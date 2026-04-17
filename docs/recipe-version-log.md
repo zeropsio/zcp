@@ -1482,6 +1482,39 @@ After the writer subagent shipped 6 README+CLAUDE.md files at 13:14, main called
 
 ---
 
+### Interlude — v24 ran, then we rolled back the checker machinery to v20 substrate
+
+- **Date**: 2026-04-17
+- **What ran**: v24 against `5fa83e8` (v8.89), outcome was **C / 126 min** — fifth consecutive regression since v20. No per-version entry above: the run was analyzed inline in the rollback plan rather than logged in this doc's usual shape, because the analysis drove a branch decision rather than a next-increment plan.
+- **What we did**: opened `rollback-to-v20-substrate`, deleted ~28 check/dispatch-gate files, reverted 19 files to `5022f8d` (last commit before v8.78), kept the genuine tool-layer wins from the intervening commits. Net −7412 lines. Full plan: [docs/implementation-v20-rollback-plan.md](implementation-v20-rollback-plan.md).
+
+**The decision.** The checker-machinery path has produced strictly-monotone regression for five consecutive runs while ~6000 lines of content checks and dispatch gates were added. v20's ten checks → v24's seventeen; v20's 71 min → v24's 126 min; v20's A− → v24's C. The math was legible before v24 (v23 §postmortem: 17 checks × 95% per-check pass rate = 42% clean-on-first-write), but v8.86's direction-inversion answer (self-verifying writer briefs) still produced a 126-min C. At that point the evidence supports a different framing: **the load-bearing problem is not how the checks fire, it's that they fire at all**. v24 surfaced failure modes no amount of brief-rewording fixes — `content_reality` regex flagging `res.json` as a missing file and pushing the agent to write "the response body parser" to satisfy it; `comment_ratio` reading the README-embedded yaml copy so the agent wrote a Python sync script to pass the check; `scaffold_hygiene` reading dev-container mount state so the agent ran `sudo rm -rf node_modules` on live dev servers. When the agent builds tooling to satisfy a check, or rewrites correct content to dodge a regex, the check is the bug.
+
+**What rolled back:**
+- v8.78 5-check reform — `causal_anchor`, `content_reality`, `per_item_standalone`, `service_coverage`, `claude_readme_consistency`
+- v8.80 — `scaffold_hygiene`, `gotcha_depth_floor`, writer-subagent dispatch gate
+- v8.81 — `content_fix_dispatch_required` gate, `architecture_narrative` check, `dev_start_contract` check, scaffold-preamble bloat in `recipe.md`
+- v8.82 — `zerops_yml_comment_depth`, `readme_container_ops`, `content-quality-overview` eager topic
+- v8.84 — `EagerAt` topic-scope refactor (recipe.md preamble bloat source)
+- v8.86 — writer-self-verifying briefs, `contract_spec`, `claude_md_folk` check
+
+**What survived the rollback (genuine tool-layer wins):**
+- v8.80 `bash_guard` middleware — rejects `cd /var/www/<host>` SSHFS patterns main-agent-side
+- v8.80 `pkill` self-kill classifier — ssh exit-255 on `pkill -f nest` now classifies as clean
+- v8.83 substep response-size fix — 14×–63× reduction on `feature-sweep-dev`, `feature-sweep-stage`, `readmes-complete` responses
+- v8.85 `env_self_shadow` check — one real bug class, zero false positives across v22/v23/v24
+- v8.85 pre-flight resolved-setup propagation — zcli always invokes with `--setup=<resolved>`
+- v8.86 `record_fact` MCP tool — orphan but harmless; agents may or may not call it
+- All unrelated fixes — cicd, git-push, server refactor, develop-flow WorkSession refactor, opus-4-7 model gate
+
+**Calibration for v25.** The rolled-back substrate IS v20's substrate plus the wins above. If v25 reproduces v20's A-grade at ~70-90 min wall — the machinery was the problem, and the forward direction is to accept v20's content drift classes (all 7 of them were content-editorial issues) as editorial-pass concerns, not check-gate concerns. If v25 lands close to v20's wall time but close-step finds more issues than usual — tool-layer regression independent of checks. If v25 lands far from v20 — substrate has degraded elsewhere (knowledge files updated upstream, platform-layer Zerops change) and the rollback has at least isolated where.
+
+**What v25 is not for.** v25 does not validate "whether the rollback was worth it" on a single run. Two consecutive clean runs are needed before treating this substrate as the new baseline. And importantly: **if v25 exposes a content drift, the response is not a new check**. Every postmortem since v20 has added a check and every subsequent run has regressed. That pattern is what this rollback is breaking.
+
+*Merged to main: `{commit-hash-on-main}` (backfill after merge). Rollback commit: `18e3854` on branch `rollback-to-v20-substrate`. v25 will be the first per-version entry below this interlude.*
+
+---
+
 ## Adding a new version
 
 When a new recipe run lands at `/Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v{N}/`:
