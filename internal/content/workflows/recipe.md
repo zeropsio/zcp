@@ -657,7 +657,7 @@ The `setup: dev` block reads `DEV_*`; `setup: prod` reads `STAGE_*`. The same ze
 **What NOT to do**:
 - Do NOT invent a `setup: stage` — there is no such thing. Stage uses `setup: prod`.
 - Do NOT reference another service's `${hostname}_zeropsSubdomain` to build URLs. Use the `${zeropsSubdomainHost}` project-scope var and the constant URL format above.
-- Do NOT create a service-level env var with the same name as a project-level env var — that's a shadow loop (the platform interpolator sees the same-name service var first and resolves to the literal `${VAR_NAME}` string). Forward under a DIFFERENT name (e.g. `FRONTEND_URL: ${STAGE_FRONTEND_URL}`); if you want the project var under its own name, just don't write the line — it's already in the OS env.
+- Do NOT create a service-level env var with the same name as ANY auto-injected var — that's a self-shadow loop. Applies to project-level (`${STAGE_API_URL}`, `${APP_SECRET}`) AND cross-service (`${db_hostname}`, `${queue_user}`). The platform interpolator sees the same-name service var first and resolves to the literal `${VAR_NAME}` string. Forward under a DIFFERENT name if the framework needs a rename (e.g. `FRONTEND_URL: ${STAGE_FRONTEND_URL}`, `DB_HOST: ${db_hostname}`); if you want the var under its own name, just don't write the line — it's already in the container's OS env. Full rule set in the `env-var-model` block.
 
 </block>
 
@@ -723,15 +723,70 @@ Recipe-specific conventions for each setup (platform rules from provision apply 
 - **Shared codebase** (`sharesCodebaseWith` = host target's hostname): write a `setup: worker` block in the SAME zerops.yaml as the host target. No `workerdev` service — the agent starts both web server and queue consumer as SSH processes from the host target's dev container.
 - **Separate codebase** (`sharesCodebaseWith` empty — DEFAULT): worker has its own repo with its own zerops.yaml (`dev` + `prod`). Mount path `/var/www/workerdev/`. Covers the 3-repo case.
 
-Worker rules: `start` mandatory (broker consumer command); NO healthCheck/readinessCheck/ports (workers don't serve HTTP); build + envVariables match prod; shared workers inherit the host target's `build.base` and cache — only `start` differs.
+Worker rules: `start` mandatory (broker consumer command); NO healthCheck/readinessCheck/ports (workers don't serve HTTP); `build` matches prod; `envVariables` = mode flags only — cross-service vars (`${db_hostname}`, `${queue_user}`, etc.) auto-inject into worker containers too, no declaration needed; shared workers inherit the host target's `build.base` and cache — only `start` differs.
 
 </block>
 
 <block name="shared-across-setups">
 
 **Shared across all setups:**
-- `envVariables:` contains ONLY cross-service references + mode flags. Do NOT re-add envSecrets — platform injects them automatically.
+- `envVariables:` contains **mode flags** (`NODE_ENV`, `APP_ENV`) + **framework-convention renames only** (`DB_HOST: ${db_hostname}` when the framework expects `DB_HOST`). Cross-service vars are already injected as OS env vars in every container — **don't re-declare them under their own name**. See the `env-var-model` block for the full rule.
+- Do NOT re-add envSecrets — platform injects them automatically.
 - dev and prod env maps must NOT be bit-identical — a structural check fails if mode flags don't differ.
+
+</block>
+
+<block name="env-var-model">
+
+### `run.envVariables` — what to write, what NOT to write
+
+Before you write any `envVariables:` block, internalise this rule set. Violating it caused multiple recipe runs to self-shadow every DB/queue credential and spend 30+ minutes diagnosing `${db_hostname}` literal strings in worker logs.
+
+**What the platform auto-injects into every container (OS env vars, no declaration needed):**
+
+- **Cross-service vars** — every service's variables are visible from every other service's containers as `{source_hostname}_{varname}`. A worker sees `db_hostname`, `db_password`, `db_port`, `queue_user`, `queue_password`, `storage_apiUrl`, `storage_accessKeyId`, `search_masterKey`, `redis_hostname`, etc. — all auto-injected with real values. Read them directly: `process.env.db_hostname`, `getenv('db_hostname')`. Zero zerops.yaml declaration required.
+- **Project-level vars** — everything set via `zerops_env project=true action=set` auto-propagates into every service's container. Read directly: `process.env.STAGE_API_URL`.
+
+**What `run.envVariables` (and `build.envVariables`) is legitimately for — only two things:**
+
+1. **Mode flags** — values that don't come from another service:
+   ```yaml
+   envVariables:
+     NODE_ENV: production
+     APP_ENV: local
+     LOG_LEVEL: debug
+   ```
+
+2. **Framework-convention renames** — forward a platform var under a DIFFERENT key because the framework's config expects that name. Key on the left MUST DIFFER from the source var name on the right:
+   ```yaml
+   envVariables:
+     DB_HOST: ${db_hostname}          # TypeORM DataSource expects uppercase DB_HOST
+     DATABASE_URL: ${db_connectionString}
+     FRONTEND_URL: ${STAGE_FRONTEND_URL}   # app code uses FRONTEND_URL not STAGE_FRONTEND_URL
+   ```
+
+**Do NOT write any of these — all are self-shadows:**
+
+```yaml
+envVariables:
+  db_hostname: ${db_hostname}        # cross-service self-shadow — worker connects to "${db_hostname}:5432"
+  db_password: ${db_password}        # cross-service self-shadow — literal `${db_password}` leaks into logs
+  queue_user: ${queue_user}          # cross-service self-shadow
+  storage_apiUrl: ${storage_apiUrl}  # cross-service self-shadow
+  STAGE_API_URL: ${STAGE_API_URL}    # project-level self-shadow
+  APP_SECRET: ${APP_SECRET}          # project-level self-shadow
+```
+
+The platform's template interpolator sees the service-level variable of that name first, cannot recurse back to the auto-injected value, and resolves the OS env var to the literal string `${varname}`. The framework then tries to connect to `"${db_hostname}:5432"` at runtime and crashes with a cryptic DNS or auth error.
+
+**Decision flow — for every var your app reads:**
+
+1. Does the app read `process.env.X` where `X` is a platform-provided name (`db_hostname`, `STAGE_API_URL`, etc.)? → **Don't declare it.** It's already there.
+2. Does the app read `process.env.X` where `X` is a framework-convention name (`DB_HOST`, `DATABASE_URL`) that differs from the platform name? → Declare `X: ${platform_name}` as a rename. Ensure keys differ.
+3. Is `X` a mode flag (`NODE_ENV`, `APP_ENV`, `LOG_LEVEL`) with a value that isn't sourced from another service? → Declare with a literal value.
+4. Is `X` a secret you want the worker/API to read? → Declare via `envSecrets` in import.yaml at provision, NOT in zerops.yaml. Platform auto-injects them too.
+
+Full platform rules for env scopes, isolation modes, build/runtime separation, and `envReplace` live in the `environment-variables` knowledge guide — fetch via `zerops_knowledge scope="guide" query="environment-variables"` when you need the mechanics behind this rule.
 
 </block>
 
@@ -1272,6 +1327,8 @@ Writing-style voice (the "developer to developer" tone, anti-patterns, correct-s
 <block name="deploy-framing">
 
 `zerops_deploy` processes the zerops.yaml through the platform — this is when `run.envVariables` become OS env vars and cross-service references (`${hostname_varname}`) resolve to real values. Before this step, the dev container had no service connectivity. After this step, the app is fully configured.
+
+**Always pass `targetService` AND `setup` together.** They are two distinct coordinates: `targetService` is the service hostname (`apidev`, `apistage`, `workerdev`, ...), `setup` is the zerops.yaml setup block name (recipes use `dev`/`prod`, shared-codebase worker recipes add `worker`). One zerops.yaml's `setup: prod` block serves both `apistage` (as the target) and a cross-deploy from `apidev` → `apistage`. A missing `setup` is the most common first-deploy failure — the tool can resolve it via role fallback for standard hostnames, but be explicit: `targetService=apidev setup=dev`, `targetService=apistage setup=prod`, `targetService=workerdev setup=dev` (separate-codebase worker) / `setup=worker` (shared-codebase worker inside the host target's zerops.yaml).
 
 </block>
 

@@ -157,6 +157,111 @@ func TestCheckGenerate_InvalidEnvRef_Fails(t *testing.T) {
 	}
 }
 
+// TestCheckGenerate_SelfShadow_Fails — v8.85. Replays the exact session-log-16
+// bug: workerdev/zerops.yaml re-declared every cross-service var under its
+// own name (`db_hostname: ${db_hostname}`, ...). The platform resolved each
+// to the literal string `${db_hostname}` and the worker crashed connecting
+// to "${db_hostname}:5432".
+//
+// The structural check must fail generate completion on this yaml, naming
+// every self-shadowed key in the detail and pointing the agent at the
+// `env-var-model` topic.
+func TestCheckGenerate_SelfShadow_Fails(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+
+	// Reduced-scale replica of session-log-16's workerdev/zerops.yaml —
+	// five self-shadows across db_* and queue_*, plus one legitimate
+	// rename (DB_HOST) and one mode flag (NODE_ENV) as negative controls
+	// that must NOT be flagged.
+	writeZeropsYml(t, dir, `zerops:
+  - setup: dev
+    build:
+      deployFiles: [.]
+    run:
+      start: node dist/main.js
+      ports:
+        - port: 3000
+      envVariables:
+        NODE_ENV: production
+        DB_HOST: ${db_hostname}
+        db_hostname: ${db_hostname}
+        db_password: ${db_password}
+        db_port: ${db_port}
+        queue_user: ${queue_user}
+        queue_password: ${queue_password}
+`)
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "workerdev", Type: "nodejs@22"},
+			Dependencies: []workflow.Dependency{
+				{Hostname: "db", Type: "postgresql@17", Resolution: "CREATE"},
+				{Hostname: "queue", Type: "nats@2.12", Resolution: "CREATE"},
+			},
+		}},
+	}
+
+	state := &workflow.BootstrapState{
+		Active: true,
+		Plan:   plan,
+		DiscoveredEnvVars: map[string][]string{
+			"db":    {"hostname", "port", "user", "password"},
+			"queue": {"user", "password"},
+		},
+	}
+
+	checker := checkGenerate(stateDir)
+	result, err := checker(context.Background(), plan, state)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Passed {
+		t.Fatal("expected generate check to fail on self-shadowed envVariables")
+	}
+
+	var shadowCheck *workflow.StepCheck
+	for i := range result.Checks {
+		if result.Checks[i].Name == "workerdev_env_self_shadow" {
+			shadowCheck = &result.Checks[i]
+			break
+		}
+	}
+	if shadowCheck == nil {
+		t.Fatal("expected workerdev_env_self_shadow check to be emitted")
+	}
+	if shadowCheck.Status != "fail" {
+		t.Errorf("expected workerdev_env_self_shadow status=fail; got %q", shadowCheck.Status)
+	}
+
+	// The detail must name every self-shadowed key and point at the
+	// env-var-model topic. The two negative controls (DB_HOST, NODE_ENV)
+	// must NOT appear in the offenders list.
+	mustContain := []string{
+		"db_hostname", "db_password", "db_port", "queue_user", "queue_password",
+		"env-var-model",
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(shadowCheck.Detail, s) {
+			t.Errorf("detail missing required fragment %q: %q", s, shadowCheck.Detail)
+		}
+	}
+	// Negative controls — DB_HOST is a rename (different keys), NODE_ENV
+	// is a mode flag. Neither should be named as an offender.
+	for _, s := range []string{"DB_HOST", "NODE_ENV"} {
+		// Detail may reference these as safe examples later, but the
+		// offenders list (before the dash) must not include them.
+		offendersSection := shadowCheck.Detail
+		if idx := strings.Index(offendersSection, " — "); idx >= 0 {
+			offendersSection = offendersSection[:idx]
+		}
+		if strings.Contains(offendersSection, s) {
+			t.Errorf("detail flagged legitimate var %q as an offender: %q", s, shadowCheck.Detail)
+		}
+	}
+}
+
 func TestCheckGenerate_NoPorts_Fails(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

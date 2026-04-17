@@ -13,20 +13,20 @@ import (
 // deployPreFlight validates zerops.yaml configuration BEFORE deploy execution.
 // This is the harness: it catches config errors that would cause silent deploy failures.
 // Returns nil when stateDir is empty (no state directory = skip validation).
-func deployPreFlight(ctx context.Context, client platform.Client, projectID, stateDir, targetHostname, setup string) (*workflow.StepCheckResult, error) {
+func deployPreFlight(ctx context.Context, client platform.Client, projectID, stateDir, targetHostname, setup string) (resolvedSetup string, result *workflow.StepCheckResult, err error) {
 	if stateDir == "" {
-		return nil, nil //nolint:nilnil // nil,nil = skip validation when no state dir
+		return setup, nil, nil
 	}
 
 	// Read ServiceMeta for target to derive role and mode.
 	meta, err := workflow.ReadServiceMeta(stateDir, targetHostname)
 	if err != nil {
-		return nil, fmt.Errorf("preflight read meta: %w", err)
+		return setup, nil, fmt.Errorf("preflight read meta: %w", err)
 	}
 	// No meta = not adopted, but requireAdoption handles that gate.
 	// If meta is nil, skip pre-flight (permissive).
 	if meta == nil {
-		return nil, nil //nolint:nilnil // nil,nil = not found, skip pre-flight
+		return setup, nil, nil
 	}
 
 	projectRoot := projectRootFromState(stateDir)
@@ -39,7 +39,7 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 			Name: "zerops_yml_exists", Status: statusFail,
 			Detail: fmt.Sprintf("zerops.yaml not found or invalid: %v", parseErr),
 		})
-		return &workflow.StepCheckResult{
+		return setup, &workflow.StepCheckResult{
 			Passed: false, Checks: checks, Summary: "zerops.yaml not found or invalid",
 		}, nil
 	}
@@ -48,6 +48,12 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	})
 
 	// Resolve setup entry: explicit setup param → role name → hostname.
+	// v8.85 — when the input `setup` is empty and pre-flight resolves one
+	// via role or hostname fallback, the resolved name is propagated back
+	// to the caller so `zcli push --setup <name>` is invoked explicitly.
+	// Without this, pre-flight silently matched the right setup but zcli
+	// received an empty flag and failed with "Cannot find corresponding
+	// setup in zerops.yaml" — the exact failure in session-log-16 (L145).
 	role := preflightRole(meta)
 	entry := resolveSetupEntry(doc, setup, role, targetHostname)
 	if entry == nil {
@@ -57,13 +63,16 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 		}
 		checks = append(checks, workflow.StepCheck{
 			Name: targetHostname + "_setup", Status: statusFail,
-			Detail: fmt.Sprintf("no setup entry %q found in zerops.yaml (also tried role %q, hostname %q)", tried, role, targetHostname),
+			Detail: fmt.Sprintf("no setup entry %q found in zerops.yaml — available setups: [%s]. Pass one explicitly via the `setup` parameter; in recipes setup names differ from hostnames (e.g. hostname=%s → setup=dev), the deploy tool cannot guess when multiple setups are declared.", tried, strings.Join(doc.SetupNames(), ", "), targetHostname),
 		})
-		return &workflow.StepCheckResult{
+		return setup, &workflow.StepCheckResult{
 			Passed: false, Checks: checks,
 			Summary: fmt.Sprintf("no matching setup entry for %s", targetHostname),
 		}, nil
 	}
+	// Entry resolved. The actual setup name to pass to zcli is entry.Setup —
+	// even when the input was empty and role/hostname fallback found it.
+	resolvedSetup = entry.Setup
 	checks = append(checks, workflow.StepCheck{
 		Name: targetHostname + "_setup", Status: statusPass,
 	})
@@ -86,7 +95,7 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	if !allPassed {
 		summary = "pre-flight checks failed — fix issues before deploying"
 	}
-	return &workflow.StepCheckResult{
+	return resolvedSetup, &workflow.StepCheckResult{
 		Passed: allPassed, Checks: checks, Summary: summary,
 	}, nil
 }

@@ -483,16 +483,31 @@ func (r *RecipeState) missingCriticalTopics(step string) []*GuidanceTopic {
 // This is the focused guidance the agent receives when working within
 // sub-step orchestration — pre-loaded topic content instead of requiring
 // the agent to call zerops_guidance manually.
+//
+// v8.84: also appends any topics marked `EagerAt: <subStep>`. Sub-step
+// scope lets a topic land in context at exactly the sub-step where its
+// teaching becomes actionable, without fattening the step-entry envelope.
+// The primary topic ID (from subStepToTopic) is excluded from the eager
+// pool so a topic that is BOTH the sub-step focus AND marked eager-at-
+// this-substep doesn't double-inline.
 func (r *RecipeState) buildSubStepGuide(step, subStep string) string {
-	topicID := subStepToTopic(step, subStep, r.Plan)
-	if topicID == "" {
+	primaryID := subStepToTopic(step, subStep, r.Plan)
+	if primaryID == "" {
 		return ""
 	}
-	resolved, err := ResolveTopic(topicID, r.Plan)
-	if err != nil || resolved == "" {
+	primary, err := ResolveTopic(primaryID, r.Plan)
+	if err != nil || primary == "" {
 		return ""
 	}
-	return resolved
+
+	// Append any topics whose EagerAt matches this sub-step (excluding
+	// the primary, which is already served above). Scope by step so we
+	// only consider topics registered against the current step.
+	eager := InjectEagerTopicsForSubStep(AllTopicsForStep(step), r.Plan, subStep, primaryID)
+	if eager == "" {
+		return primary
+	}
+	return primary + "\n\n---\n\n" + eager
 }
 
 // buildAllSubstepsCompleteMessage returns a compact prompt for the state

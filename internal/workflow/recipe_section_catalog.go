@@ -83,6 +83,12 @@ var (
 		{Name: "pre-deploy-checklist"},
 		{Name: "on-container-smoke-test"},
 		{Name: "comment-anti-patterns"},
+		// v8.85 — platform env-var model. EagerAt SubStepZeropsYAML:
+		// lands the "cross-service vars auto-inject, run.envVariables
+		// is for renames + mode flags only, self-shadow is a trap"
+		// teaching at the exact sub-step where the agent writes
+		// zerops.yaml.
+		{Name: "env-var-model"},
 		{Name: "completion"},
 	}
 

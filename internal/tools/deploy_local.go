@@ -27,7 +27,7 @@ type DeployLocalInput struct {
 func deployLocalInputSchema() *jsonschema.Schema {
 	return objectSchema(map[string]*jsonschema.Schema{
 		"targetService": {Type: "string", Description: "Hostname of the Zerops service to deploy to."},
-		"setup":         {Type: "string", Description: "zerops.yaml setup name to use. Required when setup name differs from hostname (e.g. setup=prod for hostname=appstage). Omit when setup name matches hostname."},
+		"setup":         {Type: "string", Description: "zerops.yaml setup block name — matches a `setup:` key in the file's `zerops:` array. Setup names are user-defined identifiers; recipes conventionally use `dev`/`prod` (and `worker` for shared-codebase worker recipes that pack the host service's dev/prod plus the worker setup into one zerops.yaml). Required whenever zerops.yaml declares more than one setup — the tool cannot guess which block to build. Recipes always ship multiple setups, so `setup` is effectively required in recipe workflows: `targetService=apidev setup=dev`, `targetService=apistage setup=prod` (a cross-deploy from apidev→apistage uses `setup=prod` because `setup` names the zerops.yaml block, not the deploy source). Omit only when zerops.yaml has a single setup AND its name matches the target hostname (bootstrap workflows only)."},
 		"workingDir":    {Type: "string", Description: "Local path to push from. Default: current directory."},
 		"includeGit":    flexBoolSchema("Include .git directory in the push (-g flag)."),
 	}, "targetService")
@@ -60,14 +60,20 @@ func RegisterDeployLocal(
 			return blocked, nil, nil
 		}
 
-		// Pre-flight validation (harness).
-		if pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, input.TargetService, input.Setup); pfErr != nil {
+		// Pre-flight validation (harness). v8.85 — pre-flight echoes the
+		// effective setup so zcli always invokes with --setup=<resolved>.
+		resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, input.TargetService, input.Setup)
+		if pfErr != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("Pre-flight validation error: %v", pfErr),
 				"Check zerops.yaml and service configuration")), nil, nil
-		} else if pfResult != nil && !pfResult.Passed {
+		}
+		if pfResult != nil && !pfResult.Passed {
 			return jsonResult(pfResult), nil, nil
+		}
+		if resolvedSetup != "" {
+			input.Setup = resolvedSetup
 		}
 
 		result, err := ops.DeployLocal(ctx, client, projectID, *authInfo,

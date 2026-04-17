@@ -257,11 +257,11 @@ func TestRecipeTopicRegistry_FeatureSubagentMCPSchemas_Registered(t *testing.T) 
 	}
 }
 
-// TestRecipeTopicRegistry_ContentQualityOverview_Registered — v8.82 §4.3
-// asserts the content-quality-overview topic resolves, is eager, and carries
-// the six-surface map + boundary rules + anti-patterns. The agent reads this
-// at deploy-step start to build a coherent mental model of all six content
-// surfaces before authoring any of them.
+// TestRecipeTopicRegistry_ContentQualityOverview_Registered — v8.82 §4.3 +
+// v8.84 re-scope. Asserts the content-quality-overview topic resolves, is
+// scoped to the `readmes` sub-step (not step entry), and carries the six-
+// surface map + boundary rules + anti-patterns. The agent reads this when
+// entering the sub-step where most surfaces are authored.
 func TestRecipeTopicRegistry_ContentQualityOverview_Registered(t *testing.T) {
 	t.Parallel()
 	plan := fixtureForShape(ShapeDualRuntimeShowcase)
@@ -269,8 +269,8 @@ func TestRecipeTopicRegistry_ContentQualityOverview_Registered(t *testing.T) {
 	if topic == nil {
 		t.Fatal("content-quality-overview not registered")
 	}
-	if !topic.Eager {
-		t.Fatal("content-quality-overview must be Eager so the map lands in context before authorship")
+	if topic.EagerAt != SubStepReadmes {
+		t.Fatalf("content-quality-overview must be EagerAt=SubStepReadmes (v8.84 — authoring-prep landing at the readmes sub-step, not step entry); got %q", topic.EagerAt)
 	}
 	if topic.Step != RecipeStepDeploy {
 		t.Fatalf("content-quality-overview must live on the deploy step; got %q", topic.Step)
@@ -305,21 +305,37 @@ func TestRecipeTopicRegistry_ContentQualityOverview_Registered(t *testing.T) {
 	}
 }
 
-// TestInjectEagerTopics_ContentQualityOverview_InDeploy asserts that the
-// content-quality-overview topic reaches the deploy-step eager injection
-// regardless of shape. It's a teaching overview — every shape needs the
-// mental map before authoring the README.
-func TestInjectEagerTopics_ContentQualityOverview_InDeploy(t *testing.T) {
+// TestInjectEagerTopicsForSubStep_ContentQualityOverview_AtReadmes asserts
+// that the content-quality-overview topic reaches the `readmes` sub-step's
+// eager injection regardless of shape. v8.84 re-scoped this topic from
+// step-entry to sub-step so the teaching lands adjacent to authorship
+// instead of fattening the deploy step-entry envelope past 50 KB.
+func TestInjectEagerTopicsForSubStep_ContentQualityOverview_AtReadmes(t *testing.T) {
 	t.Parallel()
 	for _, shape := range []RecipeShape{
 		ShapeHelloWorld, ShapeBackendMinimal,
 		ShapeFullStackShowcase, ShapeDualRuntimeShowcase,
 	} {
 		plan := fixtureForShape(shape)
-		got := InjectEagerTopics(recipeDeployTopics, plan)
+		// Pass excludeID="" — we're testing that the topic surfaces when
+		// not excluded by the primary-topic dedup.
+		got := InjectEagerTopicsForSubStep(recipeDeployTopics, plan, SubStepReadmes, "")
 		if !stringsContains(got, "content-quality-overview") {
-			t.Errorf("shape %q did not receive content-quality-overview eager injection", shape)
+			t.Errorf("shape %q did not receive content-quality-overview at readmes substep", shape)
 		}
+	}
+}
+
+// TestInjectEagerTopics_ContentQualityOverview_NotAtStepEntry — v8.84 guard
+// rail. The topic must NOT surface at step-entry injection anymore; it was
+// moved off step entry specifically to shrink the deploy-step-entry envelope.
+// If a future refactor promotes it back to EagerStepEntry, this test fires.
+func TestInjectEagerTopics_ContentQualityOverview_NotAtStepEntry(t *testing.T) {
+	t.Parallel()
+	plan := fixtureForShape(ShapeDualRuntimeShowcase)
+	got := InjectEagerTopics(recipeDeployTopics, plan)
+	if stringsContains(got, "content-quality-overview") {
+		t.Error("content-quality-overview must NOT land at deploy step entry (v8.84 re-scoped it to SubStepReadmes — authoring-prep, not step-entry orientation)")
 	}
 }
 
@@ -422,6 +438,95 @@ func TestInjectEagerTopics_MinimalTierSkipsShowcaseTopics(t *testing.T) {
 	got := InjectEagerTopics(recipeGenerateTopics, plan)
 	if stringsContains(got, "scaffold-subagent-brief") {
 		t.Errorf("minimal-tier plan should not receive scaffold-subagent-brief eager injection, got:\n%s", got)
+	}
+}
+
+// TestRecipeTopicRegistry_EnvVarModel_Registered — v8.85. Asserts the
+// env-var-model topic exists, resolves, is scoped to SubStepZeropsYAML (the
+// exact sub-step where the agent authors zerops.yaml), and carries the
+// authoritative teaching: cross-service + project-level auto-inject, the
+// two legitimate uses of run.envVariables, and the self-shadow trap with a
+// concrete db_hostname example.
+//
+// Session-log 16 shipped workerdev/zerops.yaml with every cross-service var
+// self-shadowed (db_hostname: ${db_hostname} × 8) because the agent's
+// received content taught "put cross-service refs in envVariables" without
+// ever stating they auto-inject. This topic closes the knowledge hole and
+// lands at the point-of-action — the sub-step where the agent writes the
+// yaml.
+func TestRecipeTopicRegistry_EnvVarModel_Registered(t *testing.T) {
+	t.Parallel()
+	topic := LookupTopic("env-var-model")
+	if topic == nil {
+		t.Fatal("env-var-model topic not registered")
+	}
+	if topic.Step != RecipeStepGenerate {
+		t.Errorf("env-var-model must live on RecipeStepGenerate (where zerops.yaml is authored); got %q", topic.Step)
+	}
+	if topic.EagerAt != SubStepZeropsYAML {
+		t.Errorf("env-var-model must be EagerAt=SubStepZeropsYAML so the teaching lands at the exact sub-step where the agent writes zerops.yaml; got %q", topic.EagerAt)
+	}
+
+	plan := fixtureForShape(ShapeDualRuntimeShowcase)
+	body, err := ResolveTopic("env-var-model", plan)
+	if err != nil {
+		t.Fatalf("resolve env-var-model: %v", err)
+	}
+
+	// Load-bearing anchors. If any of these go missing, the teaching is
+	// incomplete and the session-log-16 bug class can recur.
+	wants := []string{
+		"auto-inject",             // the core mental model term
+		"db_hostname",             // cross-service concrete example
+		"${db_hostname}",          // template syntax in an example
+		"self-shadow",             // the failure mode named
+		"process.env.db_hostname", // correct read pattern shown
+		"Mode flags",              // legitimate use #1
+		"rename",                  // legitimate use #2
+		"DB_HOST: ${db_hostname}", // rename example
+		"environment-variables",   // pointer to guide for mechanics
+	}
+	for _, w := range wants {
+		if !stringsContains(body, w) {
+			t.Errorf("env-var-model body missing required anchor %q — teaching is incomplete", w)
+		}
+	}
+}
+
+// TestBuildSubStepGuide_ZeropsYAML_IncludesEnvVarModel — v8.85. The
+// zerops-yaml sub-step's focused guidance must carry BOTH the primary
+// topic (zerops-yaml-rules — full zerops.yaml writing rules) AND the
+// sub-step-eager env-var-model teaching. Without this, the agent reaches
+// the authoring point with structural rules but no mental model of how
+// envVariables should be used.
+func TestBuildSubStepGuide_ZeropsYAML_IncludesEnvVarModel(t *testing.T) {
+	t.Parallel()
+	plan := fixtureForShape(ShapeDualRuntimeShowcase)
+	rs := &RecipeState{Plan: plan}
+	guide := rs.buildSubStepGuide(RecipeStepGenerate, SubStepZeropsYAML)
+	if guide == "" {
+		t.Fatal("expected non-empty zerops-yaml sub-step guide")
+	}
+	// Primary topic anchor — zerops-yaml-rules block content.
+	if !stringsContains(guide, "setup: dev") {
+		t.Error("zerops-yaml sub-step guide missing zerops-yaml-rules primary content (anchor: 'setup: dev')")
+	}
+	// Sub-step-eager topic anchor — env-var-model content.
+	if !stringsContains(guide, "self-shadow") || !stringsContains(guide, "db_hostname") {
+		t.Error("zerops-yaml sub-step guide missing env-var-model eager body (anchors: 'self-shadow', 'db_hostname')")
+	}
+}
+
+// TestInjectEagerTopics_EnvVarModel_NotAtStepEntry — v8.85 guard rail. The
+// topic must NOT surface at generate step-entry — its whole purpose is to
+// land at the sub-step where the action happens. If a future refactor
+// promotes EagerAt back to step-entry, this fires.
+func TestInjectEagerTopics_EnvVarModel_NotAtStepEntry(t *testing.T) {
+	t.Parallel()
+	plan := fixtureForShape(ShapeDualRuntimeShowcase)
+	got := InjectEagerTopics(recipeGenerateTopics, plan)
+	if stringsContains(got, "env-var-model") {
+		t.Error("env-var-model must NOT land at generate step-entry — it is sub-step-scoped. Check the EagerAt value.")
 	}
 }
 

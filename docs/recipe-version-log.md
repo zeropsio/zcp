@@ -1164,6 +1164,82 @@ No MCP schema validation errors (v21: 6). No `dev_server` spawn hangs (v17: 300s
 
 ---
 
+### Mid-version — v8.81 → v8.85 (between v22 and v23)
+
+Five structural versions shipped between the v22 session log (2026-04-16) and the upcoming v23 run. Each is driven by a specific v22 post-mortem item or a regression surfaced during implementation. No live run between v22 and v23 — the mid-version entries record what changed in the agent-facing content, check suite, and tool schemas.
+
+**v8.81 — v22 post-mortem fixes (commit `69409b9`).** Addresses §4.1, §4.3–§4.6 from the v22 items above:
+
+- §4.1 post-writer content-fix subagent dispatch gate (`recipe_content_fix_gate.go`) — surfaces a `content_fix_dispatch_required` check on retries of `complete step=deploy` when any of the 4 content-quality checks fail after the `readmes` substep; agent is steered to dispatch a scoped fix subagent before the full-step gate accepts. Closes the 15-minute Phase-4 iteration-into-main pattern.
+- §4.3 NATS credentials preamble in the scaffold-subagent brief (`recipe.md` scaffold-subagent-brief block).
+- §4.4 S3 endpoint preamble (same block).
+- §4.5 dev-start vs `buildCommands` contract check (`{hostname}_dev_start_contract` in `workflow_checks_generate.go`) — fails generate if `run.start` references compiled build output (`dist/*.js`, `build/*.js`, `target/*.jar`) but dev `buildCommands` omits a build step.
+- §4.6 root-README architecture-narrative check (`workflow_checks_architecture_narrative.go`, finalize-step, showcase ≥2-codebase only) — requires the root README to name each hostname, role, and cross-codebase contract verb. Informational grade — soft nudge at finalize, not a deploy-step gate.
+
+**v8.82 — content rubric reform (4 of 5 fixes).** Response-body hygiene first:
+
+- §4.2 `zerops_yml_comment_depth` hard gate at generate-complete (`workflow_checks_zerops_yml_depth.go`) — 35% reasoning-marker floor + absolute minimum 2, same taxonomy as env import.yaml depth check. Closes the IG-#1-inherits-shallow-comments regression: the zerops.yaml comments are copied verbatim into the integration guide fragment, so shallow comments there become shallow published content.
+- §4.3 `content-quality-overview` eager topic — six-surface teaching map (zerops.yaml / IG / gotchas / env comments / root README / CLAUDE.md). Authors, timing, rubrics, boundaries, anti-patterns. Eager-injected so the agent has the unified mental model before authorship begins, not after check failures.
+- §4.4 `container-ops-in-README` soft check (info-only) — flags SSHFS/fuser/ssh/chown tokens in README gotchas with a nudge toward CLAUDE.md.
+- §4.5 IG `{hostname}_integration_guide_causal_anchor` parity — every IG item beyond IG #1 must carry a concrete failure-mode anchor (HTTP status, backtick-quoted error, or symptom verb). IG #1 (zerops.yaml copy) is grandfathered.
+- §4.1 `gotcha_invariant_coverage` DROPPED per v22 design-pivot. Static-checklist-coverage punishes the first recipe in a new stack. Quality pressure from `gotcha_causal_anchor` + `gotcha_depth_floor` + predecessor-floor already covers the right layer.
+
+**v8.83 — substep response-size fall-through fix (commit `26b0347`).** v22's audit surfaced 3 substep completion responses at 40+ KB against a 1.6 KB baseline for smaller substeps. Root cause: `subStepToTopic` had no case for `SubStepFeatureSweepDev` / `SubStepFeatureSweepStage`, and `buildGuide` had no terminal-substep branch for "all substeps complete, awaiting full-step check" — both fell through to `resolveRecipeGuidance` which emits the full ~40 KB deploy monolith. Registered 2 missing topics + added the 2 missing `subStepToTopic` cases + restructured `buildGuide`'s substep branch to distinguish in-progress from all-complete. Result: feature-sweep-dev 47,188 → 3,344 bytes (14× reduction), feature-sweep-stage 47,188 → 2,474 (19×), after-readmes all-complete ~47,000 → 698 (63×). Regression guards: 5 new tests including a meta-test enumerating every `SubStep*` constant and asserting a non-empty topic mapping.
+
+**v8.84 — step-entry eager scope shift.** Deploy step-entry response was persisting to disk at 50.9 KB (Claude Code's threshold) — agent got a pointer, not the content. Four topics were flagged `Eager: true` and all landed at step entry regardless of where their teaching became actionable. First-principles re-scope: `GuidanceTopic.Eager bool` replaced with `EagerAt string`. Values: empty (not eager), `EagerStepEntry`, or any `SubStep*` constant. Migrations:
+
+| Topic | Before | After |
+|---|---|---|
+| `where-commands-run` | step-entry (deploy) | step-entry — stays (SSH from the first sub-step) |
+| `subagent-brief` | step-entry (deploy) | **removed** — substep focus already serves it |
+| `readme-fragments` | step-entry (deploy) | **removed** — substep focus already serves it |
+| `content-quality-overview` | step-entry (deploy) | **`EagerAt: SubStepReadmes`** |
+
+New `InjectEagerTopicsForSubStep(topics, plan, subStep, excludeID)` injects sub-step-scoped eager topics inside `buildSubStepGuide`, with `excludeID` dedup so a topic that's both primary and sub-step-eager doesn't double-inline. Measured result (dual-runtime showcase): deploy step-entry 50.9 KB → 7.8 KB (6.5× reduction, no more persist-to-disk); `readmes` substep picks up the `content-quality-overview` inline at 24.9 KB (primary readme-fragments + eager content-quality-overview); all other substeps unchanged at 1.6–14 KB. 5 new tests including size-budget guard rails.
+
+**v8.85 — env-var mental-model correction + self-shadow structural check + setup propagation.** Forensic audit of session-log-16 (the run that was aborted after diagnosing 8 self-shadowed cross-service vars in workerdev/zerops.yaml) proved three things:
+
+1. **The 50.9 KB response-body persist-to-disk was NOT the cause of the bug.** Agent re-read the persisted file immediately; context was fully present. The v8.84 scope shift is still the right fix for response-body hygiene, but didn't address the content bug.
+2. **The recipe agent was never taught that cross-service vars auto-inject project-wide.** Grep-verified across every pre-write response body (research step, provision step, generate step, chain recipe, all 4 fetched topics): zero matches for "cross-service vars are auto-injected into every container." The teaching the agent had was the OPPOSITE: `envVariables: contains ONLY cross-service references + mode flags` (from the `zerops-yaml-rules` topic, reinforced by the predecessor recipe's model zerops.yaml which puts `DB_HOST: ${db_hostname}` in envVariables). The predecessor worked by LUCK — the TypeORM-convention rename (`DB_HOST` vs `db_hostname`) happened to use different keys so the self-shadow didn't fire. A showcase with 5 services (db, cache, queue, search, storage) + a worker that reads `process.env.db_hostname` directly, the agent correctly noticed the predecessor's rename wasn't needed, dropped the rename — and walked into the self-shadow on every var.
+3. **The setup-vs-hostname confusion at L145 (`zerops_deploy targetService=apidev` with no setup)** was attention-decay, not missing content — the rule is taught 3× in recipe.md. The agent self-corrected in one round via zcli's error. But pre-flight had actually resolved the setup correctly via role fallback; it just didn't echo the resolved name back, so zcli still got empty and failed.
+
+v8.85 ships the coordinated fix:
+
+- **Guide corrected** — `internal/knowledge/guides/environment-variables.md` (gitignored, embedded at build via `go:embed`, push upstream via `zcp sync push guides`). New "Cross-Service References — Auto-Injected Project-Wide" section + "Self-Shadow Trap" section + corrected "Isolation Modes" table (`envIsolation` does NOT gate auto-inject — it governs YAML-level template resolution).
+- **Recipe.md `env-var-model` block** (generate section) — the agent-facing distillation of the guide's key rules: auto-inject semantics, two legitimate uses of `run.envVariables` (mode flags + framework-convention renames), self-shadow trap with concrete `db_hostname: ${db_hostname}` example, decision flow per var, pointer back to the guide.
+- **Topic `env-var-model` registered** (`recipe_topic_registry.go`) with `EagerAt: SubStepZeropsYAML` — lands the teaching at the exact substep where the agent authors zerops.yaml.
+- **Recipe.md corrections of the prior misleading lines**: `shared-across-setups` no longer claims `envVariables` contains "ONLY cross-service references + mode flags" — now correctly says "mode flags + framework-convention renames only." `worker-setup-block` no longer says "envVariables match prod" — now "envVariables = mode flags only (cross-service vars auto-inject for workers too)." `dual-runtime-what-not-to-do` shadow warning generalised to ALL auto-injected vars (not just project-level).
+- **Structural `{hostname}_env_self_shadow` check** (`internal/ops/env_shadow.go` + `workflow_checks_generate.go`) — scans both legacy top-level `envVariables` and canonical `run.envVariables` for the `key: ${key}` shape (with whitespace tolerance, ignoring composed strings like `postgres://${db_hostname}:5432/app`). Fails generate with a detail that names every offender and points at the `env-var-model` topic. Replay of session-log-16's bad yaml triggers the check on the 5 shadows, does NOT flag the legitimate `DB_HOST: ${db_hostname}` rename or the `NODE_ENV: production` mode flag.
+- **Pre-flight resolved-setup propagation** (`deploy_preflight.go` + both deploy handlers) — `deployPreFlight` now returns the resolved setup name alongside the check result. When the caller passes empty `setup` and pre-flight finds one via role/hostname fallback, the resolved name is echoed back and the handlers pass `--setup=<resolved>` to zcli explicitly. Unknown-setup errors now enumerate the available setups from the parsed zerops.yaml instead of zcli's generic "Cannot find corresponding setup" message.
+- **`zerops_deploy.setup` description reworded** (both SSH + local) — accurately says setup names are user-defined identifiers; recipes conventionally use `dev`/`prod` (and `worker` for shared-codebase worker recipes); required whenever zerops.yaml has >1 setup; explicit mapping example for recipe workflows.
+
+**Response-body sizes at v8.85 (dual-runtime showcase, Opus 4.7):**
+
+| Response | v22 / v8.80 | v8.85 |
+|---|---|---|
+| Deploy step-entry (generate → deploy) | **50.9 KB** (persist-to-disk) | **7.8 KB** (6.5×) |
+| feature-sweep-dev substep | 47.2 KB (fall-through) | 3.3 KB (14×) |
+| feature-sweep-stage substep | 47.2 KB (fall-through) | 2.5 KB (19×) |
+| all-substeps-complete | ~47 KB (fall-through) | 698 B (63×) |
+| zerops-yaml substep (generate) | ~6 KB | 6.4 KB (+env-var-model eager body) |
+| readmes substep | ~18 KB | 24.9 KB (+ content-quality-overview eager body) |
+| subagent substep | ~14 KB | 14.3 KB (unchanged) |
+| All other substeps | 1.6–10 KB | 1.6–10 KB (unchanged) |
+
+No response body crosses Claude Code's persist-to-disk threshold. The readmes substep is the heaviest at 24.9 KB, well within the 30 KB absolute ceiling enforced by `TestBuildGuide_DeployStep_AcrossAllSubsteps_SizeCeiling`.
+
+**v8.85 structural changes waiting on v23 live validation:**
+
+- `env-var-model` topic at `SubStepZeropsYAML` — does the agent write zerops.yaml without self-shadows on the first try?
+- `{hostname}_env_self_shadow` check — does it fire ONLY on actual shadows (no false positives on legitimate renames)?
+- Pre-flight resolved-setup propagation — does the agent never hit the zcli "Cannot find setup" error on its first deploy call?
+- v8.84 substep eager-scope shift — does deploy step-entry stay under 10 KB across a full run?
+- v8.82 `zerops_yml_comment_depth` gate — does the agent ship IG #1 with reasoning-marker-heavy comments?
+
+**Guide upstream-push status**: the `environment-variables.md` edit is local-only until `zcp sync push guides` creates a PR on zeropsio/docs and that PR merges. The in-binary copy (via `go:embed`) picks up the local edit at build time, so the v23 run will see the corrected guide via the released binary even before the upstream PR merges.
+
+---
+
 ## Adding a new version
 
 When a new recipe run lands at `/Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v{N}/`:

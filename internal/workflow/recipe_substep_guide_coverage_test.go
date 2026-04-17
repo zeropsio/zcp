@@ -182,34 +182,30 @@ func TestBuildGuide_AllSubStepsComplete_ReturnsCompactMessage(t *testing.T) {
 	}
 }
 
-// TestBuildGuide_DeployStep_AcrossAllSubsteps_NoFallThroughToMonolith is
-// the end-to-end size-regression guard. It walks every deploy substep in
-// turn, marks it in-progress, and captures the size of the guide buildGuide
-// serves. The goal is to detect FALL-THROUGH to the full step monolith —
-// not to enforce an absolute size ceiling on focused topics (some topics
-// are legitimately 10-18 KB because they carry feature-rich content like
-// the readme-fragments template or the feature-subagent-brief).
+// TestBuildGuide_DeployStep_AcrossAllSubsteps_SizeCeiling is the end-to-end
+// size-regression guard. It walks every deploy substep in turn and asserts
+// that its focused guide stays under an absolute ceiling.
 //
-// The heuristic: a substep guide must be substantially smaller than the
-// full-step monolith. If substep_size >= 50% of full_step_size, the switch
-// fell through. v22 observed 3 substep responses at 40+ KB where the full
-// step guide was ~40 KB — classic 100% fall-through.
+// v22 / v8.83 history: three substeps (snapshot-dev, verify-stage, readmes-
+// when-complete) served 40+ KB because subStepToTopic had no case for them
+// and buildGuide fell through to resolveRecipeGuidance. v8.83 fixed those
+// cases; v8.84 additionally pruned step-entry eager topics so the step-entry
+// guide itself is now ~7 KB (down from ~43 KB).
 //
-// Secondary absolute ceiling at 25 KB catches the case where both substep
-// and full-step grow together and the relative test would pass trivially.
-func TestBuildGuide_DeployStep_AcrossAllSubsteps_NoFallThroughToMonolith(t *testing.T) {
+// Absolute ceiling rationale: the heaviest legitimate substep guide is
+// `readmes`, which carries readme-fragments (~18 KB primary) plus content-
+// quality-overview (~4 KB sub-step eager) = ~23 KB. Everything else is
+// single-topic and under 15 KB. 30 KB headroom accommodates growth of
+// those feature-rich topics without hiding accidental monolith delivery.
+// A regression to the full ~43 KB step monolith would blow well past
+// this ceiling and fire the test.
+func TestBuildGuide_DeployStep_AcrossAllSubsteps_SizeCeiling(t *testing.T) {
 	t.Parallel()
 	plan := fixtureForShape(ShapeDualRuntimeShowcase)
 
-	// Measure the full-step monolith size for reference.
 	fullStepGuide := resolveRecipeGuidance(RecipeStepDeploy, RecipeTierShowcase, plan)
-	fullStepSize := len(fullStepGuide)
-	if fullStepSize < 20000 {
-		t.Fatalf("expected full-step deploy guide >= 20 KB (for the relative test to be meaningful), got %d bytes", fullStepSize)
-	}
-	t.Logf("full-step deploy guide: %d bytes (reference baseline)", fullStepSize)
+	t.Logf("deploy step-entry guide: %d bytes (v8.84 target < 20 KB)", len(fullStepGuide))
 
-	// Build a state in deploy step with all substeps present.
 	rs := &RecipeState{
 		Plan: plan,
 		Steps: []RecipeStep{
@@ -227,12 +223,12 @@ func TestBuildGuide_DeployStep_AcrossAllSubsteps_NoFallThroughToMonolith(t *test
 		CurrentStep: 3,
 	}
 
-	// Fall-through detection threshold: if a substep guide is ≥ 50% the
-	// size of the full-step monolith, it's almost certainly the full
-	// monolith being served (possibly with minor additions/deletions).
-	fallThroughThreshold := fullStepSize / 2
-	// Absolute ceiling: no substep's focused guide should exceed 25 KB.
-	const absoluteCeilingBytes = 25 * 1024
+	// Absolute ceiling: no substep's focused guide should exceed 30 KB.
+	// The heaviest legitimate case (readmes) carries ~23 KB of primary +
+	// sub-step-eager content; 30 KB leaves headroom for the skeleton
+	// wrapping and small growth of the feature-rich topics. A regression
+	// to the full ~43 KB monolith would blow past this.
+	const absoluteCeilingBytes = 30 * 1024
 
 	var offenders []string
 	for i := range rs.Steps[3].SubSteps {
@@ -250,23 +246,16 @@ func TestBuildGuide_DeployStep_AcrossAllSubsteps_NoFallThroughToMonolith(t *test
 		guide := rs.buildGuide(RecipeStepDeploy, 0, nil)
 		size := len(guide)
 		subStepName := rs.Steps[3].SubSteps[i].Name
-		t.Logf("substep %-22s → %5d bytes (%.0f%% of full-step)",
-			subStepName, size, 100*float64(size)/float64(fullStepSize))
-		if size >= fallThroughThreshold {
+		t.Logf("substep %-22s → %5d bytes", subStepName, size)
+		if size > absoluteCeilingBytes {
 			offenders = append(offenders, fmt.Sprintf(
-				"%s: %d bytes (%.0f%% of full-step — FALL-THROUGH)",
-				subStepName, size, 100*float64(size)/float64(fullStepSize),
-			))
-		} else if size > absoluteCeilingBytes {
-			offenders = append(offenders, fmt.Sprintf(
-				"%s: %d bytes (exceeds %d-byte absolute ceiling)",
+				"%s: %d bytes (exceeds %d-byte absolute ceiling — possible fall-through to step monolith)",
 				subStepName, size, absoluteCeilingBytes,
 			))
 		}
 	}
 	if len(offenders) > 0 {
-		t.Errorf("substep guides failed fall-through detection (full-step reference: %d bytes, threshold: %d bytes):\n  %s",
-			fullStepSize, fallThroughThreshold, strings.Join(offenders, "\n  "))
+		t.Errorf("substep guides exceeded size ceiling:\n  %s", strings.Join(offenders, "\n  "))
 	}
 }
 
@@ -384,6 +373,123 @@ func TestBuildGuide_V22Regression_SpecificSubsteps(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestResolveDeployGuidance_StepEntrySize_UnderBudget — v8.84 response-size
+// fix. Asserts the deploy step-entry body (skeleton + step-entry eager
+// topics) stays well under Claude Code's persist-to-disk threshold (~50 KB).
+//
+// v22 / v8.82 regression: four topics were flagged Eager and all landed at
+// step entry — subagent-brief (~14 KB), readme-fragments (~18 KB), where-
+// commands-run (~5 KB), content-quality-overview (~4 KB). Combined with
+// the skeleton (~3 KB), the detailedGuide hit ~43 KB; with the JSON
+// envelope, the complete response crossed 50.9 KB, triggering persist-to-
+// disk. v8.84 moved subagent-brief / readme-fragments to their sub-step
+// focus (already served there via subStepToTopic) and content-quality-
+// overview to SubStepReadmes. Only where-commands-run stays at step entry
+// — the very first deploy sub-step starts dev servers over SSH, so the
+// teaching must precede any sub-step work.
+//
+// Budget: the deploy step-entry guide must be under 20 KB. This leaves
+// plenty of headroom for the skeleton + where-commands-run + knowledge
+// injection + JSON envelope, and a comfortable gap from the 50 KB wall.
+func TestResolveDeployGuidance_StepEntrySize_UnderBudget(t *testing.T) {
+	t.Parallel()
+
+	const maxStepEntryBytes = 20 * 1024
+
+	for _, shape := range []RecipeShape{
+		ShapeHelloWorld, ShapeBackendMinimal,
+		ShapeFullStackShowcase, ShapeDualRuntimeShowcase,
+	} {
+		plan := fixtureForShape(shape)
+		guide := resolveRecipeGuidance(RecipeStepDeploy, plan.Tier, plan)
+		size := len(guide)
+		label := planShape(plan)
+		t.Logf("shape %-24s deploy step-entry → %5d bytes", label, size)
+		if size > maxStepEntryBytes {
+			t.Errorf("shape %q deploy step-entry is %d bytes (max %d). Check for newly-promoted EagerStepEntry topics — v8.84 policy is sub-step scope for topics whose teaching is sub-step-specific.",
+				label, size, maxStepEntryBytes)
+		}
+	}
+}
+
+// TestResolveDeployGuidance_StepEntryOmitsSubStepTopics — v8.84 scope-
+// shift guard. The step-entry guide MUST NOT contain the body of topics
+// re-scoped to sub-step entry. If a refactor accidentally re-promotes one
+// of them (or adds a new Eager: true without picking an EagerAt), this
+// test flags it before the envelope grows back past 50 KB.
+//
+// The anchors chosen are unique tokens from each topic's body that do not
+// appear elsewhere in the step-entry guide.
+func TestResolveDeployGuidance_StepEntryOmitsSubStepTopics(t *testing.T) {
+	t.Parallel()
+	plan := fixtureForShape(ShapeDualRuntimeShowcase)
+	guide := resolveRecipeGuidance(RecipeStepDeploy, plan.Tier, plan)
+
+	type offender struct {
+		topic  string
+		anchor string
+	}
+	// Each anchor is taken from the body of an eager-moved topic. A match
+	// in the step-entry guide means that topic's body is being inlined at
+	// step entry — regression on v8.84's scope shift.
+	cases := []offender{
+		// subagent-brief body — the "Installed-package verification rule"
+		// is unique to the feature-sub-agent dispatch block.
+		{topic: "subagent-brief", anchor: "Installed-package verification rule"},
+		// readme-fragments body — byte-literal marker template.
+		{topic: "readme-fragments", anchor: "#ZEROPS_EXTRACT_START"},
+		// content-quality-overview body — "six-surface teaching system"
+		// is the distinctive heading.
+		{topic: "content-quality-overview", anchor: "six-surface teaching"},
+	}
+	for _, c := range cases {
+		if strings.Contains(strings.ToLower(guide), strings.ToLower(c.anchor)) {
+			t.Errorf("step-entry guide still contains body of sub-step-scoped topic %q (anchor %q). v8.84 moved this topic off step entry; a refactor may have re-promoted it.",
+				c.topic, c.anchor)
+		}
+	}
+}
+
+// TestBuildSubStepGuide_Readmes_IncludesBothPrimaryAndEager — v8.84 positive
+// case. At the `readmes` sub-step, the focused guide must carry BOTH the
+// primary topic (readme-fragments — byte-literal marker template) AND the
+// sub-step-eager topic (content-quality-overview — six-surface map). The
+// two are complementary: the map orients, the template specifies.
+func TestBuildSubStepGuide_Readmes_IncludesBothPrimaryAndEager(t *testing.T) {
+	t.Parallel()
+	plan := fixtureForShape(ShapeDualRuntimeShowcase)
+	rs := &RecipeState{Plan: plan}
+	guide := rs.buildSubStepGuide(RecipeStepDeploy, SubStepReadmes)
+	if guide == "" {
+		t.Fatal("expected non-empty readmes sub-step guide")
+	}
+	// Primary topic anchor: fragment marker template.
+	if !strings.Contains(guide, "#ZEROPS_EXTRACT_START") {
+		t.Error("readmes sub-step guide missing readme-fragments primary body (anchor: #ZEROPS_EXTRACT_START)")
+	}
+	// Sub-step-eager topic anchor: six-surface teaching system.
+	if !strings.Contains(strings.ToLower(guide), "six-surface") {
+		t.Error("readmes sub-step guide missing content-quality-overview eager body (anchor: six-surface)")
+	}
+}
+
+// TestInjectEagerTopicsForSubStep_ExcludeIDDedup — v8.84 dedup guard. If a
+// topic is BOTH the sub-step's primary focus AND marked EagerAt=<thisSubStep>,
+// passing its ID as excludeID must prevent double-inline. This exercises the
+// contract that keeps buildSubStepGuide from serving the same body twice.
+func TestInjectEagerTopicsForSubStep_ExcludeIDDedup(t *testing.T) {
+	t.Parallel()
+	plan := fixtureForShape(ShapeDualRuntimeShowcase)
+	withDup := InjectEagerTopicsForSubStep(recipeDeployTopics, plan, SubStepReadmes, "")
+	withoutDup := InjectEagerTopicsForSubStep(recipeDeployTopics, plan, SubStepReadmes, "content-quality-overview")
+	if withDup == withoutDup {
+		t.Error("exclude-ID dedup did not remove content-quality-overview; withDup and withoutDup should differ")
+	}
+	if strings.Contains(withoutDup, "six-surface teaching") {
+		t.Error("excludeID did not remove content-quality-overview from injection")
 	}
 }
 

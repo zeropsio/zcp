@@ -44,6 +44,10 @@ eval/results/*
 !eval/results/.gitkeep
 eval-results/
 
+# Local debug artifacts — raw session logs, workflow debug dumps
+RAW_SESSION_LOG*
+DEBUG_WORKFLOW*.json
+
 # IDE
 .idea/
 .vscode/

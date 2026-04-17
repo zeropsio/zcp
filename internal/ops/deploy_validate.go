@@ -200,6 +200,23 @@ func (d *ZeropsYmlDoc) FindEntry(hostname string) *ZeropsYmlEntry {
 	return nil
 }
 
+// SetupNames returns every declared setup name in the order they appear in
+// zerops.yaml. Used by pre-flight to print the available setups when a
+// resolve attempt fails, so the agent sees the valid choices (rather than
+// zcli's generic "Cannot find corresponding setup" error).
+func (d *ZeropsYmlDoc) SetupNames() []string {
+	if d == nil {
+		return nil
+	}
+	names := make([]string, 0, len(d.Zerops))
+	for _, e := range d.Zerops {
+		if e.Setup != "" {
+			names = append(names, e.Setup)
+		}
+	}
+	return names
+}
+
 type zeropsYmlDeploy struct {
 	ReadinessCheck any `yaml:"readinessCheck"`
 }

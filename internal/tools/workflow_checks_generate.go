@@ -108,6 +108,8 @@ func checkGenerateEntry(doc *ops.ZeropsYmlDoc, hostname string, target workflow.
 		}
 	}
 
+	checks = append(checks, checkEnvSelfShadow(hostname, entry))
+
 	// Implicit web server: check both zerops.yaml bases AND service type from plan.
 	implicitWS := entry.HasImplicitWebServer() || ops.IsImplicitWebServerType(target.Runtime.Type)
 
@@ -352,4 +354,37 @@ func collectPlanHostnames(state *workflow.BootstrapState) []string {
 		}
 	}
 	return hostnames
+}
+
+// checkEnvSelfShadow — v8.85. Detects the `key: ${key}` shape in both
+// top-level envVariables (deprecated schema location) and run.envVariables
+// (canonical). Self-shadows resolve to the literal string `${key}` inside
+// the container because the platform interpolator sees the service-level
+// var first and cannot recurse back to the auto-injected source. Cross-
+// service vars and project-level vars auto-inject project-wide — re-
+// declaring under the same key is always redundant and actively breaks
+// the runtime env.
+//
+// Session-log 16: workerdev/zerops.yaml shipped 8 self-shadows across
+// db_* + queue_*; the worker crashed connecting to "${db_hostname}:5432".
+// This check catches the pattern at generate-step completion.
+func checkEnvSelfShadow(hostname string, entry *ops.ZeropsYmlEntry) workflow.StepCheck {
+	topLevel := ops.DetectSelfShadows(entry.EnvVariables)
+	runLevel := ops.DetectSelfShadows(entry.Run.EnvVariables)
+	shadows := make([]string, 0, len(topLevel)+len(runLevel))
+	shadows = append(shadows, topLevel...)
+	shadows = append(shadows, runLevel...)
+	if len(shadows) == 0 {
+		return workflow.StepCheck{
+			Name: hostname + "_env_self_shadow", Status: statusPass,
+		}
+	}
+	return workflow.StepCheck{
+		Name:   hostname + "_env_self_shadow",
+		Status: statusFail,
+		Detail: fmt.Sprintf(
+			"self-shadowed envVariables: %s — each entry has the shape `key: ${key}`, which resolves to the literal string `${key}` inside the container. Cross-service vars (`${db_hostname}`, `${queue_user}`, ...) and project-level vars (`${STAGE_API_URL}`, ...) already auto-inject as OS env vars project-wide; DELETE these lines — they are redundant and actively break the runtime env. Only declare a var in run.envVariables if you are renaming (`DB_HOST: ${db_hostname}` with keys that DIFFER) or setting a literal mode flag (`NODE_ENV: production`). See zerops_guidance topic=\"env-var-model\" for the full rule set.",
+			strings.Join(shadows, ", "),
+		),
+	}
 }
