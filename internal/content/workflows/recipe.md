@@ -783,6 +783,31 @@ The generate step ships an intentionally bare dashboard: **one page, one compone
 
 ### Scaffolding sub-agent brief (multi-codebase recipes only)
 
+**⚠ TOOL-USE POLICY — read before your first tool call.**
+
+You are a sub-agent spawned by the main agent inside a Zerops recipe session. The main agent holds workflow state. Your job is narrow, scoped to this dispatch brief.
+
+**Permitted tools:**
+- File ops: `Read`, `Edit`, `Write`, `Grep`, `Glob` against the SSHFS-mounted paths named in this brief
+- `Bash` — but ONLY via `ssh <hostname> "<command>"` patterns (see the "where commands run" block). NEVER `cd /var/www/<hostname> && ...`
+- `mcp__zerops__zerops_dev_server` — start/stop/status/logs/restart for dev processes
+- `mcp__zerops__zerops_knowledge` — on-demand platform knowledge queries
+- `mcp__zerops__zerops_logs` — read container logs
+- `mcp__zerops__zerops_discover` — introspect service shape
+
+**Forbidden tools — calling any of these is a sub-agent-misuse bug (workflow state is main-agent-only):**
+- `mcp__zerops__zerops_workflow` — never call `action=start`, `action=complete`, `action=status`, `action=reset`, `action=iterate`, `action=generate-finalize`
+- `mcp__zerops__zerops_import` — service provisioning is main-agent-only
+- `mcp__zerops__zerops_env` — env-var management is main-agent-only
+- `mcp__zerops__zerops_deploy` — deploy orchestration is main-agent-only
+- `mcp__zerops__zerops_subdomain` — subdomain management is main-agent-only
+- `mcp__zerops__zerops_mount` — mount lifecycle is main-agent-only
+- `mcp__zerops__zerops_verify` — step verification is main-agent-only
+
+If you feel a need to call a forbidden tool, the brief is incomplete — stop, report the gap in your return message, and let the main agent decide.
+
+**If the server rejects a call with `SUBAGENT_MISUSE`**: you are the cause. Do not retry with a different workflow name; do not call `bootstrap`. Return to your scoped task.
+
 For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appdev/apidev/workerdev mounts, or any recipe with more than one codebase), writing every codebase sequentially in the main agent is slow. Dispatch scaffolding sub-agents in parallel, one per codebase — **with a strict brief that ships an intentionally bare health-dashboard-only skeleton.** Feature code is owned by a single feature sub-agent at deploy step 4b who writes API + frontend + worker as one unit so the contracts stay consistent. v10, v11, and v12 all shipped recurring API/frontend contract-mismatch bugs because parallel scaffold agents authored their halves of each feature independently; the single-author rule at step 4b eliminates the entire class.
 
 **Order of operations — scaffolds FIRST, main-agent work AFTER. This is the v14 order; do not fall back to v13.**
@@ -1358,6 +1383,31 @@ zerops_logs serviceHostname="{worker_hostname}" limit=20
 
 <block name="dev-deploy-subagent-brief">
 
+**⚠ TOOL-USE POLICY — read before your first tool call.**
+
+You are a sub-agent spawned by the main agent inside a Zerops recipe session. The main agent holds workflow state. Your job is narrow, scoped to this dispatch brief.
+
+**Permitted tools:**
+- File ops: `Read`, `Edit`, `Write`, `Grep`, `Glob` against the SSHFS-mounted paths named in this brief
+- `Bash` — but ONLY via `ssh <hostname> "<command>"` patterns (see the "where commands run" block). NEVER `cd /var/www/<hostname> && ...`
+- `mcp__zerops__zerops_dev_server` — start/stop/status/logs/restart for dev processes
+- `mcp__zerops__zerops_knowledge` — on-demand platform knowledge queries
+- `mcp__zerops__zerops_logs` — read container logs
+- `mcp__zerops__zerops_discover` — introspect service shape
+
+**Forbidden tools — calling any of these is a sub-agent-misuse bug (workflow state is main-agent-only):**
+- `mcp__zerops__zerops_workflow` — never call `action=start`, `action=complete`, `action=status`, `action=reset`, `action=iterate`, `action=generate-finalize`
+- `mcp__zerops__zerops_import` — service provisioning is main-agent-only
+- `mcp__zerops__zerops_env` — env-var management is main-agent-only
+- `mcp__zerops__zerops_deploy` — deploy orchestration is main-agent-only
+- `mcp__zerops__zerops_subdomain` — subdomain management is main-agent-only
+- `mcp__zerops__zerops_mount` — mount lifecycle is main-agent-only
+- `mcp__zerops__zerops_verify` — step verification is main-agent-only
+
+If you feel a need to call a forbidden tool, the brief is incomplete — stop, report the gap in your return message, and let the main agent decide.
+
+**If the server rejects a call with `SUBAGENT_MISUSE`**: you are the cause. Do not retry with a different workflow name; do not call `bootstrap`. Return to your scoped task.
+
 **Step 4b: Dispatch the feature sub-agent — enforced sub-step for Type 4 showcase**
 
 After the scaffold's health dashboard is deployed and every service dot is green, dispatch **ONE** framework-expert sub-agent as a single author that owns every feature section end-to-end: API routes, worker payloads, and frontend components as one coherent unit. This is where feature implementation happens. The scaffold at generate writes the health-dashboard-only skeleton (see `scaffold-subagent-brief`); the feature sub-agent writes **everything else**.
@@ -1826,6 +1876,28 @@ Only after this sub-step passes do you proceed to the `readmes` sub-step. A stag
 
 ### Per-codebase README with extract fragments (post-deploy `readmes` sub-step)
 
+**⚠ TOOL-USE POLICY — if this brief is used as a sub-agent dispatch prompt, read before your first tool call.**
+
+When the main agent delegates README writing to a sub-agent, that sub-agent is bound by the same rules as every other recipe sub-agent. The main agent holds workflow state; the writer's job is narrow, scoped to this brief.
+
+**Permitted tools:**
+- File ops: `Read`, `Edit`, `Write`, `Grep`, `Glob` against the SSHFS-mounted README paths named in this brief
+- `Bash` — but ONLY via `ssh <hostname> "<command>"` patterns. Writer rarely needs SSH; most work is file-local.
+- `mcp__zerops__zerops_knowledge` — on-demand platform knowledge queries to confirm service types / gotcha framing
+- `mcp__zerops__zerops_logs` — read container logs if you need to verify a gotcha against real output
+- `mcp__zerops__zerops_discover` — introspect service shape for service-keys table
+
+**Forbidden tools — calling any of these is a sub-agent-misuse bug (workflow state is main-agent-only):**
+- `mcp__zerops__zerops_workflow` — never call `action=start`, `action=complete`, `action=status`, `action=reset`, `action=iterate`, `action=generate-finalize`
+- `mcp__zerops__zerops_import` — service provisioning is main-agent-only
+- `mcp__zerops__zerops_env` — env-var management is main-agent-only
+- `mcp__zerops__zerops_deploy` — deploy orchestration is main-agent-only
+- `mcp__zerops__zerops_subdomain` — subdomain management is main-agent-only
+- `mcp__zerops__zerops_mount` — mount lifecycle is main-agent-only
+- `mcp__zerops__zerops_verify` — step verification is main-agent-only
+
+If the server rejects a call with `SUBAGENT_MISUSE`, you are the cause. Return to writing the READMEs.
+
 **This is the `readmes` sub-step of deploy.** You land here after `verify-stage`, after every service is verified healthy on both dev and stage. READMEs are written now — not during generate — so the gotchas section narrates the debug rounds you just lived through. A speculative gotchas section written during generate is the root cause of the authenticity failures in v11/v12.
 
 Write **two files per codebase mount**: `README.md` and `CLAUDE.md`. They have different audiences and neither substitutes for the other:
@@ -2248,6 +2320,29 @@ Do NOT skip 1a or 1b to save time. Do NOT publish without an explicit user reque
 <block name="code-review-subagent">
 
 ### 1a. Static Code Review Sub-Agent (ALWAYS — mandatory)
+
+**⚠ TOOL-USE POLICY — include verbatim at the top of the sub-agent's dispatch prompt. The reviewer reads it before its first tool call.**
+
+You are a sub-agent spawned by the main agent inside a Zerops recipe session. The main agent holds workflow state. Your job is narrow: review framework code, report findings, propose fixes the main agent can apply.
+
+**Permitted tools:**
+- File ops: `Read`, `Edit`, `Write`, `Grep`, `Glob` against the SSHFS-mounted paths named in this brief
+- `Bash` — but ONLY via `ssh <hostname> "<command>"` patterns for type-checks / linters / test runs. NEVER `cd /var/www/<hostname> && ...`
+- `mcp__zerops__zerops_knowledge` — on-demand platform knowledge queries (only to frame a symptom report; do NOT propose platform fixes)
+- `mcp__zerops__zerops_logs` — read container logs for a SYMPTOM reporting
+- `mcp__zerops__zerops_discover` — introspect service shape
+
+**Forbidden tools — calling any of these is a sub-agent-misuse bug (workflow state is main-agent-only):**
+- `mcp__zerops__zerops_workflow` — never call `action=start`, `action=complete`, `action=status`, `action=reset`, `action=iterate`, `action=generate-finalize`
+- `mcp__zerops__zerops_import` — service provisioning is main-agent-only
+- `mcp__zerops__zerops_env` — env-var management is main-agent-only
+- `mcp__zerops__zerops_deploy` — deploy orchestration is main-agent-only
+- `mcp__zerops__zerops_subdomain` — subdomain management is main-agent-only
+- `mcp__zerops__zerops_mount` — mount lifecycle is main-agent-only
+- `mcp__zerops__zerops_verify` — step verification is main-agent-only
+- `mcp__zerops__zerops_browser` / `agent-browser` — browser walk is the main agent's job at sub-step 1b; see the existing brief below
+
+If the server rejects a call with `SUBAGENT_MISUSE`, you are the cause. Do not retry with a different workflow name. Return to the code review.
 
 Spawn a sub-agent as a **{framework} code expert** — not a Zerops platform expert. The sub-agent has NO Zerops context beyond what's in its brief: no injected guidance, no schema, no platform rules, no predecessor-recipe knowledge. Asking it to review platform config (zerops.yaml, import.yaml, zeropsSetup, envReplace, etc.) invites stale or hallucinated platform knowledge and framework-shaped "fixes" to platform problems. The main agent already owns platform config (injected guidance + live schema validation at finalize); the sub-agent's unique contribution is **framework-level code review** the main agent and automated checks cannot catch.
 
