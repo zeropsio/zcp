@@ -2495,30 +2495,59 @@ All topics are filtered to your recipe shape — irrelevant content is excluded.
 <section name="deploy-skeleton">
 ## Deploy — Build, Start, Verify & Narrate
 
+### ⚠ Substep-Complete is load-bearing (v8.90)
+
+The deploy step has up to 12 sub-steps (showcase tier). **Each `zerops_workflow action=complete step=deploy substep=X` call returns the NEXT substep's scoped guide in its `current.detailedGuide` field.** Two sub-step briefs are NOT inlined in this step-entry guide — they arrive only when you complete the preceding substep:
+
+- The `init-commands` → `subagent` boundary delivers the feature-sub-agent brief (~14 KB).
+- The `feature-sweep-stage` → `readmes` boundary delivers the README-writer brief (~17 KB).
+
+**Anti-pattern (v25 failure mode — do not repeat)**: do 40 minutes of deploy work across every substep silently, then backfill all substep completions in a 2-minute burst at the end. The substep briefs you would receive are useless once the work is done. Two consequences of the anti-pattern:
+1. The feature sub-agent is dispatched without its substep brief and has to improvise.
+2. The README writer is dispatched without its substep brief and ships content that fails the full-step content checks, forcing an extra fix-subagent round (~6 min in v25).
+
+**Correct pattern**: as you complete each substep's work, call `complete substep=X` BEFORE starting the next substep. The response carries substep X+1's brief.
+
 ### Constraints
 - `zerops_deploy` triggers build from mount files — env vars resolve at deploy time
 - Redeployment = fresh container — ALL background processes die, restart everything
 - Max 3 iterations per step
 
 ### Execution order
-1. Deploy appdev [topic: deploy-flow]
+1. Deploy apidev + workerdev + appdev dev containers [topic: deploy-flow]
    - API-first: deploy apidev FIRST [topic: deploy-api-first]
-2. Start ALL dev processes [topic: deploy-flow]
+   - `complete step=deploy substep=deploy-dev` when all dev containers are ACTIVE
+2. Start ALL dev processes
    - Asset dev server [topic: deploy-asset-dev-server]
    - Worker process [topic: deploy-worker-process]
+   - `complete step=deploy substep=start-processes` when every `zerops_dev_server` start returned OK
 3. Enable subdomain + verify [topic: deploy-target-verification]
+   - `complete step=deploy substep=verify-dev`
 4. Run init commands (migrations + seed)
-5. Dispatch feature sub-agent (showcase) [topic: subagent-brief]
+   - `complete step=deploy substep=init-commands` — **the response to THIS call delivers the feature-sub-agent brief**. Do NOT dispatch the feature sub-agent until you have received that response.
+5. Dispatch feature sub-agent (showcase only)
+   - Brief content arrives in the `complete substep=init-commands` response. Use the `current.detailedGuide` verbatim as the core of the Agent dispatch prompt.
    - Where commands run [topic: where-commands-run]
+   - `complete step=deploy substep=subagent` when the sub-agent returns
 6. Snapshot dev (showcase) — re-deploy dev to persist feature-sub-agent output into the deployed artifact. Durability step: the SSHFS mount is live but uncommitted; a mid-run container crash before cross-deploy would eat the work. [topic: deploy-flow]
-7. Browser verification (showcase) [topic: browser-walk]
-8. Cross-deploy to stage [topic: stage-deploy]
-9. Verify stage [topic: deploy-target-verification]
-10. Write per-codebase READMEs — narrate gotchas from the debug rounds you just lived through [topic: readme-fragments]
-11. Handle failures [topic: deploy-failures]
+   - `complete step=deploy substep=snapshot-dev`
+7. Feature sweep dev [topic: feature-sweep-dev]
+   - `complete step=deploy substep=feature-sweep-dev`
+8. Browser verification (showcase) [topic: browser-walk]
+   - `complete step=deploy substep=browser-walk`
+9. Cross-deploy to stage [topic: stage-deploy]
+   - `complete step=deploy substep=cross-deploy`
+10. Verify stage [topic: deploy-target-verification]
+    - `complete step=deploy substep=verify-stage`
+11. Feature sweep stage [topic: feature-sweep-stage]
+    - `complete step=deploy substep=feature-sweep-stage` — **the response to THIS call delivers the README-writer brief**. Do NOT dispatch the README writer sub-agent until you have received that response.
+12. Write per-codebase READMEs — narrate gotchas from the debug rounds you just lived through
+    - Brief content arrives in the `complete substep=feature-sweep-stage` response. Use the `current.detailedGuide` verbatim in the writer dispatch prompt.
+    - `complete step=deploy substep=readmes` when the writer returns
+13. Handle failures [topic: deploy-failures]
 
 ### Fetch guidance
-Call `zerops_guidance topic="{id}"` before each sub-task for detailed rules.
+Call `zerops_guidance topic="{id}"` on-demand for any topic you need to re-consult.
 All topics are filtered to your recipe shape — irrelevant content is excluded.
 </section>
 

@@ -216,17 +216,22 @@ var recipeDeployTopics = []*GuidanceTopic{
 		Description: "Feature sub-agent dispatch and brief",
 		Predicate:   isShowcase,
 		BlockNames:  []string{"dev-deploy-subagent-brief"},
-		// Eager: v13 fetched this topic exactly once at post-generate,
-		// then the main agent treated the platform rules inside it
-		// (NATS credentials must be split, Valkey has no auth,
-		// Meilisearch needs http:// prefix, S3 uses apiUrl not
-		// connectionString) as "instructions for the sub-agent I will
-		// dispatch later" — never dispatched, never applied them, and
-		// rediscovered the NATS credential trap as an Authorization
-		// Violation 30 minutes later. Eager-injecting at deploy keeps
-		// the rules in main-agent context where they actually need to
-		// be acted on.
-		Eager: true,
+		// NOT eager — v8.90. The brief is delivered via substep-complete:
+		// the mapping subStepToTopic(deploy, subagent) == "subagent-brief"
+		// means this block lands in the response to `complete substep=
+		// init-commands` (the advance into `subagent` is what triggers the
+		// delivery). v25 evidence: eager injection placed the brief in
+		// context 30+ minutes before the feature-sub-agent dispatch
+		// happened; the main agent then dispatched without first calling
+		// complete substep, so the substep brief arrived after the work
+		// was done. Substep-scoped delivery re-binds the brief to the
+		// phase where the delegation actually occurs.
+		//
+		// The v13 regression that originally motivated eager injection
+		// (agent fetched the topic at post-generate then forgot to act on
+		// its rules) is addressed by substep-ordered delivery: the brief
+		// arrives in the response IMMEDIATELY before dispatch, not 30+
+		// minutes earlier.
 	},
 	{
 		ID: "where-commands-run", Step: RecipeStepDeploy,
@@ -240,6 +245,12 @@ var recipeDeployTopics = []*GuidanceTopic{
 		// not be discovered after hitting the timeout. Promoting this
 		// topic to eager inlines the SSH vs dev_server distinction
 		// whether the agent fetches it or not.
+		//
+		// v8.90: subagent-brief and readme-fragments de-eagered;
+		// where-commands-run STAYS eager because the SSH/zcp boundary
+		// applies from substep=deploy-dev onwards and the
+		// zerops_dev_server tool discipline needs to be in context at
+		// every substep, not just the one whose mapping returns it.
 		Eager: true,
 	},
 	{
@@ -283,14 +294,21 @@ var recipeDeployTopics = []*GuidanceTopic{
 		ID: "readme-fragments", Step: RecipeStepDeploy,
 		Description: "Per-codebase README structure with extract fragments (post-verify `readmes` sub-step)",
 		BlockNames:  []string{"readme-with-fragments"},
-		// Eager: the fragment marker format is enforced byte-literally by
-		// the deploy-step checker. v14 burned a run where the agent
-		// invented `<!-- FRAGMENT:intro:start -->` from imagination
-		// because it never fetched this topic and the error message
-		// didn't show the expected shape. Landing the block in context
-		// at deploy time means the agent always has the literal marker
-		// template when it reaches the `readmes` sub-step.
-		Eager: true,
+		// NOT eager — v8.90. The brief is delivered via substep-complete:
+		// the mapping subStepToTopic(deploy, readmes) == "readme-fragments"
+		// means this block lands in the response to `complete substep=
+		// feature-sweep-stage` (the advance into `readmes` is what triggers
+		// the delivery). v25 evidence: the README writer was dispatched
+		// with step-entry content 33 minutes old; 6 content checks failed;
+		// a fix-subagent round cost ~6 minutes. Substep-scoped delivery
+		// lands the brief immediately before the writer dispatch, where
+		// it governs the writer's output.
+		//
+		// The v14 regression that originally motivated eager injection
+		// (agent invented fragment markers from imagination because it
+		// hadn't fetched the topic) is addressed by substep-ordered
+		// delivery: the brief arrives in the response IMMEDIATELY before
+		// the readmes substep.
 	},
 }
 
