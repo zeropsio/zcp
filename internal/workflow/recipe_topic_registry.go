@@ -17,36 +17,19 @@ type GuidanceTopic struct {
 	Predicate   func(*RecipePlan) bool // nil = always available
 	BlockNames  []string               // <block> tags to extract and concatenate
 
-	// EagerAt promotes a topic from "fetch on demand" to "always inlined"
-	// at a specific scope. Values:
+	// Eager promotes a topic from "fetch on demand" to "inlined into the
+	// step's detailedGuide". Set true for topics whose content prevents a
+	// catastrophic-failure-class bug that the agent will otherwise
+	// rediscover during deploy. v13 demonstrated that a flat list of
+	// optional fetch markers does not get fetched in priority order — the
+	// dev-server-hostcheck topic was offered, ignored, then rediscovered
+	// 45 minutes later as a 403 from the appdev subdomain. Eager topics
+	// land in context whether the agent fetches them or not.
 	//
-	//   ""              not eager — agent fetches via zerops_guidance when needed
-	//   EagerStepEntry  inlined into the step's detailedGuide at step transition
-	//   <SubStep const> inlined into that specific sub-step's focused guide
-	//
-	// Use sparingly. v13 demonstrated flat fetch-markers are not fetched in
-	// priority order — dev-server-hostcheck was offered, ignored, then re-
-	// discovered 45 minutes later as a 403 from appdev. Eager closes that
-	// gap by landing the block in context whether the agent fetches or not.
-	//
-	// Scope matters. A topic whose teaching is needed the moment the step
-	// begins (e.g. where-commands-run: SSH vs zcp-side execution, applies
-	// from the first dev-server start) belongs at EagerStepEntry. A topic
-	// whose teaching is only needed at a specific sub-step (e.g. readme-
-	// fragments: relevant only when authoring READMEs) belongs at that
-	// sub-step — inlining it at step entry forces the agent to hold ~18 KB
-	// of template in context for 10+ tool calls before it becomes actionable,
-	// and fattens the step-entry envelope past Claude Code's persist-to-disk
-	// threshold. v8.84 moved 3 topics from step-entry to sub-step scope
-	// after v8.82's deploy-step-entry response crossed 50 KB.
-	EagerAt string
+	// Use sparingly. Eager topics inflate the per-step guidance budget;
+	// only mark topics that have repeatedly cost a real recipe run.
+	Eager bool
 }
-
-// EagerAt scope values. Sub-step scope uses the SubStep* constants directly
-// from recipe_substeps.go — no new constant needed per sub-step.
-const (
-	EagerStepEntry = "step-entry"
-)
 
 // topicRegistry maps topic IDs to their definitions. Populated at init
 // from the per-step topic slices below.
@@ -130,14 +113,14 @@ var recipeGenerateTopics = []*GuidanceTopic{
 		Description: "Dev-server host-check allow-list",
 		Predicate:   hasBundlerDevServer,
 		BlockNames:  []string{"dev-server-host-check"},
-		// EagerAt step-entry: v7 documented this gotcha, v8-v12 inlined it
-		// via the chain-recipe predecessor for nestjs-minimal recipes, but
-		// v13 (a fresh showcase from a runtime where the predecessor lacks
-		// the gotcha) re-discovered it as a 403 from appdev 45 minutes into
-		// deploy. Eager-injecting at generate step entry means the scaffold
-		// sub-agent brief includes the allowedHosts setting regardless of
-		// whether the agent fetches the topic explicitly.
-		EagerAt: EagerStepEntry,
+		// Eager: v7 documented this gotcha, v8-v12 inlined it via the
+		// chain-recipe predecessor for nestjs-minimal recipes, but v13
+		// (a fresh showcase from a runtime where the predecessor lacks
+		// the gotcha) re-discovered it as a 403 from appdev 45 minutes
+		// into deploy. Eager-injecting at generate time means the
+		// scaffold sub-agent brief includes the allowedHosts setting
+		// regardless of whether the agent fetches the topic explicitly.
+		Eager: true,
 	},
 	{
 		ID: "worker-setup", Step: RecipeStepGenerate,
@@ -156,14 +139,14 @@ var recipeGenerateTopics = []*GuidanceTopic{
 		Description: "Scope contract for scaffold sub-agents (multi-codebase only)",
 		Predicate:   func(p *RecipePlan) bool { return isShowcase(p) && hasMultipleCodebases(p) },
 		BlockNames:  []string{"scaffold-subagent-brief"},
-		// EagerAt step-entry: v13 fetched 10 generate topics but skipped
-		// this one and composed scaffold briefs from its own understanding
-		// instead. The brief contains the explicit DO-NOT-WRITE list that
-		// keeps the scaffold narrow — without it the sub-agents drift into
+		// Eager: v13 fetched 10 generate topics but skipped this one and
+		// composed scaffold briefs from its own understanding instead.
+		// The brief contains the explicit DO-NOT-WRITE list that keeps
+		// the scaffold narrow — without it the sub-agents drift into
 		// writing item CRUD, cache demos, and search forms at scaffold
 		// time, which is the exact v10/v11 contract-mismatch failure mode
 		// the bare-baseline design exists to prevent.
-		EagerAt: EagerStepEntry,
+		Eager: true,
 	},
 	{
 		ID: "env-conventions", Step: RecipeStepGenerate,
@@ -192,27 +175,6 @@ var recipeGenerateTopics = []*GuidanceTopic{
 		ID: "comment-anti-patterns", Step: RecipeStepGenerate,
 		Description: "Comment formatting anti-patterns (separators, decorators)",
 		BlockNames:  []string{"comment-anti-patterns"},
-	},
-	{
-		// v8.85 — platform env-var model. Cross-service vars (`${db_hostname}`,
-		// `${queue_user}`, etc.) and project-level vars both auto-inject as OS
-		// env vars into every container in the project. `run.envVariables` is
-		// for mode flags + framework-convention renames only. Re-declaring
-		// `varname: ${varname}` self-shadows.
-		//
-		// Session-log 16 shipped workerdev/zerops.yaml with every cross-service
-		// var self-shadowed (db_hostname: ${db_hostname} × 8). Root cause: the
-		// agent's received content taught "put cross-service refs in
-		// envVariables" without ever stating they auto-inject. This topic is
-		// the corrective teaching. EagerAt SubStepZeropsYAML lands it at the
-		// exact sub-step where the agent authors zerops.yaml.
-		//
-		// Full mechanics live in the `environment-variables` knowledge guide;
-		// this topic distills the actionable rule set.
-		ID: "env-var-model", Step: RecipeStepGenerate,
-		Description: "Platform env-var model — auto-inject rules, envVariables legitimate uses, self-shadow trap",
-		BlockNames:  []string{"env-var-model"},
-		EagerAt:     SubStepZeropsYAML,
 	},
 }
 
@@ -250,54 +212,45 @@ var recipeDeployTopics = []*GuidanceTopic{
 		BlockNames:  []string{"deploy-target-verification"},
 	},
 	{
-		// v8.83 §response-size-fix — feature-sweep-dev focused topic.
-		// Previously unmapped in subStepToTopic, which caused the substep
-		// guide to fall through to the full ~40 KB deploy monolith on
-		// every completion response. The block has existed in recipe.md
-		// since v18 (catches content-type-mismatch 200+text/html from the
-		// nginx SPA fallback trap) but was never registered as a topic.
-		ID: "feature-sweep-dev", Step: RecipeStepDeploy,
-		Description: "Dev feature sweep — curl every api-surface feature's healthCheck, require 2xx + application/json",
-		BlockNames:  []string{"feature-sweep-dev"},
-	},
-	{
-		// v8.83 §response-size-fix — feature-sweep-stage focused topic.
-		// Same fall-through pattern as feature-sweep-dev, for the stage
-		// re-verify after cross-deploy.
-		ID: "feature-sweep-stage", Step: RecipeStepDeploy,
-		Description: "Stage feature sweep — re-curl every api-surface feature against the stage subdomain",
-		BlockNames:  []string{"feature-sweep-stage"},
-	},
-	{
 		ID: "subagent-brief", Step: RecipeStepDeploy,
 		Description: "Feature sub-agent dispatch and brief",
 		Predicate:   isShowcase,
 		BlockNames:  []string{"dev-deploy-subagent-brief"},
-		// No EagerAt — v8.84 dropped step-entry eager because the
-		// `subagent` sub-step's focused guide already serves this topic
-		// (subStepToTopic maps SubStepSubagent → "subagent-brief"). The
-		// teaching lands in context the moment the agent enters the
-		// subagent sub-step, which is immediately before the dispatch —
-		// exactly where the NATS-credentials / Valkey-no-auth / S3-
-		// apiUrl rules need to be. Step-entry injection pre-loaded the
-		// brief 5+ tool calls early and fattened the step-entry envelope
-		// past 50 KB (persist-to-disk threshold).
+		// Eager: v13 fetched this topic exactly once at post-generate,
+		// then the main agent treated the platform rules inside it
+		// (NATS credentials must be split, Valkey has no auth,
+		// Meilisearch needs http:// prefix, S3 uses apiUrl not
+		// connectionString) as "instructions for the sub-agent I will
+		// dispatch later" — never dispatched, never applied them, and
+		// rediscovered the NATS credential trap as an Authorization
+		// Violation 30 minutes later. Eager-injecting at deploy keeps
+		// the rules in main-agent context where they actually need to
+		// be acted on.
+		Eager: true,
 	},
 	{
 		ID: "where-commands-run", Step: RecipeStepDeploy,
 		Description: "SSH vs zcp-side command execution model + zerops_dev_server lifecycle tool",
 		BlockNames:  []string{"where-commands-run"},
-		// EagerAt step-entry: the dev-server backgrounding pattern is
-		// the single biggest operational cost driver across every recipe
-		// run (v11: 541s, v15: 556s, v16: 249s — all hand-rolled SSH + `&`
+		// Eager: the dev-server backgrounding pattern is the single
+		// biggest operational cost driver across every recipe run
+		// (v11: 541s, v15: 556s, v16: 249s — all hand-rolled SSH + `&`
 		// calls hitting the 120s bash timeout). The tool-based fix
-		// (`zerops_dev_server`) needs to land in context by default, not
-		// be discovered after hitting the timeout. This is the ONE deploy
-		// topic that legitimately belongs at step entry: the very first
-		// substep (deploy-dev / start-processes) starts dev servers over
-		// SSH, so the teaching must precede any sub-step work. Every
-		// other deploy eager topic was moved to sub-step scope in v8.84.
-		EagerAt: EagerStepEntry,
+		// (`zerops_dev_server`) needs to land in context by default,
+		// not be discovered after hitting the timeout. Promoting this
+		// topic to eager inlines the SSH vs dev_server distinction
+		// whether the agent fetches it or not.
+		Eager: true,
+	},
+	{
+		ID: "feature-sweep-dev", Step: RecipeStepDeploy,
+		Description: "Dev feature sweep — curl every api-surface feature's healthCheck, require 2xx + application/json",
+		BlockNames:  []string{"feature-sweep-dev"},
+	},
+	{
+		ID: "feature-sweep-stage", Step: RecipeStepDeploy,
+		Description: "Stage feature sweep — re-curl every api-surface feature against the stage subdomain",
+		BlockNames:  []string{"feature-sweep-stage"},
 	},
 	{
 		ID: "browser-walk", Step: RecipeStepDeploy,
@@ -327,79 +280,17 @@ var recipeDeployTopics = []*GuidanceTopic{
 		BlockNames:  []string{"reading-deploy-failures", "common-deployment-issues"},
 	},
 	{
-		ID: "writer-subagent-brief", Step: RecipeStepDeploy,
-		Description: "Writer sub-agent dispatch brief for README+CLAUDE.md composition (multi-codebase)",
-		Predicate:   hasMultipleCodebases,
-		BlockNames:  []string{"writer-subagent-brief"},
-	},
-	{
-		ID: "fix-subagent-brief", Step: RecipeStepDeploy,
-		Description: "Fix sub-agent brief for scoped check-failure iteration",
-		BlockNames:  []string{"fix-subagent-brief"},
-	},
-	{
-		// v8.81 §4.1 — content-fix sub-agent brief. Dispatched on retries
-		// of `complete step=deploy` when content-quality checks failed.
-		// The gate at engine_recipe.go surfaces a `content_fix_dispatch_required`
-		// check; the agent fetches this topic to learn the dispatch shape
-		// and file allowlist before running the Agent tool.
-		ID: "content-fix-subagent-brief", Step: RecipeStepDeploy,
-		Description: "Content-fix sub-agent brief for post-writer README/CLAUDE.md rewrite cycles (v8.81)",
-		BlockNames:  []string{"content-fix-subagent-brief"},
-	},
-	{
-		ID: "feature-subagent-mcp-schemas", Step: RecipeStepDeploy,
-		Description: "Exact MCP tool parameter names/types for feature sub-agent dispatch",
-		Predicate:   isShowcase,
-		BlockNames:  []string{"feature-subagent-mcp-schemas"},
-	},
-	{
-		// v8.86 §3.6a — execOnce semantics corrective. Lands eagerly at
-		// the init-commands sub-step (where the agent writes & debugs
-		// execOnce scripts) so the agent reaches for the correct mental
-		// model before the wrong one settles in. Pairs with the
-		// claude_md_no_burn_trap_folk content check at deploy-complete:
-		// if the agent still ships "burn trap" phrasing in a README or
-		// CLAUDE.md, that check fires and blocks the deploy step.
-		ID: "execOnce-semantics", Step: RecipeStepDeploy,
-		Description: "execOnce is keyed on appVersionId (fresh per deploy) — silent no-op comes from the script, not a burned lock",
-		BlockNames:  []string{"execOnce-semantics"},
-		EagerAt:     SubStepInitCommands,
-	},
-	{
 		ID: "readme-fragments", Step: RecipeStepDeploy,
 		Description: "Per-codebase README structure with extract fragments (post-verify `readmes` sub-step)",
 		BlockNames:  []string{"readme-with-fragments"},
-		// No EagerAt — v8.84 dropped step-entry eager because the
-		// `readmes` sub-step's focused guide already serves this topic
-		// (subStepToTopic maps SubStepReadmes → "readme-fragments").
-		// The fragment marker template lands in context the moment the
-		// agent enters the readmes sub-step — authoring-time, which is
-		// exactly when the byte-literal marker format matters. v14's
-		// agent-invented-`<!-- FRAGMENT:intro:start -->` failure
-		// happened BEFORE the sub-step orchestration layer existed, when
-		// the only injection site was step-entry or nothing. With the
-		// sub-step focus, step-entry eager is redundant and 18 KB of
-		// envelope bloat.
-	},
-	{
-		// v8.82 §4.3 — six-surface teaching system overview. Landed as
-		// teaching/coherence content — no check, no enforcement, just a
-		// map of where each content fact belongs across zerops.yaml / IG
-		// / gotchas / CLAUDE.md / env / root.
-		//
-		// v8.84 re-scoped from EagerStepEntry → SubStepReadmes. The map
-		// is authoring-prep content — it orients the agent across six
-		// surfaces before the `readmes` sub-step where most surfaces
-		// land. At step entry (5+ tool calls before readmes), it was
-		// occupying 4 KB of envelope before the teaching was actionable,
-		// and its step-entry residency (alongside subagent-brief + readme-
-		// fragments + where-commands-run) pushed deploy step-entry past
-		// 50 KB. At sub-step scope, the map lands right before authorship.
-		ID: "content-quality-overview", Step: RecipeStepDeploy,
-		Description: "Six-surface teaching system — what goes where, author, step, rubric",
-		BlockNames:  []string{"content-quality-overview"},
-		EagerAt:     SubStepReadmes,
+		// Eager: the fragment marker format is enforced byte-literally by
+		// the deploy-step checker. v14 burned a run where the agent
+		// invented `<!-- FRAGMENT:intro:start -->` from imagination
+		// because it never fetched this topic and the error message
+		// didn't show the expected shape. Landing the block in context
+		// at deploy time means the agent always has the literal marker
+		// template when it reaches the `readmes` sub-step.
+		Eager: true,
 	},
 }
 
@@ -444,21 +335,8 @@ var recipeFinalizeTopics = []*GuidanceTopic{
 var recipeCloseTopics = []*GuidanceTopic{
 	{
 		ID: "code-review-agent", Step: RecipeStepClose,
-		Description: "Static code review sub-agent brief (FIND-only — structured findings JSON)",
+		Description: "Static code review sub-agent brief",
 		BlockNames:  []string{"code-review-subagent"},
-	},
-	{
-		// v8.86 §3.4 — critical-fix sub-agent brief. Dispatched at the
-		// close.critical-fix sub-step when code-review returned ≥1
-		// critical or wrong finding. The sub-agent reads the findings
-		// JSON, applies fixes (Edit/Write), commits per codebase,
-		// redeploys each affected dev service, runs E2E verification,
-		// cross-deploys to stage, and returns a structured verification
-		// report. Keeps main agent at orchestration level.
-		ID: "close-critical-fix-brief", Step: RecipeStepClose,
-		Description: "Critical-fix sub-agent brief — applies fixes + redeploys + reverifies when code-review surfaces critical/wrong findings",
-		Predicate:   isShowcase,
-		BlockNames:  []string{"close-critical-fix-subagent"},
 	},
 	{
 		ID: "close-browser-walk", Step: RecipeStepClose,
@@ -555,27 +433,9 @@ func ResolveTopic(topicID string, plan *RecipePlan) (string, error) {
 // guidance directly in the step's detailedGuide instead of relying on the
 // agent to fetch a flat list of optional topic markers in priority order.
 func InjectEagerTopics(topics []*GuidanceTopic, plan *RecipePlan) string {
-	return injectEagerTopicsAt(topics, plan, EagerStepEntry, "")
-}
-
-// InjectEagerTopicsForSubStep returns topics whose EagerAt matches subStep.
-// The excludeID parameter lets the caller skip a topic that's already being
-// served as the sub-step's primary focus (via subStepToTopic) so the body
-// doesn't double-inline. Pass "" to include everything.
-func InjectEagerTopicsForSubStep(topics []*GuidanceTopic, plan *RecipePlan, subStep, excludeID string) string {
-	if subStep == "" {
-		return ""
-	}
-	return injectEagerTopicsAt(topics, plan, subStep, excludeID)
-}
-
-func injectEagerTopicsAt(topics []*GuidanceTopic, plan *RecipePlan, scope, excludeID string) string {
 	var parts []string
 	for _, t := range topics {
-		if t.EagerAt != scope {
-			continue
-		}
-		if t.ID == excludeID {
+		if !t.Eager {
 			continue
 		}
 		if t.Predicate != nil && !t.Predicate(plan) {

@@ -83,12 +83,6 @@ var (
 		{Name: "pre-deploy-checklist"},
 		{Name: "on-container-smoke-test"},
 		{Name: "comment-anti-patterns"},
-		// v8.85 — platform env-var model. EagerAt SubStepZeropsYAML:
-		// lands the "cross-service vars auto-inject, run.envVariables
-		// is for renames + mode flags only, self-shadow is a trap"
-		// teaching at the exact sub-step where the agent writes
-		// zerops.yaml.
-		{Name: "env-var-model"},
 		{Name: "completion"},
 	}
 
@@ -113,19 +107,6 @@ var (
 		{Name: "deploy-target-verification"},
 		{Name: "dev-deploy-subagent-brief", Predicate: isShowcase},
 		{Name: "where-commands-run"},
-		// v8.80 formalized sub-agent patterns. writer/fix-subagent-brief
-		// are available for multi-codebase and large-failure iterations
-		// respectively; feature-subagent-mcp-schemas inlines the exact
-		// MCP parameter names/types so the feature sub-agent doesn't
-		// round-trip on invalid-params rejections.
-		{Name: "writer-subagent-brief", Predicate: hasMultipleCodebases},
-		{Name: "fix-subagent-brief"},
-		// v8.81 §4.1 — content-fix sub-agent brief (post-writer content-check
-		// repair). Fetched on retries of `complete step=deploy` when
-		// content-quality checks fail; absorbs the v22-class rewrite cycle
-		// that otherwise leaks 11+ README edits into main context.
-		{Name: "content-fix-subagent-brief"},
-		{Name: "feature-subagent-mcp-schemas", Predicate: isShowcase},
 		{Name: "feature-sweep-dev"},
 		{Name: "dev-deploy-browser-walk", Predicate: isShowcase},
 		{Name: "browser-command-reference", Predicate: isShowcase},
@@ -133,15 +114,6 @@ var (
 		{Name: "feature-sweep-stage"},
 		{Name: "reading-deploy-failures"},
 		{Name: "common-deployment-issues"},
-		// v8.86 §3.6a — execOnce semantics corrective. Lands at the
-		// init-commands sub-step (eager) so the agent reaches for the
-		// correct mental model before "burn trap" folk doctrine settles.
-		{Name: "execOnce-semantics"},
-		// v8.82 §4.3 — six-surface teaching system overview. Sits right
-		// before readme-with-fragments so the agent lands in the authoring
-		// step with a map of ALL six content surfaces and their rubrics,
-		// not just the README shape. Teaching-only; no check.
-		{Name: "content-quality-overview"},
 		// v14: README writing moved from generate to the post-verify
 		// readmes sub-step so gotchas narrate lived experience.
 		{Name: "readme-with-fragments"},
@@ -165,10 +137,6 @@ var (
 	// (minimal recipes skip the walk entirely, saving ~3 KB).
 	recipeCloseBlocks = []sectionBlock{
 		{Name: "code-review-subagent"},
-		// v8.86 §3.4 — dedicated fix sub-agent brief. Only relevant for
-		// showcase runs (minimal/hello-world close steps don't produce
-		// findings that require redeploy choreography).
-		{Name: "close-critical-fix-subagent", Predicate: isShowcase},
 		{Name: "close-browser-walk", Predicate: isShowcase},
 		{Name: "export-publish"},
 		{Name: "close-completion"},

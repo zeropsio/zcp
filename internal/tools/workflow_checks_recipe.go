@@ -141,18 +141,6 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp kn
 			// Validate zerops.yaml fields against the live JSON schema.
 			checks = append(checks, checkZeropsYmlFields(ymlDir, validFields)...)
 
-			// v8.82 §4.2: zerops.yaml comment depth. Parity with the env
-			// import.yaml comment-depth check. Fires at generate-complete
-			// because IG #1 of each README copies zerops.yaml verbatim at
-			// deploy/readmes sub-step — if we only caught shallow comments
-			// post-copy, the agent would have to rewrite both surfaces.
-			// Fixing at generate-complete means the zerops.yaml that gets
-			// copied into IG #1 is the one that already passes the rubric.
-			raw, rawErr := ops.ReadZeropsYmlRaw(ymlDir)
-			if rawErr == nil {
-				checks = append(checks, checkZeropsYmlCommentDepth(string(raw), hostname)...)
-			}
-
 			// README content validation — fragments, integration-guide
 			// code blocks, comment specificity, predecessor floor,
 			// authenticity — all move to the deploy-step checker. v14
@@ -340,13 +328,6 @@ func checkCodebaseReadme(projectRoot string, target workflow.RecipeTarget, plan 
 			perItemChecks[i].Name = hostname + "_" + perItemChecks[i].Name
 		}
 		checks = append(checks, perItemChecks...)
-
-		// Per-IG-item standalone (v8.78): each `### N.` block must
-		// stand alone with its own code block + platform-anchor in the
-		// first prose paragraph. v20 apidev IG #2 ("Binding to
-		// 0.0.0.0") leaned on IG #1's zerops.yaml comments for the
-		// why; this rule forces every block to teach independently.
-		checks = append(checks, checkPerIGItemStandalone(string(readmeContent), hostname)...)
 	}
 
 	floorChecks := checkKnowledgeBaseExceedsPredecessor(string(readmeContent), plan, predecessorStems)
@@ -378,73 +359,6 @@ func checkCodebaseReadme(projectRoot string, target workflow.RecipeTarget, plan 
 	// because every recipe ships a dev container that needs a repo-local
 	// "how to work this" answer.
 	checks = append(checks, checkCLAUDEMdExists(projectRoot, target, plan)...)
-
-	// Reality-check (v8.78): every file path and every declared symbol
-	// referenced in README knowledge-base/integration-guide and CLAUDE.md
-	// must either exist in the codebase OR be framed as advisory in the
-	// surrounding prose. Catches the v20 class of "we documented behavior
-	// we didn't ship" — appdev gotcha cited `_nginx.json` proxy fix that
-	// wasn't shipped, workerdev watchdog gotcha imperatively prescribed a
-	// `setInterval` watchdog that no symbol in src/ implemented. Reads
-	// CLAUDE.md from the same mount as README.md.
-	claudePath := filepath.Join(ymlDir, "CLAUDE.md")
-	claudeBody, _ := os.ReadFile(claudePath)
-	checks = append(checks, checkContentReality(ymlDir, hostname, string(readmeContent), string(claudeBody))...)
-
-	// Causal-anchor (v8.78): every gotcha must be load-bearing — name a
-	// SPECIFIC Zerops mechanism (not generic "container"/"envVariables")
-	// AND describe a CONCRETE failure mode (HTTP code, quoted error,
-	// strong symptom verb). Catches the v20 class of generic-platform
-	// advice mis-anchored as Zerops gotcha — e.g. ".env file in repo
-	// overrides Zerops-managed values" which mentions envVariables but
-	// describes no platform-caused failure mode. Per-bullet enforcement:
-	// every gotcha must pass, not just a quorum.
-	if kbBody := extractFragmentContent(string(readmeContent), "knowledge-base"); kbBody != "" {
-		checks = append(checks, checkCausalAnchor(kbBody, hostname)...)
-		checks = append(checks, checkServiceCoverage(kbBody, plan, hostname, target.IsWorker)...)
-
-		// Gotcha depth floor (v8.80): per-role minimum gotcha count.
-		// Pairs with causal-anchor + content-reality (downward pressure
-		// per gotcha) by adding upward pressure per codebase. v21
-		// compressed 26% of README content because there was no floor.
-		if role := workflow.CodebaseRole(plan, hostname); role != "" {
-			checks = append(checks, checkGotchaDepthFloor(kbBody, role, hostname)...)
-		}
-
-		// v8.82 §4.4: container-ops-in-README nudge. Soft/info-only.
-		// Flags gotcha bullets that mention sshfs/fuser/ssh/chown and
-		// other repo-local dev-loop tokens — those belong in CLAUDE.md,
-		// not README. recipe.md states the rule (platform facts =
-		// README; repo-local ops = CLAUDE.md); this check informs the
-		// agent without blocking step completion.
-		checks = append(checks, checkReadmeContainerOps(kbBody, hostname)...)
-	}
-
-	// CLAUDE.md vs README consistency (v8.78): procedures in CLAUDE.md
-	// must not use code-level mechanisms the README's gotchas
-	// explicitly forbid for production. CLAUDE.md is the ambient
-	// context an agent reads when operating the codebase; if it
-	// teaches a pattern the README warns against, the agent will
-	// propagate it into prod-affecting changes. v20 apidev had this:
-	// README forbade `synchronize: true` in production; CLAUDE.md
-	// reset-state used `ds.synchronize()` as a dev shortcut.
-	checks = append(checks, checkClaudeReadmeConsistency(string(readmeContent), string(claudeBody), hostname)...)
-
-	// v8.86 §3.6a — folk-doctrine prevention. Flags "burn trap" phrasing
-	// near execOnce in CLAUDE.md/README. The term is fictional: execOnce
-	// keys on appVersionId, which is fresh per deploy. Shipping that
-	// wording propagates the wrong mental model to downstream agents.
-	// Concatenate README + CLAUDE.md so the proximity scan covers both
-	// surfaces under a single check name.
-	checks = append(checks, checkClaudeMdNoBurnTrapFolk(string(readmeContent)+"\n\n"+string(claudeBody), hostname)...)
-
-	// Scaffold hygiene (v8.80): every codebase ships with `.gitignore`
-	// + `.env.example` and no build-output / node_modules / OS-cruft
-	// leaked into the published tree. Restores the deterministic gate
-	// the v21 run lacked — apidev scaffold dropped both hygiene files
-	// during per-codebase brief synthesis, causing 208 MB of
-	// node_modules to leak into the output.
-	checks = append(checks, checkScaffoldHygiene(ymlDir, hostname)...)
 
 	return checks
 }

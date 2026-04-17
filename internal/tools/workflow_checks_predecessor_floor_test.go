@@ -39,11 +39,7 @@ func minimalTierPlan() *workflow.RecipePlan {
 // v10 apidev knowledge-base: four stems that all re-state the nestjs-minimal
 // predecessor gotchas with cosmetic rewording. After the v8.78 rollback
 // of the predecessor-deduplication semantic, this case PASSES — recipes
-// are standalone artifacts and predecessor overlap is fine. The new
-// authoritative gate for "this codebase covers enough services" is
-// checkServiceCoverage; the v10 catastrophe (showcase ships redis/queue/
-// storage/search but says nothing about them) is now caught there
-// because those category mentions are missing, not here.
+// are standalone artifacts and predecessor overlap is fine.
 func TestCheckKnowledgeBaseExceedsPredecessor_V10ClonePattern(t *testing.T) {
 	t.Parallel()
 	readme := readmeWithGotchas(
@@ -139,8 +135,7 @@ func TestCheckKnowledgeBaseExceedsPredecessor_OneNetNewPassesAfterRollback(t *te
 
 // TestCheckKnowledgeBaseExceedsPredecessor_TwoNetNewPassesAfterRollback —
 // v11's apidev pattern (4 predecessor clones + 2 net-new) now passes
-// here per the v8.78 rollback. checkServiceCoverage is responsible for
-// catching insufficient service category breadth.
+// here per the v8.78 rollback.
 func TestCheckKnowledgeBaseExceedsPredecessor_TwoNetNewPassesAfterRollback(t *testing.T) {
 	t.Parallel()
 	readme := readmeWithGotchas(

@@ -10,9 +10,7 @@ import (
 // minNetNewGotchas was the floor for showcase-tier knowledge-base
 // fragments before the v8.78 reform. The check is now informational
 // only — predecessor overlap is fine — and the constant is removed
-// to satisfy the unused-symbol lint. The new authoritative gate for
-// "this codebase ships enough gotchas" is checkServiceCoverage, which
-// requires at least one gotcha per managed-service category in the plan.
+// to satisfy the unused-symbol lint.
 
 // minAuthenticGotchas is the shape-classifier floor. Even when net-new
 // gotcha tokens don't overlap the predecessor, the content can still be
@@ -35,10 +33,7 @@ const minAuthenticGotchas = 3
 // Standalone recipes are read in isolation; including the most-relevant
 // predecessor gotchas alongside net-new ones is correct, not a regression.
 // The check now always passes (when applicable) and emits the count as
-// informational detail. The authoritative gate for "this codebase covers
-// enough" is now checkServiceCoverage, which requires at least one gotcha
-// per managed-service category present in the plan — overlap is fine,
-// gaps are not.
+// informational detail.
 //
 // Skipped for minimal/hello-world tiers and when the predecessor has no
 // extractable Gotchas section (the existing knowledge_base_gotchas check

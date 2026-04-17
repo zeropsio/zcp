@@ -140,7 +140,7 @@ var showcaseStepCaps = map[RecipeShape]map[string]int{
 		RecipeStepResearch:  7 * 1024,
 		RecipeStepProvision: 18 * 1024,
 		RecipeStepGenerate:  24 * 1024,
-		RecipeStepDeploy:    34 * 1024, // v8.82 §4.3: +8 KB for content-quality-overview eager topic
+		RecipeStepDeploy:    26 * 1024,
 		RecipeStepFinalize:  18 * 1024,
 		RecipeStepClose:     14 * 1024,
 	},
@@ -148,7 +148,7 @@ var showcaseStepCaps = map[RecipeShape]map[string]int{
 		RecipeStepResearch:  7 * 1024,
 		RecipeStepProvision: 18 * 1024,
 		RecipeStepGenerate:  32 * 1024,
-		RecipeStepDeploy:    34 * 1024, // v8.82 §4.3: +8 KB for content-quality-overview eager topic
+		RecipeStepDeploy:    26 * 1024,
 		RecipeStepFinalize:  18 * 1024,
 		RecipeStepClose:     14 * 1024,
 	},
@@ -156,7 +156,7 @@ var showcaseStepCaps = map[RecipeShape]map[string]int{
 		RecipeStepResearch:  14 * 1024,
 		RecipeStepProvision: 18 * 1024,
 		RecipeStepGenerate:  45 * 1024,
-		RecipeStepDeploy:    52 * 1024, // v8.82 §4.3: +8 KB for content-quality-overview eager topic
+		RecipeStepDeploy:    44 * 1024,
 		RecipeStepFinalize:  18 * 1024,
 		RecipeStepClose:     14 * 1024,
 	},
@@ -164,7 +164,7 @@ var showcaseStepCaps = map[RecipeShape]map[string]int{
 		RecipeStepResearch:  14 * 1024,
 		RecipeStepProvision: 23 * 1024,
 		RecipeStepGenerate:  48 * 1024,
-		RecipeStepDeploy:    52 * 1024, // v8.82 §4.3: +8 KB for content-quality-overview eager topic
+		RecipeStepDeploy:    44 * 1024,
 		RecipeStepFinalize:  18 * 1024,
 		RecipeStepClose:     14 * 1024,
 	},

@@ -63,20 +63,6 @@ func (e *Engine) RecipeComplete(ctx context.Context, step, attestation string, c
 		return e.recipeCompleteSubStep(ctx, state, step, subStepName, attestation)
 	}
 
-	// v8.81 §4.1 — post-writer content-fix dispatch gate.
-	// If prior iterations of this full-step complete emitted content-check
-	// failures (registered at the bottom of this block), the retry's
-	// attestation must reference a content-fix sub-agent dispatch. The
-	// content-fix subagent absorbs the rewrite cycle that v22 saw leak
-	// into main (11 Edits on workerdev/README.md), keeping main context
-	// lean and matching the delegation shape v18–v20 used.
-	if gate := contentFixDispatchGate(state.Recipe, step, attestation); gate != nil {
-		resp := state.Recipe.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge)
-		resp.CheckResult = gate
-		resp.Message = fmt.Sprintf("Step %q: content-fix dispatch required on retry — see checkResult for details", step)
-		return resp, nil
-	}
-
 	var checkResult *StepCheckResult
 	if checker != nil {
 		result, checkErr := checker(ctx, state.Recipe.Plan, state.Recipe)
@@ -84,21 +70,12 @@ func (e *Engine) RecipeComplete(ctx context.Context, step, attestation string, c
 			return nil, fmt.Errorf("recipe step check: %w", checkErr)
 		}
 		if result != nil && !result.Passed {
-			// v8.81 §4.1 — record content-check-flavored failures so
-			// the next complete-attempt can gate the attestation.
-			recordContentCheckFails(state.Recipe, step, result)
 			resp := state.Recipe.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge)
 			resp.CheckResult = result
 			resp.Message = fmt.Sprintf("Step %q: %s — fix issues and retry", step, result.Summary)
 			return resp, nil
 		}
 		checkResult = result
-		// Checker passed: clear any prior content-check fail record for
-		// this step so a future re-entry (unlikely, but possible) starts
-		// from a clean slate.
-		if state.Recipe.PriorStepCheckFails != nil {
-			delete(state.Recipe.PriorStepCheckFails, step)
-		}
 	}
 
 	if err := state.Recipe.CompleteStep(step, attestation); err != nil {

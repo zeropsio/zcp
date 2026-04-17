@@ -6,7 +6,8 @@ import (
 )
 
 // BriefingTarget is a lightweight, non-persisted service target for develop briefings.
-// Derived from ServiceMeta + API at briefing time — not stored in any session.
+// Derived from ServiceMeta + API at briefing time. Unlike DeployTarget, this is
+// stateless — no session stores it.
 type BriefingTarget struct {
 	Hostname    string `json:"hostname"`
 	Role        string `json:"role"`
@@ -266,15 +267,6 @@ func buildBriefingKnowledgeMap(targets []BriefingTarget) string {
 
 // writeCloseInstructions writes strategy-aware task close instructions.
 // This tells the LLM HOW to close the task after work is done.
-//
-// Work session auto-closes once every listed service has a succeeded deploy
-// and a passed verify. To force-close (abandon, switch intent, or simply
-// decide the task is done before auto-close fires):
-//
-//	zerops_workflow action="close" workflow="develop"
-//
-// Starting a new develop workflow with a different `intent` while one is
-// already open is rejected — close the current one first.
 func writeCloseInstructions(sb *strings.Builder, targets []BriefingTarget, strategy, mode string, env Environment) {
 	sb.WriteString("### Closing the task\n")
 
@@ -295,9 +287,8 @@ func writeCloseInstructions(sb *strings.Builder, targets []BriefingTarget, strat
 		sb.WriteString("When code changes are complete:\n\n")
 		sb.WriteString("**Ask the user:** Do you want to just push code to remote, or set up full CI/CD (automatic deploy on every push)?\n\n")
 		sb.WriteString("#### Option A: Push code to remote\n\n")
-		sb.WriteString("**GitHub fine-grained token:** Contents: Read and write (that's all)\n")
 		sb.WriteString("**Prerequisites:**\n")
-		sb.WriteString("- `GIT_TOKEN` project env var with the token above\n")
+		sb.WriteString("- `GIT_TOKEN` project env var — GitHub fine-grained token (Contents: Read and write) or GitLab token (write_repository)\n")
 		sb.WriteString("- `.netrc` on the container for git auth:\n")
 		fmt.Fprintf(sb, "  `ssh %s 'umask 077 && echo \"machine github.com login oauth2 password $GIT_TOKEN\" > ~/.netrc'`\n\n", devHost)
 		sb.WriteString("**Steps:**\n")
@@ -311,17 +302,14 @@ func writeCloseInstructions(sb *strings.Builder, targets []BriefingTarget, strat
 			fmt.Fprintf(sb, "%d. Push: `zerops_deploy targetService=\"%s\" strategy=\"git-push\"`\n", step, t.Hostname)
 			step++
 		}
-		sb.WriteString("\n#### Option B: Full CI/CD (push → automatic deploy)\n\n")
-		sb.WriteString("**GitHub fine-grained token:** Contents: Read and write + Secrets: Read and write + Workflows: Read and write\n")
-		sb.WriteString("Set `GIT_TOKEN` with this token first, then run:\n")
-		sb.WriteString("`zerops_workflow action=\"start\" workflow=\"cicd\"`\n")
+		sb.WriteString("\n#### Option B: Full CI/CD\n\n")
+		sb.WriteString("Run: `zerops_workflow action=\"start\" workflow=\"cicd\"`\n")
+		sb.WriteString("This sets up automatic deploy on every git push (GitHub Actions with zcli).\n")
 	default:
 		sb.WriteString("When code changes are complete, deploy and verify:\n")
 		writeBriefingDeployCommands(sb, targets, mode, env)
 	}
 	sb.WriteString("\n")
-	sb.WriteString("Session auto-closes once every listed service has a succeeded deploy AND a passed verify.\n")
-	sb.WriteString("Force-close before that with: `zerops_workflow action=\"close\" workflow=\"develop\"`.\n")
 }
 
 func writeBriefingDeployCommands(sb *strings.Builder, targets []BriefingTarget, mode string, env Environment) {
