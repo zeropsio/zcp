@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -10,9 +11,13 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// handleDevelopBriefing returns a stateless briefing with no session created.
-// The LLM gets knowledge upfront and works freely — no session state machine.
-func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, _ WorkflowInput, cache *ops.StackTypeCache, mounter ops.Mounter, selfHostname string) (*mcp.CallToolResult, any, error) {
+// handleDevelopBriefing returns the develop briefing and creates/resumes a
+// per-PID WorkSession that records deploy/verify lifecycle for the task.
+//
+// The WorkSession survives context compaction via the system-prompt
+// "Lifecycle Status" block, so the LLM never forgets what was deployed and
+// what still needs verification — even across summarization boundaries.
+func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, input WorkflowInput, cache *ops.StackTypeCache, mounter ops.Mounter, selfHostname string) (*mcp.CallToolResult, any, error) {
 	metas, err := workflow.ListServiceMetas(engine.StateDir())
 	if err != nil {
 		return convertError(platform.NewPlatformError(
@@ -104,13 +109,37 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		}
 	}
 
-	// Clean stale markers from dead processes, then write ours.
-	_ = workflow.CleanStaleDevelopMarkers(engine.StateDir())
-	if err := workflow.WriteDevelopMarker(engine.StateDir(), projectID, "develop"); err != nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			fmt.Sprintf("Failed to write develop marker: %v", err),
-			"")), nil, nil
+	// Create or resume per-PID WorkSession.
+	//
+	// If an open session already exists for this PID:
+	//   - matching / empty intent → reuse (fresh briefing, same session)
+	//   - different intent        → refuse and ask the LLM to close first
+	// Closed sessions are overwritten: the prior task is done, a new intent
+	// means a new task.
+	scope := workSessionScope(targets)
+	existing, _ := workflow.CurrentWorkSession(engine.StateDir())
+	if existing != nil && existing.ClosedAt == "" {
+		if input.Intent != "" && existing.Intent != "" && existing.Intent != input.Intent {
+			return convertError(platform.NewPlatformError(
+				platform.ErrWorkflowActive,
+				fmt.Sprintf("Active work session with different intent: %q", existing.Intent),
+				"Close the current task first: zerops_workflow action=\"close\" workflow=\"develop\"")), nil, nil
+		}
+	} else {
+		ws := workflow.NewWorkSession(projectID, string(engine.Environment()), input.Intent, scope)
+		if err := workflow.SaveWorkSession(engine.StateDir(), ws); err != nil {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				fmt.Sprintf("Failed to save work session: %v", err),
+				"")), nil, nil
+		}
+		_ = workflow.RegisterSession(engine.StateDir(), workflow.SessionEntry{
+			SessionID: workflow.WorkSessionID(os.Getpid()),
+			PID:       os.Getpid(),
+			Workflow:  workflow.WorkflowWork,
+			ProjectID: projectID,
+			Intent:    input.Intent,
+		})
 	}
 
 	briefingText := workflow.BuildDevelopBriefing(targets, strategy, mode, engine.Environment(), engine.StateDir())
@@ -180,4 +209,23 @@ func adoptUnmanagedServices(ctx context.Context, engine *workflow.Engine, client
 	autoMountTargets(ctx, client, projectID, mounter, engine)
 
 	return true
+}
+
+// workSessionScope returns the ordered list of hostnames a work session tracks
+// for auto-close — dev/simple targets first, stage targets second. Stage is
+// included because in standard mode deploy+verify must cover both.
+func workSessionScope(targets []workflow.BriefingTarget) []string {
+	scope := make([]string, 0, len(targets))
+	for _, t := range targets {
+		if t.Role == workflow.DeployRoleStage {
+			continue
+		}
+		scope = append(scope, t.Hostname)
+	}
+	for _, t := range targets {
+		if t.Role == workflow.DeployRoleStage {
+			scope = append(scope, t.Hostname)
+		}
+	}
+	return scope
 }

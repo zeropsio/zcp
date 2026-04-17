@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/content"
@@ -162,7 +163,12 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		if active == workflowRecipe {
 			return handleRecipeStatus(ctx, engine)
 		}
+		if resp := handleWorkSessionStatus(engine); resp != nil {
+			return resp, nil, nil
+		}
 		return handleBootstrapStatus(ctx, engine, client, cache)
+	case "close":
+		return handleWorkSessionClose(engine, input)
 	case "resume":
 		return handleResume(ctx, engine, client, cache, input)
 	case "list":
@@ -175,7 +181,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Unknown action %q", input.Action),
-			"Valid actions: start, complete, skip, status, reset, iterate, resume, list, route, strategy")), nil, nil
+			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, strategy")), nil, nil
 	}
 }
 
@@ -309,4 +315,40 @@ func handleListSessions(engine *workflow.Engine) (*mcp.CallToolResult, any, erro
 			"")), nil, nil
 	}
 	return jsonResult(sessions), nil, nil
+}
+
+// handleWorkSessionStatus returns the work session as JSON when one is active
+// for the current PID. Returns nil when there is no work session — caller
+// falls through to bootstrap/recipe status.
+func handleWorkSessionStatus(engine *workflow.Engine) *mcp.CallToolResult {
+	ws, err := workflow.CurrentWorkSession(engine.StateDir())
+	if err != nil || ws == nil {
+		return nil
+	}
+	metas, _ := workflow.ListServiceMetas(engine.StateDir())
+	return jsonResult(workSessionStatusResponse{
+		Session: ws,
+		Hint:    workflow.BuildWorkSessionBlock(ws, metas),
+	})
+}
+
+type workSessionStatusResponse struct {
+	Session *workflow.WorkSession `json:"session"`
+	Hint    string                `json:"hint"`
+}
+
+// handleWorkSessionClose closes the current-PID work session. If no session
+// exists we accept the close as a no-op success — the tool call is
+// idempotent and the LLM may retry after context compaction.
+func handleWorkSessionClose(engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+	if input.Workflow != "" && input.Workflow != workflowDevelop {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("close is only supported for workflow=\"develop\" (got %q)", input.Workflow),
+			"")), nil, nil
+	}
+	pid := os.Getpid()
+	_ = workflow.DeleteWorkSession(engine.StateDir(), pid)
+	_ = workflow.UnregisterSession(engine.StateDir(), workflow.WorkSessionID(pid))
+	return textResult("Work session closed. Start the next task: zerops_workflow action=\"start\" workflow=\"develop\" intent=\"...\""), nil, nil
 }

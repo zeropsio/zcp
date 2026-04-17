@@ -36,15 +36,29 @@ func TestRequireWorkflowContext_ActiveSession_Passes(t *testing.T) {
 	}
 }
 
-func TestRequireWorkflowContext_DevelopMarker_Passes(t *testing.T) {
-	t.Parallel()
+func TestRequireWorkflowContext_WorkSession_Passes(t *testing.T) {
 	stateDir := t.TempDir()
-	if err := workflow.WriteDevelopMarker(stateDir, "proj-1", "test"); err != nil {
-		t.Fatalf("write develop marker: %v", err)
+	ws := workflow.NewWorkSession("proj-1", "container", "test", []string{"appdev"})
+	if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
+		t.Fatalf("save work session: %v", err)
 	}
 	result := requireWorkflowContext(nil, stateDir)
 	if result != nil {
-		t.Errorf("develop marker should pass, got error")
+		t.Errorf("open work session should pass, got error")
+	}
+}
+
+func TestRequireWorkflowContext_ClosedWorkSession_Blocks(t *testing.T) {
+	stateDir := t.TempDir()
+	ws := workflow.NewWorkSession("proj-1", "container", "test", []string{"appdev"})
+	ws.ClosedAt = "2026-04-17T00:00:00Z"
+	ws.CloseReason = workflow.CloseReasonExplicit
+	if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
+		t.Fatalf("save work session: %v", err)
+	}
+	result := requireWorkflowContext(nil, stateDir)
+	if result == nil {
+		t.Fatal("closed work session should block, got nil")
 	}
 }
 

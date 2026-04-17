@@ -16,6 +16,7 @@ Single Go binary merging ZAIA CLI + ZAIA-MCP. AI-driven Zerops PaaS management v
 
 Key specs:
 - `docs/spec-workflows.md` — workflow step specs, invariants, state model
+- `docs/spec-work-session.md` — per-PID Work Session for develop flow (lifecycle visibility, compaction survival, auto-close)
 - `docs/spec-knowledge-distribution.md` — guidance delivery model (inject vs point, personalization)
 
 Zerops platform schemas (live, authoritative for YAML field validation):
@@ -43,7 +44,7 @@ cmd/zcp/main.go → internal/server → MCP tools → internal/ops → internal/
 | `internal/knowledge` | Text search, embedded docs, session-aware briefings, runtime-aware mode adaptation | `engine.go`, `briefing.go` |
 | `internal/runtime` | Container vs local detection | `runtime.go` |
 | `internal/content` | Embedded templates + workflow catalog (bootstrap, develop, recipe, cicd) | `content.go` |
-| `internal/workflow` | Workflow orchestration, bootstrap/develop/recipe conductors, guidance assembly, session state | `session.go`, `deploy_guidance.go`, `recipe.go`, `engine_recipe.go` |
+| `internal/workflow` | Workflow orchestration, bootstrap/develop/recipe conductors, guidance assembly, infra + work session state | `session.go`, `work_session.go`, `deploy_guidance.go`, `recipe.go`, `engine_recipe.go` |
 | `internal/init` | `zcp init` subcommand — config file generation | `init.go` |
 | `internal/eval` | LLM recipe eval + headless recipe creation via Claude CLI | `runner.go`, `prompt.go`, `recipe_create.go` |
 | `internal/schema` | Live Zerops YAML schema fetching, caching, enum extraction, LLM formatting | `schema.go`, `cache.go`, `format.go` |

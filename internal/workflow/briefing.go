@@ -6,8 +6,7 @@ import (
 )
 
 // BriefingTarget is a lightweight, non-persisted service target for develop briefings.
-// Derived from ServiceMeta + API at briefing time. Unlike DeployTarget, this is
-// stateless — no session stores it.
+// Derived from ServiceMeta + API at briefing time — not stored in any session.
 type BriefingTarget struct {
 	Hostname    string `json:"hostname"`
 	Role        string `json:"role"`
@@ -267,6 +266,15 @@ func buildBriefingKnowledgeMap(targets []BriefingTarget) string {
 
 // writeCloseInstructions writes strategy-aware task close instructions.
 // This tells the LLM HOW to close the task after work is done.
+//
+// Work session auto-closes once every listed service has a succeeded deploy
+// and a passed verify. To force-close (abandon, switch intent, or simply
+// decide the task is done before auto-close fires):
+//
+//	zerops_workflow action="close" workflow="develop"
+//
+// Starting a new develop workflow with a different `intent` while one is
+// already open is rejected — close the current one first.
 func writeCloseInstructions(sb *strings.Builder, targets []BriefingTarget, strategy, mode string, env Environment) {
 	sb.WriteString("### Closing the task\n")
 
@@ -312,6 +320,8 @@ func writeCloseInstructions(sb *strings.Builder, targets []BriefingTarget, strat
 		writeBriefingDeployCommands(sb, targets, mode, env)
 	}
 	sb.WriteString("\n")
+	sb.WriteString("Session auto-closes once every listed service has a succeeded deploy AND a passed verify.\n")
+	sb.WriteString("Force-close before that with: `zerops_workflow action=\"close\" workflow=\"develop\"`.\n")
 }
 
 func writeBriefingDeployCommands(sb *strings.Builder, targets []BriefingTarget, mode string, env Environment) {

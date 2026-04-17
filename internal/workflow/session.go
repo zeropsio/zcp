@@ -125,35 +125,37 @@ func SaveSessionState(stateDir, sessionID string, state *WorkflowState) error {
 
 // saveSessionState atomically writes state to sessions/{sessionID}.json.
 func saveSessionState(stateDir, sessionID string, state *WorkflowState) error {
-	sessDir := filepath.Join(stateDir, sessionsDirName)
-	if err := os.MkdirAll(sessDir, 0o755); err != nil {
-		return fmt.Errorf("save state mkdir: %w", err)
-	}
+	return atomicWriteJSON(filepath.Join(stateDir, sessionsDirName), ".state-*.tmp", sessionFilePath(stateDir, sessionID), state)
+}
 
-	data, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return fmt.Errorf("save state marshal: %w", err)
+// atomicWriteJSON marshals v and writes it to target via a temp file + rename,
+// creating dir if needed. Callers own the filename; this helper only manages
+// directory creation and atomic replacement.
+func atomicWriteJSON(dir, tmpPattern, target string, v any) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", dir, err)
 	}
-
-	target := sessionFilePath(stateDir, sessionID)
-	tmp, err := os.CreateTemp(sessDir, ".state-*.tmp")
+	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
-		return fmt.Errorf("save state temp: %w", err)
+		return fmt.Errorf("marshal: %w", err)
+	}
+	tmp, err := os.CreateTemp(dir, tmpPattern)
+	if err != nil {
+		return fmt.Errorf("create temp: %w", err)
 	}
 	tmpName := tmp.Name()
-
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
 		os.Remove(tmpName)
-		return fmt.Errorf("save state write: %w", err)
+		return fmt.Errorf("write temp: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(tmpName)
-		return fmt.Errorf("save state close: %w", err)
+		return fmt.Errorf("close temp: %w", err)
 	}
 	if err := os.Rename(tmpName, target); err != nil {
 		os.Remove(tmpName)
-		return fmt.Errorf("save state rename: %w", err)
+		return fmt.Errorf("rename: %w", err)
 	}
 	return nil
 }
@@ -219,42 +221,6 @@ func InitSessionAtomic(stateDir, projectID, workflowName, intent string) (*Workf
 	}
 
 	return state, nil
-}
-
-// activeSessionFileName is the file that persists the current session ID
-// across process restarts. Written on session start/resume, deleted on
-// session reset/completion. Enables auto-recovery when MCP server restarts.
-const activeSessionFileName = "active_session"
-
-// persistActiveSession writes the current session ID to disk.
-func persistActiveSession(stateDir, sessionID string) {
-	if stateDir == "" || sessionID == "" {
-		return
-	}
-	path := filepath.Join(stateDir, activeSessionFileName)
-	_ = os.MkdirAll(stateDir, 0o755)
-	_ = os.WriteFile(path, []byte(sessionID), 0o600)
-}
-
-// loadActiveSession reads the persisted session ID from disk.
-// Returns "" if the file doesn't exist or can't be read.
-func loadActiveSession(stateDir string) string {
-	if stateDir == "" {
-		return ""
-	}
-	data, err := os.ReadFile(filepath.Join(stateDir, activeSessionFileName))
-	if err != nil {
-		return ""
-	}
-	return string(data)
-}
-
-// clearActiveSession removes the persisted session ID file.
-func clearActiveSession(stateDir string) {
-	if stateDir == "" {
-		return
-	}
-	_ = os.Remove(filepath.Join(stateDir, activeSessionFileName))
 }
 
 // generateSessionID creates a random session ID.

@@ -11,14 +11,14 @@ import (
 )
 
 // requireWorkflowContext checks that the agent is in an active workflow:
-// either a bootstrap/recipe session OR a develop marker for the current process.
-// Used by mount and import to ensure the agent has received knowledge before
-// performing infrastructure operations.
+// either a bootstrap/recipe session OR an open work session for the current
+// process. Used by mount and import to ensure the agent has received
+// knowledge before performing infrastructure operations.
 func requireWorkflowContext(engine *workflow.Engine, stateDir string) *mcp.CallToolResult {
 	if engine != nil && engine.HasActiveSession() {
 		return nil
 	}
-	if workflow.HasDevelopMarker(stateDir) {
+	if ws, _ := workflow.CurrentWorkSession(stateDir); ws != nil && ws.ClosedAt == "" {
 		return nil
 	}
 	return convertError(platform.NewPlatformError(

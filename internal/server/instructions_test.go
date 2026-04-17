@@ -484,8 +484,11 @@ func TestBuildProjectSummary_BadMetasDir_Graceful(t *testing.T) {
 
 func TestBaseInstructions_HasWorkflowCycle(t *testing.T) {
 	t.Parallel()
-	if !strings.Contains(baseInstructions, "After deploy") {
-		t.Error("baseInstructions should mention starting new workflow after deploy")
+	if !strings.Contains(baseInstructions, "auto-closes") {
+		t.Error("baseInstructions should mention work session auto-close")
+	}
+	if !strings.Contains(baseInstructions, `action="close"`) {
+		t.Error("baseInstructions should document action=close")
 	}
 }
 

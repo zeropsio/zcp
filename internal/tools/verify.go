@@ -3,12 +3,14 @@ package tools
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // VerifyInput is the input type for zerops_verify.
@@ -17,7 +19,7 @@ type VerifyInput struct {
 }
 
 // RegisterVerify registers the zerops_verify tool.
-func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.LogFetcher, projectID string) {
+func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.LogFetcher, projectID, stateDir string) {
 	httpClient := &http.Client{
 		Timeout: 15 * time.Second,
 		Transport: &http.Transport{
@@ -39,12 +41,57 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 			if err != nil {
 				return convertError(err), nil, nil
 			}
+			recordVerifyAllToWorkSession(stateDir, result)
 			return jsonResult(result), nil, nil
 		}
 		result, err := ops.Verify(ctx, client, fetcher, httpClient, projectID, input.ServiceHostname)
 		if err != nil {
 			return convertError(err), nil, nil
 		}
+		recordVerifyToWorkSession(stateDir, result)
 		return jsonResult(result), nil, nil
 	})
+}
+
+// recordVerifyToWorkSession records one service verify result as a WorkSession attempt.
+// Pass = summary "healthy" status; fail = first failing check detail.
+func recordVerifyToWorkSession(stateDir string, r *ops.VerifyResult) {
+	if r == nil {
+		return
+	}
+	attempt := workflow.VerifyAttempt{
+		AttemptedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	passed := r.Status == statusHealthy
+	if passed {
+		attempt.Passed = true
+		attempt.PassedAt = attempt.AttemptedAt
+		attempt.Summary = statusHealthy
+	} else {
+		attempt.Summary = verifyFailureSummary(r)
+	}
+	_ = workflow.RecordVerifyAttempt(stateDir, r.Hostname, attempt)
+}
+
+// recordVerifyAllToWorkSession records results for every service verified
+// by VerifyAll. Each service appends one attempt.
+func recordVerifyAllToWorkSession(stateDir string, r *ops.VerifyAllResult) {
+	if r == nil {
+		return
+	}
+	for i := range r.Services {
+		recordVerifyToWorkSession(stateDir, &r.Services[i])
+	}
+}
+
+func verifyFailureSummary(r *ops.VerifyResult) string {
+	for _, c := range r.Checks {
+		if c.Status == statusFail {
+			if c.Detail != "" {
+				return fmt.Sprintf("%s: %s", c.Name, c.Detail)
+			}
+			return c.Name
+		}
+	}
+	return r.Status
 }

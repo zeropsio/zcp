@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -76,14 +77,28 @@ func RegisterDeployLocal(
 			input.Setup = resolvedSetup
 		}
 
+		attempt := workflow.DeployAttempt{
+			AttemptedAt: time.Now().UTC().Format(time.RFC3339),
+			Setup:       input.Setup,
+		}
+
 		result, err := ops.DeployLocal(ctx, client, projectID, *authInfo,
 			input.TargetService, input.Setup, input.WorkingDir, input.IncludeGit.Bool())
 		if err != nil {
+			attempt.Error = err.Error()
+			_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 			return convertError(err), nil, nil
 		}
 
 		onProgress := buildProgressCallback(ctx, req)
 		pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, nil)
+
+		if result != nil && result.Status == statusDeployed {
+			attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
+		} else if result != nil {
+			attempt.Error = fmt.Sprintf("deploy status %s", result.Status)
+		}
+		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 
 		return jsonResult(result), nil, nil
 	})

@@ -82,12 +82,13 @@ func mountServerWithRT(mock platform.Client, mounter ops.Mounter, rtInfo runtime
 	return srv
 }
 
-// mountServerWithDevelop creates a server with a develop marker for workflow context tests.
+// mountServerWithDevelop creates a server with a work session for workflow context tests.
 func mountServerWithDevelop(t *testing.T, mock platform.Client, mounter ops.Mounter) *mcp.Server {
 	t.Helper()
 	stateDir := t.TempDir()
-	if err := workflow.WriteDevelopMarker(stateDir, "proj-1", "test"); err != nil {
-		t.Fatalf("write develop marker: %v", err)
+	ws := workflow.NewWorkSession("proj-1", "container", "test", []string{"appdev"})
+	if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
+		t.Fatalf("save work session: %v", err)
 	}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterMount(srv, mock, "proj-1", mounter, runtime.Info{}, stateDir, nil)

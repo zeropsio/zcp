@@ -34,6 +34,7 @@ const (
 	stepDeploy        = "deploy"
 	statusFail        = "fail"
 	statusPass        = "pass"
+	statusHealthy     = "healthy"
 	defaultSkipReason = "skipped by user"
 )
 

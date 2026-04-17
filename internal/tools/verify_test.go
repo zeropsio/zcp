@@ -24,7 +24,7 @@ func TestVerifyTool_RuntimeHealthy(t *testing.T) {
 	fetcher := platform.NewMockLogFetcher()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterVerify(srv, mock, fetcher, "proj-1")
+	RegisterVerify(srv, mock, fetcher, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "app"})
 
@@ -55,7 +55,7 @@ func TestVerifyTool_ManagedHealthy(t *testing.T) {
 	fetcher := platform.NewMockLogFetcher()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterVerify(srv, mock, fetcher, "proj-1")
+	RegisterVerify(srv, mock, fetcher, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "db"})
 
@@ -89,7 +89,7 @@ func TestVerifyTool_RuntimeActive(t *testing.T) {
 	fetcher := platform.NewMockLogFetcher()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterVerify(srv, mock, fetcher, "proj-1")
+	RegisterVerify(srv, mock, fetcher, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "app"})
 
@@ -125,7 +125,7 @@ func TestVerifyTool_NotFound(t *testing.T) {
 	fetcher := platform.NewMockLogFetcher()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterVerify(srv, mock, fetcher, "proj-1")
+	RegisterVerify(srv, mock, fetcher, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "nonexistent"})
 
@@ -145,7 +145,7 @@ func TestVerifyTool_GracefulLogError(t *testing.T) {
 	fetcher := platform.NewMockLogFetcher()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterVerify(srv, mock, fetcher, "proj-1")
+	RegisterVerify(srv, mock, fetcher, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "app"})
 
@@ -178,7 +178,7 @@ func TestVerifyTool_BatchMode(t *testing.T) {
 	fetcher := platform.NewMockLogFetcher()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterVerify(srv, mock, fetcher, "proj-1")
+	RegisterVerify(srv, mock, fetcher, "proj-1", "")
 
 	// Call with empty serviceHostname → batch mode.
 	result := callTool(t, srv, "zerops_verify", map[string]any{})
@@ -210,7 +210,7 @@ func TestVerifyTool_SingleMode(t *testing.T) {
 	fetcher := platform.NewMockLogFetcher()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterVerify(srv, mock, fetcher, "proj-1")
+	RegisterVerify(srv, mock, fetcher, "proj-1", "")
 
 	// Call with serviceHostname → single mode, returns VerifyResult.
 	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "app"})

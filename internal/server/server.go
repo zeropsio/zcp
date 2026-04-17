@@ -107,7 +107,7 @@ func (s *Server) registerTools() {
 	tools.RegisterLogs(s.server, s.client, s.logFetcher, projectID)
 	tools.RegisterEvents(s.server, s.client, projectID)
 	tools.RegisterProcess(s.server, s.client)
-	tools.RegisterVerify(s.server, s.client, s.logFetcher, projectID)
+	tools.RegisterVerify(s.server, s.client, s.logFetcher, projectID, stateDir)
 	tools.RegisterPreprocess(s.server)
 
 	// Mutating tools — deploy registration routes by environment.

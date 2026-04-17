@@ -217,8 +217,7 @@ func TestImportTool_WithWorkflowSession_Succeeds(t *testing.T) {
 	}
 }
 
-func TestImportTool_WithDevelopMarker_Succeeds(t *testing.T) {
-	t.Parallel()
+func TestImportTool_WithWorkSession_Succeeds(t *testing.T) {
 	mock := platform.NewMock().
 		WithImportResult(&platform.ImportResult{
 			ProjectID:   "proj-1",
@@ -232,8 +231,9 @@ func TestImportTool_WithDevelopMarker_Succeeds(t *testing.T) {
 		WithProcess(&platform.Process{ID: "p-1", Status: statusFinished})
 
 	stateDir := t.TempDir()
-	if err := workflow.WriteDevelopMarker(stateDir, "proj-1", "test"); err != nil {
-		t.Fatalf("write develop marker: %v", err)
+	ws := workflow.NewWorkSession("proj-1", "container", "test", []string{"appdev"})
+	if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
+		t.Fatalf("save work session: %v", err)
 	}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)

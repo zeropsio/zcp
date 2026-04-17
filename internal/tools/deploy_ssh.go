@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -113,18 +114,35 @@ func RegisterDeploySSH(
 
 		// Route: git-push strategy pushes to external git remote, no Zerops build.
 		if input.Strategy == deployStrategyGitPush {
-			return handleGitPush(ctx, sshDeployer, *authInfo, input)
+			return handleGitPush(ctx, sshDeployer, *authInfo, input, stateDir)
+		}
+
+		// Record attempt up front so a crash still leaves a trace.
+		attemptedAt := time.Now().UTC().Format(time.RFC3339)
+		attempt := workflow.DeployAttempt{
+			AttemptedAt: attemptedAt,
+			Setup:       input.Setup,
+			Strategy:    "",
 		}
 
 		// Default: zcli push to Zerops.
 		result, err := ops.DeploySSH(ctx, client, projectID, sshDeployer, *authInfo,
 			input.SourceService, input.TargetService, input.Setup, input.WorkingDir, input.IncludeGit.Bool())
 		if err != nil {
+			attempt.Error = err.Error()
+			_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 			return convertError(err), nil, nil
 		}
 
 		onProgress := buildProgressCallback(ctx, req)
 		pollDeployBuild(ctx, client, projectID, result, onProgress, logFetcher, sshDeployer)
+
+		if result != nil && result.Status == statusDeployed {
+			attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
+		} else if result != nil {
+			attempt.Error = fmt.Sprintf("deploy status %s", result.Status)
+		}
+		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 
 		return jsonResult(result), nil, nil
 	})

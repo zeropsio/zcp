@@ -59,6 +59,7 @@ func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mo
 			if err != nil {
 				return convertError(err), nil, nil
 			}
+			_ = workflow.TouchWorkSession(stateDir)
 			return jsonResult(result), nil, nil
 		case "unmount":
 			result, err := ops.UnmountService(ctx, client, projectID, mounter, input.ServiceHostname)

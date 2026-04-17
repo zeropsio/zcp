@@ -16,11 +16,11 @@ const sshfsMountBase = "/var/www"
 
 const baseInstructions = `ZCP manages Zerops PaaS infrastructure.
 Every code task = one develop workflow. Start before ANY code changes:
-  zerops_workflow action="start" workflow="develop"
-The workflow refreshes service state, mounts, and guidance.
-After deploy, immediately start a new workflow for the next task.
-Other workflows: bootstrap (new infrastructure), recipe (6 env tiers), cicd (CI/CD pipelines).
-Direct tools (no workflow needed): zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_discover, zerops_knowledge`
+  zerops_workflow action="start" workflow="develop" intent="..."
+Session auto-closes once every service is deployed AND verified; force-close:
+  zerops_workflow action="close" workflow="develop"
+Other workflows: bootstrap (new infra), recipe (6 envs), cicd (pipelines).
+Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_discover, zerops_knowledge`
 
 const containerEnvironment = `
 Control plane container — manages OTHER services, does not serve traffic.
@@ -84,31 +84,47 @@ func BuildInstructions(ctx context.Context, client platform.Client, projectID st
 	return b.String()
 }
 
-// buildWorkflowHint reads the registry and returns hints for all sessions.
-// Dead-PID sessions are shown as resumable — the Engine auto-recovers them
-// on startup via the persisted active_session file.
+// buildWorkflowHint builds the prompt-level workflow block:
+//   - Current-PID WorkSession block ("## Lifecycle Status") — always first so
+//     the LLM sees it even when context is freshly compacted.
+//   - Alive/resumable infrastructure sessions (bootstrap/recipe) from the
+//     registry. Dead-PID sessions are shown as resumable; the Engine
+//     auto-recovers them on startup.
+//
+// Work sessions are PID-scoped and intentionally NOT shown as "resumable"
+// — a dead process means the task is over, code lives in git, no rehydrate.
 func buildWorkflowHint(stateDir string) string {
 	if stateDir == "" {
 		return ""
 	}
+
+	var parts []string
+
+	if ws, _ := workflow.CurrentWorkSession(stateDir); ws != nil {
+		metas, _ := workflow.ListServiceMetas(stateDir)
+		if block := workflow.BuildWorkSessionBlock(ws, metas); block != "" {
+			parts = append(parts, strings.TrimRight(block, "\n"))
+		}
+	}
+
 	sessions, err := workflow.ListSessions(stateDir)
-	if err != nil || len(sessions) == 0 {
-		return ""
+	if err == nil {
+		alive, dead := workflow.ClassifySessions(sessions)
+		for _, s := range alive {
+			if s.Workflow == workflow.WorkflowWork {
+				continue
+			}
+			parts = append(parts, buildSessionHint(stateDir, s, false))
+		}
+		for _, s := range dead {
+			if s.Workflow == workflow.WorkflowWork {
+				continue
+			}
+			parts = append(parts, buildSessionHint(stateDir, s, true))
+		}
 	}
 
-	alive, dead := workflow.ClassifySessions(sessions)
-
-	var hints []string
-	// Show alive sessions as active.
-	for _, s := range alive {
-		hints = append(hints, buildSessionHint(stateDir, s, false))
-	}
-	// Show dead sessions as resumable — don't delete them.
-	// Engine auto-recovery or explicit Resume will claim them.
-	for _, s := range dead {
-		hints = append(hints, buildSessionHint(stateDir, s, true))
-	}
-	return strings.Join(hints, "\n")
+	return strings.Join(parts, "\n")
 }
 
 // buildSessionHint formats a single session hint with step progress.

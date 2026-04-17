@@ -705,7 +705,11 @@ Route returns **facts, not recommendations**.
 
 ## 7. Session Management
 
-### 7.1 Session State
+ZCP has **two independent session kinds**, owned by different layers and
+governed by different lifetimes. Full philosophical treatment in
+`spec-work-session.md`.
+
+### 7.1 Infrastructure Sessions (Bootstrap / Recipe)
 
 Stored at `.zcp/state/sessions/{id}.json`:
 ```
@@ -714,24 +718,67 @@ WorkflowState {
   SessionID  16-hex random
   PID        process owner
   ProjectID  Zerops project
-  Workflow   "bootstrap" | "develop" | "recipe"
+  Workflow   "bootstrap" | "recipe"
   Iteration  counter
   Intent     user's goal
   CreatedAt  RFC3339
   UpdatedAt  RFC3339
   Bootstrap  *BootstrapState
-  Deploy     *DeployState
   Recipe     *RecipeState
 }
 ```
 
-### 7.2 Registry
+Lifetime = workflow duration. Survives process restart via registry
+claim-on-boot (dead-PID auto-recovery).
 
-`.zcp/state/registry.json` — tracks active sessions. File-locked via `.registry.lock`. Auto-prunes dead PIDs and sessions >24h old (on new session creation).
+### 7.2 Work Sessions (Develop)
 
-### 7.3 Resume
+Stored at `.zcp/state/work/{pid}.json`, one per process:
+```
+WorkSession {
+  Version         "1"
+  PID             int
+  ProjectID       string
+  Environment     "container" | "local"
+  Intent          string
+  Services        []hostname
+  CreatedAt       RFC3339
+  LastActivityAt  RFC3339
+  Deploys         map[hostname][]DeployAttempt  // capped at 10
+  Verifies        map[hostname][]VerifyAttempt  // capped at 10
+  ClosedAt        RFC3339 (empty = open)
+  CloseReason     "explicit" | "auto-complete"
+}
+```
 
-`action="resume" sessionId="..."`: loads session, checks PID dead → takes over (updates PID). PID alive → error. Continues from current step with full state preserved.
+Lifetime = one LLM task per process. Does **not** survive restart — code
+work survives in git and on disk. Dead-PID work sessions are pruned on
+engine boot, never claimed.
+
+### 7.3 Registry
+
+`.zcp/state/registry.json` — tracks both infrastructure sessions
+(`SessionID` = 16-hex) and work sessions (`SessionID` = `work-{pid}`),
+with file lock via `.registry.lock`. Auto-prunes dead PIDs and sessions
+>24h old on new-session creation. Replaces the legacy `active_session`
+side-channel file.
+
+### 7.4 Actions
+
+| Action | Applies to | Effect |
+|--------|-----------|--------|
+| `start workflow=bootstrap\|recipe` | infra | Creates infra session |
+| `start workflow=develop` | work | Creates Work Session for current PID |
+| `complete step=...` | infra | Advances infra step |
+| `iterate` | infra | Resets generate+deploy (bootstrap) |
+| `status` | both | Returns Work Session if present, else infra |
+| `close workflow=develop` | work | Closes Work Session, deletes file |
+| `reset` | both | Deletes active session(s) |
+| `resume sessionId=...` | infra | Claims dead-PID infra session |
+
+Develop has **no** `iterate` or `complete step` — it is stateless by
+design; deploy/verify attempts accumulate in the Work Session for
+visibility.
 
 ---
 
@@ -763,14 +810,14 @@ WorkflowState {
 | B9 | Generate writes an infrastructure verification server (hello-world, under 50 lines), NOT application logic |
 | B10 | After bootstrap, agent starts develop flow for all application development |
 
-### Develop Flow
+### Develop Flow / Work Session
 
 | ID | Invariant |
 |----|-----------|
 | D1 | Develop flow requires ServiceMeta with BootstrappedAt |
 | D0 | ALL code changes to runtime services MUST go through develop flow |
 | D2 | Strategy is informational at start, not a gate |
-| D3 | Strategy read from meta at deploy time, never cached in session |
+| D3 | Strategy read from meta at deploy time, never cached in Work Session |
 | D4 | Strategy resolved before actual deployment (within flow) |
 | D5 | Strategy can be changed at any time via action="strategy" |
 | D6 | push-git includes optional CI/CD setup |
@@ -778,6 +825,12 @@ WorkflowState {
 | D8 | Deploy checkers validate platform integration, not application correctness |
 | D9 | Checker failure blocks step advancement — agent receives CheckResult with details |
 | D10 | Mixed strategies across targets in single deploy session are rejected |
+| W1 | Work Session is per-PID, stored at `.zcp/state/work/{pid}.json` |
+| W2 | Work Session stores only intent + scope + deploy/verify history — never strategy, mode, or service status (those are read fresh) |
+| W3 | Work Session does NOT survive process restart; dead-PID files are pruned, never claimed |
+| W4 | Deploy and verify tools append to Work Session as side-effects, capped at 10 entries per hostname |
+| W5 | Work Session auto-closes when every service in scope has a succeeded deploy AND a passed verify |
+| W6 | Work Session is advisory (Lifecycle Status in system prompt); it does not gate tool calls |
 
 ### Strategy
 

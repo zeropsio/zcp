@@ -26,42 +26,58 @@ type Engine struct {
 }
 
 // NewEngine creates a new workflow engine rooted at baseDir.
-// Auto-recovers the active session from disk if the previous process died
-// (MCP server restart). Updates the session PID to the current process.
+//
+// At boot:
+//  1. Migrates away legacy state (active_session file, develop/ markers).
+//  2. Cleans stale work sessions whose PID is dead.
+//  3. Auto-claims a single dead-PID infrastructure session (bootstrap/recipe)
+//     so an MCP server restart seamlessly continues prior work. Work sessions
+//     are per-process and never claimed — only cleaned.
 func NewEngine(baseDir string, env Environment, kp knowledge.Provider) *Engine {
 	e := &Engine{
 		stateDir:    baseDir,
 		environment: env,
 		knowledge:   kp,
 	}
-	if savedID := loadActiveSession(baseDir); savedID != "" {
-		if state, err := LoadSessionByID(baseDir, savedID); err == nil {
-			// Only recover sessions from dead processes. If PID matches ours,
-			// another Engine in this process owns it (e.g. tests) — don't steal.
-			if state.PID != os.Getpid() && !isProcessAlive(state.PID) {
-				if err := e.claimSession(savedID, state); err == nil {
-					fmt.Fprintf(os.Stderr, "zcp: auto-recovered session %s from previous process\n", savedID)
-				}
+
+	MigrateRemoveLegacyWorkState(baseDir)
+	CleanStaleWorkSessions(baseDir)
+
+	sessions, _ := ListSessions(baseDir)
+	var candidates []SessionEntry
+	for _, s := range sessions {
+		if s.Workflow == WorkflowWork {
+			continue
+		}
+		if s.PID == os.Getpid() {
+			continue
+		}
+		if isProcessAlive(s.PID) {
+			continue
+		}
+		candidates = append(candidates, s)
+	}
+	if len(candidates) == 1 {
+		c := candidates[0]
+		if state, err := LoadSessionByID(baseDir, c.SessionID); err == nil {
+			if err := e.claimSession(c.SessionID, state); err == nil {
+				fmt.Fprintf(os.Stderr, "zcp: auto-recovered session %s from previous process\n", c.SessionID)
 			}
-		} else {
-			// Session file gone (pruned or completed) — clean stale reference.
-			clearActiveSession(baseDir)
 		}
 	}
 	return e
 }
 
-// setSessionID updates the in-memory session reference and persists it to disk.
+// setSessionID updates the in-memory session reference.
+// Registry is the persistent source of session ownership (see InitSessionAtomic).
 func (e *Engine) setSessionID(id string) {
 	e.sessionID = id
-	persistActiveSession(e.stateDir, id)
 }
 
-// clearSessionID clears the in-memory session reference and removes the disk file.
+// clearSessionID clears the in-memory session reference.
 func (e *Engine) clearSessionID() {
 	e.sessionID = ""
 	e.knowledgeCache = nil
-	clearActiveSession(e.stateDir)
 }
 
 // KnowledgeProvider returns the knowledge provider this engine was
