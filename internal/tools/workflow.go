@@ -186,6 +186,32 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 }
 
 func handleStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput, mounter ops.Mounter, selfHostname string) (*mcp.CallToolResult, any, error) {
+	// v8.90 Fix A: reject action=start when a DIFFERENT workflow is already
+	// active. This closes the sub-agent-misuse path: a sub-agent spawned by
+	// the main agent inside a running recipe calling action=start
+	// workflow=develop should not be told "Run bootstrap first" (the develop
+	// handler's prereq-missing message). The main agent owns workflow state;
+	// the sub-agent's job is whatever the dispatch brief scoped it to.
+	//
+	// Immediate workflows (cicd, export) are stateless — they don't create a
+	// session, so the active-session check doesn't apply. Same-workflow
+	// re-starts fall through to the workflow-specific handler, which owns
+	// idempotency (e.g. handleRecipeStart returning the current state).
+	if !workflow.IsImmediateWorkflow(input.Workflow) {
+		if active := detectActiveWorkflow(engine); active != "" && active != input.Workflow {
+			return convertError(platform.NewPlatformError(
+				platform.ErrSubagentMisuse,
+				fmt.Sprintf(
+					"A %q workflow session is already active — cannot start a %q workflow inside it.",
+					active, input.Workflow,
+				),
+				"If you are a sub-agent spawned by the main agent inside a recipe session, "+
+					"do NOT call zerops_workflow. The main agent holds workflow state. "+
+					"Perform your scoped task using the tools listed in your dispatch brief and return.",
+			)), nil, nil
+		}
+	}
+
 	// Immediate workflows: stateless, return guidance directly.
 	if workflow.IsImmediateWorkflow(input.Workflow) {
 		wfContent, err := content.GetWorkflow(input.Workflow)

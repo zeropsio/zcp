@@ -52,6 +52,7 @@ const (
 	ErrGitHistoryConflict     = "GIT_HISTORY_CONFLICT"
 	ErrGitPushRejected        = "GIT_PUSH_REJECTED"
 	ErrGitAuthFailed          = "GIT_AUTH_FAILED"
+	ErrSubagentMisuse         = "SUBAGENT_MISUSE"
 )
 
 // PlatformError carries a ZCP error code, message, and suggestion.
