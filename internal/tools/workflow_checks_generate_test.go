@@ -1227,3 +1227,262 @@ func writeZeropsYml(t *testing.T, dir, content string) {
 		t.Fatal(err)
 	}
 }
+
+// v8.81 §4.5 dev-start vs buildCommands contract tests.
+
+func TestCheckGenerate_DevStartContract_DistWithoutBuild_Fails(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+
+	// Dev setup whose run.start references compiled dist/main.js but
+	// buildCommands runs install only — v22's workerdev failure shape.
+	writeZeropsYml(t, dir, `zerops:
+  - setup: dev
+    build:
+      base: nodejs@24
+      buildCommands:
+        - npm install
+      deployFiles: [./]
+    run:
+      base: nodejs@24
+      start: node dist/main.js
+      ports:
+        - port: 3000
+`)
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "workerdev", Type: "nodejs@24"},
+		}},
+	}
+
+	checker := checkGenerate(stateDir)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var devStartCheck *workflow.StepCheck
+	for i, c := range result.Checks {
+		if c.Name == "workerdev_dev_start_contract" {
+			devStartCheck = &result.Checks[i]
+			break
+		}
+	}
+	if devStartCheck == nil {
+		t.Fatalf("expected workerdev_dev_start_contract check, got: %+v", result.Checks)
+	}
+	if devStartCheck.Status != "fail" {
+		t.Errorf("expected dev_start_contract fail, got %s: %s", devStartCheck.Status, devStartCheck.Detail)
+	}
+	for _, needle := range []string{"references compiled build output", "ts-node", "post_spawn_exit"} {
+		if !strings.Contains(devStartCheck.Detail, needle) {
+			t.Errorf("detail missing %q: %s", needle, devStartCheck.Detail)
+		}
+	}
+}
+
+func TestCheckGenerate_DevStartContract_TsNodeSrc_Passes(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+
+	writeZeropsYml(t, dir, `zerops:
+  - setup: dev
+    build:
+      base: nodejs@24
+      buildCommands:
+        - npm install
+      deployFiles: [./]
+    run:
+      base: nodejs@24
+      start: npx ts-node -r tsconfig-paths/register src/main.ts
+      ports:
+        - port: 3000
+`)
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "workerdev", Type: "nodejs@24"},
+		}},
+	}
+
+	checker := checkGenerate(stateDir)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, c := range result.Checks {
+		if c.Name == "workerdev_dev_start_contract" && c.Status != "pass" {
+			t.Errorf("expected dev_start_contract pass for ts-node src, got %s: %s", c.Status, c.Detail)
+		}
+	}
+}
+
+func TestCheckGenerate_DevStartContract_DistWithBuild_Passes(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+
+	// Dev start references dist/ BUT buildCommands runs npm run build —
+	// the contract is satisfied because dist/ will actually exist.
+	writeZeropsYml(t, dir, `zerops:
+  - setup: dev
+    build:
+      base: nodejs@24
+      buildCommands:
+        - npm install
+        - npm run build
+      deployFiles: [./]
+    run:
+      base: nodejs@24
+      start: node dist/main.js
+      ports:
+        - port: 3000
+`)
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "workerdev", Type: "nodejs@24"},
+		}},
+	}
+
+	checker := checkGenerate(stateDir)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, c := range result.Checks {
+		if c.Name == "workerdev_dev_start_contract" && c.Status != "pass" {
+			t.Errorf("expected dev_start_contract pass when buildCommands includes npm run build, got %s: %s", c.Status, c.Detail)
+		}
+	}
+}
+
+func TestCheckGenerate_DevStartContract_NestWatch_Passes(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+
+	writeZeropsYml(t, dir, `zerops:
+  - setup: dev
+    build:
+      base: nodejs@24
+      buildCommands:
+        - npm install
+      deployFiles: [./]
+    run:
+      base: nodejs@24
+      start: npm run start:dev
+      ports:
+        - port: 3000
+`)
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "apidev", Type: "nodejs@24"},
+		}},
+	}
+
+	checker := checkGenerate(stateDir)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, c := range result.Checks {
+		if c.Name == "apidev_dev_start_contract" && c.Status != "pass" {
+			t.Errorf("expected dev_start_contract pass for nest watch dev, got %s: %s", c.Status, c.Detail)
+		}
+	}
+}
+
+func TestCheckGenerate_DevStartContract_ProdMode_SkipsCheck(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+
+	// Prod setup with dist/main.js — this is the CORRECT prod shape and
+	// the dev-start contract must not fire on prod (simple mode) setups.
+	writeZeropsYml(t, dir, `zerops:
+  - setup: prod
+    build:
+      base: nodejs@24
+      buildCommands:
+        - npm install
+        - npm run build
+      deployFiles: [./]
+    run:
+      base: nodejs@24
+      start: node dist/main.js
+      ports:
+        - port: 3000
+      healthCheck:
+        httpGet:
+          path: /health
+          port: 3000
+`)
+
+	plan := &workflow.ServicePlan{
+		Targets: []workflow.BootstrapTarget{{
+			Runtime: workflow.RuntimeTarget{DevHostname: "api", Type: "nodejs@24", BootstrapMode: "simple"},
+		}},
+	}
+
+	checker := checkGenerate(stateDir)
+	result, err := checker(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, c := range result.Checks {
+		if c.Name == "api_dev_start_contract" {
+			t.Errorf("dev_start_contract should NOT fire for prod setup, got: %+v", c)
+		}
+	}
+}
+
+func TestRefsBuildOutput_Patterns(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		start string
+		want  bool
+	}{
+		{"node dist/main.js", true},
+		{"node ./dist/server.js", true},
+		{"java -jar target/app.jar", true},
+		{"node .output/server/index.mjs", true},
+		{"npx ts-node src/main.ts", false},
+		{"npm run start:dev", false},
+		{"nest start --watch", false},
+		{"php artisan serve", false},
+		{"go run ./cmd/worker", false},
+	}
+	for _, tt := range tests {
+		if got := refsBuildOutput(tt.start); got != tt.want {
+			t.Errorf("refsBuildOutput(%q) = %v, want %v", tt.start, got, tt.want)
+		}
+	}
+}
+
+func TestBuildCommandsProduceOutput_Patterns(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		bc   any
+		want bool
+	}{
+		{"npm install", false},
+		{"npm ci", false},
+		{[]any{"npm install"}, false},
+		{[]any{"npm install", "npm run build"}, true},
+		{[]any{"npm ci", "nest build"}, true},
+		{[]any{"pnpm install", "pnpm build"}, true},
+		{[]any{"cargo build --release"}, true},
+		{[]any{"go build -o bin/app ./cmd"}, true},
+		{nil, false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := buildCommandsProduceOutput(tt.bc); got != tt.want {
+			t.Errorf("buildCommandsProduceOutput(%v) = %v, want %v", tt.bc, got, tt.want)
+		}
+	}
+}

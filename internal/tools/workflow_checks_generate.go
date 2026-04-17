@@ -180,6 +180,29 @@ func checkGenerateEntry(doc *ops.ZeropsYmlDoc, hostname string, target workflow.
 		}
 	}
 
+	// v8.81 §4.5 — dev-start vs buildCommands contract.
+	// A dev setup whose run.start references compiled build output (dist/*.js,
+	// build/*.js, target/*.jar, etc.) but whose buildCommands omits an actual
+	// build step will fail at dev_server action=start with `post_spawn_exit`
+	// + `Cannot find module '/var/www/dist/main.js'`. Caught in v22 on
+	// workerdev: dev buildCommands ran `npm install` only, but run.start was
+	// `node dist/main.js` — the scaffold assumed dist existed. Correct dev
+	// shape is `ts-node src/main.ts` / `nest start --watch` / framework dev
+	// server; compiled-output start is prod-only.
+	if expected == workflow.RecipeSetupDev && entry.Run.Start != "" {
+		if refsBuildOutput(entry.Run.Start) && !buildCommandsProduceOutput(entry.Build.BuildCommands) {
+			checks = append(checks, workflow.StepCheck{
+				Name:   hostname + "_dev_start_contract",
+				Status: statusFail,
+				Detail: fmt.Sprintf("dev run.start %q references compiled build output but dev buildCommands does not run a build step — zerops_dev_server start will fail with `post_spawn_exit` + `Cannot find module`. Fix: use `ts-node src/main.ts` (headless worker) or `nest start --watch` / `npm run dev` (HTTP service) for dev; reserve `node dist/main.js` for the prod setup whose buildCommands compiles to dist/.", entry.Run.Start),
+			})
+		} else {
+			checks = append(checks, workflow.StepCheck{
+				Name: hostname + "_dev_start_contract", Status: statusPass,
+			})
+		}
+	}
+
 	// run.prepareCommands must not reference /var/www (deploy files arrive AFTER prepare).
 	if cmds := stringifyCommands(entry.Run.PrepareCommands); cmds != "" {
 		if strings.Contains(cmds, "/var/www") {
@@ -262,6 +285,55 @@ func stringifyCommands(commands any) string {
 	default:
 		return ""
 	}
+}
+
+// refsBuildOutput returns true when start references a compiled artifact
+// (e.g., `node dist/main.js`, `java -jar target/app.jar`). These are prod-only
+// entry points; dev should use an interpreter against source (ts-node, nodemon,
+// framework dev server).
+func refsBuildOutput(start string) bool {
+	s := strings.ToLower(start)
+	// Common compiled-output directories + extensions the platform has seen.
+	outputMarkers := []string{
+		"dist/", "/dist/", "./dist/",
+		"build/main.js", "/build/", "./build/", // Node build/
+		"target/", "/target/", "./target/", // JVM
+		".output/server", "/.output/", // Nuxt, SvelteKit
+	}
+	for _, m := range outputMarkers {
+		if strings.Contains(s, m) {
+			return true
+		}
+	}
+	return false
+}
+
+// buildCommandsProduceOutput returns true when buildCommands contains a build
+// step that produces the compiled artifact (npm run build, nest build, yarn build,
+// mvn package, cargo build, go build, etc.). An install-only buildCommands
+// (just `npm install` / `npm ci`) does NOT produce output.
+func buildCommandsProduceOutput(bc any) bool {
+	cmds := stringifyCommands(bc)
+	if cmds == "" {
+		return false
+	}
+	cmdsLower := strings.ToLower(cmds)
+	buildMarkers := []string{
+		"npm run build", "npm build", "npm run compile",
+		"yarn build", "yarn compile",
+		"pnpm build", "pnpm compile", "pnpm run build",
+		"nest build", "vite build", "tsc ",
+		"mvn package", "mvn install",
+		"gradle build", "gradle assemble",
+		"cargo build", "go build",
+		"composer install --no-dev", // PHP prod-deps after autoload generation
+	}
+	for _, m := range buildMarkers {
+		if strings.Contains(cmdsLower, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // collectPlanHostnames extracts all hostnames from the bootstrap plan.

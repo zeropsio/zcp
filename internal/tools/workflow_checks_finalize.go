@@ -63,6 +63,14 @@ func checkRecipeFinalize(outputDir string) workflow.RecipeStepChecker {
 		// would otherwise reach the published recipe.
 		checks = append(checks, checkAppREADMENoScaffoldTODOs(dir)...)
 
+		// v8.81 §4.6 — root README architecture narrative (showcase ≥2 codebases).
+		// The root README is the gateway. For multi-codebase recipes, a
+		// reader landing there must be told (a) each codebase's role, (b)
+		// the contracts between them. v22 shipped a root README that was
+		// a link aggregator, not an architecture narrator; cross-codebase
+		// coherence graded C+ and limited the overall content grade.
+		checks = append(checks, checkArchitectureNarrative(dir, plan)...)
+
 		allPassed := checksAllPassed(checks)
 		summary := "finalize checks passed"
 		if !allPassed {

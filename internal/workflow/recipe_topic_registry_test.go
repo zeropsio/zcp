@@ -216,6 +216,31 @@ func TestRecipeTopicRegistry_FixSubagentBrief_Registered(t *testing.T) {
 	}
 }
 
+// v8.81 §4.1 — content-fix sub-agent brief. Dispatched on retries of
+// `complete step=deploy` after content-quality checks fail; absorbs the
+// v22-class Phase-4 rewrite cycle that otherwise leaks into main context.
+func TestRecipeTopicRegistry_ContentFixSubagentBrief_Registered(t *testing.T) {
+	t.Parallel()
+	plan := fixtureForShape(ShapeDualRuntimeShowcase)
+	body, err := ResolveTopic("content-fix-subagent-brief", plan)
+	if err != nil {
+		t.Fatalf("resolve content-fix-subagent-brief: %v", err)
+	}
+	for _, s := range []string{
+		"post-writer content-quality repair",
+		"content_fix_dispatch_required",
+		"Files you MAY edit",
+		"Files you MUST NOT touch",
+		"inline-fix acknowledged",
+		"gotcha_causal_anchor",
+		"recipe_architecture_narrative",
+	} {
+		if !stringsContains(body, s) {
+			t.Errorf("content-fix-subagent-brief body missing %q", s)
+		}
+	}
+}
+
 // TestRecipeTopicRegistry_FeatureSubagentMCPSchemas_Registered — the
 // inlined MCP schema reference for the feature sub-agent. §3.6b.
 func TestRecipeTopicRegistry_FeatureSubagentMCPSchemas_Registered(t *testing.T) {
@@ -286,6 +311,24 @@ func TestInjectEagerTopics_GenerateShowcase(t *testing.T) {
 		"SSHFS network mount",
 		"Executable commands",
 		"write surface, not an execution surface",
+		// v8.81 regression guards: the three recurrence-class service-client
+		// traps that v21 AND v22 both hit as runtime CRITs despite being
+		// documented in the prior run's published README. Gotchas-in-README
+		// are post-mortem; the scaffold brief is the preventative.
+		"Recurrence-class service-client traps",
+		// NATS URL-embedded-credentials forbid
+		"NATS credentials MUST be passed as separate",
+		"TypeError: Invalid URL",
+		"ConnectionOptions",
+		// S3 endpoint preference
+		"storage_apiUrl",
+		"301 redirects",
+		"forcePathStyle",
+		// Dev-start vs buildCommands contract
+		"dev-start",
+		"ts-node",
+		"node dist/main.js",
+		"post_spawn_exit",
 	}
 	for _, w := range wants {
 		if !stringsContains(got, w) {

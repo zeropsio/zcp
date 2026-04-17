@@ -31,6 +31,14 @@ type RecipeState struct {
 	// Phase C: guidance access and failure tracking for adaptive delivery.
 	GuidanceAccess  []GuidanceAccessEntry `json:"guidanceAccess,omitempty"`
 	FailurePatterns []FailurePattern      `json:"failurePatterns,omitempty"`
+	// v8.81 §4.1: per-step content-check failures across iterations.
+	// When a full-step checker rejects a step (e.g. deploy), the names of
+	// the failing checks land here, keyed by step. On the NEXT attempt to
+	// complete the same step, the content-fix dispatch gate consults this
+	// map to decide whether to demand a content-fix sub-agent reference
+	// in the retry's attestation. Without this, v22's pattern of "fail →
+	// edit 11 READMEs inline in main → retry" slipped past the gate.
+	PriorStepCheckFails map[string][]string `json:"priorStepCheckFails,omitempty"`
 }
 
 // GuidanceAccessEntry records a single zerops_guidance topic fetch.

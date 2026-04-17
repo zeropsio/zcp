@@ -114,6 +114,11 @@ var (
 		// round-trip on invalid-params rejections.
 		{Name: "writer-subagent-brief", Predicate: hasMultipleCodebases},
 		{Name: "fix-subagent-brief"},
+		// v8.81 §4.1 — content-fix sub-agent brief (post-writer content-check
+		// repair). Fetched on retries of `complete step=deploy` when
+		// content-quality checks fail; absorbs the v22-class rewrite cycle
+		// that otherwise leaks 11+ README edits into main context.
+		{Name: "content-fix-subagent-brief"},
 		{Name: "feature-subagent-mcp-schemas", Predicate: isShowcase},
 		{Name: "feature-sweep-dev"},
 		{Name: "dev-deploy-browser-walk", Predicate: isShowcase},

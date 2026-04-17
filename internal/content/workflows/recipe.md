@@ -852,6 +852,43 @@ For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appde
 >
 > v21 apidev + workerdev ran `nest new scratch` but copied only code-config files, leaving `.gitignore` behind — the apidev mount then swept up 208 MB of `node_modules` during `git add -A`. This explicit transcription list prevents that class of omission.
 >
+> **⚠ Recurrence-class service-client traps (read BEFORE you write any managed-service client):**
+>
+> These are platform × framework intersections that v21 AND v22 both hit as runtime CRITs despite the gotchas being documented in the prior run's published README. The gotcha-in-README is a post-mortem, not a preventative — YOU are the preventative. Build the client correctly the first time by following these rules verbatim.
+>
+> 1. **NATS credentials MUST be passed as separate `ConnectionOptions` fields, NEVER URL-embedded.** The platform auto-generates `${queue_password}` with URL-reserved characters (`@`, `#`, `/`, `?`) 80%+ of the time, which makes `nats://${user}:${pass}@${host}:${port}` throw `TypeError: Invalid URL` at `connect()`. Even when the URL happens to parse, `nats.js@2` silently drops URL-embedded creds. Correct shape:
+>    ```
+>    await connect({
+>      servers: `${process.env.queue_hostname}:${process.env.queue_port}`,  // NO creds in URL
+>      user:    process.env.queue_user,
+>      pass:    process.env.queue_password,
+>    })
+>    ```
+>    Wrong shape (do not emit):
+>    ```
+>    servers: `nats://${queue_user}:${queue_password}@${queue_hostname}:${queue_port}`  // FAILS
+>    ```
+>    Applies to both API and worker codebases whenever they call NATS.
+>
+> 2. **Object-Storage (S3) endpoint MUST come from `process.env.storage_apiUrl`, NEVER built as `http://${storage_apiHost}`.** The platform's object-storage proxy returns `301 → https://...` on plain HTTP; the AWS SDK does not follow 301 redirects, so `HeadBucketCommand.send()` throws `NotFound` and `/api/status` flips `{"storage":"error"}`. `${storage_apiUrl}` is already the correct `https://...` form. Correct shape:
+>    ```
+>    new S3Client({
+>      endpoint:       process.env.storage_apiUrl,   // https://... with scheme baked in
+>      region:         'us-east-1',                  // MinIO-backed; any region string works
+>      forcePathStyle: true,                         // MinIO style
+>      credentials: { accessKeyId: process.env.storage_accessKeyId, secretAccessKey: process.env.storage_secretAccessKey },
+>    })
+>    ```
+>    Wrong shape:
+>    ```
+>    endpoint: `http://${process.env.storage_apiHost}`  // 301 loop, SDK drops it
+>    ```
+>    Applies to every codebase that speaks S3/MinIO.
+>
+> 3. **Worker dev-start must use `ts-node src/main.ts` (or the framework's dev-mode equivalent), NEVER `node dist/main.js`.** Dev `buildCommands` runs dependency install only — `npm run build` is a PROD-only step. A `run.start: node dist/main.js` in the dev setup tries to execute a file the dev build never produced, and `zerops_dev_server action=start` returns `post_spawn_exit` with `Cannot find module '/var/www/dist/main.js'`. Correct dev shape: `run.start: npx ts-node -r tsconfig-paths/register src/main.ts` for headless workers, `nest start --watch` for HTTP services. Prod shape (unchanged): `run.start: node dist/main.js` after `npm run build` in prod `buildCommands`. The contract violation is caught at `zerops_dev_server start` time — prevent it at the zerops.yaml scaffold by cross-checking `run.start` against the setup's `buildCommands`.
+>
+> These three traps accounted for ~15 min of wall-clock cost in v22 (rebuild → redeploy → reverify per CRIT). Get them right on the first scaffold; the deploy step will be 3 CRITs lighter.
+>
 > **WRITE (frontend codebase):**
 >
 > - `package.json` — production dependencies for the framework and any CSS tooling the scaffold would normally include
@@ -1603,6 +1640,58 @@ When a check failure's `detail` field is ≥2 KB of prose OR a cluster of ≥3 c
 > Read the current state of each file in the allowlist. Make the edits needed to pass the listed checks. Return only: (a) list of files edited, (b) one-sentence summary per file.
 >
 > Do NOT run any bash/git/deploy commands — the main agent dispatches you and handles re-verification on return. If you think a fix requires commands, describe what you'd run; the main agent decides whether to execute.
+
+</block>
+
+<block name="content-fix-subagent-brief">
+
+### Content-fix sub-agent brief — post-writer content-quality repair (v8.81)
+
+When `complete step=deploy` fails with content-quality checks (any of `<host>_content_reality`, `<host>_gotcha_causal_anchor`, `<host>_gotcha_distinct_from_guide`, `<host>_claude_readme_consistency`, `<host>_scaffold_hygiene`, `<host>_service_coverage`, `<host>_ig_per_item_standalone`, `<host>_knowledge_base_authenticity`, `cross_readme_gotcha_uniqueness`, `recipe_architecture_narrative`), the retry's attestation must reference a content-fix sub-agent dispatch — OR include `inline-fix acknowledged` for a principled deviation.
+
+**Why**: v22's main agent absorbed the content-check iteration cycle directly, producing 11 Edits on workerdev/README.md + 8 on apidev/README.md + 5 on workerdev/CLAUDE.md — ~15 min of wall-clock spent rewriting content inside main context. The v8.80 writer-subagent dispatch gate forces a writer at the `readmes` sub-step, but content checks fire LATER (at full `complete step=deploy`), so the rewrite work leaked past the gate. The v8.81 content-fix sub-agent absorbs that rewrite cycle.
+
+**Dispatch trigger**: the content-fix-dispatch gate surfaces on the retry of `complete step=deploy` whenever a prior attempt emitted ≥1 content-check failure. You get a structured `checkResult` with `content_fix_dispatch_required` — the failing check list is already extracted for you.
+
+**Brief template**:
+
+> You are a content-fix sub-agent dispatched because `complete step=deploy` rejected the previous attempt on content-quality checks. The main agent is blocked on the retry gate until you return with the content repaired.
+>
+> **Files you MAY edit** (exhaustive — no other files):
+> - `/var/www/{hostname}/README.md` for each hostname that failed
+> - `/var/www/{hostname}/CLAUDE.md` for each hostname that failed
+> - Root-level `README.md` if the failing check is `recipe_architecture_narrative` or `cross_readme_gotcha_uniqueness`
+>
+> **Files you MUST NOT touch**: source code, zerops.yaml, env configs, anything outside the README / CLAUDE.md surface.
+>
+> **Checks to pass** (verbatim from the gate's `priorFails` list): `{failing_check_names}`
+>
+> **Failure details** (the checker's full prose, verbatim — it names the offending bullets and explains WHAT would satisfy each check): `{failure_details_verbatim}`
+>
+> **What to do**:
+>
+> 1. **Re-read the affected README.md + CLAUDE.md files as they stand now.** The previous `complete` attempt may have partially fixed some issues; only the still-failing checks land in your brief.
+> 2. **Treat each failing check as a rubric.** The check detail names the rule (e.g., "gotcha_causal_anchor: every gotcha must name a specific Zerops mechanism AND a concrete failure mode"). Apply the rule to every offending bullet; do not half-fix.
+> 3. **For `gotcha_causal_anchor` / `gotcha_distinct_from_guide` fails**: rewrite the flagged gotcha to lead with the SYMPTOM (exact error message, HTTP status, observable misbehavior) and name a specific Zerops mechanism. If the gotcha restates an adjacent IG item, replace it with a different class of trap — consult the codebase source for an authentic framework × platform intersection.
+> 4. **For `content_reality` fails**: either (a) make the claim true by adding the referenced symbol/file to the codebase (rare), or (b) reframe the bullet as advisory ("Pattern to add if…", "Consider adding…") so the reader knows it's a proposal, not a shipped fact.
+> 5. **For `claude_readme_consistency` fails**: every production-hazardous pattern in CLAUDE.md (TypeORM synchronize, sync migrations in dev loop, etc.) must carry an explicit `dev only — see README gotcha against X in production` marker, OR be replaced with the production-equivalent procedure.
+> 6. **For `recipe_architecture_narrative` fails**: add an `## Architecture` section to the root README naming every runtime codebase by hostname + role + at least one inter-codebase contract verb (publish/consume/subscribe/proxy/call/route-to).
+>
+> **What NOT to do**:
+>
+> - Do NOT run bash / git / deploy / MCP tool commands. The main agent re-runs `complete step=deploy` after you return; it owns verification.
+> - Do NOT edit source code to make content claims true. The content must match the codebase, not vice versa.
+> - Do NOT delete a gotcha to silence a check. The `gotcha_depth_floor` check will catch the deletion; you'll have traded one fail for another. Rewrite, don't remove.
+>
+> **Return shape**: a bulleted list of files edited (one bullet per file), with a one-sentence summary of what changed per file. No commentary on WHY the original content failed the check — the detail already explained that.
+
+**Main-agent retry pattern** (do not skip the attestation step):
+
+1. Fetch this brief: `zerops_guidance topic="content-fix-subagent-brief"`.
+2. Dispatch the sub-agent with the Agent tool, including the brief, the file allowlist, the failing check names, and the verbatim failure details from the prior `complete step=deploy` rejection.
+3. After the sub-agent returns, retry `complete step=deploy` with an attestation that names the dispatch — e.g., `"Dispatched content-fix sub-agent for workerdev_gotcha_causal_anchor + workerdev_content_reality; sub-agent rewrote 3 gotchas to load-bearing shape. Re-running deploy checks."`
+
+If the gate still rejects on the retry, the attestation didn't match — include one of the accepted phrasings: `content-fix sub-agent`, `content-fix subagent`, `dispatched a fix sub-agent to fix the <readme/content/gotcha> ...`, or `inline-fix acknowledged` for a principled single-line deviation.
 
 </block>
 

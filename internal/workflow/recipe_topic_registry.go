@@ -281,6 +281,16 @@ var recipeDeployTopics = []*GuidanceTopic{
 		BlockNames:  []string{"fix-subagent-brief"},
 	},
 	{
+		// v8.81 §4.1 — content-fix sub-agent brief. Dispatched on retries
+		// of `complete step=deploy` when content-quality checks failed.
+		// The gate at engine_recipe.go surfaces a `content_fix_dispatch_required`
+		// check; the agent fetches this topic to learn the dispatch shape
+		// and file allowlist before running the Agent tool.
+		ID: "content-fix-subagent-brief", Step: RecipeStepDeploy,
+		Description: "Content-fix sub-agent brief for post-writer README/CLAUDE.md rewrite cycles (v8.81)",
+		BlockNames:  []string{"content-fix-subagent-brief"},
+	},
+	{
 		ID: "feature-subagent-mcp-schemas", Step: RecipeStepDeploy,
 		Description: "Exact MCP tool parameter names/types for feature sub-agent dispatch",
 		Predicate:   isShowcase,
