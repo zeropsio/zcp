@@ -49,7 +49,10 @@ func RegisterDeployLocal(
 		Name: "zerops_deploy",
 		Description: "Push local code to Zerops — blocks until build completes. " +
 			"Requires zerops.yaml and zcli installed. " +
-			"Set targetService to the Zerops service hostname.",
+			"Set targetService to the Zerops service hostname. " +
+			"Channel-blocking: this call holds the MCP STDIO channel for the duration of the build " +
+			"(typically 60–120s). Do NOT issue other zerops_* calls in the same response — they will " +
+			"return `Not connected` (an MCP transport error, not a platform rejection). Serialize all deploys.",
 		InputSchema: deployLocalInputSchema(),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Deploy code to a service",

@@ -59,6 +59,7 @@ func TestServer_AllToolsRegistered(t *testing.T) {
 	// local mode (zcli push) when sshDeployer is nil.
 	expectedTools := []string{
 		"zerops_workflow", "zerops_discover", "zerops_knowledge", "zerops_guidance",
+		"zerops_record_fact",
 		"zerops_logs", "zerops_events", "zerops_process", "zerops_verify",
 		"zerops_deploy", "zerops_export",
 		"zerops_manage", "zerops_scale", "zerops_env", "zerops_import", "zerops_delete", "zerops_subdomain",

@@ -16,6 +16,7 @@ func TestIsContentCheck_Families(t *testing.T) {
 		{"appdev_gotcha_causal_anchor", true},
 		{"workerdev_gotcha_distinct_from_guide", true},
 		{"apidev_claude_readme_consistency", true},
+		{"apidev_claude_md_no_burn_trap_folk", true},
 		{"appdev_scaffold_hygiene", true},
 		{"workerdev_service_coverage", true},
 		{"apidev_ig_per_item_standalone", true},
@@ -39,27 +40,34 @@ func TestIsContentCheck_Families(t *testing.T) {
 	}
 }
 
-func TestContentFixAttestationRe_Shapes(t *testing.T) {
+func TestBriefBugAckRe_RecognizesOperatorAck(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		attestation string
-		want        bool
-	}{
-		// Positive matches
-		{"dispatched content-fix sub-agent; rewrote workerdev gotchas", true},
-		{"Content-fix subagent handled the 3 failing checks on apidev.", true},
-		{"Fix sub-agent dispatched for workerdev README content", true},
-		{"dispatched a fix subagent to fix the apidev README gotchas", true},
-		{"inline-fix acknowledged — single checkbox flip", true},
-		// Negative (v22's actual behavior: "fixed in main, re-ran checks")
-		{"Rewrote workerdev/README.md gotchas inline.", false},
-		{"Fixed content-check fails by editing README.md directly.", false},
-		{"All content checks now pass.", false},
-		{"", false},
+	// v8.86 §3.3 — the gate no longer accepts "dispatched content-fix
+	// subagent" style attestations (that escape hatch is removed). Only
+	// the explicit writer-brief-bug acknowledgment passes, for operator-
+	// controlled retry while the brief is being patched.
+	positive := []string{
+		"writer-brief-bug acknowledged — brief patched in-flight",
+		"Writer brief bug acknowledged. Re-ran end-to-end after patch.",
+		"writer brief-bug acknowledged",
 	}
-	for _, tt := range tests {
-		if got := contentFixAttestationRe.MatchString(tt.attestation); got != tt.want {
-			t.Errorf("contentFixAttestationRe(%q) = %v, want %v", tt.attestation, got, tt.want)
+	for _, att := range positive {
+		if !briefBugAckRe.MatchString(att) {
+			t.Errorf("expected match on %q", att)
+		}
+	}
+	negative := []string{
+		// v8.81's "content-fix subagent" phrasings MUST NOT pass anymore.
+		"dispatched content-fix sub-agent; rewrote workerdev gotchas",
+		"Content-fix subagent handled the 3 failing checks.",
+		"dispatched a fix subagent to fix the apidev README",
+		"inline-fix acknowledged — single checkbox flip",
+		"All content checks now pass.",
+		"",
+	}
+	for _, att := range negative {
+		if briefBugAckRe.MatchString(att) {
+			t.Errorf("attestation must not pass gate: %q", att)
 		}
 	}
 }
@@ -72,7 +80,7 @@ func TestContentFixDispatchGate_NoPriorFails_Passes(t *testing.T) {
 	}
 }
 
-func TestContentFixDispatchGate_PriorFailsWithoutDispatch_Fails(t *testing.T) {
+func TestContentFixDispatchGate_PriorFails_FailsAsBriefBug(t *testing.T) {
 	t.Parallel()
 	rs := &RecipeState{
 		PriorStepCheckFails: map[string][]string{
@@ -81,7 +89,7 @@ func TestContentFixDispatchGate_PriorFailsWithoutDispatch_Fails(t *testing.T) {
 	}
 	result := contentFixDispatchGate(rs, RecipeStepDeploy, "Rewrote content inline in main.")
 	if result == nil {
-		t.Fatal("gate should fail (prior fails + no dispatch reference)")
+		t.Fatal("gate should fail (prior fails)")
 	}
 	if result.Passed {
 		t.Error("result.Passed should be false")
@@ -89,45 +97,51 @@ func TestContentFixDispatchGate_PriorFailsWithoutDispatch_Fails(t *testing.T) {
 	if len(result.Checks) != 1 {
 		t.Fatalf("expected 1 check, got %d", len(result.Checks))
 	}
-	if result.Checks[0].Name != "content_fix_dispatch_required" {
+	if result.Checks[0].Name != "writer_brief_bug" {
 		t.Errorf("unexpected check name: %s", result.Checks[0].Name)
 	}
 	for _, needle := range []string{
-		"content-quality check(s)",
+		"WRITER BRIEF BUG",
 		"workerdev_content_reality",
 		"workerdev_gotcha_causal_anchor",
-		"content-fix sub-agent",
-		"content-fix-subagent-brief",
+		"self-verify",
+		"DO NOT dispatch",
 	} {
 		if !strings.Contains(result.Checks[0].Detail, needle) {
 			t.Errorf("detail missing %q: %s", needle, result.Checks[0].Detail)
 		}
 	}
+	// Critical: the new detail MUST NOT offer a dispatch-fix escape hatch.
+	if strings.Contains(result.Checks[0].Detail, "content-fix-subagent-brief") {
+		t.Error("v8.86 gate must not reference content-fix-subagent-brief topic")
+	}
 }
 
-func TestContentFixDispatchGate_PriorFailsWithDispatch_Passes(t *testing.T) {
+func TestContentFixDispatchGate_OldDispatchAttestation_StillFails(t *testing.T) {
 	t.Parallel()
+	// v8.81 attestations are no longer accepted; old callers must now
+	// either fix the writer brief or acknowledge the brief bug.
 	rs := &RecipeState{
 		PriorStepCheckFails: map[string][]string{
 			RecipeStepDeploy: {"workerdev_content_reality"},
 		},
 	}
 	att := "Dispatched content-fix sub-agent for workerdev README gotchas; sub-agent rewrote them."
-	if got := contentFixDispatchGate(rs, RecipeStepDeploy, att); got != nil {
-		t.Errorf("gate should pass (dispatch referenced), got %+v", got)
+	if got := contentFixDispatchGate(rs, RecipeStepDeploy, att); got == nil {
+		t.Error("gate must not accept v8.81 dispatch-fix attestations")
 	}
 }
 
-func TestContentFixDispatchGate_InlineAcknowledgedDeviation_Passes(t *testing.T) {
+func TestContentFixDispatchGate_WriterBriefBugAck_Passes(t *testing.T) {
 	t.Parallel()
 	rs := &RecipeState{
 		PriorStepCheckFails: map[string][]string{
 			RecipeStepDeploy: {"workerdev_content_reality"},
 		},
 	}
-	att := "inline-fix acknowledged — one-line typo fix, no sub-agent needed."
+	att := "writer-brief-bug acknowledged — patched brief in-flight; re-ran end-to-end."
 	if got := contentFixDispatchGate(rs, RecipeStepDeploy, att); got != nil {
-		t.Errorf("gate should pass (explicit deviation marker), got %+v", got)
+		t.Errorf("gate should pass (explicit brief-bug ack), got %+v", got)
 	}
 }
 
@@ -138,7 +152,6 @@ func TestContentFixDispatchGate_NonDeployStep_SkipsGate(t *testing.T) {
 			RecipeStepGenerate: {"apidev_content_reality"},
 		},
 	}
-	// Gate only fires on deploy step retries.
 	if got := contentFixDispatchGate(rs, RecipeStepGenerate, "fixed inline"); got != nil {
 		t.Errorf("gate should not fire on non-deploy step, got %+v", got)
 	}

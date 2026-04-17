@@ -354,6 +354,19 @@ var recipeDeployTopics = []*GuidanceTopic{
 		BlockNames:  []string{"feature-subagent-mcp-schemas"},
 	},
 	{
+		// v8.86 §3.6a — execOnce semantics corrective. Lands eagerly at
+		// the init-commands sub-step (where the agent writes & debugs
+		// execOnce scripts) so the agent reaches for the correct mental
+		// model before the wrong one settles in. Pairs with the
+		// claude_md_no_burn_trap_folk content check at deploy-complete:
+		// if the agent still ships "burn trap" phrasing in a README or
+		// CLAUDE.md, that check fires and blocks the deploy step.
+		ID: "execOnce-semantics", Step: RecipeStepDeploy,
+		Description: "execOnce is keyed on appVersionId (fresh per deploy) — silent no-op comes from the script, not a burned lock",
+		BlockNames:  []string{"execOnce-semantics"},
+		EagerAt:     SubStepInitCommands,
+	},
+	{
 		ID: "readme-fragments", Step: RecipeStepDeploy,
 		Description: "Per-codebase README structure with extract fragments (post-verify `readmes` sub-step)",
 		BlockNames:  []string{"readme-with-fragments"},
@@ -431,8 +444,21 @@ var recipeFinalizeTopics = []*GuidanceTopic{
 var recipeCloseTopics = []*GuidanceTopic{
 	{
 		ID: "code-review-agent", Step: RecipeStepClose,
-		Description: "Static code review sub-agent brief",
+		Description: "Static code review sub-agent brief (FIND-only — structured findings JSON)",
 		BlockNames:  []string{"code-review-subagent"},
+	},
+	{
+		// v8.86 §3.4 — critical-fix sub-agent brief. Dispatched at the
+		// close.critical-fix sub-step when code-review returned ≥1
+		// critical or wrong finding. The sub-agent reads the findings
+		// JSON, applies fixes (Edit/Write), commits per codebase,
+		// redeploys each affected dev service, runs E2E verification,
+		// cross-deploys to stage, and returns a structured verification
+		// report. Keeps main agent at orchestration level.
+		ID: "close-critical-fix-brief", Step: RecipeStepClose,
+		Description: "Critical-fix sub-agent brief — applies fixes + redeploys + reverifies when code-review surfaces critical/wrong findings",
+		Predicate:   isShowcase,
+		BlockNames:  []string{"close-critical-fix-subagent"},
 	},
 	{
 		ID: "close-browser-walk", Step: RecipeStepClose,

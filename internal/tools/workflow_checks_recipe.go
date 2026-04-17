@@ -430,6 +430,14 @@ func checkCodebaseReadme(projectRoot string, target workflow.RecipeTarget, plan 
 	// reset-state used `ds.synchronize()` as a dev shortcut.
 	checks = append(checks, checkClaudeReadmeConsistency(string(readmeContent), string(claudeBody), hostname)...)
 
+	// v8.86 §3.6a — folk-doctrine prevention. Flags "burn trap" phrasing
+	// near execOnce in CLAUDE.md/README. The term is fictional: execOnce
+	// keys on appVersionId, which is fresh per deploy. Shipping that
+	// wording propagates the wrong mental model to downstream agents.
+	// Concatenate README + CLAUDE.md so the proximity scan covers both
+	// surfaces under a single check name.
+	checks = append(checks, checkClaudeMdNoBurnTrapFolk(string(readmeContent)+"\n\n"+string(claudeBody), hostname)...)
+
 	// Scaffold hygiene (v8.80): every codebase ships with `.gitignore`
 	// + `.env.example` and no build-output / node_modules / OS-cruft
 	// leaked into the published tree. Restores the deterministic gate

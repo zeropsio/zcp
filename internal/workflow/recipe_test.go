@@ -246,9 +246,9 @@ func TestRecipeCompleteStep_ShowcaseCloseSubStepGate(t *testing.T) {
 }
 
 // TestRecipeCloseSubSteps_ShowcaseIncludesBrowserWalk — structural assertion
-// that closeSubSteps returns exactly the sub-steps the v19 post-mortem said
-// should fire: the static code review (1a) and the close-time browser walk
-// (1b). Locked in so a future refactor can't silently drop either.
+// that closeSubSteps returns exactly the sub-steps the v8.86 §3.4 shape
+// requires: static code review (1a) → critical-fix (1b, v8.86) → close-time
+// browser walk (1c). Locked in so a future refactor can't silently drop any.
 func TestRecipeCloseSubSteps_ShowcaseIncludesBrowserWalk(t *testing.T) {
 	t.Parallel()
 
@@ -264,23 +264,24 @@ func TestRecipeCloseSubSteps_ShowcaseIncludesBrowserWalk(t *testing.T) {
 	if !names[SubStepCloseReview] {
 		t.Errorf("expected close sub-step %q in sequence", SubStepCloseReview)
 	}
+	if !names[SubStepCloseCriticalFix] {
+		t.Errorf("expected close sub-step %q in sequence — v8.86 §3.4 restores the dedicated fix sub-agent shape", SubStepCloseCriticalFix)
+	}
 	if !names[SubStepCloseBrowserWalk] {
 		t.Errorf("expected close sub-step %q in sequence — this is the v18/v19 regression guard", SubStepCloseBrowserWalk)
 	}
-	// Code review must run before the browser walk — the walk re-verifies
-	// after any redeploy caused by code-review fixes.
-	reviewIdx := -1
-	walkIdx := -1
+	// Ordering: review → critical-fix → browser walk. Critical-fix must sit
+	// between review and walk so fixes land on the deployed artifact before
+	// the walk re-verifies at the user layer.
+	idx := map[string]int{}
 	for i, ss := range substeps {
-		if ss.Name == SubStepCloseReview {
-			reviewIdx = i
-		}
-		if ss.Name == SubStepCloseBrowserWalk {
-			walkIdx = i
-		}
+		idx[ss.Name] = i
 	}
-	if reviewIdx >= 0 && walkIdx >= 0 && reviewIdx >= walkIdx {
-		t.Errorf("close sub-step order wrong: review (index %d) must come before browser walk (index %d)", reviewIdx, walkIdx)
+	if idx[SubStepCloseReview] >= idx[SubStepCloseCriticalFix] {
+		t.Errorf("review (index %d) must come before critical-fix (index %d)", idx[SubStepCloseReview], idx[SubStepCloseCriticalFix])
+	}
+	if idx[SubStepCloseCriticalFix] >= idx[SubStepCloseBrowserWalk] {
+		t.Errorf("critical-fix (index %d) must come before browser walk (index %d)", idx[SubStepCloseCriticalFix], idx[SubStepCloseBrowserWalk])
 	}
 	// First sub-step should be in-progress after init.
 	if substeps[0].Status != stepInProgress {

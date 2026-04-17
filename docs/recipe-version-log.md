@@ -10,7 +10,8 @@ The `nestjs-showcase` recipe is our canonical "hard run" — it exercises 3 sepa
 - [How to evaluate content quality](#how-to-evaluate-content-quality)
 - [Rating methodology](#rating-methodology)
 - [Cross-version summary](#cross-version-summary)
-- [Per-version log](#per-version-log) — v6 through v16
+- [Architectural insights — v20 → v23 trajectory and v8.86's shape](#architectural-insights--the-v20--v23-trajectory-and-v886s-shape) — start here if you're a new instance primed on this doc
+- [Per-version log](#per-version-log) — v6 through v23
 - [Adding a new version](#adding-a-new-version)
 
 ---
@@ -278,6 +279,7 @@ README line counts (per codebase):
 | v20 | **349** | **231** | **267** | **7 / 6 / 6** | **6 / 5 / 5** |
 | v21 | 230 | 154 | 165 | 6 / 4 / 5 | 6 / 3 / 4 |
 | v22 | 341 | 208 | 221 | **7 / 6 / 6** | **8** / 6 / 6 |
+| v23 | 250 | 260 | 290 | 6 / 3 / 4 | 4 / 4 / 4 |
 
 **v7 remains the gold standard for gotcha depth** (Meilisearch ESM-only, auto-indexing skips on redeploy, NATS queue group for HA). v10 collapsed to 0 gotchas on apidev and workerdev due to a tooling regression that's since been fixed. v14/v15 peaked on IG item count. v16 is the most compressed but also the most structurally clean.
 
@@ -300,6 +302,7 @@ README line counts (per codebase):
 | v20 | 2026-04-15 | 71 min | 294 | 177 | 33 | 2.3 min | **0** | ~50s | 7 |
 | v21 | 2026-04-16 | **129 min** | 381 | 233 | 72 | **9.2 min** | **4 (main) + 2 (scaffold) = 6** | 0.3s | **17 (bash) + 27 (tool_result is_error)** |
 | v22 | 2026-04-16 | **103 min** | **410** | **243** | 77 | 2.5 min | **0 (main)** + 2 (scaffold `nest new scratch`) = 2 | ~0s (delegated to feature subagent) | 7 (bash) + 12 (tool_result is_error) |
+| v23 | 2026-04-17 | **119 min** | 384 | 233 | 61 | **0.6 min** | **0 (main)** + 2 (scaffold `nest new scratch`) = 2 | ~0s | 2 (bash) |
 
 **v16 is the first run with zero very-long bash calls on main-session** — the dev-server wait discipline finally held. But the feature subagent in v16 still hit 360s of 404s total on two dev-server starts that used the old SSH pattern. v17 ships `zerops_dev_server` as a dedicated MCP tool to eliminate this class of error entirely.
 
@@ -326,6 +329,101 @@ README line counts (per codebase):
 | v20 | content peaks across the board + load-bearing reform surfaces | **first A-grade complete run in tracked history**. 71 min wall, 2.3 min main bash, 0 very-long, 10 subagents (new record), **first run since v16 with both deploy.browser AND close.browser** (v8.77 sub-step gate working), **first dedicated close-step critical-fix subagent** that re-deploys + re-verifies. Largest READMEs ever (349/231/267), peak gotcha counts (7/6/6), peak IG items (6/5/5). All v7 gold-standard worker gotchas restored. Env 4 comments at v7 quality with explicit two-axis `minContainers` teaching. BUT deep content read surfaces 7 classes of decorative-content drift the v8.67–v8.77 presence rules admitted: generic `.env` advice, predecessor-cloned apidev gotchas (synchronize/trust-proxy), `_nginx.json` topology mismatch in shipped vs documented, CLAUDE.md `synchronize()` against own README gotcha, watchdog declared but unimplemented, IG #2 leans on IG #1, env service comments share rolling-deploy template phrasing. v20 post-mortem fixes shipped as v8.79.0 — load-bearing content reform: 5 new per-codebase checks (content_reality, gotcha_causal_anchor, service_coverage, claude_readme_consistency, ig_per_item_standalone), 1 new finalize check (service_comment_uniqueness), predecessor-floor net-new enforcement rolled back to informational (predecessor overlap is fine for standalone recipes; service-coverage is the new authoritative gate). |
 | v21 | v8.78 load-bearing reform ships — regresses on operational + workflow dimensions | **first D-grade run since v13** (v17's F was an abort). Wall 129 min (+82% vs v20's 71 min), main bash 9.2 min (4× v20), 6 very-long bash cumulative, 27 is_error_true tool_results (3.4× v20). **208 MB `node_modules` + 748 KB `dist/` leaked into apidev published output** because main agent's per-codebase brief synthesis dropped `.gitignore`/`.env.example` line for apidev+workerdev (included for appdev). Downstream: 3 parallel zcp-side `git init && git add -A` over SSHFS traversing 209 MB tree hit 120 s each; root-ownership cascade recovery burned another ~2 min. **First run with 0 `zerops_guidance` calls** (v18–v20: 12–16). **5 subagents** vs v20's 10 — delegation patterns (writer, yaml-updater, generate-time fix×2, close-step critical-fix) all collapsed; main agent absorbed iteration in main context (190 KB more tool_use input bytes). Content compressed 26% (230/154/165 README lines, 6/4/5 gotchas) — hit exactly the `service_coverage` floor. **6 new `dev_server stop` exit-255 events** (v20: 1) — pkill-over-ssh matches its own shell child; tool surfaces raw 255 rather than classifying as success. **`claude_readme_consistency` check emitted 0 events** — its `forbiddenPatternRe` regex is so narrow it only matches v20's exact phrasing; 0 matches across v21 content (shadow-tested). Feature subagent hit 6 MCP schema-validation errors using memory-frozen parameter names (`hostname` vs `serviceHostname`, `logLines` vs `lines`, `ramGB` vs `minRam`). Close-step: 1 CRIT (CORS `origin: true, credentials: true`) + 3 runtime CRITs (NATS `ERR_INVALID_URL` on bracketed `@`-in-password, Meilisearch ECONNRESET OOM during seed, CORS preflight). Framework hardcoding audit surfaces `typeorm`/`prisma`/`ioredis`/`keydb` hardcoded in `categoryBrands` + `TypeORM synchronize`/`queue: 'workers'` in `specificMechanismTokens` — violates v8.78's "framework-agnostic by design" claim. v21 post-mortem + v8.80 implementation guide: [docs/implementation-v21-postmortem.md](implementation-v21-postmortem.md). 9 enforced-gate fixes planned (scaffold_hygiene, bash-guard middleware, gotcha_depth_floor, pattern-based claude_readme_consistency rewrite, strip framework tokens, writer-subagent dispatch gate, MCP schema-error rename suggestions, scratch-reference content-diff, pkill-self-kill classification). |
 | v22 | v8.80 structural gates hold — first Opus 4.7 run; substance restored, cost axes regress | **Mixed run that rhymes with v21 on cost but not on substance**. Wall 103 min (+45% vs v20's 71 min; −20% vs v21), but **410 assistant events is a new complete-run record** (v21: 381, v20: 294) — and tool calls 243 (v21: 233, v20: 177) — so on the two pure cost-volume axes v22 exceeds v21. First run on `claude-opus-4-7[1m]` — model change likely drives part of the deliberation bloat. **Every v8.80 structural gate held**: `scaffold_hygiene` caught `node_modules`/`dist/` leaks on api+worker at deploy step and forced ssh-side `rm -rf` remediation (25.4 s cost, 4 iteration rounds); published tree 6.1 MB clean (v21: 214 MB, 35× smaller); `claude_readme_consistency` rewrite fired 4+4 times catching TypeORM synchronize in api+worker CLAUDE.md without dev-only marker (was silently dead in v21); pkill-self-kill classification silent on dev_server stop (0 exit-255 events surfaced as failures — the 6 "exit 255" string matches are all guidance warnings about SSH session state after redeploy, not failure reasons); 0 MCP schema-validation errors across main AND feature subagent (v21: 6 in feature); substep gate rejected one premature `deploy` complete with INVALID_PARAMETER "12 required sub-steps" message and forced the agent back through browser-walk + cross-deploy. **9 subagents** (v21: 5, v20: 10) — delegation pattern restored: 3 scaffold + 1 feature + 1 README/CLAUDE writer + 1 env-comments writer + **3 parallel per-codebase framework-expert code reviews** (new split — finished in 71/11/27 s). **Writer subagent gate worked at dispatch but content iteration leaked back to main**: main ran 31 Edits + 4 Writes, including **11 Edits on `workerdev/README.md`** and 8 on `apidev/README.md` after the writer subagent handed off — content checks (`worker_content_reality: 16 fails`, `worker_gotcha_causal_anchor: 16 fails`, `worker_gotcha_distinct_from_guide: 16 fails`) kept bouncing back and the iteration absorbed into main context rather than dispatching a content-fix subagent. **Content restored to v20 peak**: 341/208/221 README lines + 7/6/6 gotchas (matches v20) + **8/6/6 IG items — apidev at new record of 8** (prior peak v15/v20 at 6). CLAUDE.md at 7307/6245/7724 bytes (v20: 3395/2786/3728) — **largest ever across all three codebases**, 7+ custom sections per file. Env-4 comments at v7+v8.77 gold standard — every service block carries explicit WHY, two-axis `minContainers` teaching intact on app/api/worker. Root README intro names real managed services (v17 `dbDriver` validation holds for 5th run). **3 deploy-step CRITs, all fixed in main inline**: NATS `TypeError: Invalid URL` on `${queue_password}` URL-reserved chars (recurrence of the v21 class — the `nats.service.ts` scaffolder still ships URL-embedded creds despite the v21 gotcha being in scope); S3 `HeadBucketCommand` 301 redirect (apidev scaffold used `http://` not `https://` endpoint); workerdev `zerops_dev_server start` returned `post_spawn_exit` because dev `buildCommands` runs `npm install` only (no `npm run build`) so `dist/main.js` doesn't exist — scaffold assumed dist would. Plus one feature-subagent-era DI resolution CRIT: `CacheFeatureController` couldn't resolve `CacheService` after per-feature module split — fixed with a `@Global() ServicesModule` wrapper. **Close review clean (3 parallel framework-expert subagents): 0 CRITICAL / 0 WRONG** — cleanest close since v14's spotless review, and the first since v14 to combine clean close with peak content. Guidance calls 17 (v21: 0, v20: 12) — progressive-guidance delivery restored. Both `deploy.browser` and `close.browser` fired (5+3 `zerops_browser` calls — highest ever). **The regression story is about cost, not deliverable quality**: content is near-peak, close is spotless, hygiene is clean, all v8.80 gates held. Primary cost drivers: (a) Opus 4.7's higher tool-call-per-decision ratio, (b) content-check iteration rounds (every v8.78/v8.79/v8.80 check fired real fails and was resolved — the quality gate is now strict enough to drive real work), (c) 3 runtime CRITs each required rebuild/redeploy/reverify cycles, (d) 11 workerdev-README edits leaked to main because no post-writer content-fix-subagent dispatch pattern exists. |
+| v23 | v8.81–v8.85 ship between v22 and v23; content quality recovers, content-fix-loop convergence breaks | **Mixed run: content is the silver lining, convergence is the cost driver**. Wall 119 min (+15% vs v22's 103, +68% vs v20's 71). 384 assistant events (v22: 410, v21: 381). Tool calls 233 (= v21, < v22's 243). Main bash 0.6 min — best operational hygiene since v18 (0 very-long, 2 errored, 38.7s total). 10 subagents matches v20 record (writer ×1 + scaffold ×3 + feature ×1 + **3 README/content fix subagents** + env-comment writer ×1 + code review ×1). **17 deploys** (v22: 11) — 5 clusters of 3, ALL justified by intervening commits (initial dev → snapshot-dev after features → first cross-deploy → code-review redeploy → second cross-deploy). 21 dev_server calls (v22: 15). 18 guidance topic fetches (v22: 17 — peak). 20 `complete deploy` calls (12 substep + 8 retries on README content checks). **The 23-minute README content-fix loop within deploy is the single biggest controllable waste**: writer subagent at 13:08-13:14 → first complete deploy fails on 23 checks → fix subagent SA2 (13:20-13:26) → 11 fails → SA3 (13:27-13:32) → 5 fails → SA4 (13:34-13:37) → 4 fails → main inline pass (13:37-13:41) → 0 fails. **Strictly decreasing fail count (23→11→5→4→2→0), no whack-a-mole — but 5 rounds where 1 should have sufficed**. Three structural defects: (a) `content_reality` truncates findings list with `... and N more`, so each subagent only sees a subset; (b) brief framing was "be surgical, only the listed findings" — SA4 explicitly skipped 3 known-bad lines because they weren't on the visible list; (c) `comment_ratio` reads the YAML embedded in README's IG step 1 fenced block, NOT the on-disk `zerops.yaml` — SA2 wasted 5m 50s editing the wrong files (fixed disk yamls 9% → 57% but checker still reported 9%). **Content quality is the silver lining**: 13 gotchas total (apidev 6 / appdev 3 / workerdev 4 — vs v22's 19) but **gotcha-origin ratio swings from v22's 0% pure-invariant to v23's 38% pure-invariant + 15% mixed + 46% incident-derived**. Compression came WITH quality, not against it. All CLAUDE.md pass byte floor + claude_readme_consistency. Architecture section present in root README (v8.81 `recipe_architecture_narrative` check fired 1×, agent fixed, retry passed). Env-4 comments solid (A−), service uniqueness pass, two-axis `minContainers` teaching at project level + per-service. Root intro names real managed services (v17 `dbDriver` validation holds for 6th run). **0 CRIT / 0 WRONG / 1 STYLE in close review** (3 CRITs caught + fixed pre-publish: StatusPanel `data.services[key]` vs apidev's flat `{db,redis,nats,storage,search}` map, workerdev Item entity divergence vs apidev migration, missing NATS queue group `'jobs-workers'`; 2 WRONG fixed: workerdev SIGTERM drain, apidev cache.drop double-RTT). **Three platform-mental-model defects**: (1) **`zsc execOnce` "burn trap" folk-doctrine enshrined in apidev/CLAUDE.md** — at 12:31:36 the apidev first-deploy seed initCommand returned ✅ in 56ms with zero `[seed] upserted ...` lines and 0 rows in the table; agent invented "execOnce burn from initial workspace deploy" terminology and codified a "Recovering execOnce burn" CLAUDE.md section. The mental model is wrong: `appVersionId` is per-deploy, not per-workspace. Real cause undiagnosed — most likely script-side silent exit or container-labeling artifact (`apidev-runtime-2-2e` suggests this was the second container). (2) **"Parallel cross-deploys rejected" — `Not connected` misattribution to platform** — at 12:32:17-19 main agent issued 3 parallel calls (subdomain enable + 2 deploys), the deploy calls returned `Not connected` (MCP STDIO transport error because `zerops_deploy` blocks the channel for 1-2 min). TIMELINE.md says *"Sequential cross-deploys (parallel called but tool returned 'Not connected' for simultaneous deploys, so serialized)"* — propagating the misattribution to the published TIMELINE. (3) **`module: nodenext` workerdev fix without diagnosis** — workerdev `start:dev` failed with `Cannot find module './app.module.js'`. Apidev tsconfig is IDENTICAL (also `module: nodenext`) but apidev works because `start:dev` uses `nest start --watch` (which proxies through @nestjs/cli's bundler) while workerdev uses raw `ts-node -r tsconfig-paths/register`. Agent flipped workerdev to commonjs without questioning why apidev's identical tsconfig didn't fail. Sustainable fix, shallow understanding. **`scaffold_hygiene` held** (no v21-class node_modules leak). **v8.81 `content_fix_dispatch_required` gate fired correctly** — v22's iteration-into-main pattern eliminated, but the brief construction emitted by the gate is anti-convergent (5 rounds instead of 1). v22's failure: dispatch gate didn't exist, iteration leaked to main. v23's failure: dispatch gate exists but emits convergence-hostile briefs, iteration loops across subagents. **v8.85 `env-var-model` topic + `env_self_shadow` check held** — no shadows in any zerops.yaml; both `${db_*}` and `${redis_*}` referenced via `process.env` correctly. v23 post-mortem at [docs/implementation-v23-postmortem.md](implementation-v23-postmortem.md). v8.86 implementation plan supersedes the postmortem's §7 list — see [docs/implementation-v8.86-plan.md](implementation-v8.86-plan.md). |
+
+---
+
+## Architectural insights — the v20 → v23 trajectory and v8.86's shape
+
+By v23 the cumulative pattern across versions had become legible: each version since v20 added quality gates and dispatch machinery on top of the previous, none restored v20's convergence properties, and each "patch" introduced its own failure class. v23's post-mortem dialogue produced four insights that the v8.86 plan is built on. Capturing them here so future readers (human or new agent instance primed on this doc) don't re-derive them.
+
+### Why each version after v20 regressed (the shape story)
+
+v20 ran with two patterns that v23 lost:
+
+- **Author-then-iterate INSIDE Generate.** README writing happened during Generate alongside scaffolds. Fix subagents fired during generate when content checks failed, but the surface was small (only scaffold + plan content) so iteration was fast — 2 fix-subagent rounds, ~5-8 min total.
+- **Find-then-fix-then-verify as one subagent at Close.** Code-review found bugs. A dedicated `close-step critical-fix` subagent applied fixes, redeployed all 3 services, cross-deployed to stage, and re-verified — all in one delegated cycle. Main agent stayed orchestrating, never absorbed the redeploy/cross-deploy plumbing.
+
+v23 inherits neither:
+
+- **Author-during-Deploy with downstream re-dispatch.** README writing moved to deploy.readmes substep (to capture deploy-discovered facts — see "Why deep content requires late writing" below). v8.81 added a `content_fix_dispatch_required` gate that re-dispatches fix subagents on writer failure. Each round is a multi-minute round trip. v23 ran 5 rounds (writer + 3 fix subagents + main inline) where 1 should have sufficed, costing 23 minutes of the 119-minute total wall.
+- **Find-bugs-and-fix-inline at Close, redeploy on main.** v22 collapsed the close-critical-fix subagent split. v23 inherits the collapsed shape — code-review subagent finds AND fixes; main agent absorbs ~10 minutes of redeploy + cross-deploy orchestration that v20 had delegated.
+
+These two shifts happened structurally between v20 and v22 (recipe.md spec evolution), not by agent choice in v23. The v23 agent was operating within a workflow that had already lost v20's convergence properties — it can't restore them by behaving differently. **v23's "feels wrong" property is a workflow-architecture residue, not an agent-behavior bug.**
+
+### The math of why "add more checks" can't reach 98%
+
+Each content-quality check shipped at ~95% writer-pass-rate (writer ships clean for that specific check 95% of the time). Probability of clean-on-first-write = P^N where N is the active check count and P is the per-check pass-rate.
+
+| Version | Active checks (~) | P(clean on first write) | P(needs ≥1 fix round) |
+|---|---:|---:|---:|
+| v20 | 10 | 60% | 40% |
+| v22 | ~14 | 49% | 51% |
+| v23 | 17 | 42% | 58% |
+
+**Adding checks mathematically lowers the probability of clean shipping.** v8.81's "fire a fix subagent on failure" makes each failure cost worse (multi-minute subagent dispatch instead of inline fix). The trajectory v20 → v23 has been adding machinery on top of machinery without adding determinism. The way past 95% can't be more checks — it has to be putting the checks in front of the writer instead of behind it.
+
+### Why deep content REQUIRES late README writing — this part of v21+ stands
+
+The original reason README authoring moved from Generate to deploy.readmes is **correct and stays**. A Generate-time README has access only to plan + scaffold + zerops.yaml. It does NOT have access to:
+
+- That `module: nodenext` + raw ts-node breaks at first dev start (workerdev-class issue)
+- That apidev `/api/status` returns flat `{db,redis,nats,storage,search}` while a naive frontend assumes nested `services[]` (StatusPanel-class contract drift)
+- That `cache-manager@6` returns absolute-epoch TTLs, not relative durations (cache-TTL-class semantic shift)
+- That Svelte 5 `$state` proxy doesn't react to `[created, ...items]` patterns
+- That stage subdomains hit CORS preflight differently than dev
+- The shape of every cross-codebase contract once features actually wire up
+
+These are the v21+ "deep content" gotchas that v23's content audit shows at 38% pure-invariant origin (vs v18-era's 0%) precisely because they're authored after deploy-discovered ground truth surfaces. **You can't write them at Generate. They emerge during Deploy.** The user porting their own NestJS app is going to hit these same surfaces, and the README has to teach them — which means the README has to be authored after the recipe agent has SEEN them.
+
+The user-side recipe quality bar v21 was pushing toward is real and worth preserving. Rolling back to v20-style early-Generate README writing would re-introduce the decorative-content drift v8.78 was right to address.
+
+### The fix is to invert verification direction
+
+Today (v23):
+
+```
+writer ships → external gate verifies → if fail, dispatch fix subagent → loop
+```
+
+Multi-round, multi-minute per round, briefs reconstructed each round, truncated findings hide leftover work, "be surgical" framing prevents exhaustive sweeps.
+
+Target (v8.86):
+
+```
+writer prepares input → writer self-verifies against rules → writer ships clean
+                                                          → external gate confirms
+```
+
+Single round in the success case. The external gate becomes a confirmation step that runs but rarely fires. Two preconditions make this work:
+
+- **Pre-collected facts** — writers operating late in the workflow (the README writer at deploy.readmes) need pre-organized input rather than 90 minutes of session log to do archaeology against. v8.86 ships a `zerops_record_fact` MCP tool the agent calls during deploy substeps when relevant facts emerge; the structured facts log feeds the writer.
+- **Rules-as-runnable-validation** — every check rule the gate will run gets translated into a concrete pre-return validation command (grep, awk, ratio computation) the writer executes against its own draft before returning. The writer iterates internally until clean.
+
+The check inventory v23 has is the right inventory — what's wrong is WHERE in the pipeline verification happens.
+
+### Why we picked the lower-risk shape (calibrated commitment)
+
+The dialogue that produced v8.86 considered two viable shapes:
+
+| Shape | Change size | Quality preserved | Convergence speed | Risk |
+|---|---|---|---|---|
+| Self-verifying writer + facts log (v8.86 stage 1) | MEDIUM | Yes (deep content, late writing) | Medium-high | Low |
+| Per-substep distributed fragment authoring (v8.87+ stage 2) | LARGE | Yes (each fragment authored at moment of freshest knowledge) | High | Medium-high (untested architecture, new failure classes possible) |
+
+The calibrated commitment: **one architectural change per release**. v8.86 establishes a working baseline. v24 evidence either justifies stage 2 (writer's self-validation loop still has ≥3 internal rounds; deploy.readmes substep ≥8 min) or proves it unnecessary. The trajectory of "commit to a bigger architectural change because the previous one didn't work" is what produced 5 failing two-hour sessions across v21→v22→v23. v8.86 inverts that pattern.
+
+This is also why the original v23-postmortem §7 list (truncation removal, brief-framing tweaks, embedded-yaml docs) was rejected: those addressed the symptoms, not the load-bearing cause (external gate + dispatch is anti-convergent by construction). The smaller-than-stage-2 but bigger-than-symptom-list shape is v8.86.
+
+### Reading order for a new instance primed on this doc
+
+1. Read this section first to get the architectural mental model
+2. Read the [milestones-and-regressions table](#milestones-and-regressions-by-version) for the per-version trajectory
+3. Read the v23 per-version entry below in detail for the load-bearing failure-mode evidence
+4. Read [implementation-v8.86-plan.md](implementation-v8.86-plan.md) for the concrete fix plan
+5. Optionally: [implementation-v23-postmortem.md](implementation-v23-postmortem.md) for the analytical deep-dive (note its §7 list is superseded — see top-of-file redirect)
+
+The single most important sentence in this section: **the convergence problem is at the gate layer, not the writer layer; the fix moves verification from after the writer to inside the writer's brief**. Every v8.86 fix flows from that.
 
 ---
 
@@ -1237,6 +1335,150 @@ No response body crosses Claude Code's persist-to-disk threshold. The readmes su
 - v8.82 `zerops_yml_comment_depth` gate — does the agent ship IG #1 with reasoning-marker-heavy comments?
 
 **Guide upstream-push status**: the `environment-variables.md` edit is local-only until `zcp sync push guides` creates a PR on zeropsio/docs and that PR merges. The in-binary copy (via `go:embed`) picks up the local edit at build time, so the v23 run will see the corrected guide via the released binary even before the upstream PR merges.
+
+---
+
+### v23 — v8.81–v8.85 ship; content recovers, content-fix-loop convergence breaks
+
+- **Date**: 2026-04-17
+- **Tier / shape**: Showcase Type 4, API-first dual-runtime + separate-codebase worker, 3-repo
+- **Model**: claude-opus-4-7[1m] (same as v22)
+- **Session**: `a15e3224ab4f3916`
+- **Session logs**: `main-session.jsonl` (2.86 MB, 384 assistant events) + 10 subagent logs
+- **Wall**: 12:10:05 → 14:09:11 = **119 min** (+15% vs v22's 103 min, +68% vs v20's 71 min, −8% vs v21's 129 min)
+- **Assistant events**: 384 (v22: 410, v21: 381, v20: 294)
+- **Tool calls**: 233 (v22: 243, v21: 233, v20: 177)
+- **Bash metrics (main)**: 61 calls / **0.6 min total (38.7 s)** / **0 very-long** / 1 long (11.7 s seed manual run) / **2 errored** / 0 port kills / 3 sleeps / 12 curls — **best operational hygiene since v18 (0.8 min)**
+- **Bash metrics (main + subagents)**: ~150 calls / ~5 min total / 2 very-long (both `nest new scratch` inside scaffold subagents — 84 s apidev, 75 s workerdev) / ~10 errored
+- **Subagents (10 — matches v20 record)**:
+  - Scaffold ×3: apidev (`afc7e4a8…`, **655 s = 10m 55s**, 69 events, 25 Bash + 23 Write), workerdev (`a9611a14…`, 163 s, 25 events), appdev (`a995689d…`, 104 s, 28 events)
+  - Feature ×1 (`a4bf1345…`, **822 s = 13m 42s**, 168 events, 55 Bash + 28 Write + 28 Read + 15 Edit, 0 MCP schema errors)
+  - README/CLAUDE writer ×1 (`a180aa17…`, 311 s = 5m 11s, 33 events, 6 Writes — initial 6-file create)
+  - **Content-fix subagent ×3** (NEW failure pattern): `afb4e132…` (350 s, 55 events, 13 Edits), `af7c2223…` (294 s, 43 events, 13 Edits), `a637f5c4…` (134 s, 33 events, 6 Edits) — all README content fixes after v8.81 dispatch gate refused `complete deploy`
+  - Env-comments writer ×1 (`a42cb788…`, **1 event total** — pure JSON build, no bash)
+  - Code review ×1 (`a8e7cbdb…`, 372 s = 6m 12s, 134 events, 43 Reads + 8 Greps)
+- **MCP tool mix**: 31 `zerops_workflow`, 21 `zerops_dev_server` (new record; v22: 15), **18 `zerops_guidance`** (v22: 17 — peak), 17 `zerops_deploy` (v22: 11), **5 `zerops_browser`** (3 deploy + 2 close), 5 `zerops_subdomain`, 3 `zerops_mount`, 3 `zerops_logs`, 1 each `zerops_knowledge` / `zerops_import` / `zerops_env` / `zerops_discover` / `zerops_verify`
+- **Workflow `complete deploy` calls**: **20** — 12 substep completes (rapid-fire 13:14:31→13:18:15) + **8 retries on full-step README content checks** (13:18→13:41)
+
+**Content metrics** (apidev / appdev / workerdev):
+
+- README lines: ~250 / ~260 / ~290 (bytes 7,840 / 8,134 / 8,952) — compressed ~30-40% vs v22's 341/208/221 lines
+- Gotchas: **6 / 3 / 4** (v22: 7/6/6 — drop driven by checker convergence, not floor enforcement)
+- IG items: 4 / 4 / 4 (v22: 8/6/6)
+- CLAUDE.md: 5,487 / 4,446 / 5,886 bytes — all clear 1200-byte floor + ≥3 custom sections
+- Root README intro: ✅ names real managed services (PostgreSQL, Valkey, NATS, S3-compatible object storage, Meilisearch — v17 `dbDriver` validation holds for **6th** consecutive run)
+- Preprocessor directive: ✅ all 6 envs carry `#zeropsPreprocessor=on` with `<@generateRandomString(<32>)>` for `JWT_SECRET`
+- **Architecture section**: ✅ present in root README (v8.81 `recipe_architecture_narrative` check fired 1×, agent fixed, retry passed) — names each codebase by hostname, role, and inter-codebase contract verb (app → api HTTP/JSON CORS, api → worker NATS publish/subscribe on `jobs.process`, worker → db SQL via TypeORM with entity-mirror invariant explicit)
+
+**Step time decomposition**:
+
+| Step | Duration | Notes |
+|---|---:|---|
+| Research | 1m 6s | clean |
+| Provision | 3m 8s | 14 services in one batch, env vars in one batch |
+| Generate | 15m 47s | 3 parallel scaffolds (apidev 11m / appdev 1m44s / workerdev 2m43s) + main writes 3 zerops.yaml |
+| Deploy | **44m 19s + 23m fix loop = 1h 7m** | 12 substeps (12:30→13:14, ~44 min); full-step gate then took 23 min for README content fixes |
+| Finalize | 4m 39s | 1 retry on `recipe_architecture_narrative` |
+| Close | 22m 54s | code review (6m12s) + redeploy ×3 + cross-deploy ×3 + close-browser-walk |
+
+**The 23-minute README content-fix loop within deploy is the single biggest controllable waste**. Without it, v23 wall-clocks at ~96 min — competitive with v18/v20/v22.
+
+**Content-check pass/fail burn (parsed from session event stream)**:
+
+| Check | Pass | Fail | Notes |
+|---|---:|---:|---|
+| `content_reality` (api/app/worker) | 2 | **5** | 5 iteration rounds — top cost driver |
+| `gotcha_causal_anchor` (api/app/worker) | 5 | 4 | mostly resolved iteratively |
+| `service_coverage` (api/worker) | 5 | 2 | drove apidev to add 6th Meili gotcha |
+| `claude_readme_consistency` | 6 | 1 | v8.80 rewrite stayed alive (vs v21 dead) |
+| `scaffold_hygiene` | 5 | 1 | held — no v21-class node_modules leak |
+| `gotcha_distinct_from_guide` | 6 | 0 | passed clean first try |
+| `knowledge_base_authenticity` | 6 | 1 | one round on apidev |
+| `ig_per_item_standalone` | 5 | 1 | one round on appdev |
+| `comment_specificity` | 4 | 2 | required 2 rounds |
+| `comment_ratio` (zerops.yaml IG-embedded) | 6 | 2 | SA2 fixed wrong file (disk yaml not embedded copy) — wasted ~5 min |
+| `comment_depth` | 3 | 0 | clean |
+| `service_comment_uniqueness` (env 0-5) | 2 | 0 | held |
+| `cross_readme_gotcha_uniqueness` | 6 | 0 | held |
+| `recipe_architecture_narrative` | 1 | 1 | v8.81 NEW — fired correctly, fixed in finalize iteration |
+| `zerops_yml_comment_depth` | 1 | 0 | v8.82 NEW — passed first try |
+| `env_self_shadow` | not observed | not observed | v8.85 NEW — silent (no shadows in any zerops.yaml) |
+
+**The README content-fix loop (the 23-minute cost driver)**:
+
+After the writer subagent shipped 6 README+CLAUDE.md files at 13:14, main called `complete deploy` → result event #496 (13:18:15): **23 fails / 47 passes**. v8.81's `content_fix_dispatch_required` gate fired and dispatched 3 fix subagents in series:
+
+| Round | Time | Subagent | Result event | Fails | Notes |
+|---|---|---|---:|---:|---|
+| Writer | 13:08-13:14 | `a180aa17` | #496 (13:18) | 23 | Initial create — no checks visible at write time |
+| Fix #1 | 13:20-13:26 | `afb4e132` | #515 (13:26) | 11 | Fixed disk `zerops.yaml` (9% → 57% comment ratio) — but checker reads embedded README copy, so `comment_ratio` STILL fails 9%/7%/11% |
+| Fix #2 | 13:27-13:32 | `af7c2223` | #521 (13:32) | 5 | Synced README-embedded yaml; `content_reality` truncation reveals new phantom paths (`dist/migrate.js`, `process.env`, `res.json`) |
+| Fix #3 | 13:34-13:37 | `a637f5c4` | #551 (13:37) | 4 | "Be surgical" brief framing — **explicitly skipped** 3 known-bad lines because they weren't on the visible findings list |
+| Inline | 13:37-13:41 | (main agent) | #622 → #651 | 0 | Main grep'd the whole tree, fixed everything |
+
+**Strictly decreasing fail count (23→11→5→4→2→0); no whack-a-mole**. The 5 rounds where 1 should have sufficed are caused by 3 v8.81 brief-construction defects:
+
+(a) `content_reality` truncates findings with `... and N more` — each subagent only sees a subset of failures.
+(b) Brief framing was "be surgical, only the listed findings" — SA4's final message literally says: *"Unaddressed / intentionally skipped: apidev/README.md line 21 (IG step 1 prose still names dist/main.js, dist/migrate.js, dist/seed.js) — not flagged in the 4 failing findings."*
+(c) `comment_ratio` reads the YAML embedded in README's IG step 1 fenced ```yaml block, NOT the on-disk `zerops.yaml`. SA2 wasted 5m 50s editing the wrong files.
+
+**v22's failure was**: dispatch gate didn't exist, iteration leaked to main (11 Edits on workerdev/README.md). **v23's failure is**: dispatch gate exists but emits convergence-hostile briefs, iteration loops across subagents.
+
+**Three platform-mental-model defects (the user's "missed understanding" perception)**:
+
+1. **`zsc execOnce` "burn trap" folk-doctrine enshrined in apidev/CLAUDE.md** — at 12:31:36 the apidev first-deploy seed initCommand returned ✅ in 56ms with zero `[seed] upserted ...` lines and 0 rows in the table. Manual rerun at 12:36:52 produced 5 rows cleanly. Subsequent deploys (12:53 snapshot-dev) ran cleanly with new `appVersionId`. The agent invented terminology ("execOnce burn from initial workspace deploy") and codified it in apidev/CLAUDE.md under "Recovering `zsc execOnce` burn". The mental model is wrong: `appVersionId` is per-deploy, not per-workspace — there is no concept of a workspace-creation-time deploy that pre-burns the next user's first deploy's key. Real cause undiagnosed (most likely script-side silent exit, or container-labeling artifact — `apidev-runtime-2-2e` suggests this was the second container). **Future runs reading apidev/CLAUDE.md will inherit this folk-doctrine**.
+
+2. **"Parallel cross-deploys are rejected" — `Not connected` misattribution propagated to TIMELINE.md** — at 12:32:17-19 main agent issued 3 parallel calls (subdomain enable + 2 deploys). The subdomain call returned `FINISHED`. The 2 deploy calls returned `Not connected` (`is_error: true`). TIMELINE.md says: *"Sequential cross-deploys (parallel called but tool returned 'Not connected' for simultaneous deploys, so serialized)"* — propagating misattribution to the published TIMELINE. Reality: `Not connected` is the standard MCP STDIO error when the channel is held by a long-running call. `zerops_deploy` blocks the channel for the build duration (1-2 min), so a second concurrent request is dropped at the transport layer. **Not a platform refusal**.
+
+3. **`module: nodenext` workerdev fix without diagnosis** — workerdev `start:dev` (raw `ts-node -r tsconfig-paths/register src/main.ts`) failed at 12:35:26 with `Cannot find module './app.module.js'`. Apidev tsconfig is **identical** (also `module: nodenext`) but apidev `start:dev` uses `nest start --watch` which proxies through @nestjs/cli's bundler. Agent flipped workerdev to commonjs without questioning why apidev's identical tsconfig didn't fail. Sustainable fix, shallow understanding — TIMELINE narrative *"NestJS 11 scratch emitted module: nodenext... ts-node refused to resolve"* is half-right but conflates "raw ts-node + nodenext = bad" (true) with "NestJS scaffold emits broken tsconfig" (false).
+
+**The "senseless deploy repetition" perception (refuted by data)**: 17 deploys, **15 produced builds**, 2 returned `Not connected` instantly without burning build time. **0 redundant deploys** by intervening-change analysis — every same-target redeploy has at least one new commit between it and the prior deploy. The 5 deploy clusters of 3-each are: initial dev (12:30-12:35), snapshot-dev (12:53-12:56 — bake feature commits), first cross-deploy (13:02-13:05 — dev→stage), code-review redeploy (13:53-13:56 — apply 3 CRITs + 2 WRONG fixes), second cross-deploy (13:58-14:01 — promote fixes to stage). Each cluster is necessary. **The user's perception is real (5 clusters of "we just deployed all 3" creates a strong rhythmic feeling of repetition) but the data shows zero waste**.
+
+**Gotcha-origin distribution (the silver lining)** — running v22's incident-vs-invariant audit on v23's 13 gotchas:
+
+| Codebase | Total | Pure invariant | Mixed | Incident-derived |
+|---|---:|---:|---:|---:|
+| apidev | 6 | 4 (NATS URL, S3 endpoint, trust proxy, TypeORM sync) | 1 (cache-manager TTL) | 1 (Meili idempotent seed) |
+| appdev | 3 | 1 (Vite allowedHosts) | 0 | 2 (cross-codebase Meili pointer, Svelte $state) |
+| workerdev | 4 | 0 | 1 (#4 schema-drift) | 3 (queue group, SIGTERM, entity divergence) |
+| **TOTAL** | **13** | **5 (38%)** | **2 (15%)** | **6 (46%)** |
+
+**vs v22's 19/19 (100%) incident-derived ratio, v23 is 5/13 pure-invariant + 2/13 mixed = 54% non-incident** — a structural improvement on the deepest content failure mode v22 surfaced. Compression came WITH quality, not against it.
+
+**Env-4 comment quality**: A−. Service uniqueness pass, two-axis `minContainers` teaching at project level + per-service (app explicit HA/rolling-deploy axis, api throughput AND HA, worker queue-group + drain). All 8 service blocks carry WHY. No templated-shape phrasings.
+
+**Close-step bugs**: **0 CRIT / 0 WRONG / 1 STYLE post-fix** (3 CRITs caught + fixed by code-review subagent pre-publish: StatusPanel `data.services[key]` vs apidev's flat `{db,redis,nats,storage,search}` map, workerdev Item entity divergence vs apidev migration, missing NATS queue group `'jobs-workers'`; 2 WRONG fixed: workerdev SIGTERM drain via `enableShutdownHooks() + process.on('SIGTERM', ...)`, apidev cache.controller.drop() doubled Redis RTT). Cleanest close since v22's 0/0 review.
+
+**v8.81–v8.85 gate effectiveness** (the validation v23 was meant to provide):
+
+| Version | Gate | Held? | Evidence |
+|---|---|---|---|
+| v8.81 | post-writer content-fix dispatch gate | ✅ structurally — ✗ converges in 1 round | Fired 3× and dispatched correct subagent type, but anti-convergent brief construction caused 5 rounds |
+| v8.81 | NATS credentials scaffold preamble | ✅ | apidev `nats.client.ts` and workerdev `main.ts` both pass user/pass as separate ConnectionOptions; v21+v22 CRIT did NOT recur |
+| v8.81 | S3 endpoint scaffold preamble | ✅ | apidev uses `process.env.storage_apiUrl` (https); v22 301 CRIT did NOT recur |
+| v8.81 | `dev_start_contract` check | inconclusive | No pass/fail events in stream; workerdev contract `npm run start:prod` (prod) vs `npm run start:dev` (dev) is consistent |
+| v8.81 | `recipe_architecture_narrative` (finalize) | ✅ | 1 fail / 1 pass — caught missing root README architecture section; agent wrote it; passed retry |
+| v8.82 | `zerops_yml_comment_depth` (generate) | ✅ | 0 fails / 1 pass — clean first try |
+| v8.82 | `content-quality-overview` eager topic | inconclusive | No session-level evidence of effect |
+| v8.83 | substep response-size fall-through fix | ✅ | All substep responses healthy in tool_results |
+| v8.84 | step-entry eager scope shift | ✅ | Deploy step-entry inline (not persisted-to-disk) |
+| v8.85 | `env-var-model` eager topic | ✅ | No env_self_shadow events; both `${db_*}` and `${redis_*}` correctly via `process.env` |
+| v8.85 | `env_self_shadow` check | held silent | 0 shadows in any zerops.yaml |
+| v8.85 | pre-flight resolved-setup propagation | ✅ | All 17 deploys passed `setup=dev`/`setup=prod` correctly; no "Cannot find setup" |
+
+**Notable**:
+
+- **First run since v8.81 shipped that exercised the post-writer content-fix dispatch gate at scale** — 3 fix subagents fired, but the brief-construction defect surfaces a new failure class (anti-convergent briefs).
+- **Best operational hygiene since v18** — main bash 0.6 min (v18: 0.8), 0 very-long, 2 errored. The 21 dev_server calls (record) are all justified deploy/feature/code-review lifecycle events, no spurious stop+start.
+- **Cleanest close-step bug count** since v22 — 0 CRIT / 0 WRONG / 1 STYLE post-fix. Code-review subagent caught 3 CRIT + 2 WRONG pre-publish; all fixed.
+- **`scaffold_hygiene` held** — published tree clean, no v21-class node_modules/dist leaks.
+- **Delegation pattern restored** — 10 subagents matches v20 record (vs v21's 5). The 3 fix subagents are NEW — they show v8.81's post-writer gate is doing its job at the dispatch layer.
+- **Gotcha-origin diversity** — first run with explicit non-incident-derived gotchas (5/13 pure invariant). v22's deepest content failure mode (100% incident-derived) is structurally improved.
+- **Three platform-doctrine defects ship in published artifacts** — apidev/CLAUDE.md "Recovering execOnce burn" section + TIMELINE.md "parallel cross-deploys rejected" + workerdev tsconfig flip without diagnosis. Future runs and porters reading these will inherit the misinformation.
+
+**Rating**: S=**A** (all 6 steps, all features, all browser walks, code-review CRITs caught + fixed pre-publish), C=**A−** (38% pure-invariant + 15% mixed gotcha origin — vs v22's 0%; full architecture section; all CLAUDE.md pass; env-4 comments solid; minor — 4 of 13 gotchas have IG-overlap or split-lesson defects; one folk-doctrine "execOnce burn" enshrined in published CLAUDE.md), O=**C** (119 min wall vs v22's 103, v20's 71; main bash A but 23-min README fix loop is the cost limiter; 17 deploys + 21 dev_server calls + 8 retry `complete deploy` calls — all justified by intervening commits but rhythmically heavy), W=**B** (10 subagents incl. 3 fix dispatches + 1 substep gate retry; both browsers fired; v8.81 dispatch gate fired but failed to converge in one round; 18 guidance topics — peak) → **C**
+
+*v23 is a mixed run. The deliverable is structurally better than v22 (gotcha-origin ratio swings from 0% to 38% pure-invariant, compression came with quality, close review is spotless). But the v8.81 post-writer content-fix dispatch gate — the flagship structural fix that was supposed to close v22's iteration-into-main pattern — did dispatch correctly but emits convergence-hostile briefs that produce 3 fix-subagent rounds where 1 should suffice. The 23-min README fix loop is the entire 119→96 min wall delta. Plus three platform-mental-model defects ship in the published deliverable, the most concerning of which is "Recovering `zsc execOnce` burn" in apidev/CLAUDE.md — fictional Zerops folk-doctrine that future runs and porters will inherit. v23 post-mortem at [docs/implementation-v23-postmortem.md](implementation-v23-postmortem.md) (analysis). The postmortem's original §7 list of 6 narrow fixes (truncation, tokenClass, embedded-yaml docs, etc.) addressed symptoms not root cause, and was superseded after a dialogue surfaced that the load-bearing problem is "external gate + dispatch fix subagent" being anti-convergent by construction (math: 17 active checks × ~95% per-check pass-rate = 42% probability of clean-on-first-write, so 58% of runs are forced into a fix loop). The v8.86 plan at [docs/implementation-v8.86-plan.md](implementation-v8.86-plan.md) inverts the verification direction: writers learn check rules upfront and self-verify before returning. Six fixes: (§3.1) `zerops_record_fact` MCP tool + structured facts log accumulated during deploy, (§3.2) writer subagent brief includes runnable validation commands per check + iterate-until-clean instruction, (§3.3) demote v8.81 dispatch gate to confirmation-only, (§3.4) restore v20's close-step critical-fix subagent, (§3.5) generate-step contract spec referenced by all 3 scaffold subagents, (§3.6) folk-doctrine prevention (execOnce semantics + MCP channel docs). README writing stays at deploy.readmes substep (preserves deep content from deploy-discovered facts). Stage 2 (v8.87+) — only if v24 evidence shows v8.86 doesn't fully close convergence gap — decomposes deploy.readmes into per-substep distributed fragment authoring (each substep authors its own README fragment at moment of freshest knowledge; deploy.readmes becomes pure stitching). Stage 2 is reserved as a higher-risk follow-up because it's a workflow-mental-model change of the same magnitude as v8.78. Expected v24 outcome: A− in ~80-95 min wall (matches v20 peak with v8.78–v8.85 quality bar preserved).*
 
 ---
 

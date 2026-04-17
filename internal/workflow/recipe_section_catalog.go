@@ -133,6 +133,10 @@ var (
 		{Name: "feature-sweep-stage"},
 		{Name: "reading-deploy-failures"},
 		{Name: "common-deployment-issues"},
+		// v8.86 §3.6a — execOnce semantics corrective. Lands at the
+		// init-commands sub-step (eager) so the agent reaches for the
+		// correct mental model before "burn trap" folk doctrine settles.
+		{Name: "execOnce-semantics"},
 		// v8.82 §4.3 — six-surface teaching system overview. Sits right
 		// before readme-with-fragments so the agent lands in the authoring
 		// step with a map of ALL six content surfaces and their rubrics,
@@ -161,6 +165,10 @@ var (
 	// (minimal recipes skip the walk entirely, saving ~3 KB).
 	recipeCloseBlocks = []sectionBlock{
 		{Name: "code-review-subagent"},
+		// v8.86 §3.4 — dedicated fix sub-agent brief. Only relevant for
+		// showcase runs (minimal/hello-world close steps don't produce
+		// findings that require redeploy choreography).
+		{Name: "close-critical-fix-subagent", Predicate: isShowcase},
 		{Name: "close-browser-walk", Predicate: isShowcase},
 		{Name: "export-publish"},
 		{Name: "close-completion"},

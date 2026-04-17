@@ -55,6 +55,7 @@ const (
 	// sub-steps converts the rubric-level expectation into a forcing
 	// function.
 	SubStepCloseReview      = "code-review"
+	SubStepCloseCriticalFix = "critical-fix"
 	SubStepCloseBrowserWalk = "close-browser-walk"
 )
 
@@ -124,23 +125,39 @@ func deploySubSteps(plan *RecipePlan) []RecipeSubStep {
 }
 
 // closeSubSteps returns the close-step sub-step sequence. Showcase recipes
-// get two gated sub-steps: code-review (static review sub-agent at 1a) and
-// close-browser-walk (main-agent browser iteration at 1b). The review runs
-// first because browser walk is the re-verify gate after any fix the review
-// caused a redeploy for. Minimal and hello-world recipes return empty — they
-// have no feature dashboard to walk and historically complete close without
-// sub-step tracking.
+// get three gated sub-steps: code-review (static review sub-agent at 1a),
+// critical-fix (new in v8.86 §3.4 — dedicated fix sub-agent that absorbs
+// redeploy + cross-deploy orchestration when code-review returns ≥1 critical
+// or wrong), and close-browser-walk (main-agent browser iteration at 1c).
+// Minimal and hello-world recipes return empty — they have no feature
+// dashboard to walk and historically complete close without sub-step tracking.
+//
+// The critical-fix sub-step is always in the sequence for showcase runs.
+// When code-review returns a clean findings list, the agent completes it
+// with an attestation that acknowledges no critical/wrong findings —
+// substep validation accepts either shape. When code-review returns
+// findings, the agent dispatches a dedicated fix sub-agent (the brief is
+// at the `close-critical-fix-brief` topic) that applies fixes, commits,
+// redeploys each affected service, runs E2E verification, cross-deploys
+// to stage, and returns a structured verification report. Main agent
+// stays at orchestration level — the redeploy choreography lives inside
+// the sub-agent, keeping main context lean.
 //
 // v18 and v19 both shipped with `close.browser` never firing despite the
 // rubric listing it as a mandatory sub-step. Root cause: the old
 // initSubSteps returned nil for close, so enforceSubStepsComplete never
-// fired and the agent skipped the browser walk without consequence. This
-// function + the RecipeStepClose branch in CompleteStep closes the gap.
+// fired and the agent skipped the browser walk without consequence.
+//
+// v23 post-mortem surfaced a parallel gap: close-step CRITs caused main
+// agent to absorb 8 minutes of redeploy + cross-deploy when the code-
+// review sub-agent (rightly restricted to finding) returned bug reports
+// main had to fix itself. §3.4 restores the v20 shape by reserving
+// critical-fix as its own sub-step with its own dispatch brief.
 func closeSubSteps(plan *RecipePlan) []RecipeSubStep {
 	if !isShowcase(plan) {
 		return nil
 	}
-	names := []string{SubStepCloseReview, SubStepCloseBrowserWalk}
+	names := []string{SubStepCloseReview, SubStepCloseCriticalFix, SubStepCloseBrowserWalk}
 	steps := make([]RecipeSubStep, len(names))
 	for i, n := range names {
 		steps[i] = RecipeSubStep{Name: n, Status: stepPending}

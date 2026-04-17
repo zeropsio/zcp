@@ -5,30 +5,24 @@ import (
 	"strings"
 )
 
-// v8.81 §4.1 — post-writer content-fix dispatch gate.
+// v8.86 §3.3 — post-writer content-fix confirmation gate.
 //
-// Context (from the v22 post-mortem): the v8.80 writer-subagent dispatch
-// gate forces the README writer to fire at the `readmes` sub-step. But
-// full-step content checks (content_reality, gotcha_causal_anchor,
-// gotcha_distinct_from_guide, claude_readme_consistency, scaffold_hygiene,
-// service_coverage, ig_per_item_standalone, cross_readme_gotcha_uniqueness)
-// fire AFTER the sub-step completes, at `complete step=deploy` time. When
-// any of these fail, the step stays in progress and the agent iterates.
+// Background: v8.81 introduced this gate as a dispatch gate — when the
+// writer subagent shipped content that failed content checks, the gate
+// forced the agent to dispatch a *second* content-fix subagent before
+// retrying. v23 evidence (119-min run, 5 total content-writing rounds)
+// showed that shape is anti-convergent: the writer never saw the check
+// rules up front, so 58% of runs were forced into a multi-round fix
+// loop (17 checks × ~95% per-check pass-rate ≈ 42% first-try clean).
 //
-// v22's agent absorbed the iteration into main context: 11 Edits on
-// workerdev/README.md + 8 on apidev/README.md + 5 on workerdev/CLAUDE.md
-// in a Read-once / Edit-many pattern spanning 16 minutes. That cost was
-// the single largest driver of the v22 wall-clock regression.
-//
-// This gate ensures the retry of `complete step=deploy` references a
-// content-fix sub-agent dispatch. The agent fetches the
-// `content-fix-subagent-brief` topic, dispatches via the Agent tool, and
-// only then retries the step. The sub-agent absorbs the content edits
-// that would otherwise bloat main context.
-//
-// The gate is deliberately lenient on WHICH checks trigger it — any of
-// the named content-check families counts. It's strict on the retry
-// shape: the attestation must name the dispatch.
+// v8.86 inverts verification direction (see plan §2): writer briefs now
+// include each active check's runnable validation command, so the writer
+// self-verifies before returning. The gate becomes a confirmation-only
+// backstop — it fires only when the writer subagent shipped content
+// that still fails post-return, which now indicates a writer-brief bug
+// (the brief lied about what would be checked) rather than a fixable
+// workflow state. The gate's failure message names that explicitly and
+// refuses to offer a dispatch-fix escape hatch.
 
 // contentCheckFailPrefixes identifies v8.78/v8.79/v8.80 content-quality
 // check families. When any check whose name starts with one of these
@@ -46,6 +40,7 @@ var contentCheckFailSuffixes = []string{
 	"_gotcha_causal_anchor",
 	"_gotcha_distinct_from_guide",
 	"_claude_readme_consistency",
+	"_claude_md_no_burn_trap_folk",
 	"_scaffold_hygiene",
 	"_service_coverage",
 	"_ig_per_item_standalone",
@@ -67,30 +62,31 @@ func isContentCheck(name string) bool {
 	return false
 }
 
-// contentFixAttestationRe matches attestation lines that reference a
-// content-fix sub-agent dispatch. Intentionally permissive — the gate's
-// purpose is friction against silent in-main iteration, not exact-phrasing
-// enforcement. Accepted shapes:
-//
-//   - "content-fix sub-agent" / "content-fix subagent" / "content fix agent"
-//   - "fix sub-agent" dispatched for content / readmes / gotchas
-//   - "dispatched ... to fix ... README" / "dispatched ... to fix ... content"
-//   - "inline-fix acknowledged" (explicit deviation marker, for edge cases
-//     where dispatch is genuinely impossible)
-var contentFixAttestationRe = regexp.MustCompile(`(?i)(content[\s\-]?fix[\s\-]?(sub[\s\-]?)?agent|fix[\s\-]?sub[\s\-]?agent.*?(readme|content|gotcha)|dispatch.*?fix.*?(readme|content|gotcha)|inline[\s\-]?fix[\s\-]?acknowledged)`)
+// briefBugAckRe matches the explicit acknowledgment the operator writes
+// when they've identified the writer-brief bug and need to retry
+// end-to-end anyway (e.g. while a brief patch is in flight). Keeps the
+// gate from becoming a permanent block in pathological edge cases.
+var briefBugAckRe = regexp.MustCompile(`(?i)writer[\s\-]?brief[\s\-]?bug[\s\-]?acknowledged`)
 
-// contentFixDispatchGate returns a non-nil failing StepCheckResult when
-// the step is being retried after prior content-check failures AND the
-// attestation does not reference a content-fix dispatch. Returns nil
-// (gate passes) when no prior fails exist, the step isn't in the
-// gate-enabled set, or the attestation satisfies the dispatch rule.
+// contentFixDispatchGate (name kept for API stability with recipeComplete
+// callers) returns a non-nil failing StepCheckResult when the deploy step
+// is being retried after prior content-check failures. The failure message
+// frames this as a writer-brief bug — the writer subagent's brief should
+// have included every check's runnable validation, and the writer should
+// have iterated its self-validation loop until clean. A post-return fail
+// means either (a) the writer skipped its validation, (b) the writer's
+// validation disagreed with the gate-side check, or (c) a new check was
+// added without updating the writer brief.
+//
+// Unlike the v8.81 shape, there is NO dispatch-fix escape hatch — the
+// gate refuses to accept "dispatched content-fix subagent" attestations
+// because that pattern papered over the real bug (the writer brief's
+// gap). The only permissive acknowledgment is `writer-brief-bug
+// acknowledged` for operator-controlled retry during brief patching.
 func contentFixDispatchGate(rs *RecipeState, step, attestation string) *StepCheckResult {
 	if rs == nil || rs.PriorStepCheckFails == nil {
 		return nil
 	}
-	// Only the deploy step carries the content-check battery that matters
-	// for this gate. Extending to other steps would require they also
-	// have content-flavored step checkers.
 	if step != RecipeStepDeploy {
 		return nil
 	}
@@ -98,33 +94,33 @@ func contentFixDispatchGate(rs *RecipeState, step, attestation string) *StepChec
 	if len(priorFails) == 0 {
 		return nil
 	}
-	if contentFixAttestationRe.MatchString(attestation) {
+	if briefBugAckRe.MatchString(attestation) {
 		return nil
 	}
 	return &StepCheckResult{
 		Passed: false,
 		Checks: []StepCheck{{
-			Name:   "content_fix_dispatch_required",
+			Name:   "writer_brief_bug",
 			Status: "fail",
-			Detail: buildContentFixGateDetail(priorFails),
+			Detail: buildWriterBriefBugDetail(priorFails),
 		}},
-		Summary: "content-fix sub-agent dispatch required on retry",
+		Summary: "writer-brief bug: writer subagent shipped content failing content checks",
 	}
 }
 
-func buildContentFixGateDetail(priorFails []string) string {
+func buildWriterBriefBugDetail(priorFails []string) string {
 	var sb strings.Builder
-	sb.WriteString("The previous `complete step=deploy` attempt failed on ")
+	sb.WriteString("WRITER BRIEF BUG: the writer sub-agent shipped content that failed ")
 	sb.WriteString(int2str(len(priorFails)))
-	sb.WriteString(" content-quality check(s): ")
+	sb.WriteString(" content check(s): ")
 	sb.WriteString(strings.Join(priorFails, ", "))
-	sb.WriteString(". On the v22 showcase run, this exact pattern triggered 11 in-main Edits on workerdev/README.md + 8 on apidev/README.md + 5 on workerdev/CLAUDE.md — ~15 minutes of wall-clock spent iterating content inside main context.\n\n")
-	sb.WriteString("Instead, dispatch a content-fix sub-agent:\n\n")
-	sb.WriteString("1. Fetch the brief: `zerops_guidance topic=\"content-fix-subagent-brief\"`.\n")
-	sb.WriteString("2. Dispatch via the Agent tool with a description that matches `fix README content-check failures` (or similar). Include the exact list of failing checks in the prompt so the sub-agent can target them.\n")
-	sb.WriteString("3. After the sub-agent returns, retry `complete step=deploy` with an attestation that references the dispatch — for example:\n")
-	sb.WriteString("   \"Dispatched content-fix sub-agent for workerdev_content_reality + workerdev_gotcha_causal_anchor fails; sub-agent rewrote workerdev/README.md + CLAUDE.md gotchas to load-bearing shape.\"\n\n")
-	sb.WriteString("If you have a principled reason to inline (e.g. a single trivial fix, blocked on sub-agent dispatch), include `inline-fix acknowledged` in the attestation to pass this gate explicitly. Every such deviation is recorded against the run's workflow-discipline grade.\n")
+	sb.WriteString(".\n\n")
+	sb.WriteString("This should not happen — the writer brief is supposed to include every active content check's runnable validation command, and the writer is supposed to self-verify against each one (iterating until clean) BEFORE returning. A post-return fail means one of:\n\n")
+	sb.WriteString("  (a) The writer sub-agent did not run its pre-return self-validation. Re-read the writer brief: the VALIDATION SECTION is mandatory.\n")
+	sb.WriteString("  (b) The writer's validation reported pass but the gate-side check disagrees. This is a parity bug — file it by naming the failing check + the validation command the brief gave.\n")
+	sb.WriteString("  (c) A new content check was added without updating the writer brief. This is a brief-completeness bug.\n\n")
+	sb.WriteString("DO NOT dispatch a content-fix sub-agent (the v8.81 shape that caused v23's 5-round loop is removed). Fix the writer brief or the check-parity bug at the source. The deploy step will not advance until the writer sub-agent ships clean content.\n\n")
+	sb.WriteString("If you are the operator patching the brief and need to retry end-to-end: include `writer-brief-bug acknowledged` in your attestation. Every such acknowledgment is logged against the run's workflow-discipline grade.\n")
 	return sb.String()
 }
 

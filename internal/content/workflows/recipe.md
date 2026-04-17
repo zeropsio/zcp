@@ -1330,6 +1330,16 @@ Writing-style voice (the "developer to developer" tone, anti-patterns, correct-s
 
 **Always pass `targetService` AND `setup` together.** They are two distinct coordinates: `targetService` is the service hostname (`apidev`, `apistage`, `workerdev`, ...), `setup` is the zerops.yaml setup block name (recipes use `dev`/`prod`, shared-codebase worker recipes add `worker`). One zerops.yaml's `setup: prod` block serves both `apistage` (as the target) and a cross-deploy from `apidev` → `apistage`. A missing `setup` is the most common first-deploy failure — the tool can resolve it via role fallback for standard hostnames, but be explicit: `targetService=apidev setup=dev`, `targetService=apistage setup=prod`, `targetService=workerdev setup=dev` (separate-codebase worker) / `setup=worker` (shared-codebase worker inside the host target's zerops.yaml).
 
+**Channel-blocking — serialize all deploys.** `zerops_deploy` holds the MCP STDIO channel for the duration of the build (60–120s typical). Do NOT issue other `zerops_*` calls in the same response while a deploy is in flight — they will return `Not connected` (an MCP transport error, NOT a platform rejection). One deploy per tool-use-block; wait for the response before the next deploy.
+
+**Record facts as you go — `zerops_record_fact`.** v8.86 §3.1. When you encounter and fix a non-trivial issue, verify a non-obvious platform behavior, or establish a cross-codebase contract binding during any deploy substep, call `zerops_record_fact` to append a structured record to the session's facts log (`/tmp/zcp-facts-{sessionId}.jsonl`). The README writer sub-agent at the end of deploy reads those records as pre-organized input — write them at the moment of freshest knowledge, not in retrospect. Record types: `gotcha_candidate`, `ig_item_candidate`, `verified_behavior`, `platform_observation`, `fix_applied`, `cross_codebase_contract`. Examples of things worth recording:
+
+- A script silently no-ops on first deploy — you diagnose and fix → `fix_applied` (include the mechanism and the real failure mode in the record body)
+- You observe that `readinessCheck` restart count goes to zero after adding a warm-up period → `verified_behavior`
+- apidev publishes a NATS subject with a specific queue group that workerdev's controller must subscribe with → `cross_codebase_contract`
+
+A deploy with an empty facts log forces the writer sub-agent into session-log archaeology. Don't skip this.
+
 </block>
 
 <block name="deploy-execution-order">
@@ -1660,18 +1670,26 @@ When a recipe has ≥2 codebases each needing README.md + CLAUDE.md (showcase Ty
 
 **Dispatch criterion**: multi-codebase recipe (showcase OR any recipe with ≥2 codebases).
 
-**Brief template** — include verbatim, substituting `{recipe_name}`, `{plan}`, `{debug_narrative}`:
+**v8.86 — self-verifying brief shape.** The brief itself is now assembled in-process by `workflow.BuildWriterBrief(...)` rather than pasted verbatim from this block. The generated brief carries four sections: (1) INPUT — the facts log accumulated via `zerops_record_fact` during deploy substeps + the cross-codebase contract spec from the `generate.contract-spec` substep + the plan summary; (2) OUTPUT — the exact files to write; (3) VALIDATION — the full registry of content-check families, each with a runnable shell command the writer executes against its own draft; (4) ITERATE UNTIL CLEAN — the contract that the writer only returns after every validation passes. The v8.81 "ship dirty, let the dispatch gate catch it" shape is gone: a post-return failure is now a writer-brief bug (see content-fix gate) that surfaces as an immediate workflow block, not a fix-loop trigger.
 
-> You are the README + CLAUDE.md writer for the `{recipe_name}` recipe. Every codebase in `{plan.Codebases}` gets a README.md AND a CLAUDE.md, following the fragment/template rules in the deploy-step `readmes` brief. The main agent has deployed all services, run the browser walks, and survived the debug rounds — you have the debug narrative to draw on.
+**Main-agent responsibilities before dispatch**:
+
+- Run the `generate.contract-spec` substep first so the contract spec file exists.
+- Verify the facts log has entries (use `jq . /tmp/zcp-facts-{sessionId}.jsonl`). If empty, do NOT skip the recording step — back-fill one record per non-obvious fix or verified behavior the deploy revealed. An empty facts log forces the writer back into session-log archaeology, which is the exact failure mode v8.86 §3.1 removes.
+- Call `workflow.BuildWriterBrief` (exposed via the writer-subagent-dispatch helper the main agent's recipe runtime exposes), capture the returned string, and pass it as the sub-agent prompt.
+
+**Legacy brief template** — kept here for reference only. Do NOT paste this verbatim; use `BuildWriterBrief` which inlines the validation registry:
+
+> You are the README + CLAUDE.md writer for the `{recipe_name}` recipe. Every codebase in `{plan.Codebases}` gets a README.md AND a CLAUDE.md, following the fragment/template rules in the deploy-step `readmes` brief. The main agent has deployed all services, run the browser walks, and survived the debug rounds — the facts log captures what broke and how it was fixed.
 >
 > **Input context**:
-> - Debug narrative (what broke, how it was fixed): `{debug_narrative}`
-> - Per-codebase gotcha pre-classification (so you don't re-dedup across READMEs): `{gotcha_classification}`
+> - Facts log (structured records of gotcha candidates, verified behaviors, fixes applied, cross-codebase contracts): `{facts_log_body}`
+> - Cross-codebase contract spec: `{contract_spec}`
 > - Each codebase's zerops.yaml (for the YAML block in each README integration-guide)
 >
-> **Output**: 2 × `{len(codebases)}` files written via the Write tool. No Bash — the main agent handles git ops after you return. Return a bulleted list of files you wrote.
+> **Output**: 2 × `{len(codebases)}` files written via the Write tool. No Bash for infrastructure — the main agent handles git ops after you return. You MAY run the validation commands from the VALIDATION section against your draft.
 >
-> **Rules**: see the full checker list in the deploy-step `readmes` brief. The checkers run automatically after you return; the main agent dispatches you again with failure details if iteration is needed. Do NOT gate your own return on checker pass — report what you wrote and the main agent reconciles against the checker output.
+> **Rules**: run the validation commands in the VALIDATION section against your draft before returning. Fix violations, re-run, iterate. Only return when every validation passes.
 >
 > **Scope hygiene**: write README.md + CLAUDE.md files ONLY. Do not touch zerops.yaml, package.json, src/*, or any infrastructure file — those are owned by earlier sub-agents.
 
@@ -2099,6 +2117,25 @@ Only after this sub-step passes do you proceed to the `readmes` sub-step. A stag
 | Static site 404 | Wrong `documentRoot` | Match to actual build output directory |
 | Permission denied on `.git/config` | `.git/` created by root (SSHFS), deploy runs as `zerops` | `ssh {hostname} "sudo chown -R zerops:zerops /var/www/.git"` on each dev container before first deploy |
 | Env var not updating after zerops.yaml fix | Service-level env var (set via `zerops_env`) shadows zerops.yaml `run.envVariables` | Delete the service-level var (`zerops_env action="delete"`) before redeploying. Never use `zerops_env set serviceHostname=...` as a debugging shortcut for vars that belong in zerops.yaml — the service-level var takes precedence on every subsequent deploy, silently ignoring your zerops.yaml fix. Fix the zerops.yaml and redeploy; if you need to verify a value quickly, read it from logs after deploy, don't inject it as a service-level var. |
+
+</block>
+
+<block name="execOnce-semantics">
+
+### execOnce semantics — the first-deploy silent no-op is in your script, not a "burned lock"
+
+`zsc execOnce ${appVersionId}` keys on the deploy version. Every new deploy gets a fresh `appVersionId`, so the lock is **never** pre-burned by a prior deploy. If your first-deploy `initCommand` finishes instantly with no body output, the cause is in your own script — NOT a "burned key" from an earlier deploy.
+
+**Checklist when your initCommand silently no-ops:**
+
+- **Early exit**: a top-level `process.exit(0)` or `return` before the work starts. Look for unhandled rejections being swallowed by `try { … } catch {}` blocks that bail out without logging.
+- **Runtime resolution**: `ts-node -r tsconfig-paths/register` against a tsconfig with `module: nodenext` rejects relative `.js`-less imports. Either flip tsconfig to `module: commonjs` + `moduleResolution: node`, or switch to the framework's built-in start path (`nest start`, `next build`).
+- **Stdout buffering**: if you redirect output through a pipe, flush on exit. Node's default line buffering drops unflushed output when the process exits before the newline.
+- **Source-map masking**: a thrown error with an unresolved source map produces a 5-line stack that reads like success. Run with `node --enable-source-maps` to surface the real line numbers.
+
+**Do NOT use "burn" or "burn trap" wording in any CLAUDE.md or README.** That terminology does not exist in the Zerops platform. Shipping it propagates fictional folk-doctrine to downstream agents who read your README and infer behavior that isn't real. The content check `claude_md_no_burn_trap_folk` fails deploy completion when `burn` appears within 100 characters of `execOnce` in either surface.
+
+**The correct mental model:** `execOnce` is idempotent by deploy version. Inside a single deploy it runs at most once across the replica set; across deploys, each new `appVersionId` starts with a clean slate. Write gotchas that name the real mechanism (the Redis-backed lock keyed on `appVersionId`) and the real failure mode (silent script exit), not an imagined "burn" state.
 
 </block>
 
@@ -2697,6 +2734,61 @@ zerops_workflow action="complete" step="close" substep="code-review" attestation
 ```
 
 The attestation must name findings and fixes. Bare "review done" or "no issues found" attestations are rejected at the sub-step validator.
+
+</block>
+
+<block name="close-critical-fix-subagent">
+
+### 1b. Critical-fix sub-agent (showcase only — dispatched when 1a reports findings)
+
+Code review 1a is deliberately FIND-only — it returns a structured findings list and nothing else. When 1a surfaces ≥1 `[CRITICAL]` or `[WRONG]` finding, dispatch a dedicated **critical-fix sub-agent** for this substep. The goal is to keep main agent at orchestration level: the redeploy + cross-deploy + E2E reverify choreography lives inside the sub-agent, not main context.
+
+**When to skip this substep:**
+
+If 1a returned zero CRITICAL and zero WRONG (only STYLE), complete the substep with:
+
+```
+zerops_workflow action="complete" step="close" substep="critical-fix" attestation="1a returned no CRITICAL or WRONG findings (N STYLE noted). No fix dispatch required."
+```
+
+Proceed directly to 1c browser walk.
+
+**When 1a returned findings — dispatch the fix sub-agent:**
+
+```
+Fetch the brief: `zerops_guidance topic="close-critical-fix-brief"`.
+```
+
+Dispatch shape (Agent tool), prompt skeleton:
+
+> You are the close-step critical-fix sub-agent. You have full MCP tool access (Edit, Write, Bash, zerops_deploy, zerops_dev_server, zerops_logs, curl).
+>
+> **Input:** the findings JSON from code-review substep 1a:
+> ```json
+> { "critical": [ ... ], "wrong": [ ... ], "style": [ ... ] }
+> ```
+>
+> **Your task, in order:**
+> 1. For each CRITICAL and WRONG finding: read the named file, apply the fix per `fix_hint`, verify no unrelated changes leaked.
+> 2. Commit per codebase (on the mount): `git add -A && git commit -m "close-step: fix <finding-summary>"`.
+> 3. Redeploy each affected dev service: `zerops_deploy sourceService=<x>dev targetService=<x>dev setup=dev`. **Serialize deploys** — the tool blocks the MCP channel for 60–120s, parallel calls return `Not connected`.
+> 4. Restart dev servers for redeployed services: `zerops_dev_server action=start serviceHostname=<x>dev`.
+> 5. Re-run the feature-sweep curls for every api-surface feature. Every feature must return 2xx + `application/json` — a text/html response (even 200) is a hard fail (SPA nginx fallback trap).
+> 6. Cross-deploy to stage: `zerops_deploy sourceService=<x>dev targetService=<x>stage setup=prod` for each affected service.
+> 7. Re-run the feature-sweep against stage subdomains.
+> 8. Return a structured verification report: one JSON document with per-finding status (fixed / reverified / failed), the deploy IDs for each redeploy, and the sweep results for dev + stage.
+>
+> **Out of scope:** browser walks (main agent runs 1c single-threaded), `import.yaml` / finalize content, exporting / publishing.
+>
+> **Serialize every zerops_deploy call.** Do NOT batch deploys into parallel tool uses — the MCP STDIO channel is held by an in-flight deploy until it completes, and concurrent zerops_* calls will error with `Not connected`. One deploy per tool-use-block.
+
+**Close the 1b sub-step.** After the sub-agent returns with all findings verified-fixed on both dev AND stage:
+
+```
+zerops_workflow action="complete" step="close" substep="critical-fix" attestation="Dispatched close-step critical-fix sub-agent for N CRIT + M WRONG findings. Sub-agent applied fixes, redeployed <services>, reran sweep on dev + stage (all 2xx + application/json), cross-deployed. Verification report: <summary>."
+```
+
+The attestation must name the finding count AND confirm both dev + stage sweeps cleared after the fixes. Attestations that skip either side are rejected.
 
 </block>
 

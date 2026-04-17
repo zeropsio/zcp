@@ -7,8 +7,10 @@ import "strings"
 const (
 	svcPostgreSQL  = "postgresql"
 	svcMariaDB     = "mariadb"
+	svcMySQL       = "mysql"
 	svcMeilisearch = "meilisearch"
 	svcStatic      = "static"
+	svcNATS        = "nats"
 )
 
 // Service-kind constants — returned by serviceTypeKind and used by validation.
