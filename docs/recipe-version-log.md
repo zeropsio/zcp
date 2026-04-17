@@ -1511,7 +1511,7 @@ After the writer subagent shipped 6 README+CLAUDE.md files at 13:14, main called
 
 **What v25 is not for.** v25 does not validate "whether the rollback was worth it" on a single run. Two consecutive clean runs are needed before treating this substrate as the new baseline. And importantly: **if v25 exposes a content drift, the response is not a new check**. Every postmortem since v20 has added a check and every subsequent run has regressed. That pattern is what this rollback is breaking.
 
-*Merged to main: `{commit-hash-on-main}` (backfill after merge). Rollback commit: `18e3854` on branch `rollback-to-v20-substrate`. v25 will be the first per-version entry below this interlude.*
+*Merged to main: fast-forward through `dd0642a` (2026-04-17). Rollback commit: `18e3854`; log-interlude commit: `dd0642a`. v25 will be the first per-version entry below this interlude.*
 
 ---
 
