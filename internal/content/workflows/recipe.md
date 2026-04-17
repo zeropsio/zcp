@@ -2045,6 +2045,85 @@ Only after this sub-step passes do you proceed to the `readmes` sub-step. A stag
 
 </block>
 
+<block name="content-quality-overview">
+
+### The six-surface teaching system — map before you write
+
+Before the `readmes` sub-step, read this once. Every recipe publishes six distinct content surfaces. Each has its own audience, its own rubric, its own check. The agent that authors them without a mental map context-switches six times per run and drifts across boundaries (CLAUDE.md using a pattern README forbids, gotchas restating IG headings, env comments copy-pasted with hostname swapped). This overview is the map.
+
+**Surface → author, step, substep, nature:**
+
+| # | Surface | Step | Substep | Written from |
+|---|---|---|---|---|
+| 1 | `zerops.yaml` + inline comments | generate | `zerops-yaml` | Smoke-test context — platform × framework reasoning inline with each field |
+| 2 | Integration Guide (README fragment) | deploy | `readmes` | Debug rounds you just lived through; IG #1 copies zerops.yaml verbatim |
+| 3 | Gotchas (README fragment) | deploy | `readmes` | Debug rounds + platform invariant candidates; distinct from IG |
+| 4 | `import.yaml` env comments (×6 envs) | finalize | — | Structured JSON input → auto-rendered YAML |
+| 5 | Root `README.md` narrative | close | — | Authored prose + finalize template |
+| 6 | `CLAUDE.md` per codebase | deploy | `readmes` | Repo-local ops; must NOT contradict #3 |
+
+**Content flow — what must be true across surfaces:**
+
+```
+[1] zerops.yaml          ─ comments explain WHY each value (v8.82 §4.2: 35% reasoning-marker floor)
+      │ verbatim copy
+      ▼
+[2] Integration Guide    ─ IG #1 = zerops.yaml copy; IG #2+ narrate debug-round diffs
+                           (per-item: mechanism + symptom + code block — v8.82 §4.5)
+      │
+      ▼
+[3] Gotchas              ─ "what surprises you if you DON'T change something"
+                           (causal-anchor: specific Zerops mechanism + concrete failure mode)
+                           (predecessor-floor: extend what the prior recipe taught, don't re-trim it)
+      │
+      ▼
+[6] CLAUDE.md            ─ repo-local ops; no code-level mechanisms the README forbids
+                           (claude_readme_consistency)
+      │
+      ▼
+[4] import.yaml (×6)     ─ per-tier scaling + availability; 35% reasoning-marker floor
+      │
+      ▼
+[5] Root README          ─ architecture overview, NOT a link aggregator
+                           (recipe_architecture_narrative)
+```
+
+**Boundary rules — where each fact goes:**
+
+| Boundary | Rule | Which check enforces |
+|---|---|---|
+| #1 vs #4 | `zerops.yaml` = FRAMEWORK × PLATFORM per-service. `import.yaml` = ENV × SCALING per-tier. | By construction (separate files) |
+| #2 vs #3 | IG = "what I changed". Gotcha = "what surprises you if you DON'T". | `gotcha_distinct_from_guide` (token compare) |
+| #3 vs #6 | Platform facts = README gotchas. Repo-local ops (SSHFS, fuser, ssh, chown) = CLAUDE.md. | `readme_container_ops_nudge` (v8.82 §4.4 — info-only) |
+| #2 vs #4 | IG = integrator's view of `zerops.yaml`. Env comments = deployer's view of `import.yaml`. | Disjoint surfaces |
+| #5 vs #2 | Root = architecture overview. Per-codebase README = integration guide + gotchas. | `recipe_architecture_narrative` |
+
+**Rubric strength, ranked — what each surface must carry:**
+
+1. **Gotchas (#3).** Load-bearing per-bullet. Must name a SPECIFIC Zerops mechanism (L7, execOnce, readinessCheck, `${X_hostname}`, httpSupport, minContainers — not generic "container" or "envVariables") AND a CONCRETE failure mode (HTTP status, quoted error in backticks, strong symptom verb: rejects/deadlocks/drops/crashes/times out/throws). Per-role count floor. Cross-codebase unique. Worker production-correctness mandatory. Predecessor floor: the prior recipe's gotchas are the bar — extend, don't re-trim.
+
+2. **Env comments (#4).** 35% reasoning-marker floor. Per-service Jaccard distinctness. Taxonomy: because / otherwise / without / must / rather than / instead of / so that / prevents / at build time / at runtime / rolling / drain.
+
+3. **CLAUDE.md (#6).** ≥ 1200 bytes substantive content + ≥ 2 custom sections beyond the template. Must not contradict README gotchas (`claude_readme_consistency`).
+
+4. **Root README (#5).** Architecture overview — names every service, describes cross-codebase contracts, doesn't just link-aggregate.
+
+5. **Integration Guide (#2).** Per-item floor: ≥ 1 fenced code block, platform-anchor in first paragraph, AND (v8.82 §4.5) a concrete failure-mode anchor in prose body for IG #2+. IG #1 (zerops.yaml copy) is grandfathered on the symptom rule.
+
+6. **`zerops.yaml` comments (#1).** (v8.82 §4.2) 35% reasoning-marker floor at parity with env comments. IG #1 copies this verbatim — shallow comments here inherit directly into the published integration guide.
+
+**Anti-patterns to avoid on authorship:**
+
+- Don't write a gotcha that restates an IG heading — rewrite to focus on the observable symptom.
+- Don't duplicate the same fact across two codebases' READMEs — pick one owner, cross-reference from the others.
+- Don't put SSHFS / fuser / ssh-config / chown content in README gotchas — it belongs in CLAUDE.md.
+- Don't narrate fields in comments ("install dependencies", "start the app") — explain WHY the value was chosen.
+- Don't write gotchas only from what broke in this run — the debug experience is a biased sample. Walk the predecessor recipe's gotchas (injected via the chain), the "framework × platform gotcha candidates to consider" section below, and your stack's known platform traps (reconnect-forever for long-lived brokers, SDK ESM/CJS boundaries, bundler build-time vs runtime env, etc.) before attesting your set complete.
+
+**Why this map is eager-injected:** the agent authoring six surfaces in one run without seeing them as a system is the structural reason for surface-crossing mistakes. v8.82 ships this as eager content so the mental model lands in context before authorship begins, not after a checker fails.
+
+</block>
+
 <block name="readme-with-fragments">
 
 ### Per-codebase README with extract fragments (post-deploy `readmes` sub-step)

@@ -141,6 +141,18 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp kn
 			// Validate zerops.yaml fields against the live JSON schema.
 			checks = append(checks, checkZeropsYmlFields(ymlDir, validFields)...)
 
+			// v8.82 §4.2: zerops.yaml comment depth. Parity with the env
+			// import.yaml comment-depth check. Fires at generate-complete
+			// because IG #1 of each README copies zerops.yaml verbatim at
+			// deploy/readmes sub-step — if we only caught shallow comments
+			// post-copy, the agent would have to rewrite both surfaces.
+			// Fixing at generate-complete means the zerops.yaml that gets
+			// copied into IG #1 is the one that already passes the rubric.
+			raw, rawErr := ops.ReadZeropsYmlRaw(ymlDir)
+			if rawErr == nil {
+				checks = append(checks, checkZeropsYmlCommentDepth(string(raw), hostname)...)
+			}
+
 			// README content validation — fragments, integration-guide
 			// code blocks, comment specificity, predecessor floor,
 			// authenticity — all move to the deploy-step checker. v14
@@ -398,6 +410,14 @@ func checkCodebaseReadme(projectRoot string, target workflow.RecipeTarget, plan 
 		if role := workflow.CodebaseRole(plan, hostname); role != "" {
 			checks = append(checks, checkGotchaDepthFloor(kbBody, role, hostname)...)
 		}
+
+		// v8.82 §4.4: container-ops-in-README nudge. Soft/info-only.
+		// Flags gotcha bullets that mention sshfs/fuser/ssh/chown and
+		// other repo-local dev-loop tokens — those belong in CLAUDE.md,
+		// not README. recipe.md states the rule (platform facts =
+		// README; repo-local ops = CLAUDE.md); this check informs the
+		// agent without blocking step completion.
+		checks = append(checks, checkReadmeContainerOps(kbBody, hostname)...)
 	}
 
 	// CLAUDE.md vs README consistency (v8.78): procedures in CLAUDE.md

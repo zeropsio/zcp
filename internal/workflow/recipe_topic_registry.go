@@ -212,6 +212,25 @@ var recipeDeployTopics = []*GuidanceTopic{
 		BlockNames:  []string{"deploy-target-verification"},
 	},
 	{
+		// v8.83 §response-size-fix — feature-sweep-dev focused topic.
+		// Previously unmapped in subStepToTopic, which caused the substep
+		// guide to fall through to the full ~40 KB deploy monolith on
+		// every completion response. The block has existed in recipe.md
+		// since v18 (catches content-type-mismatch 200+text/html from the
+		// nginx SPA fallback trap) but was never registered as a topic.
+		ID: "feature-sweep-dev", Step: RecipeStepDeploy,
+		Description: "Dev feature sweep — curl every api-surface feature's healthCheck, require 2xx + application/json",
+		BlockNames:  []string{"feature-sweep-dev"},
+	},
+	{
+		// v8.83 §response-size-fix — feature-sweep-stage focused topic.
+		// Same fall-through pattern as feature-sweep-dev, for the stage
+		// re-verify after cross-deploy.
+		ID: "feature-sweep-stage", Step: RecipeStepDeploy,
+		Description: "Stage feature sweep — re-curl every api-surface feature against the stage subdomain",
+		BlockNames:  []string{"feature-sweep-stage"},
+	},
+	{
 		ID: "subagent-brief", Step: RecipeStepDeploy,
 		Description: "Feature sub-agent dispatch and brief",
 		Predicate:   isShowcase,
@@ -308,6 +327,19 @@ var recipeDeployTopics = []*GuidanceTopic{
 		// at deploy time means the agent always has the literal marker
 		// template when it reaches the `readmes` sub-step.
 		Eager: true,
+	},
+	{
+		// v8.82 §4.3 — six-surface teaching system overview. Eager so the
+		// agent has the mental model for where each content fact belongs
+		// (zerops.yaml vs IG vs gotchas vs CLAUDE.md vs env vs root) BEFORE
+		// it starts authoring any of them. v22 shipped content-quality
+		// issues rooted in the agent context-switching across six rubrics
+		// without ever seeing them as one system; this topic is pure
+		// teaching / coherence — no check, no enforcement, just a map.
+		ID: "content-quality-overview", Step: RecipeStepDeploy,
+		Description: "Six-surface teaching system — what goes where, author, step, rubric (v8.82 §4.3, eager)",
+		BlockNames:  []string{"content-quality-overview"},
+		Eager:       true,
 	},
 }
 

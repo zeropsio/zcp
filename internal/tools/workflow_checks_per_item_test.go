@@ -6,8 +6,9 @@ import (
 )
 
 // TestPerIGItem_AllStandalone_Pass — every IG item carries its own
-// platform-anchor token in the first prose paragraph plus a code block.
-// v20 apidev shape (real fixture).
+// platform-anchor token in the first prose paragraph, a code block, and
+// (for items beyond IG #1) a concrete failure-mode anchor in the prose
+// body per the v8.82 §4.5 rule.
 func TestPerIGItem_AllStandalone_Pass(t *testing.T) {
 	t.Parallel()
 	ig := "<!-- #ZEROPS_EXTRACT_START:integration-guide# -->\n" +
@@ -15,15 +16,74 @@ func TestPerIGItem_AllStandalone_Pass(t *testing.T) {
 		"Place this file at the repo root. The Zerops build container reads it for setup directives.\n\n" +
 		"```yaml\nzerops: []\n```\n\n" +
 		"### 2. Binding to `0.0.0.0`\n\n" +
-		"Zerops containers route traffic through an internal L7 balancer. NestJS defaults to 127.0.0.1, unreachable from the balancer.\n\n" +
+		"Zerops containers route traffic through an internal L7 balancer. NestJS defaults to 127.0.0.1; the balancer rejects the connection and the subdomain returns 502.\n\n" +
 		"```typescript\nawait app.listen(port, '0.0.0.0');\n```\n\n" +
 		"### 3. Configuring CORS with `CORS_ORIGIN`\n\n" +
-		"The `CORS_ORIGIN` env var is set per-setup in `zerops.yaml`. Use it at bootstrap so the frontend subdomain is always allowed.\n\n" +
+		"The `CORS_ORIGIN` env var is set per-setup in `zerops.yaml`. Without it the browser rejects the preflight with a 403 and every fetch from the frontend subdomain throws a CORS error.\n\n" +
 		"```typescript\napp.enableCors({ origin: process.env.CORS_ORIGIN });\n```\n" +
 		"<!-- #ZEROPS_EXTRACT_END:integration-guide# -->\n"
 	checks := checkPerIGItemStandalone(ig, "apidev")
 	if checks[0].Status != statusPass {
 		t.Fatalf("expected pass; got %s — %s", checks[0].Status, checks[0].Detail)
+	}
+}
+
+// TestPerIGItem_SymptomAnchor_Missing_Fail — IG #2 has mechanism in prose
+// but no symptom anchor. Must fail per v8.82 §4.5.
+func TestPerIGItem_SymptomAnchor_Missing_Fail(t *testing.T) {
+	t.Parallel()
+	ig := "<!-- #ZEROPS_EXTRACT_START:integration-guide# -->\n" +
+		"### 1. Adding `zerops.yaml`\n\n" +
+		"Place this file at the repo root. The Zerops build container reads it.\n\n" +
+		"```yaml\nzerops: []\n```\n\n" +
+		"### 2. Binding to `0.0.0.0`\n\n" +
+		"Zerops containers route traffic through an internal L7 balancer to the application.\n\n" +
+		"```typescript\nawait app.listen(port, '0.0.0.0');\n```\n" +
+		"<!-- #ZEROPS_EXTRACT_END:integration-guide# -->\n"
+	checks := checkPerIGItemStandalone(ig, "apidev")
+	if checks[0].Status != statusFail {
+		t.Fatalf("expected fail — IG #2 has mechanism but no failure mode; got %s", checks[0].Status)
+	}
+	if !strings.Contains(checks[0].Detail, "failure mode") && !strings.Contains(checks[0].Detail, "symptom verb") {
+		t.Fatalf("detail must reference the symptom-anchor rule, got: %s", checks[0].Detail)
+	}
+}
+
+// TestPerIGItem_IG1Grandfathered_Pass — the first item ("Adding zerops.yaml")
+// is the config itself, not a failure-prevention step. Must NOT require a
+// symptom anchor. Verifies grandfathering is position-based not content-based.
+func TestPerIGItem_IG1Grandfathered_Pass(t *testing.T) {
+	t.Parallel()
+	ig := "<!-- #ZEROPS_EXTRACT_START:integration-guide# -->\n" +
+		"### 1. Adding `zerops.yaml`\n\n" +
+		"Place this file at the repo root. The Zerops build container reads it.\n\n" +
+		"```yaml\nzerops: []\n```\n\n" +
+		"### 2. Binding to `0.0.0.0` prevents the L7 balancer from returning 502\n\n" +
+		"NestJS defaults to 127.0.0.1. The container binds and the balancer drops traffic.\n\n" +
+		"```typescript\nawait app.listen(port, '0.0.0.0');\n```\n" +
+		"<!-- #ZEROPS_EXTRACT_END:integration-guide# -->\n"
+	checks := checkPerIGItemStandalone(ig, "apidev")
+	if checks[0].Status != statusPass {
+		t.Fatalf("expected pass — IG #1 grandfathered and IG #2 has mechanism+symptom; got %s — %s", checks[0].Status, checks[0].Detail)
+	}
+}
+
+// TestPerIGItem_SymptomInTitle_Pass — symptom can live in the H3 title
+// (e.g. "Binding to 0.0.0.0 because balancer returns 502"). The check
+// joins title + allProse before scanning.
+func TestPerIGItem_SymptomInTitle_Pass(t *testing.T) {
+	t.Parallel()
+	ig := "<!-- #ZEROPS_EXTRACT_START:integration-guide# -->\n" +
+		"### 1. Adding `zerops.yaml`\n\n" +
+		"Place this file at the repo root. The Zerops build container reads it.\n\n" +
+		"```yaml\nzerops: []\n```\n\n" +
+		"### 2. Binding to `0.0.0.0` — balancer returns 502 otherwise\n\n" +
+		"Zerops routes traffic through the L7 balancer to the application container.\n\n" +
+		"```typescript\nawait app.listen(port, '0.0.0.0');\n```\n" +
+		"<!-- #ZEROPS_EXTRACT_END:integration-guide# -->\n"
+	checks := checkPerIGItemStandalone(ig, "apidev")
+	if checks[0].Status != statusPass {
+		t.Fatalf("expected pass — symptom token in title; got %s — %s", checks[0].Status, checks[0].Detail)
 	}
 }
 

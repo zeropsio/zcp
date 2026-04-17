@@ -38,13 +38,35 @@ func (r *RecipeState) buildGuide(step string, iteration int, kp knowledge.Provid
 	// for that sub-step instead of the full skeleton.
 	if r.CurrentStep < len(r.Steps) {
 		currentStep := r.Steps[r.CurrentStep]
-		if currentStep.hasSubSteps() && !currentStep.allSubStepsComplete() {
-			if subGuide := r.buildSubStepGuide(step, currentStep.currentSubStepName()); subGuide != "" {
-				// Prepend a sub-step progress line.
-				progress := fmt.Sprintf("### Sub-step %d/%d: %s\n\n",
-					currentStep.CurrentSubStep+1, len(currentStep.SubSteps), currentStep.currentSubStepName())
-				return progress + subGuide
+		if currentStep.hasSubSteps() {
+			if !currentStep.allSubStepsComplete() {
+				if subGuide := r.buildSubStepGuide(step, currentStep.currentSubStepName()); subGuide != "" {
+					// Prepend a sub-step progress line.
+					progress := fmt.Sprintf("### Sub-step %d/%d: %s\n\n",
+						currentStep.CurrentSubStep+1, len(currentStep.SubSteps), currentStep.currentSubStepName())
+					return progress + subGuide
+				}
+				// Fall-through here would mean a substep with no
+				// subStepToTopic mapping or no block content. The
+				// TestSubStepToTopic_EveryInitSubStepHasMapping meta-test
+				// prevents this at build time. If we reach here in
+				// production, return a compact "missing mapping" note
+				// instead of the full ~40 KB step monolith — the agent
+				// already received the full guide at the step-transition
+				// response and does not need it re-delivered on every
+				// substep completion.
+				return buildSubStepMissingMappingNote(step, currentStep.currentSubStepName())
 			}
+			// v8.83 §response-size-fix — terminal-substep branch.
+			// Every substep is complete; the agent is waiting to call
+			// `complete step=X` to trigger full-step checks. Without
+			// this branch, buildGuide falls through to the full ~40 KB
+			// step monolith — which the agent already received at the
+			// step-transition response. v22 observed 3 redundant 40 KB
+			// deliveries on this path (snapshot-dev, verify-stage,
+			// readmes completion responses). Serve a ~500-byte compact
+			// prompt instead.
+			return buildAllSubstepsCompleteMessage(step, currentStep)
 		}
 	}
 
@@ -473,6 +495,53 @@ func (r *RecipeState) buildSubStepGuide(step, subStep string) string {
 	return resolved
 }
 
+// buildAllSubstepsCompleteMessage returns a compact prompt for the state
+// where every sub-step of `step` is marked complete and the agent is
+// waiting to call `complete step=<step>` to trigger the full-step checks.
+//
+// Without this branch, buildGuide falls through to resolveRecipeGuidance
+// which emits the full ~40 KB step monolith — redundant because the agent
+// already received that guide at the step-transition response. v22's
+// session log captured three 40 KB redundant deliveries on this exact
+// path (after snapshot-dev, after verify-stage, after readmes).
+//
+// The compact message names the step, confirms all sub-steps are done,
+// and tells the agent what to do next. Stays well under 1 KB.
+func buildAllSubstepsCompleteMessage(step string, currentStep RecipeStep) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "### All sub-steps complete (%d/%d)\n\n",
+		len(currentStep.SubSteps), len(currentStep.SubSteps))
+	fmt.Fprintf(&b, "Every sub-step of `%s` is marked complete:\n\n", step)
+	for _, ss := range currentStep.SubSteps {
+		fmt.Fprintf(&b, "- %s\n", ss.Name)
+	}
+	fmt.Fprintf(&b, "\n**Next action**: call `zerops_workflow action=\"complete\" step=%q attestation=\"<summary of the step\">` to trigger the full-step checks and advance to the next step.\n\n", step)
+	b.WriteString("The full `" + step + "` guide was delivered at the step-transition response; it is already in your context. If you need to re-consult specific topics, fetch them via `zerops_guidance topic=\"<id>\"` on demand — do not expect the full guide to be re-delivered here.\n")
+	return b.String()
+}
+
+// buildSubStepMissingMappingNote is a defensive fallback for the case
+// where a substep has no subStepToTopic mapping OR its topic resolved to
+// empty content. The meta-test
+// TestSubStepToTopic_EveryInitSubStepHasMapping prevents the first class
+// of failure at build time; this note handles the second (topic block
+// deleted/renamed in recipe.md without registry update).
+//
+// Returns a short diagnostic instead of the full 40 KB monolith, so a
+// production regression degrades to a small note rather than context
+// flooding.
+func buildSubStepMissingMappingNote(step, subStep string) string {
+	return fmt.Sprintf(
+		"### Sub-step: %s\n\n"+
+			"(No focused guidance topic is currently mapped for this sub-step. "+
+			"The step-level guide was delivered at the step-transition response "+
+			"and is still in your context. If you need specific guidance for "+
+			"`%s`, fetch a relevant topic via `zerops_guidance topic=\"<id>\"`.)\n\n"+
+			"**Next action**: proceed with the sub-step work as described in the step guide, then call `zerops_workflow action=\"complete\" step=%q substep=%q attestation=\"<what you did>\"`.\n",
+		subStep, subStep, step, subStep,
+	)
+}
+
 // Topic ID constants used in sub-step → topic mapping.
 const topicDeployFlow = "deploy-flow"
 
@@ -507,12 +576,20 @@ func subStepToTopic(step, subStep string, plan *RecipePlan) string {
 			// Durability re-deploy: same flow as initial deploy-dev,
 			// but with the feature sub-agent's output now on-disk.
 			return topicDeployFlow
+		case SubStepFeatureSweepDev:
+			// v8.83 — previously unmapped; fall-through to the full
+			// ~40 KB deploy monolith every time snapshot-dev completed
+			// (because the next substep's focused guide was empty).
+			return "feature-sweep-dev"
 		case SubStepBrowserWalk:
 			return "browser-walk"
 		case SubStepCrossDeploy:
 			return "stage-deploy"
 		case SubStepVerifyStage:
 			return "deploy-target-verification"
+		case SubStepFeatureSweepStage:
+			// v8.83 — same fall-through fix for the stage re-verify sweep.
+			return "feature-sweep-stage"
 		case SubStepReadmes:
 			return "readme-fragments"
 		}

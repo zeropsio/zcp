@@ -11,14 +11,27 @@ import (
 
 // checkPerIGItemStandalone enforces that each `### N. <title>` block in
 // the integration-guide fragment carries its own teaching surface — at
-// least one fenced code block, and at least one platform-anchor token in
-// the FIRST prose paragraph (so the why-first ordering is enforced).
+// least one fenced code block, a platform-anchor token in the FIRST
+// prose paragraph, AND (v8.82 §4.5) a concrete failure-mode anchor
+// somewhere in the item's prose that names what breaks if the code is
+// NOT applied.
 //
 // Rationale: aggregate IG-fragment floors invite leaning on neighbors.
 // v20 apidev IG #2 ("Binding to 0.0.0.0") was 3 sentences plus 2 lines
 // of code; the explanation lived in the comment block of the zerops.yaml
 // shown in IG #1. The IG #2 block leaned on the IG #1 block. The
 // per-item rule forces every block to stand alone.
+//
+// The symptom-anchor rule (v8.82 §4.5) brings IG per-item parity with
+// the gotcha causal-anchor rule: gotchas must name a SPECIFIC
+// mechanism + CONCRETE failure mode; IG items now must do the same.
+// Without it, items ship as "add this code" without naming what
+// platform failure the code prevents — the reader learns the what
+// without the why.
+//
+// IG #1 (structural position, not content pattern) is grandfathered:
+// "Adding zerops.yaml" is the config itself, not a failure prevention.
+// Symptom-anchor only fires for items at index > 0.
 //
 // Platform-anchor tokens are intentionally inclusive — Zerops actor
 // names (Zerops, L7, balancer, container, runtime, mount), Zerops
@@ -42,8 +55,8 @@ func checkPerIGItemStandalone(igFragment, hostname string) []workflow.StepCheck 
 	}
 
 	var failures []string
-	for _, item := range items {
-		issues := item.violations()
+	for idx, item := range items {
+		issues := item.violations(idx)
 		for _, msg := range issues {
 			failures = append(failures, fmt.Sprintf("%q: %s", item.title, msg))
 		}
@@ -57,7 +70,7 @@ func checkPerIGItemStandalone(igFragment, hostname string) []workflow.StepCheck 
 		Name:   checkName,
 		Status: statusFail,
 		Detail: fmt.Sprintf(
-			"%s integration-guide items must stand alone — each `### N.` block needs (a) at least one fenced code block, AND (b) at least one platform-anchor token in the first prose paragraph (Zerops/L7/balancer/runtime/container/static base/zsc/execOnce/healthCheck/readinessCheck/subdomain/initCommands/deployFiles/${X_hostname}/etc.). Items that lean on a neighboring block for the why are decorative — copy the relevant sentence into THIS block. Findings: %s",
+			"%s integration-guide items must stand alone — each `### N.` block needs (a) at least one fenced code block, (b) at least one platform-anchor token in the first prose paragraph (Zerops/L7/balancer/runtime/container/static base/zsc/execOnce/healthCheck/readinessCheck/subdomain/initCommands/deployFiles/${X_hostname}/etc.), AND (c) for items beyond IG #1, a CONCRETE failure-mode anchor in the prose body — an HTTP status code, a backtick-quoted error name, or a strong symptom verb (rejects/deadlocks/drops/crashes/times out/returns wrong content-type/breaks/hangs/throws). Items that lean on a neighboring block for the why are decorative — copy the relevant sentence into THIS block. The symptom anchor mirrors the gotcha causal-anchor rule: IG teaches the what + why + what-breaks. Findings: %s",
 			hostname, strings.Join(failures, "; "),
 		),
 	}}
@@ -65,13 +78,23 @@ func checkPerIGItemStandalone(igFragment, hostname string) []workflow.StepCheck 
 
 // igItem holds one `### N. <title>` block of an integration-guide
 // fragment with its prose split from its code blocks.
+//
+// allProse holds every non-code line of the item concatenated — used by
+// the v8.82 §4.5 symptom-anchor rule, which scans the whole item body
+// (not just the first paragraph) so the author can place the mechanism
+// in para 1 and the failure mode in para 2 if the shape reads better.
 type igItem struct {
 	title         string
 	firstProsePar string
+	allProse      string
 	codeBlocks    int
 }
 
-func (i igItem) violations() []string {
+// violations reports every rule this item fails. idx is the item's
+// 0-based position within the integration-guide fragment; idx == 0 is
+// the grandfathered zerops.yaml block and skips the symptom-anchor
+// check.
+func (i igItem) violations(idx int) []string {
 	var msgs []string
 	if i.codeBlocks == 0 {
 		msgs = append(msgs, "no fenced code block — IG items must ship copy-pasteable code")
@@ -79,16 +102,33 @@ func (i igItem) violations() []string {
 	if !containsPlatformAnchor(i.firstProsePar) {
 		msgs = append(msgs, "first prose paragraph names no Zerops mechanism (the why is missing)")
 	}
+	// v8.82 §4.5: IG causal-anchor parity. Grandfather IG #1 — it's the
+	// zerops.yaml block itself, not a failure prevention step. Every
+	// subsequent item must name a concrete failure mode somewhere in its
+	// prose body so the reader sees the WHY this code adjustment exists.
+	if idx > 0 && !hasConcreteFailureMode(i.allProse+" "+i.title) {
+		msgs = append(msgs, "prose body names no concrete failure mode (HTTP status, quoted error name, or symptom verb: rejects/drops/crashes/times out/breaks/hangs/throws) — what breaks if the reader skips this step?")
+	}
 	return msgs
 }
 
 // splitIGIntoItems walks an integration-guide fragment and returns one
 // igItem per H3 heading. Items before the first H3 are dropped.
+//
+// For every item we capture:
+//   - title: the H3 text (with "N. " enumeration stripped)
+//   - firstProsePar: the first non-empty prose paragraph outside code
+//     fences (used by the platform-anchor rule)
+//   - allProse: every non-empty prose line outside code fences joined
+//     with single spaces (used by the v8.82 §4.5 symptom-anchor rule
+//     which needs to scan the whole item body)
+//   - codeBlocks: number of fenced code blocks opened inside the item
 func splitIGIntoItems(ig string) []igItem {
 	lines := strings.Split(ig, "\n")
 	var items []igItem
 	var cur *igItem
 	var firstParBuf strings.Builder
+	var allProseBuf strings.Builder
 	firstParDone := false
 	inFence := false
 
@@ -97,9 +137,11 @@ func splitIGIntoItems(ig string) []igItem {
 			return
 		}
 		cur.firstProsePar = strings.TrimSpace(firstParBuf.String())
+		cur.allProse = strings.TrimSpace(allProseBuf.String())
 		items = append(items, *cur)
 		cur = nil
 		firstParBuf.Reset()
+		allProseBuf.Reset()
 		firstParDone = false
 		inFence = false
 	}
@@ -130,18 +172,25 @@ func splitIGIntoItems(ig string) []igItem {
 			continue
 		}
 		// Outside code fence. Collect the first non-empty prose
-		// paragraph (until a blank line ends it).
+		// paragraph (until a blank line ends it) AND the full prose
+		// body for the symptom-anchor rule.
 		if !firstParDone {
 			if trimmed == "" {
 				if firstParBuf.Len() > 0 {
 					firstParDone = true
 				}
-				continue
+			} else {
+				if firstParBuf.Len() > 0 {
+					firstParBuf.WriteByte(' ')
+				}
+				firstParBuf.WriteString(trimmed)
 			}
-			if firstParBuf.Len() > 0 {
-				firstParBuf.WriteByte(' ')
+		}
+		if trimmed != "" {
+			if allProseBuf.Len() > 0 {
+				allProseBuf.WriteByte(' ')
 			}
-			firstParBuf.WriteString(trimmed)
+			allProseBuf.WriteString(trimmed)
 		}
 	}
 	flush()

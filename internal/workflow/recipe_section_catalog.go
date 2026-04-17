@@ -127,6 +127,11 @@ var (
 		{Name: "feature-sweep-stage"},
 		{Name: "reading-deploy-failures"},
 		{Name: "common-deployment-issues"},
+		// v8.82 §4.3 — six-surface teaching system overview. Sits right
+		// before readme-with-fragments so the agent lands in the authoring
+		// step with a map of ALL six content surfaces and their rubrics,
+		// not just the README shape. Teaching-only; no check.
+		{Name: "content-quality-overview"},
 		// v14: README writing moved from generate to the post-verify
 		// readmes sub-step so gotchas narrate lived experience.
 		{Name: "readme-with-fragments"},

@@ -257,6 +257,72 @@ func TestRecipeTopicRegistry_FeatureSubagentMCPSchemas_Registered(t *testing.T) 
 	}
 }
 
+// TestRecipeTopicRegistry_ContentQualityOverview_Registered — v8.82 §4.3
+// asserts the content-quality-overview topic resolves, is eager, and carries
+// the six-surface map + boundary rules + anti-patterns. The agent reads this
+// at deploy-step start to build a coherent mental model of all six content
+// surfaces before authoring any of them.
+func TestRecipeTopicRegistry_ContentQualityOverview_Registered(t *testing.T) {
+	t.Parallel()
+	plan := fixtureForShape(ShapeDualRuntimeShowcase)
+	topic := LookupTopic("content-quality-overview")
+	if topic == nil {
+		t.Fatal("content-quality-overview not registered")
+	}
+	if !topic.Eager {
+		t.Fatal("content-quality-overview must be Eager so the map lands in context before authorship")
+	}
+	if topic.Step != RecipeStepDeploy {
+		t.Fatalf("content-quality-overview must live on the deploy step; got %q", topic.Step)
+	}
+	body, err := ResolveTopic("content-quality-overview", plan)
+	if err != nil {
+		t.Fatalf("resolve content-quality-overview: %v", err)
+	}
+	// Content anchors — the block names all six surfaces and the key
+	// boundary rules. If any of these go missing, the map is broken.
+	wants := []string{
+		"six-surface",
+		"zerops.yaml",
+		"Integration Guide",
+		"Gotchas",
+		"import.yaml",
+		"CLAUDE.md",
+		"Root README",
+		// Rubric references
+		"causal-anchor",
+		"predecessor-floor",
+		// Boundary rules
+		"Platform facts",
+		"repo-local ops",
+		// Anti-patterns
+		"Anti-patterns",
+	}
+	for _, w := range wants {
+		if !stringsContains(body, w) {
+			t.Errorf("content-quality-overview body missing %q", w)
+		}
+	}
+}
+
+// TestInjectEagerTopics_ContentQualityOverview_InDeploy asserts that the
+// content-quality-overview topic reaches the deploy-step eager injection
+// regardless of shape. It's a teaching overview — every shape needs the
+// mental map before authoring the README.
+func TestInjectEagerTopics_ContentQualityOverview_InDeploy(t *testing.T) {
+	t.Parallel()
+	for _, shape := range []RecipeShape{
+		ShapeHelloWorld, ShapeBackendMinimal,
+		ShapeFullStackShowcase, ShapeDualRuntimeShowcase,
+	} {
+		plan := fixtureForShape(shape)
+		got := InjectEagerTopics(recipeDeployTopics, plan)
+		if !stringsContains(got, "content-quality-overview") {
+			t.Errorf("shape %q did not receive content-quality-overview eager injection", shape)
+		}
+	}
+}
+
 // TestResolveTopic_UnknownTopic verifies error on unknown topic.
 func TestResolveTopic_UnknownTopic(t *testing.T) {
 	t.Parallel()
