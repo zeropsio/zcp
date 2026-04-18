@@ -1637,6 +1637,26 @@ The server's `Run bootstrap first` suggestion is **misleading and latently dange
 
 ---
 
+### v26 — aborted early; two defects surfaced, both fixed before v27
+
+- **Date**: 2026-04-18
+- **Wall**: ~23 min active work (05:54 → 07:17 UTC), user-aborted
+- **Session logs**: `nestjs-showcase-v26/SESSIONS_LOGS/main-session.jsonl` (172 events) + 3 scaffold subagent logs
+- **Reached**: research → provision → scaffold subagents (all correctly SSH'd) → main agent zerops.yaml writes. Did NOT reach deploy step; **v8.90's substep-delivery calibration stays inconclusive**.
+
+**Defect 1 — `recipePlan` stringification (opener).** Two wasted round-trips at `complete step=research`: agent passed the plan as a JSON **string** twice (`"recipePlan": "{\"slug\":...}"`) before passing as an object on the third try. MCP schema validator correctly rejected (`type: "string", want one of "null, object"`); harmless but costs ~6-12s. Root cause: the `jsonschema` tag on `WorkflowInput.RecipePlan` was terse ("Structured recipe plan for research step completion") with no explicit "object, not string" hint. Fixed as **v8.93.2** ([f54533e](https://github.com/zeropsio/zcp/commit/f54533e)) — concrete object-shape example + "stringifying costs a retry round-trip" warning in the jsonschema tag.
+
+**Defect 2 — `git init` zcp-side chown dance (terminator).** At 07:16:33 main agent ran `cd /var/www/{host} && git init && git add -A && git commit && sudo chown -R zerops:zerops /var/www/{host}/.git` zcp-side for all three codebases in parallel. The zcp-side `sudo chown` permission-denies against the SSHFS mount. Agent self-corrected in ~5s by ssh'ing the chown; user aborted to ship the fix. Same failure class as v17 and v21. Teaching existed before v26 (`git-config-mount` block at provision said "chown via SSH"; `where-commands-run` eager block at deploy step-entry listed `git init/add/commit` as SSH-only) but was split across step-entries — the SSH-only rule wasn't in hottest context when the scaffold-commit fired at end of generate (BEFORE deploy step-entry delivers the eager rule). Fixed as **v8.93.1** ([2f9cd47](https://github.com/zeropsio/zcp/commit/2f9cd47)) — `git-config-mount` block rewritten as a single container-side SSH call doing config + init + initial commit in one go. `.git/` is owned by `zerops` from the first byte, the chown dance is unreachable, and the brief demonstrates only one shape.
+
+**Not observed (v25-class carryovers that held)**: subagents did NOT call `zerops_workflow` at spawn (v8.90 Fix A + C held in the scaffold subagents that ran); `where-commands-run` eager delivery intact at provision (main agent DID ssh correctly for the initial git config at 05:57 — it's only the POST-scaffold commit at 07:16 that slipped). Substep-delivery bypass could not recur because the run never reached deploy.
+
+**v27 calibration bar (carried forward from v26's inconclusive run + the two v8.93 fixes):**
+- `recipePlan` passes on the first `complete step=research` call (no type-string retry)
+- 0 `cd /var/www/{host} && <exec>` zcp-side patterns observed anywhere — git or otherwise. Note: `bash_guard` middleware is still inert ([internal/tools/bash_guard.go:44-49](../internal/tools/bash_guard.go#L44-L49) — Claude Code's Bash tool is not interceptable from MCP), so compliance is purely brief-driven
+- v25-era v8.90 calibration items still open: 0 `SUBAGENT_MISUSE` rejections, substep-complete responses land briefs in phase (`complete init-commands` ≥14 KB with subagent-brief phrases; `complete feature-sweep-stage` ≥17 KB with readme-fragments phrases), step-entry ≤30 KB, ≤2 full-step README content-check failures. v27 is the first full run since v8.90 shipped — the substep-delivery mechanism has not been tested end-to-end.
+
+---
+
 ## Adding a new version
 
 When a new recipe run lands at `/Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v{N}/`:
