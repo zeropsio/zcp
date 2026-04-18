@@ -1502,3 +1502,308 @@ func writeFile(t *testing.T, path, content string) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+// TestCheckRecipeGenerate_EnvSelfShadow_SeparateWorker — v8.94. v28 shipped a
+// workerdev zerops.yaml containing nine `key: ${key}` self-shadow lines
+// (db_hostname, queue_user, ...) in run.envVariables. complete step=generate
+// returned zero worker-prefixed checks — the recipe generate checker filtered
+// worker targets out before checking anything. The lesson: separate-codebase
+// workers have their OWN zerops.yaml and need the same env_self_shadow floor
+// the app/api targets already get.
+func TestCheckRecipeGenerate_EnvSelfShadow_SeparateWorker(t *testing.T) {
+	t.Parallel()
+
+	plan := &workflow.RecipePlan{
+		Framework:   "nestjs",
+		Tier:        workflow.RecipeTierShowcase,
+		Slug:        "nestjs-showcase",
+		RuntimeType: "nodejs@22",
+		Research: workflow.ResearchData{
+			ServiceType:    "nodejs",
+			PackageManager: "npm",
+			HTTPPort:       3000,
+			BuildCommands:  []string{"npm ci"},
+			DeployFiles:    []string{"dist"},
+			StartCommand:   "node dist/main.js",
+		},
+		Targets: []workflow.RecipeTarget{
+			{Hostname: "app", Type: "static", Role: "app"},
+			{Hostname: "api", Type: "nodejs@22", Role: "api"},
+			// Separate-codebase worker — SharesCodebaseWith is empty.
+			// Its own zerops.yaml lives at workerdev/zerops.yaml.
+			{Hostname: "worker", Type: "nodejs@22", IsWorker: true},
+			{Hostname: "db", Type: "postgresql@17"},
+			{Hostname: "queue", Type: "nats@2.12"},
+		},
+	}
+
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Three codebase mounts: appdev (static), apidev (clean), workerdev (self-shadow).
+	for _, sub := range []string{"appdev", "apidev", "workerdev"} {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	writeFile(t, filepath.Join(dir, "appdev", "zerops.yaml"), frontendZeropsYaml)
+	writeFile(t, filepath.Join(dir, "apidev", "zerops.yaml"), `zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+      deployFiles: [.]
+    run:
+      envVariables:
+        NODE_ENV: development
+      start: zsc noop --silent
+      ports:
+        - port: 3000
+  - setup: prod
+    build:
+      base: nodejs@22
+      buildCommands:
+        - npm ci
+      deployFiles: [./dist]
+    run:
+      envVariables:
+        NODE_ENV: production
+      start: node dist/main.js
+      ports:
+        - port: 3000
+`)
+	// Workerdev ships nine self-shadow lines — exact v28 shape.
+	writeFile(t, filepath.Join(dir, "workerdev", "zerops.yaml"), `zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+      deployFiles: [.]
+    run:
+      envVariables:
+        NODE_ENV: development
+        db_hostname: ${db_hostname}
+        db_port: ${db_port}
+        db_user: ${db_user}
+        db_password: ${db_password}
+        queue_hostname: ${queue_hostname}
+        queue_port: ${queue_port}
+        queue_user: ${queue_user}
+        queue_password: ${queue_password}
+      start: zsc noop --silent
+  - setup: prod
+    build:
+      base: nodejs@22
+      buildCommands:
+        - npm ci
+      deployFiles: [./dist]
+    run:
+      envVariables:
+        NODE_ENV: production
+      start: node dist/worker.js
+`)
+
+	checker := checkRecipeGenerate(stateDir, nil, nil)
+	result, err := checker(context.Background(), plan, testRecipeState())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	byName := map[string]workflow.StepCheck{}
+	for _, c := range result.Checks {
+		byName[c.Name] = c
+	}
+
+	// Worker must be enumerated — zerops_yml_exists check present.
+	if _, ok := byName["worker_zerops_yml_exists"]; !ok {
+		t.Error("worker_zerops_yml_exists check missing — separate-codebase worker was not enumerated")
+	}
+
+	// Worker self-shadow check MUST fire and MUST fail.
+	workerShadow, ok := byName["worker_env_self_shadow"]
+	if !ok {
+		t.Fatal("worker_env_self_shadow check missing — self-shadow enumeration does not cover workers")
+	}
+	if workerShadow.Status != statusFail {
+		t.Errorf("worker_env_self_shadow status = %q, want fail; detail: %s", workerShadow.Status, workerShadow.Detail)
+	}
+	// Detail should name the offending keys so the agent can locate them.
+	if !strings.Contains(workerShadow.Detail, "db_hostname") {
+		t.Errorf("worker_env_self_shadow detail should mention db_hostname: %s", workerShadow.Detail)
+	}
+
+	// Overall result must fail — self-shadow is a generate-blocking defect.
+	if result.Passed {
+		t.Error("result.Passed = true, want false — worker self-shadow should block generate")
+	}
+}
+
+// TestCheckRecipeGenerate_EnvSelfShadow_CleanWorker — companion to the fail
+// case. Same plan shape, workerdev zerops.yaml has NO self-shadow — the
+// worker_env_self_shadow check must fire and pass. Regression guard against a
+// fix that suppresses the check entirely (which would also look like "no
+// failures" in the first test but silently regresses v8.94's coverage).
+func TestCheckRecipeGenerate_EnvSelfShadow_CleanWorker(t *testing.T) {
+	t.Parallel()
+
+	plan := &workflow.RecipePlan{
+		Framework:   "nestjs",
+		Tier:        workflow.RecipeTierShowcase,
+		Slug:        "nestjs-showcase",
+		RuntimeType: "nodejs@22",
+		Research: workflow.ResearchData{
+			ServiceType: "nodejs", PackageManager: "npm", HTTPPort: 3000,
+		},
+		Targets: []workflow.RecipeTarget{
+			{Hostname: "app", Type: "static", Role: "app"},
+			{Hostname: "api", Type: "nodejs@22", Role: "api"},
+			{Hostname: "worker", Type: "nodejs@22", IsWorker: true},
+			{Hostname: "db", Type: "postgresql@17"},
+		},
+	}
+
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, sub := range []string{"appdev", "apidev", "workerdev"} {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile(t, filepath.Join(dir, "appdev", "zerops.yaml"), frontendZeropsYaml)
+	writeFile(t, filepath.Join(dir, "apidev", "zerops.yaml"), `zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+      deployFiles: [.]
+    run:
+      envVariables:
+        NODE_ENV: development
+      start: zsc noop --silent
+      ports:
+        - port: 3000
+  - setup: prod
+    build:
+      base: nodejs@22
+      buildCommands:
+        - npm ci
+      deployFiles: [./dist]
+    run:
+      envVariables:
+        NODE_ENV: production
+      start: node dist/main.js
+      ports:
+        - port: 3000
+`)
+	// Worker yaml with properly renamed keys — no self-shadow.
+	writeFile(t, filepath.Join(dir, "workerdev", "zerops.yaml"), `zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+      deployFiles: [.]
+    run:
+      envVariables:
+        NODE_ENV: development
+        DB_HOST: ${db_hostname}
+        DB_PORT: ${db_port}
+        NATS_HOST: ${queue_hostname}
+      start: zsc noop --silent
+  - setup: prod
+    build:
+      base: nodejs@22
+      buildCommands:
+        - npm ci
+      deployFiles: [./dist]
+    run:
+      envVariables:
+        NODE_ENV: production
+        DB_HOST: ${db_hostname}
+        NATS_HOST: ${queue_hostname}
+      start: node dist/worker.js
+`)
+
+	checker := checkRecipeGenerate(stateDir, nil, nil)
+	result, err := checker(context.Background(), plan, testRecipeState())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	byName := map[string]workflow.StepCheck{}
+	for _, c := range result.Checks {
+		byName[c.Name] = c
+	}
+	workerShadow, ok := byName["worker_env_self_shadow"]
+	if !ok {
+		t.Fatal("worker_env_self_shadow check missing when worker yaml is clean")
+	}
+	if workerShadow.Status != statusPass {
+		t.Errorf("worker_env_self_shadow status = %q, want pass; detail: %s", workerShadow.Status, workerShadow.Detail)
+	}
+}
+
+// TestCheckRecipeGenerate_EnvSelfShadow_AppTargetCovered ensures the
+// self-shadow check fires on non-worker runtime targets as well. v28 was
+// written after an app-target self-shadow would also slip through the recipe
+// path (bootstrap checkGenerate had the check; recipe checkRecipeGenerate did
+// not). Parity means every enumerated hostname gets the floor.
+func TestCheckRecipeGenerate_EnvSelfShadow_AppTargetCovered(t *testing.T) {
+	t.Parallel()
+
+	plan := testRecipePlan() // single-target Laravel minimal plan
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	appDir := filepath.Join(dir, "app")
+	if err := os.MkdirAll(appDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// App-target zerops.yaml with a self-shadow line.
+	writeFile(t, filepath.Join(appDir, "zerops.yaml"), `zerops:
+  - setup: dev
+    build:
+      base: php-nginx@8.4
+      deployFiles: [.]
+    run:
+      envVariables:
+        APP_ENV: local
+        db_hostname: ${db_hostname}
+      ports:
+        - port: 80
+  - setup: prod
+    build:
+      base: php-nginx@8.4
+      deployFiles: [.]
+    run:
+      envVariables:
+        APP_ENV: production
+      ports:
+        - port: 80
+`)
+
+	checker := checkRecipeGenerate(stateDir, nil, nil)
+	result, err := checker(context.Background(), plan, testRecipeState())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var appShadow *workflow.StepCheck
+	for i := range result.Checks {
+		if result.Checks[i].Name == "app_env_self_shadow" {
+			appShadow = &result.Checks[i]
+			break
+		}
+	}
+	if appShadow == nil {
+		t.Fatal("app_env_self_shadow check missing — app targets also need self-shadow enumeration")
+	}
+	if appShadow.Status != statusFail {
+		t.Errorf("app_env_self_shadow status = %q, want fail", appShadow.Status)
+	}
+}

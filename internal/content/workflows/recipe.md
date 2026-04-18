@@ -812,6 +812,8 @@ For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appde
 4. **Main agent writes zerops.yaml LAST** — `zerops-yaml` sub-step. Use the install flow you just validated under smoke-test as the source of truth for `buildCommands`, `cache`, and `deployFiles`. Earlier v13 ordering had you writing zerops.yaml from research-time assumptions, then discovering at deploy time that the real build needed different steps.
 5. **README is NOT written during generate.** The scaffold sub-agent brief below explicitly says DO NOT write README.md. Any README content on the mounts at generate-complete time is wrong — delete it before completing. The `readmes` sub-step at the end of deploy is the only place READMEs are written, and by then the agent has lived through the debug rounds that make the gotchas section honest.
 
+**Concurrency — use the scaffold-dispatch idle window, don't just wait.** Dispatching three scaffold sub-agents and then sitting idle for 2-3 min until they return is wasted wall time. The scaffold sub-agent brief explicitly forbids scaffold agents from writing `zerops.yaml` — deploy config is main-agent territory — so these work streams are independent. The moment you dispatch the scaffolds, start drafting the zerops.yaml STRUCTURE for each codebase in parallel: runtime `base`, setup names (`dev` + `prod` + `worker` as applicable), `run.envVariables` using cross-service refs from the plan, `run.ports`, `healthCheck` where required. You have all of this from `plan.runtime.type`, `plan.targets[].ports`, `plan.targets[].setups`, and the managed-service list. Leave `buildCommands`, `cache`, and `deployFiles` as TODO placeholders — those still wait for smoke-test validation per step 4 above. When scaffolds return, merge their source output with your already-drafted zerops.yaml and fill the three smoke-test-dependent fields. This turns 2-3 min of idle wall into overlapped work without losing the smoke-test-before-buildCommands invariant that v14 locked in.
+
 **Scaffold sub-agent brief — include verbatim (edit only the codebase-specific names and service list from the plan):**
 
 > **Verify every import, decorator, and module-wiring call against the installed package, not against memory.** Before committing an `import` line, an adapter registration, or any language-level symbol binding, open the package's on-disk manifest (`node_modules/<pkg>/package.json`, `vendor/<pkg>/composer.json`, `go.sum` + the module's `go.mod`, the gem's `*.gemspec`, etc.) and confirm the subpath / symbol you're about to reference is exported by the version actually installed. Training-data memory for library APIs is version-frozen and is the single biggest source of stale-path compile errors the code-review sub-agent has to reject at close time. The verification is mechanical and takes one file read — always cheaper than a close-step round-trip. **When in doubt, run the tool's own scaffolder against a scratch directory and copy its import shapes verbatim.** The installed version's own scaffolder is the authoritative source of current-major idioms.
@@ -898,7 +900,99 @@ For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appde
 >
 > **The dashboard you ship is one green-dot panel.** A reader looking at the deployed page should see five rows: `db • green`, `redis • green`, `nats • green`, `storage • green`, `search • green` (with the service names from the plan). That is the correct, expected, final output of the scaffold phase. The feature sub-agent at deploy step 4b builds every showcase section on top of this — owning API routes, frontend components, and worker payloads as a single coherent author — so the dashboard at close time is rich and feature-complete. If you are tempted to add a "small demo" or "minimal example" of any managed service, stop: that is the feature sub-agent's job.
 >
-> **Reporting back:** return a bulleted list of the files you wrote and the env var names you wired for each managed service. Do not claim you implemented any features. You didn't. If your return value makes the main agent think step 4b is already done, the brief was not followed.
+> ### Pre-ship self-verification (MANDATORY — do not return to the main agent until all assertions pass)
+>
+> Before returning, you MUST run the following assertions against your generated code on the mount (`/var/www/{hostname}/`). Each assertion is a concrete command; if it exits non-zero, fix the underlying issue in your code and re-run the FULL assertion set before returning. Prose checklists drift. Runnable assertions do not.
+>
+> Copy-paste the script below (substitute `HOST={your-codebase-hostname}`):
+>
+> ```bash
+> HOST={hostname}
+> MOUNT=/var/www/$HOST
+> FAIL=0
+>
+> # Assertion 1 — NO self-shadow in run.envVariables
+> # Matches the `  key: ${key}` pattern. Skips mode flags like NODE_ENV.
+> if grep -nE "^\s+([a-zA-Z_][a-zA-Z0-9_]*):\s*\\\$\{\1\}\s*$" $MOUNT/zerops.yaml 2>/dev/null \
+>     | grep -v "NODE_ENV\|APP_ENV" | head -1; then
+>     echo "FAIL: self-shadow pattern in zerops.yaml — see zerops_guidance topic=env-var-model"
+>     FAIL=1
+> fi
+>
+> # Assertion 2 — If app.listen is used, bind 0.0.0.0
+> if grep -rl "app\.listen\|\.listen(" $MOUNT/src/ 2>/dev/null | while read f; do
+>     if grep -q "app.listen\|\.listen(" "$f"; then
+>         grep -qE "'0\.0\.0\.0'|\"0\.0\.0\.0\"|0\.0\.0\.0" "$f" || echo "$f"
+>     fi
+> done | head -1; then
+>     echo "FAIL: app.listen without 0.0.0.0 binding — L7 balancer returns 502 on localhost"
+>     FAIL=1
+> fi
+>
+> # Assertion 3 — Express / Nest — trust proxy on
+> if grep -rq "express\|NestFactory" $MOUNT/src/ 2>/dev/null; then
+>     if ! grep -rq "trust proxy\|trustProxy\|'trust proxy'" $MOUNT/src/; then
+>         echo "FAIL: Express/Nest without trust proxy — req.protocol/req.ip reflect balancer, not client"
+>         FAIL=1
+>     fi
+> fi
+>
+> # Assertion 4 — AWS SDK S3Client with forcePathStyle
+> if grep -rq "new S3Client\|S3Client(" $MOUNT/src/ 2>/dev/null; then
+>     if ! grep -rq "forcePathStyle:\s*true" $MOUNT/src/; then
+>         echo "FAIL: S3Client without forcePathStyle: true — MinIO rejects virtual-hosted-style"
+>         FAIL=1
+>     fi
+> fi
+>
+> # Assertion 5 — NATS ClientProxy NOT using URL-embedded credentials
+> if grep -rnE "'nats://[^']*:[^']*@|\"nats://[^\"]*:[^\"]*@" $MOUNT/src/ 2>/dev/null | head -1; then
+>     echo "FAIL: URL-embedded NATS creds — v2 client strips them silently"
+>     FAIL=1
+> fi
+>
+> # Assertion 6 — Valkey / Redis connection string with password segment
+> # Zerops managed Valkey has no auth — adding :password@ breaks DNS
+> if grep -rnE "redis://[^@]*:[^@]*@|valkey://[^@]*:[^@]*@" $MOUNT/src/ 2>/dev/null | head -1; then
+>     echo "FAIL: Valkey/Redis connection with :password@ — managed service has no auth"
+>     FAIL=1
+> fi
+>
+> # Assertion 7 — Static base: deployFiles uses tilde suffix
+> if grep -q "base:\s*static" $MOUNT/zerops.yaml 2>/dev/null; then
+>     if grep -qE "deployFiles:\s*\./dist\s*$" $MOUNT/zerops.yaml; then
+>         echo "FAIL: static base with deployFiles: ./dist (no tilde) — Nginx 404s on /"
+>         FAIL=1
+>     fi
+> fi
+>
+> # Assertion 8 — .gitignore exists and covers node_modules
+> if [ ! -f $MOUNT/.gitignore ]; then
+>     echo "FAIL: .gitignore missing"
+>     FAIL=1
+> elif ! grep -qE "^(\s*node_modules|\s*/node_modules)" $MOUNT/.gitignore; then
+>     echo "FAIL: .gitignore does not ignore node_modules — 209 MB bloat class (v21)"
+>     FAIL=1
+> fi
+>
+> # Assertion 9 — .env.example preserved as documentation (not populated .env)
+> if [ -f $MOUNT/.env ] && [ ! -f $MOUNT/.env.example ]; then
+>     echo "FAIL: .env exists without .env.example — dotenv will shadow OS env vars at runtime"
+>     FAIL=1
+> fi
+>
+> exit $FAIL
+> ```
+>
+> Run via `bash -c '...'` (or save to a temp script and invoke it) on the zcp side against the mount. **If FAIL=1, fix the specific issue reported in your code and re-run the ENTIRE script until it exits 0. Do NOT return to the main agent until all assertions pass.**
+>
+> Cite the relevant `zerops_knowledge` guide when applying a fix — `env-var-model` for self-shadow, `http-support` for 0.0.0.0 bind + trust proxy, `object-storage` for forcePathStyle. Do NOT invent mental models; follow the guide's framing.
+>
+> Each time an assertion fails and you fix it, call `zerops_record_fact type=fix_applied` so the content-authoring sub-agent later classifies the event correctly as a scaffold decision, NOT a platform gotcha. A self-inflicted bug you caught before ship is not a porter-facing trap.
+>
+> As new recurrent traps surface in future runs, this list will grow. Each added assertion prevents the next recipe from repeating a runtime incident that already cost time once.
+>
+> **Reporting back:** return a bulleted list of the files you wrote and the env var names you wired for each managed service. **Include the exit code of the pre-ship self-verification script** — it must be 0. Do not claim you implemented any features. You didn't. If your return value makes the main agent think step 4b is already done, the brief was not followed.
 
 </block>
 
@@ -1198,6 +1292,38 @@ Writing-style voice (the "developer to developer" tone, anti-patterns, correct-s
 
 </block>
 
+<block name="fact-recording-mandatory">
+
+### Fact recording — MANDATORY during deploy
+
+**This is how the content-authoring sub-agent at the end of deploy writes the gotchas section.** v28 shipped ~33% genuine gotchas and one folk-doctrine defect because the agent that spent 85 min debugging also wrote the reader-facing content — self-narrative leaked in as speculation. The fix: log structured facts at the moment of freshest knowledge (when you apply the fix), then hand those facts off — not the run transcript — to a fresh-context authoring sub-agent at the `readmes` substep.
+
+**CALL `zerops_record_fact` every time you:**
+
+- Apply a fix for a non-trivial build, deploy, or runtime failure
+- Verify a non-obvious platform behavior (e.g., `zsc execOnce` idempotency semantics, readiness-gate timing, L7 routing, subdomain assignment)
+- Establish a cross-codebase contract binding (DB schema owner, NATS queue-group name, HTTP response shape, shared entity ownership)
+- Notice the scaffold emitted a known-trap pattern that required a runtime rewrite (env-var shadow, S3 `forcePathStyle: true` missing, URL-embedded NATS creds, etc.)
+- Observe a platform behavior that a fresh reader would be surprised by (regardless of whether it broke anything)
+
+**Required fields:** `type`, `title`. **Recommended:** `substep`, `codebase`, `mechanism`, `failureMode`, `fixApplied`, `evidence`.
+
+**Valid `type` values:**
+- `gotcha_candidate` — platform-invariant or platform×framework surprise a porter would hit
+- `ig_item_candidate` — platform-forced code change worth an integration-guide item
+- `verified_behavior` — you confirmed how a platform mechanism actually behaves
+- `platform_observation` — something about how Zerops does work that's worth knowing
+- `fix_applied` — you changed something in the scaffold / code to unblock the run
+- `cross_codebase_contract` — shape-binding between codebases (queue-group name, response shape)
+
+**Classification happens in the authoring sub-agent, not here.** When you're unsure whether something is a gotcha or a self-inflicted bug, record it as `fix_applied` with the mechanism you think caused it and let the authoring sub-agent classify. Under-recording is worse than over-recording.
+
+**DO NOT write content during deploy.** README.md, CLAUDE.md, IG items, and gotchas are authored by a separate sub-agent at the `readmes` substep based on the facts you log here and on the final recipe state. Your job during deploy is to **record facts, not narrate them**.
+
+**Calibration:** v28 baseline was 3 voluntary `zerops_record_fact` calls during deploy. v29 target with this guidance mandatory: **≥5 calls**, upper bound ~15. If you're over 20 calls, you're over-steering — log root-cause mechanisms, not every micro-step.
+
+</block>
+
 <block name="deploy-execution-order">
 
 ### Deploy execution order by recipe type
@@ -1221,6 +1347,20 @@ API-first teams: the steps labelled `-API` run FIRST; do not try to verify `appd
 <block name="deploy-core-universal">
 
 ### Dev deployment flow
+
+**Parallel-deploy rule (v8.94).** Whenever you need to deploy more than one service in a cluster — initial dev for three codebases, snapshot-dev after the feature sub-agent, stage cross-deploy, close-time redeploys — use `zerops_deploy_batch` in a single MCP call. It runs the N builds in parallel server-side and aggregates results. The agent calling `zerops_deploy` three times in parallel from the MCP client hits STDIO serialization (the v23 "Not connected" failure class) — batch bypasses it.
+
+Batch call shape:
+```
+zerops_deploy_batch targets=[
+  {"targetService": "apidev", "setup": "dev"},
+  {"targetService": "appdev", "setup": "dev"},
+  {"targetService": "workerdev", "setup": "dev"}
+]
+```
+Per-target failures do NOT cancel siblings — each target runs to completion independently. The response aggregates per-target results; apply targeted fixes (`zerops_deploy targetService=X setup=Y` on the failing target alone) rather than rolling back the whole cluster.
+
+Single-service redeploys (e.g. the failing target above, or a worker rebuild after a fix) still use `zerops_deploy` directly — batch is only worth its overhead at ≥2 targets.
 
 **Step 1: Deploy appdev (self-deploy)**
 ```
@@ -1434,6 +1574,7 @@ Minimal recipes (1-2 feature sections) skip the sub-agent entirely — the main 
 - **UX quality contract** (see below)
 - **Where app-level commands run** (hard rule, see below) — include verbatim
 - **Port hygiene**: before starting any dev server, kill any existing holder of the port first: `ssh {hostname}dev "fuser -k {httpPort}/tcp 2>/dev/null || true"`
+- **Fact recording is mandatory** (v8.94). Call `zerops_record_fact` every time you apply a non-trivial fix, verify a non-obvious platform behavior, establish a cross-codebase contract binding, or notice a scaffold pattern that required rewriting. Use `type=gotcha_candidate` / `ig_item_candidate` / `verified_behavior` / `platform_observation` / `fix_applied` / `cross_codebase_contract`. Classification happens later in the content-authoring sub-agent — your job is to log what happened, NOT to decide what's publishable. The content-authoring sub-agent at the `readmes` substep reads `$ZCP_FACTS_LOG` to write the gotchas section; under-recording here ships v28-class "~33% genuine gotchas" content. Target: ≥5 facts across the feature implementation, upper bound ~15.
 - **Verify each feature as you write it** — the sub-agent has SSH access to every dev container and every managed service is reachable. After each controller + frontend pair, hit the endpoint via `ssh {hostname}dev "curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' http://localhost:{port}{F.healthCheck}"` and verify it returns `200 application/json`. If it returns `200 text/html`, the frontend hit the SPA fallback — check the `api.ts` helper is being used, not a bare `fetch()`. Fix immediately; do not write ahead of verification.
 
 **Managed service connection patterns** — before writing the sub-agent brief, use `zerops_knowledge query="connection pattern {serviceType}"` for every managed service in the plan. Include auth format, connection string construction, and known client-library pitfalls directly in the brief. Key pitfalls to inject:
@@ -2029,6 +2170,303 @@ zerops_workflow action="complete" step="deploy" substep="readmes" attestation="W
 ```
 
 After the sub-step completes, call the full deploy-step completion. The deploy-step checker runs every README content check (fragments, integration-guide code block floor, **integration-guide per-item code block** (v18), comment specificity, predecessor floor, knowledge-base authenticity, cross-README dedup, gotcha-distinct-from-guide, worker queue-group gotcha, worker shutdown gotcha, **worker drain code-block** (v18)) AND the per-codebase CLAUDE.md existence check — iterate on the content until they all pass, then the deploy step closes.
+
+</block>
+
+<block name="content-authoring-brief">
+
+### Content authoring — all reader-facing surfaces (post-deploy `readmes` sub-step)
+
+**⚠ TOOL-USE POLICY — if this brief is used as a sub-agent dispatch prompt, read before your first tool call.**
+
+When the main agent delegates content authoring to a sub-agent, that sub-agent is bound by the same rules as every other recipe sub-agent. The main agent holds workflow state; the writer's job is narrow, scoped to this brief.
+
+**Permitted tools:**
+- File ops: `Read`, `Edit`, `Write`, `Grep`, `Glob` against the SSHFS-mounted content paths named in this brief
+- `Bash` — but ONLY via `ssh <hostname> "<command>"` patterns, and only when strictly needed (most work is file-local)
+- `mcp__zerops__zerops_knowledge` — on-demand platform knowledge queries (MANDATORY consultation per the Citation Map below)
+- `mcp__zerops__zerops_logs` — read container logs if you need to verify a gotcha against real output
+- `mcp__zerops__zerops_discover` — introspect service shape for service-keys tables
+
+**Forbidden tools — calling any of these is a sub-agent-misuse bug (workflow state is main-agent-only):**
+- `mcp__zerops__zerops_workflow` — never call `action=start`, `action=complete`, `action=status`, `action=reset`, `action=iterate`, `action=generate-finalize`
+- `mcp__zerops__zerops_import` — service provisioning is main-agent-only
+- `mcp__zerops__zerops_env` — env-var management is main-agent-only
+- `mcp__zerops__zerops_deploy` — deploy orchestration is main-agent-only
+- `mcp__zerops__zerops_subdomain` — subdomain management is main-agent-only
+- `mcp__zerops__zerops_mount` — mount lifecycle is main-agent-only
+- `mcp__zerops__zerops_verify` — step verification is main-agent-only
+
+If the server rejects a call with `SUBAGENT_MISUSE`, you are the cause. Return to writing content.
+
+---
+
+**Role**: You are a content-authoring sub-agent. You have **NO memory** of the run that dispatched you. Your context is intentionally clean of the debug spiral, because reader-facing content must be written from the reader's perspective, not the author's. Three pathologies shipped across v20–v28 when the debugging agent also wrote the content:
+
+1. **Fabricated mental models** — inventing mechanisms to explain observations ("interpolator resolved before shadow formed", "execOnce burned the key at workspace creation")
+2. **Wrong-surface placement** — framework documentation / npm metadata / own-scaffold details shipped as Zerops gotchas
+3. **Self-referential decoration** — documenting the recipe's own helpers as universal integration steps
+
+Your job is to avoid all three by writing against reader-facing tests, not author-facing impressions.
+
+**Inputs you HAVE**:
+- The structured facts log at `$ZCP_FACTS_LOG` (path: `/tmp/zcp-facts-{sessionID}.jsonl`). Read with `cat` or any JSON-line parser. Each line is a `FactRecord` — see `internal/ops/facts_log.go` for the shape.
+- The **workspace manifest** via `zerops_workspace_manifest action=read` — structured JSON snapshot of each codebase's framework/runtime, source-file purposes, managed-service wiring, pre-flight results, cross-codebase contracts, and features implemented. Call this FIRST to orient without crawling the filesystem. The manifest is populated by the main agent after each subagent return.
+- The final recipe state at SSHFS-mounted paths (`/var/www/apidev/`, `/var/www/appdev/`, `/var/www/workerdev/` — whatever codebases the plan produced). Read-only except for files you write. Use the manifest to decide WHICH files are worth reading; don't walk the whole tree.
+- Platform guides via `zerops_knowledge topic=<id>`. Call on demand — see the Citation Map below for which topics map to which guides.
+
+**Inputs you do NOT have**: the run transcript, the main agent's context, any memory of what went wrong. If you want to know what happened during deploy, **read the facts log** and the **workspace manifest**.
+
+---
+
+### The six content surfaces
+
+Every recipe has six kinds of reader-facing content. Each surface has a specific reader, purpose, and one-question test. **An item that fails its surface's test is removed, not rewritten to pass.**
+
+**1. Root README** (`/var/www/<output-root>/README.md`)
+- Reader: developer browsing zerops.io/recipes
+- Purpose: decide whether to deploy, pick a tier
+- Test: *"Can a reader decide in 30 seconds whether this deploys what they need and pick the right tier?"*
+- Typical: 20–30 lines
+
+**2. Environment README** (`environments/{N — Tier}/README.md`, one per env)
+- Reader: someone deciding WHICH tier to deploy or promote to
+- Purpose: teach tier audience + how it differs from the adjacent tier
+- Test: *"Does this teach me when to outgrow this tier and what changes at the next one?"*
+- Typical: **40–80 lines** — NOT the 7-line boilerplate that shipped through v28
+
+**3. Environment `import.yaml` comments** (`environments/{N — Tier}/import.yaml` — comments only; structure generated)
+- Reader: someone reading the manifest in Zerops dashboard
+- Purpose: explain every decision (scale, mode, presence)
+- Test: *"Does each service block explain a decision, not narrate what the field does?"*
+
+**4. Per-codebase README integration-guide fragment** (`{codebase}/README.md`, between `#ZEROPS_EXTRACT_START:integration-guide#` and `#ZEROPS_EXTRACT_END:integration-guide#`)
+- Reader: porter bringing their own existing app
+- Purpose: enumerate Zerops-specific changes the porter must make in their own codebase
+- Test: *"Does a porter bringing their own code need to copy THIS exact content?"*
+
+**5. Per-codebase README knowledge-base/gotchas fragment** (`{codebase}/README.md`, between `#ZEROPS_EXTRACT_START:knowledge-base#` and `#ZEROPS_EXTRACT_END:knowledge-base#`)
+- Reader: developer hitting a confusing failure on Zerops
+- Purpose: surface platform traps that are non-obvious even to someone who read the docs
+- Test: *"Would a developer who read the Zerops docs AND the framework docs STILL be surprised by this?"*
+
+**6. Per-codebase CLAUDE.md** (`{codebase}/CLAUDE.md`)
+- Reader: someone with THIS repo checked out working on it
+- Purpose: operational guide for dev loop, testing, resetting state
+- Test: *"Is this useful for operating THIS repo — not for deploying or porting?"*
+
+**7. Per-codebase `zerops.yaml` comments** (`{codebase}/zerops.yaml` — comments only; structure was written at generate)
+- Reader: someone reading the deploy config
+- Purpose: explain non-obvious choices
+- Test: *"Does this explain a trade-off the reader couldn't infer from the field name?"*
+
+Fragment marker format is byte-literal. See `zerops_guidance topic="readme-fragments"` for the full marker rules — do NOT invent your own syntax.
+
+---
+
+### Classification taxonomy — apply BEFORE routing
+
+Every fact from the facts log gets classified BEFORE it is placed on any surface. Classification determines routing. Facts that classify as self-inflicted or framework-only are **DISCARDED, not published**.
+
+| Classification | Test | Route to |
+|---|---|---|
+| **Platform invariant** | Fact is true of Zerops regardless of this recipe's scaffold choices. A different framework entirely would hit it. | Knowledge-Base gotcha (with citation if guide exists) |
+| **Platform × framework intersection** | Framework-specific AND platform-caused. Neither alone produces it. | Knowledge-Base gotcha, naming both sides clearly |
+| **Framework quirk** | Framework's own behavior; Zerops not involved. | **DISCARD** — belongs in framework docs |
+| **Library metadata** | npm / composer / pip / cargo concern. | **DISCARD** — belongs in manifest comments |
+| **Scaffold decision** | "We chose X over Y." Non-obvious design choice in recipe's own code. | `zerops.yaml` comment (config), IG prose (code principle), or CLAUDE.md (operational) |
+| **Operational detail** | How to iterate / test / reset this repo. | CLAUDE.md |
+| **Self-inflicted** | Our code had a bug; we fixed it; a reasonable porter doesn't hit it. | **DISCARD** — not content material |
+
+**Concrete classification rules**:
+
+1. Separate mechanism (what Zerops does) from symptom (what our code did wrong). Classify on **mechanism**.
+2. Ask "would they hit this with different scaffold code?" — no → scaffold decision or self-inflicted; yes → invariant or intersection.
+3. If a `zerops_knowledge` guide covers this topic, the fact is probably a platform invariant — route as gotcha WITH citation, don't duplicate guide content.
+4. Self-inflicted test: *"Could this observation be summarized as 'our code did X, we fixed it to do Y'?"* If yes, discard. The fix belongs in code; no teaching for a porter.
+
+---
+
+### Citation map — MANDATORY guide consultation
+
+When a fact's topic matches one of these, you MUST call `zerops_knowledge topic=<id>` and read the guide BEFORE writing about that topic. Folk-doctrine ships when authors invent mental models for things the platform already documents.
+
+| Topic area | Guide ID |
+|---|---|
+| Cross-service env vars, self-shadow, aliasing | `env-var-model` |
+| `zsc execOnce`, `appVersionId`, init commands | `init-commands` (or closest match) |
+| Rolling deploys, SIGTERM, HA replicas, minContainers two-axis | `rolling-deploys` (or closest) |
+| Object Storage (MinIO, forcePathStyle) | `object-storage` |
+| L7 balancer, httpSupport, VXLAN routing, trust proxy | `http-support` / `l7-balancer` |
+| Deploy files, tilde suffix, static base | `deploy-files` / `static-runtime` |
+| Readiness check / health check | `readiness-health-checks` |
+
+If `zerops_knowledge` returns "no matching topic" for a citation-map entry, log that in your completion message and proceed — the guide may not exist yet and your content is genuinely filling a gap. But you must have tried.
+
+---
+
+### Counter-examples — wrong-surface / folk-doctrine patterns from v28
+
+Do NOT ship content that matches any of these patterns.
+
+**Self-inflicted shipped as gotcha**:
+- *"`zsc execOnce` can record a successful seed that produced zero output"* — Agent's seed script silently exited 0. `execOnce` correctly honored exit code. This is a seed-script bug, not a platform trap. **DISCARD**.
+
+**Framework quirks shipped as gotchas**:
+- *"`app.setGlobalPrefix('api')` collides with `@Controller('api/...')`"* — Pure NestJS fact. **DISCARD**.
+- *"`@sveltejs/vite-plugin-svelte@^5` peer-requires Vite 6"* — npm metadata. **DISCARD** (belongs in package.json comments if anywhere).
+
+**Self-referential decoration**:
+- *"`api.ts`'s content-type check catches SPA fallback"* — `api.ts` is the recipe's own helper. Principle (Nginx SPA fallback returns `200 text/html`) belongs in IG; implementation detail belongs in code comments.
+
+**Folk-doctrine defects** (fabricated mental models — the worst class):
+- *"The API codebase avoided the symptom because its resolver path happened to interpolate before the shadow formed; do not rely on that."* — **FABRICATED.** Both codebases had identical shadow patterns and both were broken. The real rule (from `env-var-model` guide): cross-service vars auto-inject project-wide; NEVER declare `key: ${key}`. If you're writing something about env vars, you MUST have read the guide first.
+- *"NATS 2.12 in mode: HA — clustered broker with JetStream-style durability"* — the recipe uses core NATS, not JetStream. Describe actual behavior, not plausible-sounding adjacent mechanisms.
+
+---
+
+### Workflow
+
+1. **Read the facts log**. `cat $ZCP_FACTS_LOG` or equivalent. Group records by codebase + substep.
+2. **Read the final recipe state**. Each `{codebase}/zerops.yaml`, the framework source tree under `{codebase}/src/` (or equivalent), every `environments/*/import.yaml`.
+3. **Classify every fact** using the taxonomy. For each, identify: destination surface (if any), matching citation-map entry (if any).
+4. **Fetch matching guides** via `zerops_knowledge`. Read BEFORE writing about the topic. Cite the guide in the surface item — don't re-author.
+5. **Write all six surface types** — one pass, top-down:
+   - Root README (use prettyName from plan + service list)
+   - Env READMEs — 40–80 lines each, from adjacent-tier comparison
+   - Env import.yaml comments (via `generate-finalize` structured input — you emit the comment set, the main agent applies it)
+   - Per-codebase README — intro + integration-guide + knowledge-base fragments, extract markers byte-exact (see `zerops_guidance topic="readme-fragments"` for marker rules)
+   - Per-codebase CLAUDE.md — operational, repo-local, ≥1200 bytes, ≥2 custom sections beyond template
+   - Per-codebase zerops.yaml comments — refresh comments only; don't rewrite structure
+6. **Self-review before return**. For each item on each surface, write (in your return message) the answer to the surface's test. Any "no" → **remove the item**. Do not rewrite — rewrite means the item was on the wrong surface to begin with.
+
+---
+
+### Deliverables
+
+- `/var/www/<output-root>/README.md` — root recipe README
+- `/var/www/<output-root>/environments/{N — Tier}/README.md` × N (one per env)
+- `{codebase}/README.md` × M (one per codebase with intro / IG / KB fragments)
+- `{codebase}/CLAUDE.md` × M (repo-local operations)
+- Comment-only updates to `{codebase}/zerops.yaml` × M (only if existing comments fail their test)
+- A structured `env-comment-set` JSON payload in your completion message for the main agent to apply at `generate-finalize`.
+
+Per-codebase README skeleton (markers are byte-literal — copy the shape exactly):
+
+```markdown
+# {Framework} {PrettyName} Recipe App
+
+<!-- #ZEROPS_EXTRACT_START:intro# -->
+{1-2 sentence intro with service list — no headings, 1-3 lines}
+<!-- #ZEROPS_EXTRACT_END:intro# -->
+
+⬇️ **Full recipe page and deploy with one-click**
+
+[![Deploy on Zerops](https://github.com/zeropsio/recipe-shared-assets/blob/main/deploy-button/light/deploy-button.svg)](https://app.zerops.io/recipes/{slug}?environment=small-production)
+
+![{framework} cover](https://github.com/zeropsio/recipe-shared-assets/blob/main/covers/svg/cover-{framework}.svg)
+
+## Integration Guide
+
+<!-- #ZEROPS_EXTRACT_START:integration-guide# -->
+
+### 1. Adding `zerops.yaml`
+The main configuration file — place at repository root.
+
+\`\`\`yaml
+{full commented yaml pasted from disk — DO NOT rewrite from memory}
+\`\`\`
+
+### 2. {Platform-forced code change — one H3 per real change you actually made}
+{Describe the debug round that forced the change; cite the matching `zerops_knowledge` guide when applicable; include a fenced code block with the diff — EVERY H3 in IG must carry a code block per the per-item floor}
+
+\`\`\`typescript
+// the actual patch
+\`\`\`
+
+<!-- #ZEROPS_EXTRACT_END:integration-guide# -->
+
+<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->
+
+### Gotchas
+- **{Concrete symptom}** — {mechanism and failure mode with evidence; cite guide if citation-map match}
+- ...
+
+<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->
+```
+
+Per-codebase CLAUDE.md: plain markdown, no fragments. Sections: Dev Loop / Migrations & Seed / Container Traps / Testing / plus ≥2 custom (Resetting dev state / Log tailing / Driving a test request / Adding a managed service / whatever operational knowledge you accumulated). ≥1200 bytes total.
+
+Env README skeleton (40–80 lines):
+
+```markdown
+# {Framework} {PrettyName} — {Tier Name} Environment
+
+This is the {tier name} environment for [{Framework} {PrettyName} (info + deploy)](https://app.zerops.io/recipes/{slug}?environment={tier-slug}) recipe on [Zerops](https://zerops.io).
+
+<!-- #ZEROPS_EXTRACT_START:intro# -->
+{1-2 sentence intro — audience + use case}
+<!-- #ZEROPS_EXTRACT_END:intro# -->
+
+## Who this is for
+
+{Specific audience — AI agent iterating, remote dev, local dev, stage reviewer, small prod, HA prod}
+
+## What changes vs the adjacent tier
+
+{Concrete diff from the lower tier if any, or "entry-level tier" note}
+
+## Promoting to the next tier
+
+{What to flip, what to redeploy, what to verify — or "terminal tier" note for HA prod}
+
+## Tier-specific operational concerns
+
+{Things specific to THIS tier — SSH-driven iteration, rolling-deploy testing, HA failover verification, etc.}
+```
+
+---
+
+### Worker-specific rules (when a separate-codebase worker exists)
+
+- Worker README still needs intro + IG + KB fragments, but IG typically has no frontend code — the per-item code-block floor still applies (every H3 needs a code block) BUT the integration-guide code-adjustment floor is skipped for worker codebases.
+- **Queue-group semantics under `minContainers > 1`** (MANDATORY gotcha) — cite the broker name + "queue group" / "consumer group" + "minContainers" / "double-process" / "exactly once" / "per replica", with the exact client-library option that sets the group.
+- **Graceful shutdown on SIGTERM** (MANDATORY gotcha) — cite SIGTERM or "graceful shutdown" or "drain", and include a fenced code block showing the call sequence (`process.on('SIGTERM', ...)` → `await nc.drain()` → exit). This is enforced as `{hostname}_worker_drain_code_block`.
+
+---
+
+### Self-review checklist — apply before returning
+
+For each deliverable, answer in your completion message:
+
+**Root README**: "A reader browsing recipes — can they decide in 30 sec? Yes / No."
+
+**Each env README**: "A reader considering this tier — do they learn when to outgrow it and what the next tier changes? Yes / No."
+
+**Each env import.yaml comment block**: "Does this block explain a decision, not narrate what the field does? Yes / No." (One answer per service block.)
+
+**Each IG item**: "A porter bringing their own code — do they need to copy THIS exact content? Yes / No."
+
+**Each gotcha**: "A developer who read the Zerops docs AND the framework docs — would they STILL be surprised by this? Yes / No. If the topic matches the citation map, did I read the guide? Yes / No."
+
+**Each CLAUDE.md section**: "Useful for operating THIS repo, not for deploying or porting? Yes / No."
+
+**Each zerops.yaml comment**: "Does this explain a trade-off the reader couldn't infer from the field name? Yes / No."
+
+Any item with "no" is **removed** from its surface. Do not rewrite to pass the test — rewrite means the item was on the wrong surface to begin with.
+
+Return a completion message with:
+1. List of files written + byte counts
+2. Classification summary: how many facts from the log → invariant / intersection / framework-quirk / library-meta / scaffold-decision / operational / self-inflicted
+3. Self-review answers above
+4. `env-comment-set` JSON payload for the main agent to apply at `generate-finalize`
+
+**Completion (main agent calls this after your return):**
+```
+zerops_workflow action="complete" step="deploy" substep="readmes" attestation="{summary of surfaces written + classification tallies + self-review outcome}"
+```
+
+After the substep completes, the main agent calls full deploy-step completion. The deploy-step checker runs every README content check (fragments, integration-guide code block floor, per-item code block, comment specificity, predecessor floor, knowledge-base authenticity, cross-README dedup, gotcha-distinct-from-guide, worker queue-group gotcha, worker shutdown gotcha, worker drain code-block) plus the per-codebase CLAUDE.md existence check. If any fail, the main agent iterates on the content until they pass — NOT by adding items, but by removing items that fail their surface test.
 
 </block>
 

@@ -234,6 +234,22 @@ var recipeDeployTopics = []*GuidanceTopic{
 		// minutes earlier.
 	},
 	{
+		ID: "fact-recording-mandatory", Step: RecipeStepDeploy,
+		Description: "Mandatory zerops_record_fact usage during deploy — primary input for the content-authoring sub-agent at readmes substep",
+		BlockNames:  []string{"fact-recording-mandatory"},
+		// Eager — v8.94. This is the prompt-level pressure that makes the
+		// content-authoring sub-agent's input (the facts log) substantive.
+		// Unlike the two substep-scoped briefs that arrive at a single
+		// boundary, fact recording is mandatory from the FIRST deploy
+		// substep (deploy-dev) through the LAST — every substep the agent
+		// reaches needs the guidance in context. v28 evidence: 3 voluntary
+		// calls without this pressure; the authoring path then had to
+		// reconstruct events from the run transcript, which caused the
+		// content-quality failures v8.94 is addressing. Eager is the right
+		// setting for universal, per-substep prompt pressure.
+		Eager: true,
+	},
+	{
 		ID: "where-commands-run", Step: RecipeStepDeploy,
 		Description: "SSH vs zcp-side command execution model + zerops_dev_server lifecycle tool",
 		BlockNames:  []string{"where-commands-run"},
@@ -292,23 +308,35 @@ var recipeDeployTopics = []*GuidanceTopic{
 	},
 	{
 		ID: "readme-fragments", Step: RecipeStepDeploy,
-		Description: "Per-codebase README structure with extract fragments (post-verify `readmes` sub-step)",
+		Description: "Per-codebase README structure with extract fragments (marker format reference)",
 		BlockNames:  []string{"readme-with-fragments"},
-		// NOT eager — v8.90. The brief is delivered via substep-complete:
-		// the mapping subStepToTopic(deploy, readmes) == "readme-fragments"
-		// means this block lands in the response to `complete substep=
-		// feature-sweep-stage` (the advance into `readmes` is what triggers
-		// the delivery). v25 evidence: the README writer was dispatched
-		// with step-entry content 33 minutes old; 6 content checks failed;
-		// a fix-subagent round cost ~6 minutes. Substep-scoped delivery
-		// lands the brief immediately before the writer dispatch, where
-		// it governs the writer's output.
-		//
-		// The v14 regression that originally motivated eager injection
-		// (agent invented fragment markers from imagination because it
-		// hadn't fetched the topic) is addressed by substep-ordered
-		// delivery: the brief arrives in the response IMMEDIATELY before
-		// the readmes substep.
+		// NOT eager. v8.94: the primary `readmes` substep delivery moved to
+		// content-authoring-brief (which embeds the surface contracts,
+		// classification taxonomy, and citation map). readme-fragments
+		// remains a stable on-demand reference for fragment marker format —
+		// cited from the content-authoring brief and from checker error
+		// messages — so it is NOT remapped onto SubStepReadmes. Agents fetch
+		// it via zerops_guidance topic="readme-fragments" when they need the
+		// byte-literal marker shape.
+	},
+	{
+		ID: "content-authoring-brief", Step: RecipeStepDeploy,
+		Description: "Fresh-context content-authoring sub-agent brief — surface contracts, fact classification, citation map, counter-examples",
+		Predicate:   isShowcase,
+		BlockNames:  []string{"content-authoring-brief"},
+		// NOT eager — v8.94. Delivered via substep-complete:
+		// subStepToTopic(deploy, readmes) == "content-authoring-brief" puts
+		// this block in the response to `complete substep=feature-sweep-stage`
+		// (the advance into `readmes` triggers the delivery). v28 evidence:
+		// the main agent that spent 85 min debugging wrote self-narrative
+		// gotchas (what confused me) instead of reader-facing content
+		// (what will surprise a fresh developer). The new brief replaces the
+		// READMEs substep guidance with a surface-contract + classification-
+		// taxonomy + citation-map rubric that the sub-agent evaluates every
+		// fact against before routing it to a surface. The shape of the
+		// delivery matches v8.90's subagent-brief / readme-fragments pattern
+		// (NOT eager, substep-scoped) so the brief arrives immediately before
+		// dispatch and governs the sub-agent's output.
 	},
 }
 

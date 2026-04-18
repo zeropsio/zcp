@@ -751,6 +751,48 @@ func TestGenerateEnvREADME_FixedContent(t *testing.T) {
 	}
 }
 
+// TestGenerateEnvREADME_HasTierTransitionSections — v8.94 acceptance.
+// Every env README must emit the tier-transition teaching sections so a
+// reader deciding WHICH tier to deploy learns when to outgrow it and what
+// changes at the next step. v28 shipped 7-line boilerplate READMEs; the
+// line-count floor and the section presence assertions prevent regression.
+func TestGenerateEnvREADME_HasTierTransitionSections(t *testing.T) {
+	t.Parallel()
+
+	plan := testMinimalPlan()
+
+	for i := 0; i < EnvTierCount(); i++ {
+		t.Run(fmt.Sprintf("env_%d", i), func(t *testing.T) {
+			t.Parallel()
+			readme := GenerateEnvREADME(plan, i)
+
+			// Each README must carry a "Who this is for" section — universal.
+			if !strings.Contains(readme, "## Who this is for") {
+				t.Error("expected '## Who this is for' section")
+			}
+			// Operational concerns — universal.
+			if !strings.Contains(readme, "## Tier-specific operational concerns") {
+				t.Error("expected '## Tier-specific operational concerns' section")
+			}
+			// Middle tiers carry both diff + promotion sections.
+			if i > 0 && i < EnvTierCount()-1 {
+				if !strings.Contains(readme, "## What changes vs the adjacent tier") {
+					t.Errorf("env %d: expected diff-from-previous section", i)
+				}
+				if !strings.Contains(readme, "## Promoting to the next tier") {
+					t.Errorf("env %d: expected promotion-path section", i)
+				}
+			}
+			// Line-count floor: ≥40 lines of substantive content (v8.94
+			// bar, replacing v28's 7-line boilerplate).
+			lines := strings.Count(readme, "\n")
+			if lines < 40 {
+				t.Errorf("env %d README has only %d lines, want >=40 (v8.94 tier-transition teaching floor)", i, lines)
+			}
+		})
+	}
+}
+
 func TestGenerateEnvREADME_DynamicDescription(t *testing.T) {
 	t.Parallel()
 

@@ -113,64 +113,22 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp kn
 
 		// Check zerops.yaml for each app target.
 		for _, appTarget := range appTargets {
-			hostname := appTarget.Hostname
-
-			// Try mount paths: {hostname}dev (standard mode), {hostname} (bare), then project root.
-			ymlDir := projectRoot
-			for _, candidate := range []string{hostname + "dev", hostname} {
-				mountPath := filepath.Join(projectRoot, candidate)
-				if info, err := os.Stat(mountPath); err == nil && info.IsDir() {
-					ymlDir = mountPath
-					break
-				}
-			}
-
-			doc, parseErr := ops.ParseZeropsYml(ymlDir)
-			if parseErr != nil {
-				checks = append(checks, workflow.StepCheck{
-					Name: hostname + "_zerops_yml_exists", Status: statusFail,
-					Detail: fmt.Sprintf("zerops.yaml not found for %s: %v", hostname, parseErr),
-				})
-				continue
-			}
-			checks = append(checks, workflow.StepCheck{
-				Name: hostname + "_zerops_yml_exists", Status: statusPass,
-			})
-			checks = append(checks, checkRecipeSetups(doc, appTarget, plan)...)
-
-			// Validate zerops.yaml fields against the live JSON schema.
-			checks = append(checks, checkZeropsYmlFields(ymlDir, validFields)...)
-
-			// README content validation — fragments, integration-guide
-			// code blocks, comment specificity, predecessor floor,
-			// authenticity — all move to the deploy-step checker. v14
-			// writes READMEs during the post-verify `readmes` sub-step so
-			// the gotchas section narrates real debug experience; the
-			// checker follows the content. See checkRecipeDeployReadmes.
-			//
-			// Additionally, v14 generate explicitly forbids README.md on
-			// the mount at generate-complete time: the scaffold sub-agent
-			// brief has README in its DO-NOT-WRITE list. Detect and
-			// surface so the agent deletes the scaffolder's stub before
-			// the checker re-runs.
-			readmePath := filepath.Join(ymlDir, "README.md")
-			if _, err := os.Stat(readmePath); err == nil {
-				checks = append(checks, workflow.StepCheck{
-					Name: hostname + "_no_premature_readme", Status: statusFail,
-					Detail: fmt.Sprintf("%s/README.md exists at generate-complete time — v14 moves README writing to the post-deploy `readmes` sub-step. Delete %s; the agent will write the real README after verify-stage using lived debug experience for the gotchas section.", hostname, readmePath),
-				})
-			} else {
-				checks = append(checks, workflow.StepCheck{
-					Name: hostname + "_no_premature_readme", Status: statusPass,
-				})
-			}
+			checks = append(checks, checkRecipeGenerateCodebase(projectRoot, appTarget, plan, validFields, false)...)
 		}
 
-		// Legacy: the workerTargets predecessor-floor loop lived here in
-		// v13. It moved to checkRecipeDeployReadmes alongside the other
-		// README content checks — v14 READMEs don't exist until the
-		// post-deploy readmes sub-step.
-		_ = workerTargets
+		// v8.94: separate-codebase worker targets have their OWN zerops.yaml
+		// on their OWN mount (workerdev/). v28 shipped nine self-shadow lines
+		// in workerdev/zerops.yaml because this loop did not exist — worker
+		// targets were collected into workerTargets and then discarded. The
+		// same floors that apply to app targets (yml exists, dev+prod setups,
+		// schema-field validity, env_self_shadow, no-premature-README) apply
+		// here. Shared-codebase workers are excluded at collection time
+		// (SharesCodebaseWith != "") — their setup lives inside the host
+		// codebase's zerops.yaml, already covered by the app-target loop's
+		// checkRecipeSetups → app_worker_setup check.
+		for _, workerTarget := range workerTargets {
+			checks = append(checks, checkRecipeGenerateCodebase(projectRoot, workerTarget, plan, validFields, true)...)
+		}
 
 		allPassed := checksAllPassed(checks)
 		summary := "recipe generate checks passed"
@@ -181,6 +139,99 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp kn
 			Passed: allPassed, Checks: checks, Summary: summary,
 		}, nil
 	}
+}
+
+// checkRecipeGenerateCodebase runs the per-codebase generate-time floors for
+// a single runtime target (app or separate-codebase worker). Returns the full
+// check set so the caller can accumulate across targets. The workerOnly flag
+// skips checks that don't apply to separate-codebase workers (currently: the
+// shared-worker setup expectation inside checkRecipeSetups is still valid
+// because TargetHostsSharedWorker returns false for a worker target itself,
+// so no branch is needed there — the flag is reserved for future divergence).
+func checkRecipeGenerateCodebase(projectRoot string, target workflow.RecipeTarget, plan *workflow.RecipePlan, validFields *schema.ValidFields, workerOnly bool) []workflow.StepCheck {
+	_ = workerOnly
+	hostname := target.Hostname
+
+	// Try mount paths: {hostname}dev (standard mode), {hostname} (bare),
+	// then project root. Separate-codebase workers use {hostname}dev
+	// (workerdev/) — same convention as apps in standard mode.
+	ymlDir := projectRoot
+	for _, candidate := range []string{hostname + "dev", hostname} {
+		mountPath := filepath.Join(projectRoot, candidate)
+		if info, err := os.Stat(mountPath); err == nil && info.IsDir() {
+			ymlDir = mountPath
+			break
+		}
+	}
+
+	doc, parseErr := ops.ParseZeropsYml(ymlDir)
+	if parseErr != nil {
+		return []workflow.StepCheck{{
+			Name: hostname + "_zerops_yml_exists", Status: statusFail,
+			Detail: fmt.Sprintf("zerops.yaml not found for %s: %v", hostname, parseErr),
+		}}
+	}
+
+	checks := []workflow.StepCheck{{
+		Name: hostname + "_zerops_yml_exists", Status: statusPass,
+	}}
+	checks = append(checks, checkRecipeSetups(doc, target, plan)...)
+
+	// Validate zerops.yaml fields against the live JSON schema.
+	checks = append(checks, checkZeropsYmlFields(ymlDir, validFields)...)
+
+	// v8.94: env_self_shadow floor covers every runtime target's zerops.yaml,
+	// not just the bootstrap flow's checkGenerateEntry path. v28 evidence:
+	// workerdev shipped nine self-shadow lines and zero worker-prefixed
+	// checks fired at generate-complete because the recipe path never called
+	// checkEnvSelfShadow. Runs against both dev and prod entries — a shadow
+	// in either breaks cross-service env resolution when that setup deploys.
+	for _, setupName := range []string{workflow.RecipeSetupDev, workflow.RecipeSetupProd} {
+		entry := doc.FindEntry(setupName)
+		if entry == nil {
+			continue // missing setup already reported by checkRecipeSetups
+		}
+		shadowCheck := checkEnvSelfShadow(hostname, entry)
+		// Dev + prod share the same check name; keep the fail so the agent
+		// sees the list of offenders once. A dev fail plus a prod pass should
+		// still surface as a fail.
+		if existing := findCheck(checks, hostname+"_env_self_shadow"); existing != nil {
+			if shadowCheck.Status == statusFail {
+				*existing = shadowCheck
+			}
+		} else {
+			checks = append(checks, shadowCheck)
+		}
+	}
+
+	// README content validation moves to the deploy-step checker. v14 forbids
+	// README.md on the mount at generate-complete time; detect and surface
+	// so the agent deletes the scaffolder's stub before the checker re-runs.
+	readmePath := filepath.Join(ymlDir, "README.md")
+	if _, err := os.Stat(readmePath); err == nil {
+		checks = append(checks, workflow.StepCheck{
+			Name: hostname + "_no_premature_readme", Status: statusFail,
+			Detail: fmt.Sprintf("%s/README.md exists at generate-complete time — v14 moves README writing to the post-deploy `readmes` sub-step. Delete %s; the agent will write the real README after verify-stage using lived debug experience for the gotchas section.", hostname, readmePath),
+		})
+	} else {
+		checks = append(checks, workflow.StepCheck{
+			Name: hostname + "_no_premature_readme", Status: statusPass,
+		})
+	}
+
+	return checks
+}
+
+// findCheck returns a pointer to the first check with the given name, or nil.
+// Used by checkRecipeGenerateCodebase to merge dev+prod env_self_shadow
+// results into a single accumulator entry.
+func findCheck(checks []workflow.StepCheck, name string) *workflow.StepCheck {
+	for i := range checks {
+		if checks[i].Name == name {
+			return &checks[i]
+		}
+	}
+	return nil
 }
 
 // checkRecipeDeployReadmes validates per-codebase README content at

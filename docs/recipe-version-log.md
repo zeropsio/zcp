@@ -86,9 +86,34 @@ Dump the content-metrics table across all versions in one go:
 
 For v8 onwards, every run captures raw Claude Code stream-json logs under `SESSIONS_LOGS/`. These are the ground-truth record of what tools the agent actually called, with timestamps and outputs — everything else in the run is a downstream summary.
 
-### The analyzer script
+### The timeline script (start here)
 
-`eval/scripts/analyze_bash_latency.py` is the canonical session analyzer. It reads a stream-json file, pairs every `Bash` tool invocation with its result, and reports:
+`eval/scripts/timeline.py` is the canonical cross-stream chronological analyzer — read this first for any new run. It pairs every `tool_use` with its `tool_result` by id across main-session + every subagent session under `SESSIONS_LOGS/`, annotates each line with source (`MAIN` / `SUB-{agent-id-prefix}`), computes per-call latency, and surfaces `is_error` flags. Phase auto-detection via `zerops_workflow` action inspection prints section headers (START / RESEARCH / PROVISION / GENERATE / DEPLOY / FINALIZE / CLOSE).
+
+```bash
+# Full timeline with phase headers, piped to less
+python3 /Users/fxck/www/zcp/eval/scripts/timeline.py \
+  /Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v{N} --phase | less
+
+# Post-mortem slice (close step of v27, no text blocks)
+python3 /Users/fxck/www/zcp/eval/scripts/timeline.py \
+  /Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v27 \
+  --after 2026-04-18T10:14:00 --before 2026-04-18T10:22:00 --no-text --phase
+
+# One-line cost summary for the version-log entry
+python3 /Users/fxck/www/zcp/eval/scripts/timeline.py \
+  /Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v{N} --no-text --stats
+```
+
+Flags: `--after` / `--before` (ISO timestamps), `--source MAIN` / `--source SUB-aXX` (filter repeatable), `--tool deploy` (substring match, repeatable), `--no-text` (suppress assistant text blocks, keeps only tool calls), `--json` (emit JSON array instead of human-readable), `--stats` (append per-tool histogram with total latency, errored count, per-source wall clock).
+
+Two patterns timeline.py surfaces that the bash latency analyzer doesn't:
+- **Main-context authoring cost** — summed `Write` / `Edit` latency reveals how much the model typed through main instead of delegating (v27: 44 Writes / 1919s = 32 min of scaffold-in-main).
+- **Delegation shape** — `--source SUB-*` wall clocks contrasted against MAIN's wall show what was delegated vs absorbed (v27: 14 min feature + 2 min review subagents out of 100 min total = 83 min of main-absorbed work).
+
+### The bash latency analyzer
+
+`eval/scripts/analyze_bash_latency.py` is the deep-dive bash analyzer. Run it when timeline.py shows high `Bash` or `mcp__zerops__zerops_dev_server` latency and you need the per-bucket breakdown. It reads a stream-json file, pairs every `Bash` tool invocation with its result, and reports:
 
 - Total bash calls, total bash time, long (>10s) and very-long (>60s) counts, interrupted / errored
 - Breakdown by pattern: SSH calls, dev-server starts, port kills, sleeps, curls (with per-bucket sum duration)
@@ -281,6 +306,7 @@ README line counts (per codebase):
 | v22 | 341 | 208 | 221 | **7 / 6 / 6** | **8** / 6 / 6 |
 | v23 | 250 | 260 | 290 | 6 / 3 / 4 | 4 / 4 / 4 |
 | v25 | **435** | 182 | 247 | 6 / 6 / 6 | 6 / 4 / 3 |
+| v28 | 261 | 189 | 230 | 5 / 5 / 5 | 5 / 4 / 4 |
 
 **v7 remains the gold standard for gotcha depth** (Meilisearch ESM-only, auto-indexing skips on redeploy, NATS queue group for HA). v10 collapsed to 0 gotchas on apidev and workerdev due to a tooling regression that's since been fixed. v14/v15 peaked on IG item count. v16 is the most compressed but also the most structurally clean.
 
@@ -305,6 +331,7 @@ README line counts (per codebase):
 | v22 | 2026-04-16 | **103 min** | **410** | **243** | 77 | 2.5 min | **0 (main)** + 2 (scaffold `nest new scratch`) = 2 | ~0s (delegated to feature subagent) | 7 (bash) + 12 (tool_result is_error) |
 | v23 | 2026-04-17 | **119 min** | 384 | 233 | 61 | **0.6 min** | **0 (main)** + 2 (scaffold `nest new scratch`) = 2 | ~0s | 2 (bash) |
 | v25 | 2026-04-17 | **71 min** | **225** | 177 | 30 | **0.5 min** | **0 (main)** + 2 (scaffold `nest new scratch`) = 2 | ~0s | **0 (main)** |
+| v28 | 2026-04-18 | **85 min** (recipe) / 109 min (total) | 378 | ~501 | 62 | **1.6 min** | **0 (main)** + 2 (scaffold `nest new scratch`) = 2 | ~0.3s (MCP) | 5 (main) |
 
 **v16 is the first run with zero very-long bash calls on main-session** — the dev-server wait discipline finally held. But the feature subagent in v16 still hit 360s of 404s total on two dev-server starts that used the old SSH pattern. v17 ships `zerops_dev_server` as a dedicated MCP tool to eliminate this class of error entirely.
 
@@ -334,6 +361,7 @@ README line counts (per codebase):
 | v23 | v8.81–v8.85 ship between v22 and v23; content quality recovers, content-fix-loop convergence breaks | **Mixed run: content is the silver lining, convergence is the cost driver**. Wall 119 min (+15% vs v22's 103, +68% vs v20's 71). 384 assistant events (v22: 410, v21: 381). Tool calls 233 (= v21, < v22's 243). Main bash 0.6 min — best operational hygiene since v18 (0 very-long, 2 errored, 38.7s total). 10 subagents matches v20 record (writer ×1 + scaffold ×3 + feature ×1 + **3 README/content fix subagents** + env-comment writer ×1 + code review ×1). **17 deploys** (v22: 11) — 5 clusters of 3, ALL justified by intervening commits (initial dev → snapshot-dev after features → first cross-deploy → code-review redeploy → second cross-deploy). 21 dev_server calls (v22: 15). 18 guidance topic fetches (v22: 17 — peak). 20 `complete deploy` calls (12 substep + 8 retries on README content checks). **The 23-minute README content-fix loop within deploy is the single biggest controllable waste**: writer subagent at 13:08-13:14 → first complete deploy fails on 23 checks → fix subagent SA2 (13:20-13:26) → 11 fails → SA3 (13:27-13:32) → 5 fails → SA4 (13:34-13:37) → 4 fails → main inline pass (13:37-13:41) → 0 fails. **Strictly decreasing fail count (23→11→5→4→2→0), no whack-a-mole — but 5 rounds where 1 should have sufficed**. Three structural defects: (a) `content_reality` truncates findings list with `... and N more`, so each subagent only sees a subset; (b) brief framing was "be surgical, only the listed findings" — SA4 explicitly skipped 3 known-bad lines because they weren't on the visible list; (c) `comment_ratio` reads the YAML embedded in README's IG step 1 fenced block, NOT the on-disk `zerops.yaml` — SA2 wasted 5m 50s editing the wrong files (fixed disk yamls 9% → 57% but checker still reported 9%). **Content quality is the silver lining**: 13 gotchas total (apidev 6 / appdev 3 / workerdev 4 — vs v22's 19) but **gotcha-origin ratio swings from v22's 0% pure-invariant to v23's 38% pure-invariant + 15% mixed + 46% incident-derived**. Compression came WITH quality, not against it. All CLAUDE.md pass byte floor + claude_readme_consistency. Architecture section present in root README (v8.81 `recipe_architecture_narrative` check fired 1×, agent fixed, retry passed). Env-4 comments solid (A−), service uniqueness pass, two-axis `minContainers` teaching at project level + per-service. Root intro names real managed services (v17 `dbDriver` validation holds for 6th run). **0 CRIT / 0 WRONG / 1 STYLE in close review** (3 CRITs caught + fixed pre-publish: StatusPanel `data.services[key]` vs apidev's flat `{db,redis,nats,storage,search}` map, workerdev Item entity divergence vs apidev migration, missing NATS queue group `'jobs-workers'`; 2 WRONG fixed: workerdev SIGTERM drain, apidev cache.drop double-RTT). **Three platform-mental-model defects**: (1) **`zsc execOnce` "burn trap" folk-doctrine enshrined in apidev/CLAUDE.md** — at 12:31:36 the apidev first-deploy seed initCommand returned ✅ in 56ms with zero `[seed] upserted ...` lines and 0 rows in the table; agent invented "execOnce burn from initial workspace deploy" terminology and codified a "Recovering execOnce burn" CLAUDE.md section. The mental model is wrong: `appVersionId` is per-deploy, not per-workspace. Real cause undiagnosed — most likely script-side silent exit or container-labeling artifact (`apidev-runtime-2-2e` suggests this was the second container). (2) **"Parallel cross-deploys rejected" — `Not connected` misattribution to platform** — at 12:32:17-19 main agent issued 3 parallel calls (subdomain enable + 2 deploys), the deploy calls returned `Not connected` (MCP STDIO transport error because `zerops_deploy` blocks the channel for 1-2 min). TIMELINE.md says *"Sequential cross-deploys (parallel called but tool returned 'Not connected' for simultaneous deploys, so serialized)"* — propagating the misattribution to the published TIMELINE. (3) **`module: nodenext` workerdev fix without diagnosis** — workerdev `start:dev` failed with `Cannot find module './app.module.js'`. Apidev tsconfig is IDENTICAL (also `module: nodenext`) but apidev works because `start:dev` uses `nest start --watch` (which proxies through @nestjs/cli's bundler) while workerdev uses raw `ts-node -r tsconfig-paths/register`. Agent flipped workerdev to commonjs without questioning why apidev's identical tsconfig didn't fail. Sustainable fix, shallow understanding. **`scaffold_hygiene` held** (no v21-class node_modules leak). **v8.81 `content_fix_dispatch_required` gate fired correctly** — v22's iteration-into-main pattern eliminated, but the brief construction emitted by the gate is anti-convergent (5 rounds instead of 1). v22's failure: dispatch gate didn't exist, iteration leaked to main. v23's failure: dispatch gate exists but emits convergence-hostile briefs, iteration loops across subagents. **v8.85 `env-var-model` topic + `env_self_shadow` check held** — no shadows in any zerops.yaml; both `${db_*}` and `${redis_*}` referenced via `process.env` correctly. v23 post-mortem at [docs/implementation-v23-postmortem.md](implementation-v23-postmortem.md). v8.86 implementation plan supersedes the postmortem's §7 list — see [docs/implementation-v8.86-plan.md](implementation-v8.86-plan.md). |
 | v8.90 | state-coherence fixes ship (pre-v26) | **Implementation-only release** between v25 and v26, addressing the two workflow-discipline defects v25 surfaced. Four upstream fixes, zero new checkers, zero new gates (per rollback-calibration rule): (A) `SUBAGENT_MISUSE` error code added in `internal/platform/errors.go`; `handleStart` in `internal/tools/workflow.go` now rejects `action=start` when a non-immediate workflow is already active AND `active != input.Workflow`, replacing the misleading `PREREQUISITE_MISSING: Run bootstrap first` with a precise message that tells sub-agents to `do NOT call zerops_workflow`. Immediate workflows (cicd, export) are exempt; same-workflow restarts fall through to the workflow-specific idempotency. (B) `subagent-brief` and `readme-fragments` flipped to `Eager: false` in `internal/workflow/recipe_topic_registry.go`; `where-commands-run` stays eager. The existing `subStepToTopic` mapping (SubStepSubagent → subagent-brief, SubStepReadmes → readme-fragments) already lands each brief in the response to `complete substep=<previous>` because `buildGuide` reads `currentSubStepName()` after the advance. (C) A uniform `TOOL-USE POLICY` block was prepended to the scaffold / feature / README-writer / code-review sub-agent briefs, listing 7 forbidden tools (zerops_workflow, import, env, deploy, subdomain, mount, verify) and the 'workflow state is main-agent-only' rule. (D) The `deploy-skeleton` section in `recipe.md` was rewritten with a leading `⚠ Substep-Complete is load-bearing (v8.90)` header, naming the two load-bearing brief-delivery boundaries (`init-commands→subagent`, `feature-sweep-stage→readmes`) and the v25 anti-pattern explicitly. New tests: `internal/tools/workflow_start_test.go` (Fix A, 7 cases), `internal/workflow/recipe_substep_briefs_test.go` (Fix B+D, 10 cases), `internal/workflow/recipe_tool_use_policy_test.go` (Fix C, 3 matrix tests × 4 briefs). Full test suite green, `make lint-local` clean. v26 calibration bar: 0 `SUBAGENT_MISUSE` rejections; 0 out-of-order substep attestations; `complete init-commands` response ≥14 KB containing subagent-brief phrases; `complete feature-sweep-stage` response ≥17 KB containing readme-fragments phrases; step-entry ≤30 KB (confirming de-eager held); ≤2 full-step README content-check failures. Implementation guide: [docs/implementation-v8.90-state-coherence.md](implementation-v8.90-state-coherence.md). |
 | v25 | first post-rollback run — operational + content reproduce v20; substep-delivery mechanism structurally bypassed | **Operationally cleanest full run on record; workflow-discipline defect surfaces.** Wall **71 min** (matches v20 exactly). 225 assistant events (lowest since v18's 223). 177 tool calls (matches v20 exactly). Main bash **0.5 min (30.9 s) — new best ever**, 0 very-long, **0 errored**. 7 subagents (scaffold×3 + feature×1 + README/CLAUDE writer×1 + content-fix×1 + code-review×1) with clean role separation. 11 deploys across 4 clusters (initial dev×3 + snapshot×3 + cross-stage×3 + appstage `./dist/~` fix + close-fix), all justified. 6 browser calls (4 deploy + 2 close). **5 guidance calls** (v20: 12, v22: 17, v23: 18) — low, expected post-rollback since v8.84's `EagerAt` scope shift was rolled back and agents fetch less explicitly. Close review: **0 CRIT / 1 WRONG / 3 STYLE** — WRONG was appdev `ItemsCrud.svelte` DELETE using raw `fetch()` bypassing `api.ts` helper, fixed via new `apiVoid()` helper + 1-deploy cycle. Content: apidev **435 README lines (new peak, +86 vs v20's 349)**, appdev 182, workerdev 247; gotchas **6/6/6** (v20: 7/6/6); IG items 6/4/3 (v20: 6/5/5); CLAUDE.md 4945/5576/5835 bytes (v20: 3395/2786/3728). Root README intro names real managed services (v17 `dbDriver` validation holds for 7th run). Preprocessor directive held on all 6 envs. Env-4 comments mostly v7-grade — two-axis `minContainers` teaching intact on api + worker — but **env 4 app-static comment contradicts its own YAML**: claims `"minContainers stays at the platform default"` while YAML declares `minContainers: 2`. Classic v20-era decorative-drift class; rollback calibration explicitly says editorial fix, not new check. No root README architecture section (v8.81 narrative check was rolled back; C+ cross-codebase-coherence limiter returns). **Rollback calibration verdict: PASSED** — v25 reproduces v20's A operational + A− content at v20's wall time with cleaner bash metrics. The v22–v24 cost axes (410/384 events, 23-min fix loops, 11 main-context README edits) do NOT recur. **But the run surfaces a new class of workflow-discipline defect the S/C/O/W rubric didn't capture**: (1) **Main agent bypassed the substep-delivery mechanism entirely** — did all 40 min of deploy work silently, then backfilled all 13 substep completions in 2 min at step end (21:06:55 → 21:08:59); first attestation out-of-order (`INVALID_PARAMETER: expected "deploy-dev", got "subagent"`). Each `complete substep=X` call returns the NEXT substep's scoped brief in `current.detailedGuide` — 73 KB of phase-scoped guidance was delivered into dead phases. Most consequentially, the 14 KB `subagent-brief` (delivered at `complete init-commands`) arrived 33 min AFTER the feature subagent had already dispatched and finished, and the 17 KB `readme-fragments` brief arrived AFTER the README writer had shipped 6 files. The 6-min content-fix-subagent cycle at 21:10:27-21:16:38 is DIRECTLY caused by the writer running without its substep brief: 6 content-check failures (3× `gotcha_distinct_from_guide`, `api_comment_specificity` 14%, `worker_comment_ratio` 28%, `cross_readme_gotcha_uniqueness`) all caught rules the missed brief encodes. (2) **Subagents called `zerops_workflow` at spawn**: feature subagent (20:34:30) first tried empty-input, then `action=start workflow=develop` — both rejected. Server's response was misleading: `PREREQUISITE_MISSING: Run bootstrap first` when the real state is "recipe is already active, subagent should not start a workflow." Appdev scaffold subagent hit the same path at 20:20:46. Recovery worked because subagents rationalised ("main agent orchestrates workflow state"); a subagent following the suggestion literally could have attempted `action=start workflow=bootstrap` and corrupted the recipe session. Blast-radius latent, not hit this run. **Bypass root cause**: `subagent-brief`, `where-commands-run`, and `readme-fragments` topics are all marked `Eager: true` in `recipe_topic_registry.go`. Eager topics get injected into the step-entry guide (the 37 KB response at `complete generate`). The agent therefore has both delegation briefs in hand BEFORE completing any deploy substep — substeps stop being delivery mechanisms and become retroactive checklist items. v25 post-mortem + v8.90 implementation plan at [docs/implementation-v8.90-state-coherence.md](implementation-v8.90-state-coherence.md). Four fixes — all upstream, no new checkers: (A) `SUBAGENT_MISUSE` error at `handleStart` when session already active, replacing the misleading `Run bootstrap first`; (B) de-eager `subagent-brief` and `readme-fragments` (keep `where-commands-run` eager — it applies from substep 1), remap `SubStepInitCommands → subagent-brief` and `SubStepFeatureSweepStage → readme-fragments` so the briefs only land via substep-complete calls; (C) explicit tool-use policy in every subagent brief listing permitted + forbidden tools; (D) substep-complete discipline note at top of deploy step-entry, naming the v25 anti-pattern explicitly. **Rating**: S=A (all 6 steps, all features, both browsers, 0 close CRIT), C=A− (peak apidev README; env-4 mostly gold with the app-static YAML/comment contradiction), O=A (71 min wall, 0.5 min main bash — best ever, 0 errored main, 0 very-long, 0 MCP schema errors, 0 exit-255 classifications), W=B (substep-delivery mechanism bypassed, 73 KB briefs delivered into dead phases, 2 subagents hit `zerops_workflow` misuse rejections, 6-min content-fix cycle structurally attributable to substep bypass) → **B** overall. The headline numbers match v20; the workflow-discipline defect is the next thing worth fixing before the next run. |
+| v28 | second post-rollback A-grade on mechanics; honest content audit drops surface from A− to C+ | **Mechanical discipline held; content-authoring mental-model surfaced as the limiter.** Wall **85 min** (v25: 71, v20: 71, v22: 103). 378 assistant events / ~501 tool calls / 5 subagents (scaffold×3 + feature×1 + code-review×1 — no writer, no content-fix, no env-comments dispatches; main agent wrote all content inline). Main bash 1.6 min / 0 very-long / 5 errored. 22 `zerops_guidance` fetches (v25: 5), **3 voluntary `zerops_record_fact` calls** — all three structured incidents became published gotchas. All v8.90 calibration bars passed: 0 `SUBAGENT_MISUSE`, substep attestations in canonical order in real-time (not v25's backfill pattern), ≤2 full-step README check failures (exactly 1 retry, fixed inline in 3 min). Both v8.93 calibration bars passed: recipePlan accepted without type-string retry, 0 zcp-side `cd /var/www/{host} && <exec>` patterns (git init via SSH container-side at provision). **Content metrics** (apidev / appdev / workerdev): README 261 / 189 / 230 lines, bytes 12,245 / 8,749 / 11,067; gotchas 5/5/5 balanced; IG items 5/4/4; CLAUDE.md 4754/4584/5232 bytes. Root README names real services (v17 `dbDriver` holds for 8th run). Preprocessor directive on all 6 envs. **Close review**: 2 CRIT + 1 WRONG + 4 STYLE; all CRIT+WRONG fixed inline by main after code-review subagent findings (missing NATS queue group, `ClientProxy.emit` without `firstValueFrom`, `parseInt(DB_PORT)` no fallback). **v8.85 `env_self_shadow` check-gap defect surfaced**: workerdev shipped `db_hostname: ${db_hostname}` + 8 more shadow keys at generate-write time; `complete step=generate` passed with 11 checks, none of which were `worker_env_self_shadow` — the check exists at [internal/tools/workflow_checks_generate.go:290](../internal/tools/workflow_checks_generate.go#L290) and `DetectSelfShadows` matches the exact pattern, but the worker hostname wasn't enumerated in the generate-complete check surface. The bug class that the rollback-calibration explicitly preserved this check to catch was not caught. Agent discovered the shadow at runtime (~5-10 min recovery), self-reported via `zerops_record_fact`, shipped gotcha about it. **Honest content audit drops C from A− to C+** (user correction — my first-pass grade was token-level, not reader-facing): out of 15 gotchas, only **~5 are genuine Zerops platform teaching** (appdev Vite allowedHosts, tilde suffix, build-vs-run envVars; workerdev queue group, SIGTERM drain); **5 are self-inflicted or wrong-surface** (apidev execOnce-silent-success blames platform for honoring exit-0 of a buggy seed; apidev Valkey-no-password is a 1-line fact bloated to 2 sentences; apidev `setGlobalPrefix` is pure NestJS framework docs; appdev b4 documents own `api.ts` scaffold helper as if universal; appdev b5 npm peer-dep metadata); **4 are framework-quirks borderline** (nats.js v2 URL-strip, MinIO virtual-hosted, Nest CLI tsbuildinfo-empty-emit, TypeORM synchronize-vs-migrate); **1 ships a folk-doctrine defect** — workerdev gotcha #1 claims *"The API codebase avoided the symptom because its resolver path happened to interpolate before the shadow formed; do not rely on that."* which is fabricated (both apidev and workerdev had identical shadow patterns and both were broken); correct rule per `env-var-model` guide (accessible during run, consulted 0 times by author) is "cross-service vars auto-inject project-wide; NEVER declare `key: ${key}`." Same class as v23's "Recovering execOnce burn" fabrication. **Two env-comment factual errors**: env 5 NATS block reads *"clustered broker with JetStream-style durability"* — recipe uses core NATS pub/sub with queue groups, not JetStream; env 1 workerdev block reads *"The tsbuildinfo is gitignored, so the first watch cycle always emits dist cleanly"* — `nest start --watch` uses ts-node, tsbuildinfo only affects prod `nest build`. **Cross-surface duplication**: same facts across 3–4 surfaces (.env shadowing: 3 surfaces; forcePathStyle: 4 surfaces; tsbuildinfo: 4 surfaces with factual error on one). Env 4 comments genuinely v7-gold, internally consistent (v25 app-static contradiction fixed). Env READMEs remain 7-line template boilerplate (no teaching at all — next missed surface). **Rating**: S=A, C=**C+** (not A−; honest audit reveals ~33% genuine-platform-teaching rate, 1 folk-doctrine defect, 2 env factual errors, pervasive cross-surface duplication, wrong-surface items shipped as gotchas; env 4 comments + most IG items prevent a lower grade), O=A− (85 min wall ≤90, 1.6 min main bash, 0 very-long, 0 MCP schema errors), W=A− (5 subagents clean, v8.90+v8.93 held) → **min = C+**. v28 surfaces that the content-authoring mental-model is the next load-bearing fix. The root cause is structural: the agent that debugged for 85 min writes self-narrative, not reader-facing content; token-level checks ("names a mechanism + failure mode") are trivially satisfied by journal entries. The answer is to decouple recording from authoring — see [docs/spec-content-surfaces.md](spec-content-surfaces.md) for the surface contracts + classification taxonomy + citation map, and [docs/implementation-v8.94-content-authoring.md](implementation-v8.94-content-authoring.md) for the concrete plan: (1) `zerops_record_fact` becomes mandatory during deploy, (2) fresh content-authoring subagent reads facts log + zerops_knowledge + surface contracts (NOT the run transcript) and writes all six surface types by classifying each fact and routing it to exactly one destination, (3) citation requirement for any gotcha whose topic matches a `zerops_knowledge` guide, (4) env READMEs become 40–80 lines of tier-transition teaching not boilerplate, (5) scaffold pre-flight traps list to stop recurrent run-incidents becoming recurrent gotcha candidates (self-shadow, URL-embedded creds, forcePathStyle, 0.0.0.0 bind, trust proxy). Plus v8.85 check-surface audit: `env_self_shadow` must enumerate every hostname at generate-complete (currently skips worker). |
 
 ---
 
@@ -1657,6 +1685,150 @@ The server's `Run bootstrap first` suggestion is **misleading and latently dange
 
 ---
 
+### v28 — mechanics hold (2nd post-rollback A-grade), honest content audit drops to C+
+
+- **Date**: 2026-04-18
+- **Tier / shape**: Showcase Type 4, API-first dual-runtime + separate-codebase worker, 3-repo
+- **Model**: `claude-opus-4-7[1m]` (same as v22–v27)
+- **Session**: `c0b06dd3b24748be`
+- **Session logs**: `main-session.jsonl` (2.4 MB, 739 events) + 5 subagent logs
+- **Wall (recipe work)**: 12:25:27 → 13:50:45 = **85 min**. Total session including 22-min idle + export/TIMELINE write: 12:25:27 → 14:14:40 = 109 min.
+- **Assistant events (main)**: 378 | **Tool calls (main)**: ~501
+- **Bash metrics (main)**: 62 calls / **1.6 min total (96 s)** / **0 very-long** / **5 errored** / 2 multi-host pkill chains (both clean — `pkill` self-kill classifier held)
+- **Bash metrics (main + 5 subagents)**: ~123 calls / ~4.0 min total / **0 very-long across the full tree** / 2 long (55–75 s `nest new scratch` in scaffolds — expected)
+- **Subagents (5 — minimalist shape)**:
+  - Scaffold apidev (`a4563611…`, 3:07 wall, 17 bash / 72.5 s)
+  - Scaffold appdev (`a635c7822…`, 3:07 wall, 44 bash / 97.7 s)
+  - Scaffold workerdev (`a6f5d561…`, 1:49 wall, 8 bash / 62.1 s)
+  - Feature subagent (`a858c077…`, 7:36 wall, 22 bash / 30.5 s, **0 MCP schema errors**)
+  - Code-review subagent (`a02689c4…`, 2:54 wall, 8 bash / 37.1 s — inline-fixed findings directly)
+  - **No writer / no content-fix / no env-comments / no critical-fix dispatches**. Main agent wrote all READMEs + CLAUDE.md + env comments + applied close-fixes inline.
+- **MCP tool mix (main)**: 26 `zerops_workflow`, 25 `zerops_dev_server`, **22 `zerops_guidance`** (v25: 5 — on-demand fetching restored), 18 `zerops_deploy`, 19 TodoWrite, 6 `zerops_browser` (4 deploy + 2 close), 5 Agent, 4 each of `zerops_logs`/`zerops_subdomain`/`zerops_verify`, 3 `zerops_mount`, **3 `zerops_record_fact`** (NEW — voluntary use; each became a published gotcha), 1 each `zerops_knowledge`/`zerops_import`/`zerops_discover`/`zerops_env`
+- **Deploys**: 18 total — 3 initial dev (12:47–12:49) + 3 snapshot-dev after features (13:11–13:12) + 3 cross-stage first pass (13:21–13:22) + 1 workerstage rebuild after tsbuildinfo fix (13:25) + 3 dev redeploys after close fixes (13:40–13:44) + 3 cross-stage promotion (13:45–13:49). All justified by intervening commits.
+
+**Content metrics** (apidev / appdev / workerdev):
+
+- README lines: 261 / 189 / 230 — between v23's 250/260/290 and v25's 435/182/247
+- README bytes: 12,245 / 8,749 / 11,067
+- Gotchas: **5 / 5 / 5** — balanced but below v25's 6/6/6 floor and v20/v22 peak of 7/6/6
+- IG items: 5 / 4 / 4 — apidev matches v20/v25, appdev/worker slightly below v25
+- CLAUDE.md bytes: 4,754 / 4,584 / 5,232 — all clear the 1200-byte floor; v25 was 4,945 / 5,576 / 5,835 (v28 slightly more compressed on appdev/worker)
+- Root README intro: ✅ names real managed services (v17 `dbDriver` validation holds for **8th** consecutive run)
+- Preprocessor directive: ✅ all 6 envs carry `#zeropsPreprocessor=on` with `<@generateRandomString(<32>)>` for `APP_SECRET`
+- Architecture section in root README: ❌ absent (same as v25 — editorial gap, intentional post-rollback)
+
+**v8.90 calibration (from v25 defect) — ALL PASSED**:
+
+| Bar | Result |
+|---|---|
+| 0 `SUBAGENT_MISUSE` rejections | ✅ 0 — no subagent called `zerops_workflow` at spawn |
+| Substep attestations in canonical order, real-time | ✅ — all 12 deploy substeps completed in canonical order AS work happened (not v25's end-of-step backfill). Times: 12:48:55 deploy-dev → 12:55:50 start-processes → 12:56:18 verify-dev → 12:56:27 init-commands → 13:07:30 subagent → 13:12:01 snapshot-dev → 13:12:22 feature-sweep-dev → 13:14:49 browser-walk → 13:22:06 cross-deploy → 13:22:15 verify-stage → 13:22:25 feature-sweep-stage → 13:28:05 readmes |
+| `complete init-commands` delivers subagent-brief | ✅ — feature subagent dispatched AFTER the substep attestation (13:07:30 → feature work to 13:22), confirming the brief landed in time |
+| `complete feature-sweep-stage` delivers readme-fragments | ✅ — readmes substep followed at 13:28 |
+| step-entry ≤30 KB | ✅ (no persist-to-disk events observed) |
+| ≤2 full-step README-check failures | ✅ — exactly **1 retry** (13:28:26 first `complete step=deploy` failed 4 checks → fixed inline in 3 min → 13:31:15 retry passed) |
+
+v25's substep-bypass pathology did **not** recur. v8.90's de-eager of `subagent-brief`/`readme-fragments` + tool-use policy in subagent briefs + `SUBAGENT_MISUSE` error code all held under production load.
+
+**v8.93 calibration (from v26 defects) — ALL PASSED**:
+
+- ✅ `recipePlan` accepted on first `complete step=research` call as object, no type-string retry. The one research-complete rejection at 12:27:00 was valid content (`research.sessionDriver is required for showcase tier`), not stringification — v8.93.2's object-shape jsonschema hint held.
+- ✅ 0 `cd /var/www/{host} && <exec>` zcp-side patterns. Provision step git-init'd each codebase container-side via `ssh {host} "git init -q -b main && git commit --allow-empty..."` — v8.93.1's git-config-mount rewrite held.
+
+**Close-step bugs**: 2 CRIT + 1 WRONG + 4 STYLE:
+
+- **CRIT #1 (fixed)**: workerdev `@MessagePattern('jobs.dispatch')` missing `queue: 'jobs-workers'` — double-process at `minContainers > 1`. Fixed by code-review subagent inline.
+- **CRIT #2 (fixed)**: apidev `ClientProxy.emit(...)` not wrapped in `firstValueFrom(...)` — cold Observable never subscribes, NATS never publishes. Fixed inline.
+- **WRONG (fixed)**: workerdev `parseInt(DB_PORT)` without `?? '5432'` fallback → NaN. Fixed.
+- **STYLE (1 taken, 3 left)**: redundant `data-feature="status"` on App.svelte wrapper (taken); untaken — fire-and-forget error boundary, unclosed `setTimeout` in JobsDispatch poll guard, non-rethrown bucket-init error.
+
+No dedicated critical-fix subagent — main agent applied all fixes via 4 Edits, then redeployed all 3 dev targets + cross-deployed to all 3 stage targets. Stage feature-sweep re-ran green. Total fix-cycle wall ~6 min.
+
+**v8.85 `env_self_shadow` check-surface defect (NEW, confirmed)**:
+
+Workerdev zerops.yaml shipped with 9 self-shadow lines at first Write (12:41:37):
+
+```yaml
+run:
+  envVariables:
+    queue_hostname: ${queue_hostname}    # self-shadow
+    queue_port: ${queue_port}            # self-shadow
+    queue_user: ${queue_user}            # self-shadow
+    queue_password: ${queue_password}    # self-shadow
+    db_hostname: ${db_hostname}          # self-shadow
+    db_port: ${db_port}                  # self-shadow
+    db_user: ${db_user}                  # self-shadow
+    db_password: ${db_password}          # self-shadow
+    db_dbName: ${db_dbName}              # self-shadow
+```
+
+At 12:42:12 `complete step=generate` returned **11 checks** — all `app_*` or `api_*` prefixed (+ 2 un-prefixed: `zerops_yml_schema_fields`, `dev_prod_env_divergence`). **Zero `worker_*` checks, including `worker_env_self_shadow`.**
+
+The check implementation exists at [internal/tools/workflow_checks_generate.go:111,290](../internal/tools/workflow_checks_generate.go#L290) and `ops.DetectSelfShadows` matches exactly this pattern. The worker hostname simply isn't enumerated in the generate-complete check surface.
+
+Consequence: v8.85's promise ("one real bug class, zero false positives across v22/v23/v24 — SURVIVED rollback") failed at the first post-rollback run that would have exercised it. Agent discovered the shadow at runtime (~5-10 min recovery including renaming to `DB_HOST`/`NATS_HOST` uppercase aliases), self-reported via `zerops_record_fact`, and shipped the trap as workerdev gotcha #1 — with fabricated "timing-dependent interpolator" folk-doctrine (see below).
+
+**`zerops_record_fact` — voluntary, load-bearing**:
+
+Agent called `zerops_record_fact` 3× without instruction to do so:
+1. **12:46:18** — execOnce silent-success seed incident
+2. **12:53:13** — cross-service env var shadow loop
+3. **13:19:16** — nest build empty-emit with cached tsbuildinfo
+
+Each fact has structured fields (`type: gotcha_candidate`, title, failureMode, mechanism, fixApplied, evidence, codebase, substep). All three became published gotchas. The v8.86 `record_fact` tool is NOT orphan — it's the structured incident ledger the content-authoring pipeline (v8.94) consumes. This is the one piece of v8.86 surviving that will be load-bearing in the next reform.
+
+**Honest content audit (the main finding — user correction drove this)**:
+
+My first-pass review scored content by token-level markers ("names a mechanism", "names a failure mode") and called C=A−. User's audit revealed this was token-matching rather than reader-empathy. The honest grade is **C+**, derived from surface-by-surface reading against the tests in [docs/spec-content-surfaces.md](spec-content-surfaces.md):
+
+- **Gotchas (15 total across 3 codebases)**: ~5 genuine Zerops platform teaching / ~5 self-inflicted or wrong-surface / ~4 framework-quirk borderline / **1 folk-doctrine defect**. Wrong-surface catalog:
+  - *apidev #1 execOnce silent-success* — **self-inflicted**. Seed script exited 0 with no stdout (seed bug). `execOnce` correctly honored exit code. Discard class.
+  - *apidev #4 Valkey-no-password* — 1-line fact bloated to 2 sentences; second sentence describes what happens if you write `${cache_password}` (which doesn't exist). Discard class.
+  - *apidev #5 `setGlobalPrefix`* — pure NestJS framework documentation. Wrong surface (→ framework docs).
+  - *appdev #4 api.ts helper* — documents recipe's own scaffold helper as if universal. Porter doesn't have `api.ts`. Wrong surface (→ IG principle + code comment).
+  - *appdev #5 `plugin-svelte@^5` peer-dep* — npm registry metadata. Wrong surface (→ package.json notes).
+- **Folk-doctrine defect**: workerdev gotcha #1 (env-shadow) claims *"The API codebase avoided the symptom because its resolver path happened to interpolate before the shadow formed; do not rely on that."* — fabricated. Both apidev and workerdev shipped identical self-shadow patterns; both were broken. The correct rule (from `env-var-model` guide, accessible during run, consulted 0 times by author) is: "cross-service vars auto-inject project-wide; NEVER declare `key: ${key}` in run.envVariables." Same class as v23's "Recovering `zsc execOnce` burn" fabrication. Author had the guide available and wrote folk-doctrine anyway.
+- **Env-comment factual errors**:
+  - *Env 5 (HA Production) NATS block*: *"NATS 2.12 in mode: HA — clustered broker with JetStream-style durability."* The recipe uses core NATS pub/sub with queue groups (`Transport.NATS` + `queue: 'jobs-workers'`), NOT JetStream. "JetStream-style" conflates distinct NATS subsystems.
+  - *Env 1 (Remote CDE) workerdev block*: *"The tsbuildinfo is gitignored, so the first watch cycle always emits dist cleanly."* `nest start --watch` uses ts-node (not `nest build`); the `.tsbuildinfo` issue only affects the prod `nest build` path.
+- **IG wrong-surface items**:
+  - *appdev IG #3* explains the recipe's own `api.ts` wrapper as if it were a Zerops integration step. Principle (SPA fallback returns `200 text/html`) belongs in IG; specific helper implementation belongs in code comments.
+  - *appdev IG #4* (Svelte 5 `mount()` bootstrap) is pure Svelte framework documentation. Any Svelte user already knows or finds this in Svelte docs; zero Zerops involvement.
+- **Cross-surface duplication (each fact on 3–4 surfaces instead of 1 with cross-refs)**:
+  - `.env` shadowing: apidev IG #3 + apidev zerops.yaml comment + apidev CLAUDE.md trap
+  - `forcePathStyle: true`: apidev IG #4 + apidev gotcha #2 + env 0/5 import.yaml + apidev zerops.yaml
+  - `nest build` tsbuildinfo: workerdev gotcha #2 + workerdev zerops.yaml + apidev CLAUDE.md + env 1 import.yaml (factual error on one)
+  - NATS creds-as-options: apidev gotcha #3 + apidev zerops.yaml + env 0 import.yaml + workerdev IG #2
+- **What's genuinely A-quality**: env 4 (Small Production) `import.yaml` comments are v7-gold-standard — two-axis `minContainers` teaching applied to every runtime service (throughput + HA axes distinct), NON_HA cost-trade explicit on managed services, no templated per-service phrasing, `app` static comment internally consistent (v25's contradiction fixed). The surface that has always been the content-grade anchor is still an anchor.
+- **Env READMEs**: 7 lines of template boilerplate each — zero teaching. The most obviously-undersized surface in the recipe and a missed content opportunity for the dev/stage mental-model teaching the user explicitly called out as priority.
+
+**Rating**: S=**A** (all 6 steps, all 5 features wired + exercised on dev AND stage, both browser walks fired, 0 CRIT shipped), C=**C+** (not A−; honest reader-facing audit: ~33% genuine platform teaching in gotchas + 1 folk-doctrine defect + 2 env-comment factual errors + pervasive cross-surface duplication + env READMEs at 7 lines of boilerplate + wrong-surface items shipped; env 4 comments + most IG items + clean CLAUDE.md lift C− to C+), O=**A−** (85 min wall ≤90 = A-band, 1.6 min main bash = A, 0 very-long, 0 MCP schema errors, 0 exit-255 classifications; 378 assistant events / 501 tool calls in upper-B band per the v22 Opus 4.7 rubric), W=**A−** (5 subagents with clean role separation — minimalist proved sufficient, substep attestations real-time + in-order, both browser walks, 22 guidance fetches, 3 voluntary `zerops_record_fact` calls, all v8.90+v8.93 calibration bars held) → **C+** overall.
+
+*v28 is the second consecutive post-rollback run where mechanics held cleanly (v25 was the first). The substrate is stable. But v28 surfaces that token-level content checks permit decorative and folk-doctrine content because the grading agent (prior me) and the authoring agent (main session) share the same failure mode: scoring by vocabulary rather than reader-empathy. The user's audit caught it. The next load-bearing fix is at the content-authoring layer, not the check layer.*
+
+*The architectural insight: an agent that has debugged for 85 min cannot reliably write reader-facing content about that debug spiral. Its context is saturated with "what confused me"; the reader-facing test is "what will surprise a fresh developer who read the platform docs?" These are different questions. Three sub-pathologies flow from the confusion: fabricated mental models (v23 execOnce-burn, v28 interpolator-timing), wrong-surface placement (framework docs shipped as Zerops gotchas), self-referential decoration (recipe's own scaffold helpers documented as if universal). No token-level check catches any of the three.*
+
+**v29 calibration bar + v8.94 implementation target**:
+
+Implementation plan: [docs/implementation-v8.94-content-authoring.md](implementation-v8.94-content-authoring.md). Authoritative spec (surface contracts + classification taxonomy + citation map + counter-examples from v28): [docs/spec-content-surfaces.md](spec-content-surfaces.md).
+
+Five fixes, in priority order:
+1. **Fresh-context content-authoring subagent after deploy.readmes substep**. Inputs: `zerops_record_fact` log + final recipe state + `zerops_knowledge` on demand + surface contracts. NO run transcript in context. Classifies every fact (platform-invariant / framework×platform / framework-quirk / scaffold-decision / operational / self-inflicted); routes to exactly one surface; discards self-inflicted and framework-quirk; cites `zerops_knowledge` guides when topic matches.
+2. **`zerops_record_fact` becomes mandatory** during deploy for every incident and every non-obvious scaffold decision. No content writing happens during deploy.
+3. **Env READMEs become substantive** (40–80 lines of tier-transition teaching) — written by the authoring subagent from the tier's `import.yaml` + adjacent tiers. This is where the dev/stage mental-model lives.
+4. **Scaffold pre-flight traps list** in scaffold-subagent-brief: "before you ship the file, verify your generated code doesn't do X" — list the recurrent run-incident classes (self-shadow, URL-embedded NATS creds, missing `forcePathStyle`, missing `0.0.0.0`, missing `trust proxy`). Prevents recurrent run-incidents from becoming recurrent gotcha candidates.
+5. **v8.85 check-surface audit**: `env_self_shadow` must enumerate every hostname at generate-complete. Unit test: three-codebase plan with `workerdev/zerops.yaml` containing `db_hostname: ${db_hostname}` → response `checks` array must contain `worker_env_self_shadow` with `status=fail`. The check existed and would have caught this class — the enumeration loop missed it.
+
+v29 calibration bar:
+- ≥80% of gotchas pass the fresh-developer surprise test (per spec-content-surfaces.md §5 Surface 5 test).
+- 0 folk-doctrine defects — every gotcha whose topic matches a `zerops_knowledge` guide carries a guide citation and uses the guide's framing.
+- 0 cross-surface fact duplication (each fact on exactly one surface; others cross-reference).
+- Env READMEs ≥40 lines each with genuine tier-transition teaching.
+- `env_self_shadow` check fires for every enumerated host at generate.
+- Content-authoring subagent writes all six surface types; main agent writes zero content inline.
+
+---
+
 ## Adding a new version
 
 When a new recipe run lands at `/Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v{N}/`:
@@ -1713,7 +1885,8 @@ When a new recipe run lands at `/Users/fxck/www/zcprecipator/nestjs-showcase/nes
 
 ## Tooling references
 
-- **`eval/scripts/analyze_bash_latency.py`** — session-log bash latency + pattern analyzer
+- **`eval/scripts/timeline.py`** — cross-stream chronological event timeline (main + all subagents), phase-detected, with per-tool latency histogram and per-source wall clock via `--stats`. Start here for any new run.
+- **`eval/scripts/analyze_bash_latency.py`** — session-log bash latency + pattern analyzer (deep-dive for bash/dev-server when timeline.py flags high latency)
 - **`eval/scripts/version_metrics.sh`** — per-codebase content metrics table across all versions
 - **`eval/scripts/extract-tool-calls.py`** — stream-json → JSON summary of tool calls, knowledge queries, workflow actions, errors, retries
 - **`internal/tools/workflow_checks_*.go`** — the check suite enforcing content rules; read these to understand what WILL block a future run and why

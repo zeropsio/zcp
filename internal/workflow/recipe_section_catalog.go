@@ -99,6 +99,10 @@ var (
 	// api-surface feature.
 	recipeDeployBlocks = []sectionBlock{
 		{Name: "deploy-framing"},
+		// v8.94: fact recording is mandatory during deploy — the authoring
+		// sub-agent at the readmes substep consumes the facts log, not the
+		// run transcript. Universal to every recipe tier; no predicate.
+		{Name: "fact-recording-mandatory"},
 		{Name: "deploy-execution-order"},
 		{Name: "deploy-core-universal"},
 		{Name: "deploy-api-first", Predicate: isDualRuntime},
@@ -117,6 +121,11 @@ var (
 		// v14: README writing moved from generate to the post-verify
 		// readmes sub-step so gotchas narrate lived experience.
 		{Name: "readme-with-fragments"},
+		// v8.94: content-authoring sub-agent brief — showcase-only delivery
+		// for the `readmes` substep (replaces readme-with-fragments as the
+		// substep-scoped brief; readme-with-fragments stays as a marker-
+		// format reference).
+		{Name: "content-authoring-brief", Predicate: isShowcase},
 		{Name: "deploy-completion"},
 	}
 

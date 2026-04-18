@@ -560,6 +560,18 @@ func subStepToTopic(step, subStep string, plan *RecipePlan) string {
 		case SubStepFeatureSweepStage:
 			return "feature-sweep-stage"
 		case SubStepReadmes:
+			// v8.94: content-authoring-brief replaces readme-fragments for
+			// showcase recipes. The new brief embeds surface contracts + fact
+			// classification + citation map — a rubric the dispatched
+			// sub-agent evaluates every fact against before routing it to a
+			// surface. readme-fragments stays available as an on-demand
+			// topic for the fragment marker-format reference; content-
+			// authoring-brief is showcase-predicated (the full set of six
+			// surfaces only exists on showcase recipes), so minimal/hello-
+			// world tiers fall back to readme-fragments as before.
+			if isShowcase(plan) {
+				return "content-authoring-brief"
+			}
 			return "readme-fragments"
 		}
 	}

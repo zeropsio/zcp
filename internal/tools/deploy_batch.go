@@ -1,0 +1,107 @@
+package tools
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/workflow"
+)
+
+// DeployBatchInput is the MCP input for zerops_deploy_batch — v8.94 §5.9.
+// One MCP call kicks off N parallel builds server-side, closing the STDIO
+// serialization penalty that causes "Not connected" errors when an agent
+// calls zerops_deploy three times in parallel from the client side.
+//
+// Use for every 3-deploy cluster in a recipe run: initial dev, snapshot-dev,
+// stage cross-deploy, close redeploys. Single-target redeploys (e.g. a
+// worker redeploy after a fix) still use zerops_deploy directly — batch is
+// only worth the overhead at two-plus targets.
+type DeployBatchInput struct {
+	Targets []ops.DeployBatchTarget `json:"targets" jsonschema:"required,Array of deploy targets. Each target is one sourceService+targetService+setup combination. Minimum 1; recommend 2-3 for parallelism gains. Values beyond 5 may hit build-queue limits and fall back to serial scheduling on the platform side."`
+}
+
+// RegisterDeployBatch registers the zerops_deploy_batch MCP tool for SSH
+// (container) mode. Not registered in local mode — local deploys don't face
+// the STDIO serialization problem and the batch-level goroutine orchestration
+// is SSH-specific.
+func RegisterDeployBatch(
+	srv *mcp.Server,
+	client platform.Client,
+	projectID string,
+	sshDeployer ops.SSHDeployer,
+	authInfo *auth.Info,
+	logFetcher platform.LogFetcher,
+	stateDir string,
+	engine *workflow.Engine,
+) {
+	desc := "Deploy multiple services in parallel — single MCP call kicks off N builds server-side. " +
+		"Closes the MCP STDIO serialization penalty (calling zerops_deploy multiple times in parallel returns 'Not connected'). " +
+		"Use for every 3-deploy cluster: initial dev, snapshot-dev, cross-stage, close redeploy. " +
+		"Per-target failures do NOT cancel siblings — each target runs to completion independently. " +
+		"Response aggregates per-target results so you can apply targeted fixes without rolling back the cluster."
+
+	mcp.AddTool(srv, &mcp.Tool{
+		Name:        "zerops_deploy_batch",
+		Description: desc,
+		Annotations: &mcp.ToolAnnotations{
+			Title:           "Deploy batch — parallel deploys",
+			DestructiveHint: boolPtr(true),
+		},
+	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeployBatchInput) (*mcp.CallToolResult, any, error) {
+		if len(input.Targets) == 0 {
+			return textResult("Error: zerops_deploy_batch requires at least one target"), nil, nil
+		}
+
+		// Gate: each target (and its source, when set) must be adopted by ZCP.
+		for _, t := range input.Targets {
+			if blocked := requireAdoption(stateDir, t.TargetService, t.SourceService); blocked != nil {
+				return blocked, nil, nil
+			}
+		}
+
+		// Pre-flight each target (matches zerops_deploy behavior); any
+		// failure aborts the whole batch so the agent sees the config issue
+		// before any build burns time. Pre-flight failures echo resolved
+		// setup names back into the targets — v8.85 semantics carried
+		// through to batch.
+		for i := range input.Targets {
+			t := input.Targets[i]
+			resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, t.TargetService, t.Setup)
+			if pfErr != nil {
+				return convertError(platform.NewPlatformError(
+					platform.ErrInvalidParameter,
+					fmt.Sprintf("Pre-flight validation error for %s: %v", t.TargetService, pfErr),
+					"Check zerops.yaml and service configuration")), nil, nil
+			}
+			if pfResult != nil && !pfResult.Passed {
+				return jsonResult(map[string]any{
+					"preFlightFailedFor": t.TargetService,
+					"result":             pfResult,
+				}), nil, nil
+			}
+			if resolvedSetup != "" {
+				input.Targets[i].Setup = resolvedSetup
+			}
+		}
+
+		onProgress := buildProgressCallback(ctx, req)
+		pollFn := func(c context.Context, r *ops.DeployResult, cb ops.ProgressCallback, lf platform.LogFetcher, d ops.SSHDeployer) {
+			pollDeployBuild(c, client, projectID, r, cb, lf, d)
+		}
+
+		authVal := auth.Info{}
+		if authInfo != nil {
+			authVal = *authInfo
+		}
+		result := ops.DeployBatchSSH(
+			ctx, client, projectID, sshDeployer, authVal,
+			input.Targets, logFetcher, onProgress, pollFn,
+		)
+		_ = engine // reserved for work-session recording hooks if needed later.
+		return jsonResult(result), nil, nil
+	})
+}

@@ -99,6 +99,7 @@ func (s *Server) registerTools() {
 	tools.RegisterKnowledge(s.server, s.store, s.client, stackCache, knowledgeTracker, wfEngine)
 	tools.RegisterGuidance(s.server, wfEngine)
 	tools.RegisterRecordFact(s.server, wfEngine)
+	tools.RegisterWorkspaceManifest(s.server, wfEngine)
 	tools.RegisterLogs(s.server, s.client, s.logFetcher, projectID)
 	tools.RegisterEvents(s.server, s.client, projectID)
 	tools.RegisterProcess(s.server, s.client)
@@ -108,6 +109,11 @@ func (s *Server) registerTools() {
 	// Mutating tools — deploy registration routes by environment.
 	if s.sshDeployer != nil {
 		tools.RegisterDeploySSH(s.server, s.client, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine)
+		// v8.94: batch-deploy keeps multi-target parallelism server-side
+		// so the MCP STDIO channel isn't saturated (v23 "Not connected"
+		// failure class). SSH-only — local deploys don't face the same
+		// parallelism problem.
+		tools.RegisterDeployBatch(s.server, s.client, projectID, s.sshDeployer, s.authInfo, s.logFetcher, stateDir, wfEngine)
 		// dev_server depends on the SSH deployer — it's the lifecycle
 		// primitive for background dev servers on target containers.
 		// Skipped in local-only mode where SSH to Zerops siblings is

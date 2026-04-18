@@ -44,10 +44,16 @@ func TestRecipeDeployTopics_EagerSet_v8_90(t *testing.T) {
 
 	wantEager := map[string]bool{
 		"where-commands-run": true,
+		// v8.94: mandatory fact recording is prompt-level pressure applied
+		// from the first deploy substep through the last — Eager is the
+		// correct delivery so every substep context carries the guidance.
+		"fact-recording-mandatory": true,
 	}
 	wantNotEager := []string{
 		"subagent-brief",
 		"readme-fragments",
+		// v8.94: the showcase `readmes` substep delivery topic.
+		"content-authoring-brief",
 	}
 
 	for id := range wantEager {
@@ -86,27 +92,30 @@ func TestSubStepToTopic_DeploySubagent_ReturnsSubagentBrief(t *testing.T) {
 	}
 }
 
-// TestSubStepToTopic_DeployReadmes_ReturnsReadmeFragments — regression guard
-// on the existing mapping. With Eager off, this mapping is the ONLY path
-// by which the README-writer brief reaches the agent.
-func TestSubStepToTopic_DeployReadmes_ReturnsReadmeFragments(t *testing.T) {
+// TestSubStepToTopic_DeployReadmes_Delivery — regression guard on the
+// substep mapping. v8.94: showcase recipes land on content-authoring-brief
+// (surface contracts + classification + citation map); minimal/hello-world
+// recipes still land on readme-fragments (marker-format reference only,
+// no six-surface authoring scope on non-showcase tiers).
+func TestSubStepToTopic_DeployReadmes_Delivery(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name  string
-		shape RecipeShape
+		name      string
+		shape     RecipeShape
+		wantTopic string
 	}{
-		{"dual-runtime-showcase", ShapeDualRuntimeShowcase},
-		{"fullstack-showcase", ShapeFullStackShowcase},
-		{"backend-minimal", ShapeBackendMinimal},
-		{"hello-world", ShapeHelloWorld},
+		{"dual-runtime-showcase", ShapeDualRuntimeShowcase, "content-authoring-brief"},
+		{"fullstack-showcase", ShapeFullStackShowcase, "content-authoring-brief"},
+		{"backend-minimal", ShapeBackendMinimal, "readme-fragments"},
+		{"hello-world", ShapeHelloWorld, "readme-fragments"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			plan := fixtureForShape(tt.shape)
 			got := subStepToTopic(RecipeStepDeploy, SubStepReadmes, plan)
-			if got != "readme-fragments" {
-				t.Errorf("subStepToTopic(deploy, readmes, %s) = %q, want %q", tt.name, got, "readme-fragments")
+			if got != tt.wantTopic {
+				t.Errorf("subStepToTopic(deploy, readmes, %s) = %q, want %q", tt.name, got, tt.wantTopic)
 			}
 		})
 	}
@@ -154,6 +163,28 @@ func TestInjectEagerTopics_Deploy_DoesNotIncludeReadmeFragments(t *testing.T) {
 	for _, p := range forbidden {
 		if strings.Contains(got, p) {
 			t.Errorf("eager injection for deploy MUST NOT contain readme-fragments phrase %q — remove Eager from readme-fragments", p)
+		}
+	}
+}
+
+// TestInjectEagerTopics_Deploy_DoesNotIncludeContentAuthoringBrief — v8.94
+// guard. The content-authoring brief is substep-scoped; it must NOT land in
+// the deploy step-entry guide. Distinctive phrases taken from the block
+// that would not appear in other deploy topics.
+func TestInjectEagerTopics_Deploy_DoesNotIncludeContentAuthoringBrief(t *testing.T) {
+	t.Parallel()
+	plan := fixtureForShape(ShapeDualRuntimeShowcase)
+	got := InjectEagerTopics(recipeDeployTopics, plan)
+
+	forbidden := []string{
+		"Classification taxonomy — apply BEFORE routing",
+		"Citation map — MANDATORY guide consultation",
+		"Counter-examples — wrong-surface / folk-doctrine patterns",
+		"You are a content-authoring sub-agent",
+	}
+	for _, p := range forbidden {
+		if strings.Contains(got, p) {
+			t.Errorf("eager injection for deploy MUST NOT contain content-authoring-brief phrase %q — remove Eager from content-authoring-brief", p)
 		}
 	}
 }
@@ -261,11 +292,46 @@ func TestDeploySkeleton_PointsAtSubstepDeliveredBriefs(t *testing.T) {
 	}
 }
 
-// TestSubStepGuide_FeatureSweepStageResponse_ContainsReadmeFragments —
-// integration: when current substep advances to `readmes` (after complete
-// substep=feature-sweep-stage), buildSubStepGuide must return the byte-
-// literal content of the readme-with-fragments block.
-func TestSubStepGuide_FeatureSweepStageResponse_ContainsReadmeFragments(t *testing.T) {
+// TestDeploySkeleton_ContainsFactRecordingMandatory — v8.94. The deploy
+// step-entry guide must carry the mandatory-fact-recording block so every
+// substep the main agent reaches has the prompt-level pressure to call
+// zerops_record_fact at the moment of freshest knowledge. The authoring
+// sub-agent at readmes substep depends on the facts log as its primary
+// input, not on the run transcript.
+func TestDeploySkeleton_ContainsFactRecordingMandatory(t *testing.T) {
+	t.Parallel()
+	plan := fixtureForShape(ShapeDualRuntimeShowcase)
+	got := resolveRecipeGuidance(RecipeStepDeploy, RecipeTierShowcase, plan)
+	if got == "" {
+		t.Fatal("expected non-empty deploy step-entry guide")
+	}
+
+	wants := []string{
+		"Fact recording — MANDATORY during deploy",
+		"zerops_record_fact",
+		"gotcha_candidate",
+		"ig_item_candidate",
+		"verified_behavior",
+		"platform_observation",
+		"fix_applied",
+		"cross_codebase_contract",
+		"DO NOT write content during deploy",
+	}
+	for _, w := range wants {
+		if !strings.Contains(got, w) {
+			t.Errorf("deploy step-entry guide missing mandatory-fact phrase %q", w)
+		}
+	}
+}
+
+// TestSubStepGuide_FeatureSweepStageResponse_ContainsContentAuthoringBrief —
+// integration: when current substep advances to `readmes` on a showcase plan
+// (after complete substep=feature-sweep-stage), buildSubStepGuide must return
+// the byte-literal content of the content-authoring-brief block. v8.94 moved
+// the showcase delivery from readme-fragments (which stays as the marker-
+// format reference) to the new brief with surface contracts + classification
+// taxonomy + citation map.
+func TestSubStepGuide_FeatureSweepStageResponse_ContainsContentAuthoringBrief(t *testing.T) {
 	t.Parallel()
 	plan := fixtureForShape(ShapeDualRuntimeShowcase)
 	rs := &RecipeState{Plan: plan, Tier: RecipeTierShowcase}
@@ -274,19 +340,21 @@ func TestSubStepGuide_FeatureSweepStageResponse_ContainsReadmeFragments(t *testi
 	if got == "" {
 		t.Fatal("expected non-empty sub-step guide for (deploy, readmes)")
 	}
-	if len(got) < 12*1024 {
-		t.Errorf("readme-fragments guide is only %d bytes, expected >= 12 KB (v25's was 17 KB)", len(got))
+	if len(got) < 8*1024 {
+		t.Errorf("content-authoring-brief guide is only %d bytes, expected >= 8 KB", len(got))
 	}
 
 	wants := []string{
-		"#ZEROPS_EXTRACT_START:intro#",
-		"#ZEROPS_EXTRACT_START:integration-guide#",
-		"#ZEROPS_EXTRACT_START:knowledge-base#",
-		"Per-codebase README with extract fragments",
+		"You are a content-authoring sub-agent",
+		"Classification taxonomy",
+		"Citation map",
+		"Counter-examples",
+		"Self-review checklist",
+		"env-comment-set",
 	}
 	for _, w := range wants {
 		if !strings.Contains(got, w) {
-			t.Errorf("readme-fragments guide missing %q", w)
+			t.Errorf("content-authoring-brief guide missing %q", w)
 		}
 	}
 }
