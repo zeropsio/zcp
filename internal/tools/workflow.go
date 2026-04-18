@@ -36,7 +36,7 @@ type WorkflowInput struct {
 	SessionID   string                     `json:"sessionId,omitempty"   jsonschema:"Session ID for resume action."`
 	Strategies  map[string]string          `json:"strategies,omitempty"  jsonschema:"Per-service strategy map for strategy action (e.g. {\"appdev\":\"push-git\"})."`
 	Tier        string                     `json:"tier,omitempty"        jsonschema:"Recipe tier: minimal or showcase (recipe workflow only)."`
-	RecipePlan  *workflow.RecipePlan       `json:"recipePlan,omitempty"  jsonschema:"Structured recipe plan for research step completion."`
+	RecipePlan  *workflow.RecipePlan       `json:"recipePlan,omitempty"  jsonschema:"Structured recipe plan for research step completion. Pass as a JSON object, NOT a stringified JSON blob — e.g. recipePlan={\"slug\":\"...\",\"recipeType\":\"...\",\"features\":[...],\"targets\":[...]}, not recipePlan=\"{\\\"slug\\\":...}\". The schema validator rejects strings for this field; stringifying costs a retry round-trip."`
 
 	// Recipe workflow only — the agent's self-reported model identifier from its
 	// own system prompt. Required at start for the recipe workflow because v13
