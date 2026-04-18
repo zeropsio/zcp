@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -109,6 +110,19 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		}
 	}
 
+	// Strategy gate (spec-work-session.md §6.1): if ANY runtime service has no
+	// confirmed strategy, emit the strategy-selection briefing WITHOUT creating
+	// a work session. The agent must call action="strategy" first.
+	if strategy == "" {
+		briefingText := workflow.BuildDevelopBriefing(targets, "", mode, engine.Environment(), engine.StateDir())
+		return jsonResult(workflow.DevelopBriefing{
+			Targets:  targets,
+			Mode:     mode,
+			Strategy: "",
+			Briefing: briefingText,
+		}), nil, nil
+	}
+
 	// Create or resume per-PID WorkSession.
 	//
 	// If an open session already exists for this PID:
@@ -179,15 +193,18 @@ func adoptUnmanagedServices(ctx context.Context, engine *workflow.Engine, client
 		})
 	}
 
-	targets := workflow.InferServicePairing(candidates)
-	if len(targets) == 0 {
-		return false
-	}
-
-	// Fetch live types for plan validation.
+	// Fetch live types up front so classification (F4) and plan validation
+	// both use the same authoritative catalog. InferServicePairing relies on
+	// liveManaged to recognize new Zerops categories without a static bump.
 	var liveTypes []platform.ServiceStackType
 	if cache != nil {
 		liveTypes = cache.Get(ctx, client)
+	}
+	liveManaged := knowledge.ManagedBaseNames(liveTypes)
+
+	targets := workflow.InferServicePairing(candidates, liveManaged)
+	if len(targets) == 0 {
+		return false
 	}
 
 	// Run bootstrap adoption: same engine path as manual bootstrap.
@@ -195,7 +212,9 @@ func adoptUnmanagedServices(ctx context.Context, engine *workflow.Engine, client
 		return false
 	}
 
-	if _, err := engine.BootstrapCompletePlan(targets, liveTypes, nil); err != nil {
+	// F6: pass live services for EXISTS validation — prevents a race where a
+	// hostname disappears between discover and develop.
+	if _, err := engine.BootstrapCompletePlan(targets, liveTypes, services); err != nil {
 		_ = engine.Reset() // cleanup orphaned bootstrap session
 		return false
 	}

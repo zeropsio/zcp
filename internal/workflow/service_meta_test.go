@@ -634,6 +634,153 @@ func TestServiceMeta_NoStatusFieldInJSON(t *testing.T) {
 	}
 }
 
+func TestServiceMeta_PrimaryRole(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		meta ServiceMeta
+		want string
+	}{
+		{
+			"container_standard_returns_dev",
+			ServiceMeta{Hostname: "appdev", Mode: PlanModeStandard, StageHostname: "appstage", Environment: string(EnvContainer)},
+			DeployRoleDev,
+		},
+		{
+			"container_dev_returns_dev",
+			ServiceMeta{Hostname: "appdev", Mode: PlanModeDev, Environment: string(EnvContainer)},
+			DeployRoleDev,
+		},
+		{
+			"container_simple_returns_simple",
+			ServiceMeta{Hostname: "app", Mode: PlanModeSimple, Environment: string(EnvContainer)},
+			DeployRoleSimple,
+		},
+		{
+			// Local+standard stores the stage hostname at m.Hostname because dev doesn't
+			// exist locally. Primary role is therefore stage, not dev. F1 bug: old
+			// RoleFromMode returned simple here because StageHostname was empty.
+			"local_standard_returns_stage",
+			ServiceMeta{Hostname: "appstage", Mode: PlanModeStandard, Environment: string(EnvLocal)},
+			DeployRoleStage,
+		},
+		{
+			"local_dev_returns_dev",
+			ServiceMeta{Hostname: "appdev", Mode: PlanModeDev, Environment: string(EnvLocal)},
+			DeployRoleDev,
+		},
+		{
+			"local_simple_returns_simple",
+			ServiceMeta{Hostname: "app", Mode: PlanModeSimple, Environment: string(EnvLocal)},
+			DeployRoleSimple,
+		},
+		{
+			"empty_mode_defaults_to_standard",
+			ServiceMeta{Hostname: "appdev", StageHostname: "appstage", Environment: string(EnvContainer)},
+			DeployRoleDev,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.meta.PrimaryRole(); got != tt.want {
+				t.Errorf("PrimaryRole() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestServiceMeta_RoleFor(t *testing.T) {
+	t.Parallel()
+	meta := ServiceMeta{
+		Hostname: "appdev", Mode: PlanModeStandard, StageHostname: "appstage",
+		Environment: string(EnvContainer),
+	}
+	tests := []struct {
+		hostname string
+		want     string
+	}{
+		{"appdev", DeployRoleDev},
+		{"appstage", DeployRoleStage},
+		{"unrelated", ""},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.hostname, func(t *testing.T) {
+			t.Parallel()
+			if got := meta.RoleFor(tt.hostname); got != tt.want {
+				t.Errorf("RoleFor(%q) = %q, want %q", tt.hostname, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestServiceMeta_Hostnames(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		meta ServiceMeta
+		want []string
+	}{
+		{"dev_only", ServiceMeta{Hostname: "appdev"}, []string{"appdev"}},
+		{"dev_and_stage", ServiceMeta{Hostname: "appdev", StageHostname: "appstage"}, []string{"appdev", "appstage"}},
+		{"simple", ServiceMeta{Hostname: "app"}, []string{"app"}},
+		{"local_standard_only_stage", ServiceMeta{Hostname: "appstage", Environment: string(EnvLocal), Mode: PlanModeStandard}, []string{"appstage"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := tt.meta.Hostnames()
+			if len(got) != len(tt.want) {
+				t.Fatalf("Hostnames() len = %d, want %d (%v)", len(got), len(tt.want), got)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("Hostnames()[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestServiceMeta_IsAdopted(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		meta ServiceMeta
+		want bool
+	}{
+		{
+			"adopted_complete_empty_session",
+			ServiceMeta{Hostname: "appdev", BootstrapSession: "", BootstrappedAt: "2026-04-18"},
+			true,
+		},
+		{
+			"fresh_bootstrap_session_set",
+			ServiceMeta{Hostname: "appdev", BootstrapSession: "sess1", BootstrappedAt: "2026-04-18"},
+			false,
+		},
+		{
+			"orphan_incomplete_empty_session_not_adopted",
+			ServiceMeta{Hostname: "appdev", BootstrapSession: "", BootstrappedAt: ""},
+			false,
+		},
+		{
+			"incomplete_with_session_not_adopted",
+			ServiceMeta{Hostname: "appdev", BootstrapSession: "sess1", BootstrappedAt: ""},
+			false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.meta.IsAdopted(); got != tt.want {
+				t.Errorf("IsAdopted() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestServiceMeta_EffectiveStrategy(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

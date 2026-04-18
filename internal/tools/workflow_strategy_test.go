@@ -123,7 +123,10 @@ func TestHandleStrategy_EmptyStrategies(t *testing.T) {
 	}
 }
 
-func TestHandleStrategy_NoExistingMeta(t *testing.T) {
+// F3 regression: strategy action must NOT auto-create a ServiceMeta for a hostname
+// that ZCP never bootstrapped. An orphan meta with empty Mode/BootstrappedAt poisons
+// every downstream consumer (router, briefing, hostname locks).
+func TestHandleStrategy_UnknownHostname_RefusesToCreateOrphan(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	input := WorkflowInput{Strategies: map[string]string{"newservice": workflow.StrategyPushGit}}
@@ -131,19 +134,32 @@ func TestHandleStrategy_NoExistingMeta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.IsError {
-		t.Fatalf("should succeed for new service: %s", resultText(t, result))
+	if !result.IsError {
+		t.Fatalf("expected error for unknown hostname, got success: %s", resultText(t, result))
 	}
+	if meta, _ := workflow.ReadServiceMeta(dir, "newservice"); meta != nil {
+		t.Error("handleStrategy must NOT create ServiceMeta for unknown hostname")
+	}
+}
 
-	meta, readErr := workflow.ReadServiceMeta(dir, "newservice")
-	if readErr != nil {
-		t.Fatalf("read meta: %v", readErr)
+// Incomplete meta (no BootstrappedAt — bootstrap was interrupted) must also be rejected.
+// Only completed bootstraps can have their strategy set.
+func TestHandleStrategy_IncompleteMeta_Refused(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname: "appdev", Mode: workflow.PlanModeDev, BootstrapSession: "sess1",
+		// no BootstrappedAt -> incomplete
+	}); err != nil {
+		t.Fatalf("write meta: %v", err)
 	}
-	if meta.DeployStrategy != workflow.StrategyPushGit {
-		t.Errorf("DeployStrategy: want push-git, got %q", meta.DeployStrategy)
+	input := WorkflowInput{Strategies: map[string]string{"appdev": workflow.StrategyPushGit}}
+	result, _, err := handleStrategy(nil, input, dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
-	if !meta.StrategyConfirmed {
-		t.Error("StrategyConfirmed: want true")
+	if !result.IsError {
+		t.Fatalf("expected error for incomplete meta, got success: %s", resultText(t, result))
 	}
 }
 

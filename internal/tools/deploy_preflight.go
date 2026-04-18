@@ -54,7 +54,7 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	// Without this, pre-flight silently matched the right setup but zcli
 	// received an empty flag and failed with "Cannot find corresponding
 	// setup in zerops.yaml" — the exact failure in session-log-16 (L145).
-	role := preflightRole(meta)
+	role := meta.PrimaryRole()
 	entry := resolveSetupEntry(doc, setup, role, targetHostname)
 	if entry == nil {
 		tried := targetHostname
@@ -98,15 +98,6 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	return resolvedSetup, &workflow.StepCheckResult{
 		Passed: allPassed, Checks: checks, Summary: summary,
 	}, nil
-}
-
-// preflightRole derives the deploy role from ServiceMeta.
-func preflightRole(meta *workflow.ServiceMeta) string {
-	mode := meta.Mode
-	if mode == "" {
-		mode = workflow.PlanModeStandard
-	}
-	return workflow.RoleFromMode(mode, meta.StageHostname)
 }
 
 // resolveSetupEntry finds the zerops.yaml setup entry using priority:

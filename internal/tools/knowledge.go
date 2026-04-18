@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -157,6 +158,11 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 		if hasRecipe {
 			mode := resolveKnowledgeMode(engine, input.Mode)
 			recipe, err := store.GetRecipe(input.Recipe, mode)
+			if errors.Is(err, knowledge.ErrAmbiguousRecipe) {
+				// Multiple fuzzy matches: the "recipe" text is the disambiguation
+				// list — still agent-friendly, just not auto-resolved.
+				return textResult(recipe), nil, nil
+			}
 			if err != nil {
 				return convertError(platform.NewPlatformError(
 					platform.ErrInvalidParameter,

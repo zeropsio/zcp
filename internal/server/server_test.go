@@ -16,7 +16,6 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
-	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 func TestServer_AllToolsRegistered(t *testing.T) {
@@ -205,14 +204,14 @@ func TestServer_Instructions(t *testing.T) {
 			want: "zcpx",
 		},
 		{
-			name: "in container without service name",
-			rt:   runtime.Info{InContainer: true, ServiceID: "abc"},
-			miss: "running inside",
+			name: "local dev mentions zcli push",
+			rt:   runtime.Info{},
+			want: "zcli push",
 		},
 		{
-			name: "local dev (no context)",
-			rt:   runtime.Info{},
-			miss: "running inside",
+			name: "container mentions SSHFS mount path",
+			rt:   runtime.Info{InContainer: true},
+			want: "/var/www/",
 		},
 		{
 			name: "base instructions always included",
@@ -224,7 +223,7 @@ func TestServer_Instructions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			inst := BuildInstructions(context.Background(), nil, "", tt.rt, "")
+			inst := BuildInstructions(tt.rt)
 			if tt.want != "" && !strings.Contains(inst, tt.want) {
 				t.Errorf("Instructions should contain %q, got: %s", tt.want, inst)
 			}
@@ -232,238 +231,6 @@ func TestServer_Instructions(t *testing.T) {
 				t.Errorf("Instructions should NOT contain %q, got: %s", tt.miss, inst)
 			}
 		})
-	}
-}
-
-func TestServer_Instructions_FitIn2KB(t *testing.T) {
-	t.Parallel()
-	// MCP instructions are capped at 2KB by Claude Code v2.1.84+.
-	// Static instructions must leave room for dynamic content (service listing, router).
-	containerStatic := baseInstructions + routingInstructions + containerEnvironment
-	if len(containerStatic) > 800 {
-		t.Errorf("container static instructions = %d bytes, want < 800 to leave room for dynamic content", len(containerStatic))
-	}
-}
-
-func TestServer_BaseInstructions_WorkflowDirective(t *testing.T) {
-	t.Parallel()
-	if !strings.Contains(baseInstructions, "Every code task") {
-		t.Error("baseInstructions should contain workflow cycle directive")
-	}
-	if !strings.Contains(baseInstructions, `workflow="develop"`) {
-		t.Error("baseInstructions should reference develop workflow")
-	}
-	if !strings.Contains(baseInstructions, "bootstrap") {
-		t.Error("baseInstructions should mention bootstrap workflow")
-	}
-}
-
-func TestBuildInstructions_WithServices(t *testing.T) {
-	t.Parallel()
-	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{Name: "appdev", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
-		{Name: "appstage", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
-		{Name: "db", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
-	})
-
-	inst := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{}, "")
-
-	for _, want := range []string{"appdev", "appstage", "db", "nodejs@22", "postgresql@16", "RUNNING"} {
-		if !strings.Contains(inst, want) {
-			t.Errorf("instructions should contain %q", want)
-		}
-	}
-	if !strings.Contains(inst, "ZCP manages") {
-		t.Error("instructions should contain base instructions")
-	}
-	// Should use tracked mode syntax.
-	if !strings.Contains(inst, `action="start"`) {
-		t.Error("should use tracked mode syntax")
-	}
-	// Should contain anti-deletion language.
-	if !strings.Contains(inst, "Do NOT delete") {
-		t.Error("should contain anti-deletion warning")
-	}
-	// Unmanaged runtimes should show auto-adopt hint.
-	if !strings.Contains(inst, "auto-adopted") {
-		t.Error("unmanaged runtime services should show auto-adopt label")
-	}
-}
-
-func TestBuildInstructions_UnmanagedProject(t *testing.T) {
-	t.Parallel()
-	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{Name: "api", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
-	})
-
-	inst := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{}, "")
-
-	// Should contain anti-deletion language.
-	if !strings.Contains(inst, "Do NOT delete") {
-		t.Error("should contain anti-deletion warning")
-	}
-	// Should show auto-adopt hint for unmanaged runtime.
-	if !strings.Contains(inst, "auto-adopted") {
-		t.Error("unmanaged runtime should have auto-adopt label")
-	}
-}
-
-func TestBuildInstructions_FiltersSystemServices(t *testing.T) {
-	t.Parallel()
-	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{Name: "core", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{
-			ServiceStackTypeVersionName: "core", ServiceStackTypeCategoryName: "CORE"}},
-		{Name: "buildappdevv123", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{
-			ServiceStackTypeVersionName: "ubuntu-build@1", ServiceStackTypeCategoryName: "BUILD"}},
-		{Name: "api", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{
-			ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
-		{Name: "db", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{
-			ServiceStackTypeVersionName: "postgresql@16", ServiceStackTypeCategoryName: "STANDARD"}},
-	})
-
-	inst := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{}, "")
-
-	// User services should appear.
-	if !strings.Contains(inst, "api") {
-		t.Error("instructions should contain user service 'api'")
-	}
-	if !strings.Contains(inst, "db") {
-		t.Error("instructions should contain user service 'db'")
-	}
-	// System services should NOT appear.
-	if strings.Contains(inst, "core") {
-		t.Error("instructions should not contain system service 'core'")
-	}
-	if strings.Contains(inst, "buildappdevv123") {
-		t.Error("instructions should not contain system service 'buildappdevv123'")
-	}
-}
-
-func TestBuildInstructions_FreshProject(t *testing.T) {
-	t.Parallel()
-	mock := platform.NewMock().WithServices(nil)
-
-	inst := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{}, "")
-
-	if !strings.Contains(inst, "empty") {
-		t.Error("instructions should mention empty project")
-	}
-	if !strings.Contains(inst, "bootstrap") {
-		t.Error("instructions should recommend bootstrap")
-	}
-	if !strings.Contains(inst, `action="start"`) {
-		t.Error("empty project directive should use tracked mode syntax")
-	}
-	if !strings.Contains(inst, `workflow="bootstrap"`) {
-		t.Error("empty project directive should specify bootstrap workflow")
-	}
-}
-
-func TestBuildInstructions_APIFailure(t *testing.T) {
-	t.Parallel()
-	mock := platform.NewMock().WithError("ListServices", platform.NewPlatformError(
-		platform.ErrAPIError, "connection refused", "",
-	))
-
-	inst := BuildInstructions(context.Background(), mock, "proj-1", runtime.Info{}, "")
-
-	if !strings.Contains(inst, "ZCP manages") {
-		t.Error("instructions should still contain base instructions on API failure")
-	}
-}
-
-func TestBuildInstructions_NilClient(t *testing.T) {
-	t.Parallel()
-
-	inst := BuildInstructions(context.Background(), nil, "", runtime.Info{}, "")
-
-	if !strings.Contains(inst, "ZCP manages") {
-		t.Error("instructions should contain base instructions with nil client")
-	}
-}
-
-func TestBuildInstructions_WorkflowHint_ActiveBootstrap(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	eng := workflow.NewEngine(dir, workflow.EnvLocal, nil)
-
-	// Start bootstrap and complete 2 steps.
-	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
-		t.Fatalf("BootstrapStart: %v", err)
-	}
-
-	// Complete discover with plan.
-	if _, err := eng.BootstrapCompletePlan([]workflow.BootstrapTarget{{
-		Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
-	}}, nil, nil); err != nil {
-		t.Fatalf("BootstrapCompletePlan: %v", err)
-	}
-
-	// Complete provision.
-	if _, err := eng.BootstrapComplete(context.Background(), "provision", "Attestation for provision ok", nil); err != nil {
-		t.Fatalf("BootstrapComplete(provision): %v", err)
-	}
-
-	inst := BuildInstructions(context.Background(), nil, "", runtime.Info{}, dir)
-	if !strings.Contains(inst, "Active workflow") {
-		t.Error("instructions should contain workflow hint")
-	}
-	if !strings.Contains(inst, "bootstrap") {
-		t.Error("hint should mention bootstrap workflow")
-	}
-	if !strings.Contains(inst, "step 3/5") {
-		t.Errorf("hint should mention step 3/5, got: %s", inst)
-	}
-}
-
-func TestBuildInstructions_WorkflowHint_NoState(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir() // empty dir, no state file
-
-	inst := BuildInstructions(context.Background(), nil, "", runtime.Info{}, dir)
-	if strings.Contains(inst, "Active workflow") {
-		t.Error("instructions should not contain workflow hint without state")
-	}
-}
-
-func TestBuildInstructions_WorkflowHint_PhaseDone_NoHint(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	eng := workflow.NewEngine(dir, workflow.EnvLocal, nil)
-
-	// Complete full bootstrap — DONE sessions are immediately unregistered.
-	if _, err := eng.BootstrapStart("proj-1", "test"); err != nil {
-		t.Fatalf("BootstrapStart: %v", err)
-	}
-
-	// Complete discover with plan.
-	if _, err := eng.BootstrapCompletePlan([]workflow.BootstrapTarget{{
-		Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
-	}}, nil, nil); err != nil {
-		t.Fatalf("BootstrapCompletePlan: %v", err)
-	}
-
-	steps := []string{
-		"provision", "generate",
-		"deploy", "close",
-	}
-	for _, step := range steps {
-		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" ok", nil); err != nil {
-			t.Fatalf("BootstrapComplete(%s): %v", step, err)
-		}
-	}
-
-	inst := BuildInstructions(context.Background(), nil, "", runtime.Info{}, dir)
-	if strings.Contains(inst, "Active workflow") {
-		t.Error("DONE sessions should not appear as active workflow hints")
-	}
-}
-
-func TestBuildInstructions_WorkflowHint_EmptyDir(t *testing.T) {
-	t.Parallel()
-	inst := BuildInstructions(context.Background(), nil, "", runtime.Info{}, "")
-	if strings.Contains(inst, "Active workflow") {
-		t.Error("empty stateDir should produce no hint")
 	}
 }
 

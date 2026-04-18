@@ -17,7 +17,12 @@ func isControlPlaneType(serviceType string) bool {
 // It filters out managed and control-plane types, infers dev/stage pairing
 // from hostname conventions, and sets ExplicitStage when auto-derive won't work.
 // Managed services are returned as dependencies with resolution EXISTS.
-func InferServicePairing(candidates []AdoptCandidate) []BootstrapTarget {
+//
+// liveManaged: base names of managed types from the live API catalog
+// (knowledge.ManagedBaseNames). When non-empty it overrides the static prefix
+// list so new Zerops managed categories are classified correctly without
+// requiring a managed_types.go bump. Pass nil to use the static fallback.
+func InferServicePairing(candidates []AdoptCandidate, liveManaged map[string]bool) []BootstrapTarget {
 	// Separate runtimes from managed services.
 	var runtimes []AdoptCandidate
 	var managed []AdoptCandidate
@@ -27,7 +32,7 @@ func InferServicePairing(candidates []AdoptCandidate) []BootstrapTarget {
 			continue
 		}
 		hostnames[c.Hostname] = c.Type
-		if IsManagedService(c.Type) {
+		if isManagedTypeWithLive(c.Type, liveManaged) {
 			managed = append(managed, c)
 			continue
 		}
@@ -56,7 +61,7 @@ func InferServicePairing(candidates []AdoptCandidate) []BootstrapTarget {
 		base, isDev := strings.CutSuffix(r.Hostname, "dev")
 		if isDev && base != "" {
 			stageHostname := base + "stage"
-			if _, stageExists := hostnames[stageHostname]; stageExists && !IsManagedService(hostnames[stageHostname]) {
+			if _, stageExists := hostnames[stageHostname]; stageExists && !isManagedTypeWithLive(hostnames[stageHostname], liveManaged) {
 				paired[stageHostname] = true
 			}
 		}

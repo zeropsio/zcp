@@ -133,7 +133,7 @@ func TestInferServicePairing(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			targets := InferServicePairing(tt.candidates)
+			targets := InferServicePairing(tt.candidates, nil)
 
 			if len(targets) != tt.wantCount {
 				t.Fatalf("target count: want %d, got %d", tt.wantCount, len(targets))
@@ -173,6 +173,39 @@ func TestInferServicePairing(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// F4 regression: liveManaged (from API) must override the static prefix list.
+// A new Zerops managed category should be recognized even if the static list
+// doesn't list it yet — otherwise every new type ships misclassification
+// until managed_types.go is bumped.
+func TestInferServicePairing_LiveManagedOverridesStatic(t *testing.T) {
+	t.Parallel()
+
+	// "futurecache@1" isn't in the static managedServicePrefixes list.
+	candidates := []AdoptCandidate{
+		{Hostname: "appdev", Type: "nodejs@22"},
+		{Hostname: "cache", Type: "futurecache@1"},
+	}
+
+	// Without liveManaged: static list fails, "cache" is treated as runtime.
+	staticTargets := InferServicePairing(candidates, nil)
+	if len(staticTargets) != 2 {
+		t.Fatalf("static fallback: want 2 runtime targets, got %d", len(staticTargets))
+	}
+
+	// With liveManaged: "futurecache" is known managed, becomes a dependency.
+	liveManaged := map[string]bool{"futurecache": true}
+	liveTargets := InferServicePairing(candidates, liveManaged)
+	if len(liveTargets) != 1 {
+		t.Fatalf("live managed: want 1 runtime target (appdev), got %d", len(liveTargets))
+	}
+	if liveTargets[0].Runtime.DevHostname != "appdev" {
+		t.Errorf("runtime hostname: want appdev, got %s", liveTargets[0].Runtime.DevHostname)
+	}
+	if len(liveTargets[0].Dependencies) != 1 || liveTargets[0].Dependencies[0].Hostname != "cache" {
+		t.Errorf("want 1 dep hostname=cache, got %+v", liveTargets[0].Dependencies)
 	}
 }
 

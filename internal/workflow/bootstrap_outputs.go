@@ -7,6 +7,18 @@ import (
 	"time"
 )
 
+// invertLocalHostname normalizes meta/stage hostnames for the current environment.
+// Container: returns (dev, stage) as-is — dev is primary, stage is paired.
+// Local+standard: dev doesn't exist locally, so the stage hostname is stored in
+// ServiceMeta.Hostname with StageHostname cleared. This is the single source of
+// truth for that convention — see ServiceMeta.PrimaryRole / spec-local-dev.md §6.
+func (e *Engine) invertLocalHostname(dev, stage string) (metaHost, stageHost string) {
+	if e.environment == EnvLocal && stage != "" {
+		return stage, ""
+	}
+	return dev, stage
+}
+
 // writeBootstrapOutputs writes final service meta files and appends a reflog entry.
 // Sets BootstrappedAt to mark services as fully bootstrapped.
 // Both are best-effort — errors are logged to stderr but don't fail bootstrap completion.
@@ -20,16 +32,8 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 
 	// Write service meta for each runtime target (managed deps are API-authoritative).
 	for _, target := range plan.Targets {
-		devHostname := target.Runtime.DevHostname
 		mode := target.Runtime.EffectiveMode()
-
-		// Meta hostname: local mode writes appstage (dev doesn't exist), container writes appdev.
-		metaHostname := devHostname
-		stageHostname := target.Runtime.StageHostname()
-		if e.environment == EnvLocal && stageHostname != "" {
-			metaHostname = stageHostname
-			stageHostname = ""
-		}
+		metaHostname, stageHostname := e.invertLocalHostname(target.Runtime.DevHostname, target.Runtime.StageHostname())
 
 		// Adopted services (isExisting=true) get empty BootstrapSession
 		// to signal adoption rather than fresh bootstrap.
@@ -72,12 +76,7 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 	}
 
 	for _, target := range state.Bootstrap.Plan.Targets {
-		metaHostname := target.Runtime.DevHostname
-		stageHostname := target.Runtime.StageHostname()
-		if e.environment == EnvLocal && stageHostname != "" {
-			metaHostname = stageHostname
-			stageHostname = ""
-		}
+		metaHostname, stageHostname := e.invertLocalHostname(target.Runtime.DevHostname, target.Runtime.StageHostname())
 
 		// Adopted services (isExisting=true) get empty BootstrapSession.
 		bootstrapSession := state.SessionID

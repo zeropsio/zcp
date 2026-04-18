@@ -301,12 +301,12 @@ func TestIntegration_BootstrapConductor_ErrorCases(t *testing.T) {
 		t.Error("expected error completing step without active bootstrap")
 	}
 
-	// Error: status without starting.
-	result = callAndGetResult(t, session, "zerops_workflow", map[string]any{
+	// Status without an active workflow returns the idle-phase orientation.
+	text := callAndGetText(t, session, "zerops_workflow", map[string]any{
 		"action": "status",
 	})
-	if !result.IsError {
-		t.Error("expected error for status without active session")
+	if !strings.Contains(text, "Phase: idle") {
+		t.Errorf("expected idle-phase orientation, got: %s", text)
 	}
 
 	// Start bootstrap.

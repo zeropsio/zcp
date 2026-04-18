@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 )
 
 // Strategy constants for deploy decisions.
@@ -35,6 +36,58 @@ type ServiceMeta struct {
 // the service was provisioned but bootstrap didn't finish.
 func (m *ServiceMeta) IsComplete() bool {
 	return m.BootstrappedAt != ""
+}
+
+// IsAdopted reports whether this meta records an adopted service.
+// Adopted = bootstrap-complete AND BootstrapSession empty (the convention written by
+// writeBootstrapOutputs when IsExisting=true). Both guards matter: incomplete metas
+// with an empty session are orphans, not adoptions.
+func (m *ServiceMeta) IsAdopted() bool {
+	return m.BootstrapSession == "" && m.IsComplete()
+}
+
+// Hostnames returns every hostname this meta represents.
+// For container+standard that's [dev, stage]; for everything else just [m.Hostname].
+func (m *ServiceMeta) Hostnames() []string {
+	if m.StageHostname != "" {
+		return []string{m.Hostname, m.StageHostname}
+	}
+	return []string{m.Hostname}
+}
+
+// PrimaryRole returns the deploy role of m.Hostname.
+// Encapsulates the mode+environment+stage lookup so callers don't re-derive it.
+func (m *ServiceMeta) PrimaryRole() string {
+	mode := m.Mode
+	if mode == "" {
+		mode = PlanModeStandard
+	}
+	// Local+standard: m.Hostname holds the stage hostname (dev doesn't exist locally).
+	if m.Environment == string(EnvLocal) && mode == PlanModeStandard {
+		return DeployRoleStage
+	}
+	switch mode {
+	case PlanModeDev:
+		return DeployRoleDev
+	case PlanModeSimple:
+		return DeployRoleSimple
+	}
+	return DeployRoleDev
+}
+
+// RoleFor returns the deploy role of the given hostname within this meta's scope.
+// Returns "" when the hostname is unrelated to this meta.
+func (m *ServiceMeta) RoleFor(hostname string) string {
+	if hostname == "" {
+		return ""
+	}
+	if m.StageHostname != "" && hostname == m.StageHostname {
+		return DeployRoleStage
+	}
+	if hostname == m.Hostname {
+		return m.PrimaryRole()
+	}
+	return ""
 }
 
 // EffectiveStrategy returns the deploy strategy as set by the user.
@@ -141,7 +194,14 @@ func PruneServiceMetas(baseDir string, liveHostnames map[string]bool) int {
 
 	pruned := 0
 	for _, m := range metas {
-		if liveHostnames[m.Hostname] || liveHostnames[m.StageHostname] {
+		keep := false
+		for _, h := range m.Hostnames() {
+			if liveHostnames[h] {
+				keep = true
+				break
+			}
+		}
+		if keep {
 			continue
 		}
 		if err := DeleteServiceMeta(baseDir, m.Hostname); err == nil {
@@ -159,14 +219,13 @@ func IsKnownService(stateDir, hostname string) bool {
 		return false
 	}
 	// Direct match by filename (fast path).
-	meta, _ := ReadServiceMeta(stateDir, hostname)
-	if meta != nil {
+	if meta, _ := ReadServiceMeta(stateDir, hostname); meta != nil {
 		return true
 	}
 	// Check if it's a stage hostname of any meta.
 	metas, _ := ListServiceMetas(stateDir)
 	for _, m := range metas {
-		if m.StageHostname == hostname {
+		if slices.Contains(m.Hostnames(), hostname) {
 			return true
 		}
 	}

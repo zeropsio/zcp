@@ -17,13 +17,16 @@ its own lifecycle position?*
 
 Four load-bearing principles follow from that:
 
-1. **The system prompt is the only reliable memory.** Whatever the LLM
-   must remember between tool calls lives in the prompt, re-emitted on
-   every response. In-message scratchpads are lost to compaction; tool
-   call history is truncated; only the instructions block is regenerated
-   fresh each turn. The **Lifecycle Status** block therefore owns the
-   answers to *what am I doing, where am I, what's next?* — not the
-   transcript.
+1. **Post-compaction re-orientation must be a single tool call.** The MCP
+   `Instructions` field is delivered once at client init and cannot be
+   re-emitted per response. Tool-call history is truncated under
+   compaction, so the transcript is also unreliable. The contract is
+   therefore: base instructions (delivered at init) teach the LLM a
+   single canonical recovery call — `zerops_workflow action="status"` —
+   which returns the **Lifecycle Status** block assembled on demand from
+   fresh reads of the work session file + ServiceMeta + live services.
+   That one call owns the answers to *what am I doing, where am I,
+   what's next?*.
 
 2. **One fact, one home.** Strategy lives in `ServiceMeta`. Deploy
    outcomes live in Work Session. Service status lives on the platform.
@@ -65,9 +68,10 @@ with three responsibilities:
   current task.
 - Append a capped history of deploy and verify attempts as tool
   side-effects.
-- Emit a **Lifecycle Status** block into the MCP instructions on every
-  response, so the LLM sees its position regardless of context
-  compaction.
+- Expose a **Lifecycle Status** block via `zerops_workflow action="status"`,
+  assembled on demand from the work session file + ServiceMeta + live
+  services. The base MCP `Instructions` (delivered once at client init)
+  teach the LLM to call this first on every new task and after compaction.
 
 It closes explicitly (`zerops_workflow action="close" workflow="develop"`)
 or auto-closes when every service in scope has a succeeded deploy and a
@@ -88,8 +92,10 @@ more confusion than it resolves.
 4. **Each Claude Code instance is isolated.** PID-scoped state. Zero
    cross-instance interference for work-layer state. Infrastructure-layer
    state (bootstrap, recipe) uses registry-backed ownership.
-5. **Survives compaction by default.** System prompt always contains the
-   lifecycle signal — no active-discovery required by the LLM.
+5. **Survives compaction by default.** The MCP init instructions point
+   every LLM at `zerops_workflow action="status"` as the canonical
+   orientation call, so even a freshly-compacted LLM has a single,
+   deterministic recovery step.
 6. **Survives process restart per layer semantics.** Bootstrap/recipe claim
    on boot (existing). Work sessions are per-process — restart = fresh start.
 7. **Advisory, not enforcing.** Work Session informs the LLM; it does not
@@ -191,10 +197,17 @@ type SessionEntry struct {
 
 ---
 
-## 5. System Prompt Session Hint — Full Redesign
+## 5. Lifecycle Status Block — Delivered via `action="status"`
 
-Every MCP response's instructions include a "Lifecycle Status" block. Content
-depends on active entities for the current PID:
+The **Lifecycle Status** block is assembled on demand by
+`zerops_workflow action="status"`. MCP's `Instructions` field is delivered
+once at client init and cannot be re-emitted per response, so per-call
+state cannot live there. Instead, the static init instructions direct the
+LLM to call `action="status"` first on every new task and after
+compaction; the handler reads the current work session file, service
+metas, and live service list, and renders one of the cases below.
+
+Content depends on active entities for the current PID:
 
 ### 5.1 No activity
 
@@ -372,8 +385,9 @@ autoClose = len(Services) > 0 &&
 If true:
 - Set `ClosedAt = now`, `CloseReason = "auto-complete"`.
 - File stays on disk for one grace period (e.g., until next `action=start` or
-  process exit), so the LLM's next response includes the closure hint.
-- Session hint switches to:
+  process exit), so the LLM's next `action="status"` surfaces the closure
+  hint.
+- `action="status"` switches to the task-complete variant:
   ```
   Work session — task complete. All services deployed + verified.
     For next task: zerops_workflow action="start" workflow="develop"
@@ -428,28 +442,32 @@ calls develop again, work session created.
 6. LLM discusses with user, calls `action="strategy" strategies={web: push-dev, api: push-dev}`.
 7. LLM calls `action="start" workflow="develop" intent="build the app"`.
 8. Work session created. File `work/1001.json`. Registered.
-9. Session hint in every subsequent response. LLM codes on mount.
-10. Compaction at 1h. LLM wakes up, sees session hint, continues.
+9. LLM codes on mount, using `action="status"` whenever it needs to check
+   where it is.
+10. Compaction at 1h. LLM's next instruction-following step calls
+    `action="status"` (taught by the init instructions); the Lifecycle
+    Status block re-orients it and it continues.
 11. Deploys web → succeeded. Verifies web → passed.
 12. Deploys api → succeeded. Verifies api → passed.
-13. Auto-close fires. Session hint says "task complete, close or next".
+13. Auto-close fires. Next `action="status"` renders the "task complete,
+    close or next" variant.
 14. LLM calls `action="close"` → file deleted, summary returned.
 15. For next task → repeat from step 3 (strategy already set, briefing direct).
 
 ### 9.2 Deploy-fail-fix-redeploy
 
 1. Work session active. Deploy api → build fails. `deploys.api = [{AttemptedAt, Error: "build timeout"}]`.
-2. Session hint: `api ✗ 1 attempt (last: build timeout)`.
+2. Next `action="status"` shows: `api ✗ 1 attempt (last: build timeout)`.
 3. LLM reads logs, fixes code.
 4. Deploy api → success. `deploys.api = [{fail}, {AttemptedAt, SucceededAt}]`.
-5. Session hint: `api ✓ (after 2 attempts)`.
+5. Next `action="status"` shows: `api ✓ (after 2 attempts)`.
 
 ### 9.3 Mid-work infrastructure change (add redis)
 
 1. Work session active for web, api.
 2. User: "add redis". LLM calls `action="start" workflow="bootstrap" intent="add redis"`.
 3. Bootstrap session created (stateful). Work session still alive — different layer.
-4. Session hint shows both, bootstrap primary.
+4. `action="status"` shows both, bootstrap primary.
 5. Bootstrap completes → transition message prompts strategy for redis (if non-managed) and resume/restart work session.
 6. LLM calls `action="start" workflow="develop" intent="wire redis into api"`.
 7. Work session file overwritten. New services list includes redis. History from web/api deploys is lost (different intent). Graceful — it's a new task.
@@ -459,7 +477,8 @@ calls develop again, work session created.
 1. Instance A (PID 1001): work session file `work/1001.json`, registry entry
    `work-1001`.
 2. Instance B (PID 1002): `work/1002.json`, registry entry `work-1002`.
-3. Each `buildSessionHint` reads `work/{os.Getpid()}.json` exclusively.
+3. Each call to `action="status"` reads `work/{os.Getpid()}.json`
+   exclusively, so each instance sees only its own session.
 4. Zero cross-contamination in work layer. Infrastructure layer
    (bootstrap/recipe) uses existing hostname locks.
 5. If both try `zerops_deploy web`: Zerops platform handles (last deploy wins
@@ -495,7 +514,7 @@ calls develop again, work session created.
 2. User decides to set up CI/CD. LLM calls `action="strategy" strategies={web: push-git}`.
 3. ServiceMeta updated, `StrategyConfirmed=true`.
 4. Work session unchanged (strategy not stored there).
-5. Next session hint reads strategy fresh → shows `web: push-git`.
+5. Next `action="status"` reads strategy fresh → shows `web: push-git`.
 6. `suggestedNext` in status updates: "push-git strategy — use zerops_workflow action=start workflow=cicd next".
 
 ---
@@ -504,13 +523,18 @@ calls develop again, work session created.
 
 ### 10.1 Compaction survival
 
-**Signal path:** System prompt always contains `## Lifecycle Status` block
-(when state exists). Block is re-generated on every MCP response from fresh
-reads of work session file + ServiceMeta. LLM post-compaction sees the block
-on the very next tool call.
+**Signal path:** The static MCP `Instructions` (delivered once at client
+init) always teach the LLM to call `zerops_workflow action="status"`
+first. Because that text is part of the client's permanent session state
+with the MCP server, it is not lost to transcript compaction.
+`action="status"` assembles the Lifecycle Status block from fresh reads
+of the work session file + ServiceMeta + live services on every call.
 
-**Recovery mechanism:** `action="status"` returns structured state including
-`suggestedNext`. LLM has a single, deterministic recovery call.
+**Recovery mechanism:** `action="status"` is the single deterministic
+recovery call. A post-compaction LLM consults the unchanged init
+instructions, issues `action="status"`, and receives structured state
+including `suggestedNext`. No per-response injection path is needed and
+none is architecturally available under the current MCP protocol.
 
 ### 10.2 Restart survival
 
@@ -556,8 +580,8 @@ was attempted and what failed.
 Explicit close: `action="close" workflow="develop"` — clean, intentional.
 
 Auto-close heuristic: when every service in scope has a succeeded deploy
-and passed verify, session marks itself closed. Next system prompt nudges
-LLM toward next task.
+and passed verify, session marks itself closed. Next `action="status"`
+call nudges the LLM toward the next task.
 
 Fallback: LLM abandons session silently. On next-day restart, orphan is
 cleaned. No permanent state pollution.
@@ -572,11 +596,12 @@ Phased to keep the main branch green at every step.
 
 1. Add `WorkSession` type + `.zcp/state/work/` directory.
 2. Add registry support for `work-{pid}` entries.
-3. Add `buildWorkSessionHint` (not yet called from `buildSessionHint`).
+3. Add `BuildWorkSessionBlock` (renders the Lifecycle Status block; called
+   by `action="status"`, not by the init-only `Instructions` path).
 4. Migration: on first boot, scan `.zcp/state/develop/*.json` (old markers),
    delete them. Ignore any `.zcp/state/active_session` file — delete on boot.
 
-Tests: WorkSession atomic write, registry round-trip, hint rendering.
+Tests: WorkSession atomic write, registry round-trip, block rendering.
 
 ### Phase 2 — Engine integration
 
@@ -601,14 +626,17 @@ multi-PID isolation, registry cleanup on boot.
 Tests: each tool records correctly, auto-close triggers correctly, failure
 paths recorded.
 
-### Phase 4 — System prompt + briefing
+### Phase 4 — Status block + briefing
 
-1. Extend `buildSessionHint` to include work session block.
+1. Wire `handleLifecycleStatus` to compose the Lifecycle Status block
+   from the work session + ServiceMeta + live services (no init-only
+   instructions path — MCP's `Instructions` field is static per
+   connection).
 2. Update `BuildTransitionMessage` (bootstrap → develop) to script strategy
    + start.
 3. Update briefing to return same text + "Work session created" confirmation.
 
-Tests: instructions snapshot tests updated, briefing text verified per
+Tests: status block snapshot tests, briefing text verified per
 strategy.
 
 ### Phase 5 — Test suite reconciliation
@@ -660,9 +688,11 @@ Code instances**. The redesign delivers this by:
    strategy selection and work session creation as numbered steps. No
    ambiguity at the entry point.
 
-2. **Work is observable.** Every MCP response's system prompt includes the
-   Lifecycle Status block. Compaction cannot erase it because it's
-   re-emitted on every call. The LLM always sees where it is.
+2. **Work is observable.** `zerops_workflow action="status"` is the single
+   canonical re-orientation call; the MCP init instructions teach the LLM
+   to invoke it first. Compaction cannot erase the signal because the
+   init instructions are owned by the MCP client session, not the
+   transcript, and `status` reads state fresh from disk on every call.
 
 3. **Deploy is recorded.** Every `zerops_deploy` / `zerops_verify` appends
    to the work session. The LLM sees per-service progress without re-asking
@@ -681,10 +711,13 @@ Code instances**. The redesign delivers this by:
    small history window (code survives in git).
 
 The result is a model where the LLM can **always answer these three
-questions from the system prompt alone**:
+questions with one `action="status"` call** — a call the static init
+instructions teach it to make first on every new task and after
+compaction:
 - *What am I working on?* → Work session intent.
 - *Where am I in the lifecycle?* → deploys + verifies + suggestedNext.
-- *What's my next action?* → suggestedNext (status) or closure nudge (hint).
+- *What's my next action?* → suggestedNext or closure nudge.
 
-Current architecture fails all three after compaction. This proposal
-restores them as invariants.
+Current architecture has the init instructions explicitly point at
+`action="status"` as the canonical orientation call, so all three
+questions resolve in one tool round-trip even after full compaction.

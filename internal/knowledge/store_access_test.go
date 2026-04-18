@@ -2,6 +2,7 @@
 package knowledge
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -303,11 +304,12 @@ func TestStore_ListRecipes_Empty(t *testing.T) {
 func TestStore_GetRecipe_FuzzyMatch(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name       string
-		query      string
-		docs       map[string]*Document
-		wantErr    bool
-		wantSubstr string // substring expected in result (content or disambiguation)
+		name          string
+		query         string
+		docs          map[string]*Document
+		wantErr       bool
+		wantAmbiguous bool   // expect ErrAmbiguousRecipe alongside disambiguation text
+		wantSubstr    string // substring expected in result (content or disambiguation)
 	}{
 		{
 			name:  "PrefixAutoResolve",
@@ -335,7 +337,8 @@ func TestStore_GetRecipe_FuzzyMatch(t *testing.T) {
 				"zerops://recipes/nextjs-ssr": {URI: "zerops://recipes/nextjs-ssr", Content: "SSR recipe", Description: "Next.js SSR on Node.js"},
 				"zerops://recipes/nextjs":     {URI: "zerops://recipes/nextjs", Content: "Merged recipe", Description: "Next.js on Zerops"},
 			},
-			wantSubstr: "Multiple recipes match",
+			wantAmbiguous: true,
+			wantSubstr:    "Multiple recipes match",
 		},
 		{
 			name:  "ContainsMatch",
@@ -389,6 +392,15 @@ func TestStore_GetRecipe_FuzzyMatch(t *testing.T) {
 				}
 				if err != nil && !strings.Contains(err.Error(), "not found") {
 					t.Errorf("error should contain 'not found', got: %v", err)
+				}
+				return
+			}
+			if tt.wantAmbiguous {
+				if !errors.Is(err, ErrAmbiguousRecipe) {
+					t.Errorf("expected ErrAmbiguousRecipe, got %v", err)
+				}
+				if !strings.Contains(result, tt.wantSubstr) {
+					t.Errorf("disambiguation missing %q, got:\n%s", tt.wantSubstr, result)
 				}
 				return
 			}

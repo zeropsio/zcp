@@ -149,6 +149,61 @@ func TestRecordDeployAttempt_NoSessionNoError(t *testing.T) {
 	}
 }
 
+// F5 regression: recording for a hostname outside ws.Services must not
+// pollute ws.Deploys — spec-work-session.md §7.5 single-source-of-truth.
+func TestRecordDeployAttempt_OutOfScope_RejectedAndNotPolluted(t *testing.T) {
+	dir := t.TempDir()
+	ws := NewWorkSession("p", "container", "test", []string{"web"})
+	if err := SaveWorkSession(dir, ws); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	err := RecordDeployAttempt(dir, "api", DeployAttempt{AttemptedAt: "t"})
+	if err == nil {
+		t.Fatal("expected error for out-of-scope hostname, got nil")
+	}
+
+	loaded, _ := LoadWorkSession(dir, os.Getpid())
+	if _, ok := loaded.Deploys["api"]; ok {
+		t.Errorf("ws.Deploys must not contain out-of-scope hostname, got: %v", loaded.Deploys)
+	}
+}
+
+func TestRecordVerifyAttempt_OutOfScope_RejectedAndNotPolluted(t *testing.T) {
+	dir := t.TempDir()
+	ws := NewWorkSession("p", "container", "test", []string{"web"})
+	if err := SaveWorkSession(dir, ws); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	err := RecordVerifyAttempt(dir, "api", VerifyAttempt{AttemptedAt: "t", Passed: true})
+	if err == nil {
+		t.Fatal("expected error for out-of-scope hostname, got nil")
+	}
+
+	loaded, _ := LoadWorkSession(dir, os.Getpid())
+	if _, ok := loaded.Verifies["api"]; ok {
+		t.Errorf("ws.Verifies must not contain out-of-scope hostname, got: %v", loaded.Verifies)
+	}
+}
+
+// Negative control: in-scope hostname still records successfully.
+func TestRecordDeployAttempt_InScope_Accepted(t *testing.T) {
+	dir := t.TempDir()
+	ws := NewWorkSession("p", "container", "test", []string{"web", "api"})
+	if err := SaveWorkSession(dir, ws); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	if err := RecordDeployAttempt(dir, "api", DeployAttempt{AttemptedAt: "t"}); err != nil {
+		t.Fatalf("in-scope deploy: %v", err)
+	}
+	loaded, _ := LoadWorkSession(dir, os.Getpid())
+	if len(loaded.Deploys["api"]) != 1 {
+		t.Errorf("want 1 deploy for api, got %d", len(loaded.Deploys["api"]))
+	}
+}
+
 func TestEvaluateAutoClose(t *testing.T) {
 	tests := []struct {
 		name string

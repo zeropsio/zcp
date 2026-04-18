@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -73,6 +74,17 @@ type VerifyAttempt struct {
 // workSessionMu serializes work-session file updates within a single process.
 // MCP STDIO requests are serialized by the server, but belt-and-braces.
 var workSessionMu sync.Mutex
+
+// ErrHostnameOutOfScope is returned by Record{Deploy,Verify}Attempt when the
+// hostname is not declared in ws.Services. Prevents silent pollution of
+// ws.Deploys/ws.Verifies with entries that EvaluateAutoClose never reads —
+// single-source-of-truth invariant (spec-work-session.md §7.5).
+var ErrHostnameOutOfScope = errors.New("hostname is not in work session scope")
+
+// inScope reports whether hostname is declared in ws.Services.
+func inScope(ws *WorkSession, hostname string) bool {
+	return slices.Contains(ws.Services, hostname)
+}
 
 // CurrentWorkSession returns the work session for the current PID, or nil
 // if none exists. Errors other than not-found are returned as-is.
@@ -147,6 +159,7 @@ func NewWorkSession(projectID, environment, intent string, services []string) *W
 // If result indicates success, the existing attempt's SucceededAt is set;
 // otherwise Error is set. Mutates and saves the current-PID work session.
 // No-op when no work session exists.
+// Returns ErrHostnameOutOfScope when hostname is not declared in ws.Services.
 func RecordDeployAttempt(stateDir, hostname string, attempt DeployAttempt) error {
 	workSessionMu.Lock()
 	defer workSessionMu.Unlock()
@@ -157,6 +170,9 @@ func RecordDeployAttempt(stateDir, hostname string, attempt DeployAttempt) error
 	}
 	if ws == nil {
 		return nil
+	}
+	if !inScope(ws, hostname) {
+		return fmt.Errorf("%w: %q", ErrHostnameOutOfScope, hostname)
 	}
 	if ws.Deploys == nil {
 		ws.Deploys = map[string][]DeployAttempt{}
@@ -175,6 +191,7 @@ func RecordDeployAttempt(stateDir, hostname string, attempt DeployAttempt) error
 
 // RecordVerifyAttempt appends one verify attempt for a hostname. Triggers
 // auto-close evaluation.
+// Returns ErrHostnameOutOfScope when hostname is not declared in ws.Services.
 func RecordVerifyAttempt(stateDir, hostname string, attempt VerifyAttempt) error {
 	workSessionMu.Lock()
 	defer workSessionMu.Unlock()
@@ -185,6 +202,9 @@ func RecordVerifyAttempt(stateDir, hostname string, attempt VerifyAttempt) error
 	}
 	if ws == nil {
 		return nil
+	}
+	if !inScope(ws, hostname) {
+		return fmt.Errorf("%w: %q", ErrHostnameOutOfScope, hostname)
 	}
 	if ws.Verifies == nil {
 		ws.Verifies = map[string][]VerifyAttempt{}

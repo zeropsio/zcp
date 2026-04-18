@@ -213,6 +213,25 @@ func TestBuildBriefingTargets_Simple(t *testing.T) {
 	}
 }
 
+// F1 regression: local+standard meta stores stage hostname at m.Hostname with
+// StageHostname empty, because dev doesn't exist locally. Old RoleFromMode returned
+// simple (wrong); new PrimaryRole returns stage.
+func TestBuildBriefingTargets_LocalStandard_ReturnsStageRole(t *testing.T) {
+	t.Parallel()
+
+	metas := []*ServiceMeta{
+		{Hostname: "appstage", Mode: PlanModeStandard, Environment: string(EnvLocal), BootstrappedAt: "2026-01-01"},
+	}
+	targets, _ := BuildBriefingTargets(metas)
+
+	if len(targets) != 1 {
+		t.Fatalf("expected 1 target (no dev in local+standard), got %d", len(targets))
+	}
+	if targets[0].Role != DeployRoleStage {
+		t.Errorf("role = %q, want %q (local+standard primary is stage, not simple)", targets[0].Role, DeployRoleStage)
+	}
+}
+
 func TestBuildBriefingTargets_Standard_DevPlusStage(t *testing.T) {
 	t.Parallel()
 

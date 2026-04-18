@@ -257,27 +257,13 @@ When local app can't connect to managed service:
 
 ---
 
-## 10. Local Config
-
-```go
-// workflow/local_config.go
-type LocalConfig struct {
-    Port    int    `json:"port"`
-    EnvFile string `json:"envFile"`
-}
-```
-
-Persisted at `.zcp/state/local.json`. Created during bootstrap generate step. Port from zerops.yaml `run.ports`. Used by guidance for localhost health check hint.
-
----
-
-## 11. Health Verification
+## 10. Health Verification
 
 ### Local Dev Server
 
 Agent checks via Bash: `curl -s localhost:{port}/health`
 
-Port from `LocalConfig` or zerops.yaml. No ZCP code change — agent uses existing Bash tool.
+Port is substituted by the agent from `zerops.yaml` (`run.ports`) — no ZCP-side config file. Guidance templates emit the `{port}` placeholder; the agent resolves it and uses the existing Bash tool.
 
 ### Zerops Services
 
@@ -285,7 +271,7 @@ Same as container mode — `zerops_verify` uses API + subdomain HTTP.
 
 ---
 
-## 12. Deploy Strategies
+## 11. Deploy Strategies
 
 | Strategy | Container | Local |
 |----------|-----------|-------|
@@ -297,7 +283,7 @@ Strategy names, selection flow, ServiceMeta storage — all unchanged.
 
 ---
 
-## 13. State Directory
+## 12. State Directory
 
 ```
 ~/projects/myapp/
@@ -306,8 +292,7 @@ Strategy names, selection flow, ServiceMeta storage — all unchanged.
   │   └── state/
   │       ├── sessions/                ← ephemeral workflow sessions
   │       ├── services/appstage.json   ← ServiceMeta (persistent)
-  │       ├── registry.json            ← session registry
-  │       └── local.json               ← local dev config
+  │       └── registry.json            ← session registry
   ├── .env                             ← generated env vars
   ├── .gitignore                       ← includes .env
   ├── zerops.yaml                      ← build/deploy config
@@ -318,7 +303,7 @@ Strategy names, selection flow, ServiceMeta storage — all unchanged.
 
 ---
 
-## 14. Decision Log
+## 13. Decision Log
 
 | # | Decision | Rationale |
 |---|----------|-----------|
@@ -334,7 +319,7 @@ Strategy names, selection flow, ServiceMeta storage — all unchanged.
 
 ---
 
-## 15. Unverified / Future
+## 14. Unverified / Future
 
 | Item | Status |
 |------|--------|

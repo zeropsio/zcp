@@ -46,18 +46,12 @@ func (s *Server) CallCount() int64 { return s.calls.Load() }
 
 // New creates a new ZCP MCP server with all tools registered.
 func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, mounter ops.Mounter, rtInfo runtime.Info) *Server {
-	// Determine workflow state directory for system prompt hint.
-	var stateDir string
-	if cwd, err := os.Getwd(); err == nil {
-		stateDir = filepath.Join(cwd, ".zcp", "state")
-	}
-
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel()}))
 
 	srv := mcp.NewServer(
 		&mcp.Implementation{Name: "zcp", Version: Version},
 		&mcp.ServerOptions{
-			Instructions: BuildInstructions(ctx, client, authInfo.ProjectID, rtInfo, stateDir),
+			Instructions: BuildInstructions(rtInfo),
 			Logger:       logger,
 		},
 	)

@@ -56,15 +56,23 @@ ServiceMeta (`.zcp/state/services/{hostname}.json`) is the persistent evidence t
 
 ```
 ServiceMeta {
-  Hostname         string  // service identifier
-  Mode             string  // "standard" | "dev" | "simple"
-  StageHostname    string  // stage pair (standard mode only, empty otherwise)
-  DeployStrategy   string  // "push-dev" | "push-git" | "manual" (empty until set)
-  Environment      string  // "container" | "local"
-  BootstrapSession string  // session ID that created this (null for adoption)
-  BootstrappedAt   string  // date — empty = incomplete
+  Hostname          string  // service identifier
+  Mode              string  // "standard" | "dev" | "simple"
+  StageHostname     string  // stage pair (standard mode only, empty otherwise)
+  DeployStrategy    string  // "push-dev" | "push-git" | "manual" (empty until set)
+  StrategyConfirmed bool    // true after user explicitly confirms/sets strategy
+  Environment       string  // "container" | "local"
+  BootstrapSession  string  // session ID that created this; EMPTY for adoption
+  BootstrappedAt    string  // date — empty = incomplete (bootstrap in progress)
 }
 ```
+
+**`BootstrapSession == ""` convention.** Empty (JSON-wise: empty string, not
+null) is the adoption marker. Fresh bootstraps set this to the 16-hex
+session ID; adoption path writes it as empty. `IsAdopted()` disambiguates
+adopted metas from orphan incomplete metas (which also carry an empty
+session ID) by requiring `BootstrappedAt` to be set: an adopted meta is
+always complete, an orphan never is.
 
 ```mermaid
 stateDiagram-v2
@@ -85,7 +93,10 @@ stateDiagram-v2
     end note
 ```
 
-`IsComplete()` returns true when `BootstrappedAt` is set. Strategy is always read from meta at the moment it's needed — never copied into session state.
+`IsComplete()` returns true when `BootstrappedAt` is set.
+`IsAdopted()` returns true when `BootstrapSession` is empty AND the meta
+`IsComplete()`. Strategy is always read from meta at the moment it's
+needed — never copied into session state.
 
 ### Principles
 
@@ -179,7 +190,9 @@ stateDiagram-v2
 
 **Skip**: `action="skip" step="{name}" reason="..."`.
 - `discover` and `provision`: NEVER skippable.
-- `generate`, `deploy`, `close`: ONLY for managed-only (no runtime targets).
+- `generate`, `deploy`, `close`: skippable only when the plan has no
+  runtime targets (managed-only) OR every runtime target has
+  `IsExisting=true` (pure-adoption). See §2.8.
 
 **Iterate**: `action="iterate"` resets `generate` + `deploy` to pending. Preserves discover, provision, close, plan, env vars. Max 10 iterations (configurable via `ZCP_MAX_ITERATIONS`).
 
@@ -392,9 +405,24 @@ Workflow-specific endpoint-shape checks (`/api/health`, `/status`, Laravel `/up`
 
 **Natural transition**: If the user's intent requires application development (e.g., "create an app for X"), the agent should immediately start develop flow (§4) to implement the actual application. Bootstrap proved the infrastructure works; develop flow is where the real code gets written.
 
-### 2.8 Managed-Only Fast Path
+### 2.8 Fast Paths — Managed-Only and Pure-Adoption
 
-No runtime targets: discover → provision → SKIP generate → SKIP deploy → SKIP close. No ServiceMeta (managed services are API-authoritative).
+`validateSkip` allows `generate`, `deploy`, and `close` to be skipped in
+either of two shapes:
+
+1. **Managed-only** — the plan has no runtime targets (`len(Targets)==0`).
+   Nothing to generate code for, nothing to deploy. No ServiceMeta is
+   written (managed services are API-authoritative).
+2. **Pure-adoption** — every runtime target in the plan has
+   `IsExisting=true` (`plan.IsAllExisting()`). Generate and deploy are
+   skipped because the code and running infrastructure already exist.
+   Close is skipped because adoption writes ServiceMeta directly from the
+   discover step (see §3.2).
+
+In both shapes the bootstrap walks discover → provision → SKIP generate →
+SKIP deploy → SKIP close. Mixed plans (some new runtime targets + some
+adopted) follow the full flow in §2.3–§2.7 — only the fully-uniform
+shapes above qualify for the fast path.
 
 ### 2.9 Mode Behavior Matrix
 
@@ -432,7 +460,9 @@ Adoption is a simplified process:
 3. **Write evidence**: Create ServiceMeta with:
    - Hostname, Mode, StageHostname (if standard)
    - Environment (container/local)
-   - `BootstrapSession` = null (not created by bootstrap)
+   - `BootstrapSession` = empty (not created by bootstrap — the
+     adoption marker; combined with `IsComplete()` this makes
+     `IsAdopted()` return true, see §1.1 and invariant E7)
    - `BootstrappedAt` = today's date
    - `DeployStrategy` = empty
 
@@ -443,6 +473,11 @@ No import, no code generation, no deploy. The service already exists and runs.
 When the user wants to adopt existing services AND create new ones, this goes through bootstrap (§2) with `isExisting: true` on adopted targets. Each target follows its path:
 - New targets: full bootstrap (import, generate, deploy)
 - Existing targets: verify-only, write meta
+
+**Pure-adoption fast path**: When *every* runtime target in the plan has
+`IsExisting=true`, bootstrap routes through the fast path in §2.8 —
+generate, deploy, and close are all skippable. Mixed plans (any new
+runtime target) follow the full flow regardless of adopted targets.
 
 ### 3.4 Outcome
 
@@ -790,10 +825,11 @@ visibility.
 |----|-----------|
 | E1 | Every managed runtime service has a ServiceMeta with Mode and BootstrappedAt |
 | E2 | Bootstrap creates ServiceMeta with empty DeployStrategy |
-| E3 | Adoption creates ServiceMeta with null BootstrapSession |
+| E3 | Adoption creates ServiceMeta with empty BootstrapSession (marker for the adoption path) |
 | E4 | IsComplete() = BootstrappedAt is non-empty |
 | E5 | Partial meta (no BootstrappedAt) signals bootstrap in-progress |
 | E6 | Only runtime services get ServiceMeta — managed services are API-authoritative |
+| E7 | IsAdopted() = BootstrapSession is empty AND IsComplete() — disambiguates adopted metas from orphan incomplete metas |
 
 ### Bootstrap
 
@@ -801,7 +837,7 @@ visibility.
 |----|-----------|
 | B1 | 5 steps in strict order: discover → provision → generate → deploy → close |
 | B2 | discover/provision always mandatory |
-| B3 | generate/deploy/close skippable only for managed-only |
+| B3 | generate/deploy/close skippable when the plan has no runtime targets (managed-only) OR every runtime target has IsExisting=true (pure-adoption); see §2.8 |
 | B4 | Attestation ≥ 10 chars on completion |
 | B5 | Checker failure blocks step advancement |
 | B6 | Per-service exclusivity via hostname lock |

@@ -94,10 +94,16 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 		}
 
 		// Inject live stack types into bootstrap/develop workflows.
+		// If markers are missing from the .md source, log to stderr and ship
+		// the original content — we'd rather degrade than fail the tool call.
 		if (input.Workflow == workflowBootstrap || input.Workflow == workflowDevelop) && client != nil && cache != nil {
 			if types := cache.Get(ctx, client); len(types) > 0 {
 				stackList := knowledge.FormatStackList(types)
-				wfContent = injectStacks(wfContent, stackList)
+				injected, err := injectStacks(wfContent, stackList)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "zcp: inject stacks into %s workflow: %v\n", input.Workflow, err)
+				}
+				wfContent = injected
 			}
 		}
 
@@ -163,10 +169,10 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		if active == workflowRecipe {
 			return handleRecipeStatus(ctx, engine)
 		}
-		if resp := handleWorkSessionStatus(engine); resp != nil {
-			return resp, nil, nil
+		if active == workflowBootstrap {
+			return handleBootstrapStatus(ctx, engine, client, cache)
 		}
-		return handleBootstrapStatus(ctx, engine, client, cache)
+		return handleLifecycleStatus(ctx, engine, client, projectID, selfHostname)
 	case "close":
 		return handleWorkSessionClose(engine, input)
 	case "resume":
@@ -343,24 +349,10 @@ func handleListSessions(engine *workflow.Engine) (*mcp.CallToolResult, any, erro
 	return jsonResult(sessions), nil, nil
 }
 
-// handleWorkSessionStatus returns the work session as JSON when one is active
-// for the current PID. Returns nil when there is no work session — caller
-// falls through to bootstrap/recipe status.
-func handleWorkSessionStatus(engine *workflow.Engine) *mcp.CallToolResult {
-	ws, err := workflow.CurrentWorkSession(engine.StateDir())
-	if err != nil || ws == nil {
-		return nil
-	}
-	metas, _ := workflow.ListServiceMetas(engine.StateDir())
-	return jsonResult(workSessionStatusResponse{
-		Session: ws,
-		Hint:    workflow.BuildWorkSessionBlock(ws, metas),
-	})
-}
-
-type workSessionStatusResponse struct {
-	Session *workflow.WorkSession `json:"session"`
-	Hint    string                `json:"hint"`
+// handleLifecycleStatus returns the canonical orientation block. Used when
+// no bootstrap/recipe session is active — covers both idle and develop phases.
+func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID, selfHostname string) (*mcp.CallToolResult, any, error) {
+	return textResult(workflow.BuildLifecycleStatus(ctx, client, projectID, engine.StateDir(), selfHostname)), nil, nil
 }
 
 // handleWorkSessionClose closes the current-PID work session. If no session

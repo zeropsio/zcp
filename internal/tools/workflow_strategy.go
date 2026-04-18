@@ -38,6 +38,8 @@ func handleStrategy(_ *workflow.Engine, input WorkflowInput, stateDir string) (*
 	}
 
 	// Update each service meta.
+	// Only complete (bootstrapped) metas are valid strategy targets — auto-creating
+	// orphan metas here poisons every downstream consumer (router, briefing, locks).
 	var updated []string
 	for hostname, strategy := range input.Strategies {
 		meta, err := workflow.ReadServiceMeta(stateDir, hostname)
@@ -47,10 +49,11 @@ func handleStrategy(_ *workflow.Engine, input WorkflowInput, stateDir string) (*
 				fmt.Sprintf("Read service meta %q: %v", hostname, err),
 				"Ensure the service was bootstrapped first")), nil, nil
 		}
-		if meta == nil {
-			meta = &workflow.ServiceMeta{
-				Hostname: hostname,
-			}
+		if meta == nil || !meta.IsComplete() {
+			return convertError(platform.NewPlatformError(
+				platform.ErrServiceNotFound,
+				fmt.Sprintf("Service %q is not bootstrapped", hostname),
+				"Run bootstrap first: zerops_workflow action=\"start\" workflow=\"bootstrap\"")), nil, nil
 		}
 		meta.DeployStrategy = strategy
 		meta.StrategyConfirmed = true

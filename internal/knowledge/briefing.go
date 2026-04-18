@@ -1,12 +1,20 @@
 package knowledge
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
+
+// ErrAmbiguousRecipe signals that a recipe query fuzzy-matched multiple
+// candidates. The returned content is the disambiguation list (agent-friendly
+// markdown with TL;DRs). Callers use errors.Is to distinguish this from an
+// auto-resolved single match, preserving the same UX while making the signal
+// explicit at the tool boundary.
+var ErrAmbiguousRecipe = errors.New("recipe name matched multiple recipes")
 
 // GetBriefing assembles stack-specific knowledge using layered composition.
 // Layers: live stacks -> runtime delta -> recipes -> service cards -> wiring -> decisions -> version check.
@@ -133,8 +141,9 @@ func (s *Store) GetRecipe(name, mode string) (string, error) {
 		}
 		return content, nil
 	default:
-		// Multiple matches — return disambiguation.
-		return s.formatDisambiguation(name, matches), nil
+		// Multiple matches — return disambiguation text with a sentinel error
+		// so callers can distinguish ambiguity from auto-resolved success.
+		return s.formatDisambiguation(name, matches), ErrAmbiguousRecipe
 	}
 }
 
