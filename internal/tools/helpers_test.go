@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -37,6 +38,11 @@ func callTool(t *testing.T, srv *mcp.Server, name string, args map[string]any) *
 // callToolMayError connects to a test server and calls a named tool.
 // Returns nil on success, or err when the call itself fails
 // (e.g. schema validation rejects missing required fields).
+//
+// Since go-sdk v1.5.0, server-side schema validation failures return
+// CallToolResult{IsError:true} with err=nil instead of a JSON-RPC error;
+// this helper normalizes both into a non-nil error so test expectations
+// stay stable across SDK versions.
 func callToolMayError(t *testing.T, srv *mcp.Server, name string, args map[string]any) error {
 	t.Helper()
 	ctx := context.Background()
@@ -55,8 +61,24 @@ func callToolMayError(t *testing.T, srv *mcp.Server, name string, args map[strin
 	}
 	defer session.Close()
 
-	_, err = session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
-	return err
+	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+	if err != nil {
+		return err
+	}
+	if result != nil && result.IsError {
+		return fmt.Errorf("tool returned IsError: %s", extractText(result))
+	}
+	return nil
+}
+
+func extractText(result *mcp.CallToolResult) string {
+	if result == nil || len(result.Content) == 0 {
+		return ""
+	}
+	if tc, ok := result.Content[0].(*mcp.TextContent); ok {
+		return tc.Text
+	}
+	return ""
 }
 
 // testEngine creates a workflow engine with an active session for tests.
