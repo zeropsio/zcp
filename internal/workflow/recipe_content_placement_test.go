@@ -145,13 +145,13 @@ func TestRecipe_SubAgentBriefPlacement(t *testing.T) {
 func TestRecipe_ProvisionContent(t *testing.T) {
 	t.Parallel()
 
-	// Git safe.directory for SSHFS mount MUST be documented at provision.
-	// (Deploy's sub-agent brief references the provision-set config, so the
-	// substring is allowed to appear there as a back-reference too.)
-	assertPresentIn(t, "safe.directory", "provision", "deploy")
-	// The authoritative config commands must live at provision (Phase 3.4).
+	// Git safe.directory for the container-side repo MUST be documented at
+	// provision. Since v8.93.1 git is run entirely container-side via SSH,
+	// so the deploy section no longer needs a back-reference.
+	assertPresentIn(t, "safe.directory", "provision")
+	// The authoritative config + init + commit SSH call must live at provision.
 	if !strings.Contains(sectionContent(t, "provision"), `git config --global --add safe.directory`) {
-		t.Error("provision must carry the authoritative safe.directory git config commands (Phase 3.4)")
+		t.Error("provision must carry the authoritative container-side safe.directory git config command")
 	}
 
 	// The zerops_discover instruction must be strengthened with an explicit

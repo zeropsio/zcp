@@ -308,37 +308,31 @@ This gives SSHFS access to `/var/www/appdev/` — all code writes go here.
 
 <block name="git-config-mount">
 
-### 3a. Configure git on the mount (MANDATORY before first commit)
+### 3a. Configure git and initialize the repo — all container-side (MANDATORY before first commit)
 
-SSHFS mounts surface the container's `/var/www/` to zcp as a root-owned directory. Git treats this as a security risk and refuses to operate on it — both on zcp (where you edit files) and inside the target container (where `zerops_deploy` runs `git push` on first deploy). You must configure both sides BEFORE any commit.
+**Run git entirely inside the container via SSH. Never zcp-side.** `/var/www/{hostname}/` on zcp is an SSHFS mount — a write surface into the container's `/var/www/`, not a local repo. If you `git init` on the mount, `.git/` lands owned by zcp-root, then `zerops_deploy` (which runs as container-`zerops`) can't lock `.git/config` and fails with `fatal: could not lock config file .git/config: Permission denied`. The fix is not to chown after the fact — it's to run `git init` container-side from the start, so `.git/` is owned by `zerops` and the whole ownership cascade never happens.
 
-**On zcp (once per mounted service)**:
+**One SSH call per mounted service** (config + init + initial commit in one go):
+
 ```
-git config --global --add safe.directory /var/www/{hostname}
-git config --global user.email "recipe@zerops.io"
-git config --global user.name "Zerops Recipe"
+ssh {hostname} "git config --global --add safe.directory /var/www && \
+                git config --global user.email 'recipe@zerops.io' && \
+                git config --global user.name 'Zerops Recipe' && \
+                cd /var/www && \
+                git init -q -b main && \
+                git add -A && \
+                git commit -q -m 'initial scaffold'"
 ```
 
-**On the target container (once per service, before first `zerops_deploy`)**:
-```
-ssh {hostname} "git config --global --add safe.directory /var/www && git config --global user.email 'recipe@zerops.io' && git config --global user.name 'Zerops Recipe'"
-```
+Files in the working tree may be root-owned (written via SSHFS from zcp); git does not care about working-tree ownership — only `.git/` ownership vs the current user, which is `zerops` on both sides here, so no `fatal: detected dubious ownership`.
 
-Without zcp-side config: `git commit` on the mount fails with `fatal: detected dubious ownership`. Without container-side config: `zerops_deploy` fails with `fatal: not in a git directory`. Both errors are 100% reproducing on first use — do not try to "commit without configuring and see what happens".
-
-**Ownership fix after git init.** SSHFS-created files are owned by `root` (the MCP
-agent's user). The deploy process runs as `zerops` (uid 2023) inside the container and
-must be able to lock `.git/config`. After `git init` + first commit on the SSHFS mount,
-run `sudo chown -R zerops:zerops /var/www/.git` on each dev container via SSH. Without
-this, the first `zerops_deploy` fails with `fatal: could not lock config file
-.git/config: Permission denied`. Do this once per mount, immediately after the initial
-commit — subsequent SSHFS writes to tracked files don't touch `.git/` internals.
+**Do NOT** run `git config --global ... safe.directory /var/www/{hostname}` on zcp, `cd /var/www/{hostname} && git init`, or `sudo chown -R zerops:zerops /var/www/.git` via SSH. None are needed when git runs container-side from the first call; each is a workaround for a failure mode this flow eliminates.
 
 </block>
 
 <block name="git-init-per-codebase">
 
-**Multi-codebase plans**: repeat both git configuration commands (zcp-side `safe.directory` and container-side `safe.directory`) for **every** provisioned dev mount. One codebase = one mount = one invocation of each command. The number of mounts is driven by your `sharesCodebaseWith` decisions at research — the authoritative shape table lives under "zerops.yaml — Write ALL setups at once" in the generate section. Do not assume a specific mount count; iterate over the mounts your plan actually created.
+**Multi-codebase plans**: repeat the full container-side config + init + commit SSH call for **every** provisioned dev mount. One codebase = one mount = one SSH invocation. The number of mounts is driven by your `sharesCodebaseWith` decisions at research — the authoritative shape table lives under "zerops.yaml — Write ALL setups at once" in the generate section. Do not assume a specific mount count; iterate over the mounts your plan actually created.
 
 </block>
 
@@ -847,7 +841,6 @@ For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appde
 > 1. `node_modules/` owned by zcp-root instead of the container's `zerops` user — later operations on the container hit EACCES and need `sudo chown -R`
 > 2. Broken absolute-path symlinks in `node_modules/.bin/` that don't resolve inside the container — `sh: svelte-check: not found`, `sh: vite: not found`, `npx nest` returns ENOENT even though `node_modules/@nestjs/cli/` exists
 > 3. Native modules compiled against zcp's node binary that won't load on the container — mysterious `Error: Cannot find module` errors at runtime
-> 4. `.git/` owned by zcp-root so subsequent container-side git operations need `sudo chown` to work
 >
 > If your install or build logs show EACCES, "not found" for packages that are clearly installed, or ownership surprises, you are running commands on the wrong side of the boundary. Stop, re-read this section, and redo the failing step via `ssh {hostname}`.
 >
@@ -1504,8 +1497,8 @@ The sub-agent runs on the zcp orchestrator container. `{appDir}` is an SSHFS net
 
 The principle is WHICH CONTAINER'S WORLD the tool belongs to:
 
-- **SSH (target-side)** — compilers (`tsc`, `nest build`, `go build`), type-checkers (`svelte-check`, `tsc --noEmit`), test runners (`jest`, `vitest`, `pytest`, `phpunit`), linters (`eslint`, `prettier`), package managers (`npm install`, `composer install`), framework CLIs (`artisan`, `nest`, `rails`), and any app-level `curl`/`node`/`python -c` that hits the running app or managed services.
-- **Direct (zcp-side)** — `zerops_*` MCP tools, `zerops_browser`, Read/Edit/Write against the mount, `ls`/`cat`/`grep`/`find` against the mount, `git status`/`add`/`commit` (with the safe.directory config from provision).
+- **SSH (target-side)** — compilers (`tsc`, `nest build`, `go build`), type-checkers (`svelte-check`, `tsc --noEmit`), test runners (`jest`, `vitest`, `pytest`, `phpunit`), linters (`eslint`, `prettier`), package managers (`npm install`, `composer install`), framework CLIs (`artisan`, `nest`, `rails`), every git operation (`git init`, `git add`, `git commit`, `git status`, `git log`), and any app-level `curl`/`node`/`python -c` that hits the running app or managed services.
+- **Direct (zcp-side)** — `zerops_*` MCP tools, `zerops_browser`, Read/Edit/Write against the mount, `ls`/`cat`/`grep`/`find` against the mount.
 
 Correct shape:
 ```
@@ -1867,7 +1860,6 @@ Only after this sub-step passes do you proceed to the `readmes` sub-step. A stag
 | Stage deploy fails | zerops.yaml setup name doesn't match --setup param | Ensure `setup: prod` in zerops.yaml and `setup="prod"` in zerops_deploy |
 | Health check fails | healthCheck configured on dev entry | Remove healthCheck from dev; agent controls lifecycle |
 | Static site 404 | Wrong `documentRoot` | Match to actual build output directory |
-| Permission denied on `.git/config` | `.git/` created by root (SSHFS), deploy runs as `zerops` | `ssh {hostname} "sudo chown -R zerops:zerops /var/www/.git"` on each dev container before first deploy |
 | Env var not updating after zerops.yaml fix | Service-level env var (set via `zerops_env`) shadows zerops.yaml `run.envVariables` | Delete the service-level var (`zerops_env action="delete"`) before redeploying. Never use `zerops_env set serviceHostname=...` as a debugging shortcut for vars that belong in zerops.yaml — the service-level var takes precedence on every subsequent deploy, silently ignoring your zerops.yaml fix. Fix the zerops.yaml and redeploy; if you need to verify a value quickly, read it from logs after deploy, don't inject it as a service-level var. |
 
 </block>
