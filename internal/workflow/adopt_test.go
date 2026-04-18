@@ -176,10 +176,10 @@ func TestInferServicePairing(t *testing.T) {
 	}
 }
 
-// F4 regression: liveManaged (from API) must override the static prefix list.
-// A new Zerops managed category should be recognized even if the static list
-// doesn't list it yet — otherwise every new type ships misclassification
-// until managed_types.go is bumped.
+// liveManaged (from API) must override the static prefix list. A new Zerops
+// managed category should be recognized even if the static list doesn't list
+// it yet — otherwise every new type ships misclassification until
+// managed_types.go is bumped.
 func TestInferServicePairing_LiveManagedOverridesStatic(t *testing.T) {
 	t.Parallel()
 

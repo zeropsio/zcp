@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -19,9 +20,17 @@ func BuildLifecycleStatus(
 	client platform.Client,
 	projectID, stateDir, selfHostname string,
 ) string {
-	services, _ := fetchServices(ctx, client, projectID)
-	metas, _ := ListServiceMetas(stateDir)
-	ws, _ := CurrentWorkSession(stateDir)
+	var (
+		services []platform.ServiceStack
+		metas    []*ServiceMeta
+		ws       *WorkSession
+		wg       sync.WaitGroup
+	)
+	wg.Add(3)
+	go func() { defer wg.Done(); services, _ = fetchServices(ctx, client, projectID) }()
+	go func() { defer wg.Done(); metas, _ = ListServiceMetas(stateDir) }()
+	go func() { defer wg.Done(); ws, _ = CurrentWorkSession(stateDir) }()
+	wg.Wait()
 
 	var b strings.Builder
 	b.WriteString("## Status\n")
@@ -77,7 +86,7 @@ func writeStatusServices(
 	if ws != nil && ws.ClosedAt == "" {
 		scope = ws.Services
 	} else {
-		scope = projectScope(services, metas, selfHostname)
+		scope = projectScope(services, selfHostname)
 	}
 
 	if len(scope) == 0 {
@@ -211,7 +220,7 @@ func writeStatusNext(
 // projectScope returns every non-system, non-self hostname from live services.
 // Stage hostnames of bootstrapped standard-mode services are included so they
 // appear in the listing — the setup line attributes them to their dev pair.
-func projectScope(services []platform.ServiceStack, _ []*ServiceMeta, selfHostname string) []string {
+func projectScope(services []platform.ServiceStack, selfHostname string) []string {
 	var out []string
 	for _, svc := range services {
 		if svc.IsSystem() {

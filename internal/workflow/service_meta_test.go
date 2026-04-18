@@ -657,9 +657,8 @@ func TestServiceMeta_PrimaryRole(t *testing.T) {
 			DeployRoleSimple,
 		},
 		{
-			// Local+standard stores the stage hostname at m.Hostname because dev doesn't
-			// exist locally. Primary role is therefore stage, not dev. F1 bug: old
-			// RoleFromMode returned simple here because StageHostname was empty.
+			// Local+standard stores the stage hostname at m.Hostname because dev
+			// doesn't exist locally. Primary role is therefore stage, not dev.
 			"local_standard_returns_stage",
 			ServiceMeta{Hostname: "appstage", Mode: PlanModeStandard, Environment: string(EnvLocal)},
 			DeployRoleStage,

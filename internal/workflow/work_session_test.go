@@ -149,8 +149,8 @@ func TestRecordDeployAttempt_NoSessionNoError(t *testing.T) {
 	}
 }
 
-// F5 regression: recording for a hostname outside ws.Services must not
-// pollute ws.Deploys — spec-work-session.md §7.5 single-source-of-truth.
+// Recording for a hostname outside ws.Services must not pollute ws.Deploys —
+// spec-work-session.md §7.5 single-source-of-truth.
 func TestRecordDeployAttempt_OutOfScope_RejectedAndNotPolluted(t *testing.T) {
 	dir := t.TempDir()
 	ws := NewWorkSession("p", "container", "test", []string{"web"})
@@ -318,92 +318,6 @@ func TestMigrateRemoveLegacyWorkState(t *testing.T) {
 	}
 	if _, err := os.Stat(developDir); !os.IsNotExist(err) {
 		t.Errorf("develop dir not removed")
-	}
-}
-
-func TestBuildWorkSessionBlock(t *testing.T) {
-	now := time.Now().UTC()
-	baseWS := &WorkSession{
-		PID:            os.Getpid(),
-		ProjectID:      "p",
-		Environment:    "container",
-		Intent:         "add login",
-		Services:       []string{"web", "api"},
-		CreatedAt:      now.Add(-83 * time.Minute).Format(time.RFC3339),
-		LastActivityAt: now.Format(time.RFC3339),
-	}
-	metas := []*ServiceMeta{
-		{Hostname: "web", DeployStrategy: StrategyPushDev, StrategyConfirmed: true},
-		{Hostname: "api", DeployStrategy: StrategyPushDev, StrategyConfirmed: true},
-	}
-
-	tests := []struct {
-		name        string
-		mutate      func(ws *WorkSession)
-		wantContain []string
-	}{
-		{
-			name:   "bare active session",
-			mutate: func(ws *WorkSession) {},
-			wantContain: []string{
-				"## Lifecycle Status",
-				"Work session active (1h 23m)",
-				"intent: \"add login\"",
-				"web (push-dev)",
-				"api (push-dev)",
-			},
-		},
-		{
-			name: "with deploys and verifies",
-			mutate: func(ws *WorkSession) {
-				ws.Deploys = map[string][]DeployAttempt{
-					"web": {{AttemptedAt: "t", SucceededAt: now.Add(-3 * time.Minute).Format(time.RFC3339)}},
-					"api": {{AttemptedAt: "t", Error: "build timeout"}},
-				}
-				ws.Verifies = map[string][]VerifyAttempt{
-					"web": {{AttemptedAt: "t", PassedAt: now.Add(-2 * time.Minute).Format(time.RFC3339), Passed: true}},
-				}
-			},
-			wantContain: []string{
-				"Deploys: web ✓",
-				"api ✗",
-				"build timeout",
-				"Verifies: web ✓",
-			},
-		},
-		{
-			name: "auto-closed",
-			mutate: func(ws *WorkSession) {
-				ws.ClosedAt = now.Format(time.RFC3339)
-				ws.CloseReason = CloseReasonAutoComplete
-			},
-			wantContain: []string{
-				"task complete",
-				"action=\"close\"",
-				"action=\"start\"",
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ws := *baseWS
-			ws.Deploys = map[string][]DeployAttempt{}
-			ws.Verifies = map[string][]VerifyAttempt{}
-			tt.mutate(&ws)
-			got := BuildWorkSessionBlock(&ws, metas)
-			for _, want := range tt.wantContain {
-				if !strings.Contains(got, want) {
-					t.Errorf("missing substring %q in:\n%s", want, got)
-				}
-			}
-		})
-	}
-}
-
-func TestBuildWorkSessionBlock_NilReturnsEmpty(t *testing.T) {
-	if got := BuildWorkSessionBlock(nil, nil); got != "" {
-		t.Errorf("nil session: want empty, got %q", got)
 	}
 }
 

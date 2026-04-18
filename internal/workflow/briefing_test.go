@@ -213,9 +213,9 @@ func TestBuildBriefingTargets_Simple(t *testing.T) {
 	}
 }
 
-// F1 regression: local+standard meta stores stage hostname at m.Hostname with
-// StageHostname empty, because dev doesn't exist locally. Old RoleFromMode returned
-// simple (wrong); new PrimaryRole returns stage.
+// Local+standard meta stores the stage hostname at m.Hostname with
+// StageHostname empty (dev doesn't exist locally). PrimaryRole must
+// recognize this and return stage, not simple.
 func TestBuildBriefingTargets_LocalStandard_ReturnsStageRole(t *testing.T) {
 	t.Parallel()
 
