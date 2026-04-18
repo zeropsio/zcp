@@ -169,9 +169,20 @@ func TestPollProcess_CallbackCalled(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	// One callback per GetProcess call: PENDING, RUNNING, FINISHED = 3.
-	if len(calls) != 3 {
-		t.Errorf("callback called %d times, want 3", len(calls))
+	// Callback is emitted only for in-progress states — terminal states (FINISHED,
+	// FAILED, CANCELED) are returned directly without a progress notification to
+	// avoid a client-side race in Claude Code's MCP JS SDK: its _onresponse
+	// synchronously deletes the progress handler while _onnotification dispatches
+	// via microtask, so a same-chunk progress+response sequence fires
+	// "Received a progress notification for an unknown token" and tears down the
+	// stdio transport. Sequence PENDING, RUNNING, FINISHED → 2 callbacks.
+	if len(calls) != 2 {
+		t.Errorf("callback called %d times, want 2", len(calls))
+	}
+	for _, msg := range calls {
+		if msg == "Process proc-1: "+statusFinished {
+			t.Errorf("terminal-state callback emitted (%q) — would race with tool response", msg)
+		}
 	}
 }
 
@@ -527,9 +538,17 @@ func TestPollBuild_CallbackCalled(t *testing.T) {
 
 	mu.Lock()
 	defer mu.Unlock()
-	// One callback per SearchAppVersions call: BUILDING, ACTIVE = 2.
-	if len(calls) != 2 {
-		t.Errorf("callback called %d times, want 2", len(calls))
+	// Callback is emitted only for in-progress build states — terminal states
+	// (ACTIVE, failed pipeline) are returned directly. See pollProcess callback
+	// test for the full rationale (Claude Code MCP JS race on same-chunk
+	// progress+response). Sequence BUILDING, ACTIVE → 1 callback.
+	if len(calls) != 1 {
+		t.Errorf("callback called %d times, want 1", len(calls))
+	}
+	for _, msg := range calls {
+		if msg == "Build svc-1: "+statusActive {
+			t.Errorf("terminal-state callback emitted (%q) — would race with tool response", msg)
+		}
 	}
 }
 

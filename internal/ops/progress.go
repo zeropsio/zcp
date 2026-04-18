@@ -93,6 +93,20 @@ func pollBuild(
 			}
 		}
 
+		// Terminal states return before onProgress to avoid the Claude Code MCP
+		// JS client race (same-chunk progress+response → "unknown token" error
+		// and transport teardown). See pollProcess for the full rationale.
+		if latest != nil {
+			// Layer 2: PipelineFailed timestamp is a hard signal — stop regardless of status string.
+			if latest.Build != nil && latest.Build.PipelineFailed != nil {
+				return latest, nil
+			}
+			// Layer 1: Inverted check — whitelist in-progress states, treat everything else as terminal.
+			if !isBuildInProgress(latest.Status) {
+				return latest, nil
+			}
+		}
+
 		elapsed := time.Since(start)
 		if onProgress != nil {
 			status := "waiting"
@@ -107,17 +121,6 @@ func pollBuild(
 				fmt.Sprintf("Build %s: %s", serviceStackID, status),
 				progress, 100,
 			)
-		}
-
-		if latest != nil {
-			// Layer 2: PipelineFailed timestamp is a hard signal — stop regardless of status string.
-			if latest.Build != nil && latest.Build.PipelineFailed != nil {
-				return latest, nil
-			}
-			// Layer 1: Inverted check — whitelist in-progress states, treat everything else as terminal.
-			if !isBuildInProgress(latest.Status) {
-				return latest, nil
-			}
 		}
 
 		if elapsed > cfg.timeout {
@@ -176,6 +179,19 @@ func pollProcess(
 			return nil, fmt.Errorf("poll process %s: %w", processID, err)
 		}
 
+		// Terminal states return without emitting onProgress. Reason: Claude Code's
+		// MCP JS client has a race where _onresponse synchronously deletes the
+		// progress handler while _onnotification dispatches via microtask. If a
+		// progress notification and its tool response land in the same stdin data
+		// chunk, the microtask fires after the delete and the client errors with
+		// "Received a progress notification for an unknown token", tearing down
+		// the stdio transport. Returning before onProgress guarantees any emitted
+		// notification is at least one poll interval (1–5s) before the response,
+		// which is far outside any Node pipe coalescing window.
+		if !isProcessInProgress(proc.Status) {
+			return proc, nil
+		}
+
 		elapsed := time.Since(start)
 		if onProgress != nil {
 			progress := float64(elapsed) / float64(cfg.timeout) * 100
@@ -186,10 +202,6 @@ func pollProcess(
 				fmt.Sprintf("Process %s: %s", processID, proc.Status),
 				progress, 100,
 			)
-		}
-
-		if !isProcessInProgress(proc.Status) {
-			return proc, nil
 		}
 
 		if elapsed > cfg.timeout {
