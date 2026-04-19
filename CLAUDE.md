@@ -15,9 +15,10 @@ Single Go binary merging ZAIA CLI + ZAIA-MCP. AI-driven Zerops PaaS management v
 ```
 
 Key specs:
-- `docs/spec-workflows.md` — workflow step specs, invariants, state model
+- `docs/spec-workflows.md` — workflow step specs, invariants, state model (partially stale post-atom-rewrite — see `plans/instruction-delivery-rewrite.md` Appendix D)
 - `docs/spec-work-session.md` — per-PID Work Session for develop flow (lifecycle visibility, compaction survival, auto-close)
-- `docs/spec-knowledge-distribution.md` — guidance delivery model (inject vs point, personalization)
+- `docs/spec-knowledge-distribution.md` — legacy inject/point model (superseded in practice by the atom pipeline — see Appendix D)
+- `plans/instruction-delivery-rewrite.md` — live reference for the atom corpus + typed Plan + envelope pipeline
 
 Zerops platform schemas (live, authoritative for YAML field validation):
 - **Import YAML**: `https://api.app-prg1.zerops.io/api/rest/public/settings/import-project-yml-json-schema.json`
@@ -43,8 +44,8 @@ cmd/zcp/main.go → internal/server → MCP tools → internal/ops → internal/
 | `internal/auth` | Token resolution (env var / zcli), project discovery | `auth.go` |
 | `internal/knowledge` | Text search, embedded docs, session-aware briefings, runtime-aware mode adaptation | `engine.go`, `briefing.go` |
 | `internal/runtime` | Container vs local detection | `runtime.go` |
-| `internal/content` | Embedded templates + workflow catalog (bootstrap, develop, recipe, cicd) | `content.go` |
-| `internal/workflow` | Workflow orchestration, bootstrap/develop/recipe conductors, guidance assembly, infra + work session state | `session.go`, `work_session.go`, `deploy_guidance.go`, `recipe.go`, `engine_recipe.go` |
+| `internal/content` | Embedded templates + atom corpus (`atoms/*.md`) + recipe authoring workflow (only `workflows/recipe.md` remains) | `content.go`, `atoms_test.go` |
+| `internal/workflow` | Workflow orchestration + Layer 2/3 pipeline: atom parsing, synthesis, typed Plan, envelope composition, bootstrap/develop conductors | `synthesize.go`, `build_plan.go`, `compute_envelope.go`, `envelope.go`, `atom.go`, `session.go`, `work_session.go` |
 | `internal/init` | `zcp init` subcommand — config file generation | `init.go` |
 | `internal/eval` | LLM recipe eval + headless recipe creation via Claude CLI | `runner.go`, `prompt.go`, `recipe_create.go` |
 | `internal/schema` | Live Zerops YAML schema fetching, caching, enum extraction, LLM formatting | `schema.go`, `cache.go`, `format.go` |

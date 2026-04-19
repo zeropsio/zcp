@@ -1,6 +1,10 @@
 # Spec: Progressive Guidance Delivery
 
-**Status**: Implementation-ready
+> ⚠️ **SUPERSEDED** — Guidance delivery is being rewritten into axis-tagged knowledge atoms composed per-turn from a typed `StateEnvelope`. See `plans/instruction-delivery-rewrite.md` §6 (Orthogonal Knowledge Matrix). The iteration-tier and progressive-delivery mechanics described below are replaced; do not treat as authoritative during the rewrite. Historical record retained for audit reference until Phase 7 completes.
+>
+> **Scenarios under the new architecture**: see `docs/spec-scenarios.md`.
+
+**Status**: Superseded (was: Implementation-ready, 2026-04-12)
 **Author**: Opus-level analysis session, 2026-04-12
 **Scope**: Phases A, B, C — transforms recipe guidance from push-all-upfront to pull-on-demand + sub-step orchestration + adaptive delivery
 

@@ -1,5 +1,9 @@
 # Bootstrap Flow — Current Implementation (as-coded)
 
+> ⚠️ **SUPERSEDED** — Bootstrap is being rewritten into a 3-route design (Recipe / Classic / Adopt) per `plans/instruction-delivery-rewrite.md` §8. The code behavior described below is scheduled for replacement in Phase 4. Retained as baseline for the audit pipeline (§10 of the plan) to ensure no facts are lost during migration.
+>
+> **Scenarios under the new architecture**: see `docs/spec-scenarios.md` §2 (Phase: bootstrap-active).
+
 > This document describes what the bootstrap flow **actually does** per the code
 > as of 2026-04-14. Every statement has been verified against source. This is
 > NOT a design doc — it is a factual record for revalidation before changes.

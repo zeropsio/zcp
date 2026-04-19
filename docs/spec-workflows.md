@@ -1,13 +1,19 @@
 # ZCP Workflow Specification
 
-> **Status**: Authoritative — all workflow behavior, state transitions, and flow logic MUST conform to this document.
-> **Scope**: Bootstrap, adoption, strategy, develop — both container and local environments, all modes.
-> **Date**: 2026-04-04
-> **Companion**: `spec-knowledge-distribution.md` — defines WHAT knowledge is delivered at each step and WHY.
+> **Status**: Authoritative. State model + delivery pipeline in lock-step with `internal/workflow/*.go`.
+> **Scope**: Bootstrap, adoption, strategy, develop, recipe, cicd, export — both container and local environments, all modes; plus the envelope/plan/atom pipeline that feeds every workflow-aware response.
+> **Date**: 2026-04-19
+> **Companion docs**:
+> - `docs/spec-scenarios.md` — per-scenario acceptance walkthrough (S1–S13), pinned by `internal/workflow/scenarios_test.go`.
+> - `docs/spec-work-session.md` — per-PID Work Session for develop.
+> - `docs/spec-knowledge-distribution.md` — atom corpus authoring model (axes, priorities, placeholders).
+> - `plans/instruction-delivery-rewrite.md` — architectural reference for the pipeline (Layers 1/2/3, data model, phase inventory).
 
 ---
 
 ## 1. Lifecycle Overview
+
+### 1.1 Service Lifecycle — Two Phases
 
 Every service on Zerops goes through two phases:
 
@@ -35,6 +41,24 @@ flowchart LR
 **Phase 2 — Development**: Develop flow covers ALL code work on the service — implementing the user's actual application, bug fixes, config changes, everything. It discovers what code exists (verification server from bootstrap or existing application), provides runtime knowledge, lets the agent implement what the user wants, and deploys at the end. Strategy is always read fresh from ServiceMeta.
 
 **The boundary is strict**: Bootstrap writes zerops.yaml + infrastructure verification server. The moment the agent needs to write application logic, it must be in develop flow. If the user says "create me an app for uploading photos in Bun", bootstrap creates Bun service + dependencies with a hello-world verification server, then develop flow implements the photo upload app.
+
+### 1.2 Phase Enum — The Single State Variable
+
+The lifecycle above is collapsed into a single typed `Phase` field carried in every `StateEnvelope` (see §1.6). The enum is exhaustive — every tool response resolves to exactly one phase:
+
+| Phase | Meaning | Set by |
+|---|---|---|
+| `idle` | No active workflow session for this PID. | Default; or after session closes. |
+| `bootstrap-active` | A bootstrap session is in progress. | `zerops_workflow action=start workflow=bootstrap`. |
+| `develop-active` | A per-PID Work Session is open. | `zerops_workflow action=start workflow=develop`. |
+| `develop-closed-auto` | Work Session has `ClosedAt` set and `CloseReason=auto-complete`. Transitional phase — awaits explicit close + next. | Auto-close in `EvaluateAutoClose` when every scope service has a succeeded deploy + passed verify. |
+| `recipe-active` | A recipe-authoring session is in progress. | `zerops_workflow action=start workflow=recipe`. |
+| `cicd-active` | Stateless immediate workflow (no session) returning CI/CD guidance. | `zerops_workflow action=start workflow=cicd`. |
+| `export-active` | Stateless immediate workflow returning export guidance. | `zerops_workflow action=start workflow=export`. |
+
+Invariant: at most one non-idle **stateful** phase per PID at a time. `cicd-active`/`export-active` are stateless — they synthesize guidance and return without touching session state, so they never conflict with an active bootstrap/develop/recipe session.
+
+See `plans/instruction-delivery-rewrite.md` §4.1 for the concrete Go enum.
 
 ### Why Verification-First — The Foundational Principle
 
@@ -103,6 +127,125 @@ needed — never copied into session state.
 - **Workflow is NOT a gate.** An agent does not need to start a workflow to call `zerops_scale`, `zerops_manage`, or any other direct tool. Workflows add structure for multi-step operations.
 - **Strategy never blocks work.** Agent can always start editing code. Strategy is resolved before deploying, not before working.
 - **Tools work independently.** `zerops_discover`, `zerops_verify`, `zerops_knowledge` work without any active workflow.
+
+### 1.3 Delivery Pipeline — Envelope → Plan → Atoms
+
+Every workflow-aware tool response is produced by the same three-stage pipeline, not by ad-hoc guidance assembly.
+
+```
+          ┌───────────────┐      ┌────────────┐      ┌──────────────┐
+          │ ComputeEnvelope│──▶──▶│ BuildPlan  │      │  Synthesize  │
+          │ (state + live  │      │ (Primary,  │  ┌──▶│  (atom filter│
+          │  API + session)│      │  Secondary,│  │   │  + compose)  │
+          └───────────────┘      │  Alts)     │  │   └──────────────┘
+                 │               └────────────┘  │         ▲
+                 │                    │          │         │
+                 │                    └────────┬─┘         │
+                 ▼                             ▼           │
+          StateEnvelope  ──────▶──────▶──────▶─┴─── LoadAtomCorpus
+                                                     (//go:embed atoms/*.md)
+                                 │
+                                 ▼
+                         ┌────────────────┐
+                         │  RenderStatus  │
+                         │  (markdown UI) │
+                         └────────────────┘
+```
+
+**Stage 1 — `ComputeEnvelope`** (`internal/workflow/compute_envelope.go`): the single entry point for state gathering. Reads services from the platform API, service metas from `.zcp/state/services/`, bootstrap session state, the current Work Session, and runtime detection — merging them into a `StateEnvelope`. Called by every workflow-aware tool handler. I/O is parallelised so a tool response pays one round-trip for the envelope regardless of how many state sources are involved.
+
+**Stage 2 — `BuildPlan`** (`internal/workflow/build_plan.go`): a pure function `Plan = BuildPlan(env)`. Deterministic — no I/O, no randomness — so the plan can be reproduced verbatim after LLM context compaction from the same envelope. Branching is a fixed nine-case switch driven by `env.Phase` plus envelope shape (see §1.4).
+
+**Stage 3 — `Synthesize`** (`internal/workflow/synthesize.go`): pure function `guidance = Synthesize(env, corpus)`. Loads the atom corpus once (`LoadAtomCorpus`), filters by axis-match against the envelope, sorts by priority + id, substitutes placeholders from the envelope, and returns the composed bodies. Same compaction-safety invariant: byte-identical output for byte-equal envelopes.
+
+**Stage 4 — `RenderStatus`** (`internal/workflow/render.go`): consumes a `Response{Envelope, Guidance, Plan}` and emits the markdown status block shown to the LLM. The Next section renders the typed `Plan` with priority markers — no free-form Next string, no ad-hoc branching in the renderer.
+
+### 1.4 Plan — Typed Trichotomy
+
+The Plan replaces every piece of "what should the agent do next" that used to live in free-form markdown or `writeStatusNext` branches.
+
+```go
+type Plan struct {
+    Primary      NextAction   // never zero — if we don't know, we error out upstream
+    Secondary    *NextAction  // set only when a second action is commonly done in tandem
+    Alternatives []NextAction // genuinely alternative paths
+}
+```
+
+Dispatch (strict order, first match wins — see `build_plan.go` for the code):
+
+1. `PhaseDevelopClosed` → Primary=close-session, Secondary=start-next.
+2. `PhaseDevelopActive`, some service without a successful deploy → Primary=deploy.
+3. `PhaseDevelopActive`, deploy done but verify missing → Primary=verify.
+4. `PhaseDevelopActive`, last attempt failed → Primary=diagnose-and-retry (reads logs first).
+5. `PhaseDevelopActive`, everything green but session still open → Primary=close.
+6. `PhaseBootstrapActive` → Primary=continue-bootstrap (route-specific).
+7. `PhaseRecipeActive` → Primary=continue-recipe.
+8. `PhaseIdle` with no services → Primary=start-bootstrap.
+9. `PhaseIdle` with bootstrapped services → Primary=start-develop + alternatives (adopt if any unmanaged, add-more-services always).
+10. `PhaseIdle` with only unmanaged runtimes → Primary=adopt-via-develop.
+
+Gate semantics in the Plan are informational, not structural: e.g. `Strategy=unset` does not block the Plan from naming a deploy action; the atom `develop-strategy-unset` surfaces the gate in the body instead. This keeps `BuildPlan` a pure dispatch over envelope shape.
+
+### 1.5 Atom Corpus — Orthogonal Knowledge Matrix
+
+Runtime-dependent guidance lives as ~74 atoms under `internal/content/atoms/*.md`, embedded via `//go:embed`. Each atom has YAML frontmatter declaring its `AxisVector` and a markdown body.
+
+```yaml
+---
+id: develop-dynamic-runtime-start-container
+priority: 2
+phases: [develop-active]
+runtimes: [dynamic]
+environments: [container]
+title: "Dynamic runtime — start over SSH after deploy"
+---
+
+After a dynamic-runtime deploy, the container is running `zsc noop`. Start
+the real server over SSH:
+...
+```
+
+**Axes** (the knowledge-variation dimensions):
+
+| Axis | Values | Emptiness semantic |
+|---|---|---|
+| `phases` | `idle`, `bootstrap-active`, `develop-active`, `develop-closed-auto`, `recipe-active`, `cicd-active`, `export-active` | MUST be non-empty. |
+| `modes` | `dev`, `stage`, `simple` | Empty = any mode. |
+| `environments` | `container`, `local` | Empty = either. |
+| `strategies` | `push-dev`, `push-git`, `manual`, `unset` | Empty = any strategy. |
+| `runtimes` | `dynamic`, `static`, `implicit-webserver`, `managed`, `unknown` | Empty = any runtime. |
+| `routes` | `recipe`, `classic`, `adopt` | Bootstrap-only. Empty = any route. |
+| `steps` | bootstrap step names | Bootstrap-only. Empty = any step. |
+
+**Synthesizer contract**:
+
+1. Filter: an atom matches iff every non-empty axis permits the envelope. Service-scoped axes (`modes`/`strategies`/`runtimes`) match if *any* service in `env.Services` matches.
+2. Sort: priority ascending (1 first), then id lexicographically.
+3. Substitute: `{hostname}`, `{stage-hostname}`, `{project-name}` are replaced from the envelope; a whitelist of agent-filled placeholders (`{start-command}`, `{port}`, …) survives untouched. Any unknown `{word}` token is a build-time error.
+4. Return: ordered list of rendered bodies.
+
+**Compaction-safety invariant**: for byte-equal envelopes, `Synthesize` MUST return byte-identical output. No map iteration, no timestamps, no randomness leaks into the body.
+
+### 1.6 StateEnvelope — Live Data Contract
+
+`StateEnvelope` is the single typed data structure passed between stages. It is attached verbatim to every workflow-aware tool response, so the LLM can reconstruct state post-compaction.
+
+| Field | Purpose |
+|---|---|
+| `Phase` | The phase enum from §1.2. Drives atom filtering and plan dispatch. |
+| `Environment` | `container` or `local`. Driven by `runtime.Info.InContainer`. |
+| `SelfService` | Hostname of the ZCP control-plane container (container env only). |
+| `Project` | `{ID, Name}` — project identity. |
+| `Services[]` | Sorted snapshots: hostname, type+version, runtime class, status, bootstrapped flag, mode, strategy, stage pair. |
+| `WorkSession` | Open develop session summary: intent, scope, deploy/verify attempts, close state. `nil` outside develop. |
+| `Recipe` | Recipe session summary. `nil` outside recipe-active. |
+| `Bootstrap` | Bootstrap session summary: route, step, iteration. `nil` outside bootstrap-active. |
+| `Generated` | Timestamp for the envelope (diagnostics only — not part of synthesis input). |
+
+Slices sort by hostname; attempt lists sort by time; maps use key-sorted encoding. The JSON form is deterministic, which is what makes §1.3's compaction-safety invariant provable.
+
+Full field-level Go definitions live in `internal/workflow/envelope.go` and `plans/instruction-delivery-rewrite.md` §4.
 
 ---
 
@@ -626,17 +769,15 @@ Before actual deployment, the system:
 
 ### 4.7 Iteration on Failure
 
-When deploy fails, agent can iterate. Escalating guidance tiers:
+When deploy fails, the agent can iterate. Escalating guidance tiers live in `internal/workflow/iteration_delta.go` and are shared by bootstrap and develop deploys:
 
-**Bootstrap iteration tiers** (wider ranges, up to 10 iterations):
-- Iteration 1-2: DIAGNOSE
-- Iteration 3-4: SYSTEMATIC
-- Iteration 5+: STOP
+| Iteration | Tier | Guidance |
+|---|---|---|
+| 1-2 | DIAGNOSE | `zerops_logs severity=error since=5m`, fix the specific error, redeploy + verify. |
+| 3-4 | SYSTEMATIC | "PREVIOUS FIXES FAILED" — walk the env-vars / bind-address / deployFiles / ports / start checklist. |
+| 5 | STOP | Present to user: what was tried, current error, "should I continue or will you debug manually?" — do NOT attempt another fix. |
 
-**Deploy iteration tiers** (faster escalation):
-- Iteration 1: DIAGNOSE
-- Iteration 2: SYSTEMATIC
-- Iteration 3+: STOP
+`defaultMaxIterations = 5` caps the session, so the STOP tier fires exactly once and then the session closes with `CloseReason=iteration-cap`. Continuing requires a fresh `zerops_workflow action=start`, making continuation an explicit user decision (fixes defect D5 in `plans/instruction-delivery-rewrite.md`).
 
 ### 4.8 Operational Details
 
@@ -716,7 +857,7 @@ Both environments follow the same flows but with different mechanisms.
 
 ### 5.3 Guidance Adaptation
 
-Generate and deploy steps use entirely different guidance for local vs container (full replacement, not addenda). Other steps use base + local addendum. See `spec-knowledge-distribution.md` for details.
+Environment-specific guidance is handled at the atom level, not in conductor code: atoms tagged `environments: [local]` cover local-only guidance (e.g. `bootstrap-generate-local`, `bootstrap-deploy-local`, `develop-local-workflow`), atoms tagged `environments: [container]` cover container-only guidance, and atoms with an empty `environments` axis apply to both. The synthesizer picks the right combination per turn — no hand-coded addendum/replacement logic in Go. See `docs/spec-knowledge-distribution.md` for the authoring model.
 
 ---
 
@@ -887,6 +1028,20 @@ visibility.
 | O4 | Dev server started manually via SSH after every deploy (container, dynamic runtimes) |
 | O5 | Stage entry written AFTER dev verified (standard mode) |
 | O6 | Stage deployFiles = build output, NOT [.] |
+
+### Pipeline
+
+| ID | Invariant |
+|----|-----------|
+| P1 | `ComputeEnvelope` is the single entry point for state gathering — no tool handler reads `.zcp/state/` or the platform API directly for envelope fields. |
+| P2 | `BuildPlan(env)` is pure: no I/O, no time, no randomness. Same envelope JSON → same Plan. |
+| P3 | `Synthesize(env, corpus)` is pure under the same contract as P2. Same envelope JSON → byte-identical composed guidance. |
+| P4 | Every workflow-aware tool response is a `Response{Envelope, Guidance, Plan}` triple. No free-form Next strings anywhere in a response. |
+| P5 | `Plan.Primary` is never zero. If dispatch finds no branch, an empty Plan is returned and treated as a construction bug — callers MUST error, not silently continue. |
+| P6 | Each atom declares a non-empty `phases` axis. Atoms with empty phases are rejected at corpus load (`LoadAtomCorpus`). |
+| P7 | Unknown `{placeholder}` tokens in atom bodies are build-time errors — none leak to the LLM as literal braces. |
+| P8 | `cicd-active` and `export-active` are stateless phases: they synthesize guidance from the atom corpus and return without touching session state. |
+| P9 | Recipe authoring (`workflow=recipe`) uses its own section-parser pipeline (`recipe_block_parser.go`, `recipe_decisions.go`, …), NOT the atom synthesizer. The pipelines are intentionally independent. |
 
 ---
 

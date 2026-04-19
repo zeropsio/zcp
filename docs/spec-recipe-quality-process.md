@@ -123,6 +123,40 @@ Not a rigid template — adapt to the framework. Some frameworks need layers (La
 
 ---
 
+## Runtime Viability Gate
+
+> Implemented in Phase 0 of `plans/instruction-delivery-rewrite.md`. Enforced during bootstrap route selection: a matched recipe that fails the gate is rejected and route selection falls through to classic bootstrap (with the rejection reason surfaced to the user).
+
+The viability gate is an automated runtime check applied at bootstrap route selection time. It prevents stub recipes (e.g. a 6-line file with only frontmatter) from being matched as the happy path.
+
+### What the gate checks
+
+A recipe is **viable** only if ALL three hold:
+
+- **Minimum length** — body is at least 200 lines.
+- **Required sections** — the body contains all of: `overview`, `deploy`, `verify` (case-insensitive `##` heading match).
+- **At least one code fence** — the body contains at least one fenced code block (```` ``` ````).
+
+Thresholds live in `internal/knowledge/recipes_viability.go` as `RecipeViabilityRules`. They are calibrated so every audited recipe currently listed as "yes" in the Status table below passes, while stubs fail.
+
+### What the gate does NOT check
+
+- Factual accuracy of commands — that is the audit process's job (§1 of this doc).
+- E2E testability — that is verified separately.
+- Recipe currency against the live platform catalog.
+
+### Interaction with audit status
+
+A recipe not yet audited (`—` in the Status table) may still pass the viability gate if it has the required structure. That's acceptable: the gate protects against empty content, not against unverified content. A recipe that passes the gate but has not been audited is delivered as-is; users may hit platform-level issues that proper audit would have caught.
+
+### How to respond when a recipe fails the gate
+
+- **If the recipe is a stub**: write its content. The gate is blocking publication until the recipe has something to deliver.
+- **If the recipe is complete but structurally different** (e.g. uses `# Deploy` instead of `## Deploy`): fix the heading level. The gate's section match is intentionally strict to force consistent structure.
+- **Never** lower the thresholds to accommodate a specific recipe. If a 50-line recipe is genuinely complete, the gate tells you the runtime knowledge footprint is too thin to be a happy-path match — re-route to classic bootstrap is the right behavior.
+
+---
+
 ## Validation
 
 ### Automated (lint)
