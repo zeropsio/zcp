@@ -94,17 +94,41 @@ func isSubjunctive(commentBody string) bool {
 	return false
 }
 
+// factualClaimMismatch records one comment-vs-yaml contradiction with
+// enough context for a per-mismatch StepCheck.
+type factualClaimMismatch struct {
+	commentLine int    // 1-based source line of the offending comment
+	yamlLine    int    // 1-based source line of the adjacent YAML field
+	patName     string // e.g. "storage quota"
+	yamlKey     string // e.g. "objectStorageSize"
+	claimed     int
+	actual      int
+	unit        string // " GB" or ""
+}
+
+func (m factualClaimMismatch) detail() string {
+	return fmt.Sprintf(
+		"line %d: comment claims %d%s %s but adjacent %s is %d",
+		m.commentLine, m.claimed, m.unit, m.patName, m.yamlKey, m.actual,
+	)
+}
+
 // checkFactualClaims walks the import.yaml line by line, finds declarative
 // numeric claims in comment lines, and compares them to the adjacent YAML
 // field value within a small forward window. A mismatch is a hard fail —
 // the comment is lying about what the file actually provisions.
+//
+// v8.96 §5.3: emits ONE StepCheck per mismatch (instead of an aggregated
+// failure detail) so each contradicting line gets its own ReadSurface
+// pointing at the exact line + key, and its own HowToFix that names the
+// concrete remedy.
 //
 // This catches the v5 "5 GB quota" / v8 and v10 "10 GB quota" regression
 // permanently without depending on a specific object-storage field being
 // parsed into the importYAMLDoc struct: everything is line-based.
 func checkFactualClaims(content, prefix string) []workflow.StepCheck {
 	lines := strings.Split(content, "\n")
-	var failures []string
+	var mismatches []factualClaimMismatch
 
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -130,7 +154,7 @@ func checkFactualClaims(content, prefix string) []workflow.StepCheck {
 			if err != nil {
 				continue
 			}
-			actual, found := findAdjacentYAMLValue(lines, i, pat.yamlKey, factualClaimWindow)
+			actual, yamlLine, found := findAdjacentYAMLValueWithLine(lines, i, pat.yamlKey, factualClaimWindow)
 			if !found {
 				continue // no adjacent field to compare against
 			}
@@ -141,48 +165,57 @@ func checkFactualClaims(content, prefix string) []workflow.StepCheck {
 			if pat.unitInText != "" {
 				unit = " " + pat.unitInText
 			}
-			failures = append(failures, fmt.Sprintf(
-				"line %d: comment claims %d%s %s but adjacent %s is %d",
-				i+1, claimed, unit, pat.name, pat.yamlKey, actual,
-			))
+			mismatches = append(mismatches, factualClaimMismatch{
+				commentLine: i + 1,
+				yamlLine:    yamlLine,
+				patName:     pat.name,
+				yamlKey:     pat.yamlKey,
+				claimed:     claimed,
+				actual:      actual,
+				unit:        unit,
+			})
 		}
 	}
 
-	if len(failures) == 0 {
+	if len(mismatches) == 0 {
 		return []workflow.StepCheck{{
 			Name:   prefix + "_factual_claims",
 			Status: statusPass,
 		}}
 	}
-	detail := strings.Join(failures, "; ")
-	if len(failures) > 3 {
-		detail = strings.Join(failures[:3], "; ") + fmt.Sprintf("; and %d more", len(failures)-3)
+
+	envFolder := strings.TrimSuffix(prefix, "_import")
+	out := make([]workflow.StepCheck, 0, len(mismatches))
+	for i, m := range mismatches {
+		// Distinct check name per mismatch so the result table shows
+		// each individually instead of collapsing into one "factual_claims"
+		// entry. The base name stays so the existing aggregation tests
+		// that look for prefix+"_factual_claims" still find at least one.
+		name := prefix + "_factual_claims"
+		if i > 0 {
+			name = fmt.Sprintf("%s_factual_claims_%d", prefix, i+1)
+		}
+		out = append(out, workflow.StepCheck{
+			Name:        name,
+			Status:      statusFail,
+			Detail:      "comment contradicts YAML value — " + m.detail() + ". Either correct the number to match the configured value, drop the number from the comment, or rephrase as aspirational (e.g. 'bump to N GB via the GUI when usage grows').",
+			ReadSurface: fmt.Sprintf("%s/import.yaml line %d (comment) vs line %d (`%s` field)", envFolder, m.commentLine, m.yamlLine, m.yamlKey),
+			Required:    fmt.Sprintf("comment number matches the adjacent `%s` value", m.yamlKey),
+			Actual:      fmt.Sprintf("comment claims %d%s; YAML has %s: %d", m.claimed, m.unit, m.yamlKey, m.actual),
+			HowToFix: fmt.Sprintf(
+				"Edit %s/import.yaml line %d so the comment number matches the `%s: %d` declaration on line %d. If the right answer is the comment, change the YAML; if the right answer is the YAML, drop the number from the comment or rephrase aspirationally ('bump to N %s via the GUI when usage grows').",
+				envFolder, m.commentLine, m.yamlKey, m.actual, m.yamlLine, strings.TrimSpace(m.unit),
+			),
+		})
 	}
-	return []workflow.StepCheck{{
-		Name:   prefix + "_factual_claims",
-		Status: statusFail,
-		Detail: "comment contradicts YAML value — " + detail + ". Either correct the number to match the configured value, drop the number from the comment, or rephrase as aspirational (e.g. 'bump to N GB via the GUI when usage grows').",
-	}}
+	return out
 }
 
-// yamlIntFieldRe matches a line of the form `  someKey: 42` and captures
-// both the key name and the integer value. Non-integer values (strings,
-// mappings) are ignored — factual claims we check are all integers.
-var yamlIntFieldRe = regexp.MustCompile(`^\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*(\d+)\s*$`)
-
-// findAdjacentYAMLValue scans forward from startLine (exclusive) up to
-// `window` lines looking for the first YAML integer field named `key`.
-// Returns (value, true) on a hit, (0, false) on miss.
-//
-// Sibling-block safety: the scanner counts `- ` list-item sentinels and
-// bails out when it crosses into the second one. The first sentinel is
-// the current service's own header (the comment was a header-style
-// comment immediately preceding a `- hostname:` line); the second
-// sentinel means we've walked past the current service block's end and
-// are about to read fields from a different service. Without this guard
-// a comment on service A with no matching field would bleed into a
-// later sibling's field and flag a spurious contradiction.
-func findAdjacentYAMLValue(lines []string, startLine int, key string, window int) (int, bool) {
+// findAdjacentYAMLValueWithLine is the line-aware variant of
+// findAdjacentYAMLValue. Returns (value, line, true) on a hit so the
+// per-mismatch StepCheck can name both the comment line AND the YAML
+// line in its ReadSurface.
+func findAdjacentYAMLValueWithLine(lines []string, startLine int, key string, window int) (val, line int, found bool) {
 	end := min(startLine+1+window, len(lines))
 	listItems := 0
 	for i := startLine + 1; i < end; i++ {
@@ -196,23 +229,26 @@ func findAdjacentYAMLValue(lines []string, startLine int, key string, window int
 		if strings.HasPrefix(trimmed, "- ") {
 			listItems++
 			if listItems >= 2 {
-				return 0, false
+				return 0, 0, false
 			}
 			continue
 		}
 		m := yamlIntFieldRe.FindStringSubmatch(lines[i])
 		if m == nil {
-			// Non-integer field — keep scanning; the field we want may
-			// be further down in the same service block.
 			continue
 		}
 		if m[1] == key {
 			v, err := strconv.Atoi(m[2])
 			if err != nil {
-				return 0, false
+				return 0, 0, false
 			}
-			return v, true
+			return v, i + 1, true
 		}
 	}
-	return 0, false
+	return 0, 0, false
 }
+
+// yamlIntFieldRe matches a line of the form `  someKey: 42` and captures
+// both the key name and the integer value. Non-integer values (strings,
+// mappings) are ignored — factual claims we check are all integers.
+var yamlIntFieldRe = regexp.MustCompile(`^\s*([A-Za-z][A-Za-z0-9_]*)\s*:\s*(\d+)\s*$`)

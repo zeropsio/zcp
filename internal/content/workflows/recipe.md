@@ -310,7 +310,9 @@ This gives SSHFS access to `/var/www/appdev/` — all code writes go here.
 
 ### 3a. Configure git and initialize the repo — all container-side (MANDATORY before first commit)
 
-**Run git entirely inside the container via SSH. Never zcp-side.** `/var/www/{hostname}/` on zcp is an SSHFS mount — a write surface into the container's `/var/www/`, not a local repo. If you `git init` on the mount, `.git/` lands owned by zcp-root, then `zerops_deploy` (which runs as container-`zerops`) can't lock `.git/config` and fails with `fatal: could not lock config file .git/config: Permission denied`. The fix is not to chown after the fact — it's to run `git init` container-side from the start, so `.git/` is owned by `zerops` and the whole ownership cascade never happens.
+**Every git operation in a recipe — by ANY agent (main, scaffold subagent, feature subagent, code-review subagent) — runs on the dev container via SSH. Git ops are NOT main-agent-owned; the rule is about WHERE, not WHO.** `/var/www/{hostname}/` on zcp is an SSHFS mount — a write surface into the container's `/var/www/`, not a local repo. If you `git init` on the mount, `.git/` lands owned by zcp-root, then `zerops_deploy` (which runs as container-`zerops`) can't lock `.git/config` and fails with `fatal: could not lock config file .git/config: Permission denied`. The fix is not to chown after the fact — it's to run every git command container-side from the start, so `.git/` is owned by `zerops` and the whole ownership cascade never happens.
+
+**Concurrency on a single mount.** Within one mount's `.git/`, git enforces a `.git/index.lock` lock file. If multiple SSH calls run concurrent git ops on the SAME mount (e.g. main agent's `git init` racing with a scaffold subagent's framework-scaffolder `git init`), the second call fails with `fatal: Unable to create '.git/index.lock': File exists`. This is a real lock, not a race symptom — the workaround is to NOT run concurrent git ops on the same mount, not to add retry-with-backoff prose to the recipe. Different mounts (one per codebase) have independent `.git/` and can run in parallel safely.
 
 **One SSH call per mounted service** (config + init + initial commit in one go):
 
@@ -798,6 +800,8 @@ You are a sub-agent spawned by the main agent inside a Zerops recipe session. Th
 - `mcp__zerops__zerops_mount` — mount lifecycle is main-agent-only
 - `mcp__zerops__zerops_verify` — step verification is main-agent-only
 
+**File-op sequencing — Read before Edit (Claude Code constraint, NOT a Zerops rule):** every `Edit` call must be preceded by a `Read` of the same file in this session. The Edit tool enforces this; hitting "File has not been read yet" and reactively Read+retry is trace pollution that trains you into defensive over-reading. Plan up front: before your first `Edit`, batch-`Read` every file you intend to modify. For files you create from scratch, use `Write` (no Read required). When the framework scaffolder (`nest new`, `npm create vite`, etc.) creates files you then need to modify, `Read` each one once after the scaffolder returns and before your first `Edit`.
+
 If you feel a need to call a forbidden tool, the brief is incomplete — stop, report the gap in your return message, and let the main agent decide.
 
 **If the server rejects a call with `SUBAGENT_MISUSE`**: you are the cause. Do not retry with a different workflow name; do not call `bootstrap`. Return to your scoped task.
@@ -854,6 +858,17 @@ For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appde
 >
 > That's the complete rule — every deviation from it causes the symptoms above.
 >
+> **⚠ Framework scaffolders that auto-init git: pass `--skip-git` or delete `.git/` before returning.**
+>
+> Many framework scaffolders (`nest new`, `npm create vite`, `npm create svelte`, `rails new`, etc.) run `git init` as a final step. Even when invoked via SSH, the resulting `.git/` lands inside `/var/www/` on the container, then the main agent's container-side `git init` (run later, per the `git-config-mount` block) collides with it: `fatal: Unable to create '.git/index.lock': File exists` or a half-initialized `.git/HEAD`. The scaffolder's git state is also incomplete (no first commit, no user.email, sometimes wrong default branch).
+>
+> Two acceptable handling shapes — pick one per scaffolder:
+>
+> 1. **Pass the scaffolder's skip-git flag if it has one.** `nest new --skip-git`, `npm create vite -- --git false` (varies by template), `rails new --skip-git`, `cargo new --vcs none`. When in doubt, run `<scaffolder> --help | grep -i git` to find the flag.
+> 2. **Delete `.git/` after the scaffolder returns.** `ssh {hostname} "rm -rf /var/www/.git"` immediately after the scaffolder's SSH call returns. The main agent's later `git init` then runs on a clean slate.
+>
+> Do NOT leave the scaffolder's `.git/` in place expecting the main agent's `git init` to merge with it — git refuses, and you'll burn rounds debugging an `.git/index.lock` that does not unlock.
+>
 > **WRITE (frontend codebase):**
 >
 > - `package.json` — production dependencies for the framework and any CSS tooling the scaffold would normally include
@@ -888,6 +903,7 @@ For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appde
 >
 > - **`README.md`. Do not create it. Do not scaffold one.** Delete any README the framework scaffolder emits. The main agent writes READMEs at the very end of deploy, narrating real debug experience. If a README exists at generate-complete time, the checker fails and retries.
 > - **`zerops.yaml`. Do not create it.** The main agent writes it AFTER your scaffold returns, AFTER the on-container smoke test proves the install flow. If zerops.yaml exists at scaffold-return time the main agent will flag it and rewrite it.
+> - **`.git/` directories.** Whether your framework scaffolder creates one or you would create one yourself, delete it before returning (`ssh {hostname} "rm -rf /var/www/.git"`). The main agent runs the canonical `git init -q -b main && git add -A && git commit` container-side after every scaffold returns; a residual `.git/` from your scaffolder collides with `.git/index.lock`. This rule is consistent with the `git-config-mount` block: every git op runs container-side via SSH, and on a single mount only ONE actor's git op can be live at a time.
 > - Item CRUD endpoints, item list components, create-item forms, item detail views
 > - Cache-demo routes, cached-vs-fresh components
 > - Search endpoints or search UI
@@ -978,6 +994,15 @@ For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appde
 > # Assertion 9 — .env.example preserved as documentation (not populated .env)
 > if [ -f $MOUNT/.env ] && [ ! -f $MOUNT/.env.example ]; then
 >     echo "FAIL: .env exists without .env.example — dotenv will shadow OS env vars at runtime"
+>     FAIL=1
+> fi
+>
+> # Assertion 10 — no .git/ left by the framework scaffolder (v8.96)
+> # The main agent runs the canonical container-side `git init` after
+> # every scaffold returns; a residual .git/ from the scaffolder
+> # collides with .git/index.lock. See `git-config-mount` block.
+> if ssh $HOST "test -d /var/www/.git" 2>/dev/null; then
+>     echo "FAIL: /var/www/.git exists on $HOST — framework scaffolder created it; delete with 'ssh $HOST \"rm -rf /var/www/.git\"' before returning"
 >     FAIL=1
 > fi
 >
@@ -1314,7 +1339,7 @@ Writing-style voice (the "developer to developer" tone, anti-patterns, correct-s
 - Notice the scaffold emitted a known-trap pattern that required a runtime rewrite (env-var shadow, S3 `forcePathStyle: true` missing, URL-embedded NATS creds, etc.)
 - Observe a platform behavior that a fresh reader would be surprised by (regardless of whether it broke anything)
 
-**Required fields:** `type`, `title`. **Recommended:** `substep`, `codebase`, `mechanism`, `failureMode`, `fixApplied`, `evidence`.
+**Required fields:** `type`, `title`. **Recommended:** `substep`, `codebase`, `mechanism`, `failureMode`, `fixApplied`, `evidence`. **Optional (v8.96):** `scope`.
 
 **Valid `type` values:**
 - `gotcha_candidate` — platform-invariant or platform×framework surprise a porter would hit
@@ -1323,6 +1348,19 @@ Writing-style voice (the "developer to developer" tone, anti-patterns, correct-s
 - `platform_observation` — something about how Zerops does work that's worth knowing
 - `fix_applied` — you changed something in the scaffold / code to unblock the run
 - `cross_codebase_contract` — shape-binding between codebases (queue-group name, response shape)
+
+**`scope` values (v8.96):**
+
+The `scope` field routes the fact between two lanes. Default (unset) is `content` — pre-v8.96 behavior, only the readmes-writer subagent reads it.
+
+- `scope: "content"` (the default) — platform invariants, gotcha candidates, IG-item candidates. Goes to the readmes-writer subagent at the `readmes` substep.
+- `scope: "downstream"` — framework-API quirks the NEXT subagent would otherwise re-investigate. The fact is prepended to the next subagent's dispatch brief under "Prior discoveries" and is NOT included in the writer's content manifest. Examples worth marking `downstream`:
+    - "Meilisearch v0.57 renamed class from MeiliSearch to Meilisearch"
+    - "cache-manager v6 returns absolute-epoch TTLs, not relative durations"
+    - "svelte-check@4 not compatible with typescript@6 — `$state` shows 'untyped' errors but runtime build is unaffected"
+- `scope: "both"` — used sparingly; visible in both lanes.
+
+When in doubt, default to `content`. A fact that turns out to be useless downstream costs nothing; a fact that SHOULD have been recorded as `downstream` but wasn't costs another subagent ~20 s of re-archaeology (v31 measured ~80 s of duplicate framework lookups across three subagents).
 
 **Classification happens in the authoring sub-agent, not here.** When you're unsure whether something is a gotcha or a self-inflicted bug, record it as `fix_applied` with the mechanism you think caused it and let the authoring sub-agent classify. Under-recording is worse than over-recording.
 
@@ -1544,6 +1582,8 @@ You are a sub-agent spawned by the main agent inside a Zerops recipe session. Th
 - `mcp__zerops__zerops_subdomain` — subdomain management is main-agent-only
 - `mcp__zerops__zerops_mount` — mount lifecycle is main-agent-only
 - `mcp__zerops__zerops_verify` — step verification is main-agent-only
+
+**File-op sequencing — Read before Edit (Claude Code constraint, NOT a Zerops rule):** every `Edit` call must be preceded by a `Read` of the same file in this session. The Edit tool enforces this; hitting "File has not been read yet" and reactively Read+retry is trace pollution that trains you into defensive over-reading. Plan up front: before your first `Edit`, batch-`Read` every file you intend to modify. For files you create from scratch, use `Write` (no Read required). When you need to extend a file the scaffold subagent already wrote, `Read` it once before your first `Edit`.
 
 If you feel a need to call a forbidden tool, the brief is incomplete — stop, report the gap in your return message, and let the main agent decide.
 
@@ -2037,6 +2077,8 @@ When the main agent delegates README writing to a sub-agent, that sub-agent is b
 - `mcp__zerops__zerops_mount` — mount lifecycle is main-agent-only
 - `mcp__zerops__zerops_verify` — step verification is main-agent-only
 
+**File-op sequencing — Read before Edit (Claude Code constraint, NOT a Zerops rule):** every `Edit` call must be preceded by a `Read` of the same file in this session. The Edit tool enforces this; hitting "File has not been read yet" and reactively Read+retry is trace pollution. For README/CLAUDE.md files you create from scratch, use `Write` (no Read needed). When extending an existing README the scaffold or main agent already wrote, `Read` it once before your first `Edit`.
+
 If the server rejects a call with `SUBAGENT_MISUSE`, you are the cause. Return to writing the READMEs.
 
 **This is the `readmes` sub-step of deploy.** You land here after `verify-stage`, after every service is verified healthy on both dev and stage. READMEs are written now — not during generate — so the gotchas section narrates the debug rounds you just lived through. A speculative gotchas section written during generate is the root cause of the authenticity failures in v11/v12.
@@ -2205,6 +2247,8 @@ When the main agent delegates content authoring to a sub-agent, that sub-agent i
 - `mcp__zerops__zerops_mount` — mount lifecycle is main-agent-only
 - `mcp__zerops__zerops_verify` — step verification is main-agent-only
 
+**File-op sequencing — Read before Edit (Claude Code constraint, NOT a Zerops rule):** every `Edit` call must be preceded by a `Read` of the same file in this session. The Edit tool enforces this; hitting "File has not been read yet" and reactively Read+retry is trace pollution that can leak into the published content as defensive prose. Most of your work is `Write`-from-scratch (READMEs, CLAUDE.md, the manifest); `Read` is needed only when extending an existing file the main agent or scaffold already authored.
+
 If the server rejects a call with `SUBAGENT_MISUSE`, you are the cause. Return to writing content.
 
 ---
@@ -2247,7 +2291,7 @@ Before returning from this dispatch, Write a file at `/var/www/ZCP_CONTENT_MANIF
 
 Rules (enforced by the `writer_content_manifest_*` checks at deploy-step completion):
 
-- **Every distinct `FactRecord.Title` in `$ZCP_FACTS_LOG` gets exactly one manifest entry.** Missing titles fail `writer_manifest_completeness`. An empty `"facts": []` while the facts log has entries is the deceptive-empty-manifest attack and fails the same check.
+- **Every distinct `FactRecord.Title` in `$ZCP_FACTS_LOG` gets exactly one manifest entry — except `scope: "downstream"` entries, which are skipped.** v8.96 added a `scope` field to facts. Records with `scope: "downstream"` are scratch knowledge for other subagents (framework / tooling quirks the next dispatch would otherwise re-investigate); they do NOT belong in published content and the completeness check drops them before comparing. Records with `scope: "content"`, `scope: "both"`, or unset still require a manifest entry. An empty `"facts": []` while the facts log has content-lane entries is the deceptive-empty-manifest attack and fails `writer_manifest_completeness`.
 - **Default-discard classifications** — `framework-quirk`, `library-meta`, `self-inflicted` — should route to `"discarded"` by default. Routing them anywhere else requires a non-empty `override_reason` explaining why the default doesn't apply (e.g. *"reframed from scaffold-internal bug to porter-facing symptom with concrete failure mode"*). Empty reason fails `writer_discard_classification_consistency`.
 - **Honesty**: a fact routed to `"discarded"` must not appear (as a Jaccard-similar stem, threshold 0.3) in any published gotcha bullet. If it does, `writer_manifest_honesty` fires and you must either remove the gotcha or update the manifest entry with the correct `routed_to` + `override_reason`.
 - Missing file or malformed JSON at `/var/www/ZCP_CONTENT_MANIFEST.json` fails `writer_content_manifest_exists` / `_valid`. The main agent CANNOT call `action="complete" step="deploy"` until these pass.
@@ -2811,6 +2855,8 @@ You are a sub-agent spawned by the main agent inside a Zerops recipe session. Th
 - `mcp__zerops__zerops_verify` — step verification is main-agent-only
 - `mcp__zerops__zerops_browser` / `agent-browser` — browser walk is the main agent's job at sub-step 1b; see the existing brief below
 
+**File-op sequencing — Read before Edit (Claude Code constraint, NOT a Zerops rule):** every `Edit` call must be preceded by a `Read` of the same file in this session. Code review is mostly a Read-heavy workflow (you're inspecting, not authoring), so plan: `Read` every file you intend to inspect or modify before any `Edit`. Hitting "File has not been read yet" and reactively Read+retry is trace pollution.
+
 If the server rejects a call with `SUBAGENT_MISUSE`, you are the cause. Do not retry with a different workflow name. Return to the code review.
 
 Spawn a sub-agent as a **{framework} code expert** — not a Zerops platform expert. The sub-agent has NO Zerops context beyond what's in its brief: no injected guidance, no schema, no platform rules, no predecessor-recipe knowledge. Asking it to review platform config (zerops.yaml, import.yaml, zeropsSetup, envReplace, etc.) invites stale or hallucinated platform knowledge and framework-shaped "fixes" to platform problems. The main agent already owns platform config (injected guidance + live schema validation at finalize); the sub-agent's unique contribution is **framework-level code review** the main agent and automated checks cannot catch.
@@ -3077,6 +3123,10 @@ The deploy step has up to 12 sub-steps (showcase tier). **Each `zerops_workflow 
 - Redeployment = fresh container — ALL background processes die, restart everything
 - Max 3 iterations per step
 
+### Reading check failures (v8.96)
+
+When `zerops_workflow action=complete step=deploy` returns `Passed=false`, every failing check now carries structured fields. Read `ReadSurface` (which file the gate inspected — embedded YAML in apidev/README.md vs the on-disk apidev/zerops.yaml are NOT the same surface), `Required` + `Actual` (the threshold and the observed value), `CoupledWith` (files whose state must stay in sync with the ReadSurface), and `HowToFix` (a concrete remedy). Use these fields, not the legacy `Detail` prose. When `CoupledWith` is non-empty on any failing check, sequence your edits so the coupled files stay in sync within a single round — the readme integration-guide YAML block typically mirrors the on-disk `zerops.yaml`; bumping comments on one without re-syncing the other is the v31 deploy-readmes 3-round loop. The result also carries `nextRoundPrediction`: `single-round-fix-expected` means one revision should converge; `coupled-surfaces-require-sequencing` means plan the edit order; `multi-round-likely` means the gate didn't populate enough detail and you'll have to infer.
+
 ### Execution order
 1. Deploy apidev + workerdev + appdev dev containers [topic: deploy-flow]
    - API-first: deploy apidev FIRST [topic: deploy-api-first]
@@ -3122,6 +3172,10 @@ All topics are filtered to your recipe shape — irrelevant content is excluded.
 - Do NOT edit import.yaml files by hand — use `generate-finalize` with structured input
 - Each env's import.yaml must be self-contained — do NOT reference other envs
 - Comment ratio >= 30% (aim 35%)
+
+### Reading check failures (v8.96)
+
+When `zerops_workflow action=complete step=finalize` returns `Passed=false`, every failing env-comment check (`*_import_comment_ratio`, `*_import_comment_depth`, `*_import_cross_env_refs`, `*_import_factual_claims`) carries structured diagnostic fields: `ReadSurface` names the env folder + line, `Required` names the threshold, `Actual` names the observed value, and `HowToFix` is a concrete imperative remedy. The `*_import_factual_claims` check now emits ONE entry per mismatch (not one aggregated entry) so each contradicting line gets its own ReadSurface and HowToFix — rewrite each independently. Use these structured fields, not the legacy `Detail` prose. v31's 3-round finalize loop becomes a 1-round loop when the agent reads the structured fields and applies HowToFix verbatim.
 
 ### Execution order
 1. Write tailored comment set per environment via `generate-finalize` [topic: env-comments]

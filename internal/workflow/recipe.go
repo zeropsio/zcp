@@ -409,7 +409,7 @@ func (r *RecipeState) BuildResponse(sessionID, intent string, iteration int, env
 			Verification: detail.Verification,
 			PriorContext: r.buildPriorContext(),
 		}
-		resp.Current.DetailedGuide = r.buildGuide(detail.Name, iteration, kp)
+		resp.Current.DetailedGuide = r.buildGuide(detail.Name, iteration, kp, sessionID)
 		resp.Message = fmt.Sprintf("Recipe step %d/%d: %s", r.CurrentStep+1, len(r.Steps), detail.Name)
 
 		// Only expose outputDir during finalize/close — earlier steps write to

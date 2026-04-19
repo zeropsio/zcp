@@ -23,6 +23,7 @@ type RecordFactInput struct {
 	FailureMode string `json:"failureMode,omitempty" jsonschema:"Concrete failure symptom: HTTP code, quoted error message, or strong-symptom verb (rejects, deadlocks, drops, crashes, times out, throws, returns 5xx, returns wrong content-type, hangs, silent no-op)."`
 	FixApplied  string `json:"fixApplied,omitempty"  jsonschema:"Remedy applied. Include the exact config flip / file path / command when applicable."`
 	Evidence    string `json:"evidence,omitempty"    jsonschema:"Log-line timestamps, deploy IDs, or curl output snippets that prove the behavior. Keeps the writer subagent from inventing evidence to fit the gotcha."`
+	Scope       string `json:"scope,omitempty"       jsonschema:"One of: content, downstream, both. Defaults to 'content' (writer-only, the pre-v8.96 behavior). Set 'downstream' for framework/tooling discoveries that don't belong in published content but would waste downstream subagents' time if re-investigated (e.g. Meilisearch v0.57 renamed class from MeiliSearch to Meilisearch; svelte-check@4 incompatible with typescript@6 — $state shows untyped errors). Set 'both' sparingly when a fact is load-bearing on both lanes."`
 }
 
 // RegisterRecordFact registers the zerops_record_fact MCP tool.
@@ -53,6 +54,7 @@ func RegisterRecordFact(srv *mcp.Server, engine *workflow.Engine) {
 			FailureMode: input.FailureMode,
 			FixApplied:  input.FixApplied,
 			Evidence:    input.Evidence,
+			Scope:       input.Scope,
 		}
 		path := ops.FactLogPath(sessionID)
 		if err := ops.AppendFact(path, rec); err != nil {

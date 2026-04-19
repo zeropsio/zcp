@@ -4,13 +4,43 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
+)
+
+const (
+	// portFreePollMS is the poll cadence of waitForPortFree. ss probes
+	// over ssh take ~50-150ms each on a healthy container; 200ms gives
+	// margin without burning probe budget.
+	portFreePollMS = 200
+	// portFreeWaitTotalMS bounds the post-stop port-free poll. Calibrated
+	// against measured SO_REUSEADDR linger on the Zerops dev container
+	// (~100-300ms typical, ~1.2s pathological worst-case in a v21 trace).
+	portFreeWaitTotalMS = 1500
+	// portFreeWaitEscalationMS bounds the post-SIGKILL re-poll. After a
+	// hard kill the listener should be released within one OS reaper
+	// cycle; 800ms covers that without inflating the stop call.
+	portFreeWaitEscalationMS = 800
+	// reasonPortStillBound is the structured Reason value emitted when
+	// a port refuses to release even after SIGKILL escalation. Tests and
+	// callers pattern-match on this string.
+	reasonPortStillBound = "port_still_bound"
 )
 
 // stopDevServer kills the dev-server process and frees the port.
 // Uses pkill on a caller-supplied match string and fuser on the port if
 // provided. Both commands tolerate "no matching process" as success.
+//
+// v8.96 quality fix: when a port is supplied, the stop call does NOT
+// return until the port is actually free (or the wait budget exhausts).
+// Prior behavior returned immediately after sending kill signals, which
+// raced with the OS reaper — a subsequent start would then hit "address
+// already in use" and the agent would improvise pgrep+pkill+sleep
+// workarounds, sometimes shipping the workaround as a "Zerops gotcha"
+// in the published README. Polling after the kill removes the race so
+// the next start sees a guaranteed-free port and the agent never
+// invents a workaround.
 func stopDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams) (*DevServerResult, error) {
 	match := strings.TrimSpace(p.ProcessMatch)
 	if match == "" && strings.TrimSpace(p.Command) != "" {
@@ -64,12 +94,106 @@ func stopDevServer(ctx context.Context, ssh SSHDeployer, p DevServerParams) (*De
 				"Dev server stopped on %s (matched %q). SSH session dropped because pkill matched its own shell child — this is expected when the dev command's process tree overlaps the sh/ssh session.",
 				p.Hostname, match,
 			)
-			return result, nil
+			// Fall through to the post-kill port-free wait — the kill
+			// landed, but the OS may still hold the listener for a
+			// fraction of a second.
+		} else {
+			return nil, fmt.Errorf("dev_server stop: %w", err)
 		}
-		return nil, fmt.Errorf("dev_server stop: %w", err)
+	}
+
+	// Post-kill verification: when the caller named a port, wait for it
+	// to actually be free before returning success. SO_REUSEADDR sockets
+	// can linger ~100-300ms after the listener PID dies; on a busy
+	// container we have measured up to ~1.2s. The poll budget below
+	// covers the realistic worst case while still failing loudly if the
+	// kill didn't take.
+	if p.Port > 0 && p.Port <= 65535 {
+		freed, lingerMS, _ := waitForPortFree(ctx, ssh, p.Hostname, p.Port, portFreeWaitTotalMS, portFreePollMS)
+		if !freed {
+			// Escalate: hard SIGKILL anything still on the port, then
+			// give it one more poll cycle. If it STILL won't release,
+			// surface a structured failure so the caller / agent can
+			// decide whether to retry — never silently claim success.
+			killCmd := fmt.Sprintf("fuser -k -KILL %d/tcp 2>/dev/null || true", p.Port)
+			_, _ = ssh.ExecSSH(ctx, p.Hostname, killCmd)
+			var lastPIDs string
+			freed, lingerMS, lastPIDs = waitForPortFree(ctx, ssh, p.Hostname, p.Port, portFreeWaitEscalationMS, portFreePollMS)
+			if !freed {
+				result.Reason = reasonPortStillBound
+				detail := ""
+				if strings.TrimSpace(lastPIDs) != "" {
+					detail = " (PIDs still holding the port: " + strings.TrimSpace(lastPIDs) + ")"
+				}
+				result.Message = fmt.Sprintf(
+					"Dev server stop on %s sent kill signals (matched %q, fuser -k on port %d, then SIGKILL escalation), but port %d is still bound after %dms%s. Investigate with `ssh %s \"ss -tnlp | grep :%d\"` before re-starting; do NOT add a manual pkill workaround to the recipe — port-stop is the platform's responsibility, not the recipe's.",
+					p.Hostname, match, p.Port, p.Port,
+					portFreeWaitTotalMS+portFreeWaitEscalationMS, detail, p.Hostname, p.Port,
+				)
+				return result, nil
+			}
+		}
+		result.Message = fmt.Sprintf(
+			"Dev server stopped on %s (matched %q). Port %d is free (verified after %dms).",
+			p.Hostname, match, p.Port, lingerMS,
+		)
+		return result, nil
+	}
+
+	if result.Reason == "ssh_self_killed" {
+		// Caller didn't supply a port; the legacy ssh-self-killed path
+		// stays responsible for its own narrative when we can't verify.
+		return result, nil
 	}
 	result.Message = fmt.Sprintf("Dev server stopped on %s (matched %q).", p.Hostname, match)
 	return result, nil
+}
+
+// waitForPortFree polls the target container's TCP listener table for
+// `port` until either nothing is bound or the budget expires. Returns
+// (freed, elapsedMS, lastListenerPIDs). lastListenerPIDs is whatever
+// `ss -tnlp` reported on the final probe — used to populate the
+// failure-path message so the agent can investigate without inventing
+// a workaround.
+//
+// Probe shape: `ss -tnlp 'sport = :PORT'` exits 0 either way; the
+// presence of a non-empty result line indicates a listener. We grep
+// for `pid=` to narrow to the bound socket, then collect those tokens.
+func waitForPortFree(ctx context.Context, ssh SSHDeployer, hostname string, port, totalMS, pollMS int) (bool, int, string) {
+	if pollMS <= 0 {
+		pollMS = portFreePollMS
+	}
+	probe := fmt.Sprintf(
+		"ss -tnlp 'sport = :%d' 2>/dev/null | tail -n +2",
+		port,
+	)
+	elapsed := 0
+	var last string
+	for elapsed <= totalMS {
+		out, _ := ssh.ExecSSH(ctx, hostname, probe)
+		last = strings.TrimSpace(string(out))
+		if last == "" {
+			return true, elapsed, ""
+		}
+		if elapsed == totalMS {
+			break
+		}
+		sleep := pollMS
+		if elapsed+sleep > totalMS {
+			sleep = totalMS - elapsed
+		}
+		// Sleep on the remote side via ssh would double-charge the
+		// network round-trip; sleep here instead. The poll cadence is
+		// already tuned so cumulative ssh probe latency stays under
+		// the budget.
+		select {
+		case <-ctx.Done():
+			return false, elapsed, last
+		case <-time.After(time.Duration(sleep) * time.Millisecond):
+		}
+		elapsed += sleep
+	}
+	return false, elapsed, last
 }
 
 // isSSHSelfKill returns true when the underlying error is SSH exit 255,

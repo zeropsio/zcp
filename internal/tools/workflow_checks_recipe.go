@@ -142,9 +142,11 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp kn
 		if !allPassed {
 			summary = "recipe generate checks failed"
 		}
-		return &workflow.StepCheckResult{
+		result := &workflow.StepCheckResult{
 			Passed: allPassed, Checks: checks, Summary: summary,
-		}, nil
+		}
+		workflow.AnnotateNextRoundPrediction(result)
+		return result, nil
 	}
 }
 
@@ -342,9 +344,11 @@ func checkRecipeDeployReadmes(stateDir string, kp knowledge.Provider, factsLogPa
 		if !allPassed {
 			summary = "recipe deploy README checks failed"
 		}
-		return &workflow.StepCheckResult{
+		result := &workflow.StepCheckResult{
 			Passed: allPassed, Checks: checks, Summary: summary,
-		}, nil
+		}
+		workflow.AnnotateNextRoundPrediction(result)
+		return result, nil
 	}
 }
 
@@ -395,7 +399,7 @@ func checkCodebaseReadme(projectRoot string, target workflow.RecipeTarget, plan 
 	checks = append(checks, workflow.StepCheck{
 		Name: hostname + "_readme_exists", Status: statusPass,
 	})
-	checks = append(checks, checkReadmeFragments(string(readmeContent))...)
+	checks = append(checks, checkReadmeFragments(string(readmeContent), hostname)...)
 
 	if !workerOnly {
 		if igContent := extractFragmentContent(string(readmeContent), "integration-guide"); igContent != "" {
@@ -420,7 +424,7 @@ func checkCodebaseReadme(projectRoot string, target workflow.RecipeTarget, plan 
 		checks = append(checks, perItemChecks...)
 	}
 
-	floorChecks := checkKnowledgeBaseExceedsPredecessor(string(readmeContent), plan, predecessorStems)
+	floorChecks := checkKnowledgeBaseExceedsPredecessor(string(readmeContent), plan, predecessorStems, hostname)
 	for i := range floorChecks {
 		floorChecks[i].Name = hostname + "_" + floorChecks[i].Name
 	}
@@ -552,8 +556,14 @@ func checkRecipeDevProdDivergence(devEntry, prodEntry *ops.ZeropsYmlEntry) []wor
 	}}
 }
 
-// checkReadmeFragments validates README.md contains required fragment markers and quality.
-func checkReadmeFragments(content string) []workflow.StepCheck {
+// checkReadmeFragments validates README.md contains required fragment
+// markers and quality. The hostname identifies which codebase's README
+// is being inspected — it appears in v8.96 structured-diagnostic
+// ReadSurface fields so the author can disambiguate when the same check
+// fires across multiple codebases. The check Names themselves stay bare
+// (e.g. "comment_ratio") for backwards compatibility with existing
+// tests; ReadSurface carries the host context.
+func checkReadmeFragments(content, hostname string) []workflow.StepCheck {
 	var checks []workflow.StepCheck
 
 	// Check required fragment markers.
@@ -602,9 +612,24 @@ func checkReadmeFragments(content string) []workflow.StepCheck {
 						Detail: fmt.Sprintf("%.0f%% comments", ratio*100),
 					})
 				} else {
+					readSurface := fmt.Sprintf(
+						"embedded YAML in %s/README.md (#ZEROPS_EXTRACT_START:integration-guide fragment)",
+						hostname,
+					)
+					coupled := []string{hostname + "/zerops.yaml"}
 					checks = append(checks, workflow.StepCheck{
-						Name: "comment_ratio", Status: statusFail,
-						Detail: fmt.Sprintf("comment ratio %.0f%% is below 30%% minimum", ratio*100),
+						Name:        "comment_ratio",
+						Status:      statusFail,
+						Detail:      fmt.Sprintf("comment ratio %.0f%% is below 30%% minimum", ratio*100),
+						ReadSurface: readSurface,
+						Required:    "≥30% of YAML lines comment-only",
+						Actual:      fmt.Sprintf("%.0f%%", ratio*100),
+						CoupledWith: coupled,
+						HowToFix: fmt.Sprintf(
+							"Add `#` comment lines inside the integration-guide YAML block in %s/README.md until the comment-only ratio reaches 30%%. "+
+								"This block usually mirrors %s/zerops.yaml (IG step 1) — keep both files byte-identical when you edit, otherwise the next round will fail again on the unsynced surface.",
+							hostname, hostname,
+						),
 					})
 				}
 				// Section-heading comment check on zerops.yaml.
@@ -647,9 +672,21 @@ func checkReadmeFragments(content string) []workflow.StepCheck {
 		if _, rest, ok := strings.Cut(afterMarker, "\n"); ok {
 			nextLine, _, _ := strings.Cut(rest, "\n")
 			if nextLine != "" && !strings.HasPrefix(nextLine, "<!--") {
+				readPath := "README.md"
+				if hostname != "" {
+					readPath = hostname + "/README.md"
+				}
 				checks = append(checks, workflow.StepCheck{
-					Name: "fragment_" + name + "_blank_after_marker", Status: statusFail,
-					Detail: fmt.Sprintf("fragment %q needs a blank line after the start marker", name),
+					Name:        "fragment_" + name + "_blank_after_marker",
+					Status:      statusFail,
+					Detail:      fmt.Sprintf("fragment %q needs a blank line after the start marker", name),
+					ReadSurface: fmt.Sprintf("%s — line immediately after `<!-- #ZEROPS_EXTRACT_START:%s# -->`", readPath, name),
+					Required:    "exactly one blank line between the start marker and the fragment body",
+					Actual:      fmt.Sprintf("non-blank content on the line after the %q start marker", name),
+					HowToFix: fmt.Sprintf(
+						"Insert a blank line in %s between `<!-- #ZEROPS_EXTRACT_START:%s# -->` and the first content line. The extractor that publishes the fragment to zerops.io/recipes treats the marker line as a comment and needs the blank separator before the rendered body starts.",
+						readPath, name,
+					),
 				})
 			}
 		}

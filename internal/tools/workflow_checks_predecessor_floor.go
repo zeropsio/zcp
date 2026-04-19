@@ -41,7 +41,13 @@ const minAuthenticGotchas = 3
 //
 // Authenticity classifier ride-along is unchanged — the synthetic-stem
 // floor still fires here.
-func checkKnowledgeBaseExceedsPredecessor(content string, plan *workflow.RecipePlan, predecessorStems []string) []workflow.StepCheck {
+// hostname identifies the codebase whose README is being inspected;
+// passed through to checkKnowledgeBaseAuthenticity so the v8.96
+// structured ReadSurface field can name `{hostname}/README.md`. Callers
+// that don't have a hostname (predecessor-floor unit tests) can pass the
+// empty string — the diagnostics still populate the file path with a
+// generic "README.md".
+func checkKnowledgeBaseExceedsPredecessor(content string, plan *workflow.RecipePlan, predecessorStems []string, hostname string) []workflow.StepCheck {
 	if plan == nil || plan.Tier != workflow.RecipeTierShowcase {
 		return nil
 	}
@@ -57,7 +63,7 @@ func checkKnowledgeBaseExceedsPredecessor(content string, plan *workflow.RecipeP
 		return nil
 	}
 	netNew := workflow.CountNetNewGotchas(emitted, predecessorStems)
-	authenticityChecks := checkKnowledgeBaseAuthenticity(kbContent)
+	authenticityChecks := checkKnowledgeBaseAuthenticity(kbContent, hostname)
 	checks := make([]workflow.StepCheck, 0, 1+len(authenticityChecks))
 	checks = append(checks, workflow.StepCheck{
 		Name:   "knowledge_base_exceeds_predecessor",
@@ -77,7 +83,7 @@ func checkKnowledgeBaseExceedsPredecessor(content string, plan *workflow.RecipeP
 // never hit. The net-new floor alone can't catch these because synthetic
 // gotchas have novel tokens relative to the predecessor. The authenticity
 // check is the shape-based complement.
-func checkKnowledgeBaseAuthenticity(kbContent string) []workflow.StepCheck {
+func checkKnowledgeBaseAuthenticity(kbContent, hostname string) []workflow.StepCheck {
 	entries := workflow.ExtractGotchaEntries(kbContent)
 	if len(entries) == 0 {
 		return nil
@@ -98,13 +104,24 @@ func checkKnowledgeBaseAuthenticity(kbContent string) []workflow.StepCheck {
 			synthetic = append(synthetic, e.Stem)
 		}
 	}
+	readmePath := "README.md"
+	if hostname != "" {
+		readmePath = hostname + "/README.md"
+	}
+	syntheticList := strings.Join(synthetic, ", ")
 	return []workflow.StepCheck{{
-		Name:   "knowledge_base_authenticity",
-		Status: statusFail,
+		Name:        "knowledge_base_authenticity",
+		Status:      statusFail,
+		ReadSurface: fmt.Sprintf("%s knowledge-base fragment — bolded gotcha stems", readmePath),
+		Required:    fmt.Sprintf("≥%d gotchas classified ShapeAuthentic (platform-anchored OR concrete failure mode)", minAuthenticGotchas),
+		Actual:      fmt.Sprintf("%d authentic / %d total (%d synthetic)", authentic, len(entries), len(synthetic)),
+		HowToFix: fmt.Sprintf(
+			"Rewrite the synthetic stems in %s knowledge-base fragment to name a Zerops platform constraint (execOnce, L7 balancer, ${env_var}, httpSupport, base: static) AND/OR a concrete failure mode the reader would observe ('fails with DNS errors', 'returns empty results', 'Blocked request'). Replace any architectural narration ('Shared database with the API') with a real trap you hit during deploy. Synthetic stems: %s.",
+			readmePath, syntheticList,
+		),
 		Detail: fmt.Sprintf(
-			"only %d authentic gotcha(s) (required %d) — %d of %d read as scaffold-self-referential narration rather than real integration traps. Synthetic stems: %s. A real gotcha describes either (a) a Zerops platform constraint (execOnce, L7 balancer, ${env_var} references, base: static, httpSupport), or (b) a concrete failure mode a user would observe (\"fails with DNS errors\", \"returns empty results\", \"Blocked request\", \"shadows env var\"), or both. Rewrite each synthetic stem to name the trap + symptom, OR replace it with a gotcha you actually hit during generate/deploy. Architectural narration (\"Shared database with the API\"), credential descriptions (\"NATS authentication\"), and obvious restatements (\"Static base has no Node runtime\") do not count.",
-			authentic, minAuthenticGotchas, len(synthetic), len(entries),
-			strings.Join(synthetic, ", "),
+			"only %d authentic gotcha(s) (required %d) — %d of %d read as scaffold-self-referential narration. Synthetic stems: %s.",
+			authentic, minAuthenticGotchas, len(synthetic), len(entries), syntheticList,
 		),
 	}}
 }

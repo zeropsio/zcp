@@ -180,6 +180,44 @@ func TestKnowledgeTool_ModeMixError(t *testing.T) {
 	if !result.IsError {
 		t.Error("expected error for mixed modes")
 	}
+	// v8.96: rejection MUST name the specific modes the agent passed,
+	// not just say "cannot mix" generically. The agent fixes the call
+	// from this list alone — no rule re-derivation needed.
+	body := extractText(result)
+	if !strings.Contains(body, "MODE 1 query=") || !strings.Contains(body, "MODE 2 runtime=") {
+		t.Errorf("v8.96: rejection must name the specific conflicting modes (MODE 1 query= + MODE 2 runtime=); got: %s", body)
+	}
+}
+
+// TestKnowledgeTool_ModeMixError_AllFourCombination — v8.96. When the
+// agent passes ALL FOUR modes, the rejection must list all four in the
+// canonical order (MODE 4 → MODE 3 → MODE 2 → MODE 1) so the agent
+// learns the taxonomy from the rejection alone.
+func TestKnowledgeTool_ModeMixError_AllFourCombination(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeStore(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil, nil)
+
+	result := callTool(t, srv, "zerops_knowledge", map[string]any{
+		"query":   "anything",
+		"runtime": "php@8",
+		"scope":   "infrastructure",
+		"recipe":  "php-hello-world",
+	})
+	if !result.IsError {
+		t.Fatal("expected error when all four modes are passed together")
+	}
+	body := extractText(result)
+	for _, want := range []string{"MODE 4 recipe=", "MODE 3 scope=", "MODE 2 runtime=", "MODE 1 query="} {
+		if !strings.Contains(body, want) {
+			t.Errorf("rejection must name %q; got: %s", want, body)
+		}
+	}
+	// The remediation must tell the agent the positive form.
+	if !strings.Contains(body, "Re-call with only one of") {
+		t.Errorf("rejection must include positive remediation 'Re-call with only one of...': %s", body)
+	}
 }
 
 func TestKnowledgeTool_NoModeError(t *testing.T) {
@@ -192,6 +230,15 @@ func TestKnowledgeTool_NoModeError(t *testing.T) {
 
 	if !result.IsError {
 		t.Error("expected error for no mode")
+	}
+	// v8.96: empty-call rejection must restate the decision tree (the
+	// four mode names) so the agent picks one without re-fetching the
+	// tool description.
+	body := extractText(result)
+	for _, want := range []string{"recipe", "scope", "runtime", "query"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("empty-call rejection must mention %q to guide the next call: %s", want, body)
+		}
 	}
 }
 

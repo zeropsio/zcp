@@ -29,6 +29,16 @@ type GuidanceTopic struct {
 	// Use sparingly. Eager topics inflate the per-step guidance budget;
 	// only mark topics that have repeatedly cost a real recipe run.
 	Eager bool
+
+	// IncludePriorDiscoveries — v8.96 §6.3. When true, buildSubStepGuide
+	// prepends a "Prior discoveries" block (downstream-scoped facts from
+	// upstream subagents) to the resolved topic content. Use for
+	// delegation briefs whose subagent would otherwise re-investigate
+	// framework / tooling surfaces an upstream subagent already
+	// characterized. Default false: the writer subagent reads the facts
+	// log directly via the v8.95 manifest contract; scaffold runs first
+	// so it has no upstream facts.
+	IncludePriorDiscoveries bool
 }
 
 // topicRegistry maps topic IDs to their definitions. Populated at init
@@ -216,6 +226,12 @@ var recipeDeployTopics = []*GuidanceTopic{
 		Description: "Feature sub-agent dispatch and brief",
 		Predicate:   isShowcase,
 		BlockNames:  []string{"dev-deploy-subagent-brief"},
+		// v8.96 §6.3 — feature subagent benefits from scaffold-recorded
+		// framework quirks (Meilisearch SDK shape, cache-manager TTL
+		// semantics, svelte-check / typescript compat). When prepended,
+		// the brief carries upstream subagents' downstream-scoped facts
+		// so the feature subagent doesn't re-archaeology the same APIs.
+		IncludePriorDiscoveries: true,
 		// NOT eager — v8.90. The brief is delivered via substep-complete:
 		// the mapping subStepToTopic(deploy, subagent) == "subagent-brief"
 		// means this block lands in the response to `complete substep=
@@ -383,6 +399,10 @@ var recipeCloseTopics = []*GuidanceTopic{
 		ID: "code-review-agent", Step: RecipeStepClose,
 		Description: "Static code review sub-agent brief",
 		BlockNames:  []string{"code-review-subagent"},
+		// v8.96 §6.3 — code-review benefits from feature/scaffold
+		// tooling observations (e.g. svelte-check@4 incompatible with
+		// typescript@6) so it doesn't flag a non-bug as a STYLE finding.
+		IncludePriorDiscoveries: true,
 	},
 	{
 		ID: "close-browser-walk", Step: RecipeStepClose,
@@ -555,6 +575,15 @@ func ExpandTopic(topicID string, plan *RecipePlan, accessed map[string]bool) []*
 // LookupTopic returns the topic definition for a given ID, or nil if not found.
 func LookupTopic(topicID string) *GuidanceTopic {
 	return topicRegistry[topicID]
+}
+
+// TopicIncludesPriorDiscoveries reports whether the topic with the given
+// ID opts into the v8.96 "Prior discoveries" block prepend. Returns false
+// for unknown topic IDs so a renamed topic doesn't accidentally inject a
+// stray block.
+func TopicIncludesPriorDiscoveries(topicID string) bool {
+	t := topicRegistry[topicID]
+	return t != nil && t.IncludePriorDiscoveries
 }
 
 // AllTopicsForStep returns all topic definitions for a given recipe step.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/knowledge"
@@ -14,14 +15,43 @@ import (
 
 // KnowledgeInput is the input type for zerops_knowledge.
 // Supports four modes: query (text search), briefing (contextual assembly), scope (platform reference), or recipe.
+//
+// v8.96 quality fix — every parameter description leads with `MODE N:`
+// so the agent can pattern-match the mode taxonomy from any one field
+// it consults. Combined with the tool-level Description rewrite below,
+// this eliminates the v31 "5 retries" pattern where the agent kept
+// passing two-mode combos (query + recipe, runtime + scope, etc.) and
+// learning the rules by trial-and-error from rejection messages.
 type KnowledgeInput struct {
-	Query    string   `json:"query,omitempty"    jsonschema:"Free-text topic search across Zerops docs (e.g. 'readiness check', 'cross-service wiring'). NOT for fetching known guides by name — if you have a recipe/hello-world name, use recipe= instead. Use alone (query mode)."`
-	Limit    int      `json:"limit,omitempty"    jsonschema:"Maximum number of search results to return (query mode only)."`
-	Runtime  string   `json:"runtime,omitempty"  jsonschema:"Runtime type for stack briefing (e.g. php-nginx@8.4 or bun@1.2). Use with or without services (briefing mode)."`
-	Services []string `json:"services,omitempty" jsonschema:"Service types for stack briefing (e.g. [postgresql@16, valkey@7.2]). Use with or without runtime (briefing mode)."`
-	Recipe   string   `json:"recipe,omitempty"   jsonschema:"Name of a pre-authored guide in the knowledge store. Valid shapes: {runtime}-hello-world (runtime primer — go, bun, php, python, nodejs, deno, dotnet, gleam, java, ruby, rust), {framework}-{ssr,static}-hello-world (frontend framework primer — nextjs-ssr, vue-static, svelte, ...), or {framework}-minimal (backend framework recipe — laravel-minimal, django-minimal, ...). ALWAYS use this field for any named guide lookup — never query= for a known name. Use alone (recipe mode)."`
-	Scope    string   `json:"scope,omitempty"    jsonschema:"Platform reference scope. Use scope=infrastructure for complete Zerops knowledge (YAML schemas, env vars, build/deploy lifecycle). Required before generating YAML. Use alone (scope mode)."`
-	Mode     string   `json:"mode,omitempty"     jsonschema:"Override mode filter (dev, standard, simple, stage). Auto-detected from active workflow session if omitted. Use mode=stage to see prod deploy patterns during dev/standard workflows."`
+	Query    string   `json:"query,omitempty"    jsonschema:"MODE 1 (query — free-text search). Pass a topic phrase like 'readiness check', 'cross-service wiring'. ONLY for unknown topics — for any named guide ({runtime}-hello-world, {framework}-minimal, {framework}-{ssr,static}-hello-world), use the recipe= field instead. Use alone — combining with runtime/services/scope/recipe is rejected."`
+	Limit    int      `json:"limit,omitempty"    jsonschema:"MODE 1 helper — maximum number of search results (query mode only). Has no effect in other modes."`
+	Runtime  string   `json:"runtime,omitempty"  jsonschema:"MODE 2 (briefing — stack-specific rules). Pass a runtime type with version, e.g. php-nginx@8.4 or bun@1.2. Combine with services= for full-stack briefings; use either field alone is also valid. Do NOT combine with query/scope/recipe."`
+	Services []string `json:"services,omitempty" jsonschema:"MODE 2 (briefing — stack-specific rules). Pass service types with versions, e.g. [postgresql@16, valkey@7.2]. Combine with runtime= for full-stack briefings; use either field alone is also valid. Do NOT combine with query/scope/recipe."`
+	Recipe   string   `json:"recipe,omitempty"   jsonschema:"MODE 4 (recipe — named guide lookup). Valid shapes: {runtime}-hello-world (runtime primer — go, bun, php, python, nodejs, deno, dotnet, gleam, java, ruby, rust), {framework}-{ssr,static}-hello-world (frontend framework primer — nextjs-ssr, vue-static, svelte, ...), or {framework}-minimal (backend framework recipe — laravel-minimal, django-minimal, ...). ALWAYS use this field for named lookups — never query= for a known name. Use alone — combining with query/runtime/services/scope is rejected."`
+	Scope    string   `json:"scope,omitempty"    jsonschema:"MODE 3 (scope — full platform reference). Only valid value is 'infrastructure' — returns complete Zerops knowledge (YAML schemas, env vars, build/deploy lifecycle). Required before generating YAML. Use alone — combining with query/runtime/services/recipe is rejected."`
+	Mode     string   `json:"mode,omitempty"     jsonschema:"OPTIONAL helper, ANY mode — override the auto-detected workflow mode filter (dev, standard, simple, stage). Auto-detected from the active workflow session when omitted. Common use: mode=stage during a dev/standard workflow to see prod deploy patterns. Does NOT count as a mode-selecting field."`
+}
+
+// describeKnowledgeModes renders the modes the caller passed as a
+// readable list for use in rejection messages. Order matches the
+// canonical decision tree in the tool description (recipe → scope →
+// briefing → query) so the agent's mental map of mode taxonomy stays
+// consistent across passes.
+func describeKnowledgeModes(hasRecipe, hasScope, hasBriefing, hasQuery bool) string {
+	var parts []string
+	if hasRecipe {
+		parts = append(parts, "MODE 4 recipe=")
+	}
+	if hasScope {
+		parts = append(parts, "MODE 3 scope=")
+	}
+	if hasBriefing {
+		parts = append(parts, "MODE 2 runtime=/services=")
+	}
+	if hasQuery {
+		parts = append(parts, "MODE 1 query=")
+	}
+	return strings.Join(parts, " + ")
 }
 
 // resolveKnowledgeMode determines the mode filter for knowledge responses.
@@ -48,7 +78,7 @@ func resolveKnowledgeMode(engine *workflow.Engine, inputMode string) string {
 func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platform.Client, cache *ops.StackTypeCache, tracker *ops.KnowledgeTracker, engine *workflow.Engine) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_knowledge",
-		Description: "Load Zerops platform knowledge. Four modes: (1) briefing — stack-specific rules via runtime/services params. (2) scope=infrastructure — complete platform reference, required before generating YAML. (3) query — free-text topic search (NOT for fetching known guides — use recipe= for those). (4) recipe — named guide from store: runtime primer ({runtime}-hello-world), frontend primer ({framework}-{ssr,static}-hello-world), or backend framework recipe ({framework}-minimal).",
+		Description: "Load Zerops platform knowledge. Pick ONE mode per call (mixing is rejected): recipe=NAME for a named guide ({runtime}-hello-world, {framework}-minimal, {framework}-{ssr,static}-hello-world); scope=\"infrastructure\" before writing zerops.yaml/import.yaml; runtime= and/or services= for a stack briefing; query=\"phrase\" for free-text search of unknown topics. The optional mode= field overrides the workflow-mode filter and combines with any of the four.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Zerops knowledge access",
 			ReadOnlyHint:   true,
@@ -78,15 +108,20 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 		if modeCount == 0 {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
-				"Must provide at least one of: query, runtime/services, scope, or recipe",
-				"Specify query for text search, runtime/services for briefing, scope for platform reference, or recipe for a recipe")), nil, nil
+				"No mode selected — zerops_knowledge requires exactly one of: recipe, scope, runtime/services, or query",
+				"Pick the mode that matches your intent: recipe=\"NAME\" for named guide, scope=\"infrastructure\" before writing YAML, runtime=/services= for stack briefing, query=\"phrase\" for free-text search.")), nil, nil
 		}
 
 		if modeCount > 1 {
+			// Name the specific combination the agent passed so the
+			// rejection points at the conflict instead of restating the
+			// rule generically. The agent can fix the call from the
+			// "what was passed" list alone.
+			combo := describeKnowledgeModes(hasRecipe, hasScope, hasBriefing, hasQuery)
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
-				"Cannot mix query, briefing, scope, and recipe modes",
-				"Use only one mode per call")), nil, nil
+				fmt.Sprintf("Multiple modes selected (%s) — pick exactly one", combo),
+				"Re-call with only one of: recipe=\"NAME\" alone, OR scope=\"infrastructure\" alone, OR runtime=/services= alone, OR query=\"phrase\" alone. The mode= field is the only one that combines with any of these.")), nil, nil
 		}
 
 		// Mode 1: Scope (platform reference) — always returns full content.

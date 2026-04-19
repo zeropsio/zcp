@@ -137,8 +137,11 @@ func fixtureForShape(s RecipeShape) *RecipePlan {
 // deploy caps bumped +2 KB each.
 var showcaseStepCaps = map[RecipeShape]map[string]int{
 	ShapeHelloWorld: {
-		RecipeStepResearch:  7 * 1024,
-		RecipeStepProvision: 18 * 1024,
+		RecipeStepResearch: 7 * 1024,
+		// v8.96 +1 KB: git-config-mount block adds the "every agent runs
+		// git container-side" framing + .git/index.lock concurrency rule
+		// (load-bearing — closes the v31 ~90s git-lock cost driver).
+		RecipeStepProvision: 19 * 1024,
 		RecipeStepGenerate:  24 * 1024,
 		RecipeStepDeploy:    26 * 1024,
 		RecipeStepFinalize:  18 * 1024,
@@ -146,7 +149,7 @@ var showcaseStepCaps = map[RecipeShape]map[string]int{
 	},
 	ShapeBackendMinimal: {
 		RecipeStepResearch:  7 * 1024,
-		RecipeStepProvision: 18 * 1024,
+		RecipeStepProvision: 19 * 1024, // v8.96 +1 KB — see ShapeHelloWorld note
 		RecipeStepGenerate:  32 * 1024,
 		RecipeStepDeploy:    26 * 1024,
 		RecipeStepFinalize:  18 * 1024,
@@ -154,7 +157,7 @@ var showcaseStepCaps = map[RecipeShape]map[string]int{
 	},
 	ShapeFullStackShowcase: {
 		RecipeStepResearch:  14 * 1024,
-		RecipeStepProvision: 18 * 1024,
+		RecipeStepProvision: 19 * 1024, // v8.96 +1 KB — see ShapeHelloWorld note
 		RecipeStepGenerate:  45 * 1024,
 		RecipeStepDeploy:    44 * 1024,
 		RecipeStepFinalize:  18 * 1024,
@@ -685,8 +688,8 @@ func TestBuildGuide_Generate_Iteration1_ReturnsDelta(t *testing.T) {
 	t.Parallel()
 	plan := fixtureForShape(ShapeBackendMinimal)
 	rs := advanceShowcaseStateTo(RecipeStepGenerate, plan)
-	full := rs.buildGuide(RecipeStepGenerate, 0, nil)
-	delta := rs.buildGuide(RecipeStepGenerate, 1, nil)
+	full := rs.buildGuide(RecipeStepGenerate, 0, nil, "")
+	delta := rs.buildGuide(RecipeStepGenerate, 1, nil, "")
 	if len(delta) == 0 || len(full) == 0 {
 		t.Fatalf("empty guide: full=%d delta=%d", len(full), len(delta))
 	}

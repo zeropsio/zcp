@@ -205,6 +205,13 @@ func checkManifestCompleteness(m contentManifest, factsLogPath string) []workflo
 			Detail: fmt.Sprintf("facts log unreadable at %s (%v); completeness check skipped", factsLogPath, err),
 		}}
 	}
+	// v8.96 §6.3 — drop downstream-scoped facts before checking
+	// completeness. The writer subagent's manifest covers content-lane
+	// facts only; a Scope="downstream" fact is scratch knowledge for the
+	// next subagent, not published content. Without this filter, the
+	// completeness check would force the writer to manifest entries it
+	// has no business reasoning about.
+	facts = filterContentScoped(facts)
 	if len(facts) == 0 {
 		return []workflow.StepCheck{{
 			Name: "writer_manifest_completeness", Status: statusPass,
@@ -238,6 +245,21 @@ func checkManifestCompleteness(m contentManifest, factsLogPath string) []workflo
 		Status: statusFail,
 		Detail: fmt.Sprintf("manifest missing entries for %d distinct FactRecord.Title values that appear in the facts log: %s. Every recorded fact must have exactly one manifest entry with classification + routed_to. An under-populated manifest bypasses sub-checks B and C.", len(missing), strings.Join(missing, "; ")),
 	}}
+}
+
+// filterContentScoped (v8.96 §6.3) keeps facts whose Scope is content,
+// both, or unset (the legacy default). Drops Scope="downstream" — those
+// are framework / tooling discoveries routed to dispatch briefs, not to
+// the writer subagent's manifest.
+func filterContentScoped(facts []ops.FactRecord) []ops.FactRecord {
+	out := make([]ops.FactRecord, 0, len(facts))
+	for _, f := range facts {
+		if f.Scope == ops.FactScopeDownstream {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 // jaccardStopWords are tokens filtered out before Jaccard similarity

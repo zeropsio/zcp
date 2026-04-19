@@ -48,7 +48,7 @@ func TestCheckKnowledgeBaseExceedsPredecessor_V10ClonePattern(t *testing.T) {
 		"NestJS listens on `localhost` by default.",
 		"ts-node requires devDependencies.",
 	)
-	checks := checkKnowledgeBaseExceedsPredecessor(readme, showcaseTierPlan(), nestjsMinimalPredecessorStems)
+	checks := checkKnowledgeBaseExceedsPredecessor(readme, showcaseTierPlan(), nestjsMinimalPredecessorStems, "")
 	if len(checks) == 0 {
 		t.Fatal("expected a check result, got none")
 	}
@@ -75,7 +75,7 @@ func TestCheckKnowledgeBaseExceedsPredecessor_V7Pattern(t *testing.T) {
 		"Auto-indexing skips on redeploy seed runs",
 		"MinIO needs `forcePathStyle: true` and an explicit region",
 	)
-	checks := checkKnowledgeBaseExceedsPredecessor(readme, showcaseTierPlan(), nestjsMinimalPredecessorStems)
+	checks := checkKnowledgeBaseExceedsPredecessor(readme, showcaseTierPlan(), nestjsMinimalPredecessorStems, "")
 	if len(checks) == 0 {
 		t.Fatal("expected a check result, got none")
 	}
@@ -95,7 +95,7 @@ func TestCheckKnowledgeBaseExceedsPredecessor_V7Pattern(t *testing.T) {
 func TestCheckKnowledgeBaseExceedsPredecessor_MinimalTierSkipped(t *testing.T) {
 	t.Parallel()
 	readme := readmeWithGotchas("No .env files on Zerops.")
-	checks := checkKnowledgeBaseExceedsPredecessor(readme, minimalTierPlan(), nestjsMinimalPredecessorStems)
+	checks := checkKnowledgeBaseExceedsPredecessor(readme, minimalTierPlan(), nestjsMinimalPredecessorStems, "")
 	if len(checks) != 0 {
 		t.Errorf("expected no checks emitted for minimal tier, got %d: %+v", len(checks), checks)
 	}
@@ -109,7 +109,7 @@ func TestCheckKnowledgeBaseExceedsPredecessor_MinimalTierSkipped(t *testing.T) {
 func TestCheckKnowledgeBaseExceedsPredecessor_EmptyPredecessorSkipped(t *testing.T) {
 	t.Parallel()
 	readme := readmeWithGotchas("Anything at all")
-	checks := checkKnowledgeBaseExceedsPredecessor(readme, showcaseTierPlan(), nil)
+	checks := checkKnowledgeBaseExceedsPredecessor(readme, showcaseTierPlan(), nil, "")
 	if len(checks) != 0 {
 		t.Errorf("expected no checks without predecessor baseline, got %d", len(checks))
 	}
@@ -127,7 +127,7 @@ func TestCheckKnowledgeBaseExceedsPredecessor_OneNetNewPassesAfterRollback(t *te
 		"NestJS listens on `localhost`.",
 		"Meilisearch SDK is ESM-only",
 	)
-	checks := checkKnowledgeBaseExceedsPredecessor(readme, showcaseTierPlan(), nestjsMinimalPredecessorStems)
+	checks := checkKnowledgeBaseExceedsPredecessor(readme, showcaseTierPlan(), nestjsMinimalPredecessorStems, "")
 	if len(checks) == 0 || checks[0].Status != "pass" {
 		t.Errorf("expected pass after rollback, got: %+v", checks)
 	}
@@ -146,7 +146,7 @@ func TestCheckKnowledgeBaseExceedsPredecessor_TwoNetNewPassesAfterRollback(t *te
 		"CORS with dual-runtime frontend",
 		"S3 path-style addressing required",
 	)
-	checks := checkKnowledgeBaseExceedsPredecessor(readme, showcaseTierPlan(), nestjsMinimalPredecessorStems)
+	checks := checkKnowledgeBaseExceedsPredecessor(readme, showcaseTierPlan(), nestjsMinimalPredecessorStems, "")
 	if len(checks) == 0 || checks[0].Status != "pass" {
 		t.Errorf("expected pass after rollback, got: %+v", checks)
 	}
@@ -171,7 +171,7 @@ func TestCheckKnowledgeBaseAuthenticity_V12SyntheticMix(t *testing.T) {
 		"- **NATS lazy connection pattern** — the NATS client connects on first publish, not at module init. This prevents the API from crashing at startup if the NATS service is still initializing.\n" +
 		"- **Valkey cache-manager store configuration** — the cache-manager library for NestJS requires an ioredis-backed store adapter. Valkey is Redis-compatible but the connection must use plain TCP for internal traffic on Zerops.\n" +
 		"\n<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->\n"
-	checks := checkKnowledgeBaseExceedsPredecessor(readme, showcaseTierPlan(), nestjsMinimalPredecessorStems)
+	checks := checkKnowledgeBaseExceedsPredecessor(readme, showcaseTierPlan(), nestjsMinimalPredecessorStems, "")
 	var authenticity *workflow.StepCheck
 	for i := range checks {
 		if checks[i].Name == "knowledge_base_authenticity" {
@@ -201,7 +201,7 @@ func TestCheckKnowledgeBaseAuthenticity_V7Style(t *testing.T) {
 		"- **Vite dev server host-check** — Vite 6+ blocks requests from unrecognized hosts. The allowedHosts setting is required or the dev server returns Blocked request for the Zerops subdomain.\n" +
 		"- **No .env files on Zerops** — Zerops injects all environment variables as OS-level env vars. Creating a .env file shadows the platform-injected values.\n" +
 		"\n<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->\n"
-	checks := checkKnowledgeBaseExceedsPredecessor(readme, showcaseTierPlan(), nestjsMinimalPredecessorStems)
+	checks := checkKnowledgeBaseExceedsPredecessor(readme, showcaseTierPlan(), nestjsMinimalPredecessorStems, "")
 	var authenticity *workflow.StepCheck
 	for i := range checks {
 		if checks[i].Name == "knowledge_base_authenticity" {

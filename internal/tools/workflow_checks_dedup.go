@@ -225,10 +225,17 @@ func checkGotchaRestatesGuide(hostname, content string) []workflow.StepCheck {
 		return []workflow.StepCheck{{Name: checkName, Status: statusPass}}
 	}
 	return []workflow.StepCheck{{
-		Name:   checkName,
-		Status: statusFail,
+		Name:        checkName,
+		Status:      statusFail,
+		ReadSurface: fmt.Sprintf("%s/README.md — both #integration-guide H3 headings and #knowledge-base bolded gotcha stems", hostname),
+		Required:    "no gotcha stem normalizes to the same token set as any integration-guide H3 heading",
+		Actual:      fmt.Sprintf("%d restated gotcha(s)", len(violations)),
+		HowToFix: fmt.Sprintf(
+			"Rewrite each restated gotcha in %s/README.md to name the failure symptom (exact error message, HTTP status, observable misbehavior — 'Blocked request 200 + blank browser') instead of the topic. If the symptom is already in the integration-guide, delete the gotcha and use the slot for something the guide does NOT cover. Violations: %s.",
+			hostname, strings.Join(violations, "; "),
+		),
 		Detail: fmt.Sprintf(
-			"%s README has gotchas that restate integration-guide items — a gotcha must teach the reader what the guide did NOT. Rewrite each restatement to focus on the failure symptom (exact error message, HTTP status, observable misbehavior like a blank browser or a 200 with text/plain body), not the topic. If the symptom is already narrated in the guide, delete the gotcha and keep the gotcha slot for something the guide does not cover. README.md is PUBLISHED content extracted to zerops.io/recipes — an integration-guide item followed by a gotcha saying the same thing in different words is wasted space that trains readers to skim. Violations: %s",
+			"%s README has gotchas that restate integration-guide items. Violations: %s",
 			hostname, strings.Join(violations, "; "),
 		),
 	}}

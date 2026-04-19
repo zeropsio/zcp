@@ -190,11 +190,20 @@ func checkCommentDepth(content, prefix string) []workflow.StepCheck {
 			Detail: fmt.Sprintf("%d of %d comments (%.0f%%) explain WHY", reasoning, total, ratio*100),
 		}}
 	}
+	envFolder := strings.TrimSuffix(prefix, "_import")
+	readSurface := fmt.Sprintf("%s/import.yaml WHY-marker lines (multi-line `#` blocks counted as one)", envFolder)
 	return []workflow.StepCheck{{
-		Name:   prefix + "_comment_depth",
-		Status: statusFail,
+		Name:        prefix + "_comment_depth",
+		Status:      statusFail,
+		ReadSurface: readSurface,
+		Required:    fmt.Sprintf("≥%.0f%% of substantive comment blocks (≥%d) carry a reasoning marker", minReasoningCommentRatio*100, minReasoningComments),
+		Actual:      fmt.Sprintf("%d of %d (%.0f%%)", reasoning, total, ratio*100),
+		HowToFix: fmt.Sprintf(
+			"Rewrite comment blocks in %s/import.yaml so each answers one of: WHY this value vs the obvious alternative; WHAT BREAKS if the decision flips; HOW THIS AFFECTS operations (rotation, scaling, rolling deploys, concurrent containers). Add the WHY clause inline (use words like `because`, `otherwise`, `without`, `prevents`, `rolling`, `rotation`, `redeploy`). Narration like 'minContainers: 2 enables rolling deploys' fails; 'minContainers: 2 because a single container would drop in-flight requests during rolling deploys' passes.",
+			envFolder,
+		),
 		Detail: fmt.Sprintf(
-			"only %d of %d substantive comments (%.0f%%, need >= %.0f%% or >= %d) explain WHY a decision was made. The v7 gold-standard import.yaml comments teach — they explain what goes wrong if the decision flips ('session-cookie validation fails if any container in the L7 pool disagrees on the signing key'), the trade-off chosen ('single broker is sufficient for the small-prod tier; the queue-group already gives consumer-side redundancy'), and the operational consequence ('service-level envSecrets would force every container to be redeployed when the key rotates'). v16 regressed to describing field values without the reasoning behind them. Rewrite comments so they answer one of: WHY this value specifically (vs the obvious alternative), WHAT BREAKS if we flip the decision, or HOW THIS AFFECTS operations (rotation, scaling, rolling deploys, concurrent containers, failure modes). Narration like 'minContainers: 2 enables rolling deploys' fails; 'JWT_SECRET project-scoped because cookie validation fails if two containers in the L7 pool disagree on the signing key' passes.",
+			"only %d of %d substantive comments (%.0f%%, need >= %.0f%% or >= %d) explain WHY a decision was made.",
 			reasoning, total, ratio*100, minReasoningCommentRatio*100, minReasoningComments,
 		),
 	}}

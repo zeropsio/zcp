@@ -11,7 +11,12 @@ import (
 
 // buildGuide assembles step-specific guidance with knowledge injection for recipe workflow.
 // Follows deploy's pattern: own method on RecipeState, not via assembleGuidance (which is bootstrap-only).
-func (r *RecipeState) buildGuide(step string, iteration int, kp knowledge.Provider) string {
+//
+// sessionID (v8.96 §6.2) is threaded down to buildSubStepGuide so the
+// "Prior discoveries" block can be prepended to delegation briefs whose
+// topic opts in via GuidanceTopic.IncludePriorDiscoveries. Empty sessionID
+// is tolerated — buildSubStepGuide simply skips the prepend.
+func (r *RecipeState) buildGuide(step string, iteration int, kp knowledge.Provider, sessionID string) string {
 	// Iteration delta for deploy retries — replaces normal guidance.
 	// Phase C: adaptive delta layers failure-pattern-specific guidance on
 	// top of the shape-aware reminders.
@@ -40,7 +45,7 @@ func (r *RecipeState) buildGuide(step string, iteration int, kp knowledge.Provid
 		currentStep := r.Steps[r.CurrentStep]
 		if currentStep.hasSubSteps() {
 			if !currentStep.allSubStepsComplete() {
-				if subGuide := r.buildSubStepGuide(step, currentStep.currentSubStepName()); subGuide != "" {
+				if subGuide := r.buildSubStepGuide(step, currentStep.currentSubStepName(), sessionID); subGuide != "" {
 					// Prepend a sub-step progress line.
 					progress := fmt.Sprintf("### Sub-step %d/%d: %s\n\n",
 						currentStep.CurrentSubStep+1, len(currentStep.SubSteps), currentStep.currentSubStepName())
@@ -469,7 +474,13 @@ func (r *RecipeState) missingCriticalTopics(step string) []*GuidanceTopic {
 // This is the focused guidance the agent receives when working within
 // sub-step orchestration — pre-loaded topic content instead of requiring
 // the agent to call zerops_guidance manually.
-func (r *RecipeState) buildSubStepGuide(step, subStep string) string {
+//
+// sessionID (v8.96 §6.2) is the recipe session ID. When the resolved
+// topic opts into IncludePriorDiscoveries, a "Prior discoveries" block
+// of upstream-recorded downstream-scoped facts is prepended to the
+// returned content. Empty sessionID means "skip the prepend" (test
+// fixtures, sessions with no upstream substep history).
+func (r *RecipeState) buildSubStepGuide(step, subStep, sessionID string) string {
 	topicID := subStepToTopic(step, subStep, r.Plan)
 	if topicID == "" {
 		return ""
@@ -477,6 +488,11 @@ func (r *RecipeState) buildSubStepGuide(step, subStep string) string {
 	resolved, err := ResolveTopic(topicID, r.Plan)
 	if err != nil || resolved == "" {
 		return ""
+	}
+	if TopicIncludesPriorDiscoveries(topicID) {
+		if block := BuildPriorDiscoveriesBlock(sessionID, subStep); block != "" {
+			resolved = block + "\n\n---\n\n" + resolved
+		}
 	}
 	return resolved
 }

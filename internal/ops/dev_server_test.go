@@ -450,7 +450,13 @@ func TestDevServer_Start_ServiceNotFound(t *testing.T) {
 func TestDevServer_Stop_ByCommand(t *testing.T) {
 	t.Parallel()
 
-	ssh := &scriptSSH{queue: []scriptStep{{output: "stopped"}}}
+	// Two scripted responses: the kill command, then the post-stop
+	// port-free probe (v8.96). Empty probe output means the port is
+	// free, so the verification succeeds on the first poll.
+	ssh := &scriptSSH{queue: []scriptStep{
+		{output: "stopped"},
+		{output: ""}, // ss -tnlp returns nothing → port free
+	}}
 	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
 		DevServerParams{
 			Action:   "stop",
@@ -464,8 +470,8 @@ func TestDevServer_Stop_ByCommand(t *testing.T) {
 	if result.Running {
 		t.Errorf("expected Running=false after stop")
 	}
-	if len(ssh.calls) != 1 {
-		t.Fatalf("expected 1 ssh call, got %d", len(ssh.calls))
+	if len(ssh.calls) != 2 {
+		t.Fatalf("expected 2 ssh calls (kill + port-probe), got %d", len(ssh.calls))
 	}
 	cmd := ssh.calls[0].command
 	// Must include pkill with the derived first-token match AND fuser on the port.
@@ -480,6 +486,14 @@ func TestDevServer_Stop_ByCommand(t *testing.T) {
 	if !strings.Contains(cmd, "|| true") {
 		t.Errorf("expected '|| true' tolerance in stop command: %q", cmd)
 	}
+	// v8.96: post-stop port-free verification must run.
+	probeCmd := ssh.calls[1].command
+	if !strings.Contains(probeCmd, "ss -tnlp") || !strings.Contains(probeCmd, ":3000") {
+		t.Errorf("expected ss -tnlp port-3000 probe after kill: %q", probeCmd)
+	}
+	if !strings.Contains(result.Message, "Port 3000 is free") {
+		t.Errorf("message must report verified port-free state: %q", result.Message)
+	}
 }
 
 // TestStopDevServer_PkillMatchesSelf_Returns255_ClassifiedAsSuccess — the
@@ -492,7 +506,14 @@ func TestDevServer_Stop_ByCommand(t *testing.T) {
 // raw error.
 func TestStopDevServer_PkillMatchesSelf_Returns255_ClassifiedAsSuccess(t *testing.T) {
 	t.Parallel()
-	ssh := &scriptSSH{queue: []scriptStep{{output: "", err: errors.New("ssh apidev: exit status 255")}}}
+	// v8.96: the self-kill path now ALSO runs the post-stop port-free
+	// verification — the kill landed even if SSH dropped, so the port
+	// poll proves the listener is gone. Queue: kill (255), port-probe
+	// (empty = free).
+	ssh := &scriptSSH{queue: []scriptStep{
+		{output: "", err: errors.New("ssh apidev: exit status 255")},
+		{output: ""},
+	}}
 	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
 		DevServerParams{
 			Action:   "stop",
@@ -509,11 +530,13 @@ func TestStopDevServer_PkillMatchesSelf_Returns255_ClassifiedAsSuccess(t *testin
 	if result.Running {
 		t.Error("expected Running=false on self-kill")
 	}
-	if result.Reason != "ssh_self_killed" {
-		t.Errorf("expected Reason=ssh_self_killed, got %q", result.Reason)
-	}
-	if !strings.Contains(result.Message, "SSH session") {
-		t.Errorf("message must explain SSH self-kill: %q", result.Message)
+	// After v8.96: when port is supplied, the port-free verification
+	// supersedes the ssh_self_killed narrative — the user gets the
+	// stronger guarantee (the port is verifiably free), not just the
+	// hand-wavy "SSH session dropped, trust me." Reason is cleared on
+	// the verified-free path.
+	if !strings.Contains(result.Message, "Port 3000 is free") {
+		t.Errorf("post-self-kill message must report verified port-free state: %q", result.Message)
 	}
 }
 
@@ -544,7 +567,11 @@ func TestStopDevServer_GenuineSSHFailure_PropagatesError(t *testing.T) {
 // fallback filtering $$ / $PPID for older procps on busybox.
 func TestStopDevServer_PkillCommandIncludesIgnoreAncestors(t *testing.T) {
 	t.Parallel()
-	ssh := &scriptSSH{queue: []scriptStep{{output: "stopped"}}}
+	// v8.96: post-stop also probes the port; queue an empty probe.
+	ssh := &scriptSSH{queue: []scriptStep{
+		{output: "stopped"},
+		{output: ""},
+	}}
 	_, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
 		DevServerParams{
 			Action:   "stop",
@@ -561,6 +588,90 @@ func TestStopDevServer_PkillCommandIncludesIgnoreAncestors(t *testing.T) {
 	}
 	if !strings.Contains(cmd, "pgrep") {
 		t.Errorf("stop command must carry pgrep fallback for older procps: %q", cmd)
+	}
+}
+
+// TestStopDevServer_PortFreesAfterPolling — v8.96. Listener lingers on
+// the port for one poll cycle (SO_REUSEADDR delay), then releases.
+// The stop call must wait it out and then return success — NOT race
+// the OS reaper and leave the next start to fail with "address in use."
+//
+// Queue: kill, probe-1 returns a listener, probe-2 empty.
+func TestStopDevServer_PortFreesAfterPolling(t *testing.T) {
+	t.Parallel()
+	ssh := &scriptSSH{queue: []scriptStep{
+		{output: "stopped"},
+		{output: "LISTEN 0 511 *:3000 *:* users:((\"node\",pid=1234,fd=20))"},
+		{output: ""}, // freed on second poll
+	}}
+	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
+		DevServerParams{
+			Action:   "stop",
+			Hostname: "apidev",
+			Command:  "npm run start:dev",
+			Port:     3000,
+		})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(result.Message, "Port 3000 is free") {
+		t.Errorf("expected verified-free message after polling, got %q", result.Message)
+	}
+	if result.Reason == "port_still_bound" {
+		t.Error("port that frees on second poll must NOT escalate to port_still_bound")
+	}
+	if len(ssh.calls) < 3 {
+		t.Errorf("expected ≥3 ssh calls (kill + 2 probes), got %d", len(ssh.calls))
+	}
+}
+
+// TestStopDevServer_PortStillBoundAfterEscalation — v8.96. Listener
+// refuses to release even after SIGKILL escalation. The stop call MUST
+// surface a structured failure (Reason=port_still_bound) so the caller
+// knows not to immediately re-start; if the agent silently hits "addr
+// in use" on next start, it invents a workaround and ships it as a
+// false gotcha. The error message must explicitly tell the agent NOT
+// to ship a manual pkill workaround in the recipe.
+func TestStopDevServer_PortStillBoundAfterEscalation(t *testing.T) {
+	t.Parallel()
+	stuck := scriptStep{output: "LISTEN 0 511 *:3000 *:* users:((\"node\",pid=1234,fd=20))"}
+	// Many stuck probes — the poll loop keeps firing until budget exhausts.
+	queue := make([]scriptStep, 0, 42)
+	queue = append(queue, scriptStep{output: "stopped"})
+	for range 20 {
+		queue = append(queue, stuck)
+	}
+	queue = append(queue, scriptStep{output: ""}) // SIGKILL escalation
+	for range 20 {
+		queue = append(queue, stuck) // still stuck after escalation
+	}
+	ssh := &scriptSSH{queue: queue}
+	result, err := ExecuteDevServer(context.Background(), ssh, mockClientWithServices("apidev"), "p1",
+		DevServerParams{
+			Action:   "stop",
+			Hostname: "apidev",
+			Command:  "npm run start:dev",
+			Port:     3000,
+		})
+	if err != nil {
+		t.Fatalf("port-stuck must surface as structured result, not error: %v", err)
+	}
+	if result.Reason != "port_still_bound" {
+		t.Errorf("expected Reason=port_still_bound, got %q (msg: %s)", result.Reason, result.Message)
+	}
+	if !strings.Contains(result.Message, "do NOT add a manual pkill workaround") {
+		t.Errorf("message must explicitly warn against shipping a workaround as a recipe gotcha: %q", result.Message)
+	}
+	// SIGKILL escalation must have been attempted.
+	sawSIGKILL := false
+	for _, c := range ssh.calls {
+		if strings.Contains(c.command, "fuser -k -KILL") {
+			sawSIGKILL = true
+			break
+		}
+	}
+	if !sawSIGKILL {
+		t.Error("port-stuck must trigger SIGKILL escalation via `fuser -k -KILL`")
 	}
 }
 
@@ -638,9 +749,11 @@ func TestDevServer_Logs_ReturnsTail(t *testing.T) {
 func TestDevServer_Restart_IsStopThenStart(t *testing.T) {
 	t.Parallel()
 
-	// stop + spawn + probe + logTail
+	// v8.96: stop now also runs a port-free probe before returning, so
+	// the call sequence is: kill + port-probe + spawn + probe + logTail.
 	ssh := &scriptSSH{queue: []scriptStep{
-		{output: "stopped"},                      // stop phase
+		{output: "stopped"},                      // stop kill
+		{output: ""},                             // post-stop port-free probe (empty = free)
 		{output: "zcp-dev-server-spawned pid=1"}, // bg spawn ack
 		{output: "OK 204 500"},                   // probe (204 also counts as ready)
 		{output: "ok"},                           // log tail
@@ -665,15 +778,19 @@ func TestDevServer_Restart_IsStopThenStart(t *testing.T) {
 	if result.HealthStatus != 204 {
 		t.Errorf("expected HealthStatus=204, got %d", result.HealthStatus)
 	}
-	if len(ssh.calls) != 4 {
-		t.Fatalf("expected 4 SSH calls (stop + spawn + probe + tail), got %d", len(ssh.calls))
+	if len(ssh.calls) != 5 {
+		t.Fatalf("expected 5 SSH calls (kill + port-probe + spawn + probe + tail), got %d", len(ssh.calls))
 	}
-	// First call is the stop phase.
+	// First call is the stop kill.
 	if !strings.Contains(ssh.calls[0].command, "pkill") {
 		t.Errorf("expected first call to be stop (pkill), got %q", ssh.calls[0].command)
 	}
-	// Second call is the background spawn.
-	if !ssh.calls[1].background {
+	// Second call is the v8.96 post-stop port-free probe.
+	if !strings.Contains(ssh.calls[1].command, "ss -tnlp") {
+		t.Errorf("expected second call to be the port-free probe (ss -tnlp), got %q", ssh.calls[1].command)
+	}
+	// Third call is the background spawn.
+	if !ssh.calls[2].background {
 		t.Error("spawn call in restart must use ExecSSHBackground")
 	}
 }

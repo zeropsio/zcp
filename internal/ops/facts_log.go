@@ -32,6 +32,26 @@ var knownFactTypes = map[string]bool{
 	FactTypeCrossCodebaseContract: true,
 }
 
+// Fact scope values. v8.96 §6.1: Scope is orthogonal to Type and routes
+// the fact between the readmes-writer subagent (content lane) and downstream
+// dispatch briefs (delegation lane). Default ("") preserves pre-v8.96
+// behavior — writer reads, downstream subagents do not.
+const (
+	FactScopeContent    = "content"
+	FactScopeDownstream = "downstream"
+	FactScopeBoth       = "both"
+)
+
+// knownScopes guards against typos like "downsteam" silently defaulting
+// to content-scope (writer would read, downstream subagents would skip).
+// Empty string is accepted — that's the legacy content-only path.
+var knownScopes = map[string]bool{
+	"":                  true,
+	FactScopeContent:    true,
+	FactScopeDownstream: true,
+	FactScopeBoth:       true,
+}
+
 // FactRecord is one append-only entry in the deploy facts log. The agent
 // writes these at the moment of freshest knowledge (when a fix is applied,
 // a platform behavior is observed, a contract binding is established); the
@@ -46,6 +66,10 @@ type FactRecord struct {
 	FailureMode string `json:"failureMode,omitempty"`
 	FixApplied  string `json:"fixApplied,omitempty"`
 	Evidence    string `json:"evidence,omitempty"`
+	// Scope (v8.96 §6.1) routes the fact between the writer subagent
+	// (content lane) and downstream dispatch briefs (delegation lane).
+	// Empty defaults to FactScopeContent (pre-v8.96 behavior).
+	Scope string `json:"scope,omitempty"`
 }
 
 // FactLogPath returns the canonical facts-log path for a session. Lives in
@@ -67,6 +91,9 @@ func AppendFact(path string, rec FactRecord) error {
 	}
 	if !knownFactTypes[rec.Type] {
 		return fmt.Errorf("fact record: unknown fact type %q (valid: gotcha_candidate, ig_item_candidate, verified_behavior, platform_observation, fix_applied, cross_codebase_contract)", rec.Type)
+	}
+	if !knownScopes[rec.Scope] {
+		return fmt.Errorf("fact record: unknown scope %q (valid: content, downstream, both)", rec.Scope)
 	}
 	if strings.TrimSpace(rec.Title) == "" {
 		return fmt.Errorf("fact record: title is required")

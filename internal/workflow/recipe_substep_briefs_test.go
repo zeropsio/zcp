@@ -222,7 +222,7 @@ func TestSubStepGuide_InitCommandsResponse_ContainsSubagentBrief(t *testing.T) {
 	// buildSubStepGuide is what feeds resp.Current.DetailedGuide when the
 	// agent is in the named substep. Here we simulate "current substep =
 	// subagent" — the state after complete substep=init-commands advances.
-	got := rs.buildSubStepGuide(RecipeStepDeploy, SubStepSubagent)
+	got := rs.buildSubStepGuide(RecipeStepDeploy, SubStepSubagent, "")
 	if got == "" {
 		t.Fatal("expected non-empty sub-step guide for (deploy, subagent)")
 	}
@@ -336,7 +336,7 @@ func TestSubStepGuide_FeatureSweepStageResponse_ContainsContentAuthoringBrief(t 
 	plan := fixtureForShape(ShapeDualRuntimeShowcase)
 	rs := &RecipeState{Plan: plan, Tier: RecipeTierShowcase}
 
-	got := rs.buildSubStepGuide(RecipeStepDeploy, SubStepReadmes)
+	got := rs.buildSubStepGuide(RecipeStepDeploy, SubStepReadmes, "")
 	if got == "" {
 		t.Fatal("expected non-empty sub-step guide for (deploy, readmes)")
 	}
