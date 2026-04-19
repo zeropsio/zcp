@@ -104,7 +104,19 @@ func handleRecipeComplete(ctx context.Context, engine *workflow.Engine, client p
 			"Describe what was accomplished")), nil, nil
 	}
 
-	checker := buildRecipeStepChecker(ctx, input.Step, projectID, stateDir, schemaCache, engine.KnowledgeProvider())
+	// v8.95: resolve the active session's facts-log path lazily so the
+	// content-manifest completeness sub-check can cross-reference recorded
+	// FactRecord.Titles against manifest entries. Captured by reference —
+	// the closure runs when deploy-step checks execute, by which time the
+	// engine has a stable session ID.
+	factsLogPathFn := func() string {
+		sid := engine.SessionID()
+		if sid == "" {
+			return ""
+		}
+		return ops.FactLogPath(sid)
+	}
+	checker := buildRecipeStepChecker(ctx, input.Step, projectID, stateDir, schemaCache, engine.KnowledgeProvider(), factsLogPathFn)
 
 	var resp *workflow.RecipeResponse
 	var err error

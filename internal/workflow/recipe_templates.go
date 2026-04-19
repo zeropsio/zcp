@@ -169,7 +169,7 @@ func GenerateEnvREADME(plan *RecipePlan, envIndex int) string {
 		b.WriteString("- Every service is sized for a single developer / agent working alone.\n")
 		b.WriteString("- Managed services (DB, cache, broker, storage, search) run single-replica; no HA, no redundancy.\n")
 		b.WriteString("- If you need higher availability, stronger DB durability, or replicated runtimes, promote to the next tier rather than hand-tuning this one.\n")
-		b.WriteString("- Data persists across tier promotions because service hostnames stay stable — you can iterate here and move up without rebuilding the database from scratch.\n\n")
+		b.WriteString("- Each tier's `import.yaml` declares a distinct `project.name`, so deploying a later-tier template creates a NEW Zerops project. Service state (DB rows, cache entries, stored files) does NOT carry across tiers by default — promote by first exporting data from this tier's project and importing into the next, or re-seed in the new project.\n\n")
 	} else {
 		b.WriteString("## What changes vs the adjacent tier\n\n")
 		b.WriteString(envDiffFromPrevious(envIndex))
@@ -233,10 +233,10 @@ func envAudience(envIndex int) string {
 			"  - single-tenant SaaS with moderate daily users,\n" +
 			"  - internal tools for an organization,\n" +
 			"  - a minimum-viable production for an early-stage product.\n" +
-			"- Runtime runs one container (scaled vertically for cost); DB and cache are single-replica.\n" +
+			"- Runtime services run at `minContainers: 2` (scaled vertically for cost); DB and cache are single-replica and run in `mode: NON_HA`.\n" +
 			"- Daily backups are retained per the recipe's backup policy.\n" +
-			"- Expect brief downtime on every deploy — there is no HA replica to absorb traffic while the new container starts.\n" +
-			"- Best fit: budget-constrained production where occasional 30-60s downtime windows during deploy are acceptable."
+			"- Rolling deploys are graceful when `readinessCheck` is configured — one replica keeps serving while the other rolls. DB/cache remain NON_HA, so node-level failures incur downtime until the platform restarts the affected instance.\n" +
+			"- Best fit: budget-constrained production where occasional node-failure downtime is tolerable but routine deploys must not drop traffic."
 	case 5:
 		return "- Production traffic that must survive node failures, rolling deploys, and transient platform incidents with **zero visible downtime**.\n" +
 			"- Runtime runs `minContainers: 2` behind the L7 balancer; the balancer drains one container while the other serves.\n" +
@@ -276,13 +276,13 @@ func envDiffFromPrevious(envIndex int) string {
 	case 4:
 		return "vs the stage tier:\n" +
 			"- Managed services scale up where throughput matters — DB container size grows, cache memory allocation grows, search engine index capacity grows.\n" +
-			"- Runtime services stay at `minContainers: 1` but are sized for real traffic.\n" +
-			"- Deploys still incur downtime — no HA replicas to absorb traffic.\n" +
+			"- Runtime services run at `minContainers: 2` — the second replica provides redundancy during rolling deploys so a slow-starting new container doesn't starve traffic.\n" +
+			"- DB and cache remain single-replica (`mode: NON_HA`) — node-level failures can still cause a brief outage until the platform restarts the affected instance.\n" +
 			"- Backups become meaningful at this tier — daily snapshots of DB and storage are retained per the recipe's backup policy.\n" +
 			"- Same `zerops.yaml`, same setup name — the tier difference is all in `import.yaml` sizing."
 	case 5:
 		return "vs the small production tier:\n" +
-			"- Every runtime `minContainers` flips to `2` so rolling deploys survive without visible downtime.\n" +
+			"- `minContainers: 2` is already in place at Small Production — the HA-distinct change is `mode: HA` on DB and cache (automatic failover on node failure) and tighter readiness-probe windows.\n" +
 			"- DB moves to `mode: HA` replication.\n" +
 			"- Cache moves to HA replication.\n" +
 			"- Object storage gets redundancy built into its managed type.\n" +
@@ -300,9 +300,9 @@ func envPromotionPath(envIndex int) string {
 	switch envIndex {
 	case 0:
 		return "To move from AI Agent to Remote (CDE):\n" +
-			"- Deploy the `1 — Remote (CDE)/import.yaml` into your Zerops project (or click the deploy button for that tier).\n" +
-			"- The dev container upgrades to the CDE toolchain; managed services stay put.\n" +
-			"- Existing data in DB / cache / storage persists across the tier bump because hostnames are identical.\n" +
+			"- Deploy the `1 — Remote (CDE)/import.yaml` via the Zerops dashboard or the deploy button (this provisions a new project for the Remote tier; it does NOT modify your AI-Agent tier project).\n" +
+			"- The dev container in the new project ships the CDE toolchain; the managed-service set stays the same shape, but the containers are separate from this tier's.\n" +
+			"- Each tier's YAML declares a distinct `project.name` suffix (this tier's ends `-agent`, Remote's ends `-remote`). Service hostnames match by convention, but the containers are separate — if you need data carry-over, export from this tier's project before provisioning Remote; otherwise plan to re-seed.\n" +
 			"- Handoff cost: minutes — no code changes, no deploy ceremony."
 	case 1:
 		return "From CDE to Local is usually a step sideways, not up:\n" +
@@ -321,17 +321,17 @@ func envPromotionPath(envIndex int) string {
 			"- Deploy the `4 — Small Production/import.yaml`.\n" +
 			"- `zerops.yaml` itself does not change — same prod setup, same build + deploy commands.\n" +
 			"- Managed-service sizing grows: larger DB, more cache memory, bigger search index.\n" +
-			"- Runtime container stays at `minContainers: 1`.\n" +
+			"- Runtime services run at `minContainers: 2` — one replica keeps serving while the other rolls during a deploy.\n" +
 			"- First tier where the recipe's backup policy matters — verify the daily DB snapshot is active.\n" +
-			"- Plan for brief deploy-time downtime windows."
+			"- Configure `deploy.readinessCheck` on runtime services before this promotion — the rolling-deploy behavior at `minContainers: 2` assumes it; without readiness gating, traffic can reach a not-yet-ready new replica during rollover."
 	case 4:
 		return "From Small Production to Highly-available Production:\n" +
 			"- Deploy the `5 — Highly-available Production/import.yaml`.\n" +
-			"- Runtime `minContainers` flips to `2` so rolling deploys survive zero-downtime.\n" +
-			"- DB and cache move to `mode: HA` replication — automatic failover.\n" +
-			"- Expect the promotion itself to incur a brief downtime window for the DB mode flip — schedule during low-traffic hours.\n" +
-			"- After the flip, subsequent deploys incur zero downtime.\n" +
-			"- Verify the worker codebase's queue-group configuration BEFORE the flip (double-processing risk on `minContainers > 1`)."
+			"- Runtime services continue at `minContainers: 2`; the HA-distinct change is `mode: HA` on DB and cache. Note: managed-service `mode` is immutable after creation, so the HA flip happens in a new project — the Small-Production services are not modified in place.\n" +
+			"- Automatic failover on DB and cache once the HA project is live.\n" +
+			"- Expect the cutover from the Small-Production project to the HA project to involve a data export/import — schedule during low-traffic hours and plan the DNS/client swap.\n" +
+			"- Once the HA project is serving, subsequent deploys within it are graceful by the same rolling mechanics as Small Production.\n" +
+			"- Verify the worker codebase's queue-group configuration BEFORE the cutover (double-processing risk on `minContainers > 1`, which already applies at Small Production)."
 	}
 	return ""
 }
@@ -367,12 +367,12 @@ func envOperationalConcerns(envIndex int) string {
 			"- Stage hits the same DB as dev on tiers 0-2 — schema migrations break backwards compatibility at your own risk.\n" +
 			"- See `zerops_knowledge topic=readiness-health-checks` for the three probe types and their failure semantics."
 	case 4:
-		return "- Deploys incur downtime because `minContainers: 1` — the single runtime container is replaced during deploy.\n" +
-			"- Schedule deploys during low-traffic windows or warn users.\n" +
+		return "- Rolling deploys at `minContainers: 2` keep one replica serving while the other rolls, but traffic can still land on a not-yet-ready replica unless `readinessCheck` is configured on runtime services — add `deploy.readinessCheck` with an `httpGet` probe to gate traffic handoff.\n" +
+			"- Schedule any `mode`-related changes (HA promotion, managed-service mode flips) during low-traffic windows — those require a new project and a data cutover, unlike sizing changes.\n" +
 			"- Backups matter: verify the daily DB snapshot policy is active.\n" +
 			"- Test a restore at least once before you have an incident.\n" +
 			"- Keep `zerops_logs` windows narrow to control retention cost.\n" +
-			"- Cache is single-replica — a cache restart flushes warm data. Design the app to tolerate cold cache."
+			"- Cache is single-replica (`mode: NON_HA`) — a cache restart flushes warm data. Design the app to tolerate cold cache."
 	case 5:
 		return "- Rolling deploys are zero-downtime BUT require the application to handle SIGTERM correctly.\n" +
 			"- Consumers must drain in-flight work before exit — see the worker codebase's README §Gotchas for the concrete drain sequence.\n" +

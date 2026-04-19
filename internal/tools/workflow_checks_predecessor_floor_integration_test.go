@@ -132,7 +132,7 @@ func TestCheckRecipeGenerate_ShowcaseFloor_DualRuntime_MixedPassFail(t *testing.
 	// checkRecipeDeployReadmes) — not at generate, because v14 defers
 	// README writing until after verify-stage so the gotchas section
 	// can narrate lived debug experience.
-	checker := checkRecipeDeployReadmes(stateDir, kp)
+	checker := checkRecipeDeployReadmes(stateDir, kp, nil)
 	result, err := checker(context.Background(), plan, testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -258,7 +258,7 @@ func TestCheckRecipeGenerate_ShowcaseFloor_SeparateCodebaseWorker(t *testing.T) 
 	// v14: predecessor-floor runs at the deploy step via
 	// checkRecipeDeployReadmes, which iterates both appTargets and
 	// workerTargets for the floor loop.
-	checker := checkRecipeDeployReadmes(stateDir, kp)
+	checker := checkRecipeDeployReadmes(stateDir, kp, nil)
 	result, err := checker(context.Background(), plan, testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

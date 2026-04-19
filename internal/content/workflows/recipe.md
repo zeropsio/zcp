@@ -984,13 +984,21 @@ For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appde
 > exit $FAIL
 > ```
 >
-> Run via `bash -c '...'` (or save to a temp script and invoke it) on the zcp side against the mount. **If FAIL=1, fix the specific issue reported in your code and re-run the ENTIRE script until it exits 0. Do NOT return to the main agent until all assertions pass.**
+> Run via `bash -c '...'` directly, OR save to a scratch file OUTSIDE the codebase tree (e.g. `/tmp/zcp-preship-$$.sh`) and invoke it from there. NEVER save it under `/var/www/{hostname}/` — files committed to the codebase ship to the porter's clone, and assertions about "no README.md at generate-complete" are meaningless outside recipe authoring. **If FAIL=1, fix the specific issue reported in your code and re-run the ENTIRE script until it exits 0. Do NOT return to the main agent until all assertions pass.**
 >
 > Cite the relevant `zerops_knowledge` guide when applying a fix — `env-var-model` for self-shadow, `http-support` for 0.0.0.0 bind + trust proxy, `object-storage` for forcePathStyle. Do NOT invent mental models; follow the guide's framing.
 >
 > Each time an assertion fails and you fix it, call `zerops_record_fact type=fix_applied` so the content-authoring sub-agent later classifies the event correctly as a scaffold decision, NOT a platform gotcha. A self-inflicted bug you caught before ship is not a porter-facing trap.
 >
 > As new recurrent traps surface in future runs, this list will grow. Each added assertion prevents the next recipe from repeating a runtime incident that already cost time once.
+>
+> ### Committed-artifact prohibition (v8.95)
+>
+> The pre-ship script above runs ephemerally. No artifact from pre-ship verification — script file, results log, assertion helper — may remain in the codebase at generate-complete. A `{hostname}_scaffold_artifact_leak` check walks each codebase at generate-complete and fails on `scripts/*.sh`, `scripts/*.py`, `verify/*`, `assert/*`, `preflight/*`, `_scaffold*`, or `scaffold-*` entries that are NOT referenced by the codebase's `zerops.yaml` (via `run.start`, `run.prepareCommands`, `build.buildCommands`, `build.prepareCommands`, or raw-YAML substring match on `initCommands` or any unmodeled field).
+>
+> If you need more than ~20 assertions, split into 2–3 separate `bash -c` or `ssh` invocations. Do NOT persist them as a script file inside the codebase.
+>
+> Legitimate `scripts/*.sh` files used at runtime (e.g. a `healthcheck.sh` referenced from `run.start`) are fine — the check confirms the reference before failing. A script referenced by `zerops.yaml` is platform code, not scaffold-phase temp.
 >
 > **Reporting back:** return a bulleted list of the files you wrote and the env var names you wired for each managed service. **Include the exit code of the pre-ship self-verification script** — it must be 0. Do not claim you implemented any features. You didn't. If your return value makes the main agent think step 4b is already done, the brief was not followed.
 
@@ -2182,7 +2190,7 @@ After the sub-step completes, call the full deploy-step completion. The deploy-s
 When the main agent delegates content authoring to a sub-agent, that sub-agent is bound by the same rules as every other recipe sub-agent. The main agent holds workflow state; the writer's job is narrow, scoped to this brief.
 
 **Permitted tools:**
-- File ops: `Read`, `Edit`, `Write`, `Grep`, `Glob` against the SSHFS-mounted content paths named in this brief
+- File ops: `Read`, `Edit`, `Write`, `Grep`, `Glob` against the SSHFS-mounted content paths named in this brief AND the single manifest path `/var/www/ZCP_CONTENT_MANIFEST.json` (see §"Return contract: content manifest" below)
 - `Bash` — but ONLY via `ssh <hostname> "<command>"` patterns, and only when strictly needed (most work is file-local)
 - `mcp__zerops__zerops_knowledge` — on-demand platform knowledge queries (MANDATORY consultation per the Citation Map below)
 - `mcp__zerops__zerops_logs` — read container logs if you need to verify a gotcha against real output
@@ -2216,6 +2224,37 @@ Your job is to avoid all three by writing against reader-facing tests, not autho
 - Platform guides via `zerops_knowledge topic=<id>`. Call on demand — see the Citation Map below for which topics map to which guides.
 
 **Inputs you do NOT have**: the run transcript, the main agent's context, any memory of what went wrong. If you want to know what happened during deploy, **read the facts log** and the **workspace manifest**.
+
+---
+
+### Return contract: content manifest (MANDATORY)
+
+Before returning from this dispatch, Write a file at `/var/www/ZCP_CONTENT_MANIFEST.json` with this exact shape:
+
+```json
+{
+  "version": 1,
+  "facts": [
+    {
+      "fact_title": "<exact title from facts-log FactRecord.Title>",
+      "classification": "invariant|intersection|framework-quirk|library-meta|scaffold-decision|operational|self-inflicted",
+      "routed_to": "apidev-gotcha|apidev-ig|apidev-claude-md|apidev-zerops-yaml-comment|appdev-gotcha|appdev-ig|appdev-claude-md|appdev-zerops-yaml-comment|workerdev-gotcha|workerdev-ig|workerdev-claude-md|workerdev-zerops-yaml-comment|env-yaml-comment|discarded",
+      "override_reason": ""
+    }
+  ]
+}
+```
+
+Rules (enforced by the `writer_content_manifest_*` checks at deploy-step completion):
+
+- **Every distinct `FactRecord.Title` in `$ZCP_FACTS_LOG` gets exactly one manifest entry.** Missing titles fail `writer_manifest_completeness`. An empty `"facts": []` while the facts log has entries is the deceptive-empty-manifest attack and fails the same check.
+- **Default-discard classifications** — `framework-quirk`, `library-meta`, `self-inflicted` — should route to `"discarded"` by default. Routing them anywhere else requires a non-empty `override_reason` explaining why the default doesn't apply (e.g. *"reframed from scaffold-internal bug to porter-facing symptom with concrete failure mode"*). Empty reason fails `writer_discard_classification_consistency`.
+- **Honesty**: a fact routed to `"discarded"` must not appear (as a Jaccard-similar stem, threshold 0.3) in any published gotcha bullet. If it does, `writer_manifest_honesty` fires and you must either remove the gotcha or update the manifest entry with the correct `routed_to` + `override_reason`.
+- Missing file or malformed JSON at `/var/www/ZCP_CONTENT_MANIFEST.json` fails `writer_content_manifest_exists` / `_valid`. The main agent CANNOT call `action="complete" step="deploy"` until these pass.
+
+The manifest is the only structured artifact the server-side checker sees — the writer's return prose is invisible to it. Treat the manifest as the contract, the prose as a courtesy to the main agent.
+
+**Permitted tools extension**: `Write` is permitted to the single path `/var/www/ZCP_CONTENT_MANIFEST.json` in addition to the content paths named above.
 
 ---
 

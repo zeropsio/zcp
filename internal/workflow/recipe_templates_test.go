@@ -2,8 +2,12 @@ package workflow
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // repoURL is the expected buildFromGit URL pattern.
@@ -1526,5 +1530,205 @@ func TestGenerateEnvImportYAML_DuplicateAppSecretDedup(t *testing.T) {
 	// APP_URL should still be present.
 	if !strings.Contains(yaml, "APP_URL:") {
 		t.Errorf("expected APP_URL to be present in YAML output")
+	}
+}
+
+// ── v8.95 §5.2 + §5.3 regression tests ───────────────────────────────────
+// These pin env-README prose against the YAML truth so the hardcoded
+// fabrications and minContainers drift v29 shipped can never drift back.
+
+// TestGenerateEnvREADME_NoDataPersistenceFabrication — §5.2.
+// Every env declares a distinct project.name suffix (see envSlugSuffix and
+// TestGenerateEnvImportYAML_ProjectNameSuffixes), so deploying a later tier
+// creates a NEW Zerops project. Claims that service state persists "because
+// hostnames stay stable" are factually wrong: separate projects have
+// separate state.
+func TestGenerateEnvREADME_NoDataPersistenceFabrication(t *testing.T) {
+	t.Parallel()
+
+	plan := testShowcasePlan()
+	forbidden := []string{
+		"data persists across tier promotions",
+		"persists across the tier bump",
+		"hostnames are identical",
+		"hostnames stay stable",
+		"persists because hostnames",
+	}
+	for i := 0; i < EnvTierCount(); i++ {
+		readme := GenerateEnvREADME(plan, i)
+		low := strings.ToLower(readme)
+		for _, phrase := range forbidden {
+			if strings.Contains(low, phrase) {
+				t.Errorf("env %d README contains fabricated phrase %q — each tier's import.yaml declares a distinct project.name suffix, so separate projects have separate state", i, phrase)
+			}
+		}
+	}
+}
+
+// TestEnvPromotionPath_NoFabricatedMechanism — §5.2.
+// Guards against inventing Zerops mechanisms that don't exist. An earlier
+// draft of v8.95 proposed citing `override-import` as the in-place promotion
+// mechanism; exhaustive grep across Zerops docs returned zero matches. Only
+// `zcli project project-import` (new project) and `zcli project
+// service-import` (services into existing project) are real.
+func TestEnvPromotionPath_NoFabricatedMechanism(t *testing.T) {
+	t.Parallel()
+
+	for i := 0; i < EnvTierCount()-1; i++ {
+		path := strings.ToLower(envPromotionPath(i))
+		for _, phrase := range []string{
+			"override-import",
+			"override_import",
+			"project-override",
+			"overrideimport",
+		} {
+			if strings.Contains(path, phrase) {
+				t.Errorf("envPromotionPath(%d) cites %q, which is NOT a real Zerops mechanism. Actual zcli commands: project-import (new) / service-import (additive). See references/cli/commands.mdx.", i, phrase)
+			}
+		}
+	}
+}
+
+// minContainersClaimRe extracts `minContainers: N` literal claims from prose.
+var minContainersClaimRe = regexp.MustCompile(`minContainers:\s*` + "`?" + `(\d+)`)
+
+// extractMinContainersClaimsFromProse returns every integer N that appears
+// as a `minContainers: N` (or “ `minContainers: N` “) claim in the given
+// prose. Fenced code blocks are stripped first so an illustrative YAML block
+// inside the README does not itself count as a prose claim.
+func extractMinContainersClaimsFromProse(s string) []int {
+	fenced := regexp.MustCompile("(?s)```[^`]*```")
+	stripped := fenced.ReplaceAllString(s, "")
+	var claims []int
+	for _, m := range minContainersClaimRe.FindAllStringSubmatch(stripped, -1) {
+		n, err := strconv.Atoi(m[1])
+		if err == nil {
+			claims = append(claims, n)
+		}
+	}
+	return claims
+}
+
+// declaredRuntimeMinContainers returns the set of minContainers values
+// declared on runtime services in env envIndex's generated import.yaml.
+// Returns {1} when no runtime service declares an explicit minContainers —
+// matches the Zerops default per the import-yml schema.
+func declaredRuntimeMinContainers(t *testing.T, plan *RecipePlan, envIndex int) map[int]bool {
+	t.Helper()
+	yamlContent := GenerateEnvImportYAML(plan, envIndex)
+	var shape struct {
+		Services []struct {
+			Type          string `yaml:"type"`
+			MinContainers *int   `yaml:"minContainers"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(yamlContent), &shape); err != nil {
+		t.Fatalf("env %d: yaml parse: %v", envIndex, err)
+	}
+	declared := map[int]bool{}
+	for _, svc := range shape.Services {
+		if IsRuntimeType(svc.Type) && svc.MinContainers != nil {
+			declared[*svc.MinContainers] = true
+		}
+	}
+	if len(declared) == 0 {
+		declared[1] = true
+	}
+	return declared
+}
+
+// TestGenerateEnvREADME_MinContainersMatchesYAML — §5.3.
+// Every `minContainers: N` claim in an env README must match either env N's
+// YAML OR env N+1's YAML. GenerateEnvREADME(plan, N) concatenates audience +
+// diff-from-previous + promotion-path + operational-concerns, and the
+// promotion-path section legitimately describes the TARGET tier. Union
+// semantics let legitimate cross-tier promotion-path prose pass while
+// catching the original defect class (claims drifted from YAML truth).
+func TestGenerateEnvREADME_MinContainersMatchesYAML(t *testing.T) {
+	t.Parallel()
+
+	plan := testShowcasePlan()
+	for i := 0; i < EnvTierCount(); i++ {
+		readme := GenerateEnvREADME(plan, i)
+		readmeClaims := extractMinContainersClaimsFromProse(readme)
+		if len(readmeClaims) == 0 {
+			continue
+		}
+		declared := declaredRuntimeMinContainers(t, plan, i)
+		if i < EnvTierCount()-1 {
+			for k := range declaredRuntimeMinContainers(t, plan, i+1) {
+				declared[k] = true
+			}
+		}
+		for _, claim := range readmeClaims {
+			if !declared[claim] {
+				vals := make([]int, 0, len(declared))
+				for k := range declared {
+					vals = append(vals, k)
+				}
+				t.Errorf("env %d README claims minContainers: %d but neither env %d nor env %d declares that value. Declared (union): %v",
+					i, claim, i, i+1, vals)
+			}
+		}
+	}
+}
+
+// TestEnvPromotionPath_CrossEnvClaimsMatchTargetYAML — §5.3.
+// Tighter per-section pin: every minContainers:N claim appearing in
+// envPromotionPath(i) must match env i+1's declared runtime minContainers
+// (promotion-path prose describes the TARGET tier explicitly by name).
+func TestEnvPromotionPath_CrossEnvClaimsMatchTargetYAML(t *testing.T) {
+	t.Parallel()
+
+	plan := testShowcasePlan()
+	for i := 0; i < EnvTierCount()-1; i++ {
+		path := envPromotionPath(i)
+		claims := extractMinContainersClaimsFromProse(path)
+		if len(claims) == 0 {
+			continue
+		}
+		declared := declaredRuntimeMinContainers(t, plan, i+1)
+		for _, claim := range claims {
+			if !declared[claim] {
+				vals := make([]int, 0, len(declared))
+				for k := range declared {
+					vals = append(vals, k)
+				}
+				t.Errorf("envPromotionPath(%d) claims minContainers: %d for target env %d, but env %d's yaml declares %v",
+					i, claim, i+1, i+1, vals)
+			}
+		}
+	}
+}
+
+// TestGenerateEnvImportYAML_MinContainers_GroundTruth is an executable
+// record of the actual minContainers values each env declares for runtime
+// services. Serves as a living reference for reviewers auditing §5.3 edits
+// and as a failure-forward pin — if GenerateEnvImportYAML ever flips env 4
+// or env 5 off minContainers: 2, this test fails immediately and the prose
+// edits must follow.
+func TestGenerateEnvImportYAML_MinContainers_GroundTruth(t *testing.T) {
+	t.Parallel()
+
+	plan := testShowcasePlan()
+	want := map[int]map[int]bool{
+		0: {1: true},
+		1: {1: true},
+		2: {1: true},
+		3: {1: true},
+		4: {2: true},
+		5: {2: true},
+	}
+	for i := 0; i < EnvTierCount(); i++ {
+		got := declaredRuntimeMinContainers(t, plan, i)
+		if len(got) != len(want[i]) {
+			t.Errorf("env %d: runtime minContainers set = %v, want %v", i, got, want[i])
+			continue
+		}
+		for k := range want[i] {
+			if !got[k] {
+				t.Errorf("env %d: runtime minContainers missing %d (got %v, want %v)", i, k, got, want[i])
+			}
+		}
 	}
 }

@@ -27,7 +27,14 @@ import (
 // section can narrate debug experience rather than speculation; the
 // validation moved with it. Generate is now purely a zerops.yaml +
 // scaffold sanity check — no README content is inspected there.
-func buildRecipeStepChecker(ctx context.Context, step, _, stateDir string, schemaCache *schema.Cache, kp knowledge.Provider) workflow.RecipeStepChecker {
+// factsLogPathFn resolves the canonical facts-log path for the active
+// recipe session. Passed into buildRecipeStepChecker by the handler so
+// deploy-step checks (the content-manifest completeness sub-check in
+// particular) can cross-reference the writer's manifest entries against
+// every distinct FactRecord.Title the agent recorded. Nil or an empty
+// string from the resolver → sub-check D passes with a skip note (test
+// context or no active session).
+func buildRecipeStepChecker(ctx context.Context, step, _, stateDir string, schemaCache *schema.Cache, kp knowledge.Provider, factsLogPathFn func() string) workflow.RecipeStepChecker {
 	switch step {
 	case workflow.RecipeStepGenerate:
 		var validFields *schema.ValidFields
@@ -38,7 +45,7 @@ func buildRecipeStepChecker(ctx context.Context, step, _, stateDir string, schem
 		}
 		return checkRecipeGenerate(stateDir, validFields, kp)
 	case workflow.RecipeStepDeploy:
-		return checkRecipeDeployReadmes(stateDir, kp)
+		return checkRecipeDeployReadmes(stateDir, kp, factsLogPathFn)
 	case workflow.RecipeStepFinalize:
 		return checkRecipeFinalizeFromState(stateDir)
 	}
@@ -219,6 +226,19 @@ func checkRecipeGenerateCodebase(projectRoot string, target workflow.RecipeTarge
 		})
 	}
 
+	// v8.95: scaffold-artifact leak check. Walks the codebase mount for
+	// common scaffold-phase residue (scripts/, verify/, preflight/,
+	// scaffold-*) that isn't referenced by the codebase's own zerops.yaml.
+	// v29's apidev shipped scripts/preship.sh because no rule forbade it;
+	// this turns the rule into a hard gate at generate-complete. Pass both
+	// the parsed doc (for structured reference scan) and the raw YAML (for
+	// substring fallback on unmodeled fields like initCommands).
+	rawYAMLData, _ := os.ReadFile(filepath.Join(ymlDir, "zerops.yaml"))
+	if rawYAMLData == nil {
+		rawYAMLData, _ = os.ReadFile(filepath.Join(ymlDir, "zerops.yml"))
+	}
+	checks = append(checks, checkScaffoldArtifactLeak(ymlDir, doc, string(rawYAMLData), hostname)...)
+
 	return checks
 }
 
@@ -249,7 +269,12 @@ func findCheck(checks []workflow.StepCheck, name string) *workflow.StepCheck {
 // kp is the knowledge provider used to pull the direct-predecessor
 // recipe's gotcha stems for the predecessor-floor check. Nil kp in test
 // contexts no-ops that check gracefully.
-func checkRecipeDeployReadmes(stateDir string, kp knowledge.Provider) workflow.RecipeStepChecker {
+//
+// factsLogPathFn (v8.95) resolves the writer subagent's session facts-log
+// path so the content-manifest completeness sub-check can cross-reference
+// every recorded FactRecord.Title against the manifest entries. Pass nil
+// for test contexts — sub-check D handles that by passing with a skip note.
+func checkRecipeDeployReadmes(stateDir string, kp knowledge.Provider, factsLogPathFn func() string) workflow.RecipeStepChecker {
 	return func(_ context.Context, plan *workflow.RecipePlan, _ *workflow.RecipeState) (*workflow.StepCheckResult, error) {
 		if plan == nil {
 			return nil, nil
@@ -297,6 +322,20 @@ func checkRecipeDeployReadmes(stateDir string, kp knowledge.Provider) workflow.R
 		// readme_gotcha_uniqueness") so the failure is scoped to the
 		// whole recipe, not any one codebase.
 		checks = append(checks, checkCrossReadmeGotchaUniqueness(readmesByHost)...)
+
+		// v8.95: content-manifest enforcement. The writer subagent emits
+		// ZCP_CONTENT_MANIFEST.json at the recipe root before returning;
+		// this check reads it and enforces classification consistency
+		// (DISCARD-class routing), manifest honesty (discarded facts
+		// must not appear as gotchas), and completeness (every distinct
+		// FactRecord.Title must have a manifest entry). factsLogPathFn
+		// resolves the session's facts-log path — nil/empty → sub-check
+		// D skips gracefully.
+		factsLogPath := ""
+		if factsLogPathFn != nil {
+			factsLogPath = factsLogPathFn()
+		}
+		checks = append(checks, checkWriterContentManifest(projectRoot, readmesByHost, factsLogPath)...)
 
 		allPassed := checksAllPassed(checks)
 		summary := "recipe deploy README checks passed"

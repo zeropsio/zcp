@@ -604,7 +604,7 @@ func TestCheckRecipeDeployReadmes_MissingFragments(t *testing.T) {
 	// deploy step, not generate.
 	writeFile(t, filepath.Join(appDir, "README.md"), "# App\nJust a basic readme.")
 
-	checker := checkRecipeDeployReadmes(stateDir, nil)
+	checker := checkRecipeDeployReadmes(stateDir, nil, nil)
 	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -690,7 +690,7 @@ zerops:
 `
 	writeFile(t, filepath.Join(appDir, "README.md"), readme)
 
-	checker := checkRecipeDeployReadmes(stateDir, nil)
+	checker := checkRecipeDeployReadmes(stateDir, nil, nil)
 	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -756,7 +756,7 @@ zerops:
 `
 	writeFile(t, filepath.Join(appDir, "README.md"), readme)
 
-	checker := checkRecipeDeployReadmes(stateDir, nil)
+	checker := checkRecipeDeployReadmes(stateDir, nil, nil)
 	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
