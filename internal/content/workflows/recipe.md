@@ -7,15 +7,17 @@ Create a Zerops recipe: a deployable reference implementation with 6 environment
 
 Fill in all research fields by examining the framework's documentation and existing recipes. The `ResearchData` and `RecipeTarget` input schemas on `zerops_workflow` describe every field — read the tool's own schema for the authoritative field list. This section carries only the decisions the schema alone cannot express.
 
-### What type of recipe?
+**Top-level `recipePlan` fields** (submit exactly these keys — the schema rejects unknown properties, so do NOT invent variants based on column headers or prose terms): `framework`, `tier` (`"hello-world"` / `"minimal"` / `"showcase"`), `slug`, `runtimeType` (e.g. `"nodejs@22"`), `buildBases`, `decisions`, `research`, `targets`, `features`. Optional: `envComments`, `projectEnvVariables`. The table below groups recipes by `tier` — the kind-label column ("1. Runtime hello world", etc.) is a mental model, NOT a field value.
 
-| Type | Slug pattern | Example | Key characteristic |
-|------|-------------|---------|-------------------|
-| **1. Runtime hello world** | `{runtime}-hello-world` | `go-hello-world` | Raw HTTP + SQL, no framework. Simplest possible app. |
-| **2a. Frontend static** | `{framework}-hello-world` | `react-hello-world` | Builds to HTML/CSS/JS, `run.base: static`. No DB. |
-| **2b. Frontend SSR** | `{framework}-hello-world` | `nextjs-hello-world` | SSR framework (Next.js, Nuxt, etc.) with DB. |
-| **3. Backend framework** | `{framework}-minimal` | `laravel-minimal` | Framework with ORM, migrations, templates. |
-| **4. Showcase** | `{framework}-showcase` | `laravel-showcase` | Full dashboard, 5+ feature sections, worker, all services. |
+### Recipe kinds (grouped by `tier`)
+
+| Kind | `tier` value | Slug pattern | Example | Key characteristic |
+|------|-------------|-------------|---------|-------------------|
+| **1. Runtime hello world** | `"hello-world"` | `{runtime}-hello-world` | `go-hello-world` | Raw HTTP + SQL, no framework. Simplest possible app. |
+| **2a. Frontend static** | `"hello-world"` | `{framework}-hello-world` | `react-hello-world` | Builds to HTML/CSS/JS, `run.base: static`. No DB. |
+| **2b. Frontend SSR** | `"hello-world"` | `{framework}-hello-world` | `nextjs-hello-world` | SSR framework (Next.js, Nuxt, etc.) with DB. |
+| **3. Backend framework** | `"minimal"` | `{framework}-minimal` | `laravel-minimal` | Framework with ORM, migrations, templates. |
+| **4. Showcase** | `"showcase"` | `{framework}-showcase` | `laravel-showcase` | Full dashboard, 5+ feature sections, worker, all services. |
 
 **Scaffold preservation (mandatory).** Preserve what the framework's official scaffold emits (`composer create-project laravel/laravel`, `npx create-next-app`, `rails new`, `django-admin startproject`). "Minimal" in the recipe slug refers to **external services** (no Redis, no S3, DB-only), NOT to the framework's feature surface. Stripping Vite / Tailwind / ESM from a Laravel or Next.js scaffold makes the recipe non-representative — a user running the same scaffold locally will have those files and will expect them to deploy. Keep them.
 
