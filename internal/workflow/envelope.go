@@ -1,0 +1,139 @@
+package workflow
+
+import "time"
+
+// StateEnvelope captures all state needed to (a) synthesize knowledge,
+// (b) produce the next-action plan. It is computed once per tool response
+// and embedded verbatim in the response payload. Any two envelopes that
+// serialize to the same JSON MUST produce the same synthesis — this is
+// the compaction-safety invariant.
+//
+// Serialization invariant: slices are sorted by stable keys (services by
+// hostname, attempts by time). encoding/json already sorts map keys
+// alphabetically, so plain json.Marshal is deterministic once slice order
+// is controlled at construction.
+type StateEnvelope struct {
+	Phase       Phase                    `json:"phase"`
+	Environment Environment              `json:"environment"`
+	SelfService *SelfService             `json:"selfService,omitempty"`
+	Project     ProjectSummary           `json:"project"`
+	Services    []ServiceSnapshot        `json:"services"`
+	WorkSession *WorkSessionSummary      `json:"workSession,omitempty"`
+	Bootstrap   *BootstrapSessionSummary `json:"bootstrap,omitempty"`
+	Recipe      *RecipeSessionSummary    `json:"recipe,omitempty"`
+	Generated   time.Time                `json:"generated"`
+}
+
+// Phase enumerates the lifecycle states the envelope can describe.
+type Phase string
+
+const (
+	PhaseIdle            Phase = "idle"
+	PhaseBootstrapActive Phase = "bootstrap-active"
+	PhaseDevelopActive   Phase = "develop-active"
+	PhaseDevelopClosed   Phase = "develop-closed-auto"
+	PhaseRecipeActive    Phase = "recipe-active"
+	PhaseCICDActive      Phase = "cicd-active"
+	PhaseExportActive    Phase = "export-active"
+)
+
+// SelfService names the ZCP host service when running in container environment.
+type SelfService struct {
+	Hostname string `json:"hostname"`
+}
+
+// ProjectSummary identifies the project the envelope describes.
+type ProjectSummary struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// ServiceSnapshot is one service's point-in-time state inside the envelope.
+type ServiceSnapshot struct {
+	Hostname      string         `json:"hostname"`
+	TypeVersion   string         `json:"typeVersion"`
+	RuntimeClass  RuntimeClass   `json:"runtimeClass"`
+	Status        string         `json:"status"`
+	Bootstrapped  bool           `json:"bootstrapped"`
+	Mode          Mode           `json:"mode,omitempty"`
+	Strategy      DeployStrategy `json:"strategy,omitempty"`
+	StageHostname string         `json:"stageHostname,omitempty"`
+}
+
+// RuntimeClass partitions services by how deploy + start behaviour differ.
+type RuntimeClass string
+
+const (
+	RuntimeDynamic     RuntimeClass = "dynamic"
+	RuntimeStatic      RuntimeClass = "static"
+	RuntimeImplicitWeb RuntimeClass = "implicit-webserver"
+	RuntimeManaged     RuntimeClass = "managed"
+	RuntimeUnknown     RuntimeClass = "unknown"
+)
+
+// Mode is the bootstrapped service's deploy mode in envelope terms.
+// Distinct from the untyped-string meta.Mode ("dev", "standard", "simple"):
+// envelope splits the dev half of a standard pair (ModeStandard) from its
+// stage half (ModeStage) so atoms can target one role without matching the
+// other. Dev-only services get ModeDev; simple-mode single services get
+// ModeSimple.
+type Mode string
+
+const (
+	ModeDev      Mode = "dev"
+	ModeStandard Mode = "standard"
+	ModeStage    Mode = "stage"
+	ModeSimple   Mode = "simple"
+)
+
+// DeployStrategy is the developer-chosen deploy mechanism. The string
+// values live in service_meta.go so existing untyped-string callers and
+// the envelope model share one vocabulary. Use the named type on
+// typed-surface code (envelope, plan) and plain strings on persistence.
+type DeployStrategy string
+
+// StrategyUnset is the sentinel for "no strategy chosen yet" — it has no
+// existing untyped counterpart because the old model conflated unset with
+// push-dev via EffectiveStrategy().
+const StrategyUnset DeployStrategy = "unset"
+
+// WorkSessionSummary mirrors the persistent WorkSession at envelope build time.
+type WorkSessionSummary struct {
+	Intent      string                   `json:"intent"`
+	Services    []string                 `json:"services"`
+	CreatedAt   time.Time                `json:"createdAt"`
+	ClosedAt    *time.Time               `json:"closedAt,omitempty"`
+	CloseReason string                   `json:"closeReason,omitempty"`
+	Deploys     map[string][]AttemptInfo `json:"deploys,omitempty"`
+	Verifies    map[string][]AttemptInfo `json:"verifies,omitempty"`
+}
+
+// AttemptInfo is a single deploy/verify record.
+type AttemptInfo struct {
+	At        time.Time `json:"at"`
+	Success   bool      `json:"success"`
+	Iteration int       `json:"iteration"`
+}
+
+// RecipeSessionSummary echoes the active recipe match when one exists.
+type RecipeSessionSummary struct {
+	Slug       string  `json:"slug"`
+	Confidence float64 `json:"confidence"`
+}
+
+// BootstrapSessionSummary mirrors the persistent BootstrapSession at envelope
+// build time. Populated only when a BootstrapSession file exists for the
+// current PID — its presence is the primary signal that atoms should target a
+// specific bootstrap route (recipe/classic/adopt).
+//
+// Step names the current bootstrap step the agent is working on (discover,
+// provision, generate, deploy, close) so atoms can scope themselves to a
+// single step. Empty string means "step not applicable" (used outside the
+// active-bootstrap conductor).
+type BootstrapSessionSummary struct {
+	Route       BootstrapRoute `json:"route"`
+	Step        string         `json:"step,omitempty"`
+	Intent      string         `json:"intent,omitempty"`
+	RecipeMatch *RecipeMatch   `json:"recipeMatch,omitempty"`
+	Closed      bool           `json:"closed,omitempty"`
+}
