@@ -16,6 +16,7 @@ title: "Bootstrap — recovery and iteration patterns"
 | App crashes: EADDRINUSE | Port conflict | Ensure app listens on the port declared in `zerops.yaml` |
 | App crashes: connection refused | Wrong DB / cache host | Compare `envVariables` mapping with discovered var names |
 | `/status`: "db: error" | Missing or wrong env var | Diff zerops.yaml `envVariables` against discovery output |
+| App sees stale env after zerops.yaml fix | Service-level `zerops_env` value shadows `run.envVariables` | `zerops_env action="delete"` for that key, then redeploy |
 | HTTP 502 | Subdomain not activated | `zerops_subdomain action="enable"` |
 | `curl` returns empty | App listens on localhost, not `0.0.0.0` | Set `HOST=0.0.0.0` in `envVariables` |
 | HTTP 500 | App error | `zerops_logs` + framework log files on the mount path |
