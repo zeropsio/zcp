@@ -54,6 +54,8 @@ func checkRecipeFinalize(outputDir string) workflow.RecipeStepChecker {
 		// would otherwise reach the published recipe.
 		checks = append(checks, checkAppREADMENoScaffoldTODOs(dir)...)
 
+		// v8.97 Fix 4: stamp surface-derived coupling hints.
+		checks = workflow.StampCoupling(checks)
 		allPassed := checksAllPassed(checks)
 		summary := "finalize checks passed"
 		if !allPassed {

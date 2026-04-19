@@ -53,6 +53,7 @@ const (
 	ErrGitPushRejected        = "GIT_PUSH_REJECTED"
 	ErrGitAuthFailed          = "GIT_AUTH_FAILED"
 	ErrSubagentMisuse         = "SUBAGENT_MISUSE"
+	ErrExportBlocked          = "EXPORT_BLOCKED"
 )
 
 // PlatformError carries a ZCP error code, message, and suggestion.

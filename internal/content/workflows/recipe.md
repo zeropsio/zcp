@@ -806,6 +806,16 @@ If you feel a need to call a forbidden tool, the brief is incomplete — stop, r
 
 **If the server rejects a call with `SUBAGENT_MISUSE`**: you are the cause. Do not retry with a different workflow name; do not call `bootstrap`. Return to your scoped task.
 
+<<<MANDATORY — TRANSMIT VERBATIM IN AGENT DISPATCH PROMPT>>>
+
+**File-op sequencing** — every Edit must be preceded by a Read of the same file in this session. The Edit tool enforces this. Hitting "File has not been read yet" and reactively Read+retry is trace pollution. Plan up front: before the first Edit, batch-Read every file you intend to modify. For scaffolder-created files (nest new, npm create vite, cargo new, etc.) Read each one once after the scaffolder returns and before any Edit.
+
+**Tool-use policy** — permitted tools: Read, Edit, Write, Grep, Glob on the SSHFS mount; Bash ONLY as `ssh {hostname} "..."`. Forbidden: zerops_workflow, zerops_import, zerops_env, zerops_deploy, zerops_subdomain, zerops_mount, zerops_verify. Violating any of these corrupts workflow state.
+
+**SSH-only executables** — NEVER `cd /var/www/{hostname} && <executable>` in Bash. ALWAYS `ssh {hostname} "cd /var/www && <executable>"`. Files via Write/Edit on the mount.
+
+<<<END MANDATORY>>>
+
 For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appdev/apidev/workerdev mounts, or any recipe with more than one codebase), writing every codebase sequentially in the main agent is slow. Dispatch scaffolding sub-agents in parallel, one per codebase — **with a strict brief that ships an intentionally bare health-dashboard-only skeleton.** Feature code is owned by a single feature sub-agent at deploy step 4b who writes API + frontend + worker as one unit so the contracts stay consistent. v10, v11, and v12 all shipped recurring API/frontend contract-mismatch bugs because parallel scaffold agents authored their halves of each feature independently; the single-author rule at step 4b eliminates the entire class.
 
 **Order of operations — scaffolds FIRST, main-agent work AFTER. This is the v14 order; do not fall back to v13.**
@@ -817,6 +827,14 @@ For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appde
 5. **README is NOT written during generate.** The scaffold sub-agent brief below explicitly says DO NOT write README.md. Any README content on the mounts at generate-complete time is wrong — delete it before completing. The `readmes` sub-step at the end of deploy is the only place READMEs are written, and by then the agent has lived through the debug rounds that make the gotchas section honest.
 
 **Concurrency — use the scaffold-dispatch idle window, don't just wait.** Dispatching three scaffold sub-agents and then sitting idle for 2-3 min until they return is wasted wall time. The scaffold sub-agent brief explicitly forbids scaffold agents from writing `zerops.yaml` — deploy config is main-agent territory — so these work streams are independent. The moment you dispatch the scaffolds, start drafting the zerops.yaml STRUCTURE for each codebase in parallel: runtime `base`, setup names (`dev` + `prod` + `worker` as applicable), `run.envVariables` using cross-service refs from the plan, `run.ports`, `healthCheck` where required. You have all of this from `plan.runtime.type`, `plan.targets[].ports`, `plan.targets[].setups`, and the managed-service list. Leave `buildCommands`, `cache`, and `deployFiles` as TODO placeholders — those still wait for smoke-test validation per step 4 above. When scaffolds return, merge their source output with your already-drafted zerops.yaml and fill the three smoke-test-dependent fields. This turns 2-3 min of idle wall into overlapped work without losing the smoke-test-before-buildCommands invariant that v14 locked in.
+
+### Constructing the Agent() dispatch prompt
+
+The brief you receive from the workflow may be 10-15 KB. You will compress, re-order, or add context when constructing the Agent tool's `prompt` parameter for dispatch. That compression is normal.
+
+**One exception**: blocks wrapped in `<<<MANDATORY — TRANSMIT VERBATIM IN AGENT DISPATCH PROMPT>>> ... <<<END MANDATORY>>>` must be included BYTE-IDENTICALLY in the dispatch prompt. Do not paraphrase, do not summarize, do not extract bullets. Copy the sentinels and everything between them as-is. Load-bearing rules keep getting dropped in compression — v21 lost the mount-as-write-surface preamble, v22 lost the NATS URL-embedded-creds forbid, v32 lost the Read-before-Edit rule across three scaffold subagents. The sentinels are the structural remedy: compress everything else freely, but never touch what sits between them.
+
+This rule applies to every subagent dispatch in this workflow — scaffold, feature, readmes writer, code-review. Apply it to your own paraphrase of the brief when you construct the Agent() prompt.
 
 **Scaffold sub-agent brief — include verbatim (edit only the codebase-specific names and service list from the plan):**
 
@@ -915,6 +933,71 @@ For dual-runtime and multi-codebase recipes (showcase Type 4 with separate appde
 > - CORS config, proxy rules, `types.ts` shared between codebases — the main agent resolves cross-codebase integration during verification
 >
 > **The dashboard you ship is one green-dot panel.** A reader looking at the deployed page should see five rows: `db • green`, `redis • green`, `nats • green`, `storage • green`, `search • green` (with the service names from the plan). That is the correct, expected, final output of the scaffold phase. The feature sub-agent at deploy step 4b builds every showcase section on top of this — owning API routes, frontend components, and worker payloads as a single coherent author — so the dashboard at close time is rich and feature-complete. If you are tempted to add a "small demo" or "minimal example" of any managed service, stop: that is the feature sub-agent's job.
+>
+> <<<MANDATORY — TRANSMIT VERBATIM IN AGENT DISPATCH PROMPT>>>
+>
+> ### Scaffold pre-flight — platform principles
+>
+> The Zerops platform imposes invariants that every service must honor. Framework scaffolders do not automatically satisfy them. Before pre-ship assertions run, walk this list. For each principle that applies to your codebase type:
+>
+> 1. Identify the framework's specific idiom that satisfies the principle (you just scaffolded the framework — you know its APIs).
+> 2. Verify the idiom is present in the scaffolded code. If absent, implement it.
+> 3. Record a fact with scope=both naming both the principle number AND the idiom used (for example: "Principle 1 satisfied via the framework's graceful-shutdown hook in the app-entry file"). The porting user learns which idiom their runtime needs.
+> 4. If the framework offers no idiom for a principle that applies, implement the behavior yourself AND record a fact explaining the implementation.
+>
+> Principles are absolute. Idioms are framework-specific and not listed here; the subagent translates.
+>
+> **Principle 1 — Graceful shutdown within thirty seconds**
+>
+> Applies to: any long-running service (API server, worker, scheduled job, subscription consumer).
+>
+> - **Platform constraint**: rolling deploys send a termination signal, wait up to thirty seconds, then force-kill. The service has that window to stop accepting new work, drain in-flight work, release external resources, and exit cleanly.
+> - **Symptom of violation**: mid-request five-hundreds responses during deploys; worker jobs processed but not acknowledged; database transactions left open; subscription messages redelivered on next replica.
+> - **Obligation**: on the termination signal, stop accepting new work, await completion of in-flight work, close long-lived connections (database, message broker, object store, search index, cache), and exit within thirty seconds. Translate into the framework's shutdown-hook or signal-handler idiom.
+>
+> **Principle 2 — Routable network binding**
+>
+> Applies to: any HTTP, WebSocket, or gRPC server.
+>
+> - **Platform constraint**: the L7 balancer routes to the container's pod IP. A server bound only to loopback is unreachable from the balancer.
+> - **Symptom of violation**: 502 Bad Gateway on every request; the service's own healthcheck passes from inside the container but the platform healthcheck fails immediately.
+> - **Obligation**: bind to all network interfaces (the wildcard address for the protocol in use) or to the container's advertised IP — never to loopback. Translate into the framework's listen-address option.
+>
+> **Principle 3 — Client-origin awareness behind a proxy**
+>
+> Applies to: any HTTP server that cares about the client IP, scheme, or host.
+>
+> - **Platform constraint**: the L7 balancer is a trusted single-hop reverse proxy. Without explicit proxy trust, the server sees the balancer as the client.
+> - **Symptom of violation**: rate-limits and audit logs attribute every request to the balancer IP; geo-IP and abuse detection fail; HTTPS-aware redirects mis-fire; CSRF origin checks reject legitimate requests.
+> - **Obligation**: configure the framework's proxy-trust or forwarded-header handling for exactly one upstream hop. Translate into the framework's trust-proxy or forwarded-header option.
+>
+> **Principle 4 — Competing-consumer semantics at replica count two or more**
+>
+> Applies to: any subscription-driven worker (message queue, event stream, pub/sub) that runs with minContainers at two or greater.
+>
+> - **Platform constraint**: with N replicas, each replica subscribes independently. Without competing-consumer semantics on the subscription, every message is processed N times.
+> - **Symptom of violation**: duplicate database rows; duplicate emails; double-charge; non-idempotent side effects fire N times per message.
+> - **Obligation**: enable the broker's competing-consumer mechanism on every subscription (queue group, consumer group, shared subscription, durable subscription, visibility timeout — the name varies by broker). If the broker does not support it, the worker must run at minContainers one and record a fact explaining the scaling constraint.
+>
+> **Principle 5 — Structured credential passing**
+>
+> Applies to: any client connecting to a service with generated credentials.
+>
+> - **Platform constraint**: generated passwords may contain URL-reserved characters (at-sign, hash, slash, question mark, percent, colon). Embedding in a scheme-user-pass-host URL silently drops credentials in some clients and fails parse in others.
+> - **Symptom of violation**: authentication failed despite credentials being correct in env vars; intermittent connect failures; library-specific quirks that look like network errors.
+> - **Obligation**: pass user and pass as structured client options (object, config struct, or separate parameters) rather than as URL components. If only a URL form is available, URL-encode the password before embedding.
+>
+> **Principle 6 — Stripped build-output root for static deploys**
+>
+> Applies to: any static or SPA deploy whose build output lives in a subdirectory (dist, build, public, and similar).
+>
+> - **Platform constraint**: the deployed tree's root becomes the served root. If build output sits inside a subdirectory and the tree is deployed as-is, the index file returns 404 and assets are reachable only under the subdirectory path.
+> - **Symptom of violation**: every request returns 404 or the fallback index; asset URLs in the served HTML point at subdirectory-prefixed paths.
+> - **Obligation**: in the zerops.yaml static deploy, strip the build-output directory prefix at deploy time (Zerops syntax: the build-dir path followed by a tilde suffix makes the directory's contents become the served root).
+>
+> For every principle that applies, both the scaffold pre-ship script and the feature subagent verify the implementation. A missing implementation blocks the pre-ship assertion. An implementation that is syntactically present but semantically wrong (a shutdown hook registered but never awaited) is caught by the close-step code review.
+>
+> <<<END MANDATORY>>>
 >
 > ### Pre-ship self-verification (MANDATORY — do not return to the main agent until all assertions pass)
 >
@@ -1589,6 +1672,35 @@ If you feel a need to call a forbidden tool, the brief is incomplete — stop, r
 
 **If the server rejects a call with `SUBAGENT_MISUSE`**: you are the cause. Do not retry with a different workflow name; do not call `bootstrap`. Return to your scoped task.
 
+<<<MANDATORY — TRANSMIT VERBATIM IN AGENT DISPATCH PROMPT>>>
+
+**File-op sequencing** — every Edit must be preceded by a Read of the same file in this session. The Edit tool enforces this. Hitting "File has not been read yet" and reactively Read+retry is trace pollution. Plan up front: before the first Edit, batch-Read every file you intend to modify. For files the scaffold subagent already wrote that you will extend, Read each one once before your first Edit.
+
+**Tool-use policy** — permitted tools: Read, Edit, Write, Grep, Glob on the SSHFS mount; Bash ONLY as `ssh {hostname} "..."`. Forbidden: zerops_workflow, zerops_import, zerops_env, zerops_deploy, zerops_subdomain, zerops_mount, zerops_verify. Violating any of these corrupts workflow state.
+
+**SSH-only executables** — NEVER `cd /var/www/{hostname} && <executable>` in Bash. ALWAYS `ssh {hostname} "cd /var/www && <executable>"`. Files via Write/Edit on the mount.
+
+<<<END MANDATORY>>>
+
+<<<MANDATORY — TRANSMIT VERBATIM IN AGENT DISPATCH PROMPT>>>
+
+### Feature pre-ship — sustain the platform principles
+
+The scaffold subagent recorded facts naming how each applicable platform principle was satisfied in the scaffolded code (graceful shutdown, routable bind, proxy awareness, competing-consumer, structured creds, stripped build root). Your job is to **not regress** those facts as you add features.
+
+For every new code path you author:
+
+- **New HTTP route or controller**: verify the parent server still binds to all interfaces (Principle 2) and still trusts the upstream proxy (Principle 3). You do not re-bind; you verify nobody mis-configured during refactoring.
+- **New long-lived resource (DB pool, broker client, cache client, file handle)**: verify it is closed by the existing graceful-shutdown hook (Principle 1). If not, extend the hook OR record a fact explaining the fire-and-forget decision.
+- **New subscription / consumer / stream listener**: verify the subscription uses the broker's competing-consumer mechanism (Principle 4). Without it, every replica processes every message.
+- **New external-service client that accepts credentials**: verify credentials are passed as structured options, not embedded in URL form (Principle 5).
+
+If you add code that violates any principle, fix it inline and record a fact with `scope="both"` naming the principle number, the idiom you used, and the code location. The scaffold subagent already recorded the happy-path facts; your facts capture extensions and regressions prevented.
+
+Do NOT re-enumerate the principle text here — the scaffold subagent brief is the authoritative source. If you are uncertain about a principle's intent, pull the scaffold brief via `zerops_workflow` step guidance and read it.
+
+<<<END MANDATORY>>>
+
 **Step 4b: Dispatch the feature sub-agent — enforced sub-step for Type 4 showcase**
 
 After the scaffold's health dashboard is deployed and every service dot is green, dispatch **ONE** framework-expert sub-agent as a single author that owns every feature section end-to-end: API routes, worker payloads, and frontend components as one coherent unit. This is where feature implementation happens. The scaffold at generate writes the health-dashboard-only skeleton (see `scaffold-subagent-brief`); the feature sub-agent writes **everything else**.
@@ -2081,6 +2193,16 @@ When the main agent delegates README writing to a sub-agent, that sub-agent is b
 
 If the server rejects a call with `SUBAGENT_MISUSE`, you are the cause. Return to writing the READMEs.
 
+<<<MANDATORY — TRANSMIT VERBATIM IN AGENT DISPATCH PROMPT>>>
+
+**File-op sequencing** — every Edit must be preceded by a Read of the same file in this session. The Edit tool enforces this. Hitting "File has not been read yet" and reactively Read+retry is trace pollution. For README/CLAUDE.md files you create from scratch, use Write (no Read required). When extending an existing file the scaffold or main agent already wrote, Read it once before your first Edit.
+
+**Tool-use policy** — permitted tools: Read, Edit, Write, Grep, Glob on the SSHFS mount; Bash ONLY as `ssh {hostname} "..."`. Forbidden: zerops_workflow, zerops_import, zerops_env, zerops_deploy, zerops_subdomain, zerops_mount, zerops_verify. Violating any of these corrupts workflow state.
+
+**SSH-only executables** — NEVER `cd /var/www/{hostname} && <executable>` in Bash. ALWAYS `ssh {hostname} "cd /var/www && <executable>"`. Files via Write/Edit on the mount.
+
+<<<END MANDATORY>>>
+
 **This is the `readmes` sub-step of deploy.** You land here after `verify-stage`, after every service is verified healthy on both dev and stage. READMEs are written now — not during generate — so the gotchas section narrates the debug rounds you just lived through. A speculative gotchas section written during generate is the root cause of the authenticity failures in v11/v12.
 
 Write **two files per codebase mount**: `README.md` and `CLAUDE.md`. They have different audiences and neither substitutes for the other:
@@ -2250,6 +2372,16 @@ When the main agent delegates content authoring to a sub-agent, that sub-agent i
 **File-op sequencing — Read before Edit (Claude Code constraint, NOT a Zerops rule):** every `Edit` call must be preceded by a `Read` of the same file in this session. The Edit tool enforces this; hitting "File has not been read yet" and reactively Read+retry is trace pollution that can leak into the published content as defensive prose. Most of your work is `Write`-from-scratch (READMEs, CLAUDE.md, the manifest); `Read` is needed only when extending an existing file the main agent or scaffold already authored.
 
 If the server rejects a call with `SUBAGENT_MISUSE`, you are the cause. Return to writing content.
+
+<<<MANDATORY — TRANSMIT VERBATIM IN AGENT DISPATCH PROMPT>>>
+
+**File-op sequencing** — every Edit must be preceded by a Read of the same file in this session. The Edit tool enforces this. Most of your work is Write-from-scratch (READMEs, CLAUDE.md, the manifest); Read is needed only when extending an existing file the main agent or scaffold already authored.
+
+**Tool-use policy** — permitted tools: Read, Edit, Write, Grep, Glob on the SSHFS mount; Bash ONLY as `ssh {hostname} "..."`. Forbidden: zerops_workflow, zerops_import, zerops_env, zerops_deploy, zerops_subdomain, zerops_mount, zerops_verify. Violating any of these corrupts workflow state.
+
+**SSH-only executables** — NEVER `cd /var/www/{hostname} && <executable>` in Bash. ALWAYS `ssh {hostname} "cd /var/www && <executable>"`. Files via Write/Edit on the mount.
+
+<<<END MANDATORY>>>
 
 ---
 
@@ -2818,17 +2950,23 @@ zerops_workflow action="complete" step="finalize" attestation="Comments provided
 </section>
 
 <section name="close">
-## Close — Verify (always) & Publish (only when asked)
+## Close
 
-Recipe creation is complete. The close step has THREE parts, run in order:
+Close has two sub-steps. Both are always autonomous — no user prompt gates either.
 
-1. **1a — Static code review sub-agent (ALWAYS run, regardless of publish request).** A framework-expert sub-agent reviews the code, reports findings, applies fixes. NO browser walk inside this sub-agent — it never calls `zerops_browser` or `agent-browser`.
-2. **1b — Main agent browser walk (ALWAYS run for showcase — skip for minimal).** After the sub-agent exits, the main agent performs the browser verification itself by calling the `zerops_browser` MCP tool (see Step 4c). This split is structural: browser work competes with dev processes and the sub-agent's tool calls for the zcp container's fork budget, and v5 proved that fork exhaustion kills everything in flight (the sub-agent's completed static review was nearly lost). Main agent runs single-threaded; `zerops_browser` auto-wraps lifecycle and auto-recovers from fork exhaustion.
-3. **2 — Export & publish (ONLY when the user explicitly asks).** If the user did not request publishing, stop after 1a + 1b and any fixes are applied.
+1. **code-review** — dispatch the code-review sub-agent, apply any fixes it recommends.
+2. **close-browser-walk** — main agent walks the deployed dev + stage URLs in a browser, confirming the features render.
 
-Do NOT skip 1a or 1b to save time. Do NOT publish without an explicit user request.
+Run both every time. v32 asked the user "should I run the review?" and when no reply came, skipped close entirely — do not repeat. If you are tempted to ask the user for permission before either sub-step, you are misreading this section; re-read.
 
-**Showcase close is an enforced sub-step gate.** For showcase recipes, close step complete is gated on BOTH `substep="code-review"` AND `substep="close-browser-walk"` attestations — the same shape as the deploy step's feature sub-agent gate. Attempting to call `zerops_workflow action="complete" step="close"` without attesting both sub-steps returns `recipe complete step: "close" has N required sub-steps — call complete with substep= for each`. This is the v18/v19 regression fix: both runs shipped with `close.browser` silently skipped because nothing gated on it. Minimal recipes skip the gate entirely (no feature dashboard to walk).
+### Constraints
+
+- Sub-step gate: `zerops_workflow action="complete" step="close"` requires both `substep="code-review"` AND `substep="close-browser-walk"` attestations. Missing either → server-side rejection.
+- Browser walk is main agent only — never delegate to a sub-agent.
+- Do NOT dispatch `zerops_browser` calls from the code-review sub-agent (proven to fork-exhaust the parent).
+- After close completes, the workflow response includes `postCompletion.nextSteps[0]` — the `zcp sync recipe export` command. Run it autonomously (the server-side close gate passes; export succeeds). `postCompletion.nextSteps[1]` is the publish command; relay it to the user only if they explicitly asked to ship.
+
+Publishing (`zcp sync recipe publish <slug> <dir>`) is a separate CLI command the user runs manually when they are ready to open a PR on `zeropsio/recipes`. It is not part of this workflow, not a sub-step, and not something the agent should run unprompted. The workflow response after close completion includes publish instructions the agent can relay to the user.
 
 <block name="code-review-subagent">
 
@@ -2858,6 +2996,16 @@ You are a sub-agent spawned by the main agent inside a Zerops recipe session. Th
 **File-op sequencing — Read before Edit (Claude Code constraint, NOT a Zerops rule):** every `Edit` call must be preceded by a `Read` of the same file in this session. Code review is mostly a Read-heavy workflow (you're inspecting, not authoring), so plan: `Read` every file you intend to inspect or modify before any `Edit`. Hitting "File has not been read yet" and reactively Read+retry is trace pollution.
 
 If the server rejects a call with `SUBAGENT_MISUSE`, you are the cause. Do not retry with a different workflow name. Return to the code review.
+
+<<<MANDATORY — TRANSMIT VERBATIM IN AGENT DISPATCH PROMPT>>>
+
+**File-op sequencing** — every Edit must be preceded by a Read of the same file in this session. The Edit tool enforces this. Code review is mostly Read-heavy (you're inspecting, not authoring). Plan: Read every file you intend to inspect or modify before any Edit.
+
+**Tool-use policy** — permitted tools: Read, Edit, Write, Grep, Glob on the SSHFS mount; Bash ONLY as `ssh {hostname} "..."`. Forbidden: zerops_workflow, zerops_import, zerops_env, zerops_deploy, zerops_subdomain, zerops_mount, zerops_verify, zerops_browser, agent-browser. Violating any of these corrupts workflow state or forks the orchestrator.
+
+**SSH-only executables** — NEVER `cd /var/www/{hostname} && <executable>` in Bash. ALWAYS `ssh {hostname} "cd /var/www && <executable>"`. Files via Write/Edit on the mount.
+
+<<<END MANDATORY>>>
 
 Spawn a sub-agent as a **{framework} code expert** — not a Zerops platform expert. The sub-agent has NO Zerops context beyond what's in its brief: no injected guidance, no schema, no platform rules, no predecessor-recipe knowledge. Asking it to review platform config (zerops.yaml, import.yaml, zeropsSetup, envReplace, etc.) invites stale or hallucinated platform knowledge and framework-shaped "fixes" to platform problems. The main agent already owns platform config (injected guidance + live schema validation at finalize); the sub-agent's unique contribution is **framework-level code review** the main agent and automated checks cannot catch.
 
@@ -2965,11 +3113,13 @@ Only after BOTH `substep="code-review"` AND `substep="close-browser-walk"` are a
 
 <block name="export-publish">
 
-### 2. Export & Publish (ONLY when the user asks)
+### Post-workflow: Export & Publish (CLI only — not a sub-step)
 
-If the user did not explicitly request publishing (e.g. "create recipe" by itself), skip this section entirely and complete the close step. Publishing creates GitHub repos and opens PRs — side effects the user did not request.
+These commands run AFTER the close step is complete. They are not part of the workflow state. The server-side export gate refuses to run unless `step=close` is `complete`, so attempting to export early returns `EXPORT_BLOCKED` with actionable diagnostics.
 
-**Export archive** (for debugging/sharing):
+Publishing is never executed automatically — it opens a PR on `zeropsio/recipes` and runs only when the user explicitly asks. The workflow response after close populates `postCompletion.nextSteps[0]` with the publish command the agent can relay to the user.
+
+**Export archive** (for debugging/sharing; runs automatically in the orchestrator after close=complete):
 
 Single-runtime recipe (one codebase):
 ```
@@ -3058,15 +3208,15 @@ zcp sync pull recipes {slug}
 
 <block name="close-completion">
 
-### 3. Completion
+### Close completion
+
+After BOTH `substep="code-review"` AND `substep="close-browser-walk"` are attested, close the step:
+
 ```
-zerops_workflow action="complete" step="close" attestation="Recipe verified by {framework} expert sub-agent, {N} issues found and fixed"
+zerops_workflow action="complete" step="close" attestation="Code review + browser walk complete; fixes applied and re-verified on dev+stage"
 ```
 
-Or skip if not publishing now:
-```
-zerops_workflow action="skip" step="close" reason="Will publish later"
-```
+The response includes `postCompletion.nextSteps[]` with the publish CLI command — relay it to the user only if they explicitly asked to publish. The workflow does not publish on its own; publish is a post-workflow CLI operation.
 
 </block>
 </section>

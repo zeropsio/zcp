@@ -109,8 +109,15 @@ func (e *Engine) RecipeComplete(ctx context.Context, step, attestation string, c
 	}
 
 	// Append transition message with publish commands when recipe is done.
+	// Close-completion also surfaces publish CLI guidance in structured fields
+	// so the agent can render it to the user without inferring it from
+	// Message prose. Publish is NOT a workflow state — it's a post-workflow
+	// CLI operation the agent relays only when the user explicitly asks.
 	if !state.Recipe.Active && state.Recipe.Plan != nil {
 		resp.Message += buildRecipeTransition(state.Recipe.Plan)
+		if step == RecipeStepClose {
+			resp.PostCompletionSummary, resp.PostCompletionNextSteps = buildClosePostCompletion(state.Recipe.Plan, state.Recipe.OutputDir)
+		}
 	}
 
 	return resp, nil
@@ -132,6 +139,31 @@ func (e *Engine) recipeCompleteSubStep(ctx context.Context, state *WorkflowState
 	if !currentStep.hasSubSteps() {
 		currentStep.SubSteps = initSubSteps(step, rs.Plan)
 		currentStep.CurrentSubStep = 0
+	}
+
+	// v8.98 Fix C: close sub-step ordering. close-browser-walk is expensive
+	// dynamic verification and must run AFTER code-review's static pass so
+	// the browser walk observes the post-fix state. Without this guard the
+	// agent could attest browser-walk first against pre-fix code, then run
+	// code-review which applies fixes — leaving a stale browser-walk
+	// attestation behind. completeSubStep's current-pointer check already
+	// rejects out-of-order attempts with a generic message; this guard
+	// replaces that message with a semantically richer one that names
+	// both sub-steps and explains WHY the order matters.
+	if step == RecipeStepClose && subStepName == SubStepCloseBrowserWalk {
+		codeReviewDone := false
+		for _, ss := range currentStep.SubSteps {
+			if ss.Name == SubStepCloseReview && ss.Status == stepComplete {
+				codeReviewDone = true
+				break
+			}
+		}
+		if !codeReviewDone {
+			return nil, fmt.Errorf(
+				"%s: close sub-step %q must be attested before %q — dispatch the code-review subagent first, apply any fixes, then run the browser walk so it observes the post-fix state; attesting browser-walk first against pre-fix code produces a stale verification signal",
+				platform.ErrSubagentMisuse, SubStepCloseReview, SubStepCloseBrowserWalk,
+			)
+		}
 	}
 
 	// Run sub-step validator if available.
@@ -459,25 +491,4 @@ func (e *Engine) writeRecipeOutputs(state *WorkflowState) {
 	if err := WriteRecipeMeta(e.stateDir, meta); err != nil {
 		fmt.Fprintf(os.Stderr, "zcp: write recipe meta: %v\n", err)
 	}
-}
-
-// buildRecipeTransition returns the post-completion transition message with
-// publish commands, test instructions, and eval launch info.
-func buildRecipeTransition(plan *RecipePlan) string {
-	return fmt.Sprintf(`
-
-## Recipe Complete: %s
-
-### Publish
-1. Push to GitHub:
-   `+"`"+`zcp sync push recipes %s`+"`"+`
-2. After merge, clear Strapi cache:
-   `+"`"+`zcp sync cache-clear %s`+"`"+`
-3. Pull merged version:
-   `+"`"+`zcp sync pull recipes %s`+"`"+`
-
-### Test
-Run through eval to verify quality:
-`+"`"+`zcp eval run --recipe %s`+"`"+`
-`, plan.Slug, plan.Slug, plan.Slug, plan.Slug, plan.Slug)
 }

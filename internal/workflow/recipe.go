@@ -207,17 +207,25 @@ type ResearchData struct {
 }
 
 // RecipeResponse is returned from recipe workflow actions.
+//
+// PostCompletionSummary / PostCompletionNextSteps (v8.97 Fix 2) surface post-
+// workflow follow-up actions in the close-completion response. Publish is
+// intentionally NOT a workflow step or sub-step — it's a CLI operation the
+// user triggers manually. The workflow's job is to surface the option so the
+// agent can relay it; the agent decides whether the user asked for publication.
 type RecipeResponse struct {
-	SessionID       string           `json:"sessionId"`
-	Intent          string           `json:"intent"`
-	Iteration       int              `json:"iteration"`
-	Message         string           `json:"message"`
-	PrettyName      string           `json:"prettyName,omitempty"`
-	Progress        RecipeProgress   `json:"progress"`
-	Current         *RecipeStepInfo  `json:"current,omitempty"`
-	CheckResult     *StepCheckResult `json:"checkResult,omitempty"`
-	OutputDir       string           `json:"outputDir,omitempty"`
-	AvailableStacks string           `json:"availableStacks,omitempty"`
+	SessionID               string           `json:"sessionId"`
+	Intent                  string           `json:"intent"`
+	Iteration               int              `json:"iteration"`
+	Message                 string           `json:"message"`
+	PrettyName              string           `json:"prettyName,omitempty"`
+	Progress                RecipeProgress   `json:"progress"`
+	Current                 *RecipeStepInfo  `json:"current,omitempty"`
+	CheckResult             *StepCheckResult `json:"checkResult,omitempty"`
+	OutputDir               string           `json:"outputDir,omitempty"`
+	AvailableStacks         string           `json:"availableStacks,omitempty"`
+	PostCompletionSummary   string           `json:"postCompletionSummary,omitempty"`
+	PostCompletionNextSteps []string         `json:"postCompletionNextSteps,omitempty"`
 }
 
 // RecipeProgress summarizes overall recipe progress.

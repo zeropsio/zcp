@@ -137,6 +137,11 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp kn
 			checks = append(checks, checkRecipeGenerateCodebase(projectRoot, workerTarget, plan, validFields, true)...)
 		}
 
+		// v8.97 Fix 4: stamp surface-derived coupling hints on every
+		// failed check with a populated ReadSurface before computing the
+		// pass status. Coupling is derived from shared ReadSurface, not
+		// from a hand-maintained cluster table.
+		checks = workflow.StampCoupling(checks)
 		allPassed := checksAllPassed(checks)
 		summary := "recipe generate checks passed"
 		if !allPassed {
@@ -339,6 +344,8 @@ func checkRecipeDeployReadmes(stateDir string, kp knowledge.Provider, factsLogPa
 		}
 		checks = append(checks, checkWriterContentManifest(projectRoot, readmesByHost, factsLogPath)...)
 
+		// v8.97 Fix 4: stamp surface-derived coupling hints.
+		checks = workflow.StampCoupling(checks)
 		allPassed := checksAllPassed(checks)
 		summary := "recipe deploy README checks passed"
 		if !allPassed {

@@ -324,7 +324,7 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 		printRecipeResult(result)
 
 	case "export":
-		const exportUsage = "usage: zcp sync recipe export <recipe-dir> [--app-dir <path>]... [--include-timeline]"
+		const exportUsage = "usage: zcp sync recipe export <recipe-dir> [--app-dir <path>]... [--include-timeline] [--session <id>] [--session-state-dir <path>] [--force-export]"
 		// Two-pass arg parsing: flags may appear anywhere, positional
 		// args collected in order. Fixes the strict-ordering trap that
 		// made `export --include-timeline <dir>` fail with "is not a
@@ -347,6 +347,24 @@ func runSyncRecipe(cfg *sync.Config, args []string, dryRun bool) {
 				}
 				opts.AppDirs = append(opts.AppDirs, args[i+1])
 				i++
+			case "--session":
+				if i+1 >= len(args) {
+					fmt.Fprintln(os.Stderr, "error: --session requires a session ID value")
+					fmt.Fprintln(os.Stderr, exportUsage)
+					os.Exit(1)
+				}
+				opts.SessionID = args[i+1]
+				i++
+			case "--session-state-dir":
+				if i+1 >= len(args) {
+					fmt.Fprintln(os.Stderr, "error: --session-state-dir requires a path value")
+					fmt.Fprintln(os.Stderr, exportUsage)
+					os.Exit(1)
+				}
+				opts.SessionStateDir = args[i+1]
+				i++
+			case "--force-export":
+				opts.SkipCloseGate = true
 			default:
 				if strings.HasPrefix(args[i], "--") {
 					fmt.Fprintf(os.Stderr, "error: unknown flag %q\n", args[i])

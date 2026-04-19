@@ -288,6 +288,121 @@ func TestRecipeCloseSubSteps_ShowcaseIncludesBrowserWalk(t *testing.T) {
 	}
 }
 
+// TestRecipeCloseSubSteps_ExactlyTwoAutonomousSubSteps — v8.97 Fix 2 bar.
+// Close contains only code-review + close-browser-walk — no publish, no
+// export, no additional sub-steps. Publish is a post-workflow CLI operation;
+// export is gated server-side on close=complete (Fix 1) but is not itself a
+// workflow sub-step. The v32 close-skip failure class depended on the agent
+// reading "publish is gated" and interpreting it as "close itself is gated" —
+// removing publish from workflow state closes that ambiguity at the root.
+func TestRecipeCloseSubSteps_ExactlyTwoAutonomousSubSteps(t *testing.T) {
+	t.Parallel()
+
+	plan := &RecipePlan{Tier: RecipeTierShowcase}
+	got := initSubSteps(RecipeStepClose, plan)
+	want := []string{SubStepCloseReview, SubStepCloseBrowserWalk}
+	if len(got) != len(want) {
+		t.Fatalf("expected exactly %d close sub-steps (%v), got %d (%+v)", len(want), want, len(got), got)
+	}
+	for i, ss := range got {
+		if ss.Name != want[i] {
+			t.Errorf("close sub-step[%d]: expected %q, got %q — Fix 2 bar", i, want[i], ss.Name)
+		}
+		// Reject any substep containing publish or export vocabulary — the
+		// server-side guard against Fix 2 regressing into a three-substep
+		// close again.
+		for _, banned := range []string{"publish", "export"} {
+			if strings.Contains(ss.Name, banned) {
+				t.Errorf("close sub-step[%d] %q contains banned vocabulary %q — publish/export are not workflow sub-steps", i, ss.Name, banned)
+			}
+		}
+	}
+}
+
+// TestHandleComplete_CloseStepReturnsPostCompletionGuidance — v8.97 Fix 2,
+// updated for v8.98 Fix B. The close-completion response populates
+// PostCompletionSummary and exactly two NextSteps entries: export at [0]
+// (autonomous) and publish at [1] (user-gated).
+func TestHandleComplete_CloseStepReturnsPostCompletionGuidance(t *testing.T) {
+	t.Parallel()
+
+	plan := &RecipePlan{Slug: "test-showcase", Tier: RecipeTierShowcase}
+	summary, nextSteps := buildClosePostCompletion(plan, "/var/www/zcprecipator/test-showcase")
+	if summary == "" {
+		t.Fatal("expected PostCompletionSummary populated on close completion")
+	}
+	if !strings.Contains(summary, "code-review") || !strings.Contains(summary, "close-browser-walk") {
+		t.Errorf("summary must name both sub-steps; got %q", summary)
+	}
+	// Two NextSteps entries now: export at [0] (autonomous), publish at [1]
+	// (user-gated).
+	if len(nextSteps) != 2 {
+		t.Fatalf("expected exactly 2 NextSteps entries (export + publish), got %d: %+v", len(nextSteps), nextSteps)
+	}
+	if !strings.Contains(nextSteps[0], "zcp sync recipe export") {
+		t.Errorf("NextSteps[0] must name export CLI command; got %q", nextSteps[0])
+	}
+	if !strings.Contains(nextSteps[1], "zcp sync recipe publish") {
+		t.Errorf("NextSteps[1] must name publish CLI command; got %q", nextSteps[1])
+	}
+	if !strings.Contains(nextSteps[1], "test-showcase") {
+		t.Errorf("NextSteps[1] must embed slug; got %q", nextSteps[1])
+	}
+}
+
+// TestHandleComplete_CloseStepPostCompletionHasExportAtZero — v8.98 Fix B.
+// NextSteps[0] names the export CLI command and flags it as autonomous so
+// the agent runs it without asking the user.
+func TestHandleComplete_CloseStepPostCompletionHasExportAtZero(t *testing.T) {
+	t.Parallel()
+
+	plan := &RecipePlan{Slug: "test-showcase", Tier: RecipeTierShowcase}
+	_, nextSteps := buildClosePostCompletion(plan, "/var/www/zcprecipator/test-showcase")
+	if len(nextSteps) == 0 {
+		t.Fatal("expected NextSteps[0] populated")
+	}
+	if !strings.Contains(nextSteps[0], "zcp sync recipe export") {
+		t.Errorf("NextSteps[0] must name export; got %q", nextSteps[0])
+	}
+	if !strings.Contains(nextSteps[0], "autonomous") {
+		t.Errorf("NextSteps[0] must flag export as autonomous; got %q", nextSteps[0])
+	}
+}
+
+// TestHandleComplete_CloseStepPostCompletionHasPublishAtOne — v8.98 Fix B.
+// NextSteps[1] names the publish CLI command and carries a phrase
+// indicating user-gated intent so the agent only relays when asked.
+func TestHandleComplete_CloseStepPostCompletionHasPublishAtOne(t *testing.T) {
+	t.Parallel()
+
+	plan := &RecipePlan{Slug: "test-showcase", Tier: RecipeTierShowcase}
+	_, nextSteps := buildClosePostCompletion(plan, "/var/www/zcprecipator/test-showcase")
+	if len(nextSteps) < 2 {
+		t.Fatalf("expected NextSteps[1] populated; got %d entries", len(nextSteps))
+	}
+	if !strings.Contains(nextSteps[1], "zcp sync recipe publish") {
+		t.Errorf("NextSteps[1] must name publish; got %q", nextSteps[1])
+	}
+	if !strings.Contains(nextSteps[1], "explicitly asked") {
+		t.Errorf("NextSteps[1] must flag publish as user-gated; got %q", nextSteps[1])
+	}
+}
+
+// TestHandleComplete_CloseStepSummaryDoesNotClaimAutomaticExport — v8.98 Fix B.
+// Regression guard against the v8.97 shipped wording ("Export runs
+// automatically") which suggested something other than the agent runs
+// export. After Fix B, the summary describes export as the agent's
+// autonomous next action, not as something that happens without an agent.
+func TestHandleComplete_CloseStepSummaryDoesNotClaimAutomaticExport(t *testing.T) {
+	t.Parallel()
+
+	plan := &RecipePlan{Slug: "test-showcase", Tier: RecipeTierShowcase}
+	summary, _ := buildClosePostCompletion(plan, "/var/www/zcprecipator/test-showcase")
+	if strings.Contains(summary, "Export runs automatically") {
+		t.Errorf("summary must not carry the v8.97 \"Export runs automatically\" wording (Fix B regression guard); got %q", summary)
+	}
+}
+
 // TestRecipeCloseSubSteps_MinimalEmpty — regression guard that minimal
 // recipes skip close sub-step enforcement entirely. Minimal recipes don't
 // have a feature dashboard so a browser walk has nothing to observe, and

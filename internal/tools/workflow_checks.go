@@ -144,6 +144,10 @@ func checkProvision(client platform.Client, projectID string, engine *workflow.E
 			}
 		}
 
+		// v8.97 Fix 4: stamp surface-derived coupling. No-op when checks
+		// populate no ReadSurface; future checks that do will get the
+		// hint automatically.
+		checks = workflow.StampCoupling(checks)
 		summary := "all services provisioned"
 		if !allPassed {
 			summary = "provisioning incomplete"
@@ -227,6 +231,8 @@ func checkDeploy(client platform.Client, fetcher platform.LogFetcher, projectID 
 			}
 		}
 
+		// v8.97 Fix 4: stamp surface-derived coupling.
+		checks = workflow.StampCoupling(checks)
 		summary := "all services deployed and healthy"
 		if !allPassed {
 			summary = "deployment or health check incomplete"
