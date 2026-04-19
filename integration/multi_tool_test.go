@@ -466,8 +466,8 @@ func TestIntegration_WorkflowNoParams_Error(t *testing.T) {
 		t.Fatal("expected IsError for empty workflow call")
 	}
 	errText := getTextContent(t, result)
-	if !strings.Contains(errText, "No workflow specified") {
-		t.Errorf("expected 'No workflow specified' error, got: %s", errText)
+	if !strings.Contains(errText, "No workflow or action specified") {
+		t.Errorf("expected 'No workflow or action specified' error, got: %s", errText)
 	}
 }
 

@@ -223,13 +223,17 @@ func TestBuildStrategyGuidance(t *testing.T) {
 
 func TestBuildStrategyGuidance_DuplicateOnlyOnce(t *testing.T) {
 	t.Parallel()
-	guidance := buildStrategyGuidance(map[string]string{
+	once := buildStrategyGuidance(map[string]string{
+		"appdev": workflow.StrategyPushDev,
+	})
+	twice := buildStrategyGuidance(map[string]string{
 		"appdev": workflow.StrategyPushDev,
 		"apidev": workflow.StrategyPushDev,
 	})
-	// Count separator — multiple sections would have "---" between them.
-	if strings.Contains(guidance, "---") {
-		t.Error("duplicate strategy should produce only one section, not multiple separated by ---")
+	// Deduplication invariant: repeating the same strategy across services
+	// must not multiply the matched atom set. Output is byte-identical.
+	if once != twice {
+		t.Errorf("duplicate strategy should produce identical guidance; once != twice")
 	}
 }
 

@@ -14,7 +14,7 @@ func sectionContent(t *testing.T, name string) string {
 	if err != nil {
 		t.Fatalf("load recipe.md: %v", err)
 	}
-	s := ExtractSection(md, name)
+	s := extractSection(md, name)
 	if s == "" {
 		t.Fatalf("section %q not found in recipe.md", name)
 	}
@@ -47,7 +47,7 @@ func assertPresentIn(t *testing.T, needle string, sections ...string) {
 		wanted[s] = struct{}{}
 	}
 	for _, s := range recipeSectionNames {
-		body := ExtractSection(md, s)
+		body := extractSection(md, s)
 		has := strings.Contains(body, needle)
 		_, shouldHave := wanted[s]
 		if shouldHave && !has {
@@ -111,7 +111,7 @@ func TestRecipe_SubAgentBriefPlacement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load recipe.md: %v", err)
 	}
-	if ExtractSection(md, "generate-dashboard") != "" {
+	if extractSection(md, "generate-dashboard") != "" {
 		t.Error("generate-dashboard section should be removed in Phase 4 — content moves to deploy")
 	}
 

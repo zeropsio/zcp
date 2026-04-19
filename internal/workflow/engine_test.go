@@ -1014,8 +1014,8 @@ func TestEngine_Iterate_MaxLimit(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	// Iterate 10 times (default max) — all should succeed.
-	for i := range 10 {
+	// Iterate 5 times (default max, aligned with 3-tier STOP) — all should succeed.
+	for i := range 5 {
 		state, err := eng.Iterate()
 		if err != nil {
 			t.Fatalf("Iterate %d: %v", i+1, err)
@@ -1025,10 +1025,10 @@ func TestEngine_Iterate_MaxLimit(t *testing.T) {
 		}
 	}
 
-	// 11th iteration should fail with "max iterations" error.
+	// 6th iteration should fail with "max iterations" error.
 	_, err := eng.Iterate()
 	if err == nil {
-		t.Fatal("expected error on 11th iteration")
+		t.Fatal("expected error on 6th iteration")
 	}
 	if got := err.Error(); !contains(got, "max iterations") {
 		t.Errorf("error should mention 'max iterations', got: %s", got)
@@ -1059,6 +1059,42 @@ func TestEngine_Iterate_EnvOverride(t *testing.T) {
 	}
 	if got := err.Error(); !contains(got, "max iterations") {
 		t.Errorf("error should mention 'max iterations', got: %s", got)
+	}
+}
+
+func TestEngine_Iterate_CapAutoClosesWorkSession(t *testing.T) {
+	t.Setenv("ZCP_MAX_ITERATIONS", "2")
+
+	dir := t.TempDir()
+	eng := NewEngine(dir, EnvLocal, nil)
+	if _, err := eng.Start("proj-1", "develop", "test"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Seed a current-PID work session so cap auto-close has something to close.
+	ws := NewWorkSession("proj-1", "dev", "test task", []string{"appdev"})
+	if err := SaveWorkSession(dir, ws); err != nil {
+		t.Fatalf("SaveWorkSession: %v", err)
+	}
+
+	for i := range 2 {
+		if _, err := eng.Iterate(); err != nil {
+			t.Fatalf("Iterate %d: %v", i+1, err)
+		}
+	}
+	// Hitting the cap must close the work session with CloseReasonIterationCap.
+	if _, err := eng.Iterate(); err == nil {
+		t.Fatal("expected error at cap")
+	}
+	got, err := LoadWorkSession(dir, ws.PID)
+	if err != nil || got == nil {
+		t.Fatalf("LoadWorkSession after cap: ws=%v err=%v", got, err)
+	}
+	if got.ClosedAt == "" {
+		t.Fatal("work session should be closed after iteration cap")
+	}
+	if got.CloseReason != CloseReasonIterationCap {
+		t.Errorf("CloseReason: want %q, got %q", CloseReasonIterationCap, got.CloseReason)
 	}
 }
 

@@ -257,7 +257,7 @@ func blockNamesForStep(t *testing.T, step string) map[string]bool {
 	t.Helper()
 	md := loadRecipeMD(t)
 	sectionName := stepToSectionName(step)
-	body := ExtractSection(md, sectionName)
+	body := extractSection(md, sectionName)
 	if body == "" {
 		t.Fatalf("section %q not found", sectionName)
 	}

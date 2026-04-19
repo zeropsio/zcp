@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/zeropsio/zcp/internal/content"
-	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -63,9 +63,11 @@ type immediateResponse struct {
 }
 
 // RegisterWorkflow registers the zerops_workflow tool.
-// selfHostname is the hostname of the service running ZCP (empty when local).
+// rt carries the runtime detection (container vs local, self hostname, project
+// ID from container env). selfHostname duplicates rt.ServiceName for handlers
+// that haven't migrated yet — Phase 7 consolidates on rt.
 // mounter enables auto-mounting runtime services after provision (nil in local env).
-func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, schemaCache *schema.Cache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string, mounter ops.Mounter) {
+func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, schemaCache *schema.Cache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string, mounter ops.Mounter, rt runtime.Info) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
 		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (create/adopt infrastructure only — not the user's application), develop (all development, deployment, fixing, investigating), recipe (create recipe repo files), cicd (CI/CD setup). After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route\".",
@@ -78,40 +80,33 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 		// New multi-action handler.
 		if input.Action != "" {
-			return handleWorkflowAction(ctx, projectID, engine, client, cache, schemaCache, logFetcher, input, stateDir, selfHostname, mounter)
+			return handleWorkflowAction(ctx, projectID, engine, client, cache, schemaCache, logFetcher, input, stateDir, selfHostname, mounter, rt)
 		}
 
-		// Legacy: static workflow guidance.
+		// Immediate workflows (cicd, export) may be fetched without action.
+		// Orchestrated workflows (bootstrap, develop, recipe) always require
+		// a session and must route through action="start".
 		if input.Workflow == "" {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
-				"No workflow specified",
-				"Use workflow=\"bootstrap\", workflow=\"develop\", or workflow=\"cicd\"")), nil, nil
+				"No workflow or action specified",
+				`Use action="start" workflow="bootstrap|develop|recipe" for orchestrated workflows, or workflow="cicd|export" for immediate guidance`)), nil, nil
 		}
-		wfContent, err := content.GetWorkflow(input.Workflow)
+		if !workflow.IsImmediateWorkflow(input.Workflow) {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				fmt.Sprintf("Workflow %q requires action=\"start\"", input.Workflow),
+				fmt.Sprintf(`Use action="start" workflow=%q intent="..."`, input.Workflow))), nil, nil
+		}
+		guidance, err := synthesizeImmediateGuidance(input.Workflow, engine, rt)
 		if err != nil {
 			return convertError(err), nil, nil
 		}
-
-		// Inject live stack types into bootstrap/develop workflows.
-		// If markers are missing from the .md source, log to stderr and ship
-		// the original content — we'd rather degrade than fail the tool call.
-		if (input.Workflow == workflowBootstrap || input.Workflow == workflowDevelop) && client != nil && cache != nil {
-			if types := cache.Get(ctx, client); len(types) > 0 {
-				stackList := knowledge.FormatStackList(types)
-				injected, err := injectStacks(wfContent, stackList)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "zcp: inject stacks into %s workflow: %v\n", input.Workflow, err)
-				}
-				wfContent = injected
-			}
-		}
-
-		return textResult(wfContent), nil, nil
+		return textResult(guidance), nil, nil
 	})
 }
 
-func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache, logFetcher platform.LogFetcher, input WorkflowInput, stateDir, selfHostname string, mounter ops.Mounter) (*mcp.CallToolResult, any, error) {
+func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache, logFetcher platform.LogFetcher, input WorkflowInput, stateDir, selfHostname string, mounter ops.Mounter, rt runtime.Info) (*mcp.CallToolResult, any, error) {
 	if engine == nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
@@ -121,7 +116,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 
 	switch input.Action {
 	case "start":
-		return handleStart(ctx, projectID, engine, client, cache, input, mounter, selfHostname)
+		return handleStart(ctx, projectID, engine, client, cache, input, mounter, selfHostname, rt)
 	case "reset":
 		return handleReset(engine)
 	case "iterate":
@@ -172,7 +167,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		if active == workflowBootstrap {
 			return handleBootstrapStatus(ctx, engine, client, cache)
 		}
-		return handleLifecycleStatus(ctx, engine, client, projectID, selfHostname)
+		return handleLifecycleStatus(ctx, engine, client, projectID, rt)
 	case "close":
 		return handleWorkSessionClose(engine, input)
 	case "resume":
@@ -191,7 +186,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	}
 }
 
-func handleStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput, mounter ops.Mounter, selfHostname string) (*mcp.CallToolResult, any, error) {
+func handleStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput, mounter ops.Mounter, selfHostname string, rt runtime.Info) (*mcp.CallToolResult, any, error) {
 	// v8.90 Fix A: reject action=start when a DIFFERENT workflow is already
 	// active. This closes the sub-agent-misuse path: a sub-agent spawned by
 	// the main agent inside a running recipe calling action=start
@@ -218,26 +213,15 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 		}
 	}
 
-	// Immediate workflows: stateless, return guidance directly.
+	// Immediate workflows: stateless, atom-synthesized guidance.
 	if workflow.IsImmediateWorkflow(input.Workflow) {
-		wfContent, err := content.GetWorkflow(input.Workflow)
+		guidance, err := synthesizeImmediateGuidance(input.Workflow, engine, rt)
 		if err != nil {
-			return convertError(platform.NewPlatformError(
-				platform.ErrInvalidParameter,
-				fmt.Sprintf("Workflow %q not found: %v", input.Workflow, err),
-				"Valid workflows: bootstrap, develop, recipe, cicd, export")), nil, nil
+			return convertError(err), nil, nil
 		}
-
-		// CI/CD: prepend service context from ServiceMeta (if available).
-		if input.Workflow == "cicd" && engine != nil {
-			if ctx := buildCICDContext(engine.StateDir()); ctx != "" {
-				wfContent = ctx + "\n\n---\n\n" + wfContent
-			}
-		}
-
 		return jsonResult(immediateResponse{
 			Workflow: input.Workflow,
-			Guidance: wfContent,
+			Guidance: guidance,
 		}), nil, nil
 	}
 
@@ -256,7 +240,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 
 	// Develop workflow — stateless briefing, no session created.
 	if input.Workflow == workflowDevelop {
-		return handleDevelopBriefing(ctx, engine, client, projectID, input, cache, mounter, selfHostname)
+		return handleDevelopBriefing(ctx, engine, client, projectID, input, cache, mounter, selfHostname, rt)
 	}
 
 	// Recipe workflow.
@@ -351,8 +335,39 @@ func handleListSessions(engine *workflow.Engine) (*mcp.CallToolResult, any, erro
 
 // handleLifecycleStatus returns the canonical orientation block. Used when
 // no bootstrap/recipe session is active — covers both idle and develop phases.
-func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID, selfHostname string) (*mcp.CallToolResult, any, error) {
-	return textResult(workflow.BuildLifecycleStatus(ctx, client, projectID, engine.StateDir(), selfHostname)), nil, nil
+//
+// Pipeline: ComputeEnvelope (parallel I/O) → Synthesize (typed knowledge
+// atoms) → BuildPlan (typed NextActions) → RenderStatus (markdown). A loader
+// error on the atom corpus is fatal — the atoms ship embedded so a failure
+// here means a malformed build, not a runtime condition.
+func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info) (*mcp.CallToolResult, any, error) {
+	envelope, err := workflow.ComputeEnvelope(ctx, client, engine.StateDir(), projectID, rt, time.Now())
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrNotImplemented,
+			fmt.Sprintf("Compute envelope: %v", err),
+			"")), nil, nil
+	}
+	corpus, err := workflow.LoadAtomCorpus()
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrNotImplemented,
+			fmt.Sprintf("Load knowledge atoms: %v", err),
+			"")), nil, nil
+	}
+	guidance, err := workflow.Synthesize(envelope, corpus)
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrNotImplemented,
+			fmt.Sprintf("Synthesize guidance: %v", err),
+			"")), nil, nil
+	}
+	plan := workflow.BuildPlan(envelope)
+	return textResult(workflow.RenderStatus(workflow.Response{
+		Envelope: envelope,
+		Guidance: guidance,
+		Plan:     &plan,
+	})), nil, nil
 }
 
 // handleWorkSessionClose closes the current-PID work session. If no session

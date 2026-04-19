@@ -3,10 +3,8 @@ package tools
 import (
 	"context"
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -15,13 +13,6 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
-
-// ErrMissingStacksHook signals that neither the <!-- STACKS:BEGIN/END -->
-// markers nor the "## Part 1" anchor were found in the workflow content.
-// Previously this path silently returned the content unchanged, shipping a
-// stack-less bootstrap response whenever a merge accidentally removed the
-// hook. Now it fails loudly so the caller can log and degrade intentionally.
-var ErrMissingStacksHook = errors.New("workflow content missing STACKS markers and anchor")
 
 // stackSteps are the steps where the stack catalog is useful.
 var stackSteps = map[string]bool{
@@ -192,26 +183,4 @@ func populateStacks(ctx context.Context, resp *workflow.BootstrapResponse, clien
 	if types := cache.Get(ctx, client); len(types) > 0 {
 		resp.AvailableStacks = knowledge.FormatStackList(types)
 	}
-}
-
-// injectStacks inserts the stack list section into workflow content.
-// Replaces content between STACKS markers if present, otherwise inserts before "## Part 1".
-// Returns ErrMissingStacksHook when neither hook is present so the caller
-// notices rather than silently shipping stack-less content.
-func injectStacks(content, stackList string) (string, error) {
-	const beginMarker = "<!-- STACKS:BEGIN -->"
-	const endMarker = "<!-- STACKS:END -->"
-
-	if beginIdx := strings.Index(content, beginMarker); beginIdx >= 0 {
-		if endIdx := strings.Index(content, endMarker); endIdx > beginIdx {
-			return content[:beginIdx] + stackList + content[endIdx+len(endMarker):], nil
-		}
-	}
-
-	const anchor = "## Part 1"
-	if idx := strings.Index(content, anchor); idx > 0 {
-		return content[:idx] + stackList + "\n---\n\n" + content[idx:], nil
-	}
-
-	return content, ErrMissingStacksHook
 }

@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -50,7 +51,7 @@ func TestHandleStart_SubagentMisuse_RecipeActive_DevelopStartRejected(t *testing
 	startRecipeSession(t, engine)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, dir, "", nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, dir, "", nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
@@ -76,7 +77,7 @@ func TestHandleStart_SubagentMisuse_RecipeActive_BootstrapStartRejected(t *testi
 	startRecipeSession(t, engine)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, dir, "", nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, dir, "", nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
@@ -102,7 +103,7 @@ func TestHandleStart_SubagentMisuse_BootstrapActive_RecipeStartRejected(t *testi
 	startBootstrapSession(t, engine)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, dir, "", nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, dir, "", nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":      "start",
@@ -132,7 +133,7 @@ func TestHandleStart_ImmediateWorkflow_NotRejected(t *testing.T) {
 	startRecipeSession(t, engine)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, dir, "", nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, dir, "", nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
@@ -162,7 +163,7 @@ func TestHandleStart_FreshSession_NoSubagentMisuse(t *testing.T) {
 				t.Fatal("fresh engine should have no active session")
 			}
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, dir, "", nil)
+			RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, dir, "", nil, runtime.Info{})
 
 			result := callTool(t, srv, "zerops_workflow", map[string]any{
 				"action":      "start",
@@ -192,7 +193,7 @@ func TestHandleStart_SameWorkflowReStart_FallsThroughToSpecificHandler(t *testin
 	startRecipeSession(t, engine)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, dir, "", nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, dir, "", nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":      "start",
@@ -220,7 +221,7 @@ func TestSubagentMisuseError_MessageShape(t *testing.T) {
 	startRecipeSession(t, engine)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, dir, "", nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, dir, "", nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",

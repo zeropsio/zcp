@@ -458,7 +458,7 @@ func TestBuildResponse_DetailedGuide_Populated(t *testing.T) {
 		t.Fatal("Current should not be nil")
 	}
 	if resp.Current.DetailedGuide == "" {
-		t.Error("DetailedGuide should be populated from bootstrap.md for discover step")
+		t.Error("DetailedGuide should be populated from the atom corpus for discover step")
 	}
 }
 
@@ -787,90 +787,6 @@ func TestBuildResponse_DeployStep_SimpleMode_HasDeployContent(t *testing.T) {
 	}
 }
 
-func TestBuildResponse_NonProgressiveStep_GuidanceUnchanged(t *testing.T) {
-	t.Parallel()
-	// discover and provision return base guidance in container mode.
-	// In local mode they include addenda — tested separately in bootstrap_guidance_test.go.
-	tests := []struct {
-		name    string
-		stepIdx int
-	}{
-		{"discover", 0},
-		{"provision", 1},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			bs := NewBootstrapState()
-			for i := 0; i < tt.stepIdx; i++ {
-				bs.Steps[i].Status = stepComplete
-				bs.Steps[i].Attestation = "completed step " + bs.Steps[i].Name + " successfully"
-			}
-			bs.CurrentStep = tt.stepIdx
-			bs.Steps[tt.stepIdx].Status = stepInProgress
-
-			resp := bs.BuildResponse("sess-nonprog-"+tt.name, "test", 0, EnvContainer, nil)
-			if resp.Current == nil {
-				t.Fatal("Current should not be nil")
-			}
-
-			expected := ResolveGuidance(tt.name)
-			if resp.Current.DetailedGuide != expected {
-				t.Errorf("step %q: DetailedGuide should match ResolveGuidance exactly\ngot length %d, want length %d",
-					tt.name, len(resp.Current.DetailedGuide), len(expected))
-			}
-		})
-	}
-}
-
-func TestBuildResponse_GenerateStep_UsesProgressiveGuidance(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name        string
-		mode        string
-		wantContain string
-		wantExclude string
-	}{
-		{"standard", "", "zsc noop --silent", ""},
-		{"dev", "dev", "zsc noop --silent", ""},
-		{"simple", "simple", "REAL start command", ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			bs := NewBootstrapState()
-			hostname := "appdev"
-			if tt.mode == "simple" {
-				hostname = "app"
-			}
-			bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
-				{Runtime: RuntimeTarget{DevHostname: hostname, Type: "bun@1.2", BootstrapMode: tt.mode}},
-			}}
-			for i := range 2 {
-				bs.Steps[i].Status = stepComplete
-				bs.Steps[i].Attestation = "completed step " + bs.Steps[i].Name + " successfully"
-			}
-			bs.CurrentStep = 2
-			bs.Steps[2].Status = stepInProgress
-
-			resp := bs.BuildResponse("sess-gen-"+tt.name, "test", 0, EnvContainer, nil)
-			if resp.Current == nil {
-				t.Fatal("Current should not be nil")
-			}
-			if !strings.Contains(resp.Current.DetailedGuide, tt.wantContain) {
-				t.Errorf("generate guide for %s mode should contain %q", tt.name, tt.wantContain)
-			}
-			if tt.wantExclude != "" && strings.Contains(resp.Current.DetailedGuide, tt.wantExclude) {
-				t.Errorf("generate guide for %s mode should NOT contain %q", tt.name, tt.wantExclude)
-			}
-			// All modes should include common content.
-			if !strings.Contains(resp.Current.DetailedGuide, "Verification server endpoints") {
-				t.Errorf("generate guide for %s mode missing common content", tt.name)
-			}
-		})
-	}
-}
-
 // --- C-03: ResetForIteration ---
 
 func TestResetForIteration_ResetsGenerateDeployVerify(t *testing.T) {
@@ -945,52 +861,6 @@ func TestResetForIteration_NilBootstrap_NoOp(t *testing.T) {
 	var b *BootstrapState
 	// Should not panic.
 	b.ResetForIteration()
-}
-
-// --- BuildResponse knowledge injection ---
-
-func TestBuildResponse_Provision_GuideContainsKnowledge(t *testing.T) {
-	t.Parallel()
-	store := testKnowledgeProvider(t)
-	bs := NewBootstrapState()
-	bs.Steps[0].Status = stepComplete
-	bs.Steps[0].Attestation = "FRESH project detected"
-	bs.CurrentStep = 1
-	bs.Steps[1].Status = stepInProgress
-	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
-	}}
-
-	resp := bs.BuildResponse("sess-kn", "test", 0, EnvContainer, store)
-	if resp.Current == nil {
-		t.Fatal("Current should not be nil")
-	}
-	if !strings.Contains(resp.Current.DetailedGuide, "import.yaml Schema") {
-		t.Error("provision guide should contain 'import.yaml Schema' from knowledge injection")
-	}
-}
-
-func TestBuildResponse_Generate_GuideContainsRuntimeGuide(t *testing.T) {
-	t.Parallel()
-	store := testKnowledgeProvider(t)
-	bs := NewBootstrapState()
-	for i := range 2 {
-		bs.Steps[i].Status = stepComplete
-		bs.Steps[i].Attestation = "completed step " + bs.Steps[i].Name + " successfully"
-	}
-	bs.CurrentStep = 2
-	bs.Steps[2].Status = stepInProgress
-	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
-	}}
-
-	resp := bs.BuildResponse("sess-kn2", "test", 0, EnvContainer, store)
-	if resp.Current == nil {
-		t.Fatal("Current should not be nil")
-	}
-	if !strings.Contains(resp.Current.DetailedGuide, "Node.js") {
-		t.Error("generate guide should contain Node.js runtime guide from knowledge injection")
-	}
 }
 
 func TestBuildPriorContext_PlanAlwaysIncluded(t *testing.T) {

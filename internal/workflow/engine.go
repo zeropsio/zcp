@@ -175,15 +175,32 @@ func (e *Engine) Reset() error {
 }
 
 // Iterate resets bootstrap steps and increments the counter.
+// When the iteration cap is reached, any active work session is closed with
+// CloseReasonIterationCap so the LLM stops retrying and surfaces the failure
+// to the user (3-tier STOP ladder at iteration 5).
 func (e *Engine) Iterate() (*WorkflowState, error) {
 	state, err := e.loadState()
 	if err != nil {
 		return nil, fmt.Errorf("iterate: %w", err)
 	}
 	if state.Iteration >= maxIterations() {
+		closeWorkSessionOnCap(e.stateDir)
 		return nil, fmt.Errorf("iterate: max iterations reached (%d), reset session to continue", maxIterations())
 	}
 	return IterateSession(e.stateDir, e.sessionID)
+}
+
+// closeWorkSessionOnCap closes the current-PID work session with
+// CloseReasonIterationCap. Idempotent and best-effort: errors are swallowed
+// because the cap signal itself is already being returned to the caller.
+func closeWorkSessionOnCap(stateDir string) {
+	ws, err := CurrentWorkSession(stateDir)
+	if err != nil || ws == nil || ws.ClosedAt != "" {
+		return
+	}
+	ws.ClosedAt = time.Now().UTC().Format(time.RFC3339)
+	ws.CloseReason = CloseReasonIterationCap
+	_ = SaveWorkSession(stateDir, ws)
 }
 
 // HasActiveSession returns true if this engine has an active session.

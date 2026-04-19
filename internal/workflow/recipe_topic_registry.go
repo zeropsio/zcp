@@ -452,7 +452,7 @@ func ResolveTopic(topicID string, plan *RecipePlan) (string, error) {
 	}
 
 	sectionName := stepToSectionName(topic.Step)
-	sectionBody := ExtractSection(md, sectionName)
+	sectionBody := extractSection(md, sectionName)
 	if sectionBody == "" {
 		return "", fmt.Errorf("section %q not found in recipe.md", sectionName)
 	}

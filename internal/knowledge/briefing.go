@@ -114,7 +114,7 @@ func (s *Store) GetRecipe(name, mode string) (string, error) {
 	// Try exact match first.
 	uri := "zerops://recipes/" + name
 	if doc, err := s.Get(uri); err == nil {
-		content := s.prependRecipeContext(doc.Content)
+		content := s.prependUniversals(doc.Content)
 		if mode != "" {
 			rt := s.detectRecipeRuntime(name)
 			content = prependModeAdaptation(mode, rt) + content
@@ -134,7 +134,7 @@ func (s *Store) GetRecipe(name, mode string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("recipe %q not found: %w", matches[0], err)
 		}
-		content := s.prependRecipeContext(doc.Content)
+		content := s.prependUniversals(doc.Content)
 		if mode != "" {
 			rt := s.detectRecipeRuntime(matches[0])
 			content = prependModeAdaptation(mode, rt) + content
@@ -162,12 +162,6 @@ func (s *Store) detectRecipeRuntime(recipeName string) string {
 		}
 	}
 	return ""
-}
-
-// prependRecipeContext prepends platform universals to recipe content.
-// Runtime guides are NOT prepended — each recipe is standalone with its own knowledge.
-func (s *Store) prependRecipeContext(content string) string {
-	return s.prependUniversals(content)
 }
 
 // findMatchingRecipes returns recipe names matching the query via prefix, substring, or keyword.

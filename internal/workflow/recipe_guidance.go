@@ -9,6 +9,21 @@ import (
 	"github.com/zeropsio/zcp/internal/knowledge"
 )
 
+// getCoreSection extracts an H2 section from the core knowledge document.
+// Recipe-local helper; when the recipe pipeline moves to the atom corpus
+// this helper disappears with it.
+func getCoreSection(kp knowledge.Provider, name string) string {
+	doc, err := kp.Get("zerops://themes/core")
+	if err != nil {
+		return ""
+	}
+	sections := doc.H2Sections()
+	if s, ok := sections[name]; ok {
+		return s
+	}
+	return ""
+}
+
 // buildGuide assembles step-specific guidance with knowledge injection for recipe workflow.
 // Follows deploy's pattern: own method on RecipeState, not via assembleGuidance (which is bootstrap-only).
 //
@@ -103,16 +118,16 @@ func resolveRecipeGuidance(step, tier string, plan *RecipePlan) string {
 		// then minimal base (framework identity, build pipeline, decision tree).
 		// The showcase section explicitly says "REPLACES the loading above."
 		if effectiveTier == RecipeTierShowcase {
-			showcase := ExtractSection(md, "research-showcase")
-			minimal := ExtractSection(md, "research-minimal")
+			showcase := extractSection(md, "research-showcase")
+			minimal := extractSection(md, "research-minimal")
 			return showcase + "\n\n---\n\n" + minimal
 		}
-		return ExtractSection(md, "research-minimal")
+		return extractSection(md, "research-minimal")
 
 	case RecipeStepGenerate:
 		// Phase A: return skeleton instead of composed blocks.
 		// The skeleton references topics; the agent fetches them via zerops_guidance.
-		if skeleton := ExtractSection(md, "generate-skeleton"); skeleton != "" {
+		if skeleton := extractSection(md, "generate-skeleton"); skeleton != "" {
 			composed := composeSkeleton(skeleton, recipeGenerateTopics, plan)
 			if eager := InjectEagerTopics(recipeGenerateTopics, plan); eager != "" {
 				composed += "\n\n---\n\n" + eager
@@ -121,11 +136,11 @@ func resolveRecipeGuidance(step, tier string, plan *RecipePlan) string {
 		}
 		// Fallback: compose blocks as before (safety net during migration).
 		var parts []string
-		if body := ExtractSection(md, "generate"); body != "" {
+		if body := extractSection(md, "generate"); body != "" {
 			parts = append(parts, composeSection(body, recipeGenerateBlocks, plan))
 		}
 		if planNeedsFragmentsDeepDive(plan) {
-			if s := ExtractSection(md, "generate-fragments"); s != "" {
+			if s := extractSection(md, "generate-fragments"); s != "" {
 				parts = append(parts, s)
 			}
 		}
@@ -136,39 +151,39 @@ func resolveRecipeGuidance(step, tier string, plan *RecipePlan) string {
 
 	case RecipeStepProvision:
 		// Provision: composed through predicate-gated blocks (Phase 6).
-		body := ExtractSection(md, "provision")
+		body := extractSection(md, "provision")
 		return composeSection(body, recipeProvisionBlocks, plan)
 
 	case RecipeStepDeploy:
 		// Phase A: return skeleton instead of composed blocks.
-		if skeleton := ExtractSection(md, "deploy-skeleton"); skeleton != "" {
+		if skeleton := extractSection(md, "deploy-skeleton"); skeleton != "" {
 			composed := composeSkeleton(skeleton, recipeDeployTopics, plan)
 			if eager := InjectEagerTopics(recipeDeployTopics, plan); eager != "" {
 				composed += "\n\n---\n\n" + eager
 			}
 			return composed
 		}
-		body := ExtractSection(md, "deploy")
+		body := extractSection(md, "deploy")
 		return composeSection(body, recipeDeployBlocks, plan)
 
 	case RecipeStepFinalize:
 		// Phase A: return skeleton instead of composed blocks.
-		if skeleton := ExtractSection(md, "finalize-skeleton"); skeleton != "" {
+		if skeleton := extractSection(md, "finalize-skeleton"); skeleton != "" {
 			return composeSkeleton(skeleton, recipeFinalizeTopics, plan)
 		}
-		body := ExtractSection(md, "finalize")
+		body := extractSection(md, "finalize")
 		return composeSection(body, recipeFinalizeBlocks, plan)
 
 	case RecipeStepClose:
 		// Phase A: return skeleton instead of composed blocks.
-		if skeleton := ExtractSection(md, "close-skeleton"); skeleton != "" {
+		if skeleton := extractSection(md, "close-skeleton"); skeleton != "" {
 			return composeSkeleton(skeleton, recipeCloseTopics, plan)
 		}
-		body := ExtractSection(md, "close")
+		body := extractSection(md, "close")
 		return composeSection(body, recipeCloseBlocks, plan)
 
 	default:
-		return ExtractSection(md, step)
+		return extractSection(md, step)
 	}
 }
 

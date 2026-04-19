@@ -5,15 +5,17 @@ import (
 	"testing"
 )
 
+// Recipe is the only workflow still backed by a static workflows/*.md file —
+// bootstrap, develop, cicd, and export are synthesized at runtime from the
+// atom corpus. Recipe stays in the workflow file because its AUTHORING
+// pipeline (recipe_guidance.go, recipe_section_parser.go, recipe_topic_
+// registry.go) consumes it through an independent section parser.
 func TestGetWorkflow_AllWorkflows(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name string
 	}{
-		{"bootstrap"},
-		{"develop"},
-		{"cicd"},
 		{"recipe"},
 	}
 
@@ -43,29 +45,16 @@ func TestGetWorkflow_Unknown(t *testing.T) {
 	}
 }
 
-// Phase 4 tests: verify strategy step removed, close step added
-func TestBootstrapWorkflow_StrategyStepRemoved(t *testing.T) {
+// TestGetWorkflow_OrchestratedNotStatic asserts that no workflow except
+// recipe is loadable through GetWorkflow. Bootstrap, develop, cicd, and
+// export are atom-synthesized; re-adding a workflows/*.md for any of them
+// would let the static file drift from the atom corpus.
+func TestGetWorkflow_OrchestratedNotStatic(t *testing.T) {
 	t.Parallel()
-	content, err := GetWorkflow("bootstrap")
-	if err != nil {
-		t.Fatalf("GetWorkflow(bootstrap): %v", err)
-	}
-	if strings.Contains(content, `<section name="strategy"`) {
-		t.Error("bootstrap.md should NOT contain <section name=\"strategy\">")
-	}
-	if strings.Contains(content, "Choose Deployment Strategy") {
-		t.Error("bootstrap.md should NOT contain old strategy section")
-	}
-}
-
-func TestBootstrapWorkflow_CloseStepPresent(t *testing.T) {
-	t.Parallel()
-	content, err := GetWorkflow("bootstrap")
-	if err != nil {
-		t.Fatalf("GetWorkflow(bootstrap): %v", err)
-	}
-	if !strings.Contains(content, `<section name="close"`) {
-		t.Error("bootstrap.md should contain <section name=\"close\">")
+	for _, name := range []string{"bootstrap", "develop", "cicd", "export"} {
+		if _, err := GetWorkflow(name); err == nil {
+			t.Errorf("GetWorkflow(%q) should fail — atom-synthesized workflows must not have a static .md file", name)
+		}
 	}
 }
 
@@ -142,7 +131,7 @@ func TestListWorkflows_Complete(t *testing.T) {
 
 	workflows := ListWorkflows()
 
-	expected := []string{"bootstrap", "cicd", "develop", "export", "recipe"}
+	expected := []string{"recipe"}
 	if len(workflows) != len(expected) {
 		t.Fatalf("expected %d workflows, got %d: %v", len(expected), len(workflows), workflows)
 	}

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -42,7 +43,7 @@ func TestRecipeStart_ModelGate(t *testing.T) {
 			t.Parallel()
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 			engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
-			RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil)
+			RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil, runtime.Info{})
 
 			input := map[string]any{
 				"action":   "start",
@@ -66,7 +67,7 @@ func TestRecipeStart_Success(t *testing.T) {
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":      "start",
@@ -112,7 +113,7 @@ func TestRecipeStart_DefaultTierRejected(t *testing.T) {
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":      "start",
@@ -131,7 +132,7 @@ func TestRecipeStart_InvalidTier(t *testing.T) {
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
@@ -150,7 +151,7 @@ func TestRecipeComplete_Research(t *testing.T) {
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil, runtime.Info{})
 
 	// Start recipe session.
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
@@ -239,7 +240,7 @@ func TestRecipeComplete_MissingPlan(t *testing.T) {
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil, runtime.Info{})
 
 	// Start.
 	callTool(t, srv, "zerops_workflow", map[string]any{
@@ -263,7 +264,7 @@ func TestRecipeSkip_CloseAllowed(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	dir := t.TempDir()
 	engine := workflow.NewEngine(dir, workflow.EnvLocal, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, dir, "", nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, dir, "", nil, runtime.Info{})
 
 	// Start and advance to close step via engine directly.
 	resp, err := engine.RecipeStart("proj1", "test recipe", "minimal")
@@ -322,7 +323,7 @@ func TestRecipeStatus(t *testing.T) {
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil, runtime.Info{})
 
 	// Start recipe.
 	callTool(t, srv, "zerops_workflow", map[string]any{
@@ -354,7 +355,7 @@ func TestRecipeAutoReset_CompletedSession(t *testing.T) {
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil, runtime.Info{})
 
 	// Start and complete all recipe steps.
 	if _, err := engine.RecipeStart("proj1", "test", "minimal"); err != nil {

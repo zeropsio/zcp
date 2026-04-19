@@ -5,13 +5,6 @@ import (
 	"strings"
 )
 
-// StrategyToSection maps deploy strategy constants to deploy.md section names.
-var StrategyToSection = map[string]string{
-	StrategyPushDev: "deploy-push-dev",
-	StrategyPushGit: "deploy-push-git",
-	StrategyManual:  "deploy-manual",
-}
-
 // strategyDescriptions provides one-line descriptions for strategy alternatives.
 var strategyDescriptions = map[string]string{
 	StrategyPushDev: "SSH self-deploy from dev container",

@@ -35,7 +35,7 @@ func TestCatalog_CoversAllMarkdownBlocks(t *testing.T) {
 		{"close", recipeCloseBlocks},
 	}
 	for _, s := range sections {
-		body := ExtractSection(md, s.name)
+		body := extractSection(md, s.name)
 		if body == "" {
 			continue
 		}

@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/zeropsio/zcp/internal/content"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -88,27 +87,11 @@ func handleStrategy(_ *workflow.Engine, input WorkflowInput, stateDir string) (*
 	return jsonResult(result), nil, nil
 }
 
-// buildStrategyGuidance extracts strategy-specific guidance from deploy.md.
+// buildStrategyGuidance returns strategy-specific guidance synthesised from
+// the Layer 2 atom corpus.
 func buildStrategyGuidance(strategies map[string]string) string {
-	md, err := content.GetWorkflow("develop")
-	if err != nil {
-		return ""
-	}
-
-	seen := make(map[string]bool)
-	var parts []string
-	for _, strategy := range strategies {
-		section, ok := workflow.StrategyToSection[strategy]
-		if !ok || seen[section] {
-			continue
-		}
-		seen[section] = true
-		extracted := workflow.ExtractSection(md, section)
-		if extracted != "" {
-			parts = append(parts, extracted)
-		}
-	}
-	return strings.Join(parts, "\n\n---\n\n")
+	g, _ := workflow.BuildStrategyGuidance(strategies)
+	return g
 }
 
 // allStrategiesAre returns true if all values in the map equal the given strategy.

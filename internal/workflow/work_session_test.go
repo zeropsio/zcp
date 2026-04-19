@@ -3,7 +3,6 @@ package workflow
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -349,49 +348,5 @@ func TestCleanStaleWorkSessions(t *testing.T) {
 	}
 	if _, err := os.Stat(workSessionPath(dir, os.Getpid())); err != nil {
 		t.Errorf("live PID file removed: %v", err)
-	}
-}
-
-func TestSuggestNext(t *testing.T) {
-	tests := []struct {
-		name     string
-		ws       *WorkSession
-		contains string
-	}{
-		{"nil", nil, ""},
-		{"empty services", &WorkSession{}, ""},
-		{
-			"pending deploy",
-			&WorkSession{Services: []string{"web"}},
-			"Deploy pending",
-		},
-		{
-			"pending verify",
-			&WorkSession{
-				Services: []string{"web"},
-				Deploys:  map[string][]DeployAttempt{"web": {{AttemptedAt: "t", SucceededAt: "t"}}},
-			},
-			"Verify pending",
-		},
-		{
-			"closed",
-			&WorkSession{
-				Services: []string{"web"},
-				ClosedAt: "t",
-			},
-			"Task complete",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := SuggestNext(tt.ws)
-			if tt.contains == "" && got != "" {
-				t.Errorf("want empty, got %q", got)
-				return
-			}
-			if tt.contains != "" && !strings.Contains(got, tt.contains) {
-				t.Errorf("want contains %q, got %q", tt.contains, got)
-			}
-		})
 	}
 }

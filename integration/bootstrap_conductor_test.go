@@ -16,6 +16,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/tools"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -38,7 +39,7 @@ func setupWorkflowServer(t *testing.T, mock *platform.Mock) (*mcp.ClientSession,
 	stateDir := t.TempDir()
 	engine := workflow.NewEngine(stateDir, workflow.EnvLocal, nil)
 
-	tools.RegisterWorkflow(mcpSrv, mock, "proj-1", nil, nil, engine, nil, "", "", nil)
+	tools.RegisterWorkflow(mcpSrv, mock, "proj-1", nil, nil, engine, nil, "", "", nil, runtime.Info{})
 	tools.RegisterDiscover(mcpSrv, mock, "proj-1", "")
 	tools.RegisterKnowledge(mcpSrv, store, mock, nil, nil, nil)
 

@@ -11,7 +11,10 @@ import (
 	"time"
 )
 
-const defaultMaxIterations = 10
+// defaultMaxIterations aligns with the 3-tier escalation ladder in
+// BuildIterationDelta: tiers 1-2 diagnose, 3-4 systematic check, 5 stop.
+// Cap at 5 so the STOP tier fires exactly once instead of repeating.
+const defaultMaxIterations = 5
 
 // WorkflowBootstrap is the workflow name for bootstrap sessions.
 const WorkflowBootstrap = "bootstrap"

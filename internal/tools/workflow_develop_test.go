@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -43,7 +44,7 @@ func TestHandleDevelopBriefing_NoStrategy_DoesNotCreateWorkSession(t *testing.T)
 	})
 
 	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
-		WorkflowInput{Intent: "test"}, nil, nil, "")
+		WorkflowInput{Intent: "test"}, nil, nil, "", runtime.Info{InContainer: true})
 	if err != nil {
 		t.Fatalf("handleDevelopBriefing: %v", err)
 	}
@@ -91,7 +92,7 @@ func TestHandleDevelopBriefing_WithStrategy_CreatesWorkSession(t *testing.T) {
 	})
 
 	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
-		WorkflowInput{Intent: "test"}, nil, nil, "")
+		WorkflowInput{Intent: "test"}, nil, nil, "", runtime.Info{InContainer: true})
 	if err != nil {
 		t.Fatalf("handleDevelopBriefing: %v", err)
 	}

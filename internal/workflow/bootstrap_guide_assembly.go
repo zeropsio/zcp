@@ -9,36 +9,125 @@ import (
 	"github.com/zeropsio/zcp/internal/knowledge"
 )
 
-// buildGuide assembles a step guide with injected knowledge from the knowledge store.
-// Falls back to base guidance if knowledge is unavailable.
-func (b *BootstrapState) buildGuide(step string, iteration int, env Environment, kp knowledge.Provider) string {
-	var runtimeType string
-	var depTypes []string
-	if b.Plan != nil {
-		runtimeType = b.Plan.RuntimeBase()
-		depTypes = b.Plan.DependencyTypes()
+// buildGuide assembles a step guide by synthesizing knowledge atoms against a
+// minimal StateEnvelope derived from the live BootstrapState. Iteration-delta
+// guidance short-circuits atom synthesis for retries — failure ladders are
+// step-scoped to deploy and not expressible as atoms today.
+//
+// knowledge.Provider is accepted for signature stability with earlier callers
+// but no longer consulted: runtime briefings were redundant with the runtime
+// guide atoms and added 2x the token cost without new information.
+func (b *BootstrapState) buildGuide(step string, iteration int, env Environment, _ knowledge.Provider) string {
+	if iteration > 0 {
+		if delta := BuildIterationDelta(step, iteration, b.Plan, b.lastAttestation()); delta != "" {
+			return delta
+		}
 	}
 
-	// D5: Env vars injected once at generate, not at deploy.
-	var envVars map[string][]string
-	if step != StepDeploy {
-		envVars = b.DiscoveredEnvVars
+	if step == StepClose && (b.Plan == nil || len(b.Plan.Targets) == 0) {
+		return closeGuidance
 	}
 
-	return assembleGuidance(GuidanceParams{
-		Step:              step,
-		Mode:              b.PlanMode(),
-		Env:               env,
-		RuntimeType:       runtimeType,
-		DependencyTypes:   depTypes,
-		DiscoveredEnvVars: envVars,
-		Iteration:         iteration,
-		Plan:              b.Plan,
-		LastAttestation:   b.lastAttestation(),
-		FailureCount:      iteration,
-		KP:                kp,
-	})
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		return ""
+	}
+	envelope := b.synthesisEnvelope(step, env)
+	bodies, err := Synthesize(envelope, corpus)
+	if err != nil {
+		return ""
+	}
+	out := strings.Join(bodies, "\n\n---\n\n")
+
+	// Env var catalog is dynamic data — not expressible as a static atom.
+	// Re-injected at generate so the agent has the authoritative key list
+	// even if the provision attestation was lost to compaction.
+	if step == StepGenerate && len(b.DiscoveredEnvVars) > 0 {
+		if out != "" {
+			out += "\n\n---\n\n"
+		}
+		out += formatEnvVarsForGuide(b.DiscoveredEnvVars)
+	}
+	return out
 }
+
+// synthesisEnvelope builds the minimal StateEnvelope that atom filtering
+// needs during a bootstrap step. Phase is always bootstrap-active; route
+// is inferred from the plan (adopt when every target pre-exists, classic
+// otherwise — recipe bootstraps run a separate conductor and don't reach
+// buildGuide). Each standard-mode runtime emits two snapshots (dev + stage)
+// so stage-scoped atoms match.
+func (b *BootstrapState) synthesisEnvelope(step string, env Environment) StateEnvelope {
+	services := make([]ServiceSnapshot, 0)
+	if b.Plan != nil {
+		for _, t := range b.Plan.Targets {
+			services = append(services, planTargetSnapshots(t)...)
+		}
+	}
+	route := BootstrapRouteClassic
+	if b.Plan != nil && b.Plan.IsAllExisting() {
+		route = BootstrapRouteAdopt
+	}
+	return StateEnvelope{
+		Phase:       PhaseBootstrapActive,
+		Environment: env,
+		Services:    services,
+		Bootstrap:   &BootstrapSessionSummary{Route: route, Step: step},
+	}
+}
+
+// planTargetSnapshots turns a plan target into one (dev/simple) or two
+// (standard = dev + stage) service snapshots keyed by envelope Mode. The
+// RuntimeClass assumes the target has ports (true for every dynamic or
+// implicit-webserver runtime we bootstrap today); static plans keep the
+// same classification because atoms filter on runtime presence, not shape.
+func planTargetSnapshots(t BootstrapTarget) []ServiceSnapshot {
+	mode := planModeToEnvelopeMode(t.Runtime.EffectiveMode())
+	runtimeClass := classifyEnvelopeRuntime(t.Runtime.Type, true)
+	snaps := []ServiceSnapshot{{
+		Hostname:     t.Runtime.DevHostname,
+		TypeVersion:  t.Runtime.Type,
+		RuntimeClass: runtimeClass,
+		Mode:         mode,
+	}}
+	if mode == ModeStandard {
+		if stage := t.Runtime.StageHostname(); stage != "" {
+			snaps[0].StageHostname = stage
+			snaps = append(snaps, ServiceSnapshot{
+				Hostname:     stage,
+				TypeVersion:  t.Runtime.Type,
+				RuntimeClass: runtimeClass,
+				Mode:         ModeStage,
+			})
+		}
+	}
+	return snaps
+}
+
+// planModeToEnvelopeMode translates the plan's string mode into the envelope
+// Mode enum. Standard's dev half gets ModeStandard; the stage half is emitted
+// separately by planTargetSnapshots with ModeStage.
+func planModeToEnvelopeMode(mode string) Mode {
+	switch mode {
+	case PlanModeDev:
+		return ModeDev
+	case PlanModeSimple:
+		return ModeSimple
+	case PlanModeStandard, "":
+		return ModeStandard
+	}
+	return Mode(mode)
+}
+
+// closeGuidance is the static guidance for the administrative close step
+// when the plan is empty (managed-only bootstraps) — no atom corpus path
+// covers that edge case, so we keep the short inline message.
+const closeGuidance = `Bootstrap is complete. All services are deployed and healthy.
+
+Complete this step to finalize bootstrap:
+→ zerops_workflow action="complete" step="close" attestation="Bootstrap finalized, services operational"
+
+After closing, choose a deployment strategy for each service before deploying again.`
 
 // formatEnvVarsForGuide formats discovered env vars as a markdown catalog table
 // for guide injection. Shape mirrors the attestation the provision step tells

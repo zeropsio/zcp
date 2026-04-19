@@ -49,12 +49,7 @@ var universalForbiddenTools = []string{
 // and returns its body (without wrapper tags).
 func extractBlock(t *testing.T, md, name string) string {
 	t.Helper()
-	body := ExtractSection(md, "")
-	// ExtractSection works on <section> tags, not <block>. Use ExtractBlocks
-	// over the whole file instead.
-	blocks := ExtractBlocks(md)
-	_ = body
-	for _, b := range blocks {
+	for _, b := range ExtractBlocks(md) {
 		if b.Name == name {
 			return b.Body
 		}

@@ -31,9 +31,9 @@ const (
 	CloseReasonAutoComplete = "auto-complete"
 	// CloseReasonAbandoned — orphan cleanup or reset.
 	CloseReasonAbandoned = "abandoned"
-
-	// workIdleThreshold — after this idle period, suggestedNext nudges closure.
-	workIdleThreshold = 4 * time.Hour
+	// CloseReasonIterationCap — infrastructure workflow hit maxIterations(); work
+	// session auto-closes so the LLM can report to the user instead of looping.
+	CloseReasonIterationCap = "iteration-cap"
 )
 
 // WorkSession records the lifecycle of one LLM task tied to a process.
@@ -295,44 +295,6 @@ func workSessionID(pid int) string {
 
 func workSessionPath(stateDir string, pid int) string {
 	return filepath.Join(stateDir, workSessionDirName, strconv.Itoa(pid)+".json")
-}
-
-// SuggestNext returns the next-action hint for the work session based on its
-// state. Pure function — depends only on the session, not live platform data.
-func SuggestNext(ws *WorkSession) string {
-	if ws == nil || len(ws.Services) == 0 {
-		return ""
-	}
-	if ws.ClosedAt != "" {
-		return "Task complete. Close session (action=\"close\") or start next task (action=\"start\" workflow=\"develop\")."
-	}
-
-	var needsDeploy, needsVerify []string
-	for _, h := range ws.Services {
-		deploys := ws.Deploys[h]
-		if len(deploys) == 0 || deploys[len(deploys)-1].SucceededAt == "" {
-			needsDeploy = append(needsDeploy, h)
-			continue
-		}
-		verifies := ws.Verifies[h]
-		if len(verifies) == 0 || !verifies[len(verifies)-1].Passed {
-			needsVerify = append(needsVerify, h)
-		}
-	}
-
-	if len(needsDeploy) > 0 {
-		return "Deploy pending for " + strings.Join(needsDeploy, ", ") + ". Use zerops_deploy."
-	}
-	if len(needsVerify) > 0 {
-		return "Verify pending for " + strings.Join(needsVerify, ", ") + ". Use zerops_verify."
-	}
-
-	if t, err := time.Parse(time.RFC3339, ws.LastActivityAt); err == nil {
-		if time.Since(t) > workIdleThreshold {
-			return "Session idle >4h. Close if task is done (action=\"close\" workflow=\"develop\")."
-		}
-	}
-	return "All services deployed and verified. Close session or start next task."
 }
 
 // MigrateRemoveLegacyWorkState deletes pre-WorkSession artifacts:

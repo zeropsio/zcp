@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -18,7 +20,11 @@ import (
 // The WorkSession survives context compaction via the system-prompt
 // "Lifecycle Status" block, so the LLM never forgets what was deployed and
 // what still needs verification — even across summarization boundaries.
-func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, input WorkflowInput, cache *ops.StackTypeCache, mounter ops.Mounter, selfHostname string) (*mcp.CallToolResult, any, error) {
+//
+// Guidance is synthesized via the Layer 2 atom pipeline (ComputeEnvelope →
+// Synthesize → BuildPlan → RenderStatus): runtime, strategy, mode and
+// environment axes of the envelope drive which atoms match.
+func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, input WorkflowInput, cache *ops.StackTypeCache, mounter ops.Mounter, selfHostname string, rt runtime.Info) (*mcp.CallToolResult, any, error) {
 	metas, err := workflow.ListServiceMetas(engine.StateDir())
 	if err != nil {
 		return convertError(platform.NewPlatformError(
@@ -67,7 +73,8 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		}
 	}
 
-	// Filter to complete runtime services.
+	// Filter to complete runtime services. Required for both the strategy gate
+	// and the WorkSession scope — managed services are never deploy targets.
 	var runtimeMetas []*workflow.ServiceMeta
 	for _, m := range metas {
 		if !m.IsComplete() {
@@ -84,86 +91,81 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 			"Run bootstrap first: action=\"start\" workflow=\"bootstrap\"")), nil, nil
 	}
 
-	// Build briefing targets from metas.
-	targets, mode := workflow.BuildBriefingTargets(runtimeMetas)
-
-	// Enrich targets with runtime types and HTTP support from live service data.
-	typeMap := make(map[string]string, len(liveServices))
-	httpMap := make(map[string]bool, len(liveServices))
-	for _, svc := range liveServices {
-		typeMap[svc.Name] = svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
-		for _, p := range svc.Ports {
-			if p.HTTPSupport {
-				httpMap[svc.Name] = true
-				break
-			}
-		}
-	}
-	workflow.EnrichBriefingTargets(targets, typeMap, httpMap)
-
-	// Determine dominant strategy.
-	strategy := ""
-	for _, t := range targets {
-		if t.Role != workflow.DeployRoleStage && t.Strategy != "" {
-			strategy = t.Strategy
+	// Strategy gate (spec-work-session.md §6.1): if ANY runtime service has no
+	// confirmed strategy, render the briefing WITHOUT creating a work session.
+	// The atom pipeline picks up the `strategies: [unset]` atom because
+	// ComputeEnvelope sets snapshot.Strategy=StrategyUnset for empty metas.
+	strategyUnset := false
+	for _, m := range runtimeMetas {
+		if m.EffectiveStrategy() == "" {
+			strategyUnset = true
 			break
 		}
 	}
 
-	// Strategy gate (spec-work-session.md §6.1): if ANY runtime service has no
-	// confirmed strategy, emit the strategy-selection briefing WITHOUT creating
-	// a work session. The agent must call action="strategy" first.
-	if strategy == "" {
-		briefingText := workflow.BuildDevelopBriefing(targets, "", mode, engine.Environment(), engine.StateDir())
-		return jsonResult(workflow.DevelopBriefing{
-			Targets:  targets,
-			Mode:     mode,
-			Strategy: "",
-			Briefing: briefingText,
-		}), nil, nil
+	if !strategyUnset {
+		// Create or resume per-PID WorkSession.
+		//
+		// If an open session already exists for this PID:
+		//   - matching / empty intent → reuse (fresh briefing, same session)
+		//   - different intent        → refuse and ask the LLM to close first
+		// Closed sessions are overwritten: the prior task is done, a new intent
+		// means a new task.
+		existing, _ := workflow.CurrentWorkSession(engine.StateDir())
+		if existing != nil && existing.ClosedAt == "" {
+			if input.Intent != "" && existing.Intent != "" && existing.Intent != input.Intent {
+				return convertError(platform.NewPlatformError(
+					platform.ErrWorkflowActive,
+					fmt.Sprintf("Active work session with different intent: %q", existing.Intent),
+					"Close the current task first: zerops_workflow action=\"close\" workflow=\"develop\"")), nil, nil
+			}
+		} else {
+			scope := workSessionScopeFromMetas(runtimeMetas)
+			ws := workflow.NewWorkSession(projectID, string(engine.Environment()), input.Intent, scope)
+			if err := workflow.SaveWorkSession(engine.StateDir(), ws); err != nil {
+				return convertError(platform.NewPlatformError(
+					platform.ErrInvalidParameter,
+					fmt.Sprintf("Failed to save work session: %v", err),
+					"")), nil, nil
+			}
+			_ = workflow.RegisterSession(engine.StateDir(), workflow.SessionEntry{
+				SessionID: workflow.WorkSessionID(os.Getpid()),
+				PID:       os.Getpid(),
+				Workflow:  workflow.WorkflowWork,
+				ProjectID: projectID,
+				Intent:    input.Intent,
+			})
+		}
 	}
 
-	// Create or resume per-PID WorkSession.
-	//
-	// If an open session already exists for this PID:
-	//   - matching / empty intent → reuse (fresh briefing, same session)
-	//   - different intent        → refuse and ask the LLM to close first
-	// Closed sessions are overwritten: the prior task is done, a new intent
-	// means a new task.
-	scope := workSessionScope(targets)
-	existing, _ := workflow.CurrentWorkSession(engine.StateDir())
-	if existing != nil && existing.ClosedAt == "" {
-		if input.Intent != "" && existing.Intent != "" && existing.Intent != input.Intent {
-			return convertError(platform.NewPlatformError(
-				platform.ErrWorkflowActive,
-				fmt.Sprintf("Active work session with different intent: %q", existing.Intent),
-				"Close the current task first: zerops_workflow action=\"close\" workflow=\"develop\"")), nil, nil
-		}
-	} else {
-		ws := workflow.NewWorkSession(projectID, string(engine.Environment()), input.Intent, scope)
-		if err := workflow.SaveWorkSession(engine.StateDir(), ws); err != nil {
-			return convertError(platform.NewPlatformError(
-				platform.ErrInvalidParameter,
-				fmt.Sprintf("Failed to save work session: %v", err),
-				"")), nil, nil
-		}
-		_ = workflow.RegisterSession(engine.StateDir(), workflow.SessionEntry{
-			SessionID: workflow.WorkSessionID(os.Getpid()),
-			PID:       os.Getpid(),
-			Workflow:  workflow.WorkflowWork,
-			ProjectID: projectID,
-			Intent:    input.Intent,
-		})
+	// Render via the atom pipeline: envelope → atom filter → typed plan → markdown.
+	envelope, err := workflow.ComputeEnvelope(ctx, client, engine.StateDir(), projectID, rt, time.Now())
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrNotImplemented,
+			fmt.Sprintf("Compute envelope: %v", err),
+			"")), nil, nil
 	}
-
-	briefingText := workflow.BuildDevelopBriefing(targets, strategy, mode, engine.Environment(), engine.StateDir())
-
-	return jsonResult(workflow.DevelopBriefing{
-		Targets:  targets,
-		Mode:     mode,
-		Strategy: strategy,
-		Briefing: briefingText,
-	}), nil, nil
+	corpus, err := workflow.LoadAtomCorpus()
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrNotImplemented,
+			fmt.Sprintf("Load knowledge atoms: %v", err),
+			"")), nil, nil
+	}
+	guidance, err := workflow.Synthesize(envelope, corpus)
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrNotImplemented,
+			fmt.Sprintf("Synthesize guidance: %v", err),
+			"")), nil, nil
+	}
+	plan := workflow.BuildPlan(envelope)
+	return textResult(workflow.RenderStatus(workflow.Response{
+		Envelope: envelope,
+		Guidance: guidance,
+		Plan:     &plan,
+	})), nil, nil
 }
 
 // adoptUnmanagedServices auto-adopts existing platform services through the bootstrap engine.
@@ -230,20 +232,17 @@ func adoptUnmanagedServices(ctx context.Context, engine *workflow.Engine, client
 	return true
 }
 
-// workSessionScope returns the ordered list of hostnames a work session tracks
+// workSessionScopeFromMetas returns the ordered hostnames a work session tracks
 // for auto-close — dev/simple targets first, stage targets second. Stage is
 // included because in standard mode deploy+verify must cover both.
-func workSessionScope(targets []workflow.BriefingTarget) []string {
-	scope := make([]string, 0, len(targets))
-	for _, t := range targets {
-		if t.Role == workflow.DeployRoleStage {
-			continue
-		}
-		scope = append(scope, t.Hostname)
+func workSessionScopeFromMetas(metas []*workflow.ServiceMeta) []string {
+	scope := make([]string, 0, len(metas)*2)
+	for _, m := range metas {
+		scope = append(scope, m.Hostname)
 	}
-	for _, t := range targets {
-		if t.Role == workflow.DeployRoleStage {
-			scope = append(scope, t.Hostname)
+	for _, m := range metas {
+		if m.StageHostname != "" {
+			scope = append(scope, m.StageHostname)
 		}
 	}
 	return scope
