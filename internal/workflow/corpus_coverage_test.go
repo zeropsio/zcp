@@ -158,6 +158,12 @@ func developCoverageFixtures() []coverageFixture {
 				"zerops_verify",
 				"VERDICT",
 				"agent-browser",
+				// Phase-1 additions — load-bearing awareness + KB pointers.
+				"Deploy strategy — current + how to change",
+				`action="strategy"`,
+				"edit → deploy",
+				"Knowledge on demand",
+				"Infrastructure changes",
 			},
 		},
 		{
