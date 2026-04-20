@@ -6,13 +6,15 @@ import (
 )
 
 // TestModeExpansionAtom_FiresOnlyForSingleSlotModes pins the axis filter on
-// `develop-mode-expansion.md` — the atom must fire for services in dev or
-// simple mode (where a stage pair is missing and expansion is meaningful)
-// and must NOT fire for standard mode (which already has a stage pair).
+// `develop-mode-expansion.md` — the atom must fire for deployed services in
+// dev or simple mode (where a stage pair is missing and expansion is
+// meaningful) and must NOT fire for standard mode (already has a stage pair)
+// nor during the first-deploy branch (expansion is a post-deploy decision).
 //
-// Regression guard: without the modes axis, this atom would surface on
-// standard-mode services and advise the agent to "add a stage" that
-// already exists.
+// Regression guard: without the modes + deployStates axes, this atom would
+// either surface on standard-mode services and advise the agent to "add a
+// stage" that already exists, or fire during first-deploy before the current
+// single-slot setup is validated.
 func TestModeExpansionAtom_FiresOnlyForSingleSlotModes(t *testing.T) {
 	t.Parallel()
 
@@ -24,12 +26,15 @@ func TestModeExpansionAtom_FiresOnlyForSingleSlotModes(t *testing.T) {
 	cases := []struct {
 		name     string
 		mode     Mode
+		deployed bool
 		wantFire bool
 	}{
-		{"dev_fires", ModeDev, true},
-		{"simple_fires", ModeSimple, true},
-		{"standard_suppressed", ModeStandard, false},
-		{"stage_suppressed", ModeStage, false},
+		{"dev_deployed_fires", ModeDev, true, true},
+		{"simple_deployed_fires", ModeSimple, true, true},
+		{"dev_never_deployed_suppressed", ModeDev, false, false},
+		{"simple_never_deployed_suppressed", ModeSimple, false, false},
+		{"standard_suppressed", ModeStandard, true, false},
+		{"stage_suppressed", ModeStage, true, false},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -40,7 +45,7 @@ func TestModeExpansionAtom_FiresOnlyForSingleSlotModes(t *testing.T) {
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: RuntimeDynamic, Mode: tt.mode,
-					Strategy: "push-dev",
+					Strategy: "push-dev", Bootstrapped: true, Deployed: tt.deployed,
 				}},
 			}
 			bodies, err := Synthesize(env, corpus)
@@ -50,7 +55,7 @@ func TestModeExpansionAtom_FiresOnlyForSingleSlotModes(t *testing.T) {
 			joined := strings.Join(bodies, "\n")
 			fired := strings.Contains(joined, "Mode expansion — add a stage pair")
 			if fired != tt.wantFire {
-				t.Errorf("mode=%s: expansion atom fired=%v, want %v", tt.mode, fired, tt.wantFire)
+				t.Errorf("mode=%s deployed=%v: expansion atom fired=%v, want %v", tt.mode, tt.deployed, fired, tt.wantFire)
 			}
 		})
 	}

@@ -2,6 +2,7 @@
 id: develop-strategy-awareness
 priority: 5
 phases: [develop-active]
+strategies: [push-dev, push-git, manual]
 title: "Deploy strategy — current + how to change"
 ---
 

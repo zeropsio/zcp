@@ -2,6 +2,7 @@
 id: develop-mode-expansion
 priority: 6
 phases: [develop-active]
+deployStates: [deployed]
 modes: [dev, simple]
 title: "Mode expansion — add a stage pair"
 ---
