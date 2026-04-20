@@ -1,14 +1,16 @@
 #yamlPreprocessor=on
 
 # Used by develop-* scenarios that need a live Laravel app to iterate on.
-# buildFromGit clones + builds + deploys the recipe, so `appdev` reaches
-# ACTIVE before the LLM starts. `zeropsSetup: dev` marks the container as
-# the development surface (SSHFS-mountable, in-place edits).
+# buildFromGit clones + builds + deploys `zeropsio/recipe-laravel-minimal`,
+# whose zerops.yml declares `setup: app` — the import hostname MUST match
+# that setup name or Zerops fails the build at 0s. Seed intentionally
+# writes no ServiceMeta: the develop-* scenarios test that the LLM can
+# adopt existing unmanaged services (bootstrap/adopt route) and then
+# continue into the develop flow.
 
 services:
-  - hostname: appdev
+  - hostname: app
     type: php-nginx@8.4
-    zeropsSetup: dev
     buildFromGit: https://github.com/zeropsio/recipe-laravel-minimal
     enableSubdomainAccess: true
     envSecrets:

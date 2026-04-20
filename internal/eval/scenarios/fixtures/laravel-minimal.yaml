@@ -1,8 +1,12 @@
+# Single-service trimmed fixture. Paired with seed=imported scenarios that
+# exercise the READY_TO_DEPLOY recovery path — no buildFromGit, no db, so
+# `appdev` is created and sits at READY_TO_DEPLOY (import did not set
+# startWithoutCode). Seed intentionally writes no ServiceMeta.
+
 services:
   - hostname: appdev
     type: php-nginx@8.4
     mode: NON_HA
     enableSubdomainAccess: true
-  - hostname: db
-    type: postgresql@18
-    mode: NON_HA
+    verticalAutoscaling:
+      minRam: 0.5
