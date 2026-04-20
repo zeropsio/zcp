@@ -1235,3 +1235,46 @@ Post-close autonomous tool invocations stop firing. An agent that had read the t
 ### Known follow-ups
 
 - `buildRecipeTransition` (separate function) still emits prose with publish + cache-clear + pull walkthroughs. That output lives outside the close-step response payload — it's used by CLI-adjacent surfaces. No C-11 change required; the NextSteps invariant applies only to the workflow-response NextSteps slice.
+
+---
+
+## C-12 — Land `docs/zcprecipator2/DISPATCH.md`
+
+**Status**: green (docs-only)
+
+### What landed
+
+Per [atomic-layout.md §2](03-architecture/atomic-layout.md) + [principles.md P2 §Enforcement](03-architecture/principles.md), dispatcher instructions live in a document that is **never transmitted** to sub-agents. [`docs/zcprecipator2/DISPATCH.md`](DISPATCH.md) is that document.
+
+Contents (7 sections):
+1. **The composition surface** — named table of the 5 `Build*DispatchBrief` functions in `atom_stitcher.go`, with their substep + tier gating.
+2. **Stitching recipe** — the fixed shape (mandatory-core + role-specific + principles pointer-includes + interpolated inputs) every dispatch brief follows; pointer-include vs inline distinction; the 3 interpolatable inputs (factsLogPath, manifestPath, SymbolContract JSON).
+3. **Multi-codebase branching** — role-parameter approach for scaffold (one invocation per codebase); shared-vs-separate-codebase worker dispatch rules; minimal-tier dual-runtime scoping.
+4. **Why certain tokens are forbidden in transmitted briefs** — B-1 through B-5 + B-7 + H-4 from the upcoming C-13 build lints, with the rationale for each (the "why"). Covers version anchors, dispatcher vocabulary, internal check names, Go source paths, 300-line cap, orphan-prohibition, positive-P4-form in entry atoms.
+5. **Where to edit vs where to look** — maintenance cheat-sheet table for common dispatch refactors.
+6. **Golden-diff testing** — points at step-4 composed-brief goldens at `04-verification/brief-*-composed.md` as cold-read review artifacts; flags C-14's dry-run harness as the canonical diff surface.
+7. **Operational boundary** — dispatchers see DISPATCH.md; sub-agents see composed briefs; the two are updated together when a new dispatch surface lands.
+
+### Verification
+
+- No Go changes; no test surface.
+- `make lint-local` — 0 issues.
+
+### LoC delta
+
+- `docs/zcprecipator2/DISPATCH.md`: +175 LoC (handoff estimate was ~+400; came in under because §4 reads compactly by referencing the upcoming lint rules rather than re-deriving each invariant from principles).
+
+### Breaks-alone consequence
+
+None — documentation-only.
+
+### Ordering deps verified
+
+- C-4 ✓ (atoms exist to reference in §1 + §2 + §5).
+- C-5 ✓ (stitcher exists to reference in §1 + §3).
+- C-7.5 ✓ (editorial-review dispatch brief exists to reference in §1).
+
+### Known follow-ups
+
+- C-13 must keep its lint rule rationale **consistent** with this document's §4 — if a lint rule changes (e.g. new banned token, modified regex), update DISPATCH.md §4 alongside. The lint file (next commit) is the enforcement; this document is the reasoning.
+- C-14's dry-run harness referenced in §6 is the canonical golden-diff surface for future composition refactors. Document currently forward-references the feature; once C-14 lands, the §6 pointer becomes live.
