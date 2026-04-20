@@ -3,116 +3,57 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
+	opschecks "github.com/zeropsio/zcp/internal/ops/checks"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// checkWorkerProductionCorrectness enforces that worker README.md
-// (or CLAUDE.md, whichever the build chose) carries gotchas covering
-// the two production-correctness concerns that bite every scaled
-// worker deployment on Zerops:
+// checkWorkerProductionCorrectness composes the two queue-group and
+// shutdown predicates that C-7c moved into internal/ops/checks. The
+// composition behavior is preserved exactly from the pre-C-7c inline
+// form: when BOTH sub-checks pass, a single aggregate
+// `{hostname}_worker_production_correctness` pass row is emitted (no
+// individual pass rows). When either fails, only the fail rows are
+// emitted (no aggregate pass).
 //
-//  1. Queue-group semantics under `minContainers > 1` — whenever
-//     a worker runs more than one replica (for throughput scaling OR
-//     for HA / rolling-deploy availability), a NATS (or Kafka, or any
-//     broker) consumer that doesn't specify a queue group processes
-//     every message N times, one per replica. v16's nestjs-showcase shipped without
-//     this gotcha in the workerdev README; only the feature
-//     subagent's code review noticed "queue: 'worker'" was missing
-//     from the StatusPanel, and even then the README never mentioned
-//     why that option was needed. A reader deploying a fresh worker
-//     to Zerops with minContainers:2 will run every background job
-//     twice and never know why their database is full of duplicates.
-//
-//  2. Graceful shutdown on SIGTERM — Zerops sends SIGTERM to the
-//     container during rolling deploys. A consumer that doesn't
-//     drain in-flight messages before exit loses work. The drain
-//     pattern (nc.drain() on SIGTERM, wait for completion, exit)
-//     is fundamental to long-running broker consumers and applies
-//     to every worker on Zerops regardless of framework.
-//
-// The rule: for every target with IsWorker=true, at least one
-// gotcha stem in the worker README's knowledge-base fragment must
-// normalize-match the queue-group topic, and at least one must
-// normalize-match the graceful-shutdown topic. The match uses the
-// same token-set intersection as the predecessor-floor check, so
-// lightly-reworded phrasings ("NATS queue group mandatory for HA"
-// vs "Without a queue group, workers double-process under scale")
-// still collide.
-//
-// Shared-codebase workers (SharesCodebaseWith != "") skip this check
-// — their operational knowledge lives in the host target's README.
-// The caller filters these out before calling.
-func checkWorkerProductionCorrectness(hostname string, readmeContent string, target workflow.RecipeTarget) []workflow.StepCheck {
-	if !target.IsWorker {
-		return nil
-	}
-	if target.SharesCodebaseWith != "" {
-		return nil
-	}
-	kb := extractFragmentContent(readmeContent, "knowledge-base")
-	if kb == "" {
-		// Fragment-missing error surfaces via checkReadmeFragments —
-		// don't duplicate it from here.
-		return nil
-	}
-	stems := workflow.ExtractGotchaStems(kb)
-	if len(stems) == 0 {
-		return nil
+// Non-worker targets and shared-codebase workers return nil — the
+// ops/checks predicates already short-circuit both of those.
+func checkWorkerProductionCorrectness(ctx context.Context, hostname string, readmeContent string, target workflow.RecipeTarget) []workflow.StepCheck {
+	qg := opschecks.CheckWorkerQueueGroupGotcha(ctx, hostname, readmeContent, target)
+	sh := opschecks.CheckWorkerShutdownGotcha(ctx, hostname, readmeContent, target)
+	if len(qg) == 0 && len(sh) == 0 {
+		return nil // non-worker or shared-codebase worker: upstream skips
 	}
 
-	bodies := workerGotchaBodies(kb)
-	haveQueueGroup := false
-	haveShutdown := false
-	for i, stem := range stems {
-		body := ""
-		if i < len(bodies) {
-			body = bodies[i]
-		}
-		combined := strings.ToLower(stem + " " + body)
-		if matchesQueueGroupTopic(combined) {
-			haveQueueGroup = true
-		}
-		if matchesShutdownTopic(combined) {
-			haveShutdown = true
-		}
-	}
-
-	var checks []workflow.StepCheck
-	if !haveQueueGroup {
-		checks = append(checks, workflow.StepCheck{
-			Name:   hostname + "_worker_queue_group_gotcha",
-			Status: statusFail,
-			Detail: fmt.Sprintf(
-				"worker %q README has no gotcha covering queue-group semantics under `minContainers > 1`. Whenever a worker runs more than one replica — whether the replicas exist for throughput scaling or for HA / rolling-deploy availability — a broker consumer that doesn't set a queue group (NATS `queue: 'workers'`, Kafka consumer group, etc.) processes every message ONCE PER REPLICA, so a 2-container worker runs every job twice. This is a production-correctness bug that only manifests after the first scale-out, and users cannot discover it from the scaffold alone. Add a gotcha describing the trap (stem naming the broker + 'queue group' or 'consumer group' + 'minContainers' / 'per replica' / 'double-process') with the exact client-library option that sets it. The `queue: 'workers'` option in NestJS's createMicroservice, the `GroupID` in sarama / confluent-kafka, etc.",
-				hostname,
-			),
-		})
-	}
-	if !haveShutdown {
-		checks = append(checks, workflow.StepCheck{
-			Name:   hostname + "_worker_shutdown_gotcha",
-			Status: statusFail,
-			Detail: fmt.Sprintf(
-				"worker %q README has no gotcha covering graceful shutdown on SIGTERM. Zerops sends SIGTERM to running containers during rolling deploys; a broker consumer that exits on SIGTERM without draining in-flight messages acks the batch, crashes, and loses the work. This is a production-correctness bug that only manifests during deploys. Add a gotcha covering the trap (stem naming 'SIGTERM' or 'graceful shutdown' or 'in-flight' or 'drain') with the concrete call sequence: catch SIGTERM, call `nc.drain()` / equivalent, await, then `process.exit(0)`. For NestJS microservice workers this is `app.close()` plus the underlying transport's drain.",
-				hostname,
-			),
-		})
-	}
-	if len(checks) == 0 {
+	qgPass := len(qg) == 1 && qg[0].Status == statusPass
+	shPass := len(sh) == 1 && sh[0].Status == statusPass
+	if qgPass && shPass {
 		return []workflow.StepCheck{{
 			Name:   hostname + "_worker_production_correctness",
 			Status: statusPass,
 		}}
 	}
-	return checks
+
+	var out []workflow.StepCheck
+	for _, c := range qg {
+		if c.Status == statusFail {
+			out = append(out, c)
+		}
+	}
+	for _, c := range sh {
+		if c.Status == statusFail {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // checkWorkerDrainCodeBlock enforces that a separate-codebase worker
-// README carries a fenced code block showing the SIGTERM → drain → exit
-// call sequence. v7's worker README had this as IG #3 with a full
+// README carries a fenced code block showing the SIGTERM → drain →
+// exit call sequence. v7's worker README had this as IG #3 with a full
 // typescript diff; v18's worker README shipped the drain topic only as
 // prose inside a gotcha — correct content but no copy-paste reference.
 //
@@ -123,10 +64,9 @@ func checkWorkerProductionCorrectness(hostname string, readmeContent string, tar
 // knowledge-base fragment) must contain a drain call AND a process/app
 // exit call, proving the reader has a copy-pasteable implementation.
 //
-// Detection is intentionally loose on language — drain sequences show
-// up as typescript in Node workers, go in Go workers, python in Celery
-// workers. The signal is: "a fenced block mentions draining and
-// exiting in the same block".
+// "Keep" disposition per check-rewrite.md §17 — the predicate reads the
+// whole README (not a structured manifest field), and the tools layer
+// already has the mount-walking context it needs; no shim benefit.
 func checkWorkerDrainCodeBlock(hostname string, readmeContent string, target workflow.RecipeTarget) []workflow.StepCheck {
 	if !target.IsWorker {
 		return nil
@@ -134,8 +74,6 @@ func checkWorkerDrainCodeBlock(hostname string, readmeContent string, target wor
 	if target.SharesCodebaseWith != "" {
 		return nil
 	}
-	// Collect all fenced-block bodies from the whole README (both
-	// IG and knowledge-base fragments live inside it).
 	blocks := extractFencedBlockBodies(readmeContent)
 	for _, b := range blocks {
 		lower := strings.ToLower(b)
@@ -203,8 +141,8 @@ func containsExitCall(lowerBlock string) bool {
 }
 
 // extractFencedBlockBodies returns the body text of every fenced code
-// block in the content. Used by the drain-code-block check to walk
-// every block looking for a call sequence.
+// block in the content. Used by checkWorkerDrainCodeBlock to walk every
+// block looking for a call sequence.
 func extractFencedBlockBodies(content string) []string {
 	var out []string
 	rest := content
@@ -226,89 +164,4 @@ func extractFencedBlockBodies(content string) []string {
 		out = append(out, rest[bodyStart:bodyStart+end])
 		rest = rest[bodyStart+end+3:]
 	}
-}
-
-// workerGotchaBodies extracts the body text for each gotcha bullet
-// in the knowledge-base fragment. Mirrors the stem extraction shape
-// used by the predecessor-floor check so the two walk the same
-// content in the same order.
-func workerGotchaBodies(kb string) []string {
-	entries := workflow.ExtractGotchaEntries(kb)
-	bodies := make([]string, 0, len(entries))
-	for _, e := range entries {
-		bodies = append(bodies, e.Body)
-	}
-	return bodies
-}
-
-// queueGroupTopicTokens are the substrings whose presence in a
-// normalized gotcha signals coverage of queue-group semantics.
-// Match is "any of these tokens in the combined stem+body", which
-// tolerates the many phrasings the topic shows up in ("queue group",
-// "consumer group", "GroupID", "double-process", "exactly once",
-// "minContainers").
-var queueGroupTopicTokens = []string{
-	"queue group",
-	"queuegroup",
-	"queue: '",
-	"queue: \"",
-	"consumer group",
-	"consumergroup",
-	"groupid",
-	"group id",
-	"double-process",
-	"double process",
-	"processed twice",
-	"duplicate processing",
-	"exactly once",
-	"at-most-once",
-	"at most once",
-	"fan out",
-	"fan-out",
-	"replicated subscription",
-	"every replica",
-	"per replica",
-	"load-balance messages",
-	"load balance messages",
-	"mincontainers",
-}
-
-func matchesQueueGroupTopic(combined string) bool {
-	for _, token := range queueGroupTopicTokens {
-		if strings.Contains(combined, token) {
-			return true
-		}
-	}
-	return false
-}
-
-// shutdownTopicTokens are the substrings whose presence in a
-// normalized gotcha signals coverage of graceful shutdown on SIGTERM.
-var shutdownTopicTokens = []string{
-	"sigterm",
-	"graceful shutdown",
-	"graceful-shutdown",
-	"in-flight",
-	"in flight",
-	"nc.drain",
-	".drain(",
-	"drain the subscription",
-	"drain subscription",
-	"drain in-flight",
-	"stop signal",
-	"shutdown hook",
-	"lose messages",
-	"losing messages",
-	"lose the work",
-	"rolling deploy",
-	"rolling restart",
-}
-
-func matchesShutdownTopic(combined string) bool {
-	for _, token := range shutdownTopicTokens {
-		if strings.Contains(combined, token) {
-			return true
-		}
-	}
-	return false
 }

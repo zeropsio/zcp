@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/ops"
+	opschecks "github.com/zeropsio/zcp/internal/ops/checks"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -30,7 +31,7 @@ func checkManifestRouteToPopulated(manifestPath string) []workflow.StepCheck {
 			Status: statusPass,
 		}}
 	}
-	var manifest contentManifest
+	var manifest opschecks.ContentManifest
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return []workflow.StepCheck{{
 			Name:   "manifest_route_to_populated",

@@ -53,7 +53,7 @@ func writeFactsLog(t *testing.T, path string, titles []string) {
 // slice as []workflowStepCheckShim for consistent assertion helpers.
 func runManifestCheck(t *testing.T, projectRoot string, readmesByHost map[string]string, factsLogPath string) []workflowStepCheckShim {
 	t.Helper()
-	checks := checkWriterContentManifest(projectRoot, readmesByHost, factsLogPath)
+	checks := checkWriterContentManifest(t.Context(), projectRoot, readmesByHost, factsLogPath)
 	out := make([]workflowStepCheckShim, 0, len(checks))
 	for _, c := range checks {
 		out = append(out, workflowStepCheckShim{Name: c.Name, Status: c.Status, Detail: c.Detail})

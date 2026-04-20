@@ -358,14 +358,14 @@ func checkRecipeDeployReadmes(stateDir string, kp knowledge.Provider, factsLogPa
 		if factsLogPathFn != nil {
 			factsLogPath = factsLogPathFn()
 		}
-		checks = append(checks, checkWriterContentManifest(projectRoot, readmesByHost, factsLogPath)...)
+		checks = append(checks, checkWriterContentManifest(ctx, projectRoot, readmesByHost, factsLogPath)...)
 
 		// C-6: manifest_route_to_populated. Every manifest entry must carry
 		// a non-empty routed_to matching the FactRouteTo* enum. Closes
 		// v34's DB_PASS class where claude_md-routed facts leaked into the
 		// published gotcha list because the drift was visible in the
 		// manifest but nothing gated on it. Principle P5.
-		checks = append(checks, checkManifestRouteToPopulated(filepath.Join(projectRoot, manifestFileName))...)
+		checks = append(checks, checkManifestRouteToPopulated(filepath.Join(projectRoot, opschecks.ManifestFileName))...)
 
 		// C-6: symbol-contract env-var consistency at deploy.readmes.
 		// Second firing point per check-rewrite.md §16 — the first is at
@@ -482,7 +482,7 @@ func checkCodebaseReadme(ctx context.Context, projectRoot string, target workflo
 	// triggers the shutdown bug) even though the remediation is framework-
 	// level. Shared-codebase workers skip this check; their operational
 	// knowledge lives in the host target README.
-	checks = append(checks, checkWorkerProductionCorrectness(hostname, string(readmeContent), target)...)
+	checks = append(checks, checkWorkerProductionCorrectness(ctx, hostname, string(readmeContent), target)...)
 	checks = append(checks, checkWorkerDrainCodeBlock(hostname, string(readmeContent), target)...)
 
 	// CLAUDE.md: repo-local dev-loop operations guide. Lives alongside

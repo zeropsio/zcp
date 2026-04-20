@@ -767,3 +767,47 @@ No user-observable behavior change. The four migrated predicates emit identical 
 
 - `extractFragmentContent` still duplicated (tools copy used by other not-yet-migrated checks; C-7d is the likely consolidation point or C-15).
 - 8 checks remain: worker-queue-group, worker-shutdown, manifest-honesty, manifest-completeness (C-7c) + comment-depth, factual-claims, cross-readme-dedup, symbol-contract-env-consistency (C-7d).
+
+---
+
+## C-7c — migrate worker-queue-group, worker-shutdown, manifest-honesty, manifest-completeness
+
+**Status**: green
+
+### What landed
+
+- [`internal/ops/checks/worker_gotcha.go`](../../internal/ops/checks/worker_gotcha.go) (180 LoC) — `CheckWorkerQueueGroupGotcha(ctx, hostname, readme, target)` + `CheckWorkerShutdownGotcha(ctx, hostname, readme, target)`. Migrates the split v8.94 queue-group + shutdown predicates out of `workflow_checks_worker_correctness.go`. Shared helpers (`queueGroupTopicTokens`, `shutdownTopicTokens`, `matchesQueueGroupTopic`, `matchesShutdownTopic`, `workerGotchaCombinedLines`) moved alongside. Each predicate returns one row per invocation (pass or fail), shim-ready — the tool-layer composes the two + emits a single aggregate `_worker_production_correctness: pass` row when both pass.
+- [`internal/ops/checks/manifest.go`](../../internal/ops/checks/manifest.go) (290 LoC) — exports `ContentManifest`, `ContentManifestFact`, `ManifestFileName`, `LoadContentManifest`. `CheckManifestHonesty(ctx, manifest, readmesByHost)` and `CheckManifestCompleteness(ctx, manifest, factsLogPath)` migrate C-5's manifest battery sub-checks C + D. Shared Jaccard machinery (`jaccardStopWords`, `jaccardSimilarityNoStopwords`, `tokenizeForJaccard`, `extractGotchaStems`) + `filterContentScoped` helper moved alongside. `jaccardHonestyThreshold` const preserved (0.3).
+- Paired tests: 2 files, ~320 LoC total.
+
+### Tool-layer delegation
+
+- `workflow_checks_content_manifest.go` shrinks from 371 LoC → 130 LoC. Local `contentManifest` / `contentManifestFact` types, `manifestFileName` const, honesty + completeness bodies, and all Jaccard/stem-extraction helpers deleted. `checkWriterContentManifest` gains a leading `ctx` and delegates sub-checks C + D to `opschecks.CheckManifestHonesty` / `opschecks.CheckManifestCompleteness`. Sub-check B (`checkManifestClassificationConsistency`) stays local — "keep" disposition per check-rewrite.md §17; updated to accept `opschecks.ContentManifest`.
+- `workflow_checks_manifest_route_to.go` (C-6) updated to use `opschecks.ContentManifest` instead of the now-deleted local `contentManifest`.
+- `workflow_checks_worker_correctness.go` shrinks from 315 LoC → 150 LoC. `checkWorkerProductionCorrectness` becomes a 20-line composition that calls both `opschecks` predicates and preserves the pre-C-7c aggregate-pass behavior exactly: if both pass → single `_worker_production_correctness: pass` row; if either fails → only the fail rows. `checkWorkerDrainCodeBlock` stays local ("keep" per §17) alongside its `drainCallTokens` / `exitCallTokens` / `extractFencedBlockBodies` helpers.
+- ctx threaded through `checkWriterContentManifest` callers (`checkRecipeDeployReadmes`) and `checkWorkerProductionCorrectness` callers (`checkCodebaseReadme` + 7 test sites).
+
+### Verification
+
+- `go test ./... -count=1` — full suite green across 20 packages.
+- `make lint-local` — 0 issues (modernize flagged two `for _, line := range ...` loops in `worker_gotcha.go` — converted to `slices.ContainsFunc`).
+
+### LoC delta
+
+- New ops/checks files: +470 LoC (2 predicate + 2 test files).
+- Tool-layer shrinkage: ~-460 LoC (manifest + worker_correctness files).
+- Net: roughly neutral, predicate bodies now exist in exactly one place.
+
+### Breaks-alone consequence
+
+No user-observable behavior change. The four migrated predicates emit identical StepCheck rows; the worker-production-correctness aggregate-pass row shape is preserved exactly through the tool-layer composition wrapper.
+
+### Ordering deps verified
+
+- C-7b ✓ — `opschecks` package already established.
+- C-6 ✓ — C-6's `checkManifestRouteToPopulated` updated to use the new `opschecks.ContentManifest` shared type (no behavior change; same JSON shape, same check output).
+
+### Known follow-ups
+
+- `extractFragmentContent`, `uniqueStrings`, `sectionHasFencedBlock` helpers still duplicated between `internal/tools/workflow_checks_recipe.go` and `internal/ops/checks/ig_*.go`. Still used by tool-local checks that won't migrate to ops/checks (e.g. `checkGotchaRestatesGuide`, `checkCLAUDEMdExists`). C-15 deduplicates when the recipe.md path is deleted.
+- 4 checks remain: comment-depth, factual-claims, cross-readme-dedup, symbol-contract-env-consistency (C-7d).
