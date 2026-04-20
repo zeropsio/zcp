@@ -718,3 +718,52 @@ No user-observable behavior change. Every migrated predicate emits the same Step
 
 - `codeBlockFenceRe` / `extractFragmentContent` / `uniqueStrings` remain duplicated in `internal/tools/workflow_checks_recipe.go` + `internal/ops/checks/ig_code_adjustment.go`. Consolidation happens in C-7b (when ig-per-item-code migrates) or C-15 (when the recipe.md path is deleted).
 - No CLI shim surface yet — thin adapters land in C-7e atop the 16 migrated predicates.
+
+---
+
+## C-7b — migrate ig-per-item-code, comment-specificity, yml-schema, kb-authenticity
+
+**Status**: green
+
+### What landed
+
+- [`internal/ops/checks/ig_per_item_code.go`](../../internal/ops/checks/ig_per_item_code.go) (115 LoC) — `CheckIGPerItemCode(ctx, content, isShowcase)`. Moves `splitByH3` + `sectionHasFencedBlock` alongside the predicate since they were only used here; both deleted from `workflow_checks_recipe.go`.
+- [`internal/ops/checks/comment_specificity.go`](../../internal/ops/checks/comment_specificity.go) (110 LoC) — `CheckCommentSpecificity(ctx, yamlBlock, isShowcase)`. Migrates `specificityMarkers` + `minSpecificComments` + `specificCommentRatio` + `commentSpecificityRatio` helpers.
+- [`internal/ops/checks/yml_schema.go`](../../internal/ops/checks/yml_schema.go) (52 LoC) — `CheckZeropsYmlFields(ctx, ymlDir, validFields)`. Direct port of `checkZeropsYmlFields`.
+- [`internal/ops/checks/kb_authenticity.go`](../../internal/ops/checks/kb_authenticity.go) (80 LoC) — `CheckKnowledgeBaseAuthenticity(ctx, kbContent, hostname)`. Migrates `minAuthenticGotchas` + the structured-fail payload (`ReadSurface`, `Required`, `Actual`, `HowToFix`) intact.
+- Paired tests: 4 files, ~330 LoC total, table-driven per CLAUDE.md seed pattern. Fixture correction needed for `kb_authenticity_test` — `workflow.ExtractGotchaEntries` requires a `## Gotchas` section header above bullet lines.
+
+### Tool-layer delegation
+
+- `checkIntegrationGuidePerItemCodeBlock` collapses to a 3-line thin wrapper (post-C-7b).
+- `checkCommentSpecificity` collapses to a 3-line thin wrapper; all marker definitions now live in `ops/checks`.
+- `checkZeropsYmlFields` collapses to a 1-line delegation.
+- `checkKnowledgeBaseAuthenticity` collapses to a 1-line delegation in `workflow_checks_predecessor_floor.go`. `checkKnowledgeBaseExceedsPredecessor` gains a leading `ctx` so it can thread to the authenticity delegate (the exceeds-predecessor check itself is slated for deletion in C-9 per rollout-sequence).
+- `codeBlockFenceRe` deleted from `workflow_checks_recipe.go` (now unused — its only remaining caller `sectionHasFencedBlock` moved to `ops/checks/ig_per_item_code.go`; the ops/checks version declared independently in `ig_code_adjustment.go` is the sole copy).
+- ctx threaded through the 4 callers (`checkRecipeGenerateCodebase`, `checkCodebaseReadme`) and 9 test sites (8 in `workflow_checks_predecessor_floor_test.go` via `sed`, 2 in `workflow_checks_recipe_test.go`).
+
+### Verification
+
+- `go test ./... -count=1` — full suite green across 20 packages.
+- `make lint-local` — 0 issues.
+
+### LoC delta
+
+- New `internal/ops/checks/` files: +714 LoC (4 predicate + 4 test files).
+- `internal/tools/workflow_checks_recipe.go`: -200 LoC (`splitByH3`, `sectionHasFencedBlock`, `specificityMarkers`, `commentSpecificityRatio`, `minSpecificComments`, `specificCommentRatio`, `codeBlockFenceRe`, `checkZeropsYmlFields` body, `checkCommentSpecificity` body, `checkIntegrationGuidePerItemCodeBlock` body all gone); +8 LoC (thin wrappers + ctx threading).
+- `internal/tools/workflow_checks_predecessor_floor.go`: -55 LoC (`checkKnowledgeBaseAuthenticity` body + unused const deleted); +5 LoC (wrapper + ctx threading + new import).
+- `workflow_checks_recipe_test.go` + `workflow_checks_predecessor_floor_test.go`: +minimal (ctx passed through `t.Context()`).
+- **Net**: ~+475 LoC.
+
+### Breaks-alone consequence
+
+No user-observable behavior change. The four migrated predicates emit identical StepCheck Name/Status/Detail (plus structured-fail fields for kb-authenticity) as before. 8 out of 16 checks now live in `internal/ops/checks`; 8 remain for C-7c + C-7d.
+
+### Ordering deps verified
+
+- C-7a ✓ — `opschecks` package scaffolding + pattern established.
+
+### Known follow-ups
+
+- `extractFragmentContent` still duplicated (tools copy used by other not-yet-migrated checks; C-7d is the likely consolidation point or C-15).
+- 8 checks remain: worker-queue-group, worker-shutdown, manifest-honesty, manifest-completeness (C-7c) + comment-depth, factual-claims, cross-readme-dedup, symbol-contract-env-consistency (C-7d).

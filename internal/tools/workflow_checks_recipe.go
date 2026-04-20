@@ -203,7 +203,7 @@ func checkRecipeGenerateCodebase(ctx context.Context, projectRoot string, target
 	checks = append(checks, checkRecipeSetups(doc, target, plan)...)
 
 	// Validate zerops.yaml fields against the live JSON schema.
-	checks = append(checks, checkZeropsYmlFields(ymlDir, validFields)...)
+	checks = append(checks, checkZeropsYmlFields(ctx, ymlDir, validFields)...)
 
 	// v8.94: env_self_shadow floor covers every runtime target's zerops.yaml,
 	// not just the bootstrap flow's checkGenerateEntry path. v28 evidence:
@@ -441,7 +441,7 @@ func checkCodebaseReadme(ctx context.Context, projectRoot string, target workflo
 	if !workerOnly {
 		if igContent := extractFragmentContent(string(readmeContent), "integration-guide"); igContent != "" {
 			if yamlBlock := extractYAMLBlock(igContent); yamlBlock != "" {
-				specChecks := checkCommentSpecificity(yamlBlock, plan)
+				specChecks := checkCommentSpecificity(ctx, yamlBlock, plan)
 				for i := range specChecks {
 					specChecks[i].Name = hostname + "_" + specChecks[i].Name
 				}
@@ -454,14 +454,14 @@ func checkCodebaseReadme(ctx context.Context, projectRoot string, target workflo
 		}
 		checks = append(checks, codeChecks...)
 
-		perItemChecks := checkIntegrationGuidePerItemCodeBlock(string(readmeContent), plan)
+		perItemChecks := checkIntegrationGuidePerItemCodeBlock(ctx, string(readmeContent), plan)
 		for i := range perItemChecks {
 			perItemChecks[i].Name = hostname + "_" + perItemChecks[i].Name
 		}
 		checks = append(checks, perItemChecks...)
 	}
 
-	floorChecks := checkKnowledgeBaseExceedsPredecessor(string(readmeContent), plan, predecessorStems, hostname)
+	floorChecks := checkKnowledgeBaseExceedsPredecessor(ctx, string(readmeContent), plan, predecessorStems, hostname)
 	for i := range floorChecks {
 		floorChecks[i].Name = hostname + "_" + floorChecks[i].Name
 	}
@@ -812,10 +812,6 @@ func extractFragmentContent(content, name string) string {
 	return strings.TrimSpace(content[contentStart:extractEnd])
 }
 
-// codeBlockFenceRe matches the opening fence of a fenced code block:
-// three backticks followed by an optional language tag on the same line.
-var codeBlockFenceRe = regexp.MustCompile("(?m)^\\s*```([a-zA-Z0-9+_-]*)")
-
 // checkIntegrationGuideCodeBlocks — tool-layer thin wrapper (post-C-7a)
 // around opschecks.CheckIGCodeAdjustment. The predicate lives in
 // internal/ops/checks so the (future) zcp check ig-code-adjustment CLI
@@ -847,92 +843,13 @@ func checkIntegrationGuideCodeBlocks(ctx context.Context, content string, plan *
 //
 // Scoped to showcase tier (minimal recipes have simpler IG shapes that
 // don't always need per-item code blocks).
-func checkIntegrationGuidePerItemCodeBlock(content string, plan *workflow.RecipePlan) []workflow.StepCheck {
-	if plan == nil || plan.Tier != workflow.RecipeTierShowcase {
-		return nil
-	}
-	igContent := extractFragmentContent(content, "integration-guide")
-	if igContent == "" {
-		return nil
-	}
-	sections := splitByH3(igContent)
-	if len(sections) < 2 {
-		return []workflow.StepCheck{{
-			Name:   "integration_guide_per_item_code",
-			Status: statusPass,
-		}}
-	}
-
-	var missing []string
-	for _, sec := range sections {
-		if sectionHasFencedBlock(sec.Body) {
-			continue
-		}
-		missing = append(missing, sec.Heading)
-	}
-	if len(missing) == 0 {
-		return []workflow.StepCheck{{
-			Name:   "integration_guide_per_item_code",
-			Status: statusPass,
-			Detail: fmt.Sprintf("%d IG items, all with fenced code blocks", len(sections)),
-		}}
-	}
-	return []workflow.StepCheck{{
-		Name:   "integration_guide_per_item_code",
-		Status: statusFail,
-		Detail: fmt.Sprintf(
-			"integration-guide H3 section(s) with no fenced code block: %s. Every IG step must carry a code diff — recipe.md says 'one IG item per real code adjustment, with the code diff'. If a step describes a config placement (envVariables section, where to put a var), show the before/after as a fenced block. If a step is prose-only, either delete it or fold its content into a neighbouring step that has code.",
-			strings.Join(missing, " | "),
-		),
-	}}
-}
-
-// igSection is one H3 section inside the integration-guide fragment.
-type igSection struct {
-	Heading string // the H3 heading text (without the ### prefix)
-	Body    string // the content between this H3 and the next one (or end-of-fragment)
-}
-
-// splitByH3 splits markdown content into sections keyed by H3 headings.
-// Content before the first H3 is dropped (usually a fragment start marker).
-func splitByH3(content string) []igSection {
-	lines := strings.Split(content, "\n")
-	var sections []igSection
-	var current *igSection
-	var body strings.Builder
-	flush := func() {
-		if current == nil {
-			return
-		}
-		current.Body = body.String()
-		sections = append(sections, *current)
-		current = nil
-		body.Reset()
-	}
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "### ") {
-			flush()
-			heading := strings.TrimSpace(strings.TrimPrefix(trimmed, "### "))
-			current = &igSection{Heading: heading}
-			continue
-		}
-		if current != nil {
-			body.WriteString(line)
-			body.WriteString("\n")
-		}
-	}
-	flush()
-	return sections
-}
-
-// sectionHasFencedBlock returns true when the body contains at least
-// one complete fenced code block (``` ... ```), any language. Each
-// opener/closer emits a regex match, so a complete block produces ≥2
-// matches.
-func sectionHasFencedBlock(body string) bool {
-	matches := codeBlockFenceRe.FindAllStringIndex(body, -1)
-	return len(matches) >= 2
+// checkIntegrationGuidePerItemCodeBlock — tool-layer thin wrapper
+// (post-C-7b) around opschecks.CheckIGPerItemCode. splitByH3 +
+// sectionHasFencedBlock helpers moved into the ops/checks package
+// alongside the predicate.
+func checkIntegrationGuidePerItemCodeBlock(ctx context.Context, content string, plan *workflow.RecipePlan) []workflow.StepCheck {
+	isShowcase := plan != nil && plan.Tier == workflow.RecipeTierShowcase
+	return opschecks.CheckIGPerItemCode(ctx, content, isShowcase)
 }
 
 // extractYAMLBlock extracts content from the first ```yaml ... ``` block.
@@ -979,102 +896,13 @@ func commentRatio(yamlContent string) float64 {
 	return float64(comments) / float64(total)
 }
 
-// specificityMarkers are tokens that signal a comment is earning its
-// keep — it explains WHY, names a concrete platform behavior, or points
-// at a failure mode the reader would otherwise trip on. A comment
-// containing any of these is "specific"; comments without any marker are
-// boilerplate ("npm ci for reproducible builds" is the archetype — true
-// of every recipe, load-bearing on none).
-//
-// The list is intentionally coarse: we want to accept real comments
-// without stylistic hand-wringing, not grade them for prose quality.
-// Every v12 API zerops.yaml comment already clears this bar.
-var specificityMarkers = []string{
-	// causal / reasoning
-	"because", "so that", "otherwise", "prevents", "required", "ensures",
-	"needed", "must", "without",
-	// failure mode
-	"fails", "breaks", "crashes", "silent", "race", "502", "401", "cold start",
-	"blocked", "drops", "empty",
-	// platform constraints
-	"zerops", "execonce", "l7", "balancer", "httpsupport", "advisory lock",
-	"0.0.0.0", "subdomain", "reverse proxy", "terminates ssl", "trust proxy",
-	"vxlan", "${",
-	// framework×platform intersection signals
-	"build time", "build-time", "runtime", "os-level", "horizontal container",
-	"multi-container", "fresh container", "stateless", "bundle",
-}
-
-// commentSpecificityRatio measures how many comment lines in a zerops.yaml
-// block clear the specificity floor. A comment is specific when it
-// contains at least one specificityMarker (after lowercasing). The check
-// that consumes this ratio requires both an absolute floor (at least
-// minSpecificComments specific comments) and a proportional floor (at
-// least specificCommentRatio of all comments are specific).
-func commentSpecificityRatio(yamlContent string) (specific, total int, ratio float64) {
-	for line := range strings.SplitSeq(yamlContent, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if !strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		total++
-		lower := strings.ToLower(trimmed)
-		for _, marker := range specificityMarkers {
-			if strings.Contains(lower, marker) {
-				specific++
-				break
-			}
-		}
-	}
-	if total == 0 {
-		return 0, 0, 0
-	}
-	return specific, total, float64(specific) / float64(total)
-}
-
-// minSpecificComments is the absolute floor — even a very short
-// zerops.yaml must have at least this many non-boilerplate comments to
-// pass the specificity check.
-const minSpecificComments = 3
-
-// specificCommentRatio is the proportional floor — even a very long
-// zerops.yaml with many comments must have at least this fraction that
-// clear the specificity bar. Tuned low enough that v12 API's comments
-// easily pass; tight enough that copy-paste boilerplate fails.
-const specificCommentRatio = 0.25
-
-// checkCommentSpecificity is the companion to commentRatio. commentRatio
-// measures how many comments are PRESENT; specificity measures how many
-// are LOAD-BEARING. The v12 session had comments like "npm ci for
-// reproducible builds" and "cache node_modules between builds" that
-// pass the 30%-present ratio but read as generic boilerplate that could
-// appear in any recipe. A reader learning Zerops from the integration
-// guide needs to see comments that explain Zerops-specific constraints
-// — execOnce on multi-container deploys, L7 balancer behavior, the
-// $-interpolated credential injection, the tilde deployFiles suffix.
-func checkCommentSpecificity(yamlBlock string, plan *workflow.RecipePlan) []workflow.StepCheck {
-	if plan == nil || plan.Tier != workflow.RecipeTierShowcase {
-		return nil
-	}
-	specific, total, ratio := commentSpecificityRatio(yamlBlock)
-	if total == 0 {
-		return nil
-	}
-	if specific >= minSpecificComments && ratio >= specificCommentRatio {
-		return []workflow.StepCheck{{
-			Name:   "comment_specificity",
-			Status: statusPass,
-			Detail: fmt.Sprintf("%d of %d comments are specific (%.0f%%)", specific, total, ratio*100),
-		}}
-	}
-	return []workflow.StepCheck{{
-		Name:   "comment_specificity",
-		Status: statusFail,
-		Detail: fmt.Sprintf(
-			"comment specificity too low: %d of %d are specific (%.0f%%, need >= %d and >= %.0f%%). Specific means the comment explains WHY (because/so that/prevents/required/fails/breaks), or names a Zerops platform term (execOnce, L7 balancer, ${env_var}, httpSupport, 0.0.0.0, subdomain, advisory lock, trust proxy, cold start, build time, horizontal container). Generic lines like \"npm ci for reproducible builds\" or \"cache node_modules between builds\" pass the ratio check but teach the reader nothing Zerops-specific. Rewrite boilerplate comments to explain what would break without them.",
-			specific, total, ratio*100, minSpecificComments, specificCommentRatio*100,
-		),
-	}}
+// checkCommentSpecificity — tool-layer thin wrapper (post-C-7b) around
+// opschecks.CheckCommentSpecificity. specificityMarkers, thresholds,
+// and the ratio computation moved into the ops/checks package alongside
+// the predicate.
+func checkCommentSpecificity(ctx context.Context, yamlBlock string, plan *workflow.RecipePlan) []workflow.StepCheck {
+	isShowcase := plan != nil && plan.Tier == workflow.RecipeTierShowcase
+	return opschecks.CheckCommentSpecificity(ctx, yamlBlock, isShowcase)
 }
 
 // nonEmptyLines returns non-empty lines from content.
@@ -1088,36 +916,10 @@ func nonEmptyLines(content string) []string {
 	return result
 }
 
-// checkZeropsYmlFields validates zerops.yaml field names against the live JSON schema.
-// Catches import.yaml-only fields (e.g. verticalAutoscaling) that agents
-// incorrectly add to zerops.yaml, and any other hallucinated field names.
-func checkZeropsYmlFields(ymlDir string, validFields *schema.ValidFields) []workflow.StepCheck {
-	if validFields == nil {
-		return nil
-	}
-
-	// Read raw content — ParseZeropsYml uses typed structs which silently drop unknown fields.
-	raw, err := ops.ReadZeropsYmlRaw(ymlDir)
-	if err != nil {
-		return nil // file-not-found already reported by the existence check
-	}
-
-	fieldErrs := schema.ValidateZeropsYmlRaw(raw, validFields)
-	if len(fieldErrs) == 0 {
-		return []workflow.StepCheck{{
-			Name: "zerops_yml_schema_fields", Status: statusPass,
-		}}
-	}
-
-	details := make([]string, len(fieldErrs))
-	for i, e := range fieldErrs {
-		details[i] = e.Error()
-	}
-	return []workflow.StepCheck{{
-		Name:   "zerops_yml_schema_fields",
-		Status: statusFail,
-		Detail: fmt.Sprintf("zerops.yaml contains fields not in the platform schema (these belong in import.yaml or don't exist): %s", strings.Join(details, "; ")),
-	}}
+// checkZeropsYmlFields — tool-layer thin wrapper (post-C-7b) around
+// opschecks.CheckZeropsYmlFields.
+func checkZeropsYmlFields(ctx context.Context, ymlDir string, validFields *schema.ValidFields) []workflow.StepCheck {
+	return opschecks.CheckZeropsYmlFields(ctx, ymlDir, validFields)
 }
 
 // uniqueStrings returns unique strings from a slice.

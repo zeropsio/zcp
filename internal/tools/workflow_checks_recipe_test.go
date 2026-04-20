@@ -165,7 +165,7 @@ func TestCheckCommentSpecificity(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := checkCommentSpecificity(tt.yaml, tt.plan)
+			got := checkCommentSpecificity(t.Context(), tt.yaml, tt.plan)
 			if len(got) != tt.wantLen {
 				t.Fatalf("checks len = %d, want %d: %+v", len(got), tt.wantLen, got)
 			}
@@ -309,7 +309,7 @@ func TestCheckIntegrationGuidePerItemCodeBlock(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := checkIntegrationGuidePerItemCodeBlock(tt.content, tt.plan)
+			got := checkIntegrationGuidePerItemCodeBlock(t.Context(), tt.content, tt.plan)
 			if tt.wantStatus == "" {
 				if len(got) != 0 {
 					t.Fatalf("expected no checks (skipped), got: %+v", got)
