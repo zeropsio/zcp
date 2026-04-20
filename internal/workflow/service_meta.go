@@ -101,17 +101,6 @@ func (m *ServiceMeta) RoleFor(hostname string) string {
 	return ""
 }
 
-// EffectiveStrategy returns the deploy strategy as set by the user.
-// Handles backward compatibility: old bootstrap metas wrote "push-dev" with
-// StrategyConfirmed=false as a default. These are treated as empty (not user-chosen).
-// After the fix, bootstrap writes empty DeployStrategy, making this a no-op for new metas.
-func (m *ServiceMeta) EffectiveStrategy() string {
-	if m.DeployStrategy == StrategyPushDev && !m.StrategyConfirmed {
-		return "" // old bootstrap default, not a user choice
-	}
-	return m.DeployStrategy
-}
-
 // WriteServiceMeta writes service metadata to baseDir/services/{hostname}.json.
 func WriteServiceMeta(baseDir string, meta *ServiceMeta) error {
 	dir := filepath.Join(baseDir, "services")

@@ -123,7 +123,6 @@ func TestWorkflowTool_Action_Start_Develop_ReturnsBriefing(t *testing.T) {
 	engine := workflow.NewEngine(dir, workflow.EnvLocal, nil)
 
 	// Write a complete service meta so briefing finds targets.
-	// StrategyConfirmed=true → EffectiveStrategy returns push-dev, not "".
 	meta := &workflow.ServiceMeta{
 		Hostname:          "appdev",
 		Mode:              "standard",

@@ -882,29 +882,3 @@ func TestServiceMeta_IsAdopted(t *testing.T) {
 		})
 	}
 }
-
-func TestServiceMeta_EffectiveStrategy(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		meta ServiceMeta
-		want string
-	}{
-		{"empty_strategy", ServiceMeta{}, ""},
-		{"confirmed_push_dev", ServiceMeta{DeployStrategy: StrategyPushDev, StrategyConfirmed: true}, StrategyPushDev},
-		{"unconfirmed_push_dev_is_bootstrap_default", ServiceMeta{DeployStrategy: StrategyPushDev, StrategyConfirmed: false}, ""},
-		{"confirmed_push_git", ServiceMeta{DeployStrategy: StrategyPushGit, StrategyConfirmed: true}, StrategyPushGit},
-		{"unconfirmed_push_git_is_user_set", ServiceMeta{DeployStrategy: StrategyPushGit}, StrategyPushGit},
-		{"confirmed_manual", ServiceMeta{DeployStrategy: StrategyManual, StrategyConfirmed: true}, StrategyManual},
-		{"unconfirmed_manual_is_user_set", ServiceMeta{DeployStrategy: StrategyManual}, StrategyManual},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := tt.meta.EffectiveStrategy()
-			if got != tt.want {
-				t.Errorf("EffectiveStrategy() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}

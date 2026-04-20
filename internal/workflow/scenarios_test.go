@@ -208,7 +208,7 @@ func TestScenario_S3_AdoptOnlyUnmanaged(t *testing.T) {
 	}
 }
 
-func TestScenario_S4_DevelopStrategyUnset(t *testing.T) {
+func TestScenario_S4_DevelopStrategyReviewAfterFirstDeploy(t *testing.T) {
 	t.Parallel()
 
 	corpus, err := LoadAtomCorpus()
@@ -216,10 +216,10 @@ func TestScenario_S4_DevelopStrategyUnset(t *testing.T) {
 		t.Fatalf("LoadAtomCorpus: %v", err)
 	}
 
-	// S4: an open WorkSession exists but the service lost its strategy (e.g.
-	// recreated out-of-band). ComputeEnvelope sets Strategy=StrategyUnset on
-	// the snapshot, and the pipeline must surface develop-strategy-unset
-	// before any deploy.
+	// S4: first deploy has landed (FirstDeployedAt stamped → Deployed=true)
+	// but the user never confirmed an ongoing strategy. The strategy-review
+	// atom fires now — before first deploy it would be premature, since the
+	// first deploy always uses the default mechanism regardless of strategy.
 	now := time.Now().UTC()
 	env := StateEnvelope{
 		Phase:       PhaseDevelopActive,
@@ -231,6 +231,7 @@ func TestScenario_S4_DevelopStrategyUnset(t *testing.T) {
 			Mode:         ModeDev,
 			Strategy:     StrategyUnset,
 			Bootstrapped: true,
+			Deployed:     true,
 		}},
 		WorkSession: &WorkSessionSummary{
 			Intent:    "fix auth",
@@ -244,18 +245,17 @@ func TestScenario_S4_DevelopStrategyUnset(t *testing.T) {
 		t.Fatalf("Synthesize: %v", err)
 	}
 	joined := strings.Join(bodies, "\n")
-	for _, phrase := range []string{"Strategy selection required", `action="strategy"`} {
+	for _, phrase := range []string{"Pick an ongoing deploy strategy", `action="strategy"`} {
 		if !strings.Contains(joined, phrase) {
 			t.Errorf("S4: expected synthesized body to contain %q", phrase)
 		}
 	}
 
-	// Plan routes to deploy — strategy-required is expressed through the
-	// atom layer, not a distinct branch. See spec-workflows §1.4 and
-	// spec-scenarios §3.2 C14.
+	// Plan routes to deploy as long as no deploy attempt is recorded in the
+	// work session. The strategy-review gate is expressed by the atom layer.
 	plan := BuildPlan(env)
 	if plan.Primary.Tool != "zerops_deploy" {
-		t.Errorf("S4: expected primary=zerops_deploy (current code contract — strategy gate lives in the atom, not the plan), got tool=%q", plan.Primary.Tool)
+		t.Errorf("S4: expected primary=zerops_deploy, got tool=%q", plan.Primary.Tool)
 	}
 	if plan.Primary.Args["hostname"] != "appdev" {
 		t.Errorf("S4: expected primary hostname=appdev, got %q", plan.Primary.Args["hostname"])
@@ -523,6 +523,7 @@ func TestScenario_S8_DevelopIterationFailure(t *testing.T) {
 			Mode:         ModeDev,
 			Strategy:     "push-dev",
 			Bootstrapped: true,
+			Deployed:     true,
 		}},
 		WorkSession: &WorkSessionSummary{
 			Intent:    "fix auth flow",

@@ -122,9 +122,8 @@ const (
 // typed-surface code (envelope, plan) and plain strings on persistence.
 type DeployStrategy string
 
-// StrategyUnset is the sentinel for "no strategy chosen yet" — it has no
-// existing untyped counterpart because the old model conflated unset with
-// push-dev via EffectiveStrategy().
+// StrategyUnset is the sentinel for "no strategy chosen yet" — surfaced
+// to atoms as the `strategies: [unset]` axis value.
 const StrategyUnset DeployStrategy = "unset"
 
 // WorkSessionSummary mirrors the persistent WorkSession at envelope build time.

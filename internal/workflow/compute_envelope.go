@@ -234,7 +234,7 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta) ServiceSnaps
 		snap.Bootstrapped = true
 		snap.Deployed = meta.IsDeployed()
 		snap.Mode = resolveEnvelopeMode(meta, svc.Name)
-		snap.Strategy = DeployStrategy(meta.EffectiveStrategy())
+		snap.Strategy = DeployStrategy(meta.DeployStrategy)
 		if snap.Strategy == "" {
 			snap.Strategy = StrategyUnset
 		}

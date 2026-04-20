@@ -91,51 +91,34 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 			"Run bootstrap first: action=\"start\" workflow=\"bootstrap\"")), nil, nil
 	}
 
-	// Strategy gate (spec-work-session.md §6.1): if ANY runtime service has no
-	// confirmed strategy, render the briefing WITHOUT creating a work session.
-	// The atom pipeline picks up the `strategies: [unset]` atom because
-	// ComputeEnvelope sets snapshot.Strategy=StrategyUnset for empty metas.
-	strategyUnset := false
-	for _, m := range runtimeMetas {
-		if m.EffectiveStrategy() == "" {
-			strategyUnset = true
-			break
+	// Strategy is NOT a gate: first deploy always uses the default
+	// self-deploy mechanism regardless of meta.DeployStrategy. The strategy
+	// decision surfaces post-first-deploy via the develop-strategy-review
+	// atom (phases=develop-active, deployStates=[deployed], strategies=[unset]).
+	existing, _ := workflow.CurrentWorkSession(engine.StateDir())
+	if existing != nil && existing.ClosedAt == "" {
+		if input.Intent != "" && existing.Intent != "" && existing.Intent != input.Intent {
+			return convertError(platform.NewPlatformError(
+				platform.ErrWorkflowActive,
+				fmt.Sprintf("Active work session with different intent: %q", existing.Intent),
+				"Close the current task first: zerops_workflow action=\"close\" workflow=\"develop\"")), nil, nil
 		}
-	}
-
-	if !strategyUnset {
-		// Create or resume per-PID WorkSession.
-		//
-		// If an open session already exists for this PID:
-		//   - matching / empty intent → reuse (fresh briefing, same session)
-		//   - different intent        → refuse and ask the LLM to close first
-		// Closed sessions are overwritten: the prior task is done, a new intent
-		// means a new task.
-		existing, _ := workflow.CurrentWorkSession(engine.StateDir())
-		if existing != nil && existing.ClosedAt == "" {
-			if input.Intent != "" && existing.Intent != "" && existing.Intent != input.Intent {
-				return convertError(platform.NewPlatformError(
-					platform.ErrWorkflowActive,
-					fmt.Sprintf("Active work session with different intent: %q", existing.Intent),
-					"Close the current task first: zerops_workflow action=\"close\" workflow=\"develop\"")), nil, nil
-			}
-		} else {
-			scope := workSessionScopeFromMetas(runtimeMetas)
-			ws := workflow.NewWorkSession(projectID, string(engine.Environment()), input.Intent, scope)
-			if err := workflow.SaveWorkSession(engine.StateDir(), ws); err != nil {
-				return convertError(platform.NewPlatformError(
-					platform.ErrInvalidParameter,
-					fmt.Sprintf("Failed to save work session: %v", err),
-					"")), nil, nil
-			}
-			_ = workflow.RegisterSession(engine.StateDir(), workflow.SessionEntry{
-				SessionID: workflow.WorkSessionID(os.Getpid()),
-				PID:       os.Getpid(),
-				Workflow:  workflow.WorkflowWork,
-				ProjectID: projectID,
-				Intent:    input.Intent,
-			})
+	} else {
+		scope := workSessionScopeFromMetas(runtimeMetas)
+		ws := workflow.NewWorkSession(projectID, string(engine.Environment()), input.Intent, scope)
+		if err := workflow.SaveWorkSession(engine.StateDir(), ws); err != nil {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				fmt.Sprintf("Failed to save work session: %v", err),
+				"")), nil, nil
 		}
+		_ = workflow.RegisterSession(engine.StateDir(), workflow.SessionEntry{
+			SessionID: workflow.WorkSessionID(os.Getpid()),
+			PID:       os.Getpid(),
+			Workflow:  workflow.WorkflowWork,
+			ProjectID: projectID,
+			Intent:    input.Intent,
+		})
 	}
 
 	// Render via the atom pipeline: envelope → atom filter → typed plan → markdown.
