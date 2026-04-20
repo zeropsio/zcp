@@ -256,13 +256,17 @@ func cleanIncompleteMetasForSession(stateDir, sessionID string) {
 // workflow is run against services that were adopted from an external source,
 // i.e. no local ServiceMeta was ever written).
 //
+// Hostname resolves via findMetaForHostname — verifying a standard-mode stage
+// hostname stamps the dev-keyed meta file, so the first-deploy branch exits
+// regardless of which half the agent verified first.
+//
 // Under Option A this is the hook that the first-deploy branch calls after a
 // successful verify — without it, subsequent develop sessions keep re-entering
 // the first-deploy branch and re-running scaffold.
 func MarkServiceDeployed(stateDir, hostname string) error {
-	meta, err := ReadServiceMeta(stateDir, hostname)
+	meta, err := findMetaForHostname(stateDir, hostname)
 	if err != nil {
-		return fmt.Errorf("mark service deployed: read meta: %w", err)
+		return fmt.Errorf("mark service deployed: %w", err)
 	}
 	if meta == nil || meta.FirstDeployedAt != "" {
 		return nil
@@ -272,6 +276,27 @@ func MarkServiceDeployed(stateDir, hostname string) error {
 		return fmt.Errorf("mark service deployed: write meta: %w", err)
 	}
 	return nil
+}
+
+// findMetaForHostname returns the meta whose Hostname OR StageHostname matches.
+// Container+standard mode stores the meta as {dev}.json with a StageHostname
+// field, so a direct file lookup by the stage hostname misses. Fast path hits
+// the direct file; slow path scans metas for a StageHostname match.
+// Returns (nil, nil) when no meta tracks hostname.
+func findMetaForHostname(stateDir, hostname string) (*ServiceMeta, error) {
+	if meta, err := ReadServiceMeta(stateDir, hostname); err != nil || meta != nil {
+		return meta, err
+	}
+	metas, err := ListServiceMetas(stateDir)
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range metas {
+		if m.StageHostname == hostname {
+			return m, nil
+		}
+	}
+	return nil, nil //nolint:nilnil // not-found sentinel
 }
 
 // DeleteServiceMeta removes the service metadata file for the given hostname.

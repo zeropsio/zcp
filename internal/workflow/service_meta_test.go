@@ -518,6 +518,40 @@ func TestMarkServiceDeployed_NoMeta_NoError(t *testing.T) {
 	}
 }
 
+// TestMarkServiceDeployed_StampsViaStageHostname guards the container+standard
+// case: meta is keyed by dev hostname with StageHostname set. Verifying the
+// stage half must still stamp the meta — otherwise the first-deploy branch
+// keeps re-firing on the next session because FirstDeployedAt stays empty.
+func TestMarkServiceDeployed_StampsViaStageHostname(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	meta := &ServiceMeta{
+		Hostname:       "appdev",
+		StageHostname:  "appstage",
+		Mode:           PlanModeStandard,
+		Environment:    string(EnvContainer),
+		BootstrappedAt: "2026-04-18T10:00:00Z",
+	}
+	if err := WriteServiceMeta(dir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	if err := MarkServiceDeployed(dir, "appstage"); err != nil {
+		t.Fatalf("MarkServiceDeployed: %v", err)
+	}
+	got, err := ReadServiceMeta(dir, "appdev")
+	if err != nil || got == nil {
+		t.Fatalf("ReadServiceMeta: got=%+v err=%v", got, err)
+	}
+	if got.FirstDeployedAt == "" {
+		t.Error("stage-hostname verify must stamp FirstDeployedAt on the dev-keyed meta")
+	}
+	if !got.IsDeployed() {
+		t.Error("IsDeployed() should be true after stage verify")
+	}
+}
+
 func TestPruneServiceMetas_RemovesStaleEntries(t *testing.T) {
 	t.Parallel()
 
