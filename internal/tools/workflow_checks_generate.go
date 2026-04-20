@@ -55,8 +55,7 @@ func checkGenerate(stateDir string) workflow.StepChecker {
 			checks = append(checks, checkGenerateEntry(ctx, doc, hostname, target, state)...)
 		}
 
-		// v8.97 Fix 4: stamp surface-derived coupling.
-		checks = workflow.StampCoupling(checks)
+		// C-10: surface-derived coupling removed (P1 supersedes).
 		allPassed := checksAllPassed(checks)
 		summary := "generate checks passed"
 		if !allPassed {

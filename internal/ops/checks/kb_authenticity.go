@@ -59,19 +59,17 @@ func CheckKnowledgeBaseAuthenticity(_ context.Context, kbContent, hostname strin
 		readmePath = hostname + "/README.md"
 	}
 	syntheticList := strings.Join(synthetic, ", ")
+	preAttestCmd := "zcp check kb-authenticity --path=./"
+	if hostname != "" {
+		preAttestCmd = fmt.Sprintf("zcp check kb-authenticity --hostname=%s --path=./", hostname)
+	}
 	return []workflow.StepCheck{{
-		Name:        "knowledge_base_authenticity",
-		Status:      StatusFail,
-		ReadSurface: fmt.Sprintf("%s knowledge-base fragment — bolded gotcha stems", readmePath),
-		Required:    fmt.Sprintf("≥%d gotchas classified ShapeAuthentic (platform-anchored OR concrete failure mode)", minAuthenticGotchas),
-		Actual:      fmt.Sprintf("%d authentic / %d total (%d synthetic)", authentic, len(entries), len(synthetic)),
-		HowToFix: fmt.Sprintf(
-			"Rewrite the synthetic stems in %s knowledge-base fragment to name a Zerops platform constraint (execOnce, L7 balancer, ${env_var}, httpSupport, base: static) AND/OR a concrete failure mode the reader would observe ('fails with DNS errors', 'returns empty results', 'Blocked request'). Replace any architectural narration ('Shared database with the API') with a real trap you hit during deploy. Synthetic stems: %s.",
-			readmePath, syntheticList,
-		),
+		Name:         "knowledge_base_authenticity",
+		Status:       StatusFail,
+		PreAttestCmd: preAttestCmd,
 		Detail: fmt.Sprintf(
-			"only %d authentic gotcha(s) (required %d) — %d of %d read as scaffold-self-referential narration. Synthetic stems: %s.",
-			authentic, minAuthenticGotchas, len(synthetic), len(entries), syntheticList,
+			"only %d of %d gotchas in %s clear the authenticity bar (required ≥%d; %d synthetic). Rewrite synthetic stems to name a Zerops platform constraint (execOnce, L7 balancer, ${env_var}, httpSupport, base: static) AND/OR a concrete failure mode ('fails with DNS errors', 'returns empty results', 'Blocked request'). Synthetic stems: %s.",
+			authentic, len(entries), readmePath, minAuthenticGotchas, len(synthetic), syntheticList,
 		),
 	}}
 }

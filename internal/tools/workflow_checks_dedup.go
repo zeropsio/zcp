@@ -126,31 +126,15 @@ func checkGotchaRestatesGuide(hostname, content string) []workflow.StepCheck {
 	if len(violations) == 0 {
 		return []workflow.StepCheck{{Name: checkName, Status: statusPass}}
 	}
-	howToFix := fmt.Sprintf(
-		"Rewrite each restated gotcha in %s/README.md to name the failure symptom (exact error message, HTTP status, observable misbehavior — 'Blocked request 200 + blank browser') instead of the topic. If the symptom is already in the integration-guide, delete the gotcha and use the slot for something the guide does NOT cover. Violations: %s.",
-		hostname, strings.Join(violations, "; "),
-	)
-	// v8.104 — rewording a gotcha stem to pass this check changes its
-	// token set, which can newly collide with a sibling codebase's
-	// gotcha stem and flip cross_readme_gotcha_uniqueness from pass to
-	// fail on the next round. Surface the coupling inline in HowToFix
-	// so the author reviews sibling READMEs before reword, not after
-	// the next failure round.
-	perturbs := []string{"cross_readme_gotcha_uniqueness"}
-	howToFix = howToFix + "\n\nPerturbsChecks (fixing this may flip): " +
-		strings.Join(perturbs, ", ") +
-		" — rewording changes the stem token set, which can newly collide with a sibling codebase's gotcha. Cross-check other codebases' knowledge-base stems before re-running."
 	return []workflow.StepCheck{{
-		Name:        checkName,
-		Status:      statusFail,
-		ReadSurface: fmt.Sprintf("%s/README.md — both #integration-guide H3 headings and #knowledge-base bolded gotcha stems", hostname),
-		Required:    "no gotcha stem normalizes to the same token set as any integration-guide H3 heading",
-		Actual:      fmt.Sprintf("%d restated gotcha(s)", len(violations)),
-		HowToFix:    howToFix,
+		Name:   checkName,
+		Status: statusFail,
+		// No §18 shim for this check (kept-local per check-rewrite.md §17).
+		// The PreAttestCmd slot is left empty; authors re-run via the
+		// deploy.readmes substep after editing.
 		Detail: fmt.Sprintf(
-			"%s README has gotchas that restate integration-guide items. Violations: %s",
+			"%s/README.md has gotchas that restate integration-guide items. Rewrite each to name the failure symptom (exact error message, HTTP status, observable misbehavior — 'Blocked request 200 + blank browser') instead of the topic; if the symptom is already in the integration-guide, delete the gotcha and use the slot for something the guide does NOT cover. Rewording changes the stem token set, which may flip cross_readme_gotcha_uniqueness — cross-check other codebases' knowledge-base stems before re-running. Violations: %s.",
 			hostname, strings.Join(violations, "; "),
 		),
-		PerturbsChecks: perturbs,
 	}}
 }

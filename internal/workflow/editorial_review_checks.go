@@ -14,13 +14,14 @@ import (
 //
 // Unlike §16 author-runnable checks, these have no shell-shim equivalent
 // — editorial quality cannot be graded by regex or byte diff; the
-// reviewer sub-agent dispatch IS the runner. Every check's Detail
-// includes the EditorialReviewPreAttestNote so downstream consumers can
+// reviewer sub-agent dispatch IS the runner. Every failing check's
+// PreAttestCmd carries the EditorialReviewPreAttestNote marker (post
+// C-10 shape flip — moved from Detail) so downstream consumers can
 // distinguish §16a rows from §16 shell-runnable rows without parsing
 // the check name.
 
 // EditorialReviewPreAttestNote is the exported marker string every
-// §16a check emits in its Detail field where §16 checks emit a
+// §16a check emits in its PreAttestCmd field where §16 checks emit a
 // runnable command. Exported so the substep validator's aggregate
 // guidance message can include it consistently.
 const EditorialReviewPreAttestNote = "dispatched via close.editorial-review (no author-side equivalent; reviewer IS the runner)"
@@ -62,9 +63,10 @@ func EditorialReviewChecks(ret *EditorialReviewReturn) []StepCheck {
 func checkEditorialReviewDispatched(ret *EditorialReviewReturn) StepCheck {
 	if ret == nil || len(ret.SurfacesWalked) == 0 {
 		return StepCheck{
-			Name:   "editorial_review_dispatched",
-			Status: stepCheckStatusFail,
-			Detail: "editorial-review return payload missing or surfaces_walked is empty — dispatch the reviewer with the composed brief before attesting this substep. " + EditorialReviewPreAttestNote,
+			Name:         "editorial_review_dispatched",
+			Status:       stepCheckStatusFail,
+			PreAttestCmd: EditorialReviewPreAttestNote,
+			Detail:       "editorial-review return payload missing or surfaces_walked is empty — dispatch the reviewer with the composed brief before attesting this substep.",
 		}
 	}
 	return StepCheck{
@@ -77,8 +79,10 @@ func checkEditorialReviewDispatched(ret *EditorialReviewReturn) StepCheck {
 func checkEditorialReviewNoWrongSurfaceCRIT(ret *EditorialReviewReturn) StepCheck {
 	if ret == nil {
 		return StepCheck{
-			Name: "editorial_review_no_wrong_surface_crit", Status: stepCheckStatusFail,
-			Detail: "editorial-review return payload missing — cannot grade CRIT count. " + EditorialReviewPreAttestNote,
+			Name:         "editorial_review_no_wrong_surface_crit",
+			Status:       stepCheckStatusFail,
+			PreAttestCmd: EditorialReviewPreAttestNote,
+			Detail:       "editorial-review return payload missing — cannot grade CRIT count.",
 		}
 	}
 	if ret.FindingsBySeverity.Crit == 0 {
@@ -87,17 +91,20 @@ func checkEditorialReviewNoWrongSurfaceCRIT(ret *EditorialReviewReturn) StepChec
 		}
 	}
 	return StepCheck{
-		Name:   "editorial_review_no_wrong_surface_crit",
-		Status: stepCheckStatusFail,
-		Detail: fmt.Sprintf("%d CRIT finding(s) survived inline-fix; every CRIT must be fixed in-mount before attesting. %s", ret.FindingsBySeverity.Crit, EditorialReviewPreAttestNote),
+		Name:         "editorial_review_no_wrong_surface_crit",
+		Status:       stepCheckStatusFail,
+		PreAttestCmd: EditorialReviewPreAttestNote,
+		Detail:       fmt.Sprintf("%d CRIT finding(s) survived inline-fix; every CRIT must be fixed in-mount before attesting.", ret.FindingsBySeverity.Crit),
 	}
 }
 
 func checkEditorialReviewReclassificationDelta(ret *EditorialReviewReturn) StepCheck {
 	if ret == nil {
 		return StepCheck{
-			Name: "editorial_review_reclassification_delta", Status: stepCheckStatusFail,
-			Detail: "editorial-review return payload missing — cannot grade reclassification delta. " + EditorialReviewPreAttestNote,
+			Name:         "editorial_review_reclassification_delta",
+			Status:       stepCheckStatusFail,
+			PreAttestCmd: EditorialReviewPreAttestNote,
+			Detail:       "editorial-review return payload missing — cannot grade reclassification delta.",
 		}
 	}
 	var unresolved []string
@@ -116,17 +123,20 @@ func checkEditorialReviewReclassificationDelta(ret *EditorialReviewReturn) StepC
 		}
 	}
 	return StepCheck{
-		Name:   "editorial_review_reclassification_delta",
-		Status: stepCheckStatusFail,
-		Detail: fmt.Sprintf("%d reclassification disagreement(s) unresolved: %s. %s", len(unresolved), strings.Join(unresolved, "; "), EditorialReviewPreAttestNote),
+		Name:         "editorial_review_reclassification_delta",
+		Status:       stepCheckStatusFail,
+		PreAttestCmd: EditorialReviewPreAttestNote,
+		Detail:       fmt.Sprintf("%d reclassification disagreement(s) unresolved: %s.", len(unresolved), strings.Join(unresolved, "; ")),
 	}
 }
 
 func checkEditorialReviewNoFabricatedMechanism(ret *EditorialReviewReturn) StepCheck {
 	if ret == nil {
 		return StepCheck{
-			Name: "editorial_review_no_fabricated_mechanism", Status: stepCheckStatusFail,
-			Detail: "editorial-review return payload missing — cannot grade fabricated-mechanism count. " + EditorialReviewPreAttestNote,
+			Name:         "editorial_review_no_fabricated_mechanism",
+			Status:       stepCheckStatusFail,
+			PreAttestCmd: EditorialReviewPreAttestNote,
+			Detail:       "editorial-review return payload missing — cannot grade fabricated-mechanism count.",
 		}
 	}
 	var offenders []string
@@ -145,9 +155,10 @@ func checkEditorialReviewNoFabricatedMechanism(ret *EditorialReviewReturn) StepC
 		}
 	}
 	return StepCheck{
-		Name:   "editorial_review_no_fabricated_mechanism",
-		Status: stepCheckStatusFail,
-		Detail: fmt.Sprintf("%d fabricated-mechanism CRIT finding(s): %s. %s", len(offenders), strings.Join(offenders, "; "), EditorialReviewPreAttestNote),
+		Name:         "editorial_review_no_fabricated_mechanism",
+		Status:       stepCheckStatusFail,
+		PreAttestCmd: EditorialReviewPreAttestNote,
+		Detail:       fmt.Sprintf("%d fabricated-mechanism CRIT finding(s): %s.", len(offenders), strings.Join(offenders, "; ")),
 	}
 }
 
@@ -174,8 +185,10 @@ func findingFlagsFabricatedMechanism(f EditorialReviewFinding) bool {
 func checkEditorialReviewCitationCoverage(ret *EditorialReviewReturn) StepCheck {
 	if ret == nil {
 		return StepCheck{
-			Name: "editorial_review_citation_coverage", Status: stepCheckStatusFail,
-			Detail: "editorial-review return payload missing — cannot grade citation coverage. " + EditorialReviewPreAttestNote,
+			Name:         "editorial_review_citation_coverage",
+			Status:       stepCheckStatusFail,
+			PreAttestCmd: EditorialReviewPreAttestNote,
+			Detail:       "editorial-review return payload missing — cannot grade citation coverage.",
 		}
 	}
 	cc := ret.CitationCoverage
@@ -194,17 +207,20 @@ func checkEditorialReviewCitationCoverage(ret *EditorialReviewReturn) StepCheck 
 		}
 	}
 	return StepCheck{
-		Name:   "editorial_review_citation_coverage",
-		Status: stepCheckStatusFail,
-		Detail: fmt.Sprintf("%d matching-topic gotcha(s) lack a zerops_knowledge citation (%d of %d cited). %s", uncited, cc.Numerator, cc.Denominator, EditorialReviewPreAttestNote),
+		Name:         "editorial_review_citation_coverage",
+		Status:       stepCheckStatusFail,
+		PreAttestCmd: EditorialReviewPreAttestNote,
+		Detail:       fmt.Sprintf("%d matching-topic gotcha(s) lack a zerops_knowledge citation (%d of %d cited).", uncited, cc.Numerator, cc.Denominator),
 	}
 }
 
 func checkEditorialReviewCrossSurfaceDuplication(ret *EditorialReviewReturn) StepCheck {
 	if ret == nil {
 		return StepCheck{
-			Name: "editorial_review_cross_surface_duplication", Status: stepCheckStatusFail,
-			Detail: "editorial-review return payload missing — cannot grade cross-surface ledger. " + EditorialReviewPreAttestNote,
+			Name:         "editorial_review_cross_surface_duplication",
+			Status:       stepCheckStatusFail,
+			PreAttestCmd: EditorialReviewPreAttestNote,
+			Detail:       "editorial-review return payload missing — cannot grade cross-surface ledger.",
 		}
 	}
 	var duplicates []string
@@ -219,17 +235,20 @@ func checkEditorialReviewCrossSurfaceDuplication(ret *EditorialReviewReturn) Ste
 		}
 	}
 	return StepCheck{
-		Name:   "editorial_review_cross_surface_duplication",
-		Status: stepCheckStatusFail,
-		Detail: fmt.Sprintf("%d cross-surface duplicate(s): %s. %s", len(duplicates), strings.Join(duplicates, "; "), EditorialReviewPreAttestNote),
+		Name:         "editorial_review_cross_surface_duplication",
+		Status:       stepCheckStatusFail,
+		PreAttestCmd: EditorialReviewPreAttestNote,
+		Detail:       fmt.Sprintf("%d cross-surface duplicate(s): %s.", len(duplicates), strings.Join(duplicates, "; ")),
 	}
 }
 
 func checkEditorialReviewWrongCount(ret *EditorialReviewReturn) StepCheck {
 	if ret == nil {
 		return StepCheck{
-			Name: "editorial_review_wrong_count", Status: stepCheckStatusFail,
-			Detail: "editorial-review return payload missing — cannot grade WRONG count. " + EditorialReviewPreAttestNote,
+			Name:         "editorial_review_wrong_count",
+			Status:       stepCheckStatusFail,
+			PreAttestCmd: EditorialReviewPreAttestNote,
+			Detail:       "editorial-review return payload missing — cannot grade WRONG count.",
 		}
 	}
 	if ret.FindingsBySeverity.Wrong <= editorialReviewWrongCountCeiling {
@@ -240,8 +259,9 @@ func checkEditorialReviewWrongCount(ret *EditorialReviewReturn) StepCheck {
 		}
 	}
 	return StepCheck{
-		Name:   "editorial_review_wrong_count",
-		Status: stepCheckStatusFail,
-		Detail: fmt.Sprintf("%d WRONG finding(s) survived inline-fix; ceiling is %d — reduce below ceiling before attesting (inline-fix what you can; escalate the rest with user-facing disposition). %s", ret.FindingsBySeverity.Wrong, editorialReviewWrongCountCeiling, EditorialReviewPreAttestNote),
+		Name:         "editorial_review_wrong_count",
+		Status:       stepCheckStatusFail,
+		PreAttestCmd: EditorialReviewPreAttestNote,
+		Detail:       fmt.Sprintf("%d WRONG finding(s) survived inline-fix; ceiling is %d — reduce below ceiling before attesting (inline-fix what you can; escalate the rest with user-facing disposition).", ret.FindingsBySeverity.Wrong, editorialReviewWrongCountCeiling),
 	}
 }

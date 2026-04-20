@@ -148,21 +148,16 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp kn
 		// divergence.
 		checks = append(checks, checkSymbolContractEnvVarConsistency(ctx, projectRoot, plan.SymbolContract)...)
 
-		// v8.97 Fix 4: stamp surface-derived coupling hints on every
-		// failed check with a populated ReadSurface before computing the
-		// pass status. Coupling is derived from shared ReadSurface, not
-		// from a hand-maintained cluster table.
-		checks = workflow.StampCoupling(checks)
+		// C-10: surface-derived coupling + next-round prediction removed
+		// (P1 supersedes). Per-check PreAttestCmd is the runnable form.
 		allPassed := checksAllPassed(checks)
 		summary := "recipe generate checks passed"
 		if !allPassed {
 			summary = "recipe generate checks failed"
 		}
-		result := &workflow.StepCheckResult{
+		return &workflow.StepCheckResult{
 			Passed: allPassed, Checks: checks, Summary: summary,
-		}
-		workflow.AnnotateNextRoundPrediction(result)
-		return result, nil
+		}, nil
 	}
 }
 
@@ -375,18 +370,15 @@ func checkRecipeDeployReadmes(stateDir string, factsLogPathFn func() string) wor
 		// divergence that the initial scaffold got right.
 		checks = append(checks, checkSymbolContractEnvVarConsistency(ctx, projectRoot, plan.SymbolContract)...)
 
-		// v8.97 Fix 4: stamp surface-derived coupling hints.
-		checks = workflow.StampCoupling(checks)
+		// C-10: coupling + next-round prediction removed (P1 supersedes).
 		allPassed := checksAllPassed(checks)
 		summary := "recipe deploy README checks passed"
 		if !allPassed {
 			summary = "recipe deploy README checks failed"
 		}
-		result := &workflow.StepCheckResult{
+		return &workflow.StepCheckResult{
 			Passed: allPassed, Checks: checks, Summary: summary,
-		}
-		workflow.AnnotateNextRoundPrediction(result)
-		return result, nil
+		}, nil
 	}
 }
 
@@ -660,23 +652,12 @@ func checkReadmeFragments(content, hostname string) []workflow.StepCheck {
 						Detail: fmt.Sprintf("%.0f%% comments", ratio*100),
 					})
 				} else {
-					readSurface := fmt.Sprintf(
-						"embedded YAML in %s/README.md (#ZEROPS_EXTRACT_START:integration-guide fragment)",
-						hostname,
-					)
-					coupled := []string{hostname + "/zerops.yaml"}
 					checks = append(checks, workflow.StepCheck{
-						Name:        "comment_ratio",
-						Status:      statusFail,
-						Detail:      fmt.Sprintf("comment ratio %.0f%% is below 30%% minimum", ratio*100),
-						ReadSurface: readSurface,
-						Required:    "≥30% of YAML lines comment-only",
-						Actual:      fmt.Sprintf("%.0f%%", ratio*100),
-						CoupledWith: coupled,
-						HowToFix: fmt.Sprintf(
-							"Add `#` comment lines inside the integration-guide YAML block in %s/README.md until the comment-only ratio reaches 30%%. "+
-								"This block usually mirrors %s/zerops.yaml (IG step 1) — keep both files byte-identical when you edit, otherwise the next round will fail again on the unsynced surface.",
-							hostname, hostname,
+						Name:   "comment_ratio",
+						Status: statusFail,
+						Detail: fmt.Sprintf(
+							"comment ratio %.0f%% is below 30%% minimum in the integration-guide YAML block of %s/README.md. Add `#` comment lines inside the block until the comment-only ratio reaches 30%%. This block usually mirrors %s/zerops.yaml (IG step 1) — keep both byte-identical when you edit, otherwise the next round fails on the unsynced surface.",
+							ratio*100, hostname, hostname,
 						),
 					})
 				}
@@ -725,15 +706,11 @@ func checkReadmeFragments(content, hostname string) []workflow.StepCheck {
 					readPath = hostname + "/README.md"
 				}
 				checks = append(checks, workflow.StepCheck{
-					Name:        "fragment_" + name + "_blank_after_marker",
-					Status:      statusFail,
-					Detail:      fmt.Sprintf("fragment %q needs a blank line after the start marker", name),
-					ReadSurface: fmt.Sprintf("%s — line immediately after `<!-- #ZEROPS_EXTRACT_START:%s# -->`", readPath, name),
-					Required:    "exactly one blank line between the start marker and the fragment body",
-					Actual:      fmt.Sprintf("non-blank content on the line after the %q start marker", name),
-					HowToFix: fmt.Sprintf(
-						"Insert a blank line in %s between `<!-- #ZEROPS_EXTRACT_START:%s# -->` and the first content line. The extractor that publishes the fragment to zerops.io/recipes treats the marker line as a comment and needs the blank separator before the rendered body starts.",
-						readPath, name,
+					Name:   "fragment_" + name + "_blank_after_marker",
+					Status: statusFail,
+					Detail: fmt.Sprintf(
+						"fragment %q in %s needs a blank line after `<!-- #ZEROPS_EXTRACT_START:%s# -->`. The extractor that publishes the fragment to zerops.io/recipes treats the marker line as a comment and needs the blank separator before the rendered body starts.",
+						name, readPath, name,
 					),
 				})
 			}

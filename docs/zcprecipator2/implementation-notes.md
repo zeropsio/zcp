@@ -1134,3 +1134,65 @@ One fewer informational check row fires at `deploy.readmes` complete. Zero regre
 
 - `workflow.PredecessorGotchaStems` and `workflow.CountNetNewGotchas` in `internal/workflow/recipe_knowledge_chain.go` are now unused in production code. Left in place for now — their public-API signatures suggest future tests/uses, and removing exported symbols outside C-9's scope adds risk. C-15 cleanup pass can remove them if still unreferenced.
 - `workflow_checks_predecessor_floor.go` is now a ~30 LoC file with one thin-wrapper function. Consider consolidating with `workflow_checks_recipe.go` during C-15's file-structure pass.
+
+---
+
+## C-10 — Shrink `StepCheck` failure payload to `{name, detail, preAttestCmd, expectedExit}`
+
+**Status**: green
+
+### What landed
+
+The v8.96 Theme A verbose diagnostic surface (`ReadSurface`/`Required`/`Actual`/`CoupledWith`/`HowToFix`/`Probe`) and v8.104 Fix E (`PerturbsChecks`) are removed from the agent-facing payload. P1 `PreAttestCmd` + `ExpectedExit` replace them: if an author wants to know whether a check would pass, run `PreAttestCmd` and compare the exit code against `ExpectedExit`. Rich prose detail stays in `Detail` (one-line summary, not a field tower). `NextRoundPrediction` on `StepCheckResult` + its derivation helper + `StampCoupling` + `CoupledNames` are deleted outright — all depended on fields that no longer exist.
+
+- [`internal/workflow/bootstrap_checks.go`](../../internal/workflow/bootstrap_checks.go) — `StepCheck` struct rewritten to `{Name, Status, Detail, PreAttestCmd, ExpectedExit}`. `StepCheckResult` loses `NextRoundPrediction`; `AnnotateNextRoundPrediction` function deleted. File shrinks from 133 LoC to 64 LoC.
+- [`internal/workflow/coupling.go`](../../internal/workflow/coupling.go) — deleted (117 LoC). `StampCoupling`/`CoupledNames` were surface-derived coupling stampers that needed `ReadSurface` + `HowToFix`; with those fields gone the function has nothing to read and nothing to write.
+- [`internal/workflow/coupling_test.go`](../../internal/workflow/coupling_test.go) — deleted (tests targeted the deleted functions).
+- 6 `StampCoupling` invocation sites removed from `internal/tools/`: `workflow_checks.go` (2 sites: provision + deploy dispatch), `workflow_checks_generate.go`, `workflow_checks_finalize.go`, `workflow_checks_recipe.go` (2 sites: generate + deploy.readmes). All 3 `workflow.AnnotateNextRoundPrediction` invocation sites removed as well.
+- Check-emission sites migrated to PreAttestCmd shape (roughly ~300 LoC across 12 files — most diffs are "6-line field block → 1-line PreAttestCmd + consolidated Detail prose"):
+  - `internal/ops/checks/comment_depth.go`: PreAttestCmd = `zcp check comment-depth --env={folder} --path=./`. Detail prose carries the former `ReadSurface + Required + Actual + HowToFix` condensed to one-line.
+  - `internal/ops/checks/factual_claims.go`: PreAttestCmd = `zcp check factual-claims --env={folder} --path=./`.
+  - `internal/ops/checks/kb_authenticity.go`: PreAttestCmd = `zcp check kb-authenticity [--hostname={host}] --path=./`.
+  - `internal/tools/workflow_checks_recipe.go`: `fragment_*_blank_after_marker` + the embedded-YAML `comment_ratio` in `checkReadmeFragments` shed their verbose-field blocks; Detail prose retains the actionable remedy.
+  - `internal/tools/workflow_checks_finalize.go`: `_comment_ratio` + `_cross_env_refs` shed their verbose-field blocks.
+  - `internal/tools/workflow_checks_dedup.go`: `gotcha_distinct_from_guide` sheds `PerturbsChecks` + `CoupledWith`; the perturbation warning about `cross_readme_gotcha_uniqueness` is now inline prose in `Detail`.
+- [`internal/workflow/editorial_review_checks.go`](../../internal/workflow/editorial_review_checks.go) — C-7.5's §16a checks now set `PreAttestCmd = EditorialReviewPreAttestNote` on every failing row (moved from Detail string concatenation). The "reviewer IS the runner" marker lives in its structural slot.
+- Test cascade:
+  - [`internal/tools/workflow_checks_diagnostics_test.go`](../../internal/tools/workflow_checks_diagnostics_test.go) — rewritten end-to-end. The pre-C-10 file asserted every P0 check populates `ReadSurface/Required/Actual/HowToFix` with hedging-phrase discipline + length bounds + next-round-prediction heuristics. Those invariants don't exist post-C-10. New file asserts the minimum post-C-10 payload contract: every failing row carries a non-empty Detail (~25 LoC test), and §18-migratable predicates emit a `zcp check <name>` invocation in PreAttestCmd (~45 LoC test).
+  - [`internal/tools/workflow_checks_dedup_test.go`](../../internal/tools/workflow_checks_dedup_test.go) — v8.104 Fix E assertion updated: `c.PerturbsChecks` → `c.Detail` substring check for the perturbation warning about `cross_readme_gotcha_uniqueness`.
+  - [`internal/workflow/editorial_review_checks_test.go`](../../internal/workflow/editorial_review_checks_test.go) — `TestEditorialReviewChecks_EveryFailDetailNamesPreAttestNote` renamed to `_CarriesPreAttestNote`; assertion redirected from Detail substring to PreAttestCmd equality.
+  - [`internal/workflow/editorial_review_validator_test.go`](../../internal/workflow/editorial_review_validator_test.go) — validator tests unchanged (parse-failure + predicate-failure paths) because the validator's prose Guidance still embeds the note for human consumers.
+
+### Verification
+
+- `go test ./... -count=1` — full suite green across 21 packages.
+- `make lint-local` — 0 issues (after `gofmt` on editorial_review_checks.go).
+
+### LoC delta
+
+- `internal/workflow/bootstrap_checks.go`: -69 LoC.
+- `internal/workflow/coupling.go`: -117 LoC (file deleted).
+- `internal/workflow/coupling_test.go`: -~250 LoC (file deleted; size estimated).
+- `internal/tools/workflow_checks_diagnostics_test.go`: -~230 LoC (entire v8.96 suite + next-round-prediction table deleted; replaced with ~85 LoC C-10-shape assertions).
+- 6 emission-site rewrites across `internal/tools/workflow_checks_*.go` + 4 under `internal/ops/checks/`: ~-200 LoC net (verbose-field blocks deleted, Detail prose condensed, PreAttestCmd added).
+- Editorial-review ~40 LoC of field reshuffling (+7 `PreAttestCmd: EditorialReviewPreAttestNote`, -7 `" + EditorialReviewPreAttestNote"` concatenations).
+- **Total**: ~-700 LoC net. Handoff estimate was ~-100 LoC + ~+400 LoC test updates; actual came out net negative because the `StampCoupling` + `NextRoundPrediction` infrastructure (plus the verbose-field-oriented diagnostics test file) deleted more code than PreAttestCmd additions created.
+
+### Breaks-alone consequence
+
+BREAKING payload shape change visible to any JSON consumer of `StepCheck` rows. Per check-rewrite.md's ordering rationale: the new content tree (C-5 cutover) teaches the agent the new payload shape; combined with C-7e's `zcp check <name>` shim tree, authors have one runnable form per check instead of five advisory fields. Older on-disk session state carrying the v8.96-era verbose fields deserializes with those fields silently dropped (Go's JSON decoder ignores unknown fields by default).
+
+### Ordering deps verified
+
+- C-5 (cutover) ✓ — atoms + stitchers teach the new payload shape.
+- C-6 ✓ (+5 new architecture-level checks emit the new shape from the start).
+- C-7a/b/c/d/e ✓ (16 migrated predicates + CLI shim tree provide the PreAttestCmd runnable form).
+- C-7.5 ✓ (§16a editorial-review marker moves from Detail to PreAttestCmd).
+- C-8 ✓ (6-dimension manifest honesty; each row emits the new shape).
+- C-9 ✓ (deleted exceeds-predecessor — one fewer emission site to migrate).
+
+### Known deferred
+
+- **Debug-log retention hook**. Spec §C-10 mentioned a `debug.LogCheckFailureDetail(ctx, check, readSurface, required, actual, ...)` helper (~50 LoC) for server-side human inspection of the pre-shape-flip verbose fields. Deferred: implementing it cleanly requires either threading extra log state through every emission site or preserving the verbose fields internally on the Go side and stripping them at JSON-serialize time. Neither is cheap in scope, and the v35 telemetry we'd gate on the log output can come from the existing `--debug` structured logs + agent-side session transcripts. Revisit if v35 regression triage finds the loss of verbose fields a blocking handicap.
+- **`workflow.PredecessorGotchaStems` + `workflow.CountNetNewGotchas`**. Still exported post-C-9 with no production callers. C-15 cleanup can remove if still unreferenced.
+- **`content/workflows/recipe.md` monolith references to verbose fields**. The legacy content tree names `ReadSurface` / `HowToFix` in agent-facing prose. Not a gate failure — the new atom tree (C-4) is the canonical content source post-C-5 cutover; recipe.md is deleted wholesale in C-15.

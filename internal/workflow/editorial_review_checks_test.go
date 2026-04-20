@@ -134,19 +134,20 @@ func TestEditorialReviewChecks_SevenRowsInStableOrder(t *testing.T) {
 	}
 }
 
-// TestEditorialReviewChecks_EveryFailDetailNamesPreAttestNote confirms
-// the `dispatched via close.editorial-review (no author-side equivalent
-// ...)` marker is present on every failing detail so downstream
+// TestEditorialReviewChecks_EveryFailCarriesPreAttestNote confirms the
+// `dispatched via close.editorial-review (no author-side equivalent
+// ...)` marker lives in the PreAttestCmd field (moved from Detail in
+// C-10 payload-shape flip) on every failing row so downstream
 // consumers can filter §16a rows without parsing the check name.
-func TestEditorialReviewChecks_EveryFailDetailNamesPreAttestNote(t *testing.T) {
+func TestEditorialReviewChecks_EveryFailCarriesPreAttestNote(t *testing.T) {
 	t.Parallel()
 	rows := EditorialReviewChecks(nil)
 	for _, row := range rows {
 		if row.Status == "pass" {
 			continue
 		}
-		if !strings.Contains(row.Detail, EditorialReviewPreAttestNote) {
-			t.Errorf("fail row %q detail missing pre-attest note; got %q", row.Name, row.Detail)
+		if row.PreAttestCmd != EditorialReviewPreAttestNote {
+			t.Errorf("fail row %q: PreAttestCmd=%q want=%q", row.Name, row.PreAttestCmd, EditorialReviewPreAttestNote)
 		}
 	}
 }

@@ -67,18 +67,17 @@ func checkRecipeFinalize(outputDir string) workflow.RecipeStepChecker {
 		// for `v\d+(\.\d+)*` tokens. Closes v33 version-log leakage class.
 		checks = append(checks, checkNoVersionAnchorsInPublishedContent(dir)...)
 
-		// v8.97 Fix 4: stamp surface-derived coupling hints.
-		checks = workflow.StampCoupling(checks)
+		// C-10: surface-derived coupling + next-round prediction removed
+		// (P1 supersedes). The per-check PreAttestCmd is the runnable
+		// form; authors re-evaluate by running the shim.
 		allPassed := checksAllPassed(checks)
 		summary := "finalize checks passed"
 		if !allPassed {
 			summary = "finalize checks failed"
 		}
-		result := &workflow.StepCheckResult{
+		return &workflow.StepCheckResult{
 			Passed: allPassed, Checks: checks, Summary: summary,
-		}
-		workflow.AnnotateNextRoundPrediction(result)
-		return result, nil
+		}, nil
 	}
 }
 
@@ -246,17 +245,12 @@ func validateImportYAML(ctx context.Context, content string, plan *workflow.Reci
 			Detail: fmt.Sprintf("%.0f%%", ratio*100),
 		})
 	} else {
-		readSurface := fmt.Sprintf("%s/import.yaml", folder)
 		checks = append(checks, workflow.StepCheck{
-			Name:        prefix + "_comment_ratio",
-			Status:      statusFail,
-			Detail:      fmt.Sprintf("comment ratio %.0f%% is below 30%% minimum", ratio*100),
-			ReadSurface: readSurface,
-			Required:    "≥30% of non-empty lines comment-only",
-			Actual:      fmt.Sprintf("%.0f%%", ratio*100),
-			HowToFix: fmt.Sprintf(
-				"Add `#` comment lines above each service block in %s explaining WHY this env's tier shape was chosen (mode, minContainers, corePackage). Each env file is published standalone — describe THIS tier on its own terms without naming siblings.",
-				readSurface,
+			Name:   prefix + "_comment_ratio",
+			Status: statusFail,
+			Detail: fmt.Sprintf(
+				"comment ratio %.0f%% in %s/import.yaml is below 30%% minimum. Add `#` comment lines above each service block explaining WHY this env's tier shape was chosen (mode, minContainers, corePackage). Each env file is published standalone — describe THIS tier on its own terms without naming siblings.",
+				ratio*100, folder,
 			),
 		})
 	}
@@ -588,17 +582,12 @@ func checkCrossEnvReferences(content, prefix string) []workflow.StepCheck {
 			detail = strings.Join(offenders[:3], ", ") + fmt.Sprintf(" and %d more", len(offenders)-3)
 		}
 		envFolder := strings.TrimSuffix(prefix, "_import")
-		readSurface := fmt.Sprintf("%s/import.yaml comment lines: %s", envFolder, detail)
 		return []workflow.StepCheck{{
-			Name:        prefix + "_cross_env_refs",
-			Status:      statusFail,
-			Detail:      "comment references a sibling environment by tier number at " + detail + " — each env's import.yaml is published standalone on zerops.io/recipes; readers never see the other envs, so references like 'env 0', 'env 4', 'see env 5' are context-free. Rewrite the comment to describe THIS env on its own terms.",
-			ReadSurface: readSurface,
-			Required:    "no comment names a sibling tier by number (env N / envs N-M / environment N)",
-			Actual:      fmt.Sprintf("%d offending comment line(s) at %s", len(offenders), detail),
-			HowToFix: fmt.Sprintf(
-				"Rewrite the flagged comment lines in %s/import.yaml so each describes THIS env on its own terms — drop phrases like 'see env N', 'envs 4-5', 'bumps to env 4'. Each env ships standalone on zerops.io/recipes, so a sibling reference reads as a dangling pointer.",
-				envFolder,
+			Name:   prefix + "_cross_env_refs",
+			Status: statusFail,
+			Detail: fmt.Sprintf(
+				"comment in %s/import.yaml references a sibling environment by tier number at %s — each env's import.yaml is published standalone on zerops.io/recipes; readers never see the other envs, so references like 'env 0', 'env 4', 'see env 5' are context-free. Rewrite the flagged comment lines so each describes THIS env on its own terms — drop phrases like 'see env N', 'envs 4-5', 'bumps to env 4'.",
+				envFolder, detail,
 			),
 		}}
 	}

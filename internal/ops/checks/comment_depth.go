@@ -142,20 +142,13 @@ func CheckCommentDepth(_ context.Context, content, prefix string) []workflow.Ste
 		}}
 	}
 	envFolder := strings.TrimSuffix(prefix, "_import")
-	readSurface := fmt.Sprintf("%s/import.yaml WHY-marker lines (multi-line `#` blocks counted as one)", envFolder)
 	return []workflow.StepCheck{{
-		Name:        prefix + "_comment_depth",
-		Status:      StatusFail,
-		ReadSurface: readSurface,
-		Required:    fmt.Sprintf("≥%.0f%% of substantive comment blocks (≥%d) carry a reasoning marker", minReasoningCommentRatio*100, minReasoningComments),
-		Actual:      fmt.Sprintf("%d of %d (%.0f%%)", reasoning, total, ratio*100),
-		HowToFix: fmt.Sprintf(
-			"Rewrite comment blocks in %s/import.yaml so each answers one of: WHY this value vs the obvious alternative; WHAT BREAKS if the decision flips; HOW THIS AFFECTS operations (rotation, scaling, rolling deploys, concurrent containers). Add the WHY clause inline (use words like `because`, `otherwise`, `without`, `prevents`, `rolling`, `rotation`, `redeploy`). Narration like 'minContainers: 2 enables rolling deploys' fails; 'minContainers: 2 because a single container would drop in-flight requests during rolling deploys' passes.",
-			envFolder,
-		),
+		Name:         prefix + "_comment_depth",
+		Status:       StatusFail,
+		PreAttestCmd: fmt.Sprintf("zcp check comment-depth --env=%s --path=./", envFolder),
 		Detail: fmt.Sprintf(
-			"only %d of %d substantive comments (%.0f%%, need >= %.0f%% or >= %d) explain WHY a decision was made.",
-			reasoning, total, ratio*100, minReasoningCommentRatio*100, minReasoningComments,
+			"only %d of %d substantive comments (%.0f%%, need ≥%.0f%% or ≥%d) in %s/import.yaml explain WHY a decision was made. Rewrite blocks to answer WHY vs obvious alternative / WHAT BREAKS if flipped / HOW THIS AFFECTS operations — use markers like `because`, `otherwise`, `without`, `prevents`, `rolling`, `rotation`.",
+			reasoning, total, ratio*100, minReasoningCommentRatio*100, minReasoningComments, envFolder,
 		),
 	}}
 }

@@ -211,15 +211,12 @@ func CheckFactualClaims(_ context.Context, content, prefix string) []workflow.St
 			name = fmt.Sprintf("%s_factual_claims_%d", prefix, i+1)
 		}
 		out = append(out, workflow.StepCheck{
-			Name:        name,
-			Status:      StatusFail,
-			Detail:      "comment contradicts YAML value — " + m.detail() + ". Either correct the number to match the configured value, drop the number from the comment, or rephrase as aspirational (e.g. 'bump to N GB via the GUI when usage grows').",
-			ReadSurface: fmt.Sprintf("%s/import.yaml line %d (comment) vs line %d (`%s` field)", envFolder, m.commentLine, m.yamlLine, m.yamlKey),
-			Required:    fmt.Sprintf("comment number matches the adjacent `%s` value", m.yamlKey),
-			Actual:      fmt.Sprintf("comment claims %d%s; YAML has %s: %d", m.claimed, m.unit, m.yamlKey, m.actual),
-			HowToFix: fmt.Sprintf(
-				"Edit %s/import.yaml line %d so the comment number matches the `%s: %d` declaration on line %d. If the right answer is the comment, change the YAML; if the right answer is the YAML, drop the number from the comment or rephrase aspirationally ('bump to N %s via the GUI when usage grows').",
-				envFolder, m.commentLine, m.yamlKey, m.actual, m.yamlLine, strings.TrimSpace(m.unit),
+			Name:         name,
+			Status:       StatusFail,
+			PreAttestCmd: fmt.Sprintf("zcp check factual-claims --env=%s --path=./", envFolder),
+			Detail: fmt.Sprintf(
+				"comment contradicts YAML value in %s/import.yaml line %d (vs `%s` on line %d) — %s. Edit line %d so the comment number matches `%s: %d`, drop the number from the comment, or rephrase aspirationally ('bump to N %s via the GUI when usage grows').",
+				envFolder, m.commentLine, m.yamlKey, m.yamlLine, m.detail(), m.commentLine, m.yamlKey, m.actual, strings.TrimSpace(m.unit),
 			),
 		})
 	}
