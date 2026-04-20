@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -99,7 +100,14 @@ func TestRecipeStart_Success(t *testing.T) {
 	}
 }
 
-func TestRecipeStart_DefaultTier(t *testing.T) {
+// TestRecipeStart_DefaultTierRejected — v8.100 replaces the prior
+// TestRecipeStart_DefaultTier which asserted an empty tier silently
+// defaulted to "minimal". The silent default dropped showcase-intent
+// agents into minimal research guidance without the showcase rules
+// (NATS queue required, BullMQ disqualifies shared-codebase, load ONE
+// reference recipe). Empty tier is now rejected up front with a
+// message naming both valid values.
+func TestRecipeStart_DefaultTierRejected(t *testing.T) {
 	t.Parallel()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
@@ -113,8 +121,8 @@ func TestRecipeStart_DefaultTier(t *testing.T) {
 		"clientModel": "claude-opus-4-6[1m]",
 	})
 
-	if result.IsError {
-		t.Fatalf("expected success with default tier, got error: %s", getTextContent(t, result))
+	if !result.IsError {
+		t.Fatalf("expected tier-required rejection, got success: %s", getTextContent(t, result))
 	}
 }
 
@@ -401,5 +409,66 @@ func minimalToolsTestFeatures() []workflow.RecipeFeature {
 			Interaction: "Open the page; observe the greeting section populate.",
 			MustObserve: "[data-feature=\"greeting\"] [data-value] text non-empty.",
 		},
+	}
+}
+
+// TestRecipeStart_TierRequired — v8.100. Empty tier is rejected with a
+// message naming valid values. Replaces the prior silent "default to
+// minimal" which dropped showcase-intent agents into minimal guidance.
+func TestRecipeStart_TierRequired(t *testing.T) {
+	t.Parallel()
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil)
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":      "start",
+		"workflow":    "recipe",
+		"intent":      "Create a Nest.js showcase recipe",
+		"clientModel": "claude-opus-4-7[1m]",
+		// No tier.
+	})
+	if !result.IsError {
+		t.Fatalf("expected tier-required rejection, got success: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "tier is required") {
+		t.Errorf("error message must name \"tier is required\"; got: %s", text)
+	}
+	// Must name both valid values so the agent can classify on the retry.
+	for _, v := range []string{"minimal", "showcase"} {
+		if !strings.Contains(text, v) {
+			t.Errorf("error message must name tier value %q; got: %s", v, text)
+		}
+	}
+}
+
+// TestRecipeStart_TierInvalid — v8.100. Unknown tier values are rejected
+// with a message listing valid ones. Replaces relying on the engine's
+// generic "invalid tier" error which doesn't surface the valid set.
+func TestRecipeStart_TierInvalid(t *testing.T) {
+	t.Parallel()
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil)
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":      "start",
+		"workflow":    "recipe",
+		"intent":      "Create a recipe",
+		"tier":        "intermediate", // not valid
+		"clientModel": "claude-opus-4-7[1m]",
+	})
+	if !result.IsError {
+		t.Fatalf("expected invalid-tier rejection, got success: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "invalid tier") {
+		t.Errorf("error must name \"invalid tier\"; got: %s", text)
+	}
+	if !strings.Contains(text, "minimal") || !strings.Contains(text, "showcase") {
+		t.Errorf("error must list valid values; got: %s", text)
 	}
 }

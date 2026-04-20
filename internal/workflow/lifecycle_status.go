@@ -205,7 +205,13 @@ func writeStatusNext(
 	hasUnmanaged := hasUnmanagedRuntimes(services, metas, selfHostname)
 
 	if len(scope) == 0 {
-		b.WriteString(`  - Create services: zerops_workflow action="start" workflow="bootstrap"` + "\n")
+		// v8.100: empty-project hint lists BOTH valid workflow starts.
+		// The prior version named only bootstrap — agents invoked to build
+		// a recipe read the hint, interpreted it as authoritative, and
+		// switched to bootstrap despite the user's recipe intent. Emit both
+		// so the agent picks based on the user's stated goal.
+		b.WriteString(`  - Create services (bootstrap): zerops_workflow action="start" workflow="bootstrap" intent="..."` + "\n")
+		b.WriteString(`  - Create a recipe: zerops_workflow action="start" workflow="recipe" tier="<hello-world|minimal|showcase>" intent="..." clientModel="claude-opus-4-7[1m]"` + "\n")
 		return
 	}
 	if hasBootstrapped {

@@ -60,9 +60,27 @@ func handleRecipeStart(ctx context.Context, projectID string, engine *workflow.E
 		return convertError(err), nil, nil
 	}
 
+	// v8.100: no silent tier default. The prior version defaulted empty
+	// tier to "minimal", which silently dropped agents into the minimal
+	// research guidance when the user asked for a showcase. Every
+	// showcase-specific rule (NATS queue required, BullMQ disqualifies
+	// shared-codebase, load ONE reference recipe, 5-service coverage
+	// mandate) lives in the showcase section of recipe.md — if tier is
+	// wrong, none of it gets delivered and the agent invents fallbacks.
+	// Reject the call up front so the caller classifies the user's
+	// intent before the session starts.
 	tier := input.Tier
 	if tier == "" {
-		tier = workflow.RecipeTierMinimal
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"tier is required for recipe workflow start",
+			`Pass tier="minimal" | "showcase" based on the user's intent. "minimal" = backend framework with ORM + migrations + templates (no queue/cache/storage/search); "showcase" = full dashboard with every managed-service kind (db, cache, storage, search, messaging) + dedicated worker. The tier selects which research guidance is delivered — wrong tier means missing rules, not just mislabeled output.`)), nil, nil
+	}
+	if tier != workflow.RecipeTierMinimal && tier != workflow.RecipeTierShowcase {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("invalid tier %q", tier),
+			`Valid values: "minimal", "showcase". The tier selects which research guidance is delivered; other values are rejected up front.`)), nil, nil
 	}
 
 	resp, err := engine.RecipeStart(projectID, input.Intent, tier)

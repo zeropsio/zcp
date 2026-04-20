@@ -23,6 +23,37 @@ func TestBuildLifecycleStatus_EmptyProject_IdlePhaseNoServices(t *testing.T) {
 	mustContain(t, out, `workflow="bootstrap"`)
 }
 
+// TestBuildLifecycleStatus_EmptyProject_NextListsBothBootstrapAndRecipe —
+// v8.100. When the project is empty, the Next section must list BOTH
+// workflow="bootstrap" AND workflow="recipe" so an agent invoked to
+// build a recipe doesn't read the hint as authoritative and switch to
+// bootstrap. The prior version named only bootstrap, which silently
+// steered showcase-recipe requests into bootstrap mode.
+func TestBuildLifecycleStatus_EmptyProject_NextListsBothBootstrapAndRecipe(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().WithServices(nil)
+	out := BuildLifecycleStatus(context.Background(), mock, "proj-1", t.TempDir(), "")
+
+	if !strings.Contains(out, `workflow="bootstrap"`) {
+		t.Errorf("Next section must include bootstrap option; got:\n%s", out)
+	}
+	if !strings.Contains(out, `workflow="recipe"`) {
+		t.Errorf("Next section must include recipe option (v8.100 bar); got:\n%s", out)
+	}
+	// The recipe hint must name the three legal tier values so the agent
+	// classifies up front rather than defaulting silently.
+	for _, tierHint := range []string{"minimal", "showcase"} {
+		if !strings.Contains(out, tierHint) {
+			t.Errorf("recipe hint must name tier value %q; got:\n%s", tierHint, out)
+		}
+	}
+	// Must name the clientModel requirement so the agent doesn't hit the
+	// first-call rejection and have to retry.
+	if !strings.Contains(out, "clientModel") {
+		t.Errorf("recipe hint must name clientModel requirement; got:\n%s", out)
+	}
+}
+
 func TestBuildLifecycleStatus_Idle_ListsServicesWithSetup(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{

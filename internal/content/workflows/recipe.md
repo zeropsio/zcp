@@ -56,6 +56,14 @@ Submit via:
 ```
 zerops_workflow action="complete" step="research" recipePlan={...}
 ```
+
+**`recipePlan` must be a JSON OBJECT, not a JSON string.** The MCP schema expects structured input; stringifying the plan first (`JSON.stringify`, escape-quoting, etc.) produces this rejection:
+
+```
+validating /properties/recipePlan: type: {...} has type "string", want one of "null, object"
+```
+
+If you see that error you saved the right data in the wrong form — pass the object directly, no stringification. This applies to every nested property too: `targets` is an array of objects, `decisions` / `research` / `envComments` are objects, not stringified JSON blobs.
 </section>
 
 <section name="research-showcase">

@@ -156,7 +156,11 @@ var showcaseStepCaps = map[RecipeShape]map[string]int{
 		RecipeStepClose:     14 * 1024,
 	},
 	ShapeFullStackShowcase: {
-		RecipeStepResearch:  14 * 1024,
+		// v8.100 +1 KB: research-minimal gained the top-level-fields list
+		// (v8.99) + object-vs-string submission note (v8.100). Both are
+		// doc fixes that prevent first-call schema rejections observed
+		// in the wild, worth the headroom.
+		RecipeStepResearch:  15 * 1024,
 		RecipeStepProvision: 19 * 1024, // v8.96 +1 KB — see ShapeHelloWorld note
 		RecipeStepGenerate:  45 * 1024,
 		RecipeStepDeploy:    44 * 1024,
@@ -164,7 +168,7 @@ var showcaseStepCaps = map[RecipeShape]map[string]int{
 		RecipeStepClose:     14 * 1024,
 	},
 	ShapeDualRuntimeShowcase: {
-		RecipeStepResearch:  14 * 1024,
+		RecipeStepResearch:  15 * 1024, // v8.100 +1 KB — see ShapeFullStackShowcase note
 		RecipeStepProvision: 23 * 1024,
 		RecipeStepGenerate:  48 * 1024,
 		RecipeStepDeploy:    44 * 1024,

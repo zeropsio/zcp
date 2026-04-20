@@ -56,6 +56,27 @@ func TestResearchMinimal_TierValuesNamedExplicitly(t *testing.T) {
 	}
 }
 
+// TestResearchMinimal_SubmissionNamesObjectVsStringTrap — v8.100.
+// Observed in a live run: the agent stringified the full recipePlan
+// before submission (JSON.stringify-style) and got rejected 3 times
+// with "has type string, want object" before finally passing the
+// object directly. The submission block must call this out explicitly
+// so the agent reads the rule at the point of submission, not after
+// the third rejection.
+func TestResearchMinimal_SubmissionNamesObjectVsStringTrap(t *testing.T) {
+	t.Parallel()
+
+	body := sectionContent(t, "research-minimal")
+	// The submission section (not any other prose) must carry the object
+	// invariant and the exact observed error substring.
+	if !strings.Contains(body, "JSON OBJECT") {
+		t.Errorf("research-minimal submission block must declare recipePlan as a JSON OBJECT (Fix B / v8.100)")
+	}
+	if !strings.Contains(body, `has type "string", want one of "null, object"`) {
+		t.Errorf("research-minimal submission block must quote the exact schema rejection so the agent recognizes it in its own error history")
+	}
+}
+
 // TestResearchMinimal_RejectsInventedFieldNames — v8.99 doc fix.
 // research-minimal MUST NOT use the string "recipeType" anywhere — neither
 // as a field name, column header, or prose term. Reintroducing it lets
