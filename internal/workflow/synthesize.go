@@ -81,19 +81,19 @@ func atomMatches(atom KnowledgeAtom, env StateEnvelope) bool {
 		}
 	}
 
-	// Service-scoped axes (mode, strategy, runtime) match when ANY service in
-	// the envelope matches. Atoms declaring these axes are implicitly
-	// per-service; the render layer decides whether to emit once or per-service.
-	if len(atom.Axes.Modes) > 0 && !anyServiceMode(env.Services, atom.Axes.Modes) {
-		return false
-	}
-	if len(atom.Axes.Strategies) > 0 && !anyServiceStrategy(env.Services, atom.Axes.Strategies) {
-		return false
-	}
-	if len(atom.Axes.Runtimes) > 0 && !anyServiceRuntime(env.Services, atom.Axes.Runtimes) {
-		return false
-	}
-	if len(atom.Axes.DeployStates) > 0 && !anyServiceDeployState(env.Services, atom.Axes.DeployStates) {
+	// Service-scoped axes (mode, strategy, runtime, deployState) must all be
+	// satisfied by the SAME service. Disjunction (ANY service satisfies axis X
+	// while OTHER satisfies Y) would fire atoms whose placeholder body
+	// references a service that the atom isn't actually about — e.g.
+	// `develop-strategy-review (deployStates=[deployed], strategies=[unset])`
+	// would fire when service A is deployed+push-dev and service B is
+	// never-deployed+unset, despite no single service being both deployed AND
+	// unset.
+	hasServiceScope := len(atom.Axes.Modes) > 0 ||
+		len(atom.Axes.Strategies) > 0 ||
+		len(atom.Axes.Runtimes) > 0 ||
+		len(atom.Axes.DeployStates) > 0
+	if hasServiceScope && !anyServiceMatchesAll(env.Services, atom.Axes) {
 		return false
 	}
 
@@ -124,49 +124,35 @@ func envInSet(e Environment, set []Environment) bool {
 	return slices.Contains(set, e)
 }
 
-func anyServiceMode(services []ServiceSnapshot, set []Mode) bool {
+// anyServiceMatchesAll reports whether any single service satisfies every
+// declared service-scoped axis. An empty axis slice is a wildcard for that
+// axis. Non-bootstrapped services are skipped for the deployState check —
+// they have no tracked deploy state, and firing first-deploy atoms on pure-
+// adoption services bootstrap never touched would be a regression.
+func anyServiceMatchesAll(services []ServiceSnapshot, axes AxisVector) bool {
 	for _, svc := range services {
-		if slices.Contains(set, svc.Mode) {
-			return true
-		}
-	}
-	return false
-}
-
-func anyServiceStrategy(services []ServiceSnapshot, set []DeployStrategy) bool {
-	for _, svc := range services {
-		if slices.Contains(set, svc.Strategy) {
-			return true
-		}
-	}
-	return false
-}
-
-func anyServiceRuntime(services []ServiceSnapshot, set []RuntimeClass) bool {
-	for _, svc := range services {
-		if slices.Contains(set, svc.RuntimeClass) {
-			return true
-		}
-	}
-	return false
-}
-
-// anyServiceDeployState matches only bootstrapped services. Non-bootstrapped
-// services have no tracked deploy state — filtering them in would incorrectly
-// surface first-deploy atoms on pure-adoption services that bootstrap never
-// touched.
-func anyServiceDeployState(services []ServiceSnapshot, set []DeployState) bool {
-	for _, svc := range services {
-		if !svc.Bootstrapped {
+		if len(axes.Modes) > 0 && !slices.Contains(axes.Modes, svc.Mode) {
 			continue
 		}
-		state := DeployStateNeverDeployed
-		if svc.Deployed {
-			state = DeployStateDeployed
+		if len(axes.Strategies) > 0 && !slices.Contains(axes.Strategies, svc.Strategy) {
+			continue
 		}
-		if slices.Contains(set, state) {
-			return true
+		if len(axes.Runtimes) > 0 && !slices.Contains(axes.Runtimes, svc.RuntimeClass) {
+			continue
 		}
+		if len(axes.DeployStates) > 0 {
+			if !svc.Bootstrapped {
+				continue
+			}
+			state := DeployStateNeverDeployed
+			if svc.Deployed {
+				state = DeployStateDeployed
+			}
+			if !slices.Contains(axes.DeployStates, state) {
+				continue
+			}
+		}
+		return true
 	}
 	return false
 }

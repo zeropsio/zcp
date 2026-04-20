@@ -220,6 +220,57 @@ func TestSynthesize_DeployStateFilter(t *testing.T) {
 	}
 }
 
+// TestSynthesize_ServiceScopedAxesRequireSameService pins the conjunction
+// invariant: an atom declaring multiple service-scoped axes (modes,
+// strategies, runtimes, deployStates) fires only when ONE service satisfies
+// all of them. Disjunction across services would fire atoms whose body
+// references a service the atom isn't semantically about — e.g. strategy-
+// review surfacing because service A is deployed and (different) service B
+// has unset strategy.
+func TestSynthesize_ServiceScopedAxesRequireSameService(t *testing.T) {
+	t.Parallel()
+
+	corpus := []KnowledgeAtom{
+		{
+			ID:   "two-axes",
+			Axes: AxisVector{Phases: []Phase{PhaseDevelopActive}, DeployStates: []DeployState{DeployStateDeployed}, Strategies: []DeployStrategy{StrategyUnset}},
+			Body: "Two-axis atom.",
+		},
+	}
+
+	// Mixed envelope: A is deployed with push-dev, B is never-deployed with
+	// unset. No single service satisfies deployed+unset → atom must NOT fire.
+	mixed := StateEnvelope{
+		Phase: PhaseDevelopActive,
+		Services: []ServiceSnapshot{
+			{Hostname: "a", RuntimeClass: RuntimeDynamic, Bootstrapped: true, Deployed: true, Strategy: StrategyPushDev},
+			{Hostname: "b", RuntimeClass: RuntimeDynamic, Bootstrapped: true, Deployed: false, Strategy: StrategyUnset},
+		},
+	}
+	got, err := Synthesize(mixed, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize mixed: %v", err)
+	}
+	if strings.Contains(strings.Join(got, "\n"), "Two-axis atom.") {
+		t.Error("mixed envelope: two-axis atom must not fire when no single service satisfies both axes")
+	}
+
+	// Single service satisfying both axes → atom fires.
+	match := StateEnvelope{
+		Phase: PhaseDevelopActive,
+		Services: []ServiceSnapshot{
+			{Hostname: "a", RuntimeClass: RuntimeDynamic, Bootstrapped: true, Deployed: true, Strategy: StrategyUnset},
+		},
+	}
+	got, err = Synthesize(match, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize match: %v", err)
+	}
+	if !strings.Contains(strings.Join(got, "\n"), "Two-axis atom.") {
+		t.Error("match envelope: two-axis atom must fire when one service satisfies both axes")
+	}
+}
+
 func TestSynthesize_PrioritySort(t *testing.T) {
 	t.Parallel()
 
