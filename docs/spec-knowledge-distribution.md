@@ -112,10 +112,11 @@ Six axes decompose the guidance space. Each axis is declared in an atom's frontm
 | `dev` | Dev service in a standard (dev+stage) pair or a dev-only setup. |
 | `stage` | Stage service paired with dev. |
 | `simple` | Single-service mode (no dev/stage split). |
+| `standard` | Dev half of a standard pair when viewed as a runtime (the envelope splits standard into `standard` for the dev snapshot and `stage` for the stage snapshot). |
 
 **Empty = any mode (including pre-bootstrap states with no services).**
 
-Matches if *any* service in `env.Services` has one of the listed modes.
+Service-scoped axis — see §3.8 for conjunction semantics across service-scoped axes.
 
 ### 3.3 `environments` (optional)
 
@@ -135,7 +136,7 @@ Matches if *any* service in `env.Services` has one of the listed modes.
 | `manual` | User handles deploy externally. |
 | `unset` | No strategy set yet on the service's ServiceMeta. |
 
-**Empty = any strategy.** Matches if any service uses one of the listed strategies.
+**Empty = any strategy.** Service-scoped axis — see §3.8 for conjunction semantics.
 
 ### 3.5 `runtimes` (service-scoped, optional)
 
@@ -147,7 +148,7 @@ Matches if *any* service in `env.Services` has one of the listed modes.
 | `managed` | Managed service (PostgreSQL, Valkey, …). No deploy, no ServiceMeta. |
 | `unknown` | Runtime class not resolved yet. |
 
-**Empty = any runtime.** Matches if any service in the envelope is of a listed class.
+**Empty = any runtime.** Service-scoped axis — see §3.8 for conjunction semantics.
 
 ### 3.6 `routes` (bootstrap-only, optional)
 
@@ -164,6 +165,21 @@ Matches if *any* service in `env.Services` has one of the listed modes.
 Bootstrap step names: `plan`, `import`, `wait-active`, `verify-deploy`, `verify`, `write-metas`, `close`, plus route-specific steps. **Empty = any step.**
 
 Like `routes`, declaring `steps` implicitly scopes an atom to `bootstrap-active`.
+
+### 3.8 `deployStates` (service-scoped, optional)
+
+| Value | Meaning |
+|---|---|
+| `never-deployed` | ServiceMeta is complete (bootstrap finished) but `FirstDeployedAt` is empty. The first-deploy branch atoms gate on this state. |
+| `deployed` | ServiceMeta has `FirstDeployedAt` stamped. The edit-loop branch atoms gate on this state. |
+
+**Empty = any state.** Non-bootstrapped services are skipped for this axis entirely — they have no tracked deploy state, and gating first-deploy atoms on them would surface scaffold guidance for pure-adoption services bootstrap never touched.
+
+### 3.9 Service-scoped axis conjunction
+
+The four service-scoped axes (`modes`, `strategies`, `runtimes`, `deployStates`) evaluate **together per service**: an atom fires only when a single service in the envelope satisfies EVERY declared service-scoped axis. Axis independence (ANY service satisfies X while a DIFFERENT service satisfies Y) would fire atoms whose `{hostname}` substitution references a service the atom isn't semantically about — e.g. `develop-strategy-review (deployStates=[deployed], strategies=[unset])` would surface when service A is deployed+push-dev and service B is never-deployed+unset, despite no single service being both deployed AND unset.
+
+Envelope-wide axes (`phases`, `environments`, `routes`, `steps`, `idleScenarios`) match the envelope directly — conjunction only applies to the service-scoped group.
 
 ---
 
@@ -206,6 +222,7 @@ Replace `{start-command}` with the `run.start` value from `zerops.yaml`.
 | `runtimes` | no | Service-scoped (§3.5). |
 | `routes` | no | Bootstrap-only (§3.6). |
 | `steps` | no | Bootstrap-only (§3.7). |
+| `deployStates` | no | Service-scoped (§3.8). Combines with other service-scoped axes under §3.9 conjunction. |
 
 Frontmatter uses a minimal parser in `internal/workflow/atom.go::parseFrontmatter`. List values use the inline YAML form `[a, b, c]`. Comments (`#`) and blank lines are ignored. Malformed lines fail `LoadAtomCorpus`.
 
@@ -248,7 +265,7 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]string, error
    - `phases`: `env.Phase` must be in the atom's phase set.
    - `environments` (if non-empty): `env.Environment` must be in the set.
    - `routes` / `steps` (if non-empty): `env.Bootstrap` must exist and the route/step must match.
-   - `modes` / `strategies` / `runtimes` (if non-empty): *any* service in `env.Services` must match.
+   - `modes` / `strategies` / `runtimes` / `deployStates` (service-scoped group, if any is non-empty): at least one service in `env.Services` must satisfy EVERY non-empty service-scoped axis simultaneously (conjunction per service — see §3.9).
    - An empty axis = wildcard.
 2. **Sort**: priority ascending (1 first), then id lexicographically (stable tiebreaker).
 3. **Substitute**: apply a shared `strings.NewReplacer` (built once per Synthesize from envelope hostnames + project name) to each atom body, then scan for unknown placeholders.
@@ -302,6 +319,8 @@ type NextAction struct {
     Rationale string
 }
 ```
+
+`Args` keys match the target tool's input schema verbatim so the rendered suggestion can be copied into a tool call without translation (e.g. `zerops_deploy` → `targetService`, `zerops_verify` → `serviceHostname`). Every new action constructor must use the same key name the MCP tool declares.
 
 `BuildPlan(env)` is a pure function. Dispatch rules and table are in `docs/spec-workflows.md` §1.4. The Plan is rendered in the "Next" section of the status block with priority markers:
 
@@ -432,6 +451,8 @@ Every invariant here is a property of the implementation and can be verified by 
 | KD-13 | Partial ServiceMeta (no `BootstrappedAt`) signals incomplete bootstrap. | `service_meta.go:IsComplete()` |
 | KD-14 | Adopted ServiceMeta has `BootstrapSession == ""` AND `IsComplete()`. | `service_meta.go:IsAdopted()` |
 | KD-15 | Mixed strategies across a single Work Session scope are permitted — each service's strategy drives its own atom filtering. | `build_plan.go` + atom `strategies` axis |
+| KD-16 | Service-scoped axes (`modes`, `strategies`, `runtimes`, `deployStates`) evaluate under conjunction per service: an atom matches only when a single service in the envelope satisfies every declared service-scoped axis. | `synthesize.go:anyServiceMatchesAll`; `TestSynthesize_ServiceScopedAxesRequireSameService` |
+| KD-17 | `MarkServiceDeployed` resolves hostname via `findMetaForHostname`, so verifying the stage half of a standard pair stamps the dev-keyed meta. Exits the first-deploy branch regardless of which half the agent verified first. | `service_meta.go:findMetaForHostname`; `TestMarkServiceDeployed_StampsViaStageHostname` |
 
 ---
 

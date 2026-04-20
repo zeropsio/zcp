@@ -1044,6 +1044,9 @@ visibility.
 | D2 | Strategy is NEVER a gate for Work Session creation — briefing always proceeds |
 | D2a | First deploy always uses the default self-deploy mechanism regardless of meta.DeployStrategy; `push-git` / `manual` take effect only after `FirstDeployedAt` is stamped |
 | D2b | `handleGitPush` refuses with `PREREQUISITE_MISSING` when the target meta has no `FirstDeployedAt` — defense in depth against agents that ignore the atom guidance |
+| D2c | `MarkServiceDeployed` resolves the meta via `findMetaForHostname` (Hostname OR StageHostname match). Verifying either half of a container+standard pair stamps the same dev-keyed meta, so the first-deploy branch exits regardless of which half the agent verified first. |
+| D2d | Standard-mode first-deploy fires `develop-first-deploy-promote-stage` atom (`modes: [standard]`, `deployStates: [never-deployed]`) to cover dev→stage cross-deploy. Auto-close requires both halves to be deployed+verified. |
+| D2e | Local-mode close guidance lives in `develop-close-push-dev-local` atom (`modes: [dev, stage]`, `environments: [local]`). Covers local+dev and local+standard (where the envelope surfaces the stage half as `Mode=stage`). |
 | D3 | Strategy read from meta at deploy time, never cached in Work Session |
 | D4 | Strategy surfaces via `develop-strategy-review` atom (deployStates=[deployed], strategies=[unset]) — the atom layer owns the prompt, not the briefing |
 | D5 | Strategy can be changed at any time via action="strategy" |
@@ -1120,7 +1123,7 @@ visibility.
 What the engine guarantees:
 
 1. **Meta merge** (`writeProvisionMetas`, `writeBootstrapOutputs`): when an existing complete `ServiceMeta` is detected for the runtime hostname AND the target carries `IsExisting=true`, the about-to-be-written meta is merged with the existing one. Upgrade fields (`Mode`, `StageHostname`) come from the plan; user-authored fields (`BootstrappedAt`, `DeployStrategy`, `StrategyConfirmed`, `FirstDeployedAt`) are preserved. Without this, a dev→standard upgrade would silently revert the user's strategy choice and lose the original bootstrap date.
-2. **Awareness atom** (`develop-mode-expansion.md`, `modes: [dev, simple]`, priority 6): fires during develop flow for single-slot services so the agent is prompted with the expansion command and the required plan shape.
+2. **Awareness atom** (`develop-mode-expansion.md`, `modes: [dev, simple]`, `deployStates: [deployed]`, priority 6): fires during develop flow for deployed single-slot services so the agent is prompted with the expansion command and the required plan shape. Gated on `deployed` because expansion is a post-first-deploy decision — suggesting it before the current single-slot setup has validated would be premature.
 3. **Fast-path**: because `plan.IsAllExisting()` returns true for an existing runtime with no new dependencies, bootstrap auto-skips the `close` step after provision — meta write fires from the provision tail via `writeBootstrapOutputs`.
 
 What the agent still owns: generating the import YAML fragment that creates only the new stage service (not the existing dev), appending the `setup: prod` entry to `zerops.yaml`, and running the cross-deploy `zerops_deploy sourceService="{dev}" targetService="{stage}"`. The atom body includes the step-by-step instructions; bootstrap provides the session frame and the meta merge, but does not auto-generate stage code.

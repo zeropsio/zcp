@@ -371,6 +371,8 @@ Same pattern. Records `verifies[hostname]`:
 - Per-check success → `verifies[hostname]` append `VerifyAttempt{PassedAt, Passed: true}`.
 - Failure → `Passed: false, Summary: reason`.
 
+On success, `RecordVerifyAttempt` calls `MarkServiceDeployed(stateDir, hostname)` to stamp `FirstDeployedAt` on the ServiceMeta — the signal that exits the first-deploy branch on the next session. The hostname lookup resolves via `findMetaForHostname` (direct file match OR `StageHostname` field scan), so verifying the stage half of a container+standard pair stamps the same dev-keyed meta file. Standard-mode first-deploy therefore exits regardless of which half the agent verified first (see `spec-workflows.md` D2c).
+
 ### 7.3 `zerops_mount`
 
 Requires Work Session. Adds a mount indication to `LastActivityAt`, no
