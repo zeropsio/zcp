@@ -29,7 +29,7 @@ code written to the mount path.
 4. **Verify** — `zerops_verify serviceHostname="{hostname}"` must
    return status=healthy.
 5. **Iterate** if degraded/unhealthy. Diagnose → fix → redeploy →
-   start → re-verify. Max 3 iterations before surfacing to the user.
+   start → re-verify. Max 5 iterations before surfacing to the user.
 
 After verify succeeds, present the subdomain URL. No stage deploy in
 dev-only mode.

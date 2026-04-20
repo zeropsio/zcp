@@ -21,10 +21,6 @@ title: "Bootstrap — recovery and iteration patterns"
 | `curl` returns empty | App listens on localhost, not `0.0.0.0` | Set `HOST=0.0.0.0` in `envVariables` |
 | HTTP 500 | App error | `zerops_logs` + framework log files on the mount path |
 
-Max **3 iterations** per service. After that, stop, report the
-diagnosis, and ask the user whether to continue — do NOT keep
-throwing fixes at a broken configuration.
-
 ### Escalating tiers (iteration counter)
 
 - Iterations 1–2: `zerops_logs severity="error" since="5m"` — fix

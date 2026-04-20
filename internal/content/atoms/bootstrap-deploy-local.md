@@ -36,5 +36,5 @@ Key facts:
 - **VPN connections survive deploys** — no reconnect needed.
 
 If verify fails, diagnose with `zerops_logs severity="error"
-since="5m"`, fix code locally, redeploy. Max 3 iterations before
+since="5m"`, fix code locally, redeploy. Max 5 iterations before
 escalating to the user.
