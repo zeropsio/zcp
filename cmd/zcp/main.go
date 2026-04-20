@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zeropsio/zcp/cmd/zcp/check"
 	"github.com/zeropsio/zcp/internal/auth"
 	zcpinit "github.com/zeropsio/zcp/internal/init"
 	"github.com/zeropsio/zcp/internal/knowledge"
@@ -69,6 +70,9 @@ func main() {
 			return
 		case "sync":
 			runSync(os.Args[2:])
+			return
+		case "check":
+			check.Run(os.Args[2:])
 			return
 		}
 	}

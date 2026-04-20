@@ -863,3 +863,81 @@ No user-observable behavior change. **All 16 check-rewrite.md §18 predicates no
 
 - `extractFragmentContent` duplicated in tools (multiple non-migrating checks depend on it) + ops/checks. C-15 deduplication.
 - `uniqueStrings` duplicated similarly.
+
+---
+
+## C-7e — `cmd/zcp/check/` CLI shim tree over the 16 migrated predicates
+
+**Status**: green
+
+### What landed
+
+A new `cmd/zcp/check/` sub-package wraps every predicate in `internal/ops/checks/` behind a `zcp check <name>` subcommand. Main-agent or scaffold sub-agent can now invoke any gate's check against its own SSH mount before attesting — the author-runnable axis specified in [check-rewrite.md §18](03-architecture/check-rewrite.md). The design invariant from C-7d is fully realized: both the server-side gate and the shim call the **same** `opschecks.Check<Name>(...)` Go function; there is no path by which they can diverge.
+
+- [`cmd/zcp/check/check.go`](../../cmd/zcp/check/check.go) (243 LoC) — `Run(args)` entry point + testable `run(ctx, args, stdout, stderr)` core + `registry` map + `handler` signature + `emitResults(w, asJSON, checks)` (text default / ndjson on `--json`) + shared helpers (`resolveHostnameDir`, `readHostnameReadme`, `extractFragmentBody`, `extractYAMLBlock`, `newFlagSet`, `addCommonFlags`). Writes to caller-supplied `io.Writer`s so tests capture stdout/stderr without touching `os.Stdout`.
+- 16 shim files (~44 LoC average) — one per subcommand per §18. Each shim: parses flags → builds predicate inputs from disk → calls the predicate → `emitResults`.
+- [`cmd/zcp/check/check_integration_test.go`](../../cmd/zcp/check/check_integration_test.go) (360 LoC) — table-driven with 16 rows (one per subcommand) + 3 dispatcher-path tests (unknown subcommand, empty args, all-16-registered). Fixture is a single tempdir with `apidev/` + `workerdev/` + `0 — AI Agent/import.yaml` + `ZCP_CONTENT_MANIFEST.json`. Assertions target exit code + substring of combined stdout/stderr; not exhaustive — predicate-behavior tests live in `internal/ops/checks/`.
+- [`cmd/zcp/main.go`](../../cmd/zcp/main.go) — added `case "check": check.Run(os.Args[2:])` alongside existing `catalog` / `sync` / `eval` cases.
+
+### The 16 subcommands (per `check-rewrite.md §18`)
+
+| Subcommand | Predicate | Key flags |
+|---|---|---|
+| `env-refs` | `CheckEnvRefs` | `--hostname=X --path=./` |
+| `run-start-build-contract` | `CheckRunStartBuildContract` | `--hostname=X --path=./` |
+| `env-self-shadow` | `CheckEnvSelfShadow` | `--hostname=X --path=./` |
+| `ig-code-adjustment` | `CheckIGCodeAdjustment` | `--hostname=X --path=./ [--showcase]` |
+| `ig-per-item-code` | `CheckIGPerItemCode` | `--hostname=X --path=./ [--showcase]` |
+| `comment-specificity` | `CheckCommentSpecificity` | `--hostname=X --path=./ [--showcase]` |
+| `yml-schema` | `CheckZeropsYmlFields` | `--hostname=X --path=./ [--schema-json=<path>]` |
+| `kb-authenticity` | `CheckKnowledgeBaseAuthenticity` | `--hostname=X --path=./` |
+| `worker-queue-group-gotcha` | `CheckWorkerQueueGroupGotcha` | `--hostname=X --path=./ [--is-worker] [--shares-codebase-with=<host>]` |
+| `worker-shutdown-gotcha` | `CheckWorkerShutdownGotcha` | `--hostname=X --path=./ [--is-worker] [--shares-codebase-with=<host>]` |
+| `manifest-honesty` | `CheckManifestHonesty` | `--mount-root=./` |
+| `manifest-completeness` | `CheckManifestCompleteness` | `--mount-root=./ [--facts=<path>]` |
+| `comment-depth` | `CheckCommentDepth` | `--env=N --path=./` |
+| `factual-claims` | `CheckFactualClaims` | `--env=N --path=./` |
+| `cross-readme-dedup` | `CheckCrossReadmeGotchaUniqueness` | `--path=./` |
+| `symbol-contract-env-consistency` | `CheckSymbolContractEnvVarConsistency` | `--mount-root=./ [--plan-json=<path>]` |
+
+### Design decisions applied (per HANDOFF-to-I4 §C-7e)
+
+1. **Output**: plain text default (`PASS <name>` / `FAIL <name>: <detail>` / `SKIP ...`), ndjson on `--json`. Exit 0 iff every row is pass; 1 on any fail. Empty-predicate-output (graceful skip) prints a SKIP line + exits 0 — no row means "upstream surface concern" per the predicate contract.
+2. **Flag convention** matches §18. `--hostname=X` for the 10 host-scoped checks; `--mount-root=./` for the 3 mount-scoped (alias for `--path`); `--env=N` for the 2 env-scoped (resolved via `workflow.EnvFolder` → canonical folder name like "0 — AI Agent"). `--path=./` is always available as the default anchor.
+3. **State/plan sourcing**: `symbol-contract-env-consistency` takes `--plan-json=<path>` (simpler than reading full session state — the shim just loads a RecipePlan JSON blob); absent → vacuous pass via the predicate's short-circuit on empty `EnvVarsByKind`. Worker shims take `--is-worker` / `--shares-codebase-with=<host>` explicitly so the author opts in per invocation without loading the plan.
+4. **`yml-schema --schema-json=<path>` or skip**. No network fetch from shim — avoids making gates flaky on agent containers without internet. When the flag is absent, stderr prints `SKIP — --schema-json not provided` and exit 0.
+5. **Integration test**: one table-driven test function, 16 rows, substring assertions on combined stdout+stderr. Plus 3 dispatcher-path tests: unknown-subcommand (exit 1 + usage), empty-args (exit 1 + usage), all-16-registered (guards registry split).
+6. **Authorship pattern**: main-instance sequential (not subagent-dispatch). `check.go` registry is shared across every shim, so parallel subagent authoring would race on the `registerCheck` calls. Total: ~1.5 hours wall including fixture tuning.
+
+### Verification
+
+- `go test ./... -count=1` — full suite green across 21 packages (including new `cmd/zcp/check`).
+- `make lint-local` — 0 issues (after converting two `_ = json.NewEncoder(w).Encode(...)` sites to a `writeJSONLine` helper that handles marshal errors explicitly, per `errchkjson`, and running `gofmt` on the test file).
+
+### LoC delta
+
+- New `cmd/zcp/check/` package: +1,382 LoC (243 parent + 360 integration test + 16 shims at ~44 LoC each = ~711).
+- `cmd/zcp/main.go`: +5 LoC (case "check" dispatch + import line).
+- **Total**: ~+1,387 LoC (handoff estimate was ~+900 LoC; over by ~54%, driven by comprehensive per-shim flag-validation error messages + the integration-test fixture needing enough realism to satisfy every predicate's minimum input shape).
+
+### Breaks-alone consequence
+
+Author-runnable axis opens. Scaffold / feature / writer / code-review sub-agents can now invoke each gate's check over SSH against their own mount before attesting — turning gate failures into author-resolvable issues instead of post-attest retry loops. The gate path keeps working unchanged (same predicate functions, same tool-layer wrappers). No user-observable behavior change at the MCP surface.
+
+### Ordering deps verified
+
+- C-7a ✓ / C-7b ✓ / C-7c ✓ / C-7d ✓ — all 16 predicates exist in `internal/ops/checks`.
+
+### C-7 complete
+
+**C-7a + C-7b + C-7c + C-7d + C-7e all green.** 16 predicates live in `internal/ops/checks` with exactly one implementation per check; 16 shim subcommands live in `cmd/zcp/check/` as thin adapters over those predicates. Gate↔shim invariant established at the Go-function level.
+
+### Pre-C-7.5 gate preparation
+
+Not a gated commit itself; the next user-review gate is **pre-C-7.5** (editorial-review sub-agent role introduction). Stop and report C-7 complete, ready for pre-C-7.5 gate review before authoring C-7.5.
+
+### Known follow-ups
+
+- CLI shims currently don't hydrate `discoveredEnvVars` / `liveHostnames` for `CheckEnvRefs` — author-side shim passes empty maps, so the check only catches shape errors (malformed `${...}`, missing host prefix). The gate path uses `state.DiscoveredEnvVars` from the live API. Future enhancement: `--live-vars-json=<path>` to let the author dump the platform's discovered-vars snapshot before invoking the shim. Out of C-7e scope.
+- `collectReadmesByHost` in `manifest_honesty.go` + `cross_readme_dedup.go` relies on the `{host}dev` naming convention. Non-conventional folder layouts (a future recipe might use `api/` instead of `apidev/`) would miss. Non-issue at v34; flagged for C-10+ if naming ever drifts.
+- `symbol-contract-env-consistency` shim takes `--plan-json` directly rather than the handoff's proposed `--state=<dir>`. Rationale: the engine serializes full `WorkflowState` into `sessions/{sid}.json`, not a standalone `recipe-plan.json`, so a `--state=<dir>` flag would require additional session-registry machinery that doesn't exist. Direct plan-JSON is simpler + sufficient for the author use-case (dump plan, invoke shim). Documented here; revisit in C-14 if the `zcp dry-run recipe` harness surfaces a need.
