@@ -105,6 +105,15 @@ type RecipePlan struct {
 	// implemented, and if it is declared it cannot be skipped during
 	// verification. See recipe_features.go for the schema and validator.
 	Features []RecipeFeature `json:"features,omitempty" jsonschema:"REQUIRED — list of user-observable capabilities the recipe demonstrates. Each feature is the contract: declaration at research, implementation at generate, verification (curl sweep + browser walk + close re-verify) at deploy and close. Showcase recipes must cover every managed service kind in the plan (db, cache, storage, search, queue, mail) plus api + ui; minimal and hello-world recipes declare only what they demonstrate."`
+	// SymbolContract is the cross-codebase naming contract derived from the
+	// research inputs + managed services + runtime targets. Computed
+	// idempotently via BuildSymbolContract at research-complete and
+	// interpolated byte-identically into every scaffold / feature / writer
+	// dispatch so parallel sub-agents share env var names, NATS subjects
+	// and queues, HTTP route paths, DTO names, and hostname conventions.
+	// Top-level (not nested under Research) per Q1 resolution: a derived
+	// artifact regenerated idempotently whenever Research changes.
+	SymbolContract SymbolContract `json:"symbolContract,omitzero"`
 }
 
 // EnvComments holds the agent-authored comments for a single environment's
