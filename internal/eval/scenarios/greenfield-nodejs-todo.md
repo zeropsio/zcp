@@ -21,9 +21,11 @@ expect:
     - "app-<projectId>"
   requireAssessment: true
   finalUrlStatus: 200
-  # nodejs recipes may pick dev-only (single `appdev`) or standard (appdev
-  # + appstage). Use appdev — guaranteed to exist under either mode.
-  finalUrlHostname: appdev
+  # Hostname intentionally unset. "Sloučená prod+dev setup" leaves the LLM
+  # free to pick simple (`app`) or dev-only (`appdev`) or standard
+  # (`appdev`+`appstage`). The probe resolver picks whichever service has
+  # subdomain enabled + exposes ports — works across all three modes as
+  # long as the agent enables the subdomain on one of them.
 followUp:
   - "Jak vypadal tvůj první `zerops_workflow action=\"start\" workflow=\"bootstrap\"` call — s jakým `route` parametrem? A co ti to vrátilo?"
   - "Zvolil jsi route=recipe nebo route=classic? Pokud recipe, který slug a proč ten a ne jiný kandidát?"

@@ -421,7 +421,7 @@ func TestRecipeStart_TierRequired(t *testing.T) {
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":      "start",
@@ -453,7 +453,7 @@ func TestRecipeStart_TierInvalid(t *testing.T) {
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":      "start",

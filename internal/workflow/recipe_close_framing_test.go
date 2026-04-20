@@ -60,7 +60,7 @@ func TestCloseSection_NoPublishAsSubStep(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load recipe.md: %v", err)
 	}
-	body := ExtractSection(md, "close")
+	body := extractSection(md, "close")
 
 	// Stop reading at the "### Constraints" heading so we only inspect the
 	// numbered sub-step list, not the full section prose.
