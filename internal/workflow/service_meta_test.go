@@ -415,6 +415,109 @@ func TestServiceMeta_IsComplete(t *testing.T) {
 	}
 }
 
+func TestServiceMeta_IsDeployed(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		meta ServiceMeta
+		want bool
+	}{
+		{
+			"deployed meta with FirstDeployedAt",
+			ServiceMeta{Hostname: "appdev", BootstrappedAt: "2026-04-18", FirstDeployedAt: "2026-04-20"},
+			true,
+		},
+		{
+			"bootstrap-complete but never deployed",
+			ServiceMeta{Hostname: "appdev", BootstrappedAt: "2026-04-18"},
+			false,
+		},
+		{
+			"empty FirstDeployedAt string",
+			ServiceMeta{Hostname: "appdev", FirstDeployedAt: ""},
+			false,
+		},
+		{
+			"zero-value meta",
+			ServiceMeta{},
+			false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.meta.IsDeployed(); got != tt.want {
+				t.Errorf("IsDeployed(): want %v, got %v", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestMarkServiceDeployed_StampsFirstDeploy(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	meta := &ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             PlanModeDev,
+		BootstrappedAt:   "2026-04-18T10:00:00Z",
+		BootstrapSession: "sess-1",
+	}
+	if err := WriteServiceMeta(dir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	if err := MarkServiceDeployed(dir, "appdev"); err != nil {
+		t.Fatalf("MarkServiceDeployed: %v", err)
+	}
+	got, err := ReadServiceMeta(dir, "appdev")
+	if err != nil || got == nil {
+		t.Fatalf("ReadServiceMeta: got=%+v err=%v", got, err)
+	}
+	if got.FirstDeployedAt == "" {
+		t.Error("FirstDeployedAt should be stamped")
+	}
+	if !got.IsDeployed() {
+		t.Error("IsDeployed() should be true after MarkServiceDeployed")
+	}
+}
+
+func TestMarkServiceDeployed_Idempotent(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	meta := &ServiceMeta{
+		Hostname:        "appdev",
+		Mode:            PlanModeDev,
+		BootstrappedAt:  "2026-04-18T10:00:00Z",
+		FirstDeployedAt: "2026-04-20T09:00:00Z",
+	}
+	if err := WriteServiceMeta(dir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	if err := MarkServiceDeployed(dir, "appdev"); err != nil {
+		t.Fatalf("MarkServiceDeployed: %v", err)
+	}
+	got, err := ReadServiceMeta(dir, "appdev")
+	if err != nil || got == nil {
+		t.Fatalf("ReadServiceMeta: got=%+v err=%v", got, err)
+	}
+	// The original stamp is preserved — first-deploy is a one-shot event.
+	if got.FirstDeployedAt != "2026-04-20T09:00:00Z" {
+		t.Errorf("FirstDeployedAt: want 2026-04-20T09:00:00Z (preserved), got %q", got.FirstDeployedAt)
+	}
+}
+
+func TestMarkServiceDeployed_NoMeta_NoError(t *testing.T) {
+	t.Parallel()
+	if err := MarkServiceDeployed(t.TempDir(), "nonexistent"); err != nil {
+		t.Errorf("MarkServiceDeployed should be no-op when meta missing, got: %v", err)
+	}
+}
+
 func TestPruneServiceMetas_RemovesStaleEntries(t *testing.T) {
 	t.Parallel()
 

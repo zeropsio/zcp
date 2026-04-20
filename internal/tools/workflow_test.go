@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -328,7 +329,7 @@ func TestWorkflowTool_Action_Start_AutoResetDone(t *testing.T) {
 
 	// Start and complete a bootstrap to get to DONE.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap",
+		"action": "start", "workflow": "bootstrap", "route": "classic",
 		"intent": "first bootstrap",
 	})
 	// Submit empty plan (managed-only) to satisfy mode gate.
@@ -398,10 +399,13 @@ func TestWorkflowTool_Action_BootstrapStart(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil, runtime.Info{})
 
+	// Commit path: explicit route=classic skips the discovery response and
+	// writes a session with the default manual plan.
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
 		"workflow": "bootstrap",
 		"intent":   "bun + postgres",
+		"route":    "classic",
 	})
 
 	if result.IsError {
@@ -412,11 +416,211 @@ func TestWorkflowTool_Action_BootstrapStart(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
-	if resp.Progress.Total != 5 {
-		t.Errorf("Total: want 6, got %d", resp.Progress.Total)
+	if resp.Progress.Total != 3 {
+		t.Errorf("Total: want 3, got %d", resp.Progress.Total)
 	}
 	if resp.Current == nil || resp.Current.Name != "discover" {
 		t.Error("expected current step to be 'discover'")
+	}
+}
+
+// TestWorkflowTool_Action_BootstrapStart_Discovery covers the first-call
+// discovery response. No route → ranked options + no session committed.
+func TestWorkflowTool_Action_BootstrapStart_Discovery(t *testing.T) {
+	t.Parallel()
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil, runtime.Info{})
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "bootstrap",
+		"intent":   "bun + postgres",
+	})
+	if result.IsError {
+		t.Fatalf("unexpected error on discovery call: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	var resp workflow.BootstrapDiscoveryResponse
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("failed to parse discovery response: %v", err)
+	}
+	if len(resp.RouteOptions) == 0 {
+		t.Fatal("discovery response must include at least one option (classic is always included)")
+	}
+	// Last option is always classic.
+	last := resp.RouteOptions[len(resp.RouteOptions)-1]
+	if last.Route != workflow.BootstrapRouteClassic {
+		t.Errorf("last route option = %q, want classic", last.Route)
+	}
+	// No session should have been committed.
+	if engine.HasActiveSession() {
+		t.Error("discovery call committed a session; it must not")
+	}
+}
+
+// TestWorkflowTool_Action_BootstrapStart_Discovery_ThenCommitRecipe chains
+// the two-step flow end-to-end: call start without route, read a recipe slug
+// from the DiscoveryResponse, then call start again with that slug. The
+// commit must resolve the slug and pre-populate RecipeMatch on state.
+func TestWorkflowTool_Action_BootstrapStart_Discovery_ThenCommitRecipe(t *testing.T) {
+	t.Parallel()
+	docs := map[string]*knowledge.Document{
+		"zerops://recipes/laravel-minimal": {
+			URI:        "zerops://recipes/laravel-minimal",
+			Title:      "Laravel Minimal",
+			Languages:  []string{"php"},
+			Frameworks: []string{"laravel"},
+			ImportYAML: "services:\n  - hostname: app\n    type: php-nginx@8.4\n",
+		},
+	}
+	store, err := knowledge.NewStore(docs)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, store)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil, runtime.Info{})
+
+	// Step 1 — discovery, no route.
+	discResult := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "bootstrap",
+		"intent":   "Laravel weather dashboard",
+	})
+	if discResult.IsError {
+		t.Fatalf("discovery: %s", getTextContent(t, discResult))
+	}
+	var disc workflow.BootstrapDiscoveryResponse
+	if err := json.Unmarshal([]byte(getTextContent(t, discResult)), &disc); err != nil {
+		t.Fatalf("parse discovery: %v", err)
+	}
+
+	// Find the first recipe option — it's the slug we'll commit.
+	var slug string
+	for _, opt := range disc.RouteOptions {
+		if opt.Route == workflow.BootstrapRouteRecipe {
+			slug = opt.RecipeSlug
+			break
+		}
+	}
+	if slug == "" {
+		t.Fatalf("no recipe option in discovery response: %+v", disc.RouteOptions)
+	}
+	if slug != "laravel-minimal" {
+		t.Errorf("top recipe slug = %q, want laravel-minimal", slug)
+	}
+	if engine.HasActiveSession() {
+		t.Fatal("discovery leaked a session")
+	}
+
+	// Step 2 — commit with the chosen slug.
+	commitResult := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":     "start",
+		"workflow":   "bootstrap",
+		"intent":     "Laravel weather dashboard",
+		"route":      "recipe",
+		"recipeSlug": slug,
+	})
+	if commitResult.IsError {
+		t.Fatalf("commit: %s", getTextContent(t, commitResult))
+	}
+	var resp workflow.BootstrapResponse
+	if err := json.Unmarshal([]byte(getTextContent(t, commitResult)), &resp); err != nil {
+		t.Fatalf("parse commit: %v", err)
+	}
+	if resp.SessionID == "" {
+		t.Error("commit response missing sessionId")
+	}
+	if !engine.HasActiveSession() {
+		t.Fatal("commit did not create a session")
+	}
+
+	// Verify the recipe match was preloaded onto state from the slug.
+	state, err := engine.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if state.Bootstrap == nil || state.Bootstrap.Route != workflow.BootstrapRouteRecipe {
+		t.Errorf("state route = %q, want recipe", state.Bootstrap.Route)
+	}
+	if state.Bootstrap.RecipeMatch == nil || state.Bootstrap.RecipeMatch.Slug != slug {
+		t.Errorf("recipe match not preloaded: %+v", state.Bootstrap.RecipeMatch)
+	}
+	if state.Bootstrap.RecipeMatch.ImportYAML == "" {
+		t.Error("recipe ImportYAML not preloaded from corpus lookup")
+	}
+}
+
+// TestWorkflowTool_Action_BootstrapStart_RouteResume_DispatchesToResume
+// covers the tool-layer dispatch for route="resume": the handler should
+// delegate to handleResume with the sessionId from the input. Uses a
+// planted dead session to verify the takeover path fires without error.
+func TestWorkflowTool_Action_BootstrapStart_RouteResume_DispatchesToResume(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Plant an abandoned bootstrap session with a dead PID.
+	const sessionID = "resume-dispatch-001"
+	planted := &workflow.WorkflowState{
+		Version:   "2",
+		SessionID: sessionID,
+		PID:       9999999, // dead PID
+		ProjectID: "proj1",
+		Workflow:  workflow.WorkflowBootstrap,
+		Intent:    "interrupted",
+		CreatedAt: "2026-04-20T10:00:00Z",
+		UpdatedAt: "2026-04-20T10:00:00Z",
+		Bootstrap: workflow.NewBootstrapState(),
+	}
+	if err := workflow.SaveSessionState(dir, sessionID, planted); err != nil {
+		t.Fatalf("SaveSessionState: %v", err)
+	}
+	entry := workflow.SessionEntry{
+		SessionID: sessionID,
+		PID:       9999999,
+		Workflow:  workflow.WorkflowBootstrap,
+		ProjectID: "proj1",
+		CreatedAt: "2026-04-20T10:00:00Z",
+		UpdatedAt: "2026-04-20T10:00:00Z",
+	}
+	if err := workflow.RegisterSession(dir, entry); err != nil {
+		t.Fatalf("RegisterSession: %v", err)
+	}
+
+	engine := workflow.NewEngine(dir, workflow.EnvLocal, nil)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil, runtime.Info{})
+
+	// Error path: route=resume without sessionId must surface INVALID_PARAMETER.
+	missingSid := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "bootstrap",
+		"route":    "resume",
+	})
+	if !missingSid.IsError {
+		t.Fatal("expected error when route=resume omits sessionId")
+	}
+	if !strings.Contains(getTextContent(t, missingSid), "sessionId") {
+		t.Errorf("error should mention sessionId: %s", getTextContent(t, missingSid))
+	}
+
+	// Happy path: sessionId supplied → tool layer delegates to handleResume,
+	// engine claims the dead session, response is the bootstrap status.
+	ok := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":    "start",
+		"workflow":  "bootstrap",
+		"route":     "resume",
+		"sessionId": sessionID,
+	})
+	if ok.IsError {
+		t.Fatalf("route=resume dispatch failed: %s", getTextContent(t, ok))
+	}
+	if !engine.HasActiveSession() {
+		t.Error("after resume dispatch, engine should hold the claimed session")
+	}
+	if engine.SessionID() != sessionID {
+		t.Errorf("engine sessionId = %q, want %q", engine.SessionID(), sessionID)
 	}
 }
 
@@ -428,7 +632,7 @@ func TestWorkflowTool_Action_BootstrapComplete(t *testing.T) {
 
 	// Start bootstrap.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap",
+		"action": "start", "workflow": "bootstrap", "route": "classic",
 	})
 
 	// Complete discover step.
@@ -484,11 +688,11 @@ func TestWorkflowTool_Action_BootstrapSkip(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil, runtime.Info{})
 
-	// Start and advance to generate (managed-only plan for skip test).
+	// Start and advance to close (managed-only plan, so close can be skipped).
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap",
+		"action": "start", "workflow": "bootstrap", "route": "classic",
 	})
-	// Submit empty plan (managed-only) so generate can be skipped.
+	// Submit empty plan (managed-only) so close can be skipped.
 	callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "complete", "step": "discover",
 		"plan": []map[string]any{},
@@ -498,11 +702,11 @@ func TestWorkflowTool_Action_BootstrapSkip(t *testing.T) {
 		"attestation": "Attestation for provision completed ok",
 	})
 
-	// Skip generate (allowed for managed-only plan).
+	// Skip close (allowed for managed-only plan — no runtime services to register).
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "skip",
-		"step":   "generate",
-		"reason": "no runtime services",
+		"step":   "close",
+		"reason": "managed-only plan, no runtime registration needed",
 	})
 
 	if result.IsError {
@@ -513,8 +717,12 @@ func TestWorkflowTool_Action_BootstrapSkip(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
-	if resp.Current == nil || resp.Current.Name != "deploy" {
-		t.Error("expected current step to be 'deploy'")
+	// After skipping the final step, bootstrap is complete — Current is nil.
+	if resp.Current != nil {
+		t.Errorf("expected nil current after skipping final step, got: %s", resp.Current.Name)
+	}
+	if resp.Progress.Completed != 3 {
+		t.Errorf("Completed: want 3 (2 done + 1 skipped), got %d", resp.Progress.Completed)
 	}
 }
 
@@ -526,7 +734,7 @@ func TestWorkflowTool_Action_BootstrapStatus(t *testing.T) {
 
 	// Start bootstrap.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap",
+		"action": "start", "workflow": "bootstrap", "route": "classic",
 	})
 
 	// Get status.
@@ -540,8 +748,8 @@ func TestWorkflowTool_Action_BootstrapStatus(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("failed to parse response: %v", err)
 	}
-	if resp.Progress.Total != 5 {
-		t.Errorf("Total: want 6, got %d", resp.Progress.Total)
+	if resp.Progress.Total != 3 {
+		t.Errorf("Total: want 3, got %d", resp.Progress.Total)
 	}
 }
 
@@ -553,7 +761,7 @@ func TestWorkflowTool_Action_BootstrapComplete_DiscoverStep_Structured(t *testin
 
 	// Start bootstrap.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap",
+		"action": "start", "workflow": "bootstrap", "route": "classic",
 	})
 
 	// Complete discover step with structured plan.
@@ -591,7 +799,7 @@ func TestWorkflowTool_Action_BootstrapComplete_DiscoverStep_InvalidPlan(t *testi
 
 	// Start bootstrap.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap",
+		"action": "start", "workflow": "bootstrap", "route": "classic",
 	})
 
 	// Complete discover step with invalid hostname.
@@ -640,6 +848,7 @@ func TestWorkflow_BootstrapStart_IncludesStacks(t *testing.T) {
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
 		"workflow": "bootstrap",
+		"route":    "classic",
 		"intent":   "go + postgres",
 	})
 
@@ -705,7 +914,7 @@ func TestWorkflow_BootstrapComplete_IncludesStacks_OnDiscoverStep(t *testing.T) 
 
 	// Start bootstrap — current step is discover, should include stacks.
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap",
+		"action": "start", "workflow": "bootstrap", "route": "classic",
 	})
 	if result.IsError {
 		t.Errorf("unexpected error: %s", getTextContent(t, result))
@@ -759,7 +968,7 @@ func TestWorkflow_BootstrapStatus_IncludesStacks(t *testing.T) {
 
 	// Start bootstrap.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap",
+		"action": "start", "workflow": "bootstrap", "route": "classic",
 	})
 
 	// Get status.
@@ -815,7 +1024,7 @@ func TestWorkflowTool_BootstrapStatus_NoStacks_DeployStep(t *testing.T) {
 
 	// Start bootstrap and advance to deploy step.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap",
+		"action": "start", "workflow": "bootstrap", "route": "classic",
 	})
 	for _, step := range []string{"discover", "provision", "generate"} {
 		callTool(t, srv, "zerops_workflow", map[string]any{
@@ -847,7 +1056,7 @@ func TestWorkflowTool_Action_BootstrapComplete_DiscoverStep_FallbackAttestation(
 
 	// Start bootstrap.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap",
+		"action": "start", "workflow": "bootstrap", "route": "classic",
 	})
 
 	// Complete discover step with attestation only (no structured plan).
@@ -910,8 +1119,8 @@ func TestWorkflowTool_Resume_Bootstrap_ReturnsBootstrapResponse(t *testing.T) {
 	if bootstrapResp.Current == nil {
 		t.Fatal("expected non-nil current step")
 	}
-	if bootstrapResp.Progress.Total != 5 {
-		t.Errorf("Progress.Total: want 5, got %d", bootstrapResp.Progress.Total)
+	if bootstrapResp.Progress.Total != 3 {
+		t.Errorf("Progress.Total: want 3, got %d", bootstrapResp.Progress.Total)
 	}
 	if bootstrapResp.Current.DetailedGuide == "" {
 		t.Error("expected non-empty detailedGuide in resume response")
@@ -924,18 +1133,17 @@ func TestWorkflowTool_Iterate_Bootstrap_ReturnsBootstrapResponse(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil, runtime.Info{})
 
-	// Start bootstrap and complete all steps through verify (reach iteration zone).
+	// Start bootstrap and advance to a mid-flight step.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "intent": "test",
+		"action": "start", "workflow": "bootstrap", "route": "classic", "intent": "test",
 	})
-	for _, step := range []string{"discover", "provision", "generate", "deploy", "verify"} {
-		callTool(t, srv, "zerops_workflow", map[string]any{
-			"action": "complete", "step": step,
-			"attestation": "Attestation for " + step + " completed ok",
-		})
-	}
+	callTool(t, srv, "zerops_workflow", map[string]any{
+		"action": "complete", "step": "discover",
+		"plan": []map[string]any{},
+	})
 
-	// Iterate — should reset to generate step and return BootstrapResponse.
+	// Iterate — under Option A, bootstrap doesn't reset steps (retry hard-stops and
+	// escalates to the user). Iteration counter increments, step state is preserved.
 	result := callTool(t, srv, "zerops_workflow", map[string]any{"action": "iterate"})
 
 	if result.IsError {
@@ -949,11 +1157,11 @@ func TestWorkflowTool_Iterate_Bootstrap_ReturnsBootstrapResponse(t *testing.T) {
 	if bootstrapResp.Current == nil {
 		t.Fatal("expected non-nil current step after iterate")
 	}
-	if bootstrapResp.Current.Name != "generate" {
-		t.Errorf("Current.Name: want generate, got %s", bootstrapResp.Current.Name)
+	if bootstrapResp.Current.Name != "provision" {
+		t.Errorf("Current.Name: want provision (unchanged by iterate), got %s", bootstrapResp.Current.Name)
 	}
-	if bootstrapResp.Progress.Total != 5 {
-		t.Errorf("Progress.Total: want 5, got %d", bootstrapResp.Progress.Total)
+	if bootstrapResp.Progress.Total != 3 {
+		t.Errorf("Progress.Total: want 3, got %d", bootstrapResp.Progress.Total)
 	}
 }
 
@@ -1004,7 +1212,7 @@ func TestBootstrapProvision_AutoMount_ContainerEnv(t *testing.T) {
 
 	// Start bootstrap.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "intent": "node + postgres",
+		"action": "start", "workflow": "bootstrap", "route": "classic", "intent": "node + postgres",
 	})
 
 	// Complete discover with plan (dev mode — no stage service).
@@ -1066,7 +1274,7 @@ func TestBootstrapProvision_AutoMount_LocalEnv_NoMount(t *testing.T) {
 
 	// Start and advance to provision.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "intent": "node app",
+		"action": "start", "workflow": "bootstrap", "route": "classic", "intent": "node app",
 	})
 	callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "complete", "step": "discover",
@@ -1112,7 +1320,7 @@ func TestBootstrapProvision_AutoMount_MultipleTargets(t *testing.T) {
 
 	// Start bootstrap.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "intent": "app + api",
+		"action": "start", "workflow": "bootstrap", "route": "classic", "intent": "app + api",
 	})
 
 	// Plan with 2 runtime targets (dev mode, no managed deps).
@@ -1172,7 +1380,7 @@ func TestBootstrapProvision_AutoMount_Failure_NonFatal(t *testing.T) {
 
 	// Start and plan.
 	callTool(t, srv, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap", "intent": "node app",
+		"action": "start", "workflow": "bootstrap", "route": "classic", "intent": "node app",
 	})
 	callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "complete", "step": "discover",
@@ -1198,9 +1406,9 @@ func TestBootstrapProvision_AutoMount_Failure_NonFatal(t *testing.T) {
 		t.Fatalf("failed to parse response: %v", err)
 	}
 
-	// Step advanced to generate despite mount failure.
-	if resp.Current == nil || resp.Current.Name != "generate" {
-		t.Error("expected current step to be 'generate' even after mount failure")
+	// Step advanced to close despite mount failure.
+	if resp.Current == nil || resp.Current.Name != "close" {
+		t.Error("expected current step to be 'close' even after mount failure")
 	}
 
 	// Mount failure reported in auto-mounts.

@@ -1,3 +1,5 @@
+// Tests for: StoreRecipeCorpus — adapter from knowledge.Store to the
+// RecipeCorpus interface that BuildBootstrapRouteOptions consumes.
 package workflow
 
 import (
@@ -32,37 +34,48 @@ func newTestCorpus(t *testing.T) *StoreRecipeCorpus {
 	return NewStoreRecipeCorpus(store)
 }
 
-func TestStoreRecipeCorpus_FindViableMatch(t *testing.T) {
+func TestStoreRecipeCorpus_FindRankedMatches(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name            string
-		intent          string
-		wantNil         bool
-		wantSlug        string
-		wantConfAtLeast float64
+		name          string
+		intent        string
+		limit         int
+		wantEmpty     bool
+		wantTopSlug   string
+		wantMinTopCnf float64
 	}{
 		{
-			name:            "framework_hit_passes_threshold",
-			intent:          "Laravel weather dashboard",
-			wantSlug:        "laravel-minimal",
-			wantConfAtLeast: 0.9,
+			name:          "framework_hit",
+			intent:        "Laravel weather dashboard",
+			limit:         3,
+			wantTopSlug:   "laravel-minimal",
+			wantMinTopCnf: 0.9,
 		},
 		{
-			name:            "language_hit_passes_threshold",
-			intent:          "php service",
-			wantSlug:        "laravel-minimal",
-			wantConfAtLeast: 0.85,
+			name:          "language_hit",
+			intent:        "php service",
+			limit:         3,
+			wantTopSlug:   "laravel-minimal",
+			wantMinTopCnf: 0.85,
 		},
 		{
-			name:    "no_keyword_match_returns_nil",
-			intent:  "weather dashboard",
-			wantNil: true,
+			name:      "no_keyword_match",
+			intent:    "weather dashboard",
+			limit:     3,
+			wantEmpty: true,
 		},
 		{
-			name:    "empty_intent_returns_nil",
-			intent:  "",
-			wantNil: true,
+			name:      "empty_intent",
+			intent:    "",
+			limit:     3,
+			wantEmpty: true,
+		},
+		{
+			name:      "zero_limit",
+			intent:    "laravel",
+			limit:     0,
+			wantEmpty: true,
 		},
 	}
 
@@ -70,48 +83,61 @@ func TestStoreRecipeCorpus_FindViableMatch(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			match, err := corpus.FindViableMatch(tt.intent)
+			matches, err := corpus.FindRankedMatches(tt.intent, tt.limit)
 			if err != nil {
-				t.Fatalf("FindViableMatch: %v", err)
+				t.Fatalf("FindRankedMatches: %v", err)
 			}
-			if tt.wantNil {
-				if match != nil {
-					t.Fatalf("want nil match, got %+v", match)
+			if tt.wantEmpty {
+				if len(matches) != 0 {
+					t.Fatalf("want empty, got %+v", matches)
 				}
 				return
 			}
-			if match == nil {
-				t.Fatalf("want match for %q, got nil", tt.intent)
+			if len(matches) == 0 {
+				t.Fatalf("want match for %q, got none", tt.intent)
 			}
-			if match.Slug != tt.wantSlug {
-				t.Errorf("slug: got %q, want %q", match.Slug, tt.wantSlug)
+			if matches[0].Slug != tt.wantTopSlug {
+				t.Errorf("top slug: got %q, want %q", matches[0].Slug, tt.wantTopSlug)
 			}
-			if match.Confidence < tt.wantConfAtLeast {
-				t.Errorf("confidence: got %.2f, want ≥ %.2f", match.Confidence, tt.wantConfAtLeast)
+			if matches[0].Confidence < tt.wantMinTopCnf {
+				t.Errorf("top confidence: got %.2f, want ≥ %.2f", matches[0].Confidence, tt.wantMinTopCnf)
 			}
 		})
 	}
 }
 
-func TestStoreRecipeCorpus_FindViableMatch_SetsMode(t *testing.T) {
+func TestStoreRecipeCorpus_FindRankedMatches_SetsMode(t *testing.T) {
 	t.Parallel()
 	corpus := newTestCorpus(t)
-	match, err := corpus.FindViableMatch("Laravel weather dashboard")
+	matches, err := corpus.FindRankedMatches("Laravel weather dashboard", 1)
 	if err != nil {
-		t.Fatalf("FindViableMatch: %v", err)
+		t.Fatalf("FindRankedMatches: %v", err)
 	}
-	if match == nil {
+	if len(matches) == 0 {
 		t.Fatal("expected match")
 	}
-	if match.Mode != PlanModeStandard {
-		t.Errorf("mode: got %q, want %q", match.Mode, PlanModeStandard)
+	if matches[0].Mode != PlanModeStandard {
+		t.Errorf("mode: got %q, want %q", matches[0].Mode, PlanModeStandard)
+	}
+}
+
+func TestStoreRecipeCorpus_FindRankedMatches_LimitCaps(t *testing.T) {
+	t.Parallel()
+	corpus := newTestCorpus(t)
+	// "php" matches both laravel-minimal and php-hello-world.
+	matches, err := corpus.FindRankedMatches("php", 1)
+	if err != nil {
+		t.Fatalf("FindRankedMatches: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Errorf("limit=1 should produce exactly one match, got %d", len(matches))
 	}
 }
 
 func TestStoreRecipeCorpus_LookupRecipe(t *testing.T) {
 	t.Parallel()
-
 	corpus := newTestCorpus(t)
+
 	got := corpus.LookupRecipe("laravel-minimal")
 	if got == nil {
 		t.Fatal("expected non-nil lookup")
@@ -122,7 +148,6 @@ func TestStoreRecipeCorpus_LookupRecipe(t *testing.T) {
 	if got.ImportYAML == "" {
 		t.Error("expected non-empty ImportYAML")
 	}
-
 	if missing := corpus.LookupRecipe("not-a-recipe"); missing != nil {
 		t.Errorf("expected nil for missing slug, got %+v", missing)
 	}
@@ -131,11 +156,8 @@ func TestStoreRecipeCorpus_LookupRecipe(t *testing.T) {
 func TestStoreRecipeCorpus_NilSafe(t *testing.T) {
 	t.Parallel()
 	var corpus *StoreRecipeCorpus
-	if match, _ := corpus.FindViableMatch("laravel"); match != nil {
-		t.Errorf("nil corpus should return nil, got %+v", match)
-	}
-	if cs := corpus.Candidates("laravel", 3); cs != nil {
-		t.Errorf("nil corpus should return nil candidates, got %+v", cs)
+	if matches, _ := corpus.FindRankedMatches("laravel", 3); matches != nil {
+		t.Errorf("nil corpus should return nil matches, got %+v", matches)
 	}
 	if r := corpus.LookupRecipe("laravel"); r != nil {
 		t.Errorf("nil corpus should return nil recipe, got %+v", r)

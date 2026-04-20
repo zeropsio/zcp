@@ -3,7 +3,6 @@ id: bootstrap-discover-local
 priority: 1
 phases: [bootstrap-active]
 environments: [local]
-routes: [classic]
 steps: [discover]
 title: "Bootstrap — local-mode discovery addendum"
 ---

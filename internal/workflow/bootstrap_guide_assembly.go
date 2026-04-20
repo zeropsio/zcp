@@ -10,18 +10,18 @@ import (
 )
 
 // buildGuide assembles a step guide by synthesizing knowledge atoms against a
-// minimal StateEnvelope derived from the live BootstrapState. Iteration-delta
-// guidance short-circuits atom synthesis for retries — failure ladders are
-// step-scoped to deploy and not expressible as atoms today.
+// minimal StateEnvelope derived from the live BootstrapState.
+//
+// Under Option A bootstrap never iterates — infra verification hard-stops and
+// escalates to the user on any retry. iteration>0 short-circuits atom synthesis
+// and returns the hard-stop message so the agent surfaces it cleanly.
 //
 // knowledge.Provider is accepted for signature stability with earlier callers
 // but no longer consulted: runtime briefings were redundant with the runtime
 // guide atoms and added 2x the token cost without new information.
 func (b *BootstrapState) buildGuide(step string, iteration int, env Environment, _ knowledge.Provider) string {
 	if iteration > 0 {
-		if delta := BuildIterationDelta(step, iteration, b.Plan, b.lastAttestation()); delta != "" {
-			return delta
-		}
+		return buildBootstrapHardStop(step, b.lastAttestation())
 	}
 
 	if step == StepClose && (b.Plan == nil || len(b.Plan.Targets) == 0) {
@@ -40,9 +40,10 @@ func (b *BootstrapState) buildGuide(step string, iteration int, env Environment,
 	out := strings.Join(bodies, "\n\n---\n\n")
 
 	// Env var catalog is dynamic data — not expressible as a static atom.
-	// Re-injected at generate so the agent has the authoritative key list
-	// even if the provision attestation was lost to compaction.
-	if step == StepGenerate && len(b.DiscoveredEnvVars) > 0 {
+	// Injected at close so the develop handoff carries the authoritative key
+	// list even if the provision attestation was lost to compaction. Develop
+	// re-reads this from session state when writing zerops.yaml.
+	if step == StepClose && len(b.DiscoveredEnvVars) > 0 {
 		if out != "" {
 			out += "\n\n---\n\n"
 		}
@@ -61,6 +62,29 @@ func (b *BootstrapState) buildGuide(step string, iteration int, env Environment,
 		out += formatRecipeImportYAMLForGuide(b.RecipeMatch)
 	}
 	return out
+}
+
+// buildBootstrapHardStop returns the escalation message when bootstrap is
+// retried. Infrastructure verification doesn't iterate — if discover or
+// provision fails, the issue is in the plan or the API, not something that
+// rerunning the step will fix. Surface to the user rather than looping.
+func buildBootstrapHardStop(step, lastAttestation string) string {
+	var sb strings.Builder
+	sb.WriteString("STOP — bootstrap retry attempted.\n\n")
+	sb.WriteString("Infrastructure verification does not iterate. Bootstrap owns provisioning and registration only; if the ")
+	sb.WriteString(step)
+	sb.WriteString(" step failed, something is wrong with the plan or the Zerops API — rerunning the same step will not fix it.\n\n")
+	if lastAttestation != "" {
+		sb.WriteString("Last attestation: ")
+		sb.WriteString(lastAttestation)
+		sb.WriteString("\n\n")
+	}
+	sb.WriteString("Report to the user:\n")
+	sb.WriteString("1. The current error (from the CheckResult or recent API responses).\n")
+	sb.WriteString("2. What you attempted in the failing step.\n")
+	sb.WriteString("3. Ask whether to adjust the plan, debug the API failure, or escalate.\n\n")
+	sb.WriteString("Do NOT rerun the step without user input.")
+	return sb.String()
 }
 
 // synthesisEnvelope builds the minimal StateEnvelope that atom filtering
@@ -138,12 +162,12 @@ func planModeToEnvelopeMode(mode string) Mode {
 // closeGuidance is the static guidance for the administrative close step
 // when the plan is empty (managed-only bootstraps) — no atom corpus path
 // covers that edge case, so we keep the short inline message.
-const closeGuidance = `Bootstrap is complete. All services are deployed and healthy.
+const closeGuidance = `Bootstrap is complete. All managed services are provisioned and running.
 
 Complete this step to finalize bootstrap:
-→ zerops_workflow action="complete" step="close" attestation="Bootstrap finalized, services operational"
+→ zerops_workflow action="complete" step="close" attestation="Bootstrap finalized — managed services provisioned"
 
-After closing, choose a deployment strategy for each service before deploying again.`
+No runtime services to deploy. Start develop if you need to adopt a runtime, or stop here.`
 
 // formatEnvVarsForGuide formats discovered env vars as a markdown catalog table
 // for guide injection. Shape mirrors the attestation the provision step tells
@@ -233,14 +257,14 @@ func BuildTransitionMessage(state *WorkflowState) string {
 	sb.WriteString(bootstrapCompleteMsg + "\n\n## Services\n\n")
 	writeServiceList(&sb, state.Bootstrap.Plan)
 
-	sb.WriteString("\nInfrastructure is verified — services running with a verification server (hello-world). No application code has been written yet.\n\n")
+	sb.WriteString("\nInfrastructure is provisioned — runtimes are mounted and managed dependencies are running. No application code has been written yet, and nothing has been deployed. Dev-mode runtimes are idle (startWithoutCode); stage runtimes wait at READY_TO_DEPLOY for the first cross-deploy.\n\n")
 	writeDeployModelPrimer(&sb)
 
-	sb.WriteString("To implement the user's application, start the develop workflow:\n")
+	sb.WriteString("Develop owns code: it scaffolds zerops.yaml, writes the app, runs the first deploy, and verifies.\n")
 	sb.WriteString("`zerops_workflow action=\"start\" workflow=\"develop\"`\n\n")
 
 	sb.WriteString("## What's Next?\n\n")
-	sb.WriteString("Infrastructure is ready and verified. Choose your next workflow:\n\n")
+	sb.WriteString("Infrastructure is ready. Choose your next workflow:\n\n")
 	writeOfferingsFooter(&sb)
 
 	return sb.String()

@@ -4,14 +4,13 @@ package workflow
 const (
 	StepDiscover  = "discover"
 	StepProvision = "provision"
-	StepGenerate  = "generate"
-	StepDeploy    = "deploy"
 	StepClose     = "close"
 )
 
-// stepDetails defines the 5 bootstrap steps in order.
-// Skip rules enforced by validateSkip(): discover/provision mandatory,
-// generate/deploy/close skippable for managed-only.
+// stepDetails defines the 3 bootstrap steps in order (Option A infra-only).
+// Bootstrap stops at provisioning + registration — code generation and deploy
+// are owned by the develop flow. Skip rules enforced by validateSkip():
+// discover/provision mandatory, close skippable for managed-only plans.
 //
 // Verification strings describe what the step's StepChecker enforces.
 // Checkers are the real gates — attestations are audit trail only.
@@ -27,18 +26,8 @@ var stepDetails = []StepDetail{
 		Verification: "SUCCESS WHEN: all plan services exist in API with ACTIVE/RUNNING status AND service types match plan AND managed dependency env vars recorded in session state. Runtime services are auto-mounted on completion.",
 	},
 	{
-		Name:         StepGenerate,
-		Tools:        []string{"zerops_knowledge"},
-		Verification: "SUCCESS WHEN: zerops.yaml exists with setup entry for each target AND env var references match discovered variables AND run.start present (dynamic runtimes) AND deployFiles set (dev uses [.]) AND ports defined.",
-	},
-	{
-		Name:         StepDeploy,
-		Tools:        []string{"zerops_deploy", "zerops_discover", "zerops_subdomain", "zerops_logs", "zerops_mount", "zerops_verify", "zerops_manage"},
-		Verification: "SUCCESS WHEN: all runtime services deployed, accessible, AND healthy (VerifyAll: HTTP, logs, startup, subdomains enabled).",
-	},
-	{
 		Name:         StepClose,
 		Tools:        []string{"zerops_workflow"},
-		Verification: "SUCCESS WHEN: bootstrap administratively closed (metas written, transition presented).",
+		Verification: "SUCCESS WHEN: bootstrap administratively closed (metas written, transition to develop presented).",
 	},
 }

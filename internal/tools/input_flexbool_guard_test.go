@@ -57,7 +57,7 @@ func TestInputStructsUseFlexBoolForBooleans(t *testing.T) {
 		EnvInput{},
 	}
 
-	plainBool := reflect.TypeOf(false)
+	plainBool := reflect.TypeFor[bool]()
 
 	var violations []string
 	for _, in := range inputs {

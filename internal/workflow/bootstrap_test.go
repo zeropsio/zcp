@@ -1,15 +1,15 @@
-// Tests for: bootstrap conductor — 5-step state machine with attestations.
+// Tests for: bootstrap conductor — 3-step state machine with attestations
+// (Option A: infra-only; code + deploy owned by develop flow).
 package workflow
 
 import (
-	"slices"
 	"strings"
 	"testing"
 )
 
 func TestStepDetails_AllStepsCovered(t *testing.T) {
 	t.Parallel()
-	expectedNames := []string{"discover", "provision", "generate", "deploy", "close"}
+	expectedNames := []string{"discover", "provision", "close"}
 	for _, name := range expectedNames {
 		detail := lookupDetail(name)
 		if detail.Name == "" {
@@ -25,26 +25,7 @@ func TestStepDetails_AllStepsCovered(t *testing.T) {
 	}
 }
 
-func TestStepDetails_ToolLists(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		step     string
-		wantTool string
-	}{
-		{"deploy", "zerops_verify"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.step+"_has_"+tt.wantTool, func(t *testing.T) {
-			t.Parallel()
-			detail := lookupDetail(tt.step)
-			if !slices.Contains(detail.Tools, tt.wantTool) {
-				t.Errorf("step %q Tools %v should contain %q", tt.step, detail.Tools, tt.wantTool)
-			}
-		})
-	}
-}
-
-func TestNewBootstrapState_5Steps(t *testing.T) {
+func TestNewBootstrapState_3Steps(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 
@@ -54,11 +35,11 @@ func TestNewBootstrapState_5Steps(t *testing.T) {
 	if bs.CurrentStep != 0 {
 		t.Errorf("CurrentStep: want 0, got %d", bs.CurrentStep)
 	}
-	if len(bs.Steps) != 5 {
-		t.Fatalf("Steps count: want 5, got %d", len(bs.Steps))
+	if len(bs.Steps) != 3 {
+		t.Fatalf("Steps count: want 3, got %d", len(bs.Steps))
 	}
 
-	expectedNames := []string{"discover", "provision", "generate", "deploy", "close"}
+	expectedNames := []string{"discover", "provision", "close"}
 	for i, name := range expectedNames {
 		if bs.Steps[i].Name != name {
 			t.Errorf("step[%d].Name: want %s, got %s", i, name, bs.Steps[i].Name)
@@ -138,7 +119,7 @@ func TestCompleteStep_AllDone(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 
-	stepNames := []string{"discover", "provision", "generate", "deploy", "close"}
+	stepNames := []string{"discover", "provision", "close"}
 	for _, name := range stepNames {
 		bs.Steps[bs.CurrentStep].Status = "in_progress"
 		err := bs.CompleteStep(name, "Attestation for "+name+" step completed successfully")
@@ -150,22 +131,25 @@ func TestCompleteStep_AllDone(t *testing.T) {
 	if bs.Active {
 		t.Error("expected Active=false after all steps complete")
 	}
-	if bs.CurrentStep != 5 {
-		t.Errorf("CurrentStep: want 5, got %d", bs.CurrentStep)
+	if bs.CurrentStep != 3 {
+		t.Errorf("CurrentStep: want 3, got %d", bs.CurrentStep)
 	}
 }
 
+// TestSkipStep_Success — close step is skippable when plan has no runtime targets.
 func TestSkipStep_Success(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
-	// Advance to generate (index 2).
+	// Managed-only plan — runtime targets empty.
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{}}
+	// Advance to close (index 2).
 	for i := range 2 {
 		bs.Steps[i].Status = "complete"
 	}
 	bs.CurrentStep = 2
 	bs.Steps[2].Status = "in_progress"
 
-	err := bs.SkipStep("generate", "no runtime services to generate code for")
+	err := bs.SkipStep("close", "managed-only bootstrap, no runtime services to register")
 	if err != nil {
 		t.Fatalf("SkipStep: %v", err)
 	}
@@ -173,7 +157,7 @@ func TestSkipStep_Success(t *testing.T) {
 	if bs.Steps[2].Status != "skipped" {
 		t.Errorf("step[2].Status: want skipped, got %s", bs.Steps[2].Status)
 	}
-	if bs.Steps[2].SkipReason != "no runtime services to generate code for" {
+	if bs.Steps[2].SkipReason != "managed-only bootstrap, no runtime services to register" {
 		t.Error("SkipReason not stored")
 	}
 	if bs.CurrentStep != 3 {
@@ -214,7 +198,7 @@ func TestSkipStep_WrongStep(t *testing.T) {
 	bs := NewBootstrapState()
 	bs.Steps[0].Status = "in_progress"
 
-	err := bs.SkipStep("generate", "reason")
+	err := bs.SkipStep("close", "reason")
 	if err == nil {
 		t.Fatal("expected error for skipping wrong step")
 	}
@@ -235,8 +219,8 @@ func TestBuildResponse_FirstStep(t *testing.T) {
 	if resp.Intent != "bun + postgres" {
 		t.Errorf("Intent mismatch")
 	}
-	if resp.Progress.Total != 5 {
-		t.Errorf("Progress.Total: want 5, got %d", resp.Progress.Total)
+	if resp.Progress.Total != 3 {
+		t.Errorf("Progress.Total: want 3, got %d", resp.Progress.Total)
 	}
 	if resp.Progress.Completed != 0 {
 		t.Errorf("Progress.Completed: want 0, got %d", resp.Progress.Completed)
@@ -255,25 +239,23 @@ func TestBuildResponse_FirstStep(t *testing.T) {
 func TestBuildResponse_MiddleStep(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
-	for i := range 2 {
-		bs.Steps[i].Status = "complete"
-		bs.Steps[i].Attestation = "done"
-	}
-	bs.CurrentStep = 2
-	bs.Steps[2].Status = "in_progress"
+	bs.Steps[0].Status = "complete"
+	bs.Steps[0].Attestation = "done"
+	bs.CurrentStep = 1
+	bs.Steps[1].Status = "in_progress"
 
 	resp := bs.BuildResponse("sess-2", "test", 0, EnvLocal, nil)
-	if resp.Progress.Completed != 2 {
-		t.Errorf("Progress.Completed: want 2, got %d", resp.Progress.Completed)
+	if resp.Progress.Completed != 1 {
+		t.Errorf("Progress.Completed: want 1, got %d", resp.Progress.Completed)
 	}
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
-	if resp.Current.Name != "generate" {
-		t.Errorf("Current.Name: want generate, got %s", resp.Current.Name)
+	if resp.Current.Name != "provision" {
+		t.Errorf("Current.Name: want provision, got %s", resp.Current.Name)
 	}
-	if resp.Current.Index != 2 {
-		t.Errorf("Current.Index: want 2, got %d", resp.Current.Index)
+	if resp.Current.Index != 1 {
+		t.Errorf("Current.Index: want 1, got %d", resp.Current.Index)
 	}
 }
 
@@ -283,15 +265,15 @@ func TestBuildResponse_AllDone(t *testing.T) {
 	for i := range bs.Steps {
 		bs.Steps[i].Status = "complete"
 	}
-	bs.CurrentStep = 5
+	bs.CurrentStep = 3
 	bs.Active = false
 
 	resp := bs.BuildResponse("sess-3", "test", 0, EnvLocal, nil)
 	if resp.Current != nil {
 		t.Error("Current should be nil when all done")
 	}
-	if resp.Progress.Completed != 5 {
-		t.Errorf("Progress.Completed: want 5, got %d", resp.Progress.Completed)
+	if resp.Progress.Completed != 3 {
+		t.Errorf("Progress.Completed: want 3, got %d", resp.Progress.Completed)
 	}
 	if !strings.Contains(strings.ToLower(resp.Message), "complete") {
 		t.Errorf("Message should contain 'complete', got: %s", resp.Message)
@@ -301,13 +283,14 @@ func TestBuildResponse_AllDone(t *testing.T) {
 func TestBuildResponse_WithSkipped(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
+	// Managed-only plan so close is skippable.
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{}}
 	for i := range 2 {
 		bs.Steps[i].Status = "complete"
 	}
 	bs.Steps[2].Status = "skipped"
-	bs.Steps[2].SkipReason = "no runtime services"
+	bs.Steps[2].SkipReason = "managed-only"
 	bs.CurrentStep = 3
-	bs.Steps[3].Status = "in_progress"
 
 	resp := bs.BuildResponse("sess-4", "test", 0, EnvLocal, nil)
 	if resp.Progress.Completed != 3 {
@@ -316,13 +299,13 @@ func TestBuildResponse_WithSkipped(t *testing.T) {
 
 	found := false
 	for _, s := range resp.Progress.Steps {
-		if s.Name == "generate" && s.Status == "skipped" {
+		if s.Name == "close" && s.Status == "skipped" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Error("generate should appear as 'skipped' in progress steps")
+		t.Error("close should appear as 'skipped' in progress steps")
 	}
 }
 
@@ -336,37 +319,31 @@ func TestValidateSkip_ConditionalCases(t *testing.T) {
 		wantError bool
 	}{
 		{
-			name:      "nil plan allows skip",
+			name:      "close_nil_plan_allowed",
 			plan:      nil,
-			stepName:  "generate",
+			stepName:  "close",
 			wantError: false,
 		},
 		{
-			name: "generate blocked with runtime targets",
+			name: "close_with_runtime_targets_blocked",
 			plan: &ServicePlan{Targets: []BootstrapTarget{
 				{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "go@1"}},
 			}},
-			stepName:  "generate",
+			stepName:  "close",
 			wantError: true,
 		},
 		{
-			name:      "generate allowed with empty targets",
+			name:      "close_empty_targets_allowed",
 			plan:      &ServicePlan{Targets: []BootstrapTarget{}},
-			stepName:  "generate",
+			stepName:  "close",
 			wantError: false,
 		},
 		{
-			name: "deploy blocked with runtime targets",
+			name: "close_all_existing_allowed",
 			plan: &ServicePlan{Targets: []BootstrapTarget{
-				{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "go@1"}},
+				{Runtime: RuntimeTarget{DevHostname: "legacy", Type: "go@1", IsExisting: true}},
 			}},
-			stepName:  "deploy",
-			wantError: true,
-		},
-		{
-			name:      "deploy allowed with empty targets",
-			plan:      &ServicePlan{Targets: []BootstrapTarget{}},
-			stepName:  "deploy",
+			stepName:  "close",
 			wantError: false,
 		},
 	}
@@ -494,7 +471,7 @@ func TestBootstrapState_DiscoveredEnvVars(t *testing.T) {
 	}
 }
 
-func TestBootstrapState_CurrentStepName_5Steps(t *testing.T) {
+func TestBootstrapState_CurrentStepName_3Steps(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name     string
@@ -502,10 +479,9 @@ func TestBootstrapState_CurrentStepName_5Steps(t *testing.T) {
 		expected string
 	}{
 		{"first", 0, "discover"},
-		{"middle", 2, "generate"},
-		{"deploy", 3, "deploy"},
-		{"close", 4, "close"},
-		{"out_of_bounds", 5, ""},
+		{"middle", 1, "provision"},
+		{"last", 2, "close"},
+		{"out_of_bounds", 3, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -644,49 +620,49 @@ func TestBuildResponse_GuideAlwaysFresh(t *testing.T) {
 	}
 }
 
-// --- Iteration delta overrides guide in BuildResponse ---
+// --- Iteration at provision yields hard-stop (Option A: bootstrap doesn't iterate) ---
 
-func TestBuildResponse_IterationDelta_OverridesGuide(t *testing.T) {
+func TestBuildResponse_Iteration_YieldsHardStop(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
-	// Advance to deploy step.
-	for i := range 3 {
-		bs.Steps[i].Status = stepComplete
-		bs.Steps[i].Attestation = "completed step " + bs.Steps[i].Name + " successfully"
-	}
-	bs.CurrentStep = 3
-	bs.Steps[3].Status = stepInProgress
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+	}}
+	bs.Steps[0].Status = stepComplete
+	bs.Steps[0].Attestation = "discover complete"
+	bs.CurrentStep = 1
+	bs.Steps[1].Status = stepInProgress
 
-	// At iteration > 0 on deploy step, should get delta.
-	resp := bs.BuildResponse("sess-delta", "test", 1, EnvLocal, nil)
+	resp := bs.BuildResponse("sess-iter", "test", 1, EnvLocal, nil)
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
 	}
-	// The delta should be used as DetailedGuide when applicable.
-	// (May be empty if no last attestation — but the mechanism should exist)
+	if !strings.Contains(resp.Current.DetailedGuide, "STOP") {
+		t.Errorf("iteration>0 should yield hard-stop guide, got:\n%s", resp.Current.DetailedGuide)
+	}
 }
 
 func TestBuildPriorContext_CompressesOlderSteps(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
-	// Complete 3 steps with long attestations.
+	// Complete both prior steps with long attestations.
 	longAttestation := strings.Repeat("a", 100)
-	for i, name := range []string{"discover", "provision", "generate"} {
+	for i, name := range []string{"discover", "provision"} {
 		bs.Steps[i].Status = stepComplete
 		bs.Steps[i].Attestation = longAttestation + " " + name
 	}
-	bs.CurrentStep = 3
-	bs.Steps[3].Status = stepInProgress
+	bs.CurrentStep = 2
+	bs.Steps[2].Status = stepInProgress
 
 	ctx := bs.buildPriorContext()
 	if ctx == nil {
 		t.Fatal("buildPriorContext should not be nil with prior attestations")
 	}
 
-	// N-1 (generate, index 2) should be full.
-	genAtt := ctx.Attestations["generate"]
-	if genAtt != longAttestation+" generate" {
-		t.Errorf("N-1 step should have full attestation, got length %d", len(genAtt))
+	// N-1 (provision, index 1) should be full.
+	provAtt := ctx.Attestations["provision"]
+	if provAtt != longAttestation+" provision" {
+		t.Errorf("N-1 step should have full attestation, got length %d", len(provAtt))
 	}
 
 	// N-2 (discover, index 0) should be truncated with status prefix.
@@ -700,24 +676,18 @@ func TestBuildPriorContext_CompressesOlderSteps(t *testing.T) {
 	if !strings.HasSuffix(discAtt, "...]") {
 		t.Errorf("truncated attestation should end with ...], got: %s", discAtt)
 	}
-
-	// N-2 (provision, index 1) should also be truncated.
-	provAtt := ctx.Attestations["provision"]
-	if !strings.HasPrefix(provAtt, "[complete:") {
-		t.Errorf("older step should have [status: ...] prefix, got: %s", provAtt)
-	}
 }
 
 func TestBuildPriorContext_ShortAttestationNotTruncated(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 	shortAtt := "Short attestation"
-	for i, name := range []string{"discover", "provision", "generate"} {
+	for i, name := range []string{"discover", "provision"} {
 		bs.Steps[i].Status = stepComplete
 		bs.Steps[i].Attestation = shortAtt + " " + name
 	}
-	bs.CurrentStep = 3
-	bs.Steps[3].Status = stepInProgress
+	bs.CurrentStep = 2
+	bs.Steps[2].Status = stepInProgress
 
 	ctx := bs.buildPriorContext()
 	if ctx == nil {
@@ -733,134 +703,6 @@ func TestBuildPriorContext_ShortAttestationNotTruncated(t *testing.T) {
 	if strings.Contains(discAtt, "...") {
 		t.Errorf("short attestation should not be truncated, got: %s", discAtt)
 	}
-}
-
-// --- C-02: Progressive guidance wiring ---
-
-func TestBuildResponse_DeployStep_UsesConsolidatedGuidance(t *testing.T) {
-	t.Parallel()
-	bs := NewBootstrapState()
-	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
-	}}
-	// Complete steps 0-2 to reach deploy.
-	for i := range 3 {
-		bs.Steps[i].Status = stepComplete
-		bs.Steps[i].Attestation = "completed step " + bs.Steps[i].Name + " successfully"
-	}
-	bs.CurrentStep = 3
-	bs.Steps[3].Status = stepInProgress
-
-	resp := bs.BuildResponse("sess-prog", "test", 0, EnvLocal, nil)
-	if resp.Current == nil {
-		t.Fatal("Current should not be nil")
-	}
-	// Consolidated deploy section covers all modes inline.
-	if resp.Current.DetailedGuide == "" {
-		t.Error("DetailedGuide should not be empty for deploy step")
-	}
-	if !strings.Contains(resp.Current.DetailedGuide, "zerops_deploy") {
-		t.Error("deploy guide should reference zerops_deploy")
-	}
-}
-
-func TestBuildResponse_DeployStep_SimpleMode_HasDeployContent(t *testing.T) {
-	t.Parallel()
-	bs := NewBootstrapState()
-	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "app", Type: "bun@1.2", BootstrapMode: "simple"}},
-	}}
-	for i := range 3 {
-		bs.Steps[i].Status = stepComplete
-		bs.Steps[i].Attestation = "completed step " + bs.Steps[i].Name + " successfully"
-	}
-	bs.CurrentStep = 3
-	bs.Steps[3].Status = stepInProgress
-
-	resp := bs.BuildResponse("sess-simple", "test", 0, EnvContainer, nil)
-	if resp.Current == nil {
-		t.Fatal("Current should not be nil")
-	}
-	// Consolidated deploy section covers all modes (container mode).
-	if !strings.Contains(resp.Current.DetailedGuide, "Simple mode") {
-		t.Error("deploy guide should contain 'Simple mode' deploy flow")
-	}
-}
-
-// --- C-03: ResetForIteration ---
-
-func TestResetForIteration_ResetsGenerateDeployVerify(t *testing.T) {
-	t.Parallel()
-	bs := NewBootstrapState()
-
-	// Complete all 5 steps (discover, provision, generate, deploy, close).
-	for i, name := range []string{"discover", "provision", "generate", "deploy", "close"} {
-		bs.Steps[i].Status = stepInProgress
-		if err := bs.CompleteStep(name, "Attestation for "+name+" step completed ok"); err != nil {
-			t.Fatalf("CompleteStep(%s): %v", name, err)
-		}
-	}
-	// Preconditions: all done.
-	if bs.Active {
-		t.Fatal("precondition: Active should be false")
-	}
-	if bs.CurrentStep != 5 {
-		t.Fatalf("precondition: CurrentStep should be 5, got %d", bs.CurrentStep)
-	}
-
-	bs.ResetForIteration()
-
-	if !bs.Active {
-		t.Error("Active should be true after reset")
-	}
-	if bs.CurrentStep != 2 {
-		t.Errorf("CurrentStep: want 2, got %d", bs.CurrentStep)
-	}
-	// Steps 0-1 should remain complete.
-	for i := 0; i <= 1; i++ {
-		if bs.Steps[i].Status != stepComplete {
-			t.Errorf("Steps[%d].Status: want %s, got %s", i, stepComplete, bs.Steps[i].Status)
-		}
-		if bs.Steps[i].Attestation == "" {
-			t.Errorf("Steps[%d].Attestation should be preserved", i)
-		}
-	}
-	// Step 2 should be in_progress (current), step 3 should be pending.
-	if bs.Steps[2].Status != stepInProgress {
-		t.Errorf("Steps[2].Status: want %s, got %s", stepInProgress, bs.Steps[2].Status)
-	}
-	if bs.Steps[3].Status != stepPending {
-		t.Errorf("Steps[3].Status: want %s, got %s", stepPending, bs.Steps[3].Status)
-	}
-	// Step 4 (close) should remain complete (not retried).
-	if bs.Steps[4].Status != stepComplete {
-		t.Errorf("Steps[4].Status: want %s, got %s", stepComplete, bs.Steps[4].Status)
-	}
-}
-
-func TestResetForIteration_SetsCurrentStepInProgress(t *testing.T) {
-	t.Parallel()
-	bs := NewBootstrapState()
-	// Complete all steps so CurrentStep=5, Active=false.
-	for i, name := range []string{"discover", "provision", "generate", "deploy", "close"} {
-		bs.Steps[i].Status = stepInProgress
-		if err := bs.CompleteStep(name, "Attestation for "+name+" step completed ok"); err != nil {
-			t.Fatalf("CompleteStep(%s): %v", name, err)
-		}
-	}
-
-	bs.ResetForIteration()
-
-	if bs.Steps[2].Status != stepInProgress {
-		t.Errorf("Steps[2].Status: want %s, got %s", stepInProgress, bs.Steps[2].Status)
-	}
-}
-
-func TestResetForIteration_NilBootstrap_NoOp(t *testing.T) {
-	t.Parallel()
-	var b *BootstrapState
-	// Should not panic.
-	b.ResetForIteration()
 }
 
 func TestBuildPriorContext_PlanAlwaysIncluded(t *testing.T) {
@@ -904,31 +746,30 @@ func TestBuildPriorContext_PlanAlwaysIncluded(t *testing.T) {
 	}
 }
 
-// RED phase tests for Phase 1 structural changes (5-step bootstrap redesign)
+// --- 3-step Option A structural tests ---
 
-// TEST 1: StepDetails should have 5 steps (not 6): discover, provision, generate, deploy, close
-func TestStepDetails_5Steps_RemoveVerifyStrategy_AddClose(t *testing.T) {
+// TestStepDetails_3Steps_OptionA ensures bootstrap steps are the 3 infra-only
+// steps (no generate/deploy — those belong to develop).
+func TestStepDetails_3Steps_OptionA(t *testing.T) {
 	t.Parallel()
-	// After redesign: discover, provision, generate, deploy, close (5 total)
-	expectedNames := []string{"discover", "provision", "generate", "deploy", "close"}
-	if len(stepDetails) != 5 {
-		t.Fatalf("stepDetails count: want 5, got %d", len(stepDetails))
+	expectedNames := []string{"discover", "provision", "close"}
+	if len(stepDetails) != 3 {
+		t.Fatalf("stepDetails count: want 3, got %d", len(stepDetails))
 	}
 	for i, name := range expectedNames {
 		if stepDetails[i].Name != name {
 			t.Errorf("stepDetails[%d].Name: want %q, got %q", i, name, stepDetails[i].Name)
 		}
 	}
-	// Verify that old steps are gone
-	if lookupDetail("verify").Name != "" {
-		t.Error("verify step should not exist in redesigned stepDetails")
-	}
-	if lookupDetail("strategy").Name != "" {
-		t.Error("strategy step should not exist in redesigned stepDetails")
+	// Verify code/deploy steps are gone — owned by develop now.
+	for _, removed := range []string{"generate", "deploy", "verify", "strategy"} {
+		if lookupDetail(removed).Name != "" {
+			t.Errorf("%q step should not exist in Option A stepDetails", removed)
+		}
 	}
 }
 
-// TEST 2: validateSkip covers all steps — mandatory vs skippable
+// TestValidateSkip covers mandatory vs skippable rules for the 3-step flow.
 func TestValidateSkip(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -938,23 +779,22 @@ func TestValidateSkip(t *testing.T) {
 		wantError bool
 		wantMsg   string
 	}{
-		// discover/provision: always mandatory
+		// discover/provision: always mandatory.
 		{"discover_always_mandatory", nil, "discover", true, "mandatory"},
 		{"provision_always_mandatory", nil, "provision", true, "mandatory"},
-		// generate/deploy/close with runtime targets: blocked
-		{"generate_with_targets_blocked", &ServicePlan{Targets: []BootstrapTarget{{}}}, "generate", true, "runtime services"},
-		{"deploy_with_targets_blocked", &ServicePlan{Targets: []BootstrapTarget{{}}}, "deploy", true, "runtime services"},
-		{"close_with_targets_blocked", &ServicePlan{Targets: []BootstrapTarget{{}}}, "close", true, "runtime services"},
-		// generate/deploy/close with empty targets: allowed
-		{"generate_empty_targets_allowed", &ServicePlan{Targets: []BootstrapTarget{}}, "generate", false, ""},
-		{"deploy_empty_targets_allowed", &ServicePlan{Targets: []BootstrapTarget{}}, "deploy", false, ""},
-		{"close_empty_targets_allowed", &ServicePlan{Targets: []BootstrapTarget{}}, "close", false, ""},
-		// generate/deploy/close with nil plan: allowed (managed-only)
-		{"generate_nil_plan_allowed", nil, "generate", false, ""},
-		{"deploy_nil_plan_allowed", nil, "deploy", false, ""},
+		// close: skippable when no runtime targets require registration.
 		{"close_nil_plan_allowed", nil, "close", false, ""},
-		// unknown step: error
-		{"unknown_step_error", nil, "bogus", true, "unknown step"},
+		{"close_empty_targets_allowed", &ServicePlan{Targets: []BootstrapTarget{}}, "close", false, ""},
+		{"close_with_targets_blocked", &ServicePlan{Targets: []BootstrapTarget{
+			{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+		}}, "close", true, "runtime services"},
+		{"close_all_existing_allowed", &ServicePlan{Targets: []BootstrapTarget{
+			{Runtime: RuntimeTarget{DevHostname: "legacy", Type: "bun@1.2", IsExisting: true}},
+		}}, "close", false, ""},
+		// generate/deploy no longer exist in Option A — they are unknown steps.
+		{"generate_unknown", nil, "generate", true, "unknown step"},
+		{"deploy_unknown", nil, "deploy", true, "unknown step"},
+		{"bogus_unknown", nil, "bogus", true, "unknown step"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -972,104 +812,13 @@ func TestValidateSkip(t *testing.T) {
 	}
 }
 
-// TEST 4: ResetForIteration should reset indices 2-3 (generate, deploy only)
-func TestResetForIteration_ResetsGenerate_Deploy_NotClose(t *testing.T) {
+// TestCompleteStep_3StepsDeactivates ensures completing all three steps
+// deactivates bootstrap.
+func TestCompleteStep_3StepsDeactivates(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 
-	// Complete discover(0), provision(1)
-	for i := range 2 {
-		bs.Steps[i].Status = stepComplete
-		bs.Steps[i].Attestation = "step completed"
-	}
-	// Complete generate(2), deploy(3), close(4)
-	for i := 2; i < 5; i++ {
-		bs.Steps[i].Status = stepComplete
-		bs.Steps[i].Attestation = "step completed"
-	}
-	bs.CurrentStep = 5
-	bs.Active = false
-
-	// Now reset for iteration
-	bs.ResetForIteration()
-
-	// discover(0) and provision(1) should stay completed
-	if bs.Steps[0].Status != stepComplete {
-		t.Errorf("discover (step 0): should stay complete after iteration, got %s", bs.Steps[0].Status)
-	}
-	if bs.Steps[1].Status != stepComplete {
-		t.Errorf("provision (step 1): should stay complete after iteration, got %s", bs.Steps[1].Status)
-	}
-
-	// generate(2) and deploy(3) should reset to pending (except generate which becomes in_progress as current step)
-	if bs.Steps[2].Status != stepInProgress {
-		t.Errorf("generate (step 2): should be in_progress (current), got %s", bs.Steps[2].Status)
-	}
-	if bs.Steps[3].Status != stepPending {
-		t.Errorf("deploy (step 3): should reset to pending, got %s", bs.Steps[3].Status)
-	}
-
-	// close(4) should stay complete (NOT reset)
-	if bs.Steps[4].Status != stepComplete {
-		t.Errorf("close (step 4): should stay complete (not retried), got %s", bs.Steps[4].Status)
-	}
-
-	// CurrentStep should be 2 (generate)
-	if bs.CurrentStep != 2 {
-		t.Errorf("CurrentStep after reset: want 2, got %d", bs.CurrentStep)
-	}
-
-	// Active should be true
-	if !bs.Active {
-		t.Error("Active should be true after reset")
-	}
-}
-
-// TEST 5: validateSkip should guard close step (can't skip if runtime services exist)
-func TestValidateSkip_CloseStepGuard(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name            string
-		stepName        string
-		numTargets      int
-		shouldAllowSkip bool
-	}{
-		// generate and deploy are guarded
-		{"generate_with_runtime_blocked", "generate", 1, false},
-		{"generate_managed_only_allowed", "generate", 0, true},
-		{"deploy_with_runtime_blocked", "deploy", 1, false},
-		{"deploy_managed_only_allowed", "deploy", 0, true},
-		// close should also be guarded
-		{"close_with_runtime_blocked", "close", 1, false},
-		{"close_managed_only_allowed", "close", 0, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			plan := &ServicePlan{
-				Targets: make([]BootstrapTarget, tt.numTargets),
-			}
-			err := validateSkip(plan, tt.stepName)
-
-			if tt.shouldAllowSkip {
-				if err != nil {
-					t.Errorf("should allow skip, got error: %v", err)
-				}
-			} else {
-				if err == nil {
-					t.Errorf("should block skip of %q with %d runtime services", tt.stepName, tt.numTargets)
-				}
-			}
-		})
-	}
-}
-
-// TEST 6: Completing all 5 steps should deactivate bootstrap
-func TestCompleteStep_5StepsDeactivates(t *testing.T) {
-	t.Parallel()
-	bs := NewBootstrapState()
-
-	stepNames := []string{"discover", "provision", "generate", "deploy", "close"}
+	stepNames := []string{"discover", "provision", "close"}
 	for _, name := range stepNames {
 		bs.Steps[bs.CurrentStep].Status = stepInProgress
 		err := bs.CompleteStep(name, "Attestation for "+name+" completed successfully")
@@ -1079,9 +828,9 @@ func TestCompleteStep_5StepsDeactivates(t *testing.T) {
 	}
 
 	if bs.Active {
-		t.Error("expected Active=false after all 5 steps complete")
+		t.Error("expected Active=false after all 3 steps complete")
 	}
-	if bs.CurrentStep != 5 {
-		t.Errorf("CurrentStep: want 5, got %d", bs.CurrentStep)
+	if bs.CurrentStep != 3 {
+		t.Errorf("CurrentStep: want 3, got %d", bs.CurrentStep)
 	}
 }

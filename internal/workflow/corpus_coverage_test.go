@@ -103,40 +103,6 @@ func bootstrapCoverageFixtures() []coverageFixture {
 			},
 		},
 		{
-			Name: "bootstrap_classic_generate_standard",
-			Envelope: StateEnvelope{
-				Phase:       PhaseBootstrapActive,
-				Environment: EnvContainer,
-				Services: []ServiceSnapshot{{
-					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
-					StageHostname: "appstage",
-				}},
-				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteClassic, Step: StepGenerate},
-			},
-			MustContain: []string{
-				"zsc noop --silent",
-				"deployFiles: [.]",
-				"0.0.0.0",
-				"Build vs runtime env scopes",
-			},
-		},
-		{
-			Name: "bootstrap_classic_generate_simple",
-			Envelope: StateEnvelope{
-				Phase:       PhaseBootstrapActive,
-				Environment: EnvContainer,
-				Services: []ServiceSnapshot{{
-					Hostname: "app", TypeVersion: "nginx@1",
-					RuntimeClass: RuntimeDynamic, Mode: ModeSimple,
-				}},
-				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteClassic, Step: StepGenerate},
-			},
-			MustContain: []string{
-				"REAL start command",
-			},
-		},
-		{
 			Name: "bootstrap_recipe_provision",
 			Envelope: StateEnvelope{
 				Phase:       PhaseBootstrapActive,
@@ -190,6 +156,8 @@ func developCoverageFixtures() []coverageFixture {
 				"Read and edit directly on the mount",
 				"HTTP diagnostics",
 				"zerops_verify",
+				"VERDICT",
+				"agent-browser",
 			},
 		},
 		{
@@ -307,40 +275,6 @@ func developCoverageFixtures() []coverageFixture {
 func matrixCoverageFixtures() []coverageFixture {
 	return []coverageFixture{
 		{
-			Name: "bootstrap_classic_generate_dev",
-			Envelope: StateEnvelope{
-				Phase:       PhaseBootstrapActive,
-				Environment: EnvContainer,
-				Services: []ServiceSnapshot{{
-					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeDev,
-				}},
-				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteClassic, Step: StepGenerate},
-			},
-			MustContain: []string{
-				"Dev-only mode",
-				"zsc noop --silent",
-				"deployFiles: [.]",
-			},
-		},
-		{
-			Name: "bootstrap_classic_generate_standard_local",
-			Envelope: StateEnvelope{
-				Phase:       PhaseBootstrapActive,
-				Environment: EnvLocal,
-				Services: []ServiceSnapshot{{
-					Hostname: "appstage", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
-					StageHostname: "appstage",
-				}},
-				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteClassic, Step: StepGenerate},
-			},
-			MustContain: []string{
-				"local mode",
-				"working directory",
-			},
-		},
-		{
 			Name: "bootstrap_classic_static",
 			Envelope: StateEnvelope{
 				Phase:       PhaseBootstrapActive,
@@ -354,42 +288,6 @@ func matrixCoverageFixtures() []coverageFixture {
 			MustContain: []string{
 				"Static runtime plan",
 				"empty document root",
-			},
-		},
-		{
-			Name: "bootstrap_classic_deploy_dev",
-			Envelope: StateEnvelope{
-				Phase:       PhaseBootstrapActive,
-				Environment: EnvContainer,
-				Services: []ServiceSnapshot{{
-					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeDev,
-				}},
-				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteClassic, Step: StepDeploy},
-			},
-			MustContain: []string{
-				"Dev-only mode — deploy flow",
-				"zerops_deploy",
-				"zerops_verify",
-			},
-		},
-		{
-			Name: "bootstrap_classic_deploy_standard",
-			Envelope: StateEnvelope{
-				Phase:       PhaseBootstrapActive,
-				Environment: EnvContainer,
-				Services: []ServiceSnapshot{{
-					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
-					StageHostname: "appstage",
-				}},
-				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteClassic, Step: StepDeploy},
-			},
-			MustContain: []string{
-				"Standard mode",
-				"sourceService",
-				"targetService",
-				"shadows `run.envVariables`",
 			},
 		},
 		{
@@ -407,22 +305,6 @@ func matrixCoverageFixtures() []coverageFixture {
 			MustContain: []string{
 				"ACTIVE",
 				"zerops_discover",
-			},
-		},
-		{
-			Name: "bootstrap_recipe_deploy",
-			Envelope: StateEnvelope{
-				Phase:       PhaseBootstrapActive,
-				Environment: EnvContainer,
-				Services: []ServiceSnapshot{{
-					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
-				}},
-				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteRecipe, Step: StepDeploy},
-			},
-			MustContain: []string{
-				"Verify, don't redeploy",
-				"zerops_verify",
 			},
 		},
 		{
@@ -541,6 +423,32 @@ func matrixCoverageFixtures() []coverageFixture {
 			},
 		},
 		{
+			Name: "develop_verify_matrix_web_and_managed",
+			Envelope: StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{
+					{
+						Hostname: "app", TypeVersion: "php-nginx@8.4",
+						RuntimeClass: RuntimeImplicitWeb, Mode: ModeSimple,
+						Strategy: "push-dev",
+					},
+					{
+						Hostname: "db", TypeVersion: "postgresql@18",
+						RuntimeClass: RuntimeManaged,
+					},
+				},
+			},
+			MustContain: []string{
+				"Per-service verify matrix",
+				"web-facing",
+				"agent-browser",
+				"VERDICT: PASS",
+				"VERDICT: FAIL",
+				"VERDICT: UNCERTAIN",
+			},
+		},
+		{
 			Name: "develop_static_runtime",
 			Envelope: StateEnvelope{
 				Phase:       PhaseDevelopActive,
@@ -555,40 +463,6 @@ func matrixCoverageFixtures() []coverageFixture {
 				"zerops_deploy",
 				"Static runtime — develop workflow",
 				"no SSH start",
-			},
-		},
-		{
-			Name: "bootstrap_classic_generate_static_simple",
-			Envelope: StateEnvelope{
-				Phase:       PhaseBootstrapActive,
-				Environment: EnvContainer,
-				Services: []ServiceSnapshot{{
-					Hostname: "web", TypeVersion: "static@1",
-					RuntimeClass: RuntimeStatic, Mode: ModeSimple,
-				}},
-				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteClassic, Step: StepGenerate},
-			},
-			MustContain: []string{
-				"Static runtime — zerops.yaml",
-				"Omit `run.start`",
-				"deployFiles",
-			},
-		},
-		{
-			Name: "bootstrap_classic_deploy_static",
-			Envelope: StateEnvelope{
-				Phase:       PhaseBootstrapActive,
-				Environment: EnvContainer,
-				Services: []ServiceSnapshot{{
-					Hostname: "web", TypeVersion: "static@1",
-					RuntimeClass: RuntimeStatic, Mode: ModeSimple,
-				}},
-				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteClassic, Step: StepDeploy},
-			},
-			MustContain: []string{
-				"Static runtime — deploy verification",
-				"zerops_deploy",
-				"HTTP 200",
 			},
 		},
 	}

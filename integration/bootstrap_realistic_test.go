@@ -165,15 +165,13 @@ func TestIntegration_BootstrapRealistic_FullAgentFlow(t *testing.T) {
 
 	agentDiscover(t, session)
 	agentProvision(t, session)
-	agentGenerate(t, session)
-	agentDeploy(t, session)
 	agentVerify(t, session)
 }
 
 func agentDiscover(t *testing.T, session *mcp.ClientSession) {
 	t.Helper()
 	startText := callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap",
+		"action": "start", "workflow": "bootstrap", "route": "classic",
 		"intent": "bun + hono app with postgresql",
 	})
 	var resp workflow.BootstrapResponse
@@ -291,35 +289,6 @@ func agentProvision(t *testing.T, session *mcp.ClientSession) {
 			"Dev mounted at /var/www/bundev/. DB envs discovered: connectionString, host, port, user, password, dbName.")
 }
 
-func agentGenerate(t *testing.T, session *mcp.ClientSession) {
-	t.Helper()
-	completeStep(t, session, "generate",
-		"Generated zerops.yml + app code for bundev and bunstage. /status endpoint with DB SELECT 1 proof. deployFiles: [.].")
-}
-
-func agentDeploy(t *testing.T, session *mcp.ClientSession) {
-	t.Helper()
-	for _, svc := range []string{"bundev", "bunstage"} {
-		deployText := callAndGetText(t, session, "zerops_deploy", map[string]any{"targetService": svc})
-		var dr ops.DeployResult
-		mustUnmarshal(t, deployText, &dr)
-		if dr.TargetService != svc {
-			t.Errorf("deploy target: want %s, got %s", svc, dr.TargetService)
-		}
-
-		subText := callAndGetText(t, session, "zerops_subdomain", map[string]any{
-			"serviceHostname": svc, "action": "enable",
-		})
-		var sr ops.SubdomainResult
-		mustUnmarshal(t, subText, &sr)
-		if sr.Hostname != svc {
-			t.Errorf("subdomain hostname: want %s, got %s", svc, sr.Hostname)
-		}
-	}
-	completeStep(t, session, "deploy",
-		"Deployed bundev + bunstage: /status 200, SELECT 1 proof. Both subdomains enabled.")
-}
-
 func agentVerify(t *testing.T, session *mcp.ClientSession) {
 	t.Helper()
 	for _, hostname := range []string{"bundev", "bunstage", "db"} {
@@ -342,8 +311,8 @@ func agentVerify(t *testing.T, session *mcp.ClientSession) {
 	if finalResp.Current != nil {
 		t.Errorf("expected nil current after completion, got: %s", finalResp.Current.Name)
 	}
-	if finalResp.Progress.Completed != 5 {
-		t.Errorf("completed: want 5, got %d", finalResp.Progress.Completed)
+	if finalResp.Progress.Completed != 3 {
+		t.Errorf("completed: want 3, got %d", finalResp.Progress.Completed)
 	}
 	if !strings.Contains(strings.ToLower(finalResp.Message), "complete") {
 		t.Errorf("final message should contain 'complete', got: %q", finalResp.Message)
@@ -356,7 +325,7 @@ func agentVerify(t *testing.T, session *mcp.ClientSession) {
 }
 
 // TestIntegration_BootstrapRealistic_ManagedOnlySkipPath simulates a managed-only
-// project (just a database) where generate and deploy are skipped.
+// project (just a database) where close is skipped (no runtime to register).
 func TestIntegration_BootstrapRealistic_ManagedOnlySkipPath(t *testing.T) {
 	if testing.Short() {
 		t.Skip("realistic E2E test, skipping in short mode")
@@ -396,7 +365,7 @@ func TestIntegration_BootstrapRealistic_ManagedOnlySkipPath(t *testing.T) {
 func managedOnlyDiscover(t *testing.T, session *mcp.ClientSession) {
 	t.Helper()
 	callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "start", "workflow": "bootstrap",
+		"action": "start", "workflow": "bootstrap", "route": "classic",
 		"intent": "postgresql database only",
 	})
 
@@ -434,11 +403,6 @@ func managedOnlyProvision(t *testing.T, session *mcp.ClientSession) {
 func managedOnlySkipAndVerify(t *testing.T, session *mcp.ClientSession) {
 	t.Helper()
 
-	// Skip generate (no runtime services).
-	callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "skip", "step": "generate", "reason": "no runtime services to generate code for",
-	})
-
 	// Verify db is running.
 	verifyText := callAndGetText(t, session, "zerops_discover", map[string]any{"service": "db"})
 	var vDR ops.DiscoverResult
@@ -447,18 +411,15 @@ func managedOnlySkipAndVerify(t *testing.T, session *mcp.ClientSession) {
 		t.Errorf("verify db: expected RUNNING, got: %+v", vDR.Services)
 	}
 
-	// Complete deploy (even though no runtime code to deploy, managed services are ready).
-	completeStep(t, session, "deploy",
-		"No deploy needed - managed-only project. All dependencies provisioned and running.")
-
-	// Skip close (managed-only, no runtime services).
+	// Skip close (managed-only plan: no runtime services require registration).
+	// Under Option A, close is the only skippable bootstrap step.
 	finalText := callAndGetText(t, session, "zerops_workflow", map[string]any{
-		"action": "skip", "step": "close", "reason": "managed-only project, no close needed",
+		"action": "skip", "step": "close", "reason": "managed-only project, no runtime registration needed",
 	})
 	var finalResp workflow.BootstrapResponse
 	mustUnmarshal(t, finalText, &finalResp)
-	if finalResp.Progress.Completed != 5 {
-		t.Errorf("completed: want 5, got %d", finalResp.Progress.Completed)
+	if finalResp.Progress.Completed != 3 {
+		t.Errorf("completed: want 3, got %d", finalResp.Progress.Completed)
 	}
 
 	skipped, completed := 0, 0
@@ -470,11 +431,11 @@ func managedOnlySkipAndVerify(t *testing.T, session *mcp.ClientSession) {
 			completed++
 		}
 	}
-	if skipped != 2 {
-		t.Errorf("skipped: want 2, got %d", skipped)
+	if skipped != 1 {
+		t.Errorf("skipped: want 1, got %d", skipped)
 	}
-	if completed != 3 {
-		t.Errorf("completed: want 3, got %d", completed)
+	if completed != 2 {
+		t.Errorf("completed: want 2, got %d", completed)
 	}
 }
 

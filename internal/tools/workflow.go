@@ -29,7 +29,7 @@ type WorkflowInput struct {
 	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, reset, iterate, resume, list, route, or generate-finalize (recipe only — generates all 13 recipe files from plan)."`
 	Intent      string                     `json:"intent,omitempty"      jsonschema:"User intent description for start action (what you want to accomplish)."`
 	Attestation string                     `json:"attestation,omitempty" jsonschema:"Description of what was verified or accomplished (required for complete actions)."`
-	Step        string                     `json:"step,omitempty"        jsonschema:"Bootstrap step name for complete/skip actions (e.g. discover, provision, generate, deploy, close)."`
+	Step        string                     `json:"step,omitempty"        jsonschema:"Bootstrap step name for complete/skip actions (discover, provision, close)."`
 	SubStep     string                     `json:"substep,omitempty"     jsonschema:"Optional sub-step name for recipe complete action (e.g. scaffold, zerops-yaml, app-code, readme, smoke-test). Completes a sub-step within the current step instead of the full step."`
 	Plan        []workflow.BootstrapTarget `json:"plan,omitempty"        jsonschema:"Structured service plan: array of {runtime: {devHostname, type, bootstrapMode?, stageHostname?, isExisting?}, dependencies: [{hostname, type, mode?, resolution}]}. resolution: CREATE (new service), EXISTS (already in project), SHARED (created by another target in this plan). stageHostname: explicit stage hostname for standard mode when devHostname doesn't end in 'dev' (e.g. adopting existing services)."`
 	Reason      string                     `json:"reason,omitempty"      jsonschema:"Reason for skipping a step (skip action). Defaults to 'skipped by user'."`
@@ -37,6 +37,12 @@ type WorkflowInput struct {
 	Strategies  map[string]string          `json:"strategies,omitempty"  jsonschema:"Per-service strategy map for strategy action (e.g. {\"appdev\":\"push-git\"})."`
 	Tier        string                     `json:"tier,omitempty"        jsonschema:"Recipe tier: minimal or showcase (recipe workflow only)."`
 	RecipePlan  *workflow.RecipePlan       `json:"recipePlan,omitempty"  jsonschema:"Structured recipe plan for research step completion. Pass as a JSON object, NOT a stringified JSON blob — e.g. recipePlan={\"slug\":\"...\",\"recipeType\":\"...\",\"features\":[...],\"targets\":[...]}, not recipePlan=\"{\\\"slug\\\":...}\". The schema validator rejects strings for this field; stringifying costs a retry round-trip."`
+
+	// Bootstrap route selection. The first call to action=start workflow=bootstrap
+	// omits these — the engine returns a ranked list of route options. The LLM
+	// picks one and calls start again with route set.
+	Route      string `json:"route,omitempty"      jsonschema:"Bootstrap route: adopt, recipe, classic, or resume. Omit on first start call to receive ranked route options; set on second call to commit the chosen route."`
+	RecipeSlug string `json:"recipeSlug,omitempty" jsonschema:"Recipe slug when route=recipe (pick one from the discovery response's routeOptions[].recipeSlug)."`
 
 	// Recipe workflow only — the agent's self-reported model identifier from its
 	// own system prompt. Required at start for the recipe workflow because v13
@@ -225,19 +231,9 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 		}), nil, nil
 	}
 
-	// Bootstrap conductor.
+	// Bootstrap conductor — discovery + commit split.
 	if input.Workflow == workflowBootstrap {
-		// BootstrapStart is synchronous — route selection is keyword-only with
-		// no network I/O. No ctx to thread through today.
-		resp, err := engine.BootstrapStart(projectID, input.Intent) //nolint:contextcheck // intentional: synchronous, no I/O to cancel
-		if err != nil {
-			return convertError(platform.NewPlatformError(
-				platform.ErrWorkflowActive,
-				fmt.Sprintf("Bootstrap start failed: %v", err),
-				"Reset existing session first with action=reset")), nil, nil
-		}
-		populateStacks(ctx, resp, client, cache)
-		return jsonResult(resp), nil, nil
+		return handleBootstrapStart(ctx, projectID, engine, client, cache, input)
 	}
 
 	// Develop workflow — stateless briefing, no session created.
@@ -322,6 +318,72 @@ func handleResume(ctx context.Context, engine *workflow.Engine, client platform.
 		return handleRecipeStatus(ctx, engine)
 	}
 	return bootstrapStatusResult(ctx, engine, client, cache)
+}
+
+// handleBootstrapStart dispatches the bootstrap "start" action into one of
+// three sub-paths based on input.Route:
+//
+//  1. Empty route → discovery mode. Fetches existing services, calls
+//     engine.BootstrapDiscover, returns ranked route options without
+//     committing a session. The LLM reads the options and calls start
+//     again with route set.
+//  2. route=resume → delegates to handleResume (existing session resume
+//     flow). The LLM passes sessionId from the discovery response's
+//     resumeSession field.
+//  3. route=adopt|recipe|classic → commits session via
+//     BootstrapStartWithRoute with the LLM's explicit choice.
+func handleBootstrapStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+	route := input.Route
+
+	// Discovery pass — no route specified, no session committed.
+	if route == "" {
+		existing, listErr := listExistingServices(ctx, client, projectID)
+		if listErr != nil {
+			return convertError(platform.NewPlatformError(
+				platform.ErrAPIError,
+				fmt.Sprintf("Bootstrap discovery failed: %v", listErr),
+				"Check project access and try again")), nil, nil
+		}
+		resp, err := engine.BootstrapDiscover(projectID, input.Intent, existing) //nolint:contextcheck // BootstrapDiscover is synchronous, no I/O to cancel
+		if err != nil {
+			return convertError(platform.NewPlatformError(
+				platform.ErrAPIError,
+				fmt.Sprintf("Bootstrap discovery failed: %v", err),
+				"")), nil, nil
+		}
+		return jsonResult(resp), nil, nil
+	}
+
+	// Resume route — dispatch into the existing resume flow.
+	if route == string(workflow.BootstrapRouteResume) {
+		if input.SessionID == "" {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				"route=resume requires sessionId (pick it from the discovery response's resumeSession field)",
+				"Call action=start workflow=bootstrap without route first to see resumable sessions")), nil, nil
+		}
+		return handleResume(ctx, engine, client, cache, input)
+	}
+
+	// Commit pass — start a session with the chosen route.
+	resp, err := engine.BootstrapStartWithRoute(projectID, input.Intent, workflow.BootstrapRoute(route), input.RecipeSlug)
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrWorkflowActive,
+			fmt.Sprintf("Bootstrap start failed: %v", err),
+			"Call action=start workflow=bootstrap without route to discover valid options, or action=reset to clear the existing session")), nil, nil
+	}
+	populateStacks(ctx, resp, client, cache)
+	return jsonResult(resp), nil, nil
+}
+
+// listExistingServices is a best-effort wrapper around client.ListServices
+// that tolerates a nil client (test fixtures without platform access).
+func listExistingServices(ctx context.Context, client platform.Client, projectID string) ([]platform.ServiceStack, error) {
+	if client == nil || projectID == "" {
+		return nil, nil
+	}
+	return client.ListServices(ctx, projectID)
 }
 
 func handleListSessions(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {

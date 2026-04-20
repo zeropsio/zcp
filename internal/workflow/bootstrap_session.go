@@ -91,6 +91,9 @@ func initialSteps(route BootstrapRoute) []StepProgress {
 		)
 	case BootstrapRouteAdopt:
 		return namedSteps("discover", "prompt-modes", "write-metas", "verify", "close")
+	case BootstrapRouteResume:
+		// Resume takes over an existing session — step list comes from the
+		// persisted state, not from initial-step derivation.
 	}
 	return nil
 }

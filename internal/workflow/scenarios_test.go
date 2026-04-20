@@ -415,55 +415,6 @@ func TestScenario_S6_DevelopDeployOKPendingVerify(t *testing.T) {
 	}
 }
 
-// TestScenario_S9_BootstrapActiveClassicGenerate covers a classic-route
-// bootstrap mid-session at the generate step — orthogonal to S1's second
-// leg which exercises Route=recipe Step=provision. Atoms scoped to
-// routes=[classic] AND steps=[generate] must match.
-func TestScenario_S9_BootstrapActiveClassicGenerate(t *testing.T) {
-	t.Parallel()
-
-	corpus, err := LoadAtomCorpus()
-	if err != nil {
-		t.Fatalf("LoadAtomCorpus: %v", err)
-	}
-
-	env := StateEnvelope{
-		Phase:       PhaseBootstrapActive,
-		Environment: EnvContainer,
-		Services: []ServiceSnapshot{{
-			Hostname:     "appdev",
-			TypeVersion:  "nodejs@22",
-			RuntimeClass: RuntimeDynamic,
-			Mode:         ModeDev,
-		}},
-		Bootstrap: &BootstrapSessionSummary{
-			Route: BootstrapRouteClassic,
-			Step:  StepGenerate,
-		},
-	}
-
-	plan := BuildPlan(env)
-	if plan.Primary.Tool != "zerops_workflow" ||
-		plan.Primary.Args["action"] != "iterate" ||
-		plan.Primary.Args["workflow"] != "bootstrap" {
-		t.Errorf("S9: expected primary=iterate bootstrap, got tool=%q args=%v",
-			plan.Primary.Tool, plan.Primary.Args)
-	}
-
-	bodies, err := Synthesize(env, corpus)
-	if err != nil {
-		t.Fatalf("Synthesize: %v", err)
-	}
-	if len(bodies) == 0 {
-		t.Fatal("S9: expected classic-route atoms to match")
-	}
-	joined := strings.Join(bodies, "\n")
-	// bootstrap-generate-dev is classic+generate+dev-scoped.
-	if !strings.Contains(joined, "Dev-only mode") {
-		t.Error("S9: expected bootstrap-generate-dev atom body to appear")
-	}
-}
-
 // TestScenario_S10_RecipeActive pins the recipe-active plan. The recipe
 // conductor handles its own guidance; BuildPlan only provides the iterate
 // pointer so the agent can advance.

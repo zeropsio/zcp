@@ -30,7 +30,7 @@ func TestBootstrapComplete_WritesServiceMeta(t *testing.T) {
 	}
 
 	// Complete remaining steps to trigger autoComplete.
-	for _, step := range []string{"provision", "generate", "deploy", "close"} {
+	for _, step := range []string{"provision", "close"} {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
@@ -68,7 +68,7 @@ func TestBootstrapComplete_AppendsReflog(t *testing.T) {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
 
-	for _, step := range []string{"provision", "generate", "deploy", "close"} {
+	for _, step := range []string{"provision", "close"} {
 		_, err = eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil)
 		if err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
@@ -121,7 +121,7 @@ func TestBootstrapComplete_OutputErrorsNonFatal(t *testing.T) {
 
 	// Bootstrap completion should still succeed despite output errors.
 	var lastResp *BootstrapResponse
-	for _, step := range []string{"provision", "generate", "deploy", "close"} {
+	for _, step := range []string{"provision", "close"} {
 		var err error
 		lastResp, err = eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil)
 		if err != nil {
@@ -133,8 +133,8 @@ func TestBootstrapComplete_OutputErrorsNonFatal(t *testing.T) {
 	if lastResp == nil || lastResp.Current != nil {
 		t.Error("Bootstrap should be completed (no current step in final response)")
 	}
-	if lastResp.Progress.Completed != 5 {
-		t.Errorf("Bootstrap progress: want 5 completed, got %d", lastResp.Progress.Completed)
+	if lastResp.Progress.Completed != 3 {
+		t.Errorf("Bootstrap progress: want 3 completed, got %d", lastResp.Progress.Completed)
 	}
 	if eng.SessionID() != "" {
 		t.Errorf("engine SessionID should be empty after bootstrap completion, got %q", eng.SessionID())
@@ -173,7 +173,7 @@ func TestWriteBootstrapOutputs_NeverWritesDepMetas(t *testing.T) {
 				t.Fatalf("BootstrapCompletePlan: %v", err)
 			}
 
-			for _, step := range []string{"provision", "generate", "deploy", "close"} {
+			for _, step := range []string{"provision", "close"} {
 				if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 					t.Fatalf("BootstrapComplete(%s): %v", step, err)
 				}
@@ -230,7 +230,7 @@ func TestWriteBootstrapOutputs_PreExistingDepMetaSurvives(t *testing.T) {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
 
-	for _, step := range []string{"provision", "generate", "deploy", "close"} {
+	for _, step := range []string{"provision", "close"} {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
@@ -269,7 +269,7 @@ func TestWriteBootstrapOutputs_SetsBootstrappedAt(t *testing.T) {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
 
-	for _, step := range []string{"provision", "generate", "deploy", "close"} {
+	for _, step := range []string{"provision", "close"} {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
@@ -438,7 +438,7 @@ func TestWriteBootstrapOutputs_AlwaysWritesEmptyStrategy(t *testing.T) {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
 
-	for _, step := range []string{"provision", "generate", "deploy", "close"} {
+	for _, step := range []string{"provision", "close"} {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
@@ -486,7 +486,7 @@ func TestWriteBootstrapOutputs_DefaultEmptyStrategy(t *testing.T) {
 			}
 
 			// Bootstrap always writes empty strategy — user sets it later.
-			for _, step := range []string{"provision", "generate", "deploy", "close"} {
+			for _, step := range []string{"provision", "close"} {
 				if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 					t.Fatalf("BootstrapComplete(%s): %v", step, err)
 				}
@@ -523,7 +523,7 @@ func TestWriteBootstrapOutputs_LocalMode_DefaultEmptyStrategy(t *testing.T) {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
 
-	for _, step := range []string{"provision", "generate", "deploy", "close"} {
+	for _, step := range []string{"provision", "close"} {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
@@ -690,8 +690,11 @@ func TestBuildTransitionMessage_WithPlan_IncludesTransitionHint(t *testing.T) {
 	if !strings.Contains(msg, "develop") {
 		t.Error("message should hint at develop flow")
 	}
-	if !strings.Contains(msg, "verification server") {
-		t.Error("message should mention verification server")
+	// Option A: bootstrap hands off to develop BEFORE any code/deploy —
+	// the transition message explains infra is ready and develop owns
+	// scaffolding + first deploy.
+	if !strings.Contains(msg, "Develop owns code") {
+		t.Error("message should explain develop owns code scaffolding and first deploy")
 	}
 }
 
@@ -933,7 +936,7 @@ func TestWriteBootstrapOutputs_EnvironmentField(t *testing.T) {
 			if err != nil {
 				t.Fatalf("BootstrapCompletePlan: %v", err)
 			}
-			for _, step := range []string{"provision", "generate", "deploy", "close"} {
+			for _, step := range []string{"provision", "close"} {
 				if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 					t.Fatalf("BootstrapComplete(%s): %v", step, err)
 				}
@@ -973,7 +976,7 @@ func TestWriteBootstrapOutputs_LocalMode_HostnameIsStage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
-	for _, step := range []string{"provision", "generate", "deploy", "close"} {
+	for _, step := range []string{"provision", "close"} {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
@@ -1020,7 +1023,7 @@ func TestWriteBootstrapOutputs_LocalMode_DefaultEmptyStrategy2(t *testing.T) {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
 
-	for _, step := range []string{"provision", "generate", "deploy", "close"} {
+	for _, step := range []string{"provision", "close"} {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
 		}
@@ -1084,7 +1087,7 @@ func TestWriteBootstrapOutputs_AdoptedService_EmptyBootstrapSession(t *testing.T
 					t.Fatalf("BootstrapComplete(provision): %v", err)
 				}
 			} else {
-				for _, step := range []string{"provision", "generate", "deploy", "close"} {
+				for _, step := range []string{"provision", "close"} {
 					if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 						t.Fatalf("BootstrapComplete(%s): %v", step, err)
 					}

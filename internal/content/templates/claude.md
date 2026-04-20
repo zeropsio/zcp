@@ -34,9 +34,21 @@ the current phase (idle / bootstrap / develop / recipe), the concrete next
 action, and phase-specific guidance. Skipping it = operating blind.
 
 - **No services yet** → `zerops_workflow action="start" workflow="bootstrap"`.
-- **Any code change** → `zerops_workflow action="start" workflow="develop" intent="<one-liner>"`.
-  Mandatory even for typos — the session tracks strategy (push-dev /
-  push-git / manual), deploys, and auto-closes on success.
+  The first call is **route discovery**: the engine inspects the project
+  and returns a ranked `routeOptions[]` list (resume, adopt, recipe
+  candidates, classic) plus a human-readable message. Pick one and call
+  start again with `route=<chosen>` (and `recipeSlug=<slug>` when
+  route=recipe) to commit the session. Bootstrap itself is
+  **infrastructure only** — it provisions services, mounts runtimes, and
+  discovers managed-service env var names. It does NOT write code or
+  deploy. On retry it hard-stops and escalates to the user.
+- **Write code, scaffold `zerops.yaml`, first deploy, iterate** →
+  `zerops_workflow action="start" workflow="develop" intent="<one-liner>"`.
+  Develop owns everything past bootstrap. A runtime that was just
+  provisioned enters the **first-deploy branch**: scaffold `zerops.yaml`
+  from the discovered env var catalog, write the application, deploy,
+  verify. A passing verify stamps `FirstDeployedAt` on the ServiceMeta
+  and future develop sessions enter the normal edit loop.
 - **Per-service rules** (dev-mode reload vs. dynamic-runtime restart vs.
   stage-redeploy, asset compile commands) live in
   `/var/www/{hostname}/CLAUDE.md`. Read it before editing.

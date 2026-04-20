@@ -252,13 +252,88 @@ func (e *Engine) ListActiveSessions() ([]SessionEntry, error) {
 	return ListSessions(e.stateDir)
 }
 
-// BootstrapStart creates a new session with bootstrap state and returns the first step.
+// BootstrapDiscover inspects project state and returns the ranked list of
+// route options without creating a session. The LLM then picks one by calling
+// BootstrapStart with the chosen route (and recipe slug, when applicable).
 //
-// Route selection runs at start from the intent alone. Recipe route fires
-// when a viable match is found (confidence ≥ MinRecipeConfidence); classic
-// is the fallback. Adopt is NOT chosen here — it is inferred later from
-// Plan.IsAllExisting() once the discover step runs.
+// Options are ordered resume > adopt > recipe (top MaxRecipeOptions ≥
+// MinRecipeConfidence) > classic. Classic is always last so the LLM can
+// force a manual plan even when another route would auto-score higher.
+//
+// `existing` comes from the caller (the tool layer holds the platform
+// client); metas are read from stateDir.
+func (e *Engine) BootstrapDiscover(projectID, intent string, existing []platform.ServiceStack) (*BootstrapDiscoveryResponse, error) {
+	metas, err := ListServiceMetas(e.stateDir)
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap discover: list metas: %w", err)
+	}
+	var recipes RecipeCorpus
+	if e.recipeCorpus != nil {
+		recipes = e.recipeCorpus
+	}
+	options, err := BuildBootstrapRouteOptions(context.Background(), intent, existing, metas, recipes)
+	if err != nil {
+		return nil, fmt.Errorf("bootstrap discover: %w", err)
+	}
+	return &BootstrapDiscoveryResponse{
+		Intent:       intent,
+		ProjectID:    projectID,
+		RouteOptions: options,
+		Message:      buildDiscoveryMessage(options),
+	}, nil
+}
+
+// BootstrapStart commits a bootstrap session with classic route (manual
+// plan, no preselection). Thin wrapper around BootstrapStartWithRoute so
+// callers that don't care about route explicit-ness (most tests, simple
+// drivers) stay terse.
 func (e *Engine) BootstrapStart(projectID, intent string) (*BootstrapResponse, error) {
+	return e.BootstrapStartWithRoute(projectID, intent, "", "")
+}
+
+// BootstrapStartWithRoute creates a new session with bootstrap state and
+// commits the chosen route. Called after BootstrapDiscover — the LLM picks
+// a route from the discovery response and submits it here.
+//
+// Route semantics:
+//   - classic  — manual plan, no preselection. Empty string is accepted as
+//     classic so the zero-value path produces a sane default.
+//   - recipe   — recipeSlug MUST be set; the engine resolves the import YAML
+//     via the recipe corpus and pre-populates RecipeMatch on state.
+//   - adopt    — existing runtime services are flagged for adoption; the
+//     discover step's plan is expected to mirror them.
+//   - resume   — not handled here; callers detect resume at the tool layer
+//     and dispatch to engine.Resume with the session ID from discovery.
+func (e *Engine) BootstrapStartWithRoute(projectID, intent string, route BootstrapRoute, recipeSlug string) (*BootstrapResponse, error) {
+	switch route {
+	case "", BootstrapRouteClassic, BootstrapRouteAdopt, BootstrapRouteRecipe:
+		// Accepted.
+	case BootstrapRouteResume:
+		return nil, fmt.Errorf("bootstrap start: route=resume must be dispatched to engine.Resume, not BootstrapStart")
+	default:
+		return nil, fmt.Errorf("bootstrap start: unknown route %q (want adopt, recipe, classic, or resume)", route)
+	}
+
+	if route == BootstrapRouteRecipe && strings.TrimSpace(recipeSlug) == "" {
+		return nil, fmt.Errorf("bootstrap start: route=recipe requires recipeSlug")
+	}
+	if route != BootstrapRouteRecipe && recipeSlug != "" {
+		return nil, fmt.Errorf("bootstrap start: recipeSlug set for non-recipe route %q", route)
+	}
+
+	// Resolve recipe slug BEFORE creating a session. Corpus lookup can fail
+	// on typos or retired slugs — failing fast here avoids leaving an orphan
+	// session behind. Everything else validated above is pure arg-shape; the
+	// only I/O-ish step is this lookup.
+	var preloadedMatch *RecipeMatch
+	if route == BootstrapRouteRecipe {
+		match, resolveErr := e.resolveRecipeMatch(recipeSlug)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("bootstrap start: %w", resolveErr)
+		}
+		preloadedMatch = match
+	}
+
 	state, err := e.Start(projectID, WorkflowBootstrap, intent)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap start: %w", err)
@@ -267,12 +342,16 @@ func (e *Engine) BootstrapStart(projectID, intent string) (*BootstrapResponse, e
 	bs := NewBootstrapState()
 	bs.Steps[0].Status = stepInProgress
 
-	if e.recipeCorpus != nil {
-		route, match, _ := SelectBootstrapRoute(context.Background(), intent, nil, e.recipeCorpus)
-		if route == BootstrapRouteRecipe {
-			bs.Route = route
-			bs.RecipeMatch = match
-		}
+	switch route {
+	case BootstrapRouteRecipe:
+		bs.Route = BootstrapRouteRecipe
+		bs.RecipeMatch = preloadedMatch
+	case BootstrapRouteAdopt:
+		bs.Route = BootstrapRouteAdopt
+	case BootstrapRouteClassic, BootstrapRouteResume:
+		// Classic leaves bs.Route unset — matches prior behaviour
+		// (downstream treats missing route as classic). Resume cannot
+		// reach this switch: BootstrapStartWithRoute rejects it earlier.
 	}
 
 	state.Bootstrap = bs
@@ -281,6 +360,51 @@ func (e *Engine) BootstrapStart(projectID, intent string) (*BootstrapResponse, e
 		return nil, fmt.Errorf("bootstrap start save: %w", err)
 	}
 	return bs.BuildResponse(state.SessionID, intent, state.Iteration, e.environment, e.knowledge), nil
+}
+
+// resolveRecipeMatch looks up the canonical import YAML for the slug the LLM
+// picked. Returns error when the slug is unknown — guards against typos or
+// stale LLM context pointing at a retired recipe.
+func (e *Engine) resolveRecipeMatch(slug string) (*RecipeMatch, error) {
+	if e.recipeCorpus == nil {
+		return nil, fmt.Errorf("recipe route unavailable: recipe corpus not configured")
+	}
+	cand := e.recipeCorpus.LookupRecipe(slug)
+	if cand == nil {
+		return nil, fmt.Errorf("recipe route: unknown slug %q", slug)
+	}
+	mode, _ := InferRecipeShape(cand.ImportYAML)
+	return &RecipeMatch{
+		Slug:        slug,
+		Title:       cand.Title,
+		Description: cand.Description,
+		Confidence:  1.0, // LLM picked explicitly — no longer a score
+		ImportYAML:  cand.ImportYAML,
+		Mode:        mode,
+	}, nil
+}
+
+// buildDiscoveryMessage is the human-readable summary included in the
+// discovery response. Enumerates options inline so a client without atom
+// rendering still gets an intelligible payload.
+func buildDiscoveryMessage(options []BootstrapRouteOption) string {
+	var sb strings.Builder
+	sb.WriteString("Bootstrap route discovery — pick one by calling ")
+	sb.WriteString(`zerops_workflow action="start" workflow="bootstrap" route="<route>"`)
+	sb.WriteString(" (recipe requires `recipeSlug`; resume requires existing session via `action=\"resume\"`).\n\nOptions:\n")
+	for i, opt := range options {
+		fmt.Fprintf(&sb, "  %d. route=%q", i+1, string(opt.Route))
+		if opt.RecipeSlug != "" {
+			fmt.Fprintf(&sb, " recipeSlug=%q (confidence %.2f)", opt.RecipeSlug, opt.Confidence)
+		}
+		sb.WriteString(" — ")
+		sb.WriteString(opt.Why)
+		if len(opt.Collisions) > 0 {
+			fmt.Fprintf(&sb, " [hostname collisions: %s]", strings.Join(opt.Collisions, ", "))
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
 }
 
 // BootstrapComplete completes the current step and advances to the next.
@@ -341,12 +465,11 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 		e.writeProvisionMetas(state)
 
 		// Fast path: pure adoption plans (all isExisting + all EXISTS deps)
-		// skip remaining steps — generate/deploy/close are no-ops for adopted services.
+		// skip the administrative close step — adopted services already carry
+		// complete metas, so there's nothing left to administratively transition.
 		if state.Bootstrap.Plan != nil && state.Bootstrap.Plan.IsAllExisting() {
-			for _, skip := range []string{StepGenerate, StepDeploy, StepClose} {
-				if err := state.Bootstrap.SkipStep(skip, "all targets adopted"); err != nil {
-					return nil, fmt.Errorf("adoption fast path: %w", err)
-				}
+			if err := state.Bootstrap.SkipStep(StepClose, "all targets adopted"); err != nil {
+				return nil, fmt.Errorf("adoption fast path: %w", err)
 			}
 		}
 	}

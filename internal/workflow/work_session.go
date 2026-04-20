@@ -190,7 +190,9 @@ func RecordDeployAttempt(stateDir, hostname string, attempt DeployAttempt) error
 }
 
 // RecordVerifyAttempt appends one verify attempt for a hostname. Triggers
-// auto-close evaluation.
+// auto-close evaluation. When the attempt passed, also stamps
+// ServiceMeta.FirstDeployedAt so the develop first-deploy branch exits on the
+// next session.
 // Returns ErrHostnameOutOfScope when hostname is not declared in ws.Services.
 func RecordVerifyAttempt(stateDir, hostname string, attempt VerifyAttempt) error {
 	workSessionMu.Lock()
@@ -217,6 +219,11 @@ func RecordVerifyAttempt(stateDir, hostname string, attempt VerifyAttempt) error
 	if ws.ClosedAt == "" && EvaluateAutoClose(ws) {
 		ws.ClosedAt = ws.LastActivityAt
 		ws.CloseReason = CloseReasonAutoComplete
+	}
+	if attempt.Passed {
+		// Best-effort: meta-less services (adopted, no local record) return nil.
+		// Only stamp the primary hostname — stage half shares the same meta file.
+		_ = MarkServiceDeployed(stateDir, hostname)
 	}
 	return SaveWorkSession(stateDir, ws)
 }

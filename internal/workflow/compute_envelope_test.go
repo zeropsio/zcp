@@ -165,6 +165,144 @@ func TestComputeEnvelope_ServicesBootstrapped(t *testing.T) {
 	if db.Bootstrapped {
 		t.Error("db.Bootstrapped = true, want false")
 	}
+
+	// Neither appdev nor appstage has FirstDeployedAt — Deployed must be false
+	// on both so the first-deploy branch atoms fire for this envelope.
+	if appdev.Deployed {
+		t.Error("appdev.Deployed = true, want false (no FirstDeployedAt on meta)")
+	}
+	if appstage.Deployed {
+		t.Error("appstage.Deployed = true, want false (no FirstDeployedAt on meta)")
+	}
+}
+
+// TestComputeEnvelope_ServiceDeployedFlag covers the Deployed-field projection
+// from ServiceMeta.FirstDeployedAt. Under Option A, develop branches on this
+// boolean: never-deployed = scaffold + first deploy; deployed = edit loop.
+func TestComputeEnvelope_ServiceDeployedFlag(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	meta := &ServiceMeta{
+		Hostname:          "appdev",
+		Mode:              PlanModeDev,
+		DeployStrategy:    StrategyPushDev,
+		StrategyConfirmed: true,
+		BootstrappedAt:    fixedTime.Format(time.RFC3339),
+		BootstrapSession:  "sess-1",
+		FirstDeployedAt:   fixedTime.Format(time.RFC3339),
+	}
+	if err := WriteServiceMeta(dir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	svc := platform.ServiceStack{
+		ID: "s1", Name: "appdev", Status: "ACTIVE",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{
+			ServiceStackTypeVersionName:  "nodejs@22",
+			ServiceStackTypeCategoryName: "USER",
+		},
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{svc}).
+		WithProject(&platform.Project{ID: "p1", Name: "demo"})
+
+	env, err := ComputeEnvelope(context.Background(), mock, dir, "p1", runtime.Info{}, fixedTime)
+	if err != nil {
+		t.Fatalf("ComputeEnvelope: %v", err)
+	}
+	if len(env.Services) != 1 {
+		t.Fatalf("services = %d, want 1", len(env.Services))
+	}
+	if !env.Services[0].Deployed {
+		t.Error("appdev.Deployed = false, want true (FirstDeployedAt set)")
+	}
+}
+
+// TestComputeEnvelope_ResumableFlag covers the Resumable-field projection
+// from an incomplete ServiceMeta tagged with a BootstrapSession. IdleIncomplete
+// scenario fires when any non-managed service is resumable.
+func TestComputeEnvelope_ResumableFlag(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	meta := &ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             PlanModeDev,
+		BootstrapSession: "sess-abandoned",
+		// BootstrappedAt intentionally empty — incomplete.
+	}
+	if err := WriteServiceMeta(dir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	svc := platform.ServiceStack{
+		ID: "s1", Name: "appdev", Status: "ACTIVE",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{
+			ServiceStackTypeVersionName:  "nodejs@22",
+			ServiceStackTypeCategoryName: "USER",
+		},
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{svc}).
+		WithProject(&platform.Project{ID: "p1", Name: "demo"})
+
+	env, err := ComputeEnvelope(context.Background(), mock, dir, "p1", runtime.Info{}, fixedTime)
+	if err != nil {
+		t.Fatalf("ComputeEnvelope: %v", err)
+	}
+	if len(env.Services) != 1 {
+		t.Fatalf("services = %d, want 1", len(env.Services))
+	}
+	if !env.Services[0].Resumable {
+		t.Error("appdev.Resumable = false, want true (incomplete meta with BootstrapSession)")
+	}
+	if env.Services[0].Bootstrapped {
+		t.Error("appdev.Bootstrapped = true, want false (meta is incomplete)")
+	}
+	if env.IdleScenario != IdleIncomplete {
+		t.Errorf("idleScenario = %q, want %q (resumable service present)", env.IdleScenario, IdleIncomplete)
+	}
+}
+
+// TestComputeEnvelope_OrphanIncompleteMeta covers the edge case of an
+// incomplete meta without BootstrapSession — an orphan that fell off a
+// session that no longer exists. Resumable should stay false (nothing to
+// resume), and idleScenario should fall through to adopt.
+func TestComputeEnvelope_OrphanIncompleteMeta(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	meta := &ServiceMeta{
+		Hostname: "appdev",
+		Mode:     PlanModeDev,
+		// Neither BootstrappedAt nor BootstrapSession set.
+	}
+	if err := WriteServiceMeta(dir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	svc := platform.ServiceStack{
+		ID: "s1", Name: "appdev", Status: "ACTIVE",
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{
+			ServiceStackTypeVersionName:  "nodejs@22",
+			ServiceStackTypeCategoryName: "USER",
+		},
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{svc}).
+		WithProject(&platform.Project{ID: "p1", Name: "demo"})
+
+	env, err := ComputeEnvelope(context.Background(), mock, dir, "p1", runtime.Info{}, fixedTime)
+	if err != nil {
+		t.Fatalf("ComputeEnvelope: %v", err)
+	}
+	if env.Services[0].Resumable {
+		t.Error("orphan incomplete meta should not be Resumable")
+	}
+	if env.IdleScenario != IdleAdopt {
+		t.Errorf("idleScenario = %q, want %q (orphan falls under adopt)", env.IdleScenario, IdleAdopt)
+	}
 }
 
 func TestResolveEnvelopeMode(t *testing.T) {

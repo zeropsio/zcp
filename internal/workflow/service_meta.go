@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"time"
 )
 
 // Strategy constants for deploy decisions.
@@ -29,13 +30,23 @@ type ServiceMeta struct {
 	Environment       string `json:"environment,omitempty"`       // "container" or "local"
 	BootstrapSession  string `json:"bootstrapSession"`
 	BootstrappedAt    string `json:"bootstrappedAt"`
+	FirstDeployedAt   string `json:"firstDeployedAt,omitempty"` // set on the first successful deploy (develop phase)
 }
 
 // IsComplete returns true if bootstrap finished for this service.
 // BootstrappedAt is set only at bootstrap completion — empty means
 // the service was provisioned but bootstrap didn't finish.
+// Under Option A this marks infra readiness (services provisioned, mounted,
+// env vars discoverable) — not code-deploy completion. See IsDeployed.
 func (m *ServiceMeta) IsComplete() bool {
 	return m.BootstrappedAt != ""
+}
+
+// IsDeployed returns true once the service has been deployed at least once.
+// FirstDeployedAt is set by the develop flow on the first successful deploy.
+// Empty FirstDeployedAt on an IsComplete meta signals the first-deploy branch.
+func (m *ServiceMeta) IsDeployed() bool {
+	return m.FirstDeployedAt != ""
 }
 
 // IsAdopted reports whether this meta records an adopted service.
@@ -248,6 +259,30 @@ func cleanIncompleteMetasForSession(stateDir, sessionID string) {
 			_ = DeleteServiceMeta(stateDir, m.Hostname)
 		}
 	}
+}
+
+// MarkServiceDeployed stamps FirstDeployedAt on the meta for hostname. Idempotent:
+// an already-stamped meta is left untouched so the original first-deploy moment
+// is preserved. No-op when the meta does not exist (useful when a develop
+// workflow is run against services that were adopted from an external source,
+// i.e. no local ServiceMeta was ever written).
+//
+// Under Option A this is the hook that the first-deploy branch calls after a
+// successful verify — without it, subsequent develop sessions keep re-entering
+// the first-deploy branch and re-running scaffold.
+func MarkServiceDeployed(stateDir, hostname string) error {
+	meta, err := ReadServiceMeta(stateDir, hostname)
+	if err != nil {
+		return fmt.Errorf("mark service deployed: read meta: %w", err)
+	}
+	if meta == nil || meta.FirstDeployedAt != "" {
+		return nil
+	}
+	meta.FirstDeployedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := WriteServiceMeta(stateDir, meta); err != nil {
+		return fmt.Errorf("mark service deployed: write meta: %w", err)
+	}
+	return nil
 }
 
 // DeleteServiceMeta removes the service metadata file for the given hostname.

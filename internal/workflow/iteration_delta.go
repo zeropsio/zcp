@@ -4,10 +4,12 @@ import "fmt"
 
 // BuildIterationDelta returns a focused escalating recovery template for deploy iterations.
 // Returns empty for non-deploy steps or iteration == 0.
+// Only the recipe flow's deploy step consumes this today — bootstrap hard-stops
+// on retry (infra verification never iterates).
 // Escalation tiers: 1-2 = diagnose, 3-4 = systematic check, 5 = stop and ask user.
 // defaultMaxIterations=5 caps the session so the STOP tier fires exactly once.
 func BuildIterationDelta(step string, iteration int, _ *ServicePlan, lastAttestation string) string {
-	if step != StepDeploy || iteration == 0 {
+	if step != RecipeStepDeploy || iteration == 0 {
 		return ""
 	}
 	remaining := max(maxIterations()-iteration, 0)

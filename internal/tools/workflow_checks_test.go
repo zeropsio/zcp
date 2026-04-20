@@ -187,76 +187,6 @@ func TestCheckProvision_ObjectStorage_SkipEnvCheck(t *testing.T) {
 	}
 }
 
-func TestCheckDeploy_AllActive_Pass(t *testing.T) {
-	t.Parallel()
-	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: serviceStatusRunning, Ports: []platform.Port{{Port: 3000}}, SubdomainAccess: true},
-		{ID: "s2", Name: "appstage", Status: serviceStatusRunning, Ports: []platform.Port{{Port: 3000}}, SubdomainAccess: true},
-	})
-
-	plan := &workflow.ServicePlan{
-		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
-		}},
-	}
-
-	checker := checkDeploy(mock, nil, "proj-1", nil)
-	result, err := checker(context.Background(), plan, nil)
-	if err != nil {
-		t.Fatalf("checker error: %v", err)
-	}
-	if !result.Passed {
-		t.Errorf("expected pass: %s", result.Summary)
-		for _, c := range result.Checks {
-			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
-		}
-	}
-}
-
-func TestCheckDeploy_BuildFailed_Fail(t *testing.T) {
-	t.Parallel()
-	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: "BUILD_FAILED"},
-	})
-
-	plan := &workflow.ServicePlan{
-		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "simple"},
-		}},
-	}
-
-	checker := checkDeploy(mock, nil, "proj-1", nil)
-	result, err := checker(context.Background(), plan, nil)
-	if err != nil {
-		t.Fatalf("checker error: %v", err)
-	}
-	if result.Passed {
-		t.Error("expected fail for BUILD_FAILED status")
-	}
-}
-
-func TestCheckDeploy_SubdomainNotEnabled_Fail(t *testing.T) {
-	t.Parallel()
-	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: serviceStatusRunning, Ports: []platform.Port{{Port: 3000}}, SubdomainAccess: false},
-	})
-
-	plan := &workflow.ServicePlan{
-		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "simple"},
-		}},
-	}
-
-	checker := checkDeploy(mock, nil, "proj-1", nil)
-	result, err := checker(context.Background(), plan, nil)
-	if err != nil {
-		t.Fatalf("checker error: %v", err)
-	}
-	if result.Passed {
-		t.Error("expected fail for subdomain not enabled")
-	}
-}
-
 func TestCheckProvision_NilPlan_ReturnsNil(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()
@@ -295,13 +225,13 @@ func TestBuildStepChecker_UnknownStep_ReturnsNil(t *testing.T) {
 
 func TestBuildStepChecker_KnownSteps(t *testing.T) {
 	t.Parallel()
+	// Option A: only provision has a checker. Discover and close have no checker;
+	// retry on provision hard-stops and escalates to the user rather than iterating.
 	tests := []struct {
 		step    string
 		wantNil bool
 	}{
 		{"provision", false},
-		{"generate", false},
-		{"deploy", false},
 		{"close", true},
 		{"discover", true},
 		{"unknown", true},
@@ -677,57 +607,6 @@ func TestCheckProvision_DevMode_NoStage_Pass(t *testing.T) {
 	}
 	if !result.Passed {
 		t.Errorf("expected pass for dev mode (no stage): %s", result.Summary)
-		for _, c := range result.Checks {
-			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
-		}
-	}
-}
-
-func TestCheckDeploy_SimpleMode_NoStage_Pass(t *testing.T) {
-	t.Parallel()
-	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: serviceStatusRunning, Ports: []platform.Port{{Port: 8080}}, SubdomainAccess: true},
-	})
-
-	plan := &workflow.ServicePlan{
-		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4", BootstrapMode: "simple"},
-		}},
-	}
-
-	checker := checkDeploy(mock, nil, "proj-1", nil)
-	result, err := checker(context.Background(), plan, nil)
-	if err != nil {
-		t.Fatalf("checker error: %v", err)
-	}
-	if !result.Passed {
-		t.Errorf("expected pass for simple mode deploy (no stage): %s", result.Summary)
-		for _, c := range result.Checks {
-			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
-		}
-	}
-}
-
-func TestCheckDeploy_ExistingRuntime_StageRunning_Pass(t *testing.T) {
-	t.Parallel()
-	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "s1", Name: "appdev", Status: serviceStatusRunning, Ports: []platform.Port{{Port: 3000}}, SubdomainAccess: true},
-		{ID: "s2", Name: "appstage", Status: serviceStatusRunning, Ports: []platform.Port{{Port: 3000}}, SubdomainAccess: true},
-	})
-
-	plan := &workflow.ServicePlan{
-		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: true},
-		}},
-	}
-
-	checker := checkDeploy(mock, nil, "proj-1", nil)
-	result, err := checker(context.Background(), plan, nil)
-	if err != nil {
-		t.Fatalf("checker error: %v", err)
-	}
-	if !result.Passed {
-		t.Errorf("expected pass for existing runtime deploy with stage RUNNING: %s", result.Summary)
 		for _, c := range result.Checks {
 			t.Logf("  %s: %s %s", c.Name, c.Status, c.Detail)
 		}

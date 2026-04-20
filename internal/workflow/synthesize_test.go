@@ -150,6 +150,76 @@ func bodyAfterSub(atom KnowledgeAtom, env StateEnvelope) string {
 	return firstLine(replacer.Replace(atom.Body))
 }
 
+// TestSynthesize_DeployStateFilter covers the never-deployed / deployed axis
+// used by the develop first-deploy branch. An atom that declares
+// deployStates: [never-deployed] must only fire when at least one bootstrapped
+// service has not yet been deployed (no FirstDeployedAt). Deployed-only atoms
+// mirror the inverse for the edit-loop branch.
+func TestSynthesize_DeployStateFilter(t *testing.T) {
+	t.Parallel()
+
+	corpus := []KnowledgeAtom{
+		{
+			ID: "first-deploy-scaffold", Priority: 2,
+			Axes: AxisVector{
+				Phases:       []Phase{PhaseDevelopActive},
+				DeployStates: []DeployState{DeployStateNeverDeployed},
+			},
+			Body: "Scaffold and first deploy.",
+		},
+		{
+			ID: "edit-loop", Priority: 2,
+			Axes: AxisVector{
+				Phases:       []Phase{PhaseDevelopActive},
+				DeployStates: []DeployState{DeployStateDeployed},
+			},
+			Body: "Edit-deploy-verify loop.",
+		},
+	}
+
+	neverDeployed := StateEnvelope{
+		Phase: PhaseDevelopActive,
+		Services: []ServiceSnapshot{{
+			Hostname:     "appdev",
+			RuntimeClass: RuntimeDynamic,
+			Bootstrapped: true,
+			Deployed:     false,
+		}},
+	}
+	got, err := Synthesize(neverDeployed, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize never-deployed: %v", err)
+	}
+	joined := strings.Join(got, "\n---\n")
+	if !strings.Contains(joined, "Scaffold and first deploy.") {
+		t.Errorf("never-deployed envelope: expected first-deploy atom, got: %s", joined)
+	}
+	if strings.Contains(joined, "Edit-deploy-verify loop.") {
+		t.Errorf("never-deployed envelope: edit-loop atom should NOT appear, got: %s", joined)
+	}
+
+	deployed := StateEnvelope{
+		Phase: PhaseDevelopActive,
+		Services: []ServiceSnapshot{{
+			Hostname:     "appdev",
+			RuntimeClass: RuntimeDynamic,
+			Bootstrapped: true,
+			Deployed:     true,
+		}},
+	}
+	got, err = Synthesize(deployed, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize deployed: %v", err)
+	}
+	joined = strings.Join(got, "\n---\n")
+	if !strings.Contains(joined, "Edit-deploy-verify loop.") {
+		t.Errorf("deployed envelope: expected edit-loop atom, got: %s", joined)
+	}
+	if strings.Contains(joined, "Scaffold and first deploy.") {
+		t.Errorf("deployed envelope: first-deploy atom should NOT appear, got: %s", joined)
+	}
+}
+
 func TestSynthesize_PrioritySort(t *testing.T) {
 	t.Parallel()
 

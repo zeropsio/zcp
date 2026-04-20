@@ -1,5 +1,6 @@
-// Tests for buildGuide assembly — iteration-delta short-circuit, atom
-// synthesis per step/mode/route, and post-synthesis env var catalog injection.
+// Tests for buildGuide assembly — iteration hard-stop, atom synthesis per
+// step/mode/route, env-var catalog injection at close, and recipe-import-YAML
+// injection at discover/provision.
 package workflow
 
 import (
@@ -7,31 +8,21 @@ import (
 	"testing"
 )
 
-func TestBuildGuide_IterationDelta_ShortCircuits(t *testing.T) {
+func TestBuildGuide_Iteration_ShortCircuitsToHardStop(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
 	}}
-	// iteration > 0 must produce the delta, not atom synthesis.
-	guide := bs.buildGuide(StepDeploy, 1, EnvContainer, nil)
-	if !strings.Contains(guide, "ITERATION 1") {
-		t.Error("iteration > 0 should yield BuildIterationDelta output, not atom synthesis")
+	// iteration > 0 must produce the hard-stop message, not atom synthesis.
+	// Bootstrap doesn't iterate under Option A — infra verification escalates
+	// to the user rather than retry.
+	guide := bs.buildGuide(StepProvision, 1, EnvContainer, nil)
+	if !strings.Contains(guide, "STOP") {
+		t.Errorf("iteration > 0 should yield hard-stop output, got:\n%s", guide)
 	}
-}
-
-func TestBuildGuide_Generate_Standard_HasNoopStart(t *testing.T) {
-	t.Parallel()
-	bs := NewBootstrapState()
-	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
-	}}
-	guide := bs.buildGuide(StepGenerate, 0, EnvContainer, nil)
-	if guide == "" {
-		t.Fatal("generate guide should not be empty for standard-mode plan")
-	}
-	if !strings.Contains(guide, "zsc noop --silent") {
-		t.Error("standard-mode generate guide should contain 'zsc noop --silent' from bootstrap-generate-standard atom")
+	if !strings.Contains(guide, "does not iterate") {
+		t.Error("hard-stop should explain bootstrap doesn't iterate")
 	}
 }
 
@@ -108,7 +99,7 @@ func TestBuildGuide_Recipe_DiscoverInjectsImportYAMLAndMode(t *testing.T) {
 	}
 }
 
-func TestBuildGuide_Recipe_NonProvisionOrDiscoverStepDoesNotInjectYAML(t *testing.T) {
+func TestBuildGuide_Recipe_CloseDoesNotInjectYAML(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 	bs.Route = BootstrapRouteRecipe
@@ -121,9 +112,9 @@ func TestBuildGuide_Recipe_NonProvisionOrDiscoverStepDoesNotInjectYAML(t *testin
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
 		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4"}},
 	}}
-	guide := bs.buildGuide(StepDeploy, 0, EnvContainer, nil)
+	guide := bs.buildGuide(StepClose, 0, EnvContainer, nil)
 	if strings.Contains(guide, "Recipe import YAML") {
-		t.Error("deploy guide should NOT contain the recipe-import-YAML block (discover+provision only)")
+		t.Error("close guide should NOT contain the recipe-import-YAML block (discover+provision only)")
 	}
 }
 
@@ -140,37 +131,7 @@ func TestBuildGuide_NoRoute_AdoptInferredFromPlan(t *testing.T) {
 	}
 }
 
-func TestBuildGuide_Generate_Simple_HasRealStart(t *testing.T) {
-	t.Parallel()
-	bs := NewBootstrapState()
-	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "app", Type: "nginx@1", BootstrapMode: PlanModeSimple}},
-	}}
-	guide := bs.buildGuide(StepGenerate, 0, EnvContainer, nil)
-	if guide == "" {
-		t.Fatal("generate guide should not be empty for simple-mode plan")
-	}
-	if !strings.Contains(guide, "REAL start command") {
-		t.Error("simple-mode generate guide should contain 'REAL start command' from bootstrap-generate-simple atom")
-	}
-}
-
-func TestBuildGuide_Generate_DevOnly_HasNoopStart(t *testing.T) {
-	t.Parallel()
-	bs := NewBootstrapState()
-	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "worker", Type: "bun@1.2", BootstrapMode: PlanModeDev}},
-	}}
-	guide := bs.buildGuide(StepGenerate, 0, EnvContainer, nil)
-	if guide == "" {
-		t.Fatal("generate guide should not be empty for dev-only-mode plan")
-	}
-	if !strings.Contains(guide, "zsc noop --silent") {
-		t.Error("dev-only-mode generate guide should contain 'zsc noop --silent' from bootstrap-generate-dev atom")
-	}
-}
-
-func TestBuildGuide_Generate_InjectsDiscoveredEnvVars(t *testing.T) {
+func TestBuildGuide_Close_InjectsDiscoveredEnvVars(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
@@ -180,16 +141,18 @@ func TestBuildGuide_Generate_InjectsDiscoveredEnvVars(t *testing.T) {
 	bs.DiscoveredEnvVars = map[string][]string{
 		"db": {"connectionString", "port"},
 	}
-	guide := bs.buildGuide(StepGenerate, 0, EnvContainer, nil)
+	// Env var catalog is injected at close so the develop handoff carries
+	// the authoritative key list across compaction.
+	guide := bs.buildGuide(StepClose, 0, EnvContainer, nil)
 	if !strings.Contains(guide, "Discovered Managed-Service Env Var Catalog") {
-		t.Error("generate guide should contain the dynamic env var catalog when DiscoveredEnvVars is populated")
+		t.Error("close guide should contain the dynamic env var catalog when DiscoveredEnvVars is populated")
 	}
 	if !strings.Contains(guide, "${db_connectionString}") {
-		t.Error("generate guide should contain cross-service env var references")
+		t.Error("close guide should contain cross-service env var references")
 	}
 }
 
-func TestBuildGuide_Deploy_NoEnvVarCatalog(t *testing.T) {
+func TestBuildGuide_Provision_NoEnvVarCatalog(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
@@ -198,10 +161,10 @@ func TestBuildGuide_Deploy_NoEnvVarCatalog(t *testing.T) {
 	bs.DiscoveredEnvVars = map[string][]string{
 		"cache": {"connectionString"},
 	}
-	guide := bs.buildGuide(StepDeploy, 0, EnvContainer, nil)
-	// Env var catalog is injected only at generate — deploy is past that.
+	guide := bs.buildGuide(StepProvision, 0, EnvContainer, nil)
+	// Env var catalog is injected only at close — provision is before discovery completes.
 	if strings.Contains(guide, "${cache_connectionString}") {
-		t.Error("deploy guide should NOT contain env var catalog (generate-only injection)")
+		t.Error("provision guide should NOT contain env var catalog (close-only injection)")
 	}
 }
 
@@ -213,21 +176,6 @@ func TestBuildGuide_Close_EmptyPlan_ReturnsStaticMessage(t *testing.T) {
 	guide := bs.buildGuide(StepClose, 0, EnvContainer, nil)
 	if !strings.Contains(guide, "Bootstrap is complete") {
 		t.Error("close step with empty plan should return static closeGuidance")
-	}
-}
-
-func TestBuildGuide_Deploy_Standard_HasStandardAtom(t *testing.T) {
-	t.Parallel()
-	bs := NewBootstrapState()
-	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
-	}}
-	guide := bs.buildGuide(StepDeploy, 0, EnvContainer, nil)
-	if guide == "" {
-		t.Fatal("deploy guide should not be empty for standard-mode plan")
-	}
-	if !strings.Contains(guide, "Standard mode — deploy flow") {
-		t.Error("standard-mode deploy guide should contain the bootstrap-deploy-standard atom body")
 	}
 }
 

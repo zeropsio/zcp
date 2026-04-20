@@ -98,7 +98,9 @@ func ResetSessionByID(stateDir, sessionID string) error {
 	return UnregisterSession(stateDir, sessionID)
 }
 
-// IterateSession resets bootstrap steps and increments the counter.
+// IterateSession increments the iteration counter. Recipe resets its
+// generate/deploy/finalize steps; bootstrap never iterates under Option A
+// (infrastructure verification hard-stops and escalates to the user).
 func IterateSession(stateDir, sessionID string) (*WorkflowState, error) {
 	state, err := LoadSessionByID(stateDir, sessionID)
 	if err != nil {
@@ -106,9 +108,6 @@ func IterateSession(stateDir, sessionID string) (*WorkflowState, error) {
 	}
 
 	state.Iteration++
-	if state.Bootstrap != nil {
-		state.Bootstrap.ResetForIteration()
-	}
 	if state.Recipe != nil {
 		state.Recipe.ResetForIteration()
 	}

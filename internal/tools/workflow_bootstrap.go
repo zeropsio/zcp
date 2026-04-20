@@ -17,7 +17,6 @@ import (
 // stackSteps are the steps where the stack catalog is useful.
 var stackSteps = map[string]bool{
 	workflow.StepDiscover: true,
-	workflow.StepGenerate: true,
 }
 
 // needsStacks returns true if stacks should be populated for the response.

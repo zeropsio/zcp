@@ -30,24 +30,18 @@ func checksAllPassed(checks []workflow.StepCheck) bool {
 
 const (
 	stepProvision     = "provision"
-	stepGenerate      = "generate"
-	stepDeploy        = "deploy"
 	statusFail        = "fail"
 	statusPass        = "pass"
 	statusHealthy     = "healthy"
 	defaultSkipReason = "skipped by user"
 )
 
-func buildStepChecker(step string, client platform.Client, fetcher platform.LogFetcher, projectID string, httpClient ops.HTTPDoer, engine *workflow.Engine, stateDir string) workflow.StepChecker {
-	switch step {
-	case stepProvision:
+func buildStepChecker(step string, client platform.Client, _ platform.LogFetcher, projectID string, _ ops.HTTPDoer, engine *workflow.Engine, _ string) workflow.StepChecker {
+	if step == stepProvision {
 		return checkProvision(client, projectID, engine)
-	case stepGenerate:
-		return checkGenerate(stateDir)
-	case stepDeploy:
-		return checkDeploy(client, fetcher, projectID, httpClient)
 	}
-	// close step has nil checker (administrative trigger).
+	// discover and close steps have nil checkers (attestation-only triggers
+	// under Option A — bootstrap owns infra provisioning, not deploy).
 	return nil
 }
 
@@ -160,91 +154,6 @@ func checkProvision(client platform.Client, projectID string, engine *workflow.E
 	}
 }
 
-// checkDeploy validates deployment: full health via VerifyAll + subdomain access.
-func checkDeploy(client platform.Client, fetcher platform.LogFetcher, projectID string, httpClient ops.HTTPDoer) workflow.StepChecker {
-	return func(ctx context.Context, plan *workflow.ServicePlan, _ *workflow.BootstrapState) (*workflow.StepCheckResult, error) {
-		if plan == nil || len(plan.Targets) == 0 {
-			return nil, nil
-		}
-
-		// Build set of plan target hostnames.
-		planHostnames := make(map[string]bool)
-		for _, target := range plan.Targets {
-			planHostnames[target.Runtime.DevHostname] = true
-			if stage := target.Runtime.StageHostname(); stage != "" {
-				planHostnames[stage] = true
-			}
-			for _, dep := range target.Dependencies {
-				planHostnames[dep.Hostname] = true
-			}
-		}
-
-		var checks []workflow.StepCheck
-		allPassed := true
-
-		// 1. Full health verification via VerifyAll (HTTP, logs, startup).
-		result, err := ops.VerifyAll(ctx, client, fetcher, httpClient, projectID)
-		if err != nil {
-			return nil, fmt.Errorf("verify all: %w", err)
-		}
-		for _, svc := range result.Services {
-			if !planHostnames[svc.Hostname] {
-				continue
-			}
-			status := statusPass
-			if svc.Status == ops.StatusUnhealthy {
-				status = statusFail
-				allPassed = false
-			}
-			checks = append(checks, workflow.StepCheck{
-				Name:   svc.Hostname + "_health",
-				Status: status,
-				Detail: svc.Status,
-			})
-		}
-
-		// 2. Subdomain access for runtime services with ports.
-		services, err := client.ListServices(ctx, projectID)
-		if err != nil {
-			return nil, fmt.Errorf("list services: %w", err)
-		}
-		svcMap := make(map[string]platform.ServiceStack, len(services))
-		for _, svc := range services {
-			svcMap[svc.Name] = svc
-		}
-		for _, target := range plan.Targets {
-			for _, hostname := range targetHostnames(target) {
-				svc, exists := svcMap[hostname]
-				if exists && len(svc.Ports) > 0 && !svc.SubdomainAccess {
-					checks = append(checks, workflow.StepCheck{
-						Name:   hostname + "_subdomain",
-						Status: statusFail,
-						Detail: "subdomain access not enabled — call zerops_subdomain action=enable",
-					})
-					allPassed = false
-				} else if exists && len(svc.Ports) > 0 && svc.SubdomainAccess {
-					checks = append(checks, workflow.StepCheck{
-						Name:   hostname + "_subdomain",
-						Status: statusPass,
-					})
-				}
-			}
-		}
-
-		// v8.97 Fix 4: stamp surface-derived coupling.
-		checks = workflow.StampCoupling(checks)
-		summary := "all services deployed and healthy"
-		if !allPassed {
-			summary = "deployment or health check incomplete"
-		}
-		return &workflow.StepCheckResult{
-			Passed:  allPassed,
-			Checks:  checks,
-			Summary: summary,
-		}, nil
-	}
-}
-
 // checkServiceRunning checks a service exists and is running (RUNNING or ACTIVE).
 func checkServiceRunning(svcMap map[string]platform.ServiceStack, hostname string) []workflow.StepCheck {
 	return checkServiceStatusAny(svcMap, hostname, serviceStatusRunning, serviceStatusActive)
@@ -288,15 +197,6 @@ func checkServiceType(svcMap map[string]platform.ServiceStack, hostname, expecte
 		Status: statusFail,
 		Detail: fmt.Sprintf("expected %s, got %s", expectedType, actual),
 	}}
-}
-
-// targetHostnames returns all runtime hostnames (dev + stage) for a target.
-func targetHostnames(target workflow.BootstrapTarget) []string {
-	hostnames := []string{target.Runtime.DevHostname}
-	if stage := target.Runtime.StageHostname(); stage != "" {
-		hostnames = append(hostnames, stage)
-	}
-	return hostnames
 }
 
 // isManagedNonStorage returns true for managed services that are NOT storage types.

@@ -34,6 +34,22 @@ const (
 	IdleEmpty        IdleScenario = "empty"        // no user services at all
 	IdleBootstrapped IdleScenario = "bootstrapped" // at least one bootstrapped service
 	IdleAdopt        IdleScenario = "adopt"        // only unmanaged runtimes, none bootstrapped
+	// IdleIncomplete fires when at least one ServiceMeta is incomplete AND
+	// carries a non-empty BootstrapSession — a prior bootstrap session that
+	// was interrupted before writing BootstrappedAt. Resume takes priority
+	// over adopt because ZCP already owns the service slot via that session.
+	IdleIncomplete IdleScenario = "incomplete"
+)
+
+// DeployState marks a bootstrapped service's deploy progression. The
+// develop workflow branches on this: never-deployed services enter the
+// first-deploy branch (scaffold + write + first deploy + stamp FirstDeployedAt);
+// deployed services run the normal edit-loop branch.
+type DeployState string
+
+const (
+	DeployStateNeverDeployed DeployState = "never-deployed"
+	DeployStateDeployed      DeployState = "deployed"
 )
 
 // Phase enumerates the lifecycle states the envelope can describe.
@@ -67,6 +83,8 @@ type ServiceSnapshot struct {
 	RuntimeClass  RuntimeClass   `json:"runtimeClass"`
 	Status        string         `json:"status"`
 	Bootstrapped  bool           `json:"bootstrapped"`
+	Deployed      bool           `json:"deployed,omitempty"`
+	Resumable     bool           `json:"resumable,omitempty"`
 	Mode          Mode           `json:"mode,omitempty"`
 	Strategy      DeployStrategy `json:"strategy,omitempty"`
 	StageHostname string         `json:"stageHostname,omitempty"`

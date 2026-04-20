@@ -113,17 +113,26 @@ func ComputeEnvelope(
 	}, nil
 }
 
-// deriveIdleScenario classifies the idle phase into one of three sub-cases
+// deriveIdleScenario classifies the idle phase into one of four sub-cases
 // based on service composition. Returns "" for non-idle phases. Partitions
 // services the same way planIdle does: managed services don't count toward
-// either bucket (they are data stores, not deploy targets).
+// any bucket (they are data stores, not deploy targets).
+//
+// Priority: incomplete > bootstrapped > adopt > empty. Incomplete wins
+// because a ServiceMeta tagged to a prior session signals an interrupted
+// bootstrap — resuming is the only clean recovery path, and atoms gated on
+// this scenario surface the resume option before anything else.
 func deriveIdleScenario(phase Phase, services []ServiceSnapshot) IdleScenario {
 	if phase != PhaseIdle {
 		return ""
 	}
-	var bootstrapped, adoptable int
+	var bootstrapped, adoptable, resumable int
 	for _, svc := range services {
 		if svc.RuntimeClass == RuntimeManaged {
+			continue
+		}
+		if svc.Resumable {
+			resumable++
 			continue
 		}
 		if svc.Bootstrapped {
@@ -131,6 +140,9 @@ func deriveIdleScenario(phase Phase, services []ServiceSnapshot) IdleScenario {
 			continue
 		}
 		adoptable++
+	}
+	if resumable > 0 {
+		return IdleIncomplete
 	}
 	if bootstrapped > 0 {
 		return IdleBootstrapped
@@ -220,6 +232,7 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta) ServiceSnaps
 	}
 	if meta != nil && meta.IsComplete() {
 		snap.Bootstrapped = true
+		snap.Deployed = meta.IsDeployed()
 		snap.Mode = resolveEnvelopeMode(meta, svc.Name)
 		snap.Strategy = DeployStrategy(meta.EffectiveStrategy())
 		if snap.Strategy == "" {
@@ -228,6 +241,13 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta) ServiceSnaps
 		if meta.StageHostname != "" && svc.Name == meta.Hostname {
 			snap.StageHostname = meta.StageHostname
 		}
+	}
+	// Incomplete meta with BootstrapSession tag = resumable. Fires even when
+	// Bootstrapped == false because the session already owns this slot; any
+	// downstream workflow choosing "adopt" would clash with the in-flight
+	// session's metadata.
+	if meta != nil && !meta.IsComplete() && meta.BootstrapSession != "" {
+		snap.Resumable = true
 	}
 	return snap
 }

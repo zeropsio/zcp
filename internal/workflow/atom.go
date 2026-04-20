@@ -29,6 +29,7 @@ type AxisVector struct {
 	Routes        []BootstrapRoute
 	Steps         []string
 	IdleScenarios []IdleScenario
+	DeployStates  []DeployState
 }
 
 // ParseAtom parses a `.md` file body containing YAML frontmatter and a
@@ -58,6 +59,7 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 			Routes:        parseRoutes(fields["routes"]),
 			Steps:         parseYAMLList(fields["steps"]),
 			IdleScenarios: parseIdleScenarios(fields["idleScenarios"]),
+			DeployStates:  parseDeployStates(fields["deployStates"]),
 		},
 	}
 	if atom.ID == "" {
@@ -202,6 +204,15 @@ func parseIdleScenarios(raw string) []IdleScenario {
 	out := make([]IdleScenario, 0, len(values))
 	for _, v := range values {
 		out = append(out, IdleScenario(v))
+	}
+	return out
+}
+
+func parseDeployStates(raw string) []DeployState {
+	values := parseYAMLList(raw)
+	out := make([]DeployState, 0, len(values))
+	for _, v := range values {
+		out = append(out, DeployState(v))
 	}
 	return out
 }

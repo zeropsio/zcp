@@ -3,7 +3,6 @@ id: bootstrap-provision-local
 priority: 2
 phases: [bootstrap-active]
 environments: [local]
-routes: [classic]
 steps: [provision]
 title: "Bootstrap — local-mode provision addendum"
 ---

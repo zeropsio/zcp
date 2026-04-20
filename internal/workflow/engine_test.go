@@ -397,8 +397,8 @@ func TestEngine_BootstrapStart_Success(t *testing.T) {
 	if resp.Intent != "bun + postgres" {
 		t.Errorf("Intent mismatch")
 	}
-	if resp.Progress.Total != 5 {
-		t.Errorf("Total: want 5, got %d", resp.Progress.Total)
+	if resp.Progress.Total != 3 {
+		t.Errorf("Total: want 3, got %d", resp.Progress.Total)
 	}
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil")
@@ -439,8 +439,11 @@ func TestEngine_BootstrapStart_RecipeRoute(t *testing.T) {
 	}
 	eng := NewEngine(dir, EnvLocal, store)
 
-	if _, err := eng.BootstrapStart("proj-1", "Build a Laravel weather dashboard"); err != nil {
-		t.Fatalf("BootstrapStart: %v", err)
+	// Under the discovery+commit split, recipe is committed only when the
+	// LLM explicitly picks it. BootstrapStartWithRoute resolves the slug
+	// against the corpus and pre-populates RecipeMatch on state.
+	if _, err := eng.BootstrapStartWithRoute("proj-1", "Build a Laravel weather dashboard", BootstrapRouteRecipe, "laravel-minimal"); err != nil {
+		t.Fatalf("BootstrapStartWithRoute: %v", err)
 	}
 	state, err := eng.GetState()
 	if err != nil {
@@ -454,6 +457,53 @@ func TestEngine_BootstrapStart_RecipeRoute(t *testing.T) {
 	}
 	if state.Bootstrap.RecipeMatch == nil || state.Bootstrap.RecipeMatch.Slug != "laravel-minimal" {
 		t.Errorf("recipe match: got %+v", state.Bootstrap.RecipeMatch)
+	}
+}
+
+// TestEngine_BootstrapStartWithRoute_UnknownSlug_NoSessionLeak verifies the
+// fail-fast guard: when the LLM picks a recipe slug that the corpus doesn't
+// know (typo, stale context, retired recipe), the engine must error BEFORE
+// creating a session. Otherwise an orphan session file persists and blocks
+// future bootstrap attempts until a manual reset.
+func TestEngine_BootstrapStartWithRoute_UnknownSlug_NoSessionLeak(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	docs := map[string]*knowledge.Document{
+		"zerops://recipes/laravel-minimal": {
+			URI:        "zerops://recipes/laravel-minimal",
+			Languages:  []string{"php"},
+			Frameworks: []string{"laravel"},
+			ImportYAML: "services:\n  - hostname: app\n    type: php-nginx@8.4\n",
+		},
+	}
+	store, _ := knowledge.NewStore(docs)
+	eng := NewEngine(dir, EnvLocal, store)
+
+	_, err := eng.BootstrapStartWithRoute("proj-1", "laravel", BootstrapRouteRecipe, "not-a-real-recipe")
+	if err == nil {
+		t.Fatal("expected error for unknown slug")
+	}
+	if !strings.Contains(err.Error(), "unknown slug") {
+		t.Errorf("error should name 'unknown slug': got %q", err.Error())
+	}
+
+	// Critical invariant: no session was created. The registry and on-disk
+	// state must be empty so the next bootstrap call succeeds immediately.
+	sessions, lsErr := eng.ListActiveSessions()
+	if lsErr != nil {
+		t.Fatalf("ListActiveSessions: %v", lsErr)
+	}
+	if len(sessions) != 0 {
+		t.Errorf("session leaked after failed recipe lookup: %+v", sessions)
+	}
+	if eng.HasActiveSession() {
+		t.Error("engine reports active session after failed recipe lookup")
+	}
+
+	// Follow-up: a subsequent valid start must succeed without needing reset.
+	if _, err := eng.BootstrapStartWithRoute("proj-1", "laravel retry", BootstrapRouteRecipe, "laravel-minimal"); err != nil {
+		t.Fatalf("follow-up start after failed lookup: %v (session leak blocked retry)", err)
 	}
 }
 
@@ -472,12 +522,15 @@ func TestEngine_BootstrapStart_ClassicRouteWhenNoRecipeMatch(t *testing.T) {
 	store, _ := knowledge.NewStore(docs)
 	eng := NewEngine(dir, EnvLocal, store)
 
+	// BootstrapStart (no route) commits classic by default — no auto-recipe
+	// detection anymore. Even when the intent has framework keywords, classic
+	// is the default until the LLM picks differently.
 	if _, err := eng.BootstrapStart("proj-1", "weather dashboard without a framework keyword"); err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 	state, _ := eng.GetState()
 	if state.Bootstrap.Route == BootstrapRouteRecipe {
-		t.Errorf("route should not be recipe when intent has no keyword match, got %q", state.Bootstrap.Route)
+		t.Errorf("route should not be recipe on default BootstrapStart, got %q", state.Bootstrap.Route)
 	}
 }
 
@@ -537,7 +590,7 @@ func TestEngine_BootstrapComplete_FullSequence(t *testing.T) {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
 
-	steps := []string{"provision", "generate", "deploy", "close"}
+	steps := []string{"provision", "close"}
 	for _, step := range steps {
 		var err error
 		resp, err = eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" completed ok", nil)
@@ -550,8 +603,8 @@ func TestEngine_BootstrapComplete_FullSequence(t *testing.T) {
 	if resp.Current != nil {
 		t.Error("Current should be nil after all steps")
 	}
-	if resp.Progress.Completed != 5 {
-		t.Errorf("Completed: want 5, got %d", resp.Progress.Completed)
+	if resp.Progress.Completed != 3 {
+		t.Errorf("Completed: want 3, got %d", resp.Progress.Completed)
 	}
 
 	// Session should be unregistered (completed sessions are immediately cleaned up).
@@ -584,7 +637,7 @@ func TestEngine_BootstrapComplete_AdoptionFastPath(t *testing.T) {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
 
-	// Complete provision — should auto-complete generate, deploy, close.
+	// Complete provision — should auto-complete close (adoption fast-path).
 	resp, err := eng.BootstrapComplete(context.Background(), "provision", "All services exist and are running", nil)
 	if err != nil {
 		t.Fatalf("BootstrapComplete(provision): %v", err)
@@ -594,8 +647,8 @@ func TestEngine_BootstrapComplete_AdoptionFastPath(t *testing.T) {
 	if resp.Current != nil {
 		t.Errorf("Current should be nil (bootstrap done), got step %q", resp.Current.Name)
 	}
-	if resp.Progress.Completed != 5 {
-		t.Errorf("Completed: want 5, got %d", resp.Progress.Completed)
+	if resp.Progress.Completed != 3 {
+		t.Errorf("Completed: want 3, got %d", resp.Progress.Completed)
 	}
 
 	// Session should be cleaned up.
@@ -655,12 +708,12 @@ func TestEngine_BootstrapComplete_AdoptionFastPath_MixedPlan_NoSkip(t *testing.T
 		t.Fatalf("BootstrapComplete(provision): %v", err)
 	}
 
-	// Should advance to generate, NOT auto-complete.
+	// Should advance to close, NOT auto-complete (fast-path requires all-existing plan).
 	if resp.Current == nil {
 		t.Fatal("Current should not be nil — mixed plan must not fast-path")
 	}
-	if resp.Current.Name != "generate" {
-		t.Errorf("Current.Name: want generate, got %s", resp.Current.Name)
+	if resp.Current.Name != "close" {
+		t.Errorf("Current.Name: want close, got %s", resp.Current.Name)
 	}
 }
 
@@ -673,7 +726,7 @@ func TestEngine_BootstrapSkip_Success(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	// Complete discover with empty plan (managed-only, allows skipping generate).
+	// Complete discover with empty plan (managed-only, allows skipping close).
 	if _, err := eng.BootstrapCompletePlan([]BootstrapTarget{}, nil, nil); err != nil {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
@@ -683,16 +736,14 @@ func TestEngine_BootstrapSkip_Success(t *testing.T) {
 		t.Fatalf("BootstrapComplete(provision): %v", err)
 	}
 
-	// Skip generate (skippable step).
-	resp, err := eng.BootstrapSkip("generate", "no runtime services")
+	// Skip close (skippable step when plan has no runtime services).
+	resp, err := eng.BootstrapSkip("close", "managed-only bootstrap, no metas to write")
 	if err != nil {
 		t.Fatalf("BootstrapSkip: %v", err)
 	}
-	if resp.Current == nil {
-		t.Fatal("Current should not be nil")
-	}
-	if resp.Current.Name != "deploy" {
-		t.Errorf("Current.Name: want deploy, got %s", resp.Current.Name)
+	// After skipping the final step, bootstrap is done — Current is nil.
+	if resp.Current != nil {
+		t.Errorf("Current should be nil after skipping close, got step %q", resp.Current.Name)
 	}
 }
 
@@ -759,8 +810,8 @@ func TestEngine_BootstrapStatus_WithAttestations(t *testing.T) {
 		t.Fatalf("BootstrapStatus: %v", err)
 	}
 
-	if len(resp.Progress.Steps) != 5 {
-		t.Fatalf("Steps count: want 5, got %d", len(resp.Progress.Steps))
+	if len(resp.Progress.Steps) != 3 {
+		t.Fatalf("Steps count: want 3, got %d", len(resp.Progress.Steps))
 	}
 	if resp.Progress.Steps[0].Status != "complete" {
 		t.Errorf("step[0].Status: want complete, got %s", resp.Progress.Steps[0].Status)
@@ -886,9 +937,9 @@ func TestEngine_BootstrapCompletePlan_RecipeModeDeviation(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, store)
 
-	// Intent triggers recipe match on laravel-minimal (standard mode).
-	if _, err := eng.BootstrapStart("proj-1", "Laravel weather dashboard"); err != nil {
-		t.Fatalf("BootstrapStart: %v", err)
+	// LLM explicitly picks recipe=laravel-minimal (standard mode per import YAML).
+	if _, err := eng.BootstrapStartWithRoute("proj-1", "Laravel weather dashboard", BootstrapRouteRecipe, "laravel-minimal"); err != nil {
+		t.Fatalf("BootstrapStartWithRoute: %v", err)
 	}
 
 	// Deviating plan: single runtime in simple mode.
@@ -924,8 +975,9 @@ func TestEngine_BootstrapCompletePlan_RecipeModeMatches(t *testing.T) {
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, store)
 
-	if _, err := eng.BootstrapStart("proj-1", "Laravel weather dashboard"); err != nil {
-		t.Fatalf("BootstrapStart: %v", err)
+	// LLM picks recipe=laravel-minimal explicitly.
+	if _, err := eng.BootstrapStartWithRoute("proj-1", "Laravel weather dashboard", BootstrapRouteRecipe, "laravel-minimal"); err != nil {
+		t.Fatalf("BootstrapStartWithRoute: %v", err)
 	}
 
 	// Matching plan: standard mode.
@@ -1434,7 +1486,7 @@ func TestEngine_BootstrapComplete_DeletesSessionFile(t *testing.T) {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
 
-	steps := []string{"provision", "generate", "deploy", "close"}
+	steps := []string{"provision", "close"}
 	for _, step := range steps {
 		if _, err := eng.BootstrapComplete(context.Background(), step, "step completed successfully", nil); err != nil {
 			t.Fatalf("BootstrapComplete(%s): %v", step, err)
@@ -1489,8 +1541,8 @@ func TestBootstrapComplete_PlanNilCheck_NonDiscoverSteps(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 
-	// Manually advance to generate step (skip discover+provision)
-	// This simulates a scenario where bootstrap state exists but no plan has been submitted
+	// Manually advance to close step (skip discover+provision), but leave Plan nil
+	// so the Plan-nil gate should trip on non-discover step completion.
 	st, err := e.GetState()
 	if err != nil {
 		t.Fatalf("GetState: %v", err)
@@ -1499,7 +1551,7 @@ func TestBootstrapComplete_PlanNilCheck_NonDiscoverSteps(t *testing.T) {
 		t.Fatal("Bootstrap should be initialized")
 	}
 
-	// Manually set CurrentStep to generate (index 2)
+	// Manually set CurrentStep to close (index 2).
 	st.Bootstrap.CurrentStep = 2
 	for i := range 2 {
 		st.Bootstrap.Steps[i].Status = stepComplete
@@ -1511,10 +1563,10 @@ func TestBootstrapComplete_PlanNilCheck_NonDiscoverSteps(t *testing.T) {
 		t.Fatalf("saveSessionState: %v", err)
 	}
 
-	// Try to complete generate without a plan — should fail
-	_, err = e.BootstrapComplete(ctx, "generate", "Tried to complete generate without plan", nil)
+	// Try to complete close without a plan — should fail.
+	_, err = e.BootstrapComplete(ctx, "close", "Tried to complete close without plan", nil)
 
-	// Expect error because Plan is nil for non-discover step
+	// Expect error because Plan is nil for non-discover step.
 	if err == nil {
 		t.Error("BootstrapComplete should fail when Plan is nil for non-discover steps")
 	}
@@ -1536,11 +1588,9 @@ func TestEngine_BootstrapComplete_CleanupWarningInResponse(t *testing.T) {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
 
-	// Complete provision, generate, deploy.
-	for _, step := range []string{"provision", "generate", "deploy"} {
-		if _, err := eng.BootstrapComplete(context.Background(), step, "step completed successfully", nil); err != nil {
-			t.Fatalf("BootstrapComplete(%s): %v", step, err)
-		}
+	// Complete provision only (the last pre-close step in Option A).
+	if _, err := eng.BootstrapComplete(context.Background(), "provision", "step completed successfully", nil); err != nil {
+		t.Fatalf("BootstrapComplete(provision): %v", err)
 	}
 
 	// Make session dir read-only so ResetSessionByID fails on file removal.

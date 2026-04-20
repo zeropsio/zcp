@@ -93,6 +93,9 @@ func atomMatches(atom KnowledgeAtom, env StateEnvelope) bool {
 	if len(atom.Axes.Runtimes) > 0 && !anyServiceRuntime(env.Services, atom.Axes.Runtimes) {
 		return false
 	}
+	if len(atom.Axes.DeployStates) > 0 && !anyServiceDeployState(env.Services, atom.Axes.DeployStates) {
+		return false
+	}
 
 	// IdleScenario is idle-only like routes/steps are bootstrap-only. An atom
 	// that declares idleScenarios filters out non-idle envelopes entirely and
@@ -142,6 +145,26 @@ func anyServiceStrategy(services []ServiceSnapshot, set []DeployStrategy) bool {
 func anyServiceRuntime(services []ServiceSnapshot, set []RuntimeClass) bool {
 	for _, svc := range services {
 		if slices.Contains(set, svc.RuntimeClass) {
+			return true
+		}
+	}
+	return false
+}
+
+// anyServiceDeployState matches only bootstrapped services. Non-bootstrapped
+// services have no tracked deploy state — filtering them in would incorrectly
+// surface first-deploy atoms on pure-adoption services that bootstrap never
+// touched.
+func anyServiceDeployState(services []ServiceSnapshot, set []DeployState) bool {
+	for _, svc := range services {
+		if !svc.Bootstrapped {
+			continue
+		}
+		state := DeployStateNeverDeployed
+		if svc.Deployed {
+			state = DeployStateDeployed
+		}
+		if slices.Contains(set, state) {
 			return true
 		}
 	}

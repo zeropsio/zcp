@@ -60,6 +60,17 @@ type BootstrapResponse struct {
 	AutoMounts      []AutoMountInfo    `json:"autoMounts,omitempty"`
 }
 
+// BootstrapDiscoveryResponse is returned from BootstrapDiscover. Discovery
+// does not create a session — it inspects project state and returns a ranked
+// list of route options for the LLM to pick from. The session is only
+// committed when the LLM follows up with an explicit `route` parameter.
+type BootstrapDiscoveryResponse struct {
+	Intent       string                 `json:"intent,omitempty"`
+	ProjectID    string                 `json:"projectId"`
+	RouteOptions []BootstrapRouteOption `json:"routeOptions"`
+	Message      string                 `json:"message"`
+}
+
 // AutoMountInfo reports the result of auto-mounting a service after provision.
 type AutoMountInfo struct {
 	Hostname  string `json:"hostname"`
@@ -98,7 +109,7 @@ type BootstrapStepInfo struct {
 	PlanMode      string       `json:"planMode,omitempty"` // "standard" or "simple", set after plan submission
 }
 
-// NewBootstrapState creates a new bootstrap state with all 5 steps pending.
+// NewBootstrapState creates a new bootstrap state with all steps pending.
 func NewBootstrapState() *BootstrapState {
 	steps := make([]BootstrapStep, len(stepDetails))
 	for i, d := range stepDetails {
@@ -109,29 +120,6 @@ func NewBootstrapState() *BootstrapState {
 		CurrentStep: 0,
 		Steps:       steps,
 	}
-}
-
-// ResetForIteration resets generate+deploy steps for a new iteration cycle.
-// Preserves: discover, provision, close, Plan, ServiceMetas.
-// Close is administrative — not retried on iteration.
-func (b *BootstrapState) ResetForIteration() {
-	if b == nil {
-		return
-	}
-	firstReset := -1
-	for i := range b.Steps {
-		if b.Steps[i].Name == stepGenerate || b.Steps[i].Name == stepDeploy {
-			b.Steps[i] = BootstrapStep{Name: b.Steps[i].Name, Status: stepPending}
-			if firstReset < 0 {
-				firstReset = i
-			}
-		}
-	}
-	if firstReset >= 0 {
-		b.CurrentStep = firstReset
-		b.Steps[firstReset].Status = stepInProgress
-	}
-	b.Active = true
 }
 
 // CurrentStepName returns the name of the current step, or empty if done.
@@ -148,13 +136,6 @@ const (
 	stepInProgress = "in_progress"
 	stepComplete   = "complete"
 	stepSkipped    = "skipped"
-)
-
-// Step name constants for conditional skip validation.
-const (
-	stepGenerate = "generate"
-	stepDeploy   = "deploy"
-	stepClose    = "close"
 )
 
 const minAttestationLen = 10
@@ -326,13 +307,13 @@ func (b *BootstrapState) PlanMode() string {
 }
 
 // validateSkip checks whether a step can be skipped given the current plan.
-// discover/provision are always mandatory. generate/deploy/close are skippable
-// when there are no runtime targets (managed-only) or all targets are adopted (pure adoption).
+// discover/provision are always mandatory. close is skippable when there are
+// no runtime targets (managed-only) or all targets are adopted (pure adoption).
 func validateSkip(plan *ServicePlan, name string) error {
 	switch name {
 	case StepDiscover, StepProvision:
 		return fmt.Errorf("skip step: %q is mandatory and cannot be skipped", name)
-	case stepGenerate, stepDeploy, stepClose:
+	case StepClose:
 		if plan != nil && len(plan.Targets) > 0 && !plan.IsAllExisting() {
 			return fmt.Errorf("skip step: cannot skip %q — runtime services in plan require it", name)
 		}
