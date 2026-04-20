@@ -455,6 +455,95 @@ services:
 	}
 }
 
+func TestValidateImportYAML_PreprocessorDirectivePlacement(t *testing.T) {
+	t.Parallel()
+
+	// Zerops honours the preprocessor directive ONLY on line 1. A mid-file
+	// occurrence (comment block, trailing note) leaves the preprocessor off
+	// and `<@...>` expressions import verbatim. These cases pin that the
+	// check matches platform behaviour — not a looser strings.Contains.
+	tests := []struct {
+		name    string
+		content string
+		wantOK  bool
+	}{
+		{
+			name: "directive on line 1 with <@ usage",
+			content: `#zeropsPreprocessor=on
+project:
+  name: test-dev
+  envVariables:
+    APP_KEY: <@generateRandomString(<32>)>
+services:
+  - hostname: app
+    type: bun@1
+`,
+			wantOK: true,
+		},
+		{
+			name: "directive missing — <@ used",
+			content: `project:
+  name: test-dev
+  envVariables:
+    APP_KEY: <@generateRandomString(<32>)>
+services:
+  - hostname: app
+    type: bun@1
+`,
+			wantOK: false,
+		},
+		{
+			name: "directive in mid-file comment — platform ignores, check must fail",
+			content: `project:
+  name: test-dev
+  envVariables:
+    # note: #zeropsPreprocessor=on would go here
+    APP_KEY: <@generateRandomString(<32>)>
+services:
+  - hostname: app
+    type: bun@1
+`,
+			wantOK: false,
+		},
+		{
+			name: "directive on line 2 (after blank line) — platform ignores, check must fail",
+			content: `
+#zeropsPreprocessor=on
+project:
+  name: test-dev
+  envVariables:
+    APP_KEY: <@generateRandomString(<32>)>
+services:
+  - hostname: app
+    type: bun@1
+`,
+			wantOK: false,
+		},
+	}
+
+	plan := testFinalizePlan()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			checks := validateImportYAML(tt.content, plan, 0, "test")
+			var found *workflow.StepCheck
+			for i := range checks {
+				if strings.HasSuffix(checks[i].Name, "_preprocessor") {
+					found = &checks[i]
+					break
+				}
+			}
+			if found == nil {
+				t.Fatalf("expected _preprocessor check to be present")
+			}
+			passed := found.Status == statusPass
+			if passed != tt.wantOK {
+				t.Errorf("preprocessor check passed=%v, want %v (detail=%q)", passed, tt.wantOK, found.Detail)
+			}
+		})
+	}
+}
+
 func TestCheckRecipeFinalize_CommentRatio(t *testing.T) {
 	t.Parallel()
 

@@ -296,14 +296,17 @@ func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int,
 	// leave the literal "<@generateRandomString(<32>)>" string in the env var
 	// instead of generating a random value.
 	if strings.Contains(content, "<@") {
-		if strings.Contains(content, "zeropsPreprocessor=on") {
+		// Zerops honours the directive ONLY on line 1 — anywhere else (mid-file
+		// comment, trailing line) the preprocessor stays off and `<@...>`
+		// expressions import verbatim. `strings.Contains` would mask that.
+		if strings.HasPrefix(content, "#zeropsPreprocessor=on\n") {
 			checks = append(checks, workflow.StepCheck{
 				Name: prefix + "_preprocessor", Status: statusPass,
 			})
 		} else {
 			checks = append(checks, workflow.StepCheck{
 				Name: prefix + "_preprocessor", Status: statusFail,
-				Detail: "#zeropsPreprocessor=on required at the top of import.yaml when using <@...> preprocessor functions (generateRandomString, etc). Without the directive the literal <@...> string is imported verbatim instead of being expanded.",
+				Detail: "#zeropsPreprocessor=on must be the very first line of import.yaml when using <@...> preprocessor functions (generateRandomString, etc). The platform reads the directive only on line 1; anywhere else the literal <@...> string is imported verbatim instead of being expanded.",
 			})
 		}
 	}
