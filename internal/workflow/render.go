@@ -173,6 +173,10 @@ func indentLines(body, indent string) string {
 // Alternatives markers — the fix for D6 where three bullets were rendered
 // without priority. The tokens (▸, ◦, ·) are chosen for visual hierarchy:
 // filled triangle = primary, open circle = secondary, dot = alternative.
+//
+// The Per service: section renders only when len(PerService) > 1 — a single
+// service is already named in Primary, so a duplicate row would waste tokens.
+// Hostnames are sorted so the output is deterministic across calls.
 func renderPlan(b *strings.Builder, plan *Plan) {
 	if plan == nil || plan.Primary.IsZero() {
 		return
@@ -181,6 +185,17 @@ func renderPlan(b *strings.Builder, plan *Plan) {
 	fmt.Fprintf(b, "  ▸ Primary: %s\n", formatAction(plan.Primary))
 	if plan.Secondary != nil && !plan.Secondary.IsZero() {
 		fmt.Fprintf(b, "  ◦ Secondary: %s\n", formatAction(*plan.Secondary))
+	}
+	if len(plan.PerService) > 1 {
+		hosts := make([]string, 0, len(plan.PerService))
+		for host := range plan.PerService {
+			hosts = append(hosts, host)
+		}
+		sort.Strings(hosts)
+		fmt.Fprintln(b, "  · Per service:")
+		for _, host := range hosts {
+			fmt.Fprintf(b, "      - %s: %s\n", host, formatAction(plan.PerService[host]))
+		}
 	}
 	if len(plan.Alternatives) > 0 {
 		fmt.Fprintln(b, "  · Alternatives:")

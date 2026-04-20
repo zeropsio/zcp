@@ -233,4 +233,83 @@ func TestRenderStatus_DevelopActivePhaseLineShowsIntent(t *testing.T) {
 	}
 }
 
+// TestRenderStatus_PerServiceMultiEmitsSection pins the multi-service render
+// contract: when len(PerService) > 1 the `Per service:` block lists every
+// hostname alphabetically.
+func TestRenderStatus_PerServiceMultiEmitsSection(t *testing.T) {
+	t.Parallel()
+
+	plan := &Plan{
+		Primary: NextAction{
+			Label: "Deploy apidev",
+			Tool:  "zerops_deploy",
+			Args:  map[string]string{"hostname": "apidev"},
+		},
+		PerService: map[string]NextAction{
+			"apidev": {
+				Label: "Deploy apidev",
+				Tool:  "zerops_deploy",
+				Args:  map[string]string{"hostname": "apidev"},
+			},
+			"webdev": {
+				Label: "Verify webdev",
+				Tool:  "zerops_verify",
+				Args:  map[string]string{"hostname": "webdev"},
+			},
+		},
+	}
+	out := RenderStatus(Response{
+		Envelope: StateEnvelope{Phase: PhaseDevelopActive},
+		Plan:     plan,
+	})
+	if !strings.Contains(out, "Per service:") {
+		t.Errorf("missing Per service: section:\n%s", out)
+	}
+	// Hostnames must appear in sorted order (apidev before webdev).
+	api := strings.Index(out, "- apidev:")
+	web := strings.Index(out, "- webdev:")
+	if api < 0 || web < 0 {
+		t.Fatalf("per-service rows missing:\n%s", out)
+	}
+	if api >= web {
+		t.Errorf("per-service rows out of order — apidev=%d webdev=%d", api, web)
+	}
+	// Each row carries the tool + hostname arg.
+	if !strings.Contains(out, `zerops_deploy hostname="apidev"`) {
+		t.Errorf("apidev row missing deploy args:\n%s", out)
+	}
+	if !strings.Contains(out, `zerops_verify hostname="webdev"`) {
+		t.Errorf("webdev row missing verify args:\n%s", out)
+	}
+}
+
+// TestRenderStatus_PerServiceSingleOmitsSection pins the "single service =
+// redundant" rule: one entry in PerService already lives in Primary, so the
+// section is suppressed.
+func TestRenderStatus_PerServiceSingleOmitsSection(t *testing.T) {
+	t.Parallel()
+
+	plan := &Plan{
+		Primary: NextAction{
+			Label: "Deploy appdev",
+			Tool:  "zerops_deploy",
+			Args:  map[string]string{"hostname": "appdev"},
+		},
+		PerService: map[string]NextAction{
+			"appdev": {
+				Label: "Deploy appdev",
+				Tool:  "zerops_deploy",
+				Args:  map[string]string{"hostname": "appdev"},
+			},
+		},
+	}
+	out := RenderStatus(Response{
+		Envelope: StateEnvelope{Phase: PhaseDevelopActive},
+		Plan:     plan,
+	})
+	if strings.Contains(out, "Per service:") {
+		t.Errorf("single-service Plan should not emit Per service: section:\n%s", out)
+	}
+}
+
 func timePtr(t time.Time) *time.Time { return &t }

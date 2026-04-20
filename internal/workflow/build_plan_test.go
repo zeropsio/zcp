@@ -214,3 +214,122 @@ func TestBuildPlan_DeterministicByHostnameOrder(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildPlan_PerServicePopulatedMultiScope pins the per-service breakdown
+// that the render layer shows under `Per service:`. All services have pending
+// work → the map carries one entry per hostname.
+func TestBuildPlan_PerServicePopulatedMultiScope(t *testing.T) {
+	t.Parallel()
+
+	env := planEnvelope(PhaseDevelopActive)
+	env.WorkSession = &WorkSessionSummary{
+		Intent:   "ship multi-service",
+		Services: []string{"apidev", "webdev"},
+		Deploys: map[string][]AttemptInfo{
+			"apidev": {{Success: true, Iteration: 1}},
+		},
+		// webdev has no deploy yet → deploy action
+		// apidev has deploy ok, no verify → verify action
+	}
+	plan := BuildPlan(env)
+	if len(plan.PerService) != 2 {
+		t.Fatalf("PerService = %d entries, want 2: %+v", len(plan.PerService), plan.PerService)
+	}
+	if plan.PerService["apidev"].Tool != "zerops_verify" {
+		t.Errorf("apidev PerService tool = %q, want zerops_verify", plan.PerService["apidev"].Tool)
+	}
+	if plan.PerService["webdev"].Tool != "zerops_deploy" {
+		t.Errorf("webdev PerService tool = %q, want zerops_deploy", plan.PerService["webdev"].Tool)
+	}
+}
+
+// TestBuildPlan_PerServiceSkipsGreen pins the "green services are excluded"
+// rule: a fully deployed+verified service does not appear in PerService.
+// The remaining pending service still surfaces.
+func TestBuildPlan_PerServiceSkipsGreen(t *testing.T) {
+	t.Parallel()
+
+	env := planEnvelope(PhaseDevelopActive)
+	env.WorkSession = &WorkSessionSummary{
+		Intent:   "mixed",
+		Services: []string{"apidev", "webdev"},
+		Deploys: map[string][]AttemptInfo{
+			"apidev": {{Success: true, Iteration: 1}},
+		},
+		Verifies: map[string][]AttemptInfo{
+			"apidev": {{Success: true, Iteration: 1}},
+		},
+	}
+	plan := BuildPlan(env)
+	if _, ok := plan.PerService["apidev"]; ok {
+		t.Error("green service apidev must be excluded from PerService")
+	}
+	if plan.PerService["webdev"].Tool != "zerops_deploy" {
+		t.Errorf("webdev tool = %q, want zerops_deploy", plan.PerService["webdev"].Tool)
+	}
+}
+
+// TestBuildPlan_PerServiceSingleServiceStillPopulated asserts the map is
+// populated even for a single-service scope — the render layer decides
+// whether to emit the section based on len > 1. Keeping BuildPlan uniform
+// lets renderers or JSON consumers inspect per-service state directly.
+func TestBuildPlan_PerServiceSingleServiceStillPopulated(t *testing.T) {
+	t.Parallel()
+
+	env := planEnvelope(PhaseDevelopActive)
+	env.WorkSession = &WorkSessionSummary{
+		Intent:   "solo",
+		Services: []string{"appdev"},
+	}
+	plan := BuildPlan(env)
+	if len(plan.PerService) != 1 {
+		t.Fatalf("PerService = %d entries, want 1: %+v", len(plan.PerService), plan.PerService)
+	}
+	if plan.PerService["appdev"].Tool != "zerops_deploy" {
+		t.Errorf("appdev PerService tool = %q, want zerops_deploy", plan.PerService["appdev"].Tool)
+	}
+}
+
+// TestBuildPlan_PerServiceNilWhenAllGreen pins the close-suggest branch:
+// once every scope service is green, BuildPlan recommends close and
+// PerService is nil (no pending work).
+func TestBuildPlan_PerServiceNilWhenAllGreen(t *testing.T) {
+	t.Parallel()
+
+	env := planEnvelope(PhaseDevelopActive)
+	env.WorkSession = &WorkSessionSummary{
+		Intent:   "done",
+		Services: []string{"appdev"},
+		Deploys: map[string][]AttemptInfo{
+			"appdev": {{Success: true}},
+		},
+		Verifies: map[string][]AttemptInfo{
+			"appdev": {{Success: true}},
+		},
+	}
+	plan := BuildPlan(env)
+	if plan.PerService != nil {
+		t.Errorf("PerService should be nil when all services are green, got %+v", plan.PerService)
+	}
+	if plan.Primary.Args["action"] != "close" {
+		t.Errorf("primary action = %q, want close", plan.Primary.Args["action"])
+	}
+}
+
+// TestBuildPlan_PerServiceNilOutsideDevelopActive pins the scope: only the
+// develop-active branch populates PerService. Other phases (idle, closed-auto,
+// bootstrap) leave the field nil.
+func TestBuildPlan_PerServiceNilOutsideDevelopActive(t *testing.T) {
+	t.Parallel()
+
+	phases := []Phase{PhaseIdle, PhaseDevelopClosed, PhaseBootstrapActive, PhaseRecipeActive}
+	for _, p := range phases {
+		t.Run(string(p), func(t *testing.T) {
+			t.Parallel()
+			plan := BuildPlan(planEnvelope(p))
+			if plan.PerService != nil {
+				t.Errorf("phase %s: PerService = %+v, want nil", p, plan.PerService)
+			}
+		})
+	}
+}

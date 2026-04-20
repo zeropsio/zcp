@@ -65,12 +65,17 @@ func planDevelopClosed() Plan {
 // verify gaps because deploy is the prerequisite for verify; both branches
 // already handle failed-last-attempt (they key off `!attempts[last].Success`),
 // so a service whose last run failed surfaces as a deploy or verify target.
+//
+// PerService is populated alongside the Primary so multi-service scopes get a
+// per-hostname breakdown in the status output. Green services are omitted —
+// the map carries only pending work.
 func planDevelopActive(env StateEnvelope) Plan {
+	perService := perServiceDevelopActions(env)
 	if host := firstServiceNeedingDeploy(env); host != "" {
-		return Plan{Primary: deployAction(host)}
+		return Plan{Primary: deployAction(host), PerService: perService}
 	}
 	if host := firstServiceNeedingVerify(env); host != "" {
-		return Plan{Primary: verifyAction(host)}
+		return Plan{Primary: verifyAction(host), PerService: perService}
 	}
 	// Every service deployed + verified but the session isn't auto-closed:
 	// this can happen when EvaluateAutoClose sees a mixed attempt history.
@@ -83,6 +88,40 @@ func planDevelopActive(env StateEnvelope) Plan {
 			Rationale: "All scope services are deployed and verified.",
 		},
 	}
+}
+
+// perServiceDevelopActions returns a map from hostname → next action for
+// every service in the work-session scope that still has pending work.
+// Same rules as the Primary dispatch but applied to every service:
+//   - last deploy missing or unsuccessful → deploy action
+//   - deploy ok + last verify missing or unsuccessful → verify action
+//   - all green → omitted (the Primary close branch subsumes this)
+//
+// Returns nil when there is no work session or the map would be empty, so
+// downstream renderers can treat absence as "single-service or all-green".
+func perServiceDevelopActions(env StateEnvelope) map[string]NextAction {
+	if env.WorkSession == nil || len(env.WorkSession.Services) == 0 {
+		return nil
+	}
+	out := make(map[string]NextAction, len(env.WorkSession.Services))
+	for _, host := range env.WorkSession.Services {
+		deploys := env.WorkSession.Deploys[host]
+		if len(deploys) == 0 || !deploys[len(deploys)-1].Success {
+			out[host] = deployAction(host)
+			continue
+		}
+		verifies := env.WorkSession.Verifies[host]
+		if len(verifies) == 0 || !verifies[len(verifies)-1].Success {
+			out[host] = verifyAction(host)
+			continue
+		}
+		// Green: skip. The primary close branch handles "all green"; listing
+		// done services in PerService would only waste tokens.
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // planBootstrapActive points at action=iterate with bootstrap workflow — the
