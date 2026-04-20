@@ -143,6 +143,99 @@ func TestFactsLog_AllTypesAccepted(t *testing.T) {
 	}
 }
 
+// TestFactsLog_AllScopesAccepted — v8.96 Theme B invariant. The four valid
+// scopes ("" = legacy content-only default, "content", "downstream", "both")
+// must round-trip through AppendFact without rejection. C-0 substrate pin:
+// any future commit that tightens or expands the enum must update this test
+// deliberately.
+func TestFactsLog_AllScopesAccepted(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "all-scopes.jsonl")
+	scopes := []string{
+		"", // legacy default — treated as content-only per v8.96 comment
+		FactScopeContent,
+		FactScopeDownstream,
+		FactScopeBoth,
+	}
+	for _, sc := range scopes {
+		if err := AppendFact(path, FactRecord{
+			Type:  FactTypeVerifiedBehavior,
+			Title: "scope=" + sc,
+			Scope: sc,
+		}); err != nil {
+			t.Errorf("scope %q rejected: %v", sc, err)
+		}
+	}
+	got, err := ReadFacts(path)
+	if err != nil {
+		t.Fatalf("ReadFacts: %v", err)
+	}
+	if len(got) != len(scopes) {
+		t.Fatalf("want %d records, got %d", len(scopes), len(got))
+	}
+	for i, rec := range got {
+		if rec.Scope != scopes[i] {
+			t.Errorf("record[%d] Scope=%q, want %q", i, rec.Scope, scopes[i])
+		}
+	}
+}
+
+// TestFactsLog_RejectsUnknownScope — v8.96 Theme B invariant. A typo'd
+// scope (e.g. "downsteam") must return a validation error naming the valid
+// values. Silent acceptance would cause downstream-scope facts to default
+// to content-lane-only routing, invisibly starving downstream sub-agents.
+func TestFactsLog_RejectsUnknownScope(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scope-typo.jsonl")
+	err := AppendFact(path, FactRecord{
+		Type:  FactTypeGotchaCandidate,
+		Title: "typo guard",
+		Scope: "downsteam", // deliberate typo — missing the 'r'
+	})
+	if err == nil {
+		t.Fatal("expected rejection for typo'd scope value")
+	}
+	if !strings.Contains(err.Error(), "unknown scope") {
+		t.Errorf("error should name the problem: %v", err)
+	}
+	// Helpful message must enumerate the valid values so a caller can
+	// self-correct without reading source.
+	for _, want := range []string{"content", "downstream", "both"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should name valid value %q: %v", want, err)
+		}
+	}
+}
+
+// TestFactsLog_ScopeRoundTrip — v8.96 Theme B invariant. The Scope field
+// must survive marshal + unmarshal through the jsonl write/read cycle.
+// Guards against accidental `json:"-"` or rename regression.
+func TestFactsLog_ScopeRoundTrip(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "scope-rt.jsonl")
+	rec := FactRecord{
+		Type:  FactTypeCrossCodebaseContract,
+		Title: "DB_PASS naming",
+		Scope: FactScopeDownstream,
+	}
+	if err := AppendFact(path, rec); err != nil {
+		t.Fatalf("AppendFact: %v", err)
+	}
+	got, err := ReadFacts(path)
+	if err != nil {
+		t.Fatalf("ReadFacts: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 record, got %d", len(got))
+	}
+	if got[0].Scope != FactScopeDownstream {
+		t.Errorf("Scope round-trip lost value: got %q, want %q", got[0].Scope, FactScopeDownstream)
+	}
+}
+
 func TestFactsLog_JSONLFormat(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
