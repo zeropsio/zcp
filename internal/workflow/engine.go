@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/knowledge"
@@ -12,6 +13,23 @@ import (
 )
 
 // Engine orchestrates the workflow lifecycle.
+//
+// Concurrency model: zcp runs as a STDIO subprocess of a single Claude
+// Code instance, so each Engine has exactly one client. Multiple Claude
+// Code instances run separate zcp subprocesses with separate Engines;
+// cross-process serialization on the state directory is provided by the
+// registry flock in session_registry.go. Within a single process, the
+// MCP go-sdk dispatches tool calls asynchronously (jsonrpc2.Async), so
+// parallel tool_use blocks in one LLM turn land on concurrent goroutines
+// — but the LLM serializes its own calls and the realistic race damage
+// is a stale read that the next call corrects. The only operation that
+// genuinely crashes Go on concurrent access is map read/write, so
+// knowledgeCache uses sync.Map. Session state is load-mutate-save via
+// atomic rename; torn reads are not possible and the worst concurrent-
+// write outcome is a superseded state file that `reset` clears.
+//
+// Immutable fields (stateDir, environment, knowledge, recipeCorpus) are
+// set in NewEngine and never mutated afterwards.
 type Engine struct {
 	stateDir       string
 	sessionID      string
@@ -19,10 +37,10 @@ type Engine struct {
 	environment    Environment
 	knowledge      knowledge.Provider
 	// knowledgeCache caches zerops_knowledge query results for the session
-	// lifetime. Knowledge store content doesn't change within a session, so
-	// caching by query key avoids redundant searches (e.g. cancelled parallel
-	// calls retried by Claude Code).
-	knowledgeCache map[string]any
+	// lifetime. sync.Map because concurrent map read+write would panic the
+	// runtime; the other Engine fields tolerate the rare parallel tool_use
+	// race without corruption.
+	knowledgeCache sync.Map
 	// recipeCorpus drives BootstrapRoute selection when intent matches a
 	// viable recipe. Populated when NewEngine receives a concrete
 	// *knowledge.Store (production); nil for test engines using only a
@@ -85,7 +103,7 @@ func (e *Engine) setSessionID(id string) {
 // clearSessionID clears the in-memory session reference.
 func (e *Engine) clearSessionID() {
 	e.sessionID = ""
-	e.knowledgeCache = nil
+	e.knowledgeCache = sync.Map{}
 }
 
 // KnowledgeProvider returns the knowledge provider this engine was
@@ -103,11 +121,10 @@ func (e *Engine) KnowledgeProvider() knowledge.Provider {
 
 // GetKnowledgeCache returns a cached knowledge result, or (nil, false) if absent.
 func (e *Engine) GetKnowledgeCache(key string) (any, bool) {
-	if e == nil || e.knowledgeCache == nil {
+	if e == nil {
 		return nil, false
 	}
-	v, ok := e.knowledgeCache[key]
-	return v, ok
+	return e.knowledgeCache.Load(key)
 }
 
 // SetKnowledgeCache stores a knowledge result in the session-level cache.
@@ -115,10 +132,7 @@ func (e *Engine) SetKnowledgeCache(key string, value any) {
 	if e == nil {
 		return
 	}
-	if e.knowledgeCache == nil {
-		e.knowledgeCache = make(map[string]any)
-	}
-	e.knowledgeCache[key] = value
+	e.knowledgeCache.Store(key, value)
 }
 
 // claimSession takes ownership of a session: updates PID, saves state, updates registry.
@@ -232,6 +246,8 @@ func (e *Engine) StateDir() string {
 }
 
 // ListActiveSessions returns all active sessions from the registry.
+// Registry access is synchronized via flock inside ListSessions; the
+// Engine holds no in-memory state for this operation.
 func (e *Engine) ListActiveSessions() ([]SessionEntry, error) {
 	return ListSessions(e.stateDir)
 }
@@ -271,6 +287,11 @@ func (e *Engine) BootstrapStart(projectID, intent string) (*BootstrapResponse, e
 // Step advancement depends on checker results, not attestation content.
 // If checker is nil or passes, step advances. If checker fails, step stays
 // and the agent receives the failure details to fix and retry.
+//
+// The checker may call back into Engine methods (e.g. StoreDiscoveredEnvVars
+// during provision); that's safe because Engine holds no mutex. State
+// mutations after the checker pick up any writes the checker made via the
+// on-disk session file reload pattern used elsewhere in this package.
 func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attestation string, checker StepChecker) (*BootstrapResponse, error) {
 	state, err := e.loadState()
 	if err != nil {
@@ -292,12 +313,23 @@ func (e *Engine) BootstrapComplete(ctx context.Context, stepName string, attesta
 			return nil, fmt.Errorf("step check: %w", checkErr)
 		}
 		if result != nil && !result.Passed {
+			// Reload: checker may have persisted discovered env vars.
+			state, err = e.loadState()
+			if err != nil {
+				return nil, fmt.Errorf("bootstrap complete reload: %w", err)
+			}
 			resp := state.Bootstrap.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge)
 			resp.CheckResult = result
 			resp.Message = fmt.Sprintf("Step %q: %s — fix issues and retry", stepName, result.Summary)
 			return resp, nil
 		}
 		checkResult = result
+
+		// Reload after successful check — checker may have persisted env vars.
+		state, err = e.loadState()
+		if err != nil {
+			return nil, fmt.Errorf("bootstrap complete reload: %w", err)
+		}
 	}
 
 	if err := state.Bootstrap.CompleteStep(stepName, attestation); err != nil {
