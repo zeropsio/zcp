@@ -259,6 +259,71 @@ func developCoverageFixtures() []coverageFixture {
 				`action="close"`,
 			},
 		},
+		{
+			// First-deploy branch on a standard pair: the promote-stage atom
+			// fires so the agent cross-deploys after dev verify and both halves
+			// land before auto-close can fire.
+			Name: "develop_first_deploy_standard_container",
+			Envelope: StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{
+					{
+						Hostname: "appdev", TypeVersion: "nodejs@22",
+						RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+						StageHostname: "appstage",
+						Strategy:      StrategyUnset, Bootstrapped: true, Deployed: false,
+					},
+					{
+						Hostname: "appstage", TypeVersion: "nodejs@22",
+						RuntimeClass: RuntimeDynamic, Mode: ModeStage,
+						Strategy: StrategyUnset, Bootstrapped: true, Deployed: false,
+					},
+				},
+			},
+			MustContain: []string{
+				"first-deploy branch",
+				"Promote the first deploy to stage",
+				`sourceService="appdev"`,
+				`targetService="appstage"`,
+			},
+		},
+		{
+			// Local+dev push-dev: close-push-dev-local fills the gap left by
+			// close-push-dev-dev's environments=[container] restriction.
+			Name: "develop_close_local_dev",
+			Envelope: StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Environment: EnvLocal,
+				Services: []ServiceSnapshot{{
+					Hostname: "appdev", TypeVersion: "nodejs@22",
+					RuntimeClass: RuntimeDynamic, Mode: ModeDev,
+					Strategy: StrategyPushDev, Bootstrapped: true, Deployed: true,
+				}},
+			},
+			MustContain: []string{
+				"Closing the task (local)",
+				`zerops_deploy targetService="appdev"`,
+			},
+		},
+		{
+			// Local+standard push-dev: the snapshot's Mode=ModeStage (per
+			// resolveEnvelopeMode). close-push-dev-local must still fire.
+			Name: "develop_close_local_standard",
+			Envelope: StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Environment: EnvLocal,
+				Services: []ServiceSnapshot{{
+					Hostname: "appstage", TypeVersion: "nodejs@22",
+					RuntimeClass: RuntimeDynamic, Mode: ModeStage,
+					Strategy: StrategyPushDev, Bootstrapped: true, Deployed: true,
+				}},
+			},
+			MustContain: []string{
+				"Closing the task (local)",
+				`zerops_deploy targetService="appstage"`,
+			},
+		},
 	}
 }
 
