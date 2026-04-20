@@ -9,10 +9,14 @@ import (
 
 // TestCloseSection_BothSubStepsAlwaysAutonomous — v8.97 Fix 2 bar.
 // The rewritten close section must contain the literal "always autonomous"
-// so the agent cannot interpret either sub-step as user-gated. It must NOT
-// contain the abandoned framings ("user-gated", "Group VERIFY", "Group
-// PUBLISH") that earlier drafts tried and v31/v32 reinterpreted in opposite
-// directions.
+// so the agent cannot interpret either SUB-STEP as user-gated. It must
+// NOT use the abandoned sub-step framings ("Group VERIFY" / "Group
+// PUBLISH") that earlier drafts tried and v31/v32 reinterpreted.
+//
+// v8.103: "user-gated" is allowed in the close section because the
+// post-workflow export + publish CLI commands ARE user-gated — that's
+// a different scope than the two sub-steps. The Fix 2 concern was
+// specifically sub-step ambiguity, not the phrase itself.
 func TestCloseSection_BothSubStepsAlwaysAutonomous(t *testing.T) {
 	t.Parallel()
 
@@ -21,13 +25,12 @@ func TestCloseSection_BothSubStepsAlwaysAutonomous(t *testing.T) {
 		t.Errorf("close section must contain literal \"always autonomous\" (Fix 2 calibration guard)")
 	}
 	forbidden := []string{
-		"user-gated",
 		"Group VERIFY",
 		"Group PUBLISH",
 	}
 	for _, phrase := range forbidden {
 		if strings.Contains(body, phrase) {
-			t.Errorf("close section must NOT contain %q — old framing that v31/v32 reinterpreted", phrase)
+			t.Errorf("close section must NOT contain %q — old sub-step framing that v31/v32 reinterpreted", phrase)
 		}
 	}
 }
@@ -84,20 +87,51 @@ func TestCloseSection_NoPublishAsSubStep(t *testing.T) {
 	}
 }
 
+// TestCloseSection_SingleCanonicalOutputLocation — v8.103.
+// Observed in the wild: after close, the agent created a parallel
+// `/var/www/recipe-{slug}/` directory with paraphrased env folder
+// names alongside the correct `/var/www/zcprecipator/{slug}/`. Nothing
+// in recipe.md ever suggested the parallel dir — pure agent invention.
+// Fix: close section explicitly declares the single canonical output
+// location and forbids duplicates.
+func TestCloseSection_SingleCanonicalOutputLocation(t *testing.T) {
+	t.Parallel()
+
+	body := sectionContent(t, "close")
+	if !strings.Contains(body, "zcprecipator/{slug}/") {
+		t.Error("close section must name the canonical output location `{projectRoot}/zcprecipator/{slug}/`")
+	}
+	if !strings.Contains(body, "Do NOT create a parallel directory") {
+		t.Error("close section must forbid parallel output directories (v8.103 — agent-invented `recipe-{slug}/` duplicates observed in the wild)")
+	}
+}
+
+// TestCloseSection_PostCompletionCommandsUserGated — v8.103.
+// The close section must declare both export and publish as user-gated.
+// v8.98 Fix B framed export as autonomous — user objected, v8.103
+// reverted. Regression guard against "Run it autonomously" wording.
+func TestCloseSection_PostCompletionCommandsUserGated(t *testing.T) {
+	t.Parallel()
+
+	body := sectionContent(t, "close")
+	if strings.Contains(body, "Run it autonomously") {
+		t.Error("close section must NOT instruct autonomous export (v8.103 regression guard)")
+	}
+	if !strings.Contains(body, "strictly user-gated") {
+		t.Error("close section must declare post-workflow commands as strictly user-gated")
+	}
+}
+
 // TestDetailedGuide_CloseStepUnambiguous — v8.97 Fix 2. The guidance string
 // the agent actually receives at close-step transition must contain the
-// "always autonomous" calibration and must NOT contain the abandoned
-// user-gated framing. This exercises the live extraction path (buildGuide
-// → resolveRecipeGuidance → ExtractSection) to catch regressions where the
-// section content is correct in source but the extractor mis-reads it.
+// "always autonomous" calibration for the close SUB-STEPS. (v8.103:
+// "user-gated" is allowed in the section prose because it's used to
+// describe the post-workflow export/publish commands, a different scope.)
 func TestDetailedGuide_CloseStepUnambiguous(t *testing.T) {
 	t.Parallel()
 
 	body := sectionContent(t, "close")
 	if !strings.Contains(body, "always autonomous") {
 		t.Errorf("close-step detailedGuide must contain \"always autonomous\"")
-	}
-	if strings.Contains(body, "user-gated") {
-		t.Errorf("close-step detailedGuide must NOT contain \"user-gated\" (Fix 2 bar)")
 	}
 }

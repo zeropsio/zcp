@@ -2974,7 +2974,8 @@ Run both every time. v32 asked the user "should I run the review?" and when no r
 - Sub-step gate: `zerops_workflow action="complete" step="close"` requires both `substep="code-review"` AND `substep="close-browser-walk"` attestations. Missing either → server-side rejection.
 - Browser walk is main agent only — never delegate to a sub-agent.
 - Do NOT dispatch `zerops_browser` calls from the code-review sub-agent (proven to fork-exhaust the parent).
-- After close completes, the workflow response includes `postCompletion.nextSteps[0]` — the `zcp sync recipe export` command. Run it autonomously (the server-side close gate passes; export succeeds). `postCompletion.nextSteps[1]` is the publish command; relay it to the user only if they explicitly asked to ship.
+- After close completes, the workflow response includes `postCompletion.nextSteps[]` — reference commands for local export and publish. Both are **strictly user-gated**: do NOT run either unprompted. The workflow is done at close; the user (or their orchestrator) decides whether to archive locally or open a PR. Relay the commands only when the user explicitly asks.
+- The generated recipe tree lives at **exactly one location**: `{projectRoot}/zcprecipator/{slug}/` with the canonical env folder names (`0 — AI Agent`, `1 — Remote (CDE)`, `2 — Local`, `3 — Stage`, `4 — Small Production`, `5 — Highly-available Production`). Do NOT create a parallel directory (`recipe-{slug}/`, `{slug}-output/`, etc.) with paraphrased env names. Do NOT copy or move the tree. The zcprecipator dir IS the deliverable — anything else is invention the publish CLI won't understand.
 
 Publishing (`zcp sync recipe publish <slug> <dir>`) is a separate CLI command the user runs manually when they are ready to open a PR on `zeropsio/recipes`. It is not part of this workflow, not a sub-step, and not something the agent should run unprompted. The workflow response after close completion includes publish instructions the agent can relay to the user.
 
@@ -3125,11 +3126,11 @@ Only after BOTH `substep="code-review"` AND `substep="close-browser-walk"` are a
 
 ### Post-workflow: Export & Publish (CLI only — not a sub-step)
 
-These commands run AFTER the close step is complete. They are not part of the workflow state. The server-side export gate refuses to run unless `step=close` is `complete`, so attempting to export early returns `EXPORT_BLOCKED` with actionable diagnostics.
+These commands run AFTER the close step is complete. **Both are strictly user-gated — do NOT run either unprompted.** Recipe creation ends at close; export and publish are post-workflow CLI operations the user triggers when they want them. The server-side export gate refuses to run before close (returns `EXPORT_BLOCKED` with diagnostics) — but the gate existing does NOT mean the agent should auto-run export once the gate opens.
 
-Publishing is never executed automatically — it opens a PR on `zeropsio/recipes` and runs only when the user explicitly asks. The workflow response after close populates `postCompletion.nextSteps[0]` with the publish command the agent can relay to the user.
+The workflow response after close populates `postCompletion.nextSteps[]` with both commands so the agent can relay either when the user asks. If the user did not ask, say nothing and do nothing.
 
-**Export archive** (for debugging/sharing; runs automatically in the orchestrator after close=complete):
+**Export archive** (for debugging/sharing — only when the user asks):
 
 Single-runtime recipe (one codebase):
 ```

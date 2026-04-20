@@ -3,11 +3,17 @@ package workflow
 import "fmt"
 
 // buildClosePostCompletion returns the post-completion summary and next-steps
-// for the close step. Two entries: export at [0] (autonomous — the agent
-// runs it without asking the user) and publish at [1] (user-gated — relay
-// to the user only when they explicitly asked to ship). v8.98 Fix B gives
-// export a named trigger so it no longer relies on an out-of-scope
-// orchestrator prompt to fire.
+// for the close step. Both entries are STRICTLY user-gated — they are
+// reference commands the agent may relay when asked, never unprompted
+// actions. v8.98 Fix B originally framed export as autonomous; v8.103
+// reverts that: recipe creation ends at close complete, nothing runs
+// after unless the user explicitly asks (export for a local archive,
+// publish for a PR on zeropsio/recipes).
+//
+// The server-side close gate on `zcp sync recipe export` remains — it
+// refuses an early export with a diagnostic — but the gate existing
+// does NOT mean the agent should trigger export. The trigger belongs
+// to the user (or to an orchestrator that the user set up explicitly).
 func buildClosePostCompletion(plan *RecipePlan, outputDir string) (string, []string) {
 	slug := "<slug>"
 	if plan != nil && plan.Slug != "" {
@@ -17,10 +23,10 @@ func buildClosePostCompletion(plan *RecipePlan, outputDir string) (string, []str
 	if outputDir != "" {
 		dir = outputDir
 	}
-	summary := "Recipe verified (code-review + close-browser-walk complete). Next: run export autonomously against the output directory; relay the publish command to the user only if they explicitly asked to ship."
+	summary := "Recipe verified (code-review + close-browser-walk complete). The workflow is done. Do NOT run export or publish unless the user explicitly asks — they are local CLI commands, not workflow steps."
 	nextSteps := []string{
-		fmt.Sprintf("Export the archive now (autonomous, not user-gated): run `zcp sync recipe export %s`. The server-side close gate is satisfied; export will succeed. Include `--include-timeline` if TIMELINE.md is not yet present.", dir),
-		fmt.Sprintf("To publish to zeropsio/recipes: run `zcp sync recipe publish %s %s`. This opens a PR on the recipes repo; relay to the user only when they explicitly asked to ship.", slug, dir),
+		fmt.Sprintf("ON REQUEST ONLY — if the user asks for a local archive: `zcp sync recipe export %s`. Do NOT run unprompted.", dir),
+		fmt.Sprintf("ON REQUEST ONLY — if the user asks to publish to zeropsio/recipes: `zcp sync recipe publish %s %s`. This opens a PR; do NOT run unprompted.", slug, dir),
 	}
 	return summary, nextSteps
 }

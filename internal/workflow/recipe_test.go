@@ -320,9 +320,9 @@ func TestRecipeCloseSubSteps_ExactlyTwoAutonomousSubSteps(t *testing.T) {
 }
 
 // TestHandleComplete_CloseStepReturnsPostCompletionGuidance — v8.97 Fix 2,
-// updated for v8.98 Fix B. The close-completion response populates
+// updated for v8.103. The close-completion response populates
 // PostCompletionSummary and exactly two NextSteps entries: export at [0]
-// (autonomous) and publish at [1] (user-gated).
+// and publish at [1], BOTH strictly user-gated (never auto-run).
 func TestHandleComplete_CloseStepReturnsPostCompletionGuidance(t *testing.T) {
 	t.Parallel()
 
@@ -334,8 +334,6 @@ func TestHandleComplete_CloseStepReturnsPostCompletionGuidance(t *testing.T) {
 	if !strings.Contains(summary, "code-review") || !strings.Contains(summary, "close-browser-walk") {
 		t.Errorf("summary must name both sub-steps; got %q", summary)
 	}
-	// Two NextSteps entries now: export at [0] (autonomous), publish at [1]
-	// (user-gated).
 	if len(nextSteps) != 2 {
 		t.Fatalf("expected exactly 2 NextSteps entries (export + publish), got %d: %+v", len(nextSteps), nextSteps)
 	}
@@ -350,56 +348,60 @@ func TestHandleComplete_CloseStepReturnsPostCompletionGuidance(t *testing.T) {
 	}
 }
 
-// TestHandleComplete_CloseStepPostCompletionHasExportAtZero — v8.98 Fix B.
-// NextSteps[0] names the export CLI command and flags it as autonomous so
-// the agent runs it without asking the user.
-func TestHandleComplete_CloseStepPostCompletionHasExportAtZero(t *testing.T) {
+// TestHandleComplete_CloseStepPostCompletionBothUserGated — v8.103.
+// BOTH NextSteps entries (export at [0], publish at [1]) must be flagged
+// as user-gated with "ON REQUEST ONLY" wording and the explicit "do NOT
+// run unprompted" instruction. v8.98 Fix B originally framed export as
+// autonomous; real usage surfaced the user's objection: the workflow is
+// done at close, nothing runs after unless the user asks.
+func TestHandleComplete_CloseStepPostCompletionBothUserGated(t *testing.T) {
 	t.Parallel()
 
 	plan := &RecipePlan{Slug: "test-showcase", Tier: RecipeTierShowcase}
 	_, nextSteps := buildClosePostCompletion(plan, "/var/www/zcprecipator/test-showcase")
-	if len(nextSteps) == 0 {
-		t.Fatal("expected NextSteps[0] populated")
+	if len(nextSteps) != 2 {
+		t.Fatalf("expected exactly 2 NextSteps entries, got %d", len(nextSteps))
 	}
+
+	// Both entries must name their command AND flag user-gated.
 	if !strings.Contains(nextSteps[0], "zcp sync recipe export") {
 		t.Errorf("NextSteps[0] must name export; got %q", nextSteps[0])
-	}
-	if !strings.Contains(nextSteps[0], "autonomous") {
-		t.Errorf("NextSteps[0] must flag export as autonomous; got %q", nextSteps[0])
-	}
-}
-
-// TestHandleComplete_CloseStepPostCompletionHasPublishAtOne — v8.98 Fix B.
-// NextSteps[1] names the publish CLI command and carries a phrase
-// indicating user-gated intent so the agent only relays when asked.
-func TestHandleComplete_CloseStepPostCompletionHasPublishAtOne(t *testing.T) {
-	t.Parallel()
-
-	plan := &RecipePlan{Slug: "test-showcase", Tier: RecipeTierShowcase}
-	_, nextSteps := buildClosePostCompletion(plan, "/var/www/zcprecipator/test-showcase")
-	if len(nextSteps) < 2 {
-		t.Fatalf("expected NextSteps[1] populated; got %d entries", len(nextSteps))
 	}
 	if !strings.Contains(nextSteps[1], "zcp sync recipe publish") {
 		t.Errorf("NextSteps[1] must name publish; got %q", nextSteps[1])
 	}
-	if !strings.Contains(nextSteps[1], "explicitly asked") {
-		t.Errorf("NextSteps[1] must flag publish as user-gated; got %q", nextSteps[1])
+	for i, step := range nextSteps {
+		if !strings.Contains(step, "ON REQUEST ONLY") {
+			t.Errorf("NextSteps[%d] must flag ON REQUEST ONLY; got %q", i, step)
+		}
+		if !strings.Contains(step, "NOT run unprompted") {
+			t.Errorf("NextSteps[%d] must say \"NOT run unprompted\"; got %q", i, step)
+		}
+		// Regression guard against v8.98 Fix B's autonomous framing.
+		if strings.Contains(step, "autonomous") {
+			t.Errorf("NextSteps[%d] must NOT claim autonomous execution (v8.103 regression guard); got %q", i, step)
+		}
 	}
 }
 
-// TestHandleComplete_CloseStepSummaryDoesNotClaimAutomaticExport — v8.98 Fix B.
-// Regression guard against the v8.97 shipped wording ("Export runs
-// automatically") which suggested something other than the agent runs
-// export. After Fix B, the summary describes export as the agent's
-// autonomous next action, not as something that happens without an agent.
-func TestHandleComplete_CloseStepSummaryDoesNotClaimAutomaticExport(t *testing.T) {
+// TestHandleComplete_CloseStepSummaryHasNoAutomaticClaims — v8.103.
+// The summary must not imply that ANYTHING runs automatically after
+// close — not export, not publish. Regression guard against both the
+// v8.97 "Export runs automatically" wording and v8.98 Fix B's "run
+// export autonomously" instruction. Neither should reappear.
+func TestHandleComplete_CloseStepSummaryHasNoAutomaticClaims(t *testing.T) {
 	t.Parallel()
 
 	plan := &RecipePlan{Slug: "test-showcase", Tier: RecipeTierShowcase}
 	summary, _ := buildClosePostCompletion(plan, "/var/www/zcprecipator/test-showcase")
-	if strings.Contains(summary, "Export runs automatically") {
-		t.Errorf("summary must not carry the v8.97 \"Export runs automatically\" wording (Fix B regression guard); got %q", summary)
+	for _, banned := range []string{"Export runs automatically", "run export autonomously", "autonomously"} {
+		if strings.Contains(summary, banned) {
+			t.Errorf("summary must NOT contain %q — nothing runs after close without user ask (v8.103)", banned)
+		}
+	}
+	// Must explicitly say the user decides.
+	if !strings.Contains(summary, "user explicitly asks") {
+		t.Errorf("summary must name \"user explicitly asks\" as the gate for post-workflow commands; got %q", summary)
 	}
 }
 
