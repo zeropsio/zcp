@@ -632,3 +632,89 @@ Not a gated commit. Next: C-7 (~2 hours with 4-way subagent split on the
 16 check rewrites per rollout-sequence.md §Parallelization). The next
 user-review gate is **pre-C-7.5** (editorial-review role introduction) —
 stop there and report composed briefs against step-4 goldens.
+
+---
+
+## C-7 — Split into sub-commits (C-7a .. C-7e)
+
+**Rationale**: C-7 (16 check rewrites + `zcp check <name>` CLI shim
+surface) is a large structural change that modifies 12 existing
+`workflow_checks_*.go` files, introduces a new `internal/ops/checks/`
+package, and adds a new `cmd/zcp/check/` sub-package. Per
+rollout-sequence.md §Parallelization, the 16-check refactor can be
+"split into 4 sub-commits". Given:
+
+- subagent-parallel dispatch pattern works best when subagents write
+  isolated new files (C-4's 120 atoms), NOT when they modify shared
+  files (every C-7 migration touches a `workflow_checks_*.go` +
+  potentially a shared `cmd/zcp/check/check.go` registry);
+- each sub-commit is independently testable + revertable, preserving
+  the "every commit green" discipline;
+- the CLI shim surface (C-7e) has design questions that benefit from
+  landing after all 16 predicates exist so the shim is a simple thin
+  adapter;
+
+C-7 is split into **five** sub-commits:
+
+| Sub-commit | Scope |
+|---|---|
+| C-7a | scaffold `internal/ops/checks/` package + migrate 4 predicates (env-refs, run-start-build-contract, env-self-shadow, ig-code-adjustment) |
+| C-7b | migrate 4 predicates (ig-per-item-code, comment-specificity, yml-schema, kb-authenticity) |
+| C-7c | migrate 4 predicates (worker-queue-group, worker-shutdown, manifest-honesty, manifest-completeness) |
+| C-7d | migrate 4 predicates (comment-depth, factual-claims, cross-readme-dedup, symbol-contract-env-consistency) |
+| C-7e | add `cmd/zcp/check/` CLI shim sub-package (16 thin adapters + parent dispatcher) + integration test + `cmd/zcp/main.go` wiring |
+
+Each sub-commit: tests + lint green before advancing. No sub-commit
+changes user-observable semantics — predicate bodies move, emission
+shape preserved.
+
+---
+
+## C-7a — Scaffold `internal/ops/checks/` + migrate first 4 predicates
+
+**Status**: green
+
+### What landed
+
+- [`internal/ops/checks/doc.go`](../../internal/ops/checks/doc.go) (27 LoC) — package doc + `StatusPass` / `StatusFail` constants shared across migrated predicates.
+- [`internal/ops/checks/env_refs.go`](../../internal/ops/checks/env_refs.go) (52 LoC) — `CheckEnvRefs(ctx, hostname, entry, discoveredEnvVars, liveHostnames)`. Migrates the inline env-ref block from `checkGenerateEntry`.
+- [`internal/ops/checks/run_start_build_contract.go`](../../internal/ops/checks/run_start_build_contract.go) (58 LoC) — `CheckRunStartBuildContract(ctx, hostname, entry)`. Migrates the inline build-prefix loop from `checkGenerateEntry`; private `buildCommandPrefixes` moved here.
+- [`internal/ops/checks/env_self_shadow.go`](../../internal/ops/checks/env_self_shadow.go) (45 LoC) — `CheckEnvSelfShadow(ctx, hostname, entry)`. Direct port of `checkEnvSelfShadow`.
+- [`internal/ops/checks/ig_code_adjustment.go`](../../internal/ops/checks/ig_code_adjustment.go) (150 LoC) — `CheckIGCodeAdjustment(ctx, content, isShowcase)`. Migrates `checkIntegrationGuideCodeBlocks`; private helpers `codeBlockFenceRe` / `nonYamlCodeLanguages` / `extractFragmentContent` / `uniqueStrings` moved here so the predicate is self-contained (the tool-layer copies stay for now — other not-yet-migrated checks in `workflow_checks_recipe.go` still reference `codeBlockFenceRe` / `extractFragmentContent` / `uniqueStrings`; `nonYamlCodeLanguages` was deleted as unused).
+- Paired tests: 4 files, ~350 LoC total, table-driven per CLAUDE.md seed pattern.
+
+### Tool-layer delegation
+
+- [`workflow_checks_generate.go`](../../internal/tools/workflow_checks_generate.go): `checkGenerateEntry` now receives `ctx` and forwards to `opschecks.CheckEnvRefs` / `opschecks.CheckRunStartBuildContract` / `checkEnvSelfShadow` wrapper. Private `buildCommandPrefixes` deleted.
+- [`workflow_checks_recipe.go`](../../internal/tools/workflow_checks_recipe.go): `checkIntegrationGuideCodeBlocks` is now a 3-line thin wrapper around `opschecks.CheckIGCodeAdjustment`. Unused `nonYamlCodeLanguages` deleted. `codeBlockFenceRe` / `extractFragmentContent` / `uniqueStrings` retained — still referenced by not-yet-migrated `checkIntegrationGuidePerItemCodeBlock` (C-7b target) and other recipe checks.
+- `checkEnvSelfShadow(ctx, hostname, entry)` signature gained a leading `ctx`; both callers (`checkGenerateEntry` in generate.go; dual-entry loop in `checkRecipeGenerateCodebase`) updated.
+- `context.Context` threaded through `checkGenerate` closure → `checkGenerateEntry`, and through `checkRecipeGenerate` / `checkRecipeDeployReadmes` closures → `checkRecipeGenerateCodebase` / `checkCodebaseReadme`. One pre-existing test in `workflow_checks_recipe_test.go` updated to pass `t.Context()` to `checkIntegrationGuideCodeBlocks`.
+
+### Design invariant (reminder for C-7b..d)
+
+The tool-layer function retains its existing signature as a thin wrapper over the `opschecks.Check<Name>(...)` predicate. Callers outside the tools package continue to see the unchanged tool-layer API. The wrapper may adapt plan/state inputs into the predicate's leaner signature, but it does NOT add logic — predicate body lives in `ops/checks` only. C-7e's CLI shim will call the same predicate function; gate and shim share one implementation.
+
+### Verification
+
+- `go test ./... -count=1` — full suite green across 20 packages (including new `internal/ops/checks`).
+- `make lint-local` — 0 issues (after adding ctx threading through `checkGenerateEntry` / `checkRecipeGenerateCodebase` / `checkCodebaseReadme` to silence `contextcheck` and applying `gofmt` to the new test files).
+
+### LoC delta
+
+- New `internal/ops/checks/` package: +692 LoC (4 predicate files + 4 test files + doc.go).
+- `internal/tools/workflow_checks_generate.go`: -30 LoC (inline env-refs block + inline build-contract block + env-self-shadow body collapsed into wrapper + `buildCommandPrefixes` deleted); +5 LoC (ctx threading + delegation calls).
+- `internal/tools/workflow_checks_recipe.go`: -83 LoC (`checkIntegrationGuideCodeBlocks` body collapsed into 3-line wrapper + `nonYamlCodeLanguages` deleted); +3 LoC (ctx threading).
+- **Net**: ~+585 LoC (predicate bodies now in two spots — the new home + thin wrappers — until C-15-era cleanup consolidates).
+
+### Breaks-alone consequence
+
+No user-observable behavior change. Every migrated predicate emits the same StepCheck Name + Status + Detail as before the move. Caller signatures gained leading `ctx context.Context` per existing Go idiom; no field-shape breaks.
+
+### Ordering deps verified
+
+- C-6 ✓ — `opschecks` package hosts the 4 migrated predicates alongside future-C-7e's shared substrate.
+
+### Known follow-ups
+
+- `codeBlockFenceRe` / `extractFragmentContent` / `uniqueStrings` remain duplicated in `internal/tools/workflow_checks_recipe.go` + `internal/ops/checks/ig_code_adjustment.go`. Consolidation happens in C-7b (when ig-per-item-code migrates) or C-15 (when the recipe.md path is deleted).
+- No CLI shim surface yet — thin adapters land in C-7e atop the 16 migrated predicates.

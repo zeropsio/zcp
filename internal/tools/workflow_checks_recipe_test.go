@@ -224,7 +224,7 @@ func TestCheckIntegrationGuideCodeBlocks(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := checkIntegrationGuideCodeBlocks(tt.content, tt.plan)
+			got := checkIntegrationGuideCodeBlocks(t.Context(), tt.content, tt.plan)
 			if len(got) != tt.wantLen {
 				t.Fatalf("checks len = %d, want %d: %+v", len(got), tt.wantLen, got)
 			}
