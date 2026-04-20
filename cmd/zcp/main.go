@@ -74,6 +74,9 @@ func main() {
 		case "check":
 			check.Run(os.Args[2:])
 			return
+		case "dry-run":
+			runDryRun(os.Args[2:])
+			return
 		}
 	}
 
