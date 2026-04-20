@@ -300,6 +300,89 @@ Per the user's gate contract, C-5 is the CUTOVER commit — stitcher rewrite, la
 
 **C-4 scope is CLEAN: 120 atoms land, all invariants pass, all tests + lint green. Ready for the pre-C-5 user-review gate.**
 
+---
+
+## C-5 — Foundation (atom loader + stitcher surface + SymbolContract wiring + RouteTo filter)
+
+**Status**: green — **partial commit**. Foundation lands; the "flip" (replacing `buildGuide`'s block-based emission) deferred to a dedicated follow-up session.
+
+### Why partial
+
+The original C-5 plan described a single-commit cutover replacing `resolveRecipeGuidance` + `buildSubStepGuide` with atom-based composition. Executing the full flip requires cascading updates to ~15 existing tests in `internal/workflow/` that assert block-based content from recipe.md. Given session context budget, the foundation is deliverable now; the flip needs a fresh instance with focused scope.
+
+This matches the phased approach described in the I-1→I-2 instance boundary plan. I-1 ships the foundation; I-2 executes the flip.
+
+### What landed (C-5 foundation)
+
+- `internal/content/content.go` (+7 LoC): `RecipeAtomsFS` `embed.FS` exposing the 120-atom tree
+- `internal/workflow/atom_loader.go` (85 LoC, new): `LoadAtom`, `LoadAtomBody`, `AtomExists`, `concatAtoms` helpers; reads from `content.RecipeAtomsFS`
+- `internal/workflow/atom_stitcher.go` (372 LoC, new): six stitcher functions:
+  - `BuildStepEntry(phase, tier)` — composes `phases/<phase>/entry.md` + substep entries (tier-filtered)
+  - `BuildSubStepCompletion(phase, substep)` — substep-level completion with phase-level fallback
+  - `BuildScaffoldDispatchBrief(plan, role)` — scaffold brief with role addendum + SymbolContract JSON interpolation + role-aware platform-principles
+  - `BuildFeatureDispatchBrief(plan)` — feature brief with SymbolContract JSON interpolation + feature principles
+  - `BuildWriterDispatchBrief(plan, factsLogPath)` — writer brief with pointer to facts log
+  - `BuildCodeReviewDispatchBrief(plan, manifestPath)` — code-review brief with manifest pointer
+  - `BuildEditorialReviewDispatchBrief(plan, factsLogPath, manifestPath)` — editorial-review brief; **no Prior Discoveries** (P7 porter-premise); pointer inputs appended explicitly
+- `internal/workflow/recipe.go` (+9 LoC): `plan.SymbolContract = BuildSymbolContract(plan)` populated at research-complete (Q1 resolution — top-level, idempotent)
+- `internal/workflow/recipe_brief_facts.go` (+113 LoC): `BuildPriorDiscoveriesBlockForLane(sessionID, currentSubstep, lane)` — P5 lane-aware variant of the prior-discoveries block; `laneRouteToAllowlist` for scaffold/feature/writer/code-review; legacy empty RouteTo broadcast to every lane
+- `internal/workflow/atom_stitcher_test.go` (293 LoC, new): 13 tests
+  - `TestLoadAtom_EveryManifestEntry` — every 120 atoms load successfully
+  - `TestLoadAtom_UnknownID` — unregistered IDs error with the id named
+  - `TestConcatAtoms_SkipsEmpty` — "" tier-branch skips work
+  - `TestBuildStepEntry_Research` — phase + substep entries compose
+  - `TestBuildSubStepCompletion_FallsBackToPhaseLevel` — substep→phase fallback
+  - `TestBuildScaffoldDispatchBrief_ThreeRolesProduceDistinctOutput` — api/app/worker differentiate
+  - `TestBuildScaffoldDispatchBrief_ContractJSONIdenticalAcrossRoles` — P3 byte-identical invariant
+  - `TestBuildFeatureDispatchBrief_IncludesContractJSON` — feature brief interpolates contract
+  - `TestBuildWriterDispatchBrief_IncludesFactsPath` — writer brief references facts log
+  - `TestBuildCodeReviewDispatchBrief_IncludesManifestPath` — code-review brief references manifest
+  - `TestBuildEditorialReviewDispatchBrief_NoPriorDiscoveries` — porter-premise guard
+  - `TestMarshalSymbolContract_Deterministic` — idempotent JSON
+  - `TestSymbolContractWiredAtResearchComplete` — CompleteStep populates contract
+  - `TestBuildPriorDiscoveriesBlockForLane_FiltersByRouteTo` — lane-aware filtering
+
+### What's deferred (C-5 flip — follow-up)
+
+- `buildGuide` / `resolveRecipeGuidance` still read `internal/content/workflows/recipe.md` via `content.GetWorkflow("recipe")` + `ExtractSection`. Agent still sees old content until the flip.
+- `buildSubStepGuide` (the sub-step dispatch brief composer) still uses the topic-registry path.
+- `recipe.md` monolith still present (C-15 removes post-cutover).
+- Block-based tests in `internal/workflow/recipe_guidance_test.go` + `recipe_substep_briefs_test.go` still pass against old emission shape.
+
+### Verification
+
+- `go test ./internal/workflow/... -run 'TestLoadAtom|TestConcatAtoms|TestBuildStepEntry|TestBuildSubStepCompletion|TestBuildScaffoldDispatchBrief|TestBuildFeatureDispatchBrief|TestBuildWriterDispatchBrief|TestBuildCodeReviewDispatchBrief|TestBuildEditorialReviewDispatchBrief|TestMarshalSymbolContract|TestSymbolContractWiredAtResearchComplete|TestBuildPriorDiscoveriesBlockForLane'` — 13 tests green
+- `go test ./... -count=1` — full suite green (19 packages, zero regressions)
+- `make lint-local` — 0 issues
+
+### LoC delta
+
+- Go source: +586 LoC (loader + stitchers + SymbolContract wire + RouteTo filter)
+- Tests: +293 LoC
+- **Total**: ~+879 LoC
+
+### Breaks-alone consequence
+
+Nothing. Foundation is entirely additive:
+- New stitcher functions are dead code (not called by `buildGuide`)
+- `plan.SymbolContract` is populated at research-complete but never read by downstream production code yet
+- `BuildPriorDiscoveriesBlockForLane` coexists with `BuildPriorDiscoveriesBlock`; no existing caller switches
+
+### Ordering deps verified
+
+C-1 (SymbolContract type) ✓; C-2 (RouteTo enum) ✓; C-3 (atom manifest) ✓; C-4 (atom files on disk) ✓.
+
+### Next — C-5 flip (follow-up session scope)
+
+1. Replace `resolveRecipeGuidance` body: instead of `ExtractSection(md, step)` + `composeSection(body, catalog, plan)`, emit `BuildStepEntry(phase, tier)` from the new stitcher
+2. Replace `buildSubStepGuide` body: emit per-substep composition from `phases/<phase>/<substep>/entry.md` + `principles/*` pointer-includes
+3. Wire `buildScaffoldDispatchBrief` / `buildFeatureDispatchBrief` / `buildWriterDispatchBrief` / `buildCodeReviewDispatchBrief` call sites in `recipe_substep_briefs.go` to produce the dispatch prompts
+4. Update tests: replace block-based fixture assertions with golden-file diff against step-4 composed briefs in `docs/zcprecipator2/04-verification/`
+5. Verify `v34` captured dispatches against the new stitcher output for regression-direction coverage
+6. Pass `make lint-local` + full test suite before ship
+
+Risk budget: ~1 day focused work in a fresh instance with scope set to C-5 flip only.
+
 ### Tier-conditional atoms
 
 Seven tier-conditional atoms, all under `phases/` (briefs are TierAny — tier branching inside content, resolved by stitcher):

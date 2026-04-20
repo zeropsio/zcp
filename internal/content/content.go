@@ -16,6 +16,13 @@ var workflowFS embed.FS
 //go:embed templates/*
 var templateFS embed.FS
 
+// RecipeAtomsFS exposes the zcprecipator2 atomic content tree under
+// internal/content/workflows/recipe/. Consumed by internal/workflow's
+// atom-loader (C-5). Read-only — callers must not mutate.
+//
+//go:embed all:workflows/recipe
+var RecipeAtomsFS embed.FS
+
 // Workflow files live in an embed.FS, so a "read" is really a copy out of the
 // embed table plus a string() conversion — ~116 KB per call for recipe.md.
 // On a hot path (every zerops_workflow MCP tool invocation, multiplied by

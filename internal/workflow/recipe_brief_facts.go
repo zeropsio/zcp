@@ -47,6 +47,11 @@ type priorDiscoveryRecord struct {
 	FixApplied  string `json:"fixApplied,omitempty"`
 	Evidence    string `json:"evidence,omitempty"`
 	Scope       string `json:"scope,omitempty"`
+	// RouteTo mirrors ops.FactRecord.RouteTo added in C-2. Used by the
+	// C-5 RouteTo filter to narrow prior-discoveries to facts that
+	// specifically target a lane (e.g. writer reads content_* routes;
+	// scaffold reads scaffold_preamble; code-review reads claude_md).
+	RouteTo string `json:"routeTo,omitempty"`
 }
 
 // factLogPathLocal mirrors ops.FactLogPath so the workflow package can
@@ -79,6 +84,130 @@ func BuildPriorDiscoveriesBlock(sessionID, currentSubstep string) string {
 		return ""
 	}
 	return buildPriorDiscoveriesBlockFromPath(factLogPathLocal(sessionID), currentSubstep)
+}
+
+// BuildPriorDiscoveriesBlockForLane is the C-5 P5-aware variant that
+// filters prior discoveries by the target lane. Lane is one of the
+// FactRouteTo* values or empty (accept all RouteTo values, matches
+// the legacy BuildPriorDiscoveriesBlock behavior).
+//
+// Scaffold dispatches pass "scaffold_preamble"; feature dispatches pass
+// "feature_preamble"; writer dispatches pass a special sentinel that
+// accepts every content_* destination; code-review passes "claude_md"
+// + "content_gotcha" + "content_ig". Editorial-review does NOT call
+// this function at all (porter-premise requires fresh-reader stance).
+//
+// Empty lane preserves the pre-C-5 behavior (no routeTo filter). This
+// keeps the follow-up "flip" commit additive — existing callers that
+// pass sessionID without a lane continue to get the Scope-only filter.
+func BuildPriorDiscoveriesBlockForLane(sessionID, currentSubstep, lane string) string {
+	if sessionID == "" {
+		return ""
+	}
+	return buildPriorDiscoveriesBlockFromPathForLane(factLogPathLocal(sessionID), currentSubstep, lane)
+}
+
+// buildPriorDiscoveriesBlockFromPathForLane is the lane-aware variant
+// of buildPriorDiscoveriesBlockFromPath. Lane="" accepts every RouteTo
+// (legacy behavior). Non-empty lane accepts RouteTo in the lane's
+// allow-list (see laneAcceptsRouteTo).
+func buildPriorDiscoveriesBlockFromPathForLane(logPath, currentSubstep, lane string) string {
+	facts := readPriorDiscoveries(logPath)
+	if len(facts) == 0 {
+		return ""
+	}
+
+	var eligible []priorDiscoveryRecord
+	for _, f := range facts {
+		if f.Scope != factScopeDownstream && f.Scope != factScopeBoth {
+			continue
+		}
+		if !substepIsUpstream(f.Substep, currentSubstep) {
+			continue
+		}
+		if lane != "" && !laneAcceptsRouteTo(lane, f.RouteTo) {
+			continue
+		}
+		eligible = append(eligible, f)
+	}
+	if len(eligible) == 0 {
+		return ""
+	}
+	sort.SliceStable(eligible, func(i, j int) bool {
+		return eligible[i].Timestamp > eligible[j].Timestamp
+	})
+	elided := 0
+	if len(eligible) > priorDiscoveriesCap {
+		elided = len(eligible) - priorDiscoveriesCap
+		eligible = eligible[:priorDiscoveriesCap]
+	}
+	var b strings.Builder
+	b.WriteString("## Prior discoveries (recorded earlier this session)\n\n")
+	b.WriteString("These facts were surfaced by upstream subagents during the current deploy run. ")
+	b.WriteString("They do NOT belong in published content — they are framework / tooling observations ")
+	b.WriteString("that would otherwise cost you investigation time. Use them as background; do not ")
+	b.WriteString("re-investigate the same surface unless you have a specific reason to verify.\n")
+	for _, f := range eligible {
+		b.WriteString("\n- ")
+		b.WriteString(formatPriorDiscoveryBullet(f))
+	}
+	if elided > 0 {
+		fmt.Fprintf(&b, "\n\n_… and %d more earlier discoveries (see %s)_", elided, logPath)
+	}
+	return b.String()
+}
+
+// laneAcceptsRouteTo reports whether the given lane should see a fact
+// with the named RouteTo value. Legacy empty-RouteTo (pre-C-2 records)
+// is accepted by every lane — treated as "unclassified, broadcast".
+//
+// Lane aliases (stable across C-5 follow-up):
+//   - "scaffold": scaffold_preamble + content_env_comment + zerops_yaml_comment
+//   - "feature":  feature_preamble + content_env_comment + zerops_yaml_comment
+//   - "writer":   all content_* + claude_md + discarded
+//   - "code-review": claude_md + content_gotcha + content_ig + content_env_comment
+//
+// Unknown lane values fall through to accept every RouteTo (safe default).
+func laneAcceptsRouteTo(lane, routeTo string) bool {
+	if routeTo == "" {
+		return true
+	}
+	allow, known := laneRouteToAllowlist[lane]
+	if !known {
+		return true
+	}
+	_, ok := allow[routeTo]
+	return ok
+}
+
+// laneRouteToAllowlist is the allow-list per lane. Edits here must stay
+// aligned with the FactRouteTo* constants in internal/ops/facts_log.go.
+var laneRouteToAllowlist = map[string]map[string]bool{
+	"scaffold": {
+		"scaffold_preamble":   true,
+		"content_env_comment": true,
+		"zerops_yaml_comment": true,
+	},
+	"feature": {
+		"feature_preamble":    true,
+		"content_env_comment": true,
+		"zerops_yaml_comment": true,
+	},
+	"writer": {
+		"content_gotcha":      true,
+		"content_intro":       true,
+		"content_ig":          true,
+		"content_env_comment": true,
+		"claude_md":           true,
+		"zerops_yaml_comment": true,
+		"discarded":           true,
+	},
+	"code-review": {
+		"claude_md":           true,
+		"content_gotcha":      true,
+		"content_ig":          true,
+		"content_env_comment": true,
+	},
 }
 
 // buildPriorDiscoveriesBlockFromPath is the path-injectable seam used

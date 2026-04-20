@@ -327,6 +327,15 @@ func (r *RecipeState) CompleteStep(name, attestation string) error {
 	r.Steps[r.CurrentStep].Status = stepComplete
 	r.Steps[r.CurrentStep].Attestation = attestation
 	r.Steps[r.CurrentStep].CompletedAt = time.Now().UTC().Format(time.RFC3339)
+
+	// Populate plan.SymbolContract at research-complete (C-5 P3 wiring).
+	// Derived idempotently from plan.Targets + managed services; every
+	// downstream scaffold / feature / writer dispatch interpolates the
+	// same contract JSON. Cheap to compute — no external I/O.
+	if name == RecipeStepResearch && r.Plan != nil {
+		r.Plan.SymbolContract = BuildSymbolContract(r.Plan)
+	}
+
 	r.CurrentStep++
 
 	if r.CurrentStep < len(r.Steps) {
