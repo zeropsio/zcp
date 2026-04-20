@@ -3,12 +3,12 @@
 # Matches both random hostnames (evalappbun242) and fixed (evalappnodejs).
 #
 # Usage:
-#   ./eval/scripts/cleanup.sh              # Default: cleanup on zcpx
+#   ./eval/scripts/cleanup.sh              # Default: cleanup on zcp
 #   EVAL_REMOTE_HOST=myhost ./eval/scripts/cleanup.sh
 
 set -euo pipefail
 
-REMOTE_HOST="${EVAL_REMOTE_HOST:-zcpx}"
+REMOTE_HOST="${EVAL_REMOTE_HOST:-zcp}"
 
 CLEANUP_PROMPT='List all services. Then delete every service whose hostname starts with "eval". Confirm deletion for each. If there are no eval* services, just say "Nothing to clean up."'
 

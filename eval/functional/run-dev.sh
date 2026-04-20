@@ -13,7 +13,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-REMOTE_HOST="${EVAL_REMOTE_HOST:-zcpx}"
+REMOTE_HOST="${EVAL_REMOTE_HOST:-zcp}"
 TAG="func_$(date +%Y%m%d_%H%M%S)"
 RESULTS_DIR="$PROJECT_DIR/eval/results/$TAG"
 REMOTE_PROMPT="/tmp/eval_prompt_${TAG}.md"

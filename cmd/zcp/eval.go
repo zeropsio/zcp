@@ -9,11 +9,17 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/eval"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
+)
+
+const (
+	statusPass = "PASS"
+	statusFail = "FAIL"
 )
 
 func runEval(args []string) {
@@ -25,6 +31,8 @@ func runEval(args []string) {
 	switch args[0] {
 	case "run":
 		runEvalRun(args[1:])
+	case "scenario":
+		runEvalScenario(args[1:])
 	case "suite":
 		runEvalSuite(args[1:])
 	case "create":
@@ -47,6 +55,7 @@ func printEvalUsage() {
 
 Commands:
   run          --recipe <name>[,name...]       Run evaluation for specific recipes
+  scenario     --file <path>                   Run a single scenario file
   suite        [--tag <tag>]                   Run evaluation for all recipes
   create       --framework <name> --tier <t>   Create a recipe via headless workflow
   create-suite --frameworks <a,b> --tier <t>   Batch-create recipes
@@ -90,6 +99,61 @@ func runEvalRun(args []string) {
 	}
 
 	printSuiteResult(result)
+}
+
+func runEvalScenario(args []string) {
+	var path string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--file" && i+1 < len(args) {
+			path = args[i+1]
+			i++
+		}
+	}
+	if path == "" {
+		fmt.Fprintln(os.Stderr, "error: --file <scenario.md> required")
+		os.Exit(1)
+	}
+	if _, err := os.Stat(path); err != nil {
+		fmt.Fprintf(os.Stderr, "error: scenario file: %v\n", err)
+		os.Exit(1)
+	}
+
+	runner, _, ctx := initEvalRunner()
+	suiteID := time.Now().Format("2006-01-02-150405")
+
+	fmt.Fprintf(os.Stderr, "Running scenario: %s (suite=%s)\n", path, suiteID)
+	result, err := runner.RunScenario(ctx, path, suiteID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	printScenarioResult(result)
+	if !result.Grade.Passed {
+		os.Exit(1)
+	}
+}
+
+func printScenarioResult(r *eval.ScenarioResult) {
+	status := statusPass
+	if !r.Grade.Passed {
+		status = statusFail
+	}
+	if r.Error != "" {
+		status = "ERROR"
+	}
+	fmt.Fprintf(os.Stderr, "\n=== Scenario %s ===\n", r.ScenarioID)
+	fmt.Fprintf(os.Stderr, "%s  %s\n", status, r.Duration)
+	fmt.Fprintf(os.Stderr, "Log: %s\n", r.LogFile)
+	if r.Error != "" {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", r.Error)
+	}
+	if len(r.Grade.Failures) > 0 {
+		fmt.Fprintln(os.Stderr, "\nFailures:")
+		for _, f := range r.Grade.Failures {
+			fmt.Fprintf(os.Stderr, "  - %s\n", f)
+		}
+	}
 }
 
 func runEvalSuite(_ []string) {
@@ -155,7 +219,7 @@ func runEvalCreate(args []string) {
 
 	status := "SUCCESS"
 	if !result.Success {
-		status = "FAIL"
+		status = statusFail
 	}
 	if result.Error != "" {
 		status = "ERROR: " + result.Error
@@ -231,7 +295,7 @@ func runEvalCleanup(args []string) {
 			os.Exit(1)
 		}
 	} else {
-		// Full cleanup: delete all services (except zcpx), clean files, reset workflow
+		// Full cleanup: delete all services (except zcp), clean files, reset workflow
 		workDir := evalWorkDir()
 		fmt.Fprintf(os.Stderr, "Full project cleanup (workDir=%s)...\n", workDir)
 		if err := eval.CleanupProject(ctx, client, projectID, workDir); err != nil {
@@ -303,13 +367,20 @@ func evalMCPConfig() string {
 	if cfg := os.Getenv("ZCP_EVAL_MCP_CONFIG"); cfg != "" {
 		return cfg
 	}
-	// Check work dir first (Zerops container layout: /var/www/.mcp.json)
+	// Check work dir first (Zerops container layout: /var/www/.mcp.json).
 	workMCP := filepath.Join(evalWorkDir(), ".mcp.json")
 	if _, err := os.Stat(workMCP); err == nil {
 		return workMCP
 	}
+	// Fall back to ~/.mcp.json only if it exists — otherwise return empty so the
+	// eval runner skips --mcp-config and Claude picks up its own default config
+	// (e.g. ~/.claude.json written by `zcp init` on containers).
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".mcp.json")
+	homeMCP := filepath.Join(home, ".mcp.json")
+	if _, err := os.Stat(homeMCP); err == nil {
+		return homeMCP
+	}
+	return ""
 }
 
 func initPlatformClient() (platform.Client, string, context.Context) {
@@ -351,6 +422,7 @@ func initEvalRunner() (*eval.Runner, *knowledge.Store, context.Context) {
 	config := eval.RunnerConfig{
 		MCPConfig:  evalMCPConfig(),
 		ResultsDir: evalResultsDir(),
+		WorkDir:    evalWorkDir(),
 	}
 
 	runner := eval.NewRunner(config, store, client, projectID)
@@ -376,9 +448,9 @@ func printSuiteResult(result *eval.SuiteResult) {
 	fmt.Fprintf(os.Stderr, "Duration: %s\n\n", result.Duration)
 
 	for _, r := range result.Results {
-		status := "FAIL"
+		status := statusFail
 		if r.Success {
-			status = "PASS"
+			status = statusPass
 		}
 		if r.Error != "" {
 			status = "ERROR"

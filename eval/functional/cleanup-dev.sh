@@ -7,7 +7,7 @@
 
 set -euo pipefail
 
-REMOTE_HOST="${EVAL_REMOTE_HOST:-zcpx}"
+REMOTE_HOST="${EVAL_REMOTE_HOST:-zcp}"
 
 echo "==> Cleaning up functional eval services on $REMOTE_HOST..."
 

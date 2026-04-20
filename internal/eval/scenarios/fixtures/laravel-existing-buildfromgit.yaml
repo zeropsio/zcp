@@ -1,0 +1,30 @@
+#yamlPreprocessor=on
+
+# Used by adopt-existing-laravel scenario. Seed imports this YAML directly
+# via platform.Client.ImportServices — bypassing ZCP bootstrap workflow —
+# so the LLM encounters two ACTIVE services without ServiceMeta evidence.
+# That is the exact signature the idle-adopt atom keys on.
+#
+# buildFromGit points at zeropsio/recipe-laravel-minimal (which ships a
+# zerops.yml at the repo root — required for Zerops to know how to build).
+# The sibling repo zerops-recipe-apps/laravel-minimal-app has no zerops.yml
+# and therefore cannot be built directly.
+
+services:
+  - hostname: app
+    type: php-nginx@8.4
+    buildFromGit: https://github.com/zeropsio/recipe-laravel-minimal
+    enableSubdomainAccess: true
+    envSecrets:
+      APP_KEY: <@generateRandomString(<32>)>
+      APP_DEBUG: true
+      APP_ENV: development
+    verticalAutoscaling:
+      minRam: 0.5
+
+  - hostname: db
+    type: postgresql@18
+    priority: 10
+    mode: NON_HA
+    verticalAutoscaling:
+      minRam: 0.25

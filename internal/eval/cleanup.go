@@ -15,11 +15,13 @@ import (
 )
 
 // ProtectedService is the controlling service that must never be deleted.
-const ProtectedService = "zcpx"
+const ProtectedService = "zcp"
 
 // protectedPaths are files/dirs in the working directory that survive cleanup.
+// CLAUDE.md is intentionally NOT protected: each scenario regenerates it via
+// init.Run after seed, so carrying stale REFLOG/service references between
+// runs only pollutes the next agent's context.
 var protectedPaths = map[string]bool{
-	"CLAUDE.md": true,
 	".claude":   true,
 	".mcp.json": true,
 	".zcp":      true,
@@ -63,11 +65,11 @@ func CleanupEvalServices(ctx context.Context, client platform.Client, projectID,
 }
 
 // CleanupProject performs a full project cleanup after an eval run:
-//  1. Delete all services except zcpx (and system services)
+//  1. Delete all services except zcp (and system services)
 //  2. Clean generated files in workDir (keep protected paths)
 //  3. Reset workflow state
 //
-// This is the deterministic equivalent of the zcpx /cleanup slash command,
+// This is the deterministic equivalent of the zcp /cleanup slash command,
 // saving tokens by not requiring an LLM agent.
 func CleanupProject(ctx context.Context, client platform.Client, projectID, workDir string) error {
 	// 1. Delete all non-protected services
@@ -112,6 +114,14 @@ func CleanupProject(ctx context.Context, client platform.Client, projectID, work
 				return fmt.Errorf("cleanup reset session %s: %w", sess.SessionID, err)
 			}
 		}
+	}
+
+	// 5. Remove ServiceMeta evidence. Without this, a scenario that starts
+	// idle + services (adopt seed) inherits stale meta from a prior run —
+	// `Bootstrapped=true` for the same hostname flips the idle scenario from
+	// `adopt` to `bootstrapped` and the adopt atom never fires.
+	if err := os.RemoveAll(filepath.Join(stateDir, "services")); err != nil {
+		return fmt.Errorf("cleanup remove service metas: %w", err)
 	}
 
 	return nil

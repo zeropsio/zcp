@@ -164,7 +164,7 @@ func scoreToolCalls(calls []ToolCall) EvalScore {
 		"Bash": true, "Agent": true,
 	}
 	zcpTools := map[string]bool{
-		"zerops_discover": true, "zerops_workflow": true, "zerops_knowledge": true,
+		"zerops_discover": true, workflowToolName: true, "zerops_knowledge": true,
 		"zerops_deploy": true, "zerops_manage": true, "zerops_scale": true,
 		"zerops_import": true, "zerops_verify": true, "zerops_env": true,
 		"zerops_subdomain": true, "zerops_mount": true, "zerops_logs": true,
@@ -183,7 +183,7 @@ func scoreToolCalls(calls []ToolCall) EvalScore {
 			if name == "zerops_discover" {
 				score.DiscoverFirst = true
 			}
-			if name == "zerops_workflow" {
+			if name == workflowToolName {
 				score.WorkflowFirst = true
 			}
 		}

@@ -2,35 +2,41 @@
 # Build ZCP for Linux amd64 and deploy to remote host via scp.
 #
 # Usage:
-#   ./eval/scripts/build-deploy.sh              # Default: deploy to zcpx
+#   ./eval/scripts/build-deploy.sh              # Default: deploy to zcp
 #   EVAL_REMOTE_HOST=myhost ./eval/scripts/build-deploy.sh
 #
 # Environment:
-#   EVAL_REMOTE_HOST  — SSH host (default: zcpx)
-#   EVAL_REMOTE_BIN   — Remote binary path (default: /home/zerops/.local/bin/zcp)
+#   EVAL_REMOTE_HOST  — SSH host (default: zcp)
+#   EVAL_REMOTE_BIN   — Remote binary path (default: /usr/local/bin/zcp)
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-REMOTE_HOST="${EVAL_REMOTE_HOST:-zcpx}"
+REMOTE_HOST="${EVAL_REMOTE_HOST:-zcp}"
 # Canonical install location. The user PATH entry (~/.local/bin/zcp) should
 # be a symlink here — never a separate copy. See install.sh for rationale.
+# /usr/local/bin is root-owned, so install steps use sudo (passwordless on zcp).
 REMOTE_BIN="${EVAL_REMOTE_BIN:-/usr/local/bin/zcp}"
 LOCAL_BIN="$PROJECT_DIR/builds/zcp-linux-amd64"
+
+# Zerops container host keys rotate on every deploy/recreate — strict checking
+# would break deploys at every release. Disable it for all ssh/scp in this script.
+SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 
 echo "==> Building ZCP for linux/amd64..."
 (cd "$PROJECT_DIR" && make linux-amd)
 
 echo "==> Deploying to $REMOTE_HOST:$REMOTE_BIN..."
-# Upload to temp file and mv (handles running binary that can't be overwritten)
-REMOTE_TMP="${REMOTE_BIN}.tmp.$$"
-scp "$LOCAL_BIN" "$REMOTE_HOST:$REMOTE_TMP"
-ssh "$REMOTE_HOST" "mv -f '$REMOTE_TMP' '$REMOTE_BIN' && chmod +x '$REMOTE_BIN'"
+# scp to /tmp (always writable), then sudo-install to the canonical location.
+# Handles running binary that can't be overwritten in place.
+REMOTE_TMP="/tmp/zcp.deploy.$$"
+scp $SSH_OPTS "$LOCAL_BIN" "$REMOTE_HOST:$REMOTE_TMP"
+ssh $SSH_OPTS "$REMOTE_HOST" "sudo install -m 0755 '$REMOTE_TMP' '$REMOTE_BIN' && rm -f '$REMOTE_TMP'"
 
 # Ensure ~/.local/bin/zcp is a symlink to the canonical location.
 # This prevents stale copies from shadowing the system binary via PATH.
-ssh "$REMOTE_HOST" "
+ssh $SSH_OPTS "$REMOTE_HOST" "
   LOCAL_BIN=\"\$HOME/.local/bin/zcp\"
   if [ -f \"\$LOCAL_BIN\" ] && [ ! -L \"\$LOCAL_BIN\" ]; then
     rm -f \"\$LOCAL_BIN\"
@@ -46,7 +52,7 @@ ssh "$REMOTE_HOST" "
 # Verify deployment
 echo "==> Verifying..."
 LOCAL_HASH=$(shasum -a 256 "$LOCAL_BIN" | cut -d' ' -f1)
-REMOTE_HASH=$(ssh "$REMOTE_HOST" "sha256sum $REMOTE_BIN" | cut -d' ' -f1)
+REMOTE_HASH=$(ssh $SSH_OPTS "$REMOTE_HOST" "sha256sum $REMOTE_BIN" | cut -d' ' -f1)
 
 if [ "$LOCAL_HASH" != "$REMOTE_HASH" ]; then
     echo "==> WARNING: Hash mismatch!"
@@ -59,7 +65,7 @@ echo "==> Deploy OK (hash match: ${LOCAL_HASH:0:12}...)"
 
 # Kill stale zcp processes so Claude Code starts a fresh MCP server with the new binary.
 # Without this, a running "zcp serve" keeps the old binary's embedded knowledge in memory.
-KILLED=$(ssh "$REMOTE_HOST" "pkill -f '[z]cp serve' 2>/dev/null; echo done")
+KILLED=$(ssh $SSH_OPTS "$REMOTE_HOST" "pkill -f '[z]cp serve' 2>/dev/null; echo done")
 if [ "$KILLED" = "killed" ]; then
     echo "==> Killed stale zcp serve process(es) — next Claude invocation will start fresh"
 else
@@ -71,7 +77,7 @@ if [[ "${1:-}" == "--with-tests" ]]; then
     echo "==> Building E2E test binary..."
     (cd "$PROJECT_DIR" && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go test -c -tags e2e -o builds/e2e-test ./e2e/)
     echo "==> Deploying E2E test binary..."
-    scp "$PROJECT_DIR/builds/e2e-test" "$REMOTE_HOST:/var/www/e2e-test"
-    ssh "$REMOTE_HOST" "chmod +x /var/www/e2e-test"
+    scp $SSH_OPTS "$PROJECT_DIR/builds/e2e-test" "$REMOTE_HOST:/var/www/e2e-test"
+    ssh $SSH_OPTS "$REMOTE_HOST" "chmod +x /var/www/e2e-test"
     echo "==> E2E test binary deployed"
 fi

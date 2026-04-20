@@ -19,7 +19,7 @@ import (
 type RunnerConfig struct {
 	MCPConfig  string        // Path to MCP config file (e.g., ~/.mcp.json)
 	ResultsDir string        // Base directory for results output
-	WorkDir    string        // Working directory on zcpx (default: /var/www)
+	WorkDir    string        // Working directory on zcp (default: /var/www)
 	Model      string        // Claude model to use (default: "sonnet")
 	MaxTurns   int           // Max turns per eval (default: 60)
 	Timeout    time.Duration // Timeout per recipe (default: 15 min)
@@ -42,7 +42,7 @@ func NewRunner(config RunnerConfig, store *knowledge.Store, client platform.Clie
 		config.MaxTurns = 60
 	}
 	if config.Timeout == 0 {
-		config.Timeout = 15 * time.Minute
+		config.Timeout = 30 * time.Minute
 	}
 	if config.WorkDir == "" {
 		config.WorkDir = "/var/www"
@@ -150,7 +150,7 @@ func (r *Runner) Run(ctx context.Context, recipeName, suiteID string) (*RunResul
 	result.LogFile = logFile
 	result.Duration = Duration(time.Since(startedAt))
 
-	// 10. Full project cleanup: delete all services (except zcpx), clean files, reset workflow
+	// 10. Full project cleanup: delete all services (except zcp), clean files, reset workflow
 	fmt.Fprintf(os.Stderr, "cleanup: %s...\n", recipeName)
 	if cleanErr := CleanupProject(ctx, r.client, r.projectID, r.config.WorkDir); cleanErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: cleanup %s: %v\n", recipeName, cleanErr)
@@ -176,6 +176,9 @@ func (r *Runner) spawnClaude(ctx context.Context, prompt, logFile string) error 
 	}
 
 	cmd := exec.CommandContext(ctx, "claude", args...)
+	if r.config.WorkDir != "" {
+		cmd.Dir = r.config.WorkDir
+	}
 
 	outFile, err := os.Create(logFile)
 	if err != nil {
