@@ -1089,3 +1089,48 @@ Stricter gate at `deploy.readmes` complete. If a v35 candidate's writer emits a 
 
 - `any_as_intro` sentence-granularity Jaccard may over-fire on short intros where every sentence shares stop-word-stripped tokens with common fact titles. Calibration: the 0.3 threshold + the ≥12-rune filter + stop-word elimination should keep false-positive rate low; first v35 run is the empirical signal. If intros are regularly flagged for unrelated facts, the threshold or the phrase extractor needs tightening — revisit post-v35.
 - `briefs/code-review/manifest-consumption.md` atom was slated (per rollout-sequence §C-8) for a byte-check against the new dimension names. The atom's content is route-concept-based, not check-name-based — it instructs the reviewer to audit every routing dimension without naming internal check identifiers (P2 invariant). No update needed; C-8 ships as-is.
+
+---
+
+## C-9 — Delete `knowledge_base_exceeds_predecessor`
+
+**Status**: green
+
+### What landed
+
+Per [check-rewrite.md §15](03-architecture/check-rewrite.md), the one check marked for definite deletion is removed. `knowledge_base_exceeds_predecessor` was informational-only since v8.78 (predecessor overlap was ruled fine; standalone recipes are read in isolation) and carried zero gate value. `CheckKnowledgeBaseAuthenticity` is the upstream replacement — grades gotcha SHAPE rather than net-new COUNT — and now fires directly from `checkCodebaseReadme` without the exceeds-predecessor wrapper.
+
+- [`internal/tools/workflow_checks_predecessor_floor.go`](../../internal/tools/workflow_checks_predecessor_floor.go) — `checkKnowledgeBaseExceedsPredecessor` function deleted; `checkKnowledgeBaseAuthenticity` wrapper retained (still delegates to `opschecks.CheckKnowledgeBaseAuthenticity`). File shrinks from 73 LoC to 30 LoC (with the C-9 rationale comment block).
+- [`internal/tools/workflow_checks_recipe.go`](../../internal/tools/workflow_checks_recipe.go):
+  - `checkCodebaseReadme` signature loses the `predecessorStems []string` parameter. Body now calls `checkKnowledgeBaseAuthenticity` directly when the plan is showcase tier AND a knowledge-base fragment is present on the README.
+  - `checkRecipeDeployReadmes` signature loses the `kp knowledge.Provider` parameter — its sole consumer (the predecessor-stems resolution for `workflow.PredecessorGotchaStems`) is gone. `buildRecipeStepChecker`'s call site drops the `kp` argument.
+- [`internal/tools/workflow_checks_predecessor_floor_integration_test.go`](../../internal/tools/workflow_checks_predecessor_floor_integration_test.go) — deleted (475 LoC). The file was purpose-built to test `exceeds_predecessor` wiring across per-codebase README loops; every test asserted against `*_knowledge_base_exceeds_predecessor` row names. Post-C-9 the wiring those tests exercised no longer exists. Authenticity-check wiring is exercised by unit tests in `workflow_checks_predecessor_floor_test.go` (rewritten) + the deploy-readmes unit tests in `workflow_checks_recipe_test.go`.
+- [`internal/tools/workflow_checks_predecessor_floor_test.go`](../../internal/tools/workflow_checks_predecessor_floor_test.go) — rewritten: the 6 exceeds-predecessor tests are deleted; the 2 authenticity tests (V12SyntheticMix, V7Style) survive but now call `checkKnowledgeBaseAuthenticity` directly with a knowledge-base fragment body (instead of routing through the deleted wrapper that extracted the fragment internally). File shrinks from 241 LoC to 70 LoC.
+- [`internal/tools/workflow_checks_recipe_test.go`](../../internal/tools/workflow_checks_recipe_test.go) — 3 test call sites updated (`checkRecipeDeployReadmes(stateDir, nil, nil)` → `checkRecipeDeployReadmes(stateDir, nil)`). `workerZeropsYaml` test fixture deleted (sole consumer was the deleted integration test file; the unused-symbol lint caught it).
+
+### Verification
+
+- `go test ./... -count=1` — full suite green across 21 packages.
+- `make lint-local` — 0 issues.
+
+### LoC delta
+
+- `internal/tools/workflow_checks_predecessor_floor.go`: -43 LoC (body removed, comment block replaces).
+- `internal/tools/workflow_checks_predecessor_floor_test.go`: -171 LoC (6 tests deleted, 2 rewritten to call authenticity directly).
+- `internal/tools/workflow_checks_predecessor_floor_integration_test.go`: -475 LoC (file deleted).
+- `internal/tools/workflow_checks_recipe.go`: -5 LoC (predecessor-stems call + 2 function-signature params dropped; +15 LoC of the authenticity-direct-call block replacing the floor wrapper).
+- `internal/tools/workflow_checks_recipe_test.go`: -28 LoC (`workerZeropsYaml` fixture deleted + 3 call-site diffs).
+- **Total**: ~-720 LoC net (handoff estimate was -70 LoC, but the integration-test file deletion dominates — the handoff estimate didn't account for the purpose-built integration coverage).
+
+### Breaks-alone consequence
+
+One fewer informational check row fires at `deploy.readmes` complete. Zero regression risk per check-rewrite.md §15 — the check was informational-only since v8.78, so `_exceeds_predecessor` rows carried no gating weight. Authenticity check is unchanged in behavior; it simply fires from a different call-site now (directly inside `checkCodebaseReadme` instead of being a ride-along inside the deleted exceeds-predecessor wrapper).
+
+### Ordering deps verified
+
+- C-7b ✓ (authenticity-rewrite already moved the predicate into `internal/ops/checks/kb_authenticity.go`; C-9's production path calls the same thin wrapper `checkKnowledgeBaseAuthenticity`).
+
+### Known follow-ups
+
+- `workflow.PredecessorGotchaStems` and `workflow.CountNetNewGotchas` in `internal/workflow/recipe_knowledge_chain.go` are now unused in production code. Left in place for now — their public-API signatures suggest future tests/uses, and removing exported symbols outside C-9's scope adds risk. C-15 cleanup pass can remove them if still unreferenced.
+- `workflow_checks_predecessor_floor.go` is now a ~30 LoC file with one thin-wrapper function. Consider consolidating with `workflow_checks_recipe.go` during C-15's file-structure pass.

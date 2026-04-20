@@ -604,7 +604,7 @@ func TestCheckRecipeDeployReadmes_MissingFragments(t *testing.T) {
 	// deploy step, not generate.
 	writeFile(t, filepath.Join(appDir, "README.md"), "# App\nJust a basic readme.")
 
-	checker := checkRecipeDeployReadmes(stateDir, nil, nil)
+	checker := checkRecipeDeployReadmes(stateDir, nil)
 	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -690,7 +690,7 @@ zerops:
 `
 	writeFile(t, filepath.Join(appDir, "README.md"), readme)
 
-	checker := checkRecipeDeployReadmes(stateDir, nil, nil)
+	checker := checkRecipeDeployReadmes(stateDir, nil)
 	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -756,7 +756,7 @@ zerops:
 `
 	writeFile(t, filepath.Join(appDir, "README.md"), readme)
 
-	checker := checkRecipeDeployReadmes(stateDir, nil, nil)
+	checker := checkRecipeDeployReadmes(stateDir, nil)
 	result, err := checker(context.Background(), testRecipePlan(), testRecipeState())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1255,34 +1255,11 @@ const frontendZeropsYaml = `zerops:
       base: static
 `
 
-// workerZeropsYaml is a nodejs dev+prod zerops.yaml — the kind a separate-
-// codebase worker (no shared host) writes. Used by the predecessor-floor
-// integration test that exercises the per-worker README check loop.
-const workerZeropsYaml = `zerops:
-  - setup: dev
-    build:
-      base: nodejs@22
-      buildCommands:
-        - npm install
-      deployFiles:
-        - .
-    run:
-      envVariables:
-        NODE_ENV: development
-      start: node dist/worker.js
-  - setup: prod
-    build:
-      base: nodejs@22
-      buildCommands:
-        - npm ci
-        - npm run build
-      deployFiles:
-        - dist
-    run:
-      envVariables:
-        NODE_ENV: production
-      start: node dist/worker.js
-`
+// workerZeropsYaml was used by the pre-C-9 predecessor-floor integration
+// test. Removed alongside the integration test file itself. Kept for
+// reference: a future separate-codebase-worker regression test can
+// revive this fixture.
+// (Deleted to satisfy the unused-symbol lint.)
 
 // apiZeropsYamlWithWorker is a nodejs dev+prod+worker zerops.yaml — the kind a
 // dual-runtime API (with shared-codebase BullMQ worker) writes.

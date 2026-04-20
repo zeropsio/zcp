@@ -46,7 +46,7 @@ func buildRecipeStepChecker(ctx context.Context, step, _, stateDir string, schem
 		}
 		return checkRecipeGenerate(stateDir, validFields, kp)
 	case workflow.RecipeStepDeploy:
-		return checkRecipeDeployReadmes(stateDir, kp, factsLogPathFn)
+		return checkRecipeDeployReadmes(stateDir, factsLogPathFn)
 	case workflow.RecipeStepFinalize:
 		return checkRecipeFinalizeFromState(stateDir)
 	}
@@ -289,21 +289,22 @@ func findCheck(checks []workflow.StepCheck, name string) *workflow.StepCheck {
 // so the agent can iterate on the README narration without rolling back
 // the infrastructure work.
 //
-// kp is the knowledge provider used to pull the direct-predecessor
-// recipe's gotcha stems for the predecessor-floor check. Nil kp in test
-// contexts no-ops that check gracefully.
+// C-9: knowledge.Provider parameter removed — its sole consumer
+// (predecessor-floor check `knowledge_base_exceeds_predecessor`) was
+// informational-only since v8.78 and is dropped entirely. Authenticity
+// now runs from the per-codebase README surface without needing the
+// predecessor corpus.
 //
 // factsLogPathFn (v8.95) resolves the writer subagent's session facts-log
 // path so the content-manifest completeness sub-check can cross-reference
 // every recorded FactRecord.Title against the manifest entries. Pass nil
 // for test contexts — sub-check D handles that by passing with a skip note.
-func checkRecipeDeployReadmes(stateDir string, kp knowledge.Provider, factsLogPathFn func() string) workflow.RecipeStepChecker {
+func checkRecipeDeployReadmes(stateDir string, factsLogPathFn func() string) workflow.RecipeStepChecker {
 	return func(ctx context.Context, plan *workflow.RecipePlan, _ *workflow.RecipeState) (*workflow.StepCheckResult, error) {
 		if plan == nil {
 			return nil, nil
 		}
 		projectRoot := projectRootFromState(stateDir)
-		predecessorStems := workflow.PredecessorGotchaStems(plan, kp)
 
 		var appTargets []workflow.RecipeTarget
 		for _, t := range plan.Targets {
@@ -330,10 +331,10 @@ func checkRecipeDeployReadmes(stateDir string, kp knowledge.Provider, factsLogPa
 		readmesByHost := map[string]string{}
 
 		for _, target := range appTargets {
-			checks = append(checks, checkCodebaseReadme(ctx, projectRoot, target, plan, predecessorStems, false, readmesByHost)...)
+			checks = append(checks, checkCodebaseReadme(ctx, projectRoot, target, plan, false, readmesByHost)...)
 		}
 		for _, target := range workerTargets {
-			checks = append(checks, checkCodebaseReadme(ctx, projectRoot, target, plan, predecessorStems, true, readmesByHost)...)
+			checks = append(checks, checkCodebaseReadme(ctx, projectRoot, target, plan, true, readmesByHost)...)
 		}
 
 		// Cross-README gotcha-stem uniqueness: forces each distinct fact
@@ -400,7 +401,7 @@ func checkRecipeDeployReadmes(stateDir string, kp knowledge.Provider, factsLogPa
 // so the cross-README dedup check can run once across all codebases
 // without re-reading files from disk. Passing it through here keeps the
 // filesystem walk shape identical to the existing iteration loop.
-func checkCodebaseReadme(ctx context.Context, projectRoot string, target workflow.RecipeTarget, plan *workflow.RecipePlan, predecessorStems []string, workerOnly bool, readmesByHost map[string]string) []workflow.StepCheck {
+func checkCodebaseReadme(ctx context.Context, projectRoot string, target workflow.RecipeTarget, plan *workflow.RecipePlan, workerOnly bool, readmesByHost map[string]string) []workflow.StepCheck {
 	hostname := target.Hostname
 	ymlDir := projectRoot
 	for _, candidate := range []string{hostname + "dev", hostname} {
@@ -461,11 +462,21 @@ func checkCodebaseReadme(ctx context.Context, projectRoot string, target workflo
 		checks = append(checks, perItemChecks...)
 	}
 
-	floorChecks := checkKnowledgeBaseExceedsPredecessor(ctx, string(readmeContent), plan, predecessorStems, hostname)
-	for i := range floorChecks {
-		floorChecks[i].Name = hostname + "_" + floorChecks[i].Name
+	// C-9 (post-v8.78 rollback): `knowledge_base_exceeds_predecessor` was
+	// informational-only and carried zero gate value. The authenticity
+	// check `knowledge_base_authenticity` is the upstream replacement:
+	// it grades gotcha shape (platform-anchored or failure-mode described)
+	// rather than predecessor-overlap count. Fires on every showcase
+	// codebase that has a knowledge-base fragment.
+	if plan != nil && plan.Tier == workflow.RecipeTierShowcase {
+		if kbContent := extractFragmentContent(string(readmeContent), "knowledge-base"); kbContent != "" {
+			authChecks := checkKnowledgeBaseAuthenticity(ctx, kbContent, hostname)
+			for i := range authChecks {
+				authChecks[i].Name = hostname + "_" + authChecks[i].Name
+			}
+			checks = append(checks, authChecks...)
+		}
 	}
-	checks = append(checks, floorChecks...)
 
 	// Gotcha-restates-guide: a gotcha whose normalized stem matches an
 	// integration-guide H3 heading (other than the boilerplate zerops.yaml
