@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -12,10 +13,33 @@ import (
 )
 
 // ImportInput is the input type for zerops_import.
+//
+// Override is FlexBool so the MCP schema accepts both booleans and
+// stringified forms — same rationale as every other MCP-boundary
+// boolean input (some LLM agents serialize primitives as quoted
+// strings, and the raw-bool schema would reject those at the protocol
+// layer with a non-actionable error).
 type ImportInput struct {
-	Content  string `json:"content,omitempty"  jsonschema:"Inline import YAML content. Provide either content or filePath."`
-	FilePath string `json:"filePath,omitempty" jsonschema:"Path to a YAML file containing the import definition. Provide either filePath or content."`
-	Override bool   `json:"override,omitempty" jsonschema:"Set override: true on every imported service so the API replaces existing service stacks with matching hostnames. Required when re-importing a service that already exists (e.g. to transition READY_TO_DEPLOY to ACTIVE by adding startWithoutCode: true)."`
+	Content  string   `json:"content,omitempty"`
+	FilePath string   `json:"filePath,omitempty"`
+	Override FlexBool `json:"override,omitempty"`
+}
+
+// importInputSchema is the explicit InputSchema for zerops_import. Lives
+// here rather than on struct tags so `override` can declare the
+// `oneOf: [boolean, string]` shape needed by stringified-boolean agents.
+func importInputSchema() *jsonschema.Schema {
+	return objectSchema(map[string]*jsonschema.Schema{
+		"content": {
+			Type:        "string",
+			Description: "Inline import YAML content. Provide either content or filePath.",
+		},
+		"filePath": {
+			Type:        "string",
+			Description: "Path to a YAML file containing the import definition. Provide either filePath or content.",
+		},
+		"override": flexBoolSchema("Set override: true on every imported service so the API replaces existing service stacks with matching hostnames. Required when re-importing a service that already exists (e.g. to transition READY_TO_DEPLOY to ACTIVE by adding startWithoutCode: true)."),
+	})
 }
 
 // RegisterImport registers the zerops_import tool.
@@ -23,6 +47,7 @@ func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, c
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_import",
 		Description: "REQUIRES active workflow (bootstrap or develop). Import services from YAML into the project. Validates service types, blocks until all processes complete. Returns final statuses (FINISHED/FAILED).",
+		InputSchema: importInputSchema(),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Import services from YAML",
 			DestructiveHint: boolPtr(true),
@@ -39,7 +64,7 @@ func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, c
 		if schemaCache != nil {
 			schemas = schemaCache.Get(ctx)
 		}
-		result, err := ops.Import(ctx, client, projectID, input.Content, input.FilePath, liveTypes, schemas, input.Override)
+		result, err := ops.Import(ctx, client, projectID, input.Content, input.FilePath, liveTypes, schemas, input.Override.Bool())
 		if err != nil {
 			return convertError(err), nil, nil
 		}
