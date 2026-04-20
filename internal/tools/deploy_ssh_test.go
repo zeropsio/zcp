@@ -819,6 +819,21 @@ func setupAdoptedService(t *testing.T, stateDir, hostname, stageHostname string)
 	}
 }
 
+// setupDeployedService writes a ServiceMeta with FirstDeployedAt stamped so
+// the git-push pre-flight guard (requires a landed first deploy) passes.
+func setupDeployedService(t *testing.T, stateDir, hostname, stageHostname string) {
+	t.Helper()
+	setupAdoptedService(t, stateDir, hostname, stageHostname)
+	meta, err := workflow.ReadServiceMeta(stateDir, hostname)
+	if err != nil || meta == nil {
+		t.Fatalf("ReadServiceMeta after setup: %v", err)
+	}
+	meta.FirstDeployedAt = "2026-04-19T10:00:00Z"
+	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta stamp: %v", err)
+	}
+}
+
 func TestDeployTool_AdoptionGate_BlocksUnadoptedService(t *testing.T) {
 	t.Parallel()
 
@@ -941,11 +956,13 @@ type stubSSHWithCommands struct {
 	tokenErr    error
 	pushOutput  []byte // output for everything else
 	pushErr     error
+	tokenCalls  int // GIT_TOKEN check invocation counter
 }
 
 func (s *stubSSHWithCommands) ExecSSH(_ context.Context, _ string, command string) ([]byte, error) {
 	// Match the GIT_TOKEN pre-flight check command (test -n ... && echo 1 || echo 0).
 	if strings.Contains(command, "GIT_TOKEN") && !strings.Contains(command, "netrc") {
+		s.tokenCalls++
 		return s.tokenOutput, s.tokenErr
 	}
 	return s.pushOutput, s.pushErr
@@ -958,7 +975,7 @@ func TestDeployTool_GitPush_MissingGitToken_ReturnsPrerequisites(t *testing.T) {
 	t.Parallel()
 
 	stateDir := t.TempDir()
-	setupAdoptedService(t, stateDir, "appdev", "")
+	setupDeployedService(t, stateDir, "appdev", "")
 
 	mock := platform.NewMock()
 	// GIT_TOKEN check returns "0" — token not set.
@@ -1000,7 +1017,7 @@ func TestDeployTool_GitPush_WithGitToken_Succeeds(t *testing.T) {
 	t.Parallel()
 
 	stateDir := t.TempDir()
-	setupAdoptedService(t, stateDir, "appdev", "")
+	setupDeployedService(t, stateDir, "appdev", "")
 
 	mock := platform.NewMock()
 	// GIT_TOKEN check returns "1" — token is set.
@@ -1025,6 +1042,45 @@ func TestDeployTool_GitPush_WithGitToken_Succeeds(t *testing.T) {
 	text := getTextContent(t, result)
 	if !strings.Contains(text, "PUSHED") && !strings.Contains(text, "NOTHING_TO_PUSH") {
 		t.Errorf("expected push result status, got: %s", text)
+	}
+}
+
+// TestDeployTool_GitPush_BeforeFirstDeploy_Refuses pins the first-deploy
+// guard in handleGitPush: git-push needs code + GIT_TOKEN on the container,
+// neither of which exists before the first deploy lands. The tool must
+// refuse and point the caller at the default deploy path instead of
+// silently succeeding with an empty push.
+func TestDeployTool_GitPush_BeforeFirstDeploy_Refuses(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	// Adopted but never deployed — FirstDeployedAt stays empty.
+	setupAdoptedService(t, stateDir, "appdev", "")
+
+	mock := platform.NewMock()
+	ssh := &stubSSHWithCommands{tokenOutput: []byte("1"), pushOutput: []byte("ok")}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t))
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "appdev",
+		"strategy":      "git-push",
+		"remoteUrl":     "https://github.com/example/repo",
+	})
+	if !result.IsError {
+		t.Fatalf("expected error for git-push before first deploy, got:\n%s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	for _, needle := range []string{"requires a successful first deploy", "strategy argument first"} {
+		if !strings.Contains(text, needle) {
+			t.Errorf("response missing %q. Got:\n%s", needle, text)
+		}
+	}
+	// The stub must NOT have been called — guard runs before the token check.
+	if ssh.tokenCalls != 0 {
+		t.Errorf("GIT_TOKEN check fired despite first-deploy guard refusing (%d calls)", ssh.tokenCalls)
 	}
 }
 

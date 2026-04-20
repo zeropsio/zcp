@@ -83,6 +83,19 @@ func handleGitPush(
 		branch = "main"
 	}
 
+	// Pre-flight: git-push requires a landed first deploy — the container
+	// must already have code to commit + push. Run the default self-deploy
+	// first; git-push only takes over once FirstDeployedAt is stamped.
+	meta, _ := workflow.ReadServiceMeta(stateDir, hostname)
+	if meta == nil || !meta.IsDeployed() {
+		recordAttempt("service not deployed — git-push requires a first deploy")
+		return convertError(platform.NewPlatformError(
+			platform.ErrPrerequisiteMissing,
+			"git-push requires a successful first deploy on "+hostname,
+			"Run zerops_deploy targetService=\""+hostname+"\" without the strategy argument first (default self-deploy). After a passing verify stamps FirstDeployedAt, retry with strategy=git-push.",
+		)), nil, nil
+	}
+
 	// Pre-flight: check GIT_TOKEN exists on the container.
 	tokenOut, err := sshDeployer.ExecSSH(ctx, hostname, gitTokenCheckCmd)
 	if err != nil {
