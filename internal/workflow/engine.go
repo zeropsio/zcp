@@ -23,6 +23,11 @@ type Engine struct {
 	// caching by query key avoids redundant searches (e.g. cancelled parallel
 	// calls retried by Claude Code).
 	knowledgeCache map[string]any
+	// recipeCorpus drives BootstrapRoute selection when intent matches a
+	// viable recipe. Populated when NewEngine receives a concrete
+	// *knowledge.Store (production); nil for test engines using only a
+	// Provider mock — those stay on the classic route.
+	recipeCorpus *StoreRecipeCorpus
 }
 
 // NewEngine creates a new workflow engine rooted at baseDir.
@@ -38,6 +43,9 @@ func NewEngine(baseDir string, env Environment, kp knowledge.Provider) *Engine {
 		stateDir:    baseDir,
 		environment: env,
 		knowledge:   kp,
+	}
+	if store, ok := kp.(*knowledge.Store); ok {
+		e.recipeCorpus = NewStoreRecipeCorpus(store)
 	}
 
 	MigrateRemoveLegacyWorkState(baseDir)
@@ -229,6 +237,11 @@ func (e *Engine) ListActiveSessions() ([]SessionEntry, error) {
 }
 
 // BootstrapStart creates a new session with bootstrap state and returns the first step.
+//
+// Route selection runs at start from the intent alone. Recipe route fires
+// when a viable match is found (confidence ≥ MinRecipeConfidence); classic
+// is the fallback. Adopt is NOT chosen here — it is inferred later from
+// Plan.IsAllExisting() once the discover step runs.
 func (e *Engine) BootstrapStart(projectID, intent string) (*BootstrapResponse, error) {
 	state, err := e.Start(projectID, WorkflowBootstrap, intent)
 	if err != nil {
@@ -237,6 +250,15 @@ func (e *Engine) BootstrapStart(projectID, intent string) (*BootstrapResponse, e
 
 	bs := NewBootstrapState()
 	bs.Steps[0].Status = stepInProgress
+
+	if e.recipeCorpus != nil {
+		route, match, _ := SelectBootstrapRoute(context.Background(), intent, nil, e.recipeCorpus)
+		if route == BootstrapRouteRecipe {
+			bs.Route = route
+			bs.RecipeMatch = match
+		}
+	}
+
 	state.Bootstrap = bs
 
 	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
@@ -336,6 +358,15 @@ func (e *Engine) BootstrapCompletePlan(targets []BootstrapTarget, liveTypes []pl
 	defaulted, err := ValidateBootstrapTargets(targets, liveTypes, liveServices)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap complete plan: %w", err)
+	}
+
+	// Recipe route: enforce the recipe's intended mode. Otherwise an agent can
+	// accept a standard-mode recipe but submit a simple-mode plan, silently
+	// bypassing the mode-specific rules the recipe's provision atoms don't ship.
+	if state.Bootstrap.Route == BootstrapRouteRecipe {
+		if err := ValidateBootstrapRecipeMode(state.Bootstrap.RecipeMatch, targets); err != nil {
+			return nil, fmt.Errorf("bootstrap complete plan: %w", err)
+		}
 	}
 
 	// Per-hostname lock: reject if any target hostname has an incomplete meta

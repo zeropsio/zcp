@@ -25,16 +25,63 @@ type coverageFixture struct {
 }
 
 func coverageFixtures() []coverageFixture {
+	boot := bootstrapCoverageFixtures()
+	dev := developCoverageFixtures()
+	matrix := matrixCoverageFixtures()
+	pipeline := pipelineCoverageFixtures()
+	out := make([]coverageFixture, 0, len(boot)+len(dev)+len(matrix)+len(pipeline))
+	out = append(out, boot...)
+	out = append(out, dev...)
+	out = append(out, matrix...)
+	out = append(out, pipeline...)
+	return out
+}
+
+func bootstrapCoverageFixtures() []coverageFixture {
 	return []coverageFixture{
 		{
 			Name: "idle_empty_project",
 			Envelope: StateEnvelope{
-				Phase:       PhaseIdle,
-				Environment: EnvContainer,
+				Phase:        PhaseIdle,
+				Environment:  EnvContainer,
+				IdleScenario: IdleEmpty,
 			},
 			MustContain: []string{
 				`zerops_workflow action="start" workflow="bootstrap"`,
 				"one sentence",
+			},
+		},
+		{
+			Name: "idle_bootstrapped_ready_for_develop",
+			Envelope: StateEnvelope{
+				Phase:        PhaseIdle,
+				Environment:  EnvContainer,
+				IdleScenario: IdleBootstrapped,
+				Services: []ServiceSnapshot{{
+					Hostname: "appdev", TypeVersion: "nodejs@22",
+					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					Bootstrapped: true, StageHostname: "appstage",
+				}},
+			},
+			MustContain: []string{
+				`zerops_workflow action="start" workflow="develop"`,
+				"auto-closes",
+			},
+		},
+		{
+			Name: "idle_adopt_unmanaged_only",
+			Envelope: StateEnvelope{
+				Phase:        PhaseIdle,
+				Environment:  EnvContainer,
+				IdleScenario: IdleAdopt,
+				Services: []ServiceSnapshot{{
+					Hostname: "legacy", TypeVersion: "nodejs@22",
+					RuntimeClass: RuntimeDynamic,
+				}},
+			},
+			MustContain: []string{
+				`zerops_workflow action="start" workflow="bootstrap" intent="adopt`,
+				"adopt route",
 			},
 		},
 		{
@@ -71,6 +118,7 @@ func coverageFixtures() []coverageFixture {
 				"zsc noop --silent",
 				"deployFiles: [.]",
 				"0.0.0.0",
+				"Build vs runtime env scopes",
 			},
 		},
 		{
@@ -120,6 +168,11 @@ func coverageFixtures() []coverageFixture {
 				"ServiceMeta",
 			},
 		},
+	}
+}
+
+func developCoverageFixtures() []coverageFixture {
+	return []coverageFixture{
 		{
 			Name: "develop_push_dev_dev_container",
 			Envelope: StateEnvelope{
@@ -134,6 +187,9 @@ func coverageFixtures() []coverageFixture {
 			MustContain: []string{
 				"Push-Dev Deploy Strategy",
 				"SSH",
+				"Read and edit directly on the mount",
+				"HTTP diagnostics",
+				"zerops_verify",
 			},
 		},
 		{
@@ -167,6 +223,10 @@ func coverageFixtures() []coverageFixture {
 			},
 			MustContain: []string{
 				"zerops_deploy",
+				"Env var channels",
+				"auto-restarts** the affected service",
+				"does NOT pick them up",
+				"Shadow-loop pitfall",
 			},
 		},
 		{
@@ -178,6 +238,29 @@ func coverageFixtures() []coverageFixture {
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
 					Strategy: "unset",
+				}},
+			},
+			MustContain: []string{
+				"Strategy selection required",
+				`action="strategy"`,
+			},
+		},
+		{
+			// Strategy-unset atom must fire in idle too: when the develop
+			// conductor skips session creation because strategy is unset
+			// (spec-work-session §6.1), the envelope stays phase=idle and the
+			// agent would otherwise see only idle-develop-entry — telling it
+			// to call `start develop`, which loops right back.
+			Name: "idle_bootstrapped_strategy_unset",
+			Envelope: StateEnvelope{
+				Phase:        PhaseIdle,
+				Environment:  EnvContainer,
+				IdleScenario: IdleBootstrapped,
+				Services: []ServiceSnapshot{{
+					Hostname: "appdev", TypeVersion: "nodejs@22",
+					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					Bootstrapped: true, StageHostname: "appstage",
+					Strategy: StrategyUnset,
 				}},
 			},
 			MustContain: []string{
@@ -213,6 +296,342 @@ func coverageFixtures() []coverageFixture {
 			MustContain: []string{
 				"auto-closed",
 				`action="close"`,
+			},
+		},
+	}
+}
+
+// matrixCoverageFixtures fills in the axis-coverage matrix with bootstrap +
+// develop scenarios that didn't get a dedicated fixture above. Grouped so the
+// core fixtures stay readable.
+func matrixCoverageFixtures() []coverageFixture {
+	return []coverageFixture{
+		{
+			Name: "bootstrap_classic_generate_dev",
+			Envelope: StateEnvelope{
+				Phase:       PhaseBootstrapActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{{
+					Hostname: "appdev", TypeVersion: "nodejs@22",
+					RuntimeClass: RuntimeDynamic, Mode: ModeDev,
+				}},
+				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteClassic, Step: StepGenerate},
+			},
+			MustContain: []string{
+				"Dev-only mode",
+				"zsc noop --silent",
+				"deployFiles: [.]",
+			},
+		},
+		{
+			Name: "bootstrap_classic_generate_standard_local",
+			Envelope: StateEnvelope{
+				Phase:       PhaseBootstrapActive,
+				Environment: EnvLocal,
+				Services: []ServiceSnapshot{{
+					Hostname: "appstage", TypeVersion: "nodejs@22",
+					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					StageHostname: "appstage",
+				}},
+				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteClassic, Step: StepGenerate},
+			},
+			MustContain: []string{
+				"local mode",
+				"working directory",
+			},
+		},
+		{
+			Name: "bootstrap_classic_static",
+			Envelope: StateEnvelope{
+				Phase:       PhaseBootstrapActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{{
+					Hostname: "webdev", TypeVersion: "static@1",
+					RuntimeClass: RuntimeStatic, Mode: ModeDev,
+				}},
+				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteClassic, Step: StepDiscover},
+			},
+			MustContain: []string{
+				"Static runtime plan",
+				"empty document root",
+			},
+		},
+		{
+			Name: "bootstrap_classic_deploy_dev",
+			Envelope: StateEnvelope{
+				Phase:       PhaseBootstrapActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{{
+					Hostname: "appdev", TypeVersion: "nodejs@22",
+					RuntimeClass: RuntimeDynamic, Mode: ModeDev,
+				}},
+				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteClassic, Step: StepDeploy},
+			},
+			MustContain: []string{
+				"Dev-only mode — deploy flow",
+				"zerops_deploy",
+				"zerops_verify",
+			},
+		},
+		{
+			Name: "bootstrap_classic_deploy_standard",
+			Envelope: StateEnvelope{
+				Phase:       PhaseBootstrapActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{{
+					Hostname: "appdev", TypeVersion: "nodejs@22",
+					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					StageHostname: "appstage",
+				}},
+				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteClassic, Step: StepDeploy},
+			},
+			MustContain: []string{
+				"Standard mode",
+				"sourceService",
+				"targetService",
+				"shadows `run.envVariables`",
+			},
+		},
+		{
+			Name: "bootstrap_classic_provision",
+			Envelope: StateEnvelope{
+				Phase:       PhaseBootstrapActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{{
+					Hostname: "appdev", TypeVersion: "nodejs@22",
+					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					StageHostname: "appstage",
+				}},
+				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteClassic, Step: StepProvision},
+			},
+			MustContain: []string{
+				"ACTIVE",
+				"zerops_discover",
+			},
+		},
+		{
+			Name: "bootstrap_recipe_deploy",
+			Envelope: StateEnvelope{
+				Phase:       PhaseBootstrapActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{{
+					Hostname: "appdev", TypeVersion: "nodejs@22",
+					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+				}},
+				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteRecipe, Step: StepDeploy},
+			},
+			MustContain: []string{
+				"Verify, don't redeploy",
+				"zerops_verify",
+			},
+		},
+		{
+			Name: "bootstrap_adopt_provision",
+			Envelope: StateEnvelope{
+				Phase:       PhaseBootstrapActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{{
+					Hostname: "appdev", TypeVersion: "nodejs@22",
+					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+				}},
+				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteAdopt, Step: StepProvision},
+			},
+			MustContain: []string{
+				"Adopt",
+				"envVariables",
+			},
+		},
+		{
+			Name: "develop_push_dev_simple_container",
+			Envelope: StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{{
+					Hostname: "app", TypeVersion: "bun@1",
+					RuntimeClass: RuntimeDynamic, Mode: ModeSimple,
+					Strategy: "push-dev",
+				}},
+			},
+			MustContain: []string{
+				"healthCheck",
+				"zerops_deploy",
+				`setup="prod"`,
+			},
+		},
+		{
+			Name: "develop_push_dev_standard_container",
+			Envelope: StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{{
+					Hostname: "appdev", TypeVersion: "nodejs@22",
+					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					StageHostname: "appstage",
+					Strategy:      "push-dev",
+				}},
+			},
+			MustContain: []string{
+				"Push-Dev Deploy Strategy",
+				"sourceService",
+			},
+		},
+		{
+			Name: "develop_local_standard",
+			Envelope: StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Environment: EnvLocal,
+				Services: []ServiceSnapshot{{
+					Hostname: "appdev", TypeVersion: "nodejs@22",
+					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					StageHostname: "appstage",
+					Strategy:      "push-dev",
+				}},
+			},
+			MustContain: []string{
+				"zcli vpn up",
+			},
+		},
+		{
+			Name: "develop_local_push_git",
+			Envelope: StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Environment: EnvLocal,
+				Services: []ServiceSnapshot{{
+					Hostname: "appdev", TypeVersion: "nodejs@22",
+					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					StageHostname: "appstage",
+					Strategy:      "push-git",
+				}},
+			},
+			MustContain: []string{
+				"git-push",
+				"GIT_TOKEN",
+			},
+		},
+		{
+			Name: "develop_manual_container_dev",
+			Envelope: StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{{
+					Hostname: "appdev", TypeVersion: "nodejs@22",
+					RuntimeClass: RuntimeDynamic, Mode: ModeDev,
+					Strategy: "manual",
+				}},
+			},
+			MustContain: []string{
+				"Manual Deploy Strategy",
+				"user controls deploy timing",
+			},
+		},
+		{
+			Name: "develop_implicit_webserver_php",
+			Envelope: StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{{
+					Hostname: "app", TypeVersion: "php-apache@8.3",
+					RuntimeClass: RuntimeImplicitWeb, Mode: ModeSimple,
+					Strategy: "push-dev",
+				}},
+			},
+			MustContain: []string{
+				"documentRoot",
+				"Do not SSH",
+			},
+		},
+		{
+			Name: "develop_static_runtime",
+			Envelope: StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{{
+					Hostname: "web", TypeVersion: "static@1",
+					RuntimeClass: RuntimeStatic, Mode: ModeDev,
+					Strategy: "push-dev",
+				}},
+			},
+			MustContain: []string{
+				"zerops_deploy",
+				"Static runtime — develop workflow",
+				"no SSH start",
+			},
+		},
+		{
+			Name: "bootstrap_classic_generate_static_simple",
+			Envelope: StateEnvelope{
+				Phase:       PhaseBootstrapActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{{
+					Hostname: "web", TypeVersion: "static@1",
+					RuntimeClass: RuntimeStatic, Mode: ModeSimple,
+				}},
+				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteClassic, Step: StepGenerate},
+			},
+			MustContain: []string{
+				"Static runtime — zerops.yaml",
+				"Omit `run.start`",
+				"deployFiles",
+			},
+		},
+		{
+			Name: "bootstrap_classic_deploy_static",
+			Envelope: StateEnvelope{
+				Phase:       PhaseBootstrapActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{{
+					Hostname: "web", TypeVersion: "static@1",
+					RuntimeClass: RuntimeStatic, Mode: ModeSimple,
+				}},
+				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteClassic, Step: StepDeploy},
+			},
+			MustContain: []string{
+				"Static runtime — deploy verification",
+				"zerops_deploy",
+				"HTTP 200",
+			},
+		},
+	}
+}
+
+// pipelineCoverageFixtures covers cicd-active and export-active phases.
+// Both are phase-only axes — the atoms filter purely on phase, not on
+// services/modes/strategies, so a single envelope per phase is enough.
+func pipelineCoverageFixtures() []coverageFixture {
+	return []coverageFixture{
+		{
+			Name: "cicd_active",
+			Envelope: StateEnvelope{
+				Phase:       PhaseCICDActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{{
+					Hostname: "appdev", TypeVersion: "nodejs@22",
+					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					StageHostname: "appstage",
+					Strategy:      "push-git",
+				}},
+			},
+			MustContain: []string{
+				"GIT_TOKEN",
+				"ZEROPS_TOKEN",
+				"zcli push",
+				".netrc",
+			},
+		},
+		{
+			Name: "export_active",
+			Envelope: StateEnvelope{
+				Phase:       PhaseExportActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{{
+					Hostname: "appdev", TypeVersion: "nodejs@22",
+					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+				}},
+			},
+			MustContain: []string{
+				"buildFromGit",
+				"zerops_export",
+				"import.yaml",
 			},
 		},
 	}

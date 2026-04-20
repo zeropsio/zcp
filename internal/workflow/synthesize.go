@@ -5,6 +5,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/zeropsio/zcp/internal/content"
 )
@@ -33,11 +34,18 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]string, error
 		return matched[i].ID < matched[j].ID
 	})
 
+	hostname, stageHostname := primaryHostnames(envelope.Services)
+	replacer := strings.NewReplacer(
+		"{hostname}", hostname,
+		"{stage-hostname}", stageHostname,
+		"{project-name}", envelope.Project.Name,
+	)
+
 	out := make([]string, 0, len(matched))
 	for _, atom := range matched {
-		body, err := substitutePlaceholders(atom.Body, envelope)
-		if err != nil {
-			return nil, fmt.Errorf("atom %s: %w", atom.ID, err)
+		body := replacer.Replace(atom.Body)
+		if leak := findUnknownPlaceholder(body); leak != "" {
+			return nil, fmt.Errorf("atom %s: unknown placeholder %q in atom body", atom.ID, leak)
 		}
 		out = append(out, body)
 	}
@@ -85,6 +93,15 @@ func atomMatches(atom KnowledgeAtom, env StateEnvelope) bool {
 	if len(atom.Axes.Runtimes) > 0 && !anyServiceRuntime(env.Services, atom.Axes.Runtimes) {
 		return false
 	}
+
+	// IdleScenario is idle-only like routes/steps are bootstrap-only. An atom
+	// that declares idleScenarios filters out non-idle envelopes entirely and
+	// further filters idle envelopes to the listed sub-cases.
+	if len(atom.Axes.IdleScenarios) > 0 {
+		if env.Phase != PhaseIdle || !slices.Contains(atom.Axes.IdleScenarios, env.IdleScenario) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -131,71 +148,36 @@ func anyServiceRuntime(services []ServiceSnapshot, set []RuntimeClass) bool {
 	return false
 }
 
-// substitutePlaceholders swaps `{key}` tokens in the atom body with values
-// from the envelope. Supported keys:
+// primaryHostnames returns the hostname and paired stage hostname used to
+// substitute `{hostname}` / `{stage-hostname}` in atom bodies. Prefers
+// dynamic runtimes (where the placeholder is most meaningful), then
+// implicit-webserver, then static. The two picks are independent — a
+// dynamic service provides the hostname even when only a static service
+// has a stage hostname. Both empty when no runtime service exists.
 //
-//	{hostname}       — the first dynamic/static/implicit-webserver service
-//	                   in envelope.Services (runtime-scoped atoms)
-//	{stage-hostname} — paired stage hostname of that service, if any
-//	{project-name}   — envelope.Project.Name
-//	{start-command}  — left as-is (caller-populated; see note below)
-//
-// Unknown placeholders trigger an error so atoms cannot leak raw braces into
-// the LLM payload.
-//
-// `{start-command}` is intentionally NOT substituted here — the specific
-// start command varies per service and is supplied by the renderer when it
-// has the service context. An atom that contains a literal `{start-command}`
-// is passed through untouched and is expected to be rendered per-service by
-// a higher layer (Phase 5).
-func substitutePlaceholders(body string, env StateEnvelope) (string, error) {
-	hostname := primaryRuntimeHostname(env.Services)
-	stageHostname := primaryStageHostname(env.Services)
-
-	replacements := map[string]string{
-		"{hostname}":       hostname,
-		"{stage-hostname}": stageHostname,
-		"{project-name}":   env.Project.Name,
-	}
-
-	result := body
-	for key, value := range replacements {
-		result = strings.ReplaceAll(result, key, value)
-	}
-
-	// Detect any unknown `{...}` placeholder that wasn't substituted or
-	// whitelisted. `{start-command}` is explicitly allowed to survive the pass.
-	if leak := findUnknownPlaceholder(result); leak != "" {
-		return "", fmt.Errorf("unknown placeholder %q in atom body", leak)
-	}
-	return result, nil
-}
-
-// primaryRuntimeHostname picks a stable hostname for `{hostname}` expansion.
-// Prefers dynamic runtimes (where the placeholder is most meaningful), then
-// static, then implicit-webserver. Returns "" if no runtime service exists.
-func primaryRuntimeHostname(services []ServiceSnapshot) string {
+// Supported placeholder keys consumed by Synthesize: {hostname},
+// {stage-hostname}, {project-name}. {start-command} and other tokens in
+// allowedSurvivingPlaceholders pass through untouched — the agent fills
+// them from run-time context it already has.
+func primaryHostnames(services []ServiceSnapshot) (hostname, stageHostname string) {
 	order := []RuntimeClass{RuntimeDynamic, RuntimeImplicitWeb, RuntimeStatic}
 	for _, want := range order {
 		for _, svc := range services {
-			if svc.RuntimeClass == want {
-				return svc.Hostname
+			if svc.RuntimeClass != want {
+				continue
+			}
+			if hostname == "" {
+				hostname = svc.Hostname
+			}
+			if stageHostname == "" && svc.StageHostname != "" {
+				stageHostname = svc.StageHostname
+			}
+			if hostname != "" && stageHostname != "" {
+				return hostname, stageHostname
 			}
 		}
 	}
-	return ""
-}
-
-func primaryStageHostname(services []ServiceSnapshot) string {
-	order := []RuntimeClass{RuntimeDynamic, RuntimeImplicitWeb, RuntimeStatic}
-	for _, want := range order {
-		for _, svc := range services {
-			if svc.RuntimeClass == want && svc.StageHostname != "" {
-				return svc.StageHostname
-			}
-		}
-	}
-	return ""
+	return hostname, stageHostname
 }
 
 // allowedSurvivingPlaceholders are `{...}` tokens an atom is allowed to emit
@@ -226,6 +208,7 @@ var allowedSurvivingPlaceholders = map[string]struct{}{
 	"{branch}":         {},
 	"{zeropsToken}":    {},
 	"{runtime}":        {},
+	"{provider}":       {},
 }
 
 // findUnknownPlaceholder scans body for `{...}` tokens that are neither
@@ -301,21 +284,41 @@ func SynthesizeImmediateWorkflow(phase Phase, env Environment) (string, error) {
 	return strings.Join(bodies, "\n\n---\n\n"), nil
 }
 
-// LoadAtomCorpus reads all embedded atoms, parses each into a KnowledgeAtom,
-// and returns the corpus. Errors surface on the first malformed atom so the
-// build fails loudly — a silently-skipped atom is a defect vector.
+// The atom corpus is embedded in the binary and immutable after `go build`,
+// so we parse once and reuse. Hot paths call LoadAtomCorpus per-request
+// (every bootstrap step, every immediate workflow); re-reading 74 files and
+// re-parsing YAML frontmatter on each call was pure waste.
+//
+//nolint:gochecknoglobals // cache for embedded immutable corpus
+var (
+	corpusOnce sync.Once
+	corpusVal  []KnowledgeAtom
+	errCorpus  error
+)
+
+// LoadAtomCorpus returns the parsed atom corpus. First call reads and parses
+// the embedded atom files; subsequent calls return the cached slice. Errors
+// surface on the first malformed atom so the build fails loudly — a
+// silently-skipped atom is a defect vector.
+//
+// The returned slice is shared; callers must not mutate it.
 func LoadAtomCorpus() ([]KnowledgeAtom, error) {
-	files, err := content.ReadAllAtoms()
-	if err != nil {
-		return nil, fmt.Errorf("load atom corpus: %w", err)
-	}
-	corpus := make([]KnowledgeAtom, 0, len(files))
-	for _, f := range files {
-		atom, err := ParseAtom(f.Content)
+	corpusOnce.Do(func() {
+		files, err := content.ReadAllAtoms()
 		if err != nil {
-			return nil, fmt.Errorf("parse atom %s: %w", f.Name, err)
+			errCorpus = fmt.Errorf("load atom corpus: %w", err)
+			return
 		}
-		corpus = append(corpus, atom)
-	}
-	return corpus, nil
+		corpus := make([]KnowledgeAtom, 0, len(files))
+		for _, f := range files {
+			atom, err := ParseAtom(f.Content)
+			if err != nil {
+				errCorpus = fmt.Errorf("parse atom %s: %w", f.Name, err)
+				return
+			}
+			corpus = append(corpus, atom)
+		}
+		corpusVal = corpus
+	})
+	return corpusVal, errCorpus
 }

@@ -35,6 +35,111 @@ func TestBuildGuide_Generate_Standard_HasNoopStart(t *testing.T) {
 	}
 }
 
+func TestBuildGuide_Recipe_RouteOverridesPlanInference(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Route = BootstrapRouteRecipe
+	bs.RecipeMatch = &RecipeMatch{Slug: "laravel-minimal", Confidence: 1.0}
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4"}},
+	}}
+	env := bs.synthesisEnvelope(StepProvision, EnvLocal)
+	if env.Bootstrap == nil {
+		t.Fatal("bootstrap summary missing")
+	}
+	if env.Bootstrap.Route != BootstrapRouteRecipe {
+		t.Errorf("route: got %q, want %q", env.Bootstrap.Route, BootstrapRouteRecipe)
+	}
+	if env.Bootstrap.RecipeMatch == nil || env.Bootstrap.RecipeMatch.Slug != "laravel-minimal" {
+		t.Errorf("recipe match not propagated: %+v", env.Bootstrap.RecipeMatch)
+	}
+}
+
+func TestBuildGuide_Recipe_ProvisionInjectsImportYAML(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Route = BootstrapRouteRecipe
+	bs.RecipeMatch = &RecipeMatch{
+		Slug:       "laravel-minimal",
+		Confidence: 0.97,
+		Mode:       PlanModeStandard,
+		ImportYAML: "project:\n  name: laravel-minimal-agent\nservices:\n  - hostname: appdev\n    type: php-nginx@8.4\n",
+	}
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4"}},
+	}}
+	guide := bs.buildGuide(StepProvision, 0, EnvContainer, nil)
+	if !strings.Contains(guide, "Recipe import YAML") {
+		t.Error("provision guide should contain the recipe-import-YAML header for recipe route")
+	}
+	if !strings.Contains(guide, "hostname: appdev") {
+		t.Error("provision guide should contain the injected YAML body")
+	}
+	if !strings.Contains(guide, "laravel-minimal") {
+		t.Error("provision guide should name the matched recipe slug")
+	}
+	if !strings.Contains(guide, "standard") {
+		t.Error("provision guide should surface the recipe mode alongside the YAML")
+	}
+}
+
+func TestBuildGuide_Recipe_DiscoverInjectsImportYAMLAndMode(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Route = BootstrapRouteRecipe
+	bs.RecipeMatch = &RecipeMatch{
+		Slug:       "nextjs-ssr-hello-world",
+		Confidence: 0.97,
+		Mode:       PlanModeStandard,
+		ImportYAML: "project:\n  name: nextjs-agent\nservices:\n  - hostname: appdev\n    type: nodejs@22\n    zeropsSetup: dev\n  - hostname: appstage\n    type: nodejs@22\n    zeropsSetup: prod\n",
+	}
+	guide := bs.buildGuide(StepDiscover, 0, EnvContainer, nil)
+	if !strings.Contains(guide, "Recipe import YAML") {
+		t.Error("discover guide should contain the recipe-import-YAML header so Claude can write the plan from it")
+	}
+	if !strings.Contains(guide, "hostname: appdev") {
+		t.Error("discover guide should contain the injected YAML body")
+	}
+	if !strings.Contains(guide, "standard") {
+		t.Error("discover guide should surface the recipe mode so Claude sets bootstrapMode correctly on every target")
+	}
+	if !strings.Contains(guide, "bootstrapMode") {
+		t.Error("discover guide should explicitly tell Claude to set bootstrapMode on plan targets")
+	}
+}
+
+func TestBuildGuide_Recipe_NonProvisionOrDiscoverStepDoesNotInjectYAML(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Route = BootstrapRouteRecipe
+	bs.RecipeMatch = &RecipeMatch{
+		Slug:       "laravel-minimal",
+		Confidence: 0.97,
+		Mode:       PlanModeStandard,
+		ImportYAML: "project:\n  name: x\nservices:\n  - hostname: appdev\n",
+	}
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4"}},
+	}}
+	guide := bs.buildGuide(StepDeploy, 0, EnvContainer, nil)
+	if strings.Contains(guide, "Recipe import YAML") {
+		t.Error("deploy guide should NOT contain the recipe-import-YAML block (discover+provision only)")
+	}
+}
+
+func TestBuildGuide_NoRoute_AdoptInferredFromPlan(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	// No Route field set — legacy behavior: adopt inferred from Plan.IsAllExisting().
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "legacy", Type: "nodejs@22", IsExisting: true}},
+	}}
+	env := bs.synthesisEnvelope(StepProvision, EnvLocal)
+	if env.Bootstrap.Route != BootstrapRouteAdopt {
+		t.Errorf("adopt should be inferred from all-existing plan, got %q", env.Bootstrap.Route)
+	}
+}
+
 func TestBuildGuide_Generate_Simple_HasRealStart(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()

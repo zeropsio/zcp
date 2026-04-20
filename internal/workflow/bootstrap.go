@@ -31,12 +31,21 @@ type BootstrapStep struct {
 }
 
 // BootstrapState tracks progress through the bootstrap subflow.
+//
+// Route records the path chosen at bootstrap start (recipe when the intent
+// matches a viable recipe; classic otherwise). Adopt is NOT set here — the
+// adopt path is inferred dynamically from the Plan once the discover step
+// completes. Route is empty for bootstrap sessions created before the
+// route-aware conductor shipped; the envelope synthesizer falls back to
+// Plan-based inference when Route is empty.
 type BootstrapState struct {
 	Active            bool                `json:"active"`
 	CurrentStep       int                 `json:"currentStep"`
 	Steps             []BootstrapStep     `json:"steps"`
 	Plan              *ServicePlan        `json:"plan,omitempty"`
 	DiscoveredEnvVars map[string][]string `json:"discoveredEnvVars,omitempty"`
+	Route             BootstrapRoute      `json:"route,omitempty"`
+	RecipeMatch       *RecipeMatch        `json:"recipeMatch,omitempty"`
 }
 
 // BootstrapResponse is returned from conductor actions.

@@ -23,9 +23,20 @@ const (
 // RecipeMatch describes a recipe that matched the user's intent above the
 // minimum confidence threshold AND passed the viability gate. A RecipeMatch
 // is only produced for viable matches — the gate filters out stubs.
+//
+// ImportYAML is the canonical project-import YAML that `zerops_import` should
+// receive at the provision step. The recipe corpus fills it in at match time
+// so the bootstrap conductor can inject it into the provision guide without
+// a second store lookup (and so the match survives compaction).
 type RecipeMatch struct {
 	Slug       string  `json:"slug"`
 	Confidence float64 `json:"confidence"`
+	ImportYAML string  `json:"importYaml,omitempty"`
+	// Mode is the bootstrap mode inferred from ImportYAML (standard, simple,
+	// dev). Empty when the YAML shape is unrecognised or managed-only. Used
+	// to reject plan submissions on the recipe route that deviate from the
+	// recipe's intended mode.
+	Mode string `json:"mode,omitempty"`
 }
 
 // RecipeCorpus abstracts the recipe search surface. Implementations live in

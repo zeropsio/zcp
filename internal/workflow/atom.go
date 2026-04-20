@@ -21,13 +21,14 @@ type KnowledgeAtom struct {
 // axes mean "any value for this dimension" (Phases is the exception — it
 // MUST be non-empty).
 type AxisVector struct {
-	Phases       []Phase
-	Modes        []Mode
-	Environments []Environment
-	Strategies   []DeployStrategy
-	Runtimes     []RuntimeClass
-	Routes       []BootstrapRoute
-	Steps        []string
+	Phases        []Phase
+	Modes         []Mode
+	Environments  []Environment
+	Strategies    []DeployStrategy
+	Runtimes      []RuntimeClass
+	Routes        []BootstrapRoute
+	Steps         []string
+	IdleScenarios []IdleScenario
 }
 
 // ParseAtom parses a `.md` file body containing YAML frontmatter and a
@@ -49,13 +50,14 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 		Body:     strings.TrimSpace(body),
 		Priority: atomPriority(fields["priority"]),
 		Axes: AxisVector{
-			Phases:       parsePhases(fields["phases"]),
-			Modes:        parseModes(fields["modes"]),
-			Environments: parseEnvironments(fields["environments"]),
-			Strategies:   parseStrategies(fields["strategies"]),
-			Runtimes:     parseRuntimes(fields["runtimes"]),
-			Routes:       parseRoutes(fields["routes"]),
-			Steps:        parseYAMLList(fields["steps"]),
+			Phases:        parsePhases(fields["phases"]),
+			Modes:         parseModes(fields["modes"]),
+			Environments:  parseEnvironments(fields["environments"]),
+			Strategies:    parseStrategies(fields["strategies"]),
+			Runtimes:      parseRuntimes(fields["runtimes"]),
+			Routes:        parseRoutes(fields["routes"]),
+			Steps:         parseYAMLList(fields["steps"]),
+			IdleScenarios: parseIdleScenarios(fields["idleScenarios"]),
 		},
 	}
 	if atom.ID == "" {
@@ -191,6 +193,15 @@ func parseRoutes(raw string) []BootstrapRoute {
 	out := make([]BootstrapRoute, 0, len(values))
 	for _, v := range values {
 		out = append(out, BootstrapRoute(v))
+	}
+	return out
+}
+
+func parseIdleScenarios(raw string) []IdleScenario {
+	values := parseYAMLList(raw)
+	out := make([]IdleScenario, 0, len(values))
+	for _, v := range values {
+		out = append(out, IdleScenario(v))
 	}
 	return out
 }

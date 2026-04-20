@@ -3,17 +3,23 @@ package workflow
 // BuildPlan is the single entry point for producing the typed Plan from an
 // envelope. Pure — no I/O, no state, deterministic given the input JSON.
 //
-// Branching follows §7.2 strictly; first match wins:
+// Branching; first match wins:
 //
 //  1. develop-closed-auto    → close + start-next
 //  2. develop-active, deploy pending anywhere → deploy (Primary), for that svc
 //  3. develop-active, verify pending anywhere → verify
-//  4. develop-active, last attempt failed     → fix-and-retry
+//  4. develop-active, all green                → close (explicit)
 //  5. bootstrap-active                         → continue-bootstrap (route-specific)
 //  6. recipe-active                            → continue-recipe
 //  7. idle, no services                        → start-bootstrap
 //  8. idle, bootstrapped services              → start-develop + alternatives
 //  9. idle, only unmanaged services            → adopt-via-develop
+//
+// Note: "last attempt failed" doesn't get its own branch — branches 2 and 3
+// already match those cases. firstServiceNeedingDeploy/Verify both key off
+// `!attempts[last].Success`, so a failed service gets a deploy or verify
+// action pointed at it. The atom layer (develop-checklist + iteration-delta)
+// surfaces the diagnosis guidance.
 //
 // Any branch whose precondition is not met falls through — no fallbacks,
 // no defaults. If the envelope hits no branch, an empty Plan is returned,
@@ -55,18 +61,16 @@ func planDevelopClosed() Plan {
 	}
 }
 
-// planDevelopActive handles the develop-active phase. Branches 2→3→4 in
-// priority order: deploy gaps beat verify gaps beat retries, because deploy
-// is the prerequisite for both verify and retry.
+// planDevelopActive handles the develop-active phase. Deploy gaps beat
+// verify gaps because deploy is the prerequisite for verify; both branches
+// already handle failed-last-attempt (they key off `!attempts[last].Success`),
+// so a service whose last run failed surfaces as a deploy or verify target.
 func planDevelopActive(env StateEnvelope) Plan {
 	if host := firstServiceNeedingDeploy(env); host != "" {
 		return Plan{Primary: deployAction(host)}
 	}
 	if host := firstServiceNeedingVerify(env); host != "" {
 		return Plan{Primary: verifyAction(host)}
-	}
-	if host := firstServiceWithFailedAttempt(env); host != "" {
-		return Plan{Primary: fixAndRetryAction(host)}
 	}
 	// Every service deployed + verified but the session isn't auto-closed:
 	// this can happen when EvaluateAutoClose sees a mixed attempt history.
@@ -165,33 +169,6 @@ func firstServiceNeedingVerify(env StateEnvelope) string {
 	return ""
 }
 
-// firstServiceWithFailedAttempt returns the hostname of the first service
-// whose last attempt (deploy or verify) failed. Only used when there are no
-// pending deploys/verifies — i.e. every service has been tried but something
-// regressed. Separate from the deploy/verify branches because its remediation
-// is "diagnose the failure," not "run the next step."
-func firstServiceWithFailedAttempt(env StateEnvelope) string {
-	if env.WorkSession == nil {
-		return ""
-	}
-	for _, host := range env.WorkSession.Services {
-		if lastAttemptFailed(env.WorkSession.Deploys[host]) {
-			return host
-		}
-		if lastAttemptFailed(env.WorkSession.Verifies[host]) {
-			return host
-		}
-	}
-	return ""
-}
-
-func lastAttemptFailed(attempts []AttemptInfo) bool {
-	if len(attempts) == 0 {
-		return false
-	}
-	return !attempts[len(attempts)-1].Success
-}
-
 // countIdleServices partitions the envelope's services for idle-phase plan
 // dispatch. `bootstrapped` is the count with complete ServiceMeta; `adoptable`
 // is unmanaged runtimes without complete meta.
@@ -228,15 +205,6 @@ func verifyAction(host string) NextAction {
 		Tool:      "zerops_verify",
 		Args:      map[string]string{"hostname": host},
 		Rationale: "Deploy succeeded but verify has not passed yet.",
-	}
-}
-
-func fixAndRetryAction(host string) NextAction {
-	return NextAction{
-		Label:     "Diagnose and retry " + host,
-		Tool:      "zerops_logs",
-		Args:      map[string]string{"hostname": host},
-		Rationale: "The last deploy/verify attempt failed — read logs before retrying.",
 	}
 }
 

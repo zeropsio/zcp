@@ -24,8 +24,9 @@ func TestScenario_S1_NewProjectRecipeMatch(t *testing.T) {
 
 	// S1 before: new project, Phase=idle, no services.
 	before := StateEnvelope{
-		Phase:       PhaseIdle,
-		Environment: EnvContainer,
+		Phase:        PhaseIdle,
+		Environment:  EnvContainer,
+		IdleScenario: IdleEmpty,
 	}
 	plan := BuildPlan(before)
 	if plan.Primary.Tool != "zerops_workflow" ||
@@ -91,8 +92,9 @@ func TestScenario_S5_MixedBootstrappedAndUnmanaged(t *testing.T) {
 	}
 
 	env := StateEnvelope{
-		Phase:       PhaseIdle,
-		Environment: EnvContainer,
+		Phase:        PhaseIdle,
+		Environment:  EnvContainer,
+		IdleScenario: IdleBootstrapped,
 		Services: []ServiceSnapshot{
 			{
 				Hostname:     "db",
@@ -119,9 +121,8 @@ func TestScenario_S5_MixedBootstrappedAndUnmanaged(t *testing.T) {
 	plan := BuildPlan(env)
 
 	// Mixed bootstrapped + adoptable → primary develop, alternatives must
-	// include both adopt and add-services. This matches the code contract
-	// (plan.go planIdle, bootstrapped>0 branch). §14 spec proposes a
-	// different primary (adopt) — that divergence is on spec-audit agenda.
+	// include both adopt and add-services. Matches `planIdle` bootstrapped>0
+	// branch and spec §14 S5 / spec-scenarios §1.4.
 	if plan.Primary.Tool != "zerops_workflow" ||
 		plan.Primary.Args["action"] != "start" ||
 		plan.Primary.Args["workflow"] != "develop" {
@@ -169,8 +170,9 @@ func TestScenario_S3_AdoptOnlyUnmanaged(t *testing.T) {
 	// handleDevelopBriefing would try auto-adopt — but the typed-plan leg
 	// sees a pure adoptable set and must route to adopt, not develop.
 	env := StateEnvelope{
-		Phase:       PhaseIdle,
-		Environment: EnvContainer,
+		Phase:        PhaseIdle,
+		Environment:  EnvContainer,
+		IdleScenario: IdleAdopt,
 		Services: []ServiceSnapshot{{
 			Hostname:     "appdev",
 			TypeVersion:  "nodejs@22",
@@ -248,10 +250,9 @@ func TestScenario_S4_DevelopStrategyUnset(t *testing.T) {
 		}
 	}
 
-	// Plan still routes to deploy for the first service — there is no
-	// strategy-aware branch in planDevelopActive. The atom guidance is the
-	// gate, not the plan. Documenting the divergence so a future refactor
-	// (spec-audit item) knows the test expects the current behaviour.
+	// Plan routes to deploy — strategy-required is expressed through the
+	// atom layer, not a distinct branch. See spec-workflows §1.4 and
+	// spec-scenarios §3.2 C14.
 	plan := BuildPlan(env)
 	if plan.Primary.Tool != "zerops_deploy" {
 		t.Errorf("S4: expected primary=zerops_deploy (current code contract — strategy gate lives in the atom, not the plan), got tool=%q", plan.Primary.Tool)
@@ -321,6 +322,237 @@ func TestScenario_S7_DevelopClosedAuto(t *testing.T) {
 	}
 }
 
+// TestScenario_S2_IdleBootstrappedReady pins the bootstrapped-only idle
+// branch of planIdle: only the add-services alternative (no adopt, since
+// there is nothing adoptable). Distinct from S5 which has a mixed service
+// set, and from S3 which has no bootstrapped services at all.
+func TestScenario_S2_IdleBootstrappedReady(t *testing.T) {
+	t.Parallel()
+
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+
+	env := StateEnvelope{
+		Phase:        PhaseIdle,
+		Environment:  EnvContainer,
+		IdleScenario: IdleBootstrapped,
+		Services: []ServiceSnapshot{{
+			Hostname:     "appdev",
+			TypeVersion:  "nodejs@22",
+			RuntimeClass: RuntimeDynamic,
+			Mode:         ModeDev,
+			Bootstrapped: true,
+		}},
+	}
+
+	plan := BuildPlan(env)
+
+	if plan.Primary.Tool != "zerops_workflow" ||
+		plan.Primary.Args["action"] != "start" ||
+		plan.Primary.Args["workflow"] != "develop" {
+		t.Errorf("S2: expected primary=start develop, got tool=%q args=%v",
+			plan.Primary.Tool, plan.Primary.Args)
+	}
+	// Only the add-services alternative — no adopt since nothing is adoptable.
+	if len(plan.Alternatives) != 1 {
+		t.Fatalf("S2: expected exactly 1 alternative (add-services), got %d: %+v",
+			len(plan.Alternatives), plan.Alternatives)
+	}
+	if plan.Alternatives[0].Label != "Add more services" {
+		t.Errorf("S2: expected sole alternative 'Add more services', got %q",
+			plan.Alternatives[0].Label)
+	}
+
+	bodies, err := Synthesize(env, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	if len(bodies) == 0 {
+		t.Fatal("S2: expected at least one idle-phase atom to synthesize")
+	}
+}
+
+// TestScenario_S6_DevelopDeployOKPendingVerify pins the
+// deploy-succeeded/verify-not-yet branch of planDevelopActive. Branch 2
+// passes (no deploy needed) and branch 3 fires (verify pending).
+func TestScenario_S6_DevelopDeployOKPendingVerify(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	env := StateEnvelope{
+		Phase:       PhaseDevelopActive,
+		Environment: EnvContainer,
+		Services: []ServiceSnapshot{{
+			Hostname:     "appdev",
+			TypeVersion:  "nodejs@22",
+			RuntimeClass: RuntimeDynamic,
+			Mode:         ModeDev,
+			Strategy:     "push-dev",
+			Bootstrapped: true,
+		}},
+		WorkSession: &WorkSessionSummary{
+			Intent:    "add /health endpoint",
+			Services:  []string{"appdev"},
+			CreatedAt: now.Add(-5 * time.Minute),
+			Deploys: map[string][]AttemptInfo{
+				"appdev": {
+					{At: now.Add(-2 * time.Minute), Success: true, Iteration: 1},
+				},
+			},
+			// No Verifies map → firstServiceNeedingVerify returns "appdev".
+		},
+	}
+
+	plan := BuildPlan(env)
+
+	if plan.Primary.Tool != "zerops_verify" {
+		t.Errorf("S6: expected primary=zerops_verify, got tool=%q", plan.Primary.Tool)
+	}
+	if plan.Primary.Args["hostname"] != "appdev" {
+		t.Errorf("S6: expected primary hostname=appdev, got %q", plan.Primary.Args["hostname"])
+	}
+}
+
+// TestScenario_S9_BootstrapActiveClassicGenerate covers a classic-route
+// bootstrap mid-session at the generate step — orthogonal to S1's second
+// leg which exercises Route=recipe Step=provision. Atoms scoped to
+// routes=[classic] AND steps=[generate] must match.
+func TestScenario_S9_BootstrapActiveClassicGenerate(t *testing.T) {
+	t.Parallel()
+
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+
+	env := StateEnvelope{
+		Phase:       PhaseBootstrapActive,
+		Environment: EnvContainer,
+		Services: []ServiceSnapshot{{
+			Hostname:     "appdev",
+			TypeVersion:  "nodejs@22",
+			RuntimeClass: RuntimeDynamic,
+			Mode:         ModeDev,
+		}},
+		Bootstrap: &BootstrapSessionSummary{
+			Route: BootstrapRouteClassic,
+			Step:  StepGenerate,
+		},
+	}
+
+	plan := BuildPlan(env)
+	if plan.Primary.Tool != "zerops_workflow" ||
+		plan.Primary.Args["action"] != "iterate" ||
+		plan.Primary.Args["workflow"] != "bootstrap" {
+		t.Errorf("S9: expected primary=iterate bootstrap, got tool=%q args=%v",
+			plan.Primary.Tool, plan.Primary.Args)
+	}
+
+	bodies, err := Synthesize(env, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	if len(bodies) == 0 {
+		t.Fatal("S9: expected classic-route atoms to match")
+	}
+	joined := strings.Join(bodies, "\n")
+	// bootstrap-generate-dev is classic+generate+dev-scoped.
+	if !strings.Contains(joined, "Dev-only mode") {
+		t.Error("S9: expected bootstrap-generate-dev atom body to appear")
+	}
+}
+
+// TestScenario_S10_RecipeActive pins the recipe-active plan. The recipe
+// conductor handles its own guidance; BuildPlan only provides the iterate
+// pointer so the agent can advance.
+func TestScenario_S10_RecipeActive(t *testing.T) {
+	t.Parallel()
+
+	env := StateEnvelope{
+		Phase:       PhaseRecipeActive,
+		Environment: EnvContainer,
+		Recipe: &RecipeSessionSummary{
+			Slug: "laravel-minimal",
+		},
+	}
+
+	plan := BuildPlan(env)
+	if plan.Primary.Tool != "zerops_workflow" ||
+		plan.Primary.Args["action"] != "iterate" ||
+		plan.Primary.Args["workflow"] != "recipe" {
+		t.Errorf("S10: expected primary=iterate recipe, got tool=%q args=%v",
+			plan.Primary.Tool, plan.Primary.Args)
+	}
+}
+
+// TestScenario_S11_CICDActiveEmptyPlan pins the stateless-workflow contract:
+// CI/CD phase returns an empty Plan (tool handlers emit their own guidance
+// via SynthesizeImmediateWorkflow). Synthesize still produces the atom
+// bodies; the Plan absence is deliberate, not a bug.
+func TestScenario_S11_CICDActiveEmptyPlan(t *testing.T) {
+	t.Parallel()
+
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+
+	env := StateEnvelope{
+		Phase:       PhaseCICDActive,
+		Environment: EnvContainer,
+	}
+
+	plan := BuildPlan(env)
+	if plan.Primary.Tool != "" {
+		t.Errorf("S11: expected empty Plan (stateless workflow contract), got tool=%q", plan.Primary.Tool)
+	}
+	if plan.Secondary != nil || len(plan.Alternatives) != 0 {
+		t.Errorf("S11: expected no secondary/alternatives, got secondary=%v alts=%d", plan.Secondary, len(plan.Alternatives))
+	}
+
+	bodies, err := Synthesize(env, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	if len(bodies) == 0 {
+		t.Fatal("S11: expected cicd atoms to synthesize")
+	}
+}
+
+// TestScenario_S12_ExportActiveEmptyPlan mirrors S11 for the export phase.
+// Same stateless contract: empty Plan, atom bodies drive guidance.
+func TestScenario_S12_ExportActiveEmptyPlan(t *testing.T) {
+	t.Parallel()
+
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+
+	env := StateEnvelope{
+		Phase:       PhaseExportActive,
+		Environment: EnvContainer,
+	}
+
+	plan := BuildPlan(env)
+	if plan.Primary.Tool != "" {
+		t.Errorf("S12: expected empty Plan (stateless workflow contract), got tool=%q", plan.Primary.Tool)
+	}
+	if plan.Secondary != nil || len(plan.Alternatives) != 0 {
+		t.Errorf("S12: expected no secondary/alternatives, got secondary=%v alts=%d", plan.Secondary, len(plan.Alternatives))
+	}
+
+	bodies, err := Synthesize(env, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	if len(bodies) == 0 {
+		t.Fatal("S12: expected export atoms to synthesize")
+	}
+}
+
 func TestScenario_S8_DevelopIterationFailure(t *testing.T) {
 	t.Parallel()
 
@@ -357,10 +589,9 @@ func TestScenario_S8_DevelopIterationFailure(t *testing.T) {
 
 	plan := BuildPlan(env)
 
-	// Current code contract: last deploy failed → firstServiceNeedingDeploy
-	// returns that host and primary is deploy. §14 says fix-and-retry, but
-	// the deploy path is what BuildPlan actually dispatches. Spec-audit
-	// task #18 tracks reconciling the two.
+	// Last deploy failed → firstServiceNeedingDeploy returns that host
+	// and primary is deploy. Tier guidance rides along through atoms, not
+	// a distinct plan branch. See spec §14 S8 / spec-scenarios §3.3.
 	if plan.Primary.Tool != "zerops_deploy" {
 		t.Errorf("S8 iter-3 failed: expected primary=zerops_deploy, got tool=%q", plan.Primary.Tool)
 	}

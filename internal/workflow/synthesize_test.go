@@ -141,11 +141,13 @@ func TestSynthesize_AxisFiltering(t *testing.T) {
 // that Synthesize applies. Lets axis-filter assertions compare against what
 // actually lands in the synthesized output.
 func bodyAfterSub(atom KnowledgeAtom, env StateEnvelope) string {
-	body, err := substitutePlaceholders(atom.Body, env)
-	if err != nil {
-		return firstLine(atom.Body)
-	}
-	return firstLine(body)
+	hostname, stageHostname := primaryHostnames(env.Services)
+	replacer := strings.NewReplacer(
+		"{hostname}", hostname,
+		"{stage-hostname}", stageHostname,
+		"{project-name}", env.Project.Name,
+	)
+	return firstLine(replacer.Replace(atom.Body))
 }
 
 func TestSynthesize_PrioritySort(t *testing.T) {

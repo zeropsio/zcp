@@ -100,16 +100,45 @@ func ComputeEnvelope(
 	}
 
 	return StateEnvelope{
-		Phase:       phase,
-		Environment: env,
-		SelfService: self,
-		Project:     projectSummary,
-		Services:    snapshots,
-		WorkSession: wsSummary,
-		Bootstrap:   bsSummary,
-		Recipe:      recipeSummaryFromBootstrap(bs),
-		Generated:   now.UTC(),
+		Phase:        phase,
+		Environment:  env,
+		IdleScenario: deriveIdleScenario(phase, snapshots),
+		SelfService:  self,
+		Project:      projectSummary,
+		Services:     snapshots,
+		WorkSession:  wsSummary,
+		Bootstrap:    bsSummary,
+		Recipe:       recipeSummaryFromBootstrap(bs),
+		Generated:    now.UTC(),
 	}, nil
+}
+
+// deriveIdleScenario classifies the idle phase into one of three sub-cases
+// based on service composition. Returns "" for non-idle phases. Partitions
+// services the same way planIdle does: managed services don't count toward
+// either bucket (they are data stores, not deploy targets).
+func deriveIdleScenario(phase Phase, services []ServiceSnapshot) IdleScenario {
+	if phase != PhaseIdle {
+		return ""
+	}
+	var bootstrapped, adoptable int
+	for _, svc := range services {
+		if svc.RuntimeClass == RuntimeManaged {
+			continue
+		}
+		if svc.Bootstrapped {
+			bootstrapped++
+			continue
+		}
+		adoptable++
+	}
+	if bootstrapped > 0 {
+		return IdleBootstrapped
+	}
+	if adoptable > 0 {
+		return IdleAdopt
+	}
+	return IdleEmpty
 }
 
 // buildBootstrapSessionSummary adapts the persisted BootstrapSession into its
@@ -187,7 +216,7 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta) ServiceSnaps
 		Hostname:     svc.Name,
 		TypeVersion:  typeVersion,
 		Status:       svc.Status,
-		RuntimeClass: classifyEnvelopeRuntime(typeVersion, len(svc.Ports) > 0),
+		RuntimeClass: classifyEnvelopeRuntime(typeVersion),
 	}
 	if meta != nil && meta.IsComplete() {
 		snap.Bootstrapped = true
@@ -203,13 +232,13 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta) ServiceSnaps
 	return snap
 }
 
-// classifyEnvelopeRuntime maps a service type+ports pair to the envelope's
-// RuntimeClass vocabulary. Distinct from `verify.classifyRuntime` — verify's
-// enum is check-dispatch oriented (Worker = dynamic-without-ports), while
-// the envelope models managed services as a first-class class (not "skip all
-// checks"). The two classifiers agree on Dynamic/Static/Implicit; envelope
-// additionally recognises Managed and Unknown.
-func classifyEnvelopeRuntime(typeVersion string, hasPorts bool) RuntimeClass {
+// classifyEnvelopeRuntime maps a service type to the envelope's RuntimeClass
+// vocabulary. Distinct from `verify.classifyRuntime` — verify's enum is
+// check-dispatch oriented (Worker = dynamic-without-ports), while the
+// envelope models managed services as a first-class class (not "skip all
+// checks") and collapses worker/dynamic into one class because no atom
+// needs the port distinction.
+func classifyEnvelopeRuntime(typeVersion string) RuntimeClass {
 	if typeVersion == "" {
 		return RuntimeUnknown
 	}
@@ -223,9 +252,6 @@ func classifyEnvelopeRuntime(typeVersion string, hasPorts bool) RuntimeClass {
 	if strings.HasPrefix(lower, "static") || strings.HasPrefix(lower, "nginx") {
 		return RuntimeStatic
 	}
-	// Workers (no ports) still share dynamic-runtime deploy semantics; the
-	// envelope doesn't split them because no atom needs the distinction.
-	_ = hasPorts
 	return RuntimeDynamic
 }
 

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/knowledge"
 )
 
 func TestIsManagedService(t *testing.T) {
@@ -418,6 +420,67 @@ func TestEngine_BootstrapStart_Success(t *testing.T) {
 	}
 }
 
+func TestEngine_BootstrapStart_RecipeRoute(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	docs := map[string]*knowledge.Document{
+		"zerops://recipes/laravel-minimal": {
+			URI:        "zerops://recipes/laravel-minimal",
+			Title:      "Laravel Minimal",
+			Languages:  []string{"php"},
+			Frameworks: []string{"laravel"},
+			ImportYAML: "project:\n  name: laravel-minimal-agent\n",
+		},
+	}
+	store, err := knowledge.NewStore(docs)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	eng := NewEngine(dir, EnvLocal, store)
+
+	if _, err := eng.BootstrapStart("proj-1", "Build a Laravel weather dashboard"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+	state, err := eng.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	if state.Bootstrap == nil {
+		t.Fatal("Bootstrap state missing")
+	}
+	if state.Bootstrap.Route != BootstrapRouteRecipe {
+		t.Errorf("route: got %q, want %q", state.Bootstrap.Route, BootstrapRouteRecipe)
+	}
+	if state.Bootstrap.RecipeMatch == nil || state.Bootstrap.RecipeMatch.Slug != "laravel-minimal" {
+		t.Errorf("recipe match: got %+v", state.Bootstrap.RecipeMatch)
+	}
+}
+
+func TestEngine_BootstrapStart_ClassicRouteWhenNoRecipeMatch(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	docs := map[string]*knowledge.Document{
+		"zerops://recipes/laravel-minimal": {
+			URI:        "zerops://recipes/laravel-minimal",
+			Languages:  []string{"php"},
+			Frameworks: []string{"laravel"},
+			ImportYAML: "project: {}",
+		},
+	}
+	store, _ := knowledge.NewStore(docs)
+	eng := NewEngine(dir, EnvLocal, store)
+
+	if _, err := eng.BootstrapStart("proj-1", "weather dashboard without a framework keyword"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+	state, _ := eng.GetState()
+	if state.Bootstrap.Route == BootstrapRouteRecipe {
+		t.Errorf("route should not be recipe when intent has no keyword match, got %q", state.Bootstrap.Route)
+	}
+}
+
 func TestEngine_BootstrapStart_ExistingSession(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -800,6 +863,77 @@ func TestEngine_BootstrapCompletePlan_InvalidHostname(t *testing.T) {
 	_, err := eng.BootstrapCompletePlan(plan, nil, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid hostname")
+	}
+}
+
+func TestEngine_BootstrapCompletePlan_RecipeModeDeviation(t *testing.T) {
+	t.Parallel()
+
+	docs := map[string]*knowledge.Document{
+		"zerops://recipes/laravel-minimal": {
+			URI:        "zerops://recipes/laravel-minimal",
+			Title:      "Laravel Minimal",
+			Languages:  []string{"php"},
+			Frameworks: []string{"laravel"},
+			ImportYAML: "services:\n  - hostname: appdev\n    type: php-nginx@8.4\n    zeropsSetup: dev\n  - hostname: appstage\n    type: php-nginx@8.4\n    zeropsSetup: prod\n",
+		},
+	}
+	store, err := knowledge.NewStore(docs)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+
+	dir := t.TempDir()
+	eng := NewEngine(dir, EnvLocal, store)
+
+	// Intent triggers recipe match on laravel-minimal (standard mode).
+	if _, err := eng.BootstrapStart("proj-1", "Laravel weather dashboard"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	// Deviating plan: single runtime in simple mode.
+	plan := []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "app", Type: "php-nginx@8.4", BootstrapMode: "simple"}},
+	}
+	_, err = eng.BootstrapCompletePlan(plan, nil, nil)
+	if err == nil {
+		t.Fatal("expected error rejecting simple-mode plan on standard-mode recipe route")
+	}
+	if !strings.Contains(err.Error(), "laravel-minimal") || !strings.Contains(err.Error(), "standard mode") {
+		t.Errorf("error should name recipe + mode: got %q", err.Error())
+	}
+}
+
+func TestEngine_BootstrapCompletePlan_RecipeModeMatches(t *testing.T) {
+	t.Parallel()
+
+	docs := map[string]*knowledge.Document{
+		"zerops://recipes/laravel-minimal": {
+			URI:        "zerops://recipes/laravel-minimal",
+			Title:      "Laravel Minimal",
+			Languages:  []string{"php"},
+			Frameworks: []string{"laravel"},
+			ImportYAML: "services:\n  - hostname: appdev\n    type: php-nginx@8.4\n    zeropsSetup: dev\n  - hostname: appstage\n    type: php-nginx@8.4\n    zeropsSetup: prod\n",
+		},
+	}
+	store, err := knowledge.NewStore(docs)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+
+	dir := t.TempDir()
+	eng := NewEngine(dir, EnvLocal, store)
+
+	if _, err := eng.BootstrapStart("proj-1", "Laravel weather dashboard"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+
+	// Matching plan: standard mode.
+	plan := []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "php-nginx@8.4", BootstrapMode: "standard"}},
+	}
+	if _, err := eng.BootstrapCompletePlan(plan, nil, nil); err != nil {
+		t.Fatalf("expected standard plan to pass on standard recipe, got %v", err)
 	}
 }
 

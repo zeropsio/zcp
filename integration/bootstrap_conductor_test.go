@@ -200,6 +200,15 @@ func TestIntegration_BootstrapConductor_SkipFlow(t *testing.T) {
 		t.Error("current should be nil after completion")
 	}
 
+	// Skip-close path must surface the transition message — not the raw
+	// "Bootstrap complete. All steps finished." from the engine. Regression
+	// guard: prior to the appendTransitionMessage extraction, skip-close
+	// returned a barebones message with no develop-workflow guidance, so
+	// agents silently moved on to code changes without opening a session.
+	if !strings.Contains(finalResp.Message, "develop") {
+		t.Errorf("final message missing develop-workflow transition guidance: %q", finalResp.Message)
+	}
+
 	// Verify step statuses in summary.
 	skippedCount := 0
 	completedCount := 0

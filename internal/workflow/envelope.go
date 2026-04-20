@@ -13,16 +13,28 @@ import "time"
 // alphabetically, so plain json.Marshal is deterministic once slice order
 // is controlled at construction.
 type StateEnvelope struct {
-	Phase       Phase                    `json:"phase"`
-	Environment Environment              `json:"environment"`
-	SelfService *SelfService             `json:"selfService,omitempty"`
-	Project     ProjectSummary           `json:"project"`
-	Services    []ServiceSnapshot        `json:"services"`
-	WorkSession *WorkSessionSummary      `json:"workSession,omitempty"`
-	Bootstrap   *BootstrapSessionSummary `json:"bootstrap,omitempty"`
-	Recipe      *RecipeSessionSummary    `json:"recipe,omitempty"`
-	Generated   time.Time                `json:"generated"`
+	Phase        Phase                    `json:"phase"`
+	Environment  Environment              `json:"environment"`
+	IdleScenario IdleScenario             `json:"idleScenario,omitempty"`
+	SelfService  *SelfService             `json:"selfService,omitempty"`
+	Project      ProjectSummary           `json:"project"`
+	Services     []ServiceSnapshot        `json:"services"`
+	WorkSession  *WorkSessionSummary      `json:"workSession,omitempty"`
+	Bootstrap    *BootstrapSessionSummary `json:"bootstrap,omitempty"`
+	Recipe       *RecipeSessionSummary    `json:"recipe,omitempty"`
+	Generated    time.Time                `json:"generated"`
 }
+
+// IdleScenario discriminates the three sub-cases of PhaseIdle so atoms can
+// filter on a single mutually-exclusive value instead of racing on overlapping
+// service-count heuristics. Empty when Phase != idle.
+type IdleScenario string
+
+const (
+	IdleEmpty        IdleScenario = "empty"        // no user services at all
+	IdleBootstrapped IdleScenario = "bootstrapped" // at least one bootstrapped service
+	IdleAdopt        IdleScenario = "adopt"        // only unmanaged runtimes, none bootstrapped
+)
 
 // Phase enumerates the lifecycle states the envelope can describe.
 type Phase string

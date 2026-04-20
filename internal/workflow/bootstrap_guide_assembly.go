@@ -48,14 +48,26 @@ func (b *BootstrapState) buildGuide(step string, iteration int, env Environment,
 		}
 		out += formatEnvVarsForGuide(b.DiscoveredEnvVars)
 	}
+
+	// Recipe import YAML is dynamic data — it depends on the matched recipe.
+	// Injected at discover (so the agent has the canonical shape to write the
+	// plan from) and at provision (so the agent can feed it to zerops_import
+	// without scraping it out of the atom body). Mode is rendered alongside
+	// so the agent sets `bootstrapMode` correctly on every target.
+	if (step == StepDiscover || step == StepProvision) && b.Route == BootstrapRouteRecipe && b.RecipeMatch != nil && b.RecipeMatch.ImportYAML != "" {
+		if out != "" {
+			out += "\n\n---\n\n"
+		}
+		out += formatRecipeImportYAMLForGuide(b.RecipeMatch)
+	}
 	return out
 }
 
 // synthesisEnvelope builds the minimal StateEnvelope that atom filtering
 // needs during a bootstrap step. Phase is always bootstrap-active; route
-// is inferred from the plan (adopt when every target pre-exists, classic
-// otherwise — recipe bootstraps run a separate conductor and don't reach
-// buildGuide). Each standard-mode runtime emits two snapshots (dev + stage)
+// is taken from BootstrapState.Route when set (recipe) and otherwise
+// inferred from the plan (adopt when every target pre-exists, classic
+// otherwise). Each standard-mode runtime emits two snapshots (dev + stage)
 // so stage-scoped atoms match.
 func (b *BootstrapState) synthesisEnvelope(step string, env Environment) StateEnvelope {
 	services := make([]ServiceSnapshot, 0)
@@ -64,15 +76,19 @@ func (b *BootstrapState) synthesisEnvelope(step string, env Environment) StateEn
 			services = append(services, planTargetSnapshots(t)...)
 		}
 	}
-	route := BootstrapRouteClassic
-	if b.Plan != nil && b.Plan.IsAllExisting() {
-		route = BootstrapRouteAdopt
+	route := b.Route
+	if route == "" {
+		route = BootstrapRouteClassic
+		if b.Plan != nil && b.Plan.IsAllExisting() {
+			route = BootstrapRouteAdopt
+		}
 	}
+	summary := &BootstrapSessionSummary{Route: route, Step: step, RecipeMatch: b.RecipeMatch}
 	return StateEnvelope{
 		Phase:       PhaseBootstrapActive,
 		Environment: env,
 		Services:    services,
-		Bootstrap:   &BootstrapSessionSummary{Route: route, Step: step},
+		Bootstrap:   summary,
 	}
 }
 
@@ -83,7 +99,7 @@ func (b *BootstrapState) synthesisEnvelope(step string, env Environment) StateEn
 // same classification because atoms filter on runtime presence, not shape.
 func planTargetSnapshots(t BootstrapTarget) []ServiceSnapshot {
 	mode := planModeToEnvelopeMode(t.Runtime.EffectiveMode())
-	runtimeClass := classifyEnvelopeRuntime(t.Runtime.Type, true)
+	runtimeClass := classifyEnvelopeRuntime(t.Runtime.Type)
 	snaps := []ServiceSnapshot{{
 		Hostname:     t.Runtime.DevHostname,
 		TypeVersion:  t.Runtime.Type,
@@ -159,6 +175,37 @@ func formatEnvVarsForGuide(envVars map[string][]string) string {
 	return sb.String()
 }
 
+// formatRecipeImportYAMLForGuide renders the matched recipe's canonical
+// import YAML as a fenced block with adjacent instructions. The agent must
+// strip the `project:` section (zerops_import rejects it) and set any
+// project-level env vars via `zerops_env` before the import call.
+//
+// When match.Mode is set, a mode banner is emitted before the YAML so the
+// agent sets `bootstrapMode` correctly on every plan target — deviating from
+// the recipe's shape strips mode-specific provisioning rules (e.g. the
+// `startWithoutCode` rule is only emitted on dev/simple runtimes).
+func formatRecipeImportYAMLForGuide(match *RecipeMatch) string {
+	var sb strings.Builder
+	if match.Mode != "" {
+		fmt.Fprintf(&sb, "## Recipe import YAML — %q (mode: %s)\n\n", match.Slug, match.Mode)
+		fmt.Fprintf(&sb, "This recipe is **%s mode**. Every runtime target in your plan must carry `bootstrapMode: \"%s\"` verbatim — deviating strips mode-specific provisioning rules (e.g. `startWithoutCode`) and fails plan validation.\n\n", match.Mode, match.Mode)
+	} else {
+		fmt.Fprintf(&sb, "## Recipe import YAML — %q\n\n", match.Slug)
+	}
+	sb.WriteString("This is the canonical project-import YAML for the matched recipe. It is authoritative — do NOT rewrite services or adjust fields unless the user explicitly asks.\n\n")
+	sb.WriteString("Steps:\n\n")
+	sb.WriteString("1. Read the YAML below. If it contains a `project:` block with `envVariables`, set those at the project level FIRST using `zerops_env action=\"set\" scope=\"project\" ...`.\n")
+	sb.WriteString("2. Call `zerops_import` with the `services:` section ONLY — the import tool rejects YAML that includes `project:`.\n")
+	sb.WriteString("3. Poll `zerops_discover` until every service reports `ACTIVE`. Recipes build from `buildFromGit` URLs, so first provision can take 2–5 minutes while Zerops clones and builds.\n\n")
+	sb.WriteString("```yaml\n")
+	sb.WriteString(match.ImportYAML)
+	if !strings.HasSuffix(match.ImportYAML, "\n") {
+		sb.WriteString("\n")
+	}
+	sb.WriteString("```\n")
+	return sb.String()
+}
+
 const bootstrapCompleteMsg = "Bootstrap complete."
 
 // BuildTransitionMessage creates a summary message when bootstrap completes.
@@ -194,7 +241,7 @@ func BuildTransitionMessage(state *WorkflowState) string {
 
 	sb.WriteString("## What's Next?\n\n")
 	sb.WriteString("Infrastructure is ready and verified. Choose your next workflow:\n\n")
-	writeOfferingsFooter(&sb, state)
+	writeOfferingsFooter(&sb)
 
 	return sb.String()
 }
@@ -208,7 +255,7 @@ func buildAdoptionTransitionMessage(state *WorkflowState) string {
 	sb.WriteString("\n")
 	writeDeployModelPrimer(&sb)
 	sb.WriteString("## What's Next?\n\n")
-	writeOfferingsFooter(&sb, state)
+	writeOfferingsFooter(&sb)
 
 	return sb.String()
 }
@@ -234,8 +281,27 @@ func writeDeployModelPrimer(sb *strings.Builder) {
 	sb.WriteString("- **Build ≠ Run** — build container has `build.base`, run container has `run.base`. Install runtime packages in `run.prepareCommands`.\n\n")
 }
 
-func writeOfferingsFooter(sb *strings.Builder, state *WorkflowState) {
-	offerings := routeFromBootstrapState(state)
+// bootstrapTransitionOfferings are the primary workflow offerings shown in
+// the post-bootstrap transition message. Callers gate on bootstrap state
+// (Plan non-nil) before invoking — every successful bootstrap offers the
+// same two primary flows plus utilities.
+//
+//nolint:gochecknoglobals // constant offering list
+var bootstrapTransitionOfferings = []FlowOffering{
+	{
+		Workflow: "develop",
+		Priority: 1,
+		Hint:     `zerops_workflow action="start" workflow="develop"`,
+	},
+	{
+		Workflow: "cicd",
+		Priority: 2,
+		Hint:     `zerops_workflow action="start" workflow="cicd"`,
+	},
+}
+
+func writeOfferingsFooter(sb *strings.Builder) {
+	offerings := appendUtilities(bootstrapTransitionOfferings)
 	for i, o := range offerings {
 		num := 'A' + rune(i)
 		fmt.Fprintf(sb, "**%c) %s**\n", num, titleCase(o.Workflow))
@@ -247,28 +313,6 @@ func writeOfferingsFooter(sb *strings.Builder, state *WorkflowState) {
 	sb.WriteString("**Other operations:**\n")
 	sb.WriteString("- Scale: `zerops_scale serviceHostname=\"...\"`\n")
 	sb.WriteString("- Env vars: `zerops_env action=\"set|delete\"` (reload after: `zerops_manage action=\"reload\"`)\n")
-}
-
-// routeFromBootstrapState generates workflow offerings based on bootstrap state.
-// Returns up to 3 primary offerings (develop, cicd, and utilities).
-func routeFromBootstrapState(state *WorkflowState) []FlowOffering {
-	if state == nil || state.Bootstrap == nil || state.Bootstrap.Plan == nil {
-		return nil
-	}
-	offerings := []FlowOffering{
-		{
-			Workflow: "develop",
-			Priority: 1,
-			Hint:     `zerops_workflow action="start" workflow="develop"`,
-		},
-		{
-			Workflow: "cicd",
-			Priority: 2,
-			Hint:     `zerops_workflow action="start" workflow="cicd"`,
-		},
-	}
-	offerings = appendUtilities(offerings)
-	return offerings
 }
 
 // titleCase capitalizes the first letter of a word (replacement for deprecated strings.Title).
