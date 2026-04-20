@@ -199,7 +199,7 @@ func TestContentManifest_Honesty_DiscardedButGotchaShipped_Fails(t *testing.T) {
 		"override_reason": "",
 	}}))
 	got := runManifestCheck(t, dir, map[string]string{"apidev": kbReadmeWithHealthCheckGotcha}, "")
-	c := findCheckByName(got, "writer_manifest_honesty")
+	c := findCheckByName(got, "writer_manifest_honesty_discarded_as_gotcha")
 	if c == nil || c.Status != "fail" {
 		t.Fatalf("expected fail — fact marked discarded but similar gotcha shipped: %+v", c)
 	}
@@ -218,7 +218,7 @@ func TestContentManifest_Honesty_DiscardedAndNoMatch_Passes(t *testing.T) {
 		"override_reason": "",
 	}}))
 	got := runManifestCheck(t, dir, map[string]string{"apidev": kbReadmeWithHealthCheckGotcha}, "")
-	c := findCheckByName(got, "writer_manifest_honesty")
+	c := findCheckByName(got, "writer_manifest_honesty_discarded_as_gotcha")
 	if c == nil || c.Status != "pass" {
 		t.Fatalf("expected pass — no stem overlap, got %+v", c)
 	}
@@ -238,7 +238,7 @@ func TestContentManifest_Honesty_v29HealthCheck(t *testing.T) {
 		"override_reason": "",
 	}}))
 	got := runManifestCheck(t, dir, map[string]string{"apidev": kbReadmeWithHealthCheckGotcha}, "")
-	c := findCheckByName(got, "writer_manifest_honesty")
+	c := findCheckByName(got, "writer_manifest_honesty_discarded_as_gotcha")
 	if c == nil || c.Status != "fail" {
 		t.Fatalf("expected v29 healthCheck case to fail Jaccard threshold: %+v", c)
 	}

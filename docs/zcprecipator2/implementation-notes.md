@@ -1021,3 +1021,71 @@ Every new v35+ showcase-tier close step now dispatches editorial-review first. A
 - **Minimal-tier discretionary editorial-review**. Spec §C-7.5 calls for minimal's `closeSubSteps` to return an ungated-discretionary list including editorial-review + code-review. Implementing "ungated-discretionary" requires new engine semantics (a substep list where `enforceSubStepsComplete` doesn't block on incompleteness). Out of C-7.5 scope — showcase-only implementation is the minimum viable C-7.5. A follow-up commit can extend to minimal when the discretionary-substep infrastructure lands (likely alongside a broader close-substep gating refactor).
 - **Dispatch-composition test against step-4 goldens**. Pre-ship gate per rollout-sequence §C-7.5 asks for a byte-diff test against `docs/zcprecipator2/04-verification/brief-editorial-review-{minimal,showcase}-composed.md`. The goldens are synthetic / advisory (not byte-identical to stitcher output — they're reader-facing representations). C-14's `zcp dry-run recipe` harness is the canonical byte-diff surface. C-7.5's coverage is the stitcher unit test (`TestBuildEditorialReviewDispatchBrief_NoPriorDiscoveries`) from C-5 + the validator tests here; the byte-diff test lands with C-14.
 - **Pre-attest field on failing rows**. §16a says `preAttestCmd` reads the `EditorialReviewPreAttestNote` value. The current `StepCheck` struct doesn't have a `PreAttestCmd` field — that ships with C-10's payload shape change. C-7.5 emits the marker in `Detail` as an interim surface; C-10 moves it to the dedicated field uniformly across all checks. Documented to confirm C-10 must include the §16a rows in its cascading field-rename pass.
+
+---
+
+## C-8 — Expand `writer_manifest_honesty` to all 6 routing dimensions (P5)
+
+**Status**: green
+
+### What landed
+
+Per [check-rewrite.md §12](03-architecture/check-rewrite.md) + [principles.md P5](03-architecture/principles.md), the single-dimension `(discarded, published_gotcha)` check is extended to all 6 `(routed_to × surface)` pairs. Closes the v34 DB_PASS class + defense-in-depth across every wrong-surface duplication route the manifest grammar can express.
+
+- [`internal/ops/checks/manifest.go`](../../internal/ops/checks/manifest.go):
+  - `honestyDimension` struct declares one dimension (route match predicate + surface extractor + check name + human-readable labels + fail guidance). The predicate is pure-function composition — adding a dimension is a one-struct-literal append in the `honestyDimensions` table.
+  - `honestyDimensions` is the 6-row declarative table in stable order: `discarded_as_gotcha`, `claude_md_as_gotcha`, `integration_guide_as_gotcha`, `zerops_yaml_comment_as_gotcha`, `env_comment_as_gotcha`, `any_as_intro`.
+  - `CheckManifestHonesty` is now a one-line loop over the table; per-dimension grading lives in `evaluateHonestyDimension` so each dimension's logic is independently testable.
+  - `extractIntroPhrases` new helper: extracts the intro-fragment body, splits by `.` / `!` / `?`, keeps phrase units ≥ 12 runes. Sentence-level Jaccard granularity matches how a fact title concept typically leaks into prose.
+  - `routedEquals(target)` and `routedAnyExceptIntroOrEmpty` predicate constructors — declarative match shapes for the dimension table.
+- [`internal/ops/checks/manifest_test.go`](../../internal/ops/checks/manifest_test.go):
+  - `TestCheckManifestHonesty_Table` updated to assert against the dimension-specific `writer_manifest_honesty_discarded_as_gotcha` row.
+  - `TestCheckManifestHonesty_AllDimensionsReturnSixRows` pins the exact 6-row emission shape + order. A regression that adds/removes/reorders dimensions fails this test.
+  - `TestCheckManifestHonesty_PerDimensionLeakage` — table-driven per `(claude_md, content_ig, zerops_yaml_comment, content_env_comment)` route: a fact routed to each of these that leaks into the knowledge-base gotcha fragment fails only its own dimension; the other 5 rows pass. Pins the cross-dimension isolation invariant.
+  - `TestCheckManifestHonesty_AnyAsIntroDimension` pins the intro surface: a `claude_md`-routed fact appearing in intro fails `any_as_intro`; an intro-routed fact appearing in intro passes (correct routing).
+  - `toShim` helper — tiny test glue converting `[]workflow.StepCheck` to the local `[]stepCheckShim` form `findCheck` expects.
+- [`internal/tools/workflow_checks_content_manifest_test.go`](../../internal/tools/workflow_checks_content_manifest_test.go) — three pre-existing tests updated from `findCheckByName(..., "writer_manifest_honesty")` to `findCheckByName(..., "writer_manifest_honesty_discarded_as_gotcha")`. No other tool-layer changes required — `checkWriterContentManifest` already delegates to `opschecks.CheckManifestHonesty`, so the row-shape expansion propagates naturally.
+
+### The 6 dimensions
+
+| Check name | Route matched | Surface extractor | Failure meaning |
+|---|---|---|---|
+| `writer_manifest_honesty_discarded_as_gotcha` | `discarded` | gotcha stems | writer marked fact discarded but shipped matching gotcha |
+| `writer_manifest_honesty_claude_md_as_gotcha` | `claude_md` | gotcha stems | claude_md-routed fact duplicates as published gotcha |
+| `writer_manifest_honesty_integration_guide_as_gotcha` | `content_ig` | gotcha stems | integration-guide fact duplicates as published gotcha |
+| `writer_manifest_honesty_zerops_yaml_comment_as_gotcha` | `zerops_yaml_comment` | gotcha stems | zerops.yaml-inline fact duplicates as published gotcha |
+| `writer_manifest_honesty_env_comment_as_gotcha` | `content_env_comment` | gotcha stems | env-comment-routed fact duplicates as published gotcha |
+| `writer_manifest_honesty_any_as_intro` | any non-empty non-`content_intro` | intro-phrase sentences | any non-intro fact title leaks near-verbatim into intro |
+
+All 6 rows emit every run — stable surface regardless of pass/fail.
+
+### Shim alignment
+
+The `cmd/zcp/check/manifest-honesty` CLI shim is unchanged in body: it calls `opschecks.CheckManifestHonesty` and emits every row returned. Exit code is 0 iff every row is pass; any dimension failing exits 1. The shim's integration test substring assertion (`writer_manifest_honesty`) still matches all 6 row names because every dimension's check name shares that prefix.
+
+### Verification
+
+- `go test ./... -count=1` — full suite green across 21 packages.
+- `make lint-local` — 0 issues.
+
+### LoC delta
+
+- `internal/ops/checks/manifest.go`: +185 LoC (dimension table + evaluateHonestyDimension + extractIntroPhrases + routedEquals/routedAnyExceptIntroOrEmpty helpers), -30 LoC (old single-dimension body).
+- `internal/ops/checks/manifest_test.go`: +110 LoC (3 new test functions + toShim helper).
+- `internal/tools/workflow_checks_content_manifest_test.go`: ~0 LoC (3 call-site renames).
+- **Total**: ~+265 LoC (handoff estimate was ~+350; under by a modest margin because the dimension table's declarative shape means the body shrank more than expected).
+
+### Breaks-alone consequence
+
+Stricter gate at `deploy.readmes` complete. If a v35 candidate's writer emits a manifest that trips any new dimension, the gate fails with a per-dimension check name. Expected: v35 writer atom content (C-4) already teaches routing honesty along every dimension; first-pass output should pass. If the gate fails on a dimension the writer atom didn't cover, that's evidence the atom needs expansion — the per-dimension name in the fail detail names exactly where.
+
+### Ordering deps verified
+
+- C-2 ✓ (RouteTo enum — the dimension table matches against enum values).
+- C-7a/b/c/d ✓ (shim-surface infrastructure + ops/checks package home for the predicate).
+- C-7.5 ✓ (no cross-dependency, but C-7.5 completed before C-8 per rollout-sequence ordering).
+
+### Known follow-ups
+
+- `any_as_intro` sentence-granularity Jaccard may over-fire on short intros where every sentence shares stop-word-stripped tokens with common fact titles. Calibration: the 0.3 threshold + the ≥12-rune filter + stop-word elimination should keep false-positive rate low; first v35 run is the empirical signal. If intros are regularly flagged for unrelated facts, the threshold or the phrase extractor needs tightening — revisit post-v35.
+- `briefs/code-review/manifest-consumption.md` atom was slated (per rollout-sequence §C-8) for a byte-check against the new dimension names. The atom's content is route-concept-based, not check-name-based — it instructs the reviewer to audit every routing dimension without naming internal check identifiers (P2 invariant). No update needed; C-8 ships as-is.

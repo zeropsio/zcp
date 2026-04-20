@@ -69,45 +69,165 @@ func LoadContentManifest(projectRoot string) (*ContentManifest, error) {
 // that case.
 const jaccardHonestyThreshold = 0.3
 
-// CheckManifestHonesty catches the "writer lies about routing" case:
-// fact marked discarded in the manifest but a Jaccard-similar stem
-// appears in a published README. False-negatives (semantic reframings
-// where vocabulary diverges entirely) are accepted — the
-// classification-consistency check is the primary enforcement for that
-// class.
+// honestyDimension describes one (routed_to × surface) pair the
+// manifest-honesty check grades. Each dimension emits exactly one
+// StepCheck row; C-8's expansion (per check-rewrite.md §12) fires one
+// row per dimension so the agent sees per-pair pass/fail detail
+// instead of a single aggregate.
+type honestyDimension struct {
+	// routeToMatch returns true when the fact's RoutedTo participates
+	// in this dimension. For the 5 `X_as_gotcha` dimensions, the match
+	// is equality against a single route value; for `any_as_intro`,
+	// the match accepts any non-empty RoutedTo that isn't content_intro
+	// (a content_intro-routed fact appearing in intro is correct).
+	routeToMatch func(routedTo string) bool
+	// surfaceExtractor returns the stem/phrase tokens from readme
+	// content that the dimension compares fact titles against via
+	// Jaccard similarity. For gotcha dimensions this is the bolded
+	// stems from the knowledge-base fragment; for intro it's the
+	// intro-fragment body split into comparable phrase-units.
+	surfaceExtractor func(readme string) []string
+	// checkName is the StepCheck.Name emitted for this dimension.
+	checkName string
+	// routedToLabel appears in fail details, naming the offending
+	// routing value so the agent can locate the manifest entry.
+	routedToLabel string
+	// surfaceLabel appears in fail details, naming the leakage surface.
+	surfaceLabel string
+	// failGuidance is appended to each fail row's Detail as a short
+	// actionable remedy.
+	failGuidance string
+}
+
+// honestyDimensions enumerates the 6 (routed_to × surface) pairs
+// C-8 grades. Order is stable so downstream consumers see rows in a
+// consistent sequence across runs. Changing the order is a wire-contract
+// change visible to the agent.
+var honestyDimensions = []honestyDimension{
+	{
+		routeToMatch:     routedEquals("discarded"),
+		surfaceExtractor: extractGotchaStems,
+		checkName:        "writer_manifest_honesty_discarded_as_gotcha",
+		routedToLabel:    "discarded",
+		surfaceLabel:     "knowledge-base gotcha",
+		failGuidance:     "either remove the gotcha or update the manifest entry with the correct routed_to + override_reason",
+	},
+	{
+		routeToMatch:     routedEquals("claude_md"),
+		surfaceExtractor: extractGotchaStems,
+		checkName:        "writer_manifest_honesty_claude_md_as_gotcha",
+		routedToLabel:    "claude_md",
+		surfaceLabel:     "knowledge-base gotcha",
+		failGuidance:     "claude_md-routed facts belong in the repo-local CLAUDE.md; remove the duplicate gotcha or reclassify",
+	},
+	{
+		routeToMatch:     routedEquals("content_ig"),
+		surfaceExtractor: extractGotchaStems,
+		checkName:        "writer_manifest_honesty_integration_guide_as_gotcha",
+		routedToLabel:    "content_ig",
+		surfaceLabel:     "knowledge-base gotcha",
+		failGuidance:     "content_ig-routed facts belong in the integration-guide section; remove the duplicate gotcha or reclassify",
+	},
+	{
+		routeToMatch:     routedEquals("zerops_yaml_comment"),
+		surfaceExtractor: extractGotchaStems,
+		checkName:        "writer_manifest_honesty_zerops_yaml_comment_as_gotcha",
+		routedToLabel:    "zerops_yaml_comment",
+		surfaceLabel:     "knowledge-base gotcha",
+		failGuidance:     "zerops_yaml_comment-routed facts belong inline in zerops.yaml comments; remove the duplicate gotcha or reclassify",
+	},
+	{
+		routeToMatch:     routedEquals("content_env_comment"),
+		surfaceExtractor: extractGotchaStems,
+		checkName:        "writer_manifest_honesty_env_comment_as_gotcha",
+		routedToLabel:    "content_env_comment",
+		surfaceLabel:     "knowledge-base gotcha",
+		failGuidance:     "content_env_comment-routed facts belong inline in environments/*/import.yaml comments; remove the duplicate gotcha or reclassify",
+	},
+	{
+		routeToMatch:     routedAnyExceptIntroOrEmpty,
+		surfaceExtractor: extractIntroPhrases,
+		checkName:        "writer_manifest_honesty_any_as_intro",
+		routedToLabel:    "non-intro",
+		surfaceLabel:     "intro fragment",
+		failGuidance:     "only content_intro-routed facts belong in the intro fragment; relocate the leaked concept to its declared surface",
+	},
+}
+
+// routedEquals returns a match predicate for a single RoutedTo value.
+func routedEquals(target string) func(string) bool {
+	return func(routedTo string) bool {
+		return routedTo == target
+	}
+}
+
+// routedAnyExceptIntroOrEmpty matches facts routed to anything except
+// content_intro (the correct destination for intro content) OR an
+// empty string (legacy / unclassified facts; the manifest-route-to
+// check enforces classification independently).
+func routedAnyExceptIntroOrEmpty(routedTo string) bool {
+	return routedTo != "" && routedTo != "content_intro"
+}
+
+// CheckManifestHonesty catches the "writer lies about routing" case
+// across all 6 (routed_to × surface) dimensions per check-rewrite.md §12.
+// For each dimension: if any fact whose RoutedTo matches the dimension
+// has a Jaccard-similar stem appearing on the dimension's leakage
+// surface, that dimension fails with the offending pair(s) named.
+// Dimensions with no matching facts (or no leakage) pass.
+//
+// Emits one StepCheck row per dimension — always the full 6 rows so the
+// agent sees a stable per-dimension surface across runs. False-negatives
+// (semantic reframings where vocabulary diverges entirely) are accepted
+// — the classification-consistency check is the primary enforcement for
+// that class.
 func CheckManifestHonesty(_ context.Context, m *ContentManifest, readmesByHost map[string]string) []workflow.StepCheck {
 	if m == nil {
 		return nil
 	}
+	rows := make([]workflow.StepCheck, 0, len(honestyDimensions))
+	for _, dim := range honestyDimensions {
+		rows = append(rows, evaluateHonestyDimension(dim, m, readmesByHost))
+	}
+	return rows
+}
+
+// evaluateHonestyDimension computes a single dimension's pass/fail
+// verdict against the manifest + readme corpus. Kept separate so each
+// dimension's logic is independently testable + the CheckManifestHonesty
+// body stays a one-line loop over the declarative honestyDimensions
+// table.
+func evaluateHonestyDimension(dim honestyDimension, m *ContentManifest, readmesByHost map[string]string) workflow.StepCheck {
 	var failures []string
 	for _, entry := range m.Facts {
-		if entry.RoutedTo != "discarded" {
+		if !dim.routeToMatch(entry.RoutedTo) {
 			continue
 		}
 		for host, readme := range readmesByHost {
-			stems := extractGotchaStems(readme)
+			stems := dim.surfaceExtractor(readme)
 			for _, stem := range stems {
 				sim := jaccardSimilarityNoStopwords(entry.FactTitle, stem)
 				if sim >= jaccardHonestyThreshold {
 					failures = append(failures, fmt.Sprintf(
-						"fact %q marked discarded but %s/README.md ships gotcha %q (Jaccard=%.2f)",
-						entry.FactTitle, host, stem, sim,
+						"fact %q marked %s but %s/README.md %s %q (Jaccard=%.2f)",
+						entry.FactTitle, dim.routedToLabel, host, dim.surfaceLabel, stem, sim,
 					))
 				}
 			}
 		}
 	}
 	if len(failures) == 0 {
-		return []workflow.StepCheck{{
-			Name:   "writer_manifest_honesty",
+		return workflow.StepCheck{
+			Name:   dim.checkName,
 			Status: StatusPass,
-		}}
+		}
 	}
-	return []workflow.StepCheck{{
-		Name:   "writer_manifest_honesty",
+	return workflow.StepCheck{
+		Name:   dim.checkName,
 		Status: StatusFail,
-		Detail: "manifest says discarded but matching gotcha shipped: " + strings.Join(failures, "; ") + ". Either remove the gotcha or update the manifest entry with the correct routed_to + override_reason.",
-	}}
+		Detail: fmt.Sprintf("manifest says %s but matching %s shipped: %s. %s.",
+			dim.routedToLabel, dim.surfaceLabel, strings.Join(failures, "; "), dim.failGuidance),
+	}
 }
 
 // CheckManifestCompleteness compares the set of distinct
@@ -267,6 +387,60 @@ func tokenizeForJaccard(s string) []string {
 	}
 	flush()
 	return out
+}
+
+// extractIntroPhrases returns comparable phrase units from the intro
+// fragment body. The intro is prose (not bullet-stem-structured like
+// the gotcha fragment), so "phrase units" are individual sentences —
+// split by . / ! / ? — trimmed of whitespace. Short fragments (< 12
+// runes) are discarded since they carry too few tokens for a
+// meaningful Jaccard comparison. A fact title leaking into prose
+// typically appears as a near-verbatim sentence; sentence-level
+// Jaccard is the right granularity.
+func extractIntroPhrases(readme string) []string {
+	inIntro := false
+	var body strings.Builder
+	for line := range strings.SplitSeq(readme, "\n") {
+		if strings.Contains(line, "ZEROPS_EXTRACT_START:intro") {
+			inIntro = true
+			continue
+		}
+		if strings.Contains(line, "ZEROPS_EXTRACT_END:intro") {
+			inIntro = false
+			continue
+		}
+		if !inIntro {
+			continue
+		}
+		body.WriteString(line)
+		body.WriteByte('\n')
+	}
+	text := strings.TrimSpace(body.String())
+	if text == "" {
+		return nil
+	}
+	var phrases []string
+	current := strings.Builder{}
+	flush := func() {
+		p := strings.TrimSpace(current.String())
+		current.Reset()
+		if len([]rune(p)) < 12 {
+			return
+		}
+		phrases = append(phrases, p)
+	}
+	for _, r := range text {
+		switch r {
+		case '.', '!', '?':
+			flush()
+		case '\n', '\r':
+			current.WriteRune(' ')
+		default:
+			current.WriteRune(r)
+		}
+	}
+	flush()
+	return phrases
 }
 
 // extractGotchaStems returns the bolded "stem" text from each gotcha
