@@ -231,7 +231,7 @@ Two categories:
 
 Shell-style `${name}` env-var references are ignored (they belong to the generated `zerops.yaml`, not the atom).
 
-**Unknown placeholders are build-time errors.** `substitutePlaceholders` scans for leftover `{word}` tokens that aren't envelope-filled and aren't whitelisted; any match fails with `"atom <id>: unknown placeholder "{foo}" in atom body"`. No literal braces ever leak to the LLM.
+**Unknown placeholders are build-time errors.** After substitution, `findUnknownPlaceholder` scans each atom body for leftover `{word}` tokens that aren't envelope-filled and aren't whitelisted; any match fails with `"atom <id>: unknown placeholder "{foo}" in atom body"`. No literal braces ever leak to the LLM.
 
 ---
 
@@ -251,7 +251,7 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]string, error
    - `modes` / `strategies` / `runtimes` (if non-empty): *any* service in `env.Services` must match.
    - An empty axis = wildcard.
 2. **Sort**: priority ascending (1 first), then id lexicographically (stable tiebreaker).
-3. **Substitute**: run `substitutePlaceholders(body, env)` per atom.
+3. **Substitute**: apply a shared `strings.NewReplacer` (built once per Synthesize from envelope hostnames + project name) to each atom body, then scan for unknown placeholders.
 4. **Return**: the ordered list of rendered bodies.
 
 ### 5.2 Rendering into the tool response
@@ -261,7 +261,7 @@ Callers are responsible for joining. The status renderer (`RenderStatus`) emits 
 ### 5.3 Determinism guarantees
 
 - Sort is `sort.SliceStable` over (priority, id) — same input ordering every time.
-- Placeholder substitution is a sequence of `strings.ReplaceAll` calls in a fixed key order (enumerated map literal, not map iteration).
+- Placeholder substitution goes through a single `strings.NewReplacer` built from a fixed literal key list — not map iteration.
 - The service-scoped match helpers iterate `env.Services` in the envelope's serialized order (hostname-sorted).
 - No goroutines are spawned inside `Synthesize`.
 
@@ -421,7 +421,7 @@ Every invariant here is a property of the implementation and can be verified by 
 | KD-02 | `Synthesize(env, corpus)` is pure: same envelope JSON → byte-identical output. | `internal/workflow/synthesize_test.go` |
 | KD-03 | `BuildPlan(env)` is pure: no I/O, no time, no randomness. | `internal/workflow/build_plan_test.go` |
 | KD-04 | Every atom declares a non-empty `phases` axis. | `ParseAtom` rejects empty `phases` in `internal/workflow/atom.go` |
-| KD-05 | Unknown `{placeholder}` tokens in atom bodies fail the corpus load. | `substitutePlaceholders` in `synthesize.go` |
+| KD-05 | Unknown `{placeholder}` tokens in atom bodies fail the corpus load. | `findUnknownPlaceholder` in `synthesize.go` |
 | KD-06 | `Plan.Primary` is never zero in a well-formed response. | Gated by `BuildPlan` tests; callers error on empty Plan. |
 | KD-07 | `cicd-active` and `export-active` are stateless — no session file is written. | `internal/tools/workflow_cicd.go`, `workflow_export.go` |
 | KD-08 | Recipe authoring runs through `recipe_*.go` section parsers, NOT the atom synthesizer. | `internal/workflow/recipe_guidance.go` does not call `Synthesize` |

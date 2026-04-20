@@ -83,23 +83,25 @@ User's first action in any session is always `zerops_workflow action=status`. Th
 ### 1.4 Mixed — some bootstrapped, some unmanaged
 
 - **Envelope**: `Services=[{laraveldev, bootstrapped}, {newservice, no meta, unmanaged}, {db, managed}]`.
-- **Plan.Primary** = `{start develop, args.intent="...", rationale: "Unmanaged runtime 'newservice' auto-adopts on develop start."}`
+- **Plan.Primary** = `{start develop, args.intent="...", rationale: "Bootstrapped services ready for code tasks; unmanaged runtime auto-adopts on develop start."}`
 - **Plan.Secondary** = `nil`.
-- **Plan.Alternatives** = `[{start bootstrap, rationale: "Add more services before working."}]`
+- **Plan.Alternatives** = `[{adopt unmanaged runtimes, rationale: "Write ServiceMeta without opening a develop session."}, {start bootstrap, rationale: "Add more services before working."}]`
 - **Atoms**: `idle-adopt-on-develop-start`.
 
 ### 1.5 Unmanaged-only (all runtimes lack meta)
 
 - **Envelope**: `Services=[{svc1, no meta}, {svc2, no meta}]`.
-- **Plan.Primary** = `{start develop, rationale: "All runtimes auto-adopt on develop start."}`
-- **Plan.Alternatives** = `[{start bootstrap, rationale: "Add more services first."}]`
+- **Plan.Primary** = `{adopt unmanaged runtimes, args: {action: start, workflow: develop, intent: "adopt"}, rationale: "Existing runtime services have no bootstrap metadata yet."}`
+- **Plan.Alternatives** = `[]` (adopt is the only viable entry).
 
 ### 1.6 Bootstrapped but strategy unset
 
 - **Envelope**: `Services=[{svc, bootstrapped, strategy=unset}]`.
-- **Plan.Primary** = `{zerops_manage action=set-strategy, args: {hostname: svc}, rationale: "Service is ready but has no deploy strategy. Must be set before any deploy."}`
-- **Plan.Secondary** = `{start develop, rationale: "Set strategy during develop if you prefer."}`
-- **Atoms**: `idle-strategy-unset-resolve`.
+- **Plan.Primary** = `{start develop, rationale: "Service ready; strategy gate fires once the develop session is open."}`
+- **Plan.Alternatives** = `[{add more services, rationale: "Add additional managed or runtime services."}]`
+- **Atoms**: `develop-strategy-unset` surfaces the gate in the develop-active guidance body once the session starts — no idle-phase atom.
+
+  *Note: `BuildPlan` stays a pure envelope-shape dispatch; strategy-required is expressed through the atom layer, not through a distinct branch in `planIdle`.*
 
 ---
 
@@ -245,7 +247,7 @@ Valid cells (invalid combinations error at envelope validation):
 | C11 | simple | push-dev | dynamic | container | `develop-simple-mode-overview`, `develop-dynamic-start-after-deploy-container` |
 | C12 | simple | push-dev | dynamic | local | `develop-simple-mode-overview`, `develop-dynamic-start-after-deploy-local` |
 | C13 | any | manual | any dynamic | any | `develop-manual-strategy-external-deploy` (no `zerops_deploy` call; user deploys externally then `zerops_verify`) |
-| C14 | any | unset | any | any | `develop-strategy-unset-set-first` — Plan.Primary forces `zerops_manage set-strategy` |
+| C14 | any | unset | any | any | `develop-strategy-unset` — Plan.Primary stays at the envelope-shape dispatch (deploy / verify / close); the atom body surfaces `zerops_manage action="strategy"` as the gate the agent must honour before attempting a deploy |
 | C15 | n/a | n/a | managed | any | `develop-managed-no-deploy` — no deploy, verify = connection check |
 
 Invalid combinations (e.g. stage + push-dev, dev + push-git, simple + stage) are blocked at pre-flight with explicit error.
@@ -277,9 +279,10 @@ Invalid combinations (e.g. stage + push-dev, dev + push-git, simple + stage) are
 | deployed, verify pending | `zerops_verify args={hostname}` |
 | verified ∧ all services green | `zerops_workflow action=close workflow=develop` (auto-close) |
 | verified ∧ others pending | `zerops_deploy` or `zerops_verify` on next service |
-| failed, iter ≤ 2 | `zerops_logs` (diagnose) — tier 1 atom |
-| failed, iter 3–4 | systematic check — tier 2 atom |
-| failed, iter 5 | STOP — tier 3 atom; session auto-closes with `iteration-cap` |
+| failed deploy, any iter | `zerops_deploy args={hostname}` — retry same action, atom body carries tier guidance |
+| failed verify, any iter | `zerops_verify args={hostname}` — retry same action, atom body carries tier guidance |
+
+Iteration tier (tier-1 diagnose, tier-2 systematic check, tier-3 STOP) rides along via atoms — the Plan.Primary does not change shape as iterations accumulate. On iteration 5 the session auto-closes with `CloseReason=iteration-cap`, and the next status call reverts to the idle-phase dispatch.
 
 ### 3.4 Auto-close
 

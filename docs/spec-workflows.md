@@ -175,15 +175,16 @@ type Plan struct {
 Dispatch (strict order, first match wins — see `build_plan.go` for the code):
 
 1. `PhaseDevelopClosed` → Primary=close-session, Secondary=start-next.
-2. `PhaseDevelopActive`, some service without a successful deploy → Primary=deploy.
-3. `PhaseDevelopActive`, deploy done but verify missing → Primary=verify.
-4. `PhaseDevelopActive`, last attempt failed → Primary=diagnose-and-retry (reads logs first).
-5. `PhaseDevelopActive`, everything green but session still open → Primary=close.
-6. `PhaseBootstrapActive` → Primary=continue-bootstrap (route-specific).
-7. `PhaseRecipeActive` → Primary=continue-recipe.
-8. `PhaseIdle` with no services → Primary=start-bootstrap.
-9. `PhaseIdle` with bootstrapped services → Primary=start-develop + alternatives (adopt if any unmanaged, add-more-services always).
-10. `PhaseIdle` with only unmanaged runtimes → Primary=adopt-via-develop.
+2. `PhaseDevelopActive`, some service without a successful deploy (including last-attempt-failed) → Primary=deploy.
+3. `PhaseDevelopActive`, deploy done but verify missing (including last-verify-failed) → Primary=verify.
+4. `PhaseDevelopActive`, everything green but session still open → Primary=close.
+5. `PhaseBootstrapActive` → Primary=continue-bootstrap (route-specific).
+6. `PhaseRecipeActive` → Primary=continue-recipe.
+7. `PhaseIdle` with no services → Primary=start-bootstrap.
+8. `PhaseIdle` with bootstrapped services → Primary=start-develop + alternatives (adopt if any unmanaged, add-more-services always).
+9. `PhaseIdle` with only unmanaged runtimes → Primary=adopt-via-develop.
+
+Failed-last-attempt cases fold into branches 2 and 3 — `firstServiceNeedingDeploy` / `firstServiceNeedingVerify` both key off `!attempts[last].Success`, so a failed service surfaces as a deploy or verify target. Iteration-tier guidance (diagnose / systematic-check / STOP) rides along via atoms, not a distinct Plan branch.
 
 Gate semantics in the Plan are informational, not structural: e.g. `Strategy=unset` does not block the Plan from naming a deploy action; the atom `develop-strategy-unset` surfaces the gate in the body instead. This keeps `BuildPlan` a pure dispatch over envelope shape.
 

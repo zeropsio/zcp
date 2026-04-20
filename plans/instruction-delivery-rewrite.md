@@ -583,14 +583,16 @@ func BuildPlan(envelope StateEnvelope) Plan
 **Branching** (strict order, first match wins — this replaces `writeStatusNext` and `SuggestNext`):
 
 1. `PhaseDevelopClosed` → Primary=close, Secondary=start-next.
-2. `PhaseDevelopActive` with a service missing deploy → Primary=deploy.
-3. `PhaseDevelopActive` with deploy done, verify missing → Primary=verify.
-4. `PhaseDevelopActive` with a failed attempt (last in either sequence) → Primary=fix-and-retry (atom-backed).
+2. `PhaseDevelopActive` with a service missing deploy (including last-attempt-failed) → Primary=deploy.
+3. `PhaseDevelopActive` with deploy done, verify missing (including last-verify-failed) → Primary=verify.
+4. `PhaseDevelopActive` with every service green but session still open → Primary=close.
 5. `PhaseBootstrapActive` → Primary=continue-bootstrap (route-specific).
 6. `PhaseRecipeActive` → Primary=continue-recipe.
 7. `PhaseIdle` with zero services → Primary=bootstrap.
-8. `PhaseIdle` with bootstrapped services → Primary=develop; Alternatives=[adopt-unmanaged, add-more-services] if applicable.
+8. `PhaseIdle` with bootstrapped services → Primary=develop; Alternatives=[adopt-unmanaged (if any), add-more-services].
 9. `PhaseIdle` with only unmanaged services → Primary=adopt-via-develop.
+
+Failed-last-attempt cases fold into branches 2 and 3 — `firstServiceNeedingDeploy` / `firstServiceNeedingVerify` both key off `!attempts[last].Success`, so a failed service surfaces as a deploy or verify target. Iteration-tier guidance (diagnose / systematic-check / STOP) is delivered through atoms, not through a distinct Plan branch.
 
 The function is pure; its test is table-driven with ~30 envelope fixtures covering every branch.
 
@@ -1168,9 +1170,9 @@ No bootstrap needed. User starts develop directly.
 
 **Envelope**: `Phase=idle, Services=[laraveldev (bootstrapped, dev mode), newruntime (unmanaged, no meta), db (managed)]`.
 
-**Plan**: `Primary = adopt unmanaged (start develop with intent describing newruntime), Secondary = nil, Alternatives = [bootstrap more services]`.
+**Plan**: `Primary = start develop, Secondary = nil, Alternatives = [adopt unmanaged runtimes, add more services]`.
 
-When develop starts with an intent referencing `newruntime`, the first step is auto-adoption: infer mode, write ServiceMeta, proceed to work.
+Rationale: `planIdle` dispatches on `bootstrapped > 0` first. When develop starts, unmanaged runtimes auto-adopt as the session's first step. The adopt alternative is offered for callers who want to adopt without opening a develop session.
 
 ### S6 — Develop already active
 
@@ -1194,7 +1196,7 @@ Status tool renders: *"Task complete. Close and start next, or close and stop."*
 
 **Envelope**: `Phase=develop-active, WorkSession.Deploys[hostname]=[success, failed, failed, ...]` at iteration 3.
 
-**Plan**: `Primary = fix-and-retry per systematic-check tier (iter 3-4)`.
+**Plan**: `Primary = zerops_deploy args={hostname}` — the deploy branch fires because the last attempt failed. The Plan shape stays stable across iterations; tier guidance is atom-backed.
 
 **Atoms synthesized**: tier-2 systematic check atom — replaces old `BuildIterationDelta` tier-2 branch.
 
