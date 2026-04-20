@@ -3,7 +3,6 @@ id: develop-dev-mode-deploy-files
 priority: 3
 phases: [develop-active]
 modes: [dev]
-runtimes: [dynamic]
 title: "Dev mode — deployFiles must be [.]"
 ---
 

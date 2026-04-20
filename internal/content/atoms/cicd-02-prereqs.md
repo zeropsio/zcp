@@ -22,4 +22,4 @@ title: "CI/CD — Option B prerequisites"
    - **Settings** → **Actions** → **General** → **Workflow permissions**: "Read and write permissions"
 5. **Service ID** of the deploy target — get via `zerops_discover service="{targetHostname}"`
 
-Verify all prerequisites before generating the workflow file. This prevents the "push workflow → CI fails → fix permissions → push again" loop.
+Verify all prerequisites before generating the workflow file.

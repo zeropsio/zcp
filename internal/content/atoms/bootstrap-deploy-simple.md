@@ -25,16 +25,3 @@ cycle.
 3. `zerops_verify serviceHostname="{hostname}"` — must return
    status=healthy. If unhealthy, iterate: fix code, redeploy,
    re-verify.
-
-Simple mode keeps the operational surface small: one container,
-one deploy, server auto-starts. Use it for workers, cron jobs, or
-anything that doesn't need dev/stage separation.
-
-### Simple vs dev
-
-- Simple auto-starts; dev stays idle for SSH iteration.
-- Simple deploys only `deployFiles` content; dev uses `[.]` so
-  source survives.
-- Simple has a `healthCheck`; dev deliberately has none.
-- Simple redeploys to apply code changes; dev edits propagate over
-  SSHFS and the server is restarted via SSH.

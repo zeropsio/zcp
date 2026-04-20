@@ -9,9 +9,7 @@ title: "Managed service hostname conventions"
 
 ### Managed service hostname conventions
 
-Managed services (databases, caches, queues, search, storage) follow a
-fixed naming convention. Agents, recipes, and cross-service references
-all assume these names — deviating creates friction that compounds.
+Canonical hostnames (agents/recipes/cross-service refs assume these):
 
 - `db` — postgresql / mariadb / mysql / mongodb
 - `cache` — valkey / keydb / redis

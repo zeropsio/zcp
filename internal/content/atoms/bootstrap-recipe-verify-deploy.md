@@ -4,21 +4,33 @@ priority: 4
 phases: [bootstrap-active]
 routes: [recipe]
 steps: [deploy]
-title: "Recipe — deploy the imported app"
+title: "Recipe — verify the already-deployed services"
 ---
 
-### Deploy the recipe's services
+### Verify, don't redeploy
 
-The recipe's import YAML created the service skeleton; the recipe body
-includes the initial code layout that goes on-disk. Deploy each runtime
-service once the platform reports `ACTIVE`:
+Services are already alive from provision-time `buildFromGit`. Calling
+`zerops_deploy` here would push your empty working tree on top and break
+the recipe's install.
 
 ```
-zerops_deploy targetService="{hostname}"
-zerops_verify  serviceHostname="{hostname}"
+zerops_verify serviceHostname="{hostname}"
 ```
 
-Recipe-provided services usually succeed on first deploy because the
-recipe was tuned end-to-end. If the initial deploy fails, read
-`DEPLOY_FAILED` metadata (not build logs) for the failing `initCommand`
-— stderr lives in runtime logs, not build logs.
+For every runtime service in the plan. Verify confirms HTTP responsiveness,
+log health, startup completion, and subdomain exposure (if enabled).
+
+If verification fails, read the runtime logs for the failing service:
+
+```
+zerops_logs serviceHostname="{hostname}"
+```
+
+Failures in recipe-provisioned services usually trace to:
+
+- a missing project-level env var from step 2 (check `zerops_env` output)
+- a managed-service dependency that's slower than `priority:` implied
+- a user-added constraint that wasn't in the recipe's import YAML
+
+Do NOT attempt a fresh `zerops_deploy` before confirming the root cause —
+it will mask the real failure with an empty-package deploy.

@@ -5,18 +5,13 @@ phases: [bootstrap-active]
 title: "Bootstrap — overview"
 ---
 
-### Bootstrap in progress
+Bootstrap has three routes:
 
-Bootstrap builds the infrastructure substrate for a Zerops project: service
-creation, initial verification, and a persisted evidence file
-(`ServiceMeta`) that downstream workflows rely on. Three routes exist:
+- **Recipe** — services come from a matched recipe's import YAML.
+- **Classic** — deploy a minimal verification server per runtime so
+  infrastructure is provably reachable before app code lands.
+- **Adopt** — attach `ServiceMeta` to existing non-managed services; no
+  code touched.
 
-- **Recipe** — user intent matched a viable recipe; services come from the
-  recipe's import YAML.
-- **Classic** — no recipe match; deploy a minimal verification server per
-  runtime so infrastructure is provably reachable before app code lands.
-- **Adopt** — project already has non-managed services; attach
-  `ServiceMeta` without touching code.
-
-The route is chosen once at bootstrap start and persists for the session.
-Progress through the step list emitted by `zerops_workflow action="status"`.
+Route is chosen at bootstrap start and persists for the session. Follow
+the step list from `zerops_workflow action="status"`.

@@ -9,9 +9,8 @@ title: "Runtime service properties by mode"
 
 ### Runtime service properties (import.yaml)
 
-The `startWithoutCode`, `maxContainers`, and `enableSubdomainAccess` fields
-vary by mode. Get them right at import-yaml generation time — they change
-the lifecycle of the service and are painful to retrofit later.
+`startWithoutCode`, `maxContainers`, and `enableSubdomainAccess` vary by
+mode. Set them correctly at import-yaml generation time.
 
 | Property | Dev service | Stage service | Simple service |
 |----------|-----------|---------------|----------------|

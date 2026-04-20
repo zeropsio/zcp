@@ -42,5 +42,4 @@ and fail):
 - All managed env var keys discovered.
 - Runtime knowledge loaded.
 
-The sub-agent prompts embed this context. Hand it to them
-explicitly — they cannot see the parent's state.
+Embed this context in the sub-agent prompts — they cannot see parent state.

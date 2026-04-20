@@ -1,7 +1,8 @@
 ---
 id: idle-adopt-entry
-priority: 2
+priority: 1
 phases: [idle]
+idleScenarios: [adopt]
 title: "Adopt existing unmanaged services"
 ---
 

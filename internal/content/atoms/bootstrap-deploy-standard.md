@@ -26,9 +26,6 @@ no server auto-starts. The agent orchestrates:
    `start:` command).
 6. `zerops_verify` stage.
 
-Steps 1-3 repeat on iteration. Stage (steps 4-6) only after dev is
-healthy.
-
 **Concrete calls:**
 
 ```

@@ -19,10 +19,6 @@ directory in local env.
 Use `setup: <name>` in `zerops.yaml` with the canonical recipe name
 (`dev` or `prod`) — never the hostname.
 
-Mode-specific rules (`deployFiles`, `start`, `healthCheck`,
-`buildCommands`) come from the mode-scoped atom that renders alongside
-this one.
-
 **Build vs runtime env scopes**: `build.envVariables` and
 `run.envVariables` live in separate containers and are not shared.
 Build-time secrets (private registry creds, API tokens fetched during

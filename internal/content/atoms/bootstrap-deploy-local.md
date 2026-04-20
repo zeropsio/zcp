@@ -10,10 +10,9 @@ title: "Bootstrap — local deploy flow"
 
 ### Deploy — local mode
 
-In local mode there is no SSHFS, no SSH-orchestrated dev container,
-and no source-service concept. `zerops_deploy` pushes from the local
-working directory into Zerops via `zcli push`; the build runs on
-Zerops, not locally.
+No SSHFS, no SSH-orchestrated dev container, no source-service.
+`zerops_deploy` runs `zcli push` from the local working directory;
+the build runs on Zerops.
 
 Deploy flow:
 
@@ -30,7 +29,6 @@ Key facts:
 
 - **Deploy = new container on Zerops** — only `deployFiles` content
   persists. No mount, no SSH-side state carries over.
-- **Local code is unchanged.** Edit locally, redeploy when ready.
 - **Server auto-starts on Zerops** (real `start:` command +
   `healthCheck`) — no manual SSH start needed.
 - **Subdomain persists** across redeploys — no need to re-enable

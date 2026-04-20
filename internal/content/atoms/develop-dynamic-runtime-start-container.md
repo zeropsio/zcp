@@ -1,9 +1,10 @@
 ---
 id: develop-dynamic-runtime-start-container
-priority: 2
+priority: 3
 phases: [develop-active]
 runtimes: [dynamic]
 environments: [container]
+modes: [dev, standard]
 title: "Dynamic runtime — start over SSH after deploy (container)"
 ---
 

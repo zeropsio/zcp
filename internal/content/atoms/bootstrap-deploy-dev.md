@@ -36,8 +36,6 @@ dev-only mode.
 
 ### Dev iteration cycle
 
-- **Deploy = new container.** Old SSH sessions die; always open a
-  fresh connection after a deploy.
 - **Env vars are OS env vars after deploy.** Never hardcode or pass
   inline values.
 - **Code lives on the SSHFS mount.** Watch-mode frameworks reload;

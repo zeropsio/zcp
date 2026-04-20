@@ -18,4 +18,4 @@ Ask the user first:
 - GitHub → Settings → Developer settings → Fine-grained tokens → select repo → Permissions: **Contents: Read and write**
 - GitLab alternative: User Settings → Access Tokens → Scope: **write_repository**
 
-That's all. Skip to **Git Authentication** section below.
+Skip to **Git Authentication** section below.

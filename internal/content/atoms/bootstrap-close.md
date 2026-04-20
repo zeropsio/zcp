@@ -8,11 +8,6 @@ title: "Close bootstrap — hand off to develop / cicd"
 
 ### Closing bootstrap
 
-Bootstrap ends once every service is ACTIVE, every verification passed, and
-every `ServiceMeta` has been written. At that point the project is
-reachable, provable, and described on-disk — but no application code has
-been written yet.
-
 Next workflow options, in order of preference:
 
 1. **`workflow="develop"`** — implement the user's application via the

@@ -10,9 +10,6 @@ title: "Bootstrap — local-mode discovery addendum"
 
 ### Local-mode discovery
 
-You are running on the user's local machine. Their machine IS the
-development server — do NOT create a dev service on Zerops.
-
 Local-mode topology:
 
 | Mode | Created on Zerops | Stays local |

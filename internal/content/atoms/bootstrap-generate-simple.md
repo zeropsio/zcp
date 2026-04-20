@@ -10,23 +10,19 @@ title: "Generate zerops.yaml — simple mode"
 
 ### Simple mode — zerops.yaml
 
-Infrastructure verification only — write a hello-world server
-(`/`, `/health`, `/status`), not the user's application. All files
-live at `/var/www/{hostname}/`.
+Simple-mode services auto-start after deploy. Write a single entry with
+a REAL start command.
 
-Simple-mode services auto-start after deploy; no manual SSH start
-needed. Write a single entry with a REAL start command.
+**Simple entry rules:**
 
-**Simple setup rules:**
-
-- `deployFiles: [.]` — ALWAYS (self-deploy; the source must
-  survive on the container filesystem).
-- `start:` — **real start command** (`node index.js`,
-  `bun run src/index.ts`, `./app`, etc.) — NOT `zsc noop`.
+- `deployFiles: [.]` — ALWAYS (self-deploy; the source must survive on
+  the container filesystem).
+- `start:` — **real start command** (`node index.js`, `bun run src/index.ts`,
+  `./app`, etc.) — NOT `zsc noop`.
 - `buildCommands:` — dependency installation, plus compilation for
   Go / Rust / Java.
-- `healthCheck:` — **YES, required.** Zerops monitors the container
-  and restarts on failure.
+- `healthCheck:` — **YES, required.** Zerops monitors the container and
+  restarts on failure.
 
 ```yaml
 zerops:

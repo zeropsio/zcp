@@ -7,7 +7,6 @@ title: "Develop & deploy intro"
 
 ### Development & Deploy
 
-Discover what code exists on the service, implement what the user wants,
-then deploy and verify. If the service only has a bootstrap verification
-server, replace it with the actual application. If it already has
-application code, modify it according to the user's request.
+Discover existing code, implement the user's request, deploy, verify.
+Replace bootstrap verification servers with real code; modify existing
+app code in place.

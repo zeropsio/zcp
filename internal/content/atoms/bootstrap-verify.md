@@ -8,9 +8,7 @@ title: "Verify the project is reachable"
 
 ### Verify the project end-to-end
 
-The final gate before closing bootstrap is a whole-project verify. Each
-runtime service has already been verified individually at deploy time;
-this step proves the cross-service wiring works.
+Whole-project verify proves cross-service wiring works.
 
 ```
 zerops_verify

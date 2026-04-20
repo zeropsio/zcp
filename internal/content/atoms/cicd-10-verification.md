@@ -1,7 +1,7 @@
 ---
 id: cicd-10-verification
 priority: 2
-phases: [cicd-active]
+phases: [cicd-active, export-active]
 title: "CI/CD — Verification and error recovery"
 ---
 

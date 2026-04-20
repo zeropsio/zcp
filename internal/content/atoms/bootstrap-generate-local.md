@@ -10,14 +10,10 @@ title: "Bootstrap — local-mode generate addendum"
 
 ### Generate — local mode
 
-Infrastructure verification only — write a hello-world server
-(`/`, `/health`, `/status`), not the user's application. Keep it
-under ~50 LOC.
+Files are written to the current working directory — no SSHFS mounts, no
+remote paths.
 
-All files are written to the current working directory. No SSHFS
-mounts, no remote paths.
-
-**zerops.yaml — canonical setup names:**
+**Canonical setup names by mode:**
 
 | Mode | `setup:` | Notes |
 |------|------------|-------|
@@ -49,5 +45,5 @@ zerops:
           path: /health
 ```
 
-The `start` command is a REAL run command — never `zsc noop` in
-local mode. Local mode has no SSH-orchestrated dev container.
+The `start` command is a REAL run command — never `zsc noop` in local
+mode. Local mode has no SSH-orchestrated dev container.

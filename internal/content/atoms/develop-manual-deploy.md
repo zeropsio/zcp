@@ -8,7 +8,7 @@ title: "Manual strategy — external deploys"
 
 ### Manual Deploy Strategy
 
-You control when and what to deploy. ZCP does not start a guided workflow for manual strategy.
+You control when and what to deploy — the user controls deploy timing.
 
 **Deploy directly:**
 - Dev: `zerops_deploy targetService="{hostname}"`

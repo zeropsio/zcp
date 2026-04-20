@@ -1,7 +1,7 @@
 ---
 id: develop-strategy-unset
 priority: 1
-phases: [develop-active]
+phases: [idle, develop-active]
 strategies: [unset]
 title: "Strategy not set — choose before deploying"
 ---
@@ -25,5 +25,4 @@ zerops_workflow action="strategy" strategies={"{hostname}":"push-dev"}
 ```
 
 No work session is opened until every runtime service has a confirmed
-strategy. This gate prevents a half-configured project from accumulating
-deploy attempts against the wrong transport.
+strategy.

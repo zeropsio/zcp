@@ -2,6 +2,7 @@
 id: bootstrap-wait-active
 priority: 3
 phases: [bootstrap-active]
+routes: [classic]
 steps: [provision]
 title: "Wait for services to reach ACTIVE"
 ---

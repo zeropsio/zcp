@@ -13,10 +13,10 @@ full CI/CD** (automatic deploy on every push)?
 
 #### Option A — Push code to remote
 
-**Prerequisites (one-time setup):**
+One-time prerequisites:
 
-- `GIT_TOKEN` project env var — a GitHub fine-grained token with
-  `Contents: Read and write`, or a GitLab token with `write_repository`.
+- `GIT_TOKEN` project env var — GitHub fine-grained token with
+  `Contents: Read and write`, or GitLab token with `write_repository`.
 - `.netrc` on the dev container for git auth:
 
   ```
@@ -24,12 +24,8 @@ full CI/CD** (automatic deploy on every push)?
     'umask 077 && echo "machine github.com login oauth2 password $GIT_TOKEN" > ~/.netrc'
   ```
 
-**Steps:**
-
-1. Commit: `ssh {hostname} "cd /var/www && git add -A && git commit -m 'description'"`
-2. Push: `zerops_deploy targetService="{hostname}" strategy="git-push"`
-
-Repeat per dev service if you have more than one.
+Then follow the push-git workflow atom's commit + deploy steps. Repeat
+per dev service if you have more than one.
 
 #### Option B — Full CI/CD
 
@@ -37,5 +33,4 @@ Repeat per dev service if you have more than one.
 zerops_workflow action="start" workflow="cicd"
 ```
 
-This workflow provisions a GitHub Action that runs `zcli push` on every
-remote push — no manual deploy required afterwards.
+Provisions a GitHub Action that runs `zcli push` on every remote push.

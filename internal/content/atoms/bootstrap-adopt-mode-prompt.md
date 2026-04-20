@@ -9,8 +9,7 @@ title: "Adopt — confirm mode with the user"
 
 ### Confirm mode per service
 
-Adopt cannot guess the intended deploy mode — the service already exists
-and may have been running in any shape. Ask the user, per service:
+Ask the user, per service:
 
 - **dev** — single mutable container, SSHFS-mountable, no stage pair.
   Best for active development.

@@ -21,5 +21,4 @@ zerops_deploy sourceService="{hostname}" targetService="{stage-hostname}" setup=
 zerops_verify serviceHostname="{stage-hostname}"
 ```
 
-The cross-deploy (`sourceService`→`targetService`) packages the dev tree
-into the stage container so the two stay in sync without a second build.
+The cross-deploy packages the dev tree into stage — no second build.

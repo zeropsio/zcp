@@ -1,9 +1,10 @@
 ---
 id: develop-dynamic-runtime-start-local
-priority: 2
+priority: 3
 phases: [develop-active]
 runtimes: [dynamic]
 environments: [local]
+modes: [dev, standard]
 title: "Dynamic runtime — start over SSH after deploy (local)"
 ---
 

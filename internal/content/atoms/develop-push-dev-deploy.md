@@ -8,7 +8,8 @@ title: "Push-dev strategy — deploy via zerops_deploy"
 
 ### Push-Dev Deploy Strategy
 
-For services bootstrapped with dev+stage pattern using SSH push deployment.
-Follow the dev+stage pattern above.
-Key commands: zerops_deploy targetService="{hostname}" (self-deploy),
-zerops_deploy sourceService="{hostname}" targetService="{stage-hostname}" (cross-deploy).
+The dev container uses SSH push — `zerops_deploy` uploads the working
+tree straight into the service without a git remote.
+
+- Self-deploy (single service): `zerops_deploy targetService="{hostname}"`
+- Cross-deploy (dev → stage): `zerops_deploy sourceService="{hostname}" targetService="{stage-hostname}"`

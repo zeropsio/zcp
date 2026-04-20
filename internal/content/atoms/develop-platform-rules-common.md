@@ -1,6 +1,6 @@
 ---
 id: develop-platform-rules-common
-priority: 4
+priority: 2
 phases: [develop-active]
 title: "Platform rules — always applicable"
 ---
@@ -9,6 +9,8 @@ title: "Platform rules — always applicable"
 
 - **Deploy = new container.** Local files in the running container are lost;
   only content covered by `deployFiles` survives across deploys.
+- `zerops.yaml` must declare `setup: dev` (dev services) and/or `setup: prod`
+  (stage/simple) entries — canonical recipe names, NOT hostnames.
 - `envVariables` are declarative config, **not live** until a deploy. Never
   check them with `printenv` before deploying — they will not be set yet.
 - Env-reference typos (the `$hostname_varName` dollar-bracket form) render

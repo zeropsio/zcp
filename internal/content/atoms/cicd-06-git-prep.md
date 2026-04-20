@@ -1,7 +1,7 @@
 ---
 id: cicd-06-git-prep
 priority: 2
-phases: [cicd-active]
+phases: [cicd-active, export-active]
 title: "CI/CD — Git preparation"
 ---
 
@@ -11,8 +11,6 @@ SSH to the dev container and assess current state:
 ```bash
 ssh {devHostname} "cd /var/www && git remote -v 2>/dev/null && git status 2>/dev/null && git branch 2>/dev/null"
 ```
-
-Fill only what's missing:
 
 **If no .gitignore** — write one via SSH:
 ```bash

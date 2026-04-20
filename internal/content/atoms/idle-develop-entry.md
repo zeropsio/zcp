@@ -2,15 +2,16 @@
 id: idle-develop-entry
 priority: 1
 phases: [idle]
+idleScenarios: [bootstrapped]
 title: "Develop entry"
 ---
 
-All services in this project are bootstrapped. Start a develop workflow for
-every code change:
+**Start a develop workflow for every code change** — do not edit + deploy
+directly:
 
 ```
 zerops_workflow action="start" workflow="develop" intent="{task-description}"
 ```
 
-One develop workflow per coherent task. When the task is complete the
-workflow auto-closes and you can start the next one.
+The develop conductor opens a Work Session, tracks deploys/verifies, and
+auto-closes when the task is complete.

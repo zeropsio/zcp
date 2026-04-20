@@ -10,10 +10,8 @@ title: "Classic bootstrap — static runtime plan"
 
 ### Static runtime plan
 
-The service plan includes one or more static runtimes (nginx, static file
-servers). Static containers do NOT need a verification server — they come
-up serving an empty document root and the HTTP layer's readiness is proof
-enough.
+Static containers (nginx) come up serving an empty document root — no
+verification server needed.
 
 Before deploy, confirm with the user:
 
