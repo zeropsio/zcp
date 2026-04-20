@@ -203,6 +203,103 @@ The canonical tree in [atomic-layout.md §1](../zcprecipator2/03-architecture/at
 
 C-4 will create 120 atom files under `internal/content/workflows/recipe/`. Plan's "+6,500 LoC md" estimate is proportionally higher (~8,100 LoC at 67 LoC/atom average, assuming the 1:1 atom-to-file mapping and tree-declared max-line bounds).
 
+---
+
+## C-4 — 120 atom files landed under `internal/content/workflows/recipe/`
+
+**Status**: green
+
+### Dispatch summary
+
+Dispatched 9 parallel `general-purpose` subagents, each scoped to one directory group:
+
+| Group | Atoms | Directory |
+|---|---:|---|
+| phases/research+provision | 16 | phases/research/, phases/provision/ |
+| phases/generate | 24 | phases/generate/ |
+| phases/deploy | 14 | phases/deploy/ |
+| phases/finalize+close | 11 | phases/finalize/, phases/close/ |
+| briefs/scaffold | 8 | briefs/scaffold/ |
+| briefs/feature+code-review | 11 | briefs/feature/, briefs/code-review/ |
+| briefs/writer | 10 | briefs/writer/ |
+| briefs/editorial-review | 10 | briefs/editorial-review/ |
+| principles | 16 | principles/ (+ platform-principles/) |
+| **total** | **120** | |
+
+### Invariant verification (C-13 preview)
+
+Ran on the full tree:
+
+| Grep | Result |
+|---|---|
+| Version anchors `v[0-9]+(\.[0-9]+)*` | 0 matches tree-wide |
+| Dispatcher vocab IN briefs/ (critical) | 0 matches |
+| Dispatcher vocab in phases/ | 9 legitimate "main agent" / "verbatim" uses (phase atoms address main directly; "verbatim" describes YAML value preservation, not dispatch composition) |
+| Internal check names | 0 matches |
+| Go-source paths `internal/<pkg>/<file>.go` | 0 matches |
+| Per-atom line count > declared max | 0 violations (verified via tmp script against manifest) |
+| Any file > 300 lines (P6 cap) | 0 files (largest: briefs/writer/content-surface-contracts.md at 161 lines) |
+
+### Line totals
+
+4,512 total markdown lines across 120 atoms. Subagents authored compactly — substantial slack against max-lines budgets on most atoms. C-5 composition will verify against step-4 goldens; atoms may grow during brief-composition debugging if goldens need content that was compressed here.
+
+### P8 conversions surfaced
+
+Every subagent reported positive-form conversions made:
+
+- `phases/generate/zerops-yaml/comment-style-positive.md`: rewrote `comment-anti-patterns` L1301-1316 as positive ASCII allow-list ("every comment begins with a single `#` followed by one space, then a full sentence in plain ASCII") — zero enumerated prohibitions.
+- `phases/generate/zerops-yaml/setup-rules-dev.md`: folded `dual-runtime-what-not-to-do` L663-672 positively ("Use only `setup: dev` and `setup: prod` as generic names").
+- `phases/deploy/browser-walk-dev.md` rule 3: "One browser call at a time across agents" positive form.
+- `briefs/scaffold/pre-ship-assertions.md`: rewritten as positive invariants ("X is absent/present" + shell command that proves it) instead of failure enumeration.
+- `briefs/feature/diagnostic-cadence.md`: 5 permitted probe types positive allow-list instead of 17 forbidden probes.
+- `briefs/writer/classification-taxonomy.md`: each class declared "What it IS" + "Test" + "Default route".
+- `briefs/editorial-review/reporting-taxonomy.md`: CRIT/WRONG/STYLE positive semantics + inline-fix policy as positive "bounded" contract.
+- `principles/canonical-output-paths.md`: positive declaration of the single canonical tree.
+
+### Known subagent notes (flagged for C-5 review)
+
+- **briefs/scaffold/symbol-contract-consumption.md**: ends with "The contract JSON for this run follows." — expects stitcher to emit the fenced JSON block after the atom. C-5 stitcher wires `{{.SymbolContract | toJSON}}` interpolation immediately after this atom.
+- **briefs/writer/classification-taxonomy.md**: 6-class taxonomy (not 7 — excludes `library-meta`) per the brief spec. Goldens mention 7 classes; consumers must align on 6 during C-5 composition validation.
+- **briefs/scaffold/pre-ship-assertions.md**: delegates to contract's `FixRecurrenceRules.preAttestCmd` as primary source; codebase-level file-presence assertions inline. If the stitcher needs all 12 FixRecurrenceRules preAttestCmds inlined as a flat bash script, the atom needs expansion.
+- **briefs/code-review/reporting-taxonomy.md**: added SYMPTOM as a fourth escape-hatch designation (distinct from CRIT/WRONG/STYLE), preserving the three-tier framing.
+- **briefs/editorial-review**: zero references to "Prior Discoveries" across all 10 atoms (per P7 porter-premise + refinement §10 open-question #6 — stitcher will NOT include Prior Discoveries for editorial-review).
+
+### Verification
+
+- `find internal/content/workflows/recipe -name '*.md' | wc -l` = 120 (matches atomCountBaseline)
+- `go test ./internal/workflow/... -run TestAtomManifest_` — all 11 manifest tests green (path existence not asserted in C-3 tests; verified via tmp script here)
+- `go test ./... -count=1` — full suite green (19 packages)
+- `make lint-local` — 0 issues
+
+### LoC delta
+
+- Markdown content: 4,512 LoC across 120 files
+- No Go code changes
+- Notes: +100 LoC
+- **Total**: ~+4,612 LoC
+
+### Breaks-alone consequence
+
+Nothing. Content exists on disk but no code reads it:
+- atom_manifest.go paths now correspond to real files (C-3's path-uniqueness + audience invariants cross-check against the disk state).
+- `//go:embed` is not yet declared — C-5 sets up the embed.FS root.
+- Old `recipe.md` monolith stays in place (deleted in C-15).
+
+### Ordering deps verified
+
+C-3 (manifest declares paths these files must exist at) ✓.
+
+### Pre-C-5 gate preparation
+
+Per the user's gate contract, C-5 is the CUTOVER commit — stitcher rewrite, largest behavioral change. Before C-5 ships:
+
+1. Step-4 composed briefs ([docs/zcprecipator2/04-verification/brief-*-composed.md](../../docs/zcprecipator2/04-verification/)) are the golden files; C-5's new `buildSubStepGuide` + `build*DispatchBrief` helpers must produce output that matches these goldens.
+2. C-14 will add the `zcp dry-run recipe` harness to diff against the goldens in CI — but C-14 lands after C-5.
+3. C-5 review surface: `recipe_guidance.go` stitcher body + embed.FS setup + brief composition functions for scaffold / feature / writer / code-review (editorial-review's stitcher lands in C-7.5).
+
+**C-4 scope is CLEAN: 120 atoms land, all invariants pass, all tests + lint green. Ready for the pre-C-5 user-review gate.**
+
 ### Tier-conditional atoms
 
 Seven tier-conditional atoms, all under `phases/` (briefs are TierAny — tier branching inside content, resolved by stitcher):
