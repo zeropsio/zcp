@@ -1,18 +1,24 @@
 ---
 id: develop-dev-not-started
-description: Seeded runtime sits at READY_TO_DEPLOY without ZCP meta — LLM must adopt first, then either deploy code or re-import with startWithoutCode
+description: Seeded runtime sits at READY_TO_DEPLOY without ZCP meta — LLM must go through bootstrap discovery → adopt, then either deploy code or re-import with startWithoutCode
 seed: imported
 fixture: fixtures/laravel-minimal.yaml
 expect:
   mustCallTools:
     - zerops_workflow
     - zerops_discover
-  workflowCallsMin: 5
+  workflowCallsMin: 6
   mustEnterWorkflow:
     - bootstrap
     - develop
+  requiredPatterns:
+    - '"action":"start","workflow":"bootstrap"'
+    - '"route":"adopt"'
+  requireAssessment: true
+  finalUrlStatus: 200
+  finalUrlHostname: appdev
 followUp:
-  - "V jakém stavu byla služba `appdev` při startu? Jak jsi to zjistil?"
+  - "V jakém stavu byla služba `appdev` při startu? Jak jsi to zjistil z discovery response?"
   - "Jakou recovery cestu jsi zvolil (deploy existujícího kódu / re-import s startWithoutCode)? Proč?"
   - "Proč SSHFS mount a SSH nefunguje, dokud služba není ACTIVE?"
 ---
@@ -25,8 +31,11 @@ stavu READY_TO_DEPLOY (import ji vytvořil bez `startWithoutCode: true`).
 
 Tvým úkolem je:
 
-1. **Adoptovat** existující služby do ZCP (bootstrap/adopt route) —
-   jinak develop flow nemá kontext.
+1. **Adoptovat** existující služby do ZCP přes bootstrap discovery:
+   - První `zerops_workflow action="start" workflow="bootstrap"` bez
+     route — discovery response musí ukazovat adopt option s
+     `adoptServices: ["appdev"]`.
+   - Commit s `route="adopt"`.
 2. Dostat `appdev` do stavu ACTIVE. Můžeš to udělat jakkoli validně:
    - **Nasadit reálný kód** (první deploy z READY_TO_DEPLOY → BUILDING → ACTIVE).
    - **Re-importovat službu** s `startWithoutCode: true` (platforma sama
@@ -35,6 +44,8 @@ Tvým úkolem je:
 Pravidla:
 
 - Začni `zerops_workflow action="status"` — nezačínej naslepo.
+- Bootstrap discovery je **dvoukrokový**: první call bez route = discovery
+  response, druhý call s `route=adopt` = commit.
 - Po adopci pokračuj v develop flow.
 - Na konci ověř, že `appdev` je ACTIVE.
 

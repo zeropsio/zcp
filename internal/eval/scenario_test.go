@@ -95,6 +95,37 @@ func TestParseScenario_Prompt_PreservesBody(t *testing.T) {
 	}
 }
 
+func TestBuildScenarioPrompt_RequireAssessment_AppendsEvalReport(t *testing.T) {
+	t.Parallel()
+
+	sc := &Scenario{
+		Prompt: "Do the thing.",
+		Expect: Expectation{RequireAssessment: true},
+	}
+
+	got := buildScenarioPrompt(sc)
+	if !strings.Contains(got, "## EVAL REPORT") {
+		t.Errorf("prompt should contain '## EVAL REPORT' when RequireAssessment=true\n%s", got)
+	}
+	if !strings.Contains(got, "Deployment outcome") {
+		t.Errorf("prompt should contain 'Deployment outcome' section, got:\n%s", got)
+	}
+}
+
+func TestBuildScenarioPrompt_NoRequireAssessment_OmitsEvalReport(t *testing.T) {
+	t.Parallel()
+
+	sc := &Scenario{
+		Prompt: "Do the thing.",
+		Expect: Expectation{RequireAssessment: false},
+	}
+
+	got := buildScenarioPrompt(sc)
+	if strings.Contains(got, "## EVAL REPORT") {
+		t.Errorf("prompt should NOT contain '## EVAL REPORT' when RequireAssessment=false\n%s", got)
+	}
+}
+
 func TestParseScenario_FollowUp_Parsed(t *testing.T) {
 	t.Parallel()
 

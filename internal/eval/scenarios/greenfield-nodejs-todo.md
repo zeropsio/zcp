@@ -1,19 +1,29 @@
 ---
 id: greenfield-nodejs-todo
-description: Node.js REST API + Postgres (dynamic runtime, SSH start path)
+description: Node.js REST API + Postgres — greenfield, two-step bootstrap discovery → recipe/classic commit, develop scaffolds + first-deploys
 seed: empty
 expect:
   mustCallTools:
     - zerops_workflow
     - zerops_import
+    - zerops_deploy
     - zerops_verify
-  workflowCallsMin: 12
+  workflowCallsMin: 14
   mustEnterWorkflow:
     - bootstrap
     - develop
+  requiredPatterns:
+    - '"action":"start","workflow":"bootstrap"'
+    - '"route":"'
   forbiddenPatterns:
     - "app-<projectId>"
+  requireAssessment: true
+  finalUrlStatus: 200
+  finalUrlHostname: appstage
 followUp:
+  - "Jak vypadal tvůj první `zerops_workflow action=\"start\" workflow=\"bootstrap\"` call — s jakým `route` parametrem? A co ti to vrátilo?"
+  - "Zvolil jsi route=recipe nebo route=classic? Pokud recipe, který slug a proč ten a ne jiný kandidát?"
+  - "Kdy jsi poprvé zavolal zerops_deploy — uvnitř bootstrap session, nebo až v develop? Proč to tak musí být?"
   - "Jak jsi spustil server po deployi (nebo v dev mode)?"
   - "Proč dynamic runtime (nodejs) vyžaduje manual start, zatímco static runtime (php-nginx) ne?"
 ---
@@ -36,3 +46,15 @@ Požadavky:
 - Sloučená prod + dev setup.
 
 Verify: `GET /todos` vrátí 200 s validním JSON arrayem (i prázdným).
+
+Bootstrap flow (důležité):
+
+- **První `start` call bez `route` parametru je discovery** — vrátí
+  `routeOptions[]` (ranked list: recipe kandidáti / classic / adopt /
+  resume). Žádná session se nevytváří.
+- **Druhý call musí mít `route="<zvolený>"` (recipe vyžaduje `recipeSlug`)**
+  — teprve tohle commitne session.
+- Bootstrap **nikdy nedeployí**. Provisionuje services, mount, env var
+  discovery — a končí.
+- **Develop** scaffolduje `zerops.yaml`, napíše aplikaci a spustí první
+  deploy. Passing verify stampne `FirstDeployedAt` na ServiceMeta.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/knowledge"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -31,6 +33,7 @@ type Runner struct {
 	store     *knowledge.Store
 	client    platform.Client
 	projectID string
+	httpDoer  ops.HTTPDoer
 }
 
 // NewRunner creates a new eval runner.
@@ -52,7 +55,17 @@ func NewRunner(config RunnerConfig, store *knowledge.Store, client platform.Clie
 		store:     store,
 		client:    client,
 		projectID: projectID,
+		// 10s is enough for a single GET against a freshly-deployed subdomain;
+		// the scenario-level timeout already bounds the full run.
+		httpDoer: &http.Client{Timeout: 10 * time.Second},
 	}
+}
+
+// WithHTTPDoer overrides the default http.Client. Tests use this to inject a
+// fake doer; production callers leave it alone.
+func (r *Runner) WithHTTPDoer(doer ops.HTTPDoer) *Runner {
+	r.httpDoer = doer
+	return r
 }
 
 // Run executes a single recipe evaluation.

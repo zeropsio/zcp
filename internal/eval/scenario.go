@@ -36,7 +36,10 @@ type Expectation struct {
 	WorkflowCallsMin  int      `yaml:"workflowCallsMin"`
 	MustEnterWorkflow []string `yaml:"mustEnterWorkflow"`
 	FinalURLStatus    int      `yaml:"finalUrlStatus"`
+	FinalURLHostname  string   `yaml:"finalUrlHostname"`
 	ForbiddenPatterns []string `yaml:"forbiddenPatterns"`
+	RequiredPatterns  []string `yaml:"requiredPatterns"`
+	RequireAssessment bool     `yaml:"requireAssessment"`
 	AtomsHit          []string `yaml:"atomsHit"`
 	AutoClose         bool     `yaml:"autoClose"`
 }

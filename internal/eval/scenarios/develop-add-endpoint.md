@@ -1,6 +1,6 @@
 ---
 id: develop-add-endpoint
-description: Adopt seeded Laravel services (no ZCP meta) and add endpoint via develop flow
+description: Adopt seeded Laravel services (no ZCP meta) via bootstrap discovery → route=adopt, then add endpoint via develop flow
 seed: deployed
 fixture: fixtures/laravel-dev-deployed.yaml
 expect:
@@ -8,12 +8,18 @@ expect:
     - zerops_workflow
     - zerops_discover
     - zerops_verify
-  workflowCallsMin: 8
+  workflowCallsMin: 9
   mustEnterWorkflow:
     - bootstrap
     - develop
+  requiredPatterns:
+    - '"action":"start","workflow":"bootstrap"'
+    - '"route":"adopt"'
+  requireAssessment: true
+  finalUrlStatus: 200
+  finalUrlHostname: app
 followUp:
-  - "Jak jsi poznal, že služby `app` + `db` existují, ale nemají ZCP metadata? Co jsi udělal?"
+  - "Jak jsi poznal, že služby `app` + `db` existují, ale nemají ZCP metadata? Objevila se v discovery response adopt option?"
   - "V jakém pořadí jsi šel workflow-y (bootstrap/adopt → develop)? Proč přesně v tomhle pořadí?"
   - "Zvolil jsi push-dev nebo push-git strategy? Proč právě tuhle?"
 ---
@@ -23,8 +29,10 @@ followUp:
 V projektu běží Laravel aplikace (`app` + `db`) — services byly vytvořené
 mimo ZCP (žádné metadata o bootstrap modu ani strategy). Tvým úkolem je:
 
-1. **Adoptovat** existující služby do ZCP (bootstrap/adopt route) — jinak
-   develop flow nemá kontext a `zerops_deploy` nemá kam cílit.
+1. **Rozpoznat existující services z discovery** a adoptovat je do ZCP:
+   - První `zerops_workflow action="start" workflow="bootstrap"` bez
+     `route` parametru vrátí `routeOptions[]` s adopt option na top —
+     `adoptServices: ["app"]`. Commit s `route="adopt"`.
 2. Po adoptování přidat endpoint `GET /api/status`, který vrací JSON:
 
    ```json
@@ -38,6 +46,8 @@ Pravidla:
 
 - Začni `zerops_workflow action="status"` — zjisti stav a teprve poté se
   rozhodni pro další kroky.
+- Bootstrap discovery je **dvoukrokový**: první call bez route = discovery
+  response, druhý call s `route=adopt` = commit.
 - Po adopci přejdi do develop workflow — tam probíhá kódová iterace +
   deploy + verify.
 - Po deployi ověř endpoint.

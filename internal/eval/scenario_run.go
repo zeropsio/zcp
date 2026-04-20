@@ -15,14 +15,15 @@ import (
 
 // ScenarioResult captures the outcome of a single scenario run.
 type ScenarioResult struct {
-	ScenarioID string      `json:"scenarioId"`
-	SuiteID    string      `json:"suiteId"`
-	Grade      GradeResult `json:"grade"`
-	LogFile    string      `json:"logFile"`
-	Assessment string      `json:"assessment,omitempty"`
-	Duration   Duration    `json:"duration"`
-	StartedAt  time.Time   `json:"startedAt"`
-	Error      string      `json:"error,omitempty"`
+	ScenarioID string         `json:"scenarioId"`
+	SuiteID    string         `json:"suiteId"`
+	Grade      GradeResult    `json:"grade"`
+	LogFile    string         `json:"logFile"`
+	Assessment string         `json:"assessment,omitempty"`
+	FinalURL   *FinalURLProbe `json:"finalUrl,omitempty"`
+	Duration   Duration       `json:"duration"`
+	StartedAt  time.Time      `json:"startedAt"`
+	Error      string         `json:"error,omitempty"`
 }
 
 // RunScenario executes one scenario file end-to-end: seed → spawn Claude →
@@ -93,7 +94,30 @@ func (r *Runner) RunScenario(ctx context.Context, scenarioPath, suiteID string) 
 		}
 	}
 
-	result.Grade = Grade(sc, logStr, calls)
+	var probe *FinalURLProbe
+	if sc.Expect.FinalURLStatus != 0 {
+		hostname := sc.Expect.FinalURLHostname
+		if hostname == "" {
+			// Auto-discover the single web-facing runtime — greenfield
+			// scenarios let the LLM choose its own hostname, so probing
+			// works without coupling the scenario to an implementation
+			// detail. If 0 or >1 candidates exist the resolver surfaces
+			// that as a grader failure.
+			resolved, err := ResolveProbeHostname(ctx, r.client, r.projectID)
+			if err != nil {
+				probe = &FinalURLProbe{Err: err.Error()}
+			} else {
+				p := ProbeFinalURL(ctx, r.client, r.httpDoer, r.projectID, resolved)
+				probe = &p
+			}
+		} else {
+			p := ProbeFinalURL(ctx, r.client, r.httpDoer, r.projectID, hostname)
+			probe = &p
+		}
+		result.FinalURL = probe
+	}
+
+	result.Grade = GradeWithProbe(sc, logStr, calls, assessment, probe)
 	result.LogFile = logFile
 	result.Duration = Duration(time.Since(startedAt))
 
@@ -133,9 +157,11 @@ func resolveFixturePath(sc *Scenario) string {
 }
 
 // buildScenarioPrompt composes the agent prompt. The scenario body is used
-// verbatim, and follow-up questions (if any) are appended so the agent answers
+// verbatim, follow-up questions (if any) are appended so the agent answers
 // them at the end of its run — giving us post-hoc reasoning capture without
-// needing session resume.
+// needing session resume — and when Expect.RequireAssessment is true, the
+// shared assessmentInstructions block is appended so the grader can gate on
+// the agent's own EVAL REPORT.
 func buildScenarioPrompt(sc *Scenario) string {
 	var b strings.Builder
 	b.WriteString(sc.Prompt)
@@ -144,6 +170,10 @@ func buildScenarioPrompt(sc *Scenario) string {
 		for i, q := range sc.FollowUp {
 			fmt.Fprintf(&b, "%d. %s\n", i+1, q)
 		}
+	}
+	if sc.Expect.RequireAssessment {
+		b.WriteString("\n")
+		b.WriteString(assessmentInstructions)
 	}
 	return b.String()
 }
