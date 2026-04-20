@@ -54,6 +54,12 @@ const (
 	// code review at 1a, main-agent browser walk at 1b) to enforced
 	// sub-steps converts the rubric-level expectation into a forcing
 	// function.
+	// C-7.5 (refinement 2026-04-20): editorial-review precedes code-review
+	// because the reviewer's reclassification output may trigger fixes that
+	// code-review needs to see. Minimal tier currently returns nil
+	// substeps for close; ungated-discretionary minimal editorial-review is
+	// deferred — tracked in implementation-notes C-7.5 §"Known deferred".
+	SubStepEditorialReview  = "editorial-review"
 	SubStepCloseReview      = "code-review"
 	SubStepCloseBrowserWalk = "close-browser-walk"
 )
@@ -140,7 +146,10 @@ func closeSubSteps(plan *RecipePlan) []RecipeSubStep {
 	if !isShowcase(plan) {
 		return nil
 	}
-	names := []string{SubStepCloseReview, SubStepCloseBrowserWalk}
+	// C-7.5: editorial-review runs FIRST — the reviewer's reclassification
+	// output + inline-fix edits must land before code-review's static pass
+	// sees them, otherwise code-review grades a pre-fix state.
+	names := []string{SubStepEditorialReview, SubStepCloseReview, SubStepCloseBrowserWalk}
 	steps := make([]RecipeSubStep, len(names))
 	for i, n := range names {
 		steps[i] = RecipeSubStep{Name: n, Status: stepPending}

@@ -165,6 +165,29 @@ func (e *Engine) recipeCompleteSubStep(ctx context.Context, state *WorkflowState
 			)
 		}
 	}
+	// C-7.5 Fix D: close sub-step ordering. code-review must run AFTER
+	// editorial-review so code-review sees any reclassification + inline
+	// fixes the editorial reviewer applied. Without this guard, code-review
+	// could grade a pre-fix deliverable, miss the classification errors
+	// editorial would have caught, and the close step would ship with
+	// wrong-surface gotchas (v28) / fabricated mechanisms (v23) / self-
+	// referential content (v34) that editorial-review's reclassification
+	// would have flagged. The message names both substeps + explains WHY.
+	if step == RecipeStepClose && subStepName == SubStepCloseReview {
+		editorialDone := false
+		for _, ss := range currentStep.SubSteps {
+			if ss.Name == SubStepEditorialReview && ss.Status == stepComplete {
+				editorialDone = true
+				break
+			}
+		}
+		if !editorialDone {
+			return nil, fmt.Errorf(
+				"%s: close sub-step %q must be attested before %q — dispatch the editorial-review subagent first, apply any reclassification + inline fixes it reports, then run the code-review sub-agent so it grades the post-fix state; attesting code-review first against pre-fix content produces a stale review signal that missed the classification-error-at-source class (v28 folk-doctrine, v34 self-referential)",
+				platform.ErrSubagentMisuse, SubStepEditorialReview, SubStepCloseReview,
+			)
+		}
+	}
 
 	// Run sub-step validator if available.
 	if validator := getSubStepValidator(subStepName); validator != nil {
@@ -181,8 +204,15 @@ func (e *Engine) recipeCompleteSubStep(ctx context.Context, state *WorkflowState
 				return nil, fmt.Errorf("recipe substep save: %w", err)
 			}
 			resp := rs.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge)
+			// C-7.5: merge optional per-check rows into the CheckResult so
+			// the agent sees per-predicate pass/fail detail in addition to
+			// the aggregate Issues/Guidance. Only populated by validators
+			// that run a predicate battery (editorial-review); attestation-
+			// floor validators leave Checks nil and keep the pre-C-7.5
+			// summary-only shape.
 			resp.CheckResult = &StepCheckResult{
 				Passed:  false,
+				Checks:  result.Checks,
 				Summary: fmt.Sprintf("Sub-step %q validation failed: %s", subStepName, result.Guidance),
 			}
 			resp.Message = fmt.Sprintf("Sub-step %q: %d issues — fix and retry", subStepName, len(result.Issues))

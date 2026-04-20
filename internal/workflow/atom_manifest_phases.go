@@ -105,6 +105,10 @@ func phaseAtoms() []Atom {
 
 		// phases/close/
 		{ID: "close.entry", Path: "phases/close/entry.md", Audience: m, MaxLines: 80, TierCond: a},
+		// C-7.5: editorial-review phase atom — main-agent guide for the
+		// close.editorial-review substep. Paired with the briefs/editorial-
+		// review/ atom family (10 atoms landed in C-4) via the stitcher.
+		{ID: "close.editorial-review", Path: "phases/close/editorial-review.md", Audience: m, MaxLines: 80, TierCond: s},
 		{ID: "close.code-review", Path: "phases/close/code-review.md", Audience: m, MaxLines: 70, TierCond: a},
 		{ID: "close.close-browser-walk", Path: "phases/close/close-browser-walk.md", Audience: m, MaxLines: 100, TierCond: s},
 		{ID: "close.export-on-request", Path: "phases/close/export-on-request.md", Audience: m, MaxLines: 80, TierCond: a},

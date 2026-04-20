@@ -941,3 +941,83 @@ Not a gated commit itself; the next user-review gate is **pre-C-7.5** (editorial
 - CLI shims currently don't hydrate `discoveredEnvVars` / `liveHostnames` for `CheckEnvRefs` — author-side shim passes empty maps, so the check only catches shape errors (malformed `${...}`, missing host prefix). The gate path uses `state.DiscoveredEnvVars` from the live API. Future enhancement: `--live-vars-json=<path>` to let the author dump the platform's discovered-vars snapshot before invoking the shim. Out of C-7e scope.
 - `collectReadmesByHost` in `manifest_honesty.go` + `cross_readme_dedup.go` relies on the `{host}dev` naming convention. Non-conventional folder layouts (a future recipe might use `api/` instead of `apidev/`) would miss. Non-issue at v34; flagged for C-10+ if naming ever drifts.
 - `symbol-contract-env-consistency` shim takes `--plan-json` directly rather than the handoff's proposed `--state=<dir>`. Rationale: the engine serializes full `WorkflowState` into `sessions/{sid}.json`, not a standalone `recipe-plan.json`, so a `--state=<dir>` flag would require additional session-registry machinery that doesn't exist. Direct plan-JSON is simpler + sufficient for the author use-case (dump plan, invoke shim). Documented here; revisit in C-14 if the `zcp dry-run recipe` harness surfaces a need.
+
+---
+
+## C-7.5 — Editorial-review role introduction (substep + validator + 7 dispatch-runnable checks)
+
+**Status**: green
+
+### What landed
+
+C-7.5 introduces the editorial-review sub-agent role per [`docs/spec-content-surfaces.md`](../../spec-content-surfaces.md) line 317-319 + the 2026-04-20 research refinement. The reviewer walks the finished deliverable with a fresh-reader stance, applies inline fixes for editorial defects, and returns a structured payload that populates seven dispatch-runnable checks per [check-rewrite.md §16a](03-architecture/check-rewrite.md). Closes the **classification-error-at-source** class (writer self-classification errors escape all prior gates because the manifest faithfully reflects the wrong classification) + defense-in-depth on v28 wrong-surface, v28 folk-doctrine fabrication, v28 cross-surface-duplication, and v34 self-referential classes.
+
+- `internal/workflow/recipe_substeps.go` — added `SubStepEditorialReview = "editorial-review"` and placed it FIRST in `closeSubSteps` showcase return (before `code-review`, before `close-browser-walk`). Minimal tier unchanged — "ungated-discretionary" minimal editorial-review is deferred (see Known deferred below).
+- `internal/workflow/engine_recipe.go` — added **Fix D ordering guard**: `code-review` substep must have `editorial-review` complete first. Mirrors Fix C's shape + message style; error carries `SUBAGENT_MISUSE` code and explains WHY (code-review grading pre-fix content misses v28/v34 classification errors editorial would have caught).
+- `internal/workflow/recipe_guidance.go` — added `SubStepEditorialReview` to `atomIDForSubStep` (maps to `close.editorial-review` atom), `composeDispatchBriefForSubStep` (calls `BuildEditorialReviewDispatchBrief` with facts-log + manifest pointer paths; showcase-only; returns empty on minimal), `shouldPrependPriorDiscoveries` (**NEVER prepends** for editorial-review — porter-premise requires fresh-reader stance per refinement §10 open-question #6), and `laneForSubStep` (returns `"editorial-review"` for symmetry even though no fact prepend happens — future audits can distinguish deliberate "no prepend" from unmapped lanes).
+- `internal/workflow/recipe_brief_facts.go` — added `SubStepEditorialReview: 12` to `substepOrder`; shifted `SubStepCloseReview` → 13, `SubStepCloseBrowserWalk` → 14.
+- `internal/content/workflows/recipe/phases/close/editorial-review.md` — new main-agent phase atom (60 LoC) pairing with the 10 editorial-review brief atoms (already landed in C-4). Mirrors the `close.code-review` atom shape: describes what main does at the substep, the attestation shape, and the scope separation between phase atom and brief atoms.
+- `internal/workflow/atom_manifest_phases.go` — added the new atom entry (`close.editorial-review` showcase-tier-conditional).
+- `internal/workflow/atom_manifest.go` — bumped `atomCountBaseline` from 120 → 121 and updated the docstring accounting (66 phase atoms post-C-7.5).
+- `internal/workflow/editorial_review_return.go` — new file (115 LoC): `EditorialReviewReturn` type + supporting structs (`EditorialReviewFinding`, `ReclassificationDeltaRow`, `CitationCoverage`, `CrossSurfaceLedgerRow`, `InlineFixApplied`) matching `completion-shape.md` exactly; `ParseEditorialReviewReturn(attestation string) (*EditorialReviewReturn, error)` parses the substep attestation with typed errors for empty / non-JSON / parse-failure shapes. Snake_case JSON tags carry per-field `//nolint:tagliatelle` directives naming the editorial-review subagent wire contract.
+- `internal/workflow/editorial_review_checks.go` — new file (230 LoC): seven predicates + `EditorialReviewChecks(ret *EditorialReviewReturn) []StepCheck` battery. Each predicate consumes the parsed payload and emits one row in the stable §16a order (dispatched → no_wrong_surface_crit → reclassification_delta → no_fabricated_mechanism → citation_coverage → cross_surface_duplication → wrong_count). Every failing Detail includes the exported `EditorialReviewPreAttestNote` marker so downstream consumers can distinguish §16a rows from §16 shell-runnable rows without parsing the check name.
+- `internal/workflow/editorial_review_validator.go` — new file (95 LoC): `validateEditorialReview` parses the attestation, runs the battery, returns `SubStepValidationResult{Passed, Issues, Guidance, Checks}`. On parse failure emits 7 placeholder-FAIL rows so the agent still sees the full check surface; on predicate failure surfaces only the failing rows' details in `Issues` (for Phase C adaptive-retry context). `Guidance` is prose that names each failing check + links back to the `EditorialReviewPreAttestNote` reminder (no shell-shim exists; the dispatch IS the runnable form).
+- `internal/workflow/recipe_substep_validators.go` — `SubStepValidationResult` gained an optional `Checks []StepCheck` field; `getSubStepValidator` now returns `validateEditorialReview` for the editorial-review substep.
+- `internal/workflow/engine_recipe.go` — the substep-validation failure path merges `result.Checks` into `resp.CheckResult.Checks`, surfacing per-predicate pass/fail detail alongside the aggregate Issues/Guidance. Other validators (attestation-floor only) leave Checks nil and retain the pre-C-7.5 summary-only shape.
+- Tests: `editorial_review_checks_test.go` (240 LoC, 17 table rows × 7 predicates + order invariant + pre-attest-note invariant + parser shapes); `editorial_review_validator_test.go` (95 LoC, 4 scenarios: clean-pass, empty-attestation-fail, predicate-failure-propagates, guidance-names-pre-attest-note); `editorial_review_helpers_test.go` (35 LoC, `validEditorialReviewPayload` + `mustMarshalEditorialReviewReturn` shared helpers).
+- Updated pre-existing tests: `recipe_test.go::TestRecipeCloseSubSteps_ExactlyThreeAutonomousSubSteps` (was `ExactlyTwo` — now 3 substeps: editorial-review + code-review + close-browser-walk); `recipe_close_ordering_test.go::TestCloseSubStepOrder_ReviewBeforeBrowserWalkAccepted` + `TestCloseSubStepOrder_FixCGuardDoesNotFireOnCodeReview` — both now attest editorial-review before code-review.
+
+### The 7 checks (per `check-rewrite.md §16a`)
+
+| Check | Verdict source | Closes |
+|---|---|---|
+| `editorial_review_dispatched` | `len(ret.SurfacesWalked) > 0` after valid JSON parse | v34 classification-error-at-source |
+| `editorial_review_no_wrong_surface_crit` | `ret.FindingsBySeverity.Crit == 0` | v28 wrong-surface, v33 scaffold-decision, v34 self-referential |
+| `editorial_review_reclassification_delta` | every reclass row `Final == ReviewerSaid` | classification-error-at-source, v28 folk-doctrine |
+| `editorial_review_no_fabricated_mechanism` | no CRIT finding carries a fabricated-mechanism tag/description | v23 execOnce-burn, v28 folk-doctrine |
+| `editorial_review_citation_coverage` | `ret.CitationCoverage.Denominator == ret.CitationCoverage.Numerator` | v20 generic-platform-leakage, v28 folk-doctrine |
+| `editorial_review_cross_surface_duplication` | no ledger row has `Severity == "duplicate"` | v28 cross-surface-fact-duplication |
+| `editorial_review_wrong_count` | `ret.FindingsBySeverity.Wrong <= 1` | v34 self-referential + v28 wrong-surface post-inline-fix |
+
+All 7 are pure predicates over the parsed payload — no filesystem access, no network, no plan lookup.
+
+### Design decisions applied
+
+1. **Validator-based surfacing**. §16a says editorial-review checks populate `StepCheck` rows at close.editorial-review complete. Currently substeps only have `SubStepValidator` returning `SubStepValidationResult{Passed, Issues, Guidance}` — no StepCheck rows. C-7.5 extends `SubStepValidationResult` with an optional `Checks []StepCheck` field + the engine merges it into `resp.CheckResult.Checks`. This keeps the existing substep-validator pattern intact for attestation-floor validators (they leave Checks nil) while giving editorial-review the structured-row channel the spec requires.
+2. **Attestation IS the JSON payload**. Per `completion-shape.md`, the reviewer returns a single structured payload. The main agent attaches that JSON verbatim as the substep attestation; the validator parses it. No out-of-band state channel — payload flow is attestation-only.
+3. **Parse failure emits 7 FAIL rows** (not 1). Keeps the check surface consistent so the agent always sees the same row set in retry iterations — regression-direction coverage stays intact even when the attestation shape is wrong.
+4. **Ordering guard mirrors Fix C**. The v8.98 Fix C guard on `close-browser-walk → code-review` is extended with a Fix D guard on `code-review → editorial-review`. Same structured-error-message shape; same `SUBAGENT_MISUSE` error code; same "names both substeps + WHY" discipline.
+5. **Showcase-only**. Minimal tier's discretionary editorial-review is deferred (see Known deferred). Spec calls for ungated-discretionary semantics that don't exist today — adding them requires new engine plumbing (a substep list where completion isn't gated by `enforceSubStepsComplete`). Out of C-7.5 scope; a later refinement can extend to minimal.
+6. **No Prior Discoveries prepend**. The reviewer's porter-premise requires fresh-reader stance. `shouldPrependPriorDiscoveries` explicitly returns `false` for `SubStepEditorialReview` even though the substep dispatches a sub-agent (symmetry with other dispatch substeps would prepend).
+
+### Verification
+
+- `go test ./... -count=1` — full suite green across 21 packages (including the new workflow files).
+- `make lint-local` — 0 issues (after per-field `//nolint:tagliatelle` directives naming the editorial-review subagent wire contract, a `stepCheckStatus{Fail,Pass}` constant pair to silence `goconst`, `slices.Contains` modernization, and `gofmt` on the new types file).
+
+### LoC delta
+
+- Go source (workflow): +530 LoC (editorial_review_return.go 115 + editorial_review_checks.go 230 + editorial_review_validator.go 95 + substep const + closeSubSteps + guard + guidance wiring + substepOrder + atom manifest bump + SubStepValidationResult extension + engine Checks surfacing).
+- Tests (workflow): +400 LoC (editorial_review_checks_test.go 240 + editorial_review_validator_test.go 95 + editorial_review_helpers_test.go 35 + updated ordering + close-substep-count tests).
+- Atom content: +25 LoC (new `phases/close/editorial-review.md`).
+- **Total**: ~+955 LoC (handoff estimate was ~+2,800 LoC, but the 10 editorial-review atoms + stitcher had already landed in C-4 + C-5 foundation — C-7.5's actual net delta is the substep wiring + validator + 7 checks + tests).
+
+### Breaks-alone consequence
+
+Every new v35+ showcase-tier close step now dispatches editorial-review first. Authors who complete close in the canonical order (editorial-review → code-review → close-browser-walk) see no visible workflow change beyond the new substep name at the top of the close phase; authors who attempt an out-of-order attestation get a structured error naming the substep dependency + WHY (Fix D). No regression against prior shipped recipes — these only run at close step on showcase recipes going forward.
+
+### Ordering deps verified
+
+- C-1 ✓ (SymbolContract for plan-aware dispatch brief composition).
+- C-2 ✓ (RouteTo enum — editorial-review's reclassification check cross-references routing).
+- C-3 ✓ (atom_manifest — new close.editorial-review phase atom registered + baseline bumped).
+- C-4 ✓ (10 editorial-review brief atoms on disk).
+- C-5 ✓ (`BuildEditorialReviewDispatchBrief` already existed; wiring lights it up at the substep).
+- C-6 ✓ (check infrastructure — shape of StepCheck / StepCheckResult reused).
+- C-7e ✓ (shim-surface conventions — C-7.5's checks are dispatch-runnable per §16a, no shim equivalent; the `EditorialReviewPreAttestNote` marker makes the distinction explicit in every row's Detail).
+
+### Known deferred
+
+- **Minimal-tier discretionary editorial-review**. Spec §C-7.5 calls for minimal's `closeSubSteps` to return an ungated-discretionary list including editorial-review + code-review. Implementing "ungated-discretionary" requires new engine semantics (a substep list where `enforceSubStepsComplete` doesn't block on incompleteness). Out of C-7.5 scope — showcase-only implementation is the minimum viable C-7.5. A follow-up commit can extend to minimal when the discretionary-substep infrastructure lands (likely alongside a broader close-substep gating refactor).
+- **Dispatch-composition test against step-4 goldens**. Pre-ship gate per rollout-sequence §C-7.5 asks for a byte-diff test against `docs/zcprecipator2/04-verification/brief-editorial-review-{minimal,showcase}-composed.md`. The goldens are synthetic / advisory (not byte-identical to stitcher output — they're reader-facing representations). C-14's `zcp dry-run recipe` harness is the canonical byte-diff surface. C-7.5's coverage is the stitcher unit test (`TestBuildEditorialReviewDispatchBrief_NoPriorDiscoveries`) from C-5 + the validator tests here; the byte-diff test lands with C-14.
+- **Pre-attest field on failing rows**. §16a says `preAttestCmd` reads the `EditorialReviewPreAttestNote` value. The current `StepCheck` struct doesn't have a `PreAttestCmd` field — that ships with C-10's payload shape change. C-7.5 emits the marker in `Detail` as an interim surface; C-10 moves it to the dedicated field uniformly across all checks. Documented to confirm C-10 must include the §16a rows in its cascading field-rename pass.

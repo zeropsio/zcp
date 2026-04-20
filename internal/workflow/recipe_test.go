@@ -288,29 +288,34 @@ func TestRecipeCloseSubSteps_ShowcaseIncludesBrowserWalk(t *testing.T) {
 	}
 }
 
-// TestRecipeCloseSubSteps_ExactlyTwoAutonomousSubSteps — v8.97 Fix 2 bar.
-// Close contains only code-review + close-browser-walk — no publish, no
-// export, no additional sub-steps. Publish is a post-workflow CLI operation;
-// export is gated server-side on close=complete (Fix 1) but is not itself a
-// workflow sub-step. The v32 close-skip failure class depended on the agent
-// reading "publish is gated" and interpreting it as "close itself is gated" —
-// removing publish from workflow state closes that ambiguity at the root.
-func TestRecipeCloseSubSteps_ExactlyTwoAutonomousSubSteps(t *testing.T) {
+// TestRecipeCloseSubSteps_ExactlyThreeAutonomousSubSteps — v8.97 Fix 2
+// bar + C-7.5 (2026-04-20 refinement). Close contains editorial-review +
+// code-review + close-browser-walk — no publish, no export, no additional
+// sub-steps. Publish is a post-workflow CLI operation; export is gated
+// server-side on close=complete (Fix 1) but is not itself a workflow
+// sub-step. The v32 close-skip failure class depended on the agent
+// reading "publish is gated" and interpreting it as "close itself is
+// gated" — removing publish from workflow state closes that ambiguity at
+// the root. C-7.5 adds editorial-review as the FIRST close substep so
+// its reclassification findings + inline fixes land before code-review
+// grades the deliverable.
+func TestRecipeCloseSubSteps_ExactlyThreeAutonomousSubSteps(t *testing.T) {
 	t.Parallel()
 
 	plan := &RecipePlan{Tier: RecipeTierShowcase}
 	got := initSubSteps(RecipeStepClose, plan)
-	want := []string{SubStepCloseReview, SubStepCloseBrowserWalk}
+	want := []string{SubStepEditorialReview, SubStepCloseReview, SubStepCloseBrowserWalk}
 	if len(got) != len(want) {
 		t.Fatalf("expected exactly %d close sub-steps (%v), got %d (%+v)", len(want), want, len(got), got)
 	}
 	for i, ss := range got {
 		if ss.Name != want[i] {
-			t.Errorf("close sub-step[%d]: expected %q, got %q — Fix 2 bar", i, want[i], ss.Name)
+			t.Errorf("close sub-step[%d]: expected %q, got %q — Fix 2 bar + C-7.5 ordering", i, want[i], ss.Name)
 		}
 		// Reject any substep containing publish or export vocabulary — the
 		// server-side guard against Fix 2 regressing into a three-substep
-		// close again.
+		// close again (publish/export were the banned third substep; the
+		// allowed third substep is editorial-review).
 		for _, banned := range []string{"publish", "export"} {
 			if strings.Contains(ss.Name, banned) {
 				t.Errorf("close sub-step[%d] %q contains banned vocabulary %q — publish/export are not workflow sub-steps", i, ss.Name, banned)

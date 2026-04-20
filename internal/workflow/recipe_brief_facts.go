@@ -343,8 +343,10 @@ var substepOrder = map[string]int{
 	SubStepVerifyStage:       9,
 	SubStepFeatureSweepStage: 10,
 	SubStepReadmes:           11,
-	SubStepCloseReview:       12,
-	SubStepCloseBrowserWalk:  13,
+	// C-7.5: editorial-review precedes code-review in close-substep order.
+	SubStepEditorialReview:  12,
+	SubStepCloseReview:      13,
+	SubStepCloseBrowserWalk: 14,
 }
 
 // substepIsUpstream reports whether candidate appears strictly earlier

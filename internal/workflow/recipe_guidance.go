@@ -578,6 +578,8 @@ func atomIDForSubStep(step, subStep string) string {
 		}
 	case RecipeStepClose:
 		switch subStep {
+		case SubStepEditorialReview:
+			return "close.editorial-review"
 		case SubStepCloseReview:
 			return "close.code-review"
 		case SubStepCloseBrowserWalk:
@@ -625,7 +627,26 @@ func composeDispatchBriefForSubStep(plan *RecipePlan, step, subStep, sessionID s
 			return b
 		}
 	case RecipeStepClose:
-		if subStep == SubStepCloseReview {
+		switch subStep {
+		case SubStepEditorialReview:
+			// Editorial-review sub-agent (C-7.5, showcase only — minimal's
+			// discretionary variant is deferred). Composes the fresh-reader
+			// review brief with pointer inputs for the facts log + content
+			// manifest. Prior Discoveries are deliberately NOT included
+			// (porter-premise requires fresh-reader stance).
+			if !isShowcase(plan) {
+				return ""
+			}
+			factsPath := ""
+			if sessionID != "" {
+				factsPath = factLogPathLocal(sessionID)
+			}
+			b, err := BuildEditorialReviewDispatchBrief(plan, factsPath, "<recipe-output-dir>/ZCP_CONTENT_MANIFEST.json")
+			if err != nil {
+				return ""
+			}
+			return b
+		case SubStepCloseReview:
 			// Code-review sub-agent (showcase gated + minimal discretionary).
 			b, err := BuildCodeReviewDispatchBrief(plan, "<recipe-output-dir>/ZCP_CONTENT_MANIFEST.json")
 			if err != nil {
@@ -653,8 +674,18 @@ func shouldPrependPriorDiscoveries(step, subStep string, plan *RecipePlan) bool 
 			return true
 		}
 	}
-	if step == RecipeStepClose && subStep == SubStepCloseReview {
-		return isShowcase(plan)
+	if step == RecipeStepClose {
+		// Editorial-review NEVER prepends Prior Discoveries: per the
+		// porter-premise atom + refinement §10 open-question #6, the
+		// reviewer must read the deliverable cold with no authorship
+		// investment. Prior Discoveries would leak the dev session's
+		// mental model into the review stance.
+		if subStep == SubStepEditorialReview {
+			return false
+		}
+		if subStep == SubStepCloseReview {
+			return isShowcase(plan)
+		}
 	}
 	return false
 }
@@ -673,8 +704,18 @@ func laneForSubStep(step, subStep string) string {
 			return ""
 		}
 	}
-	if step == RecipeStepClose && subStep == SubStepCloseReview {
-		return "code-review"
+	if step == RecipeStepClose {
+		switch subStep {
+		case SubStepEditorialReview:
+			// Editorial-review is dispatch-owning but receives NO lane-filtered
+			// Prior Discoveries (shouldPrependPriorDiscoveries returns false for
+			// this substep). An explicit lane name is retained for symmetry so
+			// any future fact-routing audit can distinguish editorial-review's
+			// deliberate "no fact prepend" from absence of a lane mapping.
+			return "editorial-review"
+		case SubStepCloseReview:
+			return "code-review"
+		}
 	}
 	return ""
 }
