@@ -67,6 +67,15 @@ type StepCheck struct {
 	// check has a trivially-probeable form. Reserved for v8.97; v8.96
 	// migrations leave this empty.
 	Probe string `json:"probe,omitempty"`
+
+	// PerturbsChecks names sibling checks whose pass state is likely to
+	// flip when this check's failure is fixed. Unlike CoupledWith (which
+	// names sibling FILE surfaces), PerturbsChecks names sibling CHECKS
+	// — so the author sees, at round 1, which round-2 failure the
+	// current fix is likely to cause. v8.104 addition; emitted by check
+	// sites that know their fix perturbs downstream scoring (e.g.
+	// gotcha rewording perturbs cross-README similarity).
+	PerturbsChecks []string `json:"perturbsChecks,omitempty"`
 }
 
 // StepChecker validates that a bootstrap step's requirements are met.

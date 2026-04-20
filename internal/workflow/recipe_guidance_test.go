@@ -141,7 +141,12 @@ var showcaseStepCaps = map[RecipeShape]map[string]int{
 		// v8.96 +1 KB: git-config-mount block adds the "every agent runs
 		// git container-side" framing + .git/index.lock concurrency rule
 		// (load-bearing — closes the v31 ~90s git-lock cost driver).
-		RecipeStepProvision: 19 * 1024,
+		// v8.104 +1 KB: post-scaffold re-init rule — names that the
+		// scaffold subagent deletes /var/www/.git/ before returning and
+		// main-agent therefore re-runs git init before each post-
+		// scaffold commit. Closes the v33 `fatal: not a git repository`
+		// ~6s cost per run and the sequencing gap it exposed.
+		RecipeStepProvision: 20 * 1024,
 		RecipeStepGenerate:  24 * 1024,
 		RecipeStepDeploy:    26 * 1024,
 		RecipeStepFinalize:  18 * 1024,
@@ -149,7 +154,7 @@ var showcaseStepCaps = map[RecipeShape]map[string]int{
 	},
 	ShapeBackendMinimal: {
 		RecipeStepResearch:  7 * 1024,
-		RecipeStepProvision: 19 * 1024, // v8.96 +1 KB — see ShapeHelloWorld note
+		RecipeStepProvision: 20 * 1024, // v8.96 +1 KB; v8.104 +1 KB — see ShapeHelloWorld note
 		RecipeStepGenerate:  32 * 1024,
 		RecipeStepDeploy:    26 * 1024,
 		RecipeStepFinalize:  18 * 1024,
@@ -161,7 +166,7 @@ var showcaseStepCaps = map[RecipeShape]map[string]int{
 		// doc fixes that prevent first-call schema rejections observed
 		// in the wild, worth the headroom.
 		RecipeStepResearch:  15 * 1024,
-		RecipeStepProvision: 19 * 1024, // v8.96 +1 KB — see ShapeHelloWorld note
+		RecipeStepProvision: 20 * 1024, // v8.96 +1 KB; v8.104 +1 KB — see ShapeHelloWorld note
 		RecipeStepGenerate:  45 * 1024,
 		RecipeStepDeploy:    44 * 1024,
 		RecipeStepFinalize:  18 * 1024,

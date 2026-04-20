@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -263,6 +264,48 @@ func TestCheckGotchaRestatesGuide(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestGotchaRestatesGuide_PerturbsCrossReadmeUniqueness — v8.104 Fix E.
+// A failing gotcha_distinct_from_guide check must carry PerturbsChecks
+// naming cross_readme_gotcha_uniqueness (rewording a gotcha stem flips
+// its token set, which can newly collide with a sibling codebase's
+// stem). The human-readable HowToFix must surface the perturbation so
+// the author cross-checks siblings before re-running — not after the
+// next failure round.
+func TestGotchaRestatesGuide_PerturbsCrossReadmeUniqueness(t *testing.T) {
+	t.Parallel()
+
+	readme := readmeWithIGItemsAndGotchas(
+		[]string{
+			"Add `.zerops.app` to Vite `allowedHosts`",
+		},
+		[]string{
+			"Vite `allowedHosts` blocks Zerops subdomain",
+		},
+	)
+	checks := checkGotchaRestatesGuide("appdev", readme)
+	if len(checks) == 0 {
+		t.Fatal("expected a fail check, got nothing")
+	}
+	c := checks[0]
+	if c.Status != "fail" {
+		t.Fatalf("expected fail, got %q", c.Status)
+	}
+	if len(c.PerturbsChecks) == 0 {
+		t.Fatal("failing gotcha_distinct_from_guide must carry PerturbsChecks (v8.104 Fix E)")
+	}
+	if !slices.Contains(c.PerturbsChecks, "cross_readme_gotcha_uniqueness") {
+		t.Errorf("PerturbsChecks must include \"cross_readme_gotcha_uniqueness\"; got %v", c.PerturbsChecks)
+	}
+	// Human-readable HowToFix must surface the perturbation inline so
+	// the author sees it in the failure payload.
+	if !strings.Contains(c.HowToFix, "PerturbsChecks") {
+		t.Errorf("HowToFix must name PerturbsChecks inline; got:\n%s", c.HowToFix)
+	}
+	if !strings.Contains(c.HowToFix, "cross_readme_gotcha_uniqueness") {
+		t.Errorf("HowToFix must name the sibling check by name; got:\n%s", c.HowToFix)
 	}
 }
 

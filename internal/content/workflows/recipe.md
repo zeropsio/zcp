@@ -340,6 +340,8 @@ Files in the working tree may be root-owned (written via SSHFS from zcp); git do
 
 **Do NOT** run `git config --global ... safe.directory /var/www/{hostname}` on zcp, `cd /var/www/{hostname} && git init`, or `sudo chown -R zerops:zerops /var/www/.git` via SSH. None are needed when git runs container-side from the first call; each is a workaround for a failure mode this flow eliminates.
 
+**Every scaffold-return commit re-runs `git init`.** The scaffold subagent deletes `/var/www/.git/` before returning (cleanup rule — scaffolder-created `.git/` collides with the canonical init via `.git/index.lock`). So the pre-scaffold `.git/` the main agent just created no longer exists when the subagent returns. The main agent's post-scaffold commit on each mount MUST re-run `git init -q -b main` before `git add && git commit` — same SSH-call shape as above. Running `git add -A && git commit` alone fails with `fatal: not a git repository`.
+
 </block>
 
 <block name="git-init-per-codebase">
@@ -913,7 +915,7 @@ This rule applies to every subagent dispatch in this workflow — scaffold, feat
 > - `GET /api/status` — deep connectivity check. Returns a flat object with one key per service in the plan: `{ db: "ok", redis: "ok", nats: "ok", storage: "ok", search: "ok" }` with `Content-Type: application/json`. Each value is `"ok"` on successful ping, `"error"` otherwise. Exactly these keys; exactly these values.
 > - Service client initialization for **every** managed service in the plan, from env vars. Import and configure the client library, expose the client for later use.
 > - Migrations for the primary data model. Full schema — the feature sub-agent will add read/write endpoints against it.
-> - **Seed script obeying the loud-failure rule** (see `init-script-loud-failure`). Seed 3-5 rows of primary-model data. If the plan provisions a search engine and the scaffold pre-wires a client for it, the seed must sync the seeded rows to the search index AND **`await` the completion signal** (e.g., Meilisearch `waitForTask`) before the script exits. No broad `try/catch` that logs and returns — seed failures must exit non-zero so `execOnce` records failure and the deploy sweep catches it. The feature sub-agent expands seeds as it implements features that need more.
+> - **Seed script obeying the loud-failure rule** (see `init-script-loud-failure`). Seed 3-5 rows of primary-model data. If the plan provisions a search engine and the scaffold pre-wires a client for it, the seed must sync the seeded rows to the search index AND **`await` the completion signal** (e.g., Meilisearch `waitForTask`) before the script exits. No broad `try/catch` that logs and returns — seed failures must exit non-zero so `execOnce` records failure and the deploy sweep catches it. **Do NOT short-circuit on row count**; the correct idempotency mechanism is the `initCommands` key shape — seed is keyed by a static string (e.g. `bootstrap-seed-v1`), not by `${appVersionId}`. See "Two `execOnce` keys, two lifetimes" for the split. A row-count guard hides async-durable sibling work (search-index creation, cache warmup) inside the skipped branch and ships a silent v33-class gotcha. The feature sub-agent expands seeds as it implements features that need more.
 > - **No other routes.** No item CRUD. No cache-demo. No search. No jobs dispatch. No storage upload. If you are about to write any of these, stop and re-read this brief.
 >
 > **WRITE (worker codebase, if separate):**
@@ -1550,6 +1552,23 @@ Look for the framework-specific output each command emits: migration applied row
 
 Recovery: either (a) modify something that forces a new `appVersionId` (touch a source file, even a whitespace change, then redeploy — the new version ID makes `execOnce` re-fire), or (b) manually run the seed command via SSH once (`ssh {hostname} "cd /var/www && {seed_command}"`) then redeploy to verify the fix lands. Option (a) is preferred because it preserves the "never manually patch workspace state" rule; option (b) is the escape hatch when the seed depends on a schema that only exists after a successful initCommand run.
 
+#### Two `execOnce` keys, two lifetimes
+
+`zsc execOnce <key>` gates a command on the literal key value. Two shapes are correct for different jobs — pick the shape by asking whether the command should re-converge on every deploy or run exactly once per service lifetime.
+
+- **Per-deploy key** (`${appVersionId}`) — runs once per deploy across replicas. Correct for commands that are **idempotent by design** and should reconverge on every deploy: `migrate` (`CREATE TABLE IF NOT EXISTS`, additive column adds, data backfill), schema-sync helpers that can be re-applied safely.
+- **Static key** (any stable string, e.g. `bootstrap-seed-v1`) — runs once per service lifetime, across all deploys. Correct for commands that are **NOT idempotent by design** and must NOT re-run on every deploy: `seed` (inserting initial rows), one-shot provisioners (create search-engine index, upload initial S3 objects), bootstrap operations (create a default tenant).
+
+```yaml
+initCommands:
+  - zsc execOnce ${appVersionId} --retryUntilSuccessful -- npx ts-node src/migrate.ts
+  - zsc execOnce bootstrap-seed-v1 --retryUntilSuccessful -- npx ts-node src/seed.ts
+```
+
+Versioned suffix (`-v1`, `-v2`) is the way to force a re-run when the seed data itself changes: bump the suffix, the next deploy re-runs once under the new key, never again under it.
+
+**Anti-pattern — `${appVersionId}` on seed.** Seed runs every deploy, so the in-script `if (count > 0) return` guard you'll reach for creates a worse bug. Any idempotency-sensitive sibling work inside the guarded branch (search-index creation, cache warmup, S3-object upload) skips as well, and a state mismatch between the DB and that sibling system leaves a silent hole. This is the literal cause of `GET /api/search returns 500 Index 'items' not found on the second deploy` (v33 apidev gotcha #7): the Meilisearch `addDocuments(...)` call lived inside the row-count-guarded branch. The fix is the key shape, not a smarter guard. If the seed inserts rows AND creates a search index AND warms the cache, those three steps are either all gated on a static key (so they all run exactly once), or decomposed into separate initCommands each with the key shape that matches its own lifetime — never hidden behind a short-circuit.
+
 **Post-deploy data verification**: after a successful deploy, verify the expected data actually exists — don't assume initCommands ran just because the deploy returned ACTIVE. If prior failed deploys burned the `execOnce` key, the successful deploy may skip those commands silently. Check: query the database for seeded records, verify the search index contains documents, confirm the cache is populated. If the data is missing, the `execOnce` key was burned — use recovery option (a) or (b) above.
 
 **Redeployment = fresh container.** If you fix code and redeploy during iteration, the platform creates a new container — ALL background processes (asset dev server, queue worker) are gone. Restart them before re-verifying. This applies to every redeploy, not just the first.
@@ -1689,6 +1708,14 @@ If you feel a need to call a forbidden tool, the brief is incomplete — stop, r
 **Tool-use policy** — permitted tools: Read, Edit, Write, Grep, Glob on the SSHFS mount; Bash ONLY as `ssh {hostname} "..."`. Forbidden: zerops_workflow, zerops_import, zerops_env, zerops_deploy, zerops_subdomain, zerops_mount, zerops_verify. Violating any of these corrupts workflow state.
 
 **SSH-only executables** — NEVER `cd /var/www/{hostname} && <executable>` in Bash. ALWAYS `ssh {hostname} "cd /var/www && <executable>"`. Files via Write/Edit on the mount.
+
+**Diagnostic-probe cadence** — when a signal is ambiguous (a command appears to hang, output looks wrong, a tool returns an unexpected value, an SSH session seems sluggish):
+
+1. Fire at most THREE targeted probes, each testing ONE specific hypothesis. Before each probe, write down (in your head or in a scratchpad) the predicted outcome — if the outcome matches, the hypothesis is confirmed. If it doesn't match, that is ONE data point, not a reason to fire ten more.
+2. Do NOT fire parallel-identical probes — e.g. `ls`, `ls -la`, `ls /var/www`, `stat /var/www`, `echo hello`, `echo HELLOWORLD`, `printf END`, `ssh -vvv host`. They all test the same hypothesis ("is the shell / SSH / mount working at all?") and they look productive while generating cost without information. If the first probe succeeded, the hypothesis is already resolved.
+3. If three targeted probes do not resolve the ambiguity, STOP probing. Report back to the main agent with the three probes you ran and what they showed. The main agent has broader context — other subagent state, workflow history, prior attempts — and will either dispatch a specific recovery or declare the state blocking. Continuing to probe past three is how sessions lose 5–10 minutes to a system that was working.
+
+This rule exists because v33's feature subagent fired ~80 parallel diagnostic probes (`ls`, `stat`, `echo`, `ssh -vvv`) in a 90-second burst after the first three targeted probes had already succeeded — nine minutes of session wall time lost to probing a system that was working. The agent was pattern-matching on "something is weird, I should gather more evidence" without asking "what hypothesis would this new probe distinguish?" If you cannot name the hypothesis a probe tests, the probe is noise.
 
 <<<END MANDATORY>>>
 
@@ -2285,7 +2312,12 @@ Source lives at `/var/www/` on the container, SSHFS-mounted from zcp at `/var/ww
 ## Migrations & Seed
 
 Run manually: `<exact command>` — e.g. `npx ts-node src/migrate.ts` then `npx ts-node src/seed.ts`.
-On deploy, these run via `initCommands` wrapped with `zsc execOnce ${appVersionId}`. If the seeder crashed mid-insert and burned the key, touch any source file and redeploy to force a fresh `appVersionId`.
+On deploy, these run via `initCommands` — keyed by the lifetime the command actually needs:
+
+- `migrate` is keyed by `${appVersionId}` — re-runs once per deploy, reconverges schema on each version (idempotent by design: `CREATE TABLE IF NOT EXISTS`, additive column adds).
+- `seed` is keyed by a static string (e.g. `bootstrap-seed-v1`) — runs once per service lifetime; bump the suffix when seed data changes so the next deploy re-runs once under the new key.
+
+See "Two `execOnce` keys, two lifetimes" in the recipe guidance for the full rationale. Do NOT key `seed` on `${appVersionId}` — that runs seed on every deploy and forces an in-script row-count guard that silently skips sibling work (search-index creation, cache warmup). If the seeder crashed mid-insert and burned the per-deploy key on the migrate command, touch any source file and redeploy to force a fresh `appVersionId`.
 
 ## Container Traps
 
@@ -2385,6 +2417,15 @@ If the server rejects a call with `SUBAGENT_MISUSE`, you are the cause. Return t
 
 <<<MANDATORY — TRANSMIT VERBATIM IN AGENT DISPATCH PROMPT>>>
 
+**Canonical output tree** — the ONLY files you write are:
+
+- Per-codebase `/var/www/{hostname}dev/README.md` and `/var/www/{hostname}dev/CLAUDE.md` — one pair per dev mount the plan declares.
+- The content manifest at `/var/www/ZCP_CONTENT_MANIFEST.json`.
+
+You do NOT write the root recipe README, the env READMEs, or env `import.yaml` files. Those are emitted from Go templates by `BuildFinalizeOutput` at the finalize step (authoritative source: `internal/workflow/recipe_templates.go` — `EnvFolder()` owns the env folder names, `BuildFinalizeOutput()` owns the output root). Writing them yourself creates a parallel orphan tree that the publish CLI ignores and that reviewers confuse with the real deliverable.
+
+If your brief or dispatcher asks for an "output root", "output directory", "env folder names", or paraphrased tier names like `0 — Development` / `5 — HA production`, STOP and re-read this block — those parameters do not exist in your scope. Forbidden output locations include (non-exhaustive): `/var/www/recipe-{slug}/`, `/var/www/{slug}-output/`, any `environments/` tree you create on the SSHFS mount, any `0 — Development with agent` / `4 — Small production` / `5 — HA production` folder you invent by paraphrasing. The canonical env folder names are fixed and en-dash-exact: `0 — AI Agent`, `1 — Remote (CDE)`, `2 — Local`, `3 — Stage`, `4 — Small Production`, `5 — Highly-available Production`; they are produced by Go code at finalize, not by you.
+
 **File-op sequencing** — every Edit must be preceded by a Read of the same file in this session. The Edit tool enforces this. Most of your work is Write-from-scratch (READMEs, CLAUDE.md, the manifest); Read is needed only when extending an existing file the main agent or scaffold already authored.
 
 **Tool-use policy** — permitted tools: Read, Edit, Write, Grep, Glob on the SSHFS mount; Bash ONLY as `ssh {hostname} "..."`. Forbidden: zerops_workflow, zerops_import, zerops_env, zerops_deploy, zerops_subdomain, zerops_mount, zerops_verify. Violating any of these corrupts workflow state.
@@ -2448,19 +2489,19 @@ The manifest is the only structured artifact the server-side checker sees — th
 
 Every recipe has six kinds of reader-facing content. Each surface has a specific reader, purpose, and one-question test. **An item that fails its surface's test is removed, not rewritten to pass.**
 
-**1. Root README** (`/var/www/<output-root>/README.md`)
+**1. Root README** (emitted by `BuildFinalizeOutput` at finalize — reader-facing description below is informational; you do NOT author this file)
 - Reader: developer browsing zerops.io/recipes
 - Purpose: decide whether to deploy, pick a tier
 - Test: *"Can a reader decide in 30 seconds whether this deploys what they need and pick the right tier?"*
 - Typical: 20–30 lines
 
-**2. Environment README** (`environments/{N — Tier}/README.md`, one per env)
+**2. Environment README** (emitted by `BuildFinalizeOutput` at finalize — one per env, under the canonical folder names owned by `EnvFolder()` — you do NOT author these files)
 - Reader: someone deciding WHICH tier to deploy or promote to
 - Purpose: teach tier audience + how it differs from the adjacent tier
 - Test: *"Does this teach me when to outgrow this tier and what changes at the next one?"*
 - Typical: **40–80 lines** — NOT the 7-line boilerplate that shipped through v28
 
-**3. Environment `import.yaml` comments** (`environments/{N — Tier}/import.yaml` — comments only; structure generated)
+**3. Environment `import.yaml` comments** (structure emitted at finalize; you provide comments via the `envComments` input — you do NOT write the import.yaml file directly)
 - Reader: someone reading the manifest in Zerops dashboard
 - Purpose: explain every decision (scale, mode, presence)
 - Test: *"Does each service block explain a decision, not narrate what the field does?"*
@@ -2556,10 +2597,8 @@ Do NOT ship content that matches any of these patterns.
 2. **Read the final recipe state**. Each `{codebase}/zerops.yaml`, the framework source tree under `{codebase}/src/` (or equivalent), every `environments/*/import.yaml`.
 3. **Classify every fact** using the taxonomy. For each, identify: destination surface (if any), matching citation-map entry (if any).
 4. **Fetch matching guides** via `zerops_knowledge`. Read BEFORE writing about the topic. Cite the guide in the surface item — don't re-author.
-5. **Write all six surface types** — one pass, top-down:
-   - Root README (use prettyName from plan + service list)
-   - Env READMEs — 40–80 lines each, from adjacent-tier comparison
-   - Env import.yaml comments (via `generate-finalize` structured input — you emit the comment set, the main agent applies it)
+5. **Write the surfaces you own** — one pass, top-down. Root README, env READMEs, and env `import.yaml` files are emitted from Go templates at finalize (see the canonical-output-tree MANDATORY block above) — you do NOT write them.
+   - Env `import.yaml` comments (via `generate-finalize` structured input — you emit the comment set, the main agent applies it at finalize)
    - Per-codebase README — intro + integration-guide + knowledge-base fragments, extract markers byte-exact (see `zerops_guidance topic="readme-fragments"` for marker rules)
    - Per-codebase CLAUDE.md — operational, repo-local, ≥1200 bytes, ≥2 custom sections beyond template
    - Per-codebase zerops.yaml comments — refresh comments only; don't rewrite structure
@@ -2569,12 +2608,13 @@ Do NOT ship content that matches any of these patterns.
 
 ### Deliverables
 
-- `/var/www/<output-root>/README.md` — root recipe README
-- `/var/www/<output-root>/environments/{N — Tier}/README.md` × N (one per env)
-- `{codebase}/README.md` × M (one per codebase with intro / IG / KB fragments)
-- `{codebase}/CLAUDE.md` × M (repo-local operations)
-- Comment-only updates to `{codebase}/zerops.yaml` × M (only if existing comments fail their test)
+- `/var/www/{hostname}dev/README.md` × M (one per codebase with intro / IG / KB fragments)
+- `/var/www/{hostname}dev/CLAUDE.md` × M (repo-local operations)
+- Comment-only updates to `/var/www/{hostname}dev/zerops.yaml` × M (only if existing comments fail their test)
+- `/var/www/ZCP_CONTENT_MANIFEST.json` — classification manifest (return contract above)
 - A structured `env-comment-set` JSON payload in your completion message for the main agent to apply at `generate-finalize`.
+
+**Not your deliverables** (emitted by Go templates at finalize — do NOT write these): root recipe README, env READMEs, env `import.yaml` files. See the canonical-output-tree block above.
 
 Per-codebase README skeleton (markers are byte-literal — copy the shape exactly):
 
@@ -2945,6 +2985,34 @@ Recipes are read by both humans and AI agents. Write like a senior dev explainin
 ```
 
 - Don't use "we" or "you" excessively
+
+**Visual style — plain `# Comment text` per line; no decorators, no dividers, no banners.**
+
+Forbidden:
+
+- Unicode box-drawing characters (`──`, `═══`, `┌─`, `└─`, or any code point in the `U+2500`–`U+257F` range).
+- ASCII divider lines (`# ----`, `# ====`, `# ****`, `# ####` as standalone decoration — a comment line whose entire body is a repeated punctuation sequence).
+- Emoji.
+- ASCII art.
+
+Section transitions use a blank-comment line (`#`) followed by the first comment of the next section. That is sufficient; anything more is visual noise that inflates the published deliverable. Decoration renders inconsistently across zerops.io's markdown + code-block rendering, and no downstream consumer (ingestor, publish pipeline, documentation tool) benefits from it. The only justification for adding decoration is "it looks nice to the author" — which is the definition of noise.
+
+Correct shape:
+
+```yaml
+zerops:
+  # apidev — agent iterates here over SSH with nest start --watch.
+  # zeropsSetup dev deploys the full dependency tree so the toolchain
+  # is available inside the container.
+  - setup: dev
+    #
+    # Runtime — NestJS binds the L7-routable interface and trusts the
+    # upstream proxy for one hop.
+    run:
+      ports:
+        - port: 3000
+          httpSupport: true
+```
 
 </block>
 
