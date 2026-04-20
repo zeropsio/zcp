@@ -257,8 +257,8 @@ func TestScenario_S4_DevelopStrategyReviewAfterFirstDeploy(t *testing.T) {
 	if plan.Primary.Tool != "zerops_deploy" {
 		t.Errorf("S4: expected primary=zerops_deploy, got tool=%q", plan.Primary.Tool)
 	}
-	if plan.Primary.Args["hostname"] != "appdev" {
-		t.Errorf("S4: expected primary hostname=appdev, got %q", plan.Primary.Args["hostname"])
+	if plan.Primary.Args["targetService"] != "appdev" {
+		t.Errorf("S4: expected primary targetService=appdev, got %q", plan.Primary.Args["targetService"])
 	}
 }
 
@@ -410,8 +410,8 @@ func TestScenario_S6_DevelopDeployOKPendingVerify(t *testing.T) {
 	if plan.Primary.Tool != "zerops_verify" {
 		t.Errorf("S6: expected primary=zerops_verify, got tool=%q", plan.Primary.Tool)
 	}
-	if plan.Primary.Args["hostname"] != "appdev" {
-		t.Errorf("S6: expected primary hostname=appdev, got %q", plan.Primary.Args["hostname"])
+	if plan.Primary.Args["serviceHostname"] != "appdev" {
+		t.Errorf("S6: expected primary serviceHostname=appdev, got %q", plan.Primary.Args["serviceHostname"])
 	}
 }
 
@@ -547,8 +547,8 @@ func TestScenario_S8_DevelopIterationFailure(t *testing.T) {
 	if plan.Primary.Tool != "zerops_deploy" {
 		t.Errorf("S8 iter-3 failed: expected primary=zerops_deploy, got tool=%q", plan.Primary.Tool)
 	}
-	if plan.Primary.Args["hostname"] != "appdev" {
-		t.Errorf("S8: expected primary hostname=appdev, got %q", plan.Primary.Args["hostname"])
+	if plan.Primary.Args["targetService"] != "appdev" {
+		t.Errorf("S8: expected primary targetService=appdev, got %q", plan.Primary.Args["targetService"])
 	}
 
 	bodies, err := Synthesize(env, corpus)

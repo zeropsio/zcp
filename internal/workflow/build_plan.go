@@ -210,7 +210,7 @@ func deployAction(host string) NextAction {
 	return NextAction{
 		Label:     "Deploy " + host,
 		Tool:      "zerops_deploy",
-		Args:      map[string]string{"hostname": host},
+		Args:      map[string]string{"targetService": host},
 		Rationale: "No successful deploy recorded for this service.",
 	}
 }
@@ -219,7 +219,7 @@ func verifyAction(host string) NextAction {
 	return NextAction{
 		Label:     "Verify " + host,
 		Tool:      "zerops_verify",
-		Args:      map[string]string{"hostname": host},
+		Args:      map[string]string{"serviceHostname": host},
 		Rationale: "Deploy succeeded but verify has not passed yet.",
 	}
 }

@@ -104,8 +104,8 @@ func TestBuildPlan_DevelopActiveDeployPending(t *testing.T) {
 	if plan.Primary.Tool != "zerops_deploy" {
 		t.Errorf("tool = %q, want zerops_deploy", plan.Primary.Tool)
 	}
-	if plan.Primary.Args["hostname"] != "appdev" {
-		t.Errorf("hostname = %q, want appdev", plan.Primary.Args["hostname"])
+	if plan.Primary.Args["targetService"] != "appdev" {
+		t.Errorf("targetService = %q, want appdev", plan.Primary.Args["targetService"])
 	}
 }
 
@@ -164,8 +164,8 @@ func TestBuildPlan_DevelopActiveFailedAttemptRoutesToLogs(t *testing.T) {
 	if plan.Primary.Tool != "zerops_deploy" {
 		t.Errorf("with last deploy failed, expected deploy retry, got %q", plan.Primary.Tool)
 	}
-	if plan.Primary.Args["hostname"] != "appdev" {
-		t.Errorf("hostname = %q, want appdev", plan.Primary.Args["hostname"])
+	if plan.Primary.Args["targetService"] != "appdev" {
+		t.Errorf("targetService = %q, want appdev", plan.Primary.Args["targetService"])
 	}
 }
 
@@ -209,8 +209,8 @@ func TestBuildPlan_DeterministicByHostnameOrder(t *testing.T) {
 	first := BuildPlan(env)
 	for i := range 5 {
 		got := BuildPlan(env)
-		if got.Primary.Args["hostname"] != first.Primary.Args["hostname"] {
-			t.Fatalf("iteration %d picked %q, original picked %q", i, got.Primary.Args["hostname"], first.Primary.Args["hostname"])
+		if got.Primary.Args["targetService"] != first.Primary.Args["targetService"] {
+			t.Fatalf("iteration %d picked %q, original picked %q", i, got.Primary.Args["targetService"], first.Primary.Args["targetService"])
 		}
 	}
 }

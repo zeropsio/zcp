@@ -243,18 +243,18 @@ func TestRenderStatus_PerServiceMultiEmitsSection(t *testing.T) {
 		Primary: NextAction{
 			Label: "Deploy apidev",
 			Tool:  "zerops_deploy",
-			Args:  map[string]string{"hostname": "apidev"},
+			Args:  map[string]string{"targetService": "apidev"},
 		},
 		PerService: map[string]NextAction{
 			"apidev": {
 				Label: "Deploy apidev",
 				Tool:  "zerops_deploy",
-				Args:  map[string]string{"hostname": "apidev"},
+				Args:  map[string]string{"targetService": "apidev"},
 			},
 			"webdev": {
 				Label: "Verify webdev",
 				Tool:  "zerops_verify",
-				Args:  map[string]string{"hostname": "webdev"},
+				Args:  map[string]string{"serviceHostname": "webdev"},
 			},
 		},
 	}
@@ -274,11 +274,11 @@ func TestRenderStatus_PerServiceMultiEmitsSection(t *testing.T) {
 	if api >= web {
 		t.Errorf("per-service rows out of order — apidev=%d webdev=%d", api, web)
 	}
-	// Each row carries the tool + hostname arg.
-	if !strings.Contains(out, `zerops_deploy hostname="apidev"`) {
+	// Each row carries the tool + schema-matching arg key.
+	if !strings.Contains(out, `zerops_deploy targetService="apidev"`) {
 		t.Errorf("apidev row missing deploy args:\n%s", out)
 	}
-	if !strings.Contains(out, `zerops_verify hostname="webdev"`) {
+	if !strings.Contains(out, `zerops_verify serviceHostname="webdev"`) {
 		t.Errorf("webdev row missing verify args:\n%s", out)
 	}
 }
