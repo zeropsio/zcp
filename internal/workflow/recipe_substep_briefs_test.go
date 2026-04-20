@@ -212,28 +212,31 @@ func TestInjectEagerTopics_Deploy_StillIncludesWhereCommandsRun(t *testing.T) {
 
 // TestSubStepGuide_InitCommandsResponse_ContainsSubagentBrief — integration:
 // when the agent's current substep advances into `subagent` (which happens
-// after calling complete substep=init-commands), buildSubStepGuide must
-// return the byte-literal content of the subagent-brief block.
+// after calling complete substep=init-commands), buildSubStepGuide returns
+// the deploy.subagent main-agent atom + the composed feature dispatch brief.
+// C-5 flip: content now atom-sourced via the zcprecipator2 tree (not the
+// block-based recipe.md topic registry).
 func TestSubStepGuide_InitCommandsResponse_ContainsSubagentBrief(t *testing.T) {
 	t.Parallel()
 	plan := fixtureForShape(ShapeDualRuntimeShowcase)
+	plan.SymbolContract = BuildSymbolContract(plan)
 	rs := &RecipeState{Plan: plan, Tier: RecipeTierShowcase}
 
-	// buildSubStepGuide is what feeds resp.Current.DetailedGuide when the
-	// agent is in the named substep. Here we simulate "current substep =
-	// subagent" — the state after complete substep=init-commands advances.
 	got := rs.buildSubStepGuide(RecipeStepDeploy, SubStepSubagent, "")
 	if got == "" {
 		t.Fatal("expected non-empty sub-step guide for (deploy, subagent)")
 	}
-	if len(got) < 10*1024 {
-		t.Errorf("subagent-brief guide is only %d bytes, expected >= 10 KB (v25's was 14 KB)", len(got))
+	// Atom-based composition is intentionally leaner than the v25 14 KB
+	// blob; the floor is the feature-brief composition (~3 KB) + atom
+	// body (~0.5 KB).
+	if len(got) < 2*1024 {
+		t.Errorf("subagent-brief guide is only %d bytes, expected >= 2 KB", len(got))
 	}
 
 	wants := []string{
-		"Installed-package verification rule",
-		"Contract-first rule",
-		"feature sub-agent",
+		"Dispatch brief (transmit verbatim)", // stitcher-added section header
+		"envVarsByKind",                      // SymbolContract JSON
+		"feature",                            // subagent atom content + feature/task atom
 	}
 	for _, w := range wants {
 		if !strings.Contains(got, w) {
@@ -326,11 +329,9 @@ func TestDeploySkeleton_ContainsFactRecordingMandatory(t *testing.T) {
 
 // TestSubStepGuide_FeatureSweepStageResponse_ContainsContentAuthoringBrief —
 // integration: when current substep advances to `readmes` on a showcase plan
-// (after complete substep=feature-sweep-stage), buildSubStepGuide must return
-// the byte-literal content of the content-authoring-brief block. v8.94 moved
-// the showcase delivery from readme-fragments (which stays as the marker-
-// format reference) to the new brief with surface contracts + classification
-// taxonomy + citation map.
+// (after complete substep=feature-sweep-stage), buildSubStepGuide returns
+// the deploy.readmes atom + the composed writer dispatch brief.
+// C-5 flip: content atom-sourced from briefs/writer/* tree.
 func TestSubStepGuide_FeatureSweepStageResponse_ContainsContentAuthoringBrief(t *testing.T) {
 	t.Parallel()
 	plan := fixtureForShape(ShapeDualRuntimeShowcase)
@@ -340,20 +341,22 @@ func TestSubStepGuide_FeatureSweepStageResponse_ContainsContentAuthoringBrief(t 
 	if got == "" {
 		t.Fatal("expected non-empty sub-step guide for (deploy, readmes)")
 	}
-	if len(got) < 8*1024 {
-		t.Errorf("content-authoring-brief guide is only %d bytes, expected >= 8 KB", len(got))
+	// Atom-based writer brief is ~4-5 KB (10 atoms × 30-161 lines each,
+	// compressed). The v8.94 block-based 8 KB floor is not the bar here.
+	if len(got) < 3*1024 {
+		t.Errorf("content-authoring-brief guide is only %d bytes, expected >= 3 KB", len(got))
 	}
 
+	// Atom-sourced phrases that every writer dispatch must carry.
 	wants := []string{
-		"You are a content-authoring sub-agent",
-		"Classification taxonomy",
-		"Citation map",
-		"Counter-examples",
-		"Self-review checklist",
-		"env-comment-set",
+		"Dispatch brief (transmit verbatim)", // stitcher section header
+		"classification",                     // writer/classification-taxonomy atom
+		"citation",                           // writer/citation-map atom
+		"manifest",                           // writer/manifest-contract atom
+		"surface",                            // writer/content-surface-contracts atom
 	}
 	for _, w := range wants {
-		if !strings.Contains(got, w) {
+		if !strings.Contains(strings.ToLower(got), strings.ToLower(w)) {
 			t.Errorf("content-authoring-brief guide missing %q", w)
 		}
 	}

@@ -481,6 +481,39 @@ func (r *RecipeState) missingCriticalTopics(step string) []*GuidanceTopic {
 // returned content. Empty sessionID means "skip the prepend" (test
 // fixtures, sessions with no upstream substep history).
 func (r *RecipeState) buildSubStepGuide(step, subStep, sessionID string) string {
+	// C-5 flip: prefer atom-based substep content. `atomIDForSubStep`
+	// resolves each SubStep* constant to its phases/<phase>/<substep>.md
+	// atom path per atomic-layout.md §1. If an atom exists, its body is
+	// returned (with dispatch brief appended + prior-discoveries prepended
+	// as appropriate). If no atom is registered for this substep, we fall
+	// through to the legacy topic-registry path — graceful degradation
+	// covers substep shapes that haven't been atom-ified yet.
+	if atomID := atomIDForSubStep(step, subStep); atomID != "" {
+		if body, err := LoadAtomBody(atomID); err == nil {
+			// Dispatch-owning substeps append the composed sub-agent brief
+			// so the main agent can copy it verbatim into its Agent tool
+			// prompt. Under P2, the brief content is leaf-artifact — the
+			// main agent transmits, it does not edit.
+			if brief := composeDispatchBriefForSubStep(r.Plan, step, subStep, sessionID); brief != "" {
+				body = body + "\n\n---\n\n## Dispatch brief (transmit verbatim)\n\n" + brief
+			}
+			// Prior discoveries prepended for dispatch-owning substeps and
+			// for any substep whose current topic mapping opted into it.
+			// Editorial-review substep (added in C-7.5) never receives the
+			// block — porter-premise requires fresh-reader stance.
+			if subStep != "editorial-review" && shouldPrependPriorDiscoveries(step, subStep, r.Plan) {
+				lane := laneForSubStep(step, subStep)
+				if block := BuildPriorDiscoveriesBlockForLane(sessionID, subStep, lane); block != "" {
+					body = block + "\n\n---\n\n" + body
+				}
+			}
+			return body
+		}
+	}
+
+	// Legacy fallback: topic-registry path. Preserves behavior for any
+	// substep the atom manifest doesn't yet cover. Will be removed
+	// entirely in C-15 when the topic registry is deleted.
 	topicID := subStepToTopic(step, subStep, r.Plan)
 	if topicID == "" {
 		return ""
@@ -495,6 +528,155 @@ func (r *RecipeState) buildSubStepGuide(step, subStep, sessionID string) string 
 		}
 	}
 	return resolved
+}
+
+// atomIDForSubStep maps a (step, substep) pair to its main-agent atom ID
+// under the zcprecipator2 tree. Returns "" if the substep has no atom
+// (caller falls back to legacy topic-registry resolution). Plan shape
+// isn't needed for current mappings — substep names uniquely identify
+// atoms — but this is the natural extension point if tier-variant atom
+// paths appear (e.g. future app-code entry that differs by tier).
+func atomIDForSubStep(step, subStep string) string {
+	switch step {
+	case RecipeStepGenerate:
+		switch subStep {
+		case SubStepScaffold:
+			return "generate.scaffold.entry"
+		case SubStepAppCode:
+			return "generate.app-code.entry"
+		case SubStepSmokeTest:
+			return "generate.smoke-test.entry"
+		case SubStepZeropsYAML:
+			return "generate.zerops-yaml.entry"
+		}
+	case RecipeStepDeploy:
+		switch subStep {
+		case SubStepDeployDev:
+			return "deploy.deploy-dev"
+		case SubStepStartProcs:
+			return "deploy.start-processes"
+		case SubStepVerifyDev:
+			return "deploy.verify-dev"
+		case SubStepInitCommands:
+			return "deploy.init-commands"
+		case SubStepSubagent:
+			return "deploy.subagent"
+		case SubStepSnapshotDev:
+			return "deploy.snapshot-dev"
+		case SubStepFeatureSweepDev:
+			return "deploy.feature-sweep-dev"
+		case SubStepBrowserWalk:
+			return "deploy.browser-walk-dev"
+		case SubStepCrossDeploy:
+			return "deploy.cross-deploy-stage"
+		case SubStepVerifyStage:
+			return "deploy.verify-stage"
+		case SubStepFeatureSweepStage:
+			return "deploy.feature-sweep-stage"
+		case SubStepReadmes:
+			return "deploy.readmes"
+		}
+	case RecipeStepClose:
+		switch subStep {
+		case SubStepCloseReview:
+			return "close.code-review"
+		case SubStepCloseBrowserWalk:
+			return "close.close-browser-walk"
+		}
+	}
+	return ""
+}
+
+// composeDispatchBriefForSubStep returns the pre-composed sub-agent
+// dispatch brief the main agent transmits at this substep. Empty string
+// for substeps that don't dispatch a sub-agent. For showcase-only
+// dispatch substeps (SubStepSubagent / SubStepReadmes / SubStepCloseReview
+// on showcase tier), returns the atom-based composition; minimal tier's
+// main-inline writer path (Q4) returns empty so the main agent writes
+// inline rather than dispatching.
+func composeDispatchBriefForSubStep(plan *RecipePlan, step, subStep, sessionID string) string {
+	switch step {
+	case RecipeStepDeploy:
+		switch subStep {
+		case SubStepSubagent:
+			// Feature sub-agent (showcase only).
+			if !isShowcase(plan) {
+				return ""
+			}
+			b, err := BuildFeatureDispatchBrief(plan)
+			if err != nil {
+				return ""
+			}
+			return b
+		case SubStepReadmes:
+			// Writer sub-agent — showcase dispatches; minimal writes inline
+			// per Q4 Path A.
+			if !isShowcase(plan) {
+				return ""
+			}
+			factsPath := ""
+			if sessionID != "" {
+				factsPath = factLogPathLocal(sessionID)
+			}
+			b, err := BuildWriterDispatchBrief(plan, factsPath)
+			if err != nil {
+				return ""
+			}
+			return b
+		}
+	case RecipeStepClose:
+		if subStep == SubStepCloseReview {
+			// Code-review sub-agent (showcase gated + minimal discretionary).
+			b, err := BuildCodeReviewDispatchBrief(plan, "<recipe-output-dir>/ZCP_CONTENT_MANIFEST.json")
+			if err != nil {
+				return ""
+			}
+			return b
+		}
+	}
+	return ""
+}
+
+// shouldPrependPriorDiscoveries reports whether a given substep receives
+// the upstream-facts block at the head of its guidance. Applied to
+// dispatch-owning substeps that actually dispatch on this plan's tier
+// — SubStepReadmes + SubStepSubagent are showcase-only dispatchers, so
+// minimal tier does NOT prepend (the writer on minimal is main-inline
+// per Q4, and there's no feature sub-agent on minimal). SubStepCloseReview
+// also gates on showcase until C-7.5's minimal-discretionary path lands.
+func shouldPrependPriorDiscoveries(step, subStep string, plan *RecipePlan) bool {
+	if step == RecipeStepDeploy {
+		switch subStep {
+		case SubStepSubagent, SubStepReadmes:
+			return isShowcase(plan)
+		case SubStepInitCommands, SubStepFeatureSweepDev, SubStepBrowserWalk:
+			return true
+		}
+	}
+	if step == RecipeStepClose && subStep == SubStepCloseReview {
+		return isShowcase(plan)
+	}
+	return false
+}
+
+// laneForSubStep maps a dispatch-owning substep to its RouteTo-allowlist
+// lane (scaffold / feature / writer / code-review). Non-dispatch substeps
+// return empty string — legacy broadcast behavior.
+func laneForSubStep(step, subStep string) string {
+	if step == RecipeStepDeploy {
+		switch subStep {
+		case SubStepSubagent:
+			return "feature"
+		case SubStepReadmes:
+			return "writer"
+		case SubStepInitCommands, SubStepFeatureSweepDev, SubStepBrowserWalk:
+			return ""
+		}
+	}
+	if step == RecipeStepClose && subStep == SubStepCloseReview {
+		return "code-review"
+	}
+	return ""
 }
 
 // buildAllSubstepsCompleteMessage returns a compact prompt for the state

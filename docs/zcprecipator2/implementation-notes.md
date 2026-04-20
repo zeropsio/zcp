@@ -383,6 +383,67 @@ C-1 (SymbolContract type) ✓; C-2 (RouteTo enum) ✓; C-3 (atom manifest) ✓; 
 
 Risk budget: ~1 day focused work in a fresh instance with scope set to C-5 flip only.
 
+---
+
+## C-5 flip — substep-guide atom-preferring resolution
+
+**Status**: green
+
+### What changed
+
+`buildSubStepGuide` in [recipe_guidance.go](../../internal/workflow/recipe_guidance.go) now prefers atom-based content:
+
+1. Resolves `(step, substep)` via new `atomIDForSubStep` helper → atom ID
+2. If the atom exists in the embedded tree, loads its body via `LoadAtomBody`
+3. For dispatch-owning substeps (subagent / readmes / code-review), appends the composed sub-agent brief from the new stitcher (`BuildFeatureDispatchBrief` / `BuildWriterDispatchBrief` / `BuildCodeReviewDispatchBrief`) under a "Dispatch brief (transmit verbatim)" header
+4. Prepends lane-aware Prior Discoveries (`BuildPriorDiscoveriesBlockForLane`) for dispatch + observation-dependent substeps, gated on `isShowcase(plan)` for the dispatch-only substeps (minimal tier's readmes/subagent paths don't dispatch)
+5. Editorial-review substep (added in C-7.5) never receives Prior Discoveries — porter-premise guard preserved
+6. If no atom is registered for the substep, falls through to the legacy `subStepToTopic` → `ResolveTopic` path — graceful degradation
+
+### Atom coverage
+
+17 substeps mapped to atoms (out of ~18 total across generate/deploy/close):
+
+- generate: scaffold, app-code, smoke-test, zerops-yaml
+- deploy: deploy-dev, start-processes, verify-dev, init-commands, subagent, snapshot-dev, feature-sweep-dev, browser-walk (→ browser-walk-dev), cross-deploy (→ cross-deploy-stage), verify-stage, feature-sweep-stage, readmes
+- close: code-review, close-browser-walk
+
+### Test updates
+
+Two block-based tests rewritten to atom-based expectations (`recipe_substep_briefs_test.go`):
+
+- `TestSubStepGuide_InitCommandsResponse_ContainsSubagentBrief` — now checks the stitcher's "Dispatch brief (transmit verbatim)" header + SymbolContract JSON presence + feature-brief phrases. Size floor dropped from 10 KB to 2 KB (atom-based is leaner via P6)
+- `TestSubStepGuide_FeatureSweepStageResponse_ContainsContentAuthoringBrief` — checks writer brief phrases (classification, citation, manifest, surface) + size floor dropped from 8 KB to 3 KB
+
+One invariant test (`TestSubStepGuide_NoOptIn_DoesNotPrepend`) passes unchanged once `shouldPrependPriorDiscoveries` gates readmes/subagent on `isShowcase(plan)` — minimal tier doesn't dispatch so no prior-discoveries prepend.
+
+### What's NOT flipped
+
+- `resolveRecipeGuidance` (step-entry composition) still reads recipe.md via `content.GetWorkflow` + `ExtractSection`. The step-entry composition is a separate surface that goes to the main agent at every step transition; wiring it into `BuildStepEntry` + substep-aware skeleton is C-15 or a dedicated follow-up.
+- The legacy topic-registry path is still referenced by `buildSubStepGuide`'s fallback branch. C-15 deletes recipe.md + recipe_topic_registry.go, at which point every substep must have an atom (fallback becomes impossible).
+
+### Verification
+
+- `go test ./internal/workflow/... -count=1 -run 'TestSubStepGuide_'` — 4 tests green
+- `go test ./... -count=1` — full suite green (19 packages)
+- `make lint-local` — 0 issues
+
+### LoC delta
+
+- `recipe_guidance.go`: +147 LoC (new helpers + rewritten `buildSubStepGuide` body)
+- `recipe_substep_briefs_test.go`: ~+8 LoC (2 tests updated)
+- **Total**: ~+155 LoC
+
+### Breaks-alone consequence
+
+Agent now sees atom-based substep content for the 17 mapped substeps. Dispatch briefs for scaffold/feature/writer/code-review flow from the new stitchers with SymbolContract JSON byte-identical across parallel dispatches. Legacy recipe.md path still serves step-entry until a dedicated follow-up wires `BuildStepEntry` into `resolveRecipeGuidance`.
+
+### Ordering deps verified
+
+C-5 foundation (atom loader + stitchers + SymbolContract wire + RouteTo filter) ✓.
+
+**C-5 is effectively complete at the substep-dispatch surface.** Step-entry composition flip + topic-registry deletion land with C-15.
+
 ### Tier-conditional atoms
 
 Seven tier-conditional atoms, all under `phases/` (briefs are TierAny — tier branching inside content, resolved by stitcher):
