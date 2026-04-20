@@ -57,8 +57,11 @@ sync-push: build ## Push knowledge changes as GitHub PRs
 catalog-sync: build ## Refresh platform version catalog from API
 	./bin/zcp catalog sync
 
-lint-local: catalog-sync ## Full lint (native platform only)
+lint-local: catalog-sync lint-recipe-atoms ## Full lint (native platform only)
 	$(LINT) run ./...
+
+lint-recipe-atoms: ## C-13 atom-tree invariants (P2 / P6 / P8 per calibration-bars-v35.md §9)
+	go run ./tools/lint/recipe_atom_lint.go
 
 vet: ## Run go vet
 	go vet ./...

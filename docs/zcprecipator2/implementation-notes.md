@@ -1278,3 +1278,63 @@ None — documentation-only.
 
 - C-13 must keep its lint rule rationale **consistent** with this document's §4 — if a lint rule changes (e.g. new banned token, modified regex), update DISPATCH.md §4 alongside. The lint file (next commit) is the enforcement; this document is the reasoning.
 - C-14's dry-run harness referenced in §6 is the canonical golden-diff surface for future composition refactors. Document currently forward-references the feature; once C-14 lands, the §6 pointer becomes live.
+
+---
+
+## C-13 — Build-time lints on the atomic content tree
+
+**Status**: green
+
+### What landed
+
+Per [principles.md §P2 / P6 / P8](03-architecture/principles.md) + [calibration-bars-v35.md §9 B-1..B-8](05-regression/calibration-bars-v35.md), a new build lint enforces the atom-tree invariants mechanically. Runs as part of `make lint-local` and blocks any commit that introduces a version anchor, dispatcher vocabulary, internal check name, Go source path, oversized atom, orphan prohibition, or forbidden step-entry phrasing.
+
+- [`tools/lint/recipe_atom_lint.go`](../../tools/lint/recipe_atom_lint.go) (~330 LoC) — new Go program, declarative rule table + filesystem walk. Seven rules:
+  - **B-1**: no version anchors (`v[0-9]+(\.[0-9]+)*` tokens) anywhere in the atom tree.
+  - **B-2**: no dispatcher vocabulary (`compress`, `verbatim`, `include as-is`, `main agent`, `dispatcher`) inside `briefs/`.
+  - **B-3**: no internal check names (`writer_manifest_`, `_env_self_shadow`, `_content_reality`, `_causal_anchor`) inside `briefs/`.
+  - **B-4**: no Go source paths (`internal/*.go` regex) inside `briefs/`.
+  - **B-5**: per-file 300-line cap across the full tree.
+  - **B-7**: orphan-prohibition heuristic — any atom containing `do not`, `avoid`, `never`, or `MUST NOT` must also contain a positive-form signal in the ±10 surrounding lines (explicit positive tokens + markdown list markers + shell-command code spans).
+  - **H-4**: `phases/*/entry.md` atoms forbid the phrasing `your tasks for this phase are` (positive P4 form required).
+- [`tools/lint/recipe_atom_lint_test.go`](../../tools/lint/recipe_atom_lint_test.go) (~100 LoC) — two Go-level tests: `TestRunLint_ProductionTreeIsClean` asserts zero violations on the live tree; `TestRunLint_FiresOnKnownViolations` builds a synthetic fixture tree that trips every rule and pins the fire behavior (regression floor against silent regex drift).
+- [`Makefile`](../../Makefile) — new `lint-recipe-atoms` target; `lint-local` gains a dependency on it so `make lint-local` fails if the atom tree drifts.
+
+### Design decisions
+
+1. **Scope via root-relative path prefix** — rules declare scope as `"briefs"` / `"phases"` / `""` (tree-wide); the walk resolves each file's relative path via `filepath.Rel(root, path)` and applies the scope filter against the prefix. This keeps the rule declarations portable across test fixtures that point the linter at a temp directory (`TestRunLint_FiresOnKnownViolations` relies on this).
+2. **B-7 positive-form heuristic** — the rule fires when a prohibition token appears WITHOUT a positive-form signal in the ±10 surrounding lines. The positive-form allowlist includes explicit tokens (`instead`, `use`, `using`, `bind`, `name`, `is worth`, `is the rule`, ...), markdown list markers (`\n- `, `\n* `, `\n1. `), and shell-command code spans (`` `zcp `` , ``` ``` ```). The list was tuned against the existing 121 atoms; initial run flagged 5 false positives which were resolved by expanding the allowlist to cover positive phrasings the atoms actually use (present-participle verbs, value-naming clauses, bullet enumerations).
+3. **Explicit flush before `os.Exit`** — Go's `defer` does not fire when `os.Exit(1)` is called; the lint wraps its exit path in a helper that flushes `bufio.Writer` to stdout explicitly before exit. Otherwise violations would be suppressed on the failure path (confirmed during implementation — the first draft printed nothing because the deferred flush never ran).
+
+### The 121 atom baseline
+
+The production tree has exactly 121 atoms post-C-7.5 (65 phase atoms + 39 brief atoms + 16 principle atoms + 1 new `phases/close/editorial-review.md` from C-7.5). All 121 pass every rule as of C-13. Any future atom edit that violates a rule fails both `make lint-local` and `go test ./tools/lint/...` — the CI ratchet is established.
+
+### Verification
+
+- `go test ./... -count=1` — full suite green across 22 packages (including new `tools/lint`).
+- `make lint-local` — 0 issues (lint-recipe-atoms runs first, then golangci-lint on Go sources).
+- Manual smoke test: synthetic fixture at `/tmp/atomtest/briefs/test/bad.md` with B-1 + B-2 + B-3 + B-4 violations fires all four rules with correct line numbers + messages.
+
+### LoC delta
+
+- `tools/lint/recipe_atom_lint.go`: +330 LoC.
+- `tools/lint/recipe_atom_lint_test.go`: +100 LoC.
+- `Makefile`: +3 LoC (new target + dependency wire).
+- **Total**: ~+433 LoC (handoff estimate was +250 LoC; over by ~75% because the positive-form heuristic's allowlist grew larger than the shorthand anticipated, and the test fixture writing took ~60 LoC on its own).
+
+### Breaks-alone consequence
+
+CI gates on atom compliance. Atoms from C-4 + C-7.5 were authored to be compliant — the lint is a ratchet that prevents regression on future atom edits. First v35+ author who introduces a version anchor, dispatcher vocabulary leak, or oversized atom finds out at PR time instead of at showcase-run time.
+
+### Ordering deps verified
+
+- C-4 ✓ (120 atoms on disk, satisfying the lint baseline).
+- C-7.5 ✓ (121st atom `phases/close/editorial-review.md` also satisfies).
+- C-12 ✓ (DISPATCH.md §4 documents each rule's rationale; C-13's Go source references the same calibration-bar IDs for traceability).
+
+### Known follow-ups
+
+- **B-6 + B-8**: the handoff named B-1..B-8 as the target set. B-6 + B-8 don't correspond to atom-tree invariants I could identify in the principles documentation — both calibration bars apply to runtime output shape (session logs / attestation shape) rather than the atom tree. Left unimplemented; if B-6/B-8 resolve to atom-tree rules in future documentation, they can be added to `rules` as additional table entries without restructuring.
+- **Orphan-prohibition heuristic tuning**. The positive-form allowlist covers the current 121 atoms; new atoms may introduce phrasings the allowlist doesn't cover. If the lint starts firing on legitimately-positive content, expand the allowlist rather than rewriting the atom.
+- **File position is path+line**. The linter emits `{path}:{line}: [{rule-id}] {message}` format which IDE-friendly editors (VS Code's Problems tab, `gopls`) can parse. Future enhancement: emit SARIF / JSON so CI report formatting stays cleaner.
