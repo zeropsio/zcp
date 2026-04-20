@@ -180,3 +180,71 @@ C-0 (baseline). C-1 not strictly required but co-authored in the same phase.
 ### Q2 preparation
 
 `IsKnownFactRouteTo` is the exported entry point C-8 will use at both trigger points (primary at `deploy.readmes` complete, secondary at `close.code-review` complete per Q2).
+
+---
+
+## C-3 — atom_manifest.go scaffold
+
+**Status**: green
+
+### What landed
+
+Four new files under `internal/workflow/` totaling ~580 LoC + ~220 LoC tests.
+
+- `atom_manifest.go` (173 LoC) — `Atom` type, audience + tier constants, `allAtoms` aggregate, helpers (`AllAtoms`, `AtomsForPhase`, `AtomsForBrief`, `AtomPath`, `FindAtom`, `AtomsByAudience`), and the `atomCountBaseline` constant (120)
+- `atom_manifest_phases.go` (82 LoC) — 65 phase atoms, tree-walk ordered
+- `atom_manifest_briefs.go` (67 LoC) — 39 brief atoms (scaffold 8 + feature 6 + writer 10 + code-review 5 + editorial-review 10)
+- `atom_manifest_principles.go` (46 LoC) — 16 principle atoms (6 top-level + 6 platform-principles + 4 adjunct)
+- `atom_manifest_test.go` (221 LoC) — 11 tests: count baseline, ID uniqueness, path uniqueness, audience enum, tier enum, ≤300-line cap, path-prefix-matches-category, AtomsForPhase spot-check, AtomsForBrief editorial-review presence, AtomsForBrief tier filtering invariant, AtomPath lookup, TierConditional-only-in-phases invariant, editorial-review count
+
+### Atom-count note (docs reconciliation)
+
+The canonical tree in [atomic-layout.md §1](../zcprecipator2/03-architecture/atomic-layout.md) enumerates **120 atoms** (65 phase + 39 brief + 16 principle). The summary text in the same file and rollout-sequence.md quotes **96** — a stale snapshot from before the tree was expanded to per-substep entry/completion pairs. The manifest implements the tree (120); the summary number is advisory. Documented inline on `atomCountBaseline` so future deltas trace back here.
+
+C-4 will create 120 atom files under `internal/content/workflows/recipe/`. Plan's "+6,500 LoC md" estimate is proportionally higher (~8,100 LoC at 67 LoC/atom average, assuming the 1:1 atom-to-file mapping and tree-declared max-line bounds).
+
+### Tier-conditional atoms
+
+Seven tier-conditional atoms, all under `phases/` (briefs are TierAny — tier branching inside content, resolved by stitcher):
+
+- `phases/generate/app-code/execution-order-minimal.md` → `TierMinimal`
+- `phases/generate/app-code/dashboard-skeleton-showcase.md` → `TierShowcase`
+- `phases/deploy/subagent.md` → `TierShowcase` (feature-sub dispatch)
+- `phases/deploy/snapshot-dev.md` → `TierShowcase`
+- `phases/deploy/browser-walk-dev.md` → `TierShowcase`
+- `phases/finalize/service-keys-showcase.md` → `TierShowcase`
+- `phases/close/close-browser-walk.md` → `TierShowcase`
+
+Multi-codebase gating (single vs multi scaffold) is stitcher-branched, not tier-branched, since dual-runtime minimal is also multi-codebase.
+
+### Verification
+
+- `go test ./internal/workflow/... -count=1 -run 'TestAtomManifest_'` — 11 tests green
+- `go test ./... -count=1` — full suite green
+- `make lint-local` — 0 issues
+
+### LoC delta
+
+- Go source: +368 LoC (manifest + phases + briefs + principles)
+- Tests: +221 LoC (atom_manifest_test.go)
+- Total: ~+589 LoC
+
+### Breaks-alone consequence
+
+Nothing. Additive dead code:
+- Manifest is never read by any production code path.
+- No file under `internal/content/workflows/recipe/` exists yet — C-4 creates them. A path-existence test cannot fire here (it would fail); path uniqueness + audience enum + tier enum + 300-line-cap invariants all pass at manifest-only level.
+- C-5 will wire the manifest into the stitcher via embed.FS.
+
+### Ordering deps verified
+
+C-0 (baseline). No dependency on C-1 or C-2 (independent additive branch).
+
+### C-4 prerequisites
+
+Every atom's Path in the manifest is a filesystem claim. C-4 must:
+1. Create each declared path as a file under `internal/content/workflows/recipe/`
+2. Keep each file's line count ≤ its declared MaxLines
+3. Not create orphan files under `recipe/` (every file on disk must be claimed by the manifest — enforced by C-13 build lint)
+
+Given the 120-file scope, C-4 will dispatch parallel subagents per directory group (phases/research+provision, phases/generate, phases/deploy, phases/finalize+close, briefs/scaffold, briefs/feature, briefs/writer, briefs/code-review, briefs/editorial-review, principles/). Each subagent receives the atomic-layout.md block-to-atom mapping for its directory plus the step-4 composed-brief goldens as truth reference.
