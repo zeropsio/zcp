@@ -2,6 +2,7 @@
 id: develop-manual-deploy
 priority: 2
 phases: [develop-active]
+deployStates: [deployed]
 strategies: [manual]
 title: "Manual strategy — external deploys"
 ---

@@ -147,7 +147,7 @@ func developCoverageFixtures() []coverageFixture {
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: RuntimeDynamic, Mode: ModeDev,
-					Strategy: "push-dev",
+					Strategy: "push-dev", Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
@@ -180,7 +180,7 @@ func developCoverageFixtures() []coverageFixture {
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
 					StageHostname: "appstage",
-					Strategy:      "push-git",
+					Strategy:      "push-git", Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
@@ -197,7 +197,7 @@ func developCoverageFixtures() []coverageFixture {
 				Services: []ServiceSnapshot{{
 					Hostname: "app", TypeVersion: "nginx@1",
 					RuntimeClass: RuntimeDynamic, Mode: ModeSimple,
-					Strategy: "manual",
+					Strategy: "manual", Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
@@ -209,41 +209,23 @@ func developCoverageFixtures() []coverageFixture {
 			},
 		},
 		{
-			Name: "develop_strategy_unset",
+			// Post-first-deploy with strategy still unset: strategy-review atom
+			// asks the agent to confirm an ongoing strategy now that the first
+			// deploy has landed. Pre-first-deploy branch owns the
+			// strategy-agnostic first-deploy guidance; review only fires once
+			// FirstDeployedAt is stamped.
+			Name: "develop_deployed_strategy_unset",
 			Envelope: StateEnvelope{
 				Phase:       PhaseDevelopActive,
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
-					Strategy: "unset",
+					Strategy: StrategyUnset, Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
-				"Strategy selection required",
-				`action="strategy"`,
-			},
-		},
-		{
-			// Strategy-unset atom must fire in idle too: when the develop
-			// conductor skips session creation because strategy is unset
-			// (spec-work-session §6.1), the envelope stays phase=idle and the
-			// agent would otherwise see only idle-develop-entry — telling it
-			// to call `start develop`, which loops right back.
-			Name: "idle_bootstrapped_strategy_unset",
-			Envelope: StateEnvelope{
-				Phase:        PhaseIdle,
-				Environment:  EnvContainer,
-				IdleScenario: IdleBootstrapped,
-				Services: []ServiceSnapshot{{
-					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
-					Bootstrapped: true, StageHostname: "appstage",
-					Strategy: StrategyUnset,
-				}},
-			},
-			MustContain: []string{
-				"Strategy selection required",
+				"Pick an ongoing deploy strategy",
 				`action="strategy"`,
 			},
 		},
@@ -255,7 +237,7 @@ func developCoverageFixtures() []coverageFixture {
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: RuntimeDynamic, Mode: ModeDev,
-					Strategy: "push-dev",
+					Strategy: "push-dev", Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
@@ -342,7 +324,7 @@ func matrixCoverageFixtures() []coverageFixture {
 				Services: []ServiceSnapshot{{
 					Hostname: "app", TypeVersion: "bun@1",
 					RuntimeClass: RuntimeDynamic, Mode: ModeSimple,
-					Strategy: "push-dev",
+					Strategy: "push-dev", Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
@@ -360,7 +342,7 @@ func matrixCoverageFixtures() []coverageFixture {
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
 					StageHostname: "appstage",
-					Strategy:      "push-dev",
+					Strategy:      "push-dev", Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
@@ -377,7 +359,7 @@ func matrixCoverageFixtures() []coverageFixture {
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
 					StageHostname: "appstage",
-					Strategy:      "push-dev",
+					Strategy:      "push-dev", Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
@@ -393,7 +375,7 @@ func matrixCoverageFixtures() []coverageFixture {
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
 					StageHostname: "appstage",
-					Strategy:      "push-git",
+					Strategy:      "push-git", Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
@@ -409,7 +391,7 @@ func matrixCoverageFixtures() []coverageFixture {
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: RuntimeDynamic, Mode: ModeDev,
-					Strategy: "manual",
+					Strategy: "manual", Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{

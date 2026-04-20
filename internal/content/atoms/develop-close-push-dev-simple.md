@@ -2,6 +2,7 @@
 id: develop-close-push-dev-simple
 priority: 7
 phases: [develop-active]
+deployStates: [deployed]
 modes: [simple]
 strategies: [push-dev]
 title: "Close task — push-dev simple mode"

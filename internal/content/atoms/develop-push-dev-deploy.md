@@ -2,6 +2,7 @@
 id: develop-push-dev-deploy
 priority: 2
 phases: [develop-active]
+deployStates: [deployed]
 strategies: [push-dev]
 title: "Push-dev strategy — deploy via zerops_deploy"
 ---

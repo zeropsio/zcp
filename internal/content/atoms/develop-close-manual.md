@@ -2,6 +2,7 @@
 id: develop-close-manual
 priority: 7
 phases: [develop-active]
+deployStates: [deployed]
 strategies: [manual]
 title: "Close task — manual strategy"
 ---

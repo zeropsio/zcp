@@ -2,6 +2,7 @@
 id: develop-close-push-git
 priority: 7
 phases: [develop-active]
+deployStates: [deployed]
 strategies: [push-git]
 title: "Close task — push-git strategy"
 ---
@@ -33,4 +34,4 @@ per dev service if you have more than one.
 zerops_workflow action="start" workflow="cicd"
 ```
 
-Provisions a GitHub Action that runs `zcli push` on every remote push.
+Provisions a GitHub Action that deploys to Zerops on every remote push.

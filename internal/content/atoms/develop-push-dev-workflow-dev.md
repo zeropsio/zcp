@@ -2,6 +2,7 @@
 id: develop-push-dev-workflow-dev
 priority: 3
 phases: [develop-active]
+deployStates: [deployed]
 modes: [dev]
 strategies: [push-dev]
 environments: [container]

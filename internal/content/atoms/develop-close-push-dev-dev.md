@@ -2,6 +2,7 @@
 id: develop-close-push-dev-dev
 priority: 7
 phases: [develop-active]
+deployStates: [deployed]
 modes: [dev]
 strategies: [push-dev]
 environments: [container]
