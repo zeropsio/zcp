@@ -385,6 +385,79 @@ func TestSynthesize_RouteAxisFiltering(t *testing.T) {
 	}
 }
 
+// TestSynthesize_LocalModeAtomsFireForAllRoutes is the regression guard for
+// the Option A refactor that removed `routes: [classic]` from the local-mode
+// atoms (bootstrap-discover-local, bootstrap-provision-local). Before the
+// refactor, recipe-route and adopt-route bootstraps on a local environment
+// missed the local-specific guidance entirely — the atom filter excluded
+// them. After the refactor, any local-environment bootstrap gets the local
+// topology rules regardless of route.
+//
+// This test fails if someone adds `routes:` back to either atom.
+func TestSynthesize_LocalModeAtomsFireForAllRoutes(t *testing.T) {
+	t.Parallel()
+
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+
+	// The local atoms under test. Discover step for bootstrap-discover-local,
+	// provision step for bootstrap-provision-local.
+	targets := []struct {
+		atomID string
+		step   string
+	}{
+		{"bootstrap-discover-local", StepDiscover},
+		{"bootstrap-provision-local", StepProvision},
+	}
+
+	for _, target := range targets {
+		atom := findAtom(corpus, target.atomID)
+		if atom.ID == "" {
+			t.Fatalf("atom %s missing from corpus", target.atomID)
+		}
+		// Sanity: atom should declare environments: [local] and no route filter.
+		if len(atom.Axes.Routes) > 0 {
+			t.Errorf("%s has routes filter %v — local-mode atoms must be route-agnostic",
+				target.atomID, atom.Axes.Routes)
+		}
+
+		routes := []BootstrapRoute{
+			BootstrapRouteClassic,
+			BootstrapRouteRecipe,
+			BootstrapRouteAdopt,
+		}
+		for _, route := range routes {
+			t.Run(target.atomID+"_"+string(route), func(t *testing.T) {
+				t.Parallel()
+				env := StateEnvelope{
+					Phase:       PhaseBootstrapActive,
+					Environment: EnvLocal,
+					Bootstrap: &BootstrapSessionSummary{
+						Route: route,
+						Step:  target.step,
+					},
+					Services: []ServiceSnapshot{{
+						Hostname:     "appdev",
+						RuntimeClass: RuntimeDynamic,
+						Mode:         ModeDev,
+					}},
+				}
+				got, err := Synthesize(env, corpus)
+				if err != nil {
+					t.Fatalf("Synthesize: %v", err)
+				}
+				joined := strings.Join(got, "\n")
+				if !strings.Contains(joined, atom.Body[:min(60, len(atom.Body))]) {
+					t.Errorf("%s not in synthesis output for local+%s — did someone re-add routes: filter?",
+						target.atomID, route)
+				}
+			})
+		}
+	}
+}
+
 func TestSynthesize_UnknownPlaceholderErrors(t *testing.T) {
 	t.Parallel()
 
