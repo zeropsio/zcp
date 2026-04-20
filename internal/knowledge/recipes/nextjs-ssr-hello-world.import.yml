@@ -1,0 +1,34 @@
+# Next.js SSR Hello World - Local Environment
+#
+# Provides a cloud PostgreSQL database for local development. The
+# developer runs the Next.js dev server on their own machine and
+# connects to the Zerops database via `zcli vpn up`.
+project:
+  name: nextjs-ssr-hello-world-local
+
+services:
+  # Staging service: validates production builds before they go to
+  # a shared stage or production. Deploy from your local machine with
+  # `zcli push` - no separate dev service needed here.
+  - hostname: app
+    type: nodejs@22
+    zeropsSetup: prod
+    # buildFromGit pulls source code and zerops.yaml from this public
+    # repository and triggers the first build automatically.
+    buildFromGit: https://github.com/zerops-recipe-apps/nextjs-ssr-hello-world-app
+    # enableSubdomainAccess gives a public HTTPS URL on a Zerops
+    # subdomain for sharing previews with teammates.
+    enableSubdomainAccess: true
+    verticalAutoscaling:
+      minRam: 0.5
+      minFreeRamGB: 0.25
+
+  # PostgreSQL for application data. Priority 10 ensures the database
+  # is ready before the app container runs its migration in
+  # initCommands.
+  - hostname: db
+    type: postgresql@18
+    # NON_HA = single-node database - cost-effective for local dev
+    # where the database runs in the cloud for VPN access.
+    mode: NON_HA
+    priority: 10

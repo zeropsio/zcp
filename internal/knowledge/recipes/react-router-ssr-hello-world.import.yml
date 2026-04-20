@@ -1,0 +1,42 @@
+# React Router v7 SSR hello world - AI agent environment.
+# Provides a dev service (appdev) for iterative code changes
+# and a staging service (appstage) to verify prod builds,
+# both backed by a shared PostgreSQL database.
+project:
+  name: react-router-ssr-hello-world-agent
+
+services:
+  # appdev: development workspace the AI agent writes code to.
+  # buildFromGit pulls source + zerops.yaml from the public repo
+  # and runs the 'dev' setup - deploys full source so the agent
+  # can SSH in and run the dev server directly.
+  - hostname: appdev
+    type: nodejs@22
+    zeropsSetup: dev
+    buildFromGit: https://github.com/zerops-recipe-apps/react-router-ssr-hello-world-app
+    # Subdomain gives the agent a public HTTPS URL to test the
+    # running dev server without VPN or port forwarding.
+    enableSubdomainAccess: true
+    verticalAutoscaling:
+      minRam: 0.5
+
+  # appstage: runs the prod build to verify the full pipeline
+  # before the recipe is considered ready.
+  - hostname: appstage
+    type: nodejs@22
+    zeropsSetup: prod
+    buildFromGit: https://github.com/zerops-recipe-apps/react-router-ssr-hello-world-app
+    enableSubdomainAccess: true
+    verticalAutoscaling:
+      minRam: 0.25
+      # Reserve free RAM for SSR rendering spikes and V8 GC cycles
+      # - without headroom the container hits OOM and restarts.
+      minFreeRamGB: 0.125
+
+  # PostgreSQL for application data. Priority 10 starts data
+  # services before app containers, preventing connection errors
+  # on first boot.
+  - hostname: db
+    type: postgresql@18
+    mode: NON_HA
+    priority: 10

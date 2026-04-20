@@ -1,0 +1,41 @@
+# Nuxt SSR hello world — AI agent environment.
+# Two app services: appdev (dev setup, for active development)
+# and appstage (prod setup, for validating changes before commit).
+# Both have subdomain access so the agent can verify deployments.
+project:
+  name: nuxt-ssr-hello-world-agent
+
+services:
+  # Dev service: the agent writes code, pushes via zcli, and
+  # SSHes in to run the framework dev server interactively.
+  - hostname: appdev
+    type: nodejs@22
+    # zeropsSetup selects the 'dev' block from zerops.yaml —
+    # deploys full source, starts with zsc noop so the agent
+    # drives the process manually.
+    zeropsSetup: dev
+    # buildFromGit: Zerops pulls source code and zerops.yaml
+    # from this public repository on the first deploy.
+    buildFromGit: https://github.com/zerops-recipe-apps/nuxt-ssr-hello-world-app
+    # Gives a public HTTPS URL on a Zerops subdomain so the
+    # agent can verify the running app without VPN.
+    enableSubdomainAccess: true
+    verticalAutoscaling:
+      minRam: 0.5
+
+  # Stage service: prod build of the same code — the agent
+  # validates the production SSR bundle before committing.
+  - hostname: appstage
+    type: nodejs@22
+    zeropsSetup: prod
+    buildFromGit: https://github.com/zerops-recipe-apps/nuxt-ssr-hello-world-app
+    enableSubdomainAccess: true
+    verticalAutoscaling:
+      minRam: 0.5
+
+  # PostgreSQL for app data. Priority 10 starts data services
+  # before app containers, preventing connection errors on boot.
+  - hostname: db
+    type: postgresql@16
+    mode: NON_HA
+    priority: 10

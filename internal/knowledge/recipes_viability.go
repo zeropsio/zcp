@@ -49,8 +49,15 @@ func CheckViability(content string, rules RecipeViabilityRules) ViabilityResult 
 		reasons = append(reasons, fmt.Sprintf("body has %d lines, need %d", lines, rules.MinBodyLines))
 	}
 
+	// parseH2Sections honours fenced code blocks — a `## Deploy` inside a
+	// YAML example won't be counted as a real section heading.
+	sections := parseH2Sections(body)
+	lowered := make(map[string]struct{}, len(sections))
+	for name := range sections {
+		lowered[strings.ToLower(name)] = struct{}{}
+	}
 	for _, section := range rules.RequiredSections {
-		if !hasSection(body, section) {
+		if _, ok := lowered[strings.ToLower(section)]; !ok {
 			reasons = append(reasons, fmt.Sprintf("missing required section: ## %s", section))
 		}
 	}
@@ -79,15 +86,4 @@ func stripFrontmatter(content string) string {
 		return content
 	}
 	return after
-}
-
-// hasSection reports whether body contains a `## section` heading
-// (case-insensitive match on the heading text).
-func hasSection(body, section string) bool {
-	lower := strings.ToLower(body)
-	target := strings.ToLower(section)
-	if strings.HasPrefix(lower, "## "+target+"\n") || strings.HasPrefix(lower, "## "+target+" ") {
-		return true
-	}
-	return strings.Contains(lower, "\n## "+target+"\n") || strings.Contains(lower, "\n## "+target+" ")
 }

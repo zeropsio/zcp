@@ -21,6 +21,17 @@ type Document struct {
 	Content     string // Full markdown content (what gets injected into agent context)
 	Description string // Frontmatter description or first paragraph
 
+	// Recipe-only metadata (empty for non-recipe docs). Parsed from
+	// frontmatter list fields written by `zcp sync pull recipes`:
+	//   languages: [php]
+	//   frameworks: [laravel]
+	//   repo: "https://github.com/..."
+	// Plus the companion <slug>.import.yml file when present.
+	Languages  []string
+	Frameworks []string
+	Repo       string
+	ImportYAML string
+
 	sectionsOnce sync.Once
 	sections     map[string]string // cached H2 sections (lazily populated, thread-safe)
 }
@@ -34,23 +45,40 @@ func (d *Document) H2Sections() map[string]string {
 	return d.sections
 }
 
-// loadFromEmbedded walks the embedded filesystem and parses all markdown documents.
+// loadFromEmbedded walks the embedded filesystem and parses all markdown
+// documents. Companion recipe files (recipes/<slug>.import.yml) are attached
+// to the corresponding recipe Document via ImportYAML in a second pass —
+// the filesystem enumeration order is not deterministic, so we load docs
+// first, then resolve companions.
 func loadFromEmbedded() map[string]*Document {
 	docs := make(map[string]*Document)
+	importYAMLs := make(map[string]string) // URI → YAML bytes
 
 	for _, dir := range knowledgeDirs {
 		_ = fs.WalkDir(contentFS, dir, func(path string, d fs.DirEntry, err error) error {
-			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".md") {
+			if err != nil || d.IsDir() {
 				return nil //nolint:nilerr // intentional: continue walking on individual file errors
 			}
 			data, err := contentFS.ReadFile(path)
 			if err != nil {
 				return nil //nolint:nilerr // intentional: continue walking on individual file errors
 			}
-			doc := parseDocument(path, string(data))
-			docs[doc.URI] = doc
+			if stripped, ok := strings.CutSuffix(path, ".import.yml"); ok {
+				importYAMLs["zerops://"+stripped] = string(data)
+				return nil
+			}
+			if strings.HasSuffix(path, ".md") {
+				doc := parseDocument(path, string(data))
+				docs[doc.URI] = doc
+			}
 			return nil
 		})
+	}
+
+	for uri, yaml := range importYAMLs {
+		if doc, ok := docs[uri]; ok {
+			doc.ImportYAML = yaml
+		}
 	}
 
 	return docs
@@ -77,7 +105,34 @@ func parseDocument(path, content string) *Document {
 		Title:       title,
 		Content:     body,
 		Description: desc,
+		Languages:   parseInlineList(frontmatter["languages"]),
+		Frameworks:  parseInlineList(frontmatter["frameworks"]),
+		Repo:        frontmatter["repo"],
 	}
+}
+
+// parseInlineList splits a `[a, b, c]` YAML inline list into a string slice.
+// Returns nil for empty input. Bare comma-separated values (no brackets) are
+// also accepted so legacy frontmatter without brackets still works.
+func parseInlineList(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	raw = strings.TrimPrefix(raw, "[")
+	raw = strings.TrimSuffix(raw, "]")
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // extractFrontmatter parses YAML-style frontmatter from the start of content.
