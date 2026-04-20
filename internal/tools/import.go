@@ -15,6 +15,7 @@ import (
 type ImportInput struct {
 	Content  string `json:"content,omitempty"  jsonschema:"Inline import YAML content. Provide either content or filePath."`
 	FilePath string `json:"filePath,omitempty" jsonschema:"Path to a YAML file containing the import definition. Provide either filePath or content."`
+	Override bool   `json:"override,omitempty" jsonschema:"Set override: true on every imported service so the API replaces existing service stacks with matching hostnames. Required when re-importing a service that already exists (e.g. to transition READY_TO_DEPLOY to ACTIVE by adding startWithoutCode: true)."`
 }
 
 // RegisterImport registers the zerops_import tool.
@@ -38,7 +39,7 @@ func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, c
 		if schemaCache != nil {
 			schemas = schemaCache.Get(ctx)
 		}
-		result, err := ops.Import(ctx, client, projectID, input.Content, input.FilePath, liveTypes, schemas)
+		result, err := ops.Import(ctx, client, projectID, input.Content, input.FilePath, liveTypes, schemas, input.Override)
 		if err != nil {
 			return convertError(err), nil, nil
 		}

@@ -301,7 +301,7 @@ func TestE2E_Import_ZeropsYaml_Normalization_Output(t *testing.T) {
 			})
 
 			ctx := context.Background()
-			_, err := ops.Import(ctx, mock, "test-project", tt.input, "", nil, nil)
+			_, err := ops.Import(ctx, mock, "test-project", tt.input, "", nil, nil, false)
 			if err != nil {
 				t.Logf("Import error (expected for some cases): %v", err)
 				return

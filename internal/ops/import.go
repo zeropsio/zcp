@@ -46,6 +46,8 @@ type ImportProcessOutput struct {
 // Input: content XOR filePath (not both, not neither).
 // Validates YAML structure and service types, then calls client.ImportServices.
 // liveTypes: optional live service stack types for version/mode validation (nil = skip).
+// override: when true, sets `override: true` on every service so the API replaces
+// existing service stacks instead of rejecting the import with serviceStackNameUnavailable.
 func Import(
 	ctx context.Context,
 	client platform.Client,
@@ -54,6 +56,7 @@ func Import(
 	filePath string,
 	liveTypes []platform.ServiceStackType,
 	schemas *schema.Schemas,
+	override bool,
 ) (*ImportResult, error) {
 	yamlContent, err := resolveInput(content, filePath)
 	if err != nil {
@@ -77,6 +80,28 @@ func Import(
 			"import YAML must not contain a 'project:' section",
 			"Remove the 'project:' section. Import works within an existing project.",
 		)
+	}
+
+	// When override is requested, set `override: true` on each service and
+	// re-marshal so the API replaces existing service stacks instead of
+	// rejecting with serviceStackNameUnavailable.
+	if override {
+		if raw, ok := doc["services"].([]any); ok {
+			for _, svc := range raw {
+				if svcMap, ok := svc.(map[string]any); ok {
+					svcMap["override"] = true
+				}
+			}
+		}
+		remarshaled, err := yaml.Marshal(doc)
+		if err != nil {
+			return nil, platform.NewPlatformError(
+				platform.ErrInvalidImportYml,
+				fmt.Sprintf("re-marshal after override injection: %v", err),
+				"Report this as a zcp bug.",
+			)
+		}
+		yamlContent = string(remarshaled)
 	}
 
 	// Pre-flight validation: check service types against live data.
