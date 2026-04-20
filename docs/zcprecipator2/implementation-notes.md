@@ -1196,3 +1196,42 @@ BREAKING payload shape change visible to any JSON consumer of `StepCheck` rows. 
 - **Debug-log retention hook**. Spec §C-10 mentioned a `debug.LogCheckFailureDetail(ctx, check, readSurface, required, actual, ...)` helper (~50 LoC) for server-side human inspection of the pre-shape-flip verbose fields. Deferred: implementing it cleanly requires either threading extra log state through every emission site or preserving the verbose fields internally on the Go side and stripping them at JSON-serialize time. Neither is cheap in scope, and the v35 telemetry we'd gate on the log output can come from the existing `--debug` structured logs + agent-side session transcripts. Revisit if v35 regression triage finds the loss of verbose fields a blocking handicap.
 - **`workflow.PredecessorGotchaStems` + `workflow.CountNetNewGotchas`**. Still exported post-C-9 with no production callers. C-15 cleanup can remove if still unreferenced.
 - **`content/workflows/recipe.md` monolith references to verbose fields**. The legacy content tree names `ReadSurface` / `HowToFix` in agent-facing prose. Not a gate failure — the new atom tree (C-4) is the canonical content source post-C-5 cutover; recipe.md is deleted wholesale in C-15.
+
+---
+
+## C-11 — Empty `NextSteps[]` at close completion
+
+**Status**: green
+
+### What landed
+
+Per [principles.md P4 §Replaces](03-architecture/principles.md) + [data-flow-showcase.md §6b](03-architecture/data-flow-showcase.md), the close-step response carries `NextSteps = []` unconditionally. Export and publish are user-request-only local CLI commands — never autonomous workflow steps. v8.103 established the semantic (export is gated on close=complete server-side but not triggered by the workflow); C-11 makes the empty-default structural rather than content-only.
+
+- [`internal/workflow/recipe_close_response.go`](../../internal/workflow/recipe_close_response.go) — `buildClosePostCompletion` returns `[]string{}` unconditionally. The previous two-entry "ON REQUEST ONLY export / publish" slice is replaced by summary prose that acknowledges both commands as local-CLI-on-demand. `plan` and `outputDir` parameters retained on the signature (with `_ = ` discards) for symmetry with `buildRecipeTransition` and for future close-response extensibility.
+- [`internal/workflow/recipe_test.go`](../../internal/workflow/recipe_test.go):
+  - `TestHandleComplete_CloseStepReturnsPostCompletionGuidance` → renamed `TestHandleComplete_CloseStepReturnsEmptyNextSteps`. Asserts `len(nextSteps) == 0` + summary names both sub-steps. Regression guard against both v8.97 Fix 2's two-entry shape AND v8.98 Fix B's autonomous framing.
+  - `TestHandleComplete_CloseStepPostCompletionBothUserGated` → renamed `TestHandleComplete_CloseStepSummaryNamesExportAndPublishAsUserGated`. The user-gated framing moves from per-entry `ON REQUEST ONLY` markers to summary prose. Test asserts summary mentions export+publish as local CLI + says they are NOT triggered autonomously.
+  - `TestHandleComplete_CloseStepSummaryHasNoAutomaticClaims` — banned-substring list adjusted: the literal word `autonomously` is now allowed because the C-11 summary phrasing is "do NOT trigger them autonomously" (the negation-embedding form). Banned: `"Export runs automatically"` + `"run export autonomously"` (the v8.97/v8.98 Fix B positive-assertion forms). Required substring pivots to `"on demand"` OR `"user explicitly"`.
+
+### Verification
+
+- `go test ./... -count=1` — full suite green across 21 packages.
+- `make lint-local` — 0 issues.
+
+### LoC delta
+
+- `internal/workflow/recipe_close_response.go`: -12 LoC (two-entry slice + format strings deleted; summary prose expanded).
+- `internal/workflow/recipe_test.go`: -20 LoC net (consolidated 2 v8.103-shape tests into 2 C-11-shape tests; adjusted a third).
+- **Total**: ~-32 LoC (handoff estimate was -30 LoC + 100 LoC test; actual was net smaller because the new tests are tighter).
+
+### Breaks-alone consequence
+
+Post-close autonomous tool invocations stop firing. An agent that had read the two-entry NextSteps shape and relayed the commands as if they were pending actions now sees an empty slice and cannot misinterpret. Matches v8.103 export-on-request invariant; makes it structural instead of content-only.
+
+### Ordering deps verified
+
+- C-0 ✓ (baseline test — the pre-v8.103 shape was pinned there; C-11 flips the assertion to match the new structural contract).
+
+### Known follow-ups
+
+- `buildRecipeTransition` (separate function) still emits prose with publish + cache-clear + pull walkthroughs. That output lives outside the close-step response payload — it's used by CLI-adjacent surfaces. No C-11 change required; the NextSteps invariant applies only to the workflow-response NextSteps slice.

@@ -324,11 +324,14 @@ func TestRecipeCloseSubSteps_ExactlyThreeAutonomousSubSteps(t *testing.T) {
 	}
 }
 
-// TestHandleComplete_CloseStepReturnsPostCompletionGuidance — v8.97 Fix 2,
-// updated for v8.103. The close-completion response populates
-// PostCompletionSummary and exactly two NextSteps entries: export at [0]
-// and publish at [1], BOTH strictly user-gated (never auto-run).
-func TestHandleComplete_CloseStepReturnsPostCompletionGuidance(t *testing.T) {
+// TestHandleComplete_CloseStepReturnsEmptyNextSteps — C-11 (principles.md
+// P4 §Replaces + data-flow-showcase.md §6b). The close-completion
+// response carries an empty NextSteps slice unconditionally. Export and
+// publish are user-request-only local CLI commands; they are documented
+// in the separate buildRecipeTransition prose, NOT wired as workflow
+// NextSteps entries. Regression guard against both v8.97 Fix 2's "two
+// strings in NextSteps" shape AND v8.98 Fix B's autonomous framing.
+func TestHandleComplete_CloseStepReturnsEmptyNextSteps(t *testing.T) {
 	t.Parallel()
 
 	plan := &RecipePlan{Slug: "test-showcase", Tier: RecipeTierShowcase}
@@ -339,53 +342,25 @@ func TestHandleComplete_CloseStepReturnsPostCompletionGuidance(t *testing.T) {
 	if !strings.Contains(summary, "code-review") || !strings.Contains(summary, "close-browser-walk") {
 		t.Errorf("summary must name both sub-steps; got %q", summary)
 	}
-	if len(nextSteps) != 2 {
-		t.Fatalf("expected exactly 2 NextSteps entries (export + publish), got %d: %+v", len(nextSteps), nextSteps)
-	}
-	if !strings.Contains(nextSteps[0], "zcp sync recipe export") {
-		t.Errorf("NextSteps[0] must name export CLI command; got %q", nextSteps[0])
-	}
-	if !strings.Contains(nextSteps[1], "zcp sync recipe publish") {
-		t.Errorf("NextSteps[1] must name publish CLI command; got %q", nextSteps[1])
-	}
-	if !strings.Contains(nextSteps[1], "test-showcase") {
-		t.Errorf("NextSteps[1] must embed slug; got %q", nextSteps[1])
+	if len(nextSteps) != 0 {
+		t.Fatalf("expected empty NextSteps per C-11; got %d entries: %+v", len(nextSteps), nextSteps)
 	}
 }
 
-// TestHandleComplete_CloseStepPostCompletionBothUserGated — v8.103.
-// BOTH NextSteps entries (export at [0], publish at [1]) must be flagged
-// as user-gated with "ON REQUEST ONLY" wording and the explicit "do NOT
-// run unprompted" instruction. v8.98 Fix B originally framed export as
-// autonomous; real usage surfaced the user's objection: the workflow is
-// done at close, nothing runs after unless the user asks.
-func TestHandleComplete_CloseStepPostCompletionBothUserGated(t *testing.T) {
+// TestHandleComplete_CloseStepSummaryNamesExportAndPublishAsUserGated —
+// C-11. NextSteps is empty, so the user-gated framing moves to the
+// summary prose. Summary must mention both commands are local CLI,
+// user-on-demand, never autonomous.
+func TestHandleComplete_CloseStepSummaryNamesExportAndPublishAsUserGated(t *testing.T) {
 	t.Parallel()
 
 	plan := &RecipePlan{Slug: "test-showcase", Tier: RecipeTierShowcase}
-	_, nextSteps := buildClosePostCompletion(plan, "/var/www/zcprecipator/test-showcase")
-	if len(nextSteps) != 2 {
-		t.Fatalf("expected exactly 2 NextSteps entries, got %d", len(nextSteps))
+	summary, _ := buildClosePostCompletion(plan, "/var/www/zcprecipator/test-showcase")
+	if !strings.Contains(summary, "Export and publish") && !strings.Contains(summary, "xport") {
+		t.Errorf("summary must acknowledge export + publish as local CLI commands; got %q", summary)
 	}
-
-	// Both entries must name their command AND flag user-gated.
-	if !strings.Contains(nextSteps[0], "zcp sync recipe export") {
-		t.Errorf("NextSteps[0] must name export; got %q", nextSteps[0])
-	}
-	if !strings.Contains(nextSteps[1], "zcp sync recipe publish") {
-		t.Errorf("NextSteps[1] must name publish; got %q", nextSteps[1])
-	}
-	for i, step := range nextSteps {
-		if !strings.Contains(step, "ON REQUEST ONLY") {
-			t.Errorf("NextSteps[%d] must flag ON REQUEST ONLY; got %q", i, step)
-		}
-		if !strings.Contains(step, "NOT run unprompted") {
-			t.Errorf("NextSteps[%d] must say \"NOT run unprompted\"; got %q", i, step)
-		}
-		// Regression guard against v8.98 Fix B's autonomous framing.
-		if strings.Contains(step, "autonomous") {
-			t.Errorf("NextSteps[%d] must NOT claim autonomous execution (v8.103 regression guard); got %q", i, step)
-		}
+	if !strings.Contains(summary, "autonomously") {
+		t.Errorf("summary must say these commands are NOT triggered autonomously; got %q", summary)
 	}
 }
 
@@ -399,14 +374,17 @@ func TestHandleComplete_CloseStepSummaryHasNoAutomaticClaims(t *testing.T) {
 
 	plan := &RecipePlan{Slug: "test-showcase", Tier: RecipeTierShowcase}
 	summary, _ := buildClosePostCompletion(plan, "/var/www/zcprecipator/test-showcase")
-	for _, banned := range []string{"Export runs automatically", "run export autonomously", "autonomously"} {
+	// C-11: negation phrases are allowed ("NOT trigger autonomously" is the
+	// C-11 phrasing). Ban the pre-C-11 positive-assertion shapes only.
+	for _, banned := range []string{"Export runs automatically", "run export autonomously"} {
 		if strings.Contains(summary, banned) {
-			t.Errorf("summary must NOT contain %q — nothing runs after close without user ask (v8.103)", banned)
+			t.Errorf("summary must NOT contain %q — nothing runs after close without user ask (v8.103 + C-11)", banned)
 		}
 	}
-	// Must explicitly say the user decides.
-	if !strings.Contains(summary, "user explicitly asks") {
-		t.Errorf("summary must name \"user explicitly asks\" as the gate for post-workflow commands; got %q", summary)
+	// Must explicitly say the user decides — C-11 wording: "user runs
+	// on demand" or equivalent.
+	if !strings.Contains(summary, "on demand") && !strings.Contains(summary, "user explicitly") {
+		t.Errorf("summary must name the user as the gate for post-workflow commands; got %q", summary)
 	}
 }
 
