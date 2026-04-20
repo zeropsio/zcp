@@ -18,9 +18,19 @@ type APIResponse struct {
 
 // APIRecipe represents a single recipe from the API.
 type APIRecipe struct {
-	Slug       string          `json:"slug"`
-	Name       string          `json:"name"`
-	SourceData json.RawMessage `json:"sourceData"`
+	Slug                     string                 `json:"slug"`
+	Name                     string                 `json:"name"`
+	Icon                     string                 `json:"icon"`
+	Source                   string                 `json:"source"`
+	RecipeLanguageFrameworks []apiLanguageFramework `json:"recipeLanguageFrameworks"`
+	SourceData               json.RawMessage        `json:"sourceData"`
+}
+
+// apiLanguageFramework is one row of recipeLanguageFrameworks. We only need
+// slug + type ("language" or "framework") to drive intent matching.
+type apiLanguageFramework struct {
+	Slug string `json:"slug"`
+	Type string `json:"type"`
 }
 
 // sourceData is the parsed sourceData field.
@@ -31,6 +41,7 @@ type sourceData struct {
 
 type environment struct {
 	Name     string    `json:"name"`
+	Import   string    `json:"import"`
 	Services []service `json:"services"`
 }
 
@@ -92,12 +103,15 @@ func pullOneRecipe(recipe APIRecipe, slug, outDir string, dryRun bool) PullResul
 		return PullResult{Slug: slug, Status: Error, Reason: fmt.Sprintf("parse sourceData: %v", err)}
 	}
 
-	md := buildRecipeMarkdown(recipe.Name, slug, &sd)
+	md := buildRecipeMarkdown(recipe.Name, slug, &sd, recipe.RecipeLanguageFrameworks)
 	if md == "" {
 		return PullResult{Slug: slug, Status: Skipped, Reason: "no content in API"}
 	}
 
+	importYAML := findAgentImportYAML(&sd)
+
 	target := filepath.Join(outDir, slug+".md")
+	importTarget := filepath.Join(outDir, slug+".import.yml")
 
 	if dryRun {
 		return PullResult{Slug: slug, Status: DryRun, Diff: md}
@@ -106,6 +120,11 @@ func pullOneRecipe(recipe APIRecipe, slug, outDir string, dryRun bool) PullResul
 	if err := os.WriteFile(target, []byte(md), 0600); err != nil {
 		return PullResult{Slug: slug, Status: Error, Reason: fmt.Sprintf("write: %v", err)}
 	}
+	if importYAML != "" {
+		if err := os.WriteFile(importTarget, []byte(importYAML), 0600); err != nil {
+			return PullResult{Slug: slug, Status: Error, Reason: fmt.Sprintf("write import: %v", err)}
+		}
+	}
 
 	return PullResult{Slug: slug, Status: Created}
 }
@@ -113,7 +132,7 @@ func pullOneRecipe(recipe APIRecipe, slug, outDir string, dryRun bool) PullResul
 // markdownLinkPattern matches [text](url) markdown links.
 var markdownLinkPattern = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
 
-func buildRecipeMarkdown(name, slug string, sd *sourceData) string {
+func buildRecipeMarkdown(name, slug string, sd *sourceData, langs []apiLanguageFramework) string {
 	// Find intro: prefer per-service intro over recipe-level
 	intro := findServiceIntro(sd)
 	if intro == "" {
@@ -145,6 +164,8 @@ func buildRecipeMarkdown(name, slug string, sd *sourceData) string {
 		return ""
 	}
 
+	languages, frameworks := partitionTaxonomy(langs)
+
 	var sb strings.Builder
 
 	// Always write frontmatter — repo is needed for push even if intro is empty
@@ -154,6 +175,12 @@ func buildRecipeMarkdown(name, slug string, sd *sourceData) string {
 	}
 	if repo != "" {
 		sb.WriteString(fmt.Sprintf("repo: %q\n", repo))
+	}
+	if len(languages) > 0 {
+		sb.WriteString(fmt.Sprintf("languages: [%s]\n", strings.Join(languages, ", ")))
+	}
+	if len(frameworks) > 0 {
+		sb.WriteString(fmt.Sprintf("frameworks: [%s]\n", strings.Join(frameworks, ", ")))
 	}
 	sb.WriteString("---\n\n")
 
@@ -236,6 +263,38 @@ func findServiceYAML(sd *sourceData) string {
 		}
 	}
 	return ""
+}
+
+// findAgentImportYAML returns the project-import YAML for the AI Agent
+// environment — the first environment whose name contains "AI Agent".
+// Falls back to environments[0] when no agent-named environment exists,
+// so recipes predating the 6-environment split still yield a YAML.
+func findAgentImportYAML(sd *sourceData) string {
+	if len(sd.Environments) == 0 {
+		return ""
+	}
+	lower := strings.ToLower
+	for _, env := range sd.Environments {
+		if strings.Contains(lower(env.Name), "ai agent") {
+			return env.Import
+		}
+	}
+	return sd.Environments[0].Import
+}
+
+// partitionTaxonomy splits the Strapi language/framework tags into two slugs
+// lists. Slugs are written into the .md frontmatter and consumed by the
+// recipe matcher at runtime.
+func partitionTaxonomy(langs []apiLanguageFramework) (languages, frameworks []string) {
+	for _, lf := range langs {
+		switch lf.Type {
+		case "language":
+			languages = append(languages, lf.Slug)
+		case "framework":
+			frameworks = append(frameworks, lf.Slug)
+		}
+	}
+	return languages, frameworks
 }
 
 // promoteHeadings converts ### to ## in content.

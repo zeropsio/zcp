@@ -14,8 +14,16 @@ import (
 )
 
 const (
-	markerBegin = "# ZCP:BEGIN"
-	markerEnd   = "# ZCP:END"
+	// Shell-comment markers used in files parsed as shell config (e.g. SSH config).
+	shellMarkerBegin = "# ZCP:BEGIN"
+	shellMarkerEnd   = "# ZCP:END"
+	// HTML-comment markers used in files rendered as markdown (e.g. CLAUDE.md).
+	// Invisible in rendered output but work as text markers for upsert.
+	mdMarkerBegin = "<!-- ZCP:BEGIN -->"
+	mdMarkerEnd   = "<!-- ZCP:END -->"
+	// Reflog section marker — historical bootstrap records appended by the
+	// workflow engine. Must be preserved across re-init.
+	reflogMarker = "<!-- ZEROPS:REFLOG -->"
 )
 
 // step is a named, idempotent init operation.
@@ -72,8 +80,39 @@ func writeTemplate(templateName, path string) error {
 	return os.WriteFile(path, []byte(tmpl), 0644) //nolint:gosec // G306: config files need to be readable
 }
 
+// generateCLAUDEMD writes the ZCP-managed CLAUDE.md template wrapped in
+// <!-- ZCP:BEGIN/END --> markers. Re-runs replace only the marked section,
+// preserving any trailing content (REFLOG entries appended by bootstrap,
+// user additions). Fresh files get the marker-wrapped template alone.
+//
+// Migration path: if the file exists without markers but contains a REFLOG
+// section (legacy layout where template was overwritten verbatim), the
+// pre-REFLOG portion is replaced by the marker-wrapped template while the
+// REFLOG onwards is preserved.
 func generateCLAUDEMD(baseDir string) error {
-	return writeTemplate("claude.md", filepath.Join(baseDir, "CLAUDE.md"))
+	tmpl, err := content.GetTemplate("claude.md")
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(baseDir, "CLAUDE.md")
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
+	block := mdMarkerBegin + "\n" + strings.TrimRight(tmpl, "\n") + "\n" + mdMarkerEnd + "\n"
+
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read CLAUDE.md: %w", err)
+	}
+	text := string(existing)
+
+	if strings.Contains(text, mdMarkerBegin) && strings.Contains(text, mdMarkerEnd) {
+		return upsertManagedSection(path, block, mdMarkerBegin, mdMarkerEnd)
+	}
+	if idx := strings.Index(text, reflogMarker); idx >= 0 {
+		return os.WriteFile(path, []byte(block+"\n"+text[idx:]), 0644) //nolint:gosec // G306: config file
+	}
+	return os.WriteFile(path, []byte(block), 0644) //nolint:gosec // G306: config file
 }
 
 func generateMCPConfig(baseDir string) error {
@@ -97,15 +136,15 @@ func generateSSHConfig(_ string) error {
 	}
 
 	path := filepath.Join(dir, "config")
-	block := markerBegin + "\n" + strings.TrimRight(tmpl, "\n") + "\n" + markerEnd + "\n"
-	return upsertManagedSection(path, block)
+	block := shellMarkerBegin + "\n" + strings.TrimRight(tmpl, "\n") + "\n" + shellMarkerEnd + "\n"
+	return upsertManagedSection(path, block, shellMarkerBegin, shellMarkerEnd)
 }
 
-// upsertManagedSection reads the file at path, finds the ZCP managed block
-// (between markerBegin and markerEnd lines), replaces it with content, and
-// writes back atomically. If no markers exist, the block is appended.
-// If the file doesn't exist, it is created with just the block.
-func upsertManagedSection(path, block string) error {
+// upsertManagedSection reads the file at path, finds the managed block
+// (between beginMarker and endMarker lines), replaces it with block, and
+// writes back atomically. If no markers exist, block is appended. If the
+// file doesn't exist, it is created with just block.
+func upsertManagedSection(path, block, beginMarker, endMarker string) error {
 	existing, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("read %s: %w", path, err)
@@ -114,12 +153,12 @@ func upsertManagedSection(path, block string) error {
 	var result string
 	text := string(existing)
 
-	beginIdx := strings.Index(text, markerBegin)
-	endIdx := strings.Index(text, markerEnd)
+	beginIdx := strings.Index(text, beginMarker)
+	endIdx := strings.Index(text, endMarker)
 
 	if beginIdx >= 0 && endIdx >= 0 {
-		// Replace existing managed section (include the markerEnd line).
-		endLineEnd := endIdx + len(markerEnd)
+		// Replace existing managed section (include the endMarker line).
+		endLineEnd := endIdx + len(endMarker)
 		if endLineEnd < len(text) && text[endLineEnd] == '\n' {
 			endLineEnd++
 		}

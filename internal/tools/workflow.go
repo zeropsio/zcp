@@ -227,7 +227,9 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 
 	// Bootstrap conductor.
 	if input.Workflow == workflowBootstrap {
-		resp, err := engine.BootstrapStart(projectID, input.Intent)
+		// BootstrapStart is synchronous — route selection is keyword-only with
+		// no network I/O. No ctx to thread through today.
+		resp, err := engine.BootstrapStart(projectID, input.Intent) //nolint:contextcheck // intentional: synchronous, no I/O to cancel
 		if err != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrWorkflowActive,

@@ -23,14 +23,21 @@ Workflows (via zerops_workflow action="start" workflow="..."):
   recipe    — build recipe repo files
   cicd      — generate pipeline files
 
-Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain,
-zerops_discover, zerops_knowledge, zerops_deploy, zerops_verify, zerops_mount.`
+Direct tools (callable anytime): zerops_scale, zerops_manage, zerops_env,
+zerops_subdomain, zerops_discover, zerops_knowledge, zerops_verify.
+
+Workflow-gated tools: zerops_deploy (requires adopted services),
+zerops_mount and zerops_import (require an active workflow session).
+Use zerops_workflow action="status" to learn the correct entry point.`
 
 const containerEnvironment = `
-Running in a Zerops container (control plane). Manages other services;
-does not serve traffic. Files at /var/www/{hostname}/ are SSHFS mounts.
-Commands: ssh {hostname} "...". Edits on the mount survive restart but not
-deploy. zerops_discover refreshes service state.`
+Running as the ZCP control-plane container — Ubuntu with zcli, psql, mysql,
+redis-cli, jq, and network to every service. App code lives in the runtime
+containers (reach via ssh {hostname} "..."), not here. Files at
+/var/www/{hostname}/ are SSHFS mounts — edit with Read/Edit/Write, not SSH.
+CLI helpers like jq/psql are missing inside runtimes; pipe output back to
+ZCP. Edits on the mount survive restart but not deploy. zerops_discover
+refreshes service state.`
 
 const localEnvironment = `
 Running on a local machine. Code in the working directory; infrastructure

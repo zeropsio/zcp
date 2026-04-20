@@ -31,7 +31,7 @@ func TestPullRecipeMarkdown(t *testing.T) {
 		},
 	}
 
-	md := buildRecipeMarkdown("Bun Hello World", "bun-hello-world", sd)
+	md := buildRecipeMarkdown("Bun Hello World", "bun-hello-world", sd, nil)
 
 	tests := []struct {
 		name string
@@ -79,7 +79,7 @@ func TestPullRecipeMarkdown_WithIntegrationGuide(t *testing.T) {
 		},
 	}
 
-	md := buildRecipeMarkdown("Test", "test", sd)
+	md := buildRecipeMarkdown("Test", "test", sd, nil)
 
 	if !strings.Contains(md, "## zerops.yml") && !strings.Contains(md, "## zerops.yaml") {
 		t.Error("expected promoted ## zerops.yaml or ## zerops.yml heading")
@@ -105,7 +105,7 @@ func TestPullRecipeMarkdown_FallbackYAML(t *testing.T) {
 		},
 	}
 
-	md := buildRecipeMarkdown("Fallback", "fallback", sd)
+	md := buildRecipeMarkdown("Fallback", "fallback", sd, nil)
 
 	if !strings.Contains(md, "## zerops.yaml") {
 		t.Error("expected ## zerops.yaml section")
@@ -127,7 +127,7 @@ func TestPullRecipeMarkdown_EmptySkipped(t *testing.T) {
 		},
 	}
 
-	md := buildRecipeMarkdown("Empty", "empty", sd)
+	md := buildRecipeMarkdown("Empty", "empty", sd, nil)
 	if md != "" {
 		t.Errorf("expected empty markdown for recipe with no content, got: %q", md)
 	}
@@ -169,5 +169,88 @@ func TestBuildRecipeMarkdown_SourceDataJSON(t *testing.T) {
 	}
 	if sd.Environments[0].Services[0].Extracts.KnowledgeBase != "kb content" {
 		t.Error("expected knowledge-base extract")
+	}
+	if sd.Environments[0].Import != "test-import" {
+		t.Errorf("expected Import=%q, got %q", "test-import", sd.Environments[0].Import)
+	}
+}
+
+func TestFindAgentImportYAML(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		envs []environment
+		want string
+	}{
+		{
+			name: "picks_first_env_with_agent_name",
+			envs: []environment{
+				{Name: "0 — AI Agent", Import: "agent-yaml"},
+				{Name: "1 — Remote", Import: "remote-yaml"},
+			},
+			want: "agent-yaml",
+		},
+		{
+			name: "fallback_to_first_env_when_no_agent_name",
+			envs: []environment{
+				{Name: "Development", Import: "dev-yaml"},
+			},
+			want: "dev-yaml",
+		},
+		{
+			name: "empty_when_no_envs",
+			envs: nil,
+			want: "",
+		},
+		{
+			name: "empty_when_no_import",
+			envs: []environment{{Name: "AI Agent"}},
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := findAgentImportYAML(&sourceData{Environments: tt.envs})
+			if got != tt.want {
+				t.Errorf("findAgentImportYAML: want %q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestBuildRecipeMarkdown_FrontmatterTaxonomy(t *testing.T) {
+	t.Parallel()
+
+	recipe := APIRecipe{
+		Name: "Laravel Minimal",
+		Slug: "laravel-minimal",
+		RecipeLanguageFrameworks: []apiLanguageFramework{
+			{Slug: "php", Type: "language"},
+			{Slug: "laravel", Type: "framework"},
+		},
+	}
+	sd := &sourceData{
+		Environments: []environment{
+			{
+				Name: "0 — AI Agent",
+				Services: []service{
+					{
+						GitRepo:  "https://github.com/zerops-recipe-apps/laravel-minimal-app",
+						Extracts: extracts{Intro: "Laravel minimal."},
+					},
+				},
+			},
+		},
+	}
+
+	md := buildRecipeMarkdown(recipe.Name, recipe.Slug, sd, recipe.RecipeLanguageFrameworks)
+	if !strings.Contains(md, "languages: [php]") {
+		t.Errorf("expected languages frontmatter, got:\n%s", md)
+	}
+	if !strings.Contains(md, "frameworks: [laravel]") {
+		t.Errorf("expected frameworks frontmatter, got:\n%s", md)
 	}
 }

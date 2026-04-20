@@ -80,17 +80,28 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 		cleanupImportYAML(stateDir, resp.AutoMounts, engine.Environment() == workflow.EnvContainer)
 	}
 
-	// Append transition message when bootstrap completes (all steps done).
-	if resp.Current == nil {
-		state, stateErr := engine.GetState()
-		if stateErr == nil {
-			resp.Message = workflow.BuildTransitionMessage(state)
-		}
-	}
+	appendTransitionMessage(resp, engine)
 	if needsStacks(resp) {
 		populateStacks(ctx, resp, client, cache)
 	}
 	return jsonResult(resp), nil, nil
+}
+
+// appendTransitionMessage rewrites resp.Message to the rich transition guidance
+// (service list + deploy-model primer + "start the develop workflow" hint) once
+// every bootstrap step is done. Called from both complete and skip paths —
+// the skip path previously returned only "Bootstrap complete. All steps
+// finished." with no next-action, leaving the agent to decide whether to call
+// status (often: it didn't), so any code change went outside a develop session.
+func appendTransitionMessage(resp *workflow.BootstrapResponse, engine *workflow.Engine) {
+	if resp == nil || resp.Current != nil {
+		return
+	}
+	state, stateErr := engine.GetState()
+	if stateErr != nil {
+		return
+	}
+	resp.Message = workflow.BuildTransitionMessage(state)
 }
 
 func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
@@ -113,6 +124,7 @@ func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, client pl
 			fmt.Sprintf("Skip step failed: %v", err),
 			"Only skippable steps (generate, deploy, close) can be skipped")), nil, nil
 	}
+	appendTransitionMessage(resp, engine)
 	if needsStacks(resp) {
 		populateStacks(ctx, resp, client, cache)
 	}

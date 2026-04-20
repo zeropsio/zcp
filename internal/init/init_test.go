@@ -42,6 +42,48 @@ func TestRun_GeneratesCLAUDEMD(t *testing.T) {
 	}
 }
 
+func TestCLAUDEMD_PreservesReflog(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// First run: write the template.
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("first Run() error: %v", err)
+	}
+
+	// Append a REFLOG entry as bootstrap does.
+	path := filepath.Join(dir, "CLAUDE.md")
+	reflog := "\n<!-- ZEROPS:REFLOG -->\n### 2026-04-19 — Bootstrap: test entry\n\n- **Session:** abc123\n<!-- /ZEROPS:REFLOG -->\n"
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatalf("open for append: %v", err)
+	}
+	if _, err := f.WriteString(reflog); err != nil {
+		t.Fatalf("append reflog: %v", err)
+	}
+	f.Close()
+
+	// Second run: re-init. The REFLOG must survive.
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatalf("second Run() error: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read CLAUDE.md: %v", err)
+	}
+	content := string(data)
+	if !strings.Contains(content, "ZEROPS:REFLOG") {
+		t.Error("CLAUDE.md must preserve REFLOG section across re-init")
+	}
+	if !strings.Contains(content, "Session:** abc123") {
+		t.Error("CLAUDE.md must preserve REFLOG entry body across re-init")
+	}
+	if !strings.Contains(content, "# Zerops") {
+		t.Error("CLAUDE.md must still contain template heading after re-init")
+	}
+}
+
 func TestRun_GeneratesMCPConfig(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

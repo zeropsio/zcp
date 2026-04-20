@@ -57,8 +57,17 @@ func TestHandleDevelopBriefing_NoStrategy_DoesNotCreateWorkSession(t *testing.T)
 	}
 
 	text := extractText(result)
-	if !strings.Contains(text, "strategy") {
-		t.Errorf("response should prompt for strategy selection, got: %s", text)
+	// develop-strategy-unset atom must fire in idle phase (see atom
+	// phases: [idle, develop-active]). Without idle the agent loops because
+	// idle-develop-entry tells it to start develop, but start develop skips
+	// session creation and returns idle again — no strategy guidance visible.
+	for _, needle := range []string{
+		"Strategy selection required",
+		`action="strategy"`,
+	} {
+		if !strings.Contains(text, needle) {
+			t.Errorf("response missing %q — atom did not render. Got:\n%s", needle, text)
+		}
 	}
 }
 

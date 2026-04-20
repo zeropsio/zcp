@@ -210,7 +210,10 @@ func adoptUnmanagedServices(ctx context.Context, engine *workflow.Engine, client
 	}
 
 	// Run bootstrap adoption: same engine path as manual bootstrap.
-	if _, err := engine.BootstrapStart(projectID, "Auto-adoption of existing services"); err != nil {
+	// BootstrapStart doesn't take ctx today — route selection is keyword-only
+	// and synchronous. When the recipe corpus gains a network path we'll
+	// thread ctx through; until then, the parent's ctx has no use here.
+	if _, err := engine.BootstrapStart(projectID, "Auto-adoption of existing services"); err != nil { //nolint:contextcheck // intentional: BootstrapStart is synchronous, no I/O to cancel
 		return false
 	}
 

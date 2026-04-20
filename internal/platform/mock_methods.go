@@ -253,6 +253,7 @@ func (m *Mock) ImportServices(_ context.Context, _ string, yamlContent string) (
 }
 
 func (m *Mock) DeleteService(_ context.Context, serviceID string) (*Process, error) {
+	m.trackCall("DeleteService")
 	if err := m.getError("DeleteService"); err != nil {
 		return nil, err
 	}
