@@ -242,6 +242,30 @@ func TouchWorkSession(stateDir string) error {
 	return SaveWorkSession(stateDir, ws)
 }
 
+// HasSuccessfulDeploy reports whether ws recorded at least one deploy
+// attempt with a non-empty SucceededAt. Used by the explicit-close guard
+// (see handleWorkSessionClose) to distinguish sessions that completed code
+// work from sessions that never deployed.
+//
+// Returns false for nil ws or a ws with no deploys map; returns true as
+// soon as one successful deploy is found — does NOT require every service
+// to succeed, because "did the agent deploy at all?" is the question the
+// guard answers. The auto-close heuristic (EvaluateAutoClose) handles the
+// stronger "every service green" case separately.
+func HasSuccessfulDeploy(ws *WorkSession) bool {
+	if ws == nil {
+		return false
+	}
+	for _, attempts := range ws.Deploys {
+		for _, a := range attempts {
+			if a.SucceededAt != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // EvaluateAutoClose returns true when every service in scope has at least one
 // succeeded deploy and at least one passed verify. Empty scope → false.
 func EvaluateAutoClose(ws *WorkSession) bool {

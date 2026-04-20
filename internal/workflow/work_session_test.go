@@ -267,6 +267,73 @@ func TestEvaluateAutoClose(t *testing.T) {
 	}
 }
 
+// TestHasSuccessfulDeploy covers the helper the close guard keys off.
+// Contract: returns true as soon as ONE deploy attempt carries a non-empty
+// SucceededAt — no scope coverage required. Distinct from EvaluateAutoClose
+// which requires every scope service to be deployed AND verified.
+func TestHasSuccessfulDeploy(t *testing.T) {
+	tests := []struct {
+		name string
+		ws   *WorkSession
+		want bool
+	}{
+		{"nil", nil, false},
+		{"empty", &WorkSession{}, false},
+		{
+			"deploys map with no attempts",
+			&WorkSession{Deploys: map[string][]DeployAttempt{"web": {}}},
+			false,
+		},
+		{
+			"attempt with empty SucceededAt",
+			&WorkSession{
+				Deploys: map[string][]DeployAttempt{
+					"web": {{AttemptedAt: "t", Error: "boom"}},
+				},
+			},
+			false,
+		},
+		{
+			"one successful deploy",
+			&WorkSession{
+				Deploys: map[string][]DeployAttempt{
+					"web": {{AttemptedAt: "t", SucceededAt: "t"}},
+				},
+			},
+			true,
+		},
+		{
+			"mixed — at least one succeeded is enough",
+			&WorkSession{
+				Deploys: map[string][]DeployAttempt{
+					"web": {{AttemptedAt: "t", Error: "fail"}},
+					"api": {{AttemptedAt: "t", SucceededAt: "t"}},
+				},
+			},
+			true,
+		},
+		{
+			"failed followed by success (latest succeeded)",
+			&WorkSession{
+				Deploys: map[string][]DeployAttempt{
+					"web": {
+						{AttemptedAt: "t1", Error: "first failed"},
+						{AttemptedAt: "t2", SucceededAt: "t2"},
+					},
+				},
+			},
+			true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := HasSuccessfulDeploy(tt.ws); got != tt.want {
+				t.Errorf("HasSuccessfulDeploy = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRecordDeployAttempt_TriggersAutoClose(t *testing.T) {
 	dir := t.TempDir()
 	ws := NewWorkSession("p", "container", "test", []string{"web"})

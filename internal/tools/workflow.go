@@ -60,6 +60,15 @@ type WorkflowInput struct {
 	// import.yaml files. Replaces the v5 anti-pattern of hand-editing generated
 	// files (which were re-wiped on every generate-finalize re-run).
 	ProjectEnvVariables map[string]map[string]string `json:"projectEnvVariables,omitempty" jsonschema:"Recipe generate-finalize only: per-env project-level envVariables for all 6 import.yaml files. Keyed by env index as string ('0'..'5'). Each env value is a flat {name: value} map baked into that env's project.envVariables block. Values may contain ${zeropsSubdomainHost} — the platform preprocessor resolves it at project import time. Different envs typically carry different shapes: envs 0-1 (dev/stage pair) carry DEV_* and STAGE_* URL constants derived from apidev/appdev/apistage/appstage hostnames; envs 2-5 (single-slot) carry STAGE_* only with hostnames api/app. Merge semantics: a non-empty map for an env REPLACES that env's prior map (atomic); an empty map CLEARS; omitting an env leaves it untouched. Refine one env at a time by passing only that env's key."`
+
+	// Force bypasses the close-without-deploy guard on action="close"
+	// workflow="develop". Default false — close refuses when the work
+	// session has no successful deploy recorded (catches accidental close
+	// after "I changed code but forgot to deploy"). Set force=true for
+	// investigations, env-only changes, and abandoned sessions. FlexBool
+	// per project convention — LLM agents sometimes serialize booleans as
+	// strings, which the default schema rejects with a non-actionable error.
+	Force FlexBool `json:"force,omitempty"`
 }
 
 // immediateResponse is returned from immediate (stateless) workflows.
@@ -434,9 +443,17 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 	})), nil, nil
 }
 
-// handleWorkSessionClose closes the current-PID work session. If no session
-// exists we accept the close as a no-op success — the tool call is
-// idempotent and the LLM may retry after context compaction.
+// handleWorkSessionClose closes the current-PID work session. When the
+// session recorded no successful deploy and `force=true` was NOT passed, the
+// call returns ErrCloseBlocked without deleting — catching accidental close
+// after "I changed code but forgot to deploy". `force=true` is the explicit
+// opt-out for investigations, env-only changes, and abandoned sessions.
+//
+// Idempotent in both directions: no session present → success no-op (LLM
+// may retry after compaction); auto-closed session with ClosedAt set →
+// treated as already-successful and proceeds with delete regardless of
+// deploy history, because auto-close already validated the full-green
+// condition (deploy ok AND verify ok for every service in scope).
 func handleWorkSessionClose(engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if input.Workflow != "" && input.Workflow != workflowDevelop {
 		return convertError(platform.NewPlatformError(
@@ -445,7 +462,22 @@ func handleWorkSessionClose(engine *workflow.Engine, input WorkflowInput) (*mcp.
 			"")), nil, nil
 	}
 	pid := os.Getpid()
-	_ = workflow.DeleteWorkSession(engine.StateDir(), pid)
-	_ = workflow.UnregisterSession(engine.StateDir(), workflow.WorkSessionID(pid))
+	stateDir := engine.StateDir()
+
+	ws, _ := workflow.CurrentWorkSession(stateDir)
+	// Session missing entirely → no-op success (LLM may retry after
+	// compaction). Auto-closed session (ClosedAt set) already satisfied the
+	// full-green heuristic, so the guard does not apply — fall through.
+	if ws != nil && ws.ClosedAt == "" && !input.Force.Bool() && !workflow.HasSuccessfulDeploy(ws) {
+		return convertError(platform.NewPlatformError(
+			platform.ErrCloseBlocked,
+			"Work session has no successful deploy recorded — refusing to close.",
+			"If you made code changes, deploy via the active strategy and verify first. "+
+				"For investigations, env-only tweaks, or abandoned tasks, re-run close with force=true.",
+		)), nil, nil
+	}
+
+	_ = workflow.DeleteWorkSession(stateDir, pid)
+	_ = workflow.UnregisterSession(stateDir, workflow.WorkSessionID(pid))
 	return textResult("Work session closed. Start the next task: zerops_workflow action=\"start\" workflow=\"develop\" intent=\"...\""), nil, nil
 }
