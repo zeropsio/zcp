@@ -126,3 +126,57 @@ pristine regression floor.
 ### Q1 honored
 
 Top-level `plan.SymbolContract` (not `plan.Research.SymbolContract`). Derivation is idempotent — the same plan always yields byte-identical JSON (test `TestBuildSymbolContract_IdempotentJSON`).
+
+---
+
+## C-2 — FactRecord.RouteTo + routing enum
+
+**Status**: green
+
+### What landed
+
+- `internal/ops/facts_log.go` (+56 LoC):
+  - 9 `FactRouteTo*` enum constants (`content_gotcha`, `content_intro`, `content_ig`, `content_env_comment`, `claude_md`, `zerops_yaml_comment`, `scaffold_preamble`, `feature_preamble`, `discarded`)
+  - `knownRouteTos` validation map (empty string accepted as legacy default)
+  - `FactRecord.RouteTo string \`json:"routeTo,omitempty"\``
+  - AppendFact enum check (rejects typos with enumerated valid values in error)
+  - `IsKnownFactRouteTo(s string) bool` exported helper for downstream consumers (C-8 manifest-honesty)
+- `internal/ops/facts_log_test.go` (+160 LoC):
+  - `TestFactsLog_AllRouteTosAccepted` — all 10 valid values round-trip
+  - `TestFactsLog_RejectsUnknownRouteTo` — typo rejected with enumerated valids
+  - `TestFactsLog_RouteToRoundTrip` — marshal/unmarshal preserves RouteTo + Scope together
+  - `TestFactsLog_LegacyRecordWithoutRouteTo` — pre-C-2 records deserialize cleanly (zero-value → "not yet routed")
+  - `TestIsKnownFactRouteTo_Exported` — helper semantics documented for C-8 consumer
+
+### Content manifest schema
+
+`internal/tools/workflow_checks_content_manifest.go` already declares `routed_to` on `contentManifestFact` as a free-form string — the wire contract has carried the field since v8.86. C-2 adds the enum taxonomy at the FactRecord side; C-8 will wire the taxonomy into gate-level honesty checking (`writer_manifest_honesty` expansion across all routing dimensions).
+
+Legacy manifests without the field deserialize to empty RoutedTo — treated by C-8 logic as "unclassified" per the same semantics as empty `FactRecord.RouteTo`.
+
+### Verification
+
+- `go test ./internal/ops/... -count=1 -run 'TestFactsLog_|TestIsKnownFactRouteTo'` — 12 tests green (5 new + 7 existing scope/type tests)
+- `go test ./... -count=1` — full suite green (19 packages)
+- `make lint-local` — 0 issues
+
+### LoC delta
+
+- Go source: +56 LoC (facts_log.go)
+- Tests: +160 LoC (facts_log_test.go)
+- Total: ~+216 LoC (plan target: +190; within bounds)
+
+### Breaks-alone consequence
+
+Nothing. Additive:
+- `RouteTo` is optional on both ends (empty string accepted).
+- No code reads `RouteTo` yet — C-5 writer dispatch will compose the expected routing per surface; C-8 manifest-honesty will iterate all `(routed_to, surface)` pairs.
+- Existing jsonl files round-trip unchanged (verified by `TestFactsLog_LegacyRecordWithoutRouteTo`).
+
+### Ordering deps verified
+
+C-0 (baseline). C-1 not strictly required but co-authored in the same phase.
+
+### Q2 preparation
+
+`IsKnownFactRouteTo` is the exported entry point C-8 will use at both trigger points (primary at `deploy.readmes` complete, secondary at `close.code-review` complete per Q2).
