@@ -137,6 +137,16 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp kn
 			checks = append(checks, checkRecipeGenerateCodebase(projectRoot, workerTarget, plan, validFields, true)...)
 		}
 
+		// C-6: symbol-contract env-var consistency. Recipe-wide cross-
+		// codebase diff against plan.SymbolContract.EnvVarsByKind. Closes
+		// the v34 DB_PASS vs DB_PASSWORD class per principle P3. Fires at
+		// generate-complete (here) AND at deploy-complete (in
+		// checkRecipeDeployReadmes) — check-rewrite.md §16 adds it at two
+		// trigger points because the v34 class surfaced both at initial
+		// scaffold and after later inline edits that re-introduced the
+		// divergence.
+		checks = append(checks, checkSymbolContractEnvVarConsistency(projectRoot, plan.SymbolContract)...)
+
 		// v8.97 Fix 4: stamp surface-derived coupling hints on every
 		// failed check with a populated ReadSurface before computing the
 		// pass status. Coupling is derived from shared ReadSurface, not
@@ -246,6 +256,11 @@ func checkRecipeGenerateCodebase(projectRoot string, target workflow.RecipeTarge
 	}
 	checks = append(checks, checkScaffoldArtifactLeak(ymlDir, doc, string(rawYAMLData), hostname)...)
 
+	// C-6: visual-style ASCII-only check. Reads {hostname}dev/zerops.yaml
+	// and fails on Unicode Box Drawing codepoints (U+2500..U+257F). Closes
+	// the v33 class per principle P8 — visual separators are ASCII-only.
+	checks = append(checks, checkVisualStyleASCIIOnly(ymlDir, hostname)...)
+
 	return checks
 }
 
@@ -343,6 +358,20 @@ func checkRecipeDeployReadmes(stateDir string, kp knowledge.Provider, factsLogPa
 			factsLogPath = factsLogPathFn()
 		}
 		checks = append(checks, checkWriterContentManifest(projectRoot, readmesByHost, factsLogPath)...)
+
+		// C-6: manifest_route_to_populated. Every manifest entry must carry
+		// a non-empty routed_to matching the FactRouteTo* enum. Closes
+		// v34's DB_PASS class where claude_md-routed facts leaked into the
+		// published gotcha list because the drift was visible in the
+		// manifest but nothing gated on it. Principle P5.
+		checks = append(checks, checkManifestRouteToPopulated(filepath.Join(projectRoot, manifestFileName))...)
+
+		// C-6: symbol-contract env-var consistency at deploy.readmes.
+		// Second firing point per check-rewrite.md §16 — the first is at
+		// generate-complete in checkRecipeGenerate. After inline edits
+		// during deploy rounds may re-introduce cross-scaffold env-var
+		// divergence that the initial scaffold got right.
+		checks = append(checks, checkSymbolContractEnvVarConsistency(projectRoot, plan.SymbolContract)...)
 
 		// v8.97 Fix 4: stamp surface-derived coupling hints.
 		checks = workflow.StampCoupling(checks)

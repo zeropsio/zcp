@@ -489,3 +489,146 @@ Every atom's Path in the manifest is a filesystem claim. C-4 must:
 3. Not create orphan files under `recipe/` (every file on disk must be claimed by the manifest — enforced by C-13 build lint)
 
 Given the 120-file scope, C-4 will dispatch parallel subagents per directory group (phases/research+provision, phases/generate, phases/deploy, phases/finalize+close, briefs/scaffold, briefs/feature, briefs/writer, briefs/code-review, briefs/editorial-review, principles/). Each subagent receives the atomic-layout.md block-to-atom mapping for its directory plus the step-4 composed-brief goldens as truth reference.
+
+---
+
+## C-6 — 5 new architecture-level checks
+
+**Status**: green
+
+### What landed
+
+Five new check predicate files under `internal/tools/` (each with a paired
+seed-pattern table-driven test file), plus wire-up into the existing
+recipe step checkers. All predicates are pure Go — no CLI shim surface
+(that lands in C-7). Every predicate emits the `{prefix}_check_name`
+pattern (where `prefix` is host-scoped or recipe-wide per the check's
+domain).
+
+| File | LoC | Check name emitted | Principle |
+|---|---:|---|---|
+| [workflow_checks_symbol_contract.go](../../internal/tools/workflow_checks_symbol_contract.go) | 263 | `symbol_contract_env_var_consistency` | P3 |
+| [workflow_checks_visual_style.go](../../internal/tools/workflow_checks_visual_style.go) | 91 | `{host}_visual_style_ascii_only` | P8 |
+| [workflow_checks_canonical_output_tree.go](../../internal/tools/workflow_checks_canonical_output_tree.go) | 96 | `canonical_output_tree_only` | P8 |
+| [workflow_checks_manifest_route_to.go](../../internal/tools/workflow_checks_manifest_route_to.go) | 85 | `manifest_route_to_populated` | P5 |
+| [workflow_checks_no_version_anchors_in_published.go](../../internal/tools/workflow_checks_no_version_anchors_in_published.go) | 114 | `no_version_anchors_in_published_content` | P6 |
+
+Paired test files (`*_test.go`) total **739 LoC** across the five checks
+(~148 LoC/check average). Every test file follows the CLAUDE.md seed
+pattern — table-driven + `t.Parallel()` + `findCheckByName` + domain
+helpers (e.g. `writeYAMLBytes`, `writePublished`, `writeCodebaseFiles`).
+
+### Wire-up (checker dispatch per check-rewrite.md §16)
+
+| Check | Trigger | Wire site | Ambiguity resolution |
+|---|---|---|---|
+| `symbol_contract_env_var_consistency` | generate-complete + deploy.readmes | `checkRecipeGenerate` + `checkRecipeDeployReadmes` | spec §16 said "generate-complete + deploy.start-processes"; no substep-level check battery exists; deploy.readmes (the last substep, hence deploy-step-complete) is the nearest firing point after start-processes completes — matches rollout-sequence.md C-6 language |
+| `visual_style_ascii_only` | generate-complete | `checkRecipeGenerateCodebase` (per-codebase) | spec §16 unambiguous |
+| `canonical_output_tree_only` | close-entry | `checkRecipeFinalize` | close step has no checker (administrative trigger); finalize-complete runs immediately before close-entry, the semantically-equivalent firing point. A dedicated close-entry hook is out of C-6 scope |
+| `manifest_route_to_populated` | deploy.readmes | `checkRecipeDeployReadmes` | spec §16 unambiguous |
+| `no_version_anchors_in_published_content` | finalize-complete | `checkRecipeFinalize` | spec §16 unambiguous |
+
+### Predicate design notes
+
+- **symbol-contract** — derives a sibling→canonical env-var map from
+  `plan.SymbolContract.EnvVarsByKind` + a hand-seeded `siblingSuffixes`
+  table (PASS↔PASSWORD, USER↔USERNAME, HOST↔HOSTNAME, apiUrl↔API_URL,
+  DBNAME↔DATABASE). Scans `{host}dev/src/**`, `.env.example`,
+  `zerops.yaml` per codebase for non-canonical sibling references. v34
+  regression surface: DB_PASS vs DB_PASSWORD.
+- **visual-style** — reads `{ymlDir}/zerops.yaml` (fallback `.yml`),
+  scans every rune for U+2500..U+257F (Box Drawing block). Lists distinct
+  codepoints + line numbers on failure. Missing file = graceful pass
+  (the `_zerops_yml_exists` floor is the upstream concern).
+- **canonical-output-tree** — WalkDir depth ≤ 2 under the recipe project
+  root, fails on any directory whose basename starts with `recipe-`.
+  Accepts legitimate nested `recipe-*` at depth ≥ 3 (npm package naming
+  like `@pkg/recipe-helper`). Missing root = graceful pass.
+- **manifest-route-to-populated** — parses `ZCP_CONTENT_MANIFEST.json`,
+  fails on any entry with empty `routed_to` OR off-enum value. Upstream
+  concerns (file missing, invalid JSON) are graceful passes because the
+  C-5 content-manifest battery already reports those on the same surface
+  — avoids pile-on multi-fails on one root cause.
+- **no-version-anchors** — glob-scans `{host}/README.md`, `{host}/CLAUDE.md`,
+  `environments/*/README.md` for `\bv\d+(\.\d+)*\b` tokens. Surfaces
+  first 10 hits in Detail (`+N more` suffix). v33 class: leakage of
+  internal recipe version anchors (v33, v34, v8.86) into porter-facing
+  content.
+
+### Verification
+
+- `go test ./internal/tools/... -count=1` — all 13 new test functions
+  (5 table-driven parents with a combined 27 sub-cases + 8 focused
+  single-scenario tests) pass; existing tools tests stay green.
+- `go test ./... -count=1` — full suite green across all 19 packages.
+- `make lint-local` — 0 issues (after applying `gofmt`, renaming
+  `checkVisualStyleAsciiOnly` → `checkVisualStyleASCIIOnly` per `revive`
+  initialism rule, and annotating three intentional-nil-err returns
+  inside `filepath.WalkDir` closures with `//nolint:nilerr` + rationale
+  comments).
+
+### LoC delta
+
+- Predicate source: +649 LoC (5 files)
+- Tests: +739 LoC (5 files)
+- Wire-up: +42 LoC across `workflow_checks_recipe.go` +
+  `workflow_checks_finalize.go`
+- Notes: +85 LoC
+- **Total**: ~+1,515 LoC (handoff estimate was +980 LoC — over by ~55%,
+  driven by the symbol-contract predicate's sibling-map + scan-scope
+  machinery growing larger than the spec's "grep env-var tokens"
+  shorthand suggested, plus generous structured-fail Detail messages that
+  name the v-version class directly for author guidance).
+
+### Breaks-alone consequence
+
+New gates fire. Zero regression against prior runs:
+
+- All five predicates return a **pass** check when the positive-allow-list
+  surfaces are clean — a v34-style mount that already uses DB_PASSWORD
+  consistently keeps passing.
+- Upstream/structural failures (missing yaml file, missing project root,
+  invalid manifest JSON) return graceful **pass** so this C-6 layer never
+  piles multiple fails onto the same root cause already reported by
+  existing C-5 or earlier checks.
+- Detail messages directly name the v-class origin (v33 phantom tree,
+  v33 Unicode box-drawing, v33 version anchors, v34 DB_PASS, v34 manifest
+  inconsistency) so a v35 regression at any of these surfaces surfaces
+  with the v34 verdict context inline.
+
+### Ordering deps verified
+
+- C-1 (SymbolContract plan field + EnvVarsByKind) ✓ — required for the
+  symbol-contract check's canonical-set derivation.
+- C-2 (FactRecord.RouteTo enum + `ops.IsKnownFactRouteTo`) ✓ — required
+  for the manifest-route-to-populated check's enum validation.
+- C-5 foundation (atom loader + stitchers) ✓ — not a direct dep, but C-5
+  populates `plan.SymbolContract` at research-complete which is what C-6's
+  symbol-contract check reads.
+
+### Known deferred / out-of-scope
+
+- **close-entry hook**. Per check-rewrite.md §16, `canonical_output_tree_only`
+  is meant to fire at close-entry. The close step currently has no
+  checker (administrative trigger); C-6 lands it at finalize-complete,
+  which is the semantically-adjacent firing point. A dedicated close-entry
+  hook would require substep-level check-dispatch infrastructure — out
+  of C-6 scope. Documented here for C-15's post-refactor review.
+- **deploy.start-processes substep hook**. Per spec §16,
+  `symbol_contract_env_var_consistency` fires at both generate-complete
+  AND deploy.start-processes. No substep-level check battery exists; C-6
+  fires the second copy at deploy-complete (via
+  `checkRecipeDeployReadmes` — deploy.readmes is the last substep). This
+  matches rollout-sequence.md C-6's summary text. Effect: divergence
+  re-introduced by mid-deploy inline edits is still caught (at
+  deploy-complete) rather than strictly at deploy.start-processes entry.
+- **CLI shim surface** (`zcp check <name>`). Deferred to C-7 per rollout
+  sequence — C-6 provides the predicate implementations as the shared
+  substrate C-7's shim tree will wrap.
+
+### Pre-C-7 gate preparation
+
+Not a gated commit. Next: C-7 (~2 hours with 4-way subagent split on the
+16 check rewrites per rollout-sequence.md §Parallelization). The next
+user-review gate is **pre-C-7.5** (editorial-review role introduction) —
+stop there and report composed briefs against step-4 goldens.

@@ -54,6 +54,19 @@ func checkRecipeFinalize(outputDir string) workflow.RecipeStepChecker {
 		// would otherwise reach the published recipe.
 		checks = append(checks, checkAppREADMENoScaffoldTODOs(dir)...)
 
+		// C-6: canonical output tree only (P8). check-rewrite.md §16 places
+		// this at close-entry; the close step currently has no checker
+		// (administrative trigger), so it fires here at finalize-complete —
+		// immediately before close-step entry, which is the semantically
+		// identical firing point. Closes v33 phantom-tree class via the
+		// positive allow-list on per-hostname mounts.
+		checks = append(checks, checkCanonicalOutputTreeOnly(dir)...)
+
+		// C-6: no version anchors in published porter-facing content (P6).
+		// Scans each per-codebase README / CLAUDE.md / environments/*/README.md
+		// for `v\d+(\.\d+)*` tokens. Closes v33 version-log leakage class.
+		checks = append(checks, checkNoVersionAnchorsInPublishedContent(dir)...)
+
 		// v8.97 Fix 4: stamp surface-derived coupling hints.
 		checks = workflow.StampCoupling(checks)
 		allPassed := checksAllPassed(checks)
