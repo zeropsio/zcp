@@ -1,0 +1,16 @@
+#yamlPreprocessor=on
+
+# Managed-only fixture: a PostgreSQL database already exists in the project
+# (as if spun up by a previous "just a DB for testing" session). No runtime
+# services. Paired with bootstrap-recipe-collision to exercise the LLM's
+# handling of a recipe whose canonical YAML would import a second `db`
+# hostname — the agent must notice the collision annotation in the discovery
+# routeOptions and choose a non-colliding path.
+
+services:
+  - hostname: db
+    type: postgresql@18
+    priority: 10
+    mode: NON_HA
+    verticalAutoscaling:
+      minRam: 0.25

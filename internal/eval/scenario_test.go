@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -140,5 +141,37 @@ func TestParseScenario_FollowUp_Parsed(t *testing.T) {
 	}
 	if sc.FollowUp[0] != "Why did you choose that approach?" {
 		t.Errorf("followUp[0]: got %q", sc.FollowUp[0])
+	}
+}
+
+// TestParseScenario_PreseedScript covers the state-detection scenarios that
+// need local state pre-populated after init wipes the workdir. The frontmatter
+// field resolves relative to the scenario file so authors don't have to
+// duplicate path prefixes.
+func TestParseScenario_PreseedScript(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	scPath := filepath.Join(dir, "scenario.md")
+	content := `---
+id: preseed-test
+description: preseed frontmatter check
+seed: empty
+preseedScript: scripts/seed-state.sh
+expect:
+  mustCallTools:
+    - zerops_workflow
+---
+
+Run the thing.
+`
+	if err := os.WriteFile(scPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write scenario: %v", err)
+	}
+	sc, err := ParseScenario(scPath)
+	if err != nil {
+		t.Fatalf("ParseScenario: %v", err)
+	}
+	if sc.PreseedScript != "scripts/seed-state.sh" {
+		t.Errorf("PreseedScript: got %q, want scripts/seed-state.sh", sc.PreseedScript)
 	}
 }

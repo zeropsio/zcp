@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -59,6 +60,18 @@ func (r *Runner) RunScenario(ctx context.Context, scenarioPath, suiteID string) 
 	// REFLOG / service references from a previous run.
 	if err := initcmd.Run(r.config.WorkDir, runtime.Detect()); err != nil {
 		result.Error = fmt.Sprintf("init: %v", err)
+		result.Duration = Duration(time.Since(startedAt))
+		writeScenarioResult(outDir, result)
+		return result, nil
+	}
+
+	// Scenarios that test state DETECTION (incomplete bootstrap, bootstrapped
+	// but not-yet-deployed, orphaned metas, etc.) need local state pre-populated
+	// AFTER init wipes the workdir. The preseed script runs with CWD = WorkDir
+	// and receives the scenario ID + suite ID in env so it can write
+	// deterministic state files.
+	if err := r.runPreseedScript(ctx, sc, suiteID); err != nil {
+		result.Error = fmt.Sprintf("preseed: %v", err)
 		result.Duration = Duration(time.Since(startedAt))
 		writeScenarioResult(outDir, result)
 		return result, nil
@@ -145,6 +158,36 @@ func (r *Runner) seedScenario(ctx context.Context, sc *Scenario, suiteID string)
 	default:
 		return fmt.Errorf("unknown seed mode %q", sc.Seed)
 	}
+}
+
+// runPreseedScript executes the scenario's PreseedScript, if any, with CWD set
+// to the eval workdir. The script receives ZCP_SCENARIO_ID, ZCP_SUITE_ID, and
+// ZCP_WORK_DIR in env so it can write state files deterministically without
+// hardcoding paths. No-op when PreseedScript is empty — most scenarios don't
+// need any pre-population beyond what SeedImported / SeedDeployed provides.
+func (r *Runner) runPreseedScript(ctx context.Context, sc *Scenario, suiteID string) error {
+	if sc.PreseedScript == "" {
+		return nil
+	}
+	path := sc.PreseedScript
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(filepath.Dir(sc.SourcePath), path)
+	}
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("preseed script %q: %w", path, err)
+	}
+	cmd := exec.CommandContext(ctx, "bash", path)
+	cmd.Dir = r.config.WorkDir
+	cmd.Env = append(os.Environ(),
+		"ZCP_SCENARIO_ID="+sc.ID,
+		"ZCP_SUITE_ID="+suiteID,
+		"ZCP_WORK_DIR="+r.config.WorkDir,
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("preseed script: %w\n--- output ---\n%s", err, string(out))
+	}
+	return nil
 }
 
 // resolveFixturePath resolves fixture path relative to the scenario source.

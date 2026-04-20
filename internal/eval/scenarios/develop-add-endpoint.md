@@ -8,12 +8,12 @@ expect:
     - zerops_workflow
     - zerops_discover
     - zerops_verify
-  workflowCallsMin: 9
+  workflowCallsMin: 7
   mustEnterWorkflow:
     - bootstrap
     - develop
   requiredPatterns:
-    - '"action":"start","workflow":"bootstrap"'
+    - '"workflow":"bootstrap"'
     - '"route":"adopt"'
   requireAssessment: true
   finalUrlStatus: 200

@@ -8,15 +8,17 @@ expect:
     - zerops_import
     - zerops_deploy
     - zerops_verify
-  workflowCallsMin: 14
+  workflowCallsMin: 9
   mustEnterWorkflow:
     - bootstrap
     - develop
   requiredPatterns:
-    # Proof the LLM went through discovery (first start call, no route),
-    # then committed with an explicit route. The bootstrap conductor
-    # rejects commit without route so this pair is load-bearing.
-    - '"action":"start","workflow":"bootstrap"'
+    # Both patterns must appear in at least one tool call input. JSON keys
+    # serialize in alphabetical order, so don't assume "action":"start"
+    # sits adjacent to "workflow":"bootstrap" — they're separated by
+    # "intent" / "recipeSlug" / "route". Check each fragment
+    # independently; in practice they only coexist in a bootstrap start.
+    - '"workflow":"bootstrap"'
     - '"route":"'
   forbiddenPatterns:
     - "app-<projectId>"

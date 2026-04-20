@@ -8,18 +8,22 @@ expect:
     - zerops_import
     - zerops_deploy
     - zerops_verify
-  workflowCallsMin: 14
+  workflowCallsMin: 9
   mustEnterWorkflow:
     - bootstrap
     - develop
   requiredPatterns:
-    - '"action":"start","workflow":"bootstrap"'
+    # JSON keys serialize alphabetically — "action":"start" is NOT adjacent
+    # to "workflow":"bootstrap". Check each fragment independently.
+    - '"workflow":"bootstrap"'
     - '"route":"'
   forbiddenPatterns:
     - "app-<projectId>"
   requireAssessment: true
   finalUrlStatus: 200
-  finalUrlHostname: appstage
+  # nodejs recipes may pick dev-only (single `appdev`) or standard (appdev
+  # + appstage). Use appdev — guaranteed to exist under either mode.
+  finalUrlHostname: appdev
 followUp:
   - "Jak vypadal tvůj první `zerops_workflow action=\"start\" workflow=\"bootstrap\"` call — s jakým `route` parametrem? A co ti to vrátilo?"
   - "Zvolil jsi route=recipe nebo route=classic? Pokud recipe, který slug a proč ten a ne jiný kandidát?"

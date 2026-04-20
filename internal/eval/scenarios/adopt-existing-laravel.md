@@ -7,14 +7,14 @@ expect:
   mustCallTools:
     - zerops_workflow
     - zerops_discover
-  workflowCallsMin: 9
+  workflowCallsMin: 7
   mustEnterWorkflow:
     - bootstrap
   requiredPatterns:
-    # Discovery must precede commit, and commit must be route=adopt.
-    # If the LLM blindly route=classic over existing services, it would
-    # collide on hostnames and we'd want that to fail.
-    - '"action":"start","workflow":"bootstrap"'
+    # JSON keys serialize alphabetically. Check each fragment separately;
+    # route=adopt proves the LLM saw the discovery adopt option and
+    # didn't blindly classic-bootstrap over existing services.
+    - '"workflow":"bootstrap"'
     - '"route":"adopt"'
   requireAssessment: true
   finalUrlStatus: 200

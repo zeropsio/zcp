@@ -20,14 +20,15 @@ const (
 // Scenario is one runnable eval scenario parsed from a markdown file with
 // YAML frontmatter.
 type Scenario struct {
-	ID          string
-	Description string
-	Seed        SeedMode
-	Fixture     string
-	Expect      Expectation
-	FollowUp    []string
-	Prompt      string
-	SourcePath  string
+	ID            string
+	Description   string
+	Seed          SeedMode
+	Fixture       string
+	PreseedScript string
+	Expect        Expectation
+	FollowUp      []string
+	Prompt        string
+	SourcePath    string
 }
 
 // Expectation captures assertions the grader runs against the agent's output.
@@ -45,12 +46,13 @@ type Expectation struct {
 }
 
 type scenarioFrontmatter struct {
-	ID          string      `yaml:"id"`
-	Description string      `yaml:"description"`
-	Seed        string      `yaml:"seed"`
-	Fixture     string      `yaml:"fixture"`
-	Expect      Expectation `yaml:"expect"`
-	FollowUp    []string    `yaml:"followUp"`
+	ID            string      `yaml:"id"`
+	Description   string      `yaml:"description"`
+	Seed          string      `yaml:"seed"`
+	Fixture       string      `yaml:"fixture"`
+	PreseedScript string      `yaml:"preseedScript"`
+	Expect        Expectation `yaml:"expect"`
+	FollowUp      []string    `yaml:"followUp"`
 }
 
 // ParseScenario reads a scenario markdown file and returns the parsed structure.
@@ -73,14 +75,15 @@ func ParseScenario(path string) (*Scenario, error) {
 	}
 
 	sc := &Scenario{
-		ID:          fm.ID,
-		Description: fm.Description,
-		Seed:        SeedMode(fm.Seed),
-		Fixture:     fm.Fixture,
-		Expect:      fm.Expect,
-		FollowUp:    fm.FollowUp,
-		Prompt:      strings.TrimSpace(body),
-		SourcePath:  path,
+		ID:            fm.ID,
+		Description:   fm.Description,
+		Seed:          SeedMode(fm.Seed),
+		Fixture:       fm.Fixture,
+		PreseedScript: fm.PreseedScript,
+		Expect:        fm.Expect,
+		FollowUp:      fm.FollowUp,
+		Prompt:        strings.TrimSpace(body),
+		SourcePath:    path,
 	}
 
 	if err := sc.validate(); err != nil {
