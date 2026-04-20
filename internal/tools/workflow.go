@@ -443,17 +443,11 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 	})), nil, nil
 }
 
-// handleWorkSessionClose closes the current-PID work session. When the
-// session recorded no successful deploy and `force=true` was NOT passed, the
-// call returns ErrCloseBlocked without deleting — catching accidental close
-// after "I changed code but forgot to deploy". `force=true` is the explicit
-// opt-out for investigations, env-only changes, and abandoned sessions.
-//
-// Idempotent in both directions: no session present → success no-op (LLM
-// may retry after compaction); auto-closed session with ClosedAt set →
-// treated as already-successful and proceeds with delete regardless of
-// deploy history, because auto-close already validated the full-green
-// condition (deploy ok AND verify ok for every service in scope).
+// handleWorkSessionClose closes the current-PID work session. Refuses with
+// ErrCloseBlocked when the session recorded no successful deploy unless
+// force=true — catches accidental close after "edited code but forgot to
+// deploy". Auto-closed sessions (ClosedAt set) bypass the guard because
+// the auto-close heuristic already validated the green condition.
 func handleWorkSessionClose(engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if input.Workflow != "" && input.Workflow != workflowDevelop {
 		return convertError(platform.NewPlatformError(

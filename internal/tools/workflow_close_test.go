@@ -15,7 +15,6 @@
 package tools
 
 import (
-	"context"
 	"os"
 	"strings"
 	"testing"
@@ -251,5 +250,4 @@ func TestHandleWorkSessionClose_IgnoresUnrelatedInputFields(t *testing.T) {
 	if result.IsError {
 		t.Fatalf("close should ignore unrelated fields, got:\n%s", extractText(result))
 	}
-	_ = context.Background()
 }

@@ -59,10 +59,12 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 			BootstrappedAt:   now,
 		}
 
-		// Expansion merge: existing complete meta + IsExisting target →
-		// preserve user-authored fields instead of zeroing them.
-		if existing, _ := ReadServiceMeta(e.stateDir, metaHostname); existing != nil && existing.IsComplete() && target.Runtime.IsExisting {
-			mergeExistingMeta(meta, existing)
+		// Expansion merge: gate the disk read behind IsExisting so fresh
+		// bootstraps don't pay a ReadServiceMeta for every target.
+		if target.Runtime.IsExisting {
+			if existing, _ := ReadServiceMeta(e.stateDir, metaHostname); existing != nil && existing.IsComplete() {
+				mergeExistingMeta(meta, existing)
+			}
 		}
 
 		if err := WriteServiceMeta(e.stateDir, meta); err != nil {
@@ -112,8 +114,10 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 			BootstrapSession: bootstrapSession,
 		}
 
-		if existing, _ := ReadServiceMeta(e.stateDir, metaHostname); existing != nil && existing.IsComplete() && target.Runtime.IsExisting {
-			mergeExistingMeta(meta, existing)
+		if target.Runtime.IsExisting {
+			if existing, _ := ReadServiceMeta(e.stateDir, metaHostname); existing != nil && existing.IsComplete() {
+				mergeExistingMeta(meta, existing)
+			}
 		}
 
 		if err := WriteServiceMeta(e.stateDir, meta); err != nil {
@@ -122,25 +126,11 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 	}
 }
 
-// mergeExistingMeta copies user-authored fields from an existing complete
-// meta into the about-to-be-written meta. Used by the mode-expansion path
-// so a dev → standard upgrade preserves the user's deploy strategy, the
-// original bootstrap date, and the first-deploy timestamp rather than
-// overwriting them with zero values or a new-bootstrap date.
-//
-// Fields preserved:
-//   - BootstrappedAt: original bootstrap moment ("when did ZCP first own
-//     this service"). The mode upgrade is a continuation, not a re-bootstrap.
-//   - DeployStrategy + StrategyConfirmed: the agent's explicit choice. A
-//     mode upgrade should not silently revert a user's push-git preference
-//     to empty (which the develop briefing would then treat as "strategy
-//     unset, prompt again").
-//   - FirstDeployedAt: the recorded first successful deploy on the dev
-//     half. The new stage half starts its deploy history from scratch.
-//
-// Fields NOT preserved (the upgrade's contribution): Mode (dev → standard),
-// StageHostname (empty → new stage), Hostname (stays the same, but written
-// explicitly so the merge never accidentally loses it).
+// mergeExistingMeta preserves user-authored fields (BootstrappedAt,
+// DeployStrategy, StrategyConfirmed, FirstDeployedAt) on meta during a
+// mode-expansion write so a dev→standard upgrade doesn't silently clear
+// the user's strategy choice. Mode and StageHostname come from the plan
+// and are left untouched.
 func mergeExistingMeta(meta, existing *ServiceMeta) {
 	meta.BootstrappedAt = existing.BootstrappedAt
 	meta.DeployStrategy = existing.DeployStrategy

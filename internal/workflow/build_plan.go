@@ -16,7 +16,7 @@ package workflow
 //  9. idle, only unmanaged services            → adopt-via-develop
 //
 // Note: "last attempt failed" doesn't get its own branch — branches 2 and 3
-// already match those cases. firstServiceNeedingDeploy/Verify both key off
+// already match those cases. needsDeploy/needsVerify both key off
 // `!attempts[last].Success`, so a failed service gets a deploy or verify
 // action pointed at it. The atom layer (develop-checklist + iteration-delta)
 // surfaces the diagnosis guidance.
@@ -62,24 +62,25 @@ func planDevelopClosed() Plan {
 }
 
 // planDevelopActive handles the develop-active phase. Deploy gaps beat
-// verify gaps because deploy is the prerequisite for verify; both branches
-// already handle failed-last-attempt (they key off `!attempts[last].Success`),
-// so a service whose last run failed surfaces as a deploy or verify target.
-//
-// PerService is populated alongside the Primary so multi-service scopes get a
-// per-hostname breakdown in the status output. Green services are omitted —
-// the map carries only pending work.
+// verify gaps across the whole scope: any service needing deploy wins
+// Primary before a service with deploy ok + verify pending is considered.
+// PerService lists every pending service; green services are omitted.
 func planDevelopActive(env StateEnvelope) Plan {
 	perService := perServiceDevelopActions(env)
-	if host := firstServiceNeedingDeploy(env); host != "" {
-		return Plan{Primary: deployAction(host), PerService: perService}
+	if env.WorkSession != nil {
+		for _, host := range env.WorkSession.Services {
+			if needsDeploy(env.WorkSession, host) {
+				return Plan{Primary: deployAction(host), PerService: perService}
+			}
+		}
+		for _, host := range env.WorkSession.Services {
+			if needsVerify(env.WorkSession, host) {
+				return Plan{Primary: verifyAction(host), PerService: perService}
+			}
+		}
 	}
-	if host := firstServiceNeedingVerify(env); host != "" {
-		return Plan{Primary: verifyAction(host), PerService: perService}
-	}
-	// Every service deployed + verified but the session isn't auto-closed:
-	// this can happen when EvaluateAutoClose sees a mixed attempt history.
-	// The workable next step is explicit close.
+	// Every service deployed + verified but the session isn't auto-closed
+	// (can happen with a mixed attempt history). Fall back to explicit close.
 	return Plan{
 		Primary: NextAction{
 			Label:     "Close develop session",
@@ -90,38 +91,50 @@ func planDevelopActive(env StateEnvelope) Plan {
 	}
 }
 
-// perServiceDevelopActions returns a map from hostname → next action for
-// every service in the work-session scope that still has pending work.
-// Same rules as the Primary dispatch but applied to every service:
-//   - last deploy missing or unsuccessful → deploy action
-//   - deploy ok + last verify missing or unsuccessful → verify action
-//   - all green → omitted (the Primary close branch subsumes this)
-//
-// Returns nil when there is no work session or the map would be empty, so
-// downstream renderers can treat absence as "single-service or all-green".
+// perServiceDevelopActions returns a hostname → next-action map for every
+// scope service still pending work (deploy or verify). Green services are
+// dropped so the render layer only prints remaining work. Returns nil for
+// empty scopes or all-green so callers can treat absence as "nothing to
+// list".
 func perServiceDevelopActions(env StateEnvelope) map[string]NextAction {
 	if env.WorkSession == nil || len(env.WorkSession.Services) == 0 {
 		return nil
 	}
 	out := make(map[string]NextAction, len(env.WorkSession.Services))
 	for _, host := range env.WorkSession.Services {
-		deploys := env.WorkSession.Deploys[host]
-		if len(deploys) == 0 || !deploys[len(deploys)-1].Success {
+		switch {
+		case needsDeploy(env.WorkSession, host):
 			out[host] = deployAction(host)
-			continue
-		}
-		verifies := env.WorkSession.Verifies[host]
-		if len(verifies) == 0 || !verifies[len(verifies)-1].Success {
+		case needsVerify(env.WorkSession, host):
 			out[host] = verifyAction(host)
-			continue
 		}
-		// Green: skip. The primary close branch handles "all green"; listing
-		// done services in PerService would only waste tokens.
 	}
 	if len(out) == 0 {
 		return nil
 	}
 	return out
+}
+
+// lastSucceeded returns true when attempts has at least one entry and the
+// most recent one succeeded. The shared "has a green-tipped history"
+// predicate — used by both the develop Primary dispatch and the PerService
+// classifier. A failed last attempt (even after prior successes) counts as
+// "not succeeded" because the agent's next action is retry.
+func lastSucceeded(attempts []AttemptInfo) bool {
+	return len(attempts) > 0 && attempts[len(attempts)-1].Success
+}
+
+// needsDeploy reports whether host needs a (re-)deploy: no attempts, or the
+// last one failed.
+func needsDeploy(ws *WorkSessionSummary, host string) bool {
+	return !lastSucceeded(ws.Deploys[host])
+}
+
+// needsVerify reports whether host needs verification: deploy ok but
+// verify missing or last one failed. Services still needing a deploy
+// return false here so the deploy branch in planDevelopActive fires first.
+func needsVerify(ws *WorkSessionSummary, host string) bool {
+	return lastSucceeded(ws.Deploys[host]) && !lastSucceeded(ws.Verifies[host])
 }
 
 // planBootstrapActive points at action=iterate with bootstrap workflow — the
@@ -170,42 +183,6 @@ func planIdle(env StateEnvelope) Plan {
 
 	// Only unmanaged runtimes exist — adoption is the gate to develop.
 	return Plan{Primary: adoptRuntimesAction()}
-}
-
-// firstServiceNeedingDeploy returns the hostname of the first service in
-// envelope.Services that has no successful deploy recorded. Iteration order
-// mirrors envelope.Services (already sorted by hostname) so the plan is
-// deterministic.
-func firstServiceNeedingDeploy(env StateEnvelope) string {
-	if env.WorkSession == nil {
-		return ""
-	}
-	for _, host := range env.WorkSession.Services {
-		attempts := env.WorkSession.Deploys[host]
-		if len(attempts) == 0 || !attempts[len(attempts)-1].Success {
-			return host
-		}
-	}
-	return ""
-}
-
-// firstServiceNeedingVerify returns the hostname of the first service that
-// has a successful deploy but no passing verify yet.
-func firstServiceNeedingVerify(env StateEnvelope) string {
-	if env.WorkSession == nil {
-		return ""
-	}
-	for _, host := range env.WorkSession.Services {
-		deploys := env.WorkSession.Deploys[host]
-		if len(deploys) == 0 || !deploys[len(deploys)-1].Success {
-			continue
-		}
-		verifies := env.WorkSession.Verifies[host]
-		if len(verifies) == 0 || !verifies[len(verifies)-1].Success {
-			return host
-		}
-	}
-	return ""
 }
 
 // countIdleServices partitions the envelope's services for idle-phase plan

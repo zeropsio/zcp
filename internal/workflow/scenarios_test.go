@@ -401,7 +401,7 @@ func TestScenario_S6_DevelopDeployOKPendingVerify(t *testing.T) {
 					{At: now.Add(-2 * time.Minute), Success: true, Iteration: 1},
 				},
 			},
-			// No Verifies map → firstServiceNeedingVerify returns "appdev".
+			// No Verifies map → needsVerify("appdev") fires after deploy ok.
 		},
 	}
 
@@ -540,7 +540,7 @@ func TestScenario_S8_DevelopIterationFailure(t *testing.T) {
 
 	plan := BuildPlan(env)
 
-	// Last deploy failed → firstServiceNeedingDeploy returns that host
+	// Last deploy failed → needsDeploy matches the host
 	// and primary is deploy. Tier guidance rides along through atoms, not
 	// a distinct plan branch. See spec §14 S8 / spec-scenarios §3.3.
 	if plan.Primary.Tool != "zerops_deploy" {
