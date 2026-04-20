@@ -119,7 +119,7 @@ func TestCheckCrossReadmeGotchaUniqueness(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			checks := checkCrossReadmeGotchaUniqueness(tt.readmes)
+			checks := checkCrossReadmeGotchaUniqueness(t.Context(), tt.readmes)
 			if len(checks) == 0 {
 				t.Fatal("expected at least one check result")
 			}

@@ -15,7 +15,7 @@ import (
 
 // checkRecipeFinalize validates that all recipe repo files are generated and correct.
 func checkRecipeFinalize(outputDir string) workflow.RecipeStepChecker {
-	return func(_ context.Context, plan *workflow.RecipePlan, _ *workflow.RecipeState) (*workflow.StepCheckResult, error) {
+	return func(ctx context.Context, plan *workflow.RecipePlan, _ *workflow.RecipeState) (*workflow.StepCheckResult, error) {
 		if plan == nil {
 			return nil, nil
 		}
@@ -45,7 +45,7 @@ func checkRecipeFinalize(outputDir string) workflow.RecipeStepChecker {
 			if err != nil {
 				continue // file existence already checked above
 			}
-			checks = append(checks, validateImportYAML(string(data), plan, i, folder)...)
+			checks = append(checks, validateImportYAML(ctx, string(data), plan, i, folder)...)
 		}
 
 		// Reject TODO scaffold markers in the app README deliverable — if the
@@ -157,7 +157,7 @@ type importVerticalAutoscale struct {
 }
 
 // validateImportYAML runs structural checks on an import.yaml file.
-func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int, folder string) []workflow.StepCheck {
+func validateImportYAML(ctx context.Context, content string, plan *workflow.RecipePlan, envIndex int, folder string) []workflow.StepCheck {
 	prefix := folder + "_import"
 	var checks []workflow.StepCheck
 
@@ -270,13 +270,13 @@ func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int,
 	// to field narration. The rubric requires >= 35% of substantive
 	// comments to contain a reasoning marker (because, otherwise,
 	// without, rotation, rolling deploy, etc).
-	checks = append(checks, checkCommentDepth(content, prefix)...)
+	checks = append(checks, checkCommentDepth(ctx, content, prefix)...)
 
 	// Factual-claim linter: declarative numeric claims in comments
 	// ("10 GB quota", "minContainers 3") must match the adjacent YAML
 	// value in the same service block. Subjunctive phrasing ("bump to
 	// N GB when usage grows") is allowed. See checkFactualClaims.
-	checks = append(checks, checkFactualClaims(content, prefix)...)
+	checks = append(checks, checkFactualClaims(ctx, content, prefix)...)
 
 	// Section-heading comment patterns — labels, not explanations.
 	checks = append(checks, checkSectionHeadingComments(content, prefix)...)

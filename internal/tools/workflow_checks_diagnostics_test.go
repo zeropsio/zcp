@@ -159,7 +159,7 @@ services:
     priority: 10
     mode: NON_HA
 `
-	checks := validateImportYAML(content, plan, 0, folder)
+	checks := validateImportYAML(t.Context(), content, plan, 0, folder)
 	if len(checks) == 0 {
 		t.Fatal("validateImportYAML returned no checks")
 	}
@@ -205,7 +205,7 @@ services:
     priority: 10
     mode: NON_HA
 `
-	checks := checkCommentDepth(content, "env-0_import")
+	checks := checkCommentDepth(t.Context(), content, "env-0_import")
 	got, ok := findFailingCheck(checks, "comment_depth")
 	if !ok {
 		t.Fatalf("expected comment_depth fail in fixture; got %d checks", len(checks))
@@ -241,7 +241,7 @@ func TestDiagnostics_EnvImport_FactualClaims(t *testing.T) {
     # minContainers: 5
     minContainers: 2
 `
-	checks := checkFactualClaims(content, "env-0_import")
+	checks := checkFactualClaims(t.Context(), content, "env-0_import")
 	got, ok := findFailingCheck(checks, "factual_claims")
 	if !ok {
 		t.Fatalf("expected factual_claims fail; got %d checks", len(checks))

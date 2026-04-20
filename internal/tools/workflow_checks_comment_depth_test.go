@@ -72,7 +72,7 @@ services:
 
 func TestCheckCommentDepth_V7StylePasses(t *testing.T) {
 	t.Parallel()
-	checks := checkCommentDepth(v7GoldCommentSample, "env")
+	checks := checkCommentDepth(t.Context(), v7GoldCommentSample, "env")
 	if len(checks) != 1 {
 		t.Fatalf("expected 1 check, got %d", len(checks))
 	}
@@ -83,7 +83,7 @@ func TestCheckCommentDepth_V7StylePasses(t *testing.T) {
 
 func TestCheckCommentDepth_V16NarrationFails(t *testing.T) {
 	t.Parallel()
-	checks := checkCommentDepth(v16NarrationSample, "env")
+	checks := checkCommentDepth(t.Context(), v16NarrationSample, "env")
 	if len(checks) != 1 {
 		t.Fatalf("expected 1 check, got %d", len(checks))
 	}
@@ -103,7 +103,7 @@ func TestCheckCommentDepth_FewCommentsSilentlyPass(t *testing.T) {
 project:
   name: tiny
 `
-	checks := checkCommentDepth(input, "env")
+	checks := checkCommentDepth(t.Context(), input, "env")
 	if len(checks) != 1 || checks[0].Status != statusPass {
 		t.Errorf("expected silent pass for sparse comments, got %+v", checks)
 	}
@@ -118,28 +118,12 @@ func TestCheckCommentDepth_MixedRealistic(t *testing.T) {
 # has a Node runtime — static base would have no shell for npm run dev.
 # API: shares env vars with prod so behavior mirrors prod at runtime.
 `
-	checks := checkCommentDepth(input, "env")
+	checks := checkCommentDepth(t.Context(), input, "env")
 	if checks[0].Status != statusPass {
 		t.Errorf("mixed realistic sample should pass, got fail: %s", checks[0].Detail)
 	}
 }
 
-func TestContainsAny(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		s       string
-		needles []string
-		want    bool
-	}{
-		{"because the value is null", []string{"because"}, true},
-		{"no markers here", []string{"because", "otherwise"}, false},
-		{"restart is required here", []string{"restart", "required"}, true},
-		{"", []string{"any"}, false},
-	}
-	for _, tc := range cases {
-		got := containsAny(tc.s, tc.needles)
-		if got != tc.want {
-			t.Errorf("containsAny(%q, %v) = %v, want %v", tc.s, tc.needles, got, tc.want)
-		}
-	}
-}
+// TestContainsAny moved to internal/ops/checks alongside the
+// containsAny helper (post-C-7d). The tool-layer is a thin wrapper
+// that no longer owns the predicate body.

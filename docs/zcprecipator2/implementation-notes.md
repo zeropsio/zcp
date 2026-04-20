@@ -811,3 +811,55 @@ No user-observable behavior change. The four migrated predicates emit identical 
 
 - `extractFragmentContent`, `uniqueStrings`, `sectionHasFencedBlock` helpers still duplicated between `internal/tools/workflow_checks_recipe.go` and `internal/ops/checks/ig_*.go`. Still used by tool-local checks that won't migrate to ops/checks (e.g. `checkGotchaRestatesGuide`, `checkCLAUDEMdExists`). C-15 deduplicates when the recipe.md path is deleted.
 - 4 checks remain: comment-depth, factual-claims, cross-readme-dedup, symbol-contract-env-consistency (C-7d).
+
+---
+
+## C-7d — migrate comment-depth, factual-claims, cross-readme-dedup, symbol-contract-env-consistency
+
+**Status**: green
+
+### What landed
+
+- [`internal/ops/checks/comment_depth.go`](../../internal/ops/checks/comment_depth.go) (155 LoC) — `CheckCommentDepth(ctx, content, prefix)`. Migrates `reasoningMarkers`, `minReasoningCommentRatio`, `minReasoningComments`, and the comment-block grouping logic. Private `containsAny` helper moved alongside.
+- [`internal/ops/checks/factual_claims.go`](../../internal/ops/checks/factual_claims.go) (215 LoC) — `CheckFactualClaims(ctx, content, prefix)`. Migrates `factualClaimPatterns`, `subjunctiveMarkers`, `factualClaimMismatch` type, `findAdjacentYAMLValueWithLine`, and `yamlIntFieldRe`.
+- [`internal/ops/checks/cross_readme_dedup.go`](../../internal/ops/checks/cross_readme_dedup.go) (105 LoC) — `CheckCrossReadmeGotchaUniqueness(ctx, readmes)`. Direct port of the pairwise-comparison logic.
+- [`internal/ops/checks/symbol_contract_env.go`](../../internal/ops/checks/symbol_contract_env.go) (245 LoC) — `CheckSymbolContractEnvVarConsistency(ctx, projectRoot, contract)`. Migrates C-6's predicate including `sourceFileExtensions`, `envVarTokenRegexp`, `siblingSuffixes`, `canonicalEnvVarSet`, `buildSiblingMap`, `collectSymbolContractScanFiles` helpers.
+- Paired tests: 4 files, ~340 LoC.
+
+### Tool-layer delegation
+
+- `workflow_checks_comment_depth.go` → 20-line thin wrapper.
+- `workflow_checks_factual_claims.go` → 15-line thin wrapper (all 130+ LoC of markers/patterns/helpers deleted).
+- `workflow_checks_dedup.go` → 13-line thin wrapper for `checkCrossReadmeGotchaUniqueness`; `checkGotchaRestatesGuide` (keep-disposition per §17) retained intact.
+- `workflow_checks_symbol_contract.go` → 18-line thin wrapper (C-6 predicate fully relocated).
+- ctx threaded through `checkRecipeFinalize` closure → `validateImportYAML` → `checkCommentDepth` + `checkFactualClaims`. Also `checkRecipeDeployReadmes` → `checkCrossReadmeGotchaUniqueness`. Also both callers of `checkSymbolContractEnvVarConsistency` (`checkRecipeGenerate` + `checkRecipeDeployReadmes`).
+- Orphaned `TestContainsAny` in tools replaced with a one-line comment pointing to ops/checks; the helper's behavior is now exercised transitively by `TestCheckCommentDepth_Table`.
+
+### Verification
+
+- `go test ./... -count=1` — full suite green across 20 packages.
+- `make lint-local` — 0 issues.
+
+### LoC delta
+
+- New ops/checks files: +720 LoC (4 predicate + 4 test files).
+- Tool-layer shrinkage: ~-620 LoC (comment_depth.go -195, factual_claims.go -240, dedup.go -115, symbol_contract.go -240).
+- Net: roughly neutral.
+
+### Breaks-alone consequence
+
+No user-observable behavior change. **All 16 check-rewrite.md §18 predicates now live in `internal/ops/checks` with exactly one implementation per check**. Gate and (future C-7e) CLI shim share the same Go function — the design invariant is established.
+
+### Ordering deps verified
+
+- C-7c ✓.
+- C-6 ✓ — C-6's symbol-contract predicate now lives in `ops/checks`; the C-6 tool-layer file retained as a thin wrapper.
+
+### C-7 progress
+
+**16 of 16 predicates migrated** (C-7a: 4, C-7b: 4, C-7c: 4, C-7d: 4). C-7e adds the `cmd/zcp/check/` CLI shim tree + integration test + `cmd/zcp/main.go` wiring on top of the finished predicate surface.
+
+### Known follow-ups
+
+- `extractFragmentContent` duplicated in tools (multiple non-migrating checks depend on it) + ops/checks. C-15 deduplication.
+- `uniqueStrings` duplicated similarly.

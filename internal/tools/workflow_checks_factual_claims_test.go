@@ -131,7 +131,7 @@ func TestCheckFactualClaims(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			checks := checkFactualClaims(tt.content, "env0_import")
+			checks := checkFactualClaims(t.Context(), tt.content, "env0_import")
 			var gotFail bool
 			var allDetails strings.Builder
 			for _, c := range checks {

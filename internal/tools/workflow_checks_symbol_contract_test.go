@@ -13,7 +13,7 @@ import (
 // converts output to the test-local shim type.
 func runSymbolContractCheck(t *testing.T, projectRoot string, contract workflow.SymbolContract) []workflowStepCheckShim {
 	t.Helper()
-	checks := checkSymbolContractEnvVarConsistency(projectRoot, contract)
+	checks := checkSymbolContractEnvVarConsistency(t.Context(), projectRoot, contract)
 	out := make([]workflowStepCheckShim, 0, len(checks))
 	for _, c := range checks {
 		out = append(out, workflowStepCheckShim{Name: c.Name, Status: c.Status, Detail: c.Detail})

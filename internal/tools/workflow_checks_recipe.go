@@ -146,7 +146,7 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp kn
 		// trigger points because the v34 class surfaced both at initial
 		// scaffold and after later inline edits that re-introduced the
 		// divergence.
-		checks = append(checks, checkSymbolContractEnvVarConsistency(projectRoot, plan.SymbolContract)...)
+		checks = append(checks, checkSymbolContractEnvVarConsistency(ctx, projectRoot, plan.SymbolContract)...)
 
 		// v8.97 Fix 4: stamp surface-derived coupling hints on every
 		// failed check with a populated ReadSurface before computing the
@@ -344,7 +344,7 @@ func checkRecipeDeployReadmes(stateDir string, kp knowledge.Provider, factsLogPa
 		// api + worker READMEs. Returns a single check name ("cross_
 		// readme_gotcha_uniqueness") so the failure is scoped to the
 		// whole recipe, not any one codebase.
-		checks = append(checks, checkCrossReadmeGotchaUniqueness(readmesByHost)...)
+		checks = append(checks, checkCrossReadmeGotchaUniqueness(ctx, readmesByHost)...)
 
 		// v8.95: content-manifest enforcement. The writer subagent emits
 		// ZCP_CONTENT_MANIFEST.json at the recipe root before returning;
@@ -372,7 +372,7 @@ func checkRecipeDeployReadmes(stateDir string, kp knowledge.Provider, factsLogPa
 		// generate-complete in checkRecipeGenerate. After inline edits
 		// during deploy rounds may re-introduce cross-scaffold env-var
 		// divergence that the initial scaffold got right.
-		checks = append(checks, checkSymbolContractEnvVarConsistency(projectRoot, plan.SymbolContract)...)
+		checks = append(checks, checkSymbolContractEnvVarConsistency(ctx, projectRoot, plan.SymbolContract)...)
 
 		// v8.97 Fix 4: stamp surface-derived coupling hints.
 		checks = workflow.StampCoupling(checks)
