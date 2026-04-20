@@ -1158,3 +1158,202 @@ func TestProvisionMeta_AdoptedService_EmptyBootstrapSession(t *testing.T) {
 		t.Errorf("adopted service provision BootstrapSession: want empty, got %q", meta.BootstrapSession)
 	}
 }
+
+// Mode-expansion path (§9.1): the existing runtime's user-authored fields —
+// BootstrappedAt, DeployStrategy, StrategyConfirmed, FirstDeployedAt — must
+// survive the upgrade. Only Mode / StageHostname change. Without the merge,
+// a dev→standard upgrade would silently revert the user's push-git choice
+// and lose the original bootstrap date.
+//
+// Flow note: when the single runtime target is IsExisting=true with no
+// live-new dependencies, bootstrap's fast-path auto-skips `close` (set by
+// the adoption branch in BootstrapComplete after provision). The final
+// meta write fires from provision's tail call to writeBootstrapOutputs —
+// so completing provision is sufficient to drive the flow to the final
+// meta state.
+func TestWriteBootstrapOutputs_ExpansionPreservesExistingFields(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Seed the existing dev-mode meta — simulates a service the user has been
+	// running for a while with a confirmed push-git strategy.
+	existing := &ServiceMeta{
+		Hostname:          "appdev",
+		Mode:              PlanModeDev,
+		Environment:       string(EnvContainer),
+		BootstrapSession:  "original-sess",
+		BootstrappedAt:    "2026-01-15",
+		DeployStrategy:    StrategyPushGit,
+		StrategyConfirmed: true,
+		FirstDeployedAt:   "2026-01-16T10:00:00Z",
+	}
+	if err := WriteServiceMeta(dir, existing); err != nil {
+		t.Fatalf("seed WriteServiceMeta: %v", err)
+	}
+
+	// Now run a bootstrap that upgrades appdev to standard.
+	eng := NewEngine(dir, EnvContainer, nil)
+	if _, err := eng.BootstrapStart("proj-1", "expand appdev to standard"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+	if _, err := eng.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{
+			DevHostname:   "appdev",
+			Type:          "nodejs@22",
+			IsExisting:    true,
+			BootstrapMode: PlanModeStandard,
+			ExplicitStage: "appstage",
+		},
+	}}, nil, nil); err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+	// Fast-path auto-skips close once provision completes on an all-existing
+	// plan; writeBootstrapOutputs fires from the provision tail.
+	if _, err := eng.BootstrapComplete(context.Background(), "provision", "Provisioned new stage", nil); err != nil {
+		t.Fatalf("BootstrapComplete(provision): %v", err)
+	}
+
+	got, err := ReadServiceMeta(dir, "appdev")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected meta after expansion")
+	}
+
+	// Upgrade contribution:
+	if got.Mode != PlanModeStandard {
+		t.Errorf("Mode: got %q, want %q (upgrade)", got.Mode, PlanModeStandard)
+	}
+	if got.StageHostname != "appstage" {
+		t.Errorf("StageHostname: got %q, want appstage (upgrade)", got.StageHostname)
+	}
+
+	// Preserved fields:
+	if got.BootstrappedAt != existing.BootstrappedAt {
+		t.Errorf("BootstrappedAt: got %q, want %q (must be preserved)", got.BootstrappedAt, existing.BootstrappedAt)
+	}
+	if got.DeployStrategy != existing.DeployStrategy {
+		t.Errorf("DeployStrategy: got %q, want %q (must be preserved)", got.DeployStrategy, existing.DeployStrategy)
+	}
+	if !got.StrategyConfirmed {
+		t.Error("StrategyConfirmed lost — must be preserved through expansion")
+	}
+	if got.FirstDeployedAt != existing.FirstDeployedAt {
+		t.Errorf("FirstDeployedAt: got %q, want %q", got.FirstDeployedAt, existing.FirstDeployedAt)
+	}
+}
+
+// TestWriteProvisionMetas_ExpansionPreservesExistingFields covers the
+// intermediate provision write. If bootstrap crashes between provision and
+// close, the partial meta must not silently revert the user's strategy
+// choice. Same merge rules as writeBootstrapOutputs, but the emitted meta
+// is partial (IsComplete remains true because we preserve BootstrappedAt
+// from the source — which also means the close step's final write finds an
+// IsComplete meta and merges again idempotently).
+func TestWriteProvisionMetas_ExpansionPreservesExistingFields(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	existing := &ServiceMeta{
+		Hostname:          "appdev",
+		Mode:              PlanModeDev,
+		Environment:       string(EnvContainer),
+		BootstrapSession:  "earlier",
+		BootstrappedAt:    "2026-02-01",
+		DeployStrategy:    StrategyPushDev,
+		StrategyConfirmed: true,
+	}
+	if err := WriteServiceMeta(dir, existing); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	eng := NewEngine(dir, EnvContainer, nil)
+	if _, err := eng.BootstrapStart("proj-1", "expansion crash test"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+	if _, err := eng.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{
+			DevHostname:   "appdev",
+			Type:          "nodejs@22",
+			IsExisting:    true,
+			BootstrapMode: PlanModeStandard,
+			ExplicitStage: "appstage",
+		},
+	}}, nil, nil); err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+	// Stop after provision — simulates crash before close.
+	if _, err := eng.BootstrapComplete(context.Background(), "provision", "Provisioned new stage", nil); err != nil {
+		t.Fatalf("BootstrapComplete(provision): %v", err)
+	}
+
+	got, err := ReadServiceMeta(dir, "appdev")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected partial meta after provision")
+	}
+	// Upgrade contribution already visible at provision time.
+	if got.Mode != PlanModeStandard {
+		t.Errorf("Mode: got %q, want %q at provision", got.Mode, PlanModeStandard)
+	}
+	if got.StageHostname != "appstage" {
+		t.Errorf("StageHostname: got %q, want appstage at provision", got.StageHostname)
+	}
+	// User-authored fields preserved across provision write too.
+	if got.DeployStrategy != StrategyPushDev {
+		t.Errorf("DeployStrategy: got %q, want push-dev (preserved through provision)", got.DeployStrategy)
+	}
+	if !got.StrategyConfirmed {
+		t.Error("StrategyConfirmed lost at provision write")
+	}
+	if got.BootstrappedAt != existing.BootstrappedAt {
+		t.Errorf("BootstrappedAt: got %q, want %q at provision", got.BootstrappedAt, existing.BootstrappedAt)
+	}
+}
+
+// TestMergeExistingMeta pins the helper contract: upgrade fields (Mode,
+// StageHostname) stay as set on the new meta; preserved fields come from
+// the existing meta. Unit test so regressions in the helper surface here
+// instead of only in the integration paths above.
+func TestMergeExistingMeta(t *testing.T) {
+	t.Parallel()
+
+	meta := &ServiceMeta{
+		Hostname:      "appdev",
+		Mode:          PlanModeStandard, // upgrade
+		StageHostname: "appstage",       // upgrade
+		Environment:   string(EnvContainer),
+	}
+	existing := &ServiceMeta{
+		Hostname:          "appdev",
+		Mode:              PlanModeDev,
+		BootstrappedAt:    "2026-01-15",
+		DeployStrategy:    StrategyPushGit,
+		StrategyConfirmed: true,
+		FirstDeployedAt:   "2026-01-16T10:00:00Z",
+	}
+
+	mergeExistingMeta(meta, existing)
+
+	if meta.Mode != PlanModeStandard {
+		t.Errorf("Mode must stay upgrade value, got %q", meta.Mode)
+	}
+	if meta.StageHostname != "appstage" {
+		t.Errorf("StageHostname must stay upgrade value, got %q", meta.StageHostname)
+	}
+	if meta.BootstrappedAt != "2026-01-15" {
+		t.Errorf("BootstrappedAt not preserved: got %q", meta.BootstrappedAt)
+	}
+	if meta.DeployStrategy != StrategyPushGit {
+		t.Errorf("DeployStrategy not preserved: got %q", meta.DeployStrategy)
+	}
+	if !meta.StrategyConfirmed {
+		t.Error("StrategyConfirmed not preserved")
+	}
+	if meta.FirstDeployedAt != "2026-01-16T10:00:00Z" {
+		t.Errorf("FirstDeployedAt not preserved: got %q", meta.FirstDeployedAt)
+	}
+}

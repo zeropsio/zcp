@@ -164,6 +164,11 @@ func developCoverageFixtures() []coverageFixture {
 				"edit → deploy",
 				"Knowledge on demand",
 				"Infrastructure changes",
+				// Phase-4: mode-expansion hint fires for dev services.
+				// Note: {hostname} is substituted by the synthesizer to the
+				// primary dynamic hostname — for this fixture that's "appdev".
+				"Mode expansion — add a stage pair",
+				`intent="expand appdev to standard`,
 			},
 		},
 		{

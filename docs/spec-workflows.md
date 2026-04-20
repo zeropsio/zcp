@@ -303,6 +303,51 @@ flowchart TD
     style SkipClose fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 5 5
 ```
 
+### 2.0 Route Discovery (first-call split)
+
+Starting a bootstrap is a two-call flow. The first call omits `route`
+and returns a ranked `routeOptions[]` list without committing a
+session; the second call supplies `route=...` (and `recipeSlug=...`
+when `route=recipe`) to commit the session.
+
+```
+# 1. Discovery — no session committed
+zerops_workflow action="start" workflow="bootstrap" intent="<one sentence>"
+→ BootstrapDiscoveryResponse { routeOptions: [...], message: "..." }
+
+# 2. Commit — engine locks in the chosen route
+zerops_workflow action="start" workflow="bootstrap" route="recipe" recipeSlug="laravel-minimal"
+→ BootstrapResponse { sessionId, progress, current, ... }
+```
+
+**Ranking**: `resume` > `adopt` > `recipe` (top `MaxRecipeOptions` above
+`MinRecipeConfidence`) > `classic`. `classic` is always present as the
+last option — it's the explicit override for "none of the above".
+
+**Route semantics at commit**:
+
+| Route     | When it's offered                                                                | Commit requires             |
+|-----------|----------------------------------------------------------------------------------|-----------------------------|
+| `resume`  | An incomplete `ServiceMeta` is tagged to a prior session                         | `sessionId` from discovery  |
+| `adopt`   | Runtime services exist without complete `ServiceMeta` (and no resumable session) | —                           |
+| `recipe`  | Intent scores ≥ `MinRecipeConfidence` against a recipe corpus match              | `recipeSlug`                |
+| `classic` | Always                                                                            | —                           |
+
+**Collision annotation**: `recipe` options carry a `collisions[]` list
+of hostnames that the recipe's import YAML would clash with in the
+current project. Advisory only — provision still catches the conflict
+— but the LLM uses it as a pre-flight gate.
+
+**Forcing a route**: A caller that has already decided (e.g. from a
+prior discovery round, from a direct user instruction, or from an
+internal auto-adoption helper) skips discovery by passing `route=`
+on the first call. The engine commits the session immediately.
+
+See `internal/workflow/route.go` for the discriminator implementation
+(`BuildBootstrapRouteOptions`) and `internal/workflow/engine.go` for
+the commit path (`BootstrapDiscover`, `BootstrapStartWithRoute`,
+`BootstrapStart` as the classic-default wrapper).
+
 ### 2.1 Session Lifecycle
 
 ```mermaid
@@ -1050,11 +1095,11 @@ visibility.
 
 ### 9.1 Mode Expansion (simple/dev → standard)
 
-**Status**: Planned, not implemented.
+**Status**: Partially implemented (ServiceMeta merge + awareness atom); generate/deploy flow for the new stage service is delegated to the agent via the `develop-mode-expansion` atom's guidance.
 
 **Problem**: A service bootstrapped in simple or dev mode needs to expand to standard (dev+stage). This requires creating a new stage service, updating zerops.yaml with a stage entry, deploying to stage, and updating ServiceMeta.
 
-**Proposed approach**: Bootstrap in expansion mode. The existing service is treated as adopted (`isExisting: true`), and the new stage service is created. Plan example:
+**Mechanism**: Bootstrap in expansion mode — the existing runtime is flagged `isExisting: true` with `bootstrapMode: "standard"` and an explicit `stageHostname`. Plan example:
 
 ```json
 {
@@ -1068,9 +1113,15 @@ visibility.
 }
 ```
 
-Bootstrap adoption path handles it: adopted target skips generate+deploy (code already exists), new stage gets created and deployed via cross-deploy from dev. ServiceMeta updates from simple/dev → standard with new stageHostname.
+What the engine guarantees:
 
-**Why bootstrap, not deploy**: Creating services is infrastructure work. Bootstrap already handles service creation, ServiceMeta writes, and import.yaml generation. Develop flow handles code changes, not infrastructure topology changes.
+1. **Meta merge** (`writeProvisionMetas`, `writeBootstrapOutputs`): when an existing complete `ServiceMeta` is detected for the runtime hostname AND the target carries `IsExisting=true`, the about-to-be-written meta is merged with the existing one. Upgrade fields (`Mode`, `StageHostname`) come from the plan; user-authored fields (`BootstrappedAt`, `DeployStrategy`, `StrategyConfirmed`, `FirstDeployedAt`) are preserved. Without this, a dev→standard upgrade would silently revert the user's strategy choice and lose the original bootstrap date.
+2. **Awareness atom** (`develop-mode-expansion.md`, `modes: [dev, simple]`, priority 6): fires during develop flow for single-slot services so the agent is prompted with the expansion command and the required plan shape.
+3. **Fast-path**: because `plan.IsAllExisting()` returns true for an existing runtime with no new dependencies, bootstrap auto-skips the `close` step after provision — meta write fires from the provision tail via `writeBootstrapOutputs`.
+
+What the agent still owns: generating the import YAML fragment that creates only the new stage service (not the existing dev), appending the `setup: prod` entry to `zerops.yaml`, and running the cross-deploy `zerops_deploy sourceService="{dev}" targetService="{stage}"`. The atom body includes the step-by-step instructions; bootstrap provides the session frame and the meta merge, but does not auto-generate stage code.
+
+**Why bootstrap, not develop**: Creating services is infrastructure work. Bootstrap already handles service creation, ServiceMeta writes, and hostname locks. Develop flow handles code changes, not infrastructure topology changes.
 
 ---
 

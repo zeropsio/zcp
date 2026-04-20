@@ -22,6 +22,13 @@ func (e *Engine) invertLocalHostname(dev, stage string) (metaHost, stageHost str
 // writeBootstrapOutputs writes final service meta files and appends a reflog entry.
 // Sets BootstrappedAt to mark services as fully bootstrapped.
 // Both are best-effort — errors are logged to stderr but don't fail bootstrap completion.
+//
+// Mode-expansion path: when the plan upgrades an existing runtime's
+// bootstrapMode (dev/simple → standard) with IsExisting=true, the existing
+// ServiceMeta is merged rather than overwritten — BootstrappedAt,
+// DeployStrategy, StrategyConfirmed, and FirstDeployedAt are preserved so
+// the user's prior choices survive the mode upgrade. See §9.1 of
+// spec-workflows.md.
 func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 	if state.Bootstrap == nil || state.Bootstrap.Plan == nil {
 		return
@@ -51,6 +58,13 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 			BootstrapSession: bootstrapSession,
 			BootstrappedAt:   now,
 		}
+
+		// Expansion merge: existing complete meta + IsExisting target →
+		// preserve user-authored fields instead of zeroing them.
+		if existing, _ := ReadServiceMeta(e.stateDir, metaHostname); existing != nil && existing.IsComplete() && target.Runtime.IsExisting {
+			mergeExistingMeta(meta, existing)
+		}
+
 		if err := WriteServiceMeta(e.stateDir, meta); err != nil {
 			fmt.Fprintf(os.Stderr, "zcp: write service meta %s: %v\n", metaHostname, err)
 		}
@@ -70,6 +84,12 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 // that bootstrap started but hasn't finished. If bootstrap completes,
 // writeBootstrapOutputs overwrites with full metas.
 // Only runtime services get metas — managed deps are API-authoritative.
+//
+// Expansion path: when an existing complete meta is detected for the
+// target hostname, merge in its preserved fields so the intermediate
+// (partial) write doesn't lose BootstrappedAt / DeployStrategy. Without
+// this, a crash between provision and close would leave the service
+// looking like a brand-new bootstrap instead of a mode-upgrade.
 func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 	if state.Bootstrap == nil || state.Bootstrap.Plan == nil {
 		return
@@ -91,8 +111,39 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 			Environment:      string(e.environment),
 			BootstrapSession: bootstrapSession,
 		}
+
+		if existing, _ := ReadServiceMeta(e.stateDir, metaHostname); existing != nil && existing.IsComplete() && target.Runtime.IsExisting {
+			mergeExistingMeta(meta, existing)
+		}
+
 		if err := WriteServiceMeta(e.stateDir, meta); err != nil {
 			fmt.Fprintf(os.Stderr, "zcp: write service meta %s: %v\n", metaHostname, err)
 		}
 	}
+}
+
+// mergeExistingMeta copies user-authored fields from an existing complete
+// meta into the about-to-be-written meta. Used by the mode-expansion path
+// so a dev → standard upgrade preserves the user's deploy strategy, the
+// original bootstrap date, and the first-deploy timestamp rather than
+// overwriting them with zero values or a new-bootstrap date.
+//
+// Fields preserved:
+//   - BootstrappedAt: original bootstrap moment ("when did ZCP first own
+//     this service"). The mode upgrade is a continuation, not a re-bootstrap.
+//   - DeployStrategy + StrategyConfirmed: the agent's explicit choice. A
+//     mode upgrade should not silently revert a user's push-git preference
+//     to empty (which the develop briefing would then treat as "strategy
+//     unset, prompt again").
+//   - FirstDeployedAt: the recorded first successful deploy on the dev
+//     half. The new stage half starts its deploy history from scratch.
+//
+// Fields NOT preserved (the upgrade's contribution): Mode (dev → standard),
+// StageHostname (empty → new stage), Hostname (stays the same, but written
+// explicitly so the merge never accidentally loses it).
+func mergeExistingMeta(meta, existing *ServiceMeta) {
+	meta.BootstrappedAt = existing.BootstrappedAt
+	meta.DeployStrategy = existing.DeployStrategy
+	meta.StrategyConfirmed = existing.StrategyConfirmed
+	meta.FirstDeployedAt = existing.FirstDeployedAt
 }
