@@ -2,7 +2,7 @@
 id: develop-strategy-unset-regression
 description: Regression guard for develop-strategy-unset atom firing in idle phase
 seed: deployed
-fixture: fixtures/laravel-minimal.yaml
+fixture: fixtures/laravel-dev-deployed.yaml
 expect:
   mustCallTools:
     - zerops_workflow

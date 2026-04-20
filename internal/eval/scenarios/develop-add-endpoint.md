@@ -2,7 +2,7 @@
 id: develop-add-endpoint
 description: Add endpoint to deployed Laravel app via develop workflow
 seed: deployed
-fixture: fixtures/laravel-minimal.yaml
+fixture: fixtures/laravel-dev-deployed.yaml
 expect:
   mustCallTools:
     - zerops_workflow

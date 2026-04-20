@@ -1,0 +1,26 @@
+#yamlPreprocessor=on
+
+# Used by develop-* scenarios that need a live Laravel app to iterate on.
+# buildFromGit clones + builds + deploys the recipe, so `appdev` reaches
+# ACTIVE before the LLM starts. `zeropsSetup: dev` marks the container as
+# the development surface (SSHFS-mountable, in-place edits).
+
+services:
+  - hostname: appdev
+    type: php-nginx@8.4
+    zeropsSetup: dev
+    buildFromGit: https://github.com/zeropsio/recipe-laravel-minimal
+    enableSubdomainAccess: true
+    envSecrets:
+      APP_KEY: <@generateRandomString(<32>)>
+      APP_DEBUG: true
+      APP_ENV: development
+    verticalAutoscaling:
+      minRam: 0.5
+
+  - hostname: db
+    type: postgresql@18
+    priority: 10
+    mode: NON_HA
+    verticalAutoscaling:
+      minRam: 0.25
