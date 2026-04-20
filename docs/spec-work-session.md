@@ -258,17 +258,27 @@ Existing behavior, unchanged.
 1. Gather ServiceMetas. If empty and live services exist → auto-adopt
    (bootstrap fast-path, transparent).
 2. Filter to complete runtime metas.
-3. Strategy check:
-   - If any service has unconfirmed strategy → briefing prompts strategy
-     first. **Work session is NOT created yet.**
-   - If all strategies set → proceed.
-4. Create Work Session for current PID. If one already exists:
+3. Create Work Session for current PID — strategy is **not** a gate. If
+   one already exists:
    - Same intent → return fresh briefing, do not reset history.
-   - Different intent → return current state + asks: "Close current session
-     (zerops_workflow action=close) or provide intent=force to overwrite?".
-5. Register in registry (`work-{pid}` entry).
-6. Write `.zcp/state/work/{pid}.json`.
-7. Return briefing (existing format) plus "Work session created" confirmation.
+   - Different intent → return current state + asks: "Close current
+     session first: `zerops_workflow action=close workflow=develop`".
+4. Register in registry (`work-{pid}` entry).
+5. Write `.zcp/state/work/{pid}.json`.
+6. Return briefing via the atom pipeline. Strategy surfaces through
+   atoms, not via a pre-create gate:
+   - `deployStates: [never-deployed]` services → first-deploy branch
+     atoms guide the agent through scaffold + write + deploy. The
+     first deploy always uses the default self-deploy mechanism
+     (`zerops_deploy targetService=X` with no strategy argument),
+     regardless of the eventual persistent strategy.
+   - `deployStates: [deployed] + strategies: [unset]` services → the
+     `develop-strategy-review` atom asks the agent to confirm an
+     ongoing strategy (`push-dev` / `push-git` / `manual`). Leaving it
+     unset keeps the default mechanism but re-fires the atom every
+     session until confirmed.
+   - Confirmed strategies unlock the strategy-specific atoms
+     (push-git deploy / manual deploy / push-dev iteration loops).
 
 ### 6.2 `action="status"` (no workflow argument)
 

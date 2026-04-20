@@ -186,7 +186,7 @@ Dispatch (strict order, first match wins — see `build_plan.go` for the code):
 
 Failed-last-attempt cases fold into branches 2 and 3 — `firstServiceNeedingDeploy` / `firstServiceNeedingVerify` both key off `!attempts[last].Success`, so a failed service surfaces as a deploy or verify target. Iteration-tier guidance (diagnose / systematic-check / STOP) rides along via atoms, not a distinct Plan branch.
 
-Gate semantics in the Plan are informational, not structural: e.g. `Strategy=unset` does not block the Plan from naming a deploy action; the atom `develop-strategy-unset` surfaces the gate in the body instead. This keeps `BuildPlan` a pure dispatch over envelope shape.
+Gate semantics in the Plan are informational, not structural: e.g. `Strategy=unset` does not block the Plan from naming a deploy action. The first deploy always uses the default self-deploy mechanism regardless of strategy; once `FirstDeployedAt` is stamped, the `develop-strategy-review` atom (`phases: [develop-active]`, `deployStates: [deployed]`, `strategies: [unset]`) prompts the agent to confirm an ongoing strategy. This keeps `BuildPlan` a pure dispatch over envelope shape.
 
 ### 1.5 Atom Corpus — Orthogonal Knowledge Matrix
 
@@ -733,28 +733,30 @@ Develop flow discovers what code exists on the service (verification server from
 At the start of develop flow, the system reads ServiceMeta and informs the agent about strategy status. This is **informational, not blocking**.
 
 **If strategy is NOT set** (DeployStrategy empty in meta):
-> "No deploy strategy is configured for this service. Proceed with your code changes. Before deploying, discuss with the user how they want to deploy (push-dev / push-git / manual)."
+**Key principle**: Strategy is never a gate — for work-session creation or for the first deploy. The first deploy always uses the default self-deploy mechanism (`zerops_deploy targetService=X` with no strategy argument), because `push-git` and `manual` require state (committed code, `GIT_TOKEN`, or user presence) that doesn't exist before the first deploy lands. Strategy surfaces through atoms post-first-deploy:
 
-**If strategy IS set** (DeployStrategy in meta has value):
-> "Deploy strategy: {strategy}. Will deploy according to this strategy. If you want to change it, let me know at any time."
+- `deployStates: [never-deployed]` → first-deploy-branch atoms own the guidance; the `develop-strategy-review` atom does not fire.
+- `deployStates: [deployed] + strategies: [unset]` → `develop-strategy-review` fires and prompts the agent to confirm an ongoing strategy.
+- Confirmed strategy → strategy-specific atoms take over (`develop-push-git-deploy`, `develop-manual-deploy`, `develop-push-dev-workflow-*`, close sequences).
 
-**Key principle**: Strategy never blocks the start of work. Agent can always begin editing code immediately. Strategy is read from meta — if user changed it since last deploy, the new value is used automatically.
+Strategy is always read fresh from `ServiceMeta.DeployStrategy` — no caching. Agent can change strategy at any time via `zerops_workflow action="strategy"`.
 
 ### 4.3 Deploy Strategies
 
-Three strategies determine how code gets to Zerops:
+Three strategies determine how code gets to Zerops after the first deploy:
 
 #### push-dev
-- **Container**: `zerops_deploy targetService="{hostname}"` — SSH self-deploy. Blocks until build completes.
-- **Local**: `zcli push` — pushes code from local machine.
+- `zerops_deploy targetService="{hostname}"` — default self-deploy. Blocks until build completes.
 - **After deploy**: Manual server start via SSH for dev (zsc noop). Stage and simple auto-start.
 - **Good for**: Quick iterations, prototyping, direct control.
+- **First deploy**: same command — push-dev is the implicit default on any service that hasn't been deployed yet.
 
 #### push-git
 - **Mechanism**: Commit code, push to external git remote (GitHub/GitLab).
-- **First time**: Requires setup — GIT_TOKEN, .netrc, remote URL configuration.
+- **First time**: Requires setup — GIT_TOKEN, `.netrc`, remote URL configuration.
 - **Command**: `zerops_deploy targetService="{hostname}" strategy="git-push" remoteUrl="{url}"`
 - **Subsequent**: `zerops_deploy targetService="{hostname}" strategy="git-push"`
+- **Pre-flight gate**: the tool refuses with `PREREQUISITE_MISSING` when the service has no `FirstDeployedAt` stamp. `push-git` requires code on the container to commit + push, which only exists after the initial default deploy lands.
 - **Optional CI/CD**: GitHub Actions workflow or webhook for automatic deploys on push.
 - **Good for**: Team development, CI/CD pipelines, code in git.
 
@@ -1039,9 +1041,11 @@ visibility.
 |----|-----------|
 | D1 | Develop flow requires ServiceMeta with BootstrappedAt |
 | D0 | ALL code changes to runtime services MUST go through develop flow |
-| D2 | Strategy is informational at start, not a gate |
+| D2 | Strategy is NEVER a gate for Work Session creation — briefing always proceeds |
+| D2a | First deploy always uses the default self-deploy mechanism regardless of meta.DeployStrategy; `push-git` / `manual` take effect only after `FirstDeployedAt` is stamped |
+| D2b | `handleGitPush` refuses with `PREREQUISITE_MISSING` when the target meta has no `FirstDeployedAt` — defense in depth against agents that ignore the atom guidance |
 | D3 | Strategy read from meta at deploy time, never cached in Work Session |
-| D4 | Strategy resolved before actual deployment (within flow) |
+| D4 | Strategy surfaces via `develop-strategy-review` atom (deployStates=[deployed], strategies=[unset]) — the atom layer owns the prompt, not the briefing |
 | D5 | Strategy can be changed at any time via action="strategy" |
 | D6 | push-git includes optional CI/CD setup |
 | D7 | manual strategy: agent informs, user executes |
