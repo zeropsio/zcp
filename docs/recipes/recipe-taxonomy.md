@@ -64,15 +64,15 @@
 
 ## 4. Backend Framework Showcase [IN PROGRESS]
 
-**What it is**: Same framework as minimal, wired to the full Zerops service stack: PostgreSQL + Valkey + S3 Object Storage + Mailpit + Meilisearch. Includes a queue worker as a separate service.
+**What it is**: Same framework as minimal, wired to the full Zerops service stack: PostgreSQL + Valkey + NATS + S3 Object Storage + Meilisearch. Includes a queue worker as a separate service consuming NATS.
 
-**What the app does**: Dashboard at `GET /` showing status of ALL services — cache read/write demo, queue job dispatch + worker processing, file upload to S3, search index query, SMTP transport status. **Proof of wiring**, not a functional app.
+**What the app does**: Dashboard at `GET /` showing status of ALL services — cache read/write demo, queue job dispatch over NATS + worker processing, file upload to S3, search index query. **Proof of wiring**, not a functional app.
 
-**What it proves**: "This framework's entire ecosystem works on Zerops — cache, queues, storage, search, mail."
+**What it proves**: "This framework's entire ecosystem works on Zerops — cache, messaging/queues, storage, search."
 
-**Services**: App + Worker + PostgreSQL + Valkey + Object Storage + Mailpit + Meilisearch.
+**Services**: App + Worker + PostgreSQL + Valkey + NATS + Object Storage + Meilisearch.
 
-**Integration guide required**: Must include a step-by-step guide on how to go from default framework installation to full Zerops integration across all services (DB, cache, storage, search, mail, queues).
+**Integration guide required**: Must include a step-by-step guide on how to go from default framework installation to full Zerops integration across all services (DB, cache, messaging/queues, storage, search).
 
 **Prompt**: Meta-prompt generates per-framework prompts (`zrecipator-{framework}-showcase.md`).
 
