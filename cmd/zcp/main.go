@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/zeropsio/zcp/cmd/zcp/analyze"
 	"github.com/zeropsio/zcp/cmd/zcp/check"
 	"github.com/zeropsio/zcp/internal/auth"
 	zcpinit "github.com/zeropsio/zcp/internal/init"
@@ -76,6 +77,9 @@ func main() {
 			return
 		case "dry-run":
 			runDryRun(os.Args[2:])
+			return
+		case "analyze":
+			analyze.Run(os.Args[2:])
 			return
 		}
 	}
