@@ -8,9 +8,9 @@ title: "Use the discovered env var catalog when wiring the app"
 
 ### Env var catalog from bootstrap
 
-Bootstrap discovered every managed service's env var keys at provision
-and recorded them in the session. When you scaffold `zerops.yaml` and
-write the app, reference those keys verbatim — **do not guess
+Managed services expose env var keys that your runtime should reference.
+Fetch the actual key list with `zerops_discover service="{hostname}"
+includeEnvs=true` and use those keys verbatim — **do not guess
 alternatives**.
 
 Common managed-service keys (verify against the actual catalog for your
@@ -37,7 +37,7 @@ looking up service `db`'s env var named `connectionString`. A wrong
 spelling resolves to the literal string `${db_connectionString}` and
 the app fails at connect time.
 
-**If you need to check keys at any point:** `zerops_discover
-service="{hostname}" includeEnvs=true` returns the key list. The values
-are redacted — the catalog only tracks names, which is enough for
-cross-service wiring.
+**Re-check at any point:** `zerops_discover service="{hostname}"
+includeEnvs=true` returns the key list. Values are redacted by default;
+names alone are enough for cross-service wiring. Add
+`includeEnvValues=true` only for troubleshooting.

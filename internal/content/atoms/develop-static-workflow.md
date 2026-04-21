@@ -17,9 +17,8 @@ Static services have no runtime process to restart. The develop loop is:
    with curl. Do not tail `zerops_logs` for readiness; nginx is already
    serving the moment deploy lands.
 
-**There is no SSH start step.** Any guidance elsewhere about
-`ssh {hostname} 'cd /var/www && {start-command}'` does not apply to
-this runtime — nginx is serving before SSH is even available.
+**There is no SSH start step.** Static services have no long-running
+process — nginx serves files as soon as the deploy lands.
 
 **Build step** (Tailwind, bundler, SSG like Astro or Eleventy): the
 build runs in the Zerops build container during deploy, not locally.

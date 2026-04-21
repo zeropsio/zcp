@@ -13,10 +13,8 @@ zerops_subdomain serviceHostname="{hostname}" action="enable"
 zerops_verify serviceHostname="{hostname}"
 ```
 
-`zerops_verify` is the gate that stamps `FirstDeployedAt` on the
-ServiceMeta — a passing verify is the signal that the first-deploy
-branch completed. Subsequent develop sessions see `deployed: true` and
-route into the normal edit-loop atoms instead of re-running scaffold.
+A passing `zerops_verify` marks the service deployed. Subsequent
+sessions skip scaffold and enter the normal edit loop.
 
 **What a passing verify requires:**
 
@@ -35,8 +33,8 @@ route into the normal edit-loop atoms instead of re-running scaffold.
    - `run.ports.port` doesn't match what the app actually listens on.
    - Env var name drift — check `${hostname_KEY}` spelling against the
      discovered catalog.
-3. Fix in place, redeploy, re-verify. 3-tier iteration ladder caps at
-   5 attempts.
+3. Fix in place, redeploy, re-verify. Stop after 5 unsuccessful
+   attempts and reassess.
 
 After the first verify passes, the service is deployed. The develop
 session auto-closes when every in-scope service has a passing verify.

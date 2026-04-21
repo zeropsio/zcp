@@ -13,16 +13,16 @@ Bootstrap starts with a discovery pass: call
 state, the intent, and the recipe corpus and returns a ranked list of
 options in `routeOptions[]`. No session is committed yet.
 
-Pick one option and call `start` again with the chosen route. The
-engine then commits the session and the conductor takes over.
+Pick one option and call `start` again with the chosen route to commit
+the session.
 
 ### What the ranked list means
 
 Options always arrive in this priority order:
 
-1. **resume** — a previous bootstrap session was interrupted. ZCP
-   already owns the matching service slots via `BootstrapSession`
-   tags; the only clean recovery is resuming that session. When this
+1. **resume** — a previous bootstrap session was interrupted.
+   `BootstrapSession` tags mark those services as reserved; the only
+   clean recovery is resuming that session. When this
    option is present, **pick it first** unless you have a specific
    reason to override. Carries `resumeSession` + `resumeServices`;
    dispatch via `route="resume" sessionId="<resumeSession>"`.

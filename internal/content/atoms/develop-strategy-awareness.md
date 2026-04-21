@@ -9,9 +9,8 @@ title: "Deploy strategy — current + how to change"
 ### Deploy strategy — current + how to change
 
 Each runtime service has a confirmed deploy strategy shown in the Services
-section (`strategy=push-dev|push-git|manual`). The strategy is read fresh
-from `ServiceMeta` on every tool call — it is **not** cached in the work
-session, so a change takes effect immediately.
+section (`strategy=push-dev|push-git|manual`). Strategy switches take effect
+immediately — no session restart needed.
 
 Switch at any time (no session close required):
 

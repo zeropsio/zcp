@@ -31,10 +31,9 @@ zerops:
       start: <run command, not a build command>
 ```
 
-**Env var references** — use the discovered catalog (injected at close
-of bootstrap and stored in the session). Cross-service references use
-`${hostname_KEY}` exactly; inventing alternative spellings resolves to
-literal strings at runtime and fails silently.
+**Env var references** — use the keys reported by `zerops_discover`.
+Cross-service references use `${hostname_KEY}` exactly; alternative
+spellings resolve to literal strings at runtime and fail silently.
 
 **Mode-aware tips:**
 

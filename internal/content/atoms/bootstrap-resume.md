@@ -11,9 +11,8 @@ title: "Resume interrupted bootstrap"
 The project has at least one runtime service whose `ServiceMeta` is
 tagged with a `BootstrapSession` but carries no `BootstrappedAt`. That
 means a bootstrap session started, wrote partial metadata, then died
-before reaching the close step. ZCP owns those service slots via the
-recorded session — **do not classic-bootstrap over them**, or a new
-session will clash with the orphaned records.
+before reaching the close step. **Do not classic-bootstrap over them** —
+a new session will clash with the existing records.
 
 **Options, in priority order:**
 
@@ -27,8 +26,8 @@ session will clash with the orphaned records.
    ```
    zerops_workflow action="start" workflow="bootstrap" route="resume" sessionId="<resumeSession>"
    ```
-   The engine claims the session from the dead PID and hands you back
-   at the step that was in flight when it died.
+   Resume picks up at the step that was in flight when the earlier
+   session ended.
 
 2. **Reset and restart** — if the incomplete metadata is stale (the
    original bootstrap was abandoned deliberately, or the services are

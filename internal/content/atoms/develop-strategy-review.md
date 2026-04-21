@@ -26,7 +26,6 @@ should work:
 zerops_workflow action="strategy" strategies={"{hostname}":"push-dev"}
 ```
 
-This atom fires every develop session until a strategy is confirmed.
-No code changes before confirming — the implicit default keeps
-working, but strategy-specific atoms (git-push steps, close sequences)
-only unlock after `action="strategy"` records the choice.
+Confirm a strategy before iterating. No code changes before confirming —
+the default keeps working, but pick explicitly so subsequent deploys
+use the right mechanism.

@@ -24,9 +24,8 @@ In this `discover` step:
    services become dependencies on their runtime owner (derive from
    `priority`, `type`, and the app's needs as documented in the recipe body).
 3. **Set `isExisting: false`** on every target — the services don't exist yet;
-   `zerops_import` at the provision step creates them. (Adoption kicks in at
-   bootstrap close when the conductor writes ServiceMeta evidence files;
-   you do NOT need to mark the targets as existing to get adopt semantics.)
+   `zerops_import` at the provision step creates them. `ServiceMeta` records
+   are written automatically at bootstrap close.
 
 Do not write code in this step — `buildFromGit` pulls the recipe's
 codebase at import time.

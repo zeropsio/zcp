@@ -15,5 +15,5 @@ zerops_workflow action="close" workflow="develop"
 zerops_workflow action="start" workflow="develop" intent="{next-task}"
 ```
 
-Until you close, the current session is the "ambient" context — new deploy
-attempts record against it.
+Until you explicitly close, new deploy attempts attach to this
+already-completed session.

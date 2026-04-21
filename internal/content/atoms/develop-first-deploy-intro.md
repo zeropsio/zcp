@@ -8,11 +8,9 @@ title: "First-deploy branch — scaffold + write + deploy + stamp"
 
 ### You're in the develop first-deploy branch
 
-Bootstrap provisioned infrastructure but never wrote code or deployed
-anything. At least one planned runtime has `bootstrapped: true` and
-`deployed: false`. Finish the work here — the normal edit-loop branch
-only opens after the first deploy verifies and `FirstDeployedAt` is
-stamped.
+Bootstrap provisioned infrastructure but no code was ever deployed.
+Finish that here: scaffold `zerops.yaml`, write the app, deploy, verify.
+The normal edit loop begins after the first verify passes.
 
 Flow for each never-deployed runtime:
 
@@ -25,12 +23,9 @@ Flow for each never-deployed runtime:
    self-deploy mechanism, regardless of what eventual strategy the
    service will use. `strategy=git-push` requires `GIT_TOKEN` +
    committed code on the container, neither of which exists yet.
-4. **Verify** with `zerops_verify` — a passing verify auto-stamps
-   `FirstDeployedAt` on the ServiceMeta, exiting the first-deploy
-   branch for the next session.
+4. **Verify** with `zerops_verify` — a passing verify marks the service
+   deployed; the next session enters the normal edit loop.
 
-After the first deploy verifies, the next develop session will ask
-you to confirm an ongoing strategy (`push-dev` / `push-git` /
-`manual`). Skip straight to edits only after that first deploy
-lands — SSHFS mounts may be empty, subdomains are disabled, and HTTP
-probes fail before any code is delivered.
+Skip straight to edits only after that first deploy lands — SSHFS
+mounts may be empty, subdomains are disabled, and HTTP probes fail
+before any code is delivered.

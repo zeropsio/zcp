@@ -8,9 +8,9 @@ title: "Write the application code"
 
 ### Write the application code
 
-Bootstrap under Option A does NOT ship a verification stub or hello-world
-— `/var/www/{hostname}/` on the SSHFS mount is empty. The first deploy
-only succeeds if real code is there.
+Bootstrap does NOT ship a verification stub or hello-world — `/var/www/{hostname}/`
+on the SSHFS mount is empty. The first deploy only succeeds if real code
+is there.
 
 **Checklist before deploying:**
 

@@ -47,5 +47,5 @@ The bootstrap flow will:
 4. Ask for a stage deploy (cross-deploy from the dev half) to verify
    the new pair works end to end.
 
-After expansion, the develop briefing for this service reports
-`mode=standard` and includes stage-specific guidance.
+After expansion, the service runs in `mode=standard` with stage as a
+sibling service.

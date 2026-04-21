@@ -8,9 +8,8 @@ title: "Verify infrastructure is ready before handoff"
 
 ### Verify infrastructure before closing bootstrap
 
-Bootstrap under Option A is infra-only: no code, no deploy, no HTTP
-probe. Close must confirm the **platform layer** is healthy so the
-develop workflow inherits a clean handoff.
+Bootstrap is infra-only: no code, no deploy, no HTTP probe. Close must
+confirm the **platform layer** is healthy before develop starts.
 
 ```
 zerops_discover
@@ -22,9 +21,8 @@ Required state for every planned service:
   object storage). A managed service that never reached `RUNNING` means
   the import failed silently — investigate `zerops_process` logs, do
   not close.
-- Runtime services may appear as `NOT_YET_DEPLOYED` — that is expected
-  under Option A. Code and the first deploy happen in the develop
-  workflow.
+- Runtime services may appear as `NOT_YET_DEPLOYED` — that is expected.
+  Code and the first deploy happen in the develop workflow.
 - Env vars discovered during provisioning must be recorded in the
   session so develop can wire them without re-discovering.
 

@@ -10,25 +10,29 @@ import (
 // no API calls, no state reads, no dynamic content. State is encapsulated
 // behind zerops_workflow action="status", which is the one canonical entry
 // point the LLM needs to remember.
-const baseInstructions = `ZCP manages Zerops PaaS infrastructure.
+const baseInstructions = `ZCP manages Zerops PaaS infrastructure through workflows.
 
-ALWAYS begin with project state:
-  zerops_workflow action="status"
-Returns the current phase (idle | bootstrap | develop | recipe), services,
-setup, progress, and the concrete next action.
+Primary entry — every user task that changes code or deploys:
+  zerops_workflow action="start" workflow="develop" intent="<one-liner>"
 
-Workflows (via zerops_workflow action="start" workflow="..."):
-  bootstrap — create/adopt infrastructure (services, project import)
-  develop   — code tasks (edit → deploy → verify; auto-closes when complete)
-  recipe    — build recipe repo files
-  cicd      — generate pipeline files
+The develop workflow carries step-by-step guidance, tracks deploys and
+verifies, and auto-closes when scoped services are green.
 
-Direct tools (callable anytime): zerops_scale, zerops_manage, zerops_env,
-zerops_subdomain, zerops_discover, zerops_knowledge, zerops_verify.
+Other entries (when they fit):
+  workflow="bootstrap"  — create/adopt infrastructure (empty project, add a service, mode expansion)
+  workflow="recipe"     — build recipe repo files
+  workflow="cicd"       — generate pipeline config
 
-Workflow-gated tools: zerops_deploy (requires adopted services),
-zerops_mount and zerops_import (require an active workflow session).
-Use zerops_workflow action="status" to learn the correct entry point.`
+Direct tools — read-only queries and config tweaks that don't need a
+deploy cycle: zerops_discover, zerops_logs, zerops_events,
+zerops_knowledge, zerops_env, zerops_manage, zerops_scale,
+zerops_subdomain, zerops_verify.
+
+Workflow-gated: zerops_deploy (adopted services), zerops_mount and
+zerops_import (active workflow session).
+
+Recovery — after compaction or when the state is unclear:
+  zerops_workflow action="status"`
 
 const containerEnvironment = `
 Running as the ZCP control-plane container — Ubuntu with zcli, psql, mysql,

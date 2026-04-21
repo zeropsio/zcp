@@ -46,6 +46,5 @@ dependencies (postgresql, valkey, etc.) typically transition first.
 **4. Record discovered env vars.**
 
 After services reach ACTIVE, include a summary of managed-service env var
-keys in the provision attestation (e.g. `db: connectionString, port`). The
-conductor surfaces them as a catalog at the generate step — critical for
-cross-service references in `run.envVariables`.
+keys in the provision attestation (e.g. `db: connectionString, port`).
+These keys are needed for cross-service references in `run.envVariables`.

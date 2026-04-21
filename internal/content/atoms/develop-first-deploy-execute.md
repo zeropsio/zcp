@@ -12,8 +12,8 @@ title: "Run the first deploy"
 zerops_deploy targetService="{hostname}"
 ```
 
-Under Option A this is the first deploy — the service transitions from
-`bootstrapped` to `bootstrapped + deployed` only after a passing verify.
+This is the service's first deploy — it counts as deployed only after
+`zerops_verify` passes.
 
 **Notes specific to the first deploy:**
 

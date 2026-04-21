@@ -1,11 +1,27 @@
 ---
-id: bootstrap-provision-runtime-properties
+id: bootstrap-provision-rules
 priority: 2
 phases: [bootstrap-active]
 routes: [classic, adopt]
 steps: [provision]
-title: "Runtime service properties by mode"
+title: "Provision rules — managed conventions + runtime properties"
 ---
+
+### Managed service hostname conventions
+
+Canonical hostnames (agents/recipes/cross-service refs assume these):
+
+- `db` — postgresql / mariadb / mysql / mongodb
+- `cache` — valkey / keydb / redis
+- `queue` — nats / kafka / rabbitmq
+- `search` — elasticsearch / meilisearch / typesense
+- `storage` — object-storage / shared-storage
+
+**Mode for managed services**: default to `mode: NON_HA` when omitted. Set
+`mode: HA` explicitly only for production where the user has asked for HA.
+
+**Priority**: managed services use `priority: 10` so they initialize before
+runtime services (default 5). Databases must be ready before dependent apps.
 
 ### Runtime service properties (import.yaml)
 

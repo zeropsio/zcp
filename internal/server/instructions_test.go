@@ -82,15 +82,18 @@ func TestBuildInstructions_FitsIn2KB(t *testing.T) {
 	}
 }
 
-func TestBuildInstructions_MentionsStatusFirst(t *testing.T) {
+func TestBuildInstructions_DevelopEntryPrecedesStatus(t *testing.T) {
 	t.Parallel()
 	out := BuildInstructions(runtime.Info{InContainer: true})
-	statusIdx := strings.Index(out, `action="status"`)
 	startIdx := strings.Index(out, `action="start"`)
+	statusIdx := strings.Index(out, `action="status"`)
+	if startIdx < 0 {
+		t.Fatal(`instructions must mention action="start"`)
+	}
 	if statusIdx < 0 {
 		t.Fatal(`instructions must mention action="status"`)
 	}
-	if startIdx >= 0 && startIdx < statusIdx {
-		t.Errorf(`action="status" (%d) should appear before action="start" (%d) — status is the entry point`, statusIdx, startIdx)
+	if startIdx > statusIdx {
+		t.Errorf(`action="start" (%d) should appear before action="status" (%d) — develop is the primary entry, status is recovery`, startIdx, statusIdx)
 	}
 }

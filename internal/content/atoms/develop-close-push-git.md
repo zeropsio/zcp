@@ -25,8 +25,9 @@ One-time prerequisites:
     'umask 077 && echo "machine github.com login oauth2 password $GIT_TOKEN" > ~/.netrc'
   ```
 
-Then follow the push-git workflow atom's commit + deploy steps. Repeat
-per dev service if you have more than one.
+Then commit the code on the dev container and push via
+`zerops_deploy strategy="git-push"`. Repeat per dev service if you
+have more than one.
 
 #### Option B — Full CI/CD
 

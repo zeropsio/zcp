@@ -1,15 +1,16 @@
 ---
-id: bootstrap-adopt-mode-prompt
+id: bootstrap-mode-prompt
 priority: 3
 phases: [bootstrap-active]
-routes: [adopt]
+routes: [classic, adopt]
 steps: [discover]
-title: "Adopt — confirm mode with the user"
+title: "Confirm mode — dev / standard / simple per service"
 ---
 
 ### Confirm mode per service
 
-Ask the user, per service:
+Every runtime service needs a **mode**; confirm it with the user before
+committing the plan:
 
 - **dev** — single mutable container, SSHFS-mountable, no stage pair.
   Best for active development.
@@ -17,6 +18,8 @@ Ask the user, per service:
   target; dev is the iteration surface.
 - **simple** — single container that starts real code on every deploy;
   no SSHFS-mutation lifecycle.
+- **stage** — never bootstrapped on its own; created as the stage half
+  of a standard pair.
 
 Default suggestion when uncertain: **dev** for runtime services the user
 is actively iterating on, **simple** for services treated as immutable

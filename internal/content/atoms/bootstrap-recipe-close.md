@@ -9,12 +9,9 @@ title: "Recipe — auto-adopt on close"
 
 ### Close the recipe bootstrap
 
-`close` finalizes the bootstrap: the conductor writes a `ServiceMeta` per
-runtime service (mode from the plan, strategy left unset for develop to
-pick on first use) and appends a reflog entry in `CLAUDE.md`.
-
-You do NOT write metas yourself — the conductor runs
-`writeBootstrapOutputs` automatically when you complete this step.
+Complete the close step — `ServiceMeta` records (mode from the plan,
+strategy left unset) and the CLAUDE.md log entry are written
+automatically. Strategy is picked by develop on first use.
 
 ```
 zerops_workflow action="complete" step="close" attestation="Recipe {slug} bootstrapped — services active and verified"

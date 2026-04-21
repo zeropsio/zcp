@@ -20,9 +20,8 @@ Local-mode topology:
 **Key rule** — no `{name}dev` service on Zerops in local mode. The
 user's machine replaces the dev service.
 
-The plan format is unchanged: submit `devHostname` in the plan. The
-engine routes hostnames internally (standard mode creates stage, not
-dev).
+Submit `devHostname` in the plan as usual — standard mode creates the
+stage service, not dev.
 
 **VPN required** — the user runs `zcli vpn up <projectId>` to reach
 managed services from their machine. Env vars are not active over

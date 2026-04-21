@@ -14,6 +14,6 @@ zerops_workflow action="start" workflow="bootstrap" intent="{your-description}"
 
 Keep the intent one sentence. The first call returns a ranked list of
 route options (recipe matches, adopt, classic) — pick one and call
-start again with `route=...` to commit the session. The conductor then
-proposes a service plan that you approve or adjust before any services
-are created.
+start again with `route=...` to commit the session. A service plan is
+then proposed for you to approve or adjust before any services are
+created.

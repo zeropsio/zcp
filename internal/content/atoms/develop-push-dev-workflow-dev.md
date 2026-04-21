@@ -14,8 +14,9 @@ title: "Push-dev iteration cycle (dev mode, container)"
 Edit code on `/var/www/{hostname}/`. Iteration cycle:
 
 1. Edit files on the mount — changes appear instantly inside the container.
-2. Restart the server over SSH (see the start atom for the exact command).
-   Run with `run_in_background=true` so the agent isn't blocked.
+2. Restart the server over SSH (see the dynamic-runtime start guidance
+   for the exact command). Run with `run_in_background=true` so the
+   agent isn't blocked.
 3. Hit a local endpoint with curl over the same SSH connection to confirm.
 4. Repeat until the change works.
 
