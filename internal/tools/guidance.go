@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -33,7 +34,18 @@ func RegisterGuidance(srv *mcp.Server, engine *workflow.Engine) {
 
 		topic := workflow.LookupTopic(input.Topic)
 		if topic == nil {
-			return textResult(fmt.Sprintf("Error: unknown guidance topic %q — check the skeleton for valid topic IDs", input.Topic)), nil, nil
+			// Cx-GUIDANCE-TOPIC-REGISTRY (v35 F-5 close): bare
+			// "unknown topic" errors let the main agent keep
+			// guessing plausible-sounding IDs (v35 at 07:29:50-51).
+			// Returning the top-3 nearest matches short-circuits
+			// the guess loop.
+			suggestions := workflow.NearestTopicIDs(input.Topic, 3)
+			msg := fmt.Sprintf("Error: unknown guidance topic %q.", input.Topic)
+			if len(suggestions) > 0 {
+				msg += " Did you mean: " + strings.Join(suggestions, ", ") + "?"
+			}
+			msg += " (The full topic-ID list was returned in the response to action=start workflow=recipe as guidanceTopicIds.)"
+			return textResult(msg), nil, nil
 		}
 
 		// Get the active recipe plan from the engine.
@@ -51,7 +63,20 @@ func RegisterGuidance(srv *mcp.Server, engine *workflow.Engine) {
 		}
 
 		if content == "" {
-			return textResult(fmt.Sprintf("Topic %q does not apply to your recipe shape.", input.Topic)), nil, nil
+			// Cx-GUIDANCE-TOPIC-REGISTRY (v35 F-5 close): distinguish
+			// predicate-filtered-empty (topic doesn't apply to this
+			// plan shape, legitimate) from block-missing-empty
+			// (registry references a block that doesn't exist in
+			// recipe.md, server bug). The latter is a hard error so
+			// the main agent doesn't silently skip and miss required
+			// guidance.
+			if topic.Predicate != nil && !topic.Predicate(plan) {
+				return textResult(fmt.Sprintf("Topic %q does not apply to your recipe shape.", input.Topic)), nil, nil
+			}
+			return convertError(platform.NewPlatformError(
+				platform.ErrTopicEmpty,
+				fmt.Sprintf("guidance topic %q resolved to zero bytes despite predicate match", input.Topic),
+				"Server-side registry bug — topic references blocks missing from recipe.md. Report via flow-main.md; do not assume the topic is empty by design.")), nil, nil
 		}
 
 		// Phase C: record access for adaptive delivery.

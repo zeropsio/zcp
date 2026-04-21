@@ -33,7 +33,13 @@ func (e *Engine) RecipeStart(projectID, intent, tier string) (*RecipeResponse, e
 	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("recipe start save: %w", err)
 	}
-	return rs.BuildResponse(state.SessionID, intent, state.Iteration, e.environment, e.knowledge), nil
+	resp := rs.BuildResponse(state.SessionID, intent, state.Iteration, e.environment, e.knowledge)
+	// Cx-GUIDANCE-TOPIC-REGISTRY (v35 F-5 close): hand the main agent
+	// the closed universe of valid zerops_guidance topic IDs at start
+	// so it references the registry instead of pattern-matching from
+	// its own reasoning.
+	resp.GuidanceTopicIDs = AllTopicIDs()
+	return resp, nil
 }
 
 // RecipeComplete completes the current recipe step or sub-step.

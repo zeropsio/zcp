@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/content"
@@ -575,6 +576,99 @@ func ExpandTopic(topicID string, plan *RecipePlan, accessed map[string]bool) []*
 // LookupTopic returns the topic definition for a given ID, or nil if not found.
 func LookupTopic(topicID string) *GuidanceTopic {
 	return topicRegistry[topicID]
+}
+
+// AllTopicIDs returns every registered guidance topic ID sorted
+// alphabetically. Cx-GUIDANCE-TOPIC-REGISTRY (v35 F-5 close): surfaced
+// on the recipe-start response so the main agent has a closed universe
+// of valid topic IDs instead of pattern-matching plausible-sounding
+// ones from its own reasoning (v35 at 07:29:50-51: three hallucinated
+// topic lookups in succession — `dual-runtime-consumption`,
+// `client-code-observable-failure`, `init-script-loud-failure`).
+func AllTopicIDs() []string {
+	ids := make([]string, 0, len(topicRegistry))
+	for id := range topicRegistry {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// NearestTopicIDs returns up to k topic IDs closest to query by
+// Levenshtein distance, tie-broken lexicographically. Empty query or
+// k≤0 returns nil. Used to replace bare "unknown topic" errors with
+// actionable suggestions per Cx-GUIDANCE-TOPIC-REGISTRY.
+//
+// Rationale: edit-distance handles both typos (dual-runtime-consumtion
+// → dual-runtime-consumption) and near-synonyms (init-script → on-
+// container-smoke-test) well enough for triage. Full embedding-based
+// similarity is overkill for a < 100-topic registry.
+func NearestTopicIDs(query string, k int) []string {
+	if query == "" || k <= 0 {
+		return nil
+	}
+	type scored struct {
+		id       string
+		distance int
+	}
+	ids := AllTopicIDs()
+	scoredIDs := make([]scored, 0, len(ids))
+	for _, id := range ids {
+		scoredIDs = append(scoredIDs, scored{id: id, distance: levenshtein(query, id)})
+	}
+	sort.SliceStable(scoredIDs, func(i, j int) bool {
+		if scoredIDs[i].distance != scoredIDs[j].distance {
+			return scoredIDs[i].distance < scoredIDs[j].distance
+		}
+		return scoredIDs[i].id < scoredIDs[j].id
+	})
+	if k > len(scoredIDs) {
+		k = len(scoredIDs)
+	}
+	out := make([]string, k)
+	for i := 0; i < k; i++ {
+		out[i] = scoredIDs[i].id
+	}
+	return out
+}
+
+// levenshtein computes the edit distance between two strings using the
+// standard dynamic-programming matrix. O(len(a)*len(b)) time, O(len(b))
+// space. Sufficient for topic IDs (< 60 chars each).
+func levenshtein(a, b string) int {
+	if a == b {
+		return 0
+	}
+	if len(a) == 0 {
+		return len(b)
+	}
+	if len(b) == 0 {
+		return len(a)
+	}
+	prev := make([]int, len(b)+1)
+	curr := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		curr[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			// min of: delete, insert, substitute
+			curr[j] = prev[j] + 1
+			if v := curr[j-1] + 1; v < curr[j] {
+				curr[j] = v
+			}
+			if v := prev[j-1] + cost; v < curr[j] {
+				curr[j] = v
+			}
+		}
+		prev, curr = curr, prev
+	}
+	return prev[len(b)]
 }
 
 // TopicIncludesPriorDiscoveries reports whether the topic with the given

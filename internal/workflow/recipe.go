@@ -242,6 +242,14 @@ type RecipeResponse struct {
 	AvailableStacks         string           `json:"availableStacks,omitempty"`
 	PostCompletionSummary   string           `json:"postCompletionSummary,omitempty"`
 	PostCompletionNextSteps []string         `json:"postCompletionNextSteps,omitempty"`
+	// GuidanceTopicIDs (Cx-GUIDANCE-TOPIC-REGISTRY, v35 F-5 close) is the
+	// closed universe of valid zerops_guidance topic IDs, populated on
+	// action=start workflow=recipe so the main agent does not
+	// pattern-match plausible-sounding topics out of its own reasoning
+	// (v35 at 07:29:50-51 showed three hallucinated topic lookups in
+	// succession). Omitted on non-start responses to keep payload size
+	// small — the main agent caches the list from start.
+	GuidanceTopicIDs []string `json:"guidanceTopicIds,omitempty"`
 }
 
 // RecipeProgress summarizes overall recipe progress.

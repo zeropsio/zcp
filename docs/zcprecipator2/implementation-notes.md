@@ -1612,3 +1612,73 @@ Independent of Cx-CHECK-WIRE-NOTATION (check-author strings) and Cx-ITERATE-GUAR
 ### Next
 
 3-of-3 gate-to-PROCEED fix-stack commits landed (CHECK-WIRE-NOTATION + ITERATE-GUARD + BRIEF-OVERFLOW). Per HANDOFF-to-I6 §"Starting action" step 6: **STOP and report** before commissioning v36 or continuing to Cx-GUIDANCE-TOPIC-REGISTRY / Cx-KNOWLEDGE-INDEX-MANIFEST. User reviews before deciding on the remaining two or commissioning v36.
+
+---
+
+## Cx-GUIDANCE-TOPIC-REGISTRY — unknown topics return top-3 matches; zero-byte responses rejected; session briefing lists valid IDs (F-5 close)
+
+**Status**: green — 9 tests across 2 packages (registry-level + MCP-level), all passing. Fourth of five fix-stack commits per HANDOFF-to-I6.
+
+**Context**: user elected to land the remaining 2 Cx-commits before commissioning v36. Closes defect-class-registry §16.5 (`v35-guidance-unknown-topic`). v35 evidence at 07:29:50-51: three hallucinated guidance-topic lookups in a row (`dual-runtime-consumption`, `client-code-observable-failure`, `init-script-loud-failure`). First two returned bare "unknown guidance topic" errors; the third returned a zero-byte response — worse than the error because the main agent cannot distinguish "no additional guidance needed" from "lookup miss".
+
+### What landed
+
+Three coordinated changes close the hallucination + silent-empty loop:
+
+1. **Unknown-topic Levenshtein suggestions**. `NearestTopicIDs(query, k)` ranks every registered topic by edit distance and returns the top-k. The guidance handler swaps the bare "unknown guidance topic" error for one that names the top-3 nearest matches with a "Did you mean: X, Y, Z?" prompt. Main agent's guess loop short-circuits at the first unknown lookup.
+2. **Zero-byte guard on predicate-match empty**. Guidance handler now distinguishes predicate-filtered empty (topic doesn't apply to this plan shape — legitimate "does not apply" message preserved) from resolved-to-zero-bytes despite predicate match (server-side block-missing bug — surfaces as a hard `TOPIC_EMPTY` error with a pointer at the registry mismatch). The main agent can no longer silently interpret a zero-byte response as "no additional guidance".
+3. **Closed-universe list in recipe-start response**. `RecipeResponse.GuidanceTopicIDs` is populated by `AllTopicIDs()` on `action=start workflow=recipe` — every registered topic ID, sorted alphabetically. The main agent caches this list at session start and references it instead of pattern-matching plausible-sounding IDs from its own reasoning.
+
+- [`internal/platform/errors.go`](../../internal/platform/errors.go) — added `ErrTopicEmpty = "TOPIC_EMPTY"` alongside the existing codes.
+- [`internal/workflow/recipe_topic_registry.go`](../../internal/workflow/recipe_topic_registry.go) — new exports: `AllTopicIDs() []string` (sorted), `NearestTopicIDs(query, k) []string` (Levenshtein-ranked, tie-broken lexicographically), plus a private `levenshtein(a, b) int` helper using the standard DP matrix (O(nm) time / O(m) space). Total +85 LoC.
+- [`internal/workflow/recipe.go`](../../internal/workflow/recipe.go) — added `GuidanceTopicIDs []string` field on `RecipeResponse` (with `omitempty` so non-start responses stay compact).
+- [`internal/workflow/engine_recipe.go`](../../internal/workflow/engine_recipe.go) — `RecipeStart` populates `resp.GuidanceTopicIDs = AllTopicIDs()` before returning.
+- [`internal/tools/guidance.go`](../../internal/tools/guidance.go) — guidance handler now:
+  - Returns top-3 suggestions via `workflow.NearestTopicIDs` when `LookupTopic` returns nil.
+  - Checks `topic.Predicate(plan)` BEFORE declaring an empty response a bug: predicate-filtered empty keeps the legacy "does not apply" message; predicate-match empty surfaces `TOPIC_EMPTY` error naming the topic.
+  - Adds a `platform` import.
+- [`internal/workflow/guidance_topic_registry_test.go`](../../internal/workflow/guidance_topic_registry_test.go) (+155 LoC, new) — 6 tests: AllTopicIDs sorted/deduped/non-empty, NearestTopicIDs finds typo'd target / handles empty input / caps at k > registry size, RecipeStart populates GuidanceTopicIDs, every registered topic under a matching predicate resolves to non-empty content (structural guard against block-missing regressions).
+- [`internal/tools/guidance_topic_registry_test.go`](../../internal/tools/guidance_topic_registry_test.go) (+130 LoC, new) — 3 MCP-level tests: unknown topic returns suggestions + pointer to `guidanceTopicIds`, degenerate query doesn't panic and still returns "Did you mean", predicate-filtered empty does NOT surface as `TOPIC_EMPTY` (legitimate "does not apply" path preserved).
+
+### Design decisions
+
+1. **Levenshtein, not embeddings, for topic-ID triage.** HANDOFF-to-I6 said "Levenshtein-or-embedding top-3". The registry has < 100 topics with short stable IDs; edit-distance handles both typos (`dual-runtime-consumtion` → `dual-runtime-consumption`) and near-synonyms adequately. Introducing an embedding index for this class would be over-engineering; the knowledge engine's embedding pipeline is separate and tackled in Cx-KNOWLEDGE-INDEX-MANIFEST.
+2. **Predicate-filter distinction is the load-bearing insight.** The v35 analysis lumped "predicate filter rejects" and "block missing" into one failure mode. They're not. Predicate-filter empty is **correct**: the topic legitimately doesn't apply to this plan shape. Block-missing empty is a **bug**: the registry points at a recipe.md block that was renamed or deleted. Distinguishing them lets the agent act on both signals correctly — the "does not apply" message keeps the agent moving; the `TOPIC_EMPTY` error tells it (and the repo maintainers via the flow logs) to report a registry drift. Conflating them was the v35 silent-failure class.
+3. **`GuidanceTopicIDs` only on start-response, not on every response.** ~100 topic IDs would add ~2 KB to every recipe response. The main agent caches the list once at session start; the engine already owns `RecipeStart` as the canonical briefing moment, so piggybacking the list there has zero additional plumbing cost.
+4. **`TOPIC_EMPTY` error message names the fix, not just the failure.** Same pattern as Cx-ITERATE-GUARD's `MISSING_EVIDENCE` message: "Report via flow-main.md; do not assume the topic is empty by design." Short-circuits the agent's fallback-to-silently-skip pattern.
+5. **`TestResolveTopic_AllTopics_NonEmpty_UnderMatchingPredicate` is the real safety net.** The MCP-level `TOPIC_EMPTY` guard catches server-side drift at runtime, but a build-time test that walks every registered topic × every canonical plan shape + asserts non-empty under matching predicate catches the same class during CI. The test currently passes — no registry drift in the current tree — which means the `TOPIC_EMPTY` path is exercised only by hypothetical future regressions. That's the correct cost/benefit: guard firing means someone broke the registry; test passing means they haven't.
+
+### Verification
+
+- `go test ./internal/workflow/ -run 'TestAllTopicIDs|TestNearestTopicIDs|TestResolveTopic_AllTopics|TestRecipeStart_IncludesGuidanceTopicIDs' -v -count=1` → 6/6 PASS.
+- `go test ./internal/tools/ -run 'TestGuidanceTool_UnknownTopic|TestGuidanceTool_ValidTopic' -v -count=1` → 3/3 PASS.
+- `go test ./... -count=1` (full) → 22/22 packages green.
+- `make lint-local` → 0 issues.
+
+### LoC delta
+
+- `internal/platform/errors.go`: +1 LoC.
+- `internal/workflow/recipe_topic_registry.go`: +85 LoC (AllTopicIDs + NearestTopicIDs + levenshtein).
+- `internal/workflow/recipe.go`: +9 LoC (GuidanceTopicIDs field + doc).
+- `internal/workflow/engine_recipe.go`: +6 LoC (populate on start).
+- `internal/tools/guidance.go`: ~+25 LoC (suggestion path + TOPIC_EMPTY guard).
+- `internal/workflow/guidance_topic_registry_test.go`: +155 LoC (new).
+- `internal/tools/guidance_topic_registry_test.go`: +130 LoC (new).
+- **Total**: ~+410 LoC.
+
+### Breaks-alone consequence
+
+Agents that relied on the bare "Error: unknown guidance topic" string for their retry logic will now see a longer message that includes "Did you mean: X, Y, Z?" plus a pointer at `guidanceTopicIds`. Substring-match clients that checked for the "unknown guidance topic" prefix continue to work (the prefix is unchanged). Agents that silently interpreted zero-byte guidance responses as "no additional guidance" will now see either "does not apply to your recipe shape" (predicate-filtered — semantically equivalent to the old silent behavior, but loud) or a `TOPIC_EMPTY` error (server bug surfaced).
+
+### Ordering deps verified
+
+Independent of the three gate-to-PROCEED commits. Touches a different surface (guidance-tool handler + topic registry) from Cx-BRIEF-OVERFLOW (substep-guide delivery + MCP action registration). No interaction with Cx-CHECK-WIRE-NOTATION (check-author strings) or Cx-ITERATE-GUARD (engine state).
+
+### Known follow-ups
+
+- **Calibration-bar evaluator**: post-run, count `is_error:true` responses from `zerops_guidance` with message containing "unknown guidance topic". B-12 from [`runs/v35/verdict.md`](runs/v35/verdict.md) §4: zero such responses per session is the bar. Evaluator lives in `scripts/extract_calibration_evidence.py` (Front A, non-blocking).
+- **Measurement of `TOPIC_EMPTY` surfacing**: if v36 or later surfaces this error, the registry + recipe.md drifted and a rebuild-goldens commit needs to land. The test `TestResolveTopic_AllTopics_NonEmpty_UnderMatchingPredicate` catches the class at build time, so runtime surfacing should be zero.
+
+### Next
+
+Advance to Cx-KNOWLEDGE-INDEX-MANIFEST per HANDOFF-to-I6 fix-stack order. Closes F-6 (knowledge-engine misses manifest-contract atom on obvious queries). Last of five fix-stack commits.
