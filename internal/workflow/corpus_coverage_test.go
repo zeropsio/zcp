@@ -289,6 +289,38 @@ func developCoverageFixtures() []coverageFixture {
 			},
 		},
 		{
+			// First-deploy branch on an implicit-webserver pair (php-nginx
+			// standard mode): asset-pipeline atom must fire so the agent runs
+			// `npm run build` over SSH before verify. Gates on Laravel+Vite
+			// / Symfony+Encore flows where dev setups intentionally skip the
+			// production asset build.
+			Name: "develop_first_deploy_implicit_webserver_standard",
+			Envelope: StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{
+					{
+						Hostname: "appdev", TypeVersion: "php-nginx@8.4",
+						RuntimeClass: RuntimeImplicitWeb, Mode: ModeStandard,
+						StageHostname: "appstage",
+						Strategy:      StrategyUnset, Bootstrapped: true, Deployed: false,
+					},
+					{
+						Hostname: "appstage", TypeVersion: "php-nginx@8.4",
+						RuntimeClass: RuntimeImplicitWeb, Mode: ModeStage,
+						Strategy: StrategyUnset, Bootstrapped: true, Deployed: false,
+					},
+				},
+			},
+			MustContain: []string{
+				"asset pipeline",
+				"npm run build",
+				"Vite manifest not found",
+				"Do NOT add",
+				"buildCommands",
+			},
+		},
+		{
 			// Local+dev push-dev: close-push-dev-local fills the gap left by
 			// close-push-dev-dev's environments=[container] restriction.
 			Name: "develop_close_local_dev",
