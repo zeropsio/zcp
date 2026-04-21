@@ -47,7 +47,7 @@ For each env tier's payload entry:
 
 For each hostname `{h}` in `{{.Hostnames}}`:
 
-- Fragment markers present: `grep -q '#ZEROPS_EXTRACT_START:integration-guide' {{.ProjectRoot}}/{h}/README.md` and the matching end marker.
+- Fragment markers present in exact form: `grep -q '#ZEROPS_EXTRACT_START:integration-guide#' {{.ProjectRoot}}/{h}/README.md` and the matching end marker. The trailing `#` is mandatory — the extractor treats markers without it as absent.
 - H3 count in `[3, 6]`: count `### ` headings inside the integration-guide markers.
 - Every H3 item carries at least one fenced code block in its section (one action, one reason, one diff).
 - Every H3 item is standalone: a porter reading the single item understands what to do without reading the neighbouring items.
@@ -108,9 +108,9 @@ jq '[.facts[] | select(.classification == "framework-quirk" or .classification =
 
 # Per-codebase fragments present.
 for h in {{range .Hostnames}}{{.}} {{end}}; do
-  grep -q '#ZEROPS_EXTRACT_START:intro'             {{.ProjectRoot}}/$h/README.md &&
-  grep -q '#ZEROPS_EXTRACT_START:integration-guide' {{.ProjectRoot}}/$h/README.md &&
-  grep -q '#ZEROPS_EXTRACT_START:knowledge-base'    {{.ProjectRoot}}/$h/README.md || exit 1
+  grep -q '#ZEROPS_EXTRACT_START:intro#'             {{.ProjectRoot}}/$h/README.md &&
+  grep -q '#ZEROPS_EXTRACT_START:integration-guide#' {{.ProjectRoot}}/$h/README.md &&
+  grep -q '#ZEROPS_EXTRACT_START:knowledge-base#'    {{.ProjectRoot}}/$h/README.md || exit 1
 done
 
 # CLAUDE.md byte floor.
