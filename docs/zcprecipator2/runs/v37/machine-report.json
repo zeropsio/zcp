@@ -1,0 +1,430 @@
+{
+  "run": "v37",
+  "generated_at": "2026-04-21T21:56:12Z",
+  "generator_version": "v8.109.0-harness",
+  "tier": "showcase",
+  "slug": "nestjs-showcase",
+  "deliverable_dir": "/Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v37",
+  "sessions_logs_dir": "/Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v37/SESSIONS_LOGS",
+  "structural_integrity": {
+    "B-15_ghost_env_dirs": {
+      "description": "ghost (non-canonical) directories under environments/",
+      "measurement": "readdir environments/ ∉ CanonicalEnvFolders",
+      "threshold": 0,
+      "observed": 0,
+      "status": "pass"
+    },
+    "B-16_tarball_per_codebase_md": {
+      "description": "per-codebase README.md + CLAUDE.md staged into deliverable",
+      "measurement": "stat {deliverable}/{codebase}/{README.md,CLAUDE.md}",
+      "threshold": 6,
+      "observed": 6,
+      "status": "pass"
+    },
+    "B-17_marker_exact_form": {
+      "description": "ZEROPS_EXTRACT markers carry trailing '#' sentinel",
+      "measurement": "regex \u003c!-- #ZEROPS_EXTRACT_(START|END):(key) --\u003e without trailing '#'",
+      "threshold": 0,
+      "observed": 0,
+      "status": "pass"
+    },
+    "B-18_standalone_duplicate_files": {
+      "description": "standalone INTEGRATION-GUIDE.md / GOTCHAS.md absent",
+      "measurement": "walk deliverable; flag paths named INTEGRATION-GUIDE.md or GOTCHAS.md",
+      "threshold": 0,
+      "observed": 6,
+      "status": "fail",
+      "evidence_files": [
+        "apidev/GOTCHAS.md",
+        "apidev/INTEGRATION-GUIDE.md",
+        "appdev/GOTCHAS.md",
+        "appdev/INTEGRATION-GUIDE.md",
+        "workerdev/GOTCHAS.md",
+        "workerdev/INTEGRATION-GUIDE.md",
+        "session-log Write authorship: /var/www/apidev/GOTCHAS.md",
+        "session-log Write authorship: /var/www/apidev/INTEGRATION-GUIDE.md",
+        "session-log Write authorship: /var/www/appdev/GOTCHAS.md",
+        "session-log Write authorship: /var/www/appdev/INTEGRATION-GUIDE.md",
+        "session-log Write authorship: /var/www/workerdev/GOTCHAS.md",
+        "session-log Write authorship: /var/www/workerdev/INTEGRATION-GUIDE.md"
+      ]
+    },
+    "B-22_atom_template_vars_bound": {
+      "description": "atom template variables bind to populated Go render fields",
+      "measurement": "walk atom corpus; extract {{.Field}}; fail when Field ∉ allowed set",
+      "threshold": 0,
+      "observed": 0,
+      "status": "pass"
+    }
+  },
+  "session_metrics": {
+    "B-20_deploy_readmes_retry_rounds": {
+      "description": "deploy-phase failing workflow completions (writer/feature retry signal)",
+      "measurement": "count workflow.complete(step=deploy) with checkResult.passed==false across all substeps",
+      "threshold": 2,
+      "observed": 5,
+      "status": "fail",
+      "evidence_files": [
+        "",
+        "",
+        "",
+        "",
+        ""
+      ]
+    },
+    "B-21_sessionless_export_attempts": {
+      "description": "sessionless `zcp sync recipe export` attempts (F-8 evidence)",
+      "measurement": "Bash tool_use input.command contains 'sync recipe export' AND no --session / ZCP_SESSION_ID",
+      "threshold": 0,
+      "observed": 2,
+      "status": "fail",
+      "evidence_files": [
+        "zcp sync recipe export /var/www/zcprecipator/nestjs-showcase --app-dir /var/www/apidev --app-dir /var/www/workerdev --app-dir /var/www/appdev --include-timeline 2\u003e\u00261 | tail -30",
+        "zcp sync recipe export /var/www/zcprecipator/nestjs-showcase --app-dir /var/www/apidev --app-dir /var/www/workerdev --app-dir /var/www/appdev --include-timeline 2\u003e\u00261 | tail -30"
+      ]
+    },
+    "B-23_writer_first_pass_failures": {
+      "description": "writer first-pass compliance failures",
+      "threshold": 3,
+      "observed": 0,
+      "status": "skip",
+      "reason": "no writer Agent dispatch observed"
+    },
+    "B-24_dispatch_integrity": {
+      "threshold": 0,
+      "observed": 0,
+      "status": ""
+    },
+    "sub_agent_count": 13,
+    "close_step_completed": false,
+    "editorial_review_dispatched": true,
+    "code_review_dispatched": true,
+    "close_browser_walk_attempted": false,
+    "retry_cycle_attributions": [
+      {
+        "cycle": 1,
+        "timestamp": "2026-04-21T20:47:46.487Z",
+        "substep": "deploy/",
+        "failing_checks": [
+          "fragment_integration-guide",
+          "fragment_knowledge-base",
+          "fragment_intro",
+          "fragment_integration-guide",
+          "fragment_knowledge-base",
+          "fragment_intro",
+          "fragment_integration-guide",
+          "fragment_knowledge-base",
+          "fragment_intro",
+          "worker_drain_code_block",
+          "writer_manifest_honesty_any_as_intro"
+        ]
+      },
+      {
+        "cycle": 2,
+        "timestamp": "2026-04-21T20:49:36.176Z",
+        "substep": "deploy/",
+        "failing_checks": [
+          "comment_ratio",
+          "fragment_integration-guide_heading_level",
+          "fragment_knowledge-base_heading_level",
+          "fragment_integration-guide_blank_after_marker",
+          "fragment_knowledge-base_blank_after_marker",
+          "fragment_intro_blank_after_marker",
+          "knowledge_base_gotchas",
+          "intro_length",
+          "intro_no_titles",
+          "app_comment_specificity",
+          "comment_ratio",
+          "fragment_integration-guide_heading_level",
+          "fragment_knowledge-base_heading_level",
+          "fragment_integration-guide_blank_after_marker",
+          "fragment_knowledge-base_blank_after_marker",
+          "fragment_intro_blank_after_marker",
+          "knowledge_base_gotchas",
+          "intro_length",
+          "intro_no_titles",
+          "comment_ratio",
+          "fragment_integration-guide_heading_level",
+          "fragment_knowledge-base_heading_level",
+          "fragment_integration-guide_blank_after_marker",
+          "fragment_knowledge-base_blank_after_marker",
+          "fragment_intro_blank_after_marker",
+          "knowledge_base_gotchas",
+          "intro_length",
+          "intro_no_titles"
+        ]
+      },
+      {
+        "cycle": 3,
+        "timestamp": "2026-04-21T20:55:47.424Z",
+        "substep": "deploy/",
+        "failing_checks": [
+          "app_knowledge_base_authenticity",
+          "api_knowledge_base_authenticity",
+          "worker_worker_queue_group_gotcha",
+          "writer_manifest_honesty_any_as_intro"
+        ]
+      },
+      {
+        "cycle": 4,
+        "timestamp": "2026-04-21T20:59:05.039Z",
+        "substep": "deploy/",
+        "failing_checks": [
+          "app_gotcha_distinct_from_guide",
+          "cross_readme_gotcha_uniqueness"
+        ]
+      },
+      {
+        "cycle": 5,
+        "timestamp": "2026-04-21T20:59:42.755Z",
+        "substep": "deploy/",
+        "failing_checks": [
+          "worker_gotcha_distinct_from_guide"
+        ]
+      },
+      {
+        "cycle": 6,
+        "timestamp": "2026-04-21T21:01:39.326Z",
+        "substep": "finalize/",
+        "failing_checks": [
+          "0 — AI Agent_import_factual_claims",
+          "1 — Remote (CDE)_import_comment_ratio",
+          "1 — Remote (CDE)_import_factual_claims",
+          "2 — Local_import_comment_ratio",
+          "2 — Local_import_factual_claims",
+          "3 — Stage_import_comment_ratio",
+          "3 — Stage_import_factual_claims",
+          "4 — Small Production_import_comment_ratio",
+          "4 — Small Production_import_factual_claims",
+          "4 — Small Production_import_factual_claims_2",
+          "4 — Small Production_import_factual_claims_3",
+          "4 — Small Production_import_factual_claims_4",
+          "5 — Highly-available Production_import_comment_ratio",
+          "5 — Highly-available Production_import_factual_claims",
+          "no_version_anchors_in_published_content"
+        ]
+      },
+      {
+        "cycle": 7,
+        "timestamp": "2026-04-21T21:05:01.355Z",
+        "substep": "finalize/",
+        "failing_checks": [
+          "3 — Stage_import_comment_ratio",
+          "4 — Small Production_import_comment_ratio",
+          "5 — Highly-available Production_import_comment_ratio"
+        ]
+      }
+    ]
+  },
+  "writer_readmes": {
+    "apidev/README.md": {
+      "file_exists": true,
+      "size_bytes": 13999,
+      "intro_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "line_count": 1,
+        "in_range": true,
+        "status": "pass"
+      },
+      "integration_guide_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "in_range": true,
+        "h3_count": 6,
+        "every_h3_has_fenced_code_block": true,
+        "status": "pass"
+      },
+      "knowledge_base_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "gotchas_h3_present": true,
+        "gotcha_bullet_count": 6,
+        "bullets_in_range": true,
+        "status": "pass"
+      },
+      "status": "pass"
+    },
+    "appdev/README.md": {
+      "file_exists": true,
+      "size_bytes": 8519,
+      "intro_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "line_count": 1,
+        "in_range": true,
+        "status": "pass"
+      },
+      "integration_guide_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "in_range": true,
+        "h3_count": 4,
+        "every_h3_has_fenced_code_block": true,
+        "status": "pass"
+      },
+      "knowledge_base_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "gotchas_h3_present": true,
+        "gotcha_bullet_count": 5,
+        "bullets_in_range": true,
+        "status": "pass"
+      },
+      "status": "pass"
+    },
+    "workerdev/README.md": {
+      "file_exists": true,
+      "size_bytes": 12386,
+      "intro_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "line_count": 1,
+        "in_range": true,
+        "status": "pass"
+      },
+      "integration_guide_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "in_range": true,
+        "h3_count": 4,
+        "every_h3_has_fenced_code_block": true,
+        "status": "pass"
+      },
+      "knowledge_base_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "gotchas_h3_present": true,
+        "gotcha_bullet_count": 6,
+        "bullets_in_range": true,
+        "status": "pass"
+      },
+      "status": "pass"
+    }
+  },
+  "writer_claude_md": {
+    "apidev/CLAUDE.md": {
+      "file_exists": true,
+      "size_bytes": 4953,
+      "size_ge_1200_bytes": true,
+      "base_sections_present": [
+        "Dev Loop",
+        "Migrations",
+        "Container Traps",
+        "Testing"
+      ],
+      "custom_section_count": 2,
+      "custom_sections_ge_2": true,
+      "status": "pass"
+    },
+    "appdev/CLAUDE.md": {
+      "file_exists": true,
+      "size_bytes": 3094,
+      "size_ge_1200_bytes": true,
+      "base_sections_present": [
+        "Dev Loop",
+        "Migrations",
+        "Container Traps",
+        "Testing"
+      ],
+      "custom_section_count": 2,
+      "custom_sections_ge_2": true,
+      "status": "pass"
+    },
+    "workerdev/CLAUDE.md": {
+      "file_exists": true,
+      "size_bytes": 4318,
+      "size_ge_1200_bytes": true,
+      "base_sections_present": [
+        "Dev Loop",
+        "Migrations",
+        "Container Traps",
+        "Testing"
+      ],
+      "custom_section_count": 2,
+      "custom_sections_ge_2": true,
+      "status": "pass"
+    }
+  },
+  "dispatch_integrity": {
+    "Apply editorial CRIT+WRONG fixes": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Author recipe READMEs + CLAUDE.md + manifest": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Close-step static review": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Code-review: NestJS framework expert": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Editorial review of recipe content": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Editorial review: return JSON payload": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Feature sub-agent: implement 5 showcase features": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Final README fix round": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Fix README fragment format + YAML comments": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Re-dispatch editorial review": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Scaffold apidev NestJS API": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Scaffold appdev Svelte SPA": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Scaffold workerdev NestJS worker": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    }
+  },
+  "schema_version": "1.0.0"
+}
