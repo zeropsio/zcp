@@ -1542,3 +1542,73 @@ Independent of Cx-CHECK-WIRE-NOTATION — different file surfaces (workflow engi
 ### Next
 
 Advance to Cx-BRIEF-OVERFLOW per HANDOFF-to-I6 fix-stack order. That's the load-bearing one — it closes F-1, the primary root cause of v35.
+
+---
+
+## Cx-BRIEF-OVERFLOW — readmes substep emits atom-reference envelope (F-1 close)
+
+**Status**: green — eight tests across two packages (envelope shape + size + atom coverage + stitch byte-identity + inline-fallback paths + MCP action retrieval/error cases), all passing. Third of three gate-to-PROCEED commits from HANDOFF-to-I6.
+
+**Context**: the v35 primary root cause. At 08:15:21 the `complete substep=feature-sweep-stage` response weighed 71,720 chars, exceeding the runtime's ~32 KB MCP tool-response token cap. The harness spilled the payload to `/home/zerops/.claude/projects/-var-www/.../tool-results/mcp-zerops-zerops_workflow-1776759321598.txt`. The main agent only read the first ~3 KB of the spillover, losing the wire contract. It dispatched writer-1 with a prompt telling the sub-agent to `python3 -c "print(open('…').read()[A:B])"` through the JSON blob — which writer-1 did, partially, ending up with wrong fragment markers, no CLAUDE.md, no manifest. Five further dispatched writer attempts paraphrased the shape wrongly (`title` instead of `fact_title`, `routeTo` instead of `routed_to`) because the wire contract never reached the writer in-prompt. F-1 is the entire v35 deadlock pattern; Cx-CHECK-WIRE-NOTATION and Cx-ITERATE-GUARD close downstream defects but do not prevent the overflow itself.
+
+### What landed
+
+Envelope pattern implementing HANDOFF-to-I6 Option A. When `formatDispatchBriefAttachment` sees the readmes substep in showcase AND the composed brief exceeds `dispatchBriefInlineThresholdBytes` (28 KB), it emits a ~2 KB markdown envelope listing the atoms the main agent must retrieve via a new MCP action, with full stitch instructions to reproduce the brief byte-identically. The envelope is scoped narrowly to the one observed overflow class — other dispatch substeps (scaffold, code-review) keep the inline path because their composed briefs fit the cap.
+
+- [`internal/workflow/dispatch_brief_envelope.go`](../../internal/workflow/dispatch_brief_envelope.go) (+120 LoC, new) — `dispatchBriefInlineThresholdBytes` constant, `formatDispatchBriefAttachment(step, subStep, plan, sessionID, brief) string` entry point, `envelopeForLargeBrief` substep-gate, `buildWriterDispatchBriefEnvelope` writer-specific envelope constructor.
+- [`internal/workflow/atom_stitcher.go`](../../internal/workflow/atom_stitcher.go) — new helper `writerBriefBodyAtomIDs()` exposing the writer-body atom ordering so the envelope constructor names the same atom sequence `BuildWriterDispatchBrief` composes (the envelope's load-bearing byte-identity invariant is tested in `TestEnvelopeAtoms_StitchToFullBrief`).
+- [`internal/workflow/recipe_guidance.go`](../../internal/workflow/recipe_guidance.go) — `buildSubStepGuide` calls `formatDispatchBriefAttachment` instead of inlining `## Dispatch brief (transmit verbatim)` + brief directly. One-line change; the dispatch-composition invariant (HANDOFF-to-I5 invariant #5) is preserved because `BuildWriterDispatchBrief` itself is unchanged.
+- [`internal/tools/workflow.go`](../../internal/tools/workflow.go) — new MCP action `dispatch-brief-atom` + `AtomID string` field on `WorkflowInput`, handled by `handleDispatchBriefAtom(input)`. Routed BEFORE the engine-required guard since atom retrieval is stateless content-lookup; callable without an active session for debugging. Returns JSON `{"atomId":"X","body":"..."}`. Unknown IDs return `INVALID_PARAMETER` naming the offending ID.
+- [`internal/workflow/recipe_substep_briefs_test.go`](../../internal/workflow/recipe_substep_briefs_test.go) — updated `TestSubStepGuide_FeatureSweepStageResponse_ContainsContentAuthoringBrief` to assert the envelope heading + `dispatch-brief-atom` action mention + atom-ID substrings (classification / citation / manifest / content-surface). Previous inline-heading expectations were v8.94 shape.
+- [`internal/workflow/dispatch_brief_envelope_test.go`](../../internal/workflow/dispatch_brief_envelope_test.go) (+153 LoC, new) — 5 scenarios: current-size assertion (brief exceeds threshold so the gate fires), envelope shape (lists all body + principle atoms, under 5 KB), small-brief fallback (inline heading preserved), unmanaged-large-substep fallback (inline heading preserved for substeps without envelope shape), and the byte-identity invariant (envelope-stitched brief == `BuildWriterDispatchBrief` output).
+- [`internal/tools/workflow_dispatch_brief_atom_test.go`](../../internal/tools/workflow_dispatch_brief_atom_test.go) (+97 LoC, new) — 3 scenarios: valid atomID returns body JSON with expected content, missing atomID returns `INVALID_PARAMETER` with clear suggestion, unknown atomID returns `INVALID_PARAMETER` naming the offending ID.
+- [`docs/zcprecipator2/DISPATCH.md`](DISPATCH.md) — new §8 documenting the envelope shape, retrieval contract, stitch procedure, invariant preservation, and extension path for future overflow-class substeps. This is the dispatcher-side contract the main agent's stitch implementation must honor.
+
+### Design decisions
+
+1. **Scope envelope to readmes-in-showcase only.** The v35 overflow is specifically the writer brief; other dispatch substeps fit comfortably. Broad restructuring (envelope everywhere) would churn every `BuildXDispatchBrief` test + golden diff for no gain on substeps that don't overflow. Extending to other substeps is a follow-up when/if they surface overflow.
+2. **Envelope inside the substep guide, not as a separate response.** Option B from HANDOFF ("paginate response") would have required the main agent to detect pagination and concatenate — more client-side protocol surface. Option A keeps the envelope inline in the substep guide (tiny; fits easily) and pushes complexity to a separate action the agent calls N times. Simpler client contract: no pagination state to track.
+3. **`dispatch-brief-atom` as an action on `zerops_workflow`, not a new tool.** The main agent already routes through `zerops_workflow` for every orchestration call. Adding an action is a ~20-line change; adding a new MCP tool would require a new `Register*` call, new tool annotations, and a third-tool hop in the agent's planning. The atom-retrieval operation is semantically part of workflow orchestration (reading a brief component) even though it's stateless.
+4. **Byte-identity test between envelope-stitched and `BuildWriterDispatchBrief` output.** This is the load-bearing invariant the envelope pattern must preserve — if the stitched brief differs from what `BuildWriterDispatchBrief` composes internally (for `zcp dry-run recipe` + golden diffs), the dispatcher and the main agent would hold different mental models of what the sub-agent sees. The test encodes the exact stitch procedure the envelope prescribes; any drift in either direction fails CI.
+5. **Envelope heading flip from "transmit verbatim" to "retrieve + stitch before transmitting".** The existing heading implies immediate pass-through; the new heading names the required server round-trips. This is an agent-facing wording change that matters — the agent's prompt-path must read the heading correctly to not naively forward a 2 KB envelope to the sub-agent (which would be useless, since the envelope names atoms but contains no brief body). The `TestFormatDispatchBriefAttachment_ReadmesSubstep_EmitsEnvelope` test pins this heading.
+6. **Stateless atom retrieval.** `dispatch-brief-atom` handling is routed BEFORE the `engine == nil` guard so the action works without a session. Rationale: debugging + development iteration (an agent mid-session can retrieve atoms referenced by an envelope even if the session is in an unusual state; a developer running `zerops_workflow action=dispatch-brief-atom atomId=...` directly can inspect atoms without starting a workflow).
+7. **Don't shrink the atoms themselves.** The 62 KB writer brief is load-bearing content — classification taxonomy, citation map, manifest contract are all needed for the writer to emit correct output. Shrinking them trades surface area for correctness. The envelope pattern preserves every byte while fitting the delivery envelope.
+
+### Verification
+
+- `go test ./internal/workflow/ -run 'TestBuildWriterDispatchBrief_ExceedsInlineThreshold|TestFormatDispatchBriefAttachment|TestEnvelopeAtoms' -v -count=1` → 5/5 PASS.
+- `go test ./internal/tools/ -run TestWorkflowTool_DispatchBriefAtom -v -count=1` → 3/3 PASS.
+- `go test ./... -count=1` (full, not short) → 22/22 packages green.
+- `make lint-local` → 0 issues (one updated existing test + 2 new test files; golangci-lint modernizer caught a couple of `min()` uses and a manual ` > 80 { firstN = 80 }` shape — fixed).
+- Manual validation: `formatDispatchBriefAttachment(deploy, readmes, showcasePlan, "xyz", 62KB-brief)` returns a 2-KB envelope containing every atom ID + stitch instructions; retrieval via `dispatch-brief-atom atomId=briefs.writer.manifest-contract` returns the atom body as JSON.
+
+### LoC delta
+
+- `internal/workflow/dispatch_brief_envelope.go`: +120 LoC (new).
+- `internal/workflow/dispatch_brief_envelope_test.go`: +153 LoC (new).
+- `internal/tools/workflow_dispatch_brief_atom_test.go`: +97 LoC (new).
+- `internal/workflow/atom_stitcher.go`: ~+10 LoC (helper extraction, no behavior change for `BuildWriterDispatchBrief`).
+- `internal/workflow/recipe_guidance.go`: 1 line changed (call indirection).
+- `internal/tools/workflow.go`: ~+35 LoC (new field + action-before-guard routing + `handleDispatchBriefAtom` function + jsonschema description update).
+- `internal/workflow/recipe_substep_briefs_test.go`: ~+10 LoC (updated assertions).
+- `docs/zcprecipator2/DISPATCH.md`: ~+60 LoC (new §8).
+- **Total**: ~+485 LoC, ~11 lines changed.
+
+### Breaks-alone consequence
+
+Agents that relied on the inline `## Dispatch brief (transmit verbatim)` section in the readmes substep guide will now see the envelope heading instead. The envelope's stitch instructions are explicit: the agent must retrieve each listed atom via `action=dispatch-brief-atom`, concatenate in order, and append the input-files block. An agent that transmits the envelope directly to the writer sub-agent (instead of stitching first) would be sending a ~2 KB atom manifest — the sub-agent would see no brief content and likely fail fast, a loud failure vs. the silent miss v35 showed. This is the intended behavior: failure is visible, not sneaky. Other dispatch substeps (feature, scaffold, code-review, editorial-review) are unchanged.
+
+### Ordering deps verified
+
+Independent of Cx-CHECK-WIRE-NOTATION (check-author strings) and Cx-ITERATE-GUARD (engine state). Touches the substep-guide delivery layer + a new MCP action. Lands third per HANDOFF-to-I6 order because it's the load-bearing one — largest surface, most cross-cutting design decisions. Closes the F-1 primary root cause; Cx-CHECK-WIRE-NOTATION + Cx-ITERATE-GUARD close downstream defects but do not prevent overflow.
+
+### Known follow-ups
+
+- **Extend envelope to other dispatch substeps that overflow.** If v36 or later surfaces overflow on feature / scaffold / editorial-review, add a matching `buildXDispatchBriefEnvelope` + a case in `envelopeForLargeBrief`. The feature brief currently ~41 KB is close to the threshold but doesn't overflow in v35 evidence; defer until observed.
+- **Golden-diff for the envelope itself.** `zcp dry-run recipe` composes the full brief via `BuildWriterDispatchBrief` and diffs against step-4 goldens — that golden is unchanged. The envelope shape is orthogonal (delivery, not composition). A future hardening could add an envelope golden (expected-atom-ID list + ordering) and diff against it in the dry-run harness.
+- **Remove the inline path entirely for readmes?** Currently small overrides of the writer brief (nil plan, test fixtures) fall back to inline because they're under the threshold. That's fine — the threshold gate is the single point of decision. If the writer brief ever shrinks below 28 KB (atom consolidation, principle trimming), the envelope gate will silently stop firing and the inline path re-engages, which is exactly what we want: envelope only when needed.
+- **C-15 monolith deletion can now proceed.** Per HANDOFF-to-I6 §"Fronts, reordered" row C, C-15 was gated on Cx-BRIEF-OVERFLOW landing. With the envelope in place, the brief-delivery path is reliable, and the recipe.md monolith can be deleted without losing delivery fidelity. C-15 is not included in this commit; it's a separate follow-up.
+
+### Next
+
+3-of-3 gate-to-PROCEED fix-stack commits landed (CHECK-WIRE-NOTATION + ITERATE-GUARD + BRIEF-OVERFLOW). Per HANDOFF-to-I6 §"Starting action" step 6: **STOP and report** before commissioning v36 or continuing to Cx-GUIDANCE-TOPIC-REGISTRY / Cx-KNOWLEDGE-INDEX-MANIFEST. User reviews before deciding on the remaining two or commissioning v36.

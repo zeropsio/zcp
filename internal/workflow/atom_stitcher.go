@@ -186,11 +186,13 @@ func BuildFeatureDispatchBrief(plan *RecipePlan) (string, error) {
 	return b.String(), nil
 }
 
-// BuildWriterDispatchBrief composes the writer sub-agent dispatch. The
-// writer is dispatched at deploy.readmes substep. Per Q4: showcase uses
-// the dispatched writer; minimal uses Path A main-inline for v35.
-func BuildWriterDispatchBrief(plan *RecipePlan, factsLogPath string) (string, error) {
-	body, err := concatAtoms(
+// writerBriefBodyAtomIDs is the ordered list of body atoms that compose
+// the writer sub-agent's dispatch brief (stitched before the principles
+// block). Exposed as a helper so Cx-BRIEF-OVERFLOW's envelope form can
+// name the atoms the main agent must retrieve individually when the
+// composed brief would exceed the MCP tool-response token cap.
+func writerBriefBodyAtomIDs() []string {
+	return []string{
 		"briefs.writer.mandatory-core",
 		"briefs.writer.fresh-context-premise",
 		"briefs.writer.canonical-output-tree",
@@ -201,7 +203,14 @@ func BuildWriterDispatchBrief(plan *RecipePlan, factsLogPath string) (string, er
 		"briefs.writer.manifest-contract",
 		"briefs.writer.self-review-per-surface",
 		"briefs.writer.completion-shape",
-	)
+	}
+}
+
+// BuildWriterDispatchBrief composes the writer sub-agent dispatch. The
+// writer is dispatched at deploy.readmes substep. Per Q4: showcase uses
+// the dispatched writer; minimal uses Path A main-inline for v35.
+func BuildWriterDispatchBrief(plan *RecipePlan, factsLogPath string) (string, error) {
+	body, err := concatAtoms(writerBriefBodyAtomIDs()...)
 	if err != nil {
 		return "", err
 	}

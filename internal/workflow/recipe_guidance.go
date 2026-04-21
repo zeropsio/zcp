@@ -510,7 +510,7 @@ func (r *RecipeState) buildSubStepGuide(step, subStep, sessionID string) string 
 			// prompt. Under P2, the brief content is leaf-artifact — the
 			// main agent transmits, it does not edit.
 			if brief := composeDispatchBriefForSubStep(r.Plan, step, subStep, sessionID); brief != "" {
-				body = body + "\n\n---\n\n## Dispatch brief (transmit verbatim)\n\n" + brief
+				body = body + "\n\n---\n\n" + formatDispatchBriefAttachment(step, subStep, r.Plan, sessionID, brief)
 			}
 			// Prior discoveries prepended for dispatch-owning substeps and
 			// for any substep whose current topic mapping opted into it.

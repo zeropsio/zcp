@@ -26,7 +26,7 @@ type WorkflowInput struct {
 	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, develop, recipe, or cicd."`
 
 	// Multi-action fields.
-	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, reset, iterate, resume, list, route, or generate-finalize (recipe only — generates all 13 recipe files from plan)."`
+	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, reset, iterate, resume, list, route, dispatch-brief-atom (retrieve one atom of an envelope-split dispatch brief), or generate-finalize (recipe only — generates all 13 recipe files from plan)."`
 	Intent      string                     `json:"intent,omitempty"      jsonschema:"User intent description for start action (what you want to accomplish)."`
 	Attestation string                     `json:"attestation,omitempty" jsonschema:"Description of what was verified or accomplished (required for complete actions)."`
 	Step        string                     `json:"step,omitempty"        jsonschema:"Bootstrap step name for complete/skip actions (discover, provision, close)."`
@@ -69,6 +69,13 @@ type WorkflowInput struct {
 	// per project convention — LLM agents sometimes serialize booleans as
 	// strings, which the default schema rejects with a non-actionable error.
 	Force FlexBool `json:"force,omitempty"`
+
+	// AtomID is the atom identifier the main agent passes to
+	// action="dispatch-brief-atom" when retrieving one component atom of
+	// a dispatch brief whose inlined form would exceed the MCP tool-
+	// response token cap. See Cx-BRIEF-OVERFLOW / defect-class-registry
+	// §16.1. Fully-qualified dot-path, e.g. "briefs.writer.manifest-contract".
+	AtomID string `json:"atomId,omitempty" jsonschema:"Dispatch-brief atom identifier for action=\"dispatch-brief-atom\". Fully-qualified dot-path (e.g. 'briefs.writer.manifest-contract'). Retrieved from the envelope listed in a substep guide when the composed dispatch brief exceeds the MCP response cap."`
 }
 
 // immediateResponse is returned from immediate (stateless) workflows.
@@ -122,6 +129,14 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 }
 
 func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache, logFetcher platform.LogFetcher, input WorkflowInput, stateDir, selfHostname string, mounter ops.Mounter, rt runtime.Info) (*mcp.CallToolResult, any, error) {
+	// dispatch-brief-atom is a stateless content-retrieval action — it
+	// reads an atom from the embedded recipe tree and does not touch
+	// session state. Handle it before the engine-required guard so the
+	// action works even when a session has not been started (the main
+	// agent may retrieve atoms without an active session during debug).
+	if input.Action == "dispatch-brief-atom" {
+		return handleDispatchBriefAtom(input)
+	}
 	if engine == nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
@@ -197,7 +212,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Unknown action %q", input.Action),
-			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, strategy")), nil, nil
+			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, strategy, dispatch-brief-atom")), nil, nil
 	}
 }
 
@@ -293,6 +308,37 @@ func handleReset(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {
 			"")), nil, nil
 	}
 	return textResult("Session reset successfully."), nil, nil
+}
+
+// handleDispatchBriefAtom returns a single atom body by its fully-
+// qualified dot-path ID. Cx-BRIEF-OVERFLOW delivery mechanism: when a
+// composed dispatch brief exceeds the MCP tool-response token cap, the
+// substep guide embeds an envelope listing atom IDs the main agent
+// retrieves via this action, then stitches locally before dispatching
+// the sub-agent. See docs/zcprecipator2/HANDOFF-to-I6.md
+// §Cx-BRIEF-OVERFLOW and defect-class-registry §16.1.
+//
+// Returns JSON `{"atomId":"X","body":"..."}`. Atom IDs are drawn from
+// envelopes the server itself emits — the agent should not invent IDs.
+// Unknown IDs return an INVALID_PARAMETER error.
+func handleDispatchBriefAtom(input WorkflowInput) (*mcp.CallToolResult, any, error) {
+	if input.AtomID == "" {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"atomId is required for dispatch-brief-atom action",
+			"Pass the atomId from the envelope listed in the substep guide's dispatch-brief section")), nil, nil
+	}
+	body, err := workflow.LoadAtomBody(input.AtomID)
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("dispatch-brief atom %q unknown or unreadable: %v", input.AtomID, err),
+			"Check the atomId against the envelope in the current substep guide")), nil, nil
+	}
+	return jsonResult(map[string]any{
+		"atomId": input.AtomID,
+		"body":   body,
+	}), nil, nil
 }
 
 func handleIterate(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache) (*mcp.CallToolResult, any, error) {

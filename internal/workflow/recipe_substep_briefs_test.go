@@ -341,19 +341,24 @@ func TestSubStepGuide_FeatureSweepStageResponse_ContainsContentAuthoringBrief(t 
 	if got == "" {
 		t.Fatal("expected non-empty sub-step guide for (deploy, readmes)")
 	}
-	// Atom-based writer brief is ~4-5 KB (10 atoms × 30-161 lines each,
-	// compressed). The v8.94 block-based 8 KB floor is not the bar here.
+	// Post-Cx-BRIEF-OVERFLOW the readmes substep guide embeds an envelope
+	// naming atoms the main agent retrieves via action=dispatch-brief-atom
+	// instead of inlining the ~62 KB writer brief — atoms + stitch
+	// instructions + phases/deploy/readmes.md body together run ~3-4 KB.
 	if len(got) < 3*1024 {
 		t.Errorf("content-authoring-brief guide is only %d bytes, expected >= 3 KB", len(got))
 	}
 
-	// Atom-sourced phrases that every writer dispatch must carry.
+	// Phrases that must appear in the envelope the post-Cx-BRIEF-OVERFLOW
+	// readmes substep guide emits: envelope heading + dispatch-brief-atom
+	// action + every brief-body atom ID by substring.
 	wants := []string{
-		"Dispatch brief (transmit verbatim)", // stitcher section header
-		"classification",                     // writer/classification-taxonomy atom
-		"citation",                           // writer/citation-map atom
-		"manifest",                           // writer/manifest-contract atom
-		"surface",                            // writer/content-surface-contracts atom
+		"Dispatch brief (retrieve + stitch before transmitting)", // envelope heading
+		"dispatch-brief-atom", // action the main agent calls per atom
+		"classification",      // briefs.writer.classification-taxonomy atom ID
+		"citation",            // briefs.writer.citation-map atom ID
+		"manifest",            // briefs.writer.manifest-contract atom ID
+		"content-surface",     // briefs.writer.content-surface-contracts atom ID
 	}
 	for _, w := range wants {
 		if !strings.Contains(strings.ToLower(got), strings.ToLower(w)) {
