@@ -1,20 +1,8 @@
 {
-  "_comment": "Placeholder for v36 subagent-ID-prefix → role-slug mapping. Populate from a scan of <DELIVERABLE_TREE>/SESSIONS_LOGS/subagents/ after the run closes. Each key is the first 3 chars of the subagent's sessionId (or whatever stable prefix extract_flow.py keys on); each value is the role slug used in the generated sub-<role>.md filenames. See docs/zcprecipator2/scripts/role_map_v34.json for the legacy example and runs/v35/role_map.json for the v35 shape.",
-  "_expected_roles_showcase": [
-    "scaffold-apidev",
-    "scaffold-appdev",
-    "scaffold-workerdev",
-    "feature",
-    "writer-1",
-    "writer-2-fix (only if writer-1 failed and a retry was dispatched)",
-    "writer-3-fix (only if writer-2-fix also failed)",
-    "code-review",
-    "editorial-review"
-  ],
-  "_expected_roles_minimal": [
-    "scaffold-appdev (single codebase) OR scaffold-appdev + scaffold-apidev (dual-runtime)",
-    "code-review"
-  ],
-  "_headline_signal": "If v36 shows writer-1 ONLY (no -fix variants) on showcase tier, the Cx-BRIEF-OVERFLOW fix closed the v35 3-dispatch retry pattern.",
-  "<prefix-from-subagent-session-id>": "<role-slug>"
+  "af5": "scaffold-apidev",
+  "a29": "scaffold-appdev",
+  "ab8": "scaffold-workerdev",
+  "a9b": "feature",
+  "add": "writer-1",
+  "ad9": "writer-2-fix"
 }
