@@ -90,6 +90,22 @@ type ExportOpts struct {
 func enforceCloseGate(opts ExportOpts) error {
 	sessionID, sourceLabel := resolveSessionID(opts.SessionID)
 	if sessionID == "" {
+		// Cx-CLOSE-STEP-GATE-HARD: before falling through to "no session
+		// context, skip gate", check the session registry for any active
+		// session whose OutputDir matches the target recipe dir. If one
+		// exists the invocation is in fact bound to a session — the
+		// author forgot the --session flag (or the agent invented an
+		// ad-hoc export as a shortcut around close). Refuse with the
+		// session ID + remediation naming both the flag-based and
+		// workflow-based paths forward. v36 F-8/F-11 shipped an
+		// "advisory note" that was easy to skip; this turns the note
+		// into an error.
+		if liveSessionID, found, err := findLiveSessionForRecipe(opts); err == nil && found {
+			return fmt.Errorf(
+				"%s: live recipe session %q is tracking recipe-dir %q — sessionless export would bypass its close-step gate; re-run with --session=%s (to run the gate against that session), or finish `zerops_workflow action=complete step=close` inside the session first; `--force-export` bypasses with a stderr warning when the session is abandoned",
+				platform.ErrExportBlocked, liveSessionID, opts.RecipeDir, liveSessionID,
+			)
+		}
 		fmt.Fprintln(os.Stderr, "note: no session context (--session unset, $ZCP_SESSION_ID unset); skipping close-step gate.")
 		return nil
 	}

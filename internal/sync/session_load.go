@@ -62,3 +62,57 @@ func recipeStepStatus(state *workflow.RecipeState, stepName string) string {
 	}
 	return ""
 }
+
+// findLiveSessionForRecipe walks the registry and returns the first
+// active recipe session whose state.Recipe.OutputDir matches
+// opts.RecipeDir (absolute-path comparison). Used by the Cx-CLOSE-STEP-
+// GATE-HARD branch that turns sessionless export into a hard refusal
+// when an obviously-bound session exists.
+//
+// Errors from registry / session reads are swallowed — the gate's
+// fallback is "skip, no session context" so a transient registry
+// read failure shouldn't destabilize legitimate ad-hoc exports.
+func findLiveSessionForRecipe(opts ExportOpts) (string, bool, error) {
+	if opts.RecipeDir == "" {
+		return "", false, nil
+	}
+	absTarget, err := filepath.Abs(opts.RecipeDir)
+	if err != nil {
+		return "", false, err
+	}
+	dir := opts.SessionStateDir
+	if dir == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", false, err
+		}
+		dir = filepath.Join(cwd, ".zcp", "state")
+	}
+	sessions, err := workflow.ListSessions(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	for _, s := range sessions {
+		if s.Workflow != "recipe" {
+			continue
+		}
+		state, err := workflow.LoadSessionByID(dir, s.SessionID)
+		if err != nil || state == nil || state.Recipe == nil {
+			continue
+		}
+		if state.Recipe.OutputDir == "" {
+			continue
+		}
+		absOutput, err := filepath.Abs(state.Recipe.OutputDir)
+		if err != nil {
+			continue
+		}
+		if absOutput == absTarget {
+			return s.SessionID, true, nil
+		}
+	}
+	return "", false, nil
+}
