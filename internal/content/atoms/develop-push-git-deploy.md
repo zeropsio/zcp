@@ -34,6 +34,6 @@ Push committed code from the dev container to an external git repository (GitHub
 4. If no CI/CD: deploy to stage manually:
    `zerops_deploy sourceService="{hostname}" targetService="{stage-hostname}"`
 
-**Set up CI/CD:** `zerops_workflow action="start" workflow="cicd"`
+**Configure/re-configure push-git (tokens, optional CI/CD):** `zerops_workflow action="strategy" strategies={"{hostname}":"push-git"}`
 **Export with import.yaml:** `zerops_workflow action="start" workflow="export"`
 **Switch strategy:** `zerops_workflow action="strategy" strategies={"{hostname}":"push-dev"}`

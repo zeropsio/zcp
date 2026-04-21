@@ -6,10 +6,11 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// --- handleStrategy ---
+// --- handleStrategy: update mode ---
 
 func TestHandleStrategy_ValidUpdate(t *testing.T) {
 	t.Parallel()
@@ -26,7 +27,7 @@ func TestHandleStrategy_ValidUpdate(t *testing.T) {
 		{
 			"push-git",
 			map[string]string{"appdev": workflow.StrategyPushGit},
-			`workflow="cicd"`,
+			`strategy="git-push"`,
 		},
 		{
 			"manual",
@@ -55,7 +56,7 @@ func TestHandleStrategy_ValidUpdate(t *testing.T) {
 			}
 
 			input := WorkflowInput{Strategies: tt.strategies}
-			result, _, err := handleStrategy(nil, input, dir)
+			result, _, err := handleStrategy(nil, input, dir, runtime.Info{})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -97,7 +98,7 @@ func TestHandleStrategy_InvalidStrategy(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	input := WorkflowInput{Strategies: map[string]string{"appdev": "invalid-strategy"}}
-	result, _, err := handleStrategy(nil, input, dir)
+	result, _, err := handleStrategy(nil, input, dir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -110,16 +111,85 @@ func TestHandleStrategy_InvalidStrategy(t *testing.T) {
 	}
 }
 
-func TestHandleStrategy_EmptyStrategies(t *testing.T) {
+// TestHandleStrategy_EmptyStrategies_ListingMode verifies that an empty
+// strategies map switches handleStrategy into listing mode — returns current
+// strategy per service + the set of options. This is the central entry point
+// for "what can I configure and what is it now?" without mutating anything.
+func TestHandleStrategy_EmptyStrategies_ListingMode(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	input := WorkflowInput{Strategies: map[string]string{}}
-	result, _, err := handleStrategy(nil, input, dir)
+
+	// Two complete bootstraps, one incomplete (skipped by listing).
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname:       "appdev",
+		BootstrappedAt: "2026-04-05",
+		DeployStrategy: workflow.StrategyPushDev,
+	}); err != nil {
+		t.Fatalf("write meta appdev: %v", err)
+	}
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname:       "apidev",
+		BootstrappedAt: "2026-04-05",
+		// no strategy set → unset
+	}); err != nil {
+		t.Fatalf("write meta apidev: %v", err)
+	}
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname:         "incomplete",
+		BootstrapSession: "sess1",
+		// no BootstrappedAt → not complete, must not appear in listing
+	}); err != nil {
+		t.Fatalf("write meta incomplete: %v", err)
+	}
+
+	input := WorkflowInput{} // no strategies
+	result, _, err := handleStrategy(nil, input, dir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !result.IsError {
-		t.Fatal("expected error for empty strategies")
+	if result.IsError {
+		t.Fatalf("unexpected tool error: %s", resultText(t, result))
+	}
+
+	text := resultText(t, result)
+	var resp struct {
+		Status   string `json:"status"`
+		Services []struct {
+			Hostname string   `json:"hostname"`
+			Current  string   `json:"current"`
+			Options  []string `json:"options"`
+		} `json:"services"`
+		Next string `json:"next"`
+	}
+	if err := json.Unmarshal([]byte(text), &resp); err != nil {
+		t.Fatalf("unmarshal listing response: %v (text: %s)", err, text)
+	}
+
+	if resp.Status != "list" {
+		t.Errorf("status: want list, got %q", resp.Status)
+	}
+	if len(resp.Services) != 2 {
+		t.Fatalf("expected 2 complete services (appdev, apidev), got %d: %+v", len(resp.Services), resp.Services)
+	}
+	byHost := map[string]string{}
+	for _, s := range resp.Services {
+		byHost[s.Hostname] = s.Current
+		// Every entry must list all three strategies as options.
+		if len(s.Options) != 3 {
+			t.Errorf("%s: expected 3 options, got %d", s.Hostname, len(s.Options))
+		}
+	}
+	if byHost["appdev"] != workflow.StrategyPushDev {
+		t.Errorf("appdev current: want %q, got %q", workflow.StrategyPushDev, byHost["appdev"])
+	}
+	if byHost["apidev"] != string(workflow.StrategyUnset) {
+		t.Errorf("apidev current: want %q, got %q", workflow.StrategyUnset, byHost["apidev"])
+	}
+	if _, seen := byHost["incomplete"]; seen {
+		t.Error("listing must skip incomplete metas")
+	}
+	if !strings.Contains(resp.Next, "push-git") {
+		t.Errorf("next hint should mention push-git setup: %s", resp.Next)
 	}
 }
 
@@ -130,7 +200,7 @@ func TestHandleStrategy_UnknownHostname_RefusesToCreateOrphan(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	input := WorkflowInput{Strategies: map[string]string{"newservice": workflow.StrategyPushGit}}
-	result, _, err := handleStrategy(nil, input, dir)
+	result, _, err := handleStrategy(nil, input, dir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -154,7 +224,7 @@ func TestHandleStrategy_IncompleteMeta_Refused(t *testing.T) {
 		t.Fatalf("write meta: %v", err)
 	}
 	input := WorkflowInput{Strategies: map[string]string{"appdev": workflow.StrategyPushGit}}
-	result, _, err := handleStrategy(nil, input, dir)
+	result, _, err := handleStrategy(nil, input, dir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -163,7 +233,12 @@ func TestHandleStrategy_IncompleteMeta_Refused(t *testing.T) {
 	}
 }
 
-func TestHandleStrategy_GuidanceExtracted(t *testing.T) {
+// TestHandleStrategy_PushGit_SynthSetup verifies that setting a push-git
+// strategy triggers the strategy-setup atom synthesis — the full setup flow
+// (Option A/B push-only vs full CI/CD, GIT_TOKEN, workflow file, first push)
+// arrives in the guidance field. This is the single-path replacement for
+// the retired workflow=cicd.
+func TestHandleStrategy_PushGit_SynthSetup(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
@@ -174,7 +249,7 @@ func TestHandleStrategy_GuidanceExtracted(t *testing.T) {
 	}
 
 	input := WorkflowInput{Strategies: map[string]string{"appdev": workflow.StrategyPushGit}}
-	result, _, err := handleStrategy(nil, input, dir)
+	result, _, err := handleStrategy(nil, input, dir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -187,12 +262,30 @@ func TestHandleStrategy_GuidanceExtracted(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if resp["guidance"] == "" {
-		t.Error("expected non-empty guidance for push-git strategy")
+	g := resp["guidance"]
+	if g == "" {
+		t.Fatal("expected non-empty guidance for push-git setup")
+	}
+	// The setup atom must cover Option A/B, GIT_TOKEN, and the push command.
+	wantSubstrings := []string{
+		"push-only",     // Option A phrasing
+		"full CI/CD",    // Option B phrasing
+		"GIT_TOKEN",     // token setup
+		"ZEROPS_TOKEN",  // CI/CD secret
+		"zerops_deploy", // push action
+	}
+	for _, want := range wantSubstrings {
+		if !strings.Contains(g, want) {
+			t.Errorf("guidance must contain %q, not found. Got (first 400): %.400s", want, g)
+		}
+	}
+	// Regression: the retired workflow=cicd must not appear in push-git guidance.
+	if strings.Contains(g, `workflow="cicd"`) {
+		t.Errorf("guidance must not reference retired workflow=cicd: %.400s", g)
 	}
 }
 
-// --- buildStrategyGuidance ---
+// --- buildStrategyGuidance: used for non-push-git ---
 
 func TestBuildStrategyGuidance(t *testing.T) {
 	t.Parallel()
@@ -203,7 +296,6 @@ func TestBuildStrategyGuidance(t *testing.T) {
 		wantNonEmpty bool
 	}{
 		{"push-dev", map[string]string{"a": workflow.StrategyPushDev}, "Push-Dev", true},
-		{"push-git", map[string]string{"a": workflow.StrategyPushGit}, "Git", true},
 		{"manual", map[string]string{"a": workflow.StrategyManual}, "Manual", true},
 		{"duplicate deduplicates", map[string]string{"a": workflow.StrategyPushDev, "b": workflow.StrategyPushDev}, "Push-Dev", true},
 	}
@@ -237,7 +329,7 @@ func TestBuildStrategyGuidance_DuplicateOnlyOnce(t *testing.T) {
 	}
 }
 
-// --- allStrategiesAre ---
+// --- allStrategiesAre + anyStrategyIs ---
 
 func TestAllStrategiesAre(t *testing.T) {
 	t.Parallel()
@@ -260,6 +352,31 @@ func TestAllStrategiesAre(t *testing.T) {
 			got := allStrategiesAre(tt.strategies, tt.target)
 			if got != tt.want {
 				t.Errorf("allStrategiesAre(%v, %q) = %v, want %v", tt.strategies, tt.target, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAnyStrategyIs(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		strategies map[string]string
+		target     string
+		want       bool
+	}{
+		{"none", map[string]string{"a": "push-dev"}, "push-git", false},
+		{"one of mixed", map[string]string{"a": "push-dev", "b": "push-git"}, "push-git", true},
+		{"all match", map[string]string{"a": "manual", "b": "manual"}, "manual", true},
+		{"empty", map[string]string{}, "push-git", false},
+		{"nil", nil, "push-git", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := anyStrategyIs(tt.strategies, tt.target)
+			if got != tt.want {
+				t.Errorf("anyStrategyIs(%v, %q) = %v, want %v", tt.strategies, tt.target, got, tt.want)
 			}
 		})
 	}

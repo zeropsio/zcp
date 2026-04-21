@@ -19,7 +19,6 @@ type WorkflowState struct {
 
 // immediateWorkflows are stateless — no session, just guidance.
 var immediateWorkflows = map[string]bool{
-	"cicd":   true,
 	"export": true,
 }
 

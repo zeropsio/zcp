@@ -46,12 +46,13 @@ func TestGetWorkflow_Unknown(t *testing.T) {
 }
 
 // TestGetWorkflow_OrchestratedNotStatic asserts that no workflow except
-// recipe is loadable through GetWorkflow. Bootstrap, develop, cicd, and
-// export are atom-synthesized; re-adding a workflows/*.md for any of them
-// would let the static file drift from the atom corpus.
+// recipe is loadable through GetWorkflow. Bootstrap, develop, and export are
+// atom-synthesized; re-adding a workflows/*.md for any of them would let the
+// static file drift from the atom corpus. cicd is retired — its setup flow
+// now lives in action=strategy (strategy-setup phase atoms).
 func TestGetWorkflow_OrchestratedNotStatic(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"bootstrap", "develop", "cicd", "export"} {
+	for _, name := range []string{"bootstrap", "develop", "export"} {
 		if _, err := GetWorkflow(name); err == nil {
 			t.Errorf("GetWorkflow(%q) should fail — atom-synthesized workflows must not have a static .md file", name)
 		}

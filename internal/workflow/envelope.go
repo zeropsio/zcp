@@ -61,7 +61,7 @@ const (
 	PhaseDevelopActive   Phase = "develop-active"
 	PhaseDevelopClosed   Phase = "develop-closed-auto"
 	PhaseRecipeActive    Phase = "recipe-active"
-	PhaseCICDActive      Phase = "cicd-active"
+	PhaseStrategySetup   Phase = "strategy-setup"
 	PhaseExportActive    Phase = "export-active"
 )
 

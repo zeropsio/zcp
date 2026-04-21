@@ -98,7 +98,7 @@ Six axes decompose the guidance space. Each axis is declared in an atom's frontm
 | `develop-active` | Work Session open. |
 | `develop-closed-auto` | Work Session auto-closed — awaiting explicit close + next. |
 | `recipe-active` | Recipe session in progress. |
-| `cicd-active` | Stateless CI/CD immediate workflow. |
+| `strategy-setup` | Stateless synthesis phase emitted from `action=strategy` for push-git (Option A/B, tokens, optional CI/CD, first push). Replaces retired `cicd-active`. |
 | `export-active` | Stateless export immediate workflow. |
 
 **Empty = error.** No atom applies to "any phase" — the phase determines workflow fundamentals. Atoms missing a `phases` declaration fail `LoadAtomCorpus`.
@@ -273,7 +273,7 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]string, error
 
 ### 5.2 Rendering into the tool response
 
-Callers are responsible for joining. The status renderer (`RenderStatus`) emits each body as a separate paragraph in the "Guidance" section, separated by blank lines. Immediate workflows (`cicd-active`, `export-active`) use `SynthesizeImmediateWorkflow(phase, env)` which joins bodies with `\n\n---\n\n` and returns a single string.
+Callers are responsible for joining. The status renderer (`RenderStatus`) emits each body as a separate paragraph in the "Guidance" section, separated by blank lines. Stateless synthesis (`strategy-setup`, `export-active`) uses `SynthesizeImmediateWorkflow(phase, env)` which joins bodies with `\n\n---\n\n` and returns a single string. `strategy-setup` is invoked from `handleStrategy` when a push-git strategy is set; `export-active` is invoked from the `workflow=export` immediate entry.
 
 ### 5.3 Determinism guarantees
 
@@ -295,8 +295,8 @@ Inventory as of 2026-04-19 (74 atoms total):
 | `idle-*` | 3 | Entry atoms for idle phase. |
 | `bootstrap-*` | 27 | Split by mode × environment × runtime × route × step. |
 | `develop-*` | 25 | Split by mode × strategy × runtime × environment × close path. |
-| `cicd-*` | 10 | Stateless workflow. |
-| `export-*` | 9 | Stateless workflow. |
+| `strategy-push-git` | 1 | Central push-git setup atom — emitted from `action=strategy` for push-git. Replaces the retired 6-atom cicd-* set. |
+| `export` | 1 | Single-atom task list for `workflow=export`. |
 
 ---
 
@@ -442,7 +442,7 @@ Every invariant here is a property of the implementation and can be verified by 
 | KD-04 | Every atom declares a non-empty `phases` axis. | `ParseAtom` rejects empty `phases` in `internal/workflow/atom.go` |
 | KD-05 | Unknown `{placeholder}` tokens in atom bodies fail the corpus load. | `findUnknownPlaceholder` in `synthesize.go` |
 | KD-06 | `Plan.Primary` is never zero in a well-formed response. | Gated by `BuildPlan` tests; callers error on empty Plan. |
-| KD-07 | `cicd-active` and `export-active` are stateless — no session file is written. | `internal/tools/workflow_cicd.go`, `workflow_export.go` |
+| KD-07 | `strategy-setup` (from `handleStrategy` push-git) and `export-active` are stateless — no session file is written. | `internal/tools/workflow_strategy.go`, `workflow_immediate.go` |
 | KD-08 | Recipe authoring runs through `recipe_*.go` section parsers, NOT the atom synthesizer. | `internal/workflow/recipe_guidance.go` does not call `Synthesize` |
 | KD-09 | Iteration-tier text (`BuildIterationDelta`) is emitted as an addendum to synthesized atoms, not as an atom. | `internal/workflow/iteration_delta.go` is called independently by deploy handlers |
 | KD-10 | Envelope slice ordering is deterministic: services sort by hostname, attempts by time, map keys by string order. | `envelope.go` encoder + `compute_envelope.go` sort passes |

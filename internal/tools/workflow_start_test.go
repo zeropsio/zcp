@@ -124,8 +124,9 @@ func TestHandleStart_SubagentMisuse_BootstrapActive_RecipeStartRejected(t *testi
 	}
 }
 
-// TestHandleStart_ImmediateWorkflow_NotRejected — cicd is stateless,
-// not session-creating, so the active-session check must not apply.
+// TestHandleStart_ImmediateWorkflow_NotRejected — export is the only
+// stateless immediate workflow (cicd retired); active-session check must
+// not apply to it.
 func TestHandleStart_ImmediateWorkflow_NotRejected(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -137,14 +138,14 @@ func TestHandleStart_ImmediateWorkflow_NotRejected(t *testing.T) {
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
-		"workflow": "cicd",
+		"workflow": "export",
 	})
 	if result.IsError {
-		t.Fatalf("cicd start should not be rejected inside an active recipe, got: %s", getTextContent(t, result))
+		t.Fatalf("export start should not be rejected inside an active recipe, got: %s", getTextContent(t, result))
 	}
 	text := getTextContent(t, result)
 	if strings.Contains(text, "SUBAGENT_MISUSE") {
-		t.Errorf("cicd start must not emit SUBAGENT_MISUSE, got: %s", text)
+		t.Errorf("export start must not emit SUBAGENT_MISUSE, got: %s", text)
 	}
 }
 
@@ -153,7 +154,7 @@ func TestHandleStart_ImmediateWorkflow_NotRejected(t *testing.T) {
 // checks may still fire — we only assert the top-level check is silent.)
 func TestHandleStart_FreshSession_NoSubagentMisuse(t *testing.T) {
 	t.Parallel()
-	names := []string{"bootstrap", "recipe", "develop", "cicd"}
+	names := []string{"bootstrap", "recipe", "develop", "export"}
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

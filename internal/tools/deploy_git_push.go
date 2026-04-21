@@ -23,19 +23,16 @@ type gitPushPrerequisites struct {
 
 const gitTokenCheckCmd = `test -n "$GIT_TOKEN" && echo 1 || echo 0`
 
-const gitPushSetupInstructions = `Ask the user: Do you want to just push code to the remote, or set up full CI/CD (automatic deploy on every push)?
+// gitPushSetupPointerInstructions is short on purpose — the full setup flow
+// (Option A/B, tokens, optional CI/CD) lives in the strategy-push-git atom
+// synthesized by action=strategy. This pre-flight error just redirects.
+const gitPushSetupPointerInstructions = `Configure push-git via the central deploy-config action:
 
-**Option A: Push code to remote**
-GitHub fine-grained token permissions: **Contents: Read and write** (that's all)
-1. GitHub → Settings → Developer settings → Fine-grained tokens → select repo
-2. Set it: zerops_env action="set" project=true variables=["GIT_TOKEN={token}"]
-3. Retry this zerops_deploy command
+  zerops_workflow action="strategy" strategies={"%s":"push-git"}
 
-**Option B: Full CI/CD (push → automatic deploy)**
-GitHub fine-grained token permissions: **Contents: Read and write** + **Secrets: Read and write** + **Workflows: Read and write**
-1. Create token with all three permissions above
-2. Set it: zerops_env action="set" project=true variables=["GIT_TOKEN={token}"]
-3. Run: zerops_workflow action="start" workflow="cicd"`
+That returns the full setup flow — asks push-only vs full CI/CD, handles
+GIT_TOKEN permissions, and covers GitHub Actions / webhook if CI/CD chosen.
+After setup completes, retry this push.`
 
 // handleGitPush executes the git-push strategy: push committed code to an
 // external git remote. No Zerops build is triggered — no pollDeployBuild.
@@ -111,7 +108,7 @@ func handleGitPush(
 		return jsonResult(&gitPushPrerequisites{
 			Status:       platform.ErrGitTokenMissing,
 			Message:      "GIT_TOKEN is not set. This project env var is required for pushing to a git remote.",
-			Instructions: gitPushSetupInstructions,
+			Instructions: fmt.Sprintf(gitPushSetupPointerInstructions, hostname),
 		}), nil, nil
 	}
 

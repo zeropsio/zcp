@@ -17,7 +17,8 @@ func TestIsImmediateWorkflow(t *testing.T) {
 		{"configure_removed", "configure", false},
 		{"develop", "develop", false},
 		{"bootstrap", "bootstrap", false},
-		{"cicd", "cicd", true},
+		{"cicd_retired", "cicd", false},
+		{"export", "export", true},
 		{"unknown", "nonexistent", false},
 		{"empty", "", false},
 	}

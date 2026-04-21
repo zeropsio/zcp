@@ -36,10 +36,10 @@ func BuildPlan(env StateEnvelope) Plan {
 		return planRecipeActive()
 	case PhaseIdle:
 		return planIdle(env)
-	case PhaseCICDActive, PhaseExportActive:
-		// CI/CD and export phases don't drive a plan today — the tool handlers
-		// for those workflows emit their own guidance directly. Fall through
-		// to the empty Plan so the caller knows there's nothing to suggest.
+	case PhaseStrategySetup, PhaseExportActive:
+		// Strategy-setup and export phases don't drive a plan — the handlers
+		// for those paths emit their own guidance directly. Fall through to
+		// the empty Plan so the caller knows there's nothing to suggest.
 	}
 	return Plan{}
 }

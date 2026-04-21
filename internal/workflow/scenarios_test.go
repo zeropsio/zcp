@@ -438,11 +438,11 @@ func TestScenario_S10_RecipeActive(t *testing.T) {
 	}
 }
 
-// TestScenario_S11_CICDActiveEmptyPlan pins the stateless-workflow contract:
-// CI/CD phase returns an empty Plan (tool handlers emit their own guidance
-// via SynthesizeImmediateWorkflow). Synthesize still produces the atom
-// bodies; the Plan absence is deliberate, not a bug.
-func TestScenario_S11_CICDActiveEmptyPlan(t *testing.T) {
+// TestScenario_S11_StrategySetupEmptyPlan pins the stateless-synthesis contract
+// for the strategy-setup phase: synthesis emits the push-git setup atom; Plan
+// stays empty because the handler (handleStrategy) delivers the atom directly
+// in its response, not via Plan.
+func TestScenario_S11_StrategySetupEmptyPlan(t *testing.T) {
 	t.Parallel()
 
 	corpus, err := LoadAtomCorpus()
@@ -451,13 +451,13 @@ func TestScenario_S11_CICDActiveEmptyPlan(t *testing.T) {
 	}
 
 	env := StateEnvelope{
-		Phase:       PhaseCICDActive,
+		Phase:       PhaseStrategySetup,
 		Environment: EnvContainer,
 	}
 
 	plan := BuildPlan(env)
 	if plan.Primary.Tool != "" {
-		t.Errorf("S11: expected empty Plan (stateless workflow contract), got tool=%q", plan.Primary.Tool)
+		t.Errorf("S11: expected empty Plan (stateless synthesis contract), got tool=%q", plan.Primary.Tool)
 	}
 	if plan.Secondary != nil || len(plan.Alternatives) != 0 {
 		t.Errorf("S11: expected no secondary/alternatives, got secondary=%v alts=%d", plan.Secondary, len(plan.Alternatives))
@@ -468,7 +468,7 @@ func TestScenario_S11_CICDActiveEmptyPlan(t *testing.T) {
 		t.Fatalf("Synthesize: %v", err)
 	}
 	if len(bodies) == 0 {
-		t.Fatal("S11: expected cicd atoms to synthesize")
+		t.Fatal("S11: expected strategy-setup atom to synthesize")
 	}
 }
 

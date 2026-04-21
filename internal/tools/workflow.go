@@ -24,7 +24,7 @@ const (
 // WorkflowInput is the input type for zerops_workflow.
 type WorkflowInput struct {
 	// Legacy: workflow name for static guidance (backward compat).
-	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, develop, recipe, cicd, or export."`
+	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, develop, recipe, or export."`
 
 	// Multi-action fields.
 	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, reset, iterate, resume, list, route, dispatch-brief-atom (retrieve one atom of an envelope-split dispatch brief), or generate-finalize (recipe only — generates all 13 recipe files from plan)."`
@@ -93,7 +93,7 @@ type immediateResponse struct {
 func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, schemaCache *schema.Cache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string, mounter ops.Mounter, rt runtime.Info) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
-		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (create/adopt infrastructure only — not the user's application), develop (all development, deployment, fixing, investigating), recipe (create recipe repo files), cicd (CI/CD setup), export (turn a deployed service into a re-importable git repo with import.yaml + buildFromGit). After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route\".",
+		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (create/adopt infrastructure only — not the user's application), develop (all development, deployment, fixing, investigating), recipe (create recipe repo files), export (turn a deployed service into a re-importable git repo with import.yaml + buildFromGit). Deploy strategy (push-dev, push-git, manual) is configured via action=\"strategy\" strategies={hostname:value} — for push-git this returns the full setup flow (tokens, optional CI/CD, first push) in one call. After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route|strategy\".",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Workflow orchestration",
 			ReadOnlyHint:   false,
@@ -106,14 +106,14 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 			return handleWorkflowAction(ctx, projectID, engine, client, cache, schemaCache, logFetcher, input, stateDir, selfHostname, mounter, rt)
 		}
 
-		// Immediate workflows (cicd, export) may be fetched without action.
+		// Immediate workflows (export) may be fetched without action.
 		// Orchestrated workflows (bootstrap, develop, recipe) always require
 		// a session and must route through action="start".
 		if input.Workflow == "" {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				"No workflow or action specified",
-				`Use action="start" workflow="bootstrap|develop|recipe" for orchestrated workflows, or workflow="cicd|export" for immediate guidance`)), nil, nil
+				`Use action="start" workflow="bootstrap|develop|recipe" for orchestrated workflows, or workflow="export" for immediate guidance. Configure deploy strategy via action="strategy".`)), nil, nil
 		}
 		if !workflow.IsImmediateWorkflow(input.Workflow) {
 			return convertError(platform.NewPlatformError(
@@ -208,7 +208,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "route":
 		return handleRoute(ctx, engine, client, projectID, stateDir, selfHostname)
 	case "strategy":
-		return handleStrategy(engine, input, stateDir)
+		return handleStrategy(engine, input, stateDir, rt)
 	default:
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -225,7 +225,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 	// handler's prereq-missing message). The main agent owns workflow state;
 	// the sub-agent's job is whatever the dispatch brief scoped it to.
 	//
-	// Immediate workflows (cicd, export) are stateless — they don't create a
+	// Immediate workflows (export) are stateless — they don't create a
 	// session, so the active-session check doesn't apply. Same-workflow
 	// re-starts fall through to the workflow-specific handler, which owns
 	// idempotency (e.g. handleRecipeStart returning the current state).
@@ -275,7 +275,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 	return convertError(platform.NewPlatformError(
 		platform.ErrInvalidParameter,
 		fmt.Sprintf("Unknown orchestrated workflow %q", input.Workflow),
-		"Valid workflows: bootstrap, develop, recipe, cicd, export")), nil, nil
+		"Valid workflows: bootstrap, develop, recipe, export")), nil, nil
 }
 
 // isDevelopStep returns true if the step name is a develop workflow step.

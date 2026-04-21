@@ -317,11 +317,6 @@ var bootstrapTransitionOfferings = []FlowOffering{
 		Priority: 1,
 		Hint:     `zerops_workflow action="start" workflow="develop"`,
 	},
-	{
-		Workflow: "cicd",
-		Priority: 2,
-		Hint:     `zerops_workflow action="start" workflow="cicd"`,
-	},
 }
 
 func writeOfferingsFooter(sb *strings.Builder) {

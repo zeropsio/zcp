@@ -1,6 +1,6 @@
 # ZCP Workflow Specification
 
-> **Scope**: Bootstrap, adoption, strategy, develop, recipe, cicd, export — both container and local environments, all modes; plus the envelope/plan/atom pipeline that feeds every workflow-aware response.
+> **Scope**: Bootstrap, adoption, strategy (central deploy-config entry — push-dev/push-git/manual; push-git returns the full setup flow including optional CI/CD), develop, recipe, export — both container and local environments, all modes; plus the envelope/plan/atom pipeline that feeds every workflow-aware response.
 > **Companion docs**:
 > - `docs/spec-scenarios.md` — per-scenario acceptance walkthrough (S1–S13), pinned by `internal/workflow/scenarios_test.go`.
 > - `docs/spec-work-session.md` — per-PID Work Session for develop.
@@ -50,10 +50,12 @@ The lifecycle above is collapsed into a single typed `Phase` field carried in ev
 | `develop-active` | A per-PID Work Session is open. | `zerops_workflow action=start workflow=develop`. |
 | `develop-closed-auto` | Work Session has `ClosedAt` set and `CloseReason=auto-complete`. Transitional phase — awaits explicit close + next. | Auto-close in `EvaluateAutoClose` when every scope service has a succeeded deploy + passed verify. |
 | `recipe-active` | A recipe-authoring session is in progress. | `zerops_workflow action=start workflow=recipe`. |
-| `cicd-active` | Stateless immediate workflow (no session) returning CI/CD guidance. | `zerops_workflow action=start workflow=cicd`. |
+| `strategy-setup` | Stateless synthesis phase (no session) emitted by `action=strategy` when setting push-git — delivers the full setup flow (Option A push-only vs Option B full CI/CD, GIT_TOKEN, optional GitHub Actions or webhook, first push). | `zerops_workflow action=strategy strategies={hostname:push-git}`. |
 | `export-active` | Stateless immediate workflow returning export guidance. | `zerops_workflow action=start workflow=export`. |
 
-Invariant: at most one non-idle **stateful** phase per PID at a time. `cicd-active`/`export-active` are stateless — they synthesize guidance and return without touching session state, so they never conflict with an active bootstrap/develop/recipe session.
+Invariant: at most one non-idle **stateful** phase per PID at a time. `strategy-setup`/`export-active` are stateless — they synthesize guidance and return without touching session state, so they never conflict with an active bootstrap/develop/recipe session.
+
+`strategy-setup` replaces the retired `cicd-active` phase. Deploy-strategy configuration (push-dev / push-git / manual) is now a single-path operation: `zerops_workflow action=strategy strategies={hostname:value}`. For push-git, the handler probes state and returns atom-synthesized guidance with Option A/B branching for push-only vs full CI/CD. The `workflow=cicd` entry point is gone — same content reached via the central `action=strategy` path.
 
 See `plans/instruction-delivery-rewrite.md` §4.1 for the concrete Go enum.
 
@@ -208,7 +210,7 @@ the real server over SSH:
 
 | Axis | Values | Emptiness semantic |
 |---|---|---|
-| `phases` | `idle`, `bootstrap-active`, `develop-active`, `develop-closed-auto`, `recipe-active`, `cicd-active`, `export-active` | MUST be non-empty. |
+| `phases` | `idle`, `bootstrap-active`, `develop-active`, `develop-closed-auto`, `recipe-active`, `strategy-setup`, `export-active` | MUST be non-empty. |
 | `modes` | `dev`, `stage`, `simple` | Empty = any mode. |
 | `environments` | `container`, `local` | Empty = either. |
 | `strategies` | `push-dev`, `push-git`, `manual`, `unset` | Empty = any strategy. |
@@ -1095,7 +1097,7 @@ visibility.
 | P5 | `Plan.Primary` is never zero. If dispatch finds no branch, an empty Plan is returned and treated as a construction bug — callers MUST error, not silently continue. |
 | P6 | Each atom declares a non-empty `phases` axis. Atoms with empty phases are rejected at corpus load (`LoadAtomCorpus`). |
 | P7 | Unknown `{placeholder}` tokens in atom bodies are build-time errors — none leak to the LLM as literal braces. |
-| P8 | `cicd-active` and `export-active` are stateless phases: they synthesize guidance from the atom corpus and return without touching session state. |
+| P8 | `strategy-setup` and `export-active` are stateless phases: they synthesize guidance from the atom corpus and return without touching session state. |
 | P9 | Recipe authoring (`workflow=recipe`) uses its own section-parser pipeline (`recipe_block_parser.go`, `recipe_decisions.go`, …), NOT the atom synthesizer. The pipelines are intentionally independent. |
 
 ---

@@ -36,14 +36,16 @@ func TestWorkflowTool_NoParams_ReturnsError(t *testing.T) {
 	}
 }
 
-// TestWorkflowTool_Immediate_CICD hits the one remaining static-guidance
-// branch: immediate workflows (cicd, export) may be fetched without action.
-func TestWorkflowTool_Immediate_CICD(t *testing.T) {
+// TestWorkflowTool_Immediate_Export hits the one remaining static-guidance
+// branch: the export immediate workflow can be fetched without action=start.
+// (The retired cicd workflow was the other one — its setup flow now lives
+// in action=strategy for push-git.)
+func TestWorkflowTool_Immediate_Export(t *testing.T) {
 	t.Parallel()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "", nil, nil, nil, nil, "", "", nil, runtime.Info{})
 
-	result := callTool(t, srv, "zerops_workflow", map[string]any{"workflow": "cicd"})
+	result := callTool(t, srv, "zerops_workflow", map[string]any{"workflow": "export"})
 
 	if result.IsError {
 		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
@@ -271,7 +273,7 @@ func TestWorkflowTool_Action_Start_Immediate(t *testing.T) {
 		name     string
 		workflow string
 	}{
-		{"cicd", "cicd"},
+		{"export", "export"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -312,7 +314,7 @@ func TestWorkflowTool_Action_Start_ImmediateNoSession(t *testing.T) {
 	// Start an immediate workflow — should NOT create a session.
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
-		"workflow": "cicd",
+		"workflow": "export",
 	})
 	if result.IsError {
 		t.Errorf("unexpected error: %s", getTextContent(t, result))

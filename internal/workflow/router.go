@@ -158,10 +158,16 @@ func strategyOfferings(metas []*ServiceMeta) []FlowOffering {
 		Workflow: "develop", Priority: 1, Hint: developHint,
 	}}
 
-	if dominant == StrategyPushGit {
-		offerings = append(offerings,
-			FlowOffering{Workflow: "cicd", Priority: 2, Hint: `zerops_workflow action="start" workflow="cicd"`},
-		)
+	// Strategy configuration — offer the central deploy-config entry point
+	// whenever any bootstrapped service exists. This is where strategies are
+	// set (push-dev, push-git, manual) AND, for push-git, the full setup flow
+	// (tokens, optional CI/CD, first push) is delivered as a single atom.
+	// Replaces the former workflow=cicd as the git-push setup path.
+	if len(metas) > 0 {
+		offerings = append(offerings, FlowOffering{
+			Workflow: "strategy", Priority: 2,
+			Hint: `zerops_workflow action="strategy" — configure deploy strategy (push-dev/push-git/manual); push-git returns full setup flow`,
+		})
 	}
 
 	// Export — offer whenever any bootstrapped service has landed a first
@@ -194,7 +200,6 @@ func appendUtilities(offerings []FlowOffering) []FlowOffering {
 		priority int
 		hint     string
 	}{
-		{"cicd", 3, `zerops_workflow action="start" workflow="cicd" — set up CI/CD pipelines`},
 		{"recipe", 4, `zerops_workflow action="start" workflow="recipe" — create recipe repo files`},
 		{"scale", 5, `zerops_scale serviceHostname="..." — direct tool, no workflow needed`},
 	}

@@ -21,7 +21,12 @@ verifies, and auto-closes when scoped services are green.
 Other entries (when they fit):
   workflow="bootstrap"  — create/adopt infrastructure (empty project, add a service, mode expansion)
   workflow="recipe"     — build recipe repo files
-  workflow="cicd"       — generate pipeline config
+  workflow="export"     — turn a deployed service into a re-importable git repo
+
+Deploy configuration:
+  action="strategy" strategies={hostname:"push-dev|push-git|manual"}
+    — central point for deploy config; push-git returns full setup flow
+      (GIT_TOKEN, optional CI/CD via GitHub Actions or webhook, first push)
 
 Direct tools — read-only queries and config tweaks that don't need a
 deploy cycle: zerops_discover, zerops_logs, zerops_events,

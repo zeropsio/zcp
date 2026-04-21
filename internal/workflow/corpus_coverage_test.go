@@ -558,15 +558,15 @@ func matrixCoverageFixtures() []coverageFixture {
 	}
 }
 
-// pipelineCoverageFixtures covers cicd-active and export-active phases.
+// pipelineCoverageFixtures covers strategy-setup and export-active phases.
 // Both are phase-only axes — the atoms filter purely on phase, not on
 // services/modes/strategies, so a single envelope per phase is enough.
 func pipelineCoverageFixtures() []coverageFixture {
 	return []coverageFixture{
 		{
-			Name: "cicd_active",
+			Name: "strategy_setup",
 			Envelope: StateEnvelope{
-				Phase:       PhaseCICDActive,
+				Phase:       PhaseStrategySetup,
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
@@ -579,7 +579,7 @@ func pipelineCoverageFixtures() []coverageFixture {
 				"GIT_TOKEN",
 				"ZEROPS_TOKEN",
 				"zcli push",
-				".netrc",
+				"push-only",
 			},
 		},
 		{
