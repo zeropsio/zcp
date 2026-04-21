@@ -60,6 +60,11 @@ func RegisterRecordFact(srv *mcp.Server, engine *workflow.Engine) {
 		if err := ops.AppendFact(path, rec); err != nil {
 			return textResult(fmt.Sprintf("Error recording fact: %v", err)), nil, nil
 		}
+		// Cx-ITERATE-GUARD: a recorded fact is the canonical "new evidence"
+		// touchpoint that clears the post-iterate substep-complete gate.
+		// Best-effort; a failure to flip the flag is non-fatal (the fact
+		// itself landed) so don't escalate past the log.
+		_ = engine.ClearAwaitingEvidenceAfterIterate()
 		return textResult(fmt.Sprintf("Recorded %s fact: %q (session %s)", rec.Type, rec.Title, sessionID)), nil, nil
 	})
 }

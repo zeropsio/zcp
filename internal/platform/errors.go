@@ -55,6 +55,7 @@ const (
 	ErrSubagentMisuse         = "SUBAGENT_MISUSE"
 	ErrExportBlocked          = "EXPORT_BLOCKED"
 	ErrCloseBlocked           = "CLOSE_BLOCKED"
+	ErrMissingEvidence        = "MISSING_EVIDENCE"
 )
 
 // PlatformError carries a ZCP error code, message, and suggestion.

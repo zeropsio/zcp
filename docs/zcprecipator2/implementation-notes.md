@@ -1478,3 +1478,67 @@ Independent of the other four Cx-commits. Does not conflict with C-7e..C-14 or a
 ### Next
 
 Advance to Cx-ITERATE-GUARD per HANDOFF-to-I6 fix-stack order.
+
+---
+
+## Cx-ITERATE-GUARD — action=iterate requires new evidence before substep completes (F-3 close)
+
+**Status**: green — three RED tests (substep reset / no-evidence rejection / gate-clear via record-fact), all passing post-implementation.
+
+**Context**: [HANDOFF-to-I6](HANDOFF-to-I6.md) fix-stack, second of three gate-to-PROCEED commits. Closes defect-class-registry §16.3 (`v35-iterate-fake-pass`). v35 evidence: after `action=iterate` at 08:45:22, the main agent fired `action=complete` on all 12 deploy substeps between 08:46:26 and 08:47:50 — 84 seconds total, zero non-workflow tool calls between attestations. Each completion returned ~5070 B success; the engine accepted every one. Only the step-level `writer_manifest_completeness` check caught that no actual work had been done. The substep walk was theater that eroded the step-graph invariant.
+
+### What landed
+
+An evidence-gate on `recipeCompleteSubStep` that rejects attestations made after an `action=iterate` until new evidence of work has been recorded. The canonical gate-clear touchpoint is `zerops_record_fact` — the agent's per-deploy "I learned something" signal, which is already the writer subagent's structured input. Binding the gate-clear to fact recording means the agent cannot re-attest substeps without producing at least one structured knowledge entry that survives to the writer.
+
+- [`internal/platform/errors.go`](../../internal/platform/errors.go) — added `ErrMissingEvidence = "MISSING_EVIDENCE"` alongside the existing code constants.
+- [`internal/workflow/recipe.go`](../../internal/workflow/recipe.go) — new field `RecipeState.AwaitingEvidenceAfterIterate bool` (with `omitempty` JSON tag so existing serialized states round-trip without churn); `ResetForIteration` now sets it to true at the end of the reset.
+- [`internal/workflow/engine_recipe.go`](../../internal/workflow/engine_recipe.go) — `recipeCompleteSubStep` short-circuits with a `MISSING_EVIDENCE`-coded error when `rs.AwaitingEvidenceAfterIterate` is true. Error message names the substep, explains the guard mechanism, and points the agent at `zerops_record_fact` as the clear-path.
+- [`internal/workflow/engine.go`](../../internal/workflow/engine.go) — new `Engine.ClearAwaitingEvidenceAfterIterate()` method. No-op when session/recipe are absent or the flag is already false; otherwise load-mutate-save with the existing atomic-rename persistence.
+- [`internal/tools/record_fact.go`](../../internal/tools/record_fact.go) — after a successful `ops.AppendFact`, calls `engine.ClearAwaitingEvidenceAfterIterate()` best-effort. A flip failure is non-fatal (the fact itself landed) so the error isn't propagated.
+- [`internal/workflow/iterate_guard_test.go`](../../internal/workflow/iterate_guard_test.go) (+140 LoC, new) — three scenarios:
+  - `TestIterateGuard_ResetsSubstepCompletionState` — pins that iterate flips any complete substep back to non-complete (via the existing wholesale-step-replacement in `ResetForIteration`) and sets the new evidence-gate flag.
+  - `TestIterateGuard_SubstepCompleteAfterIterate_NoEvidence_Rejected` — the v35 scenario in test form: iterate → immediately call substep complete → expect `MISSING_EVIDENCE` error.
+  - `TestIterateGuard_SubstepCompleteAfterIterate_WithRecordedFact_Passes` — gate-clear path: iterate → clear-evidence (proxy for record-fact) → substep complete succeeds.
+
+### Design decisions
+
+1. **Gate-clear binds to fact recording, not arbitrary tool activity.** The calibration bar calls for "at least one non-`zerops_workflow` tool call between iterate and complete". The MCP server's middleware infrastructure could hook every non-workflow tool, but that spreads coupling. Binding the gate to `zerops_record_fact` is tighter: the fact is *structured* evidence that survives to the writer subagent's input, not just any tool ping. The agent cannot "pay the toll" with a trivial discover / verify call — it must record a fact that genuinely represents learned knowledge. This is the strictest defensible interpretation of "evidence of work".
+2. **Persist the flag on RecipeState, not on the step.** A per-step flag would require resetting it on every step transition (research→provision→generate→deploy→finalize). A per-recipe flag lives for the post-iterate window exactly — set by iterate, cleared by the first fact, dormant otherwise. Simpler state shape, no transition hooks to maintain.
+3. **Error message names the fix, not just the failure.** Per CLAUDE.md "fix at the source" / content-quality norms: the error text explicitly tells the agent "record at least one fact with zerops_record_fact" and explains why (writer subagent input; the v35 fake-pass pattern). A terse `MISSING_EVIDENCE` code alone would send the agent searching — the expanded message short-circuits that fallback chain.
+4. **Best-effort gate-clear on record-fact.** If `ClearAwaitingEvidenceAfterIterate` fails (disk full, permissions, etc.), the fact still landed in the log — the writer will see it. The gate being stuck is recoverable by a subsequent successful fact. Escalating the clear failure to the user would surface a disk problem the fact-record path cannot directly address; the existing save-state errors on the main `recordFact` path already cover that class.
+5. **`ErrMissingEvidence` as a first-class code, not an ad-hoc string.** Goes in `internal/platform/errors.go` with the other workflow/auth codes. Lets rollback-criteria evaluators and T-trigger scripts detect the guard firing as a structured signal, not by substring-match on the message body.
+
+### Verification
+
+- `go test ./internal/workflow/ -run TestIterateGuard -v -count=1` → 3/3 PASS.
+- `go test ./... -count=1` (full, not short) → 22/22 packages green.
+- `make lint-local` → 0 issues.
+
+### LoC delta
+
+- `internal/platform/errors.go`: +1 LoC (new constant).
+- `internal/workflow/recipe.go`: +9 LoC (field + 1-line flag-set in ResetForIteration).
+- `internal/workflow/engine_recipe.go`: +8 LoC (gate check block).
+- `internal/workflow/engine.go`: +21 LoC (ClearAwaitingEvidenceAfterIterate method).
+- `internal/tools/record_fact.go`: +5 LoC (gate-clear call).
+- `internal/workflow/iterate_guard_test.go`: +140 LoC (new file).
+- **Total**: ~+184 LoC.
+
+### Breaks-alone consequence
+
+Agents that relied on being able to walk substeps post-iterate without recording a fact will now hit `MISSING_EVIDENCE`. That's the point — the v35 agent did exactly this, and the v36 behavior must change. The error message carries full remediation guidance, so agents that encounter the gate once should clear it correctly on the next attempt.
+
+### Ordering deps verified
+
+Independent of Cx-CHECK-WIRE-NOTATION — different file surfaces (workflow engine vs check-author strings). Lands second per HANDOFF-to-I6 order because the engine-state change is a slightly larger surface than the check-text rewrite. Does not conflict with C-7e..C-14 — the post-C-14 rollout did not touch `recipeCompleteSubStep`'s pre-validator gate chain.
+
+### Known follow-ups
+
+- **T-3 / T-8 / T-1 arbitration**: the `MISSING_EVIDENCE` error can be counted per session by post-run evaluators as a signal of retry-depth pathology (many gate-hits = agent was repeatedly trying to fake-pass). Not a rollback trigger on its own but a useful calibration-bar input.
+- **Cx-BRIEF-OVERFLOW interaction**: the v35 chain was F-1 (brief overflow) → F-2 (Go-notation error) → F-3 (iterate fake-pass). With F-2 and F-3 closed, F-1 is the remaining load-bearing defect; Cx-ITERATE-GUARD alone won't prevent the v35 deadlock class, but it removes the theater-of-iteration coping pattern that followed the deadlock.
+- **Future gate-clear expansions**: if real-world runs show legitimate scenarios where the agent needs to iterate + complete without recording a fact (e.g. an iterate called purely to re-initialize substep state after a spurious engine failure), consider expanding the clear-path to include explicit `action=resume` or a new `action=acknowledge-iterate` signal. Not required for v36.
+
+### Next
+
+Advance to Cx-BRIEF-OVERFLOW per HANDOFF-to-I6 fix-stack order. That's the load-bearing one — it closes F-1, the primary root cause of v35.

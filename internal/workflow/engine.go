@@ -212,6 +212,32 @@ func (e *Engine) Iterate() (*WorkflowState, error) {
 	return IterateSession(e.stateDir, e.sessionID)
 }
 
+// ClearAwaitingEvidenceAfterIterate flips the recipe-state gate set by
+// action=iterate, signalling that new evidence of work has been produced.
+// The canonical touchpoint is a zerops_record_fact call — the facts log
+// entry is both the writer subagent's structured input and the gate-clear
+// signal for Cx-ITERATE-GUARD. No-op when there is no active session, no
+// recipe state, or the gate is already cleared. See defect-class-registry
+// §16.3.
+func (e *Engine) ClearAwaitingEvidenceAfterIterate() error {
+	if e.sessionID == "" {
+		return nil
+	}
+	state, err := e.loadState()
+	if err != nil {
+		return fmt.Errorf("clear awaiting evidence: %w", err)
+	}
+	if state.Recipe == nil || !state.Recipe.AwaitingEvidenceAfterIterate {
+		return nil
+	}
+	state.Recipe.AwaitingEvidenceAfterIterate = false
+	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
+		return fmt.Errorf("clear awaiting evidence save: %w", err)
+	}
+	return nil
+}
+
 // closeWorkSessionOnCap closes the current-PID work session with
 // CloseReasonIterationCap. Idempotent and best-effort: errors are swallowed
 // because the cap signal itself is already being returned to the caller.
