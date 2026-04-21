@@ -132,7 +132,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 
 	switch input.Action {
 	case "start":
-		return handleStart(ctx, projectID, engine, client, cache, input, mounter, selfHostname, rt)
+		return handleStart(ctx, projectID, engine, client, cache, input, rt)
 	case "reset":
 		return handleReset(ctx, engine, client, projectID)
 	case "iterate":
@@ -202,7 +202,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	}
 }
 
-func handleStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput, mounter ops.Mounter, selfHostname string, rt runtime.Info) (*mcp.CallToolResult, any, error) {
+func handleStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput, rt runtime.Info) (*mcp.CallToolResult, any, error) {
 	// v8.90 Fix A: reject action=start when a DIFFERENT workflow is already
 	// active. This closes the sub-agent-misuse path: a sub-agent spawned by
 	// the main agent inside a running recipe calling action=start
@@ -313,7 +313,8 @@ func handleReset(ctx context.Context, engine *workflow.Engine, client platform.C
 	preState, _ := engine.GetState()
 	metasBefore, _ := workflow.ListServiceMetas(engine.StateDir())
 
-	cleared, preserved := buildResetSnapshots(preState, metasBefore)
+	cleared := buildClearedSnapshot(preState, metasBefore)
+	preserved := resetSnapshot{}
 	if client != nil {
 		if live, listErr := client.ListServices(ctx, projectID); listErr == nil {
 			preserved.LiveServices = len(live)
@@ -341,10 +342,13 @@ func handleReset(ctx context.Context, engine *workflow.Engine, client platform.C
 	return jsonResult(report), nil, nil
 }
 
-// buildResetSnapshots separates the state snapshot into "what reset will
-// destroy" vs "what will survive", so the audit lines up field-for-field
-// with engine.Reset()'s actual behaviour.
-func buildResetSnapshots(preState *workflow.WorkflowState, metasBefore []*workflow.ServiceMeta) (cleared, preserved resetSnapshot) {
+// buildClearedSnapshot captures everything reset will destroy: the active
+// bootstrap/recipe session plus any incomplete ServiceMetas (those with
+// no BootstrappedAt). Preserved state (complete metas, live services) is
+// computed after reset by the caller since cleanIncompleteMetasForSession
+// can only be observed post-mutation.
+func buildClearedSnapshot(preState *workflow.WorkflowState, metasBefore []*workflow.ServiceMeta) resetSnapshot {
+	cleared := resetSnapshot{}
 	if preState != nil {
 		if preState.Bootstrap != nil && preState.Bootstrap.Active {
 			cleared.BootstrapSessionID = preState.SessionID
@@ -365,7 +369,7 @@ func buildResetSnapshots(preState *workflow.WorkflowState, metasBefore []*workfl
 		cleared.IncompleteMetas = append(cleared.IncompleteMetas, m.Hostname)
 	}
 	sort.Strings(cleared.IncompleteMetas)
-	return cleared, preserved
+	return cleared
 }
 
 func completeMetaNames(metas []*workflow.ServiceMeta) []string {

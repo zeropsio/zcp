@@ -103,6 +103,32 @@ func RegisterDeployLocal(
 		}
 		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 
-		return jsonResult(result), nil, nil
+		return jsonResult(deployLocalResponse{
+			DeployResult:      result,
+			WorkSessionNote:   workSessionNote(stateDir),
+			AutoCloseProgress: workflow.AutoCloseProgressFor(stateDir),
+		}), nil, nil
 	})
+}
+
+// deployLocalResponse wraps the local-mode deploy result with session
+// annotations: a warning when no active work session is tracking the
+// deploy (P9 soft nudge) and the auto-close progress snapshot when one
+// is (P7 visibility). Both fields are omitted when empty/nil so the
+// response shape stays compatible with non-session callers.
+type deployLocalResponse struct {
+	*ops.DeployResult
+	WorkSessionNote   string                      `json:"workSessionNote,omitempty"`
+	AutoCloseProgress *workflow.AutoCloseProgress `json:"autoCloseProgress,omitempty"`
+}
+
+// workSessionNote returns a one-line warning for deploys that land
+// outside an open work session. "Soft" per spec-work-session.md §0.4 —
+// agent keeps discretion, but the side-effect is observable.
+func workSessionNote(stateDir string) string {
+	ws, err := workflow.CurrentWorkSession(stateDir)
+	if err != nil || ws == nil || ws.ClosedAt != "" {
+		return "No active develop session — deploy not tracked. Start one via zerops_workflow action=\"start\" workflow=\"develop\" intent=\"...\" scope=[...] to pick up auto-close + verify tracking."
+	}
+	return ""
 }

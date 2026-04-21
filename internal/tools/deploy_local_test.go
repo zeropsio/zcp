@@ -4,12 +4,15 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 func TestDeployLocalTool_Schema_NoSourceService(t *testing.T) {
@@ -160,5 +163,53 @@ func TestDeployLocalTool_SameToolName(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected zerops_deploy tool to be registered in local mode")
+	}
+}
+
+// P9: workSessionNote emits a warning when a deploy lands without an
+// active work session, and stays empty when one is in flight. Soft
+// nudge, not a hard block — agent keeps discretion per
+// spec-work-session.md §0.4.
+func TestWorkSessionNote_NoSession_Warns(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	note := workSessionNote(dir)
+	if note == "" {
+		t.Fatal("expected warning when no session is open")
+	}
+	for _, needle := range []string{"No active develop session", "scope="} {
+		if !strings.Contains(note, needle) {
+			t.Errorf("warning missing %q: %s", needle, note)
+		}
+	}
+}
+
+func TestWorkSessionNote_ActiveSession_Silent(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	ws := workflow.NewWorkSession("proj-1", string(workflow.EnvContainer), "test", []string{"appdev"})
+	if err := workflow.SaveWorkSession(dir, ws); err != nil {
+		t.Fatalf("SaveWorkSession: %v", err)
+	}
+	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
+
+	if note := workSessionNote(dir); note != "" {
+		t.Errorf("no warning expected with open session, got: %s", note)
+	}
+}
+
+func TestWorkSessionNote_ClosedSession_Warns(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	ws := workflow.NewWorkSession("proj-1", string(workflow.EnvContainer), "done", []string{"appdev"})
+	ws.ClosedAt = time.Now().UTC().Format(time.RFC3339)
+	ws.CloseReason = workflow.CloseReasonAutoComplete
+	if err := workflow.SaveWorkSession(dir, ws); err != nil {
+		t.Fatalf("SaveWorkSession: %v", err)
+	}
+	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
+
+	if note := workSessionNote(dir); note == "" {
+		t.Error("expected warning when session is closed (not being tracked for next task)")
 	}
 }

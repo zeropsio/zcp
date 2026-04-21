@@ -313,3 +313,77 @@ func TestRenderStatus_PerServiceSingleOmitsSection(t *testing.T) {
 }
 
 func timePtr(t time.Time) *time.Time { return &t }
+
+// P8: an open work session with services pending renders a one-line
+// "Auto-close blocked" call-to-action between Progress and Guidance.
+// The line names the first pending host and suggests the concrete tool
+// call that clears it (deploy if the service has no successful deploy,
+// verify otherwise).
+func TestRenderStatus_BlockersLineWhenPending(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name         string
+		session      *WorkSessionSummary
+		wantContains []string
+		wantAbsent   []string
+	}{
+		{
+			name:         "nil-session",
+			session:      nil,
+			wantContains: nil,
+			wantAbsent:   []string{"Auto-close blocked"},
+		},
+		{
+			name: "all-green",
+			session: &WorkSessionSummary{
+				Services: []string{"appdev"},
+				Deploys:  map[string][]AttemptInfo{"appdev": {{Success: true}}},
+				Verifies: map[string][]AttemptInfo{"appdev": {{Success: true}}},
+			},
+			wantAbsent: []string{"Auto-close blocked"},
+		},
+		{
+			name: "deploy-pending",
+			session: &WorkSessionSummary{
+				Services: []string{"appdev"},
+			},
+			wantContains: []string{"Auto-close blocked: 0/1", "pending appdev", "zerops_deploy"},
+		},
+		{
+			name: "verify-pending",
+			session: &WorkSessionSummary{
+				Services: []string{"appdev", "appstage"},
+				Deploys: map[string][]AttemptInfo{
+					"appdev":   {{Success: true}},
+					"appstage": {{Success: true}},
+				},
+				Verifies: map[string][]AttemptInfo{
+					"appdev": {{Success: true}},
+				},
+			},
+			wantContains: []string{"Auto-close blocked: 1/2", "pending appstage", "zerops_verify", `"appstage"`},
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			out := RenderStatus(Response{
+				Envelope: StateEnvelope{
+					Phase:       PhaseDevelopActive,
+					WorkSession: tt.session,
+				},
+			})
+			for _, needle := range tt.wantContains {
+				if !strings.Contains(out, needle) {
+					t.Errorf("output missing %q:\n%s", needle, out)
+				}
+			}
+			for _, needle := range tt.wantAbsent {
+				if strings.Contains(out, needle) {
+					t.Errorf("output should not contain %q:\n%s", needle, out)
+				}
+			}
+		})
+	}
+}

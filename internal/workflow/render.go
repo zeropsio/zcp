@@ -16,8 +16,11 @@ type Response struct {
 }
 
 // RenderStatus produces the markdown status block from a Response. Section
-// order is stable: Phase → Services → Progress → Guidance → Next. Each
-// section is skipped when it has no content, keeping the output compact.
+// order is stable: Phase → Services → Progress → Blockers → Guidance →
+// Next. Each section is skipped when it has no content, keeping the
+// output compact. Blockers is a one-line call-to-action surfaced above
+// the (large) Guidance section so the auto-close gate is visible
+// without scrolling past atoms.
 func RenderStatus(resp Response) string {
 	var b strings.Builder
 	b.WriteString("## Status\n")
@@ -25,10 +28,68 @@ func RenderStatus(resp Response) string {
 	renderPhase(&b, resp.Envelope)
 	renderServices(&b, resp.Envelope)
 	renderProgress(&b, resp.Envelope)
+	renderBlockers(&b, resp.Envelope)
 	renderGuidance(&b, resp.Guidance)
 	renderPlan(&b, resp.Plan)
 
 	return b.String()
+}
+
+// renderBlockers emits a one-line "what's blocking auto-close" call-to-
+// action between Progress and Guidance. The Guidance section can be
+// hundreds of lines of atoms, so the Next pointer at the bottom of the
+// render is easy to miss. The blockers line surfaces the immediate
+// action the agent should take (e.g. "run zerops_verify fizzystage")
+// above the atom wall.
+//
+// Emits nothing when there is no open work session, no scope, or every
+// service in scope is already ready — the absence of the line is the
+// signal that auto-close has fired (or will on next event).
+func renderBlockers(b *strings.Builder, env StateEnvelope) {
+	ws := env.WorkSession
+	if ws == nil || ws.ClosedAt != nil || len(ws.Services) == 0 {
+		return
+	}
+	var pending []string
+	needsDeploy := false
+	needsVerify := false
+	for _, host := range ws.Services {
+		deploys := ws.Deploys[host]
+		verifies := ws.Verifies[host]
+		deployOK := len(deploys) > 0 && deploys[len(deploys)-1].Success
+		verifyOK := len(verifies) > 0 && verifies[len(verifies)-1].Success
+		if deployOK && verifyOK {
+			continue
+		}
+		pending = append(pending, host)
+		if !deployOK {
+			needsDeploy = true
+		} else if !verifyOK {
+			needsVerify = true
+		}
+	}
+	if len(pending) == 0 {
+		return
+	}
+	ready := len(ws.Services) - len(pending)
+	fmt.Fprintf(b, "→ Auto-close blocked: %d/%d ready, pending %s. %s\n",
+		ready, len(ws.Services),
+		strings.Join(pending, ", "),
+		blockerNextAction(pending[0], needsDeploy, needsVerify))
+}
+
+// blockerNextAction suggests the concrete tool call that clears the
+// first blocker. Deploy always precedes verify (no point verifying an
+// un-deployed service), so the suggestion order follows that.
+func blockerNextAction(host string, needsDeploy, needsVerify bool) string {
+	switch {
+	case needsDeploy:
+		return fmt.Sprintf("Next: zerops_deploy targetService=%q", host)
+	case needsVerify:
+		return fmt.Sprintf("Next: zerops_verify serviceHostname=%q", host)
+	default:
+		return ""
+	}
 }
 
 // renderPhase is one line: the phase identifier plus the work session intent

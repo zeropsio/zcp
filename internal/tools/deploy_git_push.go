@@ -144,5 +144,19 @@ func handleGitPush(
 	attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
 	_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 
-	return jsonResult(result), nil, nil
+	return jsonResult(deployGitPushResponse{
+		GitPushResult:     result,
+		WorkSessionNote:   workSessionNote(stateDir),
+		AutoCloseProgress: workflow.AutoCloseProgressFor(stateDir),
+	}), nil, nil
+}
+
+// deployGitPushResponse wraps the push-git result with session
+// annotations. Same shape as the local/batch wrappers; the three exist
+// because their underlying result types differ and Go can't embed an
+// interface-typed field the way we'd want.
+type deployGitPushResponse struct {
+	*ops.GitPushResult
+	WorkSessionNote   string                      `json:"workSessionNote,omitempty"`
+	AutoCloseProgress *workflow.AutoCloseProgress `json:"autoCloseProgress,omitempty"`
 }
