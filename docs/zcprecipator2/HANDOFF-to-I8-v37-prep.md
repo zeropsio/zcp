@@ -11,14 +11,25 @@
 ## 1. Slots to fill at start
 
 ```
-FIX_STACK_TAG:            <fill-in, probably v8.109.0>
-FIX_STACK_COMMITS:        <fill-in, 6 commit SHAs in order>
-HARNESS_TAG:              <fill-in, could be same as fix-stack or separate>
-ANALYSIS_HARNESS_PATH:    cmd/zcp/analyze/
-V37_COMMISSION_DATE:      <fill-in UTC>
-V37_SESSION_ID:           <fill-in from first action=start>
-V37_OUTCOME:              <close-complete | force-exported | session-abandoned>
+FIX_STACK_TAG:            v8.109.0                             (local; push via `git push origin main v8.109.0`)
+FIX_STACK_COMMITS:        8eb7c29  feat(zcprecipator2): mechanical analysis harness
+                          8fa9d1b  Cx-ENVFOLDERS-WIRED          (F-9 close)
+                          d5f0e02  Cx-MARKER-FORM-FIX           (F-12 close)
+                          3fca235  Cx-STANDALONE-FILES-REMOVED  (F-13 close)
+                          b301941  Cx-CLOSE-STEP-STAGING        (F-10 close)
+                          e6c87c0  Cx-CLOSE-STEP-GATE-HARD      (F-8/F-11 close)
+HARNESS_TAG:              v8.109.0 (bundled)
+ANALYSIS_HARNESS_PATH:    cmd/zcp/analyze/ + internal/analyze/
+V37_COMMISSION_DATE:      <unfilled — user commissions>
+V37_SESSION_ID:           <unfilled — user commissions>
+V37_OUTCOME:              <unfilled — post-run>
 ```
+
+### Phase 1 + Phase 2 completion notes
+
+- Cx-ATOM-TEMPLATE-LINT (planned as a separate Cx commit) was bundled with the harness commit (`8eb7c29`). The `tools/lint/atom_template_vars/` scan walks every atom under `internal/content/workflows/recipe/` and fires on any `{{.Field}}` reference naming a field outside `DefaultAllowedAtomFields`. Wired into `make lint-local` via the `lint-atom-template-vars` target and into CI via the `tools/lint/atom_template_vars/_test.go` suite.
+- v36 retrospective against the harness (`zcp analyze recipe-run` against `/Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v36/`) mechanically surfaces F-9 (B-15 observed=6), F-10 (B-16 observed=0/6), F-12 (B-17 observed=18 via merged deliverable + session Edit evidence), F-13 (B-18 observed=6 via merged deliverable + session Write evidence) — every gate in the Phase-1 §8 success criterion passes.
+- `make lint-local` (catalog-sync + recipe-atom + atom-template-vars + golangci) and `go test ./... -count=1 -race` are both green at HEAD (commit `e6c87c0`, tag `v8.109.0`).
 
 If any slot is `<unknown>` because the upstream phase hasn't run yet, that's expected — this handoff covers three phases (harness build → fix stack → v37 commission → v37 analysis). Fill slots as phases complete.
 
