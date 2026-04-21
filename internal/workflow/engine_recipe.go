@@ -84,6 +84,26 @@ func (e *Engine) RecipeComplete(ctx context.Context, step, attestation string, c
 		checkResult = result
 	}
 
+	// Cx-CLOSE-STEP-STAGING: before marking close complete, stage the
+	// writer sub-agent's per-codebase README.md + CLAUDE.md from the
+	// source mount into the recipe output tree so they reach the
+	// deliverable tarball. Without this, sessionless export via
+	// `git ls-files` strips uncommitted writer output and the
+	// deliverable ships without per-codebase markdown — v36 F-10.
+	// Staging failure blocks close completion and names the missing
+	// file so the agent can dispatch the writer sub-agent and retry.
+	if step == RecipeStepClose {
+		if stageErr := e.stageWriterContent(state); stageErr != nil {
+			resp := state.Recipe.BuildResponse(state.SessionID, state.Intent, state.Iteration, e.environment, e.knowledge)
+			resp.CheckResult = &StepCheckResult{
+				Passed:  false,
+				Summary: stageErr.Error(),
+			}
+			resp.Message = fmt.Sprintf("Step %q: writer content staging failed — %v", step, stageErr)
+			return resp, nil
+		}
+	}
+
 	if err := state.Recipe.CompleteStep(step, attestation); err != nil {
 		return nil, fmt.Errorf("recipe complete: %w", err)
 	}
@@ -489,6 +509,87 @@ func (e *Engine) UpdateRecipeComments(envComments map[string]EnvComments) error 
 	}
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	return saveSessionState(e.stateDir, e.sessionID, state)
+}
+
+// stageWriterContent is the Cx-CLOSE-STEP-STAGING action that copies
+// per-codebase writer output (README.md + CLAUDE.md) from each runtime
+// target's source mount directory into the recipe output tree under
+// `{OutputDir}/{hostname}dev/`. Called during RecipeComplete(step=close)
+// after close-phase checks pass. Without this, writer output stays on
+// the source mount uncommitted; sessionless export via git ls-files
+// strips it and the deliverable ships without per-codebase markdown.
+//
+// Sources the mount base from recipeMountBase (overridable via
+// recipeMountBaseOverride for tests — same pattern OverlayRealREADMEs
+// uses so the two staging paths share one mocking surface).
+//
+// Returns a wrapped error when any expected source file is missing so
+// the close-step can refuse completion and name the offending path to
+// the agent. Managed-service and shared-codebase-worker targets are
+// skipped — only runtimes that own their own codebase carry writer
+// output.
+func (e *Engine) stageWriterContent(state *WorkflowState) error {
+	if state.Recipe == nil || state.Recipe.Plan == nil || state.Recipe.OutputDir == "" {
+		return nil
+	}
+	base := recipeMountBase
+	if recipeMountBaseOverride != "" {
+		base = recipeMountBaseOverride
+	}
+	var missing []string
+	var staged int
+	for _, t := range state.Recipe.Plan.Targets {
+		if !IsRuntimeType(t.Type) {
+			continue
+		}
+		if t.IsWorker && t.SharesCodebaseWith != "" {
+			continue
+		}
+		codebase := t.Hostname + "dev"
+		srcDir := filepath.Join(base, codebase)
+		// Source directory absent → writer sub-agent did not run on
+		// this codebase (e.g. unit test stubs that skip dispatch, or
+		// push-app never occurred). Skip silently; close-step still
+		// advances, but a production run with a real mount would
+		// have the directory present and fall into the staging body
+		// below.
+		if _, err := os.Stat(srcDir); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("stage writer content: stat %s: %w", srcDir, err)
+		}
+		dstDir := filepath.Join(state.Recipe.OutputDir, codebase)
+		if err := os.MkdirAll(dstDir, 0o755); err != nil {
+			return fmt.Errorf("stage writer content: mkdir %s: %w", dstDir, err)
+		}
+		for _, name := range []string{"README.md", "CLAUDE.md"} {
+			src := filepath.Join(srcDir, name)
+			dst := filepath.Join(dstDir, name)
+			data, err := os.ReadFile(src)
+			if err != nil {
+				if os.IsNotExist(err) {
+					missing = append(missing, src)
+					continue
+				}
+				return fmt.Errorf("stage writer content: read %s: %w", src, err)
+			}
+			if err := os.WriteFile(dst, data, 0o600); err != nil {
+				return fmt.Errorf("stage writer content: write %s: %w", dst, err)
+			}
+			staged++
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf(
+			"stage writer content: %d required file(s) missing on source mount: %s — dispatch the writer sub-agent to author them, then re-attest action=complete step=close",
+			len(missing), strings.Join(missing, ", "),
+		)
+	}
+	if staged > 0 {
+		fmt.Fprintf(os.Stderr, "zcp: staged %d writer file(s) into %s\n", staged, state.Recipe.OutputDir)
+	}
+	return nil
 }
 
 // autoGenerateFinalizeFiles writes all template-generated recipe files to outputDir.

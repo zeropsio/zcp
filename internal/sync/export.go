@@ -240,6 +240,14 @@ func ExportRecipe(opts ExportOpts) (*ExportResult, error) {
 	}
 
 	// 3. Add each app source dir — one archive subdir per codebase.
+	//    Cx-CLOSE-STEP-STAGING adds a post-source overlay: after the
+	//    git-tracked source lands in `{archivePrefix}/{appName}/`, any
+	//    writer-staged files at `{recipeDir}/{appName}/*.md` overlay
+	//    into the same archive path. This is how the per-codebase
+	//    README.md + CLAUDE.md the close-step stages reach the tarball
+	//    even when the writer sub-agent never git-committed them
+	//    (v36 F-10 fix — export no longer strips uncommitted writer
+	//    output when close-step has staged it into the output tree).
 	for _, rawAppDir := range opts.AppDirs {
 		appDir, absErr := filepath.Abs(rawAppDir)
 		if absErr != nil {
@@ -260,6 +268,14 @@ func ExportRecipe(opts ExportOpts) (*ExportResult, error) {
 			gw.Close()
 			tmpFile.Close()
 			return nil, fmt.Errorf("export app dir %s: %w", rawAppDir, err)
+		}
+		// Overlay writer-staged per-codebase markdown from recipeDir.
+		stagedDir := filepath.Join(recipeDir, appName)
+		if err := overlayStagedWriterContent(tw, stagedDir, archiveAppDir); err != nil {
+			tw.Close()
+			gw.Close()
+			tmpFile.Close()
+			return nil, fmt.Errorf("overlay staged content for %s: %w", appName, err)
 		}
 	}
 
@@ -446,6 +462,37 @@ func addFileToTar(tw *tar.Writer, fullPath, archivePath string, fi os.FileInfo) 
 
 	if _, err := io.Copy(tw, f); err != nil {
 		return fmt.Errorf("copy %s: %w", archivePath, err)
+	}
+	return nil
+}
+
+// overlayStagedWriterContent walks the writer-staging destination for
+// one codebase and adds its .md files to the tar at archiveAppDir.
+// Missing stagedDir → no-op (writer sub-agent may not have run, or
+// close-step staging is disabled). Close-step staging is the
+// producer; this is the consumer — keeping the paths aligned avoids
+// a cross-package dependency on internal/workflow.
+func overlayStagedWriterContent(tw *tar.Writer, stagedDir, archiveAppDir string) error {
+	entries, err := os.ReadDir(stagedDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		src := filepath.Join(stagedDir, e.Name())
+		fi, statErr := os.Stat(src)
+		if statErr != nil {
+			continue
+		}
+		dst := filepath.Join(archiveAppDir, e.Name())
+		if addErr := addFileToTar(tw, src, dst, fi); addErr != nil {
+			return addErr
+		}
 	}
 	return nil
 }
