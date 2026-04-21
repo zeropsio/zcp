@@ -11,13 +11,13 @@ For each hostname `{h}` in the plan's codebase list:
 - `{{.ProjectRoot}}/{h}/INTEGRATION-GUIDE.md` — stand-alone integration-guide document that the README integration-guide fragment references. Each H3 item reads as a single porter-actionable change.
 - `{{.ProjectRoot}}/{h}/GOTCHAS.md` — stand-alone gotchas document that the README knowledge-base fragment references. Each bullet names a concrete observable symptom.
 
-## Per-environment files (one per env tier in the plan)
+## Per-environment files (one per env tier)
 
-For each env tier `{i}` declared in the plan:
+Exactly one README.md per env tier, at these canonical paths:
 
-- `{{.ProjectRoot}}/environments/{{index .EnvFolders i}}/README.md` — tier-focused teaching content: who the tier is for, what scale it handles, what changes relative to the adjacent tier.
-
-The env folder names come from the plan's `EnvFolders` slice. The writer does not invent, paraphrase, or re-case them.
+{{range .EnvFolders}}- `{{$.ProjectRoot}}/environments/{{.}}/README.md` — tier-focused teaching content: who the tier is for, what scale it handles, what changes relative to the adjacent tier.
+{{end}}
+The env folder names above are canonical. The writer does not invent, paraphrase, or re-case them — create these exact six paths and no others.
 
 ## Root-level files
 

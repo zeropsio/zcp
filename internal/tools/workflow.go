@@ -136,7 +136,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	// action works even when a session has not been started (the main
 	// agent may retrieve atoms without an active session during debug).
 	if input.Action == "dispatch-brief-atom" {
-		return handleDispatchBriefAtom(input)
+		return handleDispatchBriefAtom(engine, input)
 	}
 	if engine == nil {
 		return convertError(platform.NewPlatformError(
@@ -440,14 +440,26 @@ func buildResetNextHint(preserved resetSnapshot) string {
 // Returns JSON `{"atomId":"X","body":"..."}`. Atom IDs are drawn from
 // envelopes the server itself emits — the agent should not invent IDs.
 // Unknown IDs return an INVALID_PARAMETER error.
-func handleDispatchBriefAtom(input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleDispatchBriefAtom(engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if input.AtomID == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"atomId is required for dispatch-brief-atom action",
 			"Pass the atomId from the envelope listed in the substep guide's dispatch-brief section")), nil, nil
 	}
-	body, err := workflow.LoadAtomBody(input.AtomID)
+	// Cx-ENVFOLDERS-WIRED: when an active recipe plan is loadable,
+	// render template expressions against plan context before
+	// returning. Without this, atoms containing `{{.EnvFolders}}` /
+	// `{{.ProjectRoot}}` shipped raw to the writer sub-agent — v36
+	// F-9 root cause. Pre-session debug fetches (no plan) fall back
+	// to the raw body via RenderContextFromPlan(nil, "").
+	var plan *workflow.RecipePlan
+	if engine != nil {
+		if state := engine.RecipeSession(); state != nil {
+			plan = state.Plan
+		}
+	}
+	body, err := workflow.LoadAtomBodyRendered(input.AtomID, workflow.RenderContextFromPlan(plan, ""))
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,

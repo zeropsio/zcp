@@ -19,9 +19,12 @@ Per-codebase readers: none (root is recipe-level). Checks:
 
 ## Surface 2 — Per-env README
 
-For each env tier `{i}` in the plan:
+For each canonical env tier:
 
-- File exists at `{{.ProjectRoot}}/environments/{{index .EnvFolders i}}/README.md`.
+{{range .EnvFolders}}- File exists at `{{$.ProjectRoot}}/environments/{{.}}/README.md`.
+{{end}}
+Per-env review rules apply to each file above:
+
 - Line count in `[40, 80]`: `wc -l <file>` returns a value in range.
 - Four required teaching sections present: "Who this is for", "What changes vs the adjacent tier" (or "Entry-level tier"), "Promoting to the next tier" (or "Terminal tier"), "Tier-specific operational concerns". Grep-confirm each heading.
 - Numeric claims match the adjacent env `import.yaml` — any `N GB` quota statement in the env README is consistent with `objectStorageSize: N` in the same env; any "N replicas" statement matches `minContainers: N`. Mismatch fails.

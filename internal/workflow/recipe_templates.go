@@ -36,6 +36,21 @@ func EnvFolder(envIndex int) string {
 	return envTiers[envIndex].Folder
 }
 
+// CanonicalEnvFolders returns the six tier folder names in order
+// (0 — AI Agent through 5 — Highly-available Production). Exported
+// so the atom render path (LoadAtomBodyRendered) can populate
+// `{{.EnvFolders}}` references without importing envTiers directly.
+// The analyze harness mirrors this list at
+// internal/analyze.CanonicalEnvFolders so external tooling stays in
+// sync; changing the list here requires updating that copy.
+func CanonicalEnvFolders() []string {
+	out := make([]string, len(envTiers))
+	for i := range envTiers {
+		out[i] = envTiers[i].Folder
+	}
+	return out
+}
+
 // BuildFinalizeOutput generates all recipe repo files and returns them as a map.
 // Keys are relative paths (e.g., "0 — AI Agent/import.yaml").
 // Values are file content strings.
