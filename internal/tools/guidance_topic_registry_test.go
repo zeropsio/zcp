@@ -71,6 +71,90 @@ func TestGuidanceTool_UnknownTopic_WithEmptyQuery_HandlesGracefully(t *testing.T
 	}
 }
 
+// TestGuidanceTool_NilPlan_TierOnlyTopic_Resolves verifies that during
+// the research step (before the agent submits recipePlan) a topic whose
+// predicate gates only on tier resolves against a synthetic tier-only
+// plan derived from state.Recipe.Tier. v36 F-7 regression: at research
+// step with tier=showcase, showcase-gated topics (showcase-service-keys,
+// dashboard-skeleton, recipe-types) returned a misleading "does not
+// apply to your recipe shape" message because predicates ran against a
+// nil plan and returned false. The engine already knows the tier from
+// action=start — predicate evaluation must use it.
+func TestGuidanceTool_NilPlan_TierOnlyTopic_Resolves(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	engine := workflow.NewEngine(dir, workflow.EnvLocal, nil)
+	if _, err := engine.Start("proj-nilplan-tier", workflow.WorkflowRecipe, "nil-plan tier test"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	state, err := engine.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	state.Recipe = workflow.NewRecipeState()
+	state.Recipe.Tier = workflow.RecipeTierShowcase
+	// Plan stays nil — research-complete has not been called yet.
+	if err := workflow.SaveSessionState(dir, engine.SessionID(), state); err != nil {
+		t.Fatalf("SaveSessionState: %v", err)
+	}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterGuidance(srv, engine)
+
+	// showcase-service-keys is gated on isShowcase only (tier).
+	result := callTool(t, srv, "zerops_guidance", map[string]any{"topic": "showcase-service-keys"})
+	text := getTextContent(t, result)
+	if strings.Contains(text, "does not apply") {
+		t.Errorf("tier-only topic incorrectly gated at research step (nil plan, tier=showcase): %s", text)
+	}
+	if text == "" {
+		t.Fatal("expected resolved content for showcase-gated topic at research step; got empty")
+	}
+}
+
+// TestGuidanceTool_NilPlan_ShapeTopic_ReturnsPlanNotSubmitted verifies
+// that when a topic requires plan-shape information (targets/framework)
+// and the plan hasn't been submitted yet, the response distinguishes
+// "plan not yet submitted" from the pre-existing "does not apply"
+// message. The agent then knows to fetch the topic after
+// action=complete step=research instead of treating the topic as
+// permanently inapplicable.
+func TestGuidanceTool_NilPlan_ShapeTopic_ReturnsPlanNotSubmitted(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	engine := workflow.NewEngine(dir, workflow.EnvLocal, nil)
+	if _, err := engine.Start("proj-nilplan-shape", workflow.WorkflowRecipe, "nil-plan shape test"); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	state, err := engine.GetState()
+	if err != nil {
+		t.Fatalf("GetState: %v", err)
+	}
+	state.Recipe = workflow.NewRecipeState()
+	state.Recipe.Tier = workflow.RecipeTierShowcase
+	if err := workflow.SaveSessionState(dir, engine.SessionID(), state); err != nil {
+		t.Fatalf("SaveSessionState: %v", err)
+	}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterGuidance(srv, engine)
+
+	// worker-setup is gated on hasWorker — needs plan.Targets.
+	result := callTool(t, srv, "zerops_guidance", map[string]any{"topic": "worker-setup"})
+	text := getTextContent(t, result)
+	if strings.Contains(text, "does not apply to your recipe shape") {
+		t.Errorf("shape-dependent topic returned stale 'does not apply' instead of plan-not-submitted message: %s", text)
+	}
+	if !strings.Contains(text, "recipePlan") {
+		t.Errorf("expected plan-not-submitted message naming recipePlan; got: %s", text)
+	}
+	if !strings.Contains(text, "research") {
+		t.Errorf("expected plan-not-submitted message to point at the research step; got: %s", text)
+	}
+}
+
 // TestGuidanceTool_ValidTopic_WithPredicateFilter_ReturnsDoesNotApply —
 // predicate-filtered empty is still a legitimate "topic doesn't apply"
 // response. The TOPIC_EMPTY guard only fires when a topic's predicate
