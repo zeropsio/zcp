@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"slices"
 	"strings"
 	"testing"
 )
@@ -119,7 +118,7 @@ func TestCheckCrossReadmeGotchaUniqueness(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			checks := checkCrossReadmeGotchaUniqueness(tt.readmes)
+			checks := checkCrossReadmeGotchaUniqueness(t.Context(), tt.readmes)
 			if len(checks) == 0 {
 				t.Fatal("expected at least one check result")
 			}
@@ -293,19 +292,11 @@ func TestGotchaRestatesGuide_PerturbsCrossReadmeUniqueness(t *testing.T) {
 	if c.Status != "fail" {
 		t.Fatalf("expected fail, got %q", c.Status)
 	}
-	if len(c.PerturbsChecks) == 0 {
-		t.Fatal("failing gotcha_distinct_from_guide must carry PerturbsChecks (v8.104 Fix E)")
-	}
-	if !slices.Contains(c.PerturbsChecks, "cross_readme_gotcha_uniqueness") {
-		t.Errorf("PerturbsChecks must include \"cross_readme_gotcha_uniqueness\"; got %v", c.PerturbsChecks)
-	}
-	// Human-readable HowToFix must surface the perturbation inline so
-	// the author sees it in the failure payload.
-	if !strings.Contains(c.HowToFix, "PerturbsChecks") {
-		t.Errorf("HowToFix must name PerturbsChecks inline; got:\n%s", c.HowToFix)
-	}
-	if !strings.Contains(c.HowToFix, "cross_readme_gotcha_uniqueness") {
-		t.Errorf("HowToFix must name the sibling check by name; got:\n%s", c.HowToFix)
+	// C-10: PerturbsChecks field is removed; the perturbation warning
+	// is now inlined in Detail prose. Author reads the Detail and
+	// cross-checks sibling READMEs before rewording.
+	if !strings.Contains(c.Detail, "cross_readme_gotcha_uniqueness") {
+		t.Errorf("Detail must name the sibling check whose pass state may flip when this is fixed; got:\n%s", c.Detail)
 	}
 }
 

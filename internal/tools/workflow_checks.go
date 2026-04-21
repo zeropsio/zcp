@@ -138,10 +138,10 @@ func checkProvision(client platform.Client, projectID string, engine *workflow.E
 			}
 		}
 
-		// v8.97 Fix 4: stamp surface-derived coupling. No-op when checks
-		// populate no ReadSurface; future checks that do will get the
-		// hint automatically.
-		checks = workflow.StampCoupling(checks)
+		// C-10: surface-derived coupling removed (P1 supersedes). The
+		// per-check PreAttestCmd is the runnable form; authors do not
+		// need a separate coupling-hint stanza because running the shim
+		// re-checks the affected surfaces directly.
 		summary := "all services provisioned"
 		if !allPassed {
 			summary = "provisioning incomplete"

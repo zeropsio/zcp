@@ -59,7 +59,7 @@ const workerReadmeShutdownOnly = `# Worker
 func TestCheckWorkerProductionCorrectness_V16RegressionCaught(t *testing.T) {
 	t.Parallel()
 	target := workflow.RecipeTarget{Hostname: "worker", Type: "nodejs@22", IsWorker: true}
-	checks := checkWorkerProductionCorrectness("worker", v16WorkerReadmeNoCorrectnessGotchas, target)
+	checks := checkWorkerProductionCorrectness(t.Context(), "worker", v16WorkerReadmeNoCorrectnessGotchas, target)
 
 	var queueFail, shutdownFail bool
 	for _, c := range checks {
@@ -81,7 +81,7 @@ func TestCheckWorkerProductionCorrectness_V16RegressionCaught(t *testing.T) {
 func TestCheckWorkerProductionCorrectness_BothCovered(t *testing.T) {
 	t.Parallel()
 	target := workflow.RecipeTarget{Hostname: "worker", Type: "nodejs@22", IsWorker: true}
-	checks := checkWorkerProductionCorrectness("worker", workerReadmeWithCorrectness, target)
+	checks := checkWorkerProductionCorrectness(t.Context(), "worker", workerReadmeWithCorrectness, target)
 
 	var pass bool
 	for _, c := range checks {
@@ -102,7 +102,7 @@ func TestCheckWorkerProductionCorrectness_PartialCoverage(t *testing.T) {
 	target := workflow.RecipeTarget{Hostname: "worker", Type: "nodejs@22", IsWorker: true}
 
 	// Only queue group covered — shutdown missing
-	checks := checkWorkerProductionCorrectness("worker", workerReadmeQueueGroupOnly, target)
+	checks := checkWorkerProductionCorrectness(t.Context(), "worker", workerReadmeQueueGroupOnly, target)
 	var queueOK, shutdownFail bool
 	for _, c := range checks {
 		if c.Name == "worker_worker_queue_group_gotcha" && c.Status != statusFail {
@@ -127,7 +127,7 @@ func TestCheckWorkerProductionCorrectness_PartialCoverage(t *testing.T) {
 	}
 
 	// Only shutdown covered — queue group missing
-	checks = checkWorkerProductionCorrectness("worker", workerReadmeShutdownOnly, target)
+	checks = checkWorkerProductionCorrectness(t.Context(), "worker", workerReadmeShutdownOnly, target)
 	var queueFailFound bool
 	for _, c := range checks {
 		if c.Name == "worker_worker_queue_group_gotcha" && c.Status == statusFail {
@@ -142,7 +142,7 @@ func TestCheckWorkerProductionCorrectness_PartialCoverage(t *testing.T) {
 func TestCheckWorkerProductionCorrectness_NonWorkerSkipped(t *testing.T) {
 	t.Parallel()
 	target := workflow.RecipeTarget{Hostname: "api", Type: "nodejs@22", IsWorker: false}
-	checks := checkWorkerProductionCorrectness("api", v16WorkerReadmeNoCorrectnessGotchas, target)
+	checks := checkWorkerProductionCorrectness(t.Context(), "api", v16WorkerReadmeNoCorrectnessGotchas, target)
 	if len(checks) != 0 {
 		t.Errorf("expected no checks for non-worker target, got %d", len(checks))
 	}
@@ -154,7 +154,7 @@ func TestCheckWorkerProductionCorrectness_SharedCodebaseSkipped(t *testing.T) {
 		Hostname: "worker", Type: "php-nginx@8.4",
 		IsWorker: true, SharesCodebaseWith: "app",
 	}
-	checks := checkWorkerProductionCorrectness("worker", v16WorkerReadmeNoCorrectnessGotchas, target)
+	checks := checkWorkerProductionCorrectness(t.Context(), "worker", v16WorkerReadmeNoCorrectnessGotchas, target)
 	if len(checks) != 0 {
 		t.Errorf("expected shared-codebase worker to skip check, got %d checks", len(checks))
 	}
@@ -287,7 +287,7 @@ process.on('SIGTERM', () => void stop('SIGTERM'));
 func TestCheckWorkerProductionCorrectness_FailMessagesAreActionable(t *testing.T) {
 	t.Parallel()
 	target := workflow.RecipeTarget{Hostname: "worker", Type: "nodejs@22", IsWorker: true}
-	checks := checkWorkerProductionCorrectness("worker", v16WorkerReadmeNoCorrectnessGotchas, target)
+	checks := checkWorkerProductionCorrectness(t.Context(), "worker", v16WorkerReadmeNoCorrectnessGotchas, target)
 	for _, c := range checks {
 		if c.Status != statusFail {
 			continue

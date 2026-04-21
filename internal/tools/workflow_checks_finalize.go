@@ -15,7 +15,7 @@ import (
 
 // checkRecipeFinalize validates that all recipe repo files are generated and correct.
 func checkRecipeFinalize(outputDir string) workflow.RecipeStepChecker {
-	return func(_ context.Context, plan *workflow.RecipePlan, _ *workflow.RecipeState) (*workflow.StepCheckResult, error) {
+	return func(ctx context.Context, plan *workflow.RecipePlan, _ *workflow.RecipeState) (*workflow.StepCheckResult, error) {
 		if plan == nil {
 			return nil, nil
 		}
@@ -45,7 +45,7 @@ func checkRecipeFinalize(outputDir string) workflow.RecipeStepChecker {
 			if err != nil {
 				continue // file existence already checked above
 			}
-			checks = append(checks, validateImportYAML(string(data), plan, i, folder)...)
+			checks = append(checks, validateImportYAML(ctx, string(data), plan, i, folder)...)
 		}
 
 		// Reject TODO scaffold markers in the app README deliverable — if the
@@ -54,18 +54,30 @@ func checkRecipeFinalize(outputDir string) workflow.RecipeStepChecker {
 		// would otherwise reach the published recipe.
 		checks = append(checks, checkAppREADMENoScaffoldTODOs(dir)...)
 
-		// v8.97 Fix 4: stamp surface-derived coupling hints.
-		checks = workflow.StampCoupling(checks)
+		// C-6: canonical output tree only (P8). check-rewrite.md §16 places
+		// this at close-entry; the close step currently has no checker
+		// (administrative trigger), so it fires here at finalize-complete —
+		// immediately before close-step entry, which is the semantically
+		// identical firing point. Closes v33 phantom-tree class via the
+		// positive allow-list on per-hostname mounts.
+		checks = append(checks, checkCanonicalOutputTreeOnly(dir)...)
+
+		// C-6: no version anchors in published porter-facing content (P6).
+		// Scans each per-codebase README / CLAUDE.md / environments/*/README.md
+		// for `v\d+(\.\d+)*` tokens. Closes v33 version-log leakage class.
+		checks = append(checks, checkNoVersionAnchorsInPublishedContent(dir)...)
+
+		// C-10: surface-derived coupling + next-round prediction removed
+		// (P1 supersedes). The per-check PreAttestCmd is the runnable
+		// form; authors re-evaluate by running the shim.
 		allPassed := checksAllPassed(checks)
 		summary := "finalize checks passed"
 		if !allPassed {
 			summary = "finalize checks failed"
 		}
-		result := &workflow.StepCheckResult{
+		return &workflow.StepCheckResult{
 			Passed: allPassed, Checks: checks, Summary: summary,
-		}
-		workflow.AnnotateNextRoundPrediction(result)
-		return result, nil
+		}, nil
 	}
 }
 
@@ -144,7 +156,7 @@ type importVerticalAutoscale struct {
 }
 
 // validateImportYAML runs structural checks on an import.yaml file.
-func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int, folder string) []workflow.StepCheck {
+func validateImportYAML(ctx context.Context, content string, plan *workflow.RecipePlan, envIndex int, folder string) []workflow.StepCheck {
 	prefix := folder + "_import"
 	var checks []workflow.StepCheck
 
@@ -233,17 +245,12 @@ func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int,
 			Detail: fmt.Sprintf("%.0f%%", ratio*100),
 		})
 	} else {
-		readSurface := fmt.Sprintf("%s/import.yaml", folder)
 		checks = append(checks, workflow.StepCheck{
-			Name:        prefix + "_comment_ratio",
-			Status:      statusFail,
-			Detail:      fmt.Sprintf("comment ratio %.0f%% is below 30%% minimum", ratio*100),
-			ReadSurface: readSurface,
-			Required:    "≥30% of non-empty lines comment-only",
-			Actual:      fmt.Sprintf("%.0f%%", ratio*100),
-			HowToFix: fmt.Sprintf(
-				"Add `#` comment lines above each service block in %s explaining WHY this env's tier shape was chosen (mode, minContainers, corePackage). Each env file is published standalone — describe THIS tier on its own terms without naming siblings.",
-				readSurface,
+			Name:   prefix + "_comment_ratio",
+			Status: statusFail,
+			Detail: fmt.Sprintf(
+				"comment ratio %.0f%% in %s/import.yaml is below 30%% minimum. Add `#` comment lines above each service block explaining WHY this env's tier shape was chosen (mode, minContainers, corePackage). Each env file is published standalone — describe THIS tier on its own terms without naming siblings.",
+				ratio*100, folder,
 			),
 		})
 	}
@@ -257,13 +264,13 @@ func validateImportYAML(content string, plan *workflow.RecipePlan, envIndex int,
 	// to field narration. The rubric requires >= 35% of substantive
 	// comments to contain a reasoning marker (because, otherwise,
 	// without, rotation, rolling deploy, etc).
-	checks = append(checks, checkCommentDepth(content, prefix)...)
+	checks = append(checks, checkCommentDepth(ctx, content, prefix)...)
 
 	// Factual-claim linter: declarative numeric claims in comments
 	// ("10 GB quota", "minContainers 3") must match the adjacent YAML
 	// value in the same service block. Subjunctive phrasing ("bump to
 	// N GB when usage grows") is allowed. See checkFactualClaims.
-	checks = append(checks, checkFactualClaims(content, prefix)...)
+	checks = append(checks, checkFactualClaims(ctx, content, prefix)...)
 
 	// Section-heading comment patterns — labels, not explanations.
 	checks = append(checks, checkSectionHeadingComments(content, prefix)...)
@@ -578,17 +585,12 @@ func checkCrossEnvReferences(content, prefix string) []workflow.StepCheck {
 			detail = strings.Join(offenders[:3], ", ") + fmt.Sprintf(" and %d more", len(offenders)-3)
 		}
 		envFolder := strings.TrimSuffix(prefix, "_import")
-		readSurface := fmt.Sprintf("%s/import.yaml comment lines: %s", envFolder, detail)
 		return []workflow.StepCheck{{
-			Name:        prefix + "_cross_env_refs",
-			Status:      statusFail,
-			Detail:      "comment references a sibling environment by tier number at " + detail + " — each env's import.yaml is published standalone on zerops.io/recipes; readers never see the other envs, so references like 'env 0', 'env 4', 'see env 5' are context-free. Rewrite the comment to describe THIS env on its own terms.",
-			ReadSurface: readSurface,
-			Required:    "no comment names a sibling tier by number (env N / envs N-M / environment N)",
-			Actual:      fmt.Sprintf("%d offending comment line(s) at %s", len(offenders), detail),
-			HowToFix: fmt.Sprintf(
-				"Rewrite the flagged comment lines in %s/import.yaml so each describes THIS env on its own terms — drop phrases like 'see env N', 'envs 4-5', 'bumps to env 4'. Each env ships standalone on zerops.io/recipes, so a sibling reference reads as a dangling pointer.",
-				envFolder,
+			Name:   prefix + "_cross_env_refs",
+			Status: statusFail,
+			Detail: fmt.Sprintf(
+				"comment in %s/import.yaml references a sibling environment by tier number at %s — each env's import.yaml is published standalone on zerops.io/recipes; readers never see the other envs, so references like 'env 0', 'env 4', 'see env 5' are context-free. Rewrite the flagged comment lines so each describes THIS env on its own terms — drop phrases like 'see env N', 'envs 4-5', 'bumps to env 4'.",
+				envFolder, detail,
 			),
 		}}
 	}

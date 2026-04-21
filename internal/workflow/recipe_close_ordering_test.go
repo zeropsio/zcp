@@ -64,16 +64,20 @@ func TestCloseSubStepOrder_BrowserWalkBeforeReviewRejected(t *testing.T) {
 	}
 }
 
-// TestCloseSubStepOrder_ReviewBeforeBrowserWalkAccepted — v8.98 Fix C.
-// Canonical ordering (code-review → close-browser-walk) passes the guard
-// and both attestations succeed end-to-end.
+// TestCloseSubStepOrder_ReviewBeforeBrowserWalkAccepted — v8.98 Fix C
+// + C-7.5. Canonical ordering (editorial-review → code-review →
+// close-browser-walk) passes both guards and all three attestations
+// succeed end-to-end.
 func TestCloseSubStepOrder_ReviewBeforeBrowserWalkAccepted(t *testing.T) {
 	t.Parallel()
 
 	eng, state := closeOrderingFixture(t)
 
+	if _, err := eng.recipeCompleteSubStep(context.Background(), state, RecipeStepClose, SubStepEditorialReview, validEditorialReviewPayload()); err != nil {
+		t.Fatalf("editorial-review first call must succeed; got: %v", err)
+	}
 	if _, err := eng.recipeCompleteSubStep(context.Background(), state, RecipeStepClose, SubStepCloseReview, "review attestation filler content here"); err != nil {
-		t.Fatalf("code-review first call must succeed; got: %v", err)
+		t.Fatalf("code-review after editorial-review must succeed; got: %v", err)
 	}
 	if _, err := eng.recipeCompleteSubStep(context.Background(), state, RecipeStepClose, SubStepCloseBrowserWalk, "walk attestation filler content here"); err != nil {
 		t.Fatalf("close-browser-walk after code-review must succeed; got: %v", err)
@@ -82,17 +86,19 @@ func TestCloseSubStepOrder_ReviewBeforeBrowserWalkAccepted(t *testing.T) {
 
 // TestCloseSubStepOrder_FixCGuardDoesNotFireOnCodeReview — v8.98 Fix C.
 // The Fix C guard is scoped to subStepName == close-browser-walk; any
-// code-review attestation (first-time or otherwise) bypasses the guard
-// entirely. This is the minimal invariant the plan's
-// "TestCloseSubStepOrder_ReviewTwicePermitted" expresses: the Fix C guard
-// itself does not reject code-review calls. (Whether a second code-review
-// call succeeds overall is governed by the current-subset pointer in
-// completeSubStep, not by Fix C.)
+// code-review attestation (first-time or otherwise) bypasses Fix C
+// entirely. C-7.5 Fix D governs editorial-review → code-review ordering
+// and does fire on code-review when editorial-review is absent, so the
+// fixture first completes editorial-review; the Fix C guard is asserted
+// not to fire on the subsequent code-review call.
 func TestCloseSubStepOrder_FixCGuardDoesNotFireOnCodeReview(t *testing.T) {
 	t.Parallel()
 
 	eng, state := closeOrderingFixture(t)
 
+	if _, err := eng.recipeCompleteSubStep(context.Background(), state, RecipeStepClose, SubStepEditorialReview, validEditorialReviewPayload()); err != nil {
+		t.Fatalf("editorial-review setup call must succeed; got: %v", err)
+	}
 	_, err := eng.recipeCompleteSubStep(context.Background(), state, RecipeStepClose, SubStepCloseReview, "review attestation filler content here")
 	if err != nil {
 		if strings.Contains(err.Error(), platform.ErrSubagentMisuse) {

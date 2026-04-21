@@ -10,10 +10,17 @@ import (
 )
 
 // SubStepValidationResult holds the outcome of a sub-step validator.
+// Checks is the optional structured per-check channel for substeps
+// whose validator runs a predicate battery (added in C-7.5 for the
+// editorial-review substep's seven dispatch-runnable checks per
+// check-rewrite.md §16a). When Checks is non-empty the engine merges
+// the rows into the response's CheckResult so the agent sees the per-
+// check pass/fail detail alongside the aggregate Issues/Guidance.
 type SubStepValidationResult struct {
-	Passed   bool     `json:"passed"`
-	Issues   []string `json:"issues,omitempty"`
-	Guidance string   `json:"guidance,omitempty"`
+	Passed   bool        `json:"passed"`
+	Issues   []string    `json:"issues,omitempty"`
+	Guidance string      `json:"guidance,omitempty"`
+	Checks   []StepCheck `json:"checks,omitempty"`
 }
 
 // SubStepValidator checks the agent's output at a sub-step boundary.
@@ -64,6 +71,13 @@ func getSubStepValidator(subStepName string) SubStepValidator {
 		// Trust agent attestation — code quality is checked at close
 		// step by the code-review sub-agent.
 		return nil
+	case SubStepEditorialReview:
+		// C-7.5: editorial-review substep attestation is the sub-agent's
+		// structured return payload (per completion-shape.md). The
+		// validator parses it and runs the seven §16a dispatch-runnable
+		// predicates; failing predicates populate Issues + Checks so the
+		// agent sees per-check detail alongside the aggregate guidance.
+		return validateEditorialReview
 	default:
 		// Deploy sub-steps, etc. — trust attestation.
 		return nil

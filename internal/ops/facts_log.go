@@ -52,6 +52,52 @@ var knownScopes = map[string]bool{
 	FactScopeBoth:       true,
 }
 
+// Fact routing destinations. P5: fact routing is a two-way graph — the
+// writer subagent classifies every recorded fact with a routed_to value
+// that pairs with the published surface. The ZCP_CONTENT_MANIFEST.json
+// schema references the same enum; routing claimed on the manifest must
+// align with the published surface (v34 DB_PASS / DB_PASSWORD
+// cross-scaffold coordination class closed by C-8's expansion).
+//
+// RouteTo is stored on FactRecord so a fact's route can be declared at
+// record time (when classification is freshest) and consumed by the
+// writer subagent + downstream honesty check without re-inferring.
+const (
+	FactRouteToContentGotcha     = "content_gotcha"
+	FactRouteToContentIntro      = "content_intro"
+	FactRouteToContentIG         = "content_ig"
+	FactRouteToContentEnvComment = "content_env_comment"
+	FactRouteToClaudeMD          = "claude_md"
+	FactRouteToZeropsYAMLComment = "zerops_yaml_comment"
+	FactRouteToScaffoldPreamble  = "scaffold_preamble"
+	FactRouteToFeaturePreamble   = "feature_preamble"
+	FactRouteToDiscarded         = "discarded"
+)
+
+// knownRouteTos validates against typos like "content_gocha" or
+// "clude_md". Empty string is accepted as the legacy default so existing
+// facts logs round-trip without mass backfill — the writer treats empty
+// as "not yet routed" rather than a routing assertion.
+var knownRouteTos = map[string]bool{
+	"":                           true,
+	FactRouteToContentGotcha:     true,
+	FactRouteToContentIntro:      true,
+	FactRouteToContentIG:         true,
+	FactRouteToContentEnvComment: true,
+	FactRouteToClaudeMD:          true,
+	FactRouteToZeropsYAMLComment: true,
+	FactRouteToScaffoldPreamble:  true,
+	FactRouteToFeaturePreamble:   true,
+	FactRouteToDiscarded:         true,
+}
+
+// IsKnownFactRouteTo reports whether s is the empty string (legacy default)
+// or one of the enumerated routed-to destinations. Exported so the content
+// manifest parser and downstream honesty check can share the same taxonomy.
+func IsKnownFactRouteTo(s string) bool {
+	return knownRouteTos[s]
+}
+
 // FactRecord is one append-only entry in the deploy facts log. The agent
 // writes these at the moment of freshest knowledge (when a fix is applied,
 // a platform behavior is observed, a contract binding is established); the
@@ -70,6 +116,11 @@ type FactRecord struct {
 	// (content lane) and downstream dispatch briefs (delegation lane).
 	// Empty defaults to FactScopeContent (pre-v8.96 behavior).
 	Scope string `json:"scope,omitempty"`
+	// RouteTo (P5 two-way-graph) declares the published surface this
+	// fact belongs on so the writer subagent + manifest-honesty checker
+	// can enforce consistency. Empty = "not yet routed" (legacy default);
+	// non-empty must be one of FactRouteTo* constants. See IsKnownFactRouteTo.
+	RouteTo string `json:"routeTo,omitempty"`
 }
 
 // FactLogPath returns the canonical facts-log path for a session. Lives in
@@ -94,6 +145,9 @@ func AppendFact(path string, rec FactRecord) error {
 	}
 	if !knownScopes[rec.Scope] {
 		return fmt.Errorf("fact record: unknown scope %q (valid: content, downstream, both)", rec.Scope)
+	}
+	if !knownRouteTos[rec.RouteTo] {
+		return fmt.Errorf("fact record: unknown routeTo %q (valid: content_gotcha, content_intro, content_ig, content_env_comment, claude_md, zerops_yaml_comment, scaffold_preamble, feature_preamble, discarded)", rec.RouteTo)
 	}
 	if strings.TrimSpace(rec.Title) == "" {
 		return fmt.Errorf("fact record: title is required")

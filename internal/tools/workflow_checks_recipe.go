@@ -11,6 +11,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
+	opschecks "github.com/zeropsio/zcp/internal/ops/checks"
 	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -45,7 +46,7 @@ func buildRecipeStepChecker(ctx context.Context, step, _, stateDir string, schem
 		}
 		return checkRecipeGenerate(stateDir, validFields, kp)
 	case workflow.RecipeStepDeploy:
-		return checkRecipeDeployReadmes(stateDir, kp, factsLogPathFn)
+		return checkRecipeDeployReadmes(stateDir, factsLogPathFn)
 	case workflow.RecipeStepFinalize:
 		return checkRecipeFinalizeFromState(stateDir)
 	}
@@ -79,7 +80,7 @@ var requiredFragments = []string{"integration-guide", "knowledge-base", "intro"}
 // validFields, when non-nil, enables zerops.yaml field validation against the live JSON schema.
 // kp, when non-nil, enables the predecessor-as-floor check on each codebase's README.
 func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp knowledge.Provider) workflow.RecipeStepChecker {
-	return func(_ context.Context, plan *workflow.RecipePlan, state *workflow.RecipeState) (*workflow.StepCheckResult, error) {
+	return func(ctx context.Context, plan *workflow.RecipePlan, state *workflow.RecipeState) (*workflow.StepCheckResult, error) {
 		if plan == nil {
 			return nil, nil
 		}
@@ -120,7 +121,7 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp kn
 
 		// Check zerops.yaml for each app target.
 		for _, appTarget := range appTargets {
-			checks = append(checks, checkRecipeGenerateCodebase(projectRoot, appTarget, plan, validFields, false)...)
+			checks = append(checks, checkRecipeGenerateCodebase(ctx, projectRoot, appTarget, plan, validFields, false)...)
 		}
 
 		// v8.94: separate-codebase worker targets have their OWN zerops.yaml
@@ -134,24 +135,29 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp kn
 		// codebase's zerops.yaml, already covered by the app-target loop's
 		// checkRecipeSetups → app_worker_setup check.
 		for _, workerTarget := range workerTargets {
-			checks = append(checks, checkRecipeGenerateCodebase(projectRoot, workerTarget, plan, validFields, true)...)
+			checks = append(checks, checkRecipeGenerateCodebase(ctx, projectRoot, workerTarget, plan, validFields, true)...)
 		}
 
-		// v8.97 Fix 4: stamp surface-derived coupling hints on every
-		// failed check with a populated ReadSurface before computing the
-		// pass status. Coupling is derived from shared ReadSurface, not
-		// from a hand-maintained cluster table.
-		checks = workflow.StampCoupling(checks)
+		// C-6: symbol-contract env-var consistency. Recipe-wide cross-
+		// codebase diff against plan.SymbolContract.EnvVarsByKind. Closes
+		// the v34 DB_PASS vs DB_PASSWORD class per principle P3. Fires at
+		// generate-complete (here) AND at deploy-complete (in
+		// checkRecipeDeployReadmes) — check-rewrite.md §16 adds it at two
+		// trigger points because the v34 class surfaced both at initial
+		// scaffold and after later inline edits that re-introduced the
+		// divergence.
+		checks = append(checks, checkSymbolContractEnvVarConsistency(ctx, projectRoot, plan.SymbolContract)...)
+
+		// C-10: surface-derived coupling + next-round prediction removed
+		// (P1 supersedes). Per-check PreAttestCmd is the runnable form.
 		allPassed := checksAllPassed(checks)
 		summary := "recipe generate checks passed"
 		if !allPassed {
 			summary = "recipe generate checks failed"
 		}
-		result := &workflow.StepCheckResult{
+		return &workflow.StepCheckResult{
 			Passed: allPassed, Checks: checks, Summary: summary,
-		}
-		workflow.AnnotateNextRoundPrediction(result)
-		return result, nil
+		}, nil
 	}
 }
 
@@ -162,7 +168,7 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp kn
 // shared-worker setup expectation inside checkRecipeSetups is still valid
 // because TargetHostsSharedWorker returns false for a worker target itself,
 // so no branch is needed there — the flag is reserved for future divergence).
-func checkRecipeGenerateCodebase(projectRoot string, target workflow.RecipeTarget, plan *workflow.RecipePlan, validFields *schema.ValidFields, workerOnly bool) []workflow.StepCheck {
+func checkRecipeGenerateCodebase(ctx context.Context, projectRoot string, target workflow.RecipeTarget, plan *workflow.RecipePlan, validFields *schema.ValidFields, workerOnly bool) []workflow.StepCheck {
 	_ = workerOnly
 	hostname := target.Hostname
 
@@ -192,7 +198,7 @@ func checkRecipeGenerateCodebase(projectRoot string, target workflow.RecipeTarge
 	checks = append(checks, checkRecipeSetups(doc, target, plan)...)
 
 	// Validate zerops.yaml fields against the live JSON schema.
-	checks = append(checks, checkZeropsYmlFields(ymlDir, validFields)...)
+	checks = append(checks, checkZeropsYmlFields(ctx, ymlDir, validFields)...)
 
 	// v8.94: env_self_shadow floor covers every runtime target's zerops.yaml,
 	// not just the bootstrap flow's checkGenerateEntry path. v28 evidence:
@@ -205,7 +211,7 @@ func checkRecipeGenerateCodebase(projectRoot string, target workflow.RecipeTarge
 		if entry == nil {
 			continue // missing setup already reported by checkRecipeSetups
 		}
-		shadowCheck := checkEnvSelfShadow(hostname, entry)
+		shadowCheck := checkEnvSelfShadow(ctx, hostname, entry)
 		// Dev + prod share the same check name; keep the fail so the agent
 		// sees the list of offenders once. A dev fail plus a prod pass should
 		// still surface as a fail.
@@ -246,6 +252,11 @@ func checkRecipeGenerateCodebase(projectRoot string, target workflow.RecipeTarge
 	}
 	checks = append(checks, checkScaffoldArtifactLeak(ymlDir, doc, string(rawYAMLData), hostname)...)
 
+	// C-6: visual-style ASCII-only check. Reads {hostname}dev/zerops.yaml
+	// and fails on Unicode Box Drawing codepoints (U+2500..U+257F). Closes
+	// the v33 class per principle P8 — visual separators are ASCII-only.
+	checks = append(checks, checkVisualStyleASCIIOnly(ymlDir, hostname)...)
+
 	return checks
 }
 
@@ -273,21 +284,22 @@ func findCheck(checks []workflow.StepCheck, name string) *workflow.StepCheck {
 // so the agent can iterate on the README narration without rolling back
 // the infrastructure work.
 //
-// kp is the knowledge provider used to pull the direct-predecessor
-// recipe's gotcha stems for the predecessor-floor check. Nil kp in test
-// contexts no-ops that check gracefully.
+// C-9: knowledge.Provider parameter removed — its sole consumer
+// (predecessor-floor check `knowledge_base_exceeds_predecessor`) was
+// informational-only since v8.78 and is dropped entirely. Authenticity
+// now runs from the per-codebase README surface without needing the
+// predecessor corpus.
 //
 // factsLogPathFn (v8.95) resolves the writer subagent's session facts-log
 // path so the content-manifest completeness sub-check can cross-reference
 // every recorded FactRecord.Title against the manifest entries. Pass nil
 // for test contexts — sub-check D handles that by passing with a skip note.
-func checkRecipeDeployReadmes(stateDir string, kp knowledge.Provider, factsLogPathFn func() string) workflow.RecipeStepChecker {
-	return func(_ context.Context, plan *workflow.RecipePlan, _ *workflow.RecipeState) (*workflow.StepCheckResult, error) {
+func checkRecipeDeployReadmes(stateDir string, factsLogPathFn func() string) workflow.RecipeStepChecker {
+	return func(ctx context.Context, plan *workflow.RecipePlan, _ *workflow.RecipeState) (*workflow.StepCheckResult, error) {
 		if plan == nil {
 			return nil, nil
 		}
 		projectRoot := projectRootFromState(stateDir)
-		predecessorStems := workflow.PredecessorGotchaStems(plan, kp)
 
 		var appTargets []workflow.RecipeTarget
 		for _, t := range plan.Targets {
@@ -314,10 +326,10 @@ func checkRecipeDeployReadmes(stateDir string, kp knowledge.Provider, factsLogPa
 		readmesByHost := map[string]string{}
 
 		for _, target := range appTargets {
-			checks = append(checks, checkCodebaseReadme(projectRoot, target, plan, predecessorStems, false, readmesByHost)...)
+			checks = append(checks, checkCodebaseReadme(ctx, projectRoot, target, plan, false, readmesByHost)...)
 		}
 		for _, target := range workerTargets {
-			checks = append(checks, checkCodebaseReadme(projectRoot, target, plan, predecessorStems, true, readmesByHost)...)
+			checks = append(checks, checkCodebaseReadme(ctx, projectRoot, target, plan, true, readmesByHost)...)
 		}
 
 		// Cross-README gotcha-stem uniqueness: forces each distinct fact
@@ -328,7 +340,7 @@ func checkRecipeDeployReadmes(stateDir string, kp knowledge.Provider, factsLogPa
 		// api + worker READMEs. Returns a single check name ("cross_
 		// readme_gotcha_uniqueness") so the failure is scoped to the
 		// whole recipe, not any one codebase.
-		checks = append(checks, checkCrossReadmeGotchaUniqueness(readmesByHost)...)
+		checks = append(checks, checkCrossReadmeGotchaUniqueness(ctx, readmesByHost)...)
 
 		// v8.95: content-manifest enforcement. The writer subagent emits
 		// ZCP_CONTENT_MANIFEST.json at the recipe root before returning;
@@ -342,20 +354,31 @@ func checkRecipeDeployReadmes(stateDir string, kp knowledge.Provider, factsLogPa
 		if factsLogPathFn != nil {
 			factsLogPath = factsLogPathFn()
 		}
-		checks = append(checks, checkWriterContentManifest(projectRoot, readmesByHost, factsLogPath)...)
+		checks = append(checks, checkWriterContentManifest(ctx, projectRoot, readmesByHost, factsLogPath)...)
 
-		// v8.97 Fix 4: stamp surface-derived coupling hints.
-		checks = workflow.StampCoupling(checks)
+		// C-6: manifest_route_to_populated. Every manifest entry must carry
+		// a non-empty routed_to matching the FactRouteTo* enum. Closes
+		// v34's DB_PASS class where claude_md-routed facts leaked into the
+		// published gotcha list because the drift was visible in the
+		// manifest but nothing gated on it. Principle P5.
+		checks = append(checks, checkManifestRouteToPopulated(filepath.Join(projectRoot, opschecks.ManifestFileName))...)
+
+		// C-6: symbol-contract env-var consistency at deploy.readmes.
+		// Second firing point per check-rewrite.md §16 — the first is at
+		// generate-complete in checkRecipeGenerate. After inline edits
+		// during deploy rounds may re-introduce cross-scaffold env-var
+		// divergence that the initial scaffold got right.
+		checks = append(checks, checkSymbolContractEnvVarConsistency(ctx, projectRoot, plan.SymbolContract)...)
+
+		// C-10: coupling + next-round prediction removed (P1 supersedes).
 		allPassed := checksAllPassed(checks)
 		summary := "recipe deploy README checks passed"
 		if !allPassed {
 			summary = "recipe deploy README checks failed"
 		}
-		result := &workflow.StepCheckResult{
+		return &workflow.StepCheckResult{
 			Passed: allPassed, Checks: checks, Summary: summary,
-		}
-		workflow.AnnotateNextRoundPrediction(result)
-		return result, nil
+		}, nil
 	}
 }
 
@@ -370,7 +393,7 @@ func checkRecipeDeployReadmes(stateDir string, kp knowledge.Provider, factsLogPa
 // so the cross-README dedup check can run once across all codebases
 // without re-reading files from disk. Passing it through here keeps the
 // filesystem walk shape identical to the existing iteration loop.
-func checkCodebaseReadme(projectRoot string, target workflow.RecipeTarget, plan *workflow.RecipePlan, predecessorStems []string, workerOnly bool, readmesByHost map[string]string) []workflow.StepCheck {
+func checkCodebaseReadme(ctx context.Context, projectRoot string, target workflow.RecipeTarget, plan *workflow.RecipePlan, workerOnly bool, readmesByHost map[string]string) []workflow.StepCheck {
 	hostname := target.Hostname
 	ymlDir := projectRoot
 	for _, candidate := range []string{hostname + "dev", hostname} {
@@ -411,31 +434,41 @@ func checkCodebaseReadme(projectRoot string, target workflow.RecipeTarget, plan 
 	if !workerOnly {
 		if igContent := extractFragmentContent(string(readmeContent), "integration-guide"); igContent != "" {
 			if yamlBlock := extractYAMLBlock(igContent); yamlBlock != "" {
-				specChecks := checkCommentSpecificity(yamlBlock, plan)
+				specChecks := checkCommentSpecificity(ctx, yamlBlock, plan)
 				for i := range specChecks {
 					specChecks[i].Name = hostname + "_" + specChecks[i].Name
 				}
 				checks = append(checks, specChecks...)
 			}
 		}
-		codeChecks := checkIntegrationGuideCodeBlocks(string(readmeContent), plan)
+		codeChecks := checkIntegrationGuideCodeBlocks(ctx, string(readmeContent), plan)
 		for i := range codeChecks {
 			codeChecks[i].Name = hostname + "_" + codeChecks[i].Name
 		}
 		checks = append(checks, codeChecks...)
 
-		perItemChecks := checkIntegrationGuidePerItemCodeBlock(string(readmeContent), plan)
+		perItemChecks := checkIntegrationGuidePerItemCodeBlock(ctx, string(readmeContent), plan)
 		for i := range perItemChecks {
 			perItemChecks[i].Name = hostname + "_" + perItemChecks[i].Name
 		}
 		checks = append(checks, perItemChecks...)
 	}
 
-	floorChecks := checkKnowledgeBaseExceedsPredecessor(string(readmeContent), plan, predecessorStems, hostname)
-	for i := range floorChecks {
-		floorChecks[i].Name = hostname + "_" + floorChecks[i].Name
+	// C-9 (post-v8.78 rollback): `knowledge_base_exceeds_predecessor` was
+	// informational-only and carried zero gate value. The authenticity
+	// check `knowledge_base_authenticity` is the upstream replacement:
+	// it grades gotcha shape (platform-anchored or failure-mode described)
+	// rather than predecessor-overlap count. Fires on every showcase
+	// codebase that has a knowledge-base fragment.
+	if plan != nil && plan.Tier == workflow.RecipeTierShowcase {
+		if kbContent := extractFragmentContent(string(readmeContent), "knowledge-base"); kbContent != "" {
+			authChecks := checkKnowledgeBaseAuthenticity(ctx, kbContent, hostname)
+			for i := range authChecks {
+				authChecks[i].Name = hostname + "_" + authChecks[i].Name
+			}
+			checks = append(checks, authChecks...)
+		}
 	}
-	checks = append(checks, floorChecks...)
 
 	// Gotcha-restates-guide: a gotcha whose normalized stem matches an
 	// integration-guide H3 heading (other than the boilerplate zerops.yaml
@@ -452,7 +485,7 @@ func checkCodebaseReadme(projectRoot string, target workflow.RecipeTarget, plan 
 	// triggers the shutdown bug) even though the remediation is framework-
 	// level. Shared-codebase workers skip this check; their operational
 	// knowledge lives in the host target README.
-	checks = append(checks, checkWorkerProductionCorrectness(hostname, string(readmeContent), target)...)
+	checks = append(checks, checkWorkerProductionCorrectness(ctx, hostname, string(readmeContent), target)...)
 	checks = append(checks, checkWorkerDrainCodeBlock(hostname, string(readmeContent), target)...)
 
 	// CLAUDE.md: repo-local dev-loop operations guide. Lives alongside
@@ -619,23 +652,12 @@ func checkReadmeFragments(content, hostname string) []workflow.StepCheck {
 						Detail: fmt.Sprintf("%.0f%% comments", ratio*100),
 					})
 				} else {
-					readSurface := fmt.Sprintf(
-						"embedded YAML in %s/README.md (#ZEROPS_EXTRACT_START:integration-guide fragment)",
-						hostname,
-					)
-					coupled := []string{hostname + "/zerops.yaml"}
 					checks = append(checks, workflow.StepCheck{
-						Name:        "comment_ratio",
-						Status:      statusFail,
-						Detail:      fmt.Sprintf("comment ratio %.0f%% is below 30%% minimum", ratio*100),
-						ReadSurface: readSurface,
-						Required:    "≥30% of YAML lines comment-only",
-						Actual:      fmt.Sprintf("%.0f%%", ratio*100),
-						CoupledWith: coupled,
-						HowToFix: fmt.Sprintf(
-							"Add `#` comment lines inside the integration-guide YAML block in %s/README.md until the comment-only ratio reaches 30%%. "+
-								"This block usually mirrors %s/zerops.yaml (IG step 1) — keep both files byte-identical when you edit, otherwise the next round will fail again on the unsynced surface.",
-							hostname, hostname,
+						Name:   "comment_ratio",
+						Status: statusFail,
+						Detail: fmt.Sprintf(
+							"comment ratio %.0f%% is below 30%% minimum in the integration-guide YAML block of %s/README.md. Add `#` comment lines inside the block until the comment-only ratio reaches 30%%. This block usually mirrors %s/zerops.yaml (IG step 1) — keep both byte-identical when you edit, otherwise the next round fails on the unsynced surface.",
+							ratio*100, hostname, hostname,
 						),
 					})
 				}
@@ -684,15 +706,11 @@ func checkReadmeFragments(content, hostname string) []workflow.StepCheck {
 					readPath = hostname + "/README.md"
 				}
 				checks = append(checks, workflow.StepCheck{
-					Name:        "fragment_" + name + "_blank_after_marker",
-					Status:      statusFail,
-					Detail:      fmt.Sprintf("fragment %q needs a blank line after the start marker", name),
-					ReadSurface: fmt.Sprintf("%s — line immediately after `<!-- #ZEROPS_EXTRACT_START:%s# -->`", readPath, name),
-					Required:    "exactly one blank line between the start marker and the fragment body",
-					Actual:      fmt.Sprintf("non-blank content on the line after the %q start marker", name),
-					HowToFix: fmt.Sprintf(
-						"Insert a blank line in %s between `<!-- #ZEROPS_EXTRACT_START:%s# -->` and the first content line. The extractor that publishes the fragment to zerops.io/recipes treats the marker line as a comment and needs the blank separator before the rendered body starts.",
-						readPath, name,
+					Name:   "fragment_" + name + "_blank_after_marker",
+					Status: statusFail,
+					Detail: fmt.Sprintf(
+						"fragment %q in %s needs a blank line after `<!-- #ZEROPS_EXTRACT_START:%s# -->`. The extractor that publishes the fragment to zerops.io/recipes treats the marker line as a comment and needs the blank separator before the rendered body starts.",
+						name, readPath, name,
 					),
 				})
 			}
@@ -782,94 +800,16 @@ func extractFragmentContent(content, name string) string {
 	return strings.TrimSpace(content[contentStart:extractEnd])
 }
 
-// codeBlockFenceRe matches the opening fence of a fenced code block:
-// three backticks followed by an optional language tag on the same line.
-var codeBlockFenceRe = regexp.MustCompile("(?m)^\\s*```([a-zA-Z0-9+_-]*)")
-
-// nonYamlCodeLanguages are the language tags that count as "application
-// code adjustment" in an integration guide. YAML and variants are
-// explicitly excluded — every integration guide already has a zerops.yaml
-// block, and that alone doesn't show what the user needs to change in
-// their app code. Shell is accepted because some recipes document
-// setup commands (e.g. "run npm install before first deploy").
-var nonYamlCodeLanguages = map[string]bool{
-	"typescript": true,
-	"ts":         true,
-	"javascript": true,
-	"js":         true,
-	"jsx":        true,
-	"tsx":        true,
-	"svelte":     true,
-	"vue":        true,
-	"python":     true,
-	"py":         true,
-	"php":        true,
-	"go":         true,
-	"golang":     true,
-	"ruby":       true,
-	"rb":         true,
-	"rust":       true,
-	"rs":         true,
-	"java":       true,
-	"kotlin":     true,
-	"swift":      true,
-	"bash":       true,
-	"sh":         true,
-	"shell":      true,
-	"zsh":        true,
-	"dockerfile": true,
-	"nginx":      true,
-}
-
-// checkIntegrationGuideCodeBlocks verifies the integration guide contains
-// at least one non-YAML code block — real application code a user adjusts
-// to run on Zerops (trust proxy, host-check settings, framework-specific
-// bind-address changes). The v12 audit found most integration guides were
-// 95% zerops.yaml comments with only one real code-adjustment section;
-// the floor forces every integration guide to document at least one
-// concrete change the user makes to their own application code.
-//
-// Scoped to showcase tier: minimal recipes often have no application-side
-// changes to document and would fail the check for no good reason.
-func checkIntegrationGuideCodeBlocks(content string, plan *workflow.RecipePlan) []workflow.StepCheck {
-	if plan == nil || plan.Tier != workflow.RecipeTierShowcase {
-		return nil
-	}
-	igContent := extractFragmentContent(content, "integration-guide")
-	if igContent == "" {
-		return nil
-	}
-	matches := codeBlockFenceRe.FindAllStringSubmatch(igContent, -1)
-	if len(matches) == 0 {
-		return nil // checkReadmeFragments already reports "no yaml block"
-	}
-	// Each match opens a fence. The pairs alternate (open/close); the
-	// language tag only appears on the opener. We just count unique
-	// non-empty language tags that fall into the accepted set.
-	nonYaml := 0
-	var seenLangs []string
-	for _, m := range matches {
-		lang := strings.ToLower(strings.TrimSpace(m[1]))
-		if lang == "" {
-			continue // closing fence or untagged fence
-		}
-		if nonYamlCodeLanguages[lang] {
-			nonYaml++
-			seenLangs = append(seenLangs, lang)
-		}
-	}
-	if nonYaml == 0 {
-		return []workflow.StepCheck{{
-			Name:   "integration_guide_code_adjustment",
-			Status: statusFail,
-			Detail: "integration guide has zerops.yaml only — add at least one non-YAML code block showing an actual application-code change a user must make to run on Zerops. Examples: Express trust-proxy + 0.0.0.0 bind (typescript), Vite allowedHosts (js), Laravel CORS config (php), Django ALLOWED_HOSTS (py). The integration guide must document what the USER changes in their OWN code, not just the zerops.yaml they copy-paste.",
-		}}
-	}
-	return []workflow.StepCheck{{
-		Name:   "integration_guide_code_adjustment",
-		Status: statusPass,
-		Detail: fmt.Sprintf("%d non-YAML code block(s): %s", nonYaml, strings.Join(uniqueStrings(seenLangs), ", ")),
-	}}
+// checkIntegrationGuideCodeBlocks — tool-layer thin wrapper (post-C-7a)
+// around opschecks.CheckIGCodeAdjustment. The predicate lives in
+// internal/ops/checks so the (future) zcp check ig-code-adjustment CLI
+// shim and the server-side gate share one implementation. This wrapper
+// maps the plan pointer into the bare isShowcase bool the predicate
+// expects; ctx is threaded from the step-checker closure so contextcheck
+// stays quiet even though the predicate itself is a pure computation.
+func checkIntegrationGuideCodeBlocks(ctx context.Context, content string, plan *workflow.RecipePlan) []workflow.StepCheck {
+	isShowcase := plan != nil && plan.Tier == workflow.RecipeTierShowcase
+	return opschecks.CheckIGCodeAdjustment(ctx, content, isShowcase)
 }
 
 // checkIntegrationGuidePerItemCodeBlock enforces that every H3 heading
@@ -891,92 +831,13 @@ func checkIntegrationGuideCodeBlocks(content string, plan *workflow.RecipePlan) 
 //
 // Scoped to showcase tier (minimal recipes have simpler IG shapes that
 // don't always need per-item code blocks).
-func checkIntegrationGuidePerItemCodeBlock(content string, plan *workflow.RecipePlan) []workflow.StepCheck {
-	if plan == nil || plan.Tier != workflow.RecipeTierShowcase {
-		return nil
-	}
-	igContent := extractFragmentContent(content, "integration-guide")
-	if igContent == "" {
-		return nil
-	}
-	sections := splitByH3(igContent)
-	if len(sections) < 2 {
-		return []workflow.StepCheck{{
-			Name:   "integration_guide_per_item_code",
-			Status: statusPass,
-		}}
-	}
-
-	var missing []string
-	for _, sec := range sections {
-		if sectionHasFencedBlock(sec.Body) {
-			continue
-		}
-		missing = append(missing, sec.Heading)
-	}
-	if len(missing) == 0 {
-		return []workflow.StepCheck{{
-			Name:   "integration_guide_per_item_code",
-			Status: statusPass,
-			Detail: fmt.Sprintf("%d IG items, all with fenced code blocks", len(sections)),
-		}}
-	}
-	return []workflow.StepCheck{{
-		Name:   "integration_guide_per_item_code",
-		Status: statusFail,
-		Detail: fmt.Sprintf(
-			"integration-guide H3 section(s) with no fenced code block: %s. Every IG step must carry a code diff — recipe.md says 'one IG item per real code adjustment, with the code diff'. If a step describes a config placement (envVariables section, where to put a var), show the before/after as a fenced block. If a step is prose-only, either delete it or fold its content into a neighbouring step that has code.",
-			strings.Join(missing, " | "),
-		),
-	}}
-}
-
-// igSection is one H3 section inside the integration-guide fragment.
-type igSection struct {
-	Heading string // the H3 heading text (without the ### prefix)
-	Body    string // the content between this H3 and the next one (or end-of-fragment)
-}
-
-// splitByH3 splits markdown content into sections keyed by H3 headings.
-// Content before the first H3 is dropped (usually a fragment start marker).
-func splitByH3(content string) []igSection {
-	lines := strings.Split(content, "\n")
-	var sections []igSection
-	var current *igSection
-	var body strings.Builder
-	flush := func() {
-		if current == nil {
-			return
-		}
-		current.Body = body.String()
-		sections = append(sections, *current)
-		current = nil
-		body.Reset()
-	}
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "### ") {
-			flush()
-			heading := strings.TrimSpace(strings.TrimPrefix(trimmed, "### "))
-			current = &igSection{Heading: heading}
-			continue
-		}
-		if current != nil {
-			body.WriteString(line)
-			body.WriteString("\n")
-		}
-	}
-	flush()
-	return sections
-}
-
-// sectionHasFencedBlock returns true when the body contains at least
-// one complete fenced code block (``` ... ```), any language. Each
-// opener/closer emits a regex match, so a complete block produces ≥2
-// matches.
-func sectionHasFencedBlock(body string) bool {
-	matches := codeBlockFenceRe.FindAllStringIndex(body, -1)
-	return len(matches) >= 2
+// checkIntegrationGuidePerItemCodeBlock — tool-layer thin wrapper
+// (post-C-7b) around opschecks.CheckIGPerItemCode. splitByH3 +
+// sectionHasFencedBlock helpers moved into the ops/checks package
+// alongside the predicate.
+func checkIntegrationGuidePerItemCodeBlock(ctx context.Context, content string, plan *workflow.RecipePlan) []workflow.StepCheck {
+	isShowcase := plan != nil && plan.Tier == workflow.RecipeTierShowcase
+	return opschecks.CheckIGPerItemCode(ctx, content, isShowcase)
 }
 
 // extractYAMLBlock extracts content from the first ```yaml ... ``` block.
@@ -1023,102 +884,13 @@ func commentRatio(yamlContent string) float64 {
 	return float64(comments) / float64(total)
 }
 
-// specificityMarkers are tokens that signal a comment is earning its
-// keep — it explains WHY, names a concrete platform behavior, or points
-// at a failure mode the reader would otherwise trip on. A comment
-// containing any of these is "specific"; comments without any marker are
-// boilerplate ("npm ci for reproducible builds" is the archetype — true
-// of every recipe, load-bearing on none).
-//
-// The list is intentionally coarse: we want to accept real comments
-// without stylistic hand-wringing, not grade them for prose quality.
-// Every v12 API zerops.yaml comment already clears this bar.
-var specificityMarkers = []string{
-	// causal / reasoning
-	"because", "so that", "otherwise", "prevents", "required", "ensures",
-	"needed", "must", "without",
-	// failure mode
-	"fails", "breaks", "crashes", "silent", "race", "502", "401", "cold start",
-	"blocked", "drops", "empty",
-	// platform constraints
-	"zerops", "execonce", "l7", "balancer", "httpsupport", "advisory lock",
-	"0.0.0.0", "subdomain", "reverse proxy", "terminates ssl", "trust proxy",
-	"vxlan", "${",
-	// framework×platform intersection signals
-	"build time", "build-time", "runtime", "os-level", "horizontal container",
-	"multi-container", "fresh container", "stateless", "bundle",
-}
-
-// commentSpecificityRatio measures how many comment lines in a zerops.yaml
-// block clear the specificity floor. A comment is specific when it
-// contains at least one specificityMarker (after lowercasing). The check
-// that consumes this ratio requires both an absolute floor (at least
-// minSpecificComments specific comments) and a proportional floor (at
-// least specificCommentRatio of all comments are specific).
-func commentSpecificityRatio(yamlContent string) (specific, total int, ratio float64) {
-	for line := range strings.SplitSeq(yamlContent, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if !strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		total++
-		lower := strings.ToLower(trimmed)
-		for _, marker := range specificityMarkers {
-			if strings.Contains(lower, marker) {
-				specific++
-				break
-			}
-		}
-	}
-	if total == 0 {
-		return 0, 0, 0
-	}
-	return specific, total, float64(specific) / float64(total)
-}
-
-// minSpecificComments is the absolute floor — even a very short
-// zerops.yaml must have at least this many non-boilerplate comments to
-// pass the specificity check.
-const minSpecificComments = 3
-
-// specificCommentRatio is the proportional floor — even a very long
-// zerops.yaml with many comments must have at least this fraction that
-// clear the specificity bar. Tuned low enough that v12 API's comments
-// easily pass; tight enough that copy-paste boilerplate fails.
-const specificCommentRatio = 0.25
-
-// checkCommentSpecificity is the companion to commentRatio. commentRatio
-// measures how many comments are PRESENT; specificity measures how many
-// are LOAD-BEARING. The v12 session had comments like "npm ci for
-// reproducible builds" and "cache node_modules between builds" that
-// pass the 30%-present ratio but read as generic boilerplate that could
-// appear in any recipe. A reader learning Zerops from the integration
-// guide needs to see comments that explain Zerops-specific constraints
-// — execOnce on multi-container deploys, L7 balancer behavior, the
-// $-interpolated credential injection, the tilde deployFiles suffix.
-func checkCommentSpecificity(yamlBlock string, plan *workflow.RecipePlan) []workflow.StepCheck {
-	if plan == nil || plan.Tier != workflow.RecipeTierShowcase {
-		return nil
-	}
-	specific, total, ratio := commentSpecificityRatio(yamlBlock)
-	if total == 0 {
-		return nil
-	}
-	if specific >= minSpecificComments && ratio >= specificCommentRatio {
-		return []workflow.StepCheck{{
-			Name:   "comment_specificity",
-			Status: statusPass,
-			Detail: fmt.Sprintf("%d of %d comments are specific (%.0f%%)", specific, total, ratio*100),
-		}}
-	}
-	return []workflow.StepCheck{{
-		Name:   "comment_specificity",
-		Status: statusFail,
-		Detail: fmt.Sprintf(
-			"comment specificity too low: %d of %d are specific (%.0f%%, need >= %d and >= %.0f%%). Specific means the comment explains WHY (because/so that/prevents/required/fails/breaks), or names a Zerops platform term (execOnce, L7 balancer, ${env_var}, httpSupport, 0.0.0.0, subdomain, advisory lock, trust proxy, cold start, build time, horizontal container). Generic lines like \"npm ci for reproducible builds\" or \"cache node_modules between builds\" pass the ratio check but teach the reader nothing Zerops-specific. Rewrite boilerplate comments to explain what would break without them.",
-			specific, total, ratio*100, minSpecificComments, specificCommentRatio*100,
-		),
-	}}
+// checkCommentSpecificity — tool-layer thin wrapper (post-C-7b) around
+// opschecks.CheckCommentSpecificity. specificityMarkers, thresholds,
+// and the ratio computation moved into the ops/checks package alongside
+// the predicate.
+func checkCommentSpecificity(ctx context.Context, yamlBlock string, plan *workflow.RecipePlan) []workflow.StepCheck {
+	isShowcase := plan != nil && plan.Tier == workflow.RecipeTierShowcase
+	return opschecks.CheckCommentSpecificity(ctx, yamlBlock, isShowcase)
 }
 
 // nonEmptyLines returns non-empty lines from content.
@@ -1132,36 +904,10 @@ func nonEmptyLines(content string) []string {
 	return result
 }
 
-// checkZeropsYmlFields validates zerops.yaml field names against the live JSON schema.
-// Catches import.yaml-only fields (e.g. verticalAutoscaling) that agents
-// incorrectly add to zerops.yaml, and any other hallucinated field names.
-func checkZeropsYmlFields(ymlDir string, validFields *schema.ValidFields) []workflow.StepCheck {
-	if validFields == nil {
-		return nil
-	}
-
-	// Read raw content — ParseZeropsYml uses typed structs which silently drop unknown fields.
-	raw, err := ops.ReadZeropsYmlRaw(ymlDir)
-	if err != nil {
-		return nil // file-not-found already reported by the existence check
-	}
-
-	fieldErrs := schema.ValidateZeropsYmlRaw(raw, validFields)
-	if len(fieldErrs) == 0 {
-		return []workflow.StepCheck{{
-			Name: "zerops_yml_schema_fields", Status: statusPass,
-		}}
-	}
-
-	details := make([]string, len(fieldErrs))
-	for i, e := range fieldErrs {
-		details[i] = e.Error()
-	}
-	return []workflow.StepCheck{{
-		Name:   "zerops_yml_schema_fields",
-		Status: statusFail,
-		Detail: fmt.Sprintf("zerops.yaml contains fields not in the platform schema (these belong in import.yaml or don't exist): %s", strings.Join(details, "; ")),
-	}}
+// checkZeropsYmlFields — tool-layer thin wrapper (post-C-7b) around
+// opschecks.CheckZeropsYmlFields.
+func checkZeropsYmlFields(ctx context.Context, ymlDir string, validFields *schema.ValidFields) []workflow.StepCheck {
+	return opschecks.CheckZeropsYmlFields(ctx, ymlDir, validFields)
 }
 
 // uniqueStrings returns unique strings from a slice.

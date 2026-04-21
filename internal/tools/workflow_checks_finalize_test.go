@@ -438,7 +438,7 @@ services:
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			checks := validateImportYAML(tt.content, plan, 0, "test")
+			checks := validateImportYAML(t.Context(), tt.content, plan, 0, "test")
 			hasDupeCheck := false
 			for _, c := range checks {
 				if c.Status == statusFail && strings.Contains(c.Name, "duplicate_keys") {
@@ -525,7 +525,7 @@ services:
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			checks := validateImportYAML(tt.content, plan, 0, "test")
+			checks := validateImportYAML(t.Context(), tt.content, plan, 0, "test")
 			var found *workflow.StepCheck
 			for i := range checks {
 				if strings.HasSuffix(checks[i].Name, "_preprocessor") {

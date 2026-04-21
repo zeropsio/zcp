@@ -135,7 +135,7 @@ func recipeSetupName(target RecipeTarget, isDev bool) string {
 	}
 	// Shared-codebase worker: the shared zerops.yaml has a dedicated "worker" setup.
 	if SharesAppCodebase(target) {
-		return "worker"
+		return RecipeSetupWorker
 	}
 	// App, or separate-codebase worker (its own zerops.yaml's prod setup).
 	return RecipeSetupProd

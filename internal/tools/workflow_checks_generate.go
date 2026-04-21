@@ -8,19 +8,14 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/ops"
+	opschecks "github.com/zeropsio/zcp/internal/ops/checks"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
-
-// buildCommandPrefixes are command prefixes that belong in build, not run.start.
-var buildCommandPrefixes = []string{
-	"npm install", "pip install", "go build", "cargo build",
-	"mvn package", "gradle build",
-}
 
 // checkGenerate validates the generate step by checking zerops.yaml quality.
 // It verifies: existence, hostname match, env ref validity, port presence, and deployFiles.
 func checkGenerate(stateDir string) workflow.StepChecker {
-	return func(_ context.Context, plan *workflow.ServicePlan, state *workflow.BootstrapState) (*workflow.StepCheckResult, error) {
+	return func(ctx context.Context, plan *workflow.ServicePlan, state *workflow.BootstrapState) (*workflow.StepCheckResult, error) {
 		if plan == nil {
 			return nil, nil
 		}
@@ -57,11 +52,10 @@ func checkGenerate(stateDir string) workflow.StepChecker {
 			checks = append(checks, workflow.StepCheck{
 				Name: "zerops_yml_exists", Status: statusPass,
 			})
-			checks = append(checks, checkGenerateEntry(doc, hostname, target, state)...)
+			checks = append(checks, checkGenerateEntry(ctx, doc, hostname, target, state)...)
 		}
 
-		// v8.97 Fix 4: stamp surface-derived coupling.
-		checks = workflow.StampCoupling(checks)
+		// C-10: surface-derived coupling removed (P1 supersedes).
 		allPassed := checksAllPassed(checks)
 		summary := "generate checks passed"
 		if !allPassed {
@@ -75,7 +69,7 @@ func checkGenerate(stateDir string) workflow.StepChecker {
 
 // checkGenerateEntry validates a single hostname's zerops.yaml entry.
 // Expects canonical recipe setup names: "dev" for dev/standard targets, "prod" for simple targets.
-func checkGenerateEntry(doc *ops.ZeropsYmlDoc, hostname string, target workflow.BootstrapTarget, state *workflow.BootstrapState) []workflow.StepCheck {
+func checkGenerateEntry(ctx context.Context, doc *ops.ZeropsYmlDoc, hostname string, target workflow.BootstrapTarget, state *workflow.BootstrapState) []workflow.StepCheck {
 	expected := workflow.RecipeSetupForMode(target.Runtime.EffectiveMode())
 	entry := doc.FindEntry(expected)
 	if entry == nil {
@@ -90,27 +84,20 @@ func checkGenerateEntry(doc *ops.ZeropsYmlDoc, hostname string, target workflow.
 		Name: hostname + "_setup", Status: statusPass,
 	})
 
-	// Env ref validation.
-	if len(entry.EnvVariables) > 0 && state != nil {
-		liveHostnames := collectPlanHostnames(state)
-		envErrs := ops.ValidateEnvReferences(entry.EnvVariables, state.DiscoveredEnvVars, liveHostnames)
-		if len(envErrs) > 0 {
-			details := make([]string, len(envErrs))
-			for i, e := range envErrs {
-				details[i] = fmt.Sprintf("%s: %s", e.Reference, e.Reason)
-			}
-			checks = append(checks, workflow.StepCheck{
-				Name: hostname + "_env_refs", Status: statusFail,
-				Detail: strings.Join(details, "; "),
-			})
-		} else {
-			checks = append(checks, workflow.StepCheck{
-				Name: hostname + "_env_refs", Status: statusPass,
-			})
-		}
+	// Env ref validation — delegated to ops/checks (C-7a). The predicate
+	// skips when entry.EnvVariables is empty, preserving the pre-C-7a
+	// behavior where empty-envVars entries emitted no `_env_refs` row.
+	if state != nil {
+		checks = append(checks, opschecks.CheckEnvRefs(
+			ctx,
+			hostname,
+			entry,
+			state.DiscoveredEnvVars,
+			collectPlanHostnames(state),
+		)...)
 	}
 
-	checks = append(checks, checkEnvSelfShadow(hostname, entry))
+	checks = append(checks, checkEnvSelfShadow(ctx, hostname, entry))
 
 	// Implicit web server: check both zerops.yaml bases AND service type from plan.
 	implicitWS := entry.HasImplicitWebServer() || ops.IsImplicitWebServerType(target.Runtime.Type)
@@ -169,20 +156,10 @@ func checkGenerateEntry(doc *ops.ZeropsYmlDoc, hostname string, target workflow.
 		}
 	}
 
-	// run.start must not be a build command.
-	if entry.Run.Start != "" {
-		startLower := strings.ToLower(entry.Run.Start)
-		for _, prefix := range buildCommandPrefixes {
-			if strings.HasPrefix(startLower, prefix) {
-				checks = append(checks, workflow.StepCheck{
-					Name:   hostname + "_run_start_build_cmd",
-					Status: statusFail,
-					Detail: fmt.Sprintf("run.start %q looks like a build command — move it to build.buildCommands", entry.Run.Start),
-				})
-				break
-			}
-		}
-	}
+	// run.start must not be a build command — delegated to ops/checks
+	// (C-7a). Preserves the pre-C-7a behavior of emitting only on fail
+	// (no pass row).
+	checks = append(checks, opschecks.CheckRunStartBuildContract(ctx, hostname, entry)...)
 
 	// run.prepareCommands must not reference /var/www (deploy files arrive AFTER prepare).
 	if cmds := stringifyCommands(entry.Run.PrepareCommands); cmds != "" {
@@ -286,26 +263,22 @@ func collectPlanHostnames(state *workflow.BootstrapState) []string {
 	return hostnames
 }
 
-// checkEnvSelfShadow — v8.85. Detects `key: ${key}` shape in both top-level
-// envVariables (deprecated schema location) and run.envVariables (canonical).
-// Self-shadows resolve to the literal string `${key}` inside the container.
-func checkEnvSelfShadow(hostname string, entry *ops.ZeropsYmlEntry) workflow.StepCheck {
-	topLevel := ops.DetectSelfShadows(entry.EnvVariables)
-	runLevel := ops.DetectSelfShadows(entry.Run.EnvVariables)
-	shadows := make([]string, 0, len(topLevel)+len(runLevel))
-	shadows = append(shadows, topLevel...)
-	shadows = append(shadows, runLevel...)
-	if len(shadows) == 0 {
+// checkEnvSelfShadow — v8.85. Thin wrapper (post-C-7a) around
+// opschecks.CheckEnvSelfShadow. Callers in this file and
+// workflow_checks_recipe.go treat the result as a single StepCheck
+// (never a slice); the predicate contract guarantees exactly one row
+// per invocation, so we unwrap here to keep the caller shape stable.
+// ctx is threaded through so contextcheck stays quiet; the predicate
+// itself is a pure computation and ignores ctx.
+func checkEnvSelfShadow(ctx context.Context, hostname string, entry *ops.ZeropsYmlEntry) workflow.StepCheck {
+	rows := opschecks.CheckEnvSelfShadow(ctx, hostname, entry)
+	if len(rows) == 0 {
+		// Defensive: the predicate always emits one row, but if a future
+		// contract change emits zero, surface a pass so callers don't
+		// crash on an empty slice index.
 		return workflow.StepCheck{
 			Name: hostname + "_env_self_shadow", Status: statusPass,
 		}
 	}
-	return workflow.StepCheck{
-		Name:   hostname + "_env_self_shadow",
-		Status: statusFail,
-		Detail: fmt.Sprintf(
-			"self-shadowed envVariables: %s — each entry has the shape `key: ${key}`, which resolves to the literal string `${key}` inside the container. Cross-service vars (`${db_hostname}`, `${queue_user}`, ...) and project-level vars (`${STAGE_API_URL}`, ...) already auto-inject as OS env vars project-wide; DELETE these lines — they are redundant and actively break the runtime env. Only declare a var in run.envVariables if you are renaming (`DB_HOST: ${db_hostname}` with keys that DIFFER) or setting a literal mode flag (`NODE_ENV: production`). See zerops_guidance topic=\"env-var-model\" for the full rule set.",
-			strings.Join(shadows, ", "),
-		),
-	}
+	return rows[0]
 }

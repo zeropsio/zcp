@@ -2,33 +2,26 @@ package workflow
 
 import "fmt"
 
-// buildClosePostCompletion returns the post-completion summary and next-steps
-// for the close step. Both entries are STRICTLY user-gated — they are
-// reference commands the agent may relay when asked, never unprompted
-// actions. v8.98 Fix B originally framed export as autonomous; v8.103
-// reverts that: recipe creation ends at close complete, nothing runs
-// after unless the user explicitly asks (export for a local archive,
-// publish for a PR on zeropsio/recipes).
+// buildClosePostCompletion returns the post-completion summary for the
+// close step. Per C-11 (principles.md P4 §Replaces + data-flow-showcase
+// §6b) the close response carries `NextSteps = []` unconditionally —
+// export and publish are user-request-only local CLI commands, never
+// workflow steps the agent triggers unprompted. v8.98 Fix B originally
+// framed export as autonomous; v8.103 content-only reverted that;
+// C-11 makes the empty-default structural instead of content-only.
 //
 // The server-side close gate on `zcp sync recipe export` remains — it
-// refuses an early export with a diagnostic — but the gate existing
-// does NOT mean the agent should trigger export. The trigger belongs
-// to the user (or to an orchestrator that the user set up explicitly).
+// refuses an early export with a diagnostic. That gate exists to catch
+// premature user invocations, not to signal the agent should trigger
+// export. plan + outputDir are retained on the signature for symmetry
+// with buildRecipeTransition (still emits the user-facing publish
+// walkthrough) and for future use when the close response grows a
+// real summary surface.
 func buildClosePostCompletion(plan *RecipePlan, outputDir string) (string, []string) {
-	slug := "<slug>"
-	if plan != nil && plan.Slug != "" {
-		slug = plan.Slug
-	}
-	dir := "<recipe-dir>"
-	if outputDir != "" {
-		dir = outputDir
-	}
-	summary := "Recipe verified (code-review + close-browser-walk complete). The workflow is done. Do NOT run export or publish unless the user explicitly asks — they are local CLI commands, not workflow steps."
-	nextSteps := []string{
-		fmt.Sprintf("ON REQUEST ONLY — if the user asks for a local archive: `zcp sync recipe export %s`. Do NOT run unprompted.", dir),
-		fmt.Sprintf("ON REQUEST ONLY — if the user asks to publish to zeropsio/recipes: `zcp sync recipe publish %s %s`. This opens a PR; do NOT run unprompted.", slug, dir),
-	}
-	return summary, nextSteps
+	_ = plan
+	_ = outputDir
+	summary := "Recipe verified (editorial-review + code-review + close-browser-walk complete). The workflow is done. Export and publish are local CLI commands the user runs on demand — do NOT trigger them autonomously."
+	return summary, []string{}
 }
 
 // buildRecipeTransition returns the post-completion transition message with
