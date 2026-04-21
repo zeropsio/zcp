@@ -344,6 +344,21 @@ func handleResume(ctx context.Context, engine *workflow.Engine, client platform.
 func handleBootstrapStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	route := input.Route
 
+	// Plan is not accepted in start. The two-phase bootstrap (route
+	// selection → plan production) intentionally keeps them separate:
+	// start commits the route (discovery→decision reasoning space); the
+	// plan emerges during the discover step from route-specific materials
+	// (recipe YAML, zerops_discover for adopt, reasoning for classic) and
+	// is submitted via action="complete" step="discover" plan=[...].
+	// Silently accepting plan here hid real bugs — the agent passed it,
+	// thought it stuck, and didn't notice until three calls later.
+	if len(input.Plan) > 0 {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"plan is not accepted in action=start; submit it via action=\"complete\" step=\"discover\" plan=[...]",
+			"Start commits the route only. The discover step is the reasoning space where the plan is produced from route-specific materials; commit it there.")), nil, nil
+	}
+
 	// Discovery pass — no route specified, no session committed.
 	if route == "" {
 		existing, listErr := listExistingServices(ctx, client, projectID)

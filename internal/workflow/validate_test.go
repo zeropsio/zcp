@@ -716,3 +716,108 @@ func TestValidateBootstrapTargets_ManagedOnlyEmptyTargets(t *testing.T) {
 		t.Errorf("defaulted list should be empty for empty targets, got %d entries", len(defaulted))
 	}
 }
+
+// P5': classic plan (isExisting=false) naming an already-live runtime
+// hostname must fail early at plan-commit with a diagnostic that points
+// at the adopt alternative.
+func TestValidateBootstrapTargets_ClassicWithLiveRuntime_Rejected(t *testing.T) {
+	t.Parallel()
+	targets := []BootstrapTarget{
+		{
+			Runtime: RuntimeTarget{
+				DevHostname:   "fizzydev",
+				Type:          "nodejs@22",
+				BootstrapMode: "standard",
+			},
+		},
+	}
+	live := []platform.ServiceStack{
+		{Name: "fizzydev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	}
+	_, err := ValidateBootstrapTargets(targets, testLiveTypes, live)
+	if err == nil {
+		t.Fatal("expected error when classic plan hostname collides with live service")
+	}
+	for _, needle := range []string{"fizzydev", "exists", "adopt"} {
+		if !strings.Contains(err.Error(), needle) {
+			t.Errorf("error missing %q: %v", needle, err)
+		}
+	}
+}
+
+// P5': adopt plan (isExisting=true) referring to a non-existent runtime
+// is rejected symmetrically.
+func TestValidateBootstrapTargets_AdoptWithMissingRuntime_Rejected(t *testing.T) {
+	t.Parallel()
+	targets := []BootstrapTarget{
+		{
+			Runtime: RuntimeTarget{
+				DevHostname:   "fizzydev",
+				Type:          "nodejs@22",
+				BootstrapMode: "standard",
+				IsExisting:    true,
+			},
+		},
+	}
+	// Non-nil live set with a different hostname — triggers the
+	// "isExisting but not found" branch. A nil live set would skip the
+	// collision check entirely (used by test fixtures that don't care).
+	live := []platform.ServiceStack{
+		{Name: "other", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	}
+	_, err := ValidateBootstrapTargets(targets, testLiveTypes, live)
+	if err == nil {
+		t.Fatal("expected error when adopt plan hostname is not live")
+	}
+	for _, needle := range []string{"fizzydev", "isExisting", "not found"} {
+		if !strings.Contains(err.Error(), needle) {
+			t.Errorf("error missing %q: %v", needle, err)
+		}
+	}
+}
+
+// P5': stage hostname collision in a classic standard-mode plan follows
+// the same rule as the dev hostname.
+func TestValidateBootstrapTargets_ClassicWithLiveStage_Rejected(t *testing.T) {
+	t.Parallel()
+	targets := []BootstrapTarget{
+		{
+			Runtime: RuntimeTarget{
+				DevHostname:   "appdev",
+				Type:          "nodejs@22",
+				BootstrapMode: "standard",
+			},
+		},
+	}
+	live := []platform.ServiceStack{
+		{Name: "appstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	}
+	_, err := ValidateBootstrapTargets(targets, testLiveTypes, live)
+	if err == nil {
+		t.Fatal("expected error when classic plan stage hostname collides with live service")
+	}
+	for _, needle := range []string{"appstage", "exists", "adopt"} {
+		if !strings.Contains(err.Error(), needle) {
+			t.Errorf("error missing %q: %v", needle, err)
+		}
+	}
+}
+
+// P5': happy path — classic plan, hostnames not live, validation passes.
+func TestValidateBootstrapTargets_ClassicGreenfield_Success(t *testing.T) {
+	t.Parallel()
+	targets := []BootstrapTarget{
+		{
+			Runtime: RuntimeTarget{
+				DevHostname:   "appdev",
+				Type:          "nodejs@22",
+				BootstrapMode: "standard",
+			},
+		},
+	}
+	live := []platform.ServiceStack{} // empty — greenfield
+	_, err := ValidateBootstrapTargets(targets, testLiveTypes, live)
+	if err != nil {
+		t.Fatalf("greenfield classic plan must pass: %v", err)
+	}
+}

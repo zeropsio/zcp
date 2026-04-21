@@ -427,6 +427,43 @@ func TestWorkflowTool_Action_BootstrapStart(t *testing.T) {
 	}
 }
 
+// P4': plan is rejected in action="start". The two-phase bootstrap
+// (route commit → plan production in discover step) keeps reasoning
+// spaces distinct. Silent-accept of plan in start was a principle-of-
+// least-astonishment violation — the agent passed it, thought it stuck,
+// and didn't notice until three calls later.
+func TestWorkflowTool_Action_BootstrapStart_RejectsPlan(t *testing.T) {
+	t.Parallel()
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil, runtime.Info{})
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "bootstrap",
+		"intent":   "ruby app",
+		"route":    "classic",
+		"plan": []map[string]any{
+			{
+				"runtime": map[string]any{
+					"devHostname":   "appdev",
+					"type":          "nodejs@22",
+					"bootstrapMode": "standard",
+				},
+			},
+		},
+	})
+	if !result.IsError {
+		t.Fatalf("expected error when plan is submitted in start, got: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	for _, needle := range []string{"plan is not accepted", "complete", "discover"} {
+		if !strings.Contains(text, needle) {
+			t.Errorf("error missing hint %q. Got:\n%s", needle, text)
+		}
+	}
+}
+
 // TestWorkflowTool_Action_BootstrapStart_Discovery covers the first-call
 // discovery response. No route → ranked options + no session committed.
 func TestWorkflowTool_Action_BootstrapStart_Discovery(t *testing.T) {

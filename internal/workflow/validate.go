@@ -202,14 +202,26 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 		}
 
 		// H7: validate derived stage hostname length for standard mode.
+		var stageHostname string
 		if rt.EffectiveMode() == PlanModeStandard {
-			stageHostname := rt.StageHostname()
+			stageHostname = rt.StageHostname()
 			if stageHostname == "" {
 				errs = append(errs, fmt.Sprintf("target %q: standard mode requires hostname ending in 'dev' (auto-derives stage) or explicit stageHostname field", rt.DevHostname))
 				continue
 			}
 			if err := ValidatePlanHostname(stageHostname); err != nil {
 				errs = append(errs, fmt.Sprintf("target %q: derived stage hostname %q: %v", rt.DevHostname, stageHostname, err))
+				continue
+			}
+		}
+
+		// Runtime hostname collision check — symmetric with the dependency
+		// resolution check below. Extracted because inline-ing the two-pair
+		// (dev + stage) × two-direction (classic/adopt) matrix pushes the
+		// enclosing function over the maintainability-index lint threshold.
+		if liveServices != nil {
+			if collisionErr := runtimeCollisionError(rt, stageHostname, liveServiceNames); collisionErr != "" {
+				errs = append(errs, collisionErr)
 				continue
 			}
 		}
@@ -287,6 +299,33 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 		return nil, fmt.Errorf("%d validation errors:\n- %s", len(errs), strings.Join(errs, "\n- "))
 	}
 	return defaulted, nil
+}
+
+// runtimeCollisionError returns a diagnostic string when a target's runtime
+// hostnames conflict with (or disagree with) the project's live service set,
+// or the empty string when the target is consistent. Pairs the dev and stage
+// checks so callers only pay one cost.
+//
+// Classic plan + hostname already live → "exists, use adopt".
+// Adopt plan + hostname missing → "isExisting=true but not found".
+// The dual test catches fat-finger isExisting flags in both directions.
+func runtimeCollisionError(rt RuntimeTarget, stageHostname string, liveServiceNames map[string]bool) string {
+	if liveServiceNames[rt.DevHostname] && !rt.IsExisting {
+		return fmt.Sprintf("target %q: runtime already exists in project — use route=\"adopt\" with isExisting=true, or rename the target", rt.DevHostname)
+	}
+	if !liveServiceNames[rt.DevHostname] && rt.IsExisting {
+		return fmt.Sprintf("target %q: isExisting=true but runtime not found in project", rt.DevHostname)
+	}
+	if stageHostname == "" {
+		return ""
+	}
+	if liveServiceNames[stageHostname] && !rt.IsExisting {
+		return fmt.Sprintf("target %q: stage runtime %q already exists — use route=\"adopt\" with isExisting=true on this target, or rename", rt.DevHostname, stageHostname)
+	}
+	if !liveServiceNames[stageHostname] && rt.IsExisting {
+		return fmt.Sprintf("target %q: isExisting=true but stage runtime %q not found in project", rt.DevHostname, stageHostname)
+	}
+	return ""
 }
 
 // typeExists checks if a version name exists in the live type catalog.
