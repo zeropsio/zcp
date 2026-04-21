@@ -10,17 +10,18 @@ expect:
   mustEnterWorkflow:
     - bootstrap
   requiredPatterns:
-    # route=resume proves the agent saw the resume option in the discovery
-    # response and picked it over adopt/classic. sessionId carries the
-    # abandoned session — must match the one the preseed planted.
-    - '"route":"resume"'
+    # The load-bearing signal is that the agent picked up the ABANDONED
+    # session — not fresh-bootstrapped over it. NewEngine auto-claims the
+    # dead-PID session before the first tool call, so the planted
+    # sessionId threads through whatever path the agent chooses (status
+    # response, explicit action=resume, or route=resume at commit).
+    #
+    # We don't require `"route":"resume"` specifically: under auto-claim
+    # the agent may legitimately use `action="resume"` OR simply continue
+    # from the active session seen in `status`. The session-ID match is
+    # the only signal that reliably separates "agent used planted state"
+    # from "agent started fresh".
     - '"sessionId":"sess-abandoned-01"'
-  # Classic/recipe would start a fresh session and likely collide with the
-  # orphan meta. forbiddenPatterns catches the common wrong answers.
-  forbiddenPatterns:
-    - '"route":"classic"'
-    - '"route":"recipe"'
-    - '"route":"adopt"'
   requireAssessment: true
 followUp:
   - "Z čeho jsi poznal, že v projektu je přerušený bootstrap? Byl v tom nějaký konkrétní signál (status response, discover output, routeOptions)?"

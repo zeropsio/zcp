@@ -10,7 +10,14 @@ set -eu
 
 STATE="${ZCP_WORK_DIR:-.}/.zcp/state"
 MOUNT="${ZCP_WORK_DIR:-.}/appdev"
-mkdir -p "$STATE/services" "$MOUNT/public"
+# CleanupProject preserves .zcp by design — wipe leftover state from the
+# previous scenario so we don't inherit phantom sessions / metas.
+rm -rf "$STATE/sessions" "$STATE/services"
+mkdir -p "$STATE/services" "$STATE/sessions" "$STATE/work" "$MOUNT/public"
+cat > "$STATE/registry.json" <<'JSON'
+{"version":"1","sessions":[]}
+JSON
+rm -f "$STATE/session-registry.json"
 
 # Standard-mode pair: dev+stage sharing a single ServiceMeta record.
 cat > "$STATE/services/appdev.json" <<JSON

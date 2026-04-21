@@ -244,16 +244,24 @@ When local app can't connect to managed service:
 
 ### Two Independent Paths
 
-**A. Bootstrap guidance** (`assembleGuidance` → `ResolveProgressiveGuidance`):
-- `buildGuide` receives `env Environment` (activated from dead `_` parameter)
-- `GuidanceParams.Env` propagates through chain
-- Environment-specific sections: `generate-local`, `deploy-local`
-- Local deploy replaces entire SSH deploy section
+**A. Bootstrap guidance** (atom pipeline — Option A, infra-only):
+- Atoms tagged `environments: [local]` fire on local-mode bootstrap.
+- Active local atoms: `bootstrap-discover-local` (discover step) and
+  `bootstrap-provision-local` (provision step). Both are route-agnostic
+  — the `routes: [classic]` filter was removed so recipe and adopt
+  paths also pick them up on local environments.
+- Bootstrap under Option A does NOT generate code or deploy — those
+  atoms were deleted during the Option A migration. Local-specific
+  code-and-deploy guidance moved to the develop workflow (see path B).
 
-**B. Deploy workflow guidance** (`buildPrepareGuide`, `buildDeployGuide`):
-- `buildPrepareGuide` has env with container/local branches
-- `buildDeployGuide` has env parameter — uses `writeLocalWorkflow` for single-target flow
-- Local key facts: VPN survives deploys, code unchanged locally, zcli push semantics
+**B. Develop workflow guidance** (`buildPrepareGuide`, `buildDeployGuide`):
+- `buildPrepareGuide` has env with container/local branches.
+- `buildDeployGuide` has env parameter — uses `writeLocalWorkflow` for
+  single-target flow.
+- First-deploy branch atoms (`deployStates: [never-deployed]`) scaffold
+  `zerops.yaml` + write application code + run the first deploy.
+- Local key facts: VPN survives deploys, code unchanged locally, zcli
+  push semantics.
 
 ---
 

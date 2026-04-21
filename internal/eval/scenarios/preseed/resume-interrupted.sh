@@ -11,7 +11,10 @@
 set -eu
 
 STATE="${ZCP_WORK_DIR:-.}/.zcp/state"
-mkdir -p "$STATE/services" "$STATE/sessions"
+# CleanupProject preserves .zcp by design — wipe leftover state from the
+# previous scenario so we don't inherit phantom sessions / metas.
+rm -rf "$STATE/sessions" "$STATE/services"
+mkdir -p "$STATE/services" "$STATE/sessions" "$STATE/work"
 
 SESSION_ID="sess-abandoned-01"
 DEAD_PID=9999999
@@ -58,10 +61,13 @@ cat > "$STATE/sessions/${SESSION_ID}.json" <<JSON
 }
 JSON
 
-# Registry entry so ListSessions picks it up.
-cat > "$STATE/session-registry.json" <<JSON
+# Registry — authoritative file name is `registry.json` with schema
+# {"version":"1","sessions":[SessionEntry]} per internal/workflow/registry.go.
+# The dead PID lets NewEngine's auto-claim path pick it up as orphaned.
+cat > "$STATE/registry.json" <<JSON
 {
-  "entries": [
+  "version": "1",
+  "sessions": [
     {
       "sessionId": "${SESSION_ID}",
       "pid": ${DEAD_PID},
@@ -74,5 +80,7 @@ cat > "$STATE/session-registry.json" <<JSON
   ]
 }
 JSON
+# Remove the old (wrong-filename) registry if it lingers from earlier runs.
+rm -f "$STATE/session-registry.json"
 
 echo "preseed: planted resumable session ${SESSION_ID} (dead PID ${DEAD_PID}) + incomplete meta for appdev"

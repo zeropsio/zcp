@@ -1,12 +1,5 @@
 # Work Session — ZCP Development Lifecycle
 
-> Authoritative spec. Last edited 2026-04-17. Supersedes the pre-refactor
-> develop-flow design (now in `archive/spec-develop-flow-current.md`) and
-> closes the structural gaps documented in
-> `archive/spec-lifecycle-analysis.md` / `archive/audit-session-design.md`.
-
----
-
 ## 0. Philosophical Foundation
 
 ZCP runs inside an LLM harness that **forgets**. Context windows compact,
@@ -50,13 +43,6 @@ Four load-bearing principles follow from that:
    Everywhere else the LLM keeps discretion — guidance beats prohibition
    when the environment is already under an intelligent agent's control.
 
-The refactor this spec describes is not a feature addition. It is the
-removal of an earlier step-machine model whose contradictions (manual
-strategy deadlock, strategy-blind execute, deploy decoupling) forced a
-stateless-briefing workaround that in turn erased lifecycle visibility.
-The Work Session restores visibility without bringing back the step
-machine.
-
 ---
 
 ## 1. Executive Summary
@@ -71,7 +57,8 @@ with three responsibilities:
 - Expose a **Lifecycle Status** block via `zerops_workflow action="status"`,
   assembled on demand from the work session file + ServiceMeta + live
   services. The base MCP `Instructions` (delivered once at client init)
-  teach the LLM to call this first on every new task and after compaction.
+  teach the LLM to call this when state is unclear — after compaction or
+  between tasks.
 
 It closes explicitly (`zerops_workflow action="close" workflow="develop"`)
 or auto-closes when every service in scope has a succeeded deploy and a
@@ -92,10 +79,10 @@ more confusion than it resolves.
 4. **Each Claude Code instance is isolated.** PID-scoped state. Zero
    cross-instance interference for work-layer state. Infrastructure-layer
    state (bootstrap, recipe) uses registry-backed ownership.
-5. **Survives compaction by default.** The MCP init instructions point
-   every LLM at `zerops_workflow action="status"` as the canonical
-   orientation call, so even a freshly-compacted LLM has a single,
-   deterministic recovery step.
+5. **Survives compaction by default.** The MCP init instructions teach
+   `zerops_workflow action="status"` as the canonical recovery call, so
+   even a freshly-compacted LLM has a single, deterministic re-orientation
+   step.
 6. **Survives process restart per layer semantics.** Bootstrap/recipe claim
    on boot (existing). Work sessions are per-process — restart = fresh start.
 7. **Advisory, not enforcing.** Work Session informs the LLM; it does not
@@ -203,8 +190,8 @@ The **Lifecycle Status** block is assembled on demand by
 `zerops_workflow action="status"`. MCP's `Instructions` field is delivered
 once at client init and cannot be re-emitted per response, so per-call
 state cannot live there. Instead, the static init instructions direct the
-LLM to call `action="status"` first on every new task and after
-compaction; the handler reads the current work session file, service
+LLM to call `action="status"` when state is unclear — after compaction or
+between tasks; the handler reads the current work session file, service
 metas, and live service list, and renders one of the cases below.
 
 Content depends on active entities for the current PID:
@@ -229,7 +216,7 @@ Work session active (1h 23m) — intent: "add login form"
 
 ```
 ## Lifecycle Status
-Active workflow: bootstrap | session abc123 | step 3/5: generate
+Active workflow: bootstrap | session abc123 | step 2/3: provision
   ← PRIMARY — complete bootstrap before resuming work
 Work session (backgrounded): intent="..." — services: web, api
   (does not include newly bootstrapped services yet)
@@ -247,7 +234,7 @@ Work session — task complete (all services deployed + verified)
 
 ### 5.5 Bootstrap / recipe only (no work session)
 
-Existing behavior, unchanged.
+Infrastructure session is rendered without a Work Session block.
 
 ---
 
@@ -536,11 +523,12 @@ calls develop again, work session created.
 ### 10.1 Compaction survival
 
 **Signal path:** The static MCP `Instructions` (delivered once at client
-init) always teach the LLM to call `zerops_workflow action="status"`
-first. Because that text is part of the client's permanent session state
-with the MCP server, it is not lost to transcript compaction.
-`action="status"` assembles the Lifecycle Status block from fresh reads
-of the work session file + ServiceMeta + live services on every call.
+init) teach the LLM that `zerops_workflow action="status"` is the
+canonical recovery call when state is unclear. Because that text is part
+of the client's permanent session state with the MCP server, it is not
+lost to transcript compaction. `action="status"` assembles the Lifecycle
+Status block from fresh reads of the work session file + ServiceMeta +
+live services on every call.
 
 **Recovery mechanism:** `action="status"` is the single deterministic
 recovery call. A post-compaction LLM consults the unchanged init
@@ -576,9 +564,8 @@ reclaim them across process restarts creates more confusion than value.
 
 Work Session stores **only** what does not live elsewhere. Strategy, mode,
 service status, env vars, ports are read fresh from ServiceMeta + API every
-time. The class of bugs catalogued in `archive/audit-session-design.md`
-(frozen session fields
-diverging from truth) cannot occur.
+time. Frozen session fields cannot diverge from truth because the session
+does not carry that truth.
 
 ### 10.5 Silent failure prevention
 
@@ -600,136 +587,53 @@ cleaned. No permanent state pollution.
 
 ---
 
-## 11. Migration & Implementation Plan
-
-Phased to keep the main branch green at every step.
-
-### Phase 1 — Infrastructure (no behavior change)
-
-1. Add `WorkSession` type + `.zcp/state/work/` directory.
-2. Add registry support for `work-{pid}` entries.
-3. Add `BuildWorkSessionBlock` (renders the Lifecycle Status block; called
-   by `action="status"`, not by the init-only `Instructions` path).
-4. Migration: on first boot, scan `.zcp/state/develop/*.json` (old markers),
-   delete them. Ignore any `.zcp/state/active_session` file — delete on boot.
-
-Tests: WorkSession atomic write, registry round-trip, block rendering.
-
-### Phase 2 — Engine integration
-
-1. Wire `action="start" workflow="develop"` to create Work Session.
-2. Wire `action="status"` (no workflow arg) to dispatch to Work Session
-   when present.
-3. Wire `action="close" workflow="develop"` — new action.
-4. Update `NewEngine()` registry scan to prune dead work entries.
-5. Remove `active_session` file writes/reads (use registry exclusively).
-
-Tests: full session lifecycle (create, update, auto-close, explicit close),
-multi-PID isolation, registry cleanup on boot.
-
-### Phase 3 — Tool side-effects
-
-1. `zerops_deploy` writes `DeployAttempt`.
-2. `zerops_verify` writes `VerifyAttempt`.
-3. Require Work Session for mount + deploy + verify (reject with clear
-   error if absent).
-4. Evaluate auto-close heuristic after each update.
-
-Tests: each tool records correctly, auto-close triggers correctly, failure
-paths recorded.
-
-### Phase 4 — Status block + briefing
-
-1. Wire `handleLifecycleStatus` to compose the Lifecycle Status block
-   from the work session + ServiceMeta + live services (no init-only
-   instructions path — MCP's `Instructions` field is static per
-   connection).
-2. Update `BuildTransitionMessage` (bootstrap → develop) to script strategy
-   + start.
-3. Update briefing to return same text + "Work session created" confirmation.
-
-Tests: status block snapshot tests, briefing text verified per
-strategy.
-
-### Phase 5 — Test suite reconciliation
-
-1. Delete tests asserting `DeployState` / `DeployTarget` (dead structures).
-2. Update tool tests for new side-effects.
-3. Integration tests for full flow (bootstrap → strategy → work session →
-   deploy → verify → auto-close → next task).
-4. E2E tests for: compaction simulation, parallel instance isolation,
-   process restart.
-
-### Phase 6 — Documentation
-
-1. Promote this doc to `docs/spec-work-session.md` (done).
-2. Archive obsolete lifecycle docs to `docs/archive/` (done):
-   - `spec-develop-flow-current.md` — pre-refactor.
-   - `spec-lifecycle-analysis.md` — bugs 2/3/4, gaps 9.1–9.6 resolved by
-     this spec.
-   - `audit-session-design.md` — findings implemented.
-   - `audit-lifecycle-team-findings.md` — 5-agent audit report.
-3. Update `docs/spec-bootstrap-flow-current.md` for the new transition
-   message (done).
-4. Update `CLAUDE.md` Architecture table: add `WorkSession` reference,
-   drop the legacy `DeployState` entry (done).
-
----
-
-## 12. Explicit Non-Goals
+## 11. Explicit Non-Goals
 
 - **Recipe state staleness on long runs** — separate concern, not addressed
   here.
-- **Recipe 10-iteration hard cap** — retained unchanged.
-- **Bug 1 (abandoned bootstrap orphan metas)** — separate fix, pre-existing.
+- **Recipe 10-iteration hard cap** is out of scope for this spec.
 - **Cross-instance `zerops_deploy` collision** — platform concern.
-- **Enforcement gates on develop** — explicitly rejected. Work session is
-  advisory; LLM retains full discretion.
-- **Claiming work sessions across PIDs** — rejected. Work sessions die with
-  their process; code work survives in git/filesystem.
+- **Enforcement gates on develop** — Work session does not gate develop;
+  it is advisory and the LLM retains full discretion.
+- **Claiming work sessions across PIDs** — work sessions do not cross PID
+  boundaries; they die with their process. Code work survives in
+  git/filesystem.
 
 ---
 
-## 13. How It All Fits Together
+## 12. How It All Fits Together
 
-The user's stated goal is **a reliable init → work → deploy loop that
-survives long LLM work, context compaction, and multiple parallel Claude
-Code instances**. The redesign delivers this by:
+A reliable init → work → deploy loop must survive long LLM work, context
+compaction, and multiple parallel Claude Code instances. The model
+delivers this with:
 
-1. **Init is scripted.** Bootstrap completion message walks the LLM through
-   strategy selection and work session creation as numbered steps. No
-   ambiguity at the entry point.
+1. **Scripted init.** Bootstrap completion scripts strategy selection and
+   work session creation as numbered steps. No ambiguity at the entry
+   point.
 
-2. **Work is observable.** `zerops_workflow action="status"` is the single
-   canonical re-orientation call; the MCP init instructions teach the LLM
-   to invoke it first. Compaction cannot erase the signal because the
-   init instructions are owned by the MCP client session, not the
-   transcript, and `status` reads state fresh from disk on every call.
+2. **Observable work.** Every tool response carries the work session when
+   one is active. After compaction, the LLM calls
+   `zerops_workflow action="status"` to re-orient; `status` reads state
+   fresh from disk on every call, so the signal cannot be erased.
 
-3. **Deploy is recorded.** Every `zerops_deploy` / `zerops_verify` appends
+3. **Recorded deploys.** Every `zerops_deploy` / `zerops_verify` appends
    to the work session. The LLM sees per-service progress without re-asking
    the platform.
 
-4. **Close is explicit with safety net.** `action="close"` is the intended
+4. **Explicit close with safety net.** `action="close"` is the intended
    terminator. Auto-close catches LLMs that forget. Next-task loop
    (`action="start"`) is a one-call restart.
 
-5. **Parallelism is safe.** Work sessions are per-PID files. Registry is
+5. **Safe parallelism.** Work sessions are per-PID files. The registry is
    the single source of session ownership, with proper locking. No
-   `active_session` collision. No cross-instance state confusion.
+   cross-instance state confusion.
 
-6. **Long work is stable.** State persists across any number of tool calls.
+6. **Stable long work.** State persists across any number of tool calls.
    Compaction-safe. The only loss-vector is process crash, which loses a
    small history window (code survives in git).
 
-The result is a model where the LLM can **always answer these three
-questions with one `action="status"` call** — a call the static init
-instructions teach it to make first on every new task and after
-compaction:
+The LLM can answer these three questions with one `action="status"` call
+after compaction or between tasks:
 - *What am I working on?* → Work session intent.
 - *Where am I in the lifecycle?* → deploys + verifies + suggestedNext.
 - *What's my next action?* → suggestedNext or closure nudge.
-
-Current architecture has the init instructions explicitly point at
-`action="status"` as the canonical orientation call, so all three
-questions resolve in one tool round-trip even after full compaction.

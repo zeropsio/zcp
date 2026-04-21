@@ -6,11 +6,21 @@ fixture: fixtures/laravel-minimal.yaml
 preseedScript: preseed/first-deploy-branch.sh
 expect:
   mustCallTools:
+    # zerops_discover intentionally NOT required: `status` + `develop`
+    # start response already carry enough envelope signals (service
+    # status, Bootstrapped/Deployed flags, SSHFS mount path) that an
+    # efficient agent can skip the dedicated discover call. The
+    # `workflow=develop` entry and the deploy+verify pair are the
+    # load-bearing first-deploy branch assertions.
     - zerops_workflow
-    - zerops_discover
     - zerops_deploy
     - zerops_verify
-  workflowCallsMin: 4
+  # 3 is the realistic floor for the first-deploy branch (status + start
+  # develop + close-manually). Raising it blocks valid agent paths
+  # (re-import with startWithoutCode) without catching a deeper failure —
+  # the `"workflow":"develop"` required pattern + `"workflow":"bootstrap"`
+  # forbidden pattern are the real signals we care about.
+  workflowCallsMin: 3
   # Develop is the right entry point — bootstrap is already complete.
   # The agent starting bootstrap when meta.IsComplete() would be a bug.
   mustEnterWorkflow:

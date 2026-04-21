@@ -203,6 +203,38 @@ func TestGrade_RequiredPattern_Present_Passes(t *testing.T) {
 	}
 }
 
+// TestGrade_RequiredPattern_ResultMatch covers the critical extension: the
+// pattern must be findable in a tool call's Result field, not only Input.
+// State-detection scenarios assert things the agent RECEIVED (collision
+// annotations, resumeSession ids, routeOptions arrays) — those come back as
+// results, not as inputs. Without this, the collision assertion would be
+// impossible to satisfy.
+func TestGrade_RequiredPattern_ResultMatch(t *testing.T) {
+	t.Parallel()
+
+	sc := &Scenario{
+		Expect: Expectation{
+			RequiredPatterns: []string{`"collisions":["db"]`},
+		},
+	}
+	calls := []ToolCall{
+		// LLM called bootstrap start with a generic intent; the discovery
+		// response carried the collision annotation.
+		{
+			Name:   "zerops_workflow",
+			Input:  `{"action":"start","workflow":"bootstrap","intent":"..."}`,
+			Result: `{"routeOptions":[{"route":"recipe","collisions":["db"]}]}`,
+		},
+	}
+
+	g := Grade(sc, "", calls, "")
+	for _, f := range g.Failures {
+		if strings.Contains(f, "requiredPattern") {
+			t.Errorf("pattern should match inside Result: %+v", g.Failures)
+		}
+	}
+}
+
 // TestGrade_RequiredPattern_SpacingNormalized covers the JSON-spacing
 // tolerance: an agent serializing with "key": "value" (space after colon) must
 // match a pattern written as "key":"value". Both forms share a single

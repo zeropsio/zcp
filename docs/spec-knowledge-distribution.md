@@ -1,13 +1,11 @@
 # ZCP Knowledge Distribution Specification
 
-> **Status**: Authoritative (rewritten 2026-04-19 from the Phase 7 implementation).
 > **Scope**: How runtime-dependent guidance is authored, filtered, and rendered for the LLM across every workflow and every environment.
 > **Companion docs**:
 > - `docs/spec-workflows.md` §1.3–§1.6 — pipeline overview + phase enum + plan dispatch.
 > - `docs/spec-scenarios.md` — S1–S13 acceptance walkthroughs.
-> - `plans/instruction-delivery-rewrite.md` — architectural reference.
 
-This document is the authoring spec for the atom corpus at `internal/content/atoms/*.md` and the behavioural contract of the synthesizer. It replaces the pre-rewrite INJECT/POINT/NOTHING model (which keyed guidance off step-level gates) with axis-tagged atoms filtered per-envelope.
+This document is the authoring spec for the atom corpus at `internal/content/atoms/*.md` and the behavioural contract of the synthesizer. Guidance is composed per-turn by filtering axis-tagged atoms against a typed `StateEnvelope`.
 
 ---
 
@@ -162,9 +160,11 @@ Service-scoped axis — see §3.8 for conjunction semantics across service-scope
 
 ### 3.7 `steps` (bootstrap-only, optional)
 
-Bootstrap step names: `plan`, `import`, `wait-active`, `verify-deploy`, `verify`, `write-metas`, `close`, plus route-specific steps. **Empty = any step.**
+Bootstrap step names: `discover`, `provision`, `close`. **Empty = any
+step.** Any other value produces no matches.
 
-Like `routes`, declaring `steps` implicitly scopes an atom to `bootstrap-active`.
+Like `routes`, declaring `steps` implicitly scopes an atom to
+`bootstrap-active`.
 
 ### 3.8 `deployStates` (service-scoped, optional)
 

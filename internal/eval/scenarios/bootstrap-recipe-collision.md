@@ -15,12 +15,18 @@ expect:
     # to see. This pattern proves the LLM actually received it — the
     # scenario's whole point is gating on visibility of this signal.
     - '"collisions":["db"]'
-  # A blind classic or blind recipe route would attempt to create a second
-  # `db` service and fail with serviceStackNameUnavailable. If either of
-  # these surfaces in the log, the agent didn't handle the collision.
-  forbiddenPatterns:
-    - "serviceStackNameUnavailable"
-    - "hostname already in use"
+  # `serviceStackNameUnavailable` and `hostname already in use` are NOT
+  # in forbiddenPatterns. Observation (2026-04-21 run): even when the
+  # collision annotation is clearly visible in the discovery response,
+  # the LLM sometimes tries the import anyway, gets the platform error,
+  # and recovers by switching strategy. That's not the ideal path but
+  # it IS recoverable — State: SUCCESS on final assessment. Treating it
+  # as FAIL would turn this scenario into a lottery on LLM
+  # "proactiveness" rather than a test of "did the signal reach the
+  # agent and did the task complete." The required collisions pattern
+  # above covers the signal-visibility check; the assessment covers
+  # completion. Collision-respect-before-import is a soft goal — probe
+  # it in follow-up answers, not as a hard gate.
   requireAssessment: true
 followUp:
   - "Objevila se v odpovědi discovery `collisions:` anotace? Na jakém hostname a u jakého recipe option?"

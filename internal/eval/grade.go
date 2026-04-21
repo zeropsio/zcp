@@ -147,35 +147,40 @@ func checkForbiddenPatterns(patterns []string, log string) []string {
 	return failures
 }
 
-// checkRequiredPatterns asserts each pattern appears in at least one tool call
-// input (JSON-serialized). Used to gate on structural choices the agent made
-// — e.g. `"route":"classic"` proves the LLM went through the bootstrap
-// discovery+commit split rather than passing the old single-call API. Match
-// is substring-based on the serialized Input field, so callers write the
-// exact JSON fragment they want to see ("route":"recipe" catches both
-// "route":"recipe" and "route": "recipe" via the trimmed form below).
+// checkRequiredPatterns asserts each pattern appears in at least one tool
+// call's Input OR Result. Used to gate on structural choices the agent made
+// or signals it received — e.g. `"route":"classic"` (agent input) or
+// `"collisions":["db"]` (discovery response). Match is substring-based with
+// JSON-spacing normalization, so a single canonical form catches both
+// `"key":"value"` and `"key": "value"`.
+//
+// Scanning both Input and Result is load-bearing for state-detection
+// scenarios: the things we want to prove the agent saw (collisions,
+// routeOptions, resume sessions) come back as tool call results, not the
+// agent's own inputs.
 func checkRequiredPatterns(patterns []string, calls []ToolCall) []string {
 	if len(patterns) == 0 {
 		return nil
 	}
-	// Pre-normalize every call input once — strip spaces after colons so a
-	// single needle matches both spacing conventions. Cheap and bounded.
-	normalized := make([]string, 0, len(calls))
+	normalize := func(s string) string { return strings.ReplaceAll(s, `": "`, `":"`) }
+	// Concatenate Input + a separator + Result for each call, normalized
+	// once. Cheap enough, and a single Contains walk hits both halves.
+	corpus := make([]string, 0, len(calls))
 	for _, c := range calls {
-		normalized = append(normalized, strings.ReplaceAll(c.Input, `": "`, `":"`))
+		corpus = append(corpus, normalize(c.Input)+"\x00"+normalize(c.Result))
 	}
 	var failures []string
 	for _, p := range patterns {
-		needle := strings.ReplaceAll(p, `": "`, `":"`)
+		needle := normalize(p)
 		hit := false
-		for _, input := range normalized {
-			if strings.Contains(input, needle) {
+		for _, entry := range corpus {
+			if strings.Contains(entry, needle) {
 				hit = true
 				break
 			}
 		}
 		if !hit {
-			failures = append(failures, fmt.Sprintf("requiredPattern %q never seen in any tool call input", p))
+			failures = append(failures, fmt.Sprintf("requiredPattern %q never seen in any tool call input or result", p))
 		}
 	}
 	return failures

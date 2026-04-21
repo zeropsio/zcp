@@ -1,13 +1,10 @@
 # ZCP Workflow Specification
 
-> **Status**: Authoritative. State model + delivery pipeline in lock-step with `internal/workflow/*.go`.
 > **Scope**: Bootstrap, adoption, strategy, develop, recipe, cicd, export — both container and local environments, all modes; plus the envelope/plan/atom pipeline that feeds every workflow-aware response.
-> **Date**: 2026-04-19
 > **Companion docs**:
 > - `docs/spec-scenarios.md` — per-scenario acceptance walkthrough (S1–S13), pinned by `internal/workflow/scenarios_test.go`.
 > - `docs/spec-work-session.md` — per-PID Work Session for develop.
 > - `docs/spec-knowledge-distribution.md` — atom corpus authoring model (axes, priorities, placeholders).
-> - `plans/instruction-delivery-rewrite.md` — architectural reference for the pipeline (Layers 1/2/3, data model, phase inventory).
 
 ---
 
@@ -162,7 +159,7 @@ Every workflow-aware tool response is produced by the same three-stage pipeline,
 
 ### 1.4 Plan — Typed Trichotomy
 
-The Plan replaces every piece of "what should the agent do next" that used to live in free-form markdown or `writeStatusNext` branches.
+The Plan is the single source of truth for "what should the agent do next". Every workflow-aware response carries one.
 
 ```go
 type Plan struct {
@@ -256,52 +253,46 @@ Bootstrap creates a new service on Zerops and writes the evidence file. That is 
 
 ```mermaid
 flowchart TD
-    Start([Agent triggers bootstrap]) --> CreateSession["Create session<br/>Generate 16-hex ID<br/>Register in registry"]
-    CreateSession --> Discover
+    Start([Agent triggers bootstrap]) --> Discovery["Discovery call<br/>action=start workflow=bootstrap<br/>(no route yet)"]
+    Discovery --> Options{routeOptions[]}
+    Options -->|resume| Commit
+    Options -->|adopt| Commit
+    Options -->|recipe + slug| Commit
+    Options -->|classic| Commit
+    Commit["Commit call<br/>action=start workflow=bootstrap route=<chosen><br/>(engine writes session)"] --> CreateSession
+    CreateSession["Create session<br/>Generate 16-hex ID<br/>Register in registry"] --> Discover
 
-    subgraph Bootstrap ["Bootstrap Flow (5 steps)"]
+    subgraph Bootstrap ["Bootstrap Flow (3 steps — Option A: infra only)"]
         direction TB
         Discover["1. DISCOVER<br/>─────────────<br/>Classify services<br/>Identify stack<br/>Choose mode<br/>Submit plan"]
 
         Provision["2. PROVISION<br/>─────────────<br/>Generate import.yaml<br/>Create services<br/>Mount dev filesystems<br/>Discover env vars"]
 
-        Generate["3. GENERATE<br/>─────────────<br/>Write zerops.yaml<br/>Write app code<br/>Mode-specific rules"]
-
-        Deploy["4. DEPLOY<br/>─────────────<br/>Deploy to services<br/>Start servers<br/>Enable subdomains<br/>Full health verification"]
-
-        Close["5. CLOSE<br/>─────────────<br/>Write ServiceMeta<br/>Append reflog"]
+        Close["3. CLOSE<br/>─────────────<br/>Verify services RUNNING<br/>Write ServiceMeta<br/>Append reflog<br/>Hand off to develop"]
     end
 
     Discover -->|"plan submitted"| Provision
-    Provision -->|"services created"| ModeCheck{Has runtime<br/>targets?}
+    Provision -->|"services created"| Close
 
-    ModeCheck -->|Yes| Generate
-    ModeCheck -->|"No (managed-only)"| SkipGen["SKIP generate"]
-    SkipGen --> SkipDeploy["SKIP deploy"]
-    SkipDeploy --> SkipClose["SKIP close"]
+    Provision -->|"failed"| HardStop["HARD STOP<br/>(bootstrap never iterates;<br/>escalate to user)"]
 
-    Generate -->|"code written"| Deploy
-    Deploy -->|"all healthy"| Close
-
-    Deploy -->|"failed"| IterCheck{Iteration<br/>< max?}
-    IterCheck -->|Yes| Iterate["ITERATE<br/>Reset steps 2-3"]
-    Iterate --> Generate
-    IterCheck -->|No| FailReport["Report to user"]
-
-    SkipClose --> Complete
     Close --> Complete
 
-    Complete([Bootstrap Complete<br/>ServiceMeta written<br/>No strategy set])
+    Complete([Bootstrap Complete<br/>ServiceMeta BootstrappedAt set<br/>FirstDeployedAt empty — develop owns first deploy])
 
     style Discover fill:#e8f4fd,stroke:#2196F3
     style Provision fill:#e8f4fd,stroke:#2196F3
-    style Generate fill:#fff3e0,stroke:#FF9800
-    style Deploy fill:#fce4ec,stroke:#E91E63
     style Close fill:#e8f4fd,stroke:#2196F3
-    style SkipGen fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 5 5
-    style SkipDeploy fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 5 5
-    style SkipClose fill:#f5f5f5,stroke:#9e9e9e,stroke-dasharray: 5 5
+    style HardStop fill:#fce4ec,stroke:#E91E63
 ```
+
+**Option A (since v8.100+)** — bootstrap is infrastructure only. No
+application code, no deploy. Develop owns the entire code-and-deploy
+continuum including the first deploy (see `develop-first-deploy-*` atoms
+and the `deployStates: [never-deployed]` branch). Bootstrap never
+iterates; retry on provision failure hard-stops and escalates to the
+user because re-running infra provisioning without human judgment
+almost never recovers (stuck metas, conflicting imports).
 
 ### 2.0 Route Discovery (first-call split)
 
@@ -379,13 +370,22 @@ stateDiagram-v2
 
 **Skip**: `action="skip" step="{name}" reason="..."`.
 - `discover` and `provision`: NEVER skippable.
-- `generate`, `deploy`, `close`: skippable only when the plan has no
-  runtime targets (managed-only) OR every runtime target has
-  `IsExisting=true` (pure-adoption). See §2.8.
+- `close`: skippable only when the plan has no runtime targets
+  (managed-only) OR every runtime target has `IsExisting=true`
+  (pure-adoption). See §2.8.
 
-**Iterate**: `action="iterate"` resets `generate` + `deploy` to pending. Preserves discover, provision, close, plan, env vars. Max 10 iterations (configurable via `ZCP_MAX_ITERATIONS`).
+**Iterate**: Bootstrap never iterates under Option A. Provision failure
+is a hard stop — retrying the same infra-create call without user
+intervention almost never recovers (stuck metas, conflicting imports).
+`action="iterate"` on an active bootstrap session surfaces the hard-stop
+message and closes the work session with `CloseReason=iteration-cap` so
+the LLM stops retrying and reports to the user. Only recipe/develop flows
+iterate (the `develop` 3-tier deploy ladder caps at 5 attempts).
 
-**Resume**: `action="resume" sessionId="..."` takes over dead session (PID check). Continues from current step.
+**Resume**: `action="resume" sessionId="..."` takes over dead session
+(PID check). Continues from current step. Also surfaced as
+`route="resume"` in the discovery response when an incomplete
+`ServiceMeta` is tagged to a prior session.
 
 ### 2.2 Exclusivity
 
@@ -590,28 +590,29 @@ Workflow-specific endpoint-shape checks (`/api/health`, `/status`, Laravel `/up`
 3. Delete session, unregister.
 4. Return completion message: service list with modes. NO strategy prompt.
 
-**Bootstrap is done. Service is in evidence with verification server deployed. No application code written.**
+**Bootstrap is done. Services are provisioned (managed = RUNNING,
+runtimes = bootstrapped but not-yet-deployed), ServiceMeta written with
+BootstrappedAt. No application code written, nothing deployed.**
 
-**Natural transition**: If the user's intent requires application development (e.g., "create an app for X"), the agent should immediately start develop flow (§4) to implement the actual application. Bootstrap proved the infrastructure works; develop flow is where the real code gets written.
+**Natural transition**: Under Option A the next step is always
+`workflow="develop"`. Develop owns all code + the first deploy. Runtimes
+entering develop with empty `FirstDeployedAt` trigger the first-deploy
+branch (`deployStates: [never-deployed]` atoms) — scaffold
+`zerops.yaml`, write code, deploy, verify, stamp `FirstDeployedAt`.
 
 ### 2.8 Fast Paths — Managed-Only and Pure-Adoption
 
-`validateSkip` allows `generate`, `deploy`, and `close` to be skipped in
-either of two shapes:
+`validateSkip` allows `close` to be skipped in either of two shapes:
 
 1. **Managed-only** — the plan has no runtime targets (`len(Targets)==0`).
-   Nothing to generate code for, nothing to deploy. No ServiceMeta is
-   written (managed services are API-authoritative).
+   No runtime ServiceMeta to write (managed services are API-authoritative).
 2. **Pure-adoption** — every runtime target in the plan has
-   `IsExisting=true` (`plan.IsAllExisting()`). Generate and deploy are
-   skipped because the code and running infrastructure already exist.
-   Close is skipped because adoption writes ServiceMeta directly from the
-   discover step (see §3.2).
+   `IsExisting=true` (`plan.IsAllExisting()`). ServiceMeta for adopted
+   services is written inline from the provision step (see §3.2).
 
-In both shapes the bootstrap walks discover → provision → SKIP generate →
-SKIP deploy → SKIP close. Mixed plans (some new runtime targets + some
-adopted) follow the full flow in §2.3–§2.7 — only the fully-uniform
-shapes above qualify for the fast path.
+In both shapes the bootstrap walks discover → provision → SKIP close.
+Mixed plans (some new runtime targets + some adopted) walk the full
+flow and write close normally.
 
 ### 2.9 Mode Behavior Matrix
 
@@ -660,13 +661,14 @@ No import, no code generation, no deploy. The service already exists and runs.
 ### 3.3 Mixed Adoption + New
 
 When the user wants to adopt existing services AND create new ones, this goes through bootstrap (§2) with `isExisting: true` on adopted targets. Each target follows its path:
-- New targets: full bootstrap (import, generate, deploy)
-- Existing targets: verify-only, write meta
+- New targets: full 3-step bootstrap (discover, provision, close)
+- Existing targets: ServiceMeta written inline by the provision step
 
 **Pure-adoption fast path**: When *every* runtime target in the plan has
-`IsExisting=true`, bootstrap routes through the fast path in §2.8 —
-generate, deploy, and close are all skippable. Mixed plans (any new
-runtime target) follow the full flow regardless of adopted targets.
+`IsExisting=true`, bootstrap routes through the fast path in §2.8 — the
+`close` step is skipped because adoption writes ServiceMeta from
+provision directly. Mixed plans (any new runtime target) walk the full
+three-step flow and complete close normally.
 
 ### 3.4 Outcome
 
@@ -984,8 +986,8 @@ engine boot, never claimed.
 `.zcp/state/registry.json` — tracks both infrastructure sessions
 (`SessionID` = 16-hex) and work sessions (`SessionID` = `work-{pid}`),
 with file lock via `.registry.lock`. Auto-prunes dead PIDs and sessions
->24h old on new-session creation. Replaces the legacy `active_session`
-side-channel file.
+>24h old on new-session creation. This is the single source of session
+ownership; no other state files track active sessions.
 
 ### 7.4 Actions
 
@@ -1020,20 +1022,20 @@ visibility.
 | E6 | Only runtime services get ServiceMeta — managed services are API-authoritative |
 | E7 | IsAdopted() = BootstrapSession is empty AND IsComplete() — disambiguates adopted metas from orphan incomplete metas |
 
-### Bootstrap
+### Bootstrap (Option A — infrastructure only)
 
 | ID | Invariant |
 |----|-----------|
-| B1 | 5 steps in strict order: discover → provision → generate → deploy → close |
-| B2 | discover/provision always mandatory |
-| B3 | generate/deploy/close skippable when the plan has no runtime targets (managed-only) OR every runtime target has IsExisting=true (pure-adoption); see §2.8 |
+| B1 | 3 steps in strict order: discover → provision → close |
+| B2 | discover/provision always mandatory; close skippable only for managed-only or pure-adoption plans (§2.8) |
+| B3 | Starting bootstrap is a two-call flow: first call without `route` returns `routeOptions[]` (no session); second call with `route=<chosen>` commits. Empty-route commits are rejected except the classic-default convenience wrapper `BootstrapStart(pid, intent)` used by internal callers |
 | B4 | Attestation ≥ 10 chars on completion |
-| B5 | Checker failure blocks step advancement |
+| B5 | Checker failure blocks step advancement; bootstrap **hard-stops** on retry — iterate is disabled and escalates to the user |
 | B6 | Per-service exclusivity via hostname lock |
-| B7 | Bootstrap does NOT set deploy strategy |
+| B7 | Bootstrap does NOT write application code, does NOT deploy, does NOT set deploy strategy. Develop owns all three |
 | B8 | Non-discover steps require plan from discover step (defense-in-depth) |
-| B9 | Generate writes an infrastructure verification server (hello-world, under 50 lines), NOT application logic |
-| B10 | After bootstrap, agent starts develop flow for all application development |
+| B9 | `route="recipe"` requires a valid `recipeSlug`; unknown slugs error BEFORE session creation (no orphan session leak) |
+| B10 | After bootstrap close, develop owns everything code-related: scaffolding zerops.yaml, writing the application, running the first deploy, stamping `FirstDeployedAt` |
 
 ### Develop Flow / Work Session
 

@@ -8,7 +8,16 @@
 set -eu
 
 STATE="${ZCP_WORK_DIR:-.}/.zcp/state"
-mkdir -p "$STATE/services"
+# CleanupProject preserves .zcp by design — wipe leftover state from the
+# previous scenario so we don't inherit phantom sessions / metas.
+rm -rf "$STATE/sessions" "$STATE/services"
+mkdir -p "$STATE/services" "$STATE/sessions" "$STATE/work"
+# Reset registry too — leftover dead-PID entries would be auto-claimed by
+# NewEngine and poison the discovery envelope.
+cat > "$STATE/registry.json" <<'JSON'
+{"version":"1","sessions":[]}
+JSON
+rm -f "$STATE/session-registry.json"
 
 # Complete meta, strategy confirmed, never deployed.
 cat > "$STATE/services/appdev.json" <<JSON
