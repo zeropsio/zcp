@@ -102,18 +102,20 @@ func RegisterDeployBatch(
 			input.Targets, logFetcher, onProgress, pollFn,
 		)
 		_ = engine // reserved for work-session recording hooks if needed later.
+		note, progress := sessionAnnotations(stateDir)
 		return jsonResult(deployBatchResponse{
 			DeployBatchResult: result,
-			WorkSessionNote:   workSessionNote(stateDir),
-			AutoCloseProgress: workflow.AutoCloseProgressFor(stateDir),
+			WorkSessionNote:   note,
+			AutoCloseProgress: progress,
 		}), nil, nil
 	})
 }
 
 // deployBatchResponse wraps ops.DeployBatchResult with the same session
 // annotations as deployLocalResponse. Batch deploys cover multiple
-// targets (self + promote, or multi-service), but the warning/progress
-// fields read from the current-PID work session so they're scope-wide.
+// targets (self + promote, or multi-service); warning/progress fields
+// read from the current-PID work session so they reflect the scope as
+// a whole.
 type deployBatchResponse struct {
 	*ops.DeployBatchResult
 	WorkSessionNote   string                      `json:"workSessionNote,omitempty"`

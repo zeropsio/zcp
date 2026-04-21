@@ -27,45 +27,63 @@ func RenderStatus(resp Response) string {
 
 	renderPhase(&b, resp.Envelope)
 	renderServices(&b, resp.Envelope)
-	renderProgress(&b, resp.Envelope)
-	renderBlockers(&b, resp.Envelope)
+	renderProgressAndBlockers(&b, resp.Envelope)
 	renderGuidance(&b, resp.Guidance)
 	renderPlan(&b, resp.Plan)
 
 	return b.String()
 }
 
-// renderBlockers emits a one-line "what's blocking auto-close" call-to-
-// action between Progress and Guidance. The Guidance section can be
-// hundreds of lines of atoms, so the Next pointer at the bottom of the
-// render is easy to miss. The blockers line surfaces the immediate
-// action the agent should take (e.g. "run zerops_verify fizzystage")
-// above the atom wall.
+// renderProgressAndBlockers renders the per-service Progress block (the
+// deploy/verify status lines from the work session) and, if auto-close
+// is blocked, a one-line call-to-action above the Guidance section. Both
+// derive from the same pass over ws.Services so there is one source of
+// truth per host.
 //
-// Emits nothing when there is no open work session, no scope, or every
-// service in scope is already ready — the absence of the line is the
-// signal that auto-close has fired (or will on next event).
-func renderBlockers(b *strings.Builder, env StateEnvelope) {
+// Guidance can be hundreds of lines of atoms; without the blockers line
+// the agent easily scrolls past the bottom-of-output Next pointer.
+// Surfacing it here puts the immediate next step right after Progress.
+func renderProgressAndBlockers(b *strings.Builder, env StateEnvelope) {
 	ws := env.WorkSession
 	if ws == nil || ws.ClosedAt != nil || len(ws.Services) == 0 {
 		return
 	}
+	hasActivity := len(ws.Deploys) > 0 || len(ws.Verifies) > 0
+
+	type hostStatus struct {
+		host       string
+		deployText string
+		verifyText string
+		deployOK   bool
+		verifyOK   bool
+	}
+	statuses := make([]hostStatus, len(ws.Services))
 	var pending []string
 	needsDeploy := false
 	needsVerify := false
-	for _, host := range ws.Services {
+
+	for i, host := range ws.Services {
 		deploys := ws.Deploys[host]
 		verifies := ws.Verifies[host]
-		deployOK := len(deploys) > 0 && deploys[len(deploys)-1].Success
-		verifyOK := len(verifies) > 0 && verifies[len(verifies)-1].Success
-		if deployOK && verifyOK {
+		st := hostStatus{host: host}
+		st.deployText, st.deployOK = lastAttemptText(deploys, "deploy")
+		st.verifyText, st.verifyOK = lastAttemptText(verifies, "verify")
+		statuses[i] = st
+		if st.deployOK && st.verifyOK {
 			continue
 		}
 		pending = append(pending, host)
-		if !deployOK {
+		if !st.deployOK {
 			needsDeploy = true
-		} else if !verifyOK {
+		} else if !st.verifyOK {
 			needsVerify = true
+		}
+	}
+
+	if hasActivity {
+		fmt.Fprintln(b, "Progress:")
+		for _, st := range statuses {
+			fmt.Fprintf(b, "  - %s: %s, %s\n", st.host, st.deployText, st.verifyText)
 		}
 	}
 	if len(pending) == 0 {
@@ -78,9 +96,24 @@ func renderBlockers(b *strings.Builder, env StateEnvelope) {
 		blockerNextAction(pending[0], needsDeploy, needsVerify))
 }
 
+// lastAttemptText returns the human-readable "<kind> <state>" suffix for
+// the last attempt of a host and whether that attempt succeeded. Shared
+// between the Progress line rendering and the blocker-gate counters.
+func lastAttemptText(attempts []AttemptInfo, kind string) (string, bool) {
+	if len(attempts) == 0 {
+		return kind + " pending", false
+	}
+	last := attempts[len(attempts)-1]
+	if last.Success {
+		return kind + " ok", true
+	}
+	return kind + " failed", false
+}
+
 // blockerNextAction suggests the concrete tool call that clears the
 // first blocker. Deploy always precedes verify (no point verifying an
-// un-deployed service), so the suggestion order follows that.
+// un-deployed service), so the suggestion order follows that. The
+// default branch is unreachable while callers gate on len(pending) > 0.
 func blockerNextAction(host string, needsDeploy, needsVerify bool) string {
 	switch {
 	case needsDeploy:
@@ -162,47 +195,6 @@ func renderBootstrappedFields(svc ServiceSnapshot) string {
 		fields = append(fields, "stage="+svc.StageHostname)
 	}
 	return strings.Join(fields, ", ")
-}
-
-// renderProgress renders deploy+verify state per service from the work session.
-// Only emitted during an open develop-active session — a closed session's
-// progress lives in the Phase line.
-func renderProgress(b *strings.Builder, env StateEnvelope) {
-	if env.WorkSession == nil || env.WorkSession.ClosedAt != nil {
-		return
-	}
-	if len(env.WorkSession.Deploys) == 0 && len(env.WorkSession.Verifies) == 0 {
-		return
-	}
-	fmt.Fprintln(b, "Progress:")
-	for _, host := range env.WorkSession.Services {
-		fmt.Fprintf(b, "  - %s: %s\n", host, progressLine(env.WorkSession, host))
-	}
-}
-
-func progressLine(ws *WorkSessionSummary, host string) string {
-	deploys := ws.Deploys[host]
-	verifies := ws.Verifies[host]
-
-	deployText := "deploy pending"
-	if len(deploys) > 0 {
-		last := deploys[len(deploys)-1]
-		if last.Success {
-			deployText = "deploy ok"
-		} else {
-			deployText = "deploy failed"
-		}
-	}
-	verifyText := "verify pending"
-	if len(verifies) > 0 {
-		last := verifies[len(verifies)-1]
-		if last.Success {
-			verifyText = "verify ok"
-		} else {
-			verifyText = "verify failed"
-		}
-	}
-	return deployText + ", " + verifyText
 }
 
 // renderGuidance dumps the synthesized atom bodies as a single section. The

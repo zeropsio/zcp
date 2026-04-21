@@ -405,9 +405,7 @@ func countCompletedBootstrapSteps(bs *workflow.BootstrapState) int {
 	}
 	n := 0
 	for _, s := range bs.Steps {
-		// Mirror bootstrap.go's step status vocabulary; a completed or
-		// skipped step counts as "done" for audit purposes.
-		if s.Status == "complete" || s.Status == "skipped" {
+		if s.Status == workflow.StepStatusComplete || s.Status == workflow.StepStatusSkipped {
 			n++
 		}
 	}

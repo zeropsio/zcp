@@ -166,14 +166,13 @@ func TestDeployLocalTool_SameToolName(t *testing.T) {
 	}
 }
 
-// P9: workSessionNote emits a warning when a deploy lands without an
-// active work session, and stays empty when one is in flight. Soft
-// nudge, not a hard block — agent keeps discretion per
-// spec-work-session.md §0.4.
-func TestWorkSessionNote_NoSession_Warns(t *testing.T) {
+// sessionAnnotations emits a warning + nil progress when a deploy lands
+// without an active work session, or empty warning + non-nil progress
+// when one is open. Soft nudge, not a hard block — agent keeps discretion.
+func TestSessionAnnotations_NoSession_WarnsWithoutProgress(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	note := workSessionNote(dir)
+	note, progress := sessionAnnotations(dir)
 	if note == "" {
 		t.Fatal("expected warning when no session is open")
 	}
@@ -182,9 +181,12 @@ func TestWorkSessionNote_NoSession_Warns(t *testing.T) {
 			t.Errorf("warning missing %q: %s", needle, note)
 		}
 	}
+	if progress != nil {
+		t.Errorf("no progress expected when session is missing, got: %+v", progress)
+	}
 }
 
-func TestWorkSessionNote_ActiveSession_Silent(t *testing.T) {
+func TestSessionAnnotations_ActiveSession_ProgressWithoutWarning(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	ws := workflow.NewWorkSession("proj-1", string(workflow.EnvContainer), "test", []string{"appdev"})
@@ -193,12 +195,19 @@ func TestWorkSessionNote_ActiveSession_Silent(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
 
-	if note := workSessionNote(dir); note != "" {
+	note, progress := sessionAnnotations(dir)
+	if note != "" {
 		t.Errorf("no warning expected with open session, got: %s", note)
+	}
+	if progress == nil {
+		t.Fatal("expected non-nil progress with open session")
+	}
+	if progress.Total != 1 {
+		t.Errorf("progress.Total = %d, want 1", progress.Total)
 	}
 }
 
-func TestWorkSessionNote_ClosedSession_Warns(t *testing.T) {
+func TestSessionAnnotations_ClosedSession_WarnsWithoutProgress(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	ws := workflow.NewWorkSession("proj-1", string(workflow.EnvContainer), "done", []string{"appdev"})
@@ -209,7 +218,11 @@ func TestWorkSessionNote_ClosedSession_Warns(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
 
-	if note := workSessionNote(dir); note == "" {
-		t.Error("expected warning when session is closed (not being tracked for next task)")
+	note, progress := sessionAnnotations(dir)
+	if note == "" {
+		t.Error("expected warning when session is closed")
+	}
+	if progress != nil {
+		t.Errorf("no progress expected when session is closed, got: %+v", progress)
 	}
 }

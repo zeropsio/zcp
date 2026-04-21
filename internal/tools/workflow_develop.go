@@ -179,12 +179,8 @@ func renderDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 // The returned slice is sorted by hostname for deterministic work session
 // serialization — envelope and status output depend on stable ordering.
 func validateDevelopScope(requested []string, runtimeMetas map[string]*workflow.ServiceMeta) ([]string, error) {
+	available := sortedHostnames(runtimeMetas)
 	if len(requested) == 0 {
-		available := make([]string, 0, len(runtimeMetas))
-		for h := range runtimeMetas {
-			available = append(available, h)
-		}
-		sort.Strings(available)
 		return nil, fmt.Errorf("scope is required — name the runtime service hostnames this task works on. Available: %v", available)
 	}
 	seen := make(map[string]bool, len(requested))
@@ -202,11 +198,6 @@ func validateDevelopScope(requested []string, runtimeMetas map[string]*workflow.
 		scope = append(scope, h)
 	}
 	if len(unknown) > 0 {
-		available := make([]string, 0, len(runtimeMetas))
-		for h := range runtimeMetas {
-			available = append(available, h)
-		}
-		sort.Strings(available)
 		return nil, fmt.Errorf("scope contains unknown or non-deployable hostnames %v — available runtime services: %v", unknown, available)
 	}
 	if len(scope) == 0 {
@@ -214,4 +205,13 @@ func validateDevelopScope(requested []string, runtimeMetas map[string]*workflow.
 	}
 	sort.Strings(scope)
 	return scope, nil
+}
+
+func sortedHostnames(metas map[string]*workflow.ServiceMeta) []string {
+	out := make([]string, 0, len(metas))
+	for h := range metas {
+		out = append(out, h)
+	}
+	sort.Strings(out)
+	return out
 }

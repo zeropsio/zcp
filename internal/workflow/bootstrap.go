@@ -130,12 +130,21 @@ func (b *BootstrapState) CurrentStepName() string {
 	return b.Steps[b.CurrentStep].Name
 }
 
-// Step status constants.
+// Step status constants. Exported so callers outside workflow/ can discriminate
+// terminal states (StepStatusComplete, StepStatusSkipped) from in-progress ones
+// without stringly-typed duplication.
 const (
-	stepPending    = "pending"
-	stepInProgress = "in_progress"
-	stepComplete   = "complete"
-	stepSkipped    = "skipped"
+	StepStatusPending    = "pending"
+	StepStatusInProgress = "in_progress"
+	StepStatusComplete   = "complete"
+	StepStatusSkipped    = "skipped"
+
+	// Package-internal aliases. Callers inside workflow/ use the lowercase
+	// names historically; the uppercase exports mirror them exactly.
+	stepPending    = StepStatusPending
+	stepInProgress = StepStatusInProgress
+	stepComplete   = StepStatusComplete
+	stepSkipped    = StepStatusSkipped
 )
 
 const minAttestationLen = 10

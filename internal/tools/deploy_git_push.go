@@ -144,10 +144,11 @@ func handleGitPush(
 	attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
 	_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 
+	note, progress := sessionAnnotations(stateDir)
 	return jsonResult(deployGitPushResponse{
 		GitPushResult:     result,
-		WorkSessionNote:   workSessionNote(stateDir),
-		AutoCloseProgress: workflow.AutoCloseProgressFor(stateDir),
+		WorkSessionNote:   note,
+		AutoCloseProgress: progress,
 	}), nil, nil
 }
 

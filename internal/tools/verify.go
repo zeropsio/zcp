@@ -59,19 +59,18 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 	})
 }
 
-// verifyResponse wraps ops.VerifyResult with the session-effect snapshot.
-// The agent reads autoCloseProgress to see how the verify call advanced
-// the work session — turns verify from a pure HTTP probe into a tracked
-// lifecycle event (spec-work-session.md §0 principle 3: every transition
-// observable to the LLM).
+// verifyResponse wraps ops.VerifyResult with the auto-close progress
+// snapshot. Surfacing the snapshot turns verify from a pure HTTP probe
+// into an observable lifecycle event — the agent sees how this call
+// advanced the work session toward auto-close.
 type verifyResponse struct {
 	*ops.VerifyResult
 	AutoCloseProgress *workflow.AutoCloseProgress `json:"autoCloseProgress,omitempty"`
 }
 
 // verifyAllResponse mirrors verifyResponse for the multi-service VerifyAll
-// path. Each service's attempt is already recorded; we attach one progress
-// snapshot at the response root because the session scope is a whole set.
+// path. Each service's attempt is already recorded; one progress snapshot
+// at the response root reflects the whole scope.
 type verifyAllResponse struct {
 	*ops.VerifyAllResult
 	AutoCloseProgress *workflow.AutoCloseProgress `json:"autoCloseProgress,omitempty"`

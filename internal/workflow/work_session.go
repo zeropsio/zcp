@@ -285,19 +285,28 @@ type AutoCloseProgress struct {
 	Pending   []string `json:"pending,omitempty"`
 }
 
-// AutoCloseProgressFor computes the progress snapshot for the current-PID
-// work session. Returns nil when no session exists — deploy/verify
-// callers attach a non-nil value only when a session is on disk, so the
-// field is omitted from the JSON response otherwise.
+// AutoCloseProgressFor loads the current-PID work session and computes the
+// progress snapshot. Returns nil when no session exists — the caller
+// attaches a non-nil value only when a session is on disk, so the JSON
+// response's autoCloseProgress field is omitted otherwise.
 //
 // A session whose last recorded event tipped it to all-green reports
-// ready==total; the JSON response is the agent's chance to see that
-// signal at the exact call that flipped it. The auto-close ClosedAt is
-// written by the caller (RecordVerifyAttempt); reading the snapshot back
-// here still reflects the final ready/total.
+// ready==total; reading the snapshot back here still reflects the final
+// ratio even after ClosedAt is set.
 func AutoCloseProgressFor(stateDir string) *AutoCloseProgress {
 	ws, err := CurrentWorkSession(stateDir)
 	if err != nil || ws == nil {
+		return nil
+	}
+	return AutoCloseProgressOf(ws)
+}
+
+// AutoCloseProgressOf computes the progress snapshot from an already-loaded
+// WorkSession. Callers that already hold the struct (e.g. after
+// RecordDeployAttempt returned the mutated session) use this to avoid a
+// duplicate disk read.
+func AutoCloseProgressOf(ws *WorkSession) *AutoCloseProgress {
+	if ws == nil {
 		return nil
 	}
 	progress := &AutoCloseProgress{

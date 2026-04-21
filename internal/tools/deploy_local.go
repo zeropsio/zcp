@@ -103,32 +103,40 @@ func RegisterDeployLocal(
 		}
 		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 
+		note, progress := sessionAnnotations(stateDir)
 		return jsonResult(deployLocalResponse{
 			DeployResult:      result,
-			WorkSessionNote:   workSessionNote(stateDir),
-			AutoCloseProgress: workflow.AutoCloseProgressFor(stateDir),
+			WorkSessionNote:   note,
+			AutoCloseProgress: progress,
 		}), nil, nil
 	})
 }
 
 // deployLocalResponse wraps the local-mode deploy result with session
 // annotations: a warning when no active work session is tracking the
-// deploy (P9 soft nudge) and the auto-close progress snapshot when one
-// is (P7 visibility). Both fields are omitted when empty/nil so the
-// response shape stays compatible with non-session callers.
+// deploy, and the auto-close progress snapshot when one is. Both fields
+// are omitted when empty/nil so the response shape stays compatible
+// with non-session callers.
 type deployLocalResponse struct {
 	*ops.DeployResult
 	WorkSessionNote   string                      `json:"workSessionNote,omitempty"`
 	AutoCloseProgress *workflow.AutoCloseProgress `json:"autoCloseProgress,omitempty"`
 }
 
-// workSessionNote returns a one-line warning for deploys that land
-// outside an open work session. "Soft" per spec-work-session.md §0.4 —
-// agent keeps discretion, but the side-effect is observable.
-func workSessionNote(stateDir string) string {
+// sessionAnnotations loads the current-PID work session once and derives
+// both the "no active session" warning and the auto-close progress
+// snapshot. A single disk read serves all response annotations, where
+// previously each deploy/verify handler made two independent
+// CurrentWorkSession calls.
+//
+// Either return value may be empty/nil depending on session state; the
+// response wrappers use `omitempty` so missing values drop out cleanly.
+func sessionAnnotations(stateDir string) (string, *workflow.AutoCloseProgress) {
 	ws, err := workflow.CurrentWorkSession(stateDir)
 	if err != nil || ws == nil || ws.ClosedAt != "" {
-		return "No active develop session — deploy not tracked. Start one via zerops_workflow action=\"start\" workflow=\"develop\" intent=\"...\" scope=[...] to pick up auto-close + verify tracking."
+		return noActiveSessionWarning, nil
 	}
-	return ""
+	return "", workflow.AutoCloseProgressOf(ws)
 }
+
+const noActiveSessionWarning = "No active develop session — deploy not tracked. Start one via zerops_workflow action=\"start\" workflow=\"develop\" intent=\"...\" scope=[...] to pick up auto-close + verify tracking."
