@@ -5,7 +5,7 @@
 // TestAuditComposition dumps per-step, per-part, per-subsection byte
 // composition across every fixture shape. Use this to measure the effect
 // of every phase in the recipe delivery refactor
-// (docs/implementation-recipe-size-reduction.md) and to set per-shape caps
+// (docs/zrecipator-archive/implementation-recipe-size-reduction.md) and to set per-shape caps
 // in Phase 11.
 //
 //	go test -tags audit ./internal/workflow -run TestAuditComposition -v

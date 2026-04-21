@@ -11,7 +11,7 @@ import (
 // bootstrap instead of handing the LLM a near-empty knowledge payload.
 //
 // Thresholds are calibrated so every recipe listed as "audited=yes" in
-// docs/spec-recipe-quality-process.md Status passes the gate.
+// docs/zrecipator-archive/spec-recipe-quality-process.md Status passes the gate.
 type RecipeViabilityRules struct {
 	// MinBodyLines — number of non-frontmatter lines required in the recipe body.
 	MinBodyLines int
