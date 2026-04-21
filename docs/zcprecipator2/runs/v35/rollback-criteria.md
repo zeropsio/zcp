@@ -1,6 +1,16 @@
 # rollback-criteria.md — v35 go/no-go thresholds
 
-**Purpose**: explicit, numeric, time-boxed decision criteria for v35 (first run under zcprecipator2). Derived from the 97 bars in [`calibration-bars-v35.md`](../05-regression/calibration-bars-v35.md) and the 68 closed-defect rows in [`defect-class-registry.md`](../05-regression/defect-class-registry.md). The rollback procedure is a `git revert` of the rollout-sequence commit range from [`rollout-sequence.md`](rollout-sequence.md) combined with state cleanup.
+**Snapshot status** (updated 2026-04-21 post-v35 analysis):
+
+- **Frozen for v35**: this file is the rollback-criteria set used to arbitrate the v35 run, amended in-place with three measurement-definition tightenings (T-1, T-8, T-9) that the v35 analysis revealed were ambiguous or missing. v36 starts from a copy of this file under `runs/v36/rollback-criteria.md`.
+- **v35 verdict applied**: **PAUSE + engine-level defects identified**. See [`verdict.md`](verdict.md). No T-trigger cleanly fired; six engine-level defects surfaced that sit outside the T-1..T-12 coverage. Reverting C-7e..C-14 would fix zero of the six.
+- **Tightenings applied inline below** (search for "post-v35 tightening"):
+  - T-1 measurement now keys on `checkResult.passed==false` (not `is_error:true` literal)
+  - T-2 gets the same tightening
+  - T-8 measurement now names the per-call evaluator explicitly
+  - T-9 measurement excludes permission-prompt / AFK gaps > 300 s
+
+**Purpose** (unchanged): explicit, numeric, time-boxed decision criteria for v35 (first run under zcprecipator2). Derived from the 108 bars in [`calibration-bars.md`](calibration-bars.md) and the 74 closed-defect rows in [`../../../05-regression/defect-class-registry.md`](../../../05-regression/defect-class-registry.md). The rollback procedure is a `git revert` of the rollout-sequence commit range from [`../../06-migration/rollout-sequence.md`](../../06-migration/rollout-sequence.md) combined with state cleanup.
 
 Decision classes — every v35 measurement lands in exactly one:
 - **ROLLBACK**: regression against a gate bar crosses the threshold → revert the rollout-sequence commits and hold on v36 until the regression class is root-caused.
@@ -19,7 +29,7 @@ v35 is **one commissioned showcase run + one commissioned minimal run** against 
 | W-1 pre-ship | `zcp dry-run recipe` + lint + test suite all pass against C-14 scripts | ≤ 30 min |
 | W-2 during-run | session-log tailing + substrate-invariant tripwires (O-3 very-long, O-6 SUBAGENT_MISUSE, O-7 git-lock, O-9 zcp-side-exec, O-14 git-repo-missing) | live |
 | W-3 post-close | run `scripts/measure_calibration_bars.sh` against session log + exported deliverable tree; produce `reports/v35-measurement-<timestamp>.md` | ≤ 30 min after close |
-| W-4 decision | apply the decision matrix in §2; land verdict + rationale in a new `docs/zcprecipator2/07-v35-verdict/` directory; if ROLLBACK, execute §4 procedure within 2 hours | ≤ 4 hours after W-3 |
+| W-4 decision | apply the decision matrix in §2; land verdict + rationale in a new `docs/zcprecipator2/runs/v35/` directory; if ROLLBACK, execute §4 procedure within 2 hours | ≤ 4 hours after W-3 |
 
 Total time budget from close to verdict: **≤ 4.5 hours**.
 
@@ -31,19 +41,19 @@ Decision = strictest outcome across all gates. ROLLBACK > PAUSE > ACCEPT-WITH-FO
 
 ### 2.1. ROLLBACK triggers (any ONE of these → rollback)
 
-Derived from [calibration-bars-v35.md §13 headline bars](../05-regression/calibration-bars-v35.md) + v34-empirically-refuted axes from [defect-class-registry.md rows 11.2, 11.3, 13.7, 14.1, 14.2, 14.3](../05-regression/defect-class-registry.md).
+Derived from [calibration-bars.md §13 headline bars](calibration-bars.md) + v34-empirically-refuted axes from [defect-class-registry.md rows 11.2, 11.3, 13.7, 14.1, 14.2, 14.3](../../05-regression/defect-class-registry.md).
 
 | Trigger | Measurement | Threshold for rollback | Why |
 |---|---|---|---|
-| **T-1** Deploy-complete content-check rounds (C-1) | count of `is_error:true` on `complete step=deploy` | **> 2** rounds | The v31→v34 empirically-refuted axis. This IS the thesis. If v35 rounds ≥ v34 (4) under the new architecture, P1 author-runnable pre-attest has empirically failed. |
-| **T-2** Finalize-complete content-check rounds (C-2) | count of `is_error:true` on `complete step=finalize` | **> 1** round | Same class as T-1 on finalize phase. v34 was 3 rounds; v33 was 2. Target is 1. Regression at > 1 rounds = P1 doesn't collapse finalize convergence. |
+| **T-1** Deploy-complete content-check rounds (C-1) | count of `complete step=deploy` responses where `json.loads(response).checkResult.passed == false` (**post-v35 tightening** — prior `is_error:true` literal reading only counted hard MCP errors like `INVALID_PARAMETER`, not the actual check-round surface `checkResult.passed==false`; v35 had 11 check-rounds but only 1 `is_error:true`) | **> 2** rounds | The v31→v34 empirically-refuted axis. This IS the thesis. If v35 rounds ≥ v34 (4) under the new architecture, P1 author-runnable pre-attest has empirically failed. |
+| **T-2** Finalize-complete content-check rounds (C-2) | count of `complete step=finalize` responses where `json.loads(response).checkResult.passed == false` (**post-v35 tightening** — same rationale as T-1) | **> 1** round | Same class as T-1 on finalize phase. v34 was 3 rounds; v33 was 2. Target is 1. Regression at > 1 rounds = P1 doesn't collapse finalize convergence. |
 | **T-3** Substrate invariant broken | any of O-3 / O-6 / O-7 / O-8 / O-9 / O-14 / O-15 / O-17 | `> 0` events | The rewrite was supposed to leave substrate untouched. A substrate invariant breaking means the rewrite unintentionally regressed something v34 had clean. |
 | **T-4** Cross-scaffold env-var coordination regression (CS-1 + CS-2) | `zcp check symbol-contract-env-consistency` on deliverable + runtime crash logs | CS-1 non-zero OR CS-2 > 0 events | P3 `SymbolContract` failed its direct v34 closure (DB_PASS/DB_PASSWORD). If CS-1 fails on v35 under the new architecture, P3 doesn't work. |
 | **T-5** Manifest-honesty v34 class regression (M-3b) | `(routed_to=claude_md, published_gotcha)` mismatches | `> 0` matches | P5 two-way graph's direct v34 closure. Regression means P5 doesn't close what v34 surfaced. |
 | **T-6** Phantom output tree (O-10) | `find /var/www -maxdepth 2 -type d -name 'recipe-*'` | `> 0` directories | v33 class; closed by v8.103 + v8.104 Fix A in the old path. P8 positive allow-list was supposed to close it structurally in the new path. Regression = P8 failure at closing a class old-path already closed. |
 | **T-7** Self-inflicted gotchas shipped (CQ-2) | writer-classification manifest cross-check | `> 0` facts | v28/v34 class. Core content-quality gate. |
-| **T-8** Very-long main bash calls (O-3) | bash calls ≥ 120s | `> 0` | Substrate performance invariant. Signals spawn-shape or SSH-boundary regression. |
-| **T-9** Wall clock blowout (O-1 / O-1M) | session timestamps | showcase `> 135 min` (1.5× v34 baseline) OR minimal `> 90 min` | Non-linear regression that masks a different problem. |
+| **T-8** Very-long main bash calls (O-3) | per-call `(tool_use.timestamp, tool_result.timestamp)` pairs on `Bash` tool, threshold ≥ 120 s; evaluator: `scripts/extract_calibration_evidence.py::extract_long_bash_calls` (**post-v35 tightening** — prior text named the aggregate `total latency` per tool, which cannot arbitrate per-call thresholds; evaluator is pending, part of HANDOFF-to-I5 Front A) | `> 0` | Substrate performance invariant. Signals spawn-shape or SSH-boundary regression. |
+| **T-9** Wall clock blowout (O-1 / O-1M) | **active-work time**: sum of `(tool_result.ts - tool_use.ts)` across session, **excluding any gap between consecutive tool events > 300 s** (assumed AFK or permission-prompt wait; threshold chosen so legitimate long-running commands like npm install stay in-budget) (**post-v35 tightening** — v35 raw wall was 175 min but ~88 min was AFK permission-prompt wait; raw-timestamp wall is unreliable when session contains permission gates) | showcase `> 120 min` OR minimal `> 75 min` | Non-linear regression that masks a different problem. |
 | **T-10** Content-tree lint regression | `make lint-local` | any lint failure on `internal/content/workflows/recipe/` tree post-run | Build-level invariant broken — authors can't ship future atom changes until resolved. |
 | **T-11** Editorial-review wrong-surface CRIT shipped after inline-fix | `Sub[editorial-review].return.CRIT_count` post inline-fix | `> 0` CRITs remained in deliverable | Refinement 2026-04-20: editorial-review is supposed to catch wrong-surface items BEFORE close completes. If CRITs ship despite editorial review, either (a) reviewer didn't catch the class (reviewer-brief gap — revisit `counter-example-reference.md` atom), (b) main-agent didn't apply the inline-fix (workflow gap — revisit P4 enforcement), or (c) editorial-review didn't dispatch (C-7.5 regression). All three are rollback-class. |
 | **T-12** Classification-error-at-source regression | `Sub[editorial-review].return.reclassification_delta` | `> 0` AND v35 verdict doc confirms writer's self-classification was wrong on at least one reclassified fact | Refinement 2026-04-20: if the editorial reviewer finds the writer classified a fact wrong (e.g., scaffold-decision routed to gotcha-surface), the error source is the writer + the classification-taxonomy atom. If reviewer catches and inline-fixes, it's registered as PAUSE (not rollback). If reviewer catches but the wrong classification survives to export (inline-fix not applied OR reviewer itself wrong-classified), that's T-12 rollback. |
@@ -90,7 +100,7 @@ Every ROLLBACK and PAUSE and ACCEPT-WITH-FOLLOW-UP trigger is clean. v36 commiss
 
 ## 3. Cross-category gate check
 
-Beyond triggers, every `[gate]`-severity bar in [calibration-bars-v35.md §1–§10](../05-regression/calibration-bars-v35.md) is evaluated individually. Any `[gate]` failure that is NOT already covered by §2.1 or §2.2 above triggers a judgment call:
+Beyond triggers, every `[gate]`-severity bar in [calibration-bars.md §1–§10](calibration-bars.md) is evaluated individually. Any `[gate]` failure that is NOT already covered by §2.1 or §2.2 above triggers a judgment call:
 
 | Is the failing bar covered by a principle? | Does the failure reproduce a closed defect class? | Action |
 |---|---|---|
@@ -109,7 +119,7 @@ If a ROLLBACK trigger fires (§2.1), execute the following steps. Target total w
 
 ### 4.1. Decision gate
 
-1. Triple-check the trigger evidence from `reports/v35-measurement-<timestamp>.md`. Specifically: the session-log grep producing the count + the deliverable-tree grep producing the match. Record in `docs/zcprecipator2/07-v35-verdict/rollback-evidence.md`.
+1. Triple-check the trigger evidence from `reports/v35-measurement-<timestamp>.md`. Specifically: the session-log grep producing the count + the deliverable-tree grep producing the match. Record in `docs/zcprecipator2/runs/v35/rollback-evidence.md`.
 2. Confirm the triggered bar is not measurement-artifact (e.g. C-1 deploy rounds count must exclude the FIRST attempt if that first attempt didn't actually run the gate — session log shows whether `complete step=deploy` fired at all).
 3. If evidence confirms, proceed.
 
@@ -131,7 +141,7 @@ git revert --no-commit <C-0-sha>
 git commit -m "revert: roll back zcprecipator2 v35 rollout-sequence (C-0 through C-15)
 
 v35 run at <date> triggered rollback criterion <T-N> — <summary of failed bar>.
-Evidence: docs/zcprecipator2/07-v35-verdict/rollback-evidence.md
+Evidence: docs/zcprecipator2/runs/v35/rollback-evidence.md
 v34 substrate restored; rollout-sequence commits revertable for re-attempt after root cause."
 
 # Confirm baseline tests still pass
@@ -167,7 +177,7 @@ No DB state to clean; no external system state modified. Zerops project state is
 ### 4.4. Communicate
 
 1. Tag the rollback in the repo: `git tag v35-rollback-<date> -m "v35 rollback — trigger T-N, bar <name>"`
-2. Record verdict at `docs/zcprecipator2/07-v35-verdict/verdict-v35.md` with: trigger fired, bar measurement, principle implication, next-step plan (root-cause investigation scope).
+2. Record verdict at `docs/zcprecipator2/runs/v35/verdict-v35.md` with: trigger fired, bar measurement, principle implication, next-step plan (root-cause investigation scope).
 3. Update [RESUME.md](../RESUME.md) with: v35 rollback complete, pause on v36, open investigation item.
 
 ### 4.5. Re-attempt path
@@ -190,10 +200,10 @@ Rollback is not abandonment. The rollout-sequence commits remain in git history;
 
 ## 5. Evidence collection schema
 
-Every v35 verdict (ROLLBACK, PAUSE, ACCEPT-WITH-FOLLOW-UP, PROCEED) produces a document at `docs/zcprecipator2/07-v35-verdict/` with this structure:
+Every v35 verdict (ROLLBACK, PAUSE, ACCEPT-WITH-FOLLOW-UP, PROCEED) produces a document at `docs/zcprecipator2/runs/v35/` with this structure:
 
 ```
-docs/zcprecipator2/07-v35-verdict/
+docs/zcprecipator2/runs/v35/
 ├── verdict-v35.md                        one-paragraph verdict + decision + rationale
 ├── bar-measurements-v35.md               97 bars × {PASS/FAIL + evidence link}
 ├── session-log-excerpts/
@@ -215,7 +225,7 @@ This structure is the permanent record. Future migrations (v36+) reference prior
 
 ## 6. What is NOT a rollback trigger
 
-Per [calibration-bars-v35.md §14](../05-regression/calibration-bars-v35.md):
+Per [calibration-bars.md §14](calibration-bars.md):
 
 - Cross-codebase architecture narrative in root README (advisory only, rolled back per v24)
 - Self-referential gotcha count (signal only; editorial)
@@ -242,18 +252,18 @@ If v35 decisions as PROCEED (no rollback, no pause, no accept-with-follow-up —
 - If v36 PROCEEDS cleanly, the 6 deferred-deletion check candidates from [check-rewrite.md §15](../03-architecture/check-rewrite.md) are evaluated per their F-6 fire-count evidence. Demote the ones that fired zero across v35 + v36.
 - If v36 regresses against a gate that v35 held, that's a signal the first-pass was lucky. Downgrade architectural confidence; PAUSE on v37 + investigate the class that v35 didn't surface.
 
-Post-v36 PROCEED: the architecture is validated across two runs. Post-v35 (this file) process ends; the `calibration-bars-v35.md` bars graduate to `calibration-bars.md` (versionless) for ongoing measurement.
+Post-v36 PROCEED: the architecture is validated across two runs. Post-v35 (this file) process ends; the `calibration-bars.md` bars graduate to `calibration-bars.md` (versionless) for ongoing measurement.
 
 ---
 
 ## 8. Open question (documented, not gated)
 
-Per [migration-proposal.md §6.3](migration-proposal.md): the v35 gate regimen assumes a **fresh Opus 4.7 (1M context)** instance executing the recipe against the new architecture. If the v35 run is instead executed by a different model version (e.g. Opus 4.8 or later), the calibration-bars baseline from v34 may have shifted for non-architectural reasons. Document the model used in `docs/zcprecipator2/07-v35-verdict/verdict-v35.md`. If model version changed, the rollback decision matrix is advisory — the thesis test is architecture × model, and regressions may have multiple root causes.
+Per [migration-proposal.md §6.3](migration-proposal.md): the v35 gate regimen assumes a **fresh Opus 4.7 (1M context)** instance executing the recipe against the new architecture. If the v35 run is instead executed by a different model version (e.g. Opus 4.8 or later), the calibration-bars baseline from v34 may have shifted for non-architectural reasons. Document the model used in `docs/zcprecipator2/runs/v35/verdict-v35.md`. If model version changed, the rollback decision matrix is advisory — the thesis test is architecture × model, and regressions may have multiple root causes.
 
 ---
 
 ## 9. Summary — the 6 headline bars, one-line each
 
-These are the single most-important v35 measurements per [calibration-bars-v35.md §13](../05-regression/calibration-bars-v35.md) (updated refinement 2026-04-20 — 6 headline bars instead of 5; adds ER-1). If forced to read one paragraph:
+These are the single most-important v35 measurements per [calibration-bars.md §13](calibration-bars.md) (updated refinement 2026-04-20 — 6 headline bars instead of 5; adds ER-1). If forced to read one paragraph:
 
 > **v35 passes if: (C-1) deploy rounds ≤ 2; (C-2) finalize rounds ≤ 1; (C-9) ≥ 2 `Scope="downstream"` facts recorded; (M-3b) zero `(routed_to=claude_md, published_gotcha)` mismatches; (CS-1) `zcp check symbol-contract-env-consistency` exits zero; (ER-1) editorial-review CRIT count shipped after inline-fix = 0. If any one regresses against its threshold, the rewrite's core thesis needs revisiting — execute the rollback procedure in §4.**

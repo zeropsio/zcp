@@ -450,15 +450,12 @@ Decision criteria to articulate:
 ```
 docs/zcprecipator2/
 ├── README.md                           ← this file
-├── DISPATCH.md                         ← (produced step 3) human-facing dispatch instructions
-├── 01-flow/
+├── DISPATCH.md                         ← dispatcher-facing composition guide
+├── HANDOFF-to-I<N>.md                  ← instance-scoped handoffs (one per fresh-instance transition)
+├── 01-flow/                            ← v34-era flow traces (historical; new runs land in runs/vN/)
 │   ├── flow-showcase-v34-main.md
 │   ├── flow-showcase-v34-sub-*.md
-│   ├── flow-showcase-v34-dispatches/
-│   ├── flow-minimal-<ref>-main.md
-│   ├── flow-minimal-<ref>-sub-*.md
-│   ├── flow-minimal-<ref>-dispatches/
-│   └── flow-comparison.md
+│   └── flow-showcase-v34-dispatches/
 ├── 02-knowledge/
 │   ├── knowledge-matrix-showcase.md
 │   ├── knowledge-matrix-minimal.md
@@ -476,14 +473,29 @@ docs/zcprecipator2/
 │   ├── brief-*-simulation.md
 │   ├── brief-*-diff.md
 │   └── brief-*-coverage.md
-├── 05-regression/
-│   ├── defect-class-registry.md
-│   └── calibration-bars-v35.md
-└── 06-migration/
-    ├── migration-proposal.md
-    ├── rollout-sequence.md
-    └── rollback-criteria.md
+├── 05-regression/                      ← standing, multi-run docs
+│   └── defect-class-registry.md        ← append-only; one section per run's new defect classes
+├── 06-migration/                       ← standing migration docs
+│   ├── migration-proposal.md
+│   └── rollout-sequence.md
+├── runs/                               ← per-run analyses (see runs/README.md for runbook)
+│   ├── README.md                       ← index of past runs + runbook for analysing a new one
+│   └── v<N>/                           ← one folder per commissioned run
+│       ├── README.md                   ← TL;DR + file index + verdict one-liner
+│       ├── analysis.md                 ← narrative post-mortem
+│       ├── verdict.md                  ← decision + measurement tightenings
+│       ├── calibration-bars.md         ← snapshot of bars this run was measured against
+│       ├── rollback-criteria.md        ← snapshot of T-triggers used to arbitrate
+│       ├── flow-main.md                ← main-agent session trace
+│       ├── sub-*.md                    ← per-subagent traces
+│       ├── flow-dispatches/            ← verbatim dispatch prompts
+│       └── role_map.json
+└── scripts/
+    ├── extract_flow.py                 ← per-stream trace + dispatch capture
+    └── ...                             ← (see scripts/ for others)
 ```
+
+**Per-run pattern**: snapshot docs (`calibration-bars.md`, `rollback-criteria.md`) live under `runs/vN/` so each run's measurement surface is frozen in place. Standing docs (`defect-class-registry.md`, `HANDOFF-to-I*.md`, `06-migration/*`) grow across runs. See [`runs/README.md`](runs/README.md) for the analysis runbook used to populate a new `runs/vN/`.
 
 ---
 

@@ -61,7 +61,7 @@ Scaffold + feature briefs differ across (tier × codebase-count × worker-topolo
 
 ## 4. Why certain tokens are forbidden in transmitted briefs
 
-Every atom under `internal/content/workflows/recipe/` is subject to the build-time lints in [`calibration-bars-v35.md §9 B-1..B-8`](05-regression/calibration-bars-v35.md). Those lints encode the following invariants — if you edit an atom, make sure your edit still passes:
+Every atom under `internal/content/workflows/recipe/` is subject to the build-time lints in [`calibration-bars.md §9 B-1..B-8`](runs/v35/calibration-bars.md). Those lints encode the following invariants — if you edit an atom, make sure your edit still passes:
 
 ### B-1: no version anchors
 
