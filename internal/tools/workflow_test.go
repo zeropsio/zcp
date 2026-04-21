@@ -365,7 +365,9 @@ func TestWorkflowTool_Action_Reset(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil, runtime.Info{})
 
-	// Start bootstrap and reset.
+	// Start bootstrap and reset. The post-P6 reset returns a structured
+	// audit (cleared / preserved / next) instead of the old one-line
+	// success; check for the shape, not the word "reset".
 	callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
 		"workflow": "bootstrap",
@@ -376,8 +378,55 @@ func TestWorkflowTool_Action_Reset(t *testing.T) {
 		t.Errorf("unexpected error: %s", getTextContent(t, result))
 	}
 	text := getTextContent(t, result)
-	if !strings.Contains(text, "reset") {
-		t.Errorf("expected reset confirmation, got: %s", text)
+	for _, needle := range []string{`"cleared"`, `"preserved"`, `"next"`} {
+		if !strings.Contains(text, needle) {
+			t.Errorf("expected reset audit field %q in:\n%s", needle, text)
+		}
+	}
+}
+
+// P6: reset preserves complete ServiceMetas and reports them. Classic
+// "reset nukes everything" misreading hit an agent in the fizzy log
+// (they had to reverse-engineer state via zerops_discover because the
+// old single-line response didn't say).
+func TestWorkflowTool_Action_Reset_PreservesCompleteMetas(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+
+	// Complete meta — survives reset.
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             workflow.PlanModeDev,
+		Environment:      string(workflow.EnvContainer),
+		BootstrapSession: "old-sess",
+		BootstrappedAt:   "2026-04-10",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, dir, "", nil, runtime.Info{})
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{"action": "reset"})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "appdev") {
+		t.Errorf("preserved metas should list appdev; got:\n%s", text)
+	}
+	// Metas file must still be there after reset.
+	metas, _ := workflow.ListServiceMetas(dir)
+	found := false
+	for _, m := range metas {
+		if m.Hostname == "appdev" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("appdev meta should survive reset — it was complete, not incomplete")
 	}
 }
 

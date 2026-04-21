@@ -42,15 +42,39 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 				return convertError(err), nil, nil
 			}
 			recordVerifyAllToWorkSession(stateDir, result)
-			return jsonResult(result), nil, nil
+			return jsonResult(verifyAllResponse{
+				VerifyAllResult:   result,
+				AutoCloseProgress: workflow.AutoCloseProgressFor(stateDir),
+			}), nil, nil
 		}
 		result, err := ops.Verify(ctx, client, fetcher, httpClient, projectID, input.ServiceHostname)
 		if err != nil {
 			return convertError(err), nil, nil
 		}
 		recordVerifyToWorkSession(stateDir, result)
-		return jsonResult(result), nil, nil
+		return jsonResult(verifyResponse{
+			VerifyResult:      result,
+			AutoCloseProgress: workflow.AutoCloseProgressFor(stateDir),
+		}), nil, nil
 	})
+}
+
+// verifyResponse wraps ops.VerifyResult with the session-effect snapshot.
+// The agent reads autoCloseProgress to see how the verify call advanced
+// the work session — turns verify from a pure HTTP probe into a tracked
+// lifecycle event (spec-work-session.md §0 principle 3: every transition
+// observable to the LLM).
+type verifyResponse struct {
+	*ops.VerifyResult
+	AutoCloseProgress *workflow.AutoCloseProgress `json:"autoCloseProgress,omitempty"`
+}
+
+// verifyAllResponse mirrors verifyResponse for the multi-service VerifyAll
+// path. Each service's attempt is already recorded; we attach one progress
+// snapshot at the response root because the session scope is a whole set.
+type verifyAllResponse struct {
+	*ops.VerifyAllResult
+	AutoCloseProgress *workflow.AutoCloseProgress `json:"autoCloseProgress,omitempty"`
 }
 
 // recordVerifyToWorkSession records one service verify result as a WorkSession attempt.

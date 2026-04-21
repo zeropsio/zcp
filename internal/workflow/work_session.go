@@ -266,14 +266,65 @@ func EvaluateAutoClose(ws *WorkSession) bool {
 		return false
 	}
 	for _, h := range ws.Services {
-		deploys := ws.Deploys[h]
-		if len(deploys) == 0 || deploys[len(deploys)-1].SucceededAt == "" {
+		if !serviceAutoCloseReady(ws, h) {
 			return false
 		}
-		verifies := ws.Verifies[h]
-		if len(verifies) == 0 || !verifies[len(verifies)-1].Passed {
-			return false
+	}
+	return true
+}
+
+// AutoCloseProgress summarises how many services in scope have crossed the
+// auto-close threshold and names the ones still pending. Surfaced to the
+// agent in side-effect responses (verify, deploy) so the work session is
+// observably advancing — the fizzy log shows that without this the agent
+// defaulted to curl because verify's tracking purpose wasn't visible.
+type AutoCloseProgress struct {
+	SessionID string   `json:"sessionId"`
+	Ready     int      `json:"ready"`
+	Total     int      `json:"total"`
+	Pending   []string `json:"pending,omitempty"`
+}
+
+// AutoCloseProgressFor computes the progress snapshot for the current-PID
+// work session. Returns nil when no session exists — deploy/verify
+// callers attach a non-nil value only when a session is on disk, so the
+// field is omitted from the JSON response otherwise.
+//
+// A session whose last recorded event tipped it to all-green reports
+// ready==total; the JSON response is the agent's chance to see that
+// signal at the exact call that flipped it. The auto-close ClosedAt is
+// written by the caller (RecordVerifyAttempt); reading the snapshot back
+// here still reflects the final ready/total.
+func AutoCloseProgressFor(stateDir string) *AutoCloseProgress {
+	ws, err := CurrentWorkSession(stateDir)
+	if err != nil || ws == nil {
+		return nil
+	}
+	progress := &AutoCloseProgress{
+		SessionID: workSessionID(ws.PID),
+		Total:     len(ws.Services),
+	}
+	for _, h := range ws.Services {
+		if serviceAutoCloseReady(ws, h) {
+			progress.Ready++
+			continue
 		}
+		progress.Pending = append(progress.Pending, h)
+	}
+	return progress
+}
+
+// serviceAutoCloseReady is the per-host gate used by both EvaluateAutoClose
+// (boolean all-green) and AutoCloseProgressFor (counts + pending list).
+// Extracted to keep the two paths reading off the same definition of "ready".
+func serviceAutoCloseReady(ws *WorkSession, host string) bool {
+	deploys := ws.Deploys[host]
+	if len(deploys) == 0 || deploys[len(deploys)-1].SucceededAt == "" {
+		return false
+	}
+	verifies := ws.Verifies[host]
+	if len(verifies) == 0 || !verifies[len(verifies)-1].Passed {
+		return false
 	}
 	return true
 }

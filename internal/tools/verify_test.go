@@ -4,11 +4,14 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 func TestVerifyTool_RuntimeHealthy(t *testing.T) {
@@ -228,5 +231,52 @@ func TestVerifyTool_SingleMode(t *testing.T) {
 	}
 	if vr.Type != "runtime" {
 		t.Errorf("Type = %q, want runtime", vr.Type)
+	}
+}
+
+// P7: verify response includes autoCloseProgress so the agent sees how
+// the call advanced the work session (ready/total + pending hostnames).
+// Without this the agent can't tell verify apart from a plain curl probe
+// and defaults to curl — the exact pattern the fizzy log showed.
+func TestVerifyTool_ReportsAutoCloseProgress(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	now := time.Now().UTC().Format(time.RFC3339)
+	// Seed a work session with two services, one already deploy+verified,
+	// one awaiting verify. Verifying the second advances ready 1→2.
+	ws := workflow.NewWorkSession("proj-1", string(workflow.EnvContainer), "scope demo", []string{"app", "worker"})
+	ws.Deploys = map[string][]workflow.DeployAttempt{
+		"app":    {{AttemptedAt: now, SucceededAt: now, Strategy: workflow.StrategyPushDev}},
+		"worker": {{AttemptedAt: now, SucceededAt: now, Strategy: workflow.StrategyPushDev}},
+	}
+	ws.Verifies = map[string][]workflow.VerifyAttempt{
+		"app": {{AttemptedAt: now, PassedAt: now, Passed: true}},
+	}
+	if err := workflow.SaveWorkSession(dir, ws); err != nil {
+		t.Fatalf("SaveWorkSession: %v", err)
+	}
+	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-worker", Name: "worker", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: serviceStatusRunning},
+		})
+	fetcher := platform.NewMockLogFetcher()
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterVerify(srv, mock, fetcher, "proj-1", dir)
+
+	result := callTool(t, srv, "zerops_verify", map[string]any{"serviceHostname": "worker"})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	}
+
+	text := getTextContent(t, result)
+	// Raw substring checks — avoid coupling to the wrapper struct shape.
+	for _, needle := range []string{`"autoCloseProgress"`, `"ready":2`, `"total":2`} {
+		if !contains(text, needle) {
+			t.Errorf("response missing %q:\n%s", needle, text)
+		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sort"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -133,7 +134,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "start":
 		return handleStart(ctx, projectID, engine, client, cache, input, mounter, selfHostname, rt)
 	case "reset":
-		return handleReset(engine)
+		return handleReset(ctx, engine, client, projectID)
 	case "iterate":
 		return handleIterate(ctx, engine, client, cache)
 	case "complete":
@@ -285,14 +286,130 @@ func detectActiveWorkflow(engine *workflow.Engine) string {
 	return ""
 }
 
-func handleReset(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {
+// resetReport is the structured audit returned by handleReset so the agent
+// sees exactly what the mutation cleared and what survived — observability
+// for a state transition that was previously a one-line "success" message.
+type resetReport struct {
+	Cleared   resetSnapshot `json:"cleared"`
+	Preserved resetSnapshot `json:"preserved"`
+	Next      string        `json:"next"`
+}
+
+type resetSnapshot struct {
+	BootstrapSessionID string   `json:"bootstrapSessionId,omitempty"`
+	RecipeSessionID    string   `json:"recipeSessionId,omitempty"`
+	CompletedSteps     int      `json:"completedSteps,omitempty"`
+	IncompleteMetas    []string `json:"incompleteMetas,omitempty"`
+	CompleteMetas      []string `json:"completeMetas,omitempty"`
+	LiveServices       int      `json:"liveServices,omitempty"`
+	WorkSessions       int      `json:"workSessions,omitempty"`
+}
+
+func handleReset(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string) (*mcp.CallToolResult, any, error) {
+	// Snapshot state before reset — Reset() clears engine memory + removes
+	// the session file + deletes incomplete metas for the session.
+	// Complete metas, work sessions, and live platform services are never
+	// touched; surface that explicitly so the agent isn't guessing.
+	preState, _ := engine.GetState()
+	metasBefore, _ := workflow.ListServiceMetas(engine.StateDir())
+
+	cleared, preserved := buildResetSnapshots(preState, metasBefore)
+	if client != nil {
+		if live, listErr := client.ListServices(ctx, projectID); listErr == nil {
+			preserved.LiveServices = len(live)
+		}
+	}
+
 	if err := engine.Reset(); err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrSessionNotFound,
 			fmt.Sprintf("Reset failed: %v", err),
 			"")), nil, nil
 	}
-	return textResult("Session reset successfully."), nil, nil
+
+	// Recompute preserved metas after reset to catch cleanIncompleteMetas
+	// removals. Complete metas (Bootstrapped=true) stay; that's the set
+	// the agent can adopt or develop against next.
+	metasAfter, _ := workflow.ListServiceMetas(engine.StateDir())
+	preserved.CompleteMetas = completeMetaNames(metasAfter)
+
+	report := resetReport{
+		Cleared:   cleared,
+		Preserved: preserved,
+		Next:      buildResetNextHint(preserved),
+	}
+	return jsonResult(report), nil, nil
+}
+
+// buildResetSnapshots separates the state snapshot into "what reset will
+// destroy" vs "what will survive", so the audit lines up field-for-field
+// with engine.Reset()'s actual behaviour.
+func buildResetSnapshots(preState *workflow.WorkflowState, metasBefore []*workflow.ServiceMeta) (cleared, preserved resetSnapshot) {
+	if preState != nil {
+		if preState.Bootstrap != nil && preState.Bootstrap.Active {
+			cleared.BootstrapSessionID = preState.SessionID
+			cleared.CompletedSteps = countCompletedBootstrapSteps(preState.Bootstrap)
+		}
+		if preState.Recipe != nil && preState.Recipe.Active {
+			cleared.RecipeSessionID = preState.SessionID
+		}
+	}
+	for _, m := range metasBefore {
+		if m == nil {
+			continue
+		}
+		if m.IsComplete() {
+			// Complete metas survive reset.
+			continue
+		}
+		cleared.IncompleteMetas = append(cleared.IncompleteMetas, m.Hostname)
+	}
+	sort.Strings(cleared.IncompleteMetas)
+	return cleared, preserved
+}
+
+func completeMetaNames(metas []*workflow.ServiceMeta) []string {
+	var names []string
+	for _, m := range metas {
+		if m == nil || !m.IsComplete() {
+			continue
+		}
+		names = append(names, m.Hostname)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func countCompletedBootstrapSteps(bs *workflow.BootstrapState) int {
+	if bs == nil {
+		return 0
+	}
+	n := 0
+	for _, s := range bs.Steps {
+		// Mirror bootstrap.go's step status vocabulary; a completed or
+		// skipped step counts as "done" for audit purposes.
+		if s.Status == "complete" || s.Status == "skipped" {
+			n++
+		}
+	}
+	return n
+}
+
+// buildResetNextHint picks the most useful follow-up call based on what
+// survived reset — live services suggest adopt; complete metas with no
+// live services (rare, e.g. after UI deletion) suggest develop; empty
+// state suggests a fresh classic start.
+func buildResetNextHint(preserved resetSnapshot) string {
+	switch {
+	case preserved.LiveServices > 0 && len(preserved.CompleteMetas) == 0:
+		return "Live services exist without metas — action=\"start\" workflow=\"bootstrap\" route=\"adopt\""
+	case preserved.LiveServices > 0 && len(preserved.CompleteMetas) > 0:
+		return "Services still adopted — action=\"start\" workflow=\"develop\" intent=\"...\" scope=[...]"
+	case len(preserved.CompleteMetas) > 0:
+		return "Metas remain but no live services — verify state via zerops_discover, then start develop or re-bootstrap"
+	default:
+		return "Empty project — action=\"start\" workflow=\"bootstrap\" (no route to see options)"
+	}
 }
 
 func handleIterate(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache) (*mcp.CallToolResult, any, error) {
