@@ -50,14 +50,36 @@ func RegisterGuidance(srv *mcp.Server, engine *workflow.Engine) {
 
 		// Get the active recipe plan from the engine.
 		var plan *workflow.RecipePlan
+		var planSubmitted bool
+		var recipeTier string
 		if engine != nil {
 			state, err := engine.GetState()
-			if err == nil && state.Recipe != nil && state.Recipe.Plan != nil {
-				plan = state.Recipe.Plan
+			if err == nil && state.Recipe != nil {
+				recipeTier = state.Recipe.Tier
+				if state.Recipe.Plan != nil {
+					plan = state.Recipe.Plan
+					planSubmitted = true
+				}
 			}
 		}
 
-		content, err := workflow.ResolveTopic(input.Topic, plan)
+		// Cx-GUIDANCE-PLAN-NIL (v36 F-7 close): research-step topic
+		// pulls happen before the agent submits recipePlan via
+		// complete=research, so state.Recipe.Plan is nil. Predicates
+		// returning false for nil made every tier-gated topic surface
+		// a misleading "does not apply" message (v36 snippet:
+		// showcase-service-keys, dashboard-skeleton, recipe-types all
+		// rejected despite state.Recipe.Tier=showcase). Build a
+		// tier-only synthetic plan so tier-gated predicates (isShowcase)
+		// resolve correctly; shape-dependent predicates (hasWorker,
+		// isDualRuntime) still false → distinct "plan not submitted"
+		// message below.
+		evalPlan := plan
+		if evalPlan == nil && recipeTier != "" {
+			evalPlan = &workflow.RecipePlan{Tier: recipeTier}
+		}
+
+		content, err := workflow.ResolveTopic(input.Topic, evalPlan)
 		if err != nil {
 			return textResult(fmt.Sprintf("Error resolving topic %q: %v", input.Topic, err)), nil, nil
 		}
@@ -70,7 +92,20 @@ func RegisterGuidance(srv *mcp.Server, engine *workflow.Engine) {
 			// recipe.md, server bug). The latter is a hard error so
 			// the main agent doesn't silently skip and miss required
 			// guidance.
-			if topic.Predicate != nil && !topic.Predicate(plan) {
+			if topic.Predicate != nil && !topic.Predicate(evalPlan) {
+				if !planSubmitted && recipeTier != "" {
+					// Cx-GUIDANCE-PLAN-NIL: predicate needs more than
+					// tier (targets, framework) but plan hasn't been
+					// submitted yet. Different class from "shape
+					// mismatch" — must be distinguishable so the agent
+					// knows to retry after research-complete.
+					return textResult(fmt.Sprintf(
+						"Topic %q requires plan shape (targets/framework) that isn't available yet — "+
+							"state.Recipe.Plan is nil because action=complete step=research hasn't run. "+
+							"Submit your recipePlan via action=complete step=research first, then re-fetch. "+
+							"(Tier-only topics resolve at research; this one needs more than tier=%q.)",
+						input.Topic, recipeTier)), nil, nil
+				}
 				return textResult(fmt.Sprintf("Topic %q does not apply to your recipe shape.", input.Topic)), nil, nil
 			}
 			return convertError(platform.NewPlatformError(
