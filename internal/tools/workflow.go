@@ -24,7 +24,7 @@ const (
 // WorkflowInput is the input type for zerops_workflow.
 type WorkflowInput struct {
 	// Legacy: workflow name for static guidance (backward compat).
-	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, develop, recipe, or cicd."`
+	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, develop, recipe, cicd, or export."`
 
 	// Multi-action fields.
 	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, reset, iterate, resume, list, route, dispatch-brief-atom (retrieve one atom of an envelope-split dispatch brief), or generate-finalize (recipe only — generates all 13 recipe files from plan)."`
@@ -93,7 +93,7 @@ type immediateResponse struct {
 func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, schemaCache *schema.Cache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string, mounter ops.Mounter, rt runtime.Info) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
-		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (create/adopt infrastructure only — not the user's application), develop (all development, deployment, fixing, investigating), recipe (create recipe repo files), cicd (CI/CD setup). After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route\".",
+		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (create/adopt infrastructure only — not the user's application), develop (all development, deployment, fixing, investigating), recipe (create recipe repo files), cicd (CI/CD setup), export (turn a deployed service into a re-importable git repo with import.yaml + buildFromGit). After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route\".",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Workflow orchestration",
 			ReadOnlyHint:   false,

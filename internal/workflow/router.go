@@ -161,8 +161,23 @@ func strategyOfferings(metas []*ServiceMeta) []FlowOffering {
 	if dominant == StrategyPushGit {
 		offerings = append(offerings,
 			FlowOffering{Workflow: "cicd", Priority: 2, Hint: `zerops_workflow action="start" workflow="cicd"`},
-			FlowOffering{Workflow: "export", Priority: 3, Hint: `zerops_workflow action="start" workflow="export"`},
 		)
+	}
+
+	// Export — offer whenever any bootstrapped service has landed a first
+	// deploy. Export works across strategies (push-dev, push-git, manual):
+	// it turns any deployed service into a re-importable git repo via
+	// zerops_deploy strategy=git-push. Gating on push-git would hide the
+	// flow from exactly the users who most need it — teams on push-dev
+	// that want to produce a sharable recipe from their workspace.
+	for _, m := range metas {
+		if m.IsDeployed() {
+			offerings = append(offerings, FlowOffering{
+				Workflow: "export", Priority: 3,
+				Hint: `zerops_workflow action="start" workflow="export" — turn a deployed service into a re-importable git repo (import.yaml + buildFromGit)`,
+			})
+			break
+		}
 	}
 
 	return offerings
