@@ -1425,3 +1425,56 @@ The first three gates are hard-green. The fourth is a soft gate: the scaffold sh
 ### Next — STOP at post-C-14 gate
 
 Per [HANDOFF-to-I4 §Operating rules](HANDOFF-to-I4.md), the post-C-14 gate is a user-commission point: the user runs v35 showcase against the new code + atom tree; post-run measurement data fills in the calibration-bar evaluators (§C-14 known-deferred) and unblocks C-15 cleanup. This instance stops here and reports C-14 complete + pre-v35 ship gate passing (3/4 hard-green; 4th soft-green pending v35 data).
+
+---
+
+## Cx-CHECK-WIRE-NOTATION — check Detail strings use JSON keys, not Go struct.field notation (F-2 close)
+
+**Status**: green — test RED against `manifest.go:302`, then GREEN after rewrite.
+
+**Context**: [HANDOFF-to-I6](HANDOFF-to-I6.md) fix-stack, smallest-surface gate-to-PROCEED commit. Closes defect-class-registry §16.2 (`v35-check-detail-go-notation`). v35 smoking gun: `writer_manifest_completeness` failed 11× with detail `"manifest missing entries for N distinct FactRecord.Title values"` — the main agent tried `Title` / `factRecord.Title` sub-object / 14 top-level key aliases but never the actual JSON key `fact_title`, because nothing in the error text pointed at it.
+
+### What landed
+
+A package-scoped AST lint (a Go test, not a golangci-lint rule) that walks every non-test source file in `internal/ops/checks/` + `internal/tools/workflow_checks_*.go`, locates every `workflow.StepCheck` composite literal (including `[]workflow.StepCheck{{...}}` inner-composite-lit-with-nil-Type shapes), extracts every string literal used in the `Detail` field value — directly or inside a nested `fmt.Sprintf`/`fmt.Errorf` format string or format argument — and fails the test if any matches `\b(FactRecord|ContentManifest|ContentManifestFact|ManifestFact|StepCheck)\.[A-Z]\w+\b`. Plus the one Detail-string rewrite this surfaced.
+
+- [`internal/ops/checks/check_detail_wire_notation_test.go`](../../internal/ops/checks/check_detail_wire_notation_test.go) (+217 LoC, new) — `TestCheckDetailStrings_UseJSONKeyNotation_NoGoStructFieldDotNotation`. The AST-walker (`walkForStepCheckDetails`) tracks slice/array element context so inner composite literals with nil Type inherit the outer `[]StepCheck` element type, which the v35 regression file (`manifest.go:298-305`) uses.
+- [`internal/ops/checks/manifest.go:301`](../../internal/ops/checks/manifest.go) — `CheckManifestCompleteness` Detail rewritten. Old: `"manifest missing entries for N distinct FactRecord.Title values"`. New: `"manifest missing N entries whose \`fact_title\` matches a \`title\` from the facts log"` + explicit reference to `ZCP_CONTENT_MANIFEST.json`, `classification`, `routed_to` as the wire keys the author must fill in.
+- [`internal/ops/checks/manifest_test.go:264`](../../internal/ops/checks/manifest_test.go) — updated the `wantDetail` substring assertion from the now-absent `"2 distinct"` to `"missing 2 entries" + "`fact_title`"`, pinning the corrected notation against regression.
+
+### Design decisions
+
+1. **AST lint, not regex grep.** Regex on raw source text would produce false positives on comments (which legitimately name Go struct fields for Go readers) and Go doc-comments on check-author types. An AST walker scoped to `workflow.StepCheck` composite literals' `Detail` field values eliminates that class entirely — comments are not `*ast.BasicLit` strings.
+2. **Slice-of-StepCheck inner-composite tracking.** The v35 smoking-gun lives at `return []workflow.StepCheck{{Name: ..., Detail: fmt.Sprintf(...)}}` — the inner composite literal's `Type` is `nil` (inferred from the slice's element type). Without tracking slice-element context, the AST walker would skip this case and silently pass the broken string. The `visit(n, inStepCheckSlice bool)` closure propagates the outer `ArrayType.Elt == StepCheck` decision to the inner composites. Verified by the RED run flagging `manifest.go:302`.
+3. **Test package is `checks_test` (external).** Keeps the AST walker out of production code; it's authored as a test helper rather than a reusable lint harness. If more wire-contract structs surface (beyond the `FactRecord` / `ContentManifest*` / `StepCheck` seed set), append to `forbiddenGoStructs`; if more check-authoring directories beyond `internal/ops/checks/` + `internal/tools/workflow_checks_*.go` get added, extend `dirs`.
+4. **One Detail string changed.** The lint surfaced exactly one violation (`manifest.go:302`). Other `Detail` strings across the 16 checks + 15 workflow_checks_* files were already JSON-keyed or didn't mention struct.field notation at all. No broad rewrite was required — narrow surgical change.
+
+### Verification
+
+- `go test github.com/zeropsio/zcp/internal/ops/checks/ -run TestCheckDetailStrings_UseJSONKeyNotation -v -count=1` → PASS (pre-fix: FAIL naming `manifest.go:302  matched "FactRecord.Title"`).
+- `go test ./... -count=1 -short` → 22/22 packages green.
+- `make lint-local` → 0 issues (golangci-lint clean + recipe_atom_lint clean).
+
+### LoC delta
+
+- `internal/ops/checks/check_detail_wire_notation_test.go`: +217 LoC (new file).
+- `internal/ops/checks/manifest.go`: 1 line rewritten (Detail format string).
+- `internal/ops/checks/manifest_test.go`: 1 line rewritten (wantDetail assertion).
+- **Total**: ~+220 LoC, ~2 lines changed.
+
+### Breaks-alone consequence
+
+Nothing downstream. The check name `writer_manifest_completeness` is unchanged; the check status logic is unchanged; only the human-readable `Detail` string shifts from Go-field notation to JSON-key notation. The `zcp check writer_manifest_completeness` shim surface and the server-side gate both receive the corrected text from the same `CheckManifestCompleteness` Go source (gate↔shim one-implementation invariant #2 preserved).
+
+### Ordering deps verified
+
+Independent of the other four Cx-commits. Does not conflict with C-7e..C-14 or any pre-rollout work. Lands first per the HANDOFF-to-I6 recommended order because it's the smallest surface and fastest feedback loop.
+
+### Known follow-ups
+
+- If the fix stack produces new user-facing strings referencing wire contracts in other surfaces (e.g. guidance responses, error envelopes), consider extending the AST walker's scope beyond `StepCheck.Detail` to cover those too. Deferred until another surface surfaces a regression.
+- The `forbiddenGoStructs` seed list is narrow (5 struct names). If the codebase grows additional wire-contract structs (e.g. `ContentManifestV2`, `FactLogEntry`), the list must be updated. A future hardening could auto-derive it by AST-scanning `internal/ops/checks/*.go` + `internal/ops/facts_log.go` for `type X struct` declarations whose fields have `json:` tags. Not urgent — current surface is fully covered.
+
+### Next
+
+Advance to Cx-ITERATE-GUARD per HANDOFF-to-I6 fix-stack order.

@@ -299,7 +299,7 @@ func CheckManifestCompleteness(_ context.Context, m *ContentManifest, factsLogPa
 		Name:   "writer_manifest_completeness",
 		Status: StatusFail,
 		Detail: fmt.Sprintf(
-			"manifest missing entries for %d distinct FactRecord.Title values that appear in the facts log: %s. Every recorded fact must have exactly one manifest entry with classification + routed_to. An under-populated manifest bypasses the classification-consistency and honesty sub-checks.",
+			"manifest missing %d entries whose `fact_title` matches a `title` from the facts log: %s. Each facts-log entry (JSON key `title`) must have exactly one manifest entry in ZCP_CONTENT_MANIFEST.json whose `fact_title` equals that title, with `classification` + `routed_to` set. An under-populated manifest bypasses the classification-consistency and honesty sub-checks.",
 			len(missing), strings.Join(missing, "; "),
 		),
 	}}
