@@ -1,7 +1,7 @@
 # Zerops
 
-Zerops is a PaaS with its own schema — not Kubernetes, Docker Compose, or
-Helm.
+Zerops has its own syntax and conventions. Don't guess — look them up
+via `zerops_knowledge`, and inspect live state via `zerops_*` tools.
 
 ## Where you are
 
