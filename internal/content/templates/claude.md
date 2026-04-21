@@ -18,11 +18,17 @@ scaffolding, debugging, deploying, or even planning or discussing the
 change — starts a develop workflow:
 
 ```
-zerops_workflow action="start" workflow="develop" intent="<one-liner>"
+zerops_workflow action="start" workflow="develop" \
+  intent="<one-liner>" scope=["appdev","appstage"]
 ```
 
-The develop workflow guides each step, tracks every deploy and verify,
-and auto-closes once the services you're working on are deployed and verified.
+`scope` names the runtime service hostnames this task works on — the
+auto-close unit. Auto-close fires once every hostname in scope has a
+successful deploy **and** a passed verify. Copy hostnames from the
+bootstrap close transition message, or from `zerops_discover`.
+
+A new `intent` on an already-open session auto-closes the prior one
+(1 task = 1 session); no need to `action="close"` manually between tasks.
 
 **Bootstrap first** when there are no services yet or you need to add
 infrastructure (new service, mode expansion):

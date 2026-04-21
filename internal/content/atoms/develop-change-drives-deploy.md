@@ -14,14 +14,9 @@ discarded. Rule:
 
 > **edit → deploy (via active strategy) → verify**
 
-If you made code changes, run the strategy-specific `zerops_deploy`
-before closing the work session. `zerops_workflow action="close"`
-will warn when it sees no successful deploy recorded in the session —
-pass `force=true` only for non-code tasks (investigation, `zerops_env`
-tweaks, abandoned experiments).
-
-The work session auto-closes once every service in scope has a
-successful deploy **and** a passed verify. That is the normal
-task-complete signal; explicit close is only needed when skipping
-deploy intentionally or when auto-close didn't fire (e.g. partial
-coverage).
+The work session auto-closes once every service in scope has a successful
+deploy **and** a passed verify — that is the objective "task done"
+signal. Explicit `zerops_workflow action="close" workflow="develop"` is
+the "I'm done here" signal; close always succeeds (it's session cleanup,
+not commitment) and is rarely needed because starting a new task with a
+different `intent` auto-closes the prior session.

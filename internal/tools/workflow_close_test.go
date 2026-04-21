@@ -1,22 +1,20 @@
-// Tests for: handleWorkSessionClose — close-without-deploy guard + force escape.
+// Tests for: handleWorkSessionClose — close always succeeds.
 //
-// Work-session close has two policy modes:
-//   - Default (force=false): refuses when no successful deploy is recorded.
-//     Catches the "agent edited code then forgot to deploy" regression —
-//     the status block in that shape tells the agent the task is done but
-//     no artifact actually reached the platform.
-//   - Force (force=true): bypasses the guard. Intended for investigations,
-//     env-only changes, and abandoned sessions that legitimately have no
-//     deploy artifact.
+// Close is session cleanup, not commitment: any code edits live on the
+// SSHFS mount, any deploys live on the platform. Close removes the per-PID
+// session file; nothing of substance is lost. Auto-close (scope-all-green)
+// is the "task done, verified" signal; manual close is "I'm done here, for
+// whatever reason". Both delete the file.
 //
-// Auto-close is orthogonal: once ws.ClosedAt is set with
-// CloseReasonAutoComplete the full-green heuristic already ran, so the
-// guard must NOT block a subsequent explicit close (idempotency contract).
+// The previous close guard blocked close-without-deploy to catch "agent
+// edited code then forgot to deploy" regressions. In practice it created
+// friction on legitimate pivots (the agent worked around it via direct
+// tools), and with the scope-explicit invariant restored (auto-close fires
+// reliably on task completion) the guard's raison d'être evaporated.
 package tools
 
 import (
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -42,7 +40,8 @@ func closeTestEngine(t *testing.T) (*workflow.Engine, string) {
 
 // seedOpenWorkSession writes a work session with the given deploy history.
 // `deploySucceeded` controls whether the single deploy attempt carries a
-// non-empty SucceededAt — the signal HasSuccessfulDeploy keys off.
+// non-empty SucceededAt — informational since the guard is gone but still
+// useful to confirm close doesn't care about deploy state either way.
 func seedOpenWorkSession(t *testing.T, dir string, deploySucceeded bool) {
 	t.Helper()
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -58,8 +57,8 @@ func seedOpenWorkSession(t *testing.T, dir string, deploySucceeded bool) {
 }
 
 // seedAutoClosedSession writes a work session that already auto-closed
-// (ClosedAt + CloseReasonAutoComplete). The guard must NOT fire — an
-// auto-closed session already cleared the full-green heuristic.
+// (ClosedAt + CloseReasonAutoComplete). A follow-up manual close must still
+// remove the file — close is idempotent.
 func seedAutoClosedSession(t *testing.T, dir string) {
 	t.Helper()
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -77,13 +76,12 @@ func seedAutoClosedSession(t *testing.T, dir string) {
 	}
 }
 
-// closeInput shortens the WorkflowInput constructor — only the two fields
-// the close handler reads are relevant.
-func closeInput(force bool) WorkflowInput {
+// closeInput shortens the WorkflowInput constructor — only the workflow
+// value is relevant now that the close guard is gone.
+func closeInput() WorkflowInput {
 	return WorkflowInput{
 		Workflow: "develop",
 		Action:   "close",
-		Force:    FlexBool(force),
 	}
 }
 
@@ -92,7 +90,7 @@ func TestHandleWorkSessionClose_SuccessfulDeploy_Closes(t *testing.T) {
 	engine, dir := closeTestEngine(t)
 	seedOpenWorkSession(t, dir, true /*deploySucceeded*/)
 
-	result, _, err := handleWorkSessionClose(engine, closeInput(false))
+	result, _, err := handleWorkSessionClose(engine, closeInput())
 	if err != nil {
 		t.Fatalf("handleWorkSessionClose: %v", err)
 	}
@@ -104,61 +102,39 @@ func TestHandleWorkSessionClose_SuccessfulDeploy_Closes(t *testing.T) {
 	}
 }
 
-func TestHandleWorkSessionClose_NoDeploy_Blocks(t *testing.T) {
+// Close without any deploy history must succeed — the old guard blocked
+// this with CLOSE_BLOCKED; the new contract treats close as session
+// cleanup with no deploy precondition.
+func TestHandleWorkSessionClose_NoDeploy_Closes(t *testing.T) {
 	t.Parallel()
 	engine, dir := closeTestEngine(t)
 	seedOpenWorkSession(t, dir, false /*deploySucceeded*/)
 
-	result, _, err := handleWorkSessionClose(engine, closeInput(false))
-	if err != nil {
-		t.Fatalf("handleWorkSessionClose: %v", err)
-	}
-	if !result.IsError {
-		t.Fatalf("expected ErrCloseBlocked when no deploy recorded, got:\n%s", extractText(result))
-	}
-	text := extractText(result)
-	for _, needle := range []string{"CLOSE_BLOCKED", "no successful deploy", "force=true"} {
-		if !strings.Contains(text, needle) {
-			t.Errorf("response missing %q. Got:\n%s", needle, text)
-		}
-	}
-	// Guard must not delete the file.
-	if ws, _ := workflow.CurrentWorkSession(dir); ws == nil {
-		t.Error("work session was deleted despite guard; guard must keep state for retry")
-	}
-}
-
-func TestHandleWorkSessionClose_NoDeploy_ForceTrue_Closes(t *testing.T) {
-	t.Parallel()
-	engine, dir := closeTestEngine(t)
-	seedOpenWorkSession(t, dir, false /*deploySucceeded*/)
-
-	result, _, err := handleWorkSessionClose(engine, closeInput(true))
+	result, _, err := handleWorkSessionClose(engine, closeInput())
 	if err != nil {
 		t.Fatalf("handleWorkSessionClose: %v", err)
 	}
 	if result.IsError {
-		t.Fatalf("force=true must bypass guard, got:\n%s", extractText(result))
+		t.Fatalf("close must succeed without deploy history, got:\n%s", extractText(result))
 	}
 	if ws, _ := workflow.CurrentWorkSession(dir); ws != nil {
-		t.Error("work session should be deleted after force=true close")
+		t.Error("work session should be deleted after close")
 	}
 }
 
-// Auto-closed sessions have already cleared the full-green heuristic, so a
-// follow-up explicit close (without force) must proceed — the guard only
-// applies to OPEN sessions (ClosedAt empty).
+// Auto-closed sessions (ClosedAt set) still get removed by an explicit
+// follow-up close. The handler is idempotent.
 func TestHandleWorkSessionClose_AutoClosedSession_Closes(t *testing.T) {
 	t.Parallel()
 	engine, dir := closeTestEngine(t)
 	seedAutoClosedSession(t, dir)
 
-	result, _, err := handleWorkSessionClose(engine, closeInput(false))
+	result, _, err := handleWorkSessionClose(engine, closeInput())
 	if err != nil {
 		t.Fatalf("handleWorkSessionClose: %v", err)
 	}
 	if result.IsError {
-		t.Fatalf("auto-closed session close must succeed without force, got:\n%s", extractText(result))
+		t.Fatalf("auto-closed session close must succeed, got:\n%s", extractText(result))
 	}
 	if ws, _ := workflow.CurrentWorkSession(dir); ws != nil {
 		t.Error("auto-closed session should be removed after explicit close")
@@ -171,7 +147,7 @@ func TestHandleWorkSessionClose_AutoClosedSession_Closes(t *testing.T) {
 func TestHandleWorkSessionClose_NoSession_NoOp(t *testing.T) {
 	t.Parallel()
 	engine, _ := closeTestEngine(t)
-	result, _, err := handleWorkSessionClose(engine, closeInput(false))
+	result, _, err := handleWorkSessionClose(engine, closeInput())
 	if err != nil {
 		t.Fatalf("handleWorkSessionClose: %v", err)
 	}
@@ -196,9 +172,9 @@ func TestHandleWorkSessionClose_WrongWorkflow_Rejected(t *testing.T) {
 	}
 }
 
-// End-to-end through RegisterWorkflow: confirms the guard fires at the MCP
-// tool boundary (Force field surfaces through the JSON schema).
-func TestWorkflowTool_CloseGuardFromJSON(t *testing.T) {
+// End-to-end through RegisterWorkflow: confirms close surfaces at the MCP
+// tool boundary and always succeeds.
+func TestWorkflowTool_CloseAlwaysSucceeds(t *testing.T) {
 	t.Parallel()
 	engine, dir := closeTestEngine(t)
 	seedOpenWorkSession(t, dir, false /*deploySucceeded*/)
@@ -206,26 +182,15 @@ func TestWorkflowTool_CloseGuardFromJSON(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, dir, "", nil, runtime.Info{})
 
-	// Without force → blocked.
-	blocked := callTool(t, srv, "zerops_workflow", map[string]any{
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "close",
 		"workflow": "develop",
 	})
-	if !blocked.IsError {
-		t.Fatalf("close without deploy must be blocked, got:\n%s", getTextContent(t, blocked))
-	}
-
-	// With force → succeeds.
-	forced := callTool(t, srv, "zerops_workflow", map[string]any{
-		"action":   "close",
-		"workflow": "develop",
-		"force":    true,
-	})
-	if forced.IsError {
-		t.Fatalf("force=true must close, got:\n%s", getTextContent(t, forced))
+	if result.IsError {
+		t.Fatalf("close must succeed, got:\n%s", getTextContent(t, result))
 	}
 	if ws, _ := workflow.CurrentWorkSession(dir); ws != nil {
-		t.Error("work session not deleted after force=true close")
+		t.Error("work session not deleted after close")
 	}
 }
 

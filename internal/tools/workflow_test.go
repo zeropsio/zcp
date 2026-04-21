@@ -154,14 +154,16 @@ func TestWorkflowTool_Action_Start_Develop_ReturnsBriefing(t *testing.T) {
 		"action":   "start",
 		"workflow": "develop",
 		"intent":   "Deploy bun app",
+		"scope":    []string{"appdev"},
 	})
 
 	if result.IsError {
 		t.Fatalf("unexpected error: %s", getTextContent(t, result))
 	}
-	// Develop is stateless — should NOT create a session.
+	// Develop is stateless at the engine-session level — should NOT create a
+	// bootstrap/recipe session. A per-PID WorkSession is still written.
 	if engine.HasActiveSession() {
-		t.Error("develop should NOT create a session (stateless briefing)")
+		t.Error("develop should NOT create an engine session (stateless briefing)")
 	}
 	// Response should contain briefing content.
 	text := getTextContent(t, result)
@@ -200,14 +202,16 @@ func TestWorkflowTool_Action_Start_Develop_ManualStrategy_ReturnsBriefing(t *tes
 		"action":   "start",
 		"workflow": "develop",
 		"intent":   "Deploy app",
+		"scope":    []string{"appdev"},
 	})
 
 	if result.IsError {
 		t.Fatalf("manual strategy should not return error: %s", getTextContent(t, result))
 	}
-	// Develop is stateless — no session even with manual strategy.
+	// Develop does not create an engine-level bootstrap/recipe session —
+	// only the per-PID WorkSession is written.
 	if engine.HasActiveSession() {
-		t.Error("manual strategy should NOT create a session (stateless briefing)")
+		t.Error("manual strategy should NOT create an engine session (stateless briefing)")
 	}
 	// Briefing should mention manual strategy.
 	text := getTextContent(t, result)

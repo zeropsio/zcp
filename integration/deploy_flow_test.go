@@ -66,8 +66,13 @@ func startDevelopWorkflow(t *testing.T, session *mcp.ClientSession) {
 
 	// Start develop workflow via MCP.
 	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
-		Name:      "zerops_workflow",
-		Arguments: map[string]any{"action": "start", "workflow": "develop", "intent": "integration test deploy"},
+		Name: "zerops_workflow",
+		Arguments: map[string]any{
+			"action":   "start",
+			"workflow": "develop",
+			"intent":   "integration test deploy",
+			"scope":    []string{"app"},
+		},
 	})
 	if err != nil {
 		t.Fatalf("start develop workflow: %v", err)

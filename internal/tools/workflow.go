@@ -44,6 +44,15 @@ type WorkflowInput struct {
 	Route      string `json:"route,omitempty"      jsonschema:"Bootstrap route: adopt, recipe, classic, or resume. Omit on first start call to receive ranked route options; set on second call to commit the chosen route."`
 	RecipeSlug string `json:"recipeSlug,omitempty" jsonschema:"Recipe slug when route=recipe (pick one from the discovery response's routeOptions[].recipeSlug)."`
 
+	// Develop workflow scope — the runtime service hostnames this task works
+	// on. Required for action="start" workflow="develop". Fixed at start and
+	// stays stable through the task; auto-close fires when every hostname in
+	// scope has a succeeded deploy and a passed verify. Managed-service
+	// hostnames are rejected (not deployable). Services newly bootstrapped
+	// mid-task do NOT auto-join — close and start a new develop with the
+	// expanded scope, or treat them as out-of-band.
+	Scope []string `json:"scope,omitempty" jsonschema:"Runtime service hostnames this task works on (required for action='start' workflow='develop'). Fixed at start; auto-close requires every hostname in scope to have a successful deploy and passed verify. Example: [\"appdev\",\"appstage\"]. Reject managed services — only deployable runtime hostnames."`
+
 	// Recipe workflow only — the agent's self-reported model identifier from its
 	// own system prompt. Required at start for the recipe workflow because v13
 	// shipped on Sonnet/200k by accident and doubled wall time while regressing
@@ -60,15 +69,6 @@ type WorkflowInput struct {
 	// import.yaml files. Replaces the v5 anti-pattern of hand-editing generated
 	// files (which were re-wiped on every generate-finalize re-run).
 	ProjectEnvVariables map[string]map[string]string `json:"projectEnvVariables,omitempty" jsonschema:"Recipe generate-finalize only: per-env project-level envVariables for all 6 import.yaml files. Keyed by env index as string ('0'..'5'). Each env value is a flat {name: value} map baked into that env's project.envVariables block. Values may contain ${zeropsSubdomainHost} — the platform preprocessor resolves it at project import time. Different envs typically carry different shapes: envs 0-1 (dev/stage pair) carry DEV_* and STAGE_* URL constants derived from apidev/appdev/apistage/appstage hostnames; envs 2-5 (single-slot) carry STAGE_* only with hostnames api/app. Merge semantics: a non-empty map for an env REPLACES that env's prior map (atomic); an empty map CLEARS; omitting an env leaves it untouched. Refine one env at a time by passing only that env's key."`
-
-	// Force bypasses the close-without-deploy guard on action="close"
-	// workflow="develop". Default false — close refuses when the work
-	// session has no successful deploy recorded (catches accidental close
-	// after "I changed code but forgot to deploy"). Set force=true for
-	// investigations, env-only changes, and abandoned sessions. FlexBool
-	// per project convention — LLM agents sometimes serialize booleans as
-	// strings, which the default schema rejects with a non-actionable error.
-	Force FlexBool `json:"force,omitempty"`
 }
 
 // immediateResponse is returned from immediate (stateless) workflows.
@@ -247,7 +247,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 
 	// Develop workflow — stateless briefing, no session created.
 	if input.Workflow == workflowDevelop {
-		return handleDevelopBriefing(ctx, engine, client, projectID, input, cache, mounter, selfHostname, rt)
+		return handleDevelopBriefing(ctx, engine, client, projectID, input, rt)
 	}
 
 	// Recipe workflow.
@@ -443,11 +443,17 @@ func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client 
 	})), nil, nil
 }
 
-// handleWorkSessionClose closes the current-PID work session. Refuses with
-// ErrCloseBlocked when the session recorded no successful deploy unless
-// force=true — catches accidental close after "edited code but forgot to
-// deploy". Auto-closed sessions (ClosedAt set) bypass the guard because
-// the auto-close heuristic already validated the green condition.
+// handleWorkSessionClose closes the current-PID work session. Always
+// succeeds — close is session cleanup, not commitment. Any edits live on
+// the SSHFS mount and any deploys live on the platform; close only removes
+// the per-PID session file. Auto-close is the "task done, objectively
+// verified" signal (scope-all-green); manual close is "I'm done here, for
+// whatever reason".
+//
+// 1 task = 1 session invariant: callers restart with a new intent to open
+// the next task. New-intent starts auto-close prior in handleDevelopBriefing
+// already, so explicit close is rarely needed except for investigation
+// tasks with no deploy activity.
 func handleWorkSessionClose(engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if input.Workflow != "" && input.Workflow != workflowDevelop {
 		return convertError(platform.NewPlatformError(
@@ -458,20 +464,7 @@ func handleWorkSessionClose(engine *workflow.Engine, input WorkflowInput) (*mcp.
 	pid := os.Getpid()
 	stateDir := engine.StateDir()
 
-	ws, _ := workflow.CurrentWorkSession(stateDir)
-	// Session missing entirely → no-op success (LLM may retry after
-	// compaction). Auto-closed session (ClosedAt set) already satisfied the
-	// full-green heuristic, so the guard does not apply — fall through.
-	if ws != nil && ws.ClosedAt == "" && !input.Force.Bool() && !workflow.HasSuccessfulDeploy(ws) {
-		return convertError(platform.NewPlatformError(
-			platform.ErrCloseBlocked,
-			"Work session has no successful deploy recorded — refusing to close.",
-			"If you made code changes, deploy via the active strategy and verify first. "+
-				"For investigations, env-only tweaks, or abandoned tasks, re-run close with force=true.",
-		)), nil, nil
-	}
-
 	_ = workflow.DeleteWorkSession(stateDir, pid)
 	_ = workflow.UnregisterSession(stateDir, workflow.WorkSessionID(pid))
-	return textResult("Work session closed. Start the next task: zerops_workflow action=\"start\" workflow=\"develop\" intent=\"...\""), nil, nil
+	return textResult("Work session closed. Start the next task: zerops_workflow action=\"start\" workflow=\"develop\" intent=\"...\" scope=[\"hostname\",...]"), nil, nil
 }
