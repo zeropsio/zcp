@@ -60,7 +60,7 @@ Drop example — "enables zero-downtime rolling deploys" repeated word-for-word 
 
 ---
 
-## Surface 4 — Per-codebase README integration-guide fragment + `INTEGRATION-GUIDE.md`
+## Surface 4 — Per-codebase README integration-guide fragment
 
 Reader: a porter bringing their own existing application — a Svelte app they already built, a NestJS API they already wrote. They are not using this recipe as a template. They are extracting the Zerops-specific steps to adapt their own code.
 
@@ -78,7 +78,7 @@ Drop example — an H3 describing `api.ts`'s content-type check: `api.ts` is rec
 
 ---
 
-## Surface 5 — Per-codebase README knowledge-base fragment + `GOTCHAS.md`
+## Surface 5 — Per-codebase README knowledge-base fragment
 
 Reader: a developer hitting a confusing failure on Zerops and searching for what is wrong.
 
@@ -137,8 +137,8 @@ Drop example — deploy instructions: those belong in integration-guide items an
 | 1 | Root README | Recipe-page browser | 20–30 lines |
 | 2 | Env README | Tier chooser | 40–80 lines |
 | 3 | Env `import.yaml` comments | Dashboard-manifest reader | 4–10 lines per service block |
-| 4 | README integration-guide + `INTEGRATION-GUIDE.md` | Porter with own app | 3–6 H3 items |
-| 5 | README knowledge-base + `GOTCHAS.md` | Dev hitting platform failure | 3–6 gotcha bullets |
+| 4 | README integration-guide fragment | Porter with own app | 3–6 H3 items |
+| 5 | README knowledge-base fragment | Dev hitting platform failure | 3–6 gotcha bullets |
 | 6 | Per-codebase CLAUDE.md | Repo operator | ≥1200 bytes, ≥2 custom sections |
 
 Cross-surface discipline: each fact lives on exactly one surface. Other surfaces that benefit from the fact cross-reference — "See apidev/README.md §Gotchas for NATS credential format" — they do not re-author. The routing-matrix atom enforces this at the manifest level; the self-review atom enforces it at the published-content level.

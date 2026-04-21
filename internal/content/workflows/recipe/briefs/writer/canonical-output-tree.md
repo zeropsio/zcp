@@ -8,8 +8,8 @@ For each hostname `{h}` in the plan's codebase list:
 
 - `{{.ProjectRoot}}/{h}/README.md` — reader-facing content with three extract fragments (intro, integration-guide, knowledge-base). Published to the recipe page at finalize.
 - `{{.ProjectRoot}}/{h}/CLAUDE.md` — repo-local operational guide. Plain markdown. Not published.
-- `{{.ProjectRoot}}/{h}/INTEGRATION-GUIDE.md` — stand-alone integration-guide document that the README integration-guide fragment references. Each H3 item reads as a single porter-actionable change.
-- `{{.ProjectRoot}}/{h}/GOTCHAS.md` — stand-alone gotchas document that the README knowledge-base fragment references. Each bullet names a concrete observable symptom.
+
+Per codebase, exactly two authored files. Content that would have lived in standalone porter-facing documents belongs inside the README integration-guide and knowledge-base fragments — those fragments ARE the porter surface.
 
 ## Per-environment files (one per env tier)
 
@@ -32,4 +32,4 @@ The comment set inside each environment's `import.yaml` file is applied at final
 
 ## Out-of-scope paths (positive allow-list means: anything else)
 
-The seven bullets above enumerate every file path your role produces. Any other location on the SSHFS mount — for example `{{.ProjectRoot}}/recipe-{slug}/...`, `{{.ProjectRoot}}/{slug}-output/...`, or a paraphrased environment folder name — is outside your writer scope. The publish pipeline reads only the canonical tree above.
+The bullets above enumerate every file path your role produces. Any other location on the SSHFS mount — for example `{{.ProjectRoot}}/recipe-{slug}/...`, `{{.ProjectRoot}}/{slug}-output/...`, or a paraphrased environment folder name — is outside your writer scope. The publish pipeline reads only the canonical tree above.

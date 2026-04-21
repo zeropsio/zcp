@@ -6,7 +6,7 @@ You are authoring reader-facing content. Workflow state is held elsewhere; your 
 
 Permitted:
 
-- File ops on the SSHFS mount: `Read`, `Write`, `Edit`, `Grep`, `Glob`. `Write` is your primary tool because most of your output is authored from scratch (per-codebase README, per-codebase CLAUDE.md, per-codebase INTEGRATION-GUIDE.md, per-codebase GOTCHAS.md, per-env README, root README, content manifest).
+- File ops on the SSHFS mount: `Read`, `Write`, `Edit`, `Grep`, `Glob`. `Write` is your primary tool because most of your output is authored from scratch (per-codebase README, per-codebase CLAUDE.md, per-env README, root README, content manifest).
 - `mcp__zerops__zerops_knowledge` — on-demand platform topic lookup. Mandatory when the fact you are writing about matches the Citation Map.
 - `mcp__zerops__zerops_logs` — read container logs when verifying a gotcha's observable symptom.
 - `mcp__zerops__zerops_discover` — introspect service shape for service-keys tables.

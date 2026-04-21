@@ -43,7 +43,7 @@ For each env tier's payload entry:
 
 ---
 
-## Surface 4 — Per-codebase README integration-guide + `INTEGRATION-GUIDE.md`
+## Surface 4 — Per-codebase README integration-guide fragment
 
 For each hostname `{h}` in `{{.Hostnames}}`:
 
@@ -53,11 +53,10 @@ For each hostname `{h}` in `{{.Hostnames}}`:
 - Every H3 item is standalone: a porter reading the single item understands what to do without reading the neighbouring items.
 - Self-referential items removed: no H3 references a scaffold helper file or class by name as the primary teaching.
 - Matching-topic items cite their platform topic from the Citation Map in prose.
-- The companion `INTEGRATION-GUIDE.md` in the codebase directory mirrors the fragment content.
 
 ---
 
-## Surface 5 — Per-codebase README knowledge-base + `GOTCHAS.md`
+## Surface 5 — Per-codebase README knowledge-base fragment
 
 For each hostname `{h}` in `{{.Hostnames}}`:
 
@@ -69,7 +68,6 @@ For each hostname `{h}` in `{{.Hostnames}}`:
 - No recipe-run version-anchor strings in the published bullet text — describe the behavior class rather than which run surfaced it.
 - Cross-codebase uniqueness: stems do not overlap between codebases; repeated facts cross-reference by prose.
 - IG/gotcha distinctness: no gotcha stem is a paraphrase of an IG heading in the same README.
-- The companion `GOTCHAS.md` mirrors the fragment content.
 
 ---
 

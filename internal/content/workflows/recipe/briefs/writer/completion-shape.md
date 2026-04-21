@@ -11,8 +11,6 @@ Your return payload to the step above you. The payload is advisory prose; the lo
    {{.ProjectRoot}}/ZCP_CONTENT_MANIFEST.json                 <bytes>
    {{.ProjectRoot}}/{hostname}/README.md                       <bytes>
    {{.ProjectRoot}}/{hostname}/CLAUDE.md                       <bytes>
-   {{.ProjectRoot}}/{hostname}/INTEGRATION-GUIDE.md            <bytes>
-   {{.ProjectRoot}}/{hostname}/GOTCHAS.md                      <bytes>
    {{.ProjectRoot}}/environments/{env-folder}/README.md        <bytes>
    ```
 
