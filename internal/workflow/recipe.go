@@ -31,6 +31,13 @@ type RecipeState struct {
 	// Phase C: guidance access and failure tracking for adaptive delivery.
 	GuidanceAccess  []GuidanceAccessEntry `json:"guidanceAccess,omitempty"`
 	FailurePatterns []FailurePattern      `json:"failurePatterns,omitempty"`
+	// Cx-ITERATE-GUARD (v35 F-3 close): true immediately after an
+	// action=iterate call. Gates substep-complete calls until the agent
+	// produces new evidence of work — cleared by a successful
+	// zerops_record_fact, the canonical "I learned something" touchpoint.
+	// Prevents the v35 fake-pass pattern where the agent walked all 12
+	// deploy substeps in 84s with zero intervening tool calls.
+	AwaitingEvidenceAfterIterate bool `json:"awaitingEvidenceAfterIterate,omitempty"`
 }
 
 // GuidanceAccessEntry records a single zerops_guidance topic fetch.
@@ -235,6 +242,14 @@ type RecipeResponse struct {
 	AvailableStacks         string           `json:"availableStacks,omitempty"`
 	PostCompletionSummary   string           `json:"postCompletionSummary,omitempty"`
 	PostCompletionNextSteps []string         `json:"postCompletionNextSteps,omitempty"`
+	// GuidanceTopicIDs (Cx-GUIDANCE-TOPIC-REGISTRY, v35 F-5 close) is the
+	// closed universe of valid zerops_guidance topic IDs, populated on
+	// action=start workflow=recipe so the main agent does not
+	// pattern-match plausible-sounding topics out of its own reasoning
+	// (v35 at 07:29:50-51 showed three hallucinated topic lookups in
+	// succession). Omitted on non-start responses to keep payload size
+	// small — the main agent caches the list from start.
+	GuidanceTopicIDs []string `json:"guidanceTopicIds,omitempty"`
 }
 
 // RecipeProgress summarizes overall recipe progress.
@@ -397,6 +412,7 @@ func (r *RecipeState) ResetForIteration() {
 		r.Steps[firstReset].Status = stepInProgress
 	}
 	r.Active = true
+	r.AwaitingEvidenceAfterIterate = true
 }
 
 // BuildResponse constructs a RecipeResponse from the current state.

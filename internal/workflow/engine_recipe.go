@@ -33,7 +33,13 @@ func (e *Engine) RecipeStart(projectID, intent, tier string) (*RecipeResponse, e
 	if err := saveSessionState(e.stateDir, e.sessionID, state); err != nil {
 		return nil, fmt.Errorf("recipe start save: %w", err)
 	}
-	return rs.BuildResponse(state.SessionID, intent, state.Iteration, e.environment, e.knowledge), nil
+	resp := rs.BuildResponse(state.SessionID, intent, state.Iteration, e.environment, e.knowledge)
+	// Cx-GUIDANCE-TOPIC-REGISTRY (v35 F-5 close): hand the main agent
+	// the closed universe of valid zerops_guidance topic IDs at start
+	// so it references the registry instead of pattern-matching from
+	// its own reasoning.
+	resp.GuidanceTopicIDs = AllTopicIDs()
+	return resp, nil
 }
 
 // RecipeComplete completes the current recipe step or sub-step.
@@ -133,6 +139,17 @@ func (e *Engine) recipeCompleteSubStep(ctx context.Context, state *WorkflowState
 	currentStep := &rs.Steps[rs.CurrentStep]
 	if currentStep.Name != step {
 		return nil, fmt.Errorf("recipe substep complete: expected step %q, got %q", currentStep.Name, step)
+	}
+	// Cx-ITERATE-GUARD (v35 F-3 close): after action=iterate, each substep
+	// complete must be backed by new evidence of work. The canonical gate-
+	// clear is a zerops_record_fact call (the agent's "I learned something"
+	// touchpoint during deploy). Without this guard, v35 let the agent
+	// walk all 12 deploy substeps in 84s with zero intervening tool calls.
+	if rs.AwaitingEvidenceAfterIterate {
+		return nil, fmt.Errorf(
+			"%s: substep %q refused post-iterate — this step was reset by action=iterate and the engine requires new evidence of work before accepting attestations; record at least one fact with zerops_record_fact (the writer subagent's facts-log input; each fact = one observed platform behavior, fix applied, or cross-codebase contract) between the iterate and the next substep complete — re-attesting substeps without fresh evidence is the v35 fake-pass pattern the guard exists to catch",
+			platform.ErrMissingEvidence, subStepName,
+		)
 	}
 
 	// Initialize sub-steps on first sub-step completion if not already set.

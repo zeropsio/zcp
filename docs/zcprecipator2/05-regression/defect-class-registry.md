@@ -739,6 +739,66 @@ Target row count: ≥30 (README §3 step 5 minimum). Actual: **68**.
 
 ---
 
+### v35 — engine-level defects surfaced (showcase stuck on `writer_manifest_completeness`)
+
+Engine/harness/knowledge-engine-layer defects, all pre-rollout — the v35 showcase exposed them because the C-7e..C-14 rollout drove the run deep enough into the deploy-check retry loop to surface them. Rows 16.1–16.6 are **not** atom or check-logic defects; they sit in the runtime layer the rollout did not touch. Full narrative + evidence: [`../runs/v35/analysis.md`](../runs/v35/analysis.md). Fix-stack handoff: [`../HANDOFF-to-I6.md`](../HANDOFF-to-I6.md).
+
+#### 16.1. `v35-dispatch-brief-overflow`
+- **origin_run**: v35 (`complete substep=feature-sweep-stage` at 08:15:21 returns 71,720-char response exceeding MCP tool-response token cap; harness spills to `/home/zerops/.claude/projects/-var-www/.../tool-results/mcp-zerops-zerops_workflow-1776759321598.txt`; main agent reads only first ~3 KB; dispatches writer-1 with a prompt that instructs the sub-agent to `python3 -c "print(open('…').read()[A:B])"` in 80,000-char slices to excavate the wire contract from the JSON blob)
+- **class**: composed dispatch brief exceeds tool-response delivery envelope; harness spillover breaks the in-prompt composition pattern `DISPATCH.md` prescribes — `Build*DispatchBrief` composition is pure, but **delivery** loses fidelity because the main agent never sees the full payload
+- **mechanism_closed_in**: **(open — identified v35)**
+- **current_enforcement**: none; the 32 KB soft cap lives in the MCP tool-response handler but the composition pipeline has no size gate
+- **new_enforcement**: candidate Cx-BRIEF-OVERFLOW — split the readmes-substep composed brief into (a) a short envelope that fits the tool-response cap + (b) a side-channel persisted atom reference the main agent embeds by path. Split boundary: `briefs/writer/` atoms move to on-disk paths; stitcher emits an envelope listing which atoms the dispatch brief composes. Main agent passes atom paths to sub-agent; sub-agent Reads each atom locally. Preserves DISPATCH.md's "atoms transit verbatim" principle while avoiding single-response overflow.
+- **test_scenario**: given any showcase-tier dispatch brief for any substep, when `action=complete` returns the substep's dispatch-brief payload, then `result_size ≤ 32 KB` AND the main agent's next sub-agent-dispatch prompt contains the atom content (or resolvable atom references) the brief requires — without relying on spillover-file excavation
+- **calibration_bar**: `max(zerops_workflow tool_result size)` across session ≤ 32 KB; zero dispatch prompts containing the literal string `tool-results/mcp-zerops` (anti-pattern — sub-agent told to read spillover file)
+
+#### 16.2. `v35-check-detail-go-notation`
+- **origin_run**: v35 (11 `writer_manifest_completeness` failures across iterations 0+1, each with detail `"manifest missing entries for 4 distinct FactRecord.Title values that appear in the facts log"`; `FactRecord` is a Go struct name, `Title` is a Go field name; the wire JSON key for the manifest entry is `fact_title`; main agent tried `Title` / `factRecord.Title` sub-object / uppercase-first-letter / 14 top-level aliases — never the actual `fact_title` key)
+- **class**: check `Detail` strings reference wire contracts via Go type-field notation, misleading JSON-author readers (main agent, writer sub-agent) into shape-guessing rather than naming the JSON key directly
+- **mechanism_closed_in**: **(open — identified v35)**
+- **current_enforcement**: none; check authors hand-write `Detail` strings without a convention
+- **new_enforcement**: candidate Cx-CHECK-WIRE-NOTATION — audit every `StepCheck.Detail` string in `internal/ops/checks/` + `internal/tools/workflow_checks_*.go`; rewrite any Go `Type.Field` reference to the corresponding JSON key with explicit quoting. Add lint rule to `recipe_atom_lint` (or a new `check_detail_lint`) that rejects `Detail` strings matching `[A-Z][A-Za-z]+\.[A-Z][A-Za-z]+` where the LHS is a known Go struct name from `internal/ops/checks/`. Gate↔shim invariant preserved — both paths surface the same corrected text.
+- **test_scenario**: given any check implementation file under `internal/ops/checks/` or `internal/tools/workflow_checks_*.go`, when the test rig greps every `StepCheck{Detail: …}` literal for patterns `FactRecord\.`, `ContentManifestFact\.`, `StepCheck\.`, then zero matches; and for every `Detail` string that names a wire contract key, the JSON key appears in backticks or single quotes
+- **calibration_bar**: zero occurrences of Go-struct-field dot-notation in check `Detail` strings; manual read-through of rewritten strings confirms every wire-contract field is named by its JSON key
+
+#### 16.3. `v35-iterate-fake-pass`
+- **origin_run**: v35 (`action=iterate` at 08:45:22 → `iteration:1`; between 08:46:26 and 08:47:50 main agent fires `action=complete` on all 12 deploy substeps in sequence with zero tool calls between them; each returns ~5070 B; engine accepts every attestation without evidence)
+- **class**: `iterate` mechanism increments iteration counter but does not reset substep-completion state or require fresh evidence for each completion; main agent can walk the step graph top-to-bottom with empty attestations, which the engine accepts — short-circuits what should be re-work
+- **mechanism_closed_in**: **(open — identified v35)**
+- **current_enforcement**: none; engine-correctness invariant not in the invariants list
+- **new_enforcement**: candidate Cx-ITERATE-GUARD — on `action=iterate`, reset all substep-completion markers for the current step to `pending` so the next `action=complete` pass must produce actual work. Alternative: require per-completion attestation to contain a reference to at least one tool call `tool_use_id` from the current iteration (server-side attestation-evidence check). First approach is simpler and preserves the step-graph invariant.
+- **test_scenario**: given a recipe run mid-step with N substeps marked complete, when main agent calls `action=iterate`, then server response shows all N substep-completion markers reset to `pending`; and when main agent tries to call `action=complete` on any substep without new tool-call evidence since the iterate, server rejects with `MISSING_EVIDENCE` (or equivalent)
+- **calibration_bar**: zero substep `action=complete` calls following an `action=iterate` within the same iteration without at least one non-`zerops_workflow` tool call between them
+
+#### 16.4. `v35-skip-attempt-on-mandatory-step`
+- **origin_run**: v35 (`action=skip step=deploy` at 08:49:05 after 11 deploy-check failures and 1 iterate cycle; engine correctly rejects with `INVALID_PARAMETER: "deploy" is mandatory and cannot be skipped`)
+- **class**: retry-budget-exhaustion telemetry — main agent reaches for the skip mechanism on a mandatory step, a behavioral signal the retry loop has exhausted productive paths; engine refuses correctly but the signal itself is diagnostic of F-1/F-2 upstream
+- **mechanism_closed_in**: **(open — identified v35; engine refusal correct)**
+- **current_enforcement**: engine `INVALID_PARAMETER` rejection (correct behavior)
+- **new_enforcement**: candidate Cx-SKIP-TELEMETRY — record skip-attempts on mandatory steps in the session log as a first-class event (not just an error result); rollback-criteria T-trigger can key on this as a retry-exhaustion signal. No engine behavior change; telemetry addition only.
+- **test_scenario**: given a session log, when scanning for `zerops_workflow action=skip step=<deploy|generate|research|provision>`, then zero attempts per session (positive bar — never reaches this state); if > 0 attempts, session carries an `RETRY_EXHAUSTION` telemetry marker
+- **calibration_bar**: zero `action=skip` attempts on mandatory steps per session; if > 0, automatic PAUSE verdict (not rollback — upstream defect F-1/F-2 is the actual problem)
+
+#### 16.5. `v35-guidance-unknown-topic`
+- **origin_run**: v35 (rows 31-33 at 07:29:50-51: `topic=dual-runtime-consumption` → `Error: unknown guidance topic`; `topic=client-code-observable-failure` → same; `topic=init-script-loud-failure` → `result_size=0` empty response — silent failure)
+- **class**: main agent hallucinates plausible-sounding guidance topic IDs; registry returns one of (a) explicit unknown-topic error, (b) silent empty response; silent empty is the worse path because the main agent can't distinguish "no additional guidance" from "lookup miss"
+- **mechanism_closed_in**: **(open — identified v35)**
+- **current_enforcement**: unknown topics return an error string; empty topics return empty (no normalization)
+- **new_enforcement**: candidate Cx-GUIDANCE-TOPIC-REGISTRY — (a) every `zerops_guidance` error response must include a top-3 nearest-match list from the valid-topic registry; (b) empty valid-topic lookups must return an explicit sentinel (`TOPIC_EMPTY`) rather than zero bytes; (c) the initial session briefing lists the full valid-topic ID set so the main agent has a closed universe to reference. Atoms under `briefs/guidance-topics/` remain source of truth; the registry lints them.
+- **test_scenario**: given any session, when main agent calls `zerops_guidance topic=<id>`, then either (a) response is non-empty with actual guidance, or (b) response is an error with 3+ nearest-match topic IDs from the registry; zero silent-empty responses per session; session briefing payload contains the list of valid topic IDs
+- **calibration_bar**: zero unknown-topic responses per session; zero zero-byte `zerops_guidance` responses per session
+
+#### 16.6. `v35-knowledge-manifest-schema-miss`
+- **origin_run**: v35 (row 161 at 08:45:58: `zerops_knowledge query="ZCP_CONTENT_MANIFEST.json schema writer_manifest_completeness"` returns top hit `decisions/choose-queue` with score 1 — completely unrelated; `manifest-contract.md` atom exists at `internal/content/workflows/recipe/briefs/writer/manifest-contract.md` but is not surfaced for this query)
+- **class**: wire-contract atoms not indexed under obvious keyword queries in the knowledge engine; when main agent's paraphrased understanding fails and it falls back to `zerops_knowledge` for rescue, the engine returns irrelevant matches and confirms the dead-end
+- **mechanism_closed_in**: **(open — identified v35)**
+- **current_enforcement**: none; knowledge engine indexes all atoms but ranks by embedding similarity which scores poorly on short schema-keyword queries
+- **new_enforcement**: candidate Cx-KNOWLEDGE-INDEX-MANIFEST — every wire-contract atom (manifest-contract, fragment-markers, completion-shape, routing-matrix, classification-taxonomy) gets explicit keyword synonyms indexed alongside its embedding; `ZCP_CONTENT_MANIFEST.json`, `manifest schema`, `fact_title`, `routed_to`, `writer_manifest_completeness`, `writer_manifest_honesty` all route to `manifest-contract.md` in top-3. Extend `zerops_knowledge` query handler to query synonyms alongside embeddings.
+- **test_scenario**: given queries `ZCP_CONTENT_MANIFEST.json schema`, `writer_manifest_completeness`, `fact_title format`, `manifest routing`, when `zerops_knowledge` runs each, then `manifest-contract.md` appears in top 3 results for every query
+- **calibration_bar**: for each of 5 canonical wire-contract atoms × 3 representative keyword queries each, atom appears in top 3 of `zerops_knowledge` results; test rig in `internal/knowledge/` verifies
+
+---
+
 ## 2. Registry coverage audit
 
 ### 2.1. Every v20–v34 closed defect class has a row
@@ -811,4 +871,4 @@ No registry row fails to map to ≥1 principle. Three rows carry all-four-axis c
 
 - **Step 4 cold-read**: every `brief-<role>-<tier>-coverage.md` (per README §3 step 4) cross-lists every row in §1 × columns = "prevention mechanism cited in composed brief / runnable check / Go injection". Empty cell = brief not merged.
 - **Step 6 migration**: rollback-criteria measures v35 against `calibration_bar` column. Any regression against a `calibration_bar` threshold triggers rollback evaluation.
-- **v35 post-mortem** (if run ships): every new defect class surfaced by v35 earns a row; rows whose `calibration_bar` held across v35 + 1 subsequent run graduate to `current_enforcement` status for zcprecipator2's own calibration bar set (see [`calibration-bars-v35.md`](calibration-bars-v35.md)).
+- **v35 post-mortem** (if run ships): every new defect class surfaced by v35 earns a row; rows whose `calibration_bar` held across v35 + 1 subsequent run graduate to `current_enforcement` status for zcprecipator2's own calibration bar set (see [`../runs/v35/calibration-bars.md`](../runs/v35/calibration-bars.md); per-run snapshots under `../runs/vN/` for subsequent runs).

@@ -29,7 +29,7 @@ Recorded verbatim from the kickoff prompt. These govern step execution until ove
 - [x] `docs/zcprecipator2/RUNBOOK.md` — read end-to-end
 - [x] `docs/zcprecipator2/README.md` — read end-to-end (all 12 sections)
 - [x] `CLAUDE.md` — auto-loaded in context
-- [x] `docs/recipe-version-log.md` — top (lines 1–300: why-we-log, how-to-explore, how-to-analyze, how-to-evaluate, rating methodology, cross-version summary) + architectural insights (lines 388–478: v20→v23 trajectory, v8.86 shape, verification-direction inversion) + v25 through v34 (lines 1570–2434) in full
+- [x] `docs/zrecipator-archive/recipe-version-log.md` — top (lines 1–300: why-we-log, how-to-explore, how-to-analyze, how-to-evaluate, rating methodology, cross-version summary) + architectural insights (lines 388–478: v20→v23 trajectory, v8.86 shape, verification-direction inversion) + v25 through v34 (lines 1570–2434) in full
 - [ ] `internal/content/workflows/recipe.md` — intentionally deferred; per runbook §2 item 4, we reference specific blocks during step 2, no need to memorize up front
 
 ### Step 2 — Global knowledge inventory — COMPLETE (2026-04-20)

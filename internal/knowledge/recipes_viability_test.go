@@ -90,7 +90,7 @@ func TestCheckViability_StubRecipesFail(t *testing.T) {
 }
 
 // TestCheckViability_AuditedRecipesPass proves that every recipe currently
-// marked "audited=yes" in docs/spec-recipe-quality-process.md Status satisfies
+// marked "audited=yes" in docs/zrecipator-archive/spec-recipe-quality-process.md Status satisfies
 // the default gate. Calibration invariant.
 func TestCheckViability_AuditedRecipesPass(t *testing.T) {
 	t.Parallel()

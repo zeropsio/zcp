@@ -155,7 +155,7 @@ For every recorded fact in the facts log and every published item across the six
 
 ### Concrete statement
 
-Every piece of operational guidance lives in exactly one per-topic file under `internal/content/workflows/recipe/` (phases/ + briefs/ + principles/). The file is ≤ 300 lines. Stitching happens at dispatch time via the Go guidance layer (`recipe_guidance.go`). No atom contains version anchors (`v\d+(\.\d+)*`, `v8.\d+`). Version history is authoritative only in `docs/recipe-version-log.md`. Grep over the atomic tree for version-anchor patterns returns empty.
+Every piece of operational guidance lives in exactly one per-topic file under `internal/content/workflows/recipe/` (phases/ + briefs/ + principles/). The file is ≤ 300 lines. Stitching happens at dispatch time via the Go guidance layer (`recipe_guidance.go`). No atom contains version anchors (`v\d+(\.\d+)*`, `v8.\d+`). Version history is authoritative only in `docs/zrecipator-archive/recipe-version-log.md`. Grep over the atomic tree for version-anchor patterns returns empty.
 
 ### Defect classes closed
 

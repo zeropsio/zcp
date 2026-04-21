@@ -1,6 +1,12 @@
-# calibration-bars-v35.md — v35 measurement surface (aggregated from defect registry)
+# calibration-bars.md — v35 measurement surface (snapshot at post-run analysis)
 
-**Purpose**: the numeric / grep-verifiable thresholds v35 (first run under zcprecipator2) must hit. Every bar is measurable against the v35 session logs + exported deliverable tree + on-mount draft state — no qualitative "looks good" / "reasonable" / "acceptable" thresholds. Aggregated from [`defect-class-registry.md`](defect-class-registry.md) `calibration_bar` column across 68 rows + [README.md §10](../README.md) success criteria + [principles.md §12](../03-architecture/principles.md) open questions.
+**Snapshot status** (updated 2026-04-21 post-v35 analysis):
+
+- **Frozen for v35**: this file is the v35-commission bar set as-drafted + the 6 new bars added at post-run analysis (§9 B-9..B-14) + the tightened measurement definition for C-1 / C-2. It is the source-of-truth for v35 measurements. v36 will start from a copy of this file under `runs/v36/calibration-bars.md` and evolve.
+- **v35 run status**: stalled at deploy-check, never reached close. **Sections §3–§8, §9 B-9..B-14 evaluators, §11a Editorial-review are entirely UNMEASURABLE on v35** (they depend on close-step / finalize output that the run never produced). Only §1 substrate, §2 convergence, §9 B-1..B-8 dispatch-integrity, §10 tier bars, and a partial subset of §11 hybrid bars are measurable.
+- **Verdict driven by this sheet**: [`verdict.md`](verdict.md) — PAUSE + engine-level defects identified. Six of those defects added to the defect-class-registry as rows 16.1–16.6 and surface here as new bars B-9..B-14 with evaluators pending fix-stack commits ([`../../HANDOFF-to-I6.md`](../../HANDOFF-to-I6.md)).
+
+**Purpose** (unchanged from draft): the numeric / grep-verifiable thresholds v35 (first run under zcprecipator2) must hit. Every bar is measurable against the v35 session logs + exported deliverable tree + on-mount draft state — no qualitative "looks good" / "reasonable" / "acceptable" thresholds. Aggregated from [`../../05-regression/defect-class-registry.md`](../../05-regression/defect-class-registry.md) `calibration_bar` column + [README.md §10](../../README.md) success criteria + [principles.md §12](../../03-architecture/principles.md) open questions.
 
 **Tier coverage**: bars are labeled `[S]` (showcase), `[M]` (minimal), or `[S+M]` (both). A bar without tier prefix applies to both. Minimal-specific bars account for single-inline-scaffold / main-writes-features-inline / smaller deliverable surface.
 
@@ -17,7 +23,7 @@
 - `[signal]` = measured but not gate; regression is a v36 plan input, not a rollback trigger
 - `[advisory]` = editorial only; no action triggered
 
-Total bars: **102** (across 7 categories + carry-forward + tier-specific + editorial-review surface added via refinement 2026-04-20).
+Total bars: **108** (102 original + 6 runtime-integrity bars B-9..B-14 added at v35 post-run analysis).
 
 ---
 
@@ -58,8 +64,8 @@ Per [principles.md P1](../03-architecture/principles.md) + [README.md §10](../R
 
 | # | Bar | Threshold | Source | Severity |
 |---|---|---|---|---|
-| C-1 | Deploy-complete content-check rounds | **`≤ 2`** (v34: 4; v33: 3; v31: 3; target: 1) | count of `is_error:true` on `complete step=deploy` | `[gate]` — bar #0 |
-| C-2 | Finalize-complete content-check rounds | **`≤ 1`** (v34: 3; v33: 2; v31: 3; target: 1) | count of `is_error:true` on `complete step=finalize` | `[gate]` — bar #0 |
+| C-1 | Deploy-complete content-check rounds | **`≤ 2`** (v34: 4; v33: 3; v31: 3; target: 1; v35: 11 unmeasured-close) | count of `complete step=deploy` responses where `json.loads(response).checkResult.passed == false` (tightened at v35 post-run analysis — the prior `is_error:true` literal reading only fires on hard MCP errors, not `checkResult.passed==false` which is how check-round-count actually surfaces) | `[gate]` — bar #0 |
+| C-2 | Finalize-complete content-check rounds | **`≤ 1`** (v34: 3; v33: 2; v31: 3; target: 1; v35: N/A finalize never ran) | count of `complete step=finalize` responses where `json.loads(response).checkResult.passed == false` (same tightening as C-1) | `[gate]` — bar #0 |
 | C-3 | First `complete step=deploy` passes | ≥ 50% of runs (v34: 0%; target: ≥ 80%) | single-run binary; full-gate measured over run series | `[signal]` |
 | C-4 | First `complete step=finalize` passes | ≥ 50% of runs (v34: 0%; target: ≥ 80%) | single-run binary | `[signal]` |
 | C-5 | Post-writer in-main `Edit` count on any `{host}/README.md` after writer sub-agent returns | ≤ 3 per file (v34: low; v22: 11 on workerdev) | `Edit` tool use scan post-writer dispatch | `[gate]` |
@@ -196,7 +202,15 @@ Per [principles.md P2, P6, P8](../03-architecture/principles.md) + new zcprecipa
 | B-5 | Atom file size | Every `*.md` under atomic tree ≤ 300 lines (P6) | `wc -l` | `[gate]` |
 | B-6 | Captured Agent-tool dispatch payloads carry byte-identical `_shared-mandatory.md` content across all dispatches of same role `[S]` | All 3 scaffold dispatches carry identical MANDATORY region (P2 + v32 fix) | dispatch payload diff | `[gate]` |
 | B-7 | Orphan prohibitions (atoms containing "do not", "avoid", "never", "MUST NOT" without a positive-form statement within the same atom) | `== 0` (P8 build lint) | build-time lint | `[gate]` |
-| B-8 | Sub-agent dispatch prompt size | `≤ 20 KB` per dispatch (v34: in-range; unbounded in old architecture) | dispatch payload `wc -c` | `[signal]` |
+| B-8 | Sub-agent dispatch prompt size | `≤ 20 KB` per dispatch (v34: in-range; unbounded in old architecture; v35: 6.3-13.5 KB across all 7 dispatches — passes) | dispatch payload `wc -c` | `[signal]` |
+| B-9 | `zerops_workflow` tool-response size (inbound to main agent) — catches dispatch-brief overflow into spillover files | `≤ 32 KB` per response (v35: **71,720 chars overflow** on `complete substep=feature-sweep-stage` → spilled to scratch file → main agent lost wire contract) | response `wc -c` | `[gate]` pending Cx-BRIEF-OVERFLOW evaluator; currently `[signal]` |
+| B-10 | Check `Detail` strings use JSON-key notation, not Go struct-field notation | zero `grep -rE '\b(FactRecord\|ContentManifestFact\|StepCheck\|ManifestFact)\.[A-Z]\w+\b' internal/ops/checks/ internal/tools/workflow_checks_*.go` hits (v35: `FactRecord.Title` misled main agent into envelope-guess loop through 9 rounds) | build-time grep / unit test | `[gate]` pending Cx-CHECK-WIRE-NOTATION |
+| B-11 | Substep `complete` calls following `action=iterate` within same iteration without intervening tool work | `== 0` (v35: 12 fake-pass substep-completes in 84s after iterate) | log timestamp + tool-use sequence | `[gate]` pending Cx-ITERATE-GUARD |
+| B-12 | `zerops_guidance` unknown-topic responses + zero-byte valid-topic responses | `== 0` each (v35: 2 unknown-topic responses + 1 silent-empty response) | log scan for `Error: unknown guidance topic` + `result_size==0` on `zerops_guidance` | `[gate]` pending Cx-GUIDANCE-TOPIC-REGISTRY |
+| B-13 | Wire-contract atoms recoverable via canonical keyword queries in `zerops_knowledge` top-3 | 5/5 canonical atom queries return the target atom in top 3 hits (v35: `manifest-contract.md` NOT recoverable via "ZCP_CONTENT_MANIFEST.json schema" / "writer_manifest_completeness" queries) | test rig in `internal/knowledge/` | `[gate]` pending Cx-KNOWLEDGE-INDEX-MANIFEST |
+| B-14 | `action=skip` attempts on mandatory steps per session — retry-exhaustion telemetry | `== 0` (v35: 1 attempt on deploy; signals upstream defect B-9/B-10) | log scan for `action=skip step=<deploy\|generate\|research\|provision>` | `[signal]` — PAUSE verdict if > 0 |
+
+**Bars B-9..B-14 provenance**: added at v35 post-run analysis; each closes a defect class surfaced by v35 (see [`../../05-regression/defect-class-registry.md §16.1–16.6`](../../05-regression/defect-class-registry.md)). All six are `[gate]` once their Cx-commits land and evaluators exist; until then they are `[signal]` — the lack of enforcement is tracked in the fix-stack handoff ([`../../HANDOFF-to-I6.md`](../../HANDOFF-to-I6.md)).
 
 ---
 

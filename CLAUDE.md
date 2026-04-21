@@ -21,7 +21,7 @@ Key specs:
 - `docs/spec-scenarios.md` — per-phase scenario walkthroughs, pinned by `internal/workflow/scenarios_test.go`
 - `docs/spec-local-dev.md` — local-machine vs container environment differences
 - `docs/spec-content-surfaces.md` — recipe content-quality contract (seven surfaces, classification taxonomy)
-- `docs/spec-recipe-quality-process.md` — recipe audit process
+- `docs/zrecipator-archive/spec-recipe-quality-process.md` — recipe audit process (archived)
 
 Zerops platform schemas (live, authoritative for YAML field validation):
 - **Import YAML**: `https://api.app-prg1.zerops.io/api/rest/public/settings/import-project-yml-json-schema.json`

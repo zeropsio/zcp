@@ -10,7 +10,7 @@ Load-bearing inputs:
 - [`principles.md §10`](../03-architecture/principles.md) Principle-to-enforcement-layer map (which layers change)
 - [`atomic-layout.md §3`](../03-architecture/atomic-layout.md) block → atom mapping + [`§6`](../03-architecture/atomic-layout.md) Stitching conventions (guidance-side delta)
 - [`check-rewrite.md §3`](../03-architecture/check-rewrite.md) disposition counts + [`§17`](../03-architecture/check-rewrite.md) summary matrix + [`§18`](../03-architecture/check-rewrite.md) execution-plane implications (check-side delta)
-- [`calibration-bars-v35.md`](../05-regression/calibration-bars-v35.md) 97 bars (go/no-go surface)
+- [`calibration-bars.md`](../runs/v35/calibration-bars.md) 108 bars (go/no-go surface; per-run snapshot under `runs/vN/`)
 - [`defect-class-registry.md`](../05-regression/defect-class-registry.md) 68 closed classes (coverage baseline)
 
 ---

@@ -61,7 +61,7 @@ Scaffold + feature briefs differ across (tier × codebase-count × worker-topolo
 
 ## 4. Why certain tokens are forbidden in transmitted briefs
 
-Every atom under `internal/content/workflows/recipe/` is subject to the build-time lints in [`calibration-bars-v35.md §9 B-1..B-8`](05-regression/calibration-bars-v35.md). Those lints encode the following invariants — if you edit an atom, make sure your edit still passes:
+Every atom under `internal/content/workflows/recipe/` is subject to the build-time lints in [`calibration-bars.md §9 B-1..B-8`](runs/v35/calibration-bars.md). Those lints encode the following invariants — if you edit an atom, make sure your edit still passes:
 
 ### B-1: no version anchors
 
@@ -132,3 +132,68 @@ C-14's `zcp dry-run recipe` harness (once landed) exercises every `Build<Role>Di
 Dispatchers (server-side Go code) see this document. Sub-agents (Claude Code subagents dispatched via the Agent tool) see the composed briefs. The transmitted-brief surface is described in [`atomic-layout.md §1–§6`](03-architecture/atomic-layout.md); this document is the dispatcher-side complement.
 
 If a future change adds a new dispatch surface (e.g. a hypothetical `briefs/<new-role>/`), update both documents together: atomic-layout for the atom shape, DISPATCH.md for the composition semantics. The lint tree in C-13 enforces atom-side invariants; golden-diff testing in C-14 enforces composition semantics.
+
+---
+
+## 8. Envelope delivery for large briefs (Cx-BRIEF-OVERFLOW)
+
+The MCP tool-response token cap (~32 KB in v8.105.0's runtime) is smaller than the composed writer-substep brief (~62 KB). v35 demonstrated that inlining the full brief in the `complete substep=feature-sweep-stage` response triggers the harness's spillover-to-scratch-file fallback, and the main agent cannot reliably excavate the payload from the scratch file — in v35 it only read the first ~3 KB before dispatching writer-1 with a broken wire contract. See [`runs/v35/analysis.md`](runs/v35/analysis.md) §F-1 and [`05-regression/defect-class-registry.md §16.1`](05-regression/defect-class-registry.md).
+
+To avoid the overflow class, `formatDispatchBriefAttachment` (in [`../../internal/workflow/dispatch_brief_envelope.go`](../../internal/workflow/dispatch_brief_envelope.go)) emits an envelope when a composed brief would exceed `dispatchBriefInlineThresholdBytes` (28 KB — conservative margin under the 32 KB cap). Currently the envelope fires only for the readmes substep in showcase tier — the single observed overflow case. Other dispatch substeps whose briefs fit comfortably (scaffold, code-review) keep the inline path.
+
+### Envelope shape
+
+The envelope is a short markdown block (~2 KB) that replaces the historical `## Dispatch brief (transmit verbatim)\n\n<brief>` section with:
+
+```
+## Dispatch brief (retrieve + stitch before transmitting)
+
+<brief-size explanation + stitch procedure>
+
+### Body atoms (in order)
+
+- briefs.writer.mandatory-core
+- briefs.writer.fresh-context-premise
+- ...
+- briefs.writer.completion-shape
+
+### Principles atoms (in order)
+
+- principles.file-op-sequencing
+- principles.tool-use-policy
+- ...
+
+### Interpolation inputs
+
+- Facts log path: `/tmp/zcp-facts-<sessionID>.jsonl`
+```
+
+### Retrieval contract
+
+The main agent retrieves each listed atom via a new MCP action:
+
+- `zerops_workflow action=dispatch-brief-atom atomId=<id>` → returns JSON `{"atomId":"<id>","body":"<atom content>"}`.
+
+Each atom's body is ≤15 KB (enforced by the 300-line-per-atom cap B-5 in §4 above), so every retrieval fits the tool-response cap comfortably. The action is stateless — no session required, no engine mutation — so it can be called before the recipe workflow has started a session (useful for debugging).
+
+### Stitch procedure
+
+The envelope prescribes (and [`dispatch_brief_envelope_test.go:TestEnvelopeAtoms_StitchToFullBrief`](../../internal/workflow/dispatch_brief_envelope_test.go) pins) the exact byte-identical stitch:
+
+1. For each body-atom ID in order, retrieve its body via `action=dispatch-brief-atom`.
+2. Concatenate the body-atom bodies with `\n\n---\n\n` separator → `<body>`.
+3. Same for principles atoms → `<principles>`.
+4. Final brief = `<body> + "\n\n---\n\n" + <principles> + "\n\n---\n\n## Input files\n\n- Facts log: ` + "`" + `<facts-path>` + "`" + `\n"`.
+5. Transmit the result to the sub-agent verbatim — matching the P2 "atoms transit verbatim" principle.
+
+### Invariant preservation
+
+The envelope is a delivery-layer shim, not a stitcher short-circuit. `BuildWriterDispatchBrief` still performs the full composition on the server side (so internal callers like `zcp dry-run recipe` exercise the same composed output); the envelope is produced only by the substep-guide delivery layer that the main agent consumes. Per HANDOFF-to-I5 invariant #5, `Build*DispatchBrief` remains pure composition; the envelope is an orthogonal delivery mechanism.
+
+### Extending the envelope
+
+New envelope shapes for other substeps (feature dispatch, scaffold dispatch if they ever exceed the threshold) should live alongside `buildWriterDispatchBriefEnvelope` in the same file. The shape is role-specific because each brief has its own atom list + interpolation inputs; generalizing across roles is a premature abstraction given how few dispatch shapes exist.
+
+### Calibration bar
+
+Post-Cx-BRIEF-OVERFLOW, the calibration bar B-9 from [`runs/v35/verdict.md`](runs/v35/verdict.md) §4 applies: `max(zerops_workflow tool_result size) ≤ 32 KB` across session. The envelope's ~2 KB size + body atom (~8 KB) + prior-discoveries block (~2 KB) fits well under the cap even in the largest-response scenario.

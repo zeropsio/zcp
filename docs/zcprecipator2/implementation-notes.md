@@ -1425,3 +1425,331 @@ The first three gates are hard-green. The fourth is a soft gate: the scaffold sh
 ### Next — STOP at post-C-14 gate
 
 Per [HANDOFF-to-I4 §Operating rules](HANDOFF-to-I4.md), the post-C-14 gate is a user-commission point: the user runs v35 showcase against the new code + atom tree; post-run measurement data fills in the calibration-bar evaluators (§C-14 known-deferred) and unblocks C-15 cleanup. This instance stops here and reports C-14 complete + pre-v35 ship gate passing (3/4 hard-green; 4th soft-green pending v35 data).
+
+---
+
+## Cx-CHECK-WIRE-NOTATION — check Detail strings use JSON keys, not Go struct.field notation (F-2 close)
+
+**Status**: green — test RED against `manifest.go:302`, then GREEN after rewrite.
+
+**Context**: [HANDOFF-to-I6](HANDOFF-to-I6.md) fix-stack, smallest-surface gate-to-PROCEED commit. Closes defect-class-registry §16.2 (`v35-check-detail-go-notation`). v35 smoking gun: `writer_manifest_completeness` failed 11× with detail `"manifest missing entries for N distinct FactRecord.Title values"` — the main agent tried `Title` / `factRecord.Title` sub-object / 14 top-level key aliases but never the actual JSON key `fact_title`, because nothing in the error text pointed at it.
+
+### What landed
+
+A package-scoped AST lint (a Go test, not a golangci-lint rule) that walks every non-test source file in `internal/ops/checks/` + `internal/tools/workflow_checks_*.go`, locates every `workflow.StepCheck` composite literal (including `[]workflow.StepCheck{{...}}` inner-composite-lit-with-nil-Type shapes), extracts every string literal used in the `Detail` field value — directly or inside a nested `fmt.Sprintf`/`fmt.Errorf` format string or format argument — and fails the test if any matches `\b(FactRecord|ContentManifest|ContentManifestFact|ManifestFact|StepCheck)\.[A-Z]\w+\b`. Plus the one Detail-string rewrite this surfaced.
+
+- [`internal/ops/checks/check_detail_wire_notation_test.go`](../../internal/ops/checks/check_detail_wire_notation_test.go) (+217 LoC, new) — `TestCheckDetailStrings_UseJSONKeyNotation_NoGoStructFieldDotNotation`. The AST-walker (`walkForStepCheckDetails`) tracks slice/array element context so inner composite literals with nil Type inherit the outer `[]StepCheck` element type, which the v35 regression file (`manifest.go:298-305`) uses.
+- [`internal/ops/checks/manifest.go:301`](../../internal/ops/checks/manifest.go) — `CheckManifestCompleteness` Detail rewritten. Old: `"manifest missing entries for N distinct FactRecord.Title values"`. New: `"manifest missing N entries whose \`fact_title\` matches a \`title\` from the facts log"` + explicit reference to `ZCP_CONTENT_MANIFEST.json`, `classification`, `routed_to` as the wire keys the author must fill in.
+- [`internal/ops/checks/manifest_test.go:264`](../../internal/ops/checks/manifest_test.go) — updated the `wantDetail` substring assertion from the now-absent `"2 distinct"` to `"missing 2 entries" + "`fact_title`"`, pinning the corrected notation against regression.
+
+### Design decisions
+
+1. **AST lint, not regex grep.** Regex on raw source text would produce false positives on comments (which legitimately name Go struct fields for Go readers) and Go doc-comments on check-author types. An AST walker scoped to `workflow.StepCheck` composite literals' `Detail` field values eliminates that class entirely — comments are not `*ast.BasicLit` strings.
+2. **Slice-of-StepCheck inner-composite tracking.** The v35 smoking-gun lives at `return []workflow.StepCheck{{Name: ..., Detail: fmt.Sprintf(...)}}` — the inner composite literal's `Type` is `nil` (inferred from the slice's element type). Without tracking slice-element context, the AST walker would skip this case and silently pass the broken string. The `visit(n, inStepCheckSlice bool)` closure propagates the outer `ArrayType.Elt == StepCheck` decision to the inner composites. Verified by the RED run flagging `manifest.go:302`.
+3. **Test package is `checks_test` (external).** Keeps the AST walker out of production code; it's authored as a test helper rather than a reusable lint harness. If more wire-contract structs surface (beyond the `FactRecord` / `ContentManifest*` / `StepCheck` seed set), append to `forbiddenGoStructs`; if more check-authoring directories beyond `internal/ops/checks/` + `internal/tools/workflow_checks_*.go` get added, extend `dirs`.
+4. **One Detail string changed.** The lint surfaced exactly one violation (`manifest.go:302`). Other `Detail` strings across the 16 checks + 15 workflow_checks_* files were already JSON-keyed or didn't mention struct.field notation at all. No broad rewrite was required — narrow surgical change.
+
+### Verification
+
+- `go test github.com/zeropsio/zcp/internal/ops/checks/ -run TestCheckDetailStrings_UseJSONKeyNotation -v -count=1` → PASS (pre-fix: FAIL naming `manifest.go:302  matched "FactRecord.Title"`).
+- `go test ./... -count=1 -short` → 22/22 packages green.
+- `make lint-local` → 0 issues (golangci-lint clean + recipe_atom_lint clean).
+
+### LoC delta
+
+- `internal/ops/checks/check_detail_wire_notation_test.go`: +217 LoC (new file).
+- `internal/ops/checks/manifest.go`: 1 line rewritten (Detail format string).
+- `internal/ops/checks/manifest_test.go`: 1 line rewritten (wantDetail assertion).
+- **Total**: ~+220 LoC, ~2 lines changed.
+
+### Breaks-alone consequence
+
+Nothing downstream. The check name `writer_manifest_completeness` is unchanged; the check status logic is unchanged; only the human-readable `Detail` string shifts from Go-field notation to JSON-key notation. The `zcp check writer_manifest_completeness` shim surface and the server-side gate both receive the corrected text from the same `CheckManifestCompleteness` Go source (gate↔shim one-implementation invariant #2 preserved).
+
+### Ordering deps verified
+
+Independent of the other four Cx-commits. Does not conflict with C-7e..C-14 or any pre-rollout work. Lands first per the HANDOFF-to-I6 recommended order because it's the smallest surface and fastest feedback loop.
+
+### Known follow-ups
+
+- If the fix stack produces new user-facing strings referencing wire contracts in other surfaces (e.g. guidance responses, error envelopes), consider extending the AST walker's scope beyond `StepCheck.Detail` to cover those too. Deferred until another surface surfaces a regression.
+- The `forbiddenGoStructs` seed list is narrow (5 struct names). If the codebase grows additional wire-contract structs (e.g. `ContentManifestV2`, `FactLogEntry`), the list must be updated. A future hardening could auto-derive it by AST-scanning `internal/ops/checks/*.go` + `internal/ops/facts_log.go` for `type X struct` declarations whose fields have `json:` tags. Not urgent — current surface is fully covered.
+
+### Next
+
+Advance to Cx-ITERATE-GUARD per HANDOFF-to-I6 fix-stack order.
+
+---
+
+## Cx-ITERATE-GUARD — action=iterate requires new evidence before substep completes (F-3 close)
+
+**Status**: green — three RED tests (substep reset / no-evidence rejection / gate-clear via record-fact), all passing post-implementation.
+
+**Context**: [HANDOFF-to-I6](HANDOFF-to-I6.md) fix-stack, second of three gate-to-PROCEED commits. Closes defect-class-registry §16.3 (`v35-iterate-fake-pass`). v35 evidence: after `action=iterate` at 08:45:22, the main agent fired `action=complete` on all 12 deploy substeps between 08:46:26 and 08:47:50 — 84 seconds total, zero non-workflow tool calls between attestations. Each completion returned ~5070 B success; the engine accepted every one. Only the step-level `writer_manifest_completeness` check caught that no actual work had been done. The substep walk was theater that eroded the step-graph invariant.
+
+### What landed
+
+An evidence-gate on `recipeCompleteSubStep` that rejects attestations made after an `action=iterate` until new evidence of work has been recorded. The canonical gate-clear touchpoint is `zerops_record_fact` — the agent's per-deploy "I learned something" signal, which is already the writer subagent's structured input. Binding the gate-clear to fact recording means the agent cannot re-attest substeps without producing at least one structured knowledge entry that survives to the writer.
+
+- [`internal/platform/errors.go`](../../internal/platform/errors.go) — added `ErrMissingEvidence = "MISSING_EVIDENCE"` alongside the existing code constants.
+- [`internal/workflow/recipe.go`](../../internal/workflow/recipe.go) — new field `RecipeState.AwaitingEvidenceAfterIterate bool` (with `omitempty` JSON tag so existing serialized states round-trip without churn); `ResetForIteration` now sets it to true at the end of the reset.
+- [`internal/workflow/engine_recipe.go`](../../internal/workflow/engine_recipe.go) — `recipeCompleteSubStep` short-circuits with a `MISSING_EVIDENCE`-coded error when `rs.AwaitingEvidenceAfterIterate` is true. Error message names the substep, explains the guard mechanism, and points the agent at `zerops_record_fact` as the clear-path.
+- [`internal/workflow/engine.go`](../../internal/workflow/engine.go) — new `Engine.ClearAwaitingEvidenceAfterIterate()` method. No-op when session/recipe are absent or the flag is already false; otherwise load-mutate-save with the existing atomic-rename persistence.
+- [`internal/tools/record_fact.go`](../../internal/tools/record_fact.go) — after a successful `ops.AppendFact`, calls `engine.ClearAwaitingEvidenceAfterIterate()` best-effort. A flip failure is non-fatal (the fact itself landed) so the error isn't propagated.
+- [`internal/workflow/iterate_guard_test.go`](../../internal/workflow/iterate_guard_test.go) (+140 LoC, new) — three scenarios:
+  - `TestIterateGuard_ResetsSubstepCompletionState` — pins that iterate flips any complete substep back to non-complete (via the existing wholesale-step-replacement in `ResetForIteration`) and sets the new evidence-gate flag.
+  - `TestIterateGuard_SubstepCompleteAfterIterate_NoEvidence_Rejected` — the v35 scenario in test form: iterate → immediately call substep complete → expect `MISSING_EVIDENCE` error.
+  - `TestIterateGuard_SubstepCompleteAfterIterate_WithRecordedFact_Passes` — gate-clear path: iterate → clear-evidence (proxy for record-fact) → substep complete succeeds.
+
+### Design decisions
+
+1. **Gate-clear binds to fact recording, not arbitrary tool activity.** The calibration bar calls for "at least one non-`zerops_workflow` tool call between iterate and complete". The MCP server's middleware infrastructure could hook every non-workflow tool, but that spreads coupling. Binding the gate to `zerops_record_fact` is tighter: the fact is *structured* evidence that survives to the writer subagent's input, not just any tool ping. The agent cannot "pay the toll" with a trivial discover / verify call — it must record a fact that genuinely represents learned knowledge. This is the strictest defensible interpretation of "evidence of work".
+2. **Persist the flag on RecipeState, not on the step.** A per-step flag would require resetting it on every step transition (research→provision→generate→deploy→finalize). A per-recipe flag lives for the post-iterate window exactly — set by iterate, cleared by the first fact, dormant otherwise. Simpler state shape, no transition hooks to maintain.
+3. **Error message names the fix, not just the failure.** Per CLAUDE.md "fix at the source" / content-quality norms: the error text explicitly tells the agent "record at least one fact with zerops_record_fact" and explains why (writer subagent input; the v35 fake-pass pattern). A terse `MISSING_EVIDENCE` code alone would send the agent searching — the expanded message short-circuits that fallback chain.
+4. **Best-effort gate-clear on record-fact.** If `ClearAwaitingEvidenceAfterIterate` fails (disk full, permissions, etc.), the fact still landed in the log — the writer will see it. The gate being stuck is recoverable by a subsequent successful fact. Escalating the clear failure to the user would surface a disk problem the fact-record path cannot directly address; the existing save-state errors on the main `recordFact` path already cover that class.
+5. **`ErrMissingEvidence` as a first-class code, not an ad-hoc string.** Goes in `internal/platform/errors.go` with the other workflow/auth codes. Lets rollback-criteria evaluators and T-trigger scripts detect the guard firing as a structured signal, not by substring-match on the message body.
+
+### Verification
+
+- `go test ./internal/workflow/ -run TestIterateGuard -v -count=1` → 3/3 PASS.
+- `go test ./... -count=1` (full, not short) → 22/22 packages green.
+- `make lint-local` → 0 issues.
+
+### LoC delta
+
+- `internal/platform/errors.go`: +1 LoC (new constant).
+- `internal/workflow/recipe.go`: +9 LoC (field + 1-line flag-set in ResetForIteration).
+- `internal/workflow/engine_recipe.go`: +8 LoC (gate check block).
+- `internal/workflow/engine.go`: +21 LoC (ClearAwaitingEvidenceAfterIterate method).
+- `internal/tools/record_fact.go`: +5 LoC (gate-clear call).
+- `internal/workflow/iterate_guard_test.go`: +140 LoC (new file).
+- **Total**: ~+184 LoC.
+
+### Breaks-alone consequence
+
+Agents that relied on being able to walk substeps post-iterate without recording a fact will now hit `MISSING_EVIDENCE`. That's the point — the v35 agent did exactly this, and the v36 behavior must change. The error message carries full remediation guidance, so agents that encounter the gate once should clear it correctly on the next attempt.
+
+### Ordering deps verified
+
+Independent of Cx-CHECK-WIRE-NOTATION — different file surfaces (workflow engine vs check-author strings). Lands second per HANDOFF-to-I6 order because the engine-state change is a slightly larger surface than the check-text rewrite. Does not conflict with C-7e..C-14 — the post-C-14 rollout did not touch `recipeCompleteSubStep`'s pre-validator gate chain.
+
+### Known follow-ups
+
+- **T-3 / T-8 / T-1 arbitration**: the `MISSING_EVIDENCE` error can be counted per session by post-run evaluators as a signal of retry-depth pathology (many gate-hits = agent was repeatedly trying to fake-pass). Not a rollback trigger on its own but a useful calibration-bar input.
+- **Cx-BRIEF-OVERFLOW interaction**: the v35 chain was F-1 (brief overflow) → F-2 (Go-notation error) → F-3 (iterate fake-pass). With F-2 and F-3 closed, F-1 is the remaining load-bearing defect; Cx-ITERATE-GUARD alone won't prevent the v35 deadlock class, but it removes the theater-of-iteration coping pattern that followed the deadlock.
+- **Future gate-clear expansions**: if real-world runs show legitimate scenarios where the agent needs to iterate + complete without recording a fact (e.g. an iterate called purely to re-initialize substep state after a spurious engine failure), consider expanding the clear-path to include explicit `action=resume` or a new `action=acknowledge-iterate` signal. Not required for v36.
+
+### Next
+
+Advance to Cx-BRIEF-OVERFLOW per HANDOFF-to-I6 fix-stack order. That's the load-bearing one — it closes F-1, the primary root cause of v35.
+
+---
+
+## Cx-BRIEF-OVERFLOW — readmes substep emits atom-reference envelope (F-1 close)
+
+**Status**: green — eight tests across two packages (envelope shape + size + atom coverage + stitch byte-identity + inline-fallback paths + MCP action retrieval/error cases), all passing. Third of three gate-to-PROCEED commits from HANDOFF-to-I6.
+
+**Context**: the v35 primary root cause. At 08:15:21 the `complete substep=feature-sweep-stage` response weighed 71,720 chars, exceeding the runtime's ~32 KB MCP tool-response token cap. The harness spilled the payload to `/home/zerops/.claude/projects/-var-www/.../tool-results/mcp-zerops-zerops_workflow-1776759321598.txt`. The main agent only read the first ~3 KB of the spillover, losing the wire contract. It dispatched writer-1 with a prompt telling the sub-agent to `python3 -c "print(open('…').read()[A:B])"` through the JSON blob — which writer-1 did, partially, ending up with wrong fragment markers, no CLAUDE.md, no manifest. Five further dispatched writer attempts paraphrased the shape wrongly (`title` instead of `fact_title`, `routeTo` instead of `routed_to`) because the wire contract never reached the writer in-prompt. F-1 is the entire v35 deadlock pattern; Cx-CHECK-WIRE-NOTATION and Cx-ITERATE-GUARD close downstream defects but do not prevent the overflow itself.
+
+### What landed
+
+Envelope pattern implementing HANDOFF-to-I6 Option A. When `formatDispatchBriefAttachment` sees the readmes substep in showcase AND the composed brief exceeds `dispatchBriefInlineThresholdBytes` (28 KB), it emits a ~2 KB markdown envelope listing the atoms the main agent must retrieve via a new MCP action, with full stitch instructions to reproduce the brief byte-identically. The envelope is scoped narrowly to the one observed overflow class — other dispatch substeps (scaffold, code-review) keep the inline path because their composed briefs fit the cap.
+
+- [`internal/workflow/dispatch_brief_envelope.go`](../../internal/workflow/dispatch_brief_envelope.go) (+120 LoC, new) — `dispatchBriefInlineThresholdBytes` constant, `formatDispatchBriefAttachment(step, subStep, plan, sessionID, brief) string` entry point, `envelopeForLargeBrief` substep-gate, `buildWriterDispatchBriefEnvelope` writer-specific envelope constructor.
+- [`internal/workflow/atom_stitcher.go`](../../internal/workflow/atom_stitcher.go) — new helper `writerBriefBodyAtomIDs()` exposing the writer-body atom ordering so the envelope constructor names the same atom sequence `BuildWriterDispatchBrief` composes (the envelope's load-bearing byte-identity invariant is tested in `TestEnvelopeAtoms_StitchToFullBrief`).
+- [`internal/workflow/recipe_guidance.go`](../../internal/workflow/recipe_guidance.go) — `buildSubStepGuide` calls `formatDispatchBriefAttachment` instead of inlining `## Dispatch brief (transmit verbatim)` + brief directly. One-line change; the dispatch-composition invariant (HANDOFF-to-I5 invariant #5) is preserved because `BuildWriterDispatchBrief` itself is unchanged.
+- [`internal/tools/workflow.go`](../../internal/tools/workflow.go) — new MCP action `dispatch-brief-atom` + `AtomID string` field on `WorkflowInput`, handled by `handleDispatchBriefAtom(input)`. Routed BEFORE the engine-required guard since atom retrieval is stateless content-lookup; callable without an active session for debugging. Returns JSON `{"atomId":"X","body":"..."}`. Unknown IDs return `INVALID_PARAMETER` naming the offending ID.
+- [`internal/workflow/recipe_substep_briefs_test.go`](../../internal/workflow/recipe_substep_briefs_test.go) — updated `TestSubStepGuide_FeatureSweepStageResponse_ContainsContentAuthoringBrief` to assert the envelope heading + `dispatch-brief-atom` action mention + atom-ID substrings (classification / citation / manifest / content-surface). Previous inline-heading expectations were v8.94 shape.
+- [`internal/workflow/dispatch_brief_envelope_test.go`](../../internal/workflow/dispatch_brief_envelope_test.go) (+153 LoC, new) — 5 scenarios: current-size assertion (brief exceeds threshold so the gate fires), envelope shape (lists all body + principle atoms, under 5 KB), small-brief fallback (inline heading preserved), unmanaged-large-substep fallback (inline heading preserved for substeps without envelope shape), and the byte-identity invariant (envelope-stitched brief == `BuildWriterDispatchBrief` output).
+- [`internal/tools/workflow_dispatch_brief_atom_test.go`](../../internal/tools/workflow_dispatch_brief_atom_test.go) (+97 LoC, new) — 3 scenarios: valid atomID returns body JSON with expected content, missing atomID returns `INVALID_PARAMETER` with clear suggestion, unknown atomID returns `INVALID_PARAMETER` naming the offending ID.
+- [`docs/zcprecipator2/DISPATCH.md`](DISPATCH.md) — new §8 documenting the envelope shape, retrieval contract, stitch procedure, invariant preservation, and extension path for future overflow-class substeps. This is the dispatcher-side contract the main agent's stitch implementation must honor.
+
+### Design decisions
+
+1. **Scope envelope to readmes-in-showcase only.** The v35 overflow is specifically the writer brief; other dispatch substeps fit comfortably. Broad restructuring (envelope everywhere) would churn every `BuildXDispatchBrief` test + golden diff for no gain on substeps that don't overflow. Extending to other substeps is a follow-up when/if they surface overflow.
+2. **Envelope inside the substep guide, not as a separate response.** Option B from HANDOFF ("paginate response") would have required the main agent to detect pagination and concatenate — more client-side protocol surface. Option A keeps the envelope inline in the substep guide (tiny; fits easily) and pushes complexity to a separate action the agent calls N times. Simpler client contract: no pagination state to track.
+3. **`dispatch-brief-atom` as an action on `zerops_workflow`, not a new tool.** The main agent already routes through `zerops_workflow` for every orchestration call. Adding an action is a ~20-line change; adding a new MCP tool would require a new `Register*` call, new tool annotations, and a third-tool hop in the agent's planning. The atom-retrieval operation is semantically part of workflow orchestration (reading a brief component) even though it's stateless.
+4. **Byte-identity test between envelope-stitched and `BuildWriterDispatchBrief` output.** This is the load-bearing invariant the envelope pattern must preserve — if the stitched brief differs from what `BuildWriterDispatchBrief` composes internally (for `zcp dry-run recipe` + golden diffs), the dispatcher and the main agent would hold different mental models of what the sub-agent sees. The test encodes the exact stitch procedure the envelope prescribes; any drift in either direction fails CI.
+5. **Envelope heading flip from "transmit verbatim" to "retrieve + stitch before transmitting".** The existing heading implies immediate pass-through; the new heading names the required server round-trips. This is an agent-facing wording change that matters — the agent's prompt-path must read the heading correctly to not naively forward a 2 KB envelope to the sub-agent (which would be useless, since the envelope names atoms but contains no brief body). The `TestFormatDispatchBriefAttachment_ReadmesSubstep_EmitsEnvelope` test pins this heading.
+6. **Stateless atom retrieval.** `dispatch-brief-atom` handling is routed BEFORE the `engine == nil` guard so the action works without a session. Rationale: debugging + development iteration (an agent mid-session can retrieve atoms referenced by an envelope even if the session is in an unusual state; a developer running `zerops_workflow action=dispatch-brief-atom atomId=...` directly can inspect atoms without starting a workflow).
+7. **Don't shrink the atoms themselves.** The 62 KB writer brief is load-bearing content — classification taxonomy, citation map, manifest contract are all needed for the writer to emit correct output. Shrinking them trades surface area for correctness. The envelope pattern preserves every byte while fitting the delivery envelope.
+
+### Verification
+
+- `go test ./internal/workflow/ -run 'TestBuildWriterDispatchBrief_ExceedsInlineThreshold|TestFormatDispatchBriefAttachment|TestEnvelopeAtoms' -v -count=1` → 5/5 PASS.
+- `go test ./internal/tools/ -run TestWorkflowTool_DispatchBriefAtom -v -count=1` → 3/3 PASS.
+- `go test ./... -count=1` (full, not short) → 22/22 packages green.
+- `make lint-local` → 0 issues (one updated existing test + 2 new test files; golangci-lint modernizer caught a couple of `min()` uses and a manual ` > 80 { firstN = 80 }` shape — fixed).
+- Manual validation: `formatDispatchBriefAttachment(deploy, readmes, showcasePlan, "xyz", 62KB-brief)` returns a 2-KB envelope containing every atom ID + stitch instructions; retrieval via `dispatch-brief-atom atomId=briefs.writer.manifest-contract` returns the atom body as JSON.
+
+### LoC delta
+
+- `internal/workflow/dispatch_brief_envelope.go`: +120 LoC (new).
+- `internal/workflow/dispatch_brief_envelope_test.go`: +153 LoC (new).
+- `internal/tools/workflow_dispatch_brief_atom_test.go`: +97 LoC (new).
+- `internal/workflow/atom_stitcher.go`: ~+10 LoC (helper extraction, no behavior change for `BuildWriterDispatchBrief`).
+- `internal/workflow/recipe_guidance.go`: 1 line changed (call indirection).
+- `internal/tools/workflow.go`: ~+35 LoC (new field + action-before-guard routing + `handleDispatchBriefAtom` function + jsonschema description update).
+- `internal/workflow/recipe_substep_briefs_test.go`: ~+10 LoC (updated assertions).
+- `docs/zcprecipator2/DISPATCH.md`: ~+60 LoC (new §8).
+- **Total**: ~+485 LoC, ~11 lines changed.
+
+### Breaks-alone consequence
+
+Agents that relied on the inline `## Dispatch brief (transmit verbatim)` section in the readmes substep guide will now see the envelope heading instead. The envelope's stitch instructions are explicit: the agent must retrieve each listed atom via `action=dispatch-brief-atom`, concatenate in order, and append the input-files block. An agent that transmits the envelope directly to the writer sub-agent (instead of stitching first) would be sending a ~2 KB atom manifest — the sub-agent would see no brief content and likely fail fast, a loud failure vs. the silent miss v35 showed. This is the intended behavior: failure is visible, not sneaky. Other dispatch substeps (feature, scaffold, code-review, editorial-review) are unchanged.
+
+### Ordering deps verified
+
+Independent of Cx-CHECK-WIRE-NOTATION (check-author strings) and Cx-ITERATE-GUARD (engine state). Touches the substep-guide delivery layer + a new MCP action. Lands third per HANDOFF-to-I6 order because it's the load-bearing one — largest surface, most cross-cutting design decisions. Closes the F-1 primary root cause; Cx-CHECK-WIRE-NOTATION + Cx-ITERATE-GUARD close downstream defects but do not prevent overflow.
+
+### Known follow-ups
+
+- **Extend envelope to other dispatch substeps that overflow.** If v36 or later surfaces overflow on feature / scaffold / editorial-review, add a matching `buildXDispatchBriefEnvelope` + a case in `envelopeForLargeBrief`. The feature brief currently ~41 KB is close to the threshold but doesn't overflow in v35 evidence; defer until observed.
+- **Golden-diff for the envelope itself.** `zcp dry-run recipe` composes the full brief via `BuildWriterDispatchBrief` and diffs against step-4 goldens — that golden is unchanged. The envelope shape is orthogonal (delivery, not composition). A future hardening could add an envelope golden (expected-atom-ID list + ordering) and diff against it in the dry-run harness.
+- **Remove the inline path entirely for readmes?** Currently small overrides of the writer brief (nil plan, test fixtures) fall back to inline because they're under the threshold. That's fine — the threshold gate is the single point of decision. If the writer brief ever shrinks below 28 KB (atom consolidation, principle trimming), the envelope gate will silently stop firing and the inline path re-engages, which is exactly what we want: envelope only when needed.
+- **C-15 monolith deletion can now proceed.** Per HANDOFF-to-I6 §"Fronts, reordered" row C, C-15 was gated on Cx-BRIEF-OVERFLOW landing. With the envelope in place, the brief-delivery path is reliable, and the recipe.md monolith can be deleted without losing delivery fidelity. C-15 is not included in this commit; it's a separate follow-up.
+
+### Next
+
+3-of-3 gate-to-PROCEED fix-stack commits landed (CHECK-WIRE-NOTATION + ITERATE-GUARD + BRIEF-OVERFLOW). Per HANDOFF-to-I6 §"Starting action" step 6: **STOP and report** before commissioning v36 or continuing to Cx-GUIDANCE-TOPIC-REGISTRY / Cx-KNOWLEDGE-INDEX-MANIFEST. User reviews before deciding on the remaining two or commissioning v36.
+
+---
+
+## Cx-GUIDANCE-TOPIC-REGISTRY — unknown topics return top-3 matches; zero-byte responses rejected; session briefing lists valid IDs (F-5 close)
+
+**Status**: green — 9 tests across 2 packages (registry-level + MCP-level), all passing. Fourth of five fix-stack commits per HANDOFF-to-I6.
+
+**Context**: user elected to land the remaining 2 Cx-commits before commissioning v36. Closes defect-class-registry §16.5 (`v35-guidance-unknown-topic`). v35 evidence at 07:29:50-51: three hallucinated guidance-topic lookups in a row (`dual-runtime-consumption`, `client-code-observable-failure`, `init-script-loud-failure`). First two returned bare "unknown guidance topic" errors; the third returned a zero-byte response — worse than the error because the main agent cannot distinguish "no additional guidance needed" from "lookup miss".
+
+### What landed
+
+Three coordinated changes close the hallucination + silent-empty loop:
+
+1. **Unknown-topic Levenshtein suggestions**. `NearestTopicIDs(query, k)` ranks every registered topic by edit distance and returns the top-k. The guidance handler swaps the bare "unknown guidance topic" error for one that names the top-3 nearest matches with a "Did you mean: X, Y, Z?" prompt. Main agent's guess loop short-circuits at the first unknown lookup.
+2. **Zero-byte guard on predicate-match empty**. Guidance handler now distinguishes predicate-filtered empty (topic doesn't apply to this plan shape — legitimate "does not apply" message preserved) from resolved-to-zero-bytes despite predicate match (server-side block-missing bug — surfaces as a hard `TOPIC_EMPTY` error with a pointer at the registry mismatch). The main agent can no longer silently interpret a zero-byte response as "no additional guidance".
+3. **Closed-universe list in recipe-start response**. `RecipeResponse.GuidanceTopicIDs` is populated by `AllTopicIDs()` on `action=start workflow=recipe` — every registered topic ID, sorted alphabetically. The main agent caches this list at session start and references it instead of pattern-matching plausible-sounding IDs from its own reasoning.
+
+- [`internal/platform/errors.go`](../../internal/platform/errors.go) — added `ErrTopicEmpty = "TOPIC_EMPTY"` alongside the existing codes.
+- [`internal/workflow/recipe_topic_registry.go`](../../internal/workflow/recipe_topic_registry.go) — new exports: `AllTopicIDs() []string` (sorted), `NearestTopicIDs(query, k) []string` (Levenshtein-ranked, tie-broken lexicographically), plus a private `levenshtein(a, b) int` helper using the standard DP matrix (O(nm) time / O(m) space). Total +85 LoC.
+- [`internal/workflow/recipe.go`](../../internal/workflow/recipe.go) — added `GuidanceTopicIDs []string` field on `RecipeResponse` (with `omitempty` so non-start responses stay compact).
+- [`internal/workflow/engine_recipe.go`](../../internal/workflow/engine_recipe.go) — `RecipeStart` populates `resp.GuidanceTopicIDs = AllTopicIDs()` before returning.
+- [`internal/tools/guidance.go`](../../internal/tools/guidance.go) — guidance handler now:
+  - Returns top-3 suggestions via `workflow.NearestTopicIDs` when `LookupTopic` returns nil.
+  - Checks `topic.Predicate(plan)` BEFORE declaring an empty response a bug: predicate-filtered empty keeps the legacy "does not apply" message; predicate-match empty surfaces `TOPIC_EMPTY` error naming the topic.
+  - Adds a `platform` import.
+- [`internal/workflow/guidance_topic_registry_test.go`](../../internal/workflow/guidance_topic_registry_test.go) (+155 LoC, new) — 6 tests: AllTopicIDs sorted/deduped/non-empty, NearestTopicIDs finds typo'd target / handles empty input / caps at k > registry size, RecipeStart populates GuidanceTopicIDs, every registered topic under a matching predicate resolves to non-empty content (structural guard against block-missing regressions).
+- [`internal/tools/guidance_topic_registry_test.go`](../../internal/tools/guidance_topic_registry_test.go) (+130 LoC, new) — 3 MCP-level tests: unknown topic returns suggestions + pointer to `guidanceTopicIds`, degenerate query doesn't panic and still returns "Did you mean", predicate-filtered empty does NOT surface as `TOPIC_EMPTY` (legitimate "does not apply" path preserved).
+
+### Design decisions
+
+1. **Levenshtein, not embeddings, for topic-ID triage.** HANDOFF-to-I6 said "Levenshtein-or-embedding top-3". The registry has < 100 topics with short stable IDs; edit-distance handles both typos (`dual-runtime-consumtion` → `dual-runtime-consumption`) and near-synonyms adequately. Introducing an embedding index for this class would be over-engineering; the knowledge engine's embedding pipeline is separate and tackled in Cx-KNOWLEDGE-INDEX-MANIFEST.
+2. **Predicate-filter distinction is the load-bearing insight.** The v35 analysis lumped "predicate filter rejects" and "block missing" into one failure mode. They're not. Predicate-filter empty is **correct**: the topic legitimately doesn't apply to this plan shape. Block-missing empty is a **bug**: the registry points at a recipe.md block that was renamed or deleted. Distinguishing them lets the agent act on both signals correctly — the "does not apply" message keeps the agent moving; the `TOPIC_EMPTY` error tells it (and the repo maintainers via the flow logs) to report a registry drift. Conflating them was the v35 silent-failure class.
+3. **`GuidanceTopicIDs` only on start-response, not on every response.** ~100 topic IDs would add ~2 KB to every recipe response. The main agent caches the list once at session start; the engine already owns `RecipeStart` as the canonical briefing moment, so piggybacking the list there has zero additional plumbing cost.
+4. **`TOPIC_EMPTY` error message names the fix, not just the failure.** Same pattern as Cx-ITERATE-GUARD's `MISSING_EVIDENCE` message: "Report via flow-main.md; do not assume the topic is empty by design." Short-circuits the agent's fallback-to-silently-skip pattern.
+5. **`TestResolveTopic_AllTopics_NonEmpty_UnderMatchingPredicate` is the real safety net.** The MCP-level `TOPIC_EMPTY` guard catches server-side drift at runtime, but a build-time test that walks every registered topic × every canonical plan shape + asserts non-empty under matching predicate catches the same class during CI. The test currently passes — no registry drift in the current tree — which means the `TOPIC_EMPTY` path is exercised only by hypothetical future regressions. That's the correct cost/benefit: guard firing means someone broke the registry; test passing means they haven't.
+
+### Verification
+
+- `go test ./internal/workflow/ -run 'TestAllTopicIDs|TestNearestTopicIDs|TestResolveTopic_AllTopics|TestRecipeStart_IncludesGuidanceTopicIDs' -v -count=1` → 6/6 PASS.
+- `go test ./internal/tools/ -run 'TestGuidanceTool_UnknownTopic|TestGuidanceTool_ValidTopic' -v -count=1` → 3/3 PASS.
+- `go test ./... -count=1` (full) → 22/22 packages green.
+- `make lint-local` → 0 issues.
+
+### LoC delta
+
+- `internal/platform/errors.go`: +1 LoC.
+- `internal/workflow/recipe_topic_registry.go`: +85 LoC (AllTopicIDs + NearestTopicIDs + levenshtein).
+- `internal/workflow/recipe.go`: +9 LoC (GuidanceTopicIDs field + doc).
+- `internal/workflow/engine_recipe.go`: +6 LoC (populate on start).
+- `internal/tools/guidance.go`: ~+25 LoC (suggestion path + TOPIC_EMPTY guard).
+- `internal/workflow/guidance_topic_registry_test.go`: +155 LoC (new).
+- `internal/tools/guidance_topic_registry_test.go`: +130 LoC (new).
+- **Total**: ~+410 LoC.
+
+### Breaks-alone consequence
+
+Agents that relied on the bare "Error: unknown guidance topic" string for their retry logic will now see a longer message that includes "Did you mean: X, Y, Z?" plus a pointer at `guidanceTopicIds`. Substring-match clients that checked for the "unknown guidance topic" prefix continue to work (the prefix is unchanged). Agents that silently interpreted zero-byte guidance responses as "no additional guidance" will now see either "does not apply to your recipe shape" (predicate-filtered — semantically equivalent to the old silent behavior, but loud) or a `TOPIC_EMPTY` error (server bug surfaced).
+
+### Ordering deps verified
+
+Independent of the three gate-to-PROCEED commits. Touches a different surface (guidance-tool handler + topic registry) from Cx-BRIEF-OVERFLOW (substep-guide delivery + MCP action registration). No interaction with Cx-CHECK-WIRE-NOTATION (check-author strings) or Cx-ITERATE-GUARD (engine state).
+
+### Known follow-ups
+
+- **Calibration-bar evaluator**: post-run, count `is_error:true` responses from `zerops_guidance` with message containing "unknown guidance topic". B-12 from [`runs/v35/verdict.md`](runs/v35/verdict.md) §4: zero such responses per session is the bar. Evaluator lives in `scripts/extract_calibration_evidence.py` (Front A, non-blocking).
+- **Measurement of `TOPIC_EMPTY` surfacing**: if v36 or later surfaces this error, the registry + recipe.md drifted and a rebuild-goldens commit needs to land. The test `TestResolveTopic_AllTopics_NonEmpty_UnderMatchingPredicate` catches the class at build time, so runtime surfacing should be zero.
+
+### Next
+
+Advance to Cx-KNOWLEDGE-INDEX-MANIFEST per HANDOFF-to-I6 fix-stack order. Closes F-6 (knowledge-engine misses manifest-contract atom on obvious queries). Last of five fix-stack commits.
+
+---
+
+## Cx-KNOWLEDGE-INDEX-MANIFEST — wire-contract atoms routed via explicit keyword synonyms (F-6 close)
+
+**Status**: green — 5 tests (including 8 canonical-query subtests), all passing. Fifth of five fix-stack commits per HANDOFF-to-I6. Fix stack complete.
+
+**Context**: closes defect-class-registry §16.6 (`v35-knowledge-manifest-schema-miss`). v35 evidence at 08:45:58: main agent called `zerops_knowledge query="ZCP_CONTENT_MANIFEST.json schema writer_manifest_completeness"` after eight failed manifest-fix attempts. Top hit was `decisions/choose-queue` (score 1) — completely unrelated. The knowledge engine's text-match ranking scores poorly on short schema-keyword queries when the target atom (`manifest-contract.md`) is terse prose with few keyword repetitions. The one escape hatch the main agent had — ask the knowledge engine — confirmed the dead-end instead of rescuing it.
+
+### What landed
+
+An additive synonym index for five wire-contract atoms: manifest-contract, routing-matrix, classification-taxonomy, content-surface-contracts, citation-map. Each atom declares a list of canonical keyword synonyms (JSON keys, check names, canonical phrase fragments). Any query containing a synonym as a case-insensitive substring prepends the matched atom(s) to the search result list at a score boost (`synonymBoostScore = 100`) above any realistic text-match total. Synonym hits deduplicate against text-match hits by URI; non-matching queries pass through the existing text-match path untouched.
+
+The snippet for each synonym hit names the atom ID + a pointer at the Cx-BRIEF-OVERFLOW retrieval action (`zerops_workflow action=dispatch-brief-atom atomId=<id>`), so the main agent has an immediate path from search result to full atom body. This is the counterpart to Cx-BRIEF-OVERFLOW: Cx-BRIEF-OVERFLOW makes atoms retrievable via a new action; Cx-KNOWLEDGE-INDEX-MANIFEST makes them discoverable via the search path.
+
+- [`internal/knowledge/wire_contract_synonyms.go`](../../internal/knowledge/wire_contract_synonyms.go) (+180 LoC, new) — `wireContractAtom` shape, `wireContractAtoms` declaration list with synonyms per atom, `matchWireContractSynonyms(query)` substring matcher, `loadWireContractAtomBody(atom)` reading from `content.RecipeAtomsFS`, `wireContractSearchResults(query)` building boosted SearchResult entries.
+- [`internal/knowledge/engine.go`](../../internal/knowledge/engine.go) — `Search()` prepends synonym hits, budgets remaining slots for text-match hits, dedupes by URI. Text-match path is unchanged when no synonym matches.
+- [`internal/knowledge/wire_contract_synonyms_test.go`](../../internal/knowledge/wire_contract_synonyms_test.go) (+150 LoC, new) — 5 tests:
+  - `TestWireContractSynonyms_CanonicalQueriesSurfaceTargetAtoms` — 8 table-driven subtests covering every HANDOFF-to-I6 canonical query (ZCP_CONTENT_MANIFEST.json schema, writer_manifest_completeness, fact_title format, manifest routing, routing matrix, classification taxonomy, fragment markers, citation map). Each asserts the target atom appears in top-3.
+  - `TestWireContractSynonyms_HitsRankAboveEmbeddingHits` — score-boost invariant: synonym hit at position 0 even when embedding hits would otherwise rank first.
+  - `TestWireContractSynonyms_NoMatch_PassesThrough` — a query unrelated to any wire-contract synonym returns zero `zerops://recipe-atom/` hits (no over-triggering).
+  - `TestWireContractSynonyms_SnippetIncludesRetrievalPointer` — snippet contains `action=dispatch-brief-atom` + atom ID so the agent has a retrieval path.
+  - `TestMatchWireContractSynonyms_CaseInsensitive` — UPPERCASE / lowercase / MixedCase variants all match.
+  - `TestLoadWireContractAtomBody_AllAtomsResolve` — build-time safety net: every registered atom resolves to a non-empty file in the embedded tree.
+
+### Design decisions
+
+1. **Additive, not replacement.** Synonym index prepends results; text-match path runs unchanged and fills remaining slots. Non-wire-contract queries behave exactly as before. The calibration bar is "atoms recoverable via canonical queries", not "every query routes through synonyms" — over-routing would be a regression for the many non-wire-contract queries (`postgresql connection pooling`, `redis pubsub patterns`, etc.).
+2. **Substring match, not token match.** `strings.Contains(lower(query), synonym)` handles both single-word (`fact_title`) and phrase (`manifest schema`) synonyms uniformly. Token-based matching would require splitting on non-word chars and then phrase-reassembling — no win over substring for a small synonym set.
+3. **Score boost, not rank-1 forcing.** Two synonym hits can both appear (manifest-contract + routing-matrix both triggered by `manifest routing`), with tie-breakers on declaration order. The boost (100) is comfortably above the highest realistic text-match score (roughly `3 * query_word_count`); rank-1 forcing would hide legitimate multi-atom matches. Tie-breakers (`score - 0.01*i`) prefer declaration order so results are deterministic.
+4. **Retrieval pointer in snippet, not separate API.** The main agent already knows `zerops_workflow action=dispatch-brief-atom` from Cx-BRIEF-OVERFLOW. Putting the retrieval command in the snippet is cheap (one line) and makes the search → retrieve flow self-documenting: a snippet that names the atom ID + the retrieval action IS the instruction set. No new MCP tool required.
+5. **Hardcoded atom → file path mapping.** Knowledge package imports `content` (embed FS) but not `workflow` (where the atom ID → path helper lives). Hardcoding the 5 paths inline is small coupling for a narrow surface; if the synonym set grows beyond ~20 atoms, consider factoring the id→path mapping into a shared helper package.
+6. **Five atoms, not all 121.** The 121-atom tree is too large to reasonably synonym-index manually. The 5 wire-contract atoms are the ones that surfaced in v35 as unrecoverable via embedding-only search. Extending to more atoms is a follow-up if specific recovery paths fail in v36 or later.
+
+### Verification
+
+- `go test ./internal/knowledge/ -run 'TestWireContractSynonyms|TestMatchWireContractSynonyms|TestLoadWireContractAtomBody' -v -count=1` → 5/5 PASS (12 subtests counting canonical-queries expansion).
+- `go test ./... -count=1` (full) → 22/22 packages green.
+- `make lint-local` → 0 issues.
+
+### LoC delta
+
+- `internal/knowledge/wire_contract_synonyms.go`: +180 LoC (new).
+- `internal/knowledge/wire_contract_synonyms_test.go`: +150 LoC (new).
+- `internal/knowledge/engine.go`: ~+25 LoC (synonym-hits prepending + dedupe).
+- **Total**: ~+355 LoC.
+
+### Breaks-alone consequence
+
+Zero downstream breakage. Existing text-match behavior is preserved for non-wire-contract queries. Clients that asserted specific result ordering for queries that happen to match a synonym (e.g. `manifest` alone — doesn't match any synonym; `manifest contract` — matches, reorders) will see the manifest-contract atom first. No such assertions exist in the current test tree; manual audit surfaced none.
+
+### Ordering deps verified
+
+Depends on Cx-BRIEF-OVERFLOW (snippet references `action=dispatch-brief-atom` which that commit added). Independent of the other three fix-stack commits. Lands last because it closes the one remaining non-gate defect; users searching the knowledge engine are rescued by the synonym prepend.
+
+### Known follow-ups
+
+- **Calibration-bar evaluator B-13**: post-run, sample N canonical wire-contract queries against the session's knowledge calls; verify top-3 surfaces the target atom. Already pinned at build-time by `TestWireContractSynonyms_CanonicalQueriesSurfaceTargetAtoms`; runtime evaluator is a scripts/ addition (Front A, non-blocking).
+- **Extend synonym list on drift**: if v36+ shows the agent querying terms not covered by the current synonyms (e.g. the agent queries "how to write a manifest" which no synonym catches), add the phrase to the relevant atom's `synonyms` list. Additive-only; no ranking changes required.
+- **Knowledge-base atom retrieval integration**: the synonym hit's URI shape is `zerops://recipe-atom/<atom-id>`. Future work could let `store.Get(uri)` resolve these URIs to the atom body directly (not just via dispatch-brief-atom action). Deferred — the current snippet + pointer pattern is sufficient for v36.
+
+### Next — fix stack complete
+
+All 5 Cx-commits from HANDOFF-to-I6 landed:
+- Cx-CHECK-WIRE-NOTATION ✅
+- Cx-ITERATE-GUARD ✅
+- Cx-BRIEF-OVERFLOW ✅
+- Cx-GUIDANCE-TOPIC-REGISTRY ✅
+- Cx-KNOWLEDGE-INDEX-MANIFEST ✅
+
+Per HANDOFF-to-I6 §"Fronts, reordered" + verdict.md §5 "Gate to PROCEED": with ≥4 of 6 defects closed (actually 5 of 6; F-4 skip-telemetry is diagnostic-only, engine refusal is already correct), the gate to v36 commission is open. Measurement evaluators (Front A per HANDOFF-to-I5) remain non-blocking but would tighten v36 arbitration — the user can commission v36 now or schedule evaluator work first.

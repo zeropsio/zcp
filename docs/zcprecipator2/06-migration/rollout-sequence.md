@@ -379,7 +379,7 @@ Each commit is further described below.
 
 ## C-13 — Build-time lints on the atomic content tree
 
-**Purpose**: enforce P2 / P6 / P8 invariants mechanically. Per [principles.md P2 §Enforcement](../03-architecture/principles.md) + [P6 §Enforcement](../03-architecture/principles.md) + [P8 §Enforcement](../03-architecture/principles.md) + [calibration-bars-v35.md §9 B-1..B-8](../05-regression/calibration-bars-v35.md).
+**Purpose**: enforce P2 / P6 / P8 invariants mechanically. Per [principles.md P2 §Enforcement](../03-architecture/principles.md) + [P6 §Enforcement](../03-architecture/principles.md) + [P8 §Enforcement](../03-architecture/principles.md) + [calibration-bars.md §9 B-1..B-8](../runs/v35/calibration-bars.md).
 
 **What changes**:
 - `tools/lint/recipe_atom_lint.go` (or shell script under `tools/lint/`) — new lint that runs as part of `make lint-local`:
@@ -405,11 +405,11 @@ Each commit is further described below.
 
 ## C-14 — v35 dry-run infrastructure + calibration-bar measurement scripts
 
-**Purpose**: enable pre-ship + post-ship measurement against the 97 bars in [calibration-bars-v35.md](../05-regression/calibration-bars-v35.md).
+**Purpose**: enable pre-ship + post-ship measurement against the 97 bars in [calibration-bars.md](../runs/v35/calibration-bars.md).
 
 **What changes**:
 - `cmd/zcp/dry_run_recipe.go` — new subcommand `zcp dry-run recipe --tier=<showcase|minimal> --dual-runtime=<true|false> --against=<fixture-plan.json>`. Exercises `buildSubStepGuide` across every (phase × tier) producing composed output; diffs against step-4 golden files (see `docs/zcprecipator2/04-verification/brief-*-composed.md`); reports atom-by-atom delta [~300 LoC]
-- `scripts/measure_calibration_bars.sh` — shell driver that, given a v35 session log path + exported deliverable tree path, evaluates every bar in `calibration-bars-v35.md §1–§11` and emits `reports/v35-measurement-<timestamp>.md` crossing each bar with PASS/FAIL + evidence [~400 LoC of shell / Python]
+- `scripts/measure_calibration_bars.sh` — shell driver that, given a v35 session log path + exported deliverable tree path, evaluates every bar in `calibration-bars.md §1–§11` and emits `reports/v35-measurement-<timestamp>.md` crossing each bar with PASS/FAIL + evidence [~400 LoC of shell / Python]
 - `scripts/extract_calibration_evidence.py` — helper for bars needing session-log parse (C-1 deploy rounds, C-2 finalize rounds, C-6 out-of-order substep-completes, C-11 TodoWrite full-rewrite detection, etc.); reuses logic from [docs/zcprecipator2/scripts/extract_flow.py](../scripts/extract_flow.py) [~300 LoC]
 - `scripts/measure_calibration_bars_test.sh` — validates the driver against v34 session logs (known baselines) + a synthetic all-pass fixture [~150 LoC]
 

@@ -261,7 +261,7 @@ func TestCheckManifestCompleteness_Table(t *testing.T) {
 			logTitles:    []string{"A", "B", "C"},
 			useFactsPath: true,
 			wantStatus:   "fail",
-			wantDetail:   []string{"2 distinct"},
+			wantDetail:   []string{"missing 2 entries", "`fact_title`"},
 		},
 	}
 	for _, tt := range tests {
