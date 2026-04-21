@@ -107,7 +107,7 @@ User's first action in any session is always `zerops_workflow action=status`. Th
 
 Entered via `zerops_workflow action=start workflow=bootstrap`. Entry is a two-call discovery+commit flow: the first call (no `route` argument) returns a `routeOptions[]` list ranked `resume` > `adopt` > `recipe` (top matches above `MinRecipeConfidence`) > `classic`. The second call supplies `route=<chosen>` and opens a session. Bootstrap is infrastructure-only; it writes ServiceMeta + zerops.yaml scaffolding for verification but no application code and no first deploy.
 
-Bootstrap runs three steps: `discover`, `provision`, `close`. `discover` and `provision` are mandatory; `close` is always reachable. The first-deploy branch of the develop workflow owns the generate + deploy work that historically sat inside bootstrap.
+Bootstrap runs three steps: `discover`, `provision`, `close`. `discover` and `provision` are mandatory; `close` is always reachable. Bootstrap is infrastructure-only — application code scaffolding and first deploy are owned by the develop workflow's first-deploy branch (`deployStates=[never-deployed]`).
 
 ### 2.1 Route `recipe` — Recipe match
 

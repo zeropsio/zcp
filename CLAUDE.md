@@ -15,10 +15,13 @@ Single Go binary merging ZAIA CLI + ZAIA-MCP. AI-driven Zerops PaaS management v
 ```
 
 Key specs:
-- `docs/spec-workflows.md` — workflow step specs, invariants, state model (partially stale post-atom-rewrite — see `plans/instruction-delivery-rewrite.md` Appendix D)
-- `docs/spec-work-session.md` — per-PID Work Session for develop flow (lifecycle visibility, compaction survival, auto-close)
-- `docs/spec-knowledge-distribution.md` — legacy inject/point model (superseded in practice by the atom pipeline — see Appendix D)
-- `plans/instruction-delivery-rewrite.md` — live reference for the atom corpus + typed Plan + envelope pipeline
+- `docs/spec-workflows.md` — workflow step specs, invariants, envelope/plan/atom pipeline, state model
+- `docs/spec-work-session.md` — per-PID Work Session for develop (lifecycle visibility, compaction survival, auto-close)
+- `docs/spec-knowledge-distribution.md` — atom corpus authoring model (axes, priorities, placeholders) and synthesizer contract
+- `docs/spec-scenarios.md` — per-phase scenario walkthroughs, pinned by `internal/workflow/scenarios_test.go`
+- `docs/spec-local-dev.md` — local-machine vs container environment differences
+- `docs/spec-content-surfaces.md` — recipe content-quality contract (seven surfaces, classification taxonomy)
+- `docs/spec-recipe-quality-process.md` — recipe audit process
 
 Zerops platform schemas (live, authoritative for YAML field validation):
 - **Import YAML**: `https://api.app-prg1.zerops.io/api/rest/public/settings/import-project-yml-json-schema.json`
