@@ -1682,3 +1682,74 @@ Independent of the three gate-to-PROCEED commits. Touches a different surface (g
 ### Next
 
 Advance to Cx-KNOWLEDGE-INDEX-MANIFEST per HANDOFF-to-I6 fix-stack order. Closes F-6 (knowledge-engine misses manifest-contract atom on obvious queries). Last of five fix-stack commits.
+
+---
+
+## Cx-KNOWLEDGE-INDEX-MANIFEST — wire-contract atoms routed via explicit keyword synonyms (F-6 close)
+
+**Status**: green — 5 tests (including 8 canonical-query subtests), all passing. Fifth of five fix-stack commits per HANDOFF-to-I6. Fix stack complete.
+
+**Context**: closes defect-class-registry §16.6 (`v35-knowledge-manifest-schema-miss`). v35 evidence at 08:45:58: main agent called `zerops_knowledge query="ZCP_CONTENT_MANIFEST.json schema writer_manifest_completeness"` after eight failed manifest-fix attempts. Top hit was `decisions/choose-queue` (score 1) — completely unrelated. The knowledge engine's text-match ranking scores poorly on short schema-keyword queries when the target atom (`manifest-contract.md`) is terse prose with few keyword repetitions. The one escape hatch the main agent had — ask the knowledge engine — confirmed the dead-end instead of rescuing it.
+
+### What landed
+
+An additive synonym index for five wire-contract atoms: manifest-contract, routing-matrix, classification-taxonomy, content-surface-contracts, citation-map. Each atom declares a list of canonical keyword synonyms (JSON keys, check names, canonical phrase fragments). Any query containing a synonym as a case-insensitive substring prepends the matched atom(s) to the search result list at a score boost (`synonymBoostScore = 100`) above any realistic text-match total. Synonym hits deduplicate against text-match hits by URI; non-matching queries pass through the existing text-match path untouched.
+
+The snippet for each synonym hit names the atom ID + a pointer at the Cx-BRIEF-OVERFLOW retrieval action (`zerops_workflow action=dispatch-brief-atom atomId=<id>`), so the main agent has an immediate path from search result to full atom body. This is the counterpart to Cx-BRIEF-OVERFLOW: Cx-BRIEF-OVERFLOW makes atoms retrievable via a new action; Cx-KNOWLEDGE-INDEX-MANIFEST makes them discoverable via the search path.
+
+- [`internal/knowledge/wire_contract_synonyms.go`](../../internal/knowledge/wire_contract_synonyms.go) (+180 LoC, new) — `wireContractAtom` shape, `wireContractAtoms` declaration list with synonyms per atom, `matchWireContractSynonyms(query)` substring matcher, `loadWireContractAtomBody(atom)` reading from `content.RecipeAtomsFS`, `wireContractSearchResults(query)` building boosted SearchResult entries.
+- [`internal/knowledge/engine.go`](../../internal/knowledge/engine.go) — `Search()` prepends synonym hits, budgets remaining slots for text-match hits, dedupes by URI. Text-match path is unchanged when no synonym matches.
+- [`internal/knowledge/wire_contract_synonyms_test.go`](../../internal/knowledge/wire_contract_synonyms_test.go) (+150 LoC, new) — 5 tests:
+  - `TestWireContractSynonyms_CanonicalQueriesSurfaceTargetAtoms` — 8 table-driven subtests covering every HANDOFF-to-I6 canonical query (ZCP_CONTENT_MANIFEST.json schema, writer_manifest_completeness, fact_title format, manifest routing, routing matrix, classification taxonomy, fragment markers, citation map). Each asserts the target atom appears in top-3.
+  - `TestWireContractSynonyms_HitsRankAboveEmbeddingHits` — score-boost invariant: synonym hit at position 0 even when embedding hits would otherwise rank first.
+  - `TestWireContractSynonyms_NoMatch_PassesThrough` — a query unrelated to any wire-contract synonym returns zero `zerops://recipe-atom/` hits (no over-triggering).
+  - `TestWireContractSynonyms_SnippetIncludesRetrievalPointer` — snippet contains `action=dispatch-brief-atom` + atom ID so the agent has a retrieval path.
+  - `TestMatchWireContractSynonyms_CaseInsensitive` — UPPERCASE / lowercase / MixedCase variants all match.
+  - `TestLoadWireContractAtomBody_AllAtomsResolve` — build-time safety net: every registered atom resolves to a non-empty file in the embedded tree.
+
+### Design decisions
+
+1. **Additive, not replacement.** Synonym index prepends results; text-match path runs unchanged and fills remaining slots. Non-wire-contract queries behave exactly as before. The calibration bar is "atoms recoverable via canonical queries", not "every query routes through synonyms" — over-routing would be a regression for the many non-wire-contract queries (`postgresql connection pooling`, `redis pubsub patterns`, etc.).
+2. **Substring match, not token match.** `strings.Contains(lower(query), synonym)` handles both single-word (`fact_title`) and phrase (`manifest schema`) synonyms uniformly. Token-based matching would require splitting on non-word chars and then phrase-reassembling — no win over substring for a small synonym set.
+3. **Score boost, not rank-1 forcing.** Two synonym hits can both appear (manifest-contract + routing-matrix both triggered by `manifest routing`), with tie-breakers on declaration order. The boost (100) is comfortably above the highest realistic text-match score (roughly `3 * query_word_count`); rank-1 forcing would hide legitimate multi-atom matches. Tie-breakers (`score - 0.01*i`) prefer declaration order so results are deterministic.
+4. **Retrieval pointer in snippet, not separate API.** The main agent already knows `zerops_workflow action=dispatch-brief-atom` from Cx-BRIEF-OVERFLOW. Putting the retrieval command in the snippet is cheap (one line) and makes the search → retrieve flow self-documenting: a snippet that names the atom ID + the retrieval action IS the instruction set. No new MCP tool required.
+5. **Hardcoded atom → file path mapping.** Knowledge package imports `content` (embed FS) but not `workflow` (where the atom ID → path helper lives). Hardcoding the 5 paths inline is small coupling for a narrow surface; if the synonym set grows beyond ~20 atoms, consider factoring the id→path mapping into a shared helper package.
+6. **Five atoms, not all 121.** The 121-atom tree is too large to reasonably synonym-index manually. The 5 wire-contract atoms are the ones that surfaced in v35 as unrecoverable via embedding-only search. Extending to more atoms is a follow-up if specific recovery paths fail in v36 or later.
+
+### Verification
+
+- `go test ./internal/knowledge/ -run 'TestWireContractSynonyms|TestMatchWireContractSynonyms|TestLoadWireContractAtomBody' -v -count=1` → 5/5 PASS (12 subtests counting canonical-queries expansion).
+- `go test ./... -count=1` (full) → 22/22 packages green.
+- `make lint-local` → 0 issues.
+
+### LoC delta
+
+- `internal/knowledge/wire_contract_synonyms.go`: +180 LoC (new).
+- `internal/knowledge/wire_contract_synonyms_test.go`: +150 LoC (new).
+- `internal/knowledge/engine.go`: ~+25 LoC (synonym-hits prepending + dedupe).
+- **Total**: ~+355 LoC.
+
+### Breaks-alone consequence
+
+Zero downstream breakage. Existing text-match behavior is preserved for non-wire-contract queries. Clients that asserted specific result ordering for queries that happen to match a synonym (e.g. `manifest` alone — doesn't match any synonym; `manifest contract` — matches, reorders) will see the manifest-contract atom first. No such assertions exist in the current test tree; manual audit surfaced none.
+
+### Ordering deps verified
+
+Depends on Cx-BRIEF-OVERFLOW (snippet references `action=dispatch-brief-atom` which that commit added). Independent of the other three fix-stack commits. Lands last because it closes the one remaining non-gate defect; users searching the knowledge engine are rescued by the synonym prepend.
+
+### Known follow-ups
+
+- **Calibration-bar evaluator B-13**: post-run, sample N canonical wire-contract queries against the session's knowledge calls; verify top-3 surfaces the target atom. Already pinned at build-time by `TestWireContractSynonyms_CanonicalQueriesSurfaceTargetAtoms`; runtime evaluator is a scripts/ addition (Front A, non-blocking).
+- **Extend synonym list on drift**: if v36+ shows the agent querying terms not covered by the current synonyms (e.g. the agent queries "how to write a manifest" which no synonym catches), add the phrase to the relevant atom's `synonyms` list. Additive-only; no ranking changes required.
+- **Knowledge-base atom retrieval integration**: the synonym hit's URI shape is `zerops://recipe-atom/<atom-id>`. Future work could let `store.Get(uri)` resolve these URIs to the atom body directly (not just via dispatch-brief-atom action). Deferred — the current snippet + pointer pattern is sufficient for v36.
+
+### Next — fix stack complete
+
+All 5 Cx-commits from HANDOFF-to-I6 landed:
+- Cx-CHECK-WIRE-NOTATION ✅
+- Cx-ITERATE-GUARD ✅
+- Cx-BRIEF-OVERFLOW ✅
+- Cx-GUIDANCE-TOPIC-REGISTRY ✅
+- Cx-KNOWLEDGE-INDEX-MANIFEST ✅
+
+Per HANDOFF-to-I6 §"Fronts, reordered" + verdict.md §5 "Gate to PROCEED": with ≥4 of 6 defects closed (actually 5 of 6; F-4 skip-telemetry is diagnostic-only, engine refusal is already correct), the gate to v36 commission is open. Measurement evaluators (Front A per HANDOFF-to-I5) remain non-blocking but would tighten v36 arbitration — the user can commission v36 now or schedule evaluator work first.

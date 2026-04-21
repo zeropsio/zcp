@@ -104,6 +104,12 @@ func (s *Store) Search(query string, limit int) []SearchResult {
 		limit = 5
 	}
 
+	// Cx-KNOWLEDGE-INDEX-MANIFEST (v35 F-6 close): wire-contract atoms
+	// matched by explicit keyword synonyms prepend the result list at a
+	// boost score above any realistic text-match total. Synonym hits
+	// deduplicate against text-match hits on URI before returning.
+	synonymHits := wireContractSearchResults(query)
+
 	expanded := expandQuery(query)
 	words := strings.Fields(strings.ToLower(expanded))
 
@@ -140,19 +146,39 @@ func (s *Store) Search(query string, limit int) []SearchResult {
 		return hits[i].uri < hits[j].uri
 	})
 
-	if len(hits) > limit {
-		hits = hits[:limit]
+	// Dedupe the text-match hits against any synonym hit already added
+	// by URI. Synonym URIs (zerops://recipe-atom/...) don't overlap
+	// with the embedded document corpus, so in practice this is a
+	// no-op; kept defensive against future atom IDs bleeding into the
+	// document URI namespace.
+	synonymURIs := make(map[string]bool, len(synonymHits))
+	for _, h := range synonymHits {
+		synonymURIs[h.URI] = true
 	}
-	results := make([]SearchResult, len(hits))
-	for i, h := range hits {
+
+	// Budget: synonym hits consume the head of the limit; text-match
+	// hits fill the remainder.
+	remaining := max(limit-len(synonymHits), 0)
+	textResults := make([]SearchResult, 0, remaining)
+	for _, h := range hits {
+		if len(textResults) >= remaining {
+			break
+		}
+		if synonymURIs[h.uri] {
+			continue
+		}
 		doc := s.docs[h.uri]
-		results[i] = SearchResult{
+		textResults = append(textResults, SearchResult{
 			URI:     doc.URI,
 			Title:   doc.Title,
 			Score:   h.score,
 			Snippet: extractSnippet(doc.Content, expanded, 300),
-		}
+		})
 	}
+
+	results := make([]SearchResult, 0, len(synonymHits)+len(textResults))
+	results = append(results, synonymHits...)
+	results = append(results, textResults...)
 	return results
 }
 
