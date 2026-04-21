@@ -208,7 +208,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "route":
 		return handleRoute(ctx, engine, client, projectID, stateDir, selfHostname)
 	case "strategy":
-		return handleStrategy(engine, input, stateDir, rt)
+		return handleStrategy(input, stateDir, rt)
 	default:
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,

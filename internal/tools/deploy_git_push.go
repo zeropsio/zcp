@@ -23,9 +23,8 @@ type gitPushPrerequisites struct {
 
 const gitTokenCheckCmd = `test -n "$GIT_TOKEN" && echo 1 || echo 0`
 
-// gitPushSetupPointerInstructions is short on purpose — the full setup flow
-// (Option A/B, tokens, optional CI/CD) lives in the strategy-push-git atom
-// synthesized by action=strategy. This pre-flight error just redirects.
+// gitPushSetupPointerInstructions redirects to the central deploy-config
+// action; the full setup flow is synthesized there from the atom corpus.
 const gitPushSetupPointerInstructions = `Configure push-git via the central deploy-config action:
 
   zerops_workflow action="strategy" strategies={"%s":"push-git"}

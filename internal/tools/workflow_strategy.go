@@ -19,20 +19,17 @@ var validStrategies = map[string]bool{
 	workflow.StrategyManual:  true,
 }
 
-// strategyListEntry describes one service's current strategy and options for
-// the listing mode returned when `action=strategy` is called with no
-// strategies map. Listing mode is the "central point" for deploy config:
-// the agent sees current strategy per service and the available options.
+// strategyListEntry is one row in the listing-mode response: current strategy
+// + the options the agent can switch to.
 type strategyListEntry struct {
-	Hostname string   `json:"hostname"`
-	Current  string   `json:"current"`           // "push-dev" | "push-git" | "manual" | "unset"
-	Options  []string `json:"options"`           // always [push-dev, push-git, manual]
-	Hint     string   `json:"hint"`              // example invocation to change it
-	StageOf  string   `json:"stageOf,omitempty"` // dev hostname if this is a stage pair half
+	Hostname string                  `json:"hostname"`
+	Current  workflow.DeployStrategy `json:"current"`
+	Options  []string                `json:"options"`
+	Hint     string                  `json:"hint"`
 }
 
 type strategyListResponse struct {
-	Status   string              `json:"status"` // "list"
+	Status   string              `json:"status"`
 	Services []strategyListEntry `json:"services"`
 	Next     string              `json:"next"`
 }
@@ -41,22 +38,16 @@ type strategyListResponse struct {
 // strategy. Three modes:
 //
 //   - Listing: empty strategies map → returns current strategy + options per
-//     service. No mutation. Discovery mode.
+//     service. No mutation.
 //   - Simple update: strategies={X:push-dev|manual} → write meta, return
-//     short confirmation. No setup needed (those strategies are self-
-//     contained).
+//     confirmation. No setup needed.
 //   - Setup: strategies={X:push-git} → write meta AND synthesize the
 //     push-git setup atom (Option A/B, token, optional CI/CD, verify).
-//     One call gives the agent the whole setup flow.
-func handleStrategy(_ *workflow.Engine, input WorkflowInput, stateDir string, rt runtime.Info) (*mcp.CallToolResult, any, error) {
-	// Listing mode: no strategies map provided → show current state + options.
-	// This is how the agent asks "what can be set and what is set?" without
-	// changing anything.
+func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp.CallToolResult, any, error) {
 	if len(input.Strategies) == 0 {
 		return handleStrategyList(stateDir)
 	}
 
-	// Validate all strategy values first.
 	for hostname, strategy := range input.Strategies {
 		if !validStrategies[strategy] {
 			return convertError(platform.NewPlatformError(
@@ -66,10 +57,10 @@ func handleStrategy(_ *workflow.Engine, input WorkflowInput, stateDir string, rt
 		}
 	}
 
-	// Update each service meta.
-	// Only complete (bootstrapped) metas are valid strategy targets — auto-creating
-	// orphan metas here poisons every downstream consumer (router, briefing, locks).
-	var updated []string
+	// Only complete (bootstrapped) metas are valid strategy targets — auto-
+	// creating orphan metas here poisons every downstream consumer (router,
+	// briefing, locks).
+	updated := make([]string, 0, len(input.Strategies))
 	for hostname, strategy := range input.Strategies {
 		meta, err := workflow.ReadServiceMeta(stateDir, hostname)
 		if err != nil {
@@ -84,6 +75,10 @@ func handleStrategy(_ *workflow.Engine, input WorkflowInput, stateDir string, rt
 				fmt.Sprintf("Service %q is not bootstrapped", hostname),
 				"Run bootstrap first: zerops_workflow action=\"start\" workflow=\"bootstrap\"")), nil, nil
 		}
+		updated = append(updated, fmt.Sprintf("%s=%s", hostname, strategy))
+		if meta.DeployStrategy == strategy && meta.StrategyConfirmed {
+			continue
+		}
 		meta.DeployStrategy = strategy
 		meta.StrategyConfirmed = true
 		if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
@@ -92,14 +87,10 @@ func handleStrategy(_ *workflow.Engine, input WorkflowInput, stateDir string, rt
 				fmt.Sprintf("Write service meta %q: %v", hostname, err),
 				"")), nil, nil
 		}
-		updated = append(updated, fmt.Sprintf("%s=%s", hostname, strategy))
 	}
 
-	// For push-git: synthesize the full setup atom (tokens, optional CI/CD,
-	// first push). This replaces the old split between `action=strategy`
-	// (flag-only) + `workflow=cicd` (setup) into one action — the central
-	// deploy-config entry point. Other strategies (push-dev, manual) need
-	// no further setup; they get the short develop-phase guidance.
+	// push-git needs the full setup atom (tokens, optional CI/CD). Other
+	// strategies reuse the existing develop-phase iteration atoms.
 	var guidance string
 	if anyStrategyIs(input.Strategies, workflow.StrategyPushGit) {
 		g, err := workflow.SynthesizeImmediateWorkflow(workflow.PhaseStrategySetup, workflow.DetectEnvironment(rt))
@@ -140,14 +131,14 @@ func handleStrategyList(stateDir string) (*mcp.CallToolResult, any, error) {
 	}
 	options := []string{workflow.StrategyPushDev, workflow.StrategyPushGit, workflow.StrategyManual}
 
-	var entries []strategyListEntry
+	entries := make([]strategyListEntry, 0, len(metas))
 	for _, m := range metas {
 		if !m.IsComplete() {
 			continue
 		}
-		current := m.DeployStrategy
+		current := workflow.DeployStrategy(m.DeployStrategy)
 		if current == "" {
-			current = string(workflow.StrategyUnset)
+			current = workflow.StrategyUnset
 		}
 		entries = append(entries, strategyListEntry{
 			Hostname: m.Hostname,
@@ -174,8 +165,7 @@ func buildStrategyGuidance(strategies map[string]string) string {
 	return g
 }
 
-// anyStrategyIs returns true if at least one value in the map equals the
-// given strategy.
+// anyStrategyIs returns true if at least one value in the map equals strategy.
 func anyStrategyIs(strategies map[string]string, strategy string) bool {
 	for _, s := range strategies {
 		if s == strategy {
@@ -185,7 +175,8 @@ func anyStrategyIs(strategies map[string]string, strategy string) bool {
 	return false
 }
 
-// allStrategiesAre returns true if all values in the map equal the given strategy.
+// allStrategiesAre returns true if all values in the map equal strategy. Empty
+// map returns false (no strategies to match).
 func allStrategiesAre(strategies map[string]string, strategy string) bool {
 	if len(strategies) == 0 {
 		return false

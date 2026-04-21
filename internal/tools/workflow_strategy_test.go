@@ -56,7 +56,7 @@ func TestHandleStrategy_ValidUpdate(t *testing.T) {
 			}
 
 			input := WorkflowInput{Strategies: tt.strategies}
-			result, _, err := handleStrategy(nil, input, dir, runtime.Info{})
+			result, _, err := handleStrategy(input, dir, runtime.Info{})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -98,7 +98,7 @@ func TestHandleStrategy_InvalidStrategy(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	input := WorkflowInput{Strategies: map[string]string{"appdev": "invalid-strategy"}}
-	result, _, err := handleStrategy(nil, input, dir, runtime.Info{})
+	result, _, err := handleStrategy(input, dir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -143,7 +143,7 @@ func TestHandleStrategy_EmptyStrategies_ListingMode(t *testing.T) {
 	}
 
 	input := WorkflowInput{} // no strategies
-	result, _, err := handleStrategy(nil, input, dir, runtime.Info{})
+	result, _, err := handleStrategy(input, dir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestHandleStrategy_UnknownHostname_RefusesToCreateOrphan(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	input := WorkflowInput{Strategies: map[string]string{"newservice": workflow.StrategyPushGit}}
-	result, _, err := handleStrategy(nil, input, dir, runtime.Info{})
+	result, _, err := handleStrategy(input, dir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestHandleStrategy_IncompleteMeta_Refused(t *testing.T) {
 		t.Fatalf("write meta: %v", err)
 	}
 	input := WorkflowInput{Strategies: map[string]string{"appdev": workflow.StrategyPushGit}}
-	result, _, err := handleStrategy(nil, input, dir, runtime.Info{})
+	result, _, err := handleStrategy(input, dir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -249,7 +249,7 @@ func TestHandleStrategy_PushGit_SynthSetup(t *testing.T) {
 	}
 
 	input := WorkflowInput{Strategies: map[string]string{"appdev": workflow.StrategyPushGit}}
-	result, _, err := handleStrategy(nil, input, dir, runtime.Info{})
+	result, _, err := handleStrategy(input, dir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
