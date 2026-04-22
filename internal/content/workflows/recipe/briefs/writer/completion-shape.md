@@ -7,14 +7,12 @@ Your return payload to the step above you. The payload is advisory prose; the lo
 1. Files written. One line per authored file with its byte count:
 
    ```
-   {{.ProjectRoot}}/README.md                                 <bytes>
-   {{.ProjectRoot}}/ZCP_CONTENT_MANIFEST.json                 <bytes>
+   /var/www/zcprecipator/{{.Slug}}/ZCP_CONTENT_MANIFEST.json   <bytes>
    {{.ProjectRoot}}/{hostname}/README.md                       <bytes>
    {{.ProjectRoot}}/{hostname}/CLAUDE.md                       <bytes>
-   {{.ProjectRoot}}/environments/{env-folder}/README.md        <bytes>
    ```
 
-   One row per hostname in `{{.Hostnames}}`; one row per env tier in `{{.EnvFolders}}`. If a file is absent, the row is absent; rows do not carry zero-byte placeholders.
+   One row per hostname in `{{.Hostnames}}`; the manifest row appears once. If a file is absent, the row is absent; rows do not carry zero-byte placeholders. The env-comment-set payload in section 3 below is NOT a file write — it is data returned to the step above you, applied at finalize.
 
 2. Manifest summary. Three totals the step above you parses:
 

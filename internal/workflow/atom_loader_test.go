@@ -5,17 +5,13 @@ import (
 	"testing"
 )
 
-// TestLoadAtomBodyRendered_EnvFoldersResolved is the Cx-ENVFOLDERS-WIRED
-// RED→GREEN test: loading an atom that references {{.EnvFolders}} +
-// {{.ProjectRoot}} must produce a body with every template expression
-// resolved. The v36 F-9 defect happened because dispatch-brief-atom
-// returned the atom's raw bytes — `{{index .EnvFolders i}}` fragments
-// reached the writer dispatch prompt verbatim and the main agent
-// invented ghost slug names instead of the canonical numbered folders.
-//
-// Acceptance: the rendered body contains the first canonical env path
-// AND no unresolved `{{` / `}}` tokens remain anywhere in the body.
-func TestLoadAtomBodyRendered_EnvFoldersResolved(t *testing.T) {
+// TestLoadAtomBodyRendered_WriterCanonicalTreeRenders guards the writer
+// canonical-output-tree atom's template rendering. Post-Cx-WRITER-SCOPE-
+// REDUCTION the writer no longer authors env README files, so the atom
+// no longer references `{{.EnvFolders}}` — the rendering contract now
+// is: a live plan resolves every template expression; ProjectRoot +
+// Slug are expanded; zero `{{` / `}}` markers survive the render.
+func TestLoadAtomBodyRendered_WriterCanonicalTreeRenders(t *testing.T) {
 	t.Parallel()
 	plan := &RecipePlan{
 		Framework: "nestjs",
@@ -34,13 +30,13 @@ func TestLoadAtomBodyRendered_EnvFoldersResolved(t *testing.T) {
 	if strings.Contains(body, "{{") || strings.Contains(body, "}}") {
 		t.Errorf("body contains unresolved template syntax:\n%s", body)
 	}
-	wantPath := "0 \u2014 AI Agent/README.md"
-	if !strings.Contains(body, wantPath) {
-		t.Errorf("body missing canonical env path %q; got:\n%s", wantPath, body)
+	// ProjectRoot substitution: the per-codebase README path renders under /var/www.
+	if !strings.Contains(body, "/var/www/") {
+		t.Errorf("body missing rendered /var/www ProjectRoot prefix; got:\n%s", body)
 	}
-	// ProjectRoot substitution: every env path renders under /var/www.
-	if !strings.Contains(body, "/var/www/environments/0 \u2014 AI Agent/") {
-		t.Errorf("body missing rendered /var/www prefix for env 0; got:\n%s", body)
+	// Slug substitution: the manifest path carries the live plan's slug.
+	if !strings.Contains(body, "/var/www/zcprecipator/nestjs-showcase/ZCP_CONTENT_MANIFEST.json") {
+		t.Errorf("body missing rendered manifest path with slug; got:\n%s", body)
 	}
 }
 
