@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -186,10 +188,53 @@ func buildWriterBriefRendered(ctx AtomRenderContext, factsLogPath string) (strin
 		b.WriteString("Pattern-match every piece of content you author against these examples BEFORE treating it as shippable. Each section covers one of the writer-authored surfaces with `[FAIL]` (shapes to avoid) and `[PASS]` (shapes to model after) cases. When a bullet you plan to write resembles a FAIL example, reclassify per the classification taxonomy and reroute (or discard) before publishing.\n\n")
 		b.WriteString(examples)
 	}
+	if yamls := renderWriterCodebaseYAMLInput(ctx); yamls != "" {
+		b.WriteString("\n\n---\n\n")
+		b.WriteString(yamls)
+	}
 	if factsLogPath != "" {
-		fmt.Fprintf(&b, "\n\n---\n\n## Input files\n\n- Facts log: `%s`\n", factsLogPath)
+		b.WriteString("\n\n---\n\n## Input files\n\n")
+		fmt.Fprintf(&b, "- Facts log: `%s`\n", factsLogPath)
+		b.WriteString("\nThe facts log carries one JSONL record per zerops_record_fact call made during deploy. When authoring gotchas + IG items, prioritize facts with `routeTo: content_gotcha` or `routeTo: content_ig` — those are the surfaces you author directly. Facts with other routing values (claude_md, zerops_yaml_comment, discarded, scaffold_preamble, feature_preamble) inform cross-surface decisions but you do not author content from them. Empty or unset `routeTo` means the recorder did not classify — read those as candidates and classify them via the classification-pointer before authoring.\n")
 	}
 	return b.String(), nil
+}
+
+// renderWriterCodebaseYAMLInput (v39 Commit 3c) inlines each codebase's
+// actual `zerops.yaml` into the writer brief as a pre-loaded input
+// block. When the writer authors gotchas or IG items that reference
+// config-level behavior (execOnce, deployFiles, httpSupport,
+// initCommands, etc.), it pattern-matches against the real yaml rather
+// than inventing patterns from memory. Closes a class of folk-doctrine
+// at its source: the author sees the exact file the recipe ships.
+//
+// Reads from RecipeProjectRoot/{hostname}dev/zerops.yaml. Files missing
+// at brief-build time (pre-scaffold or mid-iteration paths) are
+// skipped silently with a placeholder — the block still renders, and
+// writer knows which codebases had available yaml.
+func renderWriterCodebaseYAMLInput(ctx AtomRenderContext) string {
+	if len(ctx.Hostnames) == 0 || ctx.ProjectRoot == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("# Pre-loaded input — per-codebase `zerops.yaml`\n\n")
+	b.WriteString("Each codebase below carries the `zerops.yaml` the recipe actually ships. When you write a gotcha or IG item referencing a config mechanism (`execOnce`, `deployFiles`, `httpSupport`, `initCommands`, `readinessCheck`, etc.), pattern-match your wording against the EXACT field values below — do NOT invent patterns from memory. A claim about \"our `./dist/~` tilde strip\" that doesn't match what's below is a fabrication; either reword to match the yaml or drop the claim.\n\n")
+	haveAny := false
+	for _, host := range ctx.Hostnames {
+		path := filepath.Join(ctx.ProjectRoot, host+"dev", "zerops.yaml")
+		data, err := os.ReadFile(path) // #nosec G304 -- path composed from vetted plan hostnames under a const project root
+		if err != nil {
+			fmt.Fprintf(&b, "## `%s` — `zerops.yaml` not yet present (`%s`)\n\nThe codebase's `zerops.yaml` was not readable at brief-build time. Author config-referencing content cautiously; prefer qualitative phrasing over field-specific quotes for this codebase.\n\n", host, path)
+			haveAny = true
+			continue
+		}
+		haveAny = true
+		fmt.Fprintf(&b, "## `%s` — `%s`\n\n```yaml\n%s```\n\n", host, path, string(data))
+	}
+	if !haveAny {
+		return ""
+	}
+	return strings.TrimRight(b.String(), "\n") + "\n"
 }
 
 // buildEditorialReviewBriefRendered stitches the editorial-review brief.

@@ -167,12 +167,26 @@ func resolveRecipeGuidance(step, tier string, plan *RecipePlan) string {
 		return composeSection(body, recipeDeployBlocks, plan)
 
 	case RecipeStepFinalize:
-		// Phase A: return skeleton instead of composed blocks.
+		// v39 Commit 3b (F-21 closure) — render each env's import.yaml
+		// schema-only (no comments) and append as a pre-loaded input
+		// block BEFORE the agent authors envComments. v38's "2 GB
+		// quota" fabrication across all 6 tiers happened because the
+		// main agent wrote envComment claims from memory without
+		// seeing the yaml first. Showing the yaml up-front turns
+		// "what does this block say" from a recall question into a
+		// context-inspection question — the agent cannot invent a
+		// number that isn't in the visible yaml.
+		var base string
 		if skeleton := extractSection(md, "finalize-skeleton"); skeleton != "" {
-			return composeSkeleton(skeleton, recipeFinalizeTopics, plan)
+			base = composeSkeleton(skeleton, recipeFinalizeTopics, plan)
+		} else {
+			body := extractSection(md, "finalize")
+			base = composeSection(body, recipeFinalizeBlocks, plan)
 		}
-		body := extractSection(md, "finalize")
-		return composeSection(body, recipeFinalizeBlocks, plan)
+		if yamlBlock := renderFinalizeYAMLInput(plan); yamlBlock != "" {
+			return base + "\n\n---\n\n" + yamlBlock
+		}
+		return base
 
 	case RecipeStepClose:
 		// Phase A: return skeleton instead of composed blocks.
@@ -505,6 +519,17 @@ func (r *RecipeState) buildSubStepGuide(step, subStep, sessionID string) string 
 	// covers substep shapes that haven't been atom-ified yet.
 	if atomID := atomIDForSubStep(step, subStep); atomID != "" {
 		if body, err := LoadAtomBody(atomID); err == nil {
+			// v39 Commit 3a — append annotated examples at substep entry
+			// for content-emitting substeps. Pattern-matching against
+			// concrete pass/fail shapes closes folk-doctrine / field-
+			// narration at authoring time instead of relying on post-
+			// hoc review catches. Current coverage: zerops-yaml substep
+			// (where the main agent authors `zerops.yaml` comments).
+			if surface := exampleSurfaceForSubStep(step, subStep); surface != "" {
+				if examples := renderSubStepExampleBlock(surface); examples != "" {
+					body = body + "\n\n---\n\n" + examples
+				}
+			}
 			// Dispatch-owning substeps append the composed sub-agent brief
 			// so the main agent can copy it verbatim into its Agent tool
 			// prompt. Under P2, the brief content is leaf-artifact — the
@@ -889,4 +914,89 @@ func planNeedsFragmentsDeepDive(plan *RecipePlan) bool {
 		return true
 	}
 	return !strings.HasSuffix(plan.Slug, "-hello-world")
+}
+
+// exampleSurfaceForSubStep maps a (step, substep) pair to the content
+// surface whose example bank entries should be injected at substep
+// entry. Returns empty for substeps that don't emit example-bank-
+// covered content. v39 Commit 3a — currently covers generate.zerops-
+// yaml (the substep where the main agent authors the per-codebase
+// `zerops.yaml` comments). Additional surfaces can be added as the
+// example bank grows.
+func exampleSurfaceForSubStep(step, subStep string) ExampleSurface {
+	if step == RecipeStepGenerate && subStep == SubStepZeropsYAML {
+		return ExampleSurfaceZeropsYAMLComment
+	}
+	return ""
+}
+
+// renderSubStepExampleBlock samples the example bank for the given
+// surface and renders the dispatch-ready markdown block appended to
+// the substep entry guidance. Uses the same pass+fail mix the writer
+// brief uses (2 per surface) so the main agent sees both shapes.
+func renderSubStepExampleBlock(surface ExampleSurface) string {
+	const perSurface = 2
+	samples, err := SampleFor(surface, perSurface)
+	if err != nil || len(samples) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "## Pre-loaded input — annotated %s examples\n\n", surface)
+	b.WriteString("Pattern-match every comment you write against these examples BEFORE treating it as shippable. [FAIL] examples show shapes to avoid; [PASS] examples model the surface's contract. If a comment you plan to write resembles a FAIL example, reclassify and rewrite — or drop — before publishing.\n\n")
+	b.WriteString(RenderExampleBlock(samples))
+	return b.String()
+}
+
+// renderFinalizeYAMLInput (v39 Commit 3b) returns the pre-loaded input
+// block appended to the finalize-step guidance: one section per env
+// containing the import.yaml the engine will generate with NO comments.
+// The main agent authors envComments against the visible yaml so every
+// claimed number / mode / setup name matches the adjacent field rather
+// than being recalled from memory. Closes F-21 at the source: the agent
+// cannot cite "2 GB quota" when the yaml in front of them says
+// `objectStorageSize: 1`.
+//
+// The yaml is rendered via GenerateEnvImportYAML with plan.EnvComments
+// intentionally left nil — the generator omits comment blocks for envs
+// that have no agent-authored commentary, which is exactly the schema-
+// only view we want to expose here. A follow-up call to action=
+// generate-finalize will bake the authored envComments into the file.
+//
+// Returns empty when plan is nil (test or error-path invocation) —
+// callers already guard the skeleton path so this stays quiet in edge
+// cases rather than injecting an empty section.
+func renderFinalizeYAMLInput(plan *RecipePlan) string {
+	if plan == nil {
+		return ""
+	}
+	// Gate to showcase tier — the F-21 fabrication class ("2 GB quota"
+	// across 6 tiers) surfaced on showcase, which has the most envs +
+	// most services to describe and benefits most from seeing the
+	// rendered yaml. Hello-world + minimal recipes have simpler per-env
+	// service lists; the marginal value of yaml-visibility is lower and
+	// the monotonicity test (hello ≤ minimal ≤ showcase) would flip if
+	// we injected the same-sized yaml block for every tier.
+	if plan.Tier != RecipeTierShowcase {
+		return ""
+	}
+	// Stash EnvComments and restore after render — GenerateEnvImportYAML
+	// reads plan.EnvComments directly. For the pre-authoring preview we
+	// want schema-only yaml regardless of what the agent has already
+	// drafted in plan.EnvComments.
+	stashed := plan.EnvComments
+	plan.EnvComments = nil
+	defer func() { plan.EnvComments = stashed }()
+
+	var b strings.Builder
+	b.WriteString("## Pre-loaded input — rendered `import.yaml` per env (schema-only)\n\n")
+	b.WriteString("Below is exactly what `import.yaml` the engine will emit for each env tier, with NO comments yet. Author envComments against THIS yaml — every numeric claim (`minContainers: 2`, `mode: HA`, `objectStorageSize: 1`, etc.) must match the adjacent field exactly. If the value you want to comment about isn't visible below, don't claim a number — use qualitative phrasing (\"single-replica\", \"HA mode\", \"modest quota\"). Numbers invented from memory fail the factual-claims check at close-step.\n\n")
+	for i := 0; i < EnvTierCount(); i++ {
+		folder := EnvFolder(i)
+		rendered := GenerateEnvImportYAML(plan, i)
+		if rendered == "" {
+			continue
+		}
+		fmt.Fprintf(&b, "### env %d — `%s/import.yaml`\n\n```yaml\n%s```\n\n", i, folder, rendered)
+	}
+	return b.String()
 }

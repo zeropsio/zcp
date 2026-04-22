@@ -1,95 +1,49 @@
 # Self-review per surface
 
-Before returning, walk every surface you authored and apply the positive pre-return checklist below. An item that does not satisfy every applicable check is removed, not rewritten — rewrite means the item was on the wrong surface. Move it to its correct surface (or drop it) and re-check.
+Before returning, walk every surface you authored and apply the checklist below. An item that fails any applicable check is **removed, not rewritten** — rewrite means the item was on the wrong surface. Move it to its correct surface (or drop it entirely) and re-check.
 
-Each check below is expressible as a shell predicate you can run against your in-mount draft. Exit 0 means the check passes; non-zero means the item needs removal or relocation. The aggregate exit at the end of this atom is what you report in the completion return.
+The engine runs gate checks at `complete substep=readmes` — manifest presence + valid JSON, classification-consistency, citations-present on gotcha/IG entries, manifest-honesty, fragment markers, content-quality predicates, factual-claims. You don't need to replicate those in shell; the gates fail your completion call loud if anything slips. The checklists below are the AUTHORING-TIME logic that prevents needing a retry round — pattern-match BEFORE you publish, not after the gate refuses.
 
 ---
 
 ## Surface 1 — Per-codebase README integration-guide fragment
 
-For each hostname `{h}` in `{{.Hostnames}}`:
-
-- Fragment markers present in exact form: `grep -q '#ZEROPS_EXTRACT_START:integration-guide#' {{.ProjectRoot}}/{h}/README.md` and the matching end marker. The trailing `#` is mandatory — the extractor treats markers without it as absent.
-- H3 count in `[3, 6]`: count `### ` headings inside the integration-guide markers.
-- Every H3 item carries at least one fenced code block in its section (one action, one reason, one diff).
-- Every H3 item is standalone: a porter reading the single item understands what to do without reading the neighbouring items.
-- Self-referential items removed: no H3 references a scaffold helper file or class by name as the primary teaching.
-- Matching-topic items cite their platform topic from the Citation Map in prose.
+- 3–6 H3 items. Beyond 6 means you didn't choose ruthlessly, OR you routed a scaffold-decision as an IG item.
+- Each H3 stands alone: a porter reading just that item understands the action + reason + code diff.
+- Code fenced block present in every item, showing the exact change the porter copies into their own file.
+- No H3 describes a recipe scaffold helper (`api.ts`, `useApi.ts`, scaffold-specific class names) as the primary teaching. The PRINCIPLE belongs here, the implementation belongs in code comments.
+- Every item whose mechanism matches a Citation Map row cites the platform topic in prose AND records `{topic, guide_fetched_at}` in the manifest entry's `citations` array.
 
 ---
 
 ## Surface 2 — Per-codebase README knowledge-base fragment
 
-For each hostname `{h}` in `{{.Hostnames}}`:
-
-- Fragment markers present: start and end for `knowledge-base`.
-- Gotcha bullet count in `[3, 6]`: count `- **` bullets inside the knowledge-base markers.
-- Authenticity: every gotcha either names a platform mechanism by name OR describes a concrete failure mode (HTTP status, quoted error string, measurable wrong-state). Aim for at least 80% of bullets passing one of these two tests.
-- Zero self-inflicted bullets: every bullet's manifest entry has classification in {framework-invariant, intersection, scaffold-decision-reframed, framework-quirk-reframed}. Any self-inflicted classification routed here without `override_reason` fails.
-- Zero folk-doctrine bullets: every bullet on a matching-topic Citation Map row references the cited platform topic in the body.
-- No recipe-run version-anchor strings in the published bullet text — describe the behavior class rather than which run surfaced it.
-- Cross-codebase uniqueness: stems do not overlap between codebases; repeated facts cross-reference by prose.
-- IG/gotcha distinctness: no gotcha stem is a paraphrase of an IG heading in the same README.
+- 3–6 gotcha bullets in the `### Gotchas` section. The stem names an HTTP status, a quoted error string, or a measurable wrong-state — not "it breaks".
+- Every bullet classified in {framework-invariant, framework × platform intersection, scaffold-decision-reframed, framework-quirk-reframed}. Self-inflicted routed here without `override_reason` reframing is a dropped bullet, not a rewritten one.
+- Every bullet on a Citation Map row cites the guide in prose AND records a citation on the manifest entry.
+- No bullet is a paraphrase of an IG item in the same README (IG teaches the fix; gotcha adds the symptom + mechanism + cross-codebase context).
+- No bullet repeats a fact shipped in another codebase's README — second codebase cross-references by prose instead.
 
 ---
 
 ## Surface 3 — Per-codebase CLAUDE.md
 
-For each hostname `{h}` in `{{.Hostnames}}`:
-
-- File exists at `{{.ProjectRoot}}/{h}/CLAUDE.md`.
-- Byte count floor: `test $(wc -c < {{.ProjectRoot}}/{h}/CLAUDE.md) -ge 1200`.
-- Four template sections present: "Dev Loop", "Migrations" (or "Migrations & Seed"), "Container Traps", "Testing".
-- At least two custom sections present beyond the template four. Count headings at level 2.
-- Zero deploy instructions inside CLAUDE.md — deploy content lives in integration-guide items or `zerops.yaml` comments.
+- File byte count ≥ 1200.
+- Four base sections present: "Dev Loop", "Migrations" (or "Migrations & Seed"), "Container Traps", "Testing".
+- At least two custom sections beyond the base four, chosen for what THIS repo actually needs (resetting dev state, log tailing, adding a managed service, driving a feature end-to-end).
+- No deploy instructions inside CLAUDE.md — deploy content belongs in IG items or `zerops.yaml` comments.
 
 ---
 
-## Surface 4 — Env `import.yaml` comments (via env-comment-set payload)
+## Surface 4 — Env `import.yaml` comments (env-comment-set payload)
 
-For each env tier's payload entry:
-
-- Every service block has a non-empty comment block.
-- Each block explains a decision (why this service at this tier, why this scale, why this mode) rather than narrating what the YAML field does.
-- No block is a word-for-word copy-paste of another block. Template openings repeated across service blocks fail.
-- Numeric claims match the YAML in the same block.
+- Every service block's comment explains a decision (why this service at this tier, why this scale, why this mode) rather than narrating what the YAML field does.
+- Templated openings repeated word-for-word across service blocks are anti-pattern — each block's reasoning is service-specific.
+- Every number in a comment matches the adjacent YAML field exactly. Use qualitative phrasing ("single-replica", "HA mode", "modest quota") when there is no number in the adjacent YAML to match — never invent a number from memory.
 - Every comment line is ASCII `#` prefixed; no Unicode box-drawing, no dividers.
 
 ---
 
-## Aggregate pre-attest commands
+## Removal, not rewrite
 
-Run these locally against the mount before returning. Exit 0 in aggregate is the green-light condition:
-
-```bash
-# Manifest exists at the recipe output root and parses.
-test -f /var/www/zcprecipator/{{.Slug}}/ZCP_CONTENT_MANIFEST.json
-jq empty /var/www/zcprecipator/{{.Slug}}/ZCP_CONTENT_MANIFEST.json
-
-# Every fact has a non-empty routed_to.
-jq '[.facts[] | select(.routed_to == null or .routed_to == "")] | length' \
-   /var/www/zcprecipator/{{.Slug}}/ZCP_CONTENT_MANIFEST.json | grep -qE '^0$'
-
-# Default-discard classifications without override_reason fail.
-jq '[.facts[] | select(.classification == "framework-quirk" or .classification == "self-inflicted") | select(.routed_to != "discarded") | select((.override_reason // "") == "")] | length' \
-   /var/www/zcprecipator/{{.Slug}}/ZCP_CONTENT_MANIFEST.json | grep -qE '^0$'
-
-# Canonical output tree only — no invented sibling directories.
-! find {{.ProjectRoot}} -maxdepth 2 -type d -name 'recipe-*'
-! find {{.ProjectRoot}} -maxdepth 2 -type d -name '*-output'
-
-# Per-codebase fragments present.
-for h in {{range .Hostnames}}{{.}} {{end}}; do
-  grep -q '#ZEROPS_EXTRACT_START:intro#'             {{.ProjectRoot}}/$h/README.md &&
-  grep -q '#ZEROPS_EXTRACT_START:integration-guide#' {{.ProjectRoot}}/$h/README.md &&
-  grep -q '#ZEROPS_EXTRACT_START:knowledge-base#'    {{.ProjectRoot}}/$h/README.md || exit 1
-done
-
-# CLAUDE.md byte floor.
-for h in {{range .Hostnames}}{{.}} {{end}}; do
-  test $(wc -c < {{.ProjectRoot}}/$h/CLAUDE.md) -ge 1200 || exit 1
-done
-```
-
-A non-zero exit anywhere above is a pre-return failure. Fix the item (remove or relocate) and re-run. Report the final exit code in the completion return.
+This atom's load-bearing rule: when an item fails its surface's check, **remove it**. Rewriting a wrong-surface item leaves it on the wrong surface; rewriting an uncited folk-doctrine item leaves the fabricated mechanism in place with fancier wording. The gate will refuse the completion call anyway. Your fastest path to a shipped completion is to drop the failing item and either re-route it (manifest entry changes) or discard it (manifest entry marked `routed_to: discarded`).
