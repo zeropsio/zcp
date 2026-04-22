@@ -11,14 +11,29 @@
 ## 1. Slots to fill at start
 
 ```
-FIX_STACK_TAG:            <fill-in, probably v8.109.0>
-FIX_STACK_COMMITS:        <fill-in, 6 commit SHAs in order>
-HARNESS_TAG:              <fill-in, could be same as fix-stack or separate>
-ANALYSIS_HARNESS_PATH:    cmd/zcp/analyze/
-V37_COMMISSION_DATE:      <fill-in UTC>
-V37_SESSION_ID:           <fill-in from first action=start>
-V37_OUTCOME:              <close-complete | force-exported | session-abandoned>
+FIX_STACK_TAG:            v8.109.0                             (tagged; all 6 Cx commits merged)
+FIX_STACK_COMMITS:        8eb7c29  feat(zcprecipator2): mechanical analysis harness
+                          8fa9d1b  Cx-ENVFOLDERS-WIRED          (F-9 close)
+                          d5f0e02  Cx-MARKER-FORM-FIX           (F-12 close)
+                          3fca235  Cx-STANDALONE-FILES-REMOVED  (F-13 close)
+                          b301941  Cx-CLOSE-STEP-STAGING        (F-10 close)
+                          e6c87c0  Cx-CLOSE-STEP-GATE-HARD      (F-8/F-11 close)
+HARNESS_TAG:              v8.109.0 (bundled)
+ANALYSIS_HARNESS_PATH:    cmd/zcp/analyze/ + internal/analyze/
+V37_COMMISSION_DATE:      2026-04-21 (session start 19:28Z, close-complete 21:48Z)
+V37_SESSION_ID:           9c9cce67e644ae35 (workflow) / 275672d8-56e8-4456-9456-7f8e5dd873c4 (Claude)
+V37_OUTCOME:              close-complete reached; deliverable structurally broken due to main-agent paraphrase
+V37_VERDICT:              PAUSE — see runs/v37/verdict.md (headline defect F-17: envelope content loss)
+V37_FOLLOW-UP:            HANDOFF-to-I9-v38-prep.md + plans/v38-fix-stack.md (seven new Cx commits targeting v8.110.0)
 ```
+
+**This handoff is CLOSED** — the analysis phase completed 2026-04-21. v38 preparation has moved to [`HANDOFF-to-I9-v38-prep.md`](HANDOFF-to-I9-v38-prep.md). The v8.109.0 Cx stack is historical; four of its six commits were source-correct but had zero runtime effect because of F-17 (main-agent paraphrase), which Cx-SUBAGENT-BRIEF-BUILDER in the v38 stack closes.
+
+### Phase 1 + Phase 2 completion notes
+
+- Cx-ATOM-TEMPLATE-LINT (planned as a separate Cx commit) was bundled with the harness commit (`8eb7c29`). The `tools/lint/atom_template_vars/` scan walks every atom under `internal/content/workflows/recipe/` and fires on any `{{.Field}}` reference naming a field outside `DefaultAllowedAtomFields`. Wired into `make lint-local` via the `lint-atom-template-vars` target and into CI via the `tools/lint/atom_template_vars/_test.go` suite.
+- v36 retrospective against the harness (`zcp analyze recipe-run` against `/Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v36/`) mechanically surfaces F-9 (B-15 observed=6), F-10 (B-16 observed=0/6), F-12 (B-17 observed=18 via merged deliverable + session Edit evidence), F-13 (B-18 observed=6 via merged deliverable + session Write evidence) — every gate in the Phase-1 §8 success criterion passes.
+- `make lint-local` (catalog-sync + recipe-atom + atom-template-vars + golangci) and `go test ./... -count=1 -race` are both green at HEAD (commit `e6c87c0`, tag `v8.109.0`).
 
 If any slot is `<unknown>` because the upstream phase hasn't run yet, that's expected — this handoff covers three phases (harness build → fix stack → v37 commission → v37 analysis). Fill slots as phases complete.
 

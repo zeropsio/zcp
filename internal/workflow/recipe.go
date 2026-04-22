@@ -38,6 +38,12 @@ type RecipeState struct {
 	// Prevents the v35 fake-pass pattern where the agent walked all 12
 	// deploy substeps in 84s with zero intervening tool calls.
 	AwaitingEvidenceAfterIterate bool `json:"awaitingEvidenceAfterIterate,omitempty"`
+	// Cx-SUBAGENT-BRIEF-BUILDER (v38 F-17 close): records the SHA + metadata
+	// for each `build-subagent-brief` call per role (writer, editorial-review,
+	// code-review). The dispatch guard compares the SHA of the Task prompt
+	// against this record; a mismatch is SUBAGENT_MISUSE. Survives compaction
+	// because RecipeState rides with the persisted WorkflowState JSON.
+	LastSubagentBrief map[string]SubagentBriefRecord `json:"lastSubagentBrief,omitempty"`
 }
 
 // GuidanceAccessEntry records a single zerops_guidance topic fetch.

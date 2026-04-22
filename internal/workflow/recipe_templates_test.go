@@ -1219,11 +1219,61 @@ func TestGenerateAppREADME(t *testing.T) {
 		{"cover image", "cover-laravel.svg"},
 		{"recipe link", "app.zerops.io/recipes/laravel-minimal"},
 		{"H2 outside marker", "## Integration Guide"},
-		{"step 1 heading", "### 1. Adding `zerops.yaml`"},
 	}
 	for _, tt := range checks {
 		if !strings.Contains(readme, tt.want) {
 			t.Errorf("%s: expected to contain %q", tt.name, tt.want)
+		}
+	}
+}
+
+// TestAppScaffold_HasAllThreeFragmentMarkers is the Cx-SCAFFOLD-FRAGMENT-
+// FRAMES RED→GREEN test. v37 F-12 mutated: fragment markers kept landing
+// without the trailing `#` sentinel because the writer typed them from
+// memory (or from a main-agent paraphrase that dropped the `#`). The fix
+// is to pre-scaffold the file on the mount with correct markers + an
+// explicit placeholder between each pair, so the writer physically
+// cannot get the markers wrong — it Edits between them.
+//
+// Acceptance: all six marker lines carry the trailing `#`; each pair
+// encloses a single `<!-- REPLACE THIS LINE ... -->` placeholder the
+// writer replaces via Edit; extractFragmentContent-style extraction
+// over the placeholder returns the placeholder body (no leakage of
+// surrounding markers).
+func TestAppScaffold_HasAllThreeFragmentMarkers(t *testing.T) {
+	t.Parallel()
+
+	plan := testMinimalPlan()
+	readme := GenerateAppREADME(plan)
+
+	markerLines := []string{
+		"<!-- #ZEROPS_EXTRACT_START:intro# -->",
+		"<!-- #ZEROPS_EXTRACT_END:intro# -->",
+		"<!-- #ZEROPS_EXTRACT_START:integration-guide# -->",
+		"<!-- #ZEROPS_EXTRACT_END:integration-guide# -->",
+		"<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->",
+		"<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->",
+	}
+	for _, m := range markerLines {
+		if !strings.Contains(readme, m) {
+			t.Errorf("scaffold missing required marker line with trailing '#': %q", m)
+		}
+	}
+
+	// Each pair encloses a REPLACE-THIS-LINE placeholder. The writer's
+	// Edit is "placeholder line → real content"; markers never move.
+	for _, fragment := range []string{"intro", "integration-guide", "knowledge-base"} {
+		start := "<!-- #ZEROPS_EXTRACT_START:" + fragment + "# -->"
+		end := "<!-- #ZEROPS_EXTRACT_END:" + fragment + "# -->"
+		si := strings.Index(readme, start)
+		ei := strings.Index(readme, end)
+		if si < 0 || ei < 0 || ei <= si {
+			t.Errorf("%s: markers absent or out of order", fragment)
+			continue
+		}
+		body := readme[si+len(start) : ei]
+		if !strings.Contains(body, "<!-- REPLACE THIS LINE") {
+			t.Errorf("%s: body between markers missing REPLACE-THIS-LINE placeholder; got: %q", fragment, body)
 		}
 	}
 }

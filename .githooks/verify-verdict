@@ -1,0 +1,107 @@
+#!/bin/bash
+# verify-verdict — pre-commit gate for docs/zcprecipator2/runs/vN/verdict.md.
+#
+# Enforces the analysis-discipline rules declared in
+# docs/zcprecipator2/HANDOFF-to-I8-v37-prep.md §6. Together with the
+# mechanical harness in cmd/zcp/analyze/, this turns "I wrote a
+# convincing verdict" into "the verdict cites evidence a grep/jq can
+# reproduce". The v36 analysis failure is structurally foreclosed.
+#
+# Rules enforced:
+#   1. runs/vN/{machine-report.json, verification-checklist.md,
+#      verdict.md} must be co-present in the staged set.
+#   2. verdict.md front matter must declare machine_report_sha and
+#      checklist_sha; those SHAs must match the staged file bytes.
+#   3. verification-checklist.md must have zero `<analyst-fill>` cells
+#      remaining (analyst completed the worksheet).
+#   4. Every PASS/FAIL claim in verdict.md must carry a `[checklist X-Y]`
+#      or `[machine-report.<key>]` citation within 50 characters.
+#   5. No more than 3 self-congratulatory terms (success, works, clean,
+#      PROCEED) outside of cited claims.
+#
+# Install with: git config core.hooksPath .githooks
+
+set -euo pipefail
+
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+
+# Find every runs/vN/verdict.md being added or modified.
+verdicts=$(echo "$staged" | grep -E 'docs/zcprecipator2/runs/v[0-9]+/verdict\.md$' || true)
+
+if [ -z "$verdicts" ]; then
+  # Not a verdict commit; nothing to enforce.
+  exit 0
+fi
+
+exit_code=0
+
+while IFS= read -r verdict; do
+  [ -z "$verdict" ] && continue
+  run_dir=$(dirname "$verdict")
+  checklist="$run_dir/verification-checklist.md"
+  report="$run_dir/machine-report.json"
+
+  echo "verify-verdict: checking $verdict"
+
+  # Rule 1: companion files present.
+  if [ ! -f "$report" ]; then
+    echo "  FAIL: missing $report (machine-report must exist before verdict)"
+    exit_code=1
+    continue
+  fi
+  if [ ! -f "$checklist" ]; then
+    echo "  FAIL: missing $checklist (checklist must exist before verdict)"
+    exit_code=1
+    continue
+  fi
+
+  # Rule 2: SHA front matter matches file bytes.
+  fm_report_sha=$(awk '/^machine_report_sha:/ {print $2; exit}' "$verdict")
+  fm_checklist_sha=$(awk '/^checklist_sha:/ {print $2; exit}' "$verdict")
+  actual_report_sha=$(shasum -a 256 "$report" | awk '{print $1}')
+  actual_checklist_sha=$(shasum -a 256 "$checklist" | awk '{print $1}')
+
+  if [ -z "$fm_report_sha" ] || [ -z "$fm_checklist_sha" ]; then
+    echo "  FAIL: verdict front matter missing machine_report_sha / checklist_sha"
+    echo "         expected lines like:"
+    echo "           machine_report_sha: $actual_report_sha"
+    echo "           checklist_sha:      $actual_checklist_sha"
+    exit_code=1
+    continue
+  fi
+  if [ "$fm_report_sha" != "$actual_report_sha" ]; then
+    echo "  FAIL: machine_report_sha mismatch (expected $actual_report_sha, found $fm_report_sha)"
+    exit_code=1
+  fi
+  if [ "$fm_checklist_sha" != "$actual_checklist_sha" ]; then
+    echo "  FAIL: checklist_sha mismatch (expected $actual_checklist_sha, found $fm_checklist_sha)"
+    exit_code=1
+  fi
+
+  # Rule 3: no pending cells in the checklist.
+  pending=$(grep -c '<analyst-fill>' "$checklist" 2>/dev/null || true)
+  pending=${pending:-0}
+  if [ "$pending" -gt 0 ]; then
+    echo "  FAIL: $pending <analyst-fill> placeholder(s) remain in $checklist"
+    exit_code=1
+  fi
+
+  # Rules 4 + 5: citation discipline.
+  if [ -x tools/hooks/verify_citation_rule.py ] || command -v python3 >/dev/null 2>&1; then
+    if ! python3 tools/hooks/verify_citation_rule.py "$verdict"; then
+      exit_code=1
+    fi
+  else
+    echo "  WARN: python3 not available; skipping citation-rule enforcement"
+  fi
+done <<< "$verdicts"
+
+if [ "$exit_code" -ne 0 ]; then
+  echo ""
+  echo "verify-verdict: commit blocked. Fix the issues above or re-run the analysis harness."
+  echo "  zcp analyze recipe-run <deliverable> <sessions-logs-dir> --out $run_dir/machine-report.json"
+  echo "  zcp analyze generate-checklist $run_dir/machine-report.json --out $checklist"
+  echo ""
+fi
+
+exit "$exit_code"

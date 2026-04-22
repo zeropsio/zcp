@@ -89,9 +89,13 @@ type factualClaimMismatch struct {
 }
 
 func (m factualClaimMismatch) detail() string {
+	// Cx-ENV-COMMENT-PRINCIPLE (v38): the claimed string is quoted and the
+	// actual YAML value is rendered in `<key>: <value>` form so a fix-cycle
+	// reader can diff the two side-by-side without parsing prose.
+	claimedLabel := strings.TrimSpace(fmt.Sprintf("%d%s", m.claimed, m.unit))
 	return fmt.Sprintf(
-		"line %d: comment claims %d%s %s but adjacent %s is %d",
-		m.commentLine, m.claimed, m.unit, m.patName, m.yamlKey, m.actual,
+		`line %d: comment claims "%s" (%s) but adjacent YAML has %s: %d`,
+		m.commentLine, claimedLabel, m.patName, m.yamlKey, m.actual,
 	)
 }
 

@@ -89,12 +89,11 @@ func TestNoVersionAnchorsInPublished_Table(t *testing.T) {
 			wantDetail: []string{"v34", "v8.103", "v33"},
 		},
 		{
-			name: "version anchors inside hyphenated slugs still detected (word-boundary match)",
+			name: "compound identifier tail (nestjs-minimal-v3) is not a version anchor (Cx-6)",
 			files: map[string]string{
 				"apidev/README.md": "Reference: nestjs-minimal-v3 slug.\n",
 			},
-			wantStatus: "fail",
-			wantDetail: []string{"v3"},
+			wantStatus: "pass",
 		},
 		{
 			name: "non-version 'v' tokens not matched",
@@ -122,6 +121,77 @@ func TestNoVersionAnchorsInPublished_Table(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestVersionAnchor_SkipsFencedCodeBlock is the Cx-VERSION-ANCHOR-SHARPEN
+// RED→GREEN test. v37 F-22: the check fired on `bootstrap-seed-v1`
+// execOnce keys inside YAML code blocks — a false positive that forced
+// a cross-file rename. Published porter-facing content should be
+// dateless; YAML examples inside fenced code blocks carry identifier
+// strings that don't map to recipe-internal release anchors.
+func TestVersionAnchor_SkipsFencedCodeBlock(t *testing.T) {
+	t.Parallel()
+	files := map[string]string{
+		"apidev/README.md": "Migration setup.\n\n" +
+			"```yaml\n" +
+			"initCommands:\n" +
+			"  - execOnce: bootstrap-seed-v1\n" +
+			"    command: php artisan migrate --seed\n" +
+			"```\n" +
+			"\nThe execOnce key prevents re-runs.\n",
+	}
+	root := writePublished(t, files)
+	got := runVersionAnchorsCheck(t, root)
+	check := findCheckByName(got, "no_version_anchors_in_published_content")
+	if check == nil {
+		t.Fatal("expected check emitted")
+	}
+	if check.Status != "pass" {
+		t.Errorf("fenced code block content should not trigger version-anchor check; got %q (detail: %s)", check.Status, check.Detail)
+	}
+}
+
+// TestVersionAnchor_AcceptsCompoundIdentifier: identifiers carrying a
+// `-vN` suffix as part of a compound token (e.g. `bootstrap-seed-v1`
+// in prose, not a code block) are slug-class identifiers that should
+// not trip the check. Only bare `v\d+` in prose — where the author
+// could have dropped it — counts as a recipe-run anchor leak.
+func TestVersionAnchor_AcceptsCompoundIdentifier(t *testing.T) {
+	t.Parallel()
+	files := map[string]string{
+		"apidev/README.md": "Use the `bootstrap-seed-v1` key when you need the seed to run once.\n",
+	}
+	root := writePublished(t, files)
+	got := runVersionAnchorsCheck(t, root)
+	check := findCheckByName(got, "no_version_anchors_in_published_content")
+	if check == nil {
+		t.Fatal("expected check emitted")
+	}
+	if check.Status != "pass" {
+		t.Errorf("compound identifier tail should not trigger version-anchor check; got %q (detail: %s)", check.Status, check.Detail)
+	}
+}
+
+// TestVersionAnchor_RejectsBareProseVersion: the check still catches
+// the recipe-run anchor class (v33, v8.86 etc.) in prose — that's
+// what F-22's sharpen must preserve, not loosen.
+func TestVersionAnchor_RejectsBareProseVersion(t *testing.T) {
+	t.Parallel()
+	files := map[string]string{
+		"apidev/README.md": "Now on v2 of the rollout.\n",
+	}
+	root := writePublished(t, files)
+	got := runVersionAnchorsCheck(t, root)
+	check := findCheckByName(got, "no_version_anchors_in_published_content")
+	if check == nil {
+		t.Fatal("expected check emitted")
+	}
+	if check.Status != "fail" {
+		t.Errorf("bare prose version should still fail; got %q (detail: %s)", check.Status, check.Detail)
+	}
+	if !strings.Contains(check.Detail, "v2") {
+		t.Errorf("detail should name the bare match; got %s", check.Detail)
 	}
 }
 

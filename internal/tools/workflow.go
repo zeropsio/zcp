@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -27,7 +28,7 @@ type WorkflowInput struct {
 	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, develop, recipe, or export."`
 
 	// Multi-action fields.
-	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, reset, iterate, resume, list, route, dispatch-brief-atom (retrieve one atom of an envelope-split dispatch brief), or generate-finalize (recipe only — generates all 13 recipe files from plan)."`
+	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, reset, iterate, resume, list, route, dispatch-brief-atom (retrieve one atom of an envelope-split dispatch brief), build-subagent-brief (recipe only — returns a fully-stitched dispatch brief + SHA for a named role; main agent forwards the prompt verbatim to Task), verify-subagent-dispatch (recipe only — compares a Task description + prompt against the last-built brief's SHA), or generate-finalize (recipe only — generates all 13 recipe files from plan)."`
 	Intent      string                     `json:"intent,omitempty"      jsonschema:"User intent description for start action (what you want to accomplish)."`
 	Attestation string                     `json:"attestation,omitempty" jsonschema:"Description of what was verified or accomplished (required for complete actions)."`
 	Step        string                     `json:"step,omitempty"        jsonschema:"Bootstrap step name for complete/skip actions (discover, provision, close)."`
@@ -89,6 +90,11 @@ type WorkflowInput struct {
 	// Optional: omit to receive the intro atom that asks the user to
 	// pick, then re-call with the chosen value.
 	Trigger string `json:"trigger,omitempty" jsonschema:"Downstream build trigger for strategy=push-git setup: 'webhook' (Zerops dashboard integration) or 'actions' (GitHub Actions workflow). Omit on the first call to receive the intro atom that walks through the choice; pass on the follow-up call to receive the chosen setup path."`
+
+	// Cx-SUBAGENT-BRIEF-BUILDER (v38 F-17 close).
+	Role        string `json:"role,omitempty"        jsonschema:"Sub-agent role for action=\"build-subagent-brief\" / \"verify-subagent-dispatch\": one of writer, editorial-review, code-review."`
+	Description string `json:"description,omitempty" jsonschema:"Task tool description string the main agent is about to submit. Required for action=\"verify-subagent-dispatch\"."`
+	Prompt      string `json:"prompt,omitempty"      jsonschema:"Task tool prompt string the main agent is about to submit. Required for action=\"verify-subagent-dispatch\"."`
 }
 
 // immediateResponse is returned from immediate (stateless) workflows.
@@ -148,7 +154,13 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	// action works even when a session has not been started (the main
 	// agent may retrieve atoms without an active session during debug).
 	if input.Action == "dispatch-brief-atom" {
-		return handleDispatchBriefAtom(input)
+		return handleDispatchBriefAtom(engine, input)
+	}
+	if input.Action == "build-subagent-brief" {
+		return handleBuildSubagentBrief(engine, input)
+	}
+	if input.Action == "verify-subagent-dispatch" {
+		return handleVerifySubagentDispatch(engine, input)
 	}
 	if engine == nil {
 		return convertError(platform.NewPlatformError(
@@ -454,14 +466,26 @@ func buildResetNextHint(preserved resetSnapshot) string {
 // Returns JSON `{"atomId":"X","body":"..."}`. Atom IDs are drawn from
 // envelopes the server itself emits — the agent should not invent IDs.
 // Unknown IDs return an INVALID_PARAMETER error.
-func handleDispatchBriefAtom(input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleDispatchBriefAtom(engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 	if input.AtomID == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"atomId is required for dispatch-brief-atom action",
 			"Pass the atomId from the envelope listed in the substep guide's dispatch-brief section")), nil, nil
 	}
-	body, err := workflow.LoadAtomBody(input.AtomID)
+	// Cx-ENVFOLDERS-WIRED: when an active recipe plan is loadable,
+	// render template expressions against plan context before
+	// returning. Without this, atoms containing `{{.EnvFolders}}` /
+	// `{{.ProjectRoot}}` shipped raw to the writer sub-agent — v36
+	// F-9 root cause. Pre-session debug fetches (no plan) fall back
+	// to the raw body via RenderContextFromPlan(nil, "").
+	var plan *workflow.RecipePlan
+	if engine != nil {
+		if state := engine.RecipeSession(); state != nil {
+			plan = state.Plan
+		}
+	}
+	body, err := workflow.LoadAtomBodyRendered(input.AtomID, workflow.RenderContextFromPlan(plan, ""))
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -471,6 +495,101 @@ func handleDispatchBriefAtom(input WorkflowInput) (*mcp.CallToolResult, any, err
 	return jsonResult(map[string]any{
 		"atomId": input.AtomID,
 		"body":   body,
+	}), nil, nil
+}
+
+// handleBuildSubagentBrief is the Cx-SUBAGENT-BRIEF-BUILDER entry point
+// (v38 F-17 close). Returns the fully-stitched dispatch brief for the
+// named role plus its SHA-256 hash; stores the hash in RecipeState so
+// a follow-up verify-subagent-dispatch call can compare against it.
+// The main agent's contract is to forward the returned prompt to Task
+// verbatim — any paraphrase fails the guard with SUBAGENT_MISUSE.
+func handleBuildSubagentBrief(engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+	if engine == nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrNotImplemented,
+			"Workflow engine not initialized",
+			"Ensure ZCP is configured with a state directory")), nil, nil
+	}
+	state := engine.RecipeSession()
+	if state == nil || state.Plan == nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"build-subagent-brief requires an active recipe session with a plan",
+			"Call action=start workflow=recipe first, then progress through research+provision+generate+deploy before dispatching sub-agents")), nil, nil
+	}
+	if strings.TrimSpace(input.Role) == "" {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"role is required for build-subagent-brief action",
+			"Pass role=writer|editorial-review|code-review")), nil, nil
+	}
+
+	factsLogPath := ""
+	if sessionID := engine.SessionID(); sessionID != "" {
+		factsLogPath = fmt.Sprintf("/tmp/zcp-facts-%s.jsonl", sessionID)
+	}
+	manifestPath := ""
+	if state.OutputDir != "" {
+		manifestPath = state.OutputDir + "/ZCP_CONTENT_MANIFEST.json"
+	}
+
+	built, err := workflow.BuildSubagentBrief(state.Plan, input.Role, factsLogPath, manifestPath)
+	if err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("build-subagent-brief: %v", err),
+			"Check role against writer|editorial-review|code-review and confirm an active plan")), nil, nil
+	}
+
+	if err := engine.RecordSubagentBrief(built); err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("persist subagent brief: %v", err),
+			"")), nil, nil
+	}
+
+	return jsonResult(map[string]any{
+		"role":        built.Role,
+		"description": built.Description,
+		"prompt":      built.Prompt,
+		"promptSha":   built.PromptSHA,
+		"promptSize":  len(built.Prompt),
+		"nextTool":    built.NextTool,
+	}), nil, nil
+}
+
+// handleVerifySubagentDispatch validates a proposed Task dispatch
+// against the last-built brief SHA for the detected role. Used by a
+// PreToolUse hook or by the main agent itself as a trust-but-verify
+// step before calling Task. Returns `{"allowed": bool, "role": ...,
+// "reason": ...}`. A mismatch is surfaced as SUBAGENT_MISUSE so the
+// hook can block the dispatch.
+func handleVerifySubagentDispatch(engine *workflow.Engine, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+	if engine == nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrNotImplemented,
+			"Workflow engine not initialized",
+			"")), nil, nil
+	}
+	state := engine.RecipeSession()
+	if strings.TrimSpace(input.Description) == "" {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"description is required for verify-subagent-dispatch",
+			"Pass the Task dispatch description string")), nil, nil
+	}
+	role, ok, reason := workflow.VerifySubagentDispatch(state, input.Description, input.Prompt)
+	if !ok {
+		return convertError(platform.NewPlatformError(
+			platform.ErrSubagentMisuse,
+			reason,
+			fmt.Sprintf("Call zerops_workflow action=build-subagent-brief role=%s first, then dispatch via Task with the prompt byte-identical to the returned .prompt field.", role))), nil, nil
+	}
+	return jsonResult(map[string]any{
+		"allowed":     true,
+		"role":        role,
+		"description": input.Description,
 	}), nil, nil
 }
 

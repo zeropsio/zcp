@@ -401,11 +401,16 @@ func extractIntroPhrases(readme string) []string {
 	inIntro := false
 	var body strings.Builder
 	for line := range strings.SplitSeq(readme, "\n") {
-		if strings.Contains(line, "ZEROPS_EXTRACT_START:intro") {
+		// Cx-MARKER-FORM-FIX: require the trailing `#` sentinel so
+		// this helper stays consistent with the primary fragment
+		// check (checkReadmeFragments uses the exact form). Broken
+		// markers are reported by fragment_marker_exact_form; this
+		// helper treats them as absent.
+		if strings.Contains(line, "ZEROPS_EXTRACT_START:intro#") {
 			inIntro = true
 			continue
 		}
-		if strings.Contains(line, "ZEROPS_EXTRACT_END:intro") {
+		if strings.Contains(line, "ZEROPS_EXTRACT_END:intro#") {
 			inIntro = false
 			continue
 		}
@@ -455,11 +460,13 @@ func extractGotchaStems(readme string) []string {
 	var stems []string
 	inKB := false
 	for line := range strings.SplitSeq(readme, "\n") {
-		if strings.Contains(line, "ZEROPS_EXTRACT_START:knowledge-base") {
+		// Cx-MARKER-FORM-FIX: require the trailing `#` sentinel. See
+		// extractIntroPhrases for rationale.
+		if strings.Contains(line, "ZEROPS_EXTRACT_START:knowledge-base#") {
 			inKB = true
 			continue
 		}
-		if strings.Contains(line, "ZEROPS_EXTRACT_END:knowledge-base") {
+		if strings.Contains(line, "ZEROPS_EXTRACT_END:knowledge-base#") {
 			inKB = false
 			continue
 		}

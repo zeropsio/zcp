@@ -1,66 +1,12 @@
 # Content surface contracts
 
-Six content surfaces. Each has one reader, one purpose, one single-question test, one canonical shape, and one length range. An item that fails its surface's test is removed, not rewritten. The item fails because it is on the wrong surface; rewriting leaves it on the wrong surface.
+Four content surfaces. Each has one reader, one purpose, one single-question test, one canonical shape, and one length range. An item that fails its surface's test is removed, not rewritten. The item fails because it is on the wrong surface; rewriting leaves it on the wrong surface.
 
 Surface contracts are declarative. Classification (atom: classification-taxonomy.md) decides the class of every fact; routing (atom: routing-matrix.md) turns class into surface; these contracts define what each surface accepts once a fact lands.
 
 ---
 
-## Surface 1 — Root README
-
-Reader: a developer browsing the recipe page, deciding whether to deploy.
-
-Purpose: name the managed services, list the environment tiers with deploy buttons, point to the recipe category page.
-
-Single-question test: *Can a reader decide in 30 seconds whether this recipe deploys what they need, and pick the right tier?*
-
-Shape: one opening paragraph naming every managed service. One row per environment tier with a deploy button. One link out to the recipe-category page. No debug narrative. No architecture lecture.
-
-Length range: 20 to 30 lines.
-
-Citation requirement: none.
-
-Drop example — a paragraph explaining the database driver choice: that belongs in the env `import.yaml` comments, not here. A reader choosing whether to deploy does not need driver rationale.
-
----
-
-## Surface 2 — Environment README (`environments/{env}/README.md`)
-
-Reader: someone who already chose to try the recipe and is now picking a tier, or evaluating whether to promote from this tier to the next.
-
-Purpose: teach the tier's audience, scale profile, and what changes relative to the adjacent tier.
-
-Single-question test: *Does this teach me when I would outgrow this tier and what the next tier changes?*
-
-Shape: one section naming the audience (AI-agent iterating, remote dev, local dev, stage reviewer, small-prod operator, HA-prod operator). One section on scale (single replica / multi-replica / HA). One section on what changes relative to the previous tier (or "entry-level tier" if there is none). One section on tier-specific operational concerns (ephemeral stage data, DEDICATED CPU requirement, rolling-deploy verification, and so on).
-
-Length range: 40 to 80 lines of substantive teaching. A 7-line boilerplate fails the test.
-
-Citation requirement: none directly; claim consistency with adjacent env `import.yaml` comments is required (see self-review atom).
-
-Drop example — a service-by-service "why this service exists" enumeration: that belongs in env `import.yaml` comments, one block per service, not in the env README.
-
----
-
-## Surface 3 — Env `import.yaml` comments (emitted via `env-comment-set` payload)
-
-Reader: someone reading the Zerops-dashboard manifest to understand what the tier runs.
-
-Purpose: explain every per-service decision at this tier — presence, scale, mode — and any tier-promotion context.
-
-Single-question test: *Does each service block explain a decision (why this service exists at this tier, why this scale, why this mode), rather than narrating what the field does?*
-
-Shape: per-service block of ASCII `#` comments. Each block covers: why this service at this tier, why this scale (throughput vs HA rationale for `minContainers`, cost trade rationale for single replica), why this mode (NON_HA durability trade-off, HA failover justification), and what changes on promotion to the next tier.
-
-Length range: roughly 4 to 10 comment lines per service block; the env README summarizes, these comments carry the per-decision rationale.
-
-Citation requirement: when the decision touches a topic on the Citation Map (env-var-model, rolling-deploys, object-storage, and so on), cite the platform topic name.
-
-Drop example — "enables zero-downtime rolling deploys" repeated word-for-word on every service block: each block has its own reasoning. Templated openings fail the test.
-
----
-
-## Surface 4 — Per-codebase README integration-guide fragment + `INTEGRATION-GUIDE.md`
+## Surface 1 — Per-codebase README integration-guide fragment
 
 Reader: a porter bringing their own existing application — a Svelte app they already built, a NestJS API they already wrote. They are not using this recipe as a template. They are extracting the Zerops-specific steps to adapt their own code.
 
@@ -78,7 +24,7 @@ Drop example — an H3 describing `api.ts`'s content-type check: `api.ts` is rec
 
 ---
 
-## Surface 5 — Per-codebase README knowledge-base fragment + `GOTCHAS.md`
+## Surface 2 — Per-codebase README knowledge-base fragment
 
 Reader: a developer hitting a confusing failure on Zerops and searching for what is wrong.
 
@@ -112,7 +58,7 @@ Drop examples:
 
 ---
 
-## Surface 6 — Per-codebase CLAUDE.md
+## Surface 3 — Per-codebase CLAUDE.md
 
 Reader: someone (human or Claude Code) with this specific repo checked out locally, working on the codebase.
 
@@ -130,16 +76,34 @@ Drop example — deploy instructions: those belong in integration-guide items an
 
 ---
 
+## Surface 4 — Env `import.yaml` comments (emitted via `env-comment-set` payload)
+
+Reader: someone reading the Zerops-dashboard manifest to understand what the tier runs.
+
+Purpose: explain every per-service decision at this tier — presence, scale, mode — and any tier-promotion context.
+
+Single-question test: *Does each service block explain a decision (why this service exists at this tier, why this scale, why this mode), rather than narrating what the field does?*
+
+Shape: per-service block of ASCII `#` comments. Each block covers: why this service at this tier, why this scale (throughput vs HA rationale for `minContainers`, cost trade rationale for single replica), why this mode (NON_HA durability trade-off, HA failover justification), and what changes on promotion to the next tier.
+
+Length range: roughly 4 to 10 comment lines per service block; the env comment set is a payload — you do NOT write the `import.yaml` files themselves.
+
+Citation requirement: when the decision touches a topic on the Citation Map (env-var-model, rolling-deploys, object-storage, and so on), cite the platform topic name.
+
+Drop example — "enables zero-downtime rolling deploys" repeated word-for-word on every service block: each block has its own reasoning. Templated openings fail the test.
+
+**Factuality rule**: any number in your comment must match the adjacent YAML field exactly. If the YAML has `objectStorageSize: 1`, you may say "1 GB quota" but not "2 GB". If the YAML has no number you want to reference, use qualitative phrasing ("single-replica", "HA mode", "modest quota") — never invent a number from memory. The check enforces this: a numeric claim that contradicts the adjacent YAML fails with a detail of the form `comment claims "N <unit>" but adjacent YAML has <key>: M`. Subjunctive phrasing ("bump to 50 GB when usage grows") bypasses the check — use it for tier-promotion guidance, not for current-configuration assertions. Default to qualitative phrasing; earn the number by matching the YAML.
+
+---
+
 ## Surface summary table
 
 | # | Surface | Reader | Canonical length |
 |---|---|---|---|
-| 1 | Root README | Recipe-page browser | 20–30 lines |
-| 2 | Env README | Tier chooser | 40–80 lines |
-| 3 | Env `import.yaml` comments | Dashboard-manifest reader | 4–10 lines per service block |
-| 4 | README integration-guide + `INTEGRATION-GUIDE.md` | Porter with own app | 3–6 H3 items |
-| 5 | README knowledge-base + `GOTCHAS.md` | Dev hitting platform failure | 3–6 gotcha bullets |
-| 6 | Per-codebase CLAUDE.md | Repo operator | ≥1200 bytes, ≥2 custom sections |
+| 1 | README integration-guide fragment | Porter with own app | 3–6 H3 items |
+| 2 | README knowledge-base fragment | Dev hitting platform failure | 3–6 gotcha bullets |
+| 3 | Per-codebase CLAUDE.md | Repo operator | ≥1200 bytes, ≥2 custom sections |
+| 4 | Env `import.yaml` comments (payload) | Dashboard-manifest reader | 4–10 lines per service block |
 
 Cross-surface discipline: each fact lives on exactly one surface. Other surfaces that benefit from the fact cross-reference — "See apidev/README.md §Gotchas for NATS credential format" — they do not re-author. The routing-matrix atom enforces this at the manifest level; the self-review atom enforces it at the published-content level.
 

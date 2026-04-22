@@ -1939,12 +1939,8 @@ What browser verification catches that curl cannot:
 2. **Use `zerops_browser` — never `agent-browser` as a Bash call.** The tool is the ONLY sanctioned path. Any raw `agent-browser` / `echo ... | agent-browser batch` command in a Bash tool call is a bug.
 3. **One `zerops_browser` call per subdomain.** Pass the URL + inner commands; the tool wraps open/errors/console/close. Do NOT pass multiple URLs or multiple open/close markers in one call.
 4. **Do not dispatch a sub-agent that calls `zerops_browser` while the main agent also has one in flight.** The verification sub-agent brief forbids browser usage entirely (the close step is split — see below); the main agent runs the browser walk itself.
-5. **If the tool returns `forkRecoveryAttempted: true`** — pkill already ran. Before retrying, find the process that burned the budget. For a STAGE walk, usually it's a dev process you forgot to kill after the dev walk (`ssh {devHostname} "ps -ef | grep -E 'nest|vite|node dist|ts-node'"`). For a DEV walk, the budget was already tight before the walk started — the usual cause is lingering subprocess trees from an earlier feature sub-agent or a previous browser session that wasn't reaped cleanly; run the manual pkill below and retry.
-6. **If a Bash call crashes with `fork failed: resource temporarily unavailable` or `pthread_create: Resource temporarily unavailable`** — something other than `zerops_browser` leaked processes. Recover manually:
-   ```
-   pkill -9 -f "agent-browser-"
-   ```
-   Wait 1-2s for reaping. Never retry in a loop.
+5. **If the tool returns `forkRecoveryAttempted: true`** — the tool already ran a full reset: pidfile-based process-group SIGKILL reaped Chrome + helpers, pkill --exact fallback caught any escapees, stale pidfile + socket removed. If the message names a CDP-wedge signal (`CDP command timed out`, `Target closed`, `Protocol error`), the daemon was alive but Chrome was unresponsive; the reset cleared it. Retry the SAME call. If the immediate retry also returns `forkRecoveryAttempted=true`, pass `forceReset: true` on the NEXT call — that runs the full reset BEFORE the batch starts so the retry opens against a clean daemon. If a DEV walk shows this pattern on the first call, the budget was already tight before the walk started — find the leaked subprocess tree (`ssh {devHostname} "ps -ef | grep -E 'nest|vite|node dist|ts-node'"`) and clear it, then retry.
+6. **If a Bash call crashes with `fork failed: resource temporarily unavailable` or `pthread_create: Resource temporarily unavailable`** — something other than `zerops_browser` leaked processes. The tool's own recovery is preferred; call `zerops_browser` with `forceReset: true` and let it run the full reset. NEVER run `pkill -f 'chrome'` from Bash: the `-f` pattern matches code-server's `--no-chrome` CLI flag and has killed the user's editor in past runs. The agent-browser family pattern `pkill -9 -f "agent-browser-"` remains safe if you truly need a manual step, but forceReset is faster and reliable.
 
 #### Canonical verification flow — iterate `plan.Features`
 
@@ -3032,8 +3028,10 @@ zerops_workflow action="complete" step="finalize" attestation="Comments provided
 
 Close has two sub-steps. Both are always autonomous — no user prompt gates either.
 
-1. **code-review** — dispatch the code-review sub-agent, apply any fixes it recommends.
+1. **code-review** — dispatch the code-review sub-agent via `zerops_workflow action=build-subagent-brief role=code-review`, then `Task(description=<returned description>, subagent_type="general-purpose", prompt=<returned prompt>)`. Apply any fixes the review recommends.
 2. **close-browser-walk** — main agent walks the deployed dev + stage URLs in a browser, confirming the features render.
+
+Editorial-review (separate dispatch inside the readmes substep or close, as spec'd) also goes through `zerops_workflow action=build-subagent-brief role=editorial-review`. All three guarded roles (writer, editorial-review, code-review) MUST use the build-subagent-brief path. The engine-side `verify-subagent-dispatch` guard refuses any Task dispatch whose prompt is not byte-identical to the most recent brief for the declared role.
 
 Run both every time. v32 asked the user "should I run the review?" and when no reply came, skipped close entirely — do not repeat. If you are tempted to ask the user for permission before either sub-step, you are misreading this section; re-read.
 
@@ -3383,10 +3381,12 @@ When `zerops_workflow action=complete step=deploy` returns `Passed=false`, every
 10. Verify stage [topic: deploy-target-verification]
     - `complete step=deploy substep=verify-stage`
 11. Feature sweep stage [topic: feature-sweep-stage]
-    - `complete step=deploy substep=feature-sweep-stage` — **the response to THIS call delivers the README-writer brief**. Do NOT dispatch the README writer sub-agent until you have received that response.
-12. Write per-codebase READMEs — narrate gotchas from the debug rounds you just lived through
-    - Brief content arrives in the `complete substep=feature-sweep-stage` response. Use the `current.detailedGuide` verbatim in the writer dispatch prompt.
-    - `complete step=deploy substep=readmes` when the writer returns
+    - `complete step=deploy substep=feature-sweep-stage`.
+12. Write per-codebase READMEs — narrate gotchas from the debug rounds you just lived through.
+    - **Dispatch the writer sub-agent via the engine-built brief.** Call `zerops_workflow action=build-subagent-brief role=writer` — the response delivers the README-writer brief as `{description, prompt, promptSha, nextTool, ...}`. Do NOT dispatch the README writer sub-agent until you have received that response.
+    - Dispatch via `Task(description=<returned description>, subagent_type="general-purpose", prompt=<returned prompt>)` — the prompt bytes MUST match the returned `.prompt` string verbatim. A paraphrase fails the engine-side `verify-subagent-dispatch` guard with `SUBAGENT_MISUSE` (Cx-SUBAGENT-BRIEF-BUILDER forecloses main-agent prompt-composition freedom; atoms transit the dispatch boundary byte-identically).
+    - Do NOT call `dispatch-brief-atom` one atom at a time for this role. That envelope path was the v37 paraphrase surface; `build-subagent-brief` returns the full stitched prompt in one call.
+    - `complete step=deploy substep=readmes` when the writer returns.
 13. Handle failures [topic: deploy-failures]
 
 ### Fetch guidance

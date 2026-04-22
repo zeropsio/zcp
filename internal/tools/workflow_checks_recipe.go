@@ -596,6 +596,19 @@ func checkRecipeDevProdDivergence(devEntry, prodEntry *ops.ZeropsYmlEntry) []wor
 	}}
 }
 
+// brokenMarkerFormRe catches ZEROPS_EXTRACT markers written in the
+// pre-Cx-MARKER-FORM-FIX form (no trailing `#` sentinel). The canonical
+// scaffold emits the form `<!-- #ZEROPS_EXTRACT_START:intro# -->` and
+// all content-manifest extractors assume it; bodies authored without
+// the trailing `#` are invisible to the extractors and fire
+// "missing fragment markers" on the `fragment_<name>` check, even
+// though markers are physically present. v36 writer-fix passes
+// burned 20+ Edit cycles flipping the wrong form one key at a time
+// before the engine told them the actual issue.
+var brokenMarkerFormRe = regexp.MustCompile(
+	`<!--\s*#ZEROPS_EXTRACT_(START|END):(intro|integration-guide|knowledge-base)\s*-->`,
+)
+
 // checkReadmeFragments validates README.md contains required fragment
 // markers and quality. The hostname identifies which codebase's README
 // is being inspected — it appears in v8.96 structured-diagnostic
@@ -605,6 +618,28 @@ func checkRecipeDevProdDivergence(devEntry, prodEntry *ops.ZeropsYmlEntry) []wor
 // tests; ReadSurface carries the host context.
 func checkReadmeFragments(content, hostname string) []workflow.StepCheck {
 	var checks []workflow.StepCheck
+
+	// Cx-MARKER-FORM-FIX: detect markers present in the broken form
+	// BEFORE the fragment_<name> check, so the diagnostic names form
+	// rather than presence. Added first in the slice so the agent
+	// reads it before the generic "missing fragment markers" rows.
+	if offenders := brokenMarkerFormRe.FindAllString(content, -1); len(offenders) > 0 {
+		detail := fmt.Sprintf(
+			"README has %d fragment marker(s) missing the trailing '#' sentinel. "+
+				"Each marker must be exactly `<!-- #ZEROPS_EXTRACT_START:<key># -->` / `<!-- #ZEROPS_EXTRACT_END:<key># -->`. "+
+				"Offending line(s): %s",
+			len(offenders), strings.Join(offenders, " | "),
+		)
+		checks = append(checks, workflow.StepCheck{
+			Name:   "fragment_marker_exact_form",
+			Status: statusFail,
+			Detail: detail,
+		})
+	} else {
+		checks = append(checks, workflow.StepCheck{
+			Name: "fragment_marker_exact_form", Status: statusPass,
+		})
+	}
 
 	// Check required fragment markers.
 	for _, name := range requiredFragments {

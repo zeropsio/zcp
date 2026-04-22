@@ -6,6 +6,65 @@ import (
 	"testing"
 )
 
+// TestEnvCommentFactuality_RejectsInventedNumber is the Cx-ENV-COMMENT-
+// PRINCIPLE RED→GREEN guard. v37 F-21: writer invented numeric claims
+// (2 GB quotas, minContainers: 3) that did not match the platform-auto-
+// generated YAML. The check fires, but its detail must name BOTH the
+// claimed string AND the actual YAML value in the form
+// `comment claims "N <unit>" but adjacent YAML has <key>: M` so a
+// fix-cycle reader can diff the two side-by-side rather than parsing
+// a generic mismatch sentence.
+func TestEnvCommentFactuality_RejectsInventedNumber(t *testing.T) {
+	t.Parallel()
+	content := `services:
+  - hostname: store
+    type: object-storage
+    # 2 GB quota sized for showcase traffic
+    objectStorageSize: 1`
+	got := CheckFactualClaims(context.Background(), content, "env_import")
+	failCount := 0
+	var failDetail string
+	for _, c := range got {
+		if c.Status == "fail" {
+			failCount++
+			failDetail = c.Detail
+		}
+	}
+	if failCount != 1 {
+		t.Fatalf("expected exactly 1 fail, got %d — checks: %+v", failCount, got)
+	}
+	wantFragments := []string{
+		`claims "2 GB"`,
+		`objectStorageSize: 1`,
+	}
+	for _, w := range wantFragments {
+		if !strings.Contains(failDetail, w) {
+			t.Errorf("detail missing specific-mismatch fragment %q; got:\n%s", w, failDetail)
+		}
+	}
+}
+
+// TestEnvCommentFactuality_AcceptsQualitativePhrasing pins the flip
+// side of Cx-3: a comment that describes a tier qualitatively without
+// naming a number that would contradict the YAML passes cleanly. The
+// Factuality rule in env-comment-rules.md defaults to this phrasing —
+// any regression loosens the writer-side discipline.
+func TestEnvCommentFactuality_AcceptsQualitativePhrasing(t *testing.T) {
+	t.Parallel()
+	content := `services:
+  - hostname: app
+    type: nodejs@22
+    # single-replica production with rolling-deploy risk;
+    # promote to HA for zero-downtime rotation
+    minContainers: 1`
+	got := CheckFactualClaims(context.Background(), content, "env_import")
+	for _, c := range got {
+		if c.Status == "fail" {
+			t.Errorf("qualitative comment should not fail; got fail: %s", c.Detail)
+		}
+	}
+}
+
 func TestCheckFactualClaims_Table(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

@@ -30,3 +30,9 @@ Calls to `mcp__zerops__zerops_knowledge` with a topic id. The citation-map atom 
 ## Inputs you do NOT have
 
 You do not have the run transcript, the main-agent context, memory of what broke during deploy, or any prior sub-agent's internal reasoning. Asking for them is out of scope. If you think you need them, the answer is in the facts log or the recipe state on disk.
+
+## Env folder names are NOT your vocabulary
+
+Writing env-tier README files is finalize's job, not yours. You do NOT create or modify any file or directory under `environments/`. The six env-tier READMEs are emitted at finalize time from the plan snapshot; they are not part of your scope.
+
+When you reference an env tier in prose (for example, inside a per-codebase integration-guide item that mentions tier-promotion), use the tier's prettyName from the plan — "AI Agent", "Remote Development", "Local Development", "Stage", "Small Production", "HA Production". Never invent a slug; never author a directory named after one. Env folder naming is the step-above's responsibility, and your slug guesses do not match it.

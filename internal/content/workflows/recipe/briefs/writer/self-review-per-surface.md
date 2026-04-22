@@ -6,55 +6,20 @@ Each check below is expressible as a shell predicate you can run against your in
 
 ---
 
-## Surface 1 — Root README
-
-Per-codebase readers: none (root is recipe-level). Checks:
-
-- File exists at `{{.ProjectRoot}}/README.md`.
-- Contains a deploy-button row for each env tier in the plan.
-- Length between 20 and 30 lines: `wc -l {{.ProjectRoot}}/README.md` returns a value in `[20, 30]`.
-- Single-question test passes: "a reader decides in 30 seconds whether this recipe deploys what they need and picks the right tier" — answer Yes in your return.
-
----
-
-## Surface 2 — Per-env README
-
-For each env tier `{i}` in the plan:
-
-- File exists at `{{.ProjectRoot}}/environments/{{index .EnvFolders i}}/README.md`.
-- Line count in `[40, 80]`: `wc -l <file>` returns a value in range.
-- Four required teaching sections present: "Who this is for", "What changes vs the adjacent tier" (or "Entry-level tier"), "Promoting to the next tier" (or "Terminal tier"), "Tier-specific operational concerns". Grep-confirm each heading.
-- Numeric claims match the adjacent env `import.yaml` — any `N GB` quota statement in the env README is consistent with `objectStorageSize: N` in the same env; any "N replicas" statement matches `minContainers: N`. Mismatch fails.
-
----
-
-## Surface 3 — Env `import.yaml` comments (via env-comment-set payload)
-
-For each env tier's payload entry:
-
-- Every service block has a non-empty comment block.
-- Each block explains a decision (why this service at this tier, why this scale, why this mode) rather than narrating what the YAML field does.
-- No block is a word-for-word copy-paste of another block. Template openings repeated across service blocks fail.
-- Numeric claims match the YAML in the same block.
-- Every comment line is ASCII `#` prefixed; no Unicode box-drawing, no dividers.
-
----
-
-## Surface 4 — Per-codebase README integration-guide + `INTEGRATION-GUIDE.md`
+## Surface 1 — Per-codebase README integration-guide fragment
 
 For each hostname `{h}` in `{{.Hostnames}}`:
 
-- Fragment markers present: `grep -q '#ZEROPS_EXTRACT_START:integration-guide' {{.ProjectRoot}}/{h}/README.md` and the matching end marker.
+- Fragment markers present in exact form: `grep -q '#ZEROPS_EXTRACT_START:integration-guide#' {{.ProjectRoot}}/{h}/README.md` and the matching end marker. The trailing `#` is mandatory — the extractor treats markers without it as absent.
 - H3 count in `[3, 6]`: count `### ` headings inside the integration-guide markers.
 - Every H3 item carries at least one fenced code block in its section (one action, one reason, one diff).
 - Every H3 item is standalone: a porter reading the single item understands what to do without reading the neighbouring items.
 - Self-referential items removed: no H3 references a scaffold helper file or class by name as the primary teaching.
 - Matching-topic items cite their platform topic from the Citation Map in prose.
-- The companion `INTEGRATION-GUIDE.md` in the codebase directory mirrors the fragment content.
 
 ---
 
-## Surface 5 — Per-codebase README knowledge-base + `GOTCHAS.md`
+## Surface 2 — Per-codebase README knowledge-base fragment
 
 For each hostname `{h}` in `{{.Hostnames}}`:
 
@@ -66,11 +31,10 @@ For each hostname `{h}` in `{{.Hostnames}}`:
 - No recipe-run version-anchor strings in the published bullet text — describe the behavior class rather than which run surfaced it.
 - Cross-codebase uniqueness: stems do not overlap between codebases; repeated facts cross-reference by prose.
 - IG/gotcha distinctness: no gotcha stem is a paraphrase of an IG heading in the same README.
-- The companion `GOTCHAS.md` mirrors the fragment content.
 
 ---
 
-## Surface 6 — Per-codebase CLAUDE.md
+## Surface 3 — Per-codebase CLAUDE.md
 
 For each hostname `{h}` in `{{.Hostnames}}`:
 
@@ -82,22 +46,34 @@ For each hostname `{h}` in `{{.Hostnames}}`:
 
 ---
 
+## Surface 4 — Env `import.yaml` comments (via env-comment-set payload)
+
+For each env tier's payload entry:
+
+- Every service block has a non-empty comment block.
+- Each block explains a decision (why this service at this tier, why this scale, why this mode) rather than narrating what the YAML field does.
+- No block is a word-for-word copy-paste of another block. Template openings repeated across service blocks fail.
+- Numeric claims match the YAML in the same block.
+- Every comment line is ASCII `#` prefixed; no Unicode box-drawing, no dividers.
+
+---
+
 ## Aggregate pre-attest commands
 
 Run these locally against the mount before returning. Exit 0 in aggregate is the green-light condition:
 
 ```bash
-# Manifest exists and parses.
-test -f {{.ProjectRoot}}/ZCP_CONTENT_MANIFEST.json
-jq empty {{.ProjectRoot}}/ZCP_CONTENT_MANIFEST.json
+# Manifest exists at the recipe output root and parses.
+test -f /var/www/zcprecipator/{{.Slug}}/ZCP_CONTENT_MANIFEST.json
+jq empty /var/www/zcprecipator/{{.Slug}}/ZCP_CONTENT_MANIFEST.json
 
 # Every fact has a non-empty routed_to.
 jq '[.facts[] | select(.routed_to == null or .routed_to == "")] | length' \
-   {{.ProjectRoot}}/ZCP_CONTENT_MANIFEST.json | grep -qE '^0$'
+   /var/www/zcprecipator/{{.Slug}}/ZCP_CONTENT_MANIFEST.json | grep -qE '^0$'
 
 # Default-discard classifications without override_reason fail.
 jq '[.facts[] | select(.classification == "framework-quirk" or .classification == "self-inflicted") | select(.routed_to != "discarded") | select((.override_reason // "") == "")] | length' \
-   {{.ProjectRoot}}/ZCP_CONTENT_MANIFEST.json | grep -qE '^0$'
+   /var/www/zcprecipator/{{.Slug}}/ZCP_CONTENT_MANIFEST.json | grep -qE '^0$'
 
 # Canonical output tree only — no invented sibling directories.
 ! find {{.ProjectRoot}} -maxdepth 2 -type d -name 'recipe-*'
@@ -105,9 +81,9 @@ jq '[.facts[] | select(.classification == "framework-quirk" or .classification =
 
 # Per-codebase fragments present.
 for h in {{range .Hostnames}}{{.}} {{end}}; do
-  grep -q '#ZEROPS_EXTRACT_START:intro'             {{.ProjectRoot}}/$h/README.md &&
-  grep -q '#ZEROPS_EXTRACT_START:integration-guide' {{.ProjectRoot}}/$h/README.md &&
-  grep -q '#ZEROPS_EXTRACT_START:knowledge-base'    {{.ProjectRoot}}/$h/README.md || exit 1
+  grep -q '#ZEROPS_EXTRACT_START:intro#'             {{.ProjectRoot}}/$h/README.md &&
+  grep -q '#ZEROPS_EXTRACT_START:integration-guide#' {{.ProjectRoot}}/$h/README.md &&
+  grep -q '#ZEROPS_EXTRACT_START:knowledge-base#'    {{.ProjectRoot}}/$h/README.md || exit 1
 done
 
 # CLAUDE.md byte floor.
