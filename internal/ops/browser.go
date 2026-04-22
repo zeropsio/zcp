@@ -181,12 +181,16 @@ type browserRecoveryOps struct {
 }
 
 // defaultBrowserRecoveryOps wires the production implementations.
+// The `kill` implementation is platform-specific (see
+// browser_kill_unix.go + browser_kill_windows.go) — agent-browser is
+// a Linux-container tool; the Windows build compiles to a no-op so
+// the zcp CLI itself remains cross-platform.
 func defaultBrowserRecoveryOps() browserRecoveryOps {
 	return browserRecoveryOps{
 		pidfilePath: resolveAgentBrowserPaths,
 		readFile:    os.ReadFile,
 		removeFile:  os.Remove,
-		kill:        syscall.Kill,
+		kill:        defaultKill,
 		pkillRun: func(ctx context.Context, args ...string) error {
 			return exec.CommandContext(ctx, "pkill", args...).Run()
 		},
@@ -263,8 +267,8 @@ func (execBrowserRunner) RecoverFork(ctx context.Context) {
 					// Negative PID → kill the process group. Captures Chrome
 					// and every helper inherited from the daemon's fork.
 					if ops.kill != nil {
-						_ = ops.kill(-pid, syscall.SIGKILL)
-						_ = ops.kill(pid, syscall.SIGKILL)
+						_ = ops.kill(-pid, killSignal)
+						_ = ops.kill(pid, killSignal)
 					}
 				}
 			}

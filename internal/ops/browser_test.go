@@ -629,10 +629,10 @@ func TestRecoverFork_ReadsPidfileAndKillsProcessGroup(t *testing.T) {
 	if len(killArgs) != 2 {
 		t.Fatalf("expected 2 kill calls (group + daemon), got %d: %+v", len(killArgs), killArgs)
 	}
-	if killArgs[0].pid != -12345 || killArgs[0].sig != syscall.SIGKILL {
+	if killArgs[0].pid != -12345 || killArgs[0].sig != killSignal {
 		t.Errorf("first kill must be process-group SIGKILL for -12345, got pid=%d sig=%v", killArgs[0].pid, killArgs[0].sig)
 	}
-	if killArgs[1].pid != 12345 || killArgs[1].sig != syscall.SIGKILL {
+	if killArgs[1].pid != 12345 || killArgs[1].sig != killSignal {
 		t.Errorf("second kill must be daemon SIGKILL for 12345, got pid=%d sig=%v", killArgs[1].pid, killArgs[1].sig)
 	}
 
