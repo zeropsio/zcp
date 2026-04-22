@@ -92,6 +92,8 @@ Citation requirement: when the decision touches a topic on the Citation Map (env
 
 Drop example — "enables zero-downtime rolling deploys" repeated word-for-word on every service block: each block has its own reasoning. Templated openings fail the test.
 
+**Factuality rule**: any number in your comment must match the adjacent YAML field exactly. If the YAML has `objectStorageSize: 1`, you may say "1 GB quota" but not "2 GB". If the YAML has no number you want to reference, use qualitative phrasing ("single-replica", "HA mode", "modest quota") — never invent a number from memory. The check enforces this: a numeric claim that contradicts the adjacent YAML fails with a detail of the form `comment claims "N <unit>" but adjacent YAML has <key>: M`. Subjunctive phrasing ("bump to 50 GB when usage grows") bypasses the check — use it for tier-promotion guidance, not for current-configuration assertions. Default to qualitative phrasing; earn the number by matching the YAML.
+
 ---
 
 ## Surface summary table

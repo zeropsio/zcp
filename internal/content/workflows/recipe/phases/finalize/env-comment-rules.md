@@ -27,6 +27,17 @@ Every service that appears in an env's import.yaml carries a comment explaining 
 
 Each env's import.yaml is published as a standalone deploy target on zerops.io/recipes — users land on one env's page, click deploy, and never see the others. Each env's prose therefore stands alone: phrase comments so a reader arriving only at this env file understands what it does and why, without comparing to siblings.
 
+## Factuality rule
+
+Numbers in your comment must come from the YAML block the comment is attached to, verbatim. If the YAML has `objectStorageSize: 1`, your comment may say "1 GB quota" but not "2 GB" or "20 GB". If the YAML has no number you want to reference, use qualitative phrasing — "single-replica", "HA mode", "modest quota", "sized for this tier" — rather than inventing a number from memory.
+
+The `{env}_import_factual_claims` check fires when a declarative numeric claim in a comment contradicts the adjacent YAML field within the same service block. A failure names both strings in the form `comment claims "2 GB" but adjacent YAML has objectStorageSize: 1`. Two escape hatches:
+
+- **Aspirational phrasing** — "bump to 50 GB via the GUI when usage grows" references a future value, not a current one. The subjunctive marker ("bump to", "upgrade to", "if you", "when usage", etc.) tells the check to skip the line. Use this when the comment's purpose is to teach the operator how to scale, not to assert current configuration.
+- **Drop the number** — if the quantity isn't load-bearing for the comment's purpose, rewrite without it. "Single-replica production" teaches the same decision without contradicting a mismatched YAML value.
+
+Default to qualitative phrasing. The number only earns its place when it matches the YAML verbatim AND adds information the YAML field name does not already convey.
+
 ## Depth rubric — WHY not WHAT
 
 The comment depth check scores each substantive comment block (≥ 20 chars body, grouped across contiguous `#` lines) on whether it carries at least one reasoning marker. At least **35%** of substantive blocks hit a marker, with a hard floor of 2 reasoning blocks per env. Recognised reasoning markers:
