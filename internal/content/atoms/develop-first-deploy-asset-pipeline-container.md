@@ -1,14 +1,15 @@
 ---
-id: develop-first-deploy-asset-pipeline
+id: develop-first-deploy-asset-pipeline-container
 priority: 5
 phases: [develop-active]
 modes: [dev, simple, standard]
 runtimes: [implicit-webserver]
+environments: [container]
 deployStates: [never-deployed]
 title: "Dev + asset pipeline — build assets over SSH before verify"
 ---
 
-### Dev/simple + frontend asset pipeline
+### Dev/simple + frontend asset pipeline (container)
 
 Recipes whose backend is `php-nginx` / `php-apache` and whose frontend
 runs through a build pipeline (Laravel+Vite, Symfony+Encore, …)

@@ -9,18 +9,18 @@ title: "Pick an ongoing deploy strategy"
 
 ### Pick an ongoing deploy strategy
 
-The first deploy landed and verified. The initial deploy uses the
-default mechanism (self-deploy from the dev container, or local push
-through `zerops_deploy`). Before iterating, confirm how future deploys
-should work:
+The first deploy landed and verified. Before iterating, confirm how
+future deploys should work:
 
-- `push-dev` — keep the current mechanism. Fast for tight iteration
-  against the dev container. Recommended unless you need CI.
-- `push-git` — move source of truth to an external git remote; Zerops
-  picks up remote pushes. Requires a `GIT_TOKEN` project env var and a
-  one-time commit cycle on the container before it takes effect.
-- `manual` — you orchestrate every deploy yourself. `zerops_deploy`
-  calls stay valid but the flow makes no automatic assumptions.
+- `push-dev` — ZCP drives direct deploys via `zerops_deploy` (zcli push
+  from your workspace: container dev container → stage, or local CWD →
+  stage). Fast for tight iteration.
+- `push-git` — source of truth moves to an external git remote; Zerops
+  builds triggered by a webhook or GitHub Actions. Container push-git
+  uses `GIT_TOKEN` on the project; local push-git uses your own git
+  credentials.
+- `manual` — **you** orchestrate every deploy. ZCP stays out of the
+  deploy loop; close steps don't suggest `zerops_deploy`.
 
 ```
 zerops_workflow action="strategy" strategies={"{hostname}":"push-dev"}
