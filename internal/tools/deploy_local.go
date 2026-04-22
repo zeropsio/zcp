@@ -22,9 +22,9 @@ import (
 // own git config — no GIT_TOKEN, no .netrc, no cross-boundary
 // credential juggling.
 //
-// Phase B.6: includeGit is no longer user-facing. Local zcli push always
-// runs with --no-git (recipes that need committed history go through
-// strategy=git-push instead).
+// includeGit is not user-facing: local zcli push always runs with
+// --no-git. Recipes that need committed history go through
+// strategy=git-push, which drives the user's own git CLI.
 type DeployLocalInput struct {
 	TargetService string `json:"targetService"`
 	Setup         string `json:"setup,omitempty"`

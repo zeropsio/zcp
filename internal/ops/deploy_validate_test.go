@@ -902,12 +902,11 @@ func runValidateTestWithOpts(t *testing.T, hostname, yml string, wantWarnings in
 		}
 	}
 
-	// Phase B.4 removed the hostname-substring role fallback in
-	// ValidateZeropsYml; callers pass the role explicitly. The test
+	// ValidateZeropsYml takes the role explicitly (production callers
+	// read it from ServiceMeta — see deploy_preflight.go). The test
 	// fixtures name hostnames with dev/stage suffixes for readability,
-	// so the test helper derives the role from the suffix and hands it
-	// through as the explicit role param. Production callers read role
-	// from ServiceMeta, not from hostname — see deploy_preflight.go.
+	// so this helper derives the role from the suffix before passing
+	// it in.
 	role := ""
 	switch {
 	case strings.HasSuffix(hostname, "dev"):

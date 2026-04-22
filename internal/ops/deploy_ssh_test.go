@@ -639,10 +639,8 @@ func TestDeploy_SelfDeploy_AutoInfer(t *testing.T) {
 	}
 }
 
-// Phase B.6: includeGit isn't a user knob — DeploySSH derives it from the
-// source/target pair. Self-deploy (source == target) gets -g so the service
-// keeps its own .git. This test pins that derivation from the caller's
-// perspective.
+// DeploySSH derives the -g flag from the source/target pair — self-deploy
+// (source == target) gets -g so the service keeps its own .git.
 func TestDeploy_SelfDeploy_IncludesGit(t *testing.T) {
 	t.Parallel()
 

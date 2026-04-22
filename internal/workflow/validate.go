@@ -52,10 +52,9 @@ func (r RuntimeTarget) EffectiveMode() Mode {
 }
 
 // StageHostname returns the stage hostname for standard mode. ExplicitStage
-// is the only source — under phase B.4 the `{base}dev → {base}stage` suffix
-// derivation was deleted (services can be named anything under the
-// post-strict-suffix era; the heuristic silently misclassified repos with
-// non-conforming hostnames). Returns empty for dev/simple modes OR when
+// is the only source: service names are arbitrary strings, so the old
+// `{base}dev → {base}stage` derivation silently misclassified repos with
+// non-conforming hostnames. Returns empty for dev/simple modes OR when
 // standard mode was requested without ExplicitStage; the latter is a
 // caller bug — ValidateBootstrapTargets catches it with a hard error.
 func (r RuntimeTarget) StageHostname() string {
@@ -201,11 +200,9 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 			continue
 		}
 
-		// H7: validate stage hostname for standard mode. Phase B.4
-		// dropped the `{base}dev → {base}stage` suffix derivation — a
-		// plan target claiming standard mode must now carry an explicit
-		// `stageHostname` field. Hostnames are arbitrary strings under
-		// the post-strict-suffix era and ZCP refuses to guess.
+		// Standard-mode targets must carry an explicit stageHostname.
+		// Hostnames are arbitrary strings; ZCP refuses to guess a stage
+		// pair from dev-hostname structure.
 		var stageHostname string
 		if rt.EffectiveMode() == PlanModeStandard {
 			stageHostname = rt.StageHostname()

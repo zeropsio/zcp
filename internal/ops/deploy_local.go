@@ -48,9 +48,9 @@ func OverrideRunnerForTest(r commandRunner) func() {
 // zcli push blocks until the build pipeline completes. pollDeployBuild (in tool handler)
 // then confirms the final status via API.
 //
-// Phase B.6: always runs with --no-git. Recipes that need committed history
-// route through strategy=git-push (handleLocalGitPush in the tool layer),
-// which uses the user's own git CLI and doesn't share this code path.
+// Always runs with --no-git; recipes that need committed history go
+// through strategy=git-push (handleLocalGitPush in the tool layer),
+// which drives the user's own git CLI on a separate code path.
 func DeployLocal(
 	ctx context.Context,
 	client platform.Client,

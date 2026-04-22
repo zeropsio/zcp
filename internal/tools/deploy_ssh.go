@@ -19,11 +19,10 @@ const deployStrategyGitPush = "git-push"
 
 // DeploySSHInput is the input type for zerops_deploy in SSH (container) mode.
 //
-// Phase B.6: includeGit is no longer user-facing — ZCP auto-enables it for
-// self-deploys (so a service deploying its own code preserves .git and any
-// commit history scripts depend on) and leaves it off for cross-deploys
-// (dev→stage where the stage would otherwise pick up the dev container's
-// .git). The tool surface carries one fewer knob for the LLM to get wrong.
+// includeGit is not user-facing: ZCP enables -g on self-deploys (so a
+// service deploying its own code preserves .git and any history scripts
+// depend on) and leaves it off on cross-deploys (dev→stage would otherwise
+// carry the dev container's .git across).
 type DeploySSHInput struct {
 	SourceService string `json:"sourceService,omitempty"`
 	TargetService string `json:"targetService"`

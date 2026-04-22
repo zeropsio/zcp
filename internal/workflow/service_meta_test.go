@@ -692,11 +692,10 @@ func TestServiceMeta_PrimaryRole(t *testing.T) {
 			DeployRoleSimple,
 		},
 		{
-			// Phase B.5 follow-up: local+standard is no longer a valid
-			// combination on disk (local metas use local-stage / local-only
-			// exclusively). The old Environment+Mode special case in
-			// PrimaryRole is gone; a meta labelled standard always projects
-			// as container-standard's dev half.
+			// Local metas use local-stage / local-only exclusively, never
+			// standard. PrimaryRole on a local-stage meta is still Dev
+			// because the dev half of the topology lives on the user's
+			// machine — the Zerops side is the stage runtime.
 			"local_stage_returns_stage",
 			ServiceMeta{Hostname: "myproject", StageHostname: "appstage", Mode: PlanModeLocalStage},
 			DeployRoleDev,

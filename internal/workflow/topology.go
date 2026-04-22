@@ -1,23 +1,22 @@
 package workflow
 
-// Topology primitives consolidated under plan phase B.1. One typed Mode
-// enum replaces three parallel vocabularies that had grown apart:
+// Topology primitives — one typed Mode enum carries every lifecycle
+// reading of the "what kind of service is this" axis:
 //
-//   - PlanMode* string constants (bootstrap.go) — what the user picked
-//     at bootstrap / adopt time.
-//   - Mode* typed (envelope.go) — per-service projection in the
-//     envelope, where a standard-pair service splits into a dev-half
+//   - PlanMode* (bootstrap.go) — what the user picked at bootstrap /
+//     adopt time.
+//   - Mode* (envelope.go) — per-service projection in the envelope,
+//     where a standard-pair service splits into a dev-half
 //     (ModeStandard) and a stage-half (ModeStage).
-//   - DeployRole* string constants (this file + duplicated in
-//     ops/deploy_validate.go, where "simple" was missing — a drift
-//     bug waiting to happen).
+//   - DeployRole* — the subset that describes a per-service deploy
+//     role (no local-* variants, since local topologies are
+//     project-keyed and have no per-service role).
 //
-// They all speak the same set of values, differing only in when in the
-// lifecycle the value is read. A single typed Mode eliminates the
-// duplication. PlanMode* and DeployRole* are kept as aliases below so
-// existing callers keep compiling during the cross-package rename; the
-// next cleanup cycle can delete the aliases after in-tree uses switch
-// to the typed Mode form.
+// PlanMode* and DeployRole* are aliases for the Mode values they
+// describe; keeping the three vocabularies collapsed to one source
+// means ops/ and workflow/ can't drift (the DeployRole copy in
+// ops/deploy_validate.go was missing "simple" before consolidation
+// — classic drift bug).
 
 // Mode is the canonical topology/role vocabulary. See envelope.go for
 // the type declaration and the doc explaining per-service projection.
@@ -42,10 +41,9 @@ const (
 	ModeLocalOnly  Mode = "local-only"
 )
 
-// Plan-mode string aliases. Typed as Mode so new callers can drop the
-// Plan prefix; left in place so existing callers compile unchanged.
-// Compared directly against meta.Mode (still string-typed under phase
-// B.2 — typing that field is a separate commit).
+// PlanMode* — the plan-time subset. Names reflect the caller perspective
+// (bootstrap plan input, adopt-local handler, etc.) rather than the role
+// the service plays at deploy time.
 const (
 	PlanModeStandard   = ModeStandard
 	PlanModeDev        = ModeDev
@@ -54,12 +52,10 @@ const (
 	PlanModeLocalOnly  = ModeLocalOnly
 )
 
-// DeployRole* aliases. These mirror the subset of Mode values that
-// describe per-service deploy roles (no local-* — a local-only or
-// local-stage project has no per-service role in the Zerops-runtime
-// sense). Kept as aliases so ops/ and existing workflow/ callers keep
-// compiling without the mechanical import sweep; the duplicated
-// definitions in ops/deploy_validate.go are removed in favor of these.
+// DeployRole* — the deploy-time subset. Mirrors the Mode values that
+// describe a per-service role; no local-* variants, since local
+// topologies are project-keyed and have no per-service role in the
+// Zerops-runtime sense.
 const (
 	DeployRoleDev    = ModeDev
 	DeployRoleStage  = ModeStage

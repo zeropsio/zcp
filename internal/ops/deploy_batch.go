@@ -13,8 +13,8 @@ import (
 // DeployBatchTarget is one entry in a batched deploy — names the source and
 // target service plus the zerops.yaml setup block. Each target is deployed
 // independently in its own goroutine inside DeployBatchSSH. v8.94 §5.9.
-//
-// Phase B.6: no IncludeGit knob — DeploySSH derives it from source/target.
+// DeploySSH derives -g / --no-git internally from source/target equality,
+// so there's no includeGit knob here.
 type DeployBatchTarget struct {
 	SourceService string `json:"sourceService,omitempty"`
 	TargetService string `json:"targetService"`

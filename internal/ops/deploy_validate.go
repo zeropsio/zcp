@@ -16,8 +16,8 @@ import (
 // webservers when zerops.yaml bases alone are insufficient (e.g. build.base: php@8.4 for a
 // php-nginx service). Pass "" if unknown.
 // roles carries the explicit service role from the caller's ServiceMeta.
-// Under phase B.4 the hostname-substring fallback was deleted — callers
-// that don't know the role get no role-specific warnings (empty role).
+// Callers that don't know the role (empty) skip the role-specific
+// warnings — ZCP refuses to guess from hostname shape.
 // Returns a list of warning strings (empty = no issues found).
 func ValidateZeropsYml(workingDir, targetHostname, serviceType string, roles ...string) []string {
 	var warnings []string

@@ -5,10 +5,9 @@ import (
 	"testing"
 )
 
-// Phase B.4: the hostname-suffix pairing heuristic was deleted. Every runtime
-// now becomes its own dev-mode target; managed services become shared EXISTS
-// dependencies; control-plane types are filtered out. Tests reflect the new
-// one-runtime-one-target contract.
+// InferServicePairing does no dev/stage pairing. Every runtime candidate
+// becomes its own dev-mode target; managed services become shared EXISTS
+// dependencies; control-plane types are filtered out.
 func TestInferServicePairing(t *testing.T) {
 	t.Parallel()
 

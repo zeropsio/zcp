@@ -18,23 +18,14 @@ func isControlPlaneType(serviceType string) bool {
 // becomes its own target with `BootstrapMode: PlanModeDev`. Managed
 // services become EXISTS-resolution dependencies shared across targets.
 //
-// Historical note (phase B.4): an earlier revision inferred `{base}dev`
-// + `{base}stage` pairs from hostname suffixes and auto-set
-// `BootstrapMode: PlanModeStandard` on the dev half. That heuristic
-// dated from the strict-suffix era where hostnames had to end in
-// dev/stage. Services can now be named anything, so the heuristic
-// silently misclassified repos with non-conforming names — e.g.
-// `frontend-app` + `frontend-app-prod` would be treated as two
-// independent dev-mode targets, hiding the intended pairing. Worse,
-// when the author really did pair `appdev`+`appstage` but wanted them
-// adopted as independent services, the heuristic overrode their
-// intent with no way to opt out.
-//
-// The replacement is no pairing at adoption time — every runtime is an
-// independent dev-mode target. Users who want a dev/stage pair adopted
-// as PlanModeStandard write that into the bootstrap plan explicitly
-// (BootstrapMode=standard, ExplicitStage=<hostname>). The plan input
-// is already the authoritative source for non-trivial topology.
+// Why no pairing: earlier revisions inferred `{base}dev` + `{base}stage`
+// pairs from hostname suffixes. Service names are now arbitrary strings,
+// so the heuristic silently misclassified repos with non-conforming
+// names (e.g. `frontend-app` + `frontend-app-prod`) and overrode the
+// author's intent when they wanted `appdev`+`appstage` adopted as two
+// independent services. Users who want a dev/stage pair adopted as
+// PlanModeStandard write that into the bootstrap plan explicitly
+// (BootstrapMode=standard, ExplicitStage=<hostname>).
 //
 // liveManaged: base names of managed types from the live API catalog
 // (knowledge.ManagedBaseNames). When non-empty it overrides the static

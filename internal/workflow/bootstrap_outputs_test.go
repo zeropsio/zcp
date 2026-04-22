@@ -902,11 +902,9 @@ func TestBuildTransitionMessage_Adoption_NoHelloWorld(t *testing.T) {
 	}
 }
 
-// Phase B.5: bootstrap writes the meta keyed by the dev hostname regardless
-// of environment — the legacy "local mode inverts hostname to stage" hack
-// was deleted. Local envs that want a stage-only topology go through
-// adopt-local (writes Mode=local-stage), not bootstrap. This test pins the
-// uniform shape.
+// Bootstrap writes the meta keyed by the dev hostname regardless of
+// environment. Local envs that want a stage-only topology go through
+// adopt-local (writes Mode=local-stage), not bootstrap.
 func TestWriteBootstrapOutputs_LocalMode_KeyedByDevHostname(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

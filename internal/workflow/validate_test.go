@@ -49,10 +49,8 @@ func TestValidatePlanHostname(t *testing.T) {
 
 func TestStageHostname_Standard(t *testing.T) {
 	t.Parallel()
-	// Phase B.4: ExplicitStage is the only source of a stage hostname —
-	// the previous `{base}dev → {base}stage` auto-derivation was deleted
-	// along with the broader hostname-suffix heuristic. Standard mode
-	// without ExplicitStage returns empty (caught by
+	// ExplicitStage is the only source of a stage hostname. Standard
+	// mode without ExplicitStage returns empty (caught by
 	// ValidateBootstrapTargets as a hard error).
 	rt := RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"}
 	if got := rt.StageHostname(); got != "appstage" {
@@ -151,8 +149,8 @@ func TestValidateBootstrapTargets_InvalidBootstrapMode(t *testing.T) {
 
 func TestStageHostname_NoExplicit(t *testing.T) {
 	t.Parallel()
-	// Standard mode without ExplicitStage returns empty — the suffix
-	// heuristic is gone (phase B.4).
+	// Standard mode without ExplicitStage returns empty — no suffix
+	// heuristic.
 	rt := RuntimeTarget{DevHostname: "myapp", Type: "nodejs@22"}
 	got := rt.StageHostname()
 	if got != "" {
