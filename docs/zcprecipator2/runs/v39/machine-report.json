@@ -1,0 +1,398 @@
+{
+  "run": "v39",
+  "generated_at": "2026-04-22T20:06:38Z",
+  "generator_version": "v8.109.0-harness",
+  "tier": "showcase",
+  "slug": "nestjs-showcase",
+  "deliverable_dir": "/Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v39",
+  "sessions_logs_dir": "/Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v39/SESSIONS_LOGS",
+  "structural_integrity": {
+    "B-15_ghost_env_dirs": {
+      "description": "ghost env directories (environments/* ∉ canonical OR depth-1 `environments[-_]*` siblings)",
+      "measurement": "readdir environments/ ∉ CanonicalEnvFolders + depth-1 walk for environments[-_]... siblings",
+      "threshold": 0,
+      "observed": 0,
+      "status": "pass"
+    },
+    "B-16_tarball_per_codebase_md": {
+      "description": "per-codebase README.md + CLAUDE.md staged into deliverable",
+      "measurement": "stat {deliverable}/{codebase}/{README.md,CLAUDE.md}",
+      "threshold": 6,
+      "observed": 6,
+      "status": "pass"
+    },
+    "B-17_marker_exact_form": {
+      "description": "ZEROPS_EXTRACT markers carry trailing '#' sentinel",
+      "measurement": "regex \u003c!-- #ZEROPS_EXTRACT_(START|END):(key) --\u003e without trailing '#'",
+      "threshold": 0,
+      "observed": 0,
+      "status": "pass"
+    },
+    "B-18_standalone_duplicate_files": {
+      "description": "standalone INTEGRATION-GUIDE.md / GOTCHAS.md absent",
+      "measurement": "walk deliverable; flag paths named INTEGRATION-GUIDE.md or GOTCHAS.md",
+      "threshold": 0,
+      "observed": 0,
+      "status": "pass"
+    },
+    "B-22_atom_template_vars_bound": {
+      "description": "atom template variables bind to populated Go render fields",
+      "measurement": "walk atom corpus; extract {{.Field}}; fail when Field ∉ allowed set",
+      "threshold": 0,
+      "observed": 0,
+      "status": "pass"
+    }
+  },
+  "session_metrics": {
+    "B-20_deploy_readmes_retry_rounds": {
+      "description": "deploy-phase failing workflow completions (writer/feature retry signal)",
+      "measurement": "count workflow.complete(step=deploy) with checkResult.passed==false across all substeps",
+      "threshold": 2,
+      "observed": 1,
+      "status": "pass",
+      "evidence_files": [
+        ""
+      ]
+    },
+    "B-21_sessionless_export_attempts": {
+      "description": "sessionless `zcp sync recipe export` attempts (F-8 evidence)",
+      "measurement": "Bash tool_use input.command contains 'sync recipe export' AND no --session / ZCP_SESSION_ID, before close-step completion",
+      "threshold": 0,
+      "observed": 3,
+      "status": "fail",
+      "evidence_files": [
+        "cd /var/www/zcprecipator/nestjs-showcase \u0026\u0026 zcp sync recipe export --app-dir /var/www/appdev --app-dir /var/www/apidev --app-dir /var/www/workerdev --include-timeline 2\u003e\u00261 | tail -20",
+        "zcp sync recipe export /var/www/zcprecipator/nestjs-showcase --app-dir /var/www/appdev --app-dir /var/www/apidev --app-dir /var/www/workerdev --include-timeline 2\u003e\u00261 | tail -30",
+        "zcp sync recipe export /var/www/zcprecipator/nestjs-showcase --app-dir /var/www/appdev --app-dir /var/www/apidev --app-dir /var/www/workerdev --include-timeline 2\u003e\u00261 | tail -30"
+      ]
+    },
+    "B-23_writer_first_pass_failures": {
+      "description": "writer first-pass compliance failures",
+      "measurement": "distinct failing check names in first failing deploy-phase checkResult after writer dispatch",
+      "threshold": 3,
+      "observed": 6,
+      "status": "fail",
+      "evidence_files": [
+        "api_comment_specificity",
+        "comment_ratio",
+        "fragment_integration-guide_blank_after_marker",
+        "fragment_intro_blank_after_marker",
+        "fragment_knowledge-base_blank_after_marker",
+        "intro_length"
+      ]
+    },
+    "B-24_dispatch_integrity": {
+      "threshold": 0,
+      "observed": 0,
+      "status": ""
+    },
+    "sub_agent_count": 7,
+    "close_step_completed": false,
+    "editorial_review_dispatched": true,
+    "code_review_dispatched": true,
+    "close_browser_walk_attempted": false,
+    "retry_cycle_attributions": [
+      {
+        "cycle": 1,
+        "timestamp": "2026-04-22T18:18:11.306Z",
+        "substep": "research/",
+        "failing_checks": null
+      },
+      {
+        "cycle": 2,
+        "timestamp": "2026-04-22T18:22:04.985Z",
+        "substep": "provision/",
+        "failing_checks": null
+      },
+      {
+        "cycle": 3,
+        "timestamp": "2026-04-22T18:41:09.367Z",
+        "substep": "deploy/deploy-dev",
+        "failing_checks": null
+      },
+      {
+        "cycle": 4,
+        "timestamp": "2026-04-22T18:41:47.337Z",
+        "substep": "deploy/start-processes",
+        "failing_checks": null
+      },
+      {
+        "cycle": 5,
+        "timestamp": "2026-04-22T18:42:13.890Z",
+        "substep": "deploy/verify-dev",
+        "failing_checks": null
+      },
+      {
+        "cycle": 6,
+        "timestamp": "2026-04-22T18:43:13.871Z",
+        "substep": "deploy/init-commands",
+        "failing_checks": null
+      },
+      {
+        "cycle": 7,
+        "timestamp": "2026-04-22T18:56:38.320Z",
+        "substep": "deploy/subagent",
+        "failing_checks": null
+      },
+      {
+        "cycle": 8,
+        "timestamp": "2026-04-22T18:59:20.221Z",
+        "substep": "deploy/snapshot-dev",
+        "failing_checks": null
+      },
+      {
+        "cycle": 9,
+        "timestamp": "2026-04-22T18:59:44.644Z",
+        "substep": "deploy/feature-sweep-dev",
+        "failing_checks": null
+      },
+      {
+        "cycle": 10,
+        "timestamp": "2026-04-22T19:02:27.735Z",
+        "substep": "deploy/browser-walk",
+        "failing_checks": null
+      },
+      {
+        "cycle": 11,
+        "timestamp": "2026-04-22T19:04:57.871Z",
+        "substep": "deploy/cross-deploy",
+        "failing_checks": null
+      },
+      {
+        "cycle": 12,
+        "timestamp": "2026-04-22T19:05:18.149Z",
+        "substep": "deploy/verify-stage",
+        "failing_checks": null
+      },
+      {
+        "cycle": 13,
+        "timestamp": "2026-04-22T19:05:32.540Z",
+        "substep": "deploy/feature-sweep-stage",
+        "failing_checks": null
+      },
+      {
+        "cycle": 14,
+        "timestamp": "2026-04-22T19:22:51.476Z",
+        "substep": "deploy/readmes",
+        "failing_checks": null
+      },
+      {
+        "cycle": 15,
+        "timestamp": "2026-04-22T19:23:04.446Z",
+        "substep": "deploy/",
+        "failing_checks": [
+          "comment_ratio",
+          "fragment_integration-guide_blank_after_marker",
+          "fragment_knowledge-base_blank_after_marker",
+          "fragment_intro_blank_after_marker",
+          "intro_length",
+          "comment_ratio",
+          "fragment_integration-guide_blank_after_marker",
+          "fragment_knowledge-base_blank_after_marker",
+          "fragment_intro_blank_after_marker",
+          "intro_length",
+          "api_comment_specificity",
+          "comment_ratio",
+          "fragment_integration-guide_blank_after_marker",
+          "fragment_knowledge-base_blank_after_marker",
+          "fragment_intro_blank_after_marker",
+          "intro_length"
+        ]
+      },
+      {
+        "cycle": 16,
+        "timestamp": "2026-04-22T19:28:11.810Z",
+        "substep": "finalize/",
+        "failing_checks": [
+          "1 — Remote (CDE)_import_cross_env_refs",
+          "2 — Local_import_cross_env_refs",
+          "3 — Stage_import_cross_env_refs",
+          "4 — Small Production_import_cross_env_refs"
+        ]
+      },
+      {
+        "cycle": 17,
+        "timestamp": "2026-04-22T19:29:17.730Z",
+        "substep": "finalize/",
+        "failing_checks": [
+          "3 — Stage_import_comment_ratio"
+        ]
+      }
+    ]
+  },
+  "writer_readmes": {
+    "apidev/README.md": {
+      "file_exists": true,
+      "size_bytes": 9904,
+      "intro_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "line_count": 1,
+        "in_range": true,
+        "status": "pass"
+      },
+      "integration_guide_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "in_range": true,
+        "h3_count": 6,
+        "every_h3_has_fenced_code_block": true,
+        "status": "pass"
+      },
+      "knowledge_base_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "gotchas_h3_present": true,
+        "gotcha_bullet_count": 5,
+        "bullets_in_range": true,
+        "status": "pass"
+      },
+      "status": "pass"
+    },
+    "appdev/README.md": {
+      "file_exists": true,
+      "size_bytes": 7209,
+      "intro_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "line_count": 1,
+        "in_range": true,
+        "status": "pass"
+      },
+      "integration_guide_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "in_range": true,
+        "h3_count": 5,
+        "every_h3_has_fenced_code_block": true,
+        "status": "pass"
+      },
+      "knowledge_base_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "gotchas_h3_present": true,
+        "gotcha_bullet_count": 4,
+        "bullets_in_range": true,
+        "status": "pass"
+      },
+      "status": "pass"
+    },
+    "workerdev/README.md": {
+      "file_exists": true,
+      "size_bytes": 7430,
+      "intro_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "line_count": 1,
+        "in_range": true,
+        "status": "pass"
+      },
+      "integration_guide_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "in_range": true,
+        "h3_count": 5,
+        "every_h3_has_fenced_code_block": true,
+        "status": "pass"
+      },
+      "knowledge_base_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "gotchas_h3_present": true,
+        "gotcha_bullet_count": 3,
+        "bullets_in_range": true,
+        "status": "pass"
+      },
+      "status": "pass"
+    }
+  },
+  "writer_claude_md": {
+    "apidev/CLAUDE.md": {
+      "file_exists": true,
+      "size_bytes": 4899,
+      "size_ge_1200_bytes": true,
+      "base_sections_present": [
+        "Dev Loop",
+        "Migrations",
+        "Container Traps",
+        "Testing"
+      ],
+      "custom_section_count": 3,
+      "custom_sections_ge_2": true,
+      "status": "pass"
+    },
+    "appdev/CLAUDE.md": {
+      "file_exists": true,
+      "size_bytes": 3243,
+      "size_ge_1200_bytes": true,
+      "base_sections_present": [
+        "Dev Loop",
+        "Migrations",
+        "Container Traps",
+        "Testing"
+      ],
+      "custom_section_count": 4,
+      "custom_sections_ge_2": true,
+      "status": "pass"
+    },
+    "workerdev/CLAUDE.md": {
+      "file_exists": true,
+      "size_bytes": 3540,
+      "size_ge_1200_bytes": true,
+      "base_sections_present": [
+        "Dev Loop",
+        "Migrations",
+        "Container Traps",
+        "Testing"
+      ],
+      "custom_section_count": 3,
+      "custom_sections_ge_2": true,
+      "status": "pass"
+    }
+  },
+  "dispatch_integrity": {
+    "Author recipe READMEs + CLAUDE.md + manifest": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Code review: NestJS + Svelte showcase": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Editorial review of recipe reader-facing content": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Implement 5 showcase features": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Scaffold NestJS API": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Scaffold frontend SPA": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Scaffold worker codebase": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    }
+  },
+  "schema_version": "1.0.0"
+}
