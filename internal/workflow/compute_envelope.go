@@ -346,7 +346,7 @@ func resolveEnvelopeMode(meta *ServiceMeta, hostname string) Mode {
 		// PrimaryRole returns Dev for both PlanModeDev (standalone dev) and
 		// PlanModeStandard's dev half. Split them here so standard-only atoms
 		// don't fire for dev-only services and vice versa.
-		if meta.Mode == PlanModeStandard || (meta.Mode == "" && meta.StageHostname != "") {
+		if meta.Mode == PlanModeStandard {
 			return ModeStandard
 		}
 		return ModeDev

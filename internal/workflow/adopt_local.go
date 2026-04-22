@@ -206,22 +206,3 @@ func joinServiceNames(names []string) string {
 	}
 	return out
 }
-
-// MigrateLegacyLocalMetas used to rewrite pre-A.4 local metas in place
-// (Hostname=<stage-host>, Mode ∈ {standard,simple,dev}, Environment=local
-// → Hostname=project.Name, Mode=local-stage). That migration shipped in
-// Release A; under phase B.3 the Environment field itself was dropped,
-// removing the signal the migration relied on to identify legacy rows.
-//
-// Users who upgrade straight from pre-A.4 to post-B.3 without having
-// booted an A-series binary keep their legacy meta on disk — it will
-// look like a fresh container meta (no Environment field, Mode=standard
-// etc.) and filter-out of local router paths cleanly. The practical
-// upgrade path is still to hit A first (which rewrites the state dir
-// idempotently), so this lossy skip is acceptable.
-//
-// The function is kept as a no-op so server.New doesn't have to branch
-// on "did we run B.3 already" logic — call-site stays unchanged.
-func MigrateLegacyLocalMetas(_ context.Context, _ platform.Client, _, _ string, _ []*ServiceMeta) error {
-	return nil
-}

@@ -207,11 +207,6 @@ func runLocalAutoAdopt(ctx context.Context, client platform.Client, projectID, s
 		return ""
 	}
 	if len(existing) > 0 {
-		// Migration path: rewrite any pre-A.4 local metas in place. No-op if
-		// all existing metas are already on the new shape.
-		if err := workflow.MigrateLegacyLocalMetas(ctx, client, projectID, stateDir, existing); err != nil {
-			logger.Warn("auto-adopt: legacy migration failed", "err", err)
-		}
 		return ""
 	}
 	result, err := workflow.LocalAutoAdopt(ctx, client, projectID, stateDir)

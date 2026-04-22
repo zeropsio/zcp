@@ -1,6 +1,6 @@
-// Tests for: adopt_local.go — LocalAutoAdopt, MigrateLegacyLocalMetas,
-// FormatAdoptionNote. Package workflow uses global state (os.Getpid,
-// file-based sessions) so these do NOT use t.Parallel().
+// Tests for: adopt_local.go — LocalAutoAdopt, FormatAdoptionNote.
+// Package workflow uses global state (os.Getpid, file-based sessions)
+// so these do NOT use t.Parallel().
 package workflow
 
 import (
@@ -265,36 +265,5 @@ func TestFormatAdoptionNote_Shapes(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-// TestMigrateLegacyLocalMetas_IsNoop pins the phase B.3 contract: the
-// migration function no longer rewrites anything. The signal it used
-// (ServiceMeta.Environment == "local") disappeared with the field, so
-// legacy-shape metas on disk pass through unchanged and the caller
-// signature stays stable. Detail: see adopt_local.go comment.
-func TestMigrateLegacyLocalMetas_IsNoop(t *testing.T) {
-	dir := t.TempDir()
-	legacy := &ServiceMeta{
-		Hostname:          "appstage",
-		Mode:              PlanModeStandard,
-		BootstrappedAt:    "2026-01-01",
-		DeployStrategy:    StrategyPushDev,
-		StrategyConfirmed: true,
-	}
-	if err := WriteServiceMeta(dir, legacy); err != nil {
-		t.Fatalf("WriteServiceMeta: %v", err)
-	}
-	mock := platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "myproject"})
-	metas, _ := ListServiceMetas(dir)
-	if err := MigrateLegacyLocalMetas(context.Background(), mock, "p1", dir, metas); err != nil {
-		t.Fatalf("MigrateLegacyLocalMetas: %v", err)
-	}
-	got, _ := ReadServiceMeta(dir, "appstage")
-	if got == nil || got.Mode != PlanModeStandard {
-		t.Errorf("migration should be a no-op post-B.3; got %+v", got)
-	}
-	if missing, _ := ReadServiceMeta(dir, "myproject"); missing != nil {
-		t.Errorf("migration should not create new project-keyed meta; got %+v", missing)
 	}
 }

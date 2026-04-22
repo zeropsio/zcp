@@ -428,15 +428,6 @@ func TestResolveEnvelopeMode(t *testing.T) {
 			want:     ModeSimple,
 		},
 		{
-			// Phase B.3 retired the local+standard Mode combination — local
-			// topologies are local-stage / local-only exclusively. The
-			// legacy "local_standard_stage_only" case is therefore dead.
-			name:     "empty_mode_with_stage_treated_as_standard",
-			meta:     &ServiceMeta{Hostname: "appdev", Mode: "", StageHostname: "appstage"},
-			hostname: "appdev",
-			want:     ModeStandard,
-		},
-		{
 			name:     "nil_meta",
 			meta:     nil,
 			hostname: "appdev",

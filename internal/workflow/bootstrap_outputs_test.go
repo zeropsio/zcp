@@ -902,14 +902,12 @@ func TestBuildTransitionMessage_Adoption_NoHelloWorld(t *testing.T) {
 	}
 }
 
-// TestWriteBootstrapOutputs_EnvironmentField was deleted in phase B.3:
-// the Environment field on ServiceMeta is gone (environment is runtime-
-// detected, not persisted). The env-specific meta shape — standard dev
-// keyed vs. local stage keyed — is covered by the
-// _LocalMode_HostnameIsStage test below, which asserts the disk layout
-// without relying on the removed field.
-
-func TestWriteBootstrapOutputs_LocalMode_HostnameIsStage(t *testing.T) {
+// Phase B.5: bootstrap writes the meta keyed by the dev hostname regardless
+// of environment — the legacy "local mode inverts hostname to stage" hack
+// was deleted. Local envs that want a stage-only topology go through
+// adopt-local (writes Mode=local-stage), not bootstrap. This test pins the
+// uniform shape.
+func TestWriteBootstrapOutputs_LocalMode_KeyedByDevHostname(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
@@ -930,63 +928,30 @@ func TestWriteBootstrapOutputs_LocalMode_HostnameIsStage(t *testing.T) {
 		}
 	}
 
-	// In local mode, meta should be written for appstage (not appdev).
-	meta, err := ReadServiceMeta(dir, "appstage")
+	meta, err := ReadServiceMeta(dir, "appdev")
 	if err != nil {
-		t.Fatalf("ReadServiceMeta(appstage): %v", err)
+		t.Fatalf("ReadServiceMeta(appdev): %v", err)
 	}
 	if meta == nil {
-		t.Fatal("expected appstage meta in local mode")
+		t.Fatal("expected appdev meta keyed by dev hostname in local mode")
 	}
-	if meta.Hostname != "appstage" {
-		t.Errorf("hostname = %s, want appstage", meta.Hostname)
+	if meta.Hostname != "appdev" {
+		t.Errorf("hostname = %s, want appdev", meta.Hostname)
 	}
-	if meta.StageHostname != "" {
-		t.Errorf("stageHostname = %s, want empty (local mode has no dev/stage pair)", meta.StageHostname)
+	if meta.StageHostname != "appstage" {
+		t.Errorf("stageHostname = %s, want appstage", meta.StageHostname)
 	}
 	if meta.Mode != PlanModeStandard {
 		t.Errorf("mode = %s, want standard", meta.Mode)
 	}
-
-	// appdev should NOT have a meta file in local mode.
-	devMeta, _ := ReadServiceMeta(dir, "appdev")
-	if devMeta != nil {
-		t.Error("appdev meta should NOT exist in local mode (dev service not created)")
-	}
-}
-
-func TestWriteBootstrapOutputs_LocalMode_DefaultEmptyStrategy2(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	eng := NewEngine(dir, EnvLocal, nil)
-
-	_, err := eng.BootstrapStart("proj-1", "test")
-	if err != nil {
-		t.Fatalf("BootstrapStart: %v", err)
-	}
-	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
-	}}, nil, nil)
-	if err != nil {
-		t.Fatalf("BootstrapCompletePlan: %v", err)
-	}
-
-	for _, step := range []string{"provision", "close"} {
-		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
-			t.Fatalf("BootstrapComplete(%s): %v", step, err)
-		}
-	}
-
-	// Local mode: meta written as appstage. Strategy is empty (bootstrap default).
-	meta, err := ReadServiceMeta(dir, "appstage")
-	if err != nil {
-		t.Fatalf("ReadServiceMeta(appstage): %v", err)
-	}
-	if meta == nil {
-		t.Fatal("expected appstage meta")
-	}
 	if meta.DeployStrategy != "" {
 		t.Errorf("bootstrap must write empty DeployStrategy, got %q", meta.DeployStrategy)
+	}
+
+	// No separate stage-keyed meta — the stage lives inside the dev meta's
+	// StageHostname field.
+	if stageMeta, _ := ReadServiceMeta(dir, "appstage"); stageMeta != nil {
+		t.Error("appstage meta should NOT exist on its own — stage is a field of the dev meta")
 	}
 }
 
