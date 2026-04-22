@@ -77,7 +77,10 @@ Ordered by dependency. Each has a scope, files-touched list, RED test name, and 
 
 **Acceptance on v39**: editorial-review dispatch reports 0 CRITs on any env README (`1 — Remote (CDE)`, `3 — Stage`, `4 — Small Production`). Retry-cycle for `close/editorial-review` closes on first attempt.
 
-**Estimated**: 2–3 days. Plan-schema additions require threading through provision + import.yaml generator.
+**Estimated**: 2–3 days. Breakdown:
+- **Day 1 — bullet audit (substantive design)**. Inventory every hardcoded bullet in the four functions (~40-50 bullets). Classify each as: (a) **plan-backed** — field exists in current `writeSingleService` yaml generator; (b) **prose-only** — bullet makes a claim no yaml field backs (e.g. "Backups become meaningful at this tier"); (c) **system-invariant** — true of every recipe by construction (e.g. "Each tier declares a distinct project.name"). For (b) bullets, user decides per-bullet: promote to schema + add yaml-generator support, or delete the bullet. Skipping this audit causes Cx-1 to either lose teaching (deleted (b) bullets) or move fabrication into the schema (unbacked schema fields).
+- **Day 2 — refactor**. Extract `EnvTemplate` struct. Rewrite the four prose functions to compose bullets from struct fields (for (a) bullets) + an enumerated system-invariant bullet template list (for (c) bullets). Drop or add yaml-gen support for (b) bullets per the audit decisions.
+- **Day 3 — gold test with three-way equality**. `TestFinalizeOutput_PassesSurfaceContractTests` asserts for each generated bullet: (schema field value) == (yaml-generator emitted text for that field) == (prose bullet's claim about that field). Three-way equality catches the case where a bullet's schema field is set but the yaml generator doesn't emit the corresponding config — the "fabrication moved into schema" failure mode.
 
 ---
 
