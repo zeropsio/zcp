@@ -88,7 +88,7 @@ func handleGitPush(
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
 			"git-push requires a successful first deploy on "+hostname,
-			"Run zerops_deploy targetService=\""+hostname+"\" without the strategy argument first (default self-deploy). After a passing verify stamps FirstDeployedAt, retry with strategy=git-push.",
+			"Run zerops_deploy targetService=\""+hostname+"\" without the strategy argument first. After a passing verify stamps FirstDeployedAt, retry with strategy=git-push.",
 		)), nil, nil
 	}
 

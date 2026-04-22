@@ -50,8 +50,10 @@ refreshes service state.`
 
 const localEnvironment = `
 Running on a local machine. Code in the working directory; infrastructure
-on Zerops. Deploy via zcli push (zerops.yaml at repo root; each deploy is
-a new container). zerops_discover refreshes service state.`
+on Zerops. Deploy via zerops_deploy (targetService=<hostname>) — pushes
+the working directory to the matching Zerops service and blocks until
+build completes. Requires zerops.yaml at repo root. zerops_discover
+refreshes service state.`
 
 // BuildInstructions returns the static MCP instructions text. Varies only by
 // environment (container vs local) and self-hostname — no state, no API.

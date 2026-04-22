@@ -19,13 +19,13 @@ Flow for each never-deployed runtime:
 2. **Write the application code** that implements the user's intent —
    not bootstrap's placeholder, real code.
 3. **Run the first deploy** via `zerops_deploy targetService=...` with
-   NO `strategy` argument. The first deploy is always the default
-   self-deploy mechanism, regardless of what eventual strategy the
-   service will use. `strategy=git-push` requires `GIT_TOKEN` +
-   committed code on the container, neither of which exists yet.
+   NO `strategy` argument. Every first deploy goes through the default
+   push path regardless of what eventual strategy the service will use.
+   `strategy=git-push` needs `GIT_TOKEN` + committed code (container)
+   or a configured git remote (local), neither of which is ready yet.
 4. **Verify** with `zerops_verify` — a passing verify marks the service
    deployed; the next session enters the normal edit loop.
 
-Skip straight to edits only after that first deploy lands — SSHFS
-mounts may be empty, subdomains are disabled, and HTTP probes fail
-before any code is delivered.
+Skip straight to edits only after that first deploy lands — container
+SSHFS mounts may be empty, subdomains are disabled, and HTTP probes
+fail before any code is delivered.

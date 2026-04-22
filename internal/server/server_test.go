@@ -204,9 +204,10 @@ func TestServer_Instructions(t *testing.T) {
 			want: "zcpx",
 		},
 		{
-			name: "local dev mentions zcli push",
+			name: "local dev points at zerops_deploy tool",
 			rt:   runtime.Info{},
-			want: "zcli push",
+			want: "zerops_deploy",
+			miss: "zcli push",
 		},
 		{
 			name: "container mentions SSHFS mount path",
