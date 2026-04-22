@@ -155,6 +155,12 @@ func planModeToEnvelopeMode(mode Mode) Mode {
 		return ModeSimple
 	case PlanModeStandard, "":
 		return ModeStandard
+	case ModeStage, PlanModeLocalStage, PlanModeLocalOnly:
+		// Local modes and the envelope-only ModeStage pass through
+		// unchanged — the plan flow doesn't emit them (plan inputs only
+		// carry standard/dev/simple), but an explicit case silences the
+		// exhaustive linter and documents the boundary.
+		return mode
 	}
 	return mode
 }

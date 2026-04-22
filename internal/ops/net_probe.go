@@ -14,8 +14,9 @@ const defaultVPNProbeTimeout = 2 * time.Second
 // uses net.DialTimeout against the real network.
 var vpnProbeDialer = defaultVPNProbeDialer
 
-func defaultVPNProbeDialer(_ context.Context, address string, timeout time.Duration) (net.Conn, error) {
-	return net.DialTimeout("tcp", address, timeout)
+func defaultVPNProbeDialer(ctx context.Context, address string, timeout time.Duration) (net.Conn, error) {
+	d := net.Dialer{Timeout: timeout}
+	return d.DialContext(ctx, "tcp", address)
 }
 
 // ProbeManagedReachable returns true if a TCP connection to host:port

@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -194,15 +195,6 @@ func FormatAdoptionNote(result *AdoptionResult) string {
 }
 
 // joinServiceNames is a tiny helper keeping formatAdoptionNote scannable.
-// Not exported; duplicated here rather than pulling in strings.Join to keep
-// the signature clear in the template strings.
 func joinServiceNames(names []string) string {
-	if len(names) == 0 {
-		return ""
-	}
-	out := names[0]
-	for _, n := range names[1:] {
-		out += ", " + n
-	}
-	return out
+	return strings.Join(names, ", ")
 }

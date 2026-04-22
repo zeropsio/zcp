@@ -185,7 +185,7 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 		}
 
 		// Validate bootstrap mode.
-		if !validBootstrapModes[Mode(rt.BootstrapMode)] {
+		if !validBootstrapModes[rt.BootstrapMode] {
 			errs = append(errs, fmt.Sprintf("target %q: invalid bootstrapMode %q (must be standard, dev, or simple)", rt.DevHostname, rt.BootstrapMode))
 			continue
 		}

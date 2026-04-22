@@ -89,10 +89,14 @@ func (m *ServiceMeta) PrimaryRole() Mode {
 		mode = PlanModeStandard
 	}
 	switch mode {
-	case PlanModeDev:
-		return DeployRoleDev
 	case PlanModeSimple:
 		return DeployRoleSimple
+	case PlanModeDev, PlanModeStandard, ModeStage, PlanModeLocalStage, PlanModeLocalOnly:
+		// Dev half of a standard pair and standalone dev both deploy as Dev.
+		// Local topologies have no per-service role — the container-side
+		// fallback keeps call sites that expect a non-empty role happy;
+		// callers that care about local-only semantics gate on meta.Mode.
+		return DeployRoleDev
 	}
 	return DeployRoleDev
 }

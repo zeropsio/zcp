@@ -37,7 +37,8 @@ func gitRepoFixture(t *testing.T) (workDir, remoteURL string) {
 	}
 
 	run := func(dir string, args ...string) {
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		//nolint:gosec // test-only, inputs are t.TempDir paths
+		cmd := exec.CommandContext(context.Background(), "git", append([]string{"-C", dir}, args...)...)
 		cmd.Env = append(os.Environ(),
 			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=t@t.com",
 			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=t@t.com",
@@ -139,7 +140,8 @@ func TestHandleLocalGitPush_NoOriginNoRemoteURL_Refuses(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	run := func(args ...string) {
-		cmd := exec.Command("git", append([]string{"-C", workDir}, args...)...)
+		//nolint:gosec // test-only, inputs are t.TempDir paths
+		cmd := exec.CommandContext(context.Background(), "git", append([]string{"-C", workDir}, args...)...)
 		cmd.Env = append(os.Environ(),
 			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=t@t.com",
 			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=t@t.com",

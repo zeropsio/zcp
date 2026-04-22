@@ -239,12 +239,12 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta, ws *WorkSess
 		snap.Bootstrapped = true
 		snap.Deployed = DeriveDeployed(svc.Name, svc.Status, meta, ws)
 		snap.Mode = resolveEnvelopeMode(meta, svc.Name)
-		snap.Strategy = DeployStrategy(meta.DeployStrategy)
+		snap.Strategy = meta.DeployStrategy
 		if snap.Strategy == "" {
 			snap.Strategy = StrategyUnset
 		}
 		if snap.Strategy == StrategyPushGit {
-			snap.Trigger = PushGitTrigger(meta.PushGitTrigger)
+			snap.Trigger = meta.PushGitTrigger
 			if snap.Trigger == "" {
 				snap.Trigger = TriggerUnset
 			}
@@ -342,10 +342,11 @@ func resolveEnvelopeMode(meta *ServiceMeta, hostname string) Mode {
 		return ModeStage
 	case DeployRoleSimple:
 		return ModeSimple
-	case DeployRoleDev:
+	case DeployRoleDev, PlanModeStandard, PlanModeLocalStage, PlanModeLocalOnly:
 		// PrimaryRole returns Dev for both PlanModeDev (standalone dev) and
 		// PlanModeStandard's dev half. Split them here so standard-only atoms
-		// don't fire for dev-only services and vice versa.
+		// don't fire for dev-only services and vice versa. Local topologies
+		// carry their own Mode values that project unchanged.
 		if meta.Mode == PlanModeStandard {
 			return ModeStandard
 		}

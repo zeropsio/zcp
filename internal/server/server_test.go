@@ -384,10 +384,8 @@ func TestServer_New_LocalAutoAdopt(t *testing.T) {
 				if meta.BootstrapSession != "" {
 					t.Errorf("BootstrapSession = %q, want empty (adopted, not bootstrapped)", meta.BootstrapSession)
 				}
-			} else {
-				if meta != nil {
-					t.Errorf("container env must not auto-adopt; got meta: %+v", meta)
-				}
+			} else if meta != nil {
+				t.Errorf("container env must not auto-adopt; got meta: %+v", meta)
 			}
 		})
 	}

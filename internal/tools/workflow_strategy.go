@@ -96,7 +96,7 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("Service %q is local-only — push-dev needs a Zerops stage to deploy to", hostname),
-				fmt.Sprintf("Link a stage first: zerops_workflow action=\"adopt-local\" targetService=<runtime-hostname>. Or pick push-git / manual, which work without a stage.")),
+				"Link a stage first: zerops_workflow action=\"adopt-local\" targetService=<runtime-hostname>. Or pick push-git / manual, which work without a stage."),
 			), nil, nil
 		}
 		updated = append(updated, fmt.Sprintf("%s=%s", hostname, strategy))
@@ -186,7 +186,7 @@ func handleStrategyList(stateDir string) (*mcp.CallToolResult, any, error) {
 		if !m.IsComplete() {
 			continue
 		}
-		current := workflow.DeployStrategy(m.DeployStrategy)
+		current := m.DeployStrategy
 		if current == "" {
 			current = workflow.StrategyUnset
 		}
@@ -231,7 +231,7 @@ func buildStrategySetupSnapshots(stateDir string, strategies map[string]string, 
 			Strategy:     workflow.DeployStrategy(strategy),
 		}
 		if meta, _ := workflow.ReadServiceMeta(stateDir, hostname); meta != nil {
-			snap.Mode = workflow.Mode(meta.Mode)
+			snap.Mode = meta.Mode
 			if meta.StageHostname != "" {
 				snap.StageHostname = meta.StageHostname
 			}

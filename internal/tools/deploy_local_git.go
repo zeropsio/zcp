@@ -54,8 +54,11 @@ func handleLocalGitPush(ctx context.Context, authInfo auth.Info, input DeployLoc
 		}
 	}
 
-	// 1. git repo check.
+	// 1. git repo check. MCP handlers surface the failure in the
+	// CallToolResult (convertError) and return a nil outer error.
+	//nolint:nilerr // tool-level error lives in CallToolResult
 	if _, err := runGit(ctx, workingDir, "rev-parse", "--is-inside-work-tree"); err != nil {
+		_ = err
 		record("working dir is not a git repo")
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
@@ -65,7 +68,9 @@ func handleLocalGitPush(ctx context.Context, authInfo auth.Info, input DeployLoc
 	}
 
 	// 2. HEAD has commits.
+	//nolint:nilerr // tool-level error lives in CallToolResult
 	if _, err := runGit(ctx, workingDir, "rev-parse", "HEAD"); err != nil {
+		_ = err
 		record("no commits on HEAD")
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
@@ -231,16 +236,16 @@ func currentEffectiveOrigin(current, provided string) string {
 }
 
 // trackTriggerMissingWarning builds a soft warning when the target
-// service's meta is on push-git but has no PushGitTrigger recorded. The
-// trigger field is added in Phase A.6; callers on older metas get an
-// empty string (no warning).
+// service's meta is on push-git but has no PushGitTrigger recorded —
+// the push succeeded on the git side, but Zerops won't auto-build
+// without either a webhook or a GitHub Actions workflow configured.
 func trackTriggerMissingWarning(stateDir, hostname string) string {
 	meta, _ := workflow.ReadServiceMeta(stateDir, hostname)
-	if meta == nil {
+	if meta == nil || meta.DeployStrategy != workflow.StrategyPushGit {
 		return ""
 	}
-	// Best-effort — the PushGitTrigger field doesn't exist yet in meta
-	// (Phase A.6 will add it). Keep this helper inert until then so we
-	// don't ship a dangling reference.
-	return ""
+	if meta.PushGitTrigger != "" {
+		return ""
+	}
+	return fmt.Sprintf("service %q uses push-git but has no downstream trigger configured — the push lands in git but Zerops won't build. Run zerops_workflow action=\"strategy\" strategies={%q:%q} trigger=\"webhook|actions\" to finish setup.", hostname, hostname, workflow.StrategyPushGit)
 }
