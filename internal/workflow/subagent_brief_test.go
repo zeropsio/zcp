@@ -60,6 +60,24 @@ func TestBuildSubagentBrief_WriterReturnsStitchedBrief(t *testing.T) {
 	if !strings.Contains(got.Prompt, "/tmp/zcp-facts-test.jsonl") {
 		t.Errorf("prompt must carry the factsLogPath interpolation; got:\n%s", got.Prompt)
 	}
+	// v39 Commit 3: writer brief carries the pre-loaded annotated-example
+	// input block with a section for each writer-authored surface.
+	if !strings.Contains(got.Prompt, "Pre-loaded input — annotated surface examples") {
+		t.Error("prompt missing pre-loaded example input block header (v39 Commit 3)")
+	}
+	for _, surface := range []string{"gotcha", "ig-item", "claude-section", "zerops-yaml-comment"} {
+		if !strings.Contains(got.Prompt, "## "+surface+" — annotated examples") {
+			t.Errorf("prompt missing %q example surface section", surface)
+		}
+	}
+	// Both verdicts must appear — the sampler mixes pass + fail so the
+	// writer sees concrete shapes to avoid AND to model after.
+	if !strings.Contains(got.Prompt, "[FAIL]") {
+		t.Error("prompt missing [FAIL] verdict tags — sampler didn't mix verdicts")
+	}
+	if !strings.Contains(got.Prompt, "[PASS]") {
+		t.Error("prompt missing [PASS] verdict tags — sampler didn't mix verdicts")
+	}
 }
 
 // TestBuildSubagentBrief_DeterministicHash: two builds against the

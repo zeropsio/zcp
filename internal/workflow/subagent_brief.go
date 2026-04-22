@@ -143,10 +143,24 @@ func BuildSubagentBrief(plan *RecipePlan, role, factsLogPath, manifestPath strin
 	}, nil
 }
 
+// writerExamplesPerSurface is how many examples per writer-authored
+// surface the engine samples into the dispatch brief's pre-loaded
+// input block. 2 gives one pass + one fail per surface when both are
+// in the bank; keeps the block under ~4KB at current bank size.
+const writerExamplesPerSurface = 2
+
 // buildWriterBriefRendered stitches the writer dispatch brief using the
 // render-aware atom loader so every `{{.Field}}` reference resolves
 // against the plan context BEFORE the hash is computed. Canonical
-// concatenation order: body atoms, principles atoms, input files.
+// concatenation order: body atoms, principles atoms, pre-loaded input
+// block (annotated examples per surface — v39 Commit 3), input files.
+//
+// v39 Commit 3 — the pre-loaded input block inlines 2 annotated
+// examples per writer-authored surface (gotcha, ig-item, claude-section,
+// zerops-yaml-comment). Pattern-matching against concrete shapes closes
+// folk-doctrine + wrong-surface at authoring time instead of relying
+// on post-hoc editorial-review catches. Examples are bank-sampled
+// deterministically so brief SHA stays stable across retries.
 func buildWriterBriefRendered(ctx AtomRenderContext, factsLogPath string) (string, error) {
 	body, err := concatAtomsRendered(ctx, writerBriefBodyAtomIDs()...)
 	if err != nil {
@@ -156,11 +170,21 @@ func buildWriterBriefRendered(ctx AtomRenderContext, factsLogPath string) (strin
 	if err != nil {
 		return "", err
 	}
+	examples, err := BuildWriterExampleInputBlock(writerExamplesPerSurface)
+	if err != nil {
+		return "", fmt.Errorf("build example input block: %w", err)
+	}
 	var b strings.Builder
 	b.WriteString(body)
 	if principles != "" {
 		b.WriteString("\n\n---\n\n")
 		b.WriteString(principles)
+	}
+	if examples != "" {
+		b.WriteString("\n\n---\n\n")
+		b.WriteString("# Pre-loaded input — annotated surface examples\n\n")
+		b.WriteString("Pattern-match every piece of content you author against these examples BEFORE treating it as shippable. Each section covers one of the writer-authored surfaces with `[FAIL]` (shapes to avoid) and `[PASS]` (shapes to model after) cases. When a bullet you plan to write resembles a FAIL example, reclassify per the classification taxonomy and reroute (or discard) before publishing.\n\n")
+		b.WriteString(examples)
 	}
 	if factsLogPath != "" {
 		fmt.Fprintf(&b, "\n\n---\n\n## Input files\n\n- Facts log: `%s`\n", factsLogPath)

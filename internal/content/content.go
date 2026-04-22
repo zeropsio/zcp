@@ -26,6 +26,15 @@ var atomFS embed.FS
 //go:embed all:workflows/recipe
 var RecipeAtomsFS embed.FS
 
+// ExamplesFS exposes the annotated content-surface example bank under
+// internal/content/examples/. Consumed by internal/workflow's example
+// sampler (examples.go). Each .md file carries frontmatter declaring
+// its surface / verdict / reason; see the examples/README.md for the
+// schema. Read-only.
+//
+//go:embed examples/*.md
+var ExamplesFS embed.FS
+
 // Workflow files live in an embed.FS, so a "read" is really a copy out of the
 // embed table plus a string() conversion — ~116 KB per call for recipe.md.
 // On a hot path (every zerops_workflow MCP tool invocation, multiplied by
