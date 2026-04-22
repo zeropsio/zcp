@@ -79,16 +79,22 @@ ServiceMeta (`.zcp/state/services/{hostname}.json`) is the persistent evidence t
 
 ```
 ServiceMeta {
-  Hostname          string  // service identifier
-  Mode              string  // "standard" | "dev" | "simple"
-  StageHostname     string  // stage pair (standard mode only, empty otherwise)
-  DeployStrategy    string  // "push-dev" | "push-git" | "manual" (empty until set)
-  StrategyConfirmed bool    // true after user explicitly confirms/sets strategy
-  Environment       string  // "container" | "local"
-  BootstrapSession  string  // session ID that created this; EMPTY for adoption
-  BootstrappedAt    string  // date — empty = incomplete (bootstrap in progress)
+  Hostname          string          // service identifier
+  Mode              Mode            // standard | dev | simple | local-stage | local-only
+  StageHostname     string          // stage pair (standard mode only; requires ExplicitStage on the plan target — no hostname-suffix derivation since Release B.4)
+  DeployStrategy    DeployStrategy  // push-dev | push-git | manual (empty until set)
+  PushGitTrigger    PushGitTrigger  // webhook | actions (push-git only)
+  StrategyConfirmed bool            // true after user explicitly confirms/sets strategy
+  BootstrapSession  string          // session ID that created this; EMPTY for adoption
+  BootstrappedAt    string          // date — empty = incomplete (bootstrap in progress)
+  FirstDeployedAt   string          // stamped on first real deploy (session or adoption-at-ACTIVE)
 }
 ```
+
+The three axis-bearing fields (`Mode`, `DeployStrategy`, `PushGitTrigger`)
+are typed Go enums — same vocabulary as plan input and envelope
+assembly. `Environment` is not persisted: environment is a property of
+the currently running ZCP process (runtime-detected), not of a service.
 
 **`BootstrapSession == ""` convention.** Empty (JSON-wise: empty string, not
 null) is the adoption marker. Fresh bootstraps set this to the 16-hex

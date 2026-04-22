@@ -1,8 +1,10 @@
 # ZCP Local Development Mode Specification
 
 > **Status**: Authoritative — all local mode code, content, and improvements MUST conform to this document.
-> **Scope**: Local mode only. Container mode is specified in `spec-bootstrap-deploy.md`.
-> **Date**: 2026-03-27
+> **Scope**: Local mode only. Container mode specs live in `spec-workflows.md`.
+> **Date**: 2026-04-22 — Release B refresh (typed enums, dropped
+> Environment field, removed hostname-suffix heuristic, removed
+> `invertLocalHostname` hack, removed `includeGit` knob).
 
 ---
 
@@ -96,7 +98,6 @@ ServiceMeta:
   "hostname":       "<project-name>",
   "stageHostname":  "<runtime-hostname>",
   "mode":           "local-stage",
-  "environment":    "local",
   "bootstrapSession": ""   // adopted, not bootstrapped
 }
 ```
@@ -118,7 +119,6 @@ ServiceMeta:
   "hostname":       "<project-name>",
   "stageHostname":  "",
   "mode":           "local-only",
-  "environment":    "local",
   "deployStrategy": "manual",   // forced on local-only (no push target)
   "bootstrapSession": ""
 }
@@ -166,9 +166,14 @@ Both register `zerops_deploy`. Agent always calls the same tool name.
 type DeployLocalInput struct {
     TargetService string  // Zerops service hostname
     WorkingDir    string  // Local path (default: ".")
-    IncludeGit    bool    // -g flag for zcli push
+    Strategy      string  // "" (default zcli push) | "git-push"
 }
 ```
+
+Under Release B the `includeGit` knob was dropped from the tool surface —
+local zcli push always runs with `--no-git`. Recipes that need committed
+history go through `strategy=git-push` instead, which uses the user's
+own git CLI.
 
 ### ops.DeployLocal()
 
@@ -177,7 +182,7 @@ type DeployLocalInput struct {
 3. Validate zerops.yaml exists at workingDir
 4. Run `ValidateZeropsYml(workingDir, targetService)` with local path
 5. `zcli login <token>`
-6. `zcli push <hostname> --working-dir <path> [-g]` (positional arg = hostname)
+6. `zcli push --service-id <id> --project-id <pid> --working-dir <path> --no-git`
 7. Return `DeployResult{Status: "BUILD_TRIGGERED", Mode: "local"}`
 
 ### Build Polling
@@ -190,27 +195,33 @@ type DeployLocalInput struct {
 
 ```go
 type ServiceMeta struct {
-    Hostname         string `json:"hostname"`
-    Mode             string `json:"mode,omitempty"`
-    StageHostname    string `json:"stageHostname,omitempty"`
-    DeployStrategy   string `json:"deployStrategy,omitempty"`
-    PushGitTrigger   string `json:"pushGitTrigger,omitempty"`   // "webhook" | "actions" — push-git only
-    StrategyConfirmed bool  `json:"strategyConfirmed,omitempty"`
-    Environment      string `json:"environment,omitempty"`      // "container" or "local"
-    BootstrapSession string `json:"bootstrapSession"`
-    BootstrappedAt   string `json:"bootstrappedAt"`
-    FirstDeployedAt  string `json:"firstDeployedAt,omitempty"`  // stamped on successful deploy or adoption at ACTIVE
+    Hostname          string         `json:"hostname"`
+    Mode              Mode           `json:"mode,omitempty"`
+    StageHostname     string         `json:"stageHostname,omitempty"`
+    DeployStrategy    DeployStrategy `json:"deployStrategy,omitempty"`
+    PushGitTrigger    PushGitTrigger `json:"pushGitTrigger,omitempty"`    // webhook | actions — push-git only
+    StrategyConfirmed bool           `json:"strategyConfirmed,omitempty"`
+    BootstrapSession  string         `json:"bootstrapSession"`
+    BootstrappedAt    string         `json:"bootstrappedAt"`
+    FirstDeployedAt   string         `json:"firstDeployedAt,omitempty"`   // stamped on successful deploy or adoption at ACTIVE
 }
 ```
+
+Under Release B all three axis-bearing fields (`Mode`, `DeployStrategy`,
+`PushGitTrigger`) are typed Go enums rather than bare strings — the
+vocabulary is shared with plan input and envelope assembly, so the type
+system catches drift at compile time. `Environment` is not persisted:
+env is a property of the currently running ZCP process (runtime-detected
+via `runtime.Info.InContainer`), not of a service, and storing it per
+meta created a drift vector.
 
 ### Local Mode Differences
 
 | Field | Container | Local |
 |-------|-----------|-------|
 | Hostname | Zerops service hostname | **Zerops project name** |
-| StageHostname | Paired stage (standard mode) | Linked Zerops stage (local-stage only) |
+| StageHostname | Paired stage (standard mode, explicit `ExplicitStage`) | Linked Zerops stage (local-stage only) |
 | Mode | dev / standard / simple | **local-stage / local-only** |
-| Environment | container | local |
 
 ### filterStaleMetas Compatibility
 
@@ -227,14 +238,6 @@ if m.Mode == PlanModeLocalStage || m.Mode == PlanModeLocalOnly {
 
 Stage linkage for local-stage metas is validated separately via
 `StageHostname` against the live service list.
-
-### Legacy Migration
-
-Metas written under the pre-A.4 local layout (Hostname=<stage-host>,
-Mode ∈ {standard, simple, dev}, Environment=local) are rewritten in
-place by `MigrateLegacyLocalMetas` at `server.New` time: Hostname
-becomes project name, StageHostname takes the former Hostname, Mode
-becomes `local-stage`. One-shot, idempotent.
 
 ---
 

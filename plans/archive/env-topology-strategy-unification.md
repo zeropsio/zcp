@@ -1,9 +1,11 @@
 # Plan: Env × Topology × Strategy unification
 
-**Status**: Release A implemented (phases A.1 – A.9). Release B
-(vocabulary consolidation — typed enums, delete hostname heuristic,
-drop Environment field, `IncludeGit` schema cleanup) deferred to a
-follow-up cycle after Release A soaks in production.
+**Status**: COMPLETE — Release A (A.1–A.9) shipped over the previous
+cycle, Release B (B.1–B.7) shipped on 2026-04-22. All seven artefact
+classes identified in §1 are closed: typed enums in one place (B.1–B.2),
+no persisted Environment (B.3), no hostname-suffix heuristic (B.4), no
+`invertLocalHostname` hack (B.5), no user-facing includeGit knob (B.6),
+docs aligned (B.7). Archived — no active work.
 
 **Scope**: Complete cleanup of legacy artefacts in how ZCP models environment
 (container/local), service topology (dev/standard/simple/local-stage/local-only),
