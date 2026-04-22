@@ -75,5 +75,13 @@ func isValidAppREADME(content string) bool {
 		strings.Contains(content, "**TODO** \u2014 add framework-specific gotchas") {
 		return false
 	}
+	// Cx-SCAFFOLD-FRAGMENT-FRAMES: the v38 scaffold emits a single
+	// `<!-- REPLACE THIS LINE ... -->` placeholder between each marker
+	// pair. If the placeholder survives into what the writer returns,
+	// the writer did not Edit the fragment — overlaying would publish
+	// a REPLACE-THIS-LINE comment to zerops.io/recipes.
+	if strings.Contains(content, "<!-- REPLACE THIS LINE") {
+		return false
+	}
 	return true
 }
