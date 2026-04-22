@@ -280,6 +280,7 @@ func handleRecipeGenerateFinalize(engine *workflow.Engine, envComments map[strin
 	// landing in the deliverable folder for any codebase whose README is
 	// already in place.
 	readmeOverlayCount := workflow.OverlayRealREADMEs(files, plan)
+	manifestOverlaid := workflow.OverlayManifest(files, plan)
 
 	// Write files to disk.
 	var written []string
@@ -307,6 +308,11 @@ func handleRecipeGenerateFinalize(engine *workflow.Engine, envComments map[strin
 		readmeNote = fmt.Sprintf(" %d README(s) overlaid from /var/www mounts (real content, not scaffold).", readmeOverlayCount)
 	} else {
 		readmeNote = " App README uses the TODO scaffold — write /var/www/{hostname}dev/README.md for each codebase during generate step and re-run generate-finalize to overlay it."
+	}
+	if manifestOverlaid {
+		readmeNote += fmt.Sprintf(" ZCP_CONTENT_MANIFEST.json overlaid from /var/www/zcprecipator/%s/.", plan.Slug)
+	} else {
+		readmeNote += fmt.Sprintf(" ZCP_CONTENT_MANIFEST.json not yet authored at /var/www/zcprecipator/%s/ — the writer sub-agent writes it during the readmes substep and a re-run of generate-finalize overlays it into the deliverable.", plan.Slug)
 	}
 	if hasComments {
 		message = fmt.Sprintf("Regenerated %d recipe files with your per-env comments baked in. Review the output — do NOT edit these files by hand. To refine one env, call generate-finalize again with just that env's updated entry under envComments (merge semantics, rest left untouched).%s", len(written), readmeNote)

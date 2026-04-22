@@ -199,6 +199,89 @@ func TestOverlayRealREADMEs_NoFileNoOp(t *testing.T) {
 	}
 }
 
+// TestOverlayManifest_CopiesValidJSON is the Cx-MANIFEST-OVERLAY
+// RED→GREEN test. v37 F-23: writer authored ZCP_CONTENT_MANIFEST.json
+// at the recipe output root but it never reached the deliverable —
+// only per-codebase files were staged. OverlayManifest closes the
+// gap: read the writer's manifest from
+// /var/www/zcprecipator/{slug}/ZCP_CONTENT_MANIFEST.json, confirm
+// valid JSON, and stage it into the files map at the deliverable root.
+func TestOverlayManifest_CopiesValidJSON(t *testing.T) {
+	dir := t.TempDir()
+	slug := "nestjs-showcase"
+	recipeDir := filepath.Join(dir, "zcprecipator", slug)
+	if err := os.MkdirAll(recipeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"facts":[{"title":"foo","classification":"intersection","routed_to":"content_gotcha"}]}`
+	if err := os.WriteFile(filepath.Join(recipeDir, "ZCP_CONTENT_MANIFEST.json"), []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := &RecipePlan{Slug: slug}
+	files := map[string]string{}
+
+	oldBase := recipeMountBaseOverride
+	recipeMountBaseOverride = dir
+	defer func() { recipeMountBaseOverride = oldBase }()
+
+	if ok := OverlayManifest(files, plan); !ok {
+		t.Fatal("expected OverlayManifest to return true on valid manifest")
+	}
+	if files["ZCP_CONTENT_MANIFEST.json"] != manifest {
+		t.Errorf("files[ZCP_CONTENT_MANIFEST.json] = %q; want %q", files["ZCP_CONTENT_MANIFEST.json"], manifest)
+	}
+}
+
+// TestOverlayManifest_SkipsInvalidJSON: malformed manifest JSON on the
+// mount is never staged; the deliverable must never ship a broken
+// manifest. Return value is false so the caller can log a helpful note.
+func TestOverlayManifest_SkipsInvalidJSON(t *testing.T) {
+	dir := t.TempDir()
+	slug := "bun-minimal"
+	recipeDir := filepath.Join(dir, "zcprecipator", slug)
+	if err := os.MkdirAll(recipeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(recipeDir, "ZCP_CONTENT_MANIFEST.json"), []byte("not json {"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := &RecipePlan{Slug: slug}
+	files := map[string]string{}
+
+	oldBase := recipeMountBaseOverride
+	recipeMountBaseOverride = dir
+	defer func() { recipeMountBaseOverride = oldBase }()
+
+	if ok := OverlayManifest(files, plan); ok {
+		t.Fatal("expected OverlayManifest to return false on malformed JSON")
+	}
+	if _, exists := files["ZCP_CONTENT_MANIFEST.json"]; exists {
+		t.Error("files map must not carry the malformed manifest")
+	}
+}
+
+// TestOverlayManifest_MissingFileSilentSkip: if the writer never wrote
+// the manifest, OverlayManifest reports false and leaves the files map
+// untouched. Callers log their own "manifest not authored" note.
+func TestOverlayManifest_MissingFileSilentSkip(t *testing.T) {
+	dir := t.TempDir()
+	plan := &RecipePlan{Slug: "no-such-slug"}
+	files := map[string]string{}
+
+	oldBase := recipeMountBaseOverride
+	recipeMountBaseOverride = dir
+	defer func() { recipeMountBaseOverride = oldBase }()
+
+	if ok := OverlayManifest(files, plan); ok {
+		t.Error("expected OverlayManifest to return false when manifest missing")
+	}
+	if len(files) != 0 {
+		t.Errorf("files map should stay empty; got %v", files)
+	}
+}
+
 // TestWriterFlow_NeverRetypesMarkers_Integration is the engine-side
 // integration half of the Cx-SCAFFOLD-FRAGMENT-FRAMES RED→GREEN bundle.
 // Scenario: the scaffolded README is written to the mount; a writer

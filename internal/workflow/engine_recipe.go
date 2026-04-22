@@ -603,6 +603,9 @@ func (e *Engine) autoGenerateFinalizeFiles(state *WorkflowState) {
 	if overlaid := OverlayRealREADMEs(files, state.Recipe.Plan); overlaid > 0 {
 		fmt.Fprintf(os.Stderr, "zcp: overlaid %d README(s) from mount (agent's real READMEs)\n", overlaid)
 	}
+	if OverlayManifest(files, state.Recipe.Plan) {
+		fmt.Fprintf(os.Stderr, "zcp: overlaid ZCP_CONTENT_MANIFEST.json from writer output root\n")
+	}
 	var count int
 	for relPath, content := range files {
 		fullPath := filepath.Join(state.Recipe.OutputDir, relPath)
