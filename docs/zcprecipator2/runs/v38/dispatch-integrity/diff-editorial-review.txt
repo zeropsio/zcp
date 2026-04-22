@@ -1,0 +1,460 @@
+85,96d84
+< ### Minimal tier
+< 
+< - Root README: 1 file.
+< - Environment READMEs: 4 tier directories (typically `0`, `1`, `2`, `3` for dev / review-or-stage / stage / prod — read the actual directory names from the mount, do not assume).
+< - Environment `import.yaml` comments: 4 files (one per environment tier).
+< - Per-codebase README: 1 codebase (single-codebase minimal) OR 2 codebases (dual-runtime minimal with separate frontend + api). Glob for codebase directories under the output root — the count is whatever the mount shows.
+< - Per-codebase `CLAUDE.md`: same count as per-codebase README.
+< - Per-codebase `INTEGRATION-GUIDE.md`: same count.
+< - Per-codebase `GOTCHAS.md`: same count.
+< 
+< No worker codebase on minimal. Total surface instances: 1 root + 4 env × 2 (README + import-yaml) + 1 or 2 codebases × 4 per-codebase surfaces = **13 to 17 surface instances** on a minimal walk.
+< 
+129,130d116
+< Pass: every managed service is named; every environment tier is listed with a one-line description of its audience; a deploy pointer exists. Fail: architecture deep-dives, debugging narratives, gotchas, code details, scaffold-decision rationale.
+< 
+135,136d120
+< Pass: the tier's audience is named (agent-driven iteration / remote dev / local dev / stage reviewer / small prod / HA prod); scale is stated (single replica / multi-replica / HA); the delta against the adjacent tier is stated; any tier-specific operational concern is called out. Fail: service-by-service rationale (belongs on the `import.yaml` comments next door); framework quirks; restatements of platform mechanisms.
+< 
+141,142d124
+< Pass: every service block's comment explains a tier-specific decision. Fail: templated per-service opening repeated word-for-word across services; field-narration (`# enables zero-downtime rolling deploys` on every service); general platform facts that belong in a platform guide.
+< 
+147,148d128
+< Pass: one-paragraph intro identifies the codebase's role, names the framework, points to the companion files. Fail: the intro rehashes Integration Guide material; the intro rehashes gotchas; the file is template boilerplate with no recipe-specific content.
+< 
+153,154d132
+< Pass: the dev loop is stated (how to start, where it binds, the health path); migration and seed commands are stated for hand-iteration; any repo-local trap (SSHFS uid, dev-deps pruning on redeploy) is called out. Fail: deploy instructions; platform gotchas; framework basics the operator already knows.
+< 
+159,160d136
+< Pass: each item is a concrete action (bind `0.0.0.0`, add `forcePathStyle: true`, register a SIGTERM handler) with a one-sentence reason tied to a platform mechanism and a code block the porter can copy. Fail: an item that describes the recipe's own scaffold helper files (the porter does not have those files); framework-setup steps the porter has already done for their own app; debugging narratives phrased as imperatives.
+< 
+165,170d140
+< Pass: the gotcha describes a platform behaviour that surprises even a docs-literate reader; it cites the matching platform topic per the citation-audit atom; it names a concrete observable symptom (status code, quoted error, measurable wrong state). Fail: the gotcha restates something already in the Zerops docs (no added value); the gotcha is a framework-only quirk (belongs in framework docs); the gotcha is self-inflicted (a bug in the recipe's own code that got fixed).
+< 
+< ## Disposition on fail
+< 
+< An item that fails its surface's question is **removed or rerouted**, not rewritten to pass. The test fails because the content doesn't belong on this surface, not because the phrasing is wrong. Rerouting means either moving the item to the surface where it DOES belong (if the item is genuinely useful elsewhere) or discarding it (if no surface claims it). The reporting-taxonomy atom covers how to act on the finding.
+< 
+177c147
+< ## Why "independent"
+---
+> The seven classes: platform-invariant, platform-×-framework intersection, framework-quirk, library-metadata, scaffold-decision, operational, self-inflicted.
+179c149
+< The writer's self-classification is the hypothesis under test. Reviewing a classification by reading the writer's own reasoning rehearses the writer's reasoning; you learn nothing the writer did not already see. Independent classification means you form your own classification from the item's published content and its observable mechanism, and only then open the manifest to compare.
+---
+> For every published item, record a reclassification row: item_path, writer_said, reviewer_said, final (`writer_said` if you agree; `reviewer_said` if reclassification is confident; `ambiguous` otherwise).
+181,233d150
+< Concretely: when you land on a gotcha or an IG item during the surface walk, first classify it using the rules below. Write the classification into your working notes. Then — and only then — open `/var/www/zcprecipator/nestjs-showcase/ZCP_CONTENT_MANIFEST.json` and retrieve the writer's classification for that same item. If they agree, move on. If they disagree, record a reclassification delta.
+< 
+< ## The seven classes
+< 
+< Every published fact classifies as exactly one of these. The test is the routing criterion, not the prose tag.
+< 
+< ### Platform-invariant
+< 
+< The fact is true of Zerops regardless of this recipe's scaffold choices. A different framework entirely, a different codebase shape, would hit the same trap. Route: `GOTCHAS.md` with a citation to the matching platform topic (see the citation-audit atom).
+< 
+< ### Platform-×-framework intersection
+< 
+< The fact is specific to this framework AND caused by a platform behaviour. Neither side alone would produce it. Route: `GOTCHAS.md`, naming both sides explicitly.
+< 
+< ### Framework-quirk
+< 
+< The fact is about the framework's own behaviour, unrelated to Zerops. Any user of that framework hits it regardless of where they deploy. Route: **discard**. It belongs in framework docs. If it ships as a Zerops gotcha, the finding is wrong-surface.
+< 
+< ### Library-metadata
+< 
+< The fact is about dependency resolution, version pinning, peer-dependency conflicts. Route: **discard**. It belongs in the dependency manifest comments, not in recipe content.
+< 
+< ### Scaffold-decision
+< 
+< The fact is "we chose X over Y for this recipe; a reader should understand why." A non-obvious design choice in the recipe's own code. Route: per-codebase `zerops.yaml` comments (if the choice is a config decision), or Integration-Guide prose (if the choice is a code principle a porter would need to apply to their own code), or `CLAUDE.md` (if the choice is operational). NOT `GOTCHAS.md` — a scaffold decision is not a platform trap.
+< 
+< ### Operational
+< 
+< The fact is how to iterate on / test / reset this specific repo locally. Route: `CLAUDE.md`.
+< 
+< ### Self-inflicted
+< 
+< Our code had a bug; we fixed it; a reasonable porter with different code would not hit it because their code does not have that specific bug. Route: **discard entirely**. There is no teaching for a porter. The fix belongs in the code, not in published content.
+< 
+< ## How to classify — concrete rules
+< 
+< - **Separate mechanism from symptom.** The mechanism (what the platform does) is what determines platform-invariant versus framework-quirk; the symptom (what the recipe's code did wrong) is what determines self-inflicted. Classify on the mechanism.
+< - **Ask "would a porter with different scaffold code hit this?"** If no: scaffold-decision or self-inflicted. If yes: platform-invariant or intersection.
+< - **Check the citation map.** If a platform topic already documents the mechanism, the fact is probably platform-invariant — route to `GOTCHAS.md` with citation, do not duplicate the guide's content.
+< - **Self-inflicted litmus test**: can the finding be summarised as "our code did X, we fixed it to do Y"? If yes, discard.
+< - **When in doubt between intersection and framework-quirk**: does the platform side contribute materially to the failure mode, or is the platform merely incidentally hosting the code when the framework's own behaviour bites? If the platform is incidental, it is a framework-quirk.
+< 
+< ## Reporting the delta
+< 
+< For every published item, record a reclassification row in your return payload:
+< 
+< - `item_path` — the file + section where the item lives on the mount.
+< - `writer_said` — the class the writer's manifest records.
+< - `reviewer_said` — the class you independently assigned.
+< - `final` — either `writer_said` (if you agree), or `reviewer_said` (if you disagree and the reclassification is confident), or the string `ambiguous` (if the classification is genuinely debatable and you want the caller receiving your payload to adjudicate).
+< 
+< If your reclassification routes the item to a different surface than the writer's classification did, that is a wrong-surface finding — report at the severity the reporting-taxonomy atom names. If your reclassification keeps the item on the same surface but disagrees on class, that is still a finding — severity depends on whether the disagreement affects routing.
+< 
+238c155
+< Every published gotcha whose topic matches a platform topic area MUST cite the matching platform topic guide. Missing citations on matching-topic gotchas are the surface defect that produces folk-doctrine — the writer invents a mechanism because they did not consult the guide the platform already publishes.
+---
+> Every published gotcha whose topic matches a platform topic area MUST cite the matching platform topic guide.
+240c157
+< ## The topic map
+---
+> Topic areas: `env-var-model`, `init-commands`, `rolling-deploys`, `object-storage`, `http-support`, `deploy-files`, `readiness-health-checks`, `static-runtime`, `minContainers-semantics`, `l7-balancer`.
+242c159
+< Eight topic areas. When a gotcha's mechanism falls inside any of these areas, the gotcha cites the guide by its full topic name. Abbreviated references ("the env guide") do not count; the full topic name or the guide's URL is required.
+---
+> For each gotcha: if it matches a topic area, confirm the guide id appears inline in the gotcha body. Missing citation = WRONG finding.
+244,255c161
+< | Topic area | Platform topic identifier | What the guide covers |
+< |---|---|---|
+< | Cross-service environment variables, self-shadow, aliasing | `env-var-model` | Auto-inject semantics; never declare `key: ${key}`; legitimate renames such as `DB_HOST: ${db_hostname}`; mode flags |
+< | `zsc execOnce` gate, `appVersionId`, init commands | `init-commands` | Per-deploy gate semantics; `--retryUntilSuccessful` usage |
+< | Rolling deploys, SIGTERM, HA replicas | `rolling-deploys` and `minContainers-semantics` | Two-axis `minContainers` (throughput and HA separately); SIGTERM-before-teardown; drain semantics |
+< | Object Storage, MinIO, `forcePathStyle` | `object-storage` | MinIO-backed storage; path-style addressing required; `storage_*` environment variable shape |
+< | L7 balancer, `httpSupport`, VXLAN routing | `http-support` and `l7-balancer` | Why bind `0.0.0.0`; TLS termination; `trust proxy` rationale |
+< | Cross-service references, isolation modes | `env-var-model` (same guide as the self-shadow entry) | `envIsolation` semantics; project-level versus service-level |
+< | Deploy files, tilde suffix, static base | `deploy-files` and `static-runtime` | `./dist/~` rationale; `base: static` limitations |
+< | Readiness check, health check, routing gates | `readiness-health-checks` | What routes traffic; what restarts the container |
+< 
+< ## How to audit
+---
+> Compute coverage percentage: matching-topic gotchas cited / total matching-topic gotchas.
+257,277d162
+< For each gotcha on each codebase's `GOTCHAS.md`:
+< 
+< 1. Read the gotcha's mechanism statement.
+< 2. Scan the topic-area column above. If the mechanism falls under any row, the gotcha is a **matching-topic gotcha** and a citation is required.
+< 3. Check the gotcha's body for the guide's full topic identifier. A match is an inline occurrence — somewhere in the gotcha's prose, not only in an appendix at the bottom of the file.
+< 4. If the gotcha is a matching-topic gotcha and the citation is missing, record a citation-coverage finding at WRONG severity (see the reporting-taxonomy atom).
+< 5. If the gotcha cites the guide but the cited phrasing contradicts what the guide actually says, record a fabricated-mechanism finding at CRIT severity — the citation is cover for an invented mechanism.
+< 
+< ## Coverage metric
+< 
+< At completion, compute the citation-coverage percentage:
+< 
+< - Denominator: the count of matching-topic gotchas across all codebases.
+< - Numerator: the count of matching-topic gotchas that carry an inline citation to the guide's full topic identifier.
+< 
+< Report the percentage in the completion payload. A coverage below 100% means the deliverable has gotchas whose mechanism the platform already documents but which the writer did not cite — the structural enabler of folk-doctrine.
+< 
+< ## What is NOT a citation-audit finding
+< 
+< A gotcha whose topic falls OUTSIDE the eight topic areas does not require a citation. Some gotchas are genuinely new content — a platform-×-framework intersection the platform guides are silent on. In those cases, the absence of a citation is correct. The audit flags only matching-topic gotchas with missing citations, not uncited content whose topic is genuinely outside the map.
+< 
+282c167
+< Concrete anti-patterns from prior recipe runs. Use this atom as a pattern-matching library: for each item on each surface you walk, ask whether the item's shape resembles any of the patterns below. A resemblance is not proof — but it is a signal to apply the surface's single-question test more carefully and to check the classification-reclassify atom's taxonomy more strictly.
+---
+> Anti-patterns from prior runs: self-inflicted as gotcha, framework-quirk as gotcha, scaffold-decision as gotcha, folk-doctrine (invented explanation), factually wrong content, cross-surface duplication.
+284,357d168
+< Each entry below describes the published anti-pattern by behaviour — what the content looked like, why it was wrong, what the correct form would have been. The behavioural description is what you pattern-match on; the severity to report is at the reporting-taxonomy atom.
+< 
+< ## Self-inflicted content shipped as a gotcha
+< 
+< ### Pattern: "`zsc execOnce` recorded a successful seed that produced zero output"
+< 
+< **What the published content looked like**: a gotcha on an api codebase's `GOTCHAS.md` describing how an init-command that silently exited with status 0 inserted zero rows, and `execOnce` then refused to re-run on subsequent deploys because it remembered success.
+< 
+< **Why it was wrong**: the seed script silently exited 0 with no output. That is a seed-script bug — the script should fail loudly on empty inserts. `execOnce` honoured the exit code exactly as the `init-commands` guide says it will. The platform mechanism is doing what the docs describe. The observation is a self-inflicted bug fixed in the recipe's own seed script; a porter with a seed script that fails loudly on empty inserts will not hit this.
+< 
+< **Correct form**: discard entirely. The fix belongs in the seed script; there is no teaching for a porter. If the recipe wants to warn future maintainers, the warning belongs in a code comment on the seed script, not in the deliverable.
+< 
+< ## Framework-quirk shipped as a gotcha
+< 
+< ### Pattern: "`setGlobalPrefix` collides with `@Controller` decorators"
+< 
+< **What the published content looked like**: a gotcha on a NestJS api codebase's `GOTCHAS.md` describing how calling the global-prefix API on the Nest application instance double-prefixes routes declared with decorator-level path arguments.
+< 
+< **Why it was wrong**: pure NestJS framework behaviour. The platform is not involved. A porter using NestJS already knows this or will learn it from the NestJS docs. Shipping it as a Zerops gotcha teaches the wrong thing — it suggests the platform is the variable.
+< 
+< **Correct form**: discard. Belongs in framework docs or, at most, a code comment next to the line where the global-prefix call lives.
+< 
+< ### Pattern: "vite-plugin peer-requires a specific Vite major version"
+< 
+< **What the published content looked like**: a gotcha on a Svelte frontend codebase's `GOTCHAS.md` describing how a plugin's `peerDependencies` field requires a newer Vite than the project had, producing an `EPEERINVALID` from npm.
+< 
+< **Why it was wrong**: npm registry metadata. Zero platform involvement. Belongs in the project's `package.json` or dependency-upgrade notes.
+< 
+< **Correct form**: discard. If the recipe needs a note, put it in the dependency manifest itself.
+< 
+< ## Scaffold decision shipped as a gotcha
+< 
+< ### Pattern: "our `api.ts` helper's content-type check catches the SPA-fallback class of bug"
+< 
+< **What the published content looked like**: a gotcha on a frontend codebase's `GOTCHAS.md` describing how a helper file the recipe itself authored checks the `application/json` content-type header to detect Nginx SPA fallbacks returning `200 text/html` on `/api/*` misses.
+< 
+< **Why it was wrong**: `api.ts` is the recipe's own scaffold helper. A porter bringing their own frontend does not have `api.ts`. The underlying platform invariant — SPA fallback can shadow API routes returning HTML instead of JSON — is real and worth teaching, but the teaching belongs in the Integration Guide (as a principle a porter applies to their own HTTP client) and the specific implementation belongs in a code comment on the helper file.
+< 
+< **Correct form**: split the content. The principle (check response content-type before parsing JSON) goes to `INTEGRATION-GUIDE.md`. The implementation detail (our `api.ts` does it this way) goes to a code comment. Nothing belongs in `GOTCHAS.md`.
+< 
+< ## Folk-doctrine (real trap, fabricated explanation)
+< 
+< ### Pattern: "the API codebase avoided the symptom because its resolver path happened to interpolate before the shadow formed"
+< 
+< **What the published content looked like**: a gotcha on a worker codebase's `GOTCHAS.md` describing an environment-variable self-shadow trap, with an explanation that one codebase escaped the symptom because of a timing-dependent resolver ordering.
+< 
+< **Why it was wrong**: the explanation is invented. Both codebases shipped identical self-shadow patterns; both were broken. The author couldn't explain why one appeared to work and manufactured a mental model. The `env-var-model` guide covers the correct mechanism — cross-service variables auto-inject project-wide, so declaring `key: ${key}` in `run.envVariables` is redundant AND it breaks the container env. The author had access to the guide and did not consult it.
+< 
+< **Correct form**: rewrite with citation. The gotcha cites `env-var-model`, uses the guide's framing ("never declare `key: ${key}` in `run.envVariables`"), and drops the fabricated timing explanation.
+< 
+< ## Factually wrong content
+< 
+< ### Pattern: "NATS 2.12 in `mode: HA` — clustered broker with JetStream-style durability"
+< 
+< **What the published content looked like**: an environment `import.yaml` comment on a prod-tier queue service block describing the service as providing durability through a JetStream-adjacent mechanism.
+< 
+< **Why it was wrong**: the recipe uses core-NATS publish-subscribe with queue groups — `Transport.NATS` plus a `queue` argument on subscribers. That is the core-NATS subsystem. JetStream is a different NATS subsystem with different durability semantics; conflating the two misrepresents what the deployment does. The comment is factually wrong.
+< 
+< **Correct form**: rewrite to describe the clustered core-NATS behaviour without invoking JetStream. If the recipe later adds JetStream, the comment is updated to match.
+< 
+< ## Cross-surface duplication
+< 
+< ### Pattern: the same fact body appears on multiple surfaces
+< 
+< Observed shapes: an environment-variable self-shadow fact appearing on an IG item AND a `zerops.yaml` comment AND a `CLAUDE.md` trap — the same mechanism restated three times; an object-storage `forcePathStyle` fact appearing on an IG item AND a gotcha AND multiple `import.yaml` comments AND a `zerops.yaml` comment — four restatements; a build-output-cache fact appearing on four surfaces with a factual error on one of them.
+< 
+< **Why it was wrong**: each fact lives on exactly one surface per the surface contracts. Other surfaces that need the fact cross-reference — they do not re-author. Re-authoring breeds drift: the four restatements disagree subtly, and the single factually-wrong restatement contradicts the three correct ones with no mechanism to converge them.
+< 
+< **Correct form**: pick the canonical surface per the classification-reclassify atom's routing rules. The other surfaces cross-reference with a short pointer ("see `apidev/GOTCHAS.md` on self-shadow"), carrying no fact body.
+< 
+< ## Using the library
+< 
+< During the walk, when you encounter an item that looks like any of the patterns above, open the classification-reclassify atom's taxonomy and reclassify the item independently. The pattern-match is the signal to review; the classification-reclassify rules are the decision procedure.
+< 
+362,366c173
+< As you walk the seven surfaces, you maintain a running ledger of every factual claim you encounter. The ledger is the mechanism that makes cross-surface consistency checkable: one fact, one surface, with cross-references from everywhere else. Multiple bodies of the same fact — even when phrased similarly — is the structural enabler of drift.
+< 
+< ## Ledger shape
+< 
+< The ledger is a table you build as you walk. One row per distinct factual claim. Each row carries:
+---
+> Maintain a running ledger of every distinct factual claim. One row per claim with claim_id, claim_one_line, surfaces_with_body, canonical_surface, divergences. Severity: one-surface=correct, multiple-no-divergence=STYLE, multiple-with-divergence=CRIT, wrong-surface=CRIT.
+368,396d174
+< - `claim_id` — a short stable identifier you pick (a hyphenated phrase: `worker-queue-group`, `forcepathstyle-on-s3`, `self-shadow-prohibition`).
+< - `claim_one_line` — the claim in one sentence, phrased in your own words. This is the reviewer's normalised form of the claim; the ledger compares claims on their substance, not on the prose the writer chose.
+< - `surfaces_with_body` — the list of surface instances where the fact BODY appears (not where the fact is cross-referenced). A "body" is prose that states the mechanism, the symptom, or the fix in its own right; a cross-reference is a pointer like "see `apidev/GOTCHAS.md` on self-shadow" that does not restate the claim.
+< - `canonical_surface` — the surface where the claim SHOULD live per the classification-reclassify atom's routing rules. Populate this column based on the claim's class (platform-invariant → `GOTCHAS.md` with citation; scaffold-decision → `zerops.yaml` comment or IG; operational → `CLAUDE.md`; and so on).
+< - `divergences` — phrasings or values that differ across surfaces for the SAME claim. An example: one surface says `forcePathStyle: true` applies because MinIO is path-style; another surface attributes it to VPC routing. The claim is the same (fact about `forcePathStyle`); the mechanisms attributed differ.
+< 
+< ## Building the ledger
+< 
+< When you land on a new item during the surface walk:
+< 
+< 1. Form the claim in one sentence. If the item is purely a pointer or cross-reference, note that — it does not add a row to the ledger; it is a correct use of cross-reference.
+< 2. Search the ledger for an existing row with a matching claim. "Matching" means the same mechanism or the same fix is being described, even if the surface chose different words. Use judgement — the ledger is checking substance, not exact prose.
+< 3. If an existing row matches, add the current surface to `surfaces_with_body` and note any divergence in `divergences`.
+< 4. If no row matches, create a new row. Populate `canonical_surface` from the classification-reclassify rules.
+< 5. Continue the walk.
+< 
+< ## Severity rules
+< 
+< At completion, classify each row's severity:
+< 
+< - **One surface with body, others cross-reference or silent** — correct shape. No finding.
+< - **Multiple surfaces with body, no divergence** — the same fact restated word-for-word in multiple places. Finding at STYLE severity: the duplication is a structural hazard for future drift even when the restatements agree today. Canonical surface keeps the body; other surfaces become cross-references.
+< - **Multiple surfaces with body, with divergence** — the same fact stated differently across surfaces. Finding at CRIT severity: the deliverable is internally inconsistent. A porter reading one surface gets one answer; another surface gives a contradicting answer; there is no mechanism to tell the porter which is right. The severity and exact inline-fix policy come from the reporting-taxonomy atom.
+< - **Body is on the wrong surface** — the claim appears on a surface that is not the canonical one, even if only one surface carries the body. This is the wrong-surface class from the classification-reclassify atom; severity and handling come from the reporting-taxonomy atom.
+< 
+< ## Output
+< 
+< The ledger enters your return payload as the cross-surface audit table. One entry per row, with the severity classification and the recommended canonical surface. Divergences appear as sub-entries — concrete quoted prose showing what the surfaces say differently, so the caller receiving your payload can act on the divergence without re-walking the deliverable.
+< 
+401c179,181
+< Every finding you produce falls into exactly one of three severities. The severity determines the finding's handling — whether it must be fixed before the deliverable ships, whether inline-fix is appropriate, whether the caller receiving your payload takes the finding and acts on it.
+---
+> CRIT: wrong-surface, fabricated mechanism, factually wrong, cross-surface divergence, reclassification-reroute.
+> WRONG: missing citation, boundary violation, reclassification-class-only, self-inflicted to discard.
+> STYLE: duplication-without-divergence, phrasing, formatting.
+403c183
+< ## The three severities
+---
+> Inline-fix permitted (bounded: under 5 lines) on WRONG and STYLE. CRIT surfaced for caller revision.
+405,452d184
+< ### CRIT — required revision; cannot ship as-is
+< 
+< A CRIT finding means the deliverable is wrong in a way a porter will act on and be misled. The published content directs the reader to do something incorrect, or hides a mechanism behind a fabricated explanation, or places content on a surface that fails the surface's single-question test in a way inline-fix cannot repair.
+< 
+< CRIT applies to:
+< 
+< - A wrong-surface item where the correct disposition is reroute or delete and inline-fix is infeasible (e.g., a gotcha that is actually a scaffold-decision belonging in a `zerops.yaml` comment — moving the content requires context the reviewer does not have).
+< - A fabricated-mechanism finding where the gotcha invents a platform behaviour contradicted by the matching platform topic guide.
+< - A factually-wrong claim the reviewer can verify against the recipe's own state (e.g., an `import.yaml` comment describing a subsystem the recipe does not use).
+< - A cross-surface divergence where the same claim carries different values or different mechanisms on different surfaces — the deliverable is internally inconsistent.
+< - A classification-reclassify delta whose reclassification reroutes the item to a different surface (wrong-surface by reclassification).
+< 
+< Handling: the reviewer surfaces CRIT findings to the caller receiving your payload. The caller receiving your payload takes the finding and revises the deliverable. Inline-fix by the reviewer is not appropriate for CRIT — the required revision depends on context the reviewer does not have (authorial intent, cross-codebase consistency beyond the ledger, platform-topic depth).
+< 
+< ### WRONG — fix recommended; inline-fix where confidence is high
+< 
+< A WRONG finding means the deliverable has a defect that should be fixed before shipping but that a porter reading the surrounding content can often work around. The content is imperfect in a way the reviewer can often repair directly without re-deriving authorial intent.
+< 
+< WRONG applies to:
+< 
+< - A matching-topic gotcha missing its citation to the platform topic guide (the citation-audit atom covers the topic map).
+< - A boundary violation between adjacent surfaces where the content belongs on a sibling surface and the reviewer can identify the sibling confidently (e.g., a framework-quirk shipped as a gotcha; the gotcha is deleted and the framework-quirk nature is the justification).
+< - A classification-reclassify delta that does not reroute the item but disagrees on class in a way a downstream reader would notice.
+< - A self-inflicted item that should be discarded — the reviewer deletes the item with a short note explaining the self-inflicted classification.
+< 
+< Handling: inline-fix is permitted when the fix is **bounded** (under five lines changed, a single-item deletion, or adding a citation the reviewer identifies confidently from the citation-audit topic map). A bounded inline-fix is applied via `Edit`, logged in the completion payload's `inline_fixes_applied` list with a before/after snippet, and surfaced at WRONG severity with disposition `inline-fixed`. An unbounded WRONG — one where the correct fix ripples beyond a five-line edit or one where the reviewer's confidence in the fix is low — is surfaced with disposition `fix-recommended` and left for the caller receiving your payload.
+< 
+< ### STYLE — suggestion; non-behavioural
+< 
+< A STYLE finding means the deliverable's substance is correct but the shape could be tighter. STYLE findings do not block the deliverable from shipping.
+< 
+< STYLE applies to:
+< 
+< - Cross-surface duplication where multiple surfaces carry the same fact body with no divergence — the duplication is a structural hazard for future drift but the deliverable is consistent today.
+< - Phrasing, voice, or depth concerns on a surface that passes its single-question test but could pass it more clearly.
+< - Formatting inconsistencies that do not affect comprehension.
+< 
+< Handling: STYLE findings may be inline-fixed at the reviewer's discretion when the fix is trivial (a three-line rewording, a cross-reference replacement of a duplicated body). Fixes are logged the same way as WRONG inline-fixes. STYLE findings not fixed are surfaced with disposition `suggestion` — the caller receiving your payload decides whether to act.
+< 
+< ## Inline-fix policy — what a "bounded" inline-fix looks like
+< 
+< - Under five lines changed per fix.
+< - Does not require re-deriving authorial intent or cross-codebase context beyond the ledger the reviewer already built.
+< - The `Read` of the target file has already happened in this session (per the mandatory-core atom's file-op sequencing).
+< - Each inline-fix is logged in the completion payload with the file path, the severity it addressed, and a short before/after snippet.
+< 
+< Unbounded fixes — those that cross a codebase boundary, that require re-walking another surface for consistency, or that touch more than five lines — are surfaced with disposition `fix-recommended` and left for the caller receiving your payload regardless of severity.
+< 
+457c189,198
+< You return a single structured payload when the surface walk is complete. The payload is the exclusive channel for findings; the caller receiving your payload drives substep completion. Do not split findings across multiple tool calls.
+---
+> Return structured payload with:
+> - surfaces_walked (list of paths)
+> - surfaces_skipped (empty expected)
+> - findings_by_severity (CRIT, WRONG, STYLE counts post-fix)
+> - findings_by_severity_before_inline_fix
+> - per_surface_findings (surface path + severity + test outcome + description + disposition)
+> - reclassification_delta_table
+> - citation_coverage (percentage + raw num/denom)
+> - cross_surface_ledger
+> - inline_fixes_applied (file + severity + before/after snippet)
+459c200
+< ## Payload fields
+---
+> Return as soon as the walk is complete.
+461,472d201
+< - `surfaces_walked` — a list of surface instances visited, named by their path on the mount. Every instance the surface-walk-task atom enumerated for this tier appears here, present or absent. An instance whose expected file was missing is included with a note.
+< - `surfaces_skipped` — any surface instance the walk did not visit, with a reason. An empty list is the expected case.
+< - `findings_by_severity` — three counts: `CRIT`, `WRONG`, `STYLE`. Counts are **post-inline-fix** — a finding that was inline-fixed counts in the severity it was fixed at. A separate field records the pre-fix counts.
+< - `findings_by_severity_before_inline_fix` — the same three counts measured before any inline-fix was applied. A reader comparing the two fields sees how much of the deliverable the reviewer repaired inline versus reported.
+< - `per_surface_findings` — one entry per flagged item. Each entry carries the surface instance path, the severity, the one-question test outcome (pass/fail), a short prose description, and the disposition (`inline-fixed`, `fix-recommended`, `suggestion`).
+< - `reclassification_delta_table` — one row per published gotcha and Integration-Guide item, with columns `item_path`, `writer_said`, `reviewer_said`, `final`. Rows where `writer_said == reviewer_said` may be omitted; the count of omitted rows is reported separately.
+< - `citation_coverage` — a percentage computed per the citation-audit atom: matching-topic gotchas cited, over total matching-topic gotchas. Include the raw numerator and denominator alongside the percentage.
+< - `cross_surface_ledger` — the table the cross-surface-ledger atom builds, with every row's severity classification.
+< - `inline_fixes_applied` — one entry per `Edit` the reviewer performed. Each entry carries the file path, the severity it addressed, and a short before/after snippet showing the change.
+< 
+< Return the payload as soon as the walk is complete. Do not call any workflow tool to signal completion; the caller takes the payload and completes the substep.
+< 
+477c206
+< Reads precede edits. Writes create files; edits modify them. Following this sequence keeps edits operating on current bytes and keeps your model of the mount consistent with what's actually there.
+---
+> Reads precede edits. Batch N reads before the first Edit. Write creates; Edit modifies.
+479,509d207
+< ## Read-before-Edit
+< 
+< The Edit tool reads the file's current contents internally and refuses to run unless you have already issued a Read call against that path in the current session. That enforcement exists because an edit applied to bytes that differ from your mental model produces silent corruption or a failed match that costs a round-trip to diagnose.
+< 
+< Order for any path you plan to modify:
+< 
+< 1. Read the file first.
+< 2. Issue the Edit (or sequence of Edits) using the exact bytes Read returned.
+< 
+< ## Batch your reads before the first Edit
+< 
+< When your plan touches N files, Read all N before the first Edit. Batching up front has two benefits: it surfaces "this file doesn't exist yet — I need Write, not Edit" before you start mutating anything, and it lets you compose the whole edit set in one pass rather than interleaving read-edit-read-edit (which is slower AND produces inconsistent intermediate states on the mount).
+< 
+< Pattern:
+< 
+< ```
+< Read A ; Read B ; Read C ; ... ; Edit A ; Edit B ; Write D ; Edit C
+< ```
+< 
+< Not:
+< 
+< ```
+< Read A ; Edit A ; Read B ; Edit B ; Read C ; Edit C
+< ```
+< 
+< ## Write creates, Edit modifies
+< 
+< Write is for a path that does not yet exist, or for a complete rewrite. Edit is for a targeted modification of an existing file.
+< 
+< A path that exists but needs substantial restructuring is still a candidate for Edit (multiple targeted replacements) UNLESS the new content shares almost no bytes with the old — then Write is clearer.
+< 
+514c212
+< This is the base permit list every role inherits. Role-specific narrowing (for example, an editorial reader that performs no container-side execution) is declared in the brief that pointer-includes this atom.
+---
+> Read, Write, Edit, Grep, Glob on the mount; Bash for local utilities (wc, jq, diff). Edit requires prior Read in session.
+516,541d213
+< ## Permitted tools
+< 
+< - **Read** — read files from the mount. Use for any file whose content you need to inspect before acting.
+< - **Write** — create new files on the mount. Use when the target path does not yet exist.
+< - **Edit** — modify existing files on the mount. Requires a prior Read of the same path in the current session; see principles/file-op-sequencing.md.
+< - **Grep** — content search across the mount. Prefer Grep over Bash-invoked `rg` or `grep`; Grep is permissioned directly.
+< - **Glob** — filename pattern search across the mount. Prefer Glob over Bash-invoked `find`.
+< - **Bash** — shell execution, wrapped for execution-side work as described in principles/where-commands-run.md. Every app-toolchain invocation takes the form `ssh {hostname} "cd /var/www && {command}"`. Plain-mount inspection (`ls`, `cat` against the mount) is orchestrator-side.
+< 
+< ## Tool selection heuristic
+< 
+< - Need to look at file contents? Read.
+< - Need to search for a string across many files? Grep.
+< - Need to list files matching a pattern? Glob.
+< - Need to run app-toolchain or app-runtime commands? Bash with ssh-wrapped form.
+< - Need to start a long-running dev server? Use the dev-server MCP tool, not raw SSH — see principles/dev-server-contract.md.
+< - Need to modify a file? Read it, then Edit. For brand-new files, Write.
+< 
+< ## MCP tools specific to the workflow
+< 
+< `zerops_*` tools are invoked by name through the MCP bridge, not through Bash. Examples: `zerops_workflow`, `zerops_import`, `zerops_deploy`, `zerops_discover`, `zerops_mount`, `zerops_browser`, `zerops_dev_server`, `zerops_record_fact`. These run orchestrator-side.
+< 
+< ## Role-specific overrides
+< 
+< The brief that pointer-includes this atom may narrow the permit list for its role — for example, by removing Bash for a reader-only role, or by requiring that Write precede any Edit within the role's first authoring pass. Role-specific rules are authoritative over this base list where they narrow; they cannot expand beyond it.
+< 
+546c218
+< Every text surface you author uses ASCII. ASCII renders consistently across every downstream consumer — the publish pipeline, the documentation renderer, the terminal, the raw-file viewer — so the reader sees exactly what you wrote.
+---
+> ASCII only. `--` for em-dashes. No Unicode box-drawing, no emoji.
+548,577d219
+< ## The allow-list
+< 
+< - ASCII letters and digits: `A-Z a-z 0-9`.
+< - Standard punctuation: `. , ; : ! ?`
+< - Quotes and apostrophes: `" '`
+< - Dashes: single ASCII hyphen `-` for hyphenation and compound words; double ASCII hyphen `--` as the em-dash form (written as two hyphens, not the Unicode em-dash).
+< - Slashes: forward `/` and back `\`.
+< - Brackets: parentheses `( )`, square brackets `[ ]`, curly brackets `{ }`.
+< - Structural: space, tab, newline.
+< 
+< That is the whole surface.
+< 
+< ## ASCII diagrams
+< 
+< Diagrams use `+`, `-`, `|`, and `/` / `\` for corners and edges. The result works in any monospace context, copies cleanly, and reviews cleanly.
+< 
+< ```
+<   +--------+       +--------+
+<   | apidev | ----> | workerdev |
+<   +--------+       +--------+
+< ```
+< 
+< ## Em-dash form
+< 
+< Write `--` for em-dashes. "apidev subscribes to a queue -- the worker's group name comes from the contract." Two ASCII hyphens; not `\u2014`, not `—` pasted from elsewhere.
+< 
+< ## Consistency check
+< 
+< Pasting into ASCII-only from another document often sneaks in smart quotes, Unicode dashes, or non-breaking spaces. When you assemble text, verify the output with a quick visual scan: every glyph is on the list above.
+< 
+583a226
+> - Recipe output root: `/var/www/zcprecipator/nestjs-showcase/`
+\ No newline at end of file
