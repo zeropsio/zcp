@@ -1,6 +1,9 @@
 # Plan: Env × Topology × Strategy unification
 
-**Status**: Draft — awaiting approval before Task creation and implementation.
+**Status**: Release A implemented (phases A.1 – A.9). Release B
+(vocabulary consolidation — typed enums, delete hostname heuristic,
+drop Environment field, `IncludeGit` schema cleanup) deferred to a
+follow-up cycle after Release A soaks in production.
 
 **Scope**: Complete cleanup of legacy artefacts in how ZCP models environment
 (container/local), service topology (dev/standard/simple/local-stage/local-only),
