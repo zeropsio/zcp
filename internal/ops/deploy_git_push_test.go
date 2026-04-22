@@ -25,12 +25,19 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 				"machine github.com login oauth2 password $GIT_TOKEN",
 				"chmod 600 ~/.netrc",
 				"cd /var/www",
-				"git init -q -b main",
 				"git config user.email",
 				"git remote add origin 'https://github.com/user/repo'",
 				"git remote set-url origin 'https://github.com/user/repo'",
 				"git push -u origin main",
+			},
+			// Pre-flight gates ensure .git + HEAD exist before this command runs.
+			// The old init+auto-commit fallbacks are gone (they masked "agent
+			// forgot to commit" bugs). See plan phase A.2.
+			skipParts: []string{
+				"git init",
 				"git rev-parse HEAD",
+				"initial commit",
+				"git add -A",
 			},
 		},
 		{
@@ -41,7 +48,9 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 			id:        GitIdentity{Name: "Test", Email: "t@t.com"},
 			wantParts: []string{
 				"git push -u origin develop",
-				"git init -q -b develop",
+			},
+			skipParts: []string{
+				"git init",
 			},
 		},
 		{

@@ -23,6 +23,19 @@ type gitPushPrerequisites struct {
 
 const gitTokenCheckCmd = `test -n "$GIT_TOKEN" && echo 1 || echo 0`
 
+// committedCodeCheckCmd returns "1" when workingDir contains a git repo
+// with at least one commit reachable from HEAD, "0" otherwise. This is the
+// real precondition for git-push: the push has to transmit a commit, not a
+// platform-level "service deployed" timestamp. The check must NOT mention
+// the word "netrc" so the stub dispatcher in tests can distinguish it
+// from the GIT_TOKEN check without fuzzy matching.
+func committedCodeCheckCmd(workingDir string) string {
+	return fmt.Sprintf(
+		`test -d %s/.git && git -C %s rev-parse HEAD >/dev/null 2>&1 && echo 1 || echo 0`,
+		workingDir, workingDir,
+	)
+}
+
 // gitPushSetupPointerInstructions redirects to the central deploy-config
 // action; the full setup flow is synthesized there from the atom corpus.
 const gitPushSetupPointerInstructions = `Configure push-git via the central deploy-config action:
@@ -79,16 +92,29 @@ func handleGitPush(
 		branch = "main"
 	}
 
-	// Pre-flight: git-push requires a landed first deploy — the container
-	// must already have code to commit + push. Run the default self-deploy
-	// first; git-push only takes over once FirstDeployedAt is stamped.
-	meta, _ := workflow.ReadServiceMeta(stateDir, hostname)
-	if meta == nil || !meta.IsDeployed() {
-		recordAttempt("service not deployed — git-push requires a first deploy")
+	// Pre-flight: the container must have a git repo with at least one
+	// commit at workingDir. A git push with nothing to transmit is either
+	// a user bug or a silent fallback we refuse to ship (an earlier
+	// design auto-committed everything when no commits existed; that
+	// masked "agent forgot to commit" failures). See plan phase A.2 —
+	// this replaces the old meta.IsDeployed() gate which false-positived
+	// on adopted services the platform had deployed before ZCP ever
+	// touched the meta.
+	committedOut, err := sshDeployer.ExecSSH(ctx, hostname, committedCodeCheckCmd(workingDir))
+	if err != nil {
+		recordAttempt(fmt.Sprintf("committed-code check failed: %v", err))
+		return convertError(platform.NewPlatformError(
+			platform.ErrSSHDeployFailed,
+			fmt.Sprintf("cannot check committed code on %s: %s", hostname, err),
+			"Verify the container is running and SSH is accessible",
+		)), nil, nil
+	}
+	if strings.TrimSpace(string(committedOut)) != "1" {
+		recordAttempt("no committed code at workingDir")
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
-			"git-push requires a successful first deploy on "+hostname,
-			"Run zerops_deploy targetService=\""+hostname+"\" without the strategy argument first. After a passing verify stamps FirstDeployedAt, retry with strategy=git-push.",
+			"git-push requires committed code at "+workingDir+" on "+hostname,
+			"Commit your changes on the container first: ssh "+hostname+` "cd `+workingDir+` && git add -A && git commit -m 'your message'". Then retry.`,
 		)), nil, nil
 	}
 

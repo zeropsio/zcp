@@ -951,20 +951,37 @@ func TestDeployTool_AdoptionGate_GitPush_BlocksUnadopted(t *testing.T) {
 }
 
 // stubSSHWithCommands dispatches on command content for fine-grained test control.
+// Pre-flight order in handleGitPush: committed-code check → GIT_TOKEN check → push.
 type stubSSHWithCommands struct {
-	tokenOutput []byte // output for GIT_TOKEN check command
-	tokenErr    error
-	pushOutput  []byte // output for everything else
-	pushErr     error
-	tokenCalls  int // GIT_TOKEN check invocation counter
+	committedOutput []byte // output for committed-code check command ("1" = has commits, "0" = no)
+	committedErr    error
+	tokenOutput     []byte // output for GIT_TOKEN check command ("1" = set, "0" = missing)
+	tokenErr        error
+	pushOutput      []byte // output for the actual push command
+	pushErr         error
+
+	committedCalls int // committed-code check invocation counter
+	tokenCalls     int // GIT_TOKEN check invocation counter
+	pushCalls      int // push invocation counter
 }
 
 func (s *stubSSHWithCommands) ExecSSH(_ context.Context, _ string, command string) ([]byte, error) {
-	// Match the GIT_TOKEN pre-flight check command (test -n ... && echo 1 || echo 0).
+	// Committed-code pre-flight: looks at HEAD.
+	if strings.Contains(command, "rev-parse HEAD") && !strings.Contains(command, "netrc") {
+		s.committedCalls++
+		out := s.committedOutput
+		if out == nil {
+			// Default: repo has commits. Tests that want "no commits" override explicitly.
+			out = []byte("1")
+		}
+		return out, s.committedErr
+	}
+	// GIT_TOKEN pre-flight (test -n ... && echo 1 || echo 0).
 	if strings.Contains(command, "GIT_TOKEN") && !strings.Contains(command, "netrc") {
 		s.tokenCalls++
 		return s.tokenOutput, s.tokenErr
 	}
+	s.pushCalls++
 	return s.pushOutput, s.pushErr
 }
 func (s *stubSSHWithCommands) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
@@ -1042,20 +1059,23 @@ func TestDeployTool_GitPush_WithGitToken_Succeeds(t *testing.T) {
 	}
 }
 
-// TestDeployTool_GitPush_BeforeFirstDeploy_Refuses pins the first-deploy
-// guard in handleGitPush: git-push needs code + GIT_TOKEN on the container,
-// neither of which exists before the first deploy lands. The tool must
-// refuse and point the caller at the default deploy path instead of
-// silently succeeding with an empty push.
-func TestDeployTool_GitPush_BeforeFirstDeploy_Refuses(t *testing.T) {
+// TestDeployTool_GitPush_NoCommittedCode_Refuses pins the committed-code
+// guard in handleGitPush: git-push requires an actual commit at workingDir
+// so the push has something to transmit. If the working dir isn't a git
+// repo, or the repo has no commits, the tool refuses up front instead of
+// silently auto-committing (which used to hide bugs) or pushing an empty
+// state.
+func TestDeployTool_GitPush_NoCommittedCode_Refuses(t *testing.T) {
 	t.Parallel()
 
 	stateDir := t.TempDir()
-	// Adopted but never deployed — FirstDeployedAt stays empty.
+	// Any adopted service — deploy-state no longer matters for the git-push
+	// precondition (FirstDeployedAt is dropped; see plan phase A.3).
 	setupAdoptedService(t, stateDir, "appdev", "")
 
 	mock := platform.NewMock()
-	ssh := &stubSSHWithCommands{tokenOutput: []byte("1"), pushOutput: []byte("ok")}
+	// Committed-code pre-flight returns "0" — no commits on container.
+	ssh := &stubSSHWithCommands{committedOutput: []byte("0"), tokenOutput: []byte("1"), pushOutput: []byte("ok")}
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
@@ -1067,17 +1087,64 @@ func TestDeployTool_GitPush_BeforeFirstDeploy_Refuses(t *testing.T) {
 		"remoteUrl":     "https://github.com/example/repo",
 	})
 	if !result.IsError {
-		t.Fatalf("expected error for git-push before first deploy, got:\n%s", getTextContent(t, result))
+		t.Fatalf("expected error for git-push without committed code, got:\n%s", getTextContent(t, result))
 	}
 	text := getTextContent(t, result)
-	for _, needle := range []string{"requires a successful first deploy", "strategy argument first"} {
+	for _, needle := range []string{"committed code", "commit"} {
 		if !strings.Contains(text, needle) {
 			t.Errorf("response missing %q. Got:\n%s", needle, text)
 		}
 	}
-	// The stub must NOT have been called — guard runs before the token check.
+	// No downstream calls should have happened — guard runs first.
 	if ssh.tokenCalls != 0 {
-		t.Errorf("GIT_TOKEN check fired despite first-deploy guard refusing (%d calls)", ssh.tokenCalls)
+		t.Errorf("GIT_TOKEN check fired despite committed-code guard refusing (%d calls)", ssh.tokenCalls)
+	}
+	if ssh.pushCalls != 0 {
+		t.Errorf("push fired despite committed-code guard refusing (%d calls)", ssh.pushCalls)
+	}
+}
+
+// TestDeployTool_GitPush_AdoptedNeverDeployed_Proceeds locks in the
+// FirstDeployedAt decoupling: a service adopted by ZCP but never deployed
+// through a ZCP verify cycle (legacy state or fresh adopt) must still be
+// able to git-push as long as the container has committed code. The old
+// gate (meta.IsDeployed) blocked this class of users — most visibly
+// during export of an already-running service whose meta ZCP never stamped.
+func TestDeployTool_GitPush_AdoptedNeverDeployed_Proceeds(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	// Adopted, no FirstDeployedAt. Under the old gate this would fail;
+	// under the new model the gate looks at the repo, not the meta.
+	setupAdoptedService(t, stateDir, "appdev", "")
+
+	mock := platform.NewMock()
+	ssh := &stubSSHWithCommands{
+		committedOutput: []byte("1"), // repo has commits
+		tokenOutput:     []byte("1"), // GIT_TOKEN present
+		pushOutput:      []byte("ok"),
+	}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1", Email: "t@t.com", FullName: "Test"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t))
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "appdev",
+		"strategy":      "git-push",
+		"remoteUrl":     "https://github.com/example/repo",
+	})
+	if result.IsError {
+		t.Fatalf("expected success for adopted-never-deployed + committed code, got:\n%s", getTextContent(t, result))
+	}
+	if ssh.committedCalls != 1 {
+		t.Errorf("committed-code pre-flight must run exactly once, got %d calls", ssh.committedCalls)
+	}
+	if ssh.tokenCalls != 1 {
+		t.Errorf("GIT_TOKEN pre-flight must run after committed-code check, got %d calls", ssh.tokenCalls)
+	}
+	if ssh.pushCalls != 1 {
+		t.Errorf("push must fire after both pre-flights pass, got %d calls", ssh.pushCalls)
 	}
 }
 
