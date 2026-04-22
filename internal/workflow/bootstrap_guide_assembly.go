@@ -144,10 +144,10 @@ func planTargetSnapshots(t BootstrapTarget) []ServiceSnapshot {
 	return snaps
 }
 
-// planModeToEnvelopeMode translates the plan's string mode into the envelope
+// planModeToEnvelopeMode translates the plan's mode into the envelope
 // Mode enum. Standard's dev half gets ModeStandard; the stage half is emitted
 // separately by planTargetSnapshots with ModeStage.
-func planModeToEnvelopeMode(mode string) Mode {
+func planModeToEnvelopeMode(mode Mode) Mode {
 	switch mode {
 	case PlanModeDev:
 		return ModeDev
@@ -156,7 +156,7 @@ func planModeToEnvelopeMode(mode string) Mode {
 	case PlanModeStandard, "":
 		return ModeStandard
 	}
-	return Mode(mode)
+	return mode
 }
 
 // closeGuidance is the static guidance for the administrative close step

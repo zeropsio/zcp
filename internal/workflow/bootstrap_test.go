@@ -500,7 +500,7 @@ func TestPlanMode(t *testing.T) {
 	tests := []struct {
 		name string
 		plan *ServicePlan
-		want string
+		want Mode
 	}{
 		{
 			"nil_plan",

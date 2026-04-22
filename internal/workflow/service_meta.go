@@ -35,16 +35,16 @@ const (
 // sufficient signal and verify-only stamping was masking legitimate
 // Deployed=true cases for services that bypassed ZCP verify.
 type ServiceMeta struct {
-	Hostname          string `json:"hostname"`
-	Mode              string `json:"mode,omitempty"`
-	StageHostname     string `json:"stageHostname,omitempty"`
-	DeployStrategy    string `json:"deployStrategy,omitempty"`
-	PushGitTrigger    string `json:"pushGitTrigger,omitempty"`    // "webhook" | "actions" | "" — valid only when DeployStrategy==push-git
-	StrategyConfirmed bool   `json:"strategyConfirmed,omitempty"` // true after user explicitly confirms/sets strategy
-	Environment       string `json:"environment,omitempty"`       // "container" or "local"
-	BootstrapSession  string `json:"bootstrapSession"`
-	BootstrappedAt    string `json:"bootstrappedAt"`
-	FirstDeployedAt   string `json:"firstDeployedAt,omitempty"` // stamped on first observed deploy — via session or adoption
+	Hostname          string         `json:"hostname"`
+	Mode              Mode           `json:"mode,omitempty"`
+	StageHostname     string         `json:"stageHostname,omitempty"`
+	DeployStrategy    DeployStrategy `json:"deployStrategy,omitempty"`
+	PushGitTrigger    PushGitTrigger `json:"pushGitTrigger,omitempty"`    // valid only when DeployStrategy==push-git
+	StrategyConfirmed bool           `json:"strategyConfirmed,omitempty"` // true after user explicitly confirms/sets strategy
+	Environment       string         `json:"environment,omitempty"`       // "container" or "local" — dropped in phase B.3
+	BootstrapSession  string         `json:"bootstrapSession"`
+	BootstrappedAt    string         `json:"bootstrappedAt"`
+	FirstDeployedAt   string         `json:"firstDeployedAt,omitempty"` // stamped on first observed deploy — via session or adoption
 }
 
 // IsComplete returns true if bootstrap finished for this service.
@@ -81,7 +81,7 @@ func (m *ServiceMeta) Hostnames() []string {
 
 // PrimaryRole returns the deploy role of m.Hostname.
 // Encapsulates the mode+environment+stage lookup so callers don't re-derive it.
-func (m *ServiceMeta) PrimaryRole() string {
+func (m *ServiceMeta) PrimaryRole() Mode {
 	mode := m.Mode
 	if mode == "" {
 		mode = PlanModeStandard
@@ -101,7 +101,7 @@ func (m *ServiceMeta) PrimaryRole() string {
 
 // RoleFor returns the deploy role of the given hostname within this meta's scope.
 // Returns "" when the hostname is unrelated to this meta.
-func (m *ServiceMeta) RoleFor(hostname string) string {
+func (m *ServiceMeta) RoleFor(hostname string) Mode {
 	if hostname == "" {
 		return ""
 	}

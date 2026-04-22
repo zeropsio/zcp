@@ -22,7 +22,9 @@ const (
 )
 
 // validBootstrapModes is the set of valid BootstrapMode values (including empty for default).
-var validBootstrapModes = map[string]bool{
+//
+//nolint:gochecknoglobals // enum-set table; value-only, not mutated.
+var validBootstrapModes = map[Mode]bool{
 	"": true, PlanModeStandard: true, PlanModeDev: true, PlanModeSimple: true,
 }
 
@@ -37,12 +39,12 @@ type RuntimeTarget struct {
 	DevHostname   string `json:"devHostname"`
 	Type          string `json:"type"`
 	IsExisting    bool   `json:"isExisting,omitempty"`
-	BootstrapMode string `json:"bootstrapMode,omitempty"` // standard, dev, or simple
+	BootstrapMode Mode   `json:"bootstrapMode,omitempty"` // standard, dev, or simple
 	ExplicitStage string `json:"stageHostname,omitempty"` // explicit stage hostname override for standard mode
 }
 
 // EffectiveMode returns the bootstrap mode, defaulting to standard if empty.
-func (r RuntimeTarget) EffectiveMode() string {
+func (r RuntimeTarget) EffectiveMode() Mode {
 	if r.BootstrapMode == "" {
 		return PlanModeStandard
 	}
@@ -186,7 +188,7 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 		}
 
 		// Validate bootstrap mode.
-		if !validBootstrapModes[rt.BootstrapMode] {
+		if !validBootstrapModes[Mode(rt.BootstrapMode)] {
 			errs = append(errs, fmt.Sprintf("target %q: invalid bootstrapMode %q (must be standard, dev, or simple)", rt.DevHostname, rt.BootstrapMode))
 			continue
 		}

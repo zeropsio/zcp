@@ -39,7 +39,7 @@ type RecipeMatch struct {
 	ImportYAML  string  `json:"importYaml,omitempty"`
 	// Mode is the bootstrap mode inferred from ImportYAML (standard, simple,
 	// dev). Empty when the YAML shape is unrecognised or managed-only.
-	Mode string `json:"mode,omitempty"`
+	Mode Mode `json:"mode,omitempty"`
 }
 
 // RecipeCorpus abstracts the recipe search surface. Implementations live in

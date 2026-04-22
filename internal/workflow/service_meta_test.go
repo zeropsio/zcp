@@ -678,7 +678,7 @@ func TestServiceMeta_PrimaryRole(t *testing.T) {
 	tests := []struct {
 		name string
 		meta ServiceMeta
-		want string
+		want Mode
 	}{
 		{
 			"container_standard_returns_dev",
@@ -736,7 +736,7 @@ func TestServiceMeta_RoleFor(t *testing.T) {
 	}
 	tests := []struct {
 		hostname string
-		want     string
+		want     Mode
 	}{
 		{"appdev", DeployRoleDev},
 		{"appstage", DeployRoleStage},

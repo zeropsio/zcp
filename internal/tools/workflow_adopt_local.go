@@ -129,7 +129,7 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 		"status":   "linked",
 		"project":  local.Hostname,
 		"stage":    target.Name,
-		"mode":     workflow.PlanModeLocalStage,
+		"mode":     string(workflow.PlanModeLocalStage),
 		"strategy": "unset",
 		"next":     fmt.Sprintf(`Pick a strategy: zerops_workflow action="strategy" strategies={%q:%q}`, local.Hostname, workflow.StrategyPushDev),
 	}), nil, nil

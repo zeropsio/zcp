@@ -147,7 +147,7 @@ func filterStaleMetas(metas []*ServiceMeta, liveServices []string) []*ServiceMet
 // both may be nil/empty — derivation degrades gracefully. env gates env-scoped
 // offerings (export is container-only in Release A; local export is deferred).
 func strategyOfferings(metas []*ServiceMeta, liveStatus map[string]string, ws *WorkSession, env Environment) []FlowOffering {
-	strategies := make(map[string]int)
+	strategies := make(map[DeployStrategy]int)
 	for _, m := range metas {
 		if s := m.DeployStrategy; s != "" {
 			strategies[s]++
@@ -155,7 +155,7 @@ func strategyOfferings(metas []*ServiceMeta, liveStatus map[string]string, ws *W
 	}
 
 	// Find dominant strategy for additional offerings.
-	var dominant string
+	var dominant DeployStrategy
 	var maxCount int
 	for s, c := range strategies {
 		if c > maxCount {

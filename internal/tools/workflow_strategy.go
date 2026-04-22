@@ -100,21 +100,23 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 			), nil, nil
 		}
 		updated = append(updated, fmt.Sprintf("%s=%s", hostname, strategy))
+		typedStrategy := workflow.DeployStrategy(strategy)
+		typedTrigger := workflow.PushGitTrigger(input.Trigger)
 		// Detect no-op: same strategy AND same trigger (if applicable) AND
 		// already-confirmed state.
-		sameStrategy := meta.DeployStrategy == strategy && meta.StrategyConfirmed
-		sameTrigger := strategy != workflow.StrategyPushGit || meta.PushGitTrigger == input.Trigger
+		sameStrategy := meta.DeployStrategy == typedStrategy && meta.StrategyConfirmed
+		sameTrigger := typedStrategy != workflow.StrategyPushGit || meta.PushGitTrigger == typedTrigger
 		if sameStrategy && sameTrigger {
 			continue
 		}
-		meta.DeployStrategy = strategy
+		meta.DeployStrategy = typedStrategy
 		meta.StrategyConfirmed = true
-		if strategy == workflow.StrategyPushGit {
+		if typedStrategy == workflow.StrategyPushGit {
 			// Only write trigger when one was provided; empty leaves the
 			// previous value (which might be "" on fresh push-git setup
 			// → intro atom handles the ask).
-			if input.Trigger != "" {
-				meta.PushGitTrigger = input.Trigger
+			if typedTrigger != "" {
+				meta.PushGitTrigger = typedTrigger
 			}
 		} else {
 			// Non-push-git strategies can't carry a trigger — clear.

@@ -78,8 +78,8 @@ func TestEffectiveMode(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
-		mode string
-		want string
+		mode Mode
+		want Mode
 	}{
 		{"empty_defaults_to_standard", "", "standard"},
 		{"explicit_standard", "standard", "standard"},
@@ -102,7 +102,7 @@ func TestValidateBootstrapTargets_InvalidBootstrapMode(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name    string
-		mode    string
+		mode    Mode
 		wantErr bool
 	}{
 		{"valid_empty", "", false},

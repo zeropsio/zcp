@@ -10,7 +10,7 @@ func TestInferRecipeShape(t *testing.T) {
 	tests := []struct {
 		name         string
 		yaml         string
-		wantMode     string
+		wantMode     Mode
 		wantRuntimes int
 	}{
 		{

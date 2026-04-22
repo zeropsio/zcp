@@ -11,7 +11,7 @@ func TestInferServicePairing(t *testing.T) {
 		name       string
 		candidates []AdoptCandidate
 		wantCount  int
-		wantModes  map[string]string // hostname → expected mode
+		wantModes  map[string]Mode   // hostname → expected mode
 		wantStage  map[string]string // hostname → expected StageHostname
 	}{
 		{
@@ -22,7 +22,7 @@ func TestInferServicePairing(t *testing.T) {
 				{Hostname: "db", Type: "postgresql@16"},
 			},
 			wantCount: 1,
-			wantModes: map[string]string{"appdev": PlanModeStandard},
+			wantModes: map[string]Mode{"appdev": PlanModeStandard},
 			wantStage: map[string]string{"appdev": "appstage"},
 		},
 		{
@@ -31,7 +31,7 @@ func TestInferServicePairing(t *testing.T) {
 				{Hostname: "api", Type: "go@1"},
 			},
 			wantCount: 1,
-			wantModes: map[string]string{"api": PlanModeDev},
+			wantModes: map[string]Mode{"api": PlanModeDev},
 			wantStage: map[string]string{"api": ""},
 		},
 		{
@@ -49,7 +49,7 @@ func TestInferServicePairing(t *testing.T) {
 				{Hostname: "appdev", Type: "nodejs@22"},
 			},
 			wantCount: 1,
-			wantModes: map[string]string{"appdev": PlanModeDev},
+			wantModes: map[string]Mode{"appdev": PlanModeDev},
 		},
 		{
 			name: "multiple pairs",
@@ -60,7 +60,7 @@ func TestInferServicePairing(t *testing.T) {
 				{Hostname: "apistage", Type: "go@1"},
 			},
 			wantCount: 2,
-			wantModes: map[string]string{
+			wantModes: map[string]Mode{
 				"webdev": PlanModeStandard,
 				"apidev": PlanModeStandard,
 			},
@@ -71,7 +71,7 @@ func TestInferServicePairing(t *testing.T) {
 				{Hostname: "appdev", Type: "bun@1.2"},
 			},
 			wantCount: 1,
-			wantModes: map[string]string{"appdev": PlanModeDev},
+			wantModes: map[string]Mode{"appdev": PlanModeDev},
 		},
 		{
 			name: "hostname is literally dev",
@@ -79,7 +79,7 @@ func TestInferServicePairing(t *testing.T) {
 				{Hostname: "dev", Type: "nodejs@22"},
 			},
 			wantCount: 1,
-			wantModes: map[string]string{"dev": PlanModeDev},
+			wantModes: map[string]Mode{"dev": PlanModeDev},
 		},
 		{
 			name: "webstage alone no pair",
@@ -87,7 +87,7 @@ func TestInferServicePairing(t *testing.T) {
 				{Hostname: "webstage", Type: "nodejs@22"},
 			},
 			wantCount: 1,
-			wantModes: map[string]string{"webstage": PlanModeDev},
+			wantModes: map[string]Mode{"webstage": PlanModeDev},
 		},
 		{
 			name: "stage before dev in API order",
@@ -97,7 +97,7 @@ func TestInferServicePairing(t *testing.T) {
 				{Hostname: "db", Type: "postgresql@16"},
 			},
 			wantCount: 1,
-			wantModes: map[string]string{"appdev": PlanModeStandard},
+			wantModes: map[string]Mode{"appdev": PlanModeStandard},
 			wantStage: map[string]string{"appdev": "appstage"},
 		},
 		{
@@ -108,7 +108,7 @@ func TestInferServicePairing(t *testing.T) {
 				{Hostname: "appdev", Type: "php-nginx@8.4"},
 			},
 			wantCount: 2,
-			wantModes: map[string]string{
+			wantModes: map[string]Mode{
 				"appdev":      PlanModeStandard,
 				"workerstage": PlanModeDev,
 			},
@@ -126,7 +126,7 @@ func TestInferServicePairing(t *testing.T) {
 				{Hostname: "cache", Type: "valkey@7.2"},
 			},
 			wantCount: 1,
-			wantModes: map[string]string{"appdev": PlanModeStandard},
+			wantModes: map[string]Mode{"appdev": PlanModeStandard},
 		},
 	}
 

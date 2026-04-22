@@ -83,7 +83,7 @@ func TestHandleStrategy_ValidUpdate(t *testing.T) {
 				if readErr != nil {
 					t.Fatalf("read meta %s: %v", hostname, readErr)
 				}
-				if meta.DeployStrategy != strategy {
+				if meta.DeployStrategy != workflow.DeployStrategy(strategy) {
 					t.Errorf("%s DeployStrategy: want %q, got %q", hostname, strategy, meta.DeployStrategy)
 				}
 				if !meta.StrategyConfirmed {

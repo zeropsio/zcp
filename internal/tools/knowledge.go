@@ -69,7 +69,7 @@ func resolveKnowledgeMode(engine *workflow.Engine, inputMode string) string {
 		return ""
 	}
 	if state.Bootstrap != nil {
-		return state.Bootstrap.PlanMode()
+		return string(state.Bootstrap.PlanMode())
 	}
 	return ""
 }

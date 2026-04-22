@@ -290,7 +290,7 @@ func TestServer_New_LocalAutoAdopt(t *testing.T) {
 		rt          runtime.Info
 		services    []platform.ServiceStack
 		wantMeta    bool
-		wantMode    string
+		wantMode    workflow.Mode
 		wantStage   string
 		wantManaged []string
 	}{

@@ -460,7 +460,7 @@ func TestWriteBootstrapOutputs_DefaultEmptyStrategy(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name          string
-		bootstrapMode string
+		bootstrapMode Mode
 		env           Environment
 	}{
 		{"dev mode gets empty strategy", PlanModeDev, EnvLocal},
@@ -545,8 +545,8 @@ func TestProvisionMeta_SetsMode(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name          string
-		bootstrapMode string
-		wantMode      string
+		bootstrapMode Mode
+		wantMode      Mode
 		env           Environment
 	}{
 		{"standard mode (default)", "", PlanModeStandard, EnvContainer},

@@ -803,9 +803,9 @@ func testDeployEngine(t *testing.T) *workflow.Engine {
 // setupAdoptedService writes a ServiceMeta so the service is "known" to ZCP.
 func setupAdoptedService(t *testing.T, stateDir, hostname, stageHostname string) {
 	t.Helper()
-	mode := "simple"
+	mode := workflow.PlanModeSimple
 	if stageHostname != "" {
-		mode = "standard"
+		mode = workflow.PlanModeStandard
 	}
 	meta := &workflow.ServiceMeta{
 		Hostname:         hostname,

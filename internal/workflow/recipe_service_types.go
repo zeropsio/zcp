@@ -64,7 +64,7 @@ const (
 
 // RecipeSetupForMode maps a bootstrap plan mode to its canonical recipe setup name.
 // Standard and dev modes use the dev workspace entry; simple mode uses the prod entry.
-func RecipeSetupForMode(mode string) string {
+func RecipeSetupForMode(mode Mode) string {
 	if mode == PlanModeSimple {
 		return RecipeSetupProd
 	}
