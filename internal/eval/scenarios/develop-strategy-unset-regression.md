@@ -14,6 +14,16 @@ expect:
   requiredPatterns:
     - '"workflow":"bootstrap"'
     - '"route":"adopt"'
+    # scope is REQUIRED for develop start (cb63bf3). `app` is the runtime
+    # hostname; `db` is managed and rejected by validateDevelopScope.
+    - '"scope":['
+    - '"app"'
+    # action="strategy" is the central deploy-config point since b76aa49
+    # ("strategy(central): collapse cicd + git-push setup into
+    # action=strategy"). The develop-strategy-review atom tells the agent
+    # to call it post-first-deploy — this pin verifies the agent actually
+    # executed the call, not just acknowledged the atom.
+    - '"action":"strategy"'
   requireAssessment: true
   finalUrlStatus: 200
   finalUrlHostname: app

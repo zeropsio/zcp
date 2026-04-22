@@ -16,6 +16,12 @@ expect:
     # didn't blindly classic-bootstrap over existing services.
     - '"workflow":"bootstrap"'
     - '"route":"adopt"'
+    # scope is REQUIRED for develop start since cb63bf3 ("workflow(develop):
+    # explicit scope + new-intent autoclose + close-always-wins"). Without
+    # this pattern the agent either skipped scope (ErrInvalidParameter) or
+    # we missed the workflow entry entirely.
+    - '"scope":['
+    - '"app"'
   requireAssessment: true
   finalUrlStatus: 200
   finalUrlHostname: app
