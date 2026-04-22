@@ -19,7 +19,7 @@ func TestCheckProvision_AllServicesExist_Pass(t *testing.T) {
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 			Dependencies: []workflow.Dependency{
 				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
 			},
@@ -49,7 +49,7 @@ func TestCheckProvision_ActiveStatus_Pass(t *testing.T) {
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 			Dependencies: []workflow.Dependency{
 				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
 			},
@@ -77,7 +77,7 @@ func TestCheckProvision_MissingService_Fail(t *testing.T) {
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 			Dependencies: []workflow.Dependency{
 				{Hostname: "db", Type: "postgresql@16", Resolution: "CREATE"},
 			},
@@ -114,7 +114,7 @@ func TestCheckProvision_NoEnvVars_Fail(t *testing.T) {
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 			Dependencies: []workflow.Dependency{
 				{Hostname: "db", Type: "postgresql@16", Resolution: "CREATE"},
 			},
@@ -205,7 +205,7 @@ func TestCheckProvision_APIError_ReturnsError(t *testing.T) {
 	mock := platform.NewMock().WithError("ListServices", fmt.Errorf("API down"))
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 		}},
 	}
 	checker := checkProvision(mock, "proj-1", nil)
@@ -264,7 +264,7 @@ func TestCheckProvision_StoresDiscoveredEnvVars(t *testing.T) {
 
 	// Submit plan to complete discover step.
 	_, err = eng.BootstrapCompletePlan([]workflow.BootstrapTarget{{
-		Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+		Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 		Dependencies: []workflow.Dependency{
 			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
 		},
@@ -405,7 +405,7 @@ func TestCheckProvision_ExistsDep_StoresEnvVars(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 	_, err = eng.BootstrapCompletePlan([]workflow.BootstrapTarget{{
-		Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: true},
+		Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: true, ExplicitStage: "appstage"},
 		Dependencies: []workflow.Dependency{
 			{Hostname: "db", Type: "postgresql@16", Resolution: "EXISTS"},
 		},
@@ -500,7 +500,7 @@ func TestCheckProvision_MixedResolution_StoresBoth(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 	_, err = eng.BootstrapCompletePlan([]workflow.BootstrapTarget{{
-		Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: true},
+		Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: true, ExplicitStage: "appstage"},
 		Dependencies: []workflow.Dependency{
 			{Hostname: "db", Type: "postgresql@16", Resolution: "EXISTS"},
 			{Hostname: "cache", Type: "valkey@7.2", Mode: "NON_HA", Resolution: "CREATE"},
@@ -620,7 +620,7 @@ func TestCheckProvision_StoreEnvVarsError_Fail(t *testing.T) {
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 			Dependencies: []workflow.Dependency{
 				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
 			},
@@ -771,7 +771,7 @@ func TestCheckProvision_TypeMatch_Pass(t *testing.T) {
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 			Dependencies: []workflow.Dependency{
 				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
 			},

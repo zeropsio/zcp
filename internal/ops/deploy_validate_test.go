@@ -902,7 +902,20 @@ func runValidateTestWithOpts(t *testing.T, hostname, yml string, wantWarnings in
 		}
 	}
 
-	warnings := ValidateZeropsYml(dir, hostname, opts.serviceType)
+	// Phase B.4 removed the hostname-substring role fallback in
+	// ValidateZeropsYml; callers pass the role explicitly. The test
+	// fixtures name hostnames with dev/stage suffixes for readability,
+	// so the test helper derives the role from the suffix and hands it
+	// through as the explicit role param. Production callers read role
+	// from ServiceMeta, not from hostname — see deploy_preflight.go.
+	role := ""
+	switch {
+	case strings.HasSuffix(hostname, "dev"):
+		role = "dev"
+	case strings.HasSuffix(hostname, "stage"):
+		role = "stage"
+	}
+	warnings := ValidateZeropsYml(dir, hostname, opts.serviceType, role)
 
 	if noWarnings {
 		if len(warnings) != 0 {

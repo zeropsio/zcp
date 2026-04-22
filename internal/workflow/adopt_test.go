@@ -1,9 +1,14 @@
 package workflow
 
 import (
+	"sort"
 	"testing"
 )
 
+// Phase B.4: the hostname-suffix pairing heuristic was deleted. Every runtime
+// now becomes its own dev-mode target; managed services become shared EXISTS
+// dependencies; control-plane types are filtered out. Tests reflect the new
+// one-runtime-one-target contract.
 func TestInferServicePairing(t *testing.T) {
 	t.Parallel()
 
@@ -11,19 +16,17 @@ func TestInferServicePairing(t *testing.T) {
 		name       string
 		candidates []AdoptCandidate
 		wantCount  int
-		wantModes  map[string]Mode   // hostname → expected mode
-		wantStage  map[string]string // hostname → expected StageHostname
+		wantHosts  []string // dev-mode target hostnames in any order
 	}{
 		{
-			name: "standard pair appdev+appstage",
+			name: "two hostname-suffixed runtimes become two dev targets (no pairing)",
 			candidates: []AdoptCandidate{
 				{Hostname: "appdev", Type: "bun@1.2"},
 				{Hostname: "appstage", Type: "bun@1.2"},
 				{Hostname: "db", Type: "postgresql@16"},
 			},
-			wantCount: 1,
-			wantModes: map[string]Mode{"appdev": PlanModeStandard},
-			wantStage: map[string]string{"appdev": "appstage"},
+			wantCount: 2,
+			wantHosts: []string{"appdev", "appstage"},
 		},
 		{
 			name: "single service dev mode",
@@ -31,11 +34,10 @@ func TestInferServicePairing(t *testing.T) {
 				{Hostname: "api", Type: "go@1"},
 			},
 			wantCount: 1,
-			wantModes: map[string]Mode{"api": PlanModeDev},
-			wantStage: map[string]string{"api": ""},
+			wantHosts: []string{"api"},
 		},
 		{
-			name: "skip managed services",
+			name: "only managed services yields no targets",
 			candidates: []AdoptCandidate{
 				{Hostname: "db", Type: "postgresql@16"},
 				{Hostname: "cache", Type: "valkey@7.2"},
@@ -49,29 +51,26 @@ func TestInferServicePairing(t *testing.T) {
 				{Hostname: "appdev", Type: "nodejs@22"},
 			},
 			wantCount: 1,
-			wantModes: map[string]Mode{"appdev": PlanModeDev},
+			wantHosts: []string{"appdev"},
 		},
 		{
-			name: "multiple pairs",
+			name: "four runtimes, no pairing — four independent dev targets",
 			candidates: []AdoptCandidate{
 				{Hostname: "webdev", Type: "nodejs@22"},
 				{Hostname: "webstage", Type: "nodejs@22"},
 				{Hostname: "apidev", Type: "go@1"},
 				{Hostname: "apistage", Type: "go@1"},
 			},
-			wantCount: 2,
-			wantModes: map[string]Mode{
-				"webdev": PlanModeStandard,
-				"apidev": PlanModeStandard,
-			},
+			wantCount: 4,
+			wantHosts: []string{"webdev", "webstage", "apidev", "apistage"},
 		},
 		{
-			name: "hostname dev alone no stage",
+			name: "hostname dev alone",
 			candidates: []AdoptCandidate{
 				{Hostname: "appdev", Type: "bun@1.2"},
 			},
 			wantCount: 1,
-			wantModes: map[string]Mode{"appdev": PlanModeDev},
+			wantHosts: []string{"appdev"},
 		},
 		{
 			name: "hostname is literally dev",
@@ -79,54 +78,26 @@ func TestInferServicePairing(t *testing.T) {
 				{Hostname: "dev", Type: "nodejs@22"},
 			},
 			wantCount: 1,
-			wantModes: map[string]Mode{"dev": PlanModeDev},
+			wantHosts: []string{"dev"},
 		},
 		{
-			name: "webstage alone no pair",
+			name: "webstage alone",
 			candidates: []AdoptCandidate{
 				{Hostname: "webstage", Type: "nodejs@22"},
 			},
 			wantCount: 1,
-			wantModes: map[string]Mode{"webstage": PlanModeDev},
+			wantHosts: []string{"webstage"},
 		},
 		{
-			name: "stage before dev in API order",
-			candidates: []AdoptCandidate{
-				{Hostname: "appstage", Type: "bun@1.2"},
-				{Hostname: "appdev", Type: "bun@1.2"},
-				{Hostname: "db", Type: "postgresql@16"},
-			},
-			wantCount: 1,
-			wantModes: map[string]Mode{"appdev": PlanModeStandard},
-			wantStage: map[string]string{"appdev": "appstage"},
-		},
-		{
-			name: "stage before dev with extra runtime",
-			candidates: []AdoptCandidate{
-				{Hostname: "workerstage", Type: "php-nginx@8.4"},
-				{Hostname: "appstage", Type: "php-nginx@8.4"},
-				{Hostname: "appdev", Type: "php-nginx@8.4"},
-			},
-			wantCount: 2,
-			wantModes: map[string]Mode{
-				"appdev":      PlanModeStandard,
-				"workerstage": PlanModeDev,
-			},
-			wantStage: map[string]string{
-				"appdev":      "appstage",
-				"workerstage": "",
-			},
-		},
-		{
-			name: "managed services become dependencies",
+			name: "managed services become dependencies on every target",
 			candidates: []AdoptCandidate{
 				{Hostname: "appdev", Type: "bun@1.2"},
 				{Hostname: "appstage", Type: "bun@1.2"},
 				{Hostname: "db", Type: "postgresql@16"},
 				{Hostname: "cache", Type: "valkey@7.2"},
 			},
-			wantCount: 1,
-			wantModes: map[string]Mode{"appdev": PlanModeStandard},
+			wantCount: 2,
+			wantHosts: []string{"appdev", "appstage"},
 		},
 	}
 
@@ -142,33 +113,44 @@ func TestInferServicePairing(t *testing.T) {
 				return
 			}
 
+			gotHosts := make([]string, 0, len(targets))
 			for _, target := range targets {
-				hostname := target.Runtime.DevHostname
-				if wantMode, ok := tt.wantModes[hostname]; ok {
-					if target.Runtime.EffectiveMode() != wantMode {
-						t.Errorf("%s mode: want %s, got %s", hostname, wantMode, target.Runtime.EffectiveMode())
-					}
+				gotHosts = append(gotHosts, target.Runtime.DevHostname)
+				if target.Runtime.EffectiveMode() != PlanModeDev {
+					t.Errorf("%s: want PlanModeDev, got %s",
+						target.Runtime.DevHostname, target.Runtime.EffectiveMode())
 				}
-				if wantStage, ok := tt.wantStage[hostname]; ok {
-					gotStage := target.Runtime.StageHostname()
-					if gotStage != wantStage {
-						t.Errorf("%s stage: want %q, got %q", hostname, wantStage, gotStage)
-					}
+				if target.Runtime.StageHostname() != "" {
+					t.Errorf("%s: dev-mode target must not synthesize a stage hostname, got %q",
+						target.Runtime.DevHostname, target.Runtime.StageHostname())
 				}
 				if !target.Runtime.IsExisting {
-					t.Errorf("%s: IsExisting should be true", hostname)
+					t.Errorf("%s: IsExisting should be true", target.Runtime.DevHostname)
 				}
 			}
 
-			// Verify managed services appear as dependencies.
-			if tt.name == "managed services become dependencies" {
-				target := targets[0]
-				if len(target.Dependencies) != 2 {
-					t.Fatalf("dependencies: want 2, got %d", len(target.Dependencies))
+			sort.Strings(gotHosts)
+			wantSorted := append([]string(nil), tt.wantHosts...)
+			sort.Strings(wantSorted)
+			for i := range wantSorted {
+				if gotHosts[i] != wantSorted[i] {
+					t.Errorf("hosts: want %v, got %v", wantSorted, gotHosts)
+					break
 				}
-				for _, dep := range target.Dependencies {
-					if dep.Resolution != "EXISTS" {
-						t.Errorf("dependency %s resolution: want EXISTS, got %s", dep.Hostname, dep.Resolution)
+			}
+
+			// Verify managed services appear as shared dependencies.
+			if tt.name == "managed services become dependencies on every target" {
+				for _, target := range targets {
+					if len(target.Dependencies) != 2 {
+						t.Fatalf("dependencies on %s: want 2, got %d",
+							target.Runtime.DevHostname, len(target.Dependencies))
+					}
+					for _, dep := range target.Dependencies {
+						if dep.Resolution != "EXISTS" {
+							t.Errorf("%s dep %s: want EXISTS, got %s",
+								target.Runtime.DevHostname, dep.Hostname, dep.Resolution)
+						}
 					}
 				}
 			}

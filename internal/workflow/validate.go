@@ -51,20 +51,18 @@ func (r RuntimeTarget) EffectiveMode() Mode {
 	return r.BootstrapMode
 }
 
-// StageHostname returns the stage hostname for standard mode.
-// Priority: explicit override > auto-derive from *dev suffix > empty.
-// Returns empty for dev/simple modes.
+// StageHostname returns the stage hostname for standard mode. ExplicitStage
+// is the only source — under phase B.4 the `{base}dev → {base}stage` suffix
+// derivation was deleted (services can be named anything under the
+// post-strict-suffix era; the heuristic silently misclassified repos with
+// non-conforming hostnames). Returns empty for dev/simple modes OR when
+// standard mode was requested without ExplicitStage; the latter is a
+// caller bug — ValidateBootstrapTargets catches it with a hard error.
 func (r RuntimeTarget) StageHostname() string {
 	if r.EffectiveMode() != PlanModeStandard {
 		return ""
 	}
-	if r.ExplicitStage != "" {
-		return r.ExplicitStage
-	}
-	if base, ok := strings.CutSuffix(r.DevHostname, "dev"); ok {
-		return base + "stage"
-	}
-	return ""
+	return r.ExplicitStage
 }
 
 // Dependency describes a service dependency for a bootstrap target.
@@ -203,16 +201,20 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 			continue
 		}
 
-		// H7: validate derived stage hostname length for standard mode.
+		// H7: validate stage hostname for standard mode. Phase B.4
+		// dropped the `{base}dev → {base}stage` suffix derivation — a
+		// plan target claiming standard mode must now carry an explicit
+		// `stageHostname` field. Hostnames are arbitrary strings under
+		// the post-strict-suffix era and ZCP refuses to guess.
 		var stageHostname string
 		if rt.EffectiveMode() == PlanModeStandard {
 			stageHostname = rt.StageHostname()
 			if stageHostname == "" {
-				errs = append(errs, fmt.Sprintf("target %q: standard mode requires hostname ending in 'dev' (auto-derives stage) or explicit stageHostname field", rt.DevHostname))
+				errs = append(errs, fmt.Sprintf("target %q: standard mode requires explicit stageHostname", rt.DevHostname))
 				continue
 			}
 			if err := ValidatePlanHostname(stageHostname); err != nil {
-				errs = append(errs, fmt.Sprintf("target %q: derived stage hostname %q: %v", rt.DevHostname, stageHostname, err))
+				errs = append(errs, fmt.Sprintf("target %q: stageHostname %q: %v", rt.DevHostname, stageHostname, err))
 				continue
 			}
 		}

@@ -862,7 +862,7 @@ func TestWorkflowTool_Action_BootstrapComplete_DiscoverStep_Structured(t *testin
 		"step":   "discover",
 		"plan": []any{
 			map[string]any{
-				"runtime": map[string]any{"devHostname": "appdev", "type": "bun@1.2"},
+				"runtime": map[string]any{"devHostname": "appdev", "type": "bun@1.2", "stageHostname": "appstage"},
 				"dependencies": []any{
 					map[string]any{"hostname": "db", "type": "postgresql@16", "mode": "NON_HA", "resolution": "CREATE"},
 				},

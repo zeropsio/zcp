@@ -14,24 +14,40 @@ func isControlPlaneType(serviceType string) bool {
 }
 
 // InferServicePairing builds BootstrapTargets from live services for adoption.
-// It filters out managed and control-plane types, infers dev/stage pairing
-// from hostname conventions, and sets ExplicitStage when auto-derive won't work.
-// Managed services are returned as dependencies with resolution EXISTS.
+// Filters out managed and control-plane types; every remaining runtime
+// becomes its own target with `BootstrapMode: PlanModeDev`. Managed
+// services become EXISTS-resolution dependencies shared across targets.
+//
+// Historical note (phase B.4): an earlier revision inferred `{base}dev`
+// + `{base}stage` pairs from hostname suffixes and auto-set
+// `BootstrapMode: PlanModeStandard` on the dev half. That heuristic
+// dated from the strict-suffix era where hostnames had to end in
+// dev/stage. Services can now be named anything, so the heuristic
+// silently misclassified repos with non-conforming names — e.g.
+// `frontend-app` + `frontend-app-prod` would be treated as two
+// independent dev-mode targets, hiding the intended pairing. Worse,
+// when the author really did pair `appdev`+`appstage` but wanted them
+// adopted as independent services, the heuristic overrode their
+// intent with no way to opt out.
+//
+// The replacement is no pairing at adoption time — every runtime is an
+// independent dev-mode target. Users who want a dev/stage pair adopted
+// as PlanModeStandard write that into the bootstrap plan explicitly
+// (BootstrapMode=standard, ExplicitStage=<hostname>). The plan input
+// is already the authoritative source for non-trivial topology.
 //
 // liveManaged: base names of managed types from the live API catalog
-// (knowledge.ManagedBaseNames). When non-empty it overrides the static prefix
-// list so new Zerops managed categories are classified correctly without
-// requiring a managed_types.go bump. Pass nil to use the static fallback.
+// (knowledge.ManagedBaseNames). When non-empty it overrides the static
+// prefix list so new Zerops managed categories are classified correctly
+// without requiring a managed_types.go bump. Pass nil to use the static
+// fallback.
 func InferServicePairing(candidates []AdoptCandidate, liveManaged map[string]bool) []BootstrapTarget {
-	// Separate runtimes from managed services.
 	var runtimes []AdoptCandidate
 	var managed []AdoptCandidate
-	hostnames := make(map[string]string) // hostname → type
 	for _, c := range candidates {
 		if isControlPlaneType(c.Type) {
 			continue
 		}
-		hostnames[c.Hostname] = c.Type
 		if isManagedTypeWithLive(c.Type, liveManaged) {
 			managed = append(managed, c)
 			continue
@@ -43,7 +59,7 @@ func InferServicePairing(candidates []AdoptCandidate, liveManaged map[string]boo
 		return nil
 	}
 
-	// Build shared dependencies from managed services.
+	// Shared dependencies from managed services.
 	deps := make([]Dependency, len(managed))
 	for i, m := range managed {
 		deps[i] = Dependency{
@@ -53,41 +69,8 @@ func InferServicePairing(candidates []AdoptCandidate, liveManaged map[string]boo
 		}
 	}
 
-	// Pass 1: identify all dev/stage pairs. A pair exists when both {base}dev
-	// and {base}stage are present in the runtime list (base must be non-empty).
-	// This must happen before target creation so API ordering doesn't matter.
-	paired := make(map[string]bool) // stage hostnames claimed by a dev service
+	targets := make([]BootstrapTarget, 0, len(runtimes))
 	for _, r := range runtimes {
-		base, isDev := strings.CutSuffix(r.Hostname, "dev")
-		if isDev && base != "" {
-			stageHostname := base + "stage"
-			if _, stageExists := hostnames[stageHostname]; stageExists && !isManagedTypeWithLive(hostnames[stageHostname], liveManaged) {
-				paired[stageHostname] = true
-			}
-		}
-	}
-
-	// Pass 2: create targets, skipping hostnames already claimed as stage.
-	var targets []BootstrapTarget
-	for _, r := range runtimes {
-		if paired[r.Hostname] {
-			continue
-		}
-
-		base, isDev := strings.CutSuffix(r.Hostname, "dev")
-		if isDev && base != "" && paired[base+"stage"] {
-			targets = append(targets, BootstrapTarget{
-				Runtime: RuntimeTarget{
-					DevHostname:   r.Hostname,
-					Type:          r.Type,
-					IsExisting:    true,
-					BootstrapMode: PlanModeStandard,
-				},
-				Dependencies: deps,
-			})
-			continue
-		}
-
 		targets = append(targets, BootstrapTarget{
 			Runtime: RuntimeTarget{
 				DevHostname:   r.Hostname,
@@ -98,6 +81,5 @@ func InferServicePairing(candidates []AdoptCandidate, liveManaged map[string]boo
 			Dependencies: deps,
 		})
 	}
-
 	return targets
 }
