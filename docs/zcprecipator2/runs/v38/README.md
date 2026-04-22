@@ -2,7 +2,7 @@
 
 **Status**: **PRE-COMMISSION PLACEHOLDER**. This folder is seeded by [`../../HANDOFF-to-I9-v38-prep.md`](../../HANDOFF-to-I9-v38-prep.md). It will be filled in after v38 runs.
 
-**Target tag**: `v8.110.0` — built from the [v38-fix-stack](../../plans/v38-fix-stack.md) commits (7 Cx-commits closing F-17 / F-21 / F-22 / F-23 + harness-v2).
+**Target tag**: `v8.110.0` — built from the [v38-fix-stack](../../plans/v38-fix-stack.md) commits (8 Cx-commits closing F-17 / F-21 / F-22 / F-23 / F-24 + harness-v2).
 
 **Predecessor**: [`v37/`](../v37/) — verdict PAUSE, root cause F-17 (main-agent paraphrase of atom envelope), 3 defect classes regressed despite source-HEAD Cx stack.
 
@@ -40,7 +40,8 @@ Per [HANDOFF-to-I9 §5](../../HANDOFF-to-I9-v38-prep.md), v38 is the first run u
 4. **F-23 closed?** — `ZCP_CONTENT_MANIFEST.json` appears in the deliverable tree at the recipe output root, overlayed from the mount by finalize.
 5. **F-21 closed or under-threshold?** — finalize envComment factuality failures ≤ 1 check (not the 15-check cycle-6 regression on v37).
 6. **F-22 closed?** — `bootstrap-seed-v1` style execOnce keys don't trigger `no_version_anchors_in_published_content`.
-7. **Harness v2 sharpness** — B-15 catches `environments*` siblings, B-21 ignores post-close sessionless exports, B-23 recognises dispatch description "Author recipe READMEs…" as writer.
+7. **F-24 closed?** — zero browser-timeout cascades. `RecoverFork` reaps Chrome processes (not just the daemon pattern). Close-browser-walk completes without user intervention. At most 1 `forceReset=true` retry per walk.
+8. **Harness v2 sharpness** — B-15 catches `environments*` siblings, B-21 ignores post-close sessionless exports, B-23 recognises dispatch description "Author recipe READMEs…" as writer.
 
 ---
 

@@ -1,4 +1,4 @@
-# plans/v38-fix-stack.md — seven Cx-commits before v38 commission
+# plans/v38-fix-stack.md — eight Cx-commits before v38 commission
 
 **Status**: TRANSIENT (per CLAUDE.md §Source of Truth #4). Archive to `plans/archive/` after v38 commission verdict ships.
 **Prerequisites**: [`../HANDOFF-to-I9-v38-prep.md`](../HANDOFF-to-I9-v38-prep.md) §4 defect inventory, [`../runs/v37/verdict.md`](../runs/v37/verdict.md) §7.
@@ -286,9 +286,54 @@ Each sub-commit lands with green tests. Ship as a single Cx-5 merge once all fiv
 
 ---
 
-## Phase 5 — Harness sharpness (Cx-7)
+## Phase 5 — Browser recovery + harness sharpness (Cx-7 + Cx-8)
 
-### Cx-7 — Cx-HARNESS-V2 (three bar patches + close-step signal)
+### Cx-7 — Cx-BROWSER-RECOVERY-COMPLETE (closes F-24 — ported from v27 archive)
+
+**Scope**: fix `RecoverFork` in [`internal/ops/browser.go`](../../../internal/ops/browser.go) so it actually reaps Chrome + its helpers when the daemon wedges. Current pattern `pkill -9 -f 'agent-browser-'` matches essentially nothing in production (the comment at [browser.go:149-157](../../../internal/ops/browser.go#L149) claiming it catches "agent-browser-chrome-*" helpers is false — the actual agent-browser binary v0.21.4 launches stock Chrome with standard flags, and Chrome's process names are `chrome`, `chromium`, `headless_shell`, `chrome --type=renderer`, `chrome_crashpad_handler` — none of which contain `agent-browser-` in argv).
+
+**Why now**: v37 burned ~15 minutes of wall-time across 5+ browser timeouts (20:19, 20:20, 20:29 deploy-phase; 21:44, 21:45 close-phase) plus one user intervention to skip close-browser-walk. Each "recovery" was a no-op because the pattern didn't match Chrome. Next daemon reattached to the wedged Chrome instance. Cycle continued. This was diagnosed in the v27 archive ([`docs/zrecipator-archive/implementation-v27-first-principles.md`](../../zrecipator-archive/implementation-v27-first-principles.md) §"v27's 7-minute browser chaos") with a full Go rewrite; the fix was never ported.
+
+**Files touched**:
+- `internal/ops/browser.go` — rewrite `RecoverFork` per the v27 archive spec:
+  1. Read daemon PID from `~/.agent-browser/default.pid` (or `$AGENT_BROWSER_SOCKET_DIR`-relative equivalent); `syscall.Kill(-pid, SIGKILL)` to kill the daemon's process group (reaps Chrome children inherited from the daemon's fork), then `syscall.Kill(pid, SIGKILL)` for the daemon itself.
+  2. Remove stale pidfile + socket so the next CLI invocation launches a fresh daemon instead of attaching to a zombie.
+  3. Pattern fallback for anything that escaped the group: keep the existing `agent-browser-` pkill AND add `pkill -9 --exact` against each of `chrome`, `chromium`, `chromium-browser`, `google-chrome`, `headless_shell`. The `--exact` flag matches argv[0] only — NOT command-line args — so code-server's `--no-chrome` CLI flag cannot be matched (that exact false-positive killed the user's editor in a v27 run).
+- `internal/ops/browser.go` — add `ForceReset bool` to `BrowserBatchInput`. When true, run `RecoverFork` + `postRecoveryGrace` sleep BEFORE the batch begins. Used by the caller when a prior call returned `forkRecoveryAttempted=true` but the retry still wedged, or when Step errors contained CDP-timeout signatures.
+- `internal/ops/browser.go` — in the post-run parse block, after `json.Unmarshal`, scan `result.Steps[]` for step errors matching `"CDP command timed out"`, `"Target closed"`, or `"Protocol error"` substrings. On match, auto-run `RecoverFork` even if the overall exit was 0 — this catches the Chrome-wedged-but-daemon-alive failure mode where the daemon returns "success" with per-step CDP errors. Populate `Message` with the triggering signal so the caller knows to retry with `ForceReset: true`.
+- `internal/tools/browser.go` — update tool description to teach `forceReset` usage: mention to set it on the next call when a prior call returned `forkRecoveryAttempted=true` without the retry succeeding, or when a `CDP command timed out` error appeared in step errors. Explicitly warn against raw Bash `pkill -f 'chrome'` (the v27 editor-kill incident).
+- `internal/content/workflows/recipe.md` — in the close-step browser-walk block + deploy browser-walk-dev atom, remove the "run `pkill -9 -f 'agent-browser-'` manually" suggestion (obsolete; tool handles it). Replace with: "If `zerops_browser` returns a message mentioning `forkRecoveryAttempted` or `Chrome wedged` and the immediate retry still fails, call once more with `forceReset: true`. Never run raw `pkill` from Bash against Chrome — the `-f 'chrome'` pattern matches code-server's `--no-chrome` CLI arg and has killed the user's editor in past runs."
+- `internal/content/workflows/recipe/phases/deploy/browser-walk-dev.md` — same replacement as recipe.md.
+
+**RED tests** (new, in `internal/ops/browser_test.go`):
+- `TestRecoverFork_ReadsPidfileAndKillsProcessGroup`
+  - Setup: write a fake `~/.agent-browser/default.pid` with a sentinel PID (use a helper fork that sleeps 10s in a group the test creates via `syscall.Setpgid`).
+  - Call `RecoverFork`.
+  - Assert: the sentinel process is killed within 1s + pidfile removed + socket file removed (create it first).
+- `TestRecoverFork_PkillExactFallback`
+  - Fake runner captures exec invocations.
+  - Call `RecoverFork` with no pidfile present.
+  - Assert: the invocation list includes `pkill -9 -f agent-browser-` PLUS `pkill -9 --exact chrome` through `pkill -9 --exact headless_shell` (5 calls).
+- `TestBrowserBatch_ForceResetRunsRecoveryBeforeBatch`
+  - Fake runner counts `RecoverFork` calls + `Run` calls.
+  - Call `BrowserBatch` with `ForceReset: true`.
+  - Assert: `RecoverFork` called once BEFORE `Run`.
+- `TestBrowserBatch_CDPTimeoutInStepsTriggersRecovery`
+  - Fake runner returns exit 0 with JSON output containing a step whose `error` is `"CDP command timed out on DOM.enable"`.
+  - Assert: `ForkRecoveryAttempted=true` in result; `Message` mentions "Chrome wedged" or CDP signal; `RecoverFork` was called.
+- `TestBrowserBatch_ForceResetGatedByMutex`
+  - Two goroutines: one runs `BrowserBatch` with `ForceReset: true`; the other attempts `BrowserBatch` concurrently.
+  - Assert: the second caller waits for the first to complete its recovery + batch before starting (serialization invariant holds).
+
+**Green**: after implementation, all five tests pass. Existing `browser_test.go` suite continues to pass.
+
+**Acceptance on v38**: zero browser-timeout cascades. At most 1 retry per walk (first timeout → tool auto-recovers → user retries with `forceReset=true` if needed → succeeds). Close-browser-walk completes without user intervention.
+
+**Estimated**: 4–6 hours. Most of the code comes from the v27 archive spec; the work is adapting it to the current v0.21.4 socket-path layout + writing the five tests.
+
+---
+
+### Cx-8 — Cx-HARNESS-V2 (three bar patches + close-step signal)
 
 **Scope**: fix the four harness bar-sharpness issues surfaced by v37 analysis (`runs/v37/verdict.md §5`).
 
@@ -367,15 +412,16 @@ See [`../HANDOFF-to-I9-v38-prep.md`](../HANDOFF-to-I9-v38-prep.md) §5 (commissi
 
 | Order | Commit | Depends on | Parallel-safe with |
 |---|---|---|---|
-| 1 | Cx-WRITER-SCOPE-REDUCTION | — (atom edits only) | Cx-2, Cx-3, Cx-6 |
-| 2 | Cx-SCAFFOLD-FRAGMENT-FRAMES | — (scaffold code + atom edit) | Cx-1, Cx-3, Cx-6 |
-| 3 | Cx-ENV-COMMENT-PRINCIPLE | — (atom + check edits) | Cx-1, Cx-2, Cx-6 |
-| 4 | Cx-MANIFEST-OVERLAY | Cx-1 (atom moved manifest path) | Cx-6 |
-| 5 | Cx-SUBAGENT-BRIEF-BUILDER | Cx-1, Cx-2, Cx-3 (needs final atom contents to stitch) | — |
+| 1 | Cx-WRITER-SCOPE-REDUCTION | — (atom edits only) | Cx-2, Cx-3, Cx-6, Cx-7, Cx-8 |
+| 2 | Cx-SCAFFOLD-FRAGMENT-FRAMES | — (scaffold code + atom edit) | Cx-1, Cx-3, Cx-6, Cx-7, Cx-8 |
+| 3 | Cx-ENV-COMMENT-PRINCIPLE | — (atom + check edits) | Cx-1, Cx-2, Cx-6, Cx-7, Cx-8 |
+| 4 | Cx-MANIFEST-OVERLAY | Cx-1 (atom moved manifest path) | Cx-6, Cx-7, Cx-8 |
+| 5 | Cx-SUBAGENT-BRIEF-BUILDER | Cx-1, Cx-2, Cx-3 (needs final atom contents to stitch) | Cx-7, Cx-8 |
 | 6 | Cx-VERSION-ANCHOR-SHARPEN | — | any |
-| 7 | Cx-HARNESS-V2 | — | any |
+| 7 | Cx-BROWSER-RECOVERY-COMPLETE | — (internal/ops/browser.go rewrite; spec comes from v27 archive) | any |
+| 8 | Cx-HARNESS-V2 | — | any |
 
-Viable parallel track: Cx-1 + Cx-2 + Cx-3 + Cx-6 in one sitting; Cx-4 after Cx-1 lands; Cx-5 after the three atom commits land; Cx-7 anytime. Total wall time should be 2–3 days if one person drives, 1 day if parallel.
+Viable parallel track: Cx-1 + Cx-2 + Cx-3 + Cx-6 + Cx-7 + Cx-8 in one sitting; Cx-4 after Cx-1 lands; Cx-5 after the three atom commits land. Total wall time should be 2–3 days if one person drives, 1 day if parallel.
 
 ---
 
@@ -385,7 +431,7 @@ Out of scope for v8.110.0:
 
 - **Root README quality beyond what finalize emits**. Finalize already generates a serviceable root README from the plan; don't touch unless a v38 observation surfaces a defect.
 - **Editorial-review hallucination of atom IDs** (main agent requesting `briefs.editorial-review.per-surface-checklist`). Cx-SUBAGENT-BRIEF-BUILDER side-effects this — once the main agent no longer paraphrases, it also no longer requests atoms by name because the engine serves them in one brief. If v38 surfaces residual hallucination, separate Cx after v38.
-- **agent-browser wedging during close-browser-walk**. Environmental; not a recipe-workflow defect. Orthogonal fix.
+- ~~**agent-browser wedging during close-browser-walk**.~~ MOVED IN-SCOPE as Cx-7. The v27 archive diagnosis is correct; the fix was just never ported. Not environmental — `RecoverFork` has a broken pkill pattern that leaks Chrome processes.
 - **Pushing recipe content to `zeropsio/recipes`**. Publish-pipeline; post-v38.
 - **Minimal-tier validation**. Independent; v35.5 work has its own track.
 - **Framework diversity** (laravel-showcase, python-showcase). v38 uses nestjs for A/B comparability with v34–v37.
@@ -401,7 +447,7 @@ Plan is complete when:
 - [ ] Phase 2 manifest overlay merged with `TestOverlayManifest_*` green.
 - [ ] Phase 3 subagent brief builder merged; four new tests green; dispatch-guard exercised in an ad-hoc run.
 - [ ] Phase 4 version-anchor sharpen merged with three new tests green.
-- [ ] Phase 5 harness-v2 merged with four new tests green.
+- [ ] Phase 5 browser-recovery + harness-v2 merged with 5 + 4 new tests green.
 - [ ] Phase 6 integration verification passed.
 - [ ] Phase 7 v8.110.0 tagged + artifact published.
 - [ ] Phase 8 slot block populated in HANDOFF-to-I9.

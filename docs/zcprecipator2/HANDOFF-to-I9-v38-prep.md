@@ -1,6 +1,6 @@
 # HANDOFF-to-I9-v38-prep.md — land v37-surfaced fix stack, commission v38, analyse
 
-**For**: fresh Claude Code instance picking up zcprecipator2 after v37 analysis shipped as PAUSE. Your job is to **land the seven-Cx fix stack**, tag `v8.110.0`, hand back to the user for v38 commission, then **analyse v38** when artifacts land.
+**For**: fresh Claude Code instance picking up zcprecipator2 after v37 analysis shipped as PAUSE. Your job is to **land the eight-Cx fix stack**, tag `v8.110.0`, hand back to the user for v38 commission, then **analyse v38** when artifacts land.
 
 **Reading order** (~60 min):
 1. This document front-to-back.
@@ -12,7 +12,7 @@
 7. [`HANDOFF-to-I8-v37-prep.md`](HANDOFF-to-I8-v37-prep.md) §6 — analysis discipline rules. **Inherited unchanged for v38 analysis.**
 8. [`../../CLAUDE.md`](../../CLAUDE.md) — auto-loaded; reread for TDD + operating norms.
 
-**Branch**: `main`. **Previous run**: v37 (v8.109.0, close-complete but deliverable structurally broken due to F-17). **Your target**: v38 against `v8.110.0` once the seven Cx-commits land.
+**Branch**: `main`. **Previous run**: v37 (v8.109.0, close-complete but deliverable structurally broken due to F-17). **Your target**: v38 against `v8.110.0` once the eight Cx-commits land.
 
 ---
 
@@ -20,13 +20,14 @@
 
 ```
 FIX_STACK_TAG:            v8.110.0                         (local; push via `git push origin main v8.110.0`)
-FIX_STACK_COMMITS:        <unfilled — 7 Cx SHAs, see plans/v38-fix-stack.md>
+FIX_STACK_COMMITS:        <unfilled — 8 Cx SHAs, see plans/v38-fix-stack.md>
                           Cx-WRITER-SCOPE-REDUCTION        (F-9 + F-13 at source)
                           Cx-SCAFFOLD-FRAGMENT-FRAMES      (F-12 at source)
                           Cx-ENV-COMMENT-PRINCIPLE         (F-21 close)
                           Cx-MANIFEST-OVERLAY              (F-23 close)
                           Cx-SUBAGENT-BRIEF-BUILDER        (F-17 close — the headline fix)
                           Cx-VERSION-ANCHOR-SHARPEN        (F-22 close)
+                          Cx-BROWSER-RECOVERY-COMPLETE     (F-24 close — ported from v27 archive)
                           Cx-HARNESS-V2                    (three bar patches + close-step signal)
 V38_COMMISSION_DATE:      <unfilled — user commissions>
 V38_SESSION_ID:           <unfilled>
@@ -71,7 +72,7 @@ Three rules fall out of this:
 
 ## 4. v37 defect inventory (post-analysis)
 
-Thirteen defect classes are relevant at this hand-off. F-1..F-7 are historical (closed by v8.108.x). F-8..F-13 were v37's fix-stack targets; four of them remain effectively open because of F-17 paraphrase. F-14..F-16 are writer-compliance (observation-class). F-17..F-23 are new from v37.
+Fourteen defect classes are relevant at this hand-off. F-1..F-7 are historical (closed by v8.108.x). F-8..F-13 were v37's fix-stack targets; four of them remain effectively open because of F-17 paraphrase. F-14..F-16 are writer-compliance (observation-class). F-17..F-24 are new or re-surfaced from v37.
 
 | # | Defect | Status at v37 close | v38 fix path |
 |---|---|---|---|
@@ -89,8 +90,9 @@ Thirteen defect classes are relevant at this hand-off. F-1..F-7 are historical (
 | F-21 | Finalize envComment factuality — writer invents numeric claims | **OPEN** — 15 failures across 6 tiers on v37 cycle 6 | Cx-3 adds factuality rule atom + check detail tightening |
 | F-22 | `no_version_anchors_in_published_content` catches `bootstrap-seed-v1` style execOnce keys (false positive) | **OPEN** — required v37 key-rename work | Cx-6 sharpens regex to skip fenced-code and compound identifiers |
 | F-23 | Root-level writer artifacts not staged (`ZCP_CONTENT_MANIFEST.json` stranded at `/var/www/`) | **OPEN** — partial F-10 closure | Cx-4 manifest overlay |
+| **F-24** | **`RecoverFork` pkill pattern does not match Chrome/chromium/headless_shell processes** — every browser-timeout recovery since v27 has been a silent no-op; wedged Chrome processes accumulate across retries; comment at [`browser.go:149-157`](../../internal/ops/browser.go#L149) claiming the pattern reaps `agent-browser-chrome-*` helpers is false per `strings` dump of the actual agent-browser v0.21.4 binary | **RE-OPENED from v27** — diagnosed + spec'd in [`docs/zrecipator-archive/implementation-v27-first-principles.md`](../../zrecipator-archive/implementation-v27-first-principles.md) but fix was never ported. **Cx-7 is the close**. Port the v27 spec: read daemon pidfile + process-group kill + `pkill --exact` fallback against `chrome`/`chromium`/`chromium-browser`/`google-chrome`/`headless_shell` + `ForceReset` input flag + auto-trigger on CDP-timeout step errors |
 
-**Structural vs behavioural split**: F-17 is the structural root cause. F-9 / F-12 / F-13 are its surface symptoms; they cannot be closed without closing F-17. F-21 / F-22 / F-23 are orthogonal quality-of-implementation fixes. F-14 / F-15 / F-16 are expected floor noise.
+**Structural vs behavioural split**: F-17 is the v38 structural root cause for the writer-path defects (F-9/F-12/F-13). F-24 is an independent structural root cause for the browser-path wall-time loss (~15 min + user intervention on v37). F-21 / F-22 / F-23 are orthogonal quality-of-implementation fixes. F-14 / F-15 / F-16 are expected floor noise.
 
 ---
 
@@ -108,13 +110,14 @@ Execute [`plans/v38-fix-stack.md`](plans/v38-fix-stack.md) phase-by-phase. In su
 | 4. MANIFEST-OVERLAY | `recipe_overlay.go` + finalize wiring | F-23 | 2 h |
 | 5. SUBAGENT-BRIEF-BUILDER | `subagent_brief.go` (new) + tool handler + dispatch guard + 4 tests + workflow-guide edits | **F-17 (headline)** | 2–3 days |
 | 6. VERSION-ANCHOR-SHARPEN | 1 check + tests | F-22 | 1–2 h |
-| 7. HARNESS-V2 | `internal/analyze/{structural,session}.go` | 4 bar-sharpness issues | 3–4 h |
+| 7. BROWSER-RECOVERY-COMPLETE | `internal/ops/browser.go` rewrite + tool description + workflow-guide edits + 5 tests | **F-24 (browser wall-time loss)** | 4–6 h |
+| 8. HARNESS-V2 | `internal/analyze/{structural,session}.go` | 4 bar-sharpness issues | 3–4 h |
 
-Cx-5 is the one that takes time and carries the architectural change. Consider decomposing into 5 sub-commits per the plan. Cx-1/2/3/6/7 are safely parallel.
+Cx-5 is the one that takes time and carries the main architectural change. Cx-7 is the second structural change (browser-recovery rewrite). Consider decomposing Cx-5 into 5 sub-commits per the plan. Cx-1/2/3/6/7/8 are safely parallel.
 
 Green gate for each: `go test <package> -race -count=1` + `make lint-local` + the Cx's RED test passes.
 
-Tag as `v8.110.0` after all seven land with green CI.
+Tag as `v8.110.0` after all eight land with green CI.
 
 ### Phase 2 — Hand back for v38 commission (15 min)
 
@@ -137,7 +140,7 @@ COMMISSIONED_BY:      user
 AGENT_MODEL:          claude-opus-4-7[1m]
 MUST_REACH:           close-step complete (action=complete step=close with no substep → progress.steps[close].status=complete)
 MUST_DISPATCH:        editorial-review, code-review sub-agents via build-subagent-brief path
-MUST_RUN:             close-browser-walk (soft-pass acceptable if agent-browser environmental)
+MUST_RUN:             close-browser-walk — expected to complete cleanly after Cx-7. Soft-pass acceptable ONLY if a new failure mode surfaces (documented F-24 is closed; unknown territory is still unknown territory).
 MUST_VERIFY_PRE_RUN:  zcp --version output captured in SESSIONS_LOGS shows v8.110.0 or pinned commit SHA
 ```
 
@@ -180,7 +183,7 @@ Same discipline as v37 analysis, inherited from [`HANDOFF-to-I8-v37-prep.md §6`
 - Deliverable tree structurally correct: no ghost env dirs anywhere, correct markers, per-codebase markdown + manifest both in the deliverable.
 - Harness machine-report clean.
 
-**ACCEPT-WITH-FOLLOW-UP** gate: one signal-grade issue remains (e.g. agent-browser environmental, or one writer-compliance class > threshold). Document as a targeted patch class for v8.110.x; v39 follows.
+**ACCEPT-WITH-FOLLOW-UP** gate: one signal-grade issue remains (e.g. a new agent-browser failure mode beyond F-24, or one writer-compliance class > threshold). Document as a targeted patch class for v8.110.x; v39 follows.
 
 **PAUSE** gate: any fix-stack target regressed OR F-17 still visible in dispatch-integrity OR > 2 writer-compliance classes fail. Write HANDOFF-to-I10 + defect stack.
 
@@ -214,7 +217,7 @@ Out of scope for v38:
 - **Multiple concurrent runs**: single commissioned run.
 - **CI/scheduled runs**: manual commission.
 - **End-to-end publish to zeropsio/recipes**: post-v38.
-- **agent-browser reliability**: environmental; soft-pass acceptable.
+- ~~**agent-browser reliability**: environmental; soft-pass acceptable.~~ MOVED IN-SCOPE as Cx-7 (F-24 close). v37's browser failures were a Chrome-reap bug in our own code (`RecoverFork` pkill pattern doesn't match Chrome), not environmental.
 - **Performance optimization**: wall-time is signal, not gate.
 
 ---
@@ -236,7 +239,7 @@ New for v38:
 
 ## 9. Success definition (when is this handoff "done")
 
-- [ ] Phase 1 seven Cx-commits merged to main; `v8.110.0` tagged + pushed.
+- [ ] Phase 1 eight Cx-commits merged to main; `v8.110.0` tagged + pushed.
 - [ ] Green full test suite + `make lint-local` at HEAD.
 - [ ] Harness v2 retrospective against v37 deliverable reflects the expected new-bar behaviour.
 - [ ] Slot block in §1 filled with commit SHAs.
