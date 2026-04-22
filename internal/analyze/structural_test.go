@@ -107,6 +107,54 @@ func TestCheckGhostEnvDirs(t *testing.T) {
 	}
 }
 
+// TestB15GhostEnvDirs_CatchesEnvironmentsGenerated is the Cx-HARNESS-V2
+// RED→GREEN guard. v37 F-9 mutated: writer authored a parallel
+// `environments-generated/` tree alongside the canonical finalize-
+// emitted `environments/`. Previous B-15 scanned only inside
+// `environments/` and missed the sibling. v38 bar must catch any
+// depth-1 directory whose name matches `environments[-_]<anything>`
+// (with the canonical `environments` staying whitelisted).
+func TestB15GhostEnvDirs_CatchesEnvironmentsGenerated(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// Canonical environments/ with all six tier folders — passes the
+	// old scope; B-15 should still flag the sibling tree.
+	envsDir := filepath.Join(dir, "environments")
+	if err := os.MkdirAll(envsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range CanonicalEnvFolders {
+		if err := os.Mkdir(filepath.Join(envsDir, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Parallel ghost tree: the v37 failure shape.
+	if err := os.MkdirAll(filepath.Join(dir, "environments-generated", "ai-agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Second sibling with underscore separator — a hypothetical
+	// `environments_v2/` would also fail the bar.
+	if err := os.MkdirAll(filepath.Join(dir, "environments_v2"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := CheckGhostEnvDirs(dir)
+	if got.Status != StatusFail {
+		t.Errorf("expected status=fail when sibling environments-generated present; got %q", got.Status)
+	}
+	if got.Observed < 2 {
+		t.Errorf("expected at least 2 observed (environments-generated + environments_v2); got %d (evidence: %v)", got.Observed, got.EvidenceFiles)
+	}
+	// Evidence should include the sibling-tree names.
+	joined := strings.Join(got.EvidenceFiles, ",")
+	if !strings.Contains(joined, "environments-generated") {
+		t.Errorf("evidence must name 'environments-generated'; got %v", got.EvidenceFiles)
+	}
+	if !strings.Contains(joined, "environments_v2") {
+		t.Errorf("evidence must name 'environments_v2'; got %v", got.EvidenceFiles)
+	}
+}
+
 // TestCheckPerCodebaseMarkdown covers the F-10 surrogate: per-codebase
 // README.md + CLAUDE.md must be present in the deliverable. Measured
 // flatly (count found vs expected). Stranded writer output produces

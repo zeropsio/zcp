@@ -63,38 +63,79 @@ var DefaultAllowedAtomFields = map[string]bool{
 	"PlanPath":     true,
 }
 
-// CheckGhostEnvDirs implements B-15. Walks {deliverable}/environments/,
-// flags every directory name not in CanonicalEnvFolders. Returns Skip
-// when the environments/ directory is absent (e.g. pre-finalize state).
+// environmentsSiblingRe matches depth-1 sibling directory names that
+// share the `environments` prefix with a separator. The canonical
+// `environments` itself must NOT match (handled via explicit check
+// before the regex). Covers `environments-generated` (v37 F-9 mutated
+// shape) and hypothetical `environments_v2` / `environments-v2`.
+var environmentsSiblingRe = regexp.MustCompile(`^environments[-_].+`)
+
+// CheckGhostEnvDirs implements B-15. Two passes:
+//  1. Walk {deliverable}/environments/ and flag every subdirectory not
+//     in CanonicalEnvFolders — the original F-9 shape.
+//  2. Walk {deliverable}/ (depth-1) and flag every sibling directory
+//     whose name matches `^environments[-_]...` — the v37 F-9 mutated
+//     shape where the writer authored a parallel `environments-generated/`
+//     tree next to the canonical `environments/`.
+//
+// Either signal is a fail. If BOTH the environments/ directory is
+// absent AND no sibling `environments*` directories exist, return
+// Skip (pre-finalize state).
 func CheckGhostEnvDirs(deliverableDir string) BarResult {
-	envsDir := filepath.Join(deliverableDir, "environments")
-	entries, err := os.ReadDir(envsDir)
-	if err != nil {
-		return BarResult{
-			Description: "ghost (non-canonical) directories under environments/",
-			Measurement: "readdir environments/ ∉ CanonicalEnvFolders",
-			Threshold:   0,
-			Status:      StatusSkip,
-			Reason:      fmt.Sprintf("cannot read %s: %v", envsDir, err),
-		}
-	}
 	canonical := make(map[string]bool, len(CanonicalEnvFolders))
 	for _, n := range CanonicalEnvFolders {
 		canonical[n] = true
 	}
+
 	var ghosts []string
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
+	var readErr error
+
+	envsDir := filepath.Join(deliverableDir, "environments")
+	if entries, err := os.ReadDir(envsDir); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			if !canonical[e.Name()] {
+				ghosts = append(ghosts, "environments/"+e.Name())
+			}
 		}
-		if !canonical[e.Name()] {
-			ghosts = append(ghosts, e.Name())
+	} else {
+		readErr = err
+	}
+
+	// Sibling scan: depth-1 directories matching `environments[-_]*`
+	// are structural ghosts regardless of their contents.
+	if rootEntries, err := os.ReadDir(deliverableDir); err == nil {
+		for _, e := range rootEntries {
+			if !e.IsDir() {
+				continue
+			}
+			name := e.Name()
+			if name == "environments" {
+				continue
+			}
+			if environmentsSiblingRe.MatchString(name) {
+				ghosts = append(ghosts, name)
+			}
 		}
 	}
+
+	// Skip only if neither the canonical dir nor any sibling was reachable.
+	if readErr != nil && len(ghosts) == 0 {
+		return BarResult{
+			Description: "ghost env directories (environments/* ∉ canonical OR depth-1 `environments[-_]*` siblings)",
+			Measurement: "readdir environments/ ∉ CanonicalEnvFolders AND no depth-1 environments[-_]... siblings",
+			Threshold:   0,
+			Status:      StatusSkip,
+			Reason:      fmt.Sprintf("cannot read %s: %v", envsDir, readErr),
+		}
+	}
+
 	sort.Strings(ghosts)
 	return BarResult{
-		Description:   "ghost (non-canonical) directories under environments/",
-		Measurement:   "readdir environments/ ∉ CanonicalEnvFolders",
+		Description:   "ghost env directories (environments/* ∉ canonical OR depth-1 `environments[-_]*` siblings)",
+		Measurement:   "readdir environments/ ∉ CanonicalEnvFolders + depth-1 walk for environments[-_]... siblings",
 		Threshold:     0,
 		Observed:      len(ghosts),
 		Status:        PassOrFail(len(ghosts) == 0),

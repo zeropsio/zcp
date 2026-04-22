@@ -194,12 +194,27 @@ func dispatchLine(line []byte, onToolUse func(parsedToolUse) error, onResult fun
 // against. Populated once per CLI invocation.
 type SessionScan struct {
 	WorkflowCalls        []workflowCall
-	BashCommands         []string
+	BashCalls            []bashCall
 	EditCalls            []editInput
 	WriteCalls           []writeCallRec
 	AgentDispatches      []agentInput
 	CheckResultsByCallID map[string]checkResult
 	Timestamps           []string
+	// CloseStepCompletedAt is the timestamp (RFC-3339 UTC string) of
+	// the workflow `complete step=close` call whose response either
+	// carried checkResult.passed=true OR progress.steps[close].status=
+	// "complete". Empty when the close step never completed. Bars that
+	// reason about pre/post-close behavior (B-21 post-close export
+	// filter) correlate against this.
+	CloseStepCompletedAt string
+}
+
+// bashCall is a timestamped Bash tool_use record. Timestamp is the
+// assistant event's ISO-8601 timestamp so post-close filtering can
+// compare bash call time vs close-step completion time.
+type bashCall struct {
+	Command   string
+	Timestamp string
 }
 
 type workflowCall struct {
@@ -219,6 +234,11 @@ type writeCallRec struct {
 type checkResult struct {
 	Passed        bool
 	FailingChecks []string
+	// ProgressCloseComplete is true iff the same engine response
+	// carried `progress.steps.close.status == "complete"` — the
+	// secondary close-step-completion signal the v37 engine exposed
+	// even when checkResult was absent.
+	ProgressCloseComplete bool
 }
 
 // workflowResult matches the JSON envelope a workflow step-complete
@@ -231,6 +251,11 @@ type checkResult struct {
 // `internal/tools/workflow*` responses; a mismatched decoder
 // fabricates "failing" check lists where none exist, which v36
 // retrospective runs surfaced during harness validation.
+//
+// progress.steps[] is the v37 engine's secondary close-step-complete
+// signal: the response returns `{"progress":{"steps":{"close":{
+// "status":"complete"}}}}` even when no top-level checkResult object
+// accompanies it. The harness accepts either as proof of completion.
 type workflowResult struct {
 	CheckResult struct {
 		Passed bool `json:"passed"`
@@ -239,6 +264,11 @@ type workflowResult struct {
 			Status string `json:"status"`
 		} `json:"checks"`
 	} `json:"checkResult"`
+	Progress struct {
+		Steps map[string]struct {
+			Status string `json:"status"`
+		} `json:"steps"`
+	} `json:"progress"`
 }
 
 // textBlock matches a single item inside a tool_result.content array.
@@ -280,7 +310,29 @@ func ScanSessions(sessionsLogsDir string) (*SessionScan, error) {
 		return nil, fmt.Errorf("read subagents dir: %w", err)
 	}
 
+	scan.CloseStepCompletedAt = detectCloseStepCompletedAt(scan)
 	return scan, nil
+}
+
+// detectCloseStepCompletedAt returns the timestamp of the earliest
+// workflow `complete step=close` call whose response carried either
+// checkResult.passed=true or progress.steps.close.status=="complete".
+// Empty when the close step never completed. Exposed via SessionScan
+// so bars that reason about pre/post-close timing (B-21) can correlate.
+func detectCloseStepCompletedAt(scan *SessionScan) string {
+	for _, wc := range scan.WorkflowCalls {
+		if wc.Input.Action != actionComplete || wc.Input.Step != "close" {
+			continue
+		}
+		cr, ok := scan.CheckResultsByCallID[wc.ID]
+		if !ok {
+			continue
+		}
+		if cr.Passed || cr.ProgressCloseComplete {
+			return wc.Timestamp
+		}
+	}
+	return ""
 }
 
 func collectFromJSONL(path, source string, scan *SessionScan) error {
@@ -296,7 +348,9 @@ func collectFromJSONL(path, source string, scan *SessionScan) error {
 			case "Bash":
 				var in bashInput
 				if err := json.Unmarshal(t.Input, &in); err == nil {
-					scan.BashCommands = append(scan.BashCommands, in.Command)
+					scan.BashCalls = append(scan.BashCalls, bashCall{
+						Command: in.Command, Timestamp: t.Timestamp,
+					})
 				}
 			case "Edit":
 				var in editInput
@@ -368,7 +422,9 @@ func decodeWorkflowResult(s string) (checkResult, bool) {
 		}
 		s = strings.TrimSuffix(strings.TrimSpace(s), "```")
 	}
-	if !strings.Contains(s, "\"checkResult\"") {
+	// Accept either signal: top-level checkResult OR progress.steps.
+	// v37 engine exposed progress.steps even when checkResult was absent.
+	if !strings.Contains(s, "\"checkResult\"") && !strings.Contains(s, "\"progress\"") {
 		return checkResult{}, false
 	}
 	var wr workflowResult
@@ -380,6 +436,9 @@ func decodeWorkflowResult(s string) (checkResult, bool) {
 		if c.Status != "pass" && c.Status != "" {
 			cr.FailingChecks = append(cr.FailingChecks, c.Name)
 		}
+	}
+	if step, ok := wr.Progress.Steps["close"]; ok && step.Status == "complete" {
+		cr.ProgressCloseComplete = true
 	}
 	return cr, true
 }
@@ -422,20 +481,35 @@ func CheckDeployReadmesRetryRounds(scan *SessionScan, threshold int) BarResult {
 // CheckSessionlessExportAttempts implements B-21. A sessionless export
 // is a Bash tool_use whose command runs `zcp sync recipe export` and
 // neither names `--session` nor exports `ZCP_SESSION_ID` inline.
+//
+// Cx-HARNESS-V2 (v38) post-close filter: exports whose timestamp is ≥
+// scan.CloseStepCompletedAt are ignored. Post-close sessionless
+// exports are legitimate — the Cx-CLOSE-STEP-GATE-HARD semantics
+// advisory-skip them (no LIVE session matches the recipeDir). The bar
+// only fires on LIVE-session violations.
 func CheckSessionlessExportAttempts(scan *SessionScan) BarResult {
 	var offenders []string
-	for _, cmd := range scan.BashCommands {
+	closedAt := scan.CloseStepCompletedAt
+	for _, bc := range scan.BashCalls {
+		cmd := bc.Command
 		if !strings.Contains(cmd, "sync recipe export") {
 			continue
 		}
 		if strings.Contains(cmd, "--session") || strings.Contains(cmd, "ZCP_SESSION_ID=") {
 			continue
 		}
+		if closedAt != "" && bc.Timestamp >= closedAt {
+			// Post-close export — legitimate per Cx-CLOSE-STEP-GATE-HARD
+			// advisory-skip semantics. The string-compare works because
+			// Claude Code timestamps are RFC-3339 UTC and lexicographically
+			// orderable.
+			continue
+		}
 		offenders = append(offenders, cmd)
 	}
 	return BarResult{
 		Description:   "sessionless `zcp sync recipe export` attempts (F-8 evidence)",
-		Measurement:   "Bash tool_use input.command contains 'sync recipe export' AND no --session / ZCP_SESSION_ID",
+		Measurement:   "Bash tool_use input.command contains 'sync recipe export' AND no --session / ZCP_SESSION_ID, before close-step completion",
 		Threshold:     0,
 		Observed:      len(offenders),
 		Status:        PassOrFail(len(offenders) == 0),
@@ -443,16 +517,28 @@ func CheckSessionlessExportAttempts(scan *SessionScan) BarResult {
 	}
 }
 
+// isWriterDispatchDescription: a Task/Agent description is a writer
+// dispatch when it mentions any of writer / README / manifest / "author
+// recipe" (case-insensitive). v36 used "Recipe writer sub-agent"; v37
+// switched to "Author recipe READMEs + CLAUDE.md + manifest" with no
+// literal "writer" token. Both must match.
+func isWriterDispatchDescription(d string) bool {
+	low := strings.ToLower(d)
+	return strings.Contains(low, "writer") ||
+		strings.Contains(low, "readme") ||
+		strings.Contains(low, "manifest") ||
+		strings.Contains(low, "author recipe")
+}
+
 // CheckWriterFirstPassFailures implements B-23. Finds the first
 // writer Agent dispatch and counts the distinct failing check names
 // in the first following `deploy substep~=readmes` tool_result.
 func CheckWriterFirstPassFailures(scan *SessionScan, threshold int) BarResult {
-	// Writer dispatch detection: description contains "writer" (case-
-	// insensitive). The v36 writer-1 dispatch description is
-	// "Recipe writer sub-agent".
+	// Writer dispatch detection: any of writer / README / manifest /
+	// "author recipe" keywords (see isWriterDispatchDescription).
 	writerDispatchAt := -1
 	for i, a := range scan.AgentDispatches {
-		if strings.Contains(strings.ToLower(a.Description), "writer") {
+		if isWriterDispatchDescription(a.Description) {
 			writerDispatchAt = i
 			break
 		}
@@ -567,17 +653,12 @@ func ComputeSessionMetrics(scan *SessionScan) SessionMetrics {
 			m.CodeReviewDispatched = true
 		}
 	}
-	// Close-step completion: any workflow complete step=close whose
-	// check result passed. A dispatched but failing close does not
-	// count as complete.
-	for _, wc := range scan.WorkflowCalls {
-		if wc.Input.Action == actionComplete && wc.Input.Step == "close" {
-			cr, ok := scan.CheckResultsByCallID[wc.ID]
-			if ok && cr.Passed {
-				m.CloseStepCompleted = true
-				break
-			}
-		}
+	// Close-step completion: EITHER checkResult.passed=true OR
+	// progress.steps.close.status=="complete" (Cx-HARNESS-V2 secondary
+	// signal — the v37 engine returned only the progress form). A
+	// dispatched but not-yet-complete close call is not enough.
+	if scan.CloseStepCompletedAt != "" {
+		m.CloseStepCompleted = true
 	}
 	// Close-browser-walk attempted: look for a browser tool call
 	// anywhere in the session. Per spec, soft pass if environmentally

@@ -157,6 +157,124 @@ func TestCheckWriterFirstPassFailures(t *testing.T) {
 	}
 }
 
+// TestB21SessionlessExport_IgnoresPostClose is the Cx-HARNESS-V2
+// RED→GREEN guard for B-21 post-close filtering. v37 triggered the bar
+// with two exports that ran AFTER close-step-completed at 21:48Z (21:49
+// and 21:52). Those exports are legitimate post-close deliverable
+// copies — the Cx-CLOSE-STEP-GATE-HARD semantics correctly advisory-
+// skip them because no LIVE session matches the recipeDir. Harness v2
+// must correlate Bash-call timestamps with the close-step completion
+// timestamp and drop any export observed ≥ that point in time.
+func TestB21SessionlessExport_IgnoresPostClose(t *testing.T) {
+	t.Parallel()
+	records := []string{
+		// First export during the live session.
+		assistantToolUseAt("b1", "Bash", "2026-04-21T21:40:00Z", `{"command":"zcp sync recipe export /var/www/zcprecipator/foo"}`),
+		// Close step completes at 21:48:39Z.
+		assistantToolUseAt("c1", "mcp__zerops__zerops_workflow", "2026-04-21T21:48:39Z", `{"action":"complete","step":"close"}`),
+		userToolResult("c1", `[{"type":"text","text":"{\"checkResult\":{\"passed\":true,\"checks\":[]}}"}]`),
+		// Post-close exports should be ignored.
+		assistantToolUseAt("b2", "Bash", "2026-04-21T21:49:00Z", `{"command":"zcp sync recipe export /var/www/zcprecipator/foo"}`),
+		assistantToolUseAt("b3", "Bash", "2026-04-21T21:52:00Z", `{"command":"zcp sync recipe export /var/www/zcprecipator/foo"}`),
+	}
+	dir := writeMainSession(t, records)
+	scan, err := ScanSessions(dir)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	got := CheckSessionlessExportAttempts(scan)
+	if got.Observed != 1 {
+		t.Errorf("expected observed=1 (only the pre-close export); got %d evidence=%v", got.Observed, got.EvidenceFiles)
+	}
+	if got.Status != StatusFail {
+		t.Errorf("expected status=fail (pre-close exports still violate); got %q", got.Status)
+	}
+}
+
+// TestB21SessionlessExport_AllPostCloseIsPass: when EVERY export is
+// post-close, B-21 should return observed=0 / pass. v37's shape: two
+// sessionless exports ran after close-step completion and the bar
+// should have returned pass.
+func TestB21SessionlessExport_AllPostCloseIsPass(t *testing.T) {
+	t.Parallel()
+	records := []string{
+		assistantToolUseAt("c1", "mcp__zerops__zerops_workflow", "2026-04-21T21:48:39Z", `{"action":"complete","step":"close"}`),
+		userToolResult("c1", `[{"type":"text","text":"{\"checkResult\":{\"passed\":true,\"checks\":[]}}"}]`),
+		assistantToolUseAt("b1", "Bash", "2026-04-21T21:49:00Z", `{"command":"zcp sync recipe export /var/www/zcprecipator/foo"}`),
+		assistantToolUseAt("b2", "Bash", "2026-04-21T21:52:00Z", `{"command":"zcp sync recipe export /var/www/zcprecipator/foo"}`),
+	}
+	dir := writeMainSession(t, records)
+	scan, err := ScanSessions(dir)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	got := CheckSessionlessExportAttempts(scan)
+	if got.Observed != 0 {
+		t.Errorf("expected observed=0 (both exports post-close); got %d evidence=%v", got.Observed, got.EvidenceFiles)
+	}
+	if got.Status != StatusPass {
+		t.Errorf("expected status=pass; got %q", got.Status)
+	}
+}
+
+// TestB23WriterFirstPass_MatchesAuthorDescription: v37's writer dispatch
+// description was "Author recipe READMEs + CLAUDE.md + manifest" — the
+// string "writer" did not appear. Previous detection missed it and the
+// bar returned skip. v38 must match writer dispatches by any of
+// writer / readme / manifest / "author recipe" keywords (case-
+// insensitive).
+func TestB23WriterFirstPass_MatchesAuthorDescription(t *testing.T) {
+	t.Parallel()
+	records := []string{
+		assistantToolUse("a1", "Task", `{"description":"Author recipe READMEs + CLAUDE.md + manifest","subagent_type":"general-purpose","prompt":"..."}`),
+		assistantToolUse("c1", "mcp__zerops__zerops_workflow", `{"action":"complete","step":"deploy","substep":"readmes"}`),
+		userToolResult("c1", `[{"type":"text","text":"{\"checkResult\":{\"passed\":false,\"checks\":[{\"name\":\"fragment_intro\",\"status\":\"fail\"}]}}"}]`),
+	}
+	dir := writeMainSession(t, records)
+	scan, err := ScanSessions(dir)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	got := CheckWriterFirstPassFailures(scan, 3)
+	if got.Status == StatusSkip {
+		t.Errorf("expected bar to run (author-recipe description is a writer dispatch); got skip: %q", got.Reason)
+	}
+	if got.Observed != 1 {
+		t.Errorf("expected observed=1 failing check; got %d evidence=%v", got.Observed, got.EvidenceFiles)
+	}
+}
+
+// TestCloseStepCompleted_RecognisesProgressSteps: v37's close response
+// returned `progress.steps[].status="complete"` for all six phases
+// without a top-level `checkResult.passed=true`. Previous detection
+// only accepted `checkResult.passed` and reported CloseStepCompleted=
+// false (a false negative). v38 accepts either signal.
+func TestCloseStepCompleted_RecognisesProgressSteps(t *testing.T) {
+	t.Parallel()
+	records := []string{
+		assistantToolUse("c1", "mcp__zerops__zerops_workflow", `{"action":"complete","step":"close"}`),
+		// Response carries progress.steps[] but NO checkResult — mirrors
+		// the v37 engine response at 21:48:39Z.
+		userToolResult("c1", `[{"type":"text","text":"{\"progress\":{\"steps\":{\"close\":{\"status\":\"complete\"}}}}"}]`),
+	}
+	dir := writeMainSession(t, records)
+	scan, err := ScanSessions(dir)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	got := ComputeSessionMetrics(scan)
+	if !got.CloseStepCompleted {
+		t.Error("expected CloseStepCompleted=true when progress.steps.close.status=complete even without checkResult")
+	}
+}
+
+// assistantToolUseAt emits an assistant tool_use event with an
+// explicit timestamp. The fifth arg order mirrors assistantToolUse
+// — name is identified by placement, id first.
+func assistantToolUseAt(id, name, timestamp, inputJSON string) string {
+	return `{"type":"assistant","uuid":"u-` + id + `","timestamp":"` + timestamp + `","message":{"content":[{"type":"tool_use","id":"` + id + `","name":"` + name + `","input":` + inputJSON + `}]}}`
+}
+
 // TestComputeSessionMetrics exercises the aggregation layer — role
 // dispatch + close-step completion.
 func TestComputeSessionMetrics(t *testing.T) {
