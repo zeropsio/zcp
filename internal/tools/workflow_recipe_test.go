@@ -99,6 +99,60 @@ func TestRecipeStart_Success(t *testing.T) {
 	if !engine.HasActiveSession() {
 		t.Error("expected active session after start")
 	}
+	// v39 Commit 5b — start response carries the canonical step + sub-step
+	// breakdown as starter todos. The main agent pastes these into its
+	// first TodoWrite call; absence here forces the v38 re-derivation loop.
+	if len(resp.StartingTodos) < 6 {
+		t.Errorf("expected starting todos to cover every step (≥ 6 entries), got %d", len(resp.StartingTodos))
+	}
+}
+
+// TestWorkflowStart_IncludesStartingTodos — v39 Commit 5b. Asserts the
+// showcase-tier action=start response includes the canonical step +
+// sub-step breakdown the main agent pastes into TodoWrite. Minimal
+// tier also carries starter todos but without showcase-only sub-steps.
+func TestWorkflowStart_IncludesStartingTodos(t *testing.T) {
+	t.Parallel()
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
+	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil, runtime.Info{})
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":      "start",
+		"workflow":    "recipe",
+		"intent":      "Create a NestJS showcase recipe",
+		"tier":        "showcase",
+		"clientModel": "claude-opus-4-7[1m]",
+	})
+	if result.IsError {
+		t.Fatalf("expected success, got error: %s", getTextContent(t, result))
+	}
+
+	var resp workflow.RecipeResponse
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// Showcase tier includes the feature sub-agent + close-review +
+	// browser-walk sub-steps — their presence in the starter todos is
+	// the signal the tier path is live.
+	wantSubstring := []string{
+		"Recipe step: research",
+		"Recipe step: deploy",
+		"Recipe step: close",
+		"substep deploy.subagent",
+		"substep deploy.browser-walk",
+		"substep close.editorial-review",
+		"substep close.code-review",
+		"substep close.close-browser-walk",
+	}
+	joined := strings.Join(resp.StartingTodos, "\n")
+	for _, want := range wantSubstring {
+		if !strings.Contains(joined, want) {
+			t.Errorf("showcase starter todos missing %q\nfull list:\n%s", want, joined)
+		}
+	}
 }
 
 // TestRecipeStart_DefaultTierRejected — v8.100 replaces the prior

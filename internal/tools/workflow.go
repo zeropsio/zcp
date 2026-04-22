@@ -83,6 +83,13 @@ type WorkflowInput struct {
 	Role        string `json:"role,omitempty"        jsonschema:"Sub-agent role for action=\"build-subagent-brief\" / \"verify-subagent-dispatch\": one of writer, editorial-review, code-review."`
 	Description string `json:"description,omitempty" jsonschema:"Task tool description string the main agent is about to submit. Required for action=\"verify-subagent-dispatch\"."`
 	Prompt      string `json:"prompt,omitempty"      jsonschema:"Task tool prompt string the main agent is about to submit. Required for action=\"verify-subagent-dispatch\"."`
+
+	// v39 Commit 5a — runtime classify lookup for recipe writer sub-agent.
+	// The classification-pointer atom in the writer brief directs the
+	// writer here for per-item override cases instead of inlining the full
+	// 11KB classification-taxonomy + routing-matrix atoms.
+	FactType      string `json:"factType,omitempty"      jsonschema:"Recipe classify action only: the fact's type (one of gotcha_candidate, ig_item_candidate, verified_behavior, platform_observation, fix_applied, cross_codebase_contract) — returned by zerops_record_fact when the writer reads back recorded facts."`
+	TitleKeywords string `json:"titleKeywords,omitempty" jsonschema:"Recipe classify action only: space-separated keywords lifted from the fact's title (e.g. 'setGlobalPrefix Controller decorators collision' or 'env-var shadow cross-service'). The classify handler inspects these for framework-quirk / self-inflicted / platform-invariant indicators. Not required; without keywords the handler returns the default route for the type alone."`
 }
 
 // immediateResponse is returned from immediate (stateless) workflows.
@@ -221,11 +228,17 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleRoute(ctx, engine, client, projectID, stateDir, selfHostname)
 	case "strategy":
 		return handleStrategy(input, stateDir, rt)
+	case "classify":
+		// v39 Commit 5a — per-item classify lookup for the recipe writer
+		// sub-agent. Replaces the inlined classification-taxonomy +
+		// routing-matrix atoms with a runtime response keyed on fact
+		// type + title keywords.
+		return handleRecipeClassify(input)
 	default:
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Unknown action %q", input.Action),
-			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, strategy, dispatch-brief-atom")), nil, nil
+			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, strategy, classify, dispatch-brief-atom")), nil, nil
 	}
 }
 

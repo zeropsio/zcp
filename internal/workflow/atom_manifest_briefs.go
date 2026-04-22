@@ -32,13 +32,14 @@ func briefAtoms() []Atom {
 		{ID: "briefs.feature.ux-quality", Path: "briefs/feature/ux-quality.md", Audience: fe, MaxLines: 80, TierCond: a},
 		{ID: "briefs.feature.completion-shape", Path: "briefs/feature/completion-shape.md", Audience: fe, MaxLines: 60, TierCond: a},
 
-		// briefs/writer/ (10 atoms)
+		// briefs/writer/ (11 atoms — classification-pointer added v39 Commit 5a)
 		{ID: "briefs.writer.mandatory-core", Path: "briefs/writer/mandatory-core.md", Audience: wr, MaxLines: 70, TierCond: a},
 		{ID: "briefs.writer.fresh-context-premise", Path: "briefs/writer/fresh-context-premise.md", Audience: wr, MaxLines: 80, TierCond: a},
 		{ID: "briefs.writer.canonical-output-tree", Path: "briefs/writer/canonical-output-tree.md", Audience: wr, MaxLines: 100, TierCond: a},
 		{ID: "briefs.writer.content-surface-contracts", Path: "briefs/writer/content-surface-contracts.md", Audience: wr, MaxLines: 260, TierCond: a},
 		{ID: "briefs.writer.classification-taxonomy", Path: "briefs/writer/classification-taxonomy.md", Audience: wr, MaxLines: 160, TierCond: a},
 		{ID: "briefs.writer.routing-matrix", Path: "briefs/writer/routing-matrix.md", Audience: wr, MaxLines: 120, TierCond: a},
+		{ID: "briefs.writer.classification-pointer", Path: "briefs/writer/classification-pointer.md", Audience: wr, MaxLines: 40, TierCond: a},
 		{ID: "briefs.writer.citation-map", Path: "briefs/writer/citation-map.md", Audience: wr, MaxLines: 160, TierCond: a},
 		{ID: "briefs.writer.manifest-contract", Path: "briefs/writer/manifest-contract.md", Audience: wr, MaxLines: 120, TierCond: a},
 		{ID: "briefs.writer.self-review-per-surface", Path: "briefs/writer/self-review-per-surface.md", Audience: wr, MaxLines: 130, TierCond: a},

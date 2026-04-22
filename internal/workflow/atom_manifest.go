@@ -155,19 +155,20 @@ func AtomsByAudience(audience string) []Atom {
 const PrinciplesPath = "principles/"
 
 // atomCountBaseline is the expected number of atoms when the manifest
-// matches atomic-layout.md §1 exactly. 121 = the sum of:
+// matches atomic-layout.md §1 exactly. 122 = the sum of:
 //
 //	66 phase atoms (research 3 + provision 13 + generate 24 + deploy 14 +
 //	   finalize 6 + close 6) — C-7.5 added close.editorial-review
-//	39 brief atoms (scaffold 8 + feature 6 + writer 10 + code-review 5 +
-//	   editorial-review 10)
+//	40 brief atoms (scaffold 8 + feature 6 + writer 11 + code-review 5 +
+//	   editorial-review 10) — v39 Commit 5a added writer.classification-
+//	   pointer (replaces inlined classification-taxonomy + routing-matrix)
 //	16 principle atoms (6 top-level + 6 platform-principles + 4 adjunct)
 //
 // Note: the "96 atoms" number that appears in atomic-layout.md §1 + the
 // rollout-sequence summary refers to an earlier research-phase snapshot
 // before the tree was expanded to per-substep entry/completion pairs. The
-// canonical count is the tree (121 post-C-7.5); the summary text is
+// canonical count is the tree (122 post-v39); the summary text is
 // advisory. C-3's seed test asserts the declared manifest matches this
 // baseline exactly — adding or removing an atom requires a deliberate
 // update to both the manifest and the constant.
-const atomCountBaseline = 121
+const atomCountBaseline = 122

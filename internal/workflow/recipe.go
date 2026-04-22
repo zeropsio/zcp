@@ -256,6 +256,15 @@ type RecipeResponse struct {
 	// succession). Omitted on non-start responses to keep payload size
 	// small — the main agent caches the list from start.
 	GuidanceTopicIDs []string `json:"guidanceTopicIds,omitempty"`
+	// StartingTodos (v39 Commit 5b) is the canonical step + sub-step
+	// breakdown the main agent pastes into its first TodoWrite call at
+	// session start. v38 showed 28 TodoWrite calls across one run — the
+	// main agent re-derived the substep sequence repeatedly after each
+	// context compaction. Publishing the canonical list once at start
+	// collapses the re-planning loop into paste-and-mark-done. Target:
+	// ≤ 5 TodoWrite calls per run (starter + periodic updates). Omitted
+	// on non-start responses.
+	StartingTodos []string `json:"startingTodos,omitempty"`
 }
 
 // RecipeProgress summarizes overall recipe progress.

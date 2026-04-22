@@ -191,14 +191,22 @@ func BuildFeatureDispatchBrief(plan *RecipePlan) (string, error) {
 // block). Exposed as a helper so Cx-BRIEF-OVERFLOW's envelope form can
 // name the atoms the main agent must retrieve individually when the
 // composed brief would exceed the MCP tool-response token cap.
+//
+// v39 Commit 5a — the 11KB classification-taxonomy + routing-matrix
+// atoms (6.3KB + 5.6KB) were replaced with the 1.5KB
+// classification-pointer atom that directs the writer to the runtime
+// zerops_workflow action=classify lookup for per-item override cases.
+// The taxonomy + routing tables stay embedded in the atom corpus so
+// the classify handler can read them directly (internal/content has no
+// build dependency on internal/workflow) but they no longer ship as
+// body bytes in every writer dispatch.
 func writerBriefBodyAtomIDs() []string {
 	return []string{
 		"briefs.writer.mandatory-core",
 		"briefs.writer.fresh-context-premise",
 		"briefs.writer.canonical-output-tree",
 		"briefs.writer.content-surface-contracts",
-		"briefs.writer.classification-taxonomy",
-		"briefs.writer.routing-matrix",
+		"briefs.writer.classification-pointer",
 		"briefs.writer.citation-map",
 		"briefs.writer.manifest-contract",
 		"briefs.writer.self-review-per-surface",
@@ -392,11 +400,15 @@ func featurePrinciples() []string {
 // writerPrinciples returns the principle atoms included in the writer
 // dispatch. The writer authors content; platform-invariant principles
 // are load-bearing for citation honesty.
+//
+// v39 Commit 5a — principles.fact-recording-discipline (4.5KB) removed.
+// The writer READS the facts log as structured input; recording facts
+// is the upstream agent's role. The atom stays in the corpus for other
+// principle-audience consumers but no longer ships in the writer brief.
 func writerPrinciples() []string {
 	return []string{
 		"principles.file-op-sequencing",
 		"principles.tool-use-policy",
-		"principles.fact-recording-discipline",
 		"principles.comment-style",
 		"principles.visual-style",
 	}

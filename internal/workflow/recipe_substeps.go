@@ -158,6 +158,78 @@ func closeSubSteps(plan *RecipePlan) []RecipeSubStep {
 	return steps
 }
 
+// BuildStartingTodos returns the canonical step + sub-step breakdown the
+// main agent pastes into its first TodoWrite call at session start. Each
+// entry is a single-line todo description the agent marks done as work
+// lands. The list includes every step the tier goes through plus the
+// full sub-step sequence for generate / deploy / close where applicable.
+//
+// v39 Commit 5b — published once on action=start workflow=recipe so the
+// main agent doesn't re-derive the substep sequence after every context
+// compaction (v38 showed 28 TodoWrite calls across one run; target ≤ 5).
+func BuildStartingTodos(tier string) []string {
+	todos := make([]string, 0, 32)
+	for _, d := range recipeStepDetails {
+		todos = append(todos, "Recipe step: "+d.Name)
+		subSteps := initSubStepsForStarterTodos(d.Name, tier)
+		for _, ss := range subSteps {
+			todos = append(todos, "  substep "+d.Name+"."+ss.Name)
+		}
+	}
+	return todos
+}
+
+// initSubStepsForStarterTodos mirrors initSubSteps but takes tier as a
+// string so the starter-todos builder doesn't need a live RecipePlan.
+// Close sub-steps fire for showcase only; minimal has none.
+func initSubStepsForStarterTodos(step, tier string) []RecipeSubStep {
+	switch step {
+	case RecipeStepGenerate:
+		return generateSubSteps()
+	case RecipeStepDeploy:
+		return deploySubStepsForTier(tier)
+	case RecipeStepClose:
+		return closeSubStepsForTier(tier)
+	default:
+		return nil
+	}
+}
+
+// deploySubStepsForTier is the tier-string variant of deploySubSteps —
+// mirrors its naming logic from a tier string instead of a RecipePlan.
+func deploySubStepsForTier(tier string) []RecipeSubStep {
+	names := []string{
+		SubStepDeployDev,
+		SubStepStartProcs,
+		SubStepVerifyDev,
+		SubStepInitCommands,
+	}
+	if tier == RecipeTierShowcase {
+		names = append(names, SubStepSubagent, SubStepSnapshotDev, SubStepFeatureSweepDev, SubStepBrowserWalk)
+	} else {
+		names = append(names, SubStepFeatureSweepDev)
+	}
+	names = append(names, SubStepCrossDeploy, SubStepVerifyStage, SubStepFeatureSweepStage, SubStepReadmes)
+	steps := make([]RecipeSubStep, len(names))
+	for i, n := range names {
+		steps[i] = RecipeSubStep{Name: n, Status: stepPending}
+	}
+	return steps
+}
+
+// closeSubStepsForTier is the tier-string variant of closeSubSteps.
+func closeSubStepsForTier(tier string) []RecipeSubStep {
+	if tier != RecipeTierShowcase {
+		return nil
+	}
+	names := []string{SubStepEditorialReview, SubStepCloseReview, SubStepCloseBrowserWalk}
+	steps := make([]RecipeSubStep, len(names))
+	for i, n := range names {
+		steps[i] = RecipeSubStep{Name: n, Status: stepPending}
+	}
+	return steps
+}
+
 // completeSubStep marks the current sub-step complete and advances to the next.
 // Returns the name of the next sub-step, or "" if all sub-steps are done.
 func (r *RecipeStep) completeSubStep(name, attestation string) (string, error) {

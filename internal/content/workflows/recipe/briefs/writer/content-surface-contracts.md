@@ -2,7 +2,7 @@
 
 Four content surfaces. Each has one reader, one purpose, one single-question test, one canonical shape, and one length range. An item that fails its surface's test is removed, not rewritten. The item fails because it is on the wrong surface; rewriting leaves it on the wrong surface.
 
-Surface contracts are declarative. Classification (atom: classification-taxonomy.md) decides the class of every fact; routing (atom: routing-matrix.md) turns class into surface; these contracts define what each surface accepts once a fact lands.
+Surface contracts are declarative. Classification + routing decisions are documented in the `classification-pointer` atom (above) and backed by the runtime classify lookup; these contracts define what each surface accepts once a fact lands. The "Pre-loaded input" section below carries annotated pass/fail examples per surface — pattern-match against them before publishing.
 
 ---
 
@@ -18,9 +18,7 @@ Shape: H3 headings inside the `integration-guide` fragment markers, each item st
 
 Length range: 3 to 6 H3 items. Beyond 6 and either repo-operations crept in (move to CLAUDE.md) or the author did not choose ruthlessly.
 
-Citation requirement: when the item's mechanism matches the Citation Map, read the guide before writing and reference the guide in the item body.
-
-Drop example — an H3 describing `api.ts`'s content-type check: `api.ts` is recipe scaffold; the porter has no `api.ts`. The underlying principle (bundler dev-server SPA fallback returns `200 text/html`) belongs here as a principle-level item with a code diff; the specific helper's implementation belongs in code comments instead.
+Citation requirement: when the item's mechanism matches the Citation Map, read the guide before writing and reference the guide in the item body. Every IG item whose manifest entry is routed to `content_ig` must carry at least one `citations` entry with a non-empty `guide_fetched_at` timestamp — the completion gate at `complete substep=readmes` refuses entries missing it.
 
 ---
 
@@ -46,15 +44,7 @@ The stem names an HTTP status, a quoted error string, a measurable wrong state �
 
 Length range: 3 to 6 bullets.
 
-Citation requirement: every gotcha whose topic matches the Citation Map MUST reference the cited platform topic in the body. A gotcha in a matching-topic area without a citation is folk-doctrine shipping.
-
-Drop examples:
-
-- Self-inflicted — "our seed script silently exited 0 and the execOnce key recorded success". The seed script was buggy; execOnce honored its contract. This is a code fix, not a gotcha.
-- Framework-only — `setGlobalPrefix('api')` colliding with `@Controller('api/...')` decorators. Pure framework fact; no Zerops involvement.
-- Tooling-metadata — peer-dep version mismatches from the package registry.
-- Scaffold-code rationale — "our helper catches the SPA fallback class of bug". The helper is recipe scaffold; the underlying principle belongs in the integration guide.
-- Restatement of an integration-guide item — if the IG teaches `forcePathStyle`, the gotcha must add value beyond the fix (the symptom, the error string, the quiet failure mode).
+Citation requirement: every gotcha whose topic matches the Citation Map MUST reference the cited platform topic in the body. Every gotcha manifest entry (`content_gotcha`) must also carry at least one `citations` entry with a non-empty `guide_fetched_at` timestamp — the completion gate at `complete substep=readmes` refuses entries missing it. A gotcha without a citation is folk-doctrine shipping. Concrete drop patterns (self-inflicted / framework-only / tooling-metadata / scaffold-code rationale / IG-restatement) are shipped as FAIL examples in the "Pre-loaded input" section — pattern-match against them, don't re-derive the list.
 
 ---
 
@@ -72,8 +62,6 @@ Length range: a substantive floor of 1200 bytes and at least 2 custom sections b
 
 Citation requirement: none; CLAUDE.md is repo-local and not published.
 
-Drop example — deploy instructions: those belong in integration-guide items and in `zerops.yaml` comments. Framework basics: the operator already knows the framework; CLAUDE.md is not a tutorial.
-
 ---
 
 ## Surface 4 — Env `import.yaml` comments (emitted via `env-comment-set` payload)
@@ -90,9 +78,7 @@ Length range: roughly 4 to 10 comment lines per service block; the env comment s
 
 Citation requirement: when the decision touches a topic on the Citation Map (env-var-model, rolling-deploys, object-storage, and so on), cite the platform topic name.
 
-Drop example — "enables zero-downtime rolling deploys" repeated word-for-word on every service block: each block has its own reasoning. Templated openings fail the test.
-
-**Factuality rule**: any number in your comment must match the adjacent YAML field exactly. If the YAML has `objectStorageSize: 1`, you may say "1 GB quota" but not "2 GB". If the YAML has no number you want to reference, use qualitative phrasing ("single-replica", "HA mode", "modest quota") — never invent a number from memory. The check enforces this: a numeric claim that contradicts the adjacent YAML fails with a detail of the form `comment claims "N <unit>" but adjacent YAML has <key>: M`. Subjunctive phrasing ("bump to 50 GB when usage grows") bypasses the check — use it for tier-promotion guidance, not for current-configuration assertions. Default to qualitative phrasing; earn the number by matching the YAML.
+**Factuality rule**: any number in your comment must match the adjacent YAML field exactly. Use qualitative phrasing ("single-replica", "HA mode", "modest quota") when the YAML has no number to match — never invent a number from memory. The check enforces this: a numeric claim that contradicts the adjacent YAML fails with a detail of the form `comment claims "N <unit>" but adjacent YAML has <key>: M`. Subjunctive phrasing ("bump to 50 GB when usage grows") bypasses the check — use it for tier-promotion guidance, not for current-configuration assertions. Default to qualitative phrasing; earn the number by matching the YAML.
 
 ---
 

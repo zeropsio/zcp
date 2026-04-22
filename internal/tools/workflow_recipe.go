@@ -98,6 +98,14 @@ func handleRecipeStart(ctx context.Context, projectID string, engine *workflow.E
 		}
 	}
 
+	// v39 Commit 5b — publish the canonical step + sub-step breakdown as
+	// starter todos. The main agent pastes this into its first TodoWrite
+	// call and marks items done as work lands; re-planning after context
+	// compaction becomes paste-from-this-list rather than re-derive. v38
+	// showed 28 TodoWrite calls across one run; the starter list collapses
+	// that to the initial paste + periodic updates.
+	resp.StartingTodos = workflow.BuildStartingTodos(tier)
+
 	return jsonResult(resp), nil, nil
 }
 
