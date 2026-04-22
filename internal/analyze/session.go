@@ -234,10 +234,19 @@ type writeCallRec struct {
 type checkResult struct {
 	Passed        bool
 	FailingChecks []string
+	// HasCheckResult is true when the response carried a top-level
+	// `checkResult` object at all. Distinguishes "response said the
+	// checks passed" (Passed=true, HasCheckResult=true) from
+	// "response had only progress + postCompletionSummary so
+	// `Passed` defaults to false even though the step succeeded"
+	// (Passed=false, HasCheckResult=false). B-20 / B-23 filter on
+	// HasCheckResult so they don't count progress-only responses
+	// as failing deploy completions.
+	HasCheckResult bool
 	// ProgressCloseComplete is true iff the same engine response
-	// carried `progress.steps.close.status == "complete"` — the
-	// secondary close-step-completion signal the v37 engine exposed
-	// even when checkResult was absent.
+	// carried a progress.steps entry for "close" with status=
+	// "complete" — the secondary close-step-completion signal the
+	// v37 engine exposed even when checkResult was absent.
 	ProgressCloseComplete bool
 }
 
@@ -253,9 +262,10 @@ type checkResult struct {
 // retrospective runs surfaced during harness validation.
 //
 // progress.steps[] is the v37 engine's secondary close-step-complete
-// signal: the response returns `{"progress":{"steps":{"close":{
-// "status":"complete"}}}}` even when no top-level checkResult object
-// accompanies it. The harness accepts either as proof of completion.
+// signal: the close-step response returns `{"progress":{"steps":[
+// {"name":"close","status":"complete"}]}}` even when no top-level
+// checkResult object accompanies it. The harness accepts either as
+// proof of completion.
 type workflowResult struct {
 	CheckResult struct {
 		Passed bool `json:"passed"`
@@ -265,10 +275,12 @@ type workflowResult struct {
 		} `json:"checks"`
 	} `json:"checkResult"`
 	Progress struct {
-		Steps map[string]struct {
+		Steps []struct {
+			Name   string `json:"name"`
 			Status string `json:"status"`
 		} `json:"steps"`
 	} `json:"progress"`
+	PostCompletionSummary string `json:"postCompletionSummary"`
 }
 
 // textBlock matches a single item inside a tool_result.content array.
@@ -328,7 +340,7 @@ func detectCloseStepCompletedAt(scan *SessionScan) string {
 		if !ok {
 			continue
 		}
-		if cr.Passed || cr.ProgressCloseComplete {
+		if (cr.HasCheckResult && cr.Passed) || cr.ProgressCloseComplete {
 			return wc.Timestamp
 		}
 	}
@@ -431,14 +443,20 @@ func decodeWorkflowResult(s string) (checkResult, bool) {
 	if err := json.Unmarshal([]byte(s), &wr); err != nil {
 		return checkResult{}, false
 	}
-	cr := checkResult{Passed: wr.CheckResult.Passed}
+	cr := checkResult{
+		Passed:         wr.CheckResult.Passed,
+		HasCheckResult: strings.Contains(s, "\"checkResult\""),
+	}
 	for _, c := range wr.CheckResult.Checks {
 		if c.Status != "pass" && c.Status != "" {
 			cr.FailingChecks = append(cr.FailingChecks, c.Name)
 		}
 	}
-	if step, ok := wr.Progress.Steps["close"]; ok && step.Status == "complete" {
-		cr.ProgressCloseComplete = true
+	for _, step := range wr.Progress.Steps {
+		if step.Name == "close" && step.Status == "complete" {
+			cr.ProgressCloseComplete = true
+			break
+		}
 	}
 	return cr, true
 }
@@ -460,6 +478,11 @@ func CheckDeployReadmesRetryRounds(scan *SessionScan, threshold int) BarResult {
 		}
 		cr, ok := scan.CheckResultsByCallID[wc.ID]
 		if !ok {
+			continue
+		}
+		// Progress-only responses default to Passed=false; they are not
+		// failing deploy completions — skip them.
+		if !cr.HasCheckResult {
 			continue
 		}
 		if !cr.Passed {
@@ -562,7 +585,7 @@ func CheckWriterFirstPassFailures(scan *SessionScan, threshold int) BarResult {
 			continue
 		}
 		cr, ok := scan.CheckResultsByCallID[wc.ID]
-		if !ok || cr.Passed {
+		if !ok || !cr.HasCheckResult || cr.Passed {
 			continue
 		}
 		distinct := uniqueNames(cr.FailingChecks)

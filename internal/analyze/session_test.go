@@ -255,7 +255,7 @@ func TestCloseStepCompleted_RecognisesProgressSteps(t *testing.T) {
 		assistantToolUse("c1", "mcp__zerops__zerops_workflow", `{"action":"complete","step":"close"}`),
 		// Response carries progress.steps[] but NO checkResult — mirrors
 		// the v37 engine response at 21:48:39Z.
-		userToolResult("c1", `[{"type":"text","text":"{\"progress\":{\"steps\":{\"close\":{\"status\":\"complete\"}}}}"}]`),
+		userToolResult("c1", `[{"type":"text","text":"{\"progress\":{\"steps\":[{\"name\":\"close\",\"status\":\"complete\"}]}}"}]`),
 	}
 	dir := writeMainSession(t, records)
 	scan, err := ScanSessions(dir)
