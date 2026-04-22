@@ -8,10 +8,28 @@ import (
 )
 
 // Plan mode constants.
+//
+// Container-env modes describe the topology of Zerops-side services:
+//   - PlanModeStandard: dev + stage pair on Zerops, dev is primary.
+//   - PlanModeDev:      single dev-flavored container.
+//   - PlanModeSimple:   single prod-flavored container (has healthCheck).
+//
+// Local-env modes describe what ZCP is tracking for a local-dev project.
+// The user's working directory is always the dev surface; ZCP never
+// creates a "local-dev service" — it just records whether a Zerops-side
+// stage runtime is linked or not.
+//   - PlanModeLocalStage: user's dir + one Zerops runtime linked as stage.
+//     Meta.Hostname = Zerops project name,
+//     Meta.StageHostname = Zerops runtime hostname.
+//   - PlanModeLocalOnly:  user's dir only; no Zerops runtime linked.
+//     Meta.Hostname = Zerops project name,
+//     Meta.StageHostname = "".
 const (
-	PlanModeStandard = "standard"
-	PlanModeDev      = "dev"
-	PlanModeSimple   = "simple"
+	PlanModeStandard   = "standard"
+	PlanModeDev        = "dev"
+	PlanModeSimple     = "simple"
+	PlanModeLocalStage = "local-stage"
+	PlanModeLocalOnly  = "local-only"
 )
 
 // StepDetail defines a bootstrap step's metadata.

@@ -114,6 +114,11 @@ func bootstrapHint(sessions []SessionEntry) string {
 
 // filterStaleMetas returns only metas whose Hostname appears in liveServices.
 // If liveServices is empty, returns all metas (no filtering).
+//
+// Local-env metas (Mode = local-stage / local-only) are always retained —
+// their Hostname is the Zerops project name, which is never a platform
+// service hostname and would otherwise always be filtered out. Stage
+// linkage for local-stage is separately checked via StageHostname.
 func filterStaleMetas(metas []*ServiceMeta, liveServices []string) []*ServiceMeta {
 	if len(liveServices) == 0 {
 		return metas
@@ -124,6 +129,10 @@ func filterStaleMetas(metas []*ServiceMeta, liveServices []string) []*ServiceMet
 	}
 	var result []*ServiceMeta
 	for _, m := range metas {
+		if m.Mode == PlanModeLocalStage || m.Mode == PlanModeLocalOnly {
+			result = append(result, m)
+			continue
+		}
 		if live[m.Hostname] {
 			result = append(result, m)
 		}

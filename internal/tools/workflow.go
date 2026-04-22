@@ -77,6 +77,12 @@ type WorkflowInput struct {
 	// response token cap. See Cx-BRIEF-OVERFLOW / defect-class-registry
 	// §16.1. Fully-qualified dot-path, e.g. "briefs.writer.manifest-contract".
 	AtomID string `json:"atomId,omitempty" jsonschema:"Dispatch-brief atom identifier for action=\"dispatch-brief-atom\". Fully-qualified dot-path (e.g. 'briefs.writer.manifest-contract'). Retrieved from the envelope listed in a substep guide when the composed dispatch brief exceeds the MCP response cap."`
+
+	// TargetService is used by action="adopt-local" to specify which
+	// Zerops runtime service should be linked as this local project's
+	// stage. Resolves the ambiguity surfaced by auto-adopt when multiple
+	// runtimes exist in the project.
+	TargetService string `json:"targetService,omitempty" jsonschema:"Runtime service hostname to link as stage for action=\"adopt-local\" (local env only). Must be a live runtime service in the project — not a managed service."`
 }
 
 // immediateResponse is returned from immediate (stateless) workflows.
@@ -209,11 +215,13 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleRoute(ctx, engine, client, projectID, stateDir, selfHostname)
 	case "strategy":
 		return handleStrategy(input, stateDir, rt)
+	case "adopt-local":
+		return handleAdoptLocal(ctx, client, projectID, stateDir, input, rt)
 	default:
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Unknown action %q", input.Action),
-			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, strategy, dispatch-brief-atom")), nil, nil
+			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, strategy, adopt-local, dispatch-brief-atom")), nil, nil
 	}
 }
 
