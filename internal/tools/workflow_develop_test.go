@@ -27,7 +27,6 @@ func TestHandleDevelopBriefing_UnsetStrategy_NeverDeployed_CreatesWorkSession_Fi
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             workflow.PlanModeDev,
-		Environment:      string(workflow.EnvContainer),
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-18",
 	}); err != nil {
@@ -81,7 +80,6 @@ func TestHandleDevelopBriefing_UnsetStrategy_Deployed_StrategyReview(t *testing.
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             workflow.PlanModeDev,
-		Environment:      string(workflow.EnvContainer),
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-18",
 		FirstDeployedAt:  "2026-04-19T10:00:00Z",
@@ -138,7 +136,6 @@ func TestHandleDevelopBriefing_ConfirmedStrategy_Deployed_NoReview(t *testing.T)
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:          "appdev",
 		Mode:              workflow.PlanModeDev,
-		Environment:       string(workflow.EnvContainer),
 		DeployStrategy:    workflow.StrategyPushDev,
 		StrategyConfirmed: true,
 		BootstrapSession:  "sess1",
@@ -199,7 +196,6 @@ func TestHandleDevelopBriefing_MultiStack_ScopeHonorsInput(t *testing.T) {
 		if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 			Hostname:         h,
 			Mode:             workflow.PlanModeStandard,
-			Environment:      string(workflow.EnvContainer),
 			BootstrapSession: "laravel-sess",
 			BootstrappedAt:   "2026-04-10",
 		}); err != nil {
@@ -211,7 +207,6 @@ func TestHandleDevelopBriefing_MultiStack_ScopeHonorsInput(t *testing.T) {
 		if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 			Hostname:         h,
 			Mode:             workflow.PlanModeStandard,
-			Environment:      string(workflow.EnvContainer),
 			BootstrapSession: "fizzy-sess",
 			BootstrappedAt:   "2026-04-21",
 		}); err != nil {
@@ -263,7 +258,6 @@ func TestHandleDevelopBriefing_MissingScope_Rejected(t *testing.T) {
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             workflow.PlanModeDev,
-		Environment:      string(workflow.EnvContainer),
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-18",
 	}); err != nil {
@@ -305,7 +299,6 @@ func TestHandleDevelopBriefing_UnknownHostInScope_Rejected(t *testing.T) {
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             workflow.PlanModeDev,
-		Environment:      string(workflow.EnvContainer),
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-18",
 	}); err != nil {
@@ -344,7 +337,6 @@ func TestHandleDevelopBriefing_NewIntent_AutoClosesPrior(t *testing.T) {
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             workflow.PlanModeDev,
-		Environment:      string(workflow.EnvContainer),
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-18",
 	}); err != nil {
@@ -408,7 +400,6 @@ func TestHandleDevelopBriefing_SameIntent_Idempotent(t *testing.T) {
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             workflow.PlanModeDev,
-		Environment:      string(workflow.EnvContainer),
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-18",
 	}); err != nil {

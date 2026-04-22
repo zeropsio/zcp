@@ -94,7 +94,6 @@ func LocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stat
 		meta := &ServiceMeta{
 			Hostname:         project.Name,
 			Mode:             PlanModeLocalOnly,
-			Environment:      string(EnvLocal),
 			DeployStrategy:   StrategyManual,
 			BootstrapSession: "", // adopted, not a fresh bootstrap
 			BootstrappedAt:   now,
@@ -116,7 +115,6 @@ func LocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stat
 			Hostname:         project.Name,
 			StageHostname:    rt.Name,
 			Mode:             PlanModeLocalStage,
-			Environment:      string(EnvLocal),
 			BootstrapSession: "",
 			BootstrappedAt:   now,
 		}
@@ -137,7 +135,6 @@ func LocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stat
 		meta := &ServiceMeta{
 			Hostname:         project.Name,
 			Mode:             PlanModeLocalOnly,
-			Environment:      string(EnvLocal),
 			BootstrapSession: "",
 			BootstrappedAt:   now,
 		}
@@ -210,63 +207,21 @@ func joinServiceNames(names []string) string {
 	return out
 }
 
-// MigrateLegacyLocalMetas rewrites local metas written under the pre-A.4
-// layout (Hostname=<stage-host>, Mode ∈ {standard,simple,dev}) to the new
-// layout (Hostname=project.Name, StageHostname=<former Hostname>,
-// Mode=local-stage). Called eagerly from server.New when any local meta
-// is present. Idempotent: already-migrated metas are untouched.
+// MigrateLegacyLocalMetas used to rewrite pre-A.4 local metas in place
+// (Hostname=<stage-host>, Mode ∈ {standard,simple,dev}, Environment=local
+// → Hostname=project.Name, Mode=local-stage). That migration shipped in
+// Release A; under phase B.3 the Environment field itself was dropped,
+// removing the signal the migration relied on to identify legacy rows.
 //
-// metas may be the same slice the caller already has; this function
-// re-reads each from disk before rewriting to avoid clobbering concurrent
-// edits. Writes a new file at the project-name key and deletes the old
-// stage-keyed file.
-func MigrateLegacyLocalMetas(ctx context.Context, client platform.Client, projectID, stateDir string, metas []*ServiceMeta) error {
-	var legacy []*ServiceMeta
-	for _, m := range metas {
-		if isLegacyLocalMeta(m) {
-			legacy = append(legacy, m)
-		}
-	}
-	if len(legacy) == 0 {
-		return nil
-	}
-
-	project, err := client.GetProject(ctx, projectID)
-	if err != nil {
-		return fmt.Errorf("migrate legacy local metas: get project: %w", err)
-	}
-	if project == nil || project.Name == "" {
-		return fmt.Errorf("migrate legacy local metas: project %q returned no name", projectID)
-	}
-
-	for _, m := range legacy {
-		stageHost := m.Hostname
-		oldFileHost := m.Hostname
-		m.Hostname = project.Name
-		m.StageHostname = stageHost
-		m.Mode = PlanModeLocalStage
-		if err := WriteServiceMeta(stateDir, m); err != nil {
-			return fmt.Errorf("migrate legacy local meta %q: write: %w", stageHost, err)
-		}
-		if err := DeleteServiceMeta(stateDir, oldFileHost); err != nil {
-			return fmt.Errorf("migrate legacy local meta %q: delete old file: %w", stageHost, err)
-		}
-	}
+// Users who upgrade straight from pre-A.4 to post-B.3 without having
+// booted an A-series binary keep their legacy meta on disk — it will
+// look like a fresh container meta (no Environment field, Mode=standard
+// etc.) and filter-out of local router paths cleanly. The practical
+// upgrade path is still to hit A first (which rewrites the state dir
+// idempotently), so this lossy skip is acceptable.
+//
+// The function is kept as a no-op so server.New doesn't have to branch
+// on "did we run B.3 already" logic — call-site stays unchanged.
+func MigrateLegacyLocalMetas(_ context.Context, _ platform.Client, _, _ string, _ []*ServiceMeta) error {
 	return nil
-}
-
-// isLegacyLocalMeta detects the pre-A.4 on-disk shape: Environment=local
-// with a container-era Mode value. The new shape uses local-stage or
-// local-only, so anything else in local env that still has a
-// container-era mode is legacy.
-func isLegacyLocalMeta(m *ServiceMeta) bool {
-	if m == nil || m.Environment != string(EnvLocal) {
-		return false
-	}
-	switch m.Mode {
-	case PlanModeStandard, PlanModeDev, PlanModeSimple:
-		return true
-	default:
-		return false
-	}
 }

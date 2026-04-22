@@ -213,7 +213,6 @@ func TestListServiceMetas_SameDeserializationAsRead(t *testing.T) {
 		Mode:             "standard",
 		StageHostname:    "appstage",
 		DeployStrategy:   StrategyPushGit,
-		Environment:      "container",
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
 	}
@@ -246,9 +245,6 @@ func TestListServiceMetas_SameDeserializationAsRead(t *testing.T) {
 	}
 	if single.DeployStrategy != list[0].DeployStrategy {
 		t.Errorf("DeployStrategy: Read=%q List=%q", single.DeployStrategy, list[0].DeployStrategy)
-	}
-	if single.Environment != list[0].Environment {
-		t.Errorf("Environment: Read=%q List=%q", single.Environment, list[0].Environment)
 	}
 	if single.BootstrapSession != list[0].BootstrapSession {
 		t.Errorf("BootstrapSession: Read=%q List=%q", single.BootstrapSession, list[0].BootstrapSession)
@@ -682,39 +678,42 @@ func TestServiceMeta_PrimaryRole(t *testing.T) {
 	}{
 		{
 			"container_standard_returns_dev",
-			ServiceMeta{Hostname: "appdev", Mode: PlanModeStandard, StageHostname: "appstage", Environment: string(EnvContainer)},
+			ServiceMeta{Hostname: "appdev", Mode: PlanModeStandard, StageHostname: "appstage"},
 			DeployRoleDev,
 		},
 		{
 			"container_dev_returns_dev",
-			ServiceMeta{Hostname: "appdev", Mode: PlanModeDev, Environment: string(EnvContainer)},
+			ServiceMeta{Hostname: "appdev", Mode: PlanModeDev},
 			DeployRoleDev,
 		},
 		{
 			"container_simple_returns_simple",
-			ServiceMeta{Hostname: "app", Mode: PlanModeSimple, Environment: string(EnvContainer)},
+			ServiceMeta{Hostname: "app", Mode: PlanModeSimple},
 			DeployRoleSimple,
 		},
 		{
-			// Local+standard stores the stage hostname at m.Hostname because dev
-			// doesn't exist locally. Primary role is therefore stage, not dev.
-			"local_standard_returns_stage",
-			ServiceMeta{Hostname: "appstage", Mode: PlanModeStandard, Environment: string(EnvLocal)},
-			DeployRoleStage,
+			// Phase B.5 follow-up: local+standard is no longer a valid
+			// combination on disk (local metas use local-stage / local-only
+			// exclusively). The old Environment+Mode special case in
+			// PrimaryRole is gone; a meta labelled standard always projects
+			// as container-standard's dev half.
+			"local_stage_returns_stage",
+			ServiceMeta{Hostname: "myproject", StageHostname: "appstage", Mode: PlanModeLocalStage},
+			DeployRoleDev,
 		},
 		{
 			"local_dev_returns_dev",
-			ServiceMeta{Hostname: "appdev", Mode: PlanModeDev, Environment: string(EnvLocal)},
+			ServiceMeta{Hostname: "appdev", Mode: PlanModeDev},
 			DeployRoleDev,
 		},
 		{
 			"local_simple_returns_simple",
-			ServiceMeta{Hostname: "app", Mode: PlanModeSimple, Environment: string(EnvLocal)},
+			ServiceMeta{Hostname: "app", Mode: PlanModeSimple},
 			DeployRoleSimple,
 		},
 		{
 			"empty_mode_defaults_to_standard",
-			ServiceMeta{Hostname: "appdev", StageHostname: "appstage", Environment: string(EnvContainer)},
+			ServiceMeta{Hostname: "appdev", StageHostname: "appstage"},
 			DeployRoleDev,
 		},
 	}
@@ -732,7 +731,6 @@ func TestServiceMeta_RoleFor(t *testing.T) {
 	t.Parallel()
 	meta := ServiceMeta{
 		Hostname: "appdev", Mode: PlanModeStandard, StageHostname: "appstage",
-		Environment: string(EnvContainer),
 	}
 	tests := []struct {
 		hostname string
@@ -763,7 +761,6 @@ func TestServiceMeta_Hostnames(t *testing.T) {
 		{"dev_only", ServiceMeta{Hostname: "appdev"}, []string{"appdev"}},
 		{"dev_and_stage", ServiceMeta{Hostname: "appdev", StageHostname: "appstage"}, []string{"appdev", "appstage"}},
 		{"simple", ServiceMeta{Hostname: "app"}, []string{"app"}},
-		{"local_standard_only_stage", ServiceMeta{Hostname: "appstage", Environment: string(EnvLocal), Mode: PlanModeStandard}, []string{"appstage"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

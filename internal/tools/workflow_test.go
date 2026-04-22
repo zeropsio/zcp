@@ -402,7 +402,6 @@ func TestWorkflowTool_Action_Reset_PreservesCompleteMetas(t *testing.T) {
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             workflow.PlanModeDev,
-		Environment:      string(workflow.EnvContainer),
 		BootstrapSession: "old-sess",
 		BootstrappedAt:   "2026-04-10",
 	}); err != nil {

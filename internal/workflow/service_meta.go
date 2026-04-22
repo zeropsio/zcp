@@ -41,7 +41,6 @@ type ServiceMeta struct {
 	DeployStrategy    DeployStrategy `json:"deployStrategy,omitempty"`
 	PushGitTrigger    PushGitTrigger `json:"pushGitTrigger,omitempty"`    // valid only when DeployStrategy==push-git
 	StrategyConfirmed bool           `json:"strategyConfirmed,omitempty"` // true after user explicitly confirms/sets strategy
-	Environment       string         `json:"environment,omitempty"`       // "container" or "local" — dropped in phase B.3
 	BootstrapSession  string         `json:"bootstrapSession"`
 	BootstrappedAt    string         `json:"bootstrappedAt"`
 	FirstDeployedAt   string         `json:"firstDeployedAt,omitempty"` // stamped on first observed deploy — via session or adoption
@@ -80,15 +79,14 @@ func (m *ServiceMeta) Hostnames() []string {
 }
 
 // PrimaryRole returns the deploy role of m.Hostname.
-// Encapsulates the mode+environment+stage lookup so callers don't re-derive it.
+// Encapsulates the mode→role lookup so callers don't re-derive it.
+// Local topologies (local-stage / local-only) are project-keyed — they
+// have no per-service deploy role; callers should use StageHostname
+// directly for deploys on local-stage.
 func (m *ServiceMeta) PrimaryRole() Mode {
 	mode := m.Mode
 	if mode == "" {
 		mode = PlanModeStandard
-	}
-	// Local+standard: m.Hostname holds the stage hostname (dev doesn't exist locally).
-	if m.Environment == string(EnvLocal) && mode == PlanModeStandard {
-		return DeployRoleStage
 	}
 	switch mode {
 	case PlanModeDev:

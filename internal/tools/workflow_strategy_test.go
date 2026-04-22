@@ -292,7 +292,6 @@ func TestHandleStrategy_PushGit_SynthSetup(t *testing.T) {
 			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 				Hostname:       "appdev",
 				Mode:           workflow.PlanModeDev,
-				Environment:    string(workflow.EnvContainer),
 				BootstrappedAt: "2026-04-05",
 			}); err != nil {
 				t.Fatalf("write meta: %v", err)

@@ -54,7 +54,6 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 			Mode:             mode,
 			StageHostname:    stageHostname,
 			DeployStrategy:   "",
-			Environment:      string(e.environment),
 			BootstrapSession: bootstrapSession,
 			BootstrappedAt:   now,
 		}
@@ -110,7 +109,6 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 			Hostname:         metaHostname,
 			Mode:             target.Runtime.EffectiveMode(),
 			StageHostname:    stageHostname,
-			Environment:      string(e.environment),
 			BootstrapSession: bootstrapSession,
 		}
 

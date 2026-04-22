@@ -902,64 +902,12 @@ func TestBuildTransitionMessage_Adoption_NoHelloWorld(t *testing.T) {
 	}
 }
 
-func TestWriteBootstrapOutputs_EnvironmentField(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name    string
-		env     Environment
-		wantEnv string
-	}{
-		{
-			name:    "container mode sets environment=container",
-			env:     EnvContainer,
-			wantEnv: "container",
-		},
-		{
-			name:    "local mode sets environment=local",
-			env:     EnvLocal,
-			wantEnv: "local",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			dir := t.TempDir()
-			eng := NewEngine(dir, tt.env, nil)
-
-			_, err := eng.BootstrapStart("proj-1", "test")
-			if err != nil {
-				t.Fatalf("BootstrapStart: %v", err)
-			}
-			_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-				Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
-			}}, nil, nil)
-			if err != nil {
-				t.Fatalf("BootstrapCompletePlan: %v", err)
-			}
-			for _, step := range []string{"provision", "close"} {
-				if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
-					t.Fatalf("BootstrapComplete(%s): %v", step, err)
-				}
-			}
-
-			// In local mode, meta hostname = appstage (stage), not appdev.
-			metaHostname := "appdev"
-			if tt.env == EnvLocal {
-				metaHostname = "appstage"
-			}
-			meta, err := ReadServiceMeta(dir, metaHostname)
-			if err != nil {
-				t.Fatalf("ReadServiceMeta(%s): %v", metaHostname, err)
-			}
-			if meta == nil {
-				t.Fatalf("expected %s meta to exist", metaHostname)
-			}
-			if meta.Environment != tt.wantEnv {
-				t.Errorf("Environment = %q, want %q", meta.Environment, tt.wantEnv)
-			}
-		})
-	}
-}
+// TestWriteBootstrapOutputs_EnvironmentField was deleted in phase B.3:
+// the Environment field on ServiceMeta is gone (environment is runtime-
+// detected, not persisted). The env-specific meta shape — standard dev
+// keyed vs. local stage keyed — is covered by the
+// _LocalMode_HostnameIsStage test below, which asserts the disk layout
+// without relying on the removed field.
 
 func TestWriteBootstrapOutputs_LocalMode_HostnameIsStage(t *testing.T) {
 	t.Parallel()
@@ -1180,7 +1128,6 @@ func TestWriteBootstrapOutputs_ExpansionPreservesExistingFields(t *testing.T) {
 	existing := &ServiceMeta{
 		Hostname:          "appdev",
 		Mode:              PlanModeDev,
-		Environment:       string(EnvContainer),
 		BootstrapSession:  "original-sess",
 		BootstrappedAt:    "2026-01-15",
 		DeployStrategy:    StrategyPushGit,
@@ -1258,7 +1205,6 @@ func TestWriteProvisionMetas_ExpansionPreservesExistingFields(t *testing.T) {
 	existing := &ServiceMeta{
 		Hostname:          "appdev",
 		Mode:              PlanModeDev,
-		Environment:       string(EnvContainer),
 		BootstrapSession:  "earlier",
 		BootstrappedAt:    "2026-02-01",
 		DeployStrategy:    StrategyPushDev,
@@ -1325,7 +1271,6 @@ func TestMergeExistingMeta(t *testing.T) {
 		Hostname:      "appdev",
 		Mode:          PlanModeStandard, // upgrade
 		StageHostname: "appstage",       // upgrade
-		Environment:   string(EnvContainer),
 	}
 	existing := &ServiceMeta{
 		Hostname:          "appdev",

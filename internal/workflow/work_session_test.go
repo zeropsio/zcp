@@ -271,7 +271,6 @@ func TestRecordDeployAttempt_StampsViaStageHostname(t *testing.T) {
 		Hostname:         "appdev",
 		StageHostname:    "appstage",
 		Mode:             PlanModeStandard,
-		Environment:      string(EnvContainer),
 		BootstrappedAt:   "2026-04-18T10:00:00Z",
 		BootstrapSession: "sess-1",
 	}

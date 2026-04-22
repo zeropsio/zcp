@@ -161,7 +161,6 @@ func TestHandleAdoptLocal_LinksRuntime_UpgradesMode(t *testing.T) {
 	dir := t.TempDir()
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname: "myproject", Mode: workflow.PlanModeLocalOnly,
-		Environment:    string(workflow.EnvLocal),
 		BootstrappedAt: "2026-04-01",
 		DeployStrategy: workflow.StrategyManual,
 	}); err != nil {

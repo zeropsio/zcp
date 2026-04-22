@@ -268,14 +268,16 @@ func TestFormatAdoptionNote_Shapes(t *testing.T) {
 	}
 }
 
-// TestMigrateLegacyLocalMetas rewrites pre-A.4 shape to the new layout.
-func TestMigrateLegacyLocalMetas_RewritesShape(t *testing.T) {
+// TestMigrateLegacyLocalMetas_IsNoop pins the phase B.3 contract: the
+// migration function no longer rewrites anything. The signal it used
+// (ServiceMeta.Environment == "local") disappeared with the field, so
+// legacy-shape metas on disk pass through unchanged and the caller
+// signature stays stable. Detail: see adopt_local.go comment.
+func TestMigrateLegacyLocalMetas_IsNoop(t *testing.T) {
 	dir := t.TempDir()
-	// Legacy shape: Hostname=<stage-host>, Environment=local, Mode=standard.
 	legacy := &ServiceMeta{
 		Hostname:          "appstage",
 		Mode:              PlanModeStandard,
-		Environment:       string(EnvLocal),
 		BootstrappedAt:    "2026-01-01",
 		DeployStrategy:    StrategyPushDev,
 		StrategyConfirmed: true,
@@ -283,80 +285,16 @@ func TestMigrateLegacyLocalMetas_RewritesShape(t *testing.T) {
 	if err := WriteServiceMeta(dir, legacy); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
-
-	mock := platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "myproject"})
-
-	metas, _ := ListServiceMetas(dir)
-	if err := MigrateLegacyLocalMetas(context.Background(), mock, "p1", dir, metas); err != nil {
-		t.Fatalf("MigrateLegacyLocalMetas: %v", err)
-	}
-
-	// New-shape file exists, keyed by project name.
-	got, err := ReadServiceMeta(dir, "myproject")
-	if err != nil || got == nil {
-		t.Fatalf("new-shape meta missing: got=%+v err=%v", got, err)
-	}
-	if got.Mode != PlanModeLocalStage {
-		t.Errorf("Mode = %q, want local-stage", got.Mode)
-	}
-	if got.Hostname != "myproject" {
-		t.Errorf("Hostname = %q, want project name", got.Hostname)
-	}
-	if got.StageHostname != "appstage" {
-		t.Errorf("StageHostname = %q, want appstage", got.StageHostname)
-	}
-	// User-authored fields preserved.
-	if got.DeployStrategy != StrategyPushDev {
-		t.Errorf("DeployStrategy lost: got %q", got.DeployStrategy)
-	}
-	if !got.StrategyConfirmed {
-		t.Error("StrategyConfirmed lost")
-	}
-
-	// Old-shape file deleted.
-	old, _ := ReadServiceMeta(dir, "appstage")
-	if old != nil {
-		t.Errorf("old stage-keyed meta should be deleted; still present: %+v", old)
-	}
-}
-
-// Idempotent: second run on already-migrated state is a no-op.
-func TestMigrateLegacyLocalMetas_Idempotent(t *testing.T) {
-	dir := t.TempDir()
-	if err := WriteServiceMeta(dir, &ServiceMeta{
-		Hostname: "myproject", Mode: PlanModeLocalStage, StageHostname: "appstage",
-		Environment: string(EnvLocal), BootstrappedAt: "2026-01-01",
-	}); err != nil {
-		t.Fatalf("WriteServiceMeta: %v", err)
-	}
-
-	mock := platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "myproject"})
-	metas, _ := ListServiceMetas(dir)
-	if err := MigrateLegacyLocalMetas(context.Background(), mock, "p1", dir, metas); err != nil {
-		t.Fatalf("MigrateLegacyLocalMetas (second run): %v", err)
-	}
-	got, _ := ReadServiceMeta(dir, "myproject")
-	if got == nil || got.Mode != PlanModeLocalStage || got.StageHostname != "appstage" {
-		t.Errorf("migration clobbered already-migrated meta: %+v", got)
-	}
-}
-
-// Container metas are not touched by the migration.
-func TestMigrateLegacyLocalMetas_IgnoresContainerMetas(t *testing.T) {
-	dir := t.TempDir()
-	if err := WriteServiceMeta(dir, &ServiceMeta{
-		Hostname: "appdev", Mode: PlanModeStandard, StageHostname: "appstage",
-		Environment: string(EnvContainer), BootstrappedAt: "2026-01-01",
-	}); err != nil {
-		t.Fatalf("WriteServiceMeta: %v", err)
-	}
 	mock := platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "myproject"})
 	metas, _ := ListServiceMetas(dir)
 	if err := MigrateLegacyLocalMetas(context.Background(), mock, "p1", dir, metas); err != nil {
 		t.Fatalf("MigrateLegacyLocalMetas: %v", err)
 	}
-	got, _ := ReadServiceMeta(dir, "appdev")
+	got, _ := ReadServiceMeta(dir, "appstage")
 	if got == nil || got.Mode != PlanModeStandard {
-		t.Errorf("container meta rewritten: %+v", got)
+		t.Errorf("migration should be a no-op post-B.3; got %+v", got)
+	}
+	if missing, _ := ReadServiceMeta(dir, "myproject"); missing != nil {
+		t.Errorf("migration should not create new project-keyed meta; got %+v", missing)
 	}
 }
