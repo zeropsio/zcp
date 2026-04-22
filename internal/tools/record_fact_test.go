@@ -83,3 +83,102 @@ func TestRecordFact_RequiresActiveSession(t *testing.T) {
 		t.Errorf("expected session error, got: %s", text)
 	}
 }
+
+// TestRecordFact_NudgeOnMissingRouteTo — v39 Commit 4. When the caller
+// records a fact without passing routeTo, the response includes a nudge
+// naming the inferred default route so the caller can confirm or
+// override. Not a refusal; the fact is still appended.
+func TestRecordFact_NudgeOnMissingRouteTo(t *testing.T) {
+	t.Parallel()
+	engine := testEngine(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterRecordFact(srv, engine)
+
+	result := callTool(t, srv, "zerops_record_fact", map[string]any{
+		"type":  ops.FactTypeGotchaCandidate,
+		"title": "execOnce silently no-ops when migration command exits 0 without SQL",
+	})
+	if result.IsError {
+		t.Fatalf("nudge must not turn into refusal; got error result: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	if !strings.Contains(strings.ToLower(text), "nudge") {
+		t.Errorf("expected nudge-prefixed message, got: %s", text)
+	}
+	if !strings.Contains(text, ops.FactRouteToContentGotcha) {
+		t.Errorf("expected inferred route %q in nudge, got: %s", ops.FactRouteToContentGotcha, text)
+	}
+
+	// Fact must still be persisted — nudge is advisory.
+	facts, err := ops.ReadFacts(ops.FactLogPath(engine.SessionID()))
+	if err != nil {
+		t.Fatalf("read facts: %v", err)
+	}
+	if len(facts) != 1 {
+		t.Fatalf("want 1 fact recorded, got %d", len(facts))
+	}
+	if facts[0].RouteTo != "" {
+		t.Errorf("persisted RouteTo should remain empty when caller didn't set it, got %q", facts[0].RouteTo)
+	}
+}
+
+// TestRecordFact_RouteToPassthrough — when the caller supplies routeTo
+// explicitly, it's persisted on the FactRecord and no nudge appears.
+func TestRecordFact_RouteToPassthrough(t *testing.T) {
+	t.Parallel()
+	engine := testEngine(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterRecordFact(srv, engine)
+
+	result := callTool(t, srv, "zerops_record_fact", map[string]any{
+		"type":    ops.FactTypeIGItemCandidate,
+		"title":   "bind 0.0.0.0 for L7 balancer reachability",
+		"routeTo": ops.FactRouteToContentIG,
+	})
+	if result.IsError {
+		t.Fatalf("tool returned error: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	if strings.Contains(strings.ToLower(text), "nudge") {
+		t.Errorf("nudge should not fire when routeTo is set; got: %s", text)
+	}
+
+	facts, err := ops.ReadFacts(ops.FactLogPath(engine.SessionID()))
+	if err != nil {
+		t.Fatalf("read facts: %v", err)
+	}
+	if len(facts) != 1 {
+		t.Fatalf("want 1 fact recorded, got %d", len(facts))
+	}
+	if facts[0].RouteTo != ops.FactRouteToContentIG {
+		t.Errorf("persisted RouteTo = %q, want %q", facts[0].RouteTo, ops.FactRouteToContentIG)
+	}
+}
+
+// TestRecordFact_InferLikelyRouteTo covers the type → route mapping so
+// the nudge message stays accurate if new FactType constants are added
+// and inferLikelyRouteTo needs to pick up a new case.
+func TestRecordFact_InferLikelyRouteTo(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		factType string
+		want     string
+	}{
+		{ops.FactTypeGotchaCandidate, ops.FactRouteToContentGotcha},
+		{ops.FactTypeIGItemCandidate, ops.FactRouteToContentIG},
+		{ops.FactTypeCrossCodebaseContract, ops.FactRouteToContentIG},
+		{ops.FactTypeFixApplied, ops.FactRouteToContentGotcha},
+		{ops.FactTypeVerifiedBehavior, ops.FactRouteToZeropsYAMLComment},
+		{ops.FactTypePlatformObservation, ops.FactRouteToZeropsYAMLComment},
+		{"unknown_type", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.factType, func(t *testing.T) {
+			t.Parallel()
+			got := inferLikelyRouteTo(tc.factType)
+			if got != tc.want {
+				t.Errorf("inferLikelyRouteTo(%q) = %q, want %q", tc.factType, got, tc.want)
+			}
+		})
+	}
+}

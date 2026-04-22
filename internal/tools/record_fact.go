@@ -24,6 +24,37 @@ type RecordFactInput struct {
 	FixApplied  string `json:"fixApplied,omitempty"  jsonschema:"Remedy applied. Include the exact config flip / file path / command when applicable."`
 	Evidence    string `json:"evidence,omitempty"    jsonschema:"Log-line timestamps, deploy IDs, or curl output snippets that prove the behavior. Keeps the writer subagent from inventing evidence to fit the gotcha."`
 	Scope       string `json:"scope,omitempty"       jsonschema:"One of: content, downstream, both. Defaults to 'content' (writer-only, the pre-v8.96 behavior). Set 'downstream' for framework/tooling discoveries that don't belong in published content but would waste downstream subagents' time if re-investigated (e.g. Meilisearch v0.57 renamed class from MeiliSearch to Meilisearch; svelte-check@4 incompatible with typescript@6 — $state shows untyped errors). Set 'both' sparingly when a fact is load-bearing on both lanes."`
+	RouteTo     string `json:"routeTo,omitempty"     jsonschema:"Optional at record time — the published surface this fact belongs on. One of: content_gotcha, content_intro, content_ig, content_env_comment, claude_md, zerops_yaml_comment, scaffold_preamble, feature_preamble, discarded. When set, the writer subagent adopts the route by default and documents any override; when empty, the response includes a nudge inferring a likely route from 'type' so the caller can confirm or override. See docs/spec-content-surfaces.md §7 routing matrix."`
+}
+
+// inferLikelyRouteTo returns the default route the fact-recorder nudge
+// suggests when the caller leaves RouteTo empty. Mapping is conservative —
+// we match against FactRecord.Type since that's the strongest signal the
+// caller already supplied. A nudge is not a refusal: the fact is recorded
+// either way, and the writer subagent can always override.
+//
+// v39 Commit 4 — reduces the "all recorded facts arrive at the writer
+// with empty RouteTo" class the facts log exhibited in v38 (writer had
+// to re-classify every fact at dispatch time, re-doing work the recorder
+// could have done at record time when classification is freshest).
+func inferLikelyRouteTo(factType string) string {
+	switch factType {
+	case ops.FactTypeGotchaCandidate:
+		return ops.FactRouteToContentGotcha
+	case ops.FactTypeIGItemCandidate:
+		return ops.FactRouteToContentIG
+	case ops.FactTypeCrossCodebaseContract:
+		return ops.FactRouteToContentIG
+	case ops.FactTypeFixApplied:
+		// fix_applied pairs with a gotcha; default to gotcha surface.
+		return ops.FactRouteToContentGotcha
+	case ops.FactTypeVerifiedBehavior, ops.FactTypePlatformObservation:
+		// Platform-level observations most often surface as zerops.yaml
+		// comments or gotchas; the writer has better context so suggest
+		// zerops_yaml_comment as a conservative default.
+		return ops.FactRouteToZeropsYAMLComment
+	}
+	return ""
 }
 
 // RegisterRecordFact registers the zerops_record_fact MCP tool.
@@ -55,6 +86,7 @@ func RegisterRecordFact(srv *mcp.Server, engine *workflow.Engine) {
 			FixApplied:  input.FixApplied,
 			Evidence:    input.Evidence,
 			Scope:       input.Scope,
+			RouteTo:     input.RouteTo,
 		}
 		path := ops.FactLogPath(sessionID)
 		if err := ops.AppendFact(path, rec); err != nil {
@@ -65,6 +97,21 @@ func RegisterRecordFact(srv *mcp.Server, engine *workflow.Engine) {
 		// Best-effort; a failure to flip the flag is non-fatal (the fact
 		// itself landed) so don't escalate past the log.
 		_ = engine.ClearAwaitingEvidenceAfterIterate()
-		return textResult(fmt.Sprintf("Recorded %s fact: %q (session %s)", rec.Type, rec.Title, sessionID)), nil, nil
+
+		// v39 Commit 4 — nudge (not refusal) when the caller leaves RouteTo
+		// empty. The fact is already appended; the nudge surfaces the
+		// inferred default so the caller can reinforce or override on the
+		// next record_fact call. Infers from rec.Type because that's the
+		// strongest signal the caller already supplied.
+		msg := fmt.Sprintf("Recorded %s fact: %q (session %s)", rec.Type, rec.Title, sessionID)
+		if rec.RouteTo == "" {
+			if inferred := inferLikelyRouteTo(rec.Type); inferred != "" {
+				msg += fmt.Sprintf(
+					". Nudge: you didn't set routeTo. Based on type=%s the likely route is %q — if that fits, pass routeTo=%q on future records of this class. Route is advisory at record time; the writer subagent re-classifies with override_reason at manifest time.",
+					rec.Type, inferred, inferred,
+				)
+			}
+		}
+		return textResult(msg), nil, nil
 	})
 }

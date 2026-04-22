@@ -16,7 +16,13 @@ Path: `{{.ProjectRoot}}/ZCP_CONTENT_MANIFEST.json`.
       "fact_title": "<exact Title from FactRecord>",
       "classification": "framework-invariant|intersection|framework-quirk|scaffold-decision|operational|self-inflicted",
       "routed_to": "content_gotcha|content_intro|content_ig|content_env_comment|claude_md|zerops_yaml_comment|scaffold_preamble|feature_preamble|discarded",
-      "override_reason": ""
+      "override_reason": "",
+      "citations": [
+        {
+          "topic": "<zerops_knowledge topic ID — e.g. env-var-model, init-commands, rolling-deploys>",
+          "guide_fetched_at": "<RFC3339 timestamp — the moment you called zerops_knowledge on this topic>"
+        }
+      ]
     }
   ]
 }
@@ -28,6 +34,10 @@ Field semantics:
 - `classification` — one of the six taxonomy classes (atom: classification-taxonomy.md). `intersection` is the short name for "framework × platform intersection".
 - `routed_to` — one of the nine route values (atom: routing-matrix.md). Empty or unrecognized values fail the routing-honesty check.
 - `override_reason` — required and non-empty when a default-discarded classification (framework-quirk, self-inflicted) is routed to anything other than `discarded`. Empty string is acceptable for every other cell; blank for default-discarded cells when routed elsewhere fails the consistency check.
+- `citations` — **required** for every entry with `routed_to` equal to `content_gotcha` or `content_ig`. At least one citation entry must carry a non-empty `topic` and a non-empty `guide_fetched_at` timestamp. Optional for other routes.
+  - `topic` — the `zerops_knowledge` topic ID you fetched while authoring the bullet (`env-var-model`, `init-commands`, `rolling-deploys`, `object-storage`, `http-support`, `deploy-files`, `readiness-health-checks`, etc. — see `spec-content-surfaces.md` §8 citation map for the canonical list of topics the spec requires).
+  - `guide_fetched_at` — the RFC3339 timestamp of the moment you called `zerops_knowledge` on that topic. This is the file-existence proof the server consumes: an empty value or an empty citations array on a gotcha / IG-item entry fails the completion gate at `complete substep=readmes`.
+  - The gate turns the judgment question "is this bullet folk-doctrine?" into a file-existence question: "did the knowledge fetch happen before the bullet was written?". If the guide doesn't cover the exact intersection, cite the closest adjacent guide (e.g. `env-var-model` for any cross-service env-var fact) so the lookup is still recorded — you paraphrased from an authoritative source, not from memory.
 
 ---
 

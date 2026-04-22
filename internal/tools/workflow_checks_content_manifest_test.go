@@ -346,3 +346,153 @@ func TestContentManifest_EmptyPath_SkipsCompleteness(t *testing.T) {
 		t.Fatalf("expected pass with empty factsLogPath (test context), got %+v", c)
 	}
 }
+
+// ── Sub-check E: citations present on reader-facing surfaces ──────────
+// v39 Commit 4 — every fact routed to content_gotcha or content_ig must
+// carry at least one citation entry with a non-empty guide_fetched_at
+// timestamp. The check turns "is this bullet folk-doctrine?" into
+// "did the knowledge fetch happen before the bullet was written?".
+
+func TestContentManifest_CitationsPresent_GotchaWithoutCitation_Fails(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeManifest(t, dir, map[string]any{
+		"version": 1,
+		"facts": []any{
+			map[string]any{
+				"fact_title":      "Cross-service env vars auto-inject; declaring key: ${key} self-shadows",
+				"classification":  "invariant",
+				"routed_to":       "content_gotcha",
+				"override_reason": "",
+				// Note: no citations array at all — the v38 writer manifest
+				// shape, which this check retroactively invalidates.
+			},
+		},
+	})
+	got := runManifestCheck(t, dir, nil, "")
+	c := findCheckByName(got, "writer_manifest_citations_present")
+	if c == nil || c.Status != "fail" {
+		t.Fatalf("expected fail when gotcha carries no citations, got %+v", c)
+	}
+	if !strings.Contains(c.Detail, "content_gotcha") {
+		t.Errorf("expected detail to name the offending route, got: %s", c.Detail)
+	}
+}
+
+func TestContentManifest_CitationsPresent_IGItemWithoutCitation_Fails(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeManifest(t, dir, map[string]any{
+		"version": 1,
+		"facts": []any{
+			map[string]any{
+				"fact_title":      "Bind HTTP server to 0.0.0.0 for L7 balancer reachability",
+				"classification":  "invariant",
+				"routed_to":       "content_ig",
+				"override_reason": "",
+				"citations":       []any{},
+			},
+		},
+	})
+	got := runManifestCheck(t, dir, nil, "")
+	c := findCheckByName(got, "writer_manifest_citations_present")
+	if c == nil || c.Status != "fail" {
+		t.Fatalf("expected fail when IG-item carries empty citations array, got %+v", c)
+	}
+}
+
+func TestContentManifest_CitationsPresent_WithTimestamp_Passes(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeManifest(t, dir, map[string]any{
+		"version": 1,
+		"facts": []any{
+			map[string]any{
+				"fact_title":     "Cross-service env vars auto-inject; declaring key: ${key} self-shadows",
+				"classification": "invariant",
+				"routed_to":      "content_gotcha",
+				"citations": []any{
+					map[string]any{
+						"topic":            "env-var-model",
+						"guide_fetched_at": "2026-04-22T16:15:00Z",
+					},
+				},
+			},
+		},
+	})
+	got := runManifestCheck(t, dir, nil, "")
+	c := findCheckByName(got, "writer_manifest_citations_present")
+	if c == nil || c.Status != "pass" {
+		t.Fatalf("expected pass when gotcha carries a valid citation, got %+v", c)
+	}
+}
+
+func TestContentManifest_CitationsPresent_EmptyTimestamp_Fails(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeManifest(t, dir, map[string]any{
+		"version": 1,
+		"facts": []any{
+			map[string]any{
+				"fact_title":     "Cross-service env vars auto-inject; declaring key: ${key} self-shadows",
+				"classification": "invariant",
+				"routed_to":      "content_gotcha",
+				"citations": []any{
+					map[string]any{
+						"topic":            "env-var-model",
+						"guide_fetched_at": "",
+					},
+				},
+			},
+		},
+	})
+	got := runManifestCheck(t, dir, nil, "")
+	c := findCheckByName(got, "writer_manifest_citations_present")
+	if c == nil || c.Status != "fail" {
+		t.Fatalf("expected fail when citation has empty guide_fetched_at, got %+v", c)
+	}
+}
+
+func TestContentManifest_CitationsPresent_DiscardedRoute_NoEnforcement(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeManifest(t, dir, map[string]any{
+		"version": 1,
+		"facts": []any{
+			map[string]any{
+				"fact_title":     "Multer framework-quirk discarded from content",
+				"classification": "framework-quirk",
+				"routed_to":      "discarded",
+			},
+		},
+	})
+	got := runManifestCheck(t, dir, nil, "")
+	c := findCheckByName(got, "writer_manifest_citations_present")
+	if c == nil || c.Status != "pass" {
+		t.Fatalf("expected pass — discarded route has no citation requirement, got %+v", c)
+	}
+}
+
+func TestContentManifest_CitationsPresent_EnvCommentRoute_NoEnforcement(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	// v39: env-comment and zerops_yaml_comment are not yet in the
+	// citation-required route set (kept narrow to content_gotcha +
+	// content_ig). This test pins that scope so future widening is
+	// explicit, not accidental.
+	writeManifest(t, dir, map[string]any{
+		"version": 1,
+		"facts": []any{
+			map[string]any{
+				"fact_title":     "DB runs in mode: NON_HA at small-prod",
+				"classification": "scaffold-decision",
+				"routed_to":      "content_env_comment",
+			},
+		},
+	})
+	got := runManifestCheck(t, dir, nil, "")
+	c := findCheckByName(got, "writer_manifest_citations_present")
+	if c == nil || c.Status != "pass" {
+		t.Fatalf("expected pass — env-comment route is not yet citation-required, got %+v", c)
+	}
+}

@@ -35,10 +35,33 @@ type ContentManifest struct {
 // documented wire contract with the writer subagent; renaming them to
 // camelCase would silently break the server-subagent handshake.
 type ContentManifestFact struct {
-	FactTitle      string `json:"fact_title"` //nolint:tagliatelle // wire contract with writer subagent
-	Classification string `json:"classification"`
-	RoutedTo       string `json:"routed_to"`       //nolint:tagliatelle // wire contract with writer subagent
-	OverrideReason string `json:"override_reason"` //nolint:tagliatelle // wire contract with writer subagent
+	FactTitle      string             `json:"fact_title"` //nolint:tagliatelle // wire contract with writer subagent
+	Classification string             `json:"classification"`
+	RoutedTo       string             `json:"routed_to"`       //nolint:tagliatelle // wire contract with writer subagent
+	OverrideReason string             `json:"override_reason"` //nolint:tagliatelle // wire contract with writer subagent
+	Citations      []ManifestCitation `json:"citations,omitempty"`
+}
+
+// ManifestCitation is one guide-fetch record the writer declares per
+// fact. v39 Commit 4 — for every fact routed to content_gotcha or
+// content_ig, the writer must have called zerops_knowledge at least
+// once during authoring and recorded the topic + timestamp here.
+// Empty citations list on a content_gotcha / content_ig entry fails
+// the readmes_citations_present check; the check turns "is this bullet
+// folk-doctrine?" into "did the knowledge fetch happen before the
+// bullet was written?" — a file-existence question with zero
+// subjectivity.
+//
+// Topic MUST be one of the knowledge topic IDs that zerops_knowledge
+// accepts (env-var-model, init-commands, rolling-deploys, etc. — see
+// docs/spec-content-surfaces.md §8 citation map). GuideFetchedAt is
+// the RFC3339 timestamp the writer recorded when it made the
+// zerops_knowledge call; the check treats any non-empty value as
+// passing (trust the writer; the presence of SOME timestamp proves
+// the lookup happened).
+type ManifestCitation struct {
+	Topic          string `json:"topic"`
+	GuideFetchedAt string `json:"guide_fetched_at"` //nolint:tagliatelle // wire contract with writer subagent
 }
 
 // LoadContentManifest reads and parses ZCP_CONTENT_MANIFEST.json at
