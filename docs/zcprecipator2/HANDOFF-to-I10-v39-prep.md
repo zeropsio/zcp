@@ -20,11 +20,12 @@
 ## 1. Slots to fill at start
 
 ```
-FIX_STACK_TAG:            v8.113.0 (pending tag)
+FIX_STACK_TAG:            v8.113.0
 FIX_STACK_COMMITS:
                           Commit 1  engine-template grounding       44463b9
                           Commit 2  manifest export whitelist       ec8a0fe
-                          Commit 3  content-authoring context pack  c3a6362  (partial — example bank + writer brief input block; generate/finalize-step guidance injection + facts-log routeTo filter deferred)
+                          Commit 3  content-authoring context pack  c3a6362 (example bank + writer brief input block)
+                                                                    e025dd3 (finalize-yaml visibility + generate-step examples + per-codebase zerops.yaml + audit trims)
                           Commit 4  knowledge-lookup workflow step  7db26dc
                           Commit 5  writer brief slim + starter     c4291b6
                                     todos
@@ -37,6 +38,11 @@ V38_RETRO_EXPECTED_DELTAS_CONFIRMED:
                             env 4/README.md has "daily snapshot" (Cluster C) and
                             "managed services scale up" variant (Cluster D).
                             Confirmed via `grep -l` against the shipped v38 tree.
+                          Commit 3b gold — finalize-step guidance for showcase
+                            plans now renders each env's import.yaml schema-only
+                            BEFORE the agent writes envComments. F-21 ("2 GB
+                            quota" fabrication class) closes at source —
+                            TestFinalizeStepGuidance_IncludesRenderedYaml pins it.
                           Commit 4 citations gate — v38 writer manifest schema had
                             no citations[] field at all; every content_gotcha +
                             content_ig entry in the manifest shape the v38 run
@@ -45,21 +51,22 @@ V38_RETRO_EXPECTED_DELTAS_CONFIRMED:
                             manifest at the root — F-23 — so direct grep is not
                             possible, but the old schema had no guide_fetched_at
                             timestamp anywhere).
-                          Writer brief size at HEAD: 60.9KB
-                            (testShowcasePlan fixture). At v8.112.0 (measured from
-                            runs/v38/dispatch-integrity/engine-writer.txt) it was
-                            59.4KB. Net change is near-zero: the 14.5KB of atoms
-                            dropped in Commit 5 (fact-recording-discipline 4.5KB,
-                            classification-taxonomy 6.3KB, routing-matrix 5.6KB,
-                            minus 1.5KB classification-pointer replacement) was
-                            offset by the 12.6KB example input block added in
-                            Commit 3. The aspirational 25KB target from
-                            plans/v39-fix-stack.md is NOT met and requires a
-                            follow-up trim pass against citation-map (6.2KB) +
-                            manifest-contract (6.2KB) + self-review-per-surface
-                            (5.5KB) OR a reduction to perSurface=1 in the example
-                            sampler. TestBuildWriterBrief_UnderSizeLimit tripwire
-                            pins at 65KB to prevent regression.
+                          Writer brief size at HEAD: 57.5KB (testShowcasePlan
+                            fixture, no per-codebase yamls on disk). At v8.112.0
+                            (measured from runs/v38/dispatch-integrity/engine-
+                            writer.txt) it was 59.4KB. Net −1.9KB on the atom
+                            corpus; real sessions add ~2-4KB of inlined per-
+                            codebase zerops.yaml for 3-codebase showcase
+                            (captured content, not prose rules). The aspirational
+                            25KB target from plans/v39-fix-stack.md is not met;
+                            per user direction the audit optimized TIGHTNESS
+                            (dropping redundant prose: citation-map 6.2→3.8KB,
+                            self-review-per-surface 5.5→4.1KB, content-surface-
+                            contracts drop-examples trim, fact-recording-
+                            discipline principle off brief, classification-
+                            taxonomy + routing-matrix → 1.5KB pointer + runtime
+                            action=classify) over byte target. Size tripwire
+                            TestBuildWriterBrief_UnderSizeLimit pins at 65KB.
 V39_COMMISSION_DATE:      <unfilled — user commissions>
 V39_SESSION_ID:           <unfilled>
 V39_OUTCOME:              <unfilled>
