@@ -1,0 +1,422 @@
+{
+  "run": "v38",
+  "generated_at": "2026-04-22T12:46:19Z",
+  "generator_version": "v8.109.0-harness",
+  "tier": "showcase",
+  "slug": "nestjs-showcase",
+  "deliverable_dir": "/Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v38",
+  "sessions_logs_dir": "/Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v38/SESSIONS_LOGS",
+  "structural_integrity": {
+    "B-15_ghost_env_dirs": {
+      "description": "ghost env directories (environments/* ∉ canonical OR depth-1 `environments[-_]*` siblings)",
+      "measurement": "readdir environments/ ∉ CanonicalEnvFolders + depth-1 walk for environments[-_]... siblings",
+      "threshold": 0,
+      "observed": 0,
+      "status": "pass"
+    },
+    "B-16_tarball_per_codebase_md": {
+      "description": "per-codebase README.md + CLAUDE.md staged into deliverable",
+      "measurement": "stat {deliverable}/{codebase}/{README.md,CLAUDE.md}",
+      "threshold": 6,
+      "observed": 6,
+      "status": "pass"
+    },
+    "B-17_marker_exact_form": {
+      "description": "ZEROPS_EXTRACT markers carry trailing '#' sentinel",
+      "measurement": "regex \u003c!-- #ZEROPS_EXTRACT_(START|END):(key) --\u003e without trailing '#'",
+      "threshold": 0,
+      "observed": 0,
+      "status": "pass"
+    },
+    "B-18_standalone_duplicate_files": {
+      "description": "standalone INTEGRATION-GUIDE.md / GOTCHAS.md absent",
+      "measurement": "walk deliverable; flag paths named INTEGRATION-GUIDE.md or GOTCHAS.md",
+      "threshold": 0,
+      "observed": 0,
+      "status": "pass"
+    },
+    "B-22_atom_template_vars_bound": {
+      "description": "atom template variables bind to populated Go render fields",
+      "measurement": "walk atom corpus; extract {{.Field}}; fail when Field ∉ allowed set",
+      "threshold": 0,
+      "observed": 0,
+      "status": "pass"
+    }
+  },
+  "session_metrics": {
+    "B-20_deploy_readmes_retry_rounds": {
+      "description": "deploy-phase failing workflow completions (writer/feature retry signal)",
+      "measurement": "count workflow.complete(step=deploy) with checkResult.passed==false across all substeps",
+      "threshold": 2,
+      "observed": 2,
+      "status": "pass",
+      "evidence_files": [
+        "",
+        ""
+      ]
+    },
+    "B-21_sessionless_export_attempts": {
+      "description": "sessionless `zcp sync recipe export` attempts (F-8 evidence)",
+      "measurement": "Bash tool_use input.command contains 'sync recipe export' AND no --session / ZCP_SESSION_ID, before close-step completion",
+      "threshold": 0,
+      "observed": 0,
+      "status": "pass"
+    },
+    "B-23_writer_first_pass_failures": {
+      "description": "writer first-pass compliance failures",
+      "measurement": "distinct failing check names in first failing deploy-phase checkResult after writer dispatch",
+      "threshold": 3,
+      "observed": 9,
+      "status": "fail",
+      "evidence_files": [
+        "api_comment_specificity",
+        "comment_ratio",
+        "fragment_integration-guide_blank_after_marker",
+        "fragment_intro_blank_after_marker",
+        "fragment_knowledge-base_blank_after_marker",
+        "intro_length",
+        "worker_drain_code_block",
+        "writer_manifest_honesty_any_as_intro",
+        "writer_manifest_honesty_claude_md_as_gotcha"
+      ]
+    },
+    "B-24_dispatch_integrity": {
+      "threshold": 0,
+      "observed": 0,
+      "status": ""
+    },
+    "sub_agent_count": 7,
+    "close_step_completed": true,
+    "editorial_review_dispatched": true,
+    "code_review_dispatched": true,
+    "close_browser_walk_attempted": false,
+    "retry_cycle_attributions": [
+      {
+        "cycle": 1,
+        "timestamp": "2026-04-22T09:01:41.520Z",
+        "substep": "research/",
+        "failing_checks": null
+      },
+      {
+        "cycle": 2,
+        "timestamp": "2026-04-22T09:04:29.748Z",
+        "substep": "provision/",
+        "failing_checks": null
+      },
+      {
+        "cycle": 3,
+        "timestamp": "2026-04-22T09:25:07.757Z",
+        "substep": "deploy/deploy-dev",
+        "failing_checks": null
+      },
+      {
+        "cycle": 4,
+        "timestamp": "2026-04-22T09:26:14.395Z",
+        "substep": "deploy/start-processes",
+        "failing_checks": null
+      },
+      {
+        "cycle": 5,
+        "timestamp": "2026-04-22T09:26:43.998Z",
+        "substep": "deploy/verify-dev",
+        "failing_checks": null
+      },
+      {
+        "cycle": 6,
+        "timestamp": "2026-04-22T09:30:00.358Z",
+        "substep": "deploy/init-commands",
+        "failing_checks": null
+      },
+      {
+        "cycle": 7,
+        "timestamp": "2026-04-22T09:46:30.896Z",
+        "substep": "deploy/subagent",
+        "failing_checks": null
+      },
+      {
+        "cycle": 8,
+        "timestamp": "2026-04-22T09:49:22.081Z",
+        "substep": "deploy/snapshot-dev",
+        "failing_checks": null
+      },
+      {
+        "cycle": 9,
+        "timestamp": "2026-04-22T09:50:07.656Z",
+        "substep": "deploy/feature-sweep-dev",
+        "failing_checks": null
+      },
+      {
+        "cycle": 10,
+        "timestamp": "2026-04-22T10:05:25.807Z",
+        "substep": "deploy/browser-walk",
+        "failing_checks": null
+      },
+      {
+        "cycle": 11,
+        "timestamp": "2026-04-22T10:11:38.574Z",
+        "substep": "deploy/cross-deploy",
+        "failing_checks": null
+      },
+      {
+        "cycle": 12,
+        "timestamp": "2026-04-22T10:11:47.993Z",
+        "substep": "deploy/verify-stage",
+        "failing_checks": null
+      },
+      {
+        "cycle": 13,
+        "timestamp": "2026-04-22T10:12:40.599Z",
+        "substep": "deploy/feature-sweep-stage",
+        "failing_checks": null
+      },
+      {
+        "cycle": 14,
+        "timestamp": "2026-04-22T10:29:36.553Z",
+        "substep": "deploy/readmes",
+        "failing_checks": null
+      },
+      {
+        "cycle": 15,
+        "timestamp": "2026-04-22T10:29:49.931Z",
+        "substep": "deploy/",
+        "failing_checks": [
+          "comment_ratio",
+          "fragment_integration-guide_blank_after_marker",
+          "fragment_knowledge-base_blank_after_marker",
+          "fragment_intro_blank_after_marker",
+          "intro_length",
+          "comment_ratio",
+          "fragment_integration-guide_blank_after_marker",
+          "fragment_knowledge-base_blank_after_marker",
+          "fragment_intro_blank_after_marker",
+          "intro_length",
+          "api_comment_specificity",
+          "comment_ratio",
+          "fragment_integration-guide_blank_after_marker",
+          "fragment_knowledge-base_blank_after_marker",
+          "fragment_intro_blank_after_marker",
+          "intro_length",
+          "worker_drain_code_block",
+          "writer_manifest_honesty_claude_md_as_gotcha",
+          "writer_manifest_honesty_any_as_intro"
+        ]
+      },
+      {
+        "cycle": 16,
+        "timestamp": "2026-04-22T10:35:26.633Z",
+        "substep": "deploy/",
+        "failing_checks": [
+          "api_comment_specificity",
+          "comment_ratio",
+          "worker_drain_code_block"
+        ]
+      },
+      {
+        "cycle": 17,
+        "timestamp": "2026-04-22T10:40:07.566Z",
+        "substep": "finalize/",
+        "failing_checks": [
+          "0 — AI Agent_import_factual_claims",
+          "1 — Remote (CDE)_import_factual_claims",
+          "1 — Remote (CDE)_import_cross_env_refs",
+          "2 — Local_import_factual_claims",
+          "3 — Stage_import_factual_claims",
+          "5 — Highly-available Production_import_comment_ratio"
+        ]
+      },
+      {
+        "cycle": 18,
+        "timestamp": "2026-04-22T11:00:36.178Z",
+        "substep": "close/editorial-review",
+        "failing_checks": null
+      },
+      {
+        "cycle": 19,
+        "timestamp": "2026-04-22T11:01:13.340Z",
+        "substep": "close/code-review",
+        "failing_checks": null
+      },
+      {
+        "cycle": 20,
+        "timestamp": "2026-04-22T11:03:10.970Z",
+        "substep": "close/close-browser-walk",
+        "failing_checks": null
+      },
+      {
+        "cycle": 21,
+        "timestamp": "2026-04-22T11:03:27.248Z",
+        "substep": "close/",
+        "failing_checks": null
+      }
+    ]
+  },
+  "writer_readmes": {
+    "apidev/README.md": {
+      "file_exists": true,
+      "size_bytes": 13580,
+      "intro_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "line_count": 3,
+        "in_range": true,
+        "status": "pass"
+      },
+      "integration_guide_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "in_range": true,
+        "h3_count": 5,
+        "every_h3_has_fenced_code_block": true,
+        "status": "pass"
+      },
+      "knowledge_base_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "gotchas_h3_present": true,
+        "gotcha_bullet_count": 3,
+        "bullets_in_range": true,
+        "status": "pass"
+      },
+      "status": "pass"
+    },
+    "appdev/README.md": {
+      "file_exists": true,
+      "size_bytes": 7427,
+      "intro_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "line_count": 3,
+        "in_range": true,
+        "status": "pass"
+      },
+      "integration_guide_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "in_range": true,
+        "h3_count": 4,
+        "every_h3_has_fenced_code_block": true,
+        "status": "pass"
+      },
+      "knowledge_base_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "gotchas_h3_present": true,
+        "gotcha_bullet_count": 4,
+        "bullets_in_range": true,
+        "status": "pass"
+      },
+      "status": "pass"
+    },
+    "workerdev/README.md": {
+      "file_exists": true,
+      "size_bytes": 8094,
+      "intro_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "line_count": 3,
+        "in_range": true,
+        "status": "pass"
+      },
+      "integration_guide_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "in_range": true,
+        "h3_count": 3,
+        "every_h3_has_fenced_code_block": true,
+        "status": "pass"
+      },
+      "knowledge_base_fragment": {
+        "markers_present": true,
+        "markers_exact_form": true,
+        "gotchas_h3_present": true,
+        "gotcha_bullet_count": 3,
+        "bullets_in_range": true,
+        "status": "pass"
+      },
+      "status": "pass"
+    }
+  },
+  "writer_claude_md": {
+    "apidev/CLAUDE.md": {
+      "file_exists": true,
+      "size_bytes": 5439,
+      "size_ge_1200_bytes": true,
+      "base_sections_present": [
+        "Migrations",
+        "Testing"
+      ],
+      "custom_section_count": 4,
+      "custom_sections_ge_2": true,
+      "status": "fail"
+    },
+    "appdev/CLAUDE.md": {
+      "file_exists": true,
+      "size_bytes": 3893,
+      "size_ge_1200_bytes": true,
+      "base_sections_present": [
+        "Migrations",
+        "Testing"
+      ],
+      "custom_section_count": 4,
+      "custom_sections_ge_2": true,
+      "status": "fail"
+    },
+    "workerdev/CLAUDE.md": {
+      "file_exists": true,
+      "size_bytes": 4793,
+      "size_ge_1200_bytes": true,
+      "base_sections_present": [
+        "Migrations",
+        "Testing"
+      ],
+      "custom_section_count": 4,
+      "custom_sections_ge_2": true,
+      "status": "fail"
+    }
+  },
+  "dispatch_integrity": {
+    "Author recipe READMEs + CLAUDE.md + manifest": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Build showcase feature sections end-to-end": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Code review of recipe scaffold + features": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Editorial review of recipe reader-facing content": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Scaffold NestJS API codebase": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Scaffold NestJS worker codebase": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    },
+    "Scaffold Svelte+Vite frontend": {
+      "dispatch_prompt_size_bytes": 0,
+      "atoms_stitched_in_envelope_order": false,
+      "dispatch_vs_source_diff_status": "unverified",
+      "template_vars_resolved": false
+    }
+  },
+  "schema_version": "1.0.0"
+}
