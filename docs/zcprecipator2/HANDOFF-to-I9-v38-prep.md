@@ -19,16 +19,24 @@
 ## 1. Slots to fill at start
 
 ```
-FIX_STACK_TAG:            v8.110.0                         (local; push via `git push origin main v8.110.0`)
-FIX_STACK_COMMITS:        <unfilled — 8 Cx SHAs, see plans/v38-fix-stack.md>
-                          Cx-WRITER-SCOPE-REDUCTION        (F-9 + F-13 at source)
-                          Cx-SCAFFOLD-FRAGMENT-FRAMES      (F-12 at source)
-                          Cx-ENV-COMMENT-PRINCIPLE         (F-21 close)
-                          Cx-MANIFEST-OVERLAY              (F-23 close)
-                          Cx-SUBAGENT-BRIEF-BUILDER        (F-17 close — the headline fix)
-                          Cx-VERSION-ANCHOR-SHARPEN        (F-22 close)
-                          Cx-BROWSER-RECOVERY-COMPLETE     (F-24 close — ported from v27 archive)
-                          Cx-HARNESS-V2                    (three bar patches + close-step signal)
+FIX_STACK_TAG:            v8.112.0   (bumped from v8.110.0 — remote had already shipped v8.110.0 + v8.111.0 on unrelated work from krls2020 during v38 implementation; our branch was rebased onto origin/main before tagging)
+FIX_STACK_COMMITS:        (SHAs refer to post-rebase history on main; each commit independently revertible)
+                          Cx-1 WRITER-SCOPE-REDUCTION      c9da867  (F-9 + F-13 at source)
+                          Cx-2 SCAFFOLD-FRAGMENT-FRAMES    a185e50  (F-12 at source)
+                          Cx-3 ENV-COMMENT-PRINCIPLE       01566ad  (F-21 close)
+                          Cx-4 MANIFEST-OVERLAY            abb1bbe  (F-23 close; depends on Cx-1)
+                          Cx-5 SUBAGENT-BRIEF-BUILDER      adfebcc  (F-17 close — the headline fix; depends on Cx-1/2/3)
+                          Cx-6 VERSION-ANCHOR-SHARPEN      73b9d2a  (F-22 close)
+                          Cx-7 BROWSER-RECOVERY-COMPLETE   eb24c52  (F-24 close — ported from v27 archive)
+                          Cx-8 HARNESS-V2                  009d729  (four bar patches + close-step signal)
+                          fix(analyze) progress.steps     787075d  (Cx-8 retrospective shape fix surfaced by v37 replay)
+HARNESS_V2_LANDED:        yes
+V37_RETRO_REPORT:         /tmp/v37-retro-after-v112.json
+V37_RETRO_EXPECTED_DELTAS_CONFIRMED:
+                          B-15 ghost_env_dirs         observed=1  (environments-generated/ caught by depth-1 sibling scan)
+                          B-21 sessionless_export     observed=0  (v37 post-close exports filtered via close_step_completed_at)
+                          B-23 writer_first_pass      observed=5 fail  (runs against "Author recipe ..." description instead of skip)
+                          close_step_completed        true        (progress.steps secondary signal parses the v37 array shape)
 V38_COMMISSION_DATE:      <unfilled — user commissions>
 V38_SESSION_ID:           <unfilled>
 V38_OUTCOME:              <unfilled — post-run>
