@@ -232,8 +232,14 @@ func ExportRecipe(opts ExportOpts) (*ExportResult, error) {
 	gw := gzip.NewWriter(tmpFile)
 	tw := tar.NewWriter(gw)
 
-	// 1. Add root files (TIMELINE.md, README.md).
-	for _, name := range []string{"TIMELINE.md", "README.md"} {
+	// 1. Add root files (TIMELINE.md, README.md, ZCP_CONTENT_MANIFEST.json).
+	//
+	// The manifest is the writer sub-agent's honesty declaration — which
+	// gotchas carry which citation-map topics, which IG items paraphrase
+	// which guides. Cx-4 MANIFEST-OVERLAY in v8.112.0 stages it into the
+	// recipe output directory; without inclusion in this whitelist it
+	// never reaches the tarball the user ships (v38 F-23 root cause).
+	for _, name := range []string{"TIMELINE.md", "README.md", "ZCP_CONTENT_MANIFEST.json"} {
 		p := filepath.Join(recipeDir, name)
 		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
 			if addErr := addFileToTar(tw, p, filepath.Join(archivePrefix, name), fi); addErr != nil {

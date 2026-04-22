@@ -139,6 +139,27 @@ func TestExportRecipe(t *testing.T) {
 				return ExportOpts{RecipeDir: recipeDir, AppDirs: []string{a, b}}
 			},
 		},
+		{
+			// v39 Commit 2 — F-23 close. Cx-4 MANIFEST-OVERLAY in v8.112.0
+			// stages ZCP_CONTENT_MANIFEST.json into the recipe output dir but
+			// the root-file whitelist at export time only passed TIMELINE.md +
+			// README.md; the manifest landed in the output directory and was
+			// dropped at tarball creation. This case asserts the manifest is
+			// now in the archive root.
+			name: "root manifest included",
+			setup: func(t *testing.T, root string) ExportOpts {
+				t.Helper()
+				recipeDir := filepath.Join(root, "nestjs-showcase")
+				writeFile(t, filepath.Join(recipeDir, "README.md"), "# root")
+				writeFile(t, filepath.Join(recipeDir, "ZCP_CONTENT_MANIFEST.json"), `{"v":1,"codebases":[]}`)
+				writeFile(t, filepath.Join(recipeDir, "environments", "0 \u2014 AI Agent", "import.yaml"), "project:\n")
+				return ExportOpts{RecipeDir: recipeDir}
+			},
+			wantIn: []string{
+				"nestjs-showcase-zcprecipator/README.md",
+				"nestjs-showcase-zcprecipator/ZCP_CONTENT_MANIFEST.json",
+			},
+		},
 	}
 
 	for _, tt := range tests {
