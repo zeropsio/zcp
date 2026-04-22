@@ -8,8 +8,11 @@ Every commissioned zcprecipator2 run lands one folder here: `runs/vN/`. The fold
 
 | Run | Tier | Date | Verdict | Root cause summary | Folder |
 |---|---|---|---|---|---|
-| v34 | showcase | 2026-04-20 | PROCEED (baseline) | convergence empirically refuted (4 deploy rounds); pre-rewrite baseline | [`../01-flow/flow-showcase-v34-*`](../01-flow/) (not yet migrated to this layout) |
+| v38 | showcase | pending | PRE-COMMISSION | target `v8.110.0` — verification of F-17 close (engine-built subagent brief); gated on [v38 fix-stack](../plans/v38-fix-stack.md) | [`v38/`](v38/) |
+| v37 | showcase | 2026-04-21 | **PAUSE** | F-17 envelope content loss: main agent paraphrases atoms when composing Task prompts, so four v8.109.0 atom-level Cx fixes had zero runtime effect | [`v37/`](v37/) |
+| v36 | showcase | 2026-04-21 | **PAUSE** (revised from ACCEPT-WITH-FOLLOW-UP) | 6 systemic open defects surfaced only on deep re-read; first analysis pass failed artifact-shape-as-proxy-for-depth — drove harness build | [`v36/`](v36/) |
 | v35 | showcase | 2026-04-21 | **PAUSE + engine-level defects** | six pre-rollout engine/harness/knowledge-engine defects surfaced; v35 stalled at deploy-check | [`v35/`](v35/) |
+| v34 | showcase | 2026-04-20 | PROCEED (baseline) | convergence empirically refuted (4 deploy rounds); pre-rewrite baseline | [`../01-flow/flow-showcase-v34-*`](../01-flow/) (not yet migrated to this layout) |
 
 Future rows land at the top. Every run row points at its folder; every folder's `README.md` is the authoritative TL;DR for that run.
 

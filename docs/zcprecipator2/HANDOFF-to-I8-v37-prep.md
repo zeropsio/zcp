@@ -11,7 +11,7 @@
 ## 1. Slots to fill at start
 
 ```
-FIX_STACK_TAG:            v8.109.0                             (local; push via `git push origin main v8.109.0`)
+FIX_STACK_TAG:            v8.109.0                             (tagged; all 6 Cx commits merged)
 FIX_STACK_COMMITS:        8eb7c29  feat(zcprecipator2): mechanical analysis harness
                           8fa9d1b  Cx-ENVFOLDERS-WIRED          (F-9 close)
                           d5f0e02  Cx-MARKER-FORM-FIX           (F-12 close)
@@ -20,10 +20,14 @@ FIX_STACK_COMMITS:        8eb7c29  feat(zcprecipator2): mechanical analysis harn
                           e6c87c0  Cx-CLOSE-STEP-GATE-HARD      (F-8/F-11 close)
 HARNESS_TAG:              v8.109.0 (bundled)
 ANALYSIS_HARNESS_PATH:    cmd/zcp/analyze/ + internal/analyze/
-V37_COMMISSION_DATE:      <unfilled — user commissions>
-V37_SESSION_ID:           <unfilled — user commissions>
-V37_OUTCOME:              <unfilled — post-run>
+V37_COMMISSION_DATE:      2026-04-21 (session start 19:28Z, close-complete 21:48Z)
+V37_SESSION_ID:           9c9cce67e644ae35 (workflow) / 275672d8-56e8-4456-9456-7f8e5dd873c4 (Claude)
+V37_OUTCOME:              close-complete reached; deliverable structurally broken due to main-agent paraphrase
+V37_VERDICT:              PAUSE — see runs/v37/verdict.md (headline defect F-17: envelope content loss)
+V37_FOLLOW-UP:            HANDOFF-to-I9-v38-prep.md + plans/v38-fix-stack.md (seven new Cx commits targeting v8.110.0)
 ```
+
+**This handoff is CLOSED** — the analysis phase completed 2026-04-21. v38 preparation has moved to [`HANDOFF-to-I9-v38-prep.md`](HANDOFF-to-I9-v38-prep.md). The v8.109.0 Cx stack is historical; four of its six commits were source-correct but had zero runtime effect because of F-17 (main-agent paraphrase), which Cx-SUBAGENT-BRIEF-BUILDER in the v38 stack closes.
 
 ### Phase 1 + Phase 2 completion notes
 
