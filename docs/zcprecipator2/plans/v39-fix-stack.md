@@ -1,411 +1,290 @@
-# plans/v39-fix-stack.md — close content-emitter gaps + F-17-runtime
+# plans/v39-fix-stack.md — context-tightening first, thin safety net behind
 
 **Status**: TRANSIENT per CLAUDE.md §Source of Truth #4. Archive to `plans/archive/` after v39 verdict ships.
 **Prerequisites**: [`../runs/v38/verdict.md`](../runs/v38/verdict.md), [`../runs/v38/CORRECTIONS.md`](../runs/v38/CORRECTIONS.md), [`../../spec-content-surfaces.md`](../../spec-content-surfaces.md).
-**Target tag**: `v8.113.0` (or higher — depends on how many Cx land before cut).
-**Estimated effort**: 5–7 days focused work. Cx-1 (GO-TEMPLATE-GROUND) is the multi-day one.
+**Target tag**: `v8.113.0`.
+**Estimated effort**: 4–5 days focused work.
 
-This doc is the execution plan the v39 implementor follows. Each Cx-commit carries: scope, files touched, RED-test name, acceptance criterion. Commits are dependency-ordered; items marked "parallel-safe" can land in any order relative to siblings.
-
----
-
-## 0. Root-cause recap (from runs/v38)
-
-v37 surfaced F-17: main agent paraphrased atoms when composing Task prompts. Cx-5 (v8.112.0) shipped `BuildSubagentBrief` + `VerifySubagentDispatch` — engine stitches the brief; verify-subagent-dispatch checks the Task prompt's SHA matches.
-
-v38 surfaced three deeper issues (see [`../runs/v38/CORRECTIONS.md`](../runs/v38/CORRECTIONS.md)):
-
-1. **F-17-runtime** — `VerifySubagentDispatch` is opt-in (no `PreToolUse` hook wires it against `Agent`). Main agent never called it. Editorial-review dispatch was 72% paraphrased (47,205 B → 13,229 B) and never caught.
-2. **F-GO-TEMPLATE** — env-tier README prose at [`internal/workflow/recipe_templates.go`](../../../internal/workflow/recipe_templates.go) is hardcoded Go strings (`envAudience` / `envDiffFromPrevious` / `envPromotionPath` / `envOperationalConcerns` — all switch-on-envIndex). Never run through spec-content-surfaces.md tests. **4 of 6 editorial-review CRITs were direct hits on this source** (CRIT #1 fabricated "expanded toolchain", CRIT #3 factually wrong "Stage hits same DB", CRIT #2 mode-immutable contradiction, CRIT #5 missing NATS HA bullet). Main agent patched the rendered files on the mount; the Go source still ships these bugs.
-3. **F-ENFORCEMENT-ASYMMETRY** — content-emitter coverage is inverted from content volume:
-   - Writer sub-agent: 13 prose units, full 60KB spec brief.
-   - Main agent zerops.yaml comments: ~40 blocks × 3 codebases, only one "Comment style" sub-section in recipe.md (no classification taxonomy, no citation map).
-   - Main agent envComments: 72 prose blocks per run, same thin teaching.
-   - Engine recipe_templates.go: root README + 6× env READMEs, zero spec teaching.
-
-The entity producing the most content (main agent) has the thinnest teaching about what good content looks like. The entity that produces no content (writer brief teaching) is perfectly taught. **Volume-to-teaching is inverted.**
+This plan supersedes an earlier 11-commit enforcement-heavy version (retained in git history at `ff3dcfb`). The direction shift was made on 2026-04-22 after user feedback: the earlier plan treated "catch bad output with machine checks" as the primary fix. v38 evidence argues the opposite — the writer had a 60KB brief and still produced folk-doctrine, which says teaching volume is the problem, not missing enforcement. The right fix is tighter context given at authoring time, not a gauntlet of post-hoc checks.
 
 ---
 
-## 1. Goals of v39
+## 0. What the v38 data actually said
 
-1. **F-17-runtime closes** — main-agent paraphrase physically cannot reach a guarded sub-agent.
-2. **F-GO-TEMPLATE closes** — engine-authored content goes through the same spec gate as writer-authored content.
-3. **F-23 closes** — `ZCP_CONTENT_MANIFEST.json` reaches the deliverable tarball.
-4. **F-ENFORCEMENT-ASYMMETRY narrows** — every content-emitting path has spec teaching at its authoring layer AND a runtime check at its emission point.
-5. **Writer brief slims from ~60KB to ~25KB** — moving classification/routing from prompt-carry to runtime-lookup + dropping wrong-role atoms.
-6. **Convergence** — v39 should reach close-step in ≤1 editorial-review round (v38 needed 4), ≤1 finalize round (v38 needed 2).
+Four content-emitting entities. Their output quality maps INVERSELY to context size:
 
-If v39 clears these, **C-15 (recipe.md deletion) becomes the next unblocker** — see [`../PLAN.md`](../PLAN.md) §2 R2-R7.
+| Entity | Brief / teaching size | Output quality in v38 |
+|---|---|---|
+| Writer sub-agent | 60KB brief | 2 CRITs (folk-doctrine + wrong-surface) |
+| Editorial-review sub-agent | 13KB dispatched (72% paraphrased from 47KB engine brief) | Caught 5 CRITs in writer + engine output |
+| Main agent (envComments, zerops.yaml comments) | ~1 sub-section of workflow guide | F-21 invented "2 GB quota"; no voice-class fires in v38 |
+| Engine `recipe_templates.go` (env READMEs) | Zero spec teaching; hardcoded Go strings | 4 of 6 editorial-review CRITs came from this source |
 
----
-
-## 2. The 10-Cx stack
-
-Ordered by dependency. Each has a scope, files-touched list, RED test name, and acceptance criterion.
-
-### Cx-1 — GO-TEMPLATE-GROUND (F-GO-TEMPLATE close — headline fix)
-
-**Scope**: reshape the hardcoded prose-generating functions in `recipe_templates.go` so every claim is computed from plan data instead of hardcoded per envIndex. Add a gold-test that runs the spec's per-surface single-question tests against `BuildFinalizeOutput(fixturePlan)` output. Fabrication becomes structurally impossible because the functions have no construction path for un-backed claims.
-
-**Why now**: 4 of 6 editorial-review CRITs in v38 came from this source. Fixing it removes the single largest class of content defect. Dependency-free.
-
-**Files touched**:
-
-- `internal/workflow/recipe.go` — add `EnvTemplate` struct carrying per-env: `RuntimeMinContainers`, `RuntimeMode` (HA/NON_HA/absent), `DBMode`, `CacheMode`, `QueueMode`, `BackupPolicy` (bool), `ReadinessCheckTightened` (bool). Populated during provision step from the plan's env tier metadata. Added as `plan.EnvTemplates [6]EnvTemplate`.
-- `internal/workflow/recipe_templates.go`:
-  - `envAudience(envIndex, plan)` — rewrite to compose from `plan.EnvTemplates[envIndex]`. Each bullet derived from a plan field. No bullet emitted if the field doesn't differ from neighboring tiers.
-  - `envDiffFromPrevious(envIndex, plan)` — iterate `EnvTemplates[envIndex-1]` vs `EnvTemplates[envIndex]`. For each field that differs, emit one bullet. Identical fields produce no bullet (CRIT #1 fix: both nodejs@24 → no "expanded toolchain" bullet).
-  - `envPromotionPath(envIndex, plan)` — compose from forward-diff.
-  - `envOperationalConcerns(envIndex, plan)` — compose from env-specific flags.
-- `internal/workflow/recipe_templates_test.go` — add `TestFinalizeOutput_PassesSurfaceContractTests`:
-  - Table-driven: 2 fixture plans (showcase + minimal).
-  - For each env in each plan, render `GenerateEnvREADME(plan, i)`.
-  - Run each Surface 2 single-question test (from [`docs/spec-content-surfaces.md`](../../spec-content-surfaces.md) §"Per-surface test cheatsheet") as an assertion:
-    - Every "What changes" bullet matches a field difference in the fixture's `EnvTemplates` data.
-    - Every "Who this is for" bullet corresponds to a plan flag that actually distinguishes this tier.
-    - No bullet mentions a service type (`nodejs@24`, `postgresql@18`) that doesn't appear in the env's import.yaml.
-    - No bullet claims a "mode" / "scale" / "HA" property that contradicts the env's import.yaml.
-  - Test fails with the specific unbacked bullet + fixture path.
-
-**RED tests**:
-
-- `TestFinalizeOutput_PassesSurfaceContractTests` (must fail against current `recipe_templates.go:273, 345, 382`; pass after refactor).
-- `TestEnvDiffFromPrevious_NoHardcodedClaims` — generic lint: scan the function body via `go/ast`, assert all return strings contain only `{{.Field}}` template markers OR references to `plan.EnvTemplates[...]` fields. Any raw string literal with platform-domain vocabulary (`nodejs`, `HA`, `CDE`, `SSH`) fails. Prevents regression.
-
-**Green**: both tests pass against rewritten functions. All existing tests in `recipe_templates_test.go` continue to pass (the 2 fixture plans need to produce the same rendered output modulo the removed fabricated bullets).
-
-**Acceptance on v39**: editorial-review dispatch reports 0 CRITs on any env README (`1 — Remote (CDE)`, `3 — Stage`, `4 — Small Production`). Retry-cycle for `close/editorial-review` closes on first attempt.
-
-**Estimated**: 2–3 days. Breakdown:
-- **Day 1 — bullet audit (substantive design)**. Inventory every hardcoded bullet in the four functions (~40-50 bullets). Classify each as: (a) **plan-backed** — field exists in current `writeSingleService` yaml generator; (b) **prose-only** — bullet makes a claim no yaml field backs (e.g. "Backups become meaningful at this tier"); (c) **system-invariant** — true of every recipe by construction (e.g. "Each tier declares a distinct project.name"). For (b) bullets, user decides per-bullet: promote to schema + add yaml-generator support, or delete the bullet. Skipping this audit causes Cx-1 to either lose teaching (deleted (b) bullets) or move fabrication into the schema (unbacked schema fields).
-- **Day 2 — refactor**. Extract `EnvTemplate` struct. Rewrite the four prose functions to compose bullets from struct fields (for (a) bullets) + an enumerated system-invariant bullet template list (for (c) bullets). Drop or add yaml-gen support for (b) bullets per the audit decisions.
-- **Day 3 — gold test with three-way equality**. `TestFinalizeOutput_PassesSurfaceContractTests` asserts for each generated bullet: (schema field value) == (yaml-generator emitted text for that field) == (prose bullet's claim about that field). Three-way equality catches the case where a bullet's schema field is set but the yaml generator doesn't emit the corresponding config — the "fabrication moved into schema" failure mode.
+The editorial-review sub-agent received 72% LESS teaching than the writer and caught MORE defects than the writer prevented. That's the clearest signal in the data that brief-volume isn't the solution — **tight, targeted context at the right moment beats comprehensive teaching up front**.
 
 ---
 
-### Cx-2 — MANIFEST-EXPORT-EXTEND (F-23 close)
+## 1. The three design principles
 
-**Scope**: extend the export root-file whitelist at [`internal/sync/export.go:236`](../../../internal/sync/export.go#L236) to include `ZCP_CONTENT_MANIFEST.json` (and `*.json` / `*.md` root files by pattern for future-proof).
+**(a) Agents see source-of-truth, not inventions.** When the agent authors content that claims a fact, the fact is visible to the agent at the moment of authoring. Examples: when writing envComments, the rendered yaml for that env is in the agent's context. When writing gotchas, the facts log is the input (not the agent's memory). When writing CLAUDE.md, the scaffold's actual file tree is in context.
 
-**Why now**: one-line fix; unblocks the manifest reaching the deliverable. Dependency-free. Parallel-safe.
+**(b) Examples beat rules.** Replace prose teaching with annotated examples. 3-5 examples per surface (two good, two bad tagged with specific failure) is more effective per byte than 2KB of prose rules. Pattern-matching against concrete examples fits how agents work; prose rules get paraphrased and lose precision.
 
-**Files touched**:
+**(c) Right-size the brief to the role.** Writer drops from 60KB to ~18KB — classification tables move to runtime lookups; wrong-role atoms (fact-recording-discipline) get dropped. Main agent gets a ~3KB comment-authoring topic injected at generate/finalize entry, not a one-paragraph mention inside a 3000-line workflow doc.
 
-- `internal/sync/export.go` — change L236 from `[]string{"TIMELINE.md", "README.md"}` to `[]string{"TIMELINE.md", "README.md", "ZCP_CONTENT_MANIFEST.json"}`. Optionally accept a `rootFilePattern` config so future overlays don't require another export edit.
-- `internal/sync/export_test.go` — add `TestExportRecipe_IncludesRootManifest`:
-  - Setup temp dir with `TIMELINE.md`, `README.md`, `ZCP_CONTENT_MANIFEST.json` (valid JSON), and one stray root-level file.
-  - Call `ExportRecipe`.
-  - Extract archive; assert `TIMELINE.md`, `README.md`, `ZCP_CONTENT_MANIFEST.json` present; stray file NOT present (pattern is explicit, not wildcard).
+---
 
-**RED test**: `TestExportRecipe_IncludesRootManifest` fails at HEAD (manifest not in archive).
+## 2. The 5-commit stack
 
-**Green**: test passes after whitelist extension.
+### Commit 1 — Engine-template grounding
 
-**Acceptance on v39**: `find nestjs-showcase-v39/ -name "ZCP_CONTENT_MANIFEST.json"` returns a file.
+**What**: parametrize the four env-README prose functions in [`internal/workflow/recipe_templates.go`](../../../internal/workflow/recipe_templates.go) so every claim is computed from plan data. Add a gold test that enforces three-way equality: for every emitted bullet, (struct field value) == (yaml-generator's emitted text for that field) == (prose bullet's claim about that field). Fabrication becomes structurally impossible.
+
+**Why this stays in the plan**: there's no agent authoring these — it's Go code emitting strings. Context-tightening doesn't apply; the Go source itself needs the fix.
+
+**Why headline**: 4 of v38's 6 editorial-review CRITs came from this one file. Fixing it removes the single largest source of content defect.
+
+**Day breakdown** (2–3 days):
+
+- **Day 1 — bullet audit.** Inventory every hardcoded bullet in `envAudience / envDiffFromPrevious / envPromotionPath / envOperationalConcerns` (~40-50 bullets). Classify each:
+  - (a) plan-backed: already corresponds to a field in `writeSingleService` yaml generator (mode, minContainers, zeropsSetup, priority).
+  - (b) prose-only: bullet claims something no yaml field backs ("Backups become meaningful at this tier"). Risk class.
+  - (c) system-invariant: true of every recipe by construction ("Each tier's import.yaml declares a distinct project.name").
+- **Day 2 — refactor.** Extract `EnvTemplate` struct. Rewrite prose functions to compose from struct fields (for a) + system-invariant template list (for c). For (b) bullets: user decides per-bullet — promote to schema + add yaml-generator support, or drop the bullet. Skipping this audit causes either silent teaching loss or fabrication migration into schema.
+- **Day 3 — gold test.** `TestFinalizeOutput_PassesSurfaceContractTests` — for each generated bullet, assert three-way equality. Any divergence fails with pointer at which layer broke.
+
+**Files touched**: `internal/workflow/recipe.go` (add EnvTemplate), `recipe_templates.go` (rewrite 4 prose functions), `recipe_templates_test.go` (gold test), possibly `recipe_templates_import.go` (if (b) bullets promote to schema + yaml support).
+
+**Acceptance on v39**: editorial-review reports 0 CRITs on any env README.
+
+---
+
+### Commit 2 — Manifest export whitelist
+
+**What**: extend the root-file whitelist at [`internal/sync/export.go:236`](../../../internal/sync/export.go#L236) to include `ZCP_CONTENT_MANIFEST.json`.
+
+**Why**: Cx-4 MANIFEST-OVERLAY in v8.112.0 stages the manifest into the recipe output dir. The export function only whitelists `TIMELINE.md` + `README.md` as root files, so the manifest gets dropped before the tarball is written.
+
+**Files touched**: `internal/sync/export.go`, `internal/sync/export_test.go`.
+
+**RED test**: `TestExportRecipe_IncludesRootManifest`.
+
+**Acceptance**: `find nestjs-showcase-v39/ -name "ZCP_CONTENT_MANIFEST.json"` returns a file.
 
 **Estimated**: 30 minutes.
 
 ---
 
-### Cx-3 — ROUTETO-RECORD-ENFORCE (enable thin writer — Phase 1)
+### Commit 3 — Content-authoring context pack per step
 
-**Scope**: `zerops_record_fact` validates `routeTo` server-side at call time against the same classification×surface routing matrix currently taught in the writer brief (atoms `routing-matrix.md` + `classification-taxonomy.md`). Without a valid `routeTo`, the call fails with a specific remediation naming which values are legal for the given `type`.
+**What**: new engine behavior at each content-emission substep. The engine injects role-appropriate, moment-appropriate context into the agent's guidance. Three concrete cases:
 
-**Why now**: v38 session logs show 45+ recorded facts, only 3 with `scope` set, 0 with `routeTo`. The "classify at record time" design intent (per [`fact-recording-discipline.md`](../../../internal/content/workflows/recipe/principles/fact-recording-discipline.md) §"The recording step IS the classification moment") is advisory-only. Making it mandatory shifts classification load from the writer to the agent that has the failure mode in front of it. Prerequisite for Cx-6 (writer brief slim).
+**3a. Generate step (main agent writes zerops.yaml):**
+When the agent enters the generate step, guidance includes (beyond the current step-entry teaching):
+- 3-5 annotated example zerops.yaml comment blocks from a curated example bank. Format: each example shows a comment plus its verdict (PASS — principle-level, trade-off explained / FAIL — field narration / FAIL — journal voice) with one sentence of rationale.
+- A pointer: "for any field whose behavior you're commenting about, call `zerops_knowledge topic=X` and paraphrase the guide's framing. Don't invent mechanism explanations."
+
+**3b. Finalize step (main agent writes envComments):**
+When the agent starts `generate-finalize`, the engine FIRST renders the import.yaml for the current env with schema only (no comments), and shows it to the agent as input:
+```
+Here is env 4's import.yaml as it will render. Your envComments for this env describe WHY each service block looks the way it does.
+
+<yaml content>
+
+Write comments grounded in the yaml above. Do not claim a number that isn't in the yaml. If a tier decision isn't visible in the yaml, don't comment about it.
+```
+Plus 3-5 example envComment blocks with verdicts.
+
+**3c. Deploy/readmes (writer sub-agent dispatch):**
+The writer's engine-stitched brief now includes, as a pre-loaded input block:
+- Per-codebase: abbreviated file tree + the already-rendered zerops.yaml of that codebase (so gotchas can reference real patterns, not invented ones).
+- Facts-log subset filtered to facts routed to `content_gotcha` / `content_ig` (via Commit 4 below).
+- 2-3 annotated examples per surface (intro, IG item, gotcha, CLAUDE.md section). Drawn from a curated examples bank.
+
+**The example bank (new)**: `internal/content/examples/` contains `.md` files with frontmatter declaring:
+```
+---
+surface: gotcha | ig-item | intro | claude-section | env-comment | zerops-yaml-comment
+verdict: pass | fail
+reason: one-sentence tag (folk-doctrine | journal-voice | self-referential | platform-invariant-ok)
+---
+<example body>
+```
+Seeding: ~15-20 files extracted from `spec-content-surfaces.md §11 counter-examples` (failure cases) plus hand-picked winners from v38 post-correction content (pass cases). Each subsequent run's editorial-review findings can be promoted to the bank (new bad examples) or the post-fix versions (new good examples).
+
+**Engine mechanism**: a new helper `examples.SampleFor(surface, n)` returns n rotating examples (mix good + bad). Called by substep guidance composers at generate/finalize/deploy-readmes entry.
+
+**Why this is the headline context-tightening commit**: replaces the need for ~5 machine checks. If the writer sees 3 good gotcha examples alongside the citation-map requirement, it pattern-matches against known-good shape. Folk-doctrine emerges when the agent is working from memory of rules; examples close the gap.
 
 **Files touched**:
-
-- `internal/workflow/fact_record.go` (or wherever `handleRecordFact` lives):
-  - Add `routeTo` as a required field in `RecordFactInput`.
-  - Validate against `ClassToRoutingCells(type)` — the class-to-surface matrix.
-  - On invalid input, return `INVALID_PARAMETER` with remediation listing the legal `routeTo` values.
-- `internal/workflow/classification.go` (new) — extract the routing matrix from the two writer-brief atoms into Go data. Single source of truth that both the `record_fact` validator AND a new `classify` action (Cx-4) consume.
-- Write unit tests for every classification×surface cell.
-- Atom update — `fact-recording-discipline.md` now says "routeTo is required; omitting it fails the call; legal values per type in the API error message".
+- `internal/content/examples/` — new directory, ~15-20 seed files.
+- `internal/workflow/examples.go` — new `SampleFor` helper + example-bank loader.
+- `internal/workflow/recipe_guidance.go` — extend step-entry composers to inject examples at the right moments.
+- `internal/workflow/subagent_brief.go` — `buildWriterBriefRendered` appends the pre-loaded input block (yaml + facts-log + examples) before the brief is handed to the writer.
+- `internal/content/topics/comment-style.md` — new topic for main-agent comment guidance, fetchable via `zerops_knowledge`.
 
 **RED tests**:
+- `TestGenerateStepGuidance_IncludesExamples` — asserts step-entry guidance contains ≥3 example blocks.
+- `TestFinalizeStepGuidance_IncludesRenderedYaml` — asserts envComments guidance shows the rendered yaml for the current env.
+- `TestWriterBrief_IncludesFactsLogAndExamples` — asserts writer brief input block includes routed facts + examples.
+- `TestExamplesBank_FrontmatterValid` — schema check on the bank.
 
-- `TestRecordFact_RejectsMissingRouteTo`
-- `TestRecordFact_RejectsInvalidRouteToForType` (e.g. `type=gotcha_candidate, routeTo=claude_md` requires override_reason)
-- `TestRecordFact_AcceptsValidRouteTo`
+**Acceptance on v39**:
+- envComments contain no claimed numbers absent from the rendered yaml (F-21 class).
+- zerops.yaml comments contain no journal voice.
+- Writer-produced gotchas have citation map coverage = 100% of citation-map-topic bullets.
 
-**Green**: all three pass.
-
-**Acceptance on v39**: main-session.jsonl contains ≥10 `zerops_record_fact` calls, 100% of which carry a non-empty `routeTo`.
-
-**Estimated**: 1 day.
+**Estimated**: 2 days.
 
 ---
 
-### Cx-4 — CLASSIFY-RUNTIME-ACTION (enable thin writer — Phase 2)
+### Commit 4 — Knowledge-lookup as workflow step
 
-**Scope**: new engine action `zerops_workflow action=classify` that takes `{type, title, mechanism, citation_topic}` and returns `{routeTo, violations[]}`. Lets the writer classify individual items at decision time without loading the full classification table in its brief.
+**What**: writer's completion shape (per [`internal/content/workflows/recipe/briefs/writer/completion-shape.md`](../../../internal/content/workflows/recipe/briefs/writer/completion-shape.md)) requires a new `citations` array. For every gotcha or IG item whose topic appears in the citation map, the corresponding citation entry must carry a `guide_fetched_at` timestamp proving `zerops_knowledge` was called on that topic during writing. Missing timestamp = engine refuses `action=complete substep=readmes` with a specific remediation.
 
-**Why now**: depends on Cx-3 (shared classification.go). Unlocks Cx-6 writer brief slim.
+**Why one hard gate survives**: this turns a judgment call ("is this bullet folk-doctrine?") into a file-existence check ("did the knowledge fetch happen before the bullet was written?"). Zero subjectivity; trivially machine-verifiable. And it forecloses the folk-doctrine class at its root: if the agent looked up the guide, it's paraphrasing an authoritative source; if it didn't, the bullet can't ship.
+
+**Additionally**: `zerops_record_fact` gets a nudge (not a refusal) when `routeTo` is missing — engine response includes a "based on type=X, likely route is Y; confirm or pass `routeTo` explicitly." Records land with routing most of the time; writer's context pack (Commit 3c) can filter facts by routing.
 
 **Files touched**:
+- `internal/content/workflows/recipe/briefs/writer/completion-shape.md` — add `citations` field spec.
+- `internal/workflow/recipe_step_checks.go` — add `readmes_citations_present` check at `complete substep=readmes`.
+- `internal/workflow/fact_record.go` — nudge response on missing routeTo.
+- `internal/workflow/fact_record_test.go` — test the nudge.
 
+**RED tests**:
+- `TestCompleteReadmes_RequiresCitationTimestamps` — fixture manifest with citation-map-topic gotcha missing `guide_fetched_at` fails completion.
+- `TestRecordFact_NudgeOnMissingRouteTo`.
+
+**Acceptance on v39**: writer's completion payload includes `citations` array; zero `readmes_citations_present` failures; every citation-map-topic bullet paraphrases its guide.
+
+**Estimated**: 4 hours.
+
+---
+
+### Commit 5 — Writer brief slim + canonical task list at session start
+
+**Two small combined changes:**
+
+**5a. Writer brief slim (60KB → ~18KB):**
+- Remove `principles.fact-recording-discipline` from `writerPrinciples()` — wrong role (writer reads facts; doesn't record).
+- Replace `briefs.writer.classification-taxonomy` + `briefs.writer.routing-matrix` (11KB combined) with one paragraph pointing at new `zerops_workflow action=classify` runtime lookup for per-item override cases. The runtime action reads the same Go-side routing matrix.
+- Trim `content-surface-contracts.md` — keep the single-question tests for each surface; drop the "does NOT belong here" negative-form prose (replaced by bad-example injection via Commit 3c).
+- Keep everything else.
+
+**5b. Canonical task list published at session start:**
+When main agent calls `zerops_workflow action=start workflow=recipe tier=<tier>`, the engine response includes a `startingTodos` array with the canonical 19-substep breakdown. Main agent pastes it into its first TodoWrite call; marks items done as they close. No re-planning, no re-compression mid-session.
+
+**Why together**: both are "stop asking the agent to reconstruct what the engine already knows." Writer doesn't need 11KB of classification rules in its brief — the engine has them; writer asks when it needs to. Main agent doesn't need to derive a substep breakdown — the engine has it; ship it at start.
+
+**Files touched**:
+- `internal/workflow/atom_stitcher.go` — `writerBriefBodyAtomIDs()` + `writerPrinciples()` edits.
+- `internal/workflow/classification.go` (new, small) — Go-side routing matrix extracted from the two atoms; consumed by new `action=classify` handler.
 - `internal/tools/workflow.go` — add `action=classify` handler.
-- `internal/workflow/classification.go` — add `Classify(input ClassifyInput) ClassifyResult` that applies the matrix + citation-map rules.
-- Tests: 6 cases, one per classification class, each asserting the right routeTo + any violations.
-
-**RED test**: `TestClassifyAction_ReturnsRouteToWithCitationCheck` — if `citation_topic` is on the Citation Map and `citation` field is empty, return violation `folk_doctrine_candidate`.
-
-**Green**: tests pass.
-
-**Acceptance on v39**: writer sub-agent log shows it calls `classify` for any ambiguous item (vs. loading the full taxonomy in its brief).
-
-**Estimated**: 4 hours.
-
----
-
-### Cx-5 — WRITER-SELF-REVIEW-AS-STEP-GATE
-
-**Scope**: move the bash checks currently in the `self-review-per-surface.md` atom (manifest exists, manifest valid JSON, no folk-doctrine bullets, per-codebase fragments present, CLAUDE.md byte floor) to engine-enforced step-gate at `action=complete substep=readmes`. Writer cannot attest completion until every machine check passes.
-
-**Why now**: self-review as advisory atom text produced 2 writer CRITs in v38 (folk-doctrine + wrong-surface). Moving the checks to the engine step-gate makes them non-bypassable.
-
-**Files touched**:
-
-- `internal/workflow/recipe_step_checks.go` (or equivalent) — add a new set of checks that fire specifically at `deploy/readmes` substep completion:
-  - `readmes_manifest_exists_and_valid_json`
-  - `readmes_no_folk_doctrine` — every gotcha whose topic is on the Citation Map AND whose body contains no `[topic:...]` reference fails.
-  - `readmes_no_wrong_surface_gotcha` — every manifest item with `routeTo=claude_md` is NOT present in any README knowledge-base fragment.
-  - `readmes_cross_readme_uniqueness` — existing check.
-  - `readmes_claude_md_byte_floor` — existing check, extended with case-insensitive base-sections match (fixes v38 harness false-positive on lowercase "Dev loop").
-- Writer atom `self-review-per-surface.md` shrinks from 4KB advisory bash to ~500B "on completion the engine runs these checks; fix the rendered files and retry".
-
-**RED tests**: one per check — fixture a deliberately-bad manifest + README, assert each check fires with the specific offending line.
-
-**Green**: tests pass; existing `fragment_*` checks continue to pass.
-
-**Acceptance on v39**: writer-first-pass compliance failure count ≤ 2 (v38 had 9). Writer cannot attest `complete substep=readmes` on content that would fail editorial-review's folk-doctrine or wrong-surface tests.
-
-**Estimated**: 1 day.
-
----
-
-### Cx-6 — WRITER-BRIEF-SLIM
-
-**Scope**: drop three atoms from the writer's dispatch brief; replace with runtime lookups or step-gate signals.
-
-- Remove `principles.fact-recording-discipline` from `writerPrinciples()` — wrong role (writer consumes facts; doesn't record).
-- Remove `briefs.writer.classification-taxonomy` + `briefs.writer.routing-matrix` from `writerBriefBodyAtomIDs()` — move to runtime lookup via Cx-4 `action=classify`.
-- Move `briefs.writer.self-review-per-surface` content to a step-gate signal (Cx-5); retain a 500-byte stub pointing at the gate checks.
-
-Target brief size: ~25KB (from current ~60KB). All removed teaching stays in the system as engine-side enforcement or runtime action.
-
-**Why now**: depends on Cx-3, Cx-4, Cx-5. With enforcement moved to the right layers, the brief shrinks naturally.
-
-**Files touched**:
-
-- `internal/workflow/atom_stitcher.go` — update `writerBriefBodyAtomIDs()` + `writerPrinciples()`.
-- `internal/workflow/subagent_brief_test.go` — add `TestBuildWriterBrief_BriefSizeUnder30KB` + assert removed atoms absent from output.
-- Atom files — `classification-taxonomy.md` and `routing-matrix.md` retained but flagged as "runtime lookup source" in their frontmatter.
+- `internal/workflow/recipe_substeps.go` — `startingTodos` helper.
+- `internal/tools/workflow.go` — include `startingTodos` in `action=start` response.
+- `internal/workflow/subagent_brief_test.go` — assert brief size ≤ 25KB.
 
 **RED tests**:
+- `TestBuildWriterBrief_UnderSizeLimit` — 25KB.
+- `TestClassifyAction_ReturnsRouteTo` — 6 cases (one per class).
+- `TestWorkflowStart_IncludesStartingTodos` — asserts `startingTodos` array populated.
 
-- `TestBuildWriterBrief_BriefSizeUnder30KB` — assert brief ≤ 30,000 bytes.
-- `TestBuildWriterBrief_NoFactRecordingDiscipline` — assert content missing.
-- `TestBuildWriterBrief_NoFullClassificationTable` — assert the full routing matrix table is NOT present (small class reference allowed, not full table).
-
-**Green**: tests pass. All downstream behavior tests in `v38_dispatch_integrity_test.go`-equivalent still pass against the smaller brief for byte-identical shape.
-
-**Acceptance on v39**: `BuildSubagentBrief(plan, writer, ...).Prompt` size under 30KB.
-
-**Estimated**: 4 hours.
-
----
-
-### Cx-7 — MAIN-AGENT-COMMENT-TEACHING + VOICE-CHECK
-
-**Scope**: add a `zerops_knowledge topic=comment-style` lookup the main agent fetches before writing zerops.yaml or envComments. Add deploy-step + finalize-step voice checks that grep for first-person/journal patterns in comment lines.
-
-**Why now**: main agent emits ~40 zerops.yaml comment blocks × 3 codebases + 72 envComment blocks per run. Current teaching is one sub-section of `recipe.md`. No check fires on voice quality. User's remembered pattern ("I started dev server it failed...") is exactly this class. Parallel-safe with Cx-1/2/3/4/5/6.
-
-**Files touched**:
-
-- `internal/content/topics/comment-style.md` (new) — lift + expand the writer brief's `comment-style` principle atom for main-agent use. Add the spec §13 counter-examples (journal voice, "turns out", self-inflicted-as-gotcha).
-- `internal/workflow/recipe_checks.go`:
-  - `zerops_yaml_comment_voice` — deploy-step check, regex `\b(I |we |turns out|then I|tried [a-z]+ failed|worked)\b` in comment lines of `*/zerops.yaml`. Fails with specific file:line.
-  - `env_comment_voice` — finalize-step equivalent scanning envComments in generated import.yaml comment blocks.
-- Update `recipe.md` generate + finalize step-entry text to point at `comment-style` topic.
-
-**RED tests**: one per check + one per fixture bad-voice comment.
-
-**Green**: tests pass.
-
-**Acceptance on v39**: zero `*_comment_voice` failures across 3 zerops.yaml + 6 env import.yaml files.
+**Acceptance on v39**:
+- Writer brief size ≤ 25KB.
+- Main-session shows 1–3 TodoWrite calls instead of v38's 28 (starter list + mark-done updates).
 
 **Estimated**: 4 hours.
 
 ---
 
-### Cx-8 — ENV-COMMENT-SCAFFOLD-DECISION-CHECK
+## 3. What explicitly DROPS from the earlier plan
 
-**Scope**: finalize-step check that env import.yaml service comments don't contain scaffold-decision teaching that belongs in the per-codebase `zerops.yaml` comment instead.
+The earlier 11-commit plan (git SHA `ff3dcfb`) included several commits now dropped:
 
-**Why now**: addresses the spec §11 counter-example class "Scaffold decisions disguised as gotchas" transposed to env comments. E.g. a tier 0 env comment that describes "how our NestJS app wires TypeORM" belongs in apidev/zerops.yaml, not env 0. Parallel-safe.
+- **Dispatch-guard auto-enforcement** — dropped. F-17's cause was a 60KB brief the main agent compressed. A 18KB brief with no redundancy is nothing to paraphrase. The class self-extinguishes.
+- **Writer self-review-as-step-gate** (folk-doctrine regex, wrong-surface detector, voice regex) — dropped. Commit 4 closes folk-doctrine via forced knowledge-lookup at authoring time. Commit 3 (examples + yaml visibility) closes wrong-surface at authoring time. Voice regex checks become redundant with example-driven teaching.
+- **Env-comment-scaffold-decision-placement check** — dropped. Commit 3b shows the agent the rendered yaml before authoring envComments; scaffold-decision-in-wrong-place emerges from agents working from memory, not source-of-truth. Closed at source.
+- **Stripping-visibility-warn** — dropped as standalone. Commit 1 removes the Go-source fabrications so there's nothing to strip. If new engine-side content emitters appear in future work, the invariant added to PLAN.md §1.5 (gold tests for all engine-emitted content) catches them at compile-time.
+- **Surface-doc-comment-lint** — deferred. PLAN.md §1.5 makes it a future invariant; lint enforcement lands when a second engine-side emitter appears.
 
-**Files touched**:
-
-- `internal/workflow/recipe_checks.go` — `env_comment_scaffold_decision_placement`. Heuristic: comment mentions a framework-specific concept (list: `TypeORM`, `Nest`, `Svelte`, `Vite`, `SvelteKit`) AND isn't naming a platform mechanism. Fails with remediation "move to apidev/zerops.yaml comment or discard; env comments explain tier decisions, not code shape."
-- Test + fixture.
-
-**RED**: fixture env comment mentioning `TypeORM` fails.
-
-**Green**: fixture with tier-decision-only passes.
-
-**Acceptance on v39**: zero `env_comment_scaffold_decision_placement` failures.
-
-**Estimated**: 3 hours.
-
----
-
-### Cx-9 — STRIPPING-VISIBILITY-WARN
-
-**Scope**: when main-agent Edit patches a file whose content was originally emitted by a Go-source function (recipe_templates.go), log a stderr warning naming the originating function. Makes the "strip from mount without fixing source" pattern visible.
-
-**Why now**: v38 main agent patched 5 env READMEs + 1 app README + 2 manifests to satisfy editorial-review — all stripping. Without visibility, this pattern recurs silently. Parallel-safe.
-
-**Files touched**:
-
-- `internal/workflow/recipe_overlay.go` — when `OverlayRealREADMEs` detects that a file on the mount differs from what `Generate*README(plan)` would produce, log the divergence. Not a failure — a warning that the Go source should be updated.
-- Alternative: the commit hook `.githooks/pre-commit` (new) greps for recent Edit operations on recipe-output files and warns if the corresponding Go-source function hasn't changed in the same commit.
-
-**RED test**: warn-on-divergence logic has a unit test.
-
-**Green**: warning fires in a synthetic "patched rendered but source unchanged" scenario.
-
-**Acceptance on v39**: when editorial-review fires CRITs and main agent patches, session-end summary lists "N patches applied to files also authored by Go source; consider upstream fix".
-
-**Estimated**: 3 hours.
-
----
-
-### Cx-10 — SURFACE-DOC-COMMENT-LINT
-
-**Scope**: build-time lint under `tools/lint/surface_coverage.go` that walks every exported function in `internal/workflow/recipe_templates.go` + any new emitter, requires a `// Surface: N / Test: <spec-single-question>` doc comment, and verifies a corresponding test exists.
-
-**Why now**: systemic prevention. Any future content-emitter added without a spec test fails CI. Parallel-safe. Seals the class v38 exposed.
-
-**Files touched**:
-
-- `tools/lint/surface_coverage.go` (new) — `go/ast` walker + existence check on `_test.go` file.
-- `Makefile` — add `lint-surface-coverage` target to `lint-local`.
-- Existing emitters get their doc comment added as part of Cx-1.
-
-**RED test**: remove a doc comment from one emitter, assert lint fails.
-
-**Green**: lint passes with all current emitters documented.
-
-**Acceptance on v39**: `make lint-local` passes.
-
-**Estimated**: 4 hours.
-
----
-
-### Cx-11 — DISPATCH-GUARD-AUTO-ENFORCE (F-17-runtime close)
-
-**Scope**: fire `VerifySubagentDispatch` automatically before any `Agent` dispatch whose description matches a guarded-role keyword. Not as a Claude Code `PreToolUse` hook (which Claude Code owns and we can't touch) — as a retroactive engine check at `action=complete substep=readmes` (and close-phase equivalents): the engine scans the main-session for recent `Agent` tool calls whose descriptions match the guarded keywords, hashes each submitted prompt, and fails the step-complete call with `SUBAGENT_MISUSE` if any prompt SHA doesn't match the most-recent `build-subagent-brief` result for that role.
-
-**Why now**: v38 proved the opt-in guard isn't invoked. Retroactive check doesn't prevent the paraphrase but blocks step-completion — so the next cycle must correct the dispatch. Rule-of-last-resort.
-
-**Files touched**:
-
-- `internal/workflow/recipe_step_checks.go` — add check `readmes_dispatch_integrity` fired at `complete substep=readmes` and `close/editorial-review` / `close/code-review` attest. Reads the session-scoped `LastSubagentBrief` + scans main-session.jsonl for recent Agent dispatches.
-- Requires exposing recent Agent tool-use history to engine — may need a MCP callback or a main-session.jsonl path exposed to engine at step-complete time.
-- Tests using the v38 deliverable's main-session.jsonl as fixture: assert editorial-review dispatch (L753, prompt 13229 B) fails the integrity check because its SHA doesn't match the engine-side `build-subagent-brief role=editorial-review` result.
-
-**RED test**: `TestDispatchIntegrity_CatchesParaphrasedEditorialReview` using v38 fixture.
-
-**Green**: test fails at HEAD (no check implemented); passes after implementation. Fixture shows `close/editorial-review` complete would have been blocked.
-
-**Acceptance on v39**: zero dispatch-integrity failures in v39 session log. Alternatively, if main-agent does paraphrase, the step-complete fails loudly with `SUBAGENT_MISUSE` remediation.
-
-**Estimated**: 1–2 days (hardest because the engine needs access to main-agent Agent history, which crosses Claude Code's abstraction).
-
----
-
-## 3. Parallelization
-
-| Cx | Depends on | Parallel-safe with |
-|---|---|---|
-| 1 GO-TEMPLATE-GROUND | — | 2, 7, 9, 10, 11 |
-| 2 MANIFEST-EXPORT-EXTEND | — | any |
-| 3 ROUTETO-RECORD-ENFORCE | — | 1, 2, 7, 9, 10 |
-| 4 CLASSIFY-RUNTIME-ACTION | 3 | 1, 2, 5, 7, 9, 10 |
-| 5 WRITER-SELF-REVIEW-AS-STEP-GATE | — | any |
-| 6 WRITER-BRIEF-SLIM | 3, 4, 5 | 1, 2, 7, 9, 10 |
-| 7 MAIN-AGENT-COMMENT-TEACHING | — | any |
-| 8 ENV-COMMENT-SCAFFOLD-DECISION | — | any |
-| 9 STRIPPING-VISIBILITY-WARN | — | any |
-| 10 SURFACE-DOC-COMMENT-LINT | 1 (for initial doc comments) | 2, 3, 4, 5, 7, 9, 11 |
-| 11 DISPATCH-GUARD-AUTO-ENFORCE | — | any |
-
-One-person drive: 5–7 days sequential. Two-person parallel: 3–4 days.
+Safety net kept thin:
+- `readmes_manifest_exists_and_valid_json` — mechanical, not judgment.
+- `readmes_citations_present` — the one hard gate surviving (Commit 4).
+- Existing `fragment_*` / `comment_ratio` / factual_claims checks — existing, unchanged.
+- Editorial-review stays as final adversarial pass. Target drop: 5 CRITs (v38) → ≤ 1 CRIT (v39).
 
 ---
 
 ## 4. Retrospective harness run (before v8.113.0 tag)
 
-Per the v38 pattern: before tagging, run `zcp analyze recipe-run` retrospectively against the v38 deliverable. Expected behavior: same defect set visible (deliverable unchanged), but the v39 additions surface as NEW failures on the v38 tree:
+Before tagging, run `zcp analyze recipe-run` against v38 deliverable with the v39 checks active. Expected:
 
-- Cx-1 addition: `TestFinalizeOutput_PassesSurfaceContractTests` fails on v38 (the CRIT #1 "expanded toolchain" fails the spec test).
-- Cx-5 addition: `readmes_no_folk_doctrine` flags v38's "benign zcli warning" retroactively.
-- Cx-7 addition: `zerops_yaml_comment_voice` passes on v38 (comments are clean).
-- Cx-11 addition: dispatch-integrity check fails v38's editorial-review SHA mismatch.
-
-If the retrospective doesn't fail the v38 deliverable on the expected new checks, the checks don't work.
+- **Commit 1 gold-test fails on v38** (catches CRIT #1 "expanded toolchain" retroactively — the hardcoded claim has no backing field).
+- **Commit 4 `readmes_citations_present` fails on v38** (writer's manifest has no `guide_fetched_at` field at all in v38 format).
+- **Writer brief size** — if we invoke `BuildSubagentBrief` against HEAD with fixture plan and check `len(Prompt) ≤ 25KB`, passes. On v38 (pre-slim), fails.
+- **Classify action** — against v38's facts log, routing-matrix coverage 100% of fact types.
 
 ---
 
 ## 5. v39 commission spec
 
-Same as v38 except:
-
 ```
 TIER:                 showcase
 SLUG:                 nestjs-showcase
 FRAMEWORK:            nestjs
-TAG:                  v8.113.0 (or higher — fill in post-release)
+TAG:                  v8.113.0
 MUST_REACH:           close-step complete + ZCP_CONTENT_MANIFEST.json in deliverable
-MUST_PASS:            all dispatch-integrity checks at close-phase attest
-MUST_PASS:            all 3 guarded roles' dispatches byte-identical to engine brief (modulo trailing-newline)
-MUST_PASS:            zero editorial-review CRITs on first pass
-MUST_PASS:            readmes retry rounds ≤ 1, finalize rounds ≤ 1
+MUST_PASS:            writer brief size ≤ 25KB at dispatch
+MUST_PASS:            every writer gotcha/IG item with citation-map topic has
+                      guide_fetched_at timestamp
+MUST_PASS:            zero editorial-review CRITs on env READMEs (Commit 1 grounds them)
+MUST_PASS:            zero envComment claimed numbers absent from rendered yaml
+MUST_CONVERGE:        readmes retry rounds ≤ 1, finalize rounds ≤ 1, editorial-review
+                      attest attempts ≤ 2
 ```
 
-**During-run tripwires** (new vs v38):
+**During-run tripwires**:
 
-- Any `zerops_record_fact` call without `routeTo` → engine refuses. Monitor for refusal count.
-- Any `Write` to env README / root README that doesn't correspond to an engine regeneration → stripping warning fires.
-- Any `close/editorial-review` attest attempt with a paraphrased dispatch → fails `readmes_dispatch_integrity`.
+- TodoWrite call count in main-session (v38 had 28) should drop to ≤ 5 (starter + periodic updates).
+- Writer calls `zerops_knowledge` at least once per citation-map-topic bullet it writes.
+- `generate-finalize` response includes the rendered yaml as an input context block for each env.
 
 ---
 
 ## 6. What v39 is NOT doing
 
-- C-15 recipe.md deletion (R2-R7 per PLAN.md §2) — deferred to post-v39.
-- Framework diversity — v39 stays on nestjs-showcase.
-- Minimal tier — independent.
-- Publish-pipeline — post-v39.
+- C-15 recipe.md deletion (R2-R7 per [`../PLAN.md`](../PLAN.md) §2). Deferred until v39 PROCEED.
+- Framework diversity (stays nestjs).
+- Minimal-tier independent track.
+- Publish-pipeline.
 
 ---
 
-## 7. Exit criteria
+## 7. Parallelization
 
-Plan is complete when:
+| Commit | Depends on | Parallel-safe with |
+|---|---|---|
+| 1 Engine-template grounding | — | 2, 4, 5 |
+| 2 Manifest export whitelist | — | any |
+| 3 Content-authoring context pack | — (example bank is new infrastructure) | 1, 2, 4 |
+| 4 Knowledge-lookup workflow step | — | 1, 2, 3, 5 |
+| 5 Writer brief slim + starter todos | — | 1, 2, 3, 4 |
 
-- [ ] Cx-1–Cx-11 merged to main with green RED→GREEN cycle each.
+Mostly parallel. Single-person drive: 4–5 days sequential. Two-person parallel: 2–3 days.
+
+---
+
+## 8. Exit criteria
+
+- [ ] 5 commits merged to main with RED→GREEN cycle each.
 - [ ] `go test ./... -race -count=1` green.
-- [ ] `make lint-local` green including new `surface_coverage` lint.
-- [ ] Retrospective harness run against v38 shows the new checks surface the v38 defects.
-- [ ] v8.113.0 (or bumped) tagged + pushed.
-- [ ] Slot block in [`HANDOFF-to-I10-v39-prep.md`](../HANDOFF-to-I10-v39-prep.md) filled with commit SHAs.
+- [ ] `make lint-local` green.
+- [ ] Retrospective run against v38 shows the new checks catch known v38 defects per §4.
+- [ ] v8.113.0 tagged + pushed.
+- [ ] Slot block in [`../HANDOFF-to-I10-v39-prep.md`](../HANDOFF-to-I10-v39-prep.md) filled with commit SHAs.
 - [ ] User commissioned v39.
-- [ ] `runs/v39/{machine-report.json, verification-checklist.md, verdict.md}` all present; verify-verdict hook passes.
-- [ ] Verdict decision shipped (PROCEED / ACCEPT-WITH-FOLLOW-UP / PAUSE / ROLLBACK-Cx).
+- [ ] `runs/v39/{machine-report.json, verification-checklist.md, verdict.md}` present; verify-verdict hook passes.
+- [ ] Verdict decision shipped.
 
-If v39 verdict is PROCEED, the next handoff targets C-15 (recipe.md deletion per PLAN.md §3 step-entry migration). If PAUSE, the next handoff targets whichever new layer v39 exposed.
+If v39 clears, C-15 (recipe.md deletion) becomes the next handoff target per [`../PLAN.md`](../PLAN.md) §3. If PAUSE, next handoff targets whichever layer v39 exposed — likely a novel content-quality class requiring a new example-bank seed, not a new check.

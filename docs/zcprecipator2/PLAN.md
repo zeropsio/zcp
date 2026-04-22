@@ -1,7 +1,7 @@
 # PLAN — zcprecipator2 long-term plan + current state
 
 **Status**: living doc. Every run analyzer edits this file as part of writing a `runs/vN/verdict.md`.
-**Last updated**: 2026-04-22 (post-v38 analysis — PAUSE; Cx-5 F-17 close proven architecturally sound, runtime enforcement gap found; new defect class F-GO-TEMPLATE surfaced)
+**Last updated**: 2026-04-22 (post-v38 analysis — PAUSE; v39 plan rewritten around context-tightening after user direction shift)
 **Supersedes**: [`README.md`](README.md) §1–§2 as the *current* statement of intent. README stays frozen as the original design rationale; this doc tracks the moving target.
 
 ---
@@ -16,6 +16,7 @@ Secondary invariants, equal weight:
 2. **Convergence gate**: deploy rounds ≤ 2, finalize rounds ≤ 1 on `nestjs-showcase`.
 3. **Content-quality gate**: gotcha-origin ≥ 80% genuine; 0 manifest↔content inconsistencies; 0 self-inflicted gotchas shipped.
 4. **Cross-scaffold symbol contract** (env vars, endpoints, hostnames) byte-identical across parallel scaffold dispatches.
+5. **Engine-emitted content coverage** (added 2026-04-22, accepted from §6 proposed amendment): every function in `internal/workflow/` that emits content to the deliverable runs through the spec-content-surfaces.md single-question tests as a gold-test. No content surface in the deliverable is authored by code that bypasses the spec. (Surfaced by v38: 4 of 6 editorial-review CRITs came from hardcoded Go strings in `recipe_templates.go` that no test had ever run against.)
 
 The full principle list is [principles.md](03-architecture/principles.md) P1–P8. The full calibration bars are [calibration-bars-v35.md](05-regression/calibration-bars-v35.md) — 102 bars, 6 headline.
 
@@ -60,15 +61,16 @@ Research/Provision/Finalize have **no substeps** ([recipe_substeps.go:78-80](../
 
 ### What remains to finish C-15
 
+v38 surfaced that content-quality is bottlenecked on context delivery, not enforcement. v39 is the first run that tests a context-tightening fix stack. Work list reorganized to reflect:
+
 | # | Work | Blocking | Target |
 |---|---|---|---|
-| R1 | ~~Verify Cx-5 closes F-17 (sub-agent paraphrase) at runtime~~ | v38 commission | v38 verdict — **PARTIAL: architectural close sound; runtime enforcement missing (see R1b)** |
-| **R1b** | **Close F-17-runtime: auto-enforce `VerifySubagentDispatch` at step-complete (Cx-11 in [v39-fix-stack.md](plans/v39-fix-stack.md))** — v38's editorial-review dispatch was 72% paraphrased, guard never fired because opt-in | **v39 commission** | **v39 verdict** |
-| **R1c** | **Close F-GO-TEMPLATE: engine-emitted content (`recipe_templates.go` env READMEs + root README) runs through spec-content-surfaces.md tests** — v38 editorial-review caught 4 hardcoded Go-source CRITs (Cx-1 GO-TEMPLATE-GROUND in v39) | **v39 commission** | **v39 verdict** |
-| **R1d** | **Close F-23: `ZCP_CONTENT_MANIFEST.json` reaches tarball** — v38 Cx-4 staged to output dir but export whitelist dropped it (Cx-2 MANIFEST-EXPORT-EXTEND in v39) | **v39 commission** | **v39 verdict** |
-| **R1e** | **Narrow F-ENFORCEMENT-ASYMMETRY: main-agent emits ~110 content prose blocks per run with thinner teaching than writer** (Cx-7 MAIN-AGENT-COMMENT-TEACHING in v39) | **v39 commission** | **v39 verdict** |
-| R2 | Wire step-entry paths for Research / Provision / Finalize to serve from existing `phases/{research,provision,finalize}/entry.md` atoms (atoms already exist but are orphaned) | R1b, R1c | post-v39 |
-| R3 | Migrate Generate / Deploy / Close step-entry composition from recipe.md `*-skeleton` sections + `composeSkeleton`/`composeSection` to atom-based composition; wire through existing `phases/{generate,deploy,close}/entry.md` atoms | R1b, R1c | post-v39 |
+| R1 | ~~Verify Cx-5 closes F-17 (sub-agent paraphrase) at runtime~~ | v38 commission | v38 verdict — **PARTIAL: architectural close sound; runtime enforcement missing. Re-approached in R1-content-tighten via brief slim (eliminates the paraphrase surface at source instead of adding a guard)** |
+| **R1-tmpl** | **Close F-GO-TEMPLATE: engine-emitted env READMEs go through spec-content-surfaces.md gold test** (Commit 1 in [v39-fix-stack.md](plans/v39-fix-stack.md)) — v38 editorial-review caught 4 hardcoded Go-source CRITs | **v39 commission** | **v39 verdict** |
+| **R1-manifest** | **Close F-23: `ZCP_CONTENT_MANIFEST.json` reaches tarball** — export whitelist extension (Commit 2 in v39 plan) | **v39 commission** | **v39 verdict** |
+| **R1-context** | **Close F-ENFORCEMENT-ASYMMETRY + F-17-runtime + F-21 authoring class: give every content-emitter right-sized context at the authoring moment.** Engine injects rendered yaml + annotated examples + facts-log subset at each content-emission substep (Commit 3 in v39 plan). Writer brief slims 60KB → 18KB (Commit 5a). Knowledge-lookup becomes workflow step, not advisory (Commit 4). Canonical task list at session start (Commit 5b). | **v39 commission** | **v39 verdict** |
+| R2 | Wire step-entry paths for Research / Provision / Finalize to serve from existing `phases/{research,provision,finalize}/entry.md` atoms (atoms already exist but are orphaned) | R1-* | post-v39 |
+| R3 | Migrate Generate / Deploy / Close step-entry composition from recipe.md `*-skeleton` sections + `composeSkeleton`/`composeSection` to atom-based composition; wire through existing `phases/{generate,deploy,close}/entry.md` atoms | R1-* | post-v39 |
 | R4 | Migrate any recipe.md `<block>` content still referenced by `subStepToTopic` fallback into the relevant `phases/` atoms; delete the fallback branch at [recipe_guidance.go:529-545](../../internal/workflow/recipe_guidance.go#L529) | R3 | post-v39 |
 | R5 | Delete `recipe_topic_registry.go` — no callers remain once R4 lands | R4 | post-v39 |
 | R6 | Delete `internal/content/workflows/recipe.md` + the `//go:embed workflows/*.md` directive that loads it | R5 | post-v39 |
@@ -123,7 +125,7 @@ Each run analyzer appends one entry after writing `runs/vN/verdict.md`. Entry fo
   - **F-17-runtime**: Cx-5 `BuildSubagentBrief` + `VerifySubagentDispatch` are byte-sound, but the guard is opt-in. Main agent never invoked `verify-subagent-dispatch`. No `PreToolUse` hook wires it to `Agent`. Editorial-review dispatch was 72% paraphrased (47,205 B → 13,229 B); no guard fired.
   - **F-GO-TEMPLATE** (new): 4 of 6 editorial-review CRITs were direct hits on hardcoded Go strings in `internal/workflow/recipe_templates.go` (env READMEs — `envAudience / envDiffFromPrevious / envPromotionPath / envOperationalConcerns` switch-on-envIndex). Writer sub-agent never touches this content. No spec test has ever run against it. Main agent patched the rendered files to satisfy editorial-review; Go source still ships the same bugs. Next run regenerates them — the "stripping" loop.
   - **F-ENFORCEMENT-ASYMMETRY** (new): volume-to-teaching inverted. Writer authors 13 prose units with full 60KB brief. Main agent authors ~110 prose units (zerops.yaml comments + envComments) with one thin "Comment style" sub-section of `recipe.md`. Engine `recipe_templates.go` authors ~7 env-README units with zero spec teaching.
-- **Plan delta**: R1 split into R1 (architectural close — done) + R1b (runtime enforcement), R1c (engine-content spec gate), R1d (manifest export), R1e (main-agent teaching parity). v39 closes R1b-R1e via [v39-fix-stack.md](plans/v39-fix-stack.md) (11 Cx commits).
+- **Plan delta**: R1 recast from "close F-17 at runtime" to three targeted items — R1-tmpl (engine-emitted content gold test), R1-manifest (export whitelist), R1-context (tighten authoring-time context for all emitters). v39 closes these via [v39-fix-stack.md](plans/v39-fix-stack.md) (5 commits — rewritten from an earlier 11-commit enforcement-heavy draft at git SHA `ff3dcfb` after user direction shift on 2026-04-22: "focus on tightening context to agents, not on catching bad output with machine checks").
 - **Artifacts**: [runs/v38/verdict.md](runs/v38/verdict.md), [runs/v38/CORRECTIONS.md](runs/v38/CORRECTIONS.md), [runs/v38/verification-checklist.md](runs/v38/verification-checklist.md), [runs/v38/dispatch-integrity/](runs/v38/dispatch-integrity/).
 
 ### v37 — PAUSE (2026-04-21, v8.109.0)
@@ -168,15 +170,7 @@ Do not edit §3 "Decision on C-15" unless a run produces evidence that deleting 
 
 ## 6. Proposed amendments (analyst-surfaced, user-resolved)
 
-### 2026-04-22 — add "engine-emitted content coverage" as a §1 invariant
-
-**Surfaced by**: v38 analysis + CORRECTIONS.md §1.
-
-**Shape**: §1 secondary invariant 1 ("Sub-agent briefs transit the dispatch boundary byte-identically") addresses content that passes through sub-agent dispatch. It does NOT address content authored by engine Go code (`recipe_templates.go:envAudience/envDiffFromPrevious/envPromotionPath/envOperationalConcerns` — hardcoded per envIndex). v38 showed 4 of 6 editorial-review CRITs were direct hits on this source, with no pre-existing quality gate. The content reaches the deliverable through `BuildFinalizeOutput` without touching the spec teaching the writer brief carries.
-
-**Proposed invariant**: *"Every function in `internal/workflow/` that emits content to the deliverable runs through the spec-content-surfaces.md single-question tests as a gold-test. No content surface in the deliverable is authored by code that bypasses the spec."*
-
-**User decision needed**: accept as §1.5, reject, or reframe. If accepted, Cx-10 SURFACE-DOC-COMMENT-LINT becomes a compile-time enforcer of this invariant.
+*Empty. Previous amendment (2026-04-22 "engine-emitted content coverage") accepted by user on same day and folded into §1 invariant 5. Analysts append new proposed changes here; user resolves.*
 
 ---
 
@@ -184,3 +178,4 @@ Do not edit §3 "Decision on C-15" unless a run produces evidence that deleting 
 
 - **"C-15 is effectively obsolete" (stated 2026-04-22 in session, retracted same day)** — incorrect. recipe.md is still the runtime source for main-agent guides via `recipe_topic_registry.go:450`. C-15 is deferred, not retired. See §3.
 - **"`phases/` is skeleton only, not wired" (stated 2026-04-22 in session, retracted same day)** — incorrect. Triple-verification in §2 confirms `phases/` is wired for all 19 substep guides via [atomIDForSubStep](../../internal/workflow/recipe_guidance.go#L554) + [buildSubStepGuide:506-527](../../internal/workflow/recipe_guidance.go#L506). What's unwired is the step-entry layer (6 phases) — not the same thing. Additionally, `phases/research/`, `phases/provision/`, `phases/finalize/` contain atoms that ARE registered in the manifest but have no runtime caller (orphaned, not skeleton). See §2 "Per-surface cutover status".
+- **"v39 closes F-17-runtime via a dispatch guard auto-enforce commit" (plans/v39-fix-stack.md as committed at `ff3dcfb`, superseded 2026-04-22)** — incorrect framing. The earlier 11-commit plan treated F-17-runtime as a paraphrase-detection problem to solve with machine enforcement. User pushback reframed: the paraphrase happens because the 60KB writer brief contains compressible redundancy. A 18KB brief tightly scoped to role has nothing to compress; paraphrase pressure vanishes. v39 plan rewritten as 5 commits (context-tightening first, thin safety net behind). Old 11-commit plan preserved in git history; new plan at [v39-fix-stack.md](plans/v39-fix-stack.md) HEAD.
