@@ -3028,8 +3028,10 @@ zerops_workflow action="complete" step="finalize" attestation="Comments provided
 
 Close has two sub-steps. Both are always autonomous — no user prompt gates either.
 
-1. **code-review** — dispatch the code-review sub-agent, apply any fixes it recommends.
+1. **code-review** — dispatch the code-review sub-agent via `zerops_workflow action=build-subagent-brief role=code-review`, then `Task(description=<returned description>, subagent_type="general-purpose", prompt=<returned prompt>)`. Apply any fixes the review recommends.
 2. **close-browser-walk** — main agent walks the deployed dev + stage URLs in a browser, confirming the features render.
+
+Editorial-review (separate dispatch inside the readmes substep or close, as spec'd) also goes through `zerops_workflow action=build-subagent-brief role=editorial-review`. All three guarded roles (writer, editorial-review, code-review) MUST use the build-subagent-brief path. The engine-side `verify-subagent-dispatch` guard refuses any Task dispatch whose prompt is not byte-identical to the most recent brief for the declared role.
 
 Run both every time. v32 asked the user "should I run the review?" and when no reply came, skipped close entirely — do not repeat. If you are tempted to ask the user for permission before either sub-step, you are misreading this section; re-read.
 
@@ -3379,10 +3381,12 @@ When `zerops_workflow action=complete step=deploy` returns `Passed=false`, every
 10. Verify stage [topic: deploy-target-verification]
     - `complete step=deploy substep=verify-stage`
 11. Feature sweep stage [topic: feature-sweep-stage]
-    - `complete step=deploy substep=feature-sweep-stage` — **the response to THIS call delivers the README-writer brief**. Do NOT dispatch the README writer sub-agent until you have received that response.
-12. Write per-codebase READMEs — narrate gotchas from the debug rounds you just lived through
-    - Brief content arrives in the `complete substep=feature-sweep-stage` response. Use the `current.detailedGuide` verbatim in the writer dispatch prompt.
-    - `complete step=deploy substep=readmes` when the writer returns
+    - `complete step=deploy substep=feature-sweep-stage`.
+12. Write per-codebase READMEs — narrate gotchas from the debug rounds you just lived through.
+    - **Dispatch the writer sub-agent via the engine-built brief.** Call `zerops_workflow action=build-subagent-brief role=writer` — the response delivers the README-writer brief as `{description, prompt, promptSha, nextTool, ...}`. Do NOT dispatch the README writer sub-agent until you have received that response.
+    - Dispatch via `Task(description=<returned description>, subagent_type="general-purpose", prompt=<returned prompt>)` — the prompt bytes MUST match the returned `.prompt` string verbatim. A paraphrase fails the engine-side `verify-subagent-dispatch` guard with `SUBAGENT_MISUSE` (Cx-SUBAGENT-BRIEF-BUILDER forecloses main-agent prompt-composition freedom; atoms transit the dispatch boundary byte-identically).
+    - Do NOT call `dispatch-brief-atom` one atom at a time for this role. That envelope path was the v37 paraphrase surface; `build-subagent-brief` returns the full stitched prompt in one call.
+    - `complete step=deploy substep=readmes` when the writer returns.
 13. Handle failures [topic: deploy-failures]
 
 ### Fetch guidance

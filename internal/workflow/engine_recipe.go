@@ -373,6 +373,32 @@ func (e *Engine) RecipeSession() *RecipeState {
 	return state.Recipe
 }
 
+// RecordSubagentBrief persists a build-subagent-brief result into the
+// active RecipeState so a subsequent verify-subagent-dispatch call can
+// compare against the stored SHA. Load-bearing for the Cx-SUBAGENT-
+// BRIEF-BUILDER dispatch guard — survives main-agent compaction
+// because RecipeState rides with the WorkflowState session file.
+func (e *Engine) RecordSubagentBrief(built SubagentBriefResult) error {
+	state, err := e.loadState()
+	if err != nil {
+		return err
+	}
+	if state.Recipe == nil {
+		return fmt.Errorf("no active recipe session to record subagent brief against")
+	}
+	if state.Recipe.LastSubagentBrief == nil {
+		state.Recipe.LastSubagentBrief = make(map[string]SubagentBriefRecord, 3)
+	}
+	state.Recipe.LastSubagentBrief[built.Role] = SubagentBriefRecord{
+		Role:        built.Role,
+		Description: built.Description,
+		PromptSHA:   built.PromptSHA,
+		BuiltAt:     time.Now().UTC().Format(time.RFC3339),
+		PromptSize:  len(built.Prompt),
+	}
+	return saveSessionState(e.stateDir, e.sessionID, state)
+}
+
 // RecordGuidanceAccess logs a topic fetch for Phase C adaptive delivery.
 // Best-effort — errors are silently ignored.
 func (e *Engine) RecordGuidanceAccess(topicID, step string) {
