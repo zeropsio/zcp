@@ -13,12 +13,13 @@ import (
 // DeployBatchTarget is one entry in a batched deploy — names the source and
 // target service plus the zerops.yaml setup block. Each target is deployed
 // independently in its own goroutine inside DeployBatchSSH. v8.94 §5.9.
+//
+// Phase B.6: no IncludeGit knob — DeploySSH derives it from source/target.
 type DeployBatchTarget struct {
 	SourceService string `json:"sourceService,omitempty"`
 	TargetService string `json:"targetService"`
 	Setup         string `json:"setup,omitempty"`
 	WorkingDir    string `json:"workingDir,omitempty"`
-	IncludeGit    bool   `json:"includeGit,omitempty"`
 }
 
 // DeployBatchEntryResult is the outcome for one target inside a batch. The
@@ -101,7 +102,7 @@ func DeployBatchSSH(
 
 			result, err := DeploySSH(
 				ctx, client, projectID, sshDeployer, authInfo,
-				tgt.SourceService, tgt.TargetService, tgt.Setup, tgt.WorkingDir, tgt.IncludeGit,
+				tgt.SourceService, tgt.TargetService, tgt.Setup, tgt.WorkingDir,
 			)
 			if err != nil {
 				entry.Error = err.Error()
