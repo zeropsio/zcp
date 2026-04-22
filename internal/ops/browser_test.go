@@ -36,9 +36,11 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -574,6 +576,305 @@ func (s *serializationRunner) Run(_ context.Context, _ string, _ time.Duration) 
 }
 
 func (*serializationRunner) RecoverFork(_ context.Context) {}
+
+// TestRecoverFork_ReadsPidfileAndKillsProcessGroup is the Cx-BROWSER-
+// RECOVERY-COMPLETE RED→GREEN guard for the pidfile path. Port from the
+// v27 archive: RecoverFork must read the daemon pidfile, issue a
+// process-group SIGKILL (negative pid) to reap Chrome + every helper
+// the daemon forked, kill the daemon itself, then remove the stale
+// pidfile + socket files so the next CLI invocation spawns a fresh
+// daemon instead of attaching to a zombie.
+func TestRecoverFork_ReadsPidfileAndKillsProcessGroup(t *testing.T) {
+	dir := t.TempDir()
+	pidfile := dir + "/default.pid"
+	if err := os.WriteFile(pidfile, []byte("12345\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Stage an empty socket file so removeFile has something to remove.
+	socketPath := dir + "/default.sock"
+	if err := os.WriteFile(socketPath, []byte{}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var killArgs []struct {
+		pid int
+		sig syscall.Signal
+	}
+	var removedPaths []string
+	var pkillCalls [][]string
+
+	restore := OverrideBrowserRecoveryOpsForTest(browserRecoveryOps{
+		pidfilePath: func() (string, string, string, error) {
+			return pidfile, dir, "default", nil
+		},
+		readFile:   os.ReadFile,
+		removeFile: func(p string) error { removedPaths = append(removedPaths, p); return os.Remove(p) },
+		kill: func(pid int, sig syscall.Signal) error {
+			killArgs = append(killArgs, struct {
+				pid int
+				sig syscall.Signal
+			}{pid, sig})
+			return nil
+		},
+		pkillRun: func(_ context.Context, args ...string) error {
+			pkillCalls = append(pkillCalls, append([]string(nil), args...))
+			return nil
+		},
+	})
+	defer restore()
+
+	execBrowserRunner{}.RecoverFork(context.Background())
+
+	// Process-group kill (negative PID) + daemon kill, both SIGKILL.
+	if len(killArgs) != 2 {
+		t.Fatalf("expected 2 kill calls (group + daemon), got %d: %+v", len(killArgs), killArgs)
+	}
+	if killArgs[0].pid != -12345 || killArgs[0].sig != syscall.SIGKILL {
+		t.Errorf("first kill must be process-group SIGKILL for -12345, got pid=%d sig=%v", killArgs[0].pid, killArgs[0].sig)
+	}
+	if killArgs[1].pid != 12345 || killArgs[1].sig != syscall.SIGKILL {
+		t.Errorf("second kill must be daemon SIGKILL for 12345, got pid=%d sig=%v", killArgs[1].pid, killArgs[1].sig)
+	}
+
+	// Pidfile + both socket candidates must be removed.
+	want := []string{pidfile, dir + "/default.sock", dir + "/agent-browser.default.sock"}
+	for _, w := range want {
+		if !slices.Contains(removedPaths, w) {
+			t.Errorf("expected removeFile to be called for %q; got %v", w, removedPaths)
+		}
+	}
+}
+
+// TestRecoverFork_PkillExactFallback pins attempt 2 of the recovery
+// path: the legacy `pkill -9 -f agent-browser-` invocation stays AND
+// five new `pkill -9 --exact <name>` invocations fire for Chrome binary
+// variants. `--exact` is critical — matching argv[0] only means
+// code-server's `--no-chrome` CLI flag can never be matched (v27
+// incident), and every real Chrome process is reaped regardless of its
+// absolute path.
+func TestRecoverFork_PkillExactFallback(t *testing.T) {
+	var pkillCalls [][]string
+	restore := OverrideBrowserRecoveryOpsForTest(browserRecoveryOps{
+		pidfilePath: func() (string, string, string, error) {
+			// Signal "no pidfile" by returning an error — forces attempt 2 only.
+			return "", "", "", errors.New("no home")
+		},
+		readFile:   os.ReadFile,
+		removeFile: os.Remove,
+		kill: func(_ int, _ syscall.Signal) error {
+			t.Error("kill must not fire when pidfilePath errors")
+			return nil
+		},
+		pkillRun: func(_ context.Context, args ...string) error {
+			pkillCalls = append(pkillCalls, append([]string(nil), args...))
+			return nil
+		},
+	})
+	defer restore()
+
+	execBrowserRunner{}.RecoverFork(context.Background())
+
+	// 1 legacy -f call + 5 --exact calls (one per Chrome variant).
+	if len(pkillCalls) != 6 {
+		t.Fatalf("expected 6 pkill invocations (1 -f + 5 --exact), got %d: %+v", len(pkillCalls), pkillCalls)
+	}
+	// First call is the legacy pattern.
+	if got := pkillCalls[0]; len(got) != 3 || got[0] != "-9" || got[1] != "-f" || got[2] != "agent-browser-" {
+		t.Errorf("pkill[0] must be [-9 -f agent-browser-], got %v", got)
+	}
+	// Remaining 5 calls are --exact against each Chrome name.
+	wantNames := map[string]bool{
+		"chrome": true, "chromium": true, "chromium-browser": true,
+		"google-chrome": true, "headless_shell": true,
+	}
+	for i, call := range pkillCalls[1:] {
+		if len(call) != 3 || call[0] != "-9" || call[1] != "--exact" {
+			t.Errorf("pkill[%d] must be [-9 --exact <name>], got %v", i+1, call)
+			continue
+		}
+		if !wantNames[call[2]] {
+			t.Errorf("pkill[%d] name %q not in expected set", i+1, call[2])
+		}
+		delete(wantNames, call[2])
+	}
+	for leftover := range wantNames {
+		t.Errorf("expected pkill --exact call for %q was missing", leftover)
+	}
+}
+
+// TestBrowserBatch_ForceResetRunsRecoveryBeforeBatch verifies the
+// ForceReset input flag triggers RecoverFork BEFORE the batch starts,
+// giving the kernel postRecoveryGrace (overridden to 0 in TestMain) to
+// reap SIGKILL'd processes. The call order is asserted via a hook that
+// records what ran when.
+func TestBrowserBatch_ForceResetRunsRecoveryBeforeBatch(t *testing.T) {
+	var order []string
+	fake := &fakeBrowserRunner{
+		runStdout: `[]`,
+	}
+	runnerWrap := &orderingRunner{inner: fake, order: &order}
+	defer OverrideBrowserRunnerForTest(runnerWrap)()
+
+	_, err := BrowserBatch(context.Background(), BrowserBatchInput{
+		URL:        "https://example.com",
+		ForceReset: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(order) < 2 {
+		t.Fatalf("expected at least recover + run events, got %v", order)
+	}
+	if order[0] != "recover" {
+		t.Errorf("first event must be 'recover', got %v", order)
+	}
+	if order[1] != "run" {
+		t.Errorf("second event must be 'run', got %v", order)
+	}
+	if fake.recoverCalls != 1 {
+		t.Errorf("expected 1 RecoverFork call, got %d", fake.recoverCalls)
+	}
+}
+
+// orderingRunner wraps a runner so tests can observe call ordering.
+type orderingRunner struct {
+	inner *fakeBrowserRunner
+	order *[]string
+}
+
+func (o *orderingRunner) LookPath() (string, error) { return o.inner.LookPath() }
+func (o *orderingRunner) Run(ctx context.Context, stdin string, timeout time.Duration) (string, string, bool, error) {
+	*o.order = append(*o.order, "run")
+	return o.inner.Run(ctx, stdin, timeout)
+}
+func (o *orderingRunner) RecoverFork(ctx context.Context) {
+	*o.order = append(*o.order, "recover")
+	o.inner.RecoverFork(ctx)
+}
+
+// TestBrowserBatch_CDPTimeoutInStepsTriggersRecovery: daemon returned
+// exit 0 with a step error matching a CDP-wedge signal. Tool must
+// auto-RecoverFork, set ForkRecoveryAttempted, and surface a message
+// naming the triggering signal — the next call's ForceReset retry is
+// the escape hatch the recipe guide teaches.
+func TestBrowserBatch_CDPTimeoutInStepsTriggersRecovery(t *testing.T) {
+	errMsg := "CDP command timed out: DOM.enable"
+	steps := []map[string]any{
+		{"command": []string{"open", "https://example.com"}, "success": false, "error": errMsg},
+		{"command": []string{"errors"}, "success": true, "result": map[string]any{"errors": []any{}}},
+		{"command": []string{"console"}, "success": true, "result": map[string]any{"logs": []any{}}},
+		{"command": []string{"close"}, "success": true, "result": map[string]any{}},
+	}
+	raw, err := json.Marshal(steps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeBrowserRunner{
+		runStdout: string(raw),
+		runStderr: "",
+		runErr:    nil, // exit 0 despite the per-step wedge
+	}
+	defer OverrideBrowserRunnerForTest(fake)()
+
+	result, err := BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.ForkRecoveryAttempted {
+		t.Error("CDP-timeout in step errors must trigger RecoverFork")
+	}
+	if fake.recoverCalls != 1 {
+		t.Errorf("expected 1 RecoverFork call, got %d", fake.recoverCalls)
+	}
+	if !strings.Contains(result.Message, "Chrome wedged") {
+		t.Errorf("message must name 'Chrome wedged' signal; got: %q", result.Message)
+	}
+	if !strings.Contains(result.Message, "CDP command timed out") {
+		t.Errorf("message must name the triggering signal substring; got: %q", result.Message)
+	}
+	// Partial walk: errorsOutput / consoleOutput must not leak through.
+	if len(result.ErrorsOutput) != 0 {
+		t.Errorf("ErrorsOutput must stay empty on CDP-wedge recovery; got %s", result.ErrorsOutput)
+	}
+}
+
+// TestBrowserBatch_TargetClosedAlsoTriggersRecovery: the wedge
+// detection fires on "Target closed" too, not only CDP timeout —
+// every known-wedge signature in cdpWedgeSignals is load-bearing.
+func TestBrowserBatch_TargetClosedAlsoTriggersRecovery(t *testing.T) {
+	errMsg := "Target closed"
+	steps := []map[string]any{
+		{"command": []string{"open", "https://example.com"}, "success": false, "error": errMsg},
+		{"command": []string{"close"}, "success": true, "result": map[string]any{}},
+	}
+	raw, err := json.Marshal(steps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeBrowserRunner{runStdout: string(raw)}
+	defer OverrideBrowserRunnerForTest(fake)()
+
+	result, err := BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.ForkRecoveryAttempted {
+		t.Error("'Target closed' in step errors must trigger RecoverFork")
+	}
+}
+
+// TestBrowserBatch_ForceResetGatedByMutex: a caller that arrives with
+// ForceReset=true while another caller holds browserMu waits for the
+// in-flight call to complete before running its own RecoverFork +
+// batch. The mutex holds across ForceReset too.
+func TestBrowserBatch_ForceResetGatedByMutex(t *testing.T) {
+	held := make(chan struct{})
+	release := make(chan struct{})
+	var runCount atomic.Int32
+
+	blocker := &serializationRunner{
+		onRun: func() {
+			if runCount.Add(1) == 1 {
+				close(held)
+				<-release
+			}
+		},
+	}
+	defer OverrideBrowserRunnerForTest(blocker)()
+
+	// Start the blocker in the background so it holds the mutex.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://example.com"})
+	}()
+	<-held
+
+	// Second caller requests ForceReset. It must wait for the blocker.
+	gotResult := make(chan struct{})
+	go func() {
+		defer close(gotResult)
+		_, _ = BrowserBatch(context.Background(), BrowserBatchInput{URL: "https://second.example.com", ForceReset: true})
+	}()
+
+	select {
+	case <-gotResult:
+		t.Fatal("ForceReset caller should not complete while mutex is held")
+	case <-time.After(50 * time.Millisecond):
+		// Expected — it's blocked behind browserMu.
+	}
+
+	// Let the blocker finish so the ForceReset caller can proceed.
+	close(release)
+	select {
+	case <-gotResult:
+		// Expected progress.
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("ForceReset caller never made progress after mutex release")
+	}
+	<-done
+}
 
 // TestBrowserBatch_CtxCancelWhileLockHeld verifies that a caller whose ctx
 // is already cancelled returns immediately without blocking on browserMu,

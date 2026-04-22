@@ -35,9 +35,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -58,6 +62,16 @@ type BrowserBatchInput struct {
 
 	// TimeoutSeconds bounds the whole batch. Default 120, max 300.
 	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
+
+	// ForceReset, when true, runs RecoverFork BEFORE the batch — fully
+	// kills any existing agent-browser daemon and Chrome process tree,
+	// waits postRecoveryGrace for kernel reap, then starts fresh. Use
+	// this when a previous call returned forkRecoveryAttempted=true
+	// without the retry succeeding, or when a CDP-timeout / Target-
+	// closed / Protocol-error string appeared in step errors. Adds
+	// ~2s pre-roll; do not enable on every call — it defeats the
+	// persistent-daemon fast path.
+	ForceReset bool `json:"forceReset,omitempty" jsonschema:"Force full reset of agent-browser daemon + Chrome before starting. Use after CDP-timeout or repeat-recovery failures."`
 }
 
 // BrowserStepResult is one step from agent-browser's --json output.
@@ -141,30 +155,150 @@ func (execBrowserRunner) Run(ctx context.Context, stdin string, timeout time.Dur
 	return out.String(), errBuf.String(), out.truncated || errBuf.truncated, err
 }
 
-// RecoverFork runs pkill against the agent-browser daemon and its Chrome
-// helper processes. Intended to reap leaked children when the daemon dies
-// without closing Chrome (fork exhaustion, timeout, unclean exit).
+// browserRecoveryOps carries the syscalls + exec calls RecoverFork needs,
+// behind overridable function fields. Tests swap these out with spies
+// so the real kill/pkill side effects never run on the test machine.
+// This replaces the pkill-only recovery path that v27 proved insufficient:
+// Chrome processes inherited by the daemon's process group are now reaped
+// via a negative-pid SIGKILL read off the daemon's pidfile, and the
+// stale pidfile + socket are removed so the next CLI invocation launches
+// a fresh daemon instead of attaching to a zombie.
+type browserRecoveryOps struct {
+	// pidfilePath returns the absolute path to the agent-browser pidfile
+	// for the current session ("default" unless AGENT_BROWSER_SESSION is
+	// set). Also returns the directory (so socket candidates can be
+	// derived) and the session name.
+	pidfilePath func() (pidfile, socketDir, session string, err error)
+	// readFile reads the pidfile bytes.
+	readFile func(path string) ([]byte, error)
+	// removeFile removes a stale pidfile / socket. Non-existent is fine.
+	removeFile func(path string) error
+	// kill issues a signal to a PID. Negative PID = process group.
+	kill func(pid int, sig syscall.Signal) error
+	// pkillRun runs pkill <args> under ctx. Non-zero exit (no matches)
+	// is swallowed by the caller. Returns only fatal errors.
+	pkillRun func(ctx context.Context, args ...string) error
+}
+
+// defaultBrowserRecoveryOps wires the production implementations.
+func defaultBrowserRecoveryOps() browserRecoveryOps {
+	return browserRecoveryOps{
+		pidfilePath: resolveAgentBrowserPaths,
+		readFile:    os.ReadFile,
+		removeFile:  os.Remove,
+		kill:        syscall.Kill,
+		pkillRun: func(ctx context.Context, args ...string) error {
+			return exec.CommandContext(ctx, "pkill", args...).Run()
+		},
+	}
+}
+
+// browserRecovery holds the active recovery ops. Tests override via
+// OverrideBrowserRecoveryOpsForTest.
+var browserRecovery = defaultBrowserRecoveryOps()
+
+// OverrideBrowserRecoveryOpsForTest swaps the recovery ops and returns
+// a restore function. Tests use this to assert on syscalls / pkill
+// invocations without executing them for real.
+func OverrideBrowserRecoveryOpsForTest(ops browserRecoveryOps) func() {
+	old := browserRecovery
+	browserRecovery = ops
+	return func() { browserRecovery = old }
+}
+
+// resolveAgentBrowserPaths returns (pidfile, socketDir, session) by
+// combining the user home directory (or AGENT_BROWSER_SOCKET_DIR when
+// set) with AGENT_BROWSER_SESSION (default: "default"). Session name
+// governs both pidfile and socket candidates, matching the v0.21.4
+// agent-browser layout.
+func resolveAgentBrowserPaths() (string, string, string, error) {
+	session := os.Getenv("AGENT_BROWSER_SESSION")
+	if session == "" {
+		session = "default"
+	}
+	dir := os.Getenv("AGENT_BROWSER_SOCKET_DIR")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", "", "", err
+		}
+		dir = filepath.Join(home, ".agent-browser")
+	}
+	return filepath.Join(dir, session+".pid"), dir, session, nil
+}
+
+// RecoverFork performs a full agent-browser + Chrome reset.
 //
-// The single `agent-browser-` pattern matches:
-//   - agent-browser-linux (production daemon inside the zcp container)
-//   - agent-browser-darwin (development daemon on macOS)
-//   - agent-browser-chrome-* (Chrome renderer/gpu/utility helpers)
+// Attempt 1 — read the daemon pidfile, kill its process group via
+// syscall.Kill(-pid, SIGKILL) so every Chrome helper the daemon forked
+// is reaped regardless of binary name. Then kill the daemon itself.
+// Remove the stale pidfile and socket files so the next CLI invocation
+// spawns a fresh daemon.
 //
-// It does NOT match the `agent-browser` CLI wrapper itself because pkill
-// with `-f` matches the full command line — `agent-browser batch --json`
-// does not contain the literal substring `agent-browser-` (hyphen after).
-// By the time recovery runs, that wrapper process has already exited
-// anyway (cmd.Run returned).
+// Attempt 2 — pkill fallback for anything that escaped the group. The
+// legacy `pkill -9 -f agent-browser-` pattern stays (it matches the
+// daemon binary family). New: `pkill -9 --exact <name>` runs for each
+// Chrome binary family (chrome, chromium, chromium-browser,
+// google-chrome, headless_shell). `--exact` matches the process basename
+// only — never argv tail — so code-server's `--no-chrome` CLI flag is
+// untouched. Using `-f` against `chrome` would match code-server and
+// kill the user's editor (happened once in a v27 run; never again).
 //
-// Errors from pkill are ignored — pkill returns exit 1 when nothing
-// matches, which is the common case after a clean run that doesn't need
-// recovery. The kernel-reap grace window is handled by the caller AFTER
-// the package-level mutex is released, so a recovery does not block
-// other waiters.
+// Errors from pkill are swallowed — exit 1 (no matches) is the common
+// case after a clean run that doesn't need recovery. Failure of the
+// pidfile path falls through to the pkill fallback; failure of both
+// leaves the system unchanged and the caller sees forkRecoveryAttempted=
+// true via the call-site bookkeeping.
 func (execBrowserRunner) RecoverFork(ctx context.Context) {
 	pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	_ = exec.CommandContext(pctx, "pkill", "-9", "-f", "agent-browser-").Run()
+
+	ops := browserRecovery
+
+	// Attempt 1: pidfile-based process-group kill.
+	if ops.pidfilePath != nil {
+		if pidfile, dir, session, err := ops.pidfilePath(); err == nil {
+			if data, readErr := ops.readFile(pidfile); readErr == nil {
+				if pid, atoiErr := strconv.Atoi(strings.TrimSpace(string(data))); atoiErr == nil && pid > 0 {
+					// Negative PID → kill the process group. Captures Chrome
+					// and every helper inherited from the daemon's fork.
+					if ops.kill != nil {
+						_ = ops.kill(-pid, syscall.SIGKILL)
+						_ = ops.kill(pid, syscall.SIGKILL)
+					}
+				}
+			}
+			if ops.removeFile != nil {
+				_ = ops.removeFile(pidfile)
+				// Both socket candidate forms — agent-browser v0.21.4 uses
+				// `<session>.sock` for the default session and may also
+				// write `agent-browser.<session>.sock` when a non-default
+				// AGENT_BROWSER_SESSION is exported.
+				_ = ops.removeFile(filepath.Join(dir, session+".sock"))
+				_ = ops.removeFile(filepath.Join(dir, "agent-browser."+session+".sock"))
+			}
+		}
+	}
+
+	// Attempt 2: pattern fallback for anything that escaped the group.
+	if ops.pkillRun != nil {
+		_ = ops.pkillRun(pctx, "-9", "-f", "agent-browser-")
+		for _, name := range chromeBinaryNames {
+			_ = ops.pkillRun(pctx, "-9", "--exact", name)
+		}
+	}
+}
+
+// chromeBinaryNames lists the process basename(s) agent-browser v0.21.4
+// may launch for the headless Chrome it drives. pkill --exact matches
+// argv[0] only so each name here is the binary name as it appears in
+// /proc/<pid>/comm — never the full CLI.
+var chromeBinaryNames = []string{
+	"chrome",
+	"chromium",
+	"chromium-browser",
+	"google-chrome",
+	"headless_shell",
 }
 
 // browserRun is the active runner. Tests override via OverrideBrowserRunnerForTest.
@@ -243,6 +377,16 @@ func lockBrowserMu(ctx context.Context) error {
 	}
 }
 
+// cdpWedgeSignals are per-step error substrings that indicate Chrome
+// wedged behind a stuck CDP connection even when the daemon returned
+// exit 0. A match on any of these auto-runs RecoverFork so the next
+// call doesn't reattach to the same zombie Chrome.
+var cdpWedgeSignals = []string{
+	"CDP command timed out",
+	"Target closed",
+	"Protocol error",
+}
+
 // BrowserBatch runs one bounded agent-browser session against the given URL.
 // See package doc for the lifecycle contract.
 func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchResult, error) {
@@ -291,6 +435,16 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 			"agent-browser not found on PATH",
 			"This tool is only available inside the ZCP container. agent-browser is pre-installed there.",
 		)
+	}
+
+	// Cx-BROWSER-RECOVERY-COMPLETE: ForceReset fires RecoverFork BEFORE
+	// the batch starts, giving the kernel postRecoveryGrace to reap
+	// SIGKILL'd processes. Use when a prior call returned
+	// forkRecoveryAttempted=true without the retry succeeding, or when
+	// CDP-timeout step errors surfaced in the last run's result.Steps.
+	if input.ForceReset {
+		browserRun.RecoverFork(ctx)
+		time.Sleep(postRecoveryGrace)
 	}
 
 	start := time.Now()
@@ -370,6 +524,24 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 		return result, nil
 	}
 
+	// Cx-BROWSER-RECOVERY-COMPLETE: CDP-wedge signals buried in per-step
+	// errors (even with exit 0) indicate Chrome hung behind a stuck CDP
+	// connection. The daemon is alive; Chrome isn't responding. Reap the
+	// whole process tree so the next call doesn't reattach to the zombie.
+	if sig, hit := scanStepsForCDPWedge(result.Steps); hit {
+		browserRun.RecoverFork(ctx)
+		result.ForkRecoveryAttempted = true
+		recoveryNeeded = true
+		result.Message = fmt.Sprintf(
+			"Chrome wedged behind CDP (signal: %s). Full reset ran automatically. "+
+				"Retry with forceReset=true if the next call still wedges.",
+			sig,
+		)
+		// Intentionally do not populate ErrorsOutput / ConsoleOutput —
+		// the partial walk must not look like a successful one.
+		return result, nil
+	}
+
 	// Extract the canonical errors/console steps ONLY on a successful run.
 	// On a non-zero exit we preserve Steps for diagnosis but we must NOT
 	// populate ErrorsOutput/ConsoleOutput — those fields are the load-
@@ -387,6 +559,24 @@ func BrowserBatch(ctx context.Context, input BrowserBatchInput) (*BrowserBatchRe
 	}
 
 	return result, nil
+}
+
+// scanStepsForCDPWedge returns the first matching signal substring and
+// true if any step's error field contains one of the CDP-wedge markers
+// in cdpWedgeSignals. The "" sentinel in the return means "no match".
+func scanStepsForCDPWedge(steps []BrowserStepResult) (string, bool) {
+	for _, s := range steps {
+		if s.Error == nil {
+			continue
+		}
+		msg := *s.Error
+		for _, sig := range cdpWedgeSignals {
+			if strings.Contains(msg, sig) {
+				return sig, true
+			}
+		}
+	}
+	return "", false
 }
 
 // buildCanonicalBatch assembles [open url] + stripped caller commands +

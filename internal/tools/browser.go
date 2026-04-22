@@ -18,8 +18,16 @@ func RegisterBrowser(srv *mcp.Server) {
 			"browser verification — one call per subdomain (appstage, then appdev). " +
 			"Before calling: stop background dev processes on every dev container (pkill -f 'nest start' etc) " +
 			"— they compete for the fork budget and crash Chrome. " +
-			"On fork exhaustion or timeout the tool auto-runs pkill recovery and returns forkRecoveryAttempted=true " +
-			"— fix the leaking processes before retrying. " +
+			"On fork exhaustion, context timeout, daemon crash, OR a CDP-wedge signal in per-step errors " +
+			"(\"CDP command timed out\", \"Target closed\", \"Protocol error\") the tool auto-runs a full reset: " +
+			"pidfile-based process-group SIGKILL reaps Chrome + helpers, then pkill --exact fallback against " +
+			"chrome/chromium/chromium-browser/google-chrome/headless_shell reaps any escapees. " +
+			"forkRecoveryAttempted=true is set and the message names the triggering signal. " +
+			"If a prior call returned forkRecoveryAttempted=true and the immediate retry still wedges, " +
+			"pass forceReset=true on the NEXT call to fully reset the daemon + Chrome state BEFORE the batch starts. " +
+			"NEVER run raw `pkill -f chrome` from Bash — that pattern matches code-server's --no-chrome CLI arg " +
+			"and has killed the user's editor in past runs (v27 incident). The tool's --exact fallback is safe; " +
+			"raw `pkill -f` is not. " +
 			"Inner command vocabulary (inside commands[]): [\"snapshot\",\"-i\",\"-c\"], [\"click\",\"@e1\"], " +
 			"[\"fill\",\"@e2\",\"text\"], [\"find\",\"role\",\"button\",\"Submit\",\"click\"], [\"get\",\"text\",\"<sel>\"], " +
 			"[\"get\",\"count\",\"<sel>\"], [\"is\",\"visible\",\"<sel>\"], [\"wait\",\"500\"]. " +
