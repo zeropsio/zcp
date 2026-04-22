@@ -16,6 +16,12 @@ import (
 // DeployLocalInput is the input type for zerops_deploy in local mode.
 // No sourceService — code lives locally, not on a remote service.
 //
+// Strategy / RemoteURL / Branch carry the same meaning as in container
+// (DeploySSHInput), so the LLM uses a single set of params regardless
+// of where ZCP is running. The local git-push dispatch uses the user's
+// own git config — no GIT_TOKEN, no .netrc, no cross-boundary
+// credential juggling.
+//
 // IncludeGit is FlexBool so stringified boolean forms go through —
 // same reasoning as DiscoverInput/EnvInput.
 type DeployLocalInput struct {
@@ -23,6 +29,9 @@ type DeployLocalInput struct {
 	Setup         string   `json:"setup,omitempty"`
 	WorkingDir    string   `json:"workingDir,omitempty"`
 	IncludeGit    FlexBool `json:"includeGit,omitempty"`
+	Strategy      string   `json:"strategy,omitempty"`
+	RemoteURL     string   `json:"remoteUrl,omitempty"`
+	Branch        string   `json:"branch,omitempty"`
 }
 
 func deployLocalInputSchema() *jsonschema.Schema {
@@ -31,6 +40,9 @@ func deployLocalInputSchema() *jsonschema.Schema {
 		"setup":         {Type: "string", Description: "zerops.yaml setup block name — matches a `setup:` key in the file's `zerops:` array. Setup names are user-defined identifiers; recipes conventionally use `dev`/`prod` (and `worker` for shared-codebase worker recipes that pack the host service's dev/prod plus the worker setup into one zerops.yaml). Required whenever zerops.yaml declares more than one setup — the tool cannot guess which block to build. Recipes always ship multiple setups, so `setup` is effectively required in recipe workflows: `targetService=apidev setup=dev`, `targetService=apistage setup=prod` (a cross-deploy from apidev→apistage uses `setup=prod` because `setup` names the zerops.yaml block, not the deploy source). Omit only when zerops.yaml has a single setup AND its name matches the target hostname (bootstrap workflows only)."},
 		"workingDir":    {Type: "string", Description: "Local path to push from. Default: current directory."},
 		"includeGit":    flexBoolSchema("Include .git directory in the push (-g flag)."),
+		"strategy":      {Type: "string", Description: "Deploy strategy. Omit for default push (zerops build from the working directory). Set to 'git-push' to push committed code from your local git repo to the configured origin remote — ZCP invokes your own git, no GIT_TOKEN needed."},
+		"remoteUrl":     {Type: "string", Description: "Git remote URL (HTTPS). Optional for strategy=git-push — used only when origin isn't already configured in the local repo; otherwise the existing origin is reused."},
+		"branch":        {Type: "string", Description: "Git branch for strategy=git-push. Default: current HEAD branch."},
 	}, "targetService")
 }
 
@@ -59,9 +71,29 @@ func RegisterDeployLocal(
 			DestructiveHint: boolPtr(true),
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeployLocalInput) (*mcp.CallToolResult, any, error) {
+		// Strategy validation. "manual" is a ServiceMeta declaration only —
+		// calling zerops_deploy on a manual-strategy service is a contradiction
+		// ZCP refuses to resolve silently.
+		if err := validateDeployStrategyParam(input.Strategy); err != nil {
+			return convertError(err), nil, nil
+		}
+
 		// Gate: target must be adopted by ZCP.
 		if blocked := requireAdoption(stateDir, input.TargetService); blocked != nil {
 			return blocked, nil, nil
+		}
+
+		// Local-only projects have no Zerops-side deploy target — reject
+		// push-dev (which needs a service to zcli-push into) and point the
+		// user at either linking a stage or using git-push.
+		if err := checkLocalOnlyGate(stateDir, input.TargetService, input.Strategy); err != nil {
+			return convertError(err), nil, nil
+		}
+
+		// Route: git-push dispatches to the user's own local git; no Zerops
+		// build is triggered from our side.
+		if input.Strategy == deployStrategyGitPush {
+			return handleLocalGitPush(ctx, *authInfo, input, stateDir)
 		}
 
 		// Pre-flight validation (harness). v8.85 — pre-flight echoes the

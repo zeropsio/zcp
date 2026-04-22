@@ -77,6 +77,13 @@ func RegisterDeploySSH(
 			DestructiveHint: boolPtr(true),
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeploySSHInput) (*mcp.CallToolResult, any, error) {
+		// Strategy validation. "manual" is a ServiceMeta declaration only —
+		// calling zerops_deploy on a manual-strategy service is a contradiction
+		// ZCP refuses to resolve silently.
+		if err := validateDeployStrategyParam(input.Strategy); err != nil {
+			return convertError(err), nil, nil
+		}
+
 		// Gate: target (and source) must be adopted by ZCP.
 		if blocked := requireAdoption(stateDir, input.TargetService, input.SourceService); blocked != nil {
 			return blocked, nil, nil
@@ -102,15 +109,6 @@ func RegisterDeploySSH(
 			if resolvedSetup != "" {
 				input.Setup = resolvedSetup
 			}
-		}
-
-		// Validate strategy parameter.
-		if input.Strategy != "" && input.Strategy != deployStrategyGitPush {
-			return convertError(platform.NewPlatformError(
-				platform.ErrInvalidParameter,
-				fmt.Sprintf("Invalid strategy %q", input.Strategy),
-				"Valid values: omit (default push) or 'git-push'",
-			)), nil, nil
 		}
 
 		// Route: git-push strategy pushes to external git remote, no Zerops build.
