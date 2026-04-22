@@ -87,6 +87,7 @@ type ServiceSnapshot struct {
 	Resumable     bool           `json:"resumable,omitempty"`
 	Mode          Mode           `json:"mode,omitempty"`
 	Strategy      DeployStrategy `json:"strategy,omitempty"`
+	Trigger       PushGitTrigger `json:"trigger,omitempty"` // set only when Strategy==push-git
 	StageHostname string         `json:"stageHostname,omitempty"`
 }
 
@@ -125,6 +126,20 @@ type DeployStrategy string
 // StrategyUnset is the sentinel for "no strategy chosen yet" — surfaced
 // to atoms as the `strategies: [unset]` axis value.
 const StrategyUnset DeployStrategy = "unset"
+
+// PushGitTrigger is the downstream trigger chosen for push-git services.
+// Valid only when DeployStrategy == "push-git". TriggerUnset is the
+// envelope sentinel ("unset") that atoms filter on via `triggers: [unset]`
+// — a push-git meta whose PushGitTrigger field is still empty string on
+// disk surfaces as this value in the snapshot so intro atoms can match.
+// Webhook/Actions are the two user-selectable values.
+type PushGitTrigger string
+
+const (
+	TriggerUnset   PushGitTrigger = "unset"
+	TriggerWebhook PushGitTrigger = "webhook"
+	TriggerActions PushGitTrigger = "actions"
+)
 
 // WorkSessionSummary mirrors the persistent WorkSession at envelope build time.
 type WorkSessionSummary struct {

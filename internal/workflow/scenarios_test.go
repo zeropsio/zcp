@@ -439,9 +439,14 @@ func TestScenario_S10_RecipeActive(t *testing.T) {
 }
 
 // TestScenario_S11_StrategySetupEmptyPlan pins the stateless-synthesis contract
-// for the strategy-setup phase: synthesis emits the push-git setup atom; Plan
-// stays empty because the handler (handleStrategy) delivers the atom directly
-// in its response, not via Plan.
+// for the strategy-setup phase: synthesis emits the push-git setup atom
+// chain; Plan stays empty because the handler (handleStrategy) delivers the
+// atom directly in its response, not via Plan.
+//
+// Under plan phase A.6 the monolithic strategy-push-git atom is replaced by
+// five service-scoped atoms (intro, 2x push per env, 2x trigger per type);
+// the envelope therefore carries a synthetic service snapshot reflecting
+// the service being configured.
 func TestScenario_S11_StrategySetupEmptyPlan(t *testing.T) {
 	t.Parallel()
 
@@ -453,6 +458,13 @@ func TestScenario_S11_StrategySetupEmptyPlan(t *testing.T) {
 	env := StateEnvelope{
 		Phase:       PhaseStrategySetup,
 		Environment: EnvContainer,
+		Services: []ServiceSnapshot{{
+			Hostname:     "appdev",
+			Bootstrapped: true,
+			Strategy:     StrategyPushGit,
+			Trigger:      TriggerUnset, // pre-trigger call → intro atom should fire
+			Mode:         ModeDev,
+		}},
 	}
 
 	plan := BuildPlan(env)

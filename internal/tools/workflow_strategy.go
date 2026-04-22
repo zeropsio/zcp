@@ -57,6 +57,22 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 		}
 	}
 
+	// push-git + trigger input must match — reject unknown trigger values
+	// up front. Empty trigger is legitimate: the intro atom will surface
+	// the choice to the user, who re-calls with an explicit trigger.
+	if input.Trigger != "" && input.Trigger != string(workflow.TriggerWebhook) && input.Trigger != string(workflow.TriggerActions) {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Invalid trigger %q", input.Trigger),
+			"Valid triggers (push-git only): 'webhook' or 'actions'")), nil, nil
+	}
+	if input.Trigger != "" && !anyStrategyIs(input.Strategies, workflow.StrategyPushGit) {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"trigger is only valid when setting strategy=push-git",
+			"Drop the trigger param, or set strategies={hostname:\"push-git\"}")), nil, nil
+	}
+
 	// Only complete (bootstrapped) metas are valid strategy targets — auto-
 	// creating orphan metas here poisons every downstream consumer (router,
 	// briefing, locks).
@@ -75,12 +91,35 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 				fmt.Sprintf("Service %q is not bootstrapped", hostname),
 				"Run bootstrap first: zerops_workflow action=\"start\" workflow=\"bootstrap\"")), nil, nil
 		}
+		// Gate local-only + push-dev: no stage target.
+		if strategy == workflow.StrategyPushDev && meta.Mode == workflow.PlanModeLocalOnly {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				fmt.Sprintf("Service %q is local-only — push-dev needs a Zerops stage to deploy to", hostname),
+				fmt.Sprintf("Link a stage first: zerops_workflow action=\"adopt-local\" targetService=<runtime-hostname>. Or pick push-git / manual, which work without a stage.")),
+			), nil, nil
+		}
 		updated = append(updated, fmt.Sprintf("%s=%s", hostname, strategy))
-		if meta.DeployStrategy == strategy && meta.StrategyConfirmed {
+		// Detect no-op: same strategy AND same trigger (if applicable) AND
+		// already-confirmed state.
+		sameStrategy := meta.DeployStrategy == strategy && meta.StrategyConfirmed
+		sameTrigger := strategy != workflow.StrategyPushGit || meta.PushGitTrigger == input.Trigger
+		if sameStrategy && sameTrigger {
 			continue
 		}
 		meta.DeployStrategy = strategy
 		meta.StrategyConfirmed = true
+		if strategy == workflow.StrategyPushGit {
+			// Only write trigger when one was provided; empty leaves the
+			// previous value (which might be "" on fresh push-git setup
+			// → intro atom handles the ask).
+			if input.Trigger != "" {
+				meta.PushGitTrigger = input.Trigger
+			}
+		} else {
+			// Non-push-git strategies can't carry a trigger — clear.
+			meta.PushGitTrigger = ""
+		}
 		if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrServiceNotFound,
@@ -89,11 +128,20 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 		}
 	}
 
-	// push-git needs the full setup atom (tokens, optional CI/CD). Other
-	// strategies reuse the existing develop-phase iteration atoms.
+	// push-git needs the full setup atom chain (intro → push → trigger).
+	// Service-scoped atoms (strategies, triggers) need a snapshot in the
+	// envelope to match against; we synthesize one minimally from the just-
+	// written meta(s). Other strategies reuse the existing develop-phase
+	// iteration atoms.
 	var guidance string
 	if anyStrategyIs(input.Strategies, workflow.StrategyPushGit) {
-		g, err := workflow.SynthesizeImmediateWorkflow(workflow.PhaseStrategySetup, workflow.DetectEnvironment(rt))
+		env := workflow.DetectEnvironment(rt)
+		envelope := workflow.StateEnvelope{
+			Phase:       workflow.PhaseStrategySetup,
+			Environment: env,
+			Services:    buildStrategySetupSnapshots(stateDir, input.Strategies, input.Trigger),
+		}
+		g, err := workflow.SynthesizeImmediateWorkflow(envelope)
 		if err == nil {
 			guidance = g
 		}
@@ -163,6 +211,41 @@ func handleStrategyList(stateDir string) (*mcp.CallToolResult, any, error) {
 func buildStrategyGuidance(strategies map[string]string) string {
 	g, _ := workflow.BuildStrategyGuidance(strategies)
 	return g
+}
+
+// buildStrategySetupSnapshots constructs minimal ServiceSnapshots for every
+// service being configured in this handleStrategy call, so push-git setup
+// atoms — which filter on strategies/triggers/mode — can match. The
+// snapshots reflect POST-write state: Strategy is what the caller asked
+// for, Trigger is what the caller passed (possibly empty → intro atom).
+// Mode comes from the freshly-read meta so the env-specific push atoms
+// (container vs local) dispatch correctly.
+func buildStrategySetupSnapshots(stateDir string, strategies map[string]string, trigger string) []workflow.ServiceSnapshot {
+	out := make([]workflow.ServiceSnapshot, 0, len(strategies))
+	for hostname, strategy := range strategies {
+		snap := workflow.ServiceSnapshot{
+			Hostname:     hostname,
+			Bootstrapped: true,
+			Strategy:     workflow.DeployStrategy(strategy),
+		}
+		if meta, _ := workflow.ReadServiceMeta(stateDir, hostname); meta != nil {
+			snap.Mode = workflow.Mode(meta.Mode)
+			if meta.StageHostname != "" {
+				snap.StageHostname = meta.StageHostname
+			}
+		}
+		// Trigger axis only carries meaning on push-git — for push-dev/manual
+		// we leave it unset so trigger-filtered atoms don't accidentally match.
+		if strategy == workflow.StrategyPushGit {
+			if trigger == "" {
+				snap.Trigger = workflow.TriggerUnset
+			} else {
+				snap.Trigger = workflow.PushGitTrigger(trigger)
+			}
+		}
+		out = append(out, snap)
+	}
+	return out
 }
 
 // anyStrategyIs returns true if at least one value in the map equals strategy.

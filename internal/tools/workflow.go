@@ -83,6 +83,12 @@ type WorkflowInput struct {
 	// stage. Resolves the ambiguity surfaced by auto-adopt when multiple
 	// runtimes exist in the project.
 	TargetService string `json:"targetService,omitempty" jsonschema:"Runtime service hostname to link as stage for action=\"adopt-local\" (local env only). Must be a live runtime service in the project — not a managed service."`
+
+	// Trigger chooses the downstream build trigger when setting up
+	// strategy=push-git. Paired with Strategies — meaningless otherwise.
+	// Optional: omit to receive the intro atom that asks the user to
+	// pick, then re-call with the chosen value.
+	Trigger string `json:"trigger,omitempty" jsonschema:"Downstream build trigger for strategy=push-git setup: 'webhook' (Zerops dashboard integration) or 'actions' (GitHub Actions workflow). Omit on the first call to receive the intro atom that walks through the choice; pass on the follow-up call to receive the chosen setup path."`
 }
 
 // immediateResponse is returned from immediate (stateless) workflows.

@@ -243,6 +243,12 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta, ws *WorkSess
 		if snap.Strategy == "" {
 			snap.Strategy = StrategyUnset
 		}
+		if snap.Strategy == StrategyPushGit {
+			snap.Trigger = PushGitTrigger(meta.PushGitTrigger)
+			if snap.Trigger == "" {
+				snap.Trigger = TriggerUnset
+			}
+		}
 		if meta.StageHostname != "" && svc.Name == meta.Hostname {
 			snap.StageHostname = meta.StageHostname
 		}

@@ -559,12 +559,13 @@ func matrixCoverageFixtures() []coverageFixture {
 }
 
 // pipelineCoverageFixtures covers strategy-setup and export-active phases.
-// Both are phase-only axes — the atoms filter purely on phase, not on
-// services/modes/strategies, so a single envelope per phase is enough.
+// strategy-setup has two sub-cases driven by the Trigger axis: the intro
+// atom fires pre-trigger-choice, the full setup chain fires once the
+// trigger is chosen. Both must render cleanly.
 func pipelineCoverageFixtures() []coverageFixture {
 	return []coverageFixture{
 		{
-			Name: "strategy_setup",
+			Name: "strategy_setup_intro_pre_trigger",
 			Envelope: StateEnvelope{
 				Phase:       PhaseStrategySetup,
 				Environment: EnvContainer,
@@ -572,14 +573,53 @@ func pipelineCoverageFixtures() []coverageFixture {
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
 					StageHostname: "appstage",
-					Strategy:      "push-git",
+					Strategy:      StrategyPushGit,
+					Trigger:       TriggerUnset,
+				}},
+			},
+			MustContain: []string{
+				"webhook",
+				"actions",
+				"Confirm the repo URL",
+				"GIT_TOKEN", // push atom fires regardless of trigger choice
+			},
+		},
+		{
+			Name: "strategy_setup_actions_full_chain",
+			Envelope: StateEnvelope{
+				Phase:       PhaseStrategySetup,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{{
+					Hostname: "appdev", TypeVersion: "nodejs@22",
+					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					StageHostname: "appstage",
+					Strategy:      StrategyPushGit,
+					Trigger:       TriggerActions,
 				}},
 			},
 			MustContain: []string{
 				"GIT_TOKEN",
 				"ZEROPS_TOKEN",
 				"zcli push",
-				"push-only",
+			},
+		},
+		{
+			Name: "strategy_setup_webhook_full_chain",
+			Envelope: StateEnvelope{
+				Phase:       PhaseStrategySetup,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{{
+					Hostname: "appdev", TypeVersion: "nodejs@22",
+					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					StageHostname: "appstage",
+					Strategy:      StrategyPushGit,
+					Trigger:       TriggerWebhook,
+				}},
+			},
+			MustContain: []string{
+				"GIT_TOKEN",
+				"dashboard",
+				"Trigger automatic builds",
 			},
 		},
 		{

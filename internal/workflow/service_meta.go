@@ -39,6 +39,7 @@ type ServiceMeta struct {
 	Mode              string `json:"mode,omitempty"`
 	StageHostname     string `json:"stageHostname,omitempty"`
 	DeployStrategy    string `json:"deployStrategy,omitempty"`
+	PushGitTrigger    string `json:"pushGitTrigger,omitempty"`    // "webhook" | "actions" | "" — valid only when DeployStrategy==push-git
 	StrategyConfirmed bool   `json:"strategyConfirmed,omitempty"` // true after user explicitly confirms/sets strategy
 	Environment       string `json:"environment,omitempty"`       // "container" or "local"
 	BootstrapSession  string `json:"bootstrapSession"`

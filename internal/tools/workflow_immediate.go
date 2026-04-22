@@ -20,7 +20,7 @@ func synthesizeImmediateGuidance(name string, _ *workflow.Engine, rt runtime.Inf
 			fmt.Sprintf("Unknown immediate workflow %q", name),
 			"Valid immediate workflows: export")
 	}
-	guidance, err := workflow.SynthesizeImmediateWorkflow(phase, workflow.DetectEnvironment(rt))
+	guidance, err := workflow.SynthesizeImmediatePhase(phase, workflow.DetectEnvironment(rt))
 	if err != nil {
 		return "", platform.NewPlatformError(
 			platform.ErrNotImplemented,
