@@ -16,6 +16,14 @@ import (
 // not on arbitrary "v"-prefixed identifiers embedded in longer words.
 // Principle P6: version anchors belong in archival changelogs, not in
 // published recipe content consumed by porters.
+//
+// Post-Cx-VERSION-ANCHOR-SHARPEN the regex is paired with two sharpen
+// filters applied in scanForVersionAnchors: (a) fenced code blocks are
+// excluded so YAML examples that reference identifier strings like
+// `bootstrap-seed-v1` don't trip the check, and (b) a match whose
+// character immediately preceding the `v` is `-` is a compound
+// identifier (the regex match is the tail of a hyphenated slug), not
+// an anchor, and is also skipped.
 var versionAnchorRegexp = regexp.MustCompile(`\bv\d+(?:\.\d+)*\b`)
 
 // versionAnchorScanGlobs names the globs inside a recipe project root the
@@ -34,6 +42,54 @@ var versionAnchorScanGlobs = []string{
 // surface in Detail so the error message stays readable even when the
 // regression is wide. The full count is always reported separately.
 const maxVersionAnchorExamples = 10
+
+// scanForVersionAnchors strips fenced code blocks from content, then
+// scans the prose for version-anchor matches. A match whose immediately
+// preceding character is `-` is treated as a compound identifier tail
+// (e.g. `bootstrap-seed-v1`, `nestjs-minimal-v3`) and skipped — such
+// identifiers are slug-class tokens, not recipe-run anchors a porter
+// would have no context for.
+//
+// Fenced-code detection is line-oriented and triggers on a line whose
+// trimmed prefix starts with three or more backticks (same shape Markdown
+// renderers accept). Nested fences are not handled — no production atom
+// or README uses them today — and indented code blocks are intentionally
+// out of scope: the sharpen targets YAML/bash examples, where the fenced
+// form dominates.
+func scanForVersionAnchors(content string) []string {
+	lines := strings.Split(content, "\n")
+	var prose strings.Builder
+	inFence := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") {
+			inFence = !inFence
+			prose.WriteByte('\n')
+			continue
+		}
+		if inFence {
+			prose.WriteByte('\n')
+			continue
+		}
+		prose.WriteString(line)
+		prose.WriteByte('\n')
+	}
+	proseText := prose.String()
+
+	var matches []string
+	for _, idx := range versionAnchorRegexp.FindAllStringIndex(proseText, -1) {
+		start, end := idx[0], idx[1]
+		// Preceding character check — compound identifier tails have `-`
+		// (e.g. `bootstrap-seed-v1`). Only the boundary character matters;
+		// the regex already anchors on a word boundary so the left side
+		// is either document start, whitespace, or punctuation we accept.
+		if start > 0 && proseText[start-1] == '-' {
+			continue
+		}
+		matches = append(matches, proseText[start:end])
+	}
+	return matches
+}
 
 // checkNoVersionAnchorsInPublishedContent scans the mountRoot project tree
 // for v33-class version leakage in published porter-facing content.
@@ -74,7 +130,7 @@ func checkNoVersionAnchorsInPublishedContent(mountRoot string) []workflow.StepCh
 			if readErr != nil {
 				continue
 			}
-			for _, match := range versionAnchorRegexp.FindAllString(string(data), -1) {
+			for _, match := range scanForVersionAnchors(string(data)) {
 				hits = append(hits, hit{path: rel, match: match})
 			}
 		}
