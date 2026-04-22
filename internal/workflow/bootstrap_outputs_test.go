@@ -1160,10 +1160,10 @@ func TestProvisionMeta_AdoptedService_EmptyBootstrapSession(t *testing.T) {
 }
 
 // Mode-expansion path (§9.1): the existing runtime's user-authored fields —
-// BootstrappedAt, DeployStrategy, StrategyConfirmed, FirstDeployedAt — must
-// survive the upgrade. Only Mode / StageHostname change. Without the merge,
-// a dev→standard upgrade would silently revert the user's push-git choice
-// and lose the original bootstrap date.
+// BootstrappedAt, DeployStrategy, StrategyConfirmed, FirstDeployedAt —
+// must survive the upgrade. Only Mode / StageHostname change. Without the
+// merge, a dev→standard upgrade would silently revert the user's push-git
+// choice and lose deploy history.
 //
 // Flow note: when the single runtime target is IsExisting=true with no
 // live-new dependencies, bootstrap's fast-path auto-skips `close` (set by
@@ -1240,7 +1240,7 @@ func TestWriteBootstrapOutputs_ExpansionPreservesExistingFields(t *testing.T) {
 		t.Error("StrategyConfirmed lost — must be preserved through expansion")
 	}
 	if got.FirstDeployedAt != existing.FirstDeployedAt {
-		t.Errorf("FirstDeployedAt: got %q, want %q", got.FirstDeployedAt, existing.FirstDeployedAt)
+		t.Errorf("FirstDeployedAt: got %q, want %q (must be preserved)", got.FirstDeployedAt, existing.FirstDeployedAt)
 	}
 }
 

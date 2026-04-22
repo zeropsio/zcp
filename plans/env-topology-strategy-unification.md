@@ -160,25 +160,48 @@ The old `DeployRole*` duplicate in `ops/deploy_validate.go` is **deleted**.
 `ops` imports from `workflow` (reverse-direction import check: `workflow`
 doesn't import `ops`, so this is safe).
 
-### 2.6 "IsDeployed" — derived, not persistent
+### 2.6 "IsDeployed" — derived, not persistent (with durable stamp)
 
-Current `ServiceMeta.FirstDeployedAt` is dropped. Replacement:
+`ServiceMeta.FirstDeployedAt` is retained as a **durable stamp** written
+from the correct events (not just verify pass). The envelope's `Deployed`
+field is then derived from three OR-composed signals:
 
-- `StateEnvelope.ServiceSnapshot.Deployed` is derived at envelope build time:
+```
+Deployed := meta.FirstDeployedAt != ""
+         OR HasSuccessfulDeployFor(ws, hostname)
+         OR (meta.IsAdopted() AND platform.Status == "ACTIVE")
+```
 
-  ```
-  Deployed := platformService.Status == "ACTIVE"
-           OR hasSuccessfulDeployAttempt(ws, hostname)
-  ```
+Stamping of `FirstDeployedAt`:
 
-- Atom filter `deployStates: [never-deployed|deployed]` evaluates against
-  the derived envelope value, not against meta.
+- `RecordDeployAttempt` stamps the meta when `SucceededAt` is set. Replaces
+  the old verify-only stamping, which missed ZCP-driven deploys whose
+  verify never ran (e.g. push-git where verify is downstream).
+- Auto-adoption (Phase A.4 `LocalAutoAdopt`) stamps when platform Status
+  is ACTIVE at adoption time — captures services that were deployed
+  before ZCP touched them (the fizzy-export case).
+
+The IsAdopted+ACTIVE derivation path in `DeriveDeployed` is a legacy
+safety net for metas written before the stamping code shipped; new flows
+rely on the stamped field.
+
+The IsAdopted guard on the adoption-path derivation is still load-bearing
+for a different reason: fresh ZCP bootstrap lands services at
+Status=ACTIVE via `startWithoutCode` even though no real code has been
+deployed. `meta.IsAdopted()` distinguishes "ZCP observed but didn't
+create" (empty BootstrapSession) from "ZCP created from nothing"
+(non-empty BootstrapSession).
+
+Related cleanup:
+
 - `handleGitPush` precondition changes from `meta.IsDeployed()` to "repo
-  has committed code at working dir" (`git log -1` succeeds). See §5.2.
-- `develop` first-deploy branch detection uses the same derived predicate
-  from envelope — matches what atoms see.
-- `RecordVerifyAttempt` no longer calls `MarkServiceDeployed`. Cross-
-  boundary write removed.
+  has committed code at working dir" (committedCodeCheckCmd). See §5.2.
+  The git-push gate no longer couples to meta state at all.
+- `develop` first-deploy branch detection uses the derived envelope
+  predicate — matches what atoms see.
+- `RecordVerifyAttempt` no longer calls `MarkServiceDeployed`. Stamping
+  moved to `RecordDeployAttempt` where it belongs; cross-boundary write
+  from verify into meta-stamp retired.
 
 ### 2.7 Unified deploy input schema
 

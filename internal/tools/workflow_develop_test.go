@@ -14,9 +14,10 @@ import (
 )
 
 // handleDevelopBriefing creates a work session regardless of meta strategy:
-// the first deploy is always the default self-deploy mechanism, and the
-// strategy decision surfaces via `develop-strategy-review` once
-// FirstDeployedAt is stamped.
+// the first deploy is always the default push mechanism, and the
+// strategy decision surfaces via `develop-strategy-review` once the
+// envelope's Deployed projection flips to true (derived from session
+// history + platform status; see compute_envelope.DeriveDeployed).
 func TestHandleDevelopBriefing_UnsetStrategy_NeverDeployed_CreatesWorkSession_FirstDeployBranch(t *testing.T) {
 	t.Parallel()
 
@@ -64,12 +65,13 @@ func TestHandleDevelopBriefing_UnsetStrategy_NeverDeployed_CreatesWorkSession_Fi
 		t.Errorf("response missing first-deploy-intro marker. Got:\n%s", text)
 	}
 	if strings.Contains(text, "Pick an ongoing deploy strategy") {
-		t.Errorf("strategy-review fired pre-first-deploy — it must wait for FirstDeployedAt. Got:\n%s", text)
+		t.Errorf("strategy-review fired pre-first-deploy — it must wait until Deployed flips true. Got:\n%s", text)
 	}
 }
 
-// After FirstDeployedAt is stamped the develop briefing renders the
-// strategy-review atom instead of the first-deploy atoms.
+// Once FirstDeployedAt is stamped (via a successful session deploy or
+// adoption-at-ACTIVE), develop renders strategy-review instead of
+// first-deploy atoms.
 func TestHandleDevelopBriefing_UnsetStrategy_Deployed_StrategyReview(t *testing.T) {
 	t.Parallel()
 

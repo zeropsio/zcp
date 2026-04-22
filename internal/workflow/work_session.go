@@ -186,14 +186,45 @@ func RecordDeployAttempt(stateDir, hostname string, attempt DeployAttempt) error
 		ws.ClosedAt = ws.LastActivityAt
 		ws.CloseReason = CloseReasonAutoComplete
 	}
+	// Persistent deploy marker: once a deploy lands successfully, stamp the
+	// meta so the fact survives session closure. Only the first successful
+	// deploy stamps (idempotent). findMetaForHostname resolves both halves
+	// of a container+standard dev/stage pair to the single meta file.
+	if attempt.SucceededAt != "" {
+		_ = stampFirstDeployedAt(stateDir, hostname)
+	}
 	return SaveWorkSession(stateDir, ws)
 }
 
+// stampFirstDeployedAt writes FirstDeployedAt on the meta for hostname if
+// unset. Resolves hostname through findMetaForHostname so a stage-side
+// deploy stamps the dev-keyed meta file (container+standard case).
+// Best-effort: meta-less services (adopted without a local record) return
+// nil without error — stamping a missing file is a no-op, not a bug.
+func stampFirstDeployedAt(stateDir, hostname string) error {
+	meta, err := findMetaForHostname(stateDir, hostname)
+	if err != nil {
+		return fmt.Errorf("stamp first deployed: %w", err)
+	}
+	if meta == nil || meta.FirstDeployedAt != "" {
+		return nil
+	}
+	meta.FirstDeployedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := WriteServiceMeta(stateDir, meta); err != nil {
+		return fmt.Errorf("stamp first deployed: write meta: %w", err)
+	}
+	return nil
+}
+
 // RecordVerifyAttempt appends one verify attempt for a hostname. Triggers
-// auto-close evaluation. When the attempt passed, also stamps
-// ServiceMeta.FirstDeployedAt so the develop first-deploy branch exits on the
-// next session.
+// auto-close evaluation.
 // Returns ErrHostnameOutOfScope when hostname is not declared in ws.Services.
+//
+// Under plan phase A.3 this no longer mutates ServiceMeta. "Deployed" is
+// derived at envelope build time from platform.Status and the session's
+// own deploy attempts; a persistent FirstDeployedAt flag turned into a
+// cross-boundary write from session state into bootstrap state and stuck
+// adopted services at "never deployed" forever.
 func RecordVerifyAttempt(stateDir, hostname string, attempt VerifyAttempt) error {
 	workSessionMu.Lock()
 	defer workSessionMu.Unlock()
@@ -219,11 +250,6 @@ func RecordVerifyAttempt(stateDir, hostname string, attempt VerifyAttempt) error
 	if ws.ClosedAt == "" && EvaluateAutoClose(ws) {
 		ws.ClosedAt = ws.LastActivityAt
 		ws.CloseReason = CloseReasonAutoComplete
-	}
-	if attempt.Passed {
-		// Best-effort: meta-less services (adopted, no local record) return nil.
-		// Only stamp the primary hostname — stage half shares the same meta file.
-		_ = MarkServiceDeployed(stateDir, hostname)
 	}
 	return SaveWorkSession(stateDir, ws)
 }
@@ -254,6 +280,22 @@ func HasSuccessfulDeploy(ws *WorkSession) bool {
 			if a.SucceededAt != "" {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// HasSuccessfulDeployFor reports whether ws recorded a successful deploy for
+// the specific hostname. Used by envelope derivation to decide Deployed —
+// a per-host projection of HasSuccessfulDeploy. Empty hostname or nil ws
+// returns false.
+func HasSuccessfulDeployFor(ws *WorkSession, hostname string) bool {
+	if ws == nil || hostname == "" {
+		return false
+	}
+	for _, a := range ws.Deploys[hostname] {
+		if a.SucceededAt != "" {
+			return true
 		}
 	}
 	return false

@@ -26,9 +26,9 @@ func (e *Engine) invertLocalHostname(dev, stage string) (metaHost, stageHost str
 // Mode-expansion path: when the plan upgrades an existing runtime's
 // bootstrapMode (dev/simple → standard) with IsExisting=true, the existing
 // ServiceMeta is merged rather than overwritten — BootstrappedAt,
-// DeployStrategy, StrategyConfirmed, and FirstDeployedAt are preserved so
-// the user's prior choices survive the mode upgrade. See §9.1 of
-// spec-workflows.md.
+// DeployStrategy, StrategyConfirmed, FirstDeployedAt are preserved so the
+// user's prior choices (and deploy history) survive the mode upgrade.
+// See §9.1 of spec-workflows.md.
 func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 	if state.Bootstrap == nil || state.Bootstrap.Plan == nil {
 		return
@@ -129,8 +129,8 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 // mergeExistingMeta preserves user-authored fields (BootstrappedAt,
 // DeployStrategy, StrategyConfirmed, FirstDeployedAt) on meta during a
 // mode-expansion write so a dev→standard upgrade doesn't silently clear
-// the user's strategy choice. Mode and StageHostname come from the plan
-// and are left untouched.
+// the user's strategy choice or reset deploy history. Mode and
+// StageHostname come from the plan and are left untouched.
 func mergeExistingMeta(meta, existing *ServiceMeta) {
 	meta.BootstrappedAt = existing.BootstrappedAt
 	meta.DeployStrategy = existing.DeployStrategy

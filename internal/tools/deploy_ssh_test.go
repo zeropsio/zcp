@@ -820,7 +820,10 @@ func setupAdoptedService(t *testing.T, stateDir, hostname, stageHostname string)
 }
 
 // setupDeployedService writes a ServiceMeta with FirstDeployedAt stamped so
-// the git-push pre-flight guard (requires a landed first deploy) passes.
+// deploy-state derivation (compute_envelope.DeriveDeployed) reports
+// Deployed=true for hostname. Under plan A.3 the stamp is driven by
+// RecordDeployAttempt-on-success and adoption-at-ACTIVE; tests needing the
+// bit set up front use this helper and plant the timestamp directly.
 func setupDeployedService(t *testing.T, stateDir, hostname, stageHostname string) {
 	t.Helper()
 	setupAdoptedService(t, stateDir, hostname, stageHostname)

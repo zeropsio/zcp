@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"time"
 )
 
 // Strategy constants for deploy decisions.
@@ -20,7 +19,21 @@ const (
 
 // ServiceMeta records bootstrap decisions for a service.
 // ZCP's persistent knowledge — the API doesn't track mode, pairing, or strategy.
-// The API is the source of truth for operational state (running, resources, envs).
+// The API is the source of truth for operational state (running, resources,
+// envs).
+//
+// FirstDeployedAt is the durable "has this service seen a real code deploy"
+// signal. Stamped from two events (plan phase A.3):
+//
+//  1. A deploy attempt recorded in the work session lands with SucceededAt
+//     set — stamp here so the fact persists after the session closes.
+//  2. Auto-adoption observes platform Status=ACTIVE on a pre-existing
+//     service — stamp at adoption so services deployed before ZCP touched
+//     them don't get stuck at "never deployed" (the fizzy-export bug).
+//
+// The old "stamp only on verify pass" behavior is gone; deploy success is a
+// sufficient signal and verify-only stamping was masking legitimate
+// Deployed=true cases for services that bypassed ZCP verify.
 type ServiceMeta struct {
 	Hostname          string `json:"hostname"`
 	Mode              string `json:"mode,omitempty"`
@@ -30,7 +43,7 @@ type ServiceMeta struct {
 	Environment       string `json:"environment,omitempty"`       // "container" or "local"
 	BootstrapSession  string `json:"bootstrapSession"`
 	BootstrappedAt    string `json:"bootstrappedAt"`
-	FirstDeployedAt   string `json:"firstDeployedAt,omitempty"` // set on the first successful deploy (develop phase)
+	FirstDeployedAt   string `json:"firstDeployedAt,omitempty"` // stamped on first observed deploy — via session or adoption
 }
 
 // IsComplete returns true if bootstrap finished for this service.
@@ -42,9 +55,8 @@ func (m *ServiceMeta) IsComplete() bool {
 	return m.BootstrappedAt != ""
 }
 
-// IsDeployed returns true once the service has been deployed at least once.
-// FirstDeployedAt is set by the develop flow on the first successful deploy.
-// Empty FirstDeployedAt on an IsComplete meta signals the first-deploy branch.
+// IsDeployed returns true once the service has been observed to have a real
+// code deploy (via session or adoption-at-ACTIVE). See ServiceMeta doc.
 func (m *ServiceMeta) IsDeployed() bool {
 	return m.FirstDeployedAt != ""
 }
@@ -248,34 +260,6 @@ func cleanIncompleteMetasForSession(stateDir, sessionID string) {
 			_ = DeleteServiceMeta(stateDir, m.Hostname)
 		}
 	}
-}
-
-// MarkServiceDeployed stamps FirstDeployedAt on the meta for hostname. Idempotent:
-// an already-stamped meta is left untouched so the original first-deploy moment
-// is preserved. No-op when the meta does not exist (useful when a develop
-// workflow is run against services that were adopted from an external source,
-// i.e. no local ServiceMeta was ever written).
-//
-// Hostname resolves via findMetaForHostname — verifying a standard-mode stage
-// hostname stamps the dev-keyed meta file, so the first-deploy branch exits
-// regardless of which half the agent verified first.
-//
-// Under Option A this is the hook that the first-deploy branch calls after a
-// successful verify — without it, subsequent develop sessions keep re-entering
-// the first-deploy branch and re-running scaffold.
-func MarkServiceDeployed(stateDir, hostname string) error {
-	meta, err := findMetaForHostname(stateDir, hostname)
-	if err != nil {
-		return fmt.Errorf("mark service deployed: %w", err)
-	}
-	if meta == nil || meta.FirstDeployedAt != "" {
-		return nil
-	}
-	meta.FirstDeployedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := WriteServiceMeta(stateDir, meta); err != nil {
-		return fmt.Errorf("mark service deployed: write meta: %w", err)
-	}
-	return nil
 }
 
 // findMetaForHostname returns the meta whose Hostname OR StageHostname matches.

@@ -80,7 +80,7 @@ func ComputeEnvelope(
 		self = &SelfService{Hostname: rt.ServiceName}
 	}
 
-	snapshots := buildServiceSnapshots(services, metas, selfHostnameFromRT(rt))
+	snapshots := buildServiceSnapshots(services, metas, ws, selfHostnameFromRT(rt))
 
 	var wsSummary *WorkSessionSummary
 	if ws != nil {
@@ -189,12 +189,17 @@ func selfHostnameFromRT(rt runtime.Info) string {
 	return ""
 }
 
-// buildServiceSnapshots turns (platform services, local metas) into the
-// envelope's Services field. Skips system containers and the self-service.
-// Output is sorted by hostname for determinism.
+// buildServiceSnapshots turns (platform services, local metas, session history)
+// into the envelope's Services field. Skips system containers and the
+// self-service. Output is sorted by hostname for determinism.
+//
+// ws is optional — when nil, Deployed falls back purely to platform signals.
+// When present, a service with a recorded successful deploy in the session
+// history is marked Deployed even if platform state hasn't caught up.
 func buildServiceSnapshots(
 	services []platform.ServiceStack,
 	metas []*ServiceMeta,
+	ws *WorkSession,
 	selfHostname string,
 ) []ServiceSnapshot {
 	metaByHost := make(map[string]*ServiceMeta, len(metas))
@@ -216,13 +221,13 @@ func buildServiceSnapshots(
 		if selfHostname != "" && svc.Name == selfHostname {
 			continue
 		}
-		out = append(out, buildOneSnapshot(svc, metaByHost[svc.Name]))
+		out = append(out, buildOneSnapshot(svc, metaByHost[svc.Name], ws))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Hostname < out[j].Hostname })
 	return out
 }
 
-func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta) ServiceSnapshot {
+func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta, ws *WorkSession) ServiceSnapshot {
 	typeVersion := svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
 	snap := ServiceSnapshot{
 		Hostname:     svc.Name,
@@ -232,7 +237,7 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta) ServiceSnaps
 	}
 	if meta != nil && meta.IsComplete() {
 		snap.Bootstrapped = true
-		snap.Deployed = meta.IsDeployed()
+		snap.Deployed = DeriveDeployed(svc.Name, svc.Status, meta, ws)
 		snap.Mode = resolveEnvelopeMode(meta, svc.Name)
 		snap.Strategy = DeployStrategy(meta.DeployStrategy)
 		if snap.Strategy == "" {
@@ -250,6 +255,47 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta) ServiceSnaps
 		snap.Resumable = true
 	}
 	return snap
+}
+
+// StatusActive is the platform Status string that indicates a service is
+// running. Re-declared at package level (rather than importing from
+// internal/tools) so workflow-internal deploy-state derivation has no
+// outside dependency.
+const StatusActive = "ACTIVE"
+
+// DeriveDeployed answers "has this service ever received a real code deploy?"
+// Three signals, OR-composed:
+//
+//  1. meta.FirstDeployedAt — persistent stamp from a prior successful deploy
+//     (recorded by RecordDeployAttempt). Survives session closure; this is
+//     the authoritative signal for ZCP-driven flows after the first cycle.
+//  2. HasSuccessfulDeployFor — current session has recorded a successful
+//     deploy attempt. Covers the window between the deploy landing and the
+//     stamp reaching meta (same tick, but belt-and-suspenders).
+//  3. meta.IsAdopted() AND platform.Status == ACTIVE — services that were
+//     running before ZCP touched them (the fizzy-export case). Auto-adoption
+//     also stamps FirstDeployedAt so this path is primarily a fallback for
+//     legacy metas written before the stamping code shipped.
+//
+// Fresh ZCP bootstrap (non-empty BootstrapSession) with empty
+// FirstDeployedAt and no session-recorded deploy correctly reports
+// Deployed=false, so the develop first-deploy branch fires even though
+// the platform may show Status=ACTIVE (startWithoutCode trap).
+//
+// hostname must match the platform service name. meta is the local record
+// for that hostname (or its paired dev hostname); nil → Deployed=false.
+// ws is optional; when nil only signals 1 and 3 apply.
+func DeriveDeployed(hostname, status string, meta *ServiceMeta, ws *WorkSession) bool {
+	if meta != nil && meta.IsDeployed() {
+		return true
+	}
+	if HasSuccessfulDeployFor(ws, hostname) {
+		return true
+	}
+	if meta != nil && meta.IsAdopted() && status == StatusActive {
+		return true
+	}
+	return false
 }
 
 // classifyEnvelopeRuntime maps a service type to the envelope's RuntimeClass

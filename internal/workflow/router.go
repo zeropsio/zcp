@@ -19,7 +19,9 @@ type RouterInput struct {
 	ServiceMetas      []*ServiceMeta
 	ActiveSessions    []SessionEntry
 	LiveServices      []string
-	UnmanagedRuntimes []string // runtime hostnames without complete ServiceMeta
+	LiveServiceStatus map[string]string // hostname → platform Status; used by offerings that need deploy state (export)
+	UnmanagedRuntimes []string          // runtime hostnames without complete ServiceMeta
+	WorkSession       *WorkSession      // current-PID session, nil when none; used for deploy-history derivation
 }
 
 // Route takes environmental signals and returns available workflows.
@@ -66,7 +68,7 @@ func Route(input RouterInput) []FlowOffering {
 
 	// 3. Bootstrapped metas exist → strategy-based deploy.
 	if len(metas) > 0 {
-		offerings = append(offerings, strategyOfferings(metas)...)
+		offerings = append(offerings, strategyOfferings(metas, input.LiveServiceStatus, input.WorkSession)...)
 		// Offer adding new services only when nothing needs adoption.
 		if len(input.UnmanagedRuntimes) == 0 {
 			offerings = append(offerings, FlowOffering{
@@ -131,7 +133,9 @@ func filterStaleMetas(metas []*ServiceMeta, liveServices []string) []*ServiceMet
 
 // strategyOfferings creates offerings based on the dominant deploy strategy across metas.
 // Deploy is always offered (strategy is resolved within the flow, not before).
-func strategyOfferings(metas []*ServiceMeta) []FlowOffering {
+// liveStatus + ws are threaded for deploy-state derivation (see DeriveDeployed);
+// both may be nil/empty — derivation degrades gracefully.
+func strategyOfferings(metas []*ServiceMeta, liveStatus map[string]string, ws *WorkSession) []FlowOffering {
 	strategies := make(map[string]int)
 	for _, m := range metas {
 		if s := m.DeployStrategy; s != "" {
@@ -176,15 +180,21 @@ func strategyOfferings(metas []*ServiceMeta) []FlowOffering {
 	// zerops_deploy strategy=git-push. Gating on push-git would hide the
 	// flow from exactly the users who most need it — teams on push-dev
 	// that want to produce a sharable recipe from their workspace.
+	//
+	// Deploy state comes from DeriveDeployed, which checks session history
+	// + platform status — no persistent meta flag (see plan A.3).
 	for _, m := range metas {
-		if m.IsDeployed() {
-			offerings = append(offerings, FlowOffering{
-				Workflow: "export", Priority: 3,
-				Hint: `zerops_workflow action="start" workflow="export" — turn a deployed service into a re-importable git repo (import.yaml + buildFromGit)`,
-			})
-			break
+		for _, h := range m.Hostnames() {
+			if DeriveDeployed(h, liveStatus[h], m, ws) {
+				offerings = append(offerings, FlowOffering{
+					Workflow: "export", Priority: 3,
+					Hint: `zerops_workflow action="start" workflow="export" — turn a deployed service into a re-importable git repo (import.yaml + buildFromGit)`,
+				})
+				goto afterExport
+			}
 		}
 	}
+afterExport:
 
 	return offerings
 }

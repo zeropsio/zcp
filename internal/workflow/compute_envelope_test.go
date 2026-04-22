@@ -176,46 +176,135 @@ func TestComputeEnvelope_ServicesBootstrapped(t *testing.T) {
 	}
 }
 
-// TestComputeEnvelope_ServiceDeployedFlag covers the Deployed-field projection
-// from ServiceMeta.FirstDeployedAt. Under Option A, develop branches on this
-// boolean: never-deployed = scaffold + first deploy; deployed = edit loop.
+// TestComputeEnvelope_ServiceDeployedFlag pins the three signals
+// DeriveDeployed OR-composes:
+//
+//  1. meta.FirstDeployedAt stamped — the durable signal for services that
+//     have seen a successful deploy (session deploy or adoption-at-ACTIVE
+//     both stamp this).
+//  2. Session recorded success for this hostname — in-flight deploy just
+//     landed, before meta sync.
+//  3. Adopted (empty BootstrapSession) + platform Status=ACTIVE — legacy
+//     path covering metas written before stamping shipped.
+//
+// Fresh ZCP bootstrap (BootstrapSession non-empty) without FirstDeployedAt
+// and no session deploy correctly reports Deployed=false even at
+// Status=ACTIVE, so the develop first-deploy branch fires.
+//
+// See compute_envelope.go:DeriveDeployed.
 func TestComputeEnvelope_ServiceDeployedFlag(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	meta := &ServiceMeta{
-		Hostname:          "appdev",
-		Mode:              PlanModeDev,
-		DeployStrategy:    StrategyPushDev,
-		StrategyConfirmed: true,
-		BootstrappedAt:    fixedTime.Format(time.RFC3339),
-		BootstrapSession:  "sess-1",
-		FirstDeployedAt:   fixedTime.Format(time.RFC3339),
-	}
-	if err := WriteServiceMeta(dir, meta); err != nil {
-		t.Fatalf("WriteServiceMeta: %v", err)
-	}
-
-	svc := platform.ServiceStack{
-		ID: "s1", Name: "appdev", Status: "ACTIVE",
-		ServiceStackTypeInfo: platform.ServiceTypeInfo{
-			ServiceStackTypeVersionName:  "nodejs@22",
-			ServiceStackTypeCategoryName: "USER",
+	tests := []struct {
+		name         string
+		meta         *ServiceMeta
+		svcStatus    string
+		recordDeploy bool
+		wantDeployed bool
+	}{
+		{
+			name: "fresh bootstrap + ACTIVE + no stamp = not deployed",
+			meta: &ServiceMeta{
+				Hostname:         "appdev",
+				Mode:             PlanModeDev,
+				BootstrappedAt:   fixedTime.Format(time.RFC3339),
+				BootstrapSession: "sess-1",
+			},
+			svcStatus:    "ACTIVE",
+			wantDeployed: false,
+		},
+		{
+			name: "FirstDeployedAt stamped = deployed regardless of Status",
+			meta: &ServiceMeta{
+				Hostname:         "appdev",
+				Mode:             PlanModeDev,
+				BootstrappedAt:   fixedTime.Format(time.RFC3339),
+				BootstrapSession: "sess-1",
+				FirstDeployedAt:  fixedTime.Format(time.RFC3339),
+			},
+			svcStatus:    "BUILDING",
+			wantDeployed: true,
+		},
+		{
+			name: "adopted + ACTIVE without stamp = deployed (fizzy-export)",
+			meta: &ServiceMeta{
+				Hostname:         "appdev",
+				Mode:             PlanModeDev,
+				BootstrappedAt:   fixedTime.Format(time.RFC3339),
+				BootstrapSession: "",
+			},
+			svcStatus:    "ACTIVE",
+			wantDeployed: true,
+		},
+		{
+			name: "adopted + READY_TO_DEPLOY = not deployed",
+			meta: &ServiceMeta{
+				Hostname:         "appdev",
+				Mode:             PlanModeDev,
+				BootstrappedAt:   fixedTime.Format(time.RFC3339),
+				BootstrapSession: "",
+			},
+			svcStatus:    "READY_TO_DEPLOY",
+			wantDeployed: false,
+		},
+		{
+			name: "fresh bootstrap + session success + stamp = deployed",
+			meta: &ServiceMeta{
+				Hostname:         "appdev",
+				Mode:             PlanModeDev,
+				BootstrappedAt:   fixedTime.Format(time.RFC3339),
+				BootstrapSession: "sess-1",
+			},
+			svcStatus:    "ACTIVE",
+			recordDeploy: true, // RecordDeployAttempt both records session AND stamps meta
+			wantDeployed: true,
 		},
 	}
-	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{svc}).
-		WithProject(&platform.Project{ID: "p1", Name: "demo"})
 
-	env, err := ComputeEnvelope(context.Background(), mock, dir, "p1", runtime.Info{}, fixedTime)
-	if err != nil {
-		t.Fatalf("ComputeEnvelope: %v", err)
-	}
-	if len(env.Services) != 1 {
-		t.Fatalf("services = %d, want 1", len(env.Services))
-	}
-	if !env.Services[0].Deployed {
-		t.Error("appdev.Deployed = false, want true (FirstDeployedAt set)")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			if err := WriteServiceMeta(dir, tt.meta); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+
+			if tt.recordDeploy {
+				ws := NewWorkSession("p1", string(EnvContainer), "test", []string{tt.meta.Hostname})
+				if err := SaveWorkSession(dir, ws); err != nil {
+					t.Fatalf("SaveWorkSession: %v", err)
+				}
+				if err := RecordDeployAttempt(dir, tt.meta.Hostname, DeployAttempt{
+					AttemptedAt: fixedTime.Format(time.RFC3339),
+					SucceededAt: fixedTime.Format(time.RFC3339),
+				}); err != nil {
+					t.Fatalf("RecordDeployAttempt: %v", err)
+				}
+			}
+
+			svc := platform.ServiceStack{
+				ID: "s1", Name: tt.meta.Hostname, Status: tt.svcStatus,
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{
+					ServiceStackTypeVersionName:  "nodejs@22",
+					ServiceStackTypeCategoryName: "USER",
+				},
+			}
+			mock := platform.NewMock().
+				WithServices([]platform.ServiceStack{svc}).
+				WithProject(&platform.Project{ID: "p1", Name: "demo"})
+
+			env, err := ComputeEnvelope(context.Background(), mock, dir, "p1", runtime.Info{}, fixedTime)
+			if err != nil {
+				t.Fatalf("ComputeEnvelope: %v", err)
+			}
+			if len(env.Services) != 1 {
+				t.Fatalf("services = %d, want 1", len(env.Services))
+			}
+			if got := env.Services[0].Deployed; got != tt.wantDeployed {
+				t.Errorf("Deployed = %v, want %v", got, tt.wantDeployed)
+			}
+		})
 	}
 }
 

@@ -203,6 +203,98 @@ func TestRecordDeployAttempt_InScope_Accepted(t *testing.T) {
 	}
 }
 
+// TestRecordDeployAttempt_StampsFirstDeployedAt pins the persistence side of
+// the "service has been deployed" signal. On success, the session's
+// recording path stamps the meta so the fact outlives the session itself.
+func TestRecordDeployAttempt_StampsFirstDeployedAt(t *testing.T) {
+	dir := t.TempDir()
+	meta := &ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             PlanModeDev,
+		BootstrappedAt:   "2026-04-18T10:00:00Z",
+		BootstrapSession: "sess-1",
+	}
+	if err := WriteServiceMeta(dir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	ws := NewWorkSession("p", "container", "deploy", []string{"appdev"})
+	if err := SaveWorkSession(dir, ws); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// Failed attempt: no SucceededAt → no stamp.
+	if err := RecordDeployAttempt(dir, "appdev", DeployAttempt{
+		AttemptedAt: "2026-04-19T09:00:00Z",
+		Error:       "boom",
+	}); err != nil {
+		t.Fatalf("RecordDeployAttempt (fail): %v", err)
+	}
+	got, _ := ReadServiceMeta(dir, "appdev")
+	if got.FirstDeployedAt != "" {
+		t.Errorf("failed deploy must not stamp FirstDeployedAt, got %q", got.FirstDeployedAt)
+	}
+
+	// Successful attempt: SucceededAt set → stamp fires.
+	if err := RecordDeployAttempt(dir, "appdev", DeployAttempt{
+		AttemptedAt: "2026-04-19T09:01:00Z",
+		SucceededAt: "2026-04-19T09:02:00Z",
+	}); err != nil {
+		t.Fatalf("RecordDeployAttempt (success): %v", err)
+	}
+	got, _ = ReadServiceMeta(dir, "appdev")
+	if got.FirstDeployedAt == "" {
+		t.Error("successful deploy must stamp FirstDeployedAt on the meta")
+	}
+
+	// Idempotent: a second success doesn't overwrite.
+	first := got.FirstDeployedAt
+	if err := RecordDeployAttempt(dir, "appdev", DeployAttempt{
+		AttemptedAt: "2026-04-19T10:00:00Z",
+		SucceededAt: "2026-04-19T10:01:00Z",
+	}); err != nil {
+		t.Fatalf("RecordDeployAttempt (second success): %v", err)
+	}
+	got, _ = ReadServiceMeta(dir, "appdev")
+	if got.FirstDeployedAt != first {
+		t.Errorf("FirstDeployedAt must be first-stamp-wins; was %q, became %q", first, got.FirstDeployedAt)
+	}
+}
+
+// TestRecordDeployAttempt_StampsViaStageHostname guards the container+standard
+// case: the meta is keyed by dev hostname with StageHostname set. A deploy
+// to the stage half must still stamp the shared meta — otherwise after a
+// dev→stage cross-deploy the meta reports never-deployed and develop
+// re-enters the first-deploy branch.
+func TestRecordDeployAttempt_StampsViaStageHostname(t *testing.T) {
+	dir := t.TempDir()
+	meta := &ServiceMeta{
+		Hostname:         "appdev",
+		StageHostname:    "appstage",
+		Mode:             PlanModeStandard,
+		Environment:      string(EnvContainer),
+		BootstrappedAt:   "2026-04-18T10:00:00Z",
+		BootstrapSession: "sess-1",
+	}
+	if err := WriteServiceMeta(dir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	ws := NewWorkSession("p", "container", "deploy", []string{"appdev", "appstage"})
+	if err := SaveWorkSession(dir, ws); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	if err := RecordDeployAttempt(dir, "appstage", DeployAttempt{
+		AttemptedAt: "t",
+		SucceededAt: "t+1",
+	}); err != nil {
+		t.Fatalf("RecordDeployAttempt: %v", err)
+	}
+	got, _ := ReadServiceMeta(dir, "appdev")
+	if got.FirstDeployedAt == "" {
+		t.Error("stage deploy must stamp FirstDeployedAt on the dev-keyed meta")
+	}
+}
+
 func TestEvaluateAutoClose(t *testing.T) {
 	tests := []struct {
 		name string

@@ -193,6 +193,7 @@ func allStrategiesAre(strategies map[string]string, strategy string) bool {
 func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client, projectID, stateDir, selfHostname string) (*mcp.CallToolResult, any, error) {
 	var liveHostnames []string
 	var unmanagedRuntimes []string
+	liveStatus := make(map[string]string)
 
 	metas, _ := workflow.ListServiceMetas(stateDir)
 	metaMap := make(map[string]*workflow.ServiceMeta, len(metas))
@@ -213,6 +214,7 @@ func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client
 					continue
 				}
 				liveHostnames = append(liveHostnames, s.Name)
+				liveStatus[s.Name] = s.Status
 				typeName := s.ServiceStackTypeInfo.ServiceStackTypeVersionName
 				if !workflow.IsManagedService(typeName) && !stageOf[s.Name] {
 					if m, ok := metaMap[s.Name]; !ok || !m.IsComplete() {
@@ -224,10 +226,13 @@ func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client
 	}
 
 	sessions, _ := workflow.ListSessions(stateDir)
+	ws, _ := workflow.CurrentWorkSession(stateDir)
 	return jsonResult(workflow.Route(workflow.RouterInput{
 		ServiceMetas:      metas,
 		ActiveSessions:    sessions,
 		LiveServices:      liveHostnames,
+		LiveServiceStatus: liveStatus,
 		UnmanagedRuntimes: unmanagedRuntimes,
+		WorkSession:       ws,
 	})), nil, nil
 }
