@@ -2,6 +2,7 @@
 id: export
 priority: 2
 phases: [export-active]
+environments: [container]
 title: "Export — turn a deployed service into a re-importable git repo"
 ---
 

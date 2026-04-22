@@ -273,7 +273,7 @@ func allStrategiesAre(strategies map[string]string, strategy string) bool {
 }
 
 // handleRoute gathers router input from live API + local state and returns flow offerings.
-func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client, projectID, stateDir, selfHostname string) (*mcp.CallToolResult, any, error) {
+func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client, projectID, stateDir, selfHostname string, rt runtime.Info) (*mcp.CallToolResult, any, error) {
 	var liveHostnames []string
 	var unmanagedRuntimes []string
 	liveStatus := make(map[string]string)
@@ -317,5 +317,6 @@ func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client
 		LiveServiceStatus: liveStatus,
 		UnmanagedRuntimes: unmanagedRuntimes,
 		WorkSession:       ws,
+		Environment:       workflow.DetectEnvironment(rt),
 	})), nil, nil
 }

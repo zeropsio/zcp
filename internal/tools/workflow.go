@@ -218,7 +218,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "list":
 		return handleListSessions(engine)
 	case "route":
-		return handleRoute(ctx, engine, client, projectID, stateDir, selfHostname)
+		return handleRoute(ctx, engine, client, projectID, stateDir, selfHostname, rt)
 	case "strategy":
 		return handleStrategy(input, stateDir, rt)
 	case "adopt-local":

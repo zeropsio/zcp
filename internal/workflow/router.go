@@ -22,6 +22,7 @@ type RouterInput struct {
 	LiveServiceStatus map[string]string // hostname → platform Status; used by offerings that need deploy state (export)
 	UnmanagedRuntimes []string          // runtime hostnames without complete ServiceMeta
 	WorkSession       *WorkSession      // current-PID session, nil when none; used for deploy-history derivation
+	Environment       Environment       // container / local — gates env-scoped offerings (e.g. export is container-only)
 }
 
 // Route takes environmental signals and returns available workflows.
@@ -68,7 +69,7 @@ func Route(input RouterInput) []FlowOffering {
 
 	// 3. Bootstrapped metas exist → strategy-based deploy.
 	if len(metas) > 0 {
-		offerings = append(offerings, strategyOfferings(metas, input.LiveServiceStatus, input.WorkSession)...)
+		offerings = append(offerings, strategyOfferings(metas, input.LiveServiceStatus, input.WorkSession, input.Environment)...)
 		// Offer adding new services only when nothing needs adoption.
 		if len(input.UnmanagedRuntimes) == 0 {
 			offerings = append(offerings, FlowOffering{
@@ -143,8 +144,9 @@ func filterStaleMetas(metas []*ServiceMeta, liveServices []string) []*ServiceMet
 // strategyOfferings creates offerings based on the dominant deploy strategy across metas.
 // Deploy is always offered (strategy is resolved within the flow, not before).
 // liveStatus + ws are threaded for deploy-state derivation (see DeriveDeployed);
-// both may be nil/empty — derivation degrades gracefully.
-func strategyOfferings(metas []*ServiceMeta, liveStatus map[string]string, ws *WorkSession) []FlowOffering {
+// both may be nil/empty — derivation degrades gracefully. env gates env-scoped
+// offerings (export is container-only in Release A; local export is deferred).
+func strategyOfferings(metas []*ServiceMeta, liveStatus map[string]string, ws *WorkSession, env Environment) []FlowOffering {
 	strategies := make(map[string]int)
 	for _, m := range metas {
 		if s := m.DeployStrategy; s != "" {
@@ -183,27 +185,26 @@ func strategyOfferings(metas []*ServiceMeta, liveStatus map[string]string, ws *W
 		})
 	}
 
-	// Export — offer whenever any bootstrapped service has landed a first
-	// deploy. Export works across strategies (push-dev, push-git, manual):
-	// it turns any deployed service into a re-importable git repo via
-	// zerops_deploy strategy=git-push. Gating on push-git would hide the
-	// flow from exactly the users who most need it — teams on push-dev
-	// that want to produce a sharable recipe from their workspace.
-	//
-	// Deploy state comes from DeriveDeployed, which checks session history
-	// + platform status — no persistent meta flag (see plan A.3).
-	for _, m := range metas {
-		for _, h := range m.Hostnames() {
-			if DeriveDeployed(h, liveStatus[h], m, ws) {
-				offerings = append(offerings, FlowOffering{
-					Workflow: "export", Priority: 3,
-					Hint: `zerops_workflow action="start" workflow="export" — turn a deployed service into a re-importable git repo (import.yaml + buildFromGit)`,
-				})
-				goto afterExport
+	// Export — container-env only in Release A. The atom assumes SSHFS
+	// + GIT_TOKEN on the container; a local-native export variant is
+	// deferred to a follow-up plan. Offer whenever any bootstrapped
+	// service has landed a first deploy. Deploy state comes from
+	// DeriveDeployed (session history + platform status — no persistent
+	// meta flag; see plan A.3).
+	if env == EnvContainer {
+		for _, m := range metas {
+			for _, h := range m.Hostnames() {
+				if DeriveDeployed(h, liveStatus[h], m, ws) {
+					offerings = append(offerings, FlowOffering{
+						Workflow: "export", Priority: 3,
+						Hint: `zerops_workflow action="start" workflow="export" — turn a deployed service into a re-importable git repo (import.yaml + buildFromGit)`,
+					})
+					goto afterExport
+				}
 			}
 		}
+	afterExport:
 	}
-afterExport:
 
 	return offerings
 }
