@@ -1,0 +1,9 @@
+{
+  "agent-a498c72b2be6782cf": "writer",
+  "agent-a5332ddae49525290": "feature",
+  "agent-a677d909a28774a11": "code-review",
+  "agent-ac9aadb9e0e36a6c4": "scaffold-appdev",
+  "agent-ad3ee806e753c2b1d": "scaffold-workerdev",
+  "agent-adca2ddf9a7937006": "scaffold-apidev",
+  "agent-af380cd700526da0d": "editorial-review"
+}
