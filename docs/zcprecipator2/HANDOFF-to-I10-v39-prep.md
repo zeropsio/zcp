@@ -20,26 +20,47 @@
 ## 1. Slots to fill at start
 
 ```
-FIX_STACK_TAG:            <unfilled — target v8.113.0>
+FIX_STACK_TAG:            v8.113.0 (pending tag)
 FIX_STACK_COMMITS:
-                          Commit 1  engine-template grounding       <sha>
-                          Commit 2  manifest export whitelist       <sha>
-                          Commit 3  content-authoring context pack  <sha>
-                          Commit 4  knowledge-lookup workflow step  <sha>
-                          Commit 5  writer brief slim + starter     <sha>
+                          Commit 1  engine-template grounding       44463b9
+                          Commit 2  manifest export whitelist       ec8a0fe
+                          Commit 3  content-authoring context pack  c3a6362  (partial — example bank + writer brief input block; generate/finalize-step guidance injection + facts-log routeTo filter deferred)
+                          Commit 4  knowledge-lookup workflow step  7db26dc
+                          Commit 5  writer brief slim + starter     c4291b6
                                     todos
 V38_RETRO_REPORT:         /tmp/v38-retro-after-v113.json
 V38_RETRO_EXPECTED_DELTAS_CONFIRMED:
-                          TestFinalizeOutput_PassesSurfaceContractTests FAILS on v38
-                            (Commit 1 retroactively catches the "expanded toolchain"
-                             claim in env 1 README — the hardcoded claim has no
-                             backing field in the plan).
-                          readmes_citations_present FAILS on v38 (writer manifest in
-                            v38 has no guide_fetched_at timestamps because the
-                            schema didn't require them).
-                          Writer brief size at HEAD ≤ 25KB (pass); at v8.112.0 > 50KB
-                            (fail) — confirms the slim.
-V39_COMMISSION_DATE:      <unfilled>
+                          Commit 1 gold-test — v38 env READMEs at
+                            /Users/fxck/www/zcprecipator/nestjs-showcase/nestjs-showcase-v38/environments/
+                            CONTAIN forbidden phrases the gold test flags:
+                            env 1/README.md has "expanded toolchain" (Cluster A);
+                            env 4/README.md has "daily snapshot" (Cluster C) and
+                            "managed services scale up" variant (Cluster D).
+                            Confirmed via `grep -l` against the shipped v38 tree.
+                          Commit 4 citations gate — v38 writer manifest schema had
+                            no citations[] field at all; every content_gotcha +
+                            content_ig entry in the manifest shape the v38 run
+                            emitted would fail the citations-present gate
+                            retroactively (the v38 deliverable ships without a
+                            manifest at the root — F-23 — so direct grep is not
+                            possible, but the old schema had no guide_fetched_at
+                            timestamp anywhere).
+                          Writer brief size at HEAD: 60.9KB
+                            (testShowcasePlan fixture). At v8.112.0 (measured from
+                            runs/v38/dispatch-integrity/engine-writer.txt) it was
+                            59.4KB. Net change is near-zero: the 14.5KB of atoms
+                            dropped in Commit 5 (fact-recording-discipline 4.5KB,
+                            classification-taxonomy 6.3KB, routing-matrix 5.6KB,
+                            minus 1.5KB classification-pointer replacement) was
+                            offset by the 12.6KB example input block added in
+                            Commit 3. The aspirational 25KB target from
+                            plans/v39-fix-stack.md is NOT met and requires a
+                            follow-up trim pass against citation-map (6.2KB) +
+                            manifest-contract (6.2KB) + self-review-per-surface
+                            (5.5KB) OR a reduction to perSurface=1 in the example
+                            sampler. TestBuildWriterBrief_UnderSizeLimit tripwire
+                            pins at 65KB to prevent regression.
+V39_COMMISSION_DATE:      <unfilled — user commissions>
 V39_SESSION_ID:           <unfilled>
 V39_OUTCOME:              <unfilled>
 V39_VERDICT:              <unfilled>
