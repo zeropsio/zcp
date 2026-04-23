@@ -27,6 +27,10 @@ expect:
     - develop
   requiredPatterns:
     - '"workflow":"develop"'
+    # scope is REQUIRED for develop start (cb63bf3). `appdev` is the single
+    # runtime hostname in this fixture.
+    - '"scope":['
+    - '"appdev"'
   # Starting a bootstrap session on a bootstrapped project is the primary
   # anti-pattern this scenario guards against.
   forbiddenPatterns:

@@ -81,9 +81,9 @@ func atomMatches(atom KnowledgeAtom, env StateEnvelope) bool {
 		}
 	}
 
-	// Service-scoped axes (mode, strategy, runtime, deployState) must all be
-	// satisfied by the SAME service. Disjunction (ANY service satisfies axis X
-	// while OTHER satisfies Y) would fire atoms whose placeholder body
+	// Service-scoped axes (mode, strategy, trigger, runtime, deployState) must
+	// all be satisfied by the SAME service. Disjunction (ANY service satisfies
+	// axis X while OTHER satisfies Y) would fire atoms whose placeholder body
 	// references a service that the atom isn't actually about — e.g.
 	// `develop-strategy-review (deployStates=[deployed], strategies=[unset])`
 	// would fire when service A is deployed+push-dev and service B is
@@ -91,6 +91,7 @@ func atomMatches(atom KnowledgeAtom, env StateEnvelope) bool {
 	// unset.
 	hasServiceScope := len(atom.Axes.Modes) > 0 ||
 		len(atom.Axes.Strategies) > 0 ||
+		len(atom.Axes.Triggers) > 0 ||
 		len(atom.Axes.Runtimes) > 0 ||
 		len(atom.Axes.DeployStates) > 0
 	if hasServiceScope && !anyServiceMatchesAll(env.Services, atom.Axes) {
@@ -135,6 +136,9 @@ func anyServiceMatchesAll(services []ServiceSnapshot, axes AxisVector) bool {
 			continue
 		}
 		if len(axes.Strategies) > 0 && !slices.Contains(axes.Strategies, svc.Strategy) {
+			continue
+		}
+		if len(axes.Triggers) > 0 && !slices.Contains(axes.Triggers, svc.Trigger) {
 			continue
 		}
 		if len(axes.Runtimes) > 0 && !slices.Contains(axes.Runtimes, svc.RuntimeClass) {
@@ -273,24 +277,28 @@ func isPlaceholderToken(token string) bool {
 }
 
 // SynthesizeImmediateWorkflow returns the atom-composed guidance body for a
-// stateless workflow (cicd, export). These workflows don't own a session and
-// filter atoms by Phase alone, so the envelope is a minimal
-// `{Phase, Environment}` pair. Callers prepend any dynamic service-context
-// header before returning to the LLM.
-func SynthesizeImmediateWorkflow(phase Phase, env Environment) (string, error) {
-	envelope := StateEnvelope{
-		Phase:       phase,
-		Environment: env,
-	}
+// stateless workflow (strategy setup, export). These workflows don't own a
+// session; callers pass a pre-built envelope carrying whatever service-
+// scoped context the atoms need (strategy, trigger, mode). For workflows
+// that only filter on phase+environment (e.g. export), callers use
+// SynthesizeImmediatePhase as a thin wrapper.
+func SynthesizeImmediateWorkflow(env StateEnvelope) (string, error) {
 	corpus, err := LoadAtomCorpus()
 	if err != nil {
 		return "", err
 	}
-	bodies, err := Synthesize(envelope, corpus)
+	bodies, err := Synthesize(env, corpus)
 	if err != nil {
 		return "", err
 	}
 	return strings.Join(bodies, "\n\n---\n\n"), nil
+}
+
+// SynthesizeImmediatePhase is the minimal form: phase + env, no services.
+// Matches the original SynthesizeImmediateWorkflow signature for callers
+// (e.g. export) that don't need service context.
+func SynthesizeImmediatePhase(phase Phase, env Environment) (string, error) {
+	return SynthesizeImmediateWorkflow(StateEnvelope{Phase: phase, Environment: env})
 }
 
 // The atom corpus is embedded in the binary and immutable after `go build`,

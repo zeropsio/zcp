@@ -46,13 +46,35 @@ type Server struct {
 func (s *Server) CallCount() int64 { return s.calls.Load() }
 
 // New creates a new ZCP MCP server with all tools registered.
+//
+// In local env, New eagerly auto-adopts the project: checks whether any
+// ServiceMeta exists under .zcp/state/services/, and if not, writes one
+// keyed by the Zerops project name with the appropriate topology
+// (local-stage when exactly one runtime exists, local-only otherwise).
+// Legacy local metas from the pre-A.4 layout are migrated in place. The
+// resulting adoption note is appended to the MCP instructions so the LLM
+// sees it in its system prompt from the first turn — no stale
+// "not-adopted" window for any tool handler to observe.
+//
+// Adoption failures (API unreachable, project has no name) are logged
+// and propagated as empty note so the server still starts; the LLM will
+// see the consequence on the first state-reading tool call. Container
+// env skips adoption entirely — container bootstrap is explicit.
 func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, mounter ops.Mounter, rtInfo runtime.Info) *Server {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel()}))
+
+	adoptionNote := ""
+	if !rtInfo.InContainer {
+		if cwd, err := os.Getwd(); err == nil {
+			stateDir := filepath.Join(cwd, ".zcp", "state")
+			adoptionNote = runLocalAutoAdopt(ctx, client, authInfo.ProjectID, stateDir, logger)
+		}
+	}
 
 	srv := mcp.NewServer(
 		&mcp.Implementation{Name: "zcp", Version: Version},
 		&mcp.ServerOptions{
-			Instructions: BuildInstructions(rtInfo),
+			Instructions: BuildInstructionsWithNote(rtInfo, adoptionNote),
 			Logger:       logger,
 		},
 	)
@@ -179,6 +201,33 @@ func (s *Server) observe() mcp.Middleware {
 			return result, err
 		}
 	}
+}
+
+// runLocalAutoAdopt performs the eager local-env state bootstrap:
+// legacy-meta migration first (so existing installs get their meta
+// rewritten to the new shape), then auto-adoption if state is empty.
+// Returns the formatted adoption note for MCP instructions (empty when
+// nothing was adopted or an error prevented adoption).
+//
+// Errors are logged but non-fatal — we'd rather start the server with a
+// missing note than fail startup on a transient API hiccup. The missing
+// note just means the LLM doesn't know the project was auto-adopted;
+// its first tool call will compute the envelope fresh.
+func runLocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stateDir string, logger *slog.Logger) string {
+	existing, err := workflow.ListServiceMetas(stateDir)
+	if err != nil {
+		logger.Warn("auto-adopt: list metas failed", "err", err)
+		return ""
+	}
+	if len(existing) > 0 {
+		return ""
+	}
+	result, err := workflow.LocalAutoAdopt(ctx, client, projectID, stateDir)
+	if err != nil {
+		logger.Warn("auto-adopt: adoption failed", "err", err)
+		return ""
+	}
+	return workflow.FormatAdoptionNote(result)
 }
 
 // logLevel returns the slog level from ZCP_LOG_LEVEL env var (default: debug).

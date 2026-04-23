@@ -7,20 +7,17 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/zeropsio/zcp/internal/workflow"
 	"gopkg.in/yaml.v3"
-)
-
-// DeployRole identifies the service role for deploy validation.
-const (
-	DeployRoleDev   = "dev"
-	DeployRoleStage = "stage"
 )
 
 // ValidateZeropsYml checks zerops.yaml for common issues before deploy.
 // serviceType is the Zerops service type (e.g. "php-nginx@8.4") — used to detect implicit
 // webservers when zerops.yaml bases alone are insufficient (e.g. build.base: php@8.4 for a
 // php-nginx service). Pass "" if unknown.
-// roles is optional ("dev", "stage", or empty). When empty, falls back to hostname substring heuristic.
+// roles carries the explicit service role from the caller's ServiceMeta.
+// Callers that don't know the role (empty) skip the role-specific
+// warnings — ZCP refuses to guess from hostname shape.
 // Returns a list of warning strings (empty = no issues found).
 func ValidateZeropsYml(workingDir, targetHostname, serviceType string, roles ...string) []string {
 	var warnings []string
@@ -70,13 +67,15 @@ func ValidateZeropsYml(workingDir, targetHostname, serviceType string, roles ...
 		warnings = append(warnings, "build.prepareCommands has package install without sudo (apk add / apt-get install) — containers run as zerops user, prefix with sudo")
 	}
 
-	// Determine effective role: explicit parameter > hostname heuristic.
+	// Explicit role, no fallback. Empty role skips the role-specific
+	// warnings (dev deployFiles check, stage `zsc noop` check,
+	// dev healthCheck check) — callers that know the role pass it in.
 	role := ""
 	if len(roles) > 0 {
 		role = roles[0]
 	}
-	isDev := role == DeployRoleDev || (role == "" && strings.Contains(targetHostname, "dev"))
-	isStage := role == DeployRoleStage || (role == "" && strings.Contains(targetHostname, "stage"))
+	isDev := role == string(workflow.DeployRoleDev)
+	isStage := role == string(workflow.DeployRoleStage)
 
 	if isDev && len(deployFiles) > 0 {
 		if !slices.Contains(deployFiles, ".") && !slices.Contains(deployFiles, "./") {

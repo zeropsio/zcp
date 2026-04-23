@@ -57,12 +57,30 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 		}
 	}
 
+	// push-git + trigger input must match — reject unknown trigger values
+	// up front. Empty trigger is legitimate: the intro atom will surface
+	// the choice to the user, who re-calls with an explicit trigger.
+	if input.Trigger != "" && input.Trigger != string(workflow.TriggerWebhook) && input.Trigger != string(workflow.TriggerActions) {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Invalid trigger %q", input.Trigger),
+			"Valid triggers (push-git only): 'webhook' or 'actions'")), nil, nil
+	}
+	if input.Trigger != "" && !anyStrategyIs(input.Strategies, workflow.StrategyPushGit) {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"trigger is only valid when setting strategy=push-git",
+			"Drop the trigger param, or set strategies={hostname:\"push-git\"}")), nil, nil
+	}
+
 	// Only complete (bootstrapped) metas are valid strategy targets — auto-
 	// creating orphan metas here poisons every downstream consumer (router,
-	// briefing, locks).
+	// briefing, locks). FindServiceMeta resolves stage hostnames of a
+	// container+standard pair to their dev-keyed meta file (pair-keyed
+	// invariant, spec-workflows.md §8 E8).
 	updated := make([]string, 0, len(input.Strategies))
 	for hostname, strategy := range input.Strategies {
-		meta, err := workflow.ReadServiceMeta(stateDir, hostname)
+		meta, err := workflow.FindServiceMeta(stateDir, hostname)
 		if err != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrServiceNotFound,
@@ -75,12 +93,37 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 				fmt.Sprintf("Service %q is not bootstrapped", hostname),
 				"Run bootstrap first: zerops_workflow action=\"start\" workflow=\"bootstrap\"")), nil, nil
 		}
+		// Gate local-only + push-dev: no stage target.
+		if strategy == workflow.StrategyPushDev && meta.Mode == workflow.PlanModeLocalOnly {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				fmt.Sprintf("Service %q is local-only — push-dev needs a Zerops stage to deploy to", hostname),
+				"Link a stage first: zerops_workflow action=\"adopt-local\" targetService=<runtime-hostname>. Or pick push-git / manual, which work without a stage."),
+			), nil, nil
+		}
 		updated = append(updated, fmt.Sprintf("%s=%s", hostname, strategy))
-		if meta.DeployStrategy == strategy && meta.StrategyConfirmed {
+		typedStrategy := workflow.DeployStrategy(strategy)
+		typedTrigger := workflow.PushGitTrigger(input.Trigger)
+		// Detect no-op: same strategy AND same trigger (if applicable) AND
+		// already-confirmed state.
+		sameStrategy := meta.DeployStrategy == typedStrategy && meta.StrategyConfirmed
+		sameTrigger := typedStrategy != workflow.StrategyPushGit || meta.PushGitTrigger == typedTrigger
+		if sameStrategy && sameTrigger {
 			continue
 		}
-		meta.DeployStrategy = strategy
+		meta.DeployStrategy = typedStrategy
 		meta.StrategyConfirmed = true
+		if typedStrategy == workflow.StrategyPushGit {
+			// Only write trigger when one was provided; empty leaves the
+			// previous value (which might be "" on fresh push-git setup
+			// → intro atom handles the ask).
+			if typedTrigger != "" {
+				meta.PushGitTrigger = typedTrigger
+			}
+		} else {
+			// Non-push-git strategies can't carry a trigger — clear.
+			meta.PushGitTrigger = ""
+		}
 		if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrServiceNotFound,
@@ -89,11 +132,20 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 		}
 	}
 
-	// push-git needs the full setup atom (tokens, optional CI/CD). Other
-	// strategies reuse the existing develop-phase iteration atoms.
+	// push-git needs the full setup atom chain (intro → push → trigger).
+	// Service-scoped atoms (strategies, triggers) need a snapshot in the
+	// envelope to match against; we synthesize one minimally from the just-
+	// written meta(s). Other strategies reuse the existing develop-phase
+	// iteration atoms.
 	var guidance string
 	if anyStrategyIs(input.Strategies, workflow.StrategyPushGit) {
-		g, err := workflow.SynthesizeImmediateWorkflow(workflow.PhaseStrategySetup, workflow.DetectEnvironment(rt))
+		env := workflow.DetectEnvironment(rt)
+		envelope := workflow.StateEnvelope{
+			Phase:       workflow.PhaseStrategySetup,
+			Environment: env,
+			Services:    buildStrategySetupSnapshots(stateDir, input.Strategies, input.Trigger),
+		}
+		g, err := workflow.SynthesizeImmediateWorkflow(envelope)
 		if err == nil {
 			guidance = g
 		}
@@ -136,7 +188,7 @@ func handleStrategyList(stateDir string) (*mcp.CallToolResult, any, error) {
 		if !m.IsComplete() {
 			continue
 		}
-		current := workflow.DeployStrategy(m.DeployStrategy)
+		current := m.DeployStrategy
 		if current == "" {
 			current = workflow.StrategyUnset
 		}
@@ -165,6 +217,41 @@ func buildStrategyGuidance(strategies map[string]string) string {
 	return g
 }
 
+// buildStrategySetupSnapshots constructs minimal ServiceSnapshots for every
+// service being configured in this handleStrategy call, so push-git setup
+// atoms — which filter on strategies/triggers/mode — can match. The
+// snapshots reflect POST-write state: Strategy is what the caller asked
+// for, Trigger is what the caller passed (possibly empty → intro atom).
+// Mode comes from the freshly-read meta so the env-specific push atoms
+// (container vs local) dispatch correctly.
+func buildStrategySetupSnapshots(stateDir string, strategies map[string]string, trigger string) []workflow.ServiceSnapshot {
+	out := make([]workflow.ServiceSnapshot, 0, len(strategies))
+	for hostname, strategy := range strategies {
+		snap := workflow.ServiceSnapshot{
+			Hostname:     hostname,
+			Bootstrapped: true,
+			Strategy:     workflow.DeployStrategy(strategy),
+		}
+		if meta, _ := workflow.FindServiceMeta(stateDir, hostname); meta != nil {
+			snap.Mode = meta.Mode
+			if meta.StageHostname != "" {
+				snap.StageHostname = meta.StageHostname
+			}
+		}
+		// Trigger axis only carries meaning on push-git — for push-dev/manual
+		// we leave it unset so trigger-filtered atoms don't accidentally match.
+		if strategy == workflow.StrategyPushGit {
+			if trigger == "" {
+				snap.Trigger = workflow.TriggerUnset
+			} else {
+				snap.Trigger = workflow.PushGitTrigger(trigger)
+			}
+		}
+		out = append(out, snap)
+	}
+	return out
+}
+
 // anyStrategyIs returns true if at least one value in the map equals strategy.
 func anyStrategyIs(strategies map[string]string, strategy string) bool {
 	for _, s := range strategies {
@@ -190,21 +277,17 @@ func allStrategiesAre(strategies map[string]string, strategy string) bool {
 }
 
 // handleRoute gathers router input from live API + local state and returns flow offerings.
-func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client, projectID, stateDir, selfHostname string) (*mcp.CallToolResult, any, error) {
+func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client, projectID, stateDir, selfHostname string, rt runtime.Info) (*mcp.CallToolResult, any, error) {
 	var liveHostnames []string
 	var unmanagedRuntimes []string
+	liveStatus := make(map[string]string)
 
 	metas, _ := workflow.ListServiceMetas(stateDir)
-	metaMap := make(map[string]*workflow.ServiceMeta, len(metas))
-	for _, m := range metas {
-		metaMap[m.Hostname] = m
-	}
-	stageOf := make(map[string]bool)
-	for _, m := range metas {
-		if m.IsComplete() && m.StageHostname != "" {
-			stageOf[m.StageHostname] = true
-		}
-	}
+	// Pair-keyed index (spec-workflows.md §8 E8): both halves of a
+	// standard-mode pair resolve to the same *ServiceMeta; an incomplete meta
+	// still appears under its hostname so the unmanaged-vs-known distinction
+	// below remains correct for orphan cases.
+	metaIdx := workflow.ManagedRuntimeIndex(metas)
 
 	if client != nil && projectID != "" {
 		if svcs, err := client.ListServices(ctx, projectID); err == nil {
@@ -213,9 +296,10 @@ func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client
 					continue
 				}
 				liveHostnames = append(liveHostnames, s.Name)
+				liveStatus[s.Name] = s.Status
 				typeName := s.ServiceStackTypeInfo.ServiceStackTypeVersionName
-				if !workflow.IsManagedService(typeName) && !stageOf[s.Name] {
-					if m, ok := metaMap[s.Name]; !ok || !m.IsComplete() {
+				if !workflow.IsManagedService(typeName) {
+					if m, ok := metaIdx[s.Name]; !ok || !m.IsComplete() {
 						unmanagedRuntimes = append(unmanagedRuntimes, s.Name)
 					}
 				}
@@ -224,10 +308,14 @@ func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client
 	}
 
 	sessions, _ := workflow.ListSessions(stateDir)
+	ws, _ := workflow.CurrentWorkSession(stateDir)
 	return jsonResult(workflow.Route(workflow.RouterInput{
 		ServiceMetas:      metas,
 		ActiveSessions:    sessions,
 		LiveServices:      liveHostnames,
+		LiveServiceStatus: liveStatus,
 		UnmanagedRuntimes: unmanagedRuntimes,
+		WorkSession:       ws,
+		Environment:       workflow.DetectEnvironment(rt),
 	})), nil, nil
 }

@@ -1,8 +1,10 @@
 # ZCP Local Development Mode Specification
 
 > **Status**: Authoritative — all local mode code, content, and improvements MUST conform to this document.
-> **Scope**: Local mode only. Container mode is specified in `spec-bootstrap-deploy.md`.
-> **Date**: 2026-03-27
+> **Scope**: Local mode only. Container mode specs live in `spec-workflows.md`.
+> **Date**: 2026-04-22 — Release B refresh (typed enums, dropped
+> Environment field, removed hostname-suffix heuristic, removed
+> `invertLocalHostname` hack, removed `includeGit` knob).
 
 ---
 
@@ -73,30 +75,72 @@ Each project directory has its own `.mcp.json` + `.zcp/state/`. No collision:
 
 ## 4. Topology
 
-### Local Standard (default)
+Under plan phase A.4, local env always writes exactly one ServiceMeta
+(eagerly at `server.New` time) representing the project itself, keyed by
+the Zerops project name. Mode distinguishes whether a Zerops runtime is
+linked:
 
-User develops locally, pushes to stage service on Zerops.
+### Local-Stage (runtime linked)
+
+User develops locally; one Zerops runtime is linked as the stage deploy
+target. Auto-adopt picks this shape when exactly one runtime exists in
+the project at first run.
 
 | Component | Location | Notes |
 |-----------|----------|-------|
 | Dev server | User's machine | Hot reload, localhost |
-| Stage service | Zerops | appstage — real start, healthCheck |
-| Managed services | Zerops | DB, cache, storage — accessible via VPN |
+| Stage runtime | Zerops | Linked via `ServiceMeta.StageHostname` |
+| Managed services | Zerops | Accessible via `zcli vpn up` |
 
-Plan: `{devHostname: "appdev", type: "nodejs@22"}` (unchanged from container mode).
-For non-`dev` hostnames, provide explicit stage: `{devHostname: "zmon", type: "go@1", stageHostname: "zmonstage"}`.
-Engine: creates **only stage + managed** (skips dev creation in local mode).
-ServiceMeta: `{hostname: "appstage", stageHostname: "", environment: "local"}`.
+ServiceMeta:
+```
+{
+  "hostname":       "<project-name>",
+  "stageHostname":  "<runtime-hostname>",
+  "mode":           "local-stage",
+  "bootstrapSession": ""   // adopted, not bootstrapped
+}
+```
 
-### Local Simple
+If the runtime was already ACTIVE when auto-adopt ran, FirstDeployedAt
+is stamped — the fizzy-export case where a service was deployed before
+ZCP was aware of it.
 
-Single deploy target, no dev/stage separation.
+### Local-Only (no Zerops runtime linked)
 
-ServiceMeta: `{hostname: "app", mode: "simple", environment: "local"}`.
+User develops locally; zero or multiple Zerops runtimes exist but none
+is linked as stage. Multiple-runtime adoptions land here too — ZCP
+refuses to guess which one is stage and asks the user via the
+`adopt-local` subaction.
 
-### Managed-Only
+ServiceMeta:
+```
+{
+  "hostname":       "<project-name>",
+  "stageHostname":  "",
+  "mode":           "local-only",
+  "deployStrategy": "manual",   // forced on local-only (no push target)
+  "bootstrapSession": ""
+}
+```
 
-Only databases/caches/storage on Zerops. No runtime targets, no ServiceMeta.
+Managed services (databases, caches, storage) are NOT given their own
+ServiceMeta; their state stays API-authoritative. The local-only meta
+is enough to signal "ZCP knows this project" to the router.
+
+### Resolving ambiguity
+
+When multiple runtimes exist, the user picks which one to link as
+stage:
+
+```
+zerops_workflow action="adopt-local" targetService="<runtime-hostname>"
+```
+
+The handler upgrades `Mode` from `local-only` to `local-stage`, sets
+`StageHostname`, and (if the runtime is ACTIVE) stamps
+`FirstDeployedAt`. Container env does not use this subaction — container
+adoption happens through the explicit bootstrap workflow.
 
 ---
 
@@ -122,9 +166,14 @@ Both register `zerops_deploy`. Agent always calls the same tool name.
 type DeployLocalInput struct {
     TargetService string  // Zerops service hostname
     WorkingDir    string  // Local path (default: ".")
-    IncludeGit    bool    // -g flag for zcli push
+    Strategy      string  // "" (default zcli push) | "git-push"
 }
 ```
+
+Under Release B the `includeGit` knob was dropped from the tool surface —
+local zcli push always runs with `--no-git`. Recipes that need committed
+history go through `strategy=git-push` instead, which uses the user's
+own git CLI.
 
 ### ops.DeployLocal()
 
@@ -133,7 +182,7 @@ type DeployLocalInput struct {
 3. Validate zerops.yaml exists at workingDir
 4. Run `ValidateZeropsYml(workingDir, targetService)` with local path
 5. `zcli login <token>`
-6. `zcli push <hostname> --working-dir <path> [-g]` (positional arg = hostname)
+6. `zcli push --service-id <id> --project-id <pid> --working-dir <path> --no-git`
 7. Return `DeployResult{Status: "BUILD_TRIGGERED", Mode: "local"}`
 
 ### Build Polling
@@ -146,44 +195,49 @@ type DeployLocalInput struct {
 
 ```go
 type ServiceMeta struct {
-    Hostname         string `json:"hostname"`
-    Mode             string `json:"mode,omitempty"`
-    StageHostname    string `json:"stageHostname,omitempty"`
-    DeployStrategy   string `json:"deployStrategy,omitempty"`
-    Environment      string `json:"environment,omitempty"`   // "container" or "local"
-    BootstrapSession string `json:"bootstrapSession"`
-    BootstrappedAt   string `json:"bootstrappedAt"`
+    Hostname          string         `json:"hostname"`
+    Mode              Mode           `json:"mode,omitempty"`
+    StageHostname     string         `json:"stageHostname,omitempty"`
+    DeployStrategy    DeployStrategy `json:"deployStrategy,omitempty"`
+    PushGitTrigger    PushGitTrigger `json:"pushGitTrigger,omitempty"`    // webhook | actions — push-git only
+    StrategyConfirmed bool           `json:"strategyConfirmed,omitempty"`
+    BootstrapSession  string         `json:"bootstrapSession"`
+    BootstrappedAt    string         `json:"bootstrappedAt"`
+    FirstDeployedAt   string         `json:"firstDeployedAt,omitempty"`   // stamped on successful deploy or adoption at ACTIVE
 }
 ```
+
+Under Release B all three axis-bearing fields (`Mode`, `DeployStrategy`,
+`PushGitTrigger`) are typed Go enums rather than bare strings — the
+vocabulary is shared with plan input and envelope assembly, so the type
+system catches drift at compile time. `Environment` is not persisted:
+env is a property of the currently running ZCP process (runtime-detected
+via `runtime.Info.InContainer`), not of a service, and storing it per
+meta created a drift vector.
 
 ### Local Mode Differences
 
 | Field | Container | Local |
 |-------|-----------|-------|
-| Hostname | appdev | **appstage** (dev doesn't exist) |
-| StageHostname | appstage | **""** (no dev/stage pair) |
-| Environment | container | local |
-
-### Strategy Key Separation
-
-`writeBootstrapOutputs` uses `devHostname` for strategy lookup (agent stores strategies under DevHostname), `metaHostname` for ServiceMeta:
-
-```go
-devHostname := target.Runtime.DevHostname
-strategy := state.Bootstrap.Strategies[devHostname]  // lookup by DevHostname ALWAYS
-
-metaHostname := devHostname
-if e.environment == EnvLocal && stageHostname != "" {
-    metaHostname = stageHostname
-    stageHostname = ""
-}
-```
+| Hostname | Zerops service hostname | **Zerops project name** |
+| StageHostname | Paired stage (standard mode, explicit `ExplicitStage`) | Linked Zerops stage (local-stage only) |
+| Mode | dev / standard / simple | **local-stage / local-only** |
 
 ### filterStaleMetas Compatibility
 
-`router.go:filterStaleMetas` checks `live[m.Hostname]`. In local mode:
-- `hostname=appstage` → appstage exists on Zerops → survives filtering
-- If `hostname=appdev` were used → appdev doesn't exist → filtered out → system breaks
+Local metas use the project name as `Hostname`, which is never a
+live Zerops service hostname. `router.go:filterStaleMetas` therefore
+keeps all local-* metas unconditionally:
+
+```go
+if m.Mode == PlanModeLocalStage || m.Mode == PlanModeLocalOnly {
+    result = append(result, m)  // project-keyed, not service-keyed
+    continue
+}
+```
+
+Stage linkage for local-stage metas is validated separately via
+`StageHostname` against the live service list.
 
 ---
 
@@ -283,11 +337,38 @@ Same as container mode — `zerops_verify` uses API + subdomain HTTP.
 
 | Strategy | Container | Local |
 |----------|-----------|-------|
-| push-dev | SSH: dev → stage | zcli push: local → target |
-| push-git | Git push + optional CI/CD | Git push + optional CI/CD (same) |
-| manual | zerops_deploy directly | zerops_deploy directly (same) |
+| push-dev | SSH into dev → `zcli push` from `/var/www` | `zcli push` from user's CWD → linked stage |
+| push-git | `git push` via GIT_TOKEN + .netrc (tool-managed) | `git push` via user's local git credentials (SSH keys, credential manager) |
+| manual | ZCP stays out of the deploy loop — user handles it with their own tools |
 
-Strategy names, selection flow, ServiceMeta storage — all unchanged.
+Strategy names and on-disk enum values are the same across envs; the
+implementation branches inside the `zerops_deploy` handler. `manual`
+is a ServiceMeta declaration only — passing it as a tool param is
+invalid (the tool refuses with a message explaining the semantic).
+
+### push-git has a trigger sub-axis
+
+When a service is set to `push-git`, the setup flow asks which
+downstream trigger runs the Zerops build:
+
+| Trigger | What happens after push | Setup delivered by |
+|---------|-------------------------|--------------------|
+| `webhook` | Zerops dashboard OAuths the repo; webhook fires build | `strategy-push-git-trigger-webhook` atom |
+| `actions` | GitHub Actions workflow runs `zcli push` back to Zerops | `strategy-push-git-trigger-actions` atom |
+
+`PushGitTrigger` is persisted on ServiceMeta. The `handleStrategy`
+handler accepts `trigger="webhook"` or `trigger="actions"` alongside
+`strategies={X:"push-git"}`; omitting it returns the intro atom that
+asks the user to pick. Only `push-git` carries a trigger; `push-dev`
+and `manual` reject the input.
+
+### local-only + push-dev is blocked
+
+`local-only` means no Zerops runtime is linked. `push-dev` needs a
+deploy target, so the strategy handler and `zerops_deploy` both
+refuse `push-dev` on local-only services. The error points at
+`adopt-local` (to link a runtime) or `git-push` (which doesn't need a
+stage).
 
 ---
 

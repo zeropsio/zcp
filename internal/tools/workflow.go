@@ -79,6 +79,18 @@ type WorkflowInput struct {
 	// §16.1. Fully-qualified dot-path, e.g. "briefs.writer.manifest-contract".
 	AtomID string `json:"atomId,omitempty" jsonschema:"Dispatch-brief atom identifier for action=\"dispatch-brief-atom\". Fully-qualified dot-path (e.g. 'briefs.writer.manifest-contract'). Retrieved from the envelope listed in a substep guide when the composed dispatch brief exceeds the MCP response cap."`
 
+	// TargetService is used by action="adopt-local" to specify which
+	// Zerops runtime service should be linked as this local project's
+	// stage. Resolves the ambiguity surfaced by auto-adopt when multiple
+	// runtimes exist in the project.
+	TargetService string `json:"targetService,omitempty" jsonschema:"Runtime service hostname to link as stage for action=\"adopt-local\" (local env only). Must be a live runtime service in the project — not a managed service."`
+
+	// Trigger chooses the downstream build trigger when setting up
+	// strategy=push-git. Paired with Strategies — meaningless otherwise.
+	// Optional: omit to receive the intro atom that asks the user to
+	// pick, then re-call with the chosen value.
+	Trigger string `json:"trigger,omitempty" jsonschema:"Downstream build trigger for strategy=push-git setup: 'webhook' (Zerops dashboard integration) or 'actions' (GitHub Actions workflow). Omit on the first call to receive the intro atom that walks through the choice; pass on the follow-up call to receive the chosen setup path."`
+
 	// Cx-SUBAGENT-BRIEF-BUILDER (v38 F-17 close).
 	Role        string `json:"role,omitempty"        jsonschema:"Sub-agent role for action=\"build-subagent-brief\" / \"verify-subagent-dispatch\": one of writer, editorial-review, code-review."`
 	Description string `json:"description,omitempty" jsonschema:"Task tool description string the main agent is about to submit. Required for action=\"verify-subagent-dispatch\"."`
@@ -225,7 +237,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	case "list":
 		return handleListSessions(engine)
 	case "route":
-		return handleRoute(ctx, engine, client, projectID, stateDir, selfHostname)
+		return handleRoute(ctx, engine, client, projectID, stateDir, selfHostname, rt)
 	case "strategy":
 		return handleStrategy(input, stateDir, rt)
 	case "classify":
@@ -234,11 +246,13 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		// routing-matrix atoms with a runtime response keyed on fact
 		// type + title keywords.
 		return handleRecipeClassify(input)
+	case "adopt-local":
+		return handleAdoptLocal(ctx, client, projectID, stateDir, input, rt)
 	default:
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Unknown action %q", input.Action),
-			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, strategy, classify, dispatch-brief-atom")), nil, nil
+			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, strategy, classify, adopt-local, dispatch-brief-atom")), nil, nil
 	}
 }
 

@@ -6,10 +6,12 @@ import (
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
-// Instructions delivered to the MCP client at server init. Pure static text:
-// no API calls, no state reads, no dynamic content. State is encapsulated
-// behind zerops_workflow action="status", which is the one canonical entry
-// point the LLM needs to remember.
+// Instructions delivered to the MCP client at server init. Base text is
+// static (no API calls, no state reads). On local-env startup, server.New
+// prepends an adoption note describing what auto-adopt did on this run —
+// see BuildInstructions + workflow.FormatAdoptionNote. The note is
+// one-shot (only emitted when LocalAutoAdopt actually wrote a new meta);
+// re-runs against an already-initialized state dir get clean base text.
 const baseInstructions = `ZCP manages Zerops PaaS infrastructure through workflows.
 
 Primary entry — every user task that changes code or deploys:
@@ -50,18 +52,36 @@ refreshes service state.`
 
 const localEnvironment = `
 Running on a local machine. Code in the working directory; infrastructure
-on Zerops. Deploy via zcli push (zerops.yaml at repo root; each deploy is
-a new container). zerops_discover refreshes service state.`
+on Zerops. Deploy via zerops_deploy (targetService=<hostname>) — pushes
+the working directory to the matching Zerops service and blocks until
+build completes. Requires zerops.yaml at repo root. zerops_discover
+refreshes service state.`
 
-// BuildInstructions returns the static MCP instructions text. Varies only by
-// environment (container vs local) and self-hostname — no state, no API.
+// BuildInstructions returns the MCP instructions text. Base text varies by
+// environment (container vs local) and self-hostname. In local env,
+// server.New may also pass an adoptionNote describing what auto-adopt
+// just did (via BuildInstructionsWithNote). BuildInstructions itself
+// stays note-free for unit tests that don't care about adoption.
 func BuildInstructions(rt runtime.Info) string {
+	return BuildInstructionsWithNote(rt, "")
+}
+
+// BuildInstructionsWithNote is the note-aware variant used by server.New
+// after LocalAutoAdopt has run. Empty note → identical output to
+// BuildInstructions. Non-empty note is appended after the env-specific
+// block with a blank-line separator.
+func BuildInstructionsWithNote(rt runtime.Info, adoptionNote string) string {
+	var out string
 	if rt.InContainer {
-		out := baseInstructions + containerEnvironment
+		out = baseInstructions + containerEnvironment
 		if rt.ServiceName != "" {
 			out += fmt.Sprintf("\nYou are running on '%s'. Other services in this project are yours to manage.", rt.ServiceName)
 		}
-		return out
+	} else {
+		out = baseInstructions + localEnvironment
 	}
-	return baseInstructions + localEnvironment
+	if adoptionNote != "" {
+		out += "\n\n" + adoptionNote
+	}
+	return out
 }

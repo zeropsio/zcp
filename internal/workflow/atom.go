@@ -25,6 +25,7 @@ type AxisVector struct {
 	Modes         []Mode
 	Environments  []Environment
 	Strategies    []DeployStrategy
+	Triggers      []PushGitTrigger // valid only alongside strategies: [push-git]
 	Runtimes      []RuntimeClass
 	Routes        []BootstrapRoute
 	Steps         []string
@@ -55,6 +56,7 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 			Modes:         parseModes(fields["modes"]),
 			Environments:  parseEnvironments(fields["environments"]),
 			Strategies:    parseStrategies(fields["strategies"]),
+			Triggers:      parseTriggers(fields["triggers"]),
 			Runtimes:      parseRuntimes(fields["runtimes"]),
 			Routes:        parseRoutes(fields["routes"]),
 			Steps:         parseYAMLList(fields["steps"]),
@@ -177,6 +179,17 @@ func parseStrategies(raw string) []DeployStrategy {
 	out := make([]DeployStrategy, 0, len(values))
 	for _, v := range values {
 		out = append(out, DeployStrategy(v))
+	}
+	return out
+}
+
+// parseTriggers reads the optional `triggers:` frontmatter field —
+// filters strategy-setup atoms to the webhook/actions sub-branch.
+func parseTriggers(raw string) []PushGitTrigger {
+	values := parseYAMLList(raw)
+	out := make([]PushGitTrigger, 0, len(values))
+	for _, v := range values {
+		out = append(out, PushGitTrigger(v))
 	}
 	return out
 }

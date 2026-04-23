@@ -22,7 +22,9 @@ const (
 )
 
 // validBootstrapModes is the set of valid BootstrapMode values (including empty for default).
-var validBootstrapModes = map[string]bool{
+//
+//nolint:gochecknoglobals // enum-set table; value-only, not mutated.
+var validBootstrapModes = map[Mode]bool{
 	"": true, PlanModeStandard: true, PlanModeDev: true, PlanModeSimple: true,
 }
 
@@ -37,32 +39,29 @@ type RuntimeTarget struct {
 	DevHostname   string `json:"devHostname"`
 	Type          string `json:"type"`
 	IsExisting    bool   `json:"isExisting,omitempty"`
-	BootstrapMode string `json:"bootstrapMode,omitempty"` // standard, dev, or simple
+	BootstrapMode Mode   `json:"bootstrapMode,omitempty"` // standard, dev, or simple
 	ExplicitStage string `json:"stageHostname,omitempty"` // explicit stage hostname override for standard mode
 }
 
 // EffectiveMode returns the bootstrap mode, defaulting to standard if empty.
-func (r RuntimeTarget) EffectiveMode() string {
+func (r RuntimeTarget) EffectiveMode() Mode {
 	if r.BootstrapMode == "" {
 		return PlanModeStandard
 	}
 	return r.BootstrapMode
 }
 
-// StageHostname returns the stage hostname for standard mode.
-// Priority: explicit override > auto-derive from *dev suffix > empty.
-// Returns empty for dev/simple modes.
+// StageHostname returns the stage hostname for standard mode. ExplicitStage
+// is the only source: service names are arbitrary strings, so the old
+// `{base}dev → {base}stage` derivation silently misclassified repos with
+// non-conforming hostnames. Returns empty for dev/simple modes OR when
+// standard mode was requested without ExplicitStage; the latter is a
+// caller bug — ValidateBootstrapTargets catches it with a hard error.
 func (r RuntimeTarget) StageHostname() string {
 	if r.EffectiveMode() != PlanModeStandard {
 		return ""
 	}
-	if r.ExplicitStage != "" {
-		return r.ExplicitStage
-	}
-	if base, ok := strings.CutSuffix(r.DevHostname, "dev"); ok {
-		return base + "stage"
-	}
-	return ""
+	return r.ExplicitStage
 }
 
 // Dependency describes a service dependency for a bootstrap target.
@@ -201,16 +200,18 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 			continue
 		}
 
-		// H7: validate derived stage hostname length for standard mode.
+		// Standard-mode targets must carry an explicit stageHostname.
+		// Hostnames are arbitrary strings; ZCP refuses to guess a stage
+		// pair from dev-hostname structure.
 		var stageHostname string
 		if rt.EffectiveMode() == PlanModeStandard {
 			stageHostname = rt.StageHostname()
 			if stageHostname == "" {
-				errs = append(errs, fmt.Sprintf("target %q: standard mode requires hostname ending in 'dev' (auto-derives stage) or explicit stageHostname field", rt.DevHostname))
+				errs = append(errs, fmt.Sprintf("target %q: standard mode requires explicit stageHostname", rt.DevHostname))
 				continue
 			}
 			if err := ValidatePlanHostname(stageHostname); err != nil {
-				errs = append(errs, fmt.Sprintf("target %q: derived stage hostname %q: %v", rt.DevHostname, stageHostname, err))
+				errs = append(errs, fmt.Sprintf("target %q: stageHostname %q: %v", rt.DevHostname, stageHostname, err))
 				continue
 			}
 		}

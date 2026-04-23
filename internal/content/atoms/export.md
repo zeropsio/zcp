@@ -2,6 +2,7 @@
 id: export
 priority: 2
 phases: [export-active]
+environments: [container]
 title: "Export — turn a deployed service into a re-importable git repo"
 ---
 
@@ -204,7 +205,7 @@ On error:
 | Error | Fix | Then |
 |---|---|---|
 | `GIT_TOKEN_MISSING` | ask user for token (GitHub: Contents R/W; GitLab: write_repository), run `zerops_env action="set" project=true variables=["GIT_TOKEN={token}"]` | retry task 10 |
-| `PREREQUISITE_MISSING: requires a successful first deploy` | run `zerops_workflow action="start" workflow="develop" intent="first deploy" scope=["{targetHostname}"]`, complete deploy + verify | retry task 10 |
+| `PREREQUISITE_MISSING: requires committed code` | the container doesn't have the `import.yaml` commit — go back to task 9 and ensure `ssh {targetHostname} "cd /var/www && git add import.yaml && git commit -m '...'"` actually committed | retry task 10 |
 
 Optional — persist strategy in service meta so future guidance knows:
 

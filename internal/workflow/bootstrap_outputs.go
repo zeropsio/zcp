@@ -7,18 +7,6 @@ import (
 	"time"
 )
 
-// invertLocalHostname normalizes meta/stage hostnames for the current environment.
-// Container: returns (dev, stage) as-is — dev is primary, stage is paired.
-// Local+standard: dev doesn't exist locally, so the stage hostname is stored in
-// ServiceMeta.Hostname with StageHostname cleared. This is the single source of
-// truth for that convention — see ServiceMeta.PrimaryRole / spec-local-dev.md §6.
-func (e *Engine) invertLocalHostname(dev, stage string) (metaHost, stageHost string) {
-	if e.environment == EnvLocal && stage != "" {
-		return stage, ""
-	}
-	return dev, stage
-}
-
 // writeBootstrapOutputs writes final service meta files and appends a reflog entry.
 // Sets BootstrappedAt to mark services as fully bootstrapped.
 // Both are best-effort — errors are logged to stderr but don't fail bootstrap completion.
@@ -26,9 +14,9 @@ func (e *Engine) invertLocalHostname(dev, stage string) (metaHost, stageHost str
 // Mode-expansion path: when the plan upgrades an existing runtime's
 // bootstrapMode (dev/simple → standard) with IsExisting=true, the existing
 // ServiceMeta is merged rather than overwritten — BootstrappedAt,
-// DeployStrategy, StrategyConfirmed, and FirstDeployedAt are preserved so
-// the user's prior choices survive the mode upgrade. See §9.1 of
-// spec-workflows.md.
+// DeployStrategy, StrategyConfirmed, FirstDeployedAt are preserved so the
+// user's prior choices (and deploy history) survive the mode upgrade.
+// See §9.1 of spec-workflows.md.
 func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 	if state.Bootstrap == nil || state.Bootstrap.Plan == nil {
 		return
@@ -40,7 +28,8 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 	// Write service meta for each runtime target (managed deps are API-authoritative).
 	for _, target := range plan.Targets {
 		mode := target.Runtime.EffectiveMode()
-		metaHostname, stageHostname := e.invertLocalHostname(target.Runtime.DevHostname, target.Runtime.StageHostname())
+		metaHostname := target.Runtime.DevHostname
+		stageHostname := target.Runtime.StageHostname()
 
 		// Adopted services (isExisting=true) get empty BootstrapSession
 		// to signal adoption rather than fresh bootstrap.
@@ -54,7 +43,6 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 			Mode:             mode,
 			StageHostname:    stageHostname,
 			DeployStrategy:   "",
-			Environment:      string(e.environment),
 			BootstrapSession: bootstrapSession,
 			BootstrappedAt:   now,
 		}
@@ -98,7 +86,8 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 	}
 
 	for _, target := range state.Bootstrap.Plan.Targets {
-		metaHostname, stageHostname := e.invertLocalHostname(target.Runtime.DevHostname, target.Runtime.StageHostname())
+		metaHostname := target.Runtime.DevHostname
+		stageHostname := target.Runtime.StageHostname()
 
 		// Adopted services (isExisting=true) get empty BootstrapSession.
 		bootstrapSession := state.SessionID
@@ -110,7 +99,6 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 			Hostname:         metaHostname,
 			Mode:             target.Runtime.EffectiveMode(),
 			StageHostname:    stageHostname,
-			Environment:      string(e.environment),
 			BootstrapSession: bootstrapSession,
 		}
 
@@ -129,8 +117,8 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 // mergeExistingMeta preserves user-authored fields (BootstrappedAt,
 // DeployStrategy, StrategyConfirmed, FirstDeployedAt) on meta during a
 // mode-expansion write so a dev→standard upgrade doesn't silently clear
-// the user's strategy choice. Mode and StageHostname come from the plan
-// and are left untouched.
+// the user's strategy choice or reset deploy history. Mode and
+// StageHostname come from the plan and are left untouched.
 func mergeExistingMeta(meta, existing *ServiceMeta) {
 	meta.BootstrappedAt = existing.BootstrappedAt
 	meta.DeployStrategy = existing.DeployStrategy

@@ -16,6 +16,12 @@ expect:
     # Develop is the only correct entry — services are bootstrapped so
     # no bootstrap call should appear.
     - '"workflow":"develop"'
+    # scope is REQUIRED for develop start (cb63bf3). The preseed plants a
+    # standard pair (appdev + appstage) — auto-close needs BOTH halves
+    # deployed+verified, so both must be in scope.
+    - '"scope":['
+    - '"appdev"'
+    - '"appstage"'
   forbiddenPatterns:
     # Anti-pattern: agent throws away pre-seeded zerops.yaml + app code
     # and rewrites from scratch. The existing code is intentional and

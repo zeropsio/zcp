@@ -582,7 +582,7 @@ func TestCheckGenerate_HealthCheck(t *testing.T) {
 	tests := []struct {
 		name          string
 		yml           string
-		bootstrapMode string
+		bootstrapMode workflow.Mode
 		wantPassed    bool
 		wantCheckName string
 		wantStatus    string

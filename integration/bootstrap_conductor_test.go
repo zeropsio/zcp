@@ -86,7 +86,7 @@ func TestIntegration_BootstrapConductor_FullFlow(t *testing.T) {
 	// Submit standard mode plan (bundev/bunstage + db).
 	planResp, err := engine.BootstrapCompletePlan([]workflow.BootstrapTarget{
 		{
-			Runtime: workflow.RuntimeTarget{DevHostname: "bundev", Type: "bun@1.2"},
+			Runtime: workflow.RuntimeTarget{DevHostname: "bundev", Type: "bun@1.2", ExplicitStage: "bunstage"},
 			Dependencies: []workflow.Dependency{
 				{Hostname: "bunstage", Type: "bun@1.2", Mode: "NON_HA", Resolution: "CREATE"},
 				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
@@ -226,7 +226,7 @@ func TestIntegration_BootstrapConductor_StatusRecovery(t *testing.T) {
 	// Complete discover with a plan.
 	_, err = engine.BootstrapCompletePlan([]workflow.BootstrapTarget{
 		{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 			Dependencies: []workflow.Dependency{
 				{Hostname: "appstage", Type: "nodejs@22", Mode: "NON_HA", Resolution: "CREATE"},
 				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
@@ -422,7 +422,7 @@ func TestIntegration_BootstrapConductor_StepGuidanceQuality(t *testing.T) {
 	// Submit plan for discover.
 	planResp, err := engine.BootstrapCompletePlan([]workflow.BootstrapTarget{
 		{
-			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 			Dependencies: []workflow.Dependency{
 				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
 			},
@@ -563,7 +563,7 @@ func TestIntegration_BootstrapConductor_MixedModes_StandardRequired(t *testing.T
 
 	// Mixed: standard + simple. PlanMode should be "standard".
 	resp, err := engine.BootstrapCompletePlan([]workflow.BootstrapTarget{
-		{Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+		{Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", ExplicitStage: "appstage"}},
 		{Runtime: workflow.RuntimeTarget{DevHostname: "frontend", Type: "bun@1.2", BootstrapMode: "simple"}},
 	}, nil, nil)
 	if err != nil {

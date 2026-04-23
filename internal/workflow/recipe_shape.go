@@ -16,7 +16,7 @@ import (
 //   - "simple"   — single runtime with `zeropsSetup: prod`
 //   - "dev"      — single runtime with `zeropsSetup: dev`
 //   - ""         — managed-only, unknown pattern, or invalid YAML
-func InferRecipeShape(importYAML string) (mode string, runtimeCount int) {
+func InferRecipeShape(importYAML string) (mode Mode, runtimeCount int) {
 	var doc struct {
 		Services []struct {
 			Hostname    string `yaml:"hostname"`

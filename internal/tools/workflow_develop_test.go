@@ -14,9 +14,10 @@ import (
 )
 
 // handleDevelopBriefing creates a work session regardless of meta strategy:
-// the first deploy is always the default self-deploy mechanism, and the
-// strategy decision surfaces via `develop-strategy-review` once
-// FirstDeployedAt is stamped.
+// the first deploy is always the default push mechanism, and the
+// strategy decision surfaces via `develop-strategy-review` once the
+// envelope's Deployed projection flips to true (derived from session
+// history + platform status; see compute_envelope.DeriveDeployed).
 func TestHandleDevelopBriefing_UnsetStrategy_NeverDeployed_CreatesWorkSession_FirstDeployBranch(t *testing.T) {
 	t.Parallel()
 
@@ -26,7 +27,6 @@ func TestHandleDevelopBriefing_UnsetStrategy_NeverDeployed_CreatesWorkSession_Fi
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             workflow.PlanModeDev,
-		Environment:      string(workflow.EnvContainer),
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-18",
 	}); err != nil {
@@ -64,12 +64,13 @@ func TestHandleDevelopBriefing_UnsetStrategy_NeverDeployed_CreatesWorkSession_Fi
 		t.Errorf("response missing first-deploy-intro marker. Got:\n%s", text)
 	}
 	if strings.Contains(text, "Pick an ongoing deploy strategy") {
-		t.Errorf("strategy-review fired pre-first-deploy — it must wait for FirstDeployedAt. Got:\n%s", text)
+		t.Errorf("strategy-review fired pre-first-deploy — it must wait until Deployed flips true. Got:\n%s", text)
 	}
 }
 
-// After FirstDeployedAt is stamped the develop briefing renders the
-// strategy-review atom instead of the first-deploy atoms.
+// Once FirstDeployedAt is stamped (via a successful session deploy or
+// adoption-at-ACTIVE), develop renders strategy-review instead of
+// first-deploy atoms.
 func TestHandleDevelopBriefing_UnsetStrategy_Deployed_StrategyReview(t *testing.T) {
 	t.Parallel()
 
@@ -79,7 +80,6 @@ func TestHandleDevelopBriefing_UnsetStrategy_Deployed_StrategyReview(t *testing.
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             workflow.PlanModeDev,
-		Environment:      string(workflow.EnvContainer),
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-18",
 		FirstDeployedAt:  "2026-04-19T10:00:00Z",
@@ -136,7 +136,6 @@ func TestHandleDevelopBriefing_ConfirmedStrategy_Deployed_NoReview(t *testing.T)
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:          "appdev",
 		Mode:              workflow.PlanModeDev,
-		Environment:       string(workflow.EnvContainer),
 		DeployStrategy:    workflow.StrategyPushDev,
 		StrategyConfirmed: true,
 		BootstrapSession:  "sess1",
@@ -197,7 +196,6 @@ func TestHandleDevelopBriefing_MultiStack_ScopeHonorsInput(t *testing.T) {
 		if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 			Hostname:         h,
 			Mode:             workflow.PlanModeStandard,
-			Environment:      string(workflow.EnvContainer),
 			BootstrapSession: "laravel-sess",
 			BootstrappedAt:   "2026-04-10",
 		}); err != nil {
@@ -209,7 +207,6 @@ func TestHandleDevelopBriefing_MultiStack_ScopeHonorsInput(t *testing.T) {
 		if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 			Hostname:         h,
 			Mode:             workflow.PlanModeStandard,
-			Environment:      string(workflow.EnvContainer),
 			BootstrapSession: "fizzy-sess",
 			BootstrappedAt:   "2026-04-21",
 		}); err != nil {
@@ -251,6 +248,66 @@ func TestHandleDevelopBriefing_MultiStack_ScopeHonorsInput(t *testing.T) {
 	}
 }
 
+// Pair-keyed invariant (spec-workflows.md §8 E8): a container+standard pair
+// is stored as ONE meta keyed by the dev hostname, with StageHostname holding
+// the stage pair. Scope validation must accept both halves — atom
+// develop-first-deploy-promote-stage tells the agent to include both for
+// auto-close. Before ManagedRuntimeIndex, scope=["appdev","appstage"] was
+// rejected as "non-deployable hostnames" because runtimeMetas was keyed by
+// m.Hostname alone.
+func TestHandleDevelopBriefing_StandardPair_StageInScope_Accepted(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+
+	// One meta file representing the container+standard pair.
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		StageHostname:    "appstage",
+		Mode:             workflow.PlanModeStandard,
+		BootstrapSession: "sess1",
+		BootstrappedAt:   "2026-04-22",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-appdev", Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "php-nginx@8.4"}},
+		{ID: "svc-appstage", Name: "appstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "php-nginx@8.4"}},
+	})
+
+	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
+		WorkflowInput{Intent: "first deploy + promote", Scope: []string{"appdev", "appstage"}},
+		runtime.Info{InContainer: true})
+	if err != nil {
+		t.Fatalf("handleDevelopBriefing: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("scope=[appdev,appstage] must be accepted — got error:\n%s", extractText(result))
+	}
+
+	ws, _ := workflow.CurrentWorkSession(dir)
+	if ws == nil {
+		t.Fatal("work session expected")
+	}
+	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
+
+	wantScope := map[string]bool{"appdev": true, "appstage": true}
+	if len(ws.Services) != 2 {
+		t.Fatalf("scope len: want 2, got %d (%v)", len(ws.Services), ws.Services)
+	}
+	for _, h := range ws.Services {
+		if !wantScope[h] {
+			t.Errorf("unexpected hostname %q in scope", h)
+		}
+	}
+	// Sorted order per validateDevelopScope contract.
+	if ws.Services[0] != "appdev" || ws.Services[1] != "appstage" {
+		t.Errorf("scope order: want [appdev,appstage], got %v", ws.Services)
+	}
+}
+
 // P1: scope must be supplied at start — no implicit derivation from metas.
 func TestHandleDevelopBriefing_MissingScope_Rejected(t *testing.T) {
 	t.Parallel()
@@ -261,7 +318,6 @@ func TestHandleDevelopBriefing_MissingScope_Rejected(t *testing.T) {
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             workflow.PlanModeDev,
-		Environment:      string(workflow.EnvContainer),
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-18",
 	}); err != nil {
@@ -303,7 +359,6 @@ func TestHandleDevelopBriefing_UnknownHostInScope_Rejected(t *testing.T) {
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             workflow.PlanModeDev,
-		Environment:      string(workflow.EnvContainer),
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-18",
 	}); err != nil {
@@ -342,7 +397,6 @@ func TestHandleDevelopBriefing_NewIntent_AutoClosesPrior(t *testing.T) {
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             workflow.PlanModeDev,
-		Environment:      string(workflow.EnvContainer),
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-18",
 	}); err != nil {
@@ -406,7 +460,6 @@ func TestHandleDevelopBriefing_SameIntent_Idempotent(t *testing.T) {
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             workflow.PlanModeDev,
-		Environment:      string(workflow.EnvContainer),
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-18",
 	}); err != nil {

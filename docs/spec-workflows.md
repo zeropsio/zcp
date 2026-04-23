@@ -79,16 +79,22 @@ ServiceMeta (`.zcp/state/services/{hostname}.json`) is the persistent evidence t
 
 ```
 ServiceMeta {
-  Hostname          string  // service identifier
-  Mode              string  // "standard" | "dev" | "simple"
-  StageHostname     string  // stage pair (standard mode only, empty otherwise)
-  DeployStrategy    string  // "push-dev" | "push-git" | "manual" (empty until set)
-  StrategyConfirmed bool    // true after user explicitly confirms/sets strategy
-  Environment       string  // "container" | "local"
-  BootstrapSession  string  // session ID that created this; EMPTY for adoption
-  BootstrappedAt    string  // date — empty = incomplete (bootstrap in progress)
+  Hostname          string          // service identifier
+  Mode              Mode            // standard | dev | simple | local-stage | local-only
+  StageHostname     string          // stage pair (standard mode only; requires ExplicitStage on the plan target — no hostname-suffix derivation since Release B.4)
+  DeployStrategy    DeployStrategy  // push-dev | push-git | manual (empty until set)
+  PushGitTrigger    PushGitTrigger  // webhook | actions (push-git only)
+  StrategyConfirmed bool            // true after user explicitly confirms/sets strategy
+  BootstrapSession  string          // session ID that created this; EMPTY for adoption
+  BootstrappedAt    string          // date — empty = incomplete (bootstrap in progress)
+  FirstDeployedAt   string          // stamped on first real deploy (session or adoption-at-ACTIVE)
 }
 ```
+
+The three axis-bearing fields (`Mode`, `DeployStrategy`, `PushGitTrigger`)
+are typed Go enums — same vocabulary as plan input and envelope
+assembly. `Environment` is not persisted: environment is a property of
+the currently running ZCP process (runtime-detected), not of a service.
 
 **`BootstrapSession == ""` convention.** Empty (JSON-wise: empty string, not
 null) is the adoption marker. Fresh bootstraps set this to the 16-hex
@@ -1023,6 +1029,7 @@ visibility.
 | E5 | Partial meta (no BootstrappedAt) signals bootstrap in-progress |
 | E6 | Only runtime services get ServiceMeta — managed services are API-authoritative |
 | E7 | IsAdopted() = BootstrapSession is empty AND IsComplete() — disambiguates adopted metas from orphan incomplete metas |
+| E8 | Runtime meta is pair-keyed, not hostname-keyed. Every managed runtime service is represented by exactly one ServiceMeta file keyed by m.Hostname. In container+standard and local+standard modes that single file represents two live hostnames — one in m.Hostname, its pair in m.StageHostname. In dev/simple/local-only modes m.StageHostname is empty. Consequences: (a) any code that maps hostnames → metas MUST iterate m.Hostnames() or use workflow.ManagedRuntimeIndex, never keying on m.Hostname alone; (b) lifecycle stamps (FirstDeployedAt, DeployStrategy) written to either half apply to the pair as a whole; (c) the envelope pipeline deliberately splits the pair into two ServiceSnapshots for atom filtering — that split is a render concern, not a storage concern. Enforced by TestNoInlineManagedRuntimeIndex. |
 
 ### Bootstrap (Option A — infrastructure only)
 

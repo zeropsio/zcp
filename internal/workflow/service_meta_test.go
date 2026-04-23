@@ -213,7 +213,6 @@ func TestListServiceMetas_SameDeserializationAsRead(t *testing.T) {
 		Mode:             "standard",
 		StageHostname:    "appstage",
 		DeployStrategy:   StrategyPushGit,
-		Environment:      "container",
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
 	}
@@ -246,9 +245,6 @@ func TestListServiceMetas_SameDeserializationAsRead(t *testing.T) {
 	}
 	if single.DeployStrategy != list[0].DeployStrategy {
 		t.Errorf("DeployStrategy: Read=%q List=%q", single.DeployStrategy, list[0].DeployStrategy)
-	}
-	if single.Environment != list[0].Environment {
-		t.Errorf("Environment: Read=%q List=%q", single.Environment, list[0].Environment)
 	}
 	if single.BootstrapSession != list[0].BootstrapSession {
 		t.Errorf("BootstrapSession: Read=%q List=%q", single.BootstrapSession, list[0].BootstrapSession)
@@ -415,6 +411,10 @@ func TestServiceMeta_IsComplete(t *testing.T) {
 	}
 }
 
+// TestServiceMeta_IsDeployed covers the thin wrapper. FirstDeployedAt is
+// stamped elsewhere (RecordDeployAttempt for session-driven deploys,
+// LocalAutoAdopt for pre-existing ACTIVE services); this test only pins
+// the read-side behavior.
 func TestServiceMeta_IsDeployed(t *testing.T) {
 	t.Parallel()
 
@@ -424,18 +424,13 @@ func TestServiceMeta_IsDeployed(t *testing.T) {
 		want bool
 	}{
 		{
-			"deployed meta with FirstDeployedAt",
+			"stamped meta",
 			ServiceMeta{Hostname: "appdev", BootstrappedAt: "2026-04-18", FirstDeployedAt: "2026-04-20"},
 			true,
 		},
 		{
 			"bootstrap-complete but never deployed",
 			ServiceMeta{Hostname: "appdev", BootstrappedAt: "2026-04-18"},
-			false,
-		},
-		{
-			"empty FirstDeployedAt string",
-			ServiceMeta{Hostname: "appdev", FirstDeployedAt: ""},
 			false,
 		},
 		{
@@ -449,106 +444,9 @@ func TestServiceMeta_IsDeployed(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			if got := tt.meta.IsDeployed(); got != tt.want {
-				t.Errorf("IsDeployed(): want %v, got %v", tt.want, got)
+				t.Errorf("IsDeployed() = %v, want %v", got, tt.want)
 			}
 		})
-	}
-}
-
-func TestMarkServiceDeployed_StampsFirstDeploy(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	meta := &ServiceMeta{
-		Hostname:         "appdev",
-		Mode:             PlanModeDev,
-		BootstrappedAt:   "2026-04-18T10:00:00Z",
-		BootstrapSession: "sess-1",
-	}
-	if err := WriteServiceMeta(dir, meta); err != nil {
-		t.Fatalf("WriteServiceMeta: %v", err)
-	}
-
-	if err := MarkServiceDeployed(dir, "appdev"); err != nil {
-		t.Fatalf("MarkServiceDeployed: %v", err)
-	}
-	got, err := ReadServiceMeta(dir, "appdev")
-	if err != nil || got == nil {
-		t.Fatalf("ReadServiceMeta: got=%+v err=%v", got, err)
-	}
-	if got.FirstDeployedAt == "" {
-		t.Error("FirstDeployedAt should be stamped")
-	}
-	if !got.IsDeployed() {
-		t.Error("IsDeployed() should be true after MarkServiceDeployed")
-	}
-}
-
-func TestMarkServiceDeployed_Idempotent(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	meta := &ServiceMeta{
-		Hostname:        "appdev",
-		Mode:            PlanModeDev,
-		BootstrappedAt:  "2026-04-18T10:00:00Z",
-		FirstDeployedAt: "2026-04-20T09:00:00Z",
-	}
-	if err := WriteServiceMeta(dir, meta); err != nil {
-		t.Fatalf("WriteServiceMeta: %v", err)
-	}
-
-	if err := MarkServiceDeployed(dir, "appdev"); err != nil {
-		t.Fatalf("MarkServiceDeployed: %v", err)
-	}
-	got, err := ReadServiceMeta(dir, "appdev")
-	if err != nil || got == nil {
-		t.Fatalf("ReadServiceMeta: got=%+v err=%v", got, err)
-	}
-	// The original stamp is preserved — first-deploy is a one-shot event.
-	if got.FirstDeployedAt != "2026-04-20T09:00:00Z" {
-		t.Errorf("FirstDeployedAt: want 2026-04-20T09:00:00Z (preserved), got %q", got.FirstDeployedAt)
-	}
-}
-
-func TestMarkServiceDeployed_NoMeta_NoError(t *testing.T) {
-	t.Parallel()
-	if err := MarkServiceDeployed(t.TempDir(), "nonexistent"); err != nil {
-		t.Errorf("MarkServiceDeployed should be no-op when meta missing, got: %v", err)
-	}
-}
-
-// TestMarkServiceDeployed_StampsViaStageHostname guards the container+standard
-// case: meta is keyed by dev hostname with StageHostname set. Verifying the
-// stage half must still stamp the meta — otherwise the first-deploy branch
-// keeps re-firing on the next session because FirstDeployedAt stays empty.
-func TestMarkServiceDeployed_StampsViaStageHostname(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	meta := &ServiceMeta{
-		Hostname:       "appdev",
-		StageHostname:  "appstage",
-		Mode:           PlanModeStandard,
-		Environment:    string(EnvContainer),
-		BootstrappedAt: "2026-04-18T10:00:00Z",
-	}
-	if err := WriteServiceMeta(dir, meta); err != nil {
-		t.Fatalf("WriteServiceMeta: %v", err)
-	}
-
-	if err := MarkServiceDeployed(dir, "appstage"); err != nil {
-		t.Fatalf("MarkServiceDeployed: %v", err)
-	}
-	got, err := ReadServiceMeta(dir, "appdev")
-	if err != nil || got == nil {
-		t.Fatalf("ReadServiceMeta: got=%+v err=%v", got, err)
-	}
-	if got.FirstDeployedAt == "" {
-		t.Error("stage-hostname verify must stamp FirstDeployedAt on the dev-keyed meta")
-	}
-	if !got.IsDeployed() {
-		t.Error("IsDeployed() should be true after stage verify")
 	}
 }
 
@@ -740,6 +638,180 @@ func TestIsKnownService(t *testing.T) {
 	}
 }
 
+func TestManagedRuntimeIndex(t *testing.T) {
+	t.Parallel()
+
+	standardPair := &ServiceMeta{
+		Hostname:         "appdev",
+		StageHostname:    "appstage",
+		Mode:             PlanModeStandard,
+		BootstrapSession: "s1",
+		BootstrappedAt:   "2026-03-04T12:00:00Z",
+	}
+	devOnly := &ServiceMeta{
+		Hostname:         "api",
+		Mode:             PlanModeDev,
+		BootstrapSession: "s2",
+		BootstrappedAt:   "2026-03-04T12:00:00Z",
+	}
+	simple := &ServiceMeta{
+		Hostname:         "worker",
+		Mode:             PlanModeSimple,
+		BootstrapSession: "s3",
+		BootstrappedAt:   "2026-03-04T12:00:00Z",
+	}
+	localStage := &ServiceMeta{
+		Hostname:         "myproject",
+		StageHostname:    "appstage",
+		Mode:             PlanModeLocalStage,
+		BootstrapSession: "s4",
+		BootstrappedAt:   "2026-03-04T12:00:00Z",
+	}
+	incomplete := &ServiceMeta{
+		Hostname:         "orphan",
+		BootstrapSession: "s5",
+		// BootstrappedAt intentionally empty — IsComplete() == false.
+	}
+
+	t.Run("standard pair maps both keys to same pointer", func(t *testing.T) {
+		t.Parallel()
+		idx := ManagedRuntimeIndex([]*ServiceMeta{standardPair})
+		if len(idx) != 2 {
+			t.Fatalf("want 2 entries, got %d: %v", len(idx), idx)
+		}
+		if idx["appdev"] != standardPair {
+			t.Errorf("idx[appdev] = %p, want %p", idx["appdev"], standardPair)
+		}
+		if idx["appstage"] != standardPair {
+			t.Errorf("idx[appstage] = %p, want %p", idx["appstage"], standardPair)
+		}
+		if idx["appdev"] != idx["appstage"] {
+			t.Errorf("both keys must point at the same *ServiceMeta")
+		}
+	})
+
+	t.Run("dev-only meta has one key", func(t *testing.T) {
+		t.Parallel()
+		idx := ManagedRuntimeIndex([]*ServiceMeta{devOnly})
+		if len(idx) != 1 {
+			t.Fatalf("want 1 entry, got %d", len(idx))
+		}
+		if idx["api"] != devOnly {
+			t.Errorf("idx[api] mismatch")
+		}
+	})
+
+	t.Run("simple mode has one key", func(t *testing.T) {
+		t.Parallel()
+		idx := ManagedRuntimeIndex([]*ServiceMeta{simple})
+		if len(idx) != 1 {
+			t.Fatalf("want 1 entry, got %d", len(idx))
+		}
+	})
+
+	t.Run("local-stage inverted mode maps both keys", func(t *testing.T) {
+		t.Parallel()
+		idx := ManagedRuntimeIndex([]*ServiceMeta{localStage})
+		if len(idx) != 2 {
+			t.Fatalf("want 2 entries, got %d: %v", len(idx), idx)
+		}
+		if idx["myproject"] != localStage {
+			t.Errorf("idx[myproject] mismatch — inverted mode uses project name as Hostname")
+		}
+		if idx["appstage"] != localStage {
+			t.Errorf("idx[appstage] mismatch")
+		}
+	})
+
+	t.Run("incomplete meta is NOT filtered by helper (caller's predicate)", func(t *testing.T) {
+		t.Parallel()
+		idx := ManagedRuntimeIndex([]*ServiceMeta{incomplete})
+		if len(idx) != 1 {
+			t.Fatalf("want 1 entry (helper does not filter on IsComplete), got %d", len(idx))
+		}
+		if idx["orphan"] != incomplete {
+			t.Errorf("idx[orphan] mismatch")
+		}
+	})
+
+	t.Run("nil meta is skipped", func(t *testing.T) {
+		t.Parallel()
+		idx := ManagedRuntimeIndex([]*ServiceMeta{nil, devOnly, nil})
+		if len(idx) != 1 {
+			t.Fatalf("want 1 entry, got %d", len(idx))
+		}
+	})
+
+	t.Run("empty hostname is skipped, never poisons map", func(t *testing.T) {
+		t.Parallel()
+		blank := &ServiceMeta{Hostname: "", StageHostname: "appstage"}
+		idx := ManagedRuntimeIndex([]*ServiceMeta{blank, devOnly})
+		if _, present := idx[""]; present {
+			t.Errorf("empty-string key must never appear in index")
+		}
+		if len(idx) != 1 {
+			t.Fatalf("want 1 entry (only devOnly valid), got %d: %v", len(idx), idx)
+		}
+	})
+
+	t.Run("duplicate hostname: last meta wins (documented map semantics)", func(t *testing.T) {
+		t.Parallel()
+		first := &ServiceMeta{Hostname: "app", Mode: PlanModeDev}
+		second := &ServiceMeta{Hostname: "app", Mode: PlanModeSimple}
+		idx := ManagedRuntimeIndex([]*ServiceMeta{first, second})
+		if len(idx) != 1 {
+			t.Fatalf("want 1 entry, got %d", len(idx))
+		}
+		if idx["app"] != second {
+			t.Errorf("want second (last-write-wins), got %p", idx["app"])
+		}
+	})
+
+	t.Run("nil input returns empty map (no panic)", func(t *testing.T) {
+		t.Parallel()
+		idx := ManagedRuntimeIndex(nil)
+		if idx == nil {
+			t.Fatalf("must return non-nil map even on nil input")
+		}
+		if len(idx) != 0 {
+			t.Fatalf("want empty map, got %d entries", len(idx))
+		}
+	})
+
+	t.Run("empty slice returns empty map", func(t *testing.T) {
+		t.Parallel()
+		idx := ManagedRuntimeIndex([]*ServiceMeta{})
+		if len(idx) != 0 {
+			t.Fatalf("want empty map, got %d", len(idx))
+		}
+	})
+
+	t.Run("multiple non-colliding metas merge correctly", func(t *testing.T) {
+		t.Parallel()
+		// Distinct hostnames — realistic multi-stack project state.
+		pairA := &ServiceMeta{Hostname: "appdev", StageHostname: "appstage", Mode: PlanModeStandard}
+		pairB := &ServiceMeta{Hostname: "apidev", StageHostname: "apistage", Mode: PlanModeStandard}
+		idx := ManagedRuntimeIndex([]*ServiceMeta{pairA, devOnly, simple, pairB})
+		// 2 (pairA) + 1 (devOnly) + 1 (simple) + 2 (pairB) = 6
+		if len(idx) != 6 {
+			t.Fatalf("want 6 entries across 4 metas, got %d: %v", len(idx), idx)
+		}
+		wantPairs := map[string]*ServiceMeta{
+			"appdev":   pairA,
+			"appstage": pairA,
+			"api":      devOnly,
+			"worker":   simple,
+			"apidev":   pairB,
+			"apistage": pairB,
+		}
+		for h, want := range wantPairs {
+			if idx[h] != want {
+				t.Errorf("idx[%q] = %p, want %p", h, idx[h], want)
+			}
+		}
+	})
+}
+
 func TestServiceMeta_NoStatusFieldInJSON(t *testing.T) {
 	t.Parallel()
 
@@ -776,43 +848,45 @@ func TestServiceMeta_PrimaryRole(t *testing.T) {
 	tests := []struct {
 		name string
 		meta ServiceMeta
-		want string
+		want Mode
 	}{
 		{
 			"container_standard_returns_dev",
-			ServiceMeta{Hostname: "appdev", Mode: PlanModeStandard, StageHostname: "appstage", Environment: string(EnvContainer)},
+			ServiceMeta{Hostname: "appdev", Mode: PlanModeStandard, StageHostname: "appstage"},
 			DeployRoleDev,
 		},
 		{
 			"container_dev_returns_dev",
-			ServiceMeta{Hostname: "appdev", Mode: PlanModeDev, Environment: string(EnvContainer)},
+			ServiceMeta{Hostname: "appdev", Mode: PlanModeDev},
 			DeployRoleDev,
 		},
 		{
 			"container_simple_returns_simple",
-			ServiceMeta{Hostname: "app", Mode: PlanModeSimple, Environment: string(EnvContainer)},
+			ServiceMeta{Hostname: "app", Mode: PlanModeSimple},
 			DeployRoleSimple,
 		},
 		{
-			// Local+standard stores the stage hostname at m.Hostname because dev
-			// doesn't exist locally. Primary role is therefore stage, not dev.
-			"local_standard_returns_stage",
-			ServiceMeta{Hostname: "appstage", Mode: PlanModeStandard, Environment: string(EnvLocal)},
-			DeployRoleStage,
+			// Local metas use local-stage / local-only exclusively, never
+			// standard. PrimaryRole on a local-stage meta is still Dev
+			// because the dev half of the topology lives on the user's
+			// machine — the Zerops side is the stage runtime.
+			"local_stage_returns_stage",
+			ServiceMeta{Hostname: "myproject", StageHostname: "appstage", Mode: PlanModeLocalStage},
+			DeployRoleDev,
 		},
 		{
 			"local_dev_returns_dev",
-			ServiceMeta{Hostname: "appdev", Mode: PlanModeDev, Environment: string(EnvLocal)},
+			ServiceMeta{Hostname: "appdev", Mode: PlanModeDev},
 			DeployRoleDev,
 		},
 		{
 			"local_simple_returns_simple",
-			ServiceMeta{Hostname: "app", Mode: PlanModeSimple, Environment: string(EnvLocal)},
+			ServiceMeta{Hostname: "app", Mode: PlanModeSimple},
 			DeployRoleSimple,
 		},
 		{
 			"empty_mode_defaults_to_standard",
-			ServiceMeta{Hostname: "appdev", StageHostname: "appstage", Environment: string(EnvContainer)},
+			ServiceMeta{Hostname: "appdev", StageHostname: "appstage"},
 			DeployRoleDev,
 		},
 	}
@@ -830,11 +904,10 @@ func TestServiceMeta_RoleFor(t *testing.T) {
 	t.Parallel()
 	meta := ServiceMeta{
 		Hostname: "appdev", Mode: PlanModeStandard, StageHostname: "appstage",
-		Environment: string(EnvContainer),
 	}
 	tests := []struct {
 		hostname string
-		want     string
+		want     Mode
 	}{
 		{"appdev", DeployRoleDev},
 		{"appstage", DeployRoleStage},
@@ -861,7 +934,6 @@ func TestServiceMeta_Hostnames(t *testing.T) {
 		{"dev_only", ServiceMeta{Hostname: "appdev"}, []string{"appdev"}},
 		{"dev_and_stage", ServiceMeta{Hostname: "appdev", StageHostname: "appstage"}, []string{"appdev", "appstage"}},
 		{"simple", ServiceMeta{Hostname: "app"}, []string{"app"}},
-		{"local_standard_only_stage", ServiceMeta{Hostname: "appstage", Environment: string(EnvLocal), Mode: PlanModeStandard}, []string{"appstage"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -102,12 +102,12 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 
 // resolveSetupEntry finds the zerops.yaml setup entry using priority:
 // explicit setup param → role-based name → hostname fallback.
-func resolveSetupEntry(doc *ops.ZeropsYmlDoc, setup, role, hostname string) *ops.ZeropsYmlEntry {
+func resolveSetupEntry(doc *ops.ZeropsYmlDoc, setup string, role workflow.Mode, hostname string) *ops.ZeropsYmlEntry {
 	if setup != "" {
 		return doc.FindEntry(setup)
 	}
 	// Role-based: "dev" or "stage" → try as setup name.
-	if entry := doc.FindEntry(role); entry != nil {
+	if entry := doc.FindEntry(string(role)); entry != nil {
 		return entry
 	}
 	// Stage and simple roles map to "prod" setup.

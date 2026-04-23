@@ -19,17 +19,18 @@ const deployStrategyGitPush = "git-push"
 
 // DeploySSHInput is the input type for zerops_deploy in SSH (container) mode.
 //
-// IncludeGit is FlexBool so stringified boolean forms go through
-// (same reasoning as DiscoverInput/EnvInput — see flexbool.go).
+// includeGit is not user-facing: ZCP enables -g on self-deploys (so a
+// service deploying its own code preserves .git and any history scripts
+// depend on) and leaves it off on cross-deploys (dev→stage would otherwise
+// carry the dev container's .git across).
 type DeploySSHInput struct {
-	SourceService string   `json:"sourceService,omitempty"`
-	TargetService string   `json:"targetService"`
-	Setup         string   `json:"setup,omitempty"`
-	WorkingDir    string   `json:"workingDir,omitempty"`
-	IncludeGit    FlexBool `json:"includeGit,omitempty"`
-	Strategy      string   `json:"strategy,omitempty"`
-	RemoteURL     string   `json:"remoteUrl,omitempty"`
-	Branch        string   `json:"branch,omitempty"`
+	SourceService string `json:"sourceService,omitempty"`
+	TargetService string `json:"targetService"`
+	Setup         string `json:"setup,omitempty"`
+	WorkingDir    string `json:"workingDir,omitempty"`
+	Strategy      string `json:"strategy,omitempty"`
+	RemoteURL     string `json:"remoteUrl,omitempty"`
+	Branch        string `json:"branch,omitempty"`
 }
 
 func deploySSHInputSchema() *jsonschema.Schema {
@@ -38,8 +39,7 @@ func deploySSHInputSchema() *jsonschema.Schema {
 		"targetService": {Type: "string", Description: "Hostname of the service to deploy to."},
 		"setup":         {Type: "string", Description: "zerops.yaml setup block name — matches a `setup:` key in the file's `zerops:` array. Setup names are user-defined identifiers; recipes conventionally use `dev`/`prod` (and sometimes `worker`) but any name is valid. Required whenever zerops.yaml declares more than one setup — the tool cannot guess which block to build. Recipes always ship multiple setups, so `setup` is effectively required in recipe workflows: `targetService=apidev setup=dev`, `targetService=apistage setup=prod` (a cross-deploy from apidev→apistage uses `setup=prod` because `setup` names the zerops.yaml block, not the deploy source). Omit only when zerops.yaml has a single setup AND its name matches the target hostname (bootstrap workflows only)."},
 		"workingDir":    {Type: "string", Description: "Container path for deploy. Default: /var/www. In container mode: omit entirely (always correct)."},
-		"includeGit":    flexBoolSchema("Include .git directory in the push (-g flag). Auto-forced for self-deploy."),
-		"strategy":      {Type: "string", Description: "Deploy strategy. Omit for default (zcli push to Zerops). Set to 'git-push' to push committed code to an external git remote (requires GIT_TOKEN project env var). BEFORE using git-push: ask the user if they want push-only or full CI/CD. LLM should commit changes via SSH BEFORE calling git-push."},
+		"strategy":      {Type: "string", Description: "Deploy strategy. Omit for default push (direct deploy to the Zerops service). Set to 'git-push' to push committed code to an external git remote (requires GIT_TOKEN project env var). BEFORE using git-push: ask the user if they want push-only or full CI/CD. LLM should commit changes via SSH BEFORE calling git-push."},
 		"remoteUrl":     {Type: "string", Description: "Git remote URL (HTTPS). Required for strategy=git-push on first push. Omit on subsequent pushes if remote already configured."},
 		"branch":        {Type: "string", Description: "Git branch name for git-push. Default: main."},
 	}, "targetService")
@@ -77,6 +77,13 @@ func RegisterDeploySSH(
 			DestructiveHint: boolPtr(true),
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeploySSHInput) (*mcp.CallToolResult, any, error) {
+		// Strategy validation. "manual" is a ServiceMeta declaration only —
+		// calling zerops_deploy on a manual-strategy service is a contradiction
+		// ZCP refuses to resolve silently.
+		if err := validateDeployStrategyParam(input.Strategy); err != nil {
+			return convertError(err), nil, nil
+		}
+
 		// Gate: target (and source) must be adopted by ZCP.
 		if blocked := requireAdoption(stateDir, input.TargetService, input.SourceService); blocked != nil {
 			return blocked, nil, nil
@@ -104,15 +111,6 @@ func RegisterDeploySSH(
 			}
 		}
 
-		// Validate strategy parameter.
-		if input.Strategy != "" && input.Strategy != deployStrategyGitPush {
-			return convertError(platform.NewPlatformError(
-				platform.ErrInvalidParameter,
-				fmt.Sprintf("Invalid strategy %q", input.Strategy),
-				"Valid values: omit (default zcli push) or 'git-push'",
-			)), nil, nil
-		}
-
 		// Route: git-push strategy pushes to external git remote, no Zerops build.
 		if input.Strategy == deployStrategyGitPush {
 			return handleGitPush(ctx, sshDeployer, *authInfo, input, stateDir)
@@ -128,7 +126,7 @@ func RegisterDeploySSH(
 
 		// Default: zcli push to Zerops.
 		result, err := ops.DeploySSH(ctx, client, projectID, sshDeployer, *authInfo,
-			input.SourceService, input.TargetService, input.Setup, input.WorkingDir, input.IncludeGit.Bool())
+			input.SourceService, input.TargetService, input.Setup, input.WorkingDir)
 		if err != nil {
 			attempt.Error = err.Error()
 			_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)

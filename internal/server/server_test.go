@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 func TestServer_AllToolsRegistered(t *testing.T) {
@@ -205,9 +208,10 @@ func TestServer_Instructions(t *testing.T) {
 			want: "zcpx",
 		},
 		{
-			name: "local dev mentions zcli push",
+			name: "local dev points at zerops_deploy tool",
 			rt:   runtime.Info{},
-			want: "zcli push",
+			want: "zerops_deploy",
+			miss: "zcli push",
 		},
 		{
 			name: "container mentions SSHFS mount path",
@@ -269,6 +273,122 @@ func TestServer_Connect(t *testing.T) {
 	// Verify connection is alive by pinging.
 	if err := session.Ping(ctx, nil); err != nil {
 		t.Fatalf("ping failed: %v", err)
+	}
+}
+
+// TestServer_New_LocalAutoAdopt pins the eager adoption hook: when
+// server.New runs in local env against an empty state dir, it writes a
+// ServiceMeta keyed by the Zerops project name. Container env skips
+// adoption entirely.
+//
+// Non-parallel: t.Chdir rebases cwd so the stateDir derivation in
+// server.New (filepath.Join(cwd, .zcp/state)) lands under a TempDir.
+// Note-text shape is covered in workflow/adopt_local_test.go
+// TestFormatAdoptionNote_Shapes; here we assert the wired side-effect.
+func TestServer_New_LocalAutoAdopt(t *testing.T) {
+	tests := []struct {
+		name        string
+		rt          runtime.Info
+		services    []platform.ServiceStack
+		wantMeta    bool
+		wantMode    workflow.Mode
+		wantStage   string
+		wantManaged []string
+	}{
+		{
+			name: "local + one runtime → local-stage",
+			rt:   runtime.Info{},
+			services: []platform.ServiceStack{{
+				ID: "s1", Name: "apistage", Status: "ACTIVE",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{
+					ServiceStackTypeVersionName:  "nodejs@22",
+					ServiceStackTypeCategoryName: "USER",
+				},
+			}},
+			wantMeta:  true,
+			wantMode:  workflow.PlanModeLocalStage,
+			wantStage: "apistage",
+		},
+		{
+			name:     "local + zero runtimes → local-only",
+			rt:       runtime.Info{},
+			services: nil,
+			wantMeta: true,
+			wantMode: workflow.PlanModeLocalOnly,
+		},
+		{
+			name: "local + multiple runtimes → local-only (no auto-link)",
+			rt:   runtime.Info{},
+			services: []platform.ServiceStack{
+				{
+					ID: "s1", Name: "api", Status: "ACTIVE",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{
+						ServiceStackTypeVersionName:  "nodejs@22",
+						ServiceStackTypeCategoryName: "USER",
+					},
+				},
+				{
+					ID: "s2", Name: "web", Status: "ACTIVE",
+					ServiceStackTypeInfo: platform.ServiceTypeInfo{
+						ServiceStackTypeVersionName:  "nodejs@22",
+						ServiceStackTypeCategoryName: "USER",
+					},
+				},
+			},
+			wantMeta: true,
+			wantMode: workflow.PlanModeLocalOnly,
+		},
+		{
+			name: "container env → no adoption",
+			rt:   runtime.Info{InContainer: true, ServiceName: "zcpx"},
+			services: []platform.ServiceStack{{
+				ID: "s1", Name: "apistage", Status: "ACTIVE",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{
+					ServiceStackTypeVersionName:  "nodejs@22",
+					ServiceStackTypeCategoryName: "USER",
+				},
+			}},
+			wantMeta: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+
+			mock := platform.NewMock().
+				WithProject(&platform.Project{ID: "p1", Name: "demo"}).
+				WithServices(tt.services)
+			authInfo := &auth.Info{ProjectID: "p1", Token: "t", APIHost: "localhost"}
+			store, err := knowledge.GetEmbeddedStore()
+			if err != nil {
+				t.Fatalf("knowledge store: %v", err)
+			}
+
+			_ = New(context.Background(), mock, authInfo, store, platform.NewMockLogFetcher(), nil, nil, tt.rt)
+
+			// Verify side-effect: meta file existence + shape.
+			cwd, _ := os.Getwd()
+			stateDir := filepath.Join(cwd, ".zcp", "state")
+
+			meta, _ := workflow.ReadServiceMeta(stateDir, "demo")
+			if tt.wantMeta {
+				if meta == nil {
+					t.Fatalf("expected meta at %q after adoption", stateDir)
+				}
+				if meta.Mode != tt.wantMode {
+					t.Errorf("Mode = %q, want %q", meta.Mode, tt.wantMode)
+				}
+				if meta.StageHostname != tt.wantStage {
+					t.Errorf("StageHostname = %q, want %q", meta.StageHostname, tt.wantStage)
+				}
+				if meta.BootstrapSession != "" {
+					t.Errorf("BootstrapSession = %q, want empty (adopted, not bootstrapped)", meta.BootstrapSession)
+				}
+			} else if meta != nil {
+				t.Errorf("container env must not auto-adopt; got meta: %+v", meta)
+			}
+		})
 	}
 }
 

@@ -902,7 +902,19 @@ func runValidateTestWithOpts(t *testing.T, hostname, yml string, wantWarnings in
 		}
 	}
 
-	warnings := ValidateZeropsYml(dir, hostname, opts.serviceType)
+	// ValidateZeropsYml takes the role explicitly (production callers
+	// read it from ServiceMeta — see deploy_preflight.go). The test
+	// fixtures name hostnames with dev/stage suffixes for readability,
+	// so this helper derives the role from the suffix before passing
+	// it in.
+	role := ""
+	switch {
+	case strings.HasSuffix(hostname, "dev"):
+		role = "dev"
+	case strings.HasSuffix(hostname, "stage"):
+		role = "stage"
+	}
+	warnings := ValidateZeropsYml(dir, hostname, opts.serviceType, role)
 
 	if noWarnings {
 		if len(warnings) != 0 {

@@ -49,10 +49,17 @@ func TestValidatePlanHostname(t *testing.T) {
 
 func TestStageHostname_Standard(t *testing.T) {
 	t.Parallel()
-	rt := RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}
-	got := rt.StageHostname()
-	if got != "appstage" {
-		t.Errorf("StageHostname: want %q, got %q", "appstage", got)
+	// ExplicitStage is the only source of a stage hostname. Standard
+	// mode without ExplicitStage returns empty (caught by
+	// ValidateBootstrapTargets as a hard error).
+	rt := RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"}
+	if got := rt.StageHostname(); got != "appstage" {
+		t.Errorf("StageHostname with ExplicitStage: want %q, got %q", "appstage", got)
+	}
+
+	rtMissing := RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}
+	if got := rtMissing.StageHostname(); got != "" {
+		t.Errorf("StageHostname without ExplicitStage: want empty (no heuristic), got %q", got)
 	}
 }
 
@@ -78,8 +85,8 @@ func TestEffectiveMode(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
-		mode string
-		want string
+		mode Mode
+		want Mode
 	}{
 		{"empty_defaults_to_standard", "", "standard"},
 		{"explicit_standard", "standard", "standard"},
@@ -102,7 +109,7 @@ func TestValidateBootstrapTargets_InvalidBootstrapMode(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name    string
-		mode    string
+		mode    Mode
 		wantErr bool
 	}{
 		{"valid_empty", "", false},
@@ -117,11 +124,13 @@ func TestValidateBootstrapTargets_InvalidBootstrapMode(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			hostname := "appdev"
+			explicitStage := "appstage"
 			if tt.mode == "simple" || tt.mode == "dev" {
 				hostname = "myapp"
+				explicitStage = "" // non-standard modes ignore ExplicitStage
 			}
 			targets := []BootstrapTarget{
-				{Runtime: RuntimeTarget{DevHostname: hostname, Type: "nodejs@22", BootstrapMode: tt.mode}},
+				{Runtime: RuntimeTarget{DevHostname: hostname, Type: "nodejs@22", BootstrapMode: tt.mode, ExplicitStage: explicitStage}},
 			}
 			_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
 			if tt.wantErr {
@@ -138,12 +147,14 @@ func TestValidateBootstrapTargets_InvalidBootstrapMode(t *testing.T) {
 	}
 }
 
-func TestStageHostname_NoDevSuffix(t *testing.T) {
+func TestStageHostname_NoExplicit(t *testing.T) {
 	t.Parallel()
+	// Standard mode without ExplicitStage returns empty — no suffix
+	// heuristic.
 	rt := RuntimeTarget{DevHostname: "myapp", Type: "nodejs@22"}
 	got := rt.StageHostname()
 	if got != "" {
-		t.Errorf("StageHostname without 'dev' suffix: want empty, got %q", got)
+		t.Errorf("StageHostname without ExplicitStage: want empty, got %q", got)
 	}
 }
 
@@ -156,13 +167,13 @@ func TestStageHostname_ExplicitOverride(t *testing.T) {
 	}
 }
 
-func TestStageHostname_ExplicitOverridesAutoDerive(t *testing.T) {
+func TestStageHostname_ExplicitUsedVerbatim(t *testing.T) {
 	t.Parallel()
-	// Even when dev ends in "dev", explicit takes priority.
+	// ExplicitStage is used as-is; no suffix heuristic interferes.
 	rt := RuntimeTarget{DevHostname: "apidev", Type: "go@1", ExplicitStage: "apipreview"}
 	got := rt.StageHostname()
 	if got != "apipreview" {
-		t.Errorf("explicit should override auto-derive: want %q, got %q", "apipreview", got)
+		t.Errorf("ExplicitStage: want %q, got %q", "apipreview", got)
 	}
 }
 
@@ -185,7 +196,7 @@ func TestRuntimeBase(t *testing.T) {
 		{"nil_plan", nil, ""},
 		{"empty_targets", &ServicePlan{}, ""},
 		{"nodejs_version", &ServicePlan{Targets: []BootstrapTarget{
-			{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
+			{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"}},
 		}}, "nodejs"},
 		{"bun_no_version", &ServicePlan{Targets: []BootstrapTarget{
 			{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun"}},
@@ -225,7 +236,7 @@ func TestDependencyTypes(t *testing.T) {
 			{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "go@1"}, Dependencies: []Dependency{
 				{Hostname: "db", Type: "postgresql@16", Resolution: "CREATE"},
 			}},
-			{Runtime: RuntimeTarget{DevHostname: "apidev", Type: "bun@1.2"}, Dependencies: []Dependency{
+			{Runtime: RuntimeTarget{DevHostname: "apidev", Type: "bun@1.2", ExplicitStage: "apistage"}, Dependencies: []Dependency{
 				{Hostname: "db", Type: "postgresql@16", Resolution: "SHARED"},
 				{Hostname: "cache", Type: "valkey@7.2", Resolution: "CREATE"},
 			}},
@@ -272,7 +283,7 @@ func TestValidateBootstrapTargets_SingleTarget_Success(t *testing.T) {
 	t.Parallel()
 	targets := []BootstrapTarget{
 		{
-			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 			Dependencies: []Dependency{
 				{Hostname: "db", Type: "postgresql@16", Resolution: "CREATE"},
 			},
@@ -315,17 +326,17 @@ func TestValidateBootstrapTargets_InvalidHostname_Error(t *testing.T) {
 
 func TestValidateBootstrapTargets_StageHostnameOverflow_Error(t *testing.T) {
 	t.Parallel()
-	// "dev" suffix = 3 chars, stage suffix = 5 chars. Base needs to be 36 chars to make stage overflow (36+5=41>40).
-	base := strings.Repeat("a", 36)
+	// Explicit stage hostname of 41 chars exceeds the 40-char platform limit.
+	over := strings.Repeat("a", 41)
 	targets := []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: base + "dev", Type: "nodejs@22"}},
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: over}},
 	}
 	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
 	if err == nil {
 		t.Fatal("expected error for stage hostname overflow")
 	}
-	if !strings.Contains(err.Error(), "stage hostname") && !strings.Contains(err.Error(), "stageHostname") {
-		t.Errorf("error %q should mention 'stage hostname' or stageHostname", err.Error())
+	if !strings.Contains(err.Error(), "stageHostname") {
+		t.Errorf("error %q should mention stageHostname", err.Error())
 	}
 }
 
@@ -373,7 +384,7 @@ func TestValidateBootstrapTargets_StorageExcluded_FromEnvCheck(t *testing.T) {
 	// shared-storage is a managed storage type — should not require env var checks.
 	targets := []BootstrapTarget{
 		{
-			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 			Dependencies: []Dependency{
 				{Hostname: "files", Type: "shared-storage", Resolution: "CREATE"},
 			},
@@ -390,13 +401,13 @@ func TestValidateBootstrapTargets_SharedResolution_Success(t *testing.T) {
 	// Two targets both reference "db" — the second with SHARED resolution.
 	targets := []BootstrapTarget{
 		{
-			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 			Dependencies: []Dependency{
 				{Hostname: "db", Type: "postgresql@16", Resolution: "CREATE"},
 			},
 		},
 		{
-			Runtime: RuntimeTarget{DevHostname: "apidev", Type: "bun@1.2"},
+			Runtime: RuntimeTarget{DevHostname: "apidev", Type: "bun@1.2", ExplicitStage: "apistage"},
 			Dependencies: []Dependency{
 				{Hostname: "db", Type: "postgresql@16", Resolution: "SHARED"},
 			},
@@ -413,7 +424,7 @@ func TestValidateBootstrapTargets_SharedResolution_NoCreate_Error(t *testing.T) 
 	// SHARED dep references "db" but no target has CREATE for it.
 	targets := []BootstrapTarget{
 		{
-			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 			Dependencies: []Dependency{
 				{Hostname: "db", Type: "postgresql@16", Resolution: "SHARED"},
 			},
@@ -435,7 +446,7 @@ func TestValidateBootstrapTargets_CreateServiceExists_Error(t *testing.T) {
 	}
 	targets := []BootstrapTarget{
 		{
-			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 			Dependencies: []Dependency{
 				{Hostname: "db", Type: "postgresql@16", Resolution: "CREATE"},
 			},
@@ -454,7 +465,7 @@ func TestValidateBootstrapTargets_ExistsServiceMissing_Error(t *testing.T) {
 	t.Parallel()
 	targets := []BootstrapTarget{
 		{
-			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 			Dependencies: []Dependency{
 				{Hostname: "db", Type: "postgresql@16", Resolution: "EXISTS"},
 			},
@@ -499,8 +510,8 @@ func TestValidateBootstrapTargets_DevMode_NoStage(t *testing.T) {
 func TestValidateBootstrapTargets_MixedModes_Valid(t *testing.T) {
 	t.Parallel()
 	targets := []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},                          // standard (default)
-		{Runtime: RuntimeTarget{DevHostname: "frontend", Type: "bun@1.2", BootstrapMode: "simple"}}, // simple
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"}}, // standard (default)
+		{Runtime: RuntimeTarget{DevHostname: "frontend", Type: "bun@1.2", BootstrapMode: "simple"}},   // simple
 	}
 	_, err := ValidateBootstrapTargets(targets, testLiveTypes, nil)
 	if err != nil {
@@ -512,7 +523,7 @@ func TestValidateBootstrapTargets_DuplicateHostname_Error(t *testing.T) {
 	t.Parallel()
 	targets := []BootstrapTarget{
 		{
-			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 			Dependencies: []Dependency{
 				{Hostname: "db", Type: "postgresql@16", Resolution: "CREATE"},
 				{Hostname: "db", Type: "valkey@7.2", Resolution: "CREATE"},
@@ -560,13 +571,13 @@ func TestValidateBootstrapTargets_CaseInsensitiveResolution(t *testing.T) {
 			// Two targets so SHARED has a CREATE to reference.
 			targets := []BootstrapTarget{
 				{
-					Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+					Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 					Dependencies: []Dependency{
 						{Hostname: "db", Type: "postgresql@16", Resolution: "CREATE"},
 					},
 				},
 				{
-					Runtime: RuntimeTarget{DevHostname: "apidev", Type: "bun@1.2"},
+					Runtime: RuntimeTarget{DevHostname: "apidev", Type: "bun@1.2", ExplicitStage: "apistage"},
 					Dependencies: []Dependency{
 						{Hostname: "db", Type: "postgresql@16", Resolution: tt.resolution},
 					},
@@ -600,7 +611,7 @@ func TestValidateBootstrapTargets_CaseInsensitiveMode(t *testing.T) {
 			t.Parallel()
 			targets := []BootstrapTarget{
 				{
-					Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+					Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 					Dependencies: []Dependency{
 						{Hostname: "db", Type: "postgresql@16", Resolution: "CREATE", Mode: tt.mode},
 					},
@@ -622,7 +633,7 @@ func TestValidateBootstrapTargets_ManagedModeDefault_NON_HA(t *testing.T) {
 	t.Parallel()
 	targets := []BootstrapTarget{
 		{
-			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 			Dependencies: []Dependency{
 				{Hostname: "db", Type: "postgresql@16", Resolution: "CREATE"},
 				{Hostname: "cache", Type: "valkey@7.2", Mode: "HA", Resolution: "CREATE"},
@@ -728,6 +739,7 @@ func TestValidateBootstrapTargets_ClassicWithLiveRuntime_Rejected(t *testing.T) 
 				DevHostname:   "fizzydev",
 				Type:          "nodejs@22",
 				BootstrapMode: "standard",
+				ExplicitStage: "fizzystage",
 			},
 		},
 	}
@@ -756,6 +768,7 @@ func TestValidateBootstrapTargets_AdoptWithMissingRuntime_Rejected(t *testing.T)
 				Type:          "nodejs@22",
 				BootstrapMode: "standard",
 				IsExisting:    true,
+				ExplicitStage: "fizzystage",
 			},
 		},
 	}
@@ -786,6 +799,7 @@ func TestValidateBootstrapTargets_ClassicWithLiveStage_Rejected(t *testing.T) {
 				DevHostname:   "appdev",
 				Type:          "nodejs@22",
 				BootstrapMode: "standard",
+				ExplicitStage: "appstage",
 			},
 		},
 	}
@@ -812,6 +826,7 @@ func TestValidateBootstrapTargets_ClassicGreenfield_Success(t *testing.T) {
 				DevHostname:   "appdev",
 				Type:          "nodejs@22",
 				BootstrapMode: "standard",
+				ExplicitStage: "appstage",
 			},
 		},
 	}

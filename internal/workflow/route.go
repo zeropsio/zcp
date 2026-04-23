@@ -39,7 +39,7 @@ type RecipeMatch struct {
 	ImportYAML  string  `json:"importYaml,omitempty"`
 	// Mode is the bootstrap mode inferred from ImportYAML (standard, simple,
 	// dev). Empty when the YAML shape is unrecognised or managed-only.
-	Mode string `json:"mode,omitempty"`
+	Mode Mode `json:"mode,omitempty"`
 }
 
 // RecipeCorpus abstracts the recipe search surface. Implementations live in
@@ -203,7 +203,7 @@ func resumeOption(existing []platform.ServiceStack, metas []*ServiceMeta) (Boots
 // complete ServiceMeta and whose meta (if any) carries no BootstrapSession.
 // Managed and system services are excluded — they are never adopted.
 func adoptableServices(existing []platform.ServiceStack, metas []*ServiceMeta) []string {
-	metaByHost := metaIndex(metas)
+	metaByHost := ManagedRuntimeIndex(metas)
 	var out []string
 	for _, svc := range existing {
 		if svc.IsSystem() {
@@ -230,7 +230,7 @@ func adoptableServices(existing []platform.ServiceStack, metas []*ServiceMeta) [
 // session ID is returned alongside — callers use it to load the bootstrap
 // session state.
 func resumableServices(existing []platform.ServiceStack, metas []*ServiceMeta) ([]string, string) {
-	metaByHost := metaIndex(metas)
+	metaByHost := ManagedRuntimeIndex(metas)
 	var out []string
 	var sessionID string
 	for _, svc := range existing {
@@ -250,22 +250,6 @@ func resumableServices(existing []platform.ServiceStack, metas []*ServiceMeta) (
 		}
 	}
 	return out, sessionID
-}
-
-// metaIndex builds a hostname → meta lookup covering both the primary
-// hostname and any stage pair. Nil metas are skipped.
-func metaIndex(metas []*ServiceMeta) map[string]*ServiceMeta {
-	out := make(map[string]*ServiceMeta, len(metas))
-	for _, m := range metas {
-		if m == nil {
-			continue
-		}
-		out[m.Hostname] = m
-		if m.StageHostname != "" {
-			out[m.StageHostname] = m
-		}
-	}
-	return out
 }
 
 // recipeCollisions returns the hostnames that a recipe's ImportYAML would

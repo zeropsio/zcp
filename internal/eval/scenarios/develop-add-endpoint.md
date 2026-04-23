@@ -15,6 +15,10 @@ expect:
   requiredPatterns:
     - '"workflow":"bootstrap"'
     - '"route":"adopt"'
+    # scope is REQUIRED for develop start (cb63bf3). `app` is the single
+    # runtime hostname in this fixture — `db` is managed and not eligible.
+    - '"scope":['
+    - '"app"'
   requireAssessment: true
   finalUrlStatus: 200
   finalUrlHostname: app

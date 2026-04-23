@@ -377,6 +377,65 @@ func TestScenario_S2_IdleBootstrappedReady(t *testing.T) {
 // TestScenario_S6_DevelopDeployOKPendingVerify pins the
 // deploy-succeeded/verify-not-yet branch of planDevelopActive. Branch 2
 // passes (no deploy needed) and branch 3 fires (verify pending).
+// TestScenario_StandardPair_FirstDeploy_PromoteToStage pins the BuildPlan
+// behavior for the F#2 / pair-keyed-invariant flow: after the agent deploys +
+// verifies the dev half of a container+standard pair, BuildPlan must direct
+// the next deploy at the stage half. Before the ManagedRuntimeIndex
+// consolidation, scope=[dev, stage] was rejected upstream and this envelope
+// shape was unreachable; after the fix, scope carries both halves and plan
+// dispatch exits the first-deploy branch only when both are verified.
+func TestScenario_StandardPair_FirstDeploy_PromoteToStage(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	env := StateEnvelope{
+		Phase:       PhaseDevelopActive,
+		Environment: EnvContainer,
+		Services: []ServiceSnapshot{
+			{
+				Hostname:      "appdev",
+				TypeVersion:   "nodejs@22",
+				RuntimeClass:  RuntimeDynamic,
+				Mode:          ModeStandard,
+				StageHostname: "appstage",
+				Strategy:      "push-dev",
+				Bootstrapped:  true,
+				Deployed:      true,
+			},
+			{
+				Hostname:     "appstage",
+				TypeVersion:  "nodejs@22",
+				RuntimeClass: RuntimeDynamic,
+				Mode:         ModeStage,
+				Strategy:     "push-dev",
+				Bootstrapped: true,
+				Deployed:     false,
+			},
+		},
+		WorkSession: &WorkSessionSummary{
+			Intent:    "first deploy + promote to stage",
+			Services:  []string{"appdev", "appstage"},
+			CreatedAt: now.Add(-10 * time.Minute),
+			Deploys: map[string][]AttemptInfo{
+				"appdev": {{At: now.Add(-5 * time.Minute), Success: true, Iteration: 1}},
+			},
+			Verifies: map[string][]AttemptInfo{
+				"appdev": {{At: now.Add(-3 * time.Minute), Success: true, Iteration: 1}},
+			},
+		},
+	}
+
+	plan := BuildPlan(env)
+
+	if plan.Primary.Tool != "zerops_deploy" {
+		t.Errorf("standard pair promote: expected primary=zerops_deploy, got tool=%q", plan.Primary.Tool)
+	}
+	if plan.Primary.Args["targetService"] != "appstage" {
+		t.Errorf("standard pair promote: expected targetService=appstage, got %q",
+			plan.Primary.Args["targetService"])
+	}
+}
+
 func TestScenario_S6_DevelopDeployOKPendingVerify(t *testing.T) {
 	t.Parallel()
 
@@ -439,9 +498,14 @@ func TestScenario_S10_RecipeActive(t *testing.T) {
 }
 
 // TestScenario_S11_StrategySetupEmptyPlan pins the stateless-synthesis contract
-// for the strategy-setup phase: synthesis emits the push-git setup atom; Plan
-// stays empty because the handler (handleStrategy) delivers the atom directly
-// in its response, not via Plan.
+// for the strategy-setup phase: synthesis emits the push-git setup atom
+// chain; Plan stays empty because the handler (handleStrategy) delivers the
+// atom directly in its response, not via Plan.
+//
+// Under plan phase A.6 the monolithic strategy-push-git atom is replaced by
+// five service-scoped atoms (intro, 2x push per env, 2x trigger per type);
+// the envelope therefore carries a synthetic service snapshot reflecting
+// the service being configured.
 func TestScenario_S11_StrategySetupEmptyPlan(t *testing.T) {
 	t.Parallel()
 
@@ -453,6 +517,13 @@ func TestScenario_S11_StrategySetupEmptyPlan(t *testing.T) {
 	env := StateEnvelope{
 		Phase:       PhaseStrategySetup,
 		Environment: EnvContainer,
+		Services: []ServiceSnapshot{{
+			Hostname:     "appdev",
+			Bootstrapped: true,
+			Strategy:     StrategyPushGit,
+			Trigger:      TriggerUnset, // pre-trigger call → intro atom should fire
+			Mode:         ModeDev,
+		}},
 	}
 
 	plan := BuildPlan(env)

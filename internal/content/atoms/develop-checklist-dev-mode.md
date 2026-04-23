@@ -3,7 +3,8 @@ id: develop-checklist-dev-mode
 priority: 3
 phases: [develop-active]
 modes: [dev]
-title: "Dev-mode checklist extras"
+environments: [container]
+title: "Dev-mode checklist extras (container)"
 ---
 
 ### Checklist (dev-mode services)

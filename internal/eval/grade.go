@@ -122,7 +122,7 @@ func checkMustEnterWorkflow(want []string, calls []ToolCall) []string {
 		if !strings.Contains(c.Input, `"action":"start"`) && !strings.Contains(c.Input, `"action": "start"`) {
 			continue
 		}
-		for _, name := range []string{"bootstrap", "develop", "recipe", "cicd"} {
+		for _, name := range []string{"bootstrap", "develop", "recipe", "export"} {
 			if strings.Contains(c.Input, `"workflow":"`+name+`"`) || strings.Contains(c.Input, `"workflow": "`+name+`"`) {
 				entered[name] = true
 			}

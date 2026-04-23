@@ -70,15 +70,21 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 			"Run bootstrap first: action=\"start\" workflow=\"bootstrap\" (route=\"adopt\" if services already live)")), nil, nil
 	}
 
-	// Build deployable-runtime meta index for scope validation.
-	runtimeMetas := make(map[string]*workflow.ServiceMeta, len(metas))
-	for _, m := range metas {
+	// Build deployable-runtime meta index for scope validation, honoring the
+	// pair-keyed invariant (spec-workflows.md §8 E8): both halves of a
+	// container+standard pair resolve to the single meta file. Without this,
+	// scope=[devhost, stagehost] was silently rejecting stage despite the
+	// atom telling the agent to include it.
+	allRuntimes := workflow.ManagedRuntimeIndex(metas)
+	runtimeMetas := make(map[string]*workflow.ServiceMeta, len(allRuntimes))
+	for h, m := range allRuntimes {
 		if !m.IsComplete() {
 			continue
 		}
-		if m.Mode != "" || m.StageHostname != "" {
-			runtimeMetas[m.Hostname] = m
+		if m.Mode == "" && m.StageHostname == "" {
+			continue
 		}
+		runtimeMetas[h] = m
 	}
 	if len(runtimeMetas) == 0 {
 		return convertError(platform.NewPlatformError(

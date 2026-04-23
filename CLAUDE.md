@@ -159,6 +159,7 @@ Config: `.sync.yaml` (committed). Strapi token: `.env` (`STRAPI_API_TOKEN`, see 
 
 - **JSON-only stdout** — debug to stderr (if `--debug`)
 - **Service by hostname** — resolve to ID internally
+- **Runtime meta is pair-keyed** — container+standard and local+standard store one `ServiceMeta` file per dev/stage pair; stage is a field on the dev (or stage-keyed) meta, not a separate file. When indexing hostnames → metas use `workflow.ManagedRuntimeIndex(metas)` (slice→map) or `workflow.FindServiceMeta(stateDir, hostname)` (disk lookup); never key on `m.Hostname` alone. Enforced by `TestNoInlineManagedRuntimeIndex`; background in `docs/spec-workflows.md` §8 E8.
 - **Simplest correct solution** — plain functions over abstractions, fewer lines over more.
   But never leave known problems behind: if you encounter flawed architecture,
   duplicated state, or inconsistent patterns while working on a task, fix them

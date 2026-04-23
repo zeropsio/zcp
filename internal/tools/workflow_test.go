@@ -36,14 +36,14 @@ func TestWorkflowTool_NoParams_ReturnsError(t *testing.T) {
 	}
 }
 
-// TestWorkflowTool_Immediate_Export hits the one remaining static-guidance
-// branch: the export immediate workflow can be fetched without action=start.
-// (The retired cicd workflow was the other one — its setup flow now lives
-// in action=strategy for push-git.)
+// TestWorkflowTool_Immediate_Export hits the static-guidance branch for
+// export. Under plan phase A.8 the export atom is gated to container env
+// only (local-native export is deferred), so the test runs under a
+// container-flavored runtime.Info.
 func TestWorkflowTool_Immediate_Export(t *testing.T) {
 	t.Parallel()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "", nil, nil, nil, nil, "", "", nil, runtime.Info{})
+	RegisterWorkflow(srv, nil, "", nil, nil, nil, nil, "", "", nil, runtime.Info{InContainer: true, ServiceName: "zcpx"})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{"workflow": "export"})
 
@@ -278,9 +278,11 @@ func TestWorkflowTool_Action_Start_Immediate(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			engine := workflow.NewEngine(t.TempDir(), workflow.EnvLocal, nil)
+			// Export atom is gated to container env under plan A.8 — run the
+			// test in container-flavored runtime so guidance synthesizes.
+			engine := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
 			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil, runtime.Info{})
+			RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil, runtime.Info{InContainer: true, ServiceName: "zcpx"})
 
 			result := callTool(t, srv, "zerops_workflow", map[string]any{
 				"action":   "start",
@@ -400,7 +402,6 @@ func TestWorkflowTool_Action_Reset_PreservesCompleteMetas(t *testing.T) {
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             workflow.PlanModeDev,
-		Environment:      string(workflow.EnvContainer),
 		BootstrapSession: "old-sess",
 		BootstrappedAt:   "2026-04-10",
 	}); err != nil {
@@ -861,7 +862,7 @@ func TestWorkflowTool_Action_BootstrapComplete_DiscoverStep_Structured(t *testin
 		"step":   "discover",
 		"plan": []any{
 			map[string]any{
-				"runtime": map[string]any{"devHostname": "appdev", "type": "bun@1.2"},
+				"runtime": map[string]any{"devHostname": "appdev", "type": "bun@1.2", "stageHostname": "appstage"},
 				"dependencies": []any{
 					map[string]any{"hostname": "db", "type": "postgresql@16", "mode": "NON_HA", "resolution": "CREATE"},
 				},

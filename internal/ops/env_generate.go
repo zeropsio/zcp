@@ -12,10 +12,18 @@ import (
 )
 
 // EnvDotenvResult contains the result of .env file generation.
+//
+// VPNHint is populated when at least one managed service referenced in
+// the resolved env vars looked unreachable — local dev then almost
+// certainly needs `zcli vpn up`. The probe is best-effort and non-
+// blocking: even if probes fail, the .env file still lands. An empty
+// hint means every probed host was reachable (or no probe happened
+// because ServiceStack carried no port info).
 type EnvDotenvResult struct {
 	Path      string `json:"path"`
 	Services  int    `json:"services"`
 	Variables int    `json:"variables"`
+	VPNHint   string `json:"vpnHint,omitempty"`
 }
 
 // refPattern matches a full ${hostname_varName} cross-service reference.
@@ -134,11 +142,48 @@ func EnvGenerateDotenv(
 		return nil, fmt.Errorf("write .env: %w", err)
 	}
 
-	return &EnvDotenvResult{
+	result := &EnvDotenvResult{
 		Path:      envPath,
 		Services:  len(serviceEnvCache),
 		Variables: len(resolved),
-	}, nil
+	}
+
+	// Best-effort VPN probe. Only runs when we cross-referenced managed
+	// services (serviceEnvCache has entries); a local .env with only
+	// project-level vars doesn't need VPN to work on dev. Services are
+	// probed via their platform-listed TCP ports. A single unreachable
+	// host triggers the hint — users typically run one `zcli vpn up`
+	// per project, not per service.
+	if len(serviceEnvCache) > 0 {
+		if hint := probeManagedServicesForVPN(ctx, client, projectID, serviceEnvCache); hint != "" {
+			result.VPNHint = hint
+		}
+	}
+	return result, nil
+}
+
+// probeManagedServicesForVPN attempts one TCP dial per referenced
+// managed service. Returns a hint string when any probe fails, empty
+// when all succeed (or no port info is available to probe against).
+func probeManagedServicesForVPN(ctx context.Context, client platform.Client, projectID string, cache map[string][]platform.EnvVar) string {
+	services, err := client.ListServices(ctx, projectID)
+	if err != nil {
+		return ""
+	}
+	serviceByName := make(map[string]platform.ServiceStack, len(services))
+	for _, s := range services {
+		serviceByName[s.Name] = s
+	}
+	for host := range cache {
+		svc, ok := serviceByName[host]
+		if !ok || len(svc.Ports) == 0 {
+			continue
+		}
+		if !ProbeManagedReachable(ctx, host, svc.Ports[0].Port) {
+			return fmt.Sprintf("Managed service %q not reachable on port %d — run `zcli vpn up %s` and retry local dev.", host, svc.Ports[0].Port, projectID)
+		}
+	}
+	return ""
 }
 
 func findEnvValue(envs []platform.EnvVar, key string) string {

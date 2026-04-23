@@ -20,7 +20,7 @@ func TestBootstrapComplete_WritesServiceMeta(t *testing.T) {
 
 	// Submit plan.
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 		Dependencies: []Dependency{
 			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
 		},
@@ -62,7 +62,7 @@ func TestBootstrapComplete_AppendsReflog(t *testing.T) {
 	}
 
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", ExplicitStage: "appstage"},
 	}}, nil, nil)
 	if err != nil {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
@@ -164,7 +164,7 @@ func TestWriteBootstrapOutputs_NeverWritesDepMetas(t *testing.T) {
 			}
 
 			_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-				Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+				Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 				Dependencies: []Dependency{
 					{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: tt.resolution},
 				},
@@ -221,7 +221,7 @@ func TestWriteBootstrapOutputs_PreExistingDepMetaSurvives(t *testing.T) {
 	}
 
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 		Dependencies: []Dependency{
 			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "EXISTS"},
 		},
@@ -260,7 +260,7 @@ func TestWriteBootstrapOutputs_SetsBootstrappedAt(t *testing.T) {
 	}
 
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 		Dependencies: []Dependency{
 			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
 		},
@@ -302,7 +302,7 @@ func TestProvisionMeta_NoMetaAfterPlan(t *testing.T) {
 	}
 
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 		Dependencies: []Dependency{
 			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
 		},
@@ -332,7 +332,7 @@ func TestProvisionMeta_WritesPartialMeta(t *testing.T) {
 	}
 
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 		Dependencies: []Dependency{
 			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
 		},
@@ -392,7 +392,7 @@ func TestProvisionMeta_PreExistingDepMetaSurvives(t *testing.T) {
 	}
 
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 		Dependencies: []Dependency{
 			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "EXISTS"},
 		},
@@ -432,7 +432,7 @@ func TestWriteBootstrapOutputs_AlwaysWritesEmptyStrategy(t *testing.T) {
 	}
 
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 	}}, nil, nil)
 	if err != nil {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
@@ -460,7 +460,7 @@ func TestWriteBootstrapOutputs_DefaultEmptyStrategy(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name          string
-		bootstrapMode string
+		bootstrapMode Mode
 		env           Environment
 	}{
 		{"dev mode gets empty strategy", PlanModeDev, EnvLocal},
@@ -479,7 +479,7 @@ func TestWriteBootstrapOutputs_DefaultEmptyStrategy(t *testing.T) {
 			}
 
 			_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-				Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: tt.bootstrapMode},
+				Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: tt.bootstrapMode, ExplicitStage: "appstage"},
 			}}, nil, nil)
 			if err != nil {
 				t.Fatalf("BootstrapCompletePlan: %v", err)
@@ -545,8 +545,8 @@ func TestProvisionMeta_SetsMode(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name          string
-		bootstrapMode string
-		wantMode      string
+		bootstrapMode Mode
+		wantMode      Mode
 		env           Environment
 	}{
 		{"standard mode (default)", "", PlanModeStandard, EnvContainer},
@@ -565,7 +565,7 @@ func TestProvisionMeta_SetsMode(t *testing.T) {
 			}
 
 			_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-				Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: tt.bootstrapMode},
+				Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: tt.bootstrapMode, ExplicitStage: "appstage"},
 			}}, nil, nil)
 			if err != nil {
 				t.Fatalf("BootstrapCompletePlan: %v", err)
@@ -853,7 +853,7 @@ func TestBuildTransitionMessage_IncludesDeployModelPrimer(t *testing.T) {
 		Bootstrap: &BootstrapState{
 			Plan: &ServicePlan{
 				Targets: []BootstrapTarget{
-					{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
+					{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"}},
 				},
 			},
 		},
@@ -902,66 +902,10 @@ func TestBuildTransitionMessage_Adoption_NoHelloWorld(t *testing.T) {
 	}
 }
 
-func TestWriteBootstrapOutputs_EnvironmentField(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name    string
-		env     Environment
-		wantEnv string
-	}{
-		{
-			name:    "container mode sets environment=container",
-			env:     EnvContainer,
-			wantEnv: "container",
-		},
-		{
-			name:    "local mode sets environment=local",
-			env:     EnvLocal,
-			wantEnv: "local",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			dir := t.TempDir()
-			eng := NewEngine(dir, tt.env, nil)
-
-			_, err := eng.BootstrapStart("proj-1", "test")
-			if err != nil {
-				t.Fatalf("BootstrapStart: %v", err)
-			}
-			_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-				Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
-			}}, nil, nil)
-			if err != nil {
-				t.Fatalf("BootstrapCompletePlan: %v", err)
-			}
-			for _, step := range []string{"provision", "close"} {
-				if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
-					t.Fatalf("BootstrapComplete(%s): %v", step, err)
-				}
-			}
-
-			// In local mode, meta hostname = appstage (stage), not appdev.
-			metaHostname := "appdev"
-			if tt.env == EnvLocal {
-				metaHostname = "appstage"
-			}
-			meta, err := ReadServiceMeta(dir, metaHostname)
-			if err != nil {
-				t.Fatalf("ReadServiceMeta(%s): %v", metaHostname, err)
-			}
-			if meta == nil {
-				t.Fatalf("expected %s meta to exist", metaHostname)
-			}
-			if meta.Environment != tt.wantEnv {
-				t.Errorf("Environment = %q, want %q", meta.Environment, tt.wantEnv)
-			}
-		})
-	}
-}
-
-func TestWriteBootstrapOutputs_LocalMode_HostnameIsStage(t *testing.T) {
+// Bootstrap writes the meta keyed by the dev hostname regardless of
+// environment. Local envs that want a stage-only topology go through
+// adopt-local (writes Mode=local-stage), not bootstrap.
+func TestWriteBootstrapOutputs_LocalMode_KeyedByDevHostname(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
@@ -971,7 +915,7 @@ func TestWriteBootstrapOutputs_LocalMode_HostnameIsStage(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
 	}}, nil, nil)
 	if err != nil {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
@@ -982,63 +926,30 @@ func TestWriteBootstrapOutputs_LocalMode_HostnameIsStage(t *testing.T) {
 		}
 	}
 
-	// In local mode, meta should be written for appstage (not appdev).
-	meta, err := ReadServiceMeta(dir, "appstage")
+	meta, err := ReadServiceMeta(dir, "appdev")
 	if err != nil {
-		t.Fatalf("ReadServiceMeta(appstage): %v", err)
+		t.Fatalf("ReadServiceMeta(appdev): %v", err)
 	}
 	if meta == nil {
-		t.Fatal("expected appstage meta in local mode")
+		t.Fatal("expected appdev meta keyed by dev hostname in local mode")
 	}
-	if meta.Hostname != "appstage" {
-		t.Errorf("hostname = %s, want appstage", meta.Hostname)
+	if meta.Hostname != "appdev" {
+		t.Errorf("hostname = %s, want appdev", meta.Hostname)
 	}
-	if meta.StageHostname != "" {
-		t.Errorf("stageHostname = %s, want empty (local mode has no dev/stage pair)", meta.StageHostname)
+	if meta.StageHostname != "appstage" {
+		t.Errorf("stageHostname = %s, want appstage", meta.StageHostname)
 	}
 	if meta.Mode != PlanModeStandard {
 		t.Errorf("mode = %s, want standard", meta.Mode)
 	}
-
-	// appdev should NOT have a meta file in local mode.
-	devMeta, _ := ReadServiceMeta(dir, "appdev")
-	if devMeta != nil {
-		t.Error("appdev meta should NOT exist in local mode (dev service not created)")
-	}
-}
-
-func TestWriteBootstrapOutputs_LocalMode_DefaultEmptyStrategy2(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	eng := NewEngine(dir, EnvLocal, nil)
-
-	_, err := eng.BootstrapStart("proj-1", "test")
-	if err != nil {
-		t.Fatalf("BootstrapStart: %v", err)
-	}
-	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
-	}}, nil, nil)
-	if err != nil {
-		t.Fatalf("BootstrapCompletePlan: %v", err)
-	}
-
-	for _, step := range []string{"provision", "close"} {
-		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
-			t.Fatalf("BootstrapComplete(%s): %v", step, err)
-		}
-	}
-
-	// Local mode: meta written as appstage. Strategy is empty (bootstrap default).
-	meta, err := ReadServiceMeta(dir, "appstage")
-	if err != nil {
-		t.Fatalf("ReadServiceMeta(appstage): %v", err)
-	}
-	if meta == nil {
-		t.Fatal("expected appstage meta")
-	}
 	if meta.DeployStrategy != "" {
 		t.Errorf("bootstrap must write empty DeployStrategy, got %q", meta.DeployStrategy)
+	}
+
+	// No separate stage-keyed meta — the stage lives inside the dev meta's
+	// StageHostname field.
+	if stageMeta, _ := ReadServiceMeta(dir, "appstage"); stageMeta != nil {
+		t.Error("appstage meta should NOT exist on its own — stage is a field of the dev meta")
 	}
 }
 
@@ -1072,9 +983,10 @@ func TestWriteBootstrapOutputs_AdoptedService_EmptyBootstrapSession(t *testing.T
 
 			_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
 				Runtime: RuntimeTarget{
-					DevHostname: "appdev",
-					Type:        "nodejs@22",
-					IsExisting:  tt.isExisting,
+					DevHostname:   "appdev",
+					Type:          "nodejs@22",
+					IsExisting:    tt.isExisting,
+					ExplicitStage: "appstage",
 				},
 			}}, nil, nil)
 			if err != nil {
@@ -1132,9 +1044,10 @@ func TestProvisionMeta_AdoptedService_EmptyBootstrapSession(t *testing.T) {
 
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
 		Runtime: RuntimeTarget{
-			DevHostname: "appdev",
-			Type:        "nodejs@22",
-			IsExisting:  true,
+			DevHostname:   "appdev",
+			Type:          "nodejs@22",
+			IsExisting:    true,
+			ExplicitStage: "appstage",
 		},
 	}}, nil, nil)
 	if err != nil {
@@ -1160,10 +1073,10 @@ func TestProvisionMeta_AdoptedService_EmptyBootstrapSession(t *testing.T) {
 }
 
 // Mode-expansion path (§9.1): the existing runtime's user-authored fields —
-// BootstrappedAt, DeployStrategy, StrategyConfirmed, FirstDeployedAt — must
-// survive the upgrade. Only Mode / StageHostname change. Without the merge,
-// a dev→standard upgrade would silently revert the user's push-git choice
-// and lose the original bootstrap date.
+// BootstrappedAt, DeployStrategy, StrategyConfirmed, FirstDeployedAt —
+// must survive the upgrade. Only Mode / StageHostname change. Without the
+// merge, a dev→standard upgrade would silently revert the user's push-git
+// choice and lose deploy history.
 //
 // Flow note: when the single runtime target is IsExisting=true with no
 // live-new dependencies, bootstrap's fast-path auto-skips `close` (set by
@@ -1180,7 +1093,6 @@ func TestWriteBootstrapOutputs_ExpansionPreservesExistingFields(t *testing.T) {
 	existing := &ServiceMeta{
 		Hostname:          "appdev",
 		Mode:              PlanModeDev,
-		Environment:       string(EnvContainer),
 		BootstrapSession:  "original-sess",
 		BootstrappedAt:    "2026-01-15",
 		DeployStrategy:    StrategyPushGit,
@@ -1240,7 +1152,7 @@ func TestWriteBootstrapOutputs_ExpansionPreservesExistingFields(t *testing.T) {
 		t.Error("StrategyConfirmed lost — must be preserved through expansion")
 	}
 	if got.FirstDeployedAt != existing.FirstDeployedAt {
-		t.Errorf("FirstDeployedAt: got %q, want %q", got.FirstDeployedAt, existing.FirstDeployedAt)
+		t.Errorf("FirstDeployedAt: got %q, want %q (must be preserved)", got.FirstDeployedAt, existing.FirstDeployedAt)
 	}
 }
 
@@ -1258,7 +1170,6 @@ func TestWriteProvisionMetas_ExpansionPreservesExistingFields(t *testing.T) {
 	existing := &ServiceMeta{
 		Hostname:          "appdev",
 		Mode:              PlanModeDev,
-		Environment:       string(EnvContainer),
 		BootstrapSession:  "earlier",
 		BootstrappedAt:    "2026-02-01",
 		DeployStrategy:    StrategyPushDev,
@@ -1325,7 +1236,6 @@ func TestMergeExistingMeta(t *testing.T) {
 		Hostname:      "appdev",
 		Mode:          PlanModeStandard, // upgrade
 		StageHostname: "appstage",       // upgrade
-		Environment:   string(EnvContainer),
 	}
 	existing := &ServiceMeta{
 		Hostname:          "appdev",

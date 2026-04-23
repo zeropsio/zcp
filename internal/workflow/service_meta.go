@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"time"
 )
 
 // Strategy constants for deploy decisions.
@@ -20,17 +19,31 @@ const (
 
 // ServiceMeta records bootstrap decisions for a service.
 // ZCP's persistent knowledge — the API doesn't track mode, pairing, or strategy.
-// The API is the source of truth for operational state (running, resources, envs).
+// The API is the source of truth for operational state (running, resources,
+// envs).
+//
+// FirstDeployedAt is the durable "has this service seen a real code deploy"
+// signal. Stamped from two events (plan phase A.3):
+//
+//  1. A deploy attempt recorded in the work session lands with SucceededAt
+//     set — stamp here so the fact persists after the session closes.
+//  2. Auto-adoption observes platform Status=ACTIVE on a pre-existing
+//     service — stamp at adoption so services deployed before ZCP touched
+//     them don't get stuck at "never deployed" (the fizzy-export bug).
+//
+// The old "stamp only on verify pass" behavior is gone; deploy success is a
+// sufficient signal and verify-only stamping was masking legitimate
+// Deployed=true cases for services that bypassed ZCP verify.
 type ServiceMeta struct {
-	Hostname          string `json:"hostname"`
-	Mode              string `json:"mode,omitempty"`
-	StageHostname     string `json:"stageHostname,omitempty"`
-	DeployStrategy    string `json:"deployStrategy,omitempty"`
-	StrategyConfirmed bool   `json:"strategyConfirmed,omitempty"` // true after user explicitly confirms/sets strategy
-	Environment       string `json:"environment,omitempty"`       // "container" or "local"
-	BootstrapSession  string `json:"bootstrapSession"`
-	BootstrappedAt    string `json:"bootstrappedAt"`
-	FirstDeployedAt   string `json:"firstDeployedAt,omitempty"` // set on the first successful deploy (develop phase)
+	Hostname          string         `json:"hostname"`
+	Mode              Mode           `json:"mode,omitempty"`
+	StageHostname     string         `json:"stageHostname,omitempty"`
+	DeployStrategy    DeployStrategy `json:"deployStrategy,omitempty"`
+	PushGitTrigger    PushGitTrigger `json:"pushGitTrigger,omitempty"`    // valid only when DeployStrategy==push-git
+	StrategyConfirmed bool           `json:"strategyConfirmed,omitempty"` // true after user explicitly confirms/sets strategy
+	BootstrapSession  string         `json:"bootstrapSession"`
+	BootstrappedAt    string         `json:"bootstrappedAt"`
+	FirstDeployedAt   string         `json:"firstDeployedAt,omitempty"` // stamped on first observed deploy — via session or adoption
 }
 
 // IsComplete returns true if bootstrap finished for this service.
@@ -42,9 +55,8 @@ func (m *ServiceMeta) IsComplete() bool {
 	return m.BootstrappedAt != ""
 }
 
-// IsDeployed returns true once the service has been deployed at least once.
-// FirstDeployedAt is set by the develop flow on the first successful deploy.
-// Empty FirstDeployedAt on an IsComplete meta signals the first-deploy branch.
+// IsDeployed returns true once the service has been observed to have a real
+// code deploy (via session or adoption-at-ACTIVE). See ServiceMeta doc.
 func (m *ServiceMeta) IsDeployed() bool {
 	return m.FirstDeployedAt != ""
 }
@@ -58,7 +70,18 @@ func (m *ServiceMeta) IsAdopted() bool {
 }
 
 // Hostnames returns every hostname this meta represents.
-// For container+standard that's [dev, stage]; for everything else just [m.Hostname].
+//
+// Pair-keyed meta invariant (see docs/spec-workflows.md §8 E8): exactly one
+// ServiceMeta file represents a runtime service — as a dev/stage pair
+// (container+standard, local+standard) or a single hostname
+// (dev/simple/local-only). Hostnames() is the canonical enumeration across the
+// pair; use it (or ManagedRuntimeIndex for slice→map construction) anywhere you
+// map hostnames to metas. Keying by m.Hostname alone violates the invariant and
+// breaks scope validation, auto-close, and strategy resolution for stage
+// hostnames.
+//
+// For container+standard and local+standard that's [Hostname, StageHostname];
+// for everything else just [Hostname].
 func (m *ServiceMeta) Hostnames() []string {
 	if m.StageHostname != "" {
 		return []string{m.Hostname, m.StageHostname}
@@ -66,29 +89,59 @@ func (m *ServiceMeta) Hostnames() []string {
 	return []string{m.Hostname}
 }
 
+// ManagedRuntimeIndex builds a hostname → meta map honoring the pair-keyed
+// invariant (docs/spec-workflows.md §8 E8). Every hostname a meta represents
+// (via Hostnames()) resolves to the same *ServiceMeta pointer.
+//
+// The helper does not filter on IsComplete() or by Mode — callers layer their
+// own predicates on top (e.g. scope validation keeps its runtime-class
+// filter). Nil metas and metas with empty Hostname are skipped so lookups
+// never poison on an empty key.
+//
+// This is the single canonical mechanism for hostname→meta mapping when the
+// caller already holds a []*ServiceMeta slice (typically from
+// ListServiceMetas). Inline reimplementations are a pair-keyed invariant
+// violation — TestNoInlineManagedRuntimeIndex scans the codebase for the
+// pattern and fails the build.
+func ManagedRuntimeIndex(metas []*ServiceMeta) map[string]*ServiceMeta {
+	out := make(map[string]*ServiceMeta, len(metas)*2)
+	for _, m := range metas {
+		if m == nil || m.Hostname == "" {
+			continue
+		}
+		for _, h := range m.Hostnames() {
+			out[h] = m
+		}
+	}
+	return out
+}
+
 // PrimaryRole returns the deploy role of m.Hostname.
-// Encapsulates the mode+environment+stage lookup so callers don't re-derive it.
-func (m *ServiceMeta) PrimaryRole() string {
+// Encapsulates the mode→role lookup so callers don't re-derive it.
+// Local topologies (local-stage / local-only) are project-keyed — they
+// have no per-service deploy role; callers should use StageHostname
+// directly for deploys on local-stage.
+func (m *ServiceMeta) PrimaryRole() Mode {
 	mode := m.Mode
 	if mode == "" {
 		mode = PlanModeStandard
 	}
-	// Local+standard: m.Hostname holds the stage hostname (dev doesn't exist locally).
-	if m.Environment == string(EnvLocal) && mode == PlanModeStandard {
-		return DeployRoleStage
-	}
 	switch mode {
-	case PlanModeDev:
-		return DeployRoleDev
 	case PlanModeSimple:
 		return DeployRoleSimple
+	case PlanModeDev, PlanModeStandard, ModeStage, PlanModeLocalStage, PlanModeLocalOnly:
+		// Dev half of a standard pair and standalone dev both deploy as Dev.
+		// Local topologies have no per-service role — the container-side
+		// fallback keeps call sites that expect a non-empty role happy;
+		// callers that care about local-only semantics gate on meta.Mode.
+		return DeployRoleDev
 	}
 	return DeployRoleDev
 }
 
 // RoleFor returns the deploy role of the given hostname within this meta's scope.
 // Returns "" when the hostname is unrelated to this meta.
-func (m *ServiceMeta) RoleFor(hostname string) string {
+func (m *ServiceMeta) RoleFor(hostname string) Mode {
 	if hostname == "" {
 		return ""
 	}
@@ -250,40 +303,16 @@ func cleanIncompleteMetasForSession(stateDir, sessionID string) {
 	}
 }
 
-// MarkServiceDeployed stamps FirstDeployedAt on the meta for hostname. Idempotent:
-// an already-stamped meta is left untouched so the original first-deploy moment
-// is preserved. No-op when the meta does not exist (useful when a develop
-// workflow is run against services that were adopted from an external source,
-// i.e. no local ServiceMeta was ever written).
+// FindServiceMeta returns the meta whose Hostname OR StageHostname matches
+// — the disk-backed counterpart to ManagedRuntimeIndex. Honors the pair-keyed
+// invariant (spec-workflows.md §8 E8): container+standard and local+standard
+// store exactly one file per pair; a direct read by the non-primary hostname
+// would miss. Fast path hits the direct file; slow path scans metas for a
+// StageHostname match. Returns (nil, nil) when no meta tracks hostname.
 //
-// Hostname resolves via findMetaForHostname — verifying a standard-mode stage
-// hostname stamps the dev-keyed meta file, so the first-deploy branch exits
-// regardless of which half the agent verified first.
-//
-// Under Option A this is the hook that the first-deploy branch calls after a
-// successful verify — without it, subsequent develop sessions keep re-entering
-// the first-deploy branch and re-running scaffold.
-func MarkServiceDeployed(stateDir, hostname string) error {
-	meta, err := findMetaForHostname(stateDir, hostname)
-	if err != nil {
-		return fmt.Errorf("mark service deployed: %w", err)
-	}
-	if meta == nil || meta.FirstDeployedAt != "" {
-		return nil
-	}
-	meta.FirstDeployedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := WriteServiceMeta(stateDir, meta); err != nil {
-		return fmt.Errorf("mark service deployed: write meta: %w", err)
-	}
-	return nil
-}
-
-// findMetaForHostname returns the meta whose Hostname OR StageHostname matches.
-// Container+standard mode stores the meta as {dev}.json with a StageHostname
-// field, so a direct file lookup by the stage hostname misses. Fast path hits
-// the direct file; slow path scans metas for a StageHostname match.
-// Returns (nil, nil) when no meta tracks hostname.
-func findMetaForHostname(stateDir, hostname string) (*ServiceMeta, error) {
+// Use this from tool-layer handlers when you have a hostname but not a
+// pre-loaded meta slice. For slice→map construction, use ManagedRuntimeIndex.
+func FindServiceMeta(stateDir, hostname string) (*ServiceMeta, error) {
 	if meta, err := ReadServiceMeta(stateDir, hostname); err != nil || meta != nil {
 		return meta, err
 	}

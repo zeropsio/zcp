@@ -35,7 +35,9 @@ func shellQuote(s string) string {
 // Auto-inference:
 //   - targetService is required
 //   - sourceService == "" → auto-inferred as targetService (self-deploy)
-//   - sourceService == targetService → includeGit forced to true
+//   - includeGit is derived from the source/target pair: true for self-deploy
+//     (the service pushes its own code, .git must stay), false for cross-deploy
+//     (dev→stage would otherwise carry the dev container's .git across).
 func DeploySSH(
 	ctx context.Context,
 	client platform.Client,
@@ -46,7 +48,6 @@ func DeploySSH(
 	targetService string,
 	setup string,
 	workingDir string,
-	includeGit bool,
 ) (*DeployResult, error) {
 	if sshDeployer == nil {
 		return nil, platform.NewPlatformError(
@@ -65,9 +66,7 @@ func DeploySSH(
 	if sourceService == "" {
 		sourceService = targetService // auto-infer self-deploy
 	}
-	if sourceService == targetService {
-		includeGit = true // self-deploy always preserves .git
-	}
+	includeGit := sourceService == targetService
 
 	return deploySSH(ctx, client, projectID, sshDeployer, authInfo,
 		sourceService, targetService, setup, workingDir, includeGit, DeployGitIdentity)

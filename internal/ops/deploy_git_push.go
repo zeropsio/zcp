@@ -10,8 +10,10 @@ const defaultGitHost = "github.com"
 const defaultBranch = "main"
 
 // BuildGitPushCommand builds an SSH command that pushes committed code to an
-// external git remote (GitHub/GitLab). The LLM commits before calling this;
-// the tool handles auth, remote setup, and push.
+// external git remote (GitHub/GitLab). The tool handler's committed-code
+// pre-flight guarantees .git exists and HEAD points at a commit before this
+// fires — no git init, no auto-commit fallback. Those fallbacks used to
+// masquerade "agent forgot to commit" as successful pushes of empty state.
 //
 // Security: .netrc created with trap-based cleanup (runs even on failure),
 // umask 077 prevents world-readable token, remoteURL is shell-quoted.
@@ -36,9 +38,6 @@ func BuildGitPushCommand(workingDir, remoteURL, branch string, id GitIdentity) s
 	// Working directory.
 	parts = append(parts, fmt.Sprintf("cd %s", workingDir))
 
-	// Init fallback: only if .git doesn't exist (first-time setup).
-	parts = append(parts, fmt.Sprintf("(test -d .git || git init -q -b %s)", branch))
-
 	// Git identity (internal commits, not user-facing).
 	email := shellQuote(id.Email)
 	name := shellQuote(id.Name)
@@ -53,11 +52,7 @@ func BuildGitPushCommand(workingDir, remoteURL, branch string, id GitIdentity) s
 		))
 	}
 
-	// Fallback commit: only if NO commits exist yet (fresh git init).
-	// LLM normally commits before calling git-push; this handles the init case.
-	parts = append(parts, "(git rev-parse HEAD >/dev/null 2>&1 || (git add -A && git commit -q -m 'initial commit'))")
-
-	// Push.
+	// Push. Pre-flight guarantees there is at least one commit to push.
 	parts = append(parts, fmt.Sprintf("git push -u origin %s", branch))
 
 	return strings.Join(parts, " && ")

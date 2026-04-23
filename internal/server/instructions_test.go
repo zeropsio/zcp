@@ -30,7 +30,7 @@ func TestBuildInstructions_Local_HasEnvironmentBlock(t *testing.T) {
 	for _, want := range []string{
 		"ZCP manages Zerops",
 		`zerops_workflow action="status"`,
-		"zcli push",
+		"zerops_deploy",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("local instructions missing %q", want)
@@ -38,6 +38,12 @@ func TestBuildInstructions_Local_HasEnvironmentBlock(t *testing.T) {
 	}
 	if strings.Contains(out, "/var/www/") {
 		t.Error("local instructions should not mention container mount paths")
+	}
+	// Local instructions must NOT leak the internal push mechanism.
+	// The `zerops_deploy` tool encapsulates `zcli push`; LLM should call the
+	// tool, not reach for zcli directly.
+	if strings.Contains(out, "zcli push") {
+		t.Errorf("local instructions must not leak `zcli push` — use zerops_deploy encapsulation. Got:\n%s", out)
 	}
 }
 

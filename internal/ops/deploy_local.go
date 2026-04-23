@@ -47,6 +47,10 @@ func OverrideRunnerForTest(r commandRunner) func() {
 // Uses --service-id and --project-id flags for non-interactive mode (no TTY needed).
 // zcli push blocks until the build pipeline completes. pollDeployBuild (in tool handler)
 // then confirms the final status via API.
+//
+// Always runs with --no-git; recipes that need committed history go
+// through strategy=git-push (handleLocalGitPush in the tool layer),
+// which drives the user's own git CLI on a separate code path.
 func DeployLocal(
 	ctx context.Context,
 	client platform.Client,
@@ -55,7 +59,6 @@ func DeployLocal(
 	targetService string,
 	setup string,
 	workingDir string,
-	includeGit bool,
 ) (*DeployResult, error) {
 	// 1. Validate zcli.
 	if _, err := runner.LookPath("zcli"); err != nil {
@@ -127,11 +130,7 @@ func DeployLocal(
 	if setup != "" {
 		args = append(args, "--setup", setup)
 	}
-	if includeGit {
-		args = append(args, "-g")
-	} else {
-		args = append(args, "--no-git")
-	}
+	args = append(args, "--no-git")
 	_, stderr, err = runner.Run(ctx, "zcli", args...)
 	if err != nil {
 		return nil, platform.NewPlatformError(
