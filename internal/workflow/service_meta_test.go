@@ -638,6 +638,180 @@ func TestIsKnownService(t *testing.T) {
 	}
 }
 
+func TestManagedRuntimeIndex(t *testing.T) {
+	t.Parallel()
+
+	standardPair := &ServiceMeta{
+		Hostname:         "appdev",
+		StageHostname:    "appstage",
+		Mode:             PlanModeStandard,
+		BootstrapSession: "s1",
+		BootstrappedAt:   "2026-03-04T12:00:00Z",
+	}
+	devOnly := &ServiceMeta{
+		Hostname:         "api",
+		Mode:             PlanModeDev,
+		BootstrapSession: "s2",
+		BootstrappedAt:   "2026-03-04T12:00:00Z",
+	}
+	simple := &ServiceMeta{
+		Hostname:         "worker",
+		Mode:             PlanModeSimple,
+		BootstrapSession: "s3",
+		BootstrappedAt:   "2026-03-04T12:00:00Z",
+	}
+	localStage := &ServiceMeta{
+		Hostname:         "myproject",
+		StageHostname:    "appstage",
+		Mode:             PlanModeLocalStage,
+		BootstrapSession: "s4",
+		BootstrappedAt:   "2026-03-04T12:00:00Z",
+	}
+	incomplete := &ServiceMeta{
+		Hostname:         "orphan",
+		BootstrapSession: "s5",
+		// BootstrappedAt intentionally empty — IsComplete() == false.
+	}
+
+	t.Run("standard pair maps both keys to same pointer", func(t *testing.T) {
+		t.Parallel()
+		idx := ManagedRuntimeIndex([]*ServiceMeta{standardPair})
+		if len(idx) != 2 {
+			t.Fatalf("want 2 entries, got %d: %v", len(idx), idx)
+		}
+		if idx["appdev"] != standardPair {
+			t.Errorf("idx[appdev] = %p, want %p", idx["appdev"], standardPair)
+		}
+		if idx["appstage"] != standardPair {
+			t.Errorf("idx[appstage] = %p, want %p", idx["appstage"], standardPair)
+		}
+		if idx["appdev"] != idx["appstage"] {
+			t.Errorf("both keys must point at the same *ServiceMeta")
+		}
+	})
+
+	t.Run("dev-only meta has one key", func(t *testing.T) {
+		t.Parallel()
+		idx := ManagedRuntimeIndex([]*ServiceMeta{devOnly})
+		if len(idx) != 1 {
+			t.Fatalf("want 1 entry, got %d", len(idx))
+		}
+		if idx["api"] != devOnly {
+			t.Errorf("idx[api] mismatch")
+		}
+	})
+
+	t.Run("simple mode has one key", func(t *testing.T) {
+		t.Parallel()
+		idx := ManagedRuntimeIndex([]*ServiceMeta{simple})
+		if len(idx) != 1 {
+			t.Fatalf("want 1 entry, got %d", len(idx))
+		}
+	})
+
+	t.Run("local-stage inverted mode maps both keys", func(t *testing.T) {
+		t.Parallel()
+		idx := ManagedRuntimeIndex([]*ServiceMeta{localStage})
+		if len(idx) != 2 {
+			t.Fatalf("want 2 entries, got %d: %v", len(idx), idx)
+		}
+		if idx["myproject"] != localStage {
+			t.Errorf("idx[myproject] mismatch — inverted mode uses project name as Hostname")
+		}
+		if idx["appstage"] != localStage {
+			t.Errorf("idx[appstage] mismatch")
+		}
+	})
+
+	t.Run("incomplete meta is NOT filtered by helper (caller's predicate)", func(t *testing.T) {
+		t.Parallel()
+		idx := ManagedRuntimeIndex([]*ServiceMeta{incomplete})
+		if len(idx) != 1 {
+			t.Fatalf("want 1 entry (helper does not filter on IsComplete), got %d", len(idx))
+		}
+		if idx["orphan"] != incomplete {
+			t.Errorf("idx[orphan] mismatch")
+		}
+	})
+
+	t.Run("nil meta is skipped", func(t *testing.T) {
+		t.Parallel()
+		idx := ManagedRuntimeIndex([]*ServiceMeta{nil, devOnly, nil})
+		if len(idx) != 1 {
+			t.Fatalf("want 1 entry, got %d", len(idx))
+		}
+	})
+
+	t.Run("empty hostname is skipped, never poisons map", func(t *testing.T) {
+		t.Parallel()
+		blank := &ServiceMeta{Hostname: "", StageHostname: "appstage"}
+		idx := ManagedRuntimeIndex([]*ServiceMeta{blank, devOnly})
+		if _, present := idx[""]; present {
+			t.Errorf("empty-string key must never appear in index")
+		}
+		if len(idx) != 1 {
+			t.Fatalf("want 1 entry (only devOnly valid), got %d: %v", len(idx), idx)
+		}
+	})
+
+	t.Run("duplicate hostname: last meta wins (documented map semantics)", func(t *testing.T) {
+		t.Parallel()
+		first := &ServiceMeta{Hostname: "app", Mode: PlanModeDev}
+		second := &ServiceMeta{Hostname: "app", Mode: PlanModeSimple}
+		idx := ManagedRuntimeIndex([]*ServiceMeta{first, second})
+		if len(idx) != 1 {
+			t.Fatalf("want 1 entry, got %d", len(idx))
+		}
+		if idx["app"] != second {
+			t.Errorf("want second (last-write-wins), got %p", idx["app"])
+		}
+	})
+
+	t.Run("nil input returns empty map (no panic)", func(t *testing.T) {
+		t.Parallel()
+		idx := ManagedRuntimeIndex(nil)
+		if idx == nil {
+			t.Fatalf("must return non-nil map even on nil input")
+		}
+		if len(idx) != 0 {
+			t.Fatalf("want empty map, got %d entries", len(idx))
+		}
+	})
+
+	t.Run("empty slice returns empty map", func(t *testing.T) {
+		t.Parallel()
+		idx := ManagedRuntimeIndex([]*ServiceMeta{})
+		if len(idx) != 0 {
+			t.Fatalf("want empty map, got %d", len(idx))
+		}
+	})
+
+	t.Run("multiple non-colliding metas merge correctly", func(t *testing.T) {
+		t.Parallel()
+		// Distinct hostnames — realistic multi-stack project state.
+		pairA := &ServiceMeta{Hostname: "appdev", StageHostname: "appstage", Mode: PlanModeStandard}
+		pairB := &ServiceMeta{Hostname: "apidev", StageHostname: "apistage", Mode: PlanModeStandard}
+		idx := ManagedRuntimeIndex([]*ServiceMeta{pairA, devOnly, simple, pairB})
+		// 2 (pairA) + 1 (devOnly) + 1 (simple) + 2 (pairB) = 6
+		if len(idx) != 6 {
+			t.Fatalf("want 6 entries across 4 metas, got %d: %v", len(idx), idx)
+		}
+		wantPairs := map[string]*ServiceMeta{
+			"appdev":   pairA,
+			"appstage": pairA,
+			"api":      devOnly,
+			"worker":   simple,
+			"apidev":   pairB,
+			"apistage": pairB,
+		}
+		for h, want := range wantPairs {
+			if idx[h] != want {
+				t.Errorf("idx[%q] = %p, want %p", h, idx[h], want)
+			}
+		}
+	})
+}
+
 func TestServiceMeta_NoStatusFieldInJSON(t *testing.T) {
 	t.Parallel()
 

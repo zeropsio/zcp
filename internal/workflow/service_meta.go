@@ -70,12 +70,50 @@ func (m *ServiceMeta) IsAdopted() bool {
 }
 
 // Hostnames returns every hostname this meta represents.
-// For container+standard that's [dev, stage]; for everything else just [m.Hostname].
+//
+// Pair-keyed meta invariant (see docs/spec-workflows.md §8 E8): exactly one
+// ServiceMeta file represents a runtime service — as a dev/stage pair
+// (container+standard, local+standard) or a single hostname
+// (dev/simple/local-only). Hostnames() is the canonical enumeration across the
+// pair; use it (or ManagedRuntimeIndex for slice→map construction) anywhere you
+// map hostnames to metas. Keying by m.Hostname alone violates the invariant and
+// breaks scope validation, auto-close, and strategy resolution for stage
+// hostnames.
+//
+// For container+standard and local+standard that's [Hostname, StageHostname];
+// for everything else just [Hostname].
 func (m *ServiceMeta) Hostnames() []string {
 	if m.StageHostname != "" {
 		return []string{m.Hostname, m.StageHostname}
 	}
 	return []string{m.Hostname}
+}
+
+// ManagedRuntimeIndex builds a hostname → meta map honoring the pair-keyed
+// invariant (docs/spec-workflows.md §8 E8). Every hostname a meta represents
+// (via Hostnames()) resolves to the same *ServiceMeta pointer.
+//
+// The helper does not filter on IsComplete() or by Mode — callers layer their
+// own predicates on top (e.g. scope validation keeps its runtime-class
+// filter). Nil metas and metas with empty Hostname are skipped so lookups
+// never poison on an empty key.
+//
+// This is the single canonical mechanism for hostname→meta mapping when the
+// caller already holds a []*ServiceMeta slice (typically from
+// ListServiceMetas). Inline reimplementations are a pair-keyed invariant
+// violation — TestNoInlineManagedRuntimeIndex scans the codebase for the
+// pattern and fails the build.
+func ManagedRuntimeIndex(metas []*ServiceMeta) map[string]*ServiceMeta {
+	out := make(map[string]*ServiceMeta, len(metas)*2)
+	for _, m := range metas {
+		if m == nil || m.Hostname == "" {
+			continue
+		}
+		for _, h := range m.Hostnames() {
+			out[h] = m
+		}
+	}
+	return out
 }
 
 // PrimaryRole returns the deploy role of m.Hostname.
