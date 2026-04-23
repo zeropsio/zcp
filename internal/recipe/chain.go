@@ -44,14 +44,18 @@ func ResolveChain(r Resolver, slug string) (*ParentRecipe, error) {
 	return loadParent(parentSlug, parentDir)
 }
 
+// Tier suffix slugs used by the chain resolver and by tier labelling.
+const (
+	tierMinimal    = "minimal"
+	tierHelloWorld = "hello-world"
+)
+
 // parentSlugFor applies the fixed chain rules. Returns "" for no parent.
 func parentSlugFor(slug string) string {
-	switch {
-	case strings.HasSuffix(slug, "-showcase"):
-		return strings.TrimSuffix(slug, "-showcase") + "-minimal"
-	default:
-		return ""
+	if base, ok := strings.CutSuffix(slug, "-showcase"); ok {
+		return base + "-" + tierMinimal
 	}
+	return ""
 }
 
 // loadParent reads a parent recipe's published tree from disk. Not every
@@ -97,10 +101,10 @@ func loadParent(slug, dir string) (*ParentRecipe, error) {
 
 func parentTierForSlug(slug string) string {
 	switch {
-	case strings.HasSuffix(slug, "-minimal"):
-		return "minimal"
-	case strings.HasPrefix(slug, "hello-world-"):
-		return "hello-world"
+	case strings.HasSuffix(slug, "-"+tierMinimal):
+		return tierMinimal
+	case strings.HasPrefix(slug, tierHelloWorld+"-"):
+		return tierHelloWorld
 	default:
 		return ""
 	}
