@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -11,6 +12,12 @@ import (
 
 	"github.com/zeropsio/zerops-go/apiError"
 )
+
+// jsonUnmarshal is a package-level alias kept for symmetry — decodeAPIMetaJSON
+// is the only consumer. Using the alias lets test code override it if a
+// future hermetic test ever needs to simulate unmarshal failure without
+// feeding malformed bytes (not currently required).
+var jsonUnmarshal = json.Unmarshal
 
 // mapSDKError converts SDK/API errors to ZCP platform errors.
 func mapSDKError(err error, entityType string) error {
@@ -92,6 +99,22 @@ func mapAPIError(apiErr apiError.Error, entityType string) error {
 		suggestion = fmt.Sprintf("API rejected the request (code: %s) — check the input parameters", errCode)
 	}
 	return withAPICode(NewPlatformError(ErrAPIError, msg, suggestion), errCode, meta)
+}
+
+// decodeAPIMetaJSON is the JSON-bytes entrypoint used by per-service error
+// mapping (zerops_search.go). The import endpoint's `ErrorObject.Meta` is
+// `JsonRawMessage` rather than `interface{}`; unmarshal first, then share
+// the same typed decoder so the output shape is identical whether meta
+// arrived as a top-level 4xx body or as a per-service-stack error.
+func decodeAPIMetaJSON(raw []byte) []APIMetaItem {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var v interface{}
+	if err := jsonUnmarshal(raw, &v); err != nil {
+		return nil
+	}
+	return decodeAPIMeta(v)
 }
 
 // decodeAPIMeta converts the SDK's untyped meta (`interface{}`) into typed

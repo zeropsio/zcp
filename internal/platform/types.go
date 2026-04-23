@@ -144,9 +144,15 @@ type ImportedServiceStack struct {
 }
 
 // APIError represents an error from the Zerops API.
+//
+// Meta mirrors the server's `error.meta[]` array — same shape as the
+// top-level APIMeta plumbed through PlatformError — so per-service failures
+// on the import endpoint also carry field-level detail to the LLM instead
+// of collapsing to "Invalid parameter provided." See APIMetaItem in errors.go.
 type APIError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code    string        `json:"code"`
+	Message string        `json:"message"`
+	Meta    []APIMetaItem `json:"meta,omitempty"`
 }
 
 func (e *APIError) Error() string {

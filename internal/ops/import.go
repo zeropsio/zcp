@@ -15,10 +15,15 @@ import (
 )
 
 // ServiceImportError represents an error for a specific service during import.
+// Meta carries server-sent field-level detail for this service's rejection
+// (same shape as PlatformError.APIMeta — see internal/platform/errors.go).
+// When non-nil the LLM reads apiMeta[].metadata for the failing fields
+// instead of guessing from the generic Message.
 type ServiceImportError struct {
-	Service string `json:"service"`
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Service string                 `json:"service"`
+	Code    string                 `json:"code"`
+	Message string                 `json:"message"`
+	Meta    []platform.APIMetaItem `json:"meta,omitempty"`
 }
 
 // ImportResult is returned after a successful API import.
@@ -154,6 +159,7 @@ func Import(
 				Service: ss.Name,
 				Code:    ss.Error.Code,
 				Message: ss.Error.Message,
+				Meta:    ss.Error.Meta,
 			})
 		}
 		for _, p := range ss.Processes {

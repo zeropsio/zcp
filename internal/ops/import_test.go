@@ -542,6 +542,63 @@ func TestImport_ServiceError_Surfaced(t *testing.T) {
 	}
 }
 
+func TestImport_ServiceError_MetaPropagated(t *testing.T) {
+	t.Parallel()
+	// When the API rejects a specific service-stack with field-level detail
+	// in Meta, that detail must reach the LLM via ImportResult.ServiceErrors.
+	// Regression guard: silent-drop of Meta was the root cause of F#7.
+	content := `services:
+  - hostname: storage
+    type: object-storage
+    mode: NON_HA
+    objectStorageSize: 1
+    objectStoragePolicy: private
+`
+	mock := platform.NewMock().
+		WithImportResult(&platform.ImportResult{
+			ProjectID:   "proj-1",
+			ProjectName: "myproject",
+			ServiceStacks: []platform.ImportedServiceStack{
+				{
+					ID:   "svc-storage",
+					Name: "storage",
+					Error: &platform.APIError{
+						Code:    "projectImportInvalidParameter",
+						Message: "Invalid parameter provided.",
+						Meta: []platform.APIMetaItem{
+							{
+								Code:  "projectImportInvalidParameter",
+								Error: "Invalid parameter provided.",
+								Metadata: map[string][]string{
+									"storage.mode": {"mode not supported"},
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+
+	result, err := Import(context.Background(), mock, "proj-1", content, "", nil, nil, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.ServiceErrors) != 1 {
+		t.Fatalf("expected 1 service error, got %d", len(result.ServiceErrors))
+	}
+	se := result.ServiceErrors[0]
+	if len(se.Meta) != 1 {
+		t.Fatalf("expected 1 meta item, got %d", len(se.Meta))
+	}
+	got := se.Meta[0].Metadata["storage.mode"]
+	if len(got) != 1 || got[0] != "mode not supported" {
+		t.Errorf("storage.mode meta = %v, want [\"mode not supported\"]", got)
+	}
+	if se.Meta[0].Code != "projectImportInvalidParameter" {
+		t.Errorf("meta.Code = %q, want projectImportInvalidParameter", se.Meta[0].Code)
+	}
+}
+
 func TestImport_MixedSuccessAndError(t *testing.T) {
 	t.Parallel()
 	content := `services:

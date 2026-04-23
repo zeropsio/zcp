@@ -65,6 +65,7 @@ func (z *ZeropsClient) ImportServices(ctx context.Context, projectID, yamlConten
 			imported.Error = &APIError{
 				Code:    stack.Error.Code.String(),
 				Message: stack.Error.Message.String(),
+				Meta:    decodeAPIMetaJSON(stack.Error.Meta.Native()),
 			}
 		}
 		for _, proc := range stack.Processes {
