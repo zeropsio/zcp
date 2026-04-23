@@ -50,6 +50,7 @@ func deployLocalInputSchema() *jsonschema.Schema {
 func RegisterDeployLocal(
 	srv *mcp.Server,
 	client platform.Client,
+	httpClient ops.HTTPDoer,
 	projectID string,
 	authInfo *auth.Info,
 	logFetcher platform.LogFetcher,
@@ -129,6 +130,7 @@ func RegisterDeployLocal(
 
 		if result != nil && result.Status == statusDeployed {
 			attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
+			maybeAutoEnableSubdomain(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
 		} else if result != nil {
 			attempt.Error = fmt.Sprintf("deploy status %s", result.Status)
 		}

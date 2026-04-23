@@ -31,6 +31,7 @@ type DeployBatchInput struct {
 func RegisterDeployBatch(
 	srv *mcp.Server,
 	client platform.Client,
+	httpClient ops.HTTPDoer,
 	projectID string,
 	sshDeployer ops.SSHDeployer,
 	authInfo *auth.Info,
@@ -102,6 +103,17 @@ func RegisterDeployBatch(
 			input.Targets, logFetcher, onProgress, pollFn,
 		)
 		_ = engine // reserved for work-session recording hooks if needed later.
+
+		// Plan 2: auto-enable subdomain for each successfully deployed target.
+		// Best-effort — per-target failures append to that target's Warnings
+		// and never cancel siblings.
+		for i := range result.Entries {
+			entry := &result.Entries[i]
+			if entry.Result != nil && entry.Result.Status == statusDeployed {
+				maybeAutoEnableSubdomain(ctx, client, httpClient, projectID, stateDir, entry.Result.TargetService, entry.Result)
+			}
+		}
+
 		note, progress := sessionAnnotations(stateDir)
 		return jsonResult(deployBatchResponse{
 			DeployBatchResult: result,
