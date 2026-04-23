@@ -1,5 +1,5 @@
 {
-  "generated": "2026-04-22T15:32:33Z",
+  "generated": "2026-04-23T11:52:49Z",
   "versions": [
     "22.04",
     "24.04",
@@ -136,6 +136,7 @@
     "static@1.0",
     "static@latest",
     "typesense@27.1",
+    "typesense@30.2",
     "ubuntu@22.04",
     "ubuntu@24.04",
     "ubuntu@latest",

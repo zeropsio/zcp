@@ -1,131 +1,115 @@
-# Research phase — classify framework, decide codebase shape, submit typed plan
+# Research phase
 
-Your job in this phase: classify the framework and produce a typed Plan
-describing the recipe. No code written yet — this is the upstream
-decision that every downstream phase depends on.
+Next call: `zerops_recipe action=update-plan slug=<slug> plan=<payload>`.
+Don't call `zerops_knowledge` — the tool's own description says it's the
+wrong tool during recipe authoring, and this atom supplies the
+authoritative service set + runtime table below.
+
+## Canonical services — authoritative versions
+
+Do not guess versions. Use these exactly. Do not add services not in
+this table.
+
+| Kind    | Hostname  | Type             |
+|---------|-----------|------------------|
+| db      | `db`      | `postgresql@18`  |
+| cache   | `cache`   | `valkey@7.2`     |
+| broker  | `broker`  | `nats@2.12`      |
+| storage | `storage` | `object-storage` |
+| search  | `search`  | `meilisearch@1.20` |
+
+Mail / SMTP / Mailpit are NOT canonical showcase services. Production
+users bring their own SMTP. The research gate rejects non-canonical
+hostnames at `complete-phase`.
+
+## Runtime types
+
+Match the framework family: `nodejs@22` / `php-nginx@8.4` / `python@3.14`
+/ `go@1` / `rust@stable` / `java@21` / `dotnet@9` / `ruby@3.4` /
+`bun@1.2` / `deno@2` / `elixir@1.16`. Pick the latest from the family
+your framework uses.
+
+## Service set per tier
+
+- `hello-world-{lang}` → runtime only, **0** managed services.
+- `{framework}-minimal` → runtime + `db` (1 managed service).
+- `{framework}-showcase` → runtime + all **5** canonical services above.
 
 ## Classification — full-stack vs API-first
 
-Apply this decision tree using your knowledge of the framework:
+Apply to pick codebase shape. Use your framework knowledge:
 
-```
-Does the framework have a built-in view/template engine designed for
-rendering HTML from the same process that handles routing?
-│
-├─ YES → full-stack. Single codebase ("monolith") serves HTML and API
-│        routes. Dashboard uses the framework's templates. Worker runs
-│        the same codebase in a different process model.
-│        Examples of shape: Laravel+Blade, Rails+ERB, Django+Jinja2,
-│        Phoenix+HEEx, ASP.NET+Razor, SvelteKit w/ server routes,
-│        Next.js w/ server routes.
-│
-└─ NO  → API-first. Framework serves JSON/plain text only. Dashboard
-         lives in a separate codebase (static frontend — default Svelte).
-         Worker lives in a third codebase OR shares the API's codebase
-         depending on the framework's process model (see below).
-         Examples of shape: NestJS, Express, Fastify, Hono, FastAPI,
-         Flask (API mode), Spring Boot (API mode), Go (chi/fiber/echo),
-         Rust (axum/actix), Phoenix as API-only.
-```
+- **Full-stack** (built-in view engine — Laravel/Blade, Rails/ERB,
+  Django/Jinja2, Phoenix/HEEx, SvelteKit+server, Next.js+server):
+  → **shape 1** (monolith). One codebase, `role=monolith`.
+- **API-first** (JSON-only — NestJS, Express, Fastify, Hono, FastAPI,
+  Flask API, Spring Boot, Gin, Axum, Actix): → **shape 2 or 3**.
+  - Shape 2: 2 codebases. `role=api` + `role=frontend`. Worker shares
+    api's codebase (queue library runs as sibling process).
+  - Shape 3: 3 codebases. Same two + separate worker codebase.
+    Use when the framework's worker needs a first-class long-lived
+    context distinct from the API (NestJS `createApplicationContext`,
+    Express standalone worker). For NestJS specifically: shape 3.
 
-Classification rule of thumb: if the predecessor `{framework}-minimal`
-(or `hello-world-{lang}`) renders HTML via a framework-integrated
-template engine, it's full-stack. If the predecessor returns JSON or
-plain text, it's API-first.
+hello-world and minimal tiers are always shape 1 regardless of
+framework family — they test runtime + platform, not service fan-out.
 
-## Codebase shape
+## Frontend default (shape 2/3 only)
 
-After classification, pick shape:
-
-- **Shape 1 (monolith)** — full-stack frameworks. One codebase owns
-  routes, views, and worker process. `role=monolith`.
-- **Shape 2 (api + frontend, worker shares api)** — API-first frameworks
-  whose queue library runs naturally as a sibling process of the API
-  (shared codebase, different zeropsSetup). Two codebases.
-  `role=api, role=frontend`. Worker declared with
-  `isWorker=true, sharesCodebaseWith="<api-hostname>"`.
-- **Shape 3 (api + frontend + worker-separate)** — API-first frameworks
-  whose worker process uses a first-class long-lived context
-  distinct from the API (e.g. NestJS `createApplicationContext`,
-  Express standalone worker). Three codebases. Worker is
-  `isWorker=true, sharesCodebaseWith=""`.
-
-Hello-world and minimal tiers collapse to shape 1 regardless of framework
-— they prove the language+platform contract, not service fan-out. Shape
-2/3 only applies at showcase tier.
-
-## Default service set per tier
-
-- **hello-world-{lang}** — no managed services. Runtime only.
-- **{framework}-minimal** — framework + 1 database (PostgreSQL default).
-  Framework-idiomatic ORM + migrations + one CRUD endpoint.
-- **{framework}-showcase** — framework + `db` + `cache` + `broker` +
-  `storage` + `search`. Managed-service hostnames: `db`, `cache`,
-  `broker`, `storage`, `search`. Types: default PostgreSQL, Valkey,
-  NATS, Object Storage, Meilisearch. Mail (SMTP) is NOT part of the
-  showcase service set — Zerops customers use external SMTP providers.
-
-Showcase MUST NOT add services beyond this set without a signal in the
-parent recipe. Laravel-showcase's Mailpit is Laravel-specific and does
-not transfer.
-
-## Frontend default (API-first only)
-
-When shape is 2 or 3, the frontend codebase defaults to **Svelte
-(Vite) compiled to static assets**. Rationale: smallest bundle, HTML-
-superset syntax, deploys on `static` runtime (pure Nginx) in prod,
-single `npm ci && npm run build`. Don't pick React/Vue/Angular unless
+Svelte + Vite compiled to static. Deploys on `static` runtime in prod.
+Build: `npm ci && npm run build`. Don't pick React/Vue/Angular unless
 the user asked for one by name.
 
-## Parent recipe inheritance
+## Parent recipe handling
 
-If `parent` is populated in the session (the chain resolver found a
-published parent), do NOT re-derive the parent's decisions:
+The `parent` field in the `start` response tells you whether the chain
+resolver found a published predecessor:
 
-- Service hostnames + types: copy from parent, add showcase-new services.
-- Runtime type (e.g. `nodejs@22`): copy from parent, don't bump unless
-  the framework released a new stable that the parent pre-dates.
-- Codebase hostnames: preserve (showcase extends minimal, same names).
-- Gotchas / IG items: the writer cross-references the parent later;
-  don't plan to re-author.
+- **`parent` populated**: read `parent.codebases[].readme` and
+  `parent.envImports["0"]` verbatim. Inherit hostnames, runtime type,
+  and services — don't re-derive. Add only showcase-new services.
+- **`parent` is null**: first-time run for this framework (or parent
+  not mounted at `~/recipes/`). Proceed from your framework training
+  + this atom. **Do not call `zerops_knowledge` to substitute for the
+  missing parent** — the service set and versions above are
+  authoritative whether or not parent exists.
 
-Parent content is inlined in `zerops_recipe action=start` response under
-`parent.codebases[].readme` and `parent.envImports["0"]`. Read it there
-— do not call `zerops_knowledge` with freeform queries for the parent.
-
-## Required output — submit via action=update-plan
-
-Build a payload of shape:
+## Payload shape for update-plan
 
 ```json
 {
-  "framework": "<slug without -minimal/-showcase, e.g. nestjs>",
+  "framework": "<slug root, e.g. \"nestjs\">",
   "tier": "hello-world | minimal | showcase",
   "research": {
     "codebaseShape": "1 | 2 | 3",
-    "needsAppSecret": true/false,
-    "appSecretKey": "<env-var name the framework expects, or empty>",
-    "description": "one-sentence recipe purpose"
+    "needsAppSecret": true,
+    "appSecretKey": "<env-var name, e.g. APP_SECRET / APP_KEY>",
+    "description": "<one sentence>"
   },
   "codebases": [
-    {"hostname": "<host>", "role": "monolith|api|frontend|worker",
-     "baseRuntime": "<type@version>", "isWorker": false,
-     "sharesCodebaseWith": ""}
+    {"hostname": "api",    "role": "api",      "baseRuntime": "nodejs@22"},
+    {"hostname": "app",    "role": "frontend", "baseRuntime": "nodejs@22"},
+    {"hostname": "worker", "role": "worker",   "baseRuntime": "nodejs@22",
+     "isWorker": true, "sharesCodebaseWith": ""}
   ],
   "services": [
-    {"hostname": "db", "type": "postgresql@18", "kind": "managed",
-     "priority": 10}
+    {"hostname": "db",      "type": "postgresql@18",    "kind": "managed", "priority": 10},
+    {"hostname": "cache",   "type": "valkey@7.2",       "kind": "managed", "priority": 10},
+    {"hostname": "broker",  "type": "nats@2.12",        "kind": "managed", "priority": 10},
+    {"hostname": "storage", "type": "object-storage",   "kind": "storage"},
+    {"hostname": "search",  "type": "meilisearch@1.20", "kind": "managed", "priority": 10}
   ]
 }
 ```
 
-Call: `zerops_recipe action=update-plan slug=<slug> plan=<payload>`.
+Above example is a NestJS showcase (shape 3). Swap framework/tier/
+codebases/roles for other combinations.
 
-When the plan is in place, call `zerops_recipe action=complete-phase
-slug=<slug>` to run the research gate (checks classification/shape
-consistency, required services per tier, parent inheritance). Gate
-failures return structured violations — fix the plan and retry.
+## Then
 
-Do NOT call `build-brief` before `update-plan`: scaffold briefs read
-codebases from the plan, so an empty plan causes the brief composer to
-fail with `unknown role`.
+1. `zerops_recipe action=update-plan slug=<slug> plan=<payload>` (merges
+   into session — you can send partials)
+2. `zerops_recipe action=complete-phase slug=<slug>` → runs the research
+   gate. Read `violations` on failure, patch via another update-plan,
+   retry complete-phase. Do NOT call `zerops_knowledge` to understand
+   violations — the violation message itself names the field + fix.

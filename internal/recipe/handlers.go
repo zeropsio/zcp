@@ -75,6 +75,10 @@ type RecipeInput struct {
 }
 
 // RecipeResult is the generic envelope returned from zerops_recipe.
+// ParentStatus is an explicit "mounted" / "absent" / "" signal so the
+// agent doesn't have to infer presence from a nil Parent pointer —
+// "parent missing" is a legitimate first-time-framework state, not an
+// error, and the research atom branches on it.
 type RecipeResult struct {
 	OK           bool          `json:"ok"`
 	Action       string        `json:"action"`
@@ -84,6 +88,7 @@ type RecipeResult struct {
 	YAML         string        `json:"yaml,omitempty"`
 	Violations   []Violation   `json:"violations,omitempty"`
 	Parent       *ParentRecipe `json:"parent,omitempty"`
+	ParentStatus string        `json:"parentStatus,omitempty"`
 	Guidance     string        `json:"guidance,omitempty"`
 	StitchedPath string        `json:"stitchedPath,omitempty"`
 	Error        string        `json:"error,omitempty"`
@@ -140,6 +145,7 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 		}
 		snap := sess.Snapshot()
 		r.Status, r.Parent = &snap, sess.Parent
+		r.ParentStatus = parentStatus(sess.Parent)
 		r.Guidance = loadPhaseEntry(sess.Current)
 		r.OK = true
 	case "enter-phase":
@@ -314,6 +320,18 @@ func stitchContent(sess *Session, payload json.RawMessage) (string, error) {
 		return "", fmt.Errorf("write payload: %w", err)
 	}
 	return path, nil
+}
+
+// parentStatus returns a short tag telling the agent whether the chain
+// resolver found a parent. "absent" means first-time-framework run OR
+// parent not mounted — both legitimate, and the research atom branches
+// on this string to tell the agent not to freeform-search for
+// substitute knowledge.
+func parentStatus(p *ParentRecipe) string {
+	if p == nil {
+		return "absent"
+	}
+	return "mounted"
 }
 
 // nextPhase returns the phase immediately after p, if any.

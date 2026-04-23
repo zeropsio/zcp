@@ -36,8 +36,18 @@ func TestDispatch_Start_ReturnsResearchGuidance(t *testing.T) {
 	if !strings.Contains(res.Guidance, "update-plan") {
 		t.Error("start.Guidance does not mention update-plan action")
 	}
-	if !strings.Contains(res.Guidance, "Shape 1") || !strings.Contains(res.Guidance, "Shape 3") {
+	if !strings.Contains(res.Guidance, "shape 1") || !strings.Contains(res.Guidance, "shape 2 or 3") {
 		t.Error("start.Guidance missing codebase-shape decision tree")
+	}
+	if !strings.Contains(res.Guidance, "Don't call `zerops_knowledge`") {
+		t.Error("start.Guidance missing the prohibition against zerops_knowledge")
+	}
+	if !strings.Contains(res.Guidance, "postgresql@18") {
+		t.Error("start.Guidance missing authoritative service versions")
+	}
+	// ParentStatus must be explicit (absent for cold-start with empty mount).
+	if res.ParentStatus != "absent" {
+		t.Errorf("ParentStatus = %q, want \"absent\"", res.ParentStatus)
 	}
 }
 
