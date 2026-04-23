@@ -33,6 +33,10 @@ type Mock struct {
 	// CapturedImportYAML stores the YAML content passed to ImportServices.
 	CapturedImportYAML string
 
+	// CapturedValidateZeropsYaml stores inputs passed to ValidateZeropsYaml
+	// so deploy-flow tests can assert call ordering / field propagation.
+	CapturedValidateZeropsYaml []ValidateZeropsYamlInput
+
 	// CallCounts tracks how many times each method was called.
 	CallCounts map[string]int
 

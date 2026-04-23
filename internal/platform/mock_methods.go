@@ -5,6 +5,19 @@ import (
 	"fmt"
 )
 
+// ValidateZeropsYaml records the call (capturing inputs for test assertions)
+// and returns the error configured via WithError("ValidateZeropsYaml", err).
+// Nil = success. Deploy-flow tests wire a *PlatformError here to simulate
+// either a structured validation failure (APIMeta populated) or a transport
+// failure (NETWORK_ERROR code).
+func (m *Mock) ValidateZeropsYaml(_ context.Context, in ValidateZeropsYamlInput) error {
+	m.trackCall("ValidateZeropsYaml")
+	m.mu.Lock()
+	m.CapturedValidateZeropsYaml = append(m.CapturedValidateZeropsYaml, in)
+	m.mu.Unlock()
+	return m.getError("ValidateZeropsYaml")
+}
+
 func (m *Mock) GetUserInfo(_ context.Context) (*UserInfo, error) {
 	if err := m.getError("GetUserInfo"); err != nil {
 		return nil, err

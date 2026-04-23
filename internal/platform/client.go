@@ -45,6 +45,15 @@ type Client interface {
 	// Import
 	ImportServices(ctx context.Context, projectID string, yaml string) (*ImportResult, error)
 
+	// Pre-deploy zerops.yaml validation. Nil error = valid. Non-nil error
+	// = deploy should abort — structured validation failures land as
+	// *PlatformError{Code: ErrInvalidZeropsYml, APIMeta: <fields>};
+	// transport/auth failures land as the corresponding network/auth code.
+	// No "proceed on failure" fallback — if the validator can't confirm
+	// valid, downstream deploy steps would fail against the same API
+	// anyway, so fail fast with the clearer error.
+	ValidateZeropsYaml(ctx context.Context, in ValidateZeropsYamlInput) error
+
 	// Delete
 	DeleteService(ctx context.Context, serviceID string) (*Process, error)
 
