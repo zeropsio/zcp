@@ -10,6 +10,8 @@ package integration_test
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +25,15 @@ import (
 	"github.com/zeropsio/zcp/internal/tools"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
+
+// nopHTTPDoer satisfies ops.HTTPDoer for realistic integration tests —
+// returns 200 for every request so WaitHTTPReady passes instantly without
+// hitting the network.
+type nopHTTPDoer struct{}
+
+func (nopHTTPDoer) Do(*http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+}
 
 // nopMounter satisfies ops.Mounter for realistic integration tests.
 type nopMounter struct{}
@@ -128,7 +139,7 @@ func setupRealisticServer(t *testing.T, mock *platform.Mock) (*mcp.ClientSession
 	tools.RegisterProcess(mcpSrv, mock)
 	tools.RegisterMount(mcpSrv, mock, projectID, &nopMounter{}, runtime.Info{}, "", engine)
 	tools.RegisterDeploySSH(mcpSrv, mock, projectID, &nopSSH{}, authInfo, logFetcher, runtime.Info{}, "", engine)
-	tools.RegisterSubdomain(mcpSrv, mock, projectID)
+	tools.RegisterSubdomain(mcpSrv, mock, nopHTTPDoer{}, projectID)
 	tools.RegisterLogs(mcpSrv, mock, logFetcher, projectID)
 	tools.RegisterEvents(mcpSrv, mock, projectID)
 

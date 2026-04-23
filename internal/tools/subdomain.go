@@ -17,8 +17,12 @@ type SubdomainInput struct {
 	Action          string `json:"action"          jsonschema:"Action: enable or disable. Call once after first deploy of new services."`
 }
 
-// RegisterSubdomain registers the zerops_subdomain tool.
-func RegisterSubdomain(srv *mcp.Server, client platform.Client, projectID string) {
+// RegisterSubdomain registers the zerops_subdomain tool. httpClient is used
+// to verify L7 readiness after a fresh enable — the platform Process reporting
+// FINISHED does not guarantee the L7 balancer is serving traffic (propagation
+// measured at 440ms–1.3s after Process completion). Tests inject a stub
+// HTTPDoer to bypass the wait without real network I/O.
+func RegisterSubdomain(srv *mcp.Server, client platform.Client, httpClient ops.HTTPDoer, projectID string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_subdomain",
 		Description: "Enable or disable zerops.app subdomain. Idempotent. New services need one enable call after first deploy to activate the L7 route. Re-deploys do NOT deactivate it. Check zerops_discover for current status and URL.",
@@ -64,6 +68,18 @@ func RegisterSubdomain(srv *mcp.Server, client platform.Client, projectID string
 			result.Warnings = append(result.Warnings, reason)
 			result.Status = "already_enabled"
 			result.Process = nil
+		}
+		// Plan 1 commit 5: L7 propagation window is 440ms-1.3s after enable.
+		// Wait for each SubdomainUrl to respond with <500 before returning,
+		// so the agent's next zerops_verify doesn't race the L7 balancer.
+		// Best-effort — timeout appends to Warnings, never fails the call.
+		if input.Action == actionEnable && len(result.SubdomainUrls) > 0 {
+			for _, url := range result.SubdomainUrls {
+				if err := ops.WaitHTTPReady(ctx, httpClient, url); err != nil {
+					result.Warnings = append(result.Warnings,
+						fmt.Sprintf("subdomain %s not HTTP-ready after wait: %v (agent may need to retry verify)", url, err))
+				}
+			}
 		}
 		if input.Action == actionEnable {
 			result.NextActions = nextActionSubdomainEnable

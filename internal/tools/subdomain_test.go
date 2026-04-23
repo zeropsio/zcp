@@ -4,13 +4,28 @@ package tools
 
 import (
 	"encoding/json"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 )
+
+// stubHTTPAlwaysOK is a minimal ops.HTTPDoer that returns 200 for every
+// request without touching the network. Used by subdomain tests that don't
+// exercise the L7-readiness path — tests that do exercise it use their own
+// sequencingHTTP stub (or override via OverrideHTTPReadyConfigForTest).
+type stubHTTPAlwaysOK struct{}
+
+func (stubHTTPAlwaysOK) Do(*http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+}
+
+var okHTTP ops.HTTPDoer = stubHTTPAlwaysOK{}
 
 func TestSubdomainTool_EnableReturnsUrls(t *testing.T) {
 	t.Parallel()
@@ -33,7 +48,7 @@ func TestSubdomainTool_EnableReturnsUrls(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, "proj-1")
+	RegisterSubdomain(srv, mock, okHTTP, "proj-1")
 
 	result := callTool(t, srv, "zerops_subdomain", map[string]any{
 		"serviceHostname": "app", "action": "enable",
@@ -80,7 +95,7 @@ func TestSubdomainTool_EnableReturnsUrls_BarePrefix(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, "proj-1")
+	RegisterSubdomain(srv, mock, okHTTP, "proj-1")
 
 	result := callTool(t, srv, "zerops_subdomain", map[string]any{
 		"serviceHostname": "app", "action": "enable",
@@ -113,7 +128,7 @@ func TestSubdomainTool_Enable_PollsProcess(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, "proj-1")
+	RegisterSubdomain(srv, mock, okHTTP, "proj-1")
 
 	result := callTool(t, srv, "zerops_subdomain", map[string]any{
 		"serviceHostname": "api", "action": "enable",
@@ -148,7 +163,7 @@ func TestSubdomainTool_Disable_PollsProcess(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, "proj-1")
+	RegisterSubdomain(srv, mock, okHTTP, "proj-1")
 
 	result := callTool(t, srv, "zerops_subdomain", map[string]any{
 		"serviceHostname": "api", "action": "disable",
@@ -176,7 +191,7 @@ func TestSubdomainTool_InvalidAction(t *testing.T) {
 		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, "proj-1")
+	RegisterSubdomain(srv, mock, okHTTP, "proj-1")
 
 	result := callTool(t, srv, "zerops_subdomain", map[string]any{
 		"serviceHostname": "api", "action": "toggle",
@@ -193,7 +208,7 @@ func TestSubdomainTool_EmptyHostname(t *testing.T) {
 		WithServices([]platform.ServiceStack{})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, "proj-1")
+	RegisterSubdomain(srv, mock, okHTTP, "proj-1")
 
 	result := callTool(t, srv, "zerops_subdomain", map[string]any{
 		"serviceHostname": "", "action": "enable",
@@ -225,7 +240,7 @@ func TestSubdomainTool_Enable_FailedProcess_TreatedAsAlreadyEnabled(t *testing.T
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, "proj-1")
+	RegisterSubdomain(srv, mock, okHTTP, "proj-1")
 
 	result := callTool(t, srv, "zerops_subdomain", map[string]any{
 		"serviceHostname": "app", "action": "enable",
@@ -283,7 +298,7 @@ func TestSubdomainTool_Enable_FailedWithFailReason_PreservedInWarnings(t *testin
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, "proj-1")
+	RegisterSubdomain(srv, mock, okHTTP, "proj-1")
 
 	result := callTool(t, srv, "zerops_subdomain", map[string]any{
 		"serviceHostname": "app", "action": "enable",
@@ -337,7 +352,7 @@ func TestSubdomainTool_Enable_PollFailure_SurfacedAsWarning(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, "proj-1")
+	RegisterSubdomain(srv, mock, okHTTP, "proj-1")
 
 	result := callTool(t, srv, "zerops_subdomain", map[string]any{
 		"serviceHostname": "app", "action": "enable",
@@ -365,13 +380,133 @@ func TestSubdomainTool_Enable_PollFailure_SurfacedAsWarning(t *testing.T) {
 	}
 }
 
+// Plan 1 commit 5: after enable returns with SubdomainUrls, tool must wait
+// for each URL to respond <500 before returning. Empirical L7 propagation
+// window is 440ms-1.3s — without this wait the agent's next zerops_verify
+// races the L7 balancer and can get a false fail on http_root.
+type sequencingHTTPFor500 struct {
+	remaining5xx int
+}
+
+func (s *sequencingHTTPFor500) Do(*http.Request) (*http.Response, error) {
+	if s.remaining5xx > 0 {
+		s.remaining5xx--
+		return &http.Response{StatusCode: http.StatusBadGateway, Body: io.NopCloser(strings.NewReader(""))}, nil
+	}
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(""))}, nil
+}
+
+func TestSubdomainTool_Enable_WaitsForHTTPReady(t *testing.T) {
+	t.Parallel()
+	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 500*time.Millisecond)
+	defer restore()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app",
+				Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}}},
+		}).
+		WithService(&platform.ServiceStack{
+			ID: "svc-1", Name: "app", SubdomainAccess: false,
+			Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}},
+		}).
+		WithProject(&platform.Project{
+			ID: "proj-1", Name: "myproject", Status: statusActive,
+			SubdomainHost: "abc1.prg1.zerops.app",
+		}).
+		WithProcess(&platform.Process{
+			ID:     "proc-subdomain-enable-svc-1",
+			Status: statusFinished,
+		})
+
+	// Stub HTTP returns 502 twice (L7 warming), then 200. WaitHTTPReady
+	// must retry and eventually succeed without any warning.
+	stub := &sequencingHTTPFor500{remaining5xx: 2}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterSubdomain(srv, mock, stub, "proj-1")
+
+	result := callTool(t, srv, "zerops_subdomain", map[string]any{
+		"serviceHostname": "app", "action": "enable",
+	})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	}
+
+	var sr ops.SubdomainResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &sr); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	// No warnings when WaitHTTPReady eventually succeeds.
+	for _, w := range sr.Warnings {
+		if strings.Contains(w, "not HTTP-ready") {
+			t.Errorf("should not warn when retry succeeded, got: %s", w)
+		}
+	}
+}
+
+// If HTTP readiness times out, the tool must NOT fail the call — appends
+// warning and returns. Verify still has a chance to reach the URL on its
+// own probe.
+func TestSubdomainTool_Enable_HTTPReadyTimeout_WarningNotFatal(t *testing.T) {
+	t.Parallel()
+	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 10*time.Millisecond)
+	defer restore()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app",
+				Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}}},
+		}).
+		WithService(&platform.ServiceStack{
+			ID: "svc-1", Name: "app", SubdomainAccess: false,
+			Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}},
+		}).
+		WithProject(&platform.Project{
+			ID: "proj-1", Name: "myproject", Status: statusActive,
+			SubdomainHost: "abc1.prg1.zerops.app",
+		}).
+		WithProcess(&platform.Process{
+			ID:     "proc-subdomain-enable-svc-1",
+			Status: statusFinished,
+		})
+
+	// Stub HTTP always returns 503 — WaitHTTPReady will time out.
+	stub := &sequencingHTTPFor500{remaining5xx: 999}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterSubdomain(srv, mock, stub, "proj-1")
+
+	result := callTool(t, srv, "zerops_subdomain", map[string]any{
+		"serviceHostname": "app", "action": "enable",
+	})
+	if result.IsError {
+		t.Fatalf("HTTP timeout must NOT fail the tool call: %s", getTextContent(t, result))
+	}
+
+	var sr ops.SubdomainResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &sr); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	found := false
+	for _, w := range sr.Warnings {
+		if strings.Contains(w, "not HTTP-ready") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected Warnings to mention HTTP readiness timeout; got %v", sr.Warnings)
+	}
+}
+
 func TestSubdomainTool_EmptyAction(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, "proj-1")
+	RegisterSubdomain(srv, mock, okHTTP, "proj-1")
 
 	result := callTool(t, srv, "zerops_subdomain", map[string]any{
 		"serviceHostname": "api", "action": "",

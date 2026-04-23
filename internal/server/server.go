@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -151,7 +152,7 @@ func (s *Server) registerTools() {
 	tools.RegisterEnv(s.server, s.client, projectID, s.rtInfo.ServiceName)
 	tools.RegisterImport(s.server, s.client, projectID, stackCache, schemaCache, wfEngine, stateDir)
 	tools.RegisterDelete(s.server, s.client, projectID, stateDir, s.mounter, s.rtInfo)
-	tools.RegisterSubdomain(s.server, s.client, projectID)
+	tools.RegisterSubdomain(s.server, s.client, &http.Client{Timeout: 15 * time.Second}, projectID)
 	tools.RegisterMount(s.server, s.client, projectID, s.mounter, s.rtInfo, stateDir, wfEngine)
 
 	// Container-only: zerops_browser wraps agent-browser with a guaranteed
