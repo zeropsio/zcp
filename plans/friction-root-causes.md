@@ -173,39 +173,25 @@ Each workstream below is structured identically: problem statement → design �
 
 **File delta**: –50 LOC net.
 
-#### P1.2 — Filter stale build warnings by pipeline start time
+#### P1.2 — Filter stale build warnings by pipeline start time ✅ SUPERSEDED by `plans/logging-refactor.md`
 
-**Why**: `event.Build.ServiceStackID` identifies a persistent build service-stack; its log accumulates warnings across all historical builds of the target service. A fixed-and-redeployed build's warning response currently includes entries from prior builds.
+**Outcome**: The narrow P1.2 patch described below was abandoned mid-session in favour of a fundamental refactor that solves the same symptom more durably. Live probes (2026-04-23) revealed that:
 
-**Key fact**: `platform.LogFetchParams.Since` field already exists (`internal/platform/types.go:167`) and the client-side time filter is implemented (`logfetcher.go:134-144`). The fix is to populate it. The anchor is `event.Build.PipelineStart` (`internal/platform/types.go:212`), which marks when this build began emitting logs.
+- The current client-side `Since` filter is lex-compare, broken at sub-second boundaries (ASCII `Z` > `.` ordering); so P1.2 as originally specified would land on top of a silently-wrong comparator.
+- The Zerops log backend exposes a cleaner primitive: `tags=zbuilder@<appVersionId>` filters exactly this build's entries server-side. No time window needed.
+- Our queries never set `facility`, so daemon noise (sshfs, systemd) leaks into build warnings regardless of any time filter.
 
-**Changes** in `internal/ops/build_logs.go`:
+The refactor (`plans/logging-refactor.md`, shipped 2026-04-23) delivers a stronger guarantee than P1.2 would have: `FetchBuildWarnings` now scopes by tag identity, not time window. Stale warnings from prior builds are physically excluded, not probabilistically filtered. The sub-second lex bug is fixed for every path that still uses `Since` (`zerops_logs` MCP tool, `FetchRuntimeLogs`). The `deploy-warnings-fresh-only` scenario is authored at `internal/eval/scenarios/deploy-warnings-fresh-only.md` as planned.
 
-```go
-params := platform.LogFetchParams{
-    ServiceID: *event.Build.ServiceStackID,
-    Severity:  "warning",
-    Limit:     100,  // widened from 20 — client-side Since may drop majority
-}
-if event.Build.PipelineStart != nil {
-    if t, err := time.Parse(time.RFC3339Nano, *event.Build.PipelineStart); err == nil {
-        params.Since = t
-    }
-}
-entries, err := fetcher.FetchLogs(ctx, logAccess, params)
-// ... rest unchanged ...
-```
+**Frozen original text preserved for audit**:
 
-**Risk**: Zerops log API does not support server-side time bound (`logfetcher.go:80-96`). If the build-stack emits more than 100 warnings newer than `PipelineStart` (pathological chatty build), some post-`Since` legitimate warnings may still be dropped. Client-side `Since` clipping handles the dominant stale-leak case; the `Limit` widening reduces exhaustion probability.
+> Why: `event.Build.ServiceStackID` identifies a persistent build service-stack; its log accumulates warnings across all historical builds of the target service. A fixed-and-redeployed build's warning response currently includes entries from prior builds.
+>
+> Key fact: `platform.LogFetchParams.Since` field already exists and the client-side time filter is implemented but never populated. The fix is to populate it. The anchor is `event.Build.PipelineStart`.
+>
+> File delta: +15 LOC.
 
-**Invariants preserved**: `FetchBuildWarnings` return shape unchanged.
-
-**TDD**:
-1. RED: `build_logs_test.go` `TestFetchBuildWarnings_FiltersStaleByPipelineStart` — mock 3 entries at `t0`, `t0+1h`, `t0+2h`; `PipelineStart = t0+30m`; assert only last 2 returned.
-2. RED: `TestFetchBuildWarnings_NilPipelineStart_NoFilter` — `PipelineStart = nil`; assert all 3 returned (backward compatibility).
-3. GREEN: 6-LOC edit.
-
-**File delta**: +15 LOC.
+**Actual delivered changes**: see `plans/logging-refactor.md` §5 Phases 1–7. Rough file deltas: +logfetcher pipeline rewrite, +MockLogFetcher filter fidelity, +tag-identity in `FetchBuildWarnings`/`FetchBuildLogs`, +container-creation-start anchor in `FetchRuntimeLogs`, +AST contract test, +2 CLAUDE.md conventions, +eval scenario.
 
 ---
 
