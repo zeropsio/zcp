@@ -1,6 +1,7 @@
 package recipe
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -308,5 +309,116 @@ func TestDispatch_StitchContent(t *testing.T) {
 	}
 	if res.StitchedPath == "" {
 		t.Error("StitchedPath empty after successful stitch")
+	}
+}
+
+// TestDispatch_StitchContent_MergesEnvFieldsAndRegenerates pins the
+// real stitch contract: writer's env_import_comments + project_env_vars
+// merge into the plan, all 6 deliverable yamls land on disk with the
+// merged content, and writer-owned surface bodies (root README, env
+// README, per-codebase README + CLAUDE.md) land at their canonical
+// paths.
+func TestDispatch_StitchContent_MergesEnvFieldsAndRegenerates(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	outputRoot := filepath.Join(dir, "run")
+	store := NewStore(dir)
+	dispatch(t.Context(), store, RecipeInput{
+		Action: "start", Slug: "synth-showcase", OutputRoot: outputRoot,
+	})
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	payload := map[string]any{
+		"root_readme": "# synth showcase\n\nroot body.",
+		"env_readmes": map[string]any{
+			"0": "# Env 0 — AI Agent\n",
+			"5": "# Env 5 — HA Production\n",
+		},
+		"env_import_comments": map[string]any{
+			"0": map[string]any{
+				"project": "AI agent workspace — new.",
+				"service": map[string]any{"apidev": "API dev slot (stitched)."},
+			},
+		},
+		"project_env_vars": map[string]any{
+			"0": map[string]any{
+				"DEV_API_URL": "https://apidev-${zeropsSubdomainHost}-3000.prg1.zerops.app",
+			},
+			"5": map[string]any{
+				"STAGE_API_URL": "https://api-${zeropsSubdomainHost}-3000.prg1.zerops.app",
+			},
+		},
+		"codebase_readmes": map[string]any{
+			"api": map[string]any{
+				"integration_guide": "## IG for api\n- bind 0.0.0.0",
+				"gotchas":           "## Gotchas\n- self-shadow",
+			},
+		},
+		"codebase_claude": map[string]any{
+			"api": "# CLAUDE.md for api\ndev loop...",
+		},
+		"citations": map[string]any{},
+		"manifest":  map[string]any{"surface_counts": map[string]any{}},
+	}
+
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "stitch-content", Slug: "synth-showcase", Payload: payload,
+	})
+	if !res.OK {
+		t.Fatalf("stitch-content: %+v", res)
+	}
+
+	// Plan merges: EnvComments["0"].Service["apidev"] should reflect the
+	// stitched writer payload, not the synthetic fixture's old value.
+	if got := sess.Plan.EnvComments["0"].Service["apidev"]; got != "API dev slot (stitched)." {
+		t.Errorf("EnvComments[0].apidev = %q, want stitched value", got)
+	}
+	if got := sess.Plan.ProjectEnvVars["5"]["STAGE_API_URL"]; got == "" {
+		t.Error("ProjectEnvVars[5].STAGE_API_URL not merged")
+	}
+
+	// Deliverable yamls on disk with merged content.
+	for i := range Tiers() {
+		tier, _ := TierAt(i)
+		path := filepath.Join(outputRoot, tier.Folder, "import.yaml")
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("tier %d: import.yaml not on disk: %v", i, err)
+		}
+	}
+	tier0 := filepath.Join(outputRoot, "0 — AI Agent", "import.yaml")
+	body, err := os.ReadFile(tier0)
+	if err != nil {
+		t.Fatalf("read tier 0: %v", err)
+	}
+	if !strings.Contains(string(body), "DEV_API_URL") {
+		t.Errorf("tier 0 missing DEV_API_URL from project_env_vars:\n%s", string(body))
+	}
+	if !strings.Contains(string(body), "API dev slot (stitched).") {
+		t.Errorf("tier 0 missing stitched env comment:\n%s", string(body))
+	}
+	if !strings.Contains(string(body), "${zeropsSubdomainHost}") {
+		t.Errorf("tier 0 lost ${zeropsSubdomainHost} literal (template leak):\n%s", string(body))
+	}
+
+	// Content surfaces on disk.
+	for _, want := range []string{
+		filepath.Join(outputRoot, "README.md"),
+		filepath.Join(outputRoot, "0 — AI Agent", "README.md"),
+		filepath.Join(outputRoot, "codebases", "api", "README.md"),
+		filepath.Join(outputRoot, "codebases", "api", "CLAUDE.md"),
+	} {
+		if _, err := os.Stat(want); err != nil {
+			t.Errorf("missing surface %s: %v", want, err)
+		}
+	}
+	// Fragment markers on per-codebase README.
+	cbBody, _ := os.ReadFile(filepath.Join(outputRoot, "codebases", "api", "README.md"))
+	if !strings.Contains(string(cbBody), "integration-guide-start") {
+		t.Errorf("codebase README missing IG marker:\n%s", string(cbBody))
+	}
+	if !strings.Contains(string(cbBody), "knowledge-base-start") {
+		t.Errorf("codebase README missing KB marker:\n%s", string(cbBody))
 	}
 }

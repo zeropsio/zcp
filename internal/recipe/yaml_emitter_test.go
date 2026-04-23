@@ -175,6 +175,44 @@ func tierFolder(i int) string {
 	return t.Folder
 }
 
+// TestEmitWorkspaceYAML_ShapeContract pins the workspace-shape
+// invariants. These guarantees are what make provision safe: no
+// buildFromGit (repos don't exist yet), no zeropsSetup, no project
+// block (project-level env vars arrive via zerops_env after import),
+// dev slots with startWithoutCode:true, stage slots without it.
+func TestEmitWorkspaceYAML_ShapeContract(t *testing.T) {
+	t.Parallel()
+	got, err := EmitWorkspaceYAML(syntheticShowcasePlan())
+	if err != nil {
+		t.Fatalf("EmitWorkspaceYAML: %v", err)
+	}
+	// Absences — workspace shape rejects these fields.
+	for _, forbidden := range []string{
+		"project:",
+		"buildFromGit:",
+		"zeropsSetup:",
+		"<@generateRandomString",
+		"#zeropsPreprocessor",
+	} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("workspace yaml contains forbidden %q:\n%s", forbidden, got)
+		}
+	}
+	// Presences — every non-shared runtime codebase gets a dev+stage pair.
+	// Dev slots have startWithoutCode:true; stage slots omit it.
+	mustContain(t, got, "hostname: apidev")
+	mustContain(t, got, "hostname: apistage")
+	mustContain(t, got, "hostname: appdev")
+	mustContain(t, got, "hostname: appstage")
+	mustContain(t, got, "hostname: workerdev")
+	mustContain(t, got, "hostname: workerstage")
+	mustContain(t, got, "startWithoutCode: true")
+	// Managed services still present with priority/mode.
+	mustContain(t, got, "hostname: db")
+	mustContain(t, got, "type: postgresql@18")
+	mustContain(t, got, "mode: NON_HA")
+}
+
 func mustContain(t *testing.T, got, want string) {
 	t.Helper()
 	if !strings.Contains(got, want) {

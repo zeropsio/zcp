@@ -1,45 +1,81 @@
-# Provision phase — create services from the plan
+# Provision phase — bring up the working project
 
-The research phase produced a typed Plan. Provision creates the Zerops
-services for the AI-agent tier (tier 0) so scaffold and feature phases
-have a live platform to deploy against.
+Provision creates the single Zerops project this recipe run iterates
+against. Scaffold + feature phases deploy code into it; finalize
+generates the 6 published tier yamls separately — **provision does not
+create any of those 6 tiers as live projects**. It creates one workspace.
+
+## The two distinct YAML shapes — do not conflate
+
+- **Workspace YAML** (this phase): services-only, no `project:` block,
+  dev runtimes `startWithoutCode: true` so they come up empty for you
+  to write code into via SSH/mount, stage runtimes wait at
+  `READY_TO_DEPLOY`, no `buildFromGit` (repos don't exist yet), no
+  `zeropsSetup`, no preprocessor expressions. Submitted inline via
+  `zerops_import content=<yaml>`.
+
+- **Deliverable YAMLs** (6 files, produced at finalize): full `project:`
+  block per tier with `envVariables`, every runtime has
+  `zeropsSetup: dev|prod` + `buildFromGit` pointing at the published
+  codebase repos, shared secrets use `<@generateRandomString(<32>)>`
+  templates so every end-user's click-deploy gets a fresh value.
+
+The workspace yaml you submit here is NOT one of the 6 deliverables. Do
+not try to pass a deliverable yaml to `zerops_import` — the repos don't
+exist yet and it would fail at the clone step.
 
 ## Steps
 
-1. **Emit the AI-agent tier import.yaml**:
-   `zerops_recipe action=emit-yaml slug=<slug> tierIndex=0`
+1. **Emit the workspace yaml**:
+   `zerops_recipe action=emit-yaml slug=<slug> shape=workspace`
 
-2. **Write it to disk** under
-   `<outputRoot>/0 — AI Agent/import.yaml` (engine will regenerate it
-   at finalize; this is the working copy).
+   Returns services-only yaml with dev+stage pairs per codebase + all
+   managed services. No disk write — the yaml string is the response.
 
-3. **Provision via zerops_import**:
-   `zerops_import file="<path to tier-0 import.yaml>"`.
-   This creates the project + services on Zerops. Save the project ID.
+2. **Provision the workspace**:
+   `zerops_import content=<yaml from step 1>` (pass the string inline,
+   do not write it to disk first). Wait for every service to reach its
+   expected state:
+   - Dev runtimes → `RUNNING` (via `startWithoutCode: true`)
+   - Stage runtimes → `READY_TO_DEPLOY` (wait for first cross-deploy)
+   - Managed services → `RUNNING` / `ACTIVE`
 
-4. **Verify provisioning** via `zerops_discover` — every plan.Codebase
-   hostname + plan.Service hostname must appear with status=active.
+3. **Set project-level shared secrets** (if `Research.NeedsAppSecret=true`):
+   ```
+   zerops_env project=true action=set \
+     variables=["<AppSecretKey>=<@generateRandomString(<32>)>"]
+   ```
+   The preprocessor runs once, the actual secret value lands on the
+   live project, and dependent services restart with it. **This is the
+   real secret your workspace uses.** The 6 deliverable yamls emit their
+   own `<@generateRandomString>` template at finalize — each end-user's
+   click-deploy gets a different value, which is correct.
 
-5. **Inject project-level secrets** (if `Research.NeedsAppSecret=true`):
-   set `<AppSecretKey>` as a project-level env via `zerops_env`. The
-   yaml emitter already includes the preprocessor directive; the
-   secret's actual value gets generated at import time.
+4. **Mount dev codebases** (one per non-worker-shared codebase):
+   `zerops_mount serviceHostname=<codebase>dev`. SSHFS mounts land on
+   the `startWithoutCode` dev containers.
 
-6. Complete the phase: `zerops_recipe action=complete-phase slug=<slug>`.
+5. **Catalog cross-service env var keys**:
+   `zerops_discover includeEnvs=true`. Record the authoritative env-var
+   keys each managed service exposes — `${db_hostname}`, `${db_user}`,
+   `${cache_hostname}`, etc. Scaffold sub-agents reference these in each
+   codebase's `zerops.yaml run.envVariables`, never raw values.
 
-## What NOT to do here
+6. **Complete the phase**:
+   `zerops_recipe action=complete-phase slug=<slug>`.
 
-- Do NOT provision tier 1-5 now. Those tiers exist on paper (the
-  engine emits their import.yaml at finalize) but the AI-agent tier is
-  the only one that gets a live project for the duration of this run.
-- Do NOT modify the plan from within provision. If you discover the
-  plan is wrong, `action=reset` and rerun research — don't drift.
+## What NOT to do
+
+- Do NOT emit a deliverable yaml at provision. Deliverable shape has
+  `buildFromGit` pointing at repos that don't exist yet.
+- Do NOT write the workspace yaml to disk. `zerops_import` takes
+  `content` inline.
+- Do NOT declare shared secrets in the workspace yaml's `envVariables`
+  (there is no `project:` block in workspace shape). Use `zerops_env
+  project=true action=set` after import.
+- Do NOT bake your workspace's real secret value into anything that
+  flows to finalize. Finalize emits `<@generateRandomString>` templates
+  for reproducibility.
 - Do NOT call `zerops_import` with a hand-written yaml. Use the
-  engine-emitted output. If the emitter produces invalid yaml, record a
-  fact and fix the emitter via PR — that's an engine defect, not a
-  platform workaround.
-
-## Gate at complete-phase
-
-Checks: the project exists, every plan hostname resolved to an active
-service, zero hostname drift between plan and Zerops state.
+  engine-emitted workspace shape. If the emitter produces invalid yaml,
+  record a fact and fix the emitter via PR.

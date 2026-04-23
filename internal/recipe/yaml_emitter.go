@@ -11,11 +11,60 @@ import (
 // identical regardless of which engine ran.
 const RecipeAppRepoBase = "https://github.com/zerops-recipe-apps/"
 
-// EmitImportYAML renders the import.yaml for one tier of a plan. Output is
-// deterministic — struct-field order, sorted env-var keys, sorted services.
-// Prose comes exclusively from plan.EnvComments; this function adds no
-// prose of its own (plan §5 P1).
-func EmitImportYAML(plan *Plan, tierIndex int) (string, error) {
+// Shape selects which import.yaml shape the emitter produces.
+//
+// A recipe run has two fundamentally different yaml shapes and
+// conflating them is the leading cause of provision/finalize failure:
+//
+//   - ShapeWorkspace (provision-time): submitted via `zerops_import
+//     content=<yaml>` to bring up the author's single working project.
+//     Services-only (no `project:`), dev runtimes `startWithoutCode: true`
+//     so they come up empty for SSHFS-mount-and-code, no `buildFromGit`
+//     (the repos don't exist yet), no `zeropsSetup`, no preprocessor
+//     expressions. Real project-level secrets are set separately via
+//     `zerops_env project=true action=set` after the workspace is up.
+//
+//   - ShapeDeliverable (finalize, 6 tiers): the published template each
+//     end-user clicks to deploy. Full `project:` block with
+//     `envVariables` (shared secrets as `<@generateRandomString(<32>)>`
+//     templates — evaluated once per end-user), every runtime has
+//     `zeropsSetup: dev|prod` + `buildFromGit` pointing at the published
+//     codebase repos. `${zeropsSubdomainHost}` stays literal for
+//     end-user subdomain substitution at click-deploy.
+//
+// Plan §3 stays-list: v3 preserves v2's distinction between these two
+// shapes. v2 enforces via a validator refusing `startWithoutCode` in
+// deliverables (internal/tools/workflow_checks_finalize.go). v3 enforces
+// by construction — ShapeWorkspace never emits buildFromGit/zeropsSetup,
+// ShapeDeliverable never emits startWithoutCode.
+type Shape string
+
+const (
+	ShapeWorkspace   Shape = "workspace"
+	ShapeDeliverable Shape = "deliverable"
+)
+
+// EmitWorkspaceYAML renders the workspace import.yaml — submitted to
+// `zerops_import content=<yaml>` at provision to bring up the author's
+// working project. Services-only, dev+stage pairs per codebase, managed
+// services with priority/mode. No `project:` block (project-level env
+// vars are set via `zerops_env` after import).
+func EmitWorkspaceYAML(plan *Plan) (string, error) {
+	if plan == nil {
+		return "", fmt.Errorf("nil plan")
+	}
+	var b strings.Builder
+	writeWorkspaceServices(&b, plan)
+	return b.String(), nil
+}
+
+// EmitDeliverableYAML renders the published import.yaml for one tier —
+// the end-user-facing template. Full `project:` block, `zeropsSetup` +
+// `buildFromGit` per runtime service, per-tier scaling/mode. Comments
+// from plan.EnvComments; project-level env vars from plan.ProjectEnvVars
+// (keyed by tier index as string). Output is deterministic — struct-
+// field order, sorted env-var keys, sorted extra fields.
+func EmitDeliverableYAML(plan *Plan, tierIndex int) (string, error) {
 	tier, ok := TierAt(tierIndex)
 	if !ok {
 		return "", fmt.Errorf("tier index %d out of range", tierIndex)
@@ -27,8 +76,15 @@ func EmitImportYAML(plan *Plan, tierIndex int) (string, error) {
 	var b strings.Builder
 	writePreprocessor(&b, plan)
 	writeProject(&b, plan, tier)
-	writeServices(&b, plan, tier)
+	writeDeliverableServices(&b, plan, tier)
 	return b.String(), nil
+}
+
+// EmitImportYAML is retained as a thin delegate to EmitDeliverableYAML
+// for callers that haven't migrated. New callers pick a shape
+// explicitly via EmitWorkspaceYAML / EmitDeliverableYAML.
+func EmitImportYAML(plan *Plan, tierIndex int) (string, error) {
+	return EmitDeliverableYAML(plan, tierIndex)
 }
 
 func writePreprocessor(b *strings.Builder, plan *Plan) {
@@ -68,7 +124,71 @@ func writeProject(b *strings.Builder, plan *Plan, tier Tier) {
 	b.WriteByte('\n')
 }
 
-func writeServices(b *strings.Builder, plan *Plan, tier Tier) {
+// writeWorkspaceServices emits the provision-time service list. Every
+// codebase contributes a dev slot (startWithoutCode: true) and a stage
+// slot (no startWithoutCode — waits at READY_TO_DEPLOY). Managed
+// services land the same as deliverable (priority, mode, autoscaling).
+// Shared-codebase workers get stage only; the host's dev slot runs both
+// processes.
+func writeWorkspaceServices(b *strings.Builder, plan *Plan) {
+	b.WriteString("services:\n")
+	// Use tier 0 as the scaling baseline for workspace — RuntimeMinRAM /
+	// ManagedMinRAM at the dev-default level.
+	baseTier, _ := TierAt(0)
+	for _, cb := range plan.Codebases {
+		if isRuntimeShared(cb, plan) {
+			writeWorkspaceRuntimeStage(b, cb, baseTier)
+			continue
+		}
+		writeWorkspaceRuntimeDev(b, cb, baseTier)
+		writeWorkspaceRuntimeStage(b, cb, baseTier)
+	}
+	for _, svc := range plan.Services {
+		writeNonRuntimeService(b, svc, baseTier, nil)
+	}
+}
+
+// writeWorkspaceRuntimeDev emits a dev runtime slot in workspace shape:
+// startWithoutCode: true, no zeropsSetup, no buildFromGit, subdomain
+// access for non-worker services.
+func writeWorkspaceRuntimeDev(b *strings.Builder, cb Codebase, tier Tier) {
+	host := cb.Hostname + "dev"
+	fmt.Fprintf(b, "  - hostname: %s\n", host)
+	fmt.Fprintf(b, "    type: %s\n", cb.BaseRuntime)
+	if cb.Role == RoleAPI {
+		b.WriteString("    priority: 5\n")
+	}
+	b.WriteString("    startWithoutCode: true\n")
+	b.WriteString("    maxContainers: 1\n")
+	if !cb.IsWorker {
+		b.WriteString("    enableSubdomainAccess: true\n")
+	}
+	writeAutoscaling(b, serviceKindRuntime, tier)
+	b.WriteByte('\n')
+}
+
+// writeWorkspaceRuntimeStage emits a stage runtime slot in workspace
+// shape. Stage services omit startWithoutCode — they wait at
+// READY_TO_DEPLOY until the first cross-deploy from dev.
+func writeWorkspaceRuntimeStage(b *strings.Builder, cb Codebase, tier Tier) {
+	host := cb.Hostname + "stage"
+	fmt.Fprintf(b, "  - hostname: %s\n", host)
+	fmt.Fprintf(b, "    type: %s\n", cb.BaseRuntime)
+	if cb.Role == RoleAPI {
+		b.WriteString("    priority: 5\n")
+	}
+	if !cb.IsWorker {
+		b.WriteString("    enableSubdomainAccess: true\n")
+	}
+	writeAutoscaling(b, serviceKindRuntime, tier)
+	b.WriteByte('\n')
+}
+
+// writeDeliverableServices emits the finalize-time service list per
+// tier. Tiers 0-1 are dev-pair (dev+stage per codebase); tiers 2-5 are
+// single-slot (api/app/worker only). Runtime services carry
+// zeropsSetup + buildFromGit pointing at the published codebase repos.
+func writeDeliverableServices(b *strings.Builder, plan *Plan, tier Tier) {
 	b.WriteString("services:\n")
 	comments := plan.EnvComments[envKey(tier)].Service
 
@@ -146,8 +266,11 @@ func writeRuntimeSingle(b *strings.Builder, plan *Plan, cb Codebase, tier Tier, 
 }
 
 // writeNonRuntimeService emits a managed / storage / utility service.
+// comments may be nil (workspace shape has no comments).
 func writeNonRuntimeService(b *strings.Builder, svc Service, tier Tier, comments map[string]string) {
-	writeComment(b, comments[svc.Hostname], "  ")
+	if comments != nil {
+		writeComment(b, comments[svc.Hostname], "  ")
+	}
 	fmt.Fprintf(b, "  - hostname: %s\n", svc.Hostname)
 	fmt.Fprintf(b, "    type: %s\n", svc.Type)
 	if svc.Priority > 0 {

@@ -1,45 +1,80 @@
-# Finalize phase — writer dispatch, stitch payload, emit all tiers
+# Finalize phase — writer dispatch, stitch payload, regenerate all 6 tiers
 
-The scaffold + feature phases built a working deploy at tier 0. Finalize
-turns it into the 6-tier publishable artifact.
+Scaffold + feature built a working deploy in the single workspace
+project. Finalize turns that into the 6-tier publishable artifact each
+end-user clicks to deploy.
+
+## The env-var template model (critical)
+
+The 6 deliverable yamls are a **template**. Each end-user's click-deploy
+creates their own project with their own subdomains and their own
+secrets. That means:
+
+- **Shared secrets** (APP_KEY, JWT_SECRET, session key) emit as
+  `<@generateRandomString(<32>)>` templates — evaluated once per
+  end-user at their import. Your workspace's real secret value stays on
+  your workspace; **it is NOT copied into the deliverable**.
+- **URLs** use `${zeropsSubdomainHost}` as a literal — the platform
+  substitutes the end-user's subdomain at their click-deploy. Do NOT
+  bake your workspace's resolved URL.
+- **Per-env shape differs**:
+  - Envs 0-1 (AI Agent, Remote/CDE — dev-pair slots `apidev`/`apistage`
+    exist): carry both `DEV_*` and `STAGE_*` URL constants
+  - Envs 2-5 (Local, Stage, Small-Prod, HA-Prod — single-slot `api`/`app`):
+    carry `STAGE_*` only, with hostnames `api`/`app` (not `apistage`/`appstage`)
 
 ## Steps
 
-1. **Writer dispatch**: `zerops_recipe action=build-brief slug=<slug>
-   briefKind=writer`. The brief walks the surface registry, filters
-   facts-log by surface hint, inlines example banks, returns ~8–10 KB
-   of content-authoring guidance. Dispatch via `Agent` with the brief
-   body verbatim. Description: `writer-<slug>`.
+1. **Build the writer brief**:
+   `zerops_recipe action=build-brief slug=<slug> briefKind=writer`.
+   Brief walks the surface registry, filters facts by surface hint,
+   inlines example banks, returns ~8-10 KB of guidance.
 
-2. **Writer returns a structured completion payload** (see the
-   `Completion payload` section of its brief). Do NOT ask the writer to
-   write files directly — writer-owned paths are locked at the engine
-   boundary.
+2. **Dispatch the writer** via `Agent`. Pass the brief body verbatim.
+   Description: `writer-<slug>`. The writer reads `zerops_workspace_manifest`
+   to see the full run state without your debug history polluting its
+   context.
 
-3. **Stitch**: `zerops_recipe action=stitch-content slug=<slug>
-   payload=<writer's JSON>`. The engine writes the payload into the
-   recipe file tree at canonical paths. This also regenerates every
-   tier's `import.yaml` using the writer-authored `env_import_comments`.
+3. **Writer returns a structured completion payload** — see
+   `completion_payload.md` for the schema. Keys include:
+   - `root_readme`, `env_readmes`, `codebase_readmes`, `codebase_claude`
+     — surface bodies
+   - `env_import_comments` — per-env `{project, service: {host →
+     comment}}` merged into `plan.EnvComments`
+   - `project_env_vars` — per-env env var maps merged into
+     `plan.ProjectEnvVars`. Must use `${zeropsSubdomainHost}` for URLs
+     and `<@generateRandomString>` for shared secrets (see shape above)
+   - `citations`, `manifest` — gate-check inputs
 
-4. **Run gates**: `zerops_recipe action=complete-phase slug=<slug>`.
-   The gate set checks env-imports presence, citation timestamps,
-   required fact fields, completion payload schema, and main-agent-
-   rewrote-writer-path violations. Fix any CRIT violation and retry
-   the writer dispatch (fix-dispatch pattern).
+4. **Stitch**:
+   `zerops_recipe action=stitch-content slug=<slug> payload=<writer JSON>`.
+   The engine:
+   - Archives the raw payload at `<outputRoot>/.writer-payload.json`
+   - Merges `env_import_comments` → `plan.EnvComments`
+   - Merges `project_env_vars` → `plan.ProjectEnvVars`
+   - Regenerates all 6 `<outputRoot>/<tier.Folder>/import.yaml` files
+     with writer-authored comments + env vars
+   - Writes root README, env READMEs, per-codebase READMEs (IG + KB
+     fragments), per-codebase CLAUDE.md files
 
-5. **Export** (optional): the agent may copy the recipe tree to a
-   separate location, or hand control back to the user to run
-   `zcp sync recipe publish`. Engine does not auto-export.
+5. **Gates**: `zerops_recipe action=complete-phase slug=<slug>`. Checks
+   include env-imports-present (all 6 files on disk), citation
+   timestamps, required fact fields, completion-payload schema,
+   main-agent-rewrote-writer-path violations.
 
-## If writer returns a broken payload
+6. **Fix-dispatch** (if gates fail): diff the writer's output against
+   the brief schema, compose a targeted correction prompt, re-dispatch
+   the writer. Do NOT hand-edit writer-owned files — that trips the
+   main-agent-rewrote-writer-path gate.
 
-One fix-dispatch is permitted: the main agent diffs the broken output
-against the brief's completion-payload schema, composes a targeted
-correction prompt, and re-dispatches the writer. Do not hand-edit the
-writer's output files — that trips the main-agent-rewrote-writer-path
-gate and invalidates the recipe.
+## What NOT to do
 
-## Close
-
-After `complete-phase` passes on finalize, the recipe artifact is
-complete. Report the output path + the per-tier file count to the user.
+- Do NOT re-run `emit-yaml shape=workspace` at finalize — that shape is
+  provision-only.
+- Do NOT pass your live workspace's secret value as a
+  `project_env_vars` entry. Use `<@generateRandomString(<32>)>`.
+- Do NOT resolve `${zeropsSubdomainHost}` to a literal URL. It must
+  stay a template for the end-user's platform to substitute.
+- Do NOT edit the stitched files by hand. `stitch-content` is the only
+  supported write path; any subsequent edit by the main agent trips the
+  authorship gate.

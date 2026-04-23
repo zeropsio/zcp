@@ -143,29 +143,46 @@ func (s *Session) BuildBrief(kind BriefKind, cb Codebase) (Brief, error) {
 	}
 }
 
-// EmitYAML renders the import.yaml for a tier and writes it to the
-// output tree at <outputRoot>/<tier.Folder>/import.yaml. Returns the
-// rendered YAML. Thread-safe; the mutex is released before disk I/O.
-func (s *Session) EmitYAML(tierIndex int) (string, error) {
+// EmitYAML renders an import.yaml for the given shape.
+//
+//   - ShapeWorkspace: services-only yaml for `zerops_import content=<yaml>`
+//     at provision. tierIndex is ignored. Not written to disk — the agent
+//     hands the string directly to zerops_import.
+//
+//   - ShapeDeliverable: published-template yaml for tier tierIndex, written
+//     to <outputRoot>/<tier.Folder>/import.yaml so the finalize gate can
+//     verify presence.
+//
+// Thread-safe; mutex released before disk I/O.
+func (s *Session) EmitYAML(shape Shape, tierIndex int) (string, error) {
 	s.mu.Lock()
-	yaml, err := EmitImportYAML(s.Plan, tierIndex)
+	plan := s.Plan
 	outputRoot := s.OutputRoot
 	s.mu.Unlock()
-	if err != nil {
-		return "", err
-	}
-	if outputRoot != "" {
-		tier, _ := TierAt(tierIndex)
-		dir := filepath.Join(outputRoot, tier.Folder)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return "", fmt.Errorf("create tier dir: %w", err)
+
+	switch shape {
+	case ShapeWorkspace:
+		return EmitWorkspaceYAML(plan)
+	case ShapeDeliverable:
+		yaml, err := EmitDeliverableYAML(plan, tierIndex)
+		if err != nil {
+			return "", err
 		}
-		path := filepath.Join(dir, "import.yaml")
-		if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
-			return "", fmt.Errorf("write import.yaml: %w", err)
+		if outputRoot != "" {
+			tier, _ := TierAt(tierIndex)
+			dir := filepath.Join(outputRoot, tier.Folder)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return "", fmt.Errorf("create tier dir: %w", err)
+			}
+			path := filepath.Join(dir, "import.yaml")
+			if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+				return "", fmt.Errorf("write import.yaml: %w", err)
+			}
 		}
+		return yaml, nil
+	default:
+		return "", fmt.Errorf("unknown yaml shape %q (want %q or %q)", shape, ShapeWorkspace, ShapeDeliverable)
 	}
-	return yaml, nil
 }
 
 func (s *Session) readFacts() ([]FactRecord, error) {

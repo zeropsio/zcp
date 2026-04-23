@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -68,7 +69,8 @@ type RecipeInput struct {
 	Phase      string         `json:"phase,omitempty"      jsonschema:"Phase name for enter-phase / complete-phase: research, provision, scaffold, feature, finalize."`
 	BriefKind  string         `json:"briefKind,omitempty"  jsonschema:"For build-brief: scaffold, feature, writer."`
 	Codebase   string         `json:"codebase,omitempty"   jsonschema:"For build-brief when kind=scaffold: the codebase hostname to compose for."`
-	TierIndex  int            `json:"tierIndex,omitempty"  jsonschema:"For emit-yaml: tier 0..5."`
+	Shape      string         `json:"shape,omitempty"      jsonschema:"For emit-yaml: 'workspace' (services-only YAML for zerops_import at provision) or 'deliverable' (full published template for tierIndex, written to disk)."`
+	TierIndex  int            `json:"tierIndex,omitempty"  jsonschema:"For emit-yaml shape=deliverable: tier 0..5. Ignored when shape=workspace."`
 	Fact       *FactRecord    `json:"fact,omitempty"       jsonschema:"For record-fact: a FactRecord object with topic, symptom, mechanism, surfaceHint, citation fields."`
 	Plan       *Plan          `json:"plan,omitempty"       jsonschema:"For update-plan: partial Plan object. Fields present overwrite session.Plan; omitted fields untouched."`
 	Payload    map[string]any `json:"payload,omitempty"    jsonschema:"For stitch-content: writer sub-agent's structured completion payload as a JSON object."`
@@ -208,7 +210,11 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 			r.Parent, r.OK = parent, true
 		}
 	case "emit-yaml":
-		yaml, err := sess.EmitYAML(in.TierIndex)
+		shape := Shape(in.Shape)
+		if shape == "" {
+			shape = ShapeDeliverable
+		}
+		yaml, err := sess.EmitYAML(shape, in.TierIndex)
 		if err != nil {
 			r.Error = err.Error()
 			return r
@@ -298,23 +304,219 @@ func buildBriefForRequest(sess *Session, in RecipeInput) (Brief, error) {
 	return sess.BuildBrief(BriefKind(in.BriefKind), cb)
 }
 
-// stitchContent persists the writer's completion payload to disk and
-// returns the output path. Minimum viable — the writer payload is
-// stored as-is at <outputRoot>/.writer-payload.json for downstream gate
-// checks; the engine's file-tree stitching is left to Commission B.
+// stitchContent absorbs the writer sub-agent's completion payload into
+// the recipe output tree. Steps:
+//
+//  1. Archive the raw payload at <outputRoot>/.writer-payload.json
+//     (gate checks still read this).
+//  2. Merge structured env fields into the plan:
+//     - env_import_comments → plan.EnvComments
+//     - project_env_vars    → plan.ProjectEnvVars
+//  3. Regenerate all 6 deliverable import.yaml files using the merged
+//     plan (writer-authored comments + per-tier project env vars land
+//     in the published yaml).
+//  4. Write the 7 content surfaces (root README, env READMEs, per-
+//     codebase README fragments + CLAUDE.md) to their canonical paths.
+//
+// Returns the path of the archived payload for backwards-compatible
+// tests; callers inspect the output tree directly for stitched content.
 func stitchContent(sess *Session, payload map[string]any) (string, error) {
 	if len(payload) == 0 {
 		return "", errors.New("stitch-content: payload is required")
 	}
+
+	// Step 1 — archive the raw payload under the session lock.
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return "", fmt.Errorf("re-marshal payload: %w", err)
 	}
-	path := filepath.Join(sess.OutputRoot, ".writer-payload.json")
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
+	sess.mu.Lock()
+	outputRoot := sess.OutputRoot
+	sess.mu.Unlock()
+	archivePath := filepath.Join(outputRoot, ".writer-payload.json")
+	if err := os.WriteFile(archivePath, raw, 0o600); err != nil {
 		return "", fmt.Errorf("write payload: %w", err)
 	}
-	return path, nil
+
+	// Step 2 — merge env comments + project env vars into the plan so
+	// the next emit reads them. Uses the typed mergePlan path so field
+	// merge semantics stay consistent.
+	envComments := extractEnvComments(payload)
+	projectEnvVars := extractProjectEnvVars(payload)
+	if len(envComments) > 0 || len(projectEnvVars) > 0 {
+		patch := &Plan{EnvComments: envComments, ProjectEnvVars: projectEnvVars}
+		if err := mergePlan(sess, patch); err != nil {
+			return "", fmt.Errorf("merge writer plan fields: %w", err)
+		}
+	}
+
+	// Step 3 — regenerate every deliverable yaml to disk.
+	for i := range Tiers() {
+		if _, err := sess.EmitYAML(ShapeDeliverable, i); err != nil {
+			return "", fmt.Errorf("regenerate tier %d import.yaml: %w", i, err)
+		}
+	}
+
+	// Step 4 — write the content surfaces. Errors abort; a partial stitch
+	// is worse than a clear failure the agent can retry.
+	if err := writeContentSurfaces(outputRoot, payload); err != nil {
+		return "", fmt.Errorf("write content surfaces: %w", err)
+	}
+
+	return archivePath, nil
+}
+
+// extractEnvComments maps the writer's env_import_comments payload into
+// the plan's EnvComments shape. Missing or wrong-type entries are
+// skipped silently — gate checks catch missing content downstream.
+func extractEnvComments(payload map[string]any) map[string]EnvComments {
+	raw, ok := payload["env_import_comments"].(map[string]any)
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	out := make(map[string]EnvComments, len(raw))
+	for key, v := range raw {
+		entry, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		var ec EnvComments
+		if p, ok := entry["project"].(string); ok {
+			ec.Project = p
+		}
+		if svc, ok := entry["service"].(map[string]any); ok {
+			ec.Service = make(map[string]string, len(svc))
+			for host, c := range svc {
+				if s, ok := c.(string); ok {
+					ec.Service[host] = s
+				}
+			}
+		}
+		out[key] = ec
+	}
+	return out
+}
+
+// extractProjectEnvVars maps the writer's project_env_vars payload into
+// the plan's ProjectEnvVars shape (per-env map of env var name → value).
+// Preprocessor expressions and ${zeropsSubdomainHost} literals pass
+// through verbatim — the emitter writes them byte-identical for end-user
+// project-import resolution.
+func extractProjectEnvVars(payload map[string]any) map[string]map[string]string {
+	raw, ok := payload["project_env_vars"].(map[string]any)
+	if !ok || len(raw) == 0 {
+		return nil
+	}
+	out := make(map[string]map[string]string, len(raw))
+	for key, v := range raw {
+		entry, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		inner := make(map[string]string, len(entry))
+		for name, val := range entry {
+			if s, ok := val.(string); ok {
+				inner[name] = s
+			}
+		}
+		out[key] = inner
+	}
+	return out
+}
+
+// writeContentSurfaces writes the writer's string-valued payload fields
+// to their canonical paths in the output tree. See
+// internal/recipe/content/briefs/writer/completion_payload.md for the
+// schema.
+func writeContentSurfaces(outputRoot string, payload map[string]any) error {
+	// Root README.
+	if body, ok := payload["root_readme"].(string); ok && body != "" {
+		if err := writeSurfaceFile(filepath.Join(outputRoot, "README.md"), body); err != nil {
+			return err
+		}
+	}
+	// Per-env READMEs, keyed "0".."5" → <tier.Folder>/README.md.
+	if envReadmes, ok := payload["env_readmes"].(map[string]any); ok {
+		for key, v := range envReadmes {
+			body, ok := v.(string)
+			if !ok || body == "" {
+				continue
+			}
+			idx := 0
+			if _, err := fmt.Sscanf(key, "%d", &idx); err != nil {
+				continue
+			}
+			tier, ok := TierAt(idx)
+			if !ok {
+				continue
+			}
+			if err := writeSurfaceFile(filepath.Join(outputRoot, tier.Folder, "README.md"), body); err != nil {
+				return err
+			}
+		}
+	}
+	// Per-codebase README (integration guide + gotchas fragments).
+	if readmes, ok := payload["codebase_readmes"].(map[string]any); ok {
+		for host, v := range readmes {
+			frag, ok := v.(map[string]any)
+			if !ok {
+				continue
+			}
+			body := assembleCodebaseReadme(frag)
+			if body == "" {
+				continue
+			}
+			if err := writeSurfaceFile(filepath.Join(outputRoot, "codebases", host, "README.md"), body); err != nil {
+				return err
+			}
+		}
+	}
+	// Per-codebase CLAUDE.md.
+	if claudeMap, ok := payload["codebase_claude"].(map[string]any); ok {
+		for host, v := range claudeMap {
+			body, ok := v.(string)
+			if !ok || body == "" {
+				continue
+			}
+			if err := writeSurfaceFile(filepath.Join(outputRoot, "codebases", host, "CLAUDE.md"), body); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// assembleCodebaseReadme glues the two writer-owned fragments (IG +
+// gotchas) into a single README body. Each fragment is wrapped in a
+// named marker so downstream tooling can extract them individually.
+func assembleCodebaseReadme(frag map[string]any) string {
+	ig, _ := frag["integration_guide"].(string)
+	kb, _ := frag["gotchas"].(string)
+	if ig == "" && kb == "" {
+		return ""
+	}
+	var b strings.Builder
+	if ig != "" {
+		b.WriteString("<!-- integration-guide-start -->\n")
+		b.WriteString(strings.TrimSpace(ig))
+		b.WriteString("\n<!-- integration-guide-end -->\n\n")
+	}
+	if kb != "" {
+		b.WriteString("<!-- knowledge-base-start -->\n")
+		b.WriteString(strings.TrimSpace(kb))
+		b.WriteString("\n<!-- knowledge-base-end -->\n")
+	}
+	return b.String()
+}
+
+func writeSurfaceFile(path, body string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
 }
 
 // parentStatus returns a short tag telling the agent whether the chain
