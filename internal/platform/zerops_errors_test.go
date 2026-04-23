@@ -4,6 +4,7 @@ package platform
 import (
 	"context"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -20,6 +21,7 @@ func TestMapAPIError(t *testing.T) {
 		wantCode         string
 		wantAPICode      string
 		wantSuggContains string
+		wantAPIMeta      []APIMetaItem
 	}{
 		{
 			name:        "401_Unauthorized",
@@ -80,6 +82,188 @@ func TestMapAPIError(t *testing.T) {
 			wantAPICode:      "",
 			wantSuggContains: "Check the request parameters",
 		},
+		// --- APIMeta plumbing: field-level detail from API reaches PlatformError ---
+		// Live API shape captured in plans/api-validation-plumbing.md §1.2/§1.3.
+		{
+			name: "APIMeta_projectImportInvalidParameter_single_field",
+			apiErr: apiError.Error{
+				HttpStatusCode: 400,
+				ErrorCode:      "projectImportInvalidParameter",
+				Message:        "Invalid parameter provided.",
+				Meta: []interface{}{
+					map[string]interface{}{
+						"code":  "projectImportInvalidParameter",
+						"error": "Invalid parameter provided.",
+						"metadata": map[string]interface{}{
+							"storage.mode": []interface{}{"mode not supported"},
+						},
+					},
+				},
+			},
+			wantCode:         ErrAPIError,
+			wantAPICode:      "projectImportInvalidParameter",
+			wantSuggContains: "apiMeta",
+			wantAPIMeta: []APIMetaItem{
+				{
+					Code:  "projectImportInvalidParameter",
+					Error: "Invalid parameter provided.",
+					Metadata: map[string][]string{
+						"storage.mode": {"mode not supported"},
+					},
+				},
+			},
+		},
+		{
+			name: "APIMeta_projectImportMissingParameter",
+			apiErr: apiError.Error{
+				HttpStatusCode: 400,
+				ErrorCode:      "projectImportMissingParameter",
+				Message:        "Mandatory parameter is missing.",
+				Meta: []interface{}{
+					map[string]interface{}{
+						"code":  "projectImportMissingParameter",
+						"error": "Mandatory parameter is missing.",
+						"metadata": map[string]interface{}{
+							"parameter": []interface{}{"db.mode"},
+						},
+					},
+				},
+			},
+			wantCode:         ErrAPIError,
+			wantAPICode:      "projectImportMissingParameter",
+			wantSuggContains: "apiMeta",
+			wantAPIMeta: []APIMetaItem{
+				{
+					Code:  "projectImportMissingParameter",
+					Error: "Mandatory parameter is missing.",
+					Metadata: map[string][]string{
+						"parameter": {"db.mode"},
+					},
+				},
+			},
+		},
+		{
+			name: "APIMeta_errorList_multi_item",
+			apiErr: apiError.Error{
+				HttpStatusCode: 400,
+				ErrorCode:      "errorList",
+				Message:        "See metadata",
+				Meta: []interface{}{
+					map[string]interface{}{
+						"code":  "zeropsYamlInvalidParameter",
+						"error": "Invalid parameter provided.",
+						"metadata": map[string]interface{}{
+							"build.base": []interface{}{"unknown base nodejs@99"},
+							"build.os":   []interface{}{"unknown os "},
+						},
+					},
+					map[string]interface{}{
+						"code":  "zeropsYamlInvalidParameter",
+						"error": "Invalid parameter provided.",
+						"metadata": map[string]interface{}{
+							"run.base": []interface{}{"nodejs@99"},
+							"run.os":   []interface{}{""},
+						},
+					},
+				},
+			},
+			wantCode:         ErrAPIError,
+			wantAPICode:      "errorList",
+			wantSuggContains: "apiMeta",
+			wantAPIMeta: []APIMetaItem{
+				{
+					Code:  "zeropsYamlInvalidParameter",
+					Error: "Invalid parameter provided.",
+					Metadata: map[string][]string{
+						"build.base": {"unknown base nodejs@99"},
+						"build.os":   {"unknown os "},
+					},
+				},
+				{
+					Code:  "zeropsYamlInvalidParameter",
+					Error: "Invalid parameter provided.",
+					Metadata: map[string][]string{
+						"run.base": {"nodejs@99"},
+						"run.os":   {""},
+					},
+				},
+			},
+		},
+		{
+			name: "APIMeta_serviceStackTypeNotFound",
+			apiErr: apiError.Error{
+				HttpStatusCode: 400,
+				ErrorCode:      "serviceStackTypeNotFound",
+				Message:        "Service stack Type not found.",
+				Meta: []interface{}{
+					map[string]interface{}{
+						"code":  "serviceStackTypeNotFound",
+						"error": "Service stack Type not found.",
+						"metadata": map[string]interface{}{
+							"serviceStackTypeVersion": []interface{}{"nodejs@99"},
+						},
+					},
+				},
+			},
+			wantCode:    ErrAPIError,
+			wantAPICode: "serviceStackTypeNotFound",
+			wantAPIMeta: []APIMetaItem{
+				{
+					Code:  "serviceStackTypeNotFound",
+					Error: "Service stack Type not found.",
+					Metadata: map[string][]string{
+						"serviceStackTypeVersion": {"nodejs@99"},
+					},
+				},
+			},
+		},
+		{
+			name: "APIMeta_nil_meta_preserved_as_nil",
+			apiErr: apiError.Error{
+				HttpStatusCode: 400,
+				ErrorCode:      "projectImportInvalidParameter",
+				Message:        "Invalid parameter provided.",
+				Meta:           nil,
+			},
+			wantCode:    ErrAPIError,
+			wantAPICode: "projectImportInvalidParameter",
+			wantAPIMeta: nil,
+		},
+		{
+			name: "APIMeta_item_without_metadata_map",
+			apiErr: apiError.Error{
+				HttpStatusCode: 400,
+				ErrorCode:      "serviceStackNameInvalid",
+				Message:        "Service stack name is invalid.",
+				Meta: []interface{}{
+					map[string]interface{}{
+						"code":     "serviceStackNameInvalid",
+						"error":    "Service stack name is invalid.",
+						"metadata": nil,
+					},
+				},
+			},
+			wantCode:    ErrAPIError,
+			wantAPICode: "serviceStackNameInvalid",
+			wantAPIMeta: []APIMetaItem{
+				{
+					Code:  "serviceStackNameInvalid",
+					Error: "Service stack name is invalid.",
+				},
+			},
+		},
+		{
+			name: "APIMeta_malformed_shape_returns_nil_not_panic",
+			apiErr: apiError.Error{
+				HttpStatusCode: 400,
+				ErrorCode:      "projectImportInvalidParameter",
+				Message:        "Invalid parameter provided.",
+				Meta:           "unexpected string instead of array", // garbage
+			},
+			wantCode:    ErrAPIError,
+			wantAPICode: "projectImportInvalidParameter",
+			wantAPIMeta: nil,
+		},
 	}
 
 	for _, tt := range tests {
@@ -99,6 +283,9 @@ func TestMapAPIError(t *testing.T) {
 			}
 			if tt.wantSuggContains != "" && !strings.Contains(pe.Suggestion, tt.wantSuggContains) {
 				t.Errorf("Suggestion = %q, want it to contain %q", pe.Suggestion, tt.wantSuggContains)
+			}
+			if !reflect.DeepEqual(pe.APIMeta, tt.wantAPIMeta) {
+				t.Errorf("APIMeta = %+v, want %+v", pe.APIMeta, tt.wantAPIMeta)
 			}
 		})
 	}

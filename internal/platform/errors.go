@@ -63,8 +63,19 @@ type PlatformError struct {
 	Code       string
 	Message    string
 	Suggestion string
-	APICode    string // raw API error code, empty if not from API
-	Diagnostic string // raw command output for LLM debugging (SSH output, etc.)
+	APICode    string        // raw API error code, empty if not from API
+	Diagnostic string        // raw command output for LLM debugging (SSH output, etc.)
+	APIMeta    []APIMetaItem // server-provided field-level detail, empty when API did not send meta
+}
+
+// APIMetaItem mirrors one element of the Zerops API's `error.meta[]` array.
+// The server emits this shape for every 4xx response; ZCP surfaces it to the
+// LLM so the failing field and reason are visible without trial-and-error.
+// Example from live probe: metadata={"storage.mode": ["mode not supported"]}.
+type APIMetaItem struct {
+	Code     string              `json:"code,omitempty"`
+	Error    string              `json:"error,omitempty"`
+	Metadata map[string][]string `json:"metadata,omitempty"`
 }
 
 // SSHExecError carries structured SSH execution failure data.

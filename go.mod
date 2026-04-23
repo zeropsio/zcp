@@ -7,7 +7,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/modelcontextprotocol/go-sdk v1.5.0
 	github.com/zeropsio/zParser/v2 v2.1.2
-	github.com/zeropsio/zerops-go v1.0.17
+	github.com/zeropsio/zerops-go v1.0.18
 	gopkg.in/yaml.v3 v3.0.1
 )
 
