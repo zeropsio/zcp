@@ -40,7 +40,7 @@ func TestE2E_Instructions_ServiceListing(t *testing.T) {
 	defer cancel()
 
 	// Get instructions in local mode (default harness).
-	inst := server.BuildInstructions(ctx, h.client, h.projectID, runtime.Info{}, "")
+	inst := server.BuildInstructions(runtime.Info{})
 
 	// Must contain base + routing.
 	if !strings.Contains(inst, "ZCP manages") {
@@ -95,7 +95,7 @@ func TestE2E_Instructions_ContainerMode(t *testing.T) {
 
 	// Simulate container mode.
 	rtInfo := runtime.Info{InContainer: true, ServiceName: "zcpx"}
-	inst := server.BuildInstructions(ctx, h.client, h.projectID, rtInfo, "")
+	inst := server.BuildInstructions(rtInfo)
 
 	// Must have container environment section.
 	if !strings.Contains(inst, "Live service filesystems") {
@@ -130,12 +130,9 @@ func TestE2E_Instructions_ContainerMode(t *testing.T) {
 
 func TestE2E_Instructions_LocalMode(t *testing.T) {
 	t.Parallel()
-	h := newHarness(t)
+	_ = newHarness(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	inst := server.BuildInstructions(ctx, h.client, h.projectID, runtime.Info{}, "")
+	inst := server.BuildInstructions(runtime.Info{})
 
 	// Must have local environment section.
 	if !strings.Contains(inst, "zcli push") {
@@ -199,12 +196,9 @@ func TestE2E_Discover_MetaFields(t *testing.T) {
 
 func TestE2E_Instructions_AdoptionWording(t *testing.T) {
 	t.Parallel()
-	h := newHarness(t)
+	_ = newHarness(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	inst := server.BuildInstructions(ctx, h.client, h.projectID, runtime.Info{}, "")
+	inst := server.BuildInstructions(runtime.Info{})
 
 	// Routing instructions should mention adoption and develop (which covers deploy/fix/investigate).
 	if !strings.Contains(inst, "develop") {
