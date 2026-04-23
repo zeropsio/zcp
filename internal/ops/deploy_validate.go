@@ -375,17 +375,6 @@ func parseEnvRefs(s string) []envRef {
 	return refs
 }
 
-// NeedsManualStart returns true if the service type requires manual server
-// start after deploy (dynamic runtimes without implicit web servers).
-func NeedsManualStart(serviceType string) bool {
-	base, _, _ := strings.Cut(serviceType, "@")
-	switch base {
-	case runtimePHPApach, runtimePHPNginx, runtimeNginx, runtimeStatic:
-		return false
-	}
-	return true
-}
-
 // IsImplicitWebServerType returns true if the given service type (e.g. "php-nginx@8.4")
 // has a built-in web server that starts automatically.
 func IsImplicitWebServerType(serviceType string) bool {

@@ -25,28 +25,15 @@ const (
 	nextActionSubdomainEnable  = "Subdomain active. Verify: zerops_verify."
 )
 
-// deploySuccessNextActions returns dev-aware next actions for successful deploys.
-// Self-deploy to dynamic runtimes warns that the server is NOT running.
-func deploySuccessNextActions(result *ops.DeployResult) string {
-	isSelfDeploy := result.SourceService == result.TargetService
-	if isSelfDeploy && ops.NeedsManualStart(result.TargetServiceType) {
-		return fmt.Sprintf(
-			"CRITICAL: Deploy created a new container — ALL previous SSH sessions to %s are dead (exit 255). "+
-				"Dev server is NOT running (idle start: zsc noop). "+
-				"Open a NEW SSH connection and start the server (Bash run_in_background=true): "+
-				"ssh %s \"cd /var/www && {start_command}\". "+
-				"Check TaskOutput after 3-5s. Then: zerops_verify.",
-			result.TargetService, result.TargetService,
-		)
-	}
-	if isSelfDeploy && ops.IsImplicitWebServerType(result.TargetServiceType) {
-		return fmt.Sprintf(
-			"Deploy created a new container — previous SSH sessions to %s are dead (exit 255). "+
-				"Built-in webserver will auto-start — no manual action needed. "+
-				"Verify: zerops_verify serviceHostname=\"%s\".",
-			result.TargetService, result.TargetService,
-		)
-	}
+// deploySuccessNextActions returns the unified post-deploy next-action
+// (invariant DS-01, plans/dev-server-canonical-primitive.md).
+// Runtime-class-specific guidance (dev server start via zerops_dev_server
+// in container env, via harness background task primitive in local env)
+// is owned by atoms, not by this function. zerops_verify is the honest
+// runtime-state authority; zerops_logs surfaces recent errors. This
+// function surfaces only the next tool to call — no runtime-liveness
+// claims the code did not actually check.
+func deploySuccessNextActions(_ *ops.DeployResult) string {
 	return nextActionDeploySuccess
 }
 

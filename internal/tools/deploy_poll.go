@@ -39,14 +39,19 @@ func pollDeployBuild(
 	if event.Status == statusActive {
 		result.Status = statusDeployed
 		result.MonitorHint = ""
-		isSelfDeploy := result.SourceService == result.TargetService
-		switch {
-		case isSelfDeploy && ops.NeedsManualStart(result.TargetServiceType):
-			result.Message = fmt.Sprintf("Successfully deployed to %s. New container replaced old — all SSH sessions dead. Dev server NOT running (idle start). Open new SSH to start server.", result.TargetService)
-		case isSelfDeploy && ops.IsImplicitWebServerType(result.TargetServiceType):
-			result.Message = fmt.Sprintf("Successfully deployed to %s. Built-in webserver auto-starts — no manual start needed. Previous SSH sessions dead (new container).", result.TargetService)
-		default:
-			result.Message = fmt.Sprintf("Successfully deployed to %s", result.TargetService)
+		// Post-deploy message is runtime-class-agnostic and strategy-agnostic
+		// (invariant DS-01, plans/dev-server-canonical-primitive.md).
+		// Dev-server lifecycle guidance is owned by atoms: they prescribe
+		// `zerops_dev_server` in container env and the harness background
+		// task primitive in local env. zerops_verify covers runtime-state
+		// assertions honestly (service_running, startup_detected, http_root).
+		// The message here reports only what the platform told us.
+		result.Message = fmt.Sprintf("Successfully deployed to %s. Run zerops_verify for runtime state.", result.TargetService)
+		if result.SourceService == result.TargetService {
+			// Strategy-agnostic fact: push-dev replaces the container, which
+			// drops any prior SSH sessions. Agents holding open sessions
+			// from before the deploy need to reconnect.
+			result.Message += " New container replaced old — prior SSH sessions are gone."
 		}
 		result.NextActions = deploySuccessNextActions(result)
 		// Fetch build warnings/errors even on success (best-effort).

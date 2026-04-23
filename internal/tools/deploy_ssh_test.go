@@ -511,7 +511,15 @@ func TestDeployTool_SSHReadinessTimeout(t *testing.T) {
 	}
 }
 
-func TestDeployTool_SelfDeploy_DevAwareResponse(t *testing.T) {
+// TestDeployTool_SelfDeploy_NeutralMessage pins the honest post-deploy
+// message contract (DS-01). For a self-deploy to a dynamic runtime, the
+// message reports what the platform told us (deploy succeeded, new
+// container replaced old) and points the agent at the next right tool.
+// It does NOT assert process liveness the code did not check. Dev-server
+// lifecycle guidance is owned by atoms (prescribing zerops_dev_server)
+// and by zerops_verify — not by free-text assertions in deploy_poll.go.
+// See plans/dev-server-canonical-primitive.md invariant DS-01.
+func TestDeployTool_SelfDeploy_NeutralMessage(t *testing.T) {
 	t.Parallel()
 
 	mock := platform.NewMock().
@@ -548,11 +556,17 @@ func TestDeployTool_SelfDeploy_DevAwareResponse(t *testing.T) {
 	if parsed.TargetServiceType != "nodejs@22" {
 		t.Errorf("targetServiceType = %q, want %q", parsed.TargetServiceType, "nodejs@22")
 	}
-	if !strings.Contains(parsed.NextActions, "NOT running") {
-		t.Errorf("nextActions should warn about server NOT running for self-deploy dynamic runtime, got: %s", parsed.NextActions)
+	if !strings.Contains(parsed.Message, "Successfully deployed") {
+		t.Errorf("message should report deploy success, got: %s", parsed.Message)
 	}
-	if !strings.Contains(parsed.Message, "NOT running") {
-		t.Errorf("message should indicate server NOT running for self-deploy dynamic runtime, got: %s", parsed.Message)
+	forbidden := []string{"NOT running", "idle start", "auto-start", "Built-in webserver"}
+	for _, phrase := range forbidden {
+		if strings.Contains(parsed.Message, phrase) {
+			t.Errorf("message must not assert runtime state (%q), got: %s", phrase, parsed.Message)
+		}
+		if strings.Contains(parsed.NextActions, phrase) {
+			t.Errorf("nextActions must not assert runtime state (%q), got: %s", phrase, parsed.NextActions)
+		}
 	}
 }
 
@@ -601,8 +615,16 @@ func TestDeployTool_CrossDeploy_StandardResponse(t *testing.T) {
 	if parsed.TargetServiceType != "nodejs@22" {
 		t.Errorf("targetServiceType = %q, want %q", parsed.TargetServiceType, "nodejs@22")
 	}
+	// Cross-deploy message is neutral — the self-deploy addendum (new
+	// container, SSH sessions dead) does not apply.
+	if strings.Contains(parsed.Message, "NOT running") {
+		t.Errorf("message must not assert runtime state, got: %s", parsed.Message)
+	}
 	if strings.Contains(parsed.NextActions, "NOT running") {
-		t.Errorf("cross-deploy nextActions should NOT warn about server, got: %s", parsed.NextActions)
+		t.Errorf("nextActions must not assert runtime state, got: %s", parsed.NextActions)
+	}
+	if strings.Contains(parsed.Message, "New container replaced old") {
+		t.Errorf("cross-deploy must not carry self-deploy SSH-sessions-dead addendum, got: %s", parsed.Message)
 	}
 }
 

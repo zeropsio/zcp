@@ -40,65 +40,76 @@ func TestNextActions_ContainToolNames(t *testing.T) {
 	}
 }
 
-func TestDeploySuccessNextActions(t *testing.T) {
+// TestDeploySuccessNextActions_Unified pins the honest-state contract
+// (DS-01): deploySuccessNextActions returns the same unified next-action
+// for every runtime class and deploy shape. It does NOT construct SSH
+// commands, does NOT claim "server NOT running", does NOT claim
+// "auto-start". Dev-server lifecycle guidance is owned by atoms (they
+// prescribe zerops_dev_server in container env, harness background task
+// in local env). See plans/dev-server-canonical-primitive.md.
+func TestDeploySuccessNextActions_Unified(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		result       *ops.DeployResult
-		wantContains string
-		wantAbsent   string
+		name   string
+		result *ops.DeployResult
 	}{
 		{
-			name: "self_deploy_dynamic_warns_server_not_running",
+			name: "self_deploy_dynamic",
 			result: &ops.DeployResult{
 				SourceService:     "appdev",
 				TargetService:     "appdev",
 				TargetServiceType: "nodejs@22",
 			},
-			wantContains: "NOT running",
 		},
 		{
-			name: "self_deploy_implicit_mentions_autostart",
+			name: "self_deploy_implicit_webserver",
 			result: &ops.DeployResult{
 				SourceService:     "appdev",
 				TargetService:     "appdev",
 				TargetServiceType: "php-nginx@8.4",
 			},
-			wantContains: "auto-start",
-			wantAbsent:   "NOT running",
 		},
 		{
-			name: "cross_deploy_uses_standard",
+			name: "cross_deploy_dev_to_stage",
 			result: &ops.DeployResult{
 				SourceService:     "appdev",
 				TargetService:     "appstage",
 				TargetServiceType: "nodejs@22",
 			},
-			wantContains: "zerops_logs",
-			wantAbsent:   "NOT running",
 		},
 		{
-			name: "self_deploy_static_mentions_autostart",
+			name: "self_deploy_static",
 			result: &ops.DeployResult{
 				SourceService:     "webdev",
 				TargetService:     "webdev",
 				TargetServiceType: "static",
 			},
-			wantContains: "auto-start",
-			wantAbsent:   "NOT running",
 		},
+	}
+
+	forbidden := []string{
+		"NOT running",
+		"idle start",
+		"auto-start",
+		"Built-in webserver",
+		"ssh ",
+		"SSH session",
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got := deploySuccessNextActions(tt.result)
-			if tt.wantContains != "" && !strings.Contains(got, tt.wantContains) {
-				t.Errorf("deploySuccessNextActions() = %q, want to contain %q", got, tt.wantContains)
+			if got != nextActionDeploySuccess {
+				t.Errorf("deploySuccessNextActions(%s) = %q, want unified nextActionDeploySuccess (%q)",
+					tt.name, got, nextActionDeploySuccess)
 			}
-			if tt.wantAbsent != "" && strings.Contains(got, tt.wantAbsent) {
-				t.Errorf("deploySuccessNextActions() = %q, should NOT contain %q", got, tt.wantAbsent)
+			for _, phrase := range forbidden {
+				if strings.Contains(got, phrase) {
+					t.Errorf("deploySuccessNextActions must not assert runtime state or embed SSH; contained %q in output: %s",
+						phrase, got)
+				}
 			}
 		})
 	}
