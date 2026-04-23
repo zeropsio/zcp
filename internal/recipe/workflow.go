@@ -161,7 +161,7 @@ func (s *Session) EmitYAML(tierIndex int) (string, error) {
 			return "", fmt.Errorf("create tier dir: %w", err)
 		}
 		path := filepath.Join(dir, "import.yaml")
-		if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
 			return "", fmt.Errorf("write import.yaml: %w", err)
 		}
 	}
