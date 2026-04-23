@@ -28,6 +28,9 @@ type DeployBatchInput struct {
 // (container) mode. Not registered in local mode — local deploys don't face
 // the STDIO serialization problem and the batch-level goroutine orchestration
 // is SSH-specific.
+// httpClient drives the post-success subdomain auto-enable hook applied to
+// each successful entry — on first deploy for eligible modes the handler
+// calls ops.Subdomain and waits for L7 readiness before returning.
 func RegisterDeployBatch(
 	srv *mcp.Server,
 	client platform.Client,

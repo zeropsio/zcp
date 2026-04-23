@@ -20,13 +20,23 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// autoEnableTestMock builds a mock with a single service fixture ready for
-// the auto-enable path. subdomainOn controls platform-side SubdomainAccess.
-func autoEnableTestMock(t *testing.T, serviceID, hostname string, subdomainOn bool) *platform.Mock {
+// The single-service fixtures in this file share one hostname ("app") and
+// one serviceID ("svc-1"). The stage-pair fixture builds its own mock
+// inline. Keeping these fixture constants inline rather than parameterized
+// keeps unparam happy and makes the test intent explicit: the helpers are
+// for "the default single-service case".
+const (
+	autoEnableTestHostname  = "app"
+	autoEnableTestServiceID = "svc-1"
+)
+
+// autoEnableTestMock builds a mock with the default single-service
+// fixture. subdomainOn controls platform-side SubdomainAccess.
+func autoEnableTestMock(t *testing.T, subdomainOn bool) *platform.Mock {
 	t.Helper()
 	svc := platform.ServiceStack{
-		ID:              serviceID,
-		Name:            hostname,
+		ID:              autoEnableTestServiceID,
+		Name:            autoEnableTestHostname,
 		ProjectID:       "proj-1",
 		SubdomainAccess: subdomainOn,
 		Ports:           []platform.Port{{Port: 3000, Protocol: "tcp"}},
@@ -39,15 +49,15 @@ func autoEnableTestMock(t *testing.T, serviceID, hostname string, subdomainOn bo
 			SubdomainHost: "abc1.prg1.zerops.app",
 		}).
 		WithProcess(&platform.Process{
-			ID:     "proc-subdomain-enable-" + serviceID,
+			ID:     "proc-subdomain-enable-" + autoEnableTestServiceID,
 			Status: statusFinished,
 		})
 }
 
-func writeMeta(t *testing.T, dir, hostname string, mode workflow.Mode) {
+func writeMeta(t *testing.T, dir string, mode workflow.Mode) {
 	t.Helper()
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
-		Hostname:         hostname,
+		Hostname:         autoEnableTestHostname,
 		Mode:             mode,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-22",
@@ -62,9 +72,9 @@ func TestMaybeAutoEnableSubdomain_FirstDeploy_DevMode_Enables(t *testing.T) {
 	defer restore()
 
 	dir := t.TempDir()
-	writeMeta(t, dir, "app", workflow.PlanModeDev)
+	writeMeta(t, dir, workflow.PlanModeDev)
 
-	mock := autoEnableTestMock(t, "svc-1", "app", false /* subdomain off */)
+	mock := autoEnableTestMock(t, false /* subdomain off */)
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
 
 	maybeAutoEnableSubdomain(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
@@ -83,9 +93,9 @@ func TestMaybeAutoEnableSubdomain_FirstDeploy_DevMode_Enables(t *testing.T) {
 func TestMaybeAutoEnableSubdomain_SubdomainAlreadyOn_SetsFlag_NoAPICall(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeMeta(t, dir, "app", workflow.PlanModeStandard)
+	writeMeta(t, dir, workflow.PlanModeStandard)
 
-	mock := autoEnableTestMock(t, "svc-1", "app", true /* subdomain on */)
+	mock := autoEnableTestMock(t, true /* subdomain on */)
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
 
 	maybeAutoEnableSubdomain(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
@@ -106,7 +116,7 @@ func TestMaybeAutoEnableSubdomain_NoMeta_Skipped(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir() // no meta written
 
-	mock := autoEnableTestMock(t, "svc-1", "app", false)
+	mock := autoEnableTestMock(t, false)
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
 
 	maybeAutoEnableSubdomain(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
@@ -122,9 +132,9 @@ func TestMaybeAutoEnableSubdomain_NoMeta_Skipped(t *testing.T) {
 func TestMaybeAutoEnableSubdomain_LocalOnlyMode_Skipped(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeMeta(t, dir, "app", workflow.PlanModeLocalOnly)
+	writeMeta(t, dir, workflow.PlanModeLocalOnly)
 
-	mock := autoEnableTestMock(t, "svc-1", "app", false)
+	mock := autoEnableTestMock(t, false)
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
 
 	maybeAutoEnableSubdomain(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
@@ -140,9 +150,9 @@ func TestMaybeAutoEnableSubdomain_LocalOnlyMode_Skipped(t *testing.T) {
 func TestMaybeAutoEnableSubdomain_EnableFails_WarningNotFatal(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeMeta(t, dir, "app", workflow.PlanModeDev)
+	writeMeta(t, dir, workflow.PlanModeDev)
 
-	mock := autoEnableTestMock(t, "svc-1", "app", false)
+	mock := autoEnableTestMock(t, false)
 	mock.WithError("EnableSubdomainAccess", &platform.PlatformError{
 		Code:    platform.ErrAPIError,
 		Message: "transient platform failure",
@@ -193,9 +203,9 @@ func TestMaybeAutoEnableSubdomain_AllEligibleModes_TriggerEnable(t *testing.T) {
 			defer restore()
 
 			dir := t.TempDir()
-			writeMeta(t, dir, "app", tc.mode)
+			writeMeta(t, dir, tc.mode)
 
-			mock := autoEnableTestMock(t, "svc-1", "app", false)
+			mock := autoEnableTestMock(t, false)
 			result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
 			maybeAutoEnableSubdomain(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
 
@@ -274,9 +284,9 @@ func TestMaybeAutoEnableSubdomain_StageCrossDeploy_EnablesForStage(t *testing.T)
 func TestMaybeAutoEnableSubdomain_AlreadyEnabled_SkipsHTTPProbe(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeMeta(t, dir, "app", workflow.PlanModeDev)
+	writeMeta(t, dir, workflow.PlanModeDev)
 
-	mock := autoEnableTestMock(t, "svc-1", "app", true /* already on */)
+	mock := autoEnableTestMock(t, true /* already on */)
 
 	// HTTPDoer that counts calls so we can verify it was NOT invoked.
 	doer := &countingDoer{status: http.StatusOK}

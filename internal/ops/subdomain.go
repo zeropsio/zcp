@@ -8,6 +8,14 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
+// Subdomain* status values surface the short-circuit path the tool took.
+// Callers use these to skip post-enable work (HTTP readiness probes) when
+// no platform call actually happened.
+const (
+	SubdomainStatusAlreadyEnabled  = "already_enabled"
+	SubdomainStatusAlreadyDisabled = "already_disabled"
+)
+
 // SubdomainResult represents the result of a subdomain enable/disable operation.
 //
 // Warnings collects non-fatal anomalies the caller should surface without
@@ -88,7 +96,7 @@ func Subdomain(
 			// Already enabled on the platform side — do NOT call
 			// EnableSubdomainAccess. This prevents the garbage-FAILED-process
 			// generation documented above.
-			result.Status = "already_enabled"
+			result.Status = SubdomainStatusAlreadyEnabled
 			attachSubdomainUrlsToResult(ctx, client, result, projectID, svc.ID)
 			return result, nil
 		}
@@ -111,7 +119,7 @@ func Subdomain(
 			// disable is not empirically characterized but the same garbage
 			// FAILED process pattern is plausible; short-circuiting is safe
 			// defense in depth either way.
-			result.Status = "already_disabled"
+			result.Status = SubdomainStatusAlreadyDisabled
 			return result, nil
 		}
 		proc, err := client.DisableSubdomainAccess(ctx, svc.ID)

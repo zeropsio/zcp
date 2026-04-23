@@ -540,23 +540,26 @@ Generate does NOT write application logic, business features, or the user's actu
 **Standard mode (container)**:
 ```
 Phase 1 — Deploy Dev:
-  1. zerops_deploy targetService={dev}     ← blocks until build completes
+  1. zerops_deploy targetService={dev}     ← blocks until build completes;
+                                             auto-enables L7 subdomain on
+                                             first deploy (response carries
+                                             subdomainAccessEnabled + URL)
   2. Start server manually via SSH          ← dev has zsc noop
-  3. zerops_subdomain action="enable" serviceHostname={dev}
-  4. zerops_verify serviceHostname={dev}
+  3. zerops_verify serviceHostname={dev}
 
 Phase 2 — Deploy Stage (after dev healthy):
-  5. Write stage entry in zerops.yaml (real start, healthCheck, deployFiles=build output)
-  6. zerops_deploy sourceService={dev} targetService={stage}
-  7. zerops_manage action="connect-storage" (if shared-storage)
-  8. zerops_subdomain action="enable" serviceHostname={stage}
-  9. zerops_verify serviceHostname={stage}
+  4. Write stage entry in zerops.yaml (real start, healthCheck, deployFiles=build output)
+  5. zerops_deploy sourceService={dev} targetService={stage}  ← cross-deploy
+                                                                 also auto-enables
+                                                                 stage subdomain
+  6. zerops_manage action="connect-storage" (if shared-storage)
+  7. zerops_verify serviceHostname={stage}
 
 Phase 3 — Cross-verify:
-  10. zerops_verify (batch, all targets)
+  8. zerops_verify (batch, all targets)
 ```
 
-**Dev mode**: Steps 1-4 only.
+**Dev mode**: Steps 1-3 only.
 
 **Simple mode**: Deploy → auto-starts (healthCheck) → verify.
 
@@ -634,7 +637,7 @@ flow and write close normally.
 | deployFiles | `[.]` (dev) / build output (stage) | `[.]` | `[.]` |
 | Server start (container) | SSH manual (dev) / auto (stage) | SSH manual | auto |
 | Deploy sequence | dev → verify → stage → verify | dev → verify | deploy → verify |
-| Subdomain enable | both dev + stage | dev only | service only |
+| Subdomain enable | auto (deploy handler, first deploy) | auto | auto |
 | PHP runtimes | omit `start:` entirely | omit `start:` | omit `start:` |
 
 ---
@@ -839,8 +842,7 @@ When deploy fails, the agent can iterate. Escalating guidance tiers live in `int
 
 ### 4.8 Operational Details
 
-- `zerops_deploy` blocks until build completes. Returns DEPLOYED or BUILD_FAILED.
-- `zerops_subdomain action="enable"` must be called once after first deploy of new service. Persists across re-deploys.
+- `zerops_deploy` blocks until build completes. Returns DEPLOYED or BUILD_FAILED. For dev/stage/simple/standard/local-stage modes, the handler auto-enables the L7 subdomain on first deploy and waits for HTTP readiness before returning — the response carries `subdomainAccessEnabled: true` and `subdomainUrl`. Agents normally never call `zerops_subdomain action=enable` directly; the tool stays available for recovery, production opt-in, and disable operations.
 - Dev server start via SSH needed after every deploy (container, dynamic runtimes only). NOT for PHP/nginx/static (implicit-webserver auto-starts).
 - Stage entry written AFTER dev verified (standard mode).
 - `zerops_deploy sourceService={dev} targetService={stage}` for cross-deploy.
@@ -1088,7 +1090,7 @@ visibility.
 |----|-----------|
 | O1 | zerops_deploy blocks until build completes |
 | O2 | zerops_import blocks until all processes complete |
-| O3 | `zerops_subdomain action=enable` is idempotent via check-before-enable: `ops.Subdomain` reads `SubdomainAccess` from a fresh `GetService` (REST-authoritative) and short-circuits to `status=already_enabled` without calling `EnableSubdomainAccess` when already live. This prevents the platform's garbage FAILED-process pattern on redundant enable. After a genuine enable, the tool waits for L7 readiness via `ops.WaitHTTPReady` before returning, so a subsequent `zerops_verify` does not race the L7 balancer. |
+| O3 | L7 subdomain activation is a deploy-handler concern, not an agent-step concern. `zerops_deploy` auto-enables the subdomain on first deploy for eligible modes (dev/stage/simple/standard/local-stage) and waits for HTTP readiness before returning; the response carries `subdomainAccessEnabled` and `subdomainUrl`. The underlying `ops.Subdomain` path (used by the `zerops_subdomain` MCP tool for recovery or production opt-in) is idempotent via check-before-enable: it reads `SubdomainAccess` from a fresh `GetService` (REST-authoritative) and short-circuits to `status=already_enabled` without calling `EnableSubdomainAccess` when already live, preventing the platform's garbage FAILED-process pattern on redundant enable. |
 | O4 | Dev server started manually via SSH after every deploy (container, dynamic runtimes) |
 | O5 | Stage entry written AFTER dev verified (standard mode) |
 | O6 | Stage deployFiles = build output, NOT [.] |
@@ -1151,6 +1153,6 @@ What the agent still owns: generating the import YAML fragment that creates only
 | Build FAILED: "module not found" | Missing deps | Add to buildCommands |
 | App crash: "EADDRINUSE" | Port conflict | Match port to zerops.yaml |
 | App crash: "connection refused" | Wrong env var | Check envVariables vs discovered |
-| HTTP 502 | Subdomain not active | `zerops_subdomain action="enable"` |
+| HTTP 502 | Subdomain not active (auto-enable skipped on managed/prod, or failed) | Redeploy (auto-enable retries), or `zerops_subdomain action="enable"` as explicit recovery |
 | Empty response | Not on 0.0.0.0 | Fix binding |
 | READY_TO_DEPLOY after deploy | Start failed | Check start command, runtime version |

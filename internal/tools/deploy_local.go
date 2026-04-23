@@ -47,6 +47,10 @@ func deployLocalInputSchema() *jsonschema.Schema {
 
 // RegisterDeployLocal registers the zerops_deploy tool for local mode.
 // Uses zcli push instead of SSH to deploy code from the user's machine.
+// httpClient drives the post-success subdomain auto-enable hook — on first
+// deploy for eligible modes (dev/stage/simple/standard/local-stage) the
+// handler calls ops.Subdomain and waits for L7 readiness via
+// ops.WaitHTTPReady before returning.
 func RegisterDeployLocal(
 	srv *mcp.Server,
 	client platform.Client,

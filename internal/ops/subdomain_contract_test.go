@@ -27,6 +27,7 @@ func TestSubdomainRobustnessContract(t *testing.T) {
 	toolsSubdomain := parseGoFile(t, fset, "../tools/subdomain.go")
 
 	t.Run("ops.Subdomain calls GetService before EnableSubdomainAccess", func(t *testing.T) {
+		t.Parallel()
 		// GetService is the authoritative pre-check that prevents the
 		// platform's garbage FAILED process pattern on redundant enable.
 		// Removing it re-opens Bug #2 (plan §1.1).
@@ -45,6 +46,7 @@ func TestSubdomainRobustnessContract(t *testing.T) {
 	})
 
 	t.Run("tools/subdomain.go captures pollManageProcess timeout", func(t *testing.T) {
+		t.Parallel()
 		// Regression pin for commit 4 — prior code discarded the timedOut
 		// bool via `_ :=`, masking a 10-minute poll timeout as success.
 		src := readFileAsString(t, "../tools/subdomain.go")
@@ -57,6 +59,7 @@ func TestSubdomainRobustnessContract(t *testing.T) {
 	})
 
 	t.Run("SubdomainResult has Warnings field", func(t *testing.T) {
+		t.Parallel()
 		// Plan commit 3: Warnings is the diagnostic channel for non-fatal
 		// anomalies (FAILED normalization, poll timeout, HTTP readiness
 		// timeout). Removing the field deletes the provenance.
@@ -66,6 +69,7 @@ func TestSubdomainRobustnessContract(t *testing.T) {
 	})
 
 	t.Run("tools/subdomain.go calls WaitHTTPReady after enable", func(t *testing.T) {
+		t.Parallel()
 		// Plan commit 5: L7 propagation window means Process FINISHED ≠
 		// HTTP reachable. Removing WaitHTTPReady re-opens Bug #1.
 		src := readFileAsString(t, "../tools/subdomain.go")
@@ -75,6 +79,7 @@ func TestSubdomainRobustnessContract(t *testing.T) {
 	})
 
 	t.Run("dead isAlready helpers are not re-introduced", func(t *testing.T) {
+		t.Parallel()
 		// Plan commit 6: removed isAlreadyEnabled/isAlreadyDisabled as dead
 		// code. Platform doesn't emit those error codes.
 		src := readFileAsString(t, "subdomain.go")

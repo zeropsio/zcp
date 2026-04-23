@@ -395,6 +395,8 @@ Adoption follows the same pattern but writes `BootstrapSession = ""` as its mark
 
 The meta file is **pair-keyed**: `m.Hostname` and `m.StageHostname` together name every live hostname the pair represents, and they resolve to the same file on disk. See `docs/spec-workflows.md` E8 and `internal/workflow/service_meta.go::Hostnames()` for the canonical enumeration; use `ManagedRuntimeIndex` for slice→map construction and `FindServiceMeta` for disk lookup. Keying a hostname index by `m.Hostname` alone violates E8.
 
+Subdomain activation is a deploy-handler concern (see `docs/spec-workflows.md` §4.8), not a ServiceMeta field. The meta records lifecycle state owned by ZCP (bootstrapped, strategy, first-deployed-at); L7 subdomain activation is owned by the Zerops platform and reflected at read time via `GetService.SubdomainAccess`, so it is not mirrored into the meta file.
+
 ### 8.3 Strategy Update
 
 `zerops_workflow action="strategy"` updates `ServiceMeta.DeployStrategy` for specified hostnames. Validation: value must be `push-dev`, `push-git`, or `manual`. The update is written atomically.

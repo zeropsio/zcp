@@ -67,7 +67,7 @@ func maybeAutoEnableSubdomain(
 	// HTTP readiness wait only on fresh enable. On already_enabled the L7
 	// route has been live since the earlier enable; a probe would just add
 	// latency for no signal.
-	if subRes.Status != "already_enabled" {
+	if subRes.Status != ops.SubdomainStatusAlreadyEnabled {
 		for _, url := range subRes.SubdomainUrls {
 			if waitErr := ops.WaitHTTPReady(ctx, httpClient, url); waitErr != nil {
 				result.Warnings = append(result.Warnings,
@@ -82,7 +82,8 @@ func maybeAutoEnableSubdomain(
 // modes default to no auto-enable — explicit opt-in via extending the
 // switch when the mode lands. Dev/stage/simple/standard name live Zerops
 // runtimes that serve HTTP; local-stage is the stage half of a local
-// standard pair (the remote runtime that serves traffic).
+// standard pair (the remote runtime that serves traffic). ModeLocalOnly
+// has no remote runtime at all, so there is nothing to auto-enable.
 func modeEligibleForSubdomain(mode workflow.Mode) bool {
 	switch mode {
 	case workflow.PlanModeDev,
@@ -91,6 +92,8 @@ func modeEligibleForSubdomain(mode workflow.Mode) bool {
 		workflow.PlanModeSimple,
 		workflow.PlanModeLocalStage:
 		return true
+	case workflow.ModeLocalOnly:
+		return false
 	}
 	return false
 }

@@ -66,7 +66,7 @@ func RegisterSubdomain(srv *mcp.Server, client platform.Client, httpClient ops.H
 				reason = fmt.Sprintf("%s: %s", reason, *result.Process.FailReason)
 			}
 			result.Warnings = append(result.Warnings, reason)
-			result.Status = "already_enabled"
+			result.Status = ops.SubdomainStatusAlreadyEnabled
 			result.Process = nil
 		}
 		// Plan 1 commit 5: L7 propagation window is 440ms-1.3s after enable.
