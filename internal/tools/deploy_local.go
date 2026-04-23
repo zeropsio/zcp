@@ -97,7 +97,7 @@ func RegisterDeployLocal(
 		// Route: git-push dispatches to the user's own local git; no Zerops
 		// build is triggered from our side.
 		if input.Strategy == deployStrategyGitPush {
-			return handleLocalGitPush(ctx, *authInfo, input, stateDir)
+			return handleLocalGitPush(ctx, client, projectID, *authInfo, input, stateDir)
 		}
 
 		// Pre-flight validation (harness). v8.85 — pre-flight echoes the

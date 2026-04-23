@@ -16,6 +16,27 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
+// resolveTargetForValidation fetches the target ServiceStack from live
+// services so pre-deploy validation has the ServiceStackTypeID /
+// TypeVersionName required by the Zerops validator endpoint. Returns nil
+// (no error) when the service can't be resolved — validation is then
+// skipped rather than blocking deploy on a transient list failure.
+func resolveTargetForValidation(ctx context.Context, client platform.Client, projectID, hostname string) *platform.ServiceStack {
+	if client == nil || projectID == "" || hostname == "" {
+		return nil
+	}
+	services, err := client.ListServices(ctx, projectID)
+	if err != nil {
+		return nil
+	}
+	for i := range services {
+		if services[i].Name == hostname {
+			return &services[i]
+		}
+	}
+	return nil
+}
+
 // handleLocalGitPush performs `git push` from the user's local git repo
 // without ever touching the user's credentials — the local git binary
 // inherits whatever auth the user has configured (SSH keys, macOS
@@ -33,7 +54,7 @@ import (
 // Dirty-tree warning is non-blocking; the push still goes through.
 // GIT_TERMINAL_PROMPT=0 so a passphrase-protected key without an agent
 // fails fast instead of hanging the MCP channel.
-func handleLocalGitPush(ctx context.Context, authInfo auth.Info, input DeployLocalInput, stateDir string) (*mcp.CallToolResult, any, error) {
+func handleLocalGitPush(ctx context.Context, client platform.Client, projectID string, authInfo auth.Info, input DeployLocalInput, stateDir string) (*mcp.CallToolResult, any, error) {
 	hostname := input.TargetService
 	attempt := workflow.DeployAttempt{
 		AttemptedAt: time.Now().UTC().Format(time.RFC3339),
@@ -51,6 +72,21 @@ func handleLocalGitPush(ctx context.Context, authInfo auth.Info, input DeployLoc
 			workingDir = cwd
 		} else {
 			workingDir = "."
+		}
+	}
+
+	// Pre-push zerops.yaml validation: the Zerops build that triggers on
+	// the remote's receipt of our push runs the same platform validator we
+	// can call now. Failing here aborts the push before the remote's
+	// build cycle starts. Structured validation errors carry APIMeta.
+	if target := resolveTargetForValidation(ctx, client, projectID, hostname); target != nil {
+		setupName := input.Setup
+		if setupName == "" {
+			setupName = hostname
+		}
+		if vErr := ops.RunPreDeployValidation(ctx, client, target, setupName, workingDir); vErr != nil {
+			record(fmt.Sprintf("zerops.yaml validation failed: %v", vErr))
+			return convertError(vErr), nil, nil
 		}
 	}
 

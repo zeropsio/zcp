@@ -38,6 +38,7 @@ type ServiceStack struct {
 
 // ServiceTypeInfo contains service type details.
 type ServiceTypeInfo struct {
+	ServiceStackTypeID           string `json:"serviceStackTypeId,omitempty"` // opaque ID required by ValidateZeropsYaml
 	ServiceStackTypeVersionName  string `json:"serviceStackTypeVersionName"`  // e.g. "nodejs@22"
 	ServiceStackTypeCategoryName string `json:"serviceStackTypeCategoryName"` // e.g. "USER", "CORE", "BUILD"
 }

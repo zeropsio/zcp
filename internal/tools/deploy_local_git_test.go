@@ -78,7 +78,7 @@ func TestHandleLocalGitPush_HappyPath(t *testing.T) {
 	}
 
 	result, _, err := handleLocalGitPush(
-		context.Background(), auth.Info{Email: "t@t.com", FullName: "test"},
+		context.Background(), nil, "proj-test", auth.Info{Email: "t@t.com", FullName: "test"},
 		DeployLocalInput{
 			TargetService: "myproject",
 			WorkingDir:    workDir,
@@ -114,7 +114,7 @@ func TestHandleLocalGitPush_NotAGitRepo_Refuses(t *testing.T) {
 	}
 
 	result, _, _ := handleLocalGitPush(
-		context.Background(), auth.Info{},
+		context.Background(), nil, "proj-test", auth.Info{},
 		DeployLocalInput{
 			TargetService: "myproject",
 			WorkingDir:    workDir,
@@ -165,7 +165,7 @@ func TestHandleLocalGitPush_NoOriginNoRemoteURL_Refuses(t *testing.T) {
 	}
 
 	result, _, _ := handleLocalGitPush(
-		context.Background(), auth.Info{},
+		context.Background(), nil, "proj-test", auth.Info{},
 		DeployLocalInput{
 			TargetService: "myproject",
 			WorkingDir:    workDir,
@@ -192,7 +192,7 @@ func TestHandleLocalGitPush_RemoteURLMismatch_Refuses(t *testing.T) {
 	}
 
 	result, _, _ := handleLocalGitPush(
-		context.Background(), auth.Info{},
+		context.Background(), nil, "proj-test", auth.Info{},
 		DeployLocalInput{
 			TargetService: "myproject",
 			WorkingDir:    workDir,

@@ -13,6 +13,30 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
+// fetchZeropsYamlOverSSH reads zerops.yaml (or zerops.yml fallback) from
+// the target container via SSH `cat`. Returns ("", nil) when the file is
+// absent so callers can treat "no yaml" the same way the filesystem path
+// does (skip validation). A read error is returned for transport failures
+// so the caller can log; validation itself falls back to the server which
+// will error just the same if the YAML were malformed.
+func fetchZeropsYamlOverSSH(ctx context.Context, sshDeployer ops.SSHDeployer, hostname, workingDir string) (string, error) {
+	if sshDeployer == nil {
+		return "", nil
+	}
+	// Try zerops.yaml then zerops.yml; 2>/dev/null + trailing echo lets us
+	// distinguish "file missing" (nothing in stdout) from "read failed"
+	// (SSH error) without special-casing exit codes.
+	cmd := fmt.Sprintf(
+		`cat %s/zerops.yaml 2>/dev/null || cat %s/zerops.yml 2>/dev/null || true`,
+		workingDir, workingDir,
+	)
+	out, err := sshDeployer.ExecSSH(ctx, hostname, cmd)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(out), "\n"), nil
+}
+
 // gitPushPrerequisites is a structured response when GIT_TOKEN is missing.
 // Guides the agent through the decision question and setup steps.
 type gitPushPrerequisites struct {
@@ -47,9 +71,14 @@ GIT_TOKEN permissions, and covers GitHub Actions / webhook if CI/CD chosen.
 After setup completes, retry this push.`
 
 // handleGitPush executes the git-push strategy: push committed code to an
-// external git remote. No Zerops build is triggered — no pollDeployBuild.
+// external git remote. No Zerops build is triggered directly from our side,
+// but the remote's receipt of the push triggers one — so zerops.yaml still
+// needs to be valid. Pre-push validation fetches the file from the container
+// via SSH cat and calls the Zerops validator; any failure aborts the push.
 func handleGitPush(
 	ctx context.Context,
+	client platform.Client,
+	projectID string,
 	sshDeployer ops.SSHDeployer,
 	authInfo auth.Info,
 	input DeploySSHInput,
@@ -135,6 +164,25 @@ func handleGitPush(
 			Message:      "GIT_TOKEN is not set. This project env var is required for pushing to a git remote.",
 			Instructions: fmt.Sprintf(gitPushSetupPointerInstructions, hostname),
 		}), nil, nil
+	}
+
+	// Pre-push zerops.yaml validation: the remote's receipt of this push
+	// triggers a Zerops build pipeline — we validate the YAML the pipeline
+	// is about to consume by running the same platform validator now. YAML
+	// lives in the container at workingDir; fetch via SSH cat and pass to
+	// the content-based entry point. Any failure aborts the push.
+	if target := resolveTargetForValidation(ctx, client, projectID, hostname); target != nil {
+		yamlContent, yamlErr := fetchZeropsYamlOverSSH(ctx, sshDeployer, hostname, workingDir)
+		if yamlErr == nil && yamlContent != "" {
+			setupName := input.Setup
+			if setupName == "" {
+				setupName = hostname
+			}
+			if vErr := ops.ValidatePreDeployContent(ctx, client, target, setupName, yamlContent); vErr != nil {
+				recordAttempt(fmt.Sprintf("zerops.yaml validation failed: %v", vErr))
+				return convertError(vErr), nil, nil
+			}
+		}
 	}
 
 	id := ops.GitIdentity{Name: authInfo.FullName, Email: authInfo.Email}

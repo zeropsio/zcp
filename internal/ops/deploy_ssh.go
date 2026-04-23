@@ -124,6 +124,13 @@ func deploySSH(
 	serviceType := target.ServiceStackTypeInfo.ServiceStackTypeVersionName
 	if _, statErr := os.Stat(mountPath); statErr == nil {
 		warnings = ValidateZeropsYml(mountPath, setupName, serviceType)
+		// Pre-deploy API validation: Zerops checks the full zerops.yaml
+		// (field/syntax/version) server-side before we waste a build
+		// cycle on a YAML the platform will reject. Any failure —
+		// validation, transport, auth — aborts deploy.
+		if err := RunPreDeployValidation(ctx, client, target, setupName, mountPath); err != nil {
+			return nil, err
+		}
 	}
 
 	cmd := buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit, id)

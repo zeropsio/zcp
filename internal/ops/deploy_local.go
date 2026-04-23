@@ -109,6 +109,15 @@ func DeployLocal(
 	serviceType := target.ServiceStackTypeInfo.ServiceStackTypeVersionName
 	warnings := ValidateZeropsYml(workingDir, setupName, serviceType)
 
+	// Pre-deploy API validation: Zerops validates zerops.yaml pre-flight so
+	// field/syntax errors surface with field-level apiMeta before any build
+	// cycle is wasted. Any failure (validation, transport, auth) aborts
+	// deploy — no fallback: if Zerops is unreachable the push step would
+	// fail anyway.
+	if err := RunPreDeployValidation(ctx, client, target, setupName, workingDir); err != nil {
+		return nil, err
+	}
+
 	// 5. Login.
 	_, stderr, err := runner.Run(ctx, "zcli", "login", "--", authInfo.Token)
 	if err != nil {
