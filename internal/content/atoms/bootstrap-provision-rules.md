@@ -7,6 +7,17 @@ steps: [provision]
 title: "Provision rules — managed conventions + runtime properties"
 ---
 
+### Hostname format constraint
+
+Platform rule (enforced by the API): 1–40 characters, **lowercase letters
+and digits only** (`a-z`, `0-9`), first character must be a letter. No
+dashes, no underscores, no uppercase, no dots. Violations are rejected
+at import with `serviceStackNameInvalid`.
+
+Valid: `appdev`, `app42`, `apistorage`, `workersearch`.
+Invalid: `42db` (starts with digit), `my-cache` (dash), `my_app`
+(underscore), `MyApp` (uppercase), `app.dev` (dot), `app123456789012345678901234567890123456789` (41 chars).
+
 ### Managed service hostname conventions
 
 Canonical hostnames (agents/recipes/cross-service refs assume these):

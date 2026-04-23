@@ -31,7 +31,7 @@ Define workspace services based on recipe type:
 
 **Target fields** — see the `RecipeTarget` input schema on `zerops_workflow` for field-level descriptions (`hostname`, `type`, `isWorker`, `role`, `sharesCodebaseWith`). The decisions you make while filling targets:
 
-- **Hostname** — lowercase alphanumeric only. Use conventional names (`app`, `db`, `cache`, `queue`, `search`, `storage`).
+- **Hostname** — `^[a-z][a-z0-9]{0,39}$` (1–40 chars, lowercase letters/digits, start with letter; no dashes/underscores/dots/uppercase). Use conventional names (`app`, `db`, `cache`, `queue`, `search`, `storage`).
 - **Type** — pick the **highest available version** from `availableStacks` for each stack. Must include the `@version` suffix (e.g. `nodejs@22`, not bare `nodejs`). The same versioned form is required for the top-level `runtimeType` field on the plan. **For managed services (postgresql, valkey, nats, meilisearch, kafka, mariadb, ...) "highest available" is enforced at validation time** — submitting an older version is rejected unless you set `typePinReason` on that target with one sentence explaining the compatibility constraint that requires the older version (framework lag, library doesn't yet support the newer version, etc). Default rule: pick the latest. Pin reason is the documented escape hatch, not the default. Runtimes (nodejs, php-nginx, ...) are exempt — their version comes from framework compat which you negotiate separately during research.
 - **isWorker: true** — set for background/queue workers (no HTTP). Ignored for managed/utility services.
 - **role** — `app` / `api` for dual-runtime repo routing. Empty for managed services.
