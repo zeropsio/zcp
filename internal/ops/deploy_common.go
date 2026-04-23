@@ -27,6 +27,17 @@ type DeployResult struct {
 	RuntimeLogs       []string `json:"runtimeLogs,omitempty"`     // last N lines of runtime container output (DEPLOY_FAILED — initCommand stderr)
 	RuntimeLogsSource string   `json:"runtimeLogsSource,omitempty"`
 	FailedPhase       string   `json:"failedPhase,omitempty"` // "build" | "prepare" | "init" — which lifecycle phase failed
+
+	// SubdomainAccessEnabled is true when the L7 subdomain route is active
+	// for the target service at deploy-response time. Set by the deploy
+	// handler's post-success auto-enable step (plans/archive/subdomain-auto-enable.md).
+	// May be true even without the auto-enable if the platform already had
+	// the route live.
+	SubdomainAccessEnabled bool `json:"subdomainAccessEnabled,omitempty"`
+	// SubdomainURL is the first computed subdomain URL when
+	// SubdomainAccessEnabled is true. Convenience for the agent; full list
+	// and details available via zerops_discover.
+	SubdomainURL string `json:"subdomainUrl,omitempty"`
 }
 
 // GitPushResult contains the outcome of a git-push deploy operation.
