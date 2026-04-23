@@ -38,10 +38,43 @@ func mapSeverityToNumeric(severity string) string {
 	}
 }
 
+// mapFacilityToNumeric converts facility label to syslog numeric value that
+// the Zerops log backend expects. Empty or unknown values return "" so the
+// caller can omit the query param entirely — that corresponds to "no filter".
+func mapFacilityToNumeric(facility string) string {
+	switch strings.ToLower(facility) {
+	case "application":
+		return "16"
+	case "webserver":
+		return "17"
+	default:
+		return ""
+	}
+}
+
 const (
 	maxLogResponseBytes   = 50 << 20 // 50 MB
 	maxErrorResponseBytes = 1 << 20  // 1 MB
+
+	// LogLimitMin, LogLimitMax, LogLimitDefault are the clamp bounds for
+	// LogFetchParams.Limit. Matches zcli conventions and the empirical
+	// backend behaviour probed on 2026-04-23 — `limit>=50000` silently
+	// returns zero items. Exported so the mock and tests can share.
+	LogLimitMin     = 1
+	LogLimitMax     = 1000
+	LogLimitDefault = 100
 )
+
+// clampLimit returns the effective Limit to send and post-trim by.
+func clampLimit(requested int) int {
+	if requested <= 0 {
+		return LogLimitDefault
+	}
+	if requested > LogLimitMax {
+		return LogLimitMax
+	}
+	return requested
+}
 
 // ZeropsLogFetcher fetches logs from the Zerops log backend (separate HTTP service).
 type ZeropsLogFetcher struct {
@@ -77,22 +110,29 @@ func (f *ZeropsLogFetcher) FetchLogs(ctx context.Context, access *LogAccess, par
 		return nil, NewPlatformError(ErrAPIError, fmt.Sprintf("invalid log URL: %v", err), "")
 	}
 
+	effectiveLimit := clampLimit(params.Limit)
+
 	q := logURL.Query()
 	if params.ServiceID != "" {
 		q.Set("serviceStackId", params.ServiceID)
 	}
-	if params.Limit > 0 {
-		q.Set("limit", fmt.Sprintf("%d", params.Limit))
-	} else {
-		q.Set("limit", "100")
-	}
+	q.Set("limit", fmt.Sprintf("%d", effectiveLimit))
 	q.Set("desc", "1")
 	if params.Severity != "" && params.Severity != "all" {
 		q.Set("minimumSeverity", mapSeverityToNumeric(params.Severity))
 	}
-	if params.Search != "" {
-		q.Set("search", params.Search)
+	if fac := mapFacilityToNumeric(params.Facility); fac != "" {
+		q.Set("facility", fac)
 	}
+	if len(params.Tags) > 0 {
+		q.Set("tags", strings.Join(params.Tags, ","))
+	}
+	if params.ContainerID != "" {
+		q.Set("containerId", params.ContainerID)
+	}
+	// params.Search is kept out of the query string — the Zerops log backend
+	// silently ignores `search=` (verified 2026-04-23 via live probes). We
+	// apply it client-side in filterEntries below instead.
 	logURL.RawQuery = q.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, logURL.String(), nil)
@@ -127,27 +167,55 @@ func (f *ZeropsLogFetcher) FetchLogs(ctx context.Context, access *LogAccess, par
 		return nil, NewPlatformError(ErrAPIError, fmt.Sprintf("failed to parse log response: %v", err), "")
 	}
 
+	return filterEntries(entries, params, effectiveLimit), nil
+}
+
+// filterEntries applies the shared post-fetch pipeline that both the real
+// fetcher and the MockLogFetcher use. Order:
+//  1. Sort ascending by Timestamp (string sort is fine for relative ordering
+//     within a single backend response — the precise compare below handles
+//     the cross-response case).
+//  2. Drop entries whose timestamp is before params.Since (parsed compare —
+//     string compare is wrong at sub-second boundaries, see
+//     internal/platform/logfetcher_build_contract_test.go).
+//  3. Drop entries whose Message does not contain params.Search (the backend
+//     silently ignores `search=` — we apply client-side).
+//  4. Tail-trim to effectiveLimit to return the newest N.
+func filterEntries(entries []LogEntry, params LogFetchParams, effectiveLimit int) []LogEntry {
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].Timestamp < entries[j].Timestamp
 	})
 
-	// Client-side since filtering (backend does not support time range queries).
 	if !params.Since.IsZero() {
-		sinceStr := params.Since.Format(time.RFC3339)
 		filtered := entries[:0]
 		for _, e := range entries {
-			if e.Timestamp >= sinceStr {
+			et, err := time.Parse(time.RFC3339, e.Timestamp)
+			if err != nil {
+				// Malformed timestamp — drop it. Forward-compatible default.
+				continue
+			}
+			if !et.Before(params.Since) {
 				filtered = append(filtered, e)
 			}
 		}
 		entries = filtered
 	}
 
-	if params.Limit > 0 && len(entries) > params.Limit {
-		entries = entries[len(entries)-params.Limit:]
+	if params.Search != "" {
+		filtered := entries[:0]
+		for _, e := range entries {
+			if strings.Contains(e.Message, params.Search) {
+				filtered = append(filtered, e)
+			}
+		}
+		entries = filtered
 	}
 
-	return entries, nil
+	if effectiveLimit > 0 && len(entries) > effectiveLimit {
+		entries = entries[len(entries)-effectiveLimit:]
+	}
+
+	return entries
 }
 
 // logAPIResponse matches the Zerops log backend JSON structure.
@@ -159,8 +227,11 @@ type logAPIItem struct {
 	ID            string `json:"id"`
 	Timestamp     string `json:"timestamp"`
 	Hostname      string `json:"hostname"`
+	ContainerID   string `json:"containerId"`
 	Message       string `json:"message"`
 	SeverityLabel string `json:"severityLabel"`
+	FacilityLabel string `json:"facilityLabel"`
+	Tag           string `json:"tag"`
 }
 
 // parseLogResponse parses the JSON response from the log backend.
@@ -173,11 +244,14 @@ func parseLogResponse(data []byte) ([]LogEntry, error) {
 	entries := make([]LogEntry, 0, len(resp.Items))
 	for _, item := range resp.Items {
 		entries = append(entries, LogEntry{
-			ID:        item.ID,
-			Timestamp: item.Timestamp,
-			Severity:  item.SeverityLabel,
-			Message:   item.Message,
-			Container: item.Hostname,
+			ID:          item.ID,
+			Timestamp:   item.Timestamp,
+			Severity:    item.SeverityLabel,
+			Facility:    item.FacilityLabel,
+			Tag:         item.Tag,
+			Message:     item.Message,
+			Container:   item.Hostname,
+			ContainerID: item.ContainerID,
 		})
 	}
 

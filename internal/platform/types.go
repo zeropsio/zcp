@@ -168,21 +168,46 @@ type LogAccess struct {
 }
 
 // LogFetchParams contains parameters for fetching logs from the backend.
+//
+// Server-side filters (honoured by the Zerops log backend):
+//   - ServiceID   → serviceStackId
+//   - Severity    → minimumSeverity (syslog 0..7)
+//   - Facility    → facility (16 = application, 17 = webserver)
+//   - Tags        → tags= (CSV; exact match per element)
+//   - ContainerID → containerId
+//   - Limit       → limit (clamped to [1, 1000] by the fetcher)
+//
+// Client-side filters (backend silently ignores these query names;
+// logfetcher applies them post-fetch):
+//   - Since  — parsed time.Time comparison (never lex)
+//   - Search — case-sensitive substring match on Message
 type LogFetchParams struct {
-	ServiceID string
-	Severity  string // error, warning, info, debug, all
-	Since     time.Time
-	Limit     int
-	Search    string
+	ServiceID   string
+	Severity    string // "" | "emergency" | "alert" | "critical" | "error" | "warning" | "notice" | "info" | "debug" | "all"
+	Facility    string // "" | "application" | "webserver"
+	Tags        []string
+	ContainerID string
+	Since       time.Time
+	Limit       int
+	Search      string
 }
 
 // LogEntry represents a single log entry.
+//
+// Tag and Facility are populated from the syslog envelope so consumers can
+// scope filters at those dimensions without re-querying the backend. Tag in
+// particular is the primary build-identity dimension: the Zerops builder emits
+// entries with Tag = "zbuilder@<appVersionId>". FetchBuildWarnings relies on
+// this to scope results to a single build.
 type LogEntry struct {
-	ID        string `json:"id,omitempty"`
-	Timestamp string `json:"timestamp"`
-	Severity  string `json:"severity"`
-	Message   string `json:"message"`
-	Container string `json:"container,omitempty"`
+	ID          string `json:"id,omitempty"`
+	Timestamp   string `json:"timestamp"`
+	Severity    string `json:"severity"`
+	Facility    string `json:"facility,omitempty"` // e.g. "local0" (application), "daemon"
+	Tag         string `json:"tag,omitempty"`      // syslog tag, e.g. "zbuilder@abc"
+	Message     string `json:"message"`
+	Container   string `json:"container,omitempty"`   // container hostname
+	ContainerID string `json:"containerId,omitempty"` // container UUID
 }
 
 // ProcessEvent represents a process from the search API (activity timeline).
@@ -213,12 +238,23 @@ type AppVersionEvent struct {
 	LastUpdate     string     `json:"lastUpdate"`
 }
 
-// BuildInfo contains build pipeline timing.
+// BuildInfo contains build pipeline timing and target-container metadata.
+//
+// Timestamps are RFC3339Nano strings (upstream SDK emits with nanoseconds).
+// ContainerCreationStart is the authoritative anchor for "this deploy's
+// runtime container lifetime starts here" — FetchRuntimeLogs uses it as a
+// Since filter so stale logs from prior container generations are excluded.
 type BuildInfo struct {
-	ServiceStackID *string `json:"serviceStackId,omitempty"` // build container ID for log access
-	PipelineStart  *string `json:"pipelineStart,omitempty"`
-	PipelineFinish *string `json:"pipelineFinish,omitempty"`
-	PipelineFailed *string `json:"pipelineFailed,omitempty"`
+	ServiceStackID            *string `json:"serviceStackId,omitempty"`            // build service-stack (persists across builds)
+	ServiceStackName          *string `json:"serviceStackName,omitempty"`          // human-readable build service-stack name
+	ServiceStackTypeVersionID *string `json:"serviceStackTypeVersionId,omitempty"` // e.g. "nodejs@22"
+	PipelineStart             *string `json:"pipelineStart,omitempty"`
+	PipelineFinish            *string `json:"pipelineFinish,omitempty"`
+	PipelineFailed            *string `json:"pipelineFailed,omitempty"`
+	ContainerCreationStart    *string `json:"containerCreationStart,omitempty"` // runtime container creation moment
+	StartDate                 *string `json:"startDate,omitempty"`              // build-artifact upload start
+	EndDate                   *string `json:"endDate,omitempty"`                // build-artifact upload end
+	CacheSnapshotID           *string `json:"cacheSnapshotId,omitempty"`        // build-cache snapshot reused, if any
 }
 
 // UserRef is a lightweight user reference.

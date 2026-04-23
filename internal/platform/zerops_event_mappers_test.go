@@ -222,3 +222,56 @@ func TestMapEsAppVersionEvent_BuildTimestampsRFC3339(t *testing.T) {
 func strPtr(s string) *string {
 	return &s
 }
+
+// TestMapEsAppVersionEvent_MapsEnrichedBuildFields — Phase 5: the dropped
+// upstream fields are now mapped. FetchRuntimeLogs relies on
+// ContainerCreationStart as the authoritative Since anchor.
+func TestMapEsAppVersionEvent_MapsEnrichedBuildFields(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 4, 22, 6, 4, 0, 0, time.UTC)
+	pipeStart := now
+	pipeFinish := now.Add(90 * time.Second)
+	containerStart := now.Add(91 * time.Second)
+	startDate := now.Add(2 * time.Second)
+	endDate := now.Add(10 * time.Second)
+
+	input := output.EsAppVersion{
+		Created:    types.NewDateTime(now),
+		LastUpdate: types.NewDateTime(now),
+		Status:     enum.AppVersionStatusEnumUploading,
+		Source:     enum.AppVersionSourceEnumCli,
+		Build: &output.AppVersionBuild{
+			PipelineStart:          types.NewDateTimeNull(pipeStart),
+			PipelineFinish:         types.NewDateTimeNull(pipeFinish),
+			ContainerCreationStart: types.NewDateTimeNull(containerStart),
+			StartDate:              types.NewDateTimeNull(startDate),
+			EndDate:                types.NewDateTimeNull(endDate),
+		},
+	}
+
+	result := mapEsAppVersionEvent(input)
+
+	if result.Build == nil {
+		t.Fatal("Build nil")
+	}
+
+	checks := []struct {
+		name string
+		got  *string
+		want time.Time
+	}{
+		{"ContainerCreationStart", result.Build.ContainerCreationStart, containerStart},
+		{"StartDate", result.Build.StartDate, startDate},
+		{"EndDate", result.Build.EndDate, endDate},
+	}
+	for _, c := range checks {
+		if c.got == nil {
+			t.Errorf("%s is nil", c.name)
+			continue
+		}
+		if *c.got != c.want.Format(time.RFC3339Nano) {
+			t.Errorf("%s = %q, want %q", c.name, *c.got, c.want.Format(time.RFC3339Nano))
+		}
+	}
+}

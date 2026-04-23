@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"slices"
 	"sync"
 )
 
@@ -226,9 +227,116 @@ func (f *MockLogFetcher) WithError(err error) *MockLogFetcher {
 	return f
 }
 
-func (f *MockLogFetcher) FetchLogs(_ context.Context, _ *LogAccess, _ LogFetchParams) ([]LogEntry, error) {
+// FetchLogs applies the same filters that ZeropsLogFetcher applies in
+// production so consumer unit tests prove real behaviour:
+//   - Server-side simulated: Severity (syslog numeric compare against entry),
+//     Facility (maps "application"→"local0", "webserver"→"local1"),
+//     Tags (OR over exact matches on entry.Tag), ContainerID (exact match).
+//   - Client-side (shared with real fetcher via filterEntries): Since, Search,
+//     Limit tail-trim.
+//
+// Matches the ordering documented in filterEntries — server-side first, then
+// client-side, then limit.
+func (f *MockLogFetcher) FetchLogs(_ context.Context, _ *LogAccess, params LogFetchParams) ([]LogEntry, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
-	return f.entries, nil
+
+	// Copy so mutations (tail-trim aliasing via entries[:0]) don't leak into
+	// the mock's canned entries on a subsequent call.
+	entries := make([]LogEntry, len(f.entries))
+	copy(entries, f.entries)
+
+	// Severity: keep entries whose numeric severity is <= the requested min.
+	if params.Severity != "" && params.Severity != "all" {
+		minNum := severityNumeric(params.Severity)
+		filtered := entries[:0]
+		for _, e := range entries {
+			if severityNumeric(e.Severity) <= minNum {
+				filtered = append(filtered, e)
+			}
+		}
+		entries = filtered
+	}
+
+	// Facility: map label to expected entry.Facility value. Unknown facility
+	// values (want == "") are treated as "no filter", matching the real
+	// fetcher which omits the query param for unknown facility.
+	if want := facilityEntryLabel(params.Facility); want != "" {
+		filtered := entries[:0]
+		for _, e := range entries {
+			if e.Facility == want {
+				filtered = append(filtered, e)
+			}
+		}
+		entries = filtered
+	}
+
+	// Tags: OR over exact matches.
+	if len(params.Tags) > 0 {
+		filtered := entries[:0]
+		for _, e := range entries {
+			if slices.Contains(params.Tags, e.Tag) {
+				filtered = append(filtered, e)
+			}
+		}
+		entries = filtered
+	}
+
+	// ContainerID: exact match.
+	if params.ContainerID != "" {
+		filtered := entries[:0]
+		for _, e := range entries {
+			if e.ContainerID == params.ContainerID {
+				filtered = append(filtered, e)
+			}
+		}
+		entries = filtered
+	}
+
+	return filterEntries(entries, params, clampLimit(params.Limit)), nil
+}
+
+// severityNumeric converts a severity label (the on-wire LogEntry.Severity
+// form — "Warning", "Error", etc., case-insensitive) OR the request form
+// ("warning", "error") to syslog numeric 0..7. Unknown → 7 (debug) so entries
+// with missing severity pass every filter except debug.
+func severityNumeric(label string) int {
+	if label == "" {
+		return 7
+	}
+	n := mapSeverityToNumeric(label)
+	switch n {
+	case "0":
+		return 0
+	case "1":
+		return 1
+	case "2":
+		return 2
+	case "3":
+		return 3
+	case "4":
+		return 4
+	case "5":
+		return 5
+	case "6":
+		return 6
+	default:
+		return 7
+	}
+}
+
+// facilityEntryLabel maps a LogFetchParams.Facility ("application" / "webserver")
+// to the syslog label that appears in LogEntry.Facility on the wire (e.g. the
+// backend emits "local0" for facility=16). Empty return means "unknown facility
+// in the request" — caller omits the filter. Matches probed backend behaviour.
+func facilityEntryLabel(facility string) string {
+	switch facility {
+	case "application":
+		return "local0"
+	case "webserver":
+		return "local1"
+	default:
+		return ""
+	}
 }

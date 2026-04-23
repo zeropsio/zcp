@@ -89,6 +89,16 @@ func mapEsAppVersionEvent(av output.EsAppVersion) AppVersionEvent {
 			bi.ServiceStackID = &v
 			hasBuild = true
 		}
+		if name, ok := av.Build.ServiceStackName.Get(); ok {
+			v := name.String()
+			bi.ServiceStackName = &v
+			hasBuild = true
+		}
+		if tv, ok := av.Build.ServiceStackTypeVersionId.Get(); ok {
+			v := tv.Native()
+			bi.ServiceStackTypeVersionID = &v
+			hasBuild = true
+		}
 		if ps, ok := av.Build.PipelineStart.Get(); ok {
 			v := ps.Format(time.RFC3339Nano)
 			bi.PipelineStart = &v
@@ -102,6 +112,26 @@ func mapEsAppVersionEvent(av output.EsAppVersion) AppVersionEvent {
 		if pf, ok := av.Build.PipelineFailed.Get(); ok {
 			v := pf.Format(time.RFC3339Nano)
 			bi.PipelineFailed = &v
+			hasBuild = true
+		}
+		if ccs, ok := av.Build.ContainerCreationStart.Get(); ok {
+			v := ccs.Format(time.RFC3339Nano)
+			bi.ContainerCreationStart = &v
+			hasBuild = true
+		}
+		if sd, ok := av.Build.StartDate.Get(); ok {
+			v := sd.Format(time.RFC3339Nano)
+			bi.StartDate = &v
+			hasBuild = true
+		}
+		if ed, ok := av.Build.EndDate.Get(); ok {
+			v := ed.Format(time.RFC3339Nano)
+			bi.EndDate = &v
+			hasBuild = true
+		}
+		if cs, ok := av.Build.CacheSnapshotId.Get(); ok {
+			v := cs.TypedString().String()
+			bi.CacheSnapshotID = &v
 			hasBuild = true
 		}
 		if hasBuild {
