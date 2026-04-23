@@ -57,20 +57,6 @@ func TestMapAPIError(t *testing.T) {
 			wantAPICode: "rateLimited",
 		},
 		{
-			name:        "SubdomainAlreadyEnabled",
-			apiErr:      apiError.Error{HttpStatusCode: 409, ErrorCode: "SubdomainAccessAlreadyEnabled", Message: "already enabled"},
-			entityType:  "",
-			wantCode:    "SUBDOMAIN_ALREADY_ENABLED",
-			wantAPICode: "", // subdomain codes don't set APICode
-		},
-		{
-			name:        "SubdomainAlreadyDisabled",
-			apiErr:      apiError.Error{HttpStatusCode: 409, ErrorCode: "serviceStackSubdomainAccessAlreadyDisabled", Message: "already disabled"},
-			entityType:  "",
-			wantCode:    "SUBDOMAIN_ALREADY_DISABLED",
-			wantAPICode: "",
-		},
-		{
 			name:             "5xx_ServerError",
 			apiErr:           apiError.Error{HttpStatusCode: 502, ErrorCode: "badGateway", Message: "bad gateway"},
 			entityType:       "",

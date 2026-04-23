@@ -72,15 +72,6 @@ func mapAPIError(apiErr apiError.Error, entityType string) error {
 		return withAPICode(NewPlatformError(ErrAPIRateLimited, msg, "Wait and retry"), errCode)
 	}
 
-	switch {
-	case strings.Contains(errCode, "SubdomainAccessAlreadyEnabled") ||
-		strings.Contains(errCode, "subdomainAccessAlreadyEnabled"):
-		return NewPlatformError("SUBDOMAIN_ALREADY_ENABLED", msg, "")
-	case strings.Contains(errCode, "serviceStackSubdomainAccessAlreadyDisabled") ||
-		strings.Contains(errCode, "ServiceStackSubdomainAccessAlreadyDisabled"):
-		return NewPlatformError("SUBDOMAIN_ALREADY_DISABLED", msg, "")
-	}
-
 	if code >= 500 {
 		return withAPICode(NewPlatformError(ErrAPIError, msg, "Zerops API server error — retry later"), errCode)
 	}

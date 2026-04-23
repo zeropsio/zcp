@@ -2,7 +2,6 @@ package ops
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -28,27 +27,24 @@ type SubdomainResult struct {
 	Warnings      []string          `json:"warnings,omitempty"`
 }
 
-// Error codes for idempotent handling.
-const (
-	errSubdomainAlreadyEnabled  = "SUBDOMAIN_ALREADY_ENABLED"
-	errSubdomainAlreadyDisabled = "SUBDOMAIN_ALREADY_DISABLED"
-)
-
 // Subdomain enables or disables the zerops.app subdomain for a service.
 //
-// Enable is idempotent via check-before-enable: we read SubdomainAccess from a
-// fresh REST-authoritative GetService call and short-circuit when the
-// subdomain is already active. The previous version called
+// Enable is idempotent via check-before-enable: GetService (REST,
+// authoritative) reports current SubdomainAccess, and we short-circuit when
+// the subdomain is already active. The previous version called
 // EnableSubdomainAccess blindly; the platform accepts the call and creates a
 // garbage FAILED process with error.code=noSubdomainPorts for every such
-// redundant invocation. Those processes pollute the project event log and
-// trigger GUI error notifications even though the ZCP response indicated
-// success. Empirical evidence: plans/archive/subdomain-robustness.md §1.1.
+// redundant invocation — the process pollutes the event log and triggers
+// GUI error notifications even though ZCP reported success. Empirical
+// evidence: plans/archive/subdomain-robustness.md §1.1.
 //
-// The isAlreadyEnabled error branch stays as belt-and-suspenders against a
-// TOCTOU race (concurrent admin action between GetService and
-// EnableSubdomainAccess), but in normal single-caller operation the platform
-// never sees a redundant enable call.
+// TOCTOU race (subdomain flips to enabled between our GetService and our
+// EnableSubdomainAccess) is handled by the tool-layer FAILED-normalization
+// workaround at internal/tools/subdomain.go — when the platform returns a
+// FAILED process but URLs resolve, the tool normalizes to already_enabled
+// and preserves FailReason in Warnings. No dedicated error-code branch in
+// the ops layer: the platform simply does not emit SUBDOMAIN_ALREADY_ENABLED
+// as an error code for enable anymore.
 func Subdomain(
 	ctx context.Context,
 	client platform.Client,
@@ -98,13 +94,12 @@ func Subdomain(
 		}
 		proc, err := client.EnableSubdomainAccess(ctx, svc.ID)
 		if err != nil {
-			if isAlreadyEnabled(err) {
-				// Belt-and-suspenders: TOCTOU race (subdomain got enabled
-				// between our GetService and this call). Treat as success.
-				result.Status = "already_enabled"
-				attachSubdomainUrlsToResult(ctx, client, result, projectID, svc.ID)
-				return result, nil
-			}
+			// No special-case for SUBDOMAIN_ALREADY_ENABLED: the platform
+			// doesn't emit that code — empirically (plan §1.2) a redundant
+			// enable call surfaces as an HTTP 200 with a FAILED Process, not
+			// as an error. The check-before-enable gate above catches the
+			// normal idempotent case; the FAILED Process belt-and-suspenders
+			// at the tool layer covers the TOCTOU race window.
 			return nil, err
 		}
 		result.Process = proc
@@ -112,10 +107,6 @@ func Subdomain(
 	} else {
 		proc, err := client.DisableSubdomainAccess(ctx, svc.ID)
 		if err != nil {
-			if isAlreadyDisabled(err) {
-				result.Status = "already_disabled"
-				return result, nil
-			}
 			return nil, err
 		}
 		result.Process = proc
@@ -207,20 +198,4 @@ func AllEmpty(ss []string) bool {
 		}
 	}
 	return true
-}
-
-func isAlreadyEnabled(err error) bool {
-	var pe *platform.PlatformError
-	if errors.As(err, &pe) {
-		return pe.Code == errSubdomainAlreadyEnabled
-	}
-	return false
-}
-
-func isAlreadyDisabled(err error) bool {
-	var pe *platform.PlatformError
-	if errors.As(err, &pe) {
-		return pe.Code == errSubdomainAlreadyDisabled
-	}
-	return false
 }

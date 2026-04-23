@@ -195,23 +195,23 @@ func TestSubdomain_EnableReturnsUrls(t *testing.T) {
 			wantUrls: []string{"https://web-1df2.prg1.zerops.app"},
 		},
 		{
+			// Check-before-enable short-circuits when SubdomainAccess==true;
+			// URLs are still built from the cached project+service data.
 			name: "already_enabled still returns URLs",
 			mock: platform.NewMock().
 				WithServices([]platform.ServiceStack{
 					{ID: "svc-1", Name: "app", ProjectID: "proj-1",
-						Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}}},
+						SubdomainAccess: true,
+						Ports:           []platform.Port{{Port: 3000, Protocol: "tcp"}}},
 				}).
 				WithService(&platform.ServiceStack{
 					ID: "svc-1", Name: "app", ProjectID: "proj-1",
-					Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}},
+					SubdomainAccess: true,
+					Ports:           []platform.Port{{Port: 3000, Protocol: "tcp"}},
 				}).
 				WithProject(&platform.Project{
 					ID: "proj-1", Name: "myproject", Status: "ACTIVE",
 					SubdomainHost: "1df2.prg1.zerops.app",
-				}).
-				WithError("EnableSubdomainAccess", &platform.PlatformError{
-					Code:    "SUBDOMAIN_ALREADY_ENABLED",
-					Message: "subdomain already enabled",
 				}),
 			hostname: "app",
 			action:   "enable",
@@ -452,28 +452,6 @@ func TestSubdomain(t *testing.T) {
 			hostname: "api",
 			action:   "disable",
 			wantProc: true,
-		},
-		{
-			name: "Enable_AlreadyEnabled",
-			mock: platform.NewMock().WithServices(services).
-				WithError("EnableSubdomainAccess", &platform.PlatformError{
-					Code:    "SUBDOMAIN_ALREADY_ENABLED",
-					Message: "subdomain already enabled",
-				}),
-			hostname:   "api",
-			action:     "enable",
-			wantStatus: "already_enabled",
-		},
-		{
-			name: "Disable_AlreadyDisabled",
-			mock: platform.NewMock().WithServices(services).
-				WithError("DisableSubdomainAccess", &platform.PlatformError{
-					Code:    "SUBDOMAIN_ALREADY_DISABLED",
-					Message: "subdomain already disabled",
-				}),
-			hostname:   "api",
-			action:     "disable",
-			wantStatus: "already_disabled",
 		},
 		{
 			name:     "InvalidAction",
