@@ -187,26 +187,14 @@ Envelope-wide axes (`phases`, `environments`, `routes`, `steps`, `idleScenarios`
 
 ### 4.1 File layout
 
-```markdown
----
-id: develop-dynamic-runtime-start-container
-priority: 2
-phases: [develop-active]
-runtimes: [dynamic]
-environments: [container]
-title: "Dynamic runtime — start over SSH after deploy"
----
-
-After a dynamic-runtime deploy, the container is running `zsc noop`. Start
-the real server over SSH:
-
-\```
-ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {hostname} \
-  'cd /var/www && {start-command}'
-\```
-
-Replace `{start-command}` with the `run.start` value from `zerops.yaml`.
-```
+One-fact-one-home — see the full atom at
+`internal/content/atoms/develop-dynamic-runtime-start-container.md`. The
+spec references the atom by path; it does not copy the body inline. The
+atom prescribes the canonical primitive `zerops_dev_server action=start`
+for the container env; the matching local-env atom prescribes the
+harness background task primitive (e.g. `Bash run_in_background=true` in
+Claude Code). See `plans/dev-server-canonical-primitive.md` for the
+canonicalization rationale.
 
 ### 4.2 Frontmatter fields
 

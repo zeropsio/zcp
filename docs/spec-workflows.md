@@ -200,17 +200,23 @@ Runtime-dependent guidance lives as ~74 atoms under `internal/content/atoms/*.md
 ```yaml
 ---
 id: develop-dynamic-runtime-start-container
-priority: 2
+priority: 3
 phases: [develop-active]
 runtimes: [dynamic]
 environments: [container]
-title: "Dynamic runtime — start over SSH after deploy"
+modes: [dev, standard]
+title: "Dynamic runtime — start dev server via zerops_dev_server (container)"
 ---
 
-After a dynamic-runtime deploy, the container is running `zsc noop`. Start
-the real server over SSH:
-...
+After a dev-mode dynamic-runtime deploy the container runs `zsc noop`. Start
+the dev server via the canonical primitive:
+    zerops_dev_server action=start hostname={hostname} command="{start-command}" port={port} healthPath="{path}"
 ```
+
+Atom bodies are authored elsewhere — this spec references them as
+authoritative, not as content copied inline. See
+`internal/content/atoms/develop-dynamic-runtime-start-container.md` for
+the full prescription.
 
 **Axes** (the knowledge-variation dimensions):
 
@@ -544,7 +550,7 @@ Phase 1 — Deploy Dev:
                                              auto-enables L7 subdomain on
                                              first deploy (response carries
                                              subdomainAccessEnabled + URL)
-  2. Start server manually via SSH          ← dev has zsc noop
+  2. zerops_dev_server action=start         ← dev has zsc noop; container env
   3. zerops_verify serviceHostname={dev}
 
 Phase 2 — Deploy Stage (after dev healthy):
@@ -760,7 +766,7 @@ Three strategies determine how code gets to Zerops after the first deploy:
 
 #### push-dev
 - `zerops_deploy targetService="{hostname}"` — default self-deploy. Blocks until build completes.
-- **After deploy**: Manual server start via SSH for dev (zsc noop). Stage and simple auto-start.
+- **After deploy**: Agent starts the dev server on dev services (`zsc noop`) via `zerops_dev_server` in container env, or via the harness background task primitive (e.g. `Bash run_in_background=true` in Claude Code) in local env. Stage and simple auto-start via `healthCheck`.
 - **Good for**: Quick iterations, prototyping, direct control.
 - **First deploy**: same command — push-dev is the implicit default on any service that hasn't been deployed yet.
 
@@ -843,7 +849,7 @@ When deploy fails, the agent can iterate. Escalating guidance tiers live in `int
 ### 4.8 Operational Details
 
 - `zerops_deploy` blocks until build completes. Returns DEPLOYED or BUILD_FAILED. For dev/stage/simple/standard/local-stage modes, the handler auto-enables the L7 subdomain on first deploy and waits for HTTP readiness before returning — the response carries `subdomainAccessEnabled: true` and `subdomainUrl`. Agents normally never call `zerops_subdomain action=enable` directly; the tool stays available for recovery, production opt-in, and disable operations.
-- Dev server start via SSH needed after every deploy (container, dynamic runtimes only). NOT for PHP/nginx/static (implicit-webserver auto-starts).
+- Dev server start needed after every deploy for dev-mode dynamic runtimes. Container env uses `zerops_dev_server action=start`; local env uses the harness background task primitive. NOT needed for implicit-webserver (`php-nginx`, `php-apache`) / `nginx` / `static` runtimes or for simple/stage modes (those auto-start via `healthCheck`).
 - Stage entry written AFTER dev verified (standard mode).
 - `zerops_deploy sourceService={dev} targetService={stage}` for cross-deploy.
 - `zerops_manage action="connect-storage"` after first stage deploy (if shared-storage).
@@ -882,7 +888,7 @@ Both environments follow the same flows but with different mechanisms.
 - **Code access**: SSHFS mounts at `/var/www/{hostname}/`.
 - **Deploy (push-dev)**: SSH into service, git init + zcli push from inside.
 - **Deploy (push-git)**: SSH into service, git commit + push to remote.
-- **Server start**: Manual via SSH for dev (zsc noop). Auto for stage/simple.
+- **Server start**: `zerops_dev_server action=start` for dev (`zsc noop`) in container env. Auto for stage/simple via `healthCheck`.
 - **Commands**: `ssh {hostname} "cd /var/www && {command}"`.
 - **Mount tool**: Available.
 - **ServiceMeta hostname**: devHostname (standard), hostname (dev/simple).
@@ -1091,7 +1097,7 @@ visibility.
 | O1 | zerops_deploy blocks until build completes |
 | O2 | zerops_import blocks until all processes complete |
 | O3 | L7 subdomain activation is a deploy-handler concern, not an agent-step concern. `zerops_deploy` auto-enables the subdomain on first deploy for eligible modes (dev/stage/simple/standard/local-stage) and waits for HTTP readiness before returning; the response carries `subdomainAccessEnabled` and `subdomainUrl`. The underlying `ops.Subdomain` path (used by the `zerops_subdomain` MCP tool for recovery or production opt-in) is idempotent via check-before-enable: it reads `SubdomainAccess` from a fresh `GetService` (REST-authoritative) and short-circuits to `status=already_enabled` without calling `EnableSubdomainAccess` when already live, preventing the platform's garbage FAILED-process pattern on redundant enable. |
-| O4 | Dev server started manually via SSH after every deploy (container, dynamic runtimes) |
+| O4 | Dev-server lifecycle in develop workflow is owned by `zerops_dev_server` (container env) or the harness background task primitive (local env — e.g. `Bash run_in_background=true` in Claude Code). Platform auto-starts only for `simple`/`stage` modes and implicit-webserver/static runtimes. Agents never hand-roll SSH backgrounding (`ssh {host} "cmd &"`) for dev-server lifecycle in container env — the SSH channel would hold until the 120 s bash timeout. See `plans/dev-server-canonical-primitive.md`. |
 | O5 | Stage entry written AFTER dev verified (standard mode) |
 | O6 | Stage deployFiles = build output, NOT [.] |
 

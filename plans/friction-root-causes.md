@@ -139,7 +139,14 @@ Each workstream below is structured identically: problem statement → design �
 
 **Goal**: post-deploy messaging no longer asserts process state or surfaces stale warnings.
 
-#### P1.1 — Delete the "Dev server NOT running" branch
+#### P1.1 — Delete the "Dev server NOT running" branch (SUPERSEDED)
+
+> **Superseded** by `plans/dev-server-canonical-primitive.md`. The
+> deletion is subsumed there as part of a broader canonicalization:
+> `zerops_dev_server` becomes the canonical primitive in container env,
+> harness background task primitive in local env, specs codify O4
+> rewrite, atoms prescribe the canonical pattern. Content below is
+> historical only — do not implement.
 
 **Why delete, not refactor**: runtime-start guidance is already atom-owned (`develop-dynamic-runtime-start-container.md:11-21`, `-local.md:11-19`, `develop-implicit-webserver.md:9-14`, `develop-checklist-dev-mode.md:12-13`, `bootstrap-runtime-classes.md:15-19`). Deploy-tool code copies are drift. `NeedsManualStart` has zero non-UX consumers — only `deploy_poll.go:44` and `next_actions.go:32`. Parsing `zerops.yaml` to improve accuracy adds an edge-case surface for no benefit when the whole claim is redundant with atoms and with `zerops_verify`.
 
