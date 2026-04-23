@@ -36,6 +36,17 @@ func (s *Store) Get(slug string) (*Session, bool) {
 	return sess, ok
 }
 
+// HasAnySession reports whether at least one recipe session is open.
+// Used by the workflow-context guard in internal/tools/guard.go so an
+// active recipe run satisfies zerops_import/zerops_mount's "must be in
+// a workflow" precondition without starting a separate bootstrap/
+// develop workflow.
+func (s *Store) HasAnySession() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.sessions) > 0
+}
+
 // OpenOrCreate returns an existing session, or creates one at the given
 // outputRoot with a freshly-resolved parent recipe.
 func (s *Store) OpenOrCreate(slug, outputRoot string) (*Session, error) {

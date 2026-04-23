@@ -10,21 +10,37 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
+// RecipeSessionProbe is satisfied by *recipe.Store. Abstracting keeps
+// internal/tools free of a direct recipe-package import while letting
+// the workflow-context guard accept an active v3 recipe session as
+// valid context.
+type RecipeSessionProbe interface {
+	HasAnySession() bool
+}
+
 // requireWorkflowContext checks that the agent is in an active workflow:
-// either a bootstrap/recipe session OR an open work session for the current
-// process. Used by mount and import to ensure the agent has received
-// knowledge before performing infrastructure operations.
-func requireWorkflowContext(engine *workflow.Engine, stateDir string) *mcp.CallToolResult {
+// either a bootstrap / develop session, an open work session for the
+// current process, or a live v3 recipe session. Used by mount + import
+// to ensure the agent has received knowledge before performing
+// infrastructure operations.
+//
+// recipeProbe may be nil in tests that don't exercise the recipe path.
+func requireWorkflowContext(engine *workflow.Engine, stateDir string, recipeProbe RecipeSessionProbe) *mcp.CallToolResult {
 	if engine != nil && engine.HasActiveSession() {
 		return nil
 	}
 	if ws, _ := workflow.CurrentWorkSession(stateDir); ws != nil && ws.ClosedAt == "" {
 		return nil
 	}
+	if recipeProbe != nil && recipeProbe.HasAnySession() {
+		return nil
+	}
 	return convertError(platform.NewPlatformError(
 		platform.ErrWorkflowRequired,
 		"No active workflow. This tool requires a workflow context.",
-		"Start a workflow: workflow=\"bootstrap\" (create/adopt infrastructure) or workflow=\"develop\" (develop/deploy/fix).",
+		"Start a workflow: zerops_recipe action=\"start\" (recipe authoring), "+
+			"zerops_workflow action=\"start\" workflow=\"bootstrap\" (create/adopt infrastructure), "+
+			"or zerops_workflow action=\"start\" workflow=\"develop\" (develop/deploy/fix).",
 	))
 }
 

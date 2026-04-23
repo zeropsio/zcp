@@ -10,7 +10,7 @@ import (
 
 func TestRequireWorkflowContext_NilEngine_NoMarker_Blocks(t *testing.T) {
 	t.Parallel()
-	result := requireWorkflowContext(nil, t.TempDir())
+	result := requireWorkflowContext(nil, t.TempDir(), nil)
 	if result == nil {
 		t.Fatal("expected non-nil result when no workflow context")
 	}
@@ -30,7 +30,7 @@ func TestRequireWorkflowContext_ActiveSession_Passes(t *testing.T) {
 	if _, err := engine.Start("proj-1", "bootstrap", "test"); err != nil {
 		t.Fatalf("start session: %v", err)
 	}
-	result := requireWorkflowContext(engine, dir)
+	result := requireWorkflowContext(engine, dir, nil)
 	if result != nil {
 		t.Errorf("active session should pass, got error")
 	}
@@ -42,7 +42,7 @@ func TestRequireWorkflowContext_WorkSession_Passes(t *testing.T) {
 	if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
 		t.Fatalf("save work session: %v", err)
 	}
-	result := requireWorkflowContext(nil, stateDir)
+	result := requireWorkflowContext(nil, stateDir, nil)
 	if result != nil {
 		t.Errorf("open work session should pass, got error")
 	}
@@ -56,7 +56,7 @@ func TestRequireWorkflowContext_ClosedWorkSession_Blocks(t *testing.T) {
 	if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
 		t.Fatalf("save work session: %v", err)
 	}
-	result := requireWorkflowContext(nil, stateDir)
+	result := requireWorkflowContext(nil, stateDir, nil)
 	if result == nil {
 		t.Fatal("closed work session should block, got nil")
 	}
@@ -64,7 +64,7 @@ func TestRequireWorkflowContext_ClosedWorkSession_Blocks(t *testing.T) {
 
 func TestRequireWorkflowContext_EmptyStateDir_Blocks(t *testing.T) {
 	t.Parallel()
-	result := requireWorkflowContext(nil, "")
+	result := requireWorkflowContext(nil, "", nil)
 	if result == nil {
 		t.Fatal("expected non-nil result for empty stateDir with nil engine")
 	}

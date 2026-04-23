@@ -156,10 +156,27 @@ func (s *Server) registerTools() {
 	tools.RegisterManage(s.server, s.client, projectID)
 	tools.RegisterScale(s.server, s.client, projectID)
 	tools.RegisterEnv(s.server, s.client, projectID, s.rtInfo.ServiceName)
-	tools.RegisterImport(s.server, s.client, projectID, wfEngine, stateDir)
+
+	// zcprecipator3 (v3) recipe engine ships alongside v2's zerops_workflow.
+	// Both tools register; clients pick which to call. v2 deletion triggers
+	// on first clean showcase via v3 — see docs/zcprecipator3/plan.md §14.
+	// Mount root defaults to ~/recipes; override with ZCP_RECIPE_MOUNT_ROOT.
+	// The Store is wired into RegisterImport/RegisterMount so an active
+	// recipe session satisfies the workflow-context guard without
+	// requiring a separate bootstrap/develop workflow.
+	mountRoot := os.Getenv("ZCP_RECIPE_MOUNT_ROOT")
+	if mountRoot == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			mountRoot = filepath.Join(home, "recipes")
+		}
+	}
+	recipeStore := recipe.NewStore(mountRoot)
+	recipe.Register(s.server, recipeStore)
+
+	tools.RegisterImport(s.server, s.client, projectID, wfEngine, stateDir, recipeStore)
 	tools.RegisterDelete(s.server, s.client, projectID, stateDir, s.mounter, s.rtInfo)
 	tools.RegisterSubdomain(s.server, s.client, httpClient, projectID)
-	tools.RegisterMount(s.server, s.client, projectID, s.mounter, s.rtInfo, stateDir, wfEngine)
+	tools.RegisterMount(s.server, s.client, projectID, s.mounter, s.rtInfo, stateDir, wfEngine, recipeStore)
 
 	// Container-only: zerops_browser wraps agent-browser with a guaranteed
 	// open→work→close lifecycle. agent-browser is pre-installed in the ZCP
@@ -168,18 +185,6 @@ func (s *Server) registerTools() {
 	if s.rtInfo.InContainer && ops.AgentBrowserAvailable() {
 		tools.RegisterBrowser(s.server)
 	}
-
-	// zcprecipator3 (v3) recipe engine ships alongside v2's zerops_workflow.
-	// Both tools register; clients pick which to call. v2 deletion triggers
-	// on first clean showcase via v3 — see docs/zcprecipator3/plan.md §14.
-	// Mount root defaults to ~/recipes; override with ZCP_RECIPE_MOUNT_ROOT.
-	mountRoot := os.Getenv("ZCP_RECIPE_MOUNT_ROOT")
-	if mountRoot == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			mountRoot = filepath.Join(home, "recipes")
-		}
-	}
-	recipe.Register(s.server, recipe.NewStore(mountRoot))
 }
 
 // Run starts the MCP server on stdio transport.

@@ -78,7 +78,7 @@ func mountServer(mock platform.Client, mounter ops.Mounter) *mcp.Server {
 
 func mountServerWithRT(mock platform.Client, mounter ops.Mounter, rtInfo runtime.Info, engine *workflow.Engine) *mcp.Server {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterMount(srv, mock, "proj-1", mounter, rtInfo, "", engine)
+	RegisterMount(srv, mock, "proj-1", mounter, rtInfo, "", engine, nil)
 	return srv
 }
 
@@ -91,7 +91,7 @@ func mountServerWithDevelop(t *testing.T, mock platform.Client, mounter ops.Moun
 		t.Fatalf("save work session: %v", err)
 	}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterMount(srv, mock, "proj-1", mounter, runtime.Info{}, stateDir, nil)
+	RegisterMount(srv, mock, "proj-1", mounter, runtime.Info{}, stateDir, nil, nil)
 	return srv
 }
 
@@ -104,7 +104,7 @@ func mountServerWithSession(t *testing.T, mock platform.Client, mounter ops.Moun
 		t.Fatalf("bootstrap start: %v", err)
 	}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterMount(srv, mock, "proj-1", mounter, runtime.Info{}, stateDir, engine)
+	RegisterMount(srv, mock, "proj-1", mounter, runtime.Info{}, stateDir, engine, nil)
 	return srv
 }
 
@@ -358,7 +358,7 @@ func TestMountTool_MountBlockedWithoutWorkflow(t *testing.T) {
 	mounter := newStubMounter()
 	// stateDir with no develop marker and nil engine = no workflow context.
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterMount(srv, mock, "proj-1", mounter, runtime.Info{}, t.TempDir(), nil)
+	RegisterMount(srv, mock, "proj-1", mounter, runtime.Info{}, t.TempDir(), nil, nil)
 
 	result := callTool(t, srv, "zerops_mount", map[string]any{
 		"action":          "mount",

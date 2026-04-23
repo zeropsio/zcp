@@ -108,3 +108,84 @@ Run 3 and run 4 dogfood (see `runs/3/RAW_CHAT.md`, `runs/4/RAW_CHAT.md`) surface
   import.yaml"). Current emitter emits full yaml per tier; delta mode is
   Commission C.
 
+---
+
+## 2026-04-23 later — v9.5.5: workflow-context gate + CLAUDE.md teach recipe flow
+
+### Context
+
+Run 5 dogfood (`runs/5/RAW_CHAT.md`) with v9.5.4. Progress was clean
+through research + provision-yaml emit, then regressed on step 2 of
+the provision atom. The agent called `zerops_import content=<yaml>`
+verbatim as the atom instructs, but got:
+
+```
+{"code":"WORKFLOW_REQUIRED","error":"No active workflow. This tool
+requires a workflow context.","suggestion":"Start a workflow:
+workflow=\"bootstrap\" or workflow=\"develop\"."}
+```
+
+The agent then followed the error suggestion + the project CLAUDE.md's
+"Bootstrap first when there are no services yet" guidance and started a
+full bootstrap workflow, abandoning the recipe flow entirely. Two root
+causes, both engine-side.
+
+### Root causes
+
+1. **Workflow-context gate didn't know about v3 recipe sessions.**
+   `internal/tools/guard.go::requireWorkflowContext` guards
+   `zerops_import` and `zerops_mount`; its comment promised it would
+   accept "bootstrap/recipe session OR an open work session" but the
+   implementation only checked v2's engine. A live v3 `recipe.Store`
+   session wasn't recognized as valid context.
+
+2. **CLAUDE.md template taught two entry points, not three.**
+   `internal/content/templates/claude.md` instructed agents to start
+   `zerops_workflow bootstrap` when there were no services yet — the
+   exact reflex that derailed run 5. The template had zero mention of
+   `zerops_recipe` so the agent had no frame for "this is a recipe run,
+   not infra work."
+
+### Fixes shipped
+
+1. `recipe.Store.HasAnySession()` — new public predicate. Returns true
+   if at least one recipe session is open in the store.
+
+2. `requireWorkflowContext(engine, stateDir, recipeProbe
+   RecipeSessionProbe)` — third argument is a nil-safe interface probe.
+   `internal/tools/guard.go` declares `RecipeSessionProbe` (avoids a
+   hard cross-package import of `internal/recipe`); `*recipe.Store`
+   satisfies it. An active recipe session now satisfies the guard.
+
+3. `RegisterImport` + `RegisterMount` in `internal/tools/` plumb the
+   probe through; `server.go` passes the single `recipeStore` instance.
+
+4. Error message updated to list `zerops_recipe action="start"` as the
+   first option so an agent that hits the guard in a recipe context
+   sees the recipe path explicitly.
+
+5. CLAUDE.md template rewrite — "Starting a task" section becomes
+   "Three entry points — pick the right one", with recipe authoring as
+   option 1. Explicitly tells the agent **not** to start bootstrap or
+   develop workflows during recipe authoring. Points at
+   `zerops_recipe action="status"` for recovery.
+
+### Adoption gate — next problem surfaced
+
+`requireAdoption` (`internal/tools/guard.go:38`) gates deploy-related
+tools (`zerops_deploy` variants) on ServiceMeta entries under
+`stateDir/services/`. Recipe-provisioned services don't write
+ServiceMeta — so once run 5's fix lets `zerops_import` pass, the next
+call (`zerops_mount`, then `zerops_deploy` at scaffold phase) will fail
+the adoption gate. Currently gated to activate only after
+`stateDir/services/` exists (migration path), so fresh zcp installs
+bypass it, but any install with prior bootstrap state will block.
+
+Two options to fix when it bites:
+- Have `zerops_recipe complete-phase provision` write ServiceMeta for
+  every plan hostname (coupling v3 to v2's state shape).
+- Extend `requireAdoption` to ALSO accept recipe-session hostnames as
+  adopted (cleaner — mirror the guard split used above).
+
+Deferred until a dogfood run hits it.
+
