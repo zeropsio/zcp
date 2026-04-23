@@ -45,9 +45,9 @@ func TestNoInlineManagedRuntimeIndex(t *testing.T) {
 	// construction: the helper itself and anything inside service_meta.go,
 	// plus tests that assert on the helper's behavior with literal fixtures.
 	whitelist := map[string]bool{
-		filepath.Clean("../../internal/workflow/service_meta.go"):              true,
-		filepath.Clean("../../internal/workflow/service_meta_test.go"):         true,
-		filepath.Clean("../../internal/workflow/pair_keyed_contract_test.go"):  true,
+		filepath.Clean("../../internal/workflow/service_meta.go"):             true,
+		filepath.Clean("../../internal/workflow/service_meta_test.go"):        true,
+		filepath.Clean("../../internal/workflow/pair_keyed_contract_test.go"): true,
 	}
 
 	var violations []string
