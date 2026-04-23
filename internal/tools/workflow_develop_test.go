@@ -248,6 +248,66 @@ func TestHandleDevelopBriefing_MultiStack_ScopeHonorsInput(t *testing.T) {
 	}
 }
 
+// Pair-keyed invariant (spec-workflows.md §8 E8): a container+standard pair
+// is stored as ONE meta keyed by the dev hostname, with StageHostname holding
+// the stage pair. Scope validation must accept both halves — atom
+// develop-first-deploy-promote-stage tells the agent to include both for
+// auto-close. Before ManagedRuntimeIndex, scope=["appdev","appstage"] was
+// rejected as "non-deployable hostnames" because runtimeMetas was keyed by
+// m.Hostname alone.
+func TestHandleDevelopBriefing_StandardPair_StageInScope_Accepted(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+
+	// One meta file representing the container+standard pair.
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		StageHostname:    "appstage",
+		Mode:             workflow.PlanModeStandard,
+		BootstrapSession: "sess1",
+		BootstrappedAt:   "2026-04-22",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-appdev", Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "php-nginx@8.4"}},
+		{ID: "svc-appstage", Name: "appstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "php-nginx@8.4"}},
+	})
+
+	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
+		WorkflowInput{Intent: "first deploy + promote", Scope: []string{"appdev", "appstage"}},
+		runtime.Info{InContainer: true})
+	if err != nil {
+		t.Fatalf("handleDevelopBriefing: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("scope=[appdev,appstage] must be accepted — got error:\n%s", extractText(result))
+	}
+
+	ws, _ := workflow.CurrentWorkSession(dir)
+	if ws == nil {
+		t.Fatal("work session expected")
+	}
+	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
+
+	wantScope := map[string]bool{"appdev": true, "appstage": true}
+	if len(ws.Services) != 2 {
+		t.Fatalf("scope len: want 2, got %d (%v)", len(ws.Services), ws.Services)
+	}
+	for _, h := range ws.Services {
+		if !wantScope[h] {
+			t.Errorf("unexpected hostname %q in scope", h)
+		}
+	}
+	// Sorted order per validateDevelopScope contract.
+	if ws.Services[0] != "appdev" || ws.Services[1] != "appstage" {
+		t.Errorf("scope order: want [appdev,appstage], got %v", ws.Services)
+	}
+}
+
 // P1: scope must be supplied at start — no implicit derivation from metas.
 func TestHandleDevelopBriefing_MissingScope_Rejected(t *testing.T) {
 	t.Parallel()
