@@ -38,15 +38,23 @@ func RunGates(gates []Gate, ctx GateContext) []Violation {
 	return out
 }
 
-// DefaultGates returns the mechanical gate set every recipe run applies.
-// Callers can extend with surface-specific validators registered via
-// RegisterValidator.
+// DefaultGates returns the mechanical gate set that runs at every phase
+// close. Phase-specific gates (research classification, finalize file
+// presence) are added by gatesForPhase on top of this base.
 func DefaultGates() []Gate {
 	return []Gate{
-		{Name: "env-imports-present", Run: gateEnvImportsPresent},
 		{Name: "citations-timestamped", Run: gateCitationsTimestamped},
 		{Name: "fact-required-fields", Run: gateFactsValid},
 		{Name: "payload-schema-valid", Run: gatePayloadSchema},
+	}
+}
+
+// FinalizeGates returns the additional gate set that runs only at
+// finalize close — after the writer sub-agent has emitted all six
+// import.yaml files to the output tree.
+func FinalizeGates() []Gate {
+	return []Gate{
+		{Name: "env-imports-present", Run: gateEnvImportsPresent},
 	}
 }
 

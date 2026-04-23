@@ -3,6 +3,8 @@ package recipe
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -141,12 +143,29 @@ func (s *Session) BuildBrief(kind BriefKind, cb Codebase) (Brief, error) {
 	}
 }
 
-// EmitYAML renders the import.yaml for a tier. Thread-safe; safe to call
-// during or after any phase.
+// EmitYAML renders the import.yaml for a tier and writes it to the
+// output tree at <outputRoot>/<tier.Folder>/import.yaml. Returns the
+// rendered YAML. Thread-safe; the mutex is released before disk I/O.
 func (s *Session) EmitYAML(tierIndex int) (string, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return EmitImportYAML(s.Plan, tierIndex)
+	yaml, err := EmitImportYAML(s.Plan, tierIndex)
+	outputRoot := s.OutputRoot
+	s.mu.Unlock()
+	if err != nil {
+		return "", err
+	}
+	if outputRoot != "" {
+		tier, _ := TierAt(tierIndex)
+		dir := filepath.Join(outputRoot, tier.Folder)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return "", fmt.Errorf("create tier dir: %w", err)
+		}
+		path := filepath.Join(dir, "import.yaml")
+		if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+			return "", fmt.Errorf("write import.yaml: %w", err)
+		}
+	}
+	return yaml, nil
 }
 
 func (s *Session) readFacts() ([]FactRecord, error) {

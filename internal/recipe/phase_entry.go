@@ -25,7 +25,9 @@ func gatesForPhase(p Phase) []Gate {
 	switch p {
 	case PhaseResearch:
 		return append(base, researchGates()...)
-	case PhaseProvision, PhaseScaffold, PhaseFeature, PhaseFinalize:
+	case PhaseFinalize:
+		return append(base, FinalizeGates()...)
+	case PhaseProvision, PhaseScaffold, PhaseFeature:
 		return base
 	}
 	return base
