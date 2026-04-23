@@ -22,8 +22,10 @@ verifies, and auto-closes when scoped services are green.
 
 Other entries (when they fit):
   workflow="bootstrap"  — create/adopt infrastructure (empty project, add a service, mode expansion)
-  workflow="recipe"     — build recipe repo files
   workflow="export"     — turn a deployed service into a re-importable git repo
+
+Recipe authoring uses zerops_recipe (v3 engine, separate tool). Entry:
+  zerops_recipe action="start" slug="<slug>" outputRoot="<dir>"
 
 Deploy configuration:
   action="strategy" strategies={hostname:"push-dev|push-git|manual"}

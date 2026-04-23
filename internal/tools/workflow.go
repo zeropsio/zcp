@@ -25,10 +25,10 @@ const (
 // WorkflowInput is the input type for zerops_workflow.
 type WorkflowInput struct {
 	// Legacy: workflow name for static guidance (backward compat).
-	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, develop, recipe, or export."`
+	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, develop, or export. For recipe authoring use the dedicated zerops_recipe tool (v3 engine, docs/zcprecipator3/plan.md)."`
 
 	// Multi-action fields.
-	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, reset, iterate, resume, list, route, dispatch-brief-atom (retrieve one atom of an envelope-split dispatch brief), build-subagent-brief (recipe only — returns a fully-stitched dispatch brief + SHA for a named role; main agent forwards the prompt verbatim to Task), verify-subagent-dispatch (recipe only — compares a Task description + prompt against the last-built brief's SHA), or generate-finalize (recipe only — generates all 13 recipe files from plan)."`
+	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, reset, iterate, resume, list, route, dispatch-brief-atom (retrieve one atom of an envelope-split dispatch brief)."`
 	Intent      string                     `json:"intent,omitempty"      jsonschema:"User intent description for start action (what you want to accomplish)."`
 	Attestation string                     `json:"attestation,omitempty" jsonschema:"Description of what was verified or accomplished (required for complete actions)."`
 	Step        string                     `json:"step,omitempty"        jsonschema:"Bootstrap step name for complete/skip actions (discover, provision, close)."`
@@ -305,16 +305,21 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 		return handleDevelopBriefing(ctx, engine, client, projectID, input, rt)
 	}
 
-	// Recipe workflow.
+	// Recipe workflow moved to zerops_recipe (v3). v2's recipe sub-mode
+	// is no longer reachable through zerops_workflow; an explicit error
+	// steers callers to the dedicated tool. See docs/zcprecipator3/plan.md.
 	if input.Workflow == workflowRecipe {
-		return handleRecipeStart(ctx, projectID, engine, client, cache, input)
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"recipe workflow is not available on zerops_workflow",
+			"Call zerops_recipe action=start slug=<slug> outputRoot=<dir> instead. See the tool's description for the full action set.")), nil, nil
 	}
 
 	// Unknown workflow — return error.
 	return convertError(platform.NewPlatformError(
 		platform.ErrInvalidParameter,
 		fmt.Sprintf("Unknown orchestrated workflow %q", input.Workflow),
-		"Valid workflows: bootstrap, develop, recipe, export")), nil, nil
+		"Valid workflows: bootstrap, develop, export. For recipe authoring use zerops_recipe.")), nil, nil
 }
 
 // isDevelopStep returns true if the step name is a develop workflow step.

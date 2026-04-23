@@ -5,109 +5,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// requiredRecipeModel is the only model identifier accepted for new recipe
-// workflow sessions. v13 shipped on Sonnet/200k and doubled wall time
-// (40.7 → 79.8 min) while regressing close-step severity from 5 WRONG to
-// 2 CRITICAL + 1 WRONG. The recipe workflow pulls ~80 KB of guidance topics,
-// ~30 KB of schemas, plus the agent's own code-writing context; 200k is not
-// enough to hold that plus the feature sub-agent brief plus debugging loops
-// without compaction. Keep this list minimal and explicit — any alias ("opus")
-// or variant without the [1m] suffix is rejected so the agent has to switch
-// client configuration rather than hope the server will tolerate a near-match.
-// recipeAllowedModels is the accepted self-reported client model set
-// for recipe workflow start. Opus at 1M context only — either 4.6 or
-// 4.7. v13 shipped on Sonnet/200k and doubled wall time; variants
-// without the [1m] suffix cannot hold the ~80 KB guidance + schemas +
-// feature-subagent brief + code-writing context without compaction.
-var recipeAllowedModels = map[string]struct{}{
-	"claude-opus-4-6[1m]": {},
-	"claude-opus-4-7[1m]": {},
-}
-
-// validateRecipeModel returns nil when the self-reported client model clears
-// the recipe workflow floor. Returns a platform error naming the required
-// value on any failure.
-func validateRecipeModel(clientModel string) error {
-	model := strings.TrimSpace(clientModel)
-	if model == "" {
-		return platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			"clientModel is required for recipe workflow start",
-			"Pass clientModel=\"claude-opus-4-7[1m]\" (or \"claude-opus-4-6[1m]\") — the agent's exact model ID from its own system prompt. The recipe workflow pulls ~80 KB of guidance plus the agent's code-writing context and requires Opus at 1M tokens. Weaker models double wall time and regress close-step severity.")
-	}
-	if _, ok := recipeAllowedModels[model]; !ok {
-		return platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			fmt.Sprintf("Recipe workflow requires claude-opus-4-7[1m] or claude-opus-4-6[1m] — got %q", model),
-			"Switch the client to Claude Opus 4.7 (or 4.6) with the 1M-token context window. In Claude Code: /model claude-opus-4-7[1m]. In headless mode: --model claude-opus-4-7[1m]. Retry action=\"start\" after switching.")
-	}
-	return nil
-}
-
-// handleRecipeStart validates tier and creates a recipe session.
-func handleRecipeStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
-	if err := validateRecipeModel(input.ClientModel); err != nil {
-		return convertError(err), nil, nil
-	}
-
-	// v8.100: no silent tier default. The prior version defaulted empty
-	// tier to "minimal", which silently dropped agents into the minimal
-	// research guidance when the user asked for a showcase. Every
-	// showcase-specific rule (NATS queue required, BullMQ disqualifies
-	// shared-codebase, load ONE reference recipe, 5-service coverage
-	// mandate) lives in the showcase section of recipe.md — if tier is
-	// wrong, none of it gets delivered and the agent invents fallbacks.
-	// Reject the call up front so the caller classifies the user's
-	// intent before the session starts.
-	tier := input.Tier
-	if tier == "" {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			"tier is required for recipe workflow start",
-			`Pass tier="minimal" | "showcase" based on the user's intent. "minimal" = backend framework with ORM + migrations + templates (no queue/cache/storage/search); "showcase" = full dashboard with every managed-service kind (db, cache, storage, search, messaging) + dedicated worker. The tier selects which research guidance is delivered — wrong tier means missing rules, not just mislabeled output.`)), nil, nil
-	}
-	if tier != workflow.RecipeTierMinimal && tier != workflow.RecipeTierShowcase {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			fmt.Sprintf("invalid tier %q", tier),
-			`Valid values: "minimal", "showcase". The tier selects which research guidance is delivered; other values are rejected up front.`)), nil, nil
-	}
-
-	resp, err := engine.RecipeStart(projectID, input.Intent, tier)
-	if err != nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrWorkflowActive,
-			fmt.Sprintf("Recipe start failed: %v", err),
-			"Reset existing session first with action=reset")), nil, nil
-	}
-
-	// Inject available stacks for the research step.
-	if client != nil && cache != nil {
-		if types := cache.Get(ctx, client); len(types) > 0 {
-			resp.AvailableStacks = knowledge.FormatServiceStacks(types)
-		}
-	}
-
-	// v39 Commit 5b — publish the canonical step + sub-step breakdown as
-	// starter todos. The main agent pastes this into its first TodoWrite
-	// call and marks items done as work lands; re-planning after context
-	// compaction becomes paste-from-this-list rather than re-derive. v38
-	// showed 28 TodoWrite calls across one run; the starter list collapses
-	// that to the initial paste + periodic updates.
-	resp.StartingTodos = workflow.BuildStartingTodos(tier)
-
-	return jsonResult(resp), nil, nil
-}
+// validateRecipeModel, recipeAllowedModels, and handleRecipeStart were
+// removed in v9.0.1 when the recipe sub-mode of zerops_workflow was
+// blocked at dispatch. Recipe authoring moved to the dedicated
+// zerops_recipe tool (internal/recipe package). The remaining handlers
+// in this file (handleRecipeComplete, handleRecipeSkip, etc.) stay to
+// serve queries against already-open v2 recipe sessions during the
+// Phase 5 cleanup window; they are never reached for new sessions.
 
 // handleRecipeComplete routes research step to plan submission, others to checkers.
 func handleRecipeComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache, projectID, stateDir string, input WorkflowInput) (*mcp.CallToolResult, any, error) {

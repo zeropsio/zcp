@@ -48,7 +48,8 @@ cmd/zcp/main.go → internal/server → MCP tools → internal/ops → internal/
 | `internal/knowledge` | Text search, embedded docs, session-aware briefings, runtime-aware mode adaptation | `engine.go`, `briefing.go` |
 | `internal/runtime` | Container vs local detection | `runtime.go` |
 | `internal/content` | Embedded templates + atom corpus (`atoms/*.md`) + recipe authoring workflow (only `workflows/recipe.md` remains) | `content.go`, `atoms_test.go` |
-| `internal/workflow` | Workflow orchestration + Layer 2/3 pipeline: atom parsing, synthesis, typed Plan, envelope composition, bootstrap/develop conductors | `synthesize.go`, `build_plan.go`, `compute_envelope.go`, `envelope.go`, `atom.go`, `session.go`, `work_session.go` |
+| `internal/workflow` | Workflow orchestration + Layer 2/3 pipeline: atom parsing, synthesis, typed Plan, envelope composition, bootstrap/develop conductors. zcprecipator2 recipe workflow is frozen here (see `internal/workflow/README.md`); recipe work lives at `internal/recipe/`. | `synthesize.go`, `build_plan.go`, `compute_envelope.go`, `envelope.go`, `atom.go`, `session.go`, `work_session.go` |
+| `internal/recipe` | zcprecipator3 recipe engine — typed tiers / roles / surfaces / facts, 5-phase state machine, yaml emitter, chain resolver, sub-agent brief composer, MCP `zerops_recipe` handlers. See `docs/zcprecipator3/plan.md`. | `tiers.go`, `workflow.go`, `yaml_emitter.go`, `briefs.go`, `handlers.go` |
 | `internal/init` | `zcp init` subcommand — config file generation | `init.go` |
 | `internal/eval` | LLM recipe eval + headless recipe creation via Claude CLI | `runner.go`, `prompt.go`, `recipe_create.go` |
 | `internal/schema` | Live Zerops YAML schema fetching, caching, enum extraction, LLM formatting | `schema.go`, `cache.go`, `format.go` |

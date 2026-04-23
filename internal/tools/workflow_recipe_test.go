@@ -1,3 +1,12 @@
+// The recipe sub-mode of zerops_workflow was retired in v9.0.1 — recipe
+// authoring moved to the dedicated zerops_recipe tool (docs/zcprecipator3).
+// The tests in this file cover v2 dispatch paths that are no longer
+// reachable through the public MCP surface; they stay under the
+// deprecated_v2_recipe build tag as breadcrumbs until Phase 5 deletes
+// the underlying v2 recipe handlers entirely.
+
+//go:build deprecated_v2_recipe
+
 package tools
 
 import (
