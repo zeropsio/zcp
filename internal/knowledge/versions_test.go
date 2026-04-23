@@ -240,95 +240,12 @@ func TestFormatVersionCheck_BareRuntimeNormalized(t *testing.T) {
 	}
 }
 
-// --- ValidateServiceTypes Tests ---
-
-func TestValidateServiceTypes_Valid(t *testing.T) {
-	t.Parallel()
-	types := testStackTypes()
-	services := []map[string]any{
-		{"hostname": "api", "type": "nodejs@22"},
-		{"hostname": "db", "type": "postgresql@16", "mode": "NON_HA"},
-	}
-
-	warnings := ValidateServiceTypes(services, types, nil)
-
-	if len(warnings) != 0 {
-		t.Errorf("expected no warnings, got: %v", warnings)
-	}
-}
-
-func TestValidateServiceTypes_InvalidType(t *testing.T) {
-	t.Parallel()
-	types := testStackTypes()
-	services := []map[string]any{
-		{"hostname": "api", "type": "ruby@3.2"},
-	}
-
-	warnings := ValidateServiceTypes(services, types, nil)
-
-	if len(warnings) == 0 {
-		t.Fatal("expected warnings for invalid type")
-	}
-	found := false
-	for _, w := range warnings {
-		if strings.Contains(w, "ruby@3.2") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("expected warning mentioning ruby@3.2, got: %v", warnings)
-	}
-}
-
-func TestValidateServiceTypes_MissingMode(t *testing.T) {
-	t.Parallel()
-	types := testStackTypes()
-	services := []map[string]any{
-		{"hostname": "db", "type": "postgresql@16"},
-	}
-
-	warnings := ValidateServiceTypes(services, types, nil)
-
-	if len(warnings) == 0 {
-		t.Fatal("expected warning for missing mode on postgresql")
-	}
-	found := false
-	for _, w := range warnings {
-		if strings.Contains(w, "mode") && strings.Contains(w, "db") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("expected warning about missing mode for db, got: %v", warnings)
-	}
-}
-
-func TestValidateServiceTypes_NoTypes(t *testing.T) {
-	t.Parallel()
-
-	services := []map[string]any{
-		{"hostname": "api", "type": "ruby@3.2"},
-	}
-
-	tests := []struct {
-		name  string
-		types []platform.ServiceStackType
-	}{
-		{"nil", nil},
-		{"empty", []platform.ServiceStackType{}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			warnings := ValidateServiceTypes(services, tt.types, nil)
-			if warnings != nil {
-				t.Errorf("expected nil warnings, got: %v", warnings)
-			}
-		})
-	}
-}
+// ValidateServiceTypes tests were removed in W6 of plans/api-validation-plumbing.md.
+// The Zerops API validator is authoritative for every rule this package used
+// to duplicate (type existence, mode enum, mode-required-for-managed,
+// objectStoragePolicy enum); coverage for those error shapes now lives in
+// internal/platform/zerops_errors_test.go (APIMeta plumbing) and
+// internal/platform/zerops_validate_test.go (ValidateZeropsYaml surface).
 
 // --- FormatServiceStacks Tests ---
 

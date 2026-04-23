@@ -32,7 +32,7 @@ func TestImportTool_Content(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", nil, nil, testEngine(t), "")
+	RegisterImport(srv, mock, "proj-1", testEngine(t), "")
 
 	yaml := "services:\n  - hostname: api\n    type: nodejs@20\n"
 	result := callTool(t, srv, "zerops_import", map[string]any{"content": yaml})
@@ -61,7 +61,7 @@ func TestImportTool_MissingContentAndFile(t *testing.T) {
 	mock := platform.NewMock()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", nil, nil, testEngine(t), "")
+	RegisterImport(srv, mock, "proj-1", testEngine(t), "")
 
 	result := callTool(t, srv, "zerops_import", nil)
 
@@ -95,7 +95,7 @@ func TestImportTool_PollMultipleSuccess(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", nil, nil, testEngine(t), "")
+	RegisterImport(srv, mock, "proj-1", testEngine(t), "")
 
 	yaml := "services:\n  - hostname: api\n    type: nodejs@20\n  - hostname: db\n    type: postgresql@16\n"
 	result := callTool(t, srv, "zerops_import", map[string]any{"content": yaml})
@@ -145,7 +145,7 @@ func TestImportTool_PollPartialFailure(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", nil, nil, testEngine(t), "")
+	RegisterImport(srv, mock, "proj-1", testEngine(t), "")
 
 	yaml := "services:\n  - hostname: api\n    type: nodejs@20\n  - hostname: db\n    type: postgresql@16\n"
 	result := callTool(t, srv, "zerops_import", map[string]any{"content": yaml})
@@ -176,7 +176,7 @@ func TestImportTool_NoWorkflowSession_Blocked(t *testing.T) {
 	engine := workflow.NewEngine(stateDir, workflow.EnvLocal, nil)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", nil, nil, engine, stateDir)
+	RegisterImport(srv, mock, "proj-1", engine, stateDir)
 
 	result := callTool(t, srv, "zerops_import", map[string]any{"content": "services:\n  - hostname: api\n    type: nodejs@20\n"})
 	if !result.IsError {
@@ -209,7 +209,7 @@ func TestImportTool_WithWorkflowSession_Succeeds(t *testing.T) {
 	}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", nil, nil, engine, dir)
+	RegisterImport(srv, mock, "proj-1", engine, dir)
 
 	result := callTool(t, srv, "zerops_import", map[string]any{"content": "services:\n  - hostname: api\n    type: nodejs@20\n"})
 	if result.IsError {
@@ -237,7 +237,7 @@ func TestImportTool_WithWorkSession_Succeeds(t *testing.T) {
 	}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterImport(srv, mock, "proj-1", nil, nil, nil, stateDir)
+	RegisterImport(srv, mock, "proj-1", nil, stateDir)
 
 	result := callTool(t, srv, "zerops_import", map[string]any{"content": "services:\n  - hostname: api\n    type: nodejs@20\n"})
 	if result.IsError {

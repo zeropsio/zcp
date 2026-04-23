@@ -156,7 +156,7 @@ func (s *Server) registerTools() {
 	tools.RegisterManage(s.server, s.client, projectID)
 	tools.RegisterScale(s.server, s.client, projectID)
 	tools.RegisterEnv(s.server, s.client, projectID, s.rtInfo.ServiceName)
-	tools.RegisterImport(s.server, s.client, projectID, stackCache, schemaCache, wfEngine, stateDir)
+	tools.RegisterImport(s.server, s.client, projectID, wfEngine, stateDir)
 	tools.RegisterDelete(s.server, s.client, projectID, stateDir, s.mounter, s.rtInfo)
 	tools.RegisterSubdomain(s.server, s.client, httpClient, projectID)
 	tools.RegisterMount(s.server, s.client, projectID, s.mounter, s.rtInfo, stateDir, wfEngine)

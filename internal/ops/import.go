@@ -9,9 +9,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/schema"
 )
 
 // ServiceImportError represents an error for a specific service during import.
@@ -49,18 +47,28 @@ type ImportProcessOutput struct {
 
 // Import imports services from YAML into a project.
 // Input: content XOR filePath (not both, not neither).
-// Validates YAML structure and service types, then calls client.ImportServices.
-// liveTypes: optional live service stack types for version/mode validation (nil = skip).
-// override: when true, sets `override: true` on every service so the API replaces
-// existing service stacks instead of rejecting the import with serviceStackNameUnavailable.
+//
+// Validation split: the Zerops API is the authoritative validator for every
+// platform concept (service types, modes, field names, cross-field rules,
+// hostname format). ZCP's pre-flight does only the two things the API does
+// NOT tell the LLM clearly:
+//   1. `envVariables` at service-level silently drops — surfaced as warning.
+//   2. A 'project:' section — rejected with a specific code instead of the
+//      generic projectImport error, because the resolution ("remove it")
+//      is unambiguous.
+// Everything else — field names, hostname format, mode enums, type
+// existence — the API catches with structured meta that PlatformError.APIMeta
+// now propagates to the LLM (see plans/api-validation-plumbing.md).
+//
+// override: when true, sets `override: true` on every service so the API
+// replaces existing service stacks instead of rejecting with
+// serviceStackNameUnavailable.
 func Import(
 	ctx context.Context,
 	client platform.Client,
 	projectID string,
 	content string,
 	filePath string,
-	liveTypes []platform.ServiceStackType,
-	schemas *schema.Schemas,
 	override bool,
 ) (*ImportResult, error) {
 	yamlContent, err := resolveInput(content, filePath)
@@ -68,7 +76,7 @@ func Import(
 		return nil, err
 	}
 
-	// Parse YAML into generic map for validation.
+	// Parse YAML into generic map for the two ZCP-specific preflights.
 	var doc map[string]any
 	if err := yaml.Unmarshal([]byte(yamlContent), &doc); err != nil {
 		return nil, platform.NewPlatformError(
@@ -78,7 +86,9 @@ func Import(
 		)
 	}
 
-	// Check for project: key.
+	// Check for project: key — K12 in the validation-plumbing plan. The
+	// platform's projectImportInvalidParameter for this case is generic;
+	// the specific code IMPORT_HAS_PROJECT is clearer.
 	if _, ok := doc["project"]; ok {
 		return nil, platform.NewPlatformError(
 			platform.ErrImportHasProject,
@@ -109,39 +119,34 @@ func Import(
 		yamlContent = string(remarshaled)
 	}
 
-	// Pre-flight validation: check service types against live data.
+	// Sole retained client-side warning — K1 in the plan: the API accepts
+	// service-level `envVariables:` then silently discards it, producing
+	// neither an error nor a meta entry. ZCP is the only place this can
+	// surface.
 	var warnings []string
 	if raw, ok := doc["services"]; ok {
 		if servicesList, ok := raw.([]any); ok {
-			services := make([]map[string]any, 0, len(servicesList))
 			for _, svc := range servicesList {
-				if svcMap, ok := svc.(map[string]any); ok {
-					services = append(services, svcMap)
+				svcMap, ok := svc.(map[string]any)
+				if !ok {
+					continue
 				}
-			}
-			warnings = knowledge.ValidateServiceTypes(services, liveTypes, schemas)
-			// Warn on envVariables at service level — API silently drops them.
-			for _, svc := range services {
-				if _, has := svc["envVariables"]; has {
-					hostname, _ := svc["hostname"].(string)
-					warnings = append(warnings, fmt.Sprintf(
-						"service %q: 'envVariables' at service level is silently dropped by the API. Use 'envSecrets' for import-time secrets, or zerops.yaml run.envVariables for runtime config.",
-						hostname,
-					))
+				if _, has := svcMap["envVariables"]; !has {
+					continue
 				}
+				hostname, _ := svcMap["hostname"].(string)
+				warnings = append(warnings, fmt.Sprintf(
+					"service %q: 'envVariables' at service level is silently dropped by the API. Use 'envSecrets' for import-time secrets, or zerops.yaml run.envVariables for runtime config.",
+					hostname,
+				))
 			}
-		}
-	}
-
-	// Validate hostnames before hitting the API.
-	hostnames := extractHostnames(doc)
-	for _, h := range hostnames {
-		if err := platform.ValidateHostname(h); err != nil {
-			return nil, err
 		}
 	}
 
 	// Wait for any DELETING services with conflicting hostnames to finish.
+	// Race prevention, not validation — API would reject the import with a
+	// timing-dependent error and the LLM would have to retry anyway.
+	hostnames := extractHostnames(doc)
 	if err := waitForDeletingServices(ctx, client, projectID, hostnames); err != nil {
 		return nil, err
 	}

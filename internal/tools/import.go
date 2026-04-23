@@ -8,7 +8,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -43,10 +42,15 @@ func importInputSchema() *jsonschema.Schema {
 }
 
 // RegisterImport registers the zerops_import tool.
-func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, schemaCache *schema.Cache, engine *workflow.Engine, stateDir string) {
+//
+// No longer takes StackTypeCache / schema.Cache — the Zerops API is now
+// the single validator for everything the import YAML declares. Field /
+// mode / type errors come back with structured apiMeta via the error
+// surface established by the validation-plumbing plan.
+func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, engine *workflow.Engine, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_import",
-		Description: "REQUIRES active workflow (bootstrap or develop). Import services from YAML into the project. Validates service types, blocks until all processes complete. Returns final statuses (FINISHED/FAILED).",
+		Description: "REQUIRES active workflow (bootstrap or develop). Import services from YAML into the project. The Zerops API validates fields, modes, types, and hostnames server-side and returns structured apiMeta on the error response when anything is wrong. Blocks until all processes complete; returns final statuses (FINISHED/FAILED).",
 		InputSchema: importInputSchema(),
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Import services from YAML",
@@ -56,15 +60,7 @@ func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, c
 		if blocked := requireWorkflowContext(engine, stateDir); blocked != nil {
 			return blocked, nil, nil
 		}
-		var liveTypes []platform.ServiceStackType
-		if cache != nil {
-			liveTypes = cache.Get(ctx, client)
-		}
-		var schemas *schema.Schemas
-		if schemaCache != nil {
-			schemas = schemaCache.Get(ctx)
-		}
-		result, err := ops.Import(ctx, client, projectID, input.Content, input.FilePath, liveTypes, schemas, input.Override.Bool())
+		result, err := ops.Import(ctx, client, projectID, input.Content, input.FilePath, input.Override.Bool())
 		if err != nil {
 			return convertError(err), nil, nil
 		}
