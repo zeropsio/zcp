@@ -103,32 +103,32 @@ func mapAPIError(apiErr apiError.Error, entityType string) error {
 
 // decodeAPIMetaJSON is the JSON-bytes entrypoint used by per-service error
 // mapping (zerops_search.go). The import endpoint's `ErrorObject.Meta` is
-// `JsonRawMessage` rather than `interface{}`; unmarshal first, then share
+// `JsonRawMessage` rather than `any`; unmarshal first, then share
 // the same typed decoder so the output shape is identical whether meta
 // arrived as a top-level 4xx body or as a per-service-stack error.
 func decodeAPIMetaJSON(raw []byte) []APIMetaItem {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil
 	}
-	var v interface{}
+	var v any
 	if err := jsonUnmarshal(raw, &v); err != nil {
 		return nil
 	}
 	return decodeAPIMeta(v)
 }
 
-// decodeAPIMeta converts the SDK's untyped meta (`interface{}`) into typed
+// decodeAPIMeta converts the SDK's untyped meta (`any`) into typed
 // APIMetaItem slices. The server sends `meta: [{code, error, metadata}, ...]`
 // where metadata is `map<string, []string>`. Unexpected shapes return nil —
 // never panics, never drops a recognized item because a sibling is malformed.
-func decodeAPIMeta(raw interface{}) []APIMetaItem {
-	arr, ok := raw.([]interface{})
+func decodeAPIMeta(raw any) []APIMetaItem {
+	arr, ok := raw.([]any)
 	if !ok || len(arr) == 0 {
 		return nil
 	}
 	out := make([]APIMetaItem, 0, len(arr))
 	for _, rawItem := range arr {
-		m, ok := rawItem.(map[string]interface{})
+		m, ok := rawItem.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -147,16 +147,16 @@ func decodeAPIMeta(raw interface{}) []APIMetaItem {
 	return out
 }
 
-func asString(v interface{}) string {
+func asString(v any) string {
 	s, _ := v.(string)
 	return s
 }
 
-// asStringSliceMap converts `map<string, []interface{}>` (JSON decode of
+// asStringSliceMap converts `map<string, []any>` (JSON decode of
 // `map<string, []string>`) into its typed form. Keys with non-slice values
 // are skipped; an empty map returns nil to keep "no detail" consistent.
-func asStringSliceMap(raw interface{}) map[string][]string {
-	m, ok := raw.(map[string]interface{})
+func asStringSliceMap(raw any) map[string][]string {
+	m, ok := raw.(map[string]any)
 	if !ok || len(m) == 0 {
 		return nil
 	}
@@ -168,7 +168,7 @@ func asStringSliceMap(raw interface{}) map[string][]string {
 	out := make(map[string][]string, len(m))
 	for _, k := range keys {
 		v := m[k]
-		arr, ok := v.([]interface{})
+		arr, ok := v.([]any)
 		if !ok {
 			continue
 		}

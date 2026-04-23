@@ -34,9 +34,13 @@ func RunPreDeployValidation(
 	if target == nil || client == nil || workingDir == "" {
 		return nil
 	}
-	yamlBytes, err := ReadZeropsYmlRaw(workingDir)
-	if err != nil || len(yamlBytes) == 0 {
-		return nil
+	yamlBytes, readErr := ReadZeropsYmlRaw(workingDir)
+	// Missing file is "nothing to validate" — the semantic validator
+	// (ops.ValidateZeropsYml) emits its own warning. Returning the read
+	// error here would block deploy on a missing yaml AFTER the semantic
+	// validator already surfaced it; double-surfacing is noise.
+	if readErr != nil || len(yamlBytes) == 0 {
+		return nil //nolint:nilerr // missing yaml is intentionally non-fatal here
 	}
 	return ValidatePreDeployContent(ctx, client, target, setupName, string(yamlBytes))
 }

@@ -52,10 +52,11 @@ type ImportProcessOutput struct {
 // platform concept (service types, modes, field names, cross-field rules,
 // hostname format). ZCP's pre-flight does only the two things the API does
 // NOT tell the LLM clearly:
-//   1. `envVariables` at service-level silently drops — surfaced as warning.
-//   2. A 'project:' section — rejected with a specific code instead of the
-//      generic projectImport error, because the resolution ("remove it")
-//      is unambiguous.
+//  1. `envVariables` at service-level silently drops — surfaced as warning.
+//  2. A 'project:' section — rejected with a specific code instead of the
+//     generic projectImport error, because the resolution ("remove it")
+//     is unambiguous.
+//
 // Everything else — field names, hostname format, mode enums, type
 // existence — the API catches with structured meta that PlatformError.APIMeta
 // now propagates to the LLM (see plans/api-validation-plumbing.md).

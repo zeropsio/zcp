@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/zeropsio/zerops-go/dto/input/body"
@@ -106,8 +107,8 @@ func (z *ZeropsClient) ValidateZeropsYaml(ctx context.Context, in ValidateZerops
 // APICode. Non-matching errors (network, auth, server-side 5xx) pass
 // through untouched so the original classification wins.
 func reclassifyValidationError(err error) error {
-	pe, ok := err.(*PlatformError)
-	if !ok || !isValidationErrorCode(pe.APICode) {
+	var pe *PlatformError
+	if !errors.As(err, &pe) || !isValidationErrorCode(pe.APICode) {
 		return err
 	}
 	pe.Code = ErrInvalidZeropsYml

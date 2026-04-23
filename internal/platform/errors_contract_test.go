@@ -25,12 +25,12 @@ func TestTA06_MapAPIError_PreservesMetaAcrossAllBranches(t *testing.T) {
 
 	// Sample meta reused by every case — assertion is "Meta came through"
 	// not "Meta has the right content" (that's TestMapAPIError's job).
-	sampleMeta := []interface{}{
-		map[string]interface{}{
+	sampleMeta := []any{
+		map[string]any{
 			"code":  "someError",
 			"error": "Some error.",
-			"metadata": map[string]interface{}{
-				"field.path": []interface{}{"reason"},
+			"metadata": map[string]any{
+				"field.path": []any{"reason"},
 			},
 		},
 	}

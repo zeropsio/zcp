@@ -14,6 +14,11 @@ import (
 // stackFor returns a minimal ServiceStack with ID + type fields populated so
 // RunPreDeployValidation / ValidatePreDeployContent can extract the
 // ServiceStackTypeID + TypeVersionName the Zerops validator requires.
+// Signature takes a hostname even though current callers only pass
+// "appdev" — future tests will vary it, and the diff churn isn't worth a
+// rename cycle.
+//
+//nolint:unparam
 func stackFor(hostname string) *platform.ServiceStack {
 	return &platform.ServiceStack{
 		ID:   "svc-" + hostname,
@@ -120,7 +125,7 @@ func TestRunPreDeployValidation_PropagatesTransportError(t *testing.T) {
 	mock := platform.NewMock().WithError("ValidateZeropsYaml", transportErr)
 
 	err := RunPreDeployValidation(context.Background(), mock, stackFor("appdev"), "appdev", dir)
-	if !errors.Is(err, transportErr) && err != transportErr { //nolint:errorlint // direct-identity check is intentional
+	if !errors.Is(err, transportErr) {
 		t.Fatalf("expected transport error propagated, got %v", err)
 	}
 }

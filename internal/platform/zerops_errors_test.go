@@ -11,6 +11,13 @@ import (
 	"github.com/zeropsio/zerops-go/apiError"
 )
 
+// TestMapAPIError is intentionally large — it pins the full
+// HTTP-status × meta-shape truth table. Splitting it into per-branch
+// functions loses the "one fixture set, one decoder" invariant the
+// test enforces. Lint exception for maintainability index is
+// warranted.
+//
+//nolint:maintidx // broad-coverage table is the point
 func TestMapAPIError(t *testing.T) {
 	t.Parallel()
 
@@ -90,12 +97,12 @@ func TestMapAPIError(t *testing.T) {
 				HttpStatusCode: 400,
 				ErrorCode:      "projectImportInvalidParameter",
 				Message:        "Invalid parameter provided.",
-				Meta: []interface{}{
-					map[string]interface{}{
+				Meta: []any{
+					map[string]any{
 						"code":  "projectImportInvalidParameter",
 						"error": "Invalid parameter provided.",
-						"metadata": map[string]interface{}{
-							"storage.mode": []interface{}{"mode not supported"},
+						"metadata": map[string]any{
+							"storage.mode": []any{"mode not supported"},
 						},
 					},
 				},
@@ -119,12 +126,12 @@ func TestMapAPIError(t *testing.T) {
 				HttpStatusCode: 400,
 				ErrorCode:      "projectImportMissingParameter",
 				Message:        "Mandatory parameter is missing.",
-				Meta: []interface{}{
-					map[string]interface{}{
+				Meta: []any{
+					map[string]any{
 						"code":  "projectImportMissingParameter",
 						"error": "Mandatory parameter is missing.",
-						"metadata": map[string]interface{}{
-							"parameter": []interface{}{"db.mode"},
+						"metadata": map[string]any{
+							"parameter": []any{"db.mode"},
 						},
 					},
 				},
@@ -148,21 +155,21 @@ func TestMapAPIError(t *testing.T) {
 				HttpStatusCode: 400,
 				ErrorCode:      "errorList",
 				Message:        "See metadata",
-				Meta: []interface{}{
-					map[string]interface{}{
+				Meta: []any{
+					map[string]any{
 						"code":  "zeropsYamlInvalidParameter",
 						"error": "Invalid parameter provided.",
-						"metadata": map[string]interface{}{
-							"build.base": []interface{}{"unknown base nodejs@99"},
-							"build.os":   []interface{}{"unknown os "},
+						"metadata": map[string]any{
+							"build.base": []any{"unknown base nodejs@99"},
+							"build.os":   []any{"unknown os "},
 						},
 					},
-					map[string]interface{}{
+					map[string]any{
 						"code":  "zeropsYamlInvalidParameter",
 						"error": "Invalid parameter provided.",
-						"metadata": map[string]interface{}{
-							"run.base": []interface{}{"nodejs@99"},
-							"run.os":   []interface{}{""},
+						"metadata": map[string]any{
+							"run.base": []any{"nodejs@99"},
+							"run.os":   []any{""},
 						},
 					},
 				},
@@ -195,12 +202,12 @@ func TestMapAPIError(t *testing.T) {
 				HttpStatusCode: 400,
 				ErrorCode:      "serviceStackTypeNotFound",
 				Message:        "Service stack Type not found.",
-				Meta: []interface{}{
-					map[string]interface{}{
+				Meta: []any{
+					map[string]any{
 						"code":  "serviceStackTypeNotFound",
 						"error": "Service stack Type not found.",
-						"metadata": map[string]interface{}{
-							"serviceStackTypeVersion": []interface{}{"nodejs@99"},
+						"metadata": map[string]any{
+							"serviceStackTypeVersion": []any{"nodejs@99"},
 						},
 					},
 				},
@@ -235,8 +242,8 @@ func TestMapAPIError(t *testing.T) {
 				HttpStatusCode: 400,
 				ErrorCode:      "serviceStackNameInvalid",
 				Message:        "Service stack name is invalid.",
-				Meta: []interface{}{
-					map[string]interface{}{
+				Meta: []any{
+					map[string]any{
 						"code":     "serviceStackNameInvalid",
 						"error":    "Service stack name is invalid.",
 						"metadata": nil,
