@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -14,11 +15,24 @@ type httpReadyConfig struct {
 	successBelow   int
 }
 
-var defaultHTTPReadyConfig = httpReadyConfig{
-	interval:       500 * time.Millisecond,
-	timeout:        10 * time.Second,
-	requestTimeout: 5 * time.Second,
-	successBelow:   500,
+// httpReadyConfigMu guards defaultHTTPReadyConfig so the test-only
+// override helper doesn't race with a concurrent WaitHTTPReady call
+// invoked by a parallel sibling test. Production reads go through
+// currentHTTPReadyConfig(), production writes never happen.
+var (
+	httpReadyConfigMu      sync.RWMutex
+	defaultHTTPReadyConfig = httpReadyConfig{
+		interval:       500 * time.Millisecond,
+		timeout:        10 * time.Second,
+		requestTimeout: 5 * time.Second,
+		successBelow:   500,
+	}
+)
+
+func currentHTTPReadyConfig() httpReadyConfig {
+	httpReadyConfigMu.RLock()
+	defer httpReadyConfigMu.RUnlock()
+	return defaultHTTPReadyConfig
 }
 
 // WaitHTTPReady probes url with GET until a response with status < 500
@@ -36,7 +50,7 @@ var defaultHTTPReadyConfig = httpReadyConfig{
 // needing longer waits should call waitHTTPReady (unexported) with an
 // explicit config.
 func WaitHTTPReady(ctx context.Context, httpClient HTTPDoer, url string) error {
-	return waitHTTPReady(ctx, httpClient, url, defaultHTTPReadyConfig)
+	return waitHTTPReady(ctx, httpClient, url, currentHTTPReadyConfig())
 }
 
 func waitHTTPReady(ctx context.Context, httpClient HTTPDoer, url string, cfg httpReadyConfig) error {
@@ -93,7 +107,17 @@ func waitHTTPReady(ctx context.Context, httpClient HTTPDoer, url string, cfg htt
 
 // OverrideHTTPReadyConfigForTest overrides the HTTP readiness polling config.
 // Returns a restore function. Only for use in tests; enables ms-scale cadence.
+//
+// Thread-safety: read/write of defaultHTTPReadyConfig is guarded by
+// httpReadyConfigMu so CI's race detector stays green even when a test that
+// called this helper runs alongside another test that happens to invoke
+// WaitHTTPReady. Note that the mutex only eliminates the data race — tests
+// that care about specific interval/timeout values must NOT run parallel to
+// sibling tests that also override, because the second override clobbers
+// the first. Package-level tests that call this helper therefore do not
+// mark their subtests t.Parallel().
 func OverrideHTTPReadyConfigForTest(interval, timeout time.Duration) func() {
+	httpReadyConfigMu.Lock()
 	old := defaultHTTPReadyConfig
 	defaultHTTPReadyConfig = httpReadyConfig{
 		interval:       interval,
@@ -101,5 +125,10 @@ func OverrideHTTPReadyConfigForTest(interval, timeout time.Duration) func() {
 		requestTimeout: old.requestTimeout,
 		successBelow:   old.successBelow,
 	}
-	return func() { defaultHTTPReadyConfig = old }
+	httpReadyConfigMu.Unlock()
+	return func() {
+		httpReadyConfigMu.Lock()
+		defaultHTTPReadyConfig = old
+		httpReadyConfigMu.Unlock()
+	}
 }

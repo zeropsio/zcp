@@ -89,7 +89,10 @@ func TestDeployTool_SSHMode(t *testing.T) {
 // route before returning. Result payload exposes SubdomainAccessEnabled +
 // SubdomainURL; agent never calls zerops_subdomain explicitly.
 func TestDeployTool_SSHMode_AutoEnablesSubdomain(t *testing.T) {
-	t.Parallel()
+	// t.Parallel omitted — OverrideHTTPReadyConfigForTest mutates a
+	// package-level config; parallel tests would clobber each other's
+	// interval/timeout values even though the mutex keeps the race
+	// detector green.
 	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
 	defer restore()
 

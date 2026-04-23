@@ -67,7 +67,10 @@ func writeMeta(t *testing.T, dir string, mode workflow.Mode) {
 }
 
 func TestMaybeAutoEnableSubdomain_FirstDeploy_DevMode_Enables(t *testing.T) {
-	t.Parallel()
+	// t.Parallel omitted — OverrideHTTPReadyConfigForTest mutates a
+	// package-level config; parallel tests would clobber each other's
+	// interval/timeout values even though the mutex keeps the race
+	// detector green.
 	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
 	defer restore()
 
@@ -180,7 +183,10 @@ func TestMaybeAutoEnableSubdomain_EnableFails_WarningNotFatal(t *testing.T) {
 }
 
 func TestMaybeAutoEnableSubdomain_AllEligibleModes_TriggerEnable(t *testing.T) {
-	t.Parallel()
+	// t.Parallel omitted at the top level so the Override helper's config
+	// mutation doesn't interleave with sibling tests in the package.
+	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
+	defer restore()
 
 	cases := []struct {
 		name string
@@ -198,9 +204,8 @@ func TestMaybeAutoEnableSubdomain_AllEligibleModes_TriggerEnable(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
-			defer restore()
+			// Subtests share the parent's Override restore; no per-subtest
+			// override needed, and no t.Parallel (see parent comment).
 
 			dir := t.TempDir()
 			writeMeta(t, dir, tc.mode)
@@ -223,7 +228,7 @@ func TestMaybeAutoEnableSubdomain_AllEligibleModes_TriggerEnable(t *testing.T) {
 // first-deploy signal for stage; only platform-side SubdomainAccess is
 // authoritative.
 func TestMaybeAutoEnableSubdomain_StageCrossDeploy_EnablesForStage(t *testing.T) {
-	t.Parallel()
+	// t.Parallel omitted — see TestMaybeAutoEnableSubdomain_FirstDeploy_DevMode_Enables.
 	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
 	defer restore()
 

@@ -44,10 +44,14 @@ func (s *sequencingHTTP) Do(*http.Request) (*http.Response, error) {
 }
 
 func TestWaitHTTPReady(t *testing.T) {
-	t.Parallel()
+	// t.Parallel omitted — every subtest below mutates the package-level
+	// defaultHTTPReadyConfig via OverrideHTTPReadyConfigForTest. The mutex
+	// keeps the race detector green, but parallel subtests would still
+	// clobber each other's interval/timeout values (e.g. a 20ms-timeout
+	// subtest interleaving a 1s-timeout subtest would yield spurious
+	// failures). Subtests therefore run sequentially.
 
 	t.Run("immediate 200 returns nil on first attempt", func(t *testing.T) {
-		t.Parallel()
 		restore := OverrideHTTPReadyConfigForTest(1*time.Millisecond, 1*time.Second)
 		defer restore()
 
@@ -62,7 +66,6 @@ func TestWaitHTTPReady(t *testing.T) {
 	})
 
 	t.Run("404 counts as ready (< 500 contract)", func(t *testing.T) {
-		t.Parallel()
 		restore := OverrideHTTPReadyConfigForTest(1*time.Millisecond, 1*time.Second)
 		defer restore()
 
@@ -73,7 +76,6 @@ func TestWaitHTTPReady(t *testing.T) {
 	})
 
 	t.Run("5xx retried until 200", func(t *testing.T) {
-		t.Parallel()
 		restore := OverrideHTTPReadyConfigForTest(1*time.Millisecond, 1*time.Second)
 		defer restore()
 
@@ -87,7 +89,6 @@ func TestWaitHTTPReady(t *testing.T) {
 	})
 
 	t.Run("transport error retried until success", func(t *testing.T) {
-		t.Parallel()
 		restore := OverrideHTTPReadyConfigForTest(1*time.Millisecond, 1*time.Second)
 		defer restore()
 
@@ -98,7 +99,6 @@ func TestWaitHTTPReady(t *testing.T) {
 	})
 
 	t.Run("timeout on 5xx loop wraps last status", func(t *testing.T) {
-		t.Parallel()
 		restore := OverrideHTTPReadyConfigForTest(1*time.Millisecond, 20*time.Millisecond)
 		defer restore()
 
@@ -117,7 +117,6 @@ func TestWaitHTTPReady(t *testing.T) {
 	})
 
 	t.Run("timeout on transport error wraps last cause", func(t *testing.T) {
-		t.Parallel()
 		restore := OverrideHTTPReadyConfigForTest(1*time.Millisecond, 20*time.Millisecond)
 		defer restore()
 
@@ -132,7 +131,6 @@ func TestWaitHTTPReady(t *testing.T) {
 	})
 
 	t.Run("pre-cancelled context returns ctx error", func(t *testing.T) {
-		t.Parallel()
 		restore := OverrideHTTPReadyConfigForTest(1*time.Millisecond, 1*time.Second)
 		defer restore()
 
@@ -147,7 +145,6 @@ func TestWaitHTTPReady(t *testing.T) {
 	})
 
 	t.Run("context cancelled mid-flight returns ctx error", func(t *testing.T) {
-		t.Parallel()
 		restore := OverrideHTTPReadyConfigForTest(10*time.Millisecond, 1*time.Second)
 		defer restore()
 
@@ -166,7 +163,6 @@ func TestWaitHTTPReady(t *testing.T) {
 	})
 
 	t.Run("nil client returns error, zero HTTP calls", func(t *testing.T) {
-		t.Parallel()
 		err := WaitHTTPReady(context.Background(), nil, "http://test/")
 		if err == nil || !strings.Contains(err.Error(), "no HTTP client configured") {
 			t.Errorf("want 'no HTTP client configured' error, got %v", err)
@@ -174,7 +170,6 @@ func TestWaitHTTPReady(t *testing.T) {
 	})
 
 	t.Run("empty url returns error, zero HTTP calls", func(t *testing.T) {
-		t.Parallel()
 		doer := &sequencingHTTP{responses: []int{200}}
 		err := WaitHTTPReady(context.Background(), doer, "")
 		if err == nil || !strings.Contains(err.Error(), "empty url") {

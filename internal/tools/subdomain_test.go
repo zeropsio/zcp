@@ -397,7 +397,8 @@ func (s *sequencingHTTPFor500) Do(*http.Request) (*http.Response, error) {
 }
 
 func TestSubdomainTool_Enable_WaitsForHTTPReady(t *testing.T) {
-	t.Parallel()
+	// t.Parallel omitted — OverrideHTTPReadyConfigForTest mutates a
+	// package-level config; see deploy_subdomain_test.go for rationale.
 	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 500*time.Millisecond)
 	defer restore()
 
@@ -449,7 +450,8 @@ func TestSubdomainTool_Enable_WaitsForHTTPReady(t *testing.T) {
 // warning and returns. Verify still has a chance to reach the URL on its
 // own probe.
 func TestSubdomainTool_Enable_HTTPReadyTimeout_WarningNotFatal(t *testing.T) {
-	t.Parallel()
+	// t.Parallel omitted — OverrideHTTPReadyConfigForTest mutates a
+	// package-level config; see deploy_subdomain_test.go for rationale.
 	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 10*time.Millisecond)
 	defer restore()
 

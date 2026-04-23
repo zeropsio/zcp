@@ -21,6 +21,7 @@ CLAUDE.local.md
 .claude/agent-memory/
 .claude/teams/
 .claude/tasks/
+.claude/github-ci-token
 
 # Workflow state (created by tests and runtime)
 **/.zcp/
