@@ -1088,7 +1088,7 @@ visibility.
 |----|-----------|
 | O1 | zerops_deploy blocks until build completes |
 | O2 | zerops_import blocks until all processes complete |
-| O3 | zerops_subdomain called once after first deploy (persists) |
+| O3 | `zerops_subdomain action=enable` is idempotent via check-before-enable: `ops.Subdomain` reads `SubdomainAccess` from a fresh `GetService` (REST-authoritative) and short-circuits to `status=already_enabled` without calling `EnableSubdomainAccess` when already live. This prevents the platform's garbage FAILED-process pattern on redundant enable. After a genuine enable, the tool waits for L7 readiness via `ops.WaitHTTPReady` before returning, so a subsequent `zerops_verify` does not race the L7 balancer. |
 | O4 | Dev server started manually via SSH after every deploy (container, dynamic runtimes) |
 | O5 | Stage entry written AFTER dev verified (standard mode) |
 | O6 | Stage deployFiles = build output, NOT [.] |
