@@ -140,19 +140,17 @@ func (s *Server) registerTools() {
 		tools.RegisterBrowser(s.server)
 	}
 
-	// zcprecipator3 (v3) recipe engine lives alongside v2's zerops_workflow.
-	// Registered only when ZCP_RECIPE_V3=1; ships unexposed by default
-	// during the strangler-fig window so v2 remains the active engine. See
-	// docs/zcprecipator3/plan.md §6 for actions and §15 commission plan.
-	if os.Getenv("ZCP_RECIPE_V3") == "1" {
-		mountRoot := os.Getenv("ZCP_RECIPE_MOUNT_ROOT")
-		if mountRoot == "" {
-			if home, err := os.UserHomeDir(); err == nil {
-				mountRoot = filepath.Join(home, "recipes")
-			}
+	// zcprecipator3 (v3) recipe engine ships alongside v2's zerops_workflow.
+	// Both tools register; clients pick which to call. v2 deletion triggers
+	// on first clean showcase via v3 — see docs/zcprecipator3/plan.md §14.
+	// Mount root defaults to ~/recipes; override with ZCP_RECIPE_MOUNT_ROOT.
+	mountRoot := os.Getenv("ZCP_RECIPE_MOUNT_ROOT")
+	if mountRoot == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			mountRoot = filepath.Join(home, "recipes")
 		}
-		recipe.Register(s.server, recipe.NewStore(mountRoot))
 	}
+	recipe.Register(s.server, recipe.NewStore(mountRoot))
 }
 
 // Run starts the MCP server on stdio transport.

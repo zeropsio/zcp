@@ -63,6 +63,7 @@ func TestServer_AllToolsRegistered(t *testing.T) {
 		"zerops_deploy", "zerops_export",
 		"zerops_manage", "zerops_scale", "zerops_env", "zerops_import", "zerops_delete", "zerops_subdomain",
 		"zerops_mount", "zerops_preprocess",
+		"zerops_recipe",
 	}
 
 	if len(result.Tools) != len(expectedTools) {
