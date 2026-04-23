@@ -156,7 +156,7 @@ func TestSubdomainTool_Enable_PollsProcess(t *testing.T) {
 func TestSubdomainTool_Disable_PollsProcess(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}}).
+		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api", SubdomainAccess: true}}).
 		WithProcess(&platform.Process{
 			ID:     "proc-subdomain-disable-svc-1",
 			Status: statusFinished,

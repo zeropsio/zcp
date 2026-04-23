@@ -105,6 +105,15 @@ func Subdomain(
 		result.Process = proc
 		attachSubdomainUrlsToResult(ctx, client, result, projectID, svc.ID)
 	} else {
+		if !detail.SubdomainAccess {
+			// Symmetric to enable: skip the platform API call when the
+			// subdomain is already disabled. Platform behavior on redundant
+			// disable is not empirically characterized but the same garbage
+			// FAILED process pattern is plausible; short-circuiting is safe
+			// defense in depth either way.
+			result.Status = "already_disabled"
+			return result, nil
+		}
 		proc, err := client.DisableSubdomainAccess(ctx, svc.ID)
 		if err != nil {
 			return nil, err

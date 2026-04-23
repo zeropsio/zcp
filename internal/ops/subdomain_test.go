@@ -402,6 +402,49 @@ func TestSubdomain_Enable_Disabled_CallsAPI(t *testing.T) {
 	}
 }
 
+// Symmetric to Enable: check-before-disable short-circuits on already-disabled
+// services to avoid any potential garbage FAILED process pattern on the
+// platform side.
+func TestSubdomain_Disable_AlreadyDisabled_SkipsAPICall(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", SubdomainAccess: false},
+	}
+	mock := platform.NewMock().WithServices(services)
+
+	result, err := Subdomain(context.Background(), mock, "proj-1", "api", "disable")
+	if err != nil {
+		t.Fatalf("disable on already-disabled: want success, got %v", err)
+	}
+	if result.Status != "already_disabled" {
+		t.Errorf("status: want already_disabled, got %q", result.Status)
+	}
+	if result.Process != nil {
+		t.Errorf("Process: want nil (no API call), got %+v", result.Process)
+	}
+	if mock.CallCounts["DisableSubdomainAccess"] != 0 {
+		t.Errorf("DisableSubdomainAccess calls: want 0, got %d", mock.CallCounts["DisableSubdomainAccess"])
+	}
+}
+
+func TestSubdomain_Disable_Enabled_CallsAPI(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", SubdomainAccess: true},
+	}
+	mock := platform.NewMock().WithServices(services)
+
+	_, err := Subdomain(context.Background(), mock, "proj-1", "api", "disable")
+	if err != nil {
+		t.Fatalf("disable on enabled: want success, got %v", err)
+	}
+	if mock.CallCounts["DisableSubdomainAccess"] != 1 {
+		t.Errorf("DisableSubdomainAccess calls: want 1, got %d", mock.CallCounts["DisableSubdomainAccess"])
+	}
+}
+
 func TestSubdomain_Enable_ResolveServiceIDFails_NoAPICall(t *testing.T) {
 	t.Parallel()
 
@@ -447,8 +490,11 @@ func TestSubdomain(t *testing.T) {
 			wantProc: true,
 		},
 		{
-			name:     "Disable_Success",
-			mock:     platform.NewMock().WithServices(services),
+			name: "Disable_Success",
+			mock: platform.NewMock().WithServices([]platform.ServiceStack{
+				{ID: "svc-1", Name: "api", ProjectID: "proj-1", SubdomainAccess: true},
+				{ID: "svc-2", Name: "db", ProjectID: "proj-1"},
+			}),
 			hostname: "api",
 			action:   "disable",
 			wantProc: true,
