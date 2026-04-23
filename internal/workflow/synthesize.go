@@ -203,6 +203,8 @@ var allowedSurvivingPlaceholders = map[string]struct{}{
 	"{your-description}": {},
 	"{next-task}":        {},
 	"{port}":             {},
+	"{path}":             {}, // dev-server health path (/, /api/health, /status, ...)
+	"{task-id}":          {}, // harness background-task id (Claude Code's Bash run_in_background id)
 	"{name}":             {},
 	"{token}":            {},
 	"{url}":              {},
@@ -244,7 +246,9 @@ func findUnknownPlaceholder(body string) string {
 		token := body[open : closeIdx+1]
 		// Skip `${...}` shell-style env var refs — these belong to the
 		// generated zerops.yaml the agent will write, not to us.
-		if open > 0 && body[open-1] == '$' {
+		// Skip `%{...}` curl/printf format specifiers — legitimate content
+		// inside shell command examples (e.g. `curl -w '%{http_code}'`).
+		if open > 0 && (body[open-1] == '$' || body[open-1] == '%') {
 			i = closeIdx + 1
 			continue
 		}

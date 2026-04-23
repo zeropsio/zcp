@@ -11,9 +11,21 @@ title: "Platform rules — local env extras"
 - **Code lives in your working directory.** Edit normally with your
   editor/IDE. No SSHFS, no `/var/www/{hostname}` mount — that shape is
   container-only.
-- **Your dev server runs locally.** ZCP has no opinion about whether
-  it's `npm run dev`, `vite`, `bun --hot`, `artisan serve`, `rails s` —
-  use whatever your framework gives you.
+- **Dev server runs on your machine.** Use your harness's background
+  task primitive so the process survives the tool call and stdio does
+  not block. In Claude Code that is `Bash run_in_background=true`:
+
+  ```
+  Bash run_in_background=true  command="npm run dev"
+  Bash                         command="curl -s -o /dev/null -w '%{http_code}' http://localhost:5173/"
+  BashOutput                   bash_id={task-id}
+  KillBash                     shell_id={task-id}
+  ```
+
+  ZCP does not spawn processes on your machine — `zerops_dev_server` is
+  container-only. Whatever dev command your framework gives you works:
+  `npm run dev`, `bun --hot`, `vite`, `artisan serve`, `rails s`,
+  `uvicorn main:app --reload`.
 - **Managed services live on Zerops.** Access them from the local dev
   server requires VPN:
 

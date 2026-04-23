@@ -5,15 +5,63 @@ phases: [develop-active]
 runtimes: [dynamic]
 environments: [local]
 modes: [dev, standard]
-title: "Dynamic runtime — start over SSH after deploy (local)"
+title: "Dynamic runtime — start dev server on your machine (local)"
 ---
 
-From the local machine, start the real server on a dynamic-runtime service
-after deploy. VPN must be up (`zcli vpn up`) or the SSH hop fails:
+### Dynamic-runtime dev server (local)
+
+In local env the dev server runs **on your machine**, not on a Zerops
+container. ZCP does not spawn local processes — use your harness's
+background task primitive so the process survives the tool call and
+stdio does not block the caller.
+
+**In Claude Code: `Bash run_in_background=true`.**
+
+**Start:**
 
 ```
-ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {hostname} \
-  'cd /var/www && {start-command}'
+Bash run_in_background=true  command="{start-command}"
 ```
 
-Replace `{start-command}` with the `run.start` value from `zerops.yaml`.
+Use whatever dev command your framework offers (`npm run dev`,
+`bun --hot`, `vite`, `artisan serve`, `rails s`, `uvicorn main:app --reload`,
+…). These typically bind to `127.0.0.1` or `0.0.0.0` on the port your
+app listens on.
+
+**Check if already running:**
+
+```
+Bash command="curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:{port}/"
+```
+
+A 2xx/3xx/4xx response proves the server is up. A connection refused
+means it is not listening.
+
+**Tail recent logs:**
+
+```
+BashOutput bash_id={task-id}
+```
+
+**Stop:**
+
+```
+KillBash shell_id={task-id}
+```
+
+Or kill by port if the task id is lost: `Bash command="lsof -ti :{port} | xargs kill"`.
+
+**Managed-service env vars** (DATABASE_URL, REDIS_URL, …) come from
+Zerops. Generate `.env` in your working directory so your dev command
+reads them at startup:
+
+```
+zerops_env action=generate-dotenv serviceHostname="{stage-hostname}"
+```
+
+Add `.env` to `.gitignore` — it contains secrets. VPN must be up
+(`zcli vpn up`) for your local dev server to reach managed services.
+
+**Do NOT use `zerops_dev_server`** — that tool is container-only (it
+SSHes into Zerops dev containers). In local env it is not registered
+and would not make sense if it were.

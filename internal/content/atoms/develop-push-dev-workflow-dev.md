@@ -14,15 +14,36 @@ title: "Push-dev iteration cycle (dev mode, container)"
 Edit code on `/var/www/{hostname}/`. Iteration cycle:
 
 1. Edit files on the mount — changes appear instantly inside the container.
-2. Restart the server over SSH (see the dynamic-runtime start guidance
-   for the exact command). Run with `run_in_background=true` so the
-   agent isn't blocked.
-3. Hit a local endpoint with curl over the same SSH connection to confirm.
+2. Restart the dev server so it picks up the edits:
+
+   ```
+   zerops_dev_server action=restart hostname="{hostname}" command="{start-command}" port={port} healthPath="{path}"
+   ```
+
+   `action=restart` is stop + start composed. Port-free polling handles
+   SO_REUSEADDR linger; the spawn + probe budgets keep the call bounded
+   so a broken start costs seconds, not minutes.
+3. Probe the health endpoint from inside the container via the tool:
+
+   ```
+   zerops_dev_server action=status hostname="{hostname}" port={port} healthPath="{path}"
+   ```
+
 4. Repeat until the change works.
 
-**Code-only changes:** restart the server — no redeploy required.
+**Code-only changes:** `zerops_dev_server action=restart` — no redeploy required.
 
-**`zerops.yaml` changes** (env vars, ports, entries): redeploy required. The
-redeploy kills the container, which drops every open SSH session. Always
-open a **new** SSH to `{hostname}` after a redeploy (old sessions exit 255)
-and re-run the start command.
+**`zerops.yaml` changes** (env vars, ports, entries): redeploy required.
+The redeploy kills the container, so the previous dev process is gone —
+call `zerops_dev_server action=start` (not `restart`) on the new
+container after `zerops_deploy` returns.
+
+**If something goes wrong during iteration**, tail the log ring:
+
+```
+zerops_dev_server action=logs hostname="{hostname}" logLines=60
+```
+
+Check `reason` on any failed start/restart — codes like
+`health_probe_connection_refused`, `health_probe_http_500`,
+`spawn_timeout` dispatch to different diagnostic paths.
