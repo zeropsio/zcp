@@ -35,6 +35,10 @@ const (
 // convertError converts an error to a CallToolResult with IsError=true.
 // PlatformErrors are serialized as structured JSON with code/error/suggestion.
 // Generic errors are returned as plain text.
+//
+// Every optional field (suggestion, apiCode, diagnostic, apiMeta) is emitted
+// only when populated — consumers rely on absence-means-empty for the
+// apiMeta key the same way they rely on it for apiCode.
 func convertError(err error) *mcp.CallToolResult {
 	var pe *platform.PlatformError
 	if !errors.As(err, &pe) {
@@ -43,7 +47,7 @@ func convertError(err error) *mcp.CallToolResult {
 			IsError: true,
 		}
 	}
-	result := map[string]string{"code": pe.Code, "error": pe.Message}
+	result := map[string]any{"code": pe.Code, "error": pe.Message}
 	if pe.Suggestion != "" {
 		result["suggestion"] = pe.Suggestion
 	}
@@ -52,6 +56,9 @@ func convertError(err error) *mcp.CallToolResult {
 	}
 	if pe.Diagnostic != "" {
 		result["diagnostic"] = pe.Diagnostic
+	}
+	if len(pe.APIMeta) > 0 {
+		result["apiMeta"] = pe.APIMeta
 	}
 	b, err := json.Marshal(result)
 	if err != nil {
