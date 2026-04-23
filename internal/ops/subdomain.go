@@ -10,6 +10,13 @@ import (
 )
 
 // SubdomainResult represents the result of a subdomain enable/disable operation.
+//
+// Warnings collects non-fatal anomalies the caller should surface without
+// treating the whole call as failed — e.g. a process that finished in a
+// degenerate state (FAILED + URLs-present belt-and-suspenders normalization),
+// a poll timeout whose outcome is unknown, or an HTTP readiness probe that
+// timed out. Callers that ignore Warnings are unaffected; callers that want
+// diagnostic provenance see what the platform actually did.
 type SubdomainResult struct {
 	Process       *platform.Process `json:"process,omitempty"`
 	Hostname      string            `json:"serviceHostname"`
@@ -18,6 +25,7 @@ type SubdomainResult struct {
 	Status        string            `json:"status,omitempty"`
 	SubdomainUrls []string          `json:"subdomainUrls,omitempty"`
 	NextActions   string            `json:"nextActions,omitempty"`
+	Warnings      []string          `json:"warnings,omitempty"`
 }
 
 // Error codes for idempotent handling.

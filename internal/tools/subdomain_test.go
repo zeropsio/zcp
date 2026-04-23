@@ -4,6 +4,7 @@ package tools
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -246,6 +247,66 @@ func TestSubdomainTool_Enable_FailedProcess_TreatedAsAlreadyEnabled(t *testing.T
 	}
 	if len(sr.SubdomainUrls) == 0 {
 		t.Error("expected subdomainUrls to be populated")
+	}
+	// Plan 1 commit 3: FAILED normalization must NOT silently swallow the
+	// platform's signal. Warnings records the normalization reason so callers
+	// can distinguish a genuine TOCTOU race from a future unknown failure
+	// mode that happens to pass the URLs-present heuristic.
+	if len(sr.Warnings) == 0 {
+		t.Error("expected Warnings to be populated when FAILED process is normalized")
+	}
+}
+
+// Plan 1 commit 3: FailReason from the FAILED process must survive the
+// normalization. If the platform ever introduces a new failure mode, the
+// reason is visible in Warnings rather than silently dropped.
+func TestSubdomainTool_Enable_FailedWithFailReason_PreservedInWarnings(t *testing.T) {
+	t.Parallel()
+	reason := "subdomain config drift — investigate"
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app",
+				Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}}},
+		}).
+		WithService(&platform.ServiceStack{
+			ID: "svc-1", Name: "app",
+			Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}},
+		}).
+		WithProject(&platform.Project{
+			ID: "proj-1", Name: "myproject", Status: statusActive,
+			SubdomainHost: "abc1.prg1.zerops.app",
+		}).
+		WithProcess(&platform.Process{
+			ID:         "proc-subdomain-enable-svc-1",
+			Status:     statusFailed,
+			FailReason: &reason,
+		})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterSubdomain(srv, mock, "proj-1")
+
+	result := callTool(t, srv, "zerops_subdomain", map[string]any{
+		"serviceHostname": "app", "action": "enable",
+	})
+
+	var sr ops.SubdomainResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &sr); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	if len(sr.Warnings) == 0 {
+		t.Fatal("expected Warnings to be populated")
+	}
+	// At least one warning must reference the FailReason string so a reader
+	// can identify the underlying cause.
+	found := false
+	for _, w := range sr.Warnings {
+		if strings.Contains(w, reason) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Warnings must preserve FailReason %q; got %v", reason, sr.Warnings)
 	}
 }
 
