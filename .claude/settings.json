@@ -14,7 +14,9 @@
       "Bash(git log *)",
       "Bash(git branch *)",
       "Bash(git show *)",
-      "Bash(ls *)"
+      "Bash(ls *)",
+      "Bash(./scripts/ci.sh *)",
+      "Bash(scripts/ci.sh *)"
     ],
     "deny": [
       "Read(**/.env*)",
