@@ -9,9 +9,14 @@ title: "Verify the first deploy and stamp FirstDeployedAt"
 ### Verify the first deploy
 
 ```
-zerops_subdomain serviceHostname="{hostname}" action="enable"
 zerops_verify serviceHostname="{hostname}"
 ```
+
+The `zerops_deploy` handler activates the L7 subdomain automatically on
+first deploy for dev/stage/simple/standard/local-stage modes — the
+returned `subdomainAccessEnabled: true` plus `subdomainUrl` confirm the
+route is live. No manual `zerops_subdomain` call is needed in the
+happy path.
 
 A passing `zerops_verify` marks the service deployed. Subsequent
 sessions skip scaffold and enter the normal edit loop.

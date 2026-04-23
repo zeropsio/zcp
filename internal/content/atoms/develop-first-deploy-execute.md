@@ -30,5 +30,7 @@ This is the service's first deploy — it counts as deployed only after
   exact build or start failure. A second deploy on the same broken
   `zerops.yaml` burns another deploy slot without new information.
 
-After deploy returns success, immediately enable the subdomain and run
-verify (see the next atom).
+After deploy returns success, run verify (see the next atom). The
+deploy handler activates the L7 subdomain automatically on first deploy
+— the response carries `subdomainAccessEnabled: true` and
+`subdomainUrl` once the route is live.

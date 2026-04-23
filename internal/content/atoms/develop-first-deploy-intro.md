@@ -27,5 +27,5 @@ Flow for each never-deployed runtime:
    deployed; the next session enters the normal edit loop.
 
 Skip straight to edits only after that first deploy lands — container
-SSHFS mounts may be empty, subdomains are disabled, and HTTP probes
-fail before any code is delivered.
+SSHFS mounts may be empty and HTTP probes fail before any code is
+delivered.
