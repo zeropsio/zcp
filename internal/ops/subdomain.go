@@ -27,7 +27,20 @@ const (
 )
 
 // Subdomain enables or disables the zerops.app subdomain for a service.
-// Idempotent: already-enabled/disabled is treated as success.
+//
+// Enable is idempotent via check-before-enable: we read SubdomainAccess from a
+// fresh REST-authoritative GetService call and short-circuit when the
+// subdomain is already active. The previous version called
+// EnableSubdomainAccess blindly; the platform accepts the call and creates a
+// garbage FAILED process with error.code=noSubdomainPorts for every such
+// redundant invocation. Those processes pollute the project event log and
+// trigger GUI error notifications even though the ZCP response indicated
+// success. Empirical evidence: plans/archive/subdomain-robustness.md §1.1.
+//
+// The isAlreadyEnabled error branch stays as belt-and-suspenders against a
+// TOCTOU race (concurrent admin action between GetService and
+// EnableSubdomainAccess), but in normal single-caller operation the platform
+// never sees a redundant enable call.
 func Subdomain(
 	ctx context.Context,
 	client platform.Client,
@@ -53,6 +66,13 @@ func Subdomain(
 		return nil, err
 	}
 
+	// Authoritative state — GetService is REST-backed, unlike ListServices
+	// which reads from Elasticsearch and can lag by seconds.
+	detail, err := client.GetService(ctx, svc.ID)
+	if err != nil {
+		return nil, err
+	}
+
 	result := &SubdomainResult{
 		Hostname:  hostname,
 		ServiceID: svc.ID,
@@ -60,9 +80,19 @@ func Subdomain(
 	}
 
 	if action == "enable" {
+		if detail.SubdomainAccess {
+			// Already enabled on the platform side — do NOT call
+			// EnableSubdomainAccess. This prevents the garbage-FAILED-process
+			// generation documented above.
+			result.Status = "already_enabled"
+			attachSubdomainUrlsToResult(ctx, client, result, projectID, svc.ID)
+			return result, nil
+		}
 		proc, err := client.EnableSubdomainAccess(ctx, svc.ID)
 		if err != nil {
 			if isAlreadyEnabled(err) {
+				// Belt-and-suspenders: TOCTOU race (subdomain got enabled
+				// between our GetService and this call). Treat as success.
 				result.Status = "already_enabled"
 				attachSubdomainUrlsToResult(ctx, client, result, projectID, svc.ID)
 				return result, nil

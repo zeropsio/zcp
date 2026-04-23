@@ -49,6 +49,7 @@ func (m *Mock) ListServices(_ context.Context, _ string) ([]ServiceStack, error)
 }
 
 func (m *Mock) GetService(_ context.Context, serviceID string) (*ServiceStack, error) {
+	m.trackCall("GetService")
 	if err := m.getError("GetService"); err != nil {
 		return nil, err
 	}
@@ -293,6 +294,7 @@ func (m *Mock) CancelProcess(_ context.Context, processID string) (*Process, err
 }
 
 func (m *Mock) EnableSubdomainAccess(_ context.Context, serviceID string) (*Process, error) {
+	m.trackCall("EnableSubdomainAccess")
 	if err := m.getError("EnableSubdomainAccess"); err != nil {
 		return nil, err
 	}
@@ -305,6 +307,7 @@ func (m *Mock) EnableSubdomainAccess(_ context.Context, serviceID string) (*Proc
 }
 
 func (m *Mock) DisableSubdomainAccess(_ context.Context, serviceID string) (*Process, error) {
+	m.trackCall("DisableSubdomainAccess")
 	if err := m.getError("DisableSubdomainAccess"); err != nil {
 		return nil, err
 	}

@@ -351,6 +351,77 @@ func TestSubdomain_EnableReturnsUrls(t *testing.T) {
 	}
 }
 
+// Pair of tests for check-before-enable (plans/archive/subdomain-robustness.md §3.2).
+// The platform API creates a garbage FAILED process for every redundant enable
+// on an already-enabled service (empirical: §1.1). ZCP must detect this state
+// via GetService (REST-authoritative) BEFORE calling EnableSubdomainAccess.
+
+func TestSubdomain_Enable_AlreadyEnabled_SkipsAPICall(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", SubdomainAccess: true, Ports: []platform.Port{{Port: 3000}}},
+	}
+	mock := platform.NewMock().WithServices(services)
+
+	result, err := Subdomain(context.Background(), mock, "proj-1", "api", "enable")
+	if err != nil {
+		t.Fatalf("enable on already-enabled: want success, got %v", err)
+	}
+	if result.Status != "already_enabled" {
+		t.Errorf("status: want already_enabled, got %q", result.Status)
+	}
+	if result.Process != nil {
+		t.Errorf("Process: want nil (no API call), got %+v", result.Process)
+	}
+	if mock.CallCounts["EnableSubdomainAccess"] != 0 {
+		t.Errorf("EnableSubdomainAccess calls: want 0 (check-before-enable), got %d", mock.CallCounts["EnableSubdomainAccess"])
+	}
+	if mock.CallCounts["GetService"] < 1 {
+		t.Errorf("GetService calls: want ≥1 (authoritative pre-check), got %d", mock.CallCounts["GetService"])
+	}
+}
+
+func TestSubdomain_Enable_Disabled_CallsAPI(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", SubdomainAccess: false},
+	}
+	mock := platform.NewMock().WithServices(services)
+
+	result, err := Subdomain(context.Background(), mock, "proj-1", "api", "enable")
+	if err != nil {
+		t.Fatalf("enable on disabled: want success, got %v", err)
+	}
+	if result.Status == "already_enabled" {
+		t.Errorf("status: want empty (fresh enable), got %q", result.Status)
+	}
+	if mock.CallCounts["EnableSubdomainAccess"] != 1 {
+		t.Errorf("EnableSubdomainAccess calls: want 1, got %d", mock.CallCounts["EnableSubdomainAccess"])
+	}
+}
+
+func TestSubdomain_Enable_ResolveServiceIDFails_NoAPICall(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1"},
+	}
+	mock := platform.NewMock().WithServices(services)
+
+	_, err := Subdomain(context.Background(), mock, "proj-1", "nonexistent", "enable")
+	if err == nil {
+		t.Fatal("want error for unknown hostname, got nil")
+	}
+	if mock.CallCounts["EnableSubdomainAccess"] != 0 {
+		t.Errorf("EnableSubdomainAccess calls: want 0 (failed resolve), got %d", mock.CallCounts["EnableSubdomainAccess"])
+	}
+	if mock.CallCounts["GetService"] != 0 {
+		t.Errorf("GetService calls: want 0 (failed resolve), got %d", mock.CallCounts["GetService"])
+	}
+}
+
 func TestSubdomain(t *testing.T) {
 	t.Parallel()
 
