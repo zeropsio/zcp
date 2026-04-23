@@ -310,6 +310,61 @@ func TestSubdomainTool_Enable_FailedWithFailReason_PreservedInWarnings(t *testin
 	}
 }
 
+// Plan 1 commit 4: process poll failure (timeout, transient API error on
+// GetProcess, etc.) previously discarded via `_ :=`, so the tool returned as
+// if enable succeeded even though the state was unknown. Now the timeout
+// surfaces in Warnings and the agent can decide to retry or check status.
+func TestSubdomainTool_Enable_PollFailure_SurfacedAsWarning(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app",
+				Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}}},
+		}).
+		WithService(&platform.ServiceStack{
+			ID: "svc-1", Name: "app", SubdomainAccess: false,
+			Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}},
+		}).
+		WithProject(&platform.Project{
+			ID: "proj-1", Name: "myproject", Status: statusActive,
+			SubdomainHost: "abc1.prg1.zerops.app",
+		}).
+		// Enable returns a Process ID; GetProcess (used by pollManageProcess)
+		// fails — simulates a transient API hiccup during the poll.
+		WithError("GetProcess", &platform.PlatformError{
+			Code:    "API_ERROR",
+			Message: "transient failure",
+		})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterSubdomain(srv, mock, "proj-1")
+
+	result := callTool(t, srv, "zerops_subdomain", map[string]any{
+		"serviceHostname": "app", "action": "enable",
+	})
+	if result.IsError {
+		t.Fatalf("poll failure must not fail the tool call: %s", getTextContent(t, result))
+	}
+
+	var sr ops.SubdomainResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &sr); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	if len(sr.Warnings) == 0 {
+		t.Fatal("expected Warnings populated on poll timeout, got empty")
+	}
+	found := false
+	for _, w := range sr.Warnings {
+		if strings.Contains(w, "poll timed out") || strings.Contains(w, "stale") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("Warnings must mention poll timeout/stale state; got %v", sr.Warnings)
+	}
+}
+
 func TestSubdomainTool_EmptyAction(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().

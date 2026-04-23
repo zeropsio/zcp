@@ -34,7 +34,16 @@ func RegisterSubdomain(srv *mcp.Server, client platform.Client, projectID string
 		}
 		if result.Process != nil && result.Process.ID != "" {
 			onProgress := buildProgressCallback(ctx, req)
-			finalProc, _ := pollManageProcess(ctx, client, result.Process, onProgress)
+			finalProc, timedOut := pollManageProcess(ctx, client, result.Process, onProgress)
+			// Surface poll timeouts in Warnings. Discarding timedOut silently
+			// meant a 10-minute poll timeout produced stale Process state and
+			// the tool returned as if enable had succeeded. Now the caller
+			// sees the timeout and can distinguish "confirmed enable" from
+			// "unknown state, retry recommended".
+			if timedOut {
+				result.Warnings = append(result.Warnings,
+					fmt.Sprintf("process poll timed out for action=%s; state may be stale — retry or check zerops_discover", input.Action))
+			}
 			result.Process = finalProc
 		}
 		// Belt-and-suspenders TOCTOU race handling: check-before-enable in
