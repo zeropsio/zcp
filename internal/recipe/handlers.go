@@ -62,16 +62,16 @@ const errSessionNotOpen = "session not open"
 
 // RecipeInput is the input schema for zerops_recipe.
 type RecipeInput struct {
-	Action     string          `json:"action"               jsonschema:"One of: start, enter-phase, complete-phase, build-brief, record-fact, resolve-chain, emit-yaml, update-plan, stitch-content, status."`
-	Slug       string          `json:"slug,omitempty"       jsonschema:"Recipe slug (e.g. {framework}-showcase). Required for every action."`
-	OutputRoot string          `json:"outputRoot,omitempty" jsonschema:"Directory where the recipe tree + facts log live. Required for 'start'."`
-	Phase      string          `json:"phase,omitempty"      jsonschema:"Phase name for enter-phase / complete-phase: research, provision, scaffold, feature, finalize."`
-	BriefKind  string          `json:"briefKind,omitempty"  jsonschema:"For build-brief: scaffold, feature, writer."`
-	Codebase   string          `json:"codebase,omitempty"   jsonschema:"For build-brief when kind=scaffold: the codebase hostname to compose for."`
-	TierIndex  int             `json:"tierIndex,omitempty"  jsonschema:"For emit-yaml: tier 0..5."`
-	Fact       json.RawMessage `json:"fact,omitempty"       jsonschema:"For record-fact: JSON object matching FactRecord schema."`
-	Plan       json.RawMessage `json:"plan,omitempty"       jsonschema:"For update-plan: partial Plan object. Fields present overwrite session.Plan; omitted fields untouched."`
-	Payload    json.RawMessage `json:"payload,omitempty"    jsonschema:"For stitch-content: writer sub-agent's structured completion payload."`
+	Action     string         `json:"action"               jsonschema:"One of: start, enter-phase, complete-phase, build-brief, record-fact, resolve-chain, emit-yaml, update-plan, stitch-content, status."`
+	Slug       string         `json:"slug,omitempty"       jsonschema:"Recipe slug (e.g. {framework}-showcase). Required for every action."`
+	OutputRoot string         `json:"outputRoot,omitempty" jsonschema:"Directory where the recipe tree + facts log live. Required for 'start'."`
+	Phase      string         `json:"phase,omitempty"      jsonschema:"Phase name for enter-phase / complete-phase: research, provision, scaffold, feature, finalize."`
+	BriefKind  string         `json:"briefKind,omitempty"  jsonschema:"For build-brief: scaffold, feature, writer."`
+	Codebase   string         `json:"codebase,omitempty"   jsonschema:"For build-brief when kind=scaffold: the codebase hostname to compose for."`
+	TierIndex  int            `json:"tierIndex,omitempty"  jsonschema:"For emit-yaml: tier 0..5."`
+	Fact       *FactRecord    `json:"fact,omitempty"       jsonschema:"For record-fact: a FactRecord object with topic, symptom, mechanism, surfaceHint, citation fields."`
+	Plan       *Plan          `json:"plan,omitempty"       jsonschema:"For update-plan: partial Plan object. Fields present overwrite session.Plan; omitted fields untouched."`
+	Payload    map[string]any `json:"payload,omitempty"    jsonschema:"For stitch-content: writer sub-agent's structured completion payload as a JSON object."`
 }
 
 // RecipeResult is the generic envelope returned from zerops_recipe.
@@ -188,12 +188,11 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 		}
 		r.Brief, r.OK = &brief, true
 	case "record-fact":
-		var f FactRecord
-		if err := json.Unmarshal(in.Fact, &f); err != nil {
-			r.Error = fmt.Sprintf("fact payload: %v", err)
+		if in.Fact == nil {
+			r.Error = "record-fact: fact payload is required"
 			return r
 		}
-		if err := sess.RecordFact(f); err != nil {
+		if err := sess.RecordFact(*in.Fact); err != nil {
 			r.Error = err.Error()
 			return r
 		}
@@ -237,13 +236,9 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 // Non-empty fields overwrite; empty fields leave existing state
 // untouched. Enables progressive planning without the agent needing to
 // re-submit the whole Plan on every tweak.
-func mergePlan(sess *Session, raw json.RawMessage) error {
-	if len(raw) == 0 {
+func mergePlan(sess *Session, incoming *Plan) error {
+	if incoming == nil {
 		return errors.New("update-plan: missing plan payload")
-	}
-	var incoming Plan
-	if err := json.Unmarshal(raw, &incoming); err != nil {
-		return fmt.Errorf("decode plan: %w", err)
 	}
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
@@ -307,16 +302,16 @@ func buildBriefForRequest(sess *Session, in RecipeInput) (Brief, error) {
 // returns the output path. Minimum viable — the writer payload is
 // stored as-is at <outputRoot>/.writer-payload.json for downstream gate
 // checks; the engine's file-tree stitching is left to Commission B.
-func stitchContent(sess *Session, payload json.RawMessage) (string, error) {
+func stitchContent(sess *Session, payload map[string]any) (string, error) {
 	if len(payload) == 0 {
 		return "", errors.New("stitch-content: payload is required")
 	}
-	var sanity map[string]json.RawMessage
-	if err := json.Unmarshal(payload, &sanity); err != nil {
-		return "", fmt.Errorf("payload not JSON: %w", err)
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("re-marshal payload: %w", err)
 	}
 	path := filepath.Join(sess.OutputRoot, ".writer-payload.json")
-	if err := os.WriteFile(path, payload, 0o600); err != nil {
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		return "", fmt.Errorf("write payload: %w", err)
 	}
 	return path, nil

@@ -1,7 +1,6 @@
 package recipe
 
 import (
-	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -62,12 +61,9 @@ func TestDispatch_UpdatePlan_MergesFields(t *testing.T) {
 	})
 
 	// First patch — framework + tier.
-	patch1, err := json.Marshal(Plan{Framework: "synth", Tier: "showcase"})
-	if err != nil {
-		t.Fatal(err)
-	}
 	res := dispatch(t.Context(), store, RecipeInput{
-		Action: "update-plan", Slug: "synth-showcase", Plan: patch1,
+		Action: "update-plan", Slug: "synth-showcase",
+		Plan: &Plan{Framework: "synth", Tier: "showcase"},
 	})
 	if !res.OK {
 		t.Fatalf("update-plan #1: %+v", res)
@@ -75,16 +71,13 @@ func TestDispatch_UpdatePlan_MergesFields(t *testing.T) {
 
 	// Second patch — research + codebases + services (plan from fixture).
 	syn := syntheticShowcasePlan()
-	patch2, err := json.Marshal(Plan{
-		Research:  syn.Research,
-		Codebases: syn.Codebases,
-		Services:  syn.Services,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	res = dispatch(t.Context(), store, RecipeInput{
-		Action: "update-plan", Slug: "synth-showcase", Plan: patch2,
+		Action: "update-plan", Slug: "synth-showcase",
+		Plan: &Plan{
+			Research:  syn.Research,
+			Codebases: syn.Codebases,
+			Services:  syn.Services,
+		},
 	})
 	if !res.OK {
 		t.Fatalf("update-plan #2: %+v", res)
@@ -301,7 +294,12 @@ func TestDispatch_StitchContent(t *testing.T) {
 		OutputRoot: filepath.Join(dir, "run"),
 	})
 
-	payload := []byte(`{"root_readme":"hello","env_readmes":{"0":"env0"},"env_import_comments":{},"codebase_readmes":{},"codebase_claude":{},"codebase_zerops_yaml_comments":{},"citations":{},"manifest":{"surface_counts":{}}}`)
+	payload := map[string]any{
+		"root_readme": "hello", "env_readmes": map[string]any{"0": "env0"},
+		"env_import_comments": map[string]any{}, "codebase_readmes": map[string]any{},
+		"codebase_claude": map[string]any{}, "codebase_zerops_yaml_comments": map[string]any{},
+		"citations": map[string]any{}, "manifest": map[string]any{"surface_counts": map[string]any{}},
+	}
 	res := dispatch(t.Context(), store, RecipeInput{
 		Action: "stitch-content", Slug: "synth-showcase", Payload: payload,
 	})

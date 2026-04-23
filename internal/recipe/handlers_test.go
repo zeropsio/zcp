@@ -1,7 +1,6 @@
 package recipe
 
 import (
-	"encoding/json"
 	"path/filepath"
 	"testing"
 )
@@ -69,32 +68,24 @@ func TestDispatch_StartStatusRecordFactEmitYAML(t *testing.T) {
 	}
 
 	// record-fact (valid)
-	factJSON, err := json.Marshal(FactRecord{
-		Topic: "x", Symptom: "y", Mechanism: "z",
-		SurfaceHint: "platform-trap", Citation: "env-var-model",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	res = dispatch(t.Context(), store, RecipeInput{
 		Action: "record-fact", Slug: "synth-showcase",
-		Fact: factJSON,
+		Fact: &FactRecord{
+			Topic: "x", Symptom: "y", Mechanism: "z",
+			SurfaceHint: "platform-trap", Citation: "env-var-model",
+		},
 	})
 	if !res.OK {
 		t.Errorf("record-fact valid: %+v", res)
 	}
 
 	// record-fact (missing citation)
-	factJSON, err = json.Marshal(FactRecord{
-		Topic: "x", Symptom: "y", Mechanism: "z",
-		SurfaceHint: "platform-trap",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	res = dispatch(t.Context(), store, RecipeInput{
 		Action: "record-fact", Slug: "synth-showcase",
-		Fact: factJSON,
+		Fact: &FactRecord{
+			Topic: "x", Symptom: "y", Mechanism: "z",
+			SurfaceHint: "platform-trap",
+		},
 	})
 	if res.OK {
 		t.Error("record-fact missing citation should be rejected")
