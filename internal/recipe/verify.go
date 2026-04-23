@@ -9,9 +9,8 @@ import (
 	"time"
 )
 
-// Verifier runs behavioral verification probes against a deployed service.
-// Callers pass the verifier to scaffold or feature agents; the agent
-// composes its own smoke test on top of these primitives.
+// Verifier runs behavioral verification probes. Agents compose their
+// own smoke tests on top of these primitives.
 type Verifier struct {
 	HTTP    *http.Client
 	Timeout time.Duration
@@ -102,15 +101,4 @@ func (v *Verifier) expectNonEmpty(ctx context.Context, url, name string) ProbeRe
 		res.Err = "empty body"
 	}
 	return res
-}
-
-// SuiteResult aggregates probe results for agent-side report emission.
-type SuiteResult struct {
-	Results []ProbeResult
-	Failed  int
-}
-
-// Summary returns a one-line summary for an agent response.
-func (s SuiteResult) Summary() string {
-	return fmt.Sprintf("%d/%d probes passed", len(s.Results)-s.Failed, len(s.Results))
 }

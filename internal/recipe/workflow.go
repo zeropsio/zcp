@@ -159,12 +159,12 @@ func (s *Session) readFacts() ([]FactRecord, error) {
 // Status returns a snapshot summary for handlers to return from
 // zerops_recipe action=status.
 type Status struct {
-	Slug       string
-	Current    Phase
-	Completed  []Phase
-	Codebases  int
-	Services   int
-	FactsCount int
+	Slug       string  `json:"slug"`
+	Current    Phase   `json:"current"`
+	Completed  []Phase `json:"completed"`
+	Codebases  int     `json:"codebases"`
+	Services   int     `json:"services"`
+	FactsCount int     `json:"factsCount"`
 }
 
 // Snapshot returns the current session status.
@@ -172,28 +172,22 @@ func (s *Session) Snapshot() Status {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	completed := make([]Phase, 0, len(s.Completed))
-	for p := range s.Completed {
-		if s.Completed[p] {
+	for p, done := range s.Completed {
+		if done {
 			completed = append(completed, p)
 		}
 	}
-	factsCount := 0
+	var factsCount, cbs, svcs int
 	if s.FactsLog != nil {
-		if records, err := s.FactsLog.Read(); err == nil {
-			factsCount = len(records)
+		if r, err := s.FactsLog.Read(); err == nil {
+			factsCount = len(r)
 		}
 	}
-	cbs, svcs := 0, 0
 	if s.Plan != nil {
-		cbs = len(s.Plan.Codebases)
-		svcs = len(s.Plan.Services)
+		cbs, svcs = len(s.Plan.Codebases), len(s.Plan.Services)
 	}
 	return Status{
-		Slug:       s.Slug,
-		Current:    s.Current,
-		Completed:  completed,
-		Codebases:  cbs,
-		Services:   svcs,
-		FactsCount: factsCount,
+		Slug: s.Slug, Current: s.Current, Completed: completed,
+		Codebases: cbs, Services: svcs, FactsCount: factsCount,
 	}
 }

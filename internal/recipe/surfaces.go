@@ -41,9 +41,9 @@ type SurfaceInputs struct {
 
 // Violation is one finding from a ValidateFn. Empty return means pass.
 type Violation struct {
-	Code    string
-	Path    string
-	Message string
+	Code    string `json:"code"`
+	Path    string `json:"path,omitempty"`
+	Message string `json:"message"`
 }
 
 // InputFn assembles the typed inputs a surface needs. Phase 2 implements.

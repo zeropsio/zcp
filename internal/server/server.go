@@ -14,6 +14,7 @@ import (
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/recipe"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/tools"
@@ -137,6 +138,20 @@ func (s *Server) registerTools() {
 	// both container detection AND binary presence on PATH.
 	if s.rtInfo.InContainer && ops.AgentBrowserAvailable() {
 		tools.RegisterBrowser(s.server)
+	}
+
+	// zcprecipator3 (v3) recipe engine lives alongside v2's zerops_workflow.
+	// Registered only when ZCP_RECIPE_V3=1; ships unexposed by default
+	// during the strangler-fig window so v2 remains the active engine. See
+	// docs/zcprecipator3/plan.md §6 for actions and §15 commission plan.
+	if os.Getenv("ZCP_RECIPE_V3") == "1" {
+		mountRoot := os.Getenv("ZCP_RECIPE_MOUNT_ROOT")
+		if mountRoot == "" {
+			if home, err := os.UserHomeDir(); err == nil {
+				mountRoot = filepath.Join(home, "recipes")
+			}
+		}
+		recipe.Register(s.server, recipe.NewStore(mountRoot))
 	}
 }
 

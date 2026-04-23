@@ -8,18 +8,16 @@ package recipe
 type Role string
 
 const (
-	// RoleMonolith serves application routes AND renders views from a single
-	// codebase (full-stack frameworks — Laravel, Rails, Django, Next.js with
-	// server routes, SvelteKit with server hooks).
+	// RoleMonolith serves application routes AND renders views from a
+	// single codebase (full-stack framework shape).
 	RoleMonolith Role = "monolith"
-	// RoleAPI serves API routes, no rendered pages (API-first frameworks —
-	// NestJS, Express, FastAPI, Spring, Gin).
+	// RoleAPI serves API routes, no rendered pages (API-first shape).
 	RoleAPI Role = "api"
-	// RoleFrontend serves a static + hydrated client application, consumes
-	// an API over the network (Svelte, Vue, Astro, Angular with a BFF).
+	// RoleFrontend serves a static + hydrated client application and
+	// consumes an API over the network (pure-frontend shape).
 	RoleFrontend Role = "frontend"
-	// RoleWorker has no HTTP surface; it consumes queue / broker / scheduled
-	// work. May share a codebase with an API or run in its own codebase.
+	// RoleWorker has no HTTP surface; consumes queue / broker / scheduled
+	// work. May share a codebase with an API or run in its own.
 	RoleWorker Role = "worker"
 )
 

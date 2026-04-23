@@ -29,10 +29,10 @@ const (
 // the Agent tool; Parts lists the section identifiers in order so the
 // harness can trace what came from where.
 type Brief struct {
-	Kind  BriefKind
-	Body  string
-	Bytes int
-	Parts []string
+	Kind  BriefKind `json:"kind"`
+	Body  string    `json:"body"`
+	Bytes int       `json:"bytes"`
+	Parts []string  `json:"parts,omitempty"`
 }
 
 //go:embed all:content

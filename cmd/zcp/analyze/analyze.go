@@ -30,6 +30,8 @@ func Run(args []string) {
 	switch args[0] {
 	case "recipe-run":
 		runRecipeRun(args[1:])
+	case "recipe-run-v3":
+		runRecipeRunV3(args[1:])
 	case "generate-checklist":
 		runGenerateChecklist(args[1:])
 	default:
@@ -49,6 +51,8 @@ func printUsage() {
 Subcommands:
   recipe-run          Measure a zcprecipator2 deliverable tree + session logs;
                       emit machine-report.json.
+  recipe-run-v3       zcprecipator3 harness — raw walk + per-agent summaries +
+                      dispatch integrity + surface validation + delta mode.
   generate-checklist  Read machine-report.json; emit the analyst worksheet.
 
 Examples:

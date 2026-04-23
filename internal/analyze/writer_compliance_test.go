@@ -54,7 +54,7 @@ func TestReadme_ValidPass(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	p := filepath.Join(dir, "README.md")
-	if err := os.WriteFile(p, []byte(validReadme()), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(validReadme()), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	got := Readme(p)
@@ -74,7 +74,7 @@ func TestReadme_BrokenMarkersFail(t *testing.T) {
 	bad := strings.ReplaceAll(validReadme(), ":intro#", ":intro")
 	dir := t.TempDir()
 	p := filepath.Join(dir, "README.md")
-	if err := os.WriteFile(p, []byte(bad), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(bad), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	got := Readme(p)
@@ -101,7 +101,7 @@ func TestClaudeMd_ValidPass(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	p := filepath.Join(dir, "CLAUDE.md")
-	if err := os.WriteFile(p, []byte(validClaudeMd()), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(validClaudeMd()), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	got := ClaudeMd(p)
@@ -117,7 +117,7 @@ func TestClaudeMd_ShortFileFail(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	p := filepath.Join(dir, "CLAUDE.md")
-	if err := os.WriteFile(p, []byte("## Dev Loop\nshort\n"), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte("## Dev Loop\nshort\n"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	got := ClaudeMd(p)

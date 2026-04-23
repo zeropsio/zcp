@@ -15,7 +15,7 @@ func writeMainSession(t *testing.T, records []string) string {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main-session.jsonl")
 	body := strings.Join(records, "\n") + "\n"
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatalf("write fixture: %v", err)
 	}
 	return dir
