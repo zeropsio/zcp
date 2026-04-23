@@ -202,16 +202,7 @@ func buildServiceSnapshots(
 	ws *WorkSession,
 	selfHostname string,
 ) []ServiceSnapshot {
-	metaByHost := make(map[string]*ServiceMeta, len(metas))
-	for _, m := range metas {
-		if m == nil {
-			continue
-		}
-		metaByHost[m.Hostname] = m
-		if m.StageHostname != "" {
-			metaByHost[m.StageHostname] = m
-		}
-	}
+	metaByHost := ManagedRuntimeIndex(metas)
 
 	out := make([]ServiceSnapshot, 0, len(services))
 	for _, svc := range services {
