@@ -78,7 +78,7 @@ func resolveKnowledgeMode(engine *workflow.Engine, inputMode string) string {
 func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platform.Client, cache *ops.StackTypeCache, tracker *ops.KnowledgeTracker, engine *workflow.Engine) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_knowledge",
-		Description: "Read-only access to published Zerops knowledge. NOT for authoring a new recipe via zerops_recipe — that pipeline streams its own research and emits YAML deterministically. Pick ONE mode (mixing rejected): recipe=NAME reads a published guide; scope=\"infrastructure\" before YAML in develop/bootstrap; runtime=/services= for stack briefing; query=\"phrase\" for free-text search. Optional mode= overrides the workflow-mode filter.",
+		Description: "Read-only Zerops knowledge. NOT during zerops_recipe research phase — services/versions come from the research atom. After research, scaffold/feature/writer sub-agents SHOULD consult for managed-service connection patterns (postgresql, valkey, nats, object-storage, meilisearch) before writing client code. Pick ONE mode (mixing rejected): recipe=NAME reads a guide; scope=\"infrastructure\" before YAML in develop/bootstrap; runtime=/services= for stack briefing; query=\"phrase\" for free-text search.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Zerops knowledge access",
 			ReadOnlyHint:   true,

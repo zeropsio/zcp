@@ -6,12 +6,26 @@
 - Trust `X-Forwarded-*` (the L7 balancer sets them).
 - `zerops.yaml run.ports`: `{ port: <PORT>, httpSupport: true }`.
 
-## Managed services
+## Before writing client code — consult `zerops_knowledge`
+
+For each managed service in the plan, call
+`zerops_knowledge runtime=<type>` or
+`zerops_knowledge query="<service> connection"` BEFORE writing client
+setup. The guide supplies the library config shape, exact env-var
+names, auth expectations, and scheme. Do NOT compose from framework
+habit — `nats://user:pass@host` URLs when the library takes separate
+`{servers, user, pass}` fields, or `http://` on object-storage (it's
+`https://`), become self-inflicted bugs that classify as
+`framework-quirk` and get discarded at editorial-review.
+
+Fall back to `zerops_discover includeEnvs=true` output when the guide
+is silent — that catalog is authoritative for which keys to read.
+
+## Managed services — platform rules
 
 - Cross-service env vars auto-inject project-wide. Do NOT declare
   `DB_HOST: ${db_hostname}` — the platform copy and the alias collide
   and blank at container start (self-shadow). Cite `env-var-model`.
-- Valkey: auth-free. Postgres: `{hostname}_{user,password,hostname,port}`.
 
 ## Migrations / one-time setup
 

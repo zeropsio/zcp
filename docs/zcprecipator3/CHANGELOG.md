@@ -189,3 +189,82 @@ Two options to fix when it bites:
 
 Deferred until a dogfood run hits it.
 
+---
+
+## 2026-04-23 even later — v9.5.6: zerops_knowledge scope + scaffold consults-before-writing
+
+### Context
+
+Run 6 dogfood (`runs/6/`) with v9.5.5. Research + provision + scaffold
+dispatch + three sub-agent deployments + preship all green — the core
+pipeline is now unblocked end-to-end. But the sub-agents surfaced four
+runtime "gotchas" that all classify as self-inflicted / framework-quirk
+per `docs/spec-content-surfaces.md` — none are platform traps, all are
+agent discovery errors corrected at deploy time:
+
+- nats.js v2 config takes structured `{servers, user, pass}` fields;
+  sub-agent composed `nats://user:pass@host:port` URL and got rejected.
+- Object-storage endpoint is `https://`; sub-agent wrote `http://` and
+  hit 301-to-HTML-parse failure on S3 SDK v3.
+- NestJS worker uses `createMicroservice`, not `create()`; sub-agent
+  used the HTTP factory first.
+- Vite preview log format doesn't match verify `startup_detected` regex
+  (engine-side false negative, not gotcha material).
+
+Per `spec-content-surfaces.md` classification taxonomy:
+- "Framework quirk" → **DISCARD** (framework docs, not Zerops recipe)
+- "Self-inflicted" → **DISCARD** (our code had a bug; reasonable porter
+  won't hit it)
+
+All four would be correctly refused at editorial-review even if
+recorded. Fixing `zerops_record_fact` to accept v3 sessions (the
+obvious next-like-v9.5.5 move) would record more discardable garbage,
+not solve the content-quality problem.
+
+### Root cause
+
+None of the three scaffold sub-agents called `zerops_knowledge` during
+their runs. They worked from framework training + trial-and-error at
+deploy. The reason: v9.5.1's `zerops_knowledge` description rewrite
+said **"NOT for authoring a new recipe via zerops_recipe"**. That
+exclusion was meant to stop the MAIN agent during RESEARCH from
+substituting zerops_knowledge for its framework knowledge (picking
+services/versions). Over-broadened in v9.5.1: scaffold / feature /
+writer sub-agents read "recipe authoring" as covering their phase too,
+and skipped the one tool that would have told them "nats uses
+structured fields" and "object-storage is https".
+
+### Fixes shipped
+
+1. **`zerops_knowledge` description narrowed** (`internal/tools/knowledge.go`)
+   — exclusion scoped to `zerops_recipe` *research phase* only;
+   sub-agents explicitly encouraged to consult for managed-service
+   connection patterns before writing client code. Word count stays
+   under the 60-word annotation cap.
+
+2. **Scaffold `platform_principles.md` adds "Before writing client
+   code" section** — every scaffold sub-agent's brief now tells it to
+   call `zerops_knowledge runtime=<type>` or
+   `zerops_knowledge query="<service> connection"` for each managed
+   service BEFORE writing setup. Names the exact self-inflicted bugs
+   that come from skipping (nats URL composition, object-storage
+   scheme). Fits the 3 KB scaffold brief cap — earlier draft blew past
+   and had to be tightened.
+
+### Deeper lesson
+
+The KB surface captures ONLY platform×framework intersections — not
+agent self-inflicted bugs. The "four lost gotchas" framing from run-6
+analysis was wrong: the right fix is upstream (stop generating
+self-inflicted bugs by making sub-agents consult authoritative sources
+first), not downstream (record more of them so editorial-review can
+discard them).
+
+### Still deferred
+
+- `zerops_record_fact` + `zerops_workspace_manifest` still gate on v2's
+  `engine.SessionID()`. Will bite at finalize (writer reads
+  `workspace_manifest`). Same one-file fix pattern as v9.5.5's
+  workflow-context probe — deferred until finalize actually hits it.
+- `requireAdoption` gate on recipe-provisioned services (see v9.5.5
+  section).
