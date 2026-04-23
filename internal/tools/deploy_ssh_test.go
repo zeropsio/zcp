@@ -240,7 +240,7 @@ func TestDeployTool_ActiveDeploy_WithBuildWarnings(t *testing.T) {
 			AccessToken: "tok", URL: "https://log.example.com/logs",
 		})
 	logFetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
-		{Message: "WARN: deployFiles paths not found: dist"},
+		{Severity: "Warning", Facility: "local0", Tag: "zbuilder@av-1", Message: "WARN: deployFiles paths not found: dist"},
 	})
 	ssh := &stubSSH{output: []byte("ok")}
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
@@ -398,8 +398,8 @@ func TestDeployTool_BuildFailed_WithBuildLogs(t *testing.T) {
 			AccessToken: "tok", URL: "https://log.example.com/logs",
 		})
 	logFetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
-		{Message: "npm error code ERESOLVE"},
-		{Message: "Build command failed with exit code 1"},
+		{Facility: "local0", Tag: "zbuilder@av-1", Message: "npm error code ERESOLVE"},
+		{Facility: "local0", Tag: "zbuilder@av-1", Message: "Build command failed with exit code 1"},
 	})
 	ssh := &stubSSH{output: []byte("ok")}
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
@@ -720,7 +720,7 @@ func TestDeployTool_PreparingRuntimeFailed(t *testing.T) {
 			AccessToken: "tok", URL: "https://log.example.com/logs",
 		})
 	logFetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
-		{Message: "prepare command failed"},
+		{Facility: "local0", Tag: "zbuilder@av-1", Message: "prepare command failed"},
 	})
 	ssh := &stubSSH{output: []byte("ok")}
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}

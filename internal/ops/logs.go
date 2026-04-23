@@ -57,9 +57,14 @@ func FetchLogs(
 	}
 
 	// Fetch limit+1 to detect if more entries exist beyond the requested limit.
+	// Facility defaults to "application" — the agent-facing surface is the
+	// app log stream, not daemon noise (sshfs, systemd). If a future use
+	// case needs daemon or webserver logs, add a Facility field to the
+	// tool input schema rather than widening the default.
 	entries, err := fetcher.FetchLogs(ctx, logAccess, platform.LogFetchParams{
 		ServiceID: svc.ID,
 		Severity:  severity,
+		Facility:  "application",
 		Since:     sinceTime,
 		Limit:     limit + 1,
 		Search:    search,

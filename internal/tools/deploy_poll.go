@@ -52,7 +52,9 @@ func pollDeployBuild(
 		// Fetch build warnings/errors even on success (best-effort).
 		// Surfaces issues like silent build failures, missing deployFiles output.
 		if logFetcher != nil {
-			buildWarnings := ops.FetchBuildWarnings(ctx, client, logFetcher, projectID, event, 20)
+			// Limit=100: client-side tag filter is already scoping to this
+			// build; 100 is comfortable headroom for chatty builds.
+			buildWarnings := ops.FetchBuildWarnings(ctx, client, logFetcher, projectID, event, 100)
 			if len(buildWarnings) > 0 {
 				result.BuildLogs = buildWarnings
 				result.BuildLogsSource = buildContainerSource
@@ -76,7 +78,13 @@ func pollDeployBuild(
 			// DEPLOY_FAILED: runtime container has the initCommand stderr.
 			switch event.Status {
 			case statusDeployFailed:
-				result.RuntimeLogs = ops.FetchRuntimeLogs(ctx, client, logFetcher, projectID, result.TargetServiceID, 50)
+				// Anchor the runtime log fetch to the current container's
+				// creation time so stale crashes from a previous deploy's
+				// container do not bleed in. Phase 5 will swap this to
+				// event.Build.ContainerCreationStart; for now PipelineFinish
+				// approximates (container is created immediately after build).
+				creation := containerCreationAnchor(event)
+				result.RuntimeLogs = ops.FetchRuntimeLogs(ctx, client, logFetcher, projectID, result.TargetServiceID, creation, 50)
 				if len(result.RuntimeLogs) > 0 {
 					result.RuntimeLogsSource = "runtime_container"
 				}
@@ -104,6 +112,35 @@ func failedPhaseForStatus(status string) string {
 		return "init"
 	}
 	return ""
+}
+
+// containerCreationAnchor returns the authoritative Since anchor for a
+// FetchRuntimeLogs call. Order of preference (most → least precise):
+//  1. Build.ContainerCreationStart — exact "new container begins here".
+//  2. Build.PipelineFinish — container spins up immediately after build.
+//  3. Build.PipelineFailed — if build failed, use that as upper bound.
+//  4. Build.PipelineStart — earliest sensible anchor.
+//
+// Zero time means no anchor available; the caller receives unanchored
+// (best-effort) runtime logs rather than an error.
+func containerCreationAnchor(event *platform.AppVersionEvent) time.Time {
+	if event == nil || event.Build == nil {
+		return time.Time{}
+	}
+	for _, raw := range []*string{
+		event.Build.ContainerCreationStart,
+		event.Build.PipelineFinish,
+		event.Build.PipelineFailed,
+		event.Build.PipelineStart,
+	} {
+		if raw == nil {
+			continue
+		}
+		if t, err := time.Parse(time.RFC3339, *raw); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
 }
 
 // calcBuildDuration computes the build pipeline duration from event build info.

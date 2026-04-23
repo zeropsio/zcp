@@ -4,9 +4,16 @@ package ops
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
+
+// recentTS returns a timestamp within parseSince's default 1h window so these
+// tests exercise real filter behaviour (the mock applies Since per Phase 2).
+func recentTS(offsetSeconds int) string {
+	return time.Now().UTC().Add(time.Duration(offsetSeconds) * time.Second).Format(time.RFC3339Nano)
+}
 
 func TestFetchLogs_Success(t *testing.T) {
 	t.Parallel()
@@ -21,8 +28,8 @@ func TestFetchLogs_Success(t *testing.T) {
 		})
 
 	fetcher := platform.NewMockLogFetcher().WithEntries([]platform.LogEntry{
-		{Timestamp: "2024-01-01T00:00:00Z", Severity: "info", Message: "started"},
-		{Timestamp: "2024-01-01T00:00:01Z", Severity: "info", Message: "ready"},
+		{Timestamp: recentTS(-120), Severity: "info", Facility: "local0", Message: "started"},
+		{Timestamp: recentTS(-60), Severity: "info", Facility: "local0", Message: "ready"},
 	})
 
 	result, err := FetchLogs(context.Background(), mock, fetcher, "proj-1", "api", "", "", 100, "")
@@ -93,7 +100,7 @@ func TestFetchLogs_HasMore(t *testing.T) {
 	// FetchLogs requests limit+1 internally, so mock must return >limit entries.
 	entries := make([]platform.LogEntry, 101)
 	for i := range entries {
-		entries[i] = platform.LogEntry{Timestamp: "2024-01-01T00:00:00Z", Severity: "info", Message: "log"}
+		entries[i] = platform.LogEntry{Timestamp: recentTS(-i), Severity: "info", Facility: "local0", Message: "log"}
 	}
 
 	mock := platform.NewMock().
@@ -125,7 +132,7 @@ func TestFetchLogs_HasMore_ExactBoundary(t *testing.T) {
 	// Exactly limit entries should NOT report hasMore (no false positive).
 	entries := make([]platform.LogEntry, 100)
 	for i := range entries {
-		entries[i] = platform.LogEntry{Timestamp: "2024-01-01T00:00:00Z", Severity: "info", Message: "log"}
+		entries[i] = platform.LogEntry{Timestamp: recentTS(-i), Severity: "info", Facility: "local0", Message: "log"}
 	}
 
 	mock := platform.NewMock().
