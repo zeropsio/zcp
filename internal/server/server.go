@@ -130,9 +130,15 @@ func (s *Server) registerTools() {
 	tools.RegisterVerify(s.server, s.client, s.logFetcher, projectID, stateDir)
 	tools.RegisterPreprocess(s.server)
 
+	// Shared HTTP client for readiness probes (post-deploy subdomain
+	// auto-enable, post-subdomain L7 warmup). 15 s ceiling matches the
+	// per-tool maximum; individual readiness waits impose their own tight
+	// request-level timeouts on top.
+	httpClient := &http.Client{Timeout: 15 * time.Second}
+
 	// Mutating tools — deploy registration routes by environment.
 	if s.sshDeployer != nil {
-		tools.RegisterDeploySSH(s.server, s.client, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine)
+		tools.RegisterDeploySSH(s.server, s.client, httpClient, projectID, s.sshDeployer, s.authInfo, s.logFetcher, s.rtInfo, stateDir, wfEngine)
 		// v8.94: batch-deploy keeps multi-target parallelism server-side
 		// so the MCP STDIO channel isn't saturated (v23 "Not connected"
 		// failure class). SSH-only — local deploys don't face the same
@@ -152,7 +158,7 @@ func (s *Server) registerTools() {
 	tools.RegisterEnv(s.server, s.client, projectID, s.rtInfo.ServiceName)
 	tools.RegisterImport(s.server, s.client, projectID, stackCache, schemaCache, wfEngine, stateDir)
 	tools.RegisterDelete(s.server, s.client, projectID, stateDir, s.mounter, s.rtInfo)
-	tools.RegisterSubdomain(s.server, s.client, &http.Client{Timeout: 15 * time.Second}, projectID)
+	tools.RegisterSubdomain(s.server, s.client, httpClient, projectID)
 	tools.RegisterMount(s.server, s.client, projectID, s.mounter, s.rtInfo, stateDir, wfEngine)
 
 	// Container-only: zerops_browser wraps agent-browser with a guaranteed

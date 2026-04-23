@@ -46,9 +46,14 @@ func deploySSHInputSchema() *jsonschema.Schema {
 }
 
 // RegisterDeploySSH registers the zerops_deploy tool for SSH (container) mode.
+// httpClient is used by the post-success subdomain auto-enable hook to probe
+// L7 readiness before returning — empirically the L7 route takes 440ms-1.3s
+// to propagate after EnableSubdomainAccess finishes
+// (plans/archive/subdomain-robustness.md §1.3). Tests inject a stub.
 func RegisterDeploySSH(
 	srv *mcp.Server,
 	client platform.Client,
+	httpClient ops.HTTPDoer,
 	projectID string,
 	sshDeployer ops.SSHDeployer,
 	authInfo *auth.Info,
@@ -138,6 +143,12 @@ func RegisterDeploySSH(
 
 		if result != nil && result.Status == statusDeployed {
 			attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
+			// Plan 2: activate L7 subdomain for dev/stage/simple/standard/
+			// local-stage modes on first deploy (idempotent via ops.Subdomain's
+			// check-before-enable). Runs before RecordDeployAttempt so the
+			// result payload surfaces SubdomainAccessEnabled + SubdomainURL
+			// alongside the deploy outcome.
+			maybeAutoEnableSubdomain(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
 		} else if result != nil {
 			attempt.Error = fmt.Sprintf("deploy status %s", result.Status)
 		}
