@@ -1,0 +1,79 @@
+#zeropsPreprocessor=on
+
+# HA production — two replicas per runtime, DEDICATED CPU.
+project:
+  name: synth-showcase-ha-prod
+  corePackage: SERIOUS
+  envVariables:
+    APP_SECRET: <@generateRandomString(<32>)>
+    PROD_API_URL: ${api_zeropsSubdomainHost}
+
+services:
+  # API in HA — two replicas behind the L7 balancer.
+  - hostname: api
+    type: nodejs@22
+    priority: 5
+    zeropsSetup: prod
+    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-api
+    enableSubdomainAccess: true
+    minContainers: 2
+    verticalAutoscaling:
+      cpuMode: DEDICATED
+      minRam: 0.5
+      minFreeRamGB: 0.5
+
+  - hostname: app
+    type: nodejs@22
+    zeropsSetup: prod
+    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-app
+    enableSubdomainAccess: true
+    minContainers: 2
+    verticalAutoscaling:
+      cpuMode: DEDICATED
+      minRam: 0.5
+      minFreeRamGB: 0.5
+
+  - hostname: worker
+    type: nodejs@22
+    zeropsSetup: prod
+    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-worker
+    minContainers: 2
+    verticalAutoscaling:
+      cpuMode: DEDICATED
+      minRam: 0.5
+      minFreeRamGB: 0.5
+
+  # Postgres HA — managed failover.
+  - hostname: db
+    type: postgresql@18
+    priority: 10
+    mode: HA
+    verticalAutoscaling:
+      cpuMode: DEDICATED
+      minRam: 1
+      minFreeRamGB: 0.5
+
+  - hostname: cache
+    type: valkey@7
+    priority: 10
+    mode: HA
+    verticalAutoscaling:
+      cpuMode: DEDICATED
+      minRam: 1
+      minFreeRamGB: 0.5
+
+  - hostname: broker
+    type: nats@2
+    priority: 10
+    mode: HA
+    verticalAutoscaling:
+      cpuMode: DEDICATED
+      minRam: 1
+      minFreeRamGB: 0.5
+
+  # Object storage — private policy.
+  - hostname: storage
+    type: object-storage
+    objectStorageSize: 1
+    objectStoragePolicy: private
+

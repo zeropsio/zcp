@@ -1,0 +1,188 @@
+package recipe
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// syntheticShowcasePlan builds a framework-agnostic plan with three
+// codebases (api + app + worker) and four managed services (db, cache,
+// broker, storage). Hostnames are generic so the fixture never teaches
+// framework specifics.
+func syntheticShowcasePlan() *Plan {
+	return &Plan{
+		Slug:      "synth-showcase",
+		Framework: "synth",
+		Tier:      "showcase",
+		Research: ResearchResult{
+			CodebaseShape:  "3",
+			NeedsAppSecret: true,
+			AppSecretKey:   "APP_SECRET",
+			Description:    "synthetic showcase plan used as yaml-emitter fixture",
+		},
+		Codebases: []Codebase{
+			{Hostname: "api", Role: RoleAPI, BaseRuntime: "nodejs@22"},
+			{Hostname: "app", Role: RoleFrontend, BaseRuntime: "nodejs@22"},
+			{Hostname: "worker", Role: RoleWorker, BaseRuntime: "nodejs@22", IsWorker: true},
+		},
+		Services: []Service{
+			{Hostname: "db", Type: "postgresql@18", Kind: ServiceKindManaged, Priority: 10},
+			{Hostname: "cache", Type: "valkey@7", Kind: ServiceKindManaged, Priority: 10},
+			{Hostname: "broker", Type: "nats@2", Kind: ServiceKindManaged, Priority: 10},
+			{Hostname: "storage", Type: "object-storage", Kind: ServiceKindStorage},
+		},
+		EnvComments: map[string]EnvComments{
+			"0": {
+				Project: "AI agent workspace — a dev slot per codebase for SSH iteration\nplus a stage slot that validates the production build path.",
+				Service: map[string]string{
+					"apidev":   "API dev — SSHFS-mounted source, hot reload.",
+					"apistage": "API stage — prod build validation.",
+					"db":       "Postgres for the greetings table.",
+				},
+			},
+			"5": {
+				Project: "HA production — two replicas per runtime, DEDICATED CPU.",
+				Service: map[string]string{
+					"api":     "API in HA — two replicas behind the L7 balancer.",
+					"db":      "Postgres HA — managed failover.",
+					"storage": "Object storage — private policy.",
+				},
+			},
+		},
+		ProjectEnvVars: map[string]map[string]string{
+			"0": {"DEV_API_URL": "${api_zeropsSubdomainHost}"},
+			"5": {"PROD_API_URL": "${api_zeropsSubdomainHost}"},
+		},
+	}
+}
+
+func TestYAMLEmitter_Tier0_Dev(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	got, err := EmitImportYAML(plan, 0)
+	if err != nil {
+		t.Fatalf("EmitImportYAML: %v", err)
+	}
+
+	// Preprocessor directive first line when secret present.
+	if !strings.HasPrefix(got, "#zeropsPreprocessor=on") {
+		t.Errorf("tier 0: missing preprocessor directive at BOF; got first line %q",
+			firstLine(got))
+	}
+	// Secret field emitted at project level.
+	mustContain(t, got, "APP_SECRET: <@generateRandomString(<32>)>")
+	// Per-tier project var emitted.
+	mustContain(t, got, "DEV_API_URL: ${api_zeropsSubdomainHost}")
+	// Dev services emitted for each runtime codebase (worker always gets its own).
+	mustContain(t, got, "- hostname: apidev")
+	mustContain(t, got, "- hostname: apistage")
+	mustContain(t, got, "- hostname: appdev")
+	mustContain(t, got, "- hostname: appstage")
+	mustContain(t, got, "- hostname: workerdev")
+	mustContain(t, got, "- hostname: workerstage")
+	// Managed services have mode NON_HA at tier 0.
+	mustContain(t, got, "mode: NON_HA")
+	// Agent comment landed on apidev block.
+	mustContain(t, got, "API dev — SSHFS-mounted source, hot reload.")
+	// Project name includes tier suffix.
+	mustContain(t, got, "name: synth-showcase-agent")
+}
+
+func TestYAMLEmitter_Tier5_HAProd(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	got, err := EmitImportYAML(plan, 5)
+	if err != nil {
+		t.Fatalf("EmitImportYAML: %v", err)
+	}
+
+	mustContain(t, got, "name: synth-showcase-ha-prod")
+	mustContain(t, got, "corePackage: SERIOUS")
+	mustContain(t, got, "mode: HA")
+	mustContain(t, got, "cpuMode: DEDICATED")
+	mustContain(t, got, "minContainers: 2")
+	// No dev slots at tier 5.
+	if strings.Contains(got, "hostname: apidev") {
+		t.Errorf("tier 5 must not emit dev services")
+	}
+	// Base hostnames appear (single services, not dev+stage pairs).
+	mustContain(t, got, "- hostname: api")
+	mustContain(t, got, "- hostname: app")
+	mustContain(t, got, "- hostname: worker")
+	// Object storage fields appear.
+	mustContain(t, got, "objectStorageSize: 1")
+	mustContain(t, got, "objectStoragePolicy: private")
+}
+
+func TestYAMLEmitter_NoSecret_NoPreprocessor(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.Research.NeedsAppSecret = false
+	plan.Research.AppSecretKey = ""
+
+	got, err := EmitImportYAML(plan, 0)
+	if err != nil {
+		t.Fatalf("EmitImportYAML: %v", err)
+	}
+	if strings.HasPrefix(got, "#zeropsPreprocessor=on") {
+		t.Errorf("preprocessor must not appear when NeedsAppSecret=false")
+	}
+	if strings.Contains(got, "APP_SECRET:") {
+		t.Errorf("secret env var must not appear when NeedsAppSecret=false")
+	}
+}
+
+func TestYAMLEmitter_MatchesFixture(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+
+	// Fixture: check all six tiers deterministic. Regenerate goldens with
+	// `go test -run TestYAMLEmitter_MatchesFixture -update`.
+	for tierIndex := range 6 {
+		got, err := EmitImportYAML(plan, tierIndex)
+		if err != nil {
+			t.Fatalf("tier %d: EmitImportYAML: %v", tierIndex, err)
+		}
+		goldenPath := filepath.Join("testdata", "fixtures", "synth-showcase",
+			tierFolder(tierIndex)+".yaml")
+		if os.Getenv("UPDATE_FIXTURES") == "1" {
+			if err := os.MkdirAll(filepath.Dir(goldenPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(goldenPath, []byte(got), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
+		want, err := os.ReadFile(goldenPath)
+		if err != nil {
+			t.Fatalf("tier %d: read golden %s: %v", tierIndex, goldenPath, err)
+		}
+		if got != string(want) {
+			t.Errorf("tier %d: output mismatches golden %s", tierIndex, goldenPath)
+		}
+	}
+}
+
+func tierFolder(i int) string {
+	t, _ := TierAt(i)
+	return t.Folder
+}
+
+func mustContain(t *testing.T, got, want string) {
+	t.Helper()
+	if !strings.Contains(got, want) {
+		t.Errorf("output missing substring:\n  want: %q", want)
+	}
+}
+
+func firstLine(s string) string {
+	line, _, _ := strings.Cut(s, "\n")
+	return line
+}

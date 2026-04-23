@@ -1,0 +1,122 @@
+package recipe
+
+import (
+	"errors"
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// Resolver locates a parent recipe on disk. MountRoot is a directory
+// containing one subdirectory per published slug (the zeropsio/recipes
+// clone root, or a staging mount during chain tests).
+type Resolver struct {
+	MountRoot string
+}
+
+// ErrNoParent is returned by ResolveChain when the recipe has no parent
+// or the parent tree is not present on disk. Callers treat this as a
+// signal to start first-time framework discovery, not as an error.
+var ErrNoParent = errors.New("recipe has no parent")
+
+// ResolveChain returns the ParentRecipe for a recipe slug. If the recipe
+// has no parent (minimal / hello-world), or the parent tree is not
+// present on disk, ResolveChain returns ErrNoParent with a nil parent.
+// The chain is deterministic and flat per plan §7:
+//
+//   - {framework}-showcase  → {framework}-minimal
+//   - {framework}-minimal   → no parent
+//   - hello-world-{lang}    → no parent
+func ResolveChain(r Resolver, slug string) (*ParentRecipe, error) {
+	parentSlug := parentSlugFor(slug)
+	if parentSlug == "" {
+		return nil, ErrNoParent
+	}
+	parentDir := filepath.Join(r.MountRoot, parentSlug)
+	if _, err := os.Stat(parentDir); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, ErrNoParent
+		}
+		return nil, fmt.Errorf("stat parent dir %s: %w", parentDir, err)
+	}
+	return loadParent(parentSlug, parentDir)
+}
+
+// parentSlugFor applies the fixed chain rules. Returns "" for no parent.
+func parentSlugFor(slug string) string {
+	switch {
+	case strings.HasSuffix(slug, "-showcase"):
+		return strings.TrimSuffix(slug, "-showcase") + "-minimal"
+	default:
+		return ""
+	}
+}
+
+// loadParent reads a parent recipe's published tree from disk. Not every
+// codebase or env file must exist — missing files are skipped. Returns an
+// error only for read failures on existing files.
+func loadParent(slug, dir string) (*ParentRecipe, error) {
+	out := &ParentRecipe{
+		Slug:       slug,
+		Tier:       parentTierForSlug(slug),
+		Codebases:  make(map[string]ParentCodebase),
+		EnvImports: make(map[string]string),
+		SourceRoot: dir,
+	}
+
+	codebasesDir := filepath.Join(dir, "codebases")
+	if entries, err := os.ReadDir(codebasesDir); err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			cb, err := loadParentCodebase(filepath.Join(codebasesDir, e.Name()))
+			if err != nil {
+				return nil, fmt.Errorf("parent codebase %s: %w", e.Name(), err)
+			}
+			out.Codebases[e.Name()] = cb
+		}
+	}
+
+	for i := range 6 {
+		tier, _ := TierAt(i)
+		envDir := filepath.Join(dir, tier.Folder)
+		content, err := os.ReadFile(filepath.Join(envDir, "import.yaml"))
+		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("parent tier %d import.yaml: %w", i, err)
+		}
+		out.EnvImports[envKey(tier)] = string(content)
+	}
+	return out, nil
+}
+
+func parentTierForSlug(slug string) string {
+	switch {
+	case strings.HasSuffix(slug, "-minimal"):
+		return "minimal"
+	case strings.HasPrefix(slug, "hello-world-"):
+		return "hello-world"
+	default:
+		return ""
+	}
+}
+
+func loadParentCodebase(dir string) (ParentCodebase, error) {
+	cb := ParentCodebase{SourceRoot: dir}
+	if b, err := os.ReadFile(filepath.Join(dir, "README.md")); err == nil {
+		cb.README = string(b)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return cb, err
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "zerops.yaml")); err == nil {
+		cb.ZeropsYAML = string(b)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return cb, err
+	}
+	return cb, nil
+}
