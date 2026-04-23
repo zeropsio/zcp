@@ -1,0 +1,39 @@
+#!/bin/bash
+# commit-msg hook: refuses commits that modify zcprecipator2 (v2) files
+# unless the commit message body contains [workflow-v2-hotfix].
+#
+# v2 lives at internal/workflow/recipe*.go + internal/content/workflows/recipe*
+# and is frozen at tag v8.113.0-archive.
+#
+# Install: git config core.hooksPath .githooks (done by make setup).
+
+set -e
+ROOT=$(git rev-parse --show-toplevel)
+cd "$ROOT"
+
+# $1 is the path to the file containing the commit message.
+msg_file="$1"
+
+# Ignore if hook disabled via env var (for scripted operations).
+[ "${SKIP_FREEZE_V2:-}" = "1" ] && exit 0
+
+# Collect staged paths touching guarded globs.
+touched=$(git diff --cached --name-only --diff-filter=AMRD | \
+    grep -E '^internal/workflow/recipe[^/]*\.go$|^internal/content/workflows/recipe(\.md|/)' || true)
+
+[ -z "$touched" ] && exit 0
+
+# Allow override via message trailer in the actual commit message.
+if grep -q '\[workflow-v2-hotfix\]' "$msg_file"; then
+    echo "==> freeze-v2: hotfix tag present, allowing v2 edit" >&2
+    exit 0
+fi
+
+echo "==> freeze-v2: refusing to modify zcprecipator2 files" >&2
+echo "    Touched:" >&2
+echo "$touched" | sed 's/^/      /' >&2
+echo "" >&2
+echo "    v2 is frozen at tag v8.113.0-archive. v3 lives at internal/recipe/." >&2
+echo "    Override with [workflow-v2-hotfix] in commit message if this is a" >&2
+echo "    genuine v2 hotfix during the v3 strangler-fig transition." >&2
+exit 1
