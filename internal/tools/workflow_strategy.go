@@ -75,10 +75,12 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 
 	// Only complete (bootstrapped) metas are valid strategy targets — auto-
 	// creating orphan metas here poisons every downstream consumer (router,
-	// briefing, locks).
+	// briefing, locks). FindServiceMeta resolves stage hostnames of a
+	// container+standard pair to their dev-keyed meta file (pair-keyed
+	// invariant, spec-workflows.md §8 E8).
 	updated := make([]string, 0, len(input.Strategies))
 	for hostname, strategy := range input.Strategies {
-		meta, err := workflow.ReadServiceMeta(stateDir, hostname)
+		meta, err := workflow.FindServiceMeta(stateDir, hostname)
 		if err != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrServiceNotFound,
@@ -230,7 +232,7 @@ func buildStrategySetupSnapshots(stateDir string, strategies map[string]string, 
 			Bootstrapped: true,
 			Strategy:     workflow.DeployStrategy(strategy),
 		}
-		if meta, _ := workflow.ReadServiceMeta(stateDir, hostname); meta != nil {
+		if meta, _ := workflow.FindServiceMeta(stateDir, hostname); meta != nil {
 			snap.Mode = meta.Mode
 			if meta.StageHostname != "" {
 				snap.StageHostname = meta.StageHostname
@@ -281,16 +283,11 @@ func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client
 	liveStatus := make(map[string]string)
 
 	metas, _ := workflow.ListServiceMetas(stateDir)
-	metaMap := make(map[string]*workflow.ServiceMeta, len(metas))
-	for _, m := range metas {
-		metaMap[m.Hostname] = m
-	}
-	stageOf := make(map[string]bool)
-	for _, m := range metas {
-		if m.IsComplete() && m.StageHostname != "" {
-			stageOf[m.StageHostname] = true
-		}
-	}
+	// Pair-keyed index (spec-workflows.md §8 E8): both halves of a
+	// standard-mode pair resolve to the same *ServiceMeta; an incomplete meta
+	// still appears under its hostname so the unmanaged-vs-known distinction
+	// below remains correct for orphan cases.
+	metaIdx := workflow.ManagedRuntimeIndex(metas)
 
 	if client != nil && projectID != "" {
 		if svcs, err := client.ListServices(ctx, projectID); err == nil {
@@ -301,8 +298,8 @@ func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client
 				liveHostnames = append(liveHostnames, s.Name)
 				liveStatus[s.Name] = s.Status
 				typeName := s.ServiceStackTypeInfo.ServiceStackTypeVersionName
-				if !workflow.IsManagedService(typeName) && !stageOf[s.Name] {
-					if m, ok := metaMap[s.Name]; !ok || !m.IsComplete() {
+				if !workflow.IsManagedService(typeName) {
+					if m, ok := metaIdx[s.Name]; !ok || !m.IsComplete() {
 						unmanagedRuntimes = append(unmanagedRuntimes, s.Name)
 					}
 				}

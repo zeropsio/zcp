@@ -94,6 +94,56 @@ func TestHandleStrategy_ValidUpdate(t *testing.T) {
 	}
 }
 
+// Pair-keyed invariant (spec-workflows.md §8 E8): setting strategy on a stage
+// hostname resolves to the same dev-keyed meta that owns the pair. Before
+// FindServiceMeta promotion, a stage hostname surfaced as
+// "Service appstage is not bootstrapped" because the direct file read missed
+// the pair file.
+func TestHandleStrategy_StageHostname_ResolvesToPair(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	// One meta file representing the standard pair, keyed by dev hostname.
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname:       "appdev",
+		StageHostname:  "appstage",
+		Mode:           workflow.PlanModeStandard,
+		BootstrappedAt: "2026-04-22",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	// Agent asks to set strategy on the stage half. Must resolve to the
+	// pair-meta and succeed.
+	input := WorkflowInput{Strategies: map[string]string{"appstage": workflow.StrategyPushDev}}
+	result, _, err := handleStrategy(input, dir, runtime.Info{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("strategy set on stage hostname must succeed (pair-keyed invariant), got: %s",
+			resultText(t, result))
+	}
+
+	// Strategy lands on the pair-meta (dev-keyed file).
+	meta, err := workflow.ReadServiceMeta(dir, "appdev")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta(appdev): %v", err)
+	}
+	if meta.DeployStrategy != workflow.StrategyPushDev {
+		t.Errorf("DeployStrategy on dev-keyed meta: want %q, got %q",
+			workflow.StrategyPushDev, meta.DeployStrategy)
+	}
+	if !meta.StrategyConfirmed {
+		t.Error("StrategyConfirmed: want true after strategy set")
+	}
+	// No second file created for the stage hostname — pair is one file.
+	if stageMeta, _ := workflow.ReadServiceMeta(dir, "appstage"); stageMeta != nil {
+		t.Errorf("stage-keyed meta file must not be created (pair-keyed invariant)")
+	}
+}
+
 func TestHandleStrategy_InvalidStrategy(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

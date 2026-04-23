@@ -83,17 +83,12 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
 	if err != nil || len(metas) == 0 {
 		return
 	}
-	metaMap := make(map[string]bool, len(metas)*2)
-	for _, m := range metas {
-		if m.IsComplete() {
-			metaMap[m.Hostname] = true
-			if m.StageHostname != "" {
-				metaMap[m.StageHostname] = true
-			}
-		}
-	}
+	// Pair-keyed index: both halves of a standard-mode pair resolve to the
+	// shared meta (spec-workflows.md §8 E8). Layer an IsComplete filter on
+	// top because ManagedByZCP should reflect a fully-bootstrapped state.
+	idx := workflow.ManagedRuntimeIndex(metas)
 	for i := range result.Services {
-		if metaMap[result.Services[i].Hostname] {
+		if m, ok := idx[result.Services[i].Hostname]; ok && m.IsComplete() {
 			result.Services[i].ManagedByZCP = true
 		}
 	}

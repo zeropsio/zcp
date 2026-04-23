@@ -188,7 +188,7 @@ func RecordDeployAttempt(stateDir, hostname string, attempt DeployAttempt) error
 	}
 	// Persistent deploy marker: once a deploy lands successfully, stamp the
 	// meta so the fact survives session closure. Only the first successful
-	// deploy stamps (idempotent). findMetaForHostname resolves both halves
+	// deploy stamps (idempotent). FindServiceMeta resolves both halves
 	// of a container+standard dev/stage pair to the single meta file.
 	if attempt.SucceededAt != "" {
 		_ = stampFirstDeployedAt(stateDir, hostname)
@@ -197,12 +197,12 @@ func RecordDeployAttempt(stateDir, hostname string, attempt DeployAttempt) error
 }
 
 // stampFirstDeployedAt writes FirstDeployedAt on the meta for hostname if
-// unset. Resolves hostname through findMetaForHostname so a stage-side
+// unset. Resolves hostname through FindServiceMeta so a stage-side
 // deploy stamps the dev-keyed meta file (container+standard case).
 // Best-effort: meta-less services (adopted without a local record) return
 // nil without error — stamping a missing file is a no-op, not a bug.
 func stampFirstDeployedAt(stateDir, hostname string) error {
-	meta, err := findMetaForHostname(stateDir, hostname)
+	meta, err := FindServiceMeta(stateDir, hostname)
 	if err != nil {
 		return fmt.Errorf("stamp first deployed: %w", err)
 	}

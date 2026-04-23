@@ -239,8 +239,10 @@ func currentEffectiveOrigin(current, provided string) string {
 // service's meta is on push-git but has no PushGitTrigger recorded —
 // the push succeeded on the git side, but Zerops won't auto-build
 // without either a webhook or a GitHub Actions workflow configured.
+// FindServiceMeta honors the pair-keyed invariant — a stage-hostname
+// target resolves to the dev-keyed meta file (spec-workflows.md §8 E8).
 func trackTriggerMissingWarning(stateDir, hostname string) string {
-	meta, _ := workflow.ReadServiceMeta(stateDir, hostname)
+	meta, _ := workflow.FindServiceMeta(stateDir, hostname)
 	if meta == nil || meta.DeployStrategy != workflow.StrategyPushGit {
 		return ""
 	}

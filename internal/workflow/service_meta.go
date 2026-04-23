@@ -303,12 +303,16 @@ func cleanIncompleteMetasForSession(stateDir, sessionID string) {
 	}
 }
 
-// findMetaForHostname returns the meta whose Hostname OR StageHostname matches.
-// Container+standard mode stores the meta as {dev}.json with a StageHostname
-// field, so a direct file lookup by the stage hostname misses. Fast path hits
-// the direct file; slow path scans metas for a StageHostname match.
-// Returns (nil, nil) when no meta tracks hostname.
-func findMetaForHostname(stateDir, hostname string) (*ServiceMeta, error) {
+// FindServiceMeta returns the meta whose Hostname OR StageHostname matches
+// — the disk-backed counterpart to ManagedRuntimeIndex. Honors the pair-keyed
+// invariant (spec-workflows.md §8 E8): container+standard and local+standard
+// store exactly one file per pair; a direct read by the non-primary hostname
+// would miss. Fast path hits the direct file; slow path scans metas for a
+// StageHostname match. Returns (nil, nil) when no meta tracks hostname.
+//
+// Use this from tool-layer handlers when you have a hostname but not a
+// pre-loaded meta slice. For slice→map construction, use ManagedRuntimeIndex.
+func FindServiceMeta(stateDir, hostname string) (*ServiceMeta, error) {
 	if meta, err := ReadServiceMeta(stateDir, hostname); err != nil || meta != nil {
 		return meta, err
 	}
