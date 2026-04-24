@@ -7,21 +7,22 @@ title: "Dev-server state triage — expectation → check → act"
 
 ### Dev-server state triage
 
-Before deploying, verifying, or iterating on a runtime service, work the
-triage rather than blind-starting a process.
+Before deploying, verifying, or iterating on a runtime service, run
+the triage rather than blind-starting a process.
 
-**Step 1 — Determine expectation** from service type + mode:
+**Step 1 — Determine the expectation** from `runtimeClass` + `mode`
+in the envelope:
 
-| Service class | Deployed shape | Dev-server owner |
+| Envelope shape | Deployed runtime shape | Dev-server lifecycle |
 |---|---|---|
-| Implicit-webserver (`php-nginx`, `php-apache`, `nginx`, `static`) | Always live post-deploy | Platform — no manual start |
-| Dynamic runtime, mode=`dev` | `zsc noop` idle | **Agent** — starts via tool |
-| Dynamic runtime, mode=`simple` / `stage` | Real `run.start` + `healthCheck` | Platform auto-starts |
+| `runtimeClass: implicit-webserver` | Always live post-deploy | Platform-owned — no manual start |
+| `runtimeClass: dynamic`, `mode: dev` | `zsc noop` idle container | You start it via `zerops_dev_server action=start` |
+| `runtimeClass: dynamic`, `mode: simple\|stage` | Foreground binary with `healthCheck` | Platform auto-starts and probes |
 
-If the service is implicit-webserver, static, or simple/stage-mode
-dynamic, you are done with this triage — the platform owns lifecycle.
+If the envelope reports implicit-webserver, static, or
+simple/stage-mode dynamic, triage ends — platform owns lifecycle.
 
-**Step 2 — Check current state.** For dev-mode dynamic runtimes:
+**Step 2 — Check current state** for dev-mode dynamic:
 
 ```
 # container env
@@ -31,14 +32,20 @@ zerops_dev_server action=status hostname="{hostname}" port={port} healthPath="{p
 Bash command="curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:{port}{path}"
 ```
 
-Interpret the result:
+Read the response:
 
-- Running (HTTP 2xx/3xx/4xx) → proceed to `zerops_verify`.
-- Not listening (connection_refused / exit code 000) → start (step 3).
-- HTTP 5xx → server runs but is broken. Read logs + response body.
-  Do NOT restart — restart does not fix bugs. Diagnose then edit code.
+- `running: true` with HTTP 2xx/3xx/4xx `healthStatus` → proceed to
+  `zerops_verify`.
+- `running: false` with `reason: health_probe_connection_refused` →
+  start (step 3).
+- `running: true` with `healthStatus: 5xx` → server runs but is
+  broken; read logs and response body; do NOT restart (it does not
+  fix bugs); edit code then deploy.
 
-**Step 3 — Act on the delta.** Start the dev server:
+For workers with no HTTP surface (`port=0`, `healthPath=""`), skip
+HTTP status; call `zerops_logs` to confirm consumption.
+
+**Step 3 — Act on the delta.**
 
 ```
 # container env
@@ -48,6 +55,5 @@ zerops_dev_server action=start hostname="{hostname}" command="{start-command}" p
 Bash run_in_background=true command="{start-command}"
 ```
 
-**After every redeploy the dev process is gone** (new container in
-container env; framework's own restart behaviour in local env after a
-process kill). Re-run step 2 before `zerops_verify`.
+After every redeploy the dev process is gone — re-run Step 2 before
+`zerops_verify`.
