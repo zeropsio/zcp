@@ -3,6 +3,8 @@ package recipe
 import (
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -91,6 +93,14 @@ func AssembleEnvREADME(plan *Plan, tierIndex int) (string, []string, error) {
 }
 
 // AssembleCodebaseREADME renders the per-codebase README for one hostname.
+//
+// Integration-guide item #1 is engine-generated: a fenced yaml block
+// containing the committed `<cb.SourceRoot>/zerops.yaml` verbatim, with
+// inline comments preserved. Matches the reference apps-repo at
+// `/Users/fxck/www/laravel-showcase-app/README.md` where the IG opens
+// with the full yaml. Fragment-authored items start at #2; the missing-
+// fragment gate still reports when the sub-agent didn't author them.
+// Run-10-readiness §M.
 func AssembleCodebaseREADME(plan *Plan, hostname string) (string, []string, error) {
 	if !codebaseKnown(plan, hostname) {
 		return "", nil, fmt.Errorf("unknown codebase %q", hostname)
@@ -106,10 +116,80 @@ func AssembleCodebaseREADME(plan *Plan, hostname string) (string, []string, erro
 	})
 	prefix := "codebase/" + hostname
 	body, missing := substituteFragmentMarkers(body, plan.Fragments, prefix)
+	if yamlBody := readCodebaseYAMLForHost(plan, hostname); yamlBody != "" {
+		body = injectIGItem1(body, yamlBody)
+	}
 	if err := checkUnreplacedTokens(body); err != nil {
 		return "", nil, fmt.Errorf("assemble codebase/%s README: %w", hostname, err)
 	}
 	return body, missing, nil
+}
+
+// readCodebaseYAMLForHost returns the committed zerops.yaml bytes for the
+// named codebase, or empty if SourceRoot is unpopulated or the file is
+// absent. Empty return degrades the IG item #1 injection to a no-op.
+func readCodebaseYAMLForHost(plan *Plan, hostname string) string {
+	for _, cb := range plan.Codebases {
+		if cb.Hostname != hostname || cb.SourceRoot == "" {
+			continue
+		}
+		if raw, err := readCodebaseYAML(cb.SourceRoot); err == nil {
+			return raw
+		}
+		return ""
+	}
+	return ""
+}
+
+// injectIGItem1 rewrites the rendered README's integration-guide extract
+// block to open with the engine-generated item #1 (yaml block) followed
+// by whatever the sub-agent authored. The injection happens after
+// fragment substitution so the missing-fragment gate still fires when the
+// sub-agent never recorded items #2+. Idempotent — if item #1 is already
+// present the body is returned unchanged.
+func injectIGItem1(body, yamlBody string) string {
+	const (
+		start = "<!-- #ZEROPS_EXTRACT_START:integration-guide# -->"
+		end   = "<!-- #ZEROPS_EXTRACT_END:integration-guide# -->"
+	)
+	_, after, ok := strings.Cut(body, start)
+	if !ok {
+		return body
+	}
+	inside, tail, ok := strings.Cut(after, end)
+	if !ok {
+		return body
+	}
+	item1 := codebaseIGItem1(yamlBody)
+	if strings.Contains(inside, "### 1. Adding `zerops.yaml`") {
+		return body
+	}
+	head := body[:len(body)-len(after)-len(start)] + start + "\n"
+	var innerBody string
+	if trimmed := strings.TrimSpace(inside); trimmed != "" {
+		innerBody = item1 + "\n\n" + trimmed + "\n"
+	} else {
+		innerBody = item1 + "\n"
+	}
+	return head + innerBody + end + tail
+}
+
+// codebaseIGItem1 formats the engine-owned first item of a codebase's
+// Integration Guide — an "### 1. Adding zerops.yaml" heading, a short
+// intro sentence, and a fenced yaml code block carrying the committed
+// yaml verbatim. The yaml is never re-wrapped or re-parsed, so inline
+// comments survive byte-identical.
+func codebaseIGItem1(yamlBody string) string {
+	var b strings.Builder
+	b.WriteString("### 1. Adding `zerops.yaml`\n\n")
+	b.WriteString("The main configuration file — place at repository root. It tells Zerops how to build, deploy and run your app.\n\n")
+	b.WriteString("```yaml\n")
+	b.WriteString(yamlBody)
+	if !strings.HasSuffix(yamlBody, "\n") {
+		b.WriteByte('\n')
+	}
+	b.WriteString("```")
+	return b.String()
 }
 
 // AssembleCodebaseClaudeMD renders the per-codebase CLAUDE.md for one
@@ -296,4 +376,15 @@ func codebaseKnown(plan *Plan, hostname string) bool {
 // readTemplate reads an engine template from the embedded content tree.
 func readTemplate(name string) (string, error) {
 	return readAtom("templates/" + name)
+}
+
+// readCodebaseYAML reads the committed zerops.yaml at <sourceRoot>. Returns
+// the body verbatim so inline comments survive unchanged into the embedded
+// IG item #1. Missing-file is not an error — the caller degrades gracefully.
+func readCodebaseYAML(sourceRoot string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(sourceRoot, "zerops.yaml"))
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
 }

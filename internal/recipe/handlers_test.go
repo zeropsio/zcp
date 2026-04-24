@@ -3,6 +3,7 @@ package recipe
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -266,7 +267,7 @@ func TestStitch_WritesCodebaseReadmeToSourceRoot(t *testing.T) {
 		sess.Plan.Codebases[i].SourceRoot = srcDir
 	}
 
-	if err := fillAllFragments(store, "synth-showcase", sess.Plan); err != nil {
+	if err := fillAllFragments(store, sess.Plan); err != nil {
 		t.Fatalf("fill fragments: %v", err)
 	}
 	res := dispatch(t.Context(), store, RecipeInput{
@@ -290,6 +291,200 @@ func TestStitch_WritesCodebaseReadmeToSourceRoot(t *testing.T) {
 		if _, err := os.Stat(yamlPath); err != nil {
 			t.Errorf("zerops.yaml at SourceRoot missing for %s: %v", cb.Hostname, err)
 		}
+	}
+}
+
+// TestStitch_IGFirstItemIsEmbeddedYaml — run-10-readiness §M.
+// The stitch auto-generates IG item #1 as a fenced yaml block containing
+// `<cb.SourceRoot>/zerops.yaml` verbatim. Matches the reference
+// laravel-showcase-app/README.md pattern where the Integration Guide
+// opens with the full yaml + inline comments — the porter sees the
+// shape at a glance.
+func TestStitch_IGFirstItemIsEmbeddedYaml(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	outputRoot := filepath.Join(dir, "run")
+	store := NewStore(dir)
+	if _, err := store.OpenOrCreate("synth-showcase", outputRoot); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	yamlByHost := map[string]string{}
+	for i, cb := range sess.Plan.Codebases {
+		srcDir := filepath.Join(dir, "workspace", cb.Hostname)
+		if err := os.MkdirAll(srcDir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		body := "zerops:\n  - setup: prod\n    # " + cb.Hostname + " — because reference style\n    run:\n      base: nodejs@22\n"
+		if err := os.WriteFile(filepath.Join(srcDir, "zerops.yaml"), []byte(body), 0o600); err != nil {
+			t.Fatalf("write yaml: %v", err)
+		}
+		sess.Plan.Codebases[i].SourceRoot = srcDir
+		yamlByHost[cb.Hostname] = body
+	}
+
+	if err := fillAllFragments(store, sess.Plan); err != nil {
+		t.Fatalf("fill fragments: %v", err)
+	}
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "stitch-content", Slug: "synth-showcase",
+	})
+	if !res.OK {
+		t.Fatalf("stitch: %+v", res)
+	}
+
+	for _, cb := range sess.Plan.Codebases {
+		body, err := os.ReadFile(filepath.Join(cb.SourceRoot, "README.md"))
+		if err != nil {
+			t.Fatalf("read README for %s: %v", cb.Hostname, err)
+		}
+		s := string(body)
+		if !strings.Contains(s, "### 1. Adding `zerops.yaml`") {
+			t.Errorf("%s README: missing `### 1. Adding ` + zerops.yaml header", cb.Hostname)
+		}
+		// The fenced yaml block must contain the yaml byte-for-byte.
+		want := yamlByHost[cb.Hostname]
+		if !strings.Contains(s, "```yaml\n"+want+"```") {
+			t.Errorf("%s README: fenced yaml block does not match source.\nwant contained:\n%s\n---\n, got:\n%s",
+				cb.Hostname, want, s)
+		}
+	}
+}
+
+// TestStitch_IGSubsequentItemsArePorterItems — run-10-readiness §M.
+// After the engine-generated item #1, fragment-authored items appear —
+// the sub-agent's fragment starts at "### 2." per the updated brief.
+func TestStitch_IGSubsequentItemsArePorterItems(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	outputRoot := filepath.Join(dir, "run")
+	store := NewStore(dir)
+	if _, err := store.OpenOrCreate("synth-showcase", outputRoot); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+	for i, cb := range sess.Plan.Codebases {
+		srcDir := filepath.Join(dir, "workspace", cb.Hostname)
+		if err := os.MkdirAll(srcDir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(srcDir, "zerops.yaml"),
+			[]byte("zerops: []\n"), 0o600); err != nil {
+			t.Fatalf("write yaml: %v", err)
+		}
+		sess.Plan.Codebases[i].SourceRoot = srcDir
+	}
+
+	// Fragment authored by sub-agent starts at ### 2.
+	authored := "### 2. Trust the reverse proxy\n\nSet `trust proxy` so the runtime reads `X-Forwarded-*` correctly."
+	fragmentIDs := map[string]string{
+		"root/intro":                              "intro",
+		"env/0/intro":                             "tier 0",
+		"env/1/intro":                             "tier 1",
+		"env/2/intro":                             "tier 2",
+		"env/3/intro":                             "tier 3",
+		"env/4/intro":                             "tier 4",
+		"env/5/intro":                             "tier 5",
+		"codebase/api/intro":                      "api",
+		"codebase/api/integration-guide":          authored,
+		"codebase/api/knowledge-base":             "- **Topic** — prose",
+		"codebase/api/claude-md/service-facts":    "port 3000",
+		"codebase/api/claude-md/notes":            "dev loop",
+		"codebase/app/intro":                      "app",
+		"codebase/app/integration-guide":          authored,
+		"codebase/app/knowledge-base":             "- **Topic** — prose",
+		"codebase/app/claude-md/service-facts":    "port 5173",
+		"codebase/app/claude-md/notes":            "dev loop",
+		"codebase/worker/intro":                   "worker",
+		"codebase/worker/integration-guide":       authored,
+		"codebase/worker/knowledge-base":          "- **Topic** — prose",
+		"codebase/worker/claude-md/service-facts": "worker queue",
+		"codebase/worker/claude-md/notes":         "dev loop",
+	}
+	for id, body := range fragmentIDs {
+		res := dispatch(t.Context(), store, RecipeInput{
+			Action: "record-fragment", Slug: "synth-showcase",
+			FragmentID: id, Fragment: body,
+		})
+		if !res.OK {
+			t.Fatalf("record-fragment %s: %+v", id, res)
+		}
+	}
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "stitch-content", Slug: "synth-showcase",
+	})
+	if !res.OK {
+		t.Fatalf("stitch: %+v", res)
+	}
+
+	for _, cb := range sess.Plan.Codebases {
+		body, err := os.ReadFile(filepath.Join(cb.SourceRoot, "README.md"))
+		if err != nil {
+			t.Fatalf("read README for %s: %v", cb.Hostname, err)
+		}
+		s := string(body)
+		// Engine item #1 precedes the authored item #2.
+		idx1 := strings.Index(s, "### 1. Adding `zerops.yaml`")
+		idx2 := strings.Index(s, "### 2. Trust the reverse proxy")
+		if idx1 < 0 || idx2 < 0 || idx1 >= idx2 {
+			t.Errorf("%s README: engine item #1 must precede authored #2 (idx1=%d, idx2=%d)",
+				cb.Hostname, idx1, idx2)
+		}
+	}
+}
+
+// TestStitch_IGWorksWithEmptyFragment — run-10-readiness §M.
+// If the sub-agent never recorded the integration-guide fragment, the
+// engine's item #1 still renders cleanly (the overall assemble gate
+// still reports the missing fragment id, but the body isn't corrupt).
+func TestStitch_IGWorksWithEmptyFragment(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.Slug = "synth-showcase"
+	plan.Framework = "synth"
+	dir := t.TempDir()
+	apiRoot := filepath.Join(dir, "workspace", "api")
+	if err := os.MkdirAll(apiRoot, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	yaml := "zerops: []\n"
+	if err := os.WriteFile(filepath.Join(apiRoot, "zerops.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+	for i := range plan.Codebases {
+		if plan.Codebases[i].Hostname == "api" {
+			plan.Codebases[i].SourceRoot = apiRoot
+		}
+	}
+
+	// Assemble without the IG fragment supplied.
+	body, missing, err := AssembleCodebaseREADME(plan, "api")
+	if err != nil {
+		t.Fatalf("AssembleCodebaseREADME: %v", err)
+	}
+	// The IG fragment is reported missing — caller gates on this.
+	foundMissing := false
+	for _, id := range missing {
+		if id == "codebase/api/integration-guide" {
+			foundMissing = true
+		}
+	}
+	if !foundMissing {
+		t.Errorf("expected codebase/api/integration-guide in missing; got %v", missing)
+	}
+	// But the engine's item #1 is still present in the body — it does not
+	// depend on the fragment body to render.
+	if !strings.Contains(body, "### 1. Adding `zerops.yaml`") {
+		t.Errorf("engine item #1 should render even when fragment missing; body:\n%s", body)
+	}
+	if !strings.Contains(body, "```yaml\n"+yaml+"```") {
+		t.Errorf("engine-embedded yaml block should render; body:\n%s", body)
 	}
 }
 
@@ -319,7 +514,7 @@ func TestStitch_NoOutputRootCodebasesDirectory(t *testing.T) {
 		}
 		sess.Plan.Codebases[i].SourceRoot = srcDir
 	}
-	if err := fillAllFragments(store, "synth-showcase", sess.Plan); err != nil {
+	if err := fillAllFragments(store, sess.Plan); err != nil {
 		t.Fatalf("fill fragments: %v", err)
 	}
 	res := dispatch(t.Context(), store, RecipeInput{

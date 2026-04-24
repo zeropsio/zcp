@@ -459,7 +459,7 @@ func TestAssemble_DeliverableSplit(t *testing.T) {
 		sess.Plan.Codebases[i].SourceRoot = wsRoot
 	}
 
-	if err := fillAllFragments(store, "synth-showcase", sess.Plan); err != nil {
+	if err := fillAllFragments(store, sess.Plan); err != nil {
 		t.Fatalf("fill fragments: %v", err)
 	}
 	res := dispatch(t.Context(), store, RecipeInput{
@@ -501,8 +501,8 @@ func TestAssemble_DeliverableSplit(t *testing.T) {
 
 // fillAllFragments populates every fragment id the synthetic plan
 // declares so stitchContent runs without surfacing missing ids. Shared
-// between A2 tests that need a clean assemble.
-func fillAllFragments(store *Store, slug string, plan *Plan) error {
+// between tests that need a clean assemble.
+func fillAllFragments(store *Store, plan *Plan) error {
 	ids := map[string]string{
 		"root/intro": "intro",
 	}
@@ -519,7 +519,7 @@ func fillAllFragments(store *Store, slug string, plan *Plan) error {
 	}
 	for id, body := range ids {
 		res := dispatch(context.Background(), store, RecipeInput{
-			Action: "record-fragment", Slug: slug,
+			Action: "record-fragment", Slug: plan.Slug,
 			FragmentID: id, Fragment: body,
 		})
 		if !res.OK {
