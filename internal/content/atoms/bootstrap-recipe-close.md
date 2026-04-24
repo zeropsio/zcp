@@ -9,14 +9,15 @@ title: "Recipe — auto-adopt on close"
 
 ### Close the recipe bootstrap
 
-Complete the close step — `ServiceMeta` records (mode from the plan,
-strategy left unset) and the CLAUDE.md log entry are written
-automatically. Strategy is picked by develop on first use.
+Complete the close step:
 
 ```
 zerops_workflow action="complete" step="close" attestation="Recipe {slug} bootstrapped — services active and verified"
 ```
 
-After close, `zerops_workflow action="status"` will report the transition
-message with the two primary follow-up workflows: `develop` (iterate on
-the code the recipe provided) and `cicd` (wire git-based deploys).
+After close, every service the recipe provisioned appears in the
+envelope with `bootstrapped: true` and `strategy: unset` — strategy
+is not chosen at bootstrap; develop picks it on first use.
+`zerops_workflow action="status"` summarises the transition and
+points at the primary follow-ups: `develop` (iterate on the code the
+recipe provided) and `cicd` (wire git-based deploys).
