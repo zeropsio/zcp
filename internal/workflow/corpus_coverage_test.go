@@ -203,7 +203,7 @@ func developCoverageFixtures() []coverageFixture {
 			MustContain: []string{
 				"zerops_deploy",
 				"Env var channels",
-				"auto-restarts** the affected service",
+				"restartedServices",
 				"does NOT pick them up",
 				"Shadow-loop pitfall",
 			},
@@ -255,7 +255,8 @@ func developCoverageFixtures() []coverageFixture {
 				}},
 			},
 			MustContain: []string{
-				"auto-closed",
+				"develop-closed-auto",
+				"auto-complete",
 				`action="close"`,
 			},
 		},

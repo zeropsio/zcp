@@ -315,7 +315,7 @@ func TestScenario_S7_DevelopClosedAuto(t *testing.T) {
 		t.Fatalf("Synthesize: %v", err)
 	}
 	joined := strings.Join(bodies, "\n")
-	for _, phrase := range []string{"auto-closed", `action="close"`} {
+	for _, phrase := range []string{"develop-closed-auto", "auto-complete", `action="close"`} {
 		if !strings.Contains(joined, phrase) {
 			t.Errorf("S7: expected synthesized body to contain %q", phrase)
 		}
