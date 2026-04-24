@@ -1,9 +1,12 @@
 # Atom Authoring Contract — Execution Plan
 
-> **Status**: READY TO EXECUTE — decisions locked, per-atom rewrite prose frozen in companion.
-> **Companion**: `plans/atom-authoring-contract-rewrites.md` (BEFORE→AFTER prose per atom).
+> **Status**: COMPLETE (archived 2026-04-24). All phases shipped:
+>   - Demolition (Phase -2), render extension (Phase -1), 27 atom rewrites + 1 delete (Phase 0), parser extension (Phase 1), reference-field + atom integrity tests (Phase 2), unified authoring lint (Phase 3), 2 consolidation atoms + cross-references (Phase 4).
+>   - Final corpus: 76 atoms. `go test ./... -count=1` green, `make lint-local` green. Every DoD gate in §10 verified.
+>   - Authoritative enforcement now lives in three tests (`TestAtomAuthoringLint`, `TestAtomReferenceFieldIntegrity`, `TestAtomReferencesAtomsIntegrity`) plus `docs/spec-knowledge-distribution.md §11 Authoring Contract`. Per-topic `*_atom_contract_test.go` files are forbidden; extend `internal/content/atoms_lint.go` instead.
+> **Companion**: `plans/archive/atom-authoring-contract-rewrites.md` (BEFORE→AFTER prose per atom; preserved for audit).
 > **Supersedes**: `plans/friction-root-causes.md §P2.5` and archived `plans/dev-server-canonical-primitive.md` + `plans/deploy-modes-conceptual-fix.md` contract-test portions.
-> **Owner**: LLM-only execution. Each session starts with §0.
+> **Owner**: LLM-only execution. Each session started with §0. No further action required.
 
 ---
 
@@ -378,88 +381,88 @@ atom-contract(phase-0): rewrite <atom-id> to observer form
 ## 6. Phase Status (tick as you go)
 
 **Phase -2 — Demolition**
-- [ ] commit 1: delete 3 atom-contract tests
-- [ ] commit 2: strip spec-ID from 4 atoms
-- [ ] commit 3: strip DM-* from 2 knowledge-base files
-- [ ] commit 4: CLAUDE.md trim
-- [ ] commit 5: spec-workflows §8 O4 inline
-- [ ] commit 6: archive 3 plans
-- [ ] commit 7: delete deploy_validate.go:115 legacy warning
-- [ ] **Phase -2 DoD verified**
+- [x] commit 1: delete 3 atom-contract tests
+- [x] commit 2: strip spec-ID from 4 atoms
+- [x] commit 3: strip DM-* from 2 knowledge-base files (static.md tracked; dotnet recipe gitignored — local edit only, upstream push deferred)
+- [x] commit 4: CLAUDE.md trim
+- [x] commit 5: spec-workflows §8 O4 inline
+- [x] commit 6: archive 3 plans
+- [x] commit 7: delete deploy_validate.go:115 legacy warning
+- [x] **Phase -2 DoD verified** (2026-04-24)
 
 **Phase -1 — Render extension**
-- [ ] commit 1: renderBootstrappedFields extension
-- [ ] commit 2: snapshot test update
-- [ ] **Phase -1 DoD verified**
+- [x] commit 1: renderBootstrappedFields extension (fused with commit 2 — snapshot test lock-in was additive, no regression repair needed)
+- [x] commit 2: snapshot test update (see commit 1)
+- [x] **Phase -1 DoD verified** (2026-04-24)
 
 **Phase 0 — Atom rewrite**
 
 Family A — bootstrap:
-- [ ] B-1: bootstrap-adopt-discover
-- [ ] B-2: bootstrap-close (with bootstrap-write-metas paragraph folded in)
-- [ ] B-3: bootstrap-mode-prompt
-- [ ] B-4: bootstrap-recipe-close
-- [ ] B-5: bootstrap-resume
-- [ ] B-6: bootstrap-route-options
-- [ ] B-7: DELETE bootstrap-write-metas
+- [x] B-1: bootstrap-adopt-discover
+- [x] B-2: bootstrap-close (with bootstrap-write-metas paragraph folded in)
+- [x] B-3: bootstrap-mode-prompt
+- [x] B-4: bootstrap-recipe-close
+- [x] B-5: bootstrap-resume
+- [x] B-6: bootstrap-route-options
+- [x] B-7: DELETE bootstrap-write-metas
 
 Family B — first-deploy:
-- [ ] FD-1: develop-first-deploy-execute
-- [ ] FD-2: develop-first-deploy-verify
-- [ ] FD-3: develop-first-deploy-intro
-- [ ] FD-4: develop-first-deploy-promote-stage
-- [ ] FD-5: develop-first-deploy-write-app
-- [ ] FD-6: develop-first-deploy-scaffold-yaml (post-Phase -2 polish)
+- [x] FD-1: develop-first-deploy-execute
+- [x] FD-2: develop-first-deploy-verify
+- [x] FD-3: develop-first-deploy-intro
+- [x] FD-4: develop-first-deploy-promote-stage
+- [x] FD-5: develop-first-deploy-write-app
+- [x] FD-6: develop-first-deploy-scaffold-yaml (post-Phase -2 polish)
 
 Family C — develop close/push/deploy-modes:
-- [ ] C-1: develop-change-drives-deploy
-- [ ] C-2: develop-close-push-dev-dev
-- [ ] C-3: develop-closed-auto
-- [ ] C-4: develop-env-var-channels
-- [ ] C-5: develop-mode-expansion
-- [ ] C-6: develop-push-dev-workflow-dev
-- [ ] C-7: develop-strategy-awareness
-- [ ] C-8: develop-push-dev-deploy-container (post-Phase -2 polish)
+- [x] C-1: develop-change-drives-deploy
+- [x] C-2: develop-close-push-dev-dev
+- [x] C-3: develop-closed-auto (with corpus_coverage + scenarios_test updates)
+- [x] C-4: develop-env-var-channels
+- [x] C-5: develop-mode-expansion
+- [x] C-6: develop-push-dev-workflow-dev
+- [x] C-7: develop-strategy-awareness
+- [x] C-8: develop-push-dev-deploy-container (post-Phase -2 polish)
 
 Family D — dynamic/checklist/idle/export/push-git:
-- [ ] D-1: develop-dynamic-runtime-start-container
-- [ ] D-2: develop-dev-server-triage
-- [ ] D-3: develop-checklist-dev-mode
-- [ ] D-4: develop-platform-rules-container
-- [ ] D-5: idle-adopt-entry
-- [ ] D-6: idle-develop-entry
-- [ ] D-7: export
-- [ ] D-8: strategy-push-git-push-container
-- [ ] D-9: strategy-push-git-push-local
+- [x] D-1: develop-dynamic-runtime-start-container
+- [x] D-2: develop-dev-server-triage
+- [x] D-3: develop-checklist-dev-mode
+- [x] D-4: develop-platform-rules-container
+- [x] D-5: idle-adopt-entry (with scenarios_test + corpus_coverage updates)
+- [x] D-6: idle-develop-entry (with corpus_coverage update)
+- [x] D-7: export
+- [x] D-8: strategy-push-git-push-container
+- [x] D-9: strategy-push-git-push-local
 
-- [ ] **Phase 0 DoD verified**
+- [x] **Phase 0 DoD verified** (2026-04-24, corpus 74, tests + lint green)
 
 **Phase 1 — Parser extension**
-- [ ] commit 1: parser reads new frontmatter keys
-- [ ] commit 2: parser validates shapes
-- [ ] commit 3: spec-knowledge-distribution §4.2 docs
-- [ ] **Phase 1 DoD verified**
+- [x] commit 1: parser reads new frontmatter keys
+- [x] commit 2: parser validates shapes
+- [x] commit 3: spec-knowledge-distribution §4.2 docs
+- [x] **Phase 1 DoD verified** (2026-04-24)
 
 **Phase 2 — Tests 1 & 3**
-- [ ] commit 1: astFieldExists helper
-- [ ] commit 2: TestAtomReferenceFieldIntegrity
-- [ ] commit 3: TestAtomReferencesAtomsIntegrity
-- [ ] commit 4: backfill references-fields on all atoms
-- [ ] **Phase 2 DoD verified**
+- [x] commit 1: astFieldExists helper (loadAtomReferenceFieldIndex)
+- [x] commit 2: TestAtomReferenceFieldIntegrity
+- [x] commit 3: TestAtomReferencesAtomsIntegrity
+- [x] commit 4: backfill references-fields on all 27 atoms (references-atoms deferred to Phase 4 for CON-1/CON-2 cross-refs)
+- [x] **Phase 2 DoD verified** (2026-04-24)
 
 **Phase 3 — Test 2 (authoring lint)**
-- [ ] commit 1: atoms_lint.go with forbidden patterns
-- [ ] commit 2: TestAtomAuthoringLint
-- [ ] commit 3: spec-knowledge-distribution §11 Authoring Contract
-- [ ] **Phase 3 DoD verified**
+- [x] commit 1: atoms_lint.go with forbidden patterns
+- [x] commit 2: TestAtomAuthoringLint
+- [x] commit 3: spec-knowledge-distribution §11 Authoring Contract (+ splitAtomBody lint-fix followup)
+- [x] **Phase 3 DoD verified** (2026-04-24, clean corpus, lint green)
 
 **Phase 4 — Consolidation**
-- [ ] commit 1: create develop-auto-close-semantics
-- [ ] commit 2: create develop-dev-server-reason-codes
-- [ ] commit 3: atoms cross-reference auto-close-semantics (5 atoms)
-- [ ] commit 4: atoms cross-reference dev-server-reason-codes (5 atoms)
-- [ ] commit 5: final test sweep + CLAUDE.md update
-- [ ] **Phase 4 DoD verified**
+- [x] commit 1: create develop-auto-close-semantics
+- [x] commit 2: create develop-dev-server-reason-codes
+- [x] commit 3: atoms cross-reference auto-close-semantics (5 atoms)
+- [x] commit 4: atoms cross-reference dev-server-reason-codes (5 atoms)
+- [x] commit 5: final test sweep + CLAUDE.md update + 3 extra cross-refs
+- [x] **Phase 4 DoD verified** (2026-04-24, corpus 76, tests + lint green)
 
 **Phase 5 — Optional polish**
 - [ ] (TBD if scheduled)
