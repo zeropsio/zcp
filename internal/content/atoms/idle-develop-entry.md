@@ -6,12 +6,13 @@ idleScenarios: [bootstrapped]
 title: "Develop entry"
 ---
 
-**Start a develop workflow for every code change** — do not edit + deploy
-directly:
+The project has at least one bootstrapped service ready to receive
+code. Start a develop session:
 
 ```
-zerops_workflow action="start" workflow="develop" intent="{task-description}"
+zerops_workflow action="start" workflow="develop" intent="{task-description}" scope=["{hostname}",…]
 ```
 
-The develop workflow tracks deploys and verifies, and auto-closes when
-the task is complete.
+The envelope will flip to `phase: develop-active`; subsequent status
+calls show `workSession.deploys[]` and `workSession.verifies[]` as
+you iterate. Auto-close semantics: `develop-auto-close-semantics`.
