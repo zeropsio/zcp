@@ -211,8 +211,11 @@ canonicalization rationale.
 | `routes` | no | Bootstrap-only (§3.6). |
 | `steps` | no | Bootstrap-only (§3.7). |
 | `deployStates` | no | Service-scoped (§3.8). Combines with other service-scoped axes under §3.9 conjunction. |
+| `references-fields` | no | List of Go struct fields in `pkg.Type.Field` form (e.g. `ops.DeployResult.Status`) cited by the atom body. Validated: parser enforces the shape regex, `TestAtomReferenceFieldIntegrity` (in `internal/workflow/`) resolves each entry against `internal/{ops,tools,platform,workflow}/*.go` via AST scan. Part of the authoring contract (§11). |
+| `references-atoms` | no | List of atom IDs the body cross-references. Validated by `TestAtomReferencesAtomsIntegrity` (target atom must exist). Prevents rename drift; part of the authoring contract (§11). |
+| `pinned-by-scenario` | no | List of scenario-test anchors (e.g. `S7_DevelopClosedAuto`). Informational — helps future edits locate downstream test expectations. Not validated at runtime. |
 
-Frontmatter uses a minimal parser in `internal/workflow/atom.go::parseFrontmatter`. List values use the inline YAML form `[a, b, c]`. Comments (`#`) and blank lines are ignored. Malformed lines fail `LoadAtomCorpus`.
+Frontmatter uses a minimal parser in `internal/workflow/atom.go::parseFrontmatter`. List values use the inline YAML form `[a, b, c]`. Comments (`#`) and blank lines are ignored. Malformed lines fail `LoadAtomCorpus`; malformed `references-fields` entries fail `ParseAtom` with a specific message.
 
 ### 4.3 Body
 
