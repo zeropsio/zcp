@@ -330,6 +330,46 @@ func TestValidateCodebaseYAML_ShortRunsNotFlagged(t *testing.T) {
 	}
 }
 
+// TestValidate_CodebaseSurface_ReadsSourceRoot — run-10-readiness §L.
+// resolveSurfacePaths for codebase-scoped surfaces returns
+// <cb.SourceRoot>/<leaf>, not <outputRoot>/codebases/<h>/<leaf>.
+// Validators read from the same tree that stitch writes to.
+func TestValidate_CodebaseSurface_ReadsSourceRoot(t *testing.T) {
+	t.Parallel()
+
+	plan := &Plan{
+		Codebases: []Codebase{
+			{Hostname: "api", SourceRoot: "/srv/workspace/apidev"},
+			{Hostname: "worker", SourceRoot: "/srv/workspace/workerdev"},
+		},
+	}
+	cases := []struct {
+		surface Surface
+		leaf    string
+	}{
+		{SurfaceCodebaseIG, "README.md"},
+		{SurfaceCodebaseKB, "README.md"},
+		{SurfaceCodebaseCLAUDE, "CLAUDE.md"},
+		{SurfaceCodebaseZeropsComments, "zerops.yaml"},
+	}
+	for _, c := range cases {
+		got := resolveSurfacePaths("/never/used", c.surface, plan)
+		want := []string{
+			"/srv/workspace/apidev/" + c.leaf,
+			"/srv/workspace/workerdev/" + c.leaf,
+		}
+		if len(got) != len(want) {
+			t.Errorf("surface %s: len=%d want %d (%v)", c.surface, len(got), len(want), got)
+			continue
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("surface %s path[%d] = %q, want %q", c.surface, i, got[i], want[i])
+			}
+		}
+	}
+}
+
 // TestBrief_Scaffold_IncludesYamlCommentStyle — run-9-readiness §2.H
 // brief-side atom. Scaffold + feature briefs both inject.
 func TestBrief_Scaffold_IncludesYamlCommentStyle(t *testing.T) {

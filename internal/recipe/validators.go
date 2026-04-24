@@ -204,13 +204,20 @@ func resolveSurfacePaths(outputRoot string, s Surface, plan *Plan) []string {
 	return nil
 }
 
-func codebasePaths(outputRoot string, plan *Plan, leaf string) []string {
+// codebasePaths resolves per-codebase surface files to <cb.SourceRoot>/<leaf>,
+// matching the apps-repo shape at the reference (`laravel-showcase-app/`)
+// and the stitch write target. Codebases without a SourceRoot are skipped —
+// stitch would already have refused to produce their files. Run-10-readiness §L.
+func codebasePaths(_ string, plan *Plan, leaf string) []string {
 	if plan == nil {
 		return nil
 	}
 	out := make([]string, 0, len(plan.Codebases))
 	for _, cb := range plan.Codebases {
-		out = append(out, filepath.Join(outputRoot, "codebases", cb.Hostname, leaf))
+		if cb.SourceRoot == "" {
+			continue
+		}
+		out = append(out, filepath.Join(cb.SourceRoot, leaf))
 	}
 	return out
 }

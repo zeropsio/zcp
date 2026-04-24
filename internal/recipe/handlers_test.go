@@ -3,7 +3,6 @@ package recipe
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -236,38 +235,12 @@ func TestEnterPhase_Scaffold_DoesNotOverrideExplicitSourceRoot(t *testing.T) {
 	}
 }
 
-// TestCopyCommittedYAML_MissingFileReturnsHardError — after A2, an empty
-// SourceRoot or a missing source yaml is a hard error (not a silent
-// soft-fail). Signals scaffold didn't run or didn't author the yaml.
-func TestCopyCommittedYAML_MissingFileReturnsHardError(t *testing.T) {
-	t.Parallel()
-
-	// Case 1: SourceRoot empty.
-	cb := Codebase{Hostname: "api", SourceRoot: ""}
-	err := copyCommittedYAML(cb, t.TempDir())
-	if err == nil {
-		t.Fatal("expected hard error when SourceRoot empty")
-	}
-	if !strings.Contains(err.Error(), "scaffold did not run") {
-		t.Errorf("error message should name root cause; got: %v", err)
-	}
-
-	// Case 2: SourceRoot points at real dir but yaml is missing.
-	srcDir := t.TempDir()
-	cb = Codebase{Hostname: "api", SourceRoot: srcDir}
-	err = copyCommittedYAML(cb, t.TempDir())
-	if err == nil {
-		t.Fatal("expected hard error when zerops.yaml missing")
-	}
-	if !strings.Contains(err.Error(), "scaffold did not author") {
-		t.Errorf("error message should name root cause; got: %v", err)
-	}
-}
-
-// TestStitch_PerCodebaseYamlCopied — with SourceRoot populated and the
-// scaffold yaml on disk, stitch-content copies it byte-identical (including
-// inline comments) to the apps-repo shape. A2 + A2's fail-loud refinement.
-func TestStitch_PerCodebaseYamlCopied(t *testing.T) {
+// TestStitch_WritesCodebaseReadmeToSourceRoot — run-10-readiness §L.
+// Apps-repo content (README + CLAUDE.md) lands at `<cb.SourceRoot>/`, the
+// same tree as source, matching the reference apps-repo shape at
+// /Users/fxck/www/laravel-showcase-app/. The invented intermediate
+// directory `<outputRoot>/codebases/<h>/` is gone.
+func TestStitch_WritesCodebaseReadmeToSourceRoot(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -279,8 +252,8 @@ func TestStitch_PerCodebaseYamlCopied(t *testing.T) {
 	sess, _ := store.Get("synth-showcase")
 	sess.Plan = syntheticShowcasePlan()
 
-	// Stage scaffold-authored yaml for each codebase and point SourceRoot
-	// at it so copyCommittedYAML succeeds.
+	// Stage the scaffold-authored yaml at each SourceRoot — after L, the
+	// same tree receives README + CLAUDE.md.
 	for i, cb := range sess.Plan.Codebases {
 		srcDir := filepath.Join(dir, "workspace", cb.Hostname)
 		if err := os.MkdirAll(srcDir, 0o755); err != nil {
@@ -304,15 +277,61 @@ func TestStitch_PerCodebaseYamlCopied(t *testing.T) {
 	}
 
 	for _, cb := range sess.Plan.Codebases {
-		copied, err := os.ReadFile(filepath.Join(outputRoot, "codebases", cb.Hostname, "zerops.yaml"))
-		if err != nil {
-			t.Fatalf("read copied yaml for %s: %v", cb.Hostname, err)
+		readmePath := filepath.Join(cb.SourceRoot, "README.md")
+		if _, err := os.Stat(readmePath); err != nil {
+			t.Errorf("README at SourceRoot missing for %s: %v", cb.Hostname, err)
 		}
-		want := "# " + cb.Hostname + " — commented inline, verbatim\nzerops: []\n"
-		if string(copied) != want {
-			t.Errorf("codebase %s yaml differs\nwant:\n%s\ngot:\n%s",
-				cb.Hostname, want, copied)
+		claudePath := filepath.Join(cb.SourceRoot, "CLAUDE.md")
+		if _, err := os.Stat(claudePath); err != nil {
+			t.Errorf("CLAUDE.md at SourceRoot missing for %s: %v", cb.Hostname, err)
 		}
+		// The scaffold yaml stays where scaffold wrote it — no copy.
+		yamlPath := filepath.Join(cb.SourceRoot, "zerops.yaml")
+		if _, err := os.Stat(yamlPath); err != nil {
+			t.Errorf("zerops.yaml at SourceRoot missing for %s: %v", cb.Hostname, err)
+		}
+	}
+}
+
+// TestStitch_NoOutputRootCodebasesDirectory — run-10-readiness §L.
+// The invented `<outputRoot>/codebases/` directory is not created by
+// stitch. No published recipe has this directory; its only reader is the
+// chain-resolver's silently-failing `loadParent`.
+func TestStitch_NoOutputRootCodebasesDirectory(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	outputRoot := filepath.Join(dir, "run")
+	store := NewStore(dir)
+	if _, err := store.OpenOrCreate("synth-showcase", outputRoot); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+	for i, cb := range sess.Plan.Codebases {
+		srcDir := filepath.Join(dir, "workspace", cb.Hostname)
+		if err := os.MkdirAll(srcDir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(srcDir, "zerops.yaml"),
+			[]byte("zerops: []\n"), 0o600); err != nil {
+			t.Fatalf("write yaml: %v", err)
+		}
+		sess.Plan.Codebases[i].SourceRoot = srcDir
+	}
+	if err := fillAllFragments(store, "synth-showcase", sess.Plan); err != nil {
+		t.Fatalf("fill fragments: %v", err)
+	}
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "stitch-content", Slug: "synth-showcase",
+	})
+	if !res.OK {
+		t.Fatalf("stitch: %+v", res)
+	}
+
+	invented := filepath.Join(outputRoot, "codebases")
+	if _, err := os.Stat(invented); err == nil {
+		t.Errorf("outputRoot/codebases/ must not be created; found %s", invented)
 	}
 }
 

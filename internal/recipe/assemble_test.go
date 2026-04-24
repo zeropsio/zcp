@@ -430,86 +430,10 @@ func TestHandler_RecordFragment_RejectsUnknownID(t *testing.T) {
 	}
 }
 
-// TestAssemble_CopiesCommittedYaml — per-codebase zerops.yaml lands
-// verbatim in the apps-repo shape at outputRoot/codebases/<hostname>/zerops.yaml.
-// The scaffold sub-agent authors that file (with inline comments) during
-// scaffold; A2's stitch copies it without re-parsing or re-emitting, so
-// comments survive byte-identical.
-func TestAssemble_CopiesCommittedYaml(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	outputRoot := filepath.Join(dir, "run")
-	store := NewStore(dir)
-	if _, err := store.OpenOrCreate("synth-showcase", outputRoot); err != nil {
-		t.Fatalf("OpenOrCreate: %v", err)
-	}
-	sess, _ := store.Get("synth-showcase")
-	sess.Plan = syntheticShowcasePlan()
-
-	// Stage a scaffold-authored zerops.yaml with a distinct inline
-	// comment so the round-trip check catches any re-emission regression.
-	// A2 requires every codebase to have a SourceRoot + zerops.yaml on
-	// disk; the test's round-trip target is the api yaml specifically,
-	// other codebases get a minimal placeholder so stitch doesn't
-	// hard-fail on them.
-	apiRoot := filepath.Join(dir, "workspace", "api")
-	if err := os.MkdirAll(apiRoot, 0o755); err != nil {
-		t.Fatalf("mkdir scaffold: %v", err)
-	}
-	committed := `# scaffold-authored yaml — inline comment must survive verbatim
-zerops:
-  - setup: dev
-    build:
-      base: nodejs@22
-    run:
-      # why: L7 balancer routes to 0.0.0.0
-      base: nodejs@22
-`
-	if err := os.WriteFile(filepath.Join(apiRoot, "zerops.yaml"), []byte(committed), 0o600); err != nil {
-		t.Fatalf("write scaffold yaml: %v", err)
-	}
-	for i, cb := range sess.Plan.Codebases {
-		if cb.Hostname == "api" {
-			sess.Plan.Codebases[i].SourceRoot = apiRoot
-			continue
-		}
-		// Placeholder yaml for other codebases so stitch succeeds.
-		other := filepath.Join(dir, "workspace", cb.Hostname)
-		if err := os.MkdirAll(other, 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", other, err)
-		}
-		if err := os.WriteFile(filepath.Join(other, "zerops.yaml"), []byte("# placeholder — because test\nzerops: []\n"), 0o600); err != nil {
-			t.Fatalf("write placeholder yaml: %v", err)
-		}
-		sess.Plan.Codebases[i].SourceRoot = other
-	}
-
-	if err := fillAllFragments(store, "synth-showcase", sess.Plan); err != nil {
-		t.Fatalf("fill fragments: %v", err)
-	}
-
-	res := dispatch(t.Context(), store, RecipeInput{
-		Action: "stitch-content", Slug: "synth-showcase",
-	})
-	if !res.OK {
-		t.Fatalf("stitch: %+v", res)
-	}
-
-	copied, err := os.ReadFile(filepath.Join(outputRoot, "codebases", "api", "zerops.yaml"))
-	if err != nil {
-		t.Fatalf("read copied yaml: %v", err)
-	}
-	if string(copied) != committed {
-		t.Errorf("copied yaml differs from committed source\nwant:\n%s\ngot:\n%s",
-			committed, copied)
-	}
-}
-
-// TestAssemble_DeliverableSplit — stitchContent writes into two shapes
-// under outputRoot. Recipes-repo shape: root README + per-tier README
-// + per-tier import.yaml. Apps-repo shape (per codebase): README +
-// CLAUDE.md + zerops.yaml (copied).
+// TestAssemble_DeliverableSplit — stitchContent writes into two shapes.
+// Recipes-repo shape at <outputRoot>/: root README + per-tier README +
+// per-tier import.yaml. Apps-repo shape at <cb.SourceRoot>/: README +
+// CLAUDE.md + zerops.yaml (the scaffold-authored yaml is left in place).
 func TestAssemble_DeliverableSplit(t *testing.T) {
 	t.Parallel()
 
@@ -521,8 +445,8 @@ func TestAssemble_DeliverableSplit(t *testing.T) {
 	}
 	sess, _ := store.Get("synth-showcase")
 	sess.Plan = syntheticShowcasePlan()
-	// Point each codebase at a staged workspace so the yaml copy step
-	// can pick up a valid source.
+	// Point each codebase at a staged workspace — stitch's codebase-scoped
+	// writes target this tree directly.
 	for i, cb := range sess.Plan.Codebases {
 		wsRoot := filepath.Join(dir, "workspace", cb.Hostname)
 		if err := os.MkdirAll(wsRoot, 0o755); err != nil {
@@ -562,13 +486,14 @@ func TestAssemble_DeliverableSplit(t *testing.T) {
 		}
 	}
 
-	// Apps-repo shape — per codebase: README + CLAUDE.md + zerops.yaml.
+	// Apps-repo shape — per codebase at SourceRoot: README + CLAUDE.md +
+	// zerops.yaml (scaffold-authored).
 	for _, cb := range sess.Plan.Codebases {
 		for _, want := range []string{"README.md", "CLAUDE.md", "zerops.yaml"} {
-			abs := filepath.Join(outputRoot, "codebases", cb.Hostname, want)
+			abs := filepath.Join(cb.SourceRoot, want)
 			if _, err := os.Stat(abs); err != nil {
-				t.Errorf("apps-shape path missing codebases/%s/%s: %v",
-					cb.Hostname, want, err)
+				t.Errorf("apps-shape path missing %s/%s: %v",
+					cb.SourceRoot, want, err)
 			}
 		}
 	}

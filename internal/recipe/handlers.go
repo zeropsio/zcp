@@ -435,17 +435,21 @@ func stitchContent(sess *Session) ([]string, error) {
 		}
 	}
 
-	// Per-codebase apps-repo shape — README + CLAUDE.md + zerops.yaml
-	// (copied from the scaffold-authored workspace, not re-emitted, so
-	// inline comments survive byte-identical). See plan §2.A.5.
+	// Per-codebase apps-repo shape — README + CLAUDE.md land at
+	// <cb.SourceRoot>/ alongside source, matching the reference
+	// apps-repo shape at /Users/fxck/www/laravel-showcase-app/.
+	// The scaffold-authored zerops.yaml already lives there; no copy.
+	// Run-10-readiness §L.
 	for _, cb := range plan.Codebases {
+		if cb.SourceRoot == "" {
+			return nil, fmt.Errorf("codebase %q has no SourceRoot — scaffold did not run or was skipped", cb.Hostname)
+		}
 		readmeBody, m, err := AssembleCodebaseREADME(plan, cb.Hostname)
 		if err != nil {
 			return nil, fmt.Errorf("assemble codebase %s README: %w", cb.Hostname, err)
 		}
 		missing = append(missing, m...)
-		cbRoot := filepath.Join(outputRoot, "codebases", cb.Hostname)
-		if err := writeSurfaceFile(filepath.Join(cbRoot, "README.md"), readmeBody); err != nil {
+		if err := writeSurfaceFile(filepath.Join(cb.SourceRoot, "README.md"), readmeBody); err != nil {
 			return nil, err
 		}
 		claudeBody, m, err := AssembleCodebaseClaudeMD(plan, cb.Hostname)
@@ -453,11 +457,8 @@ func stitchContent(sess *Session) ([]string, error) {
 			return nil, fmt.Errorf("assemble codebase %s CLAUDE.md: %w", cb.Hostname, err)
 		}
 		missing = append(missing, m...)
-		if err := writeSurfaceFile(filepath.Join(cbRoot, "CLAUDE.md"), claudeBody); err != nil {
+		if err := writeSurfaceFile(filepath.Join(cb.SourceRoot, "CLAUDE.md"), claudeBody); err != nil {
 			return nil, err
-		}
-		if err := copyCommittedYAML(cb, cbRoot); err != nil {
-			return nil, fmt.Errorf("copy %s zerops.yaml: %w", cb.Hostname, err)
 		}
 	}
 
@@ -487,31 +488,6 @@ func populateSourceRootsForScaffold(sess *Session) {
 			sess.Plan.Codebases[i].SourceRoot = DefaultSourceRoot(cb.Hostname)
 		}
 	}
-}
-
-// copyCommittedYAML copies <cb.SourceRoot>/zerops.yaml into the apps-
-// repo shape at <cbRoot>/zerops.yaml verbatim. SourceRoot is guaranteed
-// populated by populateSourceRootsForScaffold at `enter-phase scaffold`
-// (Workstream A2), so an empty SourceRoot here signals scaffold never
-// ran — a hard gate failure. Missing source file is likewise hard fail:
-// scaffold was entered but the sub-agent did not author the yaml.
-func copyCommittedYAML(cb Codebase, cbRoot string) error {
-	if cb.SourceRoot == "" {
-		return fmt.Errorf("codebase %q has no SourceRoot — scaffold did not run or was skipped", cb.Hostname)
-	}
-	src := filepath.Join(cb.SourceRoot, "zerops.yaml")
-	body, err := os.ReadFile(src)
-	if err != nil {
-		return fmt.Errorf("read scaffold yaml at %s (scaffold did not author it): %w", src, err)
-	}
-	if err := os.MkdirAll(cbRoot, 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", cbRoot, err)
-	}
-	dst := filepath.Join(cbRoot, "zerops.yaml")
-	if err := os.WriteFile(dst, body, 0o600); err != nil {
-		return fmt.Errorf("write copied yaml: %w", err)
-	}
-	return nil
 }
 
 func writeSurfaceFile(path, body string) error {

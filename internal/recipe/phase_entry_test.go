@@ -8,10 +8,8 @@ import (
 )
 
 // stageScaffoldYAMLs stages a minimal scaffold-authored zerops.yaml per
-// codebase so stitch-content's copyCommittedYAML can succeed. Needed for
-// tests that drive stitch after A2 (run-9-readiness): A2 hard-fails on
-// missing SourceRoot or missing source yaml. Plan codebases get their
-// SourceRoot mutated to the staged dir.
+// codebase so stitch-content's codebase-scoped writes have a SourceRoot
+// on disk. Plan codebases get their SourceRoot mutated to the staged dir.
 func stageScaffoldYAMLs(t *testing.T, base string, plan *Plan) {
 	t.Helper()
 	for i, cb := range plan.Codebases {
@@ -406,12 +404,24 @@ func TestDispatch_StitchContent_AssemblesFromFragments(t *testing.T) {
 		}
 	}
 
-	// Surfaces on disk.
+	// Find the api codebase's SourceRoot to locate its apps-repo outputs.
+	var apiSourceRoot string
+	for _, cb := range sess.Plan.Codebases {
+		if cb.Hostname == "api" {
+			apiSourceRoot = cb.SourceRoot
+		}
+	}
+	if apiSourceRoot == "" {
+		t.Fatal("api codebase missing from plan")
+	}
+
+	// Surfaces on disk — recipes-repo shape at outputRoot, apps-repo
+	// shape at each SourceRoot.
 	for _, want := range []string{
 		filepath.Join(outputRoot, "README.md"),
 		filepath.Join(outputRoot, "0 — AI Agent", "README.md"),
-		filepath.Join(outputRoot, "codebases", "api", "README.md"),
-		filepath.Join(outputRoot, "codebases", "api", "CLAUDE.md"),
+		filepath.Join(apiSourceRoot, "README.md"),
+		filepath.Join(apiSourceRoot, "CLAUDE.md"),
 	} {
 		if _, err := os.Stat(want); err != nil {
 			t.Errorf("missing surface %s: %v", want, err)
@@ -425,7 +435,7 @@ func TestDispatch_StitchContent_AssemblesFromFragments(t *testing.T) {
 	}
 
 	// Per-codebase README carries integration-guide + knowledge-base bodies.
-	apiREADME, _ := os.ReadFile(filepath.Join(outputRoot, "codebases", "api", "README.md"))
+	apiREADME, _ := os.ReadFile(filepath.Join(apiSourceRoot, "README.md"))
 	if !strings.Contains(string(apiREADME), "1. Bind to 0.0.0.0") {
 		t.Errorf("api README missing IG body:\n%s", apiREADME)
 	}
