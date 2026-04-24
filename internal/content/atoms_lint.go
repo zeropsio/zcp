@@ -113,12 +113,10 @@ func splitAtomBody(content string) (string, int) {
 		return content, 0
 	}
 	rest := content[4:]
-	idx := strings.Index(rest, "\n---\n")
-	if idx < 0 {
+	frontmatter, body, ok := strings.Cut(rest, "\n---\n")
+	if !ok {
 		return content, 0
 	}
-	frontmatter := rest[:idx]
-	body := rest[idx+len("\n---\n"):]
-	// +1 for opening `---`, +1 for closing `---`, + N blank+keyed lines
+	// +1 for opening `---`, +1 for closing `---`, + N frontmatter-key lines
 	return body, 2 + strings.Count(frontmatter, "\n") + 1
 }
