@@ -9,8 +9,10 @@ title: "Dev-mode checklist extras (container)"
 
 ### Checklist (dev-mode services)
 
-- Dev entry in `zerops.yaml`: `start: zsc noop --silent`, **no** `healthCheck`
-  (agent owns the dev process and starts it via `zerops_dev_server`
-  after each deploy).
-- Stage entry (if a dev+stage pair exists): real `start:` command **plus**
-  a `healthCheck` — stage auto-starts and is probed by the platform.
+- Dev setup block in `zerops.yaml`: `start: zsc noop --silent`, **no**
+  `healthCheck`. The platform keeps the container idle; you start
+  the dev process yourself via `zerops_dev_server action=start` after
+  each deploy.
+- Stage setup block (if a dev+stage pair exists): real `start:`
+  command **plus** a `healthCheck`. Stage auto-starts on deploy and
+  the platform probes it on its configured interval.
