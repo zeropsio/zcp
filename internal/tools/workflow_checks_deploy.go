@@ -1,12 +1,9 @@
 package tools
 
 import (
-	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
-	"slices"
-	"strings"
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -70,34 +67,9 @@ func findAndParseZeropsYml(projectRoot, hostname string) (*ops.ZeropsYmlDoc, str
 	return doc, projectRoot, err
 }
 
-// validateDeployFiles checks that cherry-picked deployFiles paths exist on the filesystem.
-// Skipped when deployFiles is [.] (deploys everything).
-func validateDeployFiles(projectRoot, hostname string, entry *ops.ZeropsYmlEntry) []workflow.StepCheck {
-	if !entry.HasDeployFiles() {
-		return nil
-	}
-	deployFiles := entry.DeployFilesList()
-	// Skip if deploying everything.
-	if slices.Contains(deployFiles, ".") || slices.Contains(deployFiles, "./") {
-		return nil
-	}
-
-	var missing []string
-	for _, df := range deployFiles {
-		p := filepath.Join(projectRoot, df)
-		if _, err := os.Stat(p); err != nil {
-			missing = append(missing, df)
-		}
-	}
-	if len(missing) > 0 {
-		return []workflow.StepCheck{{
-			Name:   hostname + "_deploy_files",
-			Status: statusFail,
-			Detail: fmt.Sprintf("deployFiles paths not found: %s — these will be missing from the deploy artifact", strings.Join(missing, ", ")),
-		}}
-	}
-	return []workflow.StepCheck{{
-		Name:   hostname + "_deploy_files",
-		Status: statusPass,
-	}}
-}
+// NOTE: a stat-check of deployFiles paths used to live here. It was deleted to
+// enforce DM-4 (docs/spec-workflows.md §8 Deploy Modes): post-build filesystem
+// existence is the Zerops builder's authority, not ZCP's. `ValidateZeropsYml`
+// in ops/deploy_validate.go owns the sole source-tree-level deploy contract
+// (DM-2 self-deploy constraint); layered-authority duplication is an invariant
+// violation.

@@ -121,8 +121,16 @@ func deploySSH(
 	var warnings []string
 	mountPath := filepath.Join("/var/www", sourceService)
 	serviceType := target.ServiceStackTypeInfo.ServiceStackTypeVersionName
+	class := ClassifyDeploy(sourceService, targetService)
 	if _, statErr := os.Stat(mountPath); statErr == nil {
-		warnings = ValidateZeropsYml(mountPath, setupName, serviceType)
+		var vErr error
+		warnings, vErr = ValidateZeropsYml(mountPath, setupName, serviceType, class)
+		// DM-2 violation is a hard error — deploy aborts, warnings (if
+		// any) travel with the error for visibility but the caller
+		// won't issue a push.
+		if vErr != nil {
+			return nil, vErr
+		}
 		// Pre-deploy API validation: Zerops checks the full zerops.yaml
 		// (field/syntax/version) server-side before we waste a build
 		// cycle on a YAML the platform will reject. Any failure —

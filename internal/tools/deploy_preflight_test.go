@@ -226,7 +226,16 @@ func TestDeployPreFlight_NoMeta_ReturnsNil(t *testing.T) {
 	}
 }
 
-func TestDeployPreFlight_DeployFilesMissing_Fails(t *testing.T) {
+// TestDeployPreFlight_DeployFilesNotCheckedInPreflight is a DM-4 regression
+// gate (docs/spec-workflows.md §8 Deploy Modes). Deploy-class-aware
+// deployFiles validation lives at the push site in ops.ValidateZeropsYml
+// (DM-2 self-deploy enforcement) and at the Zerops builder (post-build
+// filesystem existence). The tool-layer pre-flight MUST NOT duplicate
+// either — that would violate DM-4's layered-authority invariant and
+// re-introduce F3-style false positives. A cherry-pick deployFiles
+// pointing at a path absent from the pre-build tree must NOT produce
+// an `appdev_deploy_files` check of any kind.
+func TestDeployPreFlight_DeployFilesNotCheckedInPreflight(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -265,17 +274,10 @@ func TestDeployPreFlight_DeployFilesMissing_Fails(t *testing.T) {
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
-	// deployFiles validation may or may not flag this depending on whether
-	// the "dist" directory exists in the project root. Since it doesn't,
-	// this should fail.
-	hasDeployFilesCheck := false
 	for _, c := range result.Checks {
-		if c.Name == "appdev_deploy_files" && c.Status == statusFail {
-			hasDeployFilesCheck = true
+		if c.Name == "appdev_deploy_files" {
+			t.Errorf("pre-flight must NOT emit deploy_files check (DM-4): found %+v", c)
 		}
-	}
-	if !hasDeployFilesCheck {
-		t.Error("expected appdev_deploy_files fail check for missing dist directory")
 	}
 }
 

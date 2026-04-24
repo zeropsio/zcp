@@ -49,6 +49,39 @@ type GitPushResult struct {
 	Warnings  []string `json:"warnings,omitempty"`  // Non-fatal warnings
 }
 
+// DeployClass classifies a deploy invocation as self-deploy (source container
+// pushes to itself) or cross-deploy (source ≠ target, including local → remote
+// and dev → stage). The class is determined at tool entry from source/target
+// identity and propagates through the deploy pipeline.
+//
+// DM-1 / DM-2 invariants (docs/spec-workflows.md §8 Deploy Modes): self-deploy
+// MUST use deployFiles: [.] — narrower patterns destroy the target's working
+// tree on artifact extraction (same container is source AND target of the
+// overwrite). Cross-deploy has no such constraint because source is distinct
+// from target.
+type DeployClass string
+
+const (
+	// DeployClassSelf — source and target are the same Zerops service.
+	// SSH self-deploy from a service to itself (agent on ZCP invokes
+	// zerops_deploy targetService=X with source omitted or source==target).
+	DeployClassSelf DeployClass = "self"
+	// DeployClassCross — source and target are distinct. Covers SSH cross-
+	// deploy (dev → stage), local deploy (user machine → remote service),
+	// and strategy=git-push (external git remote → Zerops).
+	DeployClassCross DeployClass = "cross"
+)
+
+// ClassifyDeploy returns the deploy class for a source/target pair. An empty
+// sourceService is treated as self-deploy (caller's auto-infer convention).
+// See DM-1 in docs/spec-workflows.md §8.
+func ClassifyDeploy(sourceService, targetService string) DeployClass {
+	if sourceService == "" || sourceService == targetService {
+		return DeployClassSelf
+	}
+	return DeployClassCross
+}
+
 // SSHDeployer executes commands on remote Zerops services.
 //
 // Two exec shapes live on this interface intentionally:

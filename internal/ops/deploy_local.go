@@ -107,7 +107,14 @@ func DeployLocal(
 		setupName = targetService
 	}
 	serviceType := target.ServiceStackTypeInfo.ServiceStackTypeVersionName
-	warnings := ValidateZeropsYml(workingDir, setupName, serviceType)
+	// Local deploy is always cross-deploy (DM-1): the local working dir is
+	// the source, the Zerops service is a distinct target. The deploy artifact
+	// overwrites the target's /var/www/ without touching the local working
+	// dir, so DM-2 (source-destruction) does not apply.
+	warnings, vErr := ValidateZeropsYml(workingDir, setupName, serviceType, DeployClassCross)
+	if vErr != nil {
+		return nil, vErr
+	}
 
 	// Pre-deploy API validation: Zerops validates zerops.yaml pre-flight so
 	// field/syntax errors surface with field-level apiMeta before any build

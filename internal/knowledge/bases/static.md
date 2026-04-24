@@ -1,6 +1,6 @@
 # Static on Zerops
 
-Static service serves pre-built HTML/CSS/JS. Build with `nodejs@22`, run with `static`. Use tilde (`~`) in `deployFiles` for correct webroot. No start command needed.
+Static service serves pre-built HTML/CSS/JS. Build with `nodejs@22`, run with `static`. Use tilde (`~`) in `deployFiles` for correct webroot (DM-5 — aligns build output with the runtime's content-root expectation; see `docs/spec-workflows.md` §8 Deploy Modes). No start command needed.
 
 ### Build != Run
 

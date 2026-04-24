@@ -7,35 +7,52 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
 	"gopkg.in/yaml.v3"
 )
 
 // ValidateZeropsYml checks zerops.yaml for common issues before deploy.
+//
 // serviceType is the Zerops service type (e.g. "php-nginx@8.4") — used to detect implicit
 // webservers when zerops.yaml bases alone are insufficient (e.g. build.base: php@8.4 for a
 // php-nginx service). Pass "" if unknown.
+//
+// class distinguishes self-deploy (source == target, DM-1) from cross-deploy.
+// Self-deploy with narrower-than-[.] deployFiles is rejected as a hard error
+// (DM-2) — source destruction is guaranteed, not an advisory concern.
+//
 // roles carries the explicit service role from the caller's ServiceMeta.
-// Callers that don't know the role (empty) skip the role-specific
-// warnings — ZCP refuses to guess from hostname shape.
-// Returns a list of warning strings (empty = no issues found).
-func ValidateZeropsYml(workingDir, targetHostname, serviceType string, roles ...string) []string {
+// Callers that don't know the role (empty) skip role-specific advisories.
+// Returns (warnings, err) — err is non-nil for DM-2 violations. Both channels
+// remain populated when err != nil so callers can surface partial findings.
+//
+// Scope per DM-4 (docs/spec-workflows.md §8 Deploy Modes): validates only
+// source-tree-knowable facts (yaml shape, schema coherence, deploy-class
+// contract, role-mode advisories). Post-build filesystem existence of
+// deployFiles paths is Zerops builder's authority, not ZCP's.
+func ValidateZeropsYml(workingDir, targetHostname, serviceType string, class DeployClass, roles ...string) ([]string, error) {
 	var warnings []string
 
 	doc, err := ParseZeropsYml(workingDir)
 	if err != nil {
-		return []string{err.Error()}
+		// Parse failures stay in the warnings channel (non-blocking): the
+		// API-side validator (RunPreDeployValidation in deploy_ssh.go /
+		// deploy_local.go) is authoritative for yaml syntax/schema errors
+		// and will block with a structured apiMeta response. The err
+		// channel is reserved for DM-2 (deploy-class contract) violations.
+		return []string{err.Error()}, nil //nolint:nilerr // parse error demoted to warning; authoritative validation is API-side
 	}
 
 	if len(doc.Zerops) == 0 {
-		return []string{"zerops.yaml has no setup entries under 'zerops:' key"}
+		return []string{"zerops.yaml has no setup entries under 'zerops:' key"}, nil
 	}
 
 	// Find matching setup entry.
 	entry := doc.FindEntry(targetHostname)
 	if entry == nil {
 		warnings = append(warnings, fmt.Sprintf("no setup entry for hostname %q in zerops.yaml", targetHostname))
-		return warnings
+		return warnings, nil
 	}
 
 	implicitWS := hasImplicitWebServer(entry.Run.Base, entry.Build.BaseStrings()) || IsImplicitWebServerType(serviceType)
@@ -67,9 +84,21 @@ func ValidateZeropsYml(workingDir, targetHostname, serviceType string, roles ...
 		warnings = append(warnings, "build.prepareCommands has package install without sudo (apk add / apt-get install) — containers run as zerops user, prefix with sudo")
 	}
 
-	// Explicit role, no fallback. Empty role skips the role-specific
-	// warnings (dev deployFiles check, stage `zsc noop` check,
-	// dev healthCheck check) — callers that know the role pass it in.
+	// DM-2: self-deploy with cherry-pick deployFiles is destructive.
+	// The source container IS the target; extracting a narrow artifact
+	// overwrites its working tree with only the selection, and subsequent
+	// self-deploys cannot re-push what is no longer on disk. Hard error,
+	// never an advisory. See docs/spec-workflows.md §8 Deploy Modes.
+	if class == DeployClassSelf && len(deployFiles) > 0 &&
+		!slices.Contains(deployFiles, ".") && !slices.Contains(deployFiles, "./") {
+		return warnings, platform.NewPlatformError(
+			platform.ErrInvalidZeropsYml,
+			fmt.Sprintf("self-deploy setup %q: deployFiles must be [.] or [./] — narrower patterns destroy the target's working tree on artifact extraction (DM-2)", entry.Setup),
+			"Set `deployFiles: [.]` for self-deploy. To cherry-pick build output, use cross-deploy (pass sourceService != targetService, or strategy=git-push).",
+		)
+	}
+
+	// Explicit role, no fallback. Empty role skips role-specific advisories.
 	role := ""
 	if len(roles) > 0 {
 		role = roles[0]
@@ -77,26 +106,13 @@ func ValidateZeropsYml(workingDir, targetHostname, serviceType string, roles ...
 	isDev := role == string(workflow.DeployRoleDev)
 	isStage := role == string(workflow.DeployRoleStage)
 
-	if isDev && len(deployFiles) > 0 {
-		if !slices.Contains(deployFiles, ".") && !slices.Contains(deployFiles, "./") {
-			warnings = append(warnings, "dev service should use deployFiles: [.] — ensures source files persist across deploys for continued iteration")
-		}
-	}
-
-	// When cherry-picking (not "."), check each path exists.
-	if len(deployFiles) > 0 && !slices.Contains(deployFiles, ".") && !slices.Contains(deployFiles, "./") {
-		var missing []string
-		for _, df := range deployFiles {
-			p := filepath.Join(workingDir, df)
-			if _, err := os.Stat(p); err != nil {
-				missing = append(missing, df)
-			}
-		}
-		if len(missing) > 0 {
-			warnings = append(warnings, fmt.Sprintf(
-				"deployFiles paths not found: %s — these will be missing from the deploy artifact",
-				strings.Join(missing, ", ")))
-		}
+	// Dev-role advisory (non-self-deploy path): deploying a narrow
+	// artifact to a dev-role target breaks the live-edit workspace.
+	// Self-deploy already returned above with a hard error; this branch
+	// covers cross-deploy-to-dev and local-deploy-to-dev.
+	if isDev && len(deployFiles) > 0 &&
+		!slices.Contains(deployFiles, ".") && !slices.Contains(deployFiles, "./") {
+		warnings = append(warnings, "dev service should use deployFiles: [.] — ensures source files persist across deploys for continued iteration")
 	}
 
 	// Stage services with "zsc noop" build command are likely misconfigured.
@@ -117,7 +133,7 @@ func ValidateZeropsYml(workingDir, targetHostname, serviceType string, roles ...
 			entry.Setup))
 	}
 
-	return warnings
+	return warnings, nil
 }
 
 // ZeropsYmlDoc is the top-level zerops.yaml structure (minimal for validation).

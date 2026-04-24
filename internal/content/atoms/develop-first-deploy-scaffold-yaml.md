@@ -43,4 +43,14 @@ spellings resolve to literal strings at runtime and fail silently.
 - `standard` mode: emit separate entries for dev AND stage hostnames;
   stage's `deployFiles` points at the build output directory.
 
+**Content-root tip (ASP.NET, static-serving frameworks):**
+
+When a foreground runtime expects assets at `ContentRootPath = CWD` (e.g.
+ASP.NET's `wwwroot/` lookup at `/var/www/wwwroot`), stage's `deployFiles`
+must ship those assets to the `/var/www/` root. Choose the **tilde-extract**
+pattern (`./out/~`) over **preserve** (`./out`) in that case — tilde strips
+the `out/` prefix so `wwwroot/` lands at `/var/www/wwwroot/` instead of
+`/var/www/out/wwwroot/`. See `develop-deploy-modes` atom for the full
+decision rule and DM-5 in `docs/spec-workflows.md` §8.
+
 Schema: fetch `zerops.yaml` JSON Schema via `zerops_knowledge` if unsure.

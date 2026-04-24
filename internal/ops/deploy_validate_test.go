@@ -247,26 +247,12 @@ func TestValidateZeropsYml_DeployFiles(t *testing.T) {
 			noWarnings: true,
 			createDirs: []string{"dist"},
 		},
-		{
-			name:     "cherry-picked deployFiles with missing paths",
-			hostname: "appstage",
-			yml: `zerops:
-  - setup: appstage
-    build:
-      deployFiles:
-        - app
-        - vendor
-        - public
-        - nonexistent
-    run:
-      start: php artisan serve
-      ports:
-        - port: 8080
-`,
-			wantWarnings: 1,
-			wantContains: "deployFiles paths not found: nonexistent",
-			createDirs:   []string{"app", "vendor", "public"},
-		},
+		// NOTE: no more "cherry-picked deployFiles with missing paths" case —
+		// DM-3/DM-4 (docs/spec-workflows.md §8) move post-build filesystem
+		// existence to the Zerops builder's authority. Cross-deploy's
+		// deployFiles is defined over the build container's post-buildCommands
+		// tree, which ZCP cannot observe pre-push. TestValidateZeropsYml_DM3
+		// below pins this directly.
 	}
 
 	for _, tt := range tests {
@@ -844,9 +830,17 @@ func TestParseZeropsYml_ExtensionFallback(t *testing.T) {
 	}
 }
 
-// validateTestOpts extends runValidateTest with optional serviceType.
+// validateTestOpts extends runValidateTest with optional serviceType,
+// DeployClass override, and DM-2 error expectation.
 type validateTestOpts struct {
 	serviceType string
+	// class defaults to DeployClassCross when empty — cross-deploy is the
+	// permissive path (no DM-2 enforcement) so pre-existing test cases
+	// that don't care about the class keep working.
+	class DeployClass
+	// wantErrContains asserts that ValidateZeropsYml returned a non-nil
+	// error containing this substring. Empty = expect nil error.
+	wantErrContains string
 }
 
 func runValidateTest(t *testing.T, hostname, yml string, wantWarnings int, wantContains string, noWarnings bool, createDirs ...string) {
@@ -874,6 +868,11 @@ func runValidateTestWithOpts(t *testing.T, hostname, yml string, wantWarnings in
 	// fixtures name hostnames with dev/stage suffixes for readability,
 	// so this helper derives the role from the suffix before passing
 	// it in.
+	//
+	// DeployClass default: tests that don't set opts.class exercise the
+	// cross-deploy path (no DM-2 enforcement). Cases that need self-deploy
+	// behavior set opts.class = DeployClassSelf explicitly and expect an
+	// error via opts.wantErrContains.
 	role := ""
 	switch {
 	case strings.HasSuffix(hostname, "dev"):
@@ -881,7 +880,25 @@ func runValidateTestWithOpts(t *testing.T, hostname, yml string, wantWarnings in
 	case strings.HasSuffix(hostname, "stage"):
 		role = "stage"
 	}
-	warnings := ValidateZeropsYml(dir, hostname, opts.serviceType, role)
+	class := opts.class
+	if class == "" {
+		class = DeployClassCross
+	}
+	warnings, vErr := ValidateZeropsYml(dir, hostname, opts.serviceType, class, role)
+	if opts.wantErrContains != "" {
+		if vErr == nil {
+			t.Errorf("expected error containing %q, got nil", opts.wantErrContains)
+			return
+		}
+		if !strings.Contains(vErr.Error(), opts.wantErrContains) {
+			t.Errorf("error = %q, want containing %q", vErr.Error(), opts.wantErrContains)
+		}
+		return
+	}
+	if vErr != nil {
+		t.Errorf("unexpected error: %v", vErr)
+		return
+	}
 
 	if noWarnings {
 		if len(warnings) != 0 {
@@ -1117,4 +1134,237 @@ func TestValidateZeropsYml_PrepareCommandsSudo(t *testing.T) {
 			runValidateTestWithOpts(t, tt.hostname, tt.yml, wantWarnings, tt.wantContains, tt.noWarnings, validateTestOpts{})
 		})
 	}
+}
+
+// TestValidateZeropsYml_DM2_SelfDeployRequiresDotSlash pins DM-2 from
+// docs/spec-workflows.md §8 Deploy Modes: self-deploy with narrower-than-[.]
+// deployFiles is rejected as a hard error — the source container is the
+// target, so a cherry-pick artifact overwrites its own working tree.
+func TestValidateZeropsYml_DM2_SelfDeployRequiresDotSlash(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		hostname        string
+		yml             string
+		wantErrContains string
+		noError         bool
+	}{
+		{
+			name:     "self-deploy with [.] passes",
+			hostname: "appdev",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [.]
+    run:
+      start: bun run index.ts
+      ports:
+        - port: 8080
+`,
+			noError: true,
+		},
+		{
+			name:     "self-deploy with [./] passes",
+			hostname: "appdev",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [./]
+    run:
+      start: bun run index.ts
+      ports:
+        - port: 8080
+`,
+			noError: true,
+		},
+		{
+			name:     "self-deploy with scalar ./ passes",
+			hostname: "appdev",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      deployFiles: ./
+    run:
+      start: bun run index.ts
+      ports:
+        - port: 8080
+`,
+			noError: true,
+		},
+		{
+			name:     "self-deploy dev with [./out] errors",
+			hostname: "appdev",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      buildCommands:
+        - dotnet publish App.csproj -c Release -o out
+      deployFiles: [./out]
+    run:
+      start: dotnet App.dll
+      ports:
+        - port: 8080
+`,
+			wantErrContains: "DM-2",
+		},
+		{
+			name:     "self-deploy stage with [./dist] errors (role doesn't matter for DM-2)",
+			hostname: "appstage",
+			yml: `zerops:
+  - setup: appstage
+    build:
+      buildCommands:
+        - bun build src/index.ts --outdir dist
+      deployFiles: [dist]
+    run:
+      start: bun dist/index.js
+      ports:
+        - port: 8080
+`,
+			wantErrContains: "deployFiles must be [.]",
+		},
+		{
+			name:     "self-deploy with [./out/~] errors (tilde still not [.]/[./])",
+			hostname: "appdev",
+			yml: `zerops:
+  - setup: appdev
+    build:
+      deployFiles: [./out/~]
+    run:
+      start: node server.js
+      ports:
+        - port: 8080
+`,
+			wantErrContains: "DM-2",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			opts := validateTestOpts{class: DeployClassSelf}
+			if tt.wantErrContains != "" {
+				opts.wantErrContains = tt.wantErrContains
+			}
+			runValidateTestWithOpts(t, tt.hostname, tt.yml, 0, "", tt.noError, opts)
+		})
+	}
+}
+
+// TestValidateZeropsYml_DM3_CrossDeployNoSourceExistenceCheck pins DM-3
+// from docs/spec-workflows.md §8: cross-deploy's deployFiles is defined
+// over the build container's post-buildCommands filesystem, not the
+// source tree. ZCP MUST NOT stat-check source-tree existence for
+// cross-deploy paths. A source tree that lacks ./out / ./dist / ./build
+// is normal, not a warning.
+func TestValidateZeropsYml_DM3_CrossDeployNoSourceExistenceCheck(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		yml  string
+	}{
+		{
+			name: "cross-deploy dotnet [./out] without source out",
+			yml: `zerops:
+  - setup: appstage
+    build:
+      base: dotnet@9
+      buildCommands:
+        - dotnet publish App.csproj -c Release -o out
+      deployFiles: [./out]
+    run:
+      start: dotnet App.dll
+      ports:
+        - port: 8080
+`,
+		},
+		{
+			name: "cross-deploy vite [./dist] without source dist",
+			yml: `zerops:
+  - setup: appstage
+    build:
+      buildCommands:
+        - bun run build
+      deployFiles: [./dist]
+    run:
+      start: bun preview
+      ports:
+        - port: 8080
+`,
+		},
+		{
+			name: "cross-deploy multi-path cherry-pick without any of them in source",
+			yml: `zerops:
+  - setup: appstage
+    build:
+      deployFiles:
+        - app
+        - vendor
+        - public
+        - nonexistent
+    run:
+      start: php artisan serve
+      ports:
+        - port: 8080
+`,
+		},
+		{
+			name: "cross-deploy nextjs static [out/~] without source out",
+			yml: `zerops:
+  - setup: appstage
+    build:
+      buildCommands:
+        - bun run build
+      deployFiles:
+        - out/~
+    run:
+      base: static
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			// hostname with "stage" suffix so test helper picks role=stage,
+			// but the important invariant is class=DeployClassCross.
+			runValidateTestWithOpts(t, "appstage", tt.yml, 0, "", true,
+				validateTestOpts{class: DeployClassCross})
+		})
+	}
+}
+
+// TestValidateZeropsYml_DM4_YamlShapeOnly is a regression gate for DM-4:
+// ZCP client-side pre-flight validates only source-tree-knowable facts.
+// This test enumerates what pre-flight DOES check (yaml shape, schema
+// coherence, role advisories) and what it does NOT check (post-build
+// filesystem). If anyone reintroduces a filesystem-existence check on
+// deployFiles paths, cases below that write yaml pointing to
+// non-existent paths with a matching buildCommand should still pass
+// without warnings — this test is the regression signal.
+func TestValidateZeropsYml_DM4_YamlShapeOnly(t *testing.T) {
+	t.Parallel()
+
+	// Cross-deploy with deployFiles that would have triggered the old
+	// existence check in every hello-world recipe's stage block. No
+	// warning must fire — that's the whole point of DM-4.
+	ymlWithBuildOutputs := `zerops:
+  - setup: appstage
+    build:
+      base: dotnet@9
+      buildCommands:
+        - dotnet publish App.csproj -c Release -o out
+      deployFiles:
+        - ./out
+        - ./appsettings.Production.json
+    run:
+      start: dotnet App.dll
+      ports:
+        - port: 8080
+`
+
+	runValidateTestWithOpts(t, "appstage", ymlWithBuildOutputs, 0, "", true,
+		validateTestOpts{class: DeployClassCross})
 }

@@ -33,7 +33,7 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	var checks []workflow.StepCheck
 
 	// Find and parse zerops.yaml.
-	doc, ymlDir, parseErr := findAndParseZeropsYml(projectRoot, targetHostname)
+	doc, _, parseErr := findAndParseZeropsYml(projectRoot, targetHostname)
 	if parseErr != nil {
 		checks = append(checks, workflow.StepCheck{
 			Name: "zerops_yml_exists", Status: statusFail,
@@ -80,10 +80,11 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	// Dev/prod env divergence check.
 	checks = append(checks, checkDevProdEnvDivergence(doc)...)
 
-	// Validate deployFiles paths (skip for stage — cross-deployed from dev).
-	if role != workflow.DeployRoleStage {
-		checks = append(checks, validateDeployFiles(ymlDir, targetHostname, entry)...)
-	}
+	// deployFiles path validation is owned by ops.ValidateZeropsYml (invoked
+	// at the push site in deploy_ssh.go / deploy_local.go) and enforces DM-2
+	// with full DeployClass context. DM-4 (docs/spec-workflows.md §8) forbids
+	// a duplicate check in this layer. The pre-flight's sole yaml concern
+	// here is setup resolution + schema + env-ref validation.
 
 	// Validate env var references.
 	if len(entry.EnvVariables) > 0 && client != nil {
