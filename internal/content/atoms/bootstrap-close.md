@@ -8,31 +8,30 @@ title: "Close bootstrap — hand off to develop"
 
 ### Closing bootstrap
 
-Bootstrap is **infrastructure-only**. Closing seals the infra plan by
-writing `ServiceMeta` records with `BootstrappedAt` for every planned
-runtime; `FirstDeployedAt` stays empty — develop fills it on first deploy.
+Bootstrap is **infrastructure-only**. After you call
+`action="complete" step="close"`, every planned runtime appears in the
+envelope with `bootstrapped: true` — infrastructure is provisioned
+(managed services `RUNNING`, runtimes registered, dev containers
+SSH-mount-ready, managed env vars discoverable). For classic and
+recipe-with-first-deploy-later routes the same services show
+`deployed: false` and enter the develop first-deploy branch. For
+adopt-route services and recipes that deployed during bootstrap the
+envelope shows `deployed: true` directly.
 
-**What bootstrap guarantees at close:**
+No application code is written, no `zerops.yaml` generated, and no
+deploy runs as part of bootstrap close itself. ServiceMeta records
+are on-disk evidence authored by bootstrap and adoption; their
+envelope projection is the `ServiceSnapshot` with `bootstrapped: true`,
+the chosen mode, and stage pairing where applicable.
 
-- Every planned service is provisioned on Zerops (managed services
-  `RUNNING`, runtimes registered but not-yet-deployed).
-- Dev containers are SSH-mount ready for the develop workflow.
-- Env vars produced by managed services are discoverable and have been
-  recorded in the session.
-
-**What bootstrap does NOT do:**
-
-- Write application code.
-- Generate `zerops.yaml`.
-- Deploy anything. Not even once.
-
-**Next step — `zerops_workflow action="start" workflow="develop"`.** Develop runs the full code-and-deploy loop:
+**Next step — `zerops_workflow action="start" workflow="develop"`.**
+Develop runs the full code-and-deploy loop:
 
 1. Scaffold `zerops.yaml` driven by the planned runtimes.
 2. Write the application code that implements the user's intent.
-3. Run the first deploy and verify — fresh services enter the
-   first-deploy branch, which stamps `FirstDeployedAt` on the
-   `ServiceMeta` when HTTP verification passes.
+3. Run the first deploy and verify — services with `deployed: false`
+   enter the first-deploy branch; the envelope flips `deployed: true`
+   after a successful deploy + passing verify.
 4. Iterate on failures — stop after 5 unsuccessful attempts and escalate to the user.
 
 Direct tools (`zerops_scale`, `zerops_env`, `zerops_subdomain`,
