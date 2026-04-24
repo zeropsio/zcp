@@ -175,21 +175,97 @@ func injectIGItem1(body, yamlBody string) string {
 }
 
 // codebaseIGItem1 formats the engine-owned first item of a codebase's
-// Integration Guide — an "### 1. Adding zerops.yaml" heading, a short
-// intro sentence, and a fenced yaml code block carrying the committed
-// yaml verbatim. The yaml is never re-wrapped or re-parsed, so inline
-// comments survive byte-identical.
+// Integration Guide — an "### 1. Adding zerops.yaml" heading, an intro
+// sentence derived from the yaml body (which setups are declared, whether
+// initCommands run migrations / seeding / scout-import, whether
+// readinessCheck / healthCheck ship), and a fenced yaml code block
+// carrying the committed yaml verbatim. The yaml is never re-wrapped or
+// re-parsed, so inline comments survive byte-identical.
 func codebaseIGItem1(yamlBody string) string {
 	var b strings.Builder
 	b.WriteString("### 1. Adding `zerops.yaml`\n\n")
-	b.WriteString("The main configuration file — place at repository root. It tells Zerops how to build, deploy and run your app.\n\n")
-	b.WriteString("```yaml\n")
+	b.WriteString(yamlIntroSentence(yamlBody))
+	b.WriteString("\n\n```yaml\n")
 	b.WriteString(yamlBody)
 	if !strings.HasSuffix(yamlBody, "\n") {
 		b.WriteByte('\n')
 	}
 	b.WriteString("```")
 	return b.String()
+}
+
+// yamlIntroSentence composes the one-or-two-sentence intro for IG item
+// #1 by inspecting the yaml body for known stanzas. The first sentence
+// always frames the file; subsequent clauses name the behaviors that
+// are present (setups declared, initCommands, readiness / health). The
+// detection is a simple substring probe — the yaml is canonical Zerops
+// shape, so the stanza names are stable — and never re-parses the body.
+func yamlIntroSentence(yamlBody string) string {
+	const intro = "The main configuration file — place at repository root. It tells Zerops how to build, deploy and run your app."
+	lower := strings.ToLower(yamlBody)
+	var setups []string
+	for _, s := range []string{"dev", "prod", "stage", "worker"} {
+		if strings.Contains(yamlBody, "- setup: "+s) {
+			setups = append(setups, s)
+		}
+	}
+	var detail []string
+	if len(setups) == 1 {
+		detail = append(detail, fmt.Sprintf("declares one setup (`%s`)", setups[0]))
+	} else if len(setups) > 1 {
+		quoted := make([]string, len(setups))
+		for i, s := range setups {
+			quoted[i] = "`" + s + "`"
+		}
+		detail = append(detail, fmt.Sprintf("declares %d setups (%s)", len(setups), strings.Join(quoted, ", ")))
+	}
+	if strings.Contains(yamlBody, "initCommands:") {
+		var ops []string
+		if strings.Contains(lower, "migrate") || strings.Contains(lower, "migration") {
+			ops = append(ops, "migrations")
+		}
+		if strings.Contains(lower, "seed") {
+			ops = append(ops, "seed")
+		}
+		if strings.Contains(lower, "scout:import") || strings.Contains(lower, "scout-import") || strings.Contains(lower, "reindex") {
+			ops = append(ops, "search index")
+		}
+		switch len(ops) {
+		case 0:
+			detail = append(detail, "runs `initCommands` at boot")
+		default:
+			detail = append(detail, "runs `initCommands` at boot ("+strings.Join(ops, ", ")+")")
+		}
+	}
+	var gates []string
+	if strings.Contains(yamlBody, "readinessCheck:") {
+		gates = append(gates, "readiness")
+	}
+	if strings.Contains(yamlBody, "healthCheck:") {
+		gates = append(gates, "health")
+	}
+	if len(gates) > 0 {
+		detail = append(detail, "ships "+strings.Join(gates, " + ")+" checks")
+	}
+	if len(detail) == 0 {
+		return intro
+	}
+	return intro + " This one " + joinClauses(detail) + "."
+}
+
+// joinClauses joins 1..N short clauses with Oxford-comma English ("a",
+// "a and b", "a, b, and c"). Zerops recipe yamls rarely exceed 3 clauses
+// in an intro.
+func joinClauses(parts []string) string {
+	switch len(parts) {
+	case 0:
+		return ""
+	case 1:
+		return parts[0]
+	case 2:
+		return parts[0] + " and " + parts[1]
+	}
+	return strings.Join(parts[:len(parts)-1], ", ") + ", and " + parts[len(parts)-1]
 }
 
 // AssembleCodebaseClaudeMD renders the per-codebase CLAUDE.md for one

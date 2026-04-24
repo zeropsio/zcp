@@ -354,6 +354,82 @@ func TestStitch_IGFirstItemIsEmbeddedYaml(t *testing.T) {
 	}
 }
 
+// TestStitch_IGItem1IntroDescribesYamlBehavior — run-10-readiness §M
+// follow-up. The item-#1 intro sentence is derived from the yaml body:
+// which setups are declared, whether initCommands run (migrations /
+// seeding / scout-import), and whether health / readiness checks ship.
+// A porter reading the IG learns what THIS yaml does without having to
+// decode the code block.
+func TestStitch_IGItem1IntroDescribesYamlBehavior(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	apiRoot := filepath.Join(dir, "workspace", "api")
+	if err := os.MkdirAll(apiRoot, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	yaml := `zerops:
+  - setup: dev
+    run:
+      base: nodejs@22
+      start: zsc noop --silent
+
+  - setup: prod
+    build:
+      base: nodejs@22
+    deploy:
+      readinessCheck:
+        httpGet:
+          port: 3000
+          path: /health
+    run:
+      base: nodejs@22
+      start: node dist/main.js
+      initCommands:
+        - zsc execOnce ${appVersionId} -- node scripts/migrate.js
+        - zsc execOnce ${appVersionId} -- node scripts/seed.js
+      healthCheck:
+        httpGet:
+          port: 3000
+          path: /health
+`
+	if err := os.WriteFile(filepath.Join(apiRoot, "zerops.yaml"), []byte(yaml), 0o600); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+	plan := syntheticShowcasePlan()
+	for i := range plan.Codebases {
+		if plan.Codebases[i].Hostname == "api" {
+			plan.Codebases[i].SourceRoot = apiRoot
+		}
+	}
+	body, _, err := AssembleCodebaseREADME(plan, "api")
+	if err != nil {
+		t.Fatalf("AssembleCodebaseREADME: %v", err)
+	}
+	// Extract the intro (prose between "### 1." heading and the yaml fence)
+	// so phrase assertions check the generated sentence, not stanzas in the
+	// embedded yaml body.
+	headerIdx := strings.Index(body, "### 1. Adding `zerops.yaml`")
+	fenceIdx := strings.Index(body, "```yaml")
+	if headerIdx < 0 || fenceIdx <= headerIdx {
+		t.Fatalf("IG structure malformed: header=%d fence=%d\n%s", headerIdx, fenceIdx, body)
+	}
+	intro := body[headerIdx:fenceIdx]
+	// The intro sentence names the setups, init-command presence, and
+	// readiness-check presence so a porter knows what this yaml does.
+	for _, phrase := range []string{
+		"dev",
+		"prod",
+		"migrations",
+		"readiness",
+	} {
+		if !strings.Contains(strings.ToLower(intro), phrase) {
+			t.Errorf("IG item #1 intro must mention %q; intro was:\n%s",
+				phrase, intro)
+		}
+	}
+}
+
 // TestStitch_IGSubsequentItemsArePorterItems — run-10-readiness §M.
 // After the engine-generated item #1, fragment-authored items appear —
 // the sub-agent's fragment starts at "### 2." per the updated brief.

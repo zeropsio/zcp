@@ -36,9 +36,10 @@ Produce your codebase's `zerops.yaml` (with inline comments) + record
 ### Integration Guide — item #1 is engine-owned
 
 The engine auto-generates IG item #1 during stitch: a `### 1. Adding
-\`zerops.yaml\`` heading, a one-line intro naming what the yaml does
-(setups, initCommands, health), and a fenced yaml block carrying
-`<cb.SourceRoot>/zerops.yaml` verbatim. Reference:
+\`zerops.yaml\`` heading, an intro derived from your yaml (setups
+declared, whether initCommands run migrations / seed / search-index,
+whether readiness + health checks ship), and a fenced yaml block
+carrying `<cb.SourceRoot>/zerops.yaml` verbatim. Reference:
 `laravel-showcase-app/README.md`.
 
 Your `codebase/<h>/integration-guide` fragment contains items #2+ —
