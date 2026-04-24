@@ -328,6 +328,41 @@ body`
 	}
 }
 
+// TestParseAtom_ReferencesFields_InvalidShape asserts the parser rejects
+// malformed pkg.Type.Field references early, catching typos before they
+// reach TestAtomReferenceFieldIntegrity's AST resolution.
+func TestParseAtom_ReferencesFields_InvalidShape(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		entries string
+	}{
+		{"missing_type", "[ops.Status]"},
+		{"lowercase_type", "[ops.deployResult.Status]"},
+		{"package_uppercase", "[Ops.DeployResult.Status]"},
+		{"empty_component", "[ops..Status]"},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			content := `---
+id: test
+phases: [develop-active]
+references-fields: ` + tt.entries + `
+---
+body`
+			_, err := ParseAtom(content)
+			if err == nil {
+				t.Fatalf("expected error for entries %q, got nil", tt.entries)
+			}
+			if !strings.Contains(err.Error(), "references-fields") {
+				t.Errorf("error %q should mention references-fields", err.Error())
+			}
+		})
+	}
+}
+
 // TestParseAtom_PinnedByScenarios exercises the optional test-anchor
 // frontmatter. Informational only — no runtime validation.
 func TestParseAtom_PinnedByScenarios(t *testing.T) {

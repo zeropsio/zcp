@@ -3,8 +3,14 @@ package workflow
 import (
 	"bufio"
 	"fmt"
+	"regexp"
 	"strings"
 )
+
+// referencesFieldPattern matches a pkg.Type.Field entry in atom
+// references-fields frontmatter (e.g. "ops.DeployResult.Status").
+// Used by ParseAtom to reject malformed entries early.
+var referencesFieldPattern = regexp.MustCompile(`^[a-z_]+\.[A-Z][A-Za-z0-9_]*\.[A-Za-z][A-Za-z0-9_]*$`)
 
 // KnowledgeAtom is one piece of runtime-dependent guidance. Atoms live as
 // .md files under internal/content/atoms/; their frontmatter declares the
@@ -87,6 +93,14 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 	if len(atom.Axes.Phases) == 0 {
 		return atom, fmt.Errorf("atom %q missing required field: phases", atom.ID)
 	}
+	for _, ref := range atom.ReferencesFields {
+		if !referencesFieldPattern.MatchString(ref) {
+			return atom, fmt.Errorf("atom %q references-fields entry %q is not pkg.Type.Field form (e.g. ops.DeployResult.Status)", atom.ID, ref)
+		}
+	}
+	// references-atoms entries are validated by parseYAMLList (empty
+	// strings filtered out) and by TestAtomReferencesAtomsIntegrity in
+	// Phase 2 (target atom must exist).
 	return atom, nil
 }
 
