@@ -37,12 +37,19 @@ type ResearchResult struct {
 // Codebase is one deployable codebase within a recipe. Hostname is the
 // Zerops service hostname; BaseRuntime is the Zerops runtime identifier
 // (e.g. "nodejs@22"). Role determines platform obligations via roles.go.
+//
+// SourceRoot points at the scaffold-authored workspace directory for this
+// codebase — the per-codebase zerops.yaml + README source live there. A2
+// of run-8-readiness copies <SourceRoot>/zerops.yaml verbatim into the
+// stitched apps-repo shape so inline comments the scaffold sub-agent
+// authored survive byte-identical.
 type Codebase struct {
 	Hostname           string `json:"hostname"`
 	Role               Role   `json:"role"`
 	BaseRuntime        string `json:"baseRuntime,omitempty"`
 	IsWorker           bool   `json:"isWorker,omitempty"`
 	SharesCodebaseWith string `json:"sharesCodebaseWith,omitempty"`
+	SourceRoot         string `json:"sourceRoot,omitempty"`
 }
 
 // Service is a managed or utility service in the recipe (database, cache,

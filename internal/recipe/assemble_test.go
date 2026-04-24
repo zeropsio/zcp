@@ -1,6 +1,8 @@
 package recipe
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -226,6 +228,167 @@ func TestHandler_RecordFragment_RejectsUnknownID(t *testing.T) {
 	if res.OK {
 		t.Error("expected unknown-codebase fragment id to be rejected")
 	}
+}
+
+// TestAssemble_CopiesCommittedYaml — per-codebase zerops.yaml lands
+// verbatim in the apps-repo shape at outputRoot/codebases/<hostname>/zerops.yaml.
+// The scaffold sub-agent authors that file (with inline comments) during
+// scaffold; A2's stitch copies it without re-parsing or re-emitting, so
+// comments survive byte-identical.
+func TestAssemble_CopiesCommittedYaml(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	outputRoot := filepath.Join(dir, "run")
+	store := NewStore(dir)
+	if _, err := store.OpenOrCreate("synth-showcase", outputRoot); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	// Stage a scaffold-authored zerops.yaml with a distinct inline
+	// comment so the round-trip check catches any re-emission regression.
+	scaffoldRoot := filepath.Join(dir, "workspace", "api")
+	if err := os.MkdirAll(scaffoldRoot, 0o755); err != nil {
+		t.Fatalf("mkdir scaffold: %v", err)
+	}
+	committed := `# scaffold-authored yaml — inline comment must survive verbatim
+zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+    run:
+      # why: L7 balancer routes to 0.0.0.0
+      base: nodejs@22
+`
+	yamlPath := filepath.Join(scaffoldRoot, "zerops.yaml")
+	if err := os.WriteFile(yamlPath, []byte(committed), 0o600); err != nil {
+		t.Fatalf("write scaffold yaml: %v", err)
+	}
+	for i, cb := range sess.Plan.Codebases {
+		if cb.Hostname == "api" {
+			sess.Plan.Codebases[i].SourceRoot = scaffoldRoot
+		}
+	}
+
+	if err := fillAllFragments(store, "synth-showcase", sess.Plan); err != nil {
+		t.Fatalf("fill fragments: %v", err)
+	}
+
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "stitch-content", Slug: "synth-showcase",
+	})
+	if !res.OK {
+		t.Fatalf("stitch: %+v", res)
+	}
+
+	copied, err := os.ReadFile(filepath.Join(outputRoot, "codebases", "api", "zerops.yaml"))
+	if err != nil {
+		t.Fatalf("read copied yaml: %v", err)
+	}
+	if string(copied) != committed {
+		t.Errorf("copied yaml differs from committed source\nwant:\n%s\ngot:\n%s",
+			committed, copied)
+	}
+}
+
+// TestAssemble_DeliverableSplit — stitchContent writes into two shapes
+// under outputRoot. Recipes-repo shape: root README + per-tier README
+// + per-tier import.yaml. Apps-repo shape (per codebase): README +
+// CLAUDE.md + zerops.yaml (copied).
+func TestAssemble_DeliverableSplit(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	outputRoot := filepath.Join(dir, "run")
+	store := NewStore(dir)
+	if _, err := store.OpenOrCreate("synth-showcase", outputRoot); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+	// Point each codebase at a staged workspace so the yaml copy step
+	// can pick up a valid source.
+	for i, cb := range sess.Plan.Codebases {
+		wsRoot := filepath.Join(dir, "workspace", cb.Hostname)
+		if err := os.MkdirAll(wsRoot, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", wsRoot, err)
+		}
+		if err := os.WriteFile(filepath.Join(wsRoot, "zerops.yaml"),
+			[]byte("# "+cb.Hostname+" scaffold yaml\nzerops: []\n"), 0o600); err != nil {
+			t.Fatalf("write workspace yaml: %v", err)
+		}
+		sess.Plan.Codebases[i].SourceRoot = wsRoot
+	}
+
+	if err := fillAllFragments(store, "synth-showcase", sess.Plan); err != nil {
+		t.Fatalf("fill fragments: %v", err)
+	}
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "stitch-content", Slug: "synth-showcase",
+	})
+	if !res.OK {
+		t.Fatalf("stitch: %+v", res)
+	}
+
+	// Recipes-repo shape — root + 6 tier dirs.
+	tiers := Tiers()
+	recipesShape := make([]string, 0, 1+2*len(tiers))
+	recipesShape = append(recipesShape, "README.md")
+	for _, tier := range tiers {
+		recipesShape = append(recipesShape,
+			filepath.Join(tier.Folder, "README.md"),
+			filepath.Join(tier.Folder, "import.yaml"),
+		)
+	}
+	for _, p := range recipesShape {
+		abs := filepath.Join(outputRoot, p)
+		if _, err := os.Stat(abs); err != nil {
+			t.Errorf("recipes-shape path missing %s: %v", p, err)
+		}
+	}
+
+	// Apps-repo shape — per codebase: README + CLAUDE.md + zerops.yaml.
+	for _, cb := range sess.Plan.Codebases {
+		for _, want := range []string{"README.md", "CLAUDE.md", "zerops.yaml"} {
+			abs := filepath.Join(outputRoot, "codebases", cb.Hostname, want)
+			if _, err := os.Stat(abs); err != nil {
+				t.Errorf("apps-shape path missing codebases/%s/%s: %v",
+					cb.Hostname, want, err)
+			}
+		}
+	}
+}
+
+// fillAllFragments populates every fragment id the synthetic plan
+// declares so stitchContent runs without surfacing missing ids. Shared
+// between A2 tests that need a clean assemble.
+func fillAllFragments(store *Store, slug string, plan *Plan) error {
+	ids := map[string]string{
+		"root/intro": "intro",
+	}
+	for i := range Tiers() {
+		ids[fmt.Sprintf("env/%d/intro", i)] = fmt.Sprintf("tier %d", i)
+	}
+	for _, cb := range plan.Codebases {
+		base := "codebase/" + cb.Hostname
+		ids[base+"/intro"] = "cb intro"
+		ids[base+"/integration-guide"] = "1. IG"
+		ids[base+"/knowledge-base"] = "- **x** — because"
+		ids[base+"/claude-md/service-facts"] = "port 3000"
+		ids[base+"/claude-md/notes"] = "dev loop"
+	}
+	for id, body := range ids {
+		res := dispatch(context.Background(), store, RecipeInput{
+			Action: "record-fragment", Slug: slug,
+			FragmentID: id, Fragment: body,
+		})
+		if !res.OK {
+			return fmt.Errorf("record-fragment %s: %s", id, res.Error)
+		}
+	}
+	return nil
 }
 
 // TestAssemble_StitchWritesFragmentsToDisk — stitchContent renders every

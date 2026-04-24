@@ -417,16 +417,17 @@ func stitchContent(sess *Session) ([]string, error) {
 		}
 	}
 
-	// Per-codebase README + CLAUDE.md — writes under outputRoot/codebases/.
-	// A2 moves per-codebase surfaces to the two-root split; for A1 the
-	// flat codebases/ subtree keeps shape-compat with the existing tree.
+	// Per-codebase apps-repo shape — README + CLAUDE.md + zerops.yaml
+	// (copied from the scaffold-authored workspace, not re-emitted, so
+	// inline comments survive byte-identical). See plan §2.A.5.
 	for _, cb := range plan.Codebases {
 		readmeBody, m, err := AssembleCodebaseREADME(plan, cb.Hostname)
 		if err != nil {
 			return nil, fmt.Errorf("assemble codebase %s README: %w", cb.Hostname, err)
 		}
 		missing = append(missing, m...)
-		if err := writeSurfaceFile(filepath.Join(outputRoot, "codebases", cb.Hostname, "README.md"), readmeBody); err != nil {
+		cbRoot := filepath.Join(outputRoot, "codebases", cb.Hostname)
+		if err := writeSurfaceFile(filepath.Join(cbRoot, "README.md"), readmeBody); err != nil {
 			return nil, err
 		}
 		claudeBody, m, err := AssembleCodebaseClaudeMD(plan, cb.Hostname)
@@ -434,12 +435,40 @@ func stitchContent(sess *Session) ([]string, error) {
 			return nil, fmt.Errorf("assemble codebase %s CLAUDE.md: %w", cb.Hostname, err)
 		}
 		missing = append(missing, m...)
-		if err := writeSurfaceFile(filepath.Join(outputRoot, "codebases", cb.Hostname, "CLAUDE.md"), claudeBody); err != nil {
+		if err := writeSurfaceFile(filepath.Join(cbRoot, "CLAUDE.md"), claudeBody); err != nil {
 			return nil, err
+		}
+		if err := copyCommittedYAML(cb, cbRoot); err != nil {
+			return nil, fmt.Errorf("copy %s zerops.yaml: %w", cb.Hostname, err)
 		}
 	}
 
 	return missing, nil
+}
+
+// copyCommittedYAML copies <cb.SourceRoot>/zerops.yaml into the apps-
+// repo shape at <cbRoot>/zerops.yaml verbatim. SourceRoot unset is a
+// soft fail: the stitch proceeds but the codebase ships without a
+// zerops.yaml so the finalize validator surfaces the gap (run-8
+// acceptance #4). Missing source file is a hard fail — it signals
+// scaffold never committed the yaml.
+func copyCommittedYAML(cb Codebase, cbRoot string) error {
+	if cb.SourceRoot == "" {
+		return nil
+	}
+	src := filepath.Join(cb.SourceRoot, "zerops.yaml")
+	body, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("read scaffold yaml at %s: %w", src, err)
+	}
+	if err := os.MkdirAll(cbRoot, 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", cbRoot, err)
+	}
+	dst := filepath.Join(cbRoot, "zerops.yaml")
+	if err := os.WriteFile(dst, body, 0o600); err != nil {
+		return fmt.Errorf("write copied yaml: %w", err)
+	}
+	return nil
 }
 
 // recordFragment validates the fragment id against the plan, applies
