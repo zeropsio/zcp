@@ -285,40 +285,11 @@ func TestResearchGate_RejectsDogfoodPathology(t *testing.T) {
 	}
 }
 
-func TestDispatch_StitchContent(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	store := NewStore(dir)
-	dispatch(t.Context(), store, RecipeInput{
-		Action: "start", Slug: "synth-showcase",
-		OutputRoot: filepath.Join(dir, "run"),
-	})
-
-	payload := map[string]any{
-		"root_readme": "hello", "env_readmes": map[string]any{"0": "env0"},
-		"env_import_comments": map[string]any{}, "codebase_readmes": map[string]any{},
-		"codebase_claude": map[string]any{}, "codebase_zerops_yaml_comments": map[string]any{},
-		"citations": map[string]any{}, "manifest": map[string]any{"surface_counts": map[string]any{}},
-	}
-	res := dispatch(t.Context(), store, RecipeInput{
-		Action: "stitch-content", Slug: "synth-showcase", Payload: payload,
-	})
-	if !res.OK {
-		t.Fatalf("stitch-content: %+v", res)
-	}
-	if res.StitchedPath == "" {
-		t.Error("StitchedPath empty after successful stitch")
-	}
-}
-
-// TestDispatch_StitchContent_MergesEnvFieldsAndRegenerates pins the
-// real stitch contract: writer's env_import_comments + project_env_vars
-// merge into the plan, all 6 deliverable yamls land on disk with the
-// merged content, and writer-owned surface bodies (root README, env
-// README, per-codebase README + CLAUDE.md) land at their canonical
-// paths.
-func TestDispatch_StitchContent_MergesEnvFieldsAndRegenerates(t *testing.T) {
+// TestDispatch_StitchContent_ReportsMissingFragments — the A1 stitch
+// walks every surface template and reports any unfilled marker as a
+// missing fragment id. Empty plan fragments → every surface surfaces
+// its own missing ids → stitch returns error with the list.
+func TestDispatch_StitchContent_ReportsMissingFragments(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -330,79 +301,88 @@ func TestDispatch_StitchContent_MergesEnvFieldsAndRegenerates(t *testing.T) {
 	sess, _ := store.Get("synth-showcase")
 	sess.Plan = syntheticShowcasePlan()
 
-	payload := map[string]any{
-		"root_readme": "# synth showcase\n\nroot body.",
-		"env_readmes": map[string]any{
-			"0": "# Env 0 — AI Agent\n",
-			"5": "# Env 5 — HA Production\n",
-		},
-		"env_import_comments": map[string]any{
-			"0": map[string]any{
-				"project": "AI agent workspace — new.",
-				"service": map[string]any{"apidev": "API dev slot (stitched)."},
-			},
-		},
-		"project_env_vars": map[string]any{
-			"0": map[string]any{
-				"DEV_API_URL": "https://apidev-${zeropsSubdomainHost}-3000.prg1.zerops.app",
-			},
-			"5": map[string]any{
-				"STAGE_API_URL": "https://api-${zeropsSubdomainHost}-3000.prg1.zerops.app",
-			},
-		},
-		"codebase_readmes": map[string]any{
-			"api": map[string]any{
-				"integration_guide": "## IG for api\n- bind 0.0.0.0",
-				"gotchas":           "## Gotchas\n- self-shadow",
-			},
-		},
-		"codebase_claude": map[string]any{
-			"api": "# CLAUDE.md for api\ndev loop...",
-		},
-		"citations": map[string]any{},
-		"manifest":  map[string]any{"surface_counts": map[string]any{}},
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "stitch-content", Slug: "synth-showcase",
+	})
+	if res.OK {
+		t.Fatal("stitch-content with no fragments should report missing")
+	}
+	if !strings.Contains(res.Error, "missing fragments") {
+		t.Errorf("expected 'missing fragments' error, got: %s", res.Error)
+	}
+	// Even with missing fragments, surfaces still lay down on disk so
+	// the next record-fragment + stitch iteration can overwrite.
+	if _, err := os.Stat(filepath.Join(outputRoot, "README.md")); err != nil {
+		t.Errorf("root README should be written even with missing fragments: %v", err)
+	}
+}
+
+// TestDispatch_StitchContent_AssemblesFromFragments — populating every
+// fragment via record-fragment + env import-comments lands a complete
+// set of surfaces. Tier yamls regenerate with env comments; markers
+// carry fragment bodies.
+func TestDispatch_StitchContent_AssemblesFromFragments(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	outputRoot := filepath.Join(dir, "run")
+	store := NewStore(dir)
+	dispatch(t.Context(), store, RecipeInput{
+		Action: "start", Slug: "synth-showcase", OutputRoot: outputRoot,
+	})
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	fragments := map[string]string{
+		"root/intro":                              "synth showcase intro",
+		"env/0/intro":                             "AI Agent tier",
+		"env/1/intro":                             "Remote CDE tier",
+		"env/2/intro":                             "Local tier",
+		"env/3/intro":                             "Stage tier",
+		"env/4/intro":                             "Small Prod tier",
+		"env/5/intro":                             "HA Prod tier",
+		"codebase/api/intro":                      "api intro",
+		"codebase/api/integration-guide":          "1. Bind to 0.0.0.0",
+		"codebase/api/knowledge-base":             "- **x** — because Y",
+		"codebase/api/claude-md/service-facts":    "port 3000",
+		"codebase/api/claude-md/notes":            "dev loop",
+		"codebase/app/intro":                      "app intro",
+		"codebase/app/integration-guide":          "1. Bind to 0.0.0.0",
+		"codebase/app/knowledge-base":             "- **x** — because Y",
+		"codebase/app/claude-md/service-facts":    "port 5173",
+		"codebase/app/claude-md/notes":            "dev loop",
+		"codebase/worker/intro":                   "worker intro",
+		"codebase/worker/integration-guide":       "1. queue group",
+		"codebase/worker/knowledge-base":          "- **x** — because Y",
+		"codebase/worker/claude-md/service-facts": "worker queue",
+		"codebase/worker/claude-md/notes":         "dev loop",
+	}
+	for id, body := range fragments {
+		res := dispatch(t.Context(), store, RecipeInput{
+			Action: "record-fragment", Slug: "synth-showcase",
+			FragmentID: id, Fragment: body,
+		})
+		if !res.OK {
+			t.Fatalf("record-fragment %s: %+v", id, res)
+		}
 	}
 
 	res := dispatch(t.Context(), store, RecipeInput{
-		Action: "stitch-content", Slug: "synth-showcase", Payload: payload,
+		Action: "stitch-content", Slug: "synth-showcase",
 	})
 	if !res.OK {
 		t.Fatalf("stitch-content: %+v", res)
 	}
 
-	// Plan merges: EnvComments["0"].Service["apidev"] should reflect the
-	// stitched writer payload, not the synthetic fixture's old value.
-	if got := sess.Plan.EnvComments["0"].Service["apidev"]; got != "API dev slot (stitched)." {
-		t.Errorf("EnvComments[0].apidev = %q, want stitched value", got)
-	}
-	if got := sess.Plan.ProjectEnvVars["5"]["STAGE_API_URL"]; got == "" {
-		t.Error("ProjectEnvVars[5].STAGE_API_URL not merged")
-	}
-
-	// Deliverable yamls on disk with merged content.
+	// Tier yamls on disk.
 	for i := range Tiers() {
 		tier, _ := TierAt(i)
-		path := filepath.Join(outputRoot, tier.Folder, "import.yaml")
-		if _, err := os.Stat(path); err != nil {
-			t.Errorf("tier %d: import.yaml not on disk: %v", i, err)
+		if _, err := os.Stat(filepath.Join(outputRoot, tier.Folder, "import.yaml")); err != nil {
+			t.Errorf("tier %d import.yaml missing: %v", i, err)
 		}
 	}
-	tier0 := filepath.Join(outputRoot, "0 — AI Agent", "import.yaml")
-	body, err := os.ReadFile(tier0)
-	if err != nil {
-		t.Fatalf("read tier 0: %v", err)
-	}
-	if !strings.Contains(string(body), "DEV_API_URL") {
-		t.Errorf("tier 0 missing DEV_API_URL from project_env_vars:\n%s", string(body))
-	}
-	if !strings.Contains(string(body), "API dev slot (stitched).") {
-		t.Errorf("tier 0 missing stitched env comment:\n%s", string(body))
-	}
-	if !strings.Contains(string(body), "${zeropsSubdomainHost}") {
-		t.Errorf("tier 0 lost ${zeropsSubdomainHost} literal (template leak):\n%s", string(body))
-	}
 
-	// Content surfaces on disk.
+	// Surfaces on disk.
 	for _, want := range []string{
 		filepath.Join(outputRoot, "README.md"),
 		filepath.Join(outputRoot, "0 — AI Agent", "README.md"),
@@ -413,12 +393,19 @@ func TestDispatch_StitchContent_MergesEnvFieldsAndRegenerates(t *testing.T) {
 			t.Errorf("missing surface %s: %v", want, err)
 		}
 	}
-	// Fragment markers on per-codebase README.
-	cbBody, _ := os.ReadFile(filepath.Join(outputRoot, "codebases", "api", "README.md"))
-	if !strings.Contains(string(cbBody), "integration-guide-start") {
-		t.Errorf("codebase README missing IG marker:\n%s", string(cbBody))
+
+	// Root README carries the intro fragment.
+	rootBody, _ := os.ReadFile(filepath.Join(outputRoot, "README.md"))
+	if !strings.Contains(string(rootBody), "synth showcase intro") {
+		t.Errorf("root README missing intro fragment:\n%s", rootBody)
 	}
-	if !strings.Contains(string(cbBody), "knowledge-base-start") {
-		t.Errorf("codebase README missing KB marker:\n%s", string(cbBody))
+
+	// Per-codebase README carries integration-guide + knowledge-base bodies.
+	apiREADME, _ := os.ReadFile(filepath.Join(outputRoot, "codebases", "api", "README.md"))
+	if !strings.Contains(string(apiREADME), "1. Bind to 0.0.0.0") {
+		t.Errorf("api README missing IG body:\n%s", apiREADME)
+	}
+	if !strings.Contains(string(apiREADME), "**x** — because Y") {
+		t.Errorf("api README missing KB body:\n%s", apiREADME)
 	}
 }

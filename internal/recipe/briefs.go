@@ -10,19 +10,22 @@ import (
 
 // Brief cap constants (plan §8). Enforced at dispatch time; the composer
 // produces a Brief whose Bytes field the caller compares against the cap.
+// The writer brief is deleted in run-8-readiness Workstream A1: fragment
+// authorship is pinned to whoever holds the densest context at the moment
+// of authorship, not to a post-hoc writer sub-agent.
 const (
 	ScaffoldBriefCap = 3 * 1024
 	FeatureBriefCap  = 4 * 1024
-	WriterBriefCap   = 10 * 1024
 )
 
-// BriefKind identifies one of three sub-agent roles.
+// BriefKind identifies one of two sub-agent roles. The writer role was
+// removed — fragments are authored in-phase by scaffold/feature sub-agents
+// and by the main agent at finalize (run-8-readiness §2.0).
 type BriefKind string
 
 const (
 	BriefScaffold BriefKind = "scaffold"
 	BriefFeature  BriefKind = "feature"
-	BriefWriter   BriefKind = "writer"
 )
 
 // Brief is a composed sub-agent brief. Body is the final text handed to
@@ -157,80 +160,6 @@ func BuildFeatureBrief(plan *Plan) (Brief, error) {
 
 	out := b.String()
 	return Brief{Kind: BriefFeature, Body: out, Bytes: len(out), Parts: parts}, nil
-}
-
-// BuildWriterBrief composes the writer sub-agent brief. Walks the surface
-// registry, inlines each surface's examples atom, filters facts by
-// surface hint, and appends completion payload + citation topics atoms.
-func BuildWriterBrief(plan *Plan, facts []FactRecord, parent *ParentRecipe) (Brief, error) {
-	if plan == nil {
-		return Brief{}, errors.New("nil plan")
-	}
-	var b strings.Builder
-	var parts []string
-
-	fmt.Fprintf(&b, "# Writer brief — %s\n\n", plan.Slug)
-	fmt.Fprintf(&b, "Recipe: %s · Framework: %s · Tier: %s · Codebases: %d\n\n",
-		plan.Slug, plan.Framework, plan.Tier, len(plan.Codebases))
-	parts = append(parts, "header")
-
-	b.WriteString("## Surface registry\n\n")
-	for _, s := range Surfaces() {
-		c, _ := ContractFor(s)
-		fmt.Fprintf(&b, "### %s — author=%s\n", c.Name, c.Author)
-		fmt.Fprintf(&b, "- FormatSpec: %s\n", c.FormatSpec)
-		fmt.Fprintf(&b, "- Owns: %s\n", strings.Join(c.Owns, ", "))
-		fmt.Fprintf(&b, "- FactHint: %s\n", c.FactHint)
-		if len(c.AdjacentSurfaces) > 0 {
-			adjacent := make([]string, 0, len(c.AdjacentSurfaces))
-			for _, a := range c.AdjacentSurfaces {
-				adjacent = append(adjacent, string(a))
-			}
-			fmt.Fprintf(&b, "- Adjacent (cross-reference, don't duplicate): %s\n",
-				strings.Join(adjacent, ", "))
-		}
-		surfaceFacts := FilterByHint(facts, c.FactHint)
-		if len(surfaceFacts) > 0 {
-			fmt.Fprintf(&b, "- Facts routed here: %d\n", len(surfaceFacts))
-			for _, f := range surfaceFacts {
-				fmt.Fprintf(&b, "  - %s — citation: %s\n", f.Topic, f.Citation)
-			}
-		}
-		if body, err := readAtom("briefs/writer/examples/" + string(s) + ".md"); err == nil {
-			b.WriteString("\n")
-			b.WriteString(body)
-			if !strings.HasSuffix(body, "\n") {
-				b.WriteByte('\n')
-			}
-		}
-		b.WriteByte('\n')
-		parts = append(parts, string(s))
-	}
-
-	for _, atom := range []string{
-		"briefs/writer/citation_topics.md",
-		"briefs/writer/completion_payload.md",
-	} {
-		body, err := readAtom(atom)
-		if err != nil {
-			return Brief{}, err
-		}
-		b.WriteString(body)
-		if !strings.HasSuffix(body, "\n") {
-			b.WriteByte('\n')
-		}
-		b.WriteByte('\n')
-		parts = append(parts, atom)
-	}
-
-	if parent != nil {
-		fmt.Fprintf(&b, "## Parent recipe for cross-reference\n\nParent: %s (%s). %d codebases, %d env imports.\n\nCross-reference parent's IG/gotcha items rather than re-authoring. If your recipe's fact duplicates a parent-level fact, route it as a cross-reference.\n\n",
-			parent.Slug, parent.Tier, len(parent.Codebases), len(parent.EnvImports))
-		parts = append(parts, "parent_reference")
-	}
-
-	out := b.String()
-	return Brief{Kind: BriefWriter, Body: out, Bytes: len(out), Parts: parts}, nil
 }
 
 // excerptREADME trims a parent README to at most n bytes, cutting at

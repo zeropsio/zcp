@@ -14,6 +14,14 @@ type Plan struct {
 	Services       []Service                    `json:"services,omitempty"`
 	EnvComments    map[string]EnvComments       `json:"envComments,omitempty"`
 	ProjectEnvVars map[string]map[string]string `json:"projectEnvVars,omitempty"`
+	// Fragments carries in-phase-authored content keyed by fragment id
+	// (for example "root/intro", "codebase/apidev/integration-guide").
+	// Sub-agents record fragments via zerops_recipe action=record-fragment
+	// at the moment they hold the densest context; the assembler reads
+	// them out at finalize and splices them into the surface templates.
+	// See docs/zcprecipator3/plans/run-8-readiness.md §2.A.4 for the id
+	// taxonomy and append-vs-overwrite semantics.
+	Fragments map[string]string `json:"fragments,omitempty"`
 }
 
 // ResearchResult is the output of the research phase. All fields are

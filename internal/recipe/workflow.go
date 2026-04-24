@@ -126,18 +126,11 @@ func (s *Session) BuildBrief(kind BriefKind, cb Codebase) (Brief, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	facts, err := s.readFacts()
-	if err != nil {
-		return Brief{}, err
-	}
-
 	switch kind {
 	case BriefScaffold:
 		return BuildScaffoldBrief(s.Plan, cb, s.Parent)
 	case BriefFeature:
 		return BuildFeatureBrief(s.Plan)
-	case BriefWriter:
-		return BuildWriterBrief(s.Plan, facts, s.Parent)
 	default:
 		return Brief{}, fmt.Errorf("unknown brief kind %q", kind)
 	}
@@ -183,13 +176,6 @@ func (s *Session) EmitYAML(shape Shape, tierIndex int) (string, error) {
 	default:
 		return "", fmt.Errorf("unknown yaml shape %q (want %q or %q)", shape, ShapeWorkspace, ShapeDeliverable)
 	}
-}
-
-func (s *Session) readFacts() ([]FactRecord, error) {
-	if s.FactsLog == nil {
-		return nil, nil
-	}
-	return s.FactsLog.Read()
 }
 
 // Status returns a snapshot summary for handlers to return from

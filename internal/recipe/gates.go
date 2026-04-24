@@ -1,8 +1,6 @@
 package recipe
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -45,7 +43,6 @@ func DefaultGates() []Gate {
 	return []Gate{
 		{Name: "citations-timestamped", Run: gateCitationsTimestamped},
 		{Name: "fact-required-fields", Run: gateFactsValid},
-		{Name: "payload-schema-valid", Run: gatePayloadSchema},
 	}
 }
 
@@ -128,39 +125,6 @@ func gateFactsValid(ctx GateContext) []Violation {
 				Code:    "fact-invalid",
 				Path:    fmt.Sprintf("facts[%d]", i),
 				Message: err.Error(),
-			})
-		}
-	}
-	return out
-}
-
-// gatePayloadSchema — the writer's completion payload must parse as JSON
-// and carry every top-level key the completion-payload atom names.
-func gatePayloadSchema(ctx GateContext) []Violation {
-	path := filepath.Join(ctx.OutputRoot, ".writer-payload.json")
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil // not yet authored; not a gate failure at this phase
-		}
-		return []Violation{{Code: "payload-read-failure", Path: path, Message: err.Error()}}
-	}
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &obj); err != nil {
-		return []Violation{{Code: "payload-not-json", Path: path, Message: err.Error()}}
-	}
-	required := []string{
-		"root_readme", "env_readmes", "env_import_comments",
-		"codebase_readmes", "codebase_claude",
-		"codebase_zerops_yaml_comments", "citations", "manifest",
-	}
-	var out []Violation
-	for _, key := range required {
-		if _, ok := obj[key]; !ok {
-			out = append(out, Violation{
-				Code:    "payload-missing-key",
-				Path:    path,
-				Message: fmt.Sprintf("completion payload missing %q", key),
 			})
 		}
 	}

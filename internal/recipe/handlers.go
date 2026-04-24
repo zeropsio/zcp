@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -103,17 +104,18 @@ const errSessionNotOpen = "session not open"
 
 // RecipeInput is the input schema for zerops_recipe.
 type RecipeInput struct {
-	Action     string         `json:"action"               jsonschema:"One of: start, enter-phase, complete-phase, build-brief, record-fact, resolve-chain, emit-yaml, update-plan, stitch-content, status."`
-	Slug       string         `json:"slug,omitempty"       jsonschema:"Recipe slug (e.g. {framework}-showcase). Required for every action."`
-	OutputRoot string         `json:"outputRoot,omitempty" jsonschema:"Directory where the recipe tree + facts log live. Required for 'start'."`
-	Phase      string         `json:"phase,omitempty"      jsonschema:"Phase name for enter-phase / complete-phase: research, provision, scaffold, feature, finalize."`
-	BriefKind  string         `json:"briefKind,omitempty"  jsonschema:"For build-brief: scaffold, feature, writer."`
-	Codebase   string         `json:"codebase,omitempty"   jsonschema:"For build-brief when kind=scaffold: the codebase hostname to compose for."`
-	Shape      string         `json:"shape,omitempty"      jsonschema:"For emit-yaml: 'workspace' (services-only YAML for zerops_import at provision) or 'deliverable' (full published template for tierIndex, written to disk)."`
-	TierIndex  int            `json:"tierIndex,omitempty"  jsonschema:"For emit-yaml shape=deliverable: tier 0..5. Ignored when shape=workspace."`
-	Fact       *FactRecord    `json:"fact,omitempty"       jsonschema:"For record-fact: a FactRecord object with topic, symptom, mechanism, surfaceHint, citation fields."`
-	Plan       *Plan          `json:"plan,omitempty"       jsonschema:"For update-plan: partial Plan object. Fields present overwrite session.Plan; omitted fields untouched."`
-	Payload    map[string]any `json:"payload,omitempty"    jsonschema:"For stitch-content: writer sub-agent's structured completion payload as a JSON object."`
+	Action     string      `json:"action"               jsonschema:"One of: start, enter-phase, complete-phase, build-brief, record-fact, record-fragment, resolve-chain, emit-yaml, update-plan, stitch-content, status."`
+	Slug       string      `json:"slug,omitempty"       jsonschema:"Recipe slug (e.g. {framework}-showcase). Required for every action."`
+	OutputRoot string      `json:"outputRoot,omitempty" jsonschema:"Directory where the recipe tree + facts log live. Required for 'start'."`
+	Phase      string      `json:"phase,omitempty"      jsonschema:"Phase name for enter-phase / complete-phase: research, provision, scaffold, feature, finalize."`
+	BriefKind  string      `json:"briefKind,omitempty"  jsonschema:"For build-brief: scaffold, feature."`
+	Codebase   string      `json:"codebase,omitempty"   jsonschema:"For build-brief when kind=scaffold: the codebase hostname to compose for."`
+	Shape      string      `json:"shape,omitempty"      jsonschema:"For emit-yaml: 'workspace' (services-only YAML for zerops_import at provision) or 'deliverable' (full published template for tierIndex, written to disk)."`
+	TierIndex  int         `json:"tierIndex,omitempty"  jsonschema:"For emit-yaml shape=deliverable: tier 0..5. Ignored when shape=workspace."`
+	Fact       *FactRecord `json:"fact,omitempty"       jsonschema:"For record-fact: a FactRecord object with topic, symptom, mechanism, surfaceHint, citation fields."`
+	Plan       *Plan       `json:"plan,omitempty"       jsonschema:"For update-plan: partial Plan object. Fields present overwrite session.Plan; omitted fields untouched."`
+	FragmentID string      `json:"fragmentId,omitempty" jsonschema:"For record-fragment: fragment identifier. Valid shapes: root/intro, env/<N>/intro (N=0..5), env/<N>/import-comments/<hostname>, env/<N>/import-comments/project, codebase/<hostname>/intro, codebase/<hostname>/integration-guide, codebase/<hostname>/knowledge-base, codebase/<hostname>/claude-md/service-facts, codebase/<hostname>/claude-md/notes."`
+	Fragment   string      `json:"fragment,omitempty"   jsonschema:"For record-fragment: the fragment body. Overwrite for root/* and env/* ids; append-on-extend for codebase/*/integration-guide, knowledge-base, claude-md/* ids so a feature sub-agent extends scaffold's body rather than replacing it."`
 }
 
 // RecipeResult is the generic envelope returned from zerops_recipe.
@@ -162,8 +164,8 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 	// Actions that require an existing session share session-loading.
 	needsSession := map[string]bool{
 		"enter-phase": true, "complete-phase": true, "build-brief": true,
-		"record-fact": true, "emit-yaml": true, "status": true,
-		"update-plan": true, "stitch-content": true,
+		"record-fact": true, "record-fragment": true, "emit-yaml": true,
+		"status": true, "update-plan": true, "stitch-content": true,
 	}
 	var sess *Session
 	if needsSession[in.Action] {
@@ -239,6 +241,16 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 			return r
 		}
 		r.OK = true
+	case "record-fragment":
+		if in.FragmentID == "" {
+			r.Error = "record-fragment: fragmentId is required"
+			return r
+		}
+		if err := recordFragment(sess, in.FragmentID, in.Fragment); err != nil {
+			r.Error = err.Error()
+			return r
+		}
+		r.OK = true
 	case "resolve-chain":
 		parent, err := ResolveChain(Resolver{MountRoot: store.mountRoot}, in.Slug)
 		switch {
@@ -261,12 +273,17 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 		}
 		r.YAML, r.OK = yaml, true
 	case "stitch-content":
-		path, err := stitchContent(sess, in.Payload)
+		missing, err := stitchContent(sess)
 		if err != nil {
 			r.Error = err.Error()
 			return r
 		}
-		r.StitchedPath, r.OK = path, true
+		if len(missing) > 0 {
+			r.Error = fmt.Sprintf("stitch-content: missing fragments: %s", strings.Join(missing, ", "))
+			r.StitchedPath = sess.OutputRoot
+			return r
+		}
+		r.StitchedPath, r.OK = sess.OutputRoot, true
 	case "status":
 		snap := sess.Snapshot()
 		r.Status = &snap
@@ -313,6 +330,12 @@ func mergePlan(sess *Session, incoming *Plan) error {
 	if len(incoming.ProjectEnvVars) > 0 {
 		cur.ProjectEnvVars = incoming.ProjectEnvVars
 	}
+	if len(incoming.Fragments) > 0 {
+		if cur.Fragments == nil {
+			cur.Fragments = map[string]string{}
+		}
+		maps.Copy(cur.Fragments, incoming.Fragments)
+	}
 	sess.Plan = cur
 	return nil
 }
@@ -344,209 +367,234 @@ func buildBriefForRequest(sess *Session, in RecipeInput) (Brief, error) {
 	return sess.BuildBrief(BriefKind(in.BriefKind), cb)
 }
 
-// stitchContent absorbs the writer sub-agent's completion payload into
-// the recipe output tree. Steps:
+// stitchContent walks the surface templates, renders each with the
+// plan's structural data + in-phase-authored fragments, and writes the
+// finished files to the output tree. Returns the list of missing
+// fragment ids discovered during render — an empty list means every
+// marker had a body. Callers treat non-empty as a gate failure (plan
+// §2.A.5: missing fragment → gate failure, not silent empty).
 //
-//  1. Archive the raw payload at <outputRoot>/.writer-payload.json
-//     (gate checks still read this).
-//  2. Merge structured env fields into the plan:
-//     - env_import_comments → plan.EnvComments
-//     - project_env_vars    → plan.ProjectEnvVars
-//  3. Regenerate all 6 deliverable import.yaml files using the merged
-//     plan (writer-authored comments + per-tier project env vars land
-//     in the published yaml).
-//  4. Write the 7 content surfaces (root README, env READMEs, per-
-//     codebase README fragments + CLAUDE.md) to their canonical paths.
-//
-// Returns the path of the archived payload for backwards-compatible
-// tests; callers inspect the output tree directly for stitched content.
-func stitchContent(sess *Session, payload map[string]any) (string, error) {
-	if len(payload) == 0 {
-		return "", errors.New("stitch-content: payload is required")
-	}
-
-	// Step 1 — archive the raw payload under the session lock.
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return "", fmt.Errorf("re-marshal payload: %w", err)
-	}
+// Regenerates every tier's import.yaml to disk so the writer-free
+// stitch still emits env YAMLs as before.
+func stitchContent(sess *Session) ([]string, error) {
 	sess.mu.Lock()
+	plan := sess.Plan
 	outputRoot := sess.OutputRoot
 	sess.mu.Unlock()
-	archivePath := filepath.Join(outputRoot, ".writer-payload.json")
-	if err := os.WriteFile(archivePath, raw, 0o600); err != nil {
-		return "", fmt.Errorf("write payload: %w", err)
+	if plan == nil {
+		return nil, errors.New("stitch-content: nil plan")
 	}
 
-	// Step 2 — merge env comments + project env vars into the plan so
-	// the next emit reads them. Uses the typed mergePlan path so field
-	// merge semantics stay consistent.
-	envComments := extractEnvComments(payload)
-	projectEnvVars := extractProjectEnvVars(payload)
-	if len(envComments) > 0 || len(projectEnvVars) > 0 {
-		patch := &Plan{EnvComments: envComments, ProjectEnvVars: projectEnvVars}
-		if err := mergePlan(sess, patch); err != nil {
-			return "", fmt.Errorf("merge writer plan fields: %w", err)
-		}
-	}
-
-	// Step 3 — regenerate every deliverable yaml to disk.
+	// Regenerate tier yamls.
 	for i := range Tiers() {
 		if _, err := sess.EmitYAML(ShapeDeliverable, i); err != nil {
-			return "", fmt.Errorf("regenerate tier %d import.yaml: %w", i, err)
+			return nil, fmt.Errorf("regenerate tier %d import.yaml: %w", i, err)
 		}
 	}
 
-	// Step 4 — write the content surfaces. Errors abort; a partial stitch
-	// is worse than a clear failure the agent can retry.
-	if err := writeContentSurfaces(outputRoot, payload); err != nil {
-		return "", fmt.Errorf("write content surfaces: %w", err)
-	}
+	var missing []string
 
-	return archivePath, nil
-}
-
-// extractEnvComments maps the writer's env_import_comments payload into
-// the plan's EnvComments shape. Missing or wrong-type entries are
-// skipped silently — gate checks catch missing content downstream.
-func extractEnvComments(payload map[string]any) map[string]EnvComments {
-	raw, ok := payload["env_import_comments"].(map[string]any)
-	if !ok || len(raw) == 0 {
-		return nil
-	}
-	out := make(map[string]EnvComments, len(raw))
-	for key, v := range raw {
-		entry, ok := v.(map[string]any)
-		if !ok {
-			continue
-		}
-		var ec EnvComments
-		if p, ok := entry["project"].(string); ok {
-			ec.Project = p
-		}
-		if svc, ok := entry["service"].(map[string]any); ok {
-			ec.Service = make(map[string]string, len(svc))
-			for host, c := range svc {
-				if s, ok := c.(string); ok {
-					ec.Service[host] = s
-				}
-			}
-		}
-		out[key] = ec
-	}
-	return out
-}
-
-// extractProjectEnvVars maps the writer's project_env_vars payload into
-// the plan's ProjectEnvVars shape (per-env map of env var name → value).
-// Preprocessor expressions and ${zeropsSubdomainHost} literals pass
-// through verbatim — the emitter writes them byte-identical for end-user
-// project-import resolution.
-func extractProjectEnvVars(payload map[string]any) map[string]map[string]string {
-	raw, ok := payload["project_env_vars"].(map[string]any)
-	if !ok || len(raw) == 0 {
-		return nil
-	}
-	out := make(map[string]map[string]string, len(raw))
-	for key, v := range raw {
-		entry, ok := v.(map[string]any)
-		if !ok {
-			continue
-		}
-		inner := make(map[string]string, len(entry))
-		for name, val := range entry {
-			if s, ok := val.(string); ok {
-				inner[name] = s
-			}
-		}
-		out[key] = inner
-	}
-	return out
-}
-
-// writeContentSurfaces writes the writer's string-valued payload fields
-// to their canonical paths in the output tree. See
-// internal/recipe/content/briefs/writer/completion_payload.md for the
-// schema.
-func writeContentSurfaces(outputRoot string, payload map[string]any) error {
 	// Root README.
-	if body, ok := payload["root_readme"].(string); ok && body != "" {
-		if err := writeSurfaceFile(filepath.Join(outputRoot, "README.md"), body); err != nil {
-			return err
+	rootBody, m, err := AssembleRootREADME(plan)
+	if err != nil {
+		return nil, fmt.Errorf("assemble root: %w", err)
+	}
+	missing = append(missing, m...)
+	if err := writeSurfaceFile(filepath.Join(outputRoot, "README.md"), rootBody); err != nil {
+		return nil, err
+	}
+
+	// Env READMEs.
+	for i := range Tiers() {
+		envBody, m, err := AssembleEnvREADME(plan, i)
+		if err != nil {
+			return nil, fmt.Errorf("assemble env %d: %w", i, err)
+		}
+		missing = append(missing, m...)
+		tier, _ := TierAt(i)
+		if err := writeSurfaceFile(filepath.Join(outputRoot, tier.Folder, "README.md"), envBody); err != nil {
+			return nil, err
 		}
 	}
-	// Per-env READMEs, keyed "0".."5" → <tier.Folder>/README.md.
-	if envReadmes, ok := payload["env_readmes"].(map[string]any); ok {
-		for key, v := range envReadmes {
-			body, ok := v.(string)
-			if !ok || body == "" {
-				continue
-			}
-			idx := 0
-			if _, err := fmt.Sscanf(key, "%d", &idx); err != nil {
-				continue
-			}
-			tier, ok := TierAt(idx)
-			if !ok {
-				continue
-			}
-			if err := writeSurfaceFile(filepath.Join(outputRoot, tier.Folder, "README.md"), body); err != nil {
-				return err
-			}
+
+	// Per-codebase README + CLAUDE.md — writes under outputRoot/codebases/.
+	// A2 moves per-codebase surfaces to the two-root split; for A1 the
+	// flat codebases/ subtree keeps shape-compat with the existing tree.
+	for _, cb := range plan.Codebases {
+		readmeBody, m, err := AssembleCodebaseREADME(plan, cb.Hostname)
+		if err != nil {
+			return nil, fmt.Errorf("assemble codebase %s README: %w", cb.Hostname, err)
+		}
+		missing = append(missing, m...)
+		if err := writeSurfaceFile(filepath.Join(outputRoot, "codebases", cb.Hostname, "README.md"), readmeBody); err != nil {
+			return nil, err
+		}
+		claudeBody, m, err := AssembleCodebaseClaudeMD(plan, cb.Hostname)
+		if err != nil {
+			return nil, fmt.Errorf("assemble codebase %s CLAUDE.md: %w", cb.Hostname, err)
+		}
+		missing = append(missing, m...)
+		if err := writeSurfaceFile(filepath.Join(outputRoot, "codebases", cb.Hostname, "CLAUDE.md"), claudeBody); err != nil {
+			return nil, err
 		}
 	}
-	// Per-codebase README (integration guide + gotchas fragments).
-	if readmes, ok := payload["codebase_readmes"].(map[string]any); ok {
-		for host, v := range readmes {
-			frag, ok := v.(map[string]any)
-			if !ok {
-				continue
-			}
-			body := assembleCodebaseReadme(frag)
-			if body == "" {
-				continue
-			}
-			if err := writeSurfaceFile(filepath.Join(outputRoot, "codebases", host, "README.md"), body); err != nil {
-				return err
-			}
-		}
+
+	return missing, nil
+}
+
+// recordFragment validates the fragment id against the plan, applies
+// append-or-overwrite semantics, and stores the body on plan.Fragments
+// (or on the typed EnvComments for env/*/import-comments/* ids).
+func recordFragment(sess *Session, id, body string) error {
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.Plan == nil {
+		return errors.New("record-fragment: plan not initialized — call update-plan first")
 	}
-	// Per-codebase CLAUDE.md.
-	if claudeMap, ok := payload["codebase_claude"].(map[string]any); ok {
-		for host, v := range claudeMap {
-			body, ok := v.(string)
-			if !ok || body == "" {
-				continue
-			}
-			if err := writeSurfaceFile(filepath.Join(outputRoot, "codebases", host, "CLAUDE.md"), body); err != nil {
-				return err
-			}
-		}
+	if !isValidFragmentID(sess.Plan, id) {
+		return fmt.Errorf("record-fragment: unknown fragmentId %q", id)
 	}
+	if strings.HasPrefix(id, "env/") && strings.Contains(id, "/import-comments/") {
+		return applyEnvComment(sess.Plan, id, body)
+	}
+	if sess.Plan.Fragments == nil {
+		sess.Plan.Fragments = map[string]string{}
+	}
+	if isAppendFragmentID(id) {
+		existing := sess.Plan.Fragments[id]
+		if existing == "" {
+			sess.Plan.Fragments[id] = body
+			return nil
+		}
+		sess.Plan.Fragments[id] = existing + "\n\n" + body
+		return nil
+	}
+	sess.Plan.Fragments[id] = body
 	return nil
 }
 
-// assembleCodebaseReadme glues the two writer-owned fragments (IG +
-// gotchas) into a single README body. Each fragment is wrapped in a
-// named marker so downstream tooling can extract them individually.
-func assembleCodebaseReadme(frag map[string]any) string {
-	ig, _ := frag["integration_guide"].(string)
-	kb, _ := frag["gotchas"].(string)
-	if ig == "" && kb == "" {
-		return ""
+// applyEnvComment routes env/<N>/import-comments/<target> into the
+// typed plan.EnvComments map so the yaml emitter reads writer-authored
+// comments without a separate fragment-consumption layer.
+func applyEnvComment(plan *Plan, id, body string) error {
+	// id = "env/<N>/import-comments/<target>"
+	rest := strings.TrimPrefix(id, "env/")
+	slash := strings.IndexByte(rest, '/')
+	if slash <= 0 {
+		return fmt.Errorf("record-fragment: malformed env id %q", id)
 	}
-	var b strings.Builder
-	if ig != "" {
-		b.WriteString("<!-- integration-guide-start -->\n")
-		b.WriteString(strings.TrimSpace(ig))
-		b.WriteString("\n<!-- integration-guide-end -->\n\n")
+	tierKey := rest[:slash]
+	target := strings.TrimPrefix(rest[slash+1:], "import-comments/")
+	if plan.EnvComments == nil {
+		plan.EnvComments = map[string]EnvComments{}
 	}
-	if kb != "" {
-		b.WriteString("<!-- knowledge-base-start -->\n")
-		b.WriteString(strings.TrimSpace(kb))
-		b.WriteString("\n<!-- knowledge-base-end -->\n")
+	ec := plan.EnvComments[tierKey]
+	if target == "project" {
+		ec.Project = body
+	} else {
+		if ec.Service == nil {
+			ec.Service = map[string]string{}
+		}
+		ec.Service[target] = body
 	}
-	return b.String()
+	plan.EnvComments[tierKey] = ec
+	return nil
+}
+
+// isAppendFragmentID reports whether an id uses append-on-extend
+// semantics. Per plan §2.A.4: feature sub-agent extends IG, KB, and
+// CLAUDE.md sections; root and env overwrite (main agent authors once).
+func isAppendFragmentID(id string) bool {
+	if !strings.HasPrefix(id, "codebase/") {
+		return false
+	}
+	switch {
+	case strings.HasSuffix(id, "/integration-guide"):
+		return true
+	case strings.HasSuffix(id, "/knowledge-base"):
+		return true
+	case strings.Contains(id, "/claude-md/"):
+		return true
+	}
+	return false
+}
+
+// fragmentIDRoot is the only root-scoped fragment id. Constants prevent
+// a typo here from silently diverging from the assembler's marker id.
+const fragmentIDRoot = "root/intro"
+
+// isValidFragmentID reports whether id matches one of the declared
+// fragment shapes given the plan's codebases. Covers root/, env/<N>/,
+// env/<N>/import-comments/<hostname|project>, codebase/<hostname>/...
+func isValidFragmentID(plan *Plan, id string) bool {
+	if id == fragmentIDRoot {
+		return true
+	}
+	if rest, ok := strings.CutPrefix(id, "env/"); ok {
+		slash := strings.IndexByte(rest, '/')
+		if slash <= 0 {
+			return false
+		}
+		tierIdx, err := parseTierIndex(rest[:slash])
+		if err != nil {
+			return false
+		}
+		if _, ok := TierAt(tierIdx); !ok {
+			return false
+		}
+		tail := rest[slash+1:]
+		switch {
+		case tail == "intro":
+			return true
+		case tail == "import-comments/project":
+			return true
+		case strings.HasPrefix(tail, "import-comments/"):
+			host := strings.TrimPrefix(tail, "import-comments/")
+			return codebaseKnown(plan, host) || serviceKnown(plan, host)
+		}
+		return false
+	}
+	if rest, ok := strings.CutPrefix(id, "codebase/"); ok {
+		slash := strings.IndexByte(rest, '/')
+		if slash <= 0 {
+			return false
+		}
+		host := rest[:slash]
+		if !codebaseKnown(plan, host) {
+			return false
+		}
+		tail := rest[slash+1:]
+		switch tail {
+		case "intro", "integration-guide", "knowledge-base",
+			"claude-md/service-facts", "claude-md/notes":
+			return true
+		}
+		return false
+	}
+	return false
+}
+
+// parseTierIndex returns the numeric tier index parsed from a string
+// key; returns an error on any non-numeric input.
+func parseTierIndex(s string) (int, error) {
+	var i int
+	_, err := fmt.Sscanf(s, "%d", &i)
+	return i, err
+}
+
+// serviceKnown reports whether a hostname matches one of the plan's
+// managed services. Env import-comments may address a managed service
+// block (db, cache, storage) in addition to runtime codebases.
+func serviceKnown(plan *Plan, hostname string) bool {
+	if plan == nil {
+		return false
+	}
+	for _, s := range plan.Services {
+		if s.Hostname == hostname {
+			return true
+		}
+	}
+	return false
 }
 
 func writeSurfaceFile(path, body string) error {
