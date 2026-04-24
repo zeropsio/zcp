@@ -7,68 +7,46 @@ import (
 	"testing"
 
 	zcpinit "github.com/zeropsio/zcp/internal/init"
-	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 // setupContainerTest sets common test overrides for container init tests.
 func setupContainerTest(t *testing.T) {
 	t.Helper()
-	gitDir := t.TempDir()
-	zcpinit.SetGitInitDir(gitDir)
-	t.Cleanup(func() { zcpinit.ResetGitInitDir() })
 	vsDir := t.TempDir()
 	zcpinit.SetVSCodeWorkDir(vsDir)
 	t.Cleanup(func() { zcpinit.ResetVSCodeWorkDir() })
 }
 
-func TestContainerSteps_GitConfig(t *testing.T) {
-	// Not parallel — mutates HOME env var and commandRunner.
+// TestContainerSteps_NoGitSetup locks GLC-4 — the ZCP service container
+// performs no git-related setup. Global `git config --global` was the
+// only inline-git surface containerSteps ever exposed; it was removed
+// because its only consumer (zcp sync recipe push-app) runs on the
+// developer's laptop, not inside the ZCP service container. If this test
+// fails, something has re-added `git` invocations to containerSteps —
+// verify the new consumer actually exists AS a Zerops-service workflow
+// before accepting the change.
+func TestContainerSteps_NoGitSetup(t *testing.T) {
 	dir := t.TempDir()
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
-
-	// Don't use setupContainerTest here — we need to check the git init dir.
-	gitDir := t.TempDir()
-	zcpinit.SetGitInitDir(gitDir)
-	t.Cleanup(func() { zcpinit.ResetGitInitDir() })
-	zcpinit.SetVSCodeWorkDir(t.TempDir())
-	t.Cleanup(func() { zcpinit.ResetVSCodeWorkDir() })
+	setupContainerTest(t)
 
 	var executed [][]string
 	zcpinit.SetCommandRunner(func(name string, args ...string) error {
-		cmd := append([]string{name}, args...)
-		executed = append(executed, cmd)
+		executed = append(executed, append([]string{name}, args...))
 		return nil
 	})
 	t.Cleanup(func() { zcpinit.ResetCommandRunner() })
 
-	err := zcpinit.Run(dir, runtime.Info{InContainer: true})
-	if err != nil {
+	if err := zcpinit.Run(dir, runtime.Info{InContainer: true}); err != nil {
 		t.Fatalf("Run() error: %v", err)
 	}
 
-	tests := []struct {
-		name string
-		want []string
-	}{
-		{"git email", []string{"git", "config", "--global", "user.email", ops.DeployGitIdentity.Email}},
-		{"git name", []string{"git", "config", "--global", "user.name", ops.DeployGitIdentity.Name}},
-		{"git init", []string{"git", "init", gitDir}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			found := false
-			for _, cmd := range executed {
-				if slicesEqual(cmd, tt.want) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				t.Errorf("expected command %v to be executed, got: %v", tt.want, executed)
-			}
-		})
+	for _, cmd := range executed {
+		if len(cmd) > 0 && cmd[0] == "git" {
+			t.Errorf("containerSteps must not invoke git (GLC-4): saw %v", cmd)
+		}
 	}
 }
 
@@ -118,8 +96,6 @@ func TestContainerSteps_VSCode_Enabled(t *testing.T) {
 	vsWorkDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 	t.Setenv("ZCP_VSCODE", "true")
-	zcpinit.SetGitInitDir(t.TempDir())
-	t.Cleanup(func() { zcpinit.ResetGitInitDir() })
 	zcpinit.SetVSCodeWorkDir(vsWorkDir)
 	t.Cleanup(func() { zcpinit.ResetVSCodeWorkDir() })
 
@@ -244,15 +220,3 @@ func TestContainerSteps_SkippedOutsideContainer(t *testing.T) {
 	}
 }
 
-// slicesEqual compares two string slices for equality.
-func slicesEqual(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}

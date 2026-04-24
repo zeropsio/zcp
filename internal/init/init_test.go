@@ -16,8 +16,6 @@ func stubContainerCommands(t *testing.T) {
 	t.Helper()
 	zcpinit.SetCommandRunner(func(_ string, _ ...string) error { return nil })
 	t.Cleanup(func() { zcpinit.ResetCommandRunner() })
-	zcpinit.SetGitInitDir(t.TempDir())
-	t.Cleanup(func() { zcpinit.ResetGitInitDir() })
 	zcpinit.SetVSCodeWorkDir(t.TempDir())
 	t.Cleanup(func() { zcpinit.ResetVSCodeWorkDir() })
 }

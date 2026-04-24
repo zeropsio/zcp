@@ -7,11 +7,6 @@ package init
 func SetCommandRunner(fn func(string, ...string) error) { commandRunner = fn }
 func ResetCommandRunner()                               { commandRunner = defaultCommandRunner }
 
-// Git init directory overrides.
-
-func SetGitInitDir(dir string) { gitInitDir = dir }
-func ResetGitInitDir()         { gitInitDir = defaultGitInitDir }
-
 // VS Code workspace directory overrides.
 
 func SetVSCodeWorkDir(dir string) { vsCodeWorkDir = dir }

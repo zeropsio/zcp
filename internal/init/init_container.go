@@ -9,8 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/zeropsio/zcp/internal/ops"
-
 	"github.com/zeropsio/zcp/internal/content"
 )
 
@@ -24,36 +22,21 @@ func defaultCommandRunner(name string, args ...string) error {
 }
 
 // containerSteps returns init steps that only run inside Zerops containers.
+// Git setup is intentionally absent: ZCP service on Zerops is pure
+// infrastructure from git's perspective (GLC-4). /var/www is an SSHFS
+// mount base — each mounted dev service carries its own .git/ inside its
+// own container (initialized by ops.InitServiceGit at bootstrap). Global
+// `git config --global` on the ZCP host had a single historical consumer
+// (`zcp sync recipe push-app`), which is a developer-only CLI that runs
+// locally with the developer's own ~/.gitconfig.
 func containerSteps() []step {
 	steps := []step{
-		{"Git config", configureGit},
 		{"Claude configs", configureClaude},
 	}
 	if os.Getenv("ZCP_VSCODE") == "true" {
 		steps = append(steps, step{"VS Code settings", configureVSCode})
 	}
 	return steps
-}
-
-const defaultGitInitDir = "/var/www"
-
-var gitInitDir = defaultGitInitDir
-
-// configureGit sets global git identity and initializes the workspace as a repo.
-// Idempotent: git config overwrites, git init on existing repo is a no-op.
-func configureGit(_ string) error {
-	id := ops.DeployGitIdentity
-	cmds := [][]string{
-		{"git", "config", "--global", "user.email", id.Email},
-		{"git", "config", "--global", "user.name", id.Name},
-		{"git", "init", gitInitDir},
-	}
-	for _, args := range cmds {
-		if err := commandRunner(args[0], args[1:]...); err != nil {
-			return fmt.Errorf("%s: %w", args[0], err)
-		}
-	}
-	return nil
 }
 
 // configureClaude writes ~/.claude.json and ~/.claude/settings.json.
