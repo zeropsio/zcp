@@ -469,7 +469,14 @@ ServicePlan {
 
 **Expected states**: dev → RUNNING, stage → READY_TO_DEPLOY, managed → RUNNING/ACTIVE.
 
-**On completion**: Writes partial ServiceMeta (no BootstrappedAt) — signals bootstrap in-progress, provides hostname lock.
+**On completion (container env)** — `action="complete" step="provision"` triggers `autoMountTargets` (`internal/tools/workflow_bootstrap.go`) which runs per runtime target in `plan.Targets`:
+
+1. `ops.MountService` — SSHFS mount base from ZCP host at `/var/www/{hostname}/`.
+2. `ops.InitServiceGit` — SSH-exec `git init` + identity config inside the target container at `/var/www/.git/` (GLC-1). This is the canonical `.git/` creation: runs once per service, owned by `zerops:zerops`, identity = `agent@zerops.io` / `Zerops Agent`. Errors are logged but do not mark the mount FAILED — the deploy path's atomic safety-net (GLC-2) re-inits on demand if this step hiccups.
+
+Mount + InitServiceGit are skipped entirely in local env (`mounter == nil`, `sshDeployer == nil`) — local working dirs are the user's own git territory (GLC-6).
+
+**On completion (both envs)**: Writes partial ServiceMeta (no BootstrappedAt) — signals bootstrap in-progress, provides hostname lock.
 
 **Checker**: All services exist, types match, status correct, managed dependency env vars discovered.
 
@@ -1103,7 +1110,19 @@ visibility.
 
 ### Git Lifecycle (container env)
 
-Managed runtime services carry a `/var/www/.git/` that is the container-side substrate `zerops_deploy` runs `git add -A && git commit` against. These invariants pin where it's created, who owns it, and how the deploy path tolerates its absence on migrated services. Background: `plans/git-service-lifecycle.md`.
+Managed runtime services carry a `/var/www/.git/` that is the container-side substrate `zerops_deploy` runs `git add -A && git commit` against. These invariants pin where it's created, who owns it, and how the deploy path tolerates its absence on migrated services. Background: `plans/archive/git-service-lifecycle.md`.
+
+**Execution flow — when `.git/` is created**:
+
+- **Bootstrap/adopt time (canonical path, GLC-1)** — When `zerops_workflow action="complete" step="provision"` succeeds, `autoMountTargets` iterates `plan.Targets` and for each runtime target runs `ops.MountService` followed by `ops.InitServiceGit`. The init runs SSH-exec (not SFTP) so `.git/` lands owned by `zerops:zerops`. Identity (`agent@zerops.io` / `Zerops Agent`) is written to `/var/www/.git/config` at this moment and persists for the service's lifetime. This happens **once per service**.
+
+- **Deploy time — happy path (GLC-2)** — Every `zerops_deploy` in container mode runs `buildSSHCommand`'s safety-net `(test -d .git || (git init && git config ...))`. On a service where bootstrap has already run, `test -d .git` short-circuits the OR and the whole init+config branch is skipped — the deploy goes straight to `git add -A && git commit`. Per-deploy overhead: one stat syscall.
+
+- **Deploy time — migration / recovery (GLC-2 cold path)** — If `.git/` is missing (service provisioned before this feature shipped, or someone ran `sudo rm -rf /var/www/.git` for recovery), `test -d .git` fails and the OR branch fires. Init + identity land together atomically, so the subsequent `git add -A && git commit` succeeds without needing a separate pre-step.
+
+- **Never** — ZCP-host container's own `/var/www` (GLC-4: it's the SSHFS mount base, not a code directory); user's local working directory (GLC-6: that's the user's own git territory); any path that went through the SSHFS mount from the ZCP host (GLC-5: mount-side `git init` would produce root-owned dirs due to a zembed SFTP MKDIR regression).
+
+**Single source of identity (GLC-3)**: `ops.DeployGitIdentity` is read by two call sites — `InitServiceGit` at bootstrap and `buildSSHCommand`'s safety-net at deploy time. `BuildGitPushCommand` and the deploy-ssh top level both dropped their `id GitIdentity` parameters; nothing else writes identity.
 
 | ID | Invariant |
 |----|-----------|
