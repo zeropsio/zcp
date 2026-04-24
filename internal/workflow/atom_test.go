@@ -270,3 +270,87 @@ func TestParseAtom_RoutesAxis(t *testing.T) {
 		})
 	}
 }
+
+// TestParseAtom_ReferencesFields exercises the authoring-contract
+// frontmatter that lists Go struct fields cited in the atom body
+// (pkg.Type.Field form). Validated by TestAtomReferenceFieldIntegrity
+// in Phase 2; the parser only needs to round-trip the list.
+func TestParseAtom_ReferencesFields(t *testing.T) {
+	t.Parallel()
+
+	content := `---
+id: test
+phases: [develop-active]
+references-fields: [ops.DeployResult.Status, ops.DeployResult.SubdomainURL]
+---
+body`
+
+	atom, err := ParseAtom(content)
+	if err != nil {
+		t.Fatalf("ParseAtom: %v", err)
+	}
+	want := []string{"ops.DeployResult.Status", "ops.DeployResult.SubdomainURL"}
+	if len(atom.ReferencesFields) != len(want) {
+		t.Fatalf("ReferencesFields len = %d, want %d", len(atom.ReferencesFields), len(want))
+	}
+	for i, w := range want {
+		if atom.ReferencesFields[i] != w {
+			t.Errorf("ReferencesFields[%d] = %q, want %q", i, atom.ReferencesFields[i], w)
+		}
+	}
+}
+
+// TestParseAtom_ReferencesAtoms exercises atom-to-atom cross-reference
+// frontmatter. Validated by TestAtomReferencesAtomsIntegrity in Phase 2;
+// the parser only needs to round-trip the list.
+func TestParseAtom_ReferencesAtoms(t *testing.T) {
+	t.Parallel()
+
+	content := `---
+id: test
+phases: [develop-active]
+references-atoms: [develop-auto-close-semantics, develop-dev-server-reason-codes]
+---
+body`
+
+	atom, err := ParseAtom(content)
+	if err != nil {
+		t.Fatalf("ParseAtom: %v", err)
+	}
+	want := []string{"develop-auto-close-semantics", "develop-dev-server-reason-codes"}
+	if len(atom.ReferencesAtoms) != len(want) {
+		t.Fatalf("ReferencesAtoms len = %d, want %d", len(atom.ReferencesAtoms), len(want))
+	}
+	for i, w := range want {
+		if atom.ReferencesAtoms[i] != w {
+			t.Errorf("ReferencesAtoms[%d] = %q, want %q", i, atom.ReferencesAtoms[i], w)
+		}
+	}
+}
+
+// TestParseAtom_PinnedByScenarios exercises the optional test-anchor
+// frontmatter. Informational only — no runtime validation.
+func TestParseAtom_PinnedByScenarios(t *testing.T) {
+	t.Parallel()
+
+	content := `---
+id: test
+phases: [develop-active]
+pinned-by-scenario: [S7_DevelopClosedAuto, S3_AdoptOnlyUnmanaged]
+---
+body`
+
+	atom, err := ParseAtom(content)
+	if err != nil {
+		t.Fatalf("ParseAtom: %v", err)
+	}
+	want := []string{"S7_DevelopClosedAuto", "S3_AdoptOnlyUnmanaged"}
+	if len(atom.PinnedByScenarios) != len(want) {
+		t.Fatalf("PinnedByScenarios len = %d, want %d", len(atom.PinnedByScenarios), len(want))
+	}
+	for i, w := range want {
+		if atom.PinnedByScenarios[i] != w {
+			t.Errorf("PinnedByScenarios[%d] = %q, want %q", i, atom.PinnedByScenarios[i], w)
+		}
+	}
+}

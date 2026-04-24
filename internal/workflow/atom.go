@@ -15,6 +15,20 @@ type KnowledgeAtom struct {
 	Priority int
 	Title    string
 	Body     string
+
+	// ReferencesFields lists Go struct fields in pkg.Type.Field form
+	// (e.g. ops.DeployResult.Status) that this atom cites from response
+	// or envelope shapes. Validated by TestAtomReferenceFieldIntegrity
+	// (Phase 2) — every entry must resolve to a real field via AST scan.
+	ReferencesFields []string
+	// ReferencesAtoms lists atom IDs this atom cross-references (body
+	// prose points the reader at another atom for a consolidated topic).
+	// Validated by TestAtomReferencesAtomsIntegrity (Phase 2).
+	ReferencesAtoms []string
+	// PinnedByScenarios lists scenario test names that pin this atom's
+	// appearance in the synthesized body. Informational; helps future
+	// edits locate downstream test expectations.
+	PinnedByScenarios []string
 }
 
 // AxisVector is the subset of envelope dimensions an atom applies to. Empty
@@ -63,6 +77,9 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 			IdleScenarios: parseIdleScenarios(fields["idleScenarios"]),
 			DeployStates:  parseDeployStates(fields["deployStates"]),
 		},
+		ReferencesFields:  parseYAMLList(fields["references-fields"]),
+		ReferencesAtoms:   parseYAMLList(fields["references-atoms"]),
+		PinnedByScenarios: parseYAMLList(fields["pinned-by-scenario"]),
 	}
 	if atom.ID == "" {
 		return atom, fmt.Errorf("atom missing required field: id")
