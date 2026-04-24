@@ -17,6 +17,13 @@ Your additions EXTEND the scaffold's fragments — they do not replace.
 existing body; root/env ids overwrite. Same placement rubric as
 scaffold — yaml-comment, IG, KB, CLAUDE.md notes.
 
+KB bullets you record use the `**Topic** — prose` format only. Do
+**NOT** use `**symptom**:` / `**mechanism**:` / `**fix**:` triples in
+KB — that debugging-runbook shape belongs in `claude-md/notes`, not
+in the porter-facing KB surface. A porter reading the README scans
+topic names left-to-right; a triple forces them to read the symptom
+sentence before they know what the bullet is about.
+
 - Adding a dep → extend KB if the choice is non-obvious
 - Adding an env var → extend `zerops.yaml` with an inline comment
 - Adding an `initCommand` (seed, scout:import) → consult the execOnce

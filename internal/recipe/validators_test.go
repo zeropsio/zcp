@@ -330,6 +330,119 @@ func TestValidateCodebaseYAML_ShortRunsNotFlagged(t *testing.T) {
 	}
 }
 
+// TestValidateKB_AllTripleFormat_FlagsAll — run-10-readiness §O.
+// KB entries opening with `**symptom**:` / `**mechanism**:` / `**fix**:`
+// triples belong in CLAUDE.md/notes, not in the porter-facing KB.
+// Every triple-shaped bullet emits a
+// `codebase-kb-triple-format-banned` violation.
+func TestValidateKB_AllTripleFormat_FlagsAll(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->
+
+### Gotchas
+
+- **symptom**: 502 at the L7 balancer. **mechanism**: NestJS bind defaults. **fix**: call app.listen(port, '0.0.0.0'). Cited guide: http-support.
+- **symptom**: trust proxy not set. **mechanism**: headers ignored. **fix**: set app.set('trust proxy', true). Cited guide: http-support.
+- **symptom**: NATS double auth. **mechanism**: credentials in both servers + auth. **fix**: pass connectionString only. Cited guide: env-var-model.
+
+<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->
+`)
+	vs, err := validateCodebaseKB(context.Background(),
+		"/srv/apidev/README.md", body, SurfaceInputs{Plan: &Plan{}})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	var count int
+	for _, v := range vs {
+		if v.Code == "codebase-kb-triple-format-banned" {
+			count++
+		}
+	}
+	if count != 3 {
+		t.Errorf("expected 3 triple-format violations, got %d: %+v", count, vs)
+	}
+}
+
+// TestValidateKB_AllTopicFormat_Passes — run-10-readiness §O. Reference
+// style — `**Topic** — explanation` bullets — triggers zero
+// triple-format violations.
+func TestValidateKB_AllTopicFormat_Passes(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->
+
+### Gotchas
+
+- **No .env file** — Zerops injects environment variables as OS env vars. Creating a .env file with empty values shadows the OS vars. Cited guide: env-var-model.
+- **Trust the reverse proxy** — the runtime sits behind an L7 balancer that sets X-Forwarded-*. Cited guide: http-support.
+
+<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->
+`)
+	vs, err := validateCodebaseKB(context.Background(),
+		"/srv/apidev/README.md", body, SurfaceInputs{Plan: &Plan{}})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if containsCode(vs, "codebase-kb-triple-format-banned") {
+		t.Errorf("topic-format KB should not trip triple validator: %+v", vs)
+	}
+}
+
+// TestValidateKB_MixedFormat_FlagsOnlyTriples — run-10-readiness §O.
+// A bimodal KB (run-9 shape) emits violations only for the triple
+// entries — Topic-format bullets are unaffected.
+func TestValidateKB_MixedFormat_FlagsOnlyTriples(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->
+
+### Gotchas
+
+- **symptom**: 502 at the balancer. **mechanism**: bind default. **fix**: listen on 0.0.0.0. Cited guide: http-support.
+- **Expose X-Cache via CORS** — browser fetch sees only Access-Control-Expose-Headers. Cited guide: http-support.
+- **symptom**: NATS double auth. **mechanism**: credentials. **fix**: connectionString only. Cited guide: env-var-model.
+
+<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->
+`)
+	vs, err := validateCodebaseKB(context.Background(),
+		"/srv/apidev/README.md", body, SurfaceInputs{Plan: &Plan{}})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	var count int
+	for _, v := range vs {
+		if v.Code == "codebase-kb-triple-format-banned" {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Errorf("expected 2 triple violations (only the triple entries), got %d: %+v", count, vs)
+	}
+}
+
+// TestBrief_Scaffold_KBGuidanceMatchesTopicFormat — run-10-readiness §O.
+// The scaffold brief body teaches `**Topic** — prose` and explicitly
+// bans the `**symptom**:` triple for KB.
+func TestBrief_Scaffold_KBGuidanceMatchesTopicFormat(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	for _, anchor := range []string{
+		"**Topic**",
+		"Do NOT use `**symptom**:`",
+		"claude-md/notes",
+	} {
+		if !strings.Contains(brief.Body, anchor) {
+			t.Errorf("scaffold brief missing KB anchor %q", anchor)
+		}
+	}
+}
+
 // TestValidateCodebaseYAML_MultiLineBlockWithOneCausalWord_Passes —
 // run-10-readiness §N. A multi-line comment block passes when ANY line
 // in the block carries a causal word / em-dash; individual lines no

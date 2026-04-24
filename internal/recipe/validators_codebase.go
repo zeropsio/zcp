@@ -59,9 +59,17 @@ func validateCodebaseIG(_ context.Context, path string, body []byte, _ SurfaceIn
 	return vs, nil
 }
 
+// kbTripleFormatRE flags KB bullets that open with the
+// `**symptom**:` / `**mechanism**:` / `**fix**:` debugging-runbook
+// triple. That shape belongs in CLAUDE.md/notes; KB is porter-facing
+// `**Topic** — explanation`. Run-10-readiness §O.
+var kbTripleFormatRE = regexp.MustCompile(`(?m)^\s*[-*]\s+\*\*(symptom|mechanism|fix)\*\*\s*:`)
+
 // validateCodebaseKB — knowledge-base fragment contract. Every bullet
 // starts with a bold symptom; any bullet whose topic appears in the
-// CitationMap must include the guide-id reference.
+// CitationMap must include the guide-id reference. Bullets opening with
+// the `**symptom**:` triple are flagged — debugging runbooks live in
+// CLAUDE.md/notes, KB uses `**Topic** — prose`.
 func validateCodebaseKB(_ context.Context, path string, body []byte, _ SurfaceInputs) ([]Violation, error) {
 	s := string(body)
 	var vs []Violation
@@ -78,6 +86,11 @@ func validateCodebaseKB(_ context.Context, path string, body []byte, _ SurfaceIn
 	if len(bullets) > 0 && len(boldBullets) < len(bullets) {
 		vs = append(vs, violation("kb-missing-bold-symptom", path,
 			fmt.Sprintf("%d of %d KB bullets lack a **bold symptom** opening", len(bullets)-len(boldBullets), len(bullets))))
+	}
+	for _, m := range kbTripleFormatRE.FindAllString(kb, -1) {
+		vs = append(vs, violation("codebase-kb-triple-format-banned", path,
+			fmt.Sprintf("KB entries use `**Topic** — prose` format; `**symptom**:` / `**mechanism**:` / `**fix**:` triples belong in CLAUDE.md/notes: %q",
+				trimForMessage(strings.TrimSpace(m)))))
 	}
 	// Citation-required: for every topic in CitationMap that appears
 	// anywhere in the KB body, the body must also reference the guide id.
