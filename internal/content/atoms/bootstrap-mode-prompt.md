@@ -9,20 +9,21 @@ title: "Confirm mode — dev / standard / simple per service"
 
 ### Confirm mode per service
 
-Every runtime service needs a **mode**; confirm it with the user before
-committing the plan:
+Every runtime service needs a **mode**; confirm with the user before
+submitting the plan.
 
 - **dev** — single mutable container, SSHFS-mountable, no stage pair.
-  Best for active development.
-- **standard** — dev + stage pair. Stage is the production-shaped deploy
-  target; dev is the iteration surface.
+  Best for active iteration.
+- **standard** — dev + stage pair. The envelope reports `stageHostname`
+  on the dev snapshot and a separate snapshot with `mode: stage` for
+  the stage service.
 - **simple** — single container that starts real code on every deploy;
-  no SSHFS-mutation lifecycle.
-- **stage** — never bootstrapped on its own; created as the stage half
-  of a standard pair.
+  no SSHFS mutation lifecycle.
+- **stage** — never bootstrapped alone; it is the stage half of a
+  standard pair.
 
-Default suggestion when uncertain: **dev** for runtime services the user
-is actively iterating on, **simple** for services treated as immutable
-(cron workers, fire-and-forget processes). Record the confirmed choice in
-the `ServiceMeta.Mode` field — it is immutable afterward, so only proceed
-with explicit approval.
+Default to **dev** for services under active iteration, **simple** for
+immutable workers. The plan commits the mode when you submit it; after
+bootstrap closes, the envelope exposes the chosen mode as
+`ServiceSnapshot.Mode`. Changing mode later requires the
+mode-expansion flow (see `develop-mode-expansion`).
