@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -27,7 +28,7 @@ func needsStacks(resp *workflow.BootstrapResponse) bool {
 	return stackSteps[resp.Current.Name]
 }
 
-func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput, liveTypes []platform.ServiceStackType, logFetcher platform.LogFetcher, projectID string, stateDir string, mounter ops.Mounter) (*mcp.CallToolResult, any, error) {
+func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput, liveTypes []platform.ServiceStackType, logFetcher platform.LogFetcher, projectID string, stateDir string, mounter ops.Mounter, sshDeployer ops.SSHDeployer) (*mcp.CallToolResult, any, error) {
 	if input.Step == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -75,7 +76,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 	// Auto-mount runtime services after successful provision completion.
 	// mounter is nil in local env — no-op naturally.
 	if input.Step == workflow.StepProvision && (resp.CheckResult == nil || resp.CheckResult.Passed) {
-		resp.AutoMounts = autoMountTargets(ctx, client, projectID, mounter, engine)
+		resp.AutoMounts = autoMountTargets(ctx, client, projectID, mounter, sshDeployer, engine)
 		cleanupImportYAML(stateDir, resp.AutoMounts, engine.Environment() == workflow.EnvContainer)
 	}
 
@@ -150,10 +151,16 @@ func bootstrapStatusResult(ctx context.Context, engine *workflow.Engine, client 
 	return jsonResult(resp), nil, nil
 }
 
-// autoMountTargets mounts runtime services from the bootstrap plan after provision.
-// Best-effort: mount failures are reported but don't block step advancement.
-// Returns nil when mounter is nil (local env) or no plan targets exist.
-func autoMountTargets(ctx context.Context, client platform.Client, projectID string, mounter ops.Mounter, engine *workflow.Engine) []workflow.AutoMountInfo {
+// autoMountTargets mounts runtime services from the bootstrap plan after provision
+// and initializes /var/www/.git/ container-side on each successfully-mounted service.
+// Best-effort: mount failures are reported but don't block step advancement; git init
+// failures are logged to stderr but don't mark the mount failed (deploy-time safety
+// net in buildSSHCommand re-inits on demand — GLC-1/GLC-2).
+//
+// Returns nil when mounter is nil (local env) or no plan targets exist. sshDeployer
+// is also nil in local env, so the post-mount git init skips even if the function
+// were entered — the mounter guard short-circuits first.
+func autoMountTargets(ctx context.Context, client platform.Client, projectID string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, engine *workflow.Engine) []workflow.AutoMountInfo {
 	if mounter == nil {
 		return nil
 	}
@@ -182,6 +189,22 @@ func autoMountTargets(ctx context.Context, client platform.Client, projectID str
 			MountPath: result.MountPath,
 			Status:    result.Status,
 		})
+		// Post-mount git lifecycle: init /var/www/.git/ container-side with
+		// deploy identity. GLC-1 is enforced here (every managed runtime
+		// service gets .git/ initialized at bootstrap), so subsequent
+		// deploys don't race to init or re-config.
+		//
+		// Best-effort: errors are logged to stderr rather than surfaced in
+		// AutoMountInfo. The mount is semantically separate from the git
+		// init; recording a git-init hiccup as a mount failure would mis-
+		// attribute it. The deploy safety-net (buildSSHCommand) re-inits
+		// on demand, so a transient SSH failure here doesn't block any
+		// downstream deploy.
+		if sshDeployer != nil {
+			if initErr := ops.InitServiceGit(ctx, sshDeployer, hostname); initErr != nil {
+				fmt.Fprintf(os.Stderr, "zcp: InitServiceGit %s: %v\n", hostname, initErr)
+			}
+		}
 	}
 	return results
 }

@@ -115,7 +115,10 @@ type immediateResponse struct {
 // ID from container env). selfHostname duplicates rt.ServiceName for handlers
 // that haven't migrated yet — Phase 7 consolidates on rt.
 // mounter enables auto-mounting runtime services after provision (nil in local env).
-func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, schemaCache *schema.Cache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string, mounter ops.Mounter, rt runtime.Info) {
+// sshDeployer enables post-mount git init on each runtime target
+// (ops.InitServiceGit). Nil in local env — the post-mount hook skips naturally
+// because mounter is also nil there (see autoMountTargets).
+func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, schemaCache *schema.Cache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
 		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (create/adopt infrastructure only — not the user's application), develop (all development, deployment, fixing, investigating), recipe (create recipe repo files), export (turn a deployed service into a re-importable git repo with import.yaml + buildFromGit). Deploy strategy (push-dev, push-git, manual) is configured via action=\"strategy\" strategies={hostname:value} — for push-git this returns the full setup flow (tokens, optional CI/CD, first push) in one call. After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route|strategy\".",
@@ -128,7 +131,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input WorkflowInput) (*mcp.CallToolResult, any, error) {
 		// New multi-action handler.
 		if input.Action != "" {
-			return handleWorkflowAction(ctx, projectID, engine, client, cache, schemaCache, logFetcher, input, stateDir, selfHostname, mounter, rt)
+			return handleWorkflowAction(ctx, projectID, engine, client, cache, schemaCache, logFetcher, input, stateDir, selfHostname, mounter, sshDeployer, rt)
 		}
 
 		// Immediate workflows (export) may be fetched without action.
@@ -154,7 +157,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 	})
 }
 
-func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache, logFetcher platform.LogFetcher, input WorkflowInput, stateDir, selfHostname string, mounter ops.Mounter, rt runtime.Info) (*mcp.CallToolResult, any, error) {
+func handleWorkflowAction(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, schemaCache *schema.Cache, logFetcher platform.LogFetcher, input WorkflowInput, stateDir, selfHostname string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info) (*mcp.CallToolResult, any, error) {
 	// dispatch-brief-atom is a stateless content-retrieval action — it
 	// reads an atom from the embedded recipe tree and does not touch
 	// session state. Handle it before the engine-required guard so the
@@ -199,7 +202,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		if cache != nil && client != nil {
 			liveTypes = cache.Get(ctx, client)
 		}
-		return handleBootstrapComplete(ctx, engine, client, cache, input, liveTypes, logFetcher, projectID, stateDir, mounter)
+		return handleBootstrapComplete(ctx, engine, client, cache, input, liveTypes, logFetcher, projectID, stateDir, mounter, sshDeployer)
 	case "generate-finalize":
 		if detectActiveWorkflow(engine) == workflowRecipe {
 			return handleRecipeGenerateFinalize(engine, input.EnvComments, input.ProjectEnvVariables)
