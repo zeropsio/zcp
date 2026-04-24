@@ -1,7 +1,7 @@
-# Pre-ship contract
+# Behavioral gate
 
-Verify behavior, not code. Preship passes when all five are green on
-the dev container.
+Verify behavior, not code. The gate passes when all five checks are
+green on the dev container.
 
 1. `curl ${appdev-subdomain}/health` → 200 + body.
 2. `curl -H "X-Forwarded-For: 1.2.3.4" /debug/remote-ip` echoes

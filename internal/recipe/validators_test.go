@@ -533,6 +533,27 @@ func TestValidateKB_MixedFormat_FlagsOnlyTriples(t *testing.T) {
 	}
 }
 
+// TestBrief_Scaffold_HeaderIsBehavioralGate — run-10-readiness §Q2.
+// The `# Pre-ship contract` header is renamed to `# Behavioral gate`
+// so the brief's authoring vocabulary stops colliding with the
+// voice-rule forbidden phrase (`"pre-ship contract"` stays in the
+// forbidden list for source-code and fragment-body content).
+func TestBrief_Scaffold_HeaderIsBehavioralGate(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	if !strings.Contains(brief.Body, "# Behavioral gate") {
+		t.Errorf("scaffold brief missing `# Behavioral gate` header")
+	}
+	if strings.Contains(brief.Body, "# Pre-ship contract") {
+		t.Errorf("scaffold brief still carries `# Pre-ship contract` header")
+	}
+}
+
 // TestBrief_Scaffold_OmitsHTTPSectionForNonHTTPRole — run-10-readiness
 // §Q1. Scaffold brief for a role whose contract has ServesHTTP=false
 // (worker / job-consumer) does not emit the `## HTTP` section; the
