@@ -17,13 +17,16 @@ title: "Platform rules — container extras"
   {hostname} ls …`, `ssh {hostname} tail …` or similar for files that exist
   on the mount** — every such call pays SSH setup cost and adds shell-
   escaping bugs (nested quotes in `sed`/`awk` pipelines break).
-- **Long-running dev processes → `zerops_dev_server`.** Starting, stopping,
-  restarting, probing status, and tailing the dev server all go through
-  the MCP tool. It detaches the process correctly, bounds every phase
-  with a tight budget, and returns structured `{running, healthStatus,
-  reason, logTail}` — never hand-roll `ssh {hostname} "cmd &"` for a
-  long-running process (the SSH channel holds open until the 120 s
-  timeout).
+- **Long-running dev processes → `zerops_dev_server`.** Starting,
+  stopping, restarting, probing status, and tailing the dev server
+  all go through the MCP tool. The response has `running`,
+  `healthStatus`, `startMillis`, `reason`, and `logTail` — all
+  needed for diagnosing start failures without a follow-up call. Do
+  not hand-roll `ssh {hostname} "cmd &"` — backgrounded SSH commands
+  hold the channel open until the 120 s bash timeout. See
+  `develop-dynamic-runtime-start-container` for the canonical start
+  recipe and `develop-dev-server-reason-codes` for `reason` value
+  triage.
 - **One-shot commands over SSH.** Framework CLIs (`artisan`, `bun`,
   `npm install`, `composer`), git ops, and `curl localhost` stay on raw
   SSH — they exit quickly, no channel-lifetime concern:
