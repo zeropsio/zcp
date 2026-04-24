@@ -4,6 +4,7 @@ priority: 2
 phases: [develop-active]
 title: "Dev-server state triage — expectation → check → act"
 references-fields: [workflow.ServiceSnapshot.RuntimeClass, workflow.ServiceSnapshot.Mode, ops.DevServerResult.Running, ops.DevServerResult.HealthStatus, ops.DevServerResult.Reason]
+references-atoms: [develop-dev-server-reason-codes]
 ---
 
 ### Dev-server state triage

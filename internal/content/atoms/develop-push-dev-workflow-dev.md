@@ -8,6 +8,7 @@ strategies: [push-dev]
 environments: [container]
 title: "Push-dev iteration cycle (dev mode, container)"
 references-fields: [ops.DevServerResult.Reason, ops.DevServerResult.Running, ops.DevServerResult.HealthStatus, ops.DevServerResult.LogTail, ops.DevServerResult.StartMillis]
+references-atoms: [develop-dev-server-reason-codes]
 ---
 
 ### Development workflow

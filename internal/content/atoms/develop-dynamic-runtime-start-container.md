@@ -7,6 +7,7 @@ environments: [container]
 modes: [dev, standard]
 title: "Dynamic runtime — start dev server via zerops_dev_server (container)"
 references-fields: [ops.DevServerResult.Running, ops.DevServerResult.HealthStatus, ops.DevServerResult.StartMillis, ops.DevServerResult.Reason, ops.DevServerResult.LogTail, ops.DevServerResult.Port, ops.DevServerResult.HealthPath]
+references-atoms: [develop-dev-server-reason-codes]
 ---
 
 ### Dynamic-runtime dev server (container)
