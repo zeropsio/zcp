@@ -549,18 +549,18 @@ Per-commit rollback via `git revert`. The plan is designed so each commit is ind
 
 The plan is complete when ALL of these hold:
 
-- [ ] All checkboxes in §6 "Phase Status" are ticked through Phase 4 DoD.
-- [ ] `go test ./... -count=1` green (with `-race` optional sanity run).
-- [ ] `make lint-local` green.
-- [ ] `grep -rn -E '\bDM-[1-5]\b|\bDS-0[1-4]\b|\bGLC-[1-6]\b|\bKD-[0-9]{2}\b|\bTA-[0-9]{2}\b|\bE[1-8]\b|\bO[1-4]\b|\bF#[1-9]\b|\bINV-[0-9]+\b' internal/content/atoms/` returns zero.
-- [ ] `grep -rn '\bhandler\b.*\b(automatically|auto-)' internal/content/atoms/` returns zero.
-- [ ] `find internal -name '*atom_contract*test*.go'` returns zero (only `TestAtomAuthoringLint` + `TestAtomReferenceFieldIntegrity` + `TestAtomReferencesAtomsIntegrity` remain).
-- [ ] `bootstrap-write-metas.md` does not exist.
-- [ ] `develop-auto-close-semantics.md` and `develop-dev-server-reason-codes.md` exist and are referenced by ≥3 atoms each.
-- [ ] `spec-workflows.md §8 O4` contains no `plans/` pointer.
-- [ ] `plans/friction-root-causes.md §P2.5` carries SUPERSEDED banner.
-- [ ] `plans/archive/` contains `dev-server-canonical-primitive.md` and `deploy-modes-conceptual-fix.md`.
-- [ ] This plan file moves to `plans/archive/atom-authoring-contract.md` with final commit.
+- [x] All checkboxes in §6 "Phase Status" are ticked through Phase 4 DoD.
+- [x] `go test ./... -count=1` green (verified 2026-04-24).
+- [x] `make lint-local` green (verified 2026-04-24).
+- [x] `grep -rn -E '\bDM-[1-5]\b|\bDS-0[1-4]\b|\bGLC-[1-6]\b|\bKD-[0-9]{2}\b|\bTA-[0-9]{2}\b|\bE[1-8]\b|\bO[1-4]\b|\bF#[1-9]\b|\bINV-[0-9]+\b' internal/content/atoms/` returns zero.
+- [x] `grep -rn '\bhandler\b.*\b(automatically|auto-)' internal/content/atoms/` returns zero.
+- [x] `find internal -name '*atom_contract*test*.go'` returns zero. `TestAtomAuthoringLint` lives in `internal/content/`, `TestAtomReferenceFieldIntegrity` + `TestAtomReferencesAtomsIntegrity` live in `internal/workflow/`.
+- [x] `bootstrap-write-metas.md` does not exist.
+- [x] `develop-auto-close-semantics.md` and `develop-dev-server-reason-codes.md` exist and each is referenced by 5 atoms via `references-atoms` frontmatter.
+- [x] `spec-workflows.md §8 O4` contains no `plans/` pointer.
+- [x] `plans/friction-root-causes.md §P2.5` carries SUPERSEDED banner.
+- [x] `plans/archive/` contains `dev-server-canonical-primitive.md` and `deploy-modes-conceptual-fix.md`.
+- [x] This plan file moved to `plans/archive/atom-authoring-contract.md` (commit `c2a5651`).
 
 **Explicit non-goals** (do not expand scope):
 - Recipe-authoring workflow atoms (zcprecipator2 atom tree under `internal/content/workflows/recipe/`) — separate corpus, separate plan later.
