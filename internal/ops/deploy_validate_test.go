@@ -127,22 +127,6 @@ func TestValidateZeropsYml_DeployFiles(t *testing.T) {
 			wantContains: "deployFiles is empty",
 		},
 		{
-			name:     "dev without dot deployFiles",
-			hostname: "appdev",
-			yml: `zerops:
-  - setup: appdev
-    build:
-      deployFiles: [dist]
-    run:
-      start: node dist/index.js
-      ports:
-        - port: 8080
-`,
-			wantWarnings: 1,
-			wantContains: "dev service should use deployFiles: [.]",
-			createDirs:   []string{"dist"},
-		},
-		{
 			name:     "stage without dot deployFiles is fine",
 			hostname: "appstage",
 			yml: `zerops:
@@ -198,22 +182,6 @@ func TestValidateZeropsYml_DeployFiles(t *testing.T) {
         - port: 8080
 `,
 			noWarnings: true,
-		},
-		{
-			name:     "scalar deployFiles non-dot warns for dev",
-			hostname: "appdev",
-			yml: `zerops:
-  - setup: appdev
-    build:
-      deployFiles: dist
-    run:
-      start: node dist/index.js
-      ports:
-        - port: 8080
-`,
-			wantWarnings: 1,
-			wantContains: "dev service should use deployFiles: [.]",
-			createDirs:   []string{"dist"},
 		},
 		{
 			name:     "deployFiles under run instead of build",

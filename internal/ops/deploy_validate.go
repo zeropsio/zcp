@@ -106,15 +106,6 @@ func ValidateZeropsYml(workingDir, targetHostname, serviceType string, class Dep
 	isDev := role == string(workflow.DeployRoleDev)
 	isStage := role == string(workflow.DeployRoleStage)
 
-	// Dev-role advisory (non-self-deploy path): deploying a narrow
-	// artifact to a dev-role target breaks the live-edit workspace.
-	// Self-deploy already returned above with a hard error; this branch
-	// covers cross-deploy-to-dev and local-deploy-to-dev.
-	if isDev && len(deployFiles) > 0 &&
-		!slices.Contains(deployFiles, ".") && !slices.Contains(deployFiles, "./") {
-		warnings = append(warnings, "dev service should use deployFiles: [.] — ensures source files persist across deploys for continued iteration")
-	}
-
 	// Stage services with "zsc noop" build command are likely misconfigured.
 	if isStage && entry.Build.hasZscNoop() {
 		warnings = append(warnings, fmt.Sprintf(
