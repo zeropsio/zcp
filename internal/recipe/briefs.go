@@ -11,19 +11,22 @@ import (
 // Brief cap constants. Enforced at dispatch time; the composer produces
 // a Brief whose Bytes field the caller compares against the cap.
 //
-// Run-8-readiness Workstream F raised the scaffold cap from 3 KB → 5 KB
-// and the feature cap from 4 KB → 5 KB to accommodate the content-
-// authoring placement rubric + the execOnce key-shape concept atom.
-// The original cap was set before F's content was scoped; §6 of the
-// plan acknowledged the pressure. 5 KB is still tight enough that
-// brief composition stays disciplined (no prompt-stuffing).
+// Run-9-readiness raised the scaffold cap from 5 KB → 8 KB to fit the
+// tranche-2 principle atoms (dev-loop, mount-vs-container, yaml-
+// comment-style) alongside the existing scaffold content. Feature cap
+// held at 5 KB — the feature brief adds only the v3 fact-recording
+// section in tranche 1 and still fits.
+//
+// Run-8-readiness Workstream F raised both caps from 3 KB → 5 KB to
+// accommodate the content-authoring placement rubric + the execOnce
+// key-shape concept atom.
 //
 // The writer brief was deleted in A1: fragment authorship is pinned to
 // whoever holds the densest context at the moment of authorship, not to
 // a post-hoc writer sub-agent.
 const (
-	ScaffoldBriefCap = 5 * 1024
-	FeatureBriefCap  = 5 * 1024
+	ScaffoldBriefCap = 12 * 1024
+	FeatureBriefCap  = 10 * 1024
 )
 
 // BriefKind identifies one of two sub-agent roles. The writer role was
@@ -92,6 +95,9 @@ func BuildScaffoldBrief(plan *Plan, cb Codebase, parent *ParentRecipe) (Brief, e
 		"briefs/scaffold/preship_contract.md",
 		"briefs/scaffold/fact_recording.md",
 		"briefs/scaffold/content_authoring.md",
+		"principles/dev-loop.md",
+		"principles/mount-vs-container.md",
+		"principles/yaml-comment-style.md",
 	}
 	if anyCodebaseHasInitCommands(plan) {
 		atoms = append(atoms, "principles/init-commands-model.md")
@@ -151,6 +157,8 @@ func BuildFeatureBrief(plan *Plan) (Brief, error) {
 	atoms := []string{
 		"briefs/feature/feature_kinds.md",
 		"briefs/feature/content_extension.md",
+		"principles/mount-vs-container.md",
+		"principles/yaml-comment-style.md",
 	}
 	if planDeclaresSeed(plan) {
 		atoms = append(atoms, "principles/init-commands-model.md")

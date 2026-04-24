@@ -4,6 +4,53 @@ Running log of changes on top of [plan.md](plan.md). Each entry captures what ch
 
 ---
 
+## 2026-04-24 — run-9-readiness (A1 / A2 / B / E / G1 / G2 / H / I / K / J / R)
+
+### Context
+
+Run 8 (nestjs-showcase, 2026-04-24) cleared research → provision → scaffold → feature but aborted at `stitch-content` on `{API_URL}` inside a fragment body (A1), shipped no per-codebase `zerops.yaml` because `SourceRoot` was never populated on live runs (A2), routed feature-phase facts through v2's `zerops_record_fact` so classifier + validators never saw them (B), broke first-call fact records on `surface_hint` snake-case mismatch (E), collapsed dev vs prod process model into "same start command, different deployFiles" (G1), ran `npm install` + `tsc` + `nest build` against the SSHFS mount (G2), decorated scaffold yaml with ASCII divider banners (H), leaked authoring-phase references ("the scaffold ships…", "pre-ship contract item 5") into committed source comments + intro fragments (I), serialized scaffold sub-agent dispatch losing ~23 minutes of parallelizable wall time (K), and returned byte-identical envelopes from 22 `record-fragment` calls (J). Full analysis at `docs/zcprecipator3/runs/8/ANALYSIS.md`.
+
+### Engine-delivery fixes (tranche 1)
+
+1. **A1 — scope unreplaced-token scan to engine-bound keys only.** `checkUnreplacedTokens` now filters `{UPPER_SNAKE}` matches against a fixed `engineBoundKeys` set (`SLUG`, `FRAMEWORK`, `HOSTNAME`, `TIER_LABEL`, `TIER_SUFFIX`, `TIER_LIST`). Anything outside that set (JS template literals `${API_URL}`, Svelte `{#if}`, Vue `{{template}}`, Go `{{ .Field }}`, Handlebars `{FILENAME}`) is fragment-authored code and passes. Errors now name the surface (`assemble codebase/api README: …`). See `internal/recipe/assemble.go`.
+
+2. **A2 — populate `Codebase.SourceRoot` at `enter-phase scaffold`.** Convention-based: empty `SourceRoot` becomes `/var/www/<hostname>dev`. Explicit values (chain resolver, custom mounts) are preserved. `copyCommittedYAML` flips from soft-fail (silent NO-OP) to hard-fail with a message that names the root cause ("scaffold did not run or was skipped"). Exposed as `DefaultSourceRoot(hostname)` for tests + future call sites. See `internal/recipe/handlers.go`.
+
+3. **B — feature brief routes facts through v3 tool + browser-verification FactRecord.** `content_extension.md` gains a "Recording feature-phase facts" section naming `zerops_recipe action=record-fact` (not legacy `zerops_record_fact`) + the camelCase schema. `phase_entry/feature.md` step 7 rewires the browser-walk to record one FactRecord per `zerops_browser` call with `surfaceHint: browser-verification`. Classifier maps the new hint to `ClassOperational` (publishable). See `internal/recipe/content/briefs/feature/content_extension.md`, `content/phase_entry/feature.md`, `classify.go`.
+
+4. **E — normalize `surfaceHint` casing.** Engine error message + `facts_test.go` literals + `fact_recording.md` prose all spoke `surface_hint`, but `FactRecord`'s JSON tag was `surfaceHint`. Two out of three scaffold sub-agents failed their first `record-fact` on the mismatch. Normalized to `surfaceHint` everywhere. See `internal/recipe/facts.go`, `facts_test.go`, `content/briefs/scaffold/fact_recording.md`.
+
+### Content-pipeline fixes (tranche 2)
+
+5. **G1 — dev-loop principles atom (unconditional injection).** New `content/principles/dev-loop.md` ports v2's `zsc noop --silent` pattern + `zerops_dev_server` tool + dev-vs-prod process model + `deployFiles: .` self-preservation rule. Injected into every scaffold brief (the original plan gated on `anyCodebaseIsDynamicRuntime`, but Laravel-with-Vite frontends need the dev-server even when the backend is php-nginx — so injection is unconditional and the atom explains the implicit-webserver carve-out inline). `phase_entry/scaffold.md` adds a step 5 prompting `zerops_dev_server action=start` before the preship contract. See `internal/recipe/content/principles/dev-loop.md`, `briefs.go`.
+
+6. **G2 — mount-vs-container execution-split atom.** New `content/principles/mount-vs-container.md` — editor tools run on the SSHFS mount, framework CLIs (`npm install`, `tsc`, `nest build`, `artisan`, `curl localhost`) run via `ssh <hostname>dev "..."`. Cites two reasons: correct environment (runtime version, package-manager cache, platform env vars) and avoiding FUSE-tunneled file IO. Injected unconditionally in scaffold + feature briefs. See `internal/recipe/content/principles/mount-vs-container.md`, `briefs.go`.
+
+7. **H — yaml-comment-style atom + divider-banner validator.** New `content/principles/yaml-comment-style.md` — ASCII `#` only, no dividers, no banners, section transitions use a single bare `#`. Engine-side: `yamlDividerREs` (one regex per decoration character since Go's RE2 has no backreferences) flags any comment line containing a run of 4+ `-`/`=`/`*`/`#`/`_`. New violation code `yaml-comment-divider-banned`, emitted before the causal-word check so the author sees the right diagnostic first. See `content/principles/yaml-comment-style.md`, `validators.go`, `validators_codebase.go`.
+
+8. **I — porter-voice rule + source-code comment scanner.** Voice rule prepended to both `content_authoring.md` (scaffold) and `content_extension.md` (feature): the reader is a porter cloning the apps repo, never another recipe author. Never write "the scaffold", "feature phase", "pre-ship contract item N", "showcase default", "we chose", "grew from". Always describe the finished product. Engine-side: `gateSourceCommentVoice` in `gates.go` walks every `Codebase.SourceRoot`, scans `.ts`/`.tsx`/`.js`/`.svelte`/`.vue`/`.go`/`.php`/`.py`/`.rb` files (skipping `node_modules`/`vendor`/`dist`/etc.), and flags forbidden phrases inside comment lines. Registered as a `FinalizeGates` entry. Skips codebases with empty or missing `SourceRoot` silently. See `validators_source_comments.go`, `gates.go`.
+
+9. **K — scaffold parallel-dispatch directive.** `phase_entry/scaffold.md` now prescribes: dispatch every codebase sub-agent in a single message with parallel `Agent` tool calls. Each sub-agent's `zerops_deploy` + `zerops_verify` queue naturally at the recipe session mutex — serializing dispatch serializes all the parallelizable work (file authoring, `ssh` / `npm install`, `zerops_knowledge` lookups) for no gain. Net savings on a 3-codebase scaffold: 15-30 min. See `content/phase_entry/scaffold.md`.
+
+10. **J — `record-fragment` response echoes `fragmentId` + `bodyBytes` + `appended`.** `RecipeResult` gains three omit-when-empty fields. `recordFragment` returns `(bodyBytes int, appended bool, err error)` so the handler populates them. Append-class ids (`codebase/*/integration-guide`, `knowledge-base`, `claude-md/*`) return `appended=true` + combined-body size on the second+ write; overwrite ids return the last body's size with `appended=false`. Refactor-only split: `recordFragment` + `applyEnvComment` + `isAppendFragmentID` + `isValidFragmentID` + `parseTierIndex` + `serviceKnown` + `fragmentIDRoot` moved from `handlers.go` (was 733 lines, past the 350 advisory) into `handlers_fragments.go`. No behavior change. See `handlers.go`, `handlers_fragments.go`.
+
+### Regression fixture (tranche 3)
+
+11. **R — e2e assemble fixture covering every code-block token shape.** Single `TestAssemble_FragmentBody_CodeTokens_E2E` exercises root / env / codebase README / codebase CLAUDE.md with fragment bodies carrying `${API_URL}`, `{FILENAME}`, `{{template}}`, `<slot />`, `{#if cond}…{/if}`, `{{ .FieldName }}`, and `` `${PLACEHOLDER}` ``. Pins the A1 invariant: fragment bodies with legitimate `{UPPER}` or `${UPPER}` syntax never trip the token scanner. See `assemble_test.go`.
+
+### Brief cap pressure
+
+Run-8-readiness raised the scaffold brief cap from 3 KB → 5 KB. Tranche-2 adds three principle atoms (dev-loop, mount-vs-container, yaml-comment-style) on top of existing scaffold content + mount-vs-container + yaml-comment-style on the feature side. Raised scaffold cap to 12 KB and feature cap to 10 KB. Both composers stay under their caps on a nestjs-showcase-shaped plan. Pin: `TestBrief_Scaffold_UnderCap_WithDevLoop`.
+
+### Not yet addressed (post-run-9 scope)
+
+- Automated click-deploy verification harness — still manual for criterion 10.
+- `verify-subagent-dispatch` SHA check of brief integrity — still deferred (was stretch for run 8).
+- Warn-lint at Bash pre-call hook to catch local `npm install` against the mount — harness concern, not recipe-engine.
+- Rehydrate path for feature-phase facts sent through legacy `zerops_record_fact` — brief-only fix is strictly sufficient for run 9; revisit if a future run bypasses the brief.
+
+---
+
 ## 2026-04-23 — v9.5.3 + follow-ups
 
 ### Context

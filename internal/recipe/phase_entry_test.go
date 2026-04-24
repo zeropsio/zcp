@@ -7,6 +7,26 @@ import (
 	"testing"
 )
 
+// stageScaffoldYAMLs stages a minimal scaffold-authored zerops.yaml per
+// codebase so stitch-content's copyCommittedYAML can succeed. Needed for
+// tests that drive stitch after A2 (run-9-readiness): A2 hard-fails on
+// missing SourceRoot or missing source yaml. Plan codebases get their
+// SourceRoot mutated to the staged dir.
+func stageScaffoldYAMLs(t *testing.T, base string, plan *Plan) {
+	t.Helper()
+	for i, cb := range plan.Codebases {
+		dir := filepath.Join(base, "workspace", cb.Hostname)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+		body := "# " + cb.Hostname + " — because test\nzerops: []\n"
+		if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte(body), 0o600); err != nil {
+			t.Fatalf("write yaml for %s: %v", cb.Hostname, err)
+		}
+		plan.Codebases[i].SourceRoot = dir
+	}
+}
+
 func TestPhaseEntry_AllPhasesPresent(t *testing.T) {
 	t.Parallel()
 	for _, p := range Phases() {
@@ -300,6 +320,9 @@ func TestDispatch_StitchContent_ReportsMissingFragments(t *testing.T) {
 	})
 	sess, _ := store.Get("synth-showcase")
 	sess.Plan = syntheticShowcasePlan()
+	// A2: stage scaffold-authored yaml per codebase so stitch reaches the
+	// fragment-missing path (A2's hard-fail would otherwise short-circuit).
+	stageScaffoldYAMLs(t, dir, sess.Plan)
 
 	res := dispatch(t.Context(), store, RecipeInput{
 		Action: "stitch-content", Slug: "synth-showcase",
@@ -332,6 +355,7 @@ func TestDispatch_StitchContent_AssemblesFromFragments(t *testing.T) {
 	})
 	sess, _ := store.Get("synth-showcase")
 	sess.Plan = syntheticShowcasePlan()
+	stageScaffoldYAMLs(t, dir, sess.Plan)
 
 	fragments := map[string]string{
 		"root/intro":                              "synth showcase intro",

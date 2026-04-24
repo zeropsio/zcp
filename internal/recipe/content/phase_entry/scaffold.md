@@ -4,7 +4,21 @@ Every codebase in `plan.codebases` gets ONE scaffold sub-agent dispatch.
 The sub-agent writes source code + `zerops.yaml` for its codebase; the
 main agent coordinates.
 
-## For each codebase (parallelize when shape is 2 or 3)
+## Dispatch every codebase scaffold IN PARALLEL
+
+With 2 or 3 codebases, dispatch all sub-agents in a single message (one
+`Agent` tool call per codebase, emitted in parallel). Each sub-agent's
+`zerops_deploy` + `zerops_verify` calls queue naturally at the recipe
+session mutex — you do NOT need to serialize the dispatch to serialize
+the deploys. File authoring, `Bash` and `ssh` commands, `npm install`,
+local builds, and `zerops_knowledge` consults run concurrently across
+sidechains.
+
+Net savings for a 3-codebase scaffold: 15-30 minutes. Serializing
+dispatch is the wrong optimization — the sub-agents block on their own
+framework work, not on each other.
+
+## For each codebase
 
 1. **Compose brief**:
    `zerops_recipe action=build-brief slug=<slug>
@@ -29,7 +43,15 @@ main agent coordinates.
 
 4. **Verify the dev deploy**: `zerops_verify targetService=<hostname>`.
 
-5. **Verify initCommands ran** (when the scaffold authored any):
+5. **Start the dev server**: `zerops_dev_server action=start` (dynamic
+   runtimes + any codebase with a frontend bundler). Dev slots run
+   `start: zsc noop --silent` and do NOT auto-start — the long-running
+   process is owned by the agent so code edits don't force a redeploy.
+   Implicit-webserver backends skip this for their own process, but
+   run the tool for a compiled frontend (Vite, esbuild) when applicable.
+   See `principles/dev-loop.md` in the brief.
+
+6. **Verify initCommands ran** (when the scaffold authored any):
    - `zerops_logs serviceHostname=<hostname> severity=INFO since=10m` —
      confirm the framework's success lines (applied-migration rows,
      "N rows seeded", "indexed N documents"). The sub-agent knows what
@@ -43,7 +65,7 @@ main agent coordinates.
      version makes per-deploy execOnce keys re-fire. Hand-run the
      command only when recovery-by-redeploy is not available.
 
-6. **Cross-deploy dev → stage**:
+7. **Cross-deploy dev → stage**:
    `zerops_deploy sourceService=<hostname>dev targetService=<hostname>stage`,
    then `zerops_verify targetService=<hostname>stage`. This proves the
    prod setup path (optimized build, `npm ci --omit=dev`, `./dist/~`

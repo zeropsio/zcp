@@ -36,6 +36,20 @@ const (
 // tokens the assembler didn't bind.
 var unreplacedTokenRE = regexp.MustCompile(`\{[A-Z][A-Z0-9_]*\}`)
 
+// engineBoundKeys is the full set of {TOKEN} keys the engine binds in
+// any surface template. A post-render match whose key is in this set is
+// a real defect (unreplaced engine token); a match whose key is NOT in
+// this set is fragment-authored code (JS template literal `${API_URL}`,
+// Handlebars `{FILENAME}`, Svelte `{#if}`) and is legitimate.
+var engineBoundKeys = map[string]bool{
+	"SLUG":        true,
+	"FRAMEWORK":   true,
+	"HOSTNAME":    true,
+	"TIER_LABEL":  true,
+	"TIER_SUFFIX": true,
+	"TIER_LIST":   true,
+}
+
 // AssembleRootREADME renders the root README for a recipe. Returns the
 // rendered body, the list of fragment ids that were declared by markers
 // but not supplied on plan.Fragments, and any rendering error.
@@ -47,7 +61,7 @@ func AssembleRootREADME(plan *Plan) (string, []string, error) {
 	body := renderRootTokens(tpl, plan)
 	body, missing := substituteFragmentMarkers(body, plan.Fragments, "root")
 	if err := checkUnreplacedTokens(body); err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("assemble root README: %w", err)
 	}
 	return body, missing, nil
 }
@@ -71,7 +85,7 @@ func AssembleEnvREADME(plan *Plan, tierIndex int) (string, []string, error) {
 	prefix := fmt.Sprintf("env/%d", tierIndex)
 	body, missing := substituteFragmentMarkers(body, plan.Fragments, prefix)
 	if err := checkUnreplacedTokens(body); err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("assemble env/%d README: %w", tierIndex, err)
 	}
 	return body, missing, nil
 }
@@ -93,7 +107,7 @@ func AssembleCodebaseREADME(plan *Plan, hostname string) (string, []string, erro
 	prefix := "codebase/" + hostname
 	body, missing := substituteFragmentMarkers(body, plan.Fragments, prefix)
 	if err := checkUnreplacedTokens(body); err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("assemble codebase/%s README: %w", hostname, err)
 	}
 	return body, missing, nil
 }
@@ -116,7 +130,7 @@ func AssembleCodebaseClaudeMD(plan *Plan, hostname string) (string, []string, er
 	prefix := "codebase/" + hostname + "/claude-md"
 	body, missing := substituteFragmentMarkers(body, plan.Fragments, prefix)
 	if err := checkUnreplacedTokens(body); err != nil {
-		return "", nil, err
+		return "", nil, fmt.Errorf("assemble codebase/%s CLAUDE.md: %w", hostname, err)
 	}
 	return body, missing, nil
 }
@@ -235,27 +249,33 @@ func substituteFragmentMarkers(body string, fragments map[string]string, idPrefi
 }
 
 // checkUnreplacedTokens returns a non-nil error when the rendered body
-// still contains {UPPER_SNAKE} patterns — a template carrying an
-// unbound token would otherwise ship a broken surface.
+// still contains {UPPER_SNAKE} patterns whose key is in engineBoundKeys
+// — a template carrying an unbound engine token would otherwise ship a
+// broken surface. Fragment bodies routinely contain {UPPER} or ${UPPER}
+// in code examples (JS template literals, Handlebars, Svelte, Go html/
+// template); those keys are NOT in engineBoundKeys and pass the scan.
 func checkUnreplacedTokens(body string) error {
 	leftover := unreplacedTokenRE.FindAllString(body, -1)
 	if len(leftover) == 0 {
 		return nil
 	}
-	return fmt.Errorf("template has unbound tokens: %s", strings.Join(dedupe(leftover), ", "))
-}
-
-func dedupe(in []string) []string {
+	var unbound []string
 	seen := map[string]bool{}
-	var out []string
-	for _, s := range in {
-		if seen[s] {
+	for _, m := range leftover {
+		key := m[1 : len(m)-1] // strip { and }
+		if !engineBoundKeys[key] {
 			continue
 		}
-		seen[s] = true
-		out = append(out, s)
+		if seen[m] {
+			continue
+		}
+		seen[m] = true
+		unbound = append(unbound, m)
 	}
-	return out
+	if len(unbound) == 0 {
+		return nil
+	}
+	return fmt.Errorf("template has unbound engine tokens: %s", strings.Join(unbound, ", "))
 }
 
 // codebaseKnown reports whether a hostname matches one of the plan's

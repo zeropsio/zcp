@@ -69,6 +69,11 @@ func Classify(r FactRecord) Classification {
 		return ClassOperational
 	case "scaffold-decision":
 		return ClassScaffoldDecision
+	case "browser-verification":
+		// Browser-walk verifications are operational signals recorded by
+		// the feature sub-agent after a `zerops_browser` tool call.
+		// Publishable — land under the operational class.
+		return ClassOperational
 	case "platform-trap", "porter-change":
 		if GuideForTopic(r.Citation) != "" || GuideForTopic(r.Topic) != "" {
 			return ClassPlatformInvariant

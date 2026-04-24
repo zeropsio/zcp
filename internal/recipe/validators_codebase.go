@@ -129,8 +129,16 @@ func validateCodebaseCLAUDE(_ context.Context, path string, body []byte, _ Surfa
 // validateCodebaseYAML — every comment in the committed yaml contains
 // a causal word. Q7 resolution: validate the WHOLE file (not just
 // scaffold-authored stanzas) because that's what the porter reads.
+// Run-9-readiness §2.H: decorative divider lines (runs of 4+ identical
+// `-`/`=`/`*`/`#`/`_`) are banned — emit the specific violation first
+// so the author sees the right diagnostic.
 func validateCodebaseYAML(_ context.Context, path string, body []byte, _ SurfaceInputs) ([]Violation, error) {
 	var vs []Violation
+	for _, d := range yamlFindDividers(body) {
+		vs = append(vs, violation("yaml-comment-divider-banned", path,
+			fmt.Sprintf("decorative divider line violates yaml-comment-style (no dividers, no banners): %q",
+				trimForMessage(string(d)))))
+	}
 	comments := yamlCommentRE.FindAllSubmatch(body, -1)
 	for _, m := range comments {
 		if len(m) < 2 {
@@ -144,6 +152,12 @@ func validateCodebaseYAML(_ context.Context, path string, body []byte, _ Surface
 		// like `yaml:` or the zeropsPreprocessor directive. These
 		// aren't rationale comments.
 		if strings.HasPrefix(comment, "zeropsPreprocessor") {
+			continue
+		}
+		// Divider lines are flagged above by yaml-comment-divider-banned;
+		// skip them here so the author sees the right diagnostic, not a
+		// spurious "missing causal word".
+		if yamlIsDivider("#" + comment) {
 			continue
 		}
 		if !containsAnyCausal(comment) {

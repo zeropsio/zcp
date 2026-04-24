@@ -253,6 +253,104 @@ func TestValidator_CodebaseYAML_CausalComment(t *testing.T) {
 	}
 }
 
+// TestValidateCodebaseYAML_DividerBanned — run-9-readiness §2.H.
+// Decorative divider lines (runs of 4+ identical `-`, `=`, `*`, `#`,
+// `_`) are banned. Emits `yaml-comment-divider-banned`.
+func TestValidateCodebaseYAML_DividerBanned(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`# ----------------------------------------
+zerops:
+  - setup: dev
+    # ====== DEV SETUP ======
+    run:
+      # ****
+      base: nodejs@22
+`)
+	vs, err := validateCodebaseYAML(context.Background(),
+		"codebases/api/zerops.yaml", body, SurfaceInputs{Plan: &Plan{}})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if !containsCode(vs, "yaml-comment-divider-banned") {
+		t.Errorf("expected yaml-comment-divider-banned, got %+v", vs)
+	}
+	// Three divider lines → at least three violations with that code.
+	var count int
+	for _, v := range vs {
+		if v.Code == "yaml-comment-divider-banned" {
+			count++
+		}
+	}
+	if count < 3 {
+		t.Errorf("expected 3+ divider violations, got %d", count)
+	}
+}
+
+// TestValidateCodebaseYAML_BlankCommentAllowed — a single bare `#` is
+// a section transition, not a divider.
+func TestValidateCodebaseYAML_BlankCommentAllowed(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`zerops:
+  - setup: dev
+    #
+    # deployFiles ships everything because dev self-deploys need the tree.
+    deployFiles:
+      - ./
+`)
+	vs, err := validateCodebaseYAML(context.Background(),
+		"codebases/api/zerops.yaml", body, SurfaceInputs{Plan: &Plan{}})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if containsCode(vs, "yaml-comment-divider-banned") {
+		t.Errorf("bare `#` flagged as divider: %+v", vs)
+	}
+}
+
+// TestValidateCodebaseYAML_ShortRunsNotFlagged — `# --` (2-char run)
+// is allowed; 4+ chars flag.
+func TestValidateCodebaseYAML_ShortRunsNotFlagged(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`zerops:
+  - setup: dev
+    # -- below here because test harness wants two dashes specifically
+    run:
+      base: nodejs@22
+`)
+	vs, err := validateCodebaseYAML(context.Background(),
+		"codebases/api/zerops.yaml", body, SurfaceInputs{Plan: &Plan{}})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if containsCode(vs, "yaml-comment-divider-banned") {
+		t.Errorf("2-char run flagged as divider: %+v", vs)
+	}
+}
+
+// TestBrief_Scaffold_IncludesYamlCommentStyle — run-9-readiness §2.H
+// brief-side atom. Scaffold + feature briefs both inject.
+func TestBrief_Scaffold_IncludesYamlCommentStyle(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	for _, anchor := range []string{
+		"YAML comment style",
+		"No dividers",
+		"No banners",
+	} {
+		if !strings.Contains(brief.Body, anchor) {
+			t.Errorf("scaffold brief missing yaml-comment-style anchor %q", anchor)
+		}
+	}
+}
+
 // helpers
 
 func containsCode(vs []Violation, code string) bool {
