@@ -11,8 +11,8 @@ title: "Close task — push-dev dev mode (no stage)"
 
 ### Closing the task
 
-Dev mode has no stage pair. Deploy the single runtime container, start the
-dev server via `zerops_dev_server`, then verify:
+Dev mode has no stage pair: deploy the single runtime container,
+start the dev server, verify.
 
 ```
 zerops_deploy targetService="{hostname}" setup="dev"
@@ -20,10 +20,14 @@ zerops_dev_server action=start hostname="{hostname}" command="{start-command}" p
 zerops_verify serviceHostname="{hostname}"
 ```
 
-The deploy replaces the container — any previously-running dev server is
-gone. `zerops_dev_server action=start` spawns the new one detached and
-probes the health endpoint before returning. `zerops_verify` then
-confirms infrastructure + app.
+After each deploy the container is new and the previous dev server
+is gone — check `zerops_dev_server action=status` first. If
+`running: true`, proceed to verify. Otherwise call `action=start`;
+the response carries `healthStatus` (HTTP status from the probe),
+`startMillis` (time-to-healthy), `logTail` (last log lines), and on
+failure a `reason` code for diagnosis (see
+`develop-dev-server-reason-codes`).
 
-If the dev server is already running (e.g. after an atomic code-only
-edit): `zerops_dev_server action=status hostname="{hostname}" port={port} healthPath="{path}"` — if it returns `running: true`, skip straight to `zerops_verify`.
+For no-HTTP workers (no `port`/`healthPath`), `running` is derived
+from the post-spawn liveness check; `healthStatus` stays 0 — use
+`action=logs` to confirm consumption.
