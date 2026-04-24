@@ -74,12 +74,17 @@ func TestE2E_InitServiceGit(t *testing.T) {
 	// Assert ownership — the whole point of running this container-side
 	// rather than through the SSHFS mount (zembed's SFTP MKDIR ignores
 	// authenticated user; SSH exec respects it).
+	//
+	// sshExec uses CombinedOutput, so the "Permanently added host key"
+	// warning (first time per host) lands in the captured text. We
+	// compare against the last non-empty line, which is the actual
+	// command output.
 	owner, err := sshExec(t, hostname, "stat -c '%U' /var/www/.git")
 	if err != nil {
 		t.Fatalf("stat /var/www/.git: %v", err)
 	}
-	if got := strings.TrimSpace(owner); got != "zerops" {
-		t.Errorf("/var/www/.git owner: got %q, want %q", got, "zerops")
+	if got := lastNonEmptyLine(owner); got != "zerops" {
+		t.Errorf("/var/www/.git owner: got %q, want %q\nfull: %q", got, "zerops", owner)
 	}
 
 	// Assert identity landed in .git/config with the DeployGitIdentity
@@ -95,8 +100,8 @@ func TestE2E_InitServiceGit(t *testing.T) {
 			t.Errorf("git config --get %s: %v", key, err)
 			continue
 		}
-		if got := strings.TrimSpace(out); got != want {
-			t.Errorf("git config %s: got %q, want %q", key, got, want)
+		if got := lastNonEmptyLine(out); got != want {
+			t.Errorf("git config %s: got %q, want %q\nfull: %q", key, got, want, out)
 		}
 	}
 
@@ -105,4 +110,18 @@ func TestE2E_InitServiceGit(t *testing.T) {
 	if err := ops.InitServiceGit(ctx, ssh, hostname); err != nil {
 		t.Errorf("InitServiceGit second call: %v", err)
 	}
+}
+
+// lastNonEmptyLine returns the last non-whitespace line in s. Used to
+// strip `ssh -o StrictHostKeyChecking=no ... host cmd` preambles (host-
+// key warnings, etc.) from CombinedOutput so the actual command output
+// can be compared as a one-shot string.
+func lastNonEmptyLine(s string) string {
+	lines := strings.Split(strings.ReplaceAll(s, "\r", ""), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			return line
+		}
+	}
+	return ""
 }
