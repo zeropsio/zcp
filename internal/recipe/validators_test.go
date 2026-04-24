@@ -533,6 +533,35 @@ func TestValidateKB_MixedFormat_FlagsOnlyTriples(t *testing.T) {
 	}
 }
 
+// TestPrinciples_InitCommandsCoversArbitraryStaticKey — run-10-readiness
+// §Q4. init-commands-model.md now documents the third key shape
+// (`<slug>.<operation>.<version>` static string, once-per-lifetime
+// semantics + documented re-run lever). Run-9's feature sub-agent
+// queried zerops_knowledge five times with rephrased queries because
+// the atom didn't cover this case.
+func TestPrinciples_InitCommandsCoversArbitraryStaticKey(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.FeatureKinds = []string{"seed", "scout-import"}
+	brief, err := BuildFeatureBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFeatureBrief: %v", err)
+	}
+	for _, anchor := range []string{
+		"Three key shapes",
+		"<slug>.<operation>.v1",
+		"Arbitrary static",
+	} {
+		if !strings.Contains(brief.Body, anchor) {
+			t.Errorf("feature brief missing init-commands-model anchor %q", anchor)
+		}
+	}
+	if !strings.Contains(brief.Body, "key shape #3") {
+		t.Errorf("content_extension.md pointer to key shape #3 missing from feature brief")
+	}
+}
+
 // TestBrief_Scaffold_ContainsValidatorTripwires — run-10-readiness §Q3.
 // The "Validator tripwires" section of content_authoring.md surfaces
 // six finalize-time validator rules as author-time guidance so

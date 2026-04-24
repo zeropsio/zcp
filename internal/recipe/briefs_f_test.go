@@ -324,8 +324,9 @@ func TestInitCommandsModel_TopicsListed(t *testing.T) {
 	}
 	for _, must := range []string{
 		"${appVersionId}",       // per-deploy key
-		"bootstrap-seed-r01",    // static-key example
-		"r02",                   // revision suffix pattern
+		"bootstrap-seed",        // canonical static-key example
+		"<slug>.<operation>.v1", // arbitrary-static versioned key (§Q4)
+		".v2",                   // version-bump re-run lever
 		"if (count > 0) return", // in-script-guard pitfall
 		"Decomposition",         // decomposition rule
 	} {

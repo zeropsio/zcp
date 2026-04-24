@@ -24,7 +24,9 @@ KB bullets use `**Topic** — prose` only. Do NOT use `**symptom**:` /
 - Adding a dep → extend KB if the choice is non-obvious
 - Adding an env var → extend `zerops.yaml` with an inline comment
 - Adding an `initCommand` (seed, scout:import) → consult the execOnce
-  key-shape atom below before picking the key
+  key-shape atom below. Once-per-lifetime seed with a documented
+  re-run lever? Use key shape #3: `<slug>.<operation>.v1`, bump the
+  suffix to re-run.
 
 Keep `codebase/<h>/claude-md/*` extensions terse (30–50 lines, cap
 60). Never add `Quick curls`, `Smoke test`, `Local curl`, `Redeploy
