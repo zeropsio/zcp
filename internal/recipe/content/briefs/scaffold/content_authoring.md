@@ -8,19 +8,17 @@ deploying this recipe into their own project.
 
 **Never write:** "the scaffold", "feature phase", "pre-ship contract
 item N", "showcase default", "showcase tier", "showcase tradeoff",
-"the recipe", "we chose", "we added", "grew from", "scaffold smoke
-test".
+"the recipe", "we chose", "we added", "grew from".
 
-**Always write:** descriptions of the finished product. The product
-IS wired. The product HAS the health probe. The product HANDLES the
-upload. There is no authoring "before" for a porter.
+**Always write:** the finished product. The product IS wired. HAS the
+health probe. HANDLES the upload. No authoring "before" for a porter.
 
 Good vs bad:
 
-- yaml inline: `# Bucket policy is private — signed URLs give
-  time-bounded access without exposing the bucket.` ← GOOD
-- yaml inline: `# Private (showcase default) — 15 min tradeoff.` ← BAD
-- ts: `// /health returns 200 once the runtime is ready.` ← GOOD
+- yaml: `# Bucket policy is private — signed URLs give time-bounded
+  access without exposing the bucket.` ← GOOD
+- yaml: `# Private (showcase default) — 15 min tradeoff.` ← BAD
+- ts: `// /health returns 200 once runtime is ready.` ← GOOD
 - ts: `// /health added per pre-ship contract item 1.` ← BAD
 
 Produce your codebase's `zerops.yaml` (with inline comments) + record
@@ -35,23 +33,21 @@ Produce your codebase's `zerops.yaml` (with inline comments) + record
 
 ### Integration Guide — item #1 is engine-owned
 
-The engine auto-generates IG item #1 during stitch: a `### 1. Adding
+The engine generates IG item #1 during stitch: a `### 1. Adding
 \`zerops.yaml\`` heading, an intro derived from your yaml (setups
-declared, whether initCommands run migrations / seed / search-index,
-whether readiness + health checks ship), and a fenced yaml block
-carrying `<cb.SourceRoot>/zerops.yaml` verbatim. Reference:
-`laravel-showcase-app/README.md`.
+declared, initCommands presence, readiness + health check presence),
+and a fenced yaml block carrying `<cb.SourceRoot>/zerops.yaml`
+verbatim. Reference: `laravel-showcase-app/README.md`.
 
 Your `codebase/<h>/integration-guide` fragment contains items #2+ —
-porter-facing app-side changes. Start headings at `### 2.`, `### 3.`,
-etc. Do NOT author item #1. Do NOT describe the yaml in English as
-a numbered item — the yaml block IS the description; clarifications
-go in yaml inline comments.
+porter-facing app-side changes. Start at `### 2. <title>`. Do NOT
+author item #1. Do NOT describe the yaml in English as a numbered
+item — the yaml block IS the description; clarifications go in yaml
+inline comments.
 
 ### Knowledge Base — `**Topic** — prose` only
 
-Every `codebase/<h>/knowledge-base` bullet: `**<topic>**` + em-dash +
-2–5 sentences of prose. A porter scans topic names to find the entry.
+Every KB bullet: `**<topic>**` + em-dash + 2–5 sentences.
 
 Good:
 
@@ -61,16 +57,23 @@ Good:
   pass exposedHeaders: ['X-Cache']. Cited guide: `http-support`.
 ```
 
-Bad (debugging-runbook triple — belongs in CLAUDE.md/notes, NOT KB):
+Bad (debugging-runbook triple — belongs in claude-md/notes):
 
 ```
-- **symptom**: 502 from balancer. **mechanism**: bind default.
-  **fix**: listen on '0.0.0.0'.
+- **symptom**: 502. **mechanism**: bind default. **fix**: 0.0.0.0.
 ```
 
-Do NOT use `**symptom**:` / `**mechanism**:` / `**fix**:` triples in
-`codebase/<h>/knowledge-base`. Debugging runbooks live in
-`codebase/<h>/claude-md/notes`.
+Do NOT use `**symptom**:` triples in KB; runbooks live in
+`claude-md/notes`.
+
+### CLAUDE.md — codebase-scoped, 30–50 lines (cap 60)
+
+Target 30–50 lines; hard cap 60. Reference:
+`laravel-showcase-app/CLAUDE.md` (33 lines). One fact per line;
+multi-line only with code examples. Do NOT add cross-codebase
+sections — `Quick curls`, `Smoke test(s)`, `Local curl`,
+`In-container curls`, `Redeploy vs edit`, `Boot-time connectivity` —
+those live in the recipe root README.
 
 ## Placement
 
@@ -93,7 +96,7 @@ Dev vs prod process model + `zerops_dev_server` live in
 still need the dev-server for a compiled frontend — see the atom's
 carve-out.
 
-Mount vs container execution-split (editor tools on the mount,
-framework CLIs via ssh) lives in `principles/mount-vs-container.md`
-(injected above). Never run `npm install` / `tsc` / `nest build`
-against the SSHFS mount locally.
+Mount vs container execution-split (editor tools on mount, framework
+CLIs via ssh) lives in `principles/mount-vs-container.md` (injected
+above). Never run `npm install` / `tsc` / `nest build` against the
+SSHFS mount locally.

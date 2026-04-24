@@ -206,7 +206,9 @@ func TestValidator_CrossSurfaceUniqueness(t *testing.T) {
 }
 
 // TestValidator_CodebaseCLAUDE_MinimumSize — §2.D: CLAUDE.md must be
-// ≥ 1200 bytes AND have ≥ 2 custom sections beyond the template.
+// ≥ 1200 bytes. Per run-10-readiness §P the too-few-custom-sections
+// rule is deleted and replaced by a length cap + forbidden-subsection
+// list, so the minimum-size floor stands alone.
 func TestValidator_CodebaseCLAUDE_MinimumSize(t *testing.T) {
 	t.Parallel()
 
@@ -226,6 +228,116 @@ none.
 	}
 	if !containsCode(vs, "claude-md-too-short") {
 		t.Errorf("expected claude-md-too-short, got %+v", vs)
+	}
+	if containsCode(vs, "claude-md-too-few-custom-sections") {
+		t.Errorf("too-few-custom-sections rule should be deleted per §P; got %+v", vs)
+	}
+}
+
+// TestValidateCLAUDE_TooLong_Flagged — run-10-readiness §P. A CLAUDE.md
+// over 60 lines emits `claude-md-too-long`. The reference
+// (laravel-showcase-app/CLAUDE.md, 33 lines) sets the upper bound;
+// run-9 shipped 99-line CLAUDE.md files because the old validator
+// pressured authors to ADD sections during finalize iteration.
+func TestValidateCLAUDE_TooLong_Flagged(t *testing.T) {
+	t.Parallel()
+
+	var b strings.Builder
+	b.WriteString("# CLAUDE.md — api\n\n## Zerops service facts\n\n")
+	for range 70 {
+		b.WriteString("filler fact line for bulk size\n")
+	}
+	b.WriteString("\n## Notes\n\none note.\n")
+	body := []byte(b.String())
+	vs, err := validateCodebaseCLAUDE(context.Background(),
+		"/srv/apidev/CLAUDE.md", body, SurfaceInputs{Plan: &Plan{}})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if !containsCode(vs, "claude-md-too-long") {
+		t.Errorf("expected claude-md-too-long for 70-line body, got %+v", vs)
+	}
+}
+
+// TestValidateCLAUDE_UnderCap_Passes — run-10-readiness §P. A 45-line
+// CLAUDE.md with service facts + notes passes cleanly.
+func TestValidateCLAUDE_UnderCap_Passes(t *testing.T) {
+	t.Parallel()
+
+	var b strings.Builder
+	b.WriteString("# CLAUDE.md — api\n\n")
+	b.WriteString("Nodejs 22 REST service on Zerops — HTTP port 3000 with PostgreSQL sibling, Valkey cache, and an NATS broker.\n\n")
+	b.WriteString("## Zerops service facts\n\n")
+	b.WriteString("- Hostname `api`, port 3000, DB host `db`, cache `cache`, broker `broker`.\n")
+	b.WriteString("- Runtime base: `nodejs@22` (compiled) on the prod slot; dev slot runs `zsc noop --silent`.\n")
+	b.WriteString("- Health endpoint `/health`; readiness probes it before traffic switches.\n")
+	b.WriteString("- Cross-service env vars inject `${db_hostname}`, `${cache_connectionString}`, `${broker_connectionString}`.\n\n")
+	b.WriteString("## Zerops dev\n\nDev slot is SSHFS-mounted at `/var/www/apidev/`. Run framework CLIs via SSH; never npm-install against the mount.\n\n")
+	b.WriteString("## Notes\n\n")
+	b.WriteString("- NATS `broker_connectionString` already encodes credentials — passing it as both `servers` and `auth` double-advertises and 403s.\n")
+	b.WriteString("- Seed fires once per service lifetime via `zsc execOnce <slug>.seed.v1`; bump the version suffix to re-run.\n")
+	b.WriteString("- Migrations run on every deploy via `${appVersionId}` execOnce — idempotent IF NOT EXISTS checks only.\n")
+	b.WriteString("- Trust proxy must be enabled so `X-Forwarded-*` headers flow through the balancer correctly and the runtime reads real client IPs.\n")
+	b.WriteString("- Uploads write to the `storage` sibling (S3-compatible); the bucket policy is private so signed URLs govern access.\n")
+	body := []byte(b.String())
+	// Confirm actual line count stays under 60 but over the byte floor.
+	if got := strings.Count(string(body), "\n"); got >= 60 {
+		t.Fatalf("test fixture accidentally > 60 lines: %d", got)
+	}
+	if len(body) < 1200 {
+		t.Fatalf("test fixture accidentally < 1200 bytes: %d", len(body))
+	}
+	vs, err := validateCodebaseCLAUDE(context.Background(),
+		"/srv/apidev/CLAUDE.md", body, SurfaceInputs{Plan: &Plan{}})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if containsCode(vs, "claude-md-too-long") {
+		t.Errorf("45-line CLAUDE.md should not trip too-long: %+v", vs)
+	}
+	if containsCode(vs, "claude-md-too-short") {
+		t.Errorf("over-1200-byte CLAUDE.md should not trip too-short: %+v", vs)
+	}
+	if containsCode(vs, "claude-md-forbidden-subsection") {
+		t.Errorf("normal sections should not trip forbidden-subsection: %+v", vs)
+	}
+}
+
+// TestValidateCLAUDE_ForbiddenSubsection_Flagged — run-10-readiness §P.
+// Cross-codebase operational content (`Quick curls`, `Smoke test`,
+// `Local curl`, `In-container curls`, `Redeploy vs edit`, `Boot-time
+// connectivity`) doesn't belong in a codebase-specific CLAUDE.md —
+// it's identical across codebases and inflates each one's length.
+func TestValidateCLAUDE_ForbiddenSubsection_Flagged(t *testing.T) {
+	t.Parallel()
+
+	for _, heading := range []string{
+		"## Quick curls",
+		"## Smoke test",
+		"## Smoke tests",
+		"### Local curl",
+		"### In-container curls",
+		"## Redeploy vs edit",
+		"## Boot-time connectivity",
+	} {
+		var b strings.Builder
+		b.WriteString("# CLAUDE.md — api\n\n")
+		b.WriteString("Intro paragraph for the codebase explaining stack and runtime.\n\n")
+		b.WriteString("## Zerops service facts\n\n")
+		for range 30 {
+			b.WriteString("- filler fact so the body clears the 1200 byte minimum with margin\n")
+		}
+		b.WriteString("\n")
+		b.WriteString(heading + "\n\ncontent under the forbidden section.\n")
+		body := []byte(b.String())
+		vs, err := validateCodebaseCLAUDE(context.Background(),
+			"/srv/apidev/CLAUDE.md", body, SurfaceInputs{Plan: &Plan{}})
+		if err != nil {
+			t.Fatalf("validate %q: %v", heading, err)
+		}
+		if !containsCode(vs, "claude-md-forbidden-subsection") {
+			t.Errorf("heading %q should trip forbidden-subsection; got %+v", heading, vs)
+		}
 	}
 }
 

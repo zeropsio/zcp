@@ -17,17 +17,19 @@ Your additions EXTEND the scaffold's fragments — they do not replace.
 existing body; root/env ids overwrite. Same placement rubric as
 scaffold — yaml-comment, IG, KB, CLAUDE.md notes.
 
-KB bullets you record use the `**Topic** — prose` format only. Do
-**NOT** use `**symptom**:` / `**mechanism**:` / `**fix**:` triples in
-KB — that debugging-runbook shape belongs in `claude-md/notes`, not
-in the porter-facing KB surface. A porter reading the README scans
-topic names left-to-right; a triple forces them to read the symptom
-sentence before they know what the bullet is about.
+KB bullets use `**Topic** — prose` only. Do NOT use `**symptom**:` /
+`**mechanism**:` / `**fix**:` triples; debugging runbooks live in
+`claude-md/notes`.
 
 - Adding a dep → extend KB if the choice is non-obvious
 - Adding an env var → extend `zerops.yaml` with an inline comment
 - Adding an `initCommand` (seed, scout:import) → consult the execOnce
   key-shape atom below before picking the key
+
+Keep `codebase/<h>/claude-md/*` extensions terse (30–50 lines, cap
+60). Never add `Quick curls`, `Smoke test`, `Local curl`, `Redeploy
+vs edit`, or `Boot-time connectivity` subsections — cross-codebase
+runbooks live in the recipe root README.
 
 Typical scale: 1–2 KB bullets + 0–1 IG item per feature. Most features
 change code, not topology.

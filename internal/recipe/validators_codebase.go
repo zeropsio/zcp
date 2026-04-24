@@ -108,33 +108,63 @@ func validateCodebaseKB(_ context.Context, path string, body []byte, _ SurfaceIn
 	return vs, nil
 }
 
-// validateCodebaseCLAUDE — size floor + minimum custom sections.
+// claudeMDLineCap is the upper length bound for a codebase-specific
+// CLAUDE.md. Reference laravel-showcase-app/CLAUDE.md is 33 lines; the
+// cap of 60 leaves headroom for frameworks that need more service-fact
+// bullets without permitting tutorial-length drift.
+const claudeMDLineCap = 60
+
+// claudeMDForbiddenSubsections are cross-codebase operational notes
+// that don't belong in a codebase-specific CLAUDE.md (identical across
+// every codebase in a recipe). They inflate each codebase's length;
+// they belong in the recipe-level root README or a single dev-loop
+// guide. Matched case-insensitively against H2 / H3 headers.
+var claudeMDForbiddenSubsections = []string{
+	"Quick curls",
+	"Smoke test",
+	"Smoke tests",
+	"Local curl",
+	"In-container curls",
+	"Redeploy vs edit",
+	"Boot-time connectivity",
+}
+
+// validateCodebaseCLAUDE enforces a minimum byte floor plus a length cap
+// (≤ 60 lines, reference is 33) and flags the cross-codebase
+// operational subsections that drifted into run-9's 99-line CLAUDE.mds.
+// The former too-few-custom-sections rule was deleted — it pressured
+// authors to ADD sections, which is the wrong direction. Run-10-readiness §P.
 func validateCodebaseCLAUDE(_ context.Context, path string, body []byte, _ SurfaceInputs) ([]Violation, error) {
 	var vs []Violation
 	if len(body) < 1200 {
 		vs = append(vs, violation("claude-md-too-short", path,
 			fmt.Sprintf("%d bytes < 1200 minimum", len(body))))
 	}
-	// Count H2 / H3 headers beyond the default template headers
-	// ("# CLAUDE.md", "## Zerops service facts", "## Zerops dev loop",
-	// "## Notes"). Anything else is a "custom section."
+	// Line count cap. Count "\n" occurrences; trailing newline still
+	// counts as one line for the last content line.
+	lines := strings.Count(string(body), "\n")
+	if !strings.HasSuffix(string(body), "\n") {
+		lines++
+	}
+	if lines > claudeMDLineCap {
+		vs = append(vs, violation("claude-md-too-long", path,
+			fmt.Sprintf("%d lines > %d cap — CLAUDE.md is a codebase-scoped cheat sheet (30–50 lines target). Move cross-codebase runbooks (Quick curls, Smoke tests, etc.) to the recipe root README; keep only codebase-specific service facts + dev loop + notes.",
+				lines, claudeMDLineCap)))
+	}
+	// Forbidden-subsection headings — case-insensitive match against the
+	// header text (everything after the leading `#`s). Emits one violation
+	// per occurrence so the message names each offender.
 	headerRE := regexp.MustCompile(`(?m)^##+\s+(.+)$`)
-	matches := headerRE.FindAllStringSubmatch(string(body), -1)
-	templateHeaders := map[string]bool{
-		"Zerops service facts": true,
-		"Zerops dev loop":      true,
-		"Notes":                true,
-	}
-	custom := 0
-	for _, m := range matches {
+	for _, m := range headerRE.FindAllStringSubmatch(string(body), -1) {
 		title := strings.TrimSpace(m[1])
-		if !templateHeaders[title] {
-			custom++
+		lower := strings.ToLower(title)
+		for _, banned := range claudeMDForbiddenSubsections {
+			if lower == strings.ToLower(banned) {
+				vs = append(vs, violation("claude-md-forbidden-subsection", path,
+					fmt.Sprintf("%q is a cross-codebase operational note — move to the recipe root README, not this codebase-specific CLAUDE.md", title)))
+				break
+			}
 		}
-	}
-	if custom < 2 {
-		vs = append(vs, violation("claude-md-too-few-custom-sections", path,
-			fmt.Sprintf("%d custom sections < 2 beyond template", custom)))
 	}
 	return vs, nil
 }
