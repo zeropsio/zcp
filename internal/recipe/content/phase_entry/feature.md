@@ -22,8 +22,35 @@ feature-kind from the feature brief.
    a round-trip status endpoint, etc.). Curl the signal, don't grep
    the source.
 
-4. **Redeploy affected codebases**: `zerops_deploy` on each codebase
+4. **Seed data** so the UI shows something on first click-deploy, not
+   an empty dashboard. A porter deploying tier 4/5 should see real
+   rows, search results, and uploaded objects before creating anything
+   manually. The sub-agent picks the seed command shape for its
+   framework; gate it on a static execOnce key (seeds are
+   non-idempotent by design — see `init-commands-model.md`).
+
+5. **Redeploy affected codebases**: `zerops_deploy` on each codebase
    the feature agent touched. Re-run `zerops_verify`.
+
+6. **Verify initCommands ran** on each redeployed codebase — same
+   attestation as scaffold (success line in runtime logs + post-deploy
+   data query). If seed data is missing after a green deploy, the
+   execOnce key was burned — recover by touching a source file and
+   redeploying.
+
+7. **Browser-walk verification** on the rendered UI: use the
+   `zerops_browser` tool to navigate to the frontend dev URL, exercise
+   each feature tab (list → create → update → delete → search →
+   upload), and record a `zerops_record_fact` of type
+   `browser_verification` per feature tab. Put the console output +
+   screenshot path in the fact's `evidence` field; any console error
+   or blank view is a regression the sub-agent must fix before phase
+   close.
+
+8. **Cross-deploy dev → stage** for every codebase the feature
+   touched: `zerops_deploy sourceService=<h>dev targetService=<h>stage`
+   + `zerops_verify targetService=<h>stage`. Both slots must end
+   green.
 
 ## Feature kinds (showcase tier only)
 
@@ -40,6 +67,16 @@ Feature sub-agent extends scaffold's fragments via `record-fragment`:
 `claude-md/*` ids append on extend. When a feature adds a stanza to
 `zerops.yaml`, add an inline comment at the same commit — every
 stanza must carry a causal "why" comment (finalize validator).
+
+## Wrapper discipline — what main decides vs sub-agent discovers
+
+The main agent decides: which codebases the feature set spans, the
+endpoint path shape, the feature-tab UX surface (list-first? search
+bar?). The sub-agent discovers: library choice for the seed/queue/
+search client, the exact file layout for its framework, the
+framework-idiomatic command shape. Do NOT pre-chew the library
+decision in the dispatch wrapper — the sub-agent consults
+`zerops_knowledge` and picks.
 
 ## What NOT to do here
 

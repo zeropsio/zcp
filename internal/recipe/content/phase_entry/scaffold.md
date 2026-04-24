@@ -27,8 +27,28 @@ main agent coordinates.
    contract from its brief (HTTP reachable, X-Forwarded-For echoes,
    SIGTERM drain, migrations ran). Records facts for any deviation.
 
-4. **Verify the deploy**: `zerops_verify targetService=<hostname>`.
-   Every scaffold codebase must be green before the phase completes.
+4. **Verify the dev deploy**: `zerops_verify targetService=<hostname>`.
+
+5. **Verify initCommands ran** (when the scaffold authored any):
+   - `zerops_logs serviceHostname=<hostname> severity=INFO since=10m` —
+     confirm the framework's success lines (applied-migration rows,
+     "N rows seeded", "indexed N documents"). The sub-agent knows what
+     its framework's success output looks like.
+   - Query application state directly: rows in the DB, documents in
+     the search index, objects in storage. Do NOT infer "initCommands
+     ran" from "deploy ACTIVE" alone — a prior failed deploy can burn
+     the execOnce key silently and the next deploy will skip it.
+   - **Burned-key recovery**: if data is missing after a successful
+     deploy, touch any source file and redeploy — the new deploy
+     version makes per-deploy execOnce keys re-fire. Hand-run the
+     command only when recovery-by-redeploy is not available.
+
+6. **Cross-deploy dev → stage**:
+   `zerops_deploy sourceService=<hostname>dev targetService=<hostname>stage`,
+   then `zerops_verify targetService=<hostname>stage`. This proves the
+   prod setup path (optimized build, `npm ci --omit=dev`, `./dist/~`
+   deployFiles) works, not just the dev self-deploy. Both slots must
+   be green before the phase completes.
 
 ## Dispatch integrity
 
@@ -48,8 +68,19 @@ sub-agent also writes inline comments into its committed `zerops.yaml`
 — they ship byte-identical into the published deliverable. No
 post-hoc writer sub-agent; no journal-then-writer pattern.
 
+## Wrapper discipline — what main decides vs sub-agent discovers
+
+The main agent decides: resource name, endpoint path, which codebase
+owns which concern (api/worker/frontend split), which tier the plan
+targets. The sub-agent discovers: library choice, client config shape,
+package name, framework-specific import path. Do NOT pre-chew library
+decisions in the dispatch wrapper — the sub-agent consults
+`zerops_knowledge` and picks based on its framework expertise.
+
 ## Complete-phase gate
 
-Every plan.codebase hostname must have a deployed + verified service,
-and every scaffold-owned fragment id must be recorded. Facts recorded
-during the phase flow into the classification gate at finalize.
+Every plan.codebase hostname must be deployed + verified on BOTH the
+dev and stage slots, every scaffold-owned fragment id recorded, and
+every codebase with initCommands must have attested that they ran
+(success line + post-deploy data check). Facts recorded during the
+phase flow into the classification gate at finalize.

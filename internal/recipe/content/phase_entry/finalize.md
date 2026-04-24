@@ -43,6 +43,22 @@ fragment=<body>`:
   explaining why THIS service at THIS tier at THIS mode/scale (never
   the narration of what the field does)
 
+### Single-question test per surface (spec-content-surfaces.md)
+
+Apply ONE test per fragment before recording:
+
+- **Root README intro** — "Can a reader decide in 30 seconds whether
+  this recipe deploys what they need?"
+- **Env README intro** — "Does this teach me when to outgrow this
+  tier and what changes at the next one?"
+- **Env import-comments** — "Does each service block explain a
+  decision (why this scale / mode / presence), not narrate what the
+  field does?"
+
+Items that fail their surface's test are REMOVED, not rewritten —
+failure means the content doesn't belong on that surface, not that
+it's phrased wrong.
+
 ### Tone rules
 
 - Env READMEs: porter-facing, never uses the word "agent". Tier
@@ -51,6 +67,15 @@ fragment=<body>`:
 - Import-comments: causal words (`because`, `so that`, `otherwise`,
   `trade-off`). First sentence must differ across runtime-service
   blocks (no templated opening).
+
+### Citation-map attachment
+
+When your fragment touches a topic in the engine's citation map
+(env-var-model, init-commands, rolling-deploys, object-storage,
+http-support, deploy-files, readiness-health-checks), fetch the guide
+via `zerops_knowledge` FIRST and cite it by name. Writing new mental
+models for topics the platform already documents is how folk-doctrine
+ships (run 7 workerdev gotcha #1 class).
 
 ## Stitch + validate loop
 
