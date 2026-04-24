@@ -989,6 +989,104 @@ func TestEngine_BootstrapCompletePlan_RecipeModeMatches(t *testing.T) {
 	}
 }
 
+// TestEngine_BootstrapCompletePlan_RecipeRoute_RenameAccepted pins F6:
+// under recipe route, a plan that renames runtime hostnames (to resolve
+// collisions with existing project services) passes validation and is
+// stored. Rewriting at provision is verified separately by the
+// bootstrap_guide_assembly_test suite.
+func TestEngine_BootstrapCompletePlan_RecipeRoute_RenameAccepted(t *testing.T) {
+	t.Parallel()
+
+	docs := map[string]*knowledge.Document{
+		"zerops://recipes/dotnet-hello-world": {
+			URI:        "zerops://recipes/dotnet-hello-world",
+			Title:      "Dotnet Hello World",
+			Languages:  []string{"dotnet"},
+			ImportYAML: "services:\n  - hostname: appdev\n    type: dotnet@9\n    zeropsSetup: dev\n  - hostname: appstage\n    type: dotnet@9\n    zeropsSetup: prod\n  - hostname: db\n    type: postgresql@16\n    mode: NON_HA\n",
+		},
+	}
+	store, err := knowledge.NewStore(docs)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+
+	dir := t.TempDir()
+	eng := NewEngine(dir, EnvLocal, store)
+
+	if _, err := eng.BootstrapStartWithRoute("proj-1", "upload .NET service", BootstrapRouteRecipe, "dotnet-hello-world"); err != nil {
+		t.Fatalf("BootstrapStartWithRoute: %v", err)
+	}
+
+	// Plan renames runtime hostnames (simulating collision recovery).
+	plan := []BootstrapTarget{{
+		Runtime: RuntimeTarget{
+			DevHostname:   "uploaddev",
+			ExplicitStage: "uploadstage",
+			Type:          "dotnet@9",
+			BootstrapMode: PlanModeStandard,
+		},
+		Dependencies: []Dependency{{
+			Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE",
+		}},
+	}}
+	resp, err := eng.BootstrapCompletePlan(plan, nil, nil)
+	if err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+	if resp.Current == nil || resp.Current.Name != "provision" {
+		t.Errorf("expected current step to be 'provision' after plan acceptance, got %+v", resp.Current)
+	}
+
+	state, _ := eng.GetState()
+	if state.Bootstrap.Plan == nil || state.Bootstrap.Plan.Targets[0].Runtime.DevHostname != "uploaddev" {
+		t.Errorf("plan with renamed hostname should be stored verbatim, got %+v", state.Bootstrap.Plan)
+	}
+}
+
+// TestEngine_BootstrapCompletePlan_RecipeRoute_ManagedRenameRejected pins
+// F6: renaming a managed dependency (Dependency.Hostname != recipe's
+// managed service hostname) is rejected at plan-submit time because the
+// recipe's app repo zerops.yaml holds ${hostname_*} env-var references
+// that cannot be rewritten through the override.
+func TestEngine_BootstrapCompletePlan_RecipeRoute_ManagedRenameRejected(t *testing.T) {
+	t.Parallel()
+
+	docs := map[string]*knowledge.Document{
+		"zerops://recipes/dotnet-hello-world": {
+			URI:        "zerops://recipes/dotnet-hello-world",
+			Title:      "Dotnet Hello World",
+			Languages:  []string{"dotnet"},
+			ImportYAML: "services:\n  - hostname: appdev\n    type: dotnet@9\n    zeropsSetup: dev\n  - hostname: db\n    type: postgresql@16\n    mode: NON_HA\n",
+		},
+	}
+	store, err := knowledge.NewStore(docs)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+
+	dir := t.TempDir()
+	eng := NewEngine(dir, EnvLocal, store)
+
+	if _, err := eng.BootstrapStartWithRoute("proj-1", "upload service", BootstrapRouteRecipe, "dotnet-hello-world"); err != nil {
+		t.Fatalf("BootstrapStartWithRoute: %v", err)
+	}
+
+	// Plan renames managed dep — should be rejected.
+	plan := []BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "uploaddev", Type: "dotnet@9", BootstrapMode: PlanModeDev},
+		Dependencies: []Dependency{{
+			Hostname: "mydb", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE",
+		}},
+	}}
+	_, err = eng.BootstrapCompletePlan(plan, nil, nil)
+	if err == nil {
+		t.Fatal("expected error rejecting managed-dep rename")
+	}
+	if !strings.Contains(err.Error(), "managed service") {
+		t.Errorf("error should name 'managed service' rename failure, got: %v", err)
+	}
+}
+
 func TestEngine_BootstrapCompletePlan_WrongStep(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

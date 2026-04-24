@@ -1,0 +1,24 @@
+#yamlPreprocessor=on
+
+# Runtime-hostname-collision fixture: a Python runtime pair already exists
+# at the canonical recipe hostnames (`appdev` + `appstage`). Any recipe
+# whose YAML also uses those names collides on both runtime services,
+# forcing the agent to rename runtime targets in the plan. Paired with
+# bootstrap-recipe-collision-rename to exercise F6's rewrite flow.
+
+services:
+  - hostname: appdev
+    type: python@3.11
+    mode: NON_HA
+    enableSubdomainAccess: true
+    startWithoutCode: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      minRam: 0.5
+  - hostname: appstage
+    type: python@3.11
+    mode: NON_HA
+    enableSubdomainAccess: true
+    verticalAutoscaling:
+      minRam: 0.5

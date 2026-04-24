@@ -1133,6 +1133,44 @@ Managed runtime services carry a `/var/www/.git/` that is the container-side sub
 | GLC-5 | Mount-side `git init` (from the ZCP-host into a managed service's SSHFS-mounted `/var/www/{hostname}/`) is forbidden agent behavior, covered by `develop-first-deploy-write-app.md` guidance and by the `bootstrap-git-init` eval scenario's `forbiddenPatterns`. zembed's SFTP MKDIR would produce root-owned `.git/objects/` which poisons every subsequent deploy. Recovery: `ssh {host} "sudo rm -rf /var/www/.git"` and let GLC-2's safety net re-init. |
 | GLC-6 | Local-env `strategy=git-push` requires a user-owned git repo with ≥1 commit (verified against `zcli@v1.0.61` `handler_archiveGitFiles.go:67-75`). ZCP does **not** auto-init git in the user's working directory — identity, default branch and `.gitignore` conventions are personal. `develop-platform-rules-local.md` instructs the agent to ask the user to run `git init && git add -A && git commit -m '<msg>'` themselves; `handleLocalGitPush` pre-flight catches the case as a hard fallback. The default `zerops_deploy` strategy uses `zcli --no-git` and needs no git state. |
 
+### Recipe Collision Override (F6)
+
+The recipe route allows the agent to resolve hostname collisions with
+existing project services by declaring non-colliding hostnames directly
+in the plan — ZCP then rewrites the recipe's canonical import YAML to
+match. These invariants pin the rewrite contract so managed-service
+runtime references (`${hostname_*}` in the recipe's app repo
+`zerops.yaml`) stay resolvable. Background: `plans/friction-audit-2026-04-24.md` §6.
+
+**Execution flow — when the rewrite runs**:
+
+- **Plan-submit pre-flight (RCO-1)** — `BootstrapCompletePlan` runs
+  `RewriteRecipeImportYAML(recipeYAML, plan)` as a probe after
+  `ValidateBootstrapTargets` and `ValidateBootstrapRecipeMode` pass.
+  Probe failure rejects the plan with a specific error naming the
+  offending target / dependency, so the agent learns at plan-submit
+  time rather than during provision. Success is discarded; the actual
+  rewrite re-runs at provision from the stored plan.
+
+- **Provision-step guidance (RCO-2)** — `buildGuide(StepProvision)`
+  calls `RewriteRecipeImportYAML` once more and injects the rewritten
+  YAML into the atom surface. The agent copies that block into
+  `zerops_import` — hostnames match the plan, `zeropsSetup`/`type`/
+  `buildFromGit`/`priority`/`mode` are recipe-verbatim.
+
+- **Discover-step guidance (RCO-3)** — plan is not yet submitted, so
+  the recipe YAML is injected verbatim. The agent uses that shape to
+  write their plan (with or without renames).
+
+| ID | Invariant |
+|----|-----------|
+| RCO-1 | Recipe route plan submission (`BootstrapCompletePlan` when `state.Bootstrap.Route == BootstrapRouteRecipe`) pre-flights a `RewriteRecipeImportYAML` call against the recipe's canonical YAML. Any error — managed rename, runtime type mismatch, YAML parse failure — rejects the plan BEFORE persistence, so invalid plans never reach provision. |
+| RCO-2 | Runtime-service hostname rename is the ONLY per-service field the rewrite mutates. `type`, `zeropsSetup`, `buildFromGit`, `priority`, `mode`, `enableSubdomainAccess`, `verticalAutoscaling`, `envVariables`, `envSecrets` — all pass through byte-verbatim. Changing any of these requires `route="classic"`. |
+| RCO-3 | Managed-service hostnames are IMMUTABLE across the rewrite. A plan `Dependency` whose `Hostname` differs from the recipe's corresponding managed service triggers a rejection at RCO-1. Rationale: the recipe's app repo `zerops.yaml` holds `${hostname_*}` env-var references; a mutable hostname would leave those dangling. Rename is architecturally out of scope for F6. |
+| RCO-4 | `Dependency.Resolution == EXISTS` on a managed dep drops the corresponding service entry from the rewritten YAML entirely. `zerops_import` must not attempt to create a service with an EXISTING hostname (the platform would reject with `serviceStackNameUnavailable`); runtime `${hostname_*}` refs resolve to the pre-existing service automatically. |
+| RCO-5 | Discover step injects the recipe YAML VERBATIM; provision step injects the REWRITTEN YAML. Discover is called before the plan exists — the agent uses the canonical shape to draft their plan. Provision is called after plan submission — the agent executes with plan-driven hostnames. Enforced by `bootstrap_guide_assembly.go::buildGuide` step-branch. |
+| RCO-6 | `runtimeSlot` matching consumes plan targets in first-unused order by `(type, role)` where role is `dev` (zeropsSetup=dev) or `stage` (anything else). Each runtime target's dev + stage halves MUST map to exactly one recipe runtime service; unmatched slots mean the plan declares a runtime type not present in the recipe, rejected at RCO-1. |
+
 ### Pipeline
 
 | ID | Invariant |

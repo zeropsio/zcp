@@ -99,6 +99,104 @@ func TestBuildGuide_Recipe_DiscoverInjectsImportYAMLAndMode(t *testing.T) {
 	}
 }
 
+// TestBuildGuide_Recipe_ProvisionRewritesYAMLWithPlanHostnames pins F6
+// behavior: when the agent's plan carries DevHostname/ExplicitStage
+// different from the recipe's canonical hostnames (because the canonical
+// ones collide with existing services), the provision step must surface
+// the REWRITTEN YAML so `zerops_import` creates services with the plan's
+// hostnames — not the recipe's. Discover still uses verbatim (plan isn't
+// submitted yet), covered separately.
+func TestBuildGuide_Recipe_ProvisionRewritesYAMLWithPlanHostnames(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Route = BootstrapRouteRecipe
+	bs.RecipeMatch = &RecipeMatch{
+		Slug:       "dotnet-hello-world",
+		Confidence: 0.97,
+		Mode:       PlanModeStandard,
+		ImportYAML: "project:\n  name: dotnet-agent\nservices:\n  - hostname: appdev\n    type: dotnet@9\n    zeropsSetup: dev\n  - hostname: appstage\n    type: dotnet@9\n    zeropsSetup: prod\n  - hostname: db\n    type: postgresql@16\n    mode: NON_HA\n",
+	}
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{{
+		Runtime: RuntimeTarget{
+			DevHostname:   "uploaddev",
+			ExplicitStage: "uploadstage",
+			Type:          "dotnet@9",
+			BootstrapMode: PlanModeStandard,
+		},
+		Dependencies: []Dependency{{
+			Hostname: "db", Type: "postgresql@16", Mode: ModeNonHA, Resolution: ResolutionCreate,
+		}},
+	}}}
+	guide := bs.buildGuide(StepProvision, 0, EnvContainer, nil)
+	if !strings.Contains(guide, "hostname: uploaddev") {
+		t.Errorf("provision YAML must carry plan's dev hostname, got:\n%s", guide)
+	}
+	if !strings.Contains(guide, "hostname: uploadstage") {
+		t.Errorf("provision YAML must carry plan's stage hostname, got:\n%s", guide)
+	}
+	if strings.Contains(guide, "hostname: appdev") || strings.Contains(guide, "hostname: appstage") {
+		t.Errorf("provision YAML must NOT contain recipe's original runtime hostnames, got:\n%s", guide)
+	}
+	// Managed service hostname stays verbatim — repo's zerops.yaml holds
+	// ${db_*} env-var references that cannot be rewritten.
+	if !strings.Contains(guide, "hostname: db") {
+		t.Errorf("provision YAML must keep managed service hostname verbatim, got:\n%s", guide)
+	}
+}
+
+// TestBuildGuide_Recipe_ProvisionExistsResolutionDropsManaged pins F6
+// behavior for adopting a managed service: Dependency{Resolution=EXISTS}
+// means the service already exists; the provision YAML must NOT contain
+// the entry, otherwise `zerops_import` rejects it with `serviceStackNameUnavailable`.
+func TestBuildGuide_Recipe_ProvisionExistsResolutionDropsManaged(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Route = BootstrapRouteRecipe
+	bs.RecipeMatch = &RecipeMatch{
+		Slug:       "nodejs-hello-world",
+		Confidence: 0.97,
+		Mode:       PlanModeStandard,
+		ImportYAML: "services:\n  - hostname: appdev\n    type: nodejs@22\n    zeropsSetup: dev\n  - hostname: appstage\n    type: nodejs@22\n    zeropsSetup: prod\n  - hostname: db\n    type: postgresql@18\n    mode: NON_HA\n",
+	}
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{{
+		Runtime: RuntimeTarget{
+			DevHostname:   "todoappdev",
+			ExplicitStage: "todoappstage",
+			Type:          "nodejs@22",
+			BootstrapMode: PlanModeStandard,
+		},
+		Dependencies: []Dependency{{
+			Hostname: "db", Type: "postgresql@18", Mode: ModeNonHA, Resolution: ResolutionExists,
+		}},
+	}}}
+	guide := bs.buildGuide(StepProvision, 0, EnvContainer, nil)
+	if strings.Contains(guide, "hostname: db") {
+		t.Errorf("EXISTS resolution must drop the managed service from provision YAML, got:\n%s", guide)
+	}
+	if strings.Contains(guide, "type: postgresql@18") {
+		t.Errorf("EXISTS resolution must drop postgresql entry entirely, got:\n%s", guide)
+	}
+}
+
+// TestBuildGuide_Recipe_DiscoverStaysVerbatim pins F6 boundary: the plan
+// isn't submitted at discover step, so rewrite cannot apply; agent sees
+// the recipe's canonical hostnames as the shape to base their plan on.
+func TestBuildGuide_Recipe_DiscoverStaysVerbatim(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Route = BootstrapRouteRecipe
+	bs.RecipeMatch = &RecipeMatch{
+		Slug:       "dotnet-hello-world",
+		Confidence: 0.97,
+		ImportYAML: "services:\n  - hostname: appdev\n    type: dotnet@9\n    zeropsSetup: dev\n",
+	}
+	// Plan is nil at discover (agent hasn't submitted it yet).
+	guide := bs.buildGuide(StepDiscover, 0, EnvContainer, nil)
+	if !strings.Contains(guide, "hostname: appdev") {
+		t.Errorf("discover guide should surface recipe hostnames verbatim, got:\n%s", guide)
+	}
+}
+
 func TestBuildGuide_Recipe_CloseDoesNotInjectYAML(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()

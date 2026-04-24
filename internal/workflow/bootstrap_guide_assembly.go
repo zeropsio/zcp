@@ -55,11 +55,30 @@ func (b *BootstrapState) buildGuide(step string, iteration int, env Environment,
 	// plan from) and at provision (so the agent can feed it to zerops_import
 	// without scraping it out of the atom body). Mode is rendered alongside
 	// so the agent sets `bootstrapMode` correctly on every target.
+	//
+	// At provision, when the plan is submitted, the YAML is REWRITTEN using
+	// the plan's hostnames so a rename-driven collision recovery (F6) flows
+	// end-to-end: agent chooses non-colliding hostnames in the plan, ZCP
+	// rewrites the recipe YAML accordingly, agent copies the rewritten block
+	// into zerops_import and the services land with the intended hostnames.
+	// Discover stays verbatim because the plan hasn't been submitted yet.
 	if (step == StepDiscover || step == StepProvision) && b.Route == BootstrapRouteRecipe && b.RecipeMatch != nil && b.RecipeMatch.ImportYAML != "" {
 		if out != "" {
 			out += "\n\n---\n\n"
 		}
-		out += formatRecipeImportYAMLForGuide(b.RecipeMatch)
+		match := b.RecipeMatch
+		if step == StepProvision && b.Plan != nil && len(b.Plan.Targets) > 0 {
+			if rewritten, err := RewriteRecipeImportYAML(b.RecipeMatch.ImportYAML, b.Plan); err == nil {
+				rewrittenMatch := *b.RecipeMatch
+				rewrittenMatch.ImportYAML = rewritten
+				match = &rewrittenMatch
+			}
+			// Rewrite failure is treated as a soft fallback to verbatim:
+			// BootstrapCompletePlan already pre-flights the rewrite, so a
+			// provision-time failure means state drifted. The verbatim
+			// fallback still surfaces *something* actionable.
+		}
+		out += formatRecipeImportYAMLForGuide(match)
 	}
 	return out
 }

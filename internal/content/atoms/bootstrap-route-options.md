@@ -34,11 +34,13 @@ Options always arrive in this priority order:
    the user wants; if they don't, use `route="classic"` instead so
    you can plan from scratch without colliding with the existing
    stack.
-3. **recipe** — up to three ranked recipe matches for the intent. Each
-   carries `recipeSlug`, `confidence`, and `collisions[]` (hostnames
-   that would conflict with services already in the project). **Check
-   collisions before picking** — if the recipe's hostnames clash with
-   existing services, ask the user or pick a different option.
+3. **recipe** — up to three ranked recipe matches. Each carries
+   `recipeSlug`, `confidence`, `collisions[]`. Collisions are
+   recoverable inside the recipe route (runtime rename in plan, or
+   same-type managed adopt via `resolution: "EXISTS"`); the
+   `bootstrap-recipe-match` atom details both. Switch routes only
+   when the collision is on a managed service whose type differs
+   from the recipe's, or when the user wants independent infra.
    Dispatch via `route="recipe" recipeSlug="<slug>"`.
 4. **classic** — always present, always last. Manual plan path. Pick
    this to bypass every auto-detection and describe the infrastructure
@@ -53,8 +55,7 @@ when the user directly specified a route. Valid values: `adopt`,
 
 ### Collision semantics
 
-Collisions are advisory at the route-selection stage — they annotate
-recipe options but do not suppress them. The real enforcement happens
-at the provision step, where `zerops_import` rejects a plan that tries
-to create a hostname that already exists. Use the `collisions[]` list
-as your pre-flight signal rather than waiting for provision to fail.
+`collisions[]` annotates recipe options; enforcement runs at plan submission
+(`runtimeCollisionError` + recipe-override pre-flight). Pre-plan the
+hostnames: rename runtime targets or set managed deps to `EXISTS` before
+submitting.

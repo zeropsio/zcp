@@ -548,6 +548,17 @@ func (e *Engine) BootstrapCompletePlan(targets []BootstrapTarget, liveTypes []pl
 		if err := ValidateBootstrapRecipeMode(state.Bootstrap.RecipeMatch, targets); err != nil {
 			return nil, fmt.Errorf("bootstrap complete plan: %w", err)
 		}
+		// Recipe override pre-flight: confirm the plan shape (renamed runtime
+		// hostnames, managed-dep resolution choices) can produce a valid
+		// rewritten import YAML before we commit the plan. Rejecting here
+		// gives the agent a precise diagnostic at plan-submit time rather
+		// than an opaque failure at provision.
+		if state.Bootstrap.RecipeMatch != nil && state.Bootstrap.RecipeMatch.ImportYAML != "" {
+			probe := &ServicePlan{Targets: targets}
+			if _, err := RewriteRecipeImportYAML(state.Bootstrap.RecipeMatch.ImportYAML, probe); err != nil {
+				return nil, fmt.Errorf("bootstrap complete plan: %w", err)
+			}
+		}
 	}
 
 	// Per-hostname lock: reject if any target hostname has an incomplete meta

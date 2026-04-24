@@ -307,12 +307,14 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 // or the empty string when the target is consistent. Pairs the dev and stage
 // checks so callers only pay one cost.
 //
-// Classic plan + hostname already live → "exists, use adopt".
-// Adopt plan + hostname missing → "isExisting=true but not found".
-// The dual test catches fat-finger isExisting flags in both directions.
+// Classic plan + hostname already live → "exists, use adopt or pick a
+// non-colliding hostname". Adopt plan + hostname missing → "isExisting=true
+// but not found". Recipe route: see bootstrap-recipe-match atom for the
+// rename flow — the error wording stays generic because the same function
+// serves all routes.
 func runtimeCollisionError(rt RuntimeTarget, stageHostname string, liveServiceNames map[string]bool) string {
 	if liveServiceNames[rt.DevHostname] && !rt.IsExisting {
-		return fmt.Sprintf("target %q: runtime already exists in project — use route=\"adopt\" with isExisting=true, or rename the target", rt.DevHostname)
+		return fmt.Sprintf("target %q: runtime already exists in project — set isExisting=true to adopt it, or pick a non-colliding devHostname (recipe route: ZCP rewrites the import YAML using your plan's hostnames)", rt.DevHostname)
 	}
 	if !liveServiceNames[rt.DevHostname] && rt.IsExisting {
 		return fmt.Sprintf("target %q: isExisting=true but runtime not found in project", rt.DevHostname)
@@ -321,7 +323,7 @@ func runtimeCollisionError(rt RuntimeTarget, stageHostname string, liveServiceNa
 		return ""
 	}
 	if liveServiceNames[stageHostname] && !rt.IsExisting {
-		return fmt.Sprintf("target %q: stage runtime %q already exists — use route=\"adopt\" with isExisting=true on this target, or rename", rt.DevHostname, stageHostname)
+		return fmt.Sprintf("target %q: stage runtime %q already exists — set isExisting=true to adopt, or pick a non-colliding stageHostname (recipe route: ZCP rewrites the import YAML using your plan's hostnames)", rt.DevHostname, stageHostname)
 	}
 	if !liveServiceNames[stageHostname] && rt.IsExisting {
 		return fmt.Sprintf("target %q: isExisting=true but stage runtime %q not found in project", rt.DevHostname, stageHostname)

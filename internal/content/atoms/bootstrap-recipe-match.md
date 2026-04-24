@@ -7,25 +7,23 @@ steps: [discover]
 title: "Recipe matched — plan from the import YAML"
 ---
 
-### A recipe matched this intent
+### Field mutability (change an immutable → `route="classic"`)
 
-The recipe's import YAML is the source of truth — do not edit it.
+| Mutable | Immutable |
+|---|---|
+| Runtime `hostname` via `devHostname`/`stageHostname` | `type`, `zeropsSetup`, `buildFromGit`, `priority`, `mode`, autoscaling, env vars |
+| Managed `resolution` (CREATE ↔ EXISTS) | Managed `hostname` — repo's `${hostname_*}` refs break on rename |
 
-In this `discover` step:
+### Plan shape (no collisions)
 
-1. **Read the recipe's import YAML and mode** — both are rendered below in
-   this same guide. Extract each runtime service's hostname, type, and
-   managed-service dependencies from the YAML. Note the **mode** in the
-   header; every plan target must use that exact mode.
-2. **Submit the plan** via `zerops_workflow action="complete" step="discover"`
-   with one `BootstrapTarget` per runtime service. Use the runtime hostnames
-   from the YAML verbatim — never rename. Set `bootstrapMode` on every
-   target to match the recipe's mode (standard / simple / dev). Managed
-   services become dependencies on their runtime owner (derive from
-   `priority`, `type`, and the app's needs as documented in the recipe body).
-3. **Set `isExisting: false`** on every target — the services don't exist yet;
-   `zerops_import` at the provision step creates them. `ServiceMeta` records
-   are written automatically at bootstrap close.
+Per runtime pair: `devHostname`/`stageHostname` from recipe's `zeropsSetup: dev`/`prod` services; `type` + `bootstrapMode` verbatim (mode from banner); `dependencies[]` hostname+type verbatim with `resolution: "CREATE"`; `isExisting: false`.
 
-Do not write code in this step — `buildFromGit` pulls the recipe's
-codebase at import time.
+### Collision recovery (route option has `collisions: [...]`)
+
+- **Runtime** → non-colliding `devHostname`/`stageHostname`; ZCP rewrites YAML at provision.
+- **Managed, same type** → `resolution: "EXISTS"`, keep recipe's hostname. Entry drops from YAML; existing service reused via `${hostname_*}`.
+- **Managed, different type** → `route="classic"`.
+
+Unrecovered collision → plan rejected.
+
+Do not write code — `buildFromGit` pulls the app repo at import.
