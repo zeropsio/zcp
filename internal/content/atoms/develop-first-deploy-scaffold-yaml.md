@@ -45,11 +45,11 @@ spellings resolve to literal strings at runtime and fail silently.
 
 **Content-root tip (ASP.NET, static-serving frameworks):**
 
-When a foreground runtime expects assets at `ContentRootPath = CWD` (e.g.
-ASP.NET's `wwwroot/` lookup at `/var/www/wwwroot`), stage's `deployFiles`
-must ship those assets to the `/var/www/` root. Choose the **tilde-extract**
-pattern (`./out/~`) over **preserve** (`./out`) in that case — tilde strips
-the `out/` prefix so `wwwroot/` lands at `/var/www/wwwroot/` instead of
-`/var/www/out/wwwroot/`. See `develop-deploy-modes` for the full decision rule.
+When a foreground runtime expects assets at `ContentRootPath = CWD`
+(e.g. ASP.NET's `wwwroot/` lookup at `/var/www/wwwroot/`), use
+**tilde-extract** (`./out/~`) so contents land at `/var/www/` instead
+of `/var/www/out/`. Use **preserve** (`./out`) when `run.start`
+references an explicit subpath like `./out/app/App.dll`. See
+`develop-deploy-modes` for the full decision rule.
 
 Schema: fetch `zerops.yaml` JSON Schema via `zerops_knowledge` if unsure.
