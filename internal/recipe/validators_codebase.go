@@ -126,12 +126,16 @@ func validateCodebaseCLAUDE(_ context.Context, path string, body []byte, _ Surfa
 	return vs, nil
 }
 
-// validateCodebaseYAML — every comment in the committed yaml contains
-// a causal word. Q7 resolution: validate the WHOLE file (not just
-// scaffold-authored stanzas) because that's what the porter reads.
-// Run-9-readiness §2.H: decorative divider lines (runs of 4+ identical
-// `-`/`=`/`*`/`#`/`_`) are banned — emit the specific violation first
-// so the author sees the right diagnostic.
+// validateCodebaseYAML enforces the codebase yaml-comment contract.
+// Decorative divider lines are banned (run-9 §2.H); surviving comments
+// are grouped into BLOCKS — runs of adjacent `#` lines, with bare `#`
+// treated as an in-block paragraph separator per the reference style at
+// /Users/fxck/www/laravel-showcase-app/zerops.yaml. Each block passes if
+// ANY line in it carries a causal word / em-dash; blocks whose lines
+// are all short labels (≤40 chars after stripping the `#`) pass
+// unconditionally. One violation per block, not per line — so a
+// multi-line prose block that forgets rationale emits a single report.
+// Run-10-readiness §N.
 func validateCodebaseYAML(_ context.Context, path string, body []byte, _ SurfaceInputs) ([]Violation, error) {
 	var vs []Violation
 	for _, d := range yamlFindDividers(body) {
@@ -139,34 +143,83 @@ func validateCodebaseYAML(_ context.Context, path string, body []byte, _ Surface
 			fmt.Sprintf("decorative divider line violates yaml-comment-style (no dividers, no banners): %q",
 				trimForMessage(string(d)))))
 	}
-	comments := yamlCommentRE.FindAllSubmatch(body, -1)
-	for _, m := range comments {
-		if len(m) < 2 {
+	for _, block := range parseYAMLCommentBlocks(body) {
+		if !blockNeedsCausalWord(block) {
 			continue
 		}
-		comment := strings.TrimSpace(string(m[1]))
-		if comment == "" {
-			continue // blank-after-# is a separator, not narration
+		if blockHasCausalWord(block) {
+			continue
 		}
-		// Allow file-level doc lines that start with a heading marker
-		// like `yaml:` or the zeropsPreprocessor directive. These
-		// aren't rationale comments.
+		first := block[0]
+		vs = append(vs, violation("yaml-comment-missing-causal-word", path,
+			fmt.Sprintf("comment block lacks a causal word (`because`, `so that`, `otherwise`, `trade-off`, em-dash) on any line: %q",
+				trimForMessage(first))))
+	}
+	return vs, nil
+}
+
+// parseYAMLCommentBlocks groups adjacent `#` comment lines into blocks.
+// Bare `#` lines stay in-block (paragraph separators, reference style).
+// Each returned block is a slice of comment bodies (already stripped of
+// the leading `#` + whitespace). Divider lines and the zeropsPreprocessor
+// directive are skipped — the divider violation is emitted separately
+// and the directive is not a rationale comment.
+func parseYAMLCommentBlocks(body []byte) [][]string {
+	lines := strings.Split(string(body), "\n")
+	var blocks [][]string
+	var current []string
+	for _, raw := range lines {
+		trimmed := strings.TrimLeft(raw, " \t")
+		if !strings.HasPrefix(trimmed, "#") {
+			if len(current) > 0 {
+				blocks = append(blocks, current)
+				current = nil
+			}
+			continue
+		}
+		comment := strings.TrimSpace(strings.TrimPrefix(trimmed, "#"))
 		if strings.HasPrefix(comment, "zeropsPreprocessor") {
 			continue
 		}
-		// Divider lines are flagged above by yaml-comment-divider-banned;
-		// skip them here so the author sees the right diagnostic, not a
-		// spurious "missing causal word".
-		if yamlIsDivider("#" + comment) {
+		if comment != "" && yamlIsDivider("#"+comment) {
 			continue
 		}
-		if !containsAnyCausal(comment) {
-			vs = append(vs, violation("yaml-comment-missing-causal-word", path,
-				fmt.Sprintf("comment lacks a causal word (`because`, `so that`, `otherwise`, `trade-off`, em-dash): %q",
-					trimForMessage(comment))))
+		current = append(current, comment)
+	}
+	if len(current) > 0 {
+		blocks = append(blocks, current)
+	}
+	return blocks
+}
+
+// blockNeedsCausalWord reports whether a comment block requires at
+// least one causal word. Blocks whose every non-blank line is a short
+// label (≤40 chars) pass unconditionally — label blocks never need
+// rationale.
+func blockNeedsCausalWord(block []string) bool {
+	for _, line := range block {
+		if line == "" {
+			continue
+		}
+		if len(line) > 40 {
+			return true
 		}
 	}
-	return vs, nil
+	return false
+}
+
+// blockHasCausalWord reports whether any line in the block carries a
+// causal word / em-dash.
+func blockHasCausalWord(block []string) bool {
+	for _, line := range block {
+		if line == "" {
+			continue
+		}
+		if containsAnyCausal(line) {
+			return true
+		}
+	}
+	return false
 }
 
 func trimForMessage(s string) string {

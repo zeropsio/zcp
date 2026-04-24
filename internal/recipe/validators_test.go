@@ -330,6 +330,123 @@ func TestValidateCodebaseYAML_ShortRunsNotFlagged(t *testing.T) {
 	}
 }
 
+// TestValidateCodebaseYAML_MultiLineBlockWithOneCausalWord_Passes —
+// run-10-readiness §N. A multi-line comment block passes when ANY line
+// in the block carries a causal word / em-dash; individual lines no
+// longer each need their own causal word. Matches the reference
+// style at /Users/fxck/www/laravel-showcase-app/zerops.yaml where
+// comment blocks wrap natural prose across 2–5 lines.
+func TestValidateCodebaseYAML_MultiLineBlockWithOneCausalWord_Passes(t *testing.T) {
+	t.Parallel()
+
+	// 6-line block; only line 2 carries a causal word. All six lines are
+	// > 40 chars so the label short-circuit doesn't apply — the block
+	// must actually pass via per-block causal detection.
+	body := []byte(`zerops:
+  - setup: prod
+    run:
+      # Config, route, and view caches MUST be built at runtime aaaaaaa.
+      # Build runs at /build/source but runtime serves from /var/www, so
+      # caching during build would bake paths the runtime never sees zz.
+      # Migrations run exactly once per deploy via zsc execOnce tickets,
+      # regardless of how many containers start in parallel at deploy y.
+      # Seeder populates sample data on first deploy for the dashboard.
+      initCommands:
+        - zsc execOnce ${appVersionId} -- php artisan migrate --force
+`)
+	vs, err := validateCodebaseYAML(context.Background(),
+		"/srv/apidev/zerops.yaml", body, SurfaceInputs{Plan: &Plan{}})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if containsCode(vs, "yaml-comment-missing-causal-word") {
+		t.Errorf("multi-line block with one causal word should pass; got %+v", vs)
+	}
+}
+
+// TestValidateCodebaseYAML_MultiLineBlockNoCausalWord_OneViolationPerBlock
+// — run-10-readiness §N. A 4-line block with no causal word anywhere
+// emits exactly one violation, not four.
+func TestValidateCodebaseYAML_MultiLineBlockNoCausalWord_OneViolationPerBlock(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`zerops:
+  - setup: prod
+    # This block narrates what fields do and has no rationale at all here
+    # nor does it explain tradeoffs or alternatives for the reader either
+    # and the third line keeps up the pure description of fields verbose
+    # and the fourth line continues the same toneless description style.
+    run:
+      base: nodejs@22
+`)
+	vs, err := validateCodebaseYAML(context.Background(),
+		"/srv/apidev/zerops.yaml", body, SurfaceInputs{Plan: &Plan{}})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	var count int
+	for _, v := range vs {
+		if v.Code == "yaml-comment-missing-causal-word" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected exactly 1 block-level violation, got %d: %+v", count, vs)
+	}
+}
+
+// TestValidateCodebaseYAML_ShortLabelComment_Passes — run-10-readiness §N.
+// Single-line comments shorter than 40 characters after stripping `#`
+// are treated as labels and pass unconditionally. Matches reference
+// patterns like `# Base image` or `# Bucket policy`.
+func TestValidateCodebaseYAML_ShortLabelComment_Passes(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`zerops:
+  - setup: prod
+    # Base image
+    run:
+      base: nodejs@22
+`)
+	vs, err := validateCodebaseYAML(context.Background(),
+		"/srv/apidev/zerops.yaml", body, SurfaceInputs{Plan: &Plan{}})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if containsCode(vs, "yaml-comment-missing-causal-word") {
+		t.Errorf("short label comment should pass; got %+v", vs)
+	}
+}
+
+// TestValidateCodebaseYAML_BareHashTransitionInBlock_Allowed —
+// run-10-readiness §N. Bare `#` lines inside a comment block are
+// paragraph separators (reference style); they do not end the block
+// for the purposes of the causal-word check. A block spanning bare-#
+// separated paragraphs passes if any line anywhere carries a causal
+// word.
+func TestValidateCodebaseYAML_BareHashTransitionInBlock_Allowed(t *testing.T) {
+	t.Parallel()
+
+	body := []byte(`zerops:
+  - setup: prod
+    run:
+      # Config, route, and view caches MUST be built at runtime because
+      # /build/source differs from /var/www, baking wrong paths otherwise.
+      #
+      # Second paragraph is pure description that wraps across lines and
+      # continues the thought of the comment block without causal words.
+      base: php-nginx@8.4
+`)
+	vs, err := validateCodebaseYAML(context.Background(),
+		"/srv/apidev/zerops.yaml", body, SurfaceInputs{Plan: &Plan{}})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if containsCode(vs, "yaml-comment-missing-causal-word") {
+		t.Errorf("bare-# separator inside block should keep block unified; got %+v", vs)
+	}
+}
+
 // TestValidate_CodebaseSurface_ReadsSourceRoot — run-10-readiness §L.
 // resolveSurfacePaths for codebase-scoped surfaces returns
 // <cb.SourceRoot>/<leaf>, not <outputRoot>/codebases/<h>/<leaf>.

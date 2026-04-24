@@ -50,11 +50,6 @@ var tierPromotionVerbs = []string{
 	"next tier", "previous tier",
 }
 
-// yamlCommentRE matches a single yaml comment line, captures the body
-// after `#`. Used by validateCodebaseYAML for per-comment causal-word
-// checks.
-var yamlCommentRE = regexp.MustCompile(`(?m)^\s*#\s*(.*)$`)
-
 // yamlDividerREs match comment lines that contain a run of 4+
 // identical decorative characters anywhere in the comment body. This
 // catches both pure dividers (`# ----`) and banners (`# === DEV ===`).
