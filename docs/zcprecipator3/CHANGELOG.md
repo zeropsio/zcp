@@ -268,3 +268,127 @@ discard them).
   workflow-context probe — deferred until finalize actually hits it.
 - `requireAdoption` gate on recipe-provisioned services (see v9.5.5
   section).
+
+---
+
+## 2026-04-24 — run-8-readiness: writer dispatch out, in-phase fragment authorship in
+
+### Context
+
+Run 7 closed 5 phases with trivial gates — structural only, prose
+content never validated. The writer sub-agent reconstructed reasoning
+from committed files that scaffold + feature already had in hand. That
+reconstruction is both the efficiency hole and the quality hole:
+stale, guessed causality on the reader-facing surfaces.
+
+Plan: [plans/run-8-readiness.md](plans/run-8-readiness.md). Seven
+commits in the order E → A1 → A2 → F → B → C → D, each green on local
+tests + `make lint-local` before the next.
+
+### Workstreams shipped
+
+**E — deferred gate plumbing** (feat(recipe): route record_fact +
+workspace_manifest under recipe session). `RecipeSessionProbe` gains
+`CurrentSingleSession()`; the two v2-shaped tools resolve their target
+paths from the single open recipe session's outputRoot instead of
+erroring. v2 facts land in `legacy-facts.jsonl`; v3's `facts.jsonl`
+stays reserved for `zerops_recipe action=record-fact`.
+
+**A1 — templates + Plan.Fragments schema + assembler + record-fragment**
+(refactor(recipe): replace writer dispatch with in-phase fragment
+authorship). Engine owns structural templates (`content/templates/*.tmpl`,
+string-replace tokens + fragment markers); fragments slot in via
+`record-fragment` at the moment the agent holds the densest context.
+Writer brief + examples + completion payload deleted. `stitchContent`
+now walks surface templates, returns a missing-fragments list callers
+gate on.
+
+**A2 — two-root deliverable split + committed-yaml copy**. Per-codebase
+`zerops.yaml` is copied verbatim from `Codebase.SourceRoot` (scaffold
+sub-agent's workspace) into `outputRoot/codebases/<hostname>/zerops.yaml`,
+so inline comments written at decision-moment survive byte-identical
+into the published deliverable.
+
+**F — content-authoring briefs + init-commands concept port**. New
+`content/principles/init-commands-model.md` (ported from v2's
+seed-execonce-keys.md), `briefs/scaffold/content_authoring.md`,
+`briefs/feature/content_extension.md`. Engine-side `CitationMap`
+(`citations.go`) replaces the deleted writer's citation_topics. Brief
+caps raised from 3 KB/4 KB to 5 KB/5 KB — the original caps were set
+before F's content was scoped.
+
+**B — phase atom completeness** (feat(recipe): phase atom completeness).
+Scaffold atom adds cross-deploy dev→stage + init-commands verification
+(success-line attestation + post-deploy data check + burned-key
+recovery). Feature atom adds seed step + browser-walk + cross-deploy
+dev→stage. Finalize atom adds the single-question test per surface
+from spec-content-surfaces.md. Wrapper-discipline refinement clarifies
+what the main agent decides vs what the sub-agent discovers.
+
+**C — classification pre-routing** (feat(recipe): engine-side fact
+classification as safety net). `Classify` maps surface hints +
+citation to the seven-class taxonomy from spec-content-surfaces.md.
+`ClassifyLog` partitions publishable from DISCARD-class facts; the
+safety net ensures framework-quirk / self-inflicted / library-
+metadata records never reach a surface body even if mis-tagged.
+
+**D — spec validators** (feat(recipe): spec validators per surface +
+cross-surface uniqueness). Seven per-surface `ValidateFn`s wired via
+`RegisterValidator` + `gateSurfaceValidators` on `FinalizeGates`:
+root README factuality + deploy-button count + length; env README
+meta-agent-voice + tier promotion verb; import-comments causal-word +
+templated-opening; codebase IG numbered items + no-scaffold-filenames;
+codebase KB bold symptom + citation-map guide references; CLAUDE.md
+size floor + custom sections; zerops.yaml causal comments. Cross-
+surface uniqueness on fact Topic ids.
+
+### §7 open questions resolved
+
+- **Q1 template format** — string-replace with `{TOKEN}` sigils + post-
+  render unreplaced-token scan. Rationale: single substitution engine
+  (markers + tokens share the same replace pass), no accidental
+  parse failures on fragment bodies containing `{{`, templates diff
+  cleanly against the reference `laravel-showcase/README.md`.
+- **Q2 marker naming** — kept upstream's `#ZEROPS_EXTRACT_START:NAME#`
+  (matches `zcp sync push recipes` extractor).
+- **Q3 seed script location** — moot. Atom corpus stays framework-
+  neutral per the no-framework-specific-atoms rule; seed shape is the
+  sub-agent's framework-expertise call.
+- **Q4 browser verification artifact** — FactRecord with
+  `Type=browser_verification`, console + screenshot path in Evidence.
+  Reuses the facts-log pipeline; no new schema.
+- **Q7 committed-yaml-comment validator scope** — validate the WHOLE
+  committed file (not just scaffold-authored stanzas). Rationale: that
+  file IS the deliverable porters read; authorship origin is not the
+  porter's concern.
+- **Q9 validator failure → main-agent edit vs re-dispatch** — main-
+  agent edits allowed. Iteration via `record-fragment` + re-stitch;
+  no scaffold/feature re-dispatch. Preserves densest-context
+  authorship the earlier phase already paid for.
+
+### Non-goals / still deferred
+
+- Chain-resolution delta yaml emission (§5.2 of plan) — defer until
+  nestjs-minimal gets re-run via v3.
+- Automated click-deploy verification — acceptance check 10 stays
+  manual at run-8 start.
+- `verify-subagent-dispatch` SHA check — real dispatch-integrity
+  concern but separate from content-quality; ship after run 8
+  confirms the content pipeline works.
+- `requireAdoption` fix for recipe-provisioned services — inherited
+  from v9.5.5.
+
+### What run 8 proves
+
+1. Every codebase has both dev and stage deploys green.
+2. Browser verification recorded as a `browser_verification` fact per
+   feature tab.
+3. Seed ran once; GET /items returns ≥ 3 items before the agent
+   manually creates anything.
+4. Stitched output has canonical structure (root README, 6 tier
+   READMEs + import.yamls, per-codebase README + CLAUDE.md +
+   zerops.yaml).
+5. Every finalize-phase validator passes — prose content, not just
+   structure.
+6. Fragments were authored in-phase; facts log shows `record-fragment`
+   calls by scaffold + feature sub-agents, no writer dispatch.
