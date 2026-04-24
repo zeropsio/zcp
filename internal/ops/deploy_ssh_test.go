@@ -579,7 +579,10 @@ func TestBuildSSHCommand_FreshInitPath(t *testing.T) {
 		full = full[len(prefix):]
 	}
 
-	out, err := exec.Command("bash", "-c", full).CombinedOutput() //nolint:gosec // controlled test input
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(ctx, "bash", "-c", full).CombinedOutput()
 	if err != nil {
 		t.Fatalf("safety-net chain failed: %v\noutput: %s\ncommand: %s", err, out, full)
 	}
@@ -593,7 +596,7 @@ func TestBuildSSHCommand_FreshInitPath(t *testing.T) {
 		"user.name":  "Zerops Agent",
 	}
 	for key, wantVal := range want {
-		got, gErr := exec.Command("git", "-C", dir, "config", "--get", key).Output() //nolint:gosec // controlled key
+		got, gErr := exec.CommandContext(ctx, "git", "-C", dir, "config", "--get", key).Output()
 		if gErr != nil {
 			t.Errorf("git config --get %s: %v", key, gErr)
 			continue

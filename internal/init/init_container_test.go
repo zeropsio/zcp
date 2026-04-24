@@ -219,4 +219,3 @@ func TestContainerSteps_SkippedOutsideContainer(t *testing.T) {
 		t.Error(".claude.json should not be created outside container")
 	}
 }
-

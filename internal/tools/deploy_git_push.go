@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -80,7 +79,6 @@ func handleGitPush(
 	client platform.Client,
 	projectID string,
 	sshDeployer ops.SSHDeployer,
-	authInfo auth.Info,
 	input DeploySSHInput,
 	stateDir string,
 ) (*mcp.CallToolResult, any, error) {
