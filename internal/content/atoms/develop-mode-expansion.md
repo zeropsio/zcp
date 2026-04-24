@@ -9,18 +9,18 @@ title: "Mode expansion — add a stage pair"
 
 ### Mode expansion — add a stage pair
 
-Current service runs in a single-slot mode (dev or simple). If you need
-a production sibling (stage), expand to **standard** mode without
-touching the existing service's code or strategy. Expansion is an
-**infrastructure change**, not a code change — it goes through bootstrap,
-not through the develop loop.
+The envelope reports your current service with `mode: dev` or
+`mode: simple` (single-slot). Expanding to **standard** adds a stage
+sibling without touching the existing service. Expansion is an
+infrastructure change — it runs through the bootstrap workflow, not
+develop.
 
 ```
 zerops_workflow action="start" workflow="bootstrap"
   intent="expand {hostname} to standard — add stage"
 ```
 
-Then submit a plan that flags the existing runtime and names the new
+Submit a plan that flags the existing runtime and names the new
 stage hostname:
 
 ```json
@@ -38,14 +38,14 @@ stage hostname:
 }
 ```
 
-The bootstrap flow will:
+Bootstrap leaves the existing service's code and container untouched,
+creates the new stage service via `zerops_import`, and at close the
+envelope shows both snapshots:
 
-1. Leave the existing service's code and infrastructure untouched.
-2. Create the new stage service via `zerops_import`.
-3. Preserve your deploy strategy, `BootstrappedAt`, and first-deploy
-   timestamp on the upgraded `ServiceMeta`.
-4. Ask for a stage deploy (cross-deploy from the dev half) to verify
-   the new pair works end to end.
+- the original (now `mode: standard` with `stageHostname` set,
+  `bootstrapped: true`, `deployed: true`, strategy intact);
+- the new stage (`mode: stage`, `bootstrapped: true`,
+  `deployed: false`).
 
-After expansion, the service runs in `mode=standard` with stage as a
-sibling service.
+After close, run a dev→stage cross-deploy to verify the pair
+end-to-end.
