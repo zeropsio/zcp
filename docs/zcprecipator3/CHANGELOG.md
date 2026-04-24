@@ -4,6 +4,54 @@ Running log of changes on top of [plan.md](plan.md). Each entry captures what ch
 
 ---
 
+## 2026-04-24 — run-10-readiness (L / M / N / O / P / Q1..Q4)
+
+### Context
+
+Run 9 (nestjs-showcase, 2026-04-24) was the first v3 dogfood to reach `complete-phase finalize` green on all 11 run-9-readiness workstreams. Every run-9 criterion passed against its own plan — but when the rendered deliverable was compared directly to the reference apps-repo at `/Users/fxck/www/laravel-showcase-app/`, two structural problems and a cluster of stylistic divergences surfaced that run-9's criteria didn't measure: apps-repo content was written to an invented `<outputRoot>/codebases/<h>/` directory no published recipe carries, README item #1 of the Integration Guide described the yaml in English prose instead of embedding it verbatim, yaml comments were single-line run-ons stuffed with causal words, README knowledge-bases were stylistically bimodal within one file, and CLAUDE.md files were 3× longer than the reference. Full analysis at [docs/zcprecipator3/runs/9/ANALYSIS.md](runs/9/ANALYSIS.md), diff against reference at [CONTENT_COMPARISON.md](runs/9/CONTENT_COMPARISON.md), engine-brief hygiene at [PROMPT_ANALYSIS.md](runs/9/PROMPT_ANALYSIS.md).
+
+### Shape fixes (tranche 1) — blockers for run 10
+
+1. **L — redirect apps-repo content from invented subdirectory to `<cb.SourceRoot>`.** `stitchContent` now writes each codebase's README.md + CLAUDE.md directly to `cb.SourceRoot` (the SSHFS-mounted dev slot at `/var/www/<h>dev/`), the same tree that already holds the scaffold-authored zerops.yaml + source. Matches the reference apps-repo shape where README + CLAUDE + zerops.yaml + source all live at repo root. Deleted `copyCommittedYAML` entirely (the duplicate copy had no reader; scaffold already authored the yaml at SourceRoot). Validator `codebasePaths` resolves codebase surfaces to `<cb.SourceRoot>` so validators read from the same tree stitch writes to. Net LoC negative. Sources: [ANALYSIS.md §3 gap L](runs/9/ANALYSIS.md), [CONTENT_COMPARISON.md §1](runs/9/CONTENT_COMPARISON.md). See `internal/recipe/handlers.go`, `validators.go`.
+
+2. **M — auto-embed `<cb.SourceRoot>/zerops.yaml` as IG item #1.** `AssembleCodebaseREADME` now rewrites the rendered README's integration-guide extract block to open with an engine-generated `### 1. Adding \`zerops.yaml\`` heading, a one-or-two-sentence intro *derived from the yaml body* (setups declared, whether initCommands run migrations/seeding/search-index, whether readinessCheck/healthCheck ship), and a fenced yaml code block carrying the yaml verbatim with inline comments preserved. Fragment-authored items follow at `### 2.`+ per the updated scaffold brief. The missing-fragment gate still fires when the sub-agent didn't author items #2+. Matches the reference pattern where the porter sees the full config shape at a glance without opening a second file. Sources: [CONTENT_COMPARISON.md §4](runs/9/CONTENT_COMPARISON.md). See `internal/recipe/assemble.go`, `content/briefs/scaffold/content_authoring.md`.
+
+### Style fixes (tranche 2) — inside the now-correct shape
+
+3. **N — loosen yaml-comment causal-word check from per-line to per-block.** `validateCodebaseYAML` groups adjacent `#` comment lines into blocks (bare `#` stays in-block as paragraph separator per the reference), then checks each block — not each line — for a causal word / em-dash. Label blocks (every line ≤40 chars after stripping `#`) pass unconditionally. A block without rationale emits exactly one violation, not one per line. The previous per-line rule pressured sub-agents into single-line run-ons stuffed with `because`/`so that`/`otherwise` on every line; reference-style multi-line prose blocks now pass cleanly. `yaml-comment-style.md` atom rewritten to teach the block model. Sources: [CONTENT_COMPARISON.md §3](runs/9/CONTENT_COMPARISON.md). See `internal/recipe/validators_codebase.go`, `content/principles/yaml-comment-style.md`.
+
+4. **O — unify KB format as `**Topic** — prose`; ban `**symptom**:` triple.** New validator `codebase-kb-triple-format-banned` flags KB bullets opening with `**symptom**:` / `**mechanism**:` / `**fix**:`. Run 9's api README shipped bimodal (8 triple entries from scaffold + 6 Topic entries from feature — same file, two personalities). Debugging runbooks belong in `codebase/<h>/claude-md/notes`; the porter-facing KB uses `**Topic**` + em-dash + prose so a reader scanning topic names can find the entry. Both `content_authoring.md` (scaffold) and `content_extension.md` (feature) teach the Topic format with good/bad examples. Sources: [CONTENT_COMPARISON.md §5](runs/9/CONTENT_COMPARISON.md). See `internal/recipe/validators_codebase.go`, scaffold + feature brief atoms.
+
+5. **P — cap CLAUDE.md at ≤60 lines; ban cross-codebase subsections.** Deleted `claude-md-too-few-custom-sections` (pressured authors to ADD sections — wrong direction). Added `claude-md-too-long` (flags >60 lines; reference is 33 lines, run-9 shipped 99-line files) and `claude-md-forbidden-subsection` (flags cross-codebase operational headings `Quick curls`, `Smoke test(s)`, `Local curl`, `In-container curls`, `Redeploy vs edit`, `Boot-time connectivity` — identical across every codebase in a recipe, belong in the recipe root README). Sources: [CONTENT_COMPARISON.md §6](runs/9/CONTENT_COMPARISON.md). See `internal/recipe/validators_codebase.go`, scaffold + feature brief atoms.
+
+### Engine-brief hygiene (tranche 3)
+
+6. **Q1 — gate the `## HTTP` section on `role.ServesHTTP`.** `BuildScaffoldBrief` strips the `## HTTP` platform-obligations section from the composed brief when the codebase's role has `ServesHTTP=false` (worker / job-consumer). The atom marks the section with `<!-- HTTP_SECTION_START -->` / `<!-- HTTP_SECTION_END -->` comments; the composer removes everything between them for non-HTTP roles. Dropped the `(ServesHTTP=true)` header annotation — it was a hint that the section was gated; now that it actually is, the annotation is noise. Sources: [PROMPT_ANALYSIS.md §2.2 smell S4](runs/9/PROMPT_ANALYSIS.md). See `internal/recipe/briefs.go`, `content/briefs/scaffold/platform_principles.md`.
+
+7. **Q2 — rename scaffold-brief header to `# Behavioral gate`.** The `preship_contract.md` atom renders as `# Behavioral gate` instead of `# Pre-ship contract`. The phrase "pre-ship contract" stays on the forbidden-voice list. Previously the same phrase was both a structural header in the brief AND a forbidden voice-leak in the content-authoring rules, so the sub-agent had to hold a mental partition between authoring vocabulary and output vocabulary. Sources: [PROMPT_ANALYSIS.md §2.2 smell S5](runs/9/PROMPT_ANALYSIS.md). See `content/briefs/scaffold/preship_contract.md`.
+
+8. **Q3 — port finalize-time validator rules into the scaffold brief.** `content_authoring.md` adds a "Validator tripwires" section surfacing six author-time rules that finalize gates reject on: IG item #1 is engine-owned, IG 2+ must not name scaffold-only filenames, env READMEs use porter voice, env READMEs target 45+ lines, yaml comment blocks need one causal word per block (§N), KB uses Topic format only (§O), CLAUDE.md is 30–50 lines with no cross-codebase runbooks (§P). Run-9 burned ~15 minutes of finalize wall time iterating on rules it could have seen up front. `yaml-comment-style.md` compressed to keep the scaffold brief under the 12 KB cap — regression-pinned by `TestBrief_Scaffold_UnderCap_WithValidatorTripwires`. Sources: [PROMPT_ANALYSIS.md §3 smells S11](runs/9/PROMPT_ANALYSIS.md), run-9 finalize round 1 violation list. See `content/briefs/scaffold/content_authoring.md`.
+
+9. **Q4 — extend init-commands-model.md with arbitrary-static-key shape.** Third key shape: `<slug>.<operation>.<version>` (e.g. `nestjs-showcase.seed.v1`). Same once-per-service-lifetime semantics as the canonical static key, but the `.v1` suffix is a documented re-run lever (bump to `.v2` to force re-trigger). Run 9's feature sub-agent queried `zerops_knowledge` five times with rephrased variants asking about this exact case because the atom didn't cover it. `content_extension.md` points at key shape #3 when adding an initCommand so the sub-agent sees the answer without a lookup. Sources: [PROMPT_ANALYSIS.md §2.2 smell S4-ish](runs/9/PROMPT_ANALYSIS.md), [agent-adb7.jsonl knowledge-loop evidence](runs/9/SESSION_LOGS/subagents/agent-adb75d19d2006e0db.jsonl). See `content/principles/init-commands-model.md`, `content/briefs/feature/content_extension.md`.
+
+### M follow-up — dynamic IG item #1 intro
+
+The item-#1 intro sentence is derived from the yaml body via stanza-name substring probes on the canonical Zerops shape — the yaml is never re-parsed. Before: every recipe's IG opened with the same generic "The main configuration file" sentence regardless of contents. After: the intro names the setups declared and the behaviors present (initCommands with migrations / seed / search-index, readiness + health checks). The porter learns what this yaml does before reading the code block.
+
+### Brief cap pressure
+
+Tranche 3 adds the Validator-tripwires section (~400 bytes) + the third execOnce key shape (~250 bytes). Compressed `yaml-comment-style.md` + the Voice and Classify sections of `content_authoring.md` to fit. Scaffold brief stays under 12 KB across all three synthetic codebases; feature brief stays under 10 KB. Pins: `TestBrief_Scaffold_UnderCap_WithValidatorTripwires`, existing `TestBriefCompose_ScaffoldUnderCap` and `TestBriefCompose_FeatureUnderCap`.
+
+### Not yet addressed (post-run-10 scope)
+
+- Chain-resolution redesign. `chain.go::loadParent` still reads `<parentDir>/codebases/<h>/` — that path was a no-op against v2 parents (they never had it) and, after §L, is also a no-op against v3 parents (they don't have it either). Redesign to read apps-repo-shaped parents is deferred until `nestjs-minimal` gets a v3 re-run and the real inheritance flow becomes testable.
+- Automated click-deploy verification harness — still manual for criterion 10.
+- `verify-subagent-dispatch` SHA check — still deferred.
+- Per-surface `validate-surface` action (collapses finalize "wall of red") — useful authoring affordance; not blocking.
+- Auto-inject scaffold-phase facts into feature brief (the `${broker_connectionString}` trap propagation was hand-assembled by main agent in run 9) — automatable but not blocking.
+
+---
+
 ## 2026-04-24 — run-9-readiness (A1 / A2 / B / E / G1 / G2 / H / I / K / J / R)
 
 ### Context
