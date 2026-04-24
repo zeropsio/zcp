@@ -65,7 +65,7 @@ func bootstrapCoverageFixtures() []coverageFixture {
 			},
 			MustContain: []string{
 				`zerops_workflow action="start" workflow="develop"`,
-				"auto-closes",
+				"develop-active",
 			},
 		},
 		{
@@ -81,7 +81,8 @@ func bootstrapCoverageFixtures() []coverageFixture {
 			},
 			MustContain: []string{
 				`zerops_workflow action="start" workflow="bootstrap" intent="adopt`,
-				"adopt route",
+				"not bootstrapped",
+				`route="adopt"`,
 			},
 		},
 		{
@@ -131,7 +132,7 @@ func bootstrapCoverageFixtures() []coverageFixture {
 			},
 			MustContain: []string{
 				"Adopting existing services",
-				"ServiceMeta",
+				"bootstrapped: true",
 			},
 		},
 	}

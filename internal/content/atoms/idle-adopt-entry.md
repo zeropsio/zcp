@@ -6,11 +6,9 @@ idleScenarios: [adopt]
 title: "Adopt existing unmanaged services"
 ---
 
-One or more runtime services exist in the project but have no ZCP
-bootstrap metadata. Adopt them before deploying code — the adopt route
-reads the service list, asks for mode + strategy per unmanaged
-service, writes `ServiceMeta`, and verifies connectivity against the
-current code without redeploying.
+Runtime services exist in this project that ZCP is not tracking —
+the Services block shows one or more as `not bootstrapped`. Adopt
+them to enable ZCP deploy and verify workflows.
 
 Start with discovery so the engine inspects the live state:
 
@@ -18,9 +16,13 @@ Start with discovery so the engine inspects the live state:
 zerops_workflow action="start" workflow="bootstrap" intent="adopt existing"
 ```
 
-The response surfaces an `adopt` option at the top of `routeOptions[]`
-with `adoptServices` listing the hostnames. Commit the adoption with:
+The response surfaces an `adopt` option at the top of
+`routeOptions[]` with `adoptServices[]` listing the hostnames. Commit
+the adoption with:
 
 ```
 zerops_workflow action="start" workflow="bootstrap" route="adopt" intent="adopt existing"
 ```
+
+After close, the envelope shows each adopted hostname with
+`bootstrapped: true` and its existing mode/strategy preserved.

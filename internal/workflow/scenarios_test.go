@@ -200,8 +200,9 @@ func TestScenario_S3_AdoptOnlyUnmanaged(t *testing.T) {
 	}
 	joined := strings.Join(bodies, "\n")
 	// idle-adopt-entry atom is the load-bearing one for this scenario: it
-	// tells the agent the adopt route reads live services + writes ServiceMeta.
-	for _, phrase := range []string{"Adopt them before deploying", "ServiceMeta"} {
+	// tells the agent the adopt route attaches tracking to the existing
+	// services so they show as bootstrapped afterward.
+	for _, phrase := range []string{"not bootstrapped", `route="adopt"`, "bootstrapped: true"} {
 		if !strings.Contains(joined, phrase) {
 			t.Errorf("S3: expected synthesized body to contain %q", phrase)
 		}
