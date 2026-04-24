@@ -185,7 +185,7 @@ func renderServiceLine(svc ServiceSnapshot) string {
 }
 
 func renderBootstrappedFields(svc ServiceSnapshot) string {
-	fields := []string{"mode=" + string(svc.Mode)}
+	fields := []string{"bootstrapped=true", "mode=" + string(svc.Mode)}
 	if svc.Strategy == "" || svc.Strategy == StrategyUnset {
 		fields = append(fields, "strategy=unset")
 	} else {
@@ -193,6 +193,11 @@ func renderBootstrappedFields(svc ServiceSnapshot) string {
 	}
 	if svc.StageHostname != "" {
 		fields = append(fields, "stage="+svc.StageHostname)
+	}
+	if svc.Deployed {
+		fields = append(fields, "deployed=true")
+	} else {
+		fields = append(fields, "deployed=false")
 	}
 	return strings.Join(fields, ", ")
 }

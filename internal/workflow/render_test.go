@@ -157,8 +157,10 @@ func TestRenderStatus_IdleRenders(t *testing.T) {
 		"Services: appdev, db",
 		"appdev (nodejs@22)",
 		"db (postgresql@16) — managed",
+		"bootstrapped=true",
 		"mode=dev",
 		"strategy=push-git",
+		"deployed=false",
 		"▸ Primary:",
 		"· Alternatives:",
 	} {
