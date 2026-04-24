@@ -533,6 +533,63 @@ func TestValidateKB_MixedFormat_FlagsOnlyTriples(t *testing.T) {
 	}
 }
 
+// TestBrief_Scaffold_OmitsHTTPSectionForNonHTTPRole — run-10-readiness
+// §Q1. Scaffold brief for a role whose contract has ServesHTTP=false
+// (worker / job-consumer) does not emit the `## HTTP` section; the
+// section was previously emitted unconditionally and the sub-agent
+// had to mentally skip it.
+func TestBrief_Scaffold_OmitsHTTPSectionForNonHTTPRole(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	var worker Codebase
+	for _, cb := range plan.Codebases {
+		if cb.Role == RoleWorker {
+			worker = cb
+		}
+	}
+	if worker.Hostname == "" {
+		t.Fatal("synthetic plan has no worker codebase")
+	}
+	brief, err := BuildScaffoldBrief(plan, worker, nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	if strings.Contains(brief.Body, "## HTTP") {
+		t.Errorf("worker brief should omit ## HTTP section; got:\n%s", brief.Body)
+	}
+}
+
+// TestBrief_Scaffold_IncludesHTTPSectionForHTTPRole — run-10-readiness
+// §Q1. HTTP-serving roles (api, frontend, monolith) still see the
+// `## HTTP` platform-obligations section, now with a plain header
+// (the `(ServesHTTP=true)` annotation was noise — the section only
+// exists when ServesHTTP is actually true).
+func TestBrief_Scaffold_IncludesHTTPSectionForHTTPRole(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	var api Codebase
+	for _, cb := range plan.Codebases {
+		if cb.Role == RoleAPI {
+			api = cb
+		}
+	}
+	if api.Hostname == "" {
+		t.Fatal("synthetic plan has no api codebase")
+	}
+	brief, err := BuildScaffoldBrief(plan, api, nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	if !strings.Contains(brief.Body, "## HTTP\n") {
+		t.Errorf("api brief must include ## HTTP section (plain header); got:\n%s", brief.Body)
+	}
+	if strings.Contains(brief.Body, "## HTTP (ServesHTTP=true)") {
+		t.Errorf("api brief should drop the `(ServesHTTP=true)` annotation; got:\n%s", brief.Body)
+	}
+}
+
 // TestBrief_Scaffold_KBGuidanceMatchesTopicFormat — run-10-readiness §O.
 // The scaffold brief body teaches `**Topic** — prose` and explicitly
 // bans the `**symptom**:` triple for KB.

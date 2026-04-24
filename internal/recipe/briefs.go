@@ -107,6 +107,9 @@ func BuildScaffoldBrief(plan *Plan, cb Codebase, parent *ParentRecipe) (Brief, e
 		if err != nil {
 			return Brief{}, err
 		}
+		if atom == "briefs/scaffold/platform_principles.md" && !contract.ServesHTTP {
+			body = stripHTTPSection(body)
+		}
 		b.WriteString(body)
 		if !strings.HasSuffix(body, "\n") {
 			b.WriteByte('\n')
@@ -195,6 +198,27 @@ func BuildFeatureBrief(plan *Plan) (Brief, error) {
 
 	out := b.String()
 	return Brief{Kind: BriefFeature, Body: out, Bytes: len(out), Parts: parts}, nil
+}
+
+// stripHTTPSection removes the `## HTTP` section from the platform-
+// principles atom when the codebase's role has ServesHTTP=false. The
+// section lives between `<!-- HTTP_SECTION_START -->` and
+// `<!-- HTTP_SECTION_END -->` markers in the atom. Run-10-readiness §Q1.
+func stripHTTPSection(body string) string {
+	const (
+		start = "<!-- HTTP_SECTION_START -->"
+		end   = "<!-- HTTP_SECTION_END -->"
+	)
+	before, rest, ok := strings.Cut(body, start)
+	if !ok {
+		return body
+	}
+	_, after, ok := strings.Cut(rest, end)
+	if !ok {
+		return body
+	}
+	out := strings.TrimRight(before, "\n") + "\n" + strings.TrimLeft(after, "\n")
+	return out
 }
 
 // excerptREADME trims a parent README to at most n bytes, cutting at

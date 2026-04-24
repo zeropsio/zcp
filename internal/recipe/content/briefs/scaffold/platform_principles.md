@@ -1,10 +1,12 @@
 # Platform obligations
 
-## HTTP (ServesHTTP=true)
+<!-- HTTP_SECTION_START -->
+## HTTP
 
 - Bind `0.0.0.0`, read `PORT` — loopback is unreachable
 - Trust `X-Forwarded-*` headers (L7 balancer sets them)
 - `zerops.yaml run.ports: { port: <PORT>, httpSupport: true }`
+<!-- HTTP_SECTION_END -->
 
 ## Before writing client code — consult `zerops_knowledge`
 
