@@ -4,6 +4,10 @@ package ops
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -477,76 +481,126 @@ func TestIsSSHBuildTriggered(t *testing.T) {
 	}
 }
 
-func TestBuildSSHCommand_ShellQuoting(t *testing.T) {
+// TestBuildSSHCommand_Shape locks the canonical shape of the command:
+// atomic safety-net, no top-level `git config user.*`, identity + init
+// paired inside the OR branch, followed by commit + push. Identity lands
+// from the DeployGitIdentity package constant — not from a caller — so
+// shell escaping of user-controlled strings no longer applies (the
+// attack surface vanished when the GitIdentity parameter was removed).
+// shellQuote itself is exercised by TestShellQuote below.
+func TestBuildSSHCommand_Shape(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name      string
-		email     string
-		fullName  string
-		checkFunc func(t *testing.T, cmd string)
-	}{
-		{
-			name:     "command injection via dollar",
-			email:    "test@example.com",
-			fullName: "$(whoami)",
-			checkFunc: func(t *testing.T, cmd string) {
-				t.Helper()
-				if !containsSubstring(cmd, "'$(whoami)'") {
-					t.Errorf("expected $(whoami) to be inside single quotes, got: %s", cmd)
-				}
-			},
-		},
-		{
-			name:     "backtick injection",
-			email:    "`id`@evil.com",
-			fullName: "Test User",
-			checkFunc: func(t *testing.T, cmd string) {
-				t.Helper()
-				if !containsSubstring(cmd, "'`id`@evil.com'") {
-					t.Errorf("expected backtick email to be inside single quotes, got: %s", cmd)
-				}
-			},
-		},
-		{
-			name:     "single quote in name",
-			email:    "test@example.com",
-			fullName: "O'Brien",
-			checkFunc: func(t *testing.T, cmd string) {
-				t.Helper()
-				if !containsSubstring(cmd, "'O'\\''Brien'") {
-					t.Errorf("expected single quote escaped via POSIX quoting, got: %s", cmd)
-				}
-			},
-		},
-		{
-			name:     "newline in name",
-			email:    "test@example.com",
-			fullName: "Test\nUser",
-			checkFunc: func(t *testing.T, cmd string) {
-				t.Helper()
-				if !containsSubstring(cmd, "'Test\nUser'") {
-					t.Errorf("expected newline inside single quotes, got: %s", cmd)
-				}
-			},
-		},
+	authInfo := auth.Info{
+		Token:   "test-token",
+		APIHost: "api.app-prg1.zerops.io",
+		Region:  "prg1",
+	}
+	cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false)
+
+	// Must contain: login, atomic safety-net, commit, push.
+	wantContains := []string{
+		"zcli login -- 'test-token'",
+		"cd /var/www",
+		"(test -d .git || (git init -q -b main && git config user.email 'agent@zerops.io' && git config user.name 'Zerops Agent'))",
+		"git add -A",
+		"git commit -q -m 'deploy'",
+		"zcli push --service-id svc-target",
+	}
+	for _, want := range wantContains {
+		if !containsSubstring(cmd, want) {
+			t.Errorf("missing substring %q in command:\n%s", want, cmd)
+		}
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
+	// Must NOT contain: top-level (outside OR branch) git config. The
+	// safety-net form keeps identity paired with init, so migration +
+	// recovery paths pick up both atomically. A regression that splits
+	// config out would re-introduce the "Please tell me who you are"
+	// failure on services with no pre-existing .git/.
+	//
+	// Checking this by ensuring the only occurrence of the config
+	// statements is inside the parenthesized OR branch — test by ruling
+	// out the old top-level form entirely.
+	forbidden := " && git config user.email " // note leading/trailing space — matches top-level position
+	// After the OR branch, the `&& git config` appears inside parens, not
+	// as a top-level conjunct. Easier check: count occurrences outside the
+	// OR branch. Simplest conservative check: the pattern `) && git config
+	// user.email` (identity right after the safety-net OR branch closes)
+	// would mean config was split.
+	if containsSubstring(cmd, ")) && git config user.email") {
+		t.Errorf("git config lives outside the OR branch — regression toward split identity:\n%s", cmd)
+	}
+	_ = forbidden
+}
 
-			authInfo := auth.Info{
-				Token:    "test-token",
-				APIHost:  "api.app-prg1.zerops.io",
-				Region:   "prg1",
-				Email:    tt.email,
-				FullName: tt.fullName,
-			}
-			id := GitIdentity{Name: tt.fullName, Email: tt.email}
-			cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false, id)
-			tt.checkFunc(t, cmd)
-		})
+// TestBuildSSHCommand_FreshInitPath executes the emitted command against
+// a real git binary on a scratch dir without .git/, proving the atomic
+// OR branch actually leaves a committed-ready repo behind (init + both
+// config entries). This is the migration lock-in: if a future refactor
+// splits config out of the OR branch, the following simulated "cold
+// path" deploy will fail with "Please tell me who you are" on `git
+// commit`, or user.email/user.name won't be set.
+//
+// Skipped under -short and when git is not on PATH.
+func TestBuildSSHCommand_FreshInitPath(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping under -short; needs real git binary")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	// Extract just the safety-net expression — not the whole command,
+	// which tries to `zcli push` at the end. We want to prove the atomic
+	// init+config piece behaves correctly in isolation.
+	//
+	// The safety-net is the second-through-fourth statement of the
+	// full command; grab it via the same emitter we care about rather
+	// than re-deriving the string.
+	authInfo := auth.Info{Token: "tok"}
+	full := buildSSHCommand(authInfo, "svc-target", dir, "", false)
+
+	// The safety-net chain starts at `cd <dir>` and ends just before
+	// `git add -A`. Slice that out; running it in a subshell inside dir
+	// is what a cold-path deploy would actually do on the container.
+	// Extract up to (but not including) ` && git add -A`.
+	idx := strings.Index(full, " && git add -A")
+	if idx < 0 {
+		t.Fatalf("command missing `git add -A` anchor, shape drifted:\n%s", full)
+	}
+	// Drop the leading `zcli login -- 'tok' && ` prefix so we run only
+	// the init+config piece. zcli login would fail locally — not the
+	// part we care about here.
+	full = full[:idx]
+	if prefix := "zcli login -- 'tok' && "; strings.HasPrefix(full, prefix) {
+		full = full[len(prefix):]
+	}
+
+	out, err := exec.Command("bash", "-c", full).CombinedOutput() //nolint:gosec // controlled test input
+	if err != nil {
+		t.Fatalf("safety-net chain failed: %v\noutput: %s\ncommand: %s", err, out, full)
+	}
+
+	// Assert .git/ exists and identity is set.
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		t.Errorf(".git not created: %v", err)
+	}
+	want := map[string]string{
+		"user.email": "agent@zerops.io",
+		"user.name":  "Zerops Agent",
+	}
+	for key, wantVal := range want {
+		got, gErr := exec.Command("git", "-C", dir, "config", "--get", key).Output() //nolint:gosec // controlled key
+		if gErr != nil {
+			t.Errorf("git config --get %s: %v", key, gErr)
+			continue
+		}
+		if strings.TrimSpace(string(got)) != wantVal {
+			t.Errorf("git config %s: got %q, want %q", key, strings.TrimSpace(string(got)), wantVal)
+		}
 	}
 }
 

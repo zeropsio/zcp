@@ -33,14 +33,15 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 		wantAbsent []string
 	}{
 		{
-			name:      "basic command with init guard and always-commit",
+			name:      "basic command with atomic safety-net and always-commit",
 			authInfo:  testAuthInfo(),
 			serviceID: "svc-123",
 			workDir:   "/var/www",
 			wantParts: []string{
-				"test -d .git || git init -q -b main",
-				"git config user.email 'agent@zerops.io'",
-				"git config user.name 'Zerops Agent'",
+				// Atomic OR branch: init AND config paired so migrated
+				// services (no pre-existing .git/) still get identity set
+				// before the downstream `git add -A && git commit`.
+				"(test -d .git || (git init -q -b main && git config user.email 'agent@zerops.io' && git config user.name 'Zerops Agent'))",
 				"git add -A",
 				"git diff-index --quiet HEAD 2>/dev/null || git commit -q -m 'deploy'",
 				"zcli push --service-id svc-123",
@@ -49,6 +50,10 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 				"rm -rf .git",
 				"git remote",
 				".gitignore",
+				// Top-level identity lines (outside the OR branch) would
+				// mean a regression toward the split form that used to
+				// fire "Please tell me who you are" on migrated services.
+				")) && git config user.email",
 			},
 		},
 		{
@@ -62,7 +67,7 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 			workDir:   "/var/www",
 			wantParts: []string{
 				"zcli login -- 'my-token'",
-				"test -d .git || git init -q -b main",
+				"(test -d .git || (git init -q -b main",
 				"zcli push --service-id svc-789",
 			},
 		},
@@ -98,7 +103,7 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			cmd := buildSSHCommand(tt.authInfo, tt.serviceID, tt.workDir, "", tt.includeGit, DeployGitIdentity)
+			cmd := buildSSHCommand(tt.authInfo, tt.serviceID, tt.workDir, "", tt.includeGit)
 
 			for _, part := range tt.wantParts {
 				if !contains(cmd, part) {
@@ -117,49 +122,31 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 func TestBuildSSHCommand_FreshInit_BranchMain(t *testing.T) {
 	t.Parallel()
 
-	id := GitIdentity{Name: "Test User", Email: "test@example.com"}
-	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false, id)
+	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false)
 
 	if !contains(cmd, "git init -q -b main") {
 		t.Errorf("fresh init must use -b main\ngot: %s", cmd)
 	}
 }
 
+// Identity no longer varies by caller — it's always DeployGitIdentity
+// read inside the package constant. The old table exercised alternate
+// identities that would have been injected via the (now-removed) `id
+// GitIdentity` parameter; the useful invariant from that table — the
+// diff-index-guarded commit — is what stays here.
 func TestBuildSSHCommand_AlwaysCommits(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name string
-		id   GitIdentity
-	}{
-		{
-			name: "standard identity",
-			id:   GitIdentity{Name: "Test User", Email: "test@example.com"},
-		},
-		{
-			name: "different identity",
-			id:   GitIdentity{Name: "Deploy Bot", Email: "bot@ci.io"},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false, tt.id)
-
-			if !contains(cmd, "git add -A && (git diff-index") {
-				t.Errorf("command must always stage and commit\ngot: %s", cmd)
-			}
-		})
+	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false)
+	if !contains(cmd, "git add -A && (git diff-index") {
+		t.Errorf("command must always stage and commit\ngot: %s", cmd)
 	}
 }
 
 func TestBuildSSHCommand_NoChanges_SkipsCommit(t *testing.T) {
 	t.Parallel()
 
-	id := GitIdentity{Name: "Test User", Email: "test@example.com"}
-	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false, id)
+	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false)
 
 	if !contains(cmd, "git diff-index --quiet HEAD 2>/dev/null || git commit -q -m 'deploy'") {
 		t.Errorf("must use diff-index to skip commit when nothing changed\ngot: %s", cmd)
@@ -169,8 +156,7 @@ func TestBuildSSHCommand_NoChanges_SkipsCommit(t *testing.T) {
 func TestBuildSSHCommand_PreservesRemoteAndGitignore(t *testing.T) {
 	t.Parallel()
 
-	id := GitIdentity{Name: "Test User", Email: "test@example.com"}
-	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false, id)
+	cmd := buildSSHCommand(testAuthInfo(), "svc-1", "/var/www", "", false)
 
 	unwanted := []string{"git remote", ".gitignore"}
 	for _, s := range unwanted {

@@ -69,7 +69,7 @@ func DeploySSH(
 	includeGit := sourceService == targetService
 
 	return deploySSH(ctx, client, projectID, sshDeployer, authInfo,
-		sourceService, targetService, setup, workingDir, includeGit, DeployGitIdentity)
+		sourceService, targetService, setup, workingDir, includeGit)
 }
 
 func deploySSH(
@@ -83,7 +83,6 @@ func deploySSH(
 	setup string,
 	workingDir string,
 	includeGit bool,
-	id GitIdentity,
 ) (*DeployResult, error) {
 	services, err := client.ListServices(ctx, projectID)
 	if err != nil {
@@ -133,7 +132,7 @@ func deploySSH(
 		}
 	}
 
-	cmd := buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit, id)
+	cmd := buildSSHCommand(authInfo, target.ID, workingDir, setup, includeGit)
 
 	output, err := sshDeployer.ExecSSH(ctx, source.Name, cmd)
 	if err != nil {
@@ -168,24 +167,35 @@ func deploySSH(
 	}, nil
 }
 
-func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup string, includeGit bool, id GitIdentity) string {
+func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup string, includeGit bool) string {
 	parts := make([]string, 0, 2)
 
 	// Login to zcli on the remote host.
 	loginCmd := fmt.Sprintf("zcli login -- %s", shellQuote(authInfo.Token))
 	parts = append(parts, loginCmd)
 
-	email := shellQuote(id.Email)
-	name := shellQuote(id.Name)
+	// Atomic safety-net for the .git lifecycle (GLC-2). Happy path: bootstrap
+	// already ran InitServiceGit on this service so .git/ exists + identity
+	// is persisted in .git/config. test -d short-circuits the OR and we
+	// move straight to commit.
+	//
+	// Cold path (only two cases reach it):
+	//  1. Migration — service provisioned before this file existed, no .git/.
+	//  2. Recovery — operator ran `sudo rm -rf /var/www/.git`.
+	// In either case the OR branch runs init AND identity config together
+	// so the following `git add -A && git commit` has everything it needs.
+	// Splitting config out of the OR re-introduces the "Please tell me who
+	// you are" failure on migrated services — don't.
+	email := shellQuote(DeployGitIdentity.Email)
+	name := shellQuote(DeployGitIdentity.Name)
+	gitSafety := fmt.Sprintf(
+		"(test -d .git || (git init -q -b main && git config user.email %s && git config user.name %s))",
+		email, name,
+	)
 
-	// Init only if no .git exists. Use -b main for consistent branch name.
-	gitInit := "(test -d .git || git init -q -b main)"
-
-	// Always set identity (internal deploy commits, not user-facing).
-	gitIdentity := fmt.Sprintf("git config user.email %s && git config user.name %s", email, name)
-
-	// Always stage + commit. Skip commit if nothing changed (diff-index quiet).
-	// On fresh init, HEAD doesn't exist -> diff-index fails -> || fires -> commit runs.
+	// Stage + commit. Skip commit if nothing changed (diff-index quiet).
+	// On fresh init after safety-net, HEAD doesn't exist → diff-index fails
+	// → || fires → commit runs.
 	gitCommit := "git add -A && (git diff-index --quiet HEAD 2>/dev/null || git commit -q -m 'deploy')"
 
 	// Push from workingDir with git handling.
@@ -197,8 +207,8 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup stri
 		pushArgs += " -g"
 	}
 
-	pushCmd := fmt.Sprintf("cd %s && %s && %s && %s && %s",
-		workingDir, gitInit, gitIdentity, gitCommit, pushArgs)
+	pushCmd := fmt.Sprintf("cd %s && %s && %s && %s",
+		workingDir, gitSafety, gitCommit, pushArgs)
 	parts = append(parts, pushCmd)
 
 	return strings.Join(parts, " && ")
