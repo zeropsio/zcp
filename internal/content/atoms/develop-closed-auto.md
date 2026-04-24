@@ -4,6 +4,7 @@ priority: 1
 phases: [develop-closed-auto]
 title: "Develop auto-closed — next step"
 references-fields: [workflow.StateEnvelope.Phase, workflow.WorkSessionSummary.ClosedAt, workflow.WorkSessionSummary.CloseReason]
+references-atoms: [develop-auto-close-semantics]
 ---
 
 The envelope's `phase: develop-closed-auto` is set because every

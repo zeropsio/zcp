@@ -5,6 +5,7 @@ phases: [idle]
 idleScenarios: [bootstrapped]
 title: "Develop entry"
 references-fields: [workflow.StateEnvelope.Phase, workflow.WorkSessionSummary.Deploys, workflow.WorkSessionSummary.Verifies]
+references-atoms: [develop-auto-close-semantics]
 ---
 
 The project has at least one bootstrapped service ready to receive

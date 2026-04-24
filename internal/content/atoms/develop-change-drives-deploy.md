@@ -3,6 +3,7 @@ id: develop-change-drives-deploy
 priority: 2
 phases: [develop-active]
 title: "Every code change must flow through the deploy strategy"
+references-atoms: [develop-auto-close-semantics]
 ---
 
 ### Every code change must flow through the deploy strategy

@@ -7,6 +7,7 @@ modes: [standard]
 environments: [container]
 title: "First-deploy — promote dev to stage"
 references-fields: [workflow.ServiceSnapshot.StageHostname]
+references-atoms: [develop-auto-close-semantics]
 ---
 
 ### Promote the first deploy to stage

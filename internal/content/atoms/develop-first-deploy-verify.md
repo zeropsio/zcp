@@ -5,6 +5,7 @@ phases: [develop-active]
 deployStates: [never-deployed]
 title: "Verify the first deploy"
 references-fields: [ops.VerifyResult.Status, ops.VerifyResult.Checks, ops.CheckResult.Status, ops.CheckResult.Detail]
+references-atoms: [develop-auto-close-semantics]
 ---
 
 ### Verify the first deploy
