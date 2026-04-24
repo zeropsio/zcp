@@ -5,9 +5,9 @@ Schema (all required):
 - `topic` — short kebab-case
 - `symptom` — observable failure (status + quoted error)
 - `mechanism` — why (platform-side; both sides if intersection)
-- `surface_hint` — one of: `root-overview`, `tier-promotion`,
+- `surfaceHint` — one of: `root-overview`, `tier-promotion`,
   `tier-decision`, `porter-change`, `platform-trap`, `operational`,
-  `scaffold-decision`
+  `scaffold-decision`, `browser-verification`
 - `citation` — `zerops_knowledge` guide id or published-recipe URL.
   Required for every `platform-trap` / `porter-change` fact.
 

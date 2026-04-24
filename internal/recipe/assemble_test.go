@@ -151,6 +151,206 @@ func isAllUpperSnake(s string) bool {
 	return true
 }
 
+// TestAssemble_FragmentBodyWith_JSTemplateLiteral_NotFlagged — fragment
+// bodies routinely contain JS template-literal syntax like
+// fetch(`${API_URL}/items`). The post-render token scanner must not flag
+// these as unbound engine tokens. Workstream A1 (run-9-readiness).
+func TestAssemble_FragmentBodyWith_JSTemplateLiteral_NotFlagged(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.Slug = "synth"
+	plan.Framework = "nest"
+	plan.Fragments = map[string]string{
+		"codebase/api/intro":                   "api",
+		"codebase/api/integration-guide":       "1. Configure `zerops.yaml` so the runtime calls `fetch(`${API_URL}/items`)` at boot — avoids hardcoding the origin.",
+		"codebase/api/knowledge-base":          "- **x** — because Y",
+		"codebase/api/claude-md/service-facts": "api",
+		"codebase/api/claude-md/notes":         "notes",
+	}
+
+	_, _, err := AssembleCodebaseREADME(plan, "api")
+	if err != nil {
+		t.Fatalf("JS template literal in fragment body should not trip token scan: %v", err)
+	}
+}
+
+// TestAssemble_FragmentBodyWith_BareCurlyToken_NotFlagged — Svelte /
+// Handlebars / Go html/template bodies carry `{FILENAME}` or
+// `{{ .Name }}` literals. Workstream A1.
+func TestAssemble_FragmentBodyWith_BareCurlyToken_NotFlagged(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.Slug = "synth"
+	plan.Framework = "svelte"
+	plan.Fragments = map[string]string{
+		"codebase/api/intro":                   "`{FILENAME}` routes to `src/routes/{FILENAME}.svelte` at build time.",
+		"codebase/api/integration-guide":       "1. Configure `zerops.yaml`. Use `{#if cond}…{/if}` guards as needed.",
+		"codebase/api/knowledge-base":          "- **x** — because Y",
+		"codebase/api/claude-md/service-facts": "api",
+		"codebase/api/claude-md/notes":         "notes",
+	}
+
+	body, _, err := AssembleCodebaseREADME(plan, "api")
+	if err != nil {
+		t.Fatalf("bare {UPPER} in fragment body should not trip token scan: %v", err)
+	}
+	if !strings.Contains(body, "{FILENAME}") {
+		t.Errorf("fragment body {FILENAME} token dropped from rendered output")
+	}
+}
+
+// TestAssemble_UnreplacedEngineToken_IsFlagged — a real defect: the
+// scanner still catches an engine-bound token that the template forgot
+// to supply. Simulated by seeding a fragment body with {SLUG} and
+// clearing plan.Slug so the binder leaves the literal in place.
+// Workstream A1.
+func TestAssemble_UnreplacedEngineToken_IsFlagged(t *testing.T) {
+	t.Parallel()
+
+	// Inject an engine-bound token into a fragment body; since replaceTokens
+	// runs on the template BEFORE substituteFragmentMarkers, the token in
+	// the fragment body is not substituted. Still, this test's point is the
+	// error-path shape — we assert that when an engine token IS present
+	// after render, it gets flagged.
+	plan := syntheticShowcasePlan()
+	plan.Slug = "synth"
+	plan.Framework = "nest"
+	plan.Fragments = map[string]string{
+		"codebase/api/intro":                   "{SLUG} placeholder leaked into fragment body",
+		"codebase/api/integration-guide":       "1. Configure `zerops.yaml` here.",
+		"codebase/api/knowledge-base":          "- **x** — because Y",
+		"codebase/api/claude-md/service-facts": "api",
+		"codebase/api/claude-md/notes":         "notes",
+	}
+
+	_, _, err := AssembleCodebaseREADME(plan, "api")
+	if err == nil {
+		t.Fatalf("expected unbound engine token {SLUG} in fragment body to be flagged")
+	}
+	if !strings.Contains(err.Error(), "{SLUG}") {
+		t.Errorf("error should name the unbound token; got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "codebase/api") {
+		t.Errorf("error should name the surface; got: %v", err)
+	}
+}
+
+// TestAssemble_ErrorNamesSurface — the wrapped error must carry the
+// surface identifier so the author can navigate without spelunking.
+// Workstream A1.
+func TestAssemble_ErrorNamesSurface(t *testing.T) {
+	t.Parallel()
+
+	// Env surface error path: plan.Framework contains `{FRAMEWORK}` (!)
+	// would normally self-resolve, so we test by poisoning a fragment id.
+	plan := syntheticShowcasePlan()
+	plan.Slug = "synth"
+	plan.Framework = "nest"
+	plan.Fragments = map[string]string{
+		"env/0/intro": "{FRAMEWORK} literal still here",
+	}
+
+	_, _, err := AssembleEnvREADME(plan, 0)
+	if err == nil {
+		t.Fatalf("expected unbound engine token in fragment body to be flagged")
+	}
+	if !strings.Contains(err.Error(), "env/0") {
+		t.Errorf("error should name the env surface; got: %v", err)
+	}
+}
+
+// TestAssemble_FragmentBody_CodeTokens_E2E — run-9-readiness §R.
+// Fixture covers every code-block token shape a fragment body is
+// likely to carry. Landing this pins the A1 invariant: fragment bodies
+// with legitimate `${UPPER}` or `{UPPER}` or `{{ ... }}` don't trip
+// the post-render token scanner.
+func TestAssemble_FragmentBody_CodeTokens_E2E(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.Slug = "synth-showcase"
+	plan.Framework = "synth"
+	// Every shape of fragment-body code token that a real run has
+	// produced or is likely to produce.
+	codeBodies := strings.Join([]string{
+		"JS template literal: ``fetch(`${API_URL}/items`)``",
+		"Handlebars curly: `{FILENAME}` maps to `src/{FILENAME}.svelte`",
+		"Double-brace: `{{template}}` is Vue syntax",
+		"Svelte slot: `<slot />`",
+		"Svelte conditional: `{#if cond}...{/if}`",
+		"Go html/template: `{{ .FieldName }}`",
+		"Backtick code: `` `${PLACEHOLDER}` ``",
+	}, "\n\n")
+	plan.Fragments = map[string]string{
+		"root/intro":  "root intro with `${ROOT_TOKEN}` literal",
+		"env/0/intro": "env-0 intro with `{TIER_LOCAL}` literal",
+		"env/1/intro": "env-1 intro with `{{ .Tier }}` literal",
+		"env/2/intro": "env-2 intro",
+		"env/3/intro": "env-3 intro",
+		"env/4/intro": "env-4 intro",
+		"env/5/intro": "env-5 intro",
+	}
+	// Every codebase fragment id takes a body sample from codeBodies so
+	// the round-trip exercises every surface.
+	for _, cb := range plan.Codebases {
+		base := "codebase/" + cb.Hostname
+		plan.Fragments[base+"/intro"] = codeBodies
+		plan.Fragments[base+"/integration-guide"] = "1. Configure `zerops.yaml`.\n\n" + codeBodies
+		plan.Fragments[base+"/knowledge-base"] = "- **x** — because Y\n\n" + codeBodies
+		plan.Fragments[base+"/claude-md/service-facts"] = codeBodies
+		plan.Fragments[base+"/claude-md/notes"] = codeBodies
+	}
+
+	// Root README.
+	body, missing, err := AssembleRootREADME(plan)
+	if err != nil {
+		t.Fatalf("root: %v", err)
+	}
+	if len(missing) != 0 {
+		t.Errorf("root missing: %v", missing)
+	}
+	if !strings.Contains(body, "${ROOT_TOKEN}") {
+		t.Errorf("root body dropped fragment code token")
+	}
+
+	// Env READMEs for every tier.
+	for i := range Tiers() {
+		body, _, err := AssembleEnvREADME(plan, i)
+		if err != nil {
+			t.Errorf("env/%d: %v", i, err)
+		}
+		if body == "" {
+			t.Errorf("env/%d: empty body", i)
+		}
+	}
+
+	// Per-codebase README + CLAUDE.md.
+	for _, cb := range plan.Codebases {
+		rbody, _, err := AssembleCodebaseREADME(plan, cb.Hostname)
+		if err != nil {
+			t.Errorf("codebase/%s README: %v", cb.Hostname, err)
+		}
+		for _, sample := range []string{
+			"${API_URL}", "{FILENAME}", "{{template}}",
+			"<slot />", "{#if cond}", "{{ .FieldName }}", "${PLACEHOLDER}",
+		} {
+			if !strings.Contains(rbody, sample) {
+				t.Errorf("codebase/%s README: %q missing from rendered body",
+					cb.Hostname, sample)
+			}
+		}
+		cbody, _, err := AssembleCodebaseClaudeMD(plan, cb.Hostname)
+		if err != nil {
+			t.Errorf("codebase/%s CLAUDE: %v", cb.Hostname, err)
+		}
+		if !strings.Contains(cbody, "${API_URL}") {
+			t.Errorf("codebase/%s CLAUDE.md: code token dropped", cb.Hostname)
+		}
+	}
+}
+
 // TestHandler_RecordFragment_AppendVsOverwrite — scaffold-authored
 // codebase fragments (IG, KB, CLAUDE.md) are append-on-extend so a
 // feature sub-agent can add to scaffold's body without clobbering it.
@@ -249,8 +449,12 @@ func TestAssemble_CopiesCommittedYaml(t *testing.T) {
 
 	// Stage a scaffold-authored zerops.yaml with a distinct inline
 	// comment so the round-trip check catches any re-emission regression.
-	scaffoldRoot := filepath.Join(dir, "workspace", "api")
-	if err := os.MkdirAll(scaffoldRoot, 0o755); err != nil {
+	// A2 requires every codebase to have a SourceRoot + zerops.yaml on
+	// disk; the test's round-trip target is the api yaml specifically,
+	// other codebases get a minimal placeholder so stitch doesn't
+	// hard-fail on them.
+	apiRoot := filepath.Join(dir, "workspace", "api")
+	if err := os.MkdirAll(apiRoot, 0o755); err != nil {
 		t.Fatalf("mkdir scaffold: %v", err)
 	}
 	committed := `# scaffold-authored yaml — inline comment must survive verbatim
@@ -262,14 +466,23 @@ zerops:
       # why: L7 balancer routes to 0.0.0.0
       base: nodejs@22
 `
-	yamlPath := filepath.Join(scaffoldRoot, "zerops.yaml")
-	if err := os.WriteFile(yamlPath, []byte(committed), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(apiRoot, "zerops.yaml"), []byte(committed), 0o600); err != nil {
 		t.Fatalf("write scaffold yaml: %v", err)
 	}
 	for i, cb := range sess.Plan.Codebases {
 		if cb.Hostname == "api" {
-			sess.Plan.Codebases[i].SourceRoot = scaffoldRoot
+			sess.Plan.Codebases[i].SourceRoot = apiRoot
+			continue
 		}
+		// Placeholder yaml for other codebases so stitch succeeds.
+		other := filepath.Join(dir, "workspace", cb.Hostname)
+		if err := os.MkdirAll(other, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", other, err)
+		}
+		if err := os.WriteFile(filepath.Join(other, "zerops.yaml"), []byte("# placeholder — because test\nzerops: []\n"), 0o600); err != nil {
+			t.Fatalf("write placeholder yaml: %v", err)
+		}
+		sess.Plan.Codebases[i].SourceRoot = other
 	}
 
 	if err := fillAllFragments(store, "synth-showcase", sess.Plan); err != nil {
@@ -408,6 +621,18 @@ func TestAssemble_StitchWritesFragmentsToDisk(t *testing.T) {
 	sess.Plan = syntheticShowcasePlan()
 	sess.Plan.Slug = "synth-showcase"
 	sess.Plan.Framework = "synth"
+	// Stage scaffold-authored yamls so A2's hard-fail doesn't abort stitch.
+	for i, cb := range sess.Plan.Codebases {
+		wsRoot := filepath.Join(dir, "workspace", cb.Hostname)
+		if err := os.MkdirAll(wsRoot, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(wsRoot, "zerops.yaml"),
+			[]byte("# "+cb.Hostname+" — because test\nzerops: []\n"), 0o600); err != nil {
+			t.Fatalf("write yaml: %v", err)
+		}
+		sess.Plan.Codebases[i].SourceRoot = wsRoot
+	}
 	sess.Plan.Fragments = map[string]string{
 		"root/intro":                              "synth recipe intro",
 		"env/0/intro":                             "agent-tier intro",

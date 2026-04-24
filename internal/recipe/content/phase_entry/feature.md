@@ -39,13 +39,20 @@ feature-kind from the feature brief.
    redeploying.
 
 7. **Browser-walk verification** on the rendered UI: use the
-   `zerops_browser` tool to navigate to the frontend dev URL, exercise
-   each feature tab (list → create → update → delete → search →
-   upload), and record a `zerops_record_fact` of type
-   `browser_verification` per feature tab. Put the console output +
-   screenshot path in the fact's `evidence` field; any console error
-   or blank view is a regression the sub-agent must fix before phase
-   close.
+   `zerops_browser` tool to navigate to the frontend dev URL and
+   exercise each feature tab (list → create → update → delete →
+   search → upload). After EVERY `zerops_browser` call, record one
+   FactRecord via **`zerops_recipe action=record-fact`** (the v3
+   tool — NOT the legacy `zerops_record_fact`) with
+   `surfaceHint: browser-verification`. Fill:
+   - `topic: <codebase>-<tab>-browser`
+   - `symptom: <what you checked and whether the signal was visible>`
+   - `mechanism: zerops_browser`
+   - `citation: none`
+   - `scope: <service>/<tab>`
+   - `extra.screenshot: <path>` and `extra.console: <digest>`
+   Any console error or blank view is a regression the sub-agent must
+   fix before phase close.
 
 8. **Cross-deploy dev → stage** for every codebase the feature
    touched: `zerops_deploy sourceService=<h>dev targetService=<h>stage`

@@ -37,7 +37,7 @@ func (f FactRecord) Validate() error {
 	case f.Mechanism:
 		return errors.New("fact record missing required field \"mechanism\"")
 	case f.SurfaceHint:
-		return errors.New("fact record missing required field \"surface_hint\"")
+		return errors.New("fact record missing required field \"surfaceHint\"")
 	case f.Citation:
 		return errors.New("fact record missing required field \"citation\"")
 	}

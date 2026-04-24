@@ -11,7 +11,7 @@ func TestFactRecord_RequiredFields(t *testing.T) {
 	// Facts are structured at record time, not classified at consume time
 	// (plan §5 P4). Records missing any required field are rejected at
 	// Append — the writer never sees a half-typed fact.
-	required := []string{"topic", "symptom", "mechanism", "surface_hint", "citation"}
+	required := []string{"topic", "symptom", "mechanism", "surfaceHint", "citation"}
 
 	for _, missing := range required {
 		t.Run("missing="+missing, func(t *testing.T) {
@@ -30,7 +30,7 @@ func TestFactRecord_RequiredFields(t *testing.T) {
 				f.Symptom = ""
 			case "mechanism":
 				f.Mechanism = ""
-			case "surface_hint":
+			case "surfaceHint":
 				f.SurfaceHint = ""
 			case "citation":
 				f.Citation = ""

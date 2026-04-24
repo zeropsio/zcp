@@ -135,7 +135,15 @@ type RecipeResult struct {
 	ParentStatus string        `json:"parentStatus,omitempty"`
 	Guidance     string        `json:"guidance,omitempty"`
 	StitchedPath string        `json:"stitchedPath,omitempty"`
-	Error        string        `json:"error,omitempty"`
+	// FragmentID, BodyBytes, Appended — run-9-readiness §2.J. Echoed on
+	// record-fragment success so the caller sees which fragment landed,
+	// the post-write body size, and whether append semantics fired
+	// (previously 22 record-fragment calls returned byte-identical
+	// envelopes, leaving the author no signal).
+	FragmentID string `json:"fragmentId,omitempty"`
+	BodyBytes  int    `json:"bodyBytes,omitempty"`
+	Appended   bool   `json:"appended,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 // Register installs the zerops_recipe tool. server.go gates it behind
@@ -197,6 +205,9 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 			r.Error = err.Error()
 			return r
 		}
+		if sess.Current == PhaseScaffold {
+			populateSourceRootsForScaffold(sess)
+		}
 		snap := sess.Snapshot()
 		r.Status = &snap
 		r.Guidance = loadPhaseEntry(sess.Current)
@@ -246,10 +257,14 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 			r.Error = "record-fragment: fragmentId is required"
 			return r
 		}
-		if err := recordFragment(sess, in.FragmentID, in.Fragment); err != nil {
+		bodyBytes, appended, err := recordFragment(sess, in.FragmentID, in.Fragment)
+		if err != nil {
 			r.Error = err.Error()
 			return r
 		}
+		r.FragmentID = in.FragmentID
+		r.BodyBytes = bodyBytes
+		r.Appended = appended
 		r.OK = true
 	case "resolve-chain":
 		parent, err := ResolveChain(Resolver{MountRoot: store.mountRoot}, in.Slug)
@@ -449,20 +464,45 @@ func stitchContent(sess *Session) ([]string, error) {
 	return missing, nil
 }
 
+// DefaultSourceRoot is the convention-based SSHFS mount path where the
+// scaffold sub-agent authors a codebase. Every codebase hostname `<h>`
+// materializes as `<h>dev` (mountable) + `<h>stage` (cross-deploy
+// target); the authoring workspace is always the dev slot.
+func DefaultSourceRoot(hostname string) string {
+	return "/var/www/" + hostname + "dev"
+}
+
+// populateSourceRootsForScaffold fills empty Codebase.SourceRoot fields
+// with the convention-based path at the moment scaffold authoring
+// begins. Explicit values (chain-resolver or non-standard mount) are
+// preserved. Run-9-readiness Workstream A2.
+func populateSourceRootsForScaffold(sess *Session) {
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.Plan == nil {
+		return
+	}
+	for i, cb := range sess.Plan.Codebases {
+		if cb.SourceRoot == "" {
+			sess.Plan.Codebases[i].SourceRoot = DefaultSourceRoot(cb.Hostname)
+		}
+	}
+}
+
 // copyCommittedYAML copies <cb.SourceRoot>/zerops.yaml into the apps-
-// repo shape at <cbRoot>/zerops.yaml verbatim. SourceRoot unset is a
-// soft fail: the stitch proceeds but the codebase ships without a
-// zerops.yaml so the finalize validator surfaces the gap (run-8
-// acceptance #4). Missing source file is a hard fail — it signals
-// scaffold never committed the yaml.
+// repo shape at <cbRoot>/zerops.yaml verbatim. SourceRoot is guaranteed
+// populated by populateSourceRootsForScaffold at `enter-phase scaffold`
+// (Workstream A2), so an empty SourceRoot here signals scaffold never
+// ran — a hard gate failure. Missing source file is likewise hard fail:
+// scaffold was entered but the sub-agent did not author the yaml.
 func copyCommittedYAML(cb Codebase, cbRoot string) error {
 	if cb.SourceRoot == "" {
-		return nil
+		return fmt.Errorf("codebase %q has no SourceRoot — scaffold did not run or was skipped", cb.Hostname)
 	}
 	src := filepath.Join(cb.SourceRoot, "zerops.yaml")
 	body, err := os.ReadFile(src)
 	if err != nil {
-		return fmt.Errorf("read scaffold yaml at %s: %w", src, err)
+		return fmt.Errorf("read scaffold yaml at %s (scaffold did not author it): %w", src, err)
 	}
 	if err := os.MkdirAll(cbRoot, 0o755); err != nil {
 		return fmt.Errorf("mkdir %s: %w", cbRoot, err)
@@ -472,161 +512,6 @@ func copyCommittedYAML(cb Codebase, cbRoot string) error {
 		return fmt.Errorf("write copied yaml: %w", err)
 	}
 	return nil
-}
-
-// recordFragment validates the fragment id against the plan, applies
-// append-or-overwrite semantics, and stores the body on plan.Fragments
-// (or on the typed EnvComments for env/*/import-comments/* ids).
-func recordFragment(sess *Session, id, body string) error {
-	sess.mu.Lock()
-	defer sess.mu.Unlock()
-	if sess.Plan == nil {
-		return errors.New("record-fragment: plan not initialized — call update-plan first")
-	}
-	if !isValidFragmentID(sess.Plan, id) {
-		return fmt.Errorf("record-fragment: unknown fragmentId %q", id)
-	}
-	if strings.HasPrefix(id, "env/") && strings.Contains(id, "/import-comments/") {
-		return applyEnvComment(sess.Plan, id, body)
-	}
-	if sess.Plan.Fragments == nil {
-		sess.Plan.Fragments = map[string]string{}
-	}
-	if isAppendFragmentID(id) {
-		existing := sess.Plan.Fragments[id]
-		if existing == "" {
-			sess.Plan.Fragments[id] = body
-			return nil
-		}
-		sess.Plan.Fragments[id] = existing + "\n\n" + body
-		return nil
-	}
-	sess.Plan.Fragments[id] = body
-	return nil
-}
-
-// applyEnvComment routes env/<N>/import-comments/<target> into the
-// typed plan.EnvComments map so the yaml emitter reads writer-authored
-// comments without a separate fragment-consumption layer.
-func applyEnvComment(plan *Plan, id, body string) error {
-	// id = "env/<N>/import-comments/<target>"
-	rest := strings.TrimPrefix(id, "env/")
-	slash := strings.IndexByte(rest, '/')
-	if slash <= 0 {
-		return fmt.Errorf("record-fragment: malformed env id %q", id)
-	}
-	tierKey := rest[:slash]
-	target := strings.TrimPrefix(rest[slash+1:], "import-comments/")
-	if plan.EnvComments == nil {
-		plan.EnvComments = map[string]EnvComments{}
-	}
-	ec := plan.EnvComments[tierKey]
-	if target == "project" {
-		ec.Project = body
-	} else {
-		if ec.Service == nil {
-			ec.Service = map[string]string{}
-		}
-		ec.Service[target] = body
-	}
-	plan.EnvComments[tierKey] = ec
-	return nil
-}
-
-// isAppendFragmentID reports whether an id uses append-on-extend
-// semantics. Per plan §2.A.4: feature sub-agent extends IG, KB, and
-// CLAUDE.md sections; root and env overwrite (main agent authors once).
-func isAppendFragmentID(id string) bool {
-	if !strings.HasPrefix(id, "codebase/") {
-		return false
-	}
-	switch {
-	case strings.HasSuffix(id, "/integration-guide"):
-		return true
-	case strings.HasSuffix(id, "/knowledge-base"):
-		return true
-	case strings.Contains(id, "/claude-md/"):
-		return true
-	}
-	return false
-}
-
-// fragmentIDRoot is the only root-scoped fragment id. Constants prevent
-// a typo here from silently diverging from the assembler's marker id.
-const fragmentIDRoot = "root/intro"
-
-// isValidFragmentID reports whether id matches one of the declared
-// fragment shapes given the plan's codebases. Covers root/, env/<N>/,
-// env/<N>/import-comments/<hostname|project>, codebase/<hostname>/...
-func isValidFragmentID(plan *Plan, id string) bool {
-	if id == fragmentIDRoot {
-		return true
-	}
-	if rest, ok := strings.CutPrefix(id, "env/"); ok {
-		slash := strings.IndexByte(rest, '/')
-		if slash <= 0 {
-			return false
-		}
-		tierIdx, err := parseTierIndex(rest[:slash])
-		if err != nil {
-			return false
-		}
-		if _, ok := TierAt(tierIdx); !ok {
-			return false
-		}
-		tail := rest[slash+1:]
-		switch {
-		case tail == "intro":
-			return true
-		case tail == "import-comments/project":
-			return true
-		case strings.HasPrefix(tail, "import-comments/"):
-			host := strings.TrimPrefix(tail, "import-comments/")
-			return codebaseKnown(plan, host) || serviceKnown(plan, host)
-		}
-		return false
-	}
-	if rest, ok := strings.CutPrefix(id, "codebase/"); ok {
-		slash := strings.IndexByte(rest, '/')
-		if slash <= 0 {
-			return false
-		}
-		host := rest[:slash]
-		if !codebaseKnown(plan, host) {
-			return false
-		}
-		tail := rest[slash+1:]
-		switch tail {
-		case "intro", "integration-guide", "knowledge-base",
-			"claude-md/service-facts", "claude-md/notes":
-			return true
-		}
-		return false
-	}
-	return false
-}
-
-// parseTierIndex returns the numeric tier index parsed from a string
-// key; returns an error on any non-numeric input.
-func parseTierIndex(s string) (int, error) {
-	var i int
-	_, err := fmt.Sscanf(s, "%d", &i)
-	return i, err
-}
-
-// serviceKnown reports whether a hostname matches one of the plan's
-// managed services. Env import-comments may address a managed service
-// block (db, cache, storage) in addition to runtime codebases.
-func serviceKnown(plan *Plan, hostname string) bool {
-	if plan == nil {
-		return false
-	}
-	for _, s := range plan.Services {
-		if s.Hostname == hostname {
-			return true
-		}
-	}
-	return false
 }
 
 func writeSurfaceFile(path, body string) error {

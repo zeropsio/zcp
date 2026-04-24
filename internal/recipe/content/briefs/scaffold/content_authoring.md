@@ -1,5 +1,35 @@
 # Content authoring
 
+## Voice — the reader is a porter, never another recipe author
+
+Everything you write — fragment bodies, `zerops.yaml` inline comments,
+committed source-code comments, README prose — is read by someone
+deploying this recipe into their own project. They cloned the apps
+repo and are reading your code to understand how it works, not how
+you built it.
+
+**Never write:** "the scaffold", "feature phase", "pre-ship contract
+item N", "showcase default", "showcase tier", "showcase tradeoff",
+"the recipe", "we chose", "we added", "grew from", "kept for backwards
+compat" (when the "back" is your own scaffold), "scaffold smoke test".
+
+**Always write:** descriptions of the finished product. The product
+IS wired. The product HAS the health probe. The product HANDLES the
+upload. There is no authoring-phase "before" for a porter to compare
+against.
+
+Good vs bad:
+
+- yaml inline: `# Bucket policy is private — signed URLs give callers
+  time-bounded access without exposing the bucket to the public
+  internet.` ← GOOD
+- yaml inline: `# Bucket policy is private (showcase default) — 15
+  min is a showcase-tier tradeoff.` ← BAD (authoring refs)
+- ts docstring: `// /health returns 200 once the runtime is ready.` ←
+  GOOD
+- ts docstring: `// /health added per pre-ship contract item 1. MUST
+  be removed before prod.` ← BAD (authoring refs)
+
 Produce your codebase's `zerops.yaml` (with inline comments) + record
 5 fragments via `zerops_recipe action=record-fragment`:
 
@@ -22,3 +52,14 @@ Why-not-what. Use `because`, `so that`, `otherwise`, `trade-off`.
 
 Self-inflicted bugs and pure framework quirks DISCARD. Platform ×
 framework intersections → KB with a `zerops_knowledge` citation.
+
+Dev vs prod process model + `zerops_dev_server` live in
+`principles/dev-loop.md` (injected above). Implicit-webserver runtimes
+(php-nginx, static) skip the `zsc noop` rule for their backend but may
+still need the dev-server for a compiled frontend — the atom spells
+out the carve-out.
+
+Mount vs container execution-split (editor tools on the mount,
+framework CLIs via ssh) lives in `principles/mount-vs-container.md`
+(injected above). Never run `npm install` / `tsc` / `nest build`
+against the SSHFS mount locally — it's slow AND semantically wrong.

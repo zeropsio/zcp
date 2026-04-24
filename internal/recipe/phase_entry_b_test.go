@@ -75,7 +75,7 @@ func TestFeatureAtom_BrowserVerification(t *testing.T) {
 	body := loadPhaseEntry(PhaseFeature)
 	for _, anchor := range []string{
 		"zerops_browser",
-		"browser_verification",
+		"browser-verification",
 		"console",
 	} {
 		if !strings.Contains(body, anchor) {

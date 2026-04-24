@@ -52,11 +52,41 @@ func DefaultGates() []Gate {
 // disk. In addition to the mechanical env-imports-present gate, this
 // set runs every registered per-surface validator (Workstream D) so
 // the prose content itself is checked against spec-content-surfaces.md.
+// Run-9-readiness §2.I adds the source-comment voice scanner.
 func FinalizeGates() []Gate {
 	return []Gate{
 		{Name: "env-imports-present", Run: gateEnvImportsPresent},
 		{Name: "surface-validators", Run: gateSurfaceValidators},
+		{Name: "source-comment-voice", Run: gateSourceCommentVoice},
 	}
+}
+
+// gateSourceCommentVoice walks every codebase's SourceRoot and flags
+// authoring-phase references inside committed source-code comments.
+// Skips codebases whose SourceRoot is empty or missing — a
+// chain-parent codebase, or a codebase whose scaffold never ran.
+func gateSourceCommentVoice(ctx GateContext) []Violation {
+	if ctx.Plan == nil {
+		return nil
+	}
+	var out []Violation
+	for _, cb := range ctx.Plan.Codebases {
+		if cb.SourceRoot == "" {
+			continue
+		}
+		if info, err := os.Stat(cb.SourceRoot); err != nil || !info.IsDir() {
+			continue
+		}
+		vs, err := scanSourceCommentsAt(cb.SourceRoot)
+		if err != nil {
+			out = append(out, Violation{
+				Code: "source-comment-scan-failed", Path: cb.SourceRoot, Message: err.Error(),
+			})
+			continue
+		}
+		out = append(out, vs...)
+	}
+	return out
 }
 
 // gateSurfaceValidators runs every registered SurfaceContract
