@@ -18,5 +18,5 @@ ZCP's container-internal key.
 - Self-deploy (single service): `zerops_deploy targetService="{hostname}"`
 - Cross-deploy (dev → stage): `zerops_deploy sourceService="{hostname}" targetService="{stage-hostname}"`
 
-`deployFiles` discipline differs per class — self-deploy needs `[.]`
-(DM-2), cross-deploy cherry-picks build output. See `develop-deploy-modes`.
+`deployFiles` discipline differs per class — self-deploy needs `[.]`,
+cross-deploy cherry-picks build output. See `develop-deploy-modes`.

@@ -2,10 +2,10 @@
 id: develop-deploy-files-self-deploy
 priority: 3
 phases: [develop-active]
-title: "Self-deploy requires deployFiles: [.] — DM-2"
+title: "Self-deploy requires deployFiles: [.] — narrower patterns destroy the target"
 ---
 
-### Self-deploy invariant (DM-2)
+### Self-deploy invariant
 
 Any service self-deploying (`sourceService == targetService` — the
 default when sourceService is omitted; typical pattern for dev services
@@ -24,7 +24,7 @@ deploy:
 4. On subsequent self-deploys, `zcli push` finds no source to upload —
    the target is unrecoverable without a manual re-push from elsewhere.
 
-Client-side pre-flight rejects DM-2 violations with
+Client-side pre-flight rejects this with
 `INVALID_ZEROPS_YML` before any build triggers, so this failure mode
 cannot reach the platform.
 
@@ -33,7 +33,5 @@ cannot reach the platform.
 Cross-deploy (`sourceService != targetService`, or
 `strategy=git-push`) ships build output to a **different** service —
 source is not at risk. Cross-deploy's `deployFiles` typically
-cherry-picks (`./out`, `./dist`, `./build`) and DM-2 does NOT apply.
+cherry-picks (`./out`, `./dist`, `./build`).
 See `develop-deploy-modes` atom for the full contrast.
-
-**Reference**: `docs/spec-workflows.md` §8 Deploy Modes.

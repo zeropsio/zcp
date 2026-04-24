@@ -50,7 +50,6 @@ ASP.NET's `wwwroot/` lookup at `/var/www/wwwroot`), stage's `deployFiles`
 must ship those assets to the `/var/www/` root. Choose the **tilde-extract**
 pattern (`./out/~`) over **preserve** (`./out`) in that case — tilde strips
 the `out/` prefix so `wwwroot/` lands at `/var/www/wwwroot/` instead of
-`/var/www/out/wwwroot/`. See `develop-deploy-modes` atom for the full
-decision rule and DM-5 in `docs/spec-workflows.md` §8.
+`/var/www/out/wwwroot/`. See `develop-deploy-modes` for the full decision rule.
 
 Schema: fetch `zerops.yaml` JSON Schema via `zerops_knowledge` if unsure.
