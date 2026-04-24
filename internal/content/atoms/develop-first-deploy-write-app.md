@@ -40,14 +40,13 @@ dev server) via SSH into the container: `ssh {hostname} "cd /var/www
 && <command>"`. The reason is tool availability, not ownership — most
 runtime-specific CLIs aren't installed on the ZCP host.
 
-**Don't run `git init` from the ZCP side.** Bootstrap already
-initialized `/var/www/.git/` container-side on each managed service
-with the deploy identity configured. If you run `git init` through the
-mount (`cd /var/www/{hostname}/ && git init`), the platform's SFTP
-MKDIR creates `.git/objects/` owned by root, which breaks the
-container-side `git add` that `zerops_deploy` runs. Recovery: `ssh
-{hostname} "sudo rm -rf /var/www/.git"` — the next deploy's safety-net
-re-inits it.
+**Don't run `git init` from the ZCP-side mount.** Push-dev deploy
+handlers manage the container-side git state — calling `git init` on
+the SSHFS mount (`cd /var/www/{hostname}/ && git init`) creates
+`.git/objects/` owned by root, which breaks the container-side
+`git add` the deploy handler runs. Recovery if this already happened:
+`ssh {hostname} "sudo rm -rf /var/www/.git"` — the next deploy
+re-initializes it.
 
 SSH deploys replace the container; only content covered by `deployFiles`
 survives across deploys.
