@@ -1,28 +1,25 @@
 # YAML comment style
 
-ASCII `#` only, one hash per line, one space after the hash, then
-prose. That is the full vocabulary.
+ASCII `#` only, one hash per line, one space after, then prose.
 
 - No dividers (runs of `-`, `=`, `*`, `#`, `_`)
 - No banners (multi-line boxes, `# === Section ===`)
 - No decoration
 
-Wrap comments at ~65 characters. Use **multi-line blocks** for
-anything longer than a label — a run of adjacent `#` lines reads as
-one prose paragraph. Bare `#` lines stay inside the block and act as
-paragraph separators between related thoughts.
+Wrap at ~65 chars. Use **multi-line blocks** — a run of adjacent `#`
+lines reads as one prose paragraph. Bare `#` lines stay inside the
+block as paragraph separators.
 
 **One causal word per block is enough.** The validator checks each
-block (not each line) for a `because` / `so that` / `otherwise` /
-`trade-off` / em-dash; once the block has one, the whole block passes.
-Do not stuff every line with `because` — the reference
-(`laravel-showcase-app/zerops.yaml`) lets a block's first paragraph
-carry the rationale and the rest carry the detail.
+block (not each line) for `because` / `so that` / `otherwise` /
+`trade-off` / em-dash. Do NOT stuff every line with `because` — the
+reference (`laravel-showcase-app/zerops.yaml`) lets a block's first
+paragraph carry rationale and the rest carry detail.
 
-Short labels (≤40 chars) pass unconditionally — `# Base image` and
-`# Bucket policy` don't need rationale.
+Short labels (≤40 chars) pass unconditionally — `# Base image`,
+`# Bucket policy` need no rationale.
 
-Good (multi-line block, one causal word, wraps naturally):
+GOOD (multi-line block, one causal word, natural wrap):
 
 ```
 # Config, route, and view caches MUST be built at runtime.
@@ -31,23 +28,14 @@ Good (multi-line block, one causal word, wraps naturally):
 #
 # Migrations run exactly once per deploy via zsc execOnce,
 # regardless of how many containers start in parallel.
-# Seeder populates sample data on first deploy so the
-# dashboard shows real records immediately.
 ```
 
-Bad (single-line run-on stuffed with `so that` / `otherwise` to satisfy
-a per-line rule that no longer exists):
+BAD (single-line run-on, stuffed causal words):
 
 ```
-# Dev setup — deploys the full source tree so that SSH sessions and `zerops_dev_server` can drive `nest start --watch` without a rebuild. `zsc noop --silent` keeps the container idle so that an external watcher owns the long-running process, otherwise every code edit would force a redeploy.
+# Dev setup — deploys the source tree so that SSH sessions and `zerops_dev_server` can drive `nest start --watch` without a rebuild. `zsc noop --silent` keeps the container idle so that an external watcher owns the process, otherwise every code edit would force a redeploy.
 ```
 
-Bad (decorative divider):
-
-```
-# ------------------------------------------------------------
-# DEV SETUP
-# ------------------------------------------------------------
-```
+BAD (decorative divider): `# ----- DEV SETUP -----`.
 
 Shape reference: `/Users/fxck/www/laravel-showcase-app/zerops.yaml`.

@@ -533,6 +533,53 @@ func TestValidateKB_MixedFormat_FlagsOnlyTriples(t *testing.T) {
 	}
 }
 
+// TestBrief_Scaffold_ContainsValidatorTripwires — run-10-readiness §Q3.
+// The "Validator tripwires" section of content_authoring.md surfaces
+// six finalize-time validator rules as author-time guidance so
+// sub-agents pre-empt the iteration cost observed in run 9.
+func TestBrief_Scaffold_ContainsValidatorTripwires(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	for _, anchor := range []string{
+		"Validator tripwires",
+		"item #1 is engine-owned",
+		"scaffold-only filenames",
+		"porter voice",
+		"Env READMEs target",
+		"one causal word per block",
+		"CLAUDE.md: 30–50 lines",
+	} {
+		if !strings.Contains(brief.Body, anchor) {
+			t.Errorf("scaffold brief Validator tripwires missing anchor %q", anchor)
+		}
+	}
+}
+
+// TestBrief_Scaffold_UnderCap_WithValidatorTripwires — run-10-readiness
+// §Q3 + run-9 tranche-2 cap raise. The Validator-tripwires section
+// keeps the scaffold brief under the 12 KB cap across all three
+// synthetic codebases. Regression pin so future additions don't
+// silently push any role over.
+func TestBrief_Scaffold_UnderCap_WithValidatorTripwires(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	for _, cb := range plan.Codebases {
+		brief, err := BuildScaffoldBrief(plan, cb, nil)
+		if err != nil {
+			t.Fatalf("BuildScaffoldBrief %s: %v", cb.Hostname, err)
+		}
+		if brief.Bytes > ScaffoldBriefCap {
+			t.Errorf("brief %s: %d bytes > %d cap", cb.Hostname, brief.Bytes, ScaffoldBriefCap)
+		}
+	}
+}
+
 // TestBrief_Scaffold_HeaderIsBehavioralGate — run-10-readiness §Q2.
 // The `# Pre-ship contract` header is renamed to `# Behavioral gate`
 // so the brief's authoring vocabulary stops colliding with the

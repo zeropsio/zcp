@@ -13,13 +13,10 @@ item N", "showcase default", "showcase tier", "showcase tradeoff",
 **Always write:** the finished product. The product IS wired. HAS the
 health probe. HANDLES the upload. No authoring "before" for a porter.
 
-Good vs bad:
-
-- yaml: `# Bucket policy is private — signed URLs give time-bounded
-  access without exposing the bucket.` ← GOOD
-- yaml: `# Private (showcase default) — 15 min tradeoff.` ← BAD
-- ts: `// /health returns 200 once runtime is ready.` ← GOOD
-- ts: `// /health added per pre-ship contract item 1.` ← BAD
+GOOD `# Bucket policy private — signed URLs give time-bounded access.`
+BAD  `# Private (showcase default) — tradeoff.`
+GOOD `// /health returns 200 once runtime is ready.`
+BAD  `// /health added per pre-ship contract item 1.`
 
 Produce your codebase's `zerops.yaml` (with inline comments) + record
 5 fragments via `zerops_recipe action=record-fragment`:
@@ -87,16 +84,24 @@ Why-not-what. Use `because`, `so that`, `otherwise`, `trade-off`.
 
 ## Classify before routing
 
-Self-inflicted bugs and pure framework quirks DISCARD. Platform ×
-framework intersections → KB with a `zerops_knowledge` citation.
+Self-inflicted + pure framework quirks → DISCARD. Platform × framework
+intersections → KB + `zerops_knowledge` citation.
 
-Dev vs prod process model + `zerops_dev_server` live in
-`principles/dev-loop.md` (injected above). Implicit-webserver runtimes
-(php-nginx, static) skip the `zsc noop` rule for their backend but may
-still need the dev-server for a compiled frontend — see the atom's
-carve-out.
+Dev/prod process model + `zerops_dev_server` → `principles/dev-loop.md`.
+Implicit-webserver runtimes (php-nginx, static) skip `zsc noop` for
+their backend but may still need a dev-server for a compiled frontend.
 
-Mount vs container execution-split (editor tools on mount, framework
-CLIs via ssh) lives in `principles/mount-vs-container.md` (injected
-above). Never run `npm install` / `tsc` / `nest build` against the
-SSHFS mount locally.
+Mount vs container execution-split → `principles/mount-vs-container.md`.
+Never `npm install` / `tsc` / `nest build` against the SSHFS mount.
+
+## Validator tripwires
+
+Finalize gates reject on these; fix at author-time:
+
+- IG item #1 is engine-owned; your items start at `### 2.`
+- IG 2+: no scaffold-only filenames (`main.ts`, `seed.ts`, `migrate.ts`)
+- Env READMEs use porter voice (never "agent"/"sub-agent"/"zerops_knowledge")
+- Env READMEs target 45+ lines (threshold 40; leave margin)
+- yaml comment blocks: one causal word per block (not per line)
+- KB: `**Topic** — prose` only; triples live in `claude-md/notes`
+- CLAUDE.md: 30–50 lines (cap 60); no cross-codebase runbooks
