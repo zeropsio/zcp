@@ -3,7 +3,7 @@ id: develop-first-deploy-verify
 priority: 5
 phases: [develop-active]
 deployStates: [never-deployed]
-title: "Verify the first deploy and stamp FirstDeployedAt"
+title: "Verify the first deploy"
 ---
 
 ### Verify the first deploy
@@ -12,34 +12,24 @@ title: "Verify the first deploy and stamp FirstDeployedAt"
 zerops_verify serviceHostname="{hostname}"
 ```
 
-The `zerops_deploy` handler activates the L7 subdomain automatically on
-first deploy for dev/stage/simple/standard/local-stage modes — the
-returned `subdomainAccessEnabled: true` plus `subdomainUrl` confirm the
-route is live. No manual `zerops_subdomain` call is needed in the
-happy path.
+The returned `status` is `healthy`, `degraded`, or `unhealthy`; scan
+`checks[]` for any with `status: fail` and read its `detail` for the
+specific failure. A passing verify corresponds to: service
+`status=ACTIVE` in `zerops_discover`, HTTP 200 from the subdomain root
+(or configured `/status`), and every declared env var present at
+runtime.
 
-A passing `zerops_verify` marks the service deployed. Subsequent
-sessions skip scaffold and enter the normal edit loop.
+**If unhealthy:**
 
-**What a passing verify requires:**
-
-- Service `status=ACTIVE` per `zerops_discover`.
-- HTTP 200 from the subdomain root (or the configured `/status`
-  endpoint) with the expected body shape.
-- Every declared env var present at runtime.
-
-**If verify returns unhealthy:**
-
-1. Run `zerops_logs severity="error" since="5m"` — the start or request
-   error is in the log.
+1. Run `zerops_logs severity="error" since="5m"` — the start or
+   request error is in the log.
 2. Common first-deploy misconfigs, in frequency order:
    - App bound to `localhost` instead of `0.0.0.0`.
    - `run.start` invokes a build command rather than the entry point.
    - `run.ports.port` doesn't match what the app actually listens on.
-   - Env var name drift — check `${hostname_KEY}` spelling against the
-     discovered catalog.
+   - Env var name drift — check `${hostname_KEY}` spelling against
+     the discovered catalog.
 3. Fix in place, redeploy, re-verify. Stop after 5 unsuccessful
    attempts and reassess.
 
-After the first verify passes, the service is deployed. The develop
-session auto-closes when every in-scope service has a passing verify.
+Auto-close behavior is described in `develop-auto-close-semantics`.
