@@ -8,17 +8,19 @@ title: "Deploy strategy — current + how to change"
 
 ### Deploy strategy — current + how to change
 
-Each runtime service has a confirmed deploy strategy shown in the Services
-section (`strategy=push-dev|push-git|manual`). Strategy switches take effect
-immediately — no session restart needed.
+Each runtime service in the envelope has a `strategy` field:
+`push-dev` (SSH self-deploy from the dev container), `push-git`
+(push committed code to an external git remote — carries a
+`trigger: webhook|actions|unset` sub-field), `manual` (you
+orchestrate every deploy yourself), or `unset` (bootstrap-written
+placeholder; develop picks one on first use). The rendered Services
+block shows this as `strategy=push-dev|push-git|manual|unset`.
 
-Switch at any time (no session close required):
+Switch at any time without closing the session:
 
 ```
 zerops_workflow action="strategy" strategies={"{hostname}":"push-dev"}
 ```
 
-Valid values: `push-dev` (SSH self-deploy from dev container), `push-git`
-(push committed code to external git remote), `manual` (you orchestrate
-every deploy yourself). Mix different strategies across services in one
-project if needed — per-service metas track them independently.
+Mixed strategies across services in one project are fine — each
+service's strategy is independent in the envelope.
