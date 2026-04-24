@@ -1101,6 +1101,19 @@ visibility.
 | O5 | Stage entry written AFTER dev verified (standard mode) |
 | O6 | Stage deployFiles = build output, NOT [.] |
 
+### Git Lifecycle (container env)
+
+Managed runtime services carry a `/var/www/.git/` that is the container-side substrate `zerops_deploy` runs `git add -A && git commit` against. These invariants pin where it's created, who owns it, and how the deploy path tolerates its absence on migrated services. Background: `plans/git-service-lifecycle.md`.
+
+| ID | Invariant |
+|----|-----------|
+| GLC-1 | Every runtime service added to the project via bootstrap or adopt has `/var/www/.git/` initialized **container-side** (via `ops.SSHDeployer.ExecSSH`, never SFTP MKDIR), owned by `zerops:zerops`, with `user.email = agent@zerops.io` and `user.name = Zerops Agent` persisted in `.git/config`. Enforced by `autoMountTargets` post-mount hook: after `ops.MountService` succeeds it calls `ops.InitServiceGit`. The SSH-exec path matters because zembed's SFTP MKDIR regression creates root-owned directories, which would corrupt `.git/objects/` and break subsequent `git add`. Errors are logged but do not mark the mount FAILED — GLC-2 is the safety net. |
+| GLC-2 | `deploy_ssh.go::buildSSHCommand` must tolerate a missing `.git/` as the migration/recovery fallback but must not configure identity inline at the top level. Config lives atomically inside the OR branch: `(test -d .git || (git init -q -b main && git config user.email ... && git config user.name ...))`. Splitting identity out of the OR reintroduces "fatal: empty ident name" on services whose `.git/` was never InitServiceGit'd. On the happy path `test -d` short-circuits and the OR is skipped entirely. |
+| GLC-3 | `ops.DeployGitIdentity` is the single source of deploy identity. Consumers: `ops.InitServiceGit` (per-service local config at bootstrap), `buildSSHCommand` atomic safety-net (same config, fallback only). `BuildGitPushCommand` and `buildSSHCommand` both dropped their `id GitIdentity` parameters in favor of reading the constant directly at the one call site that needs it. No other code paths write identity. |
+| GLC-4 | The ZCP-host container has no git state. `/var/www` there is the SSHFS mount base, not a code directory; no `.git/` is ever initialized on it, and no `git config --global` is written. `zcp init` in container mode (`init_container.go::containerSteps`) performs only Claude config + optional VS Code setup. Developer-side git workflows (e.g. `zcp sync recipe push-app`) run on developer laptops with the developer's own `~/.gitconfig` and are never expected to pass through a Zerops-deployed ZCP service. |
+| GLC-5 | Mount-side `git init` (from the ZCP-host into a managed service's SSHFS-mounted `/var/www/{hostname}/`) is forbidden agent behavior, covered by `develop-first-deploy-write-app.md` guidance and by the `bootstrap-git-init` eval scenario's `forbiddenPatterns`. zembed's SFTP MKDIR would produce root-owned `.git/objects/` which poisons every subsequent deploy. Recovery: `ssh {host} "sudo rm -rf /var/www/.git"` and let GLC-2's safety net re-init. |
+| GLC-6 | Local-env `strategy=git-push` requires a user-owned git repo with ≥1 commit (verified against `zcli@v1.0.61` `handler_archiveGitFiles.go:67-75`). ZCP does **not** auto-init git in the user's working directory — identity, default branch and `.gitignore` conventions are personal. `develop-platform-rules-local.md` instructs the agent to ask the user to run `git init && git add -A && git commit -m '<msg>'` themselves; `handleLocalGitPush` pre-flight catches the case as a hard fallback. The default `zerops_deploy` strategy uses `zcli --no-git` and needs no git state. |
+
 ### Pipeline
 
 | ID | Invariant |
