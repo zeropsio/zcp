@@ -9,8 +9,11 @@ title: "Adopt — discover existing services"
 
 ### Adopting existing services
 
-Adopt writes `ServiceMeta` per service. It does NOT touch code,
-configuration, or scale.
+Adoption attaches ZCP tracking to an existing runtime service without
+touching its code, configuration, or scale. After adopt close, the
+envelope reports each adopted hostname with `bootstrapped: true`; the
+rendered Services block shows them with their existing mode and
+strategy state.
 
 List what's there:
 
