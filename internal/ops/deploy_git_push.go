@@ -15,9 +15,20 @@ const defaultBranch = "main"
 // fires — no git init, no auto-commit fallback. Those fallbacks used to
 // masquerade "agent forgot to commit" as successful pushes of empty state.
 //
+// Identity is NOT set here. Bootstrap's InitServiceGit wrote agent@zerops.io
+// into /var/www/.git/config the moment the service was mounted (GLC-1), and
+// that value persists across deploys on the container's filesystem. Re-
+// applying it on every git-push was redundant; the identity check belongs
+// exclusively to InitServiceGit (at bootstrap time) and the deploy_ssh
+// atomic safety-net (as migration/recovery fallback for services without
+// .git/). Callers outside bootstrap (hypothetical — none today) hit the
+// pre-flight's "HEAD must exist" guard first; the correct remediation
+// there is to initialize the repo, not to patch identity onto a missing
+// .git/.
+//
 // Security: .netrc created with trap-based cleanup (runs even on failure),
 // umask 077 prevents world-readable token, remoteURL is shell-quoted.
-func BuildGitPushCommand(workingDir, remoteURL, branch string, id GitIdentity) string {
+func BuildGitPushCommand(workingDir, remoteURL, branch string) string {
 	if branch == "" {
 		branch = defaultBranch
 	}
@@ -37,11 +48,6 @@ func BuildGitPushCommand(workingDir, remoteURL, branch string, id GitIdentity) s
 
 	// Working directory.
 	parts = append(parts, fmt.Sprintf("cd %s", workingDir))
-
-	// Git identity (internal commits, not user-facing).
-	email := shellQuote(id.Email)
-	name := shellQuote(id.Name)
-	parts = append(parts, fmt.Sprintf("git config user.email %s && git config user.name %s", email, name))
 
 	// Remote setup (idempotent): only if remoteURL provided.
 	if remoteURL != "" {

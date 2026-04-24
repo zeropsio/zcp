@@ -185,8 +185,7 @@ func handleGitPush(
 		}
 	}
 
-	id := ops.GitIdentity{Name: authInfo.FullName, Email: authInfo.Email}
-	cmd := ops.BuildGitPushCommand(workingDir, input.RemoteURL, branch, id)
+	cmd := ops.BuildGitPushCommand(workingDir, input.RemoteURL, branch)
 
 	output, err := sshDeployer.ExecSSH(ctx, hostname, cmd)
 	if err != nil {

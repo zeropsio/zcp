@@ -10,7 +10,6 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 		workDir   string
 		remoteURL string
 		branch    string
-		id        GitIdentity
 		wantParts []string // substrings that must appear in the command
 		skipParts []string // substrings that must NOT appear
 	}{
@@ -19,25 +18,26 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 			workDir:   "/var/www",
 			remoteURL: "https://github.com/user/repo",
 			branch:    "main",
-			id:        GitIdentity{Name: "Test User", Email: "test@example.com"},
 			wantParts: []string{
 				"trap 'rm -f ~/.netrc' EXIT",
 				"machine github.com login oauth2 password $GIT_TOKEN",
 				"chmod 600 ~/.netrc",
 				"cd /var/www",
-				"git config user.email",
 				"git remote add origin 'https://github.com/user/repo'",
 				"git remote set-url origin 'https://github.com/user/repo'",
 				"git push -u origin main",
 			},
-			// Pre-flight gates ensure .git + HEAD exist before this command runs.
-			// The old init+auto-commit fallbacks are gone (they masked "agent
-			// forgot to commit" bugs). See plan phase A.2.
+			// Pre-flight gates ensure .git + HEAD exist before this command
+			// runs. The old init+auto-commit fallbacks are gone (they masked
+			// "agent forgot to commit" bugs). Identity config is gone too
+			// (redundant with InitServiceGit at bootstrap — GLC-3).
 			skipParts: []string{
 				"git init",
 				"git rev-parse HEAD",
 				"initial commit",
 				"git add -A",
+				"git config user.email",
+				"git config user.name",
 			},
 		},
 		{
@@ -45,12 +45,12 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 			workDir:   "/var/www",
 			remoteURL: "https://github.com/user/repo",
 			branch:    "develop",
-			id:        GitIdentity{Name: "Test", Email: "t@t.com"},
 			wantParts: []string{
 				"git push -u origin develop",
 			},
 			skipParts: []string{
 				"git init",
+				"git config user",
 			},
 		},
 		{
@@ -58,7 +58,6 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 			workDir:   "/var/www",
 			remoteURL: "https://github.com/user/repo",
 			branch:    "",
-			id:        GitIdentity{Name: "Test", Email: "t@t.com"},
 			wantParts: []string{
 				"git push -u origin main",
 			},
@@ -68,7 +67,6 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 			workDir:   "/var/www",
 			remoteURL: "",
 			branch:    "main",
-			id:        GitIdentity{Name: "Test", Email: "t@t.com"},
 			wantParts: []string{
 				"git push -u origin main",
 			},
@@ -82,7 +80,6 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 			workDir:   "/var/www",
 			remoteURL: "https://gitlab.com/user/repo.git",
 			branch:    "main",
-			id:        GitIdentity{Name: "Test", Email: "t@t.com"},
 			wantParts: []string{
 				"machine gitlab.com login oauth2 password $GIT_TOKEN",
 			},
@@ -92,7 +89,6 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 			workDir:   "/var/www",
 			remoteURL: "https://git.mycompany.com/team/repo",
 			branch:    "main",
-			id:        GitIdentity{Name: "Test", Email: "t@t.com"},
 			wantParts: []string{
 				"machine git.mycompany.com login oauth2 password $GIT_TOKEN",
 			},
@@ -102,19 +98,8 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 			workDir:   "/var/www",
 			remoteURL: "https://github.com/user/repo with spaces",
 			branch:    "main",
-			id:        GitIdentity{Name: "Test", Email: "t@t.com"},
 			wantParts: []string{
 				"'https://github.com/user/repo with spaces'",
-			},
-		},
-		{
-			name:      "identity shell-quoted",
-			workDir:   "/var/www",
-			remoteURL: "https://github.com/user/repo",
-			branch:    "main",
-			id:        GitIdentity{Name: "O'Brien", Email: "test@example.com"},
-			wantParts: []string{
-				"'O'\\''Brien'",
 			},
 		},
 	}
@@ -122,7 +107,7 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			cmd := BuildGitPushCommand(tt.workDir, tt.remoteURL, tt.branch, tt.id)
+			cmd := BuildGitPushCommand(tt.workDir, tt.remoteURL, tt.branch)
 			for _, want := range tt.wantParts {
 				if !containsSubstring(cmd, want) {
 					t.Errorf("command missing %q\ngot: %s", want, cmd)
@@ -134,6 +119,29 @@ func TestBuildGitPushCommand_Basic(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestBuildGitPushCommand_NoInlineIdentity locks the Fix 6 cleanup: no
+// caller-controlled GitIdentity (removed from signature) and no inline
+// `git config user.*` statements in the emitted shell. A regression that
+// re-adds identity would either put it outside the pre-flight guard (bad —
+// nothing to guard against, wasted SSH work per deploy) or duplicate
+// InitServiceGit's bootstrap-time write (worse — two sources of truth
+// for the same value, GLC-3 violated).
+func TestBuildGitPushCommand_NoInlineIdentity(t *testing.T) {
+	t.Parallel()
+
+	cmd := BuildGitPushCommand("/var/www", "https://github.com/x/y", "main")
+	for _, forbidden := range []string{
+		"git config user.email",
+		"git config user.name",
+		"git config --local user.",
+		"git -c user.email",
+	} {
+		if containsSubstring(cmd, forbidden) {
+			t.Errorf("BuildGitPushCommand must not emit identity config (%q): %s", forbidden, cmd)
+		}
 	}
 }
 
