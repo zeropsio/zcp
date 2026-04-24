@@ -8,11 +8,11 @@ title: "Resume interrupted bootstrap"
 
 ### Interrupted bootstrap detected
 
-The project has at least one runtime service whose `ServiceMeta` is
-tagged with a `BootstrapSession` but carries no `BootstrappedAt`. That
-means a bootstrap session started, wrote partial metadata, then died
-before reaching the close step. **Do not classic-bootstrap over them** —
-a new session will clash with the existing records.
+The envelope reports `idleScenario: incomplete` — the project has at
+least one runtime service whose snapshot carries `resumable: true`,
+meaning a prior bootstrap session wrote partial state and died
+before close. **Do not classic-bootstrap over these services** — a
+new session will clash with the existing partial records.
 
 **Options, in priority order:**
 
@@ -20,23 +20,22 @@ a new session will clash with the existing records.
    ```
    zerops_workflow action="start" workflow="bootstrap" intent="<anything>"
    ```
-   The response includes a `resume` option with `resumeSession` (the
-   session ID to pick up) and `resumeServices` (the hostnames that
-   will be reclaimed). Dispatch with:
+   Read `routeOptions[]` — the `resume` entry carries `resumeSession`
+   (the session ID to pick up) and `resumeServices` (the hostnames
+   that will be reclaimed). Dispatch with:
    ```
    zerops_workflow action="start" workflow="bootstrap" route="resume" sessionId="<resumeSession>"
    ```
    Resume picks up at the step that was in flight when the earlier
    session ended.
 
-2. **Reset and restart** — if the incomplete metadata is stale (the
+2. **Abandon and restart** — if the partial state is stale (the
    original bootstrap was abandoned deliberately, or the services are
-   wrong for the current task), delete the orphan metas first and
-   then run a fresh discovery. The metas live under
-   `.zcp/state/services/<hostname>.json` — removing them clears the
-   `BootstrapSession` tag, after which the services become adoptable
-   in the normal flow.
+   wrong for the current task), delete the orphan files under
+   `.zcp/state/services/<hostname>.json`. The services then become
+   adoptable in the normal flow.
 
-Either way, **never** use `route="classic"` on a project with incomplete
-metadata. Classic ignores the lock and the new plan's hostnames will
-collide with the orphan metas at provision time.
+Either way, **never** use `route="classic"` on a project with
+`resumable: true` snapshots. Classic ignores the lock and the new
+plan's hostnames will collide with the orphan records at provision
+time.
