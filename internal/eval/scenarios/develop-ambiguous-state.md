@@ -33,8 +33,8 @@ expect:
   finalUrlStatus: 200
   finalUrlHostname: appdev
 followUp:
-  - "Kolik signálů o stavu projektu jsi zkombinoval, než ses rozhodl co dělat? (status phase, discover, mount obsah, zerops.yaml na mountu, FirstDeployedAt na metas …)"
-  - "Proč jsi šel do develop flow a ne do bootstrap? Kdyby ServiceMeta neměla `BootstrappedAt`, volba by byla jiná?"
+  - "Kolik signálů o stavu projektu jsi zkombinoval, než ses rozhodl co dělat? (status phase, Services block tokens jako `bootstrapped=true` / `deployed=...`, discover, obsah mountu, zerops.yaml na mountu …)"
+  - "Proč jsi šel do develop flow a ne do bootstrap? Kdyby ve status výstupu Services block vypsal `not bootstrapped` místo `bootstrapped=true`, volba by byla jiná?"
   - "V jakém pořadí jsi deployoval dev a stage? Proč tohle pořadí (a ne opačně)?"
 ---
 

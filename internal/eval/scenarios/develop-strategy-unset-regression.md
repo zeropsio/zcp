@@ -41,9 +41,9 @@ V projektu jsou Laravel služby (`app` + `db`), byly naseedované mimo ZCP
 1. **Adoptovat** existující služby přes bootstrap discovery:
    - První `zerops_workflow action="start" workflow="bootstrap"` bez route
      = discovery response, druhý call s `route="adopt"` = commit.
-2. Po adopci bootstrap-verify krok stampne `FirstDeployedAt` (služba je
-   running). Develop briefing pak vyrenderuje `develop-strategy-review`
-   atom — zvol deploy strategy dřív, než provedeš další kroky.
+2. Po adopci envelope ukáže `deployed=true` pro běžící službu. Develop
+   briefing pak vyrenderuje `develop-strategy-review` atom — zvol
+   deploy strategy dřív, než provedeš další kroky.
 3. Změnit titulek na home page (soubor `resources/views/welcome.blade.php`)
    z výchozí "Laravel" na "Weather Dashboard".
 

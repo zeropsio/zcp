@@ -1,6 +1,6 @@
 ---
 id: bootstrap-resume-interrupted
-description: Interrupted bootstrap session left incomplete ServiceMeta — agent must detect via status and resume rather than restart
+description: Interrupted bootstrap session left partial state — envelope reports idleScenario=incomplete with resumable services; agent must resume rather than restart
 seed: empty
 preseedScript: preseed/resume-interrupted.sh
 expect:

@@ -1,6 +1,6 @@
 ---
 id: develop-first-deploy-branch
-description: Infra is provisioned (ServiceMeta complete) but nothing deployed yet — agent must detect never-deployed state and enter develop first-deploy branch, NOT bootstrap
+description: Infra is provisioned (envelope shows bootstrapped=true) but nothing deployed yet (deployed=false) — agent must detect never-deployed state and enter develop first-deploy branch, NOT bootstrap
 seed: imported
 fixture: fixtures/laravel-minimal.yaml
 preseedScript: preseed/first-deploy-branch.sh
@@ -41,7 +41,7 @@ expect:
 followUp:
   - "Z čeho jsi poznal, že služba `appdev` je bootstrapped ale nikdy nedeployed? Kde přesně v odpovědích tool volání se ta informace objevila?"
   - "Proč jsi nešel do bootstrap flow? Jak by se to chovalo kdybys ho zavolal?"
-  - "Co konkrétně první deploy stampne na ServiceMeta a proč to má vliv na další develop session?"
+  - "Co se v envelope změní po úspěšném prvním deployi + passing verify (který token v Services bloku se překlopí) a proč to má vliv na další develop session?"
 ---
 
 # Úkol

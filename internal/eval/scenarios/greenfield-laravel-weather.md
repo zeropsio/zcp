@@ -58,4 +58,5 @@ Bootstrap flow (důležité):
 - Bootstrap **nikdy nedeployí**. Provisionuje services, mount, env var
   discovery — a končí.
 - **Develop** scaffolduje `zerops.yaml`, napíše aplikaci a spustí první
-  deploy. Passing verify stampne `FirstDeployedAt` na ServiceMeta.
+  deploy. Passing verify překlopí `deployed=true` v envelope (Services
+  block).
