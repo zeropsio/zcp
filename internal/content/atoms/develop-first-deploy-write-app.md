@@ -2,6 +2,7 @@
 id: develop-first-deploy-write-app
 priority: 3
 phases: [develop-active]
+environments: [container]
 deployStates: [never-deployed]
 title: "Write the application code"
 ---
@@ -29,6 +30,24 @@ is there.
    database) so a failing verify immediately tells you whether the
    problem is the app or the wiring.
 
-Write code directly to `/var/www/{hostname}/` on the local SSHFS mount —
-NOT via SSH into the container. SSH deploys blow away uncommitted
-working-tree changes on container restart.
+**Write files** directly to `/var/www/{hostname}/` through the SSHFS
+mount — Read/Edit/Write tools (and plain `rm`, `mv`, `cp` against mount
+paths) all work because the mount bypasses container-side permissions
+at the SFTP protocol level.
+
+**Run commands** (`go build`, `php artisan`, `pytest`, framework CLIs,
+dev server) via SSH into the container: `ssh {hostname} "cd /var/www
+&& <command>"`. The reason is tool availability, not ownership — most
+runtime-specific CLIs aren't installed on the ZCP host.
+
+**Don't run `git init` from the ZCP side.** Bootstrap already
+initialized `/var/www/.git/` container-side on each managed service
+with the deploy identity configured. If you run `git init` through the
+mount (`cd /var/www/{hostname}/ && git init`), the platform's SFTP
+MKDIR creates `.git/objects/` owned by root, which breaks the
+container-side `git add` that `zerops_deploy` runs. Recovery: `ssh
+{hostname} "sudo rm -rf /var/www/.git"` — the next deploy's safety-net
+re-inits it.
+
+SSH deploys replace the container; only content covered by `deployFiles`
+survives across deploys.
