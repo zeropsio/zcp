@@ -451,6 +451,66 @@ Every invariant here is a property of the implementation and can be verified by 
 
 ---
 
+## 11. Authoring Contract
+
+The corpus is the runtime projection of what the agent can observe; its
+prose must match that projection. Enforcement is unified — no
+per-topic contract tests exist, and none should be added.
+
+### 11.1 What atoms describe
+
+1. **Observable response fields** — identifiers backed by Go struct
+   fields in `internal/{ops,tools,platform,workflow}/*.go`. Cited
+   fields MUST appear in the atom's `references-fields` frontmatter.
+2. **Observable envelope fields** — `StateEnvelope`, `ServiceSnapshot`,
+   `WorkSessionSummary`, `Plan`, `BootstrapRouteOption`,
+   `BootstrapDiscoveryResponse`. Rendered tokens in
+   `RenderStatus` output (e.g. `bootstrapped=true`,
+   `deployed=false`, `mode=dev`) are first-class.
+3. **Orchestration sequences** — ordered tool-call flows.
+4. **Platform concepts** — mode taxonomy, runtime classes, pair
+   structure, workflow phases.
+5. **Preventive rules** — anti-patterns the agent should not attempt.
+6. **Cross-references to other atoms** — via `references-atoms`
+   frontmatter (rename tracking).
+
+### 11.2 What atoms MUST NOT describe
+
+Enforced by `TestAtomAuthoringLint` (`internal/content/atoms_lint.go`):
+
+1. **Handler internals** — verbs like "the X handler … automatically /
+   auto-* / writes / stamps / activates", "tool … auto-…", "ZCP writes
+   / stamps / activates / enables / disables".
+2. **Invisible state** — `FirstDeployedAt`, `BootstrapSession`,
+   `StrategyConfirmed` (on-disk ServiceMeta fields the agent never
+   sees).
+3. **Spec invariant IDs** — `DM-*`, `DS-0[1-4]`, `GLC-[1-6]`,
+   `KD-NN`, `TA-NN`, `E[1-8]`, `O[1-4]`, `F#[1-9]`, `INV-*`. These
+   are developer taxonomy; the agent has no use for them at runtime.
+4. **Plan document paths** — `plans/<slug>.md` in atom prose.
+   Superseded plans drift; spec should be self-contained.
+
+### 11.3 Enforcement
+
+Three tests enforce the contract; they live outside the atom tree so
+rule changes do not churn atom files:
+
+| Test | Location | Responsibility |
+|---|---|---|
+| `TestAtomReferenceFieldIntegrity` | `internal/workflow/atom_reference_field_integrity_test.go` | Every `references-fields` entry resolves to a named struct field via AST scan. |
+| `TestAtomReferencesAtomsIntegrity` | `internal/workflow/atom_references_atoms_integrity_test.go` | Every `references-atoms` entry resolves to an existing atom. |
+| `TestAtomAuthoringLint` | `internal/content/atoms_lint_test.go` | Body prose matches no forbidden pattern (§11.2). |
+
+### 11.4 Allowlist policy
+
+`atomLintAllowlist` in `atoms_lint.go` accepts `"<file>::<exact-line>"`
+keys for documented exceptions. The default set is empty; every entry
+is an audit target. When adding one, commit the rationale in the map
+value. Prefer rewriting the atom — allowlisting is the escape hatch,
+not the default.
+
+---
+
 ## Appendix: Code Reference Map
 
 | Section | Primary code location |
