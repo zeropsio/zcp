@@ -336,6 +336,9 @@ func mergePlan(sess *Session, incoming *Plan) error {
 		}
 		maps.Copy(cur.Fragments, incoming.Fragments)
 	}
+	if len(incoming.FeatureKinds) > 0 {
+		cur.FeatureKinds = incoming.FeatureKinds
+	}
 	sess.Plan = cur
 	return nil
 }

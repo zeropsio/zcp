@@ -1,8 +1,15 @@
-# Finalize phase — writer dispatch, stitch payload, regenerate all 6 tiers
+# Finalize phase — main-agent fragments, stitch, validate
 
-Scaffold + feature built a working deploy in the single workspace
-project. Finalize turns that into the 6-tier publishable artifact each
-end-user clicks to deploy.
+Scaffold + feature built a working deploy and authored codebase-scoped
+fragments in-phase. Finalize is assembly + validation: the main agent
+fills the root + env fragments, stitches into the 6-tier deliverable,
+then iterates on any validator failures.
+
+There is no writer sub-agent. Fragments are authored by whoever holds
+the densest context — scaffold/feature sub-agents for codebase-scoped
+content (already recorded during their phases), main agent for
+platform-narrative content (authored here). See run-8-readiness §2.0
+for the authorship map.
 
 ## The env-var template model (critical)
 
@@ -10,71 +17,68 @@ The 6 deliverable yamls are a **template**. Each end-user's click-deploy
 creates their own project with their own subdomains and their own
 secrets. That means:
 
-- **Shared secrets** (APP_KEY, JWT_SECRET, session key) emit as
-  `<@generateRandomString(<32>)>` templates — evaluated once per
-  end-user at their import. Your workspace's real secret value stays on
-  your workspace; **it is NOT copied into the deliverable**.
+- **Shared secrets** emit as `<@generateRandomString(<32>)>` — evaluated
+  once per end-user at their import. Your workspace's real secret stays
+  on your workspace; **do NOT copy it into the deliverable**.
 - **URLs** use `${zeropsSubdomainHost}` as a literal — the platform
-  substitutes the end-user's subdomain at their click-deploy. Do NOT
-  bake your workspace's resolved URL.
+  substitutes the end-user's subdomain at their click-deploy.
 - **Per-env shape differs**:
   - Envs 0-1 (AI Agent, Remote/CDE — dev-pair slots `apidev`/`apistage`
-    exist): carry both `DEV_*` and `STAGE_*` URL constants
+    exist): carry both `DEV_*` and `STAGE_*` URL constants.
   - Envs 2-5 (Local, Stage, Small-Prod, HA-Prod — single-slot `api`/`app`):
-    carry `STAGE_*` only, with hostnames `api`/`app` (not `apistage`/`appstage`)
+    carry `STAGE_*` only, with hostnames `api`/`app`.
 
-## Steps
+## Fragment authoring
 
-1. **Build the writer brief**:
-   `zerops_recipe action=build-brief slug=<slug> briefKind=writer`.
-   Brief walks the surface registry, filters facts by surface hint,
-   inlines example banks, returns ~8-10 KB of guidance.
+The main agent authors these fragment ids, one at a time, via
+`zerops_recipe action=record-fragment slug=<slug> fragmentId=<id>
+fragment=<body>`:
 
-2. **Dispatch the writer** via `Agent`. Pass the brief body verbatim.
-   Description: `writer-<slug>`. The writer reads `zerops_workspace_manifest`
-   to see the full run state without your debug history polluting its
-   context.
+- `root/intro` — one sentence naming every managed service + tier count
+- `env/0/intro` … `env/5/intro` — per-tier audience + outgrow signal +
+  what changes at the next tier (spec-content-surfaces §Surface 2)
+- `env/<N>/import-comments/project` — per-tier project-level comment in
+  the import.yaml
+- `env/<N>/import-comments/<hostname>` — per-tier per-service comment
+  explaining why THIS service at THIS tier at THIS mode/scale (never
+  the narration of what the field does)
 
-3. **Writer returns a structured completion payload** — see
-   `completion_payload.md` for the schema. Keys include:
-   - `root_readme`, `env_readmes`, `codebase_readmes`, `codebase_claude`
-     — surface bodies
-   - `env_import_comments` — per-env `{project, service: {host →
-     comment}}` merged into `plan.EnvComments`
-   - `project_env_vars` — per-env env var maps merged into
-     `plan.ProjectEnvVars`. Must use `${zeropsSubdomainHost}` for URLs
-     and `<@generateRandomString>` for shared secrets (see shape above)
-   - `citations`, `manifest` — gate-check inputs
+### Tone rules
 
-4. **Stitch**:
-   `zerops_recipe action=stitch-content slug=<slug> payload=<writer JSON>`.
-   The engine:
-   - Archives the raw payload at `<outputRoot>/.writer-payload.json`
-   - Merges `env_import_comments` → `plan.EnvComments`
-   - Merges `project_env_vars` → `plan.ProjectEnvVars`
-   - Regenerates all 6 `<outputRoot>/<tier.Folder>/import.yaml` files
-     with writer-authored comments + env vars
-   - Writes root README, env READMEs, per-codebase READMEs (IG + KB
-     fragments), per-codebase CLAUDE.md files
+- Env READMEs: porter-facing, never uses the word "agent". Tier
+  promotion vocabulary present ("outgrow", "promote", "when you move
+  to tier N+1").
+- Import-comments: causal words (`because`, `so that`, `otherwise`,
+  `trade-off`). First sentence must differ across runtime-service
+  blocks (no templated opening).
 
-5. **Gates**: `zerops_recipe action=complete-phase slug=<slug>`. Checks
-   include env-imports-present (all 6 files on disk), citation
-   timestamps, required fact fields, completion-payload schema,
-   main-agent-rewrote-writer-path violations.
+## Stitch + validate loop
 
-6. **Fix-dispatch** (if gates fail): diff the writer's output against
-   the brief schema, compose a targeted correction prompt, re-dispatch
-   the writer. Do NOT hand-edit writer-owned files — that trips the
-   main-agent-rewrote-writer-path gate.
+1. **Author every fragment** listed above.
+2. `zerops_recipe action=stitch-content slug=<slug>` — renders every
+   surface into outputRoot. Missing fragments return as an error with
+   the list of unset ids.
+3. **Read validator output** from the complete-phase response. Each
+   violation names the offending fragment id + the rule it broke.
+4. **Iterate** — `record-fragment` again with a fixed body, re-stitch,
+   re-validate. Codebase-scoped fragment failures may route back to a
+   re-dispatch if the issue is causality only the scaffold sub-agent
+   could know.
+
+## Complete-phase gate
+
+`zerops_recipe action=complete-phase slug=<slug>` runs default gates
+(citation timestamps, fact validation) + finalize gates
+(env-imports-present, per-surface validators). Phase is not done until
+every validator passes on the assembled output.
 
 ## What NOT to do
 
 - Do NOT re-run `emit-yaml shape=workspace` at finalize — that shape is
   provision-only.
-- Do NOT pass your live workspace's secret value as a
-  `project_env_vars` entry. Use `<@generateRandomString(<32>)>`.
-- Do NOT resolve `${zeropsSubdomainHost}` to a literal URL. It must
-  stay a template for the end-user's platform to substitute.
-- Do NOT edit the stitched files by hand. `stitch-content` is the only
-  supported write path; any subsequent edit by the main agent trips the
-  authorship gate.
+- Do NOT pass your live workspace's secret as a `project_env_vars` value.
+  Use `<@generateRandomString(<32>)>`.
+- Do NOT resolve `${zeropsSubdomainHost}` to a literal URL. It stays
+  a template for the end-user's platform to substitute.
+- Do NOT hand-edit stitched files. `stitch-content` is the write path;
+  iterate via `record-fragment` + re-stitch.

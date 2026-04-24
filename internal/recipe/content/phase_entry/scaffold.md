@@ -11,10 +11,11 @@ main agent coordinates.
    briefKind=scaffold codebase=<hostname>`
 
    The brief returns platform-obligation prose (bind 0.0.0.0, trust
-   proxy, execOnce for migrations, SIGTERM drain) plus the parent
-   codebase's README excerpt if the chain resolver found one. It does
-   NOT contain framework-specific instructions — the sub-agent brings
-   that from its own knowledge.
+   proxy, SIGTERM drain), the `content_authoring.md` placement rubric
+   + tone rules, and — for any codebase whose `HasInitCommands` is
+   true — the execOnce key-shape concept atom. It does NOT contain
+   framework-specific instructions; the sub-agent brings that from
+   its own knowledge.
 
 2. **Dispatch the sub-agent** via the `Agent` tool. Pass the brief's
    `body` verbatim as the `prompt`. Description: `scaffold-<hostname>`.
@@ -38,9 +39,17 @@ misses critical platform rules. Always pass `brief.body` byte-identical.
 `zerops_recipe action=verify-subagent-dispatch` is planned but not yet
 implemented in v3 — for now, do not paraphrase.
 
+## Content authored in-phase
+
+The scaffold sub-agent records fragments at the moment of freshest
+context: `codebase/<hostname>/intro`, `integration-guide`,
+`knowledge-base`, `claude-md/service-facts`, `claude-md/notes`. The
+sub-agent also writes inline comments into its committed `zerops.yaml`
+— they ship byte-identical into the published deliverable. No
+post-hoc writer sub-agent; no journal-then-writer pattern.
+
 ## Complete-phase gate
 
-Every plan.codebase hostname must have a deployed + verified service.
-Scaffold facts recorded during the phase flow into the writer brief at
-finalize — more facts = richer content. Under-record is visible; over-
-record is not.
+Every plan.codebase hostname must have a deployed + verified service,
+and every scaffold-owned fragment id must be recorded. Facts recorded
+during the phase flow into the classification gate at finalize.

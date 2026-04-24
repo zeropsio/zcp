@@ -22,6 +22,12 @@ type Plan struct {
 	// See docs/zcprecipator3/plans/run-8-readiness.md §2.A.4 for the id
 	// taxonomy and append-vs-overwrite semantics.
 	Fragments map[string]string `json:"fragments,omitempty"`
+	// FeatureKinds records the showcase features the main agent plans
+	// to implement at the feature phase (crud, cache-demo, queue-demo,
+	// storage-upload, search-items, seed, scout-import). The feature
+	// brief injects the execOnce key-shape concept atom when the list
+	// includes any item that authors initCommands (seed, scout-import).
+	FeatureKinds []string `json:"featureKinds,omitempty"`
 }
 
 // ResearchResult is the output of the research phase. All fields are
@@ -50,6 +56,12 @@ type Codebase struct {
 	IsWorker           bool   `json:"isWorker,omitempty"`
 	SharesCodebaseWith string `json:"sharesCodebaseWith,omitempty"`
 	SourceRoot         string `json:"sourceRoot,omitempty"`
+	// HasInitCommands records that this codebase's scaffold authors
+	// `initCommands` in its zerops.yaml (migrations, seeds, search-index
+	// bootstrap). Briefs use it to decide whether to inject the
+	// execOnce key-shape concept atom — see briefs.go. Main agent sets
+	// this at update-plan time before build-brief kind=scaffold.
+	HasInitCommands bool `json:"hasInitCommands,omitempty"`
 }
 
 // Service is a managed or utility service in the recipe (database, cache,

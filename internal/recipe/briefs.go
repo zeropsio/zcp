@@ -8,14 +8,22 @@ import (
 	"strings"
 )
 
-// Brief cap constants (plan §8). Enforced at dispatch time; the composer
-// produces a Brief whose Bytes field the caller compares against the cap.
-// The writer brief is deleted in run-8-readiness Workstream A1: fragment
-// authorship is pinned to whoever holds the densest context at the moment
-// of authorship, not to a post-hoc writer sub-agent.
+// Brief cap constants. Enforced at dispatch time; the composer produces
+// a Brief whose Bytes field the caller compares against the cap.
+//
+// Run-8-readiness Workstream F raised the scaffold cap from 3 KB → 5 KB
+// and the feature cap from 4 KB → 5 KB to accommodate the content-
+// authoring placement rubric + the execOnce key-shape concept atom.
+// The original cap was set before F's content was scoped; §6 of the
+// plan acknowledged the pressure. 5 KB is still tight enough that
+// brief composition stays disciplined (no prompt-stuffing).
+//
+// The writer brief was deleted in A1: fragment authorship is pinned to
+// whoever holds the densest context at the moment of authorship, not to
+// a post-hoc writer sub-agent.
 const (
-	ScaffoldBriefCap = 3 * 1024
-	FeatureBriefCap  = 4 * 1024
+	ScaffoldBriefCap = 5 * 1024
+	FeatureBriefCap  = 5 * 1024
 )
 
 // BriefKind identifies one of two sub-agent roles. The writer role was
@@ -79,11 +87,16 @@ func BuildScaffoldBrief(plan *Plan, cb Codebase, parent *ParentRecipe) (Brief, e
 		contract.ZeropsSetupDev, contract.ZeropsSetupProd)
 	parts = append(parts, "role_contract")
 
-	for _, atom := range []string{
+	atoms := []string{
 		"briefs/scaffold/platform_principles.md",
 		"briefs/scaffold/preship_contract.md",
 		"briefs/scaffold/fact_recording.md",
-	} {
+		"briefs/scaffold/content_authoring.md",
+	}
+	if anyCodebaseHasInitCommands(plan) {
+		atoms = append(atoms, "principles/init-commands-model.md")
+	}
+	for _, atom := range atoms {
 		body, err := readAtom(atom)
 		if err != nil {
 			return Brief{}, err
@@ -95,6 +108,11 @@ func BuildScaffoldBrief(plan *Plan, cb Codebase, parent *ParentRecipe) (Brief, e
 		b.WriteByte('\n')
 		parts = append(parts, atom)
 	}
+
+	b.WriteString("## Citation map\n\nTopics covered by a `zerops_knowledge` guide: ")
+	b.WriteString(strings.Join(citationGuides(), ", "))
+	b.WriteString(". When your KB fragment touches any of them, call `zerops_knowledge` on the matching guide id first and cite it by name.\n\n")
+	parts = append(parts, "citation_map")
 
 	if parent != nil {
 		if pc, ok := parent.Codebases[cb.Hostname]; ok {
@@ -130,16 +148,25 @@ func BuildFeatureBrief(plan *Plan) (Brief, error) {
 	fmt.Fprintf(&b, "# Feature brief — %s\n\n", plan.Slug)
 	parts = append(parts, "header")
 
-	body, err := readAtom("briefs/feature/feature_kinds.md")
-	if err != nil {
-		return Brief{}, err
+	atoms := []string{
+		"briefs/feature/feature_kinds.md",
+		"briefs/feature/content_extension.md",
 	}
-	b.WriteString(body)
-	if !strings.HasSuffix(body, "\n") {
+	if planDeclaresSeed(plan) {
+		atoms = append(atoms, "principles/init-commands-model.md")
+	}
+	for _, atom := range atoms {
+		body, err := readAtom(atom)
+		if err != nil {
+			return Brief{}, err
+		}
+		b.WriteString(body)
+		if !strings.HasSuffix(body, "\n") {
+			b.WriteByte('\n')
+		}
 		b.WriteByte('\n')
+		parts = append(parts, atom)
 	}
-	b.WriteByte('\n')
-	parts = append(parts, "briefs/feature/feature_kinds.md")
 
 	b.WriteString("## Symbol table (from scaffold phase)\n\n")
 	b.WriteString("### Codebases\n\n")
@@ -173,4 +200,56 @@ func excerptREADME(body string, n int) string {
 		cut = cut[:i]
 	}
 	return cut
+}
+
+// anyCodebaseHasInitCommands reports whether any codebase in the plan
+// authors initCommands. Briefs use this to decide whether to inject the
+// execOnce key-shape concept atom — run-8-readiness §2.F.
+func anyCodebaseHasInitCommands(plan *Plan) bool {
+	if plan == nil {
+		return false
+	}
+	for _, cb := range plan.Codebases {
+		if cb.HasInitCommands {
+			return true
+		}
+	}
+	return false
+}
+
+// citationGuides returns the unique guide ids from CitationMap in
+// deterministic order so brief composition is reproducible.
+func citationGuides() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, g := range CitationMap {
+		if seen[g] {
+			continue
+		}
+		seen[g] = true
+		out = append(out, g)
+	}
+	// Sort for deterministic output — map iteration is non-deterministic.
+	for i := 1; i < len(out); i++ {
+		for j := i; j > 0 && out[j] < out[j-1]; j-- {
+			out[j], out[j-1] = out[j-1], out[j]
+		}
+	}
+	return out
+}
+
+// planDeclaresSeed reports whether the plan's feature kinds include
+// anything that authors new initCommands (seed, scout-import). Drives
+// the execOnce concept-atom injection into the feature brief.
+func planDeclaresSeed(plan *Plan) bool {
+	if plan == nil {
+		return false
+	}
+	for _, k := range plan.FeatureKinds {
+		switch k {
+		case "seed", "scout-import", "bootstrap":
+			return true
+		}
+	}
+	return false
 }
