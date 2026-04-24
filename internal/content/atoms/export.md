@@ -196,13 +196,13 @@ Later pushes (remote already on container):
 zerops_deploy targetService="{targetHostname}" strategy="git-push"
 ```
 
-The tool handles `.netrc` auth from `GIT_TOKEN`, remote add/update, push,
-and cleanup. Do NOT run `git init`, `git config user.*`, or
-`git remote add` yourself.
+The response's `status` confirms success; `warnings[]` surface
+non-fatal issues. Do NOT run `git init`, `git config user.*`, or
+`git remote add` yourself — the deploy tool owns the git-push shape.
 
-On error:
+On error, read `platform.APIError.code`:
 
-| Error | Fix | Then |
+| Error code | Fix | Then |
 |---|---|---|
 | `GIT_TOKEN_MISSING` | ask user for token (GitHub: Contents R/W; GitLab: write_repository), run `zerops_env action="set" project=true variables=["GIT_TOKEN={token}"]` | retry task 10 |
 | `PREREQUISITE_MISSING: requires committed code` | the container doesn't have the `import.yaml` commit — go back to task 9 and ensure `ssh {targetHostname} "cd /var/www && git add import.yaml && git commit -m '...'"` actually committed | retry task 10 |
