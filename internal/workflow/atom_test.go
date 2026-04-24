@@ -339,9 +339,9 @@ func TestParseAtom_ReferencesFields_InvalidShape(t *testing.T) {
 		entries string
 	}{
 		{"missing_type", "[ops.Status]"},
-		{"lowercase_type", "[ops.deployResult.Status]"},
 		{"package_uppercase", "[Ops.DeployResult.Status]"},
 		{"empty_component", "[ops..Status]"},
+		{"digit_package", "[0ps.DeployResult.Status]"},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {

@@ -8,9 +8,12 @@ import (
 )
 
 // referencesFieldPattern matches a pkg.Type.Field entry in atom
-// references-fields frontmatter (e.g. "ops.DeployResult.Status").
+// references-fields frontmatter (e.g. "ops.DeployResult.Status",
+// "tools.envChangeResult.RestartedServices"). Type names may be
+// unexported — loadAtomReferenceFieldIndex indexes all struct types
+// regardless of visibility, and JSON serialization does not hide them.
 // Used by ParseAtom to reject malformed entries early.
-var referencesFieldPattern = regexp.MustCompile(`^[a-z_]+\.[A-Z][A-Za-z0-9_]*\.[A-Za-z][A-Za-z0-9_]*$`)
+var referencesFieldPattern = regexp.MustCompile(`^[a-z_]+\.[A-Za-z][A-Za-z0-9_]*\.[A-Za-z][A-Za-z0-9_]*$`)
 
 // KnowledgeAtom is one piece of runtime-dependent guidance. Atoms live as
 // .md files under internal/content/atoms/; their frontmatter declares the
