@@ -6,6 +6,7 @@ deployStates: [never-deployed]
 modes: [standard]
 environments: [container]
 title: "First-deploy — promote dev to stage"
+references-fields: [workflow.ServiceSnapshot.StageHostname]
 ---
 
 ### Promote the first deploy to stage

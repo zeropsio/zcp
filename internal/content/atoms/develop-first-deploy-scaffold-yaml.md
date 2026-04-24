@@ -4,6 +4,7 @@ priority: 2
 phases: [develop-active]
 deployStates: [never-deployed]
 title: "Scaffold zerops.yaml for the first deploy"
+references-fields: [ops.DiscoverResult.Services, workflow.ServiceSnapshot.Mode, workflow.ServiceSnapshot.StageHostname]
 ---
 
 ### Scaffold `zerops.yaml`

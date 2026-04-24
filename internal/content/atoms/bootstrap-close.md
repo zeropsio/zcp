@@ -4,6 +4,7 @@ priority: 8
 phases: [bootstrap-active]
 steps: [close]
 title: "Close bootstrap — hand off to develop"
+references-fields: [workflow.ServiceSnapshot.Bootstrapped, workflow.ServiceSnapshot.Deployed]
 ---
 
 ### Closing bootstrap

@@ -3,6 +3,7 @@ id: develop-env-var-channels
 priority: 2
 phases: [develop-active]
 title: "Env var channels — when each one goes live"
+references-fields: [tools.envChangeResult.RestartedServices, tools.envChangeResult.RestartWarnings, tools.envChangeResult.RestartSkipped, tools.envChangeResult.RestartedProcesses, tools.envChangeResult.Stored]
 ---
 
 ### Env var channels

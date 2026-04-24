@@ -4,6 +4,7 @@ priority: 5
 phases: [develop-active]
 strategies: [push-dev, push-git, manual]
 title: "Deploy strategy — current + how to change"
+references-fields: [workflow.ServiceSnapshot.Strategy, workflow.ServiceSnapshot.Trigger]
 ---
 
 ### Deploy strategy — current + how to change

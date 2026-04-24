@@ -4,6 +4,7 @@ priority: 2
 phases: [export-active]
 environments: [container]
 title: "Export — turn a deployed service into a re-importable git repo"
+references-fields: [ops.ExportResult.ExportYAML, ops.ExportResult.Services, ops.DeployResult.Status, ops.DeployResult.Warnings, platform.APIError.Code]
 ---
 
 # Export procedure

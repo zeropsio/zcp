@@ -4,6 +4,7 @@ priority: 1
 phases: [idle]
 idleScenarios: [adopt]
 title: "Adopt existing unmanaged services"
+references-fields: [workflow.ServiceSnapshot.Bootstrapped, workflow.BootstrapRouteOption.AdoptServices]
 ---
 
 Runtime services exist in this project that ZCP is not tracking —

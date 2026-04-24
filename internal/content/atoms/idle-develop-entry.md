@@ -4,6 +4,7 @@ priority: 1
 phases: [idle]
 idleScenarios: [bootstrapped]
 title: "Develop entry"
+references-fields: [workflow.StateEnvelope.Phase, workflow.WorkSessionSummary.Deploys, workflow.WorkSessionSummary.Verifies]
 ---
 
 The project has at least one bootstrapped service ready to receive

@@ -5,6 +5,7 @@ phases: [bootstrap-active]
 routes: [classic, adopt]
 steps: [discover]
 title: "Confirm mode — dev / standard / simple per service"
+references-fields: [workflow.ServiceSnapshot.Mode, workflow.ServiceSnapshot.StageHostname]
 ---
 
 ### Confirm mode per service

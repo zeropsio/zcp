@@ -4,6 +4,7 @@ priority: 1
 phases: [idle]
 idleScenarios: [incomplete]
 title: "Resume interrupted bootstrap"
+references-fields: [workflow.StateEnvelope.IdleScenario, workflow.ServiceSnapshot.Resumable, workflow.BootstrapRouteOption.ResumeSession, workflow.BootstrapRouteOption.ResumeServices]
 ---
 
 ### Interrupted bootstrap detected

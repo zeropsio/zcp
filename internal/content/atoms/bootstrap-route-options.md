@@ -3,6 +3,7 @@ id: bootstrap-route-options
 priority: 1
 phases: [idle]
 title: "Bootstrap route selection — discovery response"
+references-fields: [workflow.BootstrapDiscoveryResponse.RouteOptions, workflow.BootstrapRouteOption.Route, workflow.BootstrapRouteOption.ResumeSession, workflow.BootstrapRouteOption.AdoptServices, workflow.BootstrapRouteOption.RecipeSlug, workflow.BootstrapRouteOption.Collisions]
 ---
 
 ### Bootstrap route discovery

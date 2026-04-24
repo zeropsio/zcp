@@ -4,6 +4,7 @@ priority: 5
 phases: [develop-active]
 environments: [container]
 title: "Platform rules — container extras"
+references-fields: [ops.DevServerResult.Running, ops.DevServerResult.HealthStatus, ops.DevServerResult.StartMillis, ops.DevServerResult.Reason, ops.DevServerResult.LogTail]
 ---
 
 ### Platform rules (container environment)

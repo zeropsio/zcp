@@ -5,6 +5,7 @@ phases: [strategy-setup]
 strategies: [push-git]
 environments: [container]
 title: "push-git push setup — container env (GIT_TOKEN + .netrc)"
+references-fields: [ops.DeployResult.Status, ops.DeployResult.Warnings, platform.APIError.Code]
 ---
 
 # Push path — container env

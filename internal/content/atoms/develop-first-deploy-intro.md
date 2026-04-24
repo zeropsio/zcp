@@ -4,6 +4,7 @@ priority: 1
 phases: [develop-active]
 deployStates: [never-deployed]
 title: "First-deploy branch — scaffold + write + deploy + stamp"
+references-fields: [workflow.ServiceSnapshot.Deployed, ops.VerifyResult.Status]
 ---
 
 ### You're in the develop first-deploy branch

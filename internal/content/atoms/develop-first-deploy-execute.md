@@ -4,6 +4,7 @@ priority: 4
 phases: [develop-active]
 deployStates: [never-deployed]
 title: "Run the first deploy"
+references-fields: [ops.DeployResult.Status, ops.DeployResult.BuildLogs, ops.DeployResult.RuntimeLogs, ops.DeployResult.FailedPhase, ops.DeployResult.SubdomainAccessEnabled, ops.DeployResult.SubdomainURL]
 ---
 
 ### Run the first deploy

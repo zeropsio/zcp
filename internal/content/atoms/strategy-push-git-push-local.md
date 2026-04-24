@@ -5,6 +5,7 @@ phases: [strategy-setup]
 strategies: [push-git]
 environments: [local]
 title: "push-git push setup — local env (user's git)"
+references-fields: [ops.DeployResult.Status, ops.DeployResult.Warnings, ops.DeployResult.Message]
 ---
 
 # Push path — local env

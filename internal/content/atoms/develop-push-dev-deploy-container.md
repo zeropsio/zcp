@@ -6,6 +6,7 @@ deployStates: [deployed]
 strategies: [push-dev]
 environments: [container]
 title: "Push-dev strategy — deploy via zerops_deploy (container)"
+references-fields: [ops.DeployResult.Mode, ops.DeployResult.SourceService, ops.DeployResult.TargetService]
 ---
 
 ### Push-Dev Deploy Strategy — container

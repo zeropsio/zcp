@@ -5,6 +5,7 @@ phases: [develop-active]
 modes: [dev]
 environments: [container]
 title: "Dev-mode checklist extras (container)"
+references-fields: [workflow.ServiceSnapshot.Mode]
 ---
 
 ### Checklist (dev-mode services)
