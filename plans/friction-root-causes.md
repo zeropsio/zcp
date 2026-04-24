@@ -366,7 +366,26 @@ This aligns guidance with the existing behavior at `internal/ops/deploy_ssh.go:1
 
 **File delta**: +5 LOC in one atom; upstream recipe PR.
 
-#### P2.5 — Atom ↔ code contract test framework
+#### P2.5 — Atom ↔ code contract test framework — SUPERSEDED
+
+> **SUPERSEDED BY** `plans/atom-authoring-contract.md`.
+>
+> The per-topic phrase-matching test approach sketched below was
+> rejected in favor of a unified atom-authoring contract:
+> - Atoms describe observable response/envelope state only; handler
+>   internals, invisible state, spec IDs, and plan-doc paths are
+>   forbidden by `TestAtomAuthoringLint`.
+> - `references-fields` frontmatter binds cited fields to real Go
+>   struct fields via AST scan in `TestAtomReferenceFieldIntegrity`.
+> - `references-atoms` frontmatter validates atom-to-atom links via
+>   `TestAtomReferencesAtomsIntegrity`.
+>
+> The three per-topic tests (`TestSubdomainAtomContract`,
+> `TestDevServerAtomContract`, `TestDeployModesAtomContract`) were
+> deleted in Phase -2 of the superseding plan. The §A2 agent block
+> below is obsolete.
+
+
 
 **Design**: `internal/workflow/atom_contract_test.go` defines a table binding atom IDs to behavioral phrases and corresponding code paths:
 

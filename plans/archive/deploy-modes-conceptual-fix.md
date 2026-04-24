@@ -1,5 +1,12 @@
 # Deploy Modes — Conceptual Fix for F3 + F4
 
+> **SUPERSEDED** (archived 2026-04-24). The DM-1…DM-5 invariants in
+> `docs/spec-workflows.md §8`, `ops.ClassifyDeploy`, and
+> `TestValidateZeropsYml_DM2_*`/`_DM3_*` shipped and stay. The atom-contract
+> portion (per-topic `TestDeployModesAtomContract` + DM-* citations in
+> atom prose) is replaced by the unified authoring contract in
+> `plans/atom-authoring-contract.md`.
+
 > **Scope**: Elevate the self-deploy vs cross-deploy asymmetry to a first-class concept in ZCP. Replace one role-gated advice + one source-tree-speculating existence check with mode-aware validation. Restructure the dotnet recipe to cover the majority single-app case by default and comment the migration-case variant. Document five DM-* invariants in `docs/spec-workflows.md` §8. Update atom corpus so the mental model is visible to every LLM from first scaffold.
 >
 > **Root cause documentation**: `plans/f3-f4-deep-dive-2026-04-24.md` — full flow trace, live repro, platform-docs cross-refs. This plan assumes that understanding.

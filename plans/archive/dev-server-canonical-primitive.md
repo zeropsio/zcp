@@ -1,5 +1,12 @@
 # Dev-Server Canonical Primitive — Implementation Plan
 
+> **SUPERSEDED** (archived 2026-04-24). The canonical-primitive install
+> shipped across DS-01…DS-04 commits; the atom-contract portion (per-topic
+> `TestDevServerAtomContract`) is replaced by the unified authoring
+> contract in `plans/atom-authoring-contract.md`. Runtime-class guidance
+> for agents now lives in the atom corpus; `docs/spec-workflows.md §8 O4`
+> is self-contained and no longer points at this plan.
+
 > **Scope**: Establish `zerops_dev_server` as the canonical primitive for dev-server lifecycle in container env, and harness background task primitive (`Bash run_in_background=true` in Claude Code) as the canonical primitive in local env. Atoms prescribe these patterns directly; the LLM follows the prescription. Code stops asserting runtime state it doesn't actually check. Specs codify the new invariant.
 >
 > **Framing**: prescriptive, not defensive. We tell the LLM what to do. When guidance is correct and complete, the problematic patterns (raw SSH backgrounding, false "NOT running" claims, 300s hangs) do not arise.
