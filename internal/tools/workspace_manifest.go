@@ -32,7 +32,12 @@ type WorkspaceManifestInput struct {
 }
 
 // RegisterWorkspaceManifest registers the zerops_workspace_manifest MCP tool.
-func RegisterWorkspaceManifest(srv *mcp.Server, engine *workflow.Engine) {
+//
+// recipeProbe may be nil in tests that don't exercise the recipe path. When
+// the v2 engine has no active session but exactly one v3 recipe session is
+// open, the tool routes to <outputRoot>/workspace-manifest.json so the
+// manifest lands inside the recipe run dir instead of the v2 /tmp path.
+func RegisterWorkspaceManifest(srv *mcp.Server, engine *workflow.Engine, recipeProbe RecipeSessionProbe) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workspace_manifest",
 		Description: "Read or update the recipe workspace manifest — a structured JSON snapshot of scaffold state, source-file purposes, managed-service wiring, pre-flight results, cross-codebase contracts, and features implemented. Subagents read this instead of crawling the filesystem. Main agent updates it after each subagent return. Action=read returns the current manifest (or an empty skeleton if uninitialized). Action=update merges the UpdatePayload — Codebases overwrite per-hostname, FeaturesImplemented appends, Contracts replaces whole.",
@@ -42,14 +47,10 @@ func RegisterWorkspaceManifest(srv *mcp.Server, engine *workflow.Engine) {
 			IdempotentHint: false,
 		},
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input WorkspaceManifestInput) (*mcp.CallToolResult, any, error) {
-		if engine == nil {
-			return textResult("Error: workflow engine not initialized"), nil, nil
+		sessionID, path, routeErr := resolveManifestPath(engine, recipeProbe)
+		if routeErr != "" {
+			return textResult(routeErr), nil, nil
 		}
-		sessionID := engine.SessionID()
-		if sessionID == "" {
-			return textResult("Error: no active workflow session — zerops_workspace_manifest is only meaningful during an active recipe session"), nil, nil
-		}
-		path := ops.WorkspaceManifestPath(sessionID)
 
 		switch input.Action {
 		case "read":
@@ -93,4 +94,27 @@ func RegisterWorkspaceManifest(srv *mcp.Server, engine *workflow.Engine) {
 			return textResult(fmt.Sprintf("Error: unknown action %q (expected 'read' or 'update')", input.Action)), nil, nil
 		}
 	})
+}
+
+// resolveManifestPath returns (sessionID, path, "") when a destination for
+// the manifest was resolved — the v2 engine's /tmp path or the single open
+// recipe session's <outputRoot>/workspace-manifest.json. The recipe routing
+// uses the recipe slug as the manifest's sessionID field because the
+// manifest is scoped to that run. When no session can be resolved, the third
+// return carries an error message suitable for textResult.
+func resolveManifestPath(engine *workflow.Engine, recipeProbe RecipeSessionProbe) (string, string, string) {
+	if engine != nil {
+		if sid := engine.SessionID(); sid != "" {
+			return sid, ops.WorkspaceManifestPath(sid), ""
+		}
+	}
+	if recipeProbe != nil {
+		if slug, _, manifestPath, ok := recipeProbe.CurrentSingleSession(); ok {
+			return slug, manifestPath, ""
+		}
+		if recipeProbe.HasAnySession() {
+			return "", "", "Error: multiple recipe sessions open — zerops_workspace_manifest cannot infer the target; specify the session explicitly"
+		}
+	}
+	return "", "", "Error: no active workflow session — zerops_workspace_manifest is only meaningful during an active recipe session"
 }

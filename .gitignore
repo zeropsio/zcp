@@ -3,6 +3,7 @@ bin/
 builds/
 /zcp
 RECIPE_RUNS/
+docs/zcprecipator3/runs/
 
 # Secrets
 .env

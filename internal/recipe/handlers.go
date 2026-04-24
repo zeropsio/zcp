@@ -47,6 +47,35 @@ func (s *Store) HasAnySession() bool {
 	return len(s.sessions) > 0
 }
 
+// CurrentSingleSession returns the slug + per-session file paths for the
+// single open recipe session, or ok=false when zero or >1 sessions are open.
+// Ambiguity must not be resolved by inference — the caller should surface an
+// error instead of picking one.
+//
+// Two cross-tool routing primitives come out of this: the legacy-facts path,
+// used by zerops_record_fact (v2 schema) so v2-authored facts land inside
+// the recipe run dir instead of a v2 session's /tmp; and the manifest path,
+// used by zerops_workspace_manifest so the workspace manifest lives next to
+// the rest of the recipe artifacts. The v3 FactsLog at <outputRoot>/facts.jsonl
+// stays reserved for structurally-classified records written via
+// zerops_recipe action=record-fact.
+func (s *Store) CurrentSingleSession() (slug, legacyFactsPath, manifestPath string, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.sessions) != 1 {
+		return "", "", "", false
+	}
+	var sess *Session
+	for sl, sv := range s.sessions {
+		slug, sess = sl, sv
+	}
+	out := sess.OutputRoot
+	return slug,
+		filepath.Join(out, "legacy-facts.jsonl"),
+		filepath.Join(out, "workspace-manifest.json"),
+		true
+}
+
 // OpenOrCreate returns an existing session, or creates one at the given
 // outputRoot with a freshly-resolved parent recipe.
 func (s *Store) OpenOrCreate(slug, outputRoot string) (*Session, error) {

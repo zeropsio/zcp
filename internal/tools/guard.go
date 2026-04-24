@@ -14,8 +14,15 @@ import (
 // internal/tools free of a direct recipe-package import while letting
 // the workflow-context guard accept an active v3 recipe session as
 // valid context.
+//
+// CurrentSingleSession lets a v2-shaped tool (zerops_record_fact,
+// zerops_workspace_manifest) route into the recipe's outputRoot when
+// the agent is in a recipe-only context — ok=false when zero or >1
+// recipe sessions are open, so ambiguity becomes an explicit error
+// instead of a guessed write.
 type RecipeSessionProbe interface {
 	HasAnySession() bool
+	CurrentSingleSession() (slug, legacyFactsPath, manifestPath string, ok bool)
 }
 
 // requireWorkflowContext checks that the agent is in an active workflow:

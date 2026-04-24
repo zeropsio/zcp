@@ -117,13 +117,25 @@ func (s *Server) registerTools() {
 	// Knowledge tracker shared between knowledge and workflow tools.
 	knowledgeTracker := ops.NewKnowledgeTracker()
 
+	// recipeStore is created early so v2-shaped tools (record_fact,
+	// workspace_manifest, import, mount) can accept an active v3 recipe
+	// session as their workflow context. Mount root defaults to ~/recipes;
+	// override with ZCP_RECIPE_MOUNT_ROOT. See docs/zcprecipator3/plan.md §6.
+	mountRoot := os.Getenv("ZCP_RECIPE_MOUNT_ROOT")
+	if mountRoot == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			mountRoot = filepath.Join(home, "recipes")
+		}
+	}
+	recipeStore := recipe.NewStore(mountRoot)
+
 	// Read-only tools
 	tools.RegisterWorkflow(s.server, s.client, projectID, stackCache, schemaCache, wfEngine, s.logFetcher, stateDir, s.rtInfo.ServiceName, s.mounter, s.rtInfo)
 	tools.RegisterDiscover(s.server, s.client, projectID, stateDir)
 	tools.RegisterKnowledge(s.server, s.store, s.client, stackCache, knowledgeTracker, wfEngine)
 	tools.RegisterGuidance(s.server, wfEngine)
-	tools.RegisterRecordFact(s.server, wfEngine)
-	tools.RegisterWorkspaceManifest(s.server, wfEngine)
+	tools.RegisterRecordFact(s.server, wfEngine, recipeStore)
+	tools.RegisterWorkspaceManifest(s.server, wfEngine, recipeStore)
 	tools.RegisterLogs(s.server, s.client, s.logFetcher, projectID)
 	tools.RegisterEvents(s.server, s.client, projectID)
 	tools.RegisterProcess(s.server, s.client)
@@ -160,17 +172,8 @@ func (s *Server) registerTools() {
 	// zcprecipator3 (v3) recipe engine ships alongside v2's zerops_workflow.
 	// Both tools register; clients pick which to call. v2 deletion triggers
 	// on first clean showcase via v3 — see docs/zcprecipator3/plan.md §14.
-	// Mount root defaults to ~/recipes; override with ZCP_RECIPE_MOUNT_ROOT.
-	// The Store is wired into RegisterImport/RegisterMount so an active
-	// recipe session satisfies the workflow-context guard without
-	// requiring a separate bootstrap/develop workflow.
-	mountRoot := os.Getenv("ZCP_RECIPE_MOUNT_ROOT")
-	if mountRoot == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			mountRoot = filepath.Join(home, "recipes")
-		}
-	}
-	recipeStore := recipe.NewStore(mountRoot)
+	// recipeStore was constructed above so v2-shaped tools can accept a
+	// recipe session as their workflow context.
 	recipe.Register(s.server, recipeStore)
 
 	tools.RegisterImport(s.server, s.client, projectID, wfEngine, stateDir, recipeStore)

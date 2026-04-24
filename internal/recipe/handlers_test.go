@@ -100,6 +100,52 @@ func TestDispatch_StartStatusRecordFactEmitYAML(t *testing.T) {
 	}
 }
 
+// TestStore_CurrentSingleSession covers the cross-tool routing primitive v3
+// uses when a v2-shaped tool (zerops_record_fact, zerops_workspace_manifest)
+// is called under a recipe-only context — one open session lets the tool
+// infer its slug + paths; zero or multiple sessions must return ok=false so
+// the caller errors instead of writing to a guessed location.
+func TestStore_CurrentSingleSession(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+
+	// Zero sessions → ok=false.
+	if _, _, _, ok := store.CurrentSingleSession(); ok {
+		t.Fatal("want ok=false when no sessions are open")
+	}
+
+	// Exactly one session → ok=true with slug + paths under outputRoot.
+	outputRoot := filepath.Join(dir, "run-a")
+	if _, err := store.OpenOrCreate("alpha-showcase", outputRoot); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	slug, legacyPath, manifestPath, ok := store.CurrentSingleSession()
+	if !ok {
+		t.Fatal("want ok=true with one session open")
+	}
+	if slug != "alpha-showcase" {
+		t.Errorf("slug = %q, want alpha-showcase", slug)
+	}
+	wantLegacy := filepath.Join(outputRoot, "legacy-facts.jsonl")
+	if legacyPath != wantLegacy {
+		t.Errorf("legacyFactsPath = %q, want %q", legacyPath, wantLegacy)
+	}
+	wantManifest := filepath.Join(outputRoot, "workspace-manifest.json")
+	if manifestPath != wantManifest {
+		t.Errorf("manifestPath = %q, want %q", manifestPath, wantManifest)
+	}
+
+	// A second session makes the resolver ambiguous → ok=false.
+	if _, err := store.OpenOrCreate("beta-showcase", filepath.Join(dir, "run-b")); err != nil {
+		t.Fatalf("OpenOrCreate second: %v", err)
+	}
+	if _, _, _, ok := store.CurrentSingleSession(); ok {
+		t.Error("want ok=false with two sessions open — caller must pass slug explicitly")
+	}
+}
+
 func TestDispatch_BuildBrief(t *testing.T) {
 	t.Parallel()
 

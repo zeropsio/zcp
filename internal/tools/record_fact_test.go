@@ -2,11 +2,13 @@ package tools
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/recipe"
 )
 
 func TestRecordFact_AppendsToSessionLog(t *testing.T) {
@@ -16,7 +18,7 @@ func TestRecordFact_AppendsToSessionLog(t *testing.T) {
 	engine := testEngine(t)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterRecordFact(srv, engine)
+	RegisterRecordFact(srv, engine, nil)
 
 	result := callTool(t, srv, "zerops_record_fact", map[string]any{
 		"type":        ops.FactTypeGotchaCandidate,
@@ -52,7 +54,7 @@ func TestRecordFact_RejectsUnknownType(t *testing.T) {
 	t.Parallel()
 	engine := testEngine(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterRecordFact(srv, engine)
+	RegisterRecordFact(srv, engine, nil)
 
 	result := callTool(t, srv, "zerops_record_fact", map[string]any{
 		"type":  "wrong_kind",
@@ -72,7 +74,7 @@ func TestRecordFact_RequiresActiveSession(t *testing.T) {
 	}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterRecordFact(srv, engine)
+	RegisterRecordFact(srv, engine, nil)
 
 	result := callTool(t, srv, "zerops_record_fact", map[string]any{
 		"type":  ops.FactTypeGotchaCandidate,
@@ -92,7 +94,7 @@ func TestRecordFact_NudgeOnMissingRouteTo(t *testing.T) {
 	t.Parallel()
 	engine := testEngine(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterRecordFact(srv, engine)
+	RegisterRecordFact(srv, engine, nil)
 
 	result := callTool(t, srv, "zerops_record_fact", map[string]any{
 		"type":  ops.FactTypeGotchaCandidate,
@@ -128,7 +130,7 @@ func TestRecordFact_RouteToPassthrough(t *testing.T) {
 	t.Parallel()
 	engine := testEngine(t)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterRecordFact(srv, engine)
+	RegisterRecordFact(srv, engine, nil)
 
 	result := callTool(t, srv, "zerops_record_fact", map[string]any{
 		"type":    ops.FactTypeIGItemCandidate,
@@ -152,6 +154,84 @@ func TestRecordFact_RouteToPassthrough(t *testing.T) {
 	}
 	if facts[0].RouteTo != ops.FactRouteToContentIG {
 		t.Errorf("persisted RouteTo = %q, want %q", facts[0].RouteTo, ops.FactRouteToContentIG)
+	}
+}
+
+// TestRecordFact_RoutesToRecipeSession — when the v2 workflow engine has no
+// active session but a v3 recipe session is open, zerops_record_fact must
+// append into the recipe's legacy-facts.jsonl rather than erroring. Exercises
+// the Workstream E deferred gate plumbing from run-8-readiness.
+func TestRecordFact_RoutesToRecipeSession(t *testing.T) {
+	t.Parallel()
+	engine := testEngine(t)
+	if err := engine.Reset(); err != nil {
+		t.Fatalf("reset engine: %v", err)
+	}
+
+	// Open a recipe session pointed at a per-test outputRoot — the probe
+	// will resolve CurrentSingleSession to this one and write into
+	// <outputRoot>/legacy-facts.jsonl.
+	store := recipe.NewStore(t.TempDir())
+	outputRoot := filepath.Join(t.TempDir(), "recipe-run")
+	if _, err := store.OpenOrCreate("alpha-showcase", outputRoot); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterRecordFact(srv, engine, store)
+
+	result := callTool(t, srv, "zerops_record_fact", map[string]any{
+		"type":      ops.FactTypeGotchaCandidate,
+		"title":     "execOnce burned on mid-seed crash",
+		"substep":   "feature.seed",
+		"codebase":  "apidev",
+		"mechanism": "zsc execOnce + per-deploy appVersionId",
+		"routeTo":   ops.FactRouteToContentGotcha,
+	})
+	if result.IsError {
+		t.Fatalf("tool returned error: %s", getTextContent(t, result))
+	}
+
+	// Fact landed in the recipe's legacy bucket, not in the v2 /tmp path.
+	path := filepath.Join(outputRoot, "legacy-facts.jsonl")
+	got, err := ops.ReadFacts(path)
+	if err != nil {
+		t.Fatalf("read recipe legacy facts: %v", err)
+	}
+	if len(got) != 1 || got[0].Title != "execOnce burned on mid-seed crash" {
+		t.Errorf("want 1 fact with matching title, got: %+v", got)
+	}
+}
+
+// TestRecordFact_AmbiguousMultipleSessionsErrors — two open recipe sessions
+// make "which session owns this fact?" unanswerable by inference; the tool
+// must error rather than silently picking one.
+func TestRecordFact_AmbiguousMultipleSessionsErrors(t *testing.T) {
+	t.Parallel()
+	engine := testEngine(t)
+	if err := engine.Reset(); err != nil {
+		t.Fatalf("reset engine: %v", err)
+	}
+
+	dir := t.TempDir()
+	store := recipe.NewStore(dir)
+	if _, err := store.OpenOrCreate("alpha-showcase", filepath.Join(dir, "a")); err != nil {
+		t.Fatalf("open alpha: %v", err)
+	}
+	if _, err := store.OpenOrCreate("beta-showcase", filepath.Join(dir, "b")); err != nil {
+		t.Fatalf("open beta: %v", err)
+	}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterRecordFact(srv, engine, store)
+
+	result := callTool(t, srv, "zerops_record_fact", map[string]any{
+		"type":  ops.FactTypeGotchaCandidate,
+		"title": "x",
+	})
+	text := getTextContent(t, result)
+	if !strings.Contains(strings.ToLower(text), "session") {
+		t.Errorf("expected session-ambiguity error, got: %s", text)
 	}
 }
 

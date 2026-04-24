@@ -58,7 +58,14 @@ func inferLikelyRouteTo(factType string) string {
 }
 
 // RegisterRecordFact registers the zerops_record_fact MCP tool.
-func RegisterRecordFact(srv *mcp.Server, engine *workflow.Engine) {
+//
+// recipeProbe may be nil in tests that don't exercise the recipe path. When
+// the v2 workflow engine has no active session but exactly one v3 recipe
+// session is open, the tool routes the v2-shaped record into
+// <outputRoot>/legacy-facts.jsonl so recipe sub-agents using this tool land
+// inside the recipe run dir — the v3 structured facts log at
+// <outputRoot>/facts.jsonl stays reserved for zerops_recipe action=record-fact.
+func RegisterRecordFact(srv *mcp.Server, engine *workflow.Engine, recipeProbe RecipeSessionProbe) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_record_fact",
 		Description: "Record a structured fact discovered during deploy for the readmes sub-step writer to consume. Call when you encounter and fix a non-trivial issue, verify a non-obvious platform behavior, or establish a cross-codebase contract binding. The writer subagent at the end of deploy reads the accumulated log as pre-organized input — write facts at the moment of freshest knowledge, not in retrospect.",
@@ -68,12 +75,9 @@ func RegisterRecordFact(srv *mcp.Server, engine *workflow.Engine) {
 			IdempotentHint: false,
 		},
 	}, func(_ context.Context, _ *mcp.CallToolRequest, input RecordFactInput) (*mcp.CallToolResult, any, error) {
-		if engine == nil {
-			return textResult("Error: workflow engine not initialized"), nil, nil
-		}
-		sessionID := engine.SessionID()
-		if sessionID == "" {
-			return textResult("Error: no active workflow session — zerops_record_fact is only meaningful during an active recipe session"), nil, nil
+		sessionLabel, path, routeErr := resolveFactLogPath(engine, recipeProbe)
+		if routeErr != "" {
+			return textResult(routeErr), nil, nil
 		}
 
 		rec := ops.FactRecord{
@@ -88,22 +92,24 @@ func RegisterRecordFact(srv *mcp.Server, engine *workflow.Engine) {
 			Scope:       input.Scope,
 			RouteTo:     input.RouteTo,
 		}
-		path := ops.FactLogPath(sessionID)
 		if err := ops.AppendFact(path, rec); err != nil {
 			return textResult(fmt.Sprintf("Error recording fact: %v", err)), nil, nil
 		}
 		// Cx-ITERATE-GUARD: a recorded fact is the canonical "new evidence"
 		// touchpoint that clears the post-iterate substep-complete gate.
 		// Best-effort; a failure to flip the flag is non-fatal (the fact
-		// itself landed) so don't escalate past the log.
-		_ = engine.ClearAwaitingEvidenceAfterIterate()
+		// itself landed) so don't escalate past the log. The flag only
+		// exists on the v2 engine; skip when routing to a recipe session.
+		if engine != nil && engine.SessionID() != "" {
+			_ = engine.ClearAwaitingEvidenceAfterIterate()
+		}
 
 		// v39 Commit 4 — nudge (not refusal) when the caller leaves RouteTo
 		// empty. The fact is already appended; the nudge surfaces the
 		// inferred default so the caller can reinforce or override on the
 		// next record_fact call. Infers from rec.Type because that's the
 		// strongest signal the caller already supplied.
-		msg := fmt.Sprintf("Recorded %s fact: %q (session %s)", rec.Type, rec.Title, sessionID)
+		msg := fmt.Sprintf("Recorded %s fact: %q (session %s)", rec.Type, rec.Title, sessionLabel)
 		if rec.RouteTo == "" {
 			if inferred := inferLikelyRouteTo(rec.Type); inferred != "" {
 				msg += fmt.Sprintf(
@@ -114,4 +120,26 @@ func RegisterRecordFact(srv *mcp.Server, engine *workflow.Engine) {
 		}
 		return textResult(msg), nil, nil
 	})
+}
+
+// resolveFactLogPath returns (sessionLabel, path, "") when a destination
+// for the fact was resolved — either the v2 engine's /tmp log or the single
+// open recipe session's legacy-facts.jsonl. When no session can be
+// resolved, the third return carries an error message suitable for
+// textResult; the first two are zero.
+func resolveFactLogPath(engine *workflow.Engine, recipeProbe RecipeSessionProbe) (string, string, string) {
+	if engine != nil {
+		if sid := engine.SessionID(); sid != "" {
+			return sid, ops.FactLogPath(sid), ""
+		}
+	}
+	if recipeProbe != nil {
+		if slug, legacyPath, _, ok := recipeProbe.CurrentSingleSession(); ok {
+			return "recipe:" + slug, legacyPath, ""
+		}
+		if recipeProbe.HasAnySession() {
+			return "", "", "Error: multiple recipe sessions open — zerops_record_fact cannot infer the target; use zerops_recipe action=record-fact with an explicit slug"
+		}
+	}
+	return "", "", "Error: no active workflow session — zerops_record_fact is only meaningful during an active recipe session"
 }
