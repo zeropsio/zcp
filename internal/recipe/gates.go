@@ -1,6 +1,7 @@
 package recipe
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,12 +48,29 @@ func DefaultGates() []Gate {
 }
 
 // FinalizeGates returns the additional gate set that runs only at
-// finalize close — after the writer sub-agent has emitted all six
-// import.yaml files to the output tree.
+// finalize close — after stitch-content has landed every surface on
+// disk. In addition to the mechanical env-imports-present gate, this
+// set runs every registered per-surface validator (Workstream D) so
+// the prose content itself is checked against spec-content-surfaces.md.
 func FinalizeGates() []Gate {
 	return []Gate{
 		{Name: "env-imports-present", Run: gateEnvImportsPresent},
+		{Name: "surface-validators", Run: gateSurfaceValidators},
 	}
+}
+
+// gateSurfaceValidators runs every registered SurfaceContract
+// ValidateFn over the stitched output tree. Facts are classified first
+// (Workstream C) so DISCARD-class records don't drive spurious
+// cross-surface violations.
+func gateSurfaceValidators(ctx GateContext) []Violation {
+	var facts []FactRecord
+	if ctx.FactsLog != nil {
+		if all, err := ctx.FactsLog.Read(); err == nil {
+			facts, _ = ClassifyLog(all)
+		}
+	}
+	return RunSurfaceValidators(context.Background(), ctx.OutputRoot, ctx.Plan, facts, ctx.Parent)
 }
 
 // gateEnvImportsPresent — every tier must have an import.yaml file in the
