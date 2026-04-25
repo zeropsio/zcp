@@ -105,6 +105,8 @@ func validateCodebaseKB(_ context.Context, path string, body []byte, _ SurfaceIn
 				fmt.Sprintf("KB mentions %q but does not cite `zerops_knowledge` guide %q", topic, guide)))
 		}
 	}
+	// V-2: paraphrase detection vs the cited guide's key phrases.
+	vs = append(vs, validateKBParaphrase(path, kb)...)
 	return vs, nil
 }
 
