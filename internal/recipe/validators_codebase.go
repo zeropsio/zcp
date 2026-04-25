@@ -14,9 +14,22 @@ import (
 // See docs/spec-content-surfaces.md §"Surface 4-7" for the contracts
 // each of these validators enforces.
 
+// igHeadingItemRE matches the canonical `### N. <title>` IG item
+// shape. Matches the heading on its own line — the engine-generated
+// item #1 ("### 1. Adding zerops.yaml") and any porter-authored
+// "### 2. <title>", "### 3. <title>" items.
+var igHeadingItemRE = regexp.MustCompile(`(?m)^### \d+\.\s+\S`)
+
+// igPlainOrderedItemRE matches plain ordered-list items (`1. `, `2. `)
+// that aren't preceded by `###`. The pre-§R shape; rejected (R-1).
+var igPlainOrderedItemRE = regexp.MustCompile(`(?m)^\d+\.\s+\S`)
+
 // validateCodebaseIG checks the integration-guide fragment: marker
-// present, ≥ 2 numbered items, first item introduces `zerops.yaml`,
-// no scaffold-only filenames in body.
+// present, ≥ 2 `### N.` heading items, first item introduces
+// `zerops.yaml`, no scaffold-only filenames in body. Plain
+// ordered-list items (without the heading shape) are rejected
+// (run-11 gap R-1) — the engine generates item #1 in heading shape;
+// porter-authored items must match.
 func validateCodebaseIG(_ context.Context, path string, body []byte, _ SurfaceInputs) ([]Violation, error) {
 	s := string(body)
 	var vs []Violation
@@ -26,16 +39,21 @@ func validateCodebaseIG(_ context.Context, path string, body []byte, _ SurfaceIn
 			"integration-guide marker missing or body empty"))
 		return vs, nil
 	}
-	items := numberedItemRE.FindAllString(ig, -1)
+	for _, plain := range igPlainOrderedItemRE.FindAllString(ig, -1) {
+		vs = append(vs, violation("codebase-ig-plain-ordered-list", path,
+			fmt.Sprintf("IG item uses plain ordered-list shape (%q); IG items must use `### N. <title>` headings to match the engine-generated item #1 — see scaffold brief",
+				trimForMessage(strings.TrimSpace(plain)))))
+	}
+	items := igHeadingItemRE.FindAllString(ig, -1)
 	if len(items) < 2 {
 		vs = append(vs, violation("codebase-ig-too-few-items", path,
-			fmt.Sprintf("%d numbered items < 2 expected", len(items))))
+			fmt.Sprintf("%d `### N.` heading items < 2 expected", len(items))))
 	}
 	// First numbered item must introduce zerops.yaml — IG is a porter's
 	// step-by-step and the yaml is the first platform-specific change.
 	if len(items) >= 1 {
 		firstBlock := ig
-		if idx := numberedItemRE.FindAllStringIndex(ig, 2); len(idx) >= 2 {
+		if idx := igHeadingItemRE.FindAllStringIndex(ig, 2); len(idx) >= 2 {
 			firstBlock = ig[idx[0][0]:idx[1][0]]
 		}
 		if !strings.Contains(strings.ToLower(firstBlock), "zerops.yaml") {

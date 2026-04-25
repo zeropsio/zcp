@@ -84,10 +84,6 @@ func yamlFindDividers(body []byte) [][]byte {
 	return out
 }
 
-// numberedItemRE matches markdown numbered-list items ("1. ", "2. ").
-// Used by the IG validator to count items.
-var numberedItemRE = regexp.MustCompile(`(?m)^\s*\d+\.\s+\S`)
-
 // boldBulletRE matches a markdown bullet that opens with `**...**`
 // (the bold symptom the KB contract requires on every bullet).
 var boldBulletRE = regexp.MustCompile(`(?m)^\s*-\s+\*\*[^*]+\*\*`)

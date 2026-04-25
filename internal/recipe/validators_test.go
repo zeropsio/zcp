@@ -612,6 +612,73 @@ func TestBrief_Scaffold_ContainsValidatorTripwires(t *testing.T) {
 	}
 }
 
+// TestValidateCodebaseIG_HashHashHashItems_Pass — run-11 gap R-1.
+// IG body using `### N.` headers (canonical shape; engine generates
+// item #1 in this shape) passes. The plain ordered-list shape is the
+// rejected one (run 10's contradiction between brief instruction and
+// validator regex).
+func TestValidateCodebaseIG_HashHashHashItems_Pass(t *testing.T) {
+	t.Parallel()
+
+	body := []byte("# codebase/api\n" +
+		"\n" +
+		"<!-- #ZEROPS_EXTRACT_START:integration-guide# -->\n" +
+		"### 1. Adding `zerops.yaml`\n\n" +
+		"Engine-generated item.\n\n" +
+		"### 2. Wiring env vars\n\n" +
+		"Porter-facing item.\n\n" +
+		"### 3. Subdomain\n\n" +
+		"Another porter step.\n" +
+		"<!-- #ZEROPS_EXTRACT_END:integration-guide# -->\n")
+	vs, err := validateCodebaseIG(context.Background(), "codebases/api/README.md", body, SurfaceInputs{Plan: &Plan{}})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if containsCode(vs, "codebase-ig-too-few-items") {
+		t.Errorf("### N. shape should pass, got: %+v", vs)
+	}
+	if containsCode(vs, "codebase-ig-plain-ordered-list") {
+		t.Errorf("### N. shape must not flag plain-ordered-list, got: %+v", vs)
+	}
+}
+
+// TestValidateCodebaseIG_PlainOrderedList_Rejected — IG body with
+// plain ordered-list items (`1.`, `2.`) is rejected; canonical shape
+// is `### N. <title>` headers only.
+func TestValidateCodebaseIG_PlainOrderedList_Rejected(t *testing.T) {
+	t.Parallel()
+
+	body := []byte("# codebase/api\n" +
+		"\n" +
+		"<!-- #ZEROPS_EXTRACT_START:integration-guide# -->\n" +
+		"1. Configure zerops.yaml.\n" +
+		"2. Bind 0.0.0.0.\n" +
+		"3. Add subdomain.\n" +
+		"<!-- #ZEROPS_EXTRACT_END:integration-guide# -->\n")
+	vs, err := validateCodebaseIG(context.Background(), "codebases/api/README.md", body, SurfaceInputs{Plan: &Plan{}})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if !containsCode(vs, "codebase-ig-plain-ordered-list") {
+		t.Errorf("expected codebase-ig-plain-ordered-list violation, got: %+v", vs)
+	}
+}
+
+// TestBrief_Scaffold_IGMandateHeadings — run-11 gap R-2. Brief
+// mandates `### N. <title>` headers explicitly.
+func TestBrief_Scaffold_IGMandateHeadings(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	if !strings.Contains(brief.Body, "### 2. <title>") {
+		t.Errorf("scaffold brief must mandate `### 2. <title>` shape; not found")
+	}
+}
+
 // TestBrief_Scaffold_DeployignoreTripwire — run-11 gap P-2. Brief
 // names the .deployignore author-time tripwire so sub-agents preempt
 // the run-10 worker mistake (dist in .deployignore, 20-minute redeploy
