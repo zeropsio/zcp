@@ -1,105 +1,112 @@
-// Tests for: server/instructions.go — static MCP instructions text.
+// Tests for: server/instructions.go — runtime-only MCP init payload.
 package server
 
 import (
 	"strings"
 	"testing"
-
-	"github.com/zeropsio/zcp/internal/runtime"
 )
 
-func TestBuildInstructions_Container_HasEnvironmentBlock(t *testing.T) {
+// MCP init is now runtime-only. Static project rules (Three entry
+// points, intent rule, env preamble) live in CLAUDE.md (env-rendered
+// at zcp init). These tests pin the runtime/static separation.
+
+func TestBuildInstructions_Empty_WhenNothingApplies(t *testing.T) {
 	t.Parallel()
-	out := BuildInstructions(runtime.Info{InContainer: true})
-	for _, want := range []string{
-		"ZCP manages Zerops",
-		`zerops_workflow action="status"`,
+	out := BuildInstructions(RuntimeContext{})
+	if out != "" {
+		t.Errorf("expected empty MCP init when no runtime context, got %q", out)
+	}
+}
+
+func TestBuildInstructions_AdoptionNoteOnly(t *testing.T) {
+	t.Parallel()
+	out := BuildInstructions(RuntimeContext{AdoptionNote: "Adopted: appdev"})
+	if out != "Adopted: appdev" {
+		t.Errorf("got %q, want %q", out, "Adopted: appdev")
+	}
+}
+
+func TestBuildInstructions_StateHintOnly(t *testing.T) {
+	t.Parallel()
+	out := BuildInstructions(RuntimeContext{StateHint: "Active recipe session: foo"})
+	if out != "Active recipe session: foo" {
+		t.Errorf("got %q", out)
+	}
+}
+
+func TestBuildInstructions_BothJoinedByBlankLine(t *testing.T) {
+	t.Parallel()
+	out := BuildInstructions(RuntimeContext{
+		AdoptionNote: "Adopted: appdev",
+		StateHint:    "Active recipe session: foo",
+	})
+	want := "Adopted: appdev\n\nActive recipe session: foo"
+	if out != want {
+		t.Errorf("got %q, want %q", out, want)
+	}
+}
+
+// Architecture invariant: MCP init must not contain static project
+// rules. Static rules live in CLAUDE.md (the strong-adherence surface).
+// Drift here would re-introduce the duplication this refactor
+// eliminates.
+func TestBuildInstructions_NoStaticRulesLeak(t *testing.T) {
+	t.Parallel()
+	out := BuildInstructions(RuntimeContext{
+		AdoptionNote: "Adopted: appdev",
+		StateHint:    "Active recipe session: foo",
+	})
+	forbidden := []string{
+		"Three entry points",
+		"workflow=\"develop\"",
+		"workflow=\"bootstrap\"",
 		"/var/www/",
 		"SSHFS",
-		"ssh",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("container instructions missing %q", want)
+		"Don't guess",
+	}
+	for _, f := range forbidden {
+		if strings.Contains(out, f) {
+			t.Errorf("MCP init must not contain %q (belongs in CLAUDE.md): %s", f, out)
 		}
-	}
-}
-
-func TestBuildInstructions_Local_HasEnvironmentBlock(t *testing.T) {
-	t.Parallel()
-	out := BuildInstructions(runtime.Info{InContainer: false})
-	for _, want := range []string{
-		"ZCP manages Zerops",
-		`zerops_workflow action="status"`,
-		"zerops_deploy",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("local instructions missing %q", want)
-		}
-	}
-	if strings.Contains(out, "/var/www/") {
-		t.Error("local instructions should not mention container mount paths")
-	}
-	// Local instructions must NOT leak the internal push mechanism.
-	// The `zerops_deploy` tool encapsulates `zcli push`; LLM should call the
-	// tool, not reach for zcli directly.
-	if strings.Contains(out, "zcli push") {
-		t.Errorf("local instructions must not leak `zcli push` — use zerops_deploy encapsulation. Got:\n%s", out)
-	}
-}
-
-func TestBuildInstructions_Container_WithSelfHostname(t *testing.T) {
-	t.Parallel()
-	out := BuildInstructions(runtime.Info{InContainer: true, ServiceName: "zcpx"})
-	if !strings.Contains(out, "'zcpx'") {
-		t.Errorf("expected self-hostname reference, got:\n%s", out)
-	}
-}
-
-func TestBuildInstructions_Static_NoDynamicContent(t *testing.T) {
-	t.Parallel()
-	// Same runtime info must always produce byte-identical output —
-	// instructions are built once at init and must not drift between calls.
-	rt := runtime.Info{InContainer: true, ServiceName: "zcpx"}
-	a := BuildInstructions(rt)
-	b := BuildInstructions(rt)
-	if a != b {
-		t.Error("BuildInstructions is not deterministic for identical runtime.Info")
 	}
 }
 
 func TestBuildInstructions_FitsIn2KB(t *testing.T) {
 	t.Parallel()
-	// Claude Code v2.1.84+ imposes a 2KB limit on the instructions field.
+	// Even with rich state hint + adoption, MCP init stays under the MCP
+	// protocol 2KB instructions budget.
+	rc := RuntimeContext{
+		AdoptionNote: strings.Repeat("Adopted: ", 30) + "appdev",
+		StateHint:    strings.Repeat("Active session: ", 30) + "details",
+	}
+	out := BuildInstructions(rc)
 	const limit = 2048
-	for _, tc := range []struct {
-		name string
-		rt   runtime.Info
-	}{
-		{"container", runtime.Info{InContainer: true, ServiceName: "zcpx"}},
-		{"local", runtime.Info{InContainer: false}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			out := BuildInstructions(tc.rt)
-			if len(out) > limit {
-				t.Errorf("instructions = %d bytes, must be under %d", len(out), limit)
-			}
-		})
+	if len(out) > limit {
+		t.Errorf("instructions = %d bytes, must be under %d", len(out), limit)
 	}
 }
 
-func TestBuildInstructions_DevelopEntryPrecedesStatus(t *testing.T) {
+func TestBuildInstructions_Deterministic(t *testing.T) {
 	t.Parallel()
-	out := BuildInstructions(runtime.Info{InContainer: true})
-	startIdx := strings.Index(out, `action="start"`)
-	statusIdx := strings.Index(out, `action="status"`)
-	if startIdx < 0 {
-		t.Fatal(`instructions must mention action="start"`)
+	rc := RuntimeContext{AdoptionNote: "x", StateHint: "y"}
+	a := BuildInstructions(rc)
+	b := BuildInstructions(RuntimeContext{AdoptionNote: "x", StateHint: "y"})
+	if a != b {
+		t.Errorf("BuildInstructions not deterministic for same RuntimeContext: %q vs %q", a, b)
 	}
-	if statusIdx < 0 {
-		t.Fatal(`instructions must mention action="status"`)
+}
+
+func TestComposeStateHint_EmptyStateDir_ReturnsEmpty(t *testing.T) {
+	t.Parallel()
+	if got := ComposeStateHint("", 1234); got != "" {
+		t.Errorf("expected empty hint for empty stateDir, got %q", got)
 	}
-	if startIdx > statusIdx {
-		t.Errorf(`action="start" (%d) should appear before action="status" (%d) — develop is the primary entry, status is recovery`, startIdx, statusIdx)
+}
+
+func TestComposeStateHint_NonexistentStateDir_ReturnsEmpty(t *testing.T) {
+	t.Parallel()
+	// Real path that doesn't exist; ListSessions soft-fails.
+	if got := ComposeStateHint(t.TempDir()+"/nonexistent", 1234); got != "" {
+		t.Errorf("expected empty hint when no sessions, got %q", got)
 	}
 }

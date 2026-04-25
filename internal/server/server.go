@@ -64,18 +64,29 @@ func (s *Server) CallCount() int64 { return s.calls.Load() }
 func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store knowledge.Provider, logFetcher platform.LogFetcher, sshDeployer ops.SSHDeployer, mounter ops.Mounter, rtInfo runtime.Info) *Server {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel()}))
 
+	// stateDir resolution mirrors registerTools(); kept local here so the
+	// MCP init payload can include a state hint without depending on tool
+	// registration. Empty stateDir (no cwd) yields empty hints — same
+	// degradation path as a project that has no .zcp state yet.
+	stateDir := ""
+	if cwd, err := os.Getwd(); err == nil {
+		stateDir = filepath.Join(cwd, ".zcp", "state")
+	}
+
 	adoptionNote := ""
-	if !rtInfo.InContainer {
-		if cwd, err := os.Getwd(); err == nil {
-			stateDir := filepath.Join(cwd, ".zcp", "state")
-			adoptionNote = runLocalAutoAdopt(ctx, client, authInfo.ProjectID, stateDir, logger)
-		}
+	if !rtInfo.InContainer && stateDir != "" {
+		adoptionNote = runLocalAutoAdopt(ctx, client, authInfo.ProjectID, stateDir, logger)
+	}
+
+	rc := RuntimeContext{
+		AdoptionNote: adoptionNote,
+		StateHint:    ComposeStateHint(stateDir, os.Getpid()),
 	}
 
 	srv := mcp.NewServer(
 		&mcp.Implementation{Name: "zcp", Version: Version},
 		&mcp.ServerOptions{
-			Instructions: BuildInstructionsWithNote(rtInfo, adoptionNote),
+			Instructions: BuildInstructions(rc),
 			Logger:       logger,
 		},
 	)

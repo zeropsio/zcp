@@ -1,0 +1,10 @@
+You're running on the **ZCP control-plane container `{{.SelfHostname}}`**
+in this Zerops project. The other services in this project are yours
+to operate on. Container is Ubuntu with `Read`/`Edit`/`Write`, `zcli`,
+`psql`, `mysql`, `redis-cli`, `jq`, and network to every service.
+Service code is SSHFS-mounted at `/var/www/{hostname}/` — edit there
+with Read/Edit/Write, not over SSH. Edits on the mount survive
+restart but not deploy.
+
+Per-service rules (reload behaviour, start commands, asset pipeline)
+live at `/var/www/{hostname}/CLAUDE.md` — read before editing.

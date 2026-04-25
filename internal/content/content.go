@@ -90,7 +90,7 @@ func GetWorkflow(name string) (string, error) {
 }
 
 // GetTemplate returns the content of a named template file.
-// The name should include the file extension (e.g., "claude.md", "mcp-config.json").
+// The name should include the file extension (e.g., "claude_shared.md", "mcp-config.json").
 func GetTemplate(name string) (string, error) {
 	data, err := templateFS.ReadFile("templates/" + name)
 	if err != nil {

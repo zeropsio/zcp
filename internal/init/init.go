@@ -26,10 +26,12 @@ const (
 	reflogMarker = "<!-- ZEROPS:REFLOG -->"
 )
 
-// step is a named, idempotent init operation.
+// step is a named, idempotent init operation. The runtime.Info argument
+// lets steps that need env-aware behaviour (currently CLAUDE.md render)
+// pick the right shape; steps that don't simply ignore it.
 type step struct {
 	name string
-	fn   func(string) error
+	fn   func(string, runtime.Info) error
 }
 
 // Run executes the init subcommand, generating configuration files in baseDir.
@@ -58,7 +60,7 @@ func Run(baseDir string, rt runtime.Info) error {
 
 	for _, s := range steps {
 		fmt.Fprintf(os.Stderr, "  → %s\n", s.name)
-		if err := s.fn(baseDir); err != nil {
+		if err := s.fn(baseDir, rt); err != nil {
 			return fmt.Errorf("%s: %w", s.name, err)
 		}
 	}
@@ -80,17 +82,21 @@ func writeTemplate(templateName, path string) error {
 	return os.WriteFile(path, []byte(tmpl), 0644) //nolint:gosec // G306: config files need to be readable
 }
 
-// generateCLAUDEMD writes the ZCP-managed CLAUDE.md template wrapped in
-// <!-- ZCP:BEGIN/END --> markers. Re-runs replace only the marked section,
-// preserving any trailing content (REFLOG entries appended by bootstrap,
-// user additions). Fresh files get the marker-wrapped template alone.
+// generateCLAUDEMD writes the env-rendered CLAUDE.md to baseDir, wrapped
+// in <!-- ZCP:BEGIN/END --> markers. The body is composed by
+// content.BuildClaudeMD from one env-specific preamble (container or
+// local) plus the env-agnostic shared body. Container preamble has its
+// {{.SelfHostname}} template var resolved to rt.ServiceName at render
+// time. Re-runs replace only the marked section, preserving any
+// trailing content (REFLOG entries appended by bootstrap, user
+// additions outside the markers).
 //
-// Migration path: if the file exists without markers but contains a REFLOG
-// section (legacy layout where template was overwritten verbatim), the
-// pre-REFLOG portion is replaced by the marker-wrapped template while the
-// REFLOG onwards is preserved.
-func generateCLAUDEMD(baseDir string) error {
-	tmpl, err := content.GetTemplate("claude.md")
+// Migration path: if the file exists without markers but contains a
+// REFLOG section (legacy layout where the template was overwritten
+// verbatim), the pre-REFLOG portion is replaced by the marker-wrapped
+// body while REFLOG onwards is preserved.
+func generateCLAUDEMD(baseDir string, rt runtime.Info) error {
+	body, err := content.BuildClaudeMD(rt)
 	if err != nil {
 		return err
 	}
@@ -98,7 +104,7 @@ func generateCLAUDEMD(baseDir string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
-	block := mdMarkerBegin + "\n" + strings.TrimRight(tmpl, "\n") + "\n" + mdMarkerEnd + "\n"
+	block := mdMarkerBegin + "\n" + strings.TrimRight(body, "\n") + "\n" + mdMarkerEnd + "\n"
 
 	existing, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
@@ -115,15 +121,15 @@ func generateCLAUDEMD(baseDir string) error {
 	return os.WriteFile(path, []byte(block), 0644) //nolint:gosec // G306: config file
 }
 
-func generateMCPConfig(baseDir string) error {
+func generateMCPConfig(baseDir string, _ runtime.Info) error {
 	return writeTemplate("mcp-config.json", filepath.Join(baseDir, ".mcp.json"))
 }
 
-func generateSettingsLocal(baseDir string) error {
+func generateSettingsLocal(baseDir string, _ runtime.Info) error {
 	return writeTemplate("settings-local.json", filepath.Join(baseDir, ".claude", "settings.local.json"))
 }
 
-func generateSSHConfig(_ string) error {
+func generateSSHConfig(_ string, _ runtime.Info) error {
 	tmpl, err := content.GetTemplate("ssh-config")
 	if err != nil {
 		return err
@@ -221,7 +227,7 @@ var shellRCFiles = []shellRCFile{
 	{".zshrc", false},
 }
 
-func generateAliases(_ string) error {
+func generateAliases(_ string, _ runtime.Info) error {
 	tmpl, err := content.GetTemplate("aliases")
 	if err != nil {
 		return err

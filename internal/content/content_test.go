@@ -65,7 +65,9 @@ func TestGetTemplate_AllTemplates(t *testing.T) {
 	tests := []struct {
 		name string
 	}{
-		{"claude.md"},
+		{"claude_shared.md"},
+		{"claude_container.md"},
+		{"claude_local.md"},
 		{"mcp-config.json"},
 		{"ssh-config"},
 		{"settings-local.json"},
@@ -85,16 +87,18 @@ func TestGetTemplate_AllTemplates(t *testing.T) {
 	}
 }
 
-func TestGetTemplate_CLAUDEMDContent(t *testing.T) {
+func TestGetTemplate_ClaudeSharedContent(t *testing.T) {
 	t.Parallel()
 
-	content, err := GetTemplate("claude.md")
+	body, err := GetTemplate("claude_shared.md")
 	if err != nil {
 		t.Fatalf("GetTemplate: %v", err)
 	}
 
-	if !strings.Contains(content, "# Zerops") {
-		t.Error("claude.md template should contain '# Zerops' heading")
+	// Shared body must mention the Three entry points header (the static
+	// project-rule layer all envs share).
+	if !strings.Contains(body, "Three entry points") {
+		t.Error("claude_shared.md should contain 'Three entry points' header")
 	}
 }
 

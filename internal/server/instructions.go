@@ -2,88 +2,148 @@ package server
 
 import (
 	"fmt"
+	"os"
+	"strings"
 
-	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// Instructions delivered to the MCP client at server init. Base text is
-// static (no API calls, no state reads). On local-env startup, server.New
-// prepends an adoption note describing what auto-adopt did on this run —
-// see BuildInstructions + workflow.FormatAdoptionNote. The note is
-// one-shot (only emitted when LocalAutoAdopt actually wrote a new meta);
-// re-runs against an already-initialized state dir get clean base text.
-const baseInstructions = `ZCP manages Zerops PaaS infrastructure through workflows.
+// Instructions delivered to the MCP client at server init are RUNTIME-ONLY.
+// Static project rules (Three entry points, intent rule, env preamble,
+// project idioms) live in CLAUDE.md (env-rendered at zcp init) — the
+// strong-adherence surface. MCP init carries only what cannot be
+// pre-rendered: per-server-start runtime context.
+//
+// Two runtime injections feed RuntimeContext:
+//   - AdoptionNote — workflow.FormatAdoptionNote(LocalAutoAdopt result),
+//     local env only. Empty when no auto-adopt fired or nothing was newly
+//     adopted this run.
+//   - StateHint — terse summary of active sessions for the current PID.
+//     Surfaces live recipe / bootstrap / work sessions so the LLM doesn't
+//     blindly call zerops_workflow start and earn an ErrSubagentMisuse on
+//     its first tool call. Empty when no sessions are open for this PID.
+//
+// The strict static/runtime split is the architecture invariant pinned
+// by TestBuildInstructions_NoStaticRulesLeak. See plans/instruction-
+// surfaces-refactor.md for the full layered ownership model.
 
-Primary entry — every user task that changes code or deploys:
-  zerops_workflow action="start" workflow="develop" intent="<one-liner>"
-
-The develop workflow carries step-by-step guidance, tracks deploys and
-verifies, and auto-closes when scoped services are green.
-
-Other entries (when they fit):
-  workflow="bootstrap"  — create/adopt infrastructure (empty project, add a service, mode expansion)
-  workflow="export"     — turn a deployed service into a re-importable git repo
-
-Recipe authoring uses zerops_recipe (v3 engine, separate tool). Entry:
-  zerops_recipe action="start" slug="<slug>" outputRoot="<dir>"
-
-Deploy configuration:
-  action="strategy" strategies={hostname:"push-dev|push-git|manual"}
-    — central point for deploy config; push-git returns full setup flow
-      (GIT_TOKEN, optional CI/CD via GitHub Actions or webhook, first push)
-
-Direct tools — read-only queries and config tweaks that don't need a
-deploy cycle: zerops_discover, zerops_logs, zerops_events,
-zerops_knowledge, zerops_env, zerops_manage, zerops_scale,
-zerops_subdomain, zerops_verify.
-
-Workflow-gated: zerops_deploy (adopted services), zerops_mount and
-zerops_import (active workflow session).
-
-Recovery — after compaction or when the state is unclear:
-  zerops_workflow action="status"`
-
-const containerEnvironment = `
-Running as the ZCP control-plane container — Ubuntu with zcli, psql, mysql,
-redis-cli, jq, and network to every service. App code lives in the runtime
-containers (reach via ssh {hostname} "..."), not here. Files at
-/var/www/{hostname}/ are SSHFS mounts — edit with Read/Edit/Write, not SSH.
-CLI helpers like jq/psql are missing inside runtimes; pipe output back to
-ZCP. Edits on the mount survive restart but not deploy. zerops_discover
-refreshes service state.`
-
-const localEnvironment = `
-Running on a local machine. Code in the working directory; infrastructure
-on Zerops. Deploy via zerops_deploy (targetService=<hostname>) — pushes
-the working directory to the matching Zerops service and blocks until
-build completes. Requires zerops.yaml at repo root. zerops_discover
-refreshes service state.`
-
-// BuildInstructions returns the MCP instructions text. Base text varies by
-// environment (container vs local) and self-hostname. In local env,
-// server.New may also pass an adoptionNote describing what auto-adopt
-// just did (via BuildInstructionsWithNote). BuildInstructions itself
-// stays note-free for unit tests that don't care about adoption.
-func BuildInstructions(rt runtime.Info) string {
-	return BuildInstructionsWithNote(rt, "")
+// RuntimeContext carries the per-server-start injections that go into the
+// MCP `instructions` field. An empty RuntimeContext yields an empty MCP
+// init payload, which is valid per MCP protocol and signals "nothing
+// notable this run."
+type RuntimeContext struct {
+	AdoptionNote string
+	StateHint    string
 }
 
-// BuildInstructionsWithNote is the note-aware variant used by server.New
-// after LocalAutoAdopt has run. Empty note → identical output to
-// BuildInstructions. Non-empty note is appended after the env-specific
-// block with a blank-line separator.
-func BuildInstructionsWithNote(rt runtime.Info, adoptionNote string) string {
-	var out string
-	if rt.InContainer {
-		out = baseInstructions + containerEnvironment
-		if rt.ServiceName != "" {
-			out += fmt.Sprintf("\nYou are running on '%s'. Other services in this project are yours to manage.", rt.ServiceName)
+// BuildInstructions composes the MCP init payload from RuntimeContext.
+// Returns "" when both fields are empty. When both are present, joins
+// with a blank-line separator so the LLM sees them as two distinct
+// notes.
+func BuildInstructions(rc RuntimeContext) string {
+	var parts []string
+	if rc.AdoptionNote != "" {
+		parts = append(parts, rc.AdoptionNote)
+	}
+	if rc.StateHint != "" {
+		parts = append(parts, rc.StateHint)
+	}
+	return strings.Join(parts, "\n\n")
+}
+
+// ComposeStateHint builds the active-session summary line(s) for the
+// current PID by reading the workflow session registry and the per-PID
+// work session file. Returns "" when no sessions are open.
+//
+// Each line is human-readable, terse, and includes the next-action
+// pointer (status call) so the LLM can act on the hint without further
+// inference. Multiple active sessions for the same PID join with a
+// blank-line separator.
+//
+// Performance: at most three filesystem reads (registry list, optional
+// per-session state load for descriptive detail, work session file).
+// Called once at server start.
+func ComposeStateHint(stateDir string, pid int) string {
+	if stateDir == "" {
+		return ""
+	}
+	var lines []string
+
+	sessions, _ := workflow.ListSessions(stateDir)
+	for _, s := range sessions {
+		if s.PID != pid {
+			continue
 		}
-	} else {
-		out = baseInstructions + localEnvironment
+		switch s.Workflow {
+		case workflow.WorkflowRecipe:
+			lines = append(lines, fmt.Sprintf(
+				"Active recipe session: %s. Use zerops_recipe action=\"status\" "+
+					"for the next action — do NOT start zerops_workflow during "+
+					"recipe authoring.",
+				describeRecipeSession(stateDir, s)))
+		case workflow.WorkflowBootstrap:
+			lines = append(lines, fmt.Sprintf(
+				"Active bootstrap session (%s). Use zerops_workflow "+
+					"action=\"status\" to continue.",
+				describeBootstrapSession(stateDir, s)))
+		}
 	}
-	if adoptionNote != "" {
-		out += "\n\n" + adoptionNote
+
+	if ws, _ := workflow.LoadWorkSession(stateDir, pid); ws != nil && ws.ClosedAt == "" {
+		lines = append(lines, fmt.Sprintf(
+			"Open develop work session: %q on %v. Use "+
+				"zerops_workflow action=\"status\" for current state.",
+			ws.Intent, ws.Services))
 	}
-	return out
+
+	return strings.Join(lines, "\n\n")
 }
+
+// describeRecipeSession returns "<slug> (phase=<phase>)" when the
+// per-session state file is loadable, falling back to intent-or-id when
+// it isn't. Bounded by one filesystem read; soft-fails on error so the
+// state hint never blocks server startup.
+func describeRecipeSession(stateDir string, s workflow.SessionEntry) string {
+	state, err := workflow.LoadSessionByID(stateDir, s.SessionID)
+	if err != nil || state == nil || state.Recipe == nil {
+		if s.Intent != "" {
+			return fmt.Sprintf("%q", s.Intent)
+		}
+		return s.SessionID
+	}
+	slug := state.Recipe.CurrentStepName()
+	if state.Recipe.Plan != nil && state.Recipe.Plan.Slug != "" {
+		slug = state.Recipe.Plan.Slug
+	}
+	step := state.Recipe.CurrentStepName()
+	if step != "" {
+		return fmt.Sprintf("%s (step=%s)", slug, step)
+	}
+	return slug
+}
+
+// describeBootstrapSession returns "route=<route>, step=<step>" when the
+// per-session state file is loadable, falling back to intent-or-id when
+// it isn't.
+func describeBootstrapSession(stateDir string, s workflow.SessionEntry) string {
+	state, err := workflow.LoadSessionByID(stateDir, s.SessionID)
+	if err != nil || state == nil || state.Bootstrap == nil {
+		if s.Intent != "" {
+			return fmt.Sprintf("intent=%q", s.Intent)
+		}
+		return "session=" + s.SessionID
+	}
+	step := state.Bootstrap.CurrentStepName()
+	route := string(state.Bootstrap.Route)
+	if route == "" {
+		route = "classic"
+	}
+	if step == "" {
+		return fmt.Sprintf("route=%s", route)
+	}
+	return fmt.Sprintf("route=%s, step=%s", route, step)
+}
+
+// CurrentPID is wrapped for testability — tests substitute to control
+// which PID drives ComposeStateHint and downstream callers.
+var CurrentPID = os.Getpid

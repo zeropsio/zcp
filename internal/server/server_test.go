@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -191,52 +190,6 @@ func TestServer_BrowserToolGating(t *testing.T) {
 			}
 			if found != tt.wantTool {
 				t.Errorf("zerops_browser registered = %v, want %v", found, tt.wantTool)
-			}
-		})
-	}
-}
-
-func TestServer_Instructions(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		rt   runtime.Info
-		want string
-		miss string
-	}{
-		{
-			name: "in container with service name",
-			rt:   runtime.Info{InContainer: true, ServiceName: "zcpx", ServiceID: "abc", ProjectID: "def"},
-			want: "zcpx",
-		},
-		{
-			name: "local dev points at zerops_deploy tool",
-			rt:   runtime.Info{},
-			want: "zerops_deploy",
-			miss: "zcli push",
-		},
-		{
-			name: "container mentions SSHFS mount path",
-			rt:   runtime.Info{InContainer: true},
-			want: "/var/www/",
-		},
-		{
-			name: "base instructions always included",
-			rt:   runtime.Info{InContainer: true, ServiceName: "myservice"},
-			want: "ZCP manages",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			inst := BuildInstructions(tt.rt)
-			if tt.want != "" && !strings.Contains(inst, tt.want) {
-				t.Errorf("Instructions should contain %q, got: %s", tt.want, inst)
-			}
-			if tt.miss != "" && strings.Contains(inst, tt.miss) {
-				t.Errorf("Instructions should NOT contain %q, got: %s", tt.miss, inst)
 			}
 		})
 	}

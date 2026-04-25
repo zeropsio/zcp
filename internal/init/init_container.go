@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/zeropsio/zcp/internal/content"
+	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 // commandRunner executes external commands. Tests replace this via SetCommandRunner.
@@ -42,7 +43,7 @@ func containerSteps() []step {
 // configureClaude writes ~/.claude.json and ~/.claude/settings.json.
 // On containers zcp init owns these files — ~/.claude.json is composed from
 // claude.json + mcp-config.json so the MCP server definition has one source of truth.
-func configureClaude(_ string) error {
+func configureClaude(_ string, _ runtime.Info) error {
 	home := resolveHome()
 
 	claudeJSON, err := buildClaudeJSON()
@@ -87,7 +88,7 @@ var vsCodeWorkDir = defaultVSCodeWorkDir
 
 // configureVSCode writes code-server user settings, terminal config, and
 // installs the Claude Code extension. Only called when ZCP_VSCODE=true.
-func configureVSCode(_ string) error {
+func configureVSCode(_ string, _ runtime.Info) error {
 	home := resolveHome()
 
 	settingsPath := filepath.Join(home, ".local", "share", "code-server", "User", "settings.json")
