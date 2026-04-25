@@ -1,4 +1,19 @@
-// Package auth resolves Zerops authentication from env vars or zcli's cli.data file.
+// Package auth resolves Zerops authentication from env vars or zcli's
+// cli.data file.
+//
+// # Layering exception — direct platform.Client access
+//
+// auth runs at process startup, BEFORE the engine and ops/ layer exist:
+// the very purpose of this package is to produce the credentials those
+// layers need. Calls into platform.Client (GetUserInfo, GetProject,
+// ListProjects) for credential validation and project resolution are
+// therefore intentional — there is no upstream wrapper for auth to defer
+// to. Once auth has populated Info, the rest of the binary goes through
+// ops/ as usual.
+//
+// Pin: any other package that needs platform.Client access for
+// pre-engine reasons should document a similar exception here or in
+// docs/spec-architecture.md, never silently bypass the layering.
 package auth
 
 import (

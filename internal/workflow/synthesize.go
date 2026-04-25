@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/zeropsio/zcp/internal/content"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -308,6 +309,18 @@ func SynthesizeImmediateWorkflow(env StateEnvelope) (string, error) {
 // (e.g. export) that don't need service context.
 func SynthesizeImmediatePhase(phase Phase, env Environment) (string, error) {
 	return SynthesizeImmediateWorkflow(StateEnvelope{Phase: phase, Environment: env})
+}
+
+// SynthesizeStrategySetup returns the strategy-setup guidance for a given
+// runtime and per-service snapshots. Wraps the envelope shape that
+// PhaseStrategySetup atoms expect so tool handlers don't construct
+// StateEnvelope inline.
+func SynthesizeStrategySetup(rt runtime.Info, snapshots []ServiceSnapshot) (string, error) {
+	return SynthesizeImmediateWorkflow(StateEnvelope{
+		Phase:       PhaseStrategySetup,
+		Environment: DetectEnvironment(rt),
+		Services:    snapshots,
+	})
 }
 
 // The atom corpus is embedded in the binary and immutable after `go build`,

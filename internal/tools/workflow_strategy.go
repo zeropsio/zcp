@@ -135,19 +135,13 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 
 	// push-git needs the full setup atom chain (intro → push → trigger).
 	// Service-scoped atoms (strategies, triggers) need a snapshot in the
-	// envelope to match against; we synthesize one minimally from the just-
-	// written meta(s). Other strategies reuse the existing develop-phase
-	// iteration atoms.
+	// envelope to match against; the workflow API wraps the envelope shape
+	// so we hand it just the runtime and the snapshots. Other strategies
+	// reuse the existing develop-phase iteration atoms.
 	var guidance string
 	if anyStrategyIs(input.Strategies, topology.StrategyPushGit) {
-		env := workflow.DetectEnvironment(rt)
-		envelope := workflow.StateEnvelope{
-			Phase:       workflow.PhaseStrategySetup,
-			Environment: env,
-			Services:    buildStrategySetupSnapshots(stateDir, input.Strategies, input.Trigger),
-		}
-		g, err := workflow.SynthesizeImmediateWorkflow(envelope)
-		if err == nil {
+		snaps := buildStrategySetupSnapshots(stateDir, input.Strategies, input.Trigger)
+		if g, err := workflow.SynthesizeStrategySetup(rt, snaps); err == nil {
 			guidance = g
 		}
 	} else {
