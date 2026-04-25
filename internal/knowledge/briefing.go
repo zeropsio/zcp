@@ -233,7 +233,7 @@ func (s *Store) prependUniversals(content string) string {
 // Recipes now include both dev and prod zerops.yaml setups with inline comments,
 // so the header only needs to direct the agent to the right setup block.
 func prependModeAdaptation(mode topology.Mode, _ string) string {
-	switch mode {
+	switch mode { //nolint:exhaustive // local-* and stage modes don't surface in the recipe-knowledge path
 	case topology.PlanModeDev, topology.PlanModeStandard:
 		return "> **Mode: dev** — Use the `dev` setup block from the zerops.yaml below.\n\n"
 	case topology.PlanModeSimple:

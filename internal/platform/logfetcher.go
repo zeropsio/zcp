@@ -96,7 +96,9 @@ var _ LogFetcher = (*ZeropsLogFetcher)(nil)
 // FetchLogs retrieves log entries from the Zerops log backend.
 func (f *ZeropsLogFetcher) FetchLogs(ctx context.Context, access *LogAccess, params LogFetchParams) ([]LogEntry, error) {
 	if access == nil {
-		return nil, NewPlatformError(ErrAPIError, "log access is nil", "")
+		return nil, NewPlatformError(ErrAPIError,
+			"log access is nil",
+			"Refresh log credentials via the project endpoint and retry; the access token may have expired.")
 	}
 
 	rawURL := access.URL
@@ -107,7 +109,9 @@ func (f *ZeropsLogFetcher) FetchLogs(ctx context.Context, access *LogAccess, par
 
 	logURL, err := url.Parse(rawURL)
 	if err != nil {
-		return nil, NewPlatformError(ErrAPIError, fmt.Sprintf("invalid log URL: %v", err), "")
+		return nil, NewPlatformError(ErrAPIError,
+			fmt.Sprintf("invalid log URL: %v", err),
+			"The log endpoint returned by the project API is malformed; refresh log access (the project's log token) and retry.")
 	}
 
 	effectiveLimit := clampLimit(params.Limit)
@@ -137,7 +141,9 @@ func (f *ZeropsLogFetcher) FetchLogs(ctx context.Context, access *LogAccess, par
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, logURL.String(), nil)
 	if err != nil {
-		return nil, NewPlatformError(ErrAPIError, fmt.Sprintf("failed to create log request: %v", err), "")
+		return nil, NewPlatformError(ErrAPIError,
+			fmt.Sprintf("failed to create log request: %v", err),
+			"Internal request construction failed — usually a malformed URL field. Retry; if persistent, this is a ZCP bug.")
 	}
 	req.Header.Set("Content-Type", "application/json")
 
@@ -145,26 +151,40 @@ func (f *ZeropsLogFetcher) FetchLogs(ctx context.Context, access *LogAccess, par
 	if err != nil {
 		code, isNet := MapNetworkError(err)
 		if isNet {
-			return nil, NewPlatformError(code, fmt.Sprintf("log backend unreachable: %v", err), "Check network connectivity")
+			return nil, NewPlatformError(code,
+				fmt.Sprintf("log backend unreachable: %v", err),
+				"Check VPN / network connectivity and DNS resolution of the log host. The log subdomain is project-scoped — re-fetch project log access if the URL stale.")
 		}
-		return nil, NewPlatformError(ErrAPIError, fmt.Sprintf("log fetch failed: %v", err), "")
+		// Reaching here means the HTTP roundtrip failed but it doesn't
+		// match any of the network signatures MapNetworkError knows. Tag
+		// it as API-side rather than network — the request shape is at
+		// fault (TLS rejection, request body issue, server hangup) and
+		// retrying without changing inputs won't help.
+		return nil, NewPlatformError(ErrAPIError,
+			fmt.Sprintf("log fetch failed: %v", err),
+			"The log backend rejected the HTTP request. Verify project log access is current and retry; if persistent, capture the error and report.")
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorResponseBytes))
 		return nil, NewPlatformError(ErrAPIError,
-			fmt.Sprintf("log backend returned HTTP %d: %s", resp.StatusCode, string(respBody)), "")
+			fmt.Sprintf("log backend returned HTTP %d: %s", resp.StatusCode, string(respBody)),
+			"The log backend responded with a non-200 status. 401/403 means refresh project log access; 5xx means transient — retry. Capture the body for the report.")
 	}
 
 	bodyBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxLogResponseBytes))
 	if err != nil {
-		return nil, NewPlatformError(ErrAPIError, fmt.Sprintf("failed to read log response: %v", err), "")
+		return nil, NewPlatformError(ErrAPIError,
+			fmt.Sprintf("failed to read log response: %v", err),
+			"Network glitch mid-stream; retry. If reproducible, the response may exceed maxLogResponseBytes — narrow the time window with from=/to=.")
 	}
 
 	entries, err := parseLogResponse(bodyBytes)
 	if err != nil {
-		return nil, NewPlatformError(ErrAPIError, fmt.Sprintf("failed to parse log response: %v", err), "")
+		return nil, NewPlatformError(ErrAPIError,
+			fmt.Sprintf("failed to parse log response: %v", err),
+			"The log backend returned a payload ZCP couldn't decode. Likely an API contract drift — capture the response body for the report.")
 	}
 
 	return filterEntries(entries, params, effectiveLimit), nil
