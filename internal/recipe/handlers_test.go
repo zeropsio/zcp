@@ -949,6 +949,91 @@ func TestRecordFragment_UnknownModeRejected(t *testing.T) {
 	}
 }
 
+// TestVerifyDispatch_MatchingBriefAccepted — run-12 §D. Wrapper text
+// appended after engine brief is allowed; only truncations/paraphrases
+// are rejected.
+func TestVerifyDispatch_MatchingBriefAccepted(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	if _, err := store.OpenOrCreate("synth-showcase", filepath.Join(dir, "run")); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	brief, err := BuildScaffoldBrief(sess.Plan, sess.Plan.Codebases[0], nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	dispatched := brief.Body + "\n\n## Wrapper notes\nx\n"
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "verify-subagent-dispatch", Slug: "synth-showcase",
+		BriefKind: "scaffold", Codebase: "api",
+		DispatchedPrompt: dispatched,
+	})
+	if !res.OK {
+		t.Errorf("matching dispatch rejected: %+v", res)
+	}
+}
+
+// TestVerifyDispatch_TruncatedBriefRejected — run-12 §D. Run-11 main
+// agent truncated scaffold-app brief 14582 → 9047 (62%); D's check
+// catches this.
+func TestVerifyDispatch_TruncatedBriefRejected(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	if _, err := store.OpenOrCreate("synth-showcase", filepath.Join(dir, "run")); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	brief, _ := BuildScaffoldBrief(sess.Plan, sess.Plan.Codebases[0], nil)
+	truncated := brief.Body[:len(brief.Body)/2]
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "verify-subagent-dispatch", Slug: "synth-showcase",
+		BriefKind: "scaffold", Codebase: "api",
+		DispatchedPrompt: truncated,
+	})
+	if res.OK {
+		t.Error("truncated dispatch accepted")
+	}
+	if !strings.Contains(res.Error, "dispatch missing engine brief body") {
+		t.Errorf("error should explain mismatch; got %q", res.Error)
+	}
+}
+
+// TestVerifyDispatch_ParaphrasedBriefRejected — run-12 §D. Wrapper that
+// rewrites engine prose loses critical platform rules; rejected.
+func TestVerifyDispatch_ParaphrasedBriefRejected(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	if _, err := store.OpenOrCreate("synth-showcase", filepath.Join(dir, "run")); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	paraphrased := "You are the api scaffold agent. Bind 0.0.0.0. Trust the L7 proxy. Done.\n"
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "verify-subagent-dispatch", Slug: "synth-showcase",
+		BriefKind: "scaffold", Codebase: "api",
+		DispatchedPrompt: paraphrased,
+	})
+	if res.OK {
+		t.Error("paraphrased dispatch accepted")
+	}
+	if !strings.Contains(res.Error, "dispatch missing engine brief body") {
+		t.Errorf("error should explain mismatch; got %q", res.Error)
+	}
+}
+
 func TestDispatch_BuildBrief(t *testing.T) {
 	t.Parallel()
 

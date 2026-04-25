@@ -100,14 +100,26 @@ framework work, not on each other.
    deployFiles) works, not just the dev self-deploy. Both slots must
    be green before the phase completes.
 
-## Dispatch integrity
+## Dispatch integrity (mandatory)
 
-The engine builds the brief; the main agent dispatches it. If the main
-agent paraphrases or truncates the brief before dispatch, the sub-agent
-misses critical platform rules. Always pass `brief.body` byte-identical.
+After composing each scaffold brief, dispatch the sub-agent via
+`Agent` with `prompt=<engine brief body><wrapper notes>`. The engine
+brief body MUST appear byte-identical inside the dispatched prompt.
 
-`zerops_recipe action=verify-subagent-dispatch` is planned but not yet
-implemented in v3 — for now, do not paraphrase.
+Before invoking `Agent`, verify:
+
+```
+zerops_recipe action=verify-subagent-dispatch
+  slug=<slug> briefKind=scaffold codebase=<host>
+  dispatchedPrompt=<the prompt you intend to send>
+```
+
+A mismatch returns an actionable error. Fix the prompt and re-verify.
+
+This is now enforced — run-11 main agents truncated scaffold-app
+brief from 14,582 bytes to 9,047 (62%) and lost teaching content.
+Wrapper additions appended after the brief are allowed; truncations
+and paraphrases are rejected.
 
 ## Content authored in-phase
 
