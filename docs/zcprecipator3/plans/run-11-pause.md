@@ -1,8 +1,10 @@
 # run-11 pause — architectural reframe before dogfood
 
 **Date**: 2026-04-25
-**Status**: paused; no engine code changes since run-11-readiness
-shipped
+**Status (resumed 2026-04-25)**: Path A executed — see the
+[cleanup CHANGELOG entry](../CHANGELOG.md#2026-04-25--cleanup-gates--notices-per-systemmd-4)
+for what shipped. Run 11 dogfood still queued, still the user's call.
+The Path A / Path B framing below is historical from before resumption.
 
 ## What happened
 
