@@ -2,10 +2,20 @@
 // This file is compiled only during testing — it does not exist in production builds.
 package init
 
+import "os/user"
+
 // Command runner overrides.
 
 func SetCommandRunner(fn func(string, ...string) error) { commandRunner = fn }
 func ResetCommandRunner()                               { commandRunner = defaultCommandRunner }
+
+// User lookup override (for nginx chown target).
+
+func SetLookupUser(fn func(string) (*user.User, error)) { lookupUser = fn }
+func ResetLookupUser()                                  { lookupUser = user.Lookup }
+
+// ContainerServiceUser exposes the nginx chown target name for assertions.
+const ContainerServiceUser = containerServiceUser
 
 // VS Code workspace directory overrides.
 
