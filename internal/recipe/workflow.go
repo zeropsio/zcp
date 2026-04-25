@@ -131,6 +131,8 @@ func (s *Session) BuildBrief(kind BriefKind, cb Codebase) (Brief, error) {
 		return BuildScaffoldBrief(s.Plan, cb, s.Parent)
 	case BriefFeature:
 		return BuildFeatureBrief(s.Plan)
+	case BriefFinalize:
+		return BuildFinalizeBrief(s.Plan)
 	default:
 		return Brief{}, fmt.Errorf("unknown brief kind %q", kind)
 	}

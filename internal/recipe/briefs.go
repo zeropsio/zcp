@@ -35,15 +35,25 @@ const (
 	FeatureBriefCap  = 12 * 1024
 )
 
-// BriefKind identifies one of two sub-agent roles. The writer role was
-// removed — fragments are authored in-phase by scaffold/feature sub-agents
-// and by the main agent at finalize (run-8-readiness §2.0).
+// BriefKind identifies a sub-agent role. Scaffold + feature have
+// always existed; finalize was added run-11 S-1 — high-volume mechanical
+// fragment authoring (root + env + import-comment fragments) optionally
+// dispatched to a sub-agent. Hand-typed wrappers compounded math
+// errors and obsolete paths in run 10; engine-composed brief eliminates
+// the wrapper-vs-engine drift.
 type BriefKind string
 
 const (
 	BriefScaffold BriefKind = "scaffold"
 	BriefFeature  BriefKind = "feature"
+	BriefFinalize BriefKind = "finalize"
 )
+
+// FinalizeBriefCap caps the finalize brief size. Sized for a typical
+// 3-codebase recipe with ~67 fragments (run 10 had 67 actual; the
+// hand-typed wrapper claimed 89 wrongly). Below the scaffold cap
+// because finalize doesn't include the principle-level atoms.
+const FinalizeBriefCap = 12 * 1024
 
 // Brief is a composed sub-agent brief. Body is the final text handed to
 // the Agent tool; Parts lists the section identifiers in order so the
@@ -204,6 +214,103 @@ func BuildFeatureBrief(plan *Plan) (Brief, error) {
 
 	out := b.String()
 	return Brief{Kind: BriefFeature, Body: out, Bytes: len(out), Parts: parts}, nil
+}
+
+// BuildFinalizeBrief composes the finalize sub-agent brief. The brief
+// derives every load-bearing fact from Plan: the codebase list with
+// SourceRoot paths, the managed-service list, the fragment-shape
+// catalog (root/env/* fragments only — no codebase/* in finalize),
+// the precomputed fragment-count math. Replaces the hand-typed
+// wrapper main agent used in run 10 (gap S) — math errors and
+// obsolete paths compounded across runs.
+//
+// Run-11 gap S-1.
+func BuildFinalizeBrief(plan *Plan) (Brief, error) {
+	if plan == nil {
+		return Brief{}, errors.New("nil plan")
+	}
+	var b strings.Builder
+	var parts []string
+
+	fmt.Fprintf(&b, "# Finalize brief — %s\n\n", plan.Slug)
+	fmt.Fprintf(&b, "Recipe: %s · Framework: %s · Tier: %s\n\n",
+		plan.Slug, plan.Framework, plan.Tier)
+	parts = append(parts, "header")
+
+	atoms := []string{
+		"briefs/finalize/intro.md",
+		"briefs/finalize/validator_tripwires.md",
+	}
+	for _, atom := range atoms {
+		body, err := readAtom(atom)
+		if err != nil {
+			return Brief{}, err
+		}
+		b.WriteString(body)
+		if !strings.HasSuffix(body, "\n") {
+			b.WriteByte('\n')
+		}
+		b.WriteByte('\n')
+		parts = append(parts, atom)
+	}
+
+	b.WriteString("## Audience paths\n\n")
+	b.WriteString("- Stitched output: `<outputRoot>/`\n")
+	b.WriteString("- Per-codebase published content (already stitched at finalize):\n")
+	for _, cb := range plan.Codebases {
+		fmt.Fprintf(&b, "  - %s → `%s/{README.md, CLAUDE.md, zerops.yaml}`\n",
+			cb.Hostname, cb.SourceRoot)
+	}
+	b.WriteByte('\n')
+	parts = append(parts, "audience_paths")
+
+	b.WriteString("## Fragment count\n\n")
+	b.WriteString(finalizeFragmentMath(plan))
+	b.WriteByte('\n')
+	parts = append(parts, "fragment_math")
+
+	b.WriteString("## Codebases (read-only context)\n\n")
+	for _, cb := range plan.Codebases {
+		fmt.Fprintf(&b, "- %s · role=%s · runtime=%s · worker=%t\n",
+			cb.Hostname, cb.Role, cb.BaseRuntime, cb.IsWorker)
+	}
+	b.WriteString("\n## Managed services\n\n")
+	if len(plan.Services) == 0 {
+		b.WriteString("(none)\n")
+	} else {
+		for _, svc := range plan.Services {
+			fmt.Fprintf(&b, "- %s · type=%s · kind=%s\n",
+				svc.Hostname, svc.Type, svc.Kind)
+		}
+	}
+	parts = append(parts, "symbol_table")
+
+	out := b.String()
+	return Brief{Kind: BriefFinalize, Body: out, Bytes: len(out), Parts: parts}, nil
+}
+
+// finalizeFragmentMath returns a precomputed sentence describing the
+// fragment count Plan implies. Replaces hand-typed wrapper math
+// (run-10 wrapper said 89 actual was 67; said 22-each actual was
+// 11-each).
+func finalizeFragmentMath(plan *Plan) string {
+	tiers := len(Tiers())
+	cbs := len(plan.Codebases)
+	svcs := len(plan.Services)
+	importHosts := cbs + svcs
+	envIntros := tiers
+	envProjectComments := tiers
+	envServiceComments := tiers * importHosts
+	rootIntro := 1
+	total := rootIntro + envIntros + envProjectComments + envServiceComments
+	return fmt.Sprintf(
+		"Tiers: %d · codebases: %d · managed services: %d (import-comment hosts: %d).\n"+
+			"Per tier: 1 env intro + 1 project comment + %d service-block comments = %d fragments.\n"+
+			"Total: 1 root intro + %d × (1 env intro + 1 project comment + %d service comments) = %d fragments.\n",
+		tiers, cbs, svcs, importHosts,
+		importHosts, 2+importHosts,
+		tiers, importHosts, total,
+	)
 }
 
 // stripHTTPSection removes the `## HTTP` section from the platform-
