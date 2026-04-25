@@ -213,6 +213,37 @@ func TestEmitWorkspaceYAML_ShapeContract(t *testing.T) {
 	mustContain(t, got, "mode: NON_HA")
 }
 
+// TestWriteComment_StripsLeadingHashFromAuthoredFragment — run-12 §Y1.
+// Agents author fragment bodies with leading `# ` per line; writeComment
+// then re-prefixed producing `# # …`. 272 lines disfigured per recipe
+// before the fix.
+func TestWriteComment_StripsLeadingHashFromAuthoredFragment(t *testing.T) {
+	t.Parallel()
+
+	var b strings.Builder
+	writeComment(&b, "# This is a comment line\n# Second line", "  ")
+	got := b.String()
+	if strings.Contains(got, "# # ") {
+		t.Errorf("doubled-prefix found in:\n%s", got)
+	}
+	mustContain(t, got, "  # This is a comment line")
+	mustContain(t, got, "  # Second line")
+}
+
+// TestWriteComment_BareProseUnchanged — run-12 §Y1. Plain prose without
+// a leading `#` still gets prefixed once; no doubled-prefix regression.
+func TestWriteComment_BareProseUnchanged(t *testing.T) {
+	t.Parallel()
+
+	var b strings.Builder
+	writeComment(&b, "Plain prose with no prefix", "  ")
+	got := b.String()
+	mustContain(t, got, "  # Plain prose with no prefix")
+	if strings.Contains(got, "# # ") {
+		t.Errorf("doubled-prefix found in:\n%s", got)
+	}
+}
+
 func mustContain(t *testing.T, got, want string) {
 	t.Helper()
 	if !strings.Contains(got, want) {
