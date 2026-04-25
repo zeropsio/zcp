@@ -7,9 +7,11 @@ import (
 	"testing"
 )
 
-// TestLintDeployignore_ContainsDist_Rejects — run-11 gap P-3. dist in
-// .deployignore filters the deploy artifact; deploy must reject loud.
-func TestLintDeployignore_ContainsDist_Rejects(t *testing.T) {
+// TestLintDeployignore_ContainsDist_Warns — dist in .deployignore is
+// almost always a mistake; the linter surfaces a warning. Deploy is
+// not blocked — the TEACH-side .deployignore paragraph in
+// internal/knowledge/themes/core.md does the actual teaching.
+func TestLintDeployignore_ContainsDist_Warns(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -21,23 +23,20 @@ func TestLintDeployignore_ContainsDist_Rejects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lint: %v", err)
 	}
-	if len(res.Errors) == 0 {
-		t.Fatal("expected hard reject on dist line, got none")
-	}
 	found := false
-	for _, e := range res.Errors {
-		if strings.Contains(e, "dist") {
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "dist") {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected error to name dist, got: %v", res.Errors)
+		t.Errorf("expected warning to name dist, got: %v", res.Warnings)
 	}
 }
 
-// TestLintDeployignore_ContainsNodeModules_Rejects — same hard-reject
+// TestLintDeployignore_ContainsNodeModules_Warns — same warning shape
 // applies to node_modules.
-func TestLintDeployignore_ContainsNodeModules_Rejects(t *testing.T) {
+func TestLintDeployignore_ContainsNodeModules_Warns(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -49,13 +48,13 @@ func TestLintDeployignore_ContainsNodeModules_Rejects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lint: %v", err)
 	}
-	if len(res.Errors) == 0 {
-		t.Fatal("expected hard reject on node_modules line")
+	if len(res.Warnings) == 0 {
+		t.Fatal("expected warning on node_modules line")
 	}
 }
 
 // TestLintDeployignore_ContainsEditorMetadata_Warns — .idea/.vscode/
-// *.log lines warn but don't block.
+// *.log lines warn.
 func TestLintDeployignore_ContainsEditorMetadata_Warns(t *testing.T) {
 	t.Parallel()
 
@@ -67,9 +66,6 @@ func TestLintDeployignore_ContainsEditorMetadata_Warns(t *testing.T) {
 	res, err := LintDeployignore(dir)
 	if err != nil {
 		t.Fatalf("Lint: %v", err)
-	}
-	if len(res.Errors) > 0 {
-		t.Errorf("editor metadata should not hard-reject, got errors: %v", res.Errors)
 	}
 	if len(res.Warnings) < 4 {
 		t.Errorf("expected 4 warnings (.git, .idea, .vscode, *.log shape), got %d: %v", len(res.Warnings), res.Warnings)
@@ -86,14 +82,14 @@ func TestLintDeployignore_NoFile_Passes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lint: %v", err)
 	}
-	if len(res.Errors) > 0 || len(res.Warnings) > 0 {
+	if len(res.Warnings) > 0 {
 		t.Errorf("expected empty result for missing .deployignore, got %+v", res)
 	}
 }
 
 // TestLintDeployignore_LegitimatePathPasses — a recipe-specific reason
-// to ignore (test fixtures, build-tool config) doesn't trip the warn
-// or reject lists.
+// to ignore (test fixtures, build-tool config) doesn't trip the
+// pattern lists.
 func TestLintDeployignore_LegitimatePathPasses(t *testing.T) {
 	t.Parallel()
 
@@ -106,7 +102,7 @@ func TestLintDeployignore_LegitimatePathPasses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Lint: %v", err)
 	}
-	if len(res.Errors) > 0 || len(res.Warnings) > 0 {
+	if len(res.Warnings) > 0 {
 		t.Errorf("legitimate paths should pass, got %+v", res)
 	}
 }

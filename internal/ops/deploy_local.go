@@ -115,19 +115,13 @@ func DeployLocal(
 	if vErr != nil {
 		return nil, vErr
 	}
-	// Run-11 P-3: lint .deployignore. dist/node_modules hard-reject;
-	// .git/.idea/.vscode/*.log warn (typically redundant — Zerops
-	// builder excludes .git, the rest belongs in .gitignore).
+	// .deployignore lint surfaces every finding (artifact patterns and
+	// redundant entries alike) as warnings. The TEACH-side teaching
+	// lives in internal/knowledge/themes/core.md; deploy never blocks
+	// on filename-pattern matches here.
 	ignoreLint, ignoreErr := LintDeployignore(workingDir)
 	if ignoreErr != nil {
 		return nil, fmt.Errorf("lint .deployignore: %w", ignoreErr)
-	}
-	if len(ignoreLint.Errors) > 0 {
-		return nil, platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			".deployignore lints failed: "+strings.Join(ignoreLint.Errors, "; "),
-			"Remove dist/node_modules entries from .deployignore — they filter the deploy artifact and brick the runtime. See zerops_knowledge themes/core for the corrected guidance.",
-		)
 	}
 	warnings = append(warnings, ignoreLint.Warnings...)
 
