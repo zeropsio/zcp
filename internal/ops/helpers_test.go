@@ -52,7 +52,7 @@ func TestResolveServiceID(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			svc, err := resolveServiceID(tt.services, tt.hostname)
+			svc, err := FindService(tt.services, tt.hostname)
 
 			if tt.wantErr != "" {
 				if err == nil {
@@ -318,7 +318,7 @@ func TestListHostnames(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := listHostnames(tt.services)
+			got := ListHostnames(tt.services)
 			if got != tt.want {
 				t.Fatalf("expected %q, got %q", tt.want, got)
 			}

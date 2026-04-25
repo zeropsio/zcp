@@ -89,7 +89,7 @@ func ExportService(
 	if err != nil {
 		return "", fmt.Errorf("list services: %w", err)
 	}
-	svc, err := resolveServiceID(services, hostname)
+	svc, err := FindService(services, hostname)
 	if err != nil {
 		return "", err
 	}

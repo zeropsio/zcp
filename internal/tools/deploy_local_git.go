@@ -30,12 +30,8 @@ func resolveTargetForValidation(ctx context.Context, client platform.Client, pro
 	if err != nil {
 		return nil
 	}
-	for i := range services {
-		if services[i].Name == hostname {
-			return &services[i]
-		}
-	}
-	return nil
+	svc, _ := ops.FindService(services, hostname)
+	return svc
 }
 
 // handleLocalGitPush performs `git push` from the user's local git repo

@@ -26,7 +26,7 @@ func Delete(
 		return nil, err
 	}
 
-	svc, err := resolveServiceID(services, hostname)
+	svc, err := FindService(services, hostname)
 	if err != nil {
 		return nil, err
 	}

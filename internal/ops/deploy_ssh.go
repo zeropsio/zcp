@@ -89,12 +89,12 @@ func deploySSH(
 		return nil, fmt.Errorf("list services: %w", err)
 	}
 
-	source, err := resolveServiceID(services, sourceService)
+	source, err := FindService(services, sourceService)
 	if err != nil {
 		return nil, err
 	}
 
-	target, err := resolveServiceID(services, targetService)
+	target, err := FindService(services, targetService)
 	if err != nil {
 		return nil, err
 	}

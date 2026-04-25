@@ -43,19 +43,13 @@ func ProbeFinalURL(
 		return probe
 	}
 
-	var svc *platform.ServiceStack
-	for i := range services {
-		if services[i].Name == hostname {
-			svc = &services[i]
-			break
-		}
-	}
-	if svc == nil {
-		probe.Err = fmt.Sprintf("service %q not found in project", hostname)
+	svc, lookupErr := ops.FindService(services, hostname)
+	if lookupErr != nil {
+		probe.Err = lookupErr.Error()
 		return probe
 	}
 
-	url := resolveSubdomainURLForProbe(ctx, client, projectID, svc)
+	url := ops.ResolveSubdomainURL(ctx, client, projectID, svc)
 	if url == "" {
 		probe.Err = fmt.Sprintf("service %q has no reachable subdomain URL (enable subdomain first)", hostname)
 		return probe
@@ -101,29 +95,4 @@ func ResolveProbeHostname(ctx context.Context, client platform.Client, projectID
 	default:
 		return "", fmt.Errorf("multiple web-facing services (%v) — set finalUrlHostname on the scenario", candidates)
 	}
-}
-
-// resolveSubdomainURLForProbe mirrors ops.resolveSubdomainURL but uses exported
-// helpers only. Keeping the logic local (instead of exporting ops' internal)
-// avoids widening the ops API surface for a grader-only concern.
-func resolveSubdomainURLForProbe(ctx context.Context, client platform.Client, projectID string, svc *platform.ServiceStack) string {
-	if !svc.SubdomainAccess || len(svc.Ports) == 0 {
-		return ""
-	}
-	proj, err := client.GetProject(ctx, projectID)
-	if err != nil || proj.SubdomainHost == "" {
-		return ""
-	}
-	port := svc.Ports[0].Port
-	if url := ops.BuildSubdomainURL(svc.Name, proj.SubdomainHost, port); url != "" {
-		return url
-	}
-	domain := ops.ExtractDomainFromEnv(ctx, client, svc.ID)
-	if domain == "" {
-		return ""
-	}
-	if port == 80 {
-		return fmt.Sprintf("https://%s-%s.%s", svc.Name, proj.SubdomainHost, domain)
-	}
-	return fmt.Sprintf("https://%s-%s-%d.%s", svc.Name, proj.SubdomainHost, port, domain)
 }

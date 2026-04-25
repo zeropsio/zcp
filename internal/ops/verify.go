@@ -64,7 +64,7 @@ func Verify(
 	if err != nil {
 		return nil, err
 	}
-	svc, err := resolveServiceID(services, hostname)
+	svc, err := FindService(services, hostname)
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +148,7 @@ func verifyService(
 	needHTTP := rc == RuntimeDynamic || rc == RuntimeImplicit || rc == RuntimeStatic
 	if needHTTP {
 		wg.Go(func() {
-			subdomainURL := resolveSubdomainURL(ctx, client, projectID, svc)
+			subdomainURL := ResolveSubdomainURL(ctx, client, projectID, svc)
 			var checks []CheckResult
 			if subdomainURL == "" {
 				skipDetail := "subdomain not enabled — call zerops_subdomain action=enable first"

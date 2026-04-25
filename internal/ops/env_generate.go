@@ -90,7 +90,7 @@ func EnvGenerateDotenv(
 			if listErr != nil {
 				return nil, fmt.Errorf("list services: %w", listErr)
 			}
-			svc, resolveErr := resolveServiceID(services, svcHostname)
+			svc, resolveErr := FindService(services, svcHostname)
 			if resolveErr != nil {
 				return nil, resolveErr
 			}

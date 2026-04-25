@@ -141,8 +141,11 @@ func truncateBody(b []byte, limit int) string {
 	return string(b[:limit]) + "..."
 }
 
-// resolveSubdomainURL constructs the subdomain URL for a service (read-only, no enable call).
-func resolveSubdomainURL(ctx context.Context, client platform.Client, projectID string, svc *platform.ServiceStack) string {
+// ResolveSubdomainURL constructs the subdomain URL for a service in
+// read-only mode (no enable call). Returns "" when subdomain access is
+// disabled or no ports are exposed. Used by verify, eval probes, and any
+// caller that wants the canonical URL without mutating platform state.
+func ResolveSubdomainURL(ctx context.Context, client platform.Client, projectID string, svc *platform.ServiceStack) string {
 	if !svc.SubdomainAccess {
 		return ""
 	}

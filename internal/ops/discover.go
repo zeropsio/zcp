@@ -74,7 +74,7 @@ func Discover(
 	}
 
 	if hostname != "" {
-		svc, resolveErr := resolveServiceID(services, hostname)
+		svc, resolveErr := FindService(services, hostname)
 		if resolveErr != nil {
 			return nil, resolveErr
 		}
@@ -89,7 +89,7 @@ func Discover(
 			rawEnvs = attachEnvs(ctx, client, &info, detail.ID, result, includeEnvValues)
 		}
 		if detail.SubdomainAccess {
-			info.SubdomainURL = extractSubdomainURL(ctx, client, detail.ID, rawEnvs)
+			info.SubdomainURL = ExtractSubdomainURL(ctx, client, detail.ID, rawEnvs)
 		}
 		result.Services = []ServiceInfo{info}
 		addEnvRefNotes(result)
@@ -267,13 +267,23 @@ func BuildSubdomainURL(hostname, subdomainHost string, port int) string {
 	return fmt.Sprintf("https://%s-%s-%d.%s", hostname, prefix, port, rest)
 }
 
-// extractSubdomainURL reads the zeropsSubdomain env var for the URL.
-// Checks already-fetched raw envs first (when includeEnvs=true), falls back to API call.
-func extractSubdomainURL(ctx context.Context, client platform.Client, serviceID string, rawEnvs []platform.EnvVar) string {
+// ExtractSubdomainURL returns the subdomain URL from the service's
+// zeropsSubdomain env var, or empty string when the key is absent. Pass
+// rawEnvs when the caller already has the env list (avoids a second API
+// round-trip — discover iterates envs anyway); pass nil to fetch via
+// client.GetServiceEnv.
+func ExtractSubdomainURL(ctx context.Context, client platform.Client, serviceID string, rawEnvs []platform.EnvVar) string {
 	for _, env := range rawEnvs {
 		if env.Key == envKeyZeropsSubdomain {
 			return env.Content
 		}
+	}
+	if rawEnvs != nil {
+		// Caller passed an env slice; if it didn't contain the key,
+		// fall back to a fetch only when the slice is empty (unset
+		// caller signaled "I don't have envs yet"). Non-empty rawEnvs
+		// without the key means subdomain isn't enabled.
+		return ""
 	}
 	envs, err := client.GetServiceEnv(ctx, serviceID)
 	if err != nil {

@@ -78,11 +78,11 @@ func ConnectStorage(ctx context.Context, client platform.Client, projectID, host
 	if err != nil {
 		return nil, err
 	}
-	svc, err := resolveServiceID(services, hostname)
+	svc, err := FindService(services, hostname)
 	if err != nil {
 		return nil, err
 	}
-	storage, err := resolveServiceID(services, storageHostname)
+	storage, err := FindService(services, storageHostname)
 	if err != nil {
 		return nil, err
 	}
@@ -95,11 +95,11 @@ func DisconnectStorage(ctx context.Context, client platform.Client, projectID, h
 	if err != nil {
 		return nil, err
 	}
-	svc, err := resolveServiceID(services, hostname)
+	svc, err := FindService(services, hostname)
 	if err != nil {
 		return nil, err
 	}
-	storage, err := resolveServiceID(services, storageHostname)
+	storage, err := FindService(services, storageHostname)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +142,7 @@ func resolveService(ctx context.Context, client platform.Client, projectID, host
 	if err != nil {
 		return nil, err
 	}
-	return resolveServiceID(services, hostname)
+	return FindService(services, hostname)
 }
 
 func validateScaleParams(p ScaleParams) error {

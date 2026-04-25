@@ -73,7 +73,7 @@ func MountService(
 	if err != nil {
 		return nil, fmt.Errorf("list services: %w", err)
 	}
-	if _, err := resolveServiceID(services, hostname); err != nil {
+	if _, err := FindService(services, hostname); err != nil {
 		return nil, err
 	}
 
@@ -216,7 +216,7 @@ func UnmountService(
 	if err != nil {
 		return nil, fmt.Errorf("list services: %w", err)
 	}
-	_, resolveErr := resolveServiceID(services, hostname)
+	_, resolveErr := FindService(services, hostname)
 	if resolveErr != nil {
 		// Service deleted but mount still active — force unmount.
 		var pe *platform.PlatformError
@@ -273,7 +273,7 @@ func MountStatus(
 		if err := platform.ValidateHostname(hostname); err != nil {
 			return nil, err
 		}
-		svc, err := resolveServiceID(services, hostname)
+		svc, err := FindService(services, hostname)
 		if err != nil {
 			return nil, err
 		}

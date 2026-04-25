@@ -82,7 +82,7 @@ func DeployLocal(
 	if err != nil {
 		return nil, fmt.Errorf("list services: %w", err)
 	}
-	target, err := resolveServiceID(services, targetService)
+	target, err := FindService(services, targetService)
 	if err != nil {
 		return nil, err
 	}

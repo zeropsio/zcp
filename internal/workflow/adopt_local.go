@@ -163,7 +163,7 @@ func FormatAdoptionNote(result *AdoptionResult) string {
 	project := result.Meta.Hostname
 	managedLine := ""
 	if len(result.Managed) > 0 {
-		managedLine = fmt.Sprintf("Managed services detected: %s. Run `zcli vpn up <projectId>` on your machine for dev-time access.", joinServiceNames(result.Managed))
+		managedLine = fmt.Sprintf("Managed services detected: %s. Run `zcli vpn up <projectId>` on your machine for dev-time access.", strings.Join(result.Managed, ", "))
 	}
 
 	switch {
@@ -179,7 +179,7 @@ func FormatAdoptionNote(result *AdoptionResult) string {
 			"Adopted project %q as local-only. Multiple Zerops runtime services exist (%s) — none linked as stage. "+
 				"Strategy options: `push-git` (push to an external remote, ZCP doesn't track what happens downstream) or `manual` (nothing automated). "+
 				"`push-dev` requires linking one runtime as stage first: zerops_workflow action=\"adopt-local\" targetService=\"<chosen-hostname>\".",
-			project, joinServiceNames(result.UnlinkedRuntimes),
+			project, strings.Join(result.UnlinkedRuntimes, ", "),
 		)
 
 	default:
@@ -193,9 +193,4 @@ func FormatAdoptionNote(result *AdoptionResult) string {
 		}
 		return base
 	}
-}
-
-// joinServiceNames is a tiny helper keeping formatAdoptionNote scannable.
-func joinServiceNames(names []string) string {
-	return strings.Join(names, ", ")
 }

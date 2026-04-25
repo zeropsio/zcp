@@ -12,15 +12,17 @@ import (
 
 var durationRegex = regexp.MustCompile(`^(\d+)(m|h|d)$`)
 
-// resolveServiceID resolves a service hostname to its ServiceStack.
-// Requires a pre-fetched service list (avoids repeated API calls).
-func resolveServiceID(services []platform.ServiceStack, hostname string) (*platform.ServiceStack, error) {
+// FindService resolves a service hostname to its ServiceStack against a
+// pre-fetched service list. Returns the canonical ErrServiceNotFound +
+// "Available: ..." suggestion when the hostname is absent — every caller
+// (tools, eval, ops itself) gets identical error wording.
+func FindService(services []platform.ServiceStack, hostname string) (*platform.ServiceStack, error) {
 	svc := findServiceByHostname(services, hostname)
 	if svc == nil {
 		return nil, platform.NewPlatformError(
 			platform.ErrServiceNotFound,
 			fmt.Sprintf("Service '%s' not found", hostname),
-			"Available services: "+listHostnames(services),
+			"Available services: "+ListHostnames(services),
 		)
 	}
 	return svc, nil
@@ -36,8 +38,10 @@ func findServiceByHostname(services []platform.ServiceStack, hostname string) *p
 	return nil
 }
 
-// listHostnames returns comma-separated hostnames for error messages.
-func listHostnames(services []platform.ServiceStack) string {
+// ListHostnames returns comma-separated hostnames for error messages.
+// Useful for callers building their own "service not found" suggestion
+// text without going through FindService.
+func ListHostnames(services []platform.ServiceStack) string {
 	if len(services) == 0 {
 		return "(none)"
 	}

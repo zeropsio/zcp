@@ -248,13 +248,10 @@ func verifyDevServerTarget(ctx context.Context, client platform.Client, projectI
 	if err != nil {
 		return err
 	}
-	for _, svc := range services {
-		// ServiceStack.Name IS the hostname on Zerops — see platform.types.go.
-		if svc.Name == hostname {
-			return nil
-		}
+	if _, lookupErr := FindService(services, hostname); lookupErr != nil {
+		return platform.NewPlatformError(platform.ErrServiceNotFound,
+			fmt.Sprintf("No service with hostname %q in this project", hostname),
+			"Pass the hostname of a dev container that exists in the current project (e.g. apidev, appdev, workerdev).")
 	}
-	return platform.NewPlatformError(platform.ErrServiceNotFound,
-		fmt.Sprintf("No service with hostname %q in this project", hostname),
-		"Pass the hostname of a dev container that exists in the current project (e.g. apidev, appdev, workerdev).")
+	return nil
 }
