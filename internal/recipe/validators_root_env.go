@@ -3,6 +3,7 @@ package recipe
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -105,10 +106,25 @@ func validateEnvImportComments(_ context.Context, path string, _ []byte, inputs 
 			vs = append(vs, violation("missing-causal-word", path,
 				fmt.Sprintf("env %s / %s comment lacks a causal word: %q", tierKey, hostname, comment)))
 		}
+		if envYAMLCiteMetaRE.MatchString(comment) {
+			vs = append(vs, violation("env-yaml-cite-meta", path,
+				fmt.Sprintf("env %s / %s comment carries citation meta-talk (`(cite \\`x\\`)` / `(via the X guide)`): %q — citations are author-time signals, not env-yaml comment content", tierKey, hostname, comment)))
+		}
+	}
+	if envYAMLCiteMetaRE.MatchString(ec.Project) {
+		vs = append(vs, violation("env-yaml-cite-meta", path,
+			fmt.Sprintf("env %s project comment carries citation meta-talk: %q", tierKey, ec.Project)))
 	}
 	vs = append(vs, templatedOpeningCheck(path, ec, inputs.Plan)...)
 	return vs, nil
 }
+
+// envYAMLCiteMetaRE flags citation-meta phrasing inside env import.yaml
+// comments. Run-10 produced lines like `# (cite \`init-commands\`
+// via the nodejs@22 hello-world guide)` — meta-talk inside a yaml
+// comment whose audience is the click-deploying porter. Citations are
+// author-time signals, not render output (run-11 gap O-2).
+var envYAMLCiteMetaRE = regexp.MustCompile("(?i)(\\(cite\\s+`|\\bcited guide:\\s*`)")
 
 // templatedOpeningCheck compares first-sentences across runtime
 // codebases only (managed services like db/cache can share an opening

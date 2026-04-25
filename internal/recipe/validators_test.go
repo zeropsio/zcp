@@ -118,6 +118,29 @@ func TestValidator_ImportComments_TemplatedOpening(t *testing.T) {
 	}
 }
 
+// TestValidateEnvYAML_CiteMetaInComment_Flagged — run-11 gap O-2.
+// Env import.yaml comments must not carry citation meta-talk such as
+// "(cite ...)" or "Cited guide: ...". Citations are author-time
+// signals, not env-yaml comment content for the porter.
+func TestValidateEnvYAML_CiteMetaInComment_Flagged(t *testing.T) {
+	t.Parallel()
+
+	plan := &Plan{
+		Codebases: []Codebase{{Hostname: "api", Role: RoleAPI}},
+		EnvComments: map[string]EnvComments{
+			"4": {
+				Service: map[string]string{
+					"api": "Enables zero-downtime rolling deploys (cite `init-commands` via the nodejs@22 hello-world guide).",
+				},
+			},
+		},
+	}
+	vs, _ := validateEnvImportComments(context.Background(), "4 — Small Production/import.yaml", nil, SurfaceInputs{Plan: plan})
+	if !containsCode(vs, "env-yaml-cite-meta") {
+		t.Errorf("expected env-yaml-cite-meta violation, got %+v", vs)
+	}
+}
+
 // TestValidator_ImportComments_CausalWordRequired — §2.D: every
 // service-block comment must contain a causal word. Pure narration
 // fails.

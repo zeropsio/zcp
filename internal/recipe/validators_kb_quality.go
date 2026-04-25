@@ -253,6 +253,26 @@ func kbBulletHasPlatformMention(bullet string, plan *Plan) bool {
 	return false
 }
 
+// kbCitedGuideBoilerplateRE flags the "Cited guide: <name>" tail
+// pattern run 10 produced — at end-of-bullet (boilerplate), not in
+// running prose. The literal phrase "Cited guide:" preceded or
+// followed by backtick-quoted guide id.
+var kbCitedGuideBoilerplateRE = regexp.MustCompile("(?i)\\*?\\*?Cited guide:\\s*`")
+
+// validateKBCitedGuideBoilerplate runs O-2 (KB side): per-bullet
+// regex flag for "Cited guide: <name>." tails. Citations belong in
+// prose ("Per the http-support guide…") not as a tail.
+func validateKBCitedGuideBoilerplate(path, kb string) []Violation {
+	var vs []Violation
+	for _, bullet := range kbBulletBlocks(kb) {
+		if kbCitedGuideBoilerplateRE.MatchString(bullet) {
+			vs = append(vs, violation("kb-cited-guide-boilerplate", path,
+				"KB bullet ends with `Cited guide: <name>` boilerplate; citations belong in prose. Restate the rule in the bullet's own words; if you couldn't, the rule isn't yours to write. See spec §'Citation map' — citations are author-time signals, not render output"))
+		}
+	}
+	return vs
+}
+
 // kbSelfInflictedVoiceRE flags bullets in first-person/recipe-author
 // voice. Phrase signatures of "we tried X, it failed, switched to Y"
 // debugging journeys — not porter-facing teaching. Spec rule 4.

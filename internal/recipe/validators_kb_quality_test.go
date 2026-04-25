@@ -114,6 +114,53 @@ func TestValidateKB_AcceptsBulletMentioningRuntimeHostname(t *testing.T) {
 	}
 }
 
+// TestValidateKB_CitedGuideBoilerplate_Flagged — run-11 gap O-2.
+// KB bullets ending with literal "Cited guide: <name>." boilerplate
+// are flagged. Citations belong in prose, not as a tail.
+func TestValidateKB_CitedGuideBoilerplate_Flagged(t *testing.T) {
+	t.Parallel()
+
+	body := []byte("# codebase/api\n" +
+		"\n" +
+		"<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->\n" +
+		"### Gotchas\n" +
+		"\n" +
+		"- **L7 Host header rewrite** — the L7 balancer rewrites the Host " +
+		"header to the public subdomain; trust proxy must be enabled. " +
+		"**Cited guide: `http-support`.**\n" +
+		"<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->\n")
+	vs, err := validateCodebaseKB(context.Background(), "codebases/api/README.md", body, SurfaceInputs{Plan: &Plan{}})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if !containsCode(vs, "kb-cited-guide-boilerplate") {
+		t.Errorf("expected kb-cited-guide-boilerplate, got %+v", vs)
+	}
+}
+
+// TestValidateKB_InProseCitation_Passes — bullet citing a guide
+// inline ("Per the http-support guide…") is the allowed shape.
+func TestValidateKB_InProseCitation_Passes(t *testing.T) {
+	t.Parallel()
+
+	body := []byte("# codebase/api\n" +
+		"\n" +
+		"<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->\n" +
+		"### Gotchas\n" +
+		"\n" +
+		"- **L7 Host header rewrite** — Per the http-support guide, the " +
+		"L7 balancer rewrites the Host header to the public subdomain; " +
+		"trust proxy must be enabled or req.hostname returns the VXLAN peer.\n" +
+		"<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->\n")
+	vs, err := validateCodebaseKB(context.Background(), "codebases/api/README.md", body, SurfaceInputs{Plan: &Plan{}})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if containsCode(vs, "kb-cited-guide-boilerplate") {
+		t.Errorf("expected NO boilerplate violation for in-prose citation, got %+v", vs)
+	}
+}
+
 // TestValidateKB_RejectsFirstPersonShape — run-11 gap V-4. A bullet
 // using first-person/recipe-author voice ("we tried X", "I switched
 // to Y", "after running") describes scaffold-debugging forensics, not

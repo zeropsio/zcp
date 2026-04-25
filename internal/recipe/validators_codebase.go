@@ -112,6 +112,8 @@ func validateCodebaseKB(_ context.Context, path string, body []byte, inputs Surf
 	vs = append(vs, validateKBNoPlatformMention(path, kb, inputs.Plan)...)
 	// V-4: regex-flag bullets in first-person/recipe-author voice.
 	vs = append(vs, validateKBSelfInflictedShape(path, kb)...)
+	// O-2: regex-flag "Cited guide: <name>" boilerplate tails.
+	vs = append(vs, validateKBCitedGuideBoilerplate(path, kb)...)
 	return vs, nil
 }
 
