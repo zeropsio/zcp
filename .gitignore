@@ -2,6 +2,7 @@
 bin/
 builds/
 /zcp
+*.test
 RECIPE_RUNS/
 docs/zcprecipator3/runs/
 
@@ -26,6 +27,9 @@ CLAUDE.local.md
 
 # Workflow state (created by tests and runtime)
 **/.zcp/
+
+# Test-generated reflog (workflow engine appends to {cwd}/CLAUDE.md on bootstrap close)
+integration/CLAUDE.md
 
 # OS
 .DS_Store
@@ -55,3 +59,6 @@ DEBUG_WORKFLOW*.json
 .vscode/
 *.swp
 *~
+
+# Autonomous-loop scheduling state (per-PID lock)
+.claude/scheduled_tasks.lock
