@@ -22,7 +22,10 @@ import (
 )
 
 func TestServer_AllToolsRegistered(t *testing.T) {
-	t.Parallel()
+	// Non-parallel: t.Chdir rebases cwd so server.New's stateDir derivation
+	// (filepath.Join(cwd, .zcp/state)) lands under TempDir instead of polluting
+	// internal/server/.zcp/.
+	t.Chdir(t.TempDir())
 
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "p1", Name: "test"}).
@@ -240,7 +243,10 @@ func TestServer_Instructions(t *testing.T) {
 }
 
 func TestServer_Connect(t *testing.T) {
-	t.Parallel()
+	// Non-parallel: t.Chdir rebases cwd so server.New's stateDir derivation
+	// (filepath.Join(cwd, .zcp/state)) lands under TempDir instead of polluting
+	// internal/server/.zcp/.
+	t.Chdir(t.TempDir())
 
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "p1", Name: "test"}).
