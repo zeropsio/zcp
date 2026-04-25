@@ -371,6 +371,9 @@ through deploy iteration (when not).
 | `guideKnowledgeSources` map (run-11 V-2) | TEACH (defensible) | ⚠️ Hand-curated topic→source map; V-2 validator now flows as Notice |
 | `LintDeployignore` artifact / redundant patterns (run-11 P-3) | DISCOVER | ✅ Warnings only — deploy never blocks; TEACH-side teaching lives in `themes/core.md` |
 | `.deployignore` paragraph rewrite in `themes/core.md` (run-11 P-1) | TEACH | ✅ Positive teaching in atom |
+| Alias-type contracts table — `${<host>_zeropsSubdomain}` is a full HTTPS URL (run-12 §A) | TEACH | ✅ Positive teaching in scaffold platform_principles atom (also: `subdomain-double-scheme` validator backup; review for demotion in run-13) |
+| CLAUDE.md porter-facing rule — framework-canonical commands, no MCP invocations (run-12 §C) | TEACH | ✅ Positive teaching in scaffold content_authoring atom (also: `claude-md-zcp-tool-leak` validator backup; review for demotion in run-13) |
+| `Service.SupportsHA` capability flag — managed-service family table downgrades non-HA-capable services (run-12 §Y3) | TEACH | ✅ Engine emits by construction; meilisearch / kafka / unknown families → NON_HA at tier 5 |
 
 ### What "wrong side" means concretely
 

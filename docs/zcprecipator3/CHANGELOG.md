@@ -4,6 +4,45 @@ Running log of changes on top of [plan.md](plan.md). Each entry captures what ch
 
 ---
 
+## 2026-04-25 — run-12 readiness: foundation + flow + cosmetic
+
+### Context
+
+[run-11 ANALYSIS](runs/11/ANALYSIS.md) closed the nestjs-showcase dogfood with three foundation teaching errors (env-pattern wrong, CLAUDE.md not porter-runnable, finalize hand-edit pattern), four engine-flow defects (codebase validators surfaced at wrong phase, append-only re-record, hand-typed finalize wrapper, paraphrased dispatches), and three engine cosmetic defects (doubled `# # ` comments, dropped tier 0/1 runtime comments, HA mode applied uniformly to non-HA-capable services). Honest content grade vs reference: **6/10**. [Plan](plans/run-12-readiness.md) named twelve workstreams across three tranches plus this CHANGELOG sign-off. All twelve commits landed locally.
+
+### Tranche 1 — content fixes (TEACH-side foundation)
+
+- **§E** ([90af262]) — Rewrote [`briefs/scaffold/platform_principles.md`](../../internal/recipe/content/briefs/scaffold/platform_principles.md) Managed services section to teach own-key aliasing (`DB_HOST: ${db_hostname}`) as the recommended pattern, with same-key shadow trap kept correctly. Deleted orphan [`principles/env-var-model.md`](../../internal/recipe/content/principles/) (unreferenced atom carried the same wrong rule).
+- **§A** ([ec8f7a9]) — Added Alias-type contracts table to scaffold platform_principles atom (`${<host>_zeropsSubdomain}` is a full HTTPS URL). Added `subdomain-double-scheme` validator + `scanSourceForSubdomainDoubleScheme`. Reference: [environment-variables.md:64-91](../../internal/knowledge/guides/environment-variables.md#L64-L91).
+- **§C** ([552af43]) — Rewrote scaffold `content_authoring.md` CLAUDE.md subsection: porter-facing voice, framework-canonical commands, never MCP tool invocations. Added `claude-md-zcp-tool-leak` validator (matches `zerops_*` MCP tools, `zcli`, `zcp`).
+- **§I** ([22c23b4]) — Added IG scope rule subsection: items 2+ are "what changes for Zerops" only; recipe-internal contracts route to KB or claude-md/notes. Aim 4-7 IG items.
+- **§M** ([523bd9c]) — Added Mount state preamble to `phase_entry/scaffold.md` describing `.git` arrival state + wipe-and-reinit recovery once.
+
+ScaffoldBriefCap raised 16 → 22 KB across the tranche to fit the new content.
+
+### Tranche 2 — engine flow
+
+- **§R** ([7e510f6]) — Added `Mode` field on RecipeInput; `record-fragment mode=replace` overwrites even append-class ids. Brief teaches when to use replace.
+- **§G** ([6ea8fa3]) — Split `FinalizeGates()` into `CodebaseGates()` (IG/KB/CLAUDE/yaml-comments + source-comment-voice) + `EnvGates()` (root + env surfaces + cross-surface uniqueness). Scaffold + feature run codebase gates so the right author sees violations on content they can fix via `mode=replace`. Finalize re-runs codebase + env.
+- **§B** ([b4cb2c2]) — `BuildFinalizeBrief` extended with tier map (derived from `Tiers()` via `tierAudienceLine`), enumerated fragment list (`formatFinalizeFragmentList`), and inlined `briefs/finalize/anti_patterns.md`. Main agent now dispatches brief.body byte-identical; no wrapper math.
+- **§D** ([f1caf5f]) — `verify-subagent-dispatch` action implemented. Engine recomposes the brief identified by briefKind+codebase and confirms its body appears byte-identical inside the dispatched prompt. Wrapper appends allowed; truncations + paraphrases rejected.
+
+### Tranche 3 — engine cosmetic
+
+- **§Y1** ([1aceb0e]) — `writeComment` strips a leading `# ` or `#` from authored fragment lines before re-prefixing. Eliminates the 272 lines of `# # ` doubled-prefix per recipe.
+- **§Y2** ([d2c6fd4]) — `writeRuntimeDev` / `writeRuntimeStage` fall back to bare codebase name (`comments[cb.Hostname]`) when slot-keyed lookup is empty. Restores tier 0 + 1 runtime comments.
+- **§Y3** ([c58ec4f]) — `Service.SupportsHA` flag + `managedServiceSupportsHA` family table. mergePlan derives the flag at update-plan time; `writeNonRuntimeService` downgrades `HA` → `NON_HA` for families without HA support (meilisearch, kafka, others). Falls back to family lookup at emit time so test fixtures with literal Service values still emit correctly.
+
+### Caveat (the user flagged this and proceeded anyway)
+
+The plan added two regex-style validators (`subdomain-double-scheme` in §A, `claude-md-zcp-tool-leak` in §C) alongside the TEACH-side content fixes. The TEACH content (alias-type contracts table; CLAUDE.md porter-facing rule with GOOD/BAD examples) is the load-bearing fix; the validators are catalog-shaped backups that pressure the agent against specific tokens rather than teaching the underlying shape. Per [system.md §4](system.md), this is on the wrong side of the TEACH/DISCOVER line and should be reviewed in run-13 readiness — either demote to Notice (the artifact stays but blocks nothing) or delete entirely if the brief teaching holds in dogfood.
+
+### What's next
+
+Run 12 dogfood is the user's call against this engine. If it ships content-quality 8/10 vs reference (per plan §8 projection), the validator-side artifacts in §A and §C should be revisited. If it slips on §E (own-key aliasing inconsistent), the brief's "always alias every cross-service var you read" rule needs strengthening; weakening §G is the wrong response.
+
+---
+
 ## 2026-04-25 — cleanup: gates → notices per system.md §4
 
 ### Context
