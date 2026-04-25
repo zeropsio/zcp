@@ -4,6 +4,57 @@ Running log of changes on top of [plan.md](plan.md). Each entry captures what ch
 
 ---
 
+## 2026-04-25 — architectural reframe: catalog drift recognized, gates → notices/structural
+
+### Context
+
+Immediately after run-11-readiness shipped, an architectural audit (this session) confirmed a fear that had been growing across runs 8–11: **v3 has been replicating zcprecipator2's failure mode** — accreting hardcoded knowledge catalogs (vocabulary lists, phrase regexes, banned-heading lists, ban-listed filenames) and firing them as finalize-blocking gates. Each dogfood run produced "the agent shipped X" → readiness plan encoded an X-detector → next run's agent learned to evade the trigger string but not the underlying class → catalog grew. Same shape as v2's recipe.md compendium that v3 was created to escape, one layer up.
+
+Inventory across runs 8–11 (counting only validators wired into `FinalizeGates` via `RegisterValidator` / `gateSurfaceValidators`): roughly 16 hardcoded catalogs and phrase-pinning regexes accumulated. Examples: `causalWords` allow-list (run-8 D), `tierPromotionVerbs` (run-8 D), `metaVoiceWords` (run-8 D), `sourceForbiddenPhrases` scanned in real source code (run-9 I), `claudeMDForbiddenSubsections` literal heading ban-list (run-10 P), `kbTripleFormatRE` (run-10 O), `platformMechanismVocab` + `platformMentionVocabBase` (run-11 V-1 / V-3, partial duplicates), `kbCitedGuideBoilerplateRE` + `kbSelfInflictedVoiceRE` (run-11 O-2 / V-4), `deployignoreHardRejectLines` (run-11 P-3), V-5 three concrete run-10 anti-patterns embedded in scaffold brief.
+
+The problem is not the individual rules — most encode true lessons from real runs. The problem is the **delivery mechanism**: rules expressed as detect-on-output regexes wired as blocking gates teach the agent to game the trigger, not the class. And every new run-specific lesson pressures the catalog to grow.
+
+### Decision
+
+Drew an explicit **TEACH / DISCOVER** line and made it the falsifiable test for every existing and future engine-side artifact. Captured durably in [system.md](system.md) §4. The line:
+
+- **TEACH side** (engine knows up-front): platform invariants that are the same for every recipe, expressed as positive shapes the engine *produces* or *requires* by construction. Examples that are correctly TEACH-side today: M-1's `dev`-suffix path contract, run-10 M's engine-emitted IG item #1, the workspace-vs-deliverable yaml split, the citation map of guide topic IDs.
+- **DISCOVER side** (each run finds out): recipe-specific knowledge surfaced by sub-agents during scaffold + feature against the live platform — managed-service connection idioms, framework binding behavior, per-recipe field usage, cross-service contracts, per-codebase causal rationale. Recorded as `FactRecord`s; routed to surfaces by classification.
+
+The catalog-drift signature is exactly DISCOVER-side knowledge reified as engine-side detect-on-output ban-lists. Per [system.md](system.md) §4, the corrective action depends on whether the lesson is recoverable as TEACH-shape (rewrite as engine-emitted shape — IG item #1 is the model), belongs on DISCOVER (demote to record-time `Notice` — V-1 already does this; V-3 / V-4 / O-2 / P-3 should follow), or is pure style with no semantic load (delete — `yamlDividerREs`, debatable cases).
+
+### What this entry records
+
+A **decision**, not a code change. No validators have been moved, demoted, or deleted yet. This entry exists so the reasoning trail survives context resets and so a fresh instance reading the engine code understands that the catalog-shaped artifacts under `internal/recipe/validators*.go` are recognized-as-wrong, scheduled for unwinding, not the engine's intended steady state.
+
+### Why pause now
+
+[plans/run-11-pause.md](plans/run-11-pause.md) records the operational call: dogfood run 11 was queued; we paused before running it because dogfooding against the current catalog-shaped engine would (a) reinforce the wrong-side mental model in whatever the run produces and (b) produce a run-12-readiness plan with another tranche of catalogs. The pause buys time to draw the line and unwind from a known position.
+
+### Documents added
+
+- [system.md](system.md) — north-star doc, ~410 lines, what v3 is + output shape + runtime sequence + the TEACH/DISCOVER line + verdict table for current artifacts. Authoritative for intent; supersedes older readiness plans where they conflict.
+- [plans/run-11-pause.md](plans/run-11-pause.md) — short note: why we paused, what's next.
+
+### Not changed
+
+- No engine code. No validator removal, demotion, or rewrite.
+- No atom corpus changes. Run-specific anti-patterns still live in scaffold + feature briefs (V-5 etc.) until cleanup.
+- run-11 dogfood not run.
+
+### What comes next (anticipated, not committed)
+
+Cleanup pass guided by the system.md §4 verdict table. Expected to touch
+`internal/recipe/validators.go`, `validators_kb_quality.go`,
+`validators_codebase.go`, `validators_root_env.go`,
+`validators_source_comments.go`, `classify.go`,
+`internal/ops/deploy_deployignore.go`, plus the V-5 anti-pattern
+litmus subsections in `content/briefs/scaffold/content_authoring.md`
+and `content/briefs/feature/content_extension.md`. Sequencing is the
+user's call.
+
+---
+
 ## 2026-04-25 — run-11-readiness (U / V / M / N / O / P / R / Q / S)
 
 ### Context
