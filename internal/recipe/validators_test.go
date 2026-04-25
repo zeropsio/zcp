@@ -969,6 +969,45 @@ func TestBrief_Scaffold_IncludesYamlCommentStyle(t *testing.T) {
 	}
 }
 
+// TestValidator_SourceCode_FlagsDoubleSchemePrefix — run-12 §A. Source
+// files using `https://${<host>_zeropsSubdomain}` (or interpolated via
+// process.env) double-prefix because the alias already includes
+// https://. Run-11 shipped this bug 3 times across sub-agents.
+func TestValidator_SourceCode_FlagsDoubleSchemePrefix(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		src  string
+		flag bool
+	}{
+		{
+			name: "yaml-style alias",
+			src:  `VITE_API_URL: "https://${apidev_zeropsSubdomain}"`,
+			flag: true,
+		},
+		{
+			name: "JS template literal via process.env",
+			src:  "const u = `https://${process.env.apistage_zeropsSubdomain}/api`;",
+			flag: true,
+		},
+		{
+			name: "alias used as-is (correct)",
+			src:  `const u = process.env.apistage_zeropsSubdomain + "/api";`,
+			flag: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			vs := scanSourceForSubdomainDoubleScheme("/tmp/x.ts", tc.src)
+			if got := containsCode(vs, "subdomain-double-scheme"); got != tc.flag {
+				t.Errorf("containsCode(subdomain-double-scheme) = %v, want %v; vs=%+v", got, tc.flag, vs)
+			}
+		})
+	}
+}
+
 // helpers
 
 func containsCode(vs []Violation, code string) bool {

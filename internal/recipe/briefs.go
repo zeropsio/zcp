@@ -30,8 +30,13 @@ import (
 // 16 KB to fit the Citation map subsection (citations are author-time
 // signals, not render output). Run-11 Q-2 raised FeatureBriefCap
 // 10 KB → 12 KB for the per-feature commit subsection.
+//
+// Run-12 §E + §A raised ScaffoldBriefCap 16 → 18 KB to fit the
+// rewritten Managed services section (own-key aliasing teaching) and
+// the new Alias-type contracts table (TEACH-side fix for the run-11
+// `https://${<host>_zeropsSubdomain}` double-prefix bug).
 const (
-	ScaffoldBriefCap = 16 * 1024
+	ScaffoldBriefCap = 18 * 1024
 	FeatureBriefCap  = 12 * 1024
 )
 

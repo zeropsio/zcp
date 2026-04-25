@@ -289,6 +289,41 @@ func trimForMessage(s string) string {
 	return s
 }
 
+// subdomainDoubleSchemeRE matches yaml/string-literal forms where the
+// alias `${<host>_zeropsSubdomain}` is prefixed with `https://`. The
+// alias already resolves to a full HTTPS URL — prepending another
+// scheme produces `https://https://...`, the run-11 nestjs-showcase bug
+// (3 independent occurrences across sub-agents).
+var subdomainDoubleSchemeRE = regexp.MustCompile(`https://\$\{[A-Za-z][A-Za-z0-9_]*_zeropsSubdomain\}`)
+
+// subdomainDoubleSchemeJSRE matches JavaScript/TS template-literal
+// double-prefix via `process.env.<host>_zeropsSubdomain`.
+var subdomainDoubleSchemeJSRE = regexp.MustCompile(`https://\$\{process\.env\.[A-Za-z][A-Za-z0-9_]*_zeropsSubdomain\}`)
+
+// scanSourceForSubdomainDoubleScheme flags occurrences of the
+// `https://${...zeropsSubdomain}` double-scheme pattern in a single
+// source body. Run-12 §A — TEACH-side: the alias is a full URL, so
+// prepending `https://` is structurally wrong on every recipe.
+func scanSourceForSubdomainDoubleScheme(path, body string) []Violation {
+	var vs []Violation
+	report := func(match string) {
+		vs = append(vs, Violation{
+			Code: "subdomain-double-scheme",
+			Path: path,
+			Message: fmt.Sprintf(
+				"`${<host>_zeropsSubdomain}` resolves to a full HTTPS URL — drop the leading `https://`: %s",
+				trimForMessage(strings.TrimSpace(match))),
+		})
+	}
+	for _, m := range subdomainDoubleSchemeRE.FindAllString(body, -1) {
+		report(m)
+	}
+	for _, m := range subdomainDoubleSchemeJSRE.FindAllString(body, -1) {
+		report(m)
+	}
+	return vs
+}
+
 // validateCrossSurfaceUniqueness — run-8 §2.D + spec-content-surfaces.md
 // "Cross-surface duplication" rule. A fact's Topic appears on exactly
 // one stitched surface body (cross-references via "See:" allowed but

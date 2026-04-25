@@ -61,6 +61,38 @@ fetch via `zerops_knowledge query=env-var-model` for the full
 treatment of project vs cross-service vars, build-time vs runtime
 scopes, and isolation modes.
 
+## Alias-type contracts
+
+The platform injects cross-service references under predictable
+shapes. Use them as-is; do not compose, prefix, or transform.
+
+| Alias pattern                  | Resolves to                              | Use as                                  |
+|--------------------------------|------------------------------------------|-----------------------------------------|
+| `${<host>_hostname}`           | bare hostname (`db`)                     | host in `host:port` URLs                |
+| `${<host>_port}`               | port number                              | port                                    |
+| `${<host>_user}`               | username                                 | auth user                               |
+| `${<host>_password}`           | password                                 | auth pass                               |
+| `${<host>_<keyname>}`          | the value as-is                          | direct value                            |
+| `${<host>_connectionString}`   | full DSN                                 | pass to client constructor              |
+| `${<host>_zeropsSubdomain}`    | **full HTTPS URL** (e.g. `https://apistage-2204-3000.prg1.zerops.app`) | Origin / Host / fetch URL — do NOT prepend `https://` |
+| `${zeropsSubdomain}`           | **this service's own full HTTPS URL**    | APP_URL, callback URL, redirect target  |
+
+`${zeropsSubdomainHost}` is a different beast — it's the
+deliverable-template variable that stays LITERAL in published
+import.yaml; the platform substitutes the end-user's host suffix at
+their click-deploy. Use only inside finalize-phase tier yaml
+templates.
+
+When the ORIGIN must be derived (CORS allow-list, Referer check):
+
+```js
+const origins = [
+  process.env.APISTAGE_URL,  // own-key alias of ${apistage_zeropsSubdomain}
+  process.env.APIDEV_URL,    // own-key alias of ${apidev_zeropsSubdomain}
+].filter(Boolean);
+// The values are already full https:// URLs — do NOT prepend.
+```
+
 ## Migrations / init-commands
 
 See the included `execOnce — key shape by lifetime` atom for the two
