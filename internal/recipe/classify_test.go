@@ -1,6 +1,7 @@
 package recipe
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -140,6 +141,88 @@ func TestClassify_AttachesCitationGuide(t *testing.T) {
 	}
 	if result.Class != ClassPlatformInvariant {
 		t.Errorf("class = %q, want platform-invariant", result.Class)
+	}
+}
+
+// TestClassify_SelfInflictedFromFixApplied — run-11 gap V-1. Run 10's
+// worker bullet ".deployignore filters the build artifact" was a
+// self-inflicted incident (recipe author wrote dist into .deployignore,
+// deploy bricked, fix was removing dist). The agent labeled it
+// platform-trap; spec rule 4 says discard. V-1 detects the shape
+// deterministically — fixApplied describes a recipe-source change AND
+// failureMode lacks platform-side mechanism vocabulary → override to
+// ClassSelfInflicted.
+func TestClassify_SelfInflictedFromFixApplied(t *testing.T) {
+	t.Parallel()
+
+	rec := FactRecord{
+		Topic:       "deployignore-filters-build-artifact",
+		Symptom:     "Cannot find module /var/www/dist/main.js looping every 2s",
+		Mechanism:   "deployignore filters the deploy bundle",
+		SurfaceHint: "platform-trap",
+		Citation:    "deploy-files",
+		FailureMode: "Cannot find module /var/www/dist/main.js",
+		FixApplied:  "removed dist from .deployignore",
+	}
+	if got := Classify(rec); got != ClassSelfInflicted {
+		t.Errorf("Classify() = %q, want %q (V-1 override should fire)", got, ClassSelfInflicted)
+	}
+	gotClass, notice := ClassifyWithNotice(rec)
+	if gotClass != ClassSelfInflicted {
+		t.Errorf("ClassifyWithNotice() class = %q, want %q", gotClass, ClassSelfInflicted)
+	}
+	if notice == "" {
+		t.Fatalf("ClassifyWithNotice() should emit notice on override, got empty")
+	}
+	if !strings.Contains(notice, "rule 4") {
+		t.Errorf("notice must name spec rule 4, got: %q", notice)
+	}
+	if !strings.Contains(notice, "self-inflicted") {
+		t.Errorf("notice must name self-inflicted, got: %q", notice)
+	}
+}
+
+// TestClassify_PlatformInvariantFromGenuineFix — V-1 must NOT
+// over-trigger. The trust-proxy / L7 intersection IS platform-side
+// teaching despite living in framework code. fixApplied "set
+// app.set('trust proxy', true)" doesn't match self-inflicted patterns;
+// failureMode "req.ip returned VXLAN peer" mentions VXLAN (platform
+// vocabulary). Override stays off; record keeps its surfaceHint
+// classification (citation http-support is in CitationMap →
+// platform-invariant).
+func TestClassify_PlatformInvariantFromGenuineFix(t *testing.T) {
+	t.Parallel()
+
+	rec := FactRecord{
+		Topic:       "trust-proxy",
+		Symptom:     "req.ip returns wrong client IP",
+		Mechanism:   "L7 balancer rewrites X-Forwarded-For; Express ignores by default",
+		SurfaceHint: "platform-trap",
+		Citation:    "http-support",
+		FailureMode: "req.ip returned VXLAN peer",
+		FixApplied:  "set app.set('trust proxy', true)",
+	}
+	if got := Classify(rec); got != ClassPlatformInvariant {
+		t.Errorf("Classify() = %q, want %q (no override should fire)", got, ClassPlatformInvariant)
+	}
+	_, notice := ClassifyWithNotice(rec)
+	if notice != "" {
+		t.Errorf("no notice expected for genuine platform fix, got: %q", notice)
+	}
+}
+
+// TestClassify_NoOverrideWhenFieldsMissing — V-1's override requires
+// both fixApplied + failureMode to be present. Older facts (pre-U-2
+// schema enrichment) lack these fields and must not trigger an override.
+func TestClassify_NoOverrideWhenFieldsMissing(t *testing.T) {
+	t.Parallel()
+
+	rec := FactRecord{
+		Topic: "x", Symptom: "y", Mechanism: "z",
+		SurfaceHint: "platform-trap", Citation: "env-var-model",
+	}
+	if got := Classify(rec); got != ClassPlatformInvariant {
+		t.Errorf("Classify() = %q, want %q (no override; fields empty)", got, ClassPlatformInvariant)
 	}
 }
 

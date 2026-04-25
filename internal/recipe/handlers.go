@@ -143,7 +143,12 @@ type RecipeResult struct {
 	FragmentID string `json:"fragmentId,omitempty"`
 	BodyBytes  int    `json:"bodyBytes,omitempty"`
 	Appended   bool   `json:"appended,omitempty"`
-	Error      string `json:"error,omitempty"`
+	// Notice carries an advisory message — currently used by record-fact
+	// when V-1's classifier override re-routes a self-inflicted fact away
+	// from the agent's platform-trap surfaceHint. Empty when no override
+	// fires. Run-11 gap V-1.
+	Notice string `json:"notice,omitempty"`
+	Error  string `json:"error,omitempty"`
 }
 
 // Register installs the zerops_recipe tool. server.go gates it behind
@@ -250,6 +255,14 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 		if err := sess.RecordFact(*in.Fact); err != nil {
 			r.Error = err.Error()
 			return r
+		}
+		// V-1 — notice when the classifier auto-overrides the agent's
+		// surfaceHint to self-inflicted. The fact is recorded either way
+		// (the override only affects publish-time routing), but the
+		// notice gives the author a chance to course-correct on the next
+		// call.
+		if _, notice := ClassifyWithNotice(*in.Fact); notice != "" {
+			r.Notice = notice
 		}
 		r.OK = true
 	case "record-fragment":
