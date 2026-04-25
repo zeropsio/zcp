@@ -47,6 +47,29 @@ func TestStore_ThemeDocsEmbedded(t *testing.T) {
 	}
 }
 
+// TestKnowledge_CoreThemes_DeployignoreParagraph_NoMirrorGitignore —
+// run-11 gap P-1. The "Recommended to mirror .gitignore patterns"
+// recommendation in core.md was the root cause of run 10's worker
+// scaffold writing dist/ into .deployignore (20 minutes of redeploy
+// loops). Pin the corrected paragraph so the bad recommendation
+// can't recur.
+func TestKnowledge_CoreThemes_DeployignoreParagraph_NoMirrorGitignore(t *testing.T) {
+	store := newTestStore(t)
+	doc, err := store.Get("zerops://themes/core")
+	if err != nil {
+		t.Fatalf("get core: %v", err)
+	}
+	if strings.Contains(doc.Content, "Recommended to mirror") {
+		t.Error("core.md still recommends mirroring .gitignore — see run-11 gap P-1")
+	}
+	if !strings.Contains(doc.Content, "Most projects do NOT need this file") {
+		t.Error("core.md missing the corrected .deployignore guidance")
+	}
+	if !strings.Contains(doc.Content, "Never list `dist/`") {
+		t.Error("core.md missing the never-list-dist warning")
+	}
+}
+
 func TestStore_RecipesEmbedded(t *testing.T) {
 	store := newTestStore(t)
 	recipes := store.ListRecipes()

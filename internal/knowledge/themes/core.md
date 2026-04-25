@@ -249,7 +249,7 @@ zerops[]:
   - Recipe uses `./app` + `start: ./app` → with `[.]`: same `start: ./app` (binary at `/var/www/app`)
   - Recipe uses `target/release/~binary` + `start: ./binary` → with `[.]`: `start: ./target/release/binary`
   - Principle: tilde extraction no longer happens, directory structure is preserved as-is. Match `start` to where build output actually lands.
-- **`.deployignore`**: Place at repo root (gitignore syntax) to exclude files/folders from deploy artifact. NOT recursive into subdirectories by default. Recommended to mirror `.gitignore` patterns. Also works with `zcli service deploy`.
+- **`.deployignore`**: Most projects do NOT need this file. The Zerops builder already excludes `.git/`. Editor metadata (`.idea/`, `.vscode/`), log files (`*.log`), and OS junk belong in `.gitignore`, not `.deployignore`. Use `.deployignore` only for the narrow case where a path is committed to git (so `.gitignore` doesn't catch it) AND must NOT ship to the runtime — e.g. fixture data, test artifacts, build-tool config the runtime doesn't read. **Never list `dist/`, `node_modules/`, or anything `deployFiles` selects** — that filters the deploy artifact and bricks the runtime. Place at repo root (gitignore syntax); not recursive into subdirectories by default. Also works with `zcli service deploy`.
 - **Deploy mode determines `deployFiles`**:
 
   | Deploy mode | Who deploys? | deployFiles | start |
