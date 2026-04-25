@@ -114,6 +114,22 @@ func TestBrief_Scaffold_TeachesOwnKeyAliasing(t *testing.T) {
 	}
 }
 
+// TestBrief_Scaffold_TeachesAliasTypeContracts — run-12 §A. Scaffold
+// brief teaches that `${<host>_zeropsSubdomain}` is a full HTTPS URL
+// already, so sub-agents stop emitting `https://${<host>_zeropsSubdomain}`.
+func TestBrief_Scaffold_TeachesAliasTypeContracts(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	mustContain(t, brief.Body, "Alias-type contracts")
+	mustContain(t, brief.Body, "full HTTPS URL")
+	mustContain(t, brief.Body, "do NOT prepend")
+}
+
 func TestBriefCompose_FeatureUnderCap(t *testing.T) {
 	t.Parallel()
 
