@@ -50,40 +50,6 @@ var tierPromotionVerbs = []string{
 	"next tier", "previous tier",
 }
 
-// yamlDividerREs match comment lines that contain a run of 4+
-// identical decorative characters anywhere in the comment body. This
-// catches both pure dividers (`# ----`) and banners (`# === DEV ===`).
-// Go's RE2 has no backreferences, so one regex per character. Run-9-
-// readiness §2.H: divider banners are banned in scaffold- and feature-
-// authored yaml.
-var yamlDividerREs = []*regexp.Regexp{
-	regexp.MustCompile(`(?m)^\s*#.*-{4,}`),
-	regexp.MustCompile(`(?m)^\s*#.*={4,}`),
-	regexp.MustCompile(`(?m)^\s*#.*\*{4,}`),
-	regexp.MustCompile(`(?m)^\s*#\s*#{3,}`), // 3+ hashes since the leading # counts
-	regexp.MustCompile(`(?m)^\s*#.*_{4,}`),
-}
-
-// yamlIsDivider reports whether a single (already-trimmed) comment line
-// matches any banned divider shape.
-func yamlIsDivider(line string) bool {
-	for _, re := range yamlDividerREs {
-		if re.MatchString(line) {
-			return true
-		}
-	}
-	return false
-}
-
-// yamlFindDividers returns every divider line found in body.
-func yamlFindDividers(body []byte) [][]byte {
-	out := make([][]byte, 0, len(yamlDividerREs))
-	for _, re := range yamlDividerREs {
-		out = append(out, re.FindAll(body, -1)...)
-	}
-	return out
-}
-
 // boldBulletRE matches a markdown bullet that opens with `**...**`
 // (the bold symptom the KB contract requires on every bullet).
 var boldBulletRE = regexp.MustCompile(`(?m)^\s*-\s+\*\*[^*]+\*\*`)

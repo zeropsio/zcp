@@ -2,10 +2,6 @@
 
 ASCII `#` only, one hash per line, one space after, then prose.
 
-- No dividers (runs of `-`, `=`, `*`, `#`, `_`)
-- No banners (multi-line boxes, `# === Section ===`)
-- No decoration
-
 Wrap at ~65 chars. Use **multi-line blocks** — a run of adjacent `#`
 lines reads as one prose paragraph. Bare `#` lines stay inside the
 block as paragraph separators.
@@ -35,7 +31,5 @@ BAD (single-line run-on, stuffed causal words):
 ```
 # Dev setup — deploys the source tree so that SSH sessions and `zerops_dev_server` can drive `nest start --watch` without a rebuild. `zsc noop --silent` keeps the container idle so that an external watcher owns the process, otherwise every code edit would force a redeploy.
 ```
-
-BAD (decorative divider): `# ----- DEV SETUP -----`.
 
 Shape reference: `/Users/fxck/www/laravel-showcase-app/zerops.yaml`.

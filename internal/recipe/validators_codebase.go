@@ -197,22 +197,16 @@ func validateCodebaseCLAUDE(_ context.Context, path string, body []byte, _ Surfa
 }
 
 // validateCodebaseYAML enforces the codebase yaml-comment contract.
-// Decorative divider lines are banned (run-9 §2.H); surviving comments
-// are grouped into BLOCKS — runs of adjacent `#` lines, with bare `#`
-// treated as an in-block paragraph separator per the reference style at
-// /Users/fxck/www/laravel-showcase-app/zerops.yaml. Each block passes if
-// ANY line in it carries a causal word / em-dash; blocks whose lines
-// are all short labels (≤40 chars after stripping the `#`) pass
-// unconditionally. One violation per block, not per line — so a
-// multi-line prose block that forgets rationale emits a single report.
-// Run-10-readiness §N.
+// Comments are grouped into BLOCKS — runs of adjacent `#` lines, with
+// bare `#` treated as an in-block paragraph separator per the
+// reference style at /Users/fxck/www/laravel-showcase-app/zerops.yaml.
+// Each block passes if ANY line in it carries a causal word /
+// em-dash; blocks whose lines are all short labels (≤40 chars after
+// stripping the `#`) pass unconditionally. One violation per block,
+// not per line — so a multi-line prose block that forgets rationale
+// emits a single report. Run-10-readiness §N.
 func validateCodebaseYAML(_ context.Context, path string, body []byte, _ SurfaceInputs) ([]Violation, error) {
 	var vs []Violation
-	for _, d := range yamlFindDividers(body) {
-		vs = append(vs, violation("yaml-comment-divider-banned", path,
-			fmt.Sprintf("decorative divider line violates yaml-comment-style (no dividers, no banners): %q",
-				trimForMessage(string(d)))))
-	}
 	for _, block := range parseYAMLCommentBlocks(body) {
 		if !blockNeedsCausalWord(block) {
 			continue
@@ -231,9 +225,8 @@ func validateCodebaseYAML(_ context.Context, path string, body []byte, _ Surface
 // parseYAMLCommentBlocks groups adjacent `#` comment lines into blocks.
 // Bare `#` lines stay in-block (paragraph separators, reference style).
 // Each returned block is a slice of comment bodies (already stripped of
-// the leading `#` + whitespace). Divider lines and the zeropsPreprocessor
-// directive are skipped — the divider violation is emitted separately
-// and the directive is not a rationale comment.
+// the leading `#` + whitespace). The zeropsPreprocessor directive is
+// skipped — it's a directive, not a rationale comment.
 func parseYAMLCommentBlocks(body []byte) [][]string {
 	lines := strings.Split(string(body), "\n")
 	var blocks [][]string
@@ -249,9 +242,6 @@ func parseYAMLCommentBlocks(body []byte) [][]string {
 		}
 		comment := strings.TrimSpace(strings.TrimPrefix(trimmed, "#"))
 		if strings.HasPrefix(comment, "zeropsPreprocessor") {
-			continue
-		}
-		if comment != "" && yamlIsDivider("#"+comment) {
 			continue
 		}
 		current = append(current, comment)
