@@ -266,7 +266,7 @@ func validateKBCitedGuideBoilerplate(path, kb string) []Violation {
 	var vs []Violation
 	for _, bullet := range kbBulletBlocks(kb) {
 		if kbCitedGuideBoilerplateRE.MatchString(bullet) {
-			vs = append(vs, violation("kb-cited-guide-boilerplate", path,
+			vs = append(vs, notice("kb-cited-guide-boilerplate", path,
 				"KB bullet ends with `Cited guide: <name>` boilerplate; citations belong in prose. Restate the rule in the bullet's own words; if you couldn't, the rule isn't yours to write. See spec §'Citation map' — citations are author-time signals, not render output"))
 		}
 	}
@@ -291,7 +291,7 @@ func validateKBSelfInflictedShape(path, kb string) []Violation {
 	var vs []Violation
 	for _, bullet := range kbBulletBlocks(kb) {
 		if kbSelfInflictedVoiceRE.MatchString(bullet) {
-			vs = append(vs, violation("kb-bullet-self-inflicted-shape", path,
+			vs = append(vs, notice("kb-bullet-self-inflicted-shape", path,
 				"first-person/recipe-author voice in KB bullet — KB content speaks to porter, not from author. Move to commit message or discard. See spec §'How to classify' rule 4"))
 		}
 	}
@@ -308,7 +308,7 @@ func validateKBNoPlatformMention(path, kb string, plan *Plan) []Violation {
 		if kbBulletHasPlatformMention(bullet, plan) {
 			continue
 		}
-		vs = append(vs, violation("kb-bullet-no-platform-mention", path,
+		vs = append(vs, notice("kb-bullet-no-platform-mention", path,
 			"KB bullet has zero platform-side vocabulary; framework-quirk content belongs in framework docs, not a Zerops recipe (spec rule 5)"))
 	}
 	return vs
@@ -336,7 +336,7 @@ func validateKBParaphrase(path, kb string) []Violation {
 				continue
 			}
 			if containment(bulletTokens, keywords) > paraphraseContainmentThreshold {
-				vs = append(vs, violation("kb-bullet-paraphrases-cited-guide", path,
+				vs = append(vs, notice("kb-bullet-paraphrases-cited-guide", path,
 					fmt.Sprintf("KB bullet's vocabulary is mostly already in the cited %q guide (containment > %.0f%%); add new content beyond the guide or omit the bullet — see spec rule 3",
 						id, paraphraseContainmentThreshold*100)))
 				break

@@ -214,8 +214,18 @@ func codebasePaths(_ string, plan *Plan, leaf string) []string {
 }
 
 // violation is a small ctor helper so validator bodies stay concise.
+// Default severity is blocking — defaulting to notice would silently
+// relax existing gates. Validators on the DISCOVER side of the
+// TEACH/DISCOVER line (system.md §4) opt in via `notice()`.
 func violation(code, path, msg string) Violation {
 	return Violation{Code: code, Path: path, Message: msg}
+}
+
+// notice is the ctor for SeverityNotice findings — the agent sees the
+// finding at gate-eval time but `complete-phase` does not block. Used
+// by validators wired on the DISCOVER side of the TEACH/DISCOVER line.
+func notice(code, path, msg string) Violation {
+	return Violation{Code: code, Path: path, Message: msg, Severity: SeverityNotice}
 }
 
 // registerValidators wires every validator at init. Kept in one place

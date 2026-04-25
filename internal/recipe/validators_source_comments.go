@@ -113,6 +113,7 @@ func scanSourceCommentsAt(root string) ([]Violation, error) {
 						Path: fmt.Sprintf("%s:%d", path, i+1),
 						Message: fmt.Sprintf("comment line contains authoring-phase reference %q: %s",
 							phrase, trimForMessage(strings.TrimSpace(line))),
+						Severity: SeverityNotice,
 					})
 				}
 			}

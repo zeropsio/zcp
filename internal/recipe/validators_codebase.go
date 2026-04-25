@@ -102,11 +102,11 @@ func validateCodebaseKB(_ context.Context, path string, body []byte, inputs Surf
 	bullets := bulletRE.FindAllStringIndex(kb, -1)
 	boldBullets := boldBulletRE.FindAllStringIndex(kb, -1)
 	if len(bullets) > 0 && len(boldBullets) < len(bullets) {
-		vs = append(vs, violation("kb-missing-bold-symptom", path,
+		vs = append(vs, notice("kb-missing-bold-symptom", path,
 			fmt.Sprintf("%d of %d KB bullets lack a **bold symptom** opening", len(bullets)-len(boldBullets), len(bullets))))
 	}
 	for _, m := range kbTripleFormatRE.FindAllString(kb, -1) {
-		vs = append(vs, violation("codebase-kb-triple-format-banned", path,
+		vs = append(vs, notice("codebase-kb-triple-format-banned", path,
 			fmt.Sprintf("KB entries use `**Topic** — prose` format; `**symptom**:` / `**mechanism**:` / `**fix**:` triples belong in CLAUDE.md/notes: %q",
 				trimForMessage(strings.TrimSpace(m)))))
 	}
@@ -187,7 +187,7 @@ func validateCodebaseCLAUDE(_ context.Context, path string, body []byte, _ Surfa
 		lower := strings.ToLower(title)
 		for _, banned := range claudeMDForbiddenSubsections {
 			if lower == strings.ToLower(banned) {
-				vs = append(vs, violation("claude-md-forbidden-subsection", path,
+				vs = append(vs, notice("claude-md-forbidden-subsection", path,
 					fmt.Sprintf("%q is a cross-codebase operational note — move to the recipe root README, not this codebase-specific CLAUDE.md", title)))
 				break
 			}
@@ -221,7 +221,7 @@ func validateCodebaseYAML(_ context.Context, path string, body []byte, _ Surface
 			continue
 		}
 		first := block[0]
-		vs = append(vs, violation("yaml-comment-missing-causal-word", path,
+		vs = append(vs, notice("yaml-comment-missing-causal-word", path,
 			fmt.Sprintf("comment block lacks a causal word (`because`, `so that`, `otherwise`, `trade-off`, em-dash) on any line: %q",
 				trimForMessage(first))))
 	}

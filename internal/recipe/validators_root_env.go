@@ -77,11 +77,11 @@ func validateEnvREADME(_ context.Context, path string, body []byte, _ SurfaceInp
 		vs = append(vs, violation("env-readme-missing-intro-marker", path, "intro marker missing"))
 	}
 	if containsAny(s, metaVoiceWords) {
-		vs = append(vs, violation("meta-agent-voice", path,
+		vs = append(vs, notice("meta-agent-voice", path,
 			"env README is porter-facing; contains meta-agent-voice words (agent, zerops_knowledge, sub-agent, scaffolder)"))
 	}
 	if !containsAny(s, tierPromotionVerbs) {
-		vs = append(vs, violation("tier-promotion-verb-missing", path,
+		vs = append(vs, notice("tier-promotion-verb-missing", path,
 			"env README must teach when to outgrow this tier (promote/outgrow/upgrade/from tier N)"))
 	}
 	return vs, nil
@@ -103,16 +103,16 @@ func validateEnvImportComments(_ context.Context, path string, _ []byte, inputs 
 	var vs []Violation
 	for hostname, comment := range ec.Service {
 		if !containsAnyCausal(comment) {
-			vs = append(vs, violation("missing-causal-word", path,
+			vs = append(vs, notice("missing-causal-word", path,
 				fmt.Sprintf("env %s / %s comment lacks a causal word: %q", tierKey, hostname, comment)))
 		}
 		if envYAMLCiteMetaRE.MatchString(comment) {
-			vs = append(vs, violation("env-yaml-cite-meta", path,
+			vs = append(vs, notice("env-yaml-cite-meta", path,
 				fmt.Sprintf("env %s / %s comment carries citation meta-talk (`(cite \\`x\\`)` / `(via the X guide)`): %q — citations are author-time signals, not env-yaml comment content", tierKey, hostname, comment)))
 		}
 	}
 	if envYAMLCiteMetaRE.MatchString(ec.Project) {
-		vs = append(vs, violation("env-yaml-cite-meta", path,
+		vs = append(vs, notice("env-yaml-cite-meta", path,
 			fmt.Sprintf("env %s project comment carries citation meta-talk: %q", tierKey, ec.Project)))
 	}
 	vs = append(vs, templatedOpeningCheck(path, ec, inputs.Plan)...)
@@ -144,7 +144,7 @@ func templatedOpeningCheck(path string, ec EnvComments, plan *Plan) []Violation 
 	}
 	for opening, count := range opens {
 		if count >= 2 {
-			return []Violation{violation("templated-opening", path,
+			return []Violation{notice("templated-opening", path,
 				fmt.Sprintf("%d runtime-service blocks share opening sentence %q — each must explain its own block", count, opening))}
 		}
 	}
