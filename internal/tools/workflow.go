@@ -28,7 +28,7 @@ type WorkflowInput struct {
 	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, develop, or export. For recipe authoring use the dedicated zerops_recipe tool (v3 engine, docs/zcprecipator3/plan.md)."`
 
 	// Multi-action fields.
-	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, reset, iterate, resume, list, route, dispatch-brief-atom (retrieve one atom of an envelope-split dispatch brief)."`
+	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, reset, iterate, resume, list, route, strategy, classify, adopt-local, dispatch-brief-atom (retrieve one atom of an envelope-split dispatch brief), record-deploy (stamp FirstDeployedAt for an externally-deployed service — zcli/CI/CD bridge; pass targetService)."`
 	Intent      string                     `json:"intent,omitempty"      jsonschema:"User intent description for start action (what you want to accomplish)."`
 	Attestation string                     `json:"attestation,omitempty" jsonschema:"Description of what was verified or accomplished (required for complete actions)."`
 	Step        string                     `json:"step,omitempty"        jsonschema:"Bootstrap step name for complete/skip actions (discover, provision, close)."`
@@ -83,7 +83,7 @@ type WorkflowInput struct {
 	// Zerops runtime service should be linked as this local project's
 	// stage. Resolves the ambiguity surfaced by auto-adopt when multiple
 	// runtimes exist in the project.
-	TargetService string `json:"targetService,omitempty" jsonschema:"Runtime service hostname to link as stage for action=\"adopt-local\" (local env only). Must be a live runtime service in the project — not a managed service."`
+	TargetService string `json:"targetService,omitempty" jsonschema:"Runtime service hostname. Used by: action=\"adopt-local\" (local env stage link target — must be a live runtime service, not managed); action=\"record-deploy\" (external-deploy ack target — stamps FirstDeployedAt on its ServiceMeta, no-op when meta is missing)."`
 
 	// Trigger chooses the downstream build trigger when setting up
 	// strategy=push-git. Paired with Strategies — meaningless otherwise.
@@ -172,6 +172,13 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	if input.Action == "verify-subagent-dispatch" {
 		return handleVerifySubagentDispatch(engine, input)
 	}
+	// record-deploy bridges manual deployers (zcli, CI/CD outside MCP) to
+	// MCP-tracked state by stamping FirstDeployedAt on the meta. Workflow-
+	// less — runs without an active session because external deployers may
+	// have happened before any develop session existed.
+	if input.Action == "record-deploy" {
+		return handleRecordDeploy(stateDir, input)
+	}
 	if engine == nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
@@ -255,7 +262,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Unknown action %q", input.Action),
-			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, strategy, classify, adopt-local, dispatch-brief-atom")), nil, nil
+			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, strategy, classify, adopt-local, dispatch-brief-atom, record-deploy")), nil, nil
 	}
 }
 

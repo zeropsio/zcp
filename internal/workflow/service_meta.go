@@ -61,6 +61,48 @@ func (m *ServiceMeta) IsDeployed() bool {
 	return m.FirstDeployedAt != ""
 }
 
+// RecordExternalDeploy stamps FirstDeployedAt on the meta for the given
+// hostname WITHOUT requiring an active work session. Bridges manual
+// deployers (zcli, CI/CD outside MCP, custom platform calls) to MCP-tracked
+// state — once stamped, ServiceSnapshot.Deployed flips to true and develop
+// atoms gated on `deployStates: [deployed]` start firing for that service.
+//
+// Idempotent: when FirstDeployedAt is already set, returns the existing
+// timestamp without rewriting. Stage hostnames resolve to the dev-keyed
+// pair meta per pair-keyed invariant (§ E8) — stamping the stage half
+// flips Deployed for both halves of a container+standard pair.
+//
+// Returns (stamped, firstDeployedAt, err):
+//   - stamped: true only when this call wrote a fresh timestamp.
+//   - firstDeployedAt: authoritative on-disk value (current or just-written),
+//     empty when meta is missing.
+//   - err: filesystem read/write failure. Missing meta returns (false, "", nil)
+//     — meta-less services have nothing to stamp; not an error.
+//
+// Implementation defers to the unexported stampFirstDeployedAt helper used
+// by RecordDeployAttempt, with a stat read first to distinguish "fresh stamp"
+// from "no-op already stamped".
+func RecordExternalDeploy(stateDir, hostname string) (bool, string, error) {
+	meta, err := FindServiceMeta(stateDir, hostname)
+	if err != nil {
+		return false, "", fmt.Errorf("record external deploy: %w", err)
+	}
+	if meta == nil {
+		return false, "", nil
+	}
+	if meta.FirstDeployedAt != "" {
+		return false, meta.FirstDeployedAt, nil
+	}
+	if err := stampFirstDeployedAt(stateDir, hostname); err != nil {
+		return false, "", err
+	}
+	stamped, err := FindServiceMeta(stateDir, hostname)
+	if err != nil || stamped == nil {
+		return true, "", err
+	}
+	return true, stamped.FirstDeployedAt, nil
+}
+
 // IsAdopted reports whether this meta records an adopted service.
 // Adopted = bootstrap-complete AND BootstrapSession empty (the convention written by
 // writeBootstrapOutputs when IsExisting=true). Both guards matter: incomplete metas
