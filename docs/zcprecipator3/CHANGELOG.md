@@ -4,6 +4,121 @@ Running log of changes on top of [plan.md](plan.md). Each entry captures what ch
 
 ---
 
+## 2026-04-25 — run-13 readiness: root-cause cleanup of run-12 catalog residue + plumbing fix
+
+### Context
+
+Code review of the run-12 commit range surfaced four items that the
+run-12 caveat box already half-named. Two were catalog-shaped
+validators added alongside legitimate TEACH-side brief rewrites — exactly
+the wrong-side-of-§4 pattern the cleanup pass earlier the same day was
+meant to retire. One was a plumbing artifact in §G's gate split: the
+codebase surface validators read from disk, but fragments authored via
+`record-fragment` only land on disk when the agent calls
+`stitch-content` — a step nothing in scaffold/feature phase-entry
+documented as a precondition. One was a doc/code mismatch in §D's
+verify-dispatch contract.
+
+Each fix is a root-cause / first-principles fix: at the brief level
+(where the teaching belongs), or by removing an artificial sequencing
+ritual the engine could perform itself. No new validators added.
+
+### §1 — delete `subdomain-double-scheme` validator
+
+`scanSourceForSubdomainDoubleScheme` (run-12 §A) was defined but
+**never wired into any gate or validator pipeline**. Only the unit
+test invoked it — pure dead code shipped as "validator." The
+load-bearing fix is the Alias-type contracts table at
+[`briefs/scaffold/platform_principles.md`](../../internal/recipe/content/briefs/scaffold/platform_principles.md)
+(`${<host>_zeropsSubdomain}` resolves to a full HTTPS URL — do NOT
+prepend `https://`), which the agent reads at scaffold dispatch.
+Deleted: the two regexes, `scanSourceForSubdomainDoubleScheme`, and
+`TestValidator_SourceCode_FlagsDoubleSchemePrefix`.
+
+### §2 — delete `claude-md-zcp-tool-leak` validator
+
+The regex enumerated 14 specific `zerops_*` tool names plus `zcli` /
+`zcp` (run-12 §C). New `zerops_*` tools would silently pass; the
+agent learns to evade trigger strings, not the underlying class. The
+load-bearing fix is the rewritten CLAUDE.md subsection at
+[`briefs/scaffold/content_authoring.md`](../../internal/recipe/content/briefs/scaffold/content_authoring.md):
+porter-facing voice paragraph, GOOD/BAD examples for dev loop +
+deploy, explicit "What does NOT go here" list naming `zerops_*`,
+`zcp *`, `zcli`. That's the lesson; the regex was what we built when
+we didn't trust the brief. Deleted: `zcpToolLeakRE`, the loop in
+`validateCodebaseCLAUDE`, `TestValidator_CodebaseCLAUDE_RejectsZcpToolReferences`,
+and the `claudeMDPad` helper.
+
+### §3 — auto-stitch codebases on scaffold/feature complete-phase
+
+Run-12 §G split `FinalizeGates()` into `CodebaseGates()` + `EnvGates()`
+so codebase-scoped validators fire at scaffold + feature
+complete-phase, where the right author can correct violations via
+`record-fragment mode=replace`. But the codebase IG/KB/CLAUDE
+validators read README.md / CLAUDE.md from `<cb.SourceRoot>` on disk
+— files that only exist after `stitch-content` runs. With the
+scaffold phase-entry doc silent on the precondition and validators
+silently `continue`-ing on `os.IsNotExist`, the gate-split's "right
+author sees violations" intent failed to fire: the agent gets a green
+complete-phase response, finalize re-runs the gates against the now-
+stitched files, and violations surface to the wrong author.
+
+Root cause: forcing the agent to remember "call stitch before
+complete-phase" is teaching engine plumbing. Complete-phase should
+be a single semantic transition: "I'm done with phase X — evaluate
+it." The engine knows the fragments are in `Plan.Fragments` and where
+they need to land for validators.
+
+Fix: extracted `stitchCodebases(sess)` in
+[`handlers.go`](../../internal/recipe/handlers.go) — writes only the
+per-codebase README + CLAUDE.md to `<SourceRoot>/`, leaving root +
+env surfaces alone (those are finalize-authored). `complete-phase`
+auto-calls `stitchCodebases` for `PhaseScaffold` and `PhaseFeature`
+before running the gate set. M-1 SourceRoot guards moved to a shared
+`validateCodebaseSourceRoots` helper used by both stitch paths.
+`completePhase` extracted as a top-level helper (dispatch's maintidx
+was already at the lint threshold; the new branch pushed it over).
+
+Test: `TestDispatch_CompletePhaseScaffold_AutoStitchesCodebases`
+records a fragment, calls `complete-phase` directly (no explicit
+stitch), asserts `<SourceRoot>/{README.md,CLAUDE.md}` materialized.
+
+### §4 — verify-dispatch wrapper-position doc fix
+
+Run-12 §D phase-entry doc said "Wrapper additions appended *after*
+the brief are allowed." The implementation uses
+`strings.Contains(dispatchedPrompt, expected.Body)` — accepts the
+brief at any position. Real wrappers prepend headers ("You are a
+sub-agent for…") and append context; both should pass. Doc was
+stricter than code.
+
+Fix: doc + jsonschema description + handler comment all now read
+"Wrapper text around the brief (header lines before, context notes
+after) is allowed; only truncations and paraphrases are rejected."
+Test extended to a 3-case table covering append-only, prepend-only,
+and both-sides wrappers — all pass.
+
+### What stays the same
+
+Run-12's TEACH-side content fixes (§A alias-type contracts table, §C
+porter-facing CLAUDE.md rewrite, §E own-key aliasing teaching, §I IG
+scope rule, §M mount state preamble) are unchanged. The brief
+teaches; the validators were the catalog drift. Now there's only the
+brief.
+
+The §B engine-composed finalize brief, §D verify-subagent-dispatch
+action, §G gate split, §R record-fragment mode=replace, and the §Y1-3
+emitter cosmetic fixes are all preserved.
+
+### What's next
+
+Run 12 dogfood is still the user's call. The engine ships into it
+without the two catalog-shaped artifacts that were already on the §4
+deficit ledger at ship, and with the §G gate split actually
+delivering on its design intent.
+
+---
+
 ## 2026-04-25 — run-12 readiness: foundation + flow + cosmetic
 
 ### Context
