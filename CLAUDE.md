@@ -79,6 +79,61 @@ Config: `.sync.yaml` + `.env STRAPI_API_TOKEN`.
 
 ---
 
+## Architecture — 4 layers + cross-cutting
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Layer 4 — ENTRY POINTS                                      │
+│  cmd/zcp/, internal/server/, internal/tools/                 │
+│  MCP handler boundary, CLI entrypoints; convert input        │
+│  strings → typed (from layer 2) at the boundary.             │
+└──────────────────────────────┬───────────────────────────────┘
+                               ↓
+┌──────────────────────────────────────────────────────────────┐
+│  Layer 3 — ORCHESTRATION + OPERATIONS  (peer layers)         │
+│  internal/workflow/  ←/→  internal/ops/                      │
+│  workflow: engine, sessions, atoms, briefing, route logic.   │
+│  ops: discrete platform operations.                          │
+│  PEERS: must NOT import each other; share types via layer 2. │
+└──────────────┬─────────────────────────────┬─────────────────┘
+               ↓                             ↓
+        ┌──────────────────────────────────────────┐
+        │  Layer 2 — ZCP TOPOLOGY VOCABULARY       │
+        │  internal/topology/                      │
+        │  Mode, DeployStrategy, RuntimeClass,     │
+        │  PushGitTrigger + predicates + aliases.  │
+        │  ZERO non-stdlib imports.                │
+        └──────────────────┬───────────────────────┘
+                           ↓
+┌──────────────────────────────────────────────────────────────┐
+│  Layer 1 — RAW PLATFORM API                                  │
+│  internal/platform/                                          │
+│  Zerops API client, ServiceStack, EnvVar, Process.           │
+│  No ZCP-specific concepts. Imports stdlib + 3rd-party only.  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Dependency rule** (pinned by `.golangci.yml::depguard` +
+`internal/architecture_test.go`):
+
+| Rule | Reason |
+|------|--------|
+| `topology/` imports stdlib only | Foundational vocabulary |
+| `platform/` imports no internal/ packages | Bottom of stack |
+| `ops/` does NOT import `workflow/`, `tools/`, `recipe/` | Peer/upper |
+| `workflow/` does NOT import `ops/`, `tools/`, `recipe/` | Peer/upper |
+| New shared type → `topology/` first, never `workflow/` | Promotion rule |
+
+**Cross-cutting packages** (peer-of-equal-level, not strict layered):
+`auth/` (pre-engine startup, talks to platform), `runtime/`, `knowledge/`,
+`content/`, `recipe/` (v3 engine, separate scope), `eval/`, `preprocess/`,
+`schema/`, `catalog/`, `sync/`, `init/`, `update/`, `service/` (exec
+wrappers, name-collision-distinct from `topology/`).
+
+Spec: `docs/spec-architecture.md` — per-package mapping + examples.
+
+---
+
 ## Conventions
 
 - **Runtime meta is pair-keyed** — one `ServiceMeta` per dev/stage pair;
