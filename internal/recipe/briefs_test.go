@@ -94,6 +94,26 @@ func TestBuildFinalizeBrief_UnderCap(t *testing.T) {
 	}
 }
 
+// TestBrief_Scaffold_TeachesOwnKeyAliasing — run-12 §E. Scaffold brief
+// teaches own-key aliasing as the recommended pattern; the run-11 wrong
+// rule ("Do NOT declare DB_HOST: ${db_hostname}") is gone.
+func TestBrief_Scaffold_TeachesOwnKeyAliasing(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	mustContain(t, brief.Body, "DB_HOST: ${db_hostname}")
+	mustContain(t, brief.Body, "process.env.DB_HOST")
+	mustContain(t, brief.Body, "Same-key shadow trap")
+	mustContain(t, brief.Body, "db_hostname: ${db_hostname}")
+	if strings.Contains(brief.Body, "Do NOT declare `DB_HOST: ${db_hostname}") {
+		t.Errorf("brief still carries the run-11 wrong rule banning own-key alias")
+	}
+}
+
 func TestBriefCompose_FeatureUnderCap(t *testing.T) {
 	t.Parallel()
 
