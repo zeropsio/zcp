@@ -213,6 +213,51 @@ func TestEmitWorkspaceYAML_ShapeContract(t *testing.T) {
 	mustContain(t, got, "mode: NON_HA")
 }
 
+// TestEmitDeliverable_Tier5_MeilisearchNonHA — run-12 §Y3. Tier 5
+// applies HA mode to every managed service uniformly; meilisearch is
+// not HA-capable on Zerops, so the platform mode field must downgrade
+// to NON_HA when SupportsHA=false. Run-11 fact #8.
+func TestEmitDeliverable_Tier5_MeilisearchNonHA(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.Services = append(plan.Services,
+		Service{Hostname: "search", Type: "meilisearch@1.20", Kind: ServiceKindManaged, Priority: 10},
+	)
+	for i, svc := range plan.Services {
+		plan.Services[i].SupportsHA = managedServiceSupportsHA(svc.Type)
+	}
+	got, err := EmitImportYAML(plan, 5)
+	if err != nil {
+		t.Fatalf("EmitImportYAML: %v", err)
+	}
+	mustContain(t, got, "type: postgresql@18\n    priority: 10\n    mode: HA")
+	mustContain(t, got, "type: meilisearch@1.20\n    priority: 10\n    mode: NON_HA")
+}
+
+// TestManagedServiceSupportsHA_FamilyTable — run-12 §Y3. Per-family
+// classification table for the SupportsHA flag.
+func TestManagedServiceSupportsHA_FamilyTable(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"postgresql@18", true},
+		{"valkey@7.2", true},
+		{"nats@2.12", true},
+		{"meilisearch@1.20", false},
+		{"kafka@3", false},
+		{"unknown@1", false},
+	}
+	for _, tc := range cases {
+		if got := managedServiceSupportsHA(tc.in); got != tc.want {
+			t.Errorf("managedServiceSupportsHA(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
 // TestWriteRuntimeDev_FallsBackToBareCodebaseName — run-12 §Y2. Brief
 // instructs agents to record env/<N>/import-comments/<bare codebase
 // name>; emitter previously looked up only by slot host (apidev /
