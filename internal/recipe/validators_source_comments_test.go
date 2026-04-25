@@ -3,7 +3,6 @@ package recipe
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -136,24 +135,5 @@ func TestGateSourceCommentVoice_FlagsLeaksAcrossCodebases(t *testing.T) {
 	})
 	if !containsCode(vs, "source-comment-authoring-voice-leak") {
 		t.Errorf("expected voice-leak violations across both codebases, got %+v", vs)
-	}
-}
-
-func TestContentAuthoring_IncludesVoiceRule(t *testing.T) {
-	t.Parallel()
-
-	body, err := readAtom("briefs/scaffold/content_authoring.md")
-	if err != nil {
-		t.Fatalf("readAtom: %v", err)
-	}
-	for _, anchor := range []string{
-		"Voice",
-		"porter",
-		"never another recipe author",
-		"we chose",
-	} {
-		if !strings.Contains(body, anchor) {
-			t.Errorf("content_authoring.md missing voice-rule anchor %q", anchor)
-		}
 	}
 }

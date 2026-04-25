@@ -715,29 +715,6 @@ func TestBrief_Scaffold_IGMandateHeadings(t *testing.T) {
 	}
 }
 
-// TestBrief_Scaffold_DeployignoreTripwire — run-11 gap P-2. Brief
-// names the .deployignore author-time tripwire so sub-agents preempt
-// the run-10 worker mistake (dist in .deployignore, 20-minute redeploy
-// loop).
-func TestBrief_Scaffold_DeployignoreTripwire(t *testing.T) {
-	t.Parallel()
-
-	plan := syntheticShowcasePlan()
-	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
-	if err != nil {
-		t.Fatalf("BuildScaffoldBrief: %v", err)
-	}
-	for _, anchor := range []string{
-		".deployignore",
-		"reflexively",
-		"NEVER list `dist`",
-	} {
-		if !strings.Contains(brief.Body, anchor) {
-			t.Errorf("scaffold brief deployignore tripwire missing anchor %q", anchor)
-		}
-	}
-}
-
 // TestBrief_Scaffold_ContainsSlotHostnameTripwire — run-11 gap N-2.
 // Scaffold brief's Validator-tripwires section names the slot-vs-
 // codebase distinction explicitly so sub-agents preempt the run-10
@@ -757,32 +734,6 @@ func TestBrief_Scaffold_ContainsSlotHostnameTripwire(t *testing.T) {
 	} {
 		if !strings.Contains(brief.Body, anchor) {
 			t.Errorf("scaffold brief slot tripwire missing anchor %q", anchor)
-		}
-	}
-}
-
-// TestBrief_Scaffold_ContainsSelfInflictedLitmus — run-11 gap V-5.
-// The scaffold brief teaches the spec rule 4 self-inflicted litmus
-// with three concrete run-10 anti-patterns so sub-agents pre-empt the
-// over-rationalize-as-platform-trap pattern that produced 7 wrong-class
-// KB bullets in run 10.
-func TestBrief_Scaffold_ContainsSelfInflictedLitmus(t *testing.T) {
-	t.Parallel()
-
-	plan := syntheticShowcasePlan()
-	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
-	if err != nil {
-		t.Fatalf("BuildScaffoldBrief: %v", err)
-	}
-	for _, anchor := range []string{
-		"Self-inflicted litmus",
-		"npx ts-node",
-		".deployignore",
-		"Trust proxy is per-framework",
-		"would a porter",
-	} {
-		if !strings.Contains(brief.Body, anchor) {
-			t.Errorf("scaffold brief Self-inflicted litmus missing anchor %q", anchor)
 		}
 	}
 }

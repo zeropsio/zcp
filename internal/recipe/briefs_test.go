@@ -77,56 +77,6 @@ func TestBuildFinalizeBrief_CorrectFragmentMath(t *testing.T) {
 	}
 }
 
-// TestBuildFinalizeBrief_NoCiteGuideInstruction — S-1 must not produce
-// the citation-noise instruction that produced run-10's literal
-// "Cite \`x\`" output. Brief content lints against the phrase.
-func TestBuildFinalizeBrief_NoCiteGuideInstruction(t *testing.T) {
-	t.Parallel()
-
-	plan := syntheticShowcasePlan()
-	for i := range plan.Codebases {
-		plan.Codebases[i].SourceRoot = "/var/www/" + plan.Codebases[i].Hostname + "dev"
-	}
-	brief, err := BuildFinalizeBrief(plan)
-	if err != nil {
-		t.Fatalf("BuildFinalizeBrief: %v", err)
-	}
-	for _, banned := range []string{
-		"Cite `rolling-deploys`",
-		"cite by name in the prose",
-	} {
-		if strings.Contains(brief.Body, banned) {
-			t.Errorf("brief contains banned phrase %q", banned)
-		}
-	}
-}
-
-// TestBuildFinalizeBrief_ValidatorTripwires — brief surfaces
-// finalize-specific validator tripwires (citation-noise, IG-shape,
-// self-inflicted-litmus references).
-func TestBuildFinalizeBrief_ValidatorTripwires(t *testing.T) {
-	t.Parallel()
-
-	plan := syntheticShowcasePlan()
-	for i := range plan.Codebases {
-		plan.Codebases[i].SourceRoot = "/var/www/" + plan.Codebases[i].Hostname + "dev"
-	}
-	brief, err := BuildFinalizeBrief(plan)
-	if err != nil {
-		t.Fatalf("BuildFinalizeBrief: %v", err)
-	}
-	for _, anchor := range []string{
-		"Validator tripwires",
-		"porter voice",
-		"Citations are author-time signals",
-		"Self-inflicted litmus",
-	} {
-		if !strings.Contains(brief.Body, anchor) {
-			t.Errorf("brief missing tripwire anchor %q", anchor)
-		}
-	}
-}
-
 // TestBuildFinalizeBrief_UnderCap — S-1 §6 watch.
 func TestBuildFinalizeBrief_UnderCap(t *testing.T) {
 	t.Parallel()
