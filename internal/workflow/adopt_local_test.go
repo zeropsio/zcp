@@ -9,13 +9,14 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 func TestLocalAutoAdopt_ExistingState_NoOp(t *testing.T) {
 	dir := t.TempDir()
 	// Seed an existing meta so adoption should skip.
 	if err := WriteServiceMeta(dir, &ServiceMeta{
-		Hostname: "myproject", Mode: PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
+		Hostname: "myproject", Mode: topology.PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
@@ -51,8 +52,8 @@ func TestLocalAutoAdopt_NoRuntimes_LocalOnly(t *testing.T) {
 	if result == nil {
 		t.Fatal("expected non-nil result; adoption must succeed")
 	}
-	if result.Meta.Mode != PlanModeLocalOnly {
-		t.Errorf("Mode = %q, want %q", result.Meta.Mode, PlanModeLocalOnly)
+	if result.Meta.Mode != topology.PlanModeLocalOnly {
+		t.Errorf("Mode = %q, want %q", result.Meta.Mode, topology.PlanModeLocalOnly)
 	}
 	if result.Meta.Hostname != "myproject" {
 		t.Errorf("Hostname = %q, want project name", result.Meta.Hostname)
@@ -60,7 +61,7 @@ func TestLocalAutoAdopt_NoRuntimes_LocalOnly(t *testing.T) {
 	if result.Meta.StageHostname != "" {
 		t.Errorf("StageHostname = %q, want empty (no runtime)", result.Meta.StageHostname)
 	}
-	if result.Meta.DeployStrategy != StrategyManual {
+	if result.Meta.DeployStrategy != topology.StrategyManual {
 		t.Errorf("DeployStrategy = %q, want manual (local-only default)", result.Meta.DeployStrategy)
 	}
 	if result.StageAutoLinked {
@@ -89,7 +90,7 @@ func TestLocalAutoAdopt_OneRuntime_LocalStageLinked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LocalAutoAdopt: %v", err)
 	}
-	if result.Meta.Mode != PlanModeLocalStage {
+	if result.Meta.Mode != topology.PlanModeLocalStage {
 		t.Errorf("Mode = %q, want local-stage", result.Meta.Mode)
 	}
 	if result.Meta.StageHostname != "apistage" {
@@ -162,7 +163,7 @@ func TestLocalAutoAdopt_MultipleRuntimes_LocalOnlyWithEnumeration(t *testing.T) 
 		t.Fatalf("LocalAutoAdopt: %v", err)
 	}
 	// Ambiguous runtimes never block adoption of the local dir itself.
-	if result.Meta.Mode != PlanModeLocalOnly {
+	if result.Meta.Mode != topology.PlanModeLocalOnly {
 		t.Errorf("Mode = %q, want local-only (ambiguous → no auto-link)", result.Meta.Mode)
 	}
 	if result.Meta.StageHostname != "" {
@@ -200,7 +201,7 @@ func TestFormatAdoptionNote_Shapes(t *testing.T) {
 			name: "stage auto-linked",
 			result: &AdoptionResult{
 				Meta: &ServiceMeta{
-					Hostname: "myproject", StageHostname: "apistage", Mode: PlanModeLocalStage,
+					Hostname: "myproject", StageHostname: "apistage", Mode: topology.PlanModeLocalStage,
 				},
 				StageAutoLinked: true,
 				Managed:         []string{"db", "cache"},
@@ -217,7 +218,7 @@ func TestFormatAdoptionNote_Shapes(t *testing.T) {
 		{
 			name: "multiple runtimes → user picks",
 			result: &AdoptionResult{
-				Meta:             &ServiceMeta{Hostname: "myproject", Mode: PlanModeLocalOnly},
+				Meta:             &ServiceMeta{Hostname: "myproject", Mode: topology.PlanModeLocalOnly},
 				UnlinkedRuntimes: []string{"api", "web", "worker"},
 			},
 			want: []string{
@@ -231,7 +232,7 @@ func TestFormatAdoptionNote_Shapes(t *testing.T) {
 		{
 			name: "no runtime",
 			result: &AdoptionResult{
-				Meta:    &ServiceMeta{Hostname: "myproject", Mode: PlanModeLocalOnly},
+				Meta:    &ServiceMeta{Hostname: "myproject", Mode: topology.PlanModeLocalOnly},
 				Managed: []string{"db"},
 			},
 			want: []string{

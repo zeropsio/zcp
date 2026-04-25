@@ -7,6 +7,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -21,22 +22,22 @@ func TestHandleStrategy_ValidUpdate(t *testing.T) {
 	}{
 		{
 			"push-dev",
-			map[string]string{"appdev": workflow.StrategyPushDev},
+			map[string]string{"appdev": topology.StrategyPushDev},
 			`workflow="develop"`,
 		},
 		{
 			"push-git",
-			map[string]string{"appdev": workflow.StrategyPushGit},
+			map[string]string{"appdev": topology.StrategyPushGit},
 			`strategy="git-push"`,
 		},
 		{
 			"manual",
-			map[string]string{"appdev": workflow.StrategyManual},
+			map[string]string{"appdev": topology.StrategyManual},
 			"deploy directly",
 		},
 		{
 			"multiple services",
-			map[string]string{"appdev": workflow.StrategyPushDev, "apidev": workflow.StrategyPushDev},
+			map[string]string{"appdev": topology.StrategyPushDev, "apidev": topology.StrategyPushDev},
 			`workflow="develop"`,
 		},
 	}
@@ -83,7 +84,7 @@ func TestHandleStrategy_ValidUpdate(t *testing.T) {
 				if readErr != nil {
 					t.Fatalf("read meta %s: %v", hostname, readErr)
 				}
-				if meta.DeployStrategy != workflow.DeployStrategy(strategy) {
+				if meta.DeployStrategy != topology.DeployStrategy(strategy) {
 					t.Errorf("%s DeployStrategy: want %q, got %q", hostname, strategy, meta.DeployStrategy)
 				}
 				if !meta.StrategyConfirmed {
@@ -108,7 +109,7 @@ func TestHandleStrategy_StageHostname_ResolvesToPair(t *testing.T) {
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:       "appdev",
 		StageHostname:  "appstage",
-		Mode:           workflow.PlanModeStandard,
+		Mode:           topology.PlanModeStandard,
 		BootstrappedAt: "2026-04-22",
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
@@ -116,7 +117,7 @@ func TestHandleStrategy_StageHostname_ResolvesToPair(t *testing.T) {
 
 	// Agent asks to set strategy on the stage half. Must resolve to the
 	// pair-meta and succeed.
-	input := WorkflowInput{Strategies: map[string]string{"appstage": workflow.StrategyPushDev}}
+	input := WorkflowInput{Strategies: map[string]string{"appstage": topology.StrategyPushDev}}
 	result, _, err := handleStrategy(input, dir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -131,9 +132,9 @@ func TestHandleStrategy_StageHostname_ResolvesToPair(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadServiceMeta(appdev): %v", err)
 	}
-	if meta.DeployStrategy != workflow.StrategyPushDev {
+	if meta.DeployStrategy != topology.StrategyPushDev {
 		t.Errorf("DeployStrategy on dev-keyed meta: want %q, got %q",
-			workflow.StrategyPushDev, meta.DeployStrategy)
+			topology.StrategyPushDev, meta.DeployStrategy)
 	}
 	if !meta.StrategyConfirmed {
 		t.Error("StrategyConfirmed: want true after strategy set")
@@ -173,7 +174,7 @@ func TestHandleStrategy_EmptyStrategies_ListingMode(t *testing.T) {
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:       "appdev",
 		BootstrappedAt: "2026-04-05",
-		DeployStrategy: workflow.StrategyPushDev,
+		DeployStrategy: topology.StrategyPushDev,
 	}); err != nil {
 		t.Fatalf("write meta appdev: %v", err)
 	}
@@ -229,11 +230,11 @@ func TestHandleStrategy_EmptyStrategies_ListingMode(t *testing.T) {
 			t.Errorf("%s: expected 3 options, got %d", s.Hostname, len(s.Options))
 		}
 	}
-	if byHost["appdev"] != workflow.StrategyPushDev {
-		t.Errorf("appdev current: want %q, got %q", workflow.StrategyPushDev, byHost["appdev"])
+	if byHost["appdev"] != topology.StrategyPushDev {
+		t.Errorf("appdev current: want %q, got %q", topology.StrategyPushDev, byHost["appdev"])
 	}
-	if byHost["apidev"] != string(workflow.StrategyUnset) {
-		t.Errorf("apidev current: want %q, got %q", workflow.StrategyUnset, byHost["apidev"])
+	if byHost["apidev"] != string(topology.StrategyUnset) {
+		t.Errorf("apidev current: want %q, got %q", topology.StrategyUnset, byHost["apidev"])
 	}
 	if _, seen := byHost["incomplete"]; seen {
 		t.Error("listing must skip incomplete metas")
@@ -249,7 +250,7 @@ func TestHandleStrategy_EmptyStrategies_ListingMode(t *testing.T) {
 func TestHandleStrategy_UnknownHostname_RefusesToCreateOrphan(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	input := WorkflowInput{Strategies: map[string]string{"newservice": workflow.StrategyPushGit}}
+	input := WorkflowInput{Strategies: map[string]string{"newservice": topology.StrategyPushGit}}
 	result, _, err := handleStrategy(input, dir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -268,12 +269,12 @@ func TestHandleStrategy_IncompleteMeta_Refused(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
-		Hostname: "appdev", Mode: workflow.PlanModeDev, BootstrapSession: "sess1",
+		Hostname: "appdev", Mode: topology.PlanModeDev, BootstrapSession: "sess1",
 		// no BootstrappedAt -> incomplete
 	}); err != nil {
 		t.Fatalf("write meta: %v", err)
 	}
-	input := WorkflowInput{Strategies: map[string]string{"appdev": workflow.StrategyPushGit}}
+	input := WorkflowInput{Strategies: map[string]string{"appdev": topology.StrategyPushGit}}
 	result, _, err := handleStrategy(input, dir, runtime.Info{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -341,14 +342,14 @@ func TestHandleStrategy_PushGit_SynthSetup(t *testing.T) {
 			dir := t.TempDir()
 			if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 				Hostname:       "appdev",
-				Mode:           workflow.PlanModeDev,
+				Mode:           topology.PlanModeDev,
 				BootstrappedAt: "2026-04-05",
 			}); err != nil {
 				t.Fatalf("write meta: %v", err)
 			}
 
 			input := WorkflowInput{
-				Strategies: map[string]string{"appdev": workflow.StrategyPushGit},
+				Strategies: map[string]string{"appdev": topology.StrategyPushGit},
 				Trigger:    tt.trigger,
 			}
 			result, _, err := handleStrategy(input, dir, runtime.Info{InContainer: true})
@@ -394,9 +395,9 @@ func TestBuildStrategyGuidance(t *testing.T) {
 		wantContains string
 		wantNonEmpty bool
 	}{
-		{"push-dev", map[string]string{"a": workflow.StrategyPushDev}, "Push-Dev", true},
-		{"manual", map[string]string{"a": workflow.StrategyManual}, "Manual", true},
-		{"duplicate deduplicates", map[string]string{"a": workflow.StrategyPushDev, "b": workflow.StrategyPushDev}, "Push-Dev", true},
+		{"push-dev", map[string]string{"a": topology.StrategyPushDev}, "Push-Dev", true},
+		{"manual", map[string]string{"a": topology.StrategyManual}, "Manual", true},
+		{"duplicate deduplicates", map[string]string{"a": topology.StrategyPushDev, "b": topology.StrategyPushDev}, "Push-Dev", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -415,11 +416,11 @@ func TestBuildStrategyGuidance(t *testing.T) {
 func TestBuildStrategyGuidance_DuplicateOnlyOnce(t *testing.T) {
 	t.Parallel()
 	once := buildStrategyGuidance(map[string]string{
-		"appdev": workflow.StrategyPushDev,
+		"appdev": topology.StrategyPushDev,
 	})
 	twice := buildStrategyGuidance(map[string]string{
-		"appdev": workflow.StrategyPushDev,
-		"apidev": workflow.StrategyPushDev,
+		"appdev": topology.StrategyPushDev,
+		"apidev": topology.StrategyPushDev,
 	})
 	// Deduplication invariant: repeating the same strategy across services
 	// must not multiply the matched atom set. Output is byte-identical.

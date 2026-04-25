@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/workflow"
+	"github.com/zeropsio/zcp/internal/topology"
 	"gopkg.in/yaml.v3"
 )
 
@@ -103,8 +103,8 @@ func ValidateZeropsYml(workingDir, targetHostname, serviceType string, class Dep
 	if len(roles) > 0 {
 		role = roles[0]
 	}
-	isDev := role == string(workflow.DeployRoleDev)
-	isStage := role == string(workflow.DeployRoleStage)
+	isDev := role == string(topology.DeployRoleDev)
+	isStage := role == string(topology.DeployRoleStage)
 
 	// Stage services with "zsc noop" build command are likely misconfigured.
 	if isStage && entry.Build.hasZscNoop() {

@@ -16,6 +16,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -102,7 +103,7 @@ func TestDeployTool_SSHMode_AutoEnablesSubdomain(t *testing.T) {
 	stateDir := filepath.Join(projectRoot, ".zcp", "state")
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "app",
-		Mode:             workflow.PlanModeDev,
+		Mode:             topology.PlanModeDev,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-22",
 	}); err != nil {
@@ -910,9 +911,9 @@ func testDeployEngine(t *testing.T) *workflow.Engine {
 // setupAdoptedService writes a ServiceMeta so the service is "known" to ZCP.
 func setupAdoptedService(t *testing.T, stateDir, hostname, stageHostname string) {
 	t.Helper()
-	mode := workflow.PlanModeSimple
+	mode := topology.PlanModeSimple
 	if stageHostname != "" {
-		mode = workflow.PlanModeStandard
+		mode = topology.PlanModeStandard
 	}
 	meta := &workflow.ServiceMeta{
 		Hostname:         hostname,

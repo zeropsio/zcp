@@ -8,10 +8,10 @@
 // shapes and compare the results to pin the behavior this package relies on.
 //
 // Purpose:
-//  - Prove that the build service-stack log accumulates across builds.
-//  - Prove that client-side Since filter as currently shipped has edge cases.
-//  - Prove that `tags=zbuilder@<appVersionId>` gives a clean per-build filter.
-//  - Prove that `from=<id>` behaves as an id cursor.
+//   - Prove that the build service-stack log accumulates across builds.
+//   - Prove that client-side Since filter as currently shipped has edge cases.
+//   - Prove that `tags=zbuilder@<appVersionId>` gives a clean per-build filter.
+//   - Prove that `from=<id>` behaves as an id cursor.
 package platform_test
 
 import (
@@ -257,9 +257,9 @@ func TestAPI_LogBackend_LexCompareFailsAtSubSecondBoundaries(t *testing.T) {
 	// approaches return.
 	wholeSec := ps.Truncate(time.Second)
 	cases := []struct {
-		name     string
-		entry    string // on-wire timestamp
-		semKept  bool   // parsed >= ps ?  (correct answer)
+		name    string
+		entry   string // on-wire timestamp
+		semKept bool   // parsed >= ps ?  (correct answer)
 	}{
 		{"whole-second-no-frac (same second as PS, semantically before)",
 			wholeSec.Format(time.RFC3339), false},
@@ -318,19 +318,20 @@ func TestAPI_LogBackend_LexCompareFailsAtSubSecondBoundaries(t *testing.T) {
 
 // TestAPI_LogBackend_ThreeApproachesCompared drives FetchBuildWarnings-style
 // queries against the live build stack three ways:
-//  (A) current shipped code: serviceStackId + severity=warning, no Since,
-//      no facility, no tag — reports daemon/system noise alongside build output
-//  (B) P1.2 as specified in plans/friction-root-causes.md: adds Since from
-//      PipelineStart — still includes daemon facility noise
-//  (C) proposed tag-based approach: serviceStackId + tags=zbuilder@<appVersionId>
-//      + facility=16 — returns only this build's application logs
+//
+//	(A) current shipped code: serviceStackId + severity=warning, no Since,
+//	    no facility, no tag — reports daemon/system noise alongside build output
+//	(B) P1.2 as specified in plans/friction-root-causes.md: adds Since from
+//	    PipelineStart — still includes daemon facility noise
+//	(C) proposed tag-based approach: serviceStackId + tags=zbuilder@<appVersionId>
+//	    + facility=16 — returns only this build's application logs
 //
 // The test prints the counts and sample entries for each approach so a reader
 // can see the concrete difference, and asserts structural invariants:
-//  - (A) and (B) agree on count when the build's wall-clock window is
-//    long enough to capture everything (no stale older entries).
-//  - (C) never returns entries with tag != "zbuilder@<appVersionId>".
-//  - (C) has ≤ (A) entries — it's a strict subset in content, never a superset.
+//   - (A) and (B) agree on count when the build's wall-clock window is
+//     long enough to capture everything (no stale older entries).
+//   - (C) never returns entries with tag != "zbuilder@<appVersionId>".
+//   - (C) has ≤ (A) entries — it's a strict subset in content, never a superset.
 func TestAPI_LogBackend_ThreeApproachesCompared(t *testing.T) {
 	projectID, event, client, _ := pickBuildEvent(t)
 	buildStack := *event.Build.ServiceStackID

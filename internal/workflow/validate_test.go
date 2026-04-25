@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 func TestValidatePlanHostname(t *testing.T) {
@@ -85,8 +86,8 @@ func TestEffectiveMode(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
-		mode Mode
-		want Mode
+		mode topology.Mode
+		want topology.Mode
 	}{
 		{"empty_defaults_to_standard", "", "standard"},
 		{"explicit_standard", "standard", "standard"},
@@ -109,7 +110,7 @@ func TestValidateBootstrapTargets_InvalidBootstrapMode(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name    string
-		mode    Mode
+		mode    topology.Mode
 		wantErr bool
 	}{
 		{"valid_empty", "", false},

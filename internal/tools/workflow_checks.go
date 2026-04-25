@@ -9,6 +9,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -200,12 +201,12 @@ func checkServiceType(svcMap map[string]platform.ServiceStack, hostname, expecte
 }
 
 // isManagedNonStorage returns true for managed services that are NOT storage types.
-// Delegates to workflow.IsManagedService for the canonical prefix list,
+// Delegates to topology.IsManagedService for the canonical prefix list,
 // then excludes storage types which don't produce env vars.
 func isManagedNonStorage(serviceType string) bool {
 	lower := strings.ToLower(serviceType)
 	if strings.HasPrefix(lower, "shared-storage") || strings.HasPrefix(lower, "object-storage") {
 		return false
 	}
-	return workflow.IsManagedService(serviceType)
+	return topology.IsManagedService(serviceType)
 }

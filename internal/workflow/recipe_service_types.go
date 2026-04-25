@@ -1,51 +1,10 @@
 package workflow
 
-import "strings"
+import (
+	"strings"
 
-// Service-type capability predicates. The template layer dispatches on these
-// directly — there is NO intermediate "role" abstraction. The agent submits
-// {hostname, type, isWorker} and every template decision flows from the type
-// and its platform category.
-
-// ServiceSupportsMode returns true if the service type supports mode: HA/NON_HA.
-// Managed services (databases, caches, search, shared-storage, messaging) do.
-// Object-storage does NOT — it's always internally replicated.
-func ServiceSupportsMode(serviceType string) bool {
-	return IsManagedService(serviceType) && !IsObjectStorageType(serviceType)
-}
-
-// ServiceSupportsAutoscaling returns true if the type supports verticalAutoscaling.
-// All services except object-storage and shared-storage.
-func ServiceSupportsAutoscaling(serviceType string) bool {
-	return !IsObjectStorageType(serviceType) && !IsSharedStorageType(serviceType)
-}
-
-// IsObjectStorageType returns true for object-storage services.
-// Object storage has no mode, no verticalAutoscaling — needs objectStorageSize instead.
-func IsObjectStorageType(serviceType string) bool {
-	return strings.HasPrefix(strings.ToLower(serviceType), "object-storage")
-}
-
-// IsSharedStorageType returns true for shared-storage services.
-// Shared storage supports mode but NOT verticalAutoscaling.
-func IsSharedStorageType(serviceType string) bool {
-	return strings.HasPrefix(strings.ToLower(serviceType), "shared-storage")
-}
-
-// IsUtilityType returns true for utility services deployed from external repos.
-// These are standalone apps (ubuntu-based) with their own buildFromGit URL and
-// their own zerops.yaml in a zerops-recipe-apps repo. Currently: mailpit.
-func IsUtilityType(serviceType string) bool {
-	return strings.HasPrefix(strings.ToLower(serviceType), "mailpit")
-}
-
-// IsRuntimeType returns true for Zerops runtime types — the categories where
-// user code executes (php-nginx, nodejs, go, bun, python, rust, nginx, static, ...).
-// Defined by exclusion: not managed and not a utility. Runtime services need
-// zeropsSetup + buildFromGit pointing at the recipe-app repo.
-func IsRuntimeType(serviceType string) bool {
-	return !IsManagedService(serviceType) && !IsUtilityType(serviceType)
-}
+	"github.com/zeropsio/zcp/internal/topology"
+)
 
 // Canonical recipe setup names. Minimal recipes use dev+prod; showcase recipes
 // add worker. All bootstrap/deploy guidance and checkers reference them.
@@ -64,8 +23,8 @@ const (
 
 // RecipeSetupForMode maps a bootstrap plan mode to its canonical recipe setup name.
 // Standard and dev modes use the dev workspace entry; simple mode uses the prod entry.
-func RecipeSetupForMode(mode Mode) string {
-	if mode == PlanModeSimple {
+func RecipeSetupForMode(mode topology.Mode) string {
+	if mode == topology.PlanModeSimple {
 		return RecipeSetupProd
 	}
 	return RecipeSetupDev
@@ -98,7 +57,7 @@ func SharesAppCodebase(target RecipeTarget) bool {
 // Separate-codebase workers have their own zerops.yaml and are not hosted by
 // any app target.
 func TargetHostsSharedWorker(target RecipeTarget, plan *RecipePlan) bool {
-	if plan == nil || target.IsWorker || !IsRuntimeType(target.Type) {
+	if plan == nil || target.IsWorker || !topology.IsRuntimeType(target.Type) {
 		return false
 	}
 	for _, t := range plan.Targets {

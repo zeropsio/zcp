@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // referencesFieldPattern matches a pkg.Type.Field entry in atom
@@ -45,11 +47,11 @@ type KnowledgeAtom struct {
 // MUST be non-empty).
 type AxisVector struct {
 	Phases        []Phase
-	Modes         []Mode
+	Modes         []topology.Mode
 	Environments  []Environment
-	Strategies    []DeployStrategy
-	Triggers      []PushGitTrigger // valid only alongside strategies: [push-git]
-	Runtimes      []RuntimeClass
+	Strategies    []topology.DeployStrategy
+	Triggers      []topology.PushGitTrigger // valid only alongside strategies: [push-git]
+	Runtimes      []topology.RuntimeClass
 	Routes        []BootstrapRoute
 	Steps         []string
 	IdleScenarios []IdleScenario
@@ -196,11 +198,11 @@ func parsePhases(raw string) []Phase {
 	return out
 }
 
-func parseModes(raw string) []Mode {
+func parseModes(raw string) []topology.Mode {
 	values := parseYAMLList(raw)
-	out := make([]Mode, 0, len(values))
+	out := make([]topology.Mode, 0, len(values))
 	for _, v := range values {
-		out = append(out, Mode(v))
+		out = append(out, topology.Mode(v))
 	}
 	return out
 }
@@ -214,31 +216,31 @@ func parseEnvironments(raw string) []Environment {
 	return out
 }
 
-func parseStrategies(raw string) []DeployStrategy {
+func parseStrategies(raw string) []topology.DeployStrategy {
 	values := parseYAMLList(raw)
-	out := make([]DeployStrategy, 0, len(values))
+	out := make([]topology.DeployStrategy, 0, len(values))
 	for _, v := range values {
-		out = append(out, DeployStrategy(v))
+		out = append(out, topology.DeployStrategy(v))
 	}
 	return out
 }
 
 // parseTriggers reads the optional `triggers:` frontmatter field —
 // filters strategy-setup atoms to the webhook/actions sub-branch.
-func parseTriggers(raw string) []PushGitTrigger {
+func parseTriggers(raw string) []topology.PushGitTrigger {
 	values := parseYAMLList(raw)
-	out := make([]PushGitTrigger, 0, len(values))
+	out := make([]topology.PushGitTrigger, 0, len(values))
 	for _, v := range values {
-		out = append(out, PushGitTrigger(v))
+		out = append(out, topology.PushGitTrigger(v))
 	}
 	return out
 }
 
-func parseRuntimes(raw string) []RuntimeClass {
+func parseRuntimes(raw string) []topology.RuntimeClass {
 	values := parseYAMLList(raw)
-	out := make([]RuntimeClass, 0, len(values))
+	out := make([]topology.RuntimeClass, 0, len(values))
 	for _, v := range values {
-		out = append(out, RuntimeClass(v))
+		out = append(out, topology.RuntimeClass(v))
 	}
 	return out
 }

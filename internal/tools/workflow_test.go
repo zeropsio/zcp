@@ -15,6 +15,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -129,7 +130,7 @@ func TestWorkflowTool_Action_Start_Develop_ReturnsBriefing(t *testing.T) {
 		Hostname:          "appdev",
 		Mode:              "standard",
 		StageHostname:     "appstage",
-		DeployStrategy:    workflow.StrategyPushDev,
+		DeployStrategy:    topology.StrategyPushDev,
 		StrategyConfirmed: true,
 		BootstrappedAt:    "2026-03-04T12:00:00Z",
 	}
@@ -182,7 +183,7 @@ func TestWorkflowTool_Action_Start_Develop_ManualStrategy_ReturnsBriefing(t *tes
 	meta := &workflow.ServiceMeta{
 		Hostname:          "appdev",
 		Mode:              "dev",
-		DeployStrategy:    workflow.StrategyManual,
+		DeployStrategy:    topology.StrategyManual,
 		StrategyConfirmed: true,
 		BootstrappedAt:    "2026-03-04T12:00:00Z",
 	}
@@ -401,7 +402,7 @@ func TestWorkflowTool_Action_Reset_PreservesCompleteMetas(t *testing.T) {
 	// Complete meta — survives reset.
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
-		Mode:             workflow.PlanModeDev,
+		Mode:             topology.PlanModeDev,
 		BootstrapSession: "old-sess",
 		BootstrappedAt:   "2026-04-10",
 	}); err != nil {

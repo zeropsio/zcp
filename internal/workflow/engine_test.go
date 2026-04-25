@@ -10,39 +10,8 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/knowledge"
+	"github.com/zeropsio/zcp/internal/topology"
 )
-
-func TestIsManagedService(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name        string
-		serviceType string
-		want        bool
-	}{
-		{"postgresql", "postgresql@16", true},
-		{"valkey", "valkey@7.2", true},
-		{"object_storage_hyphen", "object-storage@1", true},
-		{"shared_storage_hyphen", "shared-storage@1", true},
-		{"object_storage_bare", "object-storage", true},
-		{"shared_storage_bare", "shared-storage", true},
-		{"nats", "nats@2.10", true},
-		{"clickhouse", "clickhouse@24.3", true},
-		{"qdrant", "qdrant@1.12", true},
-		{"typesense", "typesense@27.1", true},
-		{"runtime_bun", "bun@1.2", false},
-		{"runtime_nodejs", "nodejs@22", false},
-		{"runtime_go", "go@1", false},
-		{"runtime_php", "php-nginx@8.4", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			if got := IsManagedService(tt.serviceType); got != tt.want {
-				t.Errorf("IsManagedService(%q) = %v, want %v", tt.serviceType, got, tt.want)
-			}
-		})
-	}
-}
 
 func TestEngine_Reset(t *testing.T) {
 	t.Parallel()
@@ -1023,7 +992,7 @@ func TestEngine_BootstrapCompletePlan_RecipeRoute_RenameAccepted(t *testing.T) {
 			DevHostname:   "uploaddev",
 			ExplicitStage: "uploadstage",
 			Type:          "dotnet@9",
-			BootstrapMode: PlanModeStandard,
+			BootstrapMode: topology.PlanModeStandard,
 		},
 		Dependencies: []Dependency{{
 			Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE",
@@ -1073,7 +1042,7 @@ func TestEngine_BootstrapCompletePlan_RecipeRoute_ManagedRenameRejected(t *testi
 
 	// Plan renames managed dep — should be rejected.
 	plan := []BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "uploaddev", Type: "dotnet@9", BootstrapMode: PlanModeDev},
+		Runtime: RuntimeTarget{DevHostname: "uploaddev", Type: "dotnet@9", BootstrapMode: topology.PlanModeDev},
 		Dependencies: []Dependency{{
 			Hostname: "mydb", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE",
 		}},

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // fakeRecipeCorpus is a stub for BuildBootstrapRouteOptions tests that don't
@@ -194,7 +195,7 @@ func TestBuildBootstrapRouteOptions_BootstrappedMeta_NoAdopt(t *testing.T) {
 	existing := []platform.ServiceStack{userSvc("appdev", "nodejs@22")}
 	metas := []*ServiceMeta{{
 		Hostname:       "appdev",
-		Mode:           PlanModeDev,
+		Mode:           topology.PlanModeDev,
 		BootstrappedAt: "2026-04-18T10:00:00Z",
 	}}
 	opts, err := BuildBootstrapRouteOptions(context.Background(), "", existing, metas, nil)
@@ -213,7 +214,7 @@ func TestBuildBootstrapRouteOptions_IncompleteMeta_PrefersResumeOverAdopt(t *tes
 	existing := []platform.ServiceStack{userSvc("appdev", "nodejs@22")}
 	metas := []*ServiceMeta{{
 		Hostname:         "appdev",
-		Mode:             PlanModeDev,
+		Mode:             topology.PlanModeDev,
 		BootstrapSession: "sess-abc",
 		// BootstrappedAt intentionally empty — incomplete.
 	}}
@@ -241,7 +242,7 @@ func TestBuildBootstrapRouteOptions_IncompleteMetaOrphan_AdoptNotResume(t *testi
 	existing := []platform.ServiceStack{userSvc("appdev", "nodejs@22")}
 	metas := []*ServiceMeta{{
 		Hostname: "appdev",
-		Mode:     PlanModeDev,
+		Mode:     topology.PlanModeDev,
 		// Neither BootstrappedAt nor BootstrapSession set.
 	}}
 	opts, err := BuildBootstrapRouteOptions(context.Background(), "", existing, metas, nil)

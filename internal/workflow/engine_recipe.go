@@ -12,6 +12,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/schema"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // RecipeStart creates a new session with recipe state and returns the first step.
@@ -565,7 +566,7 @@ func (e *Engine) stageWriterContent(state *WorkflowState) error {
 	var missing []string
 	var staged int
 	for _, t := range state.Recipe.Plan.Targets {
-		if !IsRuntimeType(t.Type) {
+		if !topology.IsRuntimeType(t.Type) {
 			continue
 		}
 		if t.IsWorker && t.SharesCodebaseWith != "" {

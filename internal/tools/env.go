@@ -9,7 +9,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/workflow"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // EnvInput is the input type for zerops_env.
@@ -270,7 +270,7 @@ func isAutoRestartEligible(svc platform.ServiceStack, selfHostname string) bool 
 	// Managed services (databases, caches, search, object/shared storage,
 	// messaging) consume their own credentials — user-set project envs do
 	// not affect their operation, so restarting is unnecessary downtime.
-	if workflow.IsManagedService(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
+	if topology.IsManagedService(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
 		return false
 	}
 	return true

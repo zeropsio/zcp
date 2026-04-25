@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // corpus returns a small in-memory corpus for synthesizer tests. Keeps the
@@ -19,7 +21,7 @@ func synthCorpus() []KnowledgeAtom {
 			ID: "develop-dynamic-container", Priority: 2,
 			Axes: AxisVector{
 				Phases:       []Phase{PhaseDevelopActive},
-				Runtimes:     []RuntimeClass{RuntimeDynamic},
+				Runtimes:     []topology.RuntimeClass{topology.RuntimeDynamic},
 				Environments: []Environment{EnvContainer},
 			},
 			Body: "SSH into {hostname} and run {start-command}.",
@@ -28,7 +30,7 @@ func synthCorpus() []KnowledgeAtom {
 			ID: "develop-dynamic-local", Priority: 2,
 			Axes: AxisVector{
 				Phases:       []Phase{PhaseDevelopActive},
-				Runtimes:     []RuntimeClass{RuntimeDynamic},
+				Runtimes:     []topology.RuntimeClass{topology.RuntimeDynamic},
 				Environments: []Environment{EnvLocal},
 			},
 			Body: "From local, SSH into {hostname}.",
@@ -37,7 +39,7 @@ func synthCorpus() []KnowledgeAtom {
 			ID: "develop-push-git", Priority: 3,
 			Axes: AxisVector{
 				Phases:     []Phase{PhaseDevelopActive},
-				Strategies: []DeployStrategy{"push-git"},
+				Strategies: []topology.DeployStrategy{"push-git"},
 			},
 			Body: "Push to git.",
 		},
@@ -45,14 +47,14 @@ func synthCorpus() []KnowledgeAtom {
 			ID: "develop-dev-mode", Priority: 4,
 			Axes: AxisVector{
 				Phases: []Phase{PhaseDevelopActive},
-				Modes:  []Mode{ModeDev},
+				Modes:  []topology.Mode{topology.ModeDev},
 			},
 			Body: "Dev mode rules.",
 		},
 	}
 }
 
-func developEnvelope(env Environment, mode Mode, strategy DeployStrategy, runtime RuntimeClass) StateEnvelope {
+func developEnvelope(env Environment, mode topology.Mode, strategy topology.DeployStrategy, runtime topology.RuntimeClass) StateEnvelope {
 	return StateEnvelope{
 		Phase:       PhaseDevelopActive,
 		Environment: env,
@@ -87,7 +89,7 @@ func TestSynthesize_AxisFiltering(t *testing.T) {
 		},
 		{
 			name:    "develop_container_dynamic_pushdev_dev",
-			env:     developEnvelope(EnvContainer, ModeDev, "push-dev", RuntimeDynamic),
+			env:     developEnvelope(EnvContainer, topology.ModeDev, "push-dev", topology.RuntimeDynamic),
 			wantIDs: []string{"develop-dynamic-container", "develop-dev-mode"},
 			wantNone: []string{
 				"idle-entry", "develop-dynamic-local", "develop-push-git",
@@ -95,7 +97,7 @@ func TestSynthesize_AxisFiltering(t *testing.T) {
 		},
 		{
 			name:    "develop_local_dynamic_pushgit_dev",
-			env:     developEnvelope(EnvLocal, ModeDev, "push-git", RuntimeDynamic),
+			env:     developEnvelope(EnvLocal, topology.ModeDev, "push-git", topology.RuntimeDynamic),
 			wantIDs: []string{"develop-dynamic-local", "develop-push-git", "develop-dev-mode"},
 			wantNone: []string{
 				"idle-entry", "develop-dynamic-container",
@@ -103,7 +105,7 @@ func TestSynthesize_AxisFiltering(t *testing.T) {
 		},
 		{
 			name:    "develop_container_static_pushdev_stage",
-			env:     developEnvelope(EnvContainer, ModeStage, "push-dev", RuntimeStatic),
+			env:     developEnvelope(EnvContainer, topology.ModeStage, "push-dev", topology.RuntimeStatic),
 			wantIDs: []string{},
 			wantNone: []string{
 				"idle-entry", "develop-dynamic-container", "develop-dynamic-local",
@@ -181,7 +183,7 @@ func TestSynthesize_DeployStateFilter(t *testing.T) {
 		Phase: PhaseDevelopActive,
 		Services: []ServiceSnapshot{{
 			Hostname:     "appdev",
-			RuntimeClass: RuntimeDynamic,
+			RuntimeClass: topology.RuntimeDynamic,
 			Bootstrapped: true,
 			Deployed:     false,
 		}},
@@ -202,7 +204,7 @@ func TestSynthesize_DeployStateFilter(t *testing.T) {
 		Phase: PhaseDevelopActive,
 		Services: []ServiceSnapshot{{
 			Hostname:     "appdev",
-			RuntimeClass: RuntimeDynamic,
+			RuntimeClass: topology.RuntimeDynamic,
 			Bootstrapped: true,
 			Deployed:     true,
 		}},
@@ -233,7 +235,7 @@ func TestSynthesize_ServiceScopedAxesRequireSameService(t *testing.T) {
 	corpus := []KnowledgeAtom{
 		{
 			ID:   "two-axes",
-			Axes: AxisVector{Phases: []Phase{PhaseDevelopActive}, DeployStates: []DeployState{DeployStateDeployed}, Strategies: []DeployStrategy{StrategyUnset}},
+			Axes: AxisVector{Phases: []Phase{PhaseDevelopActive}, DeployStates: []DeployState{DeployStateDeployed}, Strategies: []topology.DeployStrategy{topology.StrategyUnset}},
 			Body: "Two-axis atom.",
 		},
 	}
@@ -243,8 +245,8 @@ func TestSynthesize_ServiceScopedAxesRequireSameService(t *testing.T) {
 	mixed := StateEnvelope{
 		Phase: PhaseDevelopActive,
 		Services: []ServiceSnapshot{
-			{Hostname: "a", RuntimeClass: RuntimeDynamic, Bootstrapped: true, Deployed: true, Strategy: StrategyPushDev},
-			{Hostname: "b", RuntimeClass: RuntimeDynamic, Bootstrapped: true, Deployed: false, Strategy: StrategyUnset},
+			{Hostname: "a", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: true, Strategy: topology.StrategyPushDev},
+			{Hostname: "b", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: false, Strategy: topology.StrategyUnset},
 		},
 	}
 	got, err := Synthesize(mixed, corpus)
@@ -259,7 +261,7 @@ func TestSynthesize_ServiceScopedAxesRequireSameService(t *testing.T) {
 	match := StateEnvelope{
 		Phase: PhaseDevelopActive,
 		Services: []ServiceSnapshot{
-			{Hostname: "a", RuntimeClass: RuntimeDynamic, Bootstrapped: true, Deployed: true, Strategy: StrategyUnset},
+			{Hostname: "a", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: true, Strategy: topology.StrategyUnset},
 		},
 	}
 	got, err = Synthesize(match, corpus)
@@ -274,7 +276,7 @@ func TestSynthesize_ServiceScopedAxesRequireSameService(t *testing.T) {
 func TestSynthesize_PrioritySort(t *testing.T) {
 	t.Parallel()
 
-	env := developEnvelope(EnvContainer, ModeDev, "push-git", RuntimeDynamic)
+	env := developEnvelope(EnvContainer, topology.ModeDev, "push-git", topology.RuntimeDynamic)
 	got, err := Synthesize(env, synthCorpus())
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
@@ -297,7 +299,7 @@ func TestSynthesize_PrioritySort(t *testing.T) {
 func TestSynthesize_CompactionSafe(t *testing.T) {
 	t.Parallel()
 
-	env := developEnvelope(EnvContainer, ModeDev, "push-git", RuntimeDynamic)
+	env := developEnvelope(EnvContainer, topology.ModeDev, "push-git", topology.RuntimeDynamic)
 	corpus := synthCorpus()
 	first, err := Synthesize(env, corpus)
 	if err != nil {
@@ -322,7 +324,7 @@ func TestSynthesize_PlaceholderSubstitution(t *testing.T) {
 			ID: "hostname-atom", Priority: 1,
 			Axes: AxisVector{
 				Phases:   []Phase{PhaseDevelopActive},
-				Runtimes: []RuntimeClass{RuntimeDynamic},
+				Runtimes: []topology.RuntimeClass{topology.RuntimeDynamic},
 			},
 			Body: "Connect to {hostname}. Stage pair is {stage-hostname}.",
 		},
@@ -331,7 +333,7 @@ func TestSynthesize_PlaceholderSubstitution(t *testing.T) {
 		Phase:       PhaseDevelopActive,
 		Environment: EnvLocal,
 		Services: []ServiceSnapshot{{
-			Hostname: "appdev", RuntimeClass: RuntimeDynamic, StageHostname: "appstage", Mode: ModeDev,
+			Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic, StageHostname: "appstage", Mode: topology.ModeDev,
 		}},
 	}
 	got, err := Synthesize(env, corpus)
@@ -491,8 +493,8 @@ func TestSynthesize_LocalModeAtomsFireForAllRoutes(t *testing.T) {
 					},
 					Services: []ServiceSnapshot{{
 						Hostname:     "appdev",
-						RuntimeClass: RuntimeDynamic,
-						Mode:         ModeDev,
+						RuntimeClass: topology.RuntimeDynamic,
+						Mode:         topology.ModeDev,
 					}},
 				}
 				got, err := Synthesize(env, corpus)
@@ -537,7 +539,7 @@ func TestSynthesize_AllowsStartCommandPlaceholder(t *testing.T) {
 			ID: "run", Priority: 1,
 			Axes: AxisVector{
 				Phases:   []Phase{PhaseDevelopActive},
-				Runtimes: []RuntimeClass{RuntimeDynamic},
+				Runtimes: []topology.RuntimeClass{topology.RuntimeDynamic},
 			},
 			Body: "Run `{start-command}` on {hostname}.",
 		},
@@ -545,7 +547,7 @@ func TestSynthesize_AllowsStartCommandPlaceholder(t *testing.T) {
 	env := StateEnvelope{
 		Phase:       PhaseDevelopActive,
 		Environment: EnvLocal,
-		Services:    []ServiceSnapshot{{Hostname: "appdev", RuntimeClass: RuntimeDynamic}},
+		Services:    []ServiceSnapshot{{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic}},
 	}
 	got, err := Synthesize(env, corpus)
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -38,7 +39,7 @@ func TestHandleAdoptLocal_MissingTarget_Refused(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
-		Hostname: "myproject", Mode: workflow.PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
+		Hostname: "myproject", Mode: topology.PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
@@ -78,7 +79,7 @@ func TestHandleAdoptLocal_AlreadyLinked_Refused(t *testing.T) {
 	dir := t.TempDir()
 	// local-stage already — can't re-link via adopt-local.
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
-		Hostname: "myproject", StageHostname: "existing", Mode: workflow.PlanModeLocalStage,
+		Hostname: "myproject", StageHostname: "existing", Mode: topology.PlanModeLocalStage,
 		BootstrappedAt: "2026-04-01",
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
@@ -103,7 +104,7 @@ func TestHandleAdoptLocal_TargetNotARuntime_Refused(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
-		Hostname: "myproject", Mode: workflow.PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
+		Hostname: "myproject", Mode: topology.PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
@@ -136,7 +137,7 @@ func TestHandleAdoptLocal_TargetNotFound_Refused(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
-		Hostname: "myproject", Mode: workflow.PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
+		Hostname: "myproject", Mode: topology.PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
@@ -160,9 +161,9 @@ func TestHandleAdoptLocal_LinksRuntime_UpgradesMode(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
-		Hostname: "myproject", Mode: workflow.PlanModeLocalOnly,
+		Hostname: "myproject", Mode: topology.PlanModeLocalOnly,
 		BootstrappedAt: "2026-04-01",
-		DeployStrategy: workflow.StrategyManual,
+		DeployStrategy: topology.StrategyManual,
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
@@ -185,7 +186,7 @@ func TestHandleAdoptLocal_LinksRuntime_UpgradesMode(t *testing.T) {
 		t.Fatalf("expected success; got: %s", getTextContent(t, result))
 	}
 	got, _ := workflow.ReadServiceMeta(dir, "myproject")
-	if got.Mode != workflow.PlanModeLocalStage {
+	if got.Mode != topology.PlanModeLocalStage {
 		t.Errorf("Mode = %q, want local-stage", got.Mode)
 	}
 	if got.StageHostname != "apistage" {

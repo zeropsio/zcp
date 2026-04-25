@@ -1,8 +1,12 @@
 package workflow
 
-import "strings"
+import (
+	"strings"
 
-// AdoptCandidate represents a live service for auto-adoption.
+	"github.com/zeropsio/zcp/internal/topology"
+	// AdoptCandidate represents a live service for auto-adoption.
+)
+
 type AdoptCandidate struct {
 	Hostname string
 	Type     string
@@ -67,7 +71,7 @@ func InferServicePairing(candidates []AdoptCandidate, liveManaged map[string]boo
 				DevHostname:   r.Hostname,
 				Type:          r.Type,
 				IsExisting:    true,
-				BootstrapMode: PlanModeDev,
+				BootstrapMode: topology.PlanModeDev,
 			},
 			Dependencies: deps,
 		})

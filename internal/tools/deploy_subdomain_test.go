@@ -17,6 +17,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -54,7 +55,7 @@ func autoEnableTestMock(t *testing.T, subdomainOn bool) *platform.Mock {
 		})
 }
 
-func writeMeta(t *testing.T, dir string, mode workflow.Mode) {
+func writeMeta(t *testing.T, dir string, mode topology.Mode) {
 	t.Helper()
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         autoEnableTestHostname,
@@ -75,7 +76,7 @@ func TestMaybeAutoEnableSubdomain_FirstDeploy_DevMode_Enables(t *testing.T) {
 	defer restore()
 
 	dir := t.TempDir()
-	writeMeta(t, dir, workflow.PlanModeDev)
+	writeMeta(t, dir, topology.PlanModeDev)
 
 	mock := autoEnableTestMock(t, false /* subdomain off */)
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
@@ -96,7 +97,7 @@ func TestMaybeAutoEnableSubdomain_FirstDeploy_DevMode_Enables(t *testing.T) {
 func TestMaybeAutoEnableSubdomain_SubdomainAlreadyOn_SetsFlag_NoAPICall(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeMeta(t, dir, workflow.PlanModeStandard)
+	writeMeta(t, dir, topology.PlanModeStandard)
 
 	mock := autoEnableTestMock(t, true /* subdomain on */)
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
@@ -135,7 +136,7 @@ func TestMaybeAutoEnableSubdomain_NoMeta_Skipped(t *testing.T) {
 func TestMaybeAutoEnableSubdomain_LocalOnlyMode_Skipped(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeMeta(t, dir, workflow.PlanModeLocalOnly)
+	writeMeta(t, dir, topology.PlanModeLocalOnly)
 
 	mock := autoEnableTestMock(t, false)
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
@@ -153,7 +154,7 @@ func TestMaybeAutoEnableSubdomain_LocalOnlyMode_Skipped(t *testing.T) {
 func TestMaybeAutoEnableSubdomain_EnableFails_WarningNotFatal(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeMeta(t, dir, workflow.PlanModeDev)
+	writeMeta(t, dir, topology.PlanModeDev)
 
 	mock := autoEnableTestMock(t, false)
 	mock.WithError("EnableSubdomainAccess", &platform.PlatformError{
@@ -190,17 +191,17 @@ func TestMaybeAutoEnableSubdomain_AllEligibleModes_TriggerEnable(t *testing.T) {
 
 	cases := []struct {
 		name string
-		mode workflow.Mode
+		mode topology.Mode
 		want bool
 	}{
-		{"Dev", workflow.PlanModeDev, true},
-		{"Standard", workflow.PlanModeStandard, true},
-		{"Stage", workflow.ModeStage, true},
-		{"Simple", workflow.PlanModeSimple, true},
-		{"LocalStage", workflow.PlanModeLocalStage, true},
-		{"LocalOnly", workflow.PlanModeLocalOnly, false},
-		{"Unknown", workflow.Mode("production-future"), false}, // future-proof: new modes default to skip
-		{"Empty", workflow.Mode(""), false},
+		{"Dev", topology.PlanModeDev, true},
+		{"Standard", topology.PlanModeStandard, true},
+		{"Stage", topology.ModeStage, true},
+		{"Simple", topology.PlanModeSimple, true},
+		{"LocalStage", topology.PlanModeLocalStage, true},
+		{"LocalOnly", topology.PlanModeLocalOnly, false},
+		{"Unknown", topology.Mode("production-future"), false}, // future-proof: new modes default to skip
+		{"Empty", topology.Mode(""), false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -239,7 +240,7 @@ func TestMaybeAutoEnableSubdomain_StageCrossDeploy_EnablesForStage(t *testing.T)
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		StageHostname:    "appstage",
-		Mode:             workflow.PlanModeStandard,
+		Mode:             topology.PlanModeStandard,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-22",
 		FirstDeployedAt:  "2026-04-22", // dev already deployed; stage hasn't
@@ -289,7 +290,7 @@ func TestMaybeAutoEnableSubdomain_StageCrossDeploy_EnablesForStage(t *testing.T)
 func TestMaybeAutoEnableSubdomain_AlreadyEnabled_SkipsHTTPProbe(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeMeta(t, dir, workflow.PlanModeDev)
+	writeMeta(t, dir, topology.PlanModeDev)
 
 	mock := autoEnableTestMock(t, true /* already on */)
 

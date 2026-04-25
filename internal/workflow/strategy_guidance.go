@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // BuildStrategyGuidance returns strategy-specific atom bodies joined with
@@ -15,9 +17,9 @@ func BuildStrategyGuidance(strategies map[string]string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("load atom corpus: %w", err)
 	}
-	selected := make(map[DeployStrategy]struct{}, len(strategies))
+	selected := make(map[topology.DeployStrategy]struct{}, len(strategies))
 	for _, s := range strategies {
-		selected[DeployStrategy(s)] = struct{}{}
+		selected[topology.DeployStrategy(s)] = struct{}{}
 	}
 	var matched []KnowledgeAtom
 	for _, atom := range corpus {

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // FlowOffering represents a workflow available to the agent.
@@ -130,7 +132,7 @@ func filterStaleMetas(metas []*ServiceMeta, liveServices []string) []*ServiceMet
 	}
 	var result []*ServiceMeta
 	for _, m := range metas {
-		if m.Mode == PlanModeLocalStage || m.Mode == PlanModeLocalOnly {
+		if m.Mode == topology.PlanModeLocalStage || m.Mode == topology.PlanModeLocalOnly {
 			result = append(result, m)
 			continue
 		}
@@ -147,7 +149,7 @@ func filterStaleMetas(metas []*ServiceMeta, liveServices []string) []*ServiceMet
 // both may be nil/empty — derivation degrades gracefully. env gates env-scoped
 // offerings (export is container-only in Release A; local export is deferred).
 func strategyOfferings(metas []*ServiceMeta, liveStatus map[string]string, ws *WorkSession, env Environment) []FlowOffering {
-	strategies := make(map[DeployStrategy]int)
+	strategies := make(map[topology.DeployStrategy]int)
 	for _, m := range metas {
 		if s := m.DeployStrategy; s != "" {
 			strategies[s]++
@@ -155,7 +157,7 @@ func strategyOfferings(metas []*ServiceMeta, liveStatus map[string]string, ws *W
 	}
 
 	// Find dominant strategy for additional offerings.
-	var dominant DeployStrategy
+	var dominant topology.DeployStrategy
 	var maxCount int
 	for s, c := range strategies {
 		if c > maxCount {
@@ -166,7 +168,7 @@ func strategyOfferings(metas []*ServiceMeta, liveStatus map[string]string, ws *W
 
 	// Always offer deploy — strategy-aware hint when push-git is dominant.
 	developHint := `zerops_workflow action="start" workflow="develop"`
-	if dominant == StrategyPushGit {
+	if dominant == topology.StrategyPushGit {
 		developHint += ` — REQUIRED before pushing code to a git remote (handles auth, GIT_TOKEN, push)`
 	}
 	offerings := []FlowOffering{{

@@ -9,21 +9,22 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // validStrategies is the set of allowed strategy values.
 var validStrategies = map[string]bool{
-	workflow.StrategyPushDev: true,
-	workflow.StrategyPushGit: true,
-	workflow.StrategyManual:  true,
+	topology.StrategyPushDev: true,
+	topology.StrategyPushGit: true,
+	topology.StrategyManual:  true,
 }
 
 // strategyListEntry is one row in the listing-mode response: current strategy
 // + the options the agent can switch to.
 type strategyListEntry struct {
 	Hostname string                  `json:"hostname"`
-	Current  workflow.DeployStrategy `json:"current"`
+	Current  topology.DeployStrategy `json:"current"`
 	Options  []string                `json:"options"`
 	Hint     string                  `json:"hint"`
 }
@@ -60,13 +61,13 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 	// push-git + trigger input must match — reject unknown trigger values
 	// up front. Empty trigger is legitimate: the intro atom will surface
 	// the choice to the user, who re-calls with an explicit trigger.
-	if input.Trigger != "" && input.Trigger != string(workflow.TriggerWebhook) && input.Trigger != string(workflow.TriggerActions) {
+	if input.Trigger != "" && input.Trigger != string(topology.TriggerWebhook) && input.Trigger != string(topology.TriggerActions) {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Invalid trigger %q", input.Trigger),
 			"Valid triggers (push-git only): 'webhook' or 'actions'")), nil, nil
 	}
-	if input.Trigger != "" && !anyStrategyIs(input.Strategies, workflow.StrategyPushGit) {
+	if input.Trigger != "" && !anyStrategyIs(input.Strategies, topology.StrategyPushGit) {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"trigger is only valid when setting strategy=push-git",
@@ -94,7 +95,7 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 				"Run bootstrap first: zerops_workflow action=\"start\" workflow=\"bootstrap\"")), nil, nil
 		}
 		// Gate local-only + push-dev: no stage target.
-		if strategy == workflow.StrategyPushDev && meta.Mode == workflow.PlanModeLocalOnly {
+		if strategy == topology.StrategyPushDev && meta.Mode == topology.PlanModeLocalOnly {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("Service %q is local-only — push-dev needs a Zerops stage to deploy to", hostname),
@@ -102,18 +103,18 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 			), nil, nil
 		}
 		updated = append(updated, fmt.Sprintf("%s=%s", hostname, strategy))
-		typedStrategy := workflow.DeployStrategy(strategy)
-		typedTrigger := workflow.PushGitTrigger(input.Trigger)
+		typedStrategy := topology.DeployStrategy(strategy)
+		typedTrigger := topology.PushGitTrigger(input.Trigger)
 		// Detect no-op: same strategy AND same trigger (if applicable) AND
 		// already-confirmed state.
 		sameStrategy := meta.DeployStrategy == typedStrategy && meta.StrategyConfirmed
-		sameTrigger := typedStrategy != workflow.StrategyPushGit || meta.PushGitTrigger == typedTrigger
+		sameTrigger := typedStrategy != topology.StrategyPushGit || meta.PushGitTrigger == typedTrigger
 		if sameStrategy && sameTrigger {
 			continue
 		}
 		meta.DeployStrategy = typedStrategy
 		meta.StrategyConfirmed = true
-		if typedStrategy == workflow.StrategyPushGit {
+		if typedStrategy == topology.StrategyPushGit {
 			// Only write trigger when one was provided; empty leaves the
 			// previous value (which might be "" on fresh push-git setup
 			// → intro atom handles the ask).
@@ -138,7 +139,7 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 	// written meta(s). Other strategies reuse the existing develop-phase
 	// iteration atoms.
 	var guidance string
-	if anyStrategyIs(input.Strategies, workflow.StrategyPushGit) {
+	if anyStrategyIs(input.Strategies, topology.StrategyPushGit) {
 		env := workflow.DetectEnvironment(rt)
 		envelope := workflow.StateEnvelope{
 			Phase:       workflow.PhaseStrategySetup,
@@ -154,9 +155,9 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 	}
 
 	nextHint := `When code is ready: zerops_workflow action="start" workflow="develop"`
-	if allStrategiesAre(input.Strategies, workflow.StrategyManual) {
+	if allStrategiesAre(input.Strategies, topology.StrategyManual) {
 		nextHint = `When code is ready: zerops_deploy targetService="..." (manual strategy — deploy directly)`
-	} else if allStrategiesAre(input.Strategies, workflow.StrategyPushGit) {
+	} else if allStrategiesAre(input.Strategies, topology.StrategyPushGit) {
 		nextHint = `Follow the setup guidance below. Push code with: zerops_deploy targetService="..." strategy="git-push"`
 	}
 
@@ -181,7 +182,7 @@ func handleStrategyList(stateDir string) (*mcp.CallToolResult, any, error) {
 			fmt.Sprintf("List service metas: %v", err),
 			"")), nil, nil
 	}
-	options := []string{workflow.StrategyPushDev, workflow.StrategyPushGit, workflow.StrategyManual}
+	options := []string{topology.StrategyPushDev, topology.StrategyPushGit, topology.StrategyManual}
 
 	entries := make([]strategyListEntry, 0, len(metas))
 	for _, m := range metas {
@@ -190,13 +191,13 @@ func handleStrategyList(stateDir string) (*mcp.CallToolResult, any, error) {
 		}
 		current := m.DeployStrategy
 		if current == "" {
-			current = workflow.StrategyUnset
+			current = topology.StrategyUnset
 		}
 		entries = append(entries, strategyListEntry{
 			Hostname: m.Hostname,
 			Current:  current,
 			Options:  options,
-			Hint:     fmt.Sprintf(`zerops_workflow action="strategy" strategies={%q:%q}`, m.Hostname, workflow.StrategyPushDev),
+			Hint:     fmt.Sprintf(`zerops_workflow action="strategy" strategies={%q:%q}`, m.Hostname, topology.StrategyPushDev),
 		})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Hostname < entries[j].Hostname })
@@ -230,7 +231,7 @@ func buildStrategySetupSnapshots(stateDir string, strategies map[string]string, 
 		snap := workflow.ServiceSnapshot{
 			Hostname:     hostname,
 			Bootstrapped: true,
-			Strategy:     workflow.DeployStrategy(strategy),
+			Strategy:     topology.DeployStrategy(strategy),
 		}
 		if meta, _ := workflow.FindServiceMeta(stateDir, hostname); meta != nil {
 			snap.Mode = meta.Mode
@@ -240,11 +241,11 @@ func buildStrategySetupSnapshots(stateDir string, strategies map[string]string, 
 		}
 		// Trigger axis only carries meaning on push-git — for push-dev/manual
 		// we leave it unset so trigger-filtered atoms don't accidentally match.
-		if strategy == workflow.StrategyPushGit {
+		if strategy == topology.StrategyPushGit {
 			if trigger == "" {
-				snap.Trigger = workflow.TriggerUnset
+				snap.Trigger = topology.TriggerUnset
 			} else {
-				snap.Trigger = workflow.PushGitTrigger(trigger)
+				snap.Trigger = topology.PushGitTrigger(trigger)
 			}
 		}
 		out = append(out, snap)
@@ -298,7 +299,7 @@ func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client
 				liveHostnames = append(liveHostnames, s.Name)
 				liveStatus[s.Name] = s.Status
 				typeName := s.ServiceStackTypeInfo.ServiceStackTypeVersionName
-				if !workflow.IsManagedService(typeName) {
+				if !topology.IsManagedService(typeName) {
 					if m, ok := metaIdx[s.Name]; !ok || !m.IsComplete() {
 						unmanagedRuntimes = append(unmanagedRuntimes, s.Name)
 					}

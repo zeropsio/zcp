@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -137,7 +138,7 @@ func composeAllBriefs(plan *workflow.RecipePlan) (map[string]string, []error) {
 	// Scaffold briefs: one per runtime target (skip managed services +
 	// shared-codebase workers — the stitcher doesn't emit for those).
 	for _, t := range plan.Targets {
-		if !workflow.IsRuntimeType(t.Type) {
+		if !topology.IsRuntimeType(t.Type) {
 			continue
 		}
 		if t.IsWorker && t.SharesCodebaseWith != "" {

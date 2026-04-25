@@ -8,6 +8,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // fixedTime is the canonical time used across envelope fixtures so test output
@@ -62,9 +63,9 @@ func TestComputeEnvelope_ServicesBootstrapped(t *testing.T) {
 	// Write a complete meta for "appdev" with stage pair "appstage".
 	meta := &ServiceMeta{
 		Hostname:          "appdev",
-		Mode:              PlanModeStandard,
+		Mode:              topology.PlanModeStandard,
 		StageHostname:     "appstage",
-		DeployStrategy:    StrategyPushDev,
+		DeployStrategy:    topology.StrategyPushDev,
 		StrategyConfirmed: true,
 		BootstrappedAt:    fixedTime.Format(time.RFC3339),
 		BootstrapSession:  "sess-1",
@@ -132,25 +133,25 @@ func TestComputeEnvelope_ServicesBootstrapped(t *testing.T) {
 
 	// appdev snapshot: dynamic, bootstrapped, stage pair, dev-half of standard.
 	appdev := env.Services[0]
-	if appdev.RuntimeClass != RuntimeDynamic {
+	if appdev.RuntimeClass != topology.RuntimeDynamic {
 		t.Errorf("appdev runtime = %q, want dynamic", appdev.RuntimeClass)
 	}
 	if !appdev.Bootstrapped {
 		t.Error("appdev.Bootstrapped = false, want true")
 	}
-	if appdev.Strategy != DeployStrategy(StrategyPushDev) {
+	if appdev.Strategy != topology.DeployStrategy(topology.StrategyPushDev) {
 		t.Errorf("appdev strategy = %q, want push-dev", appdev.Strategy)
 	}
 	if appdev.StageHostname != "appstage" {
 		t.Errorf("appdev stage = %q, want appstage", appdev.StageHostname)
 	}
-	if appdev.Mode != ModeStandard {
+	if appdev.Mode != topology.ModeStandard {
 		t.Errorf("appdev mode = %q, want standard (dev half of pair)", appdev.Mode)
 	}
 
 	// appstage snapshot: stage half of standard pair.
 	appstage := env.Services[1]
-	if appstage.Mode != ModeStage {
+	if appstage.Mode != topology.ModeStage {
 		t.Errorf("appstage mode = %q, want stage", appstage.Mode)
 	}
 	if appstage.StageHostname != "" {
@@ -159,7 +160,7 @@ func TestComputeEnvelope_ServicesBootstrapped(t *testing.T) {
 
 	// db snapshot: managed.
 	db := env.Services[2]
-	if db.RuntimeClass != RuntimeManaged {
+	if db.RuntimeClass != topology.RuntimeManaged {
 		t.Errorf("db runtime = %q, want managed", db.RuntimeClass)
 	}
 	if db.Bootstrapped {
@@ -206,7 +207,7 @@ func TestComputeEnvelope_ServiceDeployedFlag(t *testing.T) {
 			name: "fresh bootstrap + ACTIVE + no stamp = not deployed",
 			meta: &ServiceMeta{
 				Hostname:         "appdev",
-				Mode:             PlanModeDev,
+				Mode:             topology.PlanModeDev,
 				BootstrappedAt:   fixedTime.Format(time.RFC3339),
 				BootstrapSession: "sess-1",
 			},
@@ -217,7 +218,7 @@ func TestComputeEnvelope_ServiceDeployedFlag(t *testing.T) {
 			name: "FirstDeployedAt stamped = deployed regardless of Status",
 			meta: &ServiceMeta{
 				Hostname:         "appdev",
-				Mode:             PlanModeDev,
+				Mode:             topology.PlanModeDev,
 				BootstrappedAt:   fixedTime.Format(time.RFC3339),
 				BootstrapSession: "sess-1",
 				FirstDeployedAt:  fixedTime.Format(time.RFC3339),
@@ -229,7 +230,7 @@ func TestComputeEnvelope_ServiceDeployedFlag(t *testing.T) {
 			name: "adopted + ACTIVE without stamp = deployed (fizzy-export)",
 			meta: &ServiceMeta{
 				Hostname:         "appdev",
-				Mode:             PlanModeDev,
+				Mode:             topology.PlanModeDev,
 				BootstrappedAt:   fixedTime.Format(time.RFC3339),
 				BootstrapSession: "",
 			},
@@ -240,7 +241,7 @@ func TestComputeEnvelope_ServiceDeployedFlag(t *testing.T) {
 			name: "adopted + READY_TO_DEPLOY = not deployed",
 			meta: &ServiceMeta{
 				Hostname:         "appdev",
-				Mode:             PlanModeDev,
+				Mode:             topology.PlanModeDev,
 				BootstrappedAt:   fixedTime.Format(time.RFC3339),
 				BootstrapSession: "",
 			},
@@ -251,7 +252,7 @@ func TestComputeEnvelope_ServiceDeployedFlag(t *testing.T) {
 			name: "fresh bootstrap + session success + stamp = deployed",
 			meta: &ServiceMeta{
 				Hostname:         "appdev",
-				Mode:             PlanModeDev,
+				Mode:             topology.PlanModeDev,
 				BootstrappedAt:   fixedTime.Format(time.RFC3339),
 				BootstrapSession: "sess-1",
 			},
@@ -317,7 +318,7 @@ func TestComputeEnvelope_ResumableFlag(t *testing.T) {
 	dir := t.TempDir()
 	meta := &ServiceMeta{
 		Hostname:         "appdev",
-		Mode:             PlanModeDev,
+		Mode:             topology.PlanModeDev,
 		BootstrapSession: "sess-abandoned",
 		// BootstrappedAt intentionally empty — incomplete.
 	}
@@ -364,7 +365,7 @@ func TestComputeEnvelope_OrphanIncompleteMeta(t *testing.T) {
 	dir := t.TempDir()
 	meta := &ServiceMeta{
 		Hostname: "appdev",
-		Mode:     PlanModeDev,
+		Mode:     topology.PlanModeDev,
 		// Neither BootstrappedAt nor BootstrapSession set.
 	}
 	if err := WriteServiceMeta(dir, meta); err != nil {
@@ -401,31 +402,31 @@ func TestResolveEnvelopeMode(t *testing.T) {
 		name     string
 		meta     *ServiceMeta
 		hostname string
-		want     Mode
+		want     topology.Mode
 	}{
 		{
 			name:     "standard_dev_half",
-			meta:     &ServiceMeta{Hostname: "appdev", Mode: PlanModeStandard, StageHostname: "appstage"},
+			meta:     &ServiceMeta{Hostname: "appdev", Mode: topology.PlanModeStandard, StageHostname: "appstage"},
 			hostname: "appdev",
-			want:     ModeStandard,
+			want:     topology.ModeStandard,
 		},
 		{
 			name:     "standard_stage_half",
-			meta:     &ServiceMeta{Hostname: "appdev", Mode: PlanModeStandard, StageHostname: "appstage"},
+			meta:     &ServiceMeta{Hostname: "appdev", Mode: topology.PlanModeStandard, StageHostname: "appstage"},
 			hostname: "appstage",
-			want:     ModeStage,
+			want:     topology.ModeStage,
 		},
 		{
 			name:     "dev_only",
-			meta:     &ServiceMeta{Hostname: "appdev", Mode: PlanModeDev},
+			meta:     &ServiceMeta{Hostname: "appdev", Mode: topology.PlanModeDev},
 			hostname: "appdev",
-			want:     ModeDev,
+			want:     topology.ModeDev,
 		},
 		{
 			name:     "simple",
-			meta:     &ServiceMeta{Hostname: "app", Mode: PlanModeSimple},
+			meta:     &ServiceMeta{Hostname: "app", Mode: topology.PlanModeSimple},
 			hostname: "app",
-			want:     ModeSimple,
+			want:     topology.ModeSimple,
 		},
 		{
 			name:     "nil_meta",
@@ -435,7 +436,7 @@ func TestResolveEnvelopeMode(t *testing.T) {
 		},
 		{
 			name:     "unknown_hostname",
-			meta:     &ServiceMeta{Hostname: "appdev", Mode: PlanModeDev},
+			meta:     &ServiceMeta{Hostname: "appdev", Mode: topology.PlanModeDev},
 			hostname: "other",
 			want:     "",
 		},
@@ -497,8 +498,8 @@ func TestComputeEnvelope_ParallelIO(t *testing.T) {
 	// checking envelope equality (time is supplied explicitly).
 	meta := &ServiceMeta{
 		Hostname:         "appdev",
-		Mode:             PlanModeDev,
-		DeployStrategy:   StrategyPushGit,
+		Mode:             topology.PlanModeDev,
+		DeployStrategy:   topology.StrategyPushGit,
 		BootstrappedAt:   fixedTime.Format(time.RFC3339),
 		BootstrapSession: "sess-1",
 	}

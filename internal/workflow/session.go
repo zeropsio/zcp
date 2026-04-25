@@ -19,6 +19,16 @@ const defaultMaxIterations = 5
 // WorkflowBootstrap is the workflow name for bootstrap sessions.
 const WorkflowBootstrap = "bootstrap"
 
+// WorkflowDevelop is the workflow name for develop sessions.
+const WorkflowDevelop = "develop"
+
+// Deploy step constants.
+const (
+	DeployStepPrepare = "prepare"
+	DeployStepExecute = "execute"
+	DeployStepVerify  = "verify"
+)
+
 func maxIterations() int {
 	if v := os.Getenv("ZCP_MAX_ITERATIONS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {

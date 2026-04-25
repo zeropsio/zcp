@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/knowledge"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // StepDetail defines a bootstrap step's metadata.
@@ -93,13 +94,13 @@ type StepContext struct {
 
 // BootstrapStepInfo provides detailed info about the current step.
 type BootstrapStepInfo struct {
-	Name          string       `json:"name"`
-	Index         int          `json:"index"`
-	Tools         []string     `json:"tools"`
-	Verification  string       `json:"verification"`
-	DetailedGuide string       `json:"detailedGuide,omitempty"`
-	PriorContext  *StepContext `json:"priorContext,omitempty"`
-	PlanMode      Mode         `json:"planMode,omitempty"` // "standard" or "simple", set after plan submission
+	Name          string        `json:"name"`
+	Index         int           `json:"index"`
+	Tools         []string      `json:"tools"`
+	Verification  string        `json:"verification"`
+	DetailedGuide string        `json:"detailedGuide,omitempty"`
+	PriorContext  *StepContext  `json:"priorContext,omitempty"`
+	PlanMode      topology.Mode `json:"planMode,omitempty"` // "standard" or "simple", set after plan submission
 }
 
 // NewBootstrapState creates a new bootstrap state with all steps pending.
@@ -289,16 +290,16 @@ func (b *BootstrapState) buildPriorContext() *StepContext {
 // Returns "standard" if ANY target uses standard mode (G4 required).
 // Returns "dev", "simple", or "mixed" otherwise (G4 skipped).
 // Returns empty if no plan has been submitted yet.
-func (b *BootstrapState) PlanMode() Mode {
+func (b *BootstrapState) PlanMode() topology.Mode {
 	if b.Plan == nil || len(b.Plan.Targets) == 0 {
 		return ""
 	}
-	modes := make(map[Mode]bool)
+	modes := make(map[topology.Mode]bool)
 	for _, t := range b.Plan.Targets {
 		modes[t.Runtime.EffectiveMode()] = true
 	}
-	if modes[PlanModeStandard] {
-		return PlanModeStandard
+	if modes[topology.PlanModeStandard] {
+		return topology.PlanModeStandard
 	}
 	if len(modes) == 1 {
 		for m := range modes {

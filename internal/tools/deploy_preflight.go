@@ -7,6 +7,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -103,7 +104,7 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 
 // resolveSetupEntry finds the zerops.yaml setup entry using priority:
 // explicit setup param → role-based name → hostname fallback.
-func resolveSetupEntry(doc *ops.ZeropsYmlDoc, setup string, role workflow.Mode, hostname string) *ops.ZeropsYmlEntry {
+func resolveSetupEntry(doc *ops.ZeropsYmlDoc, setup string, role topology.Mode, hostname string) *ops.ZeropsYmlEntry {
 	if setup != "" {
 		return doc.FindEntry(setup)
 	}
@@ -112,7 +113,7 @@ func resolveSetupEntry(doc *ops.ZeropsYmlDoc, setup string, role workflow.Mode, 
 		return entry
 	}
 	// Stage and simple roles map to "prod" setup.
-	if role == workflow.DeployRoleStage || role == workflow.DeployRoleSimple {
+	if role == topology.DeployRoleStage || role == topology.DeployRoleSimple {
 		if entry := doc.FindEntry(workflow.RecipeSetupProd); entry != nil {
 			return entry
 		}

@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // GenerateEnvImportYAML returns the import.yaml for a specific environment tier.
@@ -41,7 +43,7 @@ func GenerateEnvImportYAML(plan *RecipePlan, envIndex int) string {
 		// no worker process started. Separate-codebase workers (empty
 		// SharesCodebaseWith, which is the DEFAULT) get their own dev+stage
 		// regardless of whether the base runtime happens to match.
-		if IsRuntimeType(target.Type) && envIndex <= 1 {
+		if topology.IsRuntimeType(target.Type) && envIndex <= 1 {
 			if SharesAppCodebase(target) {
 				// Shared codebase: stage only (host target's dev runs both processes).
 				writeStageService(&b, plan, target, envComments.Service)
@@ -207,14 +209,14 @@ func writeSingleService(b *strings.Builder, plan *RecipePlan, target RecipeTarge
 	fmt.Fprintf(b, "    type: %s\n", target.Type)
 
 	// Priority: managed services start first (10), API services before frontends (5).
-	if !IsRuntimeType(target.Type) {
+	if !topology.IsRuntimeType(target.Type) {
 		b.WriteString("    priority: 10\n")
 	} else if target.Role == RecipeRoleAPI {
 		b.WriteString("    priority: 5\n")
 	}
 
 	// Mode: only managed services that support it.
-	if ServiceSupportsMode(target.Type) {
+	if topology.ServiceSupportsMode(target.Type) {
 		if envIndex == 5 {
 			b.WriteString("    mode: HA\n")
 		} else {
@@ -223,35 +225,35 @@ func writeSingleService(b *strings.Builder, plan *RecipePlan, target RecipeTarge
 	}
 
 	// Recipe runtime services: zeropsSetup + buildFromGit.
-	if IsRuntimeType(target.Type) {
+	if topology.IsRuntimeType(target.Type) {
 		fmt.Fprintf(b, "    zeropsSetup: %s\n", recipeSetupName(target, false))
 		writeRuntimeBuildFromGit(b, plan, target)
 	}
 
 	// Utility services: zeropsSetup + buildFromGit from the utility repo.
-	if IsUtilityType(target.Type) {
+	if topology.IsUtilityType(target.Type) {
 		b.WriteString("    zeropsSetup: app\n")
 		fmt.Fprintf(b, "    buildFromGit: %s\n", utilityBuildFromGitURL(target.Type))
 	}
 
 	// Subdomain: runtime apps (non-workers) + utility services with web UI.
-	if (IsRuntimeType(target.Type) && !target.IsWorker) || IsUtilityType(target.Type) {
+	if (topology.IsRuntimeType(target.Type) && !target.IsWorker) || topology.IsUtilityType(target.Type) {
 		b.WriteString("    enableSubdomainAccess: true\n")
 	}
 
 	// minContainers: runtime services in production tiers.
-	if IsRuntimeType(target.Type) && envIndex >= 4 {
+	if topology.IsRuntimeType(target.Type) && envIndex >= 4 {
 		b.WriteString("    minContainers: 2\n")
 	}
 
 	// Object storage: size and policy instead of autoscaling.
-	if IsObjectStorageType(target.Type) {
+	if topology.IsObjectStorageType(target.Type) {
 		b.WriteString("    objectStorageSize: 1\n")
 		b.WriteString("    objectStoragePolicy: private\n")
 	}
 
 	// Vertical autoscaling: only services that support it.
-	if ServiceSupportsAutoscaling(target.Type) {
+	if topology.ServiceSupportsAutoscaling(target.Type) {
 		writeAutoscaling(b, target, envIndex)
 	}
 
@@ -325,8 +327,8 @@ func writeDevAutoscaling(b *strings.Builder, target RecipeTarget) {
 // Caller must ensure the service type supports autoscaling (callers check
 // ServiceSupportsAutoscaling before invoking).
 func writeAutoscaling(b *strings.Builder, target RecipeTarget, envIndex int) {
-	isRT := IsRuntimeType(target.Type)   // genuine runtime (excludes utility)
-	isUtil := IsUtilityType(target.Type) // mailpit and similar
+	isRT := topology.IsRuntimeType(target.Type)   // genuine runtime (excludes utility)
+	isUtil := topology.IsUtilityType(target.Type) // mailpit and similar
 
 	b.WriteString("    verticalAutoscaling:\n")
 

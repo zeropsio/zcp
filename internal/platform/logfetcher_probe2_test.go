@@ -16,10 +16,10 @@ import (
 )
 
 // TestProbe_BuildLogsAndCursor:
-//  - Finds the latest build event for the target service and queries the build
-//    service-stack log to confirm stale-warning persistence shape.
-//  - Tests whether `id` works as an `idFrom`/`from`/`afterId` cursor.
-//  - Confirms whether `search` actually filters (baseline vs. impossible string).
+//   - Finds the latest build event for the target service and queries the build
+//     service-stack log to confirm stale-warning persistence shape.
+//   - Tests whether `id` works as an `idFrom`/`from`/`afterId` cursor.
+//   - Confirms whether `search` actually filters (baseline vs. impossible string).
 func TestProbe_BuildLogsAndCursor(t *testing.T) {
 	token := os.Getenv("ZCP_API_KEY")
 	if token == "" {

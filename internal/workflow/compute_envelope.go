@@ -10,6 +10,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // StateEnvelope.Bootstrap is populated by bootstrap_guide_assembly.go's
@@ -123,7 +124,7 @@ func deriveIdleScenario(phase Phase, services []ServiceSnapshot) IdleScenario {
 	}
 	var bootstrapped, adoptable, resumable int
 	for _, svc := range services {
-		if svc.RuntimeClass == RuntimeManaged {
+		if svc.RuntimeClass == topology.RuntimeManaged {
 			continue
 		}
 		if svc.Resumable {
@@ -200,12 +201,12 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta, ws *WorkSess
 		snap.Mode = resolveEnvelopeMode(meta, svc.Name)
 		snap.Strategy = meta.DeployStrategy
 		if snap.Strategy == "" {
-			snap.Strategy = StrategyUnset
+			snap.Strategy = topology.StrategyUnset
 		}
-		if snap.Strategy == StrategyPushGit {
+		if snap.Strategy == topology.StrategyPushGit {
 			snap.Trigger = meta.PushGitTrigger
 			if snap.Trigger == "" {
-				snap.Trigger = TriggerUnset
+				snap.Trigger = topology.TriggerUnset
 			}
 		}
 		if meta.StageHostname != "" && svc.Name == meta.Hostname {
@@ -269,21 +270,21 @@ func DeriveDeployed(hostname, status string, meta *ServiceMeta, ws *WorkSession)
 // envelope models managed services as a first-class class (not "skip all
 // checks") and collapses worker/dynamic into one class because no atom
 // needs the port distinction.
-func classifyEnvelopeRuntime(typeVersion string) RuntimeClass {
+func classifyEnvelopeRuntime(typeVersion string) topology.RuntimeClass {
 	if typeVersion == "" {
-		return RuntimeUnknown
+		return topology.RuntimeUnknown
 	}
-	if IsManagedService(typeVersion) {
-		return RuntimeManaged
+	if topology.IsManagedService(typeVersion) {
+		return topology.RuntimeManaged
 	}
 	lower := strings.ToLower(typeVersion)
 	if strings.HasPrefix(lower, "php-apache") || strings.HasPrefix(lower, "php-nginx") {
-		return RuntimeImplicitWeb
+		return topology.RuntimeImplicitWeb
 	}
 	if strings.HasPrefix(lower, "static") || strings.HasPrefix(lower, "nginx") {
-		return RuntimeStatic
+		return topology.RuntimeStatic
 	}
-	return RuntimeDynamic
+	return topology.RuntimeDynamic
 }
 
 // resolveEnvelopeMode maps a service's (meta, hostname) pair to the envelope
@@ -292,24 +293,24 @@ func classifyEnvelopeRuntime(typeVersion string) RuntimeClass {
 // single ServiceMeta record. Dev-only services get ModeDev; simple stays
 // ModeSimple. meta.RoleFor already encodes the mode+environment+hostname
 // lookup — we reuse it here instead of duplicating the rules.
-func resolveEnvelopeMode(meta *ServiceMeta, hostname string) Mode {
+func resolveEnvelopeMode(meta *ServiceMeta, hostname string) topology.Mode {
 	if meta == nil {
 		return ""
 	}
 	switch meta.RoleFor(hostname) {
-	case DeployRoleStage:
-		return ModeStage
-	case DeployRoleSimple:
-		return ModeSimple
-	case DeployRoleDev, PlanModeStandard, PlanModeLocalStage, PlanModeLocalOnly:
+	case topology.DeployRoleStage:
+		return topology.ModeStage
+	case topology.DeployRoleSimple:
+		return topology.ModeSimple
+	case topology.DeployRoleDev, topology.PlanModeStandard, topology.PlanModeLocalStage, topology.PlanModeLocalOnly:
 		// PrimaryRole returns Dev for both PlanModeDev (standalone dev) and
 		// PlanModeStandard's dev half. Split them here so standard-only atoms
 		// don't fire for dev-only services and vice versa. Local topologies
 		// carry their own Mode values that project unchanged.
-		if meta.Mode == PlanModeStandard {
-			return ModeStandard
+		if meta.Mode == topology.PlanModeStandard {
+			return topology.ModeStandard
 		}
-		return ModeDev
+		return topology.ModeDev
 	}
 	return ""
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/topology"
 	"gopkg.in/yaml.v3"
 )
 
@@ -178,7 +179,7 @@ func emittedYAMLValues(
 	out := map[string]bool{}
 	for _, shape := range shapes {
 		for _, svc := range shape.Services {
-			if runtimeOnly && !IsRuntimeType(svc.Type) {
+			if runtimeOnly && !topology.IsRuntimeType(svc.Type) {
 				continue
 			}
 			if v, ok := get(svc); ok {
@@ -322,7 +323,7 @@ func TestEnvOperationalConcerns_Env2HostnamesDerivedFromPlan(t *testing.T) {
 			t.Parallel()
 			prose := envOperationalConcerns(tt.plan, 2)
 			for _, target := range tt.plan.Targets {
-				if IsRuntimeType(target.Type) {
+				if topology.IsRuntimeType(target.Type) {
 					continue
 				}
 				wantToken := "`" + target.Hostname + "`"

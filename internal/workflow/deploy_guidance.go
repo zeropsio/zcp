@@ -3,13 +3,15 @@ package workflow
 import (
 	"fmt"
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // strategyDescriptions provides one-line descriptions for strategy alternatives.
 var strategyDescriptions = map[string]string{
-	StrategyPushDev: "SSH self-deploy from dev container",
-	StrategyPushGit: "push to git remote (optional CI/CD)",
-	StrategyManual:  "you manage deployments yourself",
+	topology.StrategyPushDev: "SSH self-deploy from dev container",
+	topology.StrategyPushGit: "push to git remote (optional CI/CD)",
+	topology.StrategyManual:  "you manage deployments yourself",
 }
 
 func writeStrategyNote(sb *strings.Builder, current string) {

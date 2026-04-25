@@ -3,6 +3,8 @@ package workflow
 import (
 	"sort"
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // Contract kind slugs — the short identifiers used in EnvVarsByKind and
@@ -138,9 +140,9 @@ func BuildSymbolContract(plan *RecipePlan) SymbolContract {
 
 	for _, t := range plan.Targets {
 		switch {
-		case IsRuntimeType(t.Type):
+		case topology.IsRuntimeType(t.Type):
 			contract.Hostnames = appendRuntimeHostname(contract.Hostnames, t)
-		case IsManagedService(t.Type) || IsUtilityType(t.Type):
+		case topology.IsManagedService(t.Type) || topology.IsUtilityType(t.Type):
 			if kind := contractKindForType(t.Type); kind != "" {
 				if _, exists := contract.EnvVarsByKind[kind]; !exists {
 					contract.EnvVarsByKind[kind] = envVarsForKind(kind, t.Hostname)

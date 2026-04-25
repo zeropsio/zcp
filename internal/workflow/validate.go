@@ -6,6 +6,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // HA mode constants.
@@ -24,8 +25,8 @@ const (
 // validBootstrapModes is the set of valid BootstrapMode values (including empty for default).
 //
 //nolint:gochecknoglobals // enum-set table; value-only, not mutated.
-var validBootstrapModes = map[Mode]bool{
-	"": true, PlanModeStandard: true, PlanModeDev: true, PlanModeSimple: true,
+var validBootstrapModes = map[topology.Mode]bool{
+	"": true, topology.PlanModeStandard: true, topology.PlanModeDev: true, topology.PlanModeSimple: true,
 }
 
 // BootstrapTarget represents one runtime service and its dependencies in the bootstrap plan.
@@ -36,17 +37,17 @@ type BootstrapTarget struct {
 
 // RuntimeTarget describes a runtime service to bootstrap.
 type RuntimeTarget struct {
-	DevHostname   string `json:"devHostname"`
-	Type          string `json:"type"`
-	IsExisting    bool   `json:"isExisting,omitempty"`
-	BootstrapMode Mode   `json:"bootstrapMode,omitempty"` // standard, dev, or simple
-	ExplicitStage string `json:"stageHostname,omitempty"` // explicit stage hostname override for standard mode
+	DevHostname   string        `json:"devHostname"`
+	Type          string        `json:"type"`
+	IsExisting    bool          `json:"isExisting,omitempty"`
+	BootstrapMode topology.Mode `json:"bootstrapMode,omitempty"` // standard, dev, or simple
+	ExplicitStage string        `json:"stageHostname,omitempty"` // explicit stage hostname override for standard mode
 }
 
 // EffectiveMode returns the bootstrap mode, defaulting to standard if empty.
-func (r RuntimeTarget) EffectiveMode() Mode {
+func (r RuntimeTarget) EffectiveMode() topology.Mode {
 	if r.BootstrapMode == "" {
-		return PlanModeStandard
+		return topology.PlanModeStandard
 	}
 	return r.BootstrapMode
 }
@@ -58,7 +59,7 @@ func (r RuntimeTarget) EffectiveMode() Mode {
 // standard mode was requested without ExplicitStage; the latter is a
 // caller bug — ValidateBootstrapTargets catches it with a hard error.
 func (r RuntimeTarget) StageHostname() string {
-	if r.EffectiveMode() != PlanModeStandard {
+	if r.EffectiveMode() != topology.PlanModeStandard {
 		return ""
 	}
 	return r.ExplicitStage
@@ -141,7 +142,7 @@ func isManagedTypeWithLive(serviceType string, liveManaged map[string]bool) bool
 	if len(liveManaged) > 0 {
 		return liveManaged[base]
 	}
-	return IsManagedService(serviceType)
+	return topology.IsManagedService(serviceType)
 }
 
 // ValidateBootstrapTargets validates a list of bootstrap targets against constraints.
@@ -204,7 +205,7 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 		// Hostnames are arbitrary strings; ZCP refuses to guess a stage
 		// pair from dev-hostname structure.
 		var stageHostname string
-		if rt.EffectiveMode() == PlanModeStandard {
+		if rt.EffectiveMode() == topology.PlanModeStandard {
 			stageHostname = rt.StageHostname()
 			if stageHostname == "" {
 				errs = append(errs, fmt.Sprintf("target %q: standard mode requires explicit stageHostname", rt.DevHostname))

@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/workflow"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // DiscoverResult contains project and service information.
@@ -127,7 +127,7 @@ func buildSummaryServiceInfo(svc *platform.ServiceStack) ServiceInfo {
 	// (see ops/discover.go contract in CLAUDE.md). Object-storage is
 	// always internally replicated and exposes no mode semantic.
 	mode := ""
-	if workflow.ServiceSupportsMode(typeVersion) {
+	if topology.ServiceSupportsMode(typeVersion) {
 		mode = svc.Mode
 	}
 	return ServiceInfo{
@@ -136,7 +136,7 @@ func buildSummaryServiceInfo(svc *platform.ServiceStack) ServiceInfo {
 		Type:             typeVersion,
 		Status:           svc.Status,
 		Mode:             mode,
-		IsInfrastructure: workflow.IsManagedService(typeVersion),
+		IsInfrastructure: topology.IsManagedService(typeVersion),
 		SubdomainEnabled: svc.SubdomainAccess,
 	}
 }

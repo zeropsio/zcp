@@ -1,6 +1,10 @@
 package workflow
 
-import "time"
+import (
+	"time"
+
+	"github.com/zeropsio/zcp/internal/topology"
+)
 
 // StateEnvelope captures all state needed to (a) synthesize knowledge,
 // (b) produce the next-action plan. It is computed once per tool response
@@ -78,68 +82,18 @@ type ProjectSummary struct {
 
 // ServiceSnapshot is one service's point-in-time state inside the envelope.
 type ServiceSnapshot struct {
-	Hostname      string         `json:"hostname"`
-	TypeVersion   string         `json:"typeVersion"`
-	RuntimeClass  RuntimeClass   `json:"runtimeClass"`
-	Status        string         `json:"status"`
-	Bootstrapped  bool           `json:"bootstrapped"`
-	Deployed      bool           `json:"deployed,omitempty"`
-	Resumable     bool           `json:"resumable,omitempty"`
-	Mode          Mode           `json:"mode,omitempty"`
-	Strategy      DeployStrategy `json:"strategy,omitempty"`
-	Trigger       PushGitTrigger `json:"trigger,omitempty"` // set only when Strategy==push-git
-	StageHostname string         `json:"stageHostname,omitempty"`
+	Hostname      string                  `json:"hostname"`
+	TypeVersion   string                  `json:"typeVersion"`
+	RuntimeClass  topology.RuntimeClass   `json:"runtimeClass"`
+	Status        string                  `json:"status"`
+	Bootstrapped  bool                    `json:"bootstrapped"`
+	Deployed      bool                    `json:"deployed,omitempty"`
+	Resumable     bool                    `json:"resumable,omitempty"`
+	Mode          topology.Mode           `json:"mode,omitempty"`
+	Strategy      topology.DeployStrategy `json:"strategy,omitempty"`
+	Trigger       topology.PushGitTrigger `json:"trigger,omitempty"` // set only when Strategy==push-git
+	StageHostname string                  `json:"stageHostname,omitempty"`
 }
-
-// RuntimeClass partitions services by how deploy + start behaviour differ.
-type RuntimeClass string
-
-const (
-	RuntimeDynamic     RuntimeClass = "dynamic"
-	RuntimeStatic      RuntimeClass = "static"
-	RuntimeImplicitWeb RuntimeClass = "implicit-webserver"
-	RuntimeManaged     RuntimeClass = "managed"
-	RuntimeUnknown     RuntimeClass = "unknown"
-)
-
-// Mode is the bootstrapped service's deploy mode in envelope terms.
-// Distinct from the untyped-string meta.Mode ("dev", "standard", "simple"):
-// envelope splits the dev half of a standard pair (ModeStandard) from its
-// stage half (ModeStage) so atoms can target one role without matching the
-// other. Dev-only services get ModeDev; simple-mode single services get
-// ModeSimple.
-type Mode string
-
-const (
-	ModeDev      Mode = "dev"
-	ModeStandard Mode = "standard"
-	ModeStage    Mode = "stage"
-	ModeSimple   Mode = "simple"
-)
-
-// DeployStrategy is the developer-chosen deploy mechanism. The string
-// values live in service_meta.go so existing untyped-string callers and
-// the envelope model share one vocabulary. Use the named type on
-// typed-surface code (envelope, plan) and plain strings on persistence.
-type DeployStrategy string
-
-// StrategyUnset is the sentinel for "no strategy chosen yet" — surfaced
-// to atoms as the `strategies: [unset]` axis value.
-const StrategyUnset DeployStrategy = "unset"
-
-// PushGitTrigger is the downstream trigger chosen for push-git services.
-// Valid only when DeployStrategy == "push-git". TriggerUnset is the
-// envelope sentinel ("unset") that atoms filter on via `triggers: [unset]`
-// — a push-git meta whose PushGitTrigger field is still empty string on
-// disk surfaces as this value in the snapshot so intro atoms can match.
-// Webhook/Actions are the two user-selectable values.
-type PushGitTrigger string
-
-const (
-	TriggerUnset   PushGitTrigger = "unset"
-	TriggerWebhook PushGitTrigger = "webhook"
-	TriggerActions PushGitTrigger = "actions"
-)
 
 // WorkSessionSummary mirrors the persistent WorkSession at envelope build time.
 type WorkSessionSummary struct {

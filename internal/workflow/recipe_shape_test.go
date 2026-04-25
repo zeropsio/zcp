@@ -3,6 +3,8 @@ package workflow
 import (
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 func TestInferRecipeShape(t *testing.T) {
@@ -10,7 +12,7 @@ func TestInferRecipeShape(t *testing.T) {
 	tests := []struct {
 		name         string
 		yaml         string
-		wantMode     Mode
+		wantMode     topology.Mode
 		wantRuntimes int
 	}{
 		{

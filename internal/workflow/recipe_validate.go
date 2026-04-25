@@ -7,6 +7,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/schema"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // slugPattern validates recipe slug format:
@@ -163,7 +164,7 @@ func validateTargets(targets []RecipeTarget, schemas *schema.Schemas) []string {
 		// comments render correctly. If a new managed type is added to
 		// managedServicePrefixes without a matching entry in serviceTypeKind,
 		// this fails at plan submission instead of at comment-generation.
-		if (IsManagedService(t.Type) || IsUtilityType(t.Type)) && serviceTypeKind(t.Type) == "" {
+		if (topology.IsManagedService(t.Type) || topology.IsUtilityType(t.Type)) && serviceTypeKind(t.Type) == "" {
 			errs = append(errs, fmt.Sprintf("target[%d]: service type %q has no serviceTypeKind — add it to recipe_service_types.go (this is a tool bug, not an agent error)", i, t.Type))
 		}
 		// Latest-version preference for managed services. The agent must
@@ -187,7 +188,7 @@ func validateTargets(targets []RecipeTarget, schemas *schema.Schemas) []string {
 // already an alias, or when the catalog reports no concrete versions
 // for this base — in any of those cases there is nothing to enforce.
 func validateManagedVersionLatest(i int, t RecipeTarget, serviceTypes []string) []string {
-	if serviceTypes == nil || !IsManagedService(t.Type) {
+	if serviceTypes == nil || !topology.IsManagedService(t.Type) {
 		return nil
 	}
 	base, ver, hasV := strings.Cut(t.Type, "@")
@@ -272,7 +273,7 @@ func validateWorkerCodebaseRefs(targets []RecipeTarget) []string {
 		}
 
 		// Rule 4: host must be a runtime type.
-		if !IsRuntimeType(host.Type) {
+		if !topology.IsRuntimeType(host.Type) {
 			errs = append(errs, fmt.Sprintf(
 				"target[%d] %q: sharesCodebaseWith points at non-runtime target %q (type %q) — only runtime targets host codebases",
 				i, t.Hostname, host.Hostname, host.Type))
@@ -282,7 +283,7 @@ func validateWorkerCodebaseRefs(targets []RecipeTarget) []string {
 		// Rule 5: worker's own type must be a runtime. Catches the "worker
 		// typed as a managed service" mistake with a precise error before
 		// Rule 6 produces a misleading base-runtime diff.
-		if !IsRuntimeType(t.Type) {
+		if !topology.IsRuntimeType(t.Type) {
 			errs = append(errs, fmt.Sprintf(
 				"target[%d] %q: worker type %q is not a runtime type — workers must use runtime types (nodejs, php-nginx, python, ...)",
 				i, t.Hostname, t.Type))
@@ -337,7 +338,7 @@ func validateShowcaseServices(targets []RecipeTarget) []string {
 
 	var errs []string
 	for _, t := range targets {
-		if IsRuntimeType(t.Type) {
+		if topology.IsRuntimeType(t.Type) {
 			if t.IsWorker {
 				hasWorker = true
 			} else {

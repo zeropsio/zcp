@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // Response is the data passed to RenderStatus. It carries the envelope plus
@@ -167,11 +169,11 @@ func renderServices(b *strings.Builder, env StateEnvelope) {
 func renderServiceLine(svc ServiceSnapshot) string {
 	parts := []string{fmt.Sprintf("%s (%s)", svc.Hostname, svc.TypeVersion)}
 	switch svc.RuntimeClass {
-	case RuntimeManaged:
+	case topology.RuntimeManaged:
 		parts = append(parts, "managed")
-	case RuntimeUnknown:
+	case topology.RuntimeUnknown:
 		parts = append(parts, "unknown runtime")
-	case RuntimeDynamic, RuntimeStatic, RuntimeImplicitWeb:
+	case topology.RuntimeDynamic, topology.RuntimeStatic, topology.RuntimeImplicitWeb:
 		if svc.Bootstrapped {
 			parts = append(parts, renderBootstrappedFields(svc))
 		} else {
@@ -186,7 +188,7 @@ func renderServiceLine(svc ServiceSnapshot) string {
 
 func renderBootstrappedFields(svc ServiceSnapshot) string {
 	fields := []string{"bootstrapped=true", "mode=" + string(svc.Mode)}
-	if svc.Strategy == "" || svc.Strategy == StrategyUnset {
+	if svc.Strategy == "" || svc.Strategy == topology.StrategyUnset {
 		fields = append(fields, "strategy=unset")
 	} else {
 		fields = append(fields, "strategy="+string(svc.Strategy))

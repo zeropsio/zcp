@@ -3,6 +3,8 @@ package workflow
 import (
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 func TestParseAtom_FrontmatterParsing(t *testing.T) {
@@ -13,8 +15,8 @@ func TestParseAtom_FrontmatterParsing(t *testing.T) {
 		content     string
 		wantID      string
 		wantPhases  []Phase
-		wantRunts   []RuntimeClass
-		wantModes   []Mode
+		wantRunts   []topology.RuntimeClass
+		wantModes   []topology.Mode
 		wantEnv     []Environment
 		wantPrio    int
 		wantBodyHas string
@@ -46,9 +48,9 @@ title: "Dynamic runtime start"
 SSH into the service and start the process.`,
 			wantID:      "full",
 			wantPhases:  []Phase{PhaseDevelopActive, PhaseDevelopClosed},
-			wantModes:   []Mode{ModeDev},
+			wantModes:   []topology.Mode{topology.ModeDev},
 			wantEnv:     []Environment{EnvContainer, EnvLocal},
-			wantRunts:   []RuntimeClass{RuntimeDynamic},
+			wantRunts:   []topology.RuntimeClass{topology.RuntimeDynamic},
 			wantPrio:    2,
 			wantBodyHas: "SSH into the service",
 		},
@@ -196,7 +198,7 @@ func equalPhases(a, b []Phase) bool {
 	return true
 }
 
-func equalModes(a, b []Mode) bool {
+func equalModes(a, b []topology.Mode) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -220,7 +222,7 @@ func equalEnvs(a, b []Environment) bool {
 	return true
 }
 
-func equalRuntimes(a, b []RuntimeClass) bool {
+func equalRuntimes(a, b []topology.RuntimeClass) bool {
 	if len(a) != len(b) {
 		return false
 	}

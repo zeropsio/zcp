@@ -3,6 +3,8 @@ package workflow
 import (
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // TestModeExpansionAtom_FiresOnlyForSingleSlotModes pins the axis filter on
@@ -25,16 +27,16 @@ func TestModeExpansionAtom_FiresOnlyForSingleSlotModes(t *testing.T) {
 
 	cases := []struct {
 		name     string
-		mode     Mode
+		mode     topology.Mode
 		deployed bool
 		wantFire bool
 	}{
-		{"dev_deployed_fires", ModeDev, true, true},
-		{"simple_deployed_fires", ModeSimple, true, true},
-		{"dev_never_deployed_suppressed", ModeDev, false, false},
-		{"simple_never_deployed_suppressed", ModeSimple, false, false},
-		{"standard_suppressed", ModeStandard, true, false},
-		{"stage_suppressed", ModeStage, true, false},
+		{"dev_deployed_fires", topology.ModeDev, true, true},
+		{"simple_deployed_fires", topology.ModeSimple, true, true},
+		{"dev_never_deployed_suppressed", topology.ModeDev, false, false},
+		{"simple_never_deployed_suppressed", topology.ModeSimple, false, false},
+		{"standard_suppressed", topology.ModeStandard, true, false},
+		{"stage_suppressed", topology.ModeStage, true, false},
 	}
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
@@ -44,7 +46,7 @@ func TestModeExpansionAtom_FiresOnlyForSingleSlotModes(t *testing.T) {
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: tt.mode,
+					RuntimeClass: topology.RuntimeDynamic, Mode: tt.mode,
 					Strategy: "push-dev", Bootstrapped: true, Deployed: tt.deployed,
 				}},
 			}

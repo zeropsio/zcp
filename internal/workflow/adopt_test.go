@@ -3,6 +3,8 @@ package workflow
 import (
 	"sort"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // InferServicePairing does no dev/stage pairing. Every runtime candidate
@@ -115,7 +117,7 @@ func TestInferServicePairing(t *testing.T) {
 			gotHosts := make([]string, 0, len(targets))
 			for _, target := range targets {
 				gotHosts = append(gotHosts, target.Runtime.DevHostname)
-				if target.Runtime.EffectiveMode() != PlanModeDev {
+				if target.Runtime.EffectiveMode() != topology.PlanModeDev {
 					t.Errorf("%s: want PlanModeDev, got %s",
 						target.Runtime.DevHostname, target.Runtime.EffectiveMode())
 				}

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // SubStepValidationResult holds the outcome of a sub-step validator.
@@ -171,7 +173,7 @@ func validateZeropsYAML(_ context.Context, plan *RecipePlan, _ *RecipeState, _ s
 
 	// Check each codebase-owning target's zerops.yaml.
 	for _, t := range plan.Targets {
-		if !IsRuntimeType(t.Type) || (t.IsWorker && t.SharesCodebaseWith != "") {
+		if !topology.IsRuntimeType(t.Type) || (t.IsWorker && t.SharesCodebaseWith != "") {
 			continue // managed services and shared-codebase workers don't own a zerops.yaml
 		}
 

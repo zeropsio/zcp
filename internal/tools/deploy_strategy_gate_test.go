@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -66,7 +67,7 @@ func TestCheckLocalOnlyGate(t *testing.T) {
 		{
 			name: "local-only + empty strategy (default push-dev) → reject",
 			meta: &workflow.ServiceMeta{
-				Hostname: "myproject", Mode: workflow.PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
+				Hostname: "myproject", Mode: topology.PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
 			},
 			strategy: "",
 			wantErr:  true,
@@ -74,7 +75,7 @@ func TestCheckLocalOnlyGate(t *testing.T) {
 		{
 			name: "local-only + explicit push-dev → reject",
 			meta: &workflow.ServiceMeta{
-				Hostname: "myproject", Mode: workflow.PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
+				Hostname: "myproject", Mode: topology.PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
 			},
 			strategy: "push-dev",
 			wantErr:  true,
@@ -82,7 +83,7 @@ func TestCheckLocalOnlyGate(t *testing.T) {
 		{
 			name: "local-only + git-push → accept (git doesn't need a stage)",
 			meta: &workflow.ServiceMeta{
-				Hostname: "myproject", Mode: workflow.PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
+				Hostname: "myproject", Mode: topology.PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
 			},
 			strategy: "git-push",
 			wantErr:  false,
@@ -90,7 +91,7 @@ func TestCheckLocalOnlyGate(t *testing.T) {
 		{
 			name: "local-stage + push-dev → accept",
 			meta: &workflow.ServiceMeta{
-				Hostname: "myproject", StageHostname: "apistage", Mode: workflow.PlanModeLocalStage, BootstrappedAt: "2026-04-01",
+				Hostname: "myproject", StageHostname: "apistage", Mode: topology.PlanModeLocalStage, BootstrappedAt: "2026-04-01",
 			},
 			strategy: "",
 			wantErr:  false,
@@ -98,7 +99,7 @@ func TestCheckLocalOnlyGate(t *testing.T) {
 		{
 			name: "container dev + push-dev → accept",
 			meta: &workflow.ServiceMeta{
-				Hostname: "appdev", Mode: workflow.PlanModeDev, BootstrappedAt: "2026-04-01",
+				Hostname: "appdev", Mode: topology.PlanModeDev, BootstrappedAt: "2026-04-01",
 			},
 			strategy: "",
 			wantErr:  false,

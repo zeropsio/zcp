@@ -17,6 +17,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -250,7 +251,7 @@ func TestServer_New_LocalAutoAdopt(t *testing.T) {
 		rt          runtime.Info
 		services    []platform.ServiceStack
 		wantMeta    bool
-		wantMode    workflow.Mode
+		wantMode    topology.Mode
 		wantStage   string
 		wantManaged []string
 	}{
@@ -265,7 +266,7 @@ func TestServer_New_LocalAutoAdopt(t *testing.T) {
 				},
 			}},
 			wantMeta:  true,
-			wantMode:  workflow.PlanModeLocalStage,
+			wantMode:  topology.PlanModeLocalStage,
 			wantStage: "apistage",
 		},
 		{
@@ -273,7 +274,7 @@ func TestServer_New_LocalAutoAdopt(t *testing.T) {
 			rt:       runtime.Info{},
 			services: nil,
 			wantMeta: true,
-			wantMode: workflow.PlanModeLocalOnly,
+			wantMode: topology.PlanModeLocalOnly,
 		},
 		{
 			name: "local + multiple runtimes → local-only (no auto-link)",
@@ -295,7 +296,7 @@ func TestServer_New_LocalAutoAdopt(t *testing.T) {
 				},
 			},
 			wantMeta: true,
-			wantMode: workflow.PlanModeLocalOnly,
+			wantMode: topology.PlanModeLocalOnly,
 		},
 		{
 			name: "container env → no adoption",

@@ -3,6 +3,8 @@ package workflow
 import (
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 func TestRoute_EmptyProject(t *testing.T) {
@@ -55,7 +57,7 @@ func TestRoute_AllBootstrapped(t *testing.T) {
 			name: "push-git strategy",
 			input: RouterInput{
 				ServiceMetas: []*ServiceMeta{{
-					Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyPushGit,
+					Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: topology.StrategyPushGit,
 				}},
 				LiveServices: []string{"appdev"},
 			},
@@ -65,7 +67,7 @@ func TestRoute_AllBootstrapped(t *testing.T) {
 			name: "push-dev strategy",
 			input: RouterInput{
 				ServiceMetas: []*ServiceMeta{{
-					Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyPushDev,
+					Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: topology.StrategyPushDev,
 				}},
 				LiveServices: []string{"appdev"},
 			},
@@ -75,7 +77,7 @@ func TestRoute_AllBootstrapped(t *testing.T) {
 			name: "manual strategy — develop still offered",
 			input: RouterInput{
 				ServiceMetas: []*ServiceMeta{{
-					Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyManual,
+					Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: topology.StrategyManual,
 				}},
 				LiveServices: []string{"appdev"},
 			},
@@ -124,7 +126,7 @@ func TestRoute_UnmanagedRuntimes(t *testing.T) {
 			name: "mix bootstrapped and unmanaged — adoption first",
 			input: RouterInput{
 				ServiceMetas: []*ServiceMeta{{
-					Hostname: "apidev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyPushDev,
+					Hostname: "apidev", BootstrappedAt: "2026-01-01", DeployStrategy: topology.StrategyPushDev,
 				}},
 				LiveServices:      []string{"apidev", "appdev"},
 				UnmanagedRuntimes: []string{"appdev"},
@@ -156,7 +158,7 @@ func TestRoute_UnmanagedWithStrategy(t *testing.T) {
 	// adoption is p1 but develop should also appear.
 	input := RouterInput{
 		ServiceMetas: []*ServiceMeta{{
-			Hostname: "apidev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyPushDev,
+			Hostname: "apidev", BootstrappedAt: "2026-01-01", DeployStrategy: topology.StrategyPushDev,
 		}},
 		LiveServices:      []string{"apidev", "appdev"},
 		UnmanagedRuntimes: []string{"appdev"},
@@ -223,7 +225,7 @@ func TestRoute_PushGit_DevelopHintMentionsGitPush(t *testing.T) {
 	t.Parallel()
 	input := RouterInput{
 		ServiceMetas: []*ServiceMeta{{
-			Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyPushGit,
+			Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: topology.StrategyPushGit,
 		}},
 		LiveServices: []string{"appdev"},
 	}
@@ -251,7 +253,7 @@ func TestRoute_PushDev_DevelopHintNoGitMention(t *testing.T) {
 	t.Parallel()
 	input := RouterInput{
 		ServiceMetas: []*ServiceMeta{{
-			Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyPushDev,
+			Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: topology.StrategyPushDev,
 		}},
 		LiveServices: []string{"appdev"},
 	}
@@ -275,8 +277,8 @@ func TestRoute_StaleMetaFiltering(t *testing.T) {
 	t.Parallel()
 	input := RouterInput{
 		ServiceMetas: []*ServiceMeta{
-			{Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyPushGit},
-			{Hostname: "staleservice", BootstrappedAt: "2026-01-01", DeployStrategy: StrategyPushDev},
+			{Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: topology.StrategyPushGit},
+			{Hostname: "staleservice", BootstrappedAt: "2026-01-01", DeployStrategy: topology.StrategyPushDev},
 		},
 		LiveServices: []string{"appdev"},
 	}
@@ -311,7 +313,7 @@ func TestRoute_IncompleteMetas(t *testing.T) {
 			name: "incomplete meta suggests bootstrap",
 			input: RouterInput{
 				ServiceMetas: []*ServiceMeta{
-					{Hostname: "appdev", Mode: PlanModeDev},
+					{Hostname: "appdev", Mode: topology.PlanModeDev},
 				},
 				LiveServices: []string{"appdev"},
 			},
@@ -321,7 +323,7 @@ func TestRoute_IncompleteMetas(t *testing.T) {
 			name: "complete meta routes to develop",
 			input: RouterInput{
 				ServiceMetas: []*ServiceMeta{
-					{Hostname: "appdev", BootstrappedAt: "2026-03-04", DeployStrategy: StrategyPushDev},
+					{Hostname: "appdev", BootstrappedAt: "2026-03-04", DeployStrategy: topology.StrategyPushDev},
 				},
 				LiveServices: []string{"appdev"},
 			},

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // Package workflow uses global state (os.Getpid, file-based work sessions),
@@ -210,7 +212,7 @@ func TestRecordDeployAttempt_StampsFirstDeployedAt(t *testing.T) {
 	dir := t.TempDir()
 	meta := &ServiceMeta{
 		Hostname:         "appdev",
-		Mode:             PlanModeDev,
+		Mode:             topology.PlanModeDev,
 		BootstrappedAt:   "2026-04-18T10:00:00Z",
 		BootstrapSession: "sess-1",
 	}
@@ -270,7 +272,7 @@ func TestRecordDeployAttempt_StampsViaStageHostname(t *testing.T) {
 	meta := &ServiceMeta{
 		Hostname:         "appdev",
 		StageHostname:    "appstage",
-		Mode:             PlanModeStandard,
+		Mode:             topology.PlanModeStandard,
 		BootstrappedAt:   "2026-04-18T10:00:00Z",
 		BootstrapSession: "sess-1",
 	}

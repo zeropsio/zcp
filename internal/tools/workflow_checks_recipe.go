@@ -13,6 +13,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	opschecks "github.com/zeropsio/zcp/internal/ops/checks"
 	"github.com/zeropsio/zcp/internal/schema"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -99,7 +100,7 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp kn
 		// Collect ALL non-worker runtime targets (frontend + API in dual-runtime recipes).
 		var appTargets []workflow.RecipeTarget
 		for _, t := range plan.Targets {
-			if workflow.IsRuntimeType(t.Type) && !t.IsWorker {
+			if topology.IsRuntimeType(t.Type) && !t.IsWorker {
 				appTargets = append(appTargets, t)
 			}
 		}
@@ -114,7 +115,7 @@ func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp kn
 		// README is already covered by the appTargets loop below.
 		var workerTargets []workflow.RecipeTarget
 		for _, t := range plan.Targets {
-			if workflow.IsRuntimeType(t.Type) && t.IsWorker && t.SharesCodebaseWith == "" {
+			if topology.IsRuntimeType(t.Type) && t.IsWorker && t.SharesCodebaseWith == "" {
 				workerTargets = append(workerTargets, t)
 			}
 		}
@@ -303,7 +304,7 @@ func checkRecipeDeployReadmes(stateDir string, factsLogPathFn func() string) wor
 
 		var appTargets []workflow.RecipeTarget
 		for _, t := range plan.Targets {
-			if workflow.IsRuntimeType(t.Type) && !t.IsWorker {
+			if topology.IsRuntimeType(t.Type) && !t.IsWorker {
 				appTargets = append(appTargets, t)
 			}
 		}
@@ -312,7 +313,7 @@ func checkRecipeDeployReadmes(stateDir string, factsLogPathFn func() string) wor
 		}
 		var workerTargets []workflow.RecipeTarget
 		for _, t := range plan.Targets {
-			if workflow.IsRuntimeType(t.Type) && t.IsWorker && t.SharesCodebaseWith == "" {
+			if topology.IsRuntimeType(t.Type) && t.IsWorker && t.SharesCodebaseWith == "" {
 				workerTargets = append(workerTargets, t)
 			}
 		}

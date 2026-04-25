@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // RecipeFeature declares a single user-observable capability the recipe
@@ -260,7 +262,7 @@ func validateShowcaseFeatureCoverage(features []RecipeFeature, targets []RecipeT
 		if surface, ok := showcaseKindToSurface[serviceTypeKind(t.Type)]; ok {
 			requiredSurfaces[surface] = true
 		}
-		if t.IsWorker && IsRuntimeType(t.Type) {
+		if t.IsWorker && topology.IsRuntimeType(t.Type) {
 			requiredSurfaces[FeatureSurfaceWorker] = true
 		}
 	}

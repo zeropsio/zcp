@@ -17,9 +17,9 @@ var (
 )
 
 const (
-	lockfileExclusiveLock    = 0x00000002
-	lockfileFailImmediately  = 0x00000001
-	errLockViolation         = 33
+	lockfileExclusiveLock   = 0x00000002
+	lockfileFailImmediately = 0x00000001
+	errLockViolation        = 33
 )
 
 // lockFileExclusive acquires an exclusive lock via LockFileEx with timeout.

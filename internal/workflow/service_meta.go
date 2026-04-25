@@ -8,13 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-)
 
-// Strategy constants for deploy decisions.
-const (
-	StrategyPushDev = "push-dev"
-	StrategyPushGit = "push-git"
-	StrategyManual  = "manual"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // ServiceMeta records bootstrap decisions for a service.
@@ -35,15 +30,15 @@ const (
 // sufficient signal and verify-only stamping was masking legitimate
 // Deployed=true cases for services that bypassed ZCP verify.
 type ServiceMeta struct {
-	Hostname          string         `json:"hostname"`
-	Mode              Mode           `json:"mode,omitempty"`
-	StageHostname     string         `json:"stageHostname,omitempty"`
-	DeployStrategy    DeployStrategy `json:"deployStrategy,omitempty"`
-	PushGitTrigger    PushGitTrigger `json:"pushGitTrigger,omitempty"`    // valid only when DeployStrategy==push-git
-	StrategyConfirmed bool           `json:"strategyConfirmed,omitempty"` // true after user explicitly confirms/sets strategy
-	BootstrapSession  string         `json:"bootstrapSession"`
-	BootstrappedAt    string         `json:"bootstrappedAt"`
-	FirstDeployedAt   string         `json:"firstDeployedAt,omitempty"` // stamped on first observed deploy — via session or adoption
+	Hostname          string                  `json:"hostname"`
+	Mode              topology.Mode           `json:"mode,omitempty"`
+	StageHostname     string                  `json:"stageHostname,omitempty"`
+	DeployStrategy    topology.DeployStrategy `json:"deployStrategy,omitempty"`
+	PushGitTrigger    topology.PushGitTrigger `json:"pushGitTrigger,omitempty"`    // valid only when DeployStrategy==push-git
+	StrategyConfirmed bool                    `json:"strategyConfirmed,omitempty"` // true after user explicitly confirms/sets strategy
+	BootstrapSession  string                  `json:"bootstrapSession"`
+	BootstrappedAt    string                  `json:"bootstrappedAt"`
+	FirstDeployedAt   string                  `json:"firstDeployedAt,omitempty"` // stamped on first observed deploy — via session or adoption
 }
 
 // IsComplete returns true if bootstrap finished for this service.
@@ -163,32 +158,32 @@ func ManagedRuntimeIndex(metas []*ServiceMeta) map[string]*ServiceMeta {
 // Local topologies (local-stage / local-only) are project-keyed — they
 // have no per-service deploy role; callers should use StageHostname
 // directly for deploys on local-stage.
-func (m *ServiceMeta) PrimaryRole() Mode {
+func (m *ServiceMeta) PrimaryRole() topology.Mode {
 	mode := m.Mode
 	if mode == "" {
-		mode = PlanModeStandard
+		mode = topology.PlanModeStandard
 	}
 	switch mode {
-	case PlanModeSimple:
-		return DeployRoleSimple
-	case PlanModeDev, PlanModeStandard, ModeStage, PlanModeLocalStage, PlanModeLocalOnly:
+	case topology.PlanModeSimple:
+		return topology.DeployRoleSimple
+	case topology.PlanModeDev, topology.PlanModeStandard, topology.ModeStage, topology.PlanModeLocalStage, topology.PlanModeLocalOnly:
 		// Dev half of a standard pair and standalone dev both deploy as Dev.
 		// Local topologies have no per-service role — the container-side
 		// fallback keeps call sites that expect a non-empty role happy;
 		// callers that care about local-only semantics gate on meta.Mode.
-		return DeployRoleDev
+		return topology.DeployRoleDev
 	}
-	return DeployRoleDev
+	return topology.DeployRoleDev
 }
 
 // RoleFor returns the deploy role of the given hostname within this meta's scope.
 // Returns "" when the hostname is unrelated to this meta.
-func (m *ServiceMeta) RoleFor(hostname string) Mode {
+func (m *ServiceMeta) RoleFor(hostname string) topology.Mode {
 	if hostname == "" {
 		return ""
 	}
 	if m.StageHostname != "" && hostname == m.StageHostname {
-		return DeployRoleStage
+		return topology.DeployRoleStage
 	}
 	if hostname == m.Hostname {
 		return m.PrimaryRole()

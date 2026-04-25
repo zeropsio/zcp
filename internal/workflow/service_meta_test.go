@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 func TestWriteServiceMeta_Success(t *testing.T) {
@@ -16,7 +18,7 @@ func TestWriteServiceMeta_Success(t *testing.T) {
 		Hostname:         "appdev",
 		Mode:             "standard",
 		StageHostname:    "appstage",
-		DeployStrategy:   StrategyPushDev,
+		DeployStrategy:   topology.StrategyPushDev,
 		BootstrapSession: "abc123",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
 	}
@@ -41,8 +43,8 @@ func TestWriteServiceMeta_Success(t *testing.T) {
 	if got.StageHostname != "appstage" {
 		t.Errorf("stageHostname: want appstage, got %s", got.StageHostname)
 	}
-	if got.DeployStrategy != StrategyPushDev {
-		t.Errorf("deployStrategy: want %s, got %s", StrategyPushDev, got.DeployStrategy)
+	if got.DeployStrategy != topology.StrategyPushDev {
+		t.Errorf("deployStrategy: want %s, got %s", topology.StrategyPushDev, got.DeployStrategy)
 	}
 }
 
@@ -77,7 +79,7 @@ func TestReadServiceMeta_Success(t *testing.T) {
 		Hostname:         "appdev",
 		Mode:             "standard",
 		StageHostname:    "appstage",
-		DeployStrategy:   StrategyPushDev,
+		DeployStrategy:   topology.StrategyPushDev,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
 	}
@@ -90,8 +92,8 @@ func TestReadServiceMeta_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadServiceMeta: %v", err)
 	}
-	if got.DeployStrategy != StrategyPushDev {
-		t.Errorf("deployStrategy: want %s, got %s", StrategyPushDev, got.DeployStrategy)
+	if got.DeployStrategy != topology.StrategyPushDev {
+		t.Errorf("deployStrategy: want %s, got %s", topology.StrategyPushDev, got.DeployStrategy)
 	}
 }
 
@@ -121,7 +123,7 @@ func TestServiceMeta_JSONRoundTrip(t *testing.T) {
 				Hostname:         "apidev",
 				Mode:             "standard",
 				StageHostname:    "apistage",
-				DeployStrategy:   StrategyPushDev,
+				DeployStrategy:   topology.StrategyPushDev,
 				BootstrapSession: "sess123",
 				BootstrappedAt:   "2026-03-04T12:00:00Z",
 			},
@@ -163,7 +165,7 @@ func TestServiceMeta_NoDeployFlowField(t *testing.T) {
 	// Verify DeployFlow is not serialized — the field should not exist.
 	meta := &ServiceMeta{
 		Hostname:         "appdev",
-		DeployStrategy:   StrategyPushDev,
+		DeployStrategy:   topology.StrategyPushDev,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
 	}
@@ -189,9 +191,9 @@ func TestStrategyConstants(t *testing.T) {
 		constant string
 		want     string
 	}{
-		{"StrategyPushDev", StrategyPushDev, "push-dev"},
-		{"StrategyPushGit", StrategyPushGit, "push-git"},
-		{"StrategyManual", StrategyManual, "manual"},
+		{"StrategyPushDev", topology.StrategyPushDev, "push-dev"},
+		{"StrategyPushGit", topology.StrategyPushGit, "push-git"},
+		{"StrategyManual", topology.StrategyManual, "manual"},
 	}
 
 	for _, tt := range tests {
@@ -212,7 +214,7 @@ func TestListServiceMetas_SameDeserializationAsRead(t *testing.T) {
 		Hostname:         "appdev",
 		Mode:             "standard",
 		StageHostname:    "appstage",
-		DeployStrategy:   StrategyPushGit,
+		DeployStrategy:   topology.StrategyPushGit,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
 	}
@@ -644,26 +646,26 @@ func TestManagedRuntimeIndex(t *testing.T) {
 	standardPair := &ServiceMeta{
 		Hostname:         "appdev",
 		StageHostname:    "appstage",
-		Mode:             PlanModeStandard,
+		Mode:             topology.PlanModeStandard,
 		BootstrapSession: "s1",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
 	}
 	devOnly := &ServiceMeta{
 		Hostname:         "api",
-		Mode:             PlanModeDev,
+		Mode:             topology.PlanModeDev,
 		BootstrapSession: "s2",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
 	}
 	simple := &ServiceMeta{
 		Hostname:         "worker",
-		Mode:             PlanModeSimple,
+		Mode:             topology.PlanModeSimple,
 		BootstrapSession: "s3",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
 	}
 	localStage := &ServiceMeta{
 		Hostname:         "myproject",
 		StageHostname:    "appstage",
-		Mode:             PlanModeLocalStage,
+		Mode:             topology.PlanModeLocalStage,
 		BootstrapSession: "s4",
 		BootstrappedAt:   "2026-03-04T12:00:00Z",
 	}
@@ -756,8 +758,8 @@ func TestManagedRuntimeIndex(t *testing.T) {
 
 	t.Run("duplicate hostname: last meta wins (documented map semantics)", func(t *testing.T) {
 		t.Parallel()
-		first := &ServiceMeta{Hostname: "app", Mode: PlanModeDev}
-		second := &ServiceMeta{Hostname: "app", Mode: PlanModeSimple}
+		first := &ServiceMeta{Hostname: "app", Mode: topology.PlanModeDev}
+		second := &ServiceMeta{Hostname: "app", Mode: topology.PlanModeSimple}
 		idx := ManagedRuntimeIndex([]*ServiceMeta{first, second})
 		if len(idx) != 1 {
 			t.Fatalf("want 1 entry, got %d", len(idx))
@@ -789,8 +791,8 @@ func TestManagedRuntimeIndex(t *testing.T) {
 	t.Run("multiple non-colliding metas merge correctly", func(t *testing.T) {
 		t.Parallel()
 		// Distinct hostnames — realistic multi-stack project state.
-		pairA := &ServiceMeta{Hostname: "appdev", StageHostname: "appstage", Mode: PlanModeStandard}
-		pairB := &ServiceMeta{Hostname: "apidev", StageHostname: "apistage", Mode: PlanModeStandard}
+		pairA := &ServiceMeta{Hostname: "appdev", StageHostname: "appstage", Mode: topology.PlanModeStandard}
+		pairB := &ServiceMeta{Hostname: "apidev", StageHostname: "apistage", Mode: topology.PlanModeStandard}
 		idx := ManagedRuntimeIndex([]*ServiceMeta{pairA, devOnly, simple, pairB})
 		// 2 (pairA) + 1 (devOnly) + 1 (simple) + 2 (pairB) = 6
 		if len(idx) != 6 {
@@ -848,22 +850,22 @@ func TestServiceMeta_PrimaryRole(t *testing.T) {
 	tests := []struct {
 		name string
 		meta ServiceMeta
-		want Mode
+		want topology.Mode
 	}{
 		{
 			"container_standard_returns_dev",
-			ServiceMeta{Hostname: "appdev", Mode: PlanModeStandard, StageHostname: "appstage"},
-			DeployRoleDev,
+			ServiceMeta{Hostname: "appdev", Mode: topology.PlanModeStandard, StageHostname: "appstage"},
+			topology.DeployRoleDev,
 		},
 		{
 			"container_dev_returns_dev",
-			ServiceMeta{Hostname: "appdev", Mode: PlanModeDev},
-			DeployRoleDev,
+			ServiceMeta{Hostname: "appdev", Mode: topology.PlanModeDev},
+			topology.DeployRoleDev,
 		},
 		{
 			"container_simple_returns_simple",
-			ServiceMeta{Hostname: "app", Mode: PlanModeSimple},
-			DeployRoleSimple,
+			ServiceMeta{Hostname: "app", Mode: topology.PlanModeSimple},
+			topology.DeployRoleSimple,
 		},
 		{
 			// Local metas use local-stage / local-only exclusively, never
@@ -871,23 +873,23 @@ func TestServiceMeta_PrimaryRole(t *testing.T) {
 			// because the dev half of the topology lives on the user's
 			// machine — the Zerops side is the stage runtime.
 			"local_stage_returns_stage",
-			ServiceMeta{Hostname: "myproject", StageHostname: "appstage", Mode: PlanModeLocalStage},
-			DeployRoleDev,
+			ServiceMeta{Hostname: "myproject", StageHostname: "appstage", Mode: topology.PlanModeLocalStage},
+			topology.DeployRoleDev,
 		},
 		{
 			"local_dev_returns_dev",
-			ServiceMeta{Hostname: "appdev", Mode: PlanModeDev},
-			DeployRoleDev,
+			ServiceMeta{Hostname: "appdev", Mode: topology.PlanModeDev},
+			topology.DeployRoleDev,
 		},
 		{
 			"local_simple_returns_simple",
-			ServiceMeta{Hostname: "app", Mode: PlanModeSimple},
-			DeployRoleSimple,
+			ServiceMeta{Hostname: "app", Mode: topology.PlanModeSimple},
+			topology.DeployRoleSimple,
 		},
 		{
 			"empty_mode_defaults_to_standard",
 			ServiceMeta{Hostname: "appdev", StageHostname: "appstage"},
-			DeployRoleDev,
+			topology.DeployRoleDev,
 		},
 	}
 	for _, tt := range tests {
@@ -903,14 +905,14 @@ func TestServiceMeta_PrimaryRole(t *testing.T) {
 func TestServiceMeta_RoleFor(t *testing.T) {
 	t.Parallel()
 	meta := ServiceMeta{
-		Hostname: "appdev", Mode: PlanModeStandard, StageHostname: "appstage",
+		Hostname: "appdev", Mode: topology.PlanModeStandard, StageHostname: "appstage",
 	}
 	tests := []struct {
 		hostname string
-		want     Mode
+		want     topology.Mode
 	}{
-		{"appdev", DeployRoleDev},
-		{"appstage", DeployRoleStage},
+		{"appdev", topology.DeployRoleDev},
+		{"appstage", topology.DeployRoleStage},
 		{"unrelated", ""},
 		{"", ""},
 	}

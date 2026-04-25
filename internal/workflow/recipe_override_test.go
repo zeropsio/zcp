@@ -3,6 +3,8 @@ package workflow
 import (
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // recipeDotnetShape is a minimal dotnet-hello-world-style recipe: one runtime
@@ -51,7 +53,7 @@ func TestRewriteRecipeImportYAML(t *testing.T) {
 				DevHostname:   "appdev",
 				ExplicitStage: "appstage",
 				Type:          "dotnet@9",
-				BootstrapMode: PlanModeStandard,
+				BootstrapMode: topology.PlanModeStandard,
 			},
 			Dependencies: []Dependency{{
 				Hostname: "db", Type: "postgresql@16", Mode: ModeNonHA, Resolution: ResolutionCreate,
@@ -65,7 +67,7 @@ func TestRewriteRecipeImportYAML(t *testing.T) {
 				DevHostname:   "uploaddev",
 				ExplicitStage: "uploadstage",
 				Type:          "dotnet@9",
-				BootstrapMode: PlanModeStandard,
+				BootstrapMode: topology.PlanModeStandard,
 			},
 			Dependencies: []Dependency{{
 				Hostname: "db", Type: "postgresql@16", Mode: ModeNonHA, Resolution: ResolutionCreate,
@@ -79,7 +81,7 @@ func TestRewriteRecipeImportYAML(t *testing.T) {
 				DevHostname:   "uploaddev",
 				ExplicitStage: "uploadstage",
 				Type:          "dotnet@9",
-				BootstrapMode: PlanModeStandard,
+				BootstrapMode: topology.PlanModeStandard,
 			},
 			Dependencies: []Dependency{{
 				Hostname: "db", Type: "postgresql@16", Mode: ModeNonHA, Resolution: ResolutionExists,
@@ -93,7 +95,7 @@ func TestRewriteRecipeImportYAML(t *testing.T) {
 				DevHostname:   "uploaddev",
 				ExplicitStage: "uploadstage",
 				Type:          "dotnet@9",
-				BootstrapMode: PlanModeStandard,
+				BootstrapMode: topology.PlanModeStandard,
 			},
 			Dependencies: []Dependency{{
 				Hostname: "mydb", Type: "postgresql@16", Mode: ModeNonHA, Resolution: ResolutionCreate,
@@ -105,7 +107,7 @@ func TestRewriteRecipeImportYAML(t *testing.T) {
 		Targets: []BootstrapTarget{{
 			Runtime: RuntimeTarget{
 				DevHostname: "xdev", ExplicitStage: "xstage",
-				Type: "nodejs@22", BootstrapMode: PlanModeStandard,
+				Type: "nodejs@22", BootstrapMode: topology.PlanModeStandard,
 			},
 		}},
 	}
@@ -113,7 +115,7 @@ func TestRewriteRecipeImportYAML(t *testing.T) {
 	planDevModeOnly := &ServicePlan{
 		Targets: []BootstrapTarget{{
 			Runtime: RuntimeTarget{
-				DevHostname: "workdev", Type: "nodejs@22", BootstrapMode: PlanModeDev,
+				DevHostname: "workdev", Type: "nodejs@22", BootstrapMode: topology.PlanModeDev,
 			},
 		}},
 	}

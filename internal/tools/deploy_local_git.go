@@ -13,6 +13,7 @@ import (
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -279,11 +280,11 @@ func currentEffectiveOrigin(current, provided string) string {
 // target resolves to the dev-keyed meta file (spec-workflows.md §8 E8).
 func trackTriggerMissingWarning(stateDir, hostname string) string {
 	meta, _ := workflow.FindServiceMeta(stateDir, hostname)
-	if meta == nil || meta.DeployStrategy != workflow.StrategyPushGit {
+	if meta == nil || meta.DeployStrategy != topology.StrategyPushGit {
 		return ""
 	}
 	if meta.PushGitTrigger != "" {
 		return ""
 	}
-	return fmt.Sprintf("service %q uses push-git but has no downstream trigger configured — the push lands in git but Zerops won't build. Run zerops_workflow action=\"strategy\" strategies={%q:%q} trigger=\"webhook|actions\" to finish setup.", hostname, hostname, workflow.StrategyPushGit)
+	return fmt.Sprintf("service %q uses push-git but has no downstream trigger configured — the push lands in git but Zerops won't build. Run zerops_workflow action=\"strategy\" strategies={%q:%q} trigger=\"webhook|actions\" to finish setup.", hostname, hostname, topology.StrategyPushGit)
 }

@@ -8,6 +8,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -55,7 +56,7 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 	// keyed by project name. Container metas are not our concern here.
 	var local *workflow.ServiceMeta
 	for _, m := range metas {
-		if m.Mode == workflow.PlanModeLocalOnly || m.Mode == workflow.PlanModeLocalStage {
+		if m.Mode == topology.PlanModeLocalOnly || m.Mode == topology.PlanModeLocalStage {
 			local = m
 			break
 		}
@@ -66,7 +67,7 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 			"No local-env meta found",
 			"action=\"adopt-local\" only applies to local env")), nil, nil
 	}
-	if local.Mode == workflow.PlanModeLocalStage {
+	if local.Mode == topology.PlanModeLocalStage {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Stage already linked: project %q → %s", local.Hostname, local.StageHostname),
@@ -90,7 +91,7 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 			continue
 		}
 		typeName := s.ServiceStackTypeInfo.ServiceStackTypeVersionName
-		if workflow.IsManagedService(typeName) {
+		if topology.IsManagedService(typeName) {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("%q is a managed service (%s), not a runtime — can't be a deploy target", s.Name, typeName),
@@ -107,7 +108,7 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 	}
 
 	// Upgrade meta: local-only → local-stage, link target.
-	local.Mode = workflow.PlanModeLocalStage
+	local.Mode = topology.PlanModeLocalStage
 	local.StageHostname = target.Name
 	// Fresh stage link loses the forced-manual from local-only adoption.
 	// Cleared to empty (not the sentinel "unset") so the persisted meta
@@ -129,8 +130,8 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 		"status":   "linked",
 		"project":  local.Hostname,
 		"stage":    target.Name,
-		"mode":     string(workflow.PlanModeLocalStage),
+		"mode":     string(topology.PlanModeLocalStage),
 		"strategy": "unset",
-		"next":     fmt.Sprintf(`Pick a strategy: zerops_workflow action="strategy" strategies={%q:%q}`, local.Hostname, workflow.StrategyPushDev),
+		"next":     fmt.Sprintf(`Pick a strategy: zerops_workflow action="strategy" strategies={%q:%q}`, local.Hostname, topology.StrategyPushDev),
 	}), nil, nil
 }

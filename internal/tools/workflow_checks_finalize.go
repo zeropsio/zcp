@@ -10,6 +10,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -329,7 +330,7 @@ func checkServiceStructure(doc importYAMLDoc, svcMap map[string]importService, p
 	// Non-runtime services (managed + utility) need priority: 10 so they
 	// start before the app container.
 	for _, target := range plan.Targets {
-		if workflow.IsRuntimeType(target.Type) {
+		if topology.IsRuntimeType(target.Type) {
 			continue
 		}
 		svc, exists := svcMap[target.Hostname]
@@ -353,7 +354,7 @@ func checkServiceStructure(doc importYAMLDoc, svcMap map[string]importService, p
 		if svcType == "" {
 			continue // service not in plan (agent-added extras aren't checked)
 		}
-		needsGitCheck := workflow.IsRuntimeType(svcType) || workflow.IsUtilityType(svcType)
+		needsGitCheck := topology.IsRuntimeType(svcType) || topology.IsUtilityType(svcType)
 		if !needsGitCheck {
 			continue
 		}
@@ -387,7 +388,7 @@ func checkServiceStructure(doc importYAMLDoc, svcMap map[string]importService, p
 	// {hostname}dev because appdev runs both processes via SSH.
 	if envIndex <= 1 {
 		for _, target := range plan.Targets {
-			if !workflow.IsRuntimeType(target.Type) {
+			if !topology.IsRuntimeType(target.Type) {
 				continue
 			}
 			sharedWorker := workflow.SharesAppCodebase(target)
@@ -445,7 +446,7 @@ func checkEnv5Requirements(doc importYAMLDoc, plan *workflow.RecipePlan, prefix 
 		}
 
 		// HA mode on services that support mode (managed, excluding object-storage).
-		if workflow.ServiceSupportsMode(svcType) && svc.Mode != "HA" {
+		if topology.ServiceSupportsMode(svcType) && svc.Mode != "HA" {
 			checks = append(checks, workflow.StepCheck{
 				Name: prefix + "_" + svc.Hostname + "_ha_mode", Status: statusFail,
 				Detail: fmt.Sprintf("env 5 service %q should have mode: HA", svc.Hostname),
@@ -454,7 +455,7 @@ func checkEnv5Requirements(doc importYAMLDoc, plan *workflow.RecipePlan, prefix 
 
 		// DEDICATED cpuMode on runtime services (excludes utility, which uses
 		// shared CPU — mailpit's workload is tiny and doesn't justify DEDICATED).
-		if svc.VerticalAutoscaling != nil && workflow.IsRuntimeType(svcType) {
+		if svc.VerticalAutoscaling != nil && topology.IsRuntimeType(svcType) {
 			if svc.VerticalAutoscaling.CPUMode != "DEDICATED" {
 				checks = append(checks, workflow.StepCheck{
 					Name: prefix + "_" + svc.Hostname + "_cpu_mode", Status: statusFail,
@@ -476,7 +477,7 @@ func checkEnv4Requirements(doc importYAMLDoc, plan *workflow.RecipePlan, prefix 
 		if svcType == "" {
 			continue
 		}
-		if workflow.IsRuntimeType(svcType) {
+		if topology.IsRuntimeType(svcType) {
 			if svc.MinContainers == nil || *svc.MinContainers < 2 {
 				checks = append(checks, workflow.StepCheck{
 					Name: prefix + "_" + svc.Hostname + "_min_containers", Status: statusFail,

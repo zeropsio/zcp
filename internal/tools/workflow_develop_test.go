@@ -10,6 +10,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -26,7 +27,7 @@ func TestHandleDevelopBriefing_UnsetStrategy_NeverDeployed_CreatesWorkSession_Fi
 
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
-		Mode:             workflow.PlanModeDev,
+		Mode:             topology.PlanModeDev,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-18",
 	}); err != nil {
@@ -79,7 +80,7 @@ func TestHandleDevelopBriefing_UnsetStrategy_Deployed_StrategyReview(t *testing.
 
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
-		Mode:             workflow.PlanModeDev,
+		Mode:             topology.PlanModeDev,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-18",
 		FirstDeployedAt:  "2026-04-19T10:00:00Z",
@@ -135,8 +136,8 @@ func TestHandleDevelopBriefing_ConfirmedStrategy_Deployed_NoReview(t *testing.T)
 
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:          "appdev",
-		Mode:              workflow.PlanModeDev,
-		DeployStrategy:    workflow.StrategyPushDev,
+		Mode:              topology.PlanModeDev,
+		DeployStrategy:    topology.StrategyPushDev,
 		StrategyConfirmed: true,
 		BootstrapSession:  "sess1",
 		BootstrappedAt:    "2026-04-18",
@@ -195,7 +196,7 @@ func TestHandleDevelopBriefing_MultiStack_ScopeHonorsInput(t *testing.T) {
 	for _, h := range []string{"appdev", "appstage"} {
 		if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 			Hostname:         h,
-			Mode:             workflow.PlanModeStandard,
+			Mode:             topology.PlanModeStandard,
 			BootstrapSession: "laravel-sess",
 			BootstrappedAt:   "2026-04-10",
 		}); err != nil {
@@ -206,7 +207,7 @@ func TestHandleDevelopBriefing_MultiStack_ScopeHonorsInput(t *testing.T) {
 	for _, h := range []string{"fizzydev", "fizzystage"} {
 		if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 			Hostname:         h,
-			Mode:             workflow.PlanModeStandard,
+			Mode:             topology.PlanModeStandard,
 			BootstrapSession: "fizzy-sess",
 			BootstrappedAt:   "2026-04-21",
 		}); err != nil {
@@ -265,7 +266,7 @@ func TestHandleDevelopBriefing_StandardPair_StageInScope_Accepted(t *testing.T) 
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		StageHostname:    "appstage",
-		Mode:             workflow.PlanModeStandard,
+		Mode:             topology.PlanModeStandard,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-22",
 	}); err != nil {
@@ -317,7 +318,7 @@ func TestHandleDevelopBriefing_MissingScope_Rejected(t *testing.T) {
 
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
-		Mode:             workflow.PlanModeDev,
+		Mode:             topology.PlanModeDev,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-18",
 	}); err != nil {
@@ -358,7 +359,7 @@ func TestHandleDevelopBriefing_UnknownHostInScope_Rejected(t *testing.T) {
 
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
-		Mode:             workflow.PlanModeDev,
+		Mode:             topology.PlanModeDev,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-18",
 	}); err != nil {
@@ -396,7 +397,7 @@ func TestHandleDevelopBriefing_NewIntent_AutoClosesPrior(t *testing.T) {
 
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
-		Mode:             workflow.PlanModeDev,
+		Mode:             topology.PlanModeDev,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-18",
 	}); err != nil {
@@ -422,7 +423,7 @@ func TestHandleDevelopBriefing_NewIntent_AutoClosesPrior(t *testing.T) {
 	_ = workflow.RecordDeployAttempt(dir, "appdev", workflow.DeployAttempt{
 		AttemptedAt: "2026-04-21T10:00:00Z",
 		SucceededAt: "2026-04-21T10:00:30Z",
-		Strategy:    workflow.StrategyPushDev,
+		Strategy:    topology.StrategyPushDev,
 	})
 
 	// Second start — task B with different intent.
@@ -459,7 +460,7 @@ func TestHandleDevelopBriefing_SameIntent_Idempotent(t *testing.T) {
 
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
-		Mode:             workflow.PlanModeDev,
+		Mode:             topology.PlanModeDev,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-18",
 	}); err != nil {
@@ -478,7 +479,7 @@ func TestHandleDevelopBriefing_SameIntent_Idempotent(t *testing.T) {
 	_ = workflow.RecordDeployAttempt(dir, "appdev", workflow.DeployAttempt{
 		AttemptedAt: "2026-04-21T10:00:00Z",
 		SucceededAt: "2026-04-21T10:00:30Z",
-		Strategy:    workflow.StrategyPushDev,
+		Strategy:    topology.StrategyPushDev,
 	})
 	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
 

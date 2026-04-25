@@ -16,10 +16,10 @@ import (
 )
 
 // TestProbe_TagsAndCursor — focused probes to answer:
-//  - Does `tags=` filter (to surface only build-N entries via the zbuilder tag)?
-//  - Does `containerId=` filter?
-//  - What are the exact semantics of `from=<id>` as a cursor?
-//  - What's the emitted RFC3339 form when the entry is exactly on-the-second?
+//   - Does `tags=` filter (to surface only build-N entries via the zbuilder tag)?
+//   - Does `containerId=` filter?
+//   - What are the exact semantics of `from=<id>` as a cursor?
+//   - What's the emitted RFC3339 form when the entry is exactly on-the-second?
 func TestProbe_TagsAndCursor(t *testing.T) {
 	token := os.Getenv("ZCP_API_KEY")
 	if token == "" {

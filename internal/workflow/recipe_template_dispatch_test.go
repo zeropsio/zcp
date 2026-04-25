@@ -3,6 +3,8 @@ package workflow
 import (
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // TestGenerateEnvImportYAML_DispatchCorrectness is the safety net for template
@@ -47,7 +49,7 @@ func TestGenerateEnvImportYAML_DispatchCorrectness(t *testing.T) {
 		for _, target := range plan.Targets {
 			// Determine expected hostnames (env 0-1 runtime → dev+stage pair).
 			hostnames := []string{target.Hostname}
-			if IsRuntimeType(target.Type) && envIndex <= 1 {
+			if topology.IsRuntimeType(target.Type) && envIndex <= 1 {
 				hostnames = []string{target.Hostname + "dev", target.Hostname + "stage"}
 			}
 
@@ -68,11 +70,11 @@ func TestGenerateEnvImportYAML_DispatchCorrectness(t *testing.T) {
 func assertBlockInvariants(t *testing.T, envIndex int, target RecipeTarget, hostname, block string) {
 	t.Helper()
 
-	isRuntime := IsRuntimeType(target.Type)
-	isUtil := IsUtilityType(target.Type)
-	isObjStorage := IsObjectStorageType(target.Type)
-	supportsMode := ServiceSupportsMode(target.Type)
-	supportsAutoscale := ServiceSupportsAutoscaling(target.Type)
+	isRuntime := topology.IsRuntimeType(target.Type)
+	isUtil := topology.IsUtilityType(target.Type)
+	isObjStorage := topology.IsObjectStorageType(target.Type)
+	supportsMode := topology.ServiceSupportsMode(target.Type)
+	supportsAutoscale := topology.ServiceSupportsAutoscaling(target.Type)
 
 	hasSetup := strings.Contains(block, "zeropsSetup:")
 	hasGit := strings.Contains(block, "buildFromGit:")
@@ -203,7 +205,7 @@ func extractServiceBlock(yaml, hostname string) string {
 // comment generation would produce "unlabeled service" garbage.
 func TestServiceTypeKind_CoversAllManagedPrefixes(t *testing.T) {
 	t.Parallel()
-	for _, prefix := range managedServicePrefixes {
+	for _, prefix := range topology.ManagedServicePrefixes() {
 		// Use the prefix directly as the test type (serviceTypeKind uses
 		// the prefix portion only, so no version suffix needed).
 		if kind := serviceTypeKind(prefix); kind == "" {

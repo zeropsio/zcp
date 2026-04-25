@@ -3,6 +3,8 @@ package workflow
 import (
 	"testing"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // planEnvelope returns a minimal envelope with the requested phase. Helpers
@@ -35,8 +37,8 @@ func TestBuildPlan_IdleBootstrappedOnly(t *testing.T) {
 
 	env := planEnvelope(PhaseIdle)
 	env.Services = []ServiceSnapshot{
-		{Hostname: "appdev", RuntimeClass: RuntimeDynamic, Bootstrapped: true, Mode: ModeDev, Strategy: "push-git"},
-		{Hostname: "db", RuntimeClass: RuntimeManaged},
+		{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Mode: topology.ModeDev, Strategy: "push-git"},
+		{Hostname: "db", RuntimeClass: topology.RuntimeManaged},
 	}
 	plan := BuildPlan(env)
 	if plan.Primary.Args["workflow"] != "develop" {
@@ -52,8 +54,8 @@ func TestBuildPlan_IdleWithAdoptableAndBootstrapped(t *testing.T) {
 
 	env := planEnvelope(PhaseIdle)
 	env.Services = []ServiceSnapshot{
-		{Hostname: "appdev", RuntimeClass: RuntimeDynamic, Bootstrapped: true, Mode: ModeDev},
-		{Hostname: "legacy", RuntimeClass: RuntimeDynamic, Bootstrapped: false},
+		{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Mode: topology.ModeDev},
+		{Hostname: "legacy", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: false},
 	}
 	plan := BuildPlan(env)
 	if plan.Primary.Args["workflow"] != "develop" {
@@ -72,7 +74,7 @@ func TestBuildPlan_IdleOnlyUnmanagedRuntimes(t *testing.T) {
 
 	env := planEnvelope(PhaseIdle)
 	env.Services = []ServiceSnapshot{
-		{Hostname: "legacy", RuntimeClass: RuntimeDynamic, Bootstrapped: false},
+		{Hostname: "legacy", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: false},
 	}
 	plan := BuildPlan(env)
 	if plan.Primary.Args["intent"] != "adopt" {

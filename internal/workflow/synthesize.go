@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/zeropsio/zcp/internal/content"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // Synthesize returns the ordered guidance bodies for the given envelope.
@@ -177,7 +178,7 @@ func anyServiceMatchesAll(services []ServiceSnapshot, axes AxisVector) bool {
 // allowedSurvivingPlaceholders pass through untouched — the agent fills
 // them from run-time context it already has.
 func primaryHostnames(services []ServiceSnapshot) (hostname, stageHostname string) {
-	order := []RuntimeClass{RuntimeDynamic, RuntimeImplicitWeb, RuntimeStatic}
+	order := []topology.RuntimeClass{topology.RuntimeDynamic, topology.RuntimeImplicitWeb, topology.RuntimeStatic}
 	for _, want := range order {
 		for _, svc := range services {
 			if svc.RuntimeClass != want {

@@ -6,6 +6,8 @@ package workflow
 import (
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 func TestBuildGuide_Iteration_ShortCircuitsToHardStop(t *testing.T) {
@@ -53,7 +55,7 @@ func TestBuildGuide_Recipe_ProvisionInjectsImportYAML(t *testing.T) {
 	bs.RecipeMatch = &RecipeMatch{
 		Slug:       "laravel-minimal",
 		Confidence: 0.97,
-		Mode:       PlanModeStandard,
+		Mode:       topology.PlanModeStandard,
 		ImportYAML: "project:\n  name: laravel-minimal-agent\nservices:\n  - hostname: appdev\n    type: php-nginx@8.4\n",
 	}
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
@@ -81,7 +83,7 @@ func TestBuildGuide_Recipe_DiscoverInjectsImportYAMLAndMode(t *testing.T) {
 	bs.RecipeMatch = &RecipeMatch{
 		Slug:       "nextjs-ssr-hello-world",
 		Confidence: 0.97,
-		Mode:       PlanModeStandard,
+		Mode:       topology.PlanModeStandard,
 		ImportYAML: "project:\n  name: nextjs-agent\nservices:\n  - hostname: appdev\n    type: nodejs@22\n    zeropsSetup: dev\n  - hostname: appstage\n    type: nodejs@22\n    zeropsSetup: prod\n",
 	}
 	guide := bs.buildGuide(StepDiscover, 0, EnvContainer, nil)
@@ -113,7 +115,7 @@ func TestBuildGuide_Recipe_ProvisionRewritesYAMLWithPlanHostnames(t *testing.T) 
 	bs.RecipeMatch = &RecipeMatch{
 		Slug:       "dotnet-hello-world",
 		Confidence: 0.97,
-		Mode:       PlanModeStandard,
+		Mode:       topology.PlanModeStandard,
 		ImportYAML: "project:\n  name: dotnet-agent\nservices:\n  - hostname: appdev\n    type: dotnet@9\n    zeropsSetup: dev\n  - hostname: appstage\n    type: dotnet@9\n    zeropsSetup: prod\n  - hostname: db\n    type: postgresql@16\n    mode: NON_HA\n",
 	}
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{{
@@ -121,7 +123,7 @@ func TestBuildGuide_Recipe_ProvisionRewritesYAMLWithPlanHostnames(t *testing.T) 
 			DevHostname:   "uploaddev",
 			ExplicitStage: "uploadstage",
 			Type:          "dotnet@9",
-			BootstrapMode: PlanModeStandard,
+			BootstrapMode: topology.PlanModeStandard,
 		},
 		Dependencies: []Dependency{{
 			Hostname: "db", Type: "postgresql@16", Mode: ModeNonHA, Resolution: ResolutionCreate,
@@ -155,7 +157,7 @@ func TestBuildGuide_Recipe_ProvisionExistsResolutionDropsManaged(t *testing.T) {
 	bs.RecipeMatch = &RecipeMatch{
 		Slug:       "nodejs-hello-world",
 		Confidence: 0.97,
-		Mode:       PlanModeStandard,
+		Mode:       topology.PlanModeStandard,
 		ImportYAML: "services:\n  - hostname: appdev\n    type: nodejs@22\n    zeropsSetup: dev\n  - hostname: appstage\n    type: nodejs@22\n    zeropsSetup: prod\n  - hostname: db\n    type: postgresql@18\n    mode: NON_HA\n",
 	}
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{{
@@ -163,7 +165,7 @@ func TestBuildGuide_Recipe_ProvisionExistsResolutionDropsManaged(t *testing.T) {
 			DevHostname:   "todoappdev",
 			ExplicitStage: "todoappstage",
 			Type:          "nodejs@22",
-			BootstrapMode: PlanModeStandard,
+			BootstrapMode: topology.PlanModeStandard,
 		},
 		Dependencies: []Dependency{{
 			Hostname: "db", Type: "postgresql@18", Mode: ModeNonHA, Resolution: ResolutionExists,
@@ -204,7 +206,7 @@ func TestBuildGuide_Recipe_CloseDoesNotInjectYAML(t *testing.T) {
 	bs.RecipeMatch = &RecipeMatch{
 		Slug:       "laravel-minimal",
 		Confidence: 0.97,
-		Mode:       PlanModeStandard,
+		Mode:       topology.PlanModeStandard,
 		ImportYAML: "project:\n  name: x\nservices:\n  - hostname: appdev\n",
 	}
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{

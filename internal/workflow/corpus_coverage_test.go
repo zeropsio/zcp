@@ -13,6 +13,8 @@ package workflow
 import (
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // coverageFixture pairs an envelope with substrings that MUST appear in the
@@ -59,7 +61,7 @@ func bootstrapCoverageFixtures() []coverageFixture {
 				IdleScenario: IdleBootstrapped,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
 					Bootstrapped: true, StageHostname: "appstage",
 				}},
 			},
@@ -76,7 +78,7 @@ func bootstrapCoverageFixtures() []coverageFixture {
 				IdleScenario: IdleAdopt,
 				Services: []ServiceSnapshot{{
 					Hostname: "legacy", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic,
+					RuntimeClass: topology.RuntimeDynamic,
 				}},
 			},
 			MustContain: []string{
@@ -92,7 +94,7 @@ func bootstrapCoverageFixtures() []coverageFixture {
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
 					StageHostname: "appstage",
 				}},
 				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteClassic, Step: StepDiscover},
@@ -110,7 +112,7 @@ func bootstrapCoverageFixtures() []coverageFixture {
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
 				}},
 				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteRecipe, Step: StepProvision},
 			},
@@ -126,7 +128,7 @@ func bootstrapCoverageFixtures() []coverageFixture {
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
 				}},
 				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteAdopt, Step: StepDiscover},
 			},
@@ -147,7 +149,7 @@ func developCoverageFixtures() []coverageFixture {
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeDev,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev,
 					Strategy: "push-dev", Bootstrapped: true, Deployed: true,
 				}},
 			},
@@ -179,7 +181,7 @@ func developCoverageFixtures() []coverageFixture {
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
 					StageHostname: "appstage",
 					Strategy:      "push-git", Bootstrapped: true, Deployed: true,
 				}},
@@ -197,7 +199,7 @@ func developCoverageFixtures() []coverageFixture {
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "app", TypeVersion: "nginx@1",
-					RuntimeClass: RuntimeDynamic, Mode: ModeSimple,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeSimple,
 					Strategy: "manual", Bootstrapped: true, Deployed: true,
 				}},
 			},
@@ -221,8 +223,8 @@ func developCoverageFixtures() []coverageFixture {
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
-					Strategy: StrategyUnset, Bootstrapped: true, Deployed: true,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
+					Strategy: topology.StrategyUnset, Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
@@ -237,7 +239,7 @@ func developCoverageFixtures() []coverageFixture {
 				Environment: EnvLocal,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeDev,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev,
 					Strategy: "push-dev", Bootstrapped: true, Deployed: true,
 				}},
 			},
@@ -252,7 +254,7 @@ func developCoverageFixtures() []coverageFixture {
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeDev,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev,
 				}},
 			},
 			MustContain: []string{
@@ -272,14 +274,14 @@ func developCoverageFixtures() []coverageFixture {
 				Services: []ServiceSnapshot{
 					{
 						Hostname: "appdev", TypeVersion: "nodejs@22",
-						RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+						RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
 						StageHostname: "appstage",
-						Strategy:      StrategyUnset, Bootstrapped: true, Deployed: false,
+						Strategy:      topology.StrategyUnset, Bootstrapped: true, Deployed: false,
 					},
 					{
 						Hostname: "appstage", TypeVersion: "nodejs@22",
-						RuntimeClass: RuntimeDynamic, Mode: ModeStage,
-						Strategy: StrategyUnset, Bootstrapped: true, Deployed: false,
+						RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage,
+						Strategy: topology.StrategyUnset, Bootstrapped: true, Deployed: false,
 					},
 				},
 			},
@@ -303,14 +305,14 @@ func developCoverageFixtures() []coverageFixture {
 				Services: []ServiceSnapshot{
 					{
 						Hostname: "appdev", TypeVersion: "php-nginx@8.4",
-						RuntimeClass: RuntimeImplicitWeb, Mode: ModeStandard,
+						RuntimeClass: topology.RuntimeImplicitWeb, Mode: topology.ModeStandard,
 						StageHostname: "appstage",
-						Strategy:      StrategyUnset, Bootstrapped: true, Deployed: false,
+						Strategy:      topology.StrategyUnset, Bootstrapped: true, Deployed: false,
 					},
 					{
 						Hostname: "appstage", TypeVersion: "php-nginx@8.4",
-						RuntimeClass: RuntimeImplicitWeb, Mode: ModeStage,
-						Strategy: StrategyUnset, Bootstrapped: true, Deployed: false,
+						RuntimeClass: topology.RuntimeImplicitWeb, Mode: topology.ModeStage,
+						Strategy: topology.StrategyUnset, Bootstrapped: true, Deployed: false,
 					},
 				},
 			},
@@ -331,8 +333,8 @@ func developCoverageFixtures() []coverageFixture {
 				Environment: EnvLocal,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeDev,
-					Strategy: StrategyPushDev, Bootstrapped: true, Deployed: true,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev,
+					Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
@@ -349,8 +351,8 @@ func developCoverageFixtures() []coverageFixture {
 				Environment: EnvLocal,
 				Services: []ServiceSnapshot{{
 					Hostname: "appstage", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeStage,
-					Strategy: StrategyPushDev, Bootstrapped: true, Deployed: true,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage,
+					Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
@@ -373,7 +375,7 @@ func matrixCoverageFixtures() []coverageFixture {
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "webdev", TypeVersion: "static@1",
-					RuntimeClass: RuntimeStatic, Mode: ModeDev,
+					RuntimeClass: topology.RuntimeStatic, Mode: topology.ModeDev,
 				}},
 				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteClassic, Step: StepDiscover},
 			},
@@ -389,7 +391,7 @@ func matrixCoverageFixtures() []coverageFixture {
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
 					StageHostname: "appstage",
 				}},
 				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteClassic, Step: StepProvision},
@@ -406,7 +408,7 @@ func matrixCoverageFixtures() []coverageFixture {
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
 				}},
 				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteAdopt, Step: StepProvision},
 			},
@@ -422,7 +424,7 @@ func matrixCoverageFixtures() []coverageFixture {
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "app", TypeVersion: "bun@1",
-					RuntimeClass: RuntimeDynamic, Mode: ModeSimple,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeSimple,
 					Strategy: "push-dev", Bootstrapped: true, Deployed: true,
 				}},
 			},
@@ -439,7 +441,7 @@ func matrixCoverageFixtures() []coverageFixture {
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
 					StageHostname: "appstage",
 					Strategy:      "push-dev", Bootstrapped: true, Deployed: true,
 				}},
@@ -456,7 +458,7 @@ func matrixCoverageFixtures() []coverageFixture {
 				Environment: EnvLocal,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
 					StageHostname: "appstage",
 					Strategy:      "push-dev", Bootstrapped: true, Deployed: true,
 				}},
@@ -472,7 +474,7 @@ func matrixCoverageFixtures() []coverageFixture {
 				Environment: EnvLocal,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
 					StageHostname: "appstage",
 					Strategy:      "push-git", Bootstrapped: true, Deployed: true,
 				}},
@@ -489,7 +491,7 @@ func matrixCoverageFixtures() []coverageFixture {
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeDev,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev,
 					Strategy: "manual", Bootstrapped: true, Deployed: true,
 				}},
 			},
@@ -505,7 +507,7 @@ func matrixCoverageFixtures() []coverageFixture {
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "app", TypeVersion: "php-apache@8.3",
-					RuntimeClass: RuntimeImplicitWeb, Mode: ModeSimple,
+					RuntimeClass: topology.RuntimeImplicitWeb, Mode: topology.ModeSimple,
 					Strategy: "push-dev",
 				}},
 			},
@@ -522,12 +524,12 @@ func matrixCoverageFixtures() []coverageFixture {
 				Services: []ServiceSnapshot{
 					{
 						Hostname: "app", TypeVersion: "php-nginx@8.4",
-						RuntimeClass: RuntimeImplicitWeb, Mode: ModeSimple,
+						RuntimeClass: topology.RuntimeImplicitWeb, Mode: topology.ModeSimple,
 						Strategy: "push-dev",
 					},
 					{
 						Hostname: "db", TypeVersion: "postgresql@18",
-						RuntimeClass: RuntimeManaged,
+						RuntimeClass: topology.RuntimeManaged,
 					},
 				},
 			},
@@ -547,7 +549,7 @@ func matrixCoverageFixtures() []coverageFixture {
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "web", TypeVersion: "static@1",
-					RuntimeClass: RuntimeStatic, Mode: ModeDev,
+					RuntimeClass: topology.RuntimeStatic, Mode: topology.ModeDev,
 					Strategy: "push-dev",
 				}},
 			},
@@ -573,10 +575,10 @@ func pipelineCoverageFixtures() []coverageFixture {
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
 					StageHostname: "appstage",
-					Strategy:      StrategyPushGit,
-					Trigger:       TriggerUnset,
+					Strategy:      topology.StrategyPushGit,
+					Trigger:       topology.TriggerUnset,
 				}},
 			},
 			MustContain: []string{
@@ -593,10 +595,10 @@ func pipelineCoverageFixtures() []coverageFixture {
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
 					StageHostname: "appstage",
-					Strategy:      StrategyPushGit,
-					Trigger:       TriggerActions,
+					Strategy:      topology.StrategyPushGit,
+					Trigger:       topology.TriggerActions,
 				}},
 			},
 			MustContain: []string{
@@ -612,10 +614,10 @@ func pipelineCoverageFixtures() []coverageFixture {
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
 					StageHostname: "appstage",
-					Strategy:      StrategyPushGit,
-					Trigger:       TriggerWebhook,
+					Strategy:      topology.StrategyPushGit,
+					Trigger:       topology.TriggerWebhook,
 				}},
 			},
 			MustContain: []string{
@@ -631,7 +633,7 @@ func pipelineCoverageFixtures() []coverageFixture {
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: RuntimeDynamic, Mode: ModeStandard,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
 				}},
 			},
 			MustContain: []string{

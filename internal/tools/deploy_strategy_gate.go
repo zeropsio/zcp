@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -18,9 +19,9 @@ import (
 // is identical in both envs.
 func validateDeployStrategyParam(strategy string) error {
 	switch strategy {
-	case "", deployStrategyGitPush, workflow.StrategyPushDev:
+	case "", deployStrategyGitPush, topology.StrategyPushDev:
 		return nil
-	case workflow.StrategyManual:
+	case topology.StrategyManual:
 		return platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"strategy \"manual\" is not a zerops_deploy option — it's a ServiceMeta declaration meaning 'ZCP stays out of the deploy loop'",
@@ -48,7 +49,7 @@ func checkLocalOnlyGate(stateDir, targetService, strategy string) error {
 		return nil
 	}
 	meta, _ := workflow.ReadServiceMeta(stateDir, targetService)
-	if meta == nil || meta.Mode != workflow.PlanModeLocalOnly {
+	if meta == nil || meta.Mode != topology.PlanModeLocalOnly {
 		return nil
 	}
 	return platform.NewPlatformError(

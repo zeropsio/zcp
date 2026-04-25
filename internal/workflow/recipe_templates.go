@@ -3,6 +3,8 @@ package workflow
 import (
 	"fmt"
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // RecipeAppRepoBase is the GitHub org where recipe app repos live.
@@ -75,7 +77,7 @@ func BuildFinalizeOutput(plan *RecipePlan) map[string]string {
 	// rule" used by the multi-repo publish flow — see
 	// docs/implementation-multi-repo-publish.md.
 	for _, target := range plan.Targets {
-		if !IsRuntimeType(target.Type) {
+		if !topology.IsRuntimeType(target.Type) {
 			continue
 		}
 		if target.IsWorker && target.SharesCodebaseWith != "" {
@@ -432,7 +434,7 @@ func managedServiceHostnameList(plan *RecipePlan) string {
 	}
 	names := make([]string, 0, len(plan.Targets))
 	for _, t := range plan.Targets {
-		if IsRuntimeType(t.Type) {
+		if topology.IsRuntimeType(t.Type) {
 			continue
 		}
 		names = append(names, "`"+t.Hostname+"`")
@@ -545,7 +547,7 @@ func recipeIntroServiceList(plan *RecipePlan) string {
 	}
 	// Additional services from plan targets (non-runtime, non-DB).
 	for _, t := range plan.Targets {
-		if IsRuntimeType(t.Type) {
+		if topology.IsRuntimeType(t.Type) {
 			continue
 		}
 		kind := serviceTypeKind(t.Type)
@@ -641,7 +643,7 @@ func buildServiceIncludesList(plan *RecipePlan, envIndex int) string {
 	var parts []string
 
 	for _, target := range plan.Targets {
-		if IsRuntimeType(target.Type) && !target.IsWorker {
+		if topology.IsRuntimeType(target.Type) && !target.IsWorker {
 			if envIndex <= 1 {
 				label := target.Hostname
 				parts = append(parts,
@@ -649,7 +651,7 @@ func buildServiceIncludesList(plan *RecipePlan, envIndex int) string {
 					fmt.Sprintf("a %s staging service", label),
 				)
 			}
-		} else if !IsRuntimeType(target.Type) {
+		} else if !topology.IsRuntimeType(target.Type) {
 			parts = append(parts, dataServiceIncludesLabel(target.Type))
 		}
 	}

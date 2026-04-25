@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // sanitizeReflogIntent strips characters that could inject markdown structure.
@@ -23,7 +25,7 @@ func AppendReflogEntry(claudeMDPath string, intent string, targets []BootstrapTa
 	for _, target := range targets {
 		mode := target.Runtime.EffectiveMode()
 		b.WriteString(fmt.Sprintf("- **Runtime:** %s (%s, %s)\n", target.Runtime.DevHostname, target.Runtime.Type, mode))
-		if mode == PlanModeStandard {
+		if mode == topology.PlanModeStandard {
 			b.WriteString(fmt.Sprintf("- **Stage:** %s\n", target.Runtime.StageHostname()))
 		}
 		if len(target.Dependencies) > 0 {

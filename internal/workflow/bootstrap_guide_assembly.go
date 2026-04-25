@@ -7,6 +7,7 @@ import (
 	"unicode"
 
 	"github.com/zeropsio/zcp/internal/knowledge"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // buildGuide assembles a step guide by synthesizing knowledge atoms against a
@@ -149,14 +150,14 @@ func planTargetSnapshots(t BootstrapTarget) []ServiceSnapshot {
 		RuntimeClass: runtimeClass,
 		Mode:         mode,
 	}}
-	if mode == ModeStandard {
+	if mode == topology.ModeStandard {
 		if stage := t.Runtime.StageHostname(); stage != "" {
 			snaps[0].StageHostname = stage
 			snaps = append(snaps, ServiceSnapshot{
 				Hostname:     stage,
 				TypeVersion:  t.Runtime.Type,
 				RuntimeClass: runtimeClass,
-				Mode:         ModeStage,
+				Mode:         topology.ModeStage,
 			})
 		}
 	}
@@ -166,15 +167,15 @@ func planTargetSnapshots(t BootstrapTarget) []ServiceSnapshot {
 // planModeToEnvelopeMode translates the plan's mode into the envelope
 // Mode enum. Standard's dev half gets ModeStandard; the stage half is emitted
 // separately by planTargetSnapshots with ModeStage.
-func planModeToEnvelopeMode(mode Mode) Mode {
+func planModeToEnvelopeMode(mode topology.Mode) topology.Mode {
 	switch mode {
-	case PlanModeDev:
-		return ModeDev
-	case PlanModeSimple:
-		return ModeSimple
-	case PlanModeStandard, "":
-		return ModeStandard
-	case ModeStage, PlanModeLocalStage, PlanModeLocalOnly:
+	case topology.PlanModeDev:
+		return topology.ModeDev
+	case topology.PlanModeSimple:
+		return topology.ModeSimple
+	case topology.PlanModeStandard, "":
+		return topology.ModeStandard
+	case topology.ModeStage, topology.PlanModeLocalStage, topology.PlanModeLocalOnly:
 		// Local modes and the envelope-only ModeStage pass through
 		// unchanged — the plan flow doesn't emit them (plan inputs only
 		// carry standard/dev/simple), but an explicit case silences the
@@ -313,7 +314,7 @@ func writeServiceList(sb *strings.Builder, plan *ServicePlan) {
 	for _, t := range plan.Targets {
 		mode := t.Runtime.EffectiveMode()
 		fmt.Fprintf(sb, "- **%s** (%s, %s mode)\n", t.Runtime.DevHostname, t.Runtime.Type, mode)
-		if mode == PlanModeStandard {
+		if mode == topology.PlanModeStandard {
 			fmt.Fprintf(sb, "  Stage: **%s**\n", t.Runtime.StageHostname())
 		}
 		for _, d := range t.Dependencies {

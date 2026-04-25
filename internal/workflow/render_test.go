@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // sampleIdlePlan returns a Plan shaped like the idle-with-bootstrapped scenario:
@@ -144,8 +146,8 @@ func TestRenderStatus_IdleRenders(t *testing.T) {
 		Envelope: StateEnvelope{
 			Phase: PhaseIdle,
 			Services: []ServiceSnapshot{
-				{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: RuntimeDynamic, Bootstrapped: true, Mode: ModeDev, Strategy: "push-git"},
-				{Hostname: "db", TypeVersion: "postgresql@16", RuntimeClass: RuntimeManaged},
+				{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Mode: topology.ModeDev, Strategy: "push-git"},
+				{Hostname: "db", TypeVersion: "postgresql@16", RuntimeClass: topology.RuntimeManaged},
 			},
 		},
 		Plan: sampleIdlePlan(),

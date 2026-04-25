@@ -8,6 +8,7 @@ import (
 	"text/template"
 
 	"github.com/zeropsio/zcp/internal/content"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // RecipeProjectRoot is the SSHFS mount point recipe sub-agents write
@@ -53,7 +54,7 @@ func RenderContextFromPlan(plan *RecipePlan, hostname string) AtomRenderContext 
 	}
 	var hostnames []string
 	for _, t := range plan.Targets {
-		if !IsRuntimeType(t.Type) {
+		if !topology.IsRuntimeType(t.Type) {
 			continue
 		}
 		if t.IsWorker && t.SharesCodebaseWith != "" {

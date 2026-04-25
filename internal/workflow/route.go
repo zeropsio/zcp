@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"gopkg.in/yaml.v3"
 )
 
@@ -39,7 +40,7 @@ type RecipeMatch struct {
 	ImportYAML  string  `json:"importYaml,omitempty"`
 	// Mode is the bootstrap mode inferred from ImportYAML (standard, simple,
 	// dev). Empty when the YAML shape is unrecognised or managed-only.
-	Mode Mode `json:"mode,omitempty"`
+	Mode topology.Mode `json:"mode,omitempty"`
 }
 
 // RecipeCorpus abstracts the recipe search surface. Implementations live in
@@ -209,7 +210,7 @@ func adoptableServices(existing []platform.ServiceStack, metas []*ServiceMeta) [
 		if svc.IsSystem() {
 			continue
 		}
-		if IsManagedService(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
+		if topology.IsManagedService(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
 			continue
 		}
 		meta := metaByHost[svc.Name]

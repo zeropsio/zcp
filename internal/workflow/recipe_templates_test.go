@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/topology"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1304,86 +1305,6 @@ func TestEnvFolder_OutOfRange(t *testing.T) {
 	}
 }
 
-func TestIsRuntimeType(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		svcType string
-		want    bool
-	}{
-		{"php-nginx@8.4", true},
-		{"nodejs@22", true},
-		{"go@1", true},
-		{"bun@1.2", true},
-		{"python@3.12", true},
-		{"nginx@1.22", true},
-		{"static", true},
-		{"rust@stable", true},
-		{"docker@26.1", true},
-		{"ubuntu@24.04", true},
-		// managed and utility are NOT runtime
-		{"postgresql@17", false},
-		{"mariadb@10.6", false},
-		{"valkey@7.2", false},
-		{"meilisearch@1.20", false},
-		{"object-storage", false},
-		{"shared-storage", false},
-		{"nats@2.12", false},
-		{"kafka@3.9", false},
-		{"mailpit", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.svcType, func(t *testing.T) {
-			t.Parallel()
-			got := IsRuntimeType(tt.svcType)
-			if got != tt.want {
-				t.Errorf("IsRuntimeType(%q) = %v, want %v", tt.svcType, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestServiceTypeCapabilities(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name          string
-		serviceType   string
-		supportsMode  bool
-		supportsScale bool
-		isObjStorage  bool
-		isUtility     bool
-	}{
-		{"runtime", "php-nginx@8.4", false, true, false, false},
-		{"postgresql", "postgresql@16", true, true, false, false},
-		{"valkey", "valkey@7.2", true, true, false, false},
-		{"meilisearch", "meilisearch@1", true, true, false, false},
-		{"object_storage", "object-storage", false, false, true, false},
-		{"shared_storage", "shared-storage", true, false, false, false},
-		{"mailpit", "mailpit", false, true, false, true},
-		{"nodejs", "nodejs@22", false, true, false, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			if got := ServiceSupportsMode(tt.serviceType); got != tt.supportsMode {
-				t.Errorf("ServiceSupportsMode(%q) = %v, want %v", tt.serviceType, got, tt.supportsMode)
-			}
-			if got := ServiceSupportsAutoscaling(tt.serviceType); got != tt.supportsScale {
-				t.Errorf("ServiceSupportsAutoscaling(%q) = %v, want %v", tt.serviceType, got, tt.supportsScale)
-			}
-			if got := IsObjectStorageType(tt.serviceType); got != tt.isObjStorage {
-				t.Errorf("IsObjectStorageType(%q) = %v, want %v", tt.serviceType, got, tt.isObjStorage)
-			}
-			if got := IsUtilityType(tt.serviceType); got != tt.isUtility {
-				t.Errorf("IsUtilityType(%q) = %v, want %v", tt.serviceType, got, tt.isUtility)
-			}
-		})
-	}
-}
-
 func TestRecipeSetupName(t *testing.T) {
 	t.Parallel()
 
@@ -1677,7 +1598,7 @@ func declaredRuntimeMinContainers(t *testing.T, plan *RecipePlan, envIndex int) 
 	}
 	declared := map[int]bool{}
 	for _, svc := range shape.Services {
-		if IsRuntimeType(svc.Type) && svc.MinContainers != nil {
+		if topology.IsRuntimeType(svc.Type) && svc.MinContainers != nil {
 			declared[*svc.MinContainers] = true
 		}
 	}

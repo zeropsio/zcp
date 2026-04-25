@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 func TestBootstrapComplete_WritesServiceMeta(t *testing.T) {
@@ -460,12 +462,12 @@ func TestWriteBootstrapOutputs_DefaultEmptyStrategy(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name          string
-		bootstrapMode Mode
+		bootstrapMode topology.Mode
 		env           Environment
 	}{
-		{"dev mode gets empty strategy", PlanModeDev, EnvLocal},
-		{"simple mode gets empty strategy", PlanModeSimple, EnvLocal},
-		{"standard mode gets empty strategy", PlanModeStandard, EnvContainer},
+		{"dev mode gets empty strategy", topology.PlanModeDev, EnvLocal},
+		{"simple mode gets empty strategy", topology.PlanModeSimple, EnvLocal},
+		{"standard mode gets empty strategy", topology.PlanModeStandard, EnvContainer},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -517,7 +519,7 @@ func TestWriteBootstrapOutputs_LocalMode_DefaultEmptyStrategy(t *testing.T) {
 	}
 
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: PlanModeDev},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: topology.PlanModeDev},
 	}}, nil, nil)
 	if err != nil {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
@@ -545,13 +547,13 @@ func TestProvisionMeta_SetsMode(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name          string
-		bootstrapMode Mode
-		wantMode      Mode
+		bootstrapMode topology.Mode
+		wantMode      topology.Mode
 		env           Environment
 	}{
-		{"standard mode (default)", "", PlanModeStandard, EnvContainer},
-		{"dev mode", PlanModeDev, PlanModeDev, EnvLocal},
-		{"simple mode", PlanModeSimple, PlanModeSimple, EnvLocal},
+		{"standard mode (default)", "", topology.PlanModeStandard, EnvContainer},
+		{"dev mode", topology.PlanModeDev, topology.PlanModeDev, EnvLocal},
+		{"simple mode", topology.PlanModeSimple, topology.PlanModeSimple, EnvLocal},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -620,7 +622,7 @@ func TestBuildTransitionMessage_WithPlan_IncludesServices(t *testing.T) {
 						Runtime: RuntimeTarget{
 							DevHostname:   "appdev",
 							Type:          "nodejs@22",
-							BootstrapMode: PlanModeStandard,
+							BootstrapMode: topology.PlanModeStandard,
 						},
 						Dependencies: []Dependency{
 							{Hostname: "db", Type: "postgresql@16"},
@@ -652,7 +654,7 @@ func TestBuildTransitionMessage_WithPlan_NoStrategySection(t *testing.T) {
 						Runtime: RuntimeTarget{
 							DevHostname:   "appdev",
 							Type:          "nodejs@22",
-							BootstrapMode: PlanModeStandard,
+							BootstrapMode: topology.PlanModeStandard,
 						},
 					},
 				},
@@ -679,7 +681,7 @@ func TestBuildTransitionMessage_WithPlan_IncludesTransitionHint(t *testing.T) {
 						Runtime: RuntimeTarget{
 							DevHostname:   "appdev",
 							Type:          "nodejs@22",
-							BootstrapMode: PlanModeStandard,
+							BootstrapMode: topology.PlanModeStandard,
 						},
 					},
 				},
@@ -708,7 +710,7 @@ func TestBuildTransitionMessage_WithPlan_IncludesRouterOffering(t *testing.T) {
 						Runtime: RuntimeTarget{
 							DevHostname:   "appdev",
 							Type:          "nodejs@22",
-							BootstrapMode: PlanModeStandard,
+							BootstrapMode: topology.PlanModeStandard,
 						},
 					},
 				},
@@ -732,14 +734,14 @@ func TestBuildTransitionMessage_WithMultipleServices_ListsAll(t *testing.T) {
 						Runtime: RuntimeTarget{
 							DevHostname:   "appdev",
 							Type:          "nodejs@22",
-							BootstrapMode: PlanModeStandard,
+							BootstrapMode: topology.PlanModeStandard,
 						},
 					},
 					{
 						Runtime: RuntimeTarget{
 							DevHostname:   "apidev",
 							Type:          "go@1.22",
-							BootstrapMode: PlanModeStandard,
+							BootstrapMode: topology.PlanModeStandard,
 						},
 					},
 				},
@@ -765,7 +767,7 @@ func TestBuildTransitionMessage_NoStrategyOptions(t *testing.T) {
 						Runtime: RuntimeTarget{
 							DevHostname:   "appdev",
 							Type:          "nodejs@22",
-							BootstrapMode: PlanModeStandard,
+							BootstrapMode: topology.PlanModeStandard,
 						},
 					},
 				},
@@ -830,7 +832,7 @@ func TestBuildTransitionMessage_IncludesRouterOfferings(t *testing.T) {
 						Runtime: RuntimeTarget{
 							DevHostname:   "appdev",
 							Type:          "nodejs@22",
-							BootstrapMode: PlanModeStandard,
+							BootstrapMode: topology.PlanModeStandard,
 						},
 					},
 				},
@@ -939,7 +941,7 @@ func TestWriteBootstrapOutputs_LocalMode_KeyedByDevHostname(t *testing.T) {
 	if meta.StageHostname != "appstage" {
 		t.Errorf("stageHostname = %s, want appstage", meta.StageHostname)
 	}
-	if meta.Mode != PlanModeStandard {
+	if meta.Mode != topology.PlanModeStandard {
 		t.Errorf("mode = %s, want standard", meta.Mode)
 	}
 	if meta.DeployStrategy != "" {
@@ -1092,10 +1094,10 @@ func TestWriteBootstrapOutputs_ExpansionPreservesExistingFields(t *testing.T) {
 	// running for a while with a confirmed push-git strategy.
 	existing := &ServiceMeta{
 		Hostname:          "appdev",
-		Mode:              PlanModeDev,
+		Mode:              topology.PlanModeDev,
 		BootstrapSession:  "original-sess",
 		BootstrappedAt:    "2026-01-15",
-		DeployStrategy:    StrategyPushGit,
+		DeployStrategy:    topology.StrategyPushGit,
 		StrategyConfirmed: true,
 		FirstDeployedAt:   "2026-01-16T10:00:00Z",
 	}
@@ -1113,7 +1115,7 @@ func TestWriteBootstrapOutputs_ExpansionPreservesExistingFields(t *testing.T) {
 			DevHostname:   "appdev",
 			Type:          "nodejs@22",
 			IsExisting:    true,
-			BootstrapMode: PlanModeStandard,
+			BootstrapMode: topology.PlanModeStandard,
 			ExplicitStage: "appstage",
 		},
 	}}, nil, nil); err != nil {
@@ -1134,8 +1136,8 @@ func TestWriteBootstrapOutputs_ExpansionPreservesExistingFields(t *testing.T) {
 	}
 
 	// Upgrade contribution:
-	if got.Mode != PlanModeStandard {
-		t.Errorf("Mode: got %q, want %q (upgrade)", got.Mode, PlanModeStandard)
+	if got.Mode != topology.PlanModeStandard {
+		t.Errorf("Mode: got %q, want %q (upgrade)", got.Mode, topology.PlanModeStandard)
 	}
 	if got.StageHostname != "appstage" {
 		t.Errorf("StageHostname: got %q, want appstage (upgrade)", got.StageHostname)
@@ -1169,10 +1171,10 @@ func TestWriteProvisionMetas_ExpansionPreservesExistingFields(t *testing.T) {
 
 	existing := &ServiceMeta{
 		Hostname:          "appdev",
-		Mode:              PlanModeDev,
+		Mode:              topology.PlanModeDev,
 		BootstrapSession:  "earlier",
 		BootstrappedAt:    "2026-02-01",
-		DeployStrategy:    StrategyPushDev,
+		DeployStrategy:    topology.StrategyPushDev,
 		StrategyConfirmed: true,
 	}
 	if err := WriteServiceMeta(dir, existing); err != nil {
@@ -1188,7 +1190,7 @@ func TestWriteProvisionMetas_ExpansionPreservesExistingFields(t *testing.T) {
 			DevHostname:   "appdev",
 			Type:          "nodejs@22",
 			IsExisting:    true,
-			BootstrapMode: PlanModeStandard,
+			BootstrapMode: topology.PlanModeStandard,
 			ExplicitStage: "appstage",
 		},
 	}}, nil, nil); err != nil {
@@ -1207,14 +1209,14 @@ func TestWriteProvisionMetas_ExpansionPreservesExistingFields(t *testing.T) {
 		t.Fatal("expected partial meta after provision")
 	}
 	// Upgrade contribution already visible at provision time.
-	if got.Mode != PlanModeStandard {
-		t.Errorf("Mode: got %q, want %q at provision", got.Mode, PlanModeStandard)
+	if got.Mode != topology.PlanModeStandard {
+		t.Errorf("Mode: got %q, want %q at provision", got.Mode, topology.PlanModeStandard)
 	}
 	if got.StageHostname != "appstage" {
 		t.Errorf("StageHostname: got %q, want appstage at provision", got.StageHostname)
 	}
 	// User-authored fields preserved across provision write too.
-	if got.DeployStrategy != StrategyPushDev {
+	if got.DeployStrategy != topology.StrategyPushDev {
 		t.Errorf("DeployStrategy: got %q, want push-dev (preserved through provision)", got.DeployStrategy)
 	}
 	if !got.StrategyConfirmed {
@@ -1234,21 +1236,21 @@ func TestMergeExistingMeta(t *testing.T) {
 
 	meta := &ServiceMeta{
 		Hostname:      "appdev",
-		Mode:          PlanModeStandard, // upgrade
-		StageHostname: "appstage",       // upgrade
+		Mode:          topology.PlanModeStandard, // upgrade
+		StageHostname: "appstage",                // upgrade
 	}
 	existing := &ServiceMeta{
 		Hostname:          "appdev",
-		Mode:              PlanModeDev,
+		Mode:              topology.PlanModeDev,
 		BootstrappedAt:    "2026-01-15",
-		DeployStrategy:    StrategyPushGit,
+		DeployStrategy:    topology.StrategyPushGit,
 		StrategyConfirmed: true,
 		FirstDeployedAt:   "2026-01-16T10:00:00Z",
 	}
 
 	mergeExistingMeta(meta, existing)
 
-	if meta.Mode != PlanModeStandard {
+	if meta.Mode != topology.PlanModeStandard {
 		t.Errorf("Mode must stay upgrade value, got %q", meta.Mode)
 	}
 	if meta.StageHostname != "appstage" {
@@ -1257,7 +1259,7 @@ func TestMergeExistingMeta(t *testing.T) {
 	if meta.BootstrappedAt != "2026-01-15" {
 		t.Errorf("BootstrappedAt not preserved: got %q", meta.BootstrappedAt)
 	}
-	if meta.DeployStrategy != StrategyPushGit {
+	if meta.DeployStrategy != topology.StrategyPushGit {
 		t.Errorf("DeployStrategy not preserved: got %q", meta.DeployStrategy)
 	}
 	if !meta.StrategyConfirmed {

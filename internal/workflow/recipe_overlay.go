@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // recipeMountBase is the base directory where SSHFS mounts live in the ZCP
@@ -35,7 +37,7 @@ func OverlayRealREADMEs(files map[string]string, plan *RecipePlan) int {
 	}
 	overlaid := 0
 	for _, t := range plan.Targets {
-		if !IsRuntimeType(t.Type) || t.IsWorker {
+		if !topology.IsRuntimeType(t.Type) || t.IsWorker {
 			continue
 		}
 		mountPath := filepath.Join(base, t.Hostname+"dev", "README.md")

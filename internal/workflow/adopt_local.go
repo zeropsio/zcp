@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // AdoptionResult is returned from LocalAutoAdopt. Meta is always non-nil on
@@ -75,7 +76,7 @@ func LocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stat
 			continue
 		}
 		typeName := s.ServiceStackTypeInfo.ServiceStackTypeVersionName
-		if IsManagedService(typeName) {
+		if topology.IsManagedService(typeName) {
 			managed = append(managed, s.Name)
 			continue
 		}
@@ -94,8 +95,8 @@ func LocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stat
 		// strategy.
 		meta := &ServiceMeta{
 			Hostname:         project.Name,
-			Mode:             PlanModeLocalOnly,
-			DeployStrategy:   StrategyManual,
+			Mode:             topology.PlanModeLocalOnly,
+			DeployStrategy:   topology.StrategyManual,
 			BootstrapSession: "", // adopted, not a fresh bootstrap
 			BootstrappedAt:   now,
 		}
@@ -115,7 +116,7 @@ func LocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stat
 		meta := &ServiceMeta{
 			Hostname:         project.Name,
 			StageHostname:    rt.Name,
-			Mode:             PlanModeLocalStage,
+			Mode:             topology.PlanModeLocalStage,
 			BootstrapSession: "",
 			BootstrappedAt:   now,
 		}
@@ -135,7 +136,7 @@ func LocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stat
 		// guess primary. User resolves via adopt-local subaction.
 		meta := &ServiceMeta{
 			Hostname:         project.Name,
-			Mode:             PlanModeLocalOnly,
+			Mode:             topology.PlanModeLocalOnly,
 			BootstrapSession: "",
 			BootstrappedAt:   now,
 		}

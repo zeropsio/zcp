@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 func TestScenario_S1_NewProjectRecipeMatch(t *testing.T) {
@@ -52,8 +54,8 @@ func TestScenario_S1_NewProjectRecipeMatch(t *testing.T) {
 		Services: []ServiceSnapshot{{
 			Hostname:     "appdev",
 			TypeVersion:  "laravel@11",
-			RuntimeClass: RuntimeDynamic,
-			Mode:         ModeStandard,
+			RuntimeClass: topology.RuntimeDynamic,
+			Mode:         topology.ModeStandard,
 		}},
 		Bootstrap: &BootstrapSessionSummary{
 			Route: BootstrapRouteRecipe,
@@ -99,20 +101,20 @@ func TestScenario_S5_MixedBootstrappedAndUnmanaged(t *testing.T) {
 			{
 				Hostname:     "db",
 				TypeVersion:  "postgresql@16",
-				RuntimeClass: RuntimeManaged,
+				RuntimeClass: topology.RuntimeManaged,
 				Bootstrapped: false, // managed services don't need meta
 			},
 			{
 				Hostname:     "laraveldev",
 				TypeVersion:  "php-apache@8.3",
-				RuntimeClass: RuntimeDynamic,
-				Mode:         ModeDev,
+				RuntimeClass: topology.RuntimeDynamic,
+				Mode:         topology.ModeDev,
 				Bootstrapped: true,
 			},
 			{
 				Hostname:     "newruntime",
 				TypeVersion:  "nodejs@22",
-				RuntimeClass: RuntimeDynamic,
+				RuntimeClass: topology.RuntimeDynamic,
 				Bootstrapped: false, // adoptable — runtime without ServiceMeta
 			},
 		},
@@ -176,7 +178,7 @@ func TestScenario_S3_AdoptOnlyUnmanaged(t *testing.T) {
 		Services: []ServiceSnapshot{{
 			Hostname:     "appdev",
 			TypeVersion:  "nodejs@22",
-			RuntimeClass: RuntimeDynamic,
+			RuntimeClass: topology.RuntimeDynamic,
 			Bootstrapped: false,
 		}},
 	}
@@ -228,9 +230,9 @@ func TestScenario_S4_DevelopStrategyReviewAfterFirstDeploy(t *testing.T) {
 		Services: []ServiceSnapshot{{
 			Hostname:     "appdev",
 			TypeVersion:  "nodejs@22",
-			RuntimeClass: RuntimeDynamic,
-			Mode:         ModeDev,
-			Strategy:     StrategyUnset,
+			RuntimeClass: topology.RuntimeDynamic,
+			Mode:         topology.ModeDev,
+			Strategy:     topology.StrategyUnset,
 			Bootstrapped: true,
 			Deployed:     true,
 		}},
@@ -282,8 +284,8 @@ func TestScenario_S7_DevelopClosedAuto(t *testing.T) {
 		Services: []ServiceSnapshot{{
 			Hostname:     "appdev",
 			TypeVersion:  "nodejs@22",
-			RuntimeClass: RuntimeDynamic,
-			Mode:         ModeDev,
+			RuntimeClass: topology.RuntimeDynamic,
+			Mode:         topology.ModeDev,
 			Strategy:     "push-dev",
 			Bootstrapped: true,
 		}},
@@ -342,8 +344,8 @@ func TestScenario_S2_IdleBootstrappedReady(t *testing.T) {
 		Services: []ServiceSnapshot{{
 			Hostname:     "appdev",
 			TypeVersion:  "nodejs@22",
-			RuntimeClass: RuntimeDynamic,
-			Mode:         ModeDev,
+			RuntimeClass: topology.RuntimeDynamic,
+			Mode:         topology.ModeDev,
 			Bootstrapped: true,
 		}},
 	}
@@ -396,8 +398,8 @@ func TestScenario_StandardPair_FirstDeploy_PromoteToStage(t *testing.T) {
 			{
 				Hostname:      "appdev",
 				TypeVersion:   "nodejs@22",
-				RuntimeClass:  RuntimeDynamic,
-				Mode:          ModeStandard,
+				RuntimeClass:  topology.RuntimeDynamic,
+				Mode:          topology.ModeStandard,
 				StageHostname: "appstage",
 				Strategy:      "push-dev",
 				Bootstrapped:  true,
@@ -406,8 +408,8 @@ func TestScenario_StandardPair_FirstDeploy_PromoteToStage(t *testing.T) {
 			{
 				Hostname:     "appstage",
 				TypeVersion:  "nodejs@22",
-				RuntimeClass: RuntimeDynamic,
-				Mode:         ModeStage,
+				RuntimeClass: topology.RuntimeDynamic,
+				Mode:         topology.ModeStage,
 				Strategy:     "push-dev",
 				Bootstrapped: true,
 				Deployed:     false,
@@ -447,8 +449,8 @@ func TestScenario_S6_DevelopDeployOKPendingVerify(t *testing.T) {
 		Services: []ServiceSnapshot{{
 			Hostname:     "appdev",
 			TypeVersion:  "nodejs@22",
-			RuntimeClass: RuntimeDynamic,
-			Mode:         ModeDev,
+			RuntimeClass: topology.RuntimeDynamic,
+			Mode:         topology.ModeDev,
 			Strategy:     "push-dev",
 			Bootstrapped: true,
 		}},
@@ -521,9 +523,9 @@ func TestScenario_S11_StrategySetupEmptyPlan(t *testing.T) {
 		Services: []ServiceSnapshot{{
 			Hostname:     "appdev",
 			Bootstrapped: true,
-			Strategy:     StrategyPushGit,
-			Trigger:      TriggerUnset, // pre-trigger call → intro atom should fire
-			Mode:         ModeDev,
+			Strategy:     topology.StrategyPushGit,
+			Trigger:      topology.TriggerUnset, // pre-trigger call → intro atom should fire
+			Mode:         topology.ModeDev,
 		}},
 	}
 
@@ -591,8 +593,8 @@ func TestScenario_S8_DevelopIterationFailure(t *testing.T) {
 		Services: []ServiceSnapshot{{
 			Hostname:     "appdev",
 			TypeVersion:  "nodejs@22",
-			RuntimeClass: RuntimeDynamic,
-			Mode:         ModeDev,
+			RuntimeClass: topology.RuntimeDynamic,
+			Mode:         topology.ModeDev,
 			Strategy:     "push-dev",
 			Bootstrapped: true,
 			Deployed:     true,

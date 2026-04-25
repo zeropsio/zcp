@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/knowledge"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // newTestCorpus returns a RecipeCorpus backed by an in-memory store for the
@@ -116,8 +117,8 @@ func TestStoreRecipeCorpus_FindRankedMatches_SetsMode(t *testing.T) {
 	if len(matches) == 0 {
 		t.Fatal("expected match")
 	}
-	if matches[0].Mode != PlanModeStandard {
-		t.Errorf("mode: got %q, want %q", matches[0].Mode, PlanModeStandard)
+	if matches[0].Mode != topology.PlanModeStandard {
+		t.Errorf("mode: got %q, want %q", matches[0].Mode, topology.PlanModeStandard)
 	}
 }
 

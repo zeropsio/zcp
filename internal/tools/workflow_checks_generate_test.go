@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -582,7 +583,7 @@ func TestCheckGenerate_HealthCheck(t *testing.T) {
 	tests := []struct {
 		name          string
 		yml           string
-		bootstrapMode workflow.Mode
+		bootstrapMode topology.Mode
 		wantPassed    bool
 		wantCheckName string
 		wantStatus    string

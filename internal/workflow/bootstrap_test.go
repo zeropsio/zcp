@@ -5,6 +5,8 @@ package workflow
 import (
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 func TestStepDetails_AllStepsCovered(t *testing.T) {
@@ -500,7 +502,7 @@ func TestPlanMode(t *testing.T) {
 	tests := []struct {
 		name string
 		plan *ServicePlan
-		want Mode
+		want topology.Mode
 	}{
 		{
 			"nil_plan",

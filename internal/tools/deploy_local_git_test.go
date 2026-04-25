@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -71,7 +72,7 @@ func TestHandleLocalGitPush_HappyPath(t *testing.T) {
 
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
-		Hostname: "myproject", Mode: workflow.PlanModeLocalStage,
+		Hostname: "myproject", Mode: topology.PlanModeLocalStage,
 		StageHostname: "apistage", BootstrappedAt: "2026-04-01",
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
@@ -108,7 +109,7 @@ func TestHandleLocalGitPush_NotAGitRepo_Refuses(t *testing.T) {
 	workDir := t.TempDir() // no git init
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
-		Hostname: "myproject", Mode: workflow.PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
+		Hostname: "myproject", Mode: topology.PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
@@ -159,7 +160,7 @@ func TestHandleLocalGitPush_NoOriginNoRemoteURL_Refuses(t *testing.T) {
 
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
-		Hostname: "myproject", Mode: workflow.PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
+		Hostname: "myproject", Mode: topology.PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
@@ -185,7 +186,7 @@ func TestHandleLocalGitPush_RemoteURLMismatch_Refuses(t *testing.T) {
 	workDir, existingRemote := gitRepoFixture(t)
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
-		Hostname: "myproject", Mode: workflow.PlanModeLocalStage,
+		Hostname: "myproject", Mode: topology.PlanModeLocalStage,
 		StageHostname: "apistage", BootstrappedAt: "2026-04-01",
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)

@@ -9,6 +9,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/ops"
 	opschecks "github.com/zeropsio/zcp/internal/ops/checks"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -127,7 +128,7 @@ func checkGenerateEntry(ctx context.Context, doc *ops.ZeropsYmlDoc, hostname str
 	}
 
 	// HealthCheck required for simple mode (unless implicit web server).
-	if target.Runtime.EffectiveMode() == workflow.PlanModeSimple && !implicitWS {
+	if target.Runtime.EffectiveMode() == topology.PlanModeSimple && !implicitWS {
 		if entry.Run.HealthCheck != nil {
 			checks = append(checks, workflow.StepCheck{
 				Name: hostname + "_health_check", Status: statusPass,
@@ -195,7 +196,7 @@ func checkGenerateEntry(ctx context.Context, doc *ops.ZeropsYmlDoc, hostname str
 
 	// Dev and standard mode services need deployFiles: [.] for full source iteration.
 	mode := target.Runtime.EffectiveMode()
-	if mode == workflow.PlanModeStandard || mode == workflow.PlanModeDev {
+	if mode == topology.PlanModeStandard || mode == topology.PlanModeDev {
 		if deployFilesContainsDot(entry.Build.DeployFiles) {
 			checks = append(checks, workflow.StepCheck{
 				Name: hostname + "_dev_deploy_files", Status: statusPass,

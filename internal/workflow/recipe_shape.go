@@ -3,6 +3,7 @@ package workflow
 import (
 	"fmt"
 
+	"github.com/zeropsio/zcp/internal/topology"
 	"gopkg.in/yaml.v3"
 )
 
@@ -16,7 +17,7 @@ import (
 //   - "simple"   — single runtime with `zeropsSetup: prod`
 //   - "dev"      — single runtime with `zeropsSetup: dev`
 //   - ""         — managed-only, unknown pattern, or invalid YAML
-func InferRecipeShape(importYAML string) (mode Mode, runtimeCount int) {
+func InferRecipeShape(importYAML string) (mode topology.Mode, runtimeCount int) {
 	var doc struct {
 		Services []struct {
 			Hostname    string `yaml:"hostname"`
@@ -37,17 +38,17 @@ func InferRecipeShape(importYAML string) (mode Mode, runtimeCount int) {
 		return "", 0
 	case 1:
 		if setups[0] == RecipeSetupProd {
-			return PlanModeSimple, 1
+			return topology.PlanModeSimple, 1
 		}
 		if setups[0] == RecipeSetupDev {
-			return PlanModeDev, 1
+			return topology.PlanModeDev, 1
 		}
 		return "", 1
 	case 2:
 		hasDev := setups[0] == RecipeSetupDev || setups[1] == RecipeSetupDev
 		hasProd := setups[0] == RecipeSetupProd || setups[1] == RecipeSetupProd
 		if hasDev && hasProd {
-			return PlanModeStandard, 2
+			return topology.PlanModeStandard, 2
 		}
 		return "", 2
 	default:

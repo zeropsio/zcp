@@ -1,5 +1,7 @@
 package workflow
 
+import
+
 // BuildPlan is the single entry point for producing the typed Plan from an
 // envelope. Pure — no I/O, no state, deterministic given the input JSON.
 //
@@ -24,6 +26,8 @@ package workflow
 // Any branch whose precondition is not met falls through — no fallbacks,
 // no defaults. If the envelope hits no branch, an empty Plan is returned,
 // signalling a bug in envelope construction.
+"github.com/zeropsio/zcp/internal/topology"
+
 func BuildPlan(env StateEnvelope) Plan {
 	switch env.Phase {
 	case PhaseDevelopClosed:
@@ -190,7 +194,7 @@ func planIdle(env StateEnvelope) Plan {
 // is unmanaged runtimes without complete meta.
 func countIdleServices(env StateEnvelope) (bootstrapped, adoptable int) {
 	for _, svc := range env.Services {
-		if svc.RuntimeClass == RuntimeManaged {
+		if svc.RuntimeClass == topology.RuntimeManaged {
 			continue
 		}
 		if svc.Bootstrapped {

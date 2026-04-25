@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // TestStateEnvelope_JSONRoundtrip confirms that every envelope fixture
@@ -63,11 +65,11 @@ func TestStateEnvelope_JSONRoundtrip(t *testing.T) {
 			Services: []ServiceSnapshot{{
 				Hostname:      "appdev",
 				TypeVersion:   "nodejs@20",
-				RuntimeClass:  RuntimeDynamic,
+				RuntimeClass:  topology.RuntimeDynamic,
 				Status:        "ACTIVE",
 				Bootstrapped:  true,
-				Mode:          ModeDev,
-				Strategy:      StrategyPushDev,
+				Mode:          topology.ModeDev,
+				Strategy:      topology.StrategyPushDev,
 				StageHostname: "appstage",
 			}},
 			WorkSession: &WorkSessionSummary{

@@ -6,6 +6,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -84,15 +85,15 @@ func maybeAutoEnableSubdomain(
 // runtimes that serve HTTP; local-stage is the stage half of a local
 // standard pair (the remote runtime that serves traffic). ModeLocalOnly
 // has no remote runtime at all, so there is nothing to auto-enable.
-func modeEligibleForSubdomain(mode workflow.Mode) bool {
+func modeEligibleForSubdomain(mode topology.Mode) bool {
 	switch mode {
-	case workflow.PlanModeDev,
-		workflow.PlanModeStandard,
-		workflow.ModeStage,
-		workflow.PlanModeSimple,
-		workflow.PlanModeLocalStage:
+	case topology.PlanModeDev,
+		topology.PlanModeStandard,
+		topology.ModeStage,
+		topology.PlanModeSimple,
+		topology.PlanModeLocalStage:
 		return true
-	case workflow.ModeLocalOnly:
+	case topology.ModeLocalOnly:
 		return false
 	}
 	return false

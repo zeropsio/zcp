@@ -3,6 +3,8 @@ package workflow
 import (
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 func TestWriteStrategyNote_Empty(t *testing.T) {
@@ -27,9 +29,9 @@ func TestWriteStrategyNote_Set(t *testing.T) {
 		strategy string
 		wantAlts []string
 	}{
-		{"push-dev", StrategyPushDev, []string{"push-git", "manual"}},
-		{"push-git", StrategyPushGit, []string{"push-dev", "manual"}},
-		{"manual", StrategyManual, []string{"push-dev", "push-git"}},
+		{"push-dev", topology.StrategyPushDev, []string{"push-git", "manual"}},
+		{"push-git", topology.StrategyPushGit, []string{"push-dev", "manual"}},
+		{"manual", topology.StrategyManual, []string{"push-dev", "push-git"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/schema"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // validMinimalPlan returns a structurally valid minimal recipe plan for testing.
@@ -249,7 +250,7 @@ func TestValidateRecipePlan_ShowcaseMissingServices(t *testing.T) {
 		{"missing app (no non-worker runtime)", func(p *RecipePlan) {
 			var filtered []RecipeTarget
 			for _, t := range p.Targets {
-				if !IsRuntimeType(t.Type) || t.IsWorker {
+				if !topology.IsRuntimeType(t.Type) || t.IsWorker {
 					filtered = append(filtered, t)
 				}
 			}
