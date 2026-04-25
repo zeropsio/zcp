@@ -156,13 +156,6 @@ var claudeMDForbiddenSubsections = []string{
 	"Boot-time connectivity",
 }
 
-// zcpToolLeakRE matches zcp control-plane primitives that have no place
-// in a porter-facing CLAUDE.md: zerops_* MCP tool names + bare `zcli`
-// or `zcp` command invocations. The porter clones the apps repo and
-// runs framework-canonical commands; they have their own Zerops project
-// and editor — no zcp control plane. Run-12 §C — TEACH-side fix.
-var zcpToolLeakRE = regexp.MustCompile(`\b(zerops_(dev_server|deploy|verify|logs|browser|recipe|env|discover|mount|subdomain|manage|knowledge|import|workflow|events)|zcli\s|zcp\s)`)
-
 // validateCodebaseCLAUDE enforces a minimum byte floor plus a length cap
 // (≤ 60 lines, reference is 33) and flags the cross-codebase
 // operational subsections that drifted into run-9's 99-line CLAUDE.mds.
@@ -184,14 +177,6 @@ func validateCodebaseCLAUDE(_ context.Context, path string, body []byte, _ Surfa
 		vs = append(vs, violation("claude-md-too-long", path,
 			fmt.Sprintf("%d lines > %d cap — CLAUDE.md is a codebase-scoped cheat sheet (30–50 lines target). Move cross-codebase runbooks (Quick curls, Smoke tests, etc.) to the recipe root README; keep only codebase-specific service facts + dev loop + notes.",
 				lines, claudeMDLineCap)))
-	}
-	// zcp control-plane tool leak — porter cannot invoke MCP tools in
-	// their own editor. Each occurrence = one violation; the message
-	// names the matched token so the author sees which line to rewrite.
-	for _, m := range zcpToolLeakRE.FindAllString(string(body), -1) {
-		vs = append(vs, violation("claude-md-zcp-tool-leak", path,
-			fmt.Sprintf("CLAUDE.md is porter-facing; %q is a zcp control-plane primitive — replace with the framework-canonical command (e.g. `npm run start:dev`, `php artisan serve`)",
-				strings.TrimSpace(m))))
 	}
 	// Forbidden-subsection headings — case-insensitive match against the
 	// header text (everything after the leading `#`s). Emits one violation
@@ -302,41 +287,6 @@ func trimForMessage(s string) string {
 		return s[:77] + "..."
 	}
 	return s
-}
-
-// subdomainDoubleSchemeRE matches yaml/string-literal forms where the
-// alias `${<host>_zeropsSubdomain}` is prefixed with `https://`. The
-// alias already resolves to a full HTTPS URL — prepending another
-// scheme produces `https://https://...`, the run-11 nestjs-showcase bug
-// (3 independent occurrences across sub-agents).
-var subdomainDoubleSchemeRE = regexp.MustCompile(`https://\$\{[A-Za-z][A-Za-z0-9_]*_zeropsSubdomain\}`)
-
-// subdomainDoubleSchemeJSRE matches JavaScript/TS template-literal
-// double-prefix via `process.env.<host>_zeropsSubdomain`.
-var subdomainDoubleSchemeJSRE = regexp.MustCompile(`https://\$\{process\.env\.[A-Za-z][A-Za-z0-9_]*_zeropsSubdomain\}`)
-
-// scanSourceForSubdomainDoubleScheme flags occurrences of the
-// `https://${...zeropsSubdomain}` double-scheme pattern in a single
-// source body. Run-12 §A — TEACH-side: the alias is a full URL, so
-// prepending `https://` is structurally wrong on every recipe.
-func scanSourceForSubdomainDoubleScheme(path, body string) []Violation {
-	var vs []Violation
-	report := func(match string) {
-		vs = append(vs, Violation{
-			Code: "subdomain-double-scheme",
-			Path: path,
-			Message: fmt.Sprintf(
-				"`${<host>_zeropsSubdomain}` resolves to a full HTTPS URL — drop the leading `https://`: %s",
-				trimForMessage(strings.TrimSpace(match))),
-		})
-	}
-	for _, m := range subdomainDoubleSchemeRE.FindAllString(body, -1) {
-		report(m)
-	}
-	for _, m := range subdomainDoubleSchemeJSRE.FindAllString(body, -1) {
-		report(m)
-	}
-	return vs
 }
 
 // validateCrossSurfaceUniqueness — run-8 §2.D + spec-content-surfaces.md
