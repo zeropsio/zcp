@@ -82,7 +82,7 @@ code, there is no teaching for a porter cloning the finished recipe.
 The engine classifier auto-overrides agent-supplied surfaceHint when
 fixApplied describes a recipe-source change without platform-side
 mechanism vocabulary in failureMode (V-1). See scaffold brief
-"Self-inflicted litmus" subsection for run-10 anti-patterns.
+"Self-inflicted litmus" subsection.
 
 ## At feature close — commit per-feature
 
