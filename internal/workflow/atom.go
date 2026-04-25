@@ -54,6 +54,11 @@ type AxisVector struct {
 	Steps         []string
 	IdleScenarios []IdleScenario
 	DeployStates  []DeployState
+	// ServiceStatuses scopes the atom to a specific live service status
+	// (`ServiceSnapshot.Status`) — typically the platform-side state like
+	// `ACTIVE` or `READY_TO_DEPLOY`. Service-scoped: at least one service
+	// in the envelope must match for the atom to fire. Empty = any status.
+	ServiceStatuses []string
 }
 
 // ParseAtom parses a `.md` file body containing YAML frontmatter and a
@@ -83,8 +88,9 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 			Runtimes:      parseRuntimes(fields["runtimes"]),
 			Routes:        parseRoutes(fields["routes"]),
 			Steps:         parseYAMLList(fields["steps"]),
-			IdleScenarios: parseIdleScenarios(fields["idleScenarios"]),
-			DeployStates:  parseDeployStates(fields["deployStates"]),
+			IdleScenarios:   parseIdleScenarios(fields["idleScenarios"]),
+			DeployStates:    parseDeployStates(fields["deployStates"]),
+			ServiceStatuses: parseYAMLList(fields["serviceStatus"]),
 		},
 		ReferencesFields:  parseYAMLList(fields["references-fields"]),
 		ReferencesAtoms:   parseYAMLList(fields["references-atoms"]),

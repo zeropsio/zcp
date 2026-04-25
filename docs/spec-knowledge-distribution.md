@@ -175,9 +175,17 @@ Like `routes`, declaring `steps` implicitly scopes an atom to
 
 **Empty = any state.** Non-bootstrapped services are skipped for this axis entirely — they have no tracked deploy state, and gating first-deploy atoms on them would surface scaffold guidance for pure-adoption services bootstrap never touched.
 
-### 3.9 Service-scoped axis conjunction
+### 3.9 `serviceStatus` (service-scoped, optional)
 
-The four service-scoped axes (`modes`, `strategies`, `runtimes`, `deployStates`) evaluate **together per service**: an atom fires only when a single service in the envelope satisfies EVERY declared service-scoped axis. Axis independence (ANY service satisfies X while a DIFFERENT service satisfies Y) would fire atoms whose `{hostname}` substitution references a service the atom isn't semantically about — e.g. `develop-strategy-review (deployStates=[deployed], strategies=[unset])` would surface when service A is deployed+push-dev and service B is never-deployed+unset, despite no single service being both deployed AND unset.
+Live platform-side service status — the value of `ServiceSnapshot.Status` (e.g. `ACTIVE`, `READY_TO_DEPLOY`, `STARTING`). Use when an atom's content is only relevant for services in a specific runtime state.
+
+**Empty = any status.** Atoms without this axis fire regardless of service status.
+
+Example: `develop-ready-to-deploy` atom describes recovery for services stuck in READY_TO_DEPLOY (created without `startWithoutCode: true`, never deployed). With `serviceStatus: [READY_TO_DEPLOY]` it fires only when at least one service in the envelope is actually in that state — the atom remains 30 lines long but is no-op for the 90% of post-bootstrap envelopes where every service is ACTIVE.
+
+### 3.10 Service-scoped axis conjunction
+
+The five service-scoped axes (`modes`, `strategies`, `runtimes`, `deployStates`, `serviceStatus`) evaluate **together per service**: an atom fires only when a single service in the envelope satisfies EVERY declared service-scoped axis. Axis independence (ANY service satisfies X while a DIFFERENT service satisfies Y) would fire atoms whose `{hostname}` substitution references a service the atom isn't semantically about — e.g. `develop-strategy-review (deployStates=[deployed], strategies=[unset])` would surface when service A is deployed+push-dev and service B is never-deployed+unset, despite no single service being both deployed AND unset.
 
 Envelope-wide axes (`phases`, `environments`, `routes`, `steps`, `idleScenarios`) match the envelope directly — conjunction only applies to the service-scoped group.
 

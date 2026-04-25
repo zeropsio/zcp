@@ -93,7 +93,8 @@ func atomMatches(atom KnowledgeAtom, env StateEnvelope) bool {
 		len(atom.Axes.Strategies) > 0 ||
 		len(atom.Axes.Triggers) > 0 ||
 		len(atom.Axes.Runtimes) > 0 ||
-		len(atom.Axes.DeployStates) > 0
+		len(atom.Axes.DeployStates) > 0 ||
+		len(atom.Axes.ServiceStatuses) > 0
 	if hasServiceScope && !anyServiceMatchesAll(env.Services, atom.Axes) {
 		return false
 	}
@@ -155,6 +156,9 @@ func anyServiceMatchesAll(services []ServiceSnapshot, axes AxisVector) bool {
 			if !slices.Contains(axes.DeployStates, state) {
 				continue
 			}
+		}
+		if len(axes.ServiceStatuses) > 0 && !slices.Contains(axes.ServiceStatuses, svc.Status) {
+			continue
 		}
 		return true
 	}

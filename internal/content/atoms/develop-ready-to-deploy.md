@@ -4,6 +4,7 @@ priority: 2
 phases: [develop-active]
 modes: [dev, simple, standard]
 environments: [container]
+serviceStatus: [READY_TO_DEPLOY]
 title: "Dev service at READY_TO_DEPLOY — bring it to ACTIVE first"
 ---
 
