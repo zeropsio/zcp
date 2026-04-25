@@ -45,7 +45,9 @@ func TestArchitectureLayering(t *testing.T) {
 			name:    "ops-not-workflow",
 			rootDir: "ops",
 			// Sub-package ops/checks/ keeps workflow access while recipe v2
-			// still owns the StepCheck types it produces.
+			// still owns the StepCheck types it produces. The narrower
+			// "ops-checks-legacy" rule below still pins the rest of the
+			// deny list (tools/, recipe/) for that subtree.
 			excludeSubdir: []string{"checks"},
 			deny: []string{
 				"github.com/zeropsio/zcp/internal/workflow",
@@ -53,6 +55,18 @@ func TestArchitectureLayering(t *testing.T) {
 				"github.com/zeropsio/zcp/internal/recipe",
 			},
 			reason: "ops/ and workflow/ are peer layer-3 packages; share types via topology/",
+		},
+		{
+			name:    "ops-checks-legacy",
+			rootDir: "ops/checks",
+			// workflow is intentionally permitted here — the StepCheck
+			// types live in workflow/ and ops/checks/ produces them.
+			// Once recipe v2 is deleted this exception goes away.
+			deny: []string{
+				"github.com/zeropsio/zcp/internal/tools",
+				"github.com/zeropsio/zcp/internal/recipe",
+			},
+			reason: "ops/checks/ is layer 3 (recipe v2 legacy); tools/ and recipe/ remain forbidden",
 		},
 		{
 			name:    "workflow-not-ops",
