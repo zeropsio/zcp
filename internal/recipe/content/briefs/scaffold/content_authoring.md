@@ -42,6 +42,28 @@ author item #1. Do NOT describe the yaml in English as a numbered
 item — the yaml block IS the description; clarifications go in yaml
 inline comments.
 
+### IG scope — "what changes for Zerops" only
+
+IG items 2+ describe what changes about a NestJS / Laravel / SvelteKit
+app to deploy on Zerops:
+
+- Bind 0.0.0.0 (instead of 127.0.0.1)
+- Trust the L7 proxy
+- Read cross-service env vars from own-key aliases (not platform-side names)
+- Cache control / SIGTERM drain — only when there's a Zerops-specific shape
+
+What does NOT go here:
+- Framework configuration that doesn't change for Zerops (route declarations,
+  middleware ordering, controller decoration patterns).
+- Recipe-internal contracts (NATS subject naming, cache key shape,
+  image storage layout, queue topic conventions). Those are
+  customization points for someone extending THIS recipe; they go in
+  KB or claude-md/notes.
+- Application architecture (module structure, class hierarchy).
+
+Aim for 4-7 IG items. More usually means recipe-internal content
+crept in. Reference (laravel-showcase-app): 5 items.
+
 ### Knowledge Base — `**Topic** — prose` only
 
 Every KB bullet: `**<topic>**` + em-dash + 2–5 sentences.
