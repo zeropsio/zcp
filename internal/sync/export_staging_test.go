@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -111,6 +112,52 @@ func listArchive(t *testing.T, path string) []string {
 
 func contains(ss []string, target string) bool {
 	return slices.Contains(ss, target)
+}
+
+// TestExport_NoGitDir_EmitsWarning — run-11 Q-3. When SourceRoot
+// lacks .git/, export proceeds with a stderr warning rather than
+// blocking. Captures the warning by redirecting os.Stderr.
+func TestExport_NoGitDir_EmitsWarning(t *testing.T) {
+	recipeDir := t.TempDir()
+	appDir := t.TempDir()
+
+	mustWrite(t, filepath.Join(recipeDir, "README.md"), "# root")
+	mustWrite(t, filepath.Join(recipeDir, "environments", "0 — AI Agent", "README.md"), "env 0")
+	mustWrite(t, filepath.Join(appDir, "main.go"), "package main")
+	if err := os.Rename(appDir, filepath.Join(filepath.Dir(appDir), "apidev")); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	appDir = filepath.Join(filepath.Dir(appDir), "apidev")
+
+	// Capture stderr.
+	origStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stderr = w
+
+	t.Chdir(t.TempDir())
+
+	_, exportErr := ExportRecipe(ExportOpts{
+		RecipeDir:     recipeDir,
+		AppDirs:       []string{appDir},
+		SkipCloseGate: true,
+	})
+
+	w.Close()
+	os.Stderr = origStderr
+	captured, _ := io.ReadAll(r)
+
+	if exportErr != nil {
+		t.Fatalf("ExportRecipe: %v", exportErr)
+	}
+	if !strings.Contains(string(captured), "no .git/") {
+		t.Errorf("expected stderr warning naming missing .git/, got: %s", string(captured))
+	}
+	if !strings.Contains(string(captured), "apidev") {
+		t.Errorf("expected stderr warning to name the codebase, got: %s", string(captured))
+	}
 }
 
 // TestOverlayStagedWriterContent_MissingDirNoop covers the no-staging

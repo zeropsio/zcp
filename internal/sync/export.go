@@ -280,10 +280,17 @@ func ExportRecipe(opts ExportOpts) (*ExportResult, error) {
 		}
 		appName := filepath.Base(appDir)
 		archiveAppDir := filepath.Join(archivePrefix, appName)
-		if hasGitDir(appDir) {
-			err = exportGitSubtree(tw, appDir, archiveAppDir, "")
-		} else {
+		// Run-11 Q-3: warn (don't block) when SourceRoot has no .git/
+		// directory. The apps-repo publish path needs a clean git
+		// history; missing .git is a sign scaffold's git-init mandate
+		// (Q-1) was skipped.
+		if !hasGitDir(appDir) {
+			fmt.Fprintf(os.Stderr,
+				"warning: %s has no .git/ — run `git init && git add -A && git commit -m 'scaffold: initial structure + zerops.yaml'` from the SourceRoot before export to give the apps-repo a clean history (run-11 Q-3)\n",
+				appDir)
 			err = exportSubdirWalk(tw, appDir, archiveAppDir, "")
+		} else {
+			err = exportGitSubtree(tw, appDir, archiveAppDir, "")
 		}
 		if err != nil {
 			tw.Close()
