@@ -47,18 +47,140 @@ func DefaultGates() []Gate {
 	}
 }
 
-// FinalizeGates returns the additional gate set that runs only at
-// finalize close — after stitch-content has landed every surface on
-// disk. In addition to the mechanical env-imports-present gate, this
-// set runs every registered per-surface validator (Workstream D) so
-// the prose content itself is checked against spec-content-surfaces.md.
-// Run-9-readiness §2.I adds the source-comment voice scanner.
-func FinalizeGates() []Gate {
+// CodebaseGates returns the gate set that runs at scaffold + feature
+// complete-phase. These validators target codebase-scoped surfaces
+// (IG, KB, CLAUDE, zerops.yaml comments) plus the source-comment voice
+// scan — content authored by the scaffold/feature sub-agent in their
+// own session, where they can correct violations via
+// `record-fragment mode=replace`. Run-12 §G splits the prior
+// FinalizeGates() so codebase-scoped checks fire when the right author
+// is in-session, not at finalize when only main is left to hand-edit.
+func CodebaseGates() []Gate {
 	return []Gate{
-		{Name: "env-imports-present", Run: gateEnvImportsPresent},
-		{Name: "surface-validators", Run: gateSurfaceValidators},
+		{Name: "codebase-surface-validators", Run: gateCodebaseSurfaceValidators},
 		{Name: "source-comment-voice", Run: gateSourceCommentVoice},
 	}
+}
+
+// EnvGates returns the gate set that runs only at finalize close —
+// finalize is the only phase that authors root + env surfaces. Adds
+// env-imports-present mechanical check.
+func EnvGates() []Gate {
+	return []Gate{
+		{Name: "env-imports-present", Run: gateEnvImportsPresent},
+		{Name: "env-surface-validators", Run: gateEnvSurfaceValidators},
+	}
+}
+
+// FinalizeGates is preserved as a convenience for callers that want
+// the union of CodebaseGates + EnvGates at finalize close. Run-12 §G
+// — finalize re-runs codebase gates (catches feature appends) plus
+// the env gates only finalize cares about.
+func FinalizeGates() []Gate {
+	out := CodebaseGates()
+	return append(out, EnvGates()...)
+}
+
+// codebaseSurfaceKinds — surfaces validated at scaffold + feature
+// complete-phase.
+var codebaseSurfaceKinds = []Surface{
+	SurfaceCodebaseIG,
+	SurfaceCodebaseKB,
+	SurfaceCodebaseCLAUDE,
+	SurfaceCodebaseZeropsComments,
+}
+
+// envSurfaceKinds — surfaces validated only at finalize close.
+var envSurfaceKinds = []Surface{
+	SurfaceRootREADME,
+	SurfaceEnvREADME,
+	SurfaceEnvImportComments,
+}
+
+// gateCodebaseSurfaceValidators runs validators for the codebase-
+// scoped surface set only.
+func gateCodebaseSurfaceValidators(ctx GateContext) []Violation {
+	return runSurfaceValidatorsForKinds(ctx, codebaseSurfaceKinds)
+}
+
+// gateEnvSurfaceValidators runs validators for the root + env surface
+// set, plus the cross-surface uniqueness check which needs the full
+// stitched corpus to be meaningful. Kept distinct so finalize is the
+// only phase emitting these violations (root + env are finalize-
+// authored; the uniqueness check spans every surface).
+func gateEnvSurfaceValidators(ctx GateContext) []Violation {
+	out := runSurfaceValidatorsForKinds(ctx, envSurfaceKinds)
+	out = append(out, runCrossSurfaceUniqueness(ctx)...)
+	return out
+}
+
+// runCrossSurfaceUniqueness reads every surface body off disk and
+// applies the cross-surface duplication check. Only meaningful at
+// finalize close, when the full corpus is on disk.
+func runCrossSurfaceUniqueness(ctx GateContext) []Violation {
+	var facts []FactRecord
+	if ctx.FactsLog != nil {
+		if all, err := ctx.FactsLog.Read(); err == nil {
+			facts, _ = ClassifyLog(all)
+		}
+	}
+	surfaces := map[string]string{}
+	for _, s := range Surfaces() {
+		for _, p := range resolveSurfacePaths(ctx.OutputRoot, s, ctx.Plan) {
+			body, err := os.ReadFile(p)
+			if err != nil {
+				continue
+			}
+			surfaces[filepath.Base(p)] = string(body)
+		}
+	}
+	return validateCrossSurfaceUniqueness(surfaces, facts)
+}
+
+// runSurfaceValidatorsForKinds runs the registered ValidateFn for each
+// of the given surface kinds against the resolved disk paths. Only
+// existing files are scanned — codebase surfaces during scaffold close
+// may live in <SourceRoot> only after the sub-agent's first
+// stitch-content call. Cross-surface uniqueness is owned by
+// gateEnvSurfaceValidators (finalize close) — it needs the full
+// stitched corpus to be meaningful.
+func runSurfaceValidatorsForKinds(ctx GateContext, kinds []Surface) []Violation {
+	var facts []FactRecord
+	if ctx.FactsLog != nil {
+		if all, err := ctx.FactsLog.Read(); err == nil {
+			facts, _ = ClassifyLog(all)
+		}
+	}
+	inputs := SurfaceInputs{Plan: ctx.Plan, Facts: facts, Parent: ctx.Parent}
+	var violations []Violation
+	for _, s := range kinds {
+		fn := ValidatorFor(s)
+		if fn == nil {
+			continue
+		}
+		paths := resolveSurfacePaths(ctx.OutputRoot, s, ctx.Plan)
+		for _, p := range paths {
+			content, err := os.ReadFile(p)
+			if err != nil {
+				if os.IsNotExist(err) {
+					continue
+				}
+				violations = append(violations, Violation{
+					Code: "validator-read-failed", Path: p, Message: err.Error(),
+				})
+				continue
+			}
+			vs, err := fn(context.Background(), p, content, inputs)
+			if err != nil {
+				violations = append(violations, Violation{
+					Code: "validator-error", Path: p, Message: err.Error(),
+				})
+				continue
+			}
+			violations = append(violations, vs...)
+		}
+	}
+	return violations
 }
 
 // gateSourceCommentVoice walks every codebase's SourceRoot and flags
@@ -87,20 +209,6 @@ func gateSourceCommentVoice(ctx GateContext) []Violation {
 		out = append(out, vs...)
 	}
 	return out
-}
-
-// gateSurfaceValidators runs every registered SurfaceContract
-// ValidateFn over the stitched output tree. Facts are classified first
-// (Workstream C) so DISCARD-class records don't drive spurious
-// cross-surface violations.
-func gateSurfaceValidators(ctx GateContext) []Violation {
-	var facts []FactRecord
-	if ctx.FactsLog != nil {
-		if all, err := ctx.FactsLog.Read(); err == nil {
-			facts, _ = ClassifyLog(all)
-		}
-	}
-	return RunSurfaceValidators(context.Background(), ctx.OutputRoot, ctx.Plan, facts, ctx.Parent)
 }
 
 // gateEnvImportsPresent — every tier must have an import.yaml file in the
