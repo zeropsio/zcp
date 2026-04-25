@@ -211,7 +211,15 @@ func writeDeliverableServices(b *strings.Builder, plan *Plan, tier Tier) {
 // writeRuntimeDev emits a tier-0/1 dev slot for a codebase.
 func writeRuntimeDev(b *strings.Builder, plan *Plan, cb Codebase, comments map[string]string) {
 	host := cb.Hostname + "dev"
-	writeComment(b, comments[host], "  ")
+	// Look up by slot host first; fall back to bare codebase name.
+	// Brief instructs agents to record under the bare codebase name
+	// (`env/<N>/import-comments/api`); emitter must honor that.
+	// Run-12 §Y2.
+	comment := comments[host]
+	if comment == "" {
+		comment = comments[cb.Hostname]
+	}
+	writeComment(b, comment, "  ")
 	fmt.Fprintf(b, "  - hostname: %s\n", host)
 	fmt.Fprintf(b, "    type: %s\n", devRuntimeType(cb))
 	if cb.Role == RoleAPI {
@@ -228,7 +236,12 @@ func writeRuntimeDev(b *strings.Builder, plan *Plan, cb Codebase, comments map[s
 // writeRuntimeStage emits a tier-0/1 stage slot for a codebase.
 func writeRuntimeStage(b *strings.Builder, plan *Plan, cb Codebase, tier Tier, comments map[string]string) {
 	host := cb.Hostname + "stage"
-	writeComment(b, comments[host], "  ")
+	// Same slot-then-bare fallback as writeRuntimeDev. Run-12 §Y2.
+	comment := comments[host]
+	if comment == "" {
+		comment = comments[cb.Hostname]
+	}
+	writeComment(b, comment, "  ")
 	fmt.Fprintf(b, "  - hostname: %s\n", host)
 	fmt.Fprintf(b, "    type: %s\n", cb.BaseRuntime)
 	if cb.Role == RoleAPI {

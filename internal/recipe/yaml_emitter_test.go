@@ -213,6 +213,52 @@ func TestEmitWorkspaceYAML_ShapeContract(t *testing.T) {
 	mustContain(t, got, "mode: NON_HA")
 }
 
+// TestWriteRuntimeDev_FallsBackToBareCodebaseName — run-12 §Y2. Brief
+// instructs agents to record env/<N>/import-comments/<bare codebase
+// name>; emitter previously looked up only by slot host (apidev /
+// apistage), missing the bare key entirely. Now falls back when the
+// slot-keyed entry is absent.
+func TestWriteRuntimeDev_FallsBackToBareCodebaseName(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.EnvComments = map[string]EnvComments{
+		"0": {Service: map[string]string{
+			"api": "api comment authored under bare codebase name",
+		}},
+	}
+	got, err := EmitImportYAML(plan, 0)
+	if err != nil {
+		t.Fatalf("EmitImportYAML: %v", err)
+	}
+	mustContain(t, got, "api comment authored under bare codebase name")
+	apidevIdx := strings.Index(got, "- hostname: apidev")
+	commentIdx := strings.Index(got, "api comment authored under bare codebase name")
+	if commentIdx < 0 || apidevIdx < 0 || commentIdx > apidevIdx {
+		t.Errorf("comment did not render above apidev block: commentIdx=%d apidevIdx=%d", commentIdx, apidevIdx)
+	}
+}
+
+// TestWriteRuntimeDev_SlotKeyTakesPrecedence — run-12 §Y2. When both a
+// slot-keyed (`apidev`) and bare-keyed (`api`) entry exist, the slot
+// hostname wins for the dev slot.
+func TestWriteRuntimeDev_SlotKeyTakesPrecedence(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.EnvComments = map[string]EnvComments{
+		"0": {Service: map[string]string{
+			"api":    "bare-name comment",
+			"apidev": "slot-keyed comment",
+		}},
+	}
+	got, err := EmitImportYAML(plan, 0)
+	if err != nil {
+		t.Fatalf("EmitImportYAML: %v", err)
+	}
+	mustContain(t, got, "slot-keyed comment")
+}
+
 // TestWriteComment_StripsLeadingHashFromAuthoredFragment — run-12 §Y1.
 // Agents author fragment bodies with leading `# ` per line; writeComment
 // then re-prefixed producing `# # …`. 272 lines disfigured per recipe
