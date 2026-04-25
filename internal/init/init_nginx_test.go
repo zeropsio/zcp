@@ -4,24 +4,12 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
 	zcpinit "github.com/zeropsio/zcp/internal/init"
 )
-
-// stubLookupCurrentUser returns the running test process's uid/gid for the
-// container service user name. This avoids tests needing a real `zerops`
-// user and lets chown operations succeed (chowning to self is always OK).
-func stubLookupCurrentUser(_ string) (*user.User, error) {
-	return &user.User{
-		Uid: strconv.Itoa(os.Geteuid()),
-		Gid: strconv.Itoa(os.Getegid()),
-	}, nil
-}
 
 func TestRunNginx_WithPassword(t *testing.T) {
 	// Not parallel — mutates package-level vars.
@@ -33,8 +21,6 @@ func TestRunNginx_WithPassword(t *testing.T) {
 	t.Cleanup(func() { zcpinit.ResetNginxDirs() })
 	zcpinit.SetNginxLogFiles(nil)
 	t.Cleanup(func() { zcpinit.ResetNginxLogFiles() })
-	zcpinit.SetLookupUser(stubLookupCurrentUser)
-	t.Cleanup(func() { zcpinit.ResetLookupUser() })
 	t.Setenv("VSCODE_PASSWORD", "test-password-123")
 
 	err := zcpinit.RunNginx()
@@ -83,8 +69,6 @@ func TestRunNginx_WithoutPassword(t *testing.T) {
 	t.Cleanup(func() { zcpinit.ResetNginxDirs() })
 	zcpinit.SetNginxLogFiles(nil)
 	t.Cleanup(func() { zcpinit.ResetNginxLogFiles() })
-	zcpinit.SetLookupUser(stubLookupCurrentUser)
-	t.Cleanup(func() { zcpinit.ResetLookupUser() })
 	// VSCODE_PASSWORD not set.
 
 	err := zcpinit.RunNginx()
@@ -135,8 +119,6 @@ func TestRunNginx_CreatesDirectories(t *testing.T) {
 	t.Cleanup(func() { zcpinit.ResetNginxLogFiles() })
 	zcpinit.SetNginxOutputPath(filepath.Join(tmpDir, "nginx.conf"))
 	t.Cleanup(func() { zcpinit.ResetNginxOutputPath() })
-	zcpinit.SetLookupUser(stubLookupCurrentUser)
-	t.Cleanup(func() { zcpinit.ResetLookupUser() })
 
 	err := zcpinit.RunNginx()
 	if err != nil {
@@ -166,8 +148,6 @@ func TestRunNginx_Idempotent(t *testing.T) {
 	t.Cleanup(func() { zcpinit.ResetNginxDirs() })
 	zcpinit.SetNginxLogFiles(nil)
 	t.Cleanup(func() { zcpinit.ResetNginxLogFiles() })
-	zcpinit.SetLookupUser(stubLookupCurrentUser)
-	t.Cleanup(func() { zcpinit.ResetLookupUser() })
 	t.Setenv("VSCODE_PASSWORD", "idempotent-test")
 
 	if err := zcpinit.RunNginx(); err != nil {
@@ -195,8 +175,6 @@ func TestRunNginx_NoFakeServerBlock(t *testing.T) {
 	t.Cleanup(func() { zcpinit.ResetNginxDirs() })
 	zcpinit.SetNginxLogFiles(nil)
 	t.Cleanup(func() { zcpinit.ResetNginxLogFiles() })
-	zcpinit.SetLookupUser(stubLookupCurrentUser)
-	t.Cleanup(func() { zcpinit.ResetLookupUser() })
 	t.Setenv("VSCODE_PASSWORD", "test")
 
 	if err := zcpinit.RunNginx(); err != nil {
@@ -212,90 +190,6 @@ func TestRunNginx_NoFakeServerBlock(t *testing.T) {
 	}
 	if strings.Contains(content, "listen 8081") {
 		t.Error("should NOT have the fake server block on port 8081")
-	}
-}
-
-func TestRunNginx_LooksUpContainerServiceUser(t *testing.T) {
-	// Not parallel — mutates package-level vars.
-	tmpDir := t.TempDir()
-	zcpinit.SetNginxOutputPath(filepath.Join(tmpDir, "nginx.conf"))
-	t.Cleanup(func() { zcpinit.ResetNginxOutputPath() })
-	zcpinit.SetNginxDirs([]string{filepath.Join(tmpDir, "log")})
-	t.Cleanup(func() { zcpinit.ResetNginxDirs() })
-	zcpinit.SetNginxLogFiles(nil)
-	t.Cleanup(func() { zcpinit.ResetNginxLogFiles() })
-
-	var requested string
-	zcpinit.SetLookupUser(func(name string) (*user.User, error) {
-		requested = name
-		return stubLookupCurrentUser(name)
-	})
-	t.Cleanup(func() { zcpinit.ResetLookupUser() })
-
-	if err := zcpinit.RunNginx(); err != nil {
-		t.Fatalf("RunNginx() error: %v", err)
-	}
-
-	if requested != zcpinit.ContainerServiceUser {
-		t.Errorf("lookupUser called with %q, want %q (platform invariant: chown target must be the canonical service user, not Geteuid)", requested, zcpinit.ContainerServiceUser)
-	}
-}
-
-func TestRunNginx_FailsWhenServiceUserMissing(t *testing.T) {
-	// Not parallel — mutates package-level vars.
-	tmpDir := t.TempDir()
-	zcpinit.SetNginxOutputPath(filepath.Join(tmpDir, "nginx.conf"))
-	t.Cleanup(func() { zcpinit.ResetNginxOutputPath() })
-	zcpinit.SetNginxDirs([]string{filepath.Join(tmpDir, "log")})
-	t.Cleanup(func() { zcpinit.ResetNginxDirs() })
-	zcpinit.SetNginxLogFiles(nil)
-	t.Cleanup(func() { zcpinit.ResetNginxLogFiles() })
-
-	zcpinit.SetLookupUser(func(string) (*user.User, error) {
-		return nil, user.UnknownUserError("zerops")
-	})
-	t.Cleanup(func() { zcpinit.ResetLookupUser() })
-
-	err := zcpinit.RunNginx()
-	if err == nil {
-		t.Fatal("RunNginx() should fail when service user lookup fails")
-	}
-	if !strings.Contains(err.Error(), "container-only") {
-		t.Errorf("error should hint that init nginx is container-only, got: %v", err)
-	}
-}
-
-func TestRunNginx_RejectsNonRootNonServiceUser(t *testing.T) {
-	// Not parallel — mutates package-level vars.
-	if os.Geteuid() == 0 {
-		t.Skip("running as root — guard test requires non-root euid")
-	}
-
-	tmpDir := t.TempDir()
-	zcpinit.SetNginxOutputPath(filepath.Join(tmpDir, "nginx.conf"))
-	t.Cleanup(func() { zcpinit.ResetNginxOutputPath() })
-	zcpinit.SetNginxDirs([]string{filepath.Join(tmpDir, "log")})
-	t.Cleanup(func() { zcpinit.ResetNginxDirs() })
-	zcpinit.SetNginxLogFiles(nil)
-	t.Cleanup(func() { zcpinit.ResetNginxLogFiles() })
-
-	// Stub a service user with a uid we are not running as, so guardCanChown
-	// returns the actionable error before chown would EPERM.
-	otherUID := os.Geteuid() + 1
-	zcpinit.SetLookupUser(func(string) (*user.User, error) {
-		return &user.User{
-			Uid: strconv.Itoa(otherUID),
-			Gid: strconv.Itoa(os.Getegid()),
-		}, nil
-	})
-	t.Cleanup(func() { zcpinit.ResetLookupUser() })
-
-	err := zcpinit.RunNginx()
-	if err == nil {
-		t.Fatal("RunNginx() should fail when running as non-root non-service user")
-	}
-	if !strings.Contains(err.Error(), "must run as root") {
-		t.Errorf("error should mention root/sudo requirement, got: %v", err)
 	}
 }
 

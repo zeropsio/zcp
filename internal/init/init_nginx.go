@@ -4,8 +4,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"os"
-	"os/user"
-	"strconv"
 	"text/template"
 
 	"github.com/zeropsio/zcp/internal/content"
@@ -17,13 +15,6 @@ type NginxConfig struct {
 	PasswordHash string
 }
 
-// containerServiceUser is the canonical Zerops container user nginx must run
-// as — `zcp serve` runs as this user, and `zcp service start nginx` inherits
-// that uid (no privilege drop in service.Start). Hardcoding this name pins
-// the platform invariant; making it configurable would let a misconfigured
-// env var quietly chown logs to the wrong user and break the start path.
-const containerServiceUser = "zerops"
-
 var (
 	defaultNginxOutputPath = "/etc/nginx/nginx.conf"
 	defaultNginxDirs       = []string{"/var/log/nginx", "/var/lib/nginx/tmp", "/var/lib/nginx/body", "/var/lib/nginx/proxy", "/var/lib/nginx/fastcgi", "/var/lib/nginx/uwsgi", "/var/lib/nginx/scgi"}
@@ -32,10 +23,6 @@ var (
 	nginxOutputPath = defaultNginxOutputPath
 	nginxDirs       = append([]string{}, defaultNginxDirs...)
 	nginxLogFiles   = append([]string{}, defaultNginxLogFiles...)
-
-	// lookupUser is overridable so tests can inject a synthetic service user
-	// (CI containers don't have a `zerops` user). Defaults to user.Lookup.
-	lookupUser = user.Lookup
 )
 
 // RunNginx generates /etc/nginx/nginx.conf and creates required directories.
@@ -61,19 +48,13 @@ func RunNginx() error {
 }
 
 // createNginxDirs creates directories needed by nginx and chowns them to the
-// container service user (`zerops`). Target ownership is fixed regardless of
-// who runs init: in Zerops `RUN.INIT` this command runs via sudo (euid=0),
-// while nginx itself runs later as `zerops` (the user `zcp serve` runs as).
-// Chowning to euid would leave dirs root-owned and break nginx startup.
+// current user — the same user that runs `zcp service start nginx` (and thus
+// the user nginx workers run as in the Zerops container). This lets us use
+// 0755 instead of 0777: workers can write because they own the dir, not
+// because everyone can write to it.
 func createNginxDirs() error {
-	uid, gid, err := serviceUserIDs()
-	if err != nil {
-		return err
-	}
-	if err := guardCanChown(uid); err != nil {
-		return err
-	}
-
+	uid := os.Geteuid()
+	gid := os.Getegid()
 	for _, d := range nginxDirs {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			return fmt.Errorf("mkdir %s: %w", d, err)
@@ -84,7 +65,7 @@ func createNginxDirs() error {
 	}
 
 	// Pre-existing log files (apt installs nginx with www-data:adm 0640) need
-	// to be owned by the service user so nginx can append. 0644 lets others
+	// to be owned by the current user so workers can append. 0644 lets others
 	// read (debugging, log shipper) but only owner write.
 	for _, f := range nginxLogFiles {
 		if _, err := os.Stat(f); err != nil {
@@ -98,35 +79,6 @@ func createNginxDirs() error {
 		}
 	}
 	return nil
-}
-
-// serviceUserIDs resolves the container service user's uid/gid.
-func serviceUserIDs() (int, int, error) {
-	u, err := lookupUser(containerServiceUser)
-	if err != nil {
-		return 0, 0, fmt.Errorf("lookup %q user: %w (init nginx is container-only)", containerServiceUser, err)
-	}
-	uid, err := strconv.Atoi(u.Uid)
-	if err != nil {
-		return 0, 0, fmt.Errorf("parse uid %q: %w", u.Uid, err)
-	}
-	gid, err := strconv.Atoi(u.Gid)
-	if err != nil {
-		return 0, 0, fmt.Errorf("parse gid %q: %w", u.Gid, err)
-	}
-	return uid, gid, nil
-}
-
-// guardCanChown returns an actionable error if the running user can neither
-// chown system files (root) nor chown to themselves (the service user). The
-// kernel would reject the chown later anyway with EPERM, but a clear message
-// up front saves the operator from chasing a permission error mid-init.
-func guardCanChown(targetUID int) error {
-	euid := os.Geteuid()
-	if euid == 0 || euid == targetUID {
-		return nil
-	}
-	return fmt.Errorf("init nginx: must run as root (sudo) or as %s user; running as uid=%d", containerServiceUser, euid)
 }
 
 // renderNginxConfig renders the nginx.conf template to outputPath.
