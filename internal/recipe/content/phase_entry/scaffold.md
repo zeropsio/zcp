@@ -4,6 +4,34 @@ Every codebase in `plan.codebases` gets ONE scaffold sub-agent dispatch.
 The sub-agent writes source code + `zerops.yaml` for its codebase; the
 main agent coordinates.
 
+## Mount state at scaffold start
+
+When your scaffold sub-agent receives control, the SSHFS mount at
+`/var/www/<hostname>dev/` already has:
+
+- `.git/` initialized — created by zcp's mount machinery
+  (`ops.InitServiceGit`). Identity: `agent@zerops.io`,
+  branch: `main`.
+- One or more `deploy` commits — created by `zerops_deploy` if any
+  prior deploy ran. Visible in `git log --oneline`.
+
+Recovery for the scaffold commit:
+
+```bash
+cd /var/www/<hostname>dev
+git reset --soft $(git rev-list --max-parents=0 HEAD) 2>/dev/null || \
+  (rm -rf .git && git init -q -b main)
+git config user.email recipe@zerops.io
+git config user.name 'Recipe Author'
+git add -A
+git commit -q -m 'scaffold: initial structure + zerops.yaml'
+```
+
+Pick the recovery once and apply consistently across all three scaffold
+sub-agents — wipe-and-reinit is acceptable for a dogfood run; in
+production, the publish path may want to preserve any meaningful deploy
+history. For run 12, wipe-and-reinit.
+
 ## Dispatch every codebase scaffold IN PARALLEL
 
 With 2 or 3 codebases, dispatch all sub-agents in a single message (one
