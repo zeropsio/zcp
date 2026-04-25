@@ -377,6 +377,15 @@ func writeComment(b *strings.Builder, text, indent string) {
 			fmt.Fprintf(b, "%s#\n", indent)
 			continue
 		}
+		// Strip a leading `# ` or `#` from agent-authored lines so
+		// re-prefixing produces single-`#` comments. Run-12 §Y1.
+		line = strings.TrimPrefix(line, "# ")
+		line = strings.TrimPrefix(line, "#")
+		line = strings.TrimSpace(line)
+		if line == "" {
+			fmt.Fprintf(b, "%s#\n", indent)
+			continue
+		}
 		fmt.Fprintf(b, "%s# %s\n", indent, line)
 	}
 }
