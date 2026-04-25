@@ -236,6 +236,67 @@ func TestEnterPhase_Scaffold_DoesNotOverrideExplicitSourceRoot(t *testing.T) {
 	}
 }
 
+// TestStitch_NonAbsSourceRoot_HardFails — run-11 gap M-1. Run 10 closed
+// with cb.SourceRoot carrying the bare hostname ("api", "app", "worker")
+// at finalize stitch time, causing README/CLAUDE to land at cwd-relative
+// paths nothing else reads. Stitch must refuse non-absolute SourceRoot
+// loud and name the offending codebase.
+func TestStitch_NonAbsSourceRoot_HardFails(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	outputRoot := filepath.Join(dir, "run")
+	store := NewStore(dir)
+	if _, err := store.OpenOrCreate("synth-showcase", outputRoot); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+	// The bug shape: bare hostname, relative.
+	sess.Plan.Codebases[0].SourceRoot = "api"
+
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "stitch-content", Slug: "synth-showcase",
+	})
+	if res.OK {
+		t.Fatalf("expected stitch refusal on non-abs SourceRoot, got OK: %+v", res)
+	}
+	if !strings.Contains(res.Error, "api") {
+		t.Errorf("error must name the codebase, got: %s", res.Error)
+	}
+	if !strings.Contains(res.Error, "absolute") {
+		t.Errorf("error must mention absolute path requirement, got: %s", res.Error)
+	}
+}
+
+// TestStitch_NonDevSuffixedSourceRoot_HardFails — M-1 second guard.
+// `cb.SourceRoot = "/var/www/api"` (absolute but no `dev` suffix) is
+// the synthetic location run-10 stitched into; nothing reads from
+// there. Stitch must refuse.
+func TestStitch_NonDevSuffixedSourceRoot_HardFails(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	outputRoot := filepath.Join(dir, "run")
+	store := NewStore(dir)
+	if _, err := store.OpenOrCreate("synth-showcase", outputRoot); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+	sess.Plan.Codebases[0].SourceRoot = "/var/www/api"
+
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "stitch-content", Slug: "synth-showcase",
+	})
+	if res.OK {
+		t.Fatalf("expected stitch refusal on non-dev-suffixed SourceRoot, got OK: %+v", res)
+	}
+	if !strings.Contains(res.Error, "dev") {
+		t.Errorf("error must name the dev-suffix requirement, got: %s", res.Error)
+	}
+}
+
 // TestStitch_WritesCodebaseReadmeToSourceRoot — run-10-readiness §L.
 // Apps-repo content (README + CLAUDE.md) lands at `<cb.SourceRoot>/`, the
 // same tree as source, matching the reference apps-repo shape at
@@ -256,7 +317,7 @@ func TestStitch_WritesCodebaseReadmeToSourceRoot(t *testing.T) {
 	// Stage the scaffold-authored yaml at each SourceRoot — after L, the
 	// same tree receives README + CLAUDE.md.
 	for i, cb := range sess.Plan.Codebases {
-		srcDir := filepath.Join(dir, "workspace", cb.Hostname)
+		srcDir := filepath.Join(dir, "workspace", cb.Hostname+"dev")
 		if err := os.MkdirAll(srcDir, 0o755); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
@@ -314,7 +375,7 @@ func TestStitch_IGFirstItemIsEmbeddedYaml(t *testing.T) {
 
 	yamlByHost := map[string]string{}
 	for i, cb := range sess.Plan.Codebases {
-		srcDir := filepath.Join(dir, "workspace", cb.Hostname)
+		srcDir := filepath.Join(dir, "workspace", cb.Hostname+"dev")
 		if err := os.MkdirAll(srcDir, 0o755); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
@@ -364,7 +425,7 @@ func TestStitch_IGItem1IntroDescribesYamlBehavior(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	apiRoot := filepath.Join(dir, "workspace", "api")
+	apiRoot := filepath.Join(dir, "workspace", "apidev")
 	if err := os.MkdirAll(apiRoot, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -445,7 +506,7 @@ func TestStitch_IGSubsequentItemsArePorterItems(t *testing.T) {
 	sess, _ := store.Get("synth-showcase")
 	sess.Plan = syntheticShowcasePlan()
 	for i, cb := range sess.Plan.Codebases {
-		srcDir := filepath.Join(dir, "workspace", cb.Hostname)
+		srcDir := filepath.Join(dir, "workspace", cb.Hostname+"dev")
 		if err := os.MkdirAll(srcDir, 0o755); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
@@ -525,7 +586,7 @@ func TestStitch_IGWorksWithEmptyFragment(t *testing.T) {
 	plan.Slug = "synth-showcase"
 	plan.Framework = "synth"
 	dir := t.TempDir()
-	apiRoot := filepath.Join(dir, "workspace", "api")
+	apiRoot := filepath.Join(dir, "workspace", "apidev")
 	if err := os.MkdirAll(apiRoot, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -580,7 +641,7 @@ func TestStitch_NoOutputRootCodebasesDirectory(t *testing.T) {
 	sess, _ := store.Get("synth-showcase")
 	sess.Plan = syntheticShowcasePlan()
 	for i, cb := range sess.Plan.Codebases {
-		srcDir := filepath.Join(dir, "workspace", cb.Hostname)
+		srcDir := filepath.Join(dir, "workspace", cb.Hostname+"dev")
 		if err := os.MkdirAll(srcDir, 0o755); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}

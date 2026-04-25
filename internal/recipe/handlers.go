@@ -416,6 +416,26 @@ func stitchContent(sess *Session) ([]string, error) {
 		return nil, errors.New("stitch-content: nil plan")
 	}
 
+	// M-1 (run-11): every codebase SourceRoot must be absolute and
+	// end in `dev` — the SSHFS-mounted dev slot. Run 10 closed with
+	// SourceRoot carrying bare hostnames, causing README/CLAUDE to
+	// land at cwd-relative paths nothing reads. Fail loud upfront so
+	// the regression cannot recur invisibly. Background:
+	// docs/zcprecipator3/runs/10/ANALYSIS.md §3 gap M.
+	for _, cb := range plan.Codebases {
+		if cb.SourceRoot == "" {
+			return nil, fmt.Errorf("codebase %q has no SourceRoot — scaffold did not run or was skipped", cb.Hostname)
+		}
+		if !filepath.IsAbs(cb.SourceRoot) {
+			return nil, fmt.Errorf("stitch refused: codebase %q has non-absolute SourceRoot %q (expected absolute path ending in 'dev'). This indicates the gap-M regression — see docs/zcprecipator3/runs/10/ANALYSIS.md §3 gap M",
+				cb.Hostname, cb.SourceRoot)
+		}
+		if !strings.HasSuffix(cb.SourceRoot, "dev") {
+			return nil, fmt.Errorf("stitch refused: codebase %q has SourceRoot %q without 'dev' suffix (expected SSHFS dev slot, e.g. /var/www/%sdev). This indicates the gap-M regression — see docs/zcprecipator3/runs/10/ANALYSIS.md §3 gap M",
+				cb.Hostname, cb.SourceRoot, cb.Hostname)
+		}
+	}
+
 	// Regenerate tier yamls.
 	for i := range Tiers() {
 		if _, err := sess.EmitYAML(ShapeDeliverable, i); err != nil {
@@ -452,11 +472,9 @@ func stitchContent(sess *Session) ([]string, error) {
 	// <cb.SourceRoot>/ alongside source, matching the reference
 	// apps-repo shape at /Users/fxck/www/laravel-showcase-app/.
 	// The scaffold-authored zerops.yaml already lives there; no copy.
+	// SourceRoot validation already happened upfront (M-1).
 	// Run-10-readiness §L.
 	for _, cb := range plan.Codebases {
-		if cb.SourceRoot == "" {
-			return nil, fmt.Errorf("codebase %q has no SourceRoot — scaffold did not run or was skipped", cb.Hostname)
-		}
 		readmeBody, m, err := AssembleCodebaseREADME(plan, cb.Hostname)
 		if err != nil {
 			return nil, fmt.Errorf("assemble codebase %s README: %w", cb.Hostname, err)

@@ -448,7 +448,7 @@ func TestAssemble_DeliverableSplit(t *testing.T) {
 	// Point each codebase at a staged workspace — stitch's codebase-scoped
 	// writes target this tree directly.
 	for i, cb := range sess.Plan.Codebases {
-		wsRoot := filepath.Join(dir, "workspace", cb.Hostname)
+		wsRoot := filepath.Join(dir, "workspace", cb.Hostname+"dev")
 		if err := os.MkdirAll(wsRoot, 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", wsRoot, err)
 		}
@@ -548,7 +548,7 @@ func TestAssemble_StitchWritesFragmentsToDisk(t *testing.T) {
 	sess.Plan.Framework = "synth"
 	// Stage scaffold-authored yamls so A2's hard-fail doesn't abort stitch.
 	for i, cb := range sess.Plan.Codebases {
-		wsRoot := filepath.Join(dir, "workspace", cb.Hostname)
+		wsRoot := filepath.Join(dir, "workspace", cb.Hostname+"dev")
 		if err := os.MkdirAll(wsRoot, 0o755); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}

@@ -13,7 +13,7 @@ import (
 func stageScaffoldYAMLs(t *testing.T, base string, plan *Plan) {
 	t.Helper()
 	for i, cb := range plan.Codebases {
-		dir := filepath.Join(base, "workspace", cb.Hostname)
+		dir := filepath.Join(base, "workspace", cb.Hostname+"dev")
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", dir, err)
 		}
