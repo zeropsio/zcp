@@ -430,6 +430,72 @@ func TestHandler_RecordFragment_RejectsUnknownID(t *testing.T) {
 	}
 }
 
+// TestReadCodebaseYAMLForHost_MissingYaml_ReturnsError — run-11 gap M-2.
+// Soft-fail-to-empty-string was the reason injectIGItem1 silently no-op'd
+// in run 10. With non-empty SourceRoot, missing yaml is a hard error.
+func TestReadCodebaseYAMLForHost_MissingYaml_ReturnsError(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	sourceRoot := filepath.Join(dir, "apidev")
+	if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	plan := &Plan{
+		Codebases: []Codebase{{Hostname: "api", SourceRoot: sourceRoot}},
+	}
+	_, err := readCodebaseYAMLForHost(plan, "api")
+	if err == nil {
+		t.Fatal("expected error when zerops.yaml is missing under non-empty SourceRoot")
+	}
+	if !strings.Contains(err.Error(), "zerops.yaml") {
+		t.Errorf("error should name the missing file, got: %v", err)
+	}
+}
+
+// TestReadCodebaseYAMLForHost_PresentYaml_ReturnsBody — happy path.
+func TestReadCodebaseYAMLForHost_PresentYaml_ReturnsBody(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	sourceRoot := filepath.Join(dir, "apidev")
+	if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	want := "zerops:\n  - setup: prod\n"
+	if err := os.WriteFile(filepath.Join(sourceRoot, "zerops.yaml"), []byte(want), 0o600); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+	plan := &Plan{
+		Codebases: []Codebase{{Hostname: "api", SourceRoot: sourceRoot}},
+	}
+	got, err := readCodebaseYAMLForHost(plan, "api")
+	if err != nil {
+		t.Fatalf("readCodebaseYAMLForHost: %v", err)
+	}
+	if got != want {
+		t.Errorf("body mismatch: got %q, want %q", got, want)
+	}
+}
+
+// TestReadCodebaseYAMLForHost_EmptySourceRoot_ReturnsEmpty — pre-scaffold
+// path: SourceRoot hasn't been populated yet, no error fires (early-phase
+// renders may legitimately call this before scaffold authors the yaml).
+func TestReadCodebaseYAMLForHost_EmptySourceRoot_ReturnsEmpty(t *testing.T) {
+	t.Parallel()
+
+	plan := &Plan{
+		Codebases: []Codebase{{Hostname: "api", SourceRoot: ""}},
+	}
+	got, err := readCodebaseYAMLForHost(plan, "api")
+	if err != nil {
+		t.Errorf("expected no error for empty SourceRoot, got: %v", err)
+	}
+	if got != "" {
+		t.Errorf("expected empty body for empty SourceRoot, got %q", got)
+	}
+}
+
 // TestAssemble_DeliverableSplit — stitchContent writes into two shapes.
 // Recipes-repo shape at <outputRoot>/: root README + per-tier README +
 // per-tier import.yaml. Apps-repo shape at <cb.SourceRoot>/: README +

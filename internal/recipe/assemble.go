@@ -116,7 +116,11 @@ func AssembleCodebaseREADME(plan *Plan, hostname string) (string, []string, erro
 	})
 	prefix := "codebase/" + hostname
 	body, missing := substituteFragmentMarkers(body, plan.Fragments, prefix)
-	if yamlBody := readCodebaseYAMLForHost(plan, hostname); yamlBody != "" {
+	yamlBody, err := readCodebaseYAMLForHost(plan, hostname)
+	if err != nil {
+		return "", nil, fmt.Errorf("assemble codebase/%s README: %w", hostname, err)
+	}
+	if yamlBody != "" {
 		body = injectIGItem1(body, yamlBody)
 	}
 	if err := checkUnreplacedTokens(body); err != nil {
@@ -125,20 +129,27 @@ func AssembleCodebaseREADME(plan *Plan, hostname string) (string, []string, erro
 	return body, missing, nil
 }
 
-// readCodebaseYAMLForHost returns the committed zerops.yaml bytes for the
-// named codebase, or empty if SourceRoot is unpopulated or the file is
-// absent. Empty return degrades the IG item #1 injection to a no-op.
-func readCodebaseYAMLForHost(plan *Plan, hostname string) string {
+// readCodebaseYAMLForHost returns the committed zerops.yaml bytes for
+// the named codebase. Run-11 M-2: when SourceRoot is non-empty AND
+// the yaml is missing or unreadable, return an error — soft-fail-to-
+// empty-string was the reason injectIGItem1 silently no-op'd in run
+// 10. Empty SourceRoot still returns ("", nil) so genuinely
+// pre-scaffold renders (early-phase paths) don't error.
+func readCodebaseYAMLForHost(plan *Plan, hostname string) (string, error) {
 	for _, cb := range plan.Codebases {
-		if cb.Hostname != hostname || cb.SourceRoot == "" {
+		if cb.Hostname != hostname {
 			continue
 		}
-		if raw, err := readCodebaseYAML(cb.SourceRoot); err == nil {
-			return raw
+		if cb.SourceRoot == "" {
+			return "", nil
 		}
-		return ""
+		raw, err := readCodebaseYAML(cb.SourceRoot)
+		if err != nil {
+			return "", fmt.Errorf("read codebase/%s zerops.yaml at %q: %w", hostname, cb.SourceRoot, err)
+		}
+		return raw, nil
 	}
-	return ""
+	return "", nil
 }
 
 // injectIGItem1 rewrites the rendered README's integration-guide extract
