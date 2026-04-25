@@ -146,3 +146,4 @@ Finalize gates reject on these; fix at author-time:
 - KB: `**Topic** — prose` only; triples live in `claude-md/notes`
 - CLAUDE.md: 30–50 lines (cap 60); no cross-codebase runbooks
 - Fragment IDs use `cb.Hostname` (the codebase name, e.g. `app`) — NEVER the slot hostname (`appdev` / `appstage`). The slot is the SSHFS mount; the codebase is the logical name. Engine rejects `codebase/appdev/intro` with the Plan codebase list.
+- Do NOT author `.deployignore` reflexively. Most recipes do not need it (the builder excludes `.git/`; editor metadata belongs in `.gitignore`). Author one only if the recipe has a specific reason — and NEVER list `dist`, `node_modules`, or anything in `deployFiles`. Worker run-10 burned 20 minutes on `dist`-in-`.deployignore`.
