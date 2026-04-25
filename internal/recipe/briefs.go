@@ -26,10 +26,11 @@ import (
 // a post-hoc writer sub-agent.
 //
 // Run-11 V-5 raised ScaffoldBriefCap from 12 KB → 14 KB to fit the
-// Self-inflicted litmus subsection (~14 lines, three labeled
-// run-10 anti-patterns + the operational porter-clone question).
+// Self-inflicted litmus subsection. Run-11 O-1 raised it again to
+// 16 KB to fit the Citation map subsection (citations are author-time
+// signals, not render output).
 const (
-	ScaffoldBriefCap = 14 * 1024
+	ScaffoldBriefCap = 16 * 1024
 	FeatureBriefCap  = 10 * 1024
 )
 

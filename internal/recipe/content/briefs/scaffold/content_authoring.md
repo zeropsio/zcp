@@ -51,7 +51,8 @@ Good:
 ```
 - **Expose X-Cache via CORS** — a cross-origin fetch only sees headers
   listed under Access-Control-Expose-Headers. app.enableCors() must
-  pass exposedHeaders: ['X-Cache']. Cited guide: `http-support`.
+  pass exposedHeaders: ['X-Cache'] for the L7 balancer's cache header
+  to reach the browser.
 ```
 
 Bad (debugging-runbook triple — belongs in claude-md/notes):
@@ -60,8 +61,33 @@ Bad (debugging-runbook triple — belongs in claude-md/notes):
 - **symptom**: 502. **mechanism**: bind default. **fix**: 0.0.0.0.
 ```
 
+Bad (citation boilerplate — see Citation map below):
+
+```
+- **Expose X-Cache via CORS** — same body. **Cited guide: `http-support`.**
+```
+
 Do NOT use `**symptom**:` triples in KB; runbooks live in
-`claude-md/notes`.
+`claude-md/notes`. Do NOT append `Cited guide: <name>` to bullets —
+citations live in prose where natural, not as boilerplate.
+
+### Citation map — author-time signals, not render output
+
+Citations are signals to **YOU** at author-time. Before writing a KB
+bullet that touches `env-var-model` / `http-support` / `init-commands`
+/ `rolling-deploys` / `object-storage` / `deploy-files` /
+`readiness-health-checks`, call `zerops_knowledge` on that guide and
+read it. The bullet's prose IS the citation: if you couldn't write
+the bullet without consulting the guide, the bullet correctly reflects
+the guide's framing. Spec rule 3: don't duplicate guide content as
+paraphrase — add new intersection content beyond it (V-2 enforces
+> 50% containment).
+
+Don't write `**Cited guide: <name>.**` at the end of bullets. Don't
+write `(cite \`x\`)` in env import.yaml comments. Don't tell the
+porter which guide you read — tell them the rule. If a guide name
+genuinely belongs in prose ("Per the http-support guide…"), it can
+stay; mechanical boilerplate is the target.
 
 ### CLAUDE.md — codebase-scoped, 30–50 lines (cap 60)
 
