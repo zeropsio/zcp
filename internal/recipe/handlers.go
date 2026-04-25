@@ -117,7 +117,7 @@ type RecipeInput struct {
 	FragmentID       string      `json:"fragmentId,omitempty"       jsonschema:"For record-fragment: fragment identifier. Valid shapes: root/intro, env/<N>/intro (N=0..5), env/<N>/import-comments/<hostname>, env/<N>/import-comments/project, codebase/<hostname>/intro, codebase/<hostname>/integration-guide, codebase/<hostname>/knowledge-base, codebase/<hostname>/claude-md/service-facts, codebase/<hostname>/claude-md/notes."`
 	Fragment         string      `json:"fragment,omitempty"         jsonschema:"For record-fragment: the fragment body. Overwrite for root/* and env/* ids; append-on-extend for codebase/*/integration-guide, knowledge-base, claude-md/* ids so a feature sub-agent extends scaffold's body rather than replacing it."`
 	Mode             string      `json:"mode,omitempty"             jsonschema:"For record-fragment: 'append' (default for codebase IG/KB/claude-md ids; concatenates with prior body) or 'replace' (overwrites prior body). Use 'replace' to correct a fragment you authored earlier in the same recipe session, e.g. after a complete-phase validator violation."`
-	DispatchedPrompt string      `json:"dispatchedPrompt,omitempty" jsonschema:"For verify-subagent-dispatch: the prompt the main agent intends to pass to Agent. Engine recomposes the brief and confirms its body appears byte-identical inside the dispatched prompt. Wrapper text appended after the brief is allowed; truncations and paraphrases are rejected."`
+	DispatchedPrompt string      `json:"dispatchedPrompt,omitempty" jsonschema:"For verify-subagent-dispatch: the prompt the main agent intends to pass to Agent. Engine recomposes the brief and confirms its body appears byte-identical inside the dispatched prompt. Wrapper text around the brief (header lines before, context notes after) is allowed; only truncations and paraphrases are rejected."`
 }
 
 // RecipeResult is the generic envelope returned from zerops_recipe.
@@ -226,21 +226,7 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 		r.Guidance = loadPhaseEntry(sess.Current)
 		r.OK = true
 	case "complete-phase":
-		blocking, notices, err := sess.CompletePhase(gatesForPhase(sess.Current))
-		if err != nil {
-			r.Error = err.Error()
-			return r
-		}
-		snap := sess.Snapshot()
-		r.Violations, r.Notices, r.Status = blocking, notices, &snap
-		r.OK = len(blocking) == 0
-		// On success, include next phase's entry guidance so the agent
-		// knows what to do after transitioning.
-		if r.OK {
-			if next, ok := nextPhase(sess.Current); ok {
-				r.Guidance = "Next phase: " + string(next) + "\n\n" + loadPhaseEntry(next)
-			}
-		}
+		r = completePhase(sess, r)
 	case "update-plan":
 		if err := mergePlan(sess, in.Plan); err != nil {
 			r.Error = err.Error()
@@ -391,12 +377,41 @@ func mergePlan(sess *Session, incoming *Plan) error {
 	return nil
 }
 
+// completePhase runs the gate set for the current phase and advances
+// state on success. Run-13 §3: for scaffold + feature, auto-stitches
+// per-codebase surfaces first so codebase validators see freshly-
+// authored fragments — eliminating the "remember to call stitch-
+// content before complete-phase" ritual that has no porter-facing
+// meaning.
+func completePhase(sess *Session, r RecipeResult) RecipeResult {
+	if sess.Current == PhaseScaffold || sess.Current == PhaseFeature {
+		if err := stitchCodebases(sess); err != nil {
+			r.Error = "complete-phase: pre-stitch codebases: " + err.Error()
+			return r
+		}
+	}
+	blocking, notices, err := sess.CompletePhase(gatesForPhase(sess.Current))
+	if err != nil {
+		r.Error = err.Error()
+		return r
+	}
+	snap := sess.Snapshot()
+	r.Violations, r.Notices, r.Status = blocking, notices, &snap
+	r.OK = len(blocking) == 0
+	if r.OK {
+		if next, ok := nextPhase(sess.Current); ok {
+			r.Guidance = "Next phase: " + string(next) + "\n\n" + loadPhaseEntry(next)
+		}
+	}
+	return r
+}
+
 // verifyDispatch implements the verify-subagent-dispatch action: the
 // engine recomposes the brief identified by briefKind+codebase and
 // confirms its body appears byte-identical inside the dispatched
-// prompt. Wrapper additions are allowed (the dispatched prompt may
-// have additional text appended); truncations and paraphrases are
-// rejected. Run-12 §D.
+// prompt. Wrapper text around the brief (header before, context
+// after) is allowed — only truncations and paraphrases are rejected.
+// Run-12 §D; run-13 §4 clarified position semantics.
 func verifyDispatch(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
 	if in.BriefKind == "" {
 		r.Error = "verify-subagent-dispatch: briefKind required"
@@ -469,24 +484,8 @@ func stitchContent(sess *Session) ([]string, error) {
 		return nil, errors.New("stitch-content: nil plan")
 	}
 
-	// M-1 (run-11): every codebase SourceRoot must be absolute and
-	// end in `dev` — the SSHFS-mounted dev slot. Run 10 closed with
-	// SourceRoot carrying bare hostnames, causing README/CLAUDE to
-	// land at cwd-relative paths nothing reads. Fail loud upfront so
-	// the regression cannot recur invisibly. Background:
-	// docs/zcprecipator3/runs/10/ANALYSIS.md §3 gap M.
-	for _, cb := range plan.Codebases {
-		if cb.SourceRoot == "" {
-			return nil, fmt.Errorf("codebase %q has no SourceRoot — scaffold did not run or was skipped", cb.Hostname)
-		}
-		if !filepath.IsAbs(cb.SourceRoot) {
-			return nil, fmt.Errorf("stitch refused: codebase %q has non-absolute SourceRoot %q (expected absolute path ending in 'dev'). This indicates the gap-M regression — see docs/zcprecipator3/runs/10/ANALYSIS.md §3 gap M",
-				cb.Hostname, cb.SourceRoot)
-		}
-		if !strings.HasSuffix(cb.SourceRoot, "dev") {
-			return nil, fmt.Errorf("stitch refused: codebase %q has SourceRoot %q without 'dev' suffix (expected SSHFS dev slot, e.g. /var/www/%sdev). This indicates the gap-M regression — see docs/zcprecipator3/runs/10/ANALYSIS.md §3 gap M",
-				cb.Hostname, cb.SourceRoot, cb.Hostname)
-		}
+	if err := validateCodebaseSourceRoots(plan); err != nil {
+		return nil, err
 	}
 
 	// Regenerate tier yamls.
@@ -527,6 +526,64 @@ func stitchContent(sess *Session) ([]string, error) {
 	// The scaffold-authored zerops.yaml already lives there; no copy.
 	// SourceRoot validation already happened upfront (M-1).
 	// Run-10-readiness §L.
+	cbMissing, err := writeCodebaseSurfaces(plan)
+	if err != nil {
+		return nil, err
+	}
+	missing = append(missing, cbMissing...)
+
+	return missing, nil
+}
+
+// validateCodebaseSourceRoots enforces M-1 (run-11): every codebase
+// SourceRoot must be absolute and end in `dev` — the SSHFS-mounted
+// dev slot. Run 10 closed with SourceRoot carrying bare hostnames,
+// causing README/CLAUDE to land at cwd-relative paths nothing reads.
+// Fail loud upfront so the regression cannot recur invisibly.
+// Background: docs/zcprecipator3/runs/10/ANALYSIS.md §3 gap M.
+func validateCodebaseSourceRoots(plan *Plan) error {
+	for _, cb := range plan.Codebases {
+		if cb.SourceRoot == "" {
+			return fmt.Errorf("codebase %q has no SourceRoot — scaffold did not run or was skipped", cb.Hostname)
+		}
+		if !filepath.IsAbs(cb.SourceRoot) {
+			return fmt.Errorf("stitch refused: codebase %q has non-absolute SourceRoot %q (expected absolute path ending in 'dev'). This indicates the gap-M regression — see docs/zcprecipator3/runs/10/ANALYSIS.md §3 gap M",
+				cb.Hostname, cb.SourceRoot)
+		}
+		if !strings.HasSuffix(cb.SourceRoot, "dev") {
+			return fmt.Errorf("stitch refused: codebase %q has SourceRoot %q without 'dev' suffix (expected SSHFS dev slot, e.g. /var/www/%sdev). This indicates the gap-M regression — see docs/zcprecipator3/runs/10/ANALYSIS.md §3 gap M",
+				cb.Hostname, cb.SourceRoot, cb.Hostname)
+		}
+	}
+	return nil
+}
+
+// stitchCodebases writes per-codebase README + CLAUDE.md to each
+// <cb.SourceRoot>/ — the apps-repo shape. Used at scaffold + feature
+// complete-phase to materialize fragments authored in-phase so the
+// codebase surface validators (which read from disk) can see them.
+// Root + env surfaces are NOT written here; finalize owns those.
+// Run-13 §3.
+func stitchCodebases(sess *Session) error {
+	sess.mu.Lock()
+	plan := sess.Plan
+	sess.mu.Unlock()
+	if plan == nil {
+		return errors.New("nil plan")
+	}
+	if err := validateCodebaseSourceRoots(plan); err != nil {
+		return err
+	}
+	_, err := writeCodebaseSurfaces(plan)
+	return err
+}
+
+// writeCodebaseSurfaces is the shared codebase-write loop used by both
+// stitchContent and stitchCodebases. Returns missing fragment ids
+// surfaced by the assemble pipeline; caller decides whether to treat
+// them as fatal.
+func writeCodebaseSurfaces(plan *Plan) ([]string, error) {
+	var missing []string
 	for _, cb := range plan.Codebases {
 		readmeBody, m, err := AssembleCodebaseREADME(plan, cb.Hostname)
 		if err != nil {
@@ -545,7 +602,6 @@ func stitchContent(sess *Session) ([]string, error) {
 			return nil, err
 		}
 	}
-
 	return missing, nil
 }
 
