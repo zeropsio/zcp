@@ -237,7 +237,9 @@ func BuildFeatureBrief(plan *Plan) (Brief, error) {
 // wrapper main agent used in run 10 (gap S) — math errors and
 // obsolete paths compounded across runs.
 //
-// Run-11 gap S-1.
+// Run-11 gap S-1; Run-12 §B extended with tier map, hostname sets,
+// fragment list, and anti-patterns so dispatch is engine brief
+// byte-identical (no wrapper padding).
 func BuildFinalizeBrief(plan *Plan) (Brief, error) {
 	if plan == nil {
 		return Brief{}, errors.New("nil plan")
@@ -267,6 +269,14 @@ func BuildFinalizeBrief(plan *Plan) (Brief, error) {
 		parts = append(parts, atom)
 	}
 
+	b.WriteString("## Tier map\n\n")
+	for _, t := range Tiers() {
+		fmt.Fprintf(&b, "- **%d — %s** (`%s`): %s\n",
+			t.Index, t.Label, t.Folder, tierAudienceLine(t))
+	}
+	b.WriteByte('\n')
+	parts = append(parts, "tier_map")
+
 	b.WriteString("## Audience paths\n\n")
 	b.WriteString("- Stitched output: `<outputRoot>/`\n")
 	b.WriteString("- Per-codebase published content (already stitched at finalize):\n")
@@ -276,6 +286,11 @@ func BuildFinalizeBrief(plan *Plan) (Brief, error) {
 	}
 	b.WriteByte('\n')
 	parts = append(parts, "audience_paths")
+
+	b.WriteString("## Fragments to author\n\n")
+	b.WriteString(formatFinalizeFragmentList(plan))
+	b.WriteByte('\n')
+	parts = append(parts, "fragment_list")
 
 	b.WriteString("## Fragment count\n\n")
 	b.WriteString(finalizeFragmentMath(plan))
@@ -296,10 +311,63 @@ func BuildFinalizeBrief(plan *Plan) (Brief, error) {
 				svc.Hostname, svc.Type, svc.Kind)
 		}
 	}
+	b.WriteByte('\n')
 	parts = append(parts, "symbol_table")
+
+	antiBody, err := readAtom("briefs/finalize/anti_patterns.md")
+	if err != nil {
+		return Brief{}, err
+	}
+	b.WriteString(antiBody)
+	if !strings.HasSuffix(antiBody, "\n") {
+		b.WriteByte('\n')
+	}
+	parts = append(parts, "anti_patterns")
 
 	out := b.String()
 	return Brief{Kind: BriefFinalize, Body: out, Bytes: len(out), Parts: parts}, nil
+}
+
+// tierAudienceLine returns a one-sentence description of the tier's
+// reader, derived from typed tier metadata.
+func tierAudienceLine(t Tier) string {
+	switch {
+	case t.RunsDevContainer:
+		return "dev-pair (apidev/apistage slots) — agent and remote-CDE iteration"
+	case t.ServiceMode == "HA":
+		return "single-slot, managed services in HA mode, dedicated CPU — production replicas"
+	case t.RuntimeMinContainers >= 2:
+		return "single-slot, runtime min 2 containers — small-production rolling deploys"
+	case t.MinFreeRAMGB > 0:
+		return "single-slot, free-RAM headroom — stage validation"
+	default:
+		return "single-slot — local self-host"
+	}
+}
+
+// formatFinalizeFragmentList returns a deterministic enumeration of
+// every fragment id finalize must author, derived from Plan structure.
+// Replaces the hand-typed wrapper list that drifted across runs.
+func formatFinalizeFragmentList(plan *Plan) string {
+	tiers := len(Tiers())
+	hosts := len(plan.Codebases) + len(plan.Services)
+	// 1 root intro + tiers × (env intro + project comment + per-host comments)
+	lines := make([]string, 0, 1+tiers*(2+hosts))
+	lines = append(lines, "- `root/intro`")
+	for _, t := range Tiers() {
+		lines = append(lines, fmt.Sprintf("- `env/%d/intro` (tier %d — %s)",
+			t.Index, t.Index, t.Label))
+		lines = append(lines, fmt.Sprintf("- `env/%d/import-comments/project`", t.Index))
+		for _, cb := range plan.Codebases {
+			lines = append(lines, fmt.Sprintf("- `env/%d/import-comments/%s`",
+				t.Index, cb.Hostname))
+		}
+		for _, svc := range plan.Services {
+			lines = append(lines, fmt.Sprintf("- `env/%d/import-comments/%s`",
+				t.Index, svc.Hostname))
+		}
+	}
+	return strings.Join(lines, "\n") + "\n"
 }
 
 // finalizeFragmentMath returns a precomputed sentence describing the

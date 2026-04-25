@@ -161,6 +161,84 @@ func TestBrief_Scaffold_IGScopeRule(t *testing.T) {
 	mustContain(t, brief.Body, "Aim for 4-7 IG items")
 }
 
+// TestBuildFinalizeBrief_IncludesTierMap — run-12 §B. Engine-composed
+// finalize brief carries the tier map (was hand-typed wrapper content).
+func TestBuildFinalizeBrief_IncludesTierMap(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	for i := range plan.Codebases {
+		plan.Codebases[i].SourceRoot = "/var/www/" + plan.Codebases[i].Hostname + "dev"
+	}
+	brief, err := BuildFinalizeBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFinalizeBrief: %v", err)
+	}
+	mustContain(t, brief.Body, "## Tier map")
+	mustContain(t, brief.Body, "0 — AI Agent")
+	mustContain(t, brief.Body, "5 — Highly-available Production")
+}
+
+// TestBuildFinalizeBrief_IncludesFragmentList — run-12 §B. Brief
+// enumerates every fragment id the agent must author, derived from
+// Plan structure. Replaces the hand-typed wrapper math.
+func TestBuildFinalizeBrief_IncludesFragmentList(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	for i := range plan.Codebases {
+		plan.Codebases[i].SourceRoot = "/var/www/" + plan.Codebases[i].Hostname + "dev"
+	}
+	brief, err := BuildFinalizeBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFinalizeBrief: %v", err)
+	}
+	mustContain(t, brief.Body, "## Fragments to author")
+	mustContain(t, brief.Body, "`root/intro`")
+	mustContain(t, brief.Body, "`env/0/intro`")
+	mustContain(t, brief.Body, "`env/0/import-comments/api`")
+	mustContain(t, brief.Body, "`env/5/import-comments/db`")
+}
+
+// TestBuildFinalizeBrief_IncludesAntiPatterns — run-12 §B. Brief
+// inlines the anti-patterns atom (do NOT re-emit workspace yaml; do
+// NOT touch codebase fragments at finalize; etc.).
+func TestBuildFinalizeBrief_IncludesAntiPatterns(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	for i := range plan.Codebases {
+		plan.Codebases[i].SourceRoot = "/var/www/" + plan.Codebases[i].Hostname + "dev"
+	}
+	brief, err := BuildFinalizeBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFinalizeBrief: %v", err)
+	}
+	mustContain(t, brief.Body, "What NOT to do")
+	mustContain(t, brief.Body, "emit-yaml shape=workspace")
+}
+
+// TestBuildFinalizeBrief_SizeApproximatesDispatchPromptSize — run-12
+// §B. After ship, dispatch prompt should be within 10% of brief size.
+// Run 11: brief 3,427 vs dispatch 13,492 (393%). Run 12 target: brief
+// large enough that main agent dispatches as-is without wrapper
+// padding.
+func TestBuildFinalizeBrief_SizeApproximatesDispatchPromptSize(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	for i := range plan.Codebases {
+		plan.Codebases[i].SourceRoot = "/var/www/" + plan.Codebases[i].Hostname + "dev"
+	}
+	brief, err := BuildFinalizeBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFinalizeBrief: %v", err)
+	}
+	if brief.Bytes < 6000 {
+		t.Errorf("finalize brief too small for dispatch-as-is: %d bytes", brief.Bytes)
+	}
+}
+
 func TestBriefCompose_FeatureUnderCap(t *testing.T) {
 	t.Parallel()
 
