@@ -17,6 +17,7 @@ linters:
     - containedctx
     - contextcheck
     - decorder
+    - depguard
     - dogsled
     - dupword
     - durationcheck
@@ -72,6 +73,56 @@ linters:
     - wastedassign
     - whitespace
   settings:
+    depguard:
+      # Pins the 4-layer architecture documented in CLAUDE.md and
+      # docs/spec-architecture.md. Each rule scopes a layer's outgoing
+      # imports to what the layer is allowed to depend on.
+      rules:
+        topology-stdlib-only:
+          # Layer 2 — foundational vocabulary. Stdlib + 3rd-party only,
+          # never internal/ packages (would create a cycle the moment
+          # any other layer imported topology/, which they all do).
+          list-mode: lax
+          files:
+            - "**/internal/topology/**/*.go"
+          deny:
+            - pkg: github.com/zeropsio/zcp/internal
+              desc: "topology/ is layer-2 vocabulary; imports stdlib + 3rd-party only"
+        platform-no-internal:
+          # Layer 1 — raw Zerops API. Stdlib + 3rd-party only.
+          list-mode: lax
+          files:
+            - "**/internal/platform/**/*.go"
+          deny:
+            - pkg: github.com/zeropsio/zcp/internal
+              desc: "platform/ is layer 1; no internal/ imports allowed"
+        ops-not-workflow:
+          # Layer 3 peer — must NOT import its peer (workflow/) nor any
+          # upper-layer package (tools/, recipe/). Sub-package
+          # ops/checks/ is exempt while recipe v2 still owns checks.
+          list-mode: lax
+          files:
+            - "**/internal/ops/*.go"
+          deny:
+            - pkg: github.com/zeropsio/zcp/internal/workflow
+              desc: "ops/ and workflow/ are peer layer-3 packages; share types via topology/"
+            - pkg: github.com/zeropsio/zcp/internal/tools
+              desc: "ops/ is layer 3; tools/ is layer 4 entry"
+            - pkg: github.com/zeropsio/zcp/internal/recipe
+              desc: "ops/ is layer 3; recipe/ is a cross-cutting v3 engine"
+        workflow-not-ops:
+          # Layer 3 peer — must NOT import its peer (ops/) nor any
+          # upper-layer package (tools/, recipe/).
+          list-mode: lax
+          files:
+            - "**/internal/workflow/**/*.go"
+          deny:
+            - pkg: github.com/zeropsio/zcp/internal/ops
+              desc: "workflow/ and ops/ are peer layer-3 packages; share types via topology/"
+            - pkg: github.com/zeropsio/zcp/internal/tools
+              desc: "workflow/ is layer 3; tools/ is layer 4 entry"
+            - pkg: github.com/zeropsio/zcp/internal/recipe
+              desc: "workflow/ is layer 3; recipe/ is a cross-cutting v3 engine"
     goconst:
       min-len: 3
       min-occurrences: 3
