@@ -13,6 +13,13 @@ import (
 func TestDiscover_AllServices(t *testing.T) {
 	t.Parallel()
 
+	// Mode is meaningful only for managed services that support HA/NON_HA
+	// (DB, cache, search, messaging, shared-storage). Runtime services and
+	// object-storage have a Mode value at the API layer but it carries no
+	// semantic for replica count — exposing it in discover output misled
+	// agents into "HA runtime = N replicas always running" reasoning. The
+	// authoritative replica count for runtimes lives in
+	// containers.minContainers; for managed in mode itself.
 	services := []platform.ServiceStack{
 		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING", Mode: "HA",
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
@@ -20,6 +27,8 @@ func TestDiscover_AllServices(t *testing.T) {
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
 		{ID: "svc-3", Name: "cache", ProjectID: "proj-1", Status: "RUNNING", Mode: "NON_HA",
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "valkey@7.2"}},
+		{ID: "svc-4", Name: "storage", ProjectID: "proj-1", Status: "RUNNING", Mode: "HA",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "object-storage@1"}},
 	}
 
 	mock := platform.NewMock().
@@ -33,14 +42,20 @@ func TestDiscover_AllServices(t *testing.T) {
 	if result.Project.ID != "proj-1" {
 		t.Errorf("expected project ID proj-1, got %s", result.Project.ID)
 	}
-	if len(result.Services) != 3 {
-		t.Fatalf("expected 3 services, got %d", len(result.Services))
+	if len(result.Services) != 4 {
+		t.Fatalf("expected 4 services, got %d", len(result.Services))
 	}
-	if result.Services[0].Mode != "HA" {
-		t.Errorf("expected api mode=HA, got %s", result.Services[0].Mode)
+	if result.Services[0].Mode != "" {
+		t.Errorf("api (nodejs runtime): expected empty mode (runtime services don't carry mode semantics), got %q", result.Services[0].Mode)
 	}
 	if result.Services[1].Mode != "NON_HA" {
-		t.Errorf("expected db mode=NON_HA, got %s", result.Services[1].Mode)
+		t.Errorf("db (postgresql managed): expected mode=NON_HA, got %q", result.Services[1].Mode)
+	}
+	if result.Services[2].Mode != "NON_HA" {
+		t.Errorf("cache (valkey managed): expected mode=NON_HA, got %q", result.Services[2].Mode)
+	}
+	if result.Services[3].Mode != "" {
+		t.Errorf("storage (object-storage): expected empty mode (object-storage is always internally replicated), got %q", result.Services[3].Mode)
 	}
 }
 
@@ -93,8 +108,11 @@ func TestDiscover_SingleService_Found(t *testing.T) {
 	if svc.ServiceID != "svc-1" {
 		t.Errorf("expected serviceId=svc-1, got %s", svc.ServiceID)
 	}
-	if svc.Mode != "HA" {
-		t.Errorf("expected mode=HA, got %s", svc.Mode)
+	// nodejs is a runtime service — mode field is non-load-bearing for
+	// container count (governed by containers.minContainers below) and
+	// must NOT appear in discover output. See TestDiscover_AllServices.
+	if svc.Mode != "" {
+		t.Errorf("expected empty mode for runtime service, got %q", svc.Mode)
 	}
 	// Resources should come from CurrentAutoscaling (active config).
 	if svc.Resources == nil {

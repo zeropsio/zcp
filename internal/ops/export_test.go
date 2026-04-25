@@ -48,13 +48,15 @@ services:
 		t.Fatalf("expected 2 services, got %d", len(result.Services))
 	}
 
-	// Check runtime service.
+	// Check runtime service. Mode is suppressed for runtime services
+	// (non-load-bearing — replica count is governed by minContainers,
+	// not by HA/NON_HA). See discover.go::buildSummaryServiceInfo.
 	app := result.Services[0]
 	if app.Hostname != "app" {
 		t.Errorf("expected hostname=app, got %s", app.Hostname)
 	}
-	if app.Mode != "HA" {
-		t.Errorf("expected mode=HA, got %s", app.Mode)
+	if app.Mode != "" {
+		t.Errorf("expected empty mode for runtime service, got %q", app.Mode)
 	}
 	if app.IsInfrastructure {
 		t.Error("expected app to not be infrastructure")

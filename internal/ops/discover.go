@@ -117,13 +117,26 @@ func Discover(
 }
 
 func buildSummaryServiceInfo(svc *platform.ServiceStack) ServiceInfo {
+	typeVersion := svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
+	// Mode (HA/NON_HA) is exposed only for service types where it is
+	// load-bearing — managed databases, caches, search engines, messaging
+	// brokers, shared-storage. For runtime services the platform accepts
+	// the field but actual replica count is governed by
+	// containers.minContainers/maxContainers, so surfacing mode here misled
+	// agents into "HA on runtime = N replicas always running" reasoning
+	// (see ops/discover.go contract in CLAUDE.md). Object-storage is
+	// always internally replicated and exposes no mode semantic.
+	mode := ""
+	if workflow.ServiceSupportsMode(typeVersion) {
+		mode = svc.Mode
+	}
 	return ServiceInfo{
 		Hostname:         svc.Name,
 		ServiceID:        svc.ID,
-		Type:             svc.ServiceStackTypeInfo.ServiceStackTypeVersionName,
+		Type:             typeVersion,
 		Status:           svc.Status,
-		Mode:             svc.Mode,
-		IsInfrastructure: workflow.IsManagedService(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName),
+		Mode:             mode,
+		IsInfrastructure: workflow.IsManagedService(typeVersion),
 		SubdomainEnabled: svc.SubdomainAccess,
 	}
 }
