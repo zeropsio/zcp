@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 func TestValidateZeropsYml_Parsing(t *testing.T) {
@@ -841,12 +843,12 @@ func runValidateTestWithOpts(t *testing.T, hostname, yml string, wantWarnings in
 	// cross-deploy path (no DM-2 enforcement). Cases that need self-deploy
 	// behavior set opts.class = DeployClassSelf explicitly and expect an
 	// error via opts.wantErrContains.
-	role := ""
+	var role topology.DeployRole
 	switch {
 	case strings.HasSuffix(hostname, "dev"):
-		role = "dev"
+		role = topology.DeployRoleDev
 	case strings.HasSuffix(hostname, "stage"):
-		role = "stage"
+		role = topology.DeployRoleStage
 	}
 	class := opts.class
 	if class == "" {

@@ -12,14 +12,14 @@ import (
 // a `---` separator. Filters the atom corpus to phase=develop-active atoms
 // whose `strategies` axis contains any of the given strategies. Output is
 // deterministic (priority asc, id asc); duplicate strategies render once.
-func BuildStrategyGuidance(strategies map[string]string) (string, error) {
+func BuildStrategyGuidance(strategies map[string]topology.DeployStrategy) (string, error) {
 	corpus, err := LoadAtomCorpus()
 	if err != nil {
 		return "", fmt.Errorf("load atom corpus: %w", err)
 	}
 	selected := make(map[topology.DeployStrategy]struct{}, len(strategies))
 	for _, s := range strategies {
-		selected[topology.DeployStrategy(s)] = struct{}{}
+		selected[s] = struct{}{}
 	}
 	var matched []KnowledgeAtom
 	for _, atom := range corpus {

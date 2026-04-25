@@ -126,12 +126,21 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 			"")), nil, nil
 	}
 
-	return jsonResult(map[string]string{
-		"status":   "linked",
-		"project":  local.Hostname,
-		"stage":    target.Name,
-		"mode":     string(topology.PlanModeLocalStage),
-		"strategy": "unset",
-		"next":     fmt.Sprintf(`Pick a strategy: zerops_workflow action="strategy" strategies={%q:%q}`, local.Hostname, topology.StrategyPushDev),
+	return jsonResult(adoptLocalResponse{
+		Status:   "linked",
+		Project:  local.Hostname,
+		Stage:    target.Name,
+		Mode:     topology.PlanModeLocalStage,
+		Strategy: topology.StrategyUnset,
+		Next:     fmt.Sprintf(`Pick a strategy: zerops_workflow action="strategy" strategies={%q:%q}`, local.Hostname, topology.StrategyPushDev),
 	}), nil, nil
+}
+
+type adoptLocalResponse struct {
+	Status   string                  `json:"status"`
+	Project  string                  `json:"project"`
+	Stage    string                  `json:"stage"`
+	Mode     topology.Mode           `json:"mode"`
+	Strategy topology.DeployStrategy `json:"strategy"`
+	Next     string                  `json:"next"`
 }

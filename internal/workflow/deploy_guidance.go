@@ -14,9 +14,10 @@ var strategyDescriptions = map[string]string{
 	topology.StrategyManual:  "you manage deployments yourself",
 }
 
-func writeStrategyNote(sb *strings.Builder, current string) {
+func writeStrategyNote(sb *strings.Builder, current topology.DeployStrategy) {
 	sb.WriteString("### Strategy\n")
-	if current == "" {
+	cur := string(current)
+	if cur == "" {
 		sb.WriteString("Not set. Before deploying, discuss with the user and choose:\n")
 		for strategy, d := range strategyDescriptions {
 			fmt.Fprintf(sb, "- %s (%s)\n", strategy, d)
@@ -24,12 +25,12 @@ func writeStrategyNote(sb *strings.Builder, current string) {
 		sb.WriteString("Set via: `zerops_workflow action=\"strategy\" strategies={...}`\n\n")
 		return
 	}
-	desc := strategyDescriptions[current]
-	fmt.Fprintf(sb, "Currently: %s (%s)\n", current, desc)
+	desc := strategyDescriptions[cur]
+	fmt.Fprintf(sb, "Currently: %s (%s)\n", cur, desc)
 
 	var alts []string
 	for strategy, d := range strategyDescriptions {
-		if strategy != current {
+		if strategy != cur {
 			alts = append(alts, fmt.Sprintf("%s (%s)", strategy, d))
 		}
 	}

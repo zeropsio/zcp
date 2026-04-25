@@ -391,13 +391,13 @@ func TestBuildStrategyGuidance(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name         string
-		strategies   map[string]string
+		strategies   map[string]topology.DeployStrategy
 		wantContains string
 		wantNonEmpty bool
 	}{
-		{"push-dev", map[string]string{"a": topology.StrategyPushDev}, "Push-Dev", true},
-		{"manual", map[string]string{"a": topology.StrategyManual}, "Manual", true},
-		{"duplicate deduplicates", map[string]string{"a": topology.StrategyPushDev, "b": topology.StrategyPushDev}, "Push-Dev", true},
+		{"push-dev", map[string]topology.DeployStrategy{"a": topology.StrategyPushDev}, "Push-Dev", true},
+		{"manual", map[string]topology.DeployStrategy{"a": topology.StrategyManual}, "Manual", true},
+		{"duplicate deduplicates", map[string]topology.DeployStrategy{"a": topology.StrategyPushDev, "b": topology.StrategyPushDev}, "Push-Dev", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -415,10 +415,10 @@ func TestBuildStrategyGuidance(t *testing.T) {
 
 func TestBuildStrategyGuidance_DuplicateOnlyOnce(t *testing.T) {
 	t.Parallel()
-	once := buildStrategyGuidance(map[string]string{
+	once := buildStrategyGuidance(map[string]topology.DeployStrategy{
 		"appdev": topology.StrategyPushDev,
 	})
-	twice := buildStrategyGuidance(map[string]string{
+	twice := buildStrategyGuidance(map[string]topology.DeployStrategy{
 		"appdev": topology.StrategyPushDev,
 		"apidev": topology.StrategyPushDev,
 	})
@@ -435,16 +435,16 @@ func TestAllStrategiesAre(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name       string
-		strategies map[string]string
-		target     string
+		strategies map[string]topology.DeployStrategy
+		target     topology.DeployStrategy
 		want       bool
 	}{
-		{"all same", map[string]string{"a": "push-dev", "b": "push-dev"}, "push-dev", true},
-		{"mixed", map[string]string{"a": "push-dev", "b": "push-git"}, "push-dev", false},
-		{"empty map", map[string]string{}, "push-dev", false},
+		{"all same", map[string]topology.DeployStrategy{"a": "push-dev", "b": "push-dev"}, "push-dev", true},
+		{"mixed", map[string]topology.DeployStrategy{"a": "push-dev", "b": "push-git"}, "push-dev", false},
+		{"empty map", map[string]topology.DeployStrategy{}, "push-dev", false},
 		{"nil map", nil, "push-dev", false},
-		{"single match", map[string]string{"a": "manual"}, "manual", true},
-		{"single no match", map[string]string{"a": "manual"}, "push-dev", false},
+		{"single match", map[string]topology.DeployStrategy{"a": "manual"}, "manual", true},
+		{"single no match", map[string]topology.DeployStrategy{"a": "manual"}, "push-dev", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -461,14 +461,14 @@ func TestAnyStrategyIs(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name       string
-		strategies map[string]string
-		target     string
+		strategies map[string]topology.DeployStrategy
+		target     topology.DeployStrategy
 		want       bool
 	}{
-		{"none", map[string]string{"a": "push-dev"}, "push-git", false},
-		{"one of mixed", map[string]string{"a": "push-dev", "b": "push-git"}, "push-git", true},
-		{"all match", map[string]string{"a": "manual", "b": "manual"}, "manual", true},
-		{"empty", map[string]string{}, "push-git", false},
+		{"none", map[string]topology.DeployStrategy{"a": "push-dev"}, "push-git", false},
+		{"one of mixed", map[string]topology.DeployStrategy{"a": "push-dev", "b": "push-git"}, "push-git", true},
+		{"all match", map[string]topology.DeployStrategy{"a": "manual", "b": "manual"}, "manual", true},
+		{"empty", map[string]topology.DeployStrategy{}, "push-git", false},
 		{"nil", nil, "push-git", false},
 	}
 	for _, tt := range tests {

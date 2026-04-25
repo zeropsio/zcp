@@ -668,7 +668,9 @@ func handleResume(ctx context.Context, engine *workflow.Engine, client platform.
 //  3. route=adopt|recipe|classic → commits session via
 //     BootstrapStartWithRoute with the LLM's explicit choice.
 func handleBootstrapStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
-	route := input.Route
+	// Parse the route at the boundary so all downstream comparisons use the
+	// typed BootstrapRoute and the engine API takes its native vocabulary.
+	route := workflow.BootstrapRoute(input.Route)
 
 	// Plan is not accepted in start. The two-phase bootstrap (route
 	// selection → plan production) intentionally keeps them separate:
@@ -705,7 +707,7 @@ func handleBootstrapStart(ctx context.Context, projectID string, engine *workflo
 	}
 
 	// Resume route — dispatch into the existing resume flow.
-	if route == string(workflow.BootstrapRouteResume) {
+	if route == workflow.BootstrapRouteResume {
 		if input.SessionID == "" {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
@@ -716,7 +718,7 @@ func handleBootstrapStart(ctx context.Context, projectID string, engine *workflo
 	}
 
 	// Commit pass — start a session with the chosen route.
-	resp, err := engine.BootstrapStartWithRoute(projectID, input.Intent, workflow.BootstrapRoute(route), input.RecipeSlug)
+	resp, err := engine.BootstrapStartWithRoute(projectID, input.Intent, route, input.RecipeSlug)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrWorkflowActive,

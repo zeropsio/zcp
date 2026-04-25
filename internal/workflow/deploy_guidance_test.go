@@ -26,7 +26,7 @@ func TestWriteStrategyNote_Set(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name     string
-		strategy string
+		strategy topology.DeployStrategy
 		wantAlts []string
 	}{
 		{"push-dev", topology.StrategyPushDev, []string{"push-git", "manual"}},
@@ -39,7 +39,7 @@ func TestWriteStrategyNote_Set(t *testing.T) {
 			var sb strings.Builder
 			writeStrategyNote(&sb, tt.strategy)
 			note := sb.String()
-			if !strings.Contains(note, "Currently: "+tt.strategy) {
+			if !strings.Contains(note, "Currently: "+string(tt.strategy)) {
 				t.Errorf("should say 'Currently: %s', got: %s", tt.strategy, note)
 			}
 			for _, alt := range tt.wantAlts {

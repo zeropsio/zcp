@@ -27,10 +27,17 @@ const (
 	PlanModeLocalOnly  = ModeLocalOnly
 )
 
+// DeployRole names a service's deploy-time role. It's a Mode alias —
+// every value in the per-service deploy axis is also a Mode value — but
+// the named alias makes deploy-side signatures self-documenting (a
+// validator that takes `roles ...DeployRole` reads as "deploy roles" at
+// the call site even though the underlying type is Mode). No local-*
+// variants: local topologies are project-keyed and have no per-service
+// role in the Zerops-runtime sense.
+type DeployRole = Mode
+
 // DeployRole* — the deploy-time subset. Mirrors the Mode values that
-// describe a per-service role; no local-* variants, since local
-// topologies are project-keyed and have no per-service role in the
-// Zerops-runtime sense.
+// describe a per-service role.
 const (
 	DeployRoleDev    = ModeDev
 	DeployRoleStage  = ModeStage

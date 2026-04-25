@@ -36,8 +36,14 @@ type DeployStrategy string
 
 // StrategyUnset is the envelope sentinel surfaced to atoms as
 // `strategies: [unset]`. The other three are the user-selectable deploy
-// mechanisms; kept as untyped constants for legacy persistence callers
-// (B.2 will type them).
+// mechanisms.
+//
+// StrategyUnset is typed so it can compare directly with
+// ServiceMeta.DeployStrategy. The other three are untyped string
+// constants so they remain assignable to both the typed workflow
+// surface (ServiceMeta.DeployStrategy) and to plain string fields used
+// by the deploy tool (DeployAttempt.Strategy uses the deploy-tool wire
+// vocabulary, which overlaps with these values).
 const StrategyUnset DeployStrategy = "unset"
 
 const (

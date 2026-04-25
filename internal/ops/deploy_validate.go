@@ -31,7 +31,7 @@ import (
 // source-tree-knowable facts (yaml shape, schema coherence, deploy-class
 // contract, role-mode advisories). Post-build filesystem existence of
 // deployFiles paths is Zerops builder's authority, not ZCP's.
-func ValidateZeropsYml(workingDir, targetHostname, serviceType string, class DeployClass, roles ...string) ([]string, error) {
+func ValidateZeropsYml(workingDir, targetHostname, serviceType string, class DeployClass, roles ...topology.DeployRole) ([]string, error) {
 	var warnings []string
 
 	doc, err := ParseZeropsYml(workingDir)
@@ -99,12 +99,12 @@ func ValidateZeropsYml(workingDir, targetHostname, serviceType string, class Dep
 	}
 
 	// Explicit role, no fallback. Empty role skips role-specific advisories.
-	role := ""
+	var role topology.DeployRole
 	if len(roles) > 0 {
 		role = roles[0]
 	}
-	isDev := role == string(topology.DeployRoleDev)
-	isStage := role == string(topology.DeployRoleStage)
+	isDev := role == topology.DeployRoleDev
+	isStage := role == topology.DeployRoleStage
 
 	// Stage services with "zsc noop" build command are likely misconfigured.
 	if isStage && entry.Build.hasZscNoop() {
