@@ -114,6 +114,57 @@ func TestValidateKB_AcceptsBulletMentioningRuntimeHostname(t *testing.T) {
 	}
 }
 
+// TestValidateKB_RejectsFirstPersonShape — run-11 gap V-4. A bullet
+// using first-person/recipe-author voice ("we tried X", "I switched
+// to Y", "after running") describes scaffold-debugging forensics, not
+// platform teaching. Spec rule 4: discard.
+func TestValidateKB_RejectsFirstPersonShape(t *testing.T) {
+	t.Parallel()
+
+	body := []byte("# codebase/api\n" +
+		"\n" +
+		"<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->\n" +
+		"### Gotchas\n" +
+		"\n" +
+		"- **npx ts-node trap** — the L7 balancer fronts the api codebase " +
+		"on Zerops; we tried npx ts-node first but it resolves against " +
+		"~/.npm/_npx not project node_modules. The fix was switching to " +
+		"node dist/migrate.js. After running this we discovered the " +
+		"deploy bricks if you forget.\n" +
+		"<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->\n")
+	vs, err := validateCodebaseKB(context.Background(), "codebases/api/README.md", body, SurfaceInputs{Plan: &Plan{}})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if !containsCode(vs, "kb-bullet-self-inflicted-shape") {
+		t.Errorf("expected kb-bullet-self-inflicted-shape, got %+v", vs)
+	}
+}
+
+// TestValidateKB_AcceptsPorterVoice — porter-voice prose passes V-4.
+// Bullet talks to the porter ("the L7 balancer rewrites the Host
+// header") not from the recipe author's debugging journey.
+func TestValidateKB_AcceptsPorterVoice(t *testing.T) {
+	t.Parallel()
+
+	body := []byte("# codebase/api\n" +
+		"\n" +
+		"<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->\n" +
+		"### Gotchas\n" +
+		"\n" +
+		"- **L7 Host header rewrite** — the L7 balancer rewrites the Host " +
+		"header to the public subdomain; trust proxy must be enabled or " +
+		"req.hostname returns the VXLAN peer.\n" +
+		"<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->\n")
+	vs, err := validateCodebaseKB(context.Background(), "codebases/api/README.md", body, SurfaceInputs{Plan: &Plan{}})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if containsCode(vs, "kb-bullet-self-inflicted-shape") {
+		t.Errorf("expected NO self-inflicted-shape violation, got %+v", vs)
+	}
+}
+
 // TestValidateKB_AcceptsCitedGuideExtension — bullet citing http-support
 // with new content beyond the guide (a recipe-specific intersection)
 // passes. The guide body's tokens make up < 50% of the bullet's

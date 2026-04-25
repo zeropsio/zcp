@@ -253,6 +253,31 @@ func kbBulletHasPlatformMention(bullet string, plan *Plan) bool {
 	return false
 }
 
+// kbSelfInflictedVoiceRE flags bullets in first-person/recipe-author
+// voice. Phrase signatures of "we tried X, it failed, switched to Y"
+// debugging journeys — not porter-facing teaching. Spec rule 4.
+var kbSelfInflictedVoiceRE = regexp.MustCompile(`(?i)\b(` +
+	`we (chose|tried|fixed|discovered|added|switched|noticed|wrote|saw|hit)|` +
+	`i (added|switched|noticed|chose|tried|fixed)|` +
+	`the fix was|after running|` +
+	`(my|our) (code|setup|scaffold)` +
+	`)\b`)
+
+// validateKBSelfInflictedShape runs V-4: regex-flag bullets in
+// first-person voice — the "we tried X, the fix was Y" shape that
+// reads as scaffold-debugging forensics. Belongs in a commit message
+// or discarded; not in published KB.
+func validateKBSelfInflictedShape(path, kb string) []Violation {
+	var vs []Violation
+	for _, bullet := range kbBulletBlocks(kb) {
+		if kbSelfInflictedVoiceRE.MatchString(bullet) {
+			vs = append(vs, violation("kb-bullet-self-inflicted-shape", path,
+				"first-person/recipe-author voice in KB bullet — KB content speaks to porter, not from author. Move to commit message or discard. See spec §'How to classify' rule 4"))
+		}
+	}
+	return vs
+}
+
 // validateKBNoPlatformMention runs V-3: each bullet must mention at
 // least one platform-side mechanism term. Bullets covering only
 // framework concerns (NestJS, Express, Svelte, library lifecycle

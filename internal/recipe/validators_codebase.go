@@ -110,6 +110,8 @@ func validateCodebaseKB(_ context.Context, path string, body []byte, inputs Surf
 	// V-3: each bullet must mention at least one platform-side
 	// mechanism term — pure framework-quirk bullets get flagged.
 	vs = append(vs, validateKBNoPlatformMention(path, kb, inputs.Plan)...)
+	// V-4: regex-flag bullets in first-person/recipe-author voice.
+	vs = append(vs, validateKBSelfInflictedShape(path, kb)...)
 	return vs, nil
 }
 
