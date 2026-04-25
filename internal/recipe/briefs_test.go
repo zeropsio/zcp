@@ -130,6 +130,22 @@ func TestBrief_Scaffold_TeachesAliasTypeContracts(t *testing.T) {
 	mustContain(t, brief.Body, "do NOT prepend")
 }
 
+// TestBrief_Scaffold_CLAUDEMDIsPorter — run-12 §C. Scaffold brief
+// teaches that CLAUDE.md is porter-facing — no zcp MCP refs in dev-loop
+// section; framework-canonical commands instead.
+func TestBrief_Scaffold_CLAUDEMDIsPorter(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	mustContain(t, brief.Body, "framework-canonical")
+	mustContain(t, brief.Body, "MCP tool invocations")
+	mustContain(t, brief.Body, "porter-facing")
+}
+
 func TestBriefCompose_FeatureUnderCap(t *testing.T) {
 	t.Parallel()
 

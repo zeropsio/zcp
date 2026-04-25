@@ -1008,7 +1008,69 @@ func TestValidator_SourceCode_FlagsDoubleSchemePrefix(t *testing.T) {
 	}
 }
 
+// TestValidator_CodebaseCLAUDE_RejectsZcpToolReferences — run-12 §C.
+// CLAUDE.md is porter-facing; zcp MCP tool names + zcli + zcp commands
+// have no place there. Run-11 shipped 3 CLAUDE.md files invoking
+// zerops_dev_server in the dev-loop section.
+func TestValidator_CodebaseCLAUDE_RejectsZcpToolReferences(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		body string
+		flag bool
+	}{
+		{
+			name: "zerops_dev_server invocation",
+			body: claudeMDPad("## Dev loop\n`zerops_dev_server action=start hostname=apidev command=\"npm run start:dev\"`\n"),
+			flag: true,
+		},
+		{
+			name: "zerops_deploy mention",
+			body: claudeMDPad("## Deploy\n`zerops_deploy targetService=apidev`\n"),
+			flag: true,
+		},
+		{
+			name: "zcli command",
+			body: claudeMDPad("## Push\n`zcli push`\n"),
+			flag: true,
+		},
+		{
+			name: "framework-canonical (passes)",
+			body: claudeMDPad("## Dev loop\n`npm run start:dev` — Nest CLI watches src/**.\n"),
+			flag: false,
+		},
+		{
+			name: "ssh alias is allowed",
+			body: claudeMDPad("## Dev loop\n`ssh apidev npm run start:dev` — connect via your dev mount.\n"),
+			flag: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			vs, err := validateCodebaseCLAUDE(context.Background(),
+				"codebases/api/CLAUDE.md", []byte(tc.body), SurfaceInputs{Plan: &Plan{}})
+			if err != nil {
+				t.Fatalf("validate: %v", err)
+			}
+			if got := containsCode(vs, "claude-md-zcp-tool-leak"); got != tc.flag {
+				t.Errorf("containsCode(claude-md-zcp-tool-leak) = %v, want %v; vs=%+v", got, tc.flag, vs)
+			}
+		})
+	}
+}
+
 // helpers
+
+// claudeMDPad pads a CLAUDE.md body to satisfy the 1200-byte minimum
+// without exceeding the 60-line cap, so unrelated validators don't
+// dominate the test signal.
+func claudeMDPad(body string) string {
+	// 30 lines × 45 chars/line = ~1350 bytes; under the 60-line cap.
+	pad := strings.Repeat("Service fact line for porter context here.\n", 30)
+	return body + "\n" + pad
+}
 
 func containsCode(vs []Violation, code string) bool {
 	for _, v := range vs {
