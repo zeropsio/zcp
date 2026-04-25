@@ -208,26 +208,13 @@ func kbBulletBlocks(kb string) []string {
 	return out
 }
 
-// platformMentionVocabBase — the static portion of V-3's platform
-// vocabulary. Plan-derived hostnames are appended at validate-time so
-// recipe-specific service names (e.g. `meilisearch1`) count as
-// platform mentions too. Case-sensitive matches; case-insensitive
-// containment is checked at lookup time.
-var platformMentionVocabBase = []string{
-	"Zerops", "L7", "balancer", "subdomain", "zerops.yaml",
-	"zsc", "execOnce", "appVersionId", "VXLAN",
-	"zeropsSubdomain", "httpSupport", "runtime card",
-	"managed service", "${", "deployFiles", "initCommands",
-	"envIsolation", "buildFromGit", "preparecommands",
-	"forcePathStyle", "minContainers",
-}
-
 // kbBulletHasPlatformMention reports whether a bullet body names any
 // platform-side mechanism. Used by V-3 to flag bullets with only
-// framework concerns. Case-insensitive on substrings.
+// framework concerns. Case-insensitive on substrings; consumes the
+// shared `PlatformVocabulary` list (classify.go).
 func kbBulletHasPlatformMention(bullet string, plan *Plan) bool {
 	lo := strings.ToLower(bullet)
-	for _, kw := range platformMentionVocabBase {
+	for _, kw := range PlatformVocabulary {
 		if strings.Contains(lo, strings.ToLower(kw)) {
 			return true
 		}

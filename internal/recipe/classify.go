@@ -132,10 +132,37 @@ var selfInflictedFixPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\bswitched\b.+\bto\b\s+\S+`),
 }
 
-var platformMechanismVocab = []string{
-	"Zerops", "L7", "balancer", "subdomain", "zerops.yaml",
-	"zsc", "execOnce", "VXLAN", "zeropsSubdomain", "httpSupport",
-	"runtime card", "managed service", "${",
+// PlatformVocabulary is the single hand-curated list of platform-side
+// mechanism terms. V-1 (classify, case-sensitive contains in
+// failureMode) and V-3 (validators_kb_quality, case-insensitive
+// contains in KB bullet body) both consume it. Alphabetized by lower-
+// case form, deduped union of the two pre-merge lists.
+//
+// Add entries when a new platform-side mechanism becomes load-bearing
+// in the recipe pipeline; do NOT promote this list into a "framework"
+// or "ClassificationContext" struct — flat slice is the contract.
+var PlatformVocabulary = []string{
+	"${",
+	"appVersionId",
+	"balancer",
+	"buildFromGit",
+	"deployFiles",
+	"envIsolation",
+	"execOnce",
+	"forcePathStyle",
+	"httpSupport",
+	"initCommands",
+	"L7",
+	"managed service",
+	"minContainers",
+	"preparecommands",
+	"runtime card",
+	"subdomain",
+	"VXLAN",
+	"Zerops",
+	"zerops.yaml",
+	"zeropsSubdomain",
+	"zsc",
 }
 
 // IsLikelySelfInflicted applies V-1's deterministic shape check.
@@ -156,7 +183,7 @@ func IsLikelySelfInflicted(r FactRecord) bool {
 	if !matched {
 		return false
 	}
-	for _, kw := range platformMechanismVocab {
+	for _, kw := range PlatformVocabulary {
 		if strings.Contains(r.FailureMode, kw) {
 			return false
 		}
