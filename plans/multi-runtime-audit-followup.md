@@ -402,7 +402,7 @@ func TestDeployPreFlight_CrossDeploy_StageHostname_ResolvesToProd(t *testing.T) 
 	// Pair-keyed meta: ONE file for the pair, StageHostname set.
 	meta := &workflow.ServiceMeta{
 		Hostname:         "apidev",
-		Mode:             workflow.PlanModeStandard,
+		Mode:             topology.PlanModeStandard,
 		StageHostname:    "apistage",
 		BootstrapSession: "s1",
 		BootstrappedAt:   "2026-04-01T00:00:00Z",

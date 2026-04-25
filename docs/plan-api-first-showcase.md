@@ -300,7 +300,7 @@ func buildServiceIncludesList(plan *RecipePlan, envIndex int) string {
 // Collect ALL non-worker runtime targets (frontend + API in dual-runtime recipes).
 var appTargets []workflow.RecipeTarget
 for _, t := range plan.Targets {
-    if workflow.IsRuntimeType(t.Type) && !t.IsWorker {
+    if topology.IsRuntimeType(t.Type) && !t.IsWorker {
         appTargets = append(appTargets, t)
     }
 }

@@ -172,10 +172,12 @@ func classifyService(s platform.ServiceStack) topology.RuntimeClass {
 // internal/ops/discover.go
 import "github.com/zeropsio/zcp/internal/workflow"  // FORBIDDEN
 
-func classify(s platform.ServiceStack) workflow.RuntimeClass { ... }
+func reportRecipe(plan *workflow.RecipePlan) error { ... }
 ```
 
 `architecture_test.go` fails. `make lint-local` fails on depguard.
+Anything genuinely shared between ops and workflow belongs in
+`topology/` (ZCP vocabulary) or `platform/` (wire shapes).
 
 ### OK — tool boundary parses string → topology type once
 
@@ -192,7 +194,7 @@ func handle(input Input) error {
 ### NOT OK — tool casts at the comparison site
 
 ```go
-if string(workflow.TriggerWebhook) == input.Trigger {  // boundary leak
+if string(topology.TriggerWebhook) == input.Trigger {  // boundary leak
     ...
 }
 ```
