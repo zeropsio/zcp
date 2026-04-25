@@ -47,35 +47,24 @@ func RunNginx() error {
 	return nil
 }
 
-// createNginxDirs creates directories needed by nginx and chowns them to the
-// current user — the same user that runs `zcp service start nginx` (and thus
-// the user nginx workers run as in the Zerops container). This lets us use
-// 0755 instead of 0777: workers can write because they own the dir, not
-// because everyone can write to it.
+// createNginxDirs creates directories needed by nginx and ensures
+// any pre-existing log files are writable by the non-root worker.
 func createNginxDirs() error {
-	uid := os.Geteuid()
-	gid := os.Getegid()
 	for _, d := range nginxDirs {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+		if err := os.MkdirAll(d, 0777); err != nil {
 			return fmt.Errorf("mkdir %s: %w", d, err)
 		}
-		if err := os.Chown(d, uid, gid); err != nil {
-			return fmt.Errorf("chown %s: %w", d, err)
+		if err := os.Chmod(d, 0777); err != nil {
+			return fmt.Errorf("chmod %s: %w", d, err)
 		}
 	}
 
-	// Pre-existing log files (apt installs nginx with www-data:adm 0640) need
-	// to be owned by the current user so workers can append. 0644 lets others
-	// read (debugging, log shipper) but only owner write.
+	// Fix perms on pre-existing log files (created by apt as www-data:adm 0640).
 	for _, f := range nginxLogFiles {
-		if _, err := os.Stat(f); err != nil {
-			continue
-		}
-		if err := os.Chown(f, uid, gid); err != nil {
-			return fmt.Errorf("chown %s: %w", f, err)
-		}
-		if err := os.Chmod(f, 0o644); err != nil {
-			return fmt.Errorf("chmod %s: %w", f, err)
+		if _, err := os.Stat(f); err == nil {
+			if err := os.Chmod(f, 0666); err != nil {
+				return fmt.Errorf("chmod %s: %w", f, err)
+			}
 		}
 	}
 	return nil
