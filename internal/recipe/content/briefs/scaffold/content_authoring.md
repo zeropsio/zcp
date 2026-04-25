@@ -119,3 +119,4 @@ Finalize gates reject on these; fix at author-time:
 - yaml comment blocks: one causal word per block (not per line)
 - KB: `**Topic** — prose` only; triples live in `claude-md/notes`
 - CLAUDE.md: 30–50 lines (cap 60); no cross-codebase runbooks
+- Fragment IDs use `cb.Hostname` (the codebase name, e.g. `app`) — NEVER the slot hostname (`appdev` / `appstage`). The slot is the SSHFS mount; the codebase is the logical name. Engine rejects `codebase/appdev/intro` with the Plan codebase list.

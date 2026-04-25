@@ -589,6 +589,29 @@ func TestBrief_Scaffold_ContainsValidatorTripwires(t *testing.T) {
 	}
 }
 
+// TestBrief_Scaffold_ContainsSlotHostnameTripwire — run-11 gap N-2.
+// Scaffold brief's Validator-tripwires section names the slot-vs-
+// codebase distinction explicitly so sub-agents preempt the run-10
+// scaffold-app mistake (5 fragments under codebase/appdev/*).
+func TestBrief_Scaffold_ContainsSlotHostnameTripwire(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	for _, anchor := range []string{
+		"cb.Hostname",
+		"slot hostname",
+		"appdev",
+	} {
+		if !strings.Contains(brief.Body, anchor) {
+			t.Errorf("scaffold brief slot tripwire missing anchor %q", anchor)
+		}
+	}
+}
+
 // TestBrief_Scaffold_ContainsSelfInflictedLitmus — run-11 gap V-5.
 // The scaffold brief teaches the spec rule 4 self-inflicted litmus
 // with three concrete run-10 anti-patterns so sub-agents pre-empt the
