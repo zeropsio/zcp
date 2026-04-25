@@ -4,6 +4,78 @@ Running log of changes on top of [plan.md](plan.md). Each entry captures what ch
 
 ---
 
+## 2026-04-25 — cleanup: gates → notices per system.md §4
+
+### Context
+
+Executes the cleanup pass anticipated by the [architectural reframe](#2026-04-25--architectural-reframe-catalog-drift-recognized-gates--notices-structural) entry directly below. Each wrong-side artifact in the §4 verdict table was either demoted to a record-time `Notice` (DISCOVER side, agent sees but publication doesn't block), merged into a single shared list (vocabulary duplicates), or deleted outright (pure-style, no semantic load).
+
+Run 11 dogfood not executed — that's the user's call against the cleaned engine.
+
+### Severity plumbing (commit 1)
+
+`Violation` gains a `Severity` field with two values: `SeverityBlocking` (zero-value, current behavior) and `SeverityNotice`. `Session.CompletePhase` now returns `(blocking, notices, err)` — only blocking violations hold the phase open. `RecipeResult.Notices []Violation` carries the notice slice to the agent at `complete-phase`. The scalar `RecipeResult.Notice` from V-1's `record-fact` path stays unchanged. `notice()` constructor in `validators.go` mirrors `violation()` so DISCOVER-side findings are explicit at construction.
+
+### Validators demoted to Notice (commit 2)
+
+- `validateKBParaphrase` (V-2)
+- `validateKBNoPlatformMention` (V-3)
+- `validateKBSelfInflictedShape` (V-4)
+- `validateKBCitedGuideBoilerplate` (O-2 KB-side)
+- `envYAMLCiteMetaRE` (O-2 env-yaml-side, both service and project comments)
+- `validateEnvREADME` `metaVoiceWords` check (run-8 D)
+- `validateEnvREADME` `tierPromotionVerbs` check (run-8 D)
+- `validateEnvImportComments` `missing-causal-word` (run-8 D)
+- `validateCodebaseYAML` block-level `yaml-comment-missing-causal-word` (run-8 D)
+- `scanSourceCommentsAt` `sourceForbiddenPhrases` (run-9 I)
+- `validateCodebaseCLAUDE` `claudeMDForbiddenSubsections` (run-10 P)
+- `validateCodebaseKB` `kbTripleFormatRE` (run-10 O)
+- `validateCodebaseKB` `kb-missing-bold-symptom` (run-8 D)
+- `templatedOpeningCheck` (run-8 D)
+
+Stays blocking (per system.md §4): IG `### N.` heading shape (R-1), `claude-md-too-short` / `claude-md-too-long` size caps, `gateEnvImportsPresent`, `checkUnreplacedTokens`, M-1 / M-2 path contracts, `kb-citation-missing`.
+
+### `LintDeployignore` warnings only (commit 3)
+
+Errors slice collapsed into Warnings. `DeployLocal` no longer hard-blocks on dist/node_modules entries; both artifact patterns and redundant entries flow as warnings up the existing channel. The TEACH-side `.deployignore` paragraph in `internal/knowledge/themes/core.md` (run-11 P-1) does the actual teaching; this linter surfaces a runtime warning when the rules are visibly broken.
+
+### Phrase-pinning tests deleted (commit 4)
+
+Tests that asserted specific wording inside atom or brief content replicate the catalog problem at the test layer. Deleted:
+
+- `TestKnowledge_CoreThemes_DeployignoreParagraph_NoMirrorGitignore`
+- `TestBuildFinalizeBrief_NoCiteGuideInstruction`
+- `TestBuildFinalizeBrief_ValidatorTripwires`
+- `TestBrief_Scaffold_ContainsSelfInflictedLitmus` (would have broken on commit 6's V-5 rewrite)
+- `TestBrief_Scaffold_DeployignoreTripwire`
+- `TestContentAuthoring_IncludesVoiceRule`
+
+Tests asserting engine-emitted shape (paths, fragment math, brief caps) stay — those test TEACH-side contracts.
+
+### Vocabulary merge (commit 5)
+
+`platformMechanismVocab` (13 terms, V-1) and `platformMentionVocabBase` (21 terms, V-3) merged into a single exported `PlatformVocabulary` in `classify.go` (alphabetized, deduped union of 21 terms). V-1 keeps case-sensitive contains in `failureMode`; V-3 keeps case-insensitive contains in bullet body. Stays a flat `[]string`.
+
+### V-5 anti-patterns rewritten (commit 6)
+
+`content/briefs/scaffold/content_authoring.md` "Self-inflicted litmus" subsection no longer enumerates the three run-10 anti-patterns (npx ts-node, dist-in-deployignore, trust-proxy-per-framework). Replaced with the abstract rule: *"if your fix is a recipe-source change AND the failure-mode description lacks platform-mechanism vocabulary (Zerops, L7, balancer, ...), it's self-inflicted per spec rule 4 — discard, don't author as KB."* Same litmus, no run-specific examples for the agent to memorize. `content/briefs/feature/content_extension.md` keeps its cross-reference to scaffold's litmus.
+
+### `yamlDividerREs` deleted (commit 7)
+
+Pure style with no semantic load. Deleted: the regex slice, `yamlIsDivider` / `yamlFindDividers` helpers, the `yaml-comment-divider-banned` violation emission, the divider-skip in `parseYAMLCommentBlocks`, the three divider tests, and the No dividers / No banners / No decoration paragraph in `content/principles/yaml-comment-style.md`. The block-mode causal-comment teaching stays.
+
+### Verdict table updated
+
+[system.md](system.md) §4 verdict table reflects the post-cleanup state. Wrong-side artifacts that were ❌ now read ✅ Notice or ✅ Deleted.
+
+### Not changed
+
+- Run 11 dogfood — still queued, still the user's call.
+- `kb-citation-missing` validator — stays blocking (citation-map presence is a structural mandate, not a phrase pattern).
+- IG heading-shape validator (R-1) — stays blocking (engine emits item #1 in this shape, so the validator is a structural mirror).
+
+---
+
 ## 2026-04-25 — architectural reframe: catalog drift recognized, gates → notices/structural
 
 ### Context

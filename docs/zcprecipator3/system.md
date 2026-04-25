@@ -244,16 +244,14 @@ not allowed to invent knowledge that earlier phases didn't capture.
 
 ## 4. The TEACH / DISCOVER line
 
-> **Decision marker.** This section is a deliberate **architectural
-> reframe**, not a description of the engine's current code state. As
-> of 2026-04-25, the verdict table below identifies ~16 wrong-side
-> artifacts that currently live in the engine as finalize-blocking
-> gates. Cleanup has not happened yet. A fresh instance reading the
-> code will see those catalogs and might assume they're the intended
-> design — they are not. The reframe is recorded in [CHANGELOG.md
+> **Decision marker.** As of 2026-04-25 the cleanup pass has shipped:
+> wrong-side artifacts have been demoted to Notice severity, deleted
+> outright, or merged. The verdict table below reflects the post-
+> cleanup state. The architectural reframe lives in [CHANGELOG.md
 > entry "2026-04-25 — architectural reframe: catalog drift recognized,
-> gates → notices/structural"](CHANGELOG.md) and the operational
-> pause that produced it in [plans/run-11-pause.md](plans/run-11-pause.md).
+> gates → notices/structural"](CHANGELOG.md); the cleanup itself is
+> recorded in the cleanup CHANGELOG entry directly above it. The
+> operational pause record is at [plans/run-11-pause.md](plans/run-11-pause.md).
 
 This is the load-bearing section. It draws the line between what the
 engine knows up-front (TEACH) and what each run is responsible for
@@ -357,22 +355,21 @@ through deploy iteration (when not).
 | Workspace vs deliverable yaml shapes | TEACH | ✅ Emitted by construction; no post-hoc validator |
 | Engine-emitted IG item #1 (run-10 M) | TEACH | ✅ Engine generates the shape from yaml body |
 | Citation map atom | TEACH | ✅ Names topics; doesn't ban anything |
-| `causalWords` allow-list (run-8 D) | wrong side | ❌ Encodes "what a rationale sentence looks like in English" — catalog |
-| `tierPromotionVerbs` (run-8 D) | wrong side | ❌ Verb catalog |
-| `metaVoiceWords` (run-8 D) | wrong side | ❌ Phrase ban-list |
-| `yamlDividerREs` (run-9 H) | wrong side | ❌ ASCII-art ban (style-not-knowledge — debatable) |
-| `sourceForbiddenPhrases` (run-9 I) | wrong side | ❌ Phrase ban-list scanned in real source comments |
-| `kbTripleFormatRE` (run-10 O) | wrong side | ❌ Phrase pin |
-| `claudeMDForbiddenSubsections` (run-10 P) | wrong side | ❌ Heading ban-list |
-| `templatedOpeningCheck` first-sentence similarity (run-8 D) | wrong side | ❌ Detect-on-output |
-| `boldBulletRE` KB symptom contract (run-8 D) | wrong side | ❌ Phrase pin |
-| V-5 three run-10 anti-patterns in scaffold brief (run-11) | wrong side | ❌ Run-specific knowledge in a brief |
-| `platformMechanismVocab` (run-11 V-1) | wrong side | ❌ Vocabulary catalog |
-| `platformMentionVocabBase` (run-11 V-3) | wrong side | ❌ Vocabulary catalog (overlaps V-1) |
-| `kbCitedGuideBoilerplateRE` (run-11 O-2) | wrong side | ❌ Phrase pin |
-| `kbSelfInflictedVoiceRE` (run-11 V-4) | wrong side | ❌ Phrase pin |
-| `guideKnowledgeSources` map (run-11 V-2) | TEACH (defensible) | ⚠️ Hand-curated topic→source map. Defensible as part of citation-map. The validator built on top is the catalog problem, not the map itself |
-| `deployignoreHardRejectLines` / `WarnLines` (run-11 P-3) | wrong side | ❌ Filename catalog. P-1's atom rewrite is correct TEACH-side; the validator on top is the wrong-side reification |
+| `causalWords` allow-list (run-8 D) | DISCOVER | ✅ Notice — the agent sees the lesson; finalize doesn't block |
+| `tierPromotionVerbs` (run-8 D) | DISCOVER | ✅ Notice |
+| `metaVoiceWords` (run-8 D) | DISCOVER | ✅ Notice |
+| `yamlDividerREs` (run-9 H) | — | ✅ Deleted (pure style, no semantic load) |
+| `sourceForbiddenPhrases` (run-9 I) | DISCOVER | ✅ Notice |
+| `kbTripleFormatRE` (run-10 O) | DISCOVER | ✅ Notice |
+| `claudeMDForbiddenSubsections` (run-10 P) | DISCOVER | ✅ Notice |
+| `templatedOpeningCheck` first-sentence similarity (run-8 D) | DISCOVER | ✅ Notice |
+| `boldBulletRE` KB symptom contract (run-8 D) | DISCOVER | ✅ Notice |
+| V-5 three run-10 anti-patterns in scaffold brief (run-11) | — | ✅ Deleted (rewritten as abstract litmus rule) |
+| `PlatformVocabulary` (merged from `platformMechanismVocab` + `platformMentionVocabBase`) | TEACH (defensible) | ✅ Single shared list; V-1 keeps record-time auto-classify, V-3 is now Notice — both consume the same vocab |
+| `kbCitedGuideBoilerplateRE` (run-11 O-2) | DISCOVER | ✅ Notice |
+| `kbSelfInflictedVoiceRE` (run-11 V-4) | DISCOVER | ✅ Notice |
+| `guideKnowledgeSources` map (run-11 V-2) | TEACH (defensible) | ⚠️ Hand-curated topic→source map; V-2 validator now flows as Notice |
+| `LintDeployignore` artifact / redundant patterns (run-11 P-3) | DISCOVER | ✅ Warnings only — deploy never blocks; TEACH-side teaching lives in `themes/core.md` |
 | `.deployignore` paragraph rewrite in `themes/core.md` (run-11 P-1) | TEACH | ✅ Positive teaching in atom |
 
 ### What "wrong side" means concretely
