@@ -104,19 +104,20 @@ const errSessionNotOpen = "session not open"
 
 // RecipeInput is the input schema for zerops_recipe.
 type RecipeInput struct {
-	Action     string      `json:"action"               jsonschema:"One of: start, enter-phase, complete-phase, build-brief, record-fact, record-fragment, resolve-chain, emit-yaml, update-plan, stitch-content, status."`
-	Slug       string      `json:"slug,omitempty"       jsonschema:"Recipe slug (e.g. {framework}-showcase). Required for every action."`
-	OutputRoot string      `json:"outputRoot,omitempty" jsonschema:"Directory where the recipe tree + facts log live. Required for 'start'."`
-	Phase      string      `json:"phase,omitempty"      jsonschema:"Phase name for enter-phase / complete-phase: research, provision, scaffold, feature, finalize."`
-	BriefKind  string      `json:"briefKind,omitempty"  jsonschema:"For build-brief: scaffold, feature, finalize."`
-	Codebase   string      `json:"codebase,omitempty"   jsonschema:"For build-brief when kind=scaffold: the codebase hostname to compose for."`
-	Shape      string      `json:"shape,omitempty"      jsonschema:"For emit-yaml: 'workspace' (services-only YAML for zerops_import at provision) or 'deliverable' (full published template for tierIndex, written to disk)."`
-	TierIndex  int         `json:"tierIndex,omitempty"  jsonschema:"For emit-yaml shape=deliverable: tier 0..5. Ignored when shape=workspace."`
-	Fact       *FactRecord `json:"fact,omitempty"       jsonschema:"For record-fact: a FactRecord object with topic, symptom, mechanism, surfaceHint, citation fields."`
-	Plan       *Plan       `json:"plan,omitempty"       jsonschema:"For update-plan: partial Plan object. Fields present overwrite session.Plan; omitted fields untouched."`
-	FragmentID string      `json:"fragmentId,omitempty" jsonschema:"For record-fragment: fragment identifier. Valid shapes: root/intro, env/<N>/intro (N=0..5), env/<N>/import-comments/<hostname>, env/<N>/import-comments/project, codebase/<hostname>/intro, codebase/<hostname>/integration-guide, codebase/<hostname>/knowledge-base, codebase/<hostname>/claude-md/service-facts, codebase/<hostname>/claude-md/notes."`
-	Fragment   string      `json:"fragment,omitempty"   jsonschema:"For record-fragment: the fragment body. Overwrite for root/* and env/* ids; append-on-extend for codebase/*/integration-guide, knowledge-base, claude-md/* ids so a feature sub-agent extends scaffold's body rather than replacing it."`
-	Mode       string      `json:"mode,omitempty"       jsonschema:"For record-fragment: 'append' (default for codebase IG/KB/claude-md ids; concatenates with prior body) or 'replace' (overwrites prior body). Use 'replace' to correct a fragment you authored earlier in the same recipe session, e.g. after a complete-phase validator violation."`
+	Action           string      `json:"action"                     jsonschema:"One of: start, enter-phase, complete-phase, build-brief, verify-subagent-dispatch, record-fact, record-fragment, resolve-chain, emit-yaml, update-plan, stitch-content, status."`
+	Slug             string      `json:"slug,omitempty"             jsonschema:"Recipe slug (e.g. {framework}-showcase). Required for every action."`
+	OutputRoot       string      `json:"outputRoot,omitempty"       jsonschema:"Directory where the recipe tree + facts log live. Required for 'start'."`
+	Phase            string      `json:"phase,omitempty"            jsonschema:"Phase name for enter-phase / complete-phase: research, provision, scaffold, feature, finalize."`
+	BriefKind        string      `json:"briefKind,omitempty"        jsonschema:"For build-brief: scaffold, feature, finalize."`
+	Codebase         string      `json:"codebase,omitempty"         jsonschema:"For build-brief when kind=scaffold: the codebase hostname to compose for."`
+	Shape            string      `json:"shape,omitempty"            jsonschema:"For emit-yaml: 'workspace' (services-only YAML for zerops_import at provision) or 'deliverable' (full published template for tierIndex, written to disk)."`
+	TierIndex        int         `json:"tierIndex,omitempty"        jsonschema:"For emit-yaml shape=deliverable: tier 0..5. Ignored when shape=workspace."`
+	Fact             *FactRecord `json:"fact,omitempty"             jsonschema:"For record-fact: a FactRecord object with topic, symptom, mechanism, surfaceHint, citation fields."`
+	Plan             *Plan       `json:"plan,omitempty"             jsonschema:"For update-plan: partial Plan object. Fields present overwrite session.Plan; omitted fields untouched."`
+	FragmentID       string      `json:"fragmentId,omitempty"       jsonschema:"For record-fragment: fragment identifier. Valid shapes: root/intro, env/<N>/intro (N=0..5), env/<N>/import-comments/<hostname>, env/<N>/import-comments/project, codebase/<hostname>/intro, codebase/<hostname>/integration-guide, codebase/<hostname>/knowledge-base, codebase/<hostname>/claude-md/service-facts, codebase/<hostname>/claude-md/notes."`
+	Fragment         string      `json:"fragment,omitempty"         jsonschema:"For record-fragment: the fragment body. Overwrite for root/* and env/* ids; append-on-extend for codebase/*/integration-guide, knowledge-base, claude-md/* ids so a feature sub-agent extends scaffold's body rather than replacing it."`
+	Mode             string      `json:"mode,omitempty"             jsonschema:"For record-fragment: 'append' (default for codebase IG/KB/claude-md ids; concatenates with prior body) or 'replace' (overwrites prior body). Use 'replace' to correct a fragment you authored earlier in the same recipe session, e.g. after a complete-phase validator violation."`
+	DispatchedPrompt string      `json:"dispatchedPrompt,omitempty" jsonschema:"For verify-subagent-dispatch: the prompt the main agent intends to pass to Agent. Engine recomposes the brief and confirms its body appears byte-identical inside the dispatched prompt. Wrapper text appended after the brief is allowed; truncations and paraphrases are rejected."`
 }
 
 // RecipeResult is the generic envelope returned from zerops_recipe.
@@ -162,7 +163,7 @@ type RecipeResult struct {
 func Register(srv *mcp.Server, store *Store) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_recipe",
-		Description: "zcprecipator3 recipe engine. Actions: start, enter-phase, complete-phase, build-brief, record-fact, resolve-chain, emit-yaml, update-plan, stitch-content, status. Call start first — it returns the research-phase guidance and the parent recipe inline. See docs/zcprecipator3/plan.md §6.",
+		Description: "zcprecipator3 recipe engine. Actions: start, enter-phase, complete-phase, build-brief, verify-subagent-dispatch, record-fact, resolve-chain, emit-yaml, update-plan, stitch-content, status. Call start first — it returns the research-phase guidance and the parent recipe inline. See docs/zcprecipator3/plan.md §6.",
 		Annotations: &mcp.ToolAnnotations{Title: "Run a Zerops recipe (v3)"},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in RecipeInput) (*mcp.CallToolResult, any, error) {
 		res := dispatch(ctx, store, in)
@@ -183,7 +184,8 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 	// Actions that require an existing session share session-loading.
 	needsSession := map[string]bool{
 		"enter-phase": true, "complete-phase": true, "build-brief": true,
-		"record-fact": true, "record-fragment": true, "emit-yaml": true,
+		"verify-subagent-dispatch": true,
+		"record-fact":              true, "record-fragment": true, "emit-yaml": true,
 		"status": true, "update-plan": true, "stitch-content": true,
 	}
 	var sess *Session
@@ -253,6 +255,8 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 			return r
 		}
 		r.Brief, r.OK = &brief, true
+	case "verify-subagent-dispatch":
+		r = verifyDispatch(sess, in, r)
 	case "record-fact":
 		if in.Fact == nil {
 			r.Error = "record-fact: fact payload is required"
@@ -375,6 +379,39 @@ func mergePlan(sess *Session, incoming *Plan) error {
 	}
 	sess.Plan = cur
 	return nil
+}
+
+// verifyDispatch implements the verify-subagent-dispatch action: the
+// engine recomposes the brief identified by briefKind+codebase and
+// confirms its body appears byte-identical inside the dispatched
+// prompt. Wrapper additions are allowed (the dispatched prompt may
+// have additional text appended); truncations and paraphrases are
+// rejected. Run-12 §D.
+func verifyDispatch(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
+	if in.BriefKind == "" {
+		r.Error = "verify-subagent-dispatch: briefKind required"
+		return r
+	}
+	if in.DispatchedPrompt == "" {
+		r.Error = "verify-subagent-dispatch: dispatchedPrompt required"
+		return r
+	}
+	expected, err := buildBriefForRequest(sess, in)
+	if err != nil {
+		r.Error = err.Error()
+		return r
+	}
+	if !strings.Contains(in.DispatchedPrompt, expected.Body) {
+		r.Error = fmt.Sprintf(
+			"verify-subagent-dispatch: dispatch missing engine brief body. "+
+				"Engine brief is %d bytes; dispatched prompt is %d bytes. "+
+				"Pass brief.body byte-identical — main agent must NOT paraphrase or truncate.",
+			len(expected.Body), len(in.DispatchedPrompt),
+		)
+		return r
+	}
+	r.OK = true
+	return r
 }
 
 // buildBriefForRequest resolves a codebase (for scaffold briefs) and
