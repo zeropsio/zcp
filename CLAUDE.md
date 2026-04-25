@@ -119,6 +119,16 @@ Config: `.sync.yaml` + `.env STRAPI_API_TOKEN`.
   `internal/content/atoms_lint.go`. Spec: `spec-knowledge-distribution.md §11`.
 - **Service by hostname** — agents/tools speak hostnames; resolve to ID internally.
 - **JSON-only stdout** — debug to stderr; MCP protocol depends on it.
+- **No progress notification immediately before a tool response** — Claude Code's
+  MCP TS client coalesces a `notifications/progress` and the next tool response
+  into one stdin chunk if they land within pipe-buffer-flush window, then errors
+  with "Received a progress notification for an unknown token" and tears down
+  the stdio transport. Every return path in a poll loop MUST run BEFORE
+  `onProgress`. Empirically reproduced 7/7 in mcptest 2026-04 testing; the only
+  ZCP emit choke-point is `tools/convert.go::buildProgressCallback`, fed by
+  `ops/progress.go::pollProcess` and `pollBuild`. Pinned by
+  `TestPollProcess_TimeoutSkipsProgressEmit`,
+  `TestPollBuild_TimeoutSkipsProgressEmit`.
 - **Stateless STDIO tools** — each MCP call is a fresh operation.
 - **Shell interpolation via `shellQuote()`** — POSIX single-quote; never strip-only.
 - **Error wrapping** — `fmt.Errorf("op: %w", err)`; never bare `return err`.

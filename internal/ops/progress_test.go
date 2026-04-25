@@ -771,3 +771,107 @@ func TestPollProcess_PublicFunction(t *testing.T) {
 		t.Errorf("status = %s, want FINISHED", proc.Status)
 	}
 }
+
+// TestPollProcess_TimeoutSkipsProgressEmit pins the same-chunk progress+response
+// race fix: the iteration that detects timeout MUST NOT call onProgress before
+// returning the timeout error, otherwise the progress notification and the
+// error response can be coalesced into a single stdin chunk on the Claude Code
+// MCP TS client and trigger "Received a progress notification for an unknown
+// token" → transport teardown (empirically reproduced 7/7 with a stripped-down
+// mcptest server emitting progress immediately before the response).
+func TestPollProcess_TimeoutSkipsProgressEmit(t *testing.T) {
+	t.Parallel()
+
+	seq := newSequencer("PENDING") // never terminates → forces timeout path
+	ctx := context.Background()
+
+	cfg := pollConfig{
+		initialInterval: 5 * time.Millisecond,
+		stepUpInterval:  5 * time.Millisecond,
+		stepUpAfter:     20 * time.Millisecond,
+		timeout:         30 * time.Millisecond,
+	}
+
+	var mu sync.Mutex
+	var lastEmit time.Time
+	cb := func(_ string, _, _ float64) {
+		mu.Lock()
+		defer mu.Unlock()
+		lastEmit = time.Now()
+	}
+
+	start := time.Now()
+	_, err := pollProcess(ctx, seq, "proc-1", cb, cfg)
+	returned := time.Now()
+
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+
+	mu.Lock()
+	lastEmitCopy := lastEmit
+	mu.Unlock()
+	if lastEmitCopy.IsZero() {
+		t.Fatal("expected at least one progress emit during the loop")
+	}
+
+	gap := returned.Sub(lastEmitCopy)
+	// The fix moves timeout check before onProgress, so the iteration that
+	// detects timeout returns without emitting. Last emit was therefore on a
+	// prior in-progress iteration, ≥ initialInterval before timeout fired.
+	// Allow a 1 ms slack for scheduler jitter.
+	minGap := cfg.initialInterval - 1*time.Millisecond
+	if gap < minGap {
+		t.Errorf("race window: last progress emitted only %v before return (want ≥ %v); the timeout iteration is emitting progress immediately before responding, which is the bug — see internal/ops/progress.go header comment. start=%v lastEmit=%v returned=%v",
+			gap, minGap, start, lastEmitCopy, returned)
+	}
+}
+
+// TestPollBuild_TimeoutSkipsProgressEmit — same race fix invariant for builds.
+func TestPollBuild_TimeoutSkipsProgressEmit(t *testing.T) {
+	t.Parallel()
+
+	// Always return one BUILDING event to keep poll going.
+	mock := platform.NewMock().WithAppVersionEvents([]platform.AppVersionEvent{{
+		ID:             "ev-1",
+		ServiceStackID: "ss-1",
+		Status:         "BUILDING",
+		Sequence:       1,
+	}})
+
+	cfg := pollConfig{
+		initialInterval: 5 * time.Millisecond,
+		stepUpInterval:  5 * time.Millisecond,
+		stepUpAfter:     20 * time.Millisecond,
+		timeout:         30 * time.Millisecond,
+	}
+
+	var mu sync.Mutex
+	var lastEmit time.Time
+	cb := func(_ string, _, _ float64) {
+		mu.Lock()
+		defer mu.Unlock()
+		lastEmit = time.Now()
+	}
+
+	ctx := context.Background()
+	_, err := pollBuild(ctx, mock, "proj-1", "ss-1", cb, cfg)
+	returned := time.Now()
+
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+
+	mu.Lock()
+	lastEmitCopy := lastEmit
+	mu.Unlock()
+	if lastEmitCopy.IsZero() {
+		t.Fatal("expected at least one progress emit during the loop")
+	}
+
+	gap := returned.Sub(lastEmitCopy)
+	minGap := cfg.initialInterval - 1*time.Millisecond
+	if gap < minGap {
+		t.Errorf("race window in pollBuild: last progress emitted only %v before return (want ≥ %v)", gap, minGap)
+	}
+}

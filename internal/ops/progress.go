@@ -107,7 +107,20 @@ func pollBuild(
 			}
 		}
 
+		// Race avoidance — see pollProcess for the full rationale. Every return
+		// path in this loop runs BEFORE onProgress so progress notifications are
+		// always at least one poll interval before any response on the wire.
 		elapsed := time.Since(start)
+		if elapsed > cfg.timeout {
+			return nil, platform.NewPlatformError(
+				platform.ErrAPITimeout,
+				fmt.Sprintf("Build for service %s timed out after %s", serviceStackID, cfg.timeout),
+				"Check build status manually with zerops_events",
+			)
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if onProgress != nil {
 			status := "waiting"
 			if latest != nil {
@@ -120,14 +133,6 @@ func pollBuild(
 			onProgress(
 				fmt.Sprintf("Build %s: %s", serviceStackID, status),
 				progress, 100,
-			)
-		}
-
-		if elapsed > cfg.timeout {
-			return nil, platform.NewPlatformError(
-				platform.ErrAPITimeout,
-				fmt.Sprintf("Build for service %s timed out after %s", serviceStackID, cfg.timeout),
-				"Check build status manually with zerops_events",
 			)
 		}
 
@@ -179,20 +184,67 @@ func pollProcess(
 			return nil, fmt.Errorf("poll process %s: %w", processID, err)
 		}
 
-		// Terminal states return without emitting onProgress. Reason: Claude Code's
-		// MCP JS client has a race where _onresponse synchronously deletes the
-		// progress handler while _onnotification dispatches via microtask. If a
-		// progress notification and its tool response land in the same stdin data
-		// chunk, the microtask fires after the delete and the client errors with
-		// "Received a progress notification for an unknown token", tearing down
-		// the stdio transport. Returning before onProgress guarantees any emitted
-		// notification is at least one poll interval (1–5s) before the response,
-		// which is far outside any Node pipe coalescing window.
+		// Race avoidance — every return path in this loop runs BEFORE onProgress.
+		//
+		// User-visible symptom this prevents: recurring "shutdown: client
+		// disconnected (err=<nil>)" entries in ~/.zcp/serve.log appearing
+		// shortly after a long-running poll completes (manage/scale/delete/
+		// subdomain/import/deploy). PRE-FIX: the iteration that detected
+		// timeout emitted progress, then ~µs later returned the error response;
+		// PRE-FIX measured gap = 1.7–4.9µs; POST-FIX gap = ≥ initialInterval
+		// (1–5s). The bug crashed an interactive Claude session at exactly the
+		// 10-min mark on 2026-04-25 (zerops_manage start appdev) — see commit
+		// log for the full forensics.
+		//
+		// Mechanism: Claude Code's MCP TS client has a documented race
+		// (modelcontextprotocol/typescript-sdk #245-class) where _onresponse
+		// synchronously deletes the progress handler while _onnotification
+		// dispatches via microtask. If a progress notification and its tool
+		// response land in the same stdin data chunk, the microtask fires after
+		// the delete and the client errors with "Received a progress notification
+		// for an unknown token", tearing down the stdio transport. Empirically
+		// reproduced 7/7 times in 2026-04 testing against mcptest with 200ms-
+		// interval progress; pinned by TestPollProcess_TimeoutSkipsProgressEmit
+		// and TestPollBuild_TimeoutSkipsProgressEmit.
+		//
+		// Return paths handled:
+		//   - terminal status (this if-block)
+		//   - timeout (below, before onProgress)
+		//   - ctx canceled at iteration boundary (below, before onProgress)
+		//   - ctx canceled during interval wait (post-emit select; gap is the
+		//     remaining wait, ≥ a few ms in practice — corner case accepted)
+		//
+		// If recurrence is suspected:
+		//  1. Confirm symptom — is the disconnect closely following a long poll?
+		//     Look for "shutdown: client disconnected" in ~/.zcp/serve.log with
+		//     uptime matching cfg.timeout (10m/15m by default).
+		//  2. Run the pinning tests:
+		//       go test -run "TestPoll(Process|Build)_TimeoutSkipsProgressEmit" \
+		//             ./internal/ops/ -count=1
+		//     Failure = workaround was reverted; gap is back in microseconds.
+		//  3. Audit new emit sites — grep "Session.NotifyProgress\|onProgress("
+		//     across internal/. The only choke-point is convert.go::
+		//     buildProgressCallback fed exclusively by pollProcess/pollBuild;
+		//     any new direct caller is a regression risk.
+		//  4. Reproduce upstream race independently — build a minimal go-sdk
+		//     server tool that emits progress every 200ms then returns a
+		//     non-nil result; drive it via interactive Claude Code; observe
+		//     "client disconnected" within ~ms of tool completion.
 		if !isProcessInProgress(proc.Status) {
 			return proc, nil
 		}
 
 		elapsed := time.Since(start)
+		if elapsed > cfg.timeout {
+			return nil, platform.NewPlatformError(
+				platform.ErrAPITimeout,
+				fmt.Sprintf("Process %s timed out after %s", processID, cfg.timeout),
+				"Check process status manually with zerops_process",
+			)
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if onProgress != nil {
 			progress := float64(elapsed) / float64(cfg.timeout) * 100
 			if progress > 100 {
@@ -201,14 +253,6 @@ func pollProcess(
 			onProgress(
 				fmt.Sprintf("Process %s: %s", processID, proc.Status),
 				progress, 100,
-			)
-		}
-
-		if elapsed > cfg.timeout {
-			return nil, platform.NewPlatformError(
-				platform.ErrAPITimeout,
-				fmt.Sprintf("Process %s timed out after %s", processID, cfg.timeout),
-				"Check process status manually with zerops_process",
 			)
 		}
 
