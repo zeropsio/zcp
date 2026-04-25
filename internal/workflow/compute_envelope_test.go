@@ -605,57 +605,6 @@ func TestComputeEnvelope_SkipsSystemAndSelf(t *testing.T) {
 	}
 }
 
-// TestComputeEnvelope_BootstrapSummaryFromSession verifies that an existing
-// BootstrapSession on disk surfaces as StateEnvelope.Bootstrap with the
-// correct route. This is the signal atoms use to target bootstrap routes.
-func TestComputeEnvelope_BootstrapSummaryFromSession(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	match := &RecipeMatch{Slug: "laravel-minimal", Confidence: 0.92}
-	sess := NewBootstrapSession(BootstrapRouteRecipe, "laravel dashboard", match)
-	if err := SaveBootstrapSession(dir, sess); err != nil {
-		t.Fatalf("SaveBootstrapSession: %v", err)
-	}
-
-	env, err := ComputeEnvelope(context.Background(), nil, dir, "", runtime.Info{}, fixedTime)
-	if err != nil {
-		t.Fatalf("ComputeEnvelope: %v", err)
-	}
-
-	if env.Bootstrap == nil {
-		t.Fatal("expected Bootstrap summary, got nil")
-	}
-	if env.Bootstrap.Route != BootstrapRouteRecipe {
-		t.Errorf("Route = %q, want recipe", env.Bootstrap.Route)
-	}
-	if env.Bootstrap.Intent != "laravel dashboard" {
-		t.Errorf("Intent = %q", env.Bootstrap.Intent)
-	}
-	if env.Bootstrap.RecipeMatch == nil || env.Bootstrap.RecipeMatch.Slug != "laravel-minimal" {
-		t.Errorf("RecipeMatch = %+v, want slug laravel-minimal", env.Bootstrap.RecipeMatch)
-	}
-	// Top-level Recipe summary mirrors Bootstrap.RecipeMatch.
-	if env.Recipe == nil || env.Recipe.Slug != "laravel-minimal" {
-		t.Errorf("Recipe = %+v, want slug laravel-minimal", env.Recipe)
-	}
-}
-
-// TestComputeEnvelope_BootstrapAbsentWhenNoSession confirms that envelopes
-// computed without a bootstrap session file on disk leave Bootstrap nil.
-// Guards against accidental coupling of the Bootstrap field to other state.
-func TestComputeEnvelope_BootstrapAbsentWhenNoSession(t *testing.T) {
-	t.Parallel()
-
-	env, err := ComputeEnvelope(context.Background(), nil, t.TempDir(), "", runtime.Info{}, fixedTime)
-	if err != nil {
-		t.Fatalf("ComputeEnvelope: %v", err)
-	}
-	if env.Bootstrap != nil {
-		t.Errorf("Bootstrap = %+v, want nil", env.Bootstrap)
-	}
-}
-
 // marshalEnvelopeForTest is the canonical JSON encoder used in tests. Go's
 // encoding/json already sorts map keys alphabetically, so plain Marshal is
 // deterministic when slice ordering is controlled — which buildServiceSnapshots

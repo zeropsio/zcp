@@ -12,6 +12,11 @@ import (
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
+// StateEnvelope.Bootstrap is populated by bootstrap_guide_assembly.go's
+// synthesisEnvelope helper, NOT by ComputeEnvelope. ComputeEnvelope leaves
+// it nil; the bootstrap conductor builds a synthetic summary from the live
+// BootstrapState on every per-step render. Same for StateEnvelope.Recipe.
+
 // ComputeEnvelope is the single entry point for computing state. Every
 // workflow-aware tool handler calls this.
 //
@@ -40,8 +45,6 @@ func ComputeEnvelope(
 		metasErr    error
 		ws          *WorkSession
 		wsErr       error
-		bs          *BootstrapSession
-		bsErr       error
 		project     *platform.Project
 		projectErr  error
 		wg          sync.WaitGroup
@@ -52,10 +55,9 @@ func ComputeEnvelope(
 		go func() { defer wg.Done(); services, servicesErr = client.ListServices(ctx, projectID) }()
 		go func() { defer wg.Done(); project, projectErr = client.GetProject(ctx, projectID) }()
 	}
-	wg.Add(3)
+	wg.Add(2)
 	go func() { defer wg.Done(); metas, metasErr = ListServiceMetas(stateDir) }()
 	go func() { defer wg.Done(); ws, wsErr = CurrentWorkSession(stateDir) }()
-	go func() { defer wg.Done(); bs, bsErr = LoadBootstrapSession(stateDir, os.Getpid()) }()
 	wg.Wait()
 
 	if servicesErr != nil {
@@ -66,9 +68,6 @@ func ComputeEnvelope(
 	}
 	if wsErr != nil {
 		return StateEnvelope{}, wsErr
-	}
-	if bsErr != nil {
-		return StateEnvelope{}, bsErr
 	}
 	// projectErr is intentionally non-fatal: project Name is cosmetic. A
 	// missing project (deleted, permissions changed, stale projectID) should
@@ -87,11 +86,6 @@ func ComputeEnvelope(
 		wsSummary = buildWorkSessionSummary(ws)
 	}
 
-	var bsSummary *BootstrapSessionSummary
-	if bs != nil {
-		bsSummary = buildBootstrapSessionSummary(bs)
-	}
-
 	phase := derivePhase(ws, snapshots, stateDir)
 
 	projectSummary := ProjectSummary{ID: projectID}
@@ -107,9 +101,10 @@ func ComputeEnvelope(
 		Project:      projectSummary,
 		Services:     snapshots,
 		WorkSession:  wsSummary,
-		Bootstrap:    bsSummary,
-		Recipe:       recipeSummaryFromBootstrap(bs),
-		Generated:    now.UTC(),
+		// Bootstrap and Recipe are left nil here — the bootstrap conductor
+		// populates them on a per-render synthetic envelope (see
+		// bootstrap_guide_assembly.go::synthesisEnvelope), not from disk.
+		Generated: now.UTC(),
 	}, nil
 }
 
@@ -151,33 +146,6 @@ func deriveIdleScenario(phase Phase, services []ServiceSnapshot) IdleScenario {
 		return IdleAdopt
 	}
 	return IdleEmpty
-}
-
-// buildBootstrapSessionSummary adapts the persisted BootstrapSession into its
-// envelope projection. Route is the primary axis for atom filtering; Closed
-// tells renderers whether the bootstrap has wrapped up but its session file
-// has not yet been GC'd.
-func buildBootstrapSessionSummary(bs *BootstrapSession) *BootstrapSessionSummary {
-	return &BootstrapSessionSummary{
-		Route:       bs.Route,
-		Intent:      bs.Intent,
-		RecipeMatch: bs.RecipeMatch,
-		Closed:      bs.ClosedAt != nil,
-	}
-}
-
-// recipeSummaryFromBootstrap mirrors bs.RecipeMatch into the envelope's top-
-// level Recipe field. Kept in sync with Bootstrap.RecipeMatch so existing
-// renderers that only inspect Recipe still see the match; Bootstrap.Route is
-// what atoms filter on.
-func recipeSummaryFromBootstrap(bs *BootstrapSession) *RecipeSessionSummary {
-	if bs == nil || bs.RecipeMatch == nil {
-		return nil
-	}
-	return &RecipeSessionSummary{
-		Slug:       bs.RecipeMatch.Slug,
-		Confidence: bs.RecipeMatch.Confidence,
-	}
 }
 
 // selfHostnameFromRT returns the container's own hostname or "" locally.

@@ -165,10 +165,12 @@ type RecipeSessionSummary struct {
 	Confidence float64 `json:"confidence"`
 }
 
-// BootstrapSessionSummary mirrors the persistent BootstrapSession at envelope
-// build time. Populated only when a BootstrapSession file exists for the
-// current PID — its presence is the primary signal that atoms should target a
-// specific bootstrap route (recipe/classic/adopt).
+// BootstrapSessionSummary is the bootstrap projection on the envelope used
+// for atom filtering. ComputeEnvelope leaves it nil; the bootstrap conductor
+// builds a synthetic instance per render in
+// bootstrap_guide_assembly.go::synthesisEnvelope from the live BootstrapState.
+// Its presence signals that atoms should target a specific bootstrap route
+// (recipe/classic/adopt).
 //
 // Step names the current bootstrap step the agent is working on (discover,
 // provision, generate, deploy, close) so atoms can scope themselves to a
