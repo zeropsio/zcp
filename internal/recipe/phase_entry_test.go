@@ -7,6 +7,28 @@ import (
 	"testing"
 )
 
+// mustHaveGate asserts a gate by name exists in the slice.
+func mustHaveGate(t *testing.T, gates []Gate, name string) {
+	t.Helper()
+	for _, g := range gates {
+		if g.Name == name {
+			return
+		}
+	}
+	t.Errorf("expected gate %q in %d-gate set", name, len(gates))
+}
+
+// mustNotHaveGate asserts a gate by name is NOT present in the slice.
+func mustNotHaveGate(t *testing.T, gates []Gate, name string) {
+	t.Helper()
+	for _, g := range gates {
+		if g.Name == name {
+			t.Errorf("expected gate %q NOT in set", name)
+			return
+		}
+	}
+}
+
 // stageScaffoldYAMLs stages a minimal scaffold-authored zerops.yaml per
 // codebase so stitch-content's codebase-scoped writes have a SourceRoot
 // on disk. Plan codebases get their SourceRoot mutated to the staged dir.
@@ -23,6 +45,41 @@ func stageScaffoldYAMLs(t *testing.T, base string, plan *Plan) {
 		}
 		plan.Codebases[i].SourceRoot = dir
 	}
+}
+
+// TestGatesForPhase_Scaffold_IncludesCodebaseGates — run-12 §G.
+// scaffold + feature complete-phase runs codebase-scoped surface
+// validators (IG/KB/CLAUDE/yaml-comments + source-comment-voice). The
+// right author is in-session and can fix violations via
+// record-fragment mode=replace.
+func TestGatesForPhase_Scaffold_IncludesCodebaseGates(t *testing.T) {
+	t.Parallel()
+	gates := gatesForPhase(PhaseScaffold)
+	mustHaveGate(t, gates, "codebase-surface-validators")
+	mustHaveGate(t, gates, "source-comment-voice")
+	mustNotHaveGate(t, gates, "env-imports-present")
+	mustNotHaveGate(t, gates, "env-surface-validators")
+}
+
+// TestGatesForPhase_Feature_IncludesCodebaseGates — feature phase
+// re-runs codebase gates so feature-authored extensions are also
+// validated.
+func TestGatesForPhase_Feature_IncludesCodebaseGates(t *testing.T) {
+	t.Parallel()
+	gates := gatesForPhase(PhaseFeature)
+	mustHaveGate(t, gates, "codebase-surface-validators")
+	mustHaveGate(t, gates, "source-comment-voice")
+	mustNotHaveGate(t, gates, "env-imports-present")
+}
+
+// TestGatesForPhase_Finalize_IncludesAllGates — finalize runs codebase
+// gates (catches feature appends) AND env gates.
+func TestGatesForPhase_Finalize_IncludesAllGates(t *testing.T) {
+	t.Parallel()
+	gates := gatesForPhase(PhaseFinalize)
+	mustHaveGate(t, gates, "codebase-surface-validators")
+	mustHaveGate(t, gates, "env-surface-validators")
+	mustHaveGate(t, gates, "env-imports-present")
 }
 
 func TestPhaseEntry_AllPhasesPresent(t *testing.T) {

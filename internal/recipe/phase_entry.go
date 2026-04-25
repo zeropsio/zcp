@@ -20,14 +20,23 @@ func loadPhaseEntry(p Phase) string {
 
 // gatesForPhase picks the gate set that runs at complete-phase. Every
 // phase gets the default gates plus phase-specific checks.
+//
+// Run-12 §G: scaffold + feature run codebase-scoped surface validators
+// at complete-phase so the right author (sub-agent in-session) sees
+// violations on content they can fix via record-fragment mode=replace.
+// Finalize re-runs codebase gates (catches feature appends) plus env
+// gates (root + env surfaces are finalize-authored).
 func gatesForPhase(p Phase) []Gate {
 	base := DefaultGates()
 	switch p {
 	case PhaseResearch:
 		return append(base, researchGates()...)
+	case PhaseScaffold, PhaseFeature:
+		return append(base, CodebaseGates()...)
 	case PhaseFinalize:
-		return append(base, FinalizeGates()...)
-	case PhaseProvision, PhaseScaffold, PhaseFeature:
+		base = append(base, CodebaseGates()...)
+		return append(base, EnvGates()...)
+	case PhaseProvision:
 		return base
 	}
 	return base
