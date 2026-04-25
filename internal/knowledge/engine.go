@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // SearchResult represents a single search result.
@@ -24,8 +25,8 @@ type Provider interface {
 	GetCore() (string, error)
 	GetUniversals() (string, error)
 	GetModel() (string, error)
-	GetBriefing(runtime string, services []string, mode string, liveTypes []platform.ServiceStackType) (string, error)
-	GetRecipe(name, mode string) (string, error)
+	GetBriefing(runtime string, services []string, mode topology.Mode, liveTypes []platform.ServiceStackType) (string, error)
+	GetRecipe(name string, mode topology.Mode) (string, error)
 	ListRecipes() []string
 }
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // mockRecipeProvider implements knowledge.Provider for testing recipe chain logic.
@@ -18,10 +19,10 @@ func (m *mockRecipeProvider) Search(string, int) []knowledge.SearchResult { retu
 func (m *mockRecipeProvider) GetCore() (string, error)                    { return "", nil }
 func (m *mockRecipeProvider) GetUniversals() (string, error)              { return "", nil }
 func (m *mockRecipeProvider) GetModel() (string, error)                   { return "", nil }
-func (m *mockRecipeProvider) GetBriefing(string, []string, string, []platform.ServiceStackType) (string, error) {
+func (m *mockRecipeProvider) GetBriefing(string, []string, topology.Mode, []platform.ServiceStackType) (string, error) {
 	return "", nil
 }
-func (m *mockRecipeProvider) GetRecipe(name, _ string) (string, error) {
+func (m *mockRecipeProvider) GetRecipe(name string, _ topology.Mode) (string, error) {
 	if content, ok := m.recipes[name]; ok {
 		return content, nil
 	}

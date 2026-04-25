@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // ErrAmbiguousRecipe signals that a recipe query fuzzy-matched multiple
@@ -23,7 +24,7 @@ var ErrAmbiguousRecipe = errors.New("recipe name matched multiple recipes")
 // services: e.g. ["postgresql@16", "valkey@7.2"] (normalized to section names)
 // liveTypes: optional live service stack types for version validation and stack listing (nil = skip)
 // Returns assembled markdown content ready for LLM consumption.
-func (s *Store) GetBriefing(runtime string, services []string, mode string, liveTypes []platform.ServiceStackType) (string, error) {
+func (s *Store) GetBriefing(runtime string, services []string, mode topology.Mode, liveTypes []platform.ServiceStackType) (string, error) {
 	// Auto-promote: if runtime is empty but a known runtime name is in services, promote it.
 	// This handles the common agent mistake of passing runtimes in the services array.
 	if runtime == "" && len(services) > 0 {
@@ -110,7 +111,7 @@ func (s *Store) GetBriefing(runtime string, services []string, mode string, live
 // and an auto-detected runtime guide.
 // name: recipe filename without extension (e.g., "laravel")
 // Resolution chain: exact match → single fuzzy → disambiguation list → error.
-func (s *Store) GetRecipe(name, mode string) (string, error) {
+func (s *Store) GetRecipe(name string, mode topology.Mode) (string, error) {
 	// Try exact match first.
 	uri := "zerops://recipes/" + name
 	if doc, err := s.Get(uri); err == nil {
@@ -231,11 +232,11 @@ func (s *Store) prependUniversals(content string) string {
 // prependModeAdaptation returns a concise mode-specific pointer for recipes.
 // Recipes now include both dev and prod zerops.yaml setups with inline comments,
 // so the header only needs to direct the agent to the right setup block.
-func prependModeAdaptation(mode, _ string) string {
+func prependModeAdaptation(mode topology.Mode, _ string) string {
 	switch mode {
-	case "dev", "standard":
+	case topology.PlanModeDev, topology.PlanModeStandard:
 		return "> **Mode: dev** — Use the `dev` setup block from the zerops.yaml below.\n\n"
-	case "simple":
+	case topology.PlanModeSimple:
 		return "> **Mode: simple** — Use the `prod` setup block below, but override `deployFiles: [.]`.\n\n"
 	default:
 		return ""

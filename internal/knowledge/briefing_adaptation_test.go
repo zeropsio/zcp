@@ -3,13 +3,15 @@ package knowledge
 import (
 	"strings"
 	"testing"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 func TestPrependModeAdaptation_RuntimeAware(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name         string
-		mode         string
+		mode         topology.Mode
 		runtime      string
 		wantContains []string
 		wantAbsent   []string

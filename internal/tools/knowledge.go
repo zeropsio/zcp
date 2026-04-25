@@ -10,6 +10,7 @@ import (
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -57,9 +58,9 @@ func describeKnowledgeModes(hasRecipe, hasScope, hasBriefing, hasQuery bool) str
 // resolveKnowledgeMode determines the mode filter for knowledge responses.
 // Explicit inputMode takes priority. Otherwise auto-detects from active/completed session.
 // Returns "" when no context is available (knowledge returned unfiltered).
-func resolveKnowledgeMode(engine *workflow.Engine, inputMode string) string {
+func resolveKnowledgeMode(engine *workflow.Engine, inputMode string) topology.Mode {
 	if inputMode != "" {
-		return inputMode
+		return topology.Mode(inputMode)
 	}
 	if engine == nil {
 		return ""
@@ -69,7 +70,7 @@ func resolveKnowledgeMode(engine *workflow.Engine, inputMode string) string {
 		return ""
 	}
 	if state.Bootstrap != nil {
-		return string(state.Bootstrap.PlanMode())
+		return state.Bootstrap.PlanMode()
 	}
 	return ""
 }

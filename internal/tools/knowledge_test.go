@@ -12,6 +12,7 @@ import (
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -557,7 +558,7 @@ func TestResolveKnowledgeMode_Table(t *testing.T) {
 		name      string
 		engine    *workflow.Engine
 		inputMode string
-		want      string
+		want      topology.Mode
 	}{
 		{
 			name:      "nil_engine_returns_empty",
