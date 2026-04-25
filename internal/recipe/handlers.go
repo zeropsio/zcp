@@ -360,7 +360,17 @@ func mergePlan(sess *Session, incoming *Plan) error {
 		cur.Codebases = incoming.Codebases
 	}
 	if len(incoming.Services) > 0 {
-		cur.Services = incoming.Services
+		// Run-12 §Y3 — derive SupportsHA from the service family at
+		// merge time so the yaml emitter never has to second-guess the
+		// agent's payload. Conservative default for unknown families
+		// is false (NON_HA emit).
+		cur.Services = make([]Service, len(incoming.Services))
+		for i, s := range incoming.Services {
+			if s.Kind == ServiceKindManaged && !s.SupportsHA {
+				s.SupportsHA = managedServiceSupportsHA(s.Type)
+			}
+			cur.Services[i] = s
+		}
 	}
 	if len(incoming.EnvComments) > 0 {
 		cur.EnvComments = incoming.EnvComments

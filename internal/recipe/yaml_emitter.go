@@ -292,7 +292,16 @@ func writeNonRuntimeService(b *strings.Builder, svc Service, tier Tier, comments
 
 	switch svc.Kind {
 	case ServiceKindManaged:
-		fmt.Fprintf(b, "    mode: %s\n", tier.ServiceMode)
+		mode := tier.ServiceMode
+		// Run-12 §Y3 — downgrade tier-5 HA to NON_HA for managed
+		// service families that don't support HA on Zerops. SupportsHA
+		// is set during plan composition (mergePlan) but fall back to
+		// the family table here so emit is correct even when fixtures
+		// or test plans pass Service literals directly.
+		if mode == "HA" && !svc.SupportsHA && !managedServiceSupportsHA(svc.Type) {
+			mode = "NON_HA"
+		}
+		fmt.Fprintf(b, "    mode: %s\n", mode)
 		writeAutoscaling(b, serviceKindManaged, tier)
 	case ServiceKindStorage:
 		b.WriteString("    objectStorageSize: 1\n")

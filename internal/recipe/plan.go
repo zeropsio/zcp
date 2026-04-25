@@ -1,5 +1,7 @@
 package recipe
 
+import "strings"
+
 // Plan is the authoritative state of a recipe run. Phases mutate specific
 // fields; handlers gate mutation through workflow transitions (see
 // workflow.go). Plan is framework-agnostic — every framework-specific
@@ -68,11 +70,36 @@ type Codebase struct {
 // broker, object storage, search, mail, ...). Kind classifies the service
 // for the yaml emitter's branches.
 type Service struct {
-	Kind        ServiceKind       `json:"kind"`
-	Hostname    string            `json:"hostname"`
-	Type        string            `json:"type"`
-	Priority    int               `json:"priority,omitempty"`
+	Kind     ServiceKind `json:"kind"`
+	Hostname string      `json:"hostname"`
+	Type     string      `json:"type"`
+	Priority int         `json:"priority,omitempty"`
+	// SupportsHA reports whether the managed service family supports
+	// HA mode on Zerops. Run-12 §Y3 — tier 5 emits HA uniformly across
+	// managed services, but meilisearch (and a few others) are single-
+	// node only; the emitter downgrades to NON_HA when SupportsHA=false.
+	// Set during plan composition via managedServiceSupportsHA(svc.Type).
+	SupportsHA  bool              `json:"supportsHa,omitempty"`
 	ExtraFields map[string]string `json:"extraFields,omitempty"`
+}
+
+// managedServiceSupportsHA reports whether a managed service family
+// supports HA mode on Zerops. Type strings include version (e.g.
+// "postgresql@18"); only the family prefix matters. Conservative
+// default for unknown families is false (NON_HA emit).
+//
+// TODO: extend the table when run-13+ recipes use new managed-service
+// families.
+func managedServiceSupportsHA(serviceType string) bool {
+	family := serviceType
+	if i := strings.IndexByte(serviceType, '@'); i > 0 {
+		family = serviceType[:i]
+	}
+	switch family {
+	case "postgresql", "valkey", "redis", "nats", "rabbitmq", "elasticsearch":
+		return true
+	}
+	return false
 }
 
 // ServiceKind classifies a service for YAML emission branches. Runtime
