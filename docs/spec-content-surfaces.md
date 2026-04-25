@@ -20,9 +20,9 @@ None of these are caught by token-level checks ("names a Zerops mechanism", "nam
 
 ---
 
-## The six content surfaces
+## The seven content surfaces
 
-Each recipe has exactly six kinds of content surface. Every fact lives on exactly ONE surface. Cross-surface references are fine; cross-surface duplication is not.
+Each recipe has exactly seven kinds of content surface. Every fact lives on exactly ONE surface. Cross-surface references are fine; cross-surface duplication is not.
 
 ### Surface 1 — Root README
 
