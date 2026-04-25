@@ -118,8 +118,8 @@ A mismatch returns an actionable error. Fix the prompt and re-verify.
 
 This is now enforced — run-11 main agents truncated scaffold-app
 brief from 14,582 bytes to 9,047 (62%) and lost teaching content.
-Wrapper additions appended after the brief are allowed; truncations
-and paraphrases are rejected.
+Wrapper text around the brief (header lines before, context notes
+after) is allowed; only truncations and paraphrases are rejected.
 
 ## Content authored in-phase
 

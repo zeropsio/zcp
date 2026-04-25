@@ -950,8 +950,9 @@ func TestRecordFragment_UnknownModeRejected(t *testing.T) {
 }
 
 // TestVerifyDispatch_MatchingBriefAccepted — run-12 §D. Wrapper text
-// appended after engine brief is allowed; only truncations/paraphrases
-// are rejected.
+// around the brief (header before, context after) is allowed; only
+// truncations/paraphrases are rejected. Run-13 §4 clarified that
+// position is unconstrained — pre-pending also passes.
 func TestVerifyDispatch_MatchingBriefAccepted(t *testing.T) {
 	t.Parallel()
 
@@ -967,14 +968,26 @@ func TestVerifyDispatch_MatchingBriefAccepted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildScaffoldBrief: %v", err)
 	}
-	dispatched := brief.Body + "\n\n## Wrapper notes\nx\n"
-	res := dispatch(t.Context(), store, RecipeInput{
-		Action: "verify-subagent-dispatch", Slug: "synth-showcase",
-		BriefKind: "scaffold", Codebase: "api",
-		DispatchedPrompt: dispatched,
-	})
-	if !res.OK {
-		t.Errorf("matching dispatch rejected: %+v", res)
+	cases := []struct {
+		name       string
+		dispatched string
+	}{
+		{name: "wrapper appended", dispatched: brief.Body + "\n\n## Wrapper notes\nx\n"},
+		{name: "wrapper prepended", dispatched: "Sub-agent: scaffold api.\n\n" + brief.Body},
+		{name: "wrapper both sides", dispatched: "Header.\n\n" + brief.Body + "\n\nFooter.\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			res := dispatch(t.Context(), store, RecipeInput{
+				Action: "verify-subagent-dispatch", Slug: "synth-showcase",
+				BriefKind: "scaffold", Codebase: "api",
+				DispatchedPrompt: tc.dispatched,
+			})
+			if !res.OK {
+				t.Errorf("matching dispatch rejected: %+v", res)
+			}
+		})
 	}
 }
 
@@ -1031,6 +1044,45 @@ func TestVerifyDispatch_ParaphrasedBriefRejected(t *testing.T) {
 	}
 	if !strings.Contains(res.Error, "dispatch missing engine brief body") {
 		t.Errorf("error should explain mismatch; got %q", res.Error)
+	}
+}
+
+// TestDispatch_CompletePhaseScaffold_AutoStitchesCodebases — run-13
+// §3. complete-phase scaffold materializes per-codebase fragments to
+// <SourceRoot>/{README.md,CLAUDE.md} so codebase surface validators
+// see them. Without auto-stitch, validators silently no-op on
+// IsNotExist and the right-author-fixes-violations design from §G
+// fails to fire.
+func TestDispatch_CompletePhaseScaffold_AutoStitchesCodebases(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	outputRoot := filepath.Join(dir, "run")
+	store := NewStore(dir)
+	dispatch(t.Context(), store, RecipeInput{
+		Action: "start", Slug: "synth-showcase", OutputRoot: outputRoot,
+	})
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+	stageScaffoldYAMLs(t, dir, sess.Plan)
+	sess.Current = PhaseScaffold
+
+	dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fragment", Slug: "synth-showcase",
+		FragmentID: "codebase/api/integration-guide",
+		Fragment:   "### 2. Bind 0.0.0.0\n\nLoopback is unreachable.\n",
+	})
+
+	dispatch(t.Context(), store, RecipeInput{
+		Action: "complete-phase", Slug: "synth-showcase",
+	})
+
+	apiSourceRoot := sess.Plan.Codebases[0].SourceRoot
+	for _, leaf := range []string{"README.md", "CLAUDE.md"} {
+		p := filepath.Join(apiSourceRoot, leaf)
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("expected %s after complete-phase scaffold: %v", p, err)
+		}
 	}
 }
 
