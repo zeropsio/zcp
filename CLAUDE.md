@@ -136,6 +136,20 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
 
 ## Conventions
 
+- **4-layer architecture pinned** — `internal/topology/` is the
+  foundational layer-2 vocabulary (Mode, DeployStrategy, RuntimeClass,
+  PushGitTrigger, predicates, aliases) with zero internal/ imports.
+  `internal/ops/` and `internal/workflow/` are peer layer-3 packages —
+  neither imports the other; shared types belong in `topology/`.
+  `internal/platform/` is the layer-1 raw API (no internal/ imports).
+  Upper layers (`internal/server/`, `internal/tools/`, `cmd/`) are
+  entry points and can reach down freely. Pinned by `architecture_test.go`
+  + `.golangci.yaml::depguard`. Spec: `docs/spec-architecture.md`.
+- **tools/eval reach platform via ops** — `client.ListServices` /
+  `client.GetServiceEnv` is forbidden outside of `internal/ops/`,
+  `internal/platform/`, and `internal/workflow/` (peer layer). Use
+  `ops.ListProjectServices` / `ops.LookupService` / `ops.FetchServiceEnv`
+  instead so caching, retries, and instrumentation land at one site.
 - **Runtime meta is pair-keyed** — one `ServiceMeta` per dev/stage pair;
   stage is a field on the dev meta. Index via `workflow.ManagedRuntimeIndex(metas)`
   / `workflow.FindServiceMeta(stateDir, hostname)`; never key on `m.Hostname`
