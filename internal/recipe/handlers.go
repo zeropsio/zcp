@@ -116,6 +116,7 @@ type RecipeInput struct {
 	Plan       *Plan       `json:"plan,omitempty"       jsonschema:"For update-plan: partial Plan object. Fields present overwrite session.Plan; omitted fields untouched."`
 	FragmentID string      `json:"fragmentId,omitempty" jsonschema:"For record-fragment: fragment identifier. Valid shapes: root/intro, env/<N>/intro (N=0..5), env/<N>/import-comments/<hostname>, env/<N>/import-comments/project, codebase/<hostname>/intro, codebase/<hostname>/integration-guide, codebase/<hostname>/knowledge-base, codebase/<hostname>/claude-md/service-facts, codebase/<hostname>/claude-md/notes."`
 	Fragment   string      `json:"fragment,omitempty"   jsonschema:"For record-fragment: the fragment body. Overwrite for root/* and env/* ids; append-on-extend for codebase/*/integration-guide, knowledge-base, claude-md/* ids so a feature sub-agent extends scaffold's body rather than replacing it."`
+	Mode       string      `json:"mode,omitempty"       jsonschema:"For record-fragment: 'append' (default for codebase IG/KB/claude-md ids; concatenates with prior body) or 'replace' (overwrites prior body). Use 'replace' to correct a fragment you authored earlier in the same recipe session, e.g. after a complete-phase validator violation."`
 }
 
 // RecipeResult is the generic envelope returned from zerops_recipe.
@@ -275,7 +276,7 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 			r.Error = "record-fragment: fragmentId is required"
 			return r
 		}
-		bodyBytes, appended, err := recordFragment(sess, in.FragmentID, in.Fragment)
+		bodyBytes, appended, err := recordFragment(sess, in.FragmentID, in.Fragment, in.Mode)
 		if err != nil {
 			r.Error = err.Error()
 			return r

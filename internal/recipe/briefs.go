@@ -40,8 +40,11 @@ import (
 // subsection (porter-facing rule + GOOD/BAD examples + what-goes-here
 // / what-doesn't lists). TEACH-side fix for the run-11 CLAUDE.md MCP-
 // tool leak.
+//
+// Run-12 §R raised the cap to 22 KB to fit the "Correcting a fragment
+// you authored" subsection (mode=replace teaching).
 const (
-	ScaffoldBriefCap = 20 * 1024
+	ScaffoldBriefCap = 22 * 1024
 	FeatureBriefCap  = 12 * 1024
 )
 

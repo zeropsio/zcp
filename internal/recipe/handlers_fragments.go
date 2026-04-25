@@ -15,7 +15,17 @@ import (
 // (or on the typed EnvComments for env/*/import-comments/* ids).
 // Returns the post-write body size and whether append fired — run-9-
 // readiness §2.J so the caller sees which fragment landed.
-func recordFragment(sess *Session, id, body string) (int, bool, error) {
+//
+// mode is "" or "append" (default; codebase IG/KB/claude-md ids
+// concatenate) or "replace" (overwrite prior body even on append-class
+// ids). Run-12 §R — sub-agent uses replace to correct its own fragment
+// after a complete-phase validator violation.
+func recordFragment(sess *Session, id, body, mode string) (int, bool, error) {
+	switch mode {
+	case "", "append", "replace":
+	default:
+		return 0, false, fmt.Errorf("record-fragment: mode must be 'append' or 'replace', got %q", mode)
+	}
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
 	if sess.Plan == nil {
@@ -33,7 +43,7 @@ func recordFragment(sess *Session, id, body string) (int, bool, error) {
 	if sess.Plan.Fragments == nil {
 		sess.Plan.Fragments = map[string]string{}
 	}
-	if isAppendFragmentID(id) {
+	if isAppendFragmentID(id) && mode != "replace" {
 		existing := sess.Plan.Fragments[id]
 		if existing == "" {
 			sess.Plan.Fragments[id] = body

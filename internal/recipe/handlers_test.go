@@ -831,6 +831,124 @@ func TestRecordFragment_OverwriteSetsAppendedFalse(t *testing.T) {
 	}
 }
 
+// TestRecordFragment_DefaultModeAppendsOnCodebaseID — run-12 §R. Default
+// behavior on append-class ids stays append (so feature can extend
+// scaffold). Mode field unspecified.
+func TestRecordFragment_DefaultModeAppendsOnCodebaseID(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	if _, err := store.OpenOrCreate("synth-showcase", filepath.Join(dir, "run")); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fragment", Slug: "synth-showcase",
+		FragmentID: "codebase/api/integration-guide", Fragment: "first body",
+	})
+	dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fragment", Slug: "synth-showcase",
+		FragmentID: "codebase/api/integration-guide", Fragment: "second body",
+	})
+	got := sess.Plan.Fragments["codebase/api/integration-guide"]
+	if got != "first body\n\nsecond body" {
+		t.Errorf("default mode should append; got %q", got)
+	}
+}
+
+// TestRecordFragment_ModeReplaceOverwrites — run-12 §R. mode=replace
+// overwrites prior body even on append-class ids; sub-agent uses this
+// to correct a fragment after a complete-phase violation.
+func TestRecordFragment_ModeReplaceOverwrites(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	if _, err := store.OpenOrCreate("synth-showcase", filepath.Join(dir, "run")); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fragment", Slug: "synth-showcase",
+		FragmentID: "codebase/api/integration-guide", Fragment: "first body",
+	})
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fragment", Slug: "synth-showcase",
+		FragmentID: "codebase/api/integration-guide", Fragment: "corrected body",
+		Mode: "replace",
+	})
+	if !res.OK {
+		t.Fatalf("replace dispatch: %+v", res)
+	}
+	if res.Appended {
+		t.Error("mode=replace must not set Appended=true")
+	}
+	got := sess.Plan.Fragments["codebase/api/integration-guide"]
+	if got != "corrected body" {
+		t.Errorf("mode=replace should overwrite; got %q", got)
+	}
+}
+
+// TestRecordFragment_ModeReplaceOnEnvIDIsEquivalentToOverwrite — run-12
+// §R. env/<N>/intro is overwrite by default; mode=replace keeps that
+// behavior, no error.
+func TestRecordFragment_ModeReplaceOnEnvIDIsEquivalentToOverwrite(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	if _, err := store.OpenOrCreate("synth-showcase", filepath.Join(dir, "run")); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fragment", Slug: "synth-showcase",
+		FragmentID: "env/0/intro", Fragment: "v1",
+	})
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fragment", Slug: "synth-showcase",
+		FragmentID: "env/0/intro", Fragment: "v2", Mode: "replace",
+	})
+	if !res.OK {
+		t.Fatalf("replace on env id: %+v", res)
+	}
+	if got := sess.Plan.Fragments["env/0/intro"]; got != "v2" {
+		t.Errorf("mode=replace on env id should overwrite; got %q", got)
+	}
+}
+
+// TestRecordFragment_UnknownModeRejected — run-12 §R. Mode strings other
+// than "" / "append" / "replace" are rejected with an actionable error.
+func TestRecordFragment_UnknownModeRejected(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	if _, err := store.OpenOrCreate("synth-showcase", filepath.Join(dir, "run")); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fragment", Slug: "synth-showcase",
+		FragmentID: "env/0/intro", Fragment: "v1", Mode: "concat",
+	})
+	if res.OK {
+		t.Errorf("expected error for mode=concat, got OK")
+	}
+	if !strings.Contains(res.Error, "mode must be") {
+		t.Errorf("error should explain valid modes; got %q", res.Error)
+	}
+}
+
 func TestDispatch_BuildBrief(t *testing.T) {
 	t.Parallel()
 

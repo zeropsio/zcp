@@ -180,6 +180,25 @@ their backend but may still need a dev-server for a compiled frontend.
 Mount vs container execution-split → `principles/mount-vs-container.md`.
 Never `npm install` / `tsc` / `nest build` against the SSHFS mount.
 
+## Correcting a fragment you authored
+
+If `complete-phase scaffold` flags a violation on a fragment you
+authored, fix it in-session via `record-fragment mode=replace`:
+
+```
+zerops_recipe action=record-fragment slug=<slug>
+  fragmentId=codebase/<host>/integration-guide
+  mode=replace
+  fragment=<corrected body>
+```
+
+Default mode is append for codebase IG/KB/claude-md ids (so feature
+phase can extend scaffold's content). `mode=replace` overwrites — use
+when correcting your own previously-recorded fragment within the same
+phase. Feature sub-agent can also use `mode=replace` to correct
+scaffold's content if scaffold wrote something feature needs to
+rewrite (rare; prefer extending).
+
 ## Validator tripwires
 
 Finalize gates reject on these; fix at author-time:
