@@ -270,20 +270,21 @@ func BuildSubdomainURL(hostname, subdomainHost string, port int) string {
 // ExtractSubdomainURL returns the subdomain URL from the service's
 // zeropsSubdomain env var, or empty string when the key is absent. Pass
 // rawEnvs when the caller already has the env list (avoids a second API
-// round-trip — discover iterates envs anyway); pass nil to fetch via
-// client.GetServiceEnv.
+// round-trip on the happy path — discover iterates envs anyway); pass
+// nil to fetch via client.GetServiceEnv.
+//
+// When rawEnvs is non-nil but doesn't contain the key the helper still
+// falls back to a fetch — the platform injects zeropsSubdomain
+// asynchronously after enable, so a service can have SubdomainAccess=true
+// while the env hasn't propagated yet. The earlier "non-nil rawEnvs
+// without the key means subdomain isn't enabled" shortcut surfaced empty
+// URLs in discover responses during that propagation window. The extra
+// API call only fires on the rare miss; the cached path is unchanged.
 func ExtractSubdomainURL(ctx context.Context, client platform.Client, serviceID string, rawEnvs []platform.EnvVar) string {
 	for _, env := range rawEnvs {
 		if env.Key == envKeyZeropsSubdomain {
 			return env.Content
 		}
-	}
-	if rawEnvs != nil {
-		// Caller passed an env slice; if it didn't contain the key,
-		// fall back to a fetch only when the slice is empty (unset
-		// caller signaled "I don't have envs yet"). Non-empty rawEnvs
-		// without the key means subdomain isn't enabled.
-		return ""
 	}
 	envs, err := client.GetServiceEnv(ctx, serviceID)
 	if err != nil {

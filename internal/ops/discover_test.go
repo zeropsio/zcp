@@ -834,6 +834,67 @@ func TestDiscover_SubdomainURL_DisabledNoFetch(t *testing.T) {
 	}
 }
 
+// TestExtractSubdomainURL_RawEnvsHit pins the cached path: when the
+// caller hands in a non-nil env slice that already contains the key,
+// no API call fires and the URL comes straight from rawEnvs.
+func TestExtractSubdomainURL_RawEnvsHit(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithError("GetServiceEnv", fmt.Errorf("should not be called"))
+	rawEnvs := []platform.EnvVar{
+		{Key: "zeropsSubdomain", Content: "https://app-1df2-3000.prg1.zerops.app"},
+	}
+	got := ExtractSubdomainURL(context.Background(), mock, "svc-1", rawEnvs)
+	if got != "https://app-1df2-3000.prg1.zerops.app" {
+		t.Errorf("got %q, want URL from rawEnvs", got)
+	}
+}
+
+// TestExtractSubdomainURL_RawEnvsMiss_FetchFallback pins the
+// asynchronous-injection contract: SubdomainAccess can be true while the
+// platform hasn't yet propagated zeropsSubdomain into the service's env
+// list (race between Enable and the env injector). When rawEnvs is
+// non-nil but lacks the key, the helper MUST refetch — otherwise discover
+// surfaces an empty URL during the propagation window.
+func TestExtractSubdomainURL_RawEnvsMiss_FetchFallback(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServiceEnv("svc-1", []platform.EnvVar{
+			{Key: "zeropsSubdomain", Content: "https://app-late.prg1.zerops.app"},
+		})
+	rawEnvs := []platform.EnvVar{{Key: "OTHER_VAR", Content: "x"}}
+	got := ExtractSubdomainURL(context.Background(), mock, "svc-1", rawEnvs)
+	if got != "https://app-late.prg1.zerops.app" {
+		t.Errorf("got %q, want URL from fetch fallback", got)
+	}
+}
+
+// TestExtractSubdomainURL_NilEnvs_FetchFallback covers the no-cached-envs
+// path — caller signals "I haven't fetched envs yet, do it for me".
+func TestExtractSubdomainURL_NilEnvs_FetchFallback(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithServiceEnv("svc-1", []platform.EnvVar{
+			{Key: "zeropsSubdomain", Content: "https://app-fetched.prg1.zerops.app"},
+		})
+	got := ExtractSubdomainURL(context.Background(), mock, "svc-1", nil)
+	if got != "https://app-fetched.prg1.zerops.app" {
+		t.Errorf("got %q, want URL from fetch fallback", got)
+	}
+}
+
+// TestExtractSubdomainURL_FetchError returns empty without panic when
+// the API call fails — caller treats empty as "no URL available".
+func TestExtractSubdomainURL_FetchError(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithError("GetServiceEnv", fmt.Errorf("transient API error"))
+	got := ExtractSubdomainURL(context.Background(), mock, "svc-1", nil)
+	if got != "" {
+		t.Errorf("got %q, want empty on fetch error", got)
+	}
+}
+
 func TestDiscover_ProjectNotFound(t *testing.T) {
 	t.Parallel()
 

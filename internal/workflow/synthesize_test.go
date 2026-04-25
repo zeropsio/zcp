@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -558,6 +559,56 @@ func TestSynthesize_AllowsStartCommandPlaceholder(t *testing.T) {
 	}
 	if !strings.Contains(got[0], "appdev") {
 		t.Errorf("hostname still expected substituted: %s", got[0])
+	}
+}
+
+// TestSynthesizeStrategySetup_LocalEnv pins the wrapper's behavior:
+// hand it a runtime + snapshots, get back guidance built from a
+// StateEnvelope{Phase=PhaseStrategySetup, Environment=local, Services}.
+// The wrapper exists so tools/ don't construct envelopes inline; this
+// test pins both halves of that contract — the envelope shape AND the
+// non-empty atom output for the standard push-git setup case.
+func TestSynthesizeStrategySetup_LocalEnv(t *testing.T) {
+	t.Parallel()
+	snaps := []ServiceSnapshot{{
+		Hostname:     "appdev",
+		Bootstrapped: true,
+		Mode:         topology.PlanModeDev,
+		Strategy:     topology.StrategyPushGit,
+		Trigger:      topology.TriggerWebhook,
+	}}
+	got, err := SynthesizeStrategySetup(runtime.Info{InContainer: false}, snaps)
+	if err != nil {
+		t.Fatalf("SynthesizeStrategySetup: %v", err)
+	}
+	if got == "" {
+		t.Fatal("expected non-empty guidance for push-git/webhook setup")
+	}
+}
+
+// TestSynthesizeStrategySetup_ContainerEnv same wrapper, container env —
+// a different set of atoms fires (container-specific push setup) so the
+// output must differ from the local case. If both come back identical,
+// the Environment axis isn't reaching the synthesizer.
+func TestSynthesizeStrategySetup_ContainerEnv(t *testing.T) {
+	t.Parallel()
+	snaps := []ServiceSnapshot{{
+		Hostname:     "appdev",
+		Bootstrapped: true,
+		Mode:         topology.PlanModeDev,
+		Strategy:     topology.StrategyPushGit,
+		Trigger:      topology.TriggerWebhook,
+	}}
+	local, err := SynthesizeStrategySetup(runtime.Info{InContainer: false}, snaps)
+	if err != nil {
+		t.Fatalf("local: %v", err)
+	}
+	container, err := SynthesizeStrategySetup(runtime.Info{InContainer: true}, snaps)
+	if err != nil {
+		t.Fatalf("container: %v", err)
+	}
+	if local == container {
+		t.Errorf("environment axis dropped: local and container guidance are identical")
 	}
 }
 
