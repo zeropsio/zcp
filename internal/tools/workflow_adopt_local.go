@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -75,7 +76,7 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 	}
 
 	// Confirm the target hostname is a live runtime service.
-	services, err := client.ListServices(ctx, projectID)
+	services, err := ops.ListProjectServices(ctx, client, projectID)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,

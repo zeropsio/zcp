@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -72,7 +73,7 @@ func waitAllActive(ctx context.Context, client platform.Client, projectID string
 	defer ticker.Stop()
 
 	for {
-		services, err := client.ListServices(ctx, projectID)
+		services, err := ops.ListProjectServices(ctx, client, projectID)
 		if err != nil {
 			return fmt.Errorf("list services: %w", err)
 		}

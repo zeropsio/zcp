@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -289,7 +290,7 @@ func handleRoute(ctx context.Context, _ *workflow.Engine, client platform.Client
 	metaIdx := workflow.ManagedRuntimeIndex(metas)
 
 	if client != nil && projectID != "" {
-		if svcs, err := client.ListServices(ctx, projectID); err == nil {
+		if svcs, err := ops.ListProjectServices(ctx, client, projectID); err == nil {
 			for _, s := range svcs {
 				if s.IsSystem() || (selfHostname != "" && s.Name == selfHostname) {
 					continue

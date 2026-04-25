@@ -26,11 +26,7 @@ func resolveTargetForValidation(ctx context.Context, client platform.Client, pro
 	if client == nil || projectID == "" || hostname == "" {
 		return nil
 	}
-	services, err := client.ListServices(ctx, projectID)
-	if err != nil {
-		return nil
-	}
-	svc, _ := ops.FindService(services, hostname)
+	svc, _ := ops.LookupService(ctx, client, projectID, hostname)
 	return svc
 }
 

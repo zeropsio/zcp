@@ -385,7 +385,7 @@ func handleReset(ctx context.Context, engine *workflow.Engine, client platform.C
 	cleared := buildClearedSnapshot(preState, metasBefore)
 	preserved := resetSnapshot{}
 	if client != nil {
-		if live, listErr := client.ListServices(ctx, projectID); listErr == nil {
+		if live, listErr := ops.ListProjectServices(ctx, client, projectID); listErr == nil {
 			preserved.LiveServices = len(live)
 		}
 	}
@@ -729,13 +729,13 @@ func handleBootstrapStart(ctx context.Context, projectID string, engine *workflo
 	return jsonResult(resp), nil, nil
 }
 
-// listExistingServices is a best-effort wrapper around client.ListServices
+// listExistingServices is a best-effort wrapper around ops.ListProjectServices
 // that tolerates a nil client (test fixtures without platform access).
 func listExistingServices(ctx context.Context, client platform.Client, projectID string) ([]platform.ServiceStack, error) {
 	if client == nil || projectID == "" {
 		return nil, nil
 	}
-	return client.ListServices(ctx, projectID)
+	return ops.ListProjectServices(ctx, client, projectID)
 }
 
 func handleListSessions(engine *workflow.Engine) (*mcp.CallToolResult, any, error) {

@@ -226,7 +226,7 @@ func resolveRestartTargets(
 	input EnvInput,
 	selfHostname string,
 ) ([]restartTarget, string) {
-	services, err := client.ListServices(ctx, projectID)
+	services, err := ops.ListProjectServices(ctx, client, projectID)
 	if err != nil {
 		return nil, fmt.Sprintf("could not list services for auto-restart: %v", err)
 	}

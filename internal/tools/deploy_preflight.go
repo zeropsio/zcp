@@ -124,7 +124,7 @@ func resolveSetupEntry(doc *ops.ZeropsYmlDoc, setup string, role topology.Mode, 
 
 // preflightEnvRefs validates env var references against live API data for a single target.
 func preflightEnvRefs(ctx context.Context, client platform.Client, projectID, hostname string, entry *ops.ZeropsYmlEntry) []workflow.StepCheck {
-	services, err := client.ListServices(ctx, projectID)
+	services, err := ops.ListProjectServices(ctx, client, projectID)
 	if err != nil {
 		return []workflow.StepCheck{{
 			Name: hostname + "_env_refs", Status: statusFail,
@@ -136,7 +136,7 @@ func preflightEnvRefs(ctx context.Context, client platform.Client, projectID, ho
 	discoveredEnvVars := make(map[string][]string)
 	for _, svc := range services {
 		liveHostnames = append(liveHostnames, svc.Name)
-		envVars, envErr := client.GetServiceEnv(ctx, svc.ID)
+		envVars, envErr := ops.FetchServiceEnv(ctx, client, svc.ID)
 		if envErr != nil {
 			continue
 		}

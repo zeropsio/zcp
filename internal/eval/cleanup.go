@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -46,7 +47,7 @@ func CleanupEvalServices(ctx context.Context, client platform.Client, projectID,
 		return fmt.Errorf("cleanup: prefix %q too short (min 2 chars)", prefix)
 	}
 
-	services, err := client.ListServices(ctx, projectID)
+	services, err := ops.ListProjectServices(ctx, client, projectID)
 	if err != nil {
 		return fmt.Errorf("cleanup list services: %w", err)
 	}
@@ -73,7 +74,7 @@ func CleanupEvalServices(ctx context.Context, client platform.Client, projectID,
 // saving tokens by not requiring an LLM agent.
 func CleanupProject(ctx context.Context, client platform.Client, projectID, workDir string) error {
 	// 1. Delete all non-protected services
-	services, err := client.ListServices(ctx, projectID)
+	services, err := ops.ListProjectServices(ctx, client, projectID)
 	if err != nil {
 		return fmt.Errorf("cleanup list services: %w", err)
 	}

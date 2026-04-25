@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -45,7 +46,7 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 	// Prune stale metas against live services — keeps envelope coherent if
 	// someone deleted a service in the Zerops UI while ZCP state lingered.
 	if client != nil {
-		services, listErr := client.ListServices(ctx, projectID)
+		services, listErr := ops.ListProjectServices(ctx, client, projectID)
 		if listErr == nil {
 			live := make(map[string]bool, len(services))
 			for _, svc := range services {

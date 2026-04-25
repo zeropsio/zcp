@@ -37,7 +37,7 @@ func ProbeFinalURL(
 ) FinalURLProbe {
 	probe := FinalURLProbe{Hostname: hostname}
 
-	services, err := client.ListServices(ctx, projectID)
+	services, err := ops.ListProjectServices(ctx, client, projectID)
 	if err != nil {
 		probe.Err = fmt.Sprintf("list services: %v", err)
 		return probe
@@ -77,7 +77,7 @@ func ProbeFinalURL(
 // choose. Returns an error when 0 or >1 candidates are found — both cases
 // mean the scenario author must set Expect.FinalURLHostname explicitly.
 func ResolveProbeHostname(ctx context.Context, client platform.Client, projectID string) (string, error) {
-	services, err := client.ListServices(ctx, projectID)
+	services, err := ops.ListProjectServices(ctx, client, projectID)
 	if err != nil {
 		return "", fmt.Errorf("list services: %w", err)
 	}

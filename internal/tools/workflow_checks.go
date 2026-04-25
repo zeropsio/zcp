@@ -52,7 +52,7 @@ func checkProvision(client platform.Client, projectID string, engine *workflow.E
 			return nil, nil
 		}
 
-		services, err := client.ListServices(ctx, projectID)
+		services, err := ops.ListProjectServices(ctx, client, projectID)
 		if err != nil {
 			return nil, fmt.Errorf("list services: %w", err)
 		}
@@ -91,7 +91,7 @@ func checkProvision(client platform.Client, projectID string, engine *workflow.E
 					if !exists {
 						continue
 					}
-					envVars, envErr := client.GetServiceEnv(ctx, svc.ID)
+					envVars, envErr := ops.FetchServiceEnv(ctx, client, svc.ID)
 					switch {
 					case envErr != nil:
 						checks = append(checks, workflow.StepCheck{
