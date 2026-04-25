@@ -28,10 +28,11 @@ import (
 // Run-11 V-5 raised ScaffoldBriefCap from 12 KB → 14 KB to fit the
 // Self-inflicted litmus subsection. Run-11 O-1 raised it again to
 // 16 KB to fit the Citation map subsection (citations are author-time
-// signals, not render output).
+// signals, not render output). Run-11 Q-2 raised FeatureBriefCap
+// 10 KB → 12 KB for the per-feature commit subsection.
 const (
 	ScaffoldBriefCap = 16 * 1024
-	FeatureBriefCap  = 10 * 1024
+	FeatureBriefCap  = 12 * 1024
 )
 
 // BriefKind identifies one of two sub-agent roles. The writer role was

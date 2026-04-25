@@ -147,3 +147,7 @@ Finalize gates reject on these; fix at author-time:
 - CLAUDE.md: 30–50 lines (cap 60); no cross-codebase runbooks
 - Fragment IDs use `cb.Hostname` (the codebase name, e.g. `app`) — NEVER the slot hostname (`appdev` / `appstage`). The slot is the SSHFS mount; the codebase is the logical name. Engine rejects `codebase/appdev/intro` with the Plan codebase list.
 - Do NOT author `.deployignore` reflexively. Most recipes do not need it (the builder excludes `.git/`; editor metadata belongs in `.gitignore`). Author one only if the recipe has a specific reason — and NEVER list `dist`, `node_modules`, or anything in `deployFiles`. Worker run-10 burned 20 minutes on `dist`-in-`.deployignore`.
+
+## At scaffold close — initialize git
+
+Run `git init && git add -A && git commit -m 'scaffold: initial structure + zerops.yaml'` from `<cb.SourceRoot>` (= `/var/www/<hostname>dev/`). The apps-repo publish path needs a clean git history; doing this post-hoc loses the per-feature commit shape a porter sees when scrolling the repo.

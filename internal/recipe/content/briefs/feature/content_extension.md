@@ -83,3 +83,10 @@ The engine classifier auto-overrides agent-supplied surfaceHint when
 fixApplied describes a recipe-source change without platform-side
 mechanism vocabulary in failureMode (V-1). See scaffold brief
 "Self-inflicted litmus" subsection for run-10 anti-patterns.
+
+## At feature close — commit per-feature
+
+Commit each feature extension separately with a descriptive message
+(`git commit -m 'feat: add CRUD endpoints + Postgres wiring'`) from
+`<cb.SourceRoot>`. The per-feature commit shape is what a porter sees
+when scrolling git history; squashing or deferring loses the narrative.

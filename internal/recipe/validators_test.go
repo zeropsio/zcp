@@ -612,6 +612,42 @@ func TestBrief_Scaffold_ContainsValidatorTripwires(t *testing.T) {
 	}
 }
 
+// TestBrief_Scaffold_ContainsGitInitMandate — run-11 gap Q-1.
+// Scaffold brief mandates git init + first commit at scaffold close so
+// the apps-repo publish path has a clean history precondition.
+func TestBrief_Scaffold_ContainsGitInitMandate(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	for _, anchor := range []string{"git init", "git add -A", "git commit"} {
+		if !strings.Contains(brief.Body, anchor) {
+			t.Errorf("scaffold brief git-init mandate missing anchor %q", anchor)
+		}
+	}
+}
+
+// TestBrief_Feature_ContainsPerFeatureCommitGuidance — run-11 gap Q-2.
+// Feature brief mandates per-feature commits so porter scrolling git
+// history sees the narrative shape.
+func TestBrief_Feature_ContainsPerFeatureCommitGuidance(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildFeatureBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFeatureBrief: %v", err)
+	}
+	for _, anchor := range []string{"per-feature", "git commit"} {
+		if !strings.Contains(brief.Body, anchor) {
+			t.Errorf("feature brief per-feature-commit guidance missing anchor %q", anchor)
+		}
+	}
+}
+
 // TestValidateCodebaseIG_HashHashHashItems_Pass — run-11 gap R-1.
 // IG body using `### N.` headers (canonical shape; engine generates
 // item #1 in this shape) passes. The plain ordered-list shape is the
