@@ -36,7 +36,7 @@ func TestSession_PhaseFlow(t *testing.T) {
 		if s.Current != p {
 			t.Fatalf("phase %d: Current = %q, want %q", i, s.Current, p)
 		}
-		if _, err := s.CompletePhase(gates); err != nil {
+		if _, _, err := s.CompletePhase(gates); err != nil {
 			t.Fatalf("CompletePhase %q: %v", p, err)
 		}
 		// Last phase has no next.
@@ -64,15 +64,74 @@ func TestSession_CompletePhase_BlocksOnViolation(t *testing.T) {
 		},
 	}
 
-	violations, err := s.CompletePhase([]Gate{failing})
+	violations, notices, err := s.CompletePhase([]Gate{failing})
 	if err != nil {
 		t.Fatalf("CompletePhase: %v", err)
 	}
 	if len(violations) != 1 {
-		t.Errorf("expected 1 violation, got %d", len(violations))
+		t.Errorf("expected 1 blocking violation, got %d", len(violations))
+	}
+	if len(notices) != 0 {
+		t.Errorf("expected 0 notices, got %d", len(notices))
 	}
 	if s.Completed[PhaseResearch] {
 		t.Error("phase should not be marked complete when gates fire")
+	}
+}
+
+func TestSession_CompletePhase_NoticeDoesNotBlock(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	log := OpenFactsLog(filepath.Join(dir, "facts.jsonl"))
+	s := NewSession("synth-showcase", log, dir, nil)
+
+	noticeOnly := Gate{
+		Name: "advisory",
+		Run: func(ctx GateContext) []Violation {
+			return []Violation{{Code: "advisory", Message: "soft", Severity: SeverityNotice}}
+		},
+	}
+
+	blocking, notices, err := s.CompletePhase([]Gate{noticeOnly})
+	if err != nil {
+		t.Fatalf("CompletePhase: %v", err)
+	}
+	if len(blocking) != 0 {
+		t.Errorf("expected 0 blocking violations, got %d", len(blocking))
+	}
+	if len(notices) != 1 {
+		t.Errorf("expected 1 notice, got %d", len(notices))
+	}
+	if !s.Completed[PhaseResearch] {
+		t.Error("notice-only gates must not block phase completion")
+	}
+}
+
+func TestSession_CompletePhase_DefaultSeverityBlocks(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	log := OpenFactsLog(filepath.Join(dir, "facts.jsonl"))
+	s := NewSession("synth-showcase", log, dir, nil)
+
+	// Zero-value Severity must keep historical blocking behavior.
+	zeroSeverity := Gate{
+		Name: "zero-severity",
+		Run: func(ctx GateContext) []Violation {
+			return []Violation{{Code: "test", Message: "default"}}
+		},
+	}
+
+	blocking, _, err := s.CompletePhase([]Gate{zeroSeverity})
+	if err != nil {
+		t.Fatalf("CompletePhase: %v", err)
+	}
+	if len(blocking) != 1 {
+		t.Errorf("expected 1 blocking violation (zero-value Severity), got %d", len(blocking))
+	}
+	if s.Completed[PhaseResearch] {
+		t.Error("zero-severity violation must keep phase open")
 	}
 }
 

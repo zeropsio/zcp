@@ -124,13 +124,18 @@ type RecipeInput struct {
 // "parent missing" is a legitimate first-time-framework state, not an
 // error, and the research atom branches on it.
 type RecipeResult struct {
-	OK           bool          `json:"ok"`
-	Action       string        `json:"action"`
-	Slug         string        `json:"slug,omitempty"`
-	Status       *Status       `json:"status,omitempty"`
-	Brief        *Brief        `json:"brief,omitempty"`
-	YAML         string        `json:"yaml,omitempty"`
-	Violations   []Violation   `json:"violations,omitempty"`
+	OK         bool        `json:"ok"`
+	Action     string      `json:"action"`
+	Slug       string      `json:"slug,omitempty"`
+	Status     *Status     `json:"status,omitempty"`
+	Brief      *Brief      `json:"brief,omitempty"`
+	YAML       string      `json:"yaml,omitempty"`
+	Violations []Violation `json:"violations,omitempty"`
+	// Notices are gate findings that did NOT block phase completion —
+	// SeverityNotice violations from validators wired on the DISCOVER
+	// side of the TEACH/DISCOVER line (system.md §4). The agent sees
+	// the lesson; publication continues.
+	Notices      []Violation   `json:"notices,omitempty"`
 	Parent       *ParentRecipe `json:"parent,omitempty"`
 	ParentStatus string        `json:"parentStatus,omitempty"`
 	Guidance     string        `json:"guidance,omitempty"`
@@ -218,14 +223,14 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 		r.Guidance = loadPhaseEntry(sess.Current)
 		r.OK = true
 	case "complete-phase":
-		violations, err := sess.CompletePhase(gatesForPhase(sess.Current))
+		blocking, notices, err := sess.CompletePhase(gatesForPhase(sess.Current))
 		if err != nil {
 			r.Error = err.Error()
 			return r
 		}
 		snap := sess.Snapshot()
-		r.Violations, r.Status = violations, &snap
-		r.OK = len(violations) == 0
+		r.Violations, r.Notices, r.Status = blocking, notices, &snap
+		r.OK = len(blocking) == 0
 		// On success, include next phase's entry guidance so the agent
 		// knows what to do after transitioning.
 		if r.OK {

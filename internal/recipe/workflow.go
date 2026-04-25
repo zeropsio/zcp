@@ -88,14 +88,18 @@ func (s *Session) EnterPhase(p Phase) error {
 	return nil
 }
 
-// CompletePhase marks the current phase done after gate evaluation. If
-// gates return any Violation the phase stays open; the caller sees the
-// violations and iterates before retrying.
-func (s *Session) CompletePhase(gates []Gate) ([]Violation, error) {
+// CompletePhase marks the current phase done after gate evaluation.
+// Violations are partitioned by severity: blocking findings hold the
+// phase open and surface in the first return; notice findings flow
+// through as the second return without affecting completion. The
+// blocking-vs-notice split exists so DISCOVER-side lessons can reach
+// the agent without the engine pre-encoding them as publish-blocking
+// gates (system.md §4).
+func (s *Session) CompletePhase(gates []Gate) (blocking, notices []Violation, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.Completed[s.Current] {
-		return nil, nil // already complete
+		return nil, nil, nil // already complete
 	}
 	ctx := GateContext{
 		Plan:       s.Plan,
@@ -103,12 +107,12 @@ func (s *Session) CompletePhase(gates []Gate) ([]Violation, error) {
 		FactsLog:   s.FactsLog,
 		Parent:     s.Parent,
 	}
-	violations := RunGates(gates, ctx)
-	if len(violations) > 0 {
-		return violations, nil
+	blocking, notices = PartitionBySeverity(RunGates(gates, ctx))
+	if len(blocking) > 0 {
+		return blocking, notices, nil
 	}
 	s.Completed[s.Current] = true
-	return nil, nil
+	return nil, notices, nil
 }
 
 // RecordFact appends a fact to the session's facts-log after validation.

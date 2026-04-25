@@ -39,11 +39,42 @@ type SurfaceInputs struct {
 	TierDiff *TierDiff
 }
 
+// Severity classifies a Violation's effect on phase completion. The
+// zero value (SeverityBlocking) keeps `complete-phase` blocked — the
+// historical behavior every gate had before the 2026-04-25
+// architectural reframe. SeverityNotice is opt-in for findings that
+// belong on the DISCOVER side of the TEACH/DISCOVER line (system.md
+// §4): the agent sees the lesson at gate-eval time but publication
+// is not held back. Any validator that returns a Violation with no
+// severity set is treated as blocking, by design — defaulting to
+// notice would silently relax existing gates.
+type Severity int
+
+const (
+	SeverityBlocking Severity = iota
+	SeverityNotice
+)
+
 // Violation is one finding from a ValidateFn. Empty return means pass.
 type Violation struct {
-	Code    string `json:"code"`
-	Path    string `json:"path,omitempty"`
-	Message string `json:"message"`
+	Code     string   `json:"code"`
+	Path     string   `json:"path,omitempty"`
+	Message  string   `json:"message"`
+	Severity Severity `json:"-"`
+}
+
+// PartitionBySeverity splits a violation slice into blocking + notice
+// halves. Used by complete-phase to decide whether the phase advances
+// (blocking only) and what surfaces in `Notices` for the agent's eyes.
+func PartitionBySeverity(vs []Violation) (blocking, notices []Violation) {
+	for _, v := range vs {
+		if v.Severity == SeverityNotice {
+			notices = append(notices, v)
+		} else {
+			blocking = append(blocking, v)
+		}
+	}
+	return
 }
 
 // InputFn assembles the typed inputs a surface needs. Phase 2 implements.
