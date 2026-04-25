@@ -108,13 +108,35 @@ type AutoscalingParams struct {
 type Process struct {
 	ID            string            `json:"id"`
 	ActionName    string            `json:"actionName"`
-	Status        string            `json:"status"` // PENDING, RUNNING, FINISHED, FAILED, CANCELED
+	Status        string            `json:"status"` // see ProcessStatus* constants
 	ServiceStacks []ServiceStackRef `json:"serviceStacks,omitempty"`
 	Created       string            `json:"created"`
 	Started       *string           `json:"started,omitempty"`
 	Finished      *string           `json:"finished,omitempty"`
 	FailReason    *string           `json:"failReason,omitempty"`
 }
+
+// Process / build / service-stack status values returned by the Zerops API.
+// These are wire-format strings — keep them in sync with the API rather
+// than redefining them per-package.
+const (
+	ProcessStatusPending  = "PENDING"
+	ProcessStatusRunning  = "RUNNING"
+	ProcessStatusFinished = "FINISHED"
+	ProcessStatusFailed   = "FAILED"
+	ProcessStatusCanceled = "CANCELED"
+
+	BuildStatusBuilding             = "BUILDING"
+	BuildStatusBuildFailed          = "BUILD_FAILED"
+	BuildStatusDeployFailed         = "DEPLOY_FAILED"
+	BuildStatusPreparingRuntimeFail = "PREPARING_RUNTIME_FAILED"
+	BuildStatusDeployed             = "DEPLOYED"
+
+	ServiceStatusNew           = "NEW"
+	ServiceStatusActive        = "ACTIVE"
+	ServiceStatusReadyToDeploy = "READY_TO_DEPLOY"
+	ServiceStatusRunning       = "RUNNING"
+)
 
 // ServiceStackRef is a lightweight service reference in a process.
 type ServiceStackRef struct {

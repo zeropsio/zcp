@@ -11,25 +11,26 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// Service status constants (from Zerops API).
+// Local aliases of platform process/build/service status values — kept
+// so call sites stay readable without sprinkling the platform. prefix
+// everywhere. Source: internal/platform/types.go.
 const (
-	serviceStatusRunning       = "RUNNING"
-	serviceStatusActive        = "ACTIVE"
-	serviceStatusNew           = "NEW"
-	serviceStatusReadyToDeploy = "READY_TO_DEPLOY"
+	serviceStatusRunning       = platform.ServiceStatusRunning
+	serviceStatusActive        = platform.ServiceStatusActive
+	serviceStatusNew           = platform.ServiceStatusNew
+	serviceStatusReadyToDeploy = platform.ServiceStatusReadyToDeploy
 )
 
-// Shared status constants for process/build results.
 const (
 	actionStatus                 = "status"
-	statusActive                 = "ACTIVE"
-	statusDeployed               = "DEPLOYED"
-	statusBuildFailed            = "BUILD_FAILED"
-	statusPreparingRuntimeFailed = "PREPARING_RUNTIME_FAILED"
-	statusDeployFailed           = "DEPLOY_FAILED"
-	statusCanceled               = "CANCELED"
-	statusFinished               = "FINISHED"
-	statusFailed                 = "FAILED"
+	statusActive                 = platform.ServiceStatusActive
+	statusDeployed               = platform.BuildStatusDeployed
+	statusBuildFailed            = platform.BuildStatusBuildFailed
+	statusPreparingRuntimeFailed = platform.BuildStatusPreparingRuntimeFail
+	statusDeployFailed           = platform.BuildStatusDeployFailed
+	statusCanceled               = platform.ProcessStatusCanceled
+	statusFinished               = platform.ProcessStatusFinished
+	statusFailed                 = platform.ProcessStatusFailed
 )
 
 // convertError converts an error to a CallToolResult with IsError=true.

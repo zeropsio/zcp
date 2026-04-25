@@ -8,13 +8,15 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
+// Local aliases of platform process/build status values — kept so call
+// sites stay readable without sprinkling the platform. prefix everywhere.
 const (
-	statusActive      = "ACTIVE"
-	statusBuilding    = "BUILDING"
-	statusBuildFailed = "BUILD_FAILED"
-	statusFinished    = "FINISHED"
-	statusFailed      = "FAILED"
-	statusCanceled    = "CANCELED"
+	statusActive      = platform.ServiceStatusActive
+	statusBuilding    = platform.BuildStatusBuilding
+	statusBuildFailed = platform.BuildStatusBuildFailed
+	statusFinished    = platform.ProcessStatusFinished
+	statusFailed      = platform.ProcessStatusFailed
+	statusCanceled    = platform.ProcessStatusCanceled
 )
 
 // ProcessStatusResult contains the status of a process.
