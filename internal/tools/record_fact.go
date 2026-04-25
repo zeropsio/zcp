@@ -68,7 +68,7 @@ func inferLikelyRouteTo(factType string) string {
 func RegisterRecordFact(srv *mcp.Server, engine *workflow.Engine, recipeProbe RecipeSessionProbe) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_record_fact",
-		Description: "Record a structured fact discovered during deploy for the readmes sub-step writer to consume. Call when you encounter and fix a non-trivial issue, verify a non-obvious platform behavior, or establish a cross-codebase contract binding. The writer subagent at the end of deploy reads the accumulated log as pre-organized input — write facts at the moment of freshest knowledge, not in retrospect.",
+		Description: "v2 fact tool — use zerops_recipe action=record-fact for v3 recipe sessions; this tool is for the legacy bootstrap/develop workflow only. Records a structured fact discovered during deploy for the readmes sub-step writer to consume. Call when you encounter and fix a non-trivial issue, verify a non-obvious platform behavior, or establish a cross-codebase contract binding. The writer subagent at the end of deploy reads the accumulated log as pre-organized input — write facts at the moment of freshest knowledge, not in retrospect.",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Record deploy-time fact",
 			ReadOnlyHint:   false,
@@ -123,10 +123,12 @@ func RegisterRecordFact(srv *mcp.Server, engine *workflow.Engine, recipeProbe Re
 }
 
 // resolveFactLogPath returns (sessionLabel, path, "") when a destination
-// for the fact was resolved — either the v2 engine's /tmp log or the single
-// open recipe session's legacy-facts.jsonl. When no session can be
-// resolved, the third return carries an error message suitable for
-// textResult; the first two are zero.
+// for the fact was resolved — the v2 engine's /tmp log. When a v3 recipe
+// session is open, the legacy "courtesy route" to <outputRoot>/legacy-facts.jsonl
+// is gone (run-11 gap U-1): the silent route hid 5 hard-won discoveries
+// from the v3 stitch pipeline in run 10 because nothing reads
+// legacy-facts.jsonl. We refuse with a redirect naming the v3 action +
+// schema so the sub-agent re-records via zerops_recipe action=record-fact.
 func resolveFactLogPath(engine *workflow.Engine, recipeProbe RecipeSessionProbe) (string, string, string) {
 	if engine != nil {
 		if sid := engine.SessionID(); sid != "" {
@@ -134,8 +136,11 @@ func resolveFactLogPath(engine *workflow.Engine, recipeProbe RecipeSessionProbe)
 		}
 	}
 	if recipeProbe != nil {
-		if slug, legacyPath, _, ok := recipeProbe.CurrentSingleSession(); ok {
-			return "recipe:" + slug, legacyPath, ""
+		if slug, _, _, ok := recipeProbe.CurrentSingleSession(); ok {
+			return "", "", fmt.Sprintf(
+				"Error: zerops_record_fact is the v2 fact tool. A v3 recipe session is open (slug=%s) — use zerops_recipe action=record-fact slug=%s instead. v3 schema: topic, symptom, mechanism, failureMode, fixApplied, evidence, scope, surfaceHint, citation.",
+				slug, slug,
+			)
 		}
 		if recipeProbe.HasAnySession() {
 			return "", "", "Error: multiple recipe sessions open — zerops_record_fact cannot infer the target; use zerops_recipe action=record-fact with an explicit slug"

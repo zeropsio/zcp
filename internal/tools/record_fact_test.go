@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -157,20 +158,19 @@ func TestRecordFact_RouteToPassthrough(t *testing.T) {
 	}
 }
 
-// TestRecordFact_RoutesToRecipeSession — when the v2 workflow engine has no
-// active session but a v3 recipe session is open, zerops_record_fact must
-// append into the recipe's legacy-facts.jsonl rather than erroring. Exercises
-// the Workstream E deferred gate plumbing from run-8-readiness.
-func TestRecordFact_RoutesToRecipeSession(t *testing.T) {
+// TestRecordFact_RefusesDuringV3Session — run-11 gap U-1. When a v3 recipe
+// session is open, the v2 zerops_record_fact tool MUST refuse with a
+// redirect naming the v3 action + slug, so sub-agents who reached for v2
+// out of habit (run-10 routed 5 hard-won discoveries to legacy-facts.jsonl
+// which the v3 stitch pipeline doesn't read) are pushed back onto the v3
+// path before the data evaporates.
+func TestRecordFact_RefusesDuringV3Session(t *testing.T) {
 	t.Parallel()
 	engine := testEngine(t)
 	if err := engine.Reset(); err != nil {
 		t.Fatalf("reset engine: %v", err)
 	}
 
-	// Open a recipe session pointed at a per-test outputRoot — the probe
-	// will resolve CurrentSingleSession to this one and write into
-	// <outputRoot>/legacy-facts.jsonl.
 	store := recipe.NewStore(t.TempDir())
 	outputRoot := filepath.Join(t.TempDir(), "recipe-run")
 	if _, err := store.OpenOrCreate("alpha-showcase", outputRoot); err != nil {
@@ -181,25 +181,52 @@ func TestRecordFact_RoutesToRecipeSession(t *testing.T) {
 	RegisterRecordFact(srv, engine, store)
 
 	result := callTool(t, srv, "zerops_record_fact", map[string]any{
-		"type":      ops.FactTypeGotchaCandidate,
-		"title":     "execOnce burned on mid-seed crash",
-		"substep":   "feature.seed",
-		"codebase":  "apidev",
-		"mechanism": "zsc execOnce + per-deploy appVersionId",
-		"routeTo":   ops.FactRouteToContentGotcha,
+		"type":  ops.FactTypeGotchaCandidate,
+		"title": "execOnce burned on mid-seed crash",
 	})
-	if result.IsError {
-		t.Fatalf("tool returned error: %s", getTextContent(t, result))
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "zerops_recipe action=record-fact") {
+		t.Errorf("expected redirect to v3 action, got: %s", text)
+	}
+	if !strings.Contains(text, "alpha-showcase") {
+		t.Errorf("expected redirect to name the open slug, got: %s", text)
+	}
+	for _, field := range []string{"topic", "symptom", "mechanism", "failureMode", "fixApplied", "evidence", "scope", "surfaceHint", "citation"} {
+		if !strings.Contains(text, field) {
+			t.Errorf("expected redirect to name v3 schema field %q, got: %s", field, text)
+		}
 	}
 
-	// Fact landed in the recipe's legacy bucket, not in the v2 /tmp path.
-	path := filepath.Join(outputRoot, "legacy-facts.jsonl")
-	got, err := ops.ReadFacts(path)
-	if err != nil {
-		t.Fatalf("read recipe legacy facts: %v", err)
+	// Nothing wrote to legacy-facts.jsonl — the file is absent because the
+	// silent route is gone.
+	legacy := filepath.Join(outputRoot, "legacy-facts.jsonl")
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Errorf("expected legacy-facts.jsonl absent after refusal, stat err: %v", err)
 	}
-	if len(got) != 1 || got[0].Title != "execOnce burned on mid-seed crash" {
-		t.Errorf("want 1 fact with matching title, got: %+v", got)
+}
+
+// TestRecordFact_AcceptsWithoutV3Session — refusal-during-v3 must not
+// affect v2-only callers (no recipe session). v2 keeps working unchanged
+// for the legacy bootstrap/develop workflow.
+func TestRecordFact_AcceptsWithoutV3Session(t *testing.T) {
+	t.Parallel()
+	engine := testEngine(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterRecordFact(srv, engine, nil)
+
+	result := callTool(t, srv, "zerops_record_fact", map[string]any{
+		"type":  ops.FactTypeGotchaCandidate,
+		"title": "v2-only caller should still work",
+	})
+	if result.IsError {
+		t.Fatalf("v2-only call returned error: %s", getTextContent(t, result))
+	}
+	got, err := ops.ReadFacts(ops.FactLogPath(engine.SessionID()))
+	if err != nil {
+		t.Fatalf("read facts: %v", err)
+	}
+	if len(got) != 1 || got[0].Title != "v2-only caller should still work" {
+		t.Errorf("want 1 fact recorded, got %+v", got)
 	}
 }
 
