@@ -1,8 +1,6 @@
 package tools
 
 import (
-	"encoding/json"
-
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -35,12 +33,12 @@ func handleRecordDeploy(stateDir string, input WorkflowInput) (*mcp.CallToolResu
 			"action=\"record-deploy\" requires targetService",
 			"Pass targetService=\"<hostname>\" — the runtime service whose external deploy you are acknowledging.")), nil, nil
 	}
-	stamped, firstAt, err := workflow.RecordExternalDeploy(stateDir, input.TargetService)
-	if err != nil {
+	stamped, firstAt, recordErr := workflow.RecordExternalDeploy(stateDir, input.TargetService)
+	if recordErr != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrPermissionDenied,
-			"failed to record external deploy: "+err.Error(),
-			"Check ZCP state directory permissions; meta is written under .zcp/state/services/<hostname>.json.")), nil, nil
+			"failed to record external deploy: "+recordErr.Error(),
+			"Check ZCP state directory permissions; meta is written under .zcp/state/services/<hostname>.json.")), nil, recordErr
 	}
 
 	resp := recordDeployResult{
@@ -57,8 +55,5 @@ func handleRecordDeploy(stateDir string, input WorkflowInput) (*mcp.CallToolResu
 		resp.Note = "already stamped — no change"
 	}
 
-	body, _ := json.MarshalIndent(resp, "", "  ")
-	return &mcp.CallToolResult{
-		Content: []mcp.Content{&mcp.TextContent{Text: string(body)}},
-	}, resp, nil
+	return jsonResult(resp), resp, nil
 }
