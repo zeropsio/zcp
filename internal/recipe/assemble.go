@@ -449,15 +449,31 @@ func checkUnreplacedTokens(body string) error {
 // codebases. Used to gate fragment writes that reference a codebase
 // (any codebase/<hostname>/<name> fragment id).
 func codebaseKnown(plan *Plan, hostname string) bool {
+	return validateCodebaseHostname(plan, hostname) == nil
+}
+
+// validateCodebaseHostname returns nil when hostname matches a Plan
+// codebase, an actionable error otherwise. Run-11 gap N-1 — the error
+// names the Plan codebase list AND the slot-vs-codebase distinction
+// (slot hostnames like `appdev` are SSHFS mount names; the codebase
+// hostname is the bare logical name).
+func validateCodebaseHostname(plan *Plan, hostname string) error {
 	if plan == nil {
-		return false
+		return fmt.Errorf("no Plan loaded — call update-plan first")
 	}
 	for _, c := range plan.Codebases {
 		if c.Hostname == hostname {
-			return true
+			return nil
 		}
 	}
-	return false
+	known := make([]string, 0, len(plan.Codebases))
+	for _, c := range plan.Codebases {
+		known = append(known, c.Hostname)
+	}
+	return fmt.Errorf(
+		"unknown codebase %q (Plan codebases: %v); if you used a slot hostname like 'appdev'/'appstage', use the bare codebase name (e.g. 'app') — slot is the SSHFS mount, codebase is the logical name",
+		hostname, known,
+	)
 }
 
 // readTemplate reads an engine template from the embedded content tree.

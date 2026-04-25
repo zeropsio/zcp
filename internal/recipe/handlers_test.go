@@ -667,6 +667,69 @@ func TestStitch_NoOutputRootCodebasesDirectory(t *testing.T) {
 	}
 }
 
+// TestRecordFragment_RejectsSlotHostname — run-11 gap N-1. Slot
+// hostnames (`appdev`, `apidev`, `workerdev`) are SSHFS mount names,
+// NOT codebase hostnames. Run 10's scaffold-app recorded all 5
+// fragments under `codebase/appdev/*` and the engine accepted them,
+// causing a cleanup-sub-agent dispatch + 8 zerops_knowledge requeries.
+// The error must name the Plan codebase list AND name the slot-vs-
+// codebase distinction so the sub-agent retries with the correct id
+// on the first try.
+func TestRecordFragment_RejectsSlotHostname(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	outputRoot := filepath.Join(dir, "run")
+	if _, err := store.OpenOrCreate("synth-showcase", outputRoot); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fragment", Slug: "synth-showcase",
+		FragmentID: "codebase/appdev/intro",
+		Fragment:   "any body",
+	})
+	if res.OK {
+		t.Fatalf("expected rejection on slot hostname, got OK: %+v", res)
+	}
+	if !strings.Contains(res.Error, "slot") || !strings.Contains(res.Error, "codebase") {
+		t.Errorf("error must name slot-vs-codebase distinction, got: %q", res.Error)
+	}
+	for _, hostname := range []string{"api", "app", "worker"} {
+		if !strings.Contains(res.Error, hostname) {
+			t.Errorf("error must name plan codebase %q, got: %q", hostname, res.Error)
+		}
+	}
+}
+
+// TestRecordFragment_AcceptsCodebaseHostname — same Plan, correct id
+// → ok:true. Pins that the rejection is specific to slot hostnames
+// and doesn't over-trigger.
+func TestRecordFragment_AcceptsCodebaseHostname(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	outputRoot := filepath.Join(dir, "run")
+	if _, err := store.OpenOrCreate("synth-showcase", outputRoot); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fragment", Slug: "synth-showcase",
+		FragmentID: "codebase/app/intro",
+		Fragment:   "scaffold-authored intro for app",
+	})
+	if !res.OK {
+		t.Fatalf("record-fragment with codebase hostname should succeed, got: %+v", res)
+	}
+}
+
 // TestRecordFragment_ResponseEchoesID — run-9-readiness §2.J. Response
 // includes fragmentId + bodyBytes + appended so the author sees which
 // fragment landed and whether append semantics fired.

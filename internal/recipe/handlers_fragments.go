@@ -21,8 +21,8 @@ func recordFragment(sess *Session, id, body string) (int, bool, error) {
 	if sess.Plan == nil {
 		return 0, false, errors.New("record-fragment: plan not initialized — call update-plan first")
 	}
-	if !isValidFragmentID(sess.Plan, id) {
-		return 0, false, fmt.Errorf("record-fragment: unknown fragmentId %q", id)
+	if err := validateFragmentID(sess.Plan, id); err != nil {
+		return 0, false, fmt.Errorf("record-fragment: %w", err)
 	}
 	if strings.HasPrefix(id, "env/") && strings.Contains(id, "/import-comments/") {
 		if err := applyEnvComment(sess.Plan, id, body); err != nil {
@@ -96,6 +96,26 @@ func isAppendFragmentID(id string) bool {
 // fragmentIDRoot is the only root-scoped fragment id. Constants prevent
 // a typo here from silently diverging from the assembler's marker id.
 const fragmentIDRoot = "root/intro"
+
+// validateFragmentID returns nil for a recognized fragment id, an
+// actionable error otherwise. Wraps isValidFragmentID so the codebase/
+// case can surface the slot-vs-codebase distinction (run-11 gap N-1).
+func validateFragmentID(plan *Plan, id string) error {
+	if rest, ok := strings.CutPrefix(id, "codebase/"); ok {
+		slash := strings.IndexByte(rest, '/')
+		if slash <= 0 {
+			return fmt.Errorf("malformed codebase fragmentId %q (expected codebase/<hostname>/<name>)", id)
+		}
+		host := rest[:slash]
+		if err := validateCodebaseHostname(plan, host); err != nil {
+			return fmt.Errorf("fragmentId %q: %w", id, err)
+		}
+	}
+	if isValidFragmentID(plan, id) {
+		return nil
+	}
+	return fmt.Errorf("unknown fragmentId %q", id)
+}
 
 // isValidFragmentID reports whether id matches one of the declared
 // fragment shapes given the plan's codebases. Covers root/, env/<N>/,
