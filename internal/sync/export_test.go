@@ -107,6 +107,32 @@ func TestExportRecipe(t *testing.T) {
 			},
 		},
 		{
+			// run-11 gap M-3 — the overlay reads README/CLAUDE from the
+			// per-codebase SourceRoot (= appDir), not from the legacy
+			// pre-§L stagedDir at <recipeDir>/<appName>/.
+			name: "overlay reads README/CLAUDE from SourceRoot",
+			setup: func(t *testing.T, root string) ExportOpts {
+				t.Helper()
+				recipeDir := filepath.Join(root, "nestjs-showcase")
+				writeFile(t, filepath.Join(recipeDir, "README.md"), "# root")
+				writeFile(t, filepath.Join(recipeDir, "environments", "0 — AI Agent", "import.yaml"), "project:\n")
+
+				appDir := filepath.Join(root, "appdev")
+				writeFile(t, filepath.Join(appDir, "src", "main.ts"), "boot()")
+				writeFile(t, filepath.Join(appDir, "package.json"), "{}")
+				// Stitch landed README + CLAUDE at SourceRoot directly.
+				writeFile(t, filepath.Join(appDir, "README.md"), "# stitched README at SourceRoot")
+				writeFile(t, filepath.Join(appDir, "CLAUDE.md"), "# stitched CLAUDE at SourceRoot")
+
+				return ExportOpts{RecipeDir: recipeDir, AppDirs: []string{appDir}}
+			},
+			wantIn: []string{
+				"nestjs-showcase-zcprecipator/appdev/src/main.ts",
+				"nestjs-showcase-zcprecipator/appdev/README.md",
+				"nestjs-showcase-zcprecipator/appdev/CLAUDE.md",
+			},
+		},
+		{
 			name: "no app dirs",
 			setup: func(t *testing.T, root string) ExportOpts {
 				t.Helper()

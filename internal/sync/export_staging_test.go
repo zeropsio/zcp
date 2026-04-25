@@ -32,10 +32,11 @@ func TestExportRecipe_OverlaysStagedWriterContent(t *testing.T) {
 	// Recipe root + one env folder so findEnvFolders resolves.
 	mustWrite(t, filepath.Join(recipeDir, "README.md"), "# root recipe readme")
 	mustWrite(t, filepath.Join(recipeDir, "environments", "0 \u2014 AI Agent", "README.md"), "env 0 body")
-	// Writer-staged per-codebase output under recipeDir.
-	mustWrite(t, filepath.Join(recipeDir, "apidev", "README.md"), "api README staged")
-	mustWrite(t, filepath.Join(recipeDir, "apidev", "CLAUDE.md"), "api CLAUDE staged")
-	// App source dir (no git — falls back to walk).
+	// Run-11 M-3: post-§L stitch lands README + CLAUDE at SourceRoot
+	// (= appDir) directly, NOT under <recipeDir>/<codebase>/.
+	mustWrite(t, filepath.Join(appDir, "README.md"), "api README at SourceRoot")
+	mustWrite(t, filepath.Join(appDir, "CLAUDE.md"), "api CLAUDE at SourceRoot")
+	// App source.
 	mustWrite(t, filepath.Join(appDir, "main.go"), "package main")
 
 	// Appname must match the staged dir name.

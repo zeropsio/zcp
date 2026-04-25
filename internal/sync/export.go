@@ -291,9 +291,13 @@ func ExportRecipe(opts ExportOpts) (*ExportResult, error) {
 			tmpFile.Close()
 			return nil, fmt.Errorf("export app dir %s: %w", rawAppDir, err)
 		}
-		// Overlay writer-staged per-codebase markdown from recipeDir.
-		stagedDir := filepath.Join(recipeDir, appName)
-		if err := overlayStagedWriterContent(tw, stagedDir, archiveAppDir); err != nil {
+		// Overlay per-codebase markdown from the SourceRoot (run-11 M-3).
+		// Pre-§L the writer staged README/CLAUDE under <recipeDir>/<appName>/;
+		// post-§L stitch writes them at <cb.SourceRoot>/ directly. The
+		// overlay covers the case where uncommitted README/CLAUDE land
+		// in the SourceRoot after stitch but before any git commit, so
+		// exportGitSubtree (committed-only) misses them.
+		if err := overlayStagedWriterContent(tw, appDir, archiveAppDir); err != nil {
 			tw.Close()
 			gw.Close()
 			tmpFile.Close()
