@@ -15,12 +15,21 @@ import (
 // written at discovery time — classification is a record-time decision
 // by the sub-agent, not a consume-time decision by the writer (plan
 // §5 P4).
+//
+// FailureMode/FixApplied/Evidence/Scope (run-11 gap U-2) capture the
+// natural shape of a deploy-time discovery the v2 schema already had —
+// adding them to v3 stops agents from flattening hard-won discoveries
+// into a thin Symptom and discarding the fix. V-1's classifier reads
+// FailureMode + FixApplied to auto-detect self-inflicted shape.
 type FactRecord struct {
 	Topic       string            `json:"topic"`
 	Symptom     string            `json:"symptom"`
 	Mechanism   string            `json:"mechanism"`
 	SurfaceHint string            `json:"surfaceHint"`
 	Citation    string            `json:"citation"`
+	FailureMode string            `json:"failureMode,omitempty"`
+	FixApplied  string            `json:"fixApplied,omitempty"`
+	Evidence    string            `json:"evidence,omitempty"`
 	Scope       string            `json:"scope,omitempty"`
 	RecordedAt  string            `json:"recordedAt,omitempty"`
 	Author      string            `json:"author,omitempty"`

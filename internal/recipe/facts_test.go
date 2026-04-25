@@ -105,6 +105,85 @@ func TestFactsLog_AppendAndRead(t *testing.T) {
 	}
 }
 
+// TestFactRecord_AcceptsEnrichedFields — run-11 gap U-2. v3 schema now
+// carries failureMode/fixApplied/evidence/scope (the v2 shape that ran-10
+// agents reached for naturally). Fields round-trip through facts.jsonl
+// and surface to V-1's classifier so self-inflicted shape can be
+// detected from fixApplied + failureMode.
+func TestFactRecord_AcceptsEnrichedFields(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	log := OpenFactsLog(filepath.Join(dir, "facts.jsonl"))
+
+	rec := FactRecord{
+		Topic:       "deployignore-filters-build-artifact",
+		Symptom:     "Cannot find module /var/www/dist/main.js looping every 2s",
+		Mechanism:   "deployignore filters the deploy bundle, not just the source upload",
+		SurfaceHint: "platform-trap",
+		Citation:    "deploy-files",
+		FailureMode: "Cannot find module /var/www/dist/main.js",
+		FixApplied:  "removed dist from .deployignore",
+		Evidence:    "deploy log line 12:35; runtime log loop 12:36-12:55",
+		Scope:       "content",
+	}
+	if err := log.Append(rec); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	got, err := log.Read()
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 record, got %d", len(got))
+	}
+	if got[0].FailureMode != rec.FailureMode {
+		t.Errorf("FailureMode round-trip: got %q, want %q", got[0].FailureMode, rec.FailureMode)
+	}
+	if got[0].FixApplied != rec.FixApplied {
+		t.Errorf("FixApplied round-trip: got %q, want %q", got[0].FixApplied, rec.FixApplied)
+	}
+	if got[0].Evidence != rec.Evidence {
+		t.Errorf("Evidence round-trip: got %q, want %q", got[0].Evidence, rec.Evidence)
+	}
+	if got[0].Scope != rec.Scope {
+		t.Errorf("Scope round-trip: got %q, want %q", got[0].Scope, rec.Scope)
+	}
+}
+
+// TestFactRecord_OptionalEnrichedFields — backward-compat: callers that
+// don't set the v3 enriched fields still validate + persist correctly.
+// No existing call breaks.
+func TestFactRecord_OptionalEnrichedFields(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	log := OpenFactsLog(filepath.Join(dir, "facts.jsonl"))
+
+	rec := FactRecord{
+		Topic:       "cross-service-env-autoinject",
+		Symptom:     "503 on first deploy",
+		Mechanism:   "self-shadow trap",
+		SurfaceHint: "platform-trap",
+		Citation:    "env-var-model",
+	}
+	if err := log.Append(rec); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	got, err := log.Read()
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 record, got %d", len(got))
+	}
+	if got[0].FailureMode != "" || got[0].FixApplied != "" || got[0].Evidence != "" {
+		t.Errorf("enriched fields should be empty when not set: %+v", got[0])
+	}
+}
+
 func TestFactsLog_FilterByHint(t *testing.T) {
 	t.Parallel()
 
