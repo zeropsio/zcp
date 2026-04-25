@@ -44,7 +44,7 @@ func pollDeployBuild(
 		// Dev-server lifecycle guidance is owned by atoms: they prescribe
 		// `zerops_dev_server` in container env and the harness background
 		// task primitive in local env. zerops_verify covers runtime-state
-		// assertions honestly (service_running, startup_detected, http_root).
+		// assertions honestly (service_running, error_logs, http_root).
 		// The message here reports only what the platform told us.
 		result.Message = fmt.Sprintf("Successfully deployed to %s. Run zerops_verify for runtime state.", result.TargetService)
 		if result.SourceService == result.TargetService {

@@ -128,9 +128,6 @@ func verifyService(
 		wg.Go(func() {
 			logAccess, logErr := client.GetProjectLog(ctx, projectID)
 			checks := batchLogChecks(ctx, fetcher, logAccess, logErr, svc.ID)
-			if rc == RuntimeDynamic {
-				checks = append(checks, checkStartupDetected(ctx, fetcher, logAccess, logErr, svc.ID))
-			}
 			mu.Lock()
 			logChecks = checks
 			mu.Unlock()
@@ -187,7 +184,6 @@ func skipChecksForClass(rc RuntimeClass) []CheckResult {
 	case RuntimeDynamic:
 		checks = append(checks,
 			CheckResult{Name: "error_logs", Status: CheckSkip, Detail: skipDetail},
-			CheckResult{Name: "startup_detected", Status: CheckSkip, Detail: skipDetail},
 			CheckResult{Name: "http_root", Status: CheckSkip, Detail: skipDetail},
 		)
 	case RuntimeImplicit:

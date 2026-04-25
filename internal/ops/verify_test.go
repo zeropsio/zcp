@@ -184,14 +184,13 @@ func TestVerify_DynamicRuntime_AllChecks(t *testing.T) {
 	if result.Status != "healthy" {
 		t.Errorf("Status = %q, want %q", result.Status, "healthy")
 	}
-	// Dynamic: service_running, error_logs, startup_detected, http_root = 4
-	if len(result.Checks) != 4 {
-		t.Fatalf("Checks count = %d, want 4; checks: %v", len(result.Checks), checkNames(result.Checks))
+	// Dynamic: service_running, error_logs, http_root = 3
+	if len(result.Checks) != 3 {
+		t.Fatalf("Checks count = %d, want 3; checks: %v", len(result.Checks), checkNames(result.Checks))
 	}
 
 	findCheck(t, result, "service_running", "pass")
 	findCheck(t, result, "error_logs", "pass")
-	findCheck(t, result, "startup_detected", "pass")
 	// HTTP check skip (no subdomain).
 	findCheck(t, result, "http_root", "skip")
 }
@@ -212,9 +211,9 @@ func TestVerify_RuntimeStopped(t *testing.T) {
 	if result.Status != "unhealthy" {
 		t.Errorf("Status = %q, want unhealthy", result.Status)
 	}
-	// Dynamic stopped: 4 checks (service_running fail + 3 skip)
-	if len(result.Checks) != 4 {
-		t.Fatalf("Checks count = %d, want 4; checks: %v", len(result.Checks), checkNames(result.Checks))
+	// Dynamic stopped: 3 checks (service_running fail + 2 skip)
+	if len(result.Checks) != 3 {
+		t.Fatalf("Checks count = %d, want 3; checks: %v", len(result.Checks), checkNames(result.Checks))
 	}
 	if result.Checks[0].Status != "fail" {
 		t.Errorf("service_running status = %q, want fail", result.Checks[0].Status)
@@ -260,30 +259,6 @@ func TestVerify_RuntimeErrorLogs(t *testing.T) {
 	findCheck(t, result, "error_logs", "info")
 }
 
-func TestVerify_RuntimeNoStartup(t *testing.T) {
-	t.Parallel()
-
-	mock := platform.NewMock().
-		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING", Ports: []platform.Port{{Port: 3000}}},
-		}).
-		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})
-
-	fetcher := &callbackLogFetcher{fn: func(params platform.LogFetchParams) ([]platform.LogEntry, error) {
-		return nil, nil // no entries for any query
-	}}
-
-	result, err := Verify(context.Background(), mock, fetcher, http.DefaultClient, "proj-1", "app")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if result.Status != "degraded" {
-		t.Errorf("Status = %q, want degraded", result.Status)
-	}
-	findCheck(t, result, "startup_detected", "fail")
-}
-
 func TestVerify_RuntimeNoSubdomain(t *testing.T) {
 	t.Parallel()
 
@@ -312,6 +287,16 @@ func TestVerify_RuntimeNoSubdomain(t *testing.T) {
 	}
 }
 
+// TestVerify_RuntimeCrashLoop pins the documented limitation: error_logs is
+// advisory ("info"), so a service that's RUNNING + emitting crash traces in
+// logs aggregates to `healthy` — verify reports the crash trace via the
+// error_logs.Detail field but doesn't downgrade aggregate status. Agents
+// must read error_logs detail in the response, not just the headline.
+// Earlier the startup_detected check accidentally caught this case (its
+// log-search-substring was broken-by-design and always failed); deleting
+// that check made the limitation visible. The right fix is to make
+// error_logs status threshold-driven rather than re-introducing a broken
+// pattern matcher — tracked separately.
 func TestVerify_RuntimeCrashLoop(t *testing.T) {
 	t.Parallel()
 
@@ -325,9 +310,6 @@ func TestVerify_RuntimeCrashLoop(t *testing.T) {
 		if params.Severity == "error" {
 			return []platform.LogEntry{{Message: "Error: Cannot find module 'express'"}}, nil
 		}
-		if params.Search != "" {
-			return nil, nil // no startup marker
-		}
 		return nil, nil
 	}}
 
@@ -336,13 +318,14 @@ func TestVerify_RuntimeCrashLoop(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.Status != "degraded" {
-		t.Errorf("Status = %q, want degraded (crash loop = running + errors + no startup)", result.Status)
-	}
-
+	// Aggregate is healthy because error_logs is advisory; subdomain not
+	// enabled so http_root skips. Detail of error_logs carries the crash
+	// trace for agent introspection.
 	findCheck(t, result, "service_running", "pass")
-	findCheck(t, result, "error_logs", "info")
-	findCheck(t, result, "startup_detected", "fail")
+	errLog := findCheck(t, result, "error_logs", "info")
+	if !strings.Contains(errLog.Detail, "Cannot find module") {
+		t.Errorf("error_logs.detail = %q, want crash trace text", errLog.Detail)
+	}
 }
 
 func TestVerify_StaticRuntime_SkipsStatusAndStartup(t *testing.T) {
@@ -398,13 +381,6 @@ func TestVerify_ImplicitWebserver_SkipsStartup(t *testing.T) {
 	findCheck(t, result, "service_running", "pass")
 	findCheck(t, result, "error_logs", "pass")
 	findCheck(t, result, "http_root", "skip") // no subdomain
-
-	// Verify startup_detected is NOT present.
-	for _, c := range result.Checks {
-		if c.Name == "startup_detected" {
-			t.Error("startup_detected should not be present for implicit webserver")
-		}
-	}
 }
 
 func TestVerify_WorkerRuntime_NoHTTPChecks(t *testing.T) {
@@ -435,11 +411,10 @@ func TestVerify_WorkerRuntime_NoHTTPChecks(t *testing.T) {
 	findCheck(t, result, "service_running", "pass")
 	findCheck(t, result, "error_logs", "pass")
 
-	// No HTTP checks or startup_detected for workers.
+	// No HTTP checks for workers.
 	for _, c := range result.Checks {
-		switch c.Name {
-		case "http_root", "startup_detected":
-			t.Errorf("check %q should not be present for worker runtime", c.Name)
+		if c.Name == "http_root" {
+			t.Errorf("http_root should not be present for worker runtime")
 		}
 	}
 }
@@ -517,7 +492,7 @@ func TestVerify_LogFetchError(t *testing.T) {
 
 	// Log checks should be skip, not fail.
 	for _, c := range result.Checks {
-		if c.Name == "error_logs" || c.Name == "startup_detected" {
+		if c.Name == "error_logs" {
 			if c.Status != "skip" {
 				t.Errorf("Check %q: status = %q, want skip", c.Name, c.Status)
 			}

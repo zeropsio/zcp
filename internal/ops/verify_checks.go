@@ -12,13 +12,12 @@ import (
 )
 
 const (
-	checkNameErrorLogs       = "error_logs"
-	checkNameStartupDetected = "startup_detected"
-	checkNameHTTPRoot        = "http_root"
-	runtimeStatic            = "static"
-	runtimeNginx             = "nginx"
-	runtimePHPApach          = "php-apache"
-	runtimePHPNginx          = "php-nginx"
+	checkNameErrorLogs = "error_logs"
+	checkNameHTTPRoot  = "http_root"
+	runtimeStatic      = "static"
+	runtimeNginx       = "nginx"
+	runtimePHPApach    = "php-apache"
+	runtimePHPNginx    = "php-nginx"
 )
 
 // RuntimeClass categorizes services for verify check dispatch.
@@ -89,30 +88,6 @@ func batchLogChecks(
 		return []CheckResult{{Name: name, Status: CheckInfo, Detail: strings.Join(msgs, " | ")}}
 	}
 	return []CheckResult{{Name: name, Status: CheckPass}}
-}
-
-func checkStartupDetected(
-	ctx context.Context, fetcher platform.LogFetcher,
-	logAccess *platform.LogAccess, logErr error,
-	serviceID string,
-) CheckResult {
-	name := checkNameStartupDetected
-	if logErr != nil {
-		return CheckResult{Name: name, Status: CheckSkip, Detail: fmt.Sprintf("log backend unavailable: %v", logErr)}
-	}
-	entries, err := fetcher.FetchLogs(ctx, logAccess, platform.LogFetchParams{
-		ServiceID: serviceID,
-		Search:    "listening|started|ready",
-		Since:     time.Now().Add(-5 * time.Minute),
-		Limit:     1,
-	})
-	if err != nil {
-		return CheckResult{Name: name, Status: CheckSkip, Detail: fmt.Sprintf("log backend unavailable: %v", err)}
-	}
-	if len(entries) == 0 {
-		return CheckResult{Name: name, Status: CheckFail, Detail: "no startup message found in last 5m"}
-	}
-	return CheckResult{Name: name, Status: CheckPass}
 }
 
 // checkHTTPRoot performs GET / and asks the question "is the HTTP server

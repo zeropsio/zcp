@@ -594,7 +594,6 @@ Phase 3 — Cross-verify:
 | Failed check | Diagnosis | Fix |
 |-------------|-----------|-----|
 | `service_running`: fail | Service not running | Check deploy status, `zerops_logs severity=error` |
-| `startup_detected`: fail | App crashed on start | `zerops_logs severity=error since=5m` |
 | `error_logs`: info | Advisory — errors found | Read detail. Infra noise → ignore. App errors → investigate. |
 | `http_root`: fail | HTTP server returned 5xx or refused connection (4xx passes — proof-of-life check, not an endpoint contract check) | Check port, binding, start command, runtime logs |
 

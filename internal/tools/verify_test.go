@@ -162,7 +162,7 @@ func TestVerifyTool_GracefulLogError(t *testing.T) {
 	}
 	// Log checks should be skip, not fail or crash.
 	for _, c := range vr.Checks {
-		if c.Name == "error_logs" || c.Name == "startup_detected" {
+		if c.Name == "error_logs" {
 			if c.Status != "skip" {
 				t.Errorf("Check %q: status = %q, want skip", c.Name, c.Status)
 			}
