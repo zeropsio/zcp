@@ -89,14 +89,42 @@ porter which guide you read — tell them the rule. If a guide name
 genuinely belongs in prose ("Per the http-support guide…"), it can
 stay; mechanical boilerplate is the target.
 
-### CLAUDE.md — codebase-scoped, 30–50 lines (cap 60)
+### CLAUDE.md — porter-facing, codebase-scoped, 30–50 lines (cap 60)
 
 Target 30–50 lines; hard cap 60. Reference:
 `laravel-showcase-app/CLAUDE.md` (33 lines). One fact per line;
-multi-line only with code examples. Do NOT add cross-codebase
-sections — `Quick curls`, `Smoke test(s)`, `Local curl`,
-`In-container curls`, `Redeploy vs edit`, `Boot-time connectivity` —
-those live in the recipe root README.
+multi-line only with code examples.
+
+The reader is an AI agent or human developer working in this codebase
+in their own editor with their own Zerops project. They do NOT have
+zcp's control plane. Write **framework-canonical commands**, never
+MCP tool invocations.
+
+GOOD `Dev loop: \`npm run start:dev\` (Nest CLI watches src/**, reloads on change).`
+BAD  `Dev loop: \`zerops_dev_server action=start hostname=apidev command="npm run start:dev"\`.`
+
+GOOD `Deploy: edit, then commit + push to your Zerops-connected branch.`
+BAD  `Deploy: \`zerops_deploy targetService=apidev\`.`
+
+The platform's `start: zsc noop --silent` is background context — one
+line, factual, not the dev loop the porter follows. The porter starts
+the watcher themselves.
+
+What goes here:
+- **Zerops service facts** — hostnames, port, runtime, subdomain, etc.
+  Concise list. Reference: `laravel-showcase-app/CLAUDE.md` (33 lines).
+- **Dev loop** — framework-canonical command (`npm run start:dev`,
+  `npm run dev`, `php artisan serve`, etc.).
+- **Notes** — codebase-scoped operational facts that don't fit
+  service-facts (cross-codebase rules, things-NOT-to-add).
+
+What does NOT go here:
+- MCP tool invocations (`zerops_*`, `zcp *`).
+- zcli commands (`zcli push`, `zcli vpn`).
+- Cross-codebase runbooks (those live in the recipe-root README) —
+  `Quick curls`, `Smoke test(s)`, `Local curl`, `In-container curls`,
+  `Redeploy vs edit`, `Boot-time connectivity`.
+- Quick curls / Smoke tests / Boot-time connectivity narration.
 
 ## Placement
 

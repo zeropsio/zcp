@@ -35,8 +35,13 @@ import (
 // rewritten Managed services section (own-key aliasing teaching) and
 // the new Alias-type contracts table (TEACH-side fix for the run-11
 // `https://${<host>_zeropsSubdomain}` double-prefix bug).
+//
+// Run-12 §C raised the cap to 20 KB to fit the rewritten CLAUDE.md
+// subsection (porter-facing rule + GOOD/BAD examples + what-goes-here
+// / what-doesn't lists). TEACH-side fix for the run-11 CLAUDE.md MCP-
+// tool leak.
 const (
-	ScaffoldBriefCap = 18 * 1024
+	ScaffoldBriefCap = 20 * 1024
 	FeatureBriefCap  = 12 * 1024
 )
 
