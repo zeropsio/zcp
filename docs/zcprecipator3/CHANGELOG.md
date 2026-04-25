@@ -4,6 +4,81 @@ Running log of changes on top of [plan.md](plan.md). Each entry captures what ch
 
 ---
 
+## 2026-04-25 — run-11-readiness (U / V / M / N / O / P / R / Q / S)
+
+### Context
+
+Run 10 (`nestjs-showcase`, 2026-04-25) was the third v3 dogfood and the second to reach `complete-phase finalize` green. All run-10-readiness workstreams (L / M / N / O / P / Q1..Q4) shipped before the run closed and the tranche 3 brief-hygiene fixes held under load. But the rendered deliverable failed reference parity in two structurally distinct ways: a SourceRoot regression caused stitch to write per-codebase README + CLAUDE to `/var/www/<hostname>/` (no `dev` suffix) — silently no-op'ing M's auto-embed of `<SourceRoot>/zerops.yaml` as IG item #1; and a content-quality audit against [docs/spec-content-surfaces.md](../spec-content-surfaces.md) found that 7 of 15 published codebase KB bullets failed the spec's DISCARD-class litmus tests. Adjacent: a v2 `zerops_record_fact` tool stayed registered alongside the v3 action and out-competed it on description, routing 5 of run-10's hardest-won discoveries (npx ts-node trap, .deployignore-bricks-dist, NATS contract, etc.) to `legacy-facts.jsonl` which the v3 stitch pipeline doesn't read. Full analysis at [docs/zcprecipator3/runs/10/ANALYSIS.md](runs/10/ANALYSIS.md), implementation plan at [docs/zcprecipator3/plans/run-11-readiness.md](plans/run-11-readiness.md).
+
+Run 11 ships in three tranches: foundation (U / V / M) ensures hard-won discoveries reach the deliverable and the engine fails loud at boundaries that previously failed silently; content discipline (N / O / P / R) tightens the routing + style lattice so per-codebase content has engine-enforced quality rather than agent-self-graded; polish (Q / S) adds the apps-repo git-history precondition and the engine-composed finalize brief.
+
+### Foundation (tranche 1) — U / V / M
+
+1. **U-1 — refuse v2 `zerops_record_fact` during a v3 recipe session.** [internal/tools/record_fact.go](../../internal/tools/record_fact.go) `resolveFactLogPath` replaces the silent route-to-`legacy-facts.jsonl` with an error naming the v3 action + slug + schema. Without this, the v3 pipeline never sees facts the agent reaches for v2 to record (run-10 lost 5 hard-won discoveries this way). v2 description prefixed with the v3-redirect note. v2-only callers (no recipe session) keep working unchanged.
+
+2. **U-2 — enrich v3 `FactRecord` schema with `failureMode` / `fixApplied` / `evidence` / `scope`.** [internal/recipe/facts.go](../../internal/recipe/facts.go). The v2 schema captured the natural shape of a deploy-time discovery; v3's terser schema forced agents to flatten the discovery into `symptom` and discard the fix. Add the four fields as optional/JSON-tagged so existing callers work unchanged. Required for V-1's auto-classification.
+
+3. **V-1 — classifier auto-detects self-inflicted from `fixApplied`+`failureMode` shape.** [internal/recipe/classify.go](../../internal/recipe/classify.go). Two regexes pattern-match recipe-source change phrasing in `fixApplied` (`(removed|added|changed) X from Y`, `switched X to Y`); a small platform-mechanism vocabulary list (`Zerops`, `L7`, `balancer`, `VXLAN`, `${...}`, etc.) rules out genuine platform teaching when that vocabulary appears in `failureMode`. When both signals fire, `Classify` overrides the agent's `surfaceHint` to `ClassSelfInflicted`. New `ClassifyWithNotice` returns the warning for record-fact callers; new `RecipeResult.Notice` surfaces it to the agent at recording time.
+
+4. **V-2 — `kb-bullet-paraphrases-cited-guide` validator.** [internal/recipe/validators_kb_quality.go](../../internal/recipe/validators_kb_quality.go) (new file). Spec rule 3 says "if a guide exists, the fact is probably a platform invariant the platform already documents — don't duplicate the guide's content." Per-bullet containment of the bullet's tokens within the cited guide's top-100 most frequent meaningful tokens; > 50% flags. Guide content loaded dynamically via `knowledge.Store.Get` from an explicit `guideKnowledgeSources` map (small, named — `env-var-model` → `guides/environment-variables` + `themes/core`, etc.). Containment, not symmetric Jaccard — bullet sizes are dwarfed by guide bodies. Memoized per process. Deterministic; no LLM grading.
+
+5. **V-3 — `kb-bullet-no-platform-mention` validator.** Bullets with zero platform-side vocabulary (only framework concerns — NestJS controller lifecycle, Express middleware, Svelte mount) are framework-quirk per spec rule 5 → flag. Static base list (Zerops, L7, balancer, subdomain, zsc, execOnce, ${...}) extended at validate-time with `Plan.Codebases` + `Plan.Services` hostnames so recipe-specific service names count as platform mentions.
+
+6. **V-4 — `kb-bullet-self-inflicted-shape` regex validator.** Bullets in first-person/recipe-author voice ("we tried X", "the fix was", "after running") are scaffold-debugging forensics, not porter-facing teaching → flag. Spec rule 4 mechanized at the bullet body.
+
+7. **V-5 — scaffold + feature briefs add `### Self-inflicted litmus` subsection.** [internal/recipe/content/briefs/scaffold/content_authoring.md](../../internal/recipe/content/briefs/scaffold/content_authoring.md), [internal/recipe/content/briefs/feature/content_extension.md](../../internal/recipe/content/briefs/feature/content_extension.md). Three labeled run-10 anti-patterns (`npx ts-node`, `dist`-in-`.deployignore`, `Trust proxy is per-framework`) + the porter-clone-question operational rule. `ScaffoldBriefCap` raised 12 KB → 14 KB; later raised again to 16 KB for O-1 Citation map subsection.
+
+8. **M-1 — stitch hard-fails on non-abs / non-`dev`-suffixed `SourceRoot`.** [internal/recipe/handlers.go](../../internal/recipe/handlers.go). Run 10 closed with `cb.SourceRoot` carrying bare hostnames at finalize stitch time, causing README/CLAUDE to land at cwd-relative paths nothing else reads. `stitchContent` now refuses upfront on any non-absolute SourceRoot or any SourceRoot without a `dev` suffix; error names the codebase + the violation. Test fixtures updated to use `<host>dev` paths.
+
+9. **M-2 — `readCodebaseYAMLForHost` hard-fails on missing yaml when SourceRoot non-empty.** [internal/recipe/assemble.go](../../internal/recipe/assemble.go). Soft-fail-to-empty-string was the reason `injectIGItem1` silently no-op'd in run 10 — when SourceRoot pointed at a yaml-less directory, the read returned `""` and the IG yaml-block injection was skipped. Now returns `(string, error)`; `AssembleCodebaseREADME` propagates so stitch fails loud. Empty SourceRoot keeps returning `("", nil)` for genuinely pre-scaffold renders.
+
+10. **M-3 — `zcp sync recipe export` reads README/CLAUDE from `<SourceRoot>/`.** [internal/sync/export.go](../../internal/sync/export.go). Pre-§L the writer staged per-codebase content under `<recipeDir>/<appName>/`; post-§L stitch writes them at `<cb.SourceRoot>/` directly. The export overlay was pinned at the old layout. Redirect to read from `appDir` (= SourceRoot) so uncommitted post-stitch markdown reaches the tarball when `exportGitSubtree`'s committed-only walk would otherwise miss them.
+
+### Content discipline (tranche 2) — N / O / P / R
+
+11. **N-1 — tighten `codebaseKnown` to reject slot hostnames + actionable error message.** [internal/recipe/assemble.go](../../internal/recipe/assemble.go), [handlers_fragments.go](../../internal/recipe/handlers_fragments.go). New `validateCodebaseHostname` returns an error naming the Plan codebase list AND the slot-vs-codebase distinction (slot is the SSHFS mount, codebase is the logical name). `record-fragment` surfaces the actionable message so sub-agents retry with the correct id on the first try (run-10 scaffold-app spent 2m37s + 8 zerops_knowledge requeries cleaning up `codebase/appdev/*` ids).
+
+12. **N-2 — scaffold-brief tripwire names the slot-vs-codebase distinction.** Author-time companion to N-1.
+
+13. **O-1 — citations live in prose, not as boilerplate.** [internal/recipe/content/briefs/scaffold/content_authoring.md](../../internal/recipe/content/briefs/scaffold/content_authoring.md). Rewrote KB Good example to drop the `Cited guide:` tail. Added a Citation map subsection that frames citations as author-time signals — call `zerops_knowledge` first, write the rule's prose, don't tell the porter which guide you read. Run-10 ended every bullet with literal `Cited guide: <name>.` boilerplate, with citation noise propagating into env import.yaml comments.
+
+14. **O-2 — `kb-cited-guide-boilerplate` + `env-yaml-cite-meta` validators.** [internal/recipe/validators_kb_quality.go](../../internal/recipe/validators_kb_quality.go), [internal/recipe/validators_root_env.go](../../internal/recipe/validators_root_env.go). KB validator regex-flags bullets ending with `Cited guide: <name>` boilerplate; env validator regex-flags env import.yaml comments containing `(cite x)` or `Cited guide:` meta phrasing. Two distinct violation codes so authors can act on the right one (V-2's paraphrase-overlap catch is separate).
+
+15. **P-1 — rewrite `.deployignore` paragraph in `themes/core.md`.** [internal/knowledge/themes/core.md](../../internal/knowledge/themes/core.md). The "Recommended to mirror `.gitignore` patterns" recommendation was the root cause of run 10's three scaffold sub-agents reflexively authoring `.deployignore` — and worker scaffold listing `dist/` in it, bricking cross-deploy for ~20 minutes. Replace with: most projects don't need it, `.git` is auto-excluded, editor metadata belongs in `.gitignore`, never list `dist/` or `node_modules/`.
+
+16. **P-2 — scaffold-brief tripwire forbids reflexive `.deployignore` authoring.** Author-time companion to P-1's atom rewrite.
+
+17. **P-3 — `zerops_deploy` lints `.deployignore` for trap patterns.** [internal/ops/deploy_deployignore.go](../../internal/ops/deploy_deployignore.go) (new file). New `LintDeployignore` returns hard-reject errors for `dist`/`node_modules` (deploy artifacts; listing them bricks the runtime), warnings for `.git`/`.idea`/`.vscode`/`*.log` (typically redundant — Zerops builder excludes `.git`, rest belongs in `.gitignore`). `DeployLocal` now blocks on errors and surfaces warnings up the existing channel.
+
+18. **R-1 + R-2 — IG validator + scaffold-brief unify on `### N.` header shape.** [internal/recipe/validators_codebase.go](../../internal/recipe/validators_codebase.go). Run 10 closed with the validator enforcing plain ordered-list while the scaffold brief instructed `### N.` headers — finalize had to rewrite IG fragments to satisfy. Pick canonical: `### N.` headers (matches the engine-generated item #1 and the laravel-showcase reference). Validator now requires heading shape and flags plain ordered-list with `codebase-ig-plain-ordered-list`; brief already mandates `### 2. <title>`. Removed unused `numberedItemRE`.
+
+### Polish (tranche 3) — Q / S
+
+19. **Q-1 + Q-2 — scaffold mandates `git init` at close + feature mandates per-feature commits.** [internal/recipe/content/briefs/scaffold/content_authoring.md](../../internal/recipe/content/briefs/scaffold/content_authoring.md), [internal/recipe/content/briefs/feature/content_extension.md](../../internal/recipe/content/briefs/feature/content_extension.md). Apps-repo publish path needs each codebase's SourceRoot to have `.git/` initialized + at least one commit. Run 10 scaffold sub-agents wrote source + `zerops.yaml` to `/var/www/<h>dev/` correctly but never ran `git init`; doing it post-hoc loses per-feature commit shape. `FeatureBriefCap` raised 10 KB → 12 KB.
+
+20. **Q-3 — `zcp sync recipe export` warns on missing `<SourceRoot>/.git/`.** [internal/sync/export.go](../../internal/sync/export.go). Stderr warning when an `appDir` lacks `.git/` — informational, doesn't block, but gives the agent + user a visible signal that the git-init mandate (Q-1) was skipped.
+
+21. **S-1 — engine-composed `briefKind=finalize` wrapper.** [internal/recipe/briefs.go](../../internal/recipe/briefs.go), [internal/recipe/content/briefs/finalize/](../../internal/recipe/content/briefs/finalize/). New `BuildFinalizeBrief` derives codebase paths, managed-service list, and fragment-count math from `Plan`; embeds finalize-specific validator tripwires (porter voice, citation-noise ban, IG-shape mandate, self-inflicted litmus). New `BriefFinalize` kind + `content/briefs/finalize/{intro, validator_tripwires}.md` atoms. Replaces the hand-typed wrapper main agent used in run 10 (math errors and obsolete paths compounded across runs). `FinalizeBriefCap` = 12 KB.
+
+22. **S-2 — `phase_entry/finalize.md` documents the dispatch option.** [internal/recipe/content/phase_entry/finalize.md](../../internal/recipe/content/phase_entry/finalize.md). Document the choice — main agent direct authoring (low count) vs sub-agent dispatch (high count, mechanical) — and point at `zerops_recipe action=build-brief briefKind=finalize` for engine-composed wrapper. Hand-typed wrappers explicitly out.
+
+### Open questions resolved at implementation
+
+- **V-1 override behavior**: log-only warning via `RecipeResult.Notice`. The fact still records; the override only affects publish-time routing. Agent gets the chance to course-correct on the next call.
+- **V-2 metric**: containment (asymmetric), not symmetric Jaccard. Bullet ~20 tokens, guide ~thousands; symmetric Jaccard would never approach 0.5. Top-100 most frequent guide tokens form the keyword set; threshold 0.5.
+- **M-2 hard-fail boundary**: hard-fail at stitch-time (M-1 + M-2 propagate); empty-SourceRoot still returns `("", nil)` for pre-scaffold paths.
+- **R-1 strict vs both-shapes**: strict `### N.` only. No published v3 recipes break; the engine's own item-#1 emits heading shape so the validator must require it.
+
+### Not yet addressed (post-run-11 scope)
+
+- Run 11 dogfood itself — execution is the user's call.
+- Forensic re-litigation of the run-10 SourceRoot regression's exact cause. M-1 + M-2 force loud failure regardless of which of the three plausible causes was real.
+- Chain-resolution redesign — still deferred until `nestjs-minimal` gets a v3 re-run.
+- Automated click-deploy verification harness — still manual.
+- `verify-subagent-dispatch` SHA check — still deferred.
+
+---
+
 ## 2026-04-24 — run-10-readiness (L / M / N / O / P / Q1..Q4)
 
 ### Context
