@@ -146,6 +146,21 @@ func TestBrief_Scaffold_CLAUDEMDIsPorter(t *testing.T) {
 	mustContain(t, brief.Body, "porter-facing")
 }
 
+// TestBrief_Scaffold_IGScopeRule — run-12 §I. Scaffold brief carries
+// the IG-scope rule: items 2+ are "what changes for Zerops" only;
+// recipe-internal contracts route to KB or claude-md/notes.
+func TestBrief_Scaffold_IGScopeRule(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	mustContain(t, brief.Body, "IG scope")
+	mustContain(t, brief.Body, "Aim for 4-7 IG items")
+}
+
 func TestBriefCompose_FeatureUnderCap(t *testing.T) {
 	t.Parallel()
 
