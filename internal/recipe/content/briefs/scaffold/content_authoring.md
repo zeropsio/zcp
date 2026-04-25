@@ -87,6 +87,20 @@ Why-not-what. Use `because`, `so that`, `otherwise`, `trade-off`.
 Self-inflicted + pure framework quirks → DISCARD. Platform × framework
 intersections → KB + `zerops_knowledge` citation.
 
+### Self-inflicted litmus
+
+Spec rule 4: could this observation be summarized as "our code did X,
+we fixed it to do Y"? If yes, **discard** — the fix belongs in the
+code, there is no teaching for a porter cloning the finished recipe.
+
+Run-10 anti-patterns to pattern-match against:
+
+- *"we chose `npx ts-node`, it failed, switched to `node dist/migrate.js`"* — **DISCARD**, code-fix not platform teaching.
+- *"wrote `dist` into `.deployignore`, deploy bricked, removed `dist`"* — **DISCARD**, recipe-author error not porter trap.
+- *"Trust proxy is per-framework, not per-platform"* — **DISCARD**, framework-quirk per spec, belongs in NestJS docs.
+
+Operational rule: before recording a KB-eligible fact, ask: would a porter cloning this finished recipe (with the FIXED yaml, FIXED .deployignore) ever encounter this? If no, discard.
+
 Dev/prod process model + `zerops_dev_server` → `principles/dev-loop.md`.
 Implicit-webserver runtimes (php-nginx, static) skip `zsc noop` for
 their backend but may still need a dev-server for a compiled frontend.

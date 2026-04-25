@@ -589,6 +589,48 @@ func TestBrief_Scaffold_ContainsValidatorTripwires(t *testing.T) {
 	}
 }
 
+// TestBrief_Scaffold_ContainsSelfInflictedLitmus — run-11 gap V-5.
+// The scaffold brief teaches the spec rule 4 self-inflicted litmus
+// with three concrete run-10 anti-patterns so sub-agents pre-empt the
+// over-rationalize-as-platform-trap pattern that produced 7 wrong-class
+// KB bullets in run 10.
+func TestBrief_Scaffold_ContainsSelfInflictedLitmus(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	for _, anchor := range []string{
+		"Self-inflicted litmus",
+		"npx ts-node",
+		".deployignore",
+		"Trust proxy is per-framework",
+		"would a porter",
+	} {
+		if !strings.Contains(brief.Body, anchor) {
+			t.Errorf("scaffold brief Self-inflicted litmus missing anchor %q", anchor)
+		}
+	}
+}
+
+// TestBrief_Feature_ContainsSelfInflictedLitmus — V-5 cross-reference
+// in the feature brief. Feature sub-agents face the same temptation;
+// the litmus must follow them across phase boundaries.
+func TestBrief_Feature_ContainsSelfInflictedLitmus(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildFeatureBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFeatureBrief: %v", err)
+	}
+	if !strings.Contains(brief.Body, "Self-inflicted litmus") {
+		t.Errorf("feature brief missing Self-inflicted litmus reference, got body without anchor")
+	}
+}
+
 // TestBrief_Scaffold_UnderCap_WithValidatorTripwires — run-10-readiness
 // §Q3 + run-9 tranche-2 cap raise. The Validator-tripwires section
 // keeps the scaffold brief under the 12 KB cap across all three

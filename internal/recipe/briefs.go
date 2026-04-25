@@ -24,8 +24,12 @@ import (
 // The writer brief was deleted in A1: fragment authorship is pinned to
 // whoever holds the densest context at the moment of authorship, not to
 // a post-hoc writer sub-agent.
+//
+// Run-11 V-5 raised ScaffoldBriefCap from 12 KB → 14 KB to fit the
+// Self-inflicted litmus subsection (~14 lines, three labeled
+// run-10 anti-patterns + the operational porter-clone question).
 const (
-	ScaffoldBriefCap = 12 * 1024
+	ScaffoldBriefCap = 14 * 1024
 	FeatureBriefCap  = 10 * 1024
 )
 

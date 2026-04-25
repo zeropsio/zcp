@@ -73,3 +73,13 @@ Classification before routing (same contract as scaffold):
 - Browser-walk verifications (see phase-entry step 7) → `surfaceHint:
   browser-verification` with the screenshot + console digest in
   `extra.screenshot` / `extra.console`
+
+## Self-inflicted litmus
+
+Spec rule 4: could this observation be summarized as "our code did X,
+we fixed it to do Y"? If yes, **discard** — the fix belongs in the
+code, there is no teaching for a porter cloning the finished recipe.
+The engine classifier auto-overrides agent-supplied surfaceHint when
+fixApplied describes a recipe-source change without platform-side
+mechanism vocabulary in failureMode (V-1). See scaffold brief
+"Self-inflicted litmus" subsection for run-10 anti-patterns.
