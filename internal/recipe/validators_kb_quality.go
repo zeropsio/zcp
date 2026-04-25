@@ -208,6 +208,67 @@ func kbBulletBlocks(kb string) []string {
 	return out
 }
 
+// platformMentionVocabBase — the static portion of V-3's platform
+// vocabulary. Plan-derived hostnames are appended at validate-time so
+// recipe-specific service names (e.g. `meilisearch1`) count as
+// platform mentions too. Case-sensitive matches; case-insensitive
+// containment is checked at lookup time.
+var platformMentionVocabBase = []string{
+	"Zerops", "L7", "balancer", "subdomain", "zerops.yaml",
+	"zsc", "execOnce", "appVersionId", "VXLAN",
+	"zeropsSubdomain", "httpSupport", "runtime card",
+	"managed service", "${", "deployFiles", "initCommands",
+	"envIsolation", "buildFromGit", "preparecommands",
+	"forcePathStyle", "minContainers",
+}
+
+// kbBulletHasPlatformMention reports whether a bullet body names any
+// platform-side mechanism. Used by V-3 to flag bullets with only
+// framework concerns. Case-insensitive on substrings.
+func kbBulletHasPlatformMention(bullet string, plan *Plan) bool {
+	lo := strings.ToLower(bullet)
+	for _, kw := range platformMentionVocabBase {
+		if strings.Contains(lo, strings.ToLower(kw)) {
+			return true
+		}
+	}
+	if plan != nil {
+		for _, c := range plan.Codebases {
+			if c.Hostname == "" {
+				continue
+			}
+			if strings.Contains(lo, strings.ToLower(c.Hostname)) {
+				return true
+			}
+		}
+		for _, s := range plan.Services {
+			if s.Hostname == "" {
+				continue
+			}
+			if strings.Contains(lo, strings.ToLower(s.Hostname)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// validateKBNoPlatformMention runs V-3: each bullet must mention at
+// least one platform-side mechanism term. Bullets covering only
+// framework concerns (NestJS, Express, Svelte, library lifecycle
+// without platform interaction) are framework-quirk per spec → flag.
+func validateKBNoPlatformMention(path, kb string, plan *Plan) []Violation {
+	var vs []Violation
+	for _, bullet := range kbBulletBlocks(kb) {
+		if kbBulletHasPlatformMention(bullet, plan) {
+			continue
+		}
+		vs = append(vs, violation("kb-bullet-no-platform-mention", path,
+			"KB bullet has zero platform-side vocabulary; framework-quirk content belongs in framework docs, not a Zerops recipe (spec rule 5)"))
+	}
+	return vs
+}
+
 // validateKBParaphrase runs V-2: per-bullet containment of the
 // bullet's tokens within the cited guide's top-N most frequent
 // keyword set. Bullets with backtick-quoted citation matching a

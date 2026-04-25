@@ -70,7 +70,7 @@ var kbTripleFormatRE = regexp.MustCompile(`(?m)^\s*[-*]\s+\*\*(symptom|mechanism
 // CitationMap must include the guide-id reference. Bullets opening with
 // the `**symptom**:` triple are flagged — debugging runbooks live in
 // CLAUDE.md/notes, KB uses `**Topic** — prose`.
-func validateCodebaseKB(_ context.Context, path string, body []byte, _ SurfaceInputs) ([]Violation, error) {
+func validateCodebaseKB(_ context.Context, path string, body []byte, inputs SurfaceInputs) ([]Violation, error) {
 	s := string(body)
 	var vs []Violation
 	kb := extractBetweenMarkers(s, "knowledge-base")
@@ -107,6 +107,9 @@ func validateCodebaseKB(_ context.Context, path string, body []byte, _ SurfaceIn
 	}
 	// V-2: paraphrase detection vs the cited guide's key phrases.
 	vs = append(vs, validateKBParaphrase(path, kb)...)
+	// V-3: each bullet must mention at least one platform-side
+	// mechanism term — pure framework-quirk bullets get flagged.
+	vs = append(vs, validateKBNoPlatformMention(path, kb, inputs.Plan)...)
 	return vs, nil
 }
 
