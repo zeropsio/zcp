@@ -663,7 +663,7 @@ func TestCorpusCoverage_RoundTrip(t *testing.T) {
 	for _, fx := range coverageFixtures() {
 		t.Run(fx.Name, func(t *testing.T) {
 			t.Parallel()
-			bodies, err := Synthesize(fx.Envelope, corpus)
+			bodies, err := SynthesizeBodies(fx.Envelope, corpus)
 			if err != nil {
 				t.Fatalf("Synthesize: %v", err)
 			}
@@ -691,13 +691,13 @@ func TestCorpusCoverage_CompactionSafe(t *testing.T) {
 	for _, fx := range coverageFixtures() {
 		t.Run(fx.Name, func(t *testing.T) {
 			t.Parallel()
-			first, err := Synthesize(fx.Envelope, corpus)
+			first, err := SynthesizeBodies(fx.Envelope, corpus)
 			if err != nil {
 				t.Fatalf("Synthesize first: %v", err)
 			}
 			firstJoined := strings.Join(first, "||")
 			for i := range 10 {
-				got, err := Synthesize(fx.Envelope, corpus)
+				got, err := SynthesizeBodies(fx.Envelope, corpus)
 				if err != nil {
 					t.Fatalf("Synthesize iter %d: %v", i, err)
 				}

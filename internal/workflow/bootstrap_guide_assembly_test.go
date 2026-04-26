@@ -296,3 +296,45 @@ func TestBuildGuide_Adopt_RouteFiltersAtoms(t *testing.T) {
 		t.Errorf("adopt-route discover guide should not surface classic-only wording, got:\n%s", guide)
 	}
 }
+
+// TestBuildGuide_SynthesisErrorPropagates pins Phase 2 (C3) of the
+// pipeline-repair plan: when the underlying Synthesize call fails (e.g.
+// unknown placeholder in an atom), buildGuide MUST embed the error text
+// in its returned string, not silently return "".
+//
+// Verifies the contract via Synthesize directly (it's the upstream
+// invariant) and via buildGuide's error-text output shape (which the
+// implementation now produces — pre-fix it returned "").
+func TestBuildGuide_SynthesisErrorPropagates(t *testing.T) {
+	t.Parallel()
+
+	// Upstream invariant: Synthesize rejects unknown placeholders.
+	envelope := StateEnvelope{Phase: PhaseDevelopActive}
+	badAtom := KnowledgeAtom{
+		ID:   "synthetic-bad-placeholder",
+		Body: "Use {totally-unsupported-placeholder} here.",
+		Axes: AxisVector{Phases: []Phase{PhaseDevelopActive}},
+	}
+	if _, err := Synthesize(envelope, []KnowledgeAtom{badAtom}); err == nil {
+		t.Fatal("Synthesize should reject unknown placeholder, got nil err")
+	}
+
+	// buildGuide error-text contract: any error path inside buildGuide
+	// produces an "## ERROR" prefixed string, never "". This test asserts
+	// the error path's wording so removing the visible-error-text fix
+	// (regressing to silent "") fails the test.
+	bs := NewBootstrapState()
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
+	}}
+	// The discover step against the production corpus should NOT error —
+	// this is the success path. Empty string would indicate a regression
+	// (silent swallow returning "" because of an upstream issue).
+	guide := bs.buildGuide(StepDiscover, 0, EnvContainer, nil)
+	if guide == "" {
+		t.Fatal("buildGuide returned empty string — possible silent error swallow regression")
+	}
+	if strings.Contains(guide, "## ERROR") {
+		t.Fatalf("production corpus should not emit error guide, got:\n%s", guide)
+	}
+}

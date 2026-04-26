@@ -391,3 +391,103 @@ body`
 		}
 	}
 }
+
+// TestParseAtom_StrictFrontmatter pins Phase 2 (C5) of the pipeline-repair
+// plan: the parser rejects malformed frontmatter at parse time instead of
+// silently degrading to wildcard-broad atoms. Three classes of failure:
+// unknown keys (typos in axis names), non-list values for list-axes (a
+// bare scalar where a list is required), and invalid enum values
+// (typoed axis values).
+func TestParseAtom_StrictFrontmatter(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name        string
+		content     string
+		wantErrFrag string
+	}{
+		{
+			name: "unknown_key",
+			content: `---
+id: typo-atom
+phases: [develop-active]
+runtmes: [dynamic]
+---
+body`,
+			wantErrFrag: `unknown atom frontmatter key "runtmes"`,
+		},
+		{
+			name: "bare_scalar_for_list_axis",
+			content: `---
+id: bare-scalar-atom
+phases: [develop-active]
+strategies: push-dev
+---
+body`,
+			wantErrFrag: `key "strategies" must be inline list form`,
+		},
+		{
+			name: "invalid_enum_value",
+			content: `---
+id: bad-enum-atom
+phases: [develop-active]
+modes: [devmode]
+---
+body`,
+			wantErrFrag: `key "modes" has invalid value "devmode"`,
+		},
+		{
+			name: "invalid_phase_value",
+			content: `---
+id: bad-phase-atom
+phases: [develop]
+---
+body`,
+			wantErrFrag: `key "phases" has invalid value "develop"`,
+		},
+		{
+			name: "valid_minimal_passes",
+			content: `---
+id: ok-atom
+phases: [develop-active]
+---
+body`,
+			wantErrFrag: "",
+		},
+		{
+			name: "valid_full_passes",
+			content: `---
+id: full-ok-atom
+title: Full atom
+priority: 3
+phases: [develop-active]
+modes: [dev, stage]
+environments: [container]
+strategies: [push-dev, push-git]
+runtimes: [dynamic]
+deployStates: [deployed]
+---
+body`,
+			wantErrFrag: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := ParseAtom(tc.content)
+			if tc.wantErrFrag == "" {
+				if err != nil {
+					t.Errorf("expected no error, got %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErrFrag)
+			}
+			if !strings.Contains(err.Error(), tc.wantErrFrag) {
+				t.Errorf("error %q missing fragment %q", err.Error(), tc.wantErrFrag)
+			}
+		})
+	}
+}

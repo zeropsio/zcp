@@ -29,16 +29,22 @@ func (b *BootstrapState) buildGuide(step string, iteration int, env Environment,
 		return closeGuidance
 	}
 
+	// Errors here are build-time defects (corpus-load failure, malformed
+	// atom, unknown placeholder). Surface them in the guidance text rather
+	// than silently dropping to "" — silent empty guidance is
+	// indistinguishable from intentional silence and masks defects until
+	// they cause downstream LLM mis-decisions. Pinned by
+	// TestBuildGuide_SynthesisErrorPropagates (plan §4 Phase 2 C3).
 	corpus, err := LoadAtomCorpus()
 	if err != nil {
-		return ""
+		return fmt.Sprintf("## ERROR: failed to load atom corpus\n\n%v\n\nThis is a build-time defect — report it. Bootstrap guidance is unavailable until the corpus loads cleanly.", err)
 	}
 	envelope := b.synthesisEnvelope(step, env)
-	bodies, err := Synthesize(envelope, corpus)
+	matches, err := Synthesize(envelope, corpus)
 	if err != nil {
-		return ""
+		return fmt.Sprintf("## ERROR: atom synthesis failed for step %q\n\n%v\n\nThis is a build-time defect — report it. Run `make lint-local` to verify the corpus.", step, err)
 	}
-	out := strings.Join(bodies, "\n\n---\n\n")
+	out := strings.Join(BodiesOf(matches), "\n\n---\n\n")
 
 	// Env var catalog is dynamic data — not expressible as a static atom.
 	// Injected at close so the develop handoff carries the authoritative key

@@ -12,102 +12,200 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
-// Synthesize returns the ordered guidance bodies for the given envelope.
-// Algorithm:
-//  1. Filter atoms whose declared axes all match the envelope.
-//  2. Sort by priority (ascending: 1 first), then by id (lexicographic) for stability.
-//  3. Substitute placeholders from envelope.
-//  4. Return bodies in sorted order.
+// MatchedRender pairs a synthesized atom body with the service whose axes
+// satisfied the atom's service-scoped declaration (when any). Service is
+// nil for atoms without service-scoped axes — those atoms render once
+// using the global primaryHostnames picker (covers envelope-wide atoms
+// like idle-* or strategy-setup-*).
 //
-// Compaction-safety invariant: for the same StateEnvelope serialisation,
-// Synthesize MUST return byte-identical output across calls. No wall-clock
-// reads, no map iteration order, no randomness.
-func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]string, error) {
-	matched := make([]KnowledgeAtom, 0, len(corpus))
-	for _, atom := range corpus {
-		if atomMatches(atom, envelope) {
-			matched = append(matched, atom)
-		}
+// Phase 2 (C2) of the pipeline-repair plan: atoms with service-scoped
+// axes (modes, strategies, runtimes, deployStates, serviceStatus,
+// triggers) bind their `{hostname}` / `{stage-hostname}` substitution to
+// the matched service. Pre-fix the global picker was used for every
+// atom, producing wrong-host commands in multi-service projects (an
+// atom matched via service B could render service A's hostname).
+type MatchedRender struct {
+	AtomID  string
+	Body    string
+	Service *ServiceSnapshot
+}
+
+// Synthesize returns the ordered MatchedRenders for the given envelope.
+// Algorithm:
+//  1. Filter atoms whose envelope-wide axes match (phase, environment,
+//     route, step, idleScenario).
+//  2. For each surviving atom, find all services satisfying the atom's
+//     service-scoped conjunction (modes ∧ strategies ∧ runtimes ∧
+//     deployStates ∧ serviceStatus ∧ triggers — all per-service).
+//  3. Sort by (priority asc, id asc) for determinism.
+//  4. Render each (atom, service) pair: per-render replacer uses the
+//     matched service's hostname/stage. Service-agnostic atoms render
+//     once using the global primaryHostnames picker.
+//  5. Reject unknown placeholders left in any rendered body.
+//
+// Compaction-safety invariant: for the same StateEnvelope JSON,
+// Synthesize MUST return byte-identical output across calls. No wall-
+// clock reads, no map iteration order, no randomness. Service-scoped
+// atoms with multiple matching services render once per service in
+// envelope's hostname-sorted order.
+func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]MatchedRender, error) {
+	type pending struct {
+		atom    KnowledgeAtom
+		matches []int // -1 = atom is service-agnostic; otherwise indices into envelope.Services
 	}
-	sort.SliceStable(matched, func(i, j int) bool {
-		if matched[i].Priority != matched[j].Priority {
-			return matched[i].Priority < matched[j].Priority
+	pendings := make([]pending, 0, len(corpus))
+	for _, atom := range corpus {
+		if !atomEnvelopeAxesMatch(atom, envelope) {
+			continue
 		}
-		return matched[i].ID < matched[j].ID
+		if !hasServiceScopedAxes(atom.Axes) {
+			pendings = append(pendings, pending{atom: atom, matches: []int{-1}})
+			continue
+		}
+		var idxs []int
+		for i, svc := range envelope.Services {
+			if serviceSatisfiesAxes(svc, atom.Axes) {
+				idxs = append(idxs, i)
+			}
+		}
+		if len(idxs) == 0 {
+			continue
+		}
+		pendings = append(pendings, pending{atom: atom, matches: idxs})
+	}
+	sort.SliceStable(pendings, func(i, j int) bool {
+		if pendings[i].atom.Priority != pendings[j].atom.Priority {
+			return pendings[i].atom.Priority < pendings[j].atom.Priority
+		}
+		return pendings[i].atom.ID < pendings[j].atom.ID
 	})
 
-	hostname, stageHostname := primaryHostnames(envelope.Services)
-	replacer := strings.NewReplacer(
-		"{hostname}", hostname,
-		"{stage-hostname}", stageHostname,
-		"{project-name}", envelope.Project.Name,
-	)
-
-	out := make([]string, 0, len(matched))
-	for _, atom := range matched {
-		body := replacer.Replace(atom.Body)
-		if leak := findUnknownPlaceholder(body); leak != "" {
-			return nil, fmt.Errorf("atom %s: unknown placeholder %q in atom body", atom.ID, leak)
+	globalHost, globalStage := primaryHostnames(envelope.Services)
+	out := make([]MatchedRender, 0, len(pendings))
+	for _, p := range pendings {
+		for _, idx := range p.matches {
+			var svc *ServiceSnapshot
+			host, stage := globalHost, globalStage
+			if idx >= 0 {
+				svc = &envelope.Services[idx]
+				host = svc.Hostname
+				stage = svc.StageHostname
+			}
+			replacer := strings.NewReplacer(
+				"{hostname}", host,
+				"{stage-hostname}", stage,
+				"{project-name}", envelope.Project.Name,
+			)
+			body := replacer.Replace(p.atom.Body)
+			if leak := findUnknownPlaceholder(body); leak != "" {
+				return nil, fmt.Errorf("atom %s: unknown placeholder %q in atom body", p.atom.ID, leak)
+			}
+			out = append(out, MatchedRender{
+				AtomID:  p.atom.ID,
+				Body:    body,
+				Service: svc,
+			})
 		}
-		out = append(out, body)
 	}
 	return out, nil
 }
 
-// atomMatches reports whether an atom's axes permit the envelope.
-// Empty axis slice = wildcard for that axis; phases is required non-empty
-// by the parser so the empty case does not arise here.
-func atomMatches(atom KnowledgeAtom, env StateEnvelope) bool {
+// SynthesizeBodies is the convenience adaptor for callers that only need
+// the rendered text bodies (status / develop briefing / bootstrap guide).
+// Equivalent to extracting `.Body` from `Synthesize`'s result.
+func SynthesizeBodies(envelope StateEnvelope, corpus []KnowledgeAtom) ([]string, error) {
+	matches, err := Synthesize(envelope, corpus)
+	if err != nil {
+		return nil, err
+	}
+	return BodiesOf(matches), nil
+}
+
+// BodiesOf extracts the Body field from a MatchedRender slice. Used by
+// callers that don't need the per-atom service binding (e.g. legacy
+// rendering paths that join bodies with separators).
+func BodiesOf(matches []MatchedRender) []string {
+	out := make([]string, 0, len(matches))
+	for _, m := range matches {
+		out = append(out, m.Body)
+	}
+	return out
+}
+
+// atomEnvelopeAxesMatch checks the envelope-wide axes (phase,
+// environment, route, step, idleScenario). Service-scoped axes are
+// evaluated separately per Synthesize so the matched service identity
+// flows through.
+func atomEnvelopeAxesMatch(atom KnowledgeAtom, env StateEnvelope) bool {
 	if !phaseInSet(env.Phase, atom.Axes.Phases) {
 		return false
 	}
 	if len(atom.Axes.Environments) > 0 && !envInSet(env.Environment, atom.Axes.Environments) {
 		return false
 	}
-
-	// Route is bootstrap-only. An atom that declares a Routes axis filters out
-	// non-bootstrap envelopes entirely (there's no route to match against) and
-	// further filters bootstrap envelopes to the listed routes.
 	if len(atom.Axes.Routes) > 0 {
 		if env.Bootstrap == nil || !routeInSet(env.Bootstrap.Route, atom.Axes.Routes) {
 			return false
 		}
 	}
-
-	// Step is bootstrap-only like route. An atom that declares a Steps axis
-	// filters bootstrap envelopes to the named step; envelopes without a
-	// Bootstrap summary (or with an empty Step) are filtered out.
 	if len(atom.Axes.Steps) > 0 {
 		if env.Bootstrap == nil || !stepInSet(env.Bootstrap.Step, atom.Axes.Steps) {
 			return false
 		}
 	}
-
-	// Service-scoped axes (mode, strategy, trigger, runtime, deployState) must
-	// all be satisfied by the SAME service. Disjunction (ANY service satisfies
-	// axis X while OTHER satisfies Y) would fire atoms whose placeholder body
-	// references a service that the atom isn't actually about — e.g.
-	// `develop-strategy-review (deployStates=[deployed], strategies=[unset])`
-	// would fire when service A is deployed+push-dev and service B is
-	// never-deployed+unset, despite no single service being both deployed AND
-	// unset.
-	hasServiceScope := len(atom.Axes.Modes) > 0 ||
-		len(atom.Axes.Strategies) > 0 ||
-		len(atom.Axes.Triggers) > 0 ||
-		len(atom.Axes.Runtimes) > 0 ||
-		len(atom.Axes.DeployStates) > 0 ||
-		len(atom.Axes.ServiceStatuses) > 0
-	if hasServiceScope && !anyServiceMatchesAll(env.Services, atom.Axes) {
-		return false
-	}
-
-	// IdleScenario is idle-only like routes/steps are bootstrap-only. An atom
-	// that declares idleScenarios filters out non-idle envelopes entirely and
-	// further filters idle envelopes to the listed sub-cases.
 	if len(atom.Axes.IdleScenarios) > 0 {
 		if env.Phase != PhaseIdle || !slices.Contains(atom.Axes.IdleScenarios, env.IdleScenario) {
 			return false
 		}
+	}
+	return true
+}
+
+// hasServiceScopedAxes reports whether the atom declares any axis whose
+// match is per-service (modes / strategies / triggers / runtimes /
+// deployStates / serviceStatus). Service-agnostic atoms render once
+// using the global primaryHostnames picker.
+func hasServiceScopedAxes(axes AxisVector) bool {
+	return len(axes.Modes) > 0 ||
+		len(axes.Strategies) > 0 ||
+		len(axes.Triggers) > 0 ||
+		len(axes.Runtimes) > 0 ||
+		len(axes.DeployStates) > 0 ||
+		len(axes.ServiceStatuses) > 0
+}
+
+// serviceSatisfiesAxes returns true when this single service satisfies
+// every service-scoped axis declared on the atom. Empty axis = wildcard.
+// Mirrors the pre-C2 anyServiceMatchesAll loop body but exposes the
+// per-service decision so Synthesize can bind placeholder substitution
+// to the matched service.
+func serviceSatisfiesAxes(svc ServiceSnapshot, axes AxisVector) bool {
+	if len(axes.Modes) > 0 && !slices.Contains(axes.Modes, svc.Mode) {
+		return false
+	}
+	if len(axes.Strategies) > 0 && !slices.Contains(axes.Strategies, svc.Strategy) {
+		return false
+	}
+	if len(axes.Triggers) > 0 && !slices.Contains(axes.Triggers, svc.Trigger) {
+		return false
+	}
+	if len(axes.Runtimes) > 0 && !slices.Contains(axes.Runtimes, svc.RuntimeClass) {
+		return false
+	}
+	if len(axes.DeployStates) > 0 {
+		if !svc.Bootstrapped {
+			return false
+		}
+		state := DeployStateNeverDeployed
+		if svc.Deployed {
+			state = DeployStateDeployed
+		}
+		if !slices.Contains(axes.DeployStates, state) {
+			return false
+		}
+	}
+	if len(axes.ServiceStatuses) > 0 && !slices.Contains(axes.ServiceStatuses, svc.Status) {
+		return false
 	}
 	return true
 }
@@ -126,45 +224,6 @@ func phaseInSet(p Phase, set []Phase) bool {
 
 func envInSet(e Environment, set []Environment) bool {
 	return slices.Contains(set, e)
-}
-
-// anyServiceMatchesAll reports whether any single service satisfies every
-// declared service-scoped axis. An empty axis slice is a wildcard for that
-// axis. Non-bootstrapped services are skipped for the deployState check —
-// they have no tracked deploy state, and firing first-deploy atoms on pure-
-// adoption services bootstrap never touched would be a regression.
-func anyServiceMatchesAll(services []ServiceSnapshot, axes AxisVector) bool {
-	for _, svc := range services {
-		if len(axes.Modes) > 0 && !slices.Contains(axes.Modes, svc.Mode) {
-			continue
-		}
-		if len(axes.Strategies) > 0 && !slices.Contains(axes.Strategies, svc.Strategy) {
-			continue
-		}
-		if len(axes.Triggers) > 0 && !slices.Contains(axes.Triggers, svc.Trigger) {
-			continue
-		}
-		if len(axes.Runtimes) > 0 && !slices.Contains(axes.Runtimes, svc.RuntimeClass) {
-			continue
-		}
-		if len(axes.DeployStates) > 0 {
-			if !svc.Bootstrapped {
-				continue
-			}
-			state := DeployStateNeverDeployed
-			if svc.Deployed {
-				state = DeployStateDeployed
-			}
-			if !slices.Contains(axes.DeployStates, state) {
-				continue
-			}
-		}
-		if len(axes.ServiceStatuses) > 0 && !slices.Contains(axes.ServiceStatuses, svc.Status) {
-			continue
-		}
-		return true
-	}
-	return false
 }
 
 // primaryHostnames returns the hostname and paired stage hostname used to
@@ -297,11 +356,11 @@ func SynthesizeImmediateWorkflow(env StateEnvelope) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	bodies, err := Synthesize(env, corpus)
+	matches, err := Synthesize(env, corpus)
 	if err != nil {
 		return "", err
 	}
-	return strings.Join(bodies, "\n\n---\n\n"), nil
+	return strings.Join(BodiesOf(matches), "\n\n---\n\n"), nil
 }
 
 // SynthesizeImmediatePhase is the minimal form: phase + env, no services.

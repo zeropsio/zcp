@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/topology"
@@ -63,9 +64,193 @@ type AxisVector struct {
 	ServiceStatuses []string
 }
 
+// validAtomFrontmatterKeys is the closed set of frontmatter keys an atom
+// MAY declare. Anything outside this set is rejected at parse time —
+// silent typos in axis names produced wildcard-broad atoms before strict
+// validation landed (see plan-pipeline-repair.md C5). Update this set
+// when adding a new axis or attribute, never to accommodate atom typos.
+//
+//nolint:gochecknoglobals // immutable lookup table
+var validAtomFrontmatterKeys = map[string]struct{}{
+	"id":                 {},
+	"title":              {},
+	"priority":           {},
+	"phases":             {},
+	"modes":              {},
+	"environments":       {},
+	"strategies":         {},
+	"triggers":           {},
+	"runtimes":           {},
+	"routes":             {},
+	"steps":              {},
+	"idleScenarios":      {},
+	"deployStates":       {},
+	"serviceStatus":      {},
+	"references-fields":  {},
+	"references-atoms":   {},
+	"pinned-by-scenario": {},
+}
+
+// listAxisKeys is the subset of frontmatter keys whose value MUST be in
+// inline-list form (`[a, b, c]`) when non-empty. Scalar keys (id, title,
+// priority) are not in this set and may appear with bare string values.
+//
+//nolint:gochecknoglobals // immutable lookup table
+var listAxisKeys = map[string]struct{}{
+	"phases":             {},
+	"modes":              {},
+	"environments":       {},
+	"strategies":         {},
+	"triggers":           {},
+	"runtimes":           {},
+	"routes":             {},
+	"steps":              {},
+	"idleScenarios":      {},
+	"deployStates":       {},
+	"serviceStatus":      {},
+	"references-fields":  {},
+	"references-atoms":   {},
+	"pinned-by-scenario": {},
+}
+
+// validAtomEnumValues maps each axis key to its closed value set.
+// Validated at parse time so a typo in an axis value (e.g. `develop` vs
+// `develop-active`) fails the build instead of silently dropping an atom
+// from filter results. Service status values aren't validated — they're
+// platform-side strings (ACTIVE, READY_TO_DEPLOY, ...) outside ZCP's
+// control.
+//
+//nolint:gochecknoglobals // immutable lookup table
+var validAtomEnumValues = map[string]map[string]struct{}{
+	"phases": {
+		"idle":                {},
+		"bootstrap-active":    {},
+		"develop-active":      {},
+		"develop-closed-auto": {},
+		"recipe-active":       {},
+		"strategy-setup":      {},
+		"export-active":       {},
+	},
+	"modes": {
+		"dev":         {},
+		"stage":       {},
+		"simple":      {},
+		"standard":    {},
+		"local-stage": {},
+		"local-only":  {},
+	},
+	"environments": {
+		"container": {},
+		"local":     {},
+	},
+	"strategies": {
+		"push-dev": {},
+		"push-git": {},
+		"manual":   {},
+		"unset":    {},
+	},
+	"triggers": {
+		"webhook": {},
+		"actions": {},
+		"unset":   {},
+	},
+	"runtimes": {
+		"dynamic":            {},
+		"static":             {},
+		"implicit-webserver": {},
+		"managed":            {},
+		"unknown":            {},
+	},
+	"routes": {
+		"recipe":  {},
+		"classic": {},
+		"adopt":   {},
+		"resume":  {},
+	},
+	"steps": {
+		"discover":  {},
+		"provision": {},
+		"close":     {},
+	},
+	"idleScenarios": {
+		"empty":        {},
+		"bootstrapped": {},
+		"adopt":        {},
+		"incomplete":   {},
+	},
+	"deployStates": {
+		"never-deployed": {},
+		"deployed":       {},
+	},
+}
+
+// validateAtomFrontmatter is the strict pre-parse gate (plan C5). It runs
+// before any axis-specific parser sees the value, so a malformed atom
+// fails ParseAtom with a precise message naming the offending key — never
+// silently degrades to a wildcard-broad atom.
+//
+// Three checks (in order, first failure wins):
+//  1. Every declared key is in validAtomFrontmatterKeys (no typos).
+//  2. Every list-axis key with a non-empty value is in `[...]` form (no
+//     bare scalars where a list is required).
+//  3. Every list-axis value is in validAtomEnumValues for that axis when
+//     the axis has a closed set (serviceStatus / references-* / pinned-*
+//     are not enum-validated — open sets).
+func validateAtomFrontmatter(fields map[string]string) error {
+	for key := range fields {
+		if _, ok := validAtomFrontmatterKeys[key]; !ok {
+			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, strategies, triggers, runtimes, routes, steps, idleScenarios, deployStates, serviceStatus, references-fields, references-atoms, pinned-by-scenario)", key)
+		}
+	}
+	for key, raw := range fields {
+		if _, isList := listAxisKeys[key]; !isList {
+			continue
+		}
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		if !strings.HasPrefix(raw, "[") || !strings.HasSuffix(raw, "]") {
+			return fmt.Errorf("atom frontmatter key %q must be inline list form `[a, b, c]`, got %q", key, raw)
+		}
+	}
+	for key, validSet := range validAtomEnumValues {
+		raw := strings.TrimSpace(fields[key])
+		if raw == "" || !strings.HasPrefix(raw, "[") || !strings.HasSuffix(raw, "]") {
+			continue
+		}
+		inner := strings.TrimSpace(raw[1 : len(raw)-1])
+		if inner == "" {
+			continue
+		}
+		for v := range strings.SplitSeq(inner, ",") {
+			v = strings.TrimSpace(v)
+			if v == "" {
+				continue
+			}
+			if _, ok := validSet[v]; !ok {
+				return fmt.Errorf("atom frontmatter key %q has invalid value %q (axis %s accepts: %s)", key, v, key, sortedEnumKeys(validSet))
+			}
+		}
+	}
+	return nil
+}
+
+// sortedEnumKeys returns a deterministic comma-separated list of the
+// valid values for an axis. Used in error messages so the offender sees
+// the closed set directly without grepping the source.
+func sortedEnumKeys(set map[string]struct{}) string {
+	keys := make([]string, 0, len(set))
+	for k := range set {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ", ")
+}
+
 // ParseAtom parses a `.md` file body containing YAML frontmatter and a
 // markdown body. It returns a KnowledgeAtom or an error if required fields
-// are missing.
+// are missing or if frontmatter fails strict validation.
 func ParseAtom(content string) (KnowledgeAtom, error) {
 	front, body, err := splitFrontmatter(content)
 	if err != nil {
@@ -73,6 +258,9 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 	}
 	fields, err := parseFrontmatter(front)
 	if err != nil {
+		return KnowledgeAtom{}, err
+	}
+	if err := validateAtomFrontmatter(fields); err != nil {
 		return KnowledgeAtom{}, err
 	}
 

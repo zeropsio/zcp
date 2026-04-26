@@ -117,7 +117,7 @@ func TestSynthesize_AxisFiltering(t *testing.T) {
 	for _, tt := range cases {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := Synthesize(tt.env, corpus)
+			got, err := SynthesizeBodies(tt.env, corpus)
 			if err != nil {
 				t.Fatalf("Synthesize: %v", err)
 			}
@@ -189,7 +189,7 @@ func TestSynthesize_DeployStateFilter(t *testing.T) {
 			Deployed:     false,
 		}},
 	}
-	got, err := Synthesize(neverDeployed, corpus)
+	got, err := SynthesizeBodies(neverDeployed, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize never-deployed: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestSynthesize_DeployStateFilter(t *testing.T) {
 			Deployed:     true,
 		}},
 	}
-	got, err = Synthesize(deployed, corpus)
+	got, err = SynthesizeBodies(deployed, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize deployed: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestSynthesize_ServiceScopedAxesRequireSameService(t *testing.T) {
 			{Hostname: "b", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: false, Strategy: topology.StrategyUnset},
 		},
 	}
-	got, err := Synthesize(mixed, corpus)
+	got, err := SynthesizeBodies(mixed, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize mixed: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestSynthesize_ServiceScopedAxesRequireSameService(t *testing.T) {
 			{Hostname: "a", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: true, Strategy: topology.StrategyUnset},
 		},
 	}
-	got, err = Synthesize(match, corpus)
+	got, err = SynthesizeBodies(match, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize match: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestSynthesize_PrioritySort(t *testing.T) {
 	t.Parallel()
 
 	env := developEnvelope(EnvContainer, topology.ModeDev, "push-git", topology.RuntimeDynamic)
-	got, err := Synthesize(env, synthCorpus())
+	got, err := SynthesizeBodies(env, synthCorpus())
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
@@ -302,12 +302,12 @@ func TestSynthesize_CompactionSafe(t *testing.T) {
 
 	env := developEnvelope(EnvContainer, topology.ModeDev, "push-git", topology.RuntimeDynamic)
 	corpus := synthCorpus()
-	first, err := Synthesize(env, corpus)
+	first, err := SynthesizeBodies(env, corpus)
 	if err != nil {
 		t.Fatalf("first: %v", err)
 	}
 	for i := range 10 {
-		got, err := Synthesize(env, corpus)
+		got, err := SynthesizeBodies(env, corpus)
 		if err != nil {
 			t.Fatalf("iter %d: %v", i, err)
 		}
@@ -337,7 +337,7 @@ func TestSynthesize_PlaceholderSubstitution(t *testing.T) {
 			Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic, StageHostname: "appstage", Mode: topology.ModeDev,
 		}},
 	}
-	got, err := Synthesize(env, corpus)
+	got, err := SynthesizeBodies(env, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
@@ -418,7 +418,7 @@ func TestSynthesize_RouteAxisFiltering(t *testing.T) {
 				Environment: EnvLocal,
 				Bootstrap:   tt.bootstrap,
 			}
-			got, err := Synthesize(env, corpus)
+			got, err := SynthesizeBodies(env, corpus)
 			if err != nil {
 				t.Fatalf("Synthesize: %v", err)
 			}
@@ -498,7 +498,7 @@ func TestSynthesize_LocalModeAtomsFireForAllRoutes(t *testing.T) {
 						Mode:         topology.ModeDev,
 					}},
 				}
-				got, err := Synthesize(env, corpus)
+				got, err := SynthesizeBodies(env, corpus)
 				if err != nil {
 					t.Fatalf("Synthesize: %v", err)
 				}
@@ -550,7 +550,7 @@ func TestSynthesize_AllowsStartCommandPlaceholder(t *testing.T) {
 		Environment: EnvLocal,
 		Services:    []ServiceSnapshot{{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic}},
 	}
-	got, err := Synthesize(env, corpus)
+	got, err := SynthesizeBodies(env, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
@@ -648,4 +648,128 @@ func firstLine(body string) string {
 		return body[:i]
 	}
 	return body
+}
+
+// TestSynthesize_PerServicePlaceholderBinding pins Phase 2 (F3/C2) of
+// the pipeline-repair plan: an atom with service-scoped axes binds
+// `{hostname}` substitution to the service that satisfied the axes, not
+// to the global primaryHostnames picker. Pre-fix multi-service projects
+// could see commands targeted at the wrong service (atom matched via
+// service B, rendered with service A's hostname).
+//
+// Alphabet-rotation: same scenario in two hostname orderings — `apidev`
+// or `appdev` first by sort order. The atom must consistently render
+// the matched service's hostname regardless of which sorts first.
+func TestSynthesize_PerServicePlaceholderBinding(t *testing.T) {
+	t.Parallel()
+
+	atom := KnowledgeAtom{
+		ID:       "test-first-deploy-write-app",
+		Priority: 5,
+		Axes: AxisVector{
+			Phases:       []Phase{PhaseDevelopActive},
+			Modes:        []topology.Mode{topology.ModeDev},
+			DeployStates: []DeployState{DeployStateNeverDeployed},
+		},
+		Body: "Write code on {hostname} and deploy.",
+	}
+
+	cases := []struct {
+		name          string
+		services      []ServiceSnapshot
+		wantHost      string
+		wantNotInBody string
+	}{
+		{
+			name: "apidev_never_deployed_appdev_deployed",
+			services: []ServiceSnapshot{
+				{Hostname: "apidev", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: false, Mode: topology.ModeDev},
+				{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: true, Mode: topology.ModeDev},
+			},
+			wantHost:      "apidev",
+			wantNotInBody: "appdev",
+		},
+		{
+			name: "appdev_never_deployed_apidev_deployed",
+			services: []ServiceSnapshot{
+				{Hostname: "apidev", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: true, Mode: topology.ModeDev},
+				{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: false, Mode: topology.ModeDev},
+			},
+			wantHost:      "appdev",
+			wantNotInBody: "apidev",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := StateEnvelope{Phase: PhaseDevelopActive, Services: tc.services}
+			matches, err := Synthesize(env, []KnowledgeAtom{atom})
+			if err != nil {
+				t.Fatalf("Synthesize: %v", err)
+			}
+			if len(matches) != 1 {
+				t.Fatalf("expected 1 match (only never-deployed satisfies), got %d", len(matches))
+			}
+			body := matches[0].Body
+			if !strings.Contains(body, tc.wantHost) {
+				t.Errorf("body should mention %q, got: %s", tc.wantHost, body)
+			}
+			if strings.Contains(body, tc.wantNotInBody) {
+				t.Errorf("body should NOT mention %q (would indicate global picker bug), got: %s", tc.wantNotInBody, body)
+			}
+			if matches[0].Service == nil {
+				t.Errorf("MatchedRender.Service should be populated for service-scoped atom")
+			} else if matches[0].Service.Hostname != tc.wantHost {
+				t.Errorf("MatchedRender.Service.Hostname = %q, want %q", matches[0].Service.Hostname, tc.wantHost)
+			}
+		})
+	}
+}
+
+// TestSynthesize_MultiMatchRendersOncePerService pins the multi-match
+// policy: when multiple services satisfy an atom's service-scoped axes,
+// the atom renders once per matching service. Each rendering binds
+// `{hostname}` to that service.
+func TestSynthesize_MultiMatchRendersOncePerService(t *testing.T) {
+	t.Parallel()
+
+	atom := KnowledgeAtom{
+		ID:       "test-strategy-iter",
+		Priority: 5,
+		Axes: AxisVector{
+			Phases:     []Phase{PhaseDevelopActive},
+			Strategies: []topology.DeployStrategy{topology.StrategyPushDev},
+		},
+		Body: "Push-dev on {hostname}.",
+	}
+	env := StateEnvelope{
+		Phase: PhaseDevelopActive,
+		Services: []ServiceSnapshot{
+			{Hostname: "apidev", Bootstrapped: true, Strategy: topology.StrategyPushDev},
+			{Hostname: "appdev", Bootstrapped: true, Strategy: topology.StrategyPushDev},
+		},
+	}
+	matches, err := Synthesize(env, []KnowledgeAtom{atom})
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("expected 2 matches (one per service), got %d", len(matches))
+	}
+	seen := map[string]bool{}
+	for _, m := range matches {
+		if m.Service == nil {
+			t.Fatalf("MatchedRender.Service nil for service-scoped atom")
+		}
+		if !strings.Contains(m.Body, m.Service.Hostname) {
+			t.Errorf("body for %s missing hostname: %s", m.Service.Hostname, m.Body)
+		}
+		seen[m.Service.Hostname] = true
+	}
+	for _, host := range []string{"apidev", "appdev"} {
+		if !seen[host] {
+			t.Errorf("expected match for %s, none found", host)
+		}
+	}
 }

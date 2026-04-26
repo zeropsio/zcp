@@ -143,14 +143,24 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 	// envelope to match against; the workflow API wraps the envelope shape
 	// so we hand it just the runtime and the snapshots. Other strategies
 	// reuse the existing develop-phase iteration atoms.
+	//
+	// Phase 2 (C3) of the pipeline-repair plan: synthesis errors propagate
+	// as visible platform errors instead of being silently swallowed —
+	// pre-fix this site dropped the error and returned empty guidance,
+	// indistinguishable from intentional silence.
 	var guidance string
 	if anyStrategyIs(strategies, topology.StrategyPushGit) {
 		snaps := buildStrategySetupSnapshots(stateDir, strategies, trigger)
-		if g, err := workflow.SynthesizeStrategySetup(rt, snaps); err == nil {
-			guidance = g
+		g, err := workflow.SynthesizeStrategySetup(rt, snaps)
+		if err != nil {
+			return convertError(platform.NewPlatformError(
+				platform.ErrNotImplemented,
+				fmt.Sprintf("strategy setup synthesis failed: %v", err),
+				"This is a build-time defect — report it. Run `make lint-local` to verify the atom corpus.")), nil, nil
 		}
+		guidance = g
 	} else {
-		guidance = buildStrategyGuidance(strategies)
+		guidance = buildStrategyGuidance(rt, strategies)
 	}
 
 	nextHint := `When code is ready: zerops_workflow action="start" workflow="develop"`
@@ -211,9 +221,10 @@ func handleStrategyList(stateDir string) (*mcp.CallToolResult, any, error) {
 
 // buildStrategyGuidance returns strategy-specific guidance synthesised from
 // the Layer 2 atom corpus. Used for non-push-git strategies (push-dev,
-// manual) which just need iteration pointers, not setup.
-func buildStrategyGuidance(strategies map[string]topology.DeployStrategy) string {
-	g, _ := workflow.BuildStrategyGuidance(strategies)
+// manual) which just need iteration pointers, not setup. Environment
+// flows from the caller so container/local atoms route correctly.
+func buildStrategyGuidance(rt runtime.Info, strategies map[string]topology.DeployStrategy) string {
+	g, _ := workflow.BuildStrategyGuidance(workflow.DetectEnvironment(rt), strategies)
 	return g
 }
 

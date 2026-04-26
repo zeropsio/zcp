@@ -37,7 +37,7 @@ func TestScenario_S1_NewProjectRecipeMatch(t *testing.T) {
 		t.Errorf("S1 idle: expected primary=zerops_workflow start bootstrap, got tool=%q args=%v",
 			plan.Primary.Tool, plan.Primary.Args)
 	}
-	bodies, err := Synthesize(before, corpus)
+	bodies, err := SynthesizeBodies(before, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize idle: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestScenario_S1_NewProjectRecipeMatch(t *testing.T) {
 		t.Errorf("S1 bootstrap-active: expected iterate bootstrap primary, got tool=%q args=%v",
 			planAfter.Primary.Tool, planAfter.Primary.Args)
 	}
-	bodiesAfter, err := Synthesize(after, corpus)
+	bodiesAfter, err := SynthesizeBodies(after, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize bootstrap-active: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestScenario_S5_MixedBootstrappedAndUnmanaged(t *testing.T) {
 		t.Error("S5: expected 'Add more services' in alternatives")
 	}
 
-	bodies, err := Synthesize(env, corpus)
+	bodies, err := SynthesizeBodies(env, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestScenario_S3_AdoptOnlyUnmanaged(t *testing.T) {
 		t.Errorf("S3: expected primary label 'Adopt unmanaged runtimes', got %q", plan.Primary.Label)
 	}
 
-	bodies, err := Synthesize(env, corpus)
+	bodies, err := SynthesizeBodies(env, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestScenario_S4_DevelopStrategyReviewAfterFirstDeploy(t *testing.T) {
 		},
 	}
 
-	bodies, err := Synthesize(env, corpus)
+	bodies, err := SynthesizeBodies(env, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
@@ -313,7 +313,7 @@ func TestScenario_S7_DevelopClosedAuto(t *testing.T) {
 		t.Errorf("S7: expected secondary=start develop, got args=%v", plan.Secondary.Args)
 	}
 
-	bodies, err := Synthesize(env, corpus)
+	bodies, err := SynthesizeBodies(env, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
@@ -368,7 +368,7 @@ func TestScenario_S2_IdleBootstrappedReady(t *testing.T) {
 			plan.Alternatives[0].Label)
 	}
 
-	bodies, err := Synthesize(env, corpus)
+	bodies, err := SynthesizeBodies(env, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
@@ -537,7 +537,7 @@ func TestScenario_S11_StrategySetupEmptyPlan(t *testing.T) {
 		t.Errorf("S11: expected no secondary/alternatives, got secondary=%v alts=%d", plan.Secondary, len(plan.Alternatives))
 	}
 
-	bodies, err := Synthesize(env, corpus)
+	bodies, err := SynthesizeBodies(env, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
@@ -569,7 +569,7 @@ func TestScenario_S12_ExportActiveEmptyPlan(t *testing.T) {
 		t.Errorf("S12: expected no secondary/alternatives, got secondary=%v alts=%d", plan.Secondary, len(plan.Alternatives))
 	}
 
-	bodies, err := Synthesize(env, corpus)
+	bodies, err := SynthesizeBodies(env, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
@@ -625,7 +625,7 @@ func TestScenario_S8_DevelopIterationFailure(t *testing.T) {
 		t.Errorf("S8: expected primary targetService=appdev, got %q", plan.Primary.Args["targetService"])
 	}
 
-	bodies, err := Synthesize(env, corpus)
+	bodies, err := SynthesizeBodies(env, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}

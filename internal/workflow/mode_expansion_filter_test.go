@@ -50,7 +50,7 @@ func TestModeExpansionAtom_FiresOnlyForSingleSlotModes(t *testing.T) {
 					Strategy: "push-dev", Bootstrapped: true, Deployed: tt.deployed,
 				}},
 			}
-			bodies, err := Synthesize(env, corpus)
+			bodies, err := SynthesizeBodies(env, corpus)
 			if err != nil {
 				t.Fatalf("Synthesize: %v", err)
 			}

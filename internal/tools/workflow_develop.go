@@ -163,7 +163,7 @@ func renderDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 			fmt.Sprintf("Load knowledge atoms: %v", err),
 			"")), nil, nil
 	}
-	guidance, err := workflow.Synthesize(envelope, corpus)
+	matches, err := workflow.Synthesize(envelope, corpus)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
@@ -173,7 +173,7 @@ func renderDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 	plan := workflow.BuildPlan(envelope)
 	return textResult(workflow.RenderStatus(workflow.Response{
 		Envelope: envelope,
-		Guidance: guidance,
+		Guidance: workflow.BodiesOf(matches),
 		Plan:     &plan,
 	})), nil, nil
 }

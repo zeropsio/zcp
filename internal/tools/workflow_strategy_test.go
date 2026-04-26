@@ -402,7 +402,11 @@ func TestBuildStrategyGuidance(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			guidance := buildStrategyGuidance(tt.strategies)
+			// Container env: matches both develop-push-dev-deploy-container
+			// and develop-manual-deploy-container atoms; sufficient for
+			// the wantContains substring assertions.
+			rt := runtime.Info{InContainer: true}
+			guidance := buildStrategyGuidance(rt, tt.strategies)
 			if tt.wantNonEmpty && guidance == "" {
 				t.Fatal("expected non-empty guidance")
 			}
@@ -413,19 +417,32 @@ func TestBuildStrategyGuidance(t *testing.T) {
 	}
 }
 
-func TestBuildStrategyGuidance_DuplicateOnlyOnce(t *testing.T) {
+func TestBuildStrategyGuidance_PerServiceRendering(t *testing.T) {
 	t.Parallel()
-	once := buildStrategyGuidance(map[string]topology.DeployStrategy{
+	rt := runtime.Info{InContainer: true}
+	once := buildStrategyGuidance(rt, map[string]topology.DeployStrategy{
 		"appdev": topology.StrategyPushDev,
 	})
-	twice := buildStrategyGuidance(map[string]topology.DeployStrategy{
+	twice := buildStrategyGuidance(rt, map[string]topology.DeployStrategy{
 		"appdev": topology.StrategyPushDev,
 		"apidev": topology.StrategyPushDev,
 	})
-	// Deduplication invariant: repeating the same strategy across services
-	// must not multiply the matched atom set. Output is byte-identical.
-	if once != twice {
-		t.Errorf("duplicate strategy should produce identical guidance; once != twice")
+	// Phase 2 (C2/F3) of the pipeline-repair plan: atoms with service-
+	// scoped axes render once PER MATCHED SERVICE, so multi-service input
+	// produces multi-service output where each rendered body carries the
+	// matched service's hostname. Pre-fix the function manually
+	// deduplicated atoms into a single rendering using a global
+	// hostname picker — wrong host commands in multi-service projects.
+	//
+	// Here apidev and appdev are both push-dev; both services satisfy
+	// the strategies axis on the strategy-specific atoms. Each atom
+	// renders twice (once per service). Output for `twice` MUST contain
+	// both hostnames; output for `once` contains only appdev.
+	if !strings.Contains(once, "appdev") {
+		t.Errorf("single-service guidance should mention appdev, got: %.200s", once)
+	}
+	if !strings.Contains(twice, "appdev") || !strings.Contains(twice, "apidev") {
+		t.Errorf("multi-service guidance should mention both hostnames, got: %.300s", twice)
 	}
 }
 
