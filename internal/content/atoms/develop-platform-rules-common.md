@@ -3,6 +3,7 @@ id: develop-platform-rules-common
 priority: 2
 phases: [bootstrap-active, develop-active]
 title: "Platform rules — always applicable"
+references-atoms: [develop-env-var-channels, develop-first-deploy-env-vars]
 ---
 
 ### Platform rules
@@ -20,10 +21,8 @@ title: "Platform rules — always applicable"
   available at run time.
 - `envVariables` are declarative config, **not live** until a deploy.
   Never check them with `printenv` before deploying — they will not be
-  set yet.
-- Env-reference typos (the `$hostname_varName` dollar-bracket form)
-  render as literal strings — the platform does NOT raise an error.
-  Check references carefully.
+  set yet. Cross-service ref syntax + typo behavior is in
+  `develop-env-var-channels` / `develop-first-deploy-env-vars`.
 - Service config changes (shared storage, scaling, nginx fragments):
   use `zerops_import` with `override: true` to update existing services.
   This is separate from `zerops_deploy`, which only updates code.

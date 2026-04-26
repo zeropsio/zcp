@@ -5,7 +5,7 @@ phases: [develop-active]
 envelopeDeployStates: [never-deployed]
 title: "Scaffold zerops.yaml for the first deploy"
 references-fields: [ops.DiscoverResult.Services, workflow.ServiceSnapshot.Mode, workflow.ServiceSnapshot.StageHostname]
-references-atoms: [develop-deploy-modes]
+references-atoms: [develop-deploy-modes, develop-first-deploy-env-vars]
 ---
 
 ### Scaffold `zerops.yaml`
@@ -33,9 +33,8 @@ zerops:
       start: <run command, not a build command>
 ```
 
-**Env var references** — use the keys reported by `zerops_discover`.
-Cross-service references use `${hostname_KEY}` exactly; alternative
-spellings resolve to literal strings at runtime and fail silently.
+**Env var references** — see `develop-first-deploy-env-vars` for the
+discovered-key catalog and the cross-service `${hostname_KEY}` syntax.
 
 **Mode-aware tips:**
 

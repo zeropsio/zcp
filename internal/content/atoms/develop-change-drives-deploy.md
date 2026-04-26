@@ -4,15 +4,15 @@ priority: 2
 phases: [develop-active]
 title: "Every code change must flow through the deploy strategy"
 references-fields: [workflow.WorkSessionSummary.CloseReason]
-references-atoms: [develop-auto-close-semantics]
+references-atoms: [develop-auto-close-semantics, develop-platform-rules-common]
 ---
 
 ### Every code change must flow through the deploy strategy
 
-Editing files on the SSHFS mount (or locally in local mode) persists
-only inside the current container — the next deploy rebuilds the
-container from scratch, and anything not covered by `deployFiles` is
-discarded. The rule is:
+Editing files on the SSHFS mount (or locally in local mode) only
+persists across deploys when covered by `deployFiles` (see
+`develop-platform-rules-common` for the deploy-replaces-container
+invariant). The rule is:
 
 > **edit → deploy (via active strategy) → verify**
 

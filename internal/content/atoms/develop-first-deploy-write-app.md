@@ -59,6 +59,3 @@ the SSHFS mount (`cd /var/www/<hostname>/ && git init`) creates
 `git add` the deploy handler runs. Recovery if this already happened:
 `ssh <hostname> "sudo rm -rf /var/www/.git"` — the next deploy
 re-initializes it.
-
-SSH deploys replace the container; only content covered by `deployFiles`
-survives across deploys.
