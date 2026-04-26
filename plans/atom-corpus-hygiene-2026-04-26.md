@@ -1065,35 +1065,39 @@ before touching content.
            }},
        },
        MustContain: []string{
-           // Phrase pins anchor the pre-hygiene fire-set. Each phrase
-           // is sourced from an atom that SHOULD fire on this envelope
-           // (verified by the Phase 0 fire-audit run before Phase 1).
-           // Phase 7 axis-tightening will REMOVE atoms that fire here
-           // but shouldn't (e.g. develop-mode-expansion fires on
-           // simple-mode envelopes where mode-expansion is N/A); pins
-           // below stay because they're anchored on the simple-mode
-           // push-dev workflow / deploy / close atoms which DO belong.
+           // Each phrase appears in the body of EXACTLY ONE atom (verified
+           // 2026-04-26 via grep across internal/content/atoms/*.md). The
+           // pin therefore anchors the named atom — if Phase 7 axis-
+           // tightening silently dropped that atom from this envelope's
+           // fire-set, TestCorpusCoverage_RoundTrip would fail.
            //
-           // Sources:
-           //   develop-push-dev-workflow-simple → "push-dev"
-           //   develop-push-dev-deploy-container → "zerops_deploy"
-           //   develop-close-push-dev-simple → "zerops_workflow action=\"close\""
-           "push-dev",
-           "zerops_deploy",
-           `zerops_workflow action="close"`,
+           // Sources (one phrase ↔ one atom, no overlap):
+           //   develop-push-dev-deploy-container ⟶ "Push-Dev Deploy Strategy — container"
+           //   develop-push-dev-workflow-simple  ⟶ "auto-starts with its `healthCheck`"
+           //   develop-close-push-dev-simple     ⟶ "Simple-mode services auto-start on deploy"
+           //
+           // None of these phrases contain placeholders, so they survive
+           // the Synthesize-time `{hostname}` substitution unchanged.
+           "Push-Dev Deploy Strategy — container",
+           "auto-starts with its `healthCheck`",
+           "Simple-mode services auto-start on deploy",
        },
    }
    ```
 
-   **Pin sourcing (Codex round 1, axis 6.3 + 6.4):** an empty
-   `MustContain` only proves at least one atom rendered, not that the
-   intended pre-hygiene fire-set was preserved. The three phrases
-   above are observable phrases that must be present on this envelope
-   pre-hygiene; if Phase 7 axis-tightening would silently drop the
-   workflow-simple / deploy-container / close-push-dev-simple atoms
-   for this envelope, `TestCorpusCoverage_RoundTrip` fails. Verify
-   each phrase appears in the rendered output BEFORE adding the
-   fixture (run Synthesize once locally with the fixture).
+   **Pin sourcing (Codex round 1, axis 6.3 + 6.4; round 2, axis 6
+   correction):** an empty `MustContain` only proves at least one atom
+   rendered, not that the intended pre-hygiene fire-set was preserved.
+   Round 2 caught that the round-1 candidate phrases (`zerops_deploy`,
+   `zerops_workflow action="close"`) were not unique to the named
+   anchoring atoms — `zerops_deploy` appears in many atoms, and
+   `zerops_workflow action="close"` does NOT appear in
+   `develop-close-push-dev-simple` at all. The three phrases above
+   were grep-verified to appear in EXACTLY one atom each, so each pin
+   anchors exactly one target. Verify each phrase still appears in
+   the rendered output BEFORE adding the fixture (run Synthesize once
+   locally with the fixture; if a phrase is missing, the fixture
+   envelope shape is wrong, not the pin).
 
 **EXIT**:
 - Both probes built + run, output committed to `plans/audit-composition/`.
