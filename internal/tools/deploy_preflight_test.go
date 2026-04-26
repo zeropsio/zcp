@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
@@ -101,6 +102,221 @@ func TestDeployPreFlight_MissingZeropsYaml_Fails(t *testing.T) {
 	}
 	if !hasYmlCheck {
 		t.Error("expected zerops_yml_exists fail check")
+	}
+}
+
+// TestDeployPreFlight_MissingZeropsYaml_NamesPerServicePath pins G16:
+// when zerops.yaml is missing in container env (per-service mount exists
+// but is empty, and project root has no fallback), the failure detail
+// must name BOTH paths searched AND point the agent at the per-service
+// mount as the canonical scaffold location. Pre-fix the detail named
+// only the project root and the agent had to infer the right directory
+// from CLAUDE.md prose after the error.
+func TestDeployPreFlight_MissingZeropsYaml_NamesPerServicePath(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Container-env shape: per-service mount directory exists at the
+	// SSHFS path, but it is empty (no zerops.yaml scaffolded yet).
+	if err := os.MkdirAll(filepath.Join(dir, "probe"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	meta := &workflow.ServiceMeta{
+		Hostname:         "probe",
+		Mode:             "simple",
+		BootstrapSession: "s1",
+		BootstrappedAt:   "2026-04-01T00:00:00Z",
+	}
+	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := platform.NewMock()
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "probe", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || result.Passed {
+		t.Fatalf("expected fail result, got: %+v", result)
+	}
+
+	var detail string
+	for _, c := range result.Checks {
+		if c.Name == "zerops_yml_exists" && c.Status == statusFail {
+			detail = c.Detail
+			break
+		}
+	}
+	if detail == "" {
+		t.Fatal("expected zerops_yml_exists fail check with detail")
+	}
+
+	mountPath := filepath.Join(dir, "probe")
+	for _, want := range []string{
+		mountPath, // per-service mount path explicitly named
+		dir,       // project root also named (fallback path)
+		"probe",   // hostname surfaced for clarity
+	} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("detail should mention %q\ndetail: %q", want, detail)
+		}
+	}
+}
+
+// TestDeployPreFlight_InvalidMountYaml_DoesNotFallBackToRoot pins the
+// Codex finding: when the per-service mount has an INVALID zerops.yaml
+// (file present, parser rejects), the preflight must NOT silently fall
+// back to a valid project-root zerops.yaml — the per-service file is
+// canonical for the targetHostname; falling back would validate an
+// unrelated config and surface the real failure later. Pre-fix the
+// mount-path parse error was discarded and the root yaml short-circuited
+// the path search.
+func TestDeployPreFlight_InvalidMountYaml_DoesNotFallBackToRoot(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Per-service mount: zerops.yaml exists but is malformed YAML.
+	mountDir := filepath.Join(dir, "probe")
+	if err := os.MkdirAll(mountDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mountDir, "zerops.yaml"), []byte(":not valid: yaml: ["), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Project root: a perfectly valid zerops.yaml — would silently
+	// shadow the broken per-service one if the fallback fired.
+	rootYaml := `zerops:
+  - setup: probe
+    build:
+      base: nodejs@22
+    run:
+      start: node index.js
+`
+	if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte(rootYaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	meta := &workflow.ServiceMeta{
+		Hostname:         "probe",
+		Mode:             "simple",
+		BootstrapSession: "s1",
+		BootstrappedAt:   "2026-04-01T00:00:00Z",
+	}
+	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := platform.NewMock()
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "probe", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || result.Passed {
+		t.Fatalf("preflight must fail when per-service yaml is invalid; got: %+v", result)
+	}
+
+	var detail string
+	for _, c := range result.Checks {
+		if c.Name == "zerops_yml_exists" && c.Status == statusFail {
+			detail = c.Detail
+			break
+		}
+	}
+	if detail == "" {
+		t.Fatal("expected zerops_yml_exists fail check with detail naming the invalid file")
+	}
+	// Detail must name the per-service mount path AND signal that the
+	// failure is parse-not-missing (so the agent fixes the right file).
+	if !strings.Contains(detail, mountDir) {
+		t.Errorf("detail must name the per-service mount path %q\ndetail: %q", mountDir, detail)
+	}
+	if !strings.Contains(detail, "invalid YAML") && !strings.Contains(detail, "invalid") {
+		t.Errorf("detail must signal that the per-service file is invalid (not just missing)\ndetail: %q", detail)
+	}
+}
+
+// TestDeployPreFlight_MountProbeError_DoesNotFallBackToRoot pins the
+// degraded-mount tri-state guard: when the per-service mount path
+// probe fails for any reason OTHER than confirmed absence (permission
+// denied, stale SSHFS, non-directory), the preflight must surface
+// that error immediately rather than silently fall back to the
+// project-root zerops.yaml. The fallback is only safe on confirmed
+// absence — Codex re-review of the G16 follow-up.
+func TestDeployPreFlight_MountProbeError_DoesNotFallBackToRoot(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Create the mount path as a FILE, not a directory — probing it
+	// returns a non-directory error, which is a probe failure (not
+	// confirmed absence). Same blast radius as a stale SSHFS mount or
+	// a permission-denied stat.
+	mountPath := filepath.Join(dir, "probe")
+	if err := os.WriteFile(mountPath, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Project root with a perfectly valid zerops.yaml — would silently
+	// shadow the broken mount probe if the fallback fired.
+	rootYaml := `zerops:
+  - setup: probe
+    build:
+      base: nodejs@22
+    run:
+      start: node index.js
+`
+	if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte(rootYaml), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	meta := &workflow.ServiceMeta{
+		Hostname:         "probe",
+		Mode:             "simple",
+		BootstrapSession: "s1",
+		BootstrappedAt:   "2026-04-01T00:00:00Z",
+	}
+	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := platform.NewMock()
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "probe", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || result.Passed {
+		t.Fatalf("preflight must fail when per-service mount probe errors; got: %+v", result)
+	}
+
+	var detail string
+	for _, c := range result.Checks {
+		if c.Name == "zerops_yml_exists" && c.Status == statusFail {
+			detail = c.Detail
+			break
+		}
+	}
+	if detail == "" {
+		t.Fatal("expected zerops_yml_exists fail check with detail naming the probe failure")
+	}
+	if !strings.Contains(detail, mountPath) {
+		t.Errorf("detail must name the per-service mount path that failed to probe (%q)\ndetail: %q", mountPath, detail)
+	}
+	if !strings.Contains(detail, "probe failed") && !strings.Contains(detail, "not a directory") {
+		t.Errorf("detail must signal probe failure / non-directory, not just 'not found'\ndetail: %q", detail)
 	}
 }
 
