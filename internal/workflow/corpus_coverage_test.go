@@ -516,6 +516,37 @@ func matrixCoverageFixtures() []coverageFixture {
 			},
 		},
 		{
+			// Hygiene-plan §7 Phase 0 step 4 addition (user-test 2026-04-26):
+			// single Go simple-mode service that's already deployed and being
+			// edited. Mirrors the develop_push_dev_simple_container shape but
+			// with a different hostname so pre-/post-hygiene fire-set deltas
+			// for THIS specific user-test envelope are greppable separately.
+			//
+			// MustContain pins were grep-verified UNIQUE to their anchor atoms
+			// 2026-04-26 (Codex round 3 verdict: UNIQUE-MATCH-CONFIRMED):
+			//   develop-push-dev-deploy-container ⟶ "Push-Dev Deploy Strategy — container"
+			//   develop-push-dev-workflow-simple  ⟶ "auto-starts with its `healthCheck`"
+			//   develop-close-push-dev-simple     ⟶ "Simple-mode services auto-start on deploy"
+			// None contain placeholders; survive Synthesize substitution.
+			// If Phase 7 axis-tightening silently dropped any of the three,
+			// TestCorpusCoverage_RoundTrip fails on the named target.
+			Name: "develop_simple_deployed_container",
+			Envelope: StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{{
+					Hostname: "weatherdash", TypeVersion: "go@1.22",
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeSimple,
+					Strategy: "push-dev", Bootstrapped: true, Deployed: true,
+				}},
+			},
+			MustContain: []string{
+				"Push-Dev Deploy Strategy — container",
+				"auto-starts with its `healthCheck`",
+				"Simple-mode services auto-start on deploy",
+			},
+		},
+		{
 			Name: "develop_push_dev_standard_container",
 			Envelope: StateEnvelope{
 				Phase:       PhaseDevelopActive,
