@@ -109,7 +109,7 @@ type RecipeInput struct {
 	OutputRoot       string      `json:"outputRoot,omitempty"       jsonschema:"Directory where the recipe tree + facts log live. Required for 'start'."`
 	Phase            string      `json:"phase,omitempty"            jsonschema:"Phase name for enter-phase / complete-phase: research, provision, scaffold, feature, finalize."`
 	BriefKind        string      `json:"briefKind,omitempty"        jsonschema:"For build-brief: scaffold, feature, finalize."`
-	Codebase         string      `json:"codebase,omitempty"         jsonschema:"For build-brief when kind=scaffold: the codebase hostname to compose for."`
+	Codebase         string      `json:"codebase,omitempty"         jsonschema:"For build-brief when kind=scaffold: the codebase hostname to compose for. For complete-phase: when set, scopes codebase-surface validators to that one codebase only — the sub-agent's pre-termination self-validate path. Phase advance only fires when codebase is empty (the main-agent's post-sub-agent-return path)."`
 	Shape            string      `json:"shape,omitempty"            jsonschema:"For emit-yaml: 'workspace' (services-only YAML for zerops_import at provision) or 'deliverable' (full published template for tierIndex, written to disk)."`
 	TierIndex        int         `json:"tierIndex,omitempty"        jsonschema:"For emit-yaml shape=deliverable: tier 0..5. Ignored when shape=workspace."`
 	Fact             *FactRecord `json:"fact,omitempty"             jsonschema:"For record-fact: a FactRecord object with topic, symptom, mechanism, surfaceHint, citation fields."`
@@ -226,7 +226,7 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 		r.Guidance = loadPhaseEntry(sess.Current)
 		r.OK = true
 	case "complete-phase":
-		r = completePhase(sess, r)
+		r = completePhase(sess, in, r)
 	case "update-plan":
 		if err := mergePlan(sess, in.Plan); err != nil {
 			r.Error = err.Error()
@@ -378,17 +378,48 @@ func mergePlan(sess *Session, incoming *Plan) error {
 }
 
 // completePhase runs the gate set for the current phase and advances
-// state on success. Run-13 §3: for scaffold + feature, auto-stitches
-// per-codebase surfaces first so codebase validators see freshly-
-// authored fragments — eliminating the "remember to call stitch-
-// content before complete-phase" ritual that has no porter-facing
-// meaning.
-func completePhase(sess *Session, r RecipeResult) RecipeResult {
+// state on success.
+//
+// Run-13 §3: for scaffold + feature, auto-stitches per-codebase
+// surfaces first so codebase validators see freshly-authored fragments
+// — eliminating the "remember to call stitch-content before complete-
+// phase" ritual that has no porter-facing meaning.
+//
+// Run-13 §G2: when in.Codebase is set, runs the codebase-scoped
+// validators against just that codebase — the sub-agent's pre-
+// termination self-validate path. Phase advance only fires on the
+// no-codebase form (main-agent's post-sub-agent-return path);
+// scoped close is a self-validate, not a state transition.
+func completePhase(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
+	if in.Codebase != "" {
+		// Validate the requested codebase before doing any stitch
+		// work — keeps "unknown codebase" errors clean (no
+		// pre-stitch noise) and avoids materializing surfaces for a
+		// typo'd hostname.
+		if err := validateCodebaseHostname(sess.Plan, in.Codebase); err != nil {
+			r.Error = "complete-phase: " + err.Error()
+			return r
+		}
+	}
 	if sess.Current == PhaseScaffold || sess.Current == PhaseFeature {
 		if err := stitchCodebases(sess); err != nil {
 			r.Error = "complete-phase: pre-stitch codebases: " + err.Error()
 			return r
 		}
+	}
+	if in.Codebase != "" {
+		// Sub-agent's pre-termination self-validate.
+		blocking, notices, err := sess.CompletePhaseScoped(CodebaseGates(), in.Codebase)
+		if err != nil {
+			r.Error = err.Error()
+			return r
+		}
+		snap := sess.Snapshot()
+		r.Violations, r.Notices, r.Status = blocking, notices, &snap
+		r.OK = len(blocking) == 0
+		// No phase advance, no Guidance — scoped close doesn't
+		// transition. Sub-agent re-calls until ok:true and terminates.
+		return r
 	}
 	blocking, notices, err := sess.CompletePhase(gatesForPhase(sess.Current))
 	if err != nil {

@@ -180,24 +180,54 @@ their backend but may still need a dev-server for a compiled frontend.
 Mount vs container execution-split → `principles/mount-vs-container.md`.
 Never `npm install` / `tsc` / `nest build` against the SSHFS mount.
 
-## Correcting a fragment you authored
+## Self-validate before terminating
 
-If `complete-phase scaffold` flags a violation on a fragment you
-authored, fix it in-session via `record-fragment mode=replace`:
+Before you terminate, call:
 
-```
-zerops_recipe action=record-fragment slug=<slug>
-  fragmentId=codebase/<host>/integration-guide
-  mode=replace
-  fragment=<corrected body>
-```
+    zerops_recipe action=complete-phase phase=scaffold codebase=<your-host>
 
-Default mode is append for codebase IG/KB/claude-md ids (so feature
-phase can extend scaffold's content). `mode=replace` overwrites — use
-when correcting your own previously-recorded fragment within the same
-phase. Feature sub-agent can also use `mode=replace` to correct
-scaffold's content if scaffold wrote something feature needs to
-rewrite (rare; prefer extending).
+This runs the codebase-scoped validators (IG / KB / CLAUDE / yaml-
+comment / source-comment-voice) against your codebase's surfaces only
+— peer codebases are NOT validated. You only see your own work, in
+your own session, where you can correct it.
+
+If `ok:true`: safe to terminate.
+
+If `ok:false` with violations:
+
+- Violations on `codebase/<host>/{integration-guide,knowledge-base,
+  claude-md/*}` ids → fix in-session via `record-fragment
+  mode=replace`:
+
+  ```
+  zerops_recipe action=record-fragment slug=<slug>
+    fragmentId=codebase/<host>/integration-guide
+    mode=replace
+    fragment=<corrected body>
+  ```
+
+  Default mode is append for codebase IG/KB/claude-md ids (so feature
+  phase can extend scaffold's content). `mode=replace` overwrites —
+  use when correcting your own previously-recorded fragment within
+  the same phase.
+
+- Violations on `<SourceRoot>/zerops.yaml` (yaml-comment-missing-
+  causal-word, IG-scaffold-filename, etc.) → ssh-edit the yaml file
+  directly; it's not a fragment, it's the committed source. After
+  ssh-edit, the engine's IG item-1 generator will re-read the yaml
+  body on next stitch.
+
+- Re-call `complete-phase phase=scaffold codebase=<your-host>` to
+  verify the fix.
+
+- Repeat until `ok:true`, then terminate.
+
+The phase-level `complete-phase` (no codebase parameter) is the main
+agent's responsibility after every sub-agent returns — it advances
+the phase state. Your job is just to ensure your own codebase's gate
+passes before you exit. Feature sub-agent can also use `mode=replace`
+to correct scaffold's content if scaffold wrote something feature
+needs to rewrite (rare; prefer extending).
 
 ## Validator tripwires
 

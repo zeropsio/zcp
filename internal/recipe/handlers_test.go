@@ -1086,6 +1086,149 @@ func TestDispatch_CompletePhaseScaffold_AutoStitchesCodebases(t *testing.T) {
 	}
 }
 
+// TestDispatch_CompletePhase_CodebaseScoped_OnlyValidatesNamedCodebase
+// — run-13 §G2. complete-phase with codebase=<host> runs the codebase-
+// scoped surface validators against just that codebase. A peer
+// codebase's violation does NOT surface; the named codebase's
+// violation does. Closes the §G actor mismatch — sub-agent self-
+// validates before terminating, sees only its own work.
+func TestDispatch_CompletePhase_CodebaseScoped_OnlyValidatesNamedCodebase(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	outputRoot := filepath.Join(dir, "run")
+	store := NewStore(dir)
+	dispatch(t.Context(), store, RecipeInput{
+		Action: "start", Slug: "synth-showcase", OutputRoot: outputRoot,
+	})
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+	stageScaffoldYAMLs(t, dir, sess.Plan)
+	sess.Current = PhaseScaffold
+
+	// api gets a violating IG (plain ordered list — codebase-ig-plain-
+	// ordered-list fires); app gets a clean IG.
+	dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fragment", Slug: "synth-showcase",
+		FragmentID: "codebase/api/integration-guide",
+		Fragment:   "1. plain ordered\n2. list shape\n",
+	})
+	dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fragment", Slug: "synth-showcase",
+		FragmentID: "codebase/app/integration-guide",
+		Fragment:   "### 2. Bind 0.0.0.0\n\nLoopback is unreachable.\n### 3. Use `vite preview`\n\nDev mode is wrong for prod.\n### 4. Object-storage path style\n\nForce path style.\n### 5. Trust proxy\n\nBehind L7.\n",
+	})
+
+	apiResult := dispatch(t.Context(), store, RecipeInput{
+		Action: "complete-phase", Slug: "synth-showcase", Codebase: "api",
+	})
+	if apiResult.OK {
+		t.Errorf("expected api scoped close to fail with violations, got OK=true; violations=%+v", apiResult.Violations)
+	}
+	if !containsCode(apiResult.Violations, "codebase-ig-plain-ordered-list") {
+		t.Errorf("expected codebase-ig-plain-ordered-list on api, got %+v", apiResult.Violations)
+	}
+
+	appResult := dispatch(t.Context(), store, RecipeInput{
+		Action: "complete-phase", Slug: "synth-showcase", Codebase: "app",
+	})
+	if containsCode(appResult.Violations, "codebase-ig-plain-ordered-list") {
+		t.Errorf("expected NO plain-ordered-list on app, got %+v", appResult.Violations)
+	}
+}
+
+// TestDispatch_CompletePhase_CodebaseScoped_DoesNotAdvancePhase —
+// run-13 §G2. Per-codebase complete-phase is a self-validate, NOT a
+// state transition. Phase stays scaffold even after a clean per-
+// codebase close. The phase-advance trigger is still the no-codebase
+// form, which is main's responsibility once all sub-agents return.
+func TestDispatch_CompletePhase_CodebaseScoped_DoesNotAdvancePhase(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	outputRoot := filepath.Join(dir, "run")
+	store := NewStore(dir)
+	dispatch(t.Context(), store, RecipeInput{
+		Action: "start", Slug: "synth-showcase", OutputRoot: outputRoot,
+	})
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+	stageScaffoldYAMLs(t, dir, sess.Plan)
+	sess.Current = PhaseScaffold
+
+	dispatch(t.Context(), store, RecipeInput{
+		Action: "complete-phase", Slug: "synth-showcase", Codebase: "api",
+	})
+	if sess.Completed[PhaseScaffold] {
+		t.Errorf("scoped close should not mark phase complete; Completed[Scaffold] = true")
+	}
+}
+
+// TestDispatch_CompletePhase_UnknownCodebase_Errors — run-13 §G2.
+// Misspelled codebase name should fail loudly, not silently no-op.
+func TestDispatch_CompletePhase_UnknownCodebase_Errors(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	outputRoot := filepath.Join(dir, "run")
+	store := NewStore(dir)
+	dispatch(t.Context(), store, RecipeInput{
+		Action: "start", Slug: "synth-showcase", OutputRoot: outputRoot,
+	})
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+	sess.Current = PhaseScaffold
+
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "complete-phase", Slug: "synth-showcase", Codebase: "nonexistent",
+	})
+	if res.OK {
+		t.Errorf("expected error for unknown codebase, got OK=true")
+	}
+	if !strings.Contains(res.Error, "nonexistent") {
+		t.Errorf("error message does not name the bad codebase; got %q", res.Error)
+	}
+}
+
+// TestDispatch_CompletePhase_NoCodebase_StillAdvancesOnClean — run-13
+// §G2 regression guard. The phase-level (no-codebase) close still
+// advances the phase when gates pass. Sub-agents call the scoped
+// form; main calls the phase-level form.
+func TestDispatch_CompletePhase_NoCodebase_StillAdvancesOnClean(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	outputRoot := filepath.Join(dir, "run")
+	store := NewStore(dir)
+	dispatch(t.Context(), store, RecipeInput{
+		Action: "start", Slug: "synth-showcase", OutputRoot: outputRoot,
+	})
+	sess, _ := store.Get("synth-showcase")
+	// Plan that satisfies provision-phase gates (no managed-service set
+	// requirements until showcase tier; provision has none) and lets
+	// the phase-level complete-phase advance cleanly.
+	sess.Plan = &Plan{
+		Slug: "synth-showcase", Framework: "synth", Tier: tierMinimal,
+		Research: ResearchResult{CodebaseShape: "1"},
+		Codebases: []Codebase{
+			{Hostname: "app", Role: RoleMonolith, BaseRuntime: "nodejs@22"},
+		},
+		Services: []Service{
+			{Hostname: "db", Type: "postgresql@18", Kind: ServiceKindManaged, Priority: 10},
+		},
+	}
+	sess.Current = PhaseProvision
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "complete-phase", Slug: "synth-showcase",
+	})
+	if !res.OK {
+		t.Fatalf("complete-phase provision should succeed for clean plan; violations=%+v error=%q", res.Violations, res.Error)
+	}
+	if !sess.Completed[PhaseProvision] {
+		t.Errorf("phase-level close on clean plan must mark phase complete")
+	}
+}
+
 func TestDispatch_BuildBrief(t *testing.T) {
 	t.Parallel()
 

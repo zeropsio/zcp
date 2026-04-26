@@ -146,3 +146,33 @@ dev and stage slots, every scaffold-owned fragment id recorded, and
 every codebase with initCommands must have attested that they ran
 (success line + post-deploy data check). Facts recorded during the
 phase flow into the classification gate at finalize.
+
+## Self-validate before terminating (sub-agent)
+
+Before you terminate, call:
+
+    zerops_recipe action=complete-phase phase=scaffold codebase=<your-host>
+
+This runs the codebase-scoped validators (IG / KB / CLAUDE / yaml-
+comment / source-comment-voice) against your codebase's surfaces only
+— peer codebases are NOT validated, so you only see your own work.
+
+If `ok:true`: all your work passes the gate; safe to terminate.
+
+If `ok:false` with violations:
+- Violations on `codebase/<host>/{integration-guide,knowledge-base,
+  claude-md/*}` ids → fix via `record-fragment mode=replace
+  fragmentId=codebase/<host>/<name> fragment=<corrected body>`.
+- Violations on `<SourceRoot>/zerops.yaml` (yaml-comment-missing-
+  causal-word, IG-scaffold-filename, etc.) → ssh-edit the yaml file
+  directly; it's not a fragment, it's the committed source. After
+  ssh-edit, the engine's IG item-1 generator will re-read the yaml
+  body on next stitch.
+- Re-call `complete-phase phase=scaffold codebase=<your-host>` to
+  verify the fix.
+- Repeat until `ok:true`, then terminate.
+
+The phase-level `complete-phase` (no codebase parameter) is the main
+agent's responsibility after all sub-agents return — it advances the
+phase state. Your job is just to ensure your own codebase's gate
+passes before you exit.

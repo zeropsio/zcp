@@ -55,9 +55,15 @@ import (
 // browser-verification facts). Showcase-tier feature brief lands ~14
 // KB; minimal/hello-world tiers stay below 12 KB and could use a
 // lower cap, but a single shared cap keeps the engine logic simple.
+//
+// Run-13 §G2 raised both caps to fit the self-validate-before-
+// terminating teaching in scaffold's content_authoring (replaces the
+// older "Correcting a fragment" subsection — broader scope, ~500
+// bytes more) and feature's content_extension (~400 bytes added).
+// Scaffold cap 24 → 26 KB; feature cap 16 → 18 KB.
 const (
-	ScaffoldBriefCap = 24 * 1024
-	FeatureBriefCap  = 16 * 1024
+	ScaffoldBriefCap = 26 * 1024
+	FeatureBriefCap  = 18 * 1024
 )
 
 // BriefKind identifies a sub-agent role. Scaffold + feature have

@@ -115,6 +115,43 @@ func (s *Session) CompletePhase(gates []Gate) (blocking, notices []Violation, er
 	return nil, notices, nil
 }
 
+// CompletePhaseScoped runs the given gate set against a Plan whose
+// Codebases slice is filtered to just `codebase`. Used by the sub-
+// agent's pre-termination self-validate path — surface validators
+// fire only against the named codebase's content. Phase state is NOT
+// mutated; this is a self-validate, not a transition. Run-13 §G2.
+//
+// Returns an error when the codebase is not in s.Plan.Codebases. The
+// caller (completePhase) typically pre-validates via
+// validateCodebaseHostname for a richer error; this guard keeps the
+// helper safe for direct callers.
+func (s *Session) CompletePhaseScoped(gates []Gate, codebase string) (blocking, notices []Violation, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Plan == nil {
+		return nil, nil, errors.New("CompletePhaseScoped: nil plan")
+	}
+	scopedPlan := *s.Plan
+	scopedPlan.Codebases = nil
+	for _, cb := range s.Plan.Codebases {
+		if cb.Hostname == codebase {
+			scopedPlan.Codebases = append(scopedPlan.Codebases, cb)
+			break
+		}
+	}
+	if len(scopedPlan.Codebases) == 0 {
+		return nil, nil, fmt.Errorf("codebase %q not in plan", codebase)
+	}
+	ctx := GateContext{
+		Plan:       &scopedPlan,
+		OutputRoot: s.OutputRoot,
+		FactsLog:   s.FactsLog,
+		Parent:     s.Parent,
+	}
+	blocking, notices = PartitionBySeverity(RunGates(gates, ctx))
+	return blocking, notices, nil
+}
+
 // RecordFact appends a fact to the session's facts-log after validation.
 // Returns an error if validation fails (required field missing).
 func (s *Session) RecordFact(f FactRecord) error {

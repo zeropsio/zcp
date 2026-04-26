@@ -117,6 +117,27 @@ fixApplied describes a recipe-source change without platform-side
 mechanism vocabulary in failureMode (V-1). See scaffold brief
 "Self-inflicted litmus" subsection.
 
+## Self-validate before terminating
+
+Before you terminate, call:
+
+    zerops_recipe action=complete-phase phase=feature codebase=<host>
+
+per codebase you touched. Same shape as scaffold's self-validate path:
+runs the codebase-scoped validators against just that codebase, so you
+see only your own work and can correct it in-session.
+
+If `ok:false` with violations on `codebase/<host>/{integration-guide,
+knowledge-base,claude-md/*}` ids → fix via `record-fragment
+mode=replace fragmentId=codebase/<host>/<name> fragment=<corrected
+body>`. Re-call until `ok:true`, then move on to the next codebase.
+
+Calling `complete-phase phase=feature` without a codebase is also
+valid — it validates ALL touched codebases at once. Use the scoped
+form when iterating on a single codebase's violations; use the
+phase-level form when you've cleared every codebase and are about to
+hand back to main for phase advance.
+
 ## At feature close — commit per-feature
 
 Commit each feature extension separately with a descriptive message
