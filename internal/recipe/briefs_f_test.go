@@ -336,6 +336,32 @@ func TestInitCommandsModel_TopicsListed(t *testing.T) {
 	}
 }
 
+// TestFeatureContentExtensionAtom_TeachesIGScopeRule — run-13 §I-feature.
+// Run-12 apidev IG carried 7 numbered items + 2 unnumbered prose
+// subsections (`### Cache-demo wrapper`, `### Liveness probe`) inside
+// the integration-guide extract markers — the feature subagent
+// appended recipe-internal contracts (cache-demo wrapper TTL, status
+// aggregator endpoint) that §I would have routed to KB or
+// claude-md/notes. The scaffold's IG-scope teaching didn't reach the
+// feature brief; this atom now carries it explicitly.
+func TestFeatureContentExtensionAtom_TeachesIGScopeRule(t *testing.T) {
+	t.Parallel()
+
+	body, err := readAtom("briefs/feature/content_extension.md")
+	if err != nil {
+		t.Fatalf("read atom: %v", err)
+	}
+	for _, must := range []string{
+		"IG scope (extending scaffold's items)",
+		"recipe-internal CONTRACT",
+		"Aim for 0-1 IG appends",
+	} {
+		if !strings.Contains(body, must) {
+			t.Errorf("content_extension missing IG-scope anchor %q", must)
+		}
+	}
+}
+
 // TestPlatformPrinciplesAtom_TeachesAliasResolutionTiming — run-13 §U.
 // Run-12 scaffold-app recorded cross-service-alias-resolution-timing:
 // `${apistage_zeropsSubdomain}` is a literal token until apistage's

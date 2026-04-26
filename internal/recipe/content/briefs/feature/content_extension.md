@@ -36,6 +36,39 @@ runbooks live in the recipe root README.
 Typical scale: 1–2 KB bullets + 0–1 IG item per feature. Most features
 change code, not topology.
 
+## IG scope (extending scaffold's items)
+
+If your feature genuinely changes what a porter has to do to deploy
+their NestJS / Laravel / SvelteKit app on Zerops (binding,
+trust-proxy, env-aliasing, init-commands, deploy-files),
+`record-fragment mode=append fragmentId=codebase/<h>/integration-guide`
+adds the new item.
+
+If your feature adds a recipe-internal CONTRACT (a new endpoint shape,
+a cache-demo wrapper's TTL convention, a NATS subject naming rule, a
+queue-group name), that goes to KB
+(`record-fragment mode=append fragmentId=codebase/<h>/knowledge-base`)
+or claude-md/notes
+(`record-fragment mode=append fragmentId=codebase/<h>/claude-md/notes`)
+— NOT to integration-guide. The IG audience is a porter bringing their
+own code; recipe-internal contracts are not their concern.
+
+Examples:
+
+- Adding `forcePathStyle: true` for object storage → IG (porter needs
+  to do this in their own code)
+- Adding a `/items/:id` cache-demo wrapper with `X-Cache: HIT/MISS` →
+  KB or claude-md/notes (recipe-internal endpoint shape)
+- Adding `app.enableCors({ exposedHeaders: ['X-Cache'] })` → KB
+  (platform × framework intersection: CORS expose-headers behaviour)
+- Adding a `/status` aggregator endpoint → claude-md/notes
+  (recipe-internal liveness pattern)
+
+Aim for 0-1 IG appends per feature; 1-2 KB bullets is normal; 0-3
+claude-md/notes additions is normal. If you find yourself adding 2+ IG
+items, check whether the additions are recipe-internal contracts that
+belong elsewhere.
+
 Mount vs container execution-split (editor tools on the mount,
 framework CLIs via ssh) lives in `principles/mount-vs-container.md`
 (injected above). Local `npm install` / `npx build` against the SSHFS
