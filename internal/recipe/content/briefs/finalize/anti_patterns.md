@@ -5,7 +5,7 @@
 - Do NOT resolve `${zeropsSubdomainHost}` to a literal URL.
 - Do NOT hand-edit stitched files; use `record-fragment` (default `append`)
   + `record-fragment mode=replace` for corrections.
-- Do NOT touch `codebase/<h>/{intro,integration-guide,knowledge-base,
-  claude-md/*}` ids — scaffold + feature have already validated their
-  content at their own complete-phase. By finalize, those surfaces are
-  green.
+- By finalize, codebase fragments should be green (scaffold + feature
+  validated them at their own complete-phase). If finalize complete-
+  phase still flags a residual codebase fragment violation, use
+  `record-fragment mode=replace` to correct it. The §R API was added exactly for this case: default mode for codebase ids is append; pass `mode=replace` only when correcting an existing fragment.

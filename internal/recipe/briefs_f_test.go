@@ -336,6 +336,29 @@ func TestInitCommandsModel_TopicsListed(t *testing.T) {
 	}
 }
 
+// TestFinalizeAntiPatternsAtom_AllowsReplaceMode — run-13 §W. The
+// previous "do not touch codebase/<h>/* ids" bullet contradicted §R
+// (which intentionally enabled mode=replace for those ids so finalize
+// CAN touch them when needed). Atom now says: codebase fragments
+// SHOULD be green by finalize, and if a residual violation fires use
+// mode=replace to correct.
+func TestFinalizeAntiPatternsAtom_AllowsReplaceMode(t *testing.T) {
+	t.Parallel()
+
+	body, err := readAtom("briefs/finalize/anti_patterns.md")
+	if err != nil {
+		t.Fatalf("read atom: %v", err)
+	}
+	for _, must := range []string{
+		"record-fragment mode=replace",
+		"§R API was added exactly for this case",
+	} {
+		if !strings.Contains(body, must) {
+			t.Errorf("anti_patterns missing replace-mode anchor %q", must)
+		}
+	}
+}
+
 // TestFeatureContentExtensionAtom_TeachesIGScopeRule — run-13 §I-feature.
 // Run-12 apidev IG carried 7 numbered items + 2 unnumbered prose
 // subsections (`### Cache-demo wrapper`, `### Liveness probe`) inside
