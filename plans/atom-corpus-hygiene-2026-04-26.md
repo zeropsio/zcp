@@ -29,10 +29,38 @@ allowlist-empty state. But the broader corpus was never audited:
   see? Are the atom transitions coherent? Are there contradictions
   across atoms? Are there gaps the agent has to fill from training?
   Nobody has read the rendered output as if they were the agent.
-- **Atom necessity is unaudited.** Some atoms might fire on no realistic
-  envelope (dead atoms). Some might be marginal — the agent could
-  reasonably proceed without them. Some might be load-bearing but
-  carry only one or two facts amid 1+ KB of prose padding.
+- **Atom necessity is unaudited along TWO axes**:
+  1. *Fire-set necessity* — does this atom fire on any realistic
+     envelope at all? (Dead atoms.)
+  2. *Content-relevance necessity* (NEW lens, validated by user-test
+     2026-04-26) — when the atom DOES fire on an envelope, does its
+     content actually help the agent on THAT envelope, or is it
+     tangential noise? An axis filter may be loose enough to admit
+     atoms whose body content is irrelevant to the envelope shape.
+
+### 1.1 User-test evidence (2026-04-26)
+
+A separate user-test session edited a single Go file in a running
+simple-mode-deployed service. The agent received **~30 atoms of
+guidance**; the user-tester (LLM running the task) judged **~5 as
+relevant**, the rest as context-window pollution.
+
+Specific irrelevance examples observed in that envelope:
+- `develop-mode-expansion` (talks about expanding to standard pair) —
+  irrelevant for a simple-mode service that doesn't expand.
+- `develop-dev-server-triage` (dev-server reason codes) — irrelevant
+  for `implicit-webserver` runtime which has no dev-server concept.
+- `develop-first-deploy-*` family — irrelevant when `deployed=true`.
+
+The §6.3 fire-set matrix would correctly report all three as "fires
+on this envelope" — they DO match the envelope's axes. The miss is
+on the second axis: their content is NOT relevant to the user's
+task. Axis-tightness audit (new content in §5/§7) addresses this.
+
+This is *concrete production validation* of the plan's premise:
+the corpus is ~75 % excess for any given envelope shape. The
+hygiene plan is not premature optimization; it's already-late
+optimization.
 
 ## 2. Goal
 
@@ -190,7 +218,7 @@ done | sort -n
 
 23 of top-30 = **NEVER AUDITED**. Total never-audited bytes ≈ ~30 KB.
 
-## 5. Six-axis hygiene taxonomy (apply per atom)
+## 5. Ten-axis hygiene taxonomy (apply per atom)
 
 Each atom receives one or more labels from this taxonomy. Choice of
 labels drives the action.
@@ -261,6 +289,31 @@ analysis: walk every coverageFixture, every scenario, every
 plausible runtime envelope; an atom that never appears in any
 fire-set is dead.
 **Action:** delete entirely.
+
+### Axis J — AXIS-LOOSE ATOM (new, from user-test 2026-04-26 evidence)
+Atom fires on envelopes where its content is NOT relevant to the
+agent's likely task. The axis filter is loose enough to admit
+envelopes the atom doesn't help. Examples from §1.1:
+- `develop-mode-expansion` fires on simple-mode envelopes where
+  expansion isn't applicable.
+- `develop-dev-server-triage` fires on implicit-webserver runtimes
+  with no dev-server concept.
+- `develop-first-deploy-*` atoms can fire on a mixed envelope where
+  ONE service is never-deployed and others are deployed; the
+  first-deploy atoms still render even when the agent's task is
+  about a different (already-deployed) service.
+
+**Action:** tighten the atom's frontmatter axes. Add `runtimes:`,
+`modes:`, `deployStates:` (or `envelopeDeployStates:` for once-per-
+envelope content) constraints that prevent the atom from firing on
+envelopes where it doesn't help. The synthesizer's existing axis
+filter does the rest.
+
+**Risk**: tightening axes can drop the atom from envelopes where it
+WAS being delivered. Confirm via fire-set re-run that axis-tightening
+doesn't drop the atom from any envelope where it's actually load-
+bearing. Commit per §6.1 fact inventory + Codex round per §10.1
+Phase 7.
 
 ## 6. Methodology
 
@@ -354,9 +407,29 @@ tool / arg shape / decision rule needed. Count gaps.
 | 2 | Likely-action gap + multiple low-probability gaps. |
 | 1 | Major gap (e.g. "what tool to call next" unclear). |
 
-**Re-run scoring** post-hygiene must show: coherence + density
-non-decreasing; redundancy + coverage-gap strictly improving (or
-flat-at-5).
+**Task-relevance — fraction of rendered atoms relevant to the most
+likely task on this envelope** (NEW dimension from user-test 2026-04-26).
+
+Per envelope, identify the 1-3 most likely tasks the agent would
+perform (e.g. simple-mode-deployed envelope: "edit a file +
+re-deploy"; first-deploy envelope: "scaffold zerops.yaml + write app
++ deploy"). For each rendered atom, judge: relevant / partially-
+relevant / irrelevant / actively-noise.
+
+| Score | Threshold |
+|---|---|
+| 5 | ≥ 90 % of atoms relevant. |
+| 4 | 75-89 % relevant. |
+| 3 | 50-74 % relevant. |
+| 2 | 25-49 % relevant. |
+| 1 | < 25 % relevant (user-test baseline = ~17 %; current corpus). |
+
+This dimension catches Axis J (axis-loose atoms) at the composition
+level. A score of 1-2 here flags axis-tightening targets for Phase 7.
+
+**Re-run scoring** post-hygiene must show: coherence + density +
+task-relevance non-decreasing; redundancy + coverage-gap strictly
+improving (or flat-at-5).
 
 ### 6.3 Necessity check
 
@@ -586,6 +659,79 @@ make lint-local
 
 After every PHASE: full `go test ./... -short -count=1 -race`.
 
+### 6.6 Multi-layer verification (per-phase + final)
+
+The §6.5 verify gate is necessary but insufficient — it catches
+test-pinned regressions only. Hygiene work risks subtler failures
+(facts dropped without test coverage, agent comprehension regressed,
+composition coherence broken). Five layered checks address each class:
+
+| Layer | What it catches | When applied |
+|---|---|---|
+| **L1 — Unit/test gate** (§6.5) | Pinned regressions, lint, race. | After every commit. |
+| **L2 — Probe re-measurement** (§6.4) | Byte-recovery deltas; dedup confirmation; per-atom-render counts. | After every commit that edits a corpus atom. |
+| **L3 — Composition audit** (§6.2) | Per-fixture aggregate quality (coherence/density/redundancy/coverage-gap). Subjective scoring with rubric anchors. | Phase 0 baseline + Phase 7 re-score. |
+| **L4 — Composition cross-validation** (NEW) | Composition scoring drift between two independent reads. | Per Phase 7 fixture: TWO Codex rounds with same fixture + rubric, compare scores. ≥2 disagreement triggers rubric refinement. |
+| **L5 — Live smoke test** (NEW) | Wire-frame on real MCP STDIO transport; agent recovery from compaction; per-phase envelope deliverability. | Phase 0 baseline + Phase 8 final gate. |
+
+#### L5 — Live smoke test procedure (per prior trim §17.5)
+
+eval-zcp container (per CLAUDE.local.md authorization) is the
+playground.
+
+```bash
+# Build the patched binary on dev box.
+make linux-amd
+
+# Push to zcp container in eval-zcp project.
+scp builds/zcp-linux-amd64 zcp:/tmp/zcp-hygiene
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+    zcp 'cp /tmp/zcp-hygiene ~/.local/bin/zcp'
+
+# Issue MCP STDIO call: initialize → status (idle envelope).
+ssh zcp 'cat <<EOF > /tmp/mcp.json
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"hygiene-smoke","version":"0"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"zerops_workflow","arguments":{"action":"status"}}}
+EOF
+( cat /tmp/mcp.json; sleep 6 ) | timeout 10s zcp serve 2>/dev/null > /tmp/resp.ndjson'
+
+# Decode response.content[0].text length per line; assert under 32 KB cap.
+ssh zcp 'awk "NR==2 {print length()}" /tmp/resp.ndjson'
+```
+
+Repeat for develop-active envelope (provision a runtime service if
+needed per CLAUDE.local.md "When tests/evals require a fresh runtime
+service, provision one yourself").
+
+L5 has TWO assertions:
+1. Wire-frame matches probe number ±1 byte (validates probe accuracy
+   end-to-end).
+2. Decoded `text` parses as valid markdown + contains the expected
+   atom-rendered structure (`## Status`, services, plan, guidance).
+
+Failure on L5 = ship-blocker until root-caused. The probe could be
+lying about wire-frame, OR the production transport adds bytes the
+probe doesn't model.
+
+### 6.7 Eval-scenario regression check
+
+Optional but recommended for Phase 7 / 8: run a known eval scenario
+from `internal/eval/scenarios/` against the new corpus. Compare agent
+moves vs the pre-hygiene baseline (capture from a `git stash` or a
+worktree on prior commit).
+
+```bash
+# Run a bootstrap → first-deploy scenario end-to-end on eval-zcp.
+go test ./internal/eval/ -run TestScenario_WeatherDashboardNodejs -count=1 -v
+```
+
+Document any divergence in `plans/audit-composition/eval-regression-<scenario>.md`.
+A divergence is NOT automatically a regression — the new corpus may
+guide the agent to a BETTER move. But unexamined divergence is a
+ship-blocker until the executor evaluates it as improvement OR
+regression.
+
 ## 7. Phased execution
 
 > **Pacing rule.** ~74 in-scope atoms across 9 phases (Phase 0-8) means
@@ -680,12 +826,44 @@ before touching content.
        // Same shape as KnownOverflows_StillOverflow.
    }
    ```
-4. **Composition-audit baseline.** Run §6.2 on the four heavy-fire
-   fixtures (`develop_first_deploy_standard_container`,
-   `develop_first_deploy_implicit_webserver_standard`,
-   `develop_first_deploy_two_runtime_pairs_standard`,
-   `develop_push_dev_dev_container`). Commit baseline scores in
-   `plans/audit-composition/baseline-scores.md`.
+4. **Composition-audit baseline.** Run §6.2 on FIVE fixtures:
+   - `develop_first_deploy_standard_container` (heavy first-deploy)
+   - `develop_first_deploy_implicit_webserver_standard` (heavy first-deploy + implicit-webserver)
+   - `develop_first_deploy_two_runtime_pairs_standard` (multi-pair stretch)
+   - `develop_push_dev_dev_container` (post-deploy edit-loop)
+   - `develop_simple_deployed_container` (NEW from user-test 2026-04-26 — single simple-mode deployed service edit task)
+
+   Commit baseline scores in `plans/audit-composition/baseline-scores.md`.
+   Score the NEW `task-relevance` dimension (per §6.2 rubric) on
+   each fixture — the user-test reported < 25 % task-relevance on
+   the simple-deployed fixture, so a baseline score of 1 is expected.
+
+   If the `develop_simple_deployed_container` fixture doesn't exist
+   in `coverageFixtures()`, ADD it as part of Phase 0 calibration
+   (analogous to how the prior trim added the
+   `develop_first_deploy_two_runtime_pairs_standard` stretch fixture).
+   Use this envelope shape:
+   ```go
+   {
+       Name: "develop_simple_deployed_container",
+       Envelope: StateEnvelope{
+           Phase: PhaseDevelopActive,
+           Environment: EnvContainer,
+           Services: []ServiceSnapshot{{
+               Hostname: "weatherdash", TypeVersion: "go@1.22",
+               RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeSimple,
+               Strategy: "push-dev", Bootstrapped: true, Deployed: true,
+           }},
+       },
+       MustContain: []string{
+           // Pin tightly to atoms that SHOULD fire here. The Phase 7
+           // axis-tightening work will remove atoms that fire here
+           // but shouldn't (mode-expansion, dev-server-triage on
+           // implicit-webserver, etc.). MustContain entries here
+           // anchor the post-hygiene fire-set.
+       },
+   }
+   ```
 
 **EXIT**:
 - Both probes built + run, output committed to `plans/audit-composition/`.
@@ -861,36 +1039,59 @@ review notes. No silent fact loss.
 
 **Target**: 2-4 KB body recovery.
 
-### Phase 7 — Necessity rationalization (axis I + composition pass)
+### Phase 7 — Necessity rationalization (axis I + axis J + composition pass)
 
 **ENTRY**: Phase 6 EXIT satisfied.
 `plans/audit-composition/merge-candidates.md` (from Phase 1) lists the
 single-fixture-fire-set atoms.
 
-**WORK-SCOPE**: fold marginal atoms into siblings; verify aggregate
-coherence.
+**WORK-SCOPE**: three sub-passes — axis tightening, marginal-atom
+merges, aggregate composition re-score.
 
-1. **Marginal-atom merges**: for each atom flagged in Phase 1 step 3
-   (single-fixture fire-set): could it merge into another atom firing
-   on the same fixture? If yes and the merged atom stays under 2 KB,
-   merge. Decompose the merged atom's content via the §6.1 fact
-   inventory.
+1. **Axis-tightness audit (axis J, NEW from user-test)**: for each
+   atom that the Phase 0 baseline composition audit's `task-relevance`
+   dimension scored ≤ 2 on at least one fixture: read the atom's
+   frontmatter axes; identify the envelopes where it fires but is
+   irrelevant; tighten axes (`runtimes:`, `modes:`, `deployStates:`,
+   `envelopeDeployStates:`) to exclude those envelopes.
+
+   Re-run §6.3 fire-set after tightening; confirm the atom is NOT
+   dropped from envelopes where it WAS load-bearing (would be a
+   regression). Per-atom Codex round per §10.1 Phase 7 PER-EDIT.
+
+   Examples from user-test:
+   - `develop-mode-expansion`: tighten to exclude `modes:[simple]`
+     (mode expansion N/A on simple).
+   - `develop-dev-server-triage`: tighten to exclude
+     `runtimes:[implicit-webserver, static, managed]`.
+   - First-deploy-* family: confirm `envelopeDeployStates:` axis
+     properly excludes them when ALL services in envelope are
+     deployed (not just the primary one).
+
+2. **Marginal-atom merges (axis I)**: for each atom flagged in Phase
+   1 step 3 (single-fixture fire-set): could it merge into another
+   atom firing on the same fixture? If yes and the merged atom stays
+   under 2 KB, merge. Decompose the merged atom's content via the
+   §6.1 fact inventory.
    - **RISK CHECK BEFORE EACH MERGE**: confirm the source and target
      atoms have OVERLAPPING axis sets. Merging a `runtimes:[dynamic]`
      atom into a `runtimes:[]` (wildcard) atom changes axis-filtering —
      facts that only applied to dynamic now fire for static too. If
      axis sets disagree, do NOT merge; keep as a marginal atom.
-2. **Re-run composition audit** (§6.2) on the four heavy-fire
-   fixtures. Compare to baseline scores. Coherence + density should
-   improve; redundancy + coverage-gap should drop.
-3. Commit composition-audit deltas as
+3. **Re-run composition audit** (§6.2) on the four heavy-fire
+   fixtures + the simple-mode-deployed user-test fixture (per §4.4
+   addition). Compare to baseline scores. Coherence + density +
+   task-relevance should improve; redundancy + coverage-gap should
+   drop.
+4. Commit composition-audit deltas as
    `plans/audit-composition/post-hygiene-scores.md`.
 
-**EXIT**: composition scores documented; merges accompanied by Codex
-round confirming axis-filtering preserved.
+**EXIT**: composition scores documented; axis-tightening + merges
+accompanied by Codex round confirming axis-filtering preserved AND
+the user-test envelope's task-relevance score moved to ≥ 4.
 
-**Target**: 1-2 atom files removed via merge; aggregate composition
-quality improvement.
+**Target**: 1-2 atom files removed via merge; 5+ atoms axis-tightened;
+aggregate composition + task-relevance improvement.
 
 ### Phase 8 — Pin-coverage closure + cleanup
 
@@ -931,6 +1132,11 @@ Augments the prior trim's §8 table.
 
 ## 9. Acceptance criteria
 
+> **Final ship-gate**: §15.3 G1-G8 are the *operationalized* form of
+> these criteria. This section names the goals; §15.3 names the
+> verifiable artifacts that prove them. A ship-claim without §15.3
+> evidence is incomplete.
+
 - All §8 tests green at every commit.
 - `knownUnpinnedAtoms` map empty at end of Phase 8.
 - Composition-audit scores (§6.2) on the four baseline envelopes
@@ -960,31 +1166,189 @@ Augments the prior trim's §8 table.
 
 ## 10. Codex collaboration protocol
 
-Mandatory per-phase invocations. Mirrors the prior trim's protocol but
-expanded:
+Codex is a **partner**, not just a reviewer. The protocol is designed
+around what Codex does best (corpus-wide analysis, fresh-eyes
+adversarial review, large-context cross-correlation) vs what Claude
+does best (per-edit orchestration, tool execution, stateful editing).
+See §10.5 for the work-economics principles that drive round selection.
 
-| Phase | Codex round purpose |
-|---|---|
-| Phase 0 | Verify the pin-coverage gap test design (false-positive risks). |
-| Phase 1 | Per-delete: confirm fire-set is genuinely empty. |
-| Phase 2 | Per-canonical-home selection: confirm choice is topically + scope-wise correct. |
-| Phase 3 | Per axis-E candidate: confirm `claude_shared.md`/guide ACTUALLY contains the fact (memory rule: pre-baked claims need grep). |
-| Phase 4 | Per-axis-F candidate: confirm "general LLM knowledge" framing isn't dropping ZCP-specific nuance. |
-| Phase 5 | Per axis-G candidate: confirm the tool surface returns the data shape we're claiming. |
-| Phase 6 | Per-atom rewrite: fact-preservation review. |
-| Phase 7 | Per-merge: confirm merged atom stays coherent + under size soft-target. |
-| Phase 8 | Final adversarial diff sweep. |
+Round types:
 
-**Per-prompt invariants** (every Codex round):
-- Cite file:line for every claim.
-- Read-only.
-- Out of scope outside the trim plan's surface.
+- **CORPUS-SCAN** (high-leverage, run once per phase or even once per
+  plan): big-picture multi-file analysis. E.g. "find every cross-
+  atom dup in the corpus", "score the redundancy heat-map across
+  all 79 atoms", "composition-audit all 4 baseline fixtures
+  independently". Output is a structured artifact that drives many
+  per-edit decisions downstream.
+- **PRE-WORK** (one per phase): approach validation before substantial
+  work. Asks Codex to find design holes BEFORE Claude commits to a
+  path.
+- **PER-EDIT** (gated, not mandatory): per-significant-change fact-
+  preservation review. Used when the change risks dropping facts
+  silently. SKIPPED for low-risk mechanical edits Claude can self-
+  verify (e.g. axis switches that don't touch body content).
+- **POST-WORK** (one per phase): "find what I missed" completeness
+  validation after the phase's work commits. Different framing from
+  PRE-WORK (gap-finding, not approach-validation).
+- **FINAL-VERDICT** (one per plan): SHIP/NO-SHIP gate per §15.3 G7.
+
+### 10.1 Per-phase round matrix
+
+The matrix below names each round + WHO consumes the output (which
+phase / which work unit / which tracker row). Output without a
+consumer = wasted Codex effort and not in the matrix.
+
+| Phase | Round type | Purpose | Output → consumed by |
+|---|---|---|---|
+| Phase 0 | CORPUS-SCAN | Pin-coverage gap derivation review: validate `TestCorpusCoverage_PinDensity` design + `knownUnpinnedAtoms` baseline list. Catch recipe-atom scope leakage (R6). | Phase 0 tracker: row per atom in initial allowlist. |
+| Phase 0 | CORPUS-SCAN | Composition baseline scoring on the 4 heavy-fire fixtures per §6.2 rubric. Codex reads each rendered status output, scores 4 dimensions × 4 fixtures = 16 scores. | `plans/audit-composition/baseline-scores.md` (filled by Codex output verbatim). |
+| Phase 0 | POST-WORK | Validate fire-set matrix: walk `ComputeEnvelope` for atoms reported as fire-set=∅ in §6.3 probe output. Confirm or reject "dead" status. | Phase 1 tracker: pre-populates "candidate state" column. |
+| Phase 1 | PRE-WORK | "Of these N candidate dead atoms, which truly are dead vs which look-dead because the envelope generator missed a state?" | Per-delete decision in Phase 1 tracker. |
+| Phase 1 | PER-EDIT | (Optional, only for atoms with non-trivial git-history archaeology) git-log walk: was the atom created for a path since removed? | Justification in tracker `notes` column. |
+| Phase 2 | CORPUS-SCAN | Full-corpus cross-atom dup hunt. Codex reads ALL 79 atoms, identifies every fact appearing in 2+ atoms, ranks by recoverable bytes, suggests canonical home per dup. Output: a single structured deliverable. | `plans/audit-composition/dedup-candidates.md`. Phase 2 tracker rows derive from this artifact. |
+| Phase 2 | PER-EDIT | (Only for canonical-home selection that has > 2 viable candidates) "Pick the topical/lowest-priority/broadest-axis home." | Tracker `notes` for that dup row. |
+| Phase 2 | POST-WORK | "Find every cross-atom dup remaining post-Phase 2. Was any axis-justified dup incorrectly merged (introduced a regression)?" | Tracker re-validation; defers to Phase 8 if any found. |
+| Phase 3 | CORPUS-SCAN | Read `claude_shared.md` + every `internal/knowledge/guides/*.md`; for each, list the facts it contains; cross-correlate against the corpus; output every (atom-fact, static-surface-fact) match pair. | `plans/audit-composition/axis-e-candidates.md`. |
+| Phase 3 | PER-EDIT | (Per memory rule "Codex pre-baked claims need grep before trust") Per axis-E candidate: confirm with grep that the static surface ACTUALLY contains the fact. | Tracker `final state` column ("confirmed" / "rejected"). |
+| Phase 4 | PRE-WORK | "For each top-30 atom, identify general-LLM-knowledge candidates. Mark each as DROP / KEEP-AS-ZCP-SPECIFIC / NUANCE-PRESERVE." | `plans/audit-composition/axis-f-candidates.md`; per-row Phase 4 tracker. |
+| Phase 4 | POST-WORK | "Re-read every Phase 4 commit. Did any drop ZCP-specific nuance disguised as general knowledge?" | Tracker re-validation. |
+| Phase 5 | CORPUS-SCAN | "Find every catalog / field-shape / port-list / response-enumeration in the corpus. Cross-reference against `zerops_*` tool surface to confirm fetchability." | `plans/audit-composition/axis-g-candidates.md`. |
+| Phase 5 | POST-WORK | "Re-grep for catalogs/field-shapes still in atoms post-Phase 5. Any we missed?" | Tracker re-validation. |
+| Phase 6 | PRE-WORK | "For each top-30 atom NOT-yet-LEAN, identify the densification path: TABLE / NUMBERED-LIST / DECISION-TREE / TIGHTEN-IN-PLACE / NO-CHANGE." | `plans/audit-composition/axis-b-candidates.md`. |
+| Phase 6 | PER-EDIT | (MANDATORY — riskiest phase) Per-atom rewrite review. Codex reads the diff, lists every fact missing/mutated. | Fact inventory commit per §6.1 cites this round. |
+| Phase 6 | POST-WORK | "Diff every Phase 6 atom edit cumulatively. Any atom whose post-edit body is missing a load-bearing fact from pre-edit body?" | Tracker re-validation. |
+| Phase 7 | PER-EDIT | Per-merge axis-set overlap check (R4 mitigation). | Tracker `notes` ("axis-overlap-confirmed" / "merge-rejected"). |
+| Phase 7 | CORPUS-SCAN | Composition cross-validation per §6.6 L4 — Codex independently scores the same 4 fixtures using the same rubric. | `plans/audit-composition/post-hygiene-scores-codex.md` (alongside the executor's `post-hygiene-scores.md`). Compare; ≥2 disagreement triggers rubric refinement. |
+| Phase 8 | CORPUS-SCAN | Final adversarial diff sweep across the full plan range. | `plans/audit-composition/final-review.md`. |
+| Phase 8 | FINAL-VERDICT | SHIP/NO-SHIP gate per §15.3 G7 contract from §10.3. | Determines whether plan is shippable. |
+
+### 10.2 Per-round invariants (every Codex invocation)
+
+- Cite `file:line` for every claim.
+- Read-only (Codex makes no edits; that's the executor's job).
+- Out of scope outside the plan's stated surface.
 - "Skeptical framing — catch what I missed."
+- For PRE-WORK: prompt asks Codex to verify the *approach*, not just
+  validate the work-already-done.
+- For PER-EDIT: prompt includes the diff or the proposed atom edit
+  inline; Codex reads the change in context.
+- For POST-WORK: prompt asks "what did the executor MISS?" — the
+  framing forces gap-finding, not approval.
+- For CORPUS-SCAN: prompt produces a STRUCTURED ARTIFACT (markdown
+  table or list) that Claude commits to `plans/audit-composition/`
+  and uses as the source of truth for downstream decisions. The
+  output's value is in being CONSUMED, not just produced.
 
-**Memory rule** (carry forward): Codex's CURRENT-code citations with
-file:line are usually right; pre-baked memory claims (like prior plan
-§15.2) are often wrong. Verify every "X exists at Y" claim with grep
-before acting.
+### 10.3 Final SHIP verdict (G7 in §15.3)
+
+The final Codex round before declaring PLAN COMPLETE has a specific
+contract:
+
+```
+Read all 9 phase trackers in plans/audit-composition/. Read every
+commit in this plan's range (git log <plan-baseline>..HEAD). Read
+the final composition scores. Read the L5 smoke-test output. Read
+the eval-regression docs.
+
+Verdict: SHIP / NO-SHIP / SHIP-WITH-NOTES
+- SHIP: every G1-G8 in §15.3 is verifiably satisfied. No deferred
+  followups OR all deferrals have documented justification.
+- NO-SHIP: some G1-G8 fails. Name which.
+- SHIP-WITH-NOTES: G1-G8 pass but you found a NEW concern not
+  addressed by the plan. Describe.
+
+If verdict is anything other than SHIP, the executor MUST address
+before claiming PLAN COMPLETE.
+```
+
+A SHIP verdict is required for §15.3 G7 to be satisfied.
+
+### 10.4 Memory rule (carry forward)
+
+Codex's CURRENT-code citations with `file:line` are usually right;
+pre-baked memory claims (like prior plan §15.2) are often wrong.
+Verify every "X exists at Y" claim with grep before acting. The
+auto-memory `feedback_codex_verify_specific_claims.md` codifies this
+— ensure it's loaded (P6 in §17 prereq).
+
+### 10.5 Work-economics principles (Claude × Codex efficiency)
+
+The protocol's design constraint: **every Codex round must produce
+output that gets consumed**. A round that runs without a downstream
+consumer is wasted compute (Codex side) AND wasted attention (Claude
+side reading the result with no decision driven by it).
+
+#### Where Codex is highest-leverage
+- **Corpus-wide pattern discovery.** Reading 79 atoms + 21 guides + 4
+  themes + claude_shared.md and finding all (atom-fact, surface-
+  fact) match pairs. Claude doing this manually = many small greps,
+  high error rate, slow. Codex doing this once = one structured
+  output that drives 20+ Phase 3 decisions.
+- **Adversarial fresh-eyes review.** Claude's biases accumulate
+  during a phase ("I just trimmed atom X, of course atom Y is fine
+  too"). Codex starts each round with no investment in prior
+  decisions — its NO-SHIP verdict is more credible than Claude's
+  self-approval.
+- **Cross-correlation across files.** "Find every atom that
+  references `references-atoms: [develop-deploy-modes]` and verify
+  the cross-link still resolves to a meaningful section after
+  deploy-modes was rewritten." Codex reads N atoms in one pass.
+- **Composition scoring with rubric.** Subjective scoring
+  benefits from independent application of the rubric. Codex
+  applies rubric to each fixture without remembering the executor's
+  bias.
+
+#### Where Codex is LOW-leverage (Claude does it directly)
+- **Single-file mechanical edits.** "Change `deployStates:` to
+  `envelopeDeployStates:`" — Claude can verify alone via test
+  re-run. No Codex round needed.
+- **Tool execution.** Running `go test`, `make lint-local`,
+  `git status`. Codex doesn't help.
+- **Probe re-measurement.** Building + running the probe binary +
+  reading numeric output. Mechanical.
+- **Tracker updates.** Filling rows in markdown tables.
+  Bookkeeping, not analysis.
+- **Routine grep verification of memory rule.** Single-line greps
+  to verify Codex's prior claim. Codex grepping its own claim is a
+  loop; Claude greps directly.
+
+#### Round-skipping decision rule
+
+Before invoking a Codex round, ask:
+
+1. **Does this round produce a STRUCTURED ARTIFACT** that drives
+   downstream decisions? (If not, skip.)
+2. **Is there a CONSUMER** identified in §10.1 for this round's
+   output? (If not, the round is decorative — skip.)
+3. **Could Claude self-verify with a single grep / test re-run?**
+   (If yes for the specific decision, skip the per-edit round —
+   keep the corpus-scan rounds intact.)
+4. **Has Codex already answered this question in a recent round?**
+   (Don't re-ask the same question; cite the prior round's output.)
+
+The matrix in §10.1 is the *upper bound* on rounds — fewer is fine
+when 1-4 above justify skipping. The matrix in §10.1 is the *lower
+bound* on rounds — never fewer than what §10.1 mandates for
+corpus-scan and final-verdict rounds.
+
+#### Pre-flight estimation
+
+Total Codex rounds budgeted (matrix-implied):
+- 5 CORPUS-SCAN rounds (one per major analysis surface).
+- 4 PRE-WORK rounds (Phases 1, 4, 6 + Phase 0's design-review).
+- ~30 PER-EDIT rounds (mostly Phase 6 prose tightening — riskiest).
+- 6 POST-WORK rounds (one per Phase 0-5 + 7).
+- 1 FINAL-VERDICT round.
+
+Total: ~46 Codex invocations across ~74 atoms touched.
+Average ~6 rounds per phase. Median round duration: 1-3 min for
+PER-EDIT, 5-10 min for CORPUS-SCAN. Total Codex compute: ~3-5
+hours across the plan execution.
+
+If the executor finds Codex consistently producing rounds that
+don't get consumed → the plan's protocol has gaps. Update §10.1
+mid-execution rather than continuing to waste rounds. Document the
+update in `plans/audit-composition/protocol-amendments.md`.
 
 ## 11. Out of scope
 
@@ -1090,26 +1454,224 @@ Audit identical to bootstrap-* and develop-* atoms.
 
 ## 13. First moves for the fresh instance
 
-1. Read this plan end-to-end.
-2. Read `plans/atom-corpus-context-trim-2026-04-26.md` §11 (anti-
-   patterns) + §17 (live-verification probe + memory rules).
-3. Read `CLAUDE.md` + `CLAUDE.local.md` (project conventions + auth).
-4. Pull current corpus state:
-   ```bash
-   wc -c internal/content/atoms/*.md | sort -n | tail -30
-   ls internal/content/atoms/*.md | wc -l
-   git log --oneline -5
-   ```
-5. Run §4.2 pin-coverage-gap derivation; confirm "68 unpinned" still
-   holds (or update baseline).
-6. Run Phase 0 Codex round: "Review the §8 test design + §6.3 fire-
-   set generator approach. Catch design holes."
-7. Start Phase 0. Build probe + fire-audit + pin-density test +
-   baseline scores.
+**Step 0 — prereq verification (MANDATORY)**: walk every row of §17
+prereq checklist (P1-P11). If any fail, STOP and ask user. Do NOT
+skip prereq verification "because the project looks set up" — this
+catches missing memory, missing Codex tooling, missing VPN, stale
+git state, AND ensures the executor knows what's missing before
+sinking effort.
 
-If something significantly diverges from the §4 baseline (corpus has
-grown / shrunk by > 15 %, or atom count moved by > 5), STOP and ask
-the user — the corpus shifted since this plan was drafted.
+**Step 1 — read plan + sister context**:
+1. This plan end-to-end (yes, all 1500+ lines).
+2. `plans/atom-corpus-context-trim-2026-04-26.md` — sections §11
+   (anti-patterns) + §17 (live-verification probe + memory rules).
+3. `CLAUDE.md` + `CLAUDE.local.md` (project conventions + auth).
+4. `~/.claude/projects/.../memory/MEMORY.md` (auto-memory) — confirm
+   `feedback_codex_verify_specific_claims.md` is loaded.
+
+**Step 2 — corpus baseline check**:
+```bash
+wc -c internal/content/atoms/*.md | sort -n | tail -30
+ls internal/content/atoms/*.md | wc -l
+git log --oneline -5
+```
+Run §4.2 pin-coverage-gap derivation; confirm "68 unpinned" still
+holds (or update baseline).
+
+If corpus has shifted by > 15 % or atom count moved by > 5, STOP and
+ask the user — the corpus shifted since this plan was drafted; the
+plan §4 baselines are stale.
+
+**Step 3 — initialize tracker directory**:
+```bash
+mkdir -p plans/audit-composition
+```
+Create empty `phase-0-tracker.md` per §15.1 schema; commit
+("scaffold: phase 0 tracker, hygiene plan execution begins").
+
+**Step 4 — Phase 0 PRE-WORK Codex round**:
+"Review the §8 test design + §6.3 fire-set generator approach. Catch
+design holes." (per §10.1 Phase 0 row.)
+
+**Step 5 — Begin Phase 0 work**: build probe + fire-audit + pin-
+density test + baseline composition scores. Per §7 Phase 0 WORK-SCOPE.
+Update `phase-0-tracker.md` per row as work lands.
+
+**Step 6 — Phase 0 EXIT verification**:
+- §15.2 EXIT check on tracker (no PENDING rows; commits cited).
+- §7 Phase 0 EXIT criteria (all four sub-bullets).
+- §6.6 L1+L2 verify gate green.
+- Run Phase 0 POST-WORK Codex round per §10.1.
+
+Only when Step 6 fully green: enter Phase 1.
+
+**Pause/resume**: per §16.2. Trackers are the system of record;
+fresh sessions resume from where last tracker leaves off.
+
+## 15. Completeness machinery — per-phase trackers + ship-gate
+
+The §7 EXIT criteria are necessary but verbal — a sloppy executor
+could mark a phase complete without actually visiting every atom in
+scope. The completeness machinery turns "did you visit every atom" /
+"did every fact get classified" / "did every Codex round happen" into
+*verifiable git-committed artifacts*.
+
+### 15.1 Per-phase tracker file contract
+
+Every phase commits a tracker file in `plans/audit-composition/`
+named `phase-N-tracker.md` (where N is the phase number). The
+tracker is the *single source of truth* for that phase's
+completeness.
+
+**Tracker schema** (markdown table, one row per work unit):
+
+```markdown
+# Phase N tracker — <phase title>
+
+Started: <ISO date>
+Closed: <ISO date | "open">
+
+| # | work unit | initial state | final state | commit | codex round | notes |
+|---|---|---|---|---|---|---|
+| 1 | <atom-id or fact name> | <baseline> | <kept/modified/deleted/deferred> | <commit hash> | <APPROVE/NEEDS-REVISION/N-A> | <one-line rationale> |
+```
+
+The schema varies per phase but the contract is invariant:
+- One row per work unit. Phase 1 = one row per atom in scope.
+  Phase 2 = one row per dedup candidate fact. Phase 6 = one row per
+  top-30 atom + axis label. Etc.
+- Every row's "final state" is non-empty before phase EXIT.
+- Every row that took action (modified / deleted) cites its commit hash.
+- Every row whose action required Codex review cites the round outcome.
+
+**Tracker rendering example** (Phase 1):
+
+```markdown
+# Phase 1 tracker — Dead-atom sweep
+
+Started: 2026-04-NN
+Closed: 2026-04-NN
+
+| # | atom | fire-set size | final state | commit | codex round | notes |
+|---|---|---|---|---|---|---|
+| 1 | bootstrap-classic-plan-static | 3 (fixtures) | KEPT | – | – | not a dead-atom candidate |
+| 2 | develop-ready-to-deploy | 0 | DELETED | abc1234 | APPROVE | confirmed via ComputeEnvelope walk; no plausible envelope satisfies axes |
+| 3 | develop-mode-expansion | 1 (single fixture) | MARKED-MERGE | – | – | candidate for Phase 7 review (single-fixture fire-set) |
+| ... | ... | ... | ... | ... | ... | ... |
+```
+
+A reviewer (or a later session of the same executor) reads the tracker
+and instantly sees: "row 27 says state=PENDING and commit=– — this
+phase is NOT actually closed."
+
+### 15.2 EXIT enforcement via tracker
+
+A phase is "shippable" only when the tracker satisfies:
+
+1. Every row has a non-empty final state (no PENDING).
+2. Every row that took action cites a commit hash (no orphan edits).
+3. Every row whose phase required a Codex round cites the round
+   outcome (no skipped reviews).
+4. The "Closed:" date is filled in.
+
+The next phase MAY NOT ENTER until prior phase's tracker satisfies
+all four. The Phase N+1 ENTRY criteria from §7 should be read AFTER
+verifying the tracker — they're additional, not replacements.
+
+### 15.3 Final ship-gate procedure
+
+Phase 8 EXIT is plan-level shippability. The executor MUST satisfy
+all of these before declaring "PLAN COMPLETE":
+
+| # | gate | how verified |
+|---|---|---|
+| G1 | All 9 phases (0-8) have closed trackers per §15.2. | Read every `phase-N-tracker.md`; confirm Closed: date + no PENDING rows. |
+| G2 | `knownUnpinnedAtoms` map is empty. | grep `corpus_coverage_test.go`. |
+| G3 | All 5 baseline composition fixtures (4 original + simple-deployed user-test) re-scored at Phase 7. Coherence + density + task-relevance non-decreasing; redundancy + coverage-gap strictly improving. The simple-deployed fixture's task-relevance must reach ≥ 4 (was baseline ~1). | Read `plans/audit-composition/post-hygiene-scores.md`; compare to baseline. |
+| G4 | `make lint-local` clean. `go test ./... -count=1 -race` clean. | Run both, paste output in final commit message. |
+| G5 | L5 live smoke test (§6.6) passes on idle + develop-active envelopes. | ssh zcp; issue MCP calls; assert wire-frame within probe ±1 + decoded text valid markdown. |
+| G6 | Eval-scenario regression check (§6.7) — at least one scenario from `internal/eval/scenarios/` re-run; divergences documented. | `plans/audit-composition/eval-regression-*.md` exists. |
+| G7 | Final Codex VERDICT round returns SHIP. | See §10 expanded protocol — Codex must explicitly write "VERDICT: SHIP" in its review. |
+| G8 | Probe binaries deleted. | `ls cmd/` shows only `zcp/`. |
+
+**Ship-gate failure mode**: if ANY G1-G8 fails, the plan is NOT
+shippable. The executor either:
+- Remediates within current phase's scope (re-open the relevant
+  tracker, complete the missed work, re-run the gate).
+- Documents a deferred follow-up in `plans/audit-composition/deferred-followups.md`
+  with a justification for why this hygiene cycle ships without it
+  (e.g. "G6 eval-scenario regression deferred — eval scenarios for
+  this runtime aren't yet authored; tracking issue #NNN").
+
+A self-claim of "SHIP COMPLETE" without G1-G8 evidence in the final
+commit message is a process failure. Treat the prior trim's
+self-congratulatory final commit as a CAUTIONARY example: it claimed
+"plan complete" but later audit found §16.2 fact-inventory
+requirement skipped + §17.7 wire-frame hard gate not landed. This
+plan's ship-gate exists to make THAT not repeat.
+
+## 16. Failure recovery + pause/resume
+
+### 16.1 What to do when a phase mid-flight breaks
+
+Failure modes during a phase:
+- A Codex round returns NEEDS REVISION → ADDRESS the concerns;
+  re-run the round; do NOT proceed until APPROVE.
+- A test fails after a commit → STOP; root-cause; either revert the
+  commit (`git reset --soft HEAD~1`, fix, re-commit) OR fix in a
+  follow-up commit. NEVER force-skip.
+- A merge breaks axis-filtering (R4) → revert the merge; document in
+  the phase tracker as "MERGE-REJECTED with reason"; treat as kept.
+- The executor finds an issue mid-phase the plan didn't anticipate
+  → STOP; document in `plans/audit-composition/phase-N-issues.md`;
+  run a Codex investigation round; decide path: fix in current
+  phase / defer to follow-up plan / abandon work.
+
+NEVER:
+- Mark a phase complete with known-failing tests "to come back later".
+- Commit work that fails the verify gate "because it'll pass after
+  the next change".
+- Skip a Codex round "because the change seems trivial".
+
+### 16.2 Pause / resume protocol
+
+Hygiene plan is multi-day work. The executor MAY pause at any point.
+Resume protocol for a fresh Claude session:
+
+1. Read this plan end-to-end.
+2. `git log --oneline ^<plan-baseline-commit> HEAD` — see what's done.
+3. `ls plans/audit-composition/` — read every tracker file; identify
+   the highest phase with state ≠ "Closed".
+4. If that phase's tracker has rows with PENDING state, RESUME there
+   — do the pending rows; close the tracker; verify gate; commit.
+5. If that phase's tracker is closed, ENTER the next phase per §7.
+6. Do NOT skip earlier phases that look "obviously done" — verify
+   the tracker exists + is closed first.
+
+Trackers are the system of record. The executor cannot rely on
+reading commit messages alone — `git log` shows commits but doesn't
+show "did Codex round actually happen for atom X". Trackers do.
+
+## 17. Self-containment prereq checklist
+
+Before Phase 0 step 1, the executor MUST verify all of these are
+satisfied. If any fail, STOP and ask the user.
+
+| # | prereq | how verified | failure → |
+|---|---|---|---|
+| P1 | Working tree clean. | `git status` returns empty. | commit / stash before proceeding |
+| P2 | Branch is current with origin. | `git fetch && git status` says "up to date". | `git pull --rebase origin main` |
+| P3 | Prior trim plan exists at expected path. | `ls plans/atom-corpus-context-trim-2026-04-26.md` succeeds. | abort — sister plan missing means context drift |
+| P4 | Prior trim's probe source reachable in git. | `git show c8d87406:cmd/atomsize_probe/main.go \| head -3` shows source. | check git history — commit hash may have changed; find new hash via `git log --oneline -- cmd/atomsize_probe/` |
+| P5 | CLAUDE.md + CLAUDE.local.md readable. | `ls CLAUDE.md CLAUDE.local.md` succeeds. | abort — running without project conventions is unsafe |
+| P6 | Auto-memory accessible. | Read `~/.claude/projects/.../memory/MEMORY.md`. Look for `feedback_codex_verify_specific_claims.md` entry. | If memory not loaded, the "verify Codex pre-baked claims" rule won't fire; cannot proceed safely |
+| P7 | `codex:codex-rescue` subagent available. | Test with a tiny invocation: `Agent(subagent_type:"codex:codex-rescue", prompt:"echo hello")`. | abort — Codex collaboration protocol is mandatory; without it the plan is unsafe |
+| P8 | VPN + SSH to eval-zcp container works. | `ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null zcp 'echo ok'`. | L5 smoke test impossible; document in §17 deferred followup OR fix VPN before starting |
+| P9 | `make lint-local` works on baseline. | Run it; expect 0 issues. | If lint already failing, hygiene work conflates with lint debt; resolve first |
+| P10 | `go test ./... -short -count=1 -race` green on baseline. | Run it. | Same as P9 — resolve before starting hygiene work |
+| P11 | Empirical baseline §4 still matches reality. | Run §4.2 derivation script. Expect ~68 unpinned atoms ±5 and 79 atoms total ±5. | If counts diverge by > 15 %, corpus shifted; STOP, ask user, possibly re-baseline plan §4 |
+
+Plan execution may begin only when P1-P11 all pass.
 
 ## 14. Provenance
 
@@ -1120,14 +1682,26 @@ for a comprehensive content-quality hygiene pass covering bootstrap +
 develop + idle clusters: per-atom necessity, composition coherence,
 redundancy elimination, prose density.
 
-Drafted in collaboration with Codex (round #1: strategy input — see
-session transcript for the prompt). The Codex round's per-cluster
-redundancy maps and per-atom classification table were intended to be
-inlined here, but Codex was still reading the 74-file scope at draft
-time. The fresh-instance executor should run Phase 0 step 4 (baseline
-composition audit) which captures the same per-cluster analysis from
-ground truth at execution time — that's a stronger guarantee than
-inlining 2026-04-26 Codex findings that may stale.
+Drafted in collaboration with Codex (round #1 strategy input was
+abandoned after stagnating 10+ minutes without content output —
+provenance kept here as a known limitation; the Phase 0 fire-set
+matrix in §6.3 + §7 captures the equivalent per-cluster analysis
+at execution time, which is a stronger guarantee than inlining a
+2026-04-26 Codex snapshot that would stale. Round #2 review of the
+draft returned VERDICT: NEEDS REVISION on 5 specific concerns —
+fire-audit source sketch, composition rubric anchors, phase entry/
+exit criteria, expanded risks, strategy-* scope clarity — all 5
+addressed before commit).
+
+**Ultrathink revision** (2026-04-26 same day, post-initial-commit):
+user audit identified 6 gaps: completeness-forcing mechanism,
+multi-layer verification, Codex-as-validator (not just reviewer),
+failure recovery, final ship-gate procedure, self-containment
+prereq checklist. All 6 addressed via new §15-§17 plus expanded
+§6.6 + §10. Plan grew from ~1130 to ~1500 lines; the additions are
+not padding, they're the machinery that turns "the plan SHOULD be
+followed" into "the plan ENFORCES being followed via committed
+artifacts and Codex SHIP verdict gate."
 
 This plan does NOT supersede `atom-corpus-context-trim-2026-04-26.md`;
 the trim plan documents the byte-cap-chase work and ships a closed
