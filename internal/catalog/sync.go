@@ -9,15 +9,18 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"time"
 
 	"github.com/zeropsio/zcp/internal/schema"
 )
 
-// Snapshot represents a point-in-time capture of valid platform versions.
+// Snapshot represents a capture of valid platform versions. Deliberately
+// has no timestamp: the snapshot is content-addressed (versions list
+// only), so two regenerations against the same upstream schemas produce
+// byte-identical files. Eliminates the rebase-conflict-on-every-release
+// pattern that the prior `Generated: time.Now()` field caused. Freshness
+// is observable via `git log -1 -- testdata/active_versions.json`.
 type Snapshot struct {
-	Generated string   `json:"generated"`
-	Versions  []string `json:"versions"`
+	Versions []string `json:"versions"`
 }
 
 // Sync fetches the public zerops.yaml and import.yaml JSON schemas, extracts
@@ -34,8 +37,7 @@ func Sync(ctx context.Context, outPath string) (*Snapshot, error) {
 	sort.Strings(versions)
 
 	snap := &Snapshot{
-		Generated: time.Now().UTC().Format(time.RFC3339),
-		Versions:  versions,
+		Versions: versions,
 	}
 
 	if err := writeSnapshot(snap, outPath); err != nil {

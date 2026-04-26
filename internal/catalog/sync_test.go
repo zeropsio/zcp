@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/zeropsio/zcp/internal/schema"
 )
@@ -55,8 +54,7 @@ func TestWriteSnapshot_ValidJSON(t *testing.T) {
 	t.Parallel()
 
 	snap := &Snapshot{
-		Generated: time.Now().UTC().Format(time.RFC3339),
-		Versions:  []string{"go@1", "nodejs@22", "static"},
+		Versions: []string{"go@1", "nodejs@22", "static"},
 	}
 
 	outPath := filepath.Join(t.TempDir(), "active_versions.json")
@@ -77,12 +75,32 @@ func TestWriteSnapshot_ValidJSON(t *testing.T) {
 	if len(fromFile.Versions) != 3 {
 		t.Errorf("expected 3 versions, got %d", len(fromFile.Versions))
 	}
+}
 
-	gen, err := time.Parse(time.RFC3339, fromFile.Generated)
-	if err != nil {
-		t.Fatalf("parse generated: %v", err)
+// TestWriteSnapshot_DeterministicBytes pins the rebase-conflict fix:
+// two regenerations against identical inputs MUST produce byte-identical
+// files. Without this guarantee the file diverges every release and
+// rebase conflicts return.
+func TestWriteSnapshot_DeterministicBytes(t *testing.T) {
+	t.Parallel()
+
+	snap := &Snapshot{
+		Versions: []string{"go@1", "nodejs@22", "static"},
 	}
-	if time.Since(gen) > time.Minute {
-		t.Errorf("generated timestamp too old: %s", fromFile.Generated)
+	dir := t.TempDir()
+	pathA := filepath.Join(dir, "a.json")
+	pathB := filepath.Join(dir, "b.json")
+
+	if err := writeSnapshot(snap, pathA); err != nil {
+		t.Fatalf("writeSnapshot A: %v", err)
+	}
+	if err := writeSnapshot(snap, pathB); err != nil {
+		t.Fatalf("writeSnapshot B: %v", err)
+	}
+
+	bytesA, _ := os.ReadFile(pathA)
+	bytesB, _ := os.ReadFile(pathB)
+	if string(bytesA) != string(bytesB) {
+		t.Errorf("snapshot bytes diverge between regenerations:\nA: %s\nB: %s", bytesA, bytesB)
 	}
 }
