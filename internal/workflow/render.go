@@ -101,6 +101,12 @@ func renderProgressAndBlockers(b *strings.Builder, env StateEnvelope) {
 // lastAttemptText returns the human-readable "<kind> <state>" suffix for
 // the last attempt of a host and whether that attempt succeeded. Shared
 // between the Progress line rendering and the blocker-gate counters.
+//
+// On failure, the Reason from AttemptInfo (when populated) appears after
+// the "<kind> failed" prefix so the LLM sees the actionable diagnosis
+// without a separate logs round-trip. Phase 1 (C1) of the pipeline-repair
+// plan: this is the surface that recovers the failed-deploy reason
+// post-compaction.
 func lastAttemptText(attempts []AttemptInfo, kind string) (string, bool) {
 	if len(attempts) == 0 {
 		return kind + " pending", false
@@ -108,6 +114,9 @@ func lastAttemptText(attempts []AttemptInfo, kind string) (string, bool) {
 	last := attempts[len(attempts)-1]
 	if last.Success {
 		return kind + " ok", true
+	}
+	if last.Reason != "" {
+		return kind + " failed: " + last.Reason, false
 	}
 	return kind + " failed", false
 }

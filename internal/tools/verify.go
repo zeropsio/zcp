@@ -78,6 +78,11 @@ type verifyAllResponse struct {
 
 // recordVerifyToWorkSession records one service verify result as a WorkSession attempt.
 // Pass = summary "healthy" status; fail = first failing check detail.
+//
+// On failure the FailureClass is populated from the failing check's name —
+// `service_running` → FailureClassStart (container not up); HTTP-shape
+// checks → FailureClassVerify; everything else → FailureClassVerify as
+// the catch-all for verify-time failures.
 func recordVerifyToWorkSession(stateDir string, r *ops.VerifyResult) {
 	if r == nil {
 		return
@@ -92,8 +97,30 @@ func recordVerifyToWorkSession(stateDir string, r *ops.VerifyResult) {
 		attempt.Summary = statusHealthy
 	} else {
 		attempt.Summary = verifyFailureSummary(r)
+		attempt.FailureClass = classifyVerifyFailure(r)
 	}
 	_ = workflow.RecordVerifyAttempt(stateDir, r.Hostname, attempt)
+}
+
+// classifyVerifyFailure maps the first failing check name to the
+// FailureClass that best describes the recovery path. service_running =
+// container start issue (deploy may need redo). HTTP-shape checks fall
+// under FailureClassVerify (route / app / config). Anything else is
+// FailureClassVerify as a coarse catch-all — the Reason text still
+// carries the specific check name + detail.
+func classifyVerifyFailure(r *ops.VerifyResult) workflow.FailureClass {
+	for _, c := range r.Checks {
+		if c.Status != statusFail {
+			continue
+		}
+		switch c.Name {
+		case "service_running":
+			return workflow.FailureClassStart
+		default:
+			return workflow.FailureClassVerify
+		}
+	}
+	return workflow.FailureClassVerify
 }
 
 // recordVerifyAllToWorkSession records results for every service verified

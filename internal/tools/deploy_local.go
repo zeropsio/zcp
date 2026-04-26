@@ -10,6 +10,7 @@ import (
 	"github.com/zeropsio/zcp/internal/auth"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -116,15 +117,23 @@ func RegisterDeployLocal(
 			input.Setup = resolvedSetup
 		}
 
+		// Strategy on the local deploy path is push-dev (zcli push from the
+		// developer's machine). The local-env git-push branch lives in
+		// deploy_local_git.go and records its own attempt with
+		// Strategy=push-git.
 		attempt := workflow.DeployAttempt{
 			AttemptedAt: time.Now().UTC().Format(time.RFC3339),
 			Setup:       input.Setup,
+			Strategy:    string(topology.StrategyPushDev),
 		}
 
 		result, err := ops.DeployLocal(ctx, client, projectID, *authInfo,
 			input.TargetService, input.Setup, input.WorkingDir)
 		if err != nil {
 			attempt.Error = err.Error()
+			// Local push failed before reaching the platform — transport-
+			// layer error (e.g. zcli auth, connection).
+			attempt.FailureClass = workflow.FailureClassNetwork
 			_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 			return convertError(err), nil, nil
 		}
@@ -137,6 +146,7 @@ func RegisterDeployLocal(
 			maybeAutoEnableSubdomain(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
 		} else if result != nil {
 			attempt.Error = fmt.Sprintf("deploy status %s", result.Status)
+			attempt.FailureClass = classifyDeployStatus(result.Status)
 		}
 		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 

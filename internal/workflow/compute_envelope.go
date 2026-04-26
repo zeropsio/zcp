@@ -344,26 +344,49 @@ func buildWorkSessionSummary(ws *WorkSession) *WorkSessionSummary {
 	return summary
 }
 
+// deployAttemptsToInfo projects persisted deploy attempts into the envelope
+// shape. Carries Setup/Strategy unconditionally (informational on both
+// success and failure) and Reason/FailureClass only when the attempt
+// failed — the LLM treats absence of those fields as "this attempt
+// succeeded; nothing to recover from".
 func deployAttemptsToInfo(attempts []DeployAttempt) []AttemptInfo {
 	out := make([]AttemptInfo, 0, len(attempts))
 	for i, a := range attempts {
-		out = append(out, AttemptInfo{
+		info := AttemptInfo{
 			At:        parseOrZero(firstNonEmpty(a.SucceededAt, a.AttemptedAt)),
 			Success:   a.SucceededAt != "",
 			Iteration: i + 1,
-		})
+			Setup:     a.Setup,
+			Strategy:  a.Strategy,
+		}
+		if !info.Success {
+			info.Reason = a.Error
+			info.FailureClass = a.FailureClass
+		}
+		out = append(out, info)
 	}
 	return out
 }
 
+// verifyAttemptsToInfo projects persisted verify attempts into the envelope
+// shape. Summary is the brief outcome string and is preserved on both pass
+// (e.g. "healthy") and fail (the failing check name + detail). Reason and
+// FailureClass duplicate Summary on failure so render/plan code can branch
+// on the same fields used for deploy attempts.
 func verifyAttemptsToInfo(attempts []VerifyAttempt) []AttemptInfo {
 	out := make([]AttemptInfo, 0, len(attempts))
 	for i, a := range attempts {
-		out = append(out, AttemptInfo{
+		info := AttemptInfo{
 			At:        parseOrZero(firstNonEmpty(a.PassedAt, a.AttemptedAt)),
 			Success:   a.Passed,
 			Iteration: i + 1,
-		})
+			Summary:   a.Summary,
+		}
+		if !info.Success {
+			info.Reason = a.Summary
+			info.FailureClass = a.FailureClass
+		}
+		out = append(out, info)
 	}
 	return out
 }

@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -315,6 +316,78 @@ func TestBuildPlan_PerServiceNilWhenAllGreen(t *testing.T) {
 	}
 	if plan.Primary.Args["action"] != "close" {
 		t.Errorf("primary action = %q, want close", plan.Primary.Args["action"])
+	}
+}
+
+// TestBuildPlan_FailureTargetedRationale pins Phase 1 (C1) of the
+// pipeline-repair plan: when the last deploy attempt carries a Reason +
+// FailureClass, BuildPlan's Primary action surfaces the failure shape in
+// its Rationale string. Without this, the Plan reads "No successful
+// deploy recorded" even when the actual issue is a build timeout — losing
+// the actionable signal post-compaction.
+func TestBuildPlan_FailureTargetedRationale(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name           string
+		failureClass   FailureClass
+		reason         string
+		wantInRational []string
+	}{
+		{
+			name:           "build_failure",
+			failureClass:   FailureClassBuild,
+			reason:         "build timeout after 15min",
+			wantInRational: []string{"build", "timeout"},
+		},
+		{
+			name:           "start_failure",
+			failureClass:   FailureClassStart,
+			reason:         "container didn't start",
+			wantInRational: []string{"start", "didn't start"},
+		},
+		{
+			name:           "config_failure",
+			failureClass:   FailureClassConfig,
+			reason:         "zerops.yaml: deployFiles required",
+			wantInRational: []string{"config", "deployFiles"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Environment: EnvLocal,
+				WorkSession: &WorkSessionSummary{
+					Intent:   "fix",
+					Services: []string{"apidev"},
+					Deploys: map[string][]AttemptInfo{
+						"apidev": {{
+							At:           time.Date(2026, 4, 26, 10, 0, 0, 0, time.UTC),
+							Success:      false,
+							Reason:       tc.reason,
+							FailureClass: tc.failureClass,
+						}},
+					},
+				},
+			}
+
+			plan := BuildPlan(env)
+
+			if plan.Primary.Tool != "zerops_deploy" {
+				t.Errorf("Primary.Tool = %q, want zerops_deploy", plan.Primary.Tool)
+			}
+			if plan.Primary.Args["targetService"] != "apidev" {
+				t.Errorf("Primary.targetService = %q, want apidev", plan.Primary.Args["targetService"])
+			}
+			for _, want := range tc.wantInRational {
+				if !strings.Contains(plan.Primary.Rationale, want) {
+					t.Errorf("Rationale missing %q\nGot: %s", want, plan.Primary.Rationale)
+				}
+			}
+		})
 	}
 }
 

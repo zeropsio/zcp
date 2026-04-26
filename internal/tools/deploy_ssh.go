@@ -11,8 +11,44 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
+
+// classifyDeployStatus maps a non-DEPLOYED platform status into the
+// workflow.FailureClass that best names the failure shape:
+//
+//   - BUILD_FAILED            — build pipeline failed (compile, install,
+//     buildCommands). FailureClassBuild.
+//   - PREPARING_RUNTIME_FAILED — runtime prep failed (initCommands,
+//     prepareCommands, runtime image). The
+//     container never reached the start phase.
+//     FailureClassStart, because the recovery
+//     action is the same as a start failure
+//     (review prepareCommands / initCommands,
+//     not the build pipeline).
+//   - READY_TO_DEPLOY         — deploy ran but the container didn't
+//     transition past READY (no start command,
+//     port binding wrong, healthCheck flapping).
+//     FailureClassStart.
+//   - DEPLOY_FAILED           — generic deploy-stage failure (runtime
+//     init / startup). FailureClassStart so
+//     the LLM gets actionable wording in
+//     BuildPlan rationale rather than the
+//     content-free "Last attempt failed".
+//
+// Unknown statuses fall through to FailureClassOther — Reason still
+// carries the raw status string so the LLM has the diagnostic content.
+func classifyDeployStatus(status string) workflow.FailureClass {
+	switch status {
+	case statusBuildFailed:
+		return workflow.FailureClassBuild
+	case statusPreparingRuntimeFailed, serviceStatusReadyToDeploy, statusDeployFailed:
+		return workflow.FailureClassStart
+	default:
+		return workflow.FailureClassOther
+	}
+}
 
 // deployStrategyGitPush is the deploy tool strategy for git-push deploys.
 const deployStrategyGitPush = "git-push"
@@ -122,11 +158,14 @@ func RegisterDeploySSH(
 		}
 
 		// Record attempt up front so a crash still leaves a trace.
+		// Strategy is "push-dev" for the default zcli-push path; the
+		// git-push branch above takes its own handler before we reach
+		// here, so this site is exclusively the push-dev case.
 		attemptedAt := time.Now().UTC().Format(time.RFC3339)
 		attempt := workflow.DeployAttempt{
 			AttemptedAt: attemptedAt,
 			Setup:       input.Setup,
-			Strategy:    "",
+			Strategy:    string(topology.StrategyPushDev),
 		}
 
 		// Default: zcli push to Zerops.
@@ -134,6 +173,8 @@ func RegisterDeploySSH(
 			input.SourceService, input.TargetService, input.Setup, input.WorkingDir)
 		if err != nil {
 			attempt.Error = err.Error()
+			// SSH/transport-layer failure — we never reached the build.
+			attempt.FailureClass = workflow.FailureClassNetwork
 			_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 			return convertError(err), nil, nil
 		}
@@ -151,6 +192,7 @@ func RegisterDeploySSH(
 			maybeAutoEnableSubdomain(ctx, client, httpClient, projectID, stateDir, input.TargetService, result)
 		} else if result != nil {
 			attempt.Error = fmt.Sprintf("deploy status %s", result.Status)
+			attempt.FailureClass = classifyDeployStatus(result.Status)
 		}
 		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 

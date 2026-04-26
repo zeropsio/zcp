@@ -613,3 +613,146 @@ func TestComputeEnvelope_SkipsSystemAndSelf(t *testing.T) {
 func marshalEnvelopeForTest(env StateEnvelope) ([]byte, error) {
 	return json.Marshal(env)
 }
+
+// TestAttemptInfo_PreservesFailureContext pins Phase 1 (C1) of the pipeline-
+// repair plan: the persisted DeployAttempt and VerifyAttempt fields that
+// describe failure context (Reason via Error/Summary, FailureClass, Setup,
+// Strategy) reach the envelope projection. Without this, `action="status"`
+// renders only "deploy failed" / "verify failed" with no actionable info,
+// breaking compaction recovery.
+func TestAttemptInfo_PreservesFailureContext(t *testing.T) {
+	t.Parallel()
+
+	ws := &WorkSession{
+		PID:       42,
+		Services:  []string{"apidev"},
+		CreatedAt: "2026-04-26T09:00:00Z",
+		Deploys: map[string][]DeployAttempt{
+			"apidev": {{
+				AttemptedAt:  "2026-04-26T10:00:00Z",
+				Setup:        "dev",
+				Strategy:     "push-dev",
+				Error:        "build timeout after 15 minutes",
+				FailureClass: FailureClassBuild,
+			}},
+		},
+		Verifies: map[string][]VerifyAttempt{
+			"apidev": {{
+				AttemptedAt:  "2026-04-26T10:05:00Z",
+				Passed:       false,
+				Summary:      "http_root: 502 Bad Gateway",
+				FailureClass: FailureClassVerify,
+			}},
+		},
+	}
+
+	summary := buildWorkSessionSummary(ws)
+	if summary == nil {
+		t.Fatal("buildWorkSessionSummary returned nil")
+	}
+
+	gotDeploy := summary.Deploys["apidev"][0]
+	if gotDeploy.Reason != "build timeout after 15 minutes" {
+		t.Errorf("deploy Reason: got %q, want %q", gotDeploy.Reason, "build timeout after 15 minutes")
+	}
+	if gotDeploy.FailureClass != FailureClassBuild {
+		t.Errorf("deploy FailureClass: got %q, want %q", gotDeploy.FailureClass, FailureClassBuild)
+	}
+	if gotDeploy.Setup != "dev" {
+		t.Errorf("deploy Setup: got %q, want %q", gotDeploy.Setup, "dev")
+	}
+	if gotDeploy.Strategy != "push-dev" {
+		t.Errorf("deploy Strategy: got %q, want %q", gotDeploy.Strategy, "push-dev")
+	}
+	if gotDeploy.Success {
+		t.Errorf("deploy Success: got true, want false")
+	}
+
+	gotVerify := summary.Verifies["apidev"][0]
+	if gotVerify.Reason != "http_root: 502 Bad Gateway" {
+		t.Errorf("verify Reason: got %q, want %q", gotVerify.Reason, "http_root: 502 Bad Gateway")
+	}
+	if gotVerify.FailureClass != FailureClassVerify {
+		t.Errorf("verify FailureClass: got %q, want %q", gotVerify.FailureClass, FailureClassVerify)
+	}
+	if gotVerify.Summary != "http_root: 502 Bad Gateway" {
+		t.Errorf("verify Summary: got %q, want %q", gotVerify.Summary, "http_root: 502 Bad Gateway")
+	}
+	if gotVerify.Success {
+		t.Errorf("verify Success: got true, want false")
+	}
+}
+
+// TestAttemptInfo_SuccessLeavesFailureFieldsEmpty pins the inverse: a
+// successful attempt MUST NOT carry Reason/FailureClass — those are
+// failure-only signals. Setup/Strategy persist; Summary persists for
+// verifies (e.g. "healthy").
+//
+// The fixture deliberately seeds non-zero Error and FailureClass values
+// on the SUCCESSFUL attempts (a stale carry-over from an earlier failed
+// retry that later succeeded — possible if a caller mutates the same
+// DeployAttempt struct in-place, or in test fixtures that copy across
+// states). The projection MUST drop them. Without this stale-seed shape,
+// the test would still pass even if the projection's `if !info.Success`
+// guard were removed — defeating its purpose as a regression guard.
+func TestAttemptInfo_SuccessLeavesFailureFieldsEmpty(t *testing.T) {
+	t.Parallel()
+
+	ws := &WorkSession{
+		PID:       42,
+		Services:  []string{"apidev"},
+		CreatedAt: "2026-04-26T09:00:00Z",
+		Deploys: map[string][]DeployAttempt{
+			"apidev": {{
+				AttemptedAt: "2026-04-26T10:00:00Z",
+				SucceededAt: "2026-04-26T10:02:00Z",
+				Setup:       "dev",
+				Strategy:    "push-dev",
+				// Stale failure fields from a previous failed retry.
+				// Projection MUST drop them on Success=true.
+				Error:        "stale: build timeout",
+				FailureClass: FailureClassBuild,
+			}},
+		},
+		Verifies: map[string][]VerifyAttempt{
+			"apidev": {{
+				AttemptedAt: "2026-04-26T10:05:00Z",
+				PassedAt:    "2026-04-26T10:05:30Z",
+				Passed:      true,
+				Summary:     "healthy",
+				// Stale failure class from previous attempt.
+				FailureClass: FailureClassVerify,
+			}},
+		},
+	}
+
+	summary := buildWorkSessionSummary(ws)
+
+	gotDeploy := summary.Deploys["apidev"][0]
+	if !gotDeploy.Success {
+		t.Errorf("deploy Success: got false, want true")
+	}
+	if gotDeploy.Reason != "" {
+		t.Errorf("deploy Reason on success: got %q, want empty (projection MUST drop stale failure fields)", gotDeploy.Reason)
+	}
+	if gotDeploy.FailureClass != "" {
+		t.Errorf("deploy FailureClass on success: got %q, want empty (projection MUST drop stale failure fields)", gotDeploy.FailureClass)
+	}
+	if gotDeploy.Setup != "dev" {
+		t.Errorf("deploy Setup: got %q, want %q", gotDeploy.Setup, "dev")
+	}
+
+	gotVerify := summary.Verifies["apidev"][0]
+	if !gotVerify.Success {
+		t.Errorf("verify Success: got false, want true")
+	}
+	if gotVerify.Reason != "" {
+		t.Errorf("verify Reason on success: got %q, want empty (projection MUST drop stale failure fields)", gotVerify.Reason)
+	}
+	if gotVerify.FailureClass != "" {
+		t.Errorf("verify FailureClass on success: got %q, want empty (projection MUST drop stale failure fields)", gotVerify.FailureClass)
+	}
+	if gotVerify.Summary != "healthy" {
+		t.Errorf("verify Summary on success: got %q, want %q", gotVerify.Summary, "healthy")
+	}
+}

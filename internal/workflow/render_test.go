@@ -237,6 +237,120 @@ func TestRenderStatus_DevelopActivePhaseLineShowsIntent(t *testing.T) {
 	}
 }
 
+// TestRenderStatus_DeployFailureShowsReason pins Phase 1 (C1) of the
+// pipeline-repair plan: the rendered Progress line for a failed deploy
+// includes the Reason text, not just "deploy failed". This is the surface
+// the LLM consumes to recover from a failed attempt without a separate
+// logs round-trip.
+func TestRenderStatus_DeployFailureShowsReason(t *testing.T) {
+	t.Parallel()
+
+	resp := Response{
+		Envelope: StateEnvelope{
+			Phase: PhaseDevelopActive,
+			WorkSession: &WorkSessionSummary{
+				Intent:   "fix",
+				Services: []string{"apidev"},
+				Deploys: map[string][]AttemptInfo{
+					"apidev": {{
+						At:           time.Date(2026, 4, 26, 10, 0, 0, 0, time.UTC),
+						Success:      false,
+						Reason:       "build timeout after 15 minutes",
+						FailureClass: FailureClassBuild,
+					}},
+				},
+			},
+		},
+	}
+
+	out := RenderStatus(resp)
+	if !strings.Contains(out, "deploy failed") {
+		t.Errorf("missing failure indicator in render:\n%s", out)
+	}
+	if !strings.Contains(out, "build timeout after 15 minutes") {
+		t.Errorf("missing reason text in render:\n%s", out)
+	}
+}
+
+// TestRenderStatus_VerifyFailureShowsReason mirrors the deploy case for
+// verify failures: the failing check Summary surfaces in render text.
+func TestRenderStatus_VerifyFailureShowsReason(t *testing.T) {
+	t.Parallel()
+
+	resp := Response{
+		Envelope: StateEnvelope{
+			Phase: PhaseDevelopActive,
+			WorkSession: &WorkSessionSummary{
+				Intent:   "fix",
+				Services: []string{"apidev"},
+				Deploys: map[string][]AttemptInfo{
+					"apidev": {{
+						At:      time.Date(2026, 4, 26, 10, 0, 0, 0, time.UTC),
+						Success: true,
+					}},
+				},
+				Verifies: map[string][]AttemptInfo{
+					"apidev": {{
+						At:           time.Date(2026, 4, 26, 10, 5, 0, 0, time.UTC),
+						Success:      false,
+						Reason:       "http_root: 502 Bad Gateway",
+						FailureClass: FailureClassVerify,
+					}},
+				},
+			},
+		},
+	}
+
+	out := RenderStatus(resp)
+	if !strings.Contains(out, "verify failed") {
+		t.Errorf("missing verify failure indicator:\n%s", out)
+	}
+	if !strings.Contains(out, "http_root: 502 Bad Gateway") {
+		t.Errorf("missing verify reason text:\n%s", out)
+	}
+}
+
+// TestRenderStatus_SuccessNoReasonText confirms successful attempts still
+// render compactly without spurious reason content.
+func TestRenderStatus_SuccessNoReasonText(t *testing.T) {
+	t.Parallel()
+
+	resp := Response{
+		Envelope: StateEnvelope{
+			Phase: PhaseDevelopActive,
+			WorkSession: &WorkSessionSummary{
+				Intent:   "ok",
+				Services: []string{"apidev"},
+				Deploys: map[string][]AttemptInfo{
+					"apidev": {{
+						At:      time.Date(2026, 4, 26, 10, 0, 0, 0, time.UTC),
+						Success: true,
+					}},
+				},
+				Verifies: map[string][]AttemptInfo{
+					"apidev": {{
+						At:      time.Date(2026, 4, 26, 10, 5, 0, 0, time.UTC),
+						Success: true,
+						Summary: "healthy",
+					}},
+				},
+			},
+		},
+	}
+
+	out := RenderStatus(resp)
+	if !strings.Contains(out, "deploy ok") {
+		t.Errorf("missing deploy ok:\n%s", out)
+	}
+	if !strings.Contains(out, "verify ok") {
+		t.Errorf("missing verify ok:\n%s", out)
+	}
+	// No "failed", no reason text leakage on success.
+	if strings.Contains(out, "deploy failed") || strings.Contains(out, "verify failed") {
+		t.Errorf("success render contains failure indicator:\n%s", out)
+	}
+}
+
 // TestRenderStatus_PerServiceMultiEmitsSection pins the multi-service render
 // contract: when len(PerService) > 1 the `Per service:` block lists every
 // hostname alphabetically.

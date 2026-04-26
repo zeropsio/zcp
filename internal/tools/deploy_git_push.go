@@ -87,13 +87,20 @@ func handleGitPush(
 		Setup:       input.Setup,
 		Strategy:    deployStrategyGitPush,
 	}
-	recordAttempt := func(err string) {
+	// recordAttempt accepts the error string and a FailureClass so each
+	// failure point classifies the recovery shape: pre-flight checks tied
+	// to git/network are FailureClassNetwork; missing GIT_TOKEN /
+	// committed-code are FailureClassConfig; YAML validation is
+	// FailureClassConfig; the actual push failure is FailureClassNetwork
+	// (transport-layer failure to reach the remote).
+	recordAttempt := func(err string, class workflow.FailureClass) {
 		attempt.Error = err
+		attempt.FailureClass = class
 		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 	}
 
 	if sshDeployer == nil {
-		recordAttempt("SSH deployer not configured")
+		recordAttempt("SSH deployer not configured", workflow.FailureClassConfig)
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
 			"SSH deployer not configured",
@@ -101,7 +108,7 @@ func handleGitPush(
 		)), nil, nil
 	}
 	if input.TargetService == "" {
-		recordAttempt("targetService missing")
+		recordAttempt("targetService missing", workflow.FailureClassConfig)
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"targetService is required for git-push",
@@ -129,7 +136,7 @@ func handleGitPush(
 	// touched the meta.
 	committedOut, err := sshDeployer.ExecSSH(ctx, hostname, committedCodeCheckCmd(workingDir))
 	if err != nil {
-		recordAttempt(fmt.Sprintf("committed-code check failed: %v", err))
+		recordAttempt(fmt.Sprintf("committed-code check failed: %v", err), workflow.FailureClassNetwork)
 		return convertError(platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,
 			fmt.Sprintf("cannot check committed code on %s: %s", hostname, err),
@@ -137,7 +144,7 @@ func handleGitPush(
 		)), nil, nil
 	}
 	if strings.TrimSpace(string(committedOut)) != "1" {
-		recordAttempt("no committed code at workingDir")
+		recordAttempt("no committed code at workingDir", workflow.FailureClassConfig)
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
 			"git-push requires committed code at "+workingDir+" on "+hostname,
@@ -148,7 +155,7 @@ func handleGitPush(
 	// Pre-flight: check GIT_TOKEN exists on the container.
 	tokenOut, err := sshDeployer.ExecSSH(ctx, hostname, gitTokenCheckCmd)
 	if err != nil {
-		recordAttempt(fmt.Sprintf("GIT_TOKEN check failed: %v", err))
+		recordAttempt(fmt.Sprintf("GIT_TOKEN check failed: %v", err), workflow.FailureClassNetwork)
 		return convertError(platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,
 			fmt.Sprintf("cannot check GIT_TOKEN on %s: %s", hostname, err),
@@ -156,7 +163,7 @@ func handleGitPush(
 		)), nil, nil
 	}
 	if strings.TrimSpace(string(tokenOut)) == "0" {
-		recordAttempt("GIT_TOKEN missing")
+		recordAttempt("GIT_TOKEN missing", workflow.FailureClassConfig)
 		return jsonResult(&gitPushPrerequisites{
 			Status:       platform.ErrGitTokenMissing,
 			Message:      "GIT_TOKEN is not set. This project env var is required for pushing to a git remote.",
@@ -177,7 +184,7 @@ func handleGitPush(
 				setupName = hostname
 			}
 			if vErr := ops.ValidatePreDeployContent(ctx, client, target, setupName, yamlContent); vErr != nil {
-				recordAttempt(fmt.Sprintf("zerops.yaml validation failed: %v", vErr))
+				recordAttempt(fmt.Sprintf("zerops.yaml validation failed: %v", vErr), workflow.FailureClassConfig)
 				return convertError(vErr), nil, nil
 			}
 		}
@@ -187,7 +194,7 @@ func handleGitPush(
 
 	output, err := sshDeployer.ExecSSH(ctx, hostname, cmd)
 	if err != nil {
-		recordAttempt(fmt.Sprintf("git-push failed: %v", err))
+		recordAttempt(fmt.Sprintf("git-push failed: %v", err), workflow.FailureClassNetwork)
 		return convertError(platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,
 			fmt.Sprintf("git-push from %s failed: %s", hostname, err),

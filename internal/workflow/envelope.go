@@ -106,12 +106,61 @@ type WorkSessionSummary struct {
 	Verifies    map[string][]AttemptInfo `json:"verifies,omitempty"`
 }
 
-// AttemptInfo is a single deploy/verify record.
+// AttemptInfo is a single deploy/verify record as projected into the
+// envelope. Carries enough diagnostic data that `action="status"`
+// reconstructs why an attempt failed without a separate logs round-trip.
+//
+// `Reason` is the failure message (empty when Success=true). `FailureClass`
+// is a typed category populated at the record site where the failure mode
+// is known from the operation result; it is informational — the LLM reads
+// `Reason` for human content, while `BuildPlan` may key off `FailureClass`
+// to phrase a targeted Primary rationale.
+//
+// `Setup` and `Strategy` are deploy-only; `Summary` is verify-only (the
+// brief outcome string, e.g. "healthy" or the failing check name). The
+// projection drops empty values via `omitempty` to keep envelope JSON
+// stable across attempt types.
 type AttemptInfo struct {
-	At        time.Time `json:"at"`
-	Success   bool      `json:"success"`
-	Iteration int       `json:"iteration"`
+	At           time.Time    `json:"at"`
+	Success      bool         `json:"success"`
+	Iteration    int          `json:"iteration"`
+	Setup        string       `json:"setup,omitempty"`
+	Strategy     string       `json:"strategy,omitempty"`
+	Reason       string       `json:"reason,omitempty"`
+	FailureClass FailureClass `json:"failureClass,omitempty"`
+	Summary      string       `json:"summary,omitempty"`
 }
+
+// FailureClass is the typed category of a failed attempt. Populated at the
+// record site where the operation result distinguishes the failure mode.
+// Empty when the attempt succeeded.
+//
+// Categories are intentionally coarse — fine-grained recovery lives in the
+// atom corpus + iteration-tier logic, not here. The class drives `BuildPlan`
+// rationale phrasing ("build failed; fix and redeploy" vs. "container
+// didn't start") and may surface in render text.
+type FailureClass string
+
+const (
+	// FailureClassBuild — Zerops build pipeline failed (compile, install,
+	// dependency resolution).
+	FailureClassBuild FailureClass = "build"
+	// FailureClassStart — service didn't reach RUNNING / ACTIVE after deploy.
+	// READY_TO_DEPLOY post-deploy lands here.
+	FailureClassStart FailureClass = "start"
+	// FailureClassVerify — verify check failed (HTTP probe, status, logs).
+	// Populated by recordVerifyToWorkSession when the check fails.
+	FailureClassVerify FailureClass = "verify"
+	// FailureClassNetwork — transport-layer error (SSH, API timeout, DNS).
+	// The operation could not reach the platform.
+	FailureClassNetwork FailureClass = "network"
+	// FailureClassConfig — zerops.yaml or service config validation
+	// rejected the request.
+	FailureClassConfig FailureClass = "config"
+	// FailureClassOther — catch-all for failure modes that don't fit a
+	// specific category. Reason field still carries the raw message.
+	FailureClassOther FailureClass = "other"
+)
 
 // RecipeSessionSummary echoes the active recipe match when one exists.
 type RecipeSessionSummary struct {

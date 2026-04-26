@@ -69,17 +69,25 @@ func planDevelopClosed() Plan {
 // verify gaps across the whole scope: any service needing deploy wins
 // Primary before a service with deploy ok + verify pending is considered.
 // PerService lists every pending service; green services are omitted.
+//
+// When the most recent deploy/verify for the chosen host carries a
+// FailureClass + Reason, the per-host action's Rationale references the
+// failure shape (Phase 1 C1 of the pipeline-repair plan) so post-compaction
+// recovery sees "build failed: timeout — fix and redeploy" instead of
+// generic "deploy this service" wording.
 func planDevelopActive(env StateEnvelope) Plan {
 	perService := perServiceDevelopActions(env)
 	if env.WorkSession != nil {
 		for _, host := range env.WorkSession.Services {
 			if needsDeploy(env.WorkSession, host) {
-				return Plan{Primary: deployAction(host), PerService: perService}
+				last := lastAttempt(env.WorkSession.Deploys[host])
+				return Plan{Primary: deployActionFor(host, last), PerService: perService}
 			}
 		}
 		for _, host := range env.WorkSession.Services {
 			if needsVerify(env.WorkSession, host) {
-				return Plan{Primary: verifyAction(host), PerService: perService}
+				last := lastAttempt(env.WorkSession.Verifies[host])
+				return Plan{Primary: verifyActionFor(host, last), PerService: perService}
 			}
 		}
 	}
@@ -108,15 +116,25 @@ func perServiceDevelopActions(env StateEnvelope) map[string]NextAction {
 	for _, host := range env.WorkSession.Services {
 		switch {
 		case needsDeploy(env.WorkSession, host):
-			out[host] = deployAction(host)
+			out[host] = deployActionFor(host, lastAttempt(env.WorkSession.Deploys[host]))
 		case needsVerify(env.WorkSession, host):
-			out[host] = verifyAction(host)
+			out[host] = verifyActionFor(host, lastAttempt(env.WorkSession.Verifies[host]))
 		}
 	}
 	if len(out) == 0 {
 		return nil
 	}
 	return out
+}
+
+// lastAttempt returns the most recent attempt or a zero AttemptInfo when
+// the slice is empty. Used by deployActionFor / verifyActionFor to phrase
+// failure-aware Rationale text without nil checks at call sites.
+func lastAttempt(attempts []AttemptInfo) AttemptInfo {
+	if len(attempts) == 0 {
+		return AttemptInfo{}
+	}
+	return attempts[len(attempts)-1]
 }
 
 // lastSucceeded returns true when attempts has at least one entry and the
@@ -210,21 +228,87 @@ func countIdleServices(env StateEnvelope) (bootstrapped, adoptable int) {
 // text is centralized. Every Args map uses explicit strings (not constants)
 // to match the MCP wire format literally.
 
-func deployAction(host string) NextAction {
+// deployActionFor returns a deploy NextAction whose Rationale reflects the
+// most recent attempt. Empty/successful last → generic "no successful deploy
+// recorded" wording. Failed last with FailureClass → wording naming the
+// failure shape ("Last attempt: build failed — <reason>") so the LLM has
+// the recovery context inline. The Reason text is included verbatim so a
+// post-compaction `action="status"` reconstructs the actionable diagnosis.
+func deployActionFor(host string, last AttemptInfo) NextAction {
 	return NextAction{
 		Label:     "Deploy " + host,
 		Tool:      "zerops_deploy",
 		Args:      map[string]string{"targetService": host},
-		Rationale: "No successful deploy recorded for this service.",
+		Rationale: deployRationale(last),
 	}
 }
 
-func verifyAction(host string) NextAction {
+// verifyActionFor mirrors deployActionFor for verify attempts. When the
+// last verify carries Reason + FailureClass, the Rationale names the
+// failing check class so the LLM picks targeted recovery (e.g. "verify
+// failed — http_root: 502" → check the route, not the start command).
+func verifyActionFor(host string, last AttemptInfo) NextAction {
 	return NextAction{
 		Label:     "Verify " + host,
 		Tool:      "zerops_verify",
 		Args:      map[string]string{"serviceHostname": host},
-		Rationale: "Deploy succeeded but verify has not passed yet.",
+		Rationale: verifyRationale(last),
+	}
+}
+
+// deployRationale phrases the deploy NextAction.Rationale based on the
+// last attempt's outcome. The class-prefix wording keeps the LLM's plan-
+// dispatch deterministic across attempt iterations: same Reason+class
+// always produces the same Rationale string, satisfying the compaction-
+// safety invariant.
+func deployRationale(last AttemptInfo) string {
+	if last.At.IsZero() || last.Success {
+		return "No successful deploy recorded for this service."
+	}
+	prefix := failureClassPrefix(last.FailureClass)
+	if last.Reason == "" {
+		return prefix + "."
+	}
+	return prefix + ": " + last.Reason + ". Fix and redeploy."
+}
+
+func verifyRationale(last AttemptInfo) string {
+	if last.At.IsZero() {
+		return "Deploy succeeded but verify has not passed yet."
+	}
+	if last.Success {
+		// Should not normally reach here — needsVerify only fires when last
+		// failed — but if a caller invokes verifyActionFor with a green
+		// last, fall back to the generic line.
+		return "Deploy succeeded but verify has not passed yet."
+	}
+	prefix := failureClassPrefix(last.FailureClass)
+	if last.Reason == "" {
+		return prefix + "."
+	}
+	return prefix + ": " + last.Reason + ". Investigate and re-verify."
+}
+
+// failureClassPrefix maps a FailureClass to a short human-readable phrase
+// for the deploy/verify Rationale. Unknown / unset returns the generic
+// "Last attempt failed" — the Reason text still carries the actionable
+// content so the agent isn't blocked on missing classification.
+func failureClassPrefix(class FailureClass) string {
+	switch class {
+	case FailureClassBuild:
+		return "Last attempt: build failed (timeout, compile, or dependency install)"
+	case FailureClassStart:
+		return "Last attempt: container didn't start"
+	case FailureClassVerify:
+		return "Last attempt: verify check failed"
+	case FailureClassNetwork:
+		return "Last attempt: network/transport error"
+	case FailureClassConfig:
+		return "Last attempt: config validation failed"
+	case FailureClassOther:
+		return "Last attempt failed"
+	default:
+		return "Last attempt failed"
 	}
 }
 

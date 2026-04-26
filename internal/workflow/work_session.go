@@ -55,20 +55,33 @@ type WorkSession struct {
 }
 
 // DeployAttempt is one zerops_deploy invocation for a hostname.
+//
+// FailureClass is populated by the deploy handler when an error occurs,
+// using the operation result to classify the failure (build / start /
+// network / config / other). Empty when the deploy succeeded. The envelope
+// projection (deployAttemptsToInfo) carries this to AttemptInfo so the
+// LLM sees a typed category alongside the human-readable Error.
 type DeployAttempt struct {
-	AttemptedAt string `json:"attemptedAt"`
-	SucceededAt string `json:"succeededAt,omitempty"`
-	Setup       string `json:"setup,omitempty"`
-	Strategy    string `json:"strategy,omitempty"`
-	Error       string `json:"error,omitempty"`
+	AttemptedAt  string       `json:"attemptedAt"`
+	SucceededAt  string       `json:"succeededAt,omitempty"`
+	Setup        string       `json:"setup,omitempty"`
+	Strategy     string       `json:"strategy,omitempty"`
+	Error        string       `json:"error,omitempty"`
+	FailureClass FailureClass `json:"failureClass,omitempty"`
 }
 
 // VerifyAttempt is one zerops_verify invocation for a hostname.
+//
+// FailureClass is populated when Passed=false and the failing check
+// distinguishes the category (typically FailureClassVerify, occasionally
+// FailureClassStart for service-not-running). Empty when the verify
+// passed.
 type VerifyAttempt struct {
-	AttemptedAt string `json:"attemptedAt"`
-	PassedAt    string `json:"passedAt,omitempty"`
-	Summary     string `json:"summary,omitempty"`
-	Passed      bool   `json:"passed"`
+	AttemptedAt  string       `json:"attemptedAt"`
+	PassedAt     string       `json:"passedAt,omitempty"`
+	Summary      string       `json:"summary,omitempty"`
+	Passed       bool         `json:"passed"`
+	FailureClass FailureClass `json:"failureClass,omitempty"`
 }
 
 // workSessionMu serializes work-session file updates within a single process.
