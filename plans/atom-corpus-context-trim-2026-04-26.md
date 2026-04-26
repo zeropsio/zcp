@@ -364,18 +364,15 @@ go test ./internal/workflow/ -run TestCorpusCoverage_OutputUnderMCPCap -count=1 
 ### 6.2 List which atoms fire for an overflow envelope
 
 Add a temporary `cmd/atomsize_probe/main.go` (delete after measurement; it
-references `internal/` packages so it must live under `cmd/`). **Build in
-a git worktree to avoid colliding with parallel work in
-`internal/workflow/`**:
+references `internal/` packages so it must live under `cmd/`):
 
 ```bash
-git worktree add ../zcp-trim-verify HEAD
-cd ../zcp-trim-verify
 mkdir -p cmd/atomsize_probe
 # write main.go below
 go build -o /tmp/atomsize_probe ./cmd/atomsize_probe/
 /tmp/atomsize_probe
-cd - && git worktree remove ../zcp-trim-verify --force
+# cleanup after the trim plan completes:
+rm -rf cmd/atomsize_probe
 ```
 
 ```go
@@ -929,11 +926,11 @@ discipline applied to every touched atom.
 ## 17. Live verification (2026-04-26) — supersedes §4 + §15.5 numbers
 
 This section records the empirical measurements taken against the live
-zcp container in eval-zcp project + a worktree-isolated probe binary
-exercising the production code path (`SynthesizeBodies` → `RenderStatus`
-→ `Response{}` JSON marshal → MCP `CallToolResult` → JSON-RPC frame +
-newline). Before any work begins, re-confirm these numbers with the §17.5
-probe — they may shift if the corpus or render pipeline changed.
+zcp container in eval-zcp project + a probe binary exercising the
+production code path (`SynthesizeBodies` → `RenderStatus` → `Response{}`
+JSON marshal → MCP `CallToolResult` → JSON-RPC frame + newline). Before
+any work begins, re-confirm these numbers with the §17.5 probe — they
+may shift if the corpus or render pipeline changed.
 
 ### 17.1 Wire-frame measurements (the metric that actually matters)
 
@@ -946,7 +943,7 @@ the joined atom bodies. Three layered metrics matter; track all three:
 | `render_status_markdown` | `RenderStatus(Response{Env, Guidance, Plan})` — adds `## Status\n` + Phase + Services + 2-space indentation per Guidance line. | The `text` field of `mcp.TextContent`. |
 | `mcp_wire_jsonrpc_frame` | `{"jsonrpc":"2.0","id":N,"result":{"content":[{"type":"text","text":"<rendered>"}]}}` + `\n` | The actual byte count Claude Code's stdio reader sees. **This is what hits the cap.** |
 
-Verified numbers (probe in worktree, build from `bff387a5`):
+Verified numbers (probe build from `bff387a5`):
 
 | Fixture | bodies-join | render | wire-frame | over 32 KB by |
 |---|---|---|---|---|
@@ -1165,20 +1162,15 @@ include generalization cost from this list.
 
 ### 17.5 Probe used for these measurements
 
-The probe was built and run from a git worktree (`../zcp-trim-verify` at
-`bff387a5`) so it didn't conflict with parallel work in progress on
-`internal/tools/`, `internal/workflow/envelope.go`, etc.
+The probe was built from `bff387a5` and exercises the production
+pipeline end-to-end: `SynthesizeBodies` → `RenderStatus` → `Response{}`
+JSON marshal → MCP `CallToolResult` shape → JSON-RPC frame + newline.
+See §6.2 for the build instructions; the `main.go` source is in §6.2.
 
-```go
-// cmd/atomsize_probe/main.go (build with: go build -o /tmp/atomsize_probe ./cmd/atomsize_probe/)
-// Runs SynthesizeBodies + RenderStatus + JSON-RPC marshal pipeline for
-// the two overflow fixtures + a single-service hypothetical, prints the
-// three layered metrics + per-atom contributions.
-```
-
-To re-run after a trim: rebuild the probe in a worktree (so a half-merged
-parallel refactor in `internal/workflow/` doesn't break your build),
-`/tmp/atomsize_probe`, compare numbers to the table in §17.1.
+To re-run after a trim: `go build -o /tmp/atomsize_probe
+./cmd/atomsize_probe/ && /tmp/atomsize_probe`. Compare numbers to the
+table in §17.1; expect the per-atom listing to shrink + duplicate
+`appstage` rows to drop as Phase 1 splits land.
 
 For end-to-end live verification (probe doesn't catch wire-side
 surprises), the procedure that worked here:
@@ -1200,9 +1192,10 @@ line). Confidence the probe = wire is high.
 
 Surface only — not in scope of this plan. The eval-zcp project's zcp
 container has `/var/www/.zcp/state/services/probe.json` for a service
-named `probe` that no longer exists in the live API. This is exactly
-the G4 scenario `plans/open-findings-resolution-2026-04-26.md` addresses.
-Useful as a real-world test fixture once that work lands.
+named `probe` that no longer exists in the live API. This is the
+`IdleOrphan` scenario the orphan-meta visibility work covers (landed
+2026-04-26 as commit `9cf3ebc6`). Useful as a real-world test fixture
+when smoke-testing that path; not relevant to the trim plan itself.
 
 ### 17.7 Phase 0 amendment — calibration without breaking the tree
 
