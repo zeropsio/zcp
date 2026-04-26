@@ -61,8 +61,16 @@ What does NOT go here:
   KB or claude-md/notes.
 - Application architecture (module structure, class hierarchy).
 
-Aim for 4-7 IG items. More usually means recipe-internal content
-crept in. Reference (laravel-showcase-app): 5 items.
+Aim for 4-7 IG items per codebase as the sweet spot for minimal
+recipes (1-2 managed services). For showcase recipes (5
+managed-service categories — db / cache / broker / storage / search),
+expect 7-10 items per codebase: each platform mechanic relevant to a
+category gets its own item. Reference (laravel-showcase-app, minimal
+tier): 5 items.
+
+Above 12 is bloat (audit for items duplicating prose in KB or
+describing framework configuration not platform mechanics); below 4
+likely missed at least one platform mechanic.
 
 ### Knowledge Base — `**Topic** — prose` only
 
@@ -110,6 +118,24 @@ write `(cite \`x\`)` in env import.yaml comments. Don't tell the
 porter which guide you read — tell them the rule. If a guide name
 genuinely belongs in prose ("Per the http-support guide…"), it can
 stay; mechanical boilerplate is the target.
+
+### CLAUDE.md is for the porter
+
+CLAUDE.md guides the porter (or the porter's AI agent) working in the
+cloned apps repo. The reader has framework experience but is new to
+*this* codebase. **Voice rule: describe what the porter does in their
+own codebase, with framework-canonical commands.** Don't mention
+authoring tools (`zcli *`, `zerops_*`, `zcp *`) — those are how the
+recipe was BUILT, not how the porter USES it.
+
+This rule is unconditional: it applies to dev-loop content, runbook
+notes, debugging tips, port-forwarding hints, "hitting localhost from
+your laptop" guidance, ANY tangential mention. If you'd write
+`zcli vpn` to give the porter a tip, you're describing an authoring
+tool; rewrite as a framework-canonical command (an `npm` /
+`composer` / `cargo` invocation, an `ssh` for remote-access, etc.) or
+skip the tangential tip entirely. The "What does NOT go here" list
+below reinforces the rule with examples; the rule is what governs.
 
 ### CLAUDE.md — porter-facing, codebase-scoped, 30–50 lines (cap 60)
 

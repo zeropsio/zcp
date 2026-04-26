@@ -121,26 +121,16 @@ framework work, not on each other.
    deployFiles) works, not just the dev self-deploy. Both slots must
    be green before the phase completes.
 
-## Dispatch integrity (mandatory)
+## Dispatch integrity
 
-After composing each scaffold brief, dispatch the sub-agent via
-`Agent` with `prompt=<engine brief body><wrapper notes>`. The engine
-brief body MUST appear byte-identical inside the dispatched prompt.
-
-Before invoking `Agent`, verify:
-
-```
-zerops_recipe action=verify-subagent-dispatch
-  slug=<slug> briefKind=scaffold codebase=<host>
-  dispatchedPrompt=<the prompt you intend to send>
-```
-
-A mismatch returns an actionable error. Fix the prompt and re-verify.
-
-This is now enforced — run-11 main agents truncated scaffold-app
-brief from 14,582 bytes to 9,047 (62%) and lost teaching content.
-Wrapper text around the brief (header lines before, context notes
-after) is allowed; only truncations and paraphrases are rejected.
+The engine composes the full dispatch prompt deterministically from
+Plan + Research.Description via `build-subagent-prompt`. Pass
+`response.prompt` to the `Agent` tool byte-identical — the prompt IS
+the engine output, so paraphrase + truncation risk is mathematically
+zero. There is no separate verify step in the prescribed flow; the
+recipe action list still carries a recovery primitive in the engine
+for hand-composed dispatches, but the byte-identical pass-through
+path here doesn't need it.
 
 ## Content authored in-phase
 
