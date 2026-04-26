@@ -3,6 +3,7 @@ package recipe
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,9 +99,20 @@ var envSurfaceKinds = []Surface{
 }
 
 // gateCodebaseSurfaceValidators runs validators for the codebase-
-// scoped surface set only.
+// scoped surface set against the assembler's just-rendered fragment
+// bodies (Cluster A.1 — R-13-1). Disk fall-through preserved for
+// codebase zerops.yaml, which the sub-agent ssh-edits in place rather
+// than authoring through Plan.Fragments.
+//
+// I/O boundary: bodies derive from in-process state (Plan.Fragments,
+// templates embedded in the binary). No filesystem coherence dependency
+// for fragment-backed surfaces.
 func gateCodebaseSurfaceValidators(ctx GateContext) []Violation {
-	return runSurfaceValidatorsForKinds(ctx, codebaseSurfaceKinds)
+	bodies, err := collectCodebaseBodies(ctx.Plan)
+	if err != nil {
+		return []Violation{{Code: "validator-prep-failed", Message: err.Error()}}
+	}
+	return runSurfaceValidatorsForKinds(ctx, codebaseSurfaceKinds, bodies)
 }
 
 // gateEnvSurfaceValidators runs validators for the root + env surface
@@ -108,16 +120,34 @@ func gateCodebaseSurfaceValidators(ctx GateContext) []Violation {
 // stitched corpus to be meaningful. Kept distinct so finalize is the
 // only phase emitting these violations (root + env are finalize-
 // authored; the uniqueness check spans every surface).
+//
+// I/O boundary: bodies for fragment-backed + emitter-deterministic
+// surfaces flow from in-process state (Cluster A.1 symmetric extension
+// per plan §7 open question 1). Cross-surface uniqueness consumes the
+// union of env + codebase bodies; only codebase zerops.yaml retains
+// the disk read because the sub-agent ssh-edits it directly.
 func gateEnvSurfaceValidators(ctx GateContext) []Violation {
-	out := runSurfaceValidatorsForKinds(ctx, envSurfaceKinds)
-	out = append(out, runCrossSurfaceUniqueness(ctx)...)
+	envBodies, err := collectEnvBodies(ctx.Plan, ctx.OutputRoot)
+	if err != nil {
+		return []Violation{{Code: "validator-prep-failed", Message: err.Error()}}
+	}
+	out := runSurfaceValidatorsForKinds(ctx, envSurfaceKinds, envBodies)
+	cbBodies, err := collectCodebaseBodies(ctx.Plan)
+	if err != nil {
+		return append(out, Violation{Code: "validator-prep-failed", Message: err.Error()})
+	}
+	union := make(map[string]string, len(envBodies)+len(cbBodies))
+	maps.Copy(union, envBodies)
+	maps.Copy(union, cbBodies)
+	out = append(out, runCrossSurfaceUniqueness(ctx, union)...)
 	return out
 }
 
-// runCrossSurfaceUniqueness reads every surface body off disk and
-// applies the cross-surface duplication check. Only meaningful at
-// finalize close, when the full corpus is on disk.
-func runCrossSurfaceUniqueness(ctx GateContext) []Violation {
+// runCrossSurfaceUniqueness applies the cross-surface duplication
+// check against bodies — preferring the in-memory map and falling
+// back to disk for surfaces not in the map (codebase zerops.yaml).
+// Only meaningful at finalize close, when the full corpus is in hand.
+func runCrossSurfaceUniqueness(ctx GateContext, bodies map[string]string) []Violation {
 	var facts []FactRecord
 	if ctx.FactsLog != nil {
 		if all, err := ctx.FactsLog.Read(); err == nil {
@@ -127,6 +157,10 @@ func runCrossSurfaceUniqueness(ctx GateContext) []Violation {
 	surfaces := map[string]string{}
 	for _, s := range Surfaces() {
 		for _, p := range resolveSurfacePaths(ctx.OutputRoot, s, ctx.Plan) {
+			if body, ok := bodies[p]; ok {
+				surfaces[filepath.Base(p)] = body
+				continue
+			}
 			body, err := os.ReadFile(p)
 			if err != nil {
 				continue
@@ -138,13 +172,18 @@ func runCrossSurfaceUniqueness(ctx GateContext) []Violation {
 }
 
 // runSurfaceValidatorsForKinds runs the registered ValidateFn for each
-// of the given surface kinds against the resolved disk paths. Only
-// existing files are scanned — codebase surfaces during scaffold close
-// may live in <SourceRoot> only after the sub-agent's first
-// stitch-content call. Cross-surface uniqueness is owned by
-// gateEnvSurfaceValidators (finalize close) — it needs the full
-// stitched corpus to be meaningful.
-func runSurfaceValidatorsForKinds(ctx GateContext, kinds []Surface) []Violation {
+// of the given surface kinds. Bodies are sourced from `bodies[path]`
+// when present and from disk otherwise — the in-memory path closes
+// the SSHFS write-back race (R-13-1) for fragment-backed surfaces while
+// preserving the disk read for surfaces the sub-agent owns directly
+// (codebase zerops.yaml). Missing-on-disk-and-not-in-bodies skips
+// silently — codebase surfaces during early scaffold close may not
+// have stitched yet.
+//
+// I/O boundary: callers compute `bodies` from in-process state
+// (Plan.Fragments + templates). Disk read is reserved for surfaces NOT
+// in bodies; those are by-construction non-stitch-race-prone.
+func runSurfaceValidatorsForKinds(ctx GateContext, kinds []Surface, bodies map[string]string) []Violation {
 	var facts []FactRecord
 	if ctx.FactsLog != nil {
 		if all, err := ctx.FactsLog.Read(); err == nil {
@@ -160,15 +199,21 @@ func runSurfaceValidatorsForKinds(ctx GateContext, kinds []Surface) []Violation 
 		}
 		paths := resolveSurfacePaths(ctx.OutputRoot, s, ctx.Plan)
 		for _, p := range paths {
-			content, err := os.ReadFile(p)
-			if err != nil {
-				if os.IsNotExist(err) {
+			var content []byte
+			if body, ok := bodies[p]; ok {
+				content = []byte(body)
+			} else {
+				disk, err := os.ReadFile(p)
+				if err != nil {
+					if os.IsNotExist(err) {
+						continue
+					}
+					violations = append(violations, Violation{
+						Code: "validator-read-failed", Path: p, Message: err.Error(),
+					})
 					continue
 				}
-				violations = append(violations, Violation{
-					Code: "validator-read-failed", Path: p, Message: err.Error(),
-				})
-				continue
+				content = disk
 			}
 			vs, err := fn(context.Background(), p, content, inputs)
 			if err != nil {
@@ -181,6 +226,69 @@ func runSurfaceValidatorsForKinds(ctx GateContext, kinds []Surface) []Violation 
 		}
 	}
 	return violations
+}
+
+// collectCodebaseBodies returns an in-memory body map keyed by the
+// on-disk path each fragment-backed codebase surface (IG, KB,
+// CLAUDE.md) renders to. Skips codebases without a SourceRoot —
+// chain-parent codebases or pre-scaffold states — so the validator's
+// disk fall-through still applies for those. zerops.yaml is omitted
+// intentionally: the sub-agent ssh-edits it; no fragment-side
+// stitch-race exists for it (validator falls through to disk).
+func collectCodebaseBodies(plan *Plan) (map[string]string, error) {
+	bodies := map[string]string{}
+	if plan == nil {
+		return bodies, nil
+	}
+	for _, cb := range plan.Codebases {
+		if cb.SourceRoot == "" {
+			continue
+		}
+		readme, _, err := AssembleCodebaseREADME(plan, cb.Hostname)
+		if err != nil {
+			return nil, fmt.Errorf("assemble %s README: %w", cb.Hostname, err)
+		}
+		bodies[filepath.Join(cb.SourceRoot, "README.md")] = readme
+		claude, _, err := AssembleCodebaseClaudeMD(plan, cb.Hostname)
+		if err != nil {
+			return nil, fmt.Errorf("assemble %s CLAUDE.md: %w", cb.Hostname, err)
+		}
+		bodies[filepath.Join(cb.SourceRoot, "CLAUDE.md")] = claude
+	}
+	return bodies, nil
+}
+
+// collectEnvBodies returns an in-memory body map keyed by the on-disk
+// path each root + env surface renders to. Covers root README,
+// per-tier README, and per-tier import.yaml (the deliverable yaml
+// produced by EmitDeliverableYAML). Symmetric extension of Cluster A.1
+// per plan §7 open question 1: prefer the in-memory body uniformly so
+// validator inputs derive from the same Plan that the deliverable
+// derives from.
+func collectEnvBodies(plan *Plan, outputRoot string) (map[string]string, error) {
+	bodies := map[string]string{}
+	if plan == nil {
+		return bodies, nil
+	}
+	rootBody, _, err := AssembleRootREADME(plan)
+	if err != nil {
+		return nil, fmt.Errorf("assemble root README: %w", err)
+	}
+	bodies[filepath.Join(outputRoot, "README.md")] = rootBody
+	for i := range Tiers() {
+		envBody, _, err := AssembleEnvREADME(plan, i)
+		if err != nil {
+			return nil, fmt.Errorf("assemble env/%d README: %w", i, err)
+		}
+		tier, _ := TierAt(i)
+		bodies[filepath.Join(outputRoot, tier.Folder, "README.md")] = envBody
+		yaml, err := EmitDeliverableYAML(plan, i)
+		if err != nil {
+			return nil, fmt.Errorf("emit tier %d import.yaml: %w", i, err)
+		}
+		bodies[filepath.Join(outputRoot, tier.Folder, "import.yaml")] = yaml
+	}
+	return bodies, nil
 }
 
 // gateSourceCommentVoice walks every codebase's SourceRoot and flags
