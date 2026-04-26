@@ -183,12 +183,25 @@ func planRecipeActive() Plan {
 	}
 }
 
-// planIdle handles the three idle sub-cases:
+// planIdle handles the four idle sub-cases:
+//   - orphan-only (no live runtimes, only stale metas) → reset (primary) + bootstrap (alternative)
 //   - no services at all → bootstrap
 //   - bootstrapped services present → develop (primary) + optional adopt / add
 //   - only unmanaged runtimes → adopt via develop
 func planIdle(env StateEnvelope) Plan {
 	bootstrapped, adoptable := countIdleServices(env)
+
+	// Orphan-only case mirrors the IdleOrphan scenario in deriveIdleScenario:
+	// metas on disk for runtimes whose live counterparts are gone, AND no
+	// non-self live service of any kind exists. Reset is the cleanup
+	// primary; a fresh bootstrap (which would clash with stale meta names
+	// otherwise) becomes the alternative once the metas are gone.
+	if bootstrapped == 0 && adoptable == 0 && len(env.OrphanMetas) > 0 && !hasAnyLive(env) {
+		return Plan{
+			Primary:      resetOrphanMetasAction(),
+			Alternatives: []NextAction{startBootstrapAction()},
+		}
+	}
 
 	if bootstrapped == 0 && adoptable == 0 {
 		return Plan{Primary: startBootstrapAction()}
@@ -205,6 +218,13 @@ func planIdle(env StateEnvelope) Plan {
 
 	// Only unmanaged runtimes exist — adoption is the gate to develop.
 	return Plan{Primary: adoptRuntimesAction()}
+}
+
+// hasAnyLive returns true when the envelope has at least one non-self
+// live service, including managed deps. Mirrors the liveAny suppression
+// logic in deriveIdleScenario so plan + scenario stay aligned.
+func hasAnyLive(env StateEnvelope) bool {
+	return len(env.Services) > 0
 }
 
 // countIdleServices partitions the envelope's services for idle-phase plan
@@ -345,5 +365,14 @@ func addServicesAction() NextAction {
 		Tool:      "zerops_workflow",
 		Args:      map[string]string{"action": "start", "workflow": "bootstrap"},
 		Rationale: "Add additional managed or runtime services to the project.",
+	}
+}
+
+func resetOrphanMetasAction() NextAction {
+	return NextAction{
+		Label:     "Reset to clear orphan metas",
+		Tool:      "zerops_workflow",
+		Args:      map[string]string{"action": "reset", "workflow": "bootstrap"},
+		Rationale: "Disk metas reference runtime services that no longer exist; reset clears them before fresh bootstrap.",
 	}
 }

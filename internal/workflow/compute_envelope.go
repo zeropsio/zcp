@@ -82,6 +82,15 @@ func ComputeEnvelope(
 
 	snapshots := buildServiceSnapshots(services, metas, ws, selfHostnameFromRT(rt))
 
+	// Orphan metas: disk metas whose live service counterparts are gone
+	// (deleted externally, or bootstrap session died with the runtime
+	// never reaching ACTIVE). Computed once here from the same inputs the
+	// snapshots use plus a session-liveness snapshot. Best-effort on
+	// session read: failure → treat liveness as unknown (every incomplete
+	// meta with a session classifies as LiveDeleted, never IncompleteLost).
+	alivePIDs, sessionByID := loadSessionLiveness(stateDir)
+	orphans := computeOrphanMetas(services, metas, alivePIDs, sessionByID)
+
 	var wsSummary *WorkSessionSummary
 	if ws != nil {
 		wsSummary = buildWorkSessionSummary(ws)
@@ -97,10 +106,11 @@ func ComputeEnvelope(
 	return StateEnvelope{
 		Phase:        phase,
 		Environment:  env,
-		IdleScenario: deriveIdleScenario(phase, snapshots),
+		IdleScenario: deriveIdleScenario(phase, snapshots, orphans),
 		SelfService:  self,
 		Project:      projectSummary,
 		Services:     snapshots,
+		OrphanMetas:  orphans,
 		WorkSession:  wsSummary,
 		// Bootstrap and Recipe are left nil here — the bootstrap conductor
 		// populates them on a per-render synthetic envelope (see
@@ -109,21 +119,114 @@ func ComputeEnvelope(
 	}, nil
 }
 
-// deriveIdleScenario classifies the idle phase into one of four sub-cases
-// based on service composition. Returns "" for non-idle phases. Partitions
-// services the same way planIdle does: managed services don't count toward
-// any bucket (they are data stores, not deploy targets).
+// loadSessionLiveness builds the (alivePIDs, sessionByID) snapshot used
+// by computeOrphanMetas. Best-effort: any registry read failure returns
+// nil maps, which causes computeOrphanMetas to skip the IncompleteLost
+// classification path and treat every incomplete meta as LiveDeleted.
+func loadSessionLiveness(stateDir string) (map[int]struct{}, map[string]int) {
+	if stateDir == "" {
+		return nil, nil
+	}
+	sessions, err := ListSessions(stateDir)
+	if err != nil {
+		return nil, nil
+	}
+	alivePIDs := make(map[int]struct{})
+	sessionByID := make(map[string]int, len(sessions))
+	alive, _ := ClassifySessions(sessions)
+	for _, s := range alive {
+		alivePIDs[s.PID] = struct{}{}
+	}
+	for _, s := range sessions {
+		sessionByID[s.SessionID] = s.PID
+	}
+	return alivePIDs, sessionByID
+}
+
+// computeOrphanMetas diffs disk metas against live services to find
+// metas whose corresponding live service no longer exists. Pair-keyed:
+// either half of a dev/stage pair being live keeps the meta non-orphan.
 //
-// Priority: incomplete > bootstrapped > adopt > empty. Incomplete wins
-// because a ServiceMeta tagged to a prior session signals an interrupted
-// bootstrap — resuming is the only clean recovery path, and atoms gated on
-// this scenario surface the resume option before anything else.
-func deriveIdleScenario(phase Phase, services []ServiceSnapshot) IdleScenario {
+// alivePIDs is the set of PIDs still alive per ClassifySessions. Nil
+// alivePIDs means "session liveness unknown" — every incomplete meta
+// with a non-empty BootstrapSession is then classified as LiveDeleted,
+// never IncompleteLost. sessionByID maps SessionEntry.SessionID (plain
+// string per registry.go:29) to PID for the liveness lookup.
+func computeOrphanMetas(
+	services []platform.ServiceStack,
+	metas []*ServiceMeta,
+	alivePIDs map[int]struct{},
+	sessionByID map[string]int,
+) []OrphanMeta {
+	if len(metas) == 0 {
+		return nil
+	}
+	liveByName := make(map[string]struct{}, len(services))
+	for _, s := range services {
+		liveByName[s.Name] = struct{}{}
+	}
+	var out []OrphanMeta
+	for _, m := range metas {
+		if m == nil {
+			continue
+		}
+		_, devLive := liveByName[m.Hostname]
+		stageLive := false
+		if m.StageHostname != "" {
+			_, stageLive = liveByName[m.StageHostname]
+		}
+		if devLive || stageLive {
+			continue // pair-keyed: either half live → not orphan
+		}
+		reason := OrphanReasonLiveDeleted
+		if !m.IsComplete() && m.BootstrapSession != "" && alivePIDs != nil {
+			pid, ok := sessionByID[m.BootstrapSession]
+			if !ok {
+				reason = OrphanReasonIncompleteLost // session record gone
+			} else if _, alive := alivePIDs[pid]; !alive {
+				reason = OrphanReasonIncompleteLost // session PID dead
+			}
+		}
+		out = append(out, OrphanMeta{
+			Hostname:         m.Hostname,
+			StageHostname:    m.StageHostname,
+			BootstrapSession: m.BootstrapSession,
+			BootstrappedAt:   m.BootstrappedAt,
+			FirstDeployedAt:  m.FirstDeployedAt,
+			Reason:           reason,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Hostname < out[j].Hostname })
+	return out
+}
+
+// deriveIdleScenario classifies the idle phase into one of five sub-cases
+// based on service composition + orphan-meta presence. Returns "" for
+// non-idle phases. Partitions services the same way planIdle does: managed
+// services don't count toward any runtime bucket (they are data stores,
+// not deploy targets).
+//
+// Priority: incomplete > bootstrapped > adopt > orphan > empty.
+//   - Incomplete wins because a ServiceMeta tagged to a prior session
+//     signals an interrupted bootstrap; atoms gated here surface resume.
+//   - Bootstrapped + adopt continue per pre-orphan logic.
+//   - Orphan only fires when the project has NO non-self runtime live
+//     service AND at least one orphan meta exists. Mixed orphan + live
+//     states fall back to whichever live-bearing scenario applies; the
+//     orphan still appears in env.OrphanMetas for visibility.
+//   - Empty when neither orphan metas nor runtime services exist.
+func deriveIdleScenario(phase Phase, services []ServiceSnapshot, orphans []OrphanMeta) IdleScenario {
 	if phase != PhaseIdle {
 		return ""
 	}
-	var bootstrapped, adoptable, resumable int
+	// liveAny counts any non-self live service (managed deps + runtimes).
+	// Managed deps don't drive the runtime buckets (bootstrap/adopt/resume)
+	// but they DO suppress IdleOrphan routing — a project with a live
+	// postgres still has live infrastructure even if some runtime metas
+	// are stale. The bucket counts only consider runtime services.
+	var bootstrapped, adoptable, resumable, liveAny int
 	for _, svc := range services {
+		liveAny++
 		if svc.RuntimeClass == topology.RuntimeManaged {
 			continue
 		}
@@ -145,6 +248,9 @@ func deriveIdleScenario(phase Phase, services []ServiceSnapshot) IdleScenario {
 	}
 	if adoptable > 0 {
 		return IdleAdopt
+	}
+	if len(orphans) > 0 && liveAny == 0 {
+		return IdleOrphan
 	}
 	return IdleEmpty
 }

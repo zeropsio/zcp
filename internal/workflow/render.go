@@ -29,11 +29,32 @@ func RenderStatus(resp Response) string {
 
 	renderPhase(&b, resp.Envelope)
 	renderServices(&b, resp.Envelope)
+	renderOrphanMetas(&b, resp.Envelope)
 	renderProgressAndBlockers(&b, resp.Envelope)
 	renderGuidance(&b, resp.Guidance)
 	renderPlan(&b, resp.Plan)
 
 	return b.String()
+}
+
+// renderOrphanMetas surfaces stale ServiceMeta entries whose live
+// service counterparts no longer exist (deleted externally, or
+// bootstrap session died with the runtime never reaching ACTIVE).
+// Visible only when at least one orphan is present, so the normal
+// idle/develop flow is unaffected.
+func renderOrphanMetas(b *strings.Builder, env StateEnvelope) {
+	if len(env.OrphanMetas) == 0 {
+		return
+	}
+	fmt.Fprintln(b, "OrphanMetas:")
+	for _, o := range env.OrphanMetas {
+		line := fmt.Sprintf("  - %s", o.Hostname)
+		if o.StageHostname != "" {
+			line += " (paired with " + o.StageHostname + ")"
+		}
+		line += " — reason=" + string(o.Reason)
+		fmt.Fprintln(b, line)
+	}
 }
 
 // renderProgressAndBlockers renders the per-service Progress block (the

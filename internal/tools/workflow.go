@@ -141,17 +141,17 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				"No workflow or action specified",
-				`Use action="start" workflow="bootstrap|develop|recipe" for orchestrated workflows, or workflow="export" for immediate guidance. Configure deploy strategy via action="strategy".`)), nil, nil
+				`Use action="start" workflow="bootstrap|develop|recipe" for orchestrated workflows, or workflow="export" for immediate guidance. Configure deploy strategy via action="strategy".`), WithRecoveryStatus()), nil, nil
 		}
 		if !workflow.IsImmediateWorkflow(input.Workflow) {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("Workflow %q requires action=\"start\"", input.Workflow),
-				fmt.Sprintf(`Use action="start" workflow=%q intent="..."`, input.Workflow))), nil, nil
+				fmt.Sprintf(`Use action="start" workflow=%q intent="..."`, input.Workflow)), WithRecoveryStatus()), nil, nil
 		}
 		guidance, err := synthesizeImmediateGuidance(input.Workflow, engine, rt)
 		if err != nil {
-			return convertError(err), nil, nil
+			return convertError(err, WithRecoveryStatus()), nil, nil
 		}
 		return textResult(guidance), nil, nil
 	})
@@ -183,7 +183,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
 			"Workflow engine not initialized",
-			"Ensure ZCP is configured with a state directory")), nil, nil
+			"Ensure ZCP is configured with a state directory"), WithRecoveryStatus()), nil, nil
 	}
 
 	switch input.Action {
@@ -199,7 +199,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				"Deploy steps are handled automatically by zerops_deploy pre-flight validation",
-				"Use zerops_deploy to deploy, zerops_verify to verify")), nil, nil
+				"Use zerops_deploy to deploy, zerops_verify to verify"), WithRecoveryStatus()), nil, nil
 		}
 		active := detectActiveWorkflow(engine)
 		if active == workflowRecipe {
@@ -217,14 +217,14 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"generate-finalize is only available during recipe workflow",
-			"")), nil, nil
+			""), WithRecoveryStatus()), nil, nil
 	case "skip":
 		// Develop is stateless — step-based skipping is never valid.
 		if isDevelopStep(input.Step) {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				"Deploy steps are handled automatically by zerops_deploy pre-flight validation",
-				"Use zerops_deploy to deploy, zerops_verify to verify")), nil, nil
+				"Use zerops_deploy to deploy, zerops_verify to verify"), WithRecoveryStatus()), nil, nil
 		}
 		active := detectActiveWorkflow(engine)
 		if active == workflowRecipe {
@@ -262,7 +262,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Unknown action %q", input.Action),
-			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, strategy, classify, adopt-local, dispatch-brief-atom, record-deploy")), nil, nil
+			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, strategy, classify, adopt-local, dispatch-brief-atom, record-deploy"), WithRecoveryStatus()), nil, nil
 	}
 }
 
@@ -289,7 +289,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 				"If you are a sub-agent spawned by the main agent inside a recipe session, "+
 					"do NOT call zerops_workflow. The main agent holds workflow state. "+
 					"Perform your scoped task using the tools listed in your dispatch brief and return.",
-			)), nil, nil
+			), WithRecoveryStatus()), nil, nil
 		}
 	}
 
@@ -297,7 +297,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 	if workflow.IsImmediateWorkflow(input.Workflow) {
 		guidance, err := synthesizeImmediateGuidance(input.Workflow, engine, rt)
 		if err != nil {
-			return convertError(err), nil, nil
+			return convertError(err, WithRecoveryStatus()), nil, nil
 		}
 		return jsonResult(immediateResponse{
 			Workflow: input.Workflow,
@@ -322,14 +322,14 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"recipe workflow is not available on zerops_workflow",
-			"Call zerops_recipe action=start slug=<slug> outputRoot=<dir> instead. See the tool's description for the full action set.")), nil, nil
+			"Call zerops_recipe action=start slug=<slug> outputRoot=<dir> instead. See the tool's description for the full action set."), WithRecoveryStatus()), nil, nil
 	}
 
 	// Unknown workflow — return error.
 	return convertError(platform.NewPlatformError(
 		platform.ErrInvalidParameter,
 		fmt.Sprintf("Unknown orchestrated workflow %q", input.Workflow),
-		"Valid workflows: bootstrap, develop, export. For recipe authoring use zerops_recipe.")), nil, nil
+		"Valid workflows: bootstrap, develop, export. For recipe authoring use zerops_recipe."), WithRecoveryStatus()), nil, nil
 }
 
 // isDevelopStep returns true if the step name is a develop workflow step.
@@ -374,6 +374,7 @@ type resetSnapshot struct {
 	CompletedSteps     int      `json:"completedSteps,omitempty"`
 	IncompleteMetas    []string `json:"incompleteMetas,omitempty"`
 	CompleteMetas      []string `json:"completeMetas,omitempty"`
+	OrphanMetas        []string `json:"orphanMetas,omitempty"`
 	LiveServices       int      `json:"liveServices,omitempty"`
 	WorkSessions       int      `json:"workSessions,omitempty"`
 }
@@ -381,16 +382,27 @@ type resetSnapshot struct {
 func handleReset(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string) (*mcp.CallToolResult, any, error) {
 	// Snapshot state before reset — Reset() clears engine memory + removes
 	// the session file + deletes incomplete metas for the session.
-	// Complete metas, work sessions, and live platform services are never
-	// touched; surface that explicitly so the agent isn't guessing.
+	// Complete metas tied to live services are preserved; complete metas
+	// whose live counterpart is gone (orphan-meta diff) are cleaned here
+	// in the handler since Engine.Reset is intentionally session-scoped
+	// and would leave them behind otherwise.
 	preState, _ := engine.GetState()
 	metasBefore, _ := workflow.ListServiceMetas(engine.StateDir())
 
 	cleared := buildClearedSnapshot(preState, metasBefore)
 	preserved := resetSnapshot{}
+
+	// Live services for the orphan diff + preserved counter. Liveness is
+	// unknown when client is nil or the API call errors — in that case
+	// we explicitly skip orphan pruning rather than treating "no live"
+	// as "delete everything".
+	var liveServices []platform.ServiceStack
+	livenessKnown := false
 	if client != nil {
 		if live, listErr := ops.ListProjectServices(ctx, client, projectID); listErr == nil {
+			liveServices = live
 			preserved.LiveServices = len(live)
+			livenessKnown = true
 		}
 	}
 
@@ -398,12 +410,21 @@ func handleReset(ctx context.Context, engine *workflow.Engine, client platform.C
 		return convertError(platform.NewPlatformError(
 			platform.ErrSessionNotFound,
 			fmt.Sprintf("Reset failed: %v", err),
-			"")), nil, nil
+			""), WithRecoveryStatus()), nil, nil
 	}
 
-	// Recompute preserved metas after reset to catch cleanIncompleteMetas
-	// removals. Complete metas (Bootstrapped=true) stay; that's the set
-	// the agent can adopt or develop against next.
+	// Orphan-meta cleanup: any meta whose live counterpart is gone is
+	// stale. Delete after engine.Reset so we don't race the
+	// session-scoped incomplete-meta cleanup. Skipped entirely when
+	// liveness is unknown (offline / client-less callers must not
+	// trigger destructive cleanup based on missing data).
+	if livenessKnown {
+		cleared.OrphanMetas = pruneOrphanMetasPostReset(engine.StateDir(), liveServices)
+	}
+
+	// Recompute preserved metas after reset + orphan cleanup to catch
+	// every removal. Complete metas with live counterparts stay; that's
+	// the set the agent can adopt or develop against next.
 	metasAfter, _ := workflow.ListServiceMetas(engine.StateDir())
 	preserved.CompleteMetas = completeMetaNames(metasAfter)
 
@@ -412,6 +433,41 @@ func handleReset(ctx context.Context, engine *workflow.Engine, client platform.C
 		Preserved: preserved,
 	}
 	return jsonResult(report), nil, nil
+}
+
+// pruneOrphanMetasPostReset deletes every meta on disk whose live
+// service counterpart is gone. Pair-keyed: either half of a dev/stage
+// pair being live keeps the meta. Returns the sorted list of deleted
+// hostnames for the report. Best-effort: individual delete errors are
+// logged-but-non-fatal (matches cleanIncompleteMetasForSession's
+// posture; reset should never fail because of one bad meta file).
+func pruneOrphanMetasPostReset(stateDir string, live []platform.ServiceStack) []string {
+	metas, err := workflow.ListServiceMetas(stateDir)
+	if err != nil {
+		return nil
+	}
+	liveByName := make(map[string]struct{}, len(live))
+	for _, s := range live {
+		liveByName[s.Name] = struct{}{}
+	}
+	var deleted []string
+	for _, m := range metas {
+		if m == nil {
+			continue
+		}
+		_, devLive := liveByName[m.Hostname]
+		stageLive := false
+		if m.StageHostname != "" {
+			_, stageLive = liveByName[m.StageHostname]
+		}
+		if devLive || stageLive {
+			continue
+		}
+		if err := workflow.DeleteServiceMeta(stateDir, m.Hostname); err == nil {
+			deleted = append(deleted, m.Hostname)
+		}
+	}
+	return deleted
 }
 
 // buildClearedSnapshot captures everything reset will destroy: the active
@@ -485,7 +541,7 @@ func handleDispatchBriefAtom(engine *workflow.Engine, input WorkflowInput) (*mcp
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"atomId is required for dispatch-brief-atom action",
-			"Pass the atomId from the envelope listed in the substep guide's dispatch-brief section")), nil, nil
+			"Pass the atomId from the envelope listed in the substep guide's dispatch-brief section"), WithRecoveryStatus()), nil, nil
 	}
 	// Cx-ENVFOLDERS-WIRED: when an active recipe plan is loadable,
 	// render template expressions against plan context before
@@ -504,7 +560,7 @@ func handleDispatchBriefAtom(engine *workflow.Engine, input WorkflowInput) (*mcp
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("dispatch-brief atom %q unknown or unreadable: %v", input.AtomID, err),
-			"Check the atomId against the envelope in the current substep guide")), nil, nil
+			"Check the atomId against the envelope in the current substep guide"), WithRecoveryStatus()), nil, nil
 	}
 	return jsonResult(map[string]any{
 		"atomId": input.AtomID,
@@ -523,20 +579,20 @@ func handleBuildSubagentBrief(engine *workflow.Engine, input WorkflowInput) (*mc
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
 			"Workflow engine not initialized",
-			"Ensure ZCP is configured with a state directory")), nil, nil
+			"Ensure ZCP is configured with a state directory"), WithRecoveryStatus()), nil, nil
 	}
 	state := engine.RecipeSession()
 	if state == nil || state.Plan == nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"build-subagent-brief requires an active recipe session with a plan",
-			"Call action=start workflow=recipe first, then progress through research+provision+generate+deploy before dispatching sub-agents")), nil, nil
+			"Call action=start workflow=recipe first, then progress through research+provision+generate+deploy before dispatching sub-agents"), WithRecoveryStatus()), nil, nil
 	}
 	if strings.TrimSpace(input.Role) == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"role is required for build-subagent-brief action",
-			"Pass role=writer|editorial-review|code-review")), nil, nil
+			"Pass role=writer|editorial-review|code-review"), WithRecoveryStatus()), nil, nil
 	}
 
 	factsLogPath := ""
@@ -553,14 +609,14 @@ func handleBuildSubagentBrief(engine *workflow.Engine, input WorkflowInput) (*mc
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("build-subagent-brief: %v", err),
-			"Check role against writer|editorial-review|code-review and confirm an active plan")), nil, nil
+			"Check role against writer|editorial-review|code-review and confirm an active plan"), WithRecoveryStatus()), nil, nil
 	}
 
 	if err := engine.RecordSubagentBrief(built); err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("persist subagent brief: %v", err),
-			"")), nil, nil
+			""), WithRecoveryStatus()), nil, nil
 	}
 
 	return jsonResult(map[string]any{
@@ -584,21 +640,21 @@ func handleVerifySubagentDispatch(engine *workflow.Engine, input WorkflowInput) 
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
 			"Workflow engine not initialized",
-			"")), nil, nil
+			""), WithRecoveryStatus()), nil, nil
 	}
 	state := engine.RecipeSession()
 	if strings.TrimSpace(input.Description) == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"description is required for verify-subagent-dispatch",
-			"Pass the Task dispatch description string")), nil, nil
+			"Pass the Task dispatch description string"), WithRecoveryStatus()), nil, nil
 	}
 	role, ok, reason := workflow.VerifySubagentDispatch(state, input.Description, input.Prompt)
 	if !ok {
 		return convertError(platform.NewPlatformError(
 			platform.ErrSubagentMisuse,
 			reason,
-			fmt.Sprintf("Call zerops_workflow action=build-subagent-brief role=%s first, then dispatch via Task with the prompt byte-identical to the returned .prompt field.", role))), nil, nil
+			fmt.Sprintf("Call zerops_workflow action=build-subagent-brief role=%s first, then dispatch via Task with the prompt byte-identical to the returned .prompt field.", role)), WithRecoveryStatus()), nil, nil
 	}
 	return jsonResult(map[string]any{
 		"allowed":     true,
@@ -612,7 +668,7 @@ func handleIterate(ctx context.Context, engine *workflow.Engine, client platform
 		return convertError(platform.NewPlatformError(
 			platform.ErrSessionNotFound,
 			fmt.Sprintf("Iterate failed: %v", err),
-			"Start a session first")), nil, nil
+			"Start a session first"), WithRecoveryStatus()), nil, nil
 	}
 	active := detectActiveWorkflow(engine)
 	if active == workflowRecipe {
@@ -626,13 +682,13 @@ func handleResume(ctx context.Context, engine *workflow.Engine, client platform.
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"sessionId is required for resume action",
-			"Specify the session ID to resume")), nil, nil
+			"Specify the session ID to resume"), WithRecoveryStatus()), nil, nil
 	}
 	if _, err := engine.Resume(input.SessionID); err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrSessionNotFound,
 			fmt.Sprintf("Resume failed: %v", err),
-			"Session may not exist or may still be active")), nil, nil
+			"Session may not exist or may still be active"), WithRecoveryStatus()), nil, nil
 	}
 	active := detectActiveWorkflow(engine)
 	if active == workflowRecipe {
@@ -670,7 +726,7 @@ func handleBootstrapStart(ctx context.Context, projectID string, engine *workflo
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"plan is not accepted in action=start; submit it via action=\"complete\" step=\"discover\" plan=[...]",
-			"Start commits the route only. The discover step is the reasoning space where the plan is produced from route-specific materials; commit it there.")), nil, nil
+			"Start commits the route only. The discover step is the reasoning space where the plan is produced from route-specific materials; commit it there."), WithRecoveryStatus()), nil, nil
 	}
 
 	// Discovery pass — no route specified, no session committed.
@@ -680,14 +736,14 @@ func handleBootstrapStart(ctx context.Context, projectID string, engine *workflo
 			return convertError(platform.NewPlatformError(
 				platform.ErrAPIError,
 				fmt.Sprintf("Bootstrap discovery failed: %v", listErr),
-				"Check project access and try again")), nil, nil
+				"Check project access and try again"), WithRecoveryStatus()), nil, nil
 		}
 		resp, err := engine.BootstrapDiscover(projectID, input.Intent, existing) //nolint:contextcheck // BootstrapDiscover is synchronous, no I/O to cancel
 		if err != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrAPIError,
 				fmt.Sprintf("Bootstrap discovery failed: %v", err),
-				"")), nil, nil
+				""), WithRecoveryStatus()), nil, nil
 		}
 		return jsonResult(resp), nil, nil
 	}
@@ -698,7 +754,7 @@ func handleBootstrapStart(ctx context.Context, projectID string, engine *workflo
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				"route=resume requires sessionId (pick it from the discovery response's resumeSession field)",
-				"Call action=start workflow=bootstrap without route first to see resumable sessions")), nil, nil
+				"Call action=start workflow=bootstrap without route first to see resumable sessions"), WithRecoveryStatus()), nil, nil
 		}
 		return handleResume(ctx, engine, client, cache, input)
 	}
@@ -709,7 +765,7 @@ func handleBootstrapStart(ctx context.Context, projectID string, engine *workflo
 		return convertError(platform.NewPlatformError(
 			platform.ErrWorkflowActive,
 			fmt.Sprintf("Bootstrap start failed: %v", err),
-			"Call action=start workflow=bootstrap without route to discover valid options, or action=reset to clear the existing session")), nil, nil
+			"Call action=start workflow=bootstrap without route to discover valid options, or action=reset to clear the existing session"), WithRecoveryStatus()), nil, nil
 	}
 	populateStacks(ctx, resp, client, cache)
 	return jsonResult(resp), nil, nil
@@ -730,7 +786,7 @@ func handleListSessions(engine *workflow.Engine) (*mcp.CallToolResult, any, erro
 		return convertError(platform.NewPlatformError(
 			platform.ErrSessionNotFound,
 			fmt.Sprintf("List sessions failed: %v", err),
-			"")), nil, nil
+			""), WithRecoveryStatus()), nil, nil
 	}
 	return jsonResult(sessions), nil, nil
 }
@@ -745,15 +801,15 @@ func handleListSessions(engine *workflow.Engine) (*mcp.CallToolResult, any, erro
 func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info) (*mcp.CallToolResult, any, error) {
 	envelope, err := workflow.ComputeEnvelope(ctx, client, engine.StateDir(), projectID, rt, time.Now())
 	if err != nil {
-		return convertError(wrapStageErr("Compute envelope", err)), nil, nil
+		return convertError(wrapStageErr("Compute envelope", err), WithRecoveryStatus()), nil, nil
 	}
 	corpus, err := workflow.LoadAtomCorpus()
 	if err != nil {
-		return convertError(wrapStageErr("Load knowledge atoms", err)), nil, nil
+		return convertError(wrapStageErr("Load knowledge atoms", err), WithRecoveryStatus()), nil, nil
 	}
 	matches, err := workflow.Synthesize(envelope, corpus)
 	if err != nil {
-		return convertError(wrapStageErr("Synthesize guidance", err)), nil, nil
+		return convertError(wrapStageErr("Synthesize guidance", err), WithRecoveryStatus()), nil, nil
 	}
 	plan := workflow.BuildPlan(envelope)
 	return textResult(workflow.RenderStatus(workflow.Response{
@@ -779,7 +835,7 @@ func handleWorkSessionClose(engine *workflow.Engine, input WorkflowInput) (*mcp.
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("close is only supported for workflow=\"develop\" (got %q)", input.Workflow),
-			"")), nil, nil
+			""), WithRecoveryStatus()), nil, nil
 	}
 	pid := os.Getpid()
 	stateDir := engine.StateDir()

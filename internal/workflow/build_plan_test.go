@@ -83,6 +83,50 @@ func TestBuildPlan_IdleOnlyUnmanagedRuntimes(t *testing.T) {
 	}
 }
 
+func TestBuildPlan_IdleOrphanOnly_PrimaryReset(t *testing.T) {
+	t.Parallel()
+
+	env := planEnvelope(PhaseIdle)
+	env.IdleScenario = IdleOrphan
+	env.OrphanMetas = []OrphanMeta{
+		{Hostname: "ghostdev", Reason: OrphanReasonLiveDeleted},
+	}
+	plan := BuildPlan(env)
+	if plan.Primary.Args["action"] != "reset" {
+		t.Errorf("primary action = %q, want reset", plan.Primary.Args["action"])
+	}
+	if plan.Primary.Args["workflow"] != "bootstrap" {
+		t.Errorf("primary workflow = %q, want bootstrap (reset is bootstrap-scoped)", plan.Primary.Args["workflow"])
+	}
+	if len(plan.Alternatives) != 1 {
+		t.Fatalf("alternatives = %d, want 1 (start bootstrap)", len(plan.Alternatives))
+	}
+	if plan.Alternatives[0].Args["action"] != "start" {
+		t.Errorf("alt[0] action = %q, want start", plan.Alternatives[0].Args["action"])
+	}
+}
+
+func TestBuildPlan_IdleOrphanPlusLiveService_NotResetPrimary(t *testing.T) {
+	t.Parallel()
+
+	env := planEnvelope(PhaseIdle)
+	env.Services = []ServiceSnapshot{
+		{Hostname: "alive", RuntimeClass: topology.RuntimeManaged}, // managed dep
+	}
+	env.OrphanMetas = []OrphanMeta{
+		{Hostname: "ghost", Reason: OrphanReasonLiveDeleted},
+	}
+	plan := BuildPlan(env)
+	// Live managed dep suppresses orphan-reset routing (matches deriveIdleScenario).
+	// Falls through to "no bootstrapped, no adoptable" → bootstrap primary.
+	if plan.Primary.Args["action"] == "reset" {
+		t.Errorf("primary action = reset; should not route to reset when live service present")
+	}
+	if plan.Primary.Args["workflow"] != "bootstrap" || plan.Primary.Args["action"] != "start" {
+		t.Errorf("primary = %+v, want start bootstrap", plan.Primary.Args)
+	}
+}
+
 func TestBuildPlan_DevelopClosedAutoRecommendsCloseAndStartNext(t *testing.T) {
 	t.Parallel()
 
