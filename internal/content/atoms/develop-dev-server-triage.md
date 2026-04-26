@@ -6,7 +6,7 @@ runtimes: [dynamic]
 deployStates: [deployed]
 title: "Dev-server state triage — expectation → check → act"
 references-fields: [workflow.ServiceSnapshot.RuntimeClass, workflow.ServiceSnapshot.Mode, ops.DevServerResult.Running, ops.DevServerResult.HealthStatus, ops.DevServerResult.Reason]
-references-atoms: [develop-dev-server-reason-codes]
+references-atoms: [develop-dev-server-reason-codes, develop-change-drives-deploy]
 ---
 
 ### Dev-server state triage
@@ -43,8 +43,10 @@ Read the response:
 - `running: false` with `reason: health_probe_connection_refused` →
   start (step 3).
 - `running: true` with `healthStatus: 5xx` → server runs but is
-  broken; read logs and response body; do NOT restart (it does not
-  fix bugs); edit code then deploy.
+  broken; read logs and response body; do NOT restart (does not
+  fix bugs). Edit code, then follow the mode-specific iteration
+  cadence (dev-mode: `action=restart`; simple/stage: `zerops_deploy`)
+  per `develop-change-drives-deploy`.
 
 For workers with no HTTP surface (`port=0`, `healthPath=""`), skip
 HTTP status; call `zerops_logs` to confirm consumption.
