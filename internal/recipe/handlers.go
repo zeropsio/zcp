@@ -94,6 +94,7 @@ func (s *Store) OpenOrCreate(slug, outputRoot string) (*Session, error) {
 		return nil, fmt.Errorf("resolve chain: %w", err)
 	}
 	sess := NewSession(slug, log, outputRoot, parent)
+	sess.MountRoot = s.mountRoot
 	s.sessions[slug] = sess
 	return sess, nil
 }

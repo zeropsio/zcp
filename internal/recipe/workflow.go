@@ -46,6 +46,11 @@ type Session struct {
 	FactsLog   *FactsLog
 	Parent     *ParentRecipe
 	OutputRoot string
+	// MountRoot is the recipes-mount root (typically the
+	// zeropsio/recipes clone directory) used by the chain Resolver and
+	// the scaffold brief's reachable-recipe-slug enumeration. Empty
+	// when the session was created without a Store-attached mount root.
+	MountRoot string
 	// Completed records phases whose exit gates passed.
 	Completed map[Phase]bool
 }
@@ -169,7 +174,11 @@ func (s *Session) BuildBrief(kind BriefKind, cb Codebase) (Brief, error) {
 
 	switch kind {
 	case BriefScaffold:
-		return BuildScaffoldBrief(s.Plan, cb, s.Parent)
+		var resolver *Resolver
+		if s.MountRoot != "" {
+			resolver = &Resolver{MountRoot: s.MountRoot}
+		}
+		return BuildScaffoldBriefWithResolver(s.Plan, cb, s.Parent, resolver)
 	case BriefFeature:
 		return BuildFeatureBrief(s.Plan)
 	case BriefFinalize:

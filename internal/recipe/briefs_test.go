@@ -2,9 +2,75 @@ package recipe
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// TestBuildScaffoldBrief_CarriesReachableSlugList pins Cluster B.3
+// (R-13-21): the scaffold brief lists the recipes whose
+// <mountRoot>/<slug>/import.yaml exists so the agent calling
+// zerops_knowledge recipe=<slug> picks a real slug instead of guessing.
+// run-13's scaffold-app burned ~10s on `svelte-ssr-hello-world` (a
+// hallucinated slug) before recovering.
+func TestBuildScaffoldBrief_CarriesReachableSlugList(t *testing.T) {
+	t.Parallel()
+
+	mount := t.TempDir()
+	for _, slug := range []string{"nestjs-hello-world", "nodejs-hello-world", "svelte-hello-world"} {
+		if err := os.MkdirAll(filepath.Join(mount, slug), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", slug, err)
+		}
+		if err := os.WriteFile(filepath.Join(mount, slug, "import.yaml"), []byte("project: {}\n"), 0o600); err != nil {
+			t.Fatalf("write import.yaml for %s: %v", slug, err)
+		}
+	}
+	// A directory without import.yaml must NOT appear in the list.
+	if err := os.MkdirAll(filepath.Join(mount, "no-import-yaml"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	plan := syntheticShowcasePlan()
+	resolver := &Resolver{MountRoot: mount}
+	brief, err := BuildScaffoldBriefWithResolver(plan, plan.Codebases[0], nil, resolver)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	if !strings.Contains(brief.Body, "## Recipe-knowledge slugs you may consult") {
+		t.Errorf("scaffold brief missing recipe-knowledge slugs section")
+	}
+	for _, slug := range []string{"nestjs-hello-world", "nodejs-hello-world", "svelte-hello-world"} {
+		if !strings.Contains(brief.Body, "- "+slug) {
+			t.Errorf("scaffold brief missing slug bullet %q", slug)
+		}
+	}
+	// Negative: a directory without import.yaml must NOT appear — the
+	// gate is the import.yaml's presence, not the directory's.
+	if strings.Contains(brief.Body, "- no-import-yaml") {
+		t.Errorf("scaffold brief lists directory without import.yaml")
+	}
+	// Negative: a hallucinated slug like svelte-ssr-hello-world must NOT
+	// appear (it doesn't exist on the mount).
+	if strings.Contains(brief.Body, "svelte-ssr-hello-world") {
+		t.Errorf("scaffold brief lists slug not present on mount")
+	}
+}
+
+// TestBuildScaffoldBrief_NoResolver_OmitsSlugList pins the
+// backward-compatible default — when no resolver is supplied (unit
+// tests, contexts without a recipes mount), the slug list is omitted.
+func TestBuildScaffoldBrief_NoResolver_OmitsSlugList(t *testing.T) {
+	t.Parallel()
+	plan := syntheticShowcasePlan()
+	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	if strings.Contains(brief.Body, "## Recipe-knowledge slugs you may consult") {
+		t.Errorf("brief should not emit slug section without a resolver")
+	}
+}
 
 func TestBriefCompose_ScaffoldUnderCap(t *testing.T) {
 	t.Parallel()

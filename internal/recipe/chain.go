@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -20,6 +21,41 @@ type Resolver struct {
 // or the parent tree is not present on disk. Callers treat this as a
 // signal to start first-time framework discovery, not as an error.
 var ErrNoParent = errors.New("recipe has no parent")
+
+// ReachableSlugs returns the sorted list of recipe slugs that have an
+// import.yaml at <MountRoot>/<slug>/import.yaml — the canonical
+// "this slug exists in the recipes mount, you can call
+// zerops_knowledge recipe=<slug> against it" set. Empty mount root
+// returns nil. Run-14 §B.3 (R-13-21) — the scaffold brief composer
+// emits these as bullets so a sub-agent never guesses at a slug
+// that isn't there.
+//
+// I/O boundary: ReadDir + Stat over <MountRoot>; called at brief
+// composition time (per-dispatch). The mount lives on the local
+// filesystem in current runs; coherence is local-fs.
+func (r Resolver) ReachableSlugs() ([]string, error) {
+	if r.MountRoot == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(r.MountRoot)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read mount root %s: %w", r.MountRoot, err)
+	}
+	var slugs []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(r.MountRoot, e.Name(), "import.yaml")); err == nil {
+			slugs = append(slugs, e.Name())
+		}
+	}
+	sort.Strings(slugs)
+	return slugs, nil
+}
 
 // ResolveChain returns the ParentRecipe for a recipe slug. If the recipe
 // has no parent (minimal / hello-world), or the parent tree is not

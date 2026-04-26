@@ -112,10 +112,22 @@ func readAtom(rel string) (string, error) {
 	return string(b), nil
 }
 
-// BuildScaffoldBrief composes a scaffold sub-agent brief for one codebase.
-// Content: role contract + platform principles atom + preship contract
-// atom + fact-recording atom + parent codebase excerpt (if chain hit).
+// BuildScaffoldBrief composes a scaffold sub-agent brief for one codebase
+// without enumerating reachable recipe slugs. Use
+// BuildScaffoldBriefWithResolver in production paths so the brief carries
+// the canonical recipe-knowledge slug list (Cluster B.3, R-13-21); the
+// shimless variant exists for unit tests that don't need the slug
+// section and don't want to construct a recipes mount.
 func BuildScaffoldBrief(plan *Plan, cb Codebase, parent *ParentRecipe) (Brief, error) {
+	return BuildScaffoldBriefWithResolver(plan, cb, parent, nil)
+}
+
+// BuildScaffoldBriefWithResolver is BuildScaffoldBrief plus a Resolver
+// whose MountRoot enumerates the recipe slugs the agent may consult via
+// `zerops_knowledge recipe=<slug>`. When the resolver is nil or its
+// mount root is empty, the slug section is omitted and the brief shape
+// matches the legacy BuildScaffoldBrief output.
+func BuildScaffoldBriefWithResolver(plan *Plan, cb Codebase, parent *ParentRecipe, resolver *Resolver) (Brief, error) {
 	if plan == nil {
 		return Brief{}, errors.New("nil plan")
 	}
@@ -172,6 +184,27 @@ func BuildScaffoldBrief(plan *Plan, cb Codebase, parent *ParentRecipe) (Brief, e
 	b.WriteString(strings.Join(citationGuides(), ", "))
 	b.WriteString(". When your KB fragment touches any of them, call `zerops_knowledge` on the matching guide id first and cite it by name.\n\n")
 	parts = append(parts, "citation_map")
+
+	// Run-14 §B.3 (R-13-21) — emit the canonical reachable recipe slugs
+	// the resolver can find on the recipes mount. Sub-agents call
+	// `zerops_knowledge recipe=<slug>` against this list verbatim instead
+	// of guessing at slugs that never existed (run-13 burned ~10s on
+	// `svelte-ssr-hello-world` before recovering). Section is omitted
+	// when the resolver is nil/empty so the legacy unit-test shape stays
+	// stable.
+	if resolver != nil {
+		if slugs, err := resolver.ReachableSlugs(); err == nil && len(slugs) > 0 {
+			b.WriteString("## Recipe-knowledge slugs you may consult\n\n")
+			b.WriteString("`zerops_knowledge recipe=<slug>` accepts only slugs whose recipe-mount entry has an `import.yaml`. The current mount holds:\n\n")
+			for _, slug := range slugs {
+				b.WriteString("- ")
+				b.WriteString(slug)
+				b.WriteByte('\n')
+			}
+			b.WriteByte('\n')
+			parts = append(parts, "recipe_slug_list")
+		}
+	}
 
 	// Run-13 §T — frontend codebases ship tier-aware prose (the SPA
 	// IG #1 cross-tier scaling note). Inject the resolved tier
