@@ -27,6 +27,11 @@ http {
         listen 8080;
 
         port_in_redirect off;
+        # Zerops L7 terminates TLS and forwards to us as HTTP. nginx's $scheme
+        # would emit Location: http://... breaking iframe loads under the
+        # parent dashboard's frame-src https://*.zerops.app CSP. Relative
+        # redirects let the browser resolve scheme/host from the address bar.
+        absolute_redirect off;
 {{- if .HasAuth}}
 
         location = /zcp-logout {
