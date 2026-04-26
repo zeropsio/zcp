@@ -283,13 +283,21 @@ func (m *Mock) GetProcess(_ context.Context, processID string) (*Process, error)
 	if err := m.getError("GetProcess"); err != nil {
 		return nil, err
 	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	// Write lock — even pure-read scenarios advance callCount, and
+	// every return path must copy the Process struct out from under
+	// the lock to avoid caller mutation aliasing the live mock state.
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	p, ok := m.processes[processID]
 	if !ok {
 		return nil, fmt.Errorf("mock: process %s not found", processID)
 	}
-	return p, nil
+	out := *p
+	if state, ok := m.processScenarios[processID]; ok {
+		state.callCount++
+		out.Status = scenarioStatusAt(state.scenario, state.callCount)
+	}
+	return &out, nil
 }
 
 func (m *Mock) CancelProcess(_ context.Context, processID string) (*Process, error) {

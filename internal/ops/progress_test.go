@@ -11,40 +11,37 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-// processSequencer wraps platform.Mock and overrides GetProcess
-// to return a sequence of process states for PollProcess tests.
-type processSequencer struct {
-	*platform.Mock
-	mu       sync.Mutex
-	sequence []*platform.Process
-	idx      int
-}
-
-func (s *processSequencer) GetProcess(_ context.Context, _ string) (*platform.Process, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.idx >= len(s.sequence) {
-		return s.sequence[len(s.sequence)-1], nil
+// newSequencer returns a *platform.Mock configured so that successive
+// GetProcess("proc-1") calls progress through the given statuses
+// (statuses[0] on call 1, statuses[1] on call 2, etc.; the last status
+// sticks once the sequence is exhausted).
+//
+// Pre-Phase-3.1 this was a wrapper struct (processSequencer) that
+// embedded *platform.Mock and overrode GetProcess with its own idx
+// counter. After Phase 3.1 platform.Mock owns the scenario API
+// natively (WithProcessScenario / scenarioStatusAt); this helper
+// became a thin shim. Two parallel patterns collapse to one.
+func newSequencer(statuses ...string) *platform.Mock {
+	if len(statuses) == 0 {
+		panic("newSequencer requires at least one status")
 	}
-	p := s.sequence[s.idx]
-	s.idx++
-	return p, nil
-}
-
-func newSequencer(statuses ...string) *processSequencer {
-	seq := make([]*platform.Process, len(statuses))
-	for i, s := range statuses {
-		seq[i] = &platform.Process{
-			ID:         "proc-1",
-			ActionName: "test",
-			Status:     s,
-			Created:    "2025-01-01T00:00:00Z",
-		}
+	mock := platform.NewMock().WithProcess(&platform.Process{
+		ID:         "proc-1",
+		ActionName: "test",
+		Created:    "2025-01-01T00:00:00Z",
+	})
+	transitions := make([]platform.ProcessTransition, 0, len(statuses)-1)
+	for i, status := range statuses[1:] {
+		transitions = append(transitions, platform.ProcessTransition{
+			AtCall: i + 2, // statuses[1] becomes call 2, statuses[2] call 3, etc.
+			Status: status,
+		})
 	}
-	return &processSequencer{
-		Mock:     platform.NewMock(),
-		sequence: seq,
-	}
+	mock.WithProcessScenario("proc-1", platform.ProcessScenario{
+		InitialStatus: statuses[0],
+		Transitions:   transitions,
+	})
+	return mock
 }
 
 func testConfig() pollConfig {
@@ -104,11 +101,23 @@ func TestPollProcess_Failed(t *testing.T) {
 	t.Parallel()
 
 	reason := "build error"
-	s := newSequencer("PENDING", statusFailed)
-	s.sequence[1].FailReason = &reason
+	// Inline construction (instead of newSequencer + per-element mutation) —
+	// FailReason has to ride on the base Process record because the
+	// scenario API keys only Status across calls.
+	mock := platform.NewMock().
+		WithProcess(&platform.Process{
+			ID:         "proc-1",
+			ActionName: "test",
+			Created:    "2025-01-01T00:00:00Z",
+			FailReason: &reason,
+		}).
+		WithProcessScenario("proc-1", platform.ProcessScenario{
+			InitialStatus: "PENDING",
+			Transitions:   []platform.ProcessTransition{{AtCall: 2, Status: statusFailed}},
+		})
 	ctx := context.Background()
 
-	proc, err := pollProcess(ctx, s, "proc-1", nil, testConfig())
+	proc, err := pollProcess(ctx, mock, "proc-1", nil, testConfig())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

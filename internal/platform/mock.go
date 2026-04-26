@@ -20,7 +20,8 @@ type Mock struct {
 	services           []ServiceStack
 	service            *ServiceStack
 	processes          map[string]*Process
-	envVars            map[string][]EnvVar // serviceID -> env vars
+	processScenarios   map[string]*processScenarioState // optional per-process state machine driven by GetProcess calls
+	envVars            map[string][]EnvVar              // serviceID -> env vars
 	projectEnv         []EnvVar
 	logAccess          *LogAccess
 	importResult       *ImportResult
@@ -48,10 +49,11 @@ type Mock struct {
 // NewMock creates a new configurable mock.
 func NewMock() *Mock {
 	return &Mock{
-		processes:  make(map[string]*Process),
-		envVars:    make(map[string][]EnvVar),
-		CallCounts: make(map[string]int),
-		errors:     make(map[string]error),
+		processes:        make(map[string]*Process),
+		processScenarios: make(map[string]*processScenarioState),
+		envVars:          make(map[string][]EnvVar),
+		CallCounts:       make(map[string]int),
+		errors:           make(map[string]error),
 	}
 }
 
