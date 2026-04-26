@@ -40,6 +40,9 @@ Thumbs.db
 internal/knowledge/recipes/*.md
 internal/knowledge/guides/*.md
 internal/knowledge/decisions/*.md
+# ZCP-internal agent protocols — not synced from upstream docs; tracked
+# in this repo because they're consumed by atom cross-references.
+!internal/knowledge/guides/verify-web-agent-protocol.md
 
 # Go
 tmp/
