@@ -150,6 +150,7 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   `internal/platform/`, and `internal/workflow/` (peer layer). Use
   `ops.ListProjectServices` / `ops.LookupService` / `ops.FetchServiceEnv`
   instead so caching, retries, and instrumentation land at one site.
+  Pinned by `TestNoDirectClientCallsInToolsEvalCmd`.
 - **Runtime meta is pair-keyed** — one `ServiceMeta` per dev/stage pair;
   stage is a field on the dev meta. Index via `workflow.ManagedRuntimeIndex(metas)`
   / `workflow.FindServiceMeta(stateDir, hostname)`; never key on `m.Hostname`

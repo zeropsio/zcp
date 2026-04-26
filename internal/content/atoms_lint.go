@@ -75,6 +75,15 @@ func LintAtomCorpus() ([]AtomLintViolation, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read atoms: %w", err)
 	}
+	return lintAtomCorpus(atoms), nil
+}
+
+// lintAtomCorpus runs the rule engine over an arbitrary atom slice.
+// Unexported on purpose — production code goes through LintAtomCorpus
+// (which sources atoms from the embedded corpus). The helper exists so
+// fires-on-fixture tests can pass synthetic atoms in directly without
+// monkeying with ReadAllAtoms.
+func lintAtomCorpus(atoms []AtomFile) []AtomLintViolation {
 	var out []AtomLintViolation
 	for _, atom := range atoms {
 		body, frontmatterLines := splitAtomBody(atom.Content)
@@ -102,7 +111,7 @@ func LintAtomCorpus() ([]AtomLintViolation, error) {
 			}
 		}
 	}
-	return out, nil
+	return out
 }
 
 // splitAtomBody returns the atom body (after the closing frontmatter
