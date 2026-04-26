@@ -681,6 +681,123 @@ func TestCorpusCoverage_RoundTrip(t *testing.T) {
 	}
 }
 
+// knownOverflowFixtures are coverage fixtures whose Synthesize output
+// is ALREADY over the soft 28 KB cap on the current corpus. Each entry
+// is a documented-defect audit target — these envelopes overflow the
+// 32 KB MCP tool-response cap at runtime today, so an LLM hitting one
+// of these shapes gets a truncated or failed response.
+//
+// The fix is a corpus-trim plan (separate scope: split fat atoms,
+// move long-form prose to zerops_knowledge topics, prune duplicate
+// rationale across atoms). When that lands and a fixture drops under
+// the cap, removing it from this map IS the verification — the
+// `_KnownOverflows_StillOverflow` test below fails the moment the
+// trim takes effect, forcing a clean removal rather than silent
+// drift the other way.
+//
+// Adding a new entry requires the same justification: a rationale and
+// a measured byte count at the time of acknowledgement.
+var knownOverflowFixtures = map[string]string{
+	"develop_first_deploy_standard_container":          "40228 bytes (2026-04-26): standard-mode first-deploy renders dev+stage atoms × runtime + container atoms. Trim plan: pending.",
+	"develop_first_deploy_implicit_webserver_standard": "43447 bytes (2026-04-26): standard-mode first-deploy + implicit-webserver atoms × dev+stage pair. Trim plan: pending.",
+}
+
+// TestCorpusCoverage_OutputUnderMCPCap pins G13: every representative
+// envelope shape's synthesized output stays under a soft 28 KB ceiling
+// — 4 KB below the documented MCP tool-response cap (~32 KB, see
+// internal/workflow/dispatch_brief_envelope.go). The margin reserves
+// room for the surrounding Response{Envelope, Plan} JSON serialization
+// at the wire and any per-handler prefix the renderer adds.
+//
+// Pre-fix runtime atoms had no size gate. Live observation of the
+// develop-active first-deploy briefing on a single simple-mode service
+// returned ~29 KB; the standard-mode multi-service variants exceeded
+// 40 KB. The fix below skips known overflows so the gate is honest
+// about the green tree while the trim plan runs separately. The
+// companion test asserts known overflows STILL overflow — the moment
+// the corpus trim lands, that test fails and the entry must be removed.
+//
+// On failure for a NEW fixture, the right move is usually:
+//
+//   - Trim verbose atom prose (look at the largest atoms in the matched
+//     set with `wc -c internal/content/atoms/*.md | sort -n`).
+//   - Split a fat atom into a smaller envelope-axis-scoped one + an
+//     opt-in dispatch-brief atom retrieved on demand.
+//   - Move long-form prose to a `zerops_knowledge` topic the agent
+//     fetches when needed.
+//
+// Raising the ceiling without first attempting the trim is an anti-
+// pattern (T2 in audit-workflow-llm-information-flow.md).
+func TestCorpusCoverage_OutputUnderMCPCap(t *testing.T) {
+	t.Parallel()
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+
+	const softCapBytes = 28 * 1024 // 28 KB; 4 KB margin under the 32 KB MCP cap.
+
+	for _, fx := range coverageFixtures() {
+		if _, known := knownOverflowFixtures[fx.Name]; known {
+			continue
+		}
+		t.Run(fx.Name, func(t *testing.T) {
+			t.Parallel()
+			bodies, err := SynthesizeBodies(fx.Envelope, corpus)
+			if err != nil {
+				t.Fatalf("Synthesize: %v", err)
+			}
+			combined := strings.Join(bodies, "\n\n---\n\n")
+			if size := len(combined); size > softCapBytes {
+				t.Errorf("fixture %q: synthesized output %d bytes exceeds soft cap %d bytes (32 KB MCP cap with 4 KB margin)\nMatched atoms: %d\nFirst 200 chars: %s",
+					fx.Name, size, softCapBytes, len(bodies), combined[:min(200, size)])
+			}
+		})
+	}
+}
+
+// TestCorpusCoverage_KnownOverflows_StillOverflow guards the audit
+// allowlist: every fixture in knownOverflowFixtures must STILL exceed
+// the soft cap. The moment a corpus trim brings one under the ceiling,
+// this test fails and forces removal from the allowlist (one-way
+// ratchet — the allowlist can only shrink). Without this companion
+// the allowlist would silently grow into a permanent escape hatch.
+func TestCorpusCoverage_KnownOverflows_StillOverflow(t *testing.T) {
+	t.Parallel()
+	if len(knownOverflowFixtures) == 0 {
+		t.Skip("no known overflow fixtures to verify")
+	}
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+	const softCapBytes = 28 * 1024
+
+	fixturesByName := make(map[string]coverageFixture, len(coverageFixtures()))
+	for _, fx := range coverageFixtures() {
+		fixturesByName[fx.Name] = fx
+	}
+
+	for name, rationale := range knownOverflowFixtures {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			fx, ok := fixturesByName[name]
+			if !ok {
+				t.Fatalf("knownOverflowFixtures lists %q but no such coverage fixture exists — remove the stale entry", name)
+			}
+			bodies, err := SynthesizeBodies(fx.Envelope, corpus)
+			if err != nil {
+				t.Fatalf("Synthesize: %v", err)
+			}
+			combined := strings.Join(bodies, "\n\n---\n\n")
+			if size := len(combined); size <= softCapBytes {
+				t.Errorf("fixture %q now fits under %d bytes (current: %d). Remove it from knownOverflowFixtures — the soft cap test will then enforce it forward.\nRationale at acknowledgement: %s",
+					name, softCapBytes, size, rationale)
+			}
+		})
+	}
+}
+
 func TestCorpusCoverage_CompactionSafe(t *testing.T) {
 	t.Parallel()
 	corpus, err := LoadAtomCorpus()
