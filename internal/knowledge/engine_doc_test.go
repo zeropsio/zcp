@@ -151,6 +151,29 @@ func TestStore_GuidesEmbedded(t *testing.T) {
 	}
 }
 
+// TestStore_VerifyWebAgentProtocolSearchable pins the cross-reference
+// contract between develop-verify-matrix atom and the
+// verify-web-agent-protocol guide. The atom instructs the agent to call
+// `zerops_knowledge query="verify web agent protocol"` to fetch the
+// sub-agent dispatch protocol on demand. Search scores by title +
+// content text-match (engine.go:123-135), NOT by URI slug — so the
+// query phrase MUST match words in the guide title or body. Pre-fix
+// regression: querying with the hyphenated URI slug returned no hit
+// because Search splits on whitespace, not hyphens.
+func TestStore_VerifyWebAgentProtocolSearchable(t *testing.T) {
+	store := newTestStore(t)
+	results := store.Search("verify web agent protocol", 5)
+	if len(results) == 0 {
+		t.Fatal("Search(\"verify web agent protocol\") returned no results — develop-verify-matrix atom's cross-reference would fail at runtime")
+	}
+	for _, r := range results {
+		if r.URI == "zerops://guides/verify-web-agent-protocol" {
+			return
+		}
+	}
+	t.Errorf("Search(\"verify web agent protocol\") did not surface zerops://guides/verify-web-agent-protocol; results: %+v", results)
+}
+
 func TestStore_DecisionsEmbedded(t *testing.T) {
 	store := newTestStore(t)
 	decisionURIs := []string{

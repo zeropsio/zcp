@@ -30,7 +30,7 @@ either failing is enough to block.
 Per web-facing target, fetch the sub-agent dispatch protocol on demand:
 
 ```
-zerops_knowledge query="verify-web-agent-protocol"
+zerops_knowledge query="verify web agent protocol"
 ```
 
 The protocol carries the full `Agent(model="sonnet", prompt=...)`
