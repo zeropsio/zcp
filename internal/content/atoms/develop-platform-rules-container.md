@@ -17,13 +17,12 @@ references-atoms: [develop-dynamic-runtime-start-container, develop-dev-server-r
   tools against `/var/www/<hostname>/` — they work through SSHFS. Never
   `ssh <hostname> cat/ls/tail …` for mount files; SSH adds setup cost
   and shell-escaping bugs (nested quotes in `sed`/`awk` pipelines break).
-- **Long-running dev processes → `zerops_dev_server`.** Start/stop/
-  restart/probe/tail all go through the MCP tool. Response carries
-  `running`, `healthStatus`, `startMillis`, `reason`, `logTail` — full
-  diagnosis without follow-up. Don't hand-roll `ssh <hostname> "cmd &"`
-  — backgrounded SSH holds the channel until the 120 s bash timeout.
-  See `develop-dynamic-runtime-start-container` for the canonical start
-  recipe; `develop-dev-server-reason-codes` for `reason` triage.
+- **Long-running dev processes → `zerops_dev_server`.** Don't
+  hand-roll `ssh <hostname> "cmd &"` — backgrounded SSH holds the
+  channel until the 120 s bash timeout. See
+  `develop-dynamic-runtime-start-container` for actions, parameters,
+  and response shape; `develop-dev-server-reason-codes` for `reason`
+  triage.
 - **One-shot commands over SSH.** Framework CLIs, git ops,
   `curl localhost` exit quickly — no channel-lifetime concern:
 
