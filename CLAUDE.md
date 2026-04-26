@@ -197,6 +197,9 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   Adding envelope to a mutation response is acceptable when the handler
   has ComputeEnvelope inputs already; not required.
 - **JSON-only stdout** — debug to stderr; MCP protocol depends on it.
+  Pinned by `TestNoStdoutOutsideJSONPath` (scans `internal/...` for
+  `fmt.Print*`, `fmt.Fprint*(os.Stdout, ...)`, `os.Stdout.Write*`,
+  `println`; CLI entrypoints under `cmd/` are out of scope).
 - **No progress notification immediately before a tool response** — Claude Code's
   MCP TS client coalesces a `notifications/progress` and the next tool response
   into one stdin chunk if they land within pipe-buffer-flush window, then errors
@@ -208,6 +211,9 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   `TestPollProcess_TimeoutSkipsProgressEmit`,
   `TestPollBuild_TimeoutSkipsProgressEmit`.
 - **Stateless STDIO tools** — each MCP call is a fresh operation.
+  Pinned by `TestNoCrossCallHandlerState` (forbids zero-value
+  package-level vars in `internal/tools/`; initialized vars — regex,
+  lookup tables, interface assertions, literals — remain allowed).
 - **Shell interpolation via `shellQuote()`** — POSIX single-quote; never strip-only.
 - **Error wrapping** — `fmt.Errorf("op: %w", err)`; never bare `return err`.
 - **350-line soft cap per `.go` file** — split when growing. Frozen v2 cluster
