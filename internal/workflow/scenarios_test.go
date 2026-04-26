@@ -9,12 +9,62 @@
 package workflow
 
 import (
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/topology"
 )
+
+// atomIDsOf returns the AtomIDs of a synthesis result, sorted for stable
+// comparison. Used by scenario tests to assert on which atoms fired
+// independent of corpus iteration order.
+func atomIDsOf(matches []MatchedRender) []string {
+	ids := make([]string, len(matches))
+	for i, m := range matches {
+		ids[i] = m.AtomID
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// requireAtomIDsContain asserts that every wantID appears in the
+// synthesis result. Subset semantics — extra atoms in the result are
+// allowed, but every named one must be present. Failure message lists
+// the missing IDs alongside the full actual set so the next-step fix
+// is obvious.
+func requireAtomIDsContain(t *testing.T, label string, matches []MatchedRender, wantIDs ...string) {
+	t.Helper()
+	got := atomIDsOf(matches)
+	have := make(map[string]bool, len(got))
+	for _, id := range got {
+		have[id] = true
+	}
+	var missing []string
+	for _, w := range wantIDs {
+		if !have[w] {
+			missing = append(missing, w)
+		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("%s: expected atom IDs to include %v; missing %v; actual IDs: %v",
+			label, wantIDs, missing, got)
+	}
+}
+
+// requireAtomIDsExact asserts the result is exactly the given set
+// (sorted). Use only when the scenario contract is "these atoms and no
+// others" — most scenarios should use requireAtomIDsContain.
+func requireAtomIDsExact(t *testing.T, label string, matches []MatchedRender, wantIDs ...string) {
+	t.Helper()
+	got := atomIDsOf(matches)
+	want := append([]string(nil), wantIDs...)
+	sort.Strings(want)
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("%s: atom IDs mismatch\n  want: %v\n  got:  %v", label, want, got)
+	}
+}
 
 func TestScenario_S1_NewProjectRecipeMatch(t *testing.T) {
 	t.Parallel()
@@ -37,13 +87,13 @@ func TestScenario_S1_NewProjectRecipeMatch(t *testing.T) {
 		t.Errorf("S1 idle: expected primary=zerops_workflow start bootstrap, got tool=%q args=%v",
 			plan.Primary.Tool, plan.Primary.Args)
 	}
-	bodies, err := SynthesizeBodies(before, corpus)
+	matchesBefore, err := Synthesize(before, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize idle: %v", err)
 	}
-	if len(bodies) == 0 {
-		t.Fatal("S1 idle: expected atoms to match, got none")
-	}
+	// idle-bootstrap-entry is load-bearing for an empty project — it routes
+	// the agent into the bootstrap workflow.
+	requireAtomIDsContain(t, "S1 idle", matchesBefore, "idle-bootstrap-entry")
 
 	// S1 after start: bootstrap-active, Route=recipe, Step=provision.
 	// Matches bootstrap_recipe_provision coverage fixture — so atoms
@@ -73,16 +123,14 @@ func TestScenario_S1_NewProjectRecipeMatch(t *testing.T) {
 		t.Errorf("S1 bootstrap-active: expected iterate bootstrap primary, got tool=%q args=%v",
 			planAfter.Primary.Tool, planAfter.Primary.Args)
 	}
-	bodiesAfter, err := SynthesizeBodies(after, corpus)
+	matchesAfter, err := Synthesize(after, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize bootstrap-active: %v", err)
 	}
-	joined := strings.Join(bodiesAfter, "\n")
-	for _, phrase := range []string{"zerops_import", "ACTIVE"} {
-		if !strings.Contains(joined, phrase) {
-			t.Errorf("S1 bootstrap-active: expected atom body to contain %q", phrase)
-		}
-	}
+	// bootstrap-recipe-import drives "use zerops_import to provision";
+	// bootstrap-intro is the orienting frame for the recipe route.
+	requireAtomIDsContain(t, "S1 bootstrap-active", matchesAfter,
+		"bootstrap-intro", "bootstrap-recipe-import")
 }
 
 func TestScenario_S5_MixedBootstrappedAndUnmanaged(t *testing.T) {
@@ -151,13 +199,13 @@ func TestScenario_S5_MixedBootstrappedAndUnmanaged(t *testing.T) {
 		t.Error("S5: expected 'Add more services' in alternatives")
 	}
 
-	bodies, err := SynthesizeBodies(env, corpus)
+	matches, err := Synthesize(env, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
-	if len(bodies) == 0 {
-		t.Fatal("S5: expected at least one idle-phase atom to synthesize")
-	}
+	// Bootstrapped + adoptable mix → idle-develop-entry routes the agent
+	// to the develop workflow with adopt as an alternative.
+	requireAtomIDsContain(t, "S5", matches, "idle-develop-entry")
 }
 
 func TestScenario_S3_AdoptOnlyUnmanaged(t *testing.T) {
@@ -196,19 +244,14 @@ func TestScenario_S3_AdoptOnlyUnmanaged(t *testing.T) {
 		t.Errorf("S3: expected primary label 'Adopt unmanaged runtimes', got %q", plan.Primary.Label)
 	}
 
-	bodies, err := SynthesizeBodies(env, corpus)
+	matches, err := Synthesize(env, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
-	joined := strings.Join(bodies, "\n")
-	// idle-adopt-entry atom is the load-bearing one for this scenario: it
-	// tells the agent the adopt route attaches tracking to the existing
+	// idle-adopt-entry is the load-bearing atom for the adopt-only branch:
+	// it tells the agent the adopt route attaches tracking to existing
 	// services so they show as bootstrapped afterward.
-	for _, phrase := range []string{"not bootstrapped", `route="adopt"`, "bootstrapped: true"} {
-		if !strings.Contains(joined, phrase) {
-			t.Errorf("S3: expected synthesized body to contain %q", phrase)
-		}
-	}
+	requireAtomIDsContain(t, "S3", matches, "idle-adopt-entry")
 }
 
 func TestScenario_S4_DevelopStrategyReviewAfterFirstDeploy(t *testing.T) {
@@ -243,16 +286,13 @@ func TestScenario_S4_DevelopStrategyReviewAfterFirstDeploy(t *testing.T) {
 		},
 	}
 
-	bodies, err := SynthesizeBodies(env, corpus)
+	matches, err := Synthesize(env, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
-	joined := strings.Join(bodies, "\n")
-	for _, phrase := range []string{"Pick an ongoing deploy strategy", `action="strategy"`} {
-		if !strings.Contains(joined, phrase) {
-			t.Errorf("S4: expected synthesized body to contain %q", phrase)
-		}
-	}
+	// develop-strategy-review is the load-bearing atom for the
+	// after-first-deploy / strategy-unset gate.
+	requireAtomIDsContain(t, "S4", matches, "develop-strategy-review")
 
 	// Plan routes to deploy as long as no deploy attempt is recorded in the
 	// work session. The strategy-review gate is expressed by the atom layer.
@@ -313,16 +353,13 @@ func TestScenario_S7_DevelopClosedAuto(t *testing.T) {
 		t.Errorf("S7: expected secondary=start develop, got args=%v", plan.Secondary.Args)
 	}
 
-	bodies, err := SynthesizeBodies(env, corpus)
+	matches, err := Synthesize(env, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
-	joined := strings.Join(bodies, "\n")
-	for _, phrase := range []string{"develop-closed-auto", "auto-complete", `action="close"`} {
-		if !strings.Contains(joined, phrase) {
-			t.Errorf("S7: expected synthesized body to contain %q", phrase)
-		}
-	}
+	// develop-closed-auto explains the auto-complete close state and the
+	// reclaim-the-slot guidance.
+	requireAtomIDsContain(t, "S7", matches, "develop-closed-auto")
 }
 
 // TestScenario_S2_IdleBootstrappedReady pins the bootstrapped-only idle
@@ -368,13 +405,12 @@ func TestScenario_S2_IdleBootstrappedReady(t *testing.T) {
 			plan.Alternatives[0].Label)
 	}
 
-	bodies, err := SynthesizeBodies(env, corpus)
+	matches, err := Synthesize(env, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
-	if len(bodies) == 0 {
-		t.Fatal("S2: expected at least one idle-phase atom to synthesize")
-	}
+	// Bootstrapped-only idle → idle-develop-entry routes to develop.
+	requireAtomIDsContain(t, "S2", matches, "idle-develop-entry")
 }
 
 // TestScenario_S6_DevelopDeployOKPendingVerify pins the
@@ -537,13 +573,13 @@ func TestScenario_S11_StrategySetupEmptyPlan(t *testing.T) {
 		t.Errorf("S11: expected no secondary/alternatives, got secondary=%v alts=%d", plan.Secondary, len(plan.Alternatives))
 	}
 
-	bodies, err := SynthesizeBodies(env, corpus)
+	matches, err := Synthesize(env, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
-	if len(bodies) == 0 {
-		t.Fatal("S11: expected strategy-setup atom to synthesize")
-	}
+	// strategy-push-git-intro is the entry atom for the push-git setup
+	// chain; downstream atoms (push/trigger per env+type) follow.
+	requireAtomIDsContain(t, "S11", matches, "strategy-push-git-intro")
 }
 
 // TestScenario_S12_ExportActiveEmptyPlan mirrors S11 for the export phase.
@@ -569,13 +605,12 @@ func TestScenario_S12_ExportActiveEmptyPlan(t *testing.T) {
 		t.Errorf("S12: expected no secondary/alternatives, got secondary=%v alts=%d", plan.Secondary, len(plan.Alternatives))
 	}
 
-	bodies, err := SynthesizeBodies(env, corpus)
+	matches, err := Synthesize(env, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
-	if len(bodies) == 0 {
-		t.Fatal("S12: expected export atoms to synthesize")
-	}
+	// Export phase has exactly one atom — exact-match contract.
+	requireAtomIDsExact(t, "S12", matches, "export")
 }
 
 func TestScenario_S8_DevelopIterationFailure(t *testing.T) {
@@ -625,16 +660,13 @@ func TestScenario_S8_DevelopIterationFailure(t *testing.T) {
 		t.Errorf("S8: expected primary targetService=appdev, got %q", plan.Primary.Args["targetService"])
 	}
 
-	bodies, err := SynthesizeBodies(env, corpus)
+	matches, err := Synthesize(env, corpus)
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
-	joined := strings.Join(bodies, "\n")
-	// Develop-active push-dev atoms are load-bearing at deploy iteration:
-	// push-dev SSH mechanics and iteration tier guidance both belong here.
-	for _, phrase := range []string{"Push-Dev Deploy Strategy", "SSH"} {
-		if !strings.Contains(joined, phrase) {
-			t.Errorf("S8: expected synthesized body to contain %q", phrase)
-		}
-	}
+	// Develop-active push-dev atoms are load-bearing at deploy iteration —
+	// SSH mechanics and iteration tier guidance both belong to this set.
+	requireAtomIDsContain(t, "S8", matches,
+		"develop-push-dev-deploy-container",
+		"develop-push-dev-workflow-dev")
 }
