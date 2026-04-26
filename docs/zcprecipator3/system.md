@@ -244,16 +244,22 @@ not allowed to invent knowledge that earlier phases didn't capture.
 
 ## 4. The TEACH / DISCOVER line
 
-> **Decision marker.** As of 2026-04-26 the run-13 readiness pass has
-> shipped: 12 commits across 6 tranches landed on top of the run-12
-> cleanup. Verdict table below reflects the post-run-13 state — every
-> §T / §F / §V / §Q / §G2 / §B2 addition is TEACH-side, with §V's
-> structural-relation validators wired as Notice. The architectural
-> reframe lives in [CHANGELOG.md entry "2026-04-25 — architectural
-> reframe: catalog drift recognized, gates → notices/structural"](CHANGELOG.md);
-> the cleanup itself is recorded in the cleanup CHANGELOG entry
-> directly above it; run-13 lives in the entry above that. The
-> operational pause record is at [plans/run-11-pause.md](plans/run-11-pause.md).
+> **Decision marker.** As of 2026-04-26 the run-14 readiness pass has
+> shipped: 9 commits across 4 tranches on top of the run-13 entries
+> below. Verdict table reflects the post-run-14 state — every
+> Cluster A / B / D addition that lands a behavior change is TEACH-side
+> (engine resolves materialization or runtime state by construction);
+> Cluster C ships C.2 + C.3 only (C.1 deferred per plan §7 open
+> question 2 — Store has no on-disk Plan/Fragments persistence yet);
+> Cluster E reaches the porter-audience rule positively rather than
+> via catalog extension. No new validator catalogs land; the only
+> blocking-class engine extension is the validator body-map plumbing
+> that closes R-13-1's stitch-vs-read race. The latest CHANGELOG
+> entry "2026-04-26 — run-14 readiness: I/O coherence + reserved
+> semantics + session-state survival + operational preempts" carries
+> the full per-cluster summary; the architectural reframe lives in
+> [CHANGELOG.md entry "2026-04-25 — architectural reframe: catalog
+> drift recognized, gates → notices/structural"](CHANGELOG.md).
 
 This is the load-bearing section. It draws the line between what the
 engine knows up-front (TEACH) and what each run is responsible for
@@ -382,6 +388,12 @@ through deploy iteration (when not).
 | `codebase_claude.md.tmpl` template strip (run-13 §Q) | TEACH | ✅ Engine no longer injects the `## Zerops dev loop` block into published CLAUDE.md; agent-authored `## Notes` section is the single source of truth for codebase-specific dev-loop commands. Eliminates the dual-source-of-truth contradiction with §C's brief teaching |
 | `complete-phase phase=<P> codebase=<host>` per-codebase scoping (run-13 §G2) | TEACH | ✅ Engine extends the dispatch surface so sub-agents self-validate before terminating. Closes the §G actor mismatch — sub-agent sees only its own codebase's violations, fixes via mode=replace (fragments) or ssh-edit (yaml file), re-calls until ok:true |
 | `build-subagent-prompt` action (run-13 §B2) | TEACH | ✅ Engine composes the FULL dispatch prompt (recipe-level context wrapper + brief body + close criteria) from Plan + Research.Description; eliminates the hand-typed wrapper that compounded math/path drift across runs (run-12 28-38% wrapper share → run-13 < 15%) |
+| Validator in-memory body plumbing (run-14 §A.1) | TEACH | ✅ Codebase + env surface validators consume assembler outputs derived from `Plan.Fragments` + embedded templates; no SSHFS round-trip for fragment-backed surfaces. Per-codebase scoped close ≡ matching slice of full-phase close by construction. Engine resolves materialization rather than racing the kernel page-cache flush |
+| Recipe-authoring subdomain auto-enable (run-14 §A.2) | TEACH | ✅ When `workflow.FindServiceMeta` returns nil (recipe-authoring deploys via `zerops_import`), `ops.LookupService` decides eligibility from the REST-authoritative service registry (non-system + HTTP-supporting port). spec-workflows §4.8 + O3 holds end-to-end for recipe deploys; agents never call `zerops_subdomain action=enable` in happy path |
+| `record-fragment mode=replace` returns priorBody (run-14 §B.1) | TEACH | ✅ Engine produces the read-then-replace baseline in the response payload; agents merge against `priorBody` verbatim instead of grep+reconstructing the lost sections |
+| Pre-processor fenced-block predicate (run-14 §B.2) | TEACH | ✅ Engine relaxes the structural rule on what fragment bodies may contain — fenced markdown regions (` ``` ` blocks + backtick inline spans) carry literal `${KEY}` examples without rejection; unfenced violations name the offending fragment id |
+| Reachable recipe-slug enumeration in scaffold brief (run-14 §B.3) | TEACH | ✅ `Resolver.ReachableSlugs` enumerates `<MountRoot>/<slug>/import.yaml` matches; brief composer emits sorted bullets so sub-agents call `zerops_knowledge recipe=<slug>` against real slugs rather than guessing |
+| Build-tool host-allowlist atom (run-14 §D.3) | TEACH | ✅ Frontend-conditional positive shape: set the bundler's allowlist knob (Vite `server.allowedHosts: true`, Webpack `devServer.allowedHosts: 'all'`, Rollup equivalent). Not a Zerops-side workaround — the bundler's intended extension point for hosted dev environments |
 
 ### What "wrong side" means concretely
 

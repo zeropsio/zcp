@@ -4,6 +4,158 @@ Running log of changes on top of [plan.md](plan.md). Each entry captures what ch
 
 ---
 
+## 2026-04-26 — run-14 readiness: I/O coherence + reserved semantics + session-state survival + operational preempts
+
+### Context
+
+Run 13 (`nestjs-showcase`, 2026-04-26) was the first dogfood after
+the post-run-13-readiness engine. The TEACH-side wins (template
+strip, tier capability matrix, showcase scenario, per-codebase
+scoping, engine-composed dispatch) all reached the deliverable
+cleanly — wrapper share dropped from 28-38% to 5.7-6.8%, six SPA
+panels shipped, init-commands key collisions and cross-service alias
+build-time races were prevented at compose time. But finalize never
+dispatched because `complete-phase phase=feature` raced an SSHFS
+write-back: the same handler that just wrote the codebase
+README/CLAUDE.md to the dev mount re-read those files for validator
+input and got the pre-write 0-byte page-cache view. Eleven of run-13's
+21 defect entries collapse into this single architectural shape —
+**engine has the truth in memory; runtime doesn't materialize it; the
+validator/agent observes the divergence**.
+
+Run-14 readiness ships nine commits across four tranches that close
+the I/O-coherence boundary, surface engine reserved semantics, give
+session state a backstop against defensive re-dispatch, preempt the
+operational traps run-13 burned ~6-7 minutes rediscovering, and
+reach the porter-audience rule positively rather than via catalog
+extension. Every behavior change is TEACH-side per system.md §4
+(engine resolves materialization or runtime state by construction);
+no new validator catalogs land. C.1 (`start attach=true`) is deferred
+per plan §7 open question 2 — Store sessions are in-memory only and
+landing C.1 requires persistence design beyond the plan's ~50 LoC
+bound.
+
+### §A.1 — validator in-memory plumbing decouples stitch from read
+
+[`internal/recipe/gates.go::collectCodebaseBodies`](../../internal/recipe/gates.go#L238)
++ [`collectEnvBodies`](../../internal/recipe/gates.go#L268) compute
+the assembler's deterministic output from Plan.Fragments + embedded
+templates; `runSurfaceValidatorsForKinds` consumes the body map
+keyed by on-disk path and falls back to `os.ReadFile` only for
+surfaces NOT in the map (codebase zerops.yaml — the sub-agent
+ssh-edits it; no fragment-side stitch race). Cross-surface
+uniqueness consumes the union. Per-codebase scoped close and the
+matching slice of full-phase close return the same code set for that
+codebase's content by construction (closes R-13-2). Symmetric
+extension applies to env surfaces per plan §7 open question 1.
+Pinned by `TestCodebaseSurfaceValidators_UsesInMemoryBodies` and
+`TestCompletePhaseScoped_VerdictEquivalentToFullPhaseSlice`.
+
+### §A.2 — subdomain auto-enable for recipe-authoring deploys
+
+[`internal/tools/deploy_subdomain.go::maybeAutoEnableSubdomain`](../../internal/tools/deploy_subdomain.go#L47)
+keeps the historical meta-Mode path for bootstrap-managed services and
+falls back to `platformEligibleForSubdomain` (non-system service +
+HTTP-supporting port) when meta is absent — recipe-authoring deploys
+land via `zerops_import content=<yaml>` and never write meta. Both
+branches route through `ops.Subdomain` (idempotent). Honors
+spec-workflows.md §4.8 + O3: agents/recipes never call
+`zerops_subdomain action=enable` in happy path. Pinned by
+`TestMaybeAutoEnable_NoMeta_StillRunsForPlatformEligibleService` +
+`_NoHTTPPort_Skips` + `_SystemService_Skips`.
+
+### §B.1 — `record-fragment mode=replace` returns priorBody
+
+[`internal/recipe/handlers_fragments.go::recordFragment`](../../internal/recipe/handlers_fragments.go#L23)
+captures `Plan.Fragments[id]` before the overwrite for mode=replace;
+the dispatcher assigns to `RecipeResult.PriorBody`
+([`internal/recipe/handlers.go::RecipeResult.PriorBody`](../../internal/recipe/handlers.go#L160)).
+Append-class operations leave the field empty by construction. Brief
+teaching at `briefs/feature/content_extension.md` teaches the
+read-then-replace workflow positively — agents merge against
+priorBody verbatim instead of grep+reconstructing the lost five IG
+sections (run-13's features-1 burned ~1m38s on exactly that).
+
+### §B.2 — fenced-block predicate for engine-token rejection
+
+[`internal/recipe/assemble.go::substituteFragmentMarkers`](../../internal/recipe/assemble.go#L376)
+scans each fragment body via `unfencedEngineTokens` before splicing —
+masks fenced regions (` ``` ` blocks + backtick inline spans) and
+rejects only engineBoundKeys matches that survive outside a fence,
+naming the offending fragment id in the error. Post-substitute
+`checkUnreplacedTokens` is fence-aware too so spliced fenced content
+isn't re-flagged. Closes the run-13 R-13-19 trap where four
+stitch-content failures cost ~1m38s on a worker fragment's
+`${HOSTNAME}` example. Pinned by
+`TestStitchContent_FencedBlockTokenAllowed` +
+`TestStitchContent_UnfencedTokenErrorIncludesFragmentID`.
+
+### §B.3 — scaffold brief carries reachable recipe-slug list
+
+[`internal/recipe/chain.go::Resolver.ReachableSlugs`](../../internal/recipe/chain.go#L36)
+walks the recipes mount and returns sorted slugs whose
+`<slug>/import.yaml` exists. New `BuildScaffoldBriefWithResolver`
+emits a `## Recipe-knowledge slugs you may consult` section when the
+resolver is present; `Session.MountRoot` (populated by
+`Store.OpenOrCreate`) wires the production path. Closes the run-13
+hallucinated-slug retry class (~10s burned on
+`svelte-ssr-hello-world`).
+
+### §C.2/C.3 — feature dispatch carries phase + no-redispatch teaching
+
+[`internal/recipe/briefs_subagent_prompt.go::buildSubagentPromptForPhase`](../../internal/recipe/briefs_subagent_prompt.go#L39)
+threads `Session.Current` into the BriefFeature closing footer —
+"the recipe session is already at phase=feature; do NOT re-walk
+research/provision/scaffold." Phase-entry feature.md adds an
+"After complete-phase phase=feature" section teaching main:
+enter-phase finalize next, do NOT re-dispatch. Defensive re-dispatch
+after compaction (run-13 features-2's ~50s phase-realignment loop)
+no longer compounds session-loss artifacts. C.1 (start attach=true)
+deferred — Store has no Plan/Fragments persistence; landing it would
+scope-creep beyond the plan's ~50 LoC bound.
+
+### §D — six operational preempts
+
+Content-only additions to phase-entry / atom / brief surfaces; zero
+engine LoC. D.1 (R-13-13) — phase_entry/scaffold.md adds 'Git
+identity on the dev container' + git config commands. D.2 (R-13-14)
+— principles/mount-vs-container.md adds 'zcli scope' naming zcli as
+host-side. D.3 (R-13-15, third recurrence) — new
+briefs/scaffold/build_tool_host_allowlist.md atom loaded conditionally
+when role=frontend AND BaseRuntime starts with nodejs (Vite /
+Webpack / Rollup variants named explicitly; positive bundler-knob
+shape, not a Zerops-side workaround). D.4 (R-13-16) —
+showcase_scenario.md adds 'Stable selectors for browser-walk
+verification' (data-feature / data-test). D.5 (R-13-17) —
+principles/dev-loop.md adds 'Watcher PID volatility' (nest-watcher
+child-process rotation). D.6 (R-13-20) — phase_entry/scaffold.md
+'Scaffold close — main-agent action sequence' (deploy → verify →
+complete-phase ordering). Brief caps raised: scaffold 26 → 28 KB,
+feature 18 → 20 KB.
+
+### §E — porter-audience rule + IG-scope multiplier + retire verify-subagent-dispatch
+
+E.1 (R-13-5) — content_authoring.md opens the CLAUDE.md authoring
+section with an unconditional 'CLAUDE.md is for the porter' rule
+that reaches every body location, not only the dev-loop slot. The
+"What does NOT go here" enumeration stays as reinforcement; the
+load-bearing teaching is the positive structural rule. E.2 (R-13-8)
+— phase_entry/scaffold.md retires the verify-subagent-dispatch
+prescription; build-subagent-prompt's pass-through is byte-identical,
+so the verify call has nothing to verify against. The action remains
+in the engine for explicit recovery. E.3 (R-13-11) — IG-scope rule
+clarifies the showcase multiplier (4-7 items minimal, 7-10 showcase,
+above 12 audits for bloat).
+
+### Acceptance criteria for run 14
+
+Carried forward from run-13's 28; new criteria 39-49 in plan §4.
+Stretch criteria 50-51 (8.5/10 → 9/10 vs reference) gate on Cluster
+A landing finalize content + Cluster D + E preventing operational
+rediscovery and template/agent voice slip.
+
+---
+
 ## 2026-04-26 — run-13 readiness: tier-fact + showcase scenario + per-codebase scoping + dispatch wrapper
 
 ### Context
