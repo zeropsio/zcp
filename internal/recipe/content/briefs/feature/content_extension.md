@@ -132,6 +132,16 @@ knowledge-base,claude-md/*}` ids → fix via `record-fragment
 mode=replace fragmentId=codebase/<host>/<name> fragment=<corrected
 body>`. Re-call until `ok:true`, then move on to the next codebase.
 
+`mode=replace` overwrites the ENTIRE fragment body. To extend an
+existing scaffold-authored fragment (add a new IG section, add a new
+KB bullet), include the prior content verbatim plus your additions in
+the new body. The engine returns the prior body in `response.priorBody`
+on every successful `record-fragment mode=replace` call, so the merge
+baseline is always one tool call away — read it from the immediately
+preceding response or call `zerops_recipe action=status` and inspect
+`Plan.Fragments[<id>]`. Do NOT reconstruct from working memory or grep
+the on-disk README; both lose fragment fidelity.
+
 Calling `complete-phase phase=feature` without a codebase is also
 valid — it validates ALL touched codebases at once. Use the scoped
 form when iterating on a single codebase's violations; use the

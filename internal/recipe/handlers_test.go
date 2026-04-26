@@ -924,6 +924,74 @@ func TestRecordFragment_ModeReplaceOnEnvIDIsEquivalentToOverwrite(t *testing.T) 
 	}
 }
 
+// TestRecordFragment_ReplaceReturnsPriorBody pins Cluster B.1 (R-13-3):
+// mode=replace overwrites the entire fragment body, so the response
+// carries the prior body. The agent extending an existing fragment can
+// merge against priorBody verbatim instead of grep+reconstructing from
+// the on-disk README — features-1 burned ~1m38s in run-13 doing exactly
+// that after a replace clobbered five scaffold-authored IG sections.
+func TestRecordFragment_ReplaceReturnsPriorBody(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	if _, err := store.OpenOrCreate("synth-showcase", filepath.Join(dir, "run")); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fragment", Slug: "synth-showcase",
+		FragmentID: "codebase/api/integration-guide",
+		Fragment:   "ORIGINAL\n",
+	})
+
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fragment", Slug: "synth-showcase",
+		FragmentID: "codebase/api/integration-guide",
+		Fragment:   "REPLACED\n",
+		Mode:       "replace",
+	})
+	if !res.OK {
+		t.Fatalf("replace dispatch: %+v", res)
+	}
+	if res.PriorBody != "ORIGINAL\n" {
+		t.Errorf("PriorBody = %q, want %q", res.PriorBody, "ORIGINAL\n")
+	}
+}
+
+// TestRecordFragment_AppendDoesNotReturnPriorBody pins the negative
+// half of Cluster B.1: append-class operations do not need priorBody
+// in the response (the response already carries the post-append body
+// size; the agent never lost prior content via append).
+func TestRecordFragment_AppendDoesNotReturnPriorBody(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	if _, err := store.OpenOrCreate("synth-showcase", filepath.Join(dir, "run")); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fragment", Slug: "synth-showcase",
+		FragmentID: "codebase/api/integration-guide", Fragment: "first",
+	})
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fragment", Slug: "synth-showcase",
+		FragmentID: "codebase/api/integration-guide", Fragment: "second",
+	})
+	if !res.OK {
+		t.Fatalf("append: %+v", res)
+	}
+	if res.PriorBody != "" {
+		t.Errorf("append should not populate PriorBody; got %q", res.PriorBody)
+	}
+}
+
 // TestRecordFragment_UnknownModeRejected — run-12 §R. Mode strings other
 // than "" / "append" / "replace" are rejected with an actionable error.
 func TestRecordFragment_UnknownModeRejected(t *testing.T) {

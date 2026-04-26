@@ -150,6 +150,13 @@ type RecipeResult struct {
 	FragmentID string `json:"fragmentId,omitempty"`
 	BodyBytes  int    `json:"bodyBytes,omitempty"`
 	Appended   bool   `json:"appended,omitempty"`
+	// PriorBody is the fragment body that was overwritten by a
+	// successful mode=replace call. Empty for append-class operations
+	// and for mode=replace on a fragment that had no prior body.
+	// Run-14 §B.1 (R-13-3) — agents extending an existing fragment
+	// can merge against this baseline instead of grep+reconstructing
+	// from the on-disk README.
+	PriorBody string `json:"priorBody,omitempty"`
 	// Notice carries an advisory message — currently used by record-fact
 	// when V-1's classifier override re-routes a self-inflicted fact away
 	// from the agent's platform-trap surfaceHint. Empty when no override
@@ -281,7 +288,7 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 			r.Error = "record-fragment: fragmentId is required"
 			return r
 		}
-		bodyBytes, appended, err := recordFragment(sess, in.FragmentID, in.Fragment, in.Mode)
+		bodyBytes, appended, priorBody, err := recordFragment(sess, in.FragmentID, in.Fragment, in.Mode)
 		if err != nil {
 			r.Error = err.Error()
 			return r
@@ -289,6 +296,7 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 		r.FragmentID = in.FragmentID
 		r.BodyBytes = bodyBytes
 		r.Appended = appended
+		r.PriorBody = priorBody
 		r.OK = true
 	case "resolve-chain":
 		parent, err := ResolveChain(Resolver{MountRoot: store.mountRoot}, in.Slug)

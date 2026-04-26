@@ -13,32 +13,34 @@ import (
 // recordFragment validates the fragment id against the plan, applies
 // append-or-overwrite semantics, and stores the body on plan.Fragments
 // (or on the typed EnvComments for env/*/import-comments/* ids).
-// Returns the post-write body size and whether append fired — run-9-
-// readiness §2.J so the caller sees which fragment landed.
+// Returns the post-write body size, whether append fired, and the
+// prior body for mode=replace operations (empty otherwise) — run-9-
+// readiness §2.J + run-14 §B.1 (R-13-3) so the caller can merge
+// against the wholesale-overwrite baseline without grep+reconstructing.
 //
 // mode is "" or "append" (default; codebase IG/KB/claude-md ids
 // concatenate) or "replace" (overwrite prior body even on append-class
 // ids). Run-12 §R — sub-agent uses replace to correct its own fragment
 // after a complete-phase validator violation.
-func recordFragment(sess *Session, id, body, mode string) (int, bool, error) {
+func recordFragment(sess *Session, id, body, mode string) (int, bool, string, error) {
 	switch mode {
 	case "", "append", "replace":
 	default:
-		return 0, false, fmt.Errorf("record-fragment: mode must be 'append' or 'replace', got %q", mode)
+		return 0, false, "", fmt.Errorf("record-fragment: mode must be 'append' or 'replace', got %q", mode)
 	}
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
 	if sess.Plan == nil {
-		return 0, false, errors.New("record-fragment: plan not initialized — call update-plan first")
+		return 0, false, "", errors.New("record-fragment: plan not initialized — call update-plan first")
 	}
 	if err := validateFragmentID(sess.Plan, id); err != nil {
-		return 0, false, fmt.Errorf("record-fragment: %w", err)
+		return 0, false, "", fmt.Errorf("record-fragment: %w", err)
 	}
 	if strings.HasPrefix(id, "env/") && strings.Contains(id, "/import-comments/") {
 		if err := applyEnvComment(sess.Plan, id, body); err != nil {
-			return 0, false, err
+			return 0, false, "", err
 		}
-		return len(body), false, nil
+		return len(body), false, "", nil
 	}
 	if sess.Plan.Fragments == nil {
 		sess.Plan.Fragments = map[string]string{}
@@ -47,14 +49,20 @@ func recordFragment(sess *Session, id, body, mode string) (int, bool, error) {
 		existing := sess.Plan.Fragments[id]
 		if existing == "" {
 			sess.Plan.Fragments[id] = body
-			return len(body), false, nil
+			return len(body), false, "", nil
 		}
 		combined := existing + "\n\n" + body
 		sess.Plan.Fragments[id] = combined
-		return len(combined), true, nil
+		return len(combined), true, "", nil
 	}
+	priorBody := sess.Plan.Fragments[id]
 	sess.Plan.Fragments[id] = body
-	return len(body), false, nil
+	if mode != "replace" {
+		// Overwrite-class ids (root/*, env/*) carry no priorBody — the
+		// agent never had a "merge from prior" workflow for them.
+		priorBody = ""
+	}
+	return len(body), false, priorBody, nil
 }
 
 // applyEnvComment routes env/<N>/import-comments/<target> into the
