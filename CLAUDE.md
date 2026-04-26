@@ -187,6 +187,14 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   Don't add per-topic `*_atom_contract_test.go` — extend
   `internal/content/atoms_lint.go`. Spec: `spec-knowledge-distribution.md §11`.
 - **Service by hostname** — agents/tools speak hostnames; resolve to ID internally.
+- **Lifecycle recovery is via `action="status"`** — `zerops_workflow
+  action="status"` is the canonical lifecycle envelope (envelope + plan +
+  guidance) and the supported recovery primitive after context compaction.
+  Mutation tool responses MAY be terse (do not require the lifecycle
+  envelope); error responses MUST remain leaf payloads (`convertError`
+  does not attach an envelope). Pinned by P4 in `docs/spec-workflows.md`.
+  Adding envelope to a mutation response is acceptable when the handler
+  has ComputeEnvelope inputs already; not required.
 - **JSON-only stdout** — debug to stderr; MCP protocol depends on it.
 - **No progress notification immediately before a tool response** — Claude Code's
   MCP TS client coalesces a `notifications/progress` and the next tool response

@@ -439,7 +439,7 @@ Every invariant here is a property of the implementation and can be verified by 
 
 | ID | Invariant | Code reference |
 |----|-----------|---------------|
-| KD-01 | Every workflow-aware tool response goes through `ComputeEnvelope` → `BuildPlan` → `Synthesize`. No tool handler produces guidance from raw platform state. | Grep for `ComputeEnvelope(` in `internal/tools/` |
+| KD-01 | The lifecycle status response (`zerops_workflow action="status"`, plus `start workflow="develop"`'s briefing) goes through `ComputeEnvelope` → `BuildPlan` → `Synthesize` — that is the canonical pipeline path. Mutation responses MAY be terse and MAY NOT pass through the synthesizer; the LLM recovers lifecycle context via `status`. Aligned with `spec-workflows.md` P4. | Grep for `ComputeEnvelope(` in `internal/tools/` |
 | KD-02 | `Synthesize(env, corpus)` is pure: same envelope JSON → byte-identical output. | `internal/workflow/synthesize_test.go` |
 | KD-03 | `BuildPlan(env)` is pure: no I/O, no time, no randomness. | `internal/workflow/build_plan_test.go` |
 | KD-04 | Every atom declares a non-empty `phases` axis. | `ParseAtom` rejects empty `phases` in `internal/workflow/atom.go` |
