@@ -7,7 +7,7 @@ environments: [container]
 modes: [dev, standard]
 title: "Dynamic runtime — start dev server via zerops_dev_server (container)"
 references-fields: [ops.DevServerResult.Running, ops.DevServerResult.HealthStatus, ops.DevServerResult.StartMillis, ops.DevServerResult.Reason, ops.DevServerResult.LogTail, ops.DevServerResult.Port, ops.DevServerResult.HealthPath]
-references-atoms: [develop-dev-server-reason-codes]
+references-atoms: [develop-dev-server-reason-codes, develop-platform-rules-common, develop-platform-rules-container]
 ---
 
 ### Dynamic-runtime dev server (container)
@@ -60,9 +60,9 @@ zerops_dev_server action=logs hostname={hostname} logLines=40
 zerops_dev_server action=stop hostname={hostname} port={port}
 ```
 
-**After every redeploy the container is new — the previous dev
-process is gone.** Re-run `action=start` before `zerops_verify`. Do
-not hand-roll `ssh {hostname} "cmd &"` — backgrounded commands hold
-the SSH channel open until the 120-second bash timeout because the
-child still owns stdio. See `develop-dev-server-reason-codes` for
-diagnosing `reason` values.
+**After every redeploy, re-run `action=start` before `zerops_verify`** —
+the rebuild drops the dev process (see
+`develop-platform-rules-common` for the deploy-replaces-container
+rule). The hand-roll `ssh {hostname} "cmd &"` anti-pattern is in
+`develop-platform-rules-container`. See `develop-dev-server-reason-codes`
+for `reason` values.

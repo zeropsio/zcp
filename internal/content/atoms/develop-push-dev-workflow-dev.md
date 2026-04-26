@@ -8,7 +8,7 @@ strategies: [push-dev]
 environments: [container]
 title: "Push-dev iteration cycle (dev mode, container)"
 references-fields: [ops.DevServerResult.Reason, ops.DevServerResult.Running, ops.DevServerResult.HealthStatus, ops.DevServerResult.LogTail, ops.DevServerResult.StartMillis]
-references-atoms: [develop-dev-server-reason-codes, develop-platform-rules-container]
+references-atoms: [develop-dev-server-reason-codes, develop-platform-rules-container, develop-platform-rules-common]
 ---
 
 ### Development workflow
@@ -25,8 +25,8 @@ on failure a `reason` code (see `develop-dev-server-reason-codes`).
 **Code-only changes**: `action=restart` is enough — no redeploy.
 
 **`zerops.yaml` changes** (env vars, ports, run-block fields): run
-`zerops_deploy` first. The redeploy replaces the container, so follow
-with `action=start` (not `restart`) on the new container.
+`zerops_deploy` first; on the rebuilt container use `action=start`
+(not `restart`) — see `develop-platform-rules-common`.
 
 **If iteration goes sideways**, tail the log ring:
 

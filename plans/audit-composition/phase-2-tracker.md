@@ -44,7 +44,7 @@ Codex summary (returned 2026-04-26):
 | 11 | First-deploy outline (`bootstrap-close` redirect) | `develop-first-deploy-intro` + sub-atoms | `bootstrap-close` | 300 B | PENDING | — | bootstrap-close redirect to develop |
 | 12 | Local git-push preflight | `strategy-push-git-push-local` | `develop-close-push-git-local`, `develop-platform-rules-local`, `develop-strategy-review` | 290 B | PENDING | — | — |
 | 13 | Browser verification protocol (conflict) | `develop-verify-matrix` | `develop-platform-rules-container` | 90 B | PENDING | — | competing-action conflict #3 |
-| 14 | `deploy = new container` + `deployFiles` persists | `develop-platform-rules-common` | `develop-change-drives-deploy`, `develop-dynamic-runtime-start-container`, `develop-close-push-dev-dev`, `develop-push-dev-workflow-dev` | 410 B | PENDING | — | §4.3 candidate |
+| 14 | `deploy = new container` + `deployFiles` persists | `develop-platform-rules-common` | `develop-change-drives-deploy` (already cross-linked, no edit needed), `develop-dynamic-runtime-start-container` (lines 63-68 trimmed), `develop-close-push-dev-dev` (lines 25-31 trimmed), `develop-push-dev-workflow-dev` (lines 27-29 trimmed) | 24 B per dynamic-runtime fire (3 first-deploy fixtures × 24 B + 2-pair × 48 B = ~120 B aggregate); plus ~150 B saved in close-push-dev-dev atom (not in probe fixtures) | DONE | <pending> | §4.3 candidate; close-push-dev-dev has bigger trim but isn't in atomsize_probe fixtures so not measured there |
 | 15 | Manual strategy + ZCP-out-of-loop | `develop-close-manual` + `develop-manual-deploy` | `develop-strategy-review` | 70 B | PENDING | — | — |
 
 ## Phase 2 EXIT (§7)

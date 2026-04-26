@@ -8,7 +8,7 @@ strategies: [push-dev]
 environments: [container]
 title: "Close task — push-dev dev mode (no stage)"
 references-fields: [ops.DevServerResult.Running, ops.DevServerResult.HealthStatus, ops.DevServerResult.StartMillis, ops.DevServerResult.Reason, ops.DevServerResult.LogTail]
-references-atoms: [develop-dev-server-reason-codes]
+references-atoms: [develop-dev-server-reason-codes, develop-dynamic-runtime-start-container, develop-platform-rules-common]
 ---
 
 ### Closing the task
@@ -22,14 +22,12 @@ zerops_dev_server action=start hostname="{hostname}" command="{start-command}" p
 zerops_verify serviceHostname="{hostname}"
 ```
 
-After each deploy the container is new and the previous dev server
-is gone — check `zerops_dev_server action=status` first. If
-`running: true`, proceed to verify. Otherwise call `action=start`;
-the response carries `healthStatus` (HTTP status from the probe),
-`startMillis` (time-to-healthy), `logTail` (last log lines), and on
-failure a `reason` code for diagnosis (see
-`develop-dev-server-reason-codes`).
+Each deploy gives a new container with no dev server — check
+`action=status` first; if `running: false`, call `action=start`.
+See `develop-dynamic-runtime-start-container` for parameters and
+response shape; `develop-dev-server-reason-codes` for `reason`
+triage.
 
-For no-HTTP workers (no `port`/`healthPath`), `running` is derived
+For no-HTTP workers (no `port`/`healthPath`), `running` derives
 from the post-spawn liveness check; `healthStatus` stays 0 — use
 `action=logs` to confirm consumption.
