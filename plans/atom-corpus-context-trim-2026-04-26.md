@@ -467,87 +467,157 @@ The fast inner loop. Full `go test ./... -short -count=1` between phases.
 
 ## 7. Phased execution
 
+> **REVISED 2026-04-26.** Original ordering put Axis 4 (cross-atom dups)
+> first because it appeared to be the highest leverage. Live verification
+> (§17) showed per-service render duplication is actually the dominant
+> driver (~50 % of overflow). The new Phase 1 collapses that duplication
+> via Option B from §17.3. The original Axis 4 / Axis 2 / Axis 3 / Axis 1
+> phases follow as Phases 2-5. The historical ordering is preserved in
+> the §17.8 changelog for context.
+
 Each phase ships independently; verify gate between every phase. No
 half-removed atoms (per CLAUDE.md "Phased refactors — verify each phase
-before continuing; no half-finished states").
+before continuing; no half-finished states"). After every phase, re-run
+the §17.5 probe to confirm wire-frame is dropping toward target.
 
-### Phase 1 — Cross-atom duplicates (Axis 4)
+### Phase 0 — Calibration (no tree-breaking)
 
-Highest leverage: a single deletion in N atoms recovers N × bytes for the
-overflow envelopes. Target: 2–4 KB recovered.
+Establish the metrics infrastructure before touching content. See §17.7
+for full rationale.
 
-1. Use §6.3 to enumerate ≥2-atom duplicates.
-2. For each duplicate: pick canonical home (lowest priority, broadest
-   axis, or the topical atom — e.g. `develop-platform-rules-common` owns
-   "platform invariants").
-3. Trim from non-canonical sites; replace with a one-liner +
-   `references-atoms: [canonical-id]`.
+1. **0a — Wire-frame info log.** Add a `t.Logf("fixture %q wire frame: %d B", name, size)` call to `TestCorpusCoverage_OutputUnderMCPCap` per fixture (NO assertion). Computes size from `RenderStatus(...)` + the JSON-RPC envelope-shape literal from §17.5. Lets future phases watch the trend.
+2. **0b — Allowlist entries carry both metrics.** Extend `knownOverflowFixtures` rationale strings to record both `bodies_join` and `mcp_wire_jsonrpc_frame` numbers. Today they only carry body-join.
+3. **0c — Multi-pair stretch fixture.** Add `develop_first_deploy_two_runtime_pairs_standard` to `developCoverageFixtures()` (4 services: `appdev/appstage` + `apidev/apistage`, all nodejs@22 standard, never-deployed). **Measure its body-join with the §17.5 probe FIRST**; only add to `knownOverflowFixtures` if it actually exceeds the 28 KB body-join cap (companion `KnownOverflows_StillOverflow:795-813` reads body-join, not wire-frame; allowlisting a fixture that fits would fail the companion immediately). Per-service-duplication scaling predicts > 60 KB body-join; confirm before allowlisting.
+
+**Verify**: full test suite stays green. No assertions added.
+
+### Phase 1 — Per-service render-duplication kill (Option B from §17.3)
+
+The dominant lever. Collapses ~10-12 KB by splitting six duplicating
+atoms along the natural rules-vs-commands seam.
+
+For each of `develop-first-deploy-write-app`, `-env-vars`,
+`-scaffold-yaml`, `-intro`, `-verify`, `-execute`:
+
+1. **Read the atom and its scenario pins** (`scenarios_test.go`,
+   `corpus_coverage_test.go::MustContain`).
+2. **Identify the rules-vs-commands seam.** Rules: SSHFS semantics,
+   bind-0.0.0.0 reasoning, env-var conventions, framework defaults.
+   Commands: `ssh {hostname} "..."`, `zerops_deploy
+   targetService="{hostname}"`, `zerops_verify
+   serviceHostname="{hostname}"`.
+3. **Split into two atoms**:
+   - `<original-id>-rules` — envelope-scoped (no service axis;
+     `phases: [develop-active]`, `deployStates: [never-deployed]`).
+     Renders 1×. Carries the rules/concepts.
+   - `<original-id>-cmds` — per-service-scoped (keeps the original
+     service axes). Renders per matching service. Small body, just the
+     imperative tool-call lines with `{hostname}` substitution.
+4. **Update `references-atoms`** in any atom pointing at the original ID
+   to point at the appropriate half. Run `TestAtomReferencesAtomsIntegrity`.
+5. **Update `MustContain`** in coverage fixtures so each pinned phrase
+   asserts against whichever half now carries it.
+6. **Per-atom fact inventory** (per §16.2): for each fact in the
+   original atom, label KEEP (with the new `MustContain` pin), MOVE
+   (to which split half), or DROP (with §5 axis justification).
+   Commit the inventory in the same commit as the split.
+7. **Run §6.4 verify gate after each atom split**: `go test
+   ./internal/workflow/ -run "TestCorpusCoverage|TestSynthesize|TestAtom"
+   -count=1` plus `make lint-local`.
+
+**Target: 10-12 KB recovered across both overflow fixtures.**
+
+**Fallback gate**: after all six splits, re-measure with §17.5 probe.
+If the standard fixture's wire-frame is still > 32 KB, escalate to
+Option A (structural `Synthesize` change + multi-host placeholder
+grammar). Pivot decision happens HERE, not earlier — Option B is the
+default because it's corpus-only.
+
+### Phase 2 — Cross-atom duplicates (Axis 4) — original Phase 1
+
+Now that per-service duplication is gone, true cross-atom dups are the
+next highest-leverage cut. Single-digit KB recovery but cheap.
+
+1. Use §6.3 grep methodology to enumerate facts appearing in ≥2 atoms.
+   **Re-verify each candidate against the current corpus** — original
+   §15.3 spot-checks were inaccurate (see §17.8 caveat).
+2. Verified candidates as of 2026-04-26 (re-verify before acting):
+   - SSHFS mount path `/var/www/{hostname}/` — in 18 atoms.
+     Canonical home: `develop-platform-rules-container` (already owns
+     "platform invariants - container").
+   - `deploy = new container, deployFiles persists` — in
+     `develop-platform-rules-common` and `develop-push-dev-workflow-dev`.
+     Canonical home: `develop-platform-rules-common`.
+   - `${hostname_VARNAME}` env-ref syntax — in
+     `develop-first-deploy-scaffold-yaml`, `develop-first-deploy-verify`,
+     `export.md`. Canonical home: `develop-env-var-channels` (more
+     topical).
+3. For each duplicate: pick canonical home (lowest priority, broadest
+   axis, or the topical atom). Trim from non-canonical sites; replace
+   with a one-liner + `references-atoms: [canonical-id]`.
 4. After each duplicate removed: run §6.4 verify.
 
-Estimated 6–10 duplicates available given the atom topical grouping.
+**Target: 2-4 KB additional recovery.**
 
-### Phase 2 — Per-atom verbosity (Axis 2)
+### Phase 3 — LLM-optimization rewrites (Axis 3) — original Phase 3
 
-Top-10 contributors per overflow envelope (see §4.4 — same list largely).
-For each, apply Axis 2 criteria:
+Identify 2-3 atoms whose content is genuinely tabular or sequential.
+Rewrite in dense form. Verified candidates:
 
-- Drop preamble.
-- Cut redundant inverse pairs.
-- One example per rule (not three).
-- Drop emphasis prose.
+- **`develop-verify-matrix`** (3 398 B, envelope-scoped, fires 1×) —
+  embeds a literal `Agent(model="sonnet", prompt="""...""")` block at
+  lines 33-73 (~1 500 B of meta-instructions for a sub-agent). Move
+  via the **generalized** dispatch-brief-atom pattern per §17.4 — NOT
+  via direct reuse (recipe-bespoke namespace + scoping). Per-turn
+  payload then ships only the protocol summary; the full embedded
+  prompt is fetched on-demand. ~1 500 B saved per turn.
+- **`develop-deploy-modes`** — mode-by-mode matrix in prose; markdown
+  table is denser. ~600 B.
+- **`develop-platform-rules-container`** — bullet lists where each
+  bullet is a paragraph; tighten bullet-to-rule ratio. ~700 B.
 
-Target: 3–5 KB recovered. Heavier per-atom work; one atom per session is
-a fine pace.
+**Target: 2-4 KB recovered.**
 
-### Phase 3 — LLM-optimization rewrites (Axis 3)
+### Phase 4 — Atoms that shouldn't exist (Axis 1) — original Phase 4
 
-Identify 2–3 atoms whose content is genuinely tabular or sequential.
-Rewrite in dense form. Likely candidates:
+Most invasive; do last when prior phases have given the most signal.
 
-- `develop-verify-matrix` — currently embeds a literal Agent() Task
-  prompt (≥1500 B of meta-instructions for a sub-agent). Could be
-  fetched on-demand via the existing `dispatch-brief-atom` mechanism
-  (see `internal/tools/workflow.go::handleDispatchBriefAtom`) so the
-  per-turn payload only ships the protocol summary, not the full
-  embedded prompt. **Note**: dispatch-brief-atom is currently
-  recipe-adjacent — confirm before extending its use.
-- `develop-deploy-modes` — a mode-by-mode matrix currently in prose;
-  a markdown table is denser.
-- `develop-platform-rules-container` and `develop-platform-rules-common`
-  — bullet lists where each bullet is a paragraph; tighten the
-  bullet-to-rule ratio.
-
-Target: 2–4 KB recovered.
-
-### Phase 4 — Atoms that shouldn't exist (Axis 1)
-
-Most invasive; do last with most signal from prior phases.
-
-For each candidate atom, check:
+For each candidate atom or section, check:
 1. Does the same fact live in `claude_shared.md`?
 2. Is it general LLM knowledge (HTTP basics, npm)?
 3. Could the agent verify by tool call?
 
-If yes to any: delete the atom (or the section). Update
+**CAVEAT**: original §15.2 spot-checks were inaccurate — `apiMeta` is
+NOT in `claude_shared.md` (verified `grep -c "apiMeta" claude_shared.md`
+= 0). Re-verify each candidate against current template + atom
+contents, do NOT trust the §15.2 list as a vetted target list.
+
+If yes to any check: delete the atom (or the section). Update
 `coverageFixtures` `MustContain` if the dropped phrase was pinned.
 Update any `references-atoms` pointers.
 
-Target: 1–3 KB recovered.
+**Target: 1-3 KB recovered.**
 
 ### Phase 5 — Allowlist removal
 
 Once both `develop_first_deploy_standard_container` and
-`develop_first_deploy_implicit_webserver_standard` measure under the
-28 KB soft cap:
+`develop_first_deploy_implicit_webserver_standard` (and the new
+`develop_first_deploy_two_runtime_pairs_standard` from Phase 0c) measure
+under the 28 KB body-join cap:
 
 ```bash
 go test ./internal/workflow/ -run TestCorpusCoverage_KnownOverflows_StillOverflow -count=1
 ```
 
-When this **fails** (vacuous skip → both fixtures fit), edit
-`internal/workflow/corpus_coverage_test.go` and empty the
-`knownOverflowFixtures` map. The size-gate test then enforces every
-fixture for every commit.
+When this **fails** for a fixture (vacuous skip → fixture fits), edit
+`internal/workflow/corpus_coverage_test.go` and remove that entry from
+`knownOverflowFixtures`. The size-gate test then enforces every fixture
+for every commit. Repeat per fixture until the map is empty.
+
+**Acceptance** (mirrors §9): all fixtures green under
+`TestCorpusCoverage_OutputUnderMCPCap`; map empty; `make lint-local`
+clean; representative envelopes ideally land under 24 KB body-join
+(8 KB margin for future feature growth).
 
 ## 8. Test guardrails (catch regressions)
 
@@ -1164,26 +1234,29 @@ KB; a < 32 KB hard gate fails immediately). Corrected sequence:
 Don't try to land a hard 32 KB wire-frame gate before the structural
 fix — the gate is the OUTCOME of the trim, not a precondition.
 
-### 17.8 Plan-execution amendments — summary
+### 17.8 Plan-execution amendments — applied to §7
 
-Concrete changes to §7 phasing in light of §17:
+The amendments below have been folded into §7 directly. Listed here as
+the changelog so a reader who knows the original §7 sees what moved.
 
-- **Drop the per-service-duplication blindness.** The Phase 2 list of
-  "top-10 contributors per overflow envelope" in §7 needs to call out
-  which atoms render twice and weight their trim impact accordingly.
-- **Promote Option A/B (§17.3) to Phase 1**, before Axis 4 cross-atom
-  duplicates. Cross-atom dedup (Phase 1 originally) is still useful but
-  recovers single-digit KB compared to ~10 KB from collapsing per-
-  service duplication.
-- **Codex pre-baked review (§15) needs re-verification** — three of its
-  spot-checks did not survive `grep` against the current corpus
-  (`apiMeta` not in `claude_shared.md`; "deploy = new container" duplicate
-  appears in 2 atoms not 5; `${hostname_VARNAME}` is in different atoms
-  than claimed). Treat §15.2 / §15.3 as starting hypotheses that need
-  per-fact re-verification before any trim, not as a vetted target list.
-- **§16.2 fact-inventory discipline still applies** to every touched
-  atom. Even option A/B (no content trim) needs an inventory because
-  the rendering change might subtly alter what the agent sees.
+- **Per-service-duplication kill is now Phase 1** (was implicit / not
+  acknowledged in original §7). Original Phase 1 (cross-atom dups)
+  becomes Phase 2; Phases 3-5 unchanged.
+- **Phase 0 (calibration) inserted** — wire-frame info log, two-metric
+  allowlist entries, multi-pair stretch fixture. None of these break
+  the tree.
+- **§15.2 / §15.3 caveats inlined** — Phase 2 + Phase 4 now carry an
+  explicit "re-verify against current corpus" step because three §15
+  spot-checks did not survive `grep` (apiMeta not in claude_shared.md;
+  "deploy = new container" duplicate appears in 2 atoms not 5;
+  `${hostname_VARNAME}` is in different atoms than claimed).
+- **§16.2 fact-inventory discipline inlined into Phase 1 step 6** —
+  every split atom needs KEEP/MOVE/DROP labels for each fact, committed
+  alongside the split.
+- **Option B chosen as Phase 1 default**, with explicit fallback gate to
+  Option A only if standard fixture's wire-frame is still > 32 KB after
+  all six splits. Pivot decision happens at one specific point, not
+  scattered.
 
 ---
 
