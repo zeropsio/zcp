@@ -8,13 +8,12 @@ strategies: [push-dev]
 environments: [container]
 title: "Push-dev iteration cycle (dev mode, container)"
 references-fields: [ops.DevServerResult.Reason, ops.DevServerResult.Running, ops.DevServerResult.HealthStatus, ops.DevServerResult.LogTail, ops.DevServerResult.StartMillis]
-references-atoms: [develop-dev-server-reason-codes]
+references-atoms: [develop-dev-server-reason-codes, develop-platform-rules-container]
 ---
 
 ### Development workflow
 
-Edit code on `/var/www/{hostname}/` — changes appear instantly inside
-the container. After each edit, run:
+Edit code on `/var/www/{hostname}/`. After each edit, run:
 
 ```
 zerops_dev_server action=restart hostname="{hostname}" command="{start-command}" port={port} healthPath="{path}"

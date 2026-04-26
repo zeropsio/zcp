@@ -7,6 +7,7 @@ modes: [simple]
 strategies: [push-dev]
 environments: [container]
 title: "Push-dev iteration cycle (simple mode, container)"
+references-atoms: [develop-platform-rules-container]
 ---
 
 ### Development workflow

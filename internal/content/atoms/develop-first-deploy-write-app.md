@@ -6,6 +6,7 @@ environments: [container]
 envelopeDeployStates: [never-deployed]
 title: "Write the application code"
 references-fields: []
+references-atoms: [develop-platform-rules-container]
 ---
 
 ### Write the application code
@@ -40,15 +41,10 @@ is there.
    `run.start` rewrites). Don't suppress dev mode — fix the operational
    mismatch and keep hot-reload working.
 
-**Write files** directly to `/var/www/<hostname>/` through the SSHFS
-mount — Read/Edit/Write tools (and plain `rm`, `mv`, `cp` against mount
-paths) all work because the mount bypasses container-side permissions
-at the SFTP protocol level.
-
-**Run commands** (`go build`, `php artisan`, `pytest`, framework CLIs,
-dev server) via SSH into the container: `ssh <hostname> "cd /var/www
-&& <command>"`. The reason is tool availability, not ownership — most
-runtime-specific CLIs aren't installed on the ZCP host.
+**Mount for files, SSH for commands** — see
+`develop-platform-rules-container` for the split. Runtime CLIs
+(`go build`, `php artisan`, `pytest`) need SSH because most aren't on
+the ZCP host.
 
 **Don't run `git init` from the ZCP-side mount.** Push-dev deploy
 handlers manage the container-side git state — calling `git init` on

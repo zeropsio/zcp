@@ -3,6 +3,7 @@ id: develop-http-diagnostic
 priority: 2
 phases: [develop-active]
 title: "HTTP diagnostics — priority order"
+references-atoms: [develop-platform-rules-container]
 ---
 
 ### HTTP diagnostics
@@ -25,10 +26,9 @@ whichever step resolves the error — do **not** default to
 3. **`zerops_logs severity="error" since="5m"`** — surfaces recent error-
    level platform logs (nginx errors, crash traces, deploy failures)
    without opening a shell.
-4. **Framework log file on the mount** — read directly via the `Read`
-   tool (e.g. `/var/www/{hostname}/storage/logs/laravel.log`,
-   `var/log/...`). Do NOT `ssh {hostname} tail …` — the mount exposes the
-   same file, cheaper and without quote-escaping hazards.
+4. **Framework log file on the mount** — read via Read tool (e.g.
+   `/var/www/{hostname}/storage/logs/laravel.log`, `var/log/...`). See
+   `develop-platform-rules-container` for the mount-vs-SSH split.
 5. **Last resort: SSH + curl localhost** — only when the above miss
    something container-local (e.g. worker-only service with no HTTP
    entrypoint; service bound to a non-default interface). Even then,
