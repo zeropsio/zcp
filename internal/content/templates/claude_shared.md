@@ -9,14 +9,17 @@ Runtime app code always runs in Zerops runtime containers.
 
    ```
    zerops_workflow action="start" workflow="develop" \
-     intent="<one-line proposal>" scope=["appdev"]
+     intent="<one-line proposal>" scope=["<runtime-hostname>"]
    ```
 
-   `intent` is your one-line proposal — pick a sensible default
-   ("Streamlit weather dashboard, python@3.12, public subdomain"),
-   start, refine inside the plan-adjust step. Don't ask the user for
-   details the workflow itself collects. 1 task = 1 session: a new
-   `intent` on an open develop session auto-closes the prior one.
+   `scope` lists the runtime services this task touches — get the
+   actual hostnames from `zerops_discover` first; never copy the
+   placeholder verbatim. `intent` is your one-line proposal — pick
+   a sensible default ("Streamlit weather dashboard, python@3.12,
+   public subdomain"), start, refine inside the plan-adjust step.
+   Don't ask the user for details the workflow itself collects.
+   1 task = 1 session: a new `intent` on an open develop session
+   auto-closes the prior one.
 
 2. **Bootstrap** — when no services exist yet, or you need to add
    infrastructure (new service, mode expansion):

@@ -355,10 +355,18 @@ Guidance is pulled on demand via `zerops_guidance` rather than pushed as a singl
 
 ### 6.5 Service deleted externally mid-work-session
 
-- **Envelope**: live API shows service absent; `WorkSession.Services` still references it.
-- **Detection**: `ComputeEnvelope` flags missing services as `GhostServices=[<names>]`.
-- **Plan.Primary** = `{close current develop, rationale: "Referenced services no longer exist on platform."}`
-- **Plan.Secondary** = `{bootstrap to recreate, rationale: "Rebuild infrastructure if accidental."}`
+- **Envelope**: live API shows service absent; `WorkSession.Services`
+  still references it. `ComputeEnvelope` does not currently diff
+  scope-vs-live (no `GhostServices` field) — the missing service
+  simply does not appear in `env.Services`.
+- **Plan.Primary**: regular develop-active dispatch — agent observes
+  the missing service via `zerops_discover` and decides whether to
+  close the work session or restart bootstrap.
+- **Future hardening (not implemented)**: `ComputeEnvelope` could
+  attach a typed `GhostServices []string` field and `BuildPlan`
+  could surface a close-or-recreate Primary, replacing the inferred
+  recovery with an explicit branch. Open issue — pin with a unit
+  test if/when implemented.
 
 ### 6.6 zerops.yaml missing at repo root (local env)
 
@@ -375,7 +383,13 @@ Guidance is pulled on demand via `zerops_guidance` rather than pushed as a singl
 ### 6.8 Container env, self-service not registered
 
 - **Trigger**: container mode detected but `SelfService.Hostname` empty.
-- **Response**: `Phase=idle`, base instructions append carries the "You are running on '{hostname}'" hint from `internal/server/instructions.go` when the self-service is known; when empty the hint is omitted and the LLM resolves identity through `zerops_discover`.
+- **Response**: `Phase=idle`, normal envelope. The "You are running on
+  the ZCP control-plane container `{{.SelfHostname}}`" identity hint
+  lives in the rendered `CLAUDE.md` (from `claude_container.md`
+  template), not in the MCP `Instructions` field. When self-hostname
+  is empty the rendered template still works (placeholder substitutes
+  to empty string) but the LLM cannot pin its host identity until
+  it calls `zerops_discover`.
 - **Plan.Primary** = the usual idle-branch plan; no special handler.
 
 ### 6.9 SSHFS mount out of date after deploy (container env)
