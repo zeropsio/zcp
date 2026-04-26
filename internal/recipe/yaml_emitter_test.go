@@ -321,6 +321,52 @@ func TestWriteComment_StripsLeadingHashFromAuthoredFragment(t *testing.T) {
 	mustContain(t, got, "  # Second line")
 }
 
+// TestEmitDeliverableYAML_Tier0_SuppressesY2FallbackDuplicateOnStageSlot
+// — run-13 §Y2D. Tier 0 dev-pair runtime services with a bare-codebase
+// EnvComments entry (Y2 fallback) used to render the SAME comment
+// above BOTH dev and stage slots. Y2D suppresses the stage slot
+// rendering when the dev slot already emitted the same fallback text.
+func TestEmitDeliverableYAML_Tier0_SuppressesY2FallbackDuplicateOnStageSlot(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.EnvComments = map[string]EnvComments{
+		"0": {Service: map[string]string{
+			"api": "Two slots — apidev and apistage — share one source tree.",
+		}},
+	}
+	got, err := EmitDeliverableYAML(plan, 0)
+	if err != nil {
+		t.Fatalf("EmitDeliverableYAML: %v", err)
+	}
+	occurrences := strings.Count(got, "share one source tree")
+	if occurrences != 1 {
+		t.Errorf("comment rendered %d times; expected 1 (Y2D dedup):\n%s", occurrences, got)
+	}
+}
+
+// TestEmitDeliverableYAML_Tier0_DistinctSlotKeysBothEmit — run-13 §Y2D
+// asymmetry guard. When the agent records DISTINCT comments under
+// `apidev` + `apistage` keys, both render — Y2D only suppresses the
+// fallback duplicate, not deliberately-distinct slot-keyed comments.
+func TestEmitDeliverableYAML_Tier0_DistinctSlotKeysBothEmit(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.EnvComments = map[string]EnvComments{
+		"0": {Service: map[string]string{
+			"apidev":   "Dev slot — hot iteration target.",
+			"apistage": "Stage slot — stable demo target.",
+		}},
+	}
+	got, err := EmitDeliverableYAML(plan, 0)
+	if err != nil {
+		t.Fatalf("EmitDeliverableYAML: %v", err)
+	}
+	mustContain(t, got, "Dev slot — hot iteration target")
+	mustContain(t, got, "Stage slot — stable demo target")
+}
+
 // TestWriteComment_BareProseUnchanged — run-12 §Y1. Plain prose without
 // a leading `#` still gets prefixed once; no doubled-prefix regression.
 func TestWriteComment_BareProseUnchanged(t *testing.T) {

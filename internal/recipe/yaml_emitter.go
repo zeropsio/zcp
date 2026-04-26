@@ -188,6 +188,14 @@ func writeWorkspaceRuntimeStage(b *strings.Builder, cb Codebase, tier Tier) {
 // tier. Tiers 0-1 are dev-pair (dev+stage per codebase); tiers 2-5 are
 // single-slot (api/app/worker only). Runtime services carry
 // zeropsSetup + buildFromGit pointing at the published codebase repos.
+//
+// Run-13 §Y2D: when a dev-pair runtime falls back to the bare-codebase
+// EnvComments key for the dev slot, the SAME prose used to render
+// above the stage slot too (both calls fall through Y2's
+// slot-then-bare lookup). devEmittedFallback tracks the rendered
+// fallback per codebase so the stage slot can suppress the duplicate.
+// Distinct slot-keyed comments (apidev / apistage both set) still
+// render normally — Y2D suppresses fallback duplication only.
 func writeDeliverableServices(b *strings.Builder, plan *Plan, tier Tier) {
 	b.WriteString("services:\n")
 	comments := plan.EnvComments[envKey(tier)].Service
@@ -195,10 +203,14 @@ func writeDeliverableServices(b *strings.Builder, plan *Plan, tier Tier) {
 	for _, cb := range plan.Codebases {
 		switch {
 		case tier.RunsDevContainer && isRuntimeShared(cb, plan):
-			writeRuntimeStage(b, plan, cb, tier, comments) // shared worker: stage only
+			writeRuntimeStage(b, plan, cb, tier, comments, "") // shared worker: stage only
 		case tier.RunsDevContainer:
+			var devEmittedFallback string
+			if comments[cb.Hostname+"dev"] == "" && comments[cb.Hostname] != "" {
+				devEmittedFallback = comments[cb.Hostname]
+			}
 			writeRuntimeDev(b, plan, cb, comments)
-			writeRuntimeStage(b, plan, cb, tier, comments)
+			writeRuntimeStage(b, plan, cb, tier, comments, devEmittedFallback)
 		default:
 			writeRuntimeSingle(b, plan, cb, tier, comments)
 		}
@@ -234,12 +246,24 @@ func writeRuntimeDev(b *strings.Builder, plan *Plan, cb Codebase, comments map[s
 }
 
 // writeRuntimeStage emits a tier-0/1 stage slot for a codebase.
-func writeRuntimeStage(b *strings.Builder, plan *Plan, cb Codebase, tier Tier, comments map[string]string) {
+//
+// devEmittedFallback is the bare-codebase comment writeRuntimeDev
+// already emitted (empty when the dev slot used a slot-keyed comment
+// or had none). When the stage slot's own fallback resolves to the
+// same string, suppress it — Y2D dedup. Distinct slot-keyed comments
+// still render normally.
+func writeRuntimeStage(b *strings.Builder, plan *Plan, cb Codebase, tier Tier, comments map[string]string, devEmittedFallback string) {
 	host := cb.Hostname + "stage"
 	// Same slot-then-bare fallback as writeRuntimeDev. Run-12 §Y2.
 	comment := comments[host]
 	if comment == "" {
 		comment = comments[cb.Hostname]
+		// Run-13 §Y2D — suppress when the dev slot already emitted
+		// the same fallback prose; otherwise both slots carry the
+		// identical block.
+		if comment == devEmittedFallback {
+			comment = ""
+		}
 	}
 	writeComment(b, comment, "  ")
 	fmt.Fprintf(b, "  - hostname: %s\n", host)
