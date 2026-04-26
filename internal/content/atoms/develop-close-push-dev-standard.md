@@ -7,6 +7,7 @@ modes: [standard]
 strategies: [push-dev]
 environments: [container]
 title: "Close task — push-dev standard mode"
+references-atoms: [develop-first-deploy-promote-stage, develop-auto-close-semantics, develop-dynamic-runtime-start-container]
 ---
 
 ### Closing the task
@@ -22,10 +23,9 @@ zerops_deploy sourceService="{hostname}" targetService="{stage-hostname}" setup=
 zerops_verify serviceHostname="{stage-hostname}"
 ```
 
-The cross-deploy packages the dev tree into stage — no second build. Stage
-has a real `run.start` + `healthCheck`, so the platform auto-starts it;
-no `zerops_dev_server` call on the stage side.
-
-If the dev server is already running after a code-only change, skip
-`action=start` and go straight to `zerops_verify`. Confirm first via
-`zerops_dev_server action=status hostname="{hostname}" port={port} healthPath="{path}"`.
+Cross-deploy details (no second build, stage auto-starts via its
+`healthCheck`): see `develop-first-deploy-promote-stage` and
+`develop-auto-close-semantics`. If the dev server is already
+running after a code-only change, run `action=status` first; if
+`running: true`, skip `action=start` and go straight to
+`zerops_verify`.

@@ -5,7 +5,7 @@ phases: [develop-active]
 envelopeDeployStates: [never-deployed]
 title: "First-deploy branch — scaffold + write + deploy + stamp"
 references-fields: [workflow.ServiceSnapshot.Deployed, ops.VerifyResult.Status]
-references-atoms: [develop-first-deploy-scaffold-yaml]
+references-atoms: [develop-first-deploy-scaffold-yaml, develop-verify-matrix]
 ---
 
 ### You're in the develop first-deploy branch
@@ -25,9 +25,9 @@ Flow for each never-deployed runtime:
    argument. Every first deploy uses the default push path;
    `strategy=git-push` requires `GIT_TOKEN` + committed code
    (container) or a configured git remote (local), neither ready yet.
-4. **Verify** with `zerops_verify serviceHostname=<hostname>`. A
-   passing verify combined with a recorded successful deploy flips
-   the envelope's `deployed: true` on the next envelope build.
+4. **Verify** (see `develop-verify-matrix` for per-service path). A
+   passing verify + successful deploy flips the envelope's
+   `deployed: true` on the next envelope build.
 
 Don't skip to edits before the first deploy lands — SSHFS mounts can
 be empty and HTTP probes return errors before any code is delivered.
