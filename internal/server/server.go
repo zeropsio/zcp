@@ -12,6 +12,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/auth"
+	"github.com/zeropsio/zcp/internal/content"
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -76,6 +77,22 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 	adoptionNote := ""
 	if !rtInfo.InContainer && stateDir != "" {
 		adoptionNote = runLocalAutoAdopt(ctx, client, authInfo.ProjectID, stateDir, logger)
+	}
+
+	// Container env: idempotently refresh CLAUDE.md from the embedded
+	// template if the on-disk managed section drifted from this build's
+	// version. Long-lived containers otherwise hold the snapshot from
+	// the last manual `zcp init`, which can be days old and carry
+	// wording the current description-drift lint would refuse (G9).
+	// First-install (no file present) is left for `zcp init` — this is
+	// incremental refresh only.
+	if rtInfo.InContainer && stateDir != "" {
+		claudemdPath := filepath.Join(filepath.Dir(filepath.Dir(stateDir)), "CLAUDE.md")
+		if refreshed, err := content.RefreshClaudeMD(claudemdPath, rtInfo); err != nil {
+			logger.Warn("CLAUDE.md refresh failed", "path", claudemdPath, "err", err)
+		} else if refreshed {
+			logger.Info("CLAUDE.md refreshed from embedded template", "path", claudemdPath)
+		}
 	}
 
 	rc := RuntimeContext{
