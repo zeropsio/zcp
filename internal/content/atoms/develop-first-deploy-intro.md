@@ -2,7 +2,7 @@
 id: develop-first-deploy-intro
 priority: 1
 phases: [develop-active]
-deployStates: [never-deployed]
+envelopeDeployStates: [never-deployed]
 title: "First-deploy branch — scaffold + write + deploy + stamp"
 references-fields: [workflow.ServiceSnapshot.Deployed, ops.VerifyResult.Status]
 references-atoms: [develop-first-deploy-scaffold-yaml]
