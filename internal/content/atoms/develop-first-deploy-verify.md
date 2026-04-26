@@ -2,24 +2,20 @@
 id: develop-first-deploy-verify
 priority: 5
 phases: [develop-active]
-deployStates: [never-deployed]
-title: "Verify the first deploy"
+envelopeDeployStates: [never-deployed]
+title: "First deploy — verify rules"
 references-fields: [ops.VerifyResult.Status, ops.VerifyResult.Checks, ops.CheckResult.Status, ops.CheckResult.Detail]
 references-atoms: [develop-auto-close-semantics]
 ---
 
 ### Verify the first deploy
 
-```
-zerops_verify serviceHostname="{hostname}"
-```
-
-The returned `status` is `healthy`, `degraded`, or `unhealthy`; scan
-`checks[]` for any with `status: fail` and read its `detail` for the
-specific failure. A passing verify corresponds to: service
-`status=ACTIVE` in `zerops_discover`, HTTP 200 from the subdomain root
-(or configured `/status`), and every declared env var present at
-runtime.
+After running `zerops_verify`, the returned `status` is `healthy`,
+`degraded`, or `unhealthy`; scan `checks[]` for any with `status: fail`
+and read its `detail` for the specific failure. A passing verify
+corresponds to: service `status=ACTIVE` in `zerops_discover`, HTTP 200
+from the subdomain root (or configured `/status`), and every declared
+env var present at runtime.
 
 **If unhealthy:**
 
