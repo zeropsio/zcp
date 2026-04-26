@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,16 +26,27 @@ import (
 )
 
 // mockSSHDeployer implements ops.SSHDeployer for integration tests.
+// Records the hostname/command pairs from each call so tests can assert
+// on which arguments reached the deployer (e.g. that workingDir
+// propagated into a `cd` segment).
 type mockSSHDeployer struct {
 	output []byte
 	err    error
+	calls  []sshCall
 }
 
-func (m *mockSSHDeployer) ExecSSH(_ context.Context, _, _ string) ([]byte, error) {
+type sshCall struct {
+	hostname string
+	command  string
+}
+
+func (m *mockSSHDeployer) ExecSSH(_ context.Context, hostname, command string) ([]byte, error) {
+	m.calls = append(m.calls, sshCall{hostname: hostname, command: command})
 	return m.output, m.err
 }
 
-func (m *mockSSHDeployer) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration) ([]byte, error) {
+func (m *mockSSHDeployer) ExecSSHBackground(_ context.Context, hostname, command string, _ time.Duration) ([]byte, error) {
+	m.calls = append(m.calls, sshCall{hostname: hostname, command: command})
 	return m.output, m.err
 }
 
@@ -210,6 +222,18 @@ func TestIntegration_DeploySSHWithWorkingDir(t *testing.T) {
 	}
 	if deployResult.Mode != "ssh" {
 		t.Errorf("mode = %q, want %q", deployResult.Mode, "ssh")
+	}
+	// Phase 6.1: the test name implies workingDir is exercised; assert it
+	// actually propagated into the SSH command. Pre-Phase-6.1 the mock
+	// deployer dropped the command string entirely, so workingDir could
+	// have been any value (or nothing at all) and the test would still
+	// pass. The recorded command must `cd` into the requested path.
+	if len(deployer.calls) == 0 {
+		t.Fatal("expected SSH deployer to be called at least once")
+	}
+	cmd := deployer.calls[0].command
+	if !strings.Contains(cmd, "cd /tmp/myapp") {
+		t.Errorf("SSH command does not cd into the workingDir; got: %s", cmd)
 	}
 }
 

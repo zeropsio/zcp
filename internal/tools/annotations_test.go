@@ -56,42 +56,7 @@ func (*nopSSH) ExecSSHBackground(_ context.Context, _, _ string, _ time.Duration
 func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 	t.Parallel()
 
-	mock := platform.NewMock().
-		WithProject(&platform.Project{ID: "p1", Name: "test"}).
-		WithServices(nil)
-	authInfo := &auth.Info{ProjectID: "p1", Token: "test", APIHost: "localhost"}
-	store, err := knowledge.GetEmbeddedStore()
-	if err != nil {
-		t.Fatalf("knowledge store: %v", err)
-	}
-	logFetcher := platform.NewMockLogFetcher()
-
-	srv := server.New(context.Background(), mock, authInfo, store, logFetcher, &nopSSH{}, &nopMounter{}, runtime.Info{})
-
-	ctx := context.Background()
-	st, ct := mcp.NewInMemoryTransports()
-
-	_, err = srv.MCPServer().Connect(ctx, st, nil)
-	if err != nil {
-		t.Fatalf("server connect: %v", err)
-	}
-
-	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	session, err := client.Connect(ctx, ct, nil)
-	if err != nil {
-		t.Fatalf("client connect: %v", err)
-	}
-	t.Cleanup(func() { session.Close() })
-
-	result, err := session.ListTools(ctx, &mcp.ListToolsParams{})
-	if err != nil {
-		t.Fatalf("list tools: %v", err)
-	}
-
-	toolMap := make(map[string]*mcp.Tool)
-	for _, tool := range result.Tools {
-		toolMap[tool.Name] = tool
-	}
+	toolMap := listAllTools(t)
 
 	tests := []struct {
 		name        string
@@ -191,31 +156,36 @@ func TestAnnotations_DescriptionWordCount(t *testing.T) {
 
 	const maxWords = 60
 
-	// Tools subject to the 60-word cap (excludes workflow, delete, logs, events, mount,
-	// scale which were not part of the trim plan).
-	trimmedTools := []string{
-		"zerops_discover",
-		"zerops_deploy",
-		"zerops_import",
-		"zerops_manage",
-		"zerops_env",
-		"zerops_subdomain",
-		"zerops_knowledge",
-		"zerops_verify",
-		"zerops_process",
-		"zerops_export",
+	// Phase 6.2: cap applies to every registered tool, with explicit
+	// debt tracking instead of silent grandfathering. The pre-Phase-6.2
+	// allowlist excluded six tools "because they were not part of the
+	// trim plan" — opaque exemption that let descriptions grow without
+	// review. The new shape inverts it: every tool is checked, and
+	// each known oversize is named in `untrimmedTools` with its
+	// current word count and the reason its trim is non-trivial. Each
+	// entry is technical debt; trim the description AND remove the
+	// exemption in the same PR. Do NOT add new entries — descriptions
+	// for new tools must fit the cap from day one.
+	untrimmedTools := map[string]string{
+		"zerops_workflow":           "82 words — orchestration tool spans many action verbs; trim collapses per-action prose into a structured args contract",
+		"zerops_dev_server":         "173 words — explains the historical hand-rolled pattern this tool replaces + the reason-code taxonomy; substantial rewrite needed to keep load-bearing parts under 60",
+		"zerops_deploy_batch":       "68 words — borderline; one-pass copy edit",
+		"zerops_record_fact":        "81 words — explains workflow integration semantics; trim by moving workflow context to atom corpus",
+		"zerops_preprocess":         "88 words — explains motivation + invariants; trim by referencing spec instead of restating",
+		"zerops_workspace_manifest": "66 words — borderline; one-pass copy edit",
 	}
 
-	for _, name := range trimmedTools {
+	for name, tool := range toolMap {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			tool, ok := toolMap[name]
-			if !ok {
-				t.Fatalf("tool %s not found", name)
+			if _, exempt := untrimmedTools[name]; exempt {
+				t.Skipf("tool %s: documented untrimmed debt — see untrimmedTools map", name)
 			}
 			words := strings.Fields(tool.Description)
 			if len(words) > maxWords {
-				t.Errorf("tool %s: description has %d words (max %d):\n%s",
+				t.Errorf("tool %s: description has %d words (max %d). "+
+					"Either trim the description, OR add an entry to `untrimmedTools` "+
+					"with a one-line rationale (then file a follow-up issue to actually trim it).\n%s",
 					name, len(words), maxWords, tool.Description)
 			}
 		})
