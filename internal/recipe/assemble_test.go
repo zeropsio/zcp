@@ -683,3 +683,40 @@ func TestAssemble_StitchWritesFragmentsToDisk(t *testing.T) {
 		t.Errorf("env README missing intro fragment:\n%s", envBody)
 	}
 }
+
+// TestAssembleCodebaseClaudeMD_NoTemplateInjectedDevLoop — run-13 §Q.
+// The template formerly carried a hardcoded `## Zerops dev loop` block
+// telling the porter to "Iterate with `zcli push`" — authoring-tool
+// voice that contradicted both the §C scaffold-brief teaching and the
+// porter-canonical dev-loop bullet the agent records under
+// `claude-md/notes`. Template now ships only the section frame; the
+// agent-authored Notes section is the single source of truth.
+func TestAssembleCodebaseClaudeMD_NoTemplateInjectedDevLoop(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.Fragments = map[string]string{
+		"codebase/api/claude-md/service-facts": "- Hostname: apidev\n",
+		"codebase/api/claude-md/notes":         "- Dev loop: SSH into apidev and run `npm run start:dev`\n",
+	}
+	body, _, err := AssembleCodebaseClaudeMD(plan, "api")
+	if err != nil {
+		t.Fatalf("AssembleCodebaseClaudeMD: %v", err)
+	}
+	for _, s := range []string{
+		"zcli push",
+		"zcli vpn",
+		"Iterate with",
+		"## Zerops dev loop",
+	} {
+		if strings.Contains(body, s) {
+			t.Errorf("template-injected forbidden string %q in CLAUDE.md output:\n%s", s, body)
+		}
+	}
+	if !strings.Contains(body, "## Notes") {
+		t.Errorf("Notes section missing from rendered CLAUDE.md:\n%s", body)
+	}
+	if !strings.Contains(body, "npm run start:dev") {
+		t.Errorf("agent-authored dev-loop bullet missing from Notes section:\n%s", body)
+	}
+}
