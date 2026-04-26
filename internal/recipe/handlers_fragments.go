@@ -10,6 +10,12 @@ import (
 // run-9-readiness commit 10 / J). The handler dispatcher calls
 // recordFragment; this file owns the validation + storage machinery.
 
+// modeReplace is the mode= literal for record-fragment that overwrites
+// the prior body (vs the default append on append-class ids). Constant
+// to keep the literal single-source — the dispatcher, the
+// append-vs-replace branch, and the priorBody capture all read it.
+const modeReplace = "replace"
+
 // recordFragment validates the fragment id against the plan, applies
 // append-or-overwrite semantics, and stores the body on plan.Fragments
 // (or on the typed EnvComments for env/*/import-comments/* ids).
@@ -24,7 +30,7 @@ import (
 // after a complete-phase validator violation.
 func recordFragment(sess *Session, id, body, mode string) (int, bool, string, error) {
 	switch mode {
-	case "", "append", "replace":
+	case "", "append", modeReplace:
 	default:
 		return 0, false, "", fmt.Errorf("record-fragment: mode must be 'append' or 'replace', got %q", mode)
 	}
@@ -45,7 +51,7 @@ func recordFragment(sess *Session, id, body, mode string) (int, bool, string, er
 	if sess.Plan.Fragments == nil {
 		sess.Plan.Fragments = map[string]string{}
 	}
-	if isAppendFragmentID(id) && mode != "replace" {
+	if isAppendFragmentID(id) && mode != modeReplace {
 		existing := sess.Plan.Fragments[id]
 		if existing == "" {
 			sess.Plan.Fragments[id] = body
@@ -57,7 +63,7 @@ func recordFragment(sess *Session, id, body, mode string) (int, bool, string, er
 	}
 	priorBody := sess.Plan.Fragments[id]
 	sess.Plan.Fragments[id] = body
-	if mode != "replace" {
+	if mode != modeReplace {
 		// Overwrite-class ids (root/*, env/*) carry no priorBody — the
 		// agent never had a "merge from prior" workflow for them.
 		priorBody = ""
