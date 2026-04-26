@@ -223,6 +223,128 @@ func TestSynthesize_DeployStateFilter(t *testing.T) {
 	}
 }
 
+// TestSynthesize_EnvelopeDeployStateFilter pins the envelope-scoped twin
+// of DeployStates: an atom with envelopeDeployStates: [never-deployed]
+// renders ONCE per envelope (not per service) when at least one
+// bootstrapped service is in that state. Per-service iteration is the
+// trap that motivated this axis (per-service render duplication
+// contributed ~10 KB to the standard first-deploy fixture's overflow,
+// see plans/atom-corpus-context-trim-2026-04-26.md §4.4 / §17.3).
+func TestSynthesize_EnvelopeDeployStateFilter(t *testing.T) {
+	t.Parallel()
+
+	corpus := []KnowledgeAtom{
+		{
+			ID: "rules-once", Priority: 1,
+			Axes: AxisVector{
+				Phases:               []Phase{PhaseDevelopActive},
+				EnvelopeDeployStates: []DeployState{DeployStateNeverDeployed},
+			},
+			Body: "Envelope rules.",
+		},
+		{
+			ID: "cmds-perservice", Priority: 2,
+			Axes: AxisVector{
+				Phases:       []Phase{PhaseDevelopActive},
+				DeployStates: []DeployState{DeployStateNeverDeployed},
+			},
+			Body: "Per-service cmds for {hostname}.",
+		},
+	}
+
+	// Two never-deployed services in the envelope. The rules atom must
+	// render exactly once (envelope-scoped); the cmds atom must render
+	// twice (per-service). Pre-fix Synthesize had no envelope-deploy-state
+	// axis, so a rules atom declaring deployStates would have rendered 2×.
+	twoServices := StateEnvelope{
+		Phase: PhaseDevelopActive,
+		Services: []ServiceSnapshot{
+			{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: false},
+			{Hostname: "appstage", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: false},
+		},
+	}
+	matches, err := Synthesize(twoServices, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	var rulesCount, cmdsCount int
+	var cmdsHosts []string
+	for _, m := range matches {
+		switch m.AtomID {
+		case "rules-once":
+			rulesCount++
+		case "cmds-perservice":
+			cmdsCount++
+			if m.Service != nil {
+				cmdsHosts = append(cmdsHosts, m.Service.Hostname)
+			}
+		}
+	}
+	if rulesCount != 1 {
+		t.Errorf("envelope-scoped rules atom rendered %d times, want 1", rulesCount)
+	}
+	if cmdsCount != 2 {
+		t.Errorf("service-scoped cmds atom rendered %d times, want 2", cmdsCount)
+	}
+	if len(cmdsHosts) != 2 || cmdsHosts[0] == cmdsHosts[1] {
+		t.Errorf("service-scoped cmds atom should bind to both hostnames once each, got: %v", cmdsHosts)
+	}
+
+	// Envelope with only deployed services — rules atom must NOT fire.
+	allDeployed := StateEnvelope{
+		Phase: PhaseDevelopActive,
+		Services: []ServiceSnapshot{
+			{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: true},
+		},
+	}
+	matches, err = Synthesize(allDeployed, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize all-deployed: %v", err)
+	}
+	for _, m := range matches {
+		if m.AtomID == "rules-once" {
+			t.Errorf("envelope-scoped rules atom must not fire when no service is never-deployed")
+		}
+	}
+
+	// Bootstrapped=false service is skipped (deploy state undefined).
+	notBootstrapped := StateEnvelope{
+		Phase: PhaseDevelopActive,
+		Services: []ServiceSnapshot{
+			{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: false},
+		},
+	}
+	matches, err = Synthesize(notBootstrapped, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize not-bootstrapped: %v", err)
+	}
+	for _, m := range matches {
+		if m.AtomID == "rules-once" {
+			t.Errorf("envelope-scoped rules atom must not fire when no service is bootstrapped")
+		}
+	}
+}
+
+// TestParseAtom_DeployStatesAndEnvelopeDeployStatesMutuallyExclusive
+// pins the parse-time guard: an atom declaring BOTH service-scoped
+// deployStates and envelope-scoped envelopeDeployStates is ambiguous —
+// service-scoped wants to render per-host, envelope-scoped wants to
+// render once. The parser rejects so the conflict surfaces in the build,
+// not as silent double-rendering at runtime.
+func TestParseAtom_DeployStatesAndEnvelopeDeployStatesMutuallyExclusive(t *testing.T) {
+	t.Parallel()
+	src := "---\n" +
+		"id: bad-atom\n" +
+		"phases: [develop-active]\n" +
+		"deployStates: [never-deployed]\n" +
+		"envelopeDeployStates: [never-deployed]\n" +
+		"---\n" +
+		"body\n"
+	if _, err := ParseAtom(src); err == nil {
+		t.Fatal("ParseAtom: expected error for atom declaring both deployStates and envelopeDeployStates")
+	}
+}
+
 // TestSynthesize_ServiceScopedAxesRequireSameService pins the conjunction
 // invariant: an atom declaring multiple service-scoped axes (modes,
 // strategies, runtimes, deployStates) fires only when ONE service satisfies

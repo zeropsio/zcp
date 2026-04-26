@@ -133,9 +133,9 @@ func BodiesOf(matches []MatchedRender) []string {
 }
 
 // atomEnvelopeAxesMatch checks the envelope-wide axes (phase,
-// environment, route, step, idleScenario). Service-scoped axes are
-// evaluated separately per Synthesize so the matched service identity
-// flows through.
+// environment, route, step, idleScenario, envelopeDeployStates).
+// Service-scoped axes are evaluated separately per Synthesize so the
+// matched service identity flows through.
 func atomEnvelopeAxesMatch(atom KnowledgeAtom, env StateEnvelope) bool {
 	if !phaseInSet(env.Phase, atom.Axes.Phases) {
 		return false
@@ -158,7 +158,36 @@ func atomEnvelopeAxesMatch(atom KnowledgeAtom, env StateEnvelope) bool {
 			return false
 		}
 	}
+	if len(atom.Axes.EnvelopeDeployStates) > 0 && !envelopeDeployStateMatches(env.Services, atom.Axes.EnvelopeDeployStates) {
+		return false
+	}
 	return true
+}
+
+// envelopeDeployStateMatches reports whether ANY bootstrapped service in
+// the envelope satisfies one of the atom's declared envelope-scoped deploy
+// states. Used by atoms that carry envelope-level guidance gated on the
+// project containing at least one matching service. Service-scoped
+// DeployStates remains the default — see AxisVector.EnvelopeDeployStates
+// docs for when to pick which.
+//
+// Bootstrapped=false services are skipped: deploy state is only meaningful
+// once the bootstrap pipeline has stamped a service. This mirrors
+// serviceSatisfiesAxes's handling of DeployStates.
+func envelopeDeployStateMatches(services []ServiceSnapshot, want []DeployState) bool {
+	for _, svc := range services {
+		if !svc.Bootstrapped {
+			continue
+		}
+		state := DeployStateNeverDeployed
+		if svc.Deployed {
+			state = DeployStateDeployed
+		}
+		if slices.Contains(want, state) {
+			return true
+		}
+	}
+	return false
 }
 
 // hasServiceScopedAxes reports whether the atom declares any axis whose

@@ -57,6 +57,16 @@ type AxisVector struct {
 	Steps         []string
 	IdleScenarios []IdleScenario
 	DeployStates  []DeployState
+	// EnvelopeDeployStates is the envelope-scoped twin of DeployStates:
+	// the atom matches once if at least one bootstrapped service in the
+	// envelope satisfies any of the listed states, and renders 1× via the
+	// global primaryHostnames picker (no per-service iteration). Lets a
+	// "rules" atom carry concept-level guidance once per envelope while a
+	// sibling "cmds" atom carries per-host imperative tool calls. Empty =
+	// no envelope-scoped deploy-state gate (atom matches independently of
+	// deploy state). MUTUALLY EXCLUSIVE with DeployStates per atom — an
+	// atom declaring both is rejected at parse time.
+	EnvelopeDeployStates []DeployState
 	// ServiceStatuses scopes the atom to a specific live service status
 	// (`ServiceSnapshot.Status`) — typically the platform-side state like
 	// `ACTIVE` or `READY_TO_DEPLOY`. Service-scoped: at least one service
@@ -72,23 +82,24 @@ type AxisVector struct {
 //
 //nolint:gochecknoglobals // immutable lookup table
 var validAtomFrontmatterKeys = map[string]struct{}{
-	"id":                 {},
-	"title":              {},
-	"priority":           {},
-	"phases":             {},
-	"modes":              {},
-	"environments":       {},
-	"strategies":         {},
-	"triggers":           {},
-	"runtimes":           {},
-	"routes":             {},
-	"steps":              {},
-	"idleScenarios":      {},
-	"deployStates":       {},
-	"serviceStatus":      {},
-	"references-fields":  {},
-	"references-atoms":   {},
-	"pinned-by-scenario": {},
+	"id":                   {},
+	"title":                {},
+	"priority":             {},
+	"phases":               {},
+	"modes":                {},
+	"environments":         {},
+	"strategies":           {},
+	"triggers":             {},
+	"runtimes":             {},
+	"routes":               {},
+	"steps":                {},
+	"idleScenarios":        {},
+	"deployStates":         {},
+	"envelopeDeployStates": {},
+	"serviceStatus":        {},
+	"references-fields":    {},
+	"references-atoms":     {},
+	"pinned-by-scenario":   {},
 }
 
 // listAxisKeys is the subset of frontmatter keys whose value MUST be in
@@ -97,20 +108,21 @@ var validAtomFrontmatterKeys = map[string]struct{}{
 //
 //nolint:gochecknoglobals // immutable lookup table
 var listAxisKeys = map[string]struct{}{
-	"phases":             {},
-	"modes":              {},
-	"environments":       {},
-	"strategies":         {},
-	"triggers":           {},
-	"runtimes":           {},
-	"routes":             {},
-	"steps":              {},
-	"idleScenarios":      {},
-	"deployStates":       {},
-	"serviceStatus":      {},
-	"references-fields":  {},
-	"references-atoms":   {},
-	"pinned-by-scenario": {},
+	"phases":               {},
+	"modes":                {},
+	"environments":         {},
+	"strategies":           {},
+	"triggers":             {},
+	"runtimes":             {},
+	"routes":               {},
+	"steps":                {},
+	"idleScenarios":        {},
+	"deployStates":         {},
+	"envelopeDeployStates": {},
+	"serviceStatus":        {},
+	"references-fields":    {},
+	"references-atoms":     {},
+	"pinned-by-scenario":   {},
 }
 
 // validAtomEnumValues maps each axis key to its closed value set.
@@ -183,6 +195,10 @@ var validAtomEnumValues = map[string]map[string]struct{}{
 		"never-deployed": {},
 		"deployed":       {},
 	},
+	"envelopeDeployStates": {
+		"never-deployed": {},
+		"deployed":       {},
+	},
 }
 
 // validateAtomFrontmatter is the strict pre-parse gate (plan C5). It runs
@@ -200,7 +216,7 @@ var validAtomEnumValues = map[string]map[string]struct{}{
 func validateAtomFrontmatter(fields map[string]string) error {
 	for key := range fields {
 		if _, ok := validAtomFrontmatterKeys[key]; !ok {
-			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, strategies, triggers, runtimes, routes, steps, idleScenarios, deployStates, serviceStatus, references-fields, references-atoms, pinned-by-scenario)", key)
+			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, strategies, triggers, runtimes, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, references-fields, references-atoms, pinned-by-scenario)", key)
 		}
 	}
 	for key, raw := range fields {
@@ -271,17 +287,18 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 		Body:     strings.TrimSpace(body),
 		Priority: atomPriority(fields["priority"]),
 		Axes: AxisVector{
-			Phases:          parsePhases(fields["phases"]),
-			Modes:           parseModes(fields["modes"]),
-			Environments:    parseEnvironments(fields["environments"]),
-			Strategies:      parseStrategies(fields["strategies"]),
-			Triggers:        parseTriggers(fields["triggers"]),
-			Runtimes:        parseRuntimes(fields["runtimes"]),
-			Routes:          parseRoutes(fields["routes"]),
-			Steps:           parseYAMLList(fields["steps"]),
-			IdleScenarios:   parseIdleScenarios(fields["idleScenarios"]),
-			DeployStates:    parseDeployStates(fields["deployStates"]),
-			ServiceStatuses: parseYAMLList(fields["serviceStatus"]),
+			Phases:               parsePhases(fields["phases"]),
+			Modes:                parseModes(fields["modes"]),
+			Environments:         parseEnvironments(fields["environments"]),
+			Strategies:           parseStrategies(fields["strategies"]),
+			Triggers:             parseTriggers(fields["triggers"]),
+			Runtimes:             parseRuntimes(fields["runtimes"]),
+			Routes:               parseRoutes(fields["routes"]),
+			Steps:                parseYAMLList(fields["steps"]),
+			IdleScenarios:        parseIdleScenarios(fields["idleScenarios"]),
+			DeployStates:         parseDeployStates(fields["deployStates"]),
+			EnvelopeDeployStates: parseDeployStates(fields["envelopeDeployStates"]),
+			ServiceStatuses:      parseYAMLList(fields["serviceStatus"]),
 		},
 		ReferencesFields:  parseYAMLList(fields["references-fields"]),
 		ReferencesAtoms:   parseYAMLList(fields["references-atoms"]),
@@ -292,6 +309,9 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 	}
 	if len(atom.Axes.Phases) == 0 {
 		return atom, fmt.Errorf("atom %q missing required field: phases", atom.ID)
+	}
+	if len(atom.Axes.DeployStates) > 0 && len(atom.Axes.EnvelopeDeployStates) > 0 {
+		return atom, fmt.Errorf("atom %q declares both deployStates (service-scoped) and envelopeDeployStates (envelope-scoped) — pick one; an atom is either per-service or once-per-envelope", atom.ID)
 	}
 	for _, ref := range atom.ReferencesFields {
 		if !referencesFieldPattern.MatchString(ref) {
