@@ -32,6 +32,22 @@ sub-agents — wipe-and-reinit is acceptable for a dogfood run; in
 production, the publish path may want to preserve any meaningful deploy
 history. For run 12, wipe-and-reinit.
 
+## Git identity on the dev container
+
+The dev container has no git identity by default; the SSH-deploy
+sequence runs git operations (commit, push) and fails with
+`SSH_DEPLOY_FAILED: ... default identity` until identity is set.
+Before the first deploy in any codebase:
+
+```
+ssh <hostname>dev "git config --global user.name 'zerops-recipe-agent' \
+  && git config --global user.email 'recipe-agent@zerops.io'"
+```
+
+This is one-time per dev container; subsequent deploys reuse the
+configured identity. Run-13's features-1 burned ~3 min recovering
+from two SSH_DEPLOY_FAILED hits before setting identity.
+
 ## Dispatch every codebase scaffold IN PARALLEL
 
 With 2 or 3 codebases, dispatch all sub-agents in a single message (one
@@ -143,6 +159,24 @@ targets. The sub-agent discovers: library choice, client config shape,
 package name, framework-specific import path. Do NOT pre-chew library
 decisions in the dispatch wrapper — the sub-agent consults
 `zerops_knowledge` and picks based on its framework expertise.
+
+## Scaffold close — main-agent action sequence
+
+After all scaffold sub-agents have terminated:
+
+1. `zerops_deploy` for each codebase (cross-deploy dev → stage if not
+   already done by the sub-agent).
+2. `zerops_verify` for each cross-deployed service.
+3. `zerops_recipe action=complete-phase phase=scaffold` (no codebase
+   parameter). The gate requires every codebase deployed + verified on
+   dev + stage before it returns `ok:true`. Calling complete-phase
+   before deploy + verify wastes a turn — the gate fails on missing
+   verifications and you re-run the same sequence anyway.
+
+The per-codebase pre-termination self-validate (sub-agent's call
+during scaffold) is a different action — the sub-agent already
+self-validates before terminating. Main's no-codebase call is the
+final phase-advance gate.
 
 ## Complete-phase gate
 

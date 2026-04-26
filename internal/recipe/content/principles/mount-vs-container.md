@@ -42,3 +42,13 @@ env, different cache, different runtime).
 Framework CLIs are one-shot — they exit in seconds, no channel-
 lifetime concern. Dev servers are long-running — they need
 `zerops_dev_server` (see `principles/dev-loop.md`), not ssh.
+
+## zcli scope
+
+`zcli` is a host-side tool. Inside the dev container (over `ssh
+<host>`) the binary is not available — DO NOT use `zcli env get`,
+`zcli vpn`, or other zcli verbs in container-side commands. The
+container has the platform-injected env vars (`$DB_PASSWORD`,
+`$NATS_USER`, etc.) by construction; read those instead. If a
+project-level secret needs fetching from outside the container, run
+`zcli` on the host shell, never tunneled through ssh.

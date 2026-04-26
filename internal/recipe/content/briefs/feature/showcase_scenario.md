@@ -45,6 +45,23 @@ panel; a recipe without object-storage doesn't render a Storage panel.
   shows real Postgres rows; the Queue panel shows real worker output;
   the Search panel shows real Meilisearch hits.
 
+### Stable selectors for browser-walk verification
+
+Per-snapshot DOM element refs go stale across `zerops_browser` calls.
+A click against a previous-snapshot ref produces a silent no-op (no
+error; nothing happens), and the agent burns minutes diagnosing the
+"button does nothing" symptom. Use stable attribute selectors:
+
+- Add `data-feature="<name>"` to interactive elements you intend to
+  exercise (publish triggers, search inputs, upload buttons).
+- Add `data-test="<name>"` to result-display elements (search results,
+  X-Cache badges, queue-feed entries, status indicators).
+- In `zerops_browser` calls, target by attribute (`[data-feature=
+  "publish"]`) rather than by per-snapshot ref.
+
+If a click appears to do nothing, suspect a stale ref; re-query the
+DOM via the data attribute and retry.
+
 ## Per-panel browser-verification
 
 After implementing the panels, run `zerops_browser` against the SPA and

@@ -61,9 +61,16 @@ import (
 // older "Correcting a fragment" subsection — broader scope, ~500
 // bytes more) and feature's content_extension (~400 bytes added).
 // Scaffold cap 24 → 26 KB; feature cap 16 → 18 KB.
+//
+// Run-14 §B.1 + §D.3 + §D.4 raised both caps. Scaffold 26 → 28 KB
+// for the frontend-conditional build-tool-host-allowlist atom (D.3,
+// ~700 bytes when active) plus the prior-body teaching addition in
+// content_extension. Feature 18 → 20 KB for the showcase-scenario
+// stable-selectors subsection (D.4, ~520 bytes) and the run-14 §B.1
+// mode=replace priorBody-merge teaching.
 const (
-	ScaffoldBriefCap = 26 * 1024
-	FeatureBriefCap  = 18 * 1024
+	ScaffoldBriefCap = 28 * 1024
+	FeatureBriefCap  = 20 * 1024
 )
 
 // BriefKind identifies a sub-agent role. Scaffold + feature have
@@ -163,6 +170,14 @@ func BuildScaffoldBriefWithResolver(plan *Plan, cb Codebase, parent *ParentRecip
 	}
 	if anyCodebaseHasInitCommands(plan) {
 		atoms = append(atoms, "principles/init-commands-model.md")
+	}
+	// Run-14 §D.3 (R-13-15) — frontend codebases on a Node base ship a
+	// bundler dev server (Vite, Webpack, Rollup) whose default
+	// host-allowlist rejects Zerops dev/stage subdomains. The atom
+	// teaches the positive shape (set the bundler's allowlist knob);
+	// other roles don't author bundler config.
+	if cb.Role == RoleFrontend && strings.HasPrefix(cb.BaseRuntime, "nodejs") {
+		atoms = append(atoms, "briefs/scaffold/build_tool_host_allowlist.md")
 	}
 	for _, atom := range atoms {
 		body, err := readAtom(atom)

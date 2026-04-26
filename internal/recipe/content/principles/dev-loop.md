@@ -32,6 +32,20 @@ Dev self-deploys require `deployFiles: .` — narrowing to
 `[dist, package.json]` wipes the source tree on the next cycle.
 Cross-deploys (dev → stage) use narrow lists.
 
+## Watcher PID volatility (nest, etc.)
+
+`nest start --watch` rotates its child process on every rebuild. A
+pidfile captured at first start is stale after any source-change
+rebuild — `kill -0 <pid>` against the saved pid returns false even
+though the watcher is healthy. Use the listening port (`netstat -lnt`,
+`ss -lnt`, or the dev-server's status endpoint) for liveness, not a
+saved pidfile.
+
+Other watch-loop dev servers (vite, webpack-dev-server) generally keep
+a stable parent process — pidfile-based liveness works there. The
+nest-watcher pattern is the outlier; treat watcher PIDs as ephemeral
+by default unless the framework documents otherwise.
+
 ## Implicit-webserver + frontend-bundle case
 
 Implicit-webserver runtimes (`php-nginx`, `php-apache`, `nginx`,
