@@ -22,5 +22,5 @@ is not chosen at bootstrap; develop picks it on first use.
 `zerops_workflow action="status"` summarises the transition and
 points at the primary follow-ups: `develop` (iterate on the code the
 recipe provided) and `strategy` (configure deploy strategy via
-`zerops_workflow action="strategy" strategies={hostname:value}` —
+`zerops_workflow action="strategy" strategies={"<hostname>":"<value>"}` —
 push-git triggers the central git deploy setup flow).

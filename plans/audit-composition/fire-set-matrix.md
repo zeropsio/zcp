@@ -6,17 +6,26 @@ plausible-envelope keys that satisfy its axes; ranked ascending.
 Counts are post-`Synthesize` so atoms that pass the axis filter but
 fail mid-render (e.g. a placeholder bug) read as 0.
 
-**Scale:** 79 atoms × 4749 plausible envelopes; 4739 successful
-Synthesize runs (10 errors all from `bootstrap-recipe-close`'s
-content bug — see § Findings below).
+**Scale (post F0-DEAD-1 sidecar fix):** 79 atoms × 4749 plausible
+envelopes; **4749 successful Synthesize runs** (0 errors). The
+sidecar fix changed `bootstrap-recipe-close.md:25` from
+`strategies={hostname:value}` to `strategies={"<hostname>":"<value>"}` —
+proper JSON syntax, `isPlaceholderToken` rejects tokens with `"`.
+Pre-fix snapshot for reference: 4739 successful runs, 10 errors all
+on `bootstrap-recipe-close`.
+
+**DEAD candidates (post-fix): 0.** Phase 1 dead-atom sweep is
+effectively a no-op for deletion; only the §7 step 3 marginal-atom
+recording (single-fixture fire-set atoms → `merge-candidates.md`
+for Phase 7) remains.
 
 ## Table — atom_id × fire-set count (ascending)
 
 | count | atom_id |
 |---|---|
-| 0 | bootstrap-recipe-close *(content bug — see findings)* |
 | 1 | export |
 | 2 | bootstrap-classic-plan-dynamic |
+| 10 | bootstrap-recipe-close *(post sidecar fix — fires across env × runtime variants of recipe/close)* |
 | 2 | bootstrap-classic-plan-static |
 | 2 | bootstrap-resume |
 | 2 | develop-closed-auto |

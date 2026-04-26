@@ -1,12 +1,1 @@
-# 10 envelopes errored during Synthesize:
-  bootstrap/local/recipe/close/svc-implicit-webserver: atom bootstrap-recipe-close: unknown placeholder "{hostname:value}" in atom body
-  bootstrap/container/recipe/close/no-svc: atom bootstrap-recipe-close: unknown placeholder "{hostname:value}" in atom body
-  bootstrap/local/recipe/close/no-svc: atom bootstrap-recipe-close: unknown placeholder "{hostname:value}" in atom body
-  bootstrap/local/recipe/close/svc-dynamic: atom bootstrap-recipe-close: unknown placeholder "{hostname:value}" in atom body
-  bootstrap/local/recipe/close/svc-managed: atom bootstrap-recipe-close: unknown placeholder "{hostname:value}" in atom body
-  bootstrap/container/recipe/close/svc-dynamic: atom bootstrap-recipe-close: unknown placeholder "{hostname:value}" in atom body
-  bootstrap/container/recipe/close/svc-static: atom bootstrap-recipe-close: unknown placeholder "{hostname:value}" in atom body
-  bootstrap/container/recipe/close/svc-implicit-webserver: atom bootstrap-recipe-close: unknown placeholder "{hostname:value}" in atom body
-  bootstrap/container/recipe/close/svc-managed: atom bootstrap-recipe-close: unknown placeholder "{hostname:value}" in atom body
-  bootstrap/local/recipe/close/svc-static: atom bootstrap-recipe-close: unknown placeholder "{hostname:value}" in atom body
-  ... +0 more
+# Post-F0-DEAD-1-sidecar-fix run (2026-04-26): 0 errored envelopes (was 10 pre-fix).

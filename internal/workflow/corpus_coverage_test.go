@@ -143,6 +143,28 @@ func bootstrapCoverageFixtures() []coverageFixture {
 			},
 		},
 		{
+			// F0-DEAD-1 follow-up (2026-04-26): the prior absence of a
+			// route=recipe step=close fixture allowed an unescaped
+			// `{hostname:value}` placeholder in `bootstrap-recipe-close.md`
+			// to ship undetected — Synthesize errors out for the entire
+			// envelope when the placeholder leaks through. This fixture
+			// pins the post-fix render so the bug class can't recur.
+			Name: "bootstrap_recipe_close",
+			Envelope: StateEnvelope{
+				Phase:       PhaseBootstrapActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{{
+					Hostname: "appdev", TypeVersion: "nodejs@22",
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
+				}},
+				Bootstrap: &BootstrapSessionSummary{Route: BootstrapRouteRecipe, Step: StepClose},
+			},
+			MustContain: []string{
+				`zerops_workflow action="complete" step="close"`,
+				`strategies={"<hostname>":"<value>"}`,
+			},
+		},
+		{
 			Name: "bootstrap_adopt_discover",
 			Envelope: StateEnvelope{
 				Phase:       PhaseBootstrapActive,
