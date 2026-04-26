@@ -1,26 +1,154 @@
-# Composition baseline scores — Phase 0 (executor pass, 2026-04-26)
+# Composition baseline scores — Phase 0 (post-rubric-refinement, 2026-04-26)
 
 Per atom-corpus-hygiene plan §6.2 + §7 Phase 0 step 4. Five fixtures
-× five dimensions (1-5 scale per §6.2 rubric anchors). Scoring done
-by reading the full rendered output of each fixture against the
-rubric. Per §6.6 L4 cross-validation, Codex CORPUS-SCAN round 2
-(§10.1 P0 row 2) re-scores independently — disagreements ≥ 2 on
-any dimension trigger rubric refinement.
+× five dimensions (1-5 scale per §6.2 rubric anchors).
+
+**Convergence history:**
+
+1. **Executor pass** (initial): scoring under loose interpretation of
+   §6.2 anchor language. Coherence/Coverage-gap/Redundancy on the
+   lenient end ("contradicts in framing" did not trigger score 1;
+   "tool present" was sufficient for coverage-gap 5; "verbatim
+   restatement" was the redundancy bar).
+2. **Codex independent pass** (`baseline-scores-codex.md`): scoring
+   under strict interpretation. Coherence 1 across all fixtures;
+   Coverage-gap 2-3; Redundancy 1 across all.
+3. **Disagreement ≥ 2 on multiple dimensions** triggered §6.6 L4
+   rubric refinement. Three anchors in §6.2 were tightened (commit
+   <pending> updates plan):
+   - **Coherence 1**: now explicitly names "two atoms recommend
+     mutually exclusive tool calls for the same likely next action"
+     as the score-1 condition. Score 3 is "framing/strategy contradiction
+     while named tool calls still agree."
+   - **Coverage-gap 5**: now requires "exactly one unambiguous
+     recommendation per likely next action." Competing recommendations
+     cap at score 3.
+   - **Redundancy 1**: now counts "paraphrases + per-service hostname-
+     substituted copies" as restated facts (was: verbatim only).
+4. **Convergence pass**: Codex's stricter scoring applies the refined
+   anchors. Adopted as the official Phase 0 baseline below.
 
 Rendered-fixture sources:
 `plans/audit-composition/rendered-fixtures/<fixture-name>.md`
 (captured by a one-shot helper on commit 55a9fbdf — helper deleted
 post-capture, fixtures durable).
 
-## Score table
+## Score table — POST-REFINEMENT BASELINE (2026-04-26)
 
-| Fixture | Coherence | Density | Redundancy | Coverage-gap | Task-relevance | Notes |
-|---|---|---|---|---|---|---|
-| `develop_first_deploy_standard_container` | 3 | 3 | 2 | 5 | 4 | 23 atoms / 27228 B / 26.6 KB. Most atoms task-critical (scaffold, write-app, deploy, verify, promote-stage, dev-server-start). Restated facts: `[.]` in 3 atoms; `${hostname_KEY}` in 2 atoms; auto-close in 3 atoms. Transitions OK except apiMeta jumps in early. |
-| `develop_first_deploy_implicit_webserver_standard` | 3 | 3 | 2 | 5 | 4 | 24 atoms / 28869 B / 28.2 KB. Adds `Implicit-Webserver Runtime` + `Dev/simple + frontend asset pipeline` atoms; drops `Dynamic-runtime dev server`. Same restatement profile as standard. |
-| `develop_first_deploy_two_runtime_pairs_standard` | 2 | 3 | 1 | 5 | 4 | 29 atoms / 30028 B / 29.3 KB. **Per-service double-render**: `Dynamic-runtime dev server (container)` and `Promote the first deploy to stage` BOTH appear twice (once per runtime). Coherence drops to 2 because reader hits the same heading twice in the same document. Redundancy drops to 1 because of the double-render. Task-relevance stays high — both pairs need their own scaffold/deploy. |
-| `develop_push_dev_dev_container` | 3 | 3 | 2 | 5 | 3 | 21 atoms / 26588 B / 26.0 KB. Post-deploy edit loop for dev-mode standard service. Task-relevance is 3 not 4 because some atoms aren't act-upon for an EDIT cycle: `Two deploy classes, one tool` (cross-deploy details), `Self-deploy invariant`, `Cross-deploy has opposite semantics` are info, not act-on. Mode-expansion atom fires here despite envelope already being standard — one unneeded atom, but small. |
-| `develop_simple_deployed_container` | 2 | 3 | 2 | 5 | **1** | 20 atoms / 23258 B / 22.7 KB. **User-test 2026-04-26 anchor**: only ~3 atoms are STRICTLY act-upon for "edit a simple-mode Go service + deploy" task — `develop-push-dev-workflow-simple` (the deploy command pair), `develop-checklist-simple-mode` (healthCheck reminder), `develop-close-push-dev-simple` (close commands). 5+ atoms are partial-relevance defensive (apiMeta, env-channels, http-diagnostic). 3 atoms are IRRELEVANT for this task: `develop-dev-server-triage` (1908 B — simple-mode auto-starts, no manual dev-server lifecycle), `develop-dev-server-reason-codes` (1264 B — dev-server tool not used in simple mode), `develop-mode-expansion` (1282 B — user is editing existing service, not expanding). Total irrelevant noise: ~4500 B / 22.7 KB ≈ 20 % pure waste. |
+| Fixture | Coherence | Density | Redundancy | Coverage-gap | Task-relevance |
+|---|---|---|---|---|---|
+| `develop_first_deploy_standard_container` | 1 | 3 | 1 | 3 | 3 |
+| `develop_first_deploy_implicit_webserver_standard` | 1 | 3 | 1 | 2 | 3 |
+| `develop_first_deploy_two_runtime_pairs_standard` | 1 | 2 | 1 | 2 | 3 |
+| `develop_push_dev_dev_container` | 1 | 3 | 1 | 3 | 2 |
+| `develop_simple_deployed_container` | 1 | 3 | 1 | 3 | 2 |
+
+### Score deltas vs initial executor pass (for transparency)
+
+| Fixture | Coherence | Density | Redundancy | Coverage-gap | Task-relevance |
+|---|---|---|---|---|---|
+| `develop_first_deploy_standard_container` | 3 → **1** (Δ−2) | 3 → 3 | 2 → **1** (Δ−1) | 5 → **3** (Δ−2) | 4 → **3** (Δ−1) |
+| `develop_first_deploy_implicit_webserver_standard` | 3 → **1** (Δ−2) | 3 → 3 | 2 → **1** (Δ−1) | 5 → **2** (Δ−3) | 4 → **3** (Δ−1) |
+| `develop_first_deploy_two_runtime_pairs_standard` | 2 → **1** (Δ−1) | 3 → **2** (Δ−1) | 1 → 1 | 5 → **2** (Δ−3) | 4 → **3** (Δ−1) |
+| `develop_push_dev_dev_container` | 3 → **1** (Δ−2) | 3 → 3 | 2 → **1** (Δ−1) | 5 → **3** (Δ−2) | 3 → **2** (Δ−1) |
+| `develop_simple_deployed_container` | 2 → **1** (Δ−1) | 3 → 3 | 2 → **1** (Δ−1) | 5 → **3** (Δ−2) | 1 → **2** (Δ+1) |
+
+The simple-deployed task-relevance moved 1 → 2 because Codex's
+strict reading uses partial-relevance counting (consistent with
+plan §6.2 rubric) — some atoms are partial-relevance defensive
+rather than fully irrelevant.
+
+## Per-fixture qualitative justification (post-refinement)
+
+### develop_first_deploy_standard_container
+
+Most-likely tasks: scaffold zerops.yaml + app code, first deploy
+dev then stage, diagnose build/runtime/HTTP.
+
+- **Coherence 1**: Competing stage-deploy instructions (direct
+  `zerops_deploy targetService="appstage"` vs cross-promote from
+  dev) are mutually exclusive tool calls for the same likely next
+  action — refined anchor score 1.
+- **Density 3**: 2.0-2.9 facts/KB.
+- **Redundancy 1**: 7+ restated facts (including paraphrases):
+  `[.]` self-deploy, env var deployment, auto-close, verify, HTTP
+  diagnostics, dev-server restart.
+- **Coverage-gap 3**: Stage first-deploy vs promotion is competing
+  recommendations on a likely next action — refined anchor caps
+  at 3.
+- **Task-relevance 3**: 50-74 % relevant; broad apiMeta / env /
+  platform / dev-server / auto-close material is partial noise.
+
+### develop_first_deploy_implicit_webserver_standard
+
+Most-likely tasks: scaffold PHP nginx zerops.yaml without
+`run.start`/`run.ports`, deploy dev, handle webserver/log
+diagnostics.
+
+- **Coherence 1**: Implicit-webserver atom says "do not SSH to
+  start a server"; generic runtime atoms say bind `0.0.0.0` and
+  set `run.start` — mutually exclusive recommendations.
+- **Density 3**: 2.0-2.9 facts/KB.
+- **Redundancy 1**: 7+ restated facts.
+- **Coverage-gap 2**: Likely-action conflict (dynamic dev-server
+  guidance leaking into implicit-webserver flow) plus multiple
+  lower-probability ambiguities.
+- **Task-relevance 3**: 50-74 %.
+
+### develop_first_deploy_two_runtime_pairs_standard
+
+Most-likely tasks: scaffold multi-service zerops.yaml for app+api
+pairs, deploy and verify both dev services, promote both to stage.
+
+- **Coherence 1**: Identical headings with hostname substitution
+  plus direct-stage-deploy vs cross-promote conflict repeated for
+  both pairs.
+- **Density 2**: Whole per-service sections duplicated, pushing
+  useful facts/KB down.
+- **Redundancy 1**: Two duplicate dynamic-dev-server atoms + two
+  duplicate stage-promotion atoms + common deploy/env/verify
+  repetition.
+- **Coverage-gap 2**: Direct-stage vs dev-to-stage promotion
+  conflict for both pairs unresolved.
+- **Task-relevance 3**: First-deploy topics present, but
+  double-rendered per-service content and defensive atoms leave
+  only 50-74 % effective value.
+
+### develop_push_dev_dev_container
+
+Most-likely tasks: edit code on `/var/www/appdev/`, restart or
+start dev server, diagnose dev-server or HTTP verification
+failures.
+
+- **Coherence 1**: "Edit → deploy → verify" instruction competes
+  with "restart only, no redeploy for code-only changes" —
+  mutually exclusive next actions.
+- **Density 3**: 2.0-2.9 facts/KB.
+- **Redundancy 1**: Dev-server status/start/restart/logs +
+  deployFiles `[.]` + deploy strategy + auto-close + verify +
+  platform rules across many atoms.
+- **Coverage-gap 3**: Edit-loop path unclear because restart-only
+  and deploy-required flows compete without clear authority.
+- **Task-relevance 2**: 25-49 %; cross-deploy, mode-expansion,
+  apiMeta, env-channel, generic platform material rather than the
+  edit-loop itself.
+
+### develop_simple_deployed_container
+
+Most-likely tasks: edit Go simple-mode app, redeploy single
+service, diagnose deploy or HTTP verification failures.
+
+- **Coherence 1**: Simple-mode guidance (platform owns lifecycle,
+  no manual server start) contradicts detailed `zerops_dev_server`
+  action atoms that still render.
+- **Density 3**: 2.0-2.9 facts/KB.
+- **Redundancy 1**: 7+ restated facts (deployFiles, deploy/verify,
+  dev-server, platform rules, auto-close, strategy awareness).
+- **Coverage-gap 3**: Deploy/verify path present, but `setup="prod"`
+  plus dev-server noise creates likely-action ambiguity.
+- **Task-relevance 2**: 25-49 %; most effective content is simple
+  checklist/workflow/close; many atoms are defensive or
+  irrelevant.
 
 ## Per-dimension rubric application
 
@@ -112,12 +240,51 @@ their axes to drop them from envelopes where they don't help.
 
 | Atom | Fire-set count (post Phase 0) | Phase 7 axis-tighten target |
 |---|---|---|
-| `develop-mode-expansion` | 768 | Drop from `modes:[simple]` envelopes (mode expansion N/A on simple — the atom literally describes expanding to standard, contradicting the simple-mode envelope). User-test evidence. |
-| `develop-dev-server-triage` | 578 | Drop from `runtimes:[implicit-webserver, static, managed]` envelopes (no manual dev-server lifecycle for those). For `runtimes:[dynamic]` add `modes:[dev]` constraint — simple/standard/stage modes auto-start. User-test evidence. |
-| `develop-dev-server-reason-codes` | 578 | Same axis tightening as `develop-dev-server-triage`. |
+| `develop-mode-expansion` | 768 | Drop from `modes:[simple]` envelopes (mode expansion N/A on simple — the atom literally describes expanding to standard, contradicting the simple-mode envelope). User-test evidence + Codex agree. |
+| `develop-dev-server-triage` | 578 | Drop from `runtimes:[implicit-webserver, static, managed]` envelopes (no manual dev-server lifecycle for those). For `runtimes:[dynamic]` add `modes:[dev]` constraint — simple/standard/stage modes auto-start. User-test evidence + Codex agree. |
+| `develop-dev-server-reason-codes` | 578 | Same axis tightening as `develop-dev-server-triage`. Codex agree. |
+| `develop-dynamic-runtime-start-container` | 193 | Conditional render gate **NEW (Codex finding)**: "if no dynamic runtime, suppress all `zerops_dev_server` atoms". This atom + triage + reason-codes form a cluster — Phase 7 should consider whether `runtimes:[dynamic]` + `modes:[dev]` filter is sufficient, or if the synthesizer needs a phase-level conditional. |
+| `develop-api-error-meta` | 4720 | **NEW (Codex finding)**: renders early and broadly; in non-error edit-loop envelopes it is pure noise. Phase 7 axis-tighten target — possibly a `serviceStatus:[ERROR]` or similar conditional. |
 | `develop-static-workflow` | 1152 | Investigate — does this atom's content belong on every develop envelope or only on `runtimes:[static]`? |
 | `develop-implicit-webserver` | 1152 | Currently fires on `runtimes:[implicit-webserver]` only (correct). Count is high because there are many implicit-webserver-touching envelopes. Not a tightening target. |
-| `develop-strategy-awareness` | 3458 | Investigate — count is broad. Phase 7 should check whether the content depends on a specific strategy axis or not. |
+| `develop-strategy-awareness` | 3458 | Investigate — count is broad. Phase 7 should check whether the content depends on a specific strategy axis or not. Codex agree (renders into already-strategized edit loops where switching is not a likely task). |
+
+## Competing-next-action problem (NEW Phase 1+ finding)
+
+Codex's strict-coherence reading surfaced a class of issue not
+captured in the original plan: **multiple atoms render mutually
+exclusive tool calls for the same likely next action**, leaving
+the agent without authoritative guidance.
+
+Concrete instances (per Codex round):
+
+1. **Direct stage deploy vs cross-promote** — first-deploy fixtures
+   render BOTH `zerops_deploy targetService="appstage"` (direct,
+   from `develop-first-deploy-execute`) AND
+   `zerops_deploy sourceService="appdev" targetService="appstage"`
+   (cross-promote, from `develop-first-deploy-promote-stage`). For a
+   standard-mode pair envelope, the agent has no signal which is
+   correct. Phase 1+ task: pick one canonical path.
+
+2. **Edit→deploy vs restart-only** — push-dev-dev fixtures show
+   `develop-change-drives-deploy` mandates redeploy after every
+   edit, while dev-server-triage atoms suggest restart-only for
+   code-only changes. Phase 1+ task: align the edit-cycle
+   guidance — likely the change-drives-deploy stays canonical and
+   dev-server-triage's "restart" framing is an edge case.
+
+3. **Implicit-webserver vs dynamic dev-server lifecycle** —
+   implicit-webserver fixtures render `develop-implicit-webserver`
+   ("do not SSH to start a server") AND `develop-dynamic-runtime-
+   start-container` (manual dev-server start). The latter should
+   be axis-tightened to NOT fire on implicit-webserver envelopes.
+
+These are NOT Phase 0 work; they're Phase 1+ deliverables. Phase 1
+dead-atom sweep is unaffected (no DEAD atoms confirmed by the
+POST-WORK Codex round); Phase 2 cross-atom dedup will likely
+reveal/resolve the direct-vs-promote conflict; Phase 7 axis-
+tightening will resolve the implicit-webserver-vs-dynamic and
+edit-loop-vs-restart ambiguities.
 
 ## Aggregate observations
 
@@ -146,20 +313,29 @@ their axes to drop them from envelopes where they don't help.
 4. **No coverage gaps surfaced** — Phase 8 doesn't need to add new
    atoms.
 
-## Cross-validation handoff to Codex CORPUS-SCAN round 2
+## Cross-validation completed
 
-Per §10.1 P0 row 2, Codex independently scores the same five
-fixtures using the same rubric. The Codex output must arrive at:
+Per §10.1 P0 row 2 + §6.6 L4: Codex independently scored the same
+five fixtures (full output:
+`plans/audit-composition/baseline-scores-codex.md`). Disagreement
+≥ 2 on multiple dimensions triggered rubric refinement in §6.2:
 
-- score-by-score deltas vs this baseline (acceptable: ±1 per
-  dimension; ≥2 disagreement triggers rubric refinement per §6.6 L4)
-- agreement on the Phase 7 axis-tightening targets (or counter-
-  proposals)
-- agreement on the aggregate observations (or counter-narratives)
+- Coherence 1 anchor: now names "mutually exclusive tool calls
+  for the same likely next action"
+- Coverage-gap 5 anchor: now requires "exactly one unambiguous
+  recommendation per likely next action"
+- Redundancy: now counts paraphrases + per-service hostname-
+  substituted copies
 
-Save Codex output as
-`plans/audit-composition/baseline-scores-codex.md` (per §10.1).
+After refinement, Codex's stricter scoring becomes the official
+post-refinement Phase 0 baseline (the table at the top of this
+file is the converged-and-refined scoring). The executor's
+initial scores are kept in the deltas table for transparency.
 
-If ≥ 2 disagreement on any dimension, refine the rubric anchor in
-§6.2 (commit) and both executors re-score before treating any
-score as ground truth.
+Phase 7 re-scoring (per §7 Phase 7 step 3) will re-apply the
+refined rubric to the same fixtures + the user-test envelope.
+Coherence + density + task-relevance must improve OR stay flat;
+redundancy + coverage-gap must strictly improve. The Phase 7 EXIT
+target for the simple-deployed user-test fixture's task-relevance
+is ≥ 4 (was 2 post-refinement; was 1 pre-refinement under loose
+interpretation).

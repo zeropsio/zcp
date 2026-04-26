@@ -366,9 +366,9 @@ disconnected snippets?**
 |---|---|
 | 5 | Reads as one cohesive document. Atom transitions are invisible — sections build on each other; cross-atom references resolve naturally. |
 | 4 | Mostly cohesive. 1-2 awkward transitions where a section feels dropped in. |
-| 3 | Sections are individually readable but transitions are jarring. The agent has to mentally reset between atoms. |
+| 3 | Sections are individually readable but transitions are jarring. The agent has to mentally reset between atoms. One atom contradicts another in **framing or strategy** but the named tool calls still agree. |
 | 2 | Bag of snippets. Sections contradict tone, repeat orientation, or address different audiences. |
-| 1 | Incoherent. Sections actively contradict each other (different recommendations, different vocabulary). |
+| 1 | Incoherent. Sections actively contradict each other (different recommendations, different vocabulary). **Specifically: two atoms recommend mutually exclusive tool calls for the same likely next action** (e.g. one atom says `zerops_deploy targetService=stage` while another says `zerops_deploy sourceService=dev targetService=stage` for the same envelope — the agent cannot pick without external authority). |
 
 **Density — load-bearing facts per KB.**
 
@@ -385,13 +385,19 @@ act on. Count distinct facts; divide by KB. Anchors:
 
 **Redundancy — facts restated by 2+ atoms in this output.**
 
+A "restated fact" includes verbatim duplication, paraphrases of the
+same operational rule, AND per-service hostname-substituted copies
+of the same atom body (e.g. two-pair envelopes that render the
+`Dynamic-runtime dev server` atom twice with different hostnames —
+counts as one restated fact, not two atoms).
+
 | Score | Threshold (per fixture render) |
 |---|---|
 | 5 | 0 cross-atom restated facts. |
 | 4 | 1 restated fact (often platform invariant — borderline acceptable). |
 | 3 | 2-3 restated facts. Cross-link should replace at least one. |
 | 2 | 4-6 restated facts. |
-| 1 | 7+ restated facts. Significant cross-atom dup territory. |
+| 1 | 7+ restated facts (counting paraphrases + per-service hostname-substituted copies). Significant cross-atom dup territory. |
 
 **Coverage-gap — facts the agent would need that aren't present.**
 
@@ -399,12 +405,18 @@ To score: for the envelope shape, enumerate the 5-10 most likely next
 agent actions; for each, check whether the rendered output names the
 tool / arg shape / decision rule needed. Count gaps.
 
+A "gap" includes ambiguity from competing recommendations: if two
+atoms render mutually-incompatible commands for the same likely next
+action, score 5 is precluded — the agent has tools but no
+authoritative path. A score of 5 requires "exactly one unambiguous
+recommendation per likely next action."
+
 | Score | Threshold |
 |---|---|
-| 5 | 0 gaps. Every plausible next-action is supported. |
+| 5 | 0 gaps. Every plausible next-action is supported by exactly one unambiguous recommendation. |
 | 4 | 1 gap on a low-probability next-action. |
-| 3 | 1 gap on a likely next-action OR 2-3 gaps total. |
-| 2 | Likely-action gap + multiple low-probability gaps. |
+| 3 | 1 gap on a likely next-action OR 2-3 gaps total OR competing recommendations exist for ONE likely next action (cap at 3 even if all individual atoms render). |
+| 2 | Likely-action gap + multiple low-probability gaps. Or: competing recommendations on multiple likely actions. |
 | 1 | Major gap (e.g. "what tool to call next" unclear). |
 
 **Task-relevance — fraction of rendered atoms relevant to the most
