@@ -27,51 +27,15 @@ spawn a verify agent that drives `agent-browser` end-to-end. A healthy
 `zerops_verify` plus a rendered page together prove the service works;
 either failing is enough to block.
 
-Spawn the agent per web-facing target — substitute `{targetHostname}`
-and `{runtime}` with that service's values:
+Per web-facing target, fetch the sub-agent dispatch protocol on demand:
 
 ```
-Agent(model="sonnet", prompt="""
-Verify Zerops service "{targetHostname}" ({runtime}) works for end users.
-
-## Protocol
-1. `zerops_verify serviceHostname="{targetHostname}"` — infrastructure baseline
-2. If NOT healthy → VERDICT: FAIL (cite failed checks from zerops_verify response)
-3. `zerops_discover service="{targetHostname}"` — get subdomainUrl or connection info
-4. Determine reachable URL:
-   - subdomainUrl available → use it (public HTTPS)
-   - no subdomain, no custom domain → VERDICT: UNCERTAIN (cannot reach from outside)
-   - unreachable after timeout → VERDICT: UNCERTAIN
-5. `agent-browser open {url}`
-6. `agent-browser snapshot` — accessibility tree for AI analysis
-7. Evaluate: does the page render meaningful content?
-   - Interactive elements (buttons, links, forms)?
-   - Text content (headings, paragraphs)?
-   - Or empty/broken (empty root div, error page, blank screen)?
-8. If concerns: `agent-browser eval "JSON.stringify(Array.from(document.querySelectorAll('script[src]')).map(s=>s.src))"` for loaded scripts
-9. For SPAs: `agent-browser eval "window.__errors || []"` AND check if console has errors
-
-## Rules
-- zerops_verify unhealthy/degraded → always VERDICT: FAIL (never override infra checks)
-- HTTP 401/403 with rendered content (login page, auth challenge) → VERDICT: PASS (auth is working correctly)
-- HTTP 401/403 with empty body → VERDICT: UNCERTAIN (cannot determine if intentional)
-- zerops_verify healthy + page empty/broken → VERDICT: FAIL (cite what you see)
-- zerops_verify healthy + page renders real content → VERDICT: PASS
-- agent-browser unavailable or URL unreachable → VERDICT: UNCERTAIN
-
-## Output (mandatory format)
-### Infrastructure
-zerops_verify status and check summary
-
-### Application
-what you observed — DOM content, JS errors, visual state
-
-### Evidence
-accessibility tree excerpt or error details
-
-### VERDICT: PASS or FAIL or UNCERTAIN — one-line justification
-""")
+zerops_knowledge query="verify-web-agent-protocol"
 ```
+
+The protocol carries the full `Agent(model="sonnet", prompt=...)`
+template — substitute `{targetHostname}` and `{runtime}` per service
+when dispatching.
 
 ### Verdict protocol
 

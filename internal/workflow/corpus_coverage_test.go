@@ -784,9 +784,8 @@ func TestCorpusCoverage_RoundTrip(t *testing.T) {
 // larger than body-join — see plans/atom-corpus-context-trim-2026-04-26.md
 // §17.1 and the wire-frame info Logf in `_OutputUnderMCPCap`).
 var knownOverflowFixtures = map[string]string{
-	"develop_first_deploy_standard_container":          "body-join 40228 B / wire-frame 43255 B (2026-04-26): standard-mode first-deploy renders dev+stage atoms × runtime + container atoms. Trim plan: atom-corpus-context-trim-2026-04-26.md.",
-	"develop_first_deploy_implicit_webserver_standard": "body-join 43447 B / wire-frame 46646 B (2026-04-26): standard-mode first-deploy + implicit-webserver atoms × dev+stage pair. Trim plan: atom-corpus-context-trim-2026-04-26.md.",
-	"develop_first_deploy_two_runtime_pairs_standard":  "body-join 62905 B / wire-frame 67740 B (2026-04-26): two standard-mode dev/stage pairs (4 services). Per-service-axis atoms render 4×; predicts > 60 KB body-join until structural collapse. Trim plan: atom-corpus-context-trim-2026-04-26.md (Phase 1 fallback gate).",
+	"develop_first_deploy_implicit_webserver_standard": "body-join 31400 B / wire-frame 33840 B (Phase 3 progress): standard-mode first-deploy + implicit-webserver atoms × dev+stage pair. Started at body-join 43447 B / wire-frame 46646 B (2026-04-26). Trim plan: atom-corpus-context-trim-2026-04-26.md.",
+	"develop_first_deploy_two_runtime_pairs_standard":  "body-join 30672 B / wire-frame 33364 B (Phase 3 progress): two standard-mode dev/stage pairs (4 services). Started at body-join 62905 B / wire-frame 67740 B (2026-04-26). Per-service-axis atoms render 4×. Trim plan: atom-corpus-context-trim-2026-04-26.md.",
 }
 
 // TestCorpusCoverage_OutputUnderMCPCap pins G13: every representative
