@@ -133,15 +133,17 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 		Stage:    target.Name,
 		Mode:     topology.PlanModeLocalStage,
 		Strategy: topology.StrategyUnset,
-		Next:     fmt.Sprintf(`Pick a strategy: zerops_workflow action="strategy" strategies={%q:%q}`, local.Hostname, topology.StrategyPushDev),
 	}), nil, nil
 }
 
+// G11: response carries no `next` hint. Strategy is unset on purpose;
+// the strategy-review atom (deployStates=deployed, strategies=unset)
+// fires on the next `zerops_workflow action="status"` and surfaces the
+// per-service strategy prompt with full envelope context.
 type adoptLocalResponse struct {
 	Status   string                  `json:"status"`
 	Project  string                  `json:"project"`
 	Stage    string                  `json:"stage"`
 	Mode     topology.Mode           `json:"mode"`
 	Strategy topology.DeployStrategy `json:"strategy"`
-	Next     string                  `json:"next"`
 }

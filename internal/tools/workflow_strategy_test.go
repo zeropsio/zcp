@@ -18,27 +18,22 @@ func TestHandleStrategy_ValidUpdate(t *testing.T) {
 	tests := []struct {
 		name       string
 		strategies map[string]string
-		wantNext   string // substring expected in next hint
 	}{
 		{
 			"push-dev",
 			map[string]string{"appdev": topology.StrategyPushDev},
-			`workflow="develop"`,
 		},
 		{
 			"push-git",
 			map[string]string{"appdev": topology.StrategyPushGit},
-			`strategy="git-push"`,
 		},
 		{
 			"manual",
 			map[string]string{"appdev": topology.StrategyManual},
-			"deploy directly",
 		},
 		{
 			"multiple services",
 			map[string]string{"appdev": topology.StrategyPushDev, "apidev": topology.StrategyPushDev},
-			`workflow="develop"`,
 		},
 	}
 	for _, tt := range tests {
@@ -74,8 +69,12 @@ func TestHandleStrategy_ValidUpdate(t *testing.T) {
 			if resp["status"] != "updated" {
 				t.Errorf("status: want updated, got %q", resp["status"])
 			}
-			if !strings.Contains(resp["next"], tt.wantNext) {
-				t.Errorf("next hint should contain %q, got %q", tt.wantNext, resp["next"])
+			// G11: response MUST NOT carry a `next` hint — the canonical
+			// "what next" surface is `zerops_workflow action="status"`,
+			// reading the live envelope. Pre-fix this carried a hand-
+			// rolled per-strategy hint that drifted from the atom guidance.
+			if _, hasNext := resp["next"]; hasNext {
+				t.Errorf("response must not include `next` field; agent calls status for next plan; got: %q", resp["next"])
 			}
 
 			// Verify meta was persisted with strategy + confirmed flag.
@@ -203,6 +202,16 @@ func TestHandleStrategy_EmptyStrategies_ListingMode(t *testing.T) {
 	}
 
 	text := resultText(t, result)
+	// Parse into a permissive map first to assert the absence of `next`
+	// (G11: response must not carry a free-form hint).
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(text), &raw); err != nil {
+		t.Fatalf("unmarshal listing response: %v (text: %s)", err, text)
+	}
+	if _, hasNext := raw["next"]; hasNext {
+		t.Errorf("listing response must not include `next` field; per-entry Hint suffices and status owns the lifecycle Plan; got: %v", raw["next"])
+	}
+
 	var resp struct {
 		Status   string `json:"status"`
 		Services []struct {
@@ -210,10 +219,9 @@ func TestHandleStrategy_EmptyStrategies_ListingMode(t *testing.T) {
 			Current  string   `json:"current"`
 			Options  []string `json:"options"`
 		} `json:"services"`
-		Next string `json:"next"`
 	}
 	if err := json.Unmarshal([]byte(text), &resp); err != nil {
-		t.Fatalf("unmarshal listing response: %v (text: %s)", err, text)
+		t.Fatalf("unmarshal typed response: %v (text: %s)", err, text)
 	}
 
 	if resp.Status != "list" {
@@ -238,9 +246,6 @@ func TestHandleStrategy_EmptyStrategies_ListingMode(t *testing.T) {
 	}
 	if _, seen := byHost["incomplete"]; seen {
 		t.Error("listing must skip incomplete metas")
-	}
-	if !strings.Contains(resp.Next, "push-git") {
-		t.Errorf("next hint should mention push-git setup: %s", resp.Next)
 	}
 }
 

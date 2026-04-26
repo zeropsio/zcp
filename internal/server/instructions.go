@@ -89,7 +89,18 @@ func ComposeStateHint(stateDir string, pid int) string {
 		}
 	}
 
-	if ws, _ := workflow.LoadWorkSession(stateDir, pid); ws != nil && ws.ClosedAt == "" {
+	ws, wsErr := workflow.LoadWorkSession(stateDir, pid)
+	if wsErr != nil {
+		// Don't drop silently — a corrupt work-session file is the only
+		// thing standing between the agent and its recovery primitive.
+		// Logged to stderr so operators can see it before the agent's
+		// first status call surfaces the same error with its
+		// recovery Suggestion attached.
+		fmt.Fprintf(os.Stderr,
+			"zcp: state-hint skipped: load work session for pid=%d: %v\n",
+			pid, wsErr)
+	}
+	if ws != nil && ws.ClosedAt == "" {
 		lines = append(lines, fmt.Sprintf(
 			"Open develop work session: %q on %v. Use "+
 				"zerops_workflow action=\"status\" for current state.",

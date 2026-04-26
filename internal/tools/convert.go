@@ -33,6 +33,26 @@ const (
 	statusFailed                 = platform.ProcessStatusFailed
 )
 
+// wrapStageErr preserves a typed PlatformError when the underlying err
+// already carries one, prefixing the message with stage for UX context;
+// otherwise wraps the raw error in a generic ErrAPIError-coded
+// PlatformError. Used by lifecycle pipeline sites (ComputeEnvelope,
+// LoadAtomCorpus, Synthesize) so a corrupt-work-session error
+// surfaces its recovery Suggestion to the LLM instead of being
+// flattened to ErrNotImplemented with no suggestion.
+func wrapStageErr(stage string, err error) *platform.PlatformError {
+	var pe *platform.PlatformError
+	if errors.As(err, &pe) {
+		out := *pe
+		out.Message = fmt.Sprintf("%s: %s", stage, pe.Message)
+		return &out
+	}
+	return platform.NewPlatformError(
+		platform.ErrAPIError,
+		fmt.Sprintf("%s: %v", stage, err),
+		"")
+}
+
 // convertError converts an error to a CallToolResult with IsError=true.
 // PlatformErrors are serialized as structured JSON with code/error/suggestion.
 // Generic errors are returned as plain text.

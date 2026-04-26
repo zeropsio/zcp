@@ -47,6 +47,7 @@ const (
 	ErrExportBlocked          = "EXPORT_BLOCKED"
 	ErrMissingEvidence        = "MISSING_EVIDENCE"
 	ErrTopicEmpty             = "TOPIC_EMPTY"
+	ErrWorkSessionCorrupt     = "WORK_SESSION_CORRUPT"
 )
 
 // PlatformError carries a ZCP error code, message, and suggestion.

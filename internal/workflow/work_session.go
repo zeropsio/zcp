@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/platform"
 )
 
 // WorkflowWork is the registry workflow name for per-PID work sessions.
@@ -121,7 +123,18 @@ func LoadWorkSession(stateDir string, pid int) (*WorkSession, error) {
 	}
 	var ws WorkSession
 	if err := json.Unmarshal(data, &ws); err != nil {
-		return nil, fmt.Errorf("unmarshal work session: %w", err)
+		// Surface as PlatformError so handleLifecycleStatus and any other
+		// recovery surface can attach the canonical reset suggestion.
+		// Recovery primitive (action="status") is the agent's only
+		// re-orientation call after compaction; if it dies on a corrupt
+		// file it must teach the next step itself.
+		pe := platform.NewPlatformError(
+			platform.ErrWorkSessionCorrupt,
+			fmt.Sprintf("Work session file is corrupt: %v", err),
+			`Discard the file and start fresh: zerops_workflow action="reset" workflow="develop". Code work survives in git/filesystem; only attempt history is lost.`,
+		)
+		pe.Diagnostic = fmt.Sprintf("path=%s; parser-detail=%v", path, err)
+		return nil, pe
 	}
 	return &ws, nil
 }

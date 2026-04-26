@@ -1,11 +1,14 @@
 package workflow
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -508,5 +511,51 @@ func TestCleanStaleWorkSessions(t *testing.T) {
 	}
 	if _, err := os.Stat(workSessionPath(dir, os.Getpid())); err != nil {
 		t.Errorf("live PID file removed: %v", err)
+	}
+}
+
+// TestLoadWorkSession_Corrupt_ReturnsPlatformError pins the recovery
+// surface: a malformed work-session JSON file must fail with a typed
+// PlatformError(ErrWorkSessionCorrupt) carrying a Suggestion that names
+// the canonical recovery action (action="reset" workflow="develop").
+//
+// Without this, ComputeEnvelope -> handleLifecycleStatus surfaces a leaf
+// "unmarshal work session" error with no recovery hint — Codex G3.
+// The recovery primitive (zerops_workflow action="status") is the agent's
+// only re-orientation call after compaction; if it fails it must teach
+// the next step itself, not hand back an opaque parser error.
+func TestLoadWorkSession_Corrupt_ReturnsPlatformError(t *testing.T) {
+	dir := t.TempDir()
+	pid := os.Getpid()
+	if err := os.MkdirAll(filepath.Join(dir, workSessionDirName), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(workSessionPath(dir, pid), []byte("{malformed"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	_, err := LoadWorkSession(dir, pid)
+	if err == nil {
+		t.Fatal("expected error from malformed file, got nil")
+	}
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) {
+		t.Fatalf("expected *platform.PlatformError, got %T: %v", err, err)
+	}
+	if pe.Code != platform.ErrWorkSessionCorrupt {
+		t.Errorf("expected code %q, got %q", platform.ErrWorkSessionCorrupt, pe.Code)
+	}
+	if pe.Suggestion == "" {
+		t.Fatal("expected non-empty Suggestion to direct the agent to recovery")
+	}
+	for _, want := range []string{"action=", "reset", "workflow="} {
+		if !strings.Contains(pe.Suggestion, want) {
+			t.Errorf("Suggestion should contain %q; got: %q", want, pe.Suggestion)
+		}
+	}
+	// Diagnostic should preserve the path and parser detail so a human
+	// debugging the file knows which entry to inspect.
+	if pe.Diagnostic == "" {
+		t.Error("expected Diagnostic to carry the parser detail + path")
 	}
 }

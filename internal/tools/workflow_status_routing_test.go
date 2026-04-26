@@ -26,6 +26,9 @@ package tools
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -160,5 +163,55 @@ func TestHandleLifecycleStatus_PlatformError_PropagatesAsMCP(t *testing.T) {
 	text := getTextContent(t, result)
 	if !strings.Contains(text, "Compute envelope") {
 		t.Errorf("error surface should name the failing stage; got: %s", text)
+	}
+}
+
+// TestHandleLifecycleStatus_CorruptWorkSession_SurfacesRecovery pins the
+// cross-layer contract for the recovery primitive: when the per-PID
+// work-session file is corrupt, action="status" must surface the typed
+// PlatformError(ErrWorkSessionCorrupt) all the way to the LLM with its
+// recovery Suggestion intact (zerops_workflow action="reset"
+// workflow="develop"). Pre-fix the handler wrapped every ComputeEnvelope
+// failure in ErrNotImplemented, deleting the suggestion the agent
+// needed to recover.
+func TestHandleLifecycleStatus_CorruptWorkSession_SurfacesRecovery(t *testing.T) {
+	// Cannot t.Parallel — work session uses os.Getpid() and the corrupt
+	// file lives at a per-PID path that other tests would race on.
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "work"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	pidFile := filepath.Join(dir, "work", strconv.Itoa(os.Getpid())+".json")
+	if err := os.WriteFile(pidFile, []byte("{malformed"), 0o644); err != nil {
+		t.Fatalf("write corrupt: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(pidFile) })
+
+	eng := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "test"})
+
+	result, _, err := handleLifecycleStatus(
+		context.Background(), eng, mock, "proj-1", runtime.Info{InContainer: true},
+	)
+	if err != nil {
+		t.Fatalf("handleLifecycleStatus must not return raw error; got: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected IsError=true on corrupt work session, got success: %s",
+			getTextContent(t, result))
+	}
+
+	text := getTextContent(t, result)
+	for _, want := range []string{
+		platform.ErrWorkSessionCorrupt, // typed code reaches the wire
+		"action=",                      // suggestion names the recovery action
+		"reset",
+		"workflow=",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("corrupt-session error surface missing %q\nwire text:\n%s", want, text)
+		}
 	}
 }

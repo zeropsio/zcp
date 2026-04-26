@@ -358,10 +358,14 @@ func detectActiveWorkflow(engine *workflow.Engine) string {
 // resetReport is the structured audit returned by handleReset so the agent
 // sees exactly what the mutation cleared and what survived — observability
 // for a state transition that was previously a one-line "success" message.
+//
+// No `next` hint: per P4/KD-01 the canonical "what next" surface is
+// `zerops_workflow action="status"`. Mutation responses stay terse; the
+// agent calls status to get the Plan. Pre-fix every mutation handler
+// rolled its own `next` string (G11) — drift class.
 type resetReport struct {
 	Cleared   resetSnapshot `json:"cleared"`
 	Preserved resetSnapshot `json:"preserved"`
-	Next      string        `json:"next"`
 }
 
 type resetSnapshot struct {
@@ -406,7 +410,6 @@ func handleReset(ctx context.Context, engine *workflow.Engine, client platform.C
 	report := resetReport{
 		Cleared:   cleared,
 		Preserved: preserved,
-		Next:      buildResetNextHint(preserved),
 	}
 	return jsonResult(report), nil, nil
 }
@@ -464,23 +467,6 @@ func countCompletedBootstrapSteps(bs *workflow.BootstrapState) int {
 		}
 	}
 	return n
-}
-
-// buildResetNextHint picks the most useful follow-up call based on what
-// survived reset — live services suggest adopt; complete metas with no
-// live services (rare, e.g. after UI deletion) suggest develop; empty
-// state suggests a fresh classic start.
-func buildResetNextHint(preserved resetSnapshot) string {
-	switch {
-	case preserved.LiveServices > 0 && len(preserved.CompleteMetas) == 0:
-		return "Live services exist without metas — action=\"start\" workflow=\"bootstrap\" route=\"adopt\""
-	case preserved.LiveServices > 0 && len(preserved.CompleteMetas) > 0:
-		return "Services still adopted — action=\"start\" workflow=\"develop\" intent=\"...\" scope=[...]"
-	case len(preserved.CompleteMetas) > 0:
-		return "Metas remain but no live services — verify state via zerops_discover, then start develop or re-bootstrap"
-	default:
-		return "Empty project — action=\"start\" workflow=\"bootstrap\" (no route to see options)"
-	}
 }
 
 // handleDispatchBriefAtom returns a single atom body by its fully-
@@ -759,24 +745,15 @@ func handleListSessions(engine *workflow.Engine) (*mcp.CallToolResult, any, erro
 func handleLifecycleStatus(ctx context.Context, engine *workflow.Engine, client platform.Client, projectID string, rt runtime.Info) (*mcp.CallToolResult, any, error) {
 	envelope, err := workflow.ComputeEnvelope(ctx, client, engine.StateDir(), projectID, rt, time.Now())
 	if err != nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrNotImplemented,
-			fmt.Sprintf("Compute envelope: %v", err),
-			"")), nil, nil
+		return convertError(wrapStageErr("Compute envelope", err)), nil, nil
 	}
 	corpus, err := workflow.LoadAtomCorpus()
 	if err != nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrNotImplemented,
-			fmt.Sprintf("Load knowledge atoms: %v", err),
-			"")), nil, nil
+		return convertError(wrapStageErr("Load knowledge atoms", err)), nil, nil
 	}
 	matches, err := workflow.Synthesize(envelope, corpus)
 	if err != nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrNotImplemented,
-			fmt.Sprintf("Synthesize guidance: %v", err),
-			"")), nil, nil
+		return convertError(wrapStageErr("Synthesize guidance", err)), nil, nil
 	}
 	plan := workflow.BuildPlan(envelope)
 	return textResult(workflow.RenderStatus(workflow.Response{
@@ -809,5 +786,10 @@ func handleWorkSessionClose(engine *workflow.Engine, input WorkflowInput) (*mcp.
 
 	_ = workflow.DeleteWorkSession(stateDir, pid)
 	_ = workflow.UnregisterSession(stateDir, workflow.WorkSessionID(pid))
-	return textResult("Work session closed. Start the next task: zerops_workflow action=\"start\" workflow=\"develop\" intent=\"...\" scope=[\"hostname\",...]"), nil, nil
+	// Terse confirmation: per P4/KD-01 the canonical "what next" surface
+	// is `zerops_workflow action="status"`. Pre-fix this returned a
+	// hand-rolled hint with a hardcoded `scope=["hostname",...]` literal
+	// (G6-class drift) — agent now calls status to get the real Plan
+	// against the actual envelope.
+	return textResult("Work session closed."), nil, nil
 }

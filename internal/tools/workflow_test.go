@@ -370,9 +370,11 @@ func TestWorkflowTool_Action_Reset(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, "", "", nil, nil, runtime.Info{})
 
-	// Start bootstrap and reset. The post-P6 reset returns a structured
-	// audit (cleared / preserved / next) instead of the old one-line
-	// success; check for the shape, not the word "reset".
+	// Start bootstrap and reset. The reset response carries a structured
+	// audit (cleared / preserved) instead of the old one-line success;
+	// check for the shape, not the word "reset". Per G11 the response
+	// no longer carries a `next` hint — agent calls action="status" for
+	// the post-reset Plan against the live envelope.
 	callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
 		"workflow": "bootstrap",
@@ -383,10 +385,13 @@ func TestWorkflowTool_Action_Reset(t *testing.T) {
 		t.Errorf("unexpected error: %s", getTextContent(t, result))
 	}
 	text := getTextContent(t, result)
-	for _, needle := range []string{`"cleared"`, `"preserved"`, `"next"`} {
+	for _, needle := range []string{`"cleared"`, `"preserved"`} {
 		if !strings.Contains(text, needle) {
 			t.Errorf("expected reset audit field %q in:\n%s", needle, text)
 		}
+	}
+	if strings.Contains(text, `"next"`) {
+		t.Errorf("reset response must not include `next` hint (G11 — agent calls status for the next plan); got:\n%s", text)
 	}
 }
 

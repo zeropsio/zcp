@@ -33,7 +33,6 @@ type strategyListEntry struct {
 type strategyListResponse struct {
 	Status   string              `json:"status"`
 	Services []strategyListEntry `json:"services"`
-	Next     string              `json:"next"`
 }
 
 // handleStrategy is the central configuration point for service deploy
@@ -163,17 +162,15 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 		guidance = buildStrategyGuidance(rt, strategies)
 	}
 
-	nextHint := `When code is ready: zerops_workflow action="start" workflow="develop"`
-	if allStrategiesAre(strategies, topology.StrategyManual) {
-		nextHint = `When code is ready: zerops_deploy targetService="..." (manual strategy — deploy directly)`
-	} else if allStrategiesAre(strategies, topology.StrategyPushGit) {
-		nextHint = `Follow the setup guidance below. Push code with: zerops_deploy targetService="..." strategy="git-push"`
-	}
-
+	// No `next` hint: the canonical "what next" surface is
+	// `zerops_workflow action="status"` (KD-01). Pre-fix this rolled a
+	// per-strategy hand-rendered hint that drifted from the atom-
+	// generated guidance below (G11). For push-git the `guidance` field
+	// already carries the setup flow; for push-dev/manual the agent
+	// reads the develop-active atoms via status.
 	result := map[string]string{
 		"status":   "updated",
 		"services": strings.Join(updated, ", "),
-		"next":     nextHint,
 	}
 	if guidance != "" {
 		result["guidance"] = guidance
@@ -214,8 +211,11 @@ func handleStrategyList(stateDir string) (*mcp.CallToolResult, any, error) {
 	resp := strategyListResponse{
 		Status:   "list",
 		Services: entries,
-		Next:     `Pick a strategy per service: zerops_workflow action="strategy" strategies={"hostname":"push-dev|push-git|manual"}. For push-git, the response includes the full setup flow (tokens + optional CI/CD).`,
 	}
+	// No `next` hint: the per-entry Hint already names the exact tool
+	// call the agent would issue to set a strategy; the canonical "what
+	// next" lifecycle surface is `zerops_workflow action="status"`.
+	// Pre-fix this carried a redundant hand-rolled string (G11).
 	return jsonResult(resp), nil, nil
 }
 
