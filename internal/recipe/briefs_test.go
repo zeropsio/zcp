@@ -1,6 +1,7 @@
 package recipe
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -260,4 +261,118 @@ func TestBriefCompose_FeatureUnderCap(t *testing.T) {
 			t.Errorf("feature brief missing service %q in symbol table", svc.Hostname)
 		}
 	}
+}
+
+// TestBuildTierFactTable_EmitsAllTiers — run-13 §T. The table renders
+// one row per tier (0..5) carrying the engine's literal field values.
+// Tier 5 row pins minContainers=2 (NOT 3 — the run-12 invented prose
+// value) so the agent authoring tier-aware prose has the truth in the
+// brief.
+func TestBuildTierFactTable_EmitsAllTiers(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	table := BuildTierFactTable(plan)
+	for i := range 6 {
+		row := fmt.Sprintf("| %d ", i)
+		if !strings.Contains(table, row) {
+			t.Errorf("tier %d row missing from table:\n%s", i, table)
+		}
+	}
+	// Tier 5 RuntimeMinContainers is 2, NOT 3. Direct counter to
+	// run-12 R-12-3 ("every runtime carries at least three replicas").
+	mustContain(t, table, "| 5 | 2 ")
+	// Per-service capability adjustments name meilisearch as NON_HA.
+	mustContain(t, table, "meilisearch")
+	mustContain(t, table, "`mode: NON_HA`")
+	// Storage emits objectStorageSize: 1 uniformly across tiers.
+	mustContain(t, table, "objectStorageSize: 1")
+}
+
+// TestBuildTierFactTable_RespectsExplicitSupportsHA — run-13 §T risk
+// mitigation. When a Plan.Service explicitly carries SupportsHA=true
+// (overriding the family default), the table reflects that, not the
+// conservative family-table fallback.
+func TestBuildTierFactTable_RespectsExplicitSupportsHA(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.Services = append(plan.Services, Service{
+		Hostname:   "search",
+		Type:       "meilisearch@1.20",
+		Kind:       ServiceKindManaged,
+		SupportsHA: true, // explicit override
+	})
+	table := BuildTierFactTable(plan)
+	// meilisearch row should not be in the family-default-NON_HA list
+	// since the plan explicitly forces HA. Smoke test: the table row
+	// for the override hostname declares HA at tier 5.
+	mustContain(t, table, "search")
+	mustContain(t, table, "(plan-overridden)")
+}
+
+// TestBuildFinalizeBrief_IncludesTierFactTable — run-13 §T. Finalize
+// brief carries the tier-fact table so the finalize sub-agent (and
+// main, when no sub-agent dispatches) authors tier prose against
+// engine truth.
+func TestBuildFinalizeBrief_IncludesTierFactTable(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	for i := range plan.Codebases {
+		plan.Codebases[i].SourceRoot = "/var/www/" + plan.Codebases[i].Hostname + "dev"
+	}
+	brief, err := BuildFinalizeBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFinalizeBrief: %v", err)
+	}
+	mustContain(t, brief.Body, "## Tier capability matrix")
+	mustContain(t, brief.Body, "## Per-service capability adjustments")
+	mustContain(t, brief.Body, "meilisearch")
+	mustContain(t, brief.Body, "objectStorageSize: 1")
+}
+
+// TestBuildScaffoldBrief_FrontendIncludesTierFactTable — run-13 §T.
+// Scaffold brief includes the table only when the codebase's role is
+// frontend (the SPA codebase ships tier-aware prose like the appdev
+// IG #1 cross-tier scaling note in run-12). API/worker scaffolds
+// don't author tier-aware prose; brief stays slimmer for them.
+func TestBuildScaffoldBrief_FrontendIncludesTierFactTable(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	var frontendCB Codebase
+	for _, cb := range plan.Codebases {
+		if cb.Role == RoleFrontend {
+			frontendCB = cb
+			break
+		}
+	}
+	brief, err := BuildScaffoldBrief(plan, frontendCB, nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	mustContain(t, brief.Body, "## Tier capability matrix")
+	mustContain(t, brief.Body, "meilisearch")
+}
+
+// TestBuildScaffoldBrief_APIOmitsTierFactTable — run-13 §T conditional
+// load. API codebases don't author tier-aware prose; the table is
+// omitted so the brief stays under cap.
+func TestBuildScaffoldBrief_APIOmitsTierFactTable(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	var apiCB Codebase
+	for _, cb := range plan.Codebases {
+		if cb.Role == RoleAPI {
+			apiCB = cb
+			break
+		}
+	}
+	brief, err := BuildScaffoldBrief(plan, apiCB, nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	mustNotContain(t, brief.Body, "## Tier capability matrix")
 }

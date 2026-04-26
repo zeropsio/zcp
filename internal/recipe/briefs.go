@@ -43,8 +43,14 @@ import (
 //
 // Run-12 §R raised the cap to 22 KB to fit the "Correcting a fragment
 // you authored" subsection (mode=replace teaching).
+//
+// Run-13 §T raised ScaffoldBriefCap 22 → 24 KB for the tier-fact table
+// the brief composer adds when the codebase's role is frontend (the
+// SPA codebase ships tier-aware prose). API/worker scaffolds still
+// fit comfortably under 22 KB; the cap is a hard upper bound for the
+// frontend variant.
 const (
-	ScaffoldBriefCap = 22 * 1024
+	ScaffoldBriefCap = 24 * 1024
 	FeatureBriefCap  = 12 * 1024
 )
 
@@ -66,7 +72,10 @@ const (
 // 3-codebase recipe with ~67 fragments (run 10 had 67 actual; the
 // hand-typed wrapper claimed 89 wrongly). Below the scaffold cap
 // because finalize doesn't include the principle-level atoms.
-const FinalizeBriefCap = 12 * 1024
+//
+// Run-13 §T raised this 12 → 14 KB to fit the tier-fact table the
+// brief composer adds before the audience-paths section.
+const FinalizeBriefCap = 14 * 1024
 
 // Brief is a composed sub-agent brief. Body is the final text handed to
 // the Agent tool; Parts lists the section identifiers in order so the
@@ -151,6 +160,18 @@ func BuildScaffoldBrief(plan *Plan, cb Codebase, parent *ParentRecipe) (Brief, e
 	b.WriteString(strings.Join(citationGuides(), ", "))
 	b.WriteString(". When your KB fragment touches any of them, call `zerops_knowledge` on the matching guide id first and cite it by name.\n\n")
 	parts = append(parts, "citation_map")
+
+	// Run-13 §T — frontend codebases ship tier-aware prose (the SPA
+	// IG #1 cross-tier scaling note). Inject the resolved tier
+	// capability matrix so the agent authors against engine truth, not
+	// extrapolation from the fuzzy `tierAudienceLine()` per-tier
+	// summary. API/worker scaffolds rarely author tier-aware prose;
+	// brief stays slimmer for them.
+	if cb.Role == RoleFrontend {
+		b.WriteString(BuildTierFactTable(plan))
+		b.WriteByte('\n')
+		parts = append(parts, "tier_fact_table")
+	}
 
 	if parent != nil {
 		if pc, ok := parent.Codebases[cb.Hostname]; ok {
@@ -276,6 +297,17 @@ func BuildFinalizeBrief(plan *Plan) (Brief, error) {
 	}
 	b.WriteByte('\n')
 	parts = append(parts, "tier_map")
+
+	// Run-13 §T — engine pushes resolved per-tier capability matrix
+	// (RuntimeMinContainers / ServiceMode / CPUMode / CorePackage /
+	// RunsDevContainer / MinFreeRAMGB) plus the per-managed-service HA
+	// downgrade table into the finalize brief. Replaces the agent's
+	// extrapolation from `tierAudienceLine()`'s fuzzy phrasing
+	// ("production replicas" → agent assumed 3; emit is 2). Source
+	// of truth for tier README + import-comment prose.
+	b.WriteString(BuildTierFactTable(plan))
+	b.WriteByte('\n')
+	parts = append(parts, "tier_fact_table")
 
 	b.WriteString("## Audience paths\n\n")
 	b.WriteString("- Stitched output: `<outputRoot>/`\n")

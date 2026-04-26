@@ -342,6 +342,13 @@ func mustContain(t *testing.T, got, want string) {
 	}
 }
 
+func mustNotContain(t *testing.T, got, unwanted string) {
+	t.Helper()
+	if strings.Contains(got, unwanted) {
+		t.Errorf("output contains forbidden substring:\n  unwanted: %q", unwanted)
+	}
+}
+
 func firstLine(s string) string {
 	line, _, _ := strings.Cut(s, "\n")
 	return line
