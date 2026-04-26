@@ -97,8 +97,13 @@ if [ -n "$GO_STAGED" ]; then
     [ -x "${MODULE_ROOT}/bin/golangci-lint" ] && LINT_BIN="${MODULE_ROOT}/bin/golangci-lint"
     if command -v "$LINT_BIN" &>/dev/null || [ -x "$LINT_BIN" ]; then
         # Lint only packages with staged Go files (not entire codebase)
-        # Exclude e2e/ — requires --build-tags e2e (separate CI step)
-        LINT_PKGS=$(echo "$GO_STAGED" | while read -r f; do dirname "./$f"; done | sort -u | grep -v '^\./e2e$' | tr '\n' ' ')
+        # Exclude e2e/ — requires --build-tags e2e (separate CI step).
+        # Filter out directories that no longer exist (deleted-package
+        # commits): golangci-lint typecheck fails on missing dirs even
+        # when the rest of the tree is clean.
+        LINT_PKGS=$(echo "$GO_STAGED" | while read -r f; do d="./$(dirname "$f")"; [ -d "$d" ] && echo "$d"; done | sort -u | grep -v '^\./e2e$' | tr '\n' ' ')
+        # All staged Go files were in deleted dirs — nothing to lint here.
+        [ -z "$LINT_PKGS" ] && exit 0
         echo "-- pre-commit: $LINT_BIN on changed packages --"
         LINT_OUTPUT=$($LINT_BIN run $LINT_PKGS --timeout=60s 2>&1)
         LINT_EXIT=$?
