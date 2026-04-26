@@ -23,10 +23,10 @@ them up immediately.
 
 **Deploy flow (both strategies):**
 
-1. Write or edit files at `/var/www/{hostname}/`.
+1. Write or edit files at `/var/www/<hostname>/`.
 2. Run the strategy-specific deploy (see the active strategy atom).
 3. Verify by fetching a URL, not by checking process state:
-   `zerops_verify hostname="{hostname}"` or `zerops_discover service="{hostname}"` to read the current `subdomainUrl` + curl.
+   `zerops_verify hostname="<hostname>"` or `zerops_discover service="<hostname>"` to read the current `subdomainUrl` + curl.
 
 **When the page 404s or 403s after a successful deploy:**
 

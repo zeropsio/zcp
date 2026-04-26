@@ -223,6 +223,65 @@ func TestSynthesize_DeployStateFilter(t *testing.T) {
 	}
 }
 
+// TestSynthesize_RenderTimeBodyDedup pins the post-substitution dedup
+// added in Phase 4 of atom-corpus-context-trim. Two renders of the same
+// atom that produce byte-identical bodies (e.g. service-scoped axis but
+// no per-service placeholder in the body) collapse to one render. Atoms
+// whose post-substitution bodies DIFFER per service render N× as before.
+func TestSynthesize_RenderTimeBodyDedup(t *testing.T) {
+	t.Parallel()
+
+	corpus := []KnowledgeAtom{
+		{
+			// Service-scoped (runtimes) but body has NO {hostname} —
+			// per-service substitution is a no-op, two renders identical.
+			ID: "identical-rules", Priority: 1,
+			Axes: AxisVector{
+				Phases:   []Phase{PhaseDevelopActive},
+				Runtimes: []topology.RuntimeClass{topology.RuntimeImplicitWeb},
+			},
+			Body: "Implicit-webserver guidance with no host placeholder.",
+		},
+		{
+			// Service-scoped + per-service body — two renders MUST stay
+			// distinct because each carries its host-specific command.
+			ID: "host-specific", Priority: 2,
+			Axes: AxisVector{
+				Phases:       []Phase{PhaseDevelopActive},
+				DeployStates: []DeployState{DeployStateNeverDeployed},
+			},
+			Body: "Run cmd for {hostname}.",
+		},
+	}
+
+	twoServices := StateEnvelope{
+		Phase: PhaseDevelopActive,
+		Services: []ServiceSnapshot{
+			{Hostname: "appdev", RuntimeClass: topology.RuntimeImplicitWeb, Bootstrapped: true, Deployed: false},
+			{Hostname: "appstage", RuntimeClass: topology.RuntimeImplicitWeb, Bootstrapped: true, Deployed: false},
+		},
+	}
+	matches, err := Synthesize(twoServices, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	var rulesCount, hostCount int
+	for _, m := range matches {
+		switch m.AtomID {
+		case "identical-rules":
+			rulesCount++
+		case "host-specific":
+			hostCount++
+		}
+	}
+	if rulesCount != 1 {
+		t.Errorf("identical-body atom rendered %d times, want 1 (dedup should collapse)", rulesCount)
+	}
+	if hostCount != 2 {
+		t.Errorf("host-specific atom rendered %d times, want 2 (different bodies must NOT dedup)", hostCount)
+	}
+}
+
 // TestSynthesize_EnvelopeDeployStateFilter pins the envelope-scoped twin
 // of DeployStates: an atom with envelopeDeployStates: [never-deployed]
 // renders ONCE per envelope (not per service) when at least one

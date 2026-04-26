@@ -30,17 +30,15 @@ is there.
    success; embed a cheap dependency check (e.g. `SELECT 1` to the
    database) so a failing verify immediately tells you whether the
    problem is the app or the wiring.
-5. **Audit "developer-friendly" framework defaults** — frameworks
-   aimed at iterative dev (Streamlit, Gradio, Vite, Jupyter, dev
-   servers) typically open a browser, watch files via inotify, pick
-   port from CLI, or auto-detect "dev mode" from a parent `.git/`
-   (push-dev creates `/var/www/.git` — false signal). Each is wrong in
-   a container behind L7. Audit the framework's docs for `headless`,
-   `port`, file watcher, "behind a reverse proxy", and pin each
-   container-correct value in the framework's **own config file** (CLI
-   flags get lost on `run.start` rewrites; env vars are a fallback).
-   Don't suppress dev mode itself — fix the operational mismatch and
-   let hot-reload + error pages keep working.
+5. **Audit "developer-friendly" framework defaults.** Iterative-dev
+   frameworks (Streamlit, Gradio, Vite, Jupyter) are wrong-in-container
+   in two ZCP-specific ways: push-dev creates `/var/www/.git` so any
+   "auto-detect dev mode from parent `.git/`" heuristic mis-fires; and
+   the runtime is behind L7 so `headless`/"reverse-proxy" framework
+   flags need to be pinned to container-correct values. Pin each in
+   the framework's **own config file** (CLI flags get lost on
+   `run.start` rewrites). Don't suppress dev mode — fix the operational
+   mismatch and keep hot-reload working.
 
 **Write files** directly to `/var/www/<hostname>/` through the SSHFS
 mount — Read/Edit/Write tools (and plain `rm`, `mv`, `cp` against mount

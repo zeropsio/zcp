@@ -82,6 +82,23 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]MatchedRender
 
 	globalHost, globalStage := primaryHostnames(envelope.Services)
 	out := make([]MatchedRender, 0, len(pendings))
+	// seen dedupes (atomID, post-substitution body) tuples. Two renders of
+	// the same atom that produce byte-identical text deliver the agent the
+	// same instruction twice — pure waste. The natural case is an atom with
+	// a service-scoped axis (e.g. runtimes) but no per-service placeholder
+	// in its body, so per-service substitution is a no-op. After dedup the
+	// atom renders 1× via whichever service got there first; downstream
+	// consumers (RenderStatus / SynthesizeBodies / BodiesOf) read bodies,
+	// not the per-render Service field, so no caller sees the collapse
+	// (synthesize.go::BodiesOf, render.go::renderGuidance, tools/workflow.go
+	// ::handleStatus). Cmds atoms (execute-cmds, verify-cmds, promote-stage)
+	// have {hostname}/{stage-hostname} substitutions in their bodies, so
+	// their post-substitution bodies differ per service — dedup correctly
+	// leaves them at N renders.
+	//
+	// IMPORTANT: dedup runs AFTER placeholder substitution, so identical
+	// bodies imply identical instructions (no per-host context lost).
+	seen := make(map[string]struct{}, len(pendings))
 	for _, p := range pendings {
 		for _, idx := range p.matches {
 			var svc *ServiceSnapshot
@@ -100,6 +117,11 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]MatchedRender
 			if leak := findUnknownPlaceholder(body); leak != "" {
 				return nil, fmt.Errorf("atom %s: unknown placeholder %q in atom body", p.atom.ID, leak)
 			}
+			key := p.atom.ID + "\x00" + body
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
 			out = append(out, MatchedRender{
 				AtomID:  p.atom.ID,
 				Body:    body,

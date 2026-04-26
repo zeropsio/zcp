@@ -783,10 +783,7 @@ func TestCorpusCoverage_RoundTrip(t *testing.T) {
 // wire-frame number is the actual MCP-cap-relevant measurement (~3 KB
 // larger than body-join — see plans/atom-corpus-context-trim-2026-04-26.md
 // §17.1 and the wire-frame info Logf in `_OutputUnderMCPCap`).
-var knownOverflowFixtures = map[string]string{
-	"develop_first_deploy_implicit_webserver_standard": "body-join 31400 B / wire-frame 33840 B (Phase 3 progress): standard-mode first-deploy + implicit-webserver atoms × dev+stage pair. Started at body-join 43447 B / wire-frame 46646 B (2026-04-26). Trim plan: atom-corpus-context-trim-2026-04-26.md.",
-	"develop_first_deploy_two_runtime_pairs_standard":  "body-join 30672 B / wire-frame 33364 B (Phase 3 progress): two standard-mode dev/stage pairs (4 services). Started at body-join 62905 B / wire-frame 67740 B (2026-04-26). Per-service-axis atoms render 4×. Trim plan: atom-corpus-context-trim-2026-04-26.md.",
-}
+var knownOverflowFixtures = map[string]string{}
 
 // TestCorpusCoverage_OutputUnderMCPCap pins G13: every representative
 // envelope shape's synthesized output stays under a soft 28 KB ceiling
