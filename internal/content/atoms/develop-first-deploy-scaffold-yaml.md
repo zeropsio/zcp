@@ -2,7 +2,7 @@
 id: develop-first-deploy-scaffold-yaml
 priority: 2
 phases: [develop-active]
-deployStates: [never-deployed]
+envelopeDeployStates: [never-deployed]
 title: "Scaffold zerops.yaml for the first deploy"
 references-fields: [ops.DiscoverResult.Services, workflow.ServiceSnapshot.Mode, workflow.ServiceSnapshot.StageHostname]
 references-atoms: [develop-deploy-modes]
@@ -18,7 +18,7 @@ wastes a deploy slot.
 
 ```yaml
 zerops:
-  - setup: {hostname}
+  - setup: <hostname>
     build:
       base: <runtime-only key, e.g. nodejs@22 — NOT the composite run key>
       buildCommands: [...]       # optional for pre-built artefacts
