@@ -336,6 +336,32 @@ func TestInitCommandsModel_TopicsListed(t *testing.T) {
 	}
 }
 
+// TestInitCommandsAtom_TeachesDecomposedStepKeyDistinction — run-13 §N.
+// Run-12 scaffold-api hit the execOnce-key-collision-across-decomposed-
+// steps trap: two initCommands sharing the same `${appVersionId}`
+// silently collapse to one lock — first runner wins, second runner
+// sees the success marker and skips even though command tail differs.
+// The atom now teaches per-step distinct keys explicitly so the next
+// recipe doesn't rediscover it.
+func TestInitCommandsAtom_TeachesDecomposedStepKeyDistinction(t *testing.T) {
+	t.Parallel()
+
+	body, err := readAtom("principles/init-commands-model.md")
+	if err != nil {
+		t.Fatalf("read atom: %v", err)
+	}
+	for _, must := range []string{
+		"Distinct keys per step",
+		"${appVersionId}-migrate",
+		"${appVersionId}-seed",
+		"collapse to one lock",
+	} {
+		if !strings.Contains(body, must) {
+			t.Errorf("init-commands-model missing decomposed-step teaching anchor %q", must)
+		}
+	}
+}
+
 // TestCitationMap_CoversInitCommands — F adds init-commands to the
 // engine-side citation map so KB fragments that cite execOnce /
 // init-commands pick up the guide id at finalize.

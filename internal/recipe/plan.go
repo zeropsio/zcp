@@ -102,15 +102,6 @@ func managedServiceSupportsHA(serviceType string) bool {
 	return false
 }
 
-// Plan.Tier canonical values. The research-phase atom + gateTierServiceSet
-// pin these to a fixed set; brief composers + validators that branch on
-// tier should reference these constants rather than literal strings.
-const (
-	TierHelloWorld = "hello-world"
-	TierMinimal    = "minimal"
-	TierShowcase   = "showcase"
-)
-
 // ServiceKind classifies a service for YAML emission branches. Runtime
 // and utility services both have zeropsSetup + buildFromGit; managed
 // services do not. Storage has size+policy fields.

@@ -45,9 +45,12 @@ func ResolveChain(r Resolver, slug string) (*ParentRecipe, error) {
 }
 
 // Tier suffix slugs used by the chain resolver and by tier labelling.
+// Brief composers + validators that branch on Plan.Tier reference these
+// constants rather than literal strings.
 const (
 	tierMinimal    = "minimal"
 	tierHelloWorld = "hello-world"
+	tierShowcase   = "showcase"
 )
 
 // parentSlugFor applies the fixed chain rules. Returns "" for no parent.

@@ -147,21 +147,21 @@ func gateTierServiceSet(ctx GateContext) []Violation {
 		}
 	}
 	switch ctx.Plan.Tier {
-	case "hello-world":
+	case tierHelloWorld:
 		if managed > 0 {
 			return []Violation{{
 				Code:    "hello-world-no-managed-services",
 				Message: "hello-world tier must declare zero managed services — remove them or switch tier to \"minimal\".",
 			}}
 		}
-	case "minimal":
+	case tierMinimal:
 		if managed < 1 {
 			return []Violation{{
 				Code:    "minimal-needs-one-managed-service",
 				Message: "minimal tier must declare at least one managed service (typically a database).",
 			}}
 		}
-	case "showcase":
+	case tierShowcase:
 		want := map[string]bool{"db": false, "cache": false, "broker": false, "storage": false, "search": false}
 		for _, s := range ctx.Plan.Services {
 			if _, ok := want[s.Hostname]; ok {

@@ -227,7 +227,7 @@ func BuildFeatureBrief(plan *Plan) (Brief, error) {
 	// the panel mandate (one panel per category) + design priorities
 	// + per-panel browser-verification facts. Hello-world / minimal
 	// recipes don't get this — they have fewer managed services.
-	if plan.Tier == TierShowcase {
+	if plan.Tier == tierShowcase {
 		atoms = append(atoms, "briefs/feature/showcase_scenario.md")
 	}
 	for _, atom := range atoms {

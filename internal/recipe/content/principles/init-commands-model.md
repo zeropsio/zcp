@@ -40,3 +40,21 @@ When one command does multiple non-idempotent things, either gate all
 on one static key or split into separate `initCommands` with shapes
 matching each operation's own lifetime. Don't mix lifetimes under
 one key.
+
+**Distinct keys per step.** When you split work into multiple
+`initCommands`, each step needs a DISTINCT lock key. Two commands
+sharing the same `${appVersionId}` collapse to one lock — the first
+runner wins and writes the success marker; the second sees the marker
+and skips silently even though the command tail differs.
+
+```yaml
+# WRONG — both commands share the same ${appVersionId} lock; only one runs
+initCommands:
+  - zsc execOnce ${appVersionId} --retryUntilSuccessful -- node dist/migrate.js
+  - zsc execOnce ${appVersionId} --retryUntilSuccessful -- node dist/seed.js
+
+# RIGHT — each step gets its own distinct key under the same deploy version
+initCommands:
+  - zsc execOnce ${appVersionId}-migrate --retryUntilSuccessful -- node dist/migrate.js
+  - zsc execOnce ${appVersionId}-seed --retryUntilSuccessful -- node dist/seed.js
+```
