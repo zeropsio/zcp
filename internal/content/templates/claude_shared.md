@@ -45,6 +45,8 @@ If state is unclear (after compaction or between tasks):
 `zerops_workflow action="status"` (or `zerops_recipe action="status"`
 for recipe sessions) returns the current phase and next action.
 
-Direct tools skip the workflow — `zerops_discover`, `zerops_logs`,
-`zerops_env`, `zerops_manage`, `zerops_scale`, `zerops_subdomain`,
-`zerops_knowledge` auto-apply without a deploy cycle.
+Read-only / one-shot tools may be called outside an active workflow:
+`zerops_discover`, `zerops_logs`, `zerops_env`, `zerops_manage`,
+`zerops_scale`, `zerops_knowledge`. `zerops_subdomain` is for explicit
+recovery, production opt-in, or disable — first-deploy subdomain
+activation is handled by `zerops_deploy`, not by this tool.
