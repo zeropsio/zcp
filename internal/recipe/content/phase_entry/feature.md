@@ -78,6 +78,22 @@ Feature sub-agent extends scaffold's fragments via `record-fragment`:
 `zerops.yaml`, add an inline comment at the same commit — every
 stanza must carry a causal "why" comment (finalize validator).
 
+## After complete-phase phase=feature
+
+When `complete-phase phase=feature` (no codebase, after every feature
+sub-agent has terminated cleanly) returns `ok:true`, the engine has
+recorded the phase as completed AND set the next phase. The next main
+action is `enter-phase phase=finalize` — do NOT re-dispatch the
+feature sub-agent. The work is done; re-dispatch only re-walks state
+in a fresh sub-agent session and risks compounding session-loss
+artifacts (run-13's features-2 burned ~50s on phase-realignment
+re-walks after exactly this defensive re-dispatch).
+
+If a compaction event leaves you uncertain whether the feature phase
+closed, call `zerops_recipe action=status` first — the snapshot's
+`current` and `completed` fields tell you whether to proceed to
+finalize or re-do feature work.
+
 ## Wrapper discipline — what main decides vs sub-agent discovers
 
 The main agent decides: which codebases the feature set spans, the

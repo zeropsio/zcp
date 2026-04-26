@@ -26,6 +26,17 @@ import (
 // the existing research-phase teaching, so no atom extension is
 // needed for the run-13 stretch.
 func buildSubagentPrompt(plan *Plan, parent *ParentRecipe, in RecipeInput) (string, error) {
+	return buildSubagentPromptForPhase(plan, parent, in, "")
+}
+
+// buildSubagentPromptForPhase is buildSubagentPrompt with the
+// session's current phase explicitly threaded so the BriefFeature
+// closing footer can teach a defensive re-dispatch sub-agent "the
+// session is already at phase=<currentPhase>; do not re-walk
+// research/provision/scaffold." Run-14 §C.2 (R-13-4) — features-2
+// in run-13 burned ~50s re-walking phase transitions after a
+// compaction-driven re-dispatch landed in a fresh sub-agent session.
+func buildSubagentPromptForPhase(plan *Plan, parent *ParentRecipe, in RecipeInput, currentPhase Phase) (string, error) {
 	if plan == nil {
 		return "", errors.New("buildSubagentPrompt: nil plan")
 	}
@@ -71,7 +82,7 @@ func buildSubagentPrompt(plan *Plan, parent *ParentRecipe, in RecipeInput) (stri
 		b.WriteByte('\n')
 	}
 	b.WriteString("\n---\n\n")
-	writePromptCloseFooter(&b, kind, in.Codebase)
+	writePromptCloseFooter(&b, kind, in.Codebase, currentPhase)
 	return b.String(), nil
 }
 
@@ -176,7 +187,7 @@ func writePromptRecipeContext(b *strings.Builder, plan *Plan, kind BriefKind, cb
 	}
 }
 
-func writePromptCloseFooter(b *strings.Builder, kind BriefKind, codebase string) {
+func writePromptCloseFooter(b *strings.Builder, kind BriefKind, codebase string, currentPhase Phase) {
 	b.WriteString("## Closing notes from the engine\n\n")
 	switch kind {
 	case BriefScaffold:
@@ -187,6 +198,14 @@ func writePromptCloseFooter(b *strings.Builder, kind BriefKind, codebase string)
 		b.WriteString("`record-fragment mode=replace` (fragments) or ssh-edit (yaml\n")
 		b.WriteString("file), re-call until ok:true, then terminate.\n")
 	case BriefFeature:
+		if currentPhase != "" {
+			fmt.Fprintf(b, "Note: the recipe session is already at phase=%s. If you join\n", currentPhase)
+			b.WriteString("an existing session at a later phase (defensive re-dispatch after\n")
+			b.WriteString("compaction is the common cause), do NOT re-walk research /\n")
+			b.WriteString("provision / scaffold — the engine refuses the transitions and\n")
+			b.WriteString("the on-disk state is already correct. Resume work at the\n")
+			b.WriteString("current phase.\n\n")
+		}
 		b.WriteString("When you're ready to terminate: ensure per-feature commits are\n")
 		b.WriteString("in place, browser-verification facts recorded for each panel\n")
 		b.WriteString("you exercised, and call\n\n")
