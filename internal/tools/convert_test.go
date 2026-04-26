@@ -79,7 +79,7 @@ func TestConvertError_WithSuggestion(t *testing.T) {
 	}
 }
 
-func TestConvertError_GenericError(t *testing.T) {
+func TestConvertError_GenericErrWrappedAsUnknown(t *testing.T) {
 	t.Parallel()
 	err := errors.New("something went wrong")
 	result := convertError(err)
@@ -89,8 +89,15 @@ func TestConvertError_GenericError(t *testing.T) {
 	}
 
 	text := getResultText(t, result)
-	if text != "something went wrong" {
-		t.Errorf("text = %q, want %q", text, "something went wrong")
+	var parsed map[string]any
+	if jsonErr := json.Unmarshal([]byte(text), &parsed); jsonErr != nil {
+		t.Fatalf("plain-text wire shape eliminated; expected JSON ErrorWire, got %q: %v", text, jsonErr)
+	}
+	if parsed["code"] != platform.ErrUnknown {
+		t.Errorf("code = %q, want %q", parsed["code"], platform.ErrUnknown)
+	}
+	if parsed["error"] != "something went wrong" {
+		t.Errorf("error = %q, want %q", parsed["error"], "something went wrong")
 	}
 }
 

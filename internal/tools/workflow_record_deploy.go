@@ -31,14 +31,15 @@ func handleRecordDeploy(stateDir string, input WorkflowInput) (*mcp.CallToolResu
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"action=\"record-deploy\" requires targetService",
-			"Pass targetService=\"<hostname>\" — the runtime service whose external deploy you are acknowledging.")), nil, nil
+			"Pass targetService=\"<hostname>\" — the runtime service whose external deploy you are acknowledging."), WithRecoveryStatus()), nil, nil
 	}
 	stamped, firstAt, recordErr := workflow.RecordExternalDeploy(stateDir, input.TargetService)
 	if recordErr != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrPermissionDenied,
 			"failed to record external deploy: "+recordErr.Error(),
-			"Check ZCP state directory permissions; meta is written under .zcp/state/services/<hostname>.json.")), nil, recordErr
+			"Check ZCP state directory permissions; meta is written under .zcp/state/services/<hostname>.json."),
+			WithRecoveryStatus()), nil, recordErr
 	}
 
 	resp := recordDeployResult{

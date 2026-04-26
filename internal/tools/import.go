@@ -62,7 +62,7 @@ func RegisterImport(srv *mcp.Server, client platform.Client, projectID string, e
 		}
 		result, err := ops.Import(ctx, client, projectID, input.Content, input.FilePath, input.Override.Bool())
 		if err != nil {
-			return convertError(err), nil, nil
+			return convertError(err, WithRecoveryStatus()), nil, nil
 		}
 
 		onProgress := buildProgressCallback(ctx, req)

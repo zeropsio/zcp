@@ -997,8 +997,12 @@ func TestDeployTool_AdoptionGate_AllowsAdoptedService(t *testing.T) {
 		"targetService": "appdev",
 	})
 
-	if result.IsError {
-		t.Errorf("expected success for adopted service, got error: %s", getTextContent(t, result))
+	// Adoption gate must let an adopted service through. Downstream may
+	// still fail on preflight (no zerops.yaml in the test setup), so we
+	// only assert the failure isn't the gate itself.
+	text := getTextContent(t, result)
+	if strings.Contains(text, "not adopted") || strings.Contains(text, platform.ErrPrerequisiteMissing) {
+		t.Errorf("adoption gate blocked an adopted service: %s", text)
 	}
 }
 
@@ -1027,8 +1031,12 @@ func TestDeployTool_AdoptionGate_AllowsStageHostname(t *testing.T) {
 		"targetService": "appstage",
 	})
 
-	if result.IsError {
-		t.Errorf("expected success for stage hostname, got error: %s", getTextContent(t, result))
+	// Adoption gate must let a stage hostname pass when its dev pair was
+	// adopted. Downstream may still fail on preflight (no zerops.yaml);
+	// we only check the failure isn't the gate.
+	text := getTextContent(t, result)
+	if strings.Contains(text, "not adopted") || strings.Contains(text, platform.ErrPrerequisiteMissing) {
+		t.Errorf("adoption gate blocked stage hostname: %s", text)
 	}
 }
 

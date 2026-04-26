@@ -34,12 +34,12 @@ func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mo
 				platform.ErrNotImplemented,
 				"Mount is only available inside a Zerops container",
 				"zerops_mount requires SSHFS and zsc (available in Zerops containers)",
-			)), nil, nil
+			), WithRecoveryStatus()), nil, nil
 		}
 		if input.Action == "" {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter, "Action is required",
-				"Use mount, unmount, or status")), nil, nil
+				"Use mount, unmount, or status"), WithRecoveryStatus()), nil, nil
 		}
 
 		switch input.Action {
@@ -50,33 +50,33 @@ func RegisterMount(srv *mcp.Server, client platform.Client, projectID string, mo
 					platform.ErrSelfServiceBlocked,
 					fmt.Sprintf("Cannot mount %q — ZCP is running on this service", input.ServiceHostname),
 					"Mounting a service into itself is not supported. Mount other services instead.",
-				)), nil, nil
+				), WithRecoveryStatus()), nil, nil
 			}
 			if blocked := requireWorkflowContext(engine, stateDir, recipeProbe); blocked != nil {
 				return blocked, nil, nil
 			}
 			result, err := ops.MountService(ctx, client, projectID, mounter, input.ServiceHostname)
 			if err != nil {
-				return convertError(err), nil, nil
+				return convertError(err, WithRecoveryStatus()), nil, nil
 			}
 			_ = workflow.TouchWorkSession(stateDir)
 			return jsonResult(result), nil, nil
 		case "unmount":
 			result, err := ops.UnmountService(ctx, client, projectID, mounter, input.ServiceHostname)
 			if err != nil {
-				return convertError(err), nil, nil
+				return convertError(err, WithRecoveryStatus()), nil, nil
 			}
 			return jsonResult(result), nil, nil
 		case actionStatus:
 			result, err := ops.MountStatus(ctx, client, projectID, mounter, input.ServiceHostname)
 			if err != nil {
-				return convertError(err), nil, nil
+				return convertError(err, WithRecoveryStatus()), nil, nil
 			}
 			return jsonResult(result), nil, nil
 		default:
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter, "Invalid action '"+input.Action+"'",
-				"Use mount, unmount, or status")), nil, nil
+				"Use mount, unmount, or status"), WithRecoveryStatus()), nil, nil
 		}
 	})
 }

@@ -27,7 +27,7 @@ func handleRecipeComplete(ctx context.Context, engine *workflow.Engine, client p
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"Step is required for recipe complete action",
-			"Specify step name (e.g., step=\"research\")")), nil, nil
+			"Specify step name (e.g., step=\"research\")"), WithRecoveryStatus()), nil, nil
 	}
 
 	// Research step: requires a recipe plan submission.
@@ -39,7 +39,7 @@ func handleRecipeComplete(ctx context.Context, engine *workflow.Engine, client p
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"Attestation is required for recipe complete action",
-			"Describe what was accomplished")), nil, nil
+			"Describe what was accomplished"), WithRecoveryStatus()), nil, nil
 	}
 
 	// v8.95: resolve the active session's facts-log path lazily so the
@@ -67,7 +67,7 @@ func handleRecipeComplete(ctx context.Context, engine *workflow.Engine, client p
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Recipe complete failed: %v", err),
-			"Check step name and session state")), nil, nil
+			"Check step name and session state"), WithRecoveryStatus()), nil, nil
 	}
 
 	return jsonResult(resp), nil, nil
@@ -79,7 +79,7 @@ func handleRecipeCompletePlan(ctx context.Context, engine *workflow.Engine, clie
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"recipePlan is required for research step completion",
-			"Submit a structured RecipePlan with framework, tier, slug, runtimeType, research fields")), nil, nil
+			"Submit a structured RecipePlan with framework, tier, slug, runtimeType, research fields"), WithRecoveryStatus()), nil, nil
 	}
 
 	attestation := input.Attestation
@@ -102,7 +102,7 @@ func handleRecipeCompletePlan(ctx context.Context, engine *workflow.Engine, clie
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Recipe plan submission failed: %v", err),
-			"Ensure research step is current and plan is valid")), nil, nil
+			"Ensure research step is current and plan is valid"), WithRecoveryStatus()), nil, nil
 	}
 
 	return jsonResult(resp), nil, nil
@@ -114,7 +114,7 @@ func handleRecipeSkip(_ context.Context, engine *workflow.Engine, input Workflow
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"Step is required for recipe skip action",
-			"Specify step name")), nil, nil
+			"Specify step name"), WithRecoveryStatus()), nil, nil
 	}
 	reason := input.Reason
 	if reason == "" {
@@ -126,7 +126,7 @@ func handleRecipeSkip(_ context.Context, engine *workflow.Engine, input Workflow
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Recipe skip failed: %v", err),
-			"Only the close step can be skipped in recipe workflow")), nil, nil
+			"Only the close step can be skipped in recipe workflow"), WithRecoveryStatus()), nil, nil
 	}
 	return jsonResult(resp), nil, nil
 }
@@ -143,7 +143,7 @@ func handleRecipeGenerateFinalize(engine *workflow.Engine, envComments map[strin
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"No active recipe session",
-			"")), nil, nil
+			""), WithRecoveryStatus()), nil, nil
 	}
 
 	plan := session.Plan
@@ -151,7 +151,7 @@ func handleRecipeGenerateFinalize(engine *workflow.Engine, envComments map[strin
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"Recipe plan not set — complete the research step first",
-			"")), nil, nil
+			""), WithRecoveryStatus()), nil, nil
 	}
 
 	outputDir := session.OutputDir
@@ -159,7 +159,7 @@ func handleRecipeGenerateFinalize(engine *workflow.Engine, envComments map[strin
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"Output directory not set in recipe state",
-			"")), nil, nil
+			""), WithRecoveryStatus()), nil, nil
 	}
 
 	// Persist per-env comment inputs into the plan (provided env keys merge;
@@ -170,7 +170,7 @@ func handleRecipeGenerateFinalize(engine *workflow.Engine, envComments map[strin
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("persist comment inputs: %v", err),
-				"")), nil, nil
+				""), WithRecoveryStatus()), nil, nil
 		}
 		session = engine.RecipeSession()
 		plan = session.Plan
@@ -186,7 +186,7 @@ func handleRecipeGenerateFinalize(engine *workflow.Engine, envComments map[strin
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("persist project env var inputs: %v", err),
-				"")), nil, nil
+				""), WithRecoveryStatus()), nil, nil
 		}
 		session = engine.RecipeSession()
 		plan = session.Plan
@@ -210,13 +210,13 @@ func handleRecipeGenerateFinalize(engine *workflow.Engine, envComments map[strin
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("mkdir %s: %v", filepath.Dir(fullPath), err),
-				"")), nil, nil
+				""), WithRecoveryStatus()), nil, nil
 		}
 		if err := os.WriteFile(fullPath, []byte(content), 0o600); err != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("write %s: %v", fullPath, err),
-				"")), nil, nil
+				""), WithRecoveryStatus()), nil, nil
 		}
 		written = append(written, relPath)
 	}
@@ -255,7 +255,7 @@ func handleRecipeStatus(_ context.Context, engine *workflow.Engine) (*mcp.CallTo
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Recipe status failed: %v", err),
-			"")), nil, nil
+			""), WithRecoveryStatus()), nil, nil
 	}
 
 	return jsonResult(resp), nil, nil

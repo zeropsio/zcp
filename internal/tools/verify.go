@@ -39,7 +39,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 		if input.ServiceHostname == "" {
 			result, err := ops.VerifyAll(ctx, client, fetcher, httpClient, projectID)
 			if err != nil {
-				return convertError(err), nil, nil
+				return convertError(err, WithRecoveryStatus()), nil, nil
 			}
 			recordVerifyAllToWorkSession(stateDir, result)
 			return jsonResult(verifyAllResponse{
@@ -49,7 +49,7 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 		}
 		result, err := ops.Verify(ctx, client, fetcher, httpClient, projectID, input.ServiceHostname)
 		if err != nil {
-			return convertError(err), nil, nil
+			return convertError(err, WithRecoveryStatus()), nil, nil
 		}
 		recordVerifyToWorkSession(stateDir, result)
 		return jsonResult(verifyResponse{

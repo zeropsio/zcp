@@ -53,3 +53,20 @@ Read-only / one-shot tools may be called outside an active workflow:
 `zerops_scale`, `zerops_knowledge`. `zerops_subdomain` is for explicit
 recovery, production opt-in, or disable — first-deploy subdomain
 activation is handled by `zerops_deploy`, not by this tool.
+
+## Tool errors
+
+Every tool error returns the same JSON shape:
+`{code, error, suggestion?, apiCode?, diagnostic?, apiMeta?, checks?, recovery?}`.
+`code` and `error` are always present (typed); the rest are optional.
+
+When `recovery` is present (workflow-aware tools attach it), the call it
+names is the canonical lifecycle recovery surface — call it before
+retrying or asking the user, not after blind retries. When `recovery`
+is absent (read-only tools), fall back to
+`zerops_workflow action="status"` yourself. `status` returns the live
+envelope, plan, and guidance for the current phase.
+
+`checks` carries multi-check failures (preflight, verify, mount) with
+a `kind` discriminator and optional `preAttestCmd`/`expectedExit` so
+you can re-run the failing check directly.

@@ -54,37 +54,41 @@ func wrapStageErr(stage string, err error) *platform.PlatformError {
 }
 
 // convertError converts an error to a CallToolResult with IsError=true.
-// PlatformErrors are serialized as structured JSON with code/error/suggestion.
-// Generic errors are returned as plain text.
+// Every error becomes the canonical ErrorWire JSON shape — generic Go
+// errors are wrapped as platform.NewPlatformError(ErrUnknown, ...) at
+// this boundary so the wire never carries a plain-text error response.
 //
-// Every optional field (suggestion, apiCode, diagnostic, apiMeta) is emitted
-// only when populated — consumers rely on absence-means-empty for the
-// apiMeta key the same way they rely on it for apiCode.
-func convertError(err error) *mcp.CallToolResult {
+// For workflow-aware handlers that should attach a recovery hint or
+// multi-check failures, use convertErrorWith(err, opts...) — convertError
+// is the bare entry point for handlers without workflow context.
+//
+// Every optional field (suggestion, apiCode, diagnostic, apiMeta, checks,
+// recovery) is emitted only when populated — consumers rely on
+// absence-means-empty.
+func convertError(err error, opts ...ErrorOption) *mcp.CallToolResult {
 	var pe *platform.PlatformError
 	if !errors.As(err, &pe) {
+		// Plain Go error → wrap as typed ErrUnknown. Plain-text wire
+		// shape eliminated; every error response is typed JSON.
+		pe = platform.NewPlatformError(platform.ErrUnknown, err.Error(), "")
+	}
+	wire := platformErrorToWire(pe)
+	for _, opt := range opts {
+		opt(&wire)
+	}
+	b, marshalErr := json.Marshal(wire)
+	if marshalErr != nil {
+		// Fallback: emit a typed marshal-error rather than panicking.
+		// This branch is unreachable in practice (ErrorWire is plain
+		// JSON-marshalable) but guards against future schema mistakes.
+		// The literal fallback can't itself fail to marshal — only
+		// declared string fields, no funcs/channels.
+		fallback, _ := json.Marshal(ErrorWire{ //nolint:errchkjson // simple-string struct can't fail
+			Code:  platform.ErrUnknown,
+			Error: fmt.Sprintf("marshal error: %v", marshalErr),
+		})
 		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: err.Error()}},
-			IsError: true,
-		}
-	}
-	result := map[string]any{"code": pe.Code, "error": pe.Message}
-	if pe.Suggestion != "" {
-		result["suggestion"] = pe.Suggestion
-	}
-	if pe.APICode != "" {
-		result["apiCode"] = pe.APICode
-	}
-	if pe.Diagnostic != "" {
-		result["diagnostic"] = pe.Diagnostic
-	}
-	if len(pe.APIMeta) > 0 {
-		result["apiMeta"] = pe.APIMeta
-	}
-	b, err := json.Marshal(result)
-	if err != nil {
-		return &mcp.CallToolResult{
-			Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("marshal error: %v", err)}},
+			Content: []mcp.Content{&mcp.TextContent{Text: string(fallback)}},
 			IsError: true,
 		}
 	}

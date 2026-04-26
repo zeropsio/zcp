@@ -57,7 +57,11 @@ func RegisterDeployBatch(
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input DeployBatchInput) (*mcp.CallToolResult, any, error) {
 		if len(input.Targets) == 0 {
-			return textResult("Error: zerops_deploy_batch requires at least one target"), nil, nil
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				"zerops_deploy_batch requires at least one target",
+				"Pass targets=[{targetService:...}, ...] with one entry per service to deploy."),
+				WithRecoveryStatus()), nil, nil
 		}
 
 		// Gate: each target (and its source, when set) must be adopted by ZCP.
@@ -79,13 +83,18 @@ func RegisterDeployBatch(
 				return convertError(platform.NewPlatformError(
 					platform.ErrInvalidParameter,
 					fmt.Sprintf("Pre-flight validation error for %s: %v", t.TargetService, pfErr),
-					"Check zerops.yaml and service configuration")), nil, nil
+					"Check zerops.yaml and service configuration"),
+					WithRecoveryStatus()), nil, nil
 			}
 			if pfResult != nil && !pfResult.Passed {
-				return jsonResult(map[string]any{
-					"preFlightFailedFor": t.TargetService,
-					"result":             pfResult,
-				}), nil, nil
+				return convertError(
+					platform.NewPlatformError(
+						platform.ErrPreflightFailed,
+						fmt.Sprintf("Preflight failed for %s: %s", t.TargetService, pfResult.Summary),
+						""),
+					WithChecks("preflight", pfResult.Checks),
+					WithRecoveryStatus(),
+				), nil, nil
 			}
 			if resolvedSetup != "" {
 				input.Targets[i].Setup = resolvedSetup

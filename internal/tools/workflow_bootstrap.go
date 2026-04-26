@@ -33,7 +33,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"Step is required for complete action",
-			"Specify step name (e.g., step=\"discover\")")), nil, nil
+			"Specify step name (e.g., step=\"discover\")"), WithRecoveryStatus()), nil, nil
 	}
 
 	// Structured plan routing for "discover" step (empty plan = managed-only).
@@ -43,7 +43,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("Plan validation failed: %v", err),
-				"Provide valid plan: [{runtime: {devHostname, type}, dependencies: [{hostname, type, resolution}]}]. Hostnames: lowercase a-z0-9, max 25 chars.")), nil, nil
+				"Provide valid plan: [{runtime: {devHostname, type}, dependencies: [{hostname, type, resolution}]}]. Hostnames: lowercase a-z0-9, max 25 chars."), WithRecoveryStatus()), nil, nil
 		}
 		if needsStacks(resp) {
 			populateStacks(ctx, resp, client, cache)
@@ -56,7 +56,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"Attestation is required for complete action",
-			"Describe what was accomplished in this step")), nil, nil
+			"Describe what was accomplished in this step"), WithRecoveryStatus()), nil, nil
 	}
 
 	httpClient := &http.Client{
@@ -70,7 +70,7 @@ func handleBootstrapComplete(ctx context.Context, engine *workflow.Engine, clien
 		return convertError(platform.NewPlatformError(
 			platform.ErrBootstrapNotActive,
 			fmt.Sprintf("Complete step failed: %v", err),
-			"Start bootstrap first with action=start workflow=bootstrap")), nil, nil
+			"Start bootstrap first with action=start workflow=bootstrap"), WithRecoveryStatus()), nil, nil
 	}
 
 	// Auto-mount runtime services after successful provision completion.
@@ -109,7 +109,7 @@ func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, client pl
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"Step is required for skip action",
-			"Specify step name (e.g., step=\"generate\")")), nil, nil
+			"Specify step name (e.g., step=\"generate\")"), WithRecoveryStatus()), nil, nil
 	}
 
 	reason := input.Reason
@@ -122,7 +122,7 @@ func handleBootstrapSkip(ctx context.Context, engine *workflow.Engine, client pl
 		return convertError(platform.NewPlatformError(
 			platform.ErrBootstrapNotActive,
 			fmt.Sprintf("Skip step failed: %v", err),
-			"Only skippable steps (generate, deploy, close) can be skipped")), nil, nil
+			"Only skippable steps (generate, deploy, close) can be skipped"), WithRecoveryStatus()), nil, nil
 	}
 	appendTransitionMessage(resp, engine)
 	if needsStacks(resp) {
@@ -143,7 +143,7 @@ func bootstrapStatusResult(ctx context.Context, engine *workflow.Engine, client 
 		return convertError(platform.NewPlatformError(
 			platform.ErrBootstrapNotActive,
 			fmt.Sprintf("Bootstrap status failed: %v", err),
-			"")), nil, nil
+			""), WithRecoveryStatus()), nil, nil
 	}
 	if needsStacks(resp) {
 		populateStacks(ctx, resp, client, cache)

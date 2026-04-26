@@ -85,7 +85,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 		}
 		if vErr := ops.RunPreDeployValidation(ctx, client, target, setupName, workingDir); vErr != nil {
 			record(fmt.Sprintf("zerops.yaml validation failed: %v", vErr), workflow.FailureClassConfig)
-			return convertError(vErr), nil, nil
+			return convertError(vErr, WithRecoveryStatus()), nil, nil
 		}
 	}
 
@@ -99,7 +99,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 			platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("workingDir %q is not a git repository", workingDir),
 			"Initialize git first: git init && git add -A && git commit -m '<message>'. Then retry.",
-		)), nil, nil
+		), WithRecoveryStatus()), nil, nil
 	}
 
 	// 2. HEAD has commits.
@@ -111,7 +111,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 			platform.ErrPrerequisiteMissing,
 			"git-push requires at least one commit on HEAD",
 			"Commit your changes first: git add -A && git commit -m '<message>'. Then retry.",
-		)), nil, nil
+		), WithRecoveryStatus()), nil, nil
 	}
 
 	// 3. Resolve origin URL.
@@ -124,7 +124,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 			platform.ErrPrerequisiteMissing,
 			"no origin remote configured and no remoteUrl provided",
 			"Either configure origin in your repo (git remote add origin <url>) or pass remoteUrl=<url> to this call.",
-		)), nil, nil
+		), WithRecoveryStatus()), nil, nil
 	case current == "" && input.RemoteURL != "":
 		if _, err := runGit(ctx, workingDir, "remote", "add", "origin", input.RemoteURL); err != nil {
 			record(fmt.Sprintf("git remote add origin failed: %v", err), workflow.FailureClassConfig)
@@ -132,7 +132,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("git remote add origin %s failed: %v", input.RemoteURL, err),
 				"",
-			)), nil, nil
+			), WithRecoveryStatus()), nil, nil
 		}
 	case current != "" && input.RemoteURL != "" && current != input.RemoteURL:
 		record("remoteUrl mismatch with existing origin", workflow.FailureClassConfig)
@@ -140,7 +140,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("origin is %q, you passed remoteUrl=%q — ZCP won't silently rewrite the remote", current, input.RemoteURL),
 			"Reconcile manually (git remote set-url origin <url>) or re-run without remoteUrl to use the configured origin.",
-		)), nil, nil
+		), WithRecoveryStatus()), nil, nil
 	}
 
 	// 4. Resolve branch.
@@ -153,7 +153,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 				platform.ErrPrerequisiteMissing,
 				fmt.Sprintf("could not detect branch in %s: %v", workingDir, err),
 				"Pass branch=<name> explicitly, or check your repo state.",
-			)), nil, nil
+			), WithRecoveryStatus()), nil, nil
 		}
 		branch = strings.TrimSpace(out)
 	}
@@ -176,7 +176,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 			platform.ErrDeployFailed,
 			fmt.Sprintf("git push origin %s failed: %s", branch, truncateStderr(pushOut)),
 			"Check your local git credentials (SSH keys, credential manager) and the remote URL. For passphrase-protected keys, ensure ssh-agent is running.",
-		)), nil, nil
+		), WithRecoveryStatus()), nil, nil
 	}
 
 	status2 := "PUSHED"

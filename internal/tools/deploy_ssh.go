@@ -122,7 +122,7 @@ func RegisterDeploySSH(
 		// calling zerops_deploy on a manual-strategy service is a contradiction
 		// ZCP refuses to resolve silently.
 		if err := validateDeployStrategyParam(input.Strategy); err != nil {
-			return convertError(err), nil, nil
+			return convertError(err, WithRecoveryStatus()), nil, nil
 		}
 
 		// Gate: target (and source) must be adopted by ZCP.
@@ -142,10 +142,15 @@ func RegisterDeploySSH(
 				return convertError(platform.NewPlatformError(
 					platform.ErrInvalidParameter,
 					fmt.Sprintf("Pre-flight validation error: %v", pfErr),
-					"Check zerops.yaml and service configuration")), nil, nil
+					"Check zerops.yaml and service configuration"),
+					WithRecoveryStatus()), nil, nil
 			}
 			if pfResult != nil && !pfResult.Passed {
-				return jsonResult(pfResult), nil, nil
+				return convertError(
+					platform.NewPlatformError(platform.ErrPreflightFailed, pfResult.Summary, ""),
+					WithChecks("preflight", pfResult.Checks),
+					WithRecoveryStatus(),
+				), nil, nil
 			}
 			if resolvedSetup != "" {
 				input.Setup = resolvedSetup
@@ -176,7 +181,7 @@ func RegisterDeploySSH(
 			// SSH/transport-layer failure — we never reached the build.
 			attempt.FailureClass = workflow.FailureClassNetwork
 			_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
-			return convertError(err), nil, nil
+			return convertError(err, WithRecoveryStatus()), nil, nil
 		}
 
 		onProgress := buildProgressCallback(ctx, req)

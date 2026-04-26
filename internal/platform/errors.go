@@ -48,6 +48,17 @@ const (
 	ErrMissingEvidence        = "MISSING_EVIDENCE"
 	ErrTopicEmpty             = "TOPIC_EMPTY"
 	ErrWorkSessionCorrupt     = "WORK_SESSION_CORRUPT"
+	// ErrPreflightFailed signals a deploy preflight check failure. Carried
+	// alongside structured CheckWire entries so the agent can re-run the
+	// failed check or fix the underlying issue. Replaces the legacy
+	// preflight wire shapes (jsonResult of StepCheckResult, ad-hoc batch
+	// {preFlightFailedFor, result} map).
+	ErrPreflightFailed = "PREFLIGHT_FAILED"
+	// ErrUnknown wraps generic Go errors at the tools/convert.go boundary
+	// when the underlying error doesn't carry a typed PlatformError code.
+	// Eliminates the plain-text wire shape — every tool error response is
+	// typed JSON.
+	ErrUnknown = "UNKNOWN"
 )
 
 // PlatformError carries a ZCP error code, message, and suggestion.

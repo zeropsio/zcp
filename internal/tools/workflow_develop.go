@@ -40,7 +40,7 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Failed to read service metas: %v", err),
-			"Run bootstrap first to create services")), nil, nil
+			"Run bootstrap first to create services"), WithRecoveryStatus()), nil, nil
 	}
 
 	// Prune stale metas against live services — keeps envelope coherent if
@@ -59,7 +59,7 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 				return convertError(platform.NewPlatformError(
 					platform.ErrInvalidParameter,
 					fmt.Sprintf("Failed to read service metas after pruning: %v", err),
-					"")), nil, nil
+					""), WithRecoveryStatus()), nil, nil
 			}
 		}
 	}
@@ -68,7 +68,7 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
 			"No bootstrapped services found",
-			"Run bootstrap first: action=\"start\" workflow=\"bootstrap\" (route=\"adopt\" if services already live)")), nil, nil
+			"Run bootstrap first: action=\"start\" workflow=\"bootstrap\" (route=\"adopt\" if services already live)"), WithRecoveryStatus()), nil, nil
 	}
 
 	// Build deployable-runtime meta index for scope validation, honoring the
@@ -91,7 +91,7 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
 			"No deployable runtime services found",
-			"Run bootstrap first: action=\"start\" workflow=\"bootstrap\"")), nil, nil
+			"Run bootstrap first: action=\"start\" workflow=\"bootstrap\""), WithRecoveryStatus()), nil, nil
 	}
 
 	// Strategy is NOT a gate: first deploy always uses the default
@@ -124,7 +124,7 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			err.Error(),
-			"Pass scope=[\"hostname1\",\"hostname2\"] listing the runtime services this task works on. Copy hostnames from the bootstrap close transition message, or call zerops_discover to list what's available.")), nil, nil
+			"Pass scope=[\"hostname1\",\"hostname2\"] listing the runtime services this task works on. Copy hostnames from the bootstrap close transition message, or call zerops_discover to list what's available."), WithRecoveryStatus()), nil, nil
 	}
 
 	ws := workflow.NewWorkSession(projectID, string(engine.Environment()), input.Intent, scope)
@@ -132,7 +132,7 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Failed to save work session: %v", err),
-			"")), nil, nil
+			""), WithRecoveryStatus()), nil, nil
 	}
 	_ = workflow.RegisterSession(engine.StateDir(), workflow.SessionEntry{
 		SessionID: workflow.WorkSessionID(os.Getpid()),
@@ -154,21 +154,21 @@ func renderDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
 			fmt.Sprintf("Compute envelope: %v", err),
-			"")), nil, nil
+			""), WithRecoveryStatus()), nil, nil
 	}
 	corpus, err := workflow.LoadAtomCorpus()
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
 			fmt.Sprintf("Load knowledge atoms: %v", err),
-			"")), nil, nil
+			""), WithRecoveryStatus()), nil, nil
 	}
 	matches, err := workflow.Synthesize(envelope, corpus)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
 			fmt.Sprintf("Synthesize guidance: %v", err),
-			"")), nil, nil
+			""), WithRecoveryStatus()), nil, nil
 	}
 	plan := workflow.BuildPlan(envelope)
 	return textResult(workflow.RenderStatus(workflow.Response{

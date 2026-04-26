@@ -111,7 +111,7 @@ func RegisterGuidance(srv *mcp.Server, engine *workflow.Engine) {
 			return convertError(platform.NewPlatformError(
 				platform.ErrTopicEmpty,
 				fmt.Sprintf("guidance topic %q resolved to zero bytes despite predicate match", input.Topic),
-				"Server-side registry bug — topic references blocks missing from recipe.md. Report via flow-main.md; do not assume the topic is empty by design.")), nil, nil
+				"Server-side registry bug — topic references blocks missing from recipe.md. Report via flow-main.md; do not assume the topic is empty by design."), WithRecoveryStatus()), nil, nil
 		}
 
 		// Phase C: record access for adaptive delivery.

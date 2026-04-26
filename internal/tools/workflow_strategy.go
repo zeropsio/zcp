@@ -58,7 +58,7 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("Invalid strategy %q for %q", raw, hostname),
-				"Valid strategies: push-dev, push-git, manual")), nil, nil
+				"Valid strategies: push-dev, push-git, manual"), WithRecoveryStatus()), nil, nil
 		}
 		strategies[hostname] = s
 	}
@@ -71,13 +71,13 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Invalid trigger %q", input.Trigger),
-			"Valid triggers (push-git only): 'webhook' or 'actions'")), nil, nil
+			"Valid triggers (push-git only): 'webhook' or 'actions'"), WithRecoveryStatus()), nil, nil
 	}
 	if trigger != "" && !anyStrategyIs(strategies, topology.StrategyPushGit) {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"trigger is only valid when setting strategy=push-git",
-			"Drop the trigger param, or set strategies={hostname:\"push-git\"}")), nil, nil
+			"Drop the trigger param, or set strategies={hostname:\"push-git\"}"), WithRecoveryStatus()), nil, nil
 	}
 
 	// Only complete (bootstrapped) metas are valid strategy targets — auto-
@@ -92,13 +92,13 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 			return convertError(platform.NewPlatformError(
 				platform.ErrServiceNotFound,
 				fmt.Sprintf("Read service meta %q: %v", hostname, err),
-				"Ensure the service was bootstrapped first")), nil, nil
+				"Ensure the service was bootstrapped first"), WithRecoveryStatus()), nil, nil
 		}
 		if meta == nil || !meta.IsComplete() {
 			return convertError(platform.NewPlatformError(
 				platform.ErrServiceNotFound,
 				fmt.Sprintf("Service %q is not bootstrapped", hostname),
-				"Run bootstrap first: zerops_workflow action=\"start\" workflow=\"bootstrap\"")), nil, nil
+				"Run bootstrap first: zerops_workflow action=\"start\" workflow=\"bootstrap\""), WithRecoveryStatus()), nil, nil
 		}
 		// Gate local-only + push-dev: no stage target.
 		if strategy == topology.StrategyPushDev && meta.Mode == topology.PlanModeLocalOnly {
@@ -106,7 +106,7 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("Service %q is local-only — push-dev needs a Zerops stage to deploy to", hostname),
 				"Link a stage first: zerops_workflow action=\"adopt-local\" targetService=<runtime-hostname>. Or pick push-git / manual, which work without a stage."),
-			), nil, nil
+				WithRecoveryStatus()), nil, nil
 		}
 		updated = append(updated, fmt.Sprintf("%s=%s", hostname, strategy))
 		// Detect no-op: same strategy AND same trigger (if applicable) AND
@@ -133,7 +133,7 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 			return convertError(platform.NewPlatformError(
 				platform.ErrServiceNotFound,
 				fmt.Sprintf("Write service meta %q: %v", hostname, err),
-				"")), nil, nil
+				""), WithRecoveryStatus()), nil, nil
 		}
 	}
 
@@ -155,7 +155,7 @@ func handleStrategy(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp
 			return convertError(platform.NewPlatformError(
 				platform.ErrNotImplemented,
 				fmt.Sprintf("strategy setup synthesis failed: %v", err),
-				"This is a build-time defect — report it. Run `make lint-local` to verify the atom corpus.")), nil, nil
+				"This is a build-time defect — report it. Run `make lint-local` to verify the atom corpus."), WithRecoveryStatus()), nil, nil
 		}
 		guidance = g
 	} else {
@@ -186,7 +186,7 @@ func handleStrategyList(stateDir string) (*mcp.CallToolResult, any, error) {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("List service metas: %v", err),
-			"")), nil, nil
+			""), WithRecoveryStatus()), nil, nil
 	}
 	options := []topology.DeployStrategy{topology.StrategyPushDev, topology.StrategyPushGit, topology.StrategyManual}
 

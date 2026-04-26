@@ -47,7 +47,7 @@ func handleRecipeClassify(input WorkflowInput) (*mcp.CallToolResult, any, error)
 			platform.ErrInvalidParameter,
 			"factType is required for action=classify",
 			"Pass factType=<one of gotcha_candidate, ig_item_candidate, verified_behavior, platform_observation, fix_applied, cross_codebase_contract>. The type comes from the fact record the writer sub-agent is classifying.",
-		)), nil, nil
+		), WithRecoveryStatus()), nil, nil
 	}
 
 	keywords := strings.ToLower(input.TitleKeywords)

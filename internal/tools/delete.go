@@ -38,7 +38,7 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, s
 				platform.ErrSelfServiceBlocked,
 				fmt.Sprintf("Cannot delete %q — ZCP is running on this service", input.ServiceHostname),
 				"Delete this service manually via zcli or Zerops GUI.",
-			)), nil, nil
+			), WithRecoveryStatus()), nil, nil
 		}
 
 		// Best-effort: unmount SSHFS before delete so the service still exists for clean unmount.
@@ -52,7 +52,7 @@ func RegisterDelete(srv *mcp.Server, client platform.Client, projectID string, s
 
 		proc, err := ops.Delete(ctx, client, projectID, input.ServiceHostname)
 		if err != nil {
-			return convertError(err), nil, nil
+			return convertError(err, WithRecoveryStatus()), nil, nil
 		}
 		onProgress := buildProgressCallback(ctx, req)
 		finalProc, _ := pollManageProcess(ctx, client, proc, onProgress)

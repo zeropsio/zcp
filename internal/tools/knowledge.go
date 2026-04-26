@@ -110,7 +110,7 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				"No mode selected — zerops_knowledge requires exactly one of: recipe, scope, runtime/services, or query",
-				"Pick the mode that matches your intent: recipe=\"NAME\" for named guide, scope=\"infrastructure\" before writing YAML, runtime=/services= for stack briefing, query=\"phrase\" for free-text search.")), nil, nil
+				"Pick the mode that matches your intent: recipe=\"NAME\" for named guide, scope=\"infrastructure\" before writing YAML, runtime=/services= for stack briefing, query=\"phrase\" for free-text search."), WithRecoveryStatus()), nil, nil
 		}
 
 		if modeCount > 1 {
@@ -122,7 +122,7 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("Multiple modes selected (%s) — pick exactly one", combo),
-				"Re-call with only one of: recipe=\"NAME\" alone, OR scope=\"infrastructure\" alone, OR runtime=/services= alone, OR query=\"phrase\" alone. The mode= field is the only one that combines with any of these.")), nil, nil
+				"Re-call with only one of: recipe=\"NAME\" alone, OR scope=\"infrastructure\" alone, OR runtime=/services= alone, OR query=\"phrase\" alone. The mode= field is the only one that combines with any of these."), WithRecoveryStatus()), nil, nil
 		}
 
 		// Mode 1: Scope (platform reference) — always returns full content.
@@ -131,14 +131,14 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 				return convertError(platform.NewPlatformError(
 					platform.ErrInvalidParameter,
 					fmt.Sprintf("Unknown scope %q", input.Scope),
-					"Use scope=\"infrastructure\" for platform reference")), nil, nil
+					"Use scope=\"infrastructure\" for platform reference"), WithRecoveryStatus()), nil, nil
 			}
 			core, err := store.GetCore()
 			if err != nil {
 				return convertError(platform.NewPlatformError(
 					platform.ErrFileNotFound,
 					fmt.Sprintf("Failed to load core reference: %v", err),
-					"Check that core knowledge files are embedded")), nil, nil
+					"Check that core knowledge files are embedded"), WithRecoveryStatus()), nil, nil
 			}
 			result := core
 			if model, mErr := store.GetModel(); mErr == nil {
@@ -182,7 +182,7 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 				return convertError(platform.NewPlatformError(
 					platform.ErrFileNotFound,
 					fmt.Sprintf("Failed to assemble briefing: %v", err),
-					"Check that core knowledge files are embedded")), nil, nil
+					"Check that core knowledge files are embedded"), WithRecoveryStatus()), nil, nil
 			}
 			if tracker != nil {
 				tracker.RecordBriefing(input.Runtime, input.Services)
@@ -203,13 +203,13 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 				return convertError(platform.NewPlatformError(
 					platform.ErrInvalidParameter,
 					err.Error(),
-					"Check recipe name spelling and available recipes")), nil, nil
+					"Check recipe name spelling and available recipes"), WithRecoveryStatus()), nil, nil
 			}
 			return textResult(recipe), nil, nil
 		}
 
 		// Should never reach here
 		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidUsage, "Invalid mode routing", "")), nil, nil
+			platform.ErrInvalidUsage, "Invalid mode routing", ""), WithRecoveryStatus()), nil, nil
 	})
 }

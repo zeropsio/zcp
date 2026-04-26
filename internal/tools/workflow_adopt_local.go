@@ -30,13 +30,13 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"action=\"adopt-local\" is for local env — use workflow=\"bootstrap\" in container env",
-			"")), nil, nil
+			""), WithRecoveryStatus()), nil, nil
 	}
 	if input.TargetService == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"targetService is required for action=\"adopt-local\"",
-			"Pass targetService=<runtime-hostname> — the Zerops runtime to link as stage for this local project")), nil, nil
+			"Pass targetService=<runtime-hostname> — the Zerops runtime to link as stage for this local project"), WithRecoveryStatus()), nil, nil
 	}
 
 	metas, err := workflow.ListServiceMetas(stateDir)
@@ -44,13 +44,13 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("read metas: %v", err),
-			"")), nil, nil
+			""), WithRecoveryStatus()), nil, nil
 	}
 	if len(metas) == 0 {
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
 			"No local project meta exists. Auto-adopt runs on server start — restart ZCP, or the API call failed during startup.",
-			"")), nil, nil
+			""), WithRecoveryStatus()), nil, nil
 	}
 
 	// Find the (single) local meta. Local projects have exactly one meta
@@ -66,13 +66,13 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
 			"No local-env meta found",
-			"action=\"adopt-local\" only applies to local env")), nil, nil
+			"action=\"adopt-local\" only applies to local env"), WithRecoveryStatus()), nil, nil
 	}
 	if local.Mode == topology.PlanModeLocalStage {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Stage already linked: project %q → %s", local.Hostname, local.StageHostname),
-			"To re-link, edit .zcp/state/services/ manually or delete the local meta and restart ZCP")), nil, nil
+			"To re-link, edit .zcp/state/services/ manually or delete the local meta and restart ZCP"), WithRecoveryStatus()), nil, nil
 	}
 
 	// Confirm the target hostname is a live runtime service.
@@ -81,7 +81,7 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("list services: %v", err),
-			"")), nil, nil
+			""), WithRecoveryStatus()), nil, nil
 	}
 	var target *platform.ServiceStack
 	for i, s := range services {
@@ -96,7 +96,7 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("%q is a managed service (%s), not a runtime — can't be a deploy target", s.Name, typeName),
-				"Pass a runtime service hostname (e.g. an app container, not a db/cache/storage)")), nil, nil
+				"Pass a runtime service hostname (e.g. an app container, not a db/cache/storage)"), WithRecoveryStatus()), nil, nil
 		}
 		target = &services[i]
 		break
@@ -105,7 +105,7 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 		return convertError(platform.NewPlatformError(
 			platform.ErrServiceNotFound,
 			fmt.Sprintf("runtime service %q not found in project", input.TargetService),
-			"")), nil, nil
+			""), WithRecoveryStatus()), nil, nil
 	}
 
 	// Upgrade meta: local-only → local-stage, link target.
@@ -124,7 +124,7 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("write meta: %v", err),
-			"")), nil, nil
+			""), WithRecoveryStatus()), nil, nil
 	}
 
 	return jsonResult(adoptLocalResponse{
