@@ -207,7 +207,15 @@ func developCoverageFixtures() []coverageFixture {
 				// Phase-1 additions — load-bearing awareness + KB pointers.
 				"Deploy strategy — current + how to change",
 				`action="strategy"`,
-				"edit → deploy",
+				// Phase-2 dedup #5 (commit <pending>) replaced the
+				// blanket "edit → deploy → verify" framing in
+				// `develop-change-drives-deploy` with mode-aware
+				// guidance to resolve the restart-vs-deploy
+				// conflict per Codex round (see
+				// `plans/audit-composition/dedup-candidates.md`).
+				// Pin migrated to a phrase unique to the post-dedup
+				// content.
+				"persistence boundary",
 				"Knowledge on demand",
 				"Infrastructure changes",
 				// Phase-4: mode-expansion hint fires for dev services.

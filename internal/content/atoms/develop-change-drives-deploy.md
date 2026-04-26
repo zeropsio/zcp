@@ -2,24 +2,23 @@
 id: develop-change-drives-deploy
 priority: 2
 phases: [develop-active]
-title: "Every code change must flow through the deploy strategy"
+title: "Every code change must reach a durable state"
 references-fields: [workflow.WorkSessionSummary.CloseReason]
-references-atoms: [develop-auto-close-semantics, develop-platform-rules-common]
+references-atoms: [develop-auto-close-semantics, develop-platform-rules-common, develop-push-dev-workflow-dev, develop-push-dev-workflow-simple]
 ---
 
-### Every code change must flow through the deploy strategy
+### Every code change must reach a durable state
 
-Editing files on the SSHFS mount (or locally in local mode) only
-persists across deploys when covered by `deployFiles` (see
-`develop-platform-rules-common` for the deploy-replaces-container
-invariant). The rule is:
+`deployFiles` is the persistence boundary (see
+`develop-platform-rules-common`). Iteration cadence is mode-specific:
 
-> **edit → deploy (via active strategy) → verify**
+- Dev-mode dynamic-runtime container: code-only changes pick up via
+  `zerops_dev_server action=restart`; `zerops.yaml` changes need
+  `zerops_deploy`. See `develop-push-dev-workflow-dev`.
+- Simple / standard / local / first-deploy: every change →
+  `zerops_deploy`.
 
-Auto-close semantics are described in `develop-auto-close-semantics`;
-`closeReason` values you can observe are `auto-complete` (every
-in-scope service passed) and `iteration-cap` (retry ceiling hit).
-Explicit `zerops_workflow action="close" workflow="develop"` emits
-the same closed state; it's rarely needed because starting a new task
-with a different `intent` replaces the session. Session close is
-cleanup, not commitment — close always succeeds.
+Auto-close: see `develop-auto-close-semantics`. Explicit
+`zerops_workflow action="close" workflow="develop"` emits the same
+closed state; rarely needed — starting a new task with a different
+`intent` replaces the session.
