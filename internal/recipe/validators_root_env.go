@@ -89,8 +89,9 @@ func validateEnvREADME(_ context.Context, path string, body []byte, _ SurfaceInp
 
 // validateEnvImportComments — every runtime-service block in every tier
 // has a comment; comment carries a causal word; no templated opening
-// across runtime-service blocks within one tier.
-func validateEnvImportComments(_ context.Context, path string, _ []byte, inputs SurfaceInputs) ([]Violation, error) {
+// across runtime-service blocks within one tier; tier-prose claims
+// match the adjacent emitted yaml fields (run-13 §V).
+func validateEnvImportComments(_ context.Context, path string, body []byte, inputs SurfaceInputs) ([]Violation, error) {
 	if inputs.Plan == nil {
 		return nil, nil
 	}
@@ -116,6 +117,7 @@ func validateEnvImportComments(_ context.Context, path string, _ []byte, inputs 
 			fmt.Sprintf("env %s project comment carries citation meta-talk: %q", tierKey, ec.Project)))
 	}
 	vs = append(vs, templatedOpeningCheck(path, ec, inputs.Plan)...)
+	vs = append(vs, validateTierProseVsEmit(path, body, inputs)...)
 	return vs, nil
 }
 
