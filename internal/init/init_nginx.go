@@ -1,7 +1,6 @@
 package init
 
 import (
-	"crypto/sha256"
 	"fmt"
 	"os"
 	"text/template"
@@ -10,9 +9,15 @@ import (
 )
 
 // NginxConfig holds values for nginx.conf template rendering.
+//
+// Password is the raw VSCODE_PASSWORD value, used verbatim as both the
+// auth-cookie value and the path component of `/zcp-auth/<token>`.
+// Generated passwords are alphanumeric so they're URL-safe and
+// cookie-safe as-is — no hashing needed (an earlier design ran sha256
+// over the env value to coerce special characters into hex).
 type NginxConfig struct {
-	HasAuth      bool
-	PasswordHash string
+	HasAuth  bool
+	Password string
 }
 
 var (
@@ -70,14 +75,15 @@ func createNginxDirs() error {
 	return nil
 }
 
-// renderNginxConfig renders the nginx.conf template to outputPath.
-// If password is non-empty, auth is enabled with SHA256 hash of the password.
+// renderNginxConfig renders the nginx.conf template to outputPath. If
+// password is non-empty, auth is enabled and the raw password is baked
+// into the rendered config as both the cookie value and the
+// `/zcp-auth/<token>` path component.
 func renderNginxConfig(outputPath, password string) error {
 	cfg := NginxConfig{}
 	if password != "" {
-		hash := sha256.Sum256([]byte(password))
 		cfg.HasAuth = true
-		cfg.PasswordHash = fmt.Sprintf("%x", hash)
+		cfg.Password = password
 	}
 
 	raw, err := content.GetTemplate("nginx.conf.tmpl")

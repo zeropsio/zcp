@@ -18,7 +18,7 @@ http {
 {{- if .HasAuth}}
 
     map $cookie___zcp_auth $zcp_cookie_ok {
-        {{.PasswordHash}} 1;
+        {{.Password}} 1;
         default 0;
     }
 {{- end}}
@@ -83,8 +83,8 @@ http {
 </html>';
         }
 
-        location = /zcp-auth/{{.PasswordHash}} {
-            add_header Set-Cookie "__zcp_auth={{.PasswordHash}}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=86400";
+        location = /zcp-auth/{{.Password}} {
+            add_header Set-Cookie "__zcp_auth={{.Password}}; Path=/; HttpOnly; SameSite=None; Secure; Max-Age=86400";
             return 302 /;
         }
 

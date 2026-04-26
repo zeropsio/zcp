@@ -1,8 +1,6 @@
 package init_test
 
 import (
-	"crypto/sha256"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,7 +19,8 @@ func TestRunNginx_WithPassword(t *testing.T) {
 	t.Cleanup(func() { zcpinit.ResetNginxDirs() })
 	zcpinit.SetNginxLogFiles(nil)
 	t.Cleanup(func() { zcpinit.ResetNginxLogFiles() })
-	t.Setenv("VSCODE_PASSWORD", "test-password-123")
+	const password = "alnum123token"
+	t.Setenv("VSCODE_PASSWORD", password)
 
 	err := zcpinit.RunNginx()
 	if err != nil {
@@ -34,18 +33,16 @@ func TestRunNginx_WithPassword(t *testing.T) {
 	}
 	content := string(data)
 
-	expectedHash := fmt.Sprintf("%x", sha256.Sum256([]byte("test-password-123")))
-
 	tests := []struct {
 		name     string
 		contains string
 	}{
 		{"has worker_processes", "worker_processes auto;"},
-		{"has password hash in cookie map", expectedHash},
+		{"has raw password in cookie map", password},
 		{"has login page", "/zcp-login"},
-		{"has auth endpoint", "/zcp-auth/" + expectedHash},
+		{"has auth endpoint with raw password", "/zcp-auth/" + password},
 		{"has logout endpoint", "/zcp-logout"},
-		{"has cookie set", "__zcp_auth=" + expectedHash},
+		{"has cookie set with raw password", "__zcp_auth=" + password},
 		{"has proxy pass", "proxy_pass http://127.0.0.1:8081"},
 		{"has CSP header", "frame-ancestors"},
 		{"has websocket upgrade", "proxy_set_header Upgrade"},
@@ -190,34 +187,5 @@ func TestRunNginx_NoFakeServerBlock(t *testing.T) {
 	}
 	if strings.Contains(content, "listen 8081") {
 		t.Error("should NOT have the fake server block on port 8081")
-	}
-}
-
-func TestNginxConfig_HashComputation(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name     string
-		password string
-		wantHash string
-	}{
-		{
-			"known password",
-			"3T1SUTUVs1)W4=_*",
-			fmt.Sprintf("%x", sha256.Sum256([]byte("3T1SUTUVs1)W4=_*"))),
-		},
-		{
-			"simple password",
-			"test",
-			fmt.Sprintf("%x", sha256.Sum256([]byte("test"))),
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			hash := fmt.Sprintf("%x", sha256.Sum256([]byte(tt.password)))
-			if hash != tt.wantHash {
-				t.Errorf("hash mismatch: got %s, want %s", hash, tt.wantHash)
-			}
-		})
 	}
 }
