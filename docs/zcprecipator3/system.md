@@ -244,13 +244,15 @@ not allowed to invent knowledge that earlier phases didn't capture.
 
 ## 4. The TEACH / DISCOVER line
 
-> **Decision marker.** As of 2026-04-25 the cleanup pass has shipped:
-> wrong-side artifacts have been demoted to Notice severity, deleted
-> outright, or merged. The verdict table below reflects the post-
-> cleanup state. The architectural reframe lives in [CHANGELOG.md
-> entry "2026-04-25 — architectural reframe: catalog drift recognized,
-> gates → notices/structural"](CHANGELOG.md); the cleanup itself is
-> recorded in the cleanup CHANGELOG entry directly above it. The
+> **Decision marker.** As of 2026-04-26 the run-13 readiness pass has
+> shipped: 12 commits across 6 tranches landed on top of the run-12
+> cleanup. Verdict table below reflects the post-run-13 state — every
+> §T / §F / §V / §Q / §G2 / §B2 addition is TEACH-side, with §V's
+> structural-relation validators wired as Notice. The architectural
+> reframe lives in [CHANGELOG.md entry "2026-04-25 — architectural
+> reframe: catalog drift recognized, gates → notices/structural"](CHANGELOG.md);
+> the cleanup itself is recorded in the cleanup CHANGELOG entry
+> directly above it; run-13 lives in the entry above that. The
 > operational pause record is at [plans/run-11-pause.md](plans/run-11-pause.md).
 
 This is the load-bearing section. It draws the line between what the
@@ -374,6 +376,12 @@ through deploy iteration (when not).
 | Alias-type contracts table — `${<host>_zeropsSubdomain}` is a full HTTPS URL (run-12 §A) | TEACH | ✅ Positive teaching in scaffold platform_principles atom (run-13 §1 deleted the `subdomain-double-scheme` validator — it was dead code, never wired) |
 | CLAUDE.md porter-facing rule — framework-canonical commands, no MCP invocations (run-12 §C) | TEACH | ✅ Positive teaching in scaffold content_authoring atom (run-13 §2 deleted the `claude-md-zcp-tool-leak` validator — catalog of 14 tool names that the brief teaching already covers) |
 | `Service.SupportsHA` capability flag — managed-service family table downgrades non-HA-capable services (run-12 §Y3) | TEACH | ✅ Engine emits by construction; meilisearch / kafka / unknown families → NON_HA at tier 5 |
+| Tier capability matrix in scaffold-frontend + finalize briefs (run-13 §T) | TEACH | ✅ Engine pushes resolved per-tier RuntimeMinContainers / ServiceMode / CPUMode / CorePackage / RunsDevContainer + per-managed-service HA-downgrade table into the brief at compose time. Closes prose-vs-emit divergence at the source: agent authors against the engine's actual field values, no extrapolation from `tierAudienceLine()` |
+| Showcase scenario specification atom (run-13 §F) | TEACH | ✅ Positive shape: `tier=showcase` recipes get a hardcoded panel-per-managed-service-category mandate (Items / Cache / Queue / Storage / Search) + per-panel browser-verification fact ids. Framework-agnostic; engine emits the per-tier mandate, agent designs panels against it |
+| `tier-prose-*-mismatch` validator family (run-13 §V) | TEACH (defensible) | ⚠️ Notice — structural-relation between two yaml elements (or markdown claim + adjacent yaml field), NOT a phrase-ban catalog. Backstop for §T's brief teaching; promotion to Blocking deferred pending dogfood validation per plan §7.1 |
+| `codebase_claude.md.tmpl` template strip (run-13 §Q) | TEACH | ✅ Engine no longer injects the `## Zerops dev loop` block into published CLAUDE.md; agent-authored `## Notes` section is the single source of truth for codebase-specific dev-loop commands. Eliminates the dual-source-of-truth contradiction with §C's brief teaching |
+| `complete-phase phase=<P> codebase=<host>` per-codebase scoping (run-13 §G2) | TEACH | ✅ Engine extends the dispatch surface so sub-agents self-validate before terminating. Closes the §G actor mismatch — sub-agent sees only its own codebase's violations, fixes via mode=replace (fragments) or ssh-edit (yaml file), re-calls until ok:true |
+| `build-subagent-prompt` action (run-13 §B2) | TEACH | ✅ Engine composes the FULL dispatch prompt (recipe-level context wrapper + brief body + close criteria) from Plan + Research.Description; eliminates the hand-typed wrapper that compounded math/path drift across runs (run-12 28-38% wrapper share → run-13 < 15%) |
 
 ### What "wrong side" means concretely
 

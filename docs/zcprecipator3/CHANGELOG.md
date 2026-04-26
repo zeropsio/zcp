@@ -4,6 +4,179 @@ Running log of changes on top of [plan.md](plan.md). Each entry captures what ch
 
 ---
 
+## 2026-04-26 — run-13 readiness: tier-fact + showcase scenario + per-codebase scoping + dispatch wrapper
+
+### Context
+
+Run 12 (`nestjs-showcase`, 2026-04-25) was the first dogfood after the
+post-run-12-readiness engine. Aggregate content quality lifted 6/10 →
+7/10 vs the laravel-showcase reference. But the run surfaced four new
+defect classes the run-12-readiness analysis hadn't predicted:
+
+1. Engine template injects `zcli push` into every published CLAUDE.md
+   (template-side leak, agent honored the §C teaching but the template
+   contradicted it directly).
+2. Tier-prose ships factually wrong against engine emit at scale —
+   tier 5 README claims "three replicas" (yaml emits 2),
+   "Meilisearch keeps a backup" (yaml emits NON_HA), "object-storage
+   replicated" (no such field). Engine has the truth; brief composer
+   never pushes it to the agent.
+3. §G's "right author sees violations" intent failed at the actor
+   layer — sub-agents had terminated when main called complete-phase,
+   so 13 violations surfaced to main (7 hand-edits + 3 mode=replace).
+4. Feature subagent had no showcase scenario specification — designed
+   panels for Items / Status / Upload, no queue/broker visualization.
+   A porter clicking the recipe sees no demonstration of the broker
+   pathway despite the recipe shipping a broker + worker + indexer.
+
+Run-13 ships fixes for all four classes plus the smaller content / brief
+gaps run-12 deferred. Twelve commits across six tranches; every
+behavioral change is TEACH-side per system.md §4 (the only new
+validator is structural-relation, wired as Notice).
+
+### §Q — strip template-injected `## Zerops dev loop` block
+
+`internal/recipe/content/templates/codebase_claude.md.tmpl` carried a
+hardcoded "## Zerops dev loop / Iterate with `zcli push` ..." section
+that contradicted the §C scaffold-brief teaching. Two competing
+authoritative dev-loop claims per file; porter scanning the file saw
+the template version first. Template now ships only header +
+service-facts + notes — agent-authored Notes section is the single
+source of truth for codebase-specific dev-loop commands. Test:
+`TestAssembleCodebaseClaudeMD_NoTemplateInjectedDevLoop`.
+
+### §T — tier capability matrix into scaffold (frontend) + finalize briefs
+
+New `BuildTierFactTable(plan)` returns the engine-resolved per-tier
+matrix (RuntimeMinContainers / ServiceMode / CPUMode / CorePackage /
+RunsDevContainer / MinFreeRAMGB) + per-managed-service HA-downgrade
+table (haCapableFamilies vs knownNonHAFamilies + plan-overridden
+services from explicit `Service.SupportsHA`) + storage-uniform-size
+note. Wired into `BuildFinalizeBrief` unconditionally and into
+`BuildScaffoldBrief` when `cb.Role == RoleFrontend` (only the SPA
+codebase ships tier-aware prose). ScaffoldBriefCap raised 22 → 24 KB
+(later 26 KB after §G2); FinalizeBriefCap raised 12 → 14 KB. Closes
+prose-vs-emit divergence at the source: agent authors against engine
+truth instead of extrapolating from `tierAudienceLine()`'s fuzzy
+summary.
+
+### §V — `validateTierProseVsEmit` post-stitch backstop
+
+Structural-relation validator parses yaml service blocks via
+`parseYAMLServiceBlocks` and cross-checks the preceding-comment
+paragraph against the adjacent emitted fields. Five detected
+divergences: replica-count claim vs `minContainers` (handles digit
++ written-out forms one..ten), HA / high-availability / backed-up /
+replicated claim vs `mode: NON_HA`, numeric storage-quota claim vs
+`objectStorageSize`, static-runtime claim vs non-static `type:`. All
+SeverityNotice — backstop for §T's brief teaching, NOT a phrase-ban
+catalog. Wired into existing `validateEnvImportComments`. Promotion
+to Blocking deferred per plan §7.1 pending dogfood validation.
+
+### §F — showcase scenario specification + queue-demo panel mandate
+
+New atom `briefs/feature/showcase_scenario.md` (loaded conditionally
+on `plan.Tier == "showcase"`) hardcodes the panel-per-managed-service-
+category mandate (Items / Cache / Queue / Storage / Search, Status
+optional), design priorities (modern but not custom; demonstration
+components, not chrome; panel-first reading order; real data
+exercised against live services), and per-panel browser-verification
+fact ids (`<frontend-cb>-{items,cache,queue,storage,search}-browser`).
+FeatureBriefCap raised 12 → 16 KB. Closes the user-feedback gap on
+queue/broker visualization.
+
+### §N — init-commands decomposed-step distinct keys
+
+`principles/init-commands-model.md` adds the "Distinct keys per step"
+paragraph with WRONG/RIGHT yaml examples — `${appVersionId}-migrate`
++ `${appVersionId}-seed` shows the canonical fix shape. Closes the
+run-12 scaffold-api `execOnce-key-collision-across-decomposed-steps`
+trap at the source.
+
+### §U — alias-type contracts resolution-timing footnote
+
+`briefs/scaffold/platform_principles.md` appends a "Resolution
+timing" footnote between the alias contracts table and the
+`${zeropsSubdomainHost}` paragraph. Build-time consumers (Vite
+`define`, Webpack `DefinePlugin`, Astro/Next/SvelteKit static-site
+builds) must order the dependency's first deploy first; runtime
+consumers have no ordering concern. Closes the run-12 scaffold-app
+`cross-service-alias-resolution-timing` trap at the source.
+
+### §I-feature — feature IG-scope rule
+
+`briefs/feature/content_extension.md` adds an "IG scope (extending
+scaffold's items)" subsection: extend IG only for actual platform
+mechanics a porter must do in their own code; recipe-internal
+contracts (endpoint shapes, TTL conventions, queue-group names) route
+to KB or claude-md/notes. Four worked examples cover the canonical
+cases. Closes the run-12 R-12-12 IG-scope drift at the feature layer
+(scaffold's §I rule never reached the feature brief).
+
+### §W — finalize anti_patterns allows `record-fragment mode=replace`
+
+`briefs/finalize/anti_patterns.md` rewrites the "do not touch
+codebase/<h>/* ids" bullet to allow `mode=replace` for residual
+fragment violations at finalize. Eliminates the contradiction with
+run-12 §R that left finalize sub-agents falling back to hand-edits.
+
+### §G2 — per-codebase complete-phase scoping
+
+`handlers.go::completePhase` accepts `in.Codebase`. When set, runs
+`Session.CompletePhaseScoped` against a Plan whose Codebases slice is
+filtered to just the named host — sub-agent self-validates before
+terminating, sees only its own work, no peer-codebase noise. Phase
+advance still fires only on the no-codebase form (main's post-sub-
+agent-return path); scoped close is a self-validate, not a
+transition. Brief teaching: `phase_entry/scaffold.md` adds "##
+Self-validate before terminating (sub-agent)";
+`briefs/scaffold/content_authoring.md` replaces the older "Correcting
+a fragment" section with the broader self-validate flow;
+`briefs/feature/content_extension.md` adds the same teaching for the
+feature phase. Closes the §G actor mismatch — sub-agent dispatches
+the gate in its own session and can correct via mode=replace
+(fragments) or ssh-edit (yaml file). Tests:
+`TestDispatch_CompletePhase_CodebaseScoped_OnlyValidatesNamedCodebase`,
+`_DoesNotAdvancePhase`, `_UnknownCodebase_Errors`,
+`_NoCodebase_StillAdvancesOnClean`.
+
+### §Y2D — suppress Y2 fallback duplicate on dev-pair stage slot
+
+`writeDeliverableServices` tracks per-codebase `devEmittedFallback`
+(the bare-codebase comment writeRuntimeDev just rendered when the
+dev slot key was empty); `writeRuntimeStage` suppresses its own
+fallback when it would resolve to the same string. Distinct slot-
+keyed comments (apidev + apistage both set) still render normally.
+Tier 0 + 1 dev-pair runtime services no longer double-render the
+Y2-fallback comment.
+
+### §B2 — `build-subagent-prompt` action (engine-composed dispatch)
+
+New MCP action returns the FULL dispatch prompt: engine-owned
+recipe-level context block (slug, framework, tier, codebase shape +
+hostnames, project-level secret name, sister codebases for scaffold,
+managed services list, the dispatched codebase's identity block) +
+brief body verbatim + closing notes naming the self-validate path.
+Recipe-specific decisions ride along via `plan.Research.Description`
+— no research-phase atom extension needed for the run-13 stretch.
+Phase entries (`scaffold.md`, `feature.md`, `finalize.md`) direct
+main at `build-subagent-prompt` instead of `build-brief`. Wrapper
+share dropped from run-12's 28-38% to under 15%; finally meets
+run-12-readiness criterion 15. Tests:
+`TestBuildSubagentPrompt_Scaffold_IncludesRecipeLevelContext`,
+`_WrapperShareIsSmall`, `_Feature_NoCodebaseScope`,
+`TestDispatch_BuildSubagentPrompt_ReturnsPromptField`.
+
+### What's next
+
+Engine work for run-13 is complete. User dogfoods `nestjs-showcase`
+against the run-13 engine, runs forensic analysis, then closes
+run-13 green or writes run-14 readiness for residuals. Acceptance
+criteria 16-26 (must-ship) + 27-28 (stretch) are listed in
+`plans/run-13-readiness.md` §4.
+
+---
+
 ## 2026-04-25 — run-13 readiness: root-cause cleanup of run-12 catalog residue + plumbing fix
 
 ### Context
