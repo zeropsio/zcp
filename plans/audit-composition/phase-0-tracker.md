@@ -14,7 +14,9 @@ Closed: open
 |---|---|---|---|---|---|---|
 | 1 | tracker-dir + this tracker | absent | scaffolded | — | N-A | scaffold commit (no Codex needed) |
 | 2 | empirical 68-atom unpinned list (§4.2 derivation) | derived ad-hoc | committed as `unpinned-atoms-baseline.md` | — | N-A | source of truth for `knownUnpinnedAtoms` |
-| 3 | Phase 0 PRE-WORK Codex round (test design + §6.3 fire-set generator + §4.2 baseline list review) | not run | — | — | PENDING | per §10.1 P0 row 1 (CORPUS-SCAN: pin-coverage gap derivation review) |
+| 3a | Phase 0 PRE-WORK Codex round 1 (test design + §6.3 fire-set generator + §4.2 baseline list review) | not run | NEEDS-REVISION (4/6 axes) | — | NEEDS-REVISION | round 1 found: substring-pin-detection self-counting (Axis 1+4); fire-set generator missing services / Trigger / strategy / export / closed-auto / multi-service / wrong step-set (Axis 5); fixture empty MustContain (Axis 6). Findings in `codex-round-p0-design-review.md`. |
+| 3b | Plan revisions applying Codex round 1 findings | NEEDS-REVISION | revisions committed | — | N-A | §6.3 generator rewritten with corrected axes; §7 step 3 test sketch rewritten with AST-based pin detection in dedicated file; §7 step 4 fixture given non-empty MustContain. |
+| 3c | Phase 0 PRE-WORK Codex round 2 (re-validate against revised plan) | not run | — | — | PENDING | re-runs the round 1 prompt against revised plan; required to APPROVE before substantive work begins (§16.1) |
 | 4 | recreate `cmd/atomsize_probe/main.go` from `c8d87406` + add `develop_simple_deployed_container` fixture | absent | — | — | N-A | mechanical: git show + adjust |
 | 5 | build `cmd/atom_fire_audit/main.go` per §6.3 sketch | absent | — | — | N-A | implementation; output committed as `fire-set-matrix.md` |
 | 6 | add `develop_simple_deployed_container` fixture to `coverageFixtures()` if absent | absent | — | — | N-A | per §4.4 + Phase 0 step 4 |

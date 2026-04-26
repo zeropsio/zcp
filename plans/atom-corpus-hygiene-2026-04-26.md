@@ -443,10 +443,16 @@ Generate the fire-set matrix via a temporary probe binary (delete after
 Phase 8 per §11 / §12). The "plausible envelope" generator is the
 Cartesian product of:
 - `Phase ∈ {idle, bootstrap-active, develop-active, develop-closed-auto, strategy-setup, export-active}`
-- `Environment ∈ {container, local}`
-- For phase=idle: `IdleScenario ∈ {empty, bootstrapped, adopt, incomplete, orphan}`
-- For phase=bootstrap-active: every `(Route, Step)` pair from `BootstrapRoute × {discover, provision, generate, deploy, close}`
-- For phase=develop-active: every `(Mode, Strategy, Trigger, RuntimeClass, DeployState, Bootstrapped)` tuple where `serviceSatisfiesAxes` accepts at least one envelope
+  (Go const names: `PhaseIdle`, `PhaseBootstrapActive`, `PhaseDevelopActive`, `PhaseDevelopClosed`, `PhaseStrategySetup`, `PhaseExportActive` — note `PhaseDevelopClosed` const name vs `"develop-closed-auto"` string value).
+- `Environment ∈ {container, local}` — both must be enumerated for every phase, including idle, bootstrap, strategy-setup. (Phase 0 round 1 fix: container was hardcoded for several sub-products.)
+- For phase=idle: `IdleScenario ∈ {empty, bootstrapped, adopt, incomplete, orphan}`.
+- For phase=bootstrap-active: every `(Route, Step, Env)` triple from `BootstrapRoute × {discover, provision, close} × {container, local}`. The atom-valid step enum is `{discover, provision, close}` per `internal/workflow/atom.go::"steps"`; `generate` and `deploy` are workflow-only states with no atom axis. Bootstrap envelopes must also generate a service-bearing variant per `RuntimeClass` so service-scoped bootstrap atoms (e.g. `bootstrap-classic-plan-dynamic`) can match — `Synthesize` skips service-scoped atoms when no envelope service satisfies their axes (`internal/workflow/synthesize.go:61-74`).
+- For phase=develop-active: every `(Mode, Strategy, Trigger, RuntimeClass, DeployState, Env)` tuple where `serviceSatisfiesAxes` accepts at least one envelope. `Trigger ∈ {unset, actions, webhook}` (`topology.TriggerUnset`/`TriggerActions`/`TriggerWebhook`) is required because strategy atoms have `triggers:` axes. Plus a multi-service mixed-deploy-state variant per environment so first-deploy atoms render against envelopes where one service is undeployed and another is deployed (Axis J risk surface).
+- For phase=develop-closed-auto: per `Env`. No service axes consulted by atoms in this phase.
+- For phase=strategy-setup: per `(Env, Trigger)`, with one push-git service per envelope so service-scoped strategy atoms can match.
+- For phase=export-active: container-only (per `internal/content/atoms/export.md::environments: [container]`); generate at least one variant.
+
+There is **no** `envelopeRuntimes` axis — atom frontmatter accepts `runtimes` (service-scoped) and `envelopeDeployStates` (envelope-scoped) but NOT envelope-scoped runtimes. Round 1 sketch implied otherwise; the corrected generator does not generate over a phantom axis.
 
 ```go
 // cmd/atom_fire_audit/main.go (build with: go build -o /tmp/fire_audit ./cmd/atom_fire_audit/)
@@ -558,41 +564,93 @@ type plausibleEnvelope struct {
 // generatePlausibleEnvelopes builds the Cartesian product of axis values
 // described in §6.3 of the hygiene plan. Each entry is keyed by a stable
 // short string so the output is deterministic + greppable.
+//
+// Codex round 1 (2026-04-26) corrections applied:
+//   - bootstrap step set narrowed to {discover, provision, close} (atom-
+//     valid set per internal/workflow/atom.go::"steps"). `generate` and
+//     `deploy` are workflow-only, not atom axes.
+//   - bootstrap envelopes carry service snapshots so service-scoped
+//     atoms (e.g. bootstrap-classic-plan-dynamic) can fire — Synthesize
+//     skips service-scoped atoms when no service satisfies axes
+//     (internal/workflow/synthesize.go:61-74).
+//   - bootstrap + idle + strategy enumerate both environments.
+//   - develop product expanded over Trigger axis ({unset, actions, webhook}).
+//   - strategy-setup synthesised per (env × trigger) with a push-git service.
+//   - export-active synthesised (container-only per export.md axis).
+//   - develop-closed-auto synthesised per env (PhaseDevelopClosed const
+//     name; "develop-closed-auto" is the string value).
+//   - multi-service mixed-deploy-state develop envelopes added — covers
+//     Axis J risk where first-deploy atoms render against an envelope
+//     in which one service is undeployed and others are deployed.
+//   - no `envelopeRuntimes` generation — that axis does not exist
+//     (internal/workflow/atom.go enums only `runtimes` + `envelopeDeployStates`).
 func generatePlausibleEnvelopes() []plausibleEnvelope {
 	var out []plausibleEnvelope
 
-	// Idle envelopes — one per IdleScenario.
-	for _, scen := range []workflow.IdleScenario{
-		workflow.IdleEmpty, workflow.IdleBootstrapped, workflow.IdleAdopt,
-		workflow.IdleIncomplete, workflow.IdleOrphan,
-	} {
-		out = append(out, plausibleEnvelope{
-			key: "idle/" + string(scen),
-			envelope: workflow.StateEnvelope{
-				Phase: workflow.PhaseIdle, Environment: workflow.EnvContainer,
-				IdleScenario: scen,
-			},
-		})
+	envs := []workflow.Environment{workflow.EnvContainer, workflow.EnvLocal}
+	runtimes := []topology.RuntimeClass{
+		topology.RuntimeDynamic, topology.RuntimeStatic,
+		topology.RuntimeImplicitWeb, topology.RuntimeManaged,
+	}
+	triggers := []topology.PushGitTrigger{
+		topology.TriggerUnset, topology.TriggerActions, topology.TriggerWebhook,
 	}
 
-	// Bootstrap-active — every (route, step) pair.
-	for _, route := range []workflow.BootstrapRoute{
-		workflow.BootstrapRouteRecipe, workflow.BootstrapRouteClassic,
-		workflow.BootstrapRouteAdopt, workflow.BootstrapRouteResume,
-	} {
-		for _, step := range []string{"discover", "provision", "generate", "deploy", "close"} {
+	// ── Idle — every (env × IdleScenario) pair.
+	for _, env := range envs {
+		for _, scen := range []workflow.IdleScenario{
+			workflow.IdleEmpty, workflow.IdleBootstrapped, workflow.IdleAdopt,
+			workflow.IdleIncomplete, workflow.IdleOrphan,
+		} {
 			out = append(out, plausibleEnvelope{
-				key: "bootstrap/" + string(route) + "/" + step,
+				key: fmt.Sprintf("idle/%s/%s", env, scen),
 				envelope: workflow.StateEnvelope{
-					Phase: workflow.PhaseBootstrapActive, Environment: workflow.EnvContainer,
-					Bootstrap: &workflow.BootstrapSessionSummary{Route: route, Step: step},
+					Phase: workflow.PhaseIdle, Environment: env,
+					IdleScenario: scen,
 				},
 			})
 		}
 	}
 
-	// Develop-active — Cartesian over (mode, strategy, runtime, deployState, env).
-	envs := []workflow.Environment{workflow.EnvContainer, workflow.EnvLocal}
+	// ── Bootstrap-active — every (env × route × step) with a no-service
+	// variant (envelope-scoped atoms) AND a one-service-per-runtime variant
+	// (service-scoped atoms like bootstrap-classic-plan-dynamic).
+	routes := []workflow.BootstrapRoute{
+		workflow.BootstrapRouteRecipe, workflow.BootstrapRouteClassic,
+		workflow.BootstrapRouteAdopt, workflow.BootstrapRouteResume,
+	}
+	bootSteps := []string{"discover", "provision", "close"} // atom-valid set
+	for _, env := range envs {
+		for _, route := range routes {
+			for _, step := range bootSteps {
+				out = append(out, plausibleEnvelope{
+					key: fmt.Sprintf("bootstrap/%s/%s/%s/no-svc", env, route, step),
+					envelope: workflow.StateEnvelope{
+						Phase: workflow.PhaseBootstrapActive, Environment: env,
+						Bootstrap: &workflow.BootstrapSessionSummary{Route: route, Step: step},
+					},
+				})
+				for _, rt := range runtimes {
+					out = append(out, plausibleEnvelope{
+						key: fmt.Sprintf("bootstrap/%s/%s/%s/svc-%s", env, route, step, rt),
+						envelope: workflow.StateEnvelope{
+							Phase: workflow.PhaseBootstrapActive, Environment: env,
+							Bootstrap: &workflow.BootstrapSessionSummary{Route: route, Step: step},
+							Services: []workflow.ServiceSnapshot{{
+								Hostname: "app", TypeVersion: "nodejs@22",
+								RuntimeClass: rt, Mode: topology.ModeStandard,
+								Strategy: topology.StrategyUnset,
+								Bootstrapped: true, Deployed: false,
+							}},
+						},
+					})
+				}
+			}
+		}
+	}
+
+	// ── Develop-active — Cartesian over (env × mode × strategy × trigger
+	// × runtime × deployState).
 	modes := []topology.Mode{
 		topology.ModeDev, topology.ModeStage, topology.ModeStandard,
 		topology.ModeSimple, topology.ModeLocalStage, topology.ModeLocalOnly,
@@ -601,36 +659,99 @@ func generatePlausibleEnvelopes() []plausibleEnvelope {
 		topology.StrategyPushDev, topology.StrategyPushGit,
 		topology.StrategyManual, topology.StrategyUnset,
 	}
-	runtimes := []topology.RuntimeClass{
-		topology.RuntimeDynamic, topology.RuntimeStatic,
-		topology.RuntimeImplicitWeb, topology.RuntimeManaged,
-	}
 	deployStates := []bool{false, true}
 	for _, env := range envs {
 		for _, mode := range modes {
 			for _, strat := range strategies {
-				for _, rt := range runtimes {
-					for _, deployed := range deployStates {
-						out = append(out, plausibleEnvelope{
-							key: fmt.Sprintf("develop/%s/%s/%s/%s/dep=%v",
-								env, mode, strat, rt, deployed),
-							envelope: workflow.StateEnvelope{
-								Phase: workflow.PhaseDevelopActive, Environment: env,
-								Services: []workflow.ServiceSnapshot{{
-									Hostname: "appdev", TypeVersion: "nodejs@22",
-									RuntimeClass: rt, Mode: mode, Strategy: strat,
-									Bootstrapped: true, Deployed: deployed,
-								}},
-							},
-						})
+				for _, trig := range triggers {
+					for _, rt := range runtimes {
+						for _, deployed := range deployStates {
+							out = append(out, plausibleEnvelope{
+								key: fmt.Sprintf("develop/%s/%s/%s/%s/%s/dep=%v",
+									env, mode, strat, trig, rt, deployed),
+								envelope: workflow.StateEnvelope{
+									Phase: workflow.PhaseDevelopActive, Environment: env,
+									Services: []workflow.ServiceSnapshot{{
+										Hostname: "appdev", TypeVersion: "nodejs@22",
+										RuntimeClass: rt, Mode: mode,
+										Strategy: strat, Trigger: trig,
+										Bootstrapped: true, Deployed: deployed,
+									}},
+								},
+							})
+						}
 					}
 				}
 			}
 		}
 	}
+	// Multi-service mixed deploy-state — covers Axis J risk: envelopeDeployStates
+	// matches if ANY bootstrapped service has the wanted state, so first-deploy
+	// atoms can fire when ONE service is undeployed despite others being deployed.
+	for _, env := range envs {
+		out = append(out, plausibleEnvelope{
+			key: fmt.Sprintf("develop/%s/multi/mixed-deploy", env),
+			envelope: workflow.StateEnvelope{
+				Phase: workflow.PhaseDevelopActive, Environment: env,
+				Services: []workflow.ServiceSnapshot{
+					{Hostname: "appdev", TypeVersion: "nodejs@22",
+						RuntimeClass: topology.RuntimeDynamic,
+						Mode:         topology.ModeStandard,
+						Strategy:     topology.StrategyPushDev,
+						Bootstrapped: true, Deployed: true},
+					{Hostname: "workerdev", TypeVersion: "nodejs@22",
+						RuntimeClass: topology.RuntimeDynamic,
+						Mode:         topology.ModeStandard,
+						Strategy:     topology.StrategyPushDev,
+						Bootstrapped: true, Deployed: false},
+				},
+			},
+		})
+	}
 
-	// Strategy-setup + export-active — small surfaces, one each per relevant axis.
-	// (Add per executor judgment based on which atoms exist there.)
+	// ── Develop-closed-auto — single phase per env, no service axes.
+	for _, env := range envs {
+		out = append(out, plausibleEnvelope{
+			key: fmt.Sprintf("develop-closed-auto/%s", env),
+			envelope: workflow.StateEnvelope{
+				Phase: workflow.PhaseDevelopClosed, Environment: env,
+			},
+		})
+	}
+
+	// ── Strategy-setup — push-git × env × trigger; one service per envelope.
+	for _, env := range envs {
+		for _, trig := range triggers {
+			out = append(out, plausibleEnvelope{
+				key: fmt.Sprintf("strategy-setup/%s/push-git/%s", env, trig),
+				envelope: workflow.StateEnvelope{
+					Phase: workflow.PhaseStrategySetup, Environment: env,
+					Services: []workflow.ServiceSnapshot{{
+						Hostname: "appdev", TypeVersion: "nodejs@22",
+						RuntimeClass: topology.RuntimeDynamic,
+						Mode:         topology.ModeStandard,
+						Strategy:     topology.StrategyPushGit, Trigger: trig,
+						Bootstrapped: true, Deployed: false,
+					}},
+				},
+			})
+		}
+	}
+
+	// ── Export-active — container-only (export.md::environments: [container]).
+	out = append(out, plausibleEnvelope{
+		key: "export-active/container",
+		envelope: workflow.StateEnvelope{
+			Phase: workflow.PhaseExportActive, Environment: workflow.EnvContainer,
+			Services: []workflow.ServiceSnapshot{{
+				Hostname: "appdev", TypeVersion: "nodejs@22",
+				RuntimeClass: topology.RuntimeDynamic,
+				Mode:         topology.ModeStandard,
+				Strategy:     topology.StrategyPushDev,
+				Bootstrapped: true, Deployed: true,
+			}},
+		},
+	})
 
 	return out
 }
@@ -763,67 +884,151 @@ before touching content.
    output as `plans/audit-composition/fire-set-matrix.md` (table only;
    not an atom).
 3. **Pin-coverage gap test.** Add `TestCorpusCoverage_PinDensity` —
-   asserts every atom_id from `LoadAtomCorpus()` is mentioned at
-   least once in either `scenarios_test.go::wantIDs` OR
-   `corpus_coverage_test.go::MustContain`. Currently 68 atoms fail
-   this — allowlist the failures with a `knownUnpinnedAtoms` map
-   following the same ratchet pattern as prior trim's
-   `knownOverflowFixtures`. Removing an entry is the verification
-   that a pin landed.
+   asserts every atom_id from `LoadAtomCorpus()` is named as an
+   argument to `requireAtomIDsContain` / `requireAtomIDsExact` in
+   `internal/workflow/scenarios_test.go`. Atom-ID mentions in
+   `coverageFixture.MustContain` are NOT counted as pins — those
+   strings are phrase-pins, not ID-pins, and may match atom IDs
+   coincidentally. Currently 68 atoms fail this — allowlist the
+   failures with a `knownUnpinnedAtoms` map following the same
+   ratchet pattern as prior trim's `knownOverflowFixtures`. Removing
+   an entry is the verification that a pin landed.
 
-   Test source sketch (pin to `internal/workflow/corpus_coverage_test.go`):
+   **File-isolation rule (Codex round 1, axis 1.2 + 4.1):** the
+   `knownUnpinnedAtoms` allowlist + the two new tests live in a
+   dedicated file `internal/workflow/corpus_pin_density_test.go`,
+   NOT in `corpus_coverage_test.go`. The test parses the AST of
+   `scenarios_test.go` to build the pinned set; the allowlist's
+   own atom IDs never enter the haystack because they are in a
+   different file. (The previous round 0 sketch was self-counting.)
+
+   Test source sketch (`internal/workflow/corpus_pin_density_test.go`):
 
    ```go
+   package workflow
+
+   import (
+       "go/ast"
+       "go/parser"
+       "go/token"
+       "strconv"
+       "testing"
+   )
+
    // knownUnpinnedAtoms is the Phase 0 starting allowlist — atoms that
-   // currently lack any MustContain or scenarios pin. Each Phase 8
-   // commit adds a pin AND removes the matching entry here. Ratchet:
-   // the map can only shrink. Phase 8 EXIT empties it.
+   // currently lack a scenarios_test.go pin. Each Phase 8 commit adds a
+   // pin AND removes the matching entry here. Ratchet: shrink-only
+   // (enforced by TestCorpusCoverage_PinDensity_StillUnpinned). Phase 8
+   // EXIT empties it.
    var knownUnpinnedAtoms = map[string]string{
-       "bootstrap-adopt-discover":      "(Phase 0): no MustContain, no scenarios_test mention.",
+       "bootstrap-adopt-discover": "(Phase 0): no scenarios_test pin.",
        // ... 67 more entries — generate from the §4.2 derivation.
    }
 
-   // TestCorpusCoverage_PinDensity asserts every loaded atom has at
-   // least one pin (MustContain phrase OR scenarios_test atom-ID
-   // mention) UNLESS it's in the knownUnpinnedAtoms allowlist. The
-   // allowlist ratchets shrink-only via TestCorpusCoverage_PinDensity_AllowlistOnlyShrinks.
+   // pinnedAtomIDs builds the set of atom IDs that scenarios_test.go
+   // pins via requireAtomIDsContain or requireAtomIDsExact. Both
+   // helpers have signature (t, label, matches, wantIDs ...string), so
+   // string-literal args from index 3 onward are the pinned atom IDs.
+   func pinnedAtomIDs(t *testing.T) map[string]bool {
+       t.Helper()
+       fset := token.NewFileSet()
+       f, err := parser.ParseFile(fset, "scenarios_test.go", nil, parser.ParseComments)
+       if err != nil {
+           t.Fatalf("parse scenarios_test.go: %v", err)
+       }
+       pinned := make(map[string]bool)
+       ast.Inspect(f, func(n ast.Node) bool {
+           ce, ok := n.(*ast.CallExpr)
+           if !ok {
+               return true
+           }
+           ident, ok := ce.Fun.(*ast.Ident)
+           if !ok {
+               return true
+           }
+           if ident.Name != "requireAtomIDsContain" && ident.Name != "requireAtomIDsExact" {
+               return true
+           }
+           if len(ce.Args) < 4 {
+               return true
+           }
+           for _, arg := range ce.Args[3:] {
+               bl, ok := arg.(*ast.BasicLit)
+               if !ok || bl.Kind != token.STRING {
+                   continue
+               }
+               s, err := strconv.Unquote(bl.Value)
+               if err != nil {
+                   continue
+               }
+               pinned[s] = true
+           }
+           return true
+       })
+       return pinned
+   }
+
+   // TestCorpusCoverage_PinDensity asserts every loaded atom is named
+   // by a scenarios_test.go pin call UNLESS allowlisted. Allowlist
+   // entries ratchet shrink-only via _StillUnpinned below.
    func TestCorpusCoverage_PinDensity(t *testing.T) {
        t.Parallel()
        corpus, err := LoadAtomCorpus()
-       if err != nil { t.Fatalf("LoadAtomCorpus: %v", err) }
-
-       // Build the union of pinned IDs from both test files.
-       scenariosBytes, err := os.ReadFile("scenarios_test.go")
-       if err != nil { t.Fatalf("read scenarios_test.go: %v", err) }
-       coverageBytes, err := os.ReadFile("corpus_coverage_test.go")
-       if err != nil { t.Fatalf("read corpus_coverage_test.go: %v", err) }
-       haystack := string(scenariosBytes) + string(coverageBytes)
+       if err != nil {
+           t.Fatalf("LoadAtomCorpus: %v", err)
+       }
+       pinned := pinnedAtomIDs(t)
 
        for _, atom := range corpus {
-           // Only enforce on internal/content/atoms/ (R6 — recipe atoms out of scope).
-           if _, allowlisted := knownUnpinnedAtoms[atom.ID]; allowlisted {
+           if _, allowed := knownUnpinnedAtoms[atom.ID]; allowed {
                continue
            }
-           if !strings.Contains(haystack, atom.ID) {
-               t.Errorf("atom %q has no MustContain or scenarios_test mention; either add a pin or allowlist it (last resort).",
+           if !pinned[atom.ID] {
+               t.Errorf("atom %q has no scenarios_test.go pin "+
+                   "(requireAtomIDsContain or requireAtomIDsExact); "+
+                   "add a pin OR (last resort) allowlist via knownUnpinnedAtoms",
                    atom.ID)
            }
        }
    }
 
    // TestCorpusCoverage_PinDensity_StillUnpinned mirrors
-   // TestCorpusCoverage_KnownOverflows_StillOverflow — every entry in
-   // knownUnpinnedAtoms must STILL be unpinned. Adding a pin AND
-   // forgetting to remove the allowlist entry fails this test —
-   // forces the cleanup.
+   // TestCorpusCoverage_KnownOverflows_StillOverflow. Two checks:
+   //   (a) stale-entry — every allowlist key MUST still exist in
+   //       LoadAtomCorpus(); deleting an atom requires removing its
+   //       allowlist row in the same commit.
+   //   (b) ratchet — every allowlist entry MUST still be unpinned;
+   //       adding a pin requires removing the allowlist row in the
+   //       same commit.
    func TestCorpusCoverage_PinDensity_StillUnpinned(t *testing.T) {
        t.Parallel()
        if len(knownUnpinnedAtoms) == 0 {
            t.Skip("allowlist empty — Phase 8 done")
        }
-       // Read both test files; for every allowlisted atom, assert
-       // its ID does NOT appear in the haystack (still unpinned).
-       // Same shape as KnownOverflows_StillOverflow.
+       corpus, err := LoadAtomCorpus()
+       if err != nil {
+           t.Fatalf("LoadAtomCorpus: %v", err)
+       }
+       corpusIDs := make(map[string]bool, len(corpus))
+       for _, a := range corpus {
+           corpusIDs[a.ID] = true
+       }
+       pinned := pinnedAtomIDs(t)
+
+       for id, rationale := range knownUnpinnedAtoms {
+           if !corpusIDs[id] {
+               t.Errorf("knownUnpinnedAtoms lists %q but no such atom "+
+                   "exists — remove the stale entry (rationale was: %s)",
+                   id, rationale)
+               continue
+           }
+           if pinned[id] {
+               t.Errorf("atom %q is now pinned in scenarios_test.go "+
+                   "(rationale at acknowledgement: %s) — remove from "+
+                   "knownUnpinnedAtoms in the same commit that added the pin",
+                   id, rationale)
+           }
+       }
    }
    ```
 4. **Composition-audit baseline.** Run §6.2 on FIVE fixtures:
@@ -842,7 +1047,11 @@ before touching content.
    in `coverageFixtures()`, ADD it as part of Phase 0 calibration
    (analogous to how the prior trim added the
    `develop_first_deploy_two_runtime_pairs_standard` stretch fixture).
-   Use this envelope shape:
+   Use this envelope shape (mirrors the existing
+   `develop_push_dev_simple_container` fixture at
+   `internal/workflow/corpus_coverage_test.go:502-516` —
+   `Strategy: "push-dev"` is the documented simple-mode default):
+
    ```go
    {
        Name: "develop_simple_deployed_container",
@@ -856,14 +1065,35 @@ before touching content.
            }},
        },
        MustContain: []string{
-           // Pin tightly to atoms that SHOULD fire here. The Phase 7
-           // axis-tightening work will remove atoms that fire here
-           // but shouldn't (mode-expansion, dev-server-triage on
-           // implicit-webserver, etc.). MustContain entries here
-           // anchor the post-hygiene fire-set.
+           // Phrase pins anchor the pre-hygiene fire-set. Each phrase
+           // is sourced from an atom that SHOULD fire on this envelope
+           // (verified by the Phase 0 fire-audit run before Phase 1).
+           // Phase 7 axis-tightening will REMOVE atoms that fire here
+           // but shouldn't (e.g. develop-mode-expansion fires on
+           // simple-mode envelopes where mode-expansion is N/A); pins
+           // below stay because they're anchored on the simple-mode
+           // push-dev workflow / deploy / close atoms which DO belong.
+           //
+           // Sources:
+           //   develop-push-dev-workflow-simple → "push-dev"
+           //   develop-push-dev-deploy-container → "zerops_deploy"
+           //   develop-close-push-dev-simple → "zerops_workflow action=\"close\""
+           "push-dev",
+           "zerops_deploy",
+           `zerops_workflow action="close"`,
        },
    }
    ```
+
+   **Pin sourcing (Codex round 1, axis 6.3 + 6.4):** an empty
+   `MustContain` only proves at least one atom rendered, not that the
+   intended pre-hygiene fire-set was preserved. The three phrases
+   above are observable phrases that must be present on this envelope
+   pre-hygiene; if Phase 7 axis-tightening would silently drop the
+   workflow-simple / deploy-container / close-push-dev-simple atoms
+   for this envelope, `TestCorpusCoverage_RoundTrip` fails. Verify
+   each phrase appears in the rendered output BEFORE adding the
+   fixture (run Synthesize once locally with the fixture).
 
 **EXIT**:
 - Both probes built + run, output committed to `plans/audit-composition/`.
@@ -1124,7 +1354,7 @@ Augments the prior trim's §8 table.
 
 | Test | What it guards | Failure mode |
 |---|---|---|
-| `TestCorpusCoverage_PinDensity` (NEW) | Every atom_id (filter to `internal/content/atoms/` only — recipe atoms out of scope per R6) has at least one MustContain pin OR scenarios_test mention. Allowlist `knownUnpinnedAtoms` carries entries the executor hasn't pinned yet; ratchet pattern from prior trim's `knownOverflowFixtures`. | An unpinned atom exists; either add a pin or remove from `knownUnpinnedAtoms` after pinning. |
+| `TestCorpusCoverage_PinDensity` (NEW) | Every atom_id (filter to `internal/content/atoms/` only — recipe atoms out of scope per R6) is named as a wantID arg to `requireAtomIDsContain` / `requireAtomIDsExact` in `scenarios_test.go` (parsed via AST, not substring search — Codex round 1 fix). MustContain phrase pins are NOT counted. Allowlist `knownUnpinnedAtoms` (in `corpus_pin_density_test.go`, isolated from the AST haystack) carries entries the executor hasn't pinned yet; ratchet pattern from prior trim's `knownOverflowFixtures`. | An unpinned atom exists; either add a `requireAtomIDsContain` arg in scenarios_test.go OR remove from `knownUnpinnedAtoms` after pinning. |
 | `TestCorpusCoverage_RoundTrip` | Existing pins (augmented in Phase 8). | A trim deleted a fact the agent needs. Restore or re-pin. |
 | `TestCorpusCoverage_OutputUnderMCPCap` | 28 KB body-join cap (allowlist already empty post-prior-trim). | Don't grow the allowlist; trim further. |
 | `TestSynthesize_*`, `TestAtom*`, scenarios | (Same as prior trim §8.) | (Same.) |
