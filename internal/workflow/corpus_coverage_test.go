@@ -11,6 +11,8 @@
 package workflow
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -379,6 +381,51 @@ func developCoverageFixtures() []coverageFixture {
 				`zerops_deploy targetService="appstage"`,
 			},
 		},
+		{
+			// Stretch fixture: TWO standard-mode dev/stage runtime pairs in
+			// the same first-deploy envelope. Per-service-axis atoms render
+			// once per matching service — with four matching services the
+			// per-service render duplication scales linearly. This shape is
+			// realistic (a project with `app` + `api` runtimes) and forces
+			// the trim plan to validate against multi-pair envelopes, not
+			// just single-pair (so a fix that closes the single-pair gap
+			// silently breaks two-pair shapes can be caught).
+			Name: "develop_first_deploy_two_runtime_pairs_standard",
+			Envelope: StateEnvelope{
+				Phase:       PhaseDevelopActive,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{
+					{
+						Hostname: "appdev", TypeVersion: "nodejs@22",
+						RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
+						StageHostname: "appstage",
+						Strategy:      topology.StrategyUnset, Bootstrapped: true, Deployed: false,
+					},
+					{
+						Hostname: "appstage", TypeVersion: "nodejs@22",
+						RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage,
+						Strategy: topology.StrategyUnset, Bootstrapped: true, Deployed: false,
+					},
+					{
+						Hostname: "apidev", TypeVersion: "nodejs@22",
+						RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
+						StageHostname: "apistage",
+						Strategy:      topology.StrategyUnset, Bootstrapped: true, Deployed: false,
+					},
+					{
+						Hostname: "apistage", TypeVersion: "nodejs@22",
+						RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage,
+						Strategy: topology.StrategyUnset, Bootstrapped: true, Deployed: false,
+					},
+				},
+			},
+			MustContain: []string{
+				"first-deploy branch",
+				"Promote the first deploy to stage",
+				`sourceService="appdev" targetService="appstage"`,
+				`sourceService="apidev" targetService="apistage"`,
+			},
+		},
 	}
 }
 
@@ -715,10 +762,16 @@ func TestCorpusCoverage_RoundTrip(t *testing.T) {
 // drift the other way.
 //
 // Adding a new entry requires the same justification: a rationale and
-// a measured byte count at the time of acknowledgement.
+// a measured byte count at the time of acknowledgement. Each entry
+// records BOTH metrics so the trim trajectory is visible: the body-join
+// number is what `KnownOverflows_StillOverflow` asserts on; the
+// wire-frame number is the actual MCP-cap-relevant measurement (~3 KB
+// larger than body-join — see plans/atom-corpus-context-trim-2026-04-26.md
+// §17.1 and the wire-frame info Logf in `_OutputUnderMCPCap`).
 var knownOverflowFixtures = map[string]string{
-	"develop_first_deploy_standard_container":          "40228 bytes (2026-04-26): standard-mode first-deploy renders dev+stage atoms × runtime + container atoms. Trim plan: pending.",
-	"develop_first_deploy_implicit_webserver_standard": "43447 bytes (2026-04-26): standard-mode first-deploy + implicit-webserver atoms × dev+stage pair. Trim plan: pending.",
+	"develop_first_deploy_standard_container":          "body-join 40228 B / wire-frame 43255 B (2026-04-26): standard-mode first-deploy renders dev+stage atoms × runtime + container atoms. Trim plan: atom-corpus-context-trim-2026-04-26.md.",
+	"develop_first_deploy_implicit_webserver_standard": "body-join 43447 B / wire-frame 46646 B (2026-04-26): standard-mode first-deploy + implicit-webserver atoms × dev+stage pair. Trim plan: atom-corpus-context-trim-2026-04-26.md.",
+	"develop_first_deploy_two_runtime_pairs_standard":  "body-join 62905 B / wire-frame 67740 B (2026-04-26): two standard-mode dev/stage pairs (4 services). Per-service-axis atoms render 4×; predicts > 60 KB body-join until structural collapse. Trim plan: atom-corpus-context-trim-2026-04-26.md (Phase 1 fallback gate).",
 }
 
 // TestCorpusCoverage_OutputUnderMCPCap pins G13: every representative
@@ -757,9 +810,6 @@ func TestCorpusCoverage_OutputUnderMCPCap(t *testing.T) {
 	const softCapBytes = 28 * 1024 // 28 KB; 4 KB margin under the 32 KB MCP cap.
 
 	for _, fx := range coverageFixtures() {
-		if _, known := knownOverflowFixtures[fx.Name]; known {
-			continue
-		}
 		t.Run(fx.Name, func(t *testing.T) {
 			t.Parallel()
 			bodies, err := SynthesizeBodies(fx.Envelope, corpus)
@@ -767,12 +817,64 @@ func TestCorpusCoverage_OutputUnderMCPCap(t *testing.T) {
 				t.Fatalf("Synthesize: %v", err)
 			}
 			combined := strings.Join(bodies, "\n\n---\n\n")
+			rendered := RenderStatus(Response{Envelope: fx.Envelope, Guidance: bodies})
+			wireFrame := mcpWireFrameSize(rendered)
+
+			// Info-only Logf (no assertion) so each phase's trim trajectory
+			// is visible in test output. The wire-frame number is the
+			// metric Claude Code's stdio cap actually applies to;
+			// body-join is what this test asserts on for historical
+			// reasons (the synthesizer-only metric pre-dated this gate).
+			t.Logf("fixture %q: body-join %d B, wire-frame %d B (atoms=%d, render=%d B)",
+				fx.Name, len(combined), wireFrame, len(bodies), len(rendered))
+
+			if _, known := knownOverflowFixtures[fx.Name]; known {
+				return
+			}
 			if size := len(combined); size > softCapBytes {
 				t.Errorf("fixture %q: synthesized output %d bytes exceeds soft cap %d bytes (32 KB MCP cap with 4 KB margin)\nMatched atoms: %d\nFirst 200 chars: %s",
 					fx.Name, size, softCapBytes, len(bodies), combined[:min(200, size)])
 			}
 		})
 	}
+}
+
+// mcpWireFrameSize returns the byte count of the JSON-RPC frame Claude
+// Code's stdio reader sees for a tool response carrying `text` as its
+// single TextContent. Reproduces the wire shape from
+// github.com/modelcontextprotocol/go-sdk@v1.5.0:
+//
+//	{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"<text>"}]}}\n
+//
+// Computed locally so workflow/ doesn't take a hard dep on the MCP SDK.
+// The encoding mirrors the SDK precisely: json.Encoder + SetEscapeHTML(false)
+// + one trailing '\n'. See cmd/atomsize_probe/main.go::wireFrameBytes for
+// the SDK-using equivalent and the Codex round #1 verification of the
+// shape (plans/atom-corpus-context-trim-2026-04-26.md §17.1).
+func mcpWireFrameSize(text string) int {
+	type wireText struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	type wireResult struct {
+		Content []wireText `json:"content"`
+	}
+	resultJSON, err := json.Marshal(wireResult{Content: []wireText{{Type: "text", Text: text}}})
+	if err != nil {
+		return -1
+	}
+	wire := struct {
+		Jsonrpc string          `json:"jsonrpc"`
+		ID      any             `json:"id,omitempty"`
+		Result  json.RawMessage `json:"result,omitempty"`
+	}{Jsonrpc: "2.0", ID: 1, Result: resultJSON}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(wire); err != nil {
+		return -1
+	}
+	return buf.Len()
 }
 
 // TestCorpusCoverage_KnownOverflows_StillOverflow guards the audit
