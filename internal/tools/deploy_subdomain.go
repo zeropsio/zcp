@@ -11,11 +11,24 @@ import (
 )
 
 // maybeAutoEnableSubdomain activates the L7 subdomain route for a freshly
-// deployed runtime when the service is eligible (dev/stage/simple/standard/
-// local-stage mode, subdomain currently disabled). Best-effort: every
+// deployed runtime when the service is eligible. Best-effort: every
 // failure path appends to result.Warnings and lets the deploy succeed — if
 // auto-enable is skipped or fails, the agent's manual zerops_subdomain
 // action=enable call remains a valid recovery path.
+//
+// Eligibility is computed from one of two sources:
+//
+//   - **Meta present (bootstrap-managed services)** — meta.Mode is checked
+//     against modeEligibleForSubdomain (dev/stage/simple/standard/
+//     local-stage). Preserves the historical bootstrap path.
+//   - **Meta absent (recipe-authoring services)** — Cluster A.2 / R-13-12.
+//     Recipe-authoring deploys land via zerops_import content=<yaml> and
+//     never write meta. Eligibility falls back to the REST-authoritative
+//     platform state via ops.LookupService: non-system service category
+//     with at least one HTTP-supporting port. spec-workflows.md §4.8 + O3:
+//     L7 activation is the deploy handler's concern; the porter never
+//     authors a recipe that requires an explicit zerops_subdomain enable
+//     for stage subdomains.
 //
 // Gate is platform-side via the ops.Subdomain call's internal
 // check-before-enable (plans/archive/subdomain-robustness.md §3.2), NOT
@@ -23,6 +36,10 @@ import (
 // (invariant E8) and unusable for stage cross-deploy detection — the dev
 // half's stamp covers both hostnames, but the stage container's L7 route
 // is independent.
+//
+// I/O boundary: ops.LookupService is a single REST round trip; no
+// filesystem coherence dependency. workflow.FindServiceMeta reads the
+// per-PID local state dir (in-process consistency).
 //
 // HTTP readiness wait fires only on fresh enable (status != "already_enabled").
 // Re-deploys on already-enabled subdomains skip the probe — the platform
@@ -36,12 +53,11 @@ func maybeAutoEnableSubdomain(
 	result *ops.DeployResult,
 ) {
 	meta, _ := workflow.FindServiceMeta(stateDir, targetService)
-	if meta == nil {
-		// Not ZCP-managed (managed services have no meta per spec E6;
-		// agent-owned services without bootstrap also absent). Skip.
-		return
-	}
-	if !modeEligibleForSubdomain(meta.Mode) {
+	if meta != nil {
+		if !modeEligibleForSubdomain(meta.Mode) {
+			return
+		}
+	} else if !platformEligibleForSubdomain(ctx, client, projectID, targetService) {
 		return
 	}
 
@@ -95,6 +111,32 @@ func modeEligibleForSubdomain(mode topology.Mode) bool {
 		return true
 	case topology.ModeLocalOnly:
 		return false
+	}
+	return false
+}
+
+// platformEligibleForSubdomain is the meta-nil fallback predicate
+// (Cluster A.2). Recipe-authoring deploys never write ServiceMeta;
+// eligibility derives from the REST-authoritative service registry:
+// non-system service category with at least one HTTP-supporting port.
+// Lookup failures soft-fail (caller treats as not-eligible and skips
+// auto-enable; agent's manual zerops_subdomain stays valid).
+func platformEligibleForSubdomain(
+	ctx context.Context,
+	client platform.Client,
+	projectID, targetService string,
+) bool {
+	svc, err := ops.LookupService(ctx, client, projectID, targetService)
+	if err != nil || svc == nil {
+		return false
+	}
+	if svc.IsSystem() {
+		return false
+	}
+	for _, p := range svc.Ports {
+		if p.HTTPSupport {
+			return true
+		}
 	}
 	return false
 }

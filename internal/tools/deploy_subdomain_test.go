@@ -1,9 +1,13 @@
 // Tests for: deploy_subdomain.go — post-deploy subdomain auto-enable.
 //
 // Verifies the deploy handler hook that activates the L7 route on first
-// deploy for dev/stage/simple/standard/local-stage modes, skips for other
-// modes and for services without ZCP meta, and survives platform failures
-// as best-effort warnings on the DeployResult.
+// deploy for dev/stage/simple/standard/local-stage modes (when meta is
+// present), falls back to the platform-state predicate for recipe-
+// authoring deploys (which never write meta), and survives platform
+// failures as best-effort warnings on the DeployResult. Cluster A.2 of
+// run-14-readiness extended the meta-nil branch — recipe-authoring
+// services with an HTTP-supporting port now auto-enable the same as
+// bootstrap-managed services do.
 
 package tools
 
@@ -116,20 +120,113 @@ func TestMaybeAutoEnableSubdomain_SubdomainAlreadyOn_SetsFlag_NoAPICall(t *testi
 	}
 }
 
-func TestMaybeAutoEnableSubdomain_NoMeta_Skipped(t *testing.T) {
+// TestMaybeAutoEnable_NoMeta_StillRunsForPlatformEligibleService pins
+// Cluster A.2 (R-13-12). Recipe-authoring deploys land via
+// zerops_import content=<yaml> which never writes the per-PID
+// ServiceMeta. The auto-enable path must therefore derive eligibility
+// from REST-authoritative platform state (non-system service with at
+// least one HTTP-supporting port) and fire the enable for any runtime
+// the recipe declared with httpSupport: true.
+//
+// I/O boundary: ops.LookupService → REST API (single network round
+// trip; no filesystem coherence concern). Read source is the platform's
+// service registry; write destination is in-memory result.* fields.
+func TestMaybeAutoEnable_NoMeta_StillRunsForPlatformEligibleService(t *testing.T) {
+	// Override pulled in to keep the readiness probe under test latency.
+	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
+	defer restore()
+
+	dir := t.TempDir() // no meta written — recipe-authoring scenario.
+
+	svc := platform.ServiceStack{
+		ID:              autoEnableTestServiceID,
+		Name:            autoEnableTestHostname,
+		ProjectID:       "proj-1",
+		SubdomainAccess: false,
+		Ports:           []platform.Port{{Port: 3000, Protocol: "tcp", HTTPSupport: true}},
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{
+			ServiceStackTypeCategoryName: "USER",
+		},
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{svc}).
+		WithService(&svc).
+		WithProject(&platform.Project{
+			ID: "proj-1", Name: "test", Status: statusActive,
+			SubdomainHost: "abc1.prg1.zerops.app",
+		}).
+		WithProcess(&platform.Process{
+			ID:     "proc-subdomain-enable-" + autoEnableTestServiceID,
+			Status: statusFinished,
+		})
+
+	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
+	maybeAutoEnableSubdomain(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
+
+	if !result.SubdomainAccessEnabled {
+		t.Error("recipe-authoring deploy with HTTP-supporting port should auto-enable; SubdomainAccessEnabled stayed false")
+	}
+	if mock.CallCounts["EnableSubdomainAccess"] != 1 {
+		t.Errorf("EnableSubdomainAccess calls: want 1, got %d", mock.CallCounts["EnableSubdomainAccess"])
+	}
+}
+
+// TestMaybeAutoEnable_NoMeta_NoHTTPPort_Skips pins the safety side of
+// Cluster A.2: a recipe-authoring service whose ports don't declare
+// httpSupport (managed-service-style runtime, internal-only worker)
+// should NOT trigger auto-enable.
+func TestMaybeAutoEnable_NoMeta_NoHTTPPort_Skips(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir() // no meta written
 
+	// Default fixture has Ports without HTTPSupport=true.
 	mock := autoEnableTestMock(t, false)
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
 
 	maybeAutoEnableSubdomain(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
 
 	if result.SubdomainAccessEnabled {
-		t.Error("no meta must skip auto-enable; SubdomainAccessEnabled should stay false")
+		t.Error("no HTTP-supporting port should skip auto-enable; SubdomainAccessEnabled stayed true")
 	}
 	if mock.CallCounts["EnableSubdomainAccess"] != 0 {
-		t.Errorf("EnableSubdomainAccess calls: want 0 (no meta), got %d", mock.CallCounts["EnableSubdomainAccess"])
+		t.Errorf("EnableSubdomainAccess calls: want 0 (no HTTP port), got %d", mock.CallCounts["EnableSubdomainAccess"])
+	}
+}
+
+// TestMaybeAutoEnable_NoMeta_SystemService_Skips pins that system-
+// category services (BUILD/CORE/PREPARE_RUNTIME/HTTP_L7_BALANCER) skip
+// auto-enable even when the meta-nil fallback runs. They never serve
+// porter HTTP traffic; the auto-enable would be wrong for them.
+func TestMaybeAutoEnable_NoMeta_SystemService_Skips(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir() // no meta
+
+	svc := platform.ServiceStack{
+		ID:              autoEnableTestServiceID,
+		Name:            autoEnableTestHostname,
+		ProjectID:       "proj-1",
+		SubdomainAccess: false,
+		Ports:           []platform.Port{{Port: 3000, Protocol: "tcp", HTTPSupport: true}},
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{
+			ServiceStackTypeCategoryName: "BUILD",
+		},
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{svc}).
+		WithService(&svc).
+		WithProject(&platform.Project{
+			ID: "proj-1", Name: "test", Status: statusActive,
+			SubdomainHost: "abc1.prg1.zerops.app",
+		})
+
+	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
+	maybeAutoEnableSubdomain(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
+
+	if result.SubdomainAccessEnabled {
+		t.Error("system-category service should skip auto-enable")
+	}
+	if mock.CallCounts["EnableSubdomainAccess"] != 0 {
+		t.Errorf("EnableSubdomainAccess calls: want 0 (system service), got %d", mock.CallCounts["EnableSubdomainAccess"])
 	}
 }
 
