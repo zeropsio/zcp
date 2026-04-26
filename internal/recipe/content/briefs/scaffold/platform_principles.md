@@ -77,6 +77,24 @@ shapes. Use them as-is; do not compose, prefix, or transform.
 | `${<host>_zeropsSubdomain}`    | **full HTTPS URL** (e.g. `https://apistage-2204-3000.prg1.zerops.app`) | Origin / Host / fetch URL — do NOT prepend `https://` |
 | `${zeropsSubdomain}`           | **this service's own full HTTPS URL**    | APP_URL, callback URL, redirect target  |
 
+**Resolution timing.** `${<host>_zeropsSubdomain}` is a literal token
+(`${...}` verbatim) until the target service's first deploy mints the
+URL. Build-time-baked references (Vite `define`, Webpack
+`DefinePlugin`, Astro/Next/SvelteKit static-site builds) must order
+the dependency's first deploy BEFORE consuming the alias — otherwise
+the build container reads the literal token and the bundle ships with
+`${apistage_zeropsSubdomain}` baked in instead of the resolved URL.
+
+For runtime references (`process.env.APISTAGE_URL` read at request
+time), the alias resolves on container start — no ordering concern.
+The race only bites build-time consumers.
+
+Recovery for build-time consumers: deploy the target service first,
+verify the subdomain is minted, THEN trigger the consumer's build.
+Parallel scaffold dispatch makes this race visible — an SPA build
+running in parallel with the api's first deploy is the canonical
+scenario.
+
 `${zeropsSubdomainHost}` is a different beast — it's the
 deliverable-template variable that stays LITERAL in published
 import.yaml; the platform substitutes the end-user's host suffix at

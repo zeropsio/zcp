@@ -336,6 +336,32 @@ func TestInitCommandsModel_TopicsListed(t *testing.T) {
 	}
 }
 
+// TestPlatformPrinciplesAtom_TeachesAliasResolutionTiming — run-13 §U.
+// Run-12 scaffold-app recorded cross-service-alias-resolution-timing:
+// `${apistage_zeropsSubdomain}` is a literal token until apistage's
+// first deploy mints the URL; SPA Vite builds running before apistage
+// deploys read the literal and inline it verbatim into dist/. The
+// alias-type contracts table now teaches the build-time-vs-runtime
+// asymmetry so the next SPA recipe doesn't rediscover the race.
+func TestPlatformPrinciplesAtom_TeachesAliasResolutionTiming(t *testing.T) {
+	t.Parallel()
+
+	body, err := readAtom("briefs/scaffold/platform_principles.md")
+	if err != nil {
+		t.Fatalf("read atom: %v", err)
+	}
+	for _, must := range []string{
+		"Resolution timing",
+		"literal token",
+		"Build-time-baked references",
+		"no ordering concern",
+	} {
+		if !strings.Contains(body, must) {
+			t.Errorf("platform_principles missing alias-resolution-timing anchor %q", must)
+		}
+	}
+}
+
 // TestInitCommandsAtom_TeachesDecomposedStepKeyDistinction — run-13 §N.
 // Run-12 scaffold-api hit the execOnce-key-collision-across-decomposed-
 // steps trap: two initCommands sharing the same `${appVersionId}`
