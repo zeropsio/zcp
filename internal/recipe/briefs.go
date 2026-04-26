@@ -49,9 +49,15 @@ import (
 // SPA codebase ships tier-aware prose). API/worker scaffolds still
 // fit comfortably under 22 KB; the cap is a hard upper bound for the
 // frontend variant.
+//
+// Run-13 §F raised FeatureBriefCap 12 → 16 KB to fit the showcase
+// scenario specification atom (panel-per-category mandate + per-panel
+// browser-verification facts). Showcase-tier feature brief lands ~14
+// KB; minimal/hello-world tiers stay below 12 KB and could use a
+// lower cap, but a single shared cap keeps the engine logic simple.
 const (
 	ScaffoldBriefCap = 24 * 1024
-	FeatureBriefCap  = 12 * 1024
+	FeatureBriefCap  = 16 * 1024
 )
 
 // BriefKind identifies a sub-agent role. Scaffold + feature have
@@ -215,6 +221,14 @@ func BuildFeatureBrief(plan *Plan) (Brief, error) {
 	}
 	if planDeclaresSeed(plan) {
 		atoms = append(atoms, "principles/init-commands-model.md")
+	}
+	// Run-13 §F — showcase-tier recipes demonstrate every managed-
+	// service category in the SPA. Hardcoded scenario spec lays out
+	// the panel mandate (one panel per category) + design priorities
+	// + per-panel browser-verification facts. Hello-world / minimal
+	// recipes don't get this — they have fewer managed services.
+	if plan.Tier == TierShowcase {
+		atoms = append(atoms, "briefs/feature/showcase_scenario.md")
 	}
 	for _, atom := range atoms {
 		body, err := readAtom(atom)

@@ -356,6 +356,42 @@ func TestBuildScaffoldBrief_FrontendIncludesTierFactTable(t *testing.T) {
 	mustContain(t, brief.Body, "meilisearch")
 }
 
+// TestBuildFeatureBrief_ShowcaseTierIncludesScenarioSpec — run-13 §F.
+// Showcase-tier recipes get the hardcoded scenario spec atom that
+// mandates one demonstration panel per managed-service category
+// (items / cache / queue / storage / search) plus per-panel browser-
+// verification facts.
+func TestBuildFeatureBrief_ShowcaseTierIncludesScenarioSpec(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.Tier = "showcase"
+	brief, err := BuildFeatureBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFeatureBrief: %v", err)
+	}
+	mustContain(t, brief.Body, "Showcase scenario specification")
+	mustContain(t, brief.Body, "Queue / Broker")
+	mustContain(t, brief.Body, "Per-panel browser-verification")
+	mustContain(t, brief.Body, "queue-browser")
+}
+
+// TestBuildFeatureBrief_MinimalTierOmitsScenarioSpec — run-13 §F.
+// Hello-world / minimal recipes don't get the showcase mandate; they
+// have fewer managed services and don't need the panel-per-category
+// rule.
+func TestBuildFeatureBrief_MinimalTierOmitsScenarioSpec(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.Tier = "minimal"
+	brief, err := BuildFeatureBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFeatureBrief: %v", err)
+	}
+	mustNotContain(t, brief.Body, "Showcase scenario specification")
+}
+
 // TestBuildScaffoldBrief_APIOmitsTierFactTable — run-13 §T conditional
 // load. API codebases don't author tier-aware prose; the table is
 // omitted so the brief stays under cap.
