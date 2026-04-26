@@ -2,20 +2,16 @@
 id: develop-first-deploy-execute
 priority: 4
 phases: [develop-active]
-deployStates: [never-deployed]
-title: "Run the first deploy"
+envelopeDeployStates: [never-deployed]
+title: "First deploy — execution rules"
 references-fields: [ops.DeployResult.Status, ops.DeployResult.BuildLogs, ops.DeployResult.RuntimeLogs, ops.DeployResult.FailedPhase, ops.DeployResult.SubdomainAccessEnabled, ops.DeployResult.SubdomainURL]
 ---
 
 ### Run the first deploy
 
-```
-zerops_deploy targetService="{hostname}"
-```
-
-The Zerops container is empty until this call lands, so probing its
-subdomain or (in container env) SSHing into it first will fail or hit
-a platform placeholder — deploy first, then inspect. `zerops_deploy`
+The Zerops container is empty until the deploy call lands, so probing
+its subdomain or (in container env) SSHing into it first will fail or
+hit a platform placeholder — deploy first, then inspect. `zerops_deploy`
 batches build + container provision + start; expect 30–90 seconds for
 dynamic runtimes and longer for `php-nginx` / `php-apache`.
 

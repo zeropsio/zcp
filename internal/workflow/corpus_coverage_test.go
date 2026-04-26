@@ -311,6 +311,12 @@ func developCoverageFixtures() []coverageFixture {
 				"Promote the first deploy to stage",
 				`sourceService="appdev"`,
 				`targetService="appstage"`,
+				// Pin the per-service execute cmds atom — its sole purpose is
+				// to bind {hostname} to each matching service. Asserting the
+				// dev-side substitution catches an accidental drop of the
+				// cmds atom (which would silently leave the agent without
+				// the explicit zerops_deploy command for the dev half).
+				`zerops_deploy targetService="appdev"`,
 			},
 		},
 		{
@@ -424,6 +430,12 @@ func developCoverageFixtures() []coverageFixture {
 				"Promote the first deploy to stage",
 				`sourceService="appdev" targetService="appstage"`,
 				`sourceService="apidev" targetService="apistage"`,
+				// Per-service execute cmds atom must bind to BOTH dev hosts
+				// (one zerops_deploy per never-deployed service). Pinning
+				// both catches accidental host-substitution loss in
+				// multi-pair envelopes.
+				`zerops_deploy targetService="appdev"`,
+				`zerops_deploy targetService="apidev"`,
 			},
 		},
 	}
