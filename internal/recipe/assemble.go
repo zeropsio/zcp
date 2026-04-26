@@ -61,7 +61,10 @@ func AssembleRootREADME(plan *Plan) (string, []string, error) {
 		return "", nil, err
 	}
 	body := renderRootTokens(tpl, plan)
-	body, missing := substituteFragmentMarkers(body, plan.Fragments, "root")
+	body, missing, err := substituteFragmentMarkers(body, plan.Fragments, "root")
+	if err != nil {
+		return "", nil, fmt.Errorf("assemble root README: %w", err)
+	}
 	if err := checkUnreplacedTokens(body); err != nil {
 		return "", nil, fmt.Errorf("assemble root README: %w", err)
 	}
@@ -85,7 +88,10 @@ func AssembleEnvREADME(plan *Plan, tierIndex int) (string, []string, error) {
 		"TIER_SUFFIX": tierDeploySuffix(tier),
 	})
 	prefix := fmt.Sprintf("env/%d", tierIndex)
-	body, missing := substituteFragmentMarkers(body, plan.Fragments, prefix)
+	body, missing, err := substituteFragmentMarkers(body, plan.Fragments, prefix)
+	if err != nil {
+		return "", nil, fmt.Errorf("assemble env/%d README: %w", tierIndex, err)
+	}
 	if err := checkUnreplacedTokens(body); err != nil {
 		return "", nil, fmt.Errorf("assemble env/%d README: %w", tierIndex, err)
 	}
@@ -115,7 +121,10 @@ func AssembleCodebaseREADME(plan *Plan, hostname string) (string, []string, erro
 		"HOSTNAME":  hostname,
 	})
 	prefix := "codebase/" + hostname
-	body, missing := substituteFragmentMarkers(body, plan.Fragments, prefix)
+	body, missing, err := substituteFragmentMarkers(body, plan.Fragments, prefix)
+	if err != nil {
+		return "", nil, fmt.Errorf("assemble codebase/%s README: %w", hostname, err)
+	}
 	yamlBody, err := readCodebaseYAMLForHost(plan, hostname)
 	if err != nil {
 		return "", nil, fmt.Errorf("assemble codebase/%s README: %w", hostname, err)
@@ -295,7 +304,10 @@ func AssembleCodebaseClaudeMD(plan *Plan, hostname string) (string, []string, er
 		"HOSTNAME":  hostname,
 	})
 	prefix := "codebase/" + hostname + "/claude-md"
-	body, missing := substituteFragmentMarkers(body, plan.Fragments, prefix)
+	body, missing, err := substituteFragmentMarkers(body, plan.Fragments, prefix)
+	if err != nil {
+		return "", nil, fmt.Errorf("assemble codebase/%s CLAUDE.md: %w", hostname, err)
+	}
 	if err := checkUnreplacedTokens(body); err != nil {
 		return "", nil, fmt.Errorf("assemble codebase/%s CLAUDE.md: %w", hostname, err)
 	}
@@ -366,7 +378,14 @@ func replaceTokens(tpl string, tokens map[string]string) string {
 // shipping empty marker blocks. Malformed marker pairs (missing end,
 // mismatched names) are preserved verbatim — the unreplaced-token scan
 // doesn't catch them, so downstream validators (Workstream D) must.
-func substituteFragmentMarkers(body string, fragments map[string]string, idPrefix string) (string, []string) {
+//
+// Run-14 §B.2 (R-13-19): fragment bodies are scanned for unbound engine
+// tokens (engineBoundKeys keys spelled `{KEY}` or `${KEY}`) outside
+// fenced markdown blocks. Fenced occurrences are intentional code
+// examples and pass through; unfenced occurrences return an error
+// naming the offending fragment id so the author can locate the
+// trigger without spelunking the rendered surface.
+func substituteFragmentMarkers(body string, fragments map[string]string, idPrefix string) (string, []string, error) {
 	var out strings.Builder
 	var missing []string
 	cursor := 0
@@ -402,6 +421,9 @@ func substituteFragmentMarkers(body string, fragments map[string]string, idPrefi
 			missing = append(missing, fragmentID)
 			out.WriteString(body[absStart:absEndClose])
 		} else {
+			if hits := unfencedEngineTokens(frag); len(hits) > 0 {
+				return "", nil, fmt.Errorf("fragment %q contains unbound engine token(s) %s outside a fenced code block — wrap the example in ``` fences or remove the literal", fragmentID, strings.Join(hits, ", "))
+			}
 			out.WriteString(extractStartPrefix)
 			out.WriteString(name)
 			out.WriteString(extractStartSuffix)
@@ -412,7 +434,73 @@ func substituteFragmentMarkers(body string, fragments map[string]string, idPrefi
 		}
 		cursor = absEndClose
 	}
-	return out.String(), missing
+	return out.String(), missing, nil
+}
+
+// unfencedEngineTokens returns engine-bound `{KEY}` matches in body
+// that fall OUTSIDE any markdown fenced code block (``` ... ``` or
+// `inline`). Run-14 §B.2 — fragment authors writing
+// `${HOSTNAME}` inside a fenced example don't trip the pre-processor;
+// only bare references in prose are flagged. Plan §7 open question 4:
+// inline backtick spans count as fences too.
+func unfencedEngineTokens(body string) []string {
+	masked := maskFencedRegions(body)
+	var hits []string
+	seen := map[string]bool{}
+	for _, m := range unreplacedTokenRE.FindAllStringIndex(masked, -1) {
+		key := masked[m[0]+1 : m[1]-1]
+		if !engineBoundKeys[key] {
+			continue
+		}
+		text := body[m[0]:m[1]]
+		if seen[text] {
+			continue
+		}
+		seen[text] = true
+		hits = append(hits, text)
+	}
+	return hits
+}
+
+// maskFencedRegions returns body with every fenced region replaced by
+// equal-length spaces so byte indices remain stable. Triple-backtick
+// blocks (``` … ``` on their own lines or terminating mid-line) and
+// inline backtick spans (`...`) both qualify.
+func maskFencedRegions(body string) string {
+	out := []byte(body)
+	i := 0
+	for i < len(out) {
+		if i+3 <= len(out) && out[i] == '`' && out[i+1] == '`' && out[i+2] == '`' {
+			end := strings.Index(string(out[i+3:]), "```")
+			if end < 0 {
+				blank(out[i:])
+				return string(out)
+			}
+			blank(out[i : i+3+end+3])
+			i += 3 + end + 3
+			continue
+		}
+		if out[i] == '`' {
+			end := strings.Index(string(out[i+1:]), "`")
+			if end < 0 {
+				i++
+				continue
+			}
+			blank(out[i : i+1+end+1])
+			i += 1 + end + 1
+			continue
+		}
+		i++
+	}
+	return string(out)
+}
+
+func blank(b []byte) {
+	for i := range b {
+		if b[i] != '\n' {
+			b[i] = ' '
+		}
+	}
 }
 
 // checkUnreplacedTokens returns a non-nil error when the rendered body
@@ -421,23 +509,31 @@ func substituteFragmentMarkers(body string, fragments map[string]string, idPrefi
 // broken surface. Fragment bodies routinely contain {UPPER} or ${UPPER}
 // in code examples (JS template literals, Handlebars, Svelte, Go html/
 // template); those keys are NOT in engineBoundKeys and pass the scan.
+//
+// Run-14 §B.2: occurrences inside markdown fenced regions (``` blocks
+// or backtick inline spans) are intentional code examples and pass the
+// scan. The pre-substitute hook in substituteFragmentMarkers catches
+// fragment-body unfenced literals and names the offending fragment id;
+// this post-substitute scan is the safety net for template-side defects.
 func checkUnreplacedTokens(body string) error {
-	leftover := unreplacedTokenRE.FindAllString(body, -1)
+	masked := maskFencedRegions(body)
+	leftover := unreplacedTokenRE.FindAllStringIndex(masked, -1)
 	if len(leftover) == 0 {
 		return nil
 	}
 	var unbound []string
 	seen := map[string]bool{}
 	for _, m := range leftover {
-		key := m[1 : len(m)-1] // strip { and }
+		key := masked[m[0]+1 : m[1]-1]
 		if !engineBoundKeys[key] {
 			continue
 		}
-		if seen[m] {
+		text := body[m[0]:m[1]]
+		if seen[text] {
 			continue
 		}
-		seen[m] = true
-		unbound = append(unbound, m)
+		seen[text] = true
+		unbound = append(unbound, text)
 	}
 	if len(unbound) == 0 {
 		return nil

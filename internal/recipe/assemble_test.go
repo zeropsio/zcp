@@ -201,6 +201,58 @@ func TestAssemble_FragmentBodyWith_BareCurlyToken_NotFlagged(t *testing.T) {
 	}
 }
 
+// TestStitchContent_FencedBlockTokenAllowed pins Cluster B.2 (R-13-19):
+// fragment bodies routinely demonstrate platform-injected env-var
+// substitution by writing literal `${HOSTNAME}` inside a fenced code
+// block. The pre-processor's engine-token check must skip occurrences
+// inside ` ``` `-fenced blocks AND backtick-inline spans so the
+// example renders without rejection.
+func TestStitchContent_FencedBlockTokenAllowed(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.Slug = "synth"
+	plan.Framework = "nest"
+	plan.Fragments = map[string]string{
+		"codebase/api/intro":                   "Worker example below.",
+		"codebase/api/integration-guide":       "1. Configure `zerops.yaml`.\n\n```\nworker-${HOSTNAME}-${pid}\n```\n",
+		"codebase/api/knowledge-base":          "- **x** — because Y, set `${HOSTNAME}` from env.",
+		"codebase/api/claude-md/service-facts": "api",
+		"codebase/api/claude-md/notes":         "notes",
+	}
+
+	if _, _, err := AssembleCodebaseREADME(plan, "api"); err != nil {
+		t.Errorf("fenced-block ${HOSTNAME} literal should be allowed; got: %v", err)
+	}
+}
+
+// TestStitchContent_UnfencedTokenErrorIncludesFragmentID pins the
+// safety side of Cluster B.2: an unbound engine token OUTSIDE a fenced
+// block still rejects, and the error names the offending fragment id
+// so the author can navigate without spelunking the rendered surface.
+func TestStitchContent_UnfencedTokenErrorIncludesFragmentID(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.Slug = "synth"
+	plan.Framework = "nest"
+	plan.Fragments = map[string]string{
+		"codebase/api/intro":                   "Bare ${HOSTNAME} reference outside any fence.",
+		"codebase/api/integration-guide":       "1. Configure `zerops.yaml`.",
+		"codebase/api/knowledge-base":          "- **x** — because Y",
+		"codebase/api/claude-md/service-facts": "api",
+		"codebase/api/claude-md/notes":         "notes",
+	}
+
+	_, _, err := AssembleCodebaseREADME(plan, "api")
+	if err == nil {
+		t.Fatal("expected unfenced ${HOSTNAME} reference to be flagged")
+	}
+	if !strings.Contains(err.Error(), "codebase/api/intro") {
+		t.Errorf("error should name the offending fragment id; got: %v", err)
+	}
+}
+
 // TestAssemble_UnreplacedEngineToken_IsFlagged — a real defect: the
 // scanner still catches an engine-bound token that the template forgot
 // to supply. Simulated by seeding a fragment body with {SLUG} and
