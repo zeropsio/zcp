@@ -290,14 +290,7 @@ func BuildTransitionMessage(state *WorkflowState) string {
 	writeServiceList(&sb, state.Bootstrap.Plan)
 
 	sb.WriteString("\nInfrastructure is provisioned — runtimes are mounted and managed dependencies are running. No application code has been written yet, and nothing has been deployed. Dev-mode runtimes are idle (startWithoutCode); stage runtimes wait at READY_TO_DEPLOY for the first cross-deploy.\n\n")
-	writeDeployModelPrimer(&sb)
-
-	sb.WriteString("Develop owns code: it scaffolds zerops.yaml, writes the app, runs the first deploy, and verifies.\n")
-	sb.WriteString("`zerops_workflow action=\"start\" workflow=\"develop\"`\n\n")
-
-	sb.WriteString("## What's Next?\n\n")
-	sb.WriteString("Infrastructure is ready. Choose your next workflow:\n\n")
-	writeOfferingsFooter(&sb)
+	sb.WriteString("Next: `zerops_workflow action=\"start\" workflow=\"develop\"` — develop owns scaffolding, code, first deploy, and verify. Platform invariants (deploy-replaces-container, SSHFS mount path, sudo, build/run split) surface via the develop-active atoms on the first call.\n")
 
 	return sb.String()
 }
@@ -308,10 +301,7 @@ func buildAdoptionTransitionMessage(state *WorkflowState) string {
 	var sb strings.Builder
 	sb.WriteString(bootstrapCompleteMsg + " Services adopted — existing code and configuration preserved.\n\n## Services\n\n")
 	writeServiceList(&sb, state.Bootstrap.Plan)
-	sb.WriteString("\n")
-	writeDeployModelPrimer(&sb)
-	sb.WriteString("## What's Next?\n\n")
-	writeOfferingsFooter(&sb)
+	sb.WriteString("\nNext: `zerops_workflow action=\"start\" workflow=\"develop\"` — develop reads each service's existing code and runs the iterate-edit-deploy loop. Platform invariants surface via the develop-active atoms on the first call.\n")
 
 	return sb.String()
 }
@@ -329,44 +319,10 @@ func writeServiceList(sb *strings.Builder, plan *ServicePlan) {
 	}
 }
 
-func writeDeployModelPrimer(sb *strings.Builder) {
-	sb.WriteString("## Deploy Model (read before developing)\n\n")
-	sb.WriteString("- **Deploy = new container** — each deploy replaces the container. Only `deployFiles` content persists.\n")
-	sb.WriteString("- **Code on SSHFS mount** — write code to the local mount (`/var/www/{hostname}/`), not via SSH into the container.\n")
-	sb.WriteString("- **prepareCommands need `sudo`** — containers run as `zerops` user. Use `sudo apk add` / `sudo apt-get install`.\n")
-	sb.WriteString("- **Build ≠ Run** — build container has `build.base`, run container has `run.base`. Install runtime packages in `run.prepareCommands`.\n\n")
-}
-
-// bootstrapTransitionOfferings are the primary workflow offerings shown in
-// the post-bootstrap transition message. Callers gate on bootstrap state
-// (Plan non-nil) before invoking — every successful bootstrap offers the
-// same two primary flows plus utilities.
-//
-//nolint:gochecknoglobals // constant offering list
-var bootstrapTransitionOfferings = []FlowOffering{
-	{
-		Workflow: "develop",
-		Priority: 1,
-		Hint:     `zerops_workflow action="start" workflow="develop"`,
-	},
-}
-
-func writeOfferingsFooter(sb *strings.Builder) {
-	offerings := appendUtilities(bootstrapTransitionOfferings)
-	for i, o := range offerings {
-		num := 'A' + rune(i)
-		fmt.Fprintf(sb, "**%c) %s**\n", num, titleCase(o.Workflow))
-		if o.Hint != "" {
-			fmt.Fprintf(sb, "   → `%s`\n", o.Hint)
-		}
-		sb.WriteString("\n")
-	}
-	sb.WriteString("**Other operations:**\n")
-	sb.WriteString("- Scale: `zerops_scale serviceHostname=\"...\"`\n")
-	sb.WriteString("- Env vars: `zerops_env action=\"set|delete\"` (reload after: `zerops_manage action=\"reload\"`)\n")
-}
-
-// titleCase capitalizes the first letter of a word (replacement for deprecated strings.Title).
+// titleCase capitalizes the first letter of a word (replacement for deprecated
+// strings.Title). Kept here even though the local bootstrap-transition
+// renderer no longer needs it: recipe_templates.go (frozen v2 cluster) still
+// references it.
 func titleCase(s string) string {
 	if len(s) == 0 {
 		return s

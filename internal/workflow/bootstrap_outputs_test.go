@@ -694,9 +694,12 @@ func TestBuildTransitionMessage_WithPlan_IncludesTransitionHint(t *testing.T) {
 	}
 	// Option A: bootstrap hands off to develop BEFORE any code/deploy —
 	// the transition message explains infra is ready and develop owns
-	// scaffolding + first deploy.
-	if !strings.Contains(msg, "Develop owns code") {
-		t.Error("message should explain develop owns code scaffolding and first deploy")
+	// scaffolding + first deploy. Wording was tightened from
+	// "Develop owns code:" to "develop owns scaffolding, code, first
+	// deploy, and verify." (G15 — drop hand-rolled deploy-model primer
+	// duplication; atoms cover the rest on the next agent call).
+	if !strings.Contains(msg, "develop owns scaffolding, code, first deploy") {
+		t.Error("message should explain develop owns scaffolding, code, first deploy and verify")
 	}
 }
 
@@ -822,7 +825,7 @@ func TestBuildTransitionMessage_EmptyTargets_ManagedOnly(t *testing.T) {
 	}
 }
 
-func TestBuildTransitionMessage_IncludesRouterOfferings(t *testing.T) {
+func TestBuildTransitionMessage_IncludesDevelopHandoff(t *testing.T) {
 	t.Parallel()
 	state := &WorkflowState{
 		Bootstrap: &BootstrapState{
@@ -840,16 +843,20 @@ func TestBuildTransitionMessage_IncludesRouterOfferings(t *testing.T) {
 		},
 	}
 	msg := BuildTransitionMessage(state)
-	// Should include deploy and push-git as router offerings.
-	if !strings.Contains(msg, "Develop") && !strings.Contains(msg, "develop") {
-		t.Error("message should include develop offering")
+	// Bootstrap close names develop as the next call. The expanded
+	// "## What's Next?" menu and "## Deploy Model" primer were dropped
+	// in G15 — atoms cover platform invariants on the next call.
+	if !strings.Contains(msg, `workflow="develop"`) {
+		t.Error("transition message should name the next workflow call (workflow=\"develop\")")
 	}
-	if !strings.Contains(msg, "What's Next") {
-		t.Error("message should include What's Next section")
+	for _, banned := range []string{"What's Next", "## Deploy Model"} {
+		if strings.Contains(msg, banned) {
+			t.Errorf("transition message must not include hand-rolled section %q (G15 — atoms own platform invariants on next call)", banned)
+		}
 	}
 }
 
-func TestBuildTransitionMessage_IncludesDeployModelPrimer(t *testing.T) {
+func TestBuildTransitionMessage_DropsDeployModelPrimer(t *testing.T) {
 	t.Parallel()
 	state := &WorkflowState{
 		Bootstrap: &BootstrapState{
@@ -861,14 +868,24 @@ func TestBuildTransitionMessage_IncludesDeployModelPrimer(t *testing.T) {
 		},
 	}
 	msg := BuildTransitionMessage(state)
-	if !strings.Contains(msg, "new container") {
-		t.Error("transition message should mention that deploy creates a new container")
+	// G15: the inline "## Deploy Model" primer was a hand-rolled
+	// duplication of facts already in the develop-active atom corpus
+	// AND in the CLAUDE.md template. Drop the primer here; the next
+	// status / develop-start call delivers the atom-driven version with
+	// proper envelope context.
+	for _, banned := range []string{
+		"## Deploy Model",
+		"prepareCommands need `sudo`",
+		"build container has `build.base`",
+	} {
+		if strings.Contains(msg, banned) {
+			t.Errorf("transition message must not inline hand-rolled primer fragment %q", banned)
+		}
 	}
-	if !strings.Contains(msg, "deployFiles") {
-		t.Error("transition message should mention deployFiles as what persists")
-	}
-	if !strings.Contains(msg, "sudo") {
-		t.Error("transition message should mention sudo for prepareCommands")
+	// The pointer to the atom-delivery surface stays — names where the
+	// invariants resurface so the agent doesn't think they're missing.
+	if !strings.Contains(msg, "develop-active atoms") {
+		t.Error("transition message should point at the develop-active atom delivery surface so the agent knows where the invariants resurface")
 	}
 }
 
