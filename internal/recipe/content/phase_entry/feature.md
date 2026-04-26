@@ -6,16 +6,19 @@ feature-kind from the feature brief.
 
 ## Dispatch
 
-1. **Compose brief**: `zerops_recipe action=build-brief slug=<slug>
-   briefKind=feature`. Returns the feature-kind catalog (crud,
-   cache-demo, queue-demo, storage-upload, search-items), the
-   `content_extension.md` append-semantics rubric, the scaffold-phase
-   symbol table, and — when `Plan.FeatureKinds` declares `seed` or
-   `scout-import` — the execOnce key-shape concept atom.
+1. **Compose dispatch prompt**: `zerops_recipe
+   action=build-subagent-prompt slug=<slug> briefKind=feature`. Returns
+   the engine-owned recipe-level context block + the feature brief
+   body verbatim (feature-kind catalog, `content_extension.md`
+   append-semantics rubric, scaffold-phase symbol table, the
+   showcase scenario spec when `Plan.Tier == "showcase"`, and — when
+   `Plan.FeatureKinds` declares `seed` or `scout-import` — the
+   execOnce key-shape concept atom) + closing notes naming the
+   self-validate path.
 
 2. **One dispatch** for the whole feature suite — feature sub-agent
-   works across every codebase that needs edits. Description:
-   `features-<slug>`.
+   works across every codebase that needs edits. Pass `response.prompt`
+   verbatim. Description: `features-<slug>`.
 
 3. **Behavioral verification** per feature: each feature-kind has an
    observable signal (cache-demo emits `X-Cache: HIT`, queue-demo has

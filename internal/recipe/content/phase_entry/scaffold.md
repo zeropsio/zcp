@@ -48,19 +48,24 @@ framework work, not on each other.
 
 ## For each codebase
 
-1. **Compose brief**:
-   `zerops_recipe action=build-brief slug=<slug>
+1. **Compose dispatch prompt**:
+   `zerops_recipe action=build-subagent-prompt slug=<slug>
    briefKind=scaffold codebase=<hostname>`
 
-   The brief returns platform-obligation prose (bind 0.0.0.0, trust
-   proxy, SIGTERM drain), the `content_authoring.md` placement rubric
-   + tone rules, and — for any codebase whose `HasInitCommands` is
-   true — the execOnce key-shape concept atom. It does NOT contain
-   framework-specific instructions; the sub-agent brings that from
-   its own knowledge.
+   The response carries the FULL dispatch prompt — engine-owned
+   recipe-level context (slug, framework, tier, codebase identity,
+   sister codebases, managed services, your codebase block) +
+   the engine brief body verbatim + closing notes naming the
+   self-validate path. No hand-typed wrapper needed; the engine has
+   every Plan-derivable fact already.
 
-2. **Dispatch the sub-agent** via the `Agent` tool. Pass the brief's
-   `body` verbatim as the `prompt`. Description: `scaffold-<hostname>`.
+   (`build-brief` still works and returns the brief body alone — use
+   it when you intend to compose your own wrapper, e.g. for a one-off
+   debugging dispatch. Default path is `build-subagent-prompt`.)
+
+2. **Dispatch the sub-agent** via the `Agent` tool. Pass
+   `response.prompt` verbatim as the `prompt`. Description:
+   `scaffold-<hostname>`.
 
 3. **Sub-agent produces**: source tree under the Zerops service's
    SSHFS mount (`/var/www/<hostname>/` in-container, or equivalent

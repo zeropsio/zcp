@@ -17,17 +17,21 @@ Finalize fragments may be authored directly by the main agent
 (low fragment count, single-shot) OR via a finalize sub-agent
 dispatch (high fragment count — root + env + import-comment
 fragments, ~50+ on a 3-codebase recipe with 6 tiers). When you
-choose the dispatch path, compose the wrapper from `Plan` via:
+choose the dispatch path, compose the FULL dispatch prompt from
+`Plan` via:
 
 ```
-zerops_recipe action=build-brief slug=<slug> briefKind=finalize
+zerops_recipe action=build-subagent-prompt slug=<slug> briefKind=finalize
 ```
 
-The composed brief carries correct codebase paths, fragment-count
-math, validator tripwires, and managed-service list — all derived
-from `Plan`. Hand-typed wrappers are out — math errors and path
-drift compound (run-10 wrapper claimed 89 fragments when actual was
-67; carried obsolete pre-§L paths). Run-11 gap S-1.
+The response carries the engine-owned recipe-level context block +
+the finalize brief verbatim (correct codebase paths, fragment-count
+math, validator tripwires, managed-service list — all Plan-derived) +
+closing notes naming the stitch-then-complete-phase path. Pass
+`response.prompt` verbatim to `Agent`. Hand-typed wrappers are out —
+math errors and path drift compound (run-10 wrapper claimed 89
+fragments when actual was 67; carried obsolete pre-§L paths). Run-11
+gap S-1; run-13 §B2.
 
 ## The env-var template model (critical)
 

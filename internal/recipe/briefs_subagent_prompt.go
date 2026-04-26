@@ -1,0 +1,214 @@
+package recipe
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
+
+// buildSubagentPrompt composes the full sub-agent dispatch prompt:
+// engine-owned recipe-level context (slug, framework, tier, codebase
+// identity, sister codebases, managed services) + the engine brief
+// body verbatim + a kind-specific closing-notes footer naming the
+// self-validate path.
+//
+// Run-13 §B2 — eliminates the hand-typed wrapper main agent typed in
+// front of the brief during dispatch. The wrapper carried slug,
+// framework, codebase identity, mount paths, fragment-id list, close
+// criteria — all derivable from Plan + the kind. Run-12 wrapper share
+// was 28-38% across sub-agent dispatches; engine-composed wrapper
+// drops to under 10%, finally meeting run-12-readiness criterion 15.
+//
+// Recipe-specific authoring decisions that aren't Plan-derivable
+// (framework-canonical pins like "Svelte+Vite static" / "NestJS+
+// TypeORM" the research phase recorded) ride along via
+// plan.Research.Description — agents already record those there per
+// the existing research-phase teaching, so no atom extension is
+// needed for the run-13 stretch.
+func buildSubagentPrompt(plan *Plan, parent *ParentRecipe, in RecipeInput) (string, error) {
+	if plan == nil {
+		return "", errors.New("buildSubagentPrompt: nil plan")
+	}
+	kind := BriefKind(in.BriefKind)
+	switch kind {
+	case BriefScaffold, BriefFeature, BriefFinalize:
+		// ok
+	default:
+		return "", fmt.Errorf("buildSubagentPrompt: unknown briefKind %q", in.BriefKind)
+	}
+
+	var cb Codebase
+	if kind == BriefScaffold {
+		if in.Codebase == "" {
+			return "", errors.New("buildSubagentPrompt: scaffold kind requires codebase")
+		}
+		found := false
+		for _, c := range plan.Codebases {
+			if c.Hostname == in.Codebase {
+				cb, found = c, true
+				break
+			}
+		}
+		if !found {
+			return "", fmt.Errorf("codebase %q not in plan", in.Codebase)
+		}
+	}
+
+	brief, err := buildBriefForKind(plan, parent, kind, cb)
+	if err != nil {
+		return "", err
+	}
+
+	var b strings.Builder
+	writePromptHeader(&b, plan, kind, cb)
+	writePromptRecipeContext(&b, plan, kind, cb)
+	b.WriteString("\n---\n\n")
+	b.WriteString("# Engine brief — ")
+	b.WriteString(string(kind))
+	b.WriteString("\n\n")
+	b.WriteString(brief.Body)
+	if !strings.HasSuffix(brief.Body, "\n") {
+		b.WriteByte('\n')
+	}
+	b.WriteString("\n---\n\n")
+	writePromptCloseFooter(&b, kind, in.Codebase)
+	return b.String(), nil
+}
+
+// buildBriefForKind dispatches to the right brief composer. Mirrors
+// Session.BuildBrief but operates on plan + parent directly (no Session
+// dependency) so buildSubagentPrompt is callable from tests without a
+// full session.
+func buildBriefForKind(plan *Plan, parent *ParentRecipe, kind BriefKind, cb Codebase) (Brief, error) {
+	switch kind {
+	case BriefScaffold:
+		return BuildScaffoldBrief(plan, cb, parent)
+	case BriefFeature:
+		return BuildFeatureBrief(plan)
+	case BriefFinalize:
+		return BuildFinalizeBrief(plan)
+	default:
+		return Brief{}, fmt.Errorf("unknown briefKind %q", kind)
+	}
+}
+
+func writePromptHeader(b *strings.Builder, plan *Plan, kind BriefKind, cb Codebase) {
+	switch kind {
+	case BriefScaffold:
+		fmt.Fprintf(b, "You are the scaffold sub-agent for the `%s` codebase of the %s recipe.\n",
+			cb.Hostname, plan.Slug)
+	case BriefFeature:
+		fmt.Fprintf(b, "You are the feature sub-agent for the %s recipe.\n", plan.Slug)
+	case BriefFinalize:
+		fmt.Fprintf(b, "You are the finalize sub-agent for the %s recipe.\n", plan.Slug)
+	}
+	b.WriteString("Read the engine brief below verbatim and follow it; the recipe-level\n")
+	b.WriteString("context above and the closing notes below the brief are wrapper notes\n")
+	b.WriteString("from the engine.\n\n")
+}
+
+func writePromptRecipeContext(b *strings.Builder, plan *Plan, kind BriefKind, cb Codebase) {
+	b.WriteString("## Recipe-level context\n\n")
+	fmt.Fprintf(b, "- Slug: `%s`\n", plan.Slug)
+	if plan.Framework != "" {
+		fmt.Fprintf(b, "- Framework family: %s\n", plan.Framework)
+	}
+	if plan.Tier != "" {
+		fmt.Fprintf(b, "- Tier: `%s`\n", plan.Tier)
+	}
+	if plan.Research.CodebaseShape != "" {
+		fmt.Fprintf(b, "- Codebase shape: %s (%s)\n",
+			plan.Research.CodebaseShape, joinHostnames(plan.Codebases))
+	}
+	if plan.Research.AppSecretKey != "" {
+		fmt.Fprintf(b, "- Project-level secret already set: `%s`\n",
+			plan.Research.AppSecretKey)
+	}
+	if plan.Research.Description != "" {
+		b.WriteString("\n### Research-phase decisions\n\n")
+		b.WriteString(plan.Research.Description)
+		if !strings.HasSuffix(plan.Research.Description, "\n") {
+			b.WriteByte('\n')
+		}
+	}
+
+	if kind == BriefScaffold {
+		b.WriteString("\n### Sister codebases\n\n")
+		emittedSister := false
+		for _, peer := range plan.Codebases {
+			if peer.Hostname == cb.Hostname {
+				continue
+			}
+			emittedSister = true
+			fmt.Fprintf(b, "- `%s` — role=%s, runtime=%s, worker=%t\n",
+				peer.Hostname, peer.Role, peer.BaseRuntime, peer.IsWorker)
+		}
+		if !emittedSister {
+			b.WriteString("(none — single-codebase recipe)\n")
+		}
+	}
+
+	if len(plan.Services) > 0 {
+		b.WriteString("\n### Managed services\n\n")
+		for _, svc := range plan.Services {
+			fmt.Fprintf(b, "- `%s` (%s) — kind=%s\n", svc.Hostname, svc.Type, svc.Kind)
+		}
+	}
+
+	if kind == BriefScaffold {
+		b.WriteString("\n## Your codebase (`")
+		b.WriteString(cb.Hostname)
+		b.WriteString("`)\n\n")
+		fmt.Fprintf(b, "- `cb.Hostname`: `%s`\n", cb.Hostname)
+		if cb.SourceRoot != "" {
+			fmt.Fprintf(b, "- `cb.SourceRoot` / mount: `%s`\n", cb.SourceRoot)
+		}
+		fmt.Fprintf(b, "- Dev slot: `%sdev`\n", cb.Hostname)
+		fmt.Fprintf(b, "- Stage slot: `%sstage`\n", cb.Hostname)
+		if cb.BaseRuntime != "" {
+			fmt.Fprintf(b, "- Runtime: `%s`\n", cb.BaseRuntime)
+		}
+		if cb.IsWorker {
+			b.WriteString("- Subdomain access: NO (worker role)\n")
+		} else {
+			b.WriteString("- Subdomain access: yes\n")
+		}
+	}
+}
+
+func writePromptCloseFooter(b *strings.Builder, kind BriefKind, codebase string) {
+	b.WriteString("## Closing notes from the engine\n\n")
+	switch kind {
+	case BriefScaffold:
+		b.WriteString("When you're ready to terminate: ensure all required fragments\n")
+		b.WriteString("are recorded, and call\n\n")
+		fmt.Fprintf(b, "    zerops_recipe action=complete-phase phase=scaffold codebase=%s\n\n", codebase)
+		b.WriteString("to self-validate. Fix any violations in-session via\n")
+		b.WriteString("`record-fragment mode=replace` (fragments) or ssh-edit (yaml\n")
+		b.WriteString("file), re-call until ok:true, then terminate.\n")
+	case BriefFeature:
+		b.WriteString("When you're ready to terminate: ensure per-feature commits are\n")
+		b.WriteString("in place, browser-verification facts recorded for each panel\n")
+		b.WriteString("you exercised, and call\n\n")
+		b.WriteString("    zerops_recipe action=complete-phase phase=feature codebase=<host>\n\n")
+		b.WriteString("per touched codebase to self-validate. Fix violations in-\n")
+		b.WriteString("session via `record-fragment mode=replace`, re-call until\n")
+		b.WriteString("ok:true, then move on.\n")
+	case BriefFinalize:
+		b.WriteString("When you're ready to terminate: ensure every fragment is\n")
+		b.WriteString("recorded, then call `stitch-content` and `complete-phase\n")
+		b.WriteString("phase=finalize`. Address any blocking violations via\n")
+		b.WriteString("`record-fragment mode=replace` (codebase ids) or fragment\n")
+		b.WriteString("re-record (root/env ids).\n")
+	}
+}
+
+// joinHostnames renders codebase hostnames as a comma-separated list
+// for the recipe-level context block.
+func joinHostnames(cbs []Codebase) string {
+	out := make([]string, 0, len(cbs))
+	for _, c := range cbs {
+		out = append(out, c.Hostname)
+	}
+	return strings.Join(out, ", ")
+}

@@ -104,7 +104,7 @@ const errSessionNotOpen = "session not open"
 
 // RecipeInput is the input schema for zerops_recipe.
 type RecipeInput struct {
-	Action           string      `json:"action"                     jsonschema:"One of: start, enter-phase, complete-phase, build-brief, verify-subagent-dispatch, record-fact, record-fragment, resolve-chain, emit-yaml, update-plan, stitch-content, status."`
+	Action           string      `json:"action"                     jsonschema:"One of: start, enter-phase, complete-phase, build-brief, build-subagent-prompt, verify-subagent-dispatch, record-fact, record-fragment, resolve-chain, emit-yaml, update-plan, stitch-content, status."`
 	Slug             string      `json:"slug,omitempty"             jsonschema:"Recipe slug (e.g. {framework}-showcase). Required for every action."`
 	OutputRoot       string      `json:"outputRoot,omitempty"       jsonschema:"Directory where the recipe tree + facts log live. Required for 'start'."`
 	Phase            string      `json:"phase,omitempty"            jsonschema:"Phase name for enter-phase / complete-phase: research, provision, scaffold, feature, finalize."`
@@ -155,6 +155,13 @@ type RecipeResult struct {
 	// from the agent's platform-trap surfaceHint. Empty when no override
 	// fires. Run-11 gap V-1.
 	Notice string `json:"notice,omitempty"`
+	// Prompt is the engine-composed sub-agent dispatch prompt — engine-
+	// owned wrapper + brief body + close criteria. Returned by
+	// action=build-subagent-prompt; main agent dispatches with
+	// `prompt=<response.prompt>` byte-identical, eliminating the hand-
+	// typed wrapper that compounded math/path drift across runs.
+	// Run-13 §B2.
+	Prompt string `json:"prompt,omitempty"`
 	Error  string `json:"error,omitempty"`
 }
 
@@ -163,7 +170,7 @@ type RecipeResult struct {
 func Register(srv *mcp.Server, store *Store) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_recipe",
-		Description: "zcprecipator3 recipe engine. Actions: start, enter-phase, complete-phase, build-brief, verify-subagent-dispatch, record-fact, resolve-chain, emit-yaml, update-plan, stitch-content, status. Call start first — it returns the research-phase guidance and the parent recipe inline. See docs/zcprecipator3/plan.md §6.",
+		Description: "zcprecipator3 recipe engine. Actions: start, enter-phase, complete-phase, build-brief, build-subagent-prompt, verify-subagent-dispatch, record-fact, resolve-chain, emit-yaml, update-plan, stitch-content, status. Call start first — it returns the research-phase guidance and the parent recipe inline. See docs/zcprecipator3/plan.md §6.",
 		Annotations: &mcp.ToolAnnotations{Title: "Run a Zerops recipe (v3)"},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in RecipeInput) (*mcp.CallToolResult, any, error) {
 		res := dispatch(ctx, store, in)
@@ -184,6 +191,7 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 	// Actions that require an existing session share session-loading.
 	needsSession := map[string]bool{
 		"enter-phase": true, "complete-phase": true, "build-brief": true,
+		"build-subagent-prompt":    true,
 		"verify-subagent-dispatch": true,
 		"record-fact":              true, "record-fragment": true, "emit-yaml": true,
 		"status": true, "update-plan": true, "stitch-content": true,
@@ -241,6 +249,13 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 			return r
 		}
 		r.Brief, r.OK = &brief, true
+	case "build-subagent-prompt":
+		prompt, err := buildSubagentPrompt(sess.Plan, sess.Parent, in)
+		if err != nil {
+			r.Error = err.Error()
+			return r
+		}
+		r.Prompt, r.OK = prompt, true
 	case "verify-subagent-dispatch":
 		r = verifyDispatch(sess, in, r)
 	case "record-fact":

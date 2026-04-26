@@ -392,6 +392,111 @@ func TestBuildFeatureBrief_MinimalTierOmitsScenarioSpec(t *testing.T) {
 	mustNotContain(t, brief.Body, "Showcase scenario specification")
 }
 
+// TestBuildSubagentPrompt_Scaffold_IncludesRecipeLevelContext — run-13
+// §B2. The new dispatch-prompt composer wraps the engine brief with
+// the recipe-level context the main agent's hand-typed wrapper used to
+// carry (slug, framework, tier, codebase identity, sister codebases,
+// managed services). The brief body appears verbatim inside.
+func TestBuildSubagentPrompt_Scaffold_IncludesRecipeLevelContext(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.Research.Description = "SPA is Svelte+Vite compiled to static; api is NestJS+TypeORM"
+	prompt, err := buildSubagentPrompt(plan, nil, RecipeInput{
+		BriefKind: "scaffold",
+		Codebase:  "api",
+	})
+	if err != nil {
+		t.Fatalf("buildSubagentPrompt: %v", err)
+	}
+	mustContain(t, prompt, "## Recipe-level context")
+	mustContain(t, prompt, "synth-showcase")
+	mustContain(t, prompt, "Sister codebases")
+	mustContain(t, prompt, "Svelte+Vite")
+	// Engine brief body appears verbatim inside.
+	apiCB := plan.Codebases[0]
+	brief, _ := BuildScaffoldBrief(plan, apiCB, nil)
+	if !strings.Contains(prompt, brief.Body) {
+		t.Errorf("dispatch prompt does not contain brief body verbatim")
+	}
+}
+
+// TestBuildSubagentPrompt_WrapperShareIsSmall — run-13 §B2 acceptance
+// criterion 27 (carry-forward of run-12 acceptance 15). Engine
+// wrapper around the brief stays under 2.5 KB, dropping wrapper share
+// well below the run-12 28-38% range.
+func TestBuildSubagentPrompt_WrapperShareIsSmall(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	for i := range plan.Codebases {
+		plan.Codebases[i].SourceRoot = "/var/www/" + plan.Codebases[i].Hostname + "dev"
+	}
+	prompt, err := buildSubagentPrompt(plan, nil, RecipeInput{
+		BriefKind: "finalize",
+	})
+	if err != nil {
+		t.Fatalf("buildSubagentPrompt: %v", err)
+	}
+	brief, _ := BuildFinalizeBrief(plan)
+	wrapperBytes := len(prompt) - len(brief.Body)
+	if wrapperBytes > 2500 {
+		t.Errorf("wrapper too large (%d bytes); criterion-15 target is < 2 KB", wrapperBytes)
+	}
+}
+
+// TestBuildSubagentPrompt_Feature_NoCodebaseScope — run-13 §B2.
+// Feature dispatches a single sub-agent across all codebases; the
+// codebase parameter is optional. The prompt still composes cleanly,
+// without per-codebase identity in the recipe-level context but with
+// the brief body intact.
+func TestBuildSubagentPrompt_Feature_NoCodebaseScope(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	prompt, err := buildSubagentPrompt(plan, nil, RecipeInput{
+		BriefKind: "feature",
+	})
+	if err != nil {
+		t.Fatalf("buildSubagentPrompt: %v", err)
+	}
+	mustContain(t, prompt, "## Recipe-level context")
+	mustContain(t, prompt, "synth-showcase")
+	feature, _ := BuildFeatureBrief(plan)
+	if !strings.Contains(prompt, feature.Body) {
+		t.Errorf("feature prompt does not contain brief body verbatim")
+	}
+}
+
+// TestDispatch_BuildSubagentPrompt_ReturnsPromptField — run-13 §B2
+// integration. The new MCP action populates RecipeResult.Prompt; main
+// dispatches with prompt=<response.prompt> byte-identical.
+func TestDispatch_BuildSubagentPrompt_ReturnsPromptField(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	dispatch(t.Context(), store, RecipeInput{
+		Action: "start", Slug: "synth-showcase", OutputRoot: dir + "/run",
+	})
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "build-subagent-prompt", Slug: "synth-showcase",
+		BriefKind: "scaffold", Codebase: "api",
+	})
+	if !res.OK {
+		t.Fatalf("build-subagent-prompt: %+v", res)
+	}
+	if res.Prompt == "" {
+		t.Errorf("response.Prompt empty")
+	}
+	if !strings.Contains(res.Prompt, "## Recipe-level context") {
+		t.Errorf("response.Prompt missing recipe-level context block")
+	}
+}
+
 // TestBuildScaffoldBrief_APIOmitsTierFactTable — run-13 §T conditional
 // load. API codebases don't author tier-aware prose; the table is
 // omitted so the brief stays under cap.
