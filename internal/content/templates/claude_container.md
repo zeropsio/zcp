@@ -7,4 +7,5 @@ with Read/Edit/Write, not over SSH. Edits on the mount survive
 restart but not deploy.
 
 Per-service rules (reload behaviour, start commands, asset pipeline)
-live at `/var/www/{hostname}/CLAUDE.md` — read before editing.
+MAY exist at `/var/www/{hostname}/CLAUDE.md` — recipes typically
+include them. Read it if present before editing; absence is normal.
