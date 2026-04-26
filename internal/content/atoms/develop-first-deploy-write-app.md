@@ -3,14 +3,14 @@ id: develop-first-deploy-write-app
 priority: 3
 phases: [develop-active]
 environments: [container]
-deployStates: [never-deployed]
+envelopeDeployStates: [never-deployed]
 title: "Write the application code"
 references-fields: []
 ---
 
 ### Write the application code
 
-Bootstrap does NOT ship a verification stub or hello-world — `/var/www/{hostname}/`
+Bootstrap does NOT ship a verification stub or hello-world — `/var/www/<hostname>/`
 on the SSHFS mount is empty. The first deploy only succeeds if real code
 is there.
 
@@ -42,22 +42,22 @@ is there.
    Don't suppress dev mode itself — fix the operational mismatch and
    let hot-reload + error pages keep working.
 
-**Write files** directly to `/var/www/{hostname}/` through the SSHFS
+**Write files** directly to `/var/www/<hostname>/` through the SSHFS
 mount — Read/Edit/Write tools (and plain `rm`, `mv`, `cp` against mount
 paths) all work because the mount bypasses container-side permissions
 at the SFTP protocol level.
 
 **Run commands** (`go build`, `php artisan`, `pytest`, framework CLIs,
-dev server) via SSH into the container: `ssh {hostname} "cd /var/www
+dev server) via SSH into the container: `ssh <hostname> "cd /var/www
 && <command>"`. The reason is tool availability, not ownership — most
 runtime-specific CLIs aren't installed on the ZCP host.
 
 **Don't run `git init` from the ZCP-side mount.** Push-dev deploy
 handlers manage the container-side git state — calling `git init` on
-the SSHFS mount (`cd /var/www/{hostname}/ && git init`) creates
+the SSHFS mount (`cd /var/www/<hostname>/ && git init`) creates
 `.git/objects/` owned by root, which breaks the container-side
 `git add` the deploy handler runs. Recovery if this already happened:
-`ssh {hostname} "sudo rm -rf /var/www/.git"` — the next deploy
+`ssh <hostname> "sudo rm -rf /var/www/.git"` — the next deploy
 re-initializes it.
 
 SSH deploys replace the container; only content covered by `deployFiles`
