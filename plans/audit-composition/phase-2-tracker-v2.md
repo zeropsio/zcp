@@ -15,7 +15,7 @@ Closed: 2026-04-27
 |---|---|---|---|---|
 | Phase 2 CORPUS-SCAN — abstraction-leak survey | CORPUS-SCAN | DONE — 79 leaks found (8 DROP, 11 REPHRASE, 60 KEEP) | `axis-k-candidates.md` | `f2825dc5` |
 | Phase 2 PER-EDIT — REPHRASE diff review (batched single round on full diff) | PER-EDIT | DONE — APPROVE on all 11 atoms | `codex-round-p2-peredit-rephrase.md` | `66f49f4d` |
-| Phase 2 POST-WORK — gap-find on Phase 2 commits | POST-WORK | DONE — initial NEEDS-REVISION (one ledger trigger-term miss) → APPROVE post-remediation | `codex-round-p2-postwork.md` | `<phase-2-exit-commit>` |
+| Phase 2 POST-WORK — gap-find on Phase 2 commits | POST-WORK | DONE — initial NEEDS-REVISION (one ledger trigger-term miss) → APPROVE post-remediation | `codex-round-p2-postwork.md` | `c6e22907` |
 
 Per amendment 1: PER-EDIT was MANDATORY for the 11 REPHRASE atoms
 (each has a HIGH-risk signal). Single batched round (not 11
