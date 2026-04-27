@@ -39,19 +39,19 @@ Atom count: 79 (matches §4.1).
 
 | # | work unit | initial state | final state | commit | codex round | notes |
 |---|---|---|---|---|---|---|
-| 1 | §17 prereq P1-P11 walked | unverified | PASS (P2 rebased, P7 deferred to PRE-WORK round, P11 cycle-1 §4.2 drift = improvement) | (this commit) | – | per §17 table above |
-| 2 | Step 0.5 baseline re-render | uncomputed | PASS (5/5 fixture sizes match §4.1 EXACTLY) | (this commit) | – | per Step 0.5 table above |
+| 1 | §17 prereq P1-P11 walked | unverified | PASS (P2 rebased, P7 deferred to PRE-WORK round, P11 cycle-1 §4.2 drift = improvement) | 00459f02 | – | per §17 table above |
+| 2 | Step 0.5 baseline re-render | uncomputed | PASS (5/5 fixture sizes match §4.1 EXACTLY) | 00459f02 | – | per Step 0.5 table above |
 | 3 | Probe binary recreated | absent (deleted G8 cycle-2) | rebuilt to /tmp/probe; source at `cmd/atomsize_probe/main.go` | (uncommitted; G8 to delete at Phase 5 EXIT) | – | source from `9c8980b9~1` |
-| 4 | Tracker dir + probe baseline file | absent | `plans/audit-composition-v3/probe-baseline-2026-04-27-v3.txt` written (146 lines, 5 fixtures) | (this commit) | – | text dump of probe stdout |
+| 4 | Tracker dir + probe baseline file | absent | `plans/audit-composition-v3/probe-baseline-2026-04-27-v3.txt` written (146 lines, 5 fixtures) | 00459f02 | – | text dump of probe stdout |
 | 5 | Phase 0 PRE-WORK Codex round 1 | not run | NEEDS-REVISION | – | NEEDS-REVISION | 4 real concerns surfaced (F3 platform-rules-local row over-drops; F4 rewrite drops diagnostic fields; F5 static-workflow has 2nd leak at L27-28; Axis N inverse rule needs DO-NOT-UNIFY exception). Plan revised; round 2 dispatched. Detail: `codex-round-p0-prework-v3.md`. |
-| 6 | Plan revisions per round 1 (4 edits to plan §3 + §5 Phase 2/3/4) | not applied | APPLIED | (this commit) | – | §3 DO-NOT-UNIFY exception; §5 Phase 2 platform-rules-local REPHRASE not DROP; §5 Phase 3 F4 retains response fields; §5 Phase 4 F5 (b) added |
-| 7 | Phase 0 PRE-WORK Codex round 2 | not run | APPROVE | (this commit) | APPROVE | All 4 plan revisions confirmed correct; all round-1 APPROVE items still hold (F1, F3 [other 7], F5 base, Axis K vs N distinction, Axis N example quality). Detail: `codex-round-p0-prework-v3.md` Round 2 section. |
+| 6 | Plan revisions per round 1 (4 edits to plan §3 + §5 Phase 2/3/4) | not applied | APPLIED | 00459f02 | – | §3 DO-NOT-UNIFY exception; §5 Phase 2 platform-rules-local REPHRASE not DROP; §5 Phase 3 F4 retains response fields; §5 Phase 4 F5 (b) added |
+| 7 | Phase 0 PRE-WORK Codex round 2 | not run | APPROVE | 00459f02 | APPROVE | All 4 plan revisions confirmed correct; all round-1 APPROVE items still hold (F1, F3 [other 7], F5 base, Axis K vs N distinction, Axis N example quality). Detail: `codex-round-p0-prework-v3.md` Round 2 section. |
 
 ## Phase 0 EXIT readiness (per §5 Phase 0 EXIT)
 
-- [x] Probe baseline output committed to `plans/audit-composition-v3/probe-baseline-2026-04-27-v3.txt`. (this commit)
+- [x] Probe baseline output committed to `plans/audit-composition-v3/probe-baseline-2026-04-27-v3.txt`. 00459f02
 - [x] Phase 0 PRE-WORK Codex round APPROVE. (round 2 APPROVE 2026-04-27 after round-1-driven plan revisions)
-- [x] Tracker `phase-0-tracker-v3.md` committed. (this commit)
+- [x] Tracker `phase-0-tracker-v3.md` committed. 00459f02
 - [x] Verify gate green. (lint+tests green pre-Phase-0 + re-run post-rebase + re-run pre-commit; see commit message)
 
 ## Notes / amendments
