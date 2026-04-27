@@ -12,9 +12,9 @@ Closed: 2026-04-27
 
 | step | round type | state | output | commit |
 |---|---|---|---|---|
-| Phase 6 ENTRY: regenerate axis-b-candidates-v2 (re-baseline atoms touched in Phase 5 per amendment 4) | (executor mechanical) | DONE — 25 atoms; 2 already-DONE; 23 work units; 6,645 B target | `axis-b-candidates-v2.md` | `<phase-6-exit>` |
-| Phase 6 PER-EDIT (delegated apply pass; HIGH+MEDIUM+LOW batched per amendment 1) | PER-EDIT (delegated) | DONE — 22 atoms applied; 1 SKIPPED (deploy-files-self-deploy: 5 B remaining, no safe trim) | apply log appended to `axis-b-candidates-v2.md` | `<phase-6-exit>` |
-| Phase 6 POST-WORK sample audit (HIGH:4 + MEDIUM:5 + LOW:3) | POST-WORK | DONE — APPROVE; 0 signal regressions; all MustContain pins preserved | "Phase 6 POST-WORK audit" section in `axis-b-candidates-v2.md` | `<phase-6-exit>` |
+| Phase 6 ENTRY: regenerate axis-b-candidates-v2 (re-baseline atoms touched in Phase 5 per amendment 4) | (executor mechanical) | DONE — 25 atoms; 2 already-DONE; 23 work units; 6,645 B target | `axis-b-candidates-v2.md` | `d3eefb23` |
+| Phase 6 PER-EDIT (delegated apply pass; HIGH+MEDIUM+LOW batched per amendment 1) | PER-EDIT (delegated) | DONE — 22 atoms applied; 1 SKIPPED (deploy-files-self-deploy: 5 B remaining, no safe trim) | apply log appended to `axis-b-candidates-v2.md` | `d3eefb23` |
+| Phase 6 POST-WORK sample audit (HIGH:4 + MEDIUM:5 + LOW:3) | POST-WORK | DONE — APPROVE; 0 signal regressions; all MustContain pins preserved | "Phase 6 POST-WORK audit" section in `axis-b-candidates-v2.md` | `d3eefb23` |
 
 ## Sub-pass work units
 
