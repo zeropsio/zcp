@@ -20,11 +20,9 @@ Static services have no runtime process to restart. The develop loop is:
 **There is no SSH start step.** Static services have no long-running
 process — nginx serves files as soon as the deploy lands.
 
-**Build step** (Tailwind, bundler, SSG like Astro or Eleventy): the
-build runs in the Zerops build container during deploy, not locally.
-To preview built output before pushing, run the build locally
-(`npm run build`) and open the output directory; Zerops will rebuild
-anyway at deploy time.
+**Build step** (Tailwind, bundler, SSG like Astro or Eleventy):
+runs in the Zerops build container at deploy time. Local builds are
+preview-only; Zerops rebuilds anyway.
 
 **Strategy fit:** `manual` for low-traffic sites; `push-git` when the
 site has CI; `push-dev` for fast iteration on a dev container over SSH.

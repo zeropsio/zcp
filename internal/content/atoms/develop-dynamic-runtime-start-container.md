@@ -29,10 +29,8 @@ Args:
 - `port` — `run.ports[0].port`.
 - `healthPath` — app-owned (`/api/health`, `/status`) or `/`.
 
-Response carries `running`, `healthStatus` (HTTP status of the
-health probe), `startMillis` (time from spawn to healthy), and on
-failure a concrete `reason` code plus `logTail` — diagnose without
-a follow-up call.
+Response carries `running`, `healthStatus`, `reason`, and `logTail`
+— read these before making another call.
 
 **After every redeploy, re-run `action=start` before `zerops_verify`** —
 the rebuild drops the dev process (see

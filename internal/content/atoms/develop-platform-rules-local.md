@@ -49,14 +49,10 @@ title: "Platform rules — local env extras"
   `git status` before a deploy if you want to ship un-committed edits
   (they need committing first for strategy=git-push; strategy=push-dev
   ships whatever is in the tree).
-- **`strategy=git-push` needs a user-owned git repo.** Before calling
-  `zerops_deploy strategy=git-push`, verify the working dir is a git
-  repo with at least one commit (`git status`, `git log`). zcli rejects
-  the push when the working dir isn't a git work tree, or when
-  `git rev-list --all --count` returns 0. If the user has neither,
-  ask them to run `git init && git add -A && git commit -m 'initial'`
-  themselves — ZCP does NOT initialize git in the user's working
-  directory because identity (user.name, user.email), default branch,
-  and `.gitignore` conventions are personal choices we won't overwrite.
-  The default `zerops_deploy` strategy uses `zcli --no-git` and needs
-  no git state at all.
+- **`strategy=git-push` needs a committed local git repo.** Before
+  calling `zerops_deploy strategy=git-push`, verify with `git status`
+  + `git log`. If the user has neither a git work tree nor any
+  commit, ask them to run `git init && git add -A && git commit -m
+  'initial'` themselves — ZCP does NOT initialize git in the user's
+  working directory. The default `zerops_deploy` strategy
+  (push-dev) needs no git state at all.

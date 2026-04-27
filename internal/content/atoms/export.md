@@ -16,11 +16,10 @@ reproduce this infrastructure with:
 zcli project project-import import.yaml
 ```
 
-**How buildFromGit works** — Zerops pulls code + `zerops.yaml` from the repo
-on deploy; `zeropsSetup` picks which `setup:` block from that zerops.yaml to
-run. So your import.yaml services only need `type`, `zeropsSetup`,
-`buildFromGit`, and platform settings (scaling, subdomain, envs). Do NOT copy
-build/run/deploy pipeline fields — they live in the repo's zerops.yaml.
+For `buildFromGit` imports, services need only `type`, `zeropsSetup`,
+`buildFromGit`, and platform settings (scaling, subdomain, envs). Do NOT
+copy build/run/deploy pipeline fields — those live in the repo's
+zerops.yaml.
 
 **Convert the task list below into your task tracker. Execute in order.**
 

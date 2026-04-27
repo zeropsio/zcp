@@ -35,17 +35,11 @@ directory; `zerops_deploy` (`zcli push`) ships the entire working dir,
 so the manifest lands on the stage container and the next request
 resolves asset URLs through it.
 
-**For iterative frontend work, run Vite locally on your machine:**
+**For iterative frontend work, run Vite locally:** `npm run dev`. The
+dev server drops `public/build/hot` with localhost URLs; the
+framework's Vite helper routes asset URLs to your local Vite server.
+Hot-reload iterates without redeploying. Deploy when stable.
 
-```
-npm run dev
-```
-
-The dev server drops `public/build/hot` with localhost URLs; the
-framework's Vite helper detects it and routes asset URLs to your local
-Vite server. Hot-reload iterates without redeploying. Deploy when the
-feature stabilizes.
-
-**Do NOT add `npm run build` to dev `buildCommands`.** Every
-`zerops_deploy` would then rebuild assets on Zerops (~20–30 s penalty)
-and break the local-HMR-first design the dev setup was authored around.
+**Do NOT add `npm run build` to dev `buildCommands`.** It defeats the
+local-HMR-first dev setup (every `zerops_deploy` rebuilds assets,
+~20–30 s penalty).

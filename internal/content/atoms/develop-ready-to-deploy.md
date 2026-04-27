@@ -26,15 +26,12 @@ Two valid ways to move it forward:
    belong only in `run.base`.
 
 2. **Re-import with `startWithoutCode: true` and `override=true`.** Use
-   this when you need the container ACTIVE *before* deploying real code
-   (e.g. to SSH in, inspect env vars, or let the LLM iterate over SSHFS
-   before the first real deploy). Regenerate the import YAML with
-   `startWithoutCode: true` on the target service and call
-   `zerops_import content="<yaml>" override=true` — the `override` flag
-   tells the API to replace the existing service stack (without it the
-   call fails with `serviceStackNameUnavailable`). Zerops auto-triggers an
-   empty `stack.deploy` right after create, lifting the service to ACTIVE
-   with a running empty container.
+   this when you need the container ACTIVE *before* deploying real code.
+   Regenerate the import YAML with `startWithoutCode: true` on the
+   target service and call `zerops_import content="<yaml>" override=true`
+   — `override` replaces the existing service stack (without it the
+   call fails with `serviceStackNameUnavailable`). Zerops then triggers
+   an empty `stack.deploy`, lifting the service to ACTIVE.
 
 Check `zerops_discover` first to see which state each runtime service is
 in. `ACTIVE` means the dev loop is ready. `READY_TO_DEPLOY` means pick

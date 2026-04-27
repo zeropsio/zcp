@@ -41,13 +41,12 @@ manager).
 
 ## What's different from container
 
-- ZCP never sets `GIT_TOKEN` on the project for the local path. A
-  `GIT_TOKEN` set for the container's benefit stays out of the way —
-  local push reads nothing from there.
-- ZCP never runs `git init`, `git config`, or alters your repo beyond
-  what `git remote add` does on first push.
-- Pushed state is the branch HEAD. Uncommitted working-tree changes
-  are WARNED about via `warnings[]` but not pushed.
+- Local push-git uses local credentials only; project `GIT_TOKEN`
+  does not apply.
+- ZCP never runs `git init` or `git config` on your repo (only
+  `git remote add` on first push).
+- Pushed state is the branch HEAD; uncommitted working-tree changes
+  are WARNED via `warnings[]` but not pushed.
 
 The trigger setup (webhook or actions) in the paired trigger atom
 handles what Zerops does after the push lands.

@@ -46,9 +46,7 @@ is there.
 the ZCP host.
 
 **Don't run `git init` from the ZCP-side mount.** Push-dev deploy
-handlers manage the container-side git state — calling `git init` on
-the SSHFS mount (`cd /var/www/<hostname>/ && git init`) creates
-`.git/objects/` owned by root, which breaks the container-side
-`git add` the deploy handler runs. Recovery if this already happened:
-`ssh <hostname> "sudo rm -rf /var/www/.git"` — the next deploy
-re-initializes it.
+handlers manage the container-side git state; running `git init` on
+the SSHFS mount creates root-owned `.git/objects/` that breaks the
+container-side `git add`. Recovery: `ssh <hostname> "sudo rm -rf
+/var/www/.git"` — the next deploy re-initializes it.

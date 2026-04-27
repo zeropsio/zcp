@@ -18,14 +18,10 @@ the triage rather than blind-starting a process.
 **Step 1 — Determine the expectation** from `runtimeClass` + `mode`
 in the envelope:
 
-| Envelope shape | Deployed runtime shape | Dev-server lifecycle |
-|---|---|---|
-| `runtimeClass: implicit-webserver` | Always live post-deploy | Platform-owned — no manual start |
-| `runtimeClass: dynamic`, `mode: dev` | `zsc noop` idle container | You start it via `zerops_dev_server action=start` |
-| `runtimeClass: dynamic`, `mode: simple\|stage` | Foreground binary with `healthCheck` | Platform auto-starts and probes |
-
-If the envelope reports implicit-webserver, static, or
-simple/stage-mode dynamic, triage ends — platform owns lifecycle.
+Only `runtimeClass: dynamic` + `mode: dev` needs a manual dev-server
+action — its `zsc noop` idle container waits for `zerops_dev_server
+action=start`. Implicit-webserver, static, and dynamic + simple/stage
+are platform-owned post-deploy; triage ends there.
 
 **Step 2 — Check current state** for dev-mode dynamic:
 

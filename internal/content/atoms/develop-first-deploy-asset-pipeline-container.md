@@ -33,8 +33,8 @@ The build writes `public/build/manifest.json` into the dev container;
 SSHFS propagates it without a redeploy. PHP-FPM reads it on the
 next request — no restart needed.
 
-**For iterative frontend work, start the dev server instead** — it
-watches files and survives template edits without repeated manual builds:
+**For iterative frontend work, start the dev server over SSH** —
+it watches files and survives template edits:
 
 ```
 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {hostname} \
@@ -42,9 +42,9 @@ ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {hostname} \
 ```
 
 The dev server drops `public/build/hot`; framework Vite helpers
-route assets through the running server. **Containers restart on
-every `zerops_deploy`** — restart the dev server after each redeploy.
+route assets through the running server. Containers restart on every
+`zerops_deploy` — restart the dev server after each redeploy.
 
-**Do NOT add `npm run build` to dev `buildCommands`.** Every `zcli push`
-would then rebuild assets (~20–30 s penalty) and break the HMR-first
-design the dev setup was authored around.
+**Do NOT add `npm run build` to dev `buildCommands`.** It defeats
+the HMR-first dev setup (every push rebuilds assets, ~20–30 s
+penalty).
