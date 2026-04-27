@@ -19,10 +19,10 @@ same hostname would clash with the stale meta:
 zerops_workflow action="reset" workflow="bootstrap"
 ```
 
-Reset clears every meta whose live counterpart is gone (orphan diff
-against the live API), plus unregisters any dead bootstrap session.
-Complete metas tied to live services are preserved. After reset the
-hostname is free to reuse for a fresh bootstrap.
+Reset clears orphan metas (those whose live counterpart is gone) and
+unregisters any dead bootstrap session. Complete metas tied to live
+services are preserved. After reset the hostname is free to reuse
+for a fresh bootstrap.
 
 After reset, start a fresh bootstrap to recreate the runtimes:
 

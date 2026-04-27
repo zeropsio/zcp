@@ -20,10 +20,7 @@ adopt-route services and recipes that deployed during bootstrap the
 envelope shows `deployed: true` directly.
 
 No application code is written, no `zerops.yaml` generated, and no
-deploy runs as part of bootstrap close itself. ServiceMeta records
-are on-disk evidence authored by bootstrap and adoption; their
-envelope projection is the `ServiceSnapshot` with `bootstrapped: true`,
-the chosen mode, and stage pairing where applicable.
+deploy runs as part of bootstrap close itself.
 
 **Next step — `zerops_workflow action="start" workflow="develop"`.**
 Develop runs the full code-and-deploy loop:

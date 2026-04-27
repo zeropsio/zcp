@@ -19,7 +19,6 @@ Poll service state:
 zerops_discover
 ```
 
-Repeat until every service reports `status: ACTIVE`. The polling itself is
-free — no side effects — so a tight loop (every few seconds) is fine.
-Production services may take 30–90 seconds to transition; managed services
-(databases) usually take longer than runtime services.
+Repeat until every service reports `status: ACTIVE`. Production services
+take 30–90 seconds to transition; managed services (databases) usually
+longer.

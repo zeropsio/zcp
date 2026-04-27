@@ -34,6 +34,6 @@ on failure a `reason` code (see `develop-dev-server-reason-codes`).
 zerops_dev_server action=logs hostname="{hostname}" logLines=60
 ```
 
-Read `reason` on any failed start/restart — the code classifies the
-failure (connection refused, HTTP 5xx, spawn timeout, worker exit)
-without a follow-up call.
+Read `reason` on any failed start/restart — it classifies the failure
+(connection refused, HTTP 5xx, spawn timeout, worker exit) without a
+follow-up call.

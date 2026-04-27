@@ -29,10 +29,7 @@ every project-level env var in the YAML.
 
 Strip `project:`. Submit `services:` verbatim via `zerops_import` — ZCP already applied your plan's hostnames and dropped EXISTS-resolved managed services. Don't edit resource limits, `buildFromGit`, `priority`, `zeropsSetup`, or `type`.
 
-**3. Wait until every service reports `ACTIVE`.**
-
-Recipes provision via `buildFromGit` — expect 2–5 minutes for first
-provision (vs ~30s for empty-container provisions). Poll with:
+**3. Wait until every service reports `ACTIVE`.** Poll with:
 
 ```
 zerops_discover

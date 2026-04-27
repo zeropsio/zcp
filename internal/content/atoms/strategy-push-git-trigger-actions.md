@@ -87,11 +87,6 @@ service, each with its own `--serviceId` and `--setup`.
 - Local env: commit locally and `zerops_deploy strategy=git-push` (or
   just `git push origin <branch>` if the user prefers their own git).
 
-The first push also fires the Actions workflow. Two builds happen on
-this push — Zerops's own (via `git-push`) and Actions's round-trip via
-`zcli push`. Redundant the first time; verifies the CI path works.
-Subsequent pushes only fire the Actions path.
-
 ## 7. Verify
 
 ```

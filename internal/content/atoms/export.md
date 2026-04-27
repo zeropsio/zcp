@@ -228,6 +228,3 @@ Iterate:
   ssh {targetHostname} 'cd /var/www && ...'                          # edit
   zerops_deploy targetService="{targetHostname}" strategy="git-push" # push
 ```
-
-If multiple services share this repo (dev + stage pair), a single push
-deploys both.
