@@ -764,6 +764,64 @@ func TestRecordFragment_ResponseEchoesID(t *testing.T) {
 	}
 }
 
+// TestRecordFragment_ResponseCarriesSurfaceContract pins run-15 F.2 —
+// every record-fragment response carries the SurfaceContract for the
+// resolved surface (reader + test + caps + FormatSpec) so the agent
+// reads the per-surface authoring contract verbatim at decision time.
+// Brief preface teaches surfaces once at boot; the contract delivered
+// at record-time keeps the rule in working memory through every
+// fragment authoring step.
+func TestRecordFragment_ResponseCarriesSurfaceContract(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	outputRoot := filepath.Join(dir, "run")
+	if _, err := store.OpenOrCreate("synth-showcase", outputRoot); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	cases := []struct {
+		fragmentID string
+		wantSurf   Surface
+	}{
+		{"root/intro", SurfaceRootREADME},
+		{"env/2/intro", SurfaceEnvREADME},
+		{"env/2/import-comments/api", SurfaceEnvImportComments},
+		{"codebase/api/integration-guide", SurfaceCodebaseIG},
+		{"codebase/api/knowledge-base", SurfaceCodebaseKB},
+		{"codebase/api/claude-md/notes", SurfaceCodebaseCLAUDE},
+	}
+	for _, tc := range cases {
+		res := dispatch(t.Context(), store, RecipeInput{
+			Action: "record-fragment", Slug: "synth-showcase",
+			FragmentID: tc.fragmentID, Fragment: "stub body",
+		})
+		if !res.OK {
+			t.Errorf("%q: dispatch failed: %+v", tc.fragmentID, res)
+			continue
+		}
+		if res.SurfaceContract == nil {
+			t.Errorf("%q: missing SurfaceContract on record-fragment response", tc.fragmentID)
+			continue
+		}
+		if res.SurfaceContract.Name != tc.wantSurf {
+			t.Errorf("%q: SurfaceContract.Name = %q, want %q", tc.fragmentID, res.SurfaceContract.Name, tc.wantSurf)
+		}
+		if res.SurfaceContract.Reader == "" {
+			t.Errorf("%q: SurfaceContract.Reader empty", tc.fragmentID)
+		}
+		if res.SurfaceContract.Test == "" {
+			t.Errorf("%q: SurfaceContract.Test empty", tc.fragmentID)
+		}
+		if res.SurfaceContract.FormatSpec == "" {
+			t.Errorf("%q: SurfaceContract.FormatSpec empty", tc.fragmentID)
+		}
+	}
+}
+
 // TestRecordFragment_AppendSetsAppendedTrue — second call to an append-
 // class id fires append semantics. BodyBytes = sum of both + 2 (`\n\n`).
 func TestRecordFragment_AppendSetsAppendedTrue(t *testing.T) {

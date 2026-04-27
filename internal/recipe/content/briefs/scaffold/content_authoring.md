@@ -61,16 +61,18 @@ What does NOT go here:
   KB or claude-md/notes.
 - Application architecture (module structure, class hierarchy).
 
-Aim for 4-7 IG items per codebase as the sweet spot for minimal
-recipes (1-2 managed services). For showcase recipes (5
-managed-service categories — db / cache / broker / storage / search),
-expect 7-10 items per codebase: each platform mechanic relevant to a
-category gets its own item. Reference (laravel-showcase-app, minimal
-tier): 5 items.
+**IG cap: 4-5 items per codebase including engine-emitted IG #1.**
+Both reference recipes (laravel-jetstream + laravel-showcase) settle
+at this. Showcase recipes do not get a higher cap — scope adds breadth
+via more codebases, not more IG items per codebase. Run-14 shipped
+8-10 items per codebase; the engine now blocks above 5 with
+`codebase-ig-too-many-items`.
 
-Above 12 is bloat (audit for items duplicating prose in KB or
-describing framework configuration not platform mechanics); below 4
-likely missed at least one platform mechanic.
+If you find yourself approaching the cap with recipe-internal scaffold
+descriptions (`api.ts` wrapper / `sirv` config / `server.js` SIGTERM
+handler), the spec test fails: a porter bringing their own code does
+not have those files. Fold the platform mechanic into a principle-
+level item; move the specific implementation to code comments.
 
 ### Knowledge Base — `**Topic** — prose` only
 
@@ -255,14 +257,69 @@ passes before you exit. Feature sub-agent can also use `mode=replace`
 to correct scaffold's content if scaffold wrote something feature
 needs to rewrite (rare; prefer extending).
 
+## record-fragment carries the surface contract
+
+Every successful `zerops_recipe action=record-fragment` response
+carries a `surfaceContract` object describing the surface the fragment
+just landed on:
+
+- `name` — surface enum (CODEBASE_IG / CODEBASE_KB / CODEBASE_CLAUDE / …)
+- `reader` — one-sentence description of who reads this surface
+- `test` — single-question self-review test for the surface
+- `lineCap` / `itemCap` / `introExtractCharCap` — structural caps
+  (zero when the cap doesn't apply)
+- `formatSpec` — `docs/spec-content-surfaces.md#…` URL anchor
+
+Read it. Compare your fragment body against the cap before you record
+the next one. The contract is the same on every call for a given
+`fragmentId`, but the engine returns it every time so you don't have
+to remember — re-read it whenever the per-surface contract is in doubt.
+
+## Optional `classification` argument refuses misroutes
+
+`record-fragment` accepts an optional `classification` parameter. When
+present, the engine refuses incompatible (classification × fragmentId)
+pairs with a redirect-teaching error and DOES NOT store the fragment.
+
+Compatibility table:
+
+| Classification | Compatible surfaces |
+|---|---|
+| `platform-invariant` | KB, IG (with diff) |
+| `intersection` | KB |
+| `scaffold-decision` | IG (with diff), zerops.yaml comments, env import.yaml comments |
+| `operational` | CLAUDE.md |
+| `framework-quirk` / `library-metadata` / `self-inflicted` | none — DISCARD |
+
+If you classify a fact and the engine refuses, the classification IS
+the answer: the fact does not belong on the surface you targeted.
+Either re-route to a compatible surface or discard.
+
 ## Validator tripwires
 
 Finalize gates reject on these; fix at author-time:
 
 - IG item #1 is engine-owned; your items start at `### 2.`
 - IG 2+: no scaffold-only filenames (`main.ts`, `seed.ts`, `migrate.ts`)
+- IG cap: 5 items per codebase including engine-emitted IG #1
+- KB cap: 8 bullets per codebase. Over-collection signals scaffold
+  decisions / framework quirks / self-inflicted observations leaking
+  in — apply the spec test ("would a developer who read the Zerops
+  docs AND framework docs STILL be surprised?"); discard if no.
 - Env READMEs use porter voice (never "agent"/"sub-agent"/"zerops_knowledge")
-- Env READMEs target 45+ lines (threshold 40; leave margin)
+- **Tier README intro extract** is 1-2 sentences ≤ 350 chars (between
+  `<!-- #ZEROPS_EXTRACT_START:intro# -->` markers — the recipe-page
+  UI renders this as the tier-card description; ladder content
+  belongs in tier import.yaml comments, not inside the markers)
+- Env import.yaml comments: no fabricated yaml field names. If a
+  comment references a yaml field, the path must exist in the yaml
+  below — `project_env_vars` (snake_case) is wrong when the schema
+  uses `project.envVariables` (camelCase, nested). The validator
+  parses the yaml AST and refuses missing paths.
+- Env import.yaml comments: porter voice. "recipe author", "during
+  scaffold", "we chose", "for the recipe" emit notice — comments
+  speak about the porter's deployed runtime, never the agent that
+  wrote them.
 - yaml comment blocks: one causal word per block (not per line)
 - KB: `**Topic** — prose` only; triples live in `claude-md/notes`
 - CLAUDE.md: 30–50 lines (cap 60); no cross-codebase runbooks

@@ -247,3 +247,112 @@ func TestClassifyLog_SplitsPublishableVsDropped(t *testing.T) {
 		t.Errorf("dropped count = %d, want 2", len(dropped))
 	}
 }
+
+// TestClassificationCompatibleWithSurface — run-15 F.3 — covers every
+// row of docs/spec-content-surfaces.md §"Classification × surface
+// compatibility". Compatible pairs return nil; incompatible pairs return
+// a redirect-teaching error; DISCARD classes refuse all surfaces.
+func TestClassificationCompatibleWithSurface(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		class     Classification
+		surface   Surface
+		wantError bool
+	}{
+		// platform-invariant → KB or IG
+		{ClassPlatformInvariant, SurfaceCodebaseKB, false},
+		{ClassPlatformInvariant, SurfaceCodebaseIG, false},
+		{ClassPlatformInvariant, SurfaceCodebaseCLAUDE, true},
+		{ClassPlatformInvariant, SurfaceCodebaseZeropsComments, true},
+		// intersection → KB only
+		{ClassIntersection, SurfaceCodebaseKB, false},
+		{ClassIntersection, SurfaceCodebaseIG, true},
+		{ClassIntersection, SurfaceCodebaseCLAUDE, true},
+		// scaffold-decision → IG / yaml comments / env-yaml comments
+		{ClassScaffoldDecision, SurfaceCodebaseIG, false},
+		{ClassScaffoldDecision, SurfaceCodebaseZeropsComments, false},
+		{ClassScaffoldDecision, SurfaceEnvImportComments, false},
+		{ClassScaffoldDecision, SurfaceCodebaseKB, true},
+		{ClassScaffoldDecision, SurfaceCodebaseCLAUDE, true},
+		// operational → CLAUDE.md only
+		{ClassOperational, SurfaceCodebaseCLAUDE, false},
+		{ClassOperational, SurfaceCodebaseKB, true},
+		{ClassOperational, SurfaceCodebaseIG, true},
+		// DISCARD classes — refused on every surface
+		{ClassFrameworkQuirk, SurfaceCodebaseKB, true},
+		{ClassFrameworkQuirk, SurfaceCodebaseIG, true},
+		{ClassLibraryMetadata, SurfaceCodebaseKB, true},
+		{ClassSelfInflicted, SurfaceCodebaseKB, true},
+		{ClassSelfInflicted, SurfaceCodebaseIG, true},
+	}
+	for _, tc := range cases {
+		err := classificationCompatibleWithSurface(tc.class, tc.surface)
+		if tc.wantError && err == nil {
+			t.Errorf("class=%q surface=%q: want error, got nil", tc.class, tc.surface)
+		}
+		if !tc.wantError && err != nil {
+			t.Errorf("class=%q surface=%q: want nil, got %v", tc.class, tc.surface, err)
+		}
+	}
+	// Empty class is back-compat: no refusal.
+	if err := classificationCompatibleWithSurface("", SurfaceCodebaseKB); err != nil {
+		t.Errorf("empty classification should be back-compat: got %v", err)
+	}
+	// Unknown class is rejected with an actionable error.
+	if err := classificationCompatibleWithSurface(Classification("bogus"), SurfaceCodebaseKB); err == nil {
+		t.Error("unknown classification should be rejected")
+	} else if !strings.Contains(err.Error(), "unknown classification") {
+		t.Errorf("unknown classification error should name the gap: %v", err)
+	}
+}
+
+// TestRecordFragment_RefusesIncompatibleClassification pins the engine
+// refusal at record-fragment time. The plan is unmodified after a
+// refused call — the agent can re-record with a corrected
+// classification (or re-classify the fact and discard if no surface fits).
+func TestRecordFragment_RefusesIncompatibleClassification(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store := NewStore(dir)
+	if _, err := store.OpenOrCreate("synth-showcase", dir+"/run"); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	// self-inflicted on KB — must be refused.
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fragment", Slug: "synth-showcase",
+		FragmentID: "codebase/api/knowledge-base", Fragment: "scaffold body",
+		Classification: "self-inflicted",
+	})
+	if res.OK {
+		t.Fatalf("record-fragment: self-inflicted on KB should be refused; got OK=true")
+	}
+	if !strings.Contains(res.Error, "self-inflicted") {
+		t.Errorf("error should name the classification: %q", res.Error)
+	}
+	// Plan stays untouched — no fragment was recorded.
+	if got := sess.Plan.Fragments["codebase/api/knowledge-base"]; got != "" {
+		t.Errorf("refused record must not store fragment; got %q", got)
+	}
+
+	// Compatible pair (platform-invariant on KB) — accepts.
+	res = dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fragment", Slug: "synth-showcase",
+		FragmentID: "codebase/api/knowledge-base", Fragment: "scaffold body",
+		Classification: "platform-invariant",
+	})
+	if !res.OK {
+		t.Errorf("record-fragment: platform-invariant on KB should accept; got %s", res.Error)
+	}
+
+	// Empty classification: back-compat — accepts.
+	res = dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fragment", Slug: "synth-showcase",
+		FragmentID: "codebase/api/integration-guide", Fragment: "scaffold body",
+	})
+	if !res.OK {
+		t.Errorf("record-fragment without classification should accept (back-compat): %s", res.Error)
+	}
+}

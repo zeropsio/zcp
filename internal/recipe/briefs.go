@@ -68,8 +68,15 @@ import (
 // content_extension. Feature 18 → 20 KB for the showcase-scenario
 // stable-selectors subsection (D.4, ~520 bytes) and the run-14 §B.1
 // mode=replace priorBody-merge teaching.
+//
+// Run-15 §F.2/F.3/F.5 raised the scaffold cap 28 → 34 KB to fit the
+// "record-fragment carries the surface contract" teaching, the
+// "classification × surface compatibility" table, and the F.5
+// validator-tripwire updates (IG/KB caps, fabricated-yaml-field rule,
+// import.yaml audience-voice rule). Scaffold lands ~32 KB when the
+// frontend-conditional atoms are active.
 const (
-	ScaffoldBriefCap = 28 * 1024
+	ScaffoldBriefCap = 34 * 1024
 	FeatureBriefCap  = 20 * 1024
 )
 

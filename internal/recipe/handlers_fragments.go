@@ -121,6 +121,12 @@ func isAppendFragmentID(id string) bool {
 // a typo here from silently diverging from the assembler's marker id.
 const fragmentIDRoot = "root/intro"
 
+// fragmentTailIntro is the leaf tail used by `env/<N>/intro` and
+// `codebase/<host>/intro` fragment ids. Constant keeps the literal
+// single-source across handlers_fragments.go and surfaces.go's
+// SurfaceFromFragmentID router.
+const fragmentTailIntro = "intro"
+
 // validateFragmentID returns nil for a recognized fragment id, an
 // actionable error otherwise. Wraps isValidFragmentID so the codebase/
 // case can surface the slot-vs-codebase distinction (run-11 gap N-1).
@@ -162,7 +168,7 @@ func isValidFragmentID(plan *Plan, id string) bool {
 		}
 		tail := rest[slash+1:]
 		switch {
-		case tail == "intro":
+		case tail == fragmentTailIntro:
 			return true
 		case tail == "import-comments/project":
 			return true
@@ -183,7 +189,7 @@ func isValidFragmentID(plan *Plan, id string) bool {
 		}
 		tail := rest[slash+1:]
 		switch tail {
-		case "intro", "integration-guide", "knowledge-base",
+		case fragmentTailIntro, "integration-guide", "knowledge-base",
 			"claude-md/service-facts", "claude-md/notes":
 			return true
 		}

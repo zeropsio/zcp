@@ -61,20 +61,41 @@ func factualityCheck(path, body string, inputs SurfaceInputs) []Violation {
 	return nil
 }
 
-// validateEnvREADME — length 40-120 lines; intro marker; no meta-voice;
-// tier-promotion vocabulary present.
+// validateEnvREADME — Surface 2 contract per
+// docs/spec-content-surfaces.md§surface-2--environment-readme. The
+// recipe-page UI renders the content between
+// `<!-- #ZEROPS_EXTRACT_START:intro# -->` markers as the tier-card
+// description; the spec caps that extract at 1-2 sentences ≤ 350 chars.
+//
+// Run-15 F.4 — replaced the prior `env-readme-too-short` (≥ 40 lines)
+// validator, which drove run-14's 35-line ladder content inside the
+// extract markers (Shape at glance / Who fits / How iteration works /
+// What you give up / When to outgrow / What changes at next tier).
+// Both reference recipes (laravel-jetstream + laravel-showcase) leave
+// the body empty; only the extract carries content. The cap below
+// targets the extract specifically — body content remains optional.
 func validateEnvREADME(_ context.Context, path string, body []byte, _ SurfaceInputs) ([]Violation, error) {
 	var vs []Violation
 	s := string(body)
 	lines := strings.Count(s, "\n")
-	if lines < 40 {
-		vs = append(vs, violation("env-readme-too-short", path, fmt.Sprintf("%d lines < 40", lines)))
-	}
 	if lines > 120 {
 		vs = append(vs, violation("env-readme-too-long", path, fmt.Sprintf("%d lines > 120", lines)))
 	}
 	if !strings.Contains(s, "<!-- #ZEROPS_EXTRACT_START:intro# -->") {
 		vs = append(vs, violation("env-readme-missing-intro-marker", path, "intro marker missing"))
+	}
+	// F.4 — extract char cap. Read the spec cap from the SurfaceContract
+	// so the validator stays in sync with the spec value (350 chars).
+	contract, _ := ContractFor(SurfaceEnvREADME)
+	if contract.IntroExtractCharCap > 0 {
+		extract := extractBetweenMarkers(s, "intro")
+		if n := len(extract); n > contract.IntroExtractCharCap {
+			vs = append(vs, violation("tier-readme-extract-too-long", path,
+				fmt.Sprintf(
+					"tier README intro extract is %d chars > %d cap (1-2 sentences, see spec §Surface 2). The recipe-page UI renders the extract as the tier-card description; ladder content (Shape at glance / Who fits / How iteration works) belongs in tier import.yaml comments, not inside the extract markers.",
+					n, contract.IntroExtractCharCap,
+				)))
+		}
 	}
 	if containsAny(s, metaVoiceWords) {
 		vs = append(vs, notice("meta-agent-voice", path,
@@ -118,6 +139,12 @@ func validateEnvImportComments(_ context.Context, path string, body []byte, inpu
 	}
 	vs = append(vs, templatedOpeningCheck(path, ec, inputs.Plan)...)
 	vs = append(vs, validateTierProseVsEmit(path, body, inputs)...)
+	// Run-15 F.5 — yaml-AST + audience-voice checks that need the on-
+	// disk yaml body (not the per-fragment EnvComments map). Catches
+	// fabricated field names (snake_case `project_env_vars` when the
+	// schema uses camelCase `project.envVariables`) and authoring-voice
+	// leaks ("recipe author", "during scaffold") inside comment lines.
+	vs = append(vs, validateEnvYAMLImportCommentsExtra(path, body)...)
 	return vs, nil
 }
 

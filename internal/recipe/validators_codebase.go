@@ -26,10 +26,15 @@ var igPlainOrderedItemRE = regexp.MustCompile(`(?m)^\d+\.\s+\S`)
 
 // validateCodebaseIG checks the integration-guide fragment: marker
 // present, ≥ 2 `### N.` heading items, first item introduces
-// `zerops.yaml`, no scaffold-only filenames in body. Plain
-// ordered-list items (without the heading shape) are rejected
-// (run-11 gap R-1) — the engine generates item #1 in heading shape;
-// porter-authored items must match.
+// `zerops.yaml`, no scaffold-only filenames in body, item count
+// within the surface's ItemCap. Plain ordered-list items (without the
+// heading shape) are rejected (run-11 gap R-1) — the engine generates
+// item #1 in heading shape; porter-authored items must match.
+//
+// Run-15 F.5 — adds the `codebase-ig-too-many-items` cap (5 items
+// including engine-emitted IG #1, per spec). Run-14 shipped 8-10 IG
+// items per codebase; the spec settles at 4-5 across both reference
+// recipes.
 func validateCodebaseIG(_ context.Context, path string, body []byte, _ SurfaceInputs) ([]Violation, error) {
 	s := string(body)
 	var vs []Violation
@@ -48,6 +53,18 @@ func validateCodebaseIG(_ context.Context, path string, body []byte, _ SurfaceIn
 	if len(items) < 2 {
 		vs = append(vs, violation("codebase-ig-too-few-items", path,
 			fmt.Sprintf("%d `### N.` heading items < 2 expected", len(items))))
+	}
+	// F.5 — item-cap from the spec (Surface 4: 4-5 items per codebase
+	// including engine-emitted IG #1). Read from SurfaceContract so the
+	// validator stays single-source with the spec.
+	if contract, ok := ContractFor(SurfaceCodebaseIG); ok && contract.ItemCap > 0 {
+		if len(items) > contract.ItemCap {
+			vs = append(vs, violation("codebase-ig-too-many-items", path,
+				fmt.Sprintf(
+					"%d `### N.` IG items > %d cap (spec §Surface 4: 4-5 items per codebase including engine-emitted IG #1). Showcase recipes do not get a higher cap; scope adds breadth via more codebases, not more items per codebase. Consider folding adjacent items, demoting recipe-internal scaffold descriptions to code comments, or removing items that explain the recipe's own helpers (which the porter doesn't have).",
+					len(items), contract.ItemCap,
+				)))
+		}
 	}
 	// First numbered item must introduce zerops.yaml — IG is a porter's
 	// step-by-step and the yaml is the first platform-specific change.
@@ -74,6 +91,10 @@ func validateCodebaseIG(_ context.Context, path string, body []byte, _ SurfaceIn
 				fmt.Sprintf("IG mentions scaffold-only filename %q — porters bringing their own code don't have it", name)))
 		}
 	}
+	// Run-15 E.2 — authoring-tool patrol. The porter operates with
+	// framework-canonical commands; tool names like `zerops_*` / `zcli`
+	// signal authoring leakage.
+	vs = append(vs, scanAuthoringToolLeaks(path, ig, "codebase IG")...)
 	return vs, nil
 }
 
@@ -105,6 +126,18 @@ func validateCodebaseKB(_ context.Context, path string, body []byte, inputs Surf
 		vs = append(vs, notice("kb-missing-bold-symptom", path,
 			fmt.Sprintf("%d of %d KB bullets lack a **bold symptom** opening", len(bullets)-len(boldBullets), len(bullets))))
 	}
+	// Run-15 F.5 — KB bullet cap (8 per codebase, per spec Surface 5).
+	// Run-14 shipped 11-12; that's over-collection. Read the cap from
+	// SurfaceContract so spec edits stay single-source.
+	if contract, ok := ContractFor(SurfaceCodebaseKB); ok && contract.ItemCap > 0 {
+		if len(bullets) > contract.ItemCap {
+			vs = append(vs, violation("codebase-kb-too-many-bullets", path,
+				fmt.Sprintf(
+					"%d KB bullets > %d cap (spec §Surface 5: 5-8 bullets per codebase). Over-collection in KB usually means scaffold decisions, framework quirks, or self-inflicted observations that should be discarded or routed elsewhere — see spec §Counter-examples.",
+					len(bullets), contract.ItemCap,
+				)))
+		}
+	}
 	for _, m := range kbTripleFormatRE.FindAllString(kb, -1) {
 		vs = append(vs, notice("codebase-kb-triple-format-banned", path,
 			fmt.Sprintf("KB entries use `**Topic** — prose` format; `**symptom**:` / `**mechanism**:` / `**fix**:` triples belong in CLAUDE.md/notes: %q",
@@ -132,6 +165,10 @@ func validateCodebaseKB(_ context.Context, path string, body []byte, inputs Surf
 	vs = append(vs, validateKBSelfInflictedShape(path, kb)...)
 	// O-2: regex-flag "Cited guide: <name>" boilerplate tails.
 	vs = append(vs, validateKBCitedGuideBoilerplate(path, kb)...)
+	// Run-15 E.2 — authoring-tool patrol. Citation-by-name (e.g. "the
+	// `env-var-model` guide") is fine; tool invocations like `zerops_browser
+	// action=...` are not.
+	vs = append(vs, scanAuthoringToolLeaks(path, kb, "codebase KB")...)
 	return vs, nil
 }
 
@@ -196,6 +233,52 @@ func validateCodebaseCLAUDE(_ context.Context, path string, body []byte, _ Surfa
 	return vs, nil
 }
 
+// authoringToolPatrolNeedles — tool names that signal authoring-time
+// content leaking into porter-facing surfaces. Run-15 E.2 extends the
+// existing CLAUDE.md patrol into apps-repo zerops.yaml and IG/KB body
+// content. The porter operates with framework-canonical commands
+// (`npm`, `composer`, `php artisan`, `ssh`, `git`); these tool names
+// are how the recipe was BUILT, not how the porter USES it.
+var authoringToolPatrolNeedles = []string{
+	"zerops_browser",
+	"zerops_subdomain",
+	"zerops_knowledge",
+	"zerops_recipe",
+	"zerops_workflow",
+	"zerops_workspace_manifest",
+	"zerops_record_fact",
+	"zerops_dev_server",
+	"zerops_discover",
+	"zerops_logs",
+	"zerops_events",
+	"zerops_process",
+	"zerops_scale",
+	"zerops_deploy",
+	"zerops_import",
+	"zerops_mount",
+	"zerops_env",
+	"zcli ",
+	"zcp ",
+}
+
+// scanAuthoringToolLeaks returns one notice per authoring-tool needle
+// hit in a piece of body text. Used by codebase yaml + IG/KB
+// validators to enforce the porter-voice audience rule across every
+// apps-repo surface, not just CLAUDE.md.
+func scanAuthoringToolLeaks(path, body, surface string) []Violation {
+	var vs []Violation
+	lower := strings.ToLower(body)
+	for _, needle := range authoringToolPatrolNeedles {
+		if !strings.Contains(lower, strings.ToLower(needle)) {
+			continue
+		}
+		vs = append(vs, notice("authoring-tool-leak", path,
+			fmt.Sprintf("%s contains authoring-tool name %q — comments / IG / KB are porter-facing; the porter operates with framework-canonical commands (`npm`, `composer`, `ssh`, `git`), never %s",
+				surface, needle, needle)))
+	}
+	return vs
+}
+
 // validateCodebaseYAML enforces the codebase yaml-comment contract.
 // Comments are grouped into BLOCKS — runs of adjacent `#` lines, with
 // bare `#` treated as an in-block paragraph separator per the
@@ -205,6 +288,10 @@ func validateCodebaseCLAUDE(_ context.Context, path string, body []byte, _ Surfa
 // stripping the `#`) pass unconditionally. One violation per block,
 // not per line — so a multi-line prose block that forgets rationale
 // emits a single report. Run-10-readiness §N.
+//
+// Run-15 E.2 — additionally patrols comments for authoring-tool name
+// leaks (zcli / zerops_* / zcp). Tool names are how the recipe was
+// BUILT, not how the porter USES it.
 func validateCodebaseYAML(_ context.Context, path string, body []byte, _ SurfaceInputs) ([]Violation, error) {
 	var vs []Violation
 	for _, block := range parseYAMLCommentBlocks(body) {
@@ -219,6 +306,17 @@ func validateCodebaseYAML(_ context.Context, path string, body []byte, _ Surface
 			fmt.Sprintf("comment block lacks a causal word (`because`, `so that`, `otherwise`, `trade-off`, em-dash) on any line: %q",
 				trimForMessage(first))))
 	}
+	// E.2 — only inspect comment lines; code referencing `zerops_env` as
+	// a yaml field name is fine. parseYAMLCommentBlocks already strips
+	// the `#` prefix and collects comment bodies.
+	var commentBody strings.Builder
+	for _, block := range parseYAMLCommentBlocks(body) {
+		for _, line := range block {
+			commentBody.WriteString(line)
+			commentBody.WriteByte('\n')
+		}
+	}
+	vs = append(vs, scanAuthoringToolLeaks(path, commentBody.String(), "apps-repo zerops.yaml comment")...)
 	return vs, nil
 }
 

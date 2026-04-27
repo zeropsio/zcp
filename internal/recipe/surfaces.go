@@ -1,6 +1,9 @@
 package recipe
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // Surface is one of seven named content surfaces a recipe produces.
 // Every fact lives on exactly one surface; cross-surface references
@@ -88,13 +91,38 @@ type ValidateFn func(ctx context.Context, path string, content []byte, inputs Su
 // into docs/spec-content-surfaces.md so the writer brief excerpts by
 // reference, not by inline copy. AdjacentSurfaces names the surfaces a
 // fact might collide with — used by the cross-surface-duplication gate.
+//
+// Reader / Test / Length caps mirror docs/spec-content-surfaces.md
+// §"Per-surface line-budget table" + each §"Surface N" section. The
+// engine returns this struct on every record-fragment response so the
+// agent reads the relevant test verbatim at authoring decision time
+// (run-15 F.2). Caps are zero when not applicable to that surface
+// (e.g. ItemCap=0 on the root README which counts lines, not items).
 type SurfaceContract struct {
-	Name             Surface
-	Author           Author
-	FormatSpec       string
-	Owns             []string
-	FactHint         string
-	AdjacentSurfaces []Surface
+	Name             Surface   `json:"name"`
+	Author           Author    `json:"author"`
+	FormatSpec       string    `json:"formatSpec"`
+	Owns             []string  `json:"owns,omitempty"`
+	FactHint         string    `json:"factHint,omitempty"`
+	AdjacentSurfaces []Surface `json:"adjacentSurfaces,omitempty"`
+	// Reader is the one-sentence audience description per spec §"Surface
+	// N → Reader". Threaded into the record-fragment response so the
+	// agent re-reads the audience at the moment of authoring.
+	Reader string `json:"reader,omitempty"`
+	// Test is the single-question self-review test the spec attaches to
+	// each surface (spec §"Per-surface test cheatsheet"). Returned on
+	// record-fragment so authors apply it before terminating.
+	Test string `json:"test,omitempty"`
+	// LineCap is the spec's hard line cap for the whole surface body.
+	// Zero when the surface uses ItemCap or IntroExtractCharCap instead.
+	LineCap int `json:"lineCap,omitempty"`
+	// ItemCap is the spec's hard item / bullet cap (IG items, KB bullets,
+	// tier service-block comment lines). Zero when not applicable.
+	ItemCap int `json:"itemCap,omitempty"`
+	// IntroExtractCharCap is the hard cap for content between
+	// `<!-- #ZEROPS_EXTRACT_START:intro# -->` markers (Surface 2: 350
+	// chars per spec). Zero on surfaces without an extract marker.
+	IntroExtractCharCap int `json:"introExtractCharCap,omitempty"`
 }
 
 var surfaceContracts = map[Surface]SurfaceContract{
@@ -104,13 +132,20 @@ var surfaceContracts = map[Surface]SurfaceContract{
 		Owns:             []string{"README.md"},
 		FactHint:         "root-overview",
 		AdjacentSurfaces: []Surface{SurfaceEnvREADME},
+		Reader:           "A developer browsing zerops.io/recipes deciding whether to click deploy.",
+		Test:             "Can a reader decide in 30 seconds whether this recipe deploys what they need, and pick the right tier?",
+		LineCap:          35,
 	},
 	SurfaceEnvREADME: {
 		Name: SurfaceEnvREADME, Author: AuthorWriter,
-		FormatSpec:       "docs/spec-content-surfaces.md#surface-2--environment-readme",
-		Owns:             []string{"*/README.md"},
-		FactHint:         "tier-promotion",
-		AdjacentSurfaces: []Surface{SurfaceRootREADME, SurfaceEnvImportComments},
+		FormatSpec:          "docs/spec-content-surfaces.md#surface-2--environment-readme",
+		Owns:                []string{"*/README.md"},
+		FactHint:            "tier-promotion",
+		AdjacentSurfaces:    []Surface{SurfaceRootREADME, SurfaceEnvImportComments},
+		Reader:              "Someone hovering over a tier card on zerops.io/recipes — the recipe-page UI renders the content between the EXTRACT markers as the tier-card description.",
+		Test:                "Does this 1-2 sentence card description tell a porter which tier to click?",
+		LineCap:             10,
+		IntroExtractCharCap: 350,
 	},
 	SurfaceEnvImportComments: {
 		Name: SurfaceEnvImportComments, Author: AuthorWriter,
@@ -118,6 +153,10 @@ var surfaceContracts = map[Surface]SurfaceContract{
 		Owns:             []string{"*/import.yaml"},
 		FactHint:         "tier-decision",
 		AdjacentSurfaces: []Surface{SurfaceEnvREADME, SurfaceCodebaseZeropsComments},
+		Reader:           "Someone who deployed this tier and is reading the manifest in the Zerops dashboard to understand what they're running.",
+		Test:             "Does each service-block comment explain a decision (scale, mode, why this service exists at this tier), not just narrate what the field does?",
+		LineCap:          40,
+		ItemCap:          5, // 3-5 lines per service block, max 8
 	},
 	SurfaceCodebaseIG: {
 		Name: SurfaceCodebaseIG, Author: AuthorWriter,
@@ -125,6 +164,9 @@ var surfaceContracts = map[Surface]SurfaceContract{
 		Owns:             []string{"codebases/*/README.md#integration-guide"},
 		FactHint:         "porter-change",
 		AdjacentSurfaces: []Surface{SurfaceCodebaseKB, SurfaceCodebaseZeropsComments},
+		Reader:           "A porter bringing their own existing application — they extract the Zerops-specific steps to adapt their own code.",
+		Test:             "Does a porter who isn't using this recipe as a template, but bringing their own code, need to copy THIS exact content into their own app?",
+		ItemCap:          5,
 	},
 	SurfaceCodebaseKB: {
 		Name: SurfaceCodebaseKB, Author: AuthorWriter,
@@ -132,6 +174,9 @@ var surfaceContracts = map[Surface]SurfaceContract{
 		Owns:             []string{"codebases/*/README.md#gotchas"},
 		FactHint:         "platform-trap",
 		AdjacentSurfaces: []Surface{SurfaceCodebaseIG},
+		Reader:           "A developer hitting a confusing failure on Zerops and searching for what's wrong.",
+		Test:             "Would a developer who read the Zerops docs AND the relevant framework docs STILL be surprised by this?",
+		ItemCap:          8,
 	},
 	SurfaceCodebaseCLAUDE: {
 		Name: SurfaceCodebaseCLAUDE, Author: AuthorWriter,
@@ -139,6 +184,9 @@ var surfaceContracts = map[Surface]SurfaceContract{
 		Owns:             []string{"codebases/*/CLAUDE.md"},
 		FactHint:         "operational",
 		AdjacentSurfaces: []Surface{SurfaceCodebaseIG},
+		Reader:           "Someone (human or AI agent) with this repo checked out locally, working on the codebase.",
+		Test:             "Is this useful for operating THIS repo specifically — not for deploying it to Zerops, not for porting it to other code?",
+		LineCap:          50,
 	},
 	SurfaceCodebaseZeropsComments: {
 		Name: SurfaceCodebaseZeropsComments, Author: AuthorWriter,
@@ -146,6 +194,8 @@ var surfaceContracts = map[Surface]SurfaceContract{
 		Owns:             []string{"codebases/*/zerops.yaml"},
 		FactHint:         "scaffold-decision",
 		AdjacentSurfaces: []Surface{SurfaceEnvImportComments, SurfaceCodebaseIG},
+		Reader:           "Someone reading the deploy config to understand or modify it.",
+		Test:             "Does each comment explain a trade-off or consequence the reader couldn't infer from the field name?",
 	},
 }
 
@@ -166,6 +216,66 @@ func Surfaces() []Surface {
 func ContractFor(s Surface) (SurfaceContract, bool) {
 	c, ok := surfaceContracts[s]
 	return c, ok
+}
+
+// SurfaceFromFragmentID maps a record-fragment id to the Surface that
+// owns its content body. Run-15 F.2 — the engine returns the resolved
+// surface's contract on every record-fragment response so the agent
+// reads the per-surface reader / test / caps verbatim at authoring
+// decision time, not just at brief-preface time.
+//
+// Fragment-id schema (mirrors handlers.RecipeInput.FragmentID):
+//
+//   - root/intro                                       → SurfaceRootREADME
+//   - env/<N>/intro                                    → SurfaceEnvREADME
+//   - env/<N>/import-comments/<host|project>           → SurfaceEnvImportComments
+//   - codebase/<host>/intro                            → SurfaceCodebaseIG (intro lives in the codebase README alongside IG)
+//   - codebase/<host>/integration-guide                → SurfaceCodebaseIG
+//   - codebase/<host>/knowledge-base                   → SurfaceCodebaseKB
+//   - codebase/<host>/claude-md/{service-facts,notes}  → SurfaceCodebaseCLAUDE
+//
+// Returns ("", false) for unknown ids — caller treats as no contract
+// to attach.
+func SurfaceFromFragmentID(fragmentID string) (Surface, bool) {
+	if fragmentID == "" {
+		return "", false
+	}
+	if fragmentID == fragmentIDRoot {
+		return SurfaceRootREADME, true
+	}
+	if rest, ok := strings.CutPrefix(fragmentID, "env/"); ok {
+		// rest = "<N>/<tail>"
+		slash := strings.IndexByte(rest, '/')
+		if slash <= 0 {
+			return "", false
+		}
+		tail := rest[slash+1:]
+		switch {
+		case tail == fragmentTailIntro:
+			return SurfaceEnvREADME, true
+		case tail == "import-comments/project",
+			strings.HasPrefix(tail, "import-comments/"):
+			return SurfaceEnvImportComments, true
+		}
+		return "", false
+	}
+	if rest, ok := strings.CutPrefix(fragmentID, "codebase/"); ok {
+		slash := strings.IndexByte(rest, '/')
+		if slash <= 0 {
+			return "", false
+		}
+		tail := rest[slash+1:]
+		switch tail {
+		case fragmentTailIntro, "integration-guide":
+			return SurfaceCodebaseIG, true
+		case "knowledge-base":
+			return SurfaceCodebaseKB, true
+		case "claude-md/service-facts", "claude-md/notes":
+			return SurfaceCodebaseCLAUDE, true
+		}
+		return "", false
+	}
+	return "", false
 }
 
 // Phase 2 populates these via package-init registration. Phase 1 leaves

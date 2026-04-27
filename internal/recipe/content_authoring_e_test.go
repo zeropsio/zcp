@@ -32,21 +32,28 @@ func TestContentAuthoring_TeachesPorterAudienceRule(t *testing.T) {
 	}
 }
 
-// TestContentAuthoring_IGScopeClarifiesShowcaseMultiplier pins E.3:
-// the §I sweet-spot rule mentions the showcase scope multiplier
-// (7-10 items per codebase when the recipe ships 5 managed-service
-// categories). Closes R-13-11's "9 items > 7 ceiling" false alarm.
-func TestContentAuthoring_IGScopeClarifiesShowcaseMultiplier(t *testing.T) {
+// TestContentAuthoring_IGCapIsUniform pins run-15 F.5: the IG cap is
+// 4-5 items per codebase including engine-emitted IG #1, regardless
+// of tier. Showcase recipes do NOT get a higher cap — scope adds
+// breadth via more codebases, not more IG items per codebase. This
+// reverses the run-14 §E.3 7-10 multiplier (R-13-11) once content-
+// quality data showed both reference recipes converging at 4-5.
+func TestContentAuthoring_IGCapIsUniform(t *testing.T) {
 	t.Parallel()
 	body, err := readAtom("briefs/scaffold/content_authoring.md")
 	if err != nil {
 		t.Fatalf("readAtom: %v", err)
 	}
-	if !strings.Contains(body, "showcase recipes") && !strings.Contains(body, "showcase recipe") {
-		t.Error("content_authoring IG-scope section missing showcase scope clarification")
+	if !strings.Contains(body, "4-5 items per codebase") {
+		t.Error("content_authoring IG-scope section missing the 4-5 uniform cap rule")
 	}
-	if !strings.Contains(body, "7-10") {
-		t.Error("content_authoring IG-scope section missing the 7-10 showcase multiplier")
+	if !strings.Contains(body, "Showcase recipes do not get a higher cap") {
+		t.Error("content_authoring IG-scope section missing the no-higher-cap-for-showcase clarification")
+	}
+	// Negative: the retired 7-10 multiplier must NOT be teaching the agent
+	// a higher cap any more.
+	if strings.Contains(body, "7-10 items per codebase") {
+		t.Error("content_authoring IG-scope still teaches the run-14 7-10 multiplier; F.5 retired it")
 	}
 }
 

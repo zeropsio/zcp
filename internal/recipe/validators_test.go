@@ -2,6 +2,7 @@ package recipe
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -61,6 +62,134 @@ Promote from this tier when you outgrow single-replica.
 	}
 	if !containsCode(vs, "meta-agent-voice") {
 		t.Errorf("expected meta-agent-voice violation, got %+v", vs)
+	}
+}
+
+// TestCodebaseIG_ItemCap pins run-15 F.5 — the spec's Surface 4 cap of
+// 4-5 IG items per codebase including the engine-emitted IG #1
+// ("Adding zerops.yaml"). Run-14 shipped 8-10 items per codebase; the
+// over-collection signal is recipe-internal scaffold descriptions
+// landing as IG items the porter doesn't have.
+func TestCodebaseIG_ItemCap(t *testing.T) {
+	t.Parallel()
+	var b strings.Builder
+	b.WriteString("README\n\n<!-- #ZEROPS_EXTRACT_START:integration-guide# -->\n")
+	// 6 items > cap of 5.
+	for i := 1; i <= 6; i++ {
+		fmt.Fprintf(&b, "### %d. Item %d\n\nzerops.yaml step or porter change.\n\n", i, i)
+	}
+	b.WriteString("<!-- #ZEROPS_EXTRACT_END:integration-guide# -->\n")
+	vs, err := validateCodebaseIG(context.Background(), "codebases/api/README.md", []byte(b.String()), SurfaceInputs{})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if !containsCode(vs, "codebase-ig-too-many-items") {
+		t.Errorf("expected codebase-ig-too-many-items at 6 items, got %+v", vs)
+	}
+
+	// Cap exact (5 items) — passes the cap check.
+	var ok strings.Builder
+	ok.WriteString("README\n\n<!-- #ZEROPS_EXTRACT_START:integration-guide# -->\n")
+	for i := 1; i <= 5; i++ {
+		fmt.Fprintf(&ok, "### %d. Item %d\n\nzerops.yaml step or porter change.\n\n", i, i)
+	}
+	ok.WriteString("<!-- #ZEROPS_EXTRACT_END:integration-guide# -->\n")
+	vsOK, _ := validateCodebaseIG(context.Background(), "codebases/api/README.md", []byte(ok.String()), SurfaceInputs{})
+	if containsCode(vsOK, "codebase-ig-too-many-items") {
+		t.Errorf("5 items at cap should pass; got %+v", vsOK)
+	}
+}
+
+// TestCodebaseKB_BulletCap pins run-15 F.5 — the spec's Surface 5 cap
+// of 5-8 KB bullets per codebase. Run-14 shipped 11-12; over-collection
+// usually means scaffold decisions, framework quirks, or self-inflicted
+// observations that should be discarded or routed elsewhere.
+func TestCodebaseKB_BulletCap(t *testing.T) {
+	t.Parallel()
+	var b strings.Builder
+	b.WriteString("README\n\n<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->\n")
+	// 9 bullets > cap of 8.
+	for i := 1; i <= 9; i++ {
+		fmt.Fprintf(&b, "- **Topic %d** — Description sentence about gotcha %d.\n", i, i)
+	}
+	b.WriteString("<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->\n")
+	plan := &Plan{Codebases: []Codebase{{Hostname: "api"}}}
+	vs, err := validateCodebaseKB(context.Background(), "codebases/api/README.md", []byte(b.String()), SurfaceInputs{Plan: plan})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if !containsCode(vs, "codebase-kb-too-many-bullets") {
+		t.Errorf("expected codebase-kb-too-many-bullets at 9 bullets, got %+v", vs)
+	}
+
+	// Cap exact (8 bullets) — passes the cap check.
+	var ok strings.Builder
+	ok.WriteString("README\n\n<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->\n")
+	for i := 1; i <= 8; i++ {
+		fmt.Fprintf(&ok, "- **Topic %d** — Description sentence about gotcha %d.\n", i, i)
+	}
+	ok.WriteString("<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->\n")
+	vsOK, _ := validateCodebaseKB(context.Background(), "codebases/api/README.md", []byte(ok.String()), SurfaceInputs{Plan: plan})
+	if containsCode(vsOK, "codebase-kb-too-many-bullets") {
+		t.Errorf("8 bullets at cap should pass; got %+v", vsOK)
+	}
+}
+
+// TestEnvREADME_ExtractCharCap pins run-15 F.4 — the spec's Surface 2
+// extract cap (≤ 350 chars between <!-- #ZEROPS_EXTRACT_START:intro# -->
+// markers). Both reference recipes settle at 1-2 sentences; run-14
+// shipped 35-line ladders inside the markers (Shape at glance / Who
+// fits / How iteration works / What you give up / When to outgrow).
+// The recipe-page UI renders the marker contents as the tier-card
+// description — ladder content shows up as a 35-line card description.
+//
+// The validator reads the cap from the SurfaceContract so the spec edit
+// stays the single source of truth.
+func TestEnvREADME_ExtractCharCap(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		extract   string
+		wantBlock bool
+	}{
+		{
+			name:      "1-sentence (passes)",
+			extract:   "Stage environment uses the same configuration as production, but runs on a single container with lower scaling settings.",
+			wantBlock: false,
+		},
+		{
+			name:      "2-sentence (passes)",
+			extract:   "AI agent environment provides a development space for AI agents to build and version the app. Promote from this tier once the app is ready for the wider audience.",
+			wantBlock: false,
+		},
+		{
+			name: "35-line ladder (blocked)",
+			extract: strings.Repeat("Shape at a glance: single replica, NON_HA managed services, reduced CPU.\n"+
+				"Who fits: solo developers iterating on a real project before sharing.\n"+
+				"How iteration works: SSH into stage, run migrations, exercise endpoints.\n"+
+				"What you give up: durability under node failure (single replica), throughput.\n"+
+				"When to outgrow: production reads, multi-developer concurrent edits, customer traffic.\n", 7),
+			wantBlock: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			body := []byte("# Stage\n\n" +
+				"<!-- #ZEROPS_EXTRACT_START:intro# -->\n" +
+				tc.extract + "\n" +
+				"<!-- #ZEROPS_EXTRACT_END:intro# -->\n\n" +
+				"Promote when you outgrow this tier.\n")
+			vs, err := validateEnvREADME(context.Background(), "3 — Stage/README.md", body, SurfaceInputs{Plan: &Plan{Framework: "svelte"}})
+			if err != nil {
+				t.Fatalf("validate: %v", err)
+			}
+			gotBlock := containsCode(vs, "tier-readme-extract-too-long")
+			if gotBlock != tc.wantBlock {
+				t.Errorf("tier-readme-extract-too-long: got block=%v, want %v\nviolations=%+v", gotBlock, tc.wantBlock, vs)
+			}
+		})
 	}
 }
 
@@ -525,7 +654,7 @@ func TestBrief_Scaffold_ContainsValidatorTripwires(t *testing.T) {
 		"item #1 is engine-owned",
 		"scaffold-only filenames",
 		"porter voice",
-		"Env READMEs target",
+		"Tier README intro extract",
 		"one causal word per block",
 		"CLAUDE.md: 30–50 lines",
 	} {

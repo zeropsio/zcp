@@ -119,6 +119,12 @@ type RecipeInput struct {
 	Fragment         string      `json:"fragment,omitempty"         jsonschema:"For record-fragment: the fragment body. Overwrite for root/* and env/* ids; append-on-extend for codebase/*/integration-guide, knowledge-base, claude-md/* ids so a feature sub-agent extends scaffold's body rather than replacing it."`
 	Mode             string      `json:"mode,omitempty"             jsonschema:"For record-fragment: 'append' (default for codebase IG/KB/claude-md ids; concatenates with prior body) or 'replace' (overwrites prior body). Use 'replace' to correct a fragment you authored earlier in the same recipe session, e.g. after a complete-phase validator violation."`
 	DispatchedPrompt string      `json:"dispatchedPrompt,omitempty" jsonschema:"For verify-subagent-dispatch: the prompt the main agent intends to pass to Agent. Engine recomposes the brief and confirms its body appears byte-identical inside the dispatched prompt. Wrapper text around the brief (header lines before, context notes after) is allowed; only truncations and paraphrases are rejected."`
+	// Classification (run-15 F.3) — optional spec classification for
+	// record-fragment. When present, the engine refuses incompatible
+	// (classification, fragmentId) pairs per the
+	// docs/spec-content-surfaces.md compatibility table. Empty
+	// classification keeps prior behavior (no refusal).
+	Classification string `json:"classification,omitempty" jsonschema:"For record-fragment: optional fact classification — one of platform-invariant, intersection, framework-quirk, library-metadata, scaffold-decision, operational, self-inflicted. The engine refuses classifications that don't belong on the fragment's surface (e.g. self-inflicted on KB, scaffold-decision on CLAUDE.md). See docs/spec-content-surfaces.md#classification--surface-compatibility."`
 }
 
 // RecipeResult is the generic envelope returned from zerops_recipe.
@@ -163,6 +169,12 @@ type RecipeResult struct {
 	// from the agent's platform-trap surfaceHint. Empty when no override
 	// fires. Run-11 gap V-1.
 	Notice string `json:"notice,omitempty"`
+	// SurfaceContract is the surface contract (reader, test, caps,
+	// FormatSpec) the agent should author the fragment against. Returned
+	// on every record-fragment response so the per-surface contract
+	// reaches the author at authoring decision time, not just at brief-
+	// preface time. Run-15 F.2.
+	SurfaceContract *SurfaceContract `json:"surfaceContract,omitempty"`
 	// Prompt is the engine-composed sub-agent dispatch prompt — engine-
 	// owned wrapper + brief body + close criteria. Returned by
 	// action=build-subagent-prompt; main agent dispatches with
@@ -285,20 +297,7 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 		}
 		r.OK = true
 	case "record-fragment":
-		if in.FragmentID == "" {
-			r.Error = "record-fragment: fragmentId is required"
-			return r
-		}
-		bodyBytes, appended, priorBody, err := recordFragment(sess, in.FragmentID, in.Fragment, in.Mode)
-		if err != nil {
-			r.Error = err.Error()
-			return r
-		}
-		r.FragmentID = in.FragmentID
-		r.BodyBytes = bodyBytes
-		r.Appended = appended
-		r.PriorBody = priorBody
-		r.OK = true
+		r = handleRecordFragment(sess, in, r)
 	case "resolve-chain":
 		parent, err := ResolveChain(Resolver{MountRoot: store.mountRoot}, in.Slug)
 		switch {
@@ -340,6 +339,48 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 	default:
 		r.Error = fmt.Sprintf("unknown action %q", in.Action)
 	}
+	return r
+}
+
+// handleRecordFragment implements the record-fragment dispatch branch.
+// Extracted from dispatch's switch for cyclomatic-complexity hygiene
+// (run-15 F.2/F.3 added contract attachment + classification refusal,
+// pushing the inline branch over the maintainability threshold).
+func handleRecordFragment(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
+	if in.FragmentID == "" {
+		r.Error = "record-fragment: fragmentId is required"
+		return r
+	}
+	// F.3 — classification × surface compatibility refusal. Runs BEFORE
+	// recordFragment so an incompatible classification never touches the
+	// plan's fragment store.
+	if in.Classification != "" {
+		if surf, ok := SurfaceFromFragmentID(in.FragmentID); ok {
+			if err := classificationCompatibleWithSurface(Classification(in.Classification), surf); err != nil {
+				r.Error = "record-fragment: " + err.Error()
+				return r
+			}
+		}
+	}
+	bodyBytes, appended, priorBody, err := recordFragment(sess, in.FragmentID, in.Fragment, in.Mode)
+	if err != nil {
+		r.Error = err.Error()
+		return r
+	}
+	r.FragmentID = in.FragmentID
+	r.BodyBytes = bodyBytes
+	r.Appended = appended
+	r.PriorBody = priorBody
+	// F.2 — attach the per-surface contract for the resolved fragment id
+	// so the agent reads reader / test / caps verbatim at authoring
+	// decision time, not just at brief-preface time.
+	if surf, ok := SurfaceFromFragmentID(in.FragmentID); ok {
+		if c, ok := ContractFor(surf); ok {
+			contract := c
+			r.SurfaceContract = &contract
+		}
+	}
+	r.OK = true
 	return r
 }
 

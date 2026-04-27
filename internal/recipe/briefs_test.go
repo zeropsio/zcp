@@ -225,7 +225,8 @@ func TestBrief_Scaffold_IGScopeRule(t *testing.T) {
 		t.Fatalf("BuildScaffoldBrief: %v", err)
 	}
 	mustContain(t, brief.Body, "IG scope")
-	mustContain(t, brief.Body, "Aim for 4-7 IG items")
+	// Run-15 F.5 — uniform 4-5 cap replaces the run-14 4-7 sweet spot.
+	mustContain(t, brief.Body, "4-5 items per codebase")
 }
 
 // TestBuildFinalizeBrief_IncludesTierMap — run-12 §B. Engine-composed
