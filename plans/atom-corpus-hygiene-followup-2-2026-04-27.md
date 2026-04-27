@@ -122,6 +122,18 @@ mental model?
 > cross-link to per-env platform-rules atoms; drop the env axis
 > on the merged atom.
 
+**DO-NOT-UNIFY exception**: if the env split itself encodes a
+tool-selection (signal #3), recovery (#4), or do-not (#5)
+guardrail — e.g., `develop-platform-rules-local` L14-L24 (use
+`Bash run_in_background=true` harness; `zerops_dev_server` is
+container-only) vs `develop-platform-rules-container` L20-L24
+(use `zerops_dev_server`; do NOT hand-roll
+`ssh <host> "cmd &"` backgrounding) — the env split IS the
+load-bearing signal. Such atoms are NEVER unification candidates
+regardless of marginal phrasing similarity. Phase 4 CORPUS-SCAN
+classifier MUST apply this exception before flagging a pair as
+UNIFICATION-CANDIDATE.
+
 **Risk**: low. If the agent reading a universal atom needs the
 per-env detail and the platform-rules cross-link doesn't render
 (e.g. axis-mismatch), it would surface as missing-information.
@@ -244,7 +256,7 @@ PLAN COMPLETE).
 | `develop-deploy-files-self-deploy` | L23 | REPHRASE — preserve recovery guardrail (signal #4) without `zcli push` mechanism | Keep "subsequent self-deploys would have no source to upload" form |
 | `strategy-push-git-trigger-actions` | L12, L75, L112 | KEEP all | Actions trigger model (L12); literal config (L75); error context (L112) |
 | `strategy-push-git-intro` | L22 | KEEP | trigger-distinguishing in actions row |
-| `develop-platform-rules-local` | L31 | DROP entire row — duplicates push-dev-deploy-local | Cross-flow duplication |
+| `develop-platform-rules-local` | L31 | REPHRASE row — drop `zcli push` mechanism mention; PRESERVE push-dev-vs-git-push uncommitted-tree distinction (push-dev ships uncommitted edits; git-push needs commits). | The `zcli push` mechanism phrase duplicates push-dev-deploy-local L13, but the strategy-uncommitted-tree guardrail is unique to this row (Codex round 1 catch). |
 | `develop-first-deploy-asset-pipeline-container` | L17 | REPHRASE — `zcli push` → `zerops_deploy` | Agent's command is `zerops_deploy` |
 | `develop-strategy-review` | L15 | DROP parenthetical "(zcli push from your workspace…)" | Mechanism detail |
 | `develop-first-deploy-asset-pipeline-local` | L32 | REPHRASE — `zcli push` → `zerops_deploy` | Agent's command |
@@ -298,6 +310,10 @@ first-time start).
 - For non-watching runners OR if the process died,
   `zerops_dev_server action=restart hostname="{hostname}"
   command="{start-command}" port={port} healthPath="{path}"`.
+  The response carries `running`, `healthStatus`, `startMillis`,
+  and on failure a `reason` code (see
+  `develop-dev-server-reason-codes`) — read it before issuing
+  another call.
 
 **`zerops.yaml` changes** (env vars, ports, run-block fields):
 `zerops_deploy` first; container is replaced; on the rebuilt
@@ -307,9 +323,9 @@ rule.
 
 **Diagnostic**: tail the log ring with
 `zerops_dev_server action=logs hostname="{hostname}"
-logLines=60`. Read `reason` on any failed start/restart — it
-classifies the failure (connection refused, HTTP 5xx, spawn
-timeout, worker exit) without a follow-up call.
+logLines=60`. `reason` classifies the failure (connection
+refused, HTTP 5xx, spawn timeout, worker exit) without a
+follow-up call.
 ```
 
 1. **Codex per-edit round (MANDATORY per HIGH-risk classification)**:
@@ -363,8 +379,15 @@ timeout, worker exit) without a follow-up call.
 3. Output `plans/audit-composition-v3/axis-n-candidates.md` —
    mirror axis-k-candidates.md shape from cycle 2 Phase 2.
 
-4. Apply per-atom: F5 (develop-static-workflow step 1) is the
-   first work unit; corpus-wide drops from CORPUS-SCAN follow.
+4. Apply per-atom: F5 work units in `develop-static-workflow`:
+   (a) **L13** "Edit files locally, or on the SSHFS mount in
+       container mode." → "Edit files."
+   (b) **L27-L28** "`push-dev` for fast iteration on a dev
+       container over SSH." → drop the "on a dev container over
+       SSH" qualifier (env-leak; per-env edit-location detail
+       lives in `develop-platform-rules-{local,container}`).
+       Codex round 1 catch.
+   Apply F5 first; corpus-wide drops from CORPUS-SCAN follow.
 
 5. **Per-edit Codex round** for any DROP-LEAK that touches a
    broad atom (priority 1-3). LOW-risk for narrow atoms

@@ -1,0 +1,146 @@
+=== develop_first_deploy_standard_container ===
+  atom-renders:           22
+  synthesize_bodies_join:   20643 B   delta-vs-28KB-cap: -8029
+  render_status_markdown:   21526 B
+  mcp_wire_jsonrpc_frame:   22399 B   delta-vs-32KB-cap: -10369
+  per-atom (host shows duplication):
+     1554  develop-deploy-modes                                
+     1553  develop-first-deploy-write-app                      
+     1447  develop-api-error-meta                              
+     1438  develop-first-deploy-scaffold-yaml                  
+     1249  develop-platform-rules-container                    
+     1206  develop-http-diagnostic                             
+     1197  develop-dynamic-runtime-start-container             appdev
+     1150  develop-verify-matrix                               
+     1111  develop-first-deploy-env-vars                       
+     1080  develop-knowledge-pointers                          
+     1066  develop-first-deploy-intro                          
+     1028  develop-platform-rules-common                       
+      980  develop-env-var-channels                            
+      973  develop-auto-close-semantics                        
+      963  develop-deploy-files-self-deploy                    
+      929  develop-first-deploy-verify                         
+      761  develop-first-deploy-execute                        
+      381  develop-first-deploy-promote-stage                  appdev
+      292  develop-change-drives-deploy                        
+       48  develop-first-deploy-verify-cmds                    appstage
+       46  develop-first-deploy-verify-cmds                    appdev
+       44  develop-first-deploy-execute-cmds                   appdev
+
+=== develop_first_deploy_implicit_webserver_standard ===
+  atom-renders:           23
+  synthesize_bodies_join:   21947 B   delta-vs-28KB-cap: -6725
+  render_status_markdown:   22880 B
+  mcp_wire_jsonrpc_frame:   23836 B   delta-vs-32KB-cap: -8932
+  per-atom (host shows duplication):
+     1554  develop-deploy-modes                                
+     1553  develop-first-deploy-write-app                      
+     1447  develop-api-error-meta                              
+     1438  develop-first-deploy-scaffold-yaml                  
+     1298  develop-first-deploy-asset-pipeline-container       appdev
+     1249  develop-platform-rules-container                    
+     1206  develop-http-diagnostic                             
+     1196  develop-implicit-webserver                          appdev
+     1150  develop-verify-matrix                               
+     1111  develop-first-deploy-env-vars                       
+     1080  develop-knowledge-pointers                          
+     1066  develop-first-deploy-intro                          
+     1028  develop-platform-rules-common                       
+      980  develop-env-var-channels                            
+      973  develop-auto-close-semantics                        
+      963  develop-deploy-files-self-deploy                    
+      929  develop-first-deploy-verify                         
+      761  develop-first-deploy-execute                        
+      381  develop-first-deploy-promote-stage                  appdev
+      292  develop-change-drives-deploy                        
+       48  develop-first-deploy-verify-cmds                    appstage
+       46  develop-first-deploy-verify-cmds                    appdev
+       44  develop-first-deploy-execute-cmds                   appdev
+
+=== develop_first_deploy_two_runtime_pairs_standard ===
+  atom-renders:           27
+  synthesize_bodies_join:   22394 B   delta-vs-28KB-cap: -6278
+  render_status_markdown:   23546 B
+  mcp_wire_jsonrpc_frame:   24489 B   delta-vs-32KB-cap: -8279
+  per-atom (host shows duplication):
+     1554  develop-deploy-modes                                
+     1553  develop-first-deploy-write-app                      
+     1447  develop-api-error-meta                              
+     1438  develop-first-deploy-scaffold-yaml                  
+     1249  develop-platform-rules-container                    
+     1206  develop-http-diagnostic                             
+     1197  develop-dynamic-runtime-start-container             appdev
+     1197  develop-dynamic-runtime-start-container             apidev
+     1150  develop-verify-matrix                               
+     1111  develop-first-deploy-env-vars                       
+     1080  develop-knowledge-pointers                          
+     1066  develop-first-deploy-intro                          
+     1028  develop-platform-rules-common                       
+      980  develop-env-var-channels                            
+      973  develop-auto-close-semantics                        
+      963  develop-deploy-files-self-deploy                    
+      929  develop-first-deploy-verify                         
+      761  develop-first-deploy-execute                        
+      381  develop-first-deploy-promote-stage                  appdev
+      381  develop-first-deploy-promote-stage                  apidev
+      292  develop-change-drives-deploy                        
+       48  develop-first-deploy-verify-cmds                    appstage
+       48  develop-first-deploy-verify-cmds                    apistage
+       46  develop-first-deploy-verify-cmds                    appdev
+       46  develop-first-deploy-verify-cmds                    apidev
+       44  develop-first-deploy-execute-cmds                   appdev
+       44  develop-first-deploy-execute-cmds                   apidev
+
+=== develop_first_deploy_standard_single_service (hypothetical) ===
+  atom-renders:           21
+  synthesize_bodies_join:   20588 B   delta-vs-28KB-cap: -8084
+  render_status_markdown:   21370 B
+  mcp_wire_jsonrpc_frame:   22237 B   delta-vs-32KB-cap: -10531
+  per-atom (host shows duplication):
+     1554  develop-deploy-modes                                
+     1553  develop-first-deploy-write-app                      
+     1447  develop-api-error-meta                              
+     1438  develop-first-deploy-scaffold-yaml                  
+     1249  develop-platform-rules-container                    
+     1206  develop-http-diagnostic                             
+     1197  develop-dynamic-runtime-start-container             appdev
+     1150  develop-verify-matrix                               
+     1111  develop-first-deploy-env-vars                       
+     1080  develop-knowledge-pointers                          
+     1066  develop-first-deploy-intro                          
+     1028  develop-platform-rules-common                       
+      980  develop-env-var-channels                            
+      973  develop-auto-close-semantics                        
+      963  develop-deploy-files-self-deploy                    
+      929  develop-first-deploy-verify                         
+      761  develop-first-deploy-execute                        
+      381  develop-first-deploy-promote-stage                  appdev
+      292  develop-change-drives-deploy                        
+       46  develop-first-deploy-verify-cmds                    appdev
+       44  develop-first-deploy-execute-cmds                   appdev
+
+=== develop_simple_deployed_container ===
+  atom-renders:           18
+  synthesize_bodies_join:   16085 B   delta-vs-28KB-cap: -12587
+  render_status_markdown:   16737 B
+  mcp_wire_jsonrpc_frame:   17481 B   delta-vs-32KB-cap: -15287
+  per-atom (host shows duplication):
+     1554  develop-deploy-modes                                
+     1452  develop-api-error-meta                              
+     1290  develop-mode-expansion                              weatherdash
+     1249  develop-platform-rules-container                    
+     1226  develop-http-diagnostic                             
+     1150  develop-verify-matrix                               
+     1080  develop-knowledge-pointers                          
+     1028  develop-platform-rules-common                       
+      980  develop-env-var-channels                            
+      973  develop-auto-close-semantics                        
+      963  develop-deploy-files-self-deploy                    
+      889  develop-push-dev-deploy-container                   weatherdash
+      738  develop-strategy-awareness                          weatherdash
+      379  develop-push-dev-workflow-simple                    weatherdash
+      292  develop-change-drives-deploy                        
+      260  develop-checklist-simple-mode                       weatherdash
+      233  develop-close-push-dev-simple                       weatherdash
+      230  develop-intro                                       weatherdash
+
