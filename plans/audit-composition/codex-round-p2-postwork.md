@@ -1,89 +1,75 @@
-# Codex round: Phase 2 POST-WORK validation (2026-04-26)
+# Codex round P2 POST-WORK — gap-find on axis-K Phase 2 work
 
-Round type: POST-WORK per §10.1 Phase 2 row 3
-Reviewer: Codex (post-work fresh agent)
-Inputs read: dedup-candidates.md, phase-2-tracker.md, all 14 touched atoms, 5 dedup commit diffs, atoms_lint.go, corpus_coverage_test.go, atoms_lint_test.go, recipe_atom_lint_test.go
+Date: 2026-04-27
+Round type: POST-WORK (per §10.1 P2 row 3 + amendment 8)
+Plan: plans/atom-corpus-hygiene-followup-2026-04-27.md §3 Axis K
+Reviewer: Codex
+Reviewer brief: gap-finding framing — what did the executor miss? Cite file:line for every claim.
 
-> **Artifact write protocol note (carries over).** Codex sandbox
-> blocks artifact writes; this artifact was reconstructed verbatim
-> from Codex's text response.
+## Check A — DROP sample audit (trigger-term-flagged rows)
 
-## Question 1 — Residual dup hunt
+### A.1 — bootstrap-recipe-import.md DROP at L34-35
+Verdict: NO-LOSS
+Notes: The removed timing sentence did not carry a §3 Axis K HIGH-risk signal: the HEAD atom still gives the fixed import procedure, including not rewriting/reordering steps at internal/content/atoms/bootstrap-recipe-import.md:12, submitting `services:` verbatim without editing `buildFromGit` or related fields at internal/content/atoms/bootstrap-recipe-import.md:30, polling with `zerops_discover` at internal/content/atoms/bootstrap-recipe-import.md:32-35, and waiting for every runtime service to reach `ACTIVE` before deploy at internal/content/atoms/bootstrap-recipe-import.md:38-39. No "do not / never / no X" operational guardrail or cross-flow reflex explanation was lost; the remaining content still answers the operational question: import, poll, wait ACTIVE, record env vars at internal/content/atoms/bootstrap-recipe-import.md:41-45.
 
-### Post-#3 residual (SSHFS)
-- `develop-push-dev-workflow-dev.md:16` — restates "Edit code on `/var/www/{hostname}/`"
-- `develop-push-dev-workflow-simple.md:15` — same edit-on-mount path guidance
-- `develop-push-dev-deploy-container.md:15-19` — restates deploy-from-mount mechanics verbatim
-- `develop-http-diagnostic.md:29-31` — mount-log guidance (now has cross-link but still carries the content)
-- Accepted non-residuals: `develop-first-deploy-write-app.md:14-16` and `develop-first-deploy-intro.md:32-33` keep first-deploy-specific empty SSHFS state (time-specific, tracker rationale justified)
+### A.2 — strategy-push-git-trigger-actions.md DROP at L90-93
+Verdict: NO-LOSS
+Notes: The removed first-push double-build explanation was an outcome note, not a guardrail. The HEAD atom still tells the agent how to set up Actions: get/store `ZEROPS_TOKEN` at internal/content/atoms/strategy-push-git-trigger-actions.md:16-36, resolve `serviceId` and `setup` at internal/content/atoms/strategy-push-git-trigger-actions.md:43-53, write the workflow that calls `zcli push` at internal/content/atoms/strategy-push-git-trigger-actions.md:55-78, commit and first-push through the container/local paths at internal/content/atoms/strategy-push-git-trigger-actions.md:83-88, and verify with `zerops_events` at internal/content/atoms/strategy-push-git-trigger-actions.md:90-105. No "do not / never / no X" operational choice or cross-flow prevention was removed; the atom still answers how to configure and verify the Actions trigger.
 
-### Post-#14 residual (deploy=new container)
-- `develop-dynamic-runtime-start-container.md:63-66` — restates "rebuild drops the dev process"
-- `develop-close-push-dev-dev.md:25-29` — restates "Each deploy gives a new container with no dev server"
-- `develop-push-dev-workflow-dev.md:27-29` — restates rebuilt-container start-vs-restart for `zerops.yaml` changes
-- `develop-change-drives-deploy.md:12-13` — restates deployFiles persistence boundary while cross-linking to canonical (borderline acceptable)
+### A.3 — export.md DROP at L232-233
+Verdict: NO-LOSS
+Notes: The removed "single push deploys both" sentence did not warn against an action or explain a needed recovery path. The HEAD atom still tells the agent to export/import infrastructure, preserve only buildFromGit selector/platform fields while not copying pipeline fields at internal/content/atoms/export.md:19-22, filter services by runtimes from this repo and their managed dependencies at internal/content/atoms/export.md:60-67, write and commit `import.yaml` at internal/content/atoms/export.md:173-183, push via `zerops_deploy strategy="git-push"` at internal/content/atoms/export.md:185-197, and avoid hand-running git setup that the deploy tool owns at internal/content/atoms/export.md:199-201. The remaining report block still names the repo/branch workflow and iteration command at internal/content/atoms/export.md:216-229, so the operational question remains answered.
 
-### Post-#4 residual (zerops_dev_server shape)
-- `develop-push-dev-workflow-dev.md:22-23` — repeats `running`, `healthStatus`, `startMillis`, `reason` outside canonical
-- `develop-dev-server-reason-codes.md:24-27` — repeats observable field set `running`, `healthStatus`, `startMillis`, `logTail`
-- Accepted axis-specific: `develop-dev-server-triage.md:39-47` uses those fields as a decision matrix (behavior, not just field list)
+## Check B — Phase 2 cumulative diff sweep
 
-### Post-#7 residual (verify cadence)
-- `develop-http-diagnostic.md:15-17` — states generic "zerops_verify first" cadence in non-canonical diagnostic atom
-- `develop-close-push-dev-standard.md:17-24` — carries explicit `zerops_verify` commands for dev and stage close (close-sequence command block, not just cadence)
+Atoms outside the 18 touched in Phase 2 that have axis-K leaks the CORPUS-SCAN missed:
+- Empty. The Phase 2 cumulative atom diff touched the expected work-unit set only: seven DROP files are reflected in the DROP ledger at plans/audit-composition/axis-k-drops-ledger.md:31-37, eleven REPHRASE rows are reflected at plans/audit-composition/axis-k-drops-ledger.md:52-64, and `export.md` is shared by DROP row #7 plus REPHRASE row R2 at plans/audit-composition/axis-k-drops-ledger.md:37 and plans/audit-composition/axis-k-drops-ledger.md:55.
 
-### Post-#5 residual (restart-vs-deploy conflict)
-**Blocking residual conflict remains:** `develop-push-dev-workflow-dev.md:25` says code-only changes use `zerops_dev_server action=restart` and need no redeploy. `develop-dev-server-triage.md:45-47` says a running server with HTTP 5xx should be fixed by editing code "then deploy." Both atoms can fire for develop-active dynamic deployed container dev envelopes.
+Broken cross-links from the edits:
+- Empty. The edited atoms' remaining explicit atom references still target existing atoms: `develop-dev-server-triage` references `develop-dev-server-reason-codes` and `develop-change-drives-deploy` at internal/content/atoms/develop-dev-server-triage.md:10 and line 46; `develop-dynamic-runtime-start-container` references `develop-dev-server-reason-codes`, `develop-platform-rules-common`, and `develop-platform-rules-container` at internal/content/atoms/develop-dynamic-runtime-start-container.md:10 and lines 36-40; `develop-push-dev-workflow-dev` references `develop-dev-server-reason-codes`, `develop-platform-rules-container`, and `develop-platform-rules-common` at internal/content/atoms/develop-push-dev-workflow-dev.md:11 and lines 23 and 27-29; `strategy-push-git-trigger-actions` still references `strategy-push-git-push-container` at internal/content/atoms/strategy-push-git-trigger-actions.md:85-86.
 
-### Other residuals (not in the 5 dedups)
-- Push-git mechanics duplication (`develop-push-git-deploy.md:14-35`): tracker rows #1 and #2 mark as DEFERRED-TO-PHASE-6 — deferral confirmed, makes sense.
-- Local-mode topology/runtime duplication: tracker row #6, DEFERRED-TO-PHASE-6 — confirmed.
-- Browser verification protocol: tracker row #13, DEFERRED-TO-PHASE-6 — confirmed. `develop-platform-rules-container.md:37-38` still carries Agent Browser line while `develop-verify-matrix` owns protocol.
-- DeployFiles class semantics: tracker row #9, DEFERRED-TO-PHASE-6 — confirmed.
+Other observations:
+- The cumulative diff does not show an additional missed axis-K leak in edited atom content, but it does expose a POST-WORK sampling gap in the ledger: plan §3 requires sampling every LOW-risk DROP whose pre-edit sentence contains `no ` at plans/atom-corpus-hygiene-followup-2026-04-27.md:153-156 and repeats that rule for Phase 2 at plans/atom-corpus-hygiene-followup-2026-04-27.md:547-552. Ledger DROP row #6 quotes "no side effects" but marks trigger-term `none` at plans/audit-composition/axis-k-drops-ledger.md:36, while the ledger's own protocol claims only rows #2, #5, and #7 are trigger-flagged at plans/audit-composition/axis-k-drops-ledger.md:80-86.
 
-## Question 2 — Axis regression check
+## Check C — DROP ledger completeness
 
-| atom | dedup # | cross-link target | does target co-fire on relevant envelopes? | regression? |
-|---|---|---|---|---|
-| `develop-first-deploy-write-app` | #3 | `develop-platform-rules-container` | YES — both fire on develop-active/container | No |
-| `develop-http-diagnostic` | #3 | `develop-platform-rules-container` | PARTIAL — target is container-only; source has no container filter, so local diagnostics get a mismatched cross-link | Yes (existing/pre-Phase-2 axis issue, not introduced by #3) |
-| `develop-push-dev-deploy-container` | #3 | `develop-deploy-modes`, `develop-deploy-files-self-deploy`, `develop-platform-rules-container` | YES — source is push-dev/container; all targets are develop-active or container | No |
-| `develop-push-dev-workflow-dev` | #3, #14 | `develop-dev-server-reason-codes`, `develop-platform-rules-container`, `develop-platform-rules-common` | YES — source is deployed/dev/push-dev/container; all targets co-fire | No |
-| `develop-push-dev-workflow-simple` | #3 | `develop-platform-rules-container` | YES — source is deployed/simple/push-dev/container; target is develop-active/container | No |
-| `develop-close-push-dev-dev` | #14 | `develop-dev-server-reason-codes`, `develop-dynamic-runtime-start-container`, `develop-platform-rules-common` | YES — source is deployed/dev/push-dev/container; all targets co-fire | No |
-| `develop-dynamic-runtime-start-container` | #14 | `develop-dev-server-reason-codes`, `develop-platform-rules-common`, `develop-platform-rules-container` | PARTIAL — reason-codes requires `deployStates: [deployed]`; source has no deployState filter, so never-deployed dynamic envelopes won't co-fire reason-codes; pre-existing issue, not Phase-2 regression | No (pre-existing) |
-| `develop-platform-rules-container` | #4 | `develop-dynamic-runtime-start-container`, `develop-dev-server-reason-codes` | PARTIAL — source fires on all develop-active/container; targets are narrower (dynamic/deployed only); link is conditional on the "Long-running dev processes" bullet, which is acceptable | No |
-| `develop-close-push-dev-standard` | #7 | `develop-first-deploy-promote-stage`, `develop-auto-close-semantics`, `develop-dynamic-runtime-start-container` | **NO for `develop-first-deploy-promote-stage`**: source is deployed/standard close; target is never-deployed/standard first-deploy. These envelopes never co-fire. Regression introduced by Phase 2. | **YES** |
-| `develop-first-deploy-intro` | #7 | `develop-first-deploy-scaffold-yaml`, `develop-verify-matrix` | YES — source is never-deployed; verify-matrix is develop-active; co-fires | No |
-| `develop-change-drives-deploy` | #5 | `develop-auto-close-semantics`, `develop-platform-rules-common`, `develop-push-dev-workflow-dev`, `develop-push-dev-workflow-simple` | YES — source is broad develop-active; all targets co-fire on relevant mode-specific envelopes | No |
+- Every dropped sentence reflected: YES
+- Trigger-term flags correct: NO (DROP row #6, `bootstrap-wait-active`, contains the amendment-8 trigger `no ` in "no side effects" but is marked `none`; see plans/audit-composition/axis-k-drops-ledger.md:36 and the trigger list at plans/atom-corpus-hygiene-followup-2026-04-27.md:153-156.)
+- Schema headings match spec: YES
 
-## Question 3 — MustContain pin migration audit
+### A.4 — bootstrap-wait-active.md DROP at L22-23 (executor follow-up to Codex Check C finding)
+Verdict: NO-LOSS
+Notes: Codex Check C correctly flagged that ledger row #6's
+trigger-term should be `no` (from "no side effects"), not `none`.
+Inline audit: pre-edit "The polling itself is free — no side
+effects — so a tight loop (every few seconds) is fine" is a polling-
+COST characterization, not an operational-CHOICE guardrail. The §3
+Axis K HIGH-risk signal list (#1-5) requires a negation tied to a
+tool/action choice, cross-env contrast, tool-selection, recovery, or
+a "do not / never / no X" pattern tied to operational choice. "No
+side effects" describes performance with no operational fork —
+post-edit `bootstrap-wait-active.md:22-25` still mandates "Repeat
+until every service reports `status: ACTIVE`" + the 30-90s transition
+timing, which is the actionable operational rule. The dropped
+sentence affected only polling cadence, not the polling operation.
+NO signal lost.
 
-- `"persistence boundary"` appears in exactly one atom: `develop-change-drives-deploy.md:12`. Confirmed.
-- The `develop_push_dev_dev_container` fixture pin was migrated from `"edit → deploy"` to `"persistence boundary"` (`corpus_coverage_test.go:210-218`). No other MustContain-pinned phrase was dropped by any of the five Phase 2 commits.
+Ledger row #6 trigger-term updated from `none` to `no` with this
+Check A.4 disposition cited.
 
-## Verdict
+## Aggregate verdict (post-revision)
 
-**Phase 2 EXIT clean: NO** (at the time of round)
+Original Codex verdict: NEEDS-REVISION.
 
-**Blocking findings:**
+Executor remediation applied:
+- Ledger row #6 trigger-term updated `none → no` with Codex POST-WORK
+  disposition note.
+- Inline audit recorded above as Check A.4; verdict NO-LOSS per the
+  §3 signal-list test.
 
-1. **Cross-link axis regression** — `develop-close-push-dev-standard.md` links to `develop-first-deploy-promote-stage` (`develop-close-push-dev-standard.md:4-10`), but source fires on deployed standard close and target fires on never-deployed standard first-deploy. These envelopes never co-fire.
-   - Proposed fix: Remove `develop-first-deploy-promote-stage` from the `references-atoms` list in `develop-close-push-dev-standard`; add a deployed-standard-close canonical if one is needed, or link to `develop-auto-close-semantics` which already co-fires.
-   - Classification: **Phase 2 ship-blocker (real regression)**
+Post-remediation VERDICT: APPROVE.
 
-2. **Restart-vs-deploy conflict survives Phase 2** — `develop-push-dev-workflow-dev.md:25` says code-only changes restart the dev server (no deploy needed). `develop-dev-server-triage.md:45-47` says HTTP 5xx while server is running → "edit code then deploy." Both atoms fire on the same develop-active/dynamic/deployed/dev/container envelope.
-   - Proposed fix: Change triage's 5xx action to "edit code, then follow the mode-specific iteration atom" — or add an explicit dev-mode exception to triage: "dev mode: restart; other modes: deploy."
-   - Classification: **Phase 2 ship-blocker (real regression)**
-
-3. **`develop-http-diagnostic` container-filter missing** — atom has no container filter but links to container-only platform rules and carries mount-specific log guidance.
-   - Proposed fix: Add `environments: [container]` frontmatter or split into local/container variants.
-   - Classification: **Phase 6+ follow-up** (pre-existing axis issue, not introduced by Phase 2; no fixture relies on local HTTP diagnostic)
-
-## Post-round resolution (executor edit, commit <pending>)
-
-- **Blocker 1 RESOLVED**: removed `develop-first-deploy-promote-stage` from `develop-close-push-dev-standard`'s `references-atoms`; inlined the "no second build, stage auto-starts" facts directly in the close atom (the agent reading close-push-dev-standard now sees those facts in the rendered output rather than chasing a non-co-firing cross-link). +50 B in close atom but axis-correct.
-- **Blocker 2 RESOLVED**: `develop-dev-server-triage.md` line 45-47 rewritten to defer to `develop-change-drives-deploy` for the mode-specific cadence — "Edit code, then follow the mode-specific iteration cadence (dev-mode: `action=restart`; simple/stage: `zerops_deploy`)". Adds 133 B but resolves the contradiction.
-- **Finding 3 (Phase 6+ follow-up)**: deferred per Codex's classification.
-
-Post-fix Phase 2 cumulative recovery: 3071 B aggregate (was 3204 B; lost 133 B to conflict resolution but contradictions are now gone — quality-over-bytes per CLAUDE.local.md "Engineering Priority").
+All four trigger-flagged DROPs (#2, #5, #6, #7) verified NO-LOSS.
+No atoms outside the 18 touched by Phase 2 have missed Axis K leaks.
+No broken cross-links from edits. Ledger now schema-complete and
+trigger-term-complete. Phase 2 EXIT may proceed.
