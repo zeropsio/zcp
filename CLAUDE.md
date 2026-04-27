@@ -183,10 +183,22 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   AST-pinned to Go struct fields), orchestration, concepts, pitfalls, cross-refs.
   MUST NOT contain spec invariant IDs (`DM-*`, `E*`, `O*`, etc.),
   handler-behavior verbs ("auto-*", "stamps", "activates"), invisible-state
-  field names, or plan-doc paths. Three tests enforce: `TestAtomAuthoringLint`,
-  `TestAtomReferenceFieldIntegrity`, `TestAtomReferencesAtomsIntegrity`.
-  Don't add per-topic `*_atom_contract_test.go` — extend
-  `internal/content/atoms_lint.go`. Spec: `spec-knowledge-distribution.md §11`.
+  field names, or plan-doc paths. MUST NOT carry env-only title/heading
+  qualifiers (`container`, `local`, `container env`, `local env` as
+  standalone tokens — Axis L is HARD-FORBID). Three tests enforce:
+  `TestAtomAuthoringLint`, `TestAtomReferenceFieldIntegrity`,
+  `TestAtomReferencesAtomsIntegrity`. Don't add per-topic
+  `*_atom_contract_test.go` — extend `internal/content/atoms_lint.go`
+  (or `atoms_lint_axes.go` for axis K/L/M/N rules). Spec:
+  `spec-knowledge-distribution.md §11`.
+- **Axis K/M/N marker convention** — heuristic axis lints fire CANDIDATES;
+  authors mark intentional keeps with inline `<!-- axis-{k,m,n}-keep:
+  signal-#N -->` (or `-drop`) on the same line, the prior non-blank line,
+  or the next non-blank line. Markers are stripped from rendered atom
+  bodies via `content.StripAxisMarkers` in `ParseAtom` — agents never
+  see the metadata. Per-line allowlist entries (`atoms_lint_seed_allowlist.go`)
+  are reserved for grandfathered or structurally-unavoidable cases; new
+  edits prefer markers. Spec: `spec-knowledge-distribution.md §11.5/§11.6/§11.7`.
 - **Service by hostname** — agents/tools speak hostnames; resolve to ID internally.
 - **Lifecycle recovery is via `action="status"`** — `zerops_workflow
   action="status"` is the canonical lifecycle envelope (envelope + plan +

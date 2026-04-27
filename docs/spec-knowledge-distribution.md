@@ -507,23 +507,32 @@ rule changes do not churn atom files:
 |---|---|---|
 | `TestAtomReferenceFieldIntegrity` | `internal/workflow/atom_reference_field_integrity_test.go` | Every `references-fields` entry resolves to a named struct field via AST scan. |
 | `TestAtomReferencesAtomsIntegrity` | `internal/workflow/atom_references_atoms_integrity_test.go` | Every `references-atoms` entry resolves to an existing atom. |
-| `TestAtomAuthoringLint` | `internal/content/atoms_lint_test.go` | Body prose matches no forbidden pattern (§11.2). |
+| `TestAtomAuthoringLint` | `internal/content/atoms_lint_test.go` | Body prose matches no forbidden pattern (§11.2) and no axis K/L/M/N drift (§11.5/§11.6). |
 
 ### 11.4 Allowlist policy
 
 `atomLintAllowlist` in `atoms_lint.go` accepts `"<file>::<exact-line>"`
-keys for documented exceptions. The default set is empty; every entry
-is an audit target. When adding one, commit the rationale in the map
-value. Prefer rewriting the atom — allowlisting is the escape hatch,
-not the default.
+keys for documented exceptions across every rule family. The default
+set is empty; every entry is an audit target. When adding one, commit
+the rationale in the map value. Prefer rewriting the atom —
+allowlisting is the escape hatch, not the default.
+
+Per-axis allowlists (`axisLAllowlist`, `axisKAllowlist`,
+`axisMAllowlist`, `axisNAllowlist`) live in
+`atoms_lint_seed_allowlist.go` and follow the same key/rationale
+shape; an entry there suppresses ONE rule for ONE atom line.
 
 ### 11.5 Content-quality axes (K, L, M)
 
-Three axes apply to atom prose beyond the §11.2 lint patterns. They
-are author-facing rules, not lint-enforced (yet); the
-`atom-corpus-hygiene` cycles audit them. Each axis is documented at
-the level of the rule + a worked example; full corpus-scan ledgers
-live in `plans/audit-composition/axis-{k,l,m}-*.md`.
+Three axes apply to atom prose beyond the §11.2 lint patterns. Each
+axis is documented at the level of the rule + a worked example; full
+corpus-scan ledgers live in `plans/audit-composition/axis-{k,l,m}-*.md`.
+
+**Lint enforcement** (engine plan E4, shipped 2026-04-27): all four
+axes (K, L, M, N) are enforced by `internal/content/atoms_lint_axes.go`
+and pinned by `TestAtomAuthoringLint`. Axis L is HARD-FORBID — no
+escape valve except a per-line allowlist entry. Axes K, M, N use the
+inline marker convention documented in §11.7 below.
 
 #### Axis K — ABSTRACTION-LEAK
 
@@ -736,6 +745,46 @@ DROP-LEAK applied here regresses to missing-information; the
 cycle-3 Phase 4 POST-WORK Codex round verified the cross-link
 holds at the time of the corpus pass.
 
+### 11.7 Marker convention (axes K, M, N)
+
+The axis-K, axis-M, and axis-N lints (`atoms_lint_axes.go`) are
+heuristic — the patterns flag CANDIDATES, not certain violations.
+Authors who want to KEEP a flagged phrase add an inline HTML comment
+on the SAME line, the IMMEDIATELY PREVIOUS non-blank line, or the
+IMMEDIATELY FOLLOWING non-blank line:
+
+```
+<!-- axis-k-keep: signal-#3 -->
+**Do NOT use `zerops_dev_server`** — that tool is container-only.
+```
+
+Markers accept a free-form trailing annotation (commonly the spec
+signal number for K, the cluster number for M, or a one-line keep
+rationale). `<!-- axis-{k,m,n}-drop -->` is also accepted as an
+explicit "this should be removed, leaving here pending edit" marker.
+
+**Markers are stripped from rendered atom bodies** — `ParseAtom` calls
+`content.StripAxisMarkers` before assigning the body to the
+`KnowledgeAtom`, so agents never see the metadata. Marker-only lines
+are dropped entirely; inline markers consume their leading whitespace
+so prose flow is preserved.
+
+**Axis L does NOT honor markers.** It is HARD-FORBID — env-only title
+qualifiers (`container`, `local`, `container env`, `local env` as
+standalone tokens after splitting on em-dash, parens, commas, or `+`)
+are rejected unconditionally. The escape valve is the per-line
+`axisLAllowlist` entry in `atoms_lint_seed_allowlist.go`, with a
+documented rationale.
+
+**Per-axis allowlists** (`axisLAllowlist`, `axisKAllowlist`,
+`axisMAllowlist`, `axisNAllowlist`) live in
+`atoms_lint_seed_allowlist.go`; each entry is keyed
+`<atomFile>::<exact-trimmed-line>` and MUST carry a one-line rationale
+in the map value. Allowlists were seeded during the 2026-04-27 audit
+to grandfather HIGH-signal guardrails, sub-agent terminology
+(cluster-#5), and structurally unavoidable env-tokens; new edits
+should prefer markers.
+
 ---
 
 ## Appendix: Code Reference Map
@@ -752,3 +801,5 @@ holds at the time of the corpus pass.
 | §8 ServiceMeta | `internal/workflow/service_meta.go`, `bootstrap_outputs.go` |
 | §9 Routing | `internal/workflow/router.go` |
 | §10 Invariants | Tests in `internal/workflow/*_test.go` pin these |
+| §11.5/§11.6 Axis lint | `internal/content/atoms_lint_axes.go`, `atoms_lint_seed_allowlist.go` |
+| §11.7 Marker stripping | `internal/content/atoms_lint_axes.go::StripAxisMarkers`, called from `internal/workflow/atom.go::ParseAtom` |
