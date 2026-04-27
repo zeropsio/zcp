@@ -7,10 +7,10 @@ title: "Per-service verify matrix"
 
 ### Per-service verify matrix
 
-Verify every service in scope after a successful deploy — never assume
-deploy success means the app works for end users. Pick the verification
-path per service based on what `zerops_discover` reports (subdomain URL
-present = web-facing; managed or no HTTP port = non-web).
+Deploy success does not prove the app works for end users. Pick the
+verification path per service based on what `zerops_discover` reports:
+subdomain URL present means web-facing; managed or no HTTP port means
+non-web.
 
 **Non-web services (managed databases, caches, workers, no subdomain):**
 

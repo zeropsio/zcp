@@ -21,7 +21,7 @@ zerops:
     build:
       base: <runtime-only key, e.g. nodejs@22 — NOT the composite run key>
       buildCommands: [...]       # optional for pre-built artefacts
-      deployFiles: [.]           # dev mode; stage uses the build output dir
+      deployFiles: [...]         # see develop-deploy-modes for deployFiles per class
     run:
       base: <run key, may be composite: php-nginx@8.4, nodejs@22, ...>
       ports:
@@ -33,15 +33,12 @@ zerops:
 ```
 
 **Env var references** — see `develop-first-deploy-env-vars` for the
-discovered-key catalog and the cross-service `${hostname_KEY}` syntax.
+discovered-key catalog and `${hostname_KEY}` syntax; see
+`develop-env-var-channels` for placement and live-timing rules.
 
-**Mode-aware tips:**
-
-- `dev` mode: `deployFiles: [.]`, build runs on SSHFS, `run.start` wakes
-  the runtime container — no stage pair to worry about.
-- `simple` mode: identical layout to dev but single-slot, no stage.
-- `standard` mode: emit separate entries for dev AND stage hostnames;
-  stage's `deployFiles` points at the build output directory.
+**Mode-aware tips:** emit separate setup entries for each targeted
+runtime hostname. See `develop-deploy-modes` for deployFiles per
+self-deploy vs cross-deploy class.
 
 **Content-root tip:** for runtimes that expect assets at the
 working-dir root (e.g. ASP.NET's `wwwroot/` lookup at

@@ -21,10 +21,10 @@ Explicit `zerops_workflow action="close" workflow="develop"` emits
 the same closed state manually and is rarely needed — starting a new
 task with a different `intent` replaces the session.
 
-For standard-mode pairs, "every service in scope" includes BOTH
-halves — skipping the stage cross-deploy leaves the session active.
-For dev-only or simple services, a single successful deploy + verify
-is enough.
+Close scope follows the session topology: standard-mode pairs include
+BOTH halves, so skipping the stage cross-deploy leaves the session
+active. Dev-only or simple services close after their one successful
+deploy + verify.
 
 Close is cleanup, not commitment. Work itself is durable — code is
 in git, infrastructure is on Zerops.

@@ -4,6 +4,7 @@ priority: 2
 phases: [develop-active]
 envelopeDeployStates: [never-deployed]
 title: "Use the discovered env var catalog when wiring the app"
+references-atoms: [develop-env-var-channels]
 ---
 
 ### Env var catalog from bootstrap
@@ -15,8 +16,9 @@ not guess alternatives**. The catalog is the authoritative source; the
 host key is **`hostname`** (never `host`), but every other key varies
 per service type, so don't hardcode from memory.
 
-**Cross-service reference form** — inside `run.envVariables` of a
-runtime service:
+Place runtime env vars in `run.envVariables`; channel timing and
+service-level shadowing rules are in `develop-env-var-channels`.
+Cross-service references use this form:
 
 ```yaml
 envVariables:
@@ -24,10 +26,9 @@ envVariables:
   DB_HOST: ${db_hostname}
 ```
 
-Zerops rewrites `${db_connectionString}` at deploy time by
-looking up service `db`'s env var named `connectionString`. A wrong
-spelling resolves to the literal string `${db_connectionString}` and
-the app fails at connect time.
+Zerops rewrites `${db_connectionString}` at deploy time from service
+`db`'s `connectionString`; a wrong spelling remains literal and the
+app fails at connect time.
 
 **Re-check at any point:** `zerops_discover service="<hostname>"
 includeEnvs=true` returns the key list. Values are redacted by default;

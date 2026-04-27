@@ -22,6 +22,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -162,6 +164,13 @@ func measure(f fixture, corpus []workflow.KnowledgeAtom) {
 
 	cap32 := 32 * 1024
 	cap28 := 28 * 1024
+
+	if dir := os.Getenv("PROBE_DUMP_DIR"); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err == nil {
+			path := filepath.Join(dir, f.name+".md")
+			_ = os.WriteFile(path, []byte(rendered), 0o600)
+		}
+	}
 
 	fmt.Printf("=== %s ===\n", f.name)
 	fmt.Printf("  atom-renders:           %d\n", len(matches))

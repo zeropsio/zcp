@@ -5,17 +5,15 @@ phases: [develop-active]
 envelopeDeployStates: [never-deployed]
 title: "First deploy — verify rules"
 references-fields: [ops.VerifyResult.Status, ops.VerifyResult.Checks, ops.CheckResult.Status, ops.CheckResult.Detail]
-references-atoms: [develop-auto-close-semantics]
+references-atoms: [develop-auto-close-semantics, develop-verify-matrix]
 ---
 
 ### Verify the first deploy
 
 After running `zerops_verify`, the returned `status` is `healthy`,
 `degraded`, or `unhealthy`; scan `checks[]` for any with `status: fail`
-and read its `detail` for the specific failure. A passing verify
-corresponds to: service `status=ACTIVE` in `zerops_discover`, HTTP 200
-from the subdomain root (or configured `/status`), and every declared
-env var present at runtime.
+and read its `detail` for the specific failure. For route selection
+between non-web and browser-backed checks, see `develop-verify-matrix`.
 
 **If unhealthy:**
 

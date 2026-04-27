@@ -7,10 +7,9 @@ title: "Self-deploy requires deployFiles: [.] — narrower patterns destroy the 
 
 ### Self-deploy invariant
 
-Any service self-deploying (`sourceService == targetService` — the
-default when sourceService is omitted; typical pattern for dev services
-and simple mode) MUST have `deployFiles: [.]` or `[./]` in the matching
-setup block.
+Any service self-deploying MUST have `deployFiles: [.]` or `[./]` in
+the matching setup block. See `develop-deploy-modes` for how ZCP
+classifies self-deploy vs cross-deploy.
 
 A narrower pattern destroys the target's working tree on the next
 deploy:
@@ -28,10 +27,5 @@ Client-side pre-flight rejects this with
 `INVALID_ZEROPS_YML` before any build triggers, so this failure mode
 cannot reach Zerops.
 
-### Cross-deploy has opposite semantics
-
-Cross-deploy (`sourceService != targetService`, or
-`strategy=git-push`) ships build output to a **different** service —
-source is not at risk. Cross-deploy's `deployFiles` typically
-cherry-picks (`./out`, `./dist`, `./build`).
-See `develop-deploy-modes` atom for the full contrast.
+Cross-deploy has opposite semantics; see `develop-deploy-modes` for
+the full contrast.
