@@ -7,18 +7,18 @@ Closed: 2026-04-27
 
 | step | round type | state | output | commit |
 |---|---|---|---|---|
-| Codex axis-B PRE-WORK | PRE-WORK | DONE | `axis-b-candidates.md` (25 atoms with axis-B content; 11 LOW-risk / 10 MEDIUM / 4 HIGH; ~9,610 B total recoverable) | <pending> |
+| Codex axis-B PRE-WORK | PRE-WORK | DONE | `axis-b-candidates.md` (25 atoms with axis-B content; 11 LOW-risk / 10 MEDIUM / 4 HIGH; ~9,610 B total recoverable) | d622507d |
 | Codex axis-B PER-EDIT | PER-EDIT | SKIPPED | — | — | per §10.5 work-economics rule #3 — LOW-risk mechanical tightenings can be self-verified by reading the diff; per-edit Codex round is mandatory only for HIGH-risk atoms (none touched this batch) |
-| Codex axis-B POST-WORK | POST-WORK | DONE | `codex-round-p6-postwork.md` (3 NUANCE-LOST findings; all restored in same commit) | <pending> |
+| Codex axis-B POST-WORK | POST-WORK | DONE | `codex-round-p6-postwork.md` (3 NUANCE-LOST findings; all restored in same commit) | d622507d |
 
 ## Per-atom work units (LOW-risk subset of Codex's plan)
 
 | # | atom | bytes target | state | commit | notes |
 |---|---|---|---|---|---|
-| 1 | `develop-platform-rules-common` | 160 B | DONE | <pending> | tightened envVariables bullet; SAFE per Codex POST-WORK |
-| 2 | `develop-env-var-channels` | 180 B | DONE | <pending> | tightened skipRestart + shadow-loop; restored "not live until manual restart" per Codex POST-WORK |
-| 3 | `develop-api-error-meta` | 380 B | DONE | <pending> | apiCode prose list → table; replaced `{host}` placeholder with `<host>` (escape isPlaceholderToken — sidecar-class fix); SAFE per Codex |
-| 4 | `develop-dynamic-runtime-start-container` | 350 B | DONE | <pending> | start/status/restart/logs/stop sections → action+args+response table; restored `healthStatus`/`startMillis` definitions + `logLines=40` per Codex POST-WORK |
+| 1 | `develop-platform-rules-common` | 160 B | DONE | d622507d | tightened envVariables bullet; SAFE per Codex POST-WORK |
+| 2 | `develop-env-var-channels` | 180 B | DONE | d622507d | tightened skipRestart + shadow-loop; restored "not live until manual restart" per Codex POST-WORK |
+| 3 | `develop-api-error-meta` | 380 B | DONE | d622507d | apiCode prose list → table; replaced `{host}` placeholder with `<host>` (escape isPlaceholderToken — sidecar-class fix); SAFE per Codex |
+| 4 | `develop-dynamic-runtime-start-container` | 350 B | DONE | d622507d | start/status/restart/logs/stop sections → action+args+response table; restored `healthStatus`/`startMillis` definitions + `logLines=40` per Codex POST-WORK |
 | 5 | `develop-first-deploy-asset-pipeline-local` | 430 B | DEFERRED-TO-LATER | — | LOW-risk but off-probe; Phase 7 may pick up |
 | 6 | `develop-first-deploy-asset-pipeline-container` | 430 B | DEFERRED-TO-LATER | — | LOW-risk; covered partially in Phase 4 |
 | 7 | `develop-dynamic-runtime-start-local` | 360 B | DEFERRED-TO-LATER | — | LOW-risk; off-probe |
