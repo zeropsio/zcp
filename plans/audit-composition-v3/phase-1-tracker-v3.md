@@ -13,8 +13,8 @@ Plan: `plans/atom-corpus-hygiene-followup-2-2026-04-27.md` §5 Phase 1.
 
 | # | atom | line range | action | initial size | final size | delta | commit | codex round | notes |
 |---|---|---|---|---:|---:|---:|---|---|---|
-| 1 | `develop-first-deploy-scaffold-yaml.md` | L41-L45 (content-root tip block) | DROP | 1,438 B/render | 1,048 B/render | −390 B/render | (this commit) | SKIPPED (LOW-risk per plan §5 Phase 1 step 3) | tilde-extract / preserve detail; cross-link to `develop-deploy-modes` already at L24 + L39 |
-| 2 | `develop-first-deploy-scaffold-yaml.md` | L47 (schema-fetch line) | DROP | included in row 1 measurement | included in row 1 | included in row 1 | (this commit) | SKIPPED (LOW-risk) | generic advice; agent has `zerops_knowledge` tool |
+| 1 | `develop-first-deploy-scaffold-yaml.md` | L41-L45 (content-root tip block) | DROP | 1,438 B/render | 1,048 B/render | −390 B/render | f27b333c | SKIPPED (LOW-risk per plan §5 Phase 1 step 3) | tilde-extract / preserve detail; cross-link to `develop-deploy-modes` already at L24 + L39 |
+| 2 | `develop-first-deploy-scaffold-yaml.md` | L47 (schema-fetch line) | DROP | included in row 1 measurement | included in row 1 | included in row 1 | f27b333c | SKIPPED (LOW-risk) | generic advice; agent has `zerops_knowledge` tool |
 
 ## Probe re-run (post-F1)
 
