@@ -13,7 +13,7 @@ references-atoms: [develop-dynamic-runtime-start-container, develop-dev-server-r
 Mount basics in `claude_container.md` (boot shim). Container-only
 cautions on top:
 
-- **Mount caveats.** Deploy rebuilds the container from mount; no
+- **Mount caveats.** Deploy creates a new container from the mount; no
   transfer at deploy time. Never `ssh <hostname> cat/ls/tail …`
   for mount files — SSH adds shell-escape bugs (nested quotes in
   `sed`/`awk` break). One-shot SSH is for runtime CLIs only.

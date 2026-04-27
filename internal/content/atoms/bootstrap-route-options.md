@@ -46,7 +46,7 @@ Options always arrive in this priority order:
 ### Explicit overrides
 
 An explicit `route` on the first call bypasses discovery entirely.
-Pass it when the LLM has already chosen (from a prior discovery), or
+Pass it when you have already chosen (from a prior discovery), or
 when the user directly specified a route. Valid values: `adopt`,
 `recipe`, `classic`, `resume`. Empty route always re-enters discovery.
 

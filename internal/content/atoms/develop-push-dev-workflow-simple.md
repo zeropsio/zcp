@@ -12,8 +12,8 @@ references-atoms: [develop-platform-rules-container]
 
 ### Development workflow
 
-Edit code on `/var/www/{hostname}/`. After each set of changes deploy — the
-container auto-starts with its `healthCheck`, no manual server start:
+Edit code on `/var/www/{hostname}/`. After each set of changes redeploy —
+the runtime container auto-starts with its `healthCheck`, no manual server start:
 
 ```
 zerops_deploy targetService="{hostname}" setup="prod"

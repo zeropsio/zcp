@@ -39,7 +39,7 @@ stage hostname:
 }
 ```
 
-Bootstrap leaves the existing service's code and container untouched,
+Bootstrap leaves the existing service's code and runtime container untouched,
 creates the new stage service via `zerops_import`, and at close the
 envelope shows both snapshots:
 

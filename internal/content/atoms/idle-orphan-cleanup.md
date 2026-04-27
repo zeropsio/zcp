@@ -8,7 +8,7 @@ references-fields: [workflow.OrphanMeta.Hostname, workflow.OrphanMeta.Reason]
 ---
 
 The project has metas on disk for services that no longer exist on
-the platform. Either the services were deleted externally (Zerops
+Zerops. Either the services were deleted externally (Zerops
 dashboard, zcli) or a bootstrap session died before completing.
 Listed in `orphanMetas[]` on the envelope.
 

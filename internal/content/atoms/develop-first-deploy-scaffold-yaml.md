@@ -11,8 +11,8 @@ references-atoms: [develop-deploy-modes, develop-first-deploy-env-vars]
 ### Scaffold `zerops.yaml`
 
 Write `zerops.yaml` at the repository root before the first deploy —
-without it, `zerops_deploy` fails at the validation stage and the agent
-wastes a deploy slot.
+without it, `zerops_deploy` fails at the validation stage and you
+burn a deploy slot.
 
 **Shape (one `zerops:` block per runtime hostname the plan targets):**
 
@@ -39,7 +39,7 @@ discovered-key catalog and the cross-service `${hostname_KEY}` syntax.
 **Mode-aware tips:**
 
 - `dev` mode: `deployFiles: [.]`, build runs on SSHFS, `run.start` wakes
-  the container — no stage pair to worry about.
+  the runtime container — no stage pair to worry about.
 - `simple` mode: identical layout to dev but single-slot, no stage.
 - `standard` mode: emit separate entries for dev AND stage hostnames;
   stage's `deployFiles` points at the build output directory.

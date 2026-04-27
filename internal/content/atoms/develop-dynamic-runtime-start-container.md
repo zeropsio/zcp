@@ -12,7 +12,7 @@ references-atoms: [develop-dev-server-reason-codes, develop-platform-rules-commo
 
 ### Dynamic-runtime dev server
 
-Dev-mode dynamic-runtime containers start running `zsc noop` after
+Dev-mode dynamic runtime containers start running `zsc noop` after
 deploy — no dev process is live until you start one. Action family
 on `zerops_dev_server`:
 
@@ -34,7 +34,7 @@ Response carries `running`, `healthStatus`, `reason`, and `logTail`
 
 **After every redeploy, re-run `action=start` before `zerops_verify`** —
 the rebuild drops the dev process (see
-`develop-platform-rules-common` for the deploy-replaces-container
+`develop-platform-rules-common` for the new container rule
 rule). The hand-roll `ssh {hostname} "cmd &"` anti-pattern is in
 `develop-platform-rules-container`. See `develop-dev-server-reason-codes`
 for `reason` values.

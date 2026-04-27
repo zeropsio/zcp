@@ -18,7 +18,7 @@ present = web-facing; managed or no HTTP port = non-web).
 zerops_verify serviceHostname="{targetHostname}"
 ```
 
-Tool returns `status=healthy` once the platform can reach the service.
+Tool returns `status=healthy` once Zerops can reach the service.
 That's the whole verification — nothing to browse.
 
 **Web-facing services (dynamic/static/implicit-webserver with subdomain

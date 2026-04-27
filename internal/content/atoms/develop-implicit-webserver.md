@@ -8,7 +8,7 @@ title: "Implicit-webserver runtime — no manual start, serve from documentRoot"
 
 ### Implicit-Webserver Runtime (`php-apache`, `php-nginx`)
 
-Apache or nginx is already running inside the container and auto-serves
+Apache or nginx is already running inside the runtime container and auto-serves
 whatever's on disk. **Do not SSH in to start a server** — there is no
 `{start-command}` to run. Deploy lands the files; the web server picks
 them up immediately.
@@ -16,7 +16,7 @@ them up immediately.
 **`zerops.yaml` shape differences vs. dynamic runtimes:**
 
 - Omit `run.start` — leave the field out entirely (not even `zsc noop`).
-- Omit `run.ports` — port 80 is fixed; the platform handles it.
+- Omit `run.ports` — port 80 is fixed; Zerops handles it.
 - Set `run.documentRoot` to the web-serving subtree. For Laravel / Symfony
   / composer-based apps that's `public` (not the repo root). For apps that
   serve from the root, omit `documentRoot` or set it to `.`.

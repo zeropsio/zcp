@@ -20,7 +20,7 @@ git -C <your-project-dir> commit -m "{your-description}"
 zerops_deploy targetService="{hostname}" strategy="git-push"
 ```
 
-The tool's pre-flight refuses without committed code AND without an
+`zerops_deploy` pre-flight refuses without committed code AND without an
 origin. If push-git isn't configured yet (missing trigger, no origin),
 go through the central deploy-config action:
 

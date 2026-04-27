@@ -22,7 +22,7 @@ git -C <your-project-dir> remote get-url origin   # should match the intended re
 ```
 
 Add an origin if missing (`git remote add origin <url>`) or pass
-`remoteUrl=<url>` on the first deploy — the tool refuses to silently
+`remoteUrl=<url>` on the first deploy — `zerops_deploy` refuses to silently
 rewrite a mismatched existing origin.
 
 ## 2. First push

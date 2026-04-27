@@ -14,8 +14,8 @@ references-atoms: [develop-deploy-modes, develop-deploy-files-self-deploy, devel
 
 The dev container uses SSH push — `zerops_deploy` uploads the
 working tree from `/var/www/{hostname}/` straight into the service
-without a git remote. No credentials on your side: the tool SSHes
-using ZCP's container-internal key. The response's `mode` is `ssh`;
+without a git remote. No credentials on your side: `zerops_deploy` SSHes
+using ZCP's runtime container internal key. The response's `mode` is `ssh`;
 `sourceService` and `targetService` identify the deploy class.
 
 - Self-deploy (single service): `zerops_deploy targetService="{hostname}"` — `sourceService == targetService`, class is self.

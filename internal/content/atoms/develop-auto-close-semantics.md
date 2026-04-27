@@ -27,4 +27,4 @@ For dev-only or simple services, a single successful deploy + verify
 is enough.
 
 Close is cleanup, not commitment. Work itself is durable — code is
-in git, infrastructure is on the platform.
+in git, infrastructure is on Zerops.

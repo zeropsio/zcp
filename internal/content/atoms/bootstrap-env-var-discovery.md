@@ -48,7 +48,7 @@ is the preference/usage layer on top):
 - **shared-storage**: `hostname` only — mounted via `mount:` in
   zerops.yaml, not a network service.
 
-**Dev-container caveat**: env vars resolve at deploy time, not OS env
-vars on a `startWithoutCode: true` container. A dev container that
+**Runtime container caveat**: env vars resolve at deploy time, not OS env
+vars on a `startWithoutCode: true` dev container. A dev container that
 never deployed has the env vars in the project catalogue but not on
 `process.env`. Deploy first, then references fire.

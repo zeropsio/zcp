@@ -26,7 +26,7 @@ Two valid ways to move it forward:
    belong only in `run.base`.
 
 2. **Re-import with `startWithoutCode: true` and `override=true`.** Use
-   this when you need the container ACTIVE *before* deploying real code.
+   this when you need the runtime container ACTIVE *before* deploying real code.
    Regenerate the import YAML with `startWithoutCode: true` on the
    target service and call `zerops_import content="<yaml>" override=true`
    — `override` replaces the existing service stack (without it the

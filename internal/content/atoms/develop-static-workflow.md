@@ -11,7 +11,7 @@ title: "Static runtime — develop workflow"
 Static services have no runtime process to restart. The develop loop is:
 
 1. Edit files locally, or on the SSHFS mount in container mode.
-2. Deploy with `zerops_deploy targetService="{hostname}"` — the tool
+2. Deploy with `zerops_deploy targetService="{hostname}"` — `zerops_deploy`
    picks the right mechanism for the active strategy.
 3. Verify the change via HTTP — open the project subdomain or fetch
    with curl. Do not tail `zerops_logs` for readiness; nginx is already

@@ -13,7 +13,7 @@ goes live.
 
 | Channel | Set with | When live |
 |---|---|---|
-| Service-level env | `zerops_env action="set"` | Response's `restartedServices` lists hostnames whose containers were cycled; `restartedProcesses` has platform Process details. |
+| Service-level env | `zerops_env action="set"` | Response's `restartedServices` lists hostnames whose runtime containers were cycled; `restartedProcesses` has platform Process details. |
 | `run.envVariables` | Edit `zerops.yaml`, commit, deploy | Full redeploy. `zerops_manage action="reload"` does NOT pick them up. |
 | `build.envVariables` | Edit `zerops.yaml`, commit, deploy | Next build uses them; not visible at runtime. |
 

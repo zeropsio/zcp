@@ -10,7 +10,7 @@ references-atoms: [develop-auto-close-semantics]
 The envelope's `phase: develop-closed-auto` is set because every
 in-scope service has a successful deploy and a passing verify, and
 the session's `closeReason` is `auto-complete`. Work is durable —
-code is in git, infrastructure on the platform.
+code is in git, infrastructure on Zerops.
 
 Start the next task or explicitly close:
 

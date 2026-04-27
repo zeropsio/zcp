@@ -10,7 +10,7 @@ title: "API error responses — read apiMeta for field-level detail"
 Any `zerops_*` tool that surfaces a 4xx from the Zerops API returns
 structured field-level detail on an optional `apiMeta` JSON key.
 Missing key = server sent no detail; present key = an array of items
-with the exact fields the platform rejected.
+with the exact fields Zerops rejected.
 
 Shape:
 
@@ -19,7 +19,7 @@ Shape:
   "code": "API_ERROR",
   "apiCode": "projectImportInvalidParameter",
   "error": "Invalid parameter provided.",
-  "suggestion": "The platform flagged specific fields — see apiMeta for each field's failure reason.",
+  "suggestion": "Zerops flagged specific fields — see apiMeta for each field's failure reason.",
   "apiMeta": [
     {
       "code": "projectImportInvalidParameter",

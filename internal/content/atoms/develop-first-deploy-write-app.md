@@ -21,7 +21,7 @@ is there.
    connection strings or host/port/credentials — bootstrap's discovered
    catalog is the authoritative source.
 2. **App binds `0.0.0.0`** (not `localhost`/`127.0.0.1`). Zerops health
-   checks call the service over the container's external interface; a
+   checks call the service over the runtime container's external interface; a
    loopback-bound app reports as healthy in tests but fails in
    `zerops_verify`.
 3. **`run.start` invokes the production entry point** — must launch a
@@ -46,7 +46,7 @@ is there.
 the ZCP host.
 
 **Don't run `git init` from the ZCP-side mount.** Push-dev deploy
-handlers manage the container-side git state; running `git init` on
+handlers manage the runtime container-side git state; running `git init` on
 the SSHFS mount creates root-owned `.git/objects/` that breaks the
-container-side `git add`. Recovery: `ssh <hostname> "sudo rm -rf
-/var/www/.git"` — the next deploy re-initializes it.
+runtime container-side `git add`. Recovery: `ssh <hostname> "sudo rm -rf
+/var/www/.git"` — the next redeploy re-initializes it.

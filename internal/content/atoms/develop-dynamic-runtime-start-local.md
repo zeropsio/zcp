@@ -11,8 +11,8 @@ title: "Dynamic runtime — start dev server on your machine"
 ### Dynamic-runtime dev server
 
 In local env the dev server runs **on your machine**, not on a Zerops
-container. ZCP does not spawn local processes — use your harness's
-background task primitive so the process survives the tool call and
+runtime container. ZCP does not spawn local processes — use your harness's
+background task primitive so the process survives the ZCP call and
 stdio does not block the caller.
 
 **In Claude Code: `Bash run_in_background=true`.**

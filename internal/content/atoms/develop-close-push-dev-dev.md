@@ -22,7 +22,7 @@ zerops_dev_server action=start hostname="{hostname}" command="{start-command}" p
 zerops_verify serviceHostname="{hostname}"
 ```
 
-Each deploy gives a new container with no dev server — check
+Each redeploy gives a new container with no dev server — check
 `action=status` first; if `running: false`, call `action=start`.
 See `develop-dynamic-runtime-start-container` for parameters and
 response shape; `develop-dev-server-reason-codes` for `reason`

@@ -24,7 +24,7 @@ envVariables:
   DB_HOST: ${db_hostname}
 ```
 
-The platform rewrites `${db_connectionString}` at deploy time by
+Zerops rewrites `${db_connectionString}` at deploy time by
 looking up service `db`'s env var named `connectionString`. A wrong
 spelling resolves to the literal string `${db_connectionString}` and
 the app fails at connect time.

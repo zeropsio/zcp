@@ -19,7 +19,7 @@ the triage rather than blind-starting a process.
 in the envelope:
 
 Only `runtimeClass: dynamic` + `mode: dev` needs a manual dev-server
-action — its `zsc noop` idle container waits for `zerops_dev_server
+action — its `zsc noop` idle runtime container waits for `zerops_dev_server
 action=start`. Implicit-webserver, static, and dynamic + simple/stage
 are platform-owned post-deploy; triage ends there.
 

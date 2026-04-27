@@ -10,7 +10,7 @@ references-fields: [ops.DeployResult.Status, ops.DeployResult.Warnings, platform
 
 # Push path (GIT_TOKEN + .netrc)
 
-The container has no user credentials, so pushes to the external git
+The runtime container has no user credentials, so pushes to the external git
 remote run under `GIT_TOKEN`.
 
 ## 1. Set `GIT_TOKEN` as a project env var
@@ -36,7 +36,7 @@ zerops_deploy targetService="{targetHostname}" strategy="git-push" \
 ```
 
 The response's `status` confirms the push. If `platform.APIError.code`
-is `PREREQUISITE_MISSING: requires committed code`, the container's
+is `PREREQUISITE_MISSING: requires committed code`, the runtime container's
 `/var/www` has no commit — run the ssh commit step again and retry.
 
 Do not run `git init`, `.netrc` configuration, or `git remote add`

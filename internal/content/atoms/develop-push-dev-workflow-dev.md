@@ -25,7 +25,7 @@ on failure a `reason` code (see `develop-dev-server-reason-codes`).
 **Code-only changes**: `action=restart` is enough — no redeploy.
 
 **`zerops.yaml` changes** (env vars, ports, run-block fields): run
-`zerops_deploy` first; on the rebuilt container use `action=start`
+`zerops_deploy` first; on the rebuilt runtime container use `action=start`
 (not `restart`) — see `develop-platform-rules-common`.
 
 **If iteration goes sideways**, tail the log ring:

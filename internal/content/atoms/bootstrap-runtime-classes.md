@@ -15,7 +15,7 @@ lifecycle behaviour:
 - **Dynamic** (nodejs, go, python, bun, ruby, …) — dev setup starts with
   `zsc noop`; the real dev process starts via `zerops_dev_server`
   (container) or via your harness background task primitive (local) after
-  each deploy. Stage setup uses a real `run.start` + `healthCheck` so the
+  each redeploy. Stage setup uses a real `run.start` + `healthCheck` so the
   platform auto-starts it.
 - **Static** (nginx, static) — auto-start after deploy, no manual step.
 - **Implicit-webserver** (php-apache, php-nginx) — auto-start; set

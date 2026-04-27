@@ -42,7 +42,7 @@ ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {hostname} \
 ```
 
 The dev server drops `public/build/hot`; framework Vite helpers
-route assets through the running server. Containers restart on every
+route assets through the running server. New containers start on every
 `zerops_deploy` — restart the dev server after each redeploy.
 
 **Do NOT add `npm run build` to dev `buildCommands`.** It defeats

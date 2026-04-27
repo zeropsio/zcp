@@ -190,7 +190,7 @@ First push / re-point remote:
 zerops_deploy targetService="{targetHostname}" strategy="git-push" remoteUrl="{repoUrl}" branch="main"
 ```
 
-Later pushes (remote already on container):
+Later pushes (remote already on dev container):
 
 ```
 zerops_deploy targetService="{targetHostname}" strategy="git-push"
@@ -205,7 +205,7 @@ On error, read `platform.APIError.code`:
 | Error code | Fix | Then |
 |---|---|---|
 | `GIT_TOKEN_MISSING` | ask user for token (GitHub: Contents R/W; GitLab: write_repository), run `zerops_env action="set" project=true variables=["GIT_TOKEN={token}"]` | retry task 10 |
-| `PREREQUISITE_MISSING: requires committed code` | the container doesn't have the `import.yaml` commit — go back to task 9 and ensure `ssh {targetHostname} "cd /var/www && git add import.yaml && git commit -m '...'"` actually committed | retry task 10 |
+| `PREREQUISITE_MISSING: requires committed code` | the runtime container doesn't have the `import.yaml` commit — go back to task 9 and ensure `ssh {targetHostname} "cd /var/www && git add import.yaml && git commit -m '...'"` actually committed | retry task 10 |
 
 Optional — persist strategy in service meta so future guidance knows:
 

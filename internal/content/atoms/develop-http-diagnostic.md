@@ -19,7 +19,7 @@ whichever step resolves the error — do **not** default to
    `https://{hostname}-${zeropsSubdomainHost}.prg1.zerops.app/` for static
    / implicit-webserver runtimes (php-nginx, nginx), `-{port}` appended
    for dynamic runtimes. `${zeropsSubdomainHost}` is a project-scope env
-   var (numeric, not the projectId) injected into every container. Read
+   var (numeric, not the projectId) injected into every runtime container. Read
    it on the host with `env | grep zeropsSubdomainHost`, or call
    `zerops_discover` which returns the resolved URL directly. Do not
    guess a UUID-shaped string.

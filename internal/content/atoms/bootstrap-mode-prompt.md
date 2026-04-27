@@ -13,12 +13,12 @@ references-fields: [workflow.ServiceSnapshot.Mode, workflow.ServiceSnapshot.Stag
 Every runtime service needs a **mode**; confirm with the user before
 submitting the plan.
 
-- **dev** — single mutable container, SSHFS-mountable, no stage pair.
+- **dev** — single mutable dev container, SSHFS-mountable, no stage pair.
   Best for active iteration.
 - **standard** — dev + stage pair. The envelope reports `stageHostname`
   on the dev snapshot and a separate snapshot with `mode: stage` for
   the stage service.
-- **simple** — single container that starts real code on every deploy;
+- **simple** — single runtime container that starts real code on every redeploy;
   no SSHFS mutation lifecycle.
 - **stage** — never bootstrapped alone; it is the stage half of a
   standard pair.

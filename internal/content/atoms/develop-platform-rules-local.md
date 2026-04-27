@@ -12,7 +12,7 @@ title: "Platform rules"
   editor/IDE. No SSHFS, no `/var/www/{hostname}` mount — that shape is
   container-only.
 - **Dev server runs on your machine.** Use your harness's background
-  task primitive so the process survives the tool call and stdio does
+  task primitive so the process survives the ZCP call and stdio does
   not block. In Claude Code that is `Bash run_in_background=true`:
 
   ```
