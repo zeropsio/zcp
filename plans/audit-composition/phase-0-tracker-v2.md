@@ -13,7 +13,7 @@ Closed: 2026-04-27
 
 | step | round type | state | output | commit |
 |---|---|---|---|---|
-| Phase 0 PRE-WORK approach validation | PRE-WORK | DONE — NEEDS-REVISION (11 amendments) | `codex-round-p0-prework-followup.md` | `<phase-0-amendments-commit>` |
+| Phase 0 PRE-WORK approach validation | PRE-WORK | DONE — NEEDS-REVISION (11 amendments) | `codex-round-p0-prework-followup.md` | `137c8aa3` |
 
 The PRE-WORK round returned NEEDS-REVISION with 11 amendments (10
 numbered + C12 wire-frame variance). Per Phase 0 EXIT contract,
@@ -28,15 +28,15 @@ live corpus + plan text (per memory rule).
 
 | # | sub-pass | initial state | final state | commit | notes |
 |---|---|---|---|---|---|
-| 1 | §17 prereq P1-P11 verification | unverified | DONE — all PASS post-rebase | `<phase-0-amendments-commit>` | P2 initially failed (39 ahead / 10 behind); user-authorized rebase per CLAUDE.local.md release process; clean rebase (zero file overlap with remote) |
-| 2 | §13 infra audit (Makefile linux-amd, eval scenarios + fixture, spawnClaude entrypoint, probe + fire-audit reachable, eval-zcp authorization) | unverified | DONE — all PASS | `<phase-0-amendments-commit>` | each item confirmed present at HEAD |
-| 3 | restore `cmd/atomsize_probe/main.go` | deleted (Phase 8 G8 first cycle) | restored | `<phase-0-amendments-commit>` | from commit `3725157e` |
-| 4 | restore `cmd/atom_fire_audit/main.go` | deleted (Phase 8 G8 first cycle) | restored | `<phase-0-amendments-commit>` | from commit `55a9fbdf` |
-| 5 | run probe → baseline output | none | `probe-baseline-2026-04-27.txt` | `<phase-0-amendments-commit>` | matches §4.1 exactly: 24347 / 26142 / 26328 / 24292 / 18435 B (5/5 fixtures) |
-| 6 | run fire-audit → baseline output | none | `fire-audit-2026-04-27.txt` | `<phase-0-amendments-commit>` | 79 atoms × 4749 envelopes; 0 zero-fire DEAD atoms |
-| 7 | Phase 0 PRE-WORK Codex round | not run | DONE — NEEDS-REVISION | `<phase-0-amendments-commit>` | 11 amendments returned; all applied in-place; ledger in §16 |
-| 8 | apply 11 amendments to plan §3, §5, §8, §12; add §16 | plan unrevised | revised | `<phase-0-amendments-commit>` | each amendment surgically applied; §16 catalogs the why-trail |
-| 9 | verify gate post-amendments | unverified | green | `<phase-0-amendments-commit>` | `go test ./... -short -count=1 -race` + `make lint-local` |
+| 1 | §17 prereq P1-P11 verification | unverified | DONE — all PASS post-rebase | `137c8aa3` | P2 initially failed (39 ahead / 10 behind); user-authorized rebase per CLAUDE.local.md release process; clean rebase (zero file overlap with remote) |
+| 2 | §13 infra audit (Makefile linux-amd, eval scenarios + fixture, spawnClaude entrypoint, probe + fire-audit reachable, eval-zcp authorization) | unverified | DONE — all PASS | `137c8aa3` | each item confirmed present at HEAD |
+| 3 | restore `cmd/atomsize_probe/main.go` | deleted (Phase 8 G8 first cycle) | restored | `137c8aa3` | from commit `3725157e` |
+| 4 | restore `cmd/atom_fire_audit/main.go` | deleted (Phase 8 G8 first cycle) | restored | `137c8aa3` | from commit `55a9fbdf` |
+| 5 | run probe → baseline output | none | `probe-baseline-2026-04-27.txt` | `137c8aa3` | matches §4.1 exactly: 24347 / 26142 / 26328 / 24292 / 18435 B (5/5 fixtures) |
+| 6 | run fire-audit → baseline output | none | `fire-audit-2026-04-27.txt` | `137c8aa3` | 79 atoms × 4749 envelopes; 0 zero-fire DEAD atoms |
+| 7 | Phase 0 PRE-WORK Codex round | not run | DONE — NEEDS-REVISION | `137c8aa3` | 11 amendments returned; all applied in-place; ledger in §16 |
+| 8 | apply 11 amendments to plan §3, §5, §8, §12; add §16 | plan unrevised | revised | `137c8aa3` | each amendment surgically applied; §16 catalogs the why-trail |
+| 9 | verify gate post-amendments | unverified | green | `137c8aa3` | `go test ./... -short -count=1 -race` + `make lint-local` |
 
 ## Phase 0 EXIT (§5 Phase 0)
 

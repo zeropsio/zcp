@@ -1198,7 +1198,7 @@ The PRE-WORK Codex round at Phase 0 returned NEEDS-REVISION with
 verbatim output is preserved at
 `plans/audit-composition/codex-round-p0-prework-followup.md`. All
 11 amendments were applied in-place to §3, §5, §8, §12 in commit
-`<phase-0-amendments-commit>` (filled in at Phase 0 EXIT). This
+`137c8aa3` (filled in at Phase 0 EXIT). This
 section catalogs them for fresh-reader traceability.
 
 | # | Concern | Plan section(s) edited | Summary of revision |
