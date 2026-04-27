@@ -25,82 +25,17 @@ import (
 )
 
 // knownUnpinnedAtoms is the Phase 0 starting allowlist — atoms that
-// currently lack a scenarios_test.go atom-ID pin (verified via the
-// AST-based pinnedAtomIDs scan against the 2026-04-26 corpus). Each
-// Phase 1-8 commit that adds a new pin MUST remove the matching entry
-// in the same commit (R5 mitigation). Phase 8 EXIT empties this map.
+// lack a scenarios_test.go atom-ID pin. Phase 8 EXIT (per
+// `plans/atom-corpus-hygiene-2026-04-26.md` §15.3 G2) empties this
+// map; the new `TestScenario_PinCoverage_AllAtomsReachable` in
+// scenarios_test.go pins every atom via a panel of representative
+// envelopes, so every loaded atom has at least one
+// `requireAtomIDsContain` arg-position mention.
 //
-// Source: plans/audit-composition/unpinned-atoms-baseline.md (commit d642de60).
-var knownUnpinnedAtoms = map[string]string{
-	"bootstrap-adopt-discover":                      "(Phase 0): no scenarios_test pin.",
-	"bootstrap-classic-plan-dynamic":                "(Phase 0): no scenarios_test pin.",
-	"bootstrap-classic-plan-static":                 "(Phase 0): no scenarios_test pin.",
-	"bootstrap-close":                               "(Phase 0): no scenarios_test pin.",
-	"bootstrap-discover-local":                      "(Phase 0): no scenarios_test pin.",
-	"bootstrap-env-var-discovery":                   "(Phase 0): no scenarios_test pin.",
-	"bootstrap-mode-prompt":                         "(Phase 0): no scenarios_test pin.",
-	"bootstrap-provision-local":                     "(Phase 0): no scenarios_test pin.",
-	"bootstrap-provision-rules":                     "(Phase 0): no scenarios_test pin.",
-	"bootstrap-recipe-close":                        "(Phase 0): no scenarios_test pin.",
-	"bootstrap-recipe-match":                        "(Phase 0): no scenarios_test pin.",
-	"bootstrap-resume":                              "(Phase 0): no scenarios_test pin.",
-	"bootstrap-route-options":                       "(Phase 0): no scenarios_test pin.",
-	"bootstrap-runtime-classes":                     "(Phase 0): no scenarios_test pin.",
-	"bootstrap-verify":                              "(Phase 0): no scenarios_test pin.",
-	"bootstrap-wait-active":                         "(Phase 0): no scenarios_test pin.",
-	"develop-api-error-meta":                        "(Phase 0): no scenarios_test pin.",
-	"develop-auto-close-semantics":                  "(Phase 0): no scenarios_test pin.",
-	"develop-change-drives-deploy":                  "(Phase 0): no scenarios_test pin.",
-	"develop-checklist-dev-mode":                    "(Phase 0): no scenarios_test pin.",
-	"develop-checklist-simple-mode":                 "(Phase 0): no scenarios_test pin.",
-	"develop-close-manual":                          "(Phase 0): no scenarios_test pin.",
-	"develop-close-push-dev-dev":                    "(Phase 0): no scenarios_test pin.",
-	"develop-close-push-dev-local":                  "(Phase 0): no scenarios_test pin.",
-	"develop-close-push-dev-simple":                 "(Phase 0): no scenarios_test pin.",
-	"develop-close-push-dev-standard":               "(Phase 0): no scenarios_test pin.",
-	"develop-close-push-git-container":              "(Phase 0): no scenarios_test pin.",
-	"develop-close-push-git-local":                  "(Phase 0): no scenarios_test pin.",
-	"develop-deploy-files-self-deploy":              "(Phase 0): no scenarios_test pin.",
-	"develop-deploy-modes":                          "(Phase 0): no scenarios_test pin.",
-	"develop-dev-server-reason-codes":               "(Phase 0): no scenarios_test pin.",
-	"develop-dev-server-triage":                     "(Phase 0): no scenarios_test pin.",
-	"develop-dynamic-runtime-start-container":       "(Phase 0): no scenarios_test pin.",
-	"develop-dynamic-runtime-start-local":           "(Phase 0): no scenarios_test pin.",
-	"develop-env-var-channels":                      "(Phase 0): no scenarios_test pin.",
-	"develop-first-deploy-asset-pipeline-container": "(Phase 0): no scenarios_test pin.",
-	"develop-first-deploy-asset-pipeline-local":     "(Phase 0): no scenarios_test pin.",
-	"develop-first-deploy-env-vars":                 "(Phase 0): no scenarios_test pin.",
-	"develop-first-deploy-execute":                  "(Phase 0): no scenarios_test pin.",
-	"develop-first-deploy-execute-cmds":             "(Phase 0): no scenarios_test pin.",
-	"develop-first-deploy-intro":                    "(Phase 0): no scenarios_test pin.",
-	"develop-first-deploy-promote-stage":            "(Phase 0): no scenarios_test pin.",
-	"develop-first-deploy-scaffold-yaml":            "(Phase 0): no scenarios_test pin.",
-	"develop-first-deploy-verify":                   "(Phase 0): no scenarios_test pin.",
-	"develop-first-deploy-verify-cmds":              "(Phase 0): no scenarios_test pin.",
-	"develop-first-deploy-write-app":                "(Phase 0): no scenarios_test pin.",
-	"develop-http-diagnostic":                       "(Phase 0): no scenarios_test pin.",
-	"develop-implicit-webserver":                    "(Phase 0): no scenarios_test pin.",
-	"develop-intro":                                 "(Phase 0): no scenarios_test pin.",
-	"develop-knowledge-pointers":                    "(Phase 0): no scenarios_test pin.",
-	"develop-local-workflow":                        "(Phase 0): no scenarios_test pin.",
-	"develop-manual-deploy":                         "(Phase 0): no scenarios_test pin.",
-	"develop-mode-expansion":                        "(Phase 0): no scenarios_test pin.",
-	"develop-platform-rules-common":                 "(Phase 0): no scenarios_test pin.",
-	"develop-platform-rules-container":              "(Phase 0): no scenarios_test pin.",
-	"develop-platform-rules-local":                  "(Phase 0): no scenarios_test pin.",
-	"develop-push-dev-deploy-local":                 "(Phase 0): no scenarios_test pin.",
-	"develop-push-dev-workflow-simple":              "(Phase 0): no scenarios_test pin.",
-	"develop-push-git-deploy":                       "(Phase 0): no scenarios_test pin.",
-	"develop-ready-to-deploy":                       "(Phase 0): no scenarios_test pin.",
-	"develop-static-workflow":                       "(Phase 0): no scenarios_test pin.",
-	"develop-strategy-awareness":                    "(Phase 0): no scenarios_test pin.",
-	"develop-verify-matrix":                         "(Phase 0): no scenarios_test pin.",
-	"idle-orphan-cleanup":                           "(Phase 0): no scenarios_test pin.",
-	"strategy-push-git-push-container":              "(Phase 0): no scenarios_test pin.",
-	"strategy-push-git-push-local":                  "(Phase 0): no scenarios_test pin.",
-	"strategy-push-git-trigger-actions":             "(Phase 0): no scenarios_test pin.",
-	"strategy-push-git-trigger-webhook":             "(Phase 0): no scenarios_test pin.",
-}
+// **Source**: `plans/audit-composition/unpinned-atoms-baseline.md`
+// (commit d642de60) — Phase 0 baseline. EMPTIED by commit <pending>
+// (Phase 8 G2 closure).
+var knownUnpinnedAtoms = map[string]string{}
 
 // pinnedAtomIDs builds the set of atom IDs that scenarios_test.go pins
 // via requireAtomIDsContain or requireAtomIDsExact. Both helpers have
