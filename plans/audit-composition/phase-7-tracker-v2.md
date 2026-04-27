@@ -12,25 +12,25 @@ Closed: 2026-04-27
 
 | step | round type | state | output | commit |
 |---|---|---|---|---|
-| Phase 7 CORPUS-SCAN composition cross-validation | CORPUS-SCAN | DONE — 4/5 PASS, 1/5 STRUCTURAL-FAIL on two-pair, 1/5 comparison-limitation note on single-service | `post-followup-scores.md` "Final Phase 7 re-score" | `<phase-7-exit>` |
-| Phase 7 FINAL-VERDICT round 1 | FINAL-VERDICT | DONE — NO-SHIP (4 specific blockers: G1 missing tracker, G4 no Phase 7 verify-record, G8 probe cleanup, §8 axes K/L/M not in spec) | `final-review-v2.md` | `<phase-7-exit>` |
+| Phase 7 CORPUS-SCAN composition cross-validation | CORPUS-SCAN | DONE — 4/5 PASS, 1/5 STRUCTURAL-FAIL on two-pair, 1/5 comparison-limitation note on single-service | `post-followup-scores.md` "Final Phase 7 re-score" | `78a408c4` |
+| Phase 7 FINAL-VERDICT round 1 | FINAL-VERDICT | DONE — NO-SHIP (4 specific blockers: G1 missing tracker, G4 no Phase 7 verify-record, G8 probe cleanup, §8 axes K/L/M not in spec) | `final-review-v2.md` | `78a408c4` |
 | Phase 7 FINAL-VERDICT round 2 (post-remediation) | FINAL-VERDICT | (run after this commit lands) | (saved by Codex) | (after this commit) |
 
 ## Sub-pass work units
 
 | # | sub-pass | state | commit | notes |
 |---|---|---|---|---|
-| 1 | Re-render fixtures (post-Phase-6) | DONE | `<phase-7-exit>` | 5 fixtures dumped via probe to `rendered-fixtures-post-followup/`; renders are post-Phase-6 corpus state |
-| 2 | Composition re-score (Codex CORPUS-SCAN) | DONE | `<phase-7-exit>` | `post-followup-scores.md` with §15.3 G3 disposition |
-| 3 | G5 binding re-run on post-Phase-6 binary | DONE | `<phase-7-exit>` | `g5-smoke-test-results-post-followup.md`; idle envelope wire frame 2,406 B / text 2,220 B; Δ -32% / -34% vs Phase 1 baseline |
-| 4 | G6 binding re-run | DONE | `<phase-7-exit>` | `g6-eval-regression-post-followup.md`; PASS in 4m58s (-21% vs Phase 1's 6m17s); 0 wasted tool calls; agent assessment "no information gaps encountered" |
-| 5 | Final Codex SHIP VERDICT round 1 | DONE — NO-SHIP | `<phase-7-exit>` | 4 blockers identified |
-| 6 | Remediations (this commit): | DONE | `<phase-7-exit>` | per below |
-| 6a | Run final go test -race full suite | DONE — GREEN (0 FAIL) | `<phase-7-exit>` | output captured `/tmp/.../tasks/b1x8a77ir.output` |
-| 6b | Run make lint-local final | DONE — GREEN (0 issues) | `<phase-7-exit>` | output captured `/tmp/.../tasks/b1t6rijyo.output` |
-| 6c | Delete cmd/atomsize_probe + cmd/atom_fire_audit (G8) | DONE | `<phase-7-exit>` | per first cycle's Phase 8 G8 pattern |
-| 6d | Document axes K/L/M in `docs/spec-knowledge-distribution.md` §11.5 | DONE | `<phase-7-exit>` | new §11.5 with axis-K HIGH-risk signal list, axis-L token rule, axis-M cluster decision tables |
-| 6e | This Phase 7 tracker | DONE | `<phase-7-exit>` | this file |
+| 1 | Re-render fixtures (post-Phase-6) | DONE | `78a408c4` | 5 fixtures dumped via probe to `rendered-fixtures-post-followup/`; renders are post-Phase-6 corpus state |
+| 2 | Composition re-score (Codex CORPUS-SCAN) | DONE | `78a408c4` | `post-followup-scores.md` with §15.3 G3 disposition |
+| 3 | G5 binding re-run on post-Phase-6 binary | DONE | `78a408c4` | `g5-smoke-test-results-post-followup.md`; idle envelope wire frame 2,406 B / text 2,220 B; Δ -32% / -34% vs Phase 1 baseline |
+| 4 | G6 binding re-run | DONE | `78a408c4` | `g6-eval-regression-post-followup.md`; PASS in 4m58s (-21% vs Phase 1's 6m17s); 0 wasted tool calls; agent assessment "no information gaps encountered" |
+| 5 | Final Codex SHIP VERDICT round 1 | DONE — NO-SHIP | `78a408c4` | 4 blockers identified |
+| 6 | Remediations (this commit): | DONE | `78a408c4` | per below |
+| 6a | Run final go test -race full suite | DONE — GREEN (0 FAIL) | `78a408c4` | output captured `/tmp/.../tasks/b1x8a77ir.output` |
+| 6b | Run make lint-local final | DONE — GREEN (0 issues) | `78a408c4` | output captured `/tmp/.../tasks/b1t6rijyo.output` |
+| 6c | Delete cmd/atomsize_probe + cmd/atom_fire_audit (G8) | DONE | `78a408c4` | per first cycle's Phase 8 G8 pattern |
+| 6d | Document axes K/L/M in `docs/spec-knowledge-distribution.md` §11.5 | DONE | `78a408c4` | new §11.5 with axis-K HIGH-risk signal list, axis-L token rule, axis-M cluster decision tables |
+| 6e | This Phase 7 tracker | DONE | `78a408c4` | this file |
 | 7 | Final Codex SHIP VERDICT round 2 (post-remediation) | (after this commit) | (next) | re-invoke after commit so Codex sees clean state |
 
 ## Probe re-measurement (final)
