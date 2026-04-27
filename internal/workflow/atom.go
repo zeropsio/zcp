@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	contentpkg "github.com/zeropsio/zcp/internal/content"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -284,7 +285,7 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 	atom := KnowledgeAtom{
 		ID:       fields["id"],
 		Title:    fields["title"],
-		Body:     strings.TrimSpace(body),
+		Body:     strings.TrimSpace(contentpkg.StripAxisMarkers(body)),
 		Priority: atomPriority(fields["priority"]),
 		Axes: AxisVector{
 			Phases:               parsePhases(fields["phases"]),
