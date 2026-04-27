@@ -9,8 +9,7 @@ references-atoms: [develop-auto-close-semantics, develop-platform-rules-common, 
 
 ### Every code change must reach a durable state
 
-`deployFiles` is the persistence boundary (see
-`develop-platform-rules-common`). Iteration cadence is mode-specific:
+Iteration cadence is mode-specific:
 
 - Dev-mode dynamic runtime container: see
   `develop-push-dev-workflow-dev`.

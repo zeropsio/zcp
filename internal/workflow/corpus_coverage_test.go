@@ -221,9 +221,11 @@ func developCoverageFixtures() []coverageFixture {
 				// guidance to resolve the restart-vs-deploy
 				// conflict per Codex round (see
 				// `plans/audit-composition/dedup-candidates.md`).
-				// Pin migrated to a phrase unique to the post-dedup
-				// content.
-				"persistence boundary",
+				// Pin migrated post-dedup; followup-Phase-5 dedup
+				// F5 drops the inline persistence-boundary cross-link
+				// (canonical: develop-platform-rules-common); pin
+				// re-migrated to a still-unique post-F5 phrase.
+				"Iteration cadence is mode-specific",
 				"Knowledge on demand",
 				"Infrastructure changes",
 				// Phase-4: mode-expansion hint fires for dev services.

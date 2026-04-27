@@ -33,8 +33,7 @@ Response carries `running`, `healthStatus`, `reason`, and `logTail`
 — read these before making another call.
 
 **After every redeploy, re-run `action=start` before `zerops_verify`** —
-the rebuild drops the dev process (see
-`develop-platform-rules-common` for the new container rule
-rule). The hand-roll `ssh {hostname} "cmd &"` anti-pattern is in
+the rebuild drops the dev process (see `develop-platform-rules-common`).
+The hand-roll `ssh {hostname} "cmd &"` anti-pattern is in
 `develop-platform-rules-container`. See `develop-dev-server-reason-codes`
 for `reason` values.
