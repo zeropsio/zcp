@@ -4,11 +4,11 @@ priority: 2
 phases: [strategy-setup]
 strategies: [push-git]
 environments: [container]
-title: "push-git push setup — container env (GIT_TOKEN + .netrc)"
+title: "push-git push setup (GIT_TOKEN + .netrc)"
 references-fields: [ops.DeployResult.Status, ops.DeployResult.Warnings, platform.APIError.Code]
 ---
 
-# Push path — container env
+# Push path (GIT_TOKEN + .netrc)
 
 The container has no user credentials, so pushes to the external git
 remote run under `GIT_TOKEN`.

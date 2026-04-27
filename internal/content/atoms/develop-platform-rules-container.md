@@ -3,12 +3,12 @@ id: develop-platform-rules-container
 priority: 5
 phases: [develop-active]
 environments: [container]
-title: "Platform rules — container extras"
+title: "Platform rules"
 references-fields: [ops.DevServerResult.Running, ops.DevServerResult.HealthStatus, ops.DevServerResult.StartMillis, ops.DevServerResult.Reason, ops.DevServerResult.LogTail]
 references-atoms: [develop-dynamic-runtime-start-container, develop-dev-server-reason-codes]
 ---
 
-### Platform rules (container environment)
+### Platform rules
 
 Mount basics in `claude_container.md` (boot shim). Container-only
 cautions on top:

@@ -404,7 +404,7 @@ func developCoverageFixtures() []coverageFixture {
 				}},
 			},
 			MustContain: []string{
-				"Closing the task (local)",
+				"Local mode builds from your committed tree",
 				`zerops_deploy targetService="appdev"`,
 			},
 		},
@@ -422,7 +422,7 @@ func developCoverageFixtures() []coverageFixture {
 				}},
 			},
 			MustContain: []string{
-				"Closing the task (local)",
+				"Local mode builds from your committed tree",
 				`zerops_deploy targetService="appstage"`,
 			},
 		},
@@ -561,13 +561,14 @@ func matrixCoverageFixtures() []coverageFixture {
 			// for THIS specific user-test envelope are greppable separately.
 			//
 			// MustContain pins were grep-verified UNIQUE to their anchor atoms
-			// 2026-04-26 (Codex round 3 verdict: UNIQUE-MATCH-CONFIRMED):
-			//   develop-push-dev-deploy-container ⟶ "Push-Dev Deploy Strategy — container"
+			// (Codex round 3 verdict 2026-04-26: UNIQUE-MATCH-CONFIRMED;
+			// post-hygiene-followup Phase 3 axis-L migration 2026-04-27):
+			//   develop-push-dev-deploy-container ⟶ "The dev container uses SSH push"
 			//   develop-push-dev-workflow-simple  ⟶ "auto-starts with its `healthCheck`"
 			//   develop-close-push-dev-simple     ⟶ "Simple-mode services auto-start on deploy"
 			// None contain placeholders; survive Synthesize substitution.
-			// If Phase 7 axis-tightening silently dropped any of the three,
-			// TestCorpusCoverage_RoundTrip fails on the named target.
+			// If a later axis-tightening silently dropped any, TestCorpusCoverage_RoundTrip
+			// fails on the named target.
 			Name: "develop_simple_deployed_container",
 			Envelope: StateEnvelope{
 				Phase:       PhaseDevelopActive,
@@ -579,7 +580,7 @@ func matrixCoverageFixtures() []coverageFixture {
 				}},
 			},
 			MustContain: []string{
-				"Push-Dev Deploy Strategy — container",
+				"The dev container uses SSH push",
 				"auto-starts with its `healthCheck`",
 				"Simple-mode services auto-start on deploy",
 			},

@@ -5,7 +5,7 @@ phases: [develop-active]
 deployStates: [deployed]
 strategies: [push-git]
 environments: [container]
-title: "Close task — push-git strategy (container)"
+title: "Close task — push-git strategy"
 ---
 
 ### Closing the task — container + push-git

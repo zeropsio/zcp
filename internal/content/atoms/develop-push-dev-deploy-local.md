@@ -5,10 +5,10 @@ phases: [develop-active]
 deployStates: [deployed]
 strategies: [push-dev]
 environments: [local]
-title: "Push-dev strategy — deploy via zerops_deploy (local)"
+title: "Push-dev strategy — deploy via zerops_deploy"
 ---
 
-### Push-Dev Deploy Strategy — local
+### Push-Dev Deploy Strategy
 
 `zerops_deploy` runs `zcli push` from your working directory into the
 linked Zerops stage. Requires `zerops.yaml` at the repo root and `zcli`

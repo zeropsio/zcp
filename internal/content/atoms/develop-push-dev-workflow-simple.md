@@ -6,7 +6,7 @@ deployStates: [deployed]
 modes: [simple]
 strategies: [push-dev]
 environments: [container]
-title: "Push-dev iteration cycle (simple mode, container)"
+title: "Push-dev iteration cycle (simple mode)"
 references-atoms: [develop-platform-rules-container]
 ---
 

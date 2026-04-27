@@ -6,10 +6,10 @@ deployStates: [deployed]
 modes: [dev, stage]
 strategies: [push-dev]
 environments: [local]
-title: "Close task — push-dev local"
+title: "Close task — push-dev"
 ---
 
-### Closing the task (local)
+### Closing the task
 
 Local mode builds from your committed tree — no SSHFS, no dev container.
 Deploy and verify from your checkout:

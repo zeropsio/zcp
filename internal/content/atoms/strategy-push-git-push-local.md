@@ -4,11 +4,11 @@ priority: 2
 phases: [strategy-setup]
 strategies: [push-git]
 environments: [local]
-title: "push-git push setup — local env (user's git)"
+title: "push-git push setup (user's git)"
 references-fields: [ops.DeployResult.Status, ops.DeployResult.Warnings, ops.DeployResult.Message]
 ---
 
-# Push path — local env
+# Push path (user's git)
 
 Local env uses the user's own git credentials (SSH keys, Keychain,
 credential manager). **No `GIT_TOKEN`, no `.netrc`.** ZCP does not

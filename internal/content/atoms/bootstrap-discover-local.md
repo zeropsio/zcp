@@ -4,7 +4,7 @@ priority: 1
 phases: [bootstrap-active]
 environments: [local]
 steps: [discover]
-title: "Bootstrap — local-mode discovery addendum"
+title: "Bootstrap — discovery addendum"
 ---
 
 ### Local-mode discovery

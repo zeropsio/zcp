@@ -4,7 +4,7 @@ priority: 3
 phases: [develop-active]
 modes: [dev]
 environments: [container]
-title: "Dev-mode checklist extras (container)"
+title: "Dev-mode checklist extras"
 references-fields: [workflow.ServiceSnapshot.Mode]
 ---
 

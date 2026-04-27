@@ -5,12 +5,12 @@ phases: [develop-active]
 runtimes: [dynamic]
 environments: [container]
 modes: [dev, standard]
-title: "Dynamic runtime — start dev server via zerops_dev_server (container)"
+title: "Dynamic runtime — start dev server via zerops_dev_server"
 references-fields: [ops.DevServerResult.Running, ops.DevServerResult.HealthStatus, ops.DevServerResult.StartMillis, ops.DevServerResult.Reason, ops.DevServerResult.LogTail, ops.DevServerResult.Port, ops.DevServerResult.HealthPath]
 references-atoms: [develop-dev-server-reason-codes, develop-platform-rules-common, develop-platform-rules-container]
 ---
 
-### Dynamic-runtime dev server (container)
+### Dynamic-runtime dev server
 
 Dev-mode dynamic-runtime containers start running `zsc noop` after
 deploy — no dev process is live until you start one. Action family

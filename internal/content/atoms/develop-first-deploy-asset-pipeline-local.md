@@ -6,10 +6,10 @@ modes: [dev, simple, standard]
 runtimes: [implicit-webserver]
 environments: [local]
 deployStates: [never-deployed]
-title: "Local + asset pipeline — build assets locally before verify"
+title: "Asset pipeline — build assets locally before verify"
 ---
 
-### Dev/simple + frontend asset pipeline (local)
+### Frontend asset pipeline
 
 Recipes that ship a frontend asset pipeline
 (Laravel+Vite, Symfony+Encore, …) intentionally OMIT `npm run build`

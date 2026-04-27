@@ -5,10 +5,10 @@ phases: [develop-active]
 runtimes: [dynamic]
 environments: [local]
 modes: [dev, standard]
-title: "Dynamic runtime — start dev server on your machine (local)"
+title: "Dynamic runtime — start dev server on your machine"
 ---
 
-### Dynamic-runtime dev server (local)
+### Dynamic-runtime dev server
 
 In local env the dev server runs **on your machine**, not on a Zerops
 container. ZCP does not spawn local processes — use your harness's

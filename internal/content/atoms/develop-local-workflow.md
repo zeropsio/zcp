@@ -6,7 +6,7 @@ environments: [local]
 title: "Local development workflow"
 ---
 
-### Development workflow (local)
+### Development workflow
 
 Edit code locally in your checkout. Managed services (databases, caches,
 object storage) are reachable over Zerops VPN:

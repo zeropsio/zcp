@@ -4,7 +4,7 @@ priority: 3
 phases: [develop-active]
 modes: [simple]
 environments: [container]
-title: "Simple-mode checklist extras (container)"
+title: "Simple-mode checklist extras"
 ---
 
 ### Checklist (simple-mode services)

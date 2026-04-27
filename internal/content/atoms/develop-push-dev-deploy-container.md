@@ -5,12 +5,12 @@ phases: [develop-active]
 deployStates: [deployed]
 strategies: [push-dev]
 environments: [container]
-title: "Push-dev strategy — deploy via zerops_deploy (container)"
+title: "Push-dev strategy — deploy via zerops_deploy"
 references-fields: [ops.DeployResult.Mode, ops.DeployResult.SourceService, ops.DeployResult.TargetService]
 references-atoms: [develop-deploy-modes, develop-deploy-files-self-deploy, develop-platform-rules-container]
 ---
 
-### Push-Dev Deploy Strategy — container
+### Push-Dev Deploy Strategy
 
 The dev container uses SSH push — `zerops_deploy` uploads the
 working tree from `/var/www/{hostname}/` straight into the service

@@ -6,10 +6,10 @@ modes: [dev, simple, standard]
 runtimes: [implicit-webserver]
 environments: [container]
 deployStates: [never-deployed]
-title: "Dev + asset pipeline — build assets over SSH before verify"
+title: "Asset pipeline — build assets over SSH before verify"
 ---
 
-### Dev/simple + frontend asset pipeline (container)
+### Frontend asset pipeline
 
 Recipes whose backend is `php-nginx` / `php-apache` and whose frontend
 runs through a build pipeline (Laravel+Vite, Symfony+Encore, …)

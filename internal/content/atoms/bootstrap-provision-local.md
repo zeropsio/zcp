@@ -4,7 +4,7 @@ priority: 2
 phases: [bootstrap-active]
 environments: [local]
 steps: [provision]
-title: "Bootstrap — local-mode provision addendum"
+title: "Bootstrap — provision addendum"
 ---
 
 ### Local-mode provision

@@ -3,10 +3,10 @@ id: develop-platform-rules-local
 priority: 5
 phases: [develop-active]
 environments: [local]
-title: "Platform rules — local env extras"
+title: "Platform rules"
 ---
 
-### Platform rules (local environment)
+### Platform rules
 
 - **Code lives in your working directory.** Edit normally with your
   editor/IDE. No SSHFS, no `/var/www/{hostname}` mount — that shape is
