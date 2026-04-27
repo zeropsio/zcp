@@ -28,5 +28,5 @@ Flow for each never-deployed runtime:
 4. **Verify** (see `develop-verify-matrix` for per-service path). Close
    and completion semantics are in `develop-auto-close-semantics`.
 
-Don't skip to edits before the first deploy lands — SSHFS mounts can
-be empty and HTTP probes return errors before any code is delivered.
+Don't skip to edits before the first deploy lands — HTTP probes
+return errors before any code is delivered.

@@ -10,7 +10,7 @@ references-fields: [workflow.ServiceSnapshot.Strategy, workflow.ServiceSnapshot.
 ### Deploy strategy — current + how to change
 
 Each runtime service in the envelope has a `strategy` field:
-`push-dev` (SSH self-deploy from the dev container), `push-git`
+`push-dev` (direct deploy from your workspace), `push-git`
 (push committed code to an external git remote — carries a
 `trigger: webhook|actions|unset` sub-field), `manual` (you
 orchestrate every deploy yourself), or `unset` (bootstrap-written

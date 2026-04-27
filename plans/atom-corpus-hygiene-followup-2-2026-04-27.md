@@ -409,6 +409,18 @@ proposal (now resolved above):
        Codex round 1 catch.
    Apply F5 first; corpus-wide drops from CORPUS-SCAN follow.
 
+   **Edit 3 (SPLIT-CANDIDATE) deferred**: per-edit Codex round 1
+   (`aef2a81baf1a7eefa`) surfaced that tightening
+   `develop-push-git-deploy.md` to `environments: [container]`
+   would break test pins on local-env push-git develop-active
+   fixtures (`scenarios_test.go:810,948` + `corpus_coverage_test.go:624`).
+   The proper fix requires authoring a new
+   `develop-push-git-deploy-local.md` atom — content-authoring
+   work, outside cycle 3's "5 content findings" scope. Tracked in
+   `plans/audit-composition-v3/deferred-followups-v3.md` DF-1.
+   Status quo (atom fires on local-env with wrong content) is
+   pre-existing; cycle 3 does not introduce or worsen it.
+
 5. **Per-edit Codex round** for any DROP-LEAK that touches a
    broad atom (priority 1-3). LOW-risk for narrow atoms
    (priority 4-7).

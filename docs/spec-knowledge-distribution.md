@@ -648,6 +648,94 @@ word "agent" refers to a SPAWNED SUB-AGENT (Sonnet model via the
 `Agent()` template). KEEP "agent" there — it's intentional
 sub-agent terminology, not author-perspective drift.
 
+### 11.6 Content-quality axis N — UNIVERSAL-ATOM PER-ENV LEAK
+
+(Authored 2026-04-27 cycle 3; corpus-scan ledger lives in
+`plans/audit-composition-v3/axis-n-candidates.md`.)
+
+**Definition**: an atom WITHOUT `environments:` axis restriction
+(or with both env values implicitly) carries env-specific edit-
+location, runtime-shell, or storage-layer detail. The per-env
+context is already established by `develop-platform-rules-local`
+and `develop-platform-rules-container` (which always co-fire on
+develop-active envelopes). Universal atoms should write at the
+universal-truth layer; let per-env atoms fill the where-to-edit /
+how-to-run gaps.
+
+**Distinction from Axis K**:
+- Axis K = atom mentions OUTSIDE-its-envelope flow detail (cross-
+  flow leakage; e.g. a container-axis atom mentions local mode).
+- Axis N = atom WITHOUT env axis carries env-specific detail
+  that belongs in per-env atoms (within-flow over-specification).
+
+**Judgment test (per phrase)**: would an agent on EITHER env
+benefit from this phrase, or does it hard-code one env's mental
+model?
+
+**HIGH-risk env tokens** (flag for classification):
+- `locally`, `your machine`, `your editor`, `your IDE`
+- `SSHFS`, `/var/www/{hostname}`, `container env`, `local env`
+- `on your CWD`, `on the mount`, `via SSH`, `over SSH`,
+  `dev container` (when the atom isn't intrinsically about
+  push-dev container flows)
+
+**Per-match classification**:
+
+- **DROP-LEAK**: atom is universal; per-env detail belongs in
+  `develop-platform-rules-{local,container}`; drop and rely on
+  per-env atoms.
+- **KEEP-LOAD-BEARING**: the per-env detail IS the guardrail;
+  can't be dropped without losing operational guidance (treat as
+  Axis K signal #3/#4/#5).
+- **SPLIT-CANDIDATE**: atom genuinely needs per-env split; tighten
+  the `environments:` axis restriction.
+- **UNIFICATION-CANDIDATE**: atom is currently env-split but
+  marginalia is env-irrelevant; merge candidate (see inverse
+  rule below).
+
+**Worked examples** (post-cycle-2 baseline):
+
+- `develop-static-workflow.md` L13 "Edit files locally, or on the
+  SSHFS mount in container mode." → DROP-LEAK; rewrite "Edit
+  files." Per-env edit location is in
+  `develop-platform-rules-{local,container}` which always co-fire
+  on develop-active envelopes.
+- `develop-strategy-review.md` L15 parenthetical "(zcli push from
+  your workspace: dev container → stage, or local CWD → stage)"
+  → DROP-LEAK; drop the parenthetical. Per-env shape is in
+  `develop-push-dev-deploy-{container,local}`.
+
+**Inverse rule (UNIFICATION candidate)**:
+
+> If two env-split atoms differ ONLY in env-marginal phrasing
+> (one says "edit files locally", the other says "edit files on
+> SSHFS mount") and the per-env detail is already in platform-
+> rules atoms, the two are candidates for UNIFICATION into a
+> single env-agnostic atom. Resolution: merge atoms + cross-link
+> to per-env platform-rules atoms; drop the env axis on the
+> merged atom.
+
+**DO-NOT-UNIFY exception**: if the env split itself encodes a
+tool-selection (signal #3), recovery (#4), or do-not (#5)
+guardrail — e.g., `develop-platform-rules-local` (use
+`Bash run_in_background=true` harness; `zerops_dev_server` is
+container-only) vs `develop-platform-rules-container` (use
+`zerops_dev_server`; do NOT hand-roll `ssh <host> "cmd &"`
+backgrounding) — the env split IS the load-bearing signal. Such
+atoms are NEVER unification candidates regardless of marginal
+phrasing similarity. Apply this exception BEFORE flagging a
+pair as UNIFICATION-CANDIDATE.
+
+**Risk + mitigation**: LOW. The mitigation is that
+`develop-platform-rules-{local,container}` always co-fire on
+develop-active envelopes (verified by Phase 4 fire-audit-style
+check). Universal atoms can rely on the cross-link rendering
+the per-env detail next to them in the agent's context window.
+If a future axis change breaks that co-fire guarantee, every
+DROP-LEAK applied here regresses to missing-information; the
+cycle-3 Phase 4 POST-WORK Codex round verified the cross-link
+holds at the time of the corpus pass.
+
 ---
 
 ## Appendix: Code Reference Map

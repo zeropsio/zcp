@@ -21,7 +21,7 @@ files; the web server picks them up immediately.
 
 **Deploy flow (both strategies):**
 
-1. Write or edit files at `/var/www/<hostname>/`.
+1. Write or edit application files.
 2. Run the strategy-specific deploy (see the active strategy atom).
 3. Verify as a web-facing service; see `develop-verify-matrix`.
 

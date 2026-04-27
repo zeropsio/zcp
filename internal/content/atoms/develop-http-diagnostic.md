@@ -3,7 +3,7 @@ id: develop-http-diagnostic
 priority: 2
 phases: [develop-active]
 title: "HTTP diagnostics — priority order"
-references-atoms: [develop-platform-rules-container]
+references-atoms: [develop-platform-rules-container, develop-platform-rules-local]
 ---
 
 ### HTTP diagnostics
@@ -22,9 +22,11 @@ default to
    use `zerops_discover` for the resolved URL. Do not guess a UUID.
 3. **`zerops_logs severity="error" since="5m"`** — recent platform errors
    (nginx, crash traces, deploy failures) without opening a shell.
-4. **Framework log file on the mount** — read via Read tool
-   (`/var/www/{hostname}/storage/logs/laravel.log`, `var/log/...`). See
-   `develop-platform-rules-container` for the mount-vs-SSH split.
+4. **Framework log file** — read via Read tool at the framework's
+   project-relative log path (`storage/logs/laravel.log`,
+   `var/log/...`). Per-env access detail in
+   `develop-platform-rules-container` (mount-vs-SSH split) and
+   `develop-platform-rules-local` (CWD reads).
 5. **Last resort: SSH + curl localhost** — only when earlier checks miss
    container-local state (worker-only service, non-default bind). Even
    then, `zerops_verify` usually already encodes the check.
