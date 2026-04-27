@@ -4,12 +4,12 @@ priority: 2
 phases: [develop-active]
 deployStates: [deployed]
 strategies: [manual]
-title: "Manual strategy — external deploys"
+title: "Manual deploy strategy"
 ---
 
 ### Manual Deploy Strategy
 
-You control when and what to deploy — the user controls deploy timing.
+You control what to deploy; the user controls deploy timing.
 
 **Deploy directly:**
 - Dev: `zerops_deploy targetService="{hostname}"`
@@ -18,11 +18,10 @@ You control when and what to deploy — the user controls deploy timing.
 
 **After deploy:**
 - Verify health: `zerops_verify serviceHostname="..."`
-- Subdomain persists across re-deploys. Check `zerops_discover` for current status and URL.
+- Subdomain persists; check `zerops_discover` for status and URL.
 
-**Dev services (`zsc noop`)** do not auto-start after any deploy
-(manual, push-dev, push-git). Start via `zerops_dev_server` in
-container env, or your harness background-task primitive in local
+**Dev services (`zsc noop`)** do not auto-start after deploy. Start via
+`zerops_dev_server` in container env, or harness background task in local
 env:
 
 ```
@@ -34,7 +33,7 @@ Bash run_in_background=true command="{start-command}"
 ```
 
 **Stage / simple services:** auto-start with `healthCheck`; no
-`zerops_dev_server` call.
+`zerops_dev_server`.
 
 **Code-only changes:** for dev services, `zerops_dev_server
 action=restart` — no redeploy needed.

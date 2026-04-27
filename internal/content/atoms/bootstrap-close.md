@@ -9,30 +9,27 @@ references-fields: [workflow.ServiceSnapshot.Bootstrapped, workflow.ServiceSnaps
 
 ### Closing bootstrap
 
-Bootstrap is **infrastructure-only**. After you call
-`action="complete" step="close"`, every planned runtime appears in the
-envelope with `bootstrapped: true` — infrastructure is provisioned
-(managed services `RUNNING`, runtimes registered, dev containers
-SSH-mount-ready, managed env vars discoverable). For classic and
-recipe-with-first-deploy-later routes the same services show
-`deployed: false` and enter the develop first-deploy branch. For
-adopt-route services and recipes that deployed during bootstrap the
-envelope shows `deployed: true` directly.
+Bootstrap is **infrastructure-only**. After
+`action="complete" step="close"`, planned runtimes show
+`bootstrapped: true`: managed services are `RUNNING`, runtimes are
+registered, dev containers are SSH-mount-ready, and managed env vars
+are discoverable. Classic and recipe-with-first-deploy-later services
+show `deployed: false` and enter develop's first-deploy branch. Adopted
+services and recipes that deployed during bootstrap show `deployed: true`.
 
 No application code is written, no `zerops.yaml` generated, and no
 deploy runs as part of bootstrap close itself.
 
 **Next step — `zerops_workflow action="start" workflow="develop"`.**
-Develop runs the full code-and-deploy loop:
+Develop owns:
 
-1. Scaffold `zerops.yaml` driven by the planned runtimes.
-2. Write the application code that implements the user's intent.
-3. Run the first deploy and verify — services with `deployed: false`
-   enter the first-deploy branch.
-4. Iterate on failures — stop after 5 unsuccessful attempts and escalate to the user.
+1. Scaffold `zerops.yaml`.
+2. Write application code.
+3. Run first deploy and verify for services with `deployed: false`.
+4. Iterate failures; after 5 unsuccessful attempts, escalate.
 
 Direct tools (`zerops_scale`, `zerops_env`, `zerops_subdomain`,
-`zerops_discover`) are always callable without a workflow wrapper — use
-them for one-shot infra adjustments that don't warrant a session.
+`zerops_discover`) stay callable without a workflow wrapper for one-shot
+infra changes.
 
 Complete this step before starting develop.

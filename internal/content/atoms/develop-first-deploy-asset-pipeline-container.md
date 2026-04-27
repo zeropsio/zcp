@@ -6,21 +6,19 @@ modes: [dev, simple, standard]
 runtimes: [implicit-webserver]
 environments: [container]
 deployStates: [never-deployed]
-title: "Asset pipeline — build assets over SSH before verify"
+title: "Asset pipeline — SSH build before verify"
 ---
 
 ### Frontend asset pipeline
 
-Recipes whose backend is `php-nginx` / `php-apache` and whose frontend
-runs through a build pipeline (Laravel+Vite, Symfony+Encore, …)
-intentionally OMIT `npm run build` from the `dev` setup `buildCommands`.
-The design assumes iterative HMR via a Vite dev server started over SSH —
-not a production asset rebuild on every `zcli push`.
+Recipes with `php-nginx` / `php-apache` plus frontend build pipeline
+(Laravel+Vite, Symfony+Encore, …) intentionally OMIT `npm run build`
+from dev `buildCommands`. Dev assumes HMR via Vite over SSH, not a
+production asset rebuild on every `zcli push`.
 
-**Consequence:** `public/build/manifest.json` is missing after the
-first deploy. Views rendering Vite helpers throw HTTP 500
-("Vite manifest not found"). `zerops_verify` fails for this reason
-before reporting any framework-level bug.
+**Consequence:** after first deploy, `public/build/manifest.json` is
+missing. Vite helpers throw HTTP 500 ("Vite manifest not found"), so
+`zerops_verify` fails before any framework bug.
 
 **After the first `zerops_deploy` lands, BEFORE `zerops_verify`:**
 
@@ -29,22 +27,20 @@ ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {hostname} \
   'cd /var/www && npm run build'
 ```
 
-The build writes `public/build/manifest.json` into the dev container;
-SSHFS propagates it without a redeploy. PHP-FPM reads it on the
-next request — no restart needed.
+The build writes `public/build/manifest.json` in the dev container;
+SSHFS propagates it without redeploy. PHP-FPM reads it on next request —
+no restart needed.
 
-**For iterative frontend work, start the dev server over SSH** —
-it watches files and survives template edits:
+**For iterative frontend work, start Vite over SSH**:
 
 ```
 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {hostname} \
   'cd /var/www && nohup npm run dev > /tmp/vite.log 2>&1 &'
 ```
 
-The dev server drops `public/build/hot`; framework Vite helpers
-route assets through the running server. New containers start on every
-`zerops_deploy` — restart the dev server after each redeploy.
+Vite drops `public/build/hot`; helpers route assets through it. New
+containers start on every `zerops_deploy` — restart Vite after each
+redeploy.
 
 **Do NOT add `npm run build` to dev `buildCommands`.** It defeats
-the HMR-first dev setup (every push rebuilds assets, ~20–30 s
-penalty).
+HMR-first dev setup: every push rebuilds assets (~20–30 s penalty).

@@ -2,13 +2,13 @@
 id: develop-platform-rules-common
 priority: 2
 phases: [bootstrap-active, develop-active]
-title: "Platform rules — always applicable"
+title: "Platform rules"
 references-atoms: [develop-env-var-channels, develop-first-deploy-env-vars]
 ---
 
 ### Platform rules
 
-- **Runtime container user is `zerops`, not root.** Package installs need `sudo`
+- **Runtime user is `zerops`, not root.** Package installs need `sudo`
   (`sudo apk add …` on Alpine, `sudo apt-get install …` on Debian/Ubuntu).
 - **Deploy = new container.** Local files in the current runtime container are
   lost; only content covered by `deployFiles` survives across redeploys.
@@ -16,9 +16,8 @@ references-atoms: [develop-env-var-channels, develop-first-deploy-env-vars]
   `prod`, `stage`, `dev`) is deployed independently — these are canonical
   recipe names, NOT hostnames.
 - **Build ≠ runtime container.** Runtime packages → `run.prepareCommands`;
-  build-only packages → `build.prepareCommands`. Tools available at
-  build time may not be at run time. See guide `deployment-lifecycle`
-  for the full split.
+  build-only packages → `build.prepareCommands`. Build-time tools may
+  not exist at run time; see guide `deployment-lifecycle`.
 - Env var live timing and cross-service syntax:
   `develop-env-var-channels` / `develop-first-deploy-env-vars`.
 - Service config changes (shared storage, scaling, nginx fragments):

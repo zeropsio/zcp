@@ -3,17 +3,17 @@ id: develop-first-deploy-scaffold-yaml
 priority: 2
 phases: [develop-active]
 envelopeDeployStates: [never-deployed]
-title: "Scaffold zerops.yaml for the first deploy"
+title: "Scaffold zerops.yaml"
 references-fields: [ops.DiscoverResult.Services, workflow.ServiceSnapshot.Mode, workflow.ServiceSnapshot.StageHostname]
 references-atoms: [develop-deploy-modes, develop-first-deploy-env-vars]
 ---
 
 ### Scaffold `zerops.yaml`
 
-Scaffold `zerops.yaml` before the first deploy. Root placement and
-`setup:` naming rules are in `develop-platform-rules-common`.
+Scaffold `zerops.yaml` before first deploy. Root placement and `setup:`
+naming rules are in `develop-platform-rules-common`.
 
-**Shape (one `zerops:` block per runtime hostname the plan targets):**
+**Shape (one `zerops:` block per targeted runtime hostname):**
 
 ```yaml
 zerops:
@@ -32,19 +32,16 @@ zerops:
       start: <run command, not a build command>
 ```
 
-**Env var references** — see `develop-first-deploy-env-vars` for the
-discovered-key catalog and `${hostname_KEY}` syntax; see
-`develop-env-var-channels` for placement and live-timing rules.
+**Env var references** — see `develop-first-deploy-env-vars` for
+`${hostname_KEY}` syntax and `develop-env-var-channels` for live timing.
 
-**Mode-aware tips:** emit separate setup entries for each targeted
-runtime hostname. See `develop-deploy-modes` for deployFiles per
-self-deploy vs cross-deploy class.
+**Mode-aware tips:** emit separate setup entries per targeted hostname.
+See `develop-deploy-modes` for deployFiles by deploy class.
 
-**Content-root tip:** for runtimes that expect assets at the
-working-dir root (e.g. ASP.NET's `wwwroot/` lookup at
-`/var/www/wwwroot/`), use **tilde-extract** (`./out/~`) so contents
-land at `/var/www/` instead of `/var/www/out/`. Use **preserve**
-(`./out`) when `run.start` references an explicit subpath like
-`./out/app/App.dll`. Full decision rule in `develop-deploy-modes`.
+**Content-root tip:** if runtime expects assets at working-dir root
+(e.g. ASP.NET `wwwroot/` at `/var/www/wwwroot/`), use tilde-extract
+(`./out/~`) so contents land at `/var/www/`. Use preserve (`./out`) when
+`run.start` references a subpath like `./out/app/App.dll`. Full decision
+rule in `develop-deploy-modes`.
 
 Schema: fetch `zerops.yaml` JSON Schema via `zerops_knowledge` if unsure.

@@ -2,15 +2,13 @@
 id: develop-api-error-meta
 priority: 2
 phases: [bootstrap-active, develop-active]
-title: "API error responses — read apiMeta for field-level detail"
+title: "API errors — read apiMeta"
 ---
 
 ### Read `apiMeta` on every error response
 
-Any `zerops_*` tool that surfaces a 4xx from the Zerops API returns
-structured field-level detail on an optional `apiMeta` JSON key.
-Missing key = server sent no detail; present key = an array of items
-with the exact fields Zerops rejected.
+Any `zerops_*` tool surfacing a Zerops API 4xx may include `apiMeta`.
+Missing key = no server detail; present key = exact rejected fields.
 
 Shape:
 
@@ -32,19 +30,19 @@ Shape:
 }
 ```
 
-Each `apiMeta[].metadata` key is a **field path** (e.g.
-`{hostname}.mode`, `build.base`, `parameter`); each value lists the
-reasons. Fix those fields in your YAML and retry — do not guess.
+Each `apiMeta[].metadata` key is a **field path** (`{hostname}.mode`,
+`build.base`, `parameter`); values list reasons. Fix those YAML fields
+and retry — do not guess.
 
 Common `apiCode` shapes:
 
 | `apiCode` | `metadata` key | Meaning |
 |---|---|---|
-| `projectImportInvalidParameter` | `<host>.mode` | service-type/mode combination not allowed |
+| `projectImportInvalidParameter` | `<host>.mode` | type/mode combination not allowed |
 | `projectImportMissingParameter` | `parameter` (value `<host>.mode`) | required field missing |
 | `serviceStackTypeNotFound` | `serviceStackTypeVersion` | version string not in platform catalog |
 | `zeropsYamlInvalidParameter` | `build.base` etc. | zerops.yaml validator caught the field pre-build |
 | `yamlValidationInvalidYaml` | `reason` (with `line N:`) | YAML syntax error |
 
-Per-service import failures land in `serviceErrors[].meta` with the
-same shape — one entry per failing service-stack.
+Per-service import failures use `serviceErrors[].meta` with the same
+shape, one entry per failing service-stack.

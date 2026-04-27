@@ -8,28 +8,23 @@ references-atoms: [develop-platform-rules-container]
 
 ### HTTP diagnostics
 
-When the app returns 500 / 502 / empty body, follow this order. Stop at
-whichever step resolves the error — do **not** default to
+For 500 / 502 / empty body, stop at the first useful signal; do **not**
+default to
 `ssh {hostname} curl localhost` for diagnosis.
 
 1. **`zerops_verify serviceHostname="{hostname}"`** — start with the
    canonical health probe and structured diagnosis; see
    `develop-verify-matrix` for the full verify path.
-2. **Subdomain URL** — format is
-   `https://{hostname}-${zeropsSubdomainHost}.prg1.zerops.app/` for static
-   / implicit-webserver runtimes (php-nginx, nginx), `-{port}` appended
-   for dynamic runtimes. `${zeropsSubdomainHost}` is a project-scope env
-   var (numeric, not the projectId) injected into every runtime container. Read
-   it on the host with `env | grep zeropsSubdomainHost`, or call
-   `zerops_discover` which returns the resolved URL directly. Do not
-   guess a UUID-shaped string.
-3. **`zerops_logs severity="error" since="5m"`** — surfaces recent error-
-   level platform logs (nginx errors, crash traces, deploy failures)
-   without opening a shell.
-4. **Framework log file on the mount** — read via Read tool (e.g.
-   `/var/www/{hostname}/storage/logs/laravel.log`, `var/log/...`). See
+2. **Subdomain URL** — static / implicit-webserver:
+   `https://{hostname}-${zeropsSubdomainHost}.prg1.zerops.app/`; dynamic
+   adds `-{port}`. `${zeropsSubdomainHost}` is numeric and project-scope,
+   not the projectId. Read it with `env | grep zeropsSubdomainHost`, or
+   use `zerops_discover` for the resolved URL. Do not guess a UUID.
+3. **`zerops_logs severity="error" since="5m"`** — recent platform errors
+   (nginx, crash traces, deploy failures) without opening a shell.
+4. **Framework log file on the mount** — read via Read tool
+   (`/var/www/{hostname}/storage/logs/laravel.log`, `var/log/...`). See
    `develop-platform-rules-container` for the mount-vs-SSH split.
-5. **Last resort: SSH + curl localhost** — only when the above miss
-   something container-local (e.g. worker-only service with no HTTP
-   entrypoint; service bound to a non-default interface). Even then,
-   `zerops_verify` usually already encodes the check.
+5. **Last resort: SSH + curl localhost** — only when earlier checks miss
+   container-local state (worker-only service, non-default bind). Even
+   then, `zerops_verify` usually already encodes the check.

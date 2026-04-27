@@ -4,53 +4,50 @@ priority: 2
 phases: [bootstrap-active]
 routes: [classic, adopt]
 steps: [provision]
-title: "Provision rules — managed conventions + runtime properties"
+title: "Provision rules"
 ---
 
 ### Hostname format constraint
 
-Platform rule (enforced by the API): 1–40 characters, **lowercase letters
-and digits only** (`a-z`, `0-9`), first character must be a letter. No
-dashes, no underscores, no uppercase, no dots. Violations are rejected
-at import with `serviceStackNameInvalid`.
+API rule: 1–40 chars, **lowercase letters and digits only** (`a-z`,
+`0-9`), first char a letter. No dashes, underscores, uppercase, or dots.
+Violations fail import with `serviceStackNameInvalid`.
 
 Valid: `appdev`, `app42`, `apistorage`, `workersearch`.
-Invalid: `42db` (starts with digit), `my-cache` (dash), `my_app`
-(underscore), `MyApp` (uppercase), `app.dev` (dot), `app123456789012345678901234567890123456789` (41 chars).
+Invalid: `42db`, `my-cache`, `my_app`, `MyApp`, `app.dev`,
+`app123456789012345678901234567890123456789`.
 
 ### Managed service hostname conventions
 
-Canonical hostnames (agents/recipes/cross-service refs assume these):
+Canonical hostnames:
 
-- `db` — postgresql / mariadb / mysql / mongodb
-- `cache` — valkey / keydb / redis
-- `queue` — nats / kafka / rabbitmq
-- `search` — elasticsearch / meilisearch / typesense
-- `storage` — object-storage / shared-storage
+| Hostname | Types |
+|---|---|
+| `db` | postgresql, mariadb, mysql, mongodb |
+| `cache` | valkey, keydb, redis |
+| `queue` | nats, kafka, rabbitmq |
+| `search` | elasticsearch, meilisearch, typesense |
+| `storage` | object-storage, shared-storage |
 
-**Mode for managed services**: default to `mode: NON_HA` when omitted. Set
-`mode: HA` explicitly only for production where the user has asked for HA.
+Managed defaults: omit mode or set `mode: NON_HA`; set `mode: HA` only
+when the user asks for production HA. Use `priority: 10` so managed
+services initialize before runtime services (default 5).
 
-**Priority**: managed services use `priority: 10` so they initialize before
-runtime services (default 5). Databases must be ready before dependent apps.
+### Runtime service properties
 
-### Runtime service properties (import.yaml)
-
-`startWithoutCode`, `maxContainers`, and `enableSubdomainAccess` vary by
-mode. Set them correctly at import-yaml generation time.
+Set these during import-yaml generation:
 
 | Property | Dev service | Stage service | Simple service |
 |----------|-----------|---------------|----------------|
 | `startWithoutCode` | `true` | omit | `true` |
 | `maxContainers` | `1` | omit | omit |
 | `enableSubdomainAccess` | `true` | `true` | `true` |
-| `verticalAutoscaling.minRam` | `1.0` for compiled runtimes (Go, Rust, Java, .NET, Elixir, Gleam) | omit | omit |
+| `verticalAutoscaling.minRam` | `1.0` for compiled runtimes | omit | omit |
 
-**Why `startWithoutCode: true`** — dev and simple services need to reach
-RUNNING before the first deploy; otherwise they sit at READY_TO_DEPLOY,
-which blocks SSHFS mount and SSH access. Stage services deliberately
-omit the flag — they wait at READY_TO_DEPLOY until the first cross-deploy
-from dev, sparing resources.
+`startWithoutCode: true` lets dev/simple reach RUNNING before first
+deploy; without it they sit at READY_TO_DEPLOY, blocking SSHFS and SSH.
+Stage deliberately omits it and waits at READY_TO_DEPLOY for the first
+dev→stage cross-deploy.
 
-**Expected post-import states**: Dev → RUNNING, Simple → RUNNING, Stage →
+Expected post-import states: Dev/Simple → RUNNING, Stage →
 READY_TO_DEPLOY, Managed → RUNNING/ACTIVE.

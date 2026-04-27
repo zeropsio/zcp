@@ -9,46 +9,35 @@ title: "Discover env vars before generate"
 
 ### Discover env vars after provision, before generate
 
-After import and before writing any zerops.yaml, discover the actual
-env vars available on the project. This is the authoritative list —
-do not guess alternative spellings. Unknown cross-service references
-resolve to literal strings at runtime and fail silently.
+After import and before any zerops.yaml, discover actual project env
+vars. This is authoritative — do not guess alternative spellings.
+Unknown cross-service references become literal strings at runtime and
+fail silently.
 
 ```
 zerops_discover includeEnvs=true
 ```
 
-Record one row per service. Keys alone are enough — cross-service
-references use `${hostname_varName}` syntax. Reference these in
-`run.envVariables` of the app's zerops.yaml.
+Record one row per service. Keys are enough; cross-service references
+use `${hostname_varName}` in `run.envVariables`.
 
-Per-service usage guidance (key name is **`hostname`**, never `host`;
-run `zerops_discover includeEnvs=true` for the live key list — this
-is the preference/usage layer on top):
+Usage layer (key is **`hostname`**, never `host`; run discovery for the
+live list):
 
-- **PostgreSQL / MariaDB / ClickHouse**: prefer `connectionString`
-  over building from `hostname:port:user:password:dbName`. PostgreSQL
-  + ClickHouse expose `superUser` / `superUserPassword` for DDL.
-  ClickHouse is multi-protocol — pick the port matching your driver
-  (`portHttp`, `portMysql`, `portNative`, `portPostgresql`).
-- **Valkey / KeyDB**: no auth (private network). KeyDB has no TLS port.
-- **NATS**: NATS URI is in `connectionString`.
-- **Kafka**: no `connectionString` — build broker URL from
-  `hostname:port`.
-- **Elasticsearch**: HTTP basic auth via `user`/`password`.
-- **Meilisearch**: use a scoped key — `defaultAdminKey`,
-  `defaultSearchKey`, `defaultReadOnlyKey`, `defaultChatKey` — not
-  `masterKey`.
-- **Typesense**: single `apiKey`.
-- **Qdrant**: HTTP + gRPC (`connectionString` / `grpcConnectionString`);
-  pick by client. Read-only access via `readOnlyApiKey`.
-- **object-storage**: S3-compatible — `apiUrl`, `accessKeyId`,
-  `secretAccessKey`, `bucketName`. No `region` env var (use the
-  bucket region from provider docs).
-- **shared-storage**: `hostname` only — mounted via `mount:` in
-  zerops.yaml, not a network service.
+| Service | Use |
+|---|---|
+| PostgreSQL / MariaDB / ClickHouse | Prefer `connectionString` over assembling `hostname:port:user:password:dbName`. PostgreSQL + ClickHouse expose `superUser` / `superUserPassword` for DDL; ClickHouse port must match the driver (`portHttp`, `portMysql`, `portNative`, `portPostgresql`). |
+| Valkey / KeyDB | No auth on private network; KeyDB has no TLS port. |
+| NATS | URI is `connectionString`. |
+| Kafka | No `connectionString`; build broker URL from `hostname:port`. |
+| Elasticsearch | HTTP basic auth via `user`/`password`. |
+| Meilisearch | Use scoped keys (`defaultAdminKey`, `defaultSearchKey`, `defaultReadOnlyKey`, `defaultChatKey`), not `masterKey`. |
+| Typesense | Single `apiKey`. |
+| Qdrant | HTTP + gRPC via `connectionString` / `grpcConnectionString`; read-only via `readOnlyApiKey`. |
+| object-storage | S3-compatible: `apiUrl`, `accessKeyId`, `secretAccessKey`, `bucketName`; no `region` env var. |
+| shared-storage | `hostname` only; mounted via `mount:` in zerops.yaml, not a network service. |
 
-**Runtime container caveat**: env vars resolve at deploy time, not OS env
-vars on a `startWithoutCode: true` dev container. A dev container that
-never deployed has the env vars in the project catalogue but not on
-`process.env`. Deploy first, then references fire.
+**Runtime container caveat**: env vars resolve at deploy time, not as OS
+env on a never-deployed `startWithoutCode: true` dev container. They are
+in the project catalogue, not `process.env`. Deploy first; then
+references fire.

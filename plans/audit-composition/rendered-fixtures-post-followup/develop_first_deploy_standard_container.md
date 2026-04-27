@@ -28,10 +28,8 @@ Guidance:
   be empty and HTTP probes return errors before any code is delivered.
   ### Read `apiMeta` on every error response
 
-  Any `zerops_*` tool that surfaces a 4xx from the Zerops API returns
-  structured field-level detail on an optional `apiMeta` JSON key.
-  Missing key = server sent no detail; present key = an array of items
-  with the exact fields Zerops rejected.
+  Any `zerops_*` tool surfacing a Zerops API 4xx may include `apiMeta`.
+  Missing key = no server detail; present key = exact rejected fields.
 
   Shape:
 
@@ -53,22 +51,22 @@ Guidance:
   }
   ```
 
-  Each `apiMeta[].metadata` key is a **field path** (e.g.
-  `appdev.mode`, `build.base`, `parameter`); each value lists the
-  reasons. Fix those fields in your YAML and retry — do not guess.
+  Each `apiMeta[].metadata` key is a **field path** (`appdev.mode`,
+  `build.base`, `parameter`); values list reasons. Fix those YAML fields
+  and retry — do not guess.
 
   Common `apiCode` shapes:
 
   | `apiCode` | `metadata` key | Meaning |
   |---|---|---|
-  | `projectImportInvalidParameter` | `<host>.mode` | service-type/mode combination not allowed |
+  | `projectImportInvalidParameter` | `<host>.mode` | type/mode combination not allowed |
   | `projectImportMissingParameter` | `parameter` (value `<host>.mode`) | required field missing |
   | `serviceStackTypeNotFound` | `serviceStackTypeVersion` | version string not in platform catalog |
   | `zeropsYamlInvalidParameter` | `build.base` etc. | zerops.yaml validator caught the field pre-build |
   | `yamlValidationInvalidYaml` | `reason` (with `line N:`) | YAML syntax error |
 
-  Per-service import failures land in `serviceErrors[].meta` with the
-  same shape — one entry per failing service-stack.
+  Per-service import failures use `serviceErrors[].meta` with the same
+  shape, one entry per failing service-stack.
   ### Every code change must reach a durable state
 
   Iteration cadence is mode-specific:
@@ -79,57 +77,52 @@ Guidance:
     `zerops_deploy`.
 
   Auto-close: see `develop-auto-close-semantics`.
-  ### Two deploy classes, one tool
-
-  `zerops_deploy` has two classes determined by source vs target:
+  ### Two deploy classes
 
   | Class | Trigger | `deployFiles` constraint | Typical use |
   |---|---|---|---|
-  | **Self-deploy** | `sourceService == targetService` (or `sourceService` omitted, auto-inferred to target) | MUST be `[.]` or `[./]` — narrower patterns destroy the target's source | dev services running `start: zsc noop --silent`; agent SSHes in and iterates on the code |
-  | **Cross-deploy** | `sourceService != targetService`, or `strategy=git-push` | Cherry-picked from build output: `./out`, `./dist`, `./build` | dev→stage promotion; stage runs foreground binaries (`start: dotnet App.dll`, `start: node dist/server.js`) |
+  | **Self-deploy** | `sourceService == targetService`, or omitted and inferred to target | MUST be `[.]` or `[./]`; narrower patterns destroy target source | dev/simple mutable workspace |
+  | **Cross-deploy** | `sourceService != targetService`, or `strategy=git-push` | Cherry-pick build output: `./out`, `./dist`, `./build` | dev→stage promotion; stage runs foreground binaries |
 
   Self-deploy refreshes a **mutable workspace**; cross-deploy produces an
-  **immutable artifact** from the build container's post-`buildCommands`
-  output.
+  **immutable artifact** from build-container output after `buildCommands`.
 
   ### Picking deployFiles
 
   | Setup block purpose | deployFiles | Why |
   |---|---|---|
   | Self-deploy (dev, simple modes) | `[.]` | Anything narrower destroys target on deploy. |
-  | Cross-deploy, preserve dir | `[./out]` | Artifact lands at `/var/www/out/...`. Pick when `start` references an explicit path (e.g. `./out/app/App.dll`) or multiple artifacts live in subdirs. |
-  | Cross-deploy, extract contents | `[./out/~]` | Tilde strips `out/`; artifact lands at `/var/www/...`. Pick when the runtime expects assets at the root (ASP.NET's `wwwroot/` at `/var/www/`). |
+  | Cross-deploy, preserve dir | `[./out]` | Lands at `/var/www/out/...`; use when `start` references that path or artifacts live in subdirs. |
+  | Cross-deploy, extract contents | `[./out/~]` | Tilde strips `out/`; use when runtime expects assets at `/var/www/`. |
 
   ### Why the source tree sometimes doesn't have `./out`
 
-  `deployFiles` is evaluated against the **build container's filesystem
-  after `buildCommands` runs** — NOT your editor's working tree. So
-  `deployFiles: [./out]` is correct even when `./out` doesn't exist
-  locally; the build creates it. See guide `deployment-lifecycle` for
-  the full pipeline.
+  `deployFiles` is evaluated against the **build container filesystem
+  after `buildCommands`**, NOT the editor tree. `deployFiles: [./out]`
+  is correct even when `./out` is absent locally; the build creates it.
+  See guide `deployment-lifecycle`.
 
-  ZCP pre-flight does NOT check path existence for cross-deploy; the
-  Zerops builder emits `WARN: deployFiles paths not found: ...` in
-  `DeployResult.BuildLogs` only when the build produces no matching files.
+  ZCP pre-flight does NOT check cross-deploy path existence; Zerops
+  builder emits `WARN: deployFiles paths not found: ...` in
+  `DeployResult.BuildLogs` only if the build produces no matches.
   ### Env var channels
 
-  Two channels set env vars, and the channel determines when the value
-  goes live.
+  Channel determines when a value goes live.
 
   | Channel | Set with | When live |
   |---|---|---|
-  | Service-level env | `zerops_env action="set"` | Response's `restartedServices` lists hostnames whose runtime containers were cycled; `restartedProcesses` has platform Process details. |
+  | Service-level env | `zerops_env action="set"` | `restartedServices` lists cycled runtime containers; `restartedProcesses` has Process details. |
   | `run.envVariables` | Edit `zerops.yaml`, commit, deploy | Full redeploy. `zerops_manage action="reload"` does NOT pick them up. |
   | `build.envVariables` | Edit `zerops.yaml`, commit, deploy | Next build uses them; not visible at runtime. |
 
-  **Suppress restart**: pass `skipRestart=true` — response reports
-  `restartSkipped: true`; `nextActions` tells you to restart manually
-  (the value is **not live** until that restart). Partial failures
-  land in `restartWarnings`; `stored` confirms which keys landed.
+  **Suppress restart**: pass `skipRestart=true`; response reports
+  `restartSkipped: true`, `nextActions` says how to restart, and the value
+  is **not live** until then. Partial failures land in `restartWarnings`;
+  `stored` confirms landed keys.
 
   **Shadow-loop pitfall**: `zerops_env`-set service-level vars shadow
-  the same key in `run.envVariables`. Fixing only `zerops.yaml`
-  won't change the live value — delete the service-level key
+  the same key in `run.envVariables`. Fixing only `zerops.yaml` won't
+  change live value — delete the service-level key
   (`zerops_env action="delete"`) before redeploy.
   ### Env var catalog from bootstrap
 
@@ -160,10 +153,10 @@ Guidance:
   `includeEnvValues=true` only for troubleshooting.
   ### Scaffold `zerops.yaml`
 
-  Scaffold `zerops.yaml` before the first deploy. Root placement and
-  `setup:` naming rules are in `develop-platform-rules-common`.
+  Scaffold `zerops.yaml` before first deploy. Root placement and `setup:`
+  naming rules are in `develop-platform-rules-common`.
 
-  **Shape (one `zerops:` block per runtime hostname the plan targets):**
+  **Shape (one `zerops:` block per targeted runtime hostname):**
 
   ```yaml
   zerops:
@@ -182,52 +175,44 @@ Guidance:
         start: <run command, not a build command>
   ```
 
-  **Env var references** — see `develop-first-deploy-env-vars` for the
-  discovered-key catalog and `${hostname_KEY}` syntax; see
-  `develop-env-var-channels` for placement and live-timing rules.
+  **Env var references** — see `develop-first-deploy-env-vars` for
+  `${hostname_KEY}` syntax and `develop-env-var-channels` for live timing.
 
-  **Mode-aware tips:** emit separate setup entries for each targeted
-  runtime hostname. See `develop-deploy-modes` for deployFiles per
-  self-deploy vs cross-deploy class.
+  **Mode-aware tips:** emit separate setup entries per targeted hostname.
+  See `develop-deploy-modes` for deployFiles by deploy class.
 
-  **Content-root tip:** for runtimes that expect assets at the
-  working-dir root (e.g. ASP.NET's `wwwroot/` lookup at
-  `/var/www/wwwroot/`), use **tilde-extract** (`./out/~`) so contents
-  land at `/var/www/` instead of `/var/www/out/`. Use **preserve**
-  (`./out`) when `run.start` references an explicit subpath like
-  `./out/app/App.dll`. Full decision rule in `develop-deploy-modes`.
+  **Content-root tip:** if runtime expects assets at working-dir root
+  (e.g. ASP.NET `wwwroot/` at `/var/www/wwwroot/`), use tilde-extract
+  (`./out/~`) so contents land at `/var/www/`. Use preserve (`./out`) when
+  `run.start` references a subpath like `./out/app/App.dll`. Full decision
+  rule in `develop-deploy-modes`.
 
   Schema: fetch `zerops.yaml` JSON Schema via `zerops_knowledge` if unsure.
   ### HTTP diagnostics
 
-  When the app returns 500 / 502 / empty body, follow this order. Stop at
-  whichever step resolves the error — do **not** default to
+  For 500 / 502 / empty body, stop at the first useful signal; do **not**
+  default to
   `ssh appdev curl localhost` for diagnosis.
 
   1. **`zerops_verify serviceHostname="appdev"`** — start with the
      canonical health probe and structured diagnosis; see
      `develop-verify-matrix` for the full verify path.
-  2. **Subdomain URL** — format is
-     `https://appdev-${zeropsSubdomainHost}.prg1.zerops.app/` for static
-     / implicit-webserver runtimes (php-nginx, nginx), `-{port}` appended
-     for dynamic runtimes. `${zeropsSubdomainHost}` is a project-scope env
-     var (numeric, not the projectId) injected into every runtime container. Read
-     it on the host with `env | grep zeropsSubdomainHost`, or call
-     `zerops_discover` which returns the resolved URL directly. Do not
-     guess a UUID-shaped string.
-  3. **`zerops_logs severity="error" since="5m"`** — surfaces recent error-
-     level platform logs (nginx errors, crash traces, deploy failures)
-     without opening a shell.
-  4. **Framework log file on the mount** — read via Read tool (e.g.
-     `/var/www/appdev/storage/logs/laravel.log`, `var/log/...`). See
+  2. **Subdomain URL** — static / implicit-webserver:
+     `https://appdev-${zeropsSubdomainHost}.prg1.zerops.app/`; dynamic
+     adds `-{port}`. `${zeropsSubdomainHost}` is numeric and project-scope,
+     not the projectId. Read it with `env | grep zeropsSubdomainHost`, or
+     use `zerops_discover` for the resolved URL. Do not guess a UUID.
+  3. **`zerops_logs severity="error" since="5m"`** — recent platform errors
+     (nginx, crash traces, deploy failures) without opening a shell.
+  4. **Framework log file on the mount** — read via Read tool
+     (`/var/www/appdev/storage/logs/laravel.log`, `var/log/...`). See
      `develop-platform-rules-container` for the mount-vs-SSH split.
-  5. **Last resort: SSH + curl localhost** — only when the above miss
-     something container-local (e.g. worker-only service with no HTTP
-     entrypoint; service bound to a non-default interface). Even then,
-     `zerops_verify` usually already encodes the check.
+  5. **Last resort: SSH + curl localhost** — only when earlier checks miss
+     container-local state (worker-only service, non-default bind). Even
+     then, `zerops_verify` usually already encodes the check.
   ### Platform rules
 
-  - **Runtime container user is `zerops`, not root.** Package installs need `sudo`
+  - **Runtime user is `zerops`, not root.** Package installs need `sudo`
     (`sudo apk add …` on Alpine, `sudo apt-get install …` on Debian/Ubuntu).
   - **Deploy = new container.** Local files in the current runtime container are
     lost; only content covered by `deployFiles` survives across redeploys.
@@ -235,9 +220,8 @@ Guidance:
     `prod`, `stage`, `dev`) is deployed independently — these are canonical
     recipe names, NOT hostnames.
   - **Build ≠ runtime container.** Runtime packages → `run.prepareCommands`;
-    build-only packages → `build.prepareCommands`. Tools available at
-    build time may not be at run time. See guide `deployment-lifecycle`
-    for the full split.
+    build-only packages → `build.prepareCommands`. Build-time tools may
+    not exist at run time; see guide `deployment-lifecycle`.
   - Env var live timing and cross-service syntax:
     `develop-env-var-channels` / `develop-first-deploy-env-vars`.
   - Service config changes (shared storage, scaling, nginx fragments):
@@ -296,39 +280,22 @@ Guidance:
   for `reason` values.
   ### Write the application code
 
-  Bootstrap does NOT ship a verification stub or hello-world — `/var/www/<hostname>/`
-  on the SSHFS mount is empty. The first deploy only succeeds if real code
-  is there.
+  Bootstrap does NOT ship a stub or hello-world — `/var/www/<hostname>/`
+  on SSHFS is empty. First deploy needs real code.
 
   **Checklist before deploying:**
 
-  1. **Code reads env vars from the OS at startup.** Never hardcode
-     connection strings or host/port/credentials — bootstrap's discovered
-     catalog is the authoritative source.
-  2. **App binds `0.0.0.0`** (not `localhost`/`127.0.0.1`). Zerops health
-     checks call the service over the runtime container's external interface; a
-     loopback-bound app reports as healthy in tests but fails in
-     `zerops_verify`.
-  3. **`run.start` invokes the production entry point** — must launch a
-     long-running process.
-  4. **Observability hook** — implement `/status` or `/health` returning
-     HTTP 200 so `zerops_verify` has a deterministic endpoint. Embedding
-     a cheap dependency check (e.g. DB ping) lets a failing verify
-     immediately distinguish app bugs from wiring issues.
-  5. **Audit "developer-friendly" framework defaults.** Iterative-dev
-     frameworks (Streamlit, Gradio, Vite, Jupyter) are wrong-in-container
-     in two ZCP-specific ways: push-dev creates `/var/www/.git` so any
-     "auto-detect dev mode from parent `.git/`" heuristic mis-fires; and
-     the runtime is behind L7 so `headless`/"reverse-proxy" framework
-     flags need to be pinned to container-correct values. Pin each in
-     the framework's **own config file** (CLI flags get lost on
-     `run.start` rewrites). Don't suppress dev mode — fix the operational
-     mismatch and keep hot-reload working.
+  | Check | Requirement |
+  |---|---|
+  | Env vars | Read OS env at startup. Never hardcode connection strings, hosts, ports, or credentials; use bootstrap's discovered catalog. |
+  | Bind | Listen on `0.0.0.0`, not `localhost`/`127.0.0.1`; loopback can pass local tests but fail `zerops_verify`. |
+  | Start | `run.start` launches the production entry point as a long-running process. |
+  | Health | Add `/status` or `/health` returning HTTP 200 so `zerops_verify` has a deterministic endpoint; include a cheap dependency check when useful. |
+  | Framework defaults | For Streamlit, Gradio, Vite, Jupyter, etc., pin container-correct dev/proxy/headless settings in the framework config. Push-dev creates `/var/www/.git`, so auto-detecting dev mode from parent `.git/` misfires. Don't suppress dev mode — fix the operational mismatch and keep hot-reload. |
 
   **Mount for files, SSH for commands** — see
-  `develop-platform-rules-container` for the split. Runtime CLIs
-  (`go build`, `php artisan`, `pytest`) need SSH because most aren't on
-  the ZCP host.
+  `develop-platform-rules-container`. Runtime CLIs (`go build`,
+  `php artisan`, `pytest`) need SSH because most are not on the ZCP host.
 
   **Don't run `git init` from the ZCP-side mount.** Push-dev deploy
   handlers manage the runtime container-side git state; running `git init` on
@@ -397,45 +364,31 @@ Guidance:
   ```
   ### Per-service verify matrix
 
-  Deploy success does not prove the app works for end users. Pick the
-  verification path per service based on what `zerops_discover` reports:
-  subdomain URL present means web-facing; managed or no HTTP port means
-  non-web.
+  Deploy success does not prove user behavior. Use `zerops_discover`:
+  subdomain URL means web-facing; managed/no HTTP port means non-web.
 
-  **Non-web services (managed databases, caches, workers, no subdomain):**
+  | Service shape | Required check |
+  |---|---|
+  | Non-web: managed DB/cache/worker/no subdomain | Run `zerops_verify serviceHostname="{targetHostname}"`. `status=healthy` is enough; nothing to browse. |
+  | Web-facing: dynamic/static/implicit-webserver with subdomain/port | Run `zerops_verify` for infrastructure, then a verify agent using `agent-browser`. Tool healthy + rendered page proves the service; either failure blocks. |
 
-  ```
-  zerops_verify serviceHostname="{targetHostname}"
-  ```
-
-  Tool returns `status=healthy` once Zerops can reach the service.
-  That's the whole verification — nothing to browse.
-
-  **Web-facing services (dynamic/static/implicit-webserver with subdomain
-  or port):** run `zerops_verify` first for infrastructure baseline, then
-  spawn a verify agent that drives `agent-browser` end-to-end. A healthy
-  `zerops_verify` plus a rendered page together prove the service works;
-  either failing is enough to block.
-
-  Per web-facing target, fetch the sub-agent dispatch protocol on demand:
+  Fetch the web-agent protocol only when needed:
 
   ```
   zerops_knowledge query="verify web agent protocol"
   ```
 
-  The protocol carries the full `Agent(model="sonnet", prompt=...)`
-  template — substitute `{targetHostname}` and `{runtime}` per service
-  when dispatching.
+  It has the `Agent(model="sonnet", prompt=...)` template; substitute
+  `{targetHostname}` and `{runtime}`.
 
   ### Verdict protocol
 
   - **VERDICT: PASS** → service verified, proceed.
-  - **VERDICT: FAIL** → agent found a visual/functional issue; enter the
-    iteration loop with the agent's evidence as the diagnosis.
-  - **VERDICT: UNCERTAIN** → fall back to the `zerops_verify` result (the
-    agent could not determine the outcome end-to-end).
-  - **Malformed agent output or timeout** → treat as UNCERTAIN and fall
-    back to `zerops_verify`.
+  - **VERDICT: FAIL** → visual/functional issue; iterate from the agent's
+    evidence.
+  - **VERDICT: UNCERTAIN** → fall back to `zerops_verify`; the agent could
+    not determine the outcome.
+  - **Malformed output or timeout** → UNCERTAIN; fall back to `zerops_verify`.
   ### Promote the first deploy to stage
 
   Standard mode pairs dev + stage. After `appdev` verifies,

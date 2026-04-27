@@ -9,34 +9,28 @@ references-fields: [workflow.StateEnvelope.IdleScenario, workflow.ServiceSnapsho
 
 ### Interrupted bootstrap detected
 
-The envelope reports `idleScenario: incomplete` — the project has at
-least one runtime service whose snapshot carries `resumable: true`,
-meaning a prior bootstrap session wrote partial state and died
-before close. **Do not classic-bootstrap over these services** — a
-new session will clash with the existing partial records.
+Envelope has `idleScenario: incomplete`: at least one runtime snapshot
+has `resumable: true`, meaning a prior bootstrap wrote partial state
+and died before close. **Do not classic-bootstrap over these services**
+— a new session collides with the partial records.
 
-**Options, in priority order:**
+**Decision path:**
 
-1. **Resume the session** — the preferred path. Call discovery first:
+1. **Resume first.** Call discovery:
    ```
    zerops_workflow action="start" workflow="bootstrap" intent="<anything>"
    ```
-   Read `routeOptions[]` — the `resume` entry carries `resumeSession`
-   (the session ID to pick up) and `resumeServices` (the hostnames
-   that will be reclaimed). Dispatch with:
+   Read `routeOptions[]`; the `resume` entry carries `resumeSession`
+   and `resumeServices`. Dispatch:
    ```
    zerops_workflow action="start" workflow="bootstrap" route="resume" sessionId="<resumeSession>"
    ```
-   Resume picks up at the step that was in flight when the earlier
-   session ended.
+   Resume continues at the interrupted step.
 
-2. **Abandon and restart** — if the partial state is stale (the
-   original bootstrap was abandoned deliberately, or the services are
-   wrong for the current task), delete the orphan files under
-   `.zcp/state/services/<hostname>.json`. The services then become
-   adoptable in the normal flow.
+2. **Abandon only when stale.** If the old bootstrap was deliberately
+   abandoned or the services are wrong, delete orphan files under
+   `.zcp/state/services/<hostname>.json`; the services become adoptable.
 
-Either way, **never** use `route="classic"` on a project with
-`resumable: true` snapshots. Classic ignores the lock and the new
-plan's hostnames will collide with the orphan records at provision
-time.
+Either way, **never** use `route="classic"` with `resumable: true`
+snapshots. Classic ignores the lock and new hostnames collide with
+orphan records at provision.

@@ -2,47 +2,33 @@
 id: develop-verify-matrix
 priority: 4
 phases: [develop-active]
-title: "Per-service verify matrix"
+title: "Verify matrix"
 ---
 
 ### Per-service verify matrix
 
-Deploy success does not prove the app works for end users. Pick the
-verification path per service based on what `zerops_discover` reports:
-subdomain URL present means web-facing; managed or no HTTP port means
-non-web.
+Deploy success does not prove user behavior. Use `zerops_discover`:
+subdomain URL means web-facing; managed/no HTTP port means non-web.
 
-**Non-web services (managed databases, caches, workers, no subdomain):**
+| Service shape | Required check |
+|---|---|
+| Non-web: managed DB/cache/worker/no subdomain | Run `zerops_verify serviceHostname="{targetHostname}"`. `status=healthy` is enough; nothing to browse. |
+| Web-facing: dynamic/static/implicit-webserver with subdomain/port | Run `zerops_verify` for infrastructure, then a verify agent using `agent-browser`. Tool healthy + rendered page proves the service; either failure blocks. |
 
-```
-zerops_verify serviceHostname="{targetHostname}"
-```
-
-Tool returns `status=healthy` once Zerops can reach the service.
-That's the whole verification — nothing to browse.
-
-**Web-facing services (dynamic/static/implicit-webserver with subdomain
-or port):** run `zerops_verify` first for infrastructure baseline, then
-spawn a verify agent that drives `agent-browser` end-to-end. A healthy
-`zerops_verify` plus a rendered page together prove the service works;
-either failing is enough to block.
-
-Per web-facing target, fetch the sub-agent dispatch protocol on demand:
+Fetch the web-agent protocol only when needed:
 
 ```
 zerops_knowledge query="verify web agent protocol"
 ```
 
-The protocol carries the full `Agent(model="sonnet", prompt=...)`
-template — substitute `{targetHostname}` and `{runtime}` per service
-when dispatching.
+It has the `Agent(model="sonnet", prompt=...)` template; substitute
+`{targetHostname}` and `{runtime}`.
 
 ### Verdict protocol
 
 - **VERDICT: PASS** → service verified, proceed.
-- **VERDICT: FAIL** → agent found a visual/functional issue; enter the
-  iteration loop with the agent's evidence as the diagnosis.
-- **VERDICT: UNCERTAIN** → fall back to the `zerops_verify` result (the
-  agent could not determine the outcome end-to-end).
-- **Malformed agent output or timeout** → treat as UNCERTAIN and fall
-  back to `zerops_verify`.
+- **VERDICT: FAIL** → visual/functional issue; iterate from the agent's
+  evidence.
+- **VERDICT: UNCERTAIN** → fall back to `zerops_verify`; the agent could
+  not determine the outcome.
+- **Malformed output or timeout** → UNCERTAIN; fall back to `zerops_verify`.
