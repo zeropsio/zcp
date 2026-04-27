@@ -147,3 +147,99 @@ unlock anything additional).
    results) made G2 closure mechanical. Future hygiene cycles
    should adopt this pattern early — avoids per-atom scenario
    writing while still satisfying the AST pin-density gate.
+
+---
+
+# Deferred from atom-corpus-hygiene-followup-2026-04-27
+
+The followup cycle shipped SHIP-WITH-NOTES per
+`plans/audit-composition/final-review-v2.md` "Executor's response"
+section. Cumulative byte recovery massively exceeded §8 binding
+target (-29,231 B vs ≥17,000 B = 1.7×). Two PRE-AUTHORIZED notes
++ one EXECUTOR FOLLOW-UP NOTE remain as Phase 8+ work for future
+sessions:
+
+## Note 1 — Two-pair fixture STRUCTURAL Redundancy fail (engine-level)
+
+**State**: 4/5 fixtures G3 PASS post-followup; `develop_first_deploy_two_runtime_pairs_standard` Redundancy held at 1.
+
+**Why**: §6.2 rubric explicitly counts per-service hostname-substituted copies as restated facts. The two-pair fixture renders `develop-dynamic-runtime-start-container` twice (`appdev` + `apidev`) and `develop-first-deploy-promote-stage` twice (`appdev → appstage` + `apidev → apistage`). Phase 5/6 trim shrank each rendered atom-body but did not eliminate the per-service rendering itself.
+
+**Status**: NOT a corpus content issue — it's a render-engine behavior. `Synthesize` (in `internal/workflow/synthesize.go`) renders per-matching-service for service-scoped atoms.
+
+**Resolution paths** (pick one for Phase 8+):
+
+A. **Atom-level "render once with service-list/table" support**: extend `Synthesize` to optionally fold per-service renders into a single atom-body with a `{services-list}` or `{services-table}` template token. Atoms can opt-in via a frontmatter axis (e.g. `multi-service: fold`).
+
+B. **Atom-axis tightening to fire on first service only**: add a frontmatter flag like `per-service-render: false` so the atom fires once per envelope regardless of matching-service count. Loses per-service hostname substitution; would need template-time iteration in atom body.
+
+C. **Accept SHIP-WITH-NOTES indefinitely**: the rendered output is correct — both `appdev` + `apidev` get the same dev-server-start guidance with their own hostname substituted. The "redundancy" by §6.2 rubric is real but is the natural shape of multi-service envelopes. Document as "rubric scoring limitation; agent doesn't experience it as friction" and remove from the deferred list.
+
+**Pre-authorized by user 2026-04-27 at Phase 5.2 SHIP-WITH-NOTES prompt.**
+
+**Files involved**: `internal/workflow/synthesize.go` (engine), `internal/content/atoms/develop-dynamic-runtime-start-container.md` + `develop-first-deploy-promote-stage.md` (atoms that duplicate per-service), `internal/workflow/atom.go` (axis vector definition if option A or B chosen).
+
+## Note 2 — Single-service hypothetical fixture comparison-limitation
+
+**State**: 4/5 fixtures G3 PASS; `develop_first_deploy_standard_single_service (hypothetical)` PASSes strict-improvement vs the `standard` baseline (its inferred parent shape) but has no §4.2 first-baseline of its own to anchor strict-improvement claims.
+
+**Why**: this fixture was added LATE in the first cycle (Phase 0 G7 prep) for stretch coverage; the §4.2 baseline scoring round didn't include it. Codex's Phase 7 re-score noted this as a "comparison limitation" rather than a regression.
+
+**Status**: NOT a corpus issue — it's a baseline-scoring-coverage gap.
+
+**Resolution path** (pick one for Phase 8+):
+
+A. **Score the fixture against historical content**: use `git show <pre-first-cycle-commit>:plans/audit-composition/baseline-scores.md` to see if any earlier scoring covered an equivalent-shape fixture. Backfill §4.2 with that data.
+
+B. **Drop the fixture from the §15.3 G3 strict-improvement contract**: declare it stretch-only (axis-J / multi-pair stretch coverage) without G3 pass requirement.
+
+C. **Explicitly score the fixture in `baseline-scores.md` post-hoc** at the first-cycle Phase-0 corpus state (via worktree at the appropriate commit), then re-evaluate G3.
+
+**Pre-authorized by user 2026-04-27 at Phase 5.2 SHIP-WITH-NOTES prompt.**
+
+## Note 3 — K/L/M lint enforcement (executor follow-up)
+
+**State**: §11.5 of `docs/spec-knowledge-distribution.md` documents axes K + L + M as author-facing rules. The lint enforcement (in `internal/content/atoms_lint.go`) covers §11.2 forbidden patterns only — it does NOT yet check for axis-K abstraction-leak patterns, axis-L title env-qualifiers, or axis-M terminology drift.
+
+**Why deferred**: §8 acceptance criterion was "documented in atom-authoring contract" — DOCUMENTATION, not lint enforcement. Lint enforcement is a stronger guarantee (catches drift in future atom edits without requiring a hygiene cycle re-audit) but is out of scope for the followup plan.
+
+**Resolution path** (Phase 8+ candidate):
+
+A. **Axis-K patterns**: codify HIGH-risk signal detection (`Don't run X`, `Never use Y`, etc. tied to operational choice) and FORBID their removal without per-edit Codex review. Probably needs git-blame-aware tooling (didn't get removed in this commit; needs a "deletions check" in the lint pass).
+
+B. **Axis-L patterns**: detect env-only qualifiers in atom titles (`(container)` / `(local)` / `— container`) and lint-fail when present. Easy to enforce via regex.
+
+C. **Axis-M patterns**: detect drift in cluster-#1 (container concept) — fail when a single atom uses both "the container" and "runtime container" inconsistently. Per-cluster decision-table enforcement.
+
+**Files involved**: `internal/content/atoms_lint.go` (extend `atomLintAllowlist` + add new pattern checks), `internal/content/atoms_lint_test.go` (test cases for new rules), `docs/spec-knowledge-distribution.md` §11.5 (update "not lint-enforced (yet)" note when enforcement lands).
+
+## Note 4 — Codex sandbox `TestOnce_NoUpdate_Returns` environment artifact
+
+**State**: in the followup cycle's final SHIP VERDICT round, Codex's sandbox observed `FAIL` lines on `internal/update.TestOnce_NoUpdate_Returns` when running `go test ./... -count=1 -short`. The dev-box authoritative environment showed 0 FAIL across multiple sequential runs (5/5 PASS in 5 sequential `-run TestOnce_NoUpdate_Returns -v`; 3/3 PASS on full -short suite; 1/1 PASS on -race).
+
+**Why deferred**: this is an environment artifact, not a corpus regression. The test uses `httptest.NewServer` (localhost-bound), `t.Setenv`, `t.TempDir`, and isolated `CacheDir` — no external network or time-of-day dependency. Codex's sandbox likely restricts loopback HTTP binding or `t.Setenv` of `ZCP_UPDATE_URL`.
+
+**Resolution path** (Phase 8+ candidate):
+
+A. **Diagnose Codex sandbox restriction**: re-run the test inside the sandbox with verbose output + strace/ktrace equivalent to identify the failure point. Patch the test to skip cleanly under sandbox restrictions OR fix the sandbox shim.
+
+B. **Add a sandbox-compat skip**: detect sandbox-restricted environment in the test setup and skip with `t.Skip("sandbox env: ...")` while still running on dev-box / CI.
+
+C. **Document as canonical resolution**: future hygiene-followup cycles invoking Codex's FINAL-VERDICT round may see the same FAIL. Document the dev-box-is-authoritative resolution as the canonical path; no test fix needed.
+
+**Files involved**: `internal/update/once_test.go::TestOnce_NoUpdate_Returns`, `internal/update/once.go`.
+
+---
+
+# Pickup contract for future sessions
+
+A fresh Claude session picking up Phase 8+ work should:
+
+1. Read this file (`plans/audit-composition/deferred-followups.md`) end-to-end.
+2. Read `plans/archive/atom-corpus-hygiene-followup-2026-04-27.md` for the followup plan's context (especially §16 amendments + §3 axes K/L/M definitions).
+3. Read `plans/audit-composition/final-review-v2.md` "Executor's response" for the SHIP-WITH-NOTES disposition rationale.
+4. Read the Phase 7 v2 tracker (`phase-7-tracker-v2.md`) for the final state at PLAN COMPLETE.
+5. Pick ONE of the four notes above and write a focused plan (`plans/<note-N-slug>-<date>.md`) addressing it. Do NOT bundle multiple notes into one plan — each has different scope, risk profile, and resolution paths.
+
+Each note's resolution path A/B/C is a starting point. The actual plan must include §17-style prereq checklist + §15-style EXIT criteria + Codex protocol per inherited §10.
+
