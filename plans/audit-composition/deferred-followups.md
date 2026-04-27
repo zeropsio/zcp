@@ -67,6 +67,35 @@ candidates were DEFERRED-TO-FOLLOW-UP-PLAN with rationale:
 Total deferred body recovery: ~11 KB across the corpus. Future
 hygiene cycle could pick these up.
 
+## §15.3 G3 first-deploy strict-improvement (formalized deferral)
+
+Codex final-round verdict (round 3, preserved verbatim in
+`final-review.md`) returned NO-SHIP citing §15.3 G3 strict-
+improvement: redundancy + coverage-gap held flat on first-deploy
+fixtures while simple-deployed (the user-test target) strictly
+improved. Per §15.3 ship-gate failure-mode the executor either
+remediates OR documents the deferred follow-up here:
+
+**Why deferred**: the gap is the broad-atom redundancy issue
+(below). First-deploy fixtures' Redundancy = 1 score is driven
+by 6+ broad atoms (`develop-api-error-meta`, `develop-env-var-
+channels`, `develop-verify-matrix`, `develop-platform-rules-
+common`, `develop-auto-close-semantics`, `develop-change-drives-
+deploy`) co-rendering with cross-atom paraphrased restatements.
+Each individual atom is reasonable; the AGGREGATE is the
+redundancy problem.
+
+Resolving requires either (a) cross-cluster broad-atom dedup
+(trim each atom of overlapping content), or (b) further axis-
+tightening to reduce co-firing breadth. Both are Phase 8+
+follow-up work — distinct from the phase 2-6 axis-specific
+dedups. Estimated ~3-5 KB additional first-deploy body recovery.
+
+**Risk if skipped**: low for the user-test target (already met
+under refined rubric); medium for first-deploy fixture
+composition quality (broad atoms still represent a noise-fraction
+that a future user-test on first-deploy envelopes might surface).
+
 ## Phase 7 broad-atom redundancy
 
 Per `phase-7-tracker.md`: Codex's composition re-score flagged
