@@ -4,6 +4,206 @@ Running log of changes on top of [plan.md](plan.md). Each entry captures what ch
 
 ---
 
+## 2026-04-27 — run-15 readiness: content-quality plateau + run-14 stealth-regression closure
+
+### Context
+
+Run-14 (`nestjs-showcase`, 2026-04-27) closed Cluster A.1's in-memory
+validator plumbing cleanly — tier surfaces lifted from run-13's 9-line
+collapse to 41-42 lines, dispatch composer saturated at ~0% wrapper
+share, six SPA panels with stable selectors, zero defensive feature
+re-dispatch. Run-14 self-graded **8.5/10 vs reference**.
+
+A post-run walk against
+[`docs/spec-content-surfaces.md`](../spec-content-surfaces.md) with
+the laravel-jetstream + laravel-showcase reference recipes in hand
+re-scored to **6.5-7.0/10 honest**. The defect class is
+**surface-purpose mismatch**: tier README extract markers wrap 35-line
+ladders where both references put 1-2 sentences; KB sections carry
+11-12 bullets where references settle at 5-8; IG items describe
+recipe-internal scaffold (`server.js`, `/healthz`, `sirv` config)
+instead of teaching platform-portable principles. Brief preface
+teaches surfaces; agent drifts at per-fragment authoring decisions
+because the spec contracts roll out of working memory by then.
+
+Run-14 also shipped two engine extensions that pass unit tests but
+miss in production: R-14-1 (Cluster A.2 subdomain auto-enable; the
+`client.GetService` fallback races L7 port-registration propagation)
+and R-14-P-1 (Cluster B.3 reachable-slug list; CHANGELOG promised it
+but the production brief carried zero matches). Both are stealth
+regressions of run-14 readiness work — code shipped, production
+surface unverified.
+
+Run-15 readiness ships across five clusters: T1 closes the two
+stealth regressions (Clusters A + B); T2 operationalizes the spec at
+record-time (Cluster F.2-F.5 — surface contract delivery,
+classification × surface refusal, tier extract char-cap, IG/KB caps,
+fabricated-yaml-field validator); T3 covers operational + content
+discipline tighteners (D.1 + E); T4 is sign-off. Every change is
+TEACH-side per [system.md §4](system.md): positive line caps, char
+caps, classification compatibility table, structural validators —
+never a vocabulary ban.
+
+### §A — R-14-1 closure: subdomain eligibility on plan-declared intent
+
+[`internal/tools/deploy_subdomain.go::platformEligibleForSubdomain`](../../internal/tools/deploy_subdomain.go#L124)
+reads `detail.SubdomainAccess` (set at yaml-import time from
+`enableSubdomainAccess: true`) instead of the racing
+`Ports[].HTTPSupport`. SubdomainAccess is plan-declared intent
+persisted by the platform; HTTPSupport races L7 port-registration on
+FIRST cross-deploy of every stage slot. Run-14 scaffold-app burned
+three manual `zerops_subdomain action=enable` calls on this race;
+Run-15 zero. The HTTP-readiness probe now also runs in the meta-nil
+already_enabled path so first-deploy URL propagation is observed
+before the next `zerops_verify`.
+
+[`internal/ops/subdomain.go::enableSubdomainAccessWithRetry`](../../internal/ops/subdomain.go)
+adds bounded backoff (250ms / 500ms / 1s) for the platform's
+`noSubdomainPorts` rejection, absorbing the propagation race at the
+right layer when the agent enables manually post-deploy.
+Test-overridable via `OverrideEnableRetryConfigForTest`.
+
+Pinned by `TestMaybeAutoEnable_NoMeta_PlanDeclaredIntent_Dispatches`,
+`TestMaybeAutoEnable_NoMeta_PlanNotDeclared_Skips`,
+`TestSubdomain_Enable_RetriesOnNoSubdomainPorts`.
+
+### §B — R-14-P-1 closure: reachable-slug list reaches dispatched brief
+
+The production dispatch path called the legacy
+`BuildScaffoldBrief` (no resolver) at
+[`briefs_subagent_prompt.go:96`](../../internal/recipe/briefs_subagent_prompt.go)
+instead of the resolver-aware `BuildScaffoldBriefWithResolver`. The
+unit test (composer + resolver) passed; the production brief carried
+zero matches for the section header. Fix threads
+`Session.MountRoot` through `buildSubagentPromptForPhase` →
+`buildBriefForKind` → `BuildScaffoldBriefWithResolver`. Run-15 brief
+carries `## Recipe-knowledge slugs you may consult` verbatim.
+
+Pinned by
+`TestScaffoldBrief_DispatchedToProductionAgent_CarriesReachableSlugList`
+([`internal/recipe/briefs_dispatch_test.go`](../../internal/recipe/briefs_dispatch_test.go)).
+Establishes the §0 production-surface precedent: every brief /
+record-fragment-response / validator extension has an e2e test that
+observes the dispatched output.
+
+### §F.2 — surface contract delivered at record-time
+
+[`internal/recipe/surfaces.go::SurfaceContract`](../../internal/recipe/surfaces.go)
+extends with `Reader`, `Test`, `LineCap`, `ItemCap`, and
+`IntroExtractCharCap` populated per-surface from the spec line-budget
+table. New `SurfaceFromFragmentID` maps every fragment-id shape to a
+surface; `RecipeResult.SurfaceContract` carries the resolved contract
+on every `record-fragment` response so the agent reads the per-
+surface reader / test / caps verbatim at authoring decision time, not
+just at brief-preface time.
+
+Pinned by `TestSurfaceFromFragmentID`,
+`TestSurfaceContract_HasCaps`,
+`TestRecordFragment_ResponseCarriesSurfaceContract`.
+
+### §F.3 — classification × surface compatibility refusal
+
+[`internal/recipe/classify.go::classificationCompatibleWithSurface`](../../internal/recipe/classify.go)
+encodes the spec's compatibility table; the dispatcher refuses
+incompatible (classification, fragmentId) pairs at `record-fragment`
+time before the plan's fragment store is touched. `RecipeInput`
+gains an optional `Classification` field; empty value preserves
+back-compat. DISCARD classes (`framework-quirk`, `library-metadata`,
+`self-inflicted`) refuse all surfaces with spec-defined redirect
+teaching.
+
+Pinned by `TestClassificationCompatibleWithSurface`,
+`TestRecordFragment_RefusesIncompatibleClassification`.
+
+### §F.4 — tier extract char-cap; delete env-readme-too-short
+
+[`internal/recipe/validators_root_env.go::validateEnvREADME`](../../internal/recipe/validators_root_env.go)
+replaces the `env-readme-too-short` (≥ 40 lines) validator —
+empirically driving run-14's 35-line ladder content inside the
+extract markers — with `tier-readme-extract-too-long`: extracts the
+content between `<!-- #ZEROPS_EXTRACT_START:intro# -->` markers and
+refuses bodies over `IntroExtractCharCap` (350 chars from spec). Both
+reference recipes leave the body empty; the cap targets the extract
+specifically. Body-length guard (≤ 120 lines) stays.
+
+Pinned by `TestEnvREADME_ExtractCharCap` (1-sentence pass / 2-sentence
+pass / 35-line ladder block).
+
+### §F.5 — IG/KB caps + fabricated-yaml-field validator + audience-voice
+
+[`validators_codebase.go`](../../internal/recipe/validators_codebase.go)
+adds `codebase-ig-too-many-items` (cap 5 incl. engine-emitted IG #1)
+and `codebase-kb-too-many-bullets` (cap 8). Both caps read from the
+SurfaceContract so the spec is single-source.
+
+[`validators_import_yaml.go`](../../internal/recipe/validators_import_yaml.go)
+parses the env import.yaml AST, collects every reachable key path,
+and refuses comment tokens whose shape matches a yaml field path
+(`[a-z][a-z0-9]*([_.][a-z0-9]+)+`) but whose path is absent from the
+yaml. Closes run-14's `project_env_vars` (snake_case) fabrication
+when the schema uses `project.envVariables`. Same file extends the
+audience-voice patrol (`recipe author`, `during scaffold`, `we
+chose`) into env import.yaml comments.
+
+Authoring-tool patrol (`zcli`, `zerops_*`, `zcp `) extended via
+`scanAuthoringToolLeaks` from CLAUDE.md to apps-repo zerops.yaml
+comments + codebase IG + codebase KB (notice severity).
+
+Pinned by `TestImportYamlComments_FabricatedFieldName`,
+`TestImportYamlComments_RealFieldName_Passes`,
+`TestImportYamlComments_AudienceVoiceLeak`,
+`TestImportYamlComments_EnglishProse_NoFalsePositive`,
+`TestCodebaseIG_ItemCap`, `TestCodebaseKB_BulletCap`.
+
+### §D.1 — browser viewport-clipping (atom-side fix)
+
+`zerops_browser` is an external tool; its CDP Click handler dispatches
+at element-center coordinates without `Element.scrollIntoView`. Fix
+ships in
+[`content/briefs/feature/showcase_scenario.md`](../../internal/recipe/content/briefs/feature/showcase_scenario.md)
+as positive shape: when a SPA renders > 3 demonstration panels, use
+tabs / collapsed accordion / two-column grid (≤ 3 wide) so the active
+panel stays above the headless viewport's 577px fold by construction.
+6-panel single-column scroll layouts are explicitly named as
+avoidable. Run-14 burned three browser-verification facts on R-14-5;
+Run-15 should hit zero `agent-browser-viewport-clipping` facts.
+
+### §E — content-discipline tighteners
+
+- **E.1 phase-advance teaching** lands in
+  [`research.md`](../../internal/recipe/content/phase_entry/research.md)
+  + [`provision.md`](../../internal/recipe/content/phase_entry/provision.md)
+  closing sections: `complete-phase` does NOT auto-advance — it marks
+  the current phase done; explicit `enter-phase phase=<next>` is
+  required. Closes R-14-2.
+- **E.2 audience-rule sweep** extends the authoring-tool patrol
+  (`zcli`, `zerops_*`, `zcp `) into apps-repo zerops.yaml comments +
+  codebase IG + codebase KB via `scanAuthoringToolLeaks`. Closes R-14-3.
+- **E.3 finalize brief density** updates
+  [`validator_tripwires.md`](../../internal/recipe/content/briefs/finalize/validator_tripwires.md)
+  + [`scaffold/content_authoring.md`](../../internal/recipe/content/briefs/scaffold/content_authoring.md)
+  to teach the new caps (IG ≤ 5, KB ≤ 8, tier README extract ≤ 350
+  chars) and retire the run-14 7-10 IG multiplier (now uniform 4-5).
+  ScaffoldBriefCap raised 28 → 34 KB to fit the new teaching.
+
+### Verdict
+
+Run-15 readiness lands the content-quality contract at the engine
+boundary: caps reach the agent at record-time, classification refusal
+catches misroutes before storage, structural validators block run-14's
+specific defect classes (35-line extract ladders, 11-12 KB bullets,
+fabricated yaml field names). Combined with the run-14 stealth-
+regression closures (A + B), the path forward to honest 8.5/10 is
+mechanical — the engine now resolves the spec by construction, not by
+agent self-discipline.
+
+C.1 (`start attach=true`) remains deferred per
+[run-14 §7 open question 2](plans/run-14-readiness.md#7-open-questions).
+D.2 (§B3 yaml-emit corrective patterns for execOnce + Vite-bake)
+remains stretch — not shipped in run-15.
+
+---
+
 ## 2026-04-26 — run-14 readiness: I/O coherence + reserved semantics + session-state survival + operational preempts
 
 ### Context
