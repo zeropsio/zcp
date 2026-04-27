@@ -709,7 +709,6 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		{"idle/bootstrapped", StateEnvelope{Phase: PhaseIdle, Environment: EnvContainer, IdleScenario: IdleBootstrapped}},
 		{"idle/adopt", StateEnvelope{Phase: PhaseIdle, Environment: EnvContainer, IdleScenario: IdleAdopt}},
 		{"idle/incomplete", StateEnvelope{Phase: PhaseIdle, Environment: EnvContainer, IdleScenario: IdleIncomplete}},
-		{"idle/orphan", StateEnvelope{Phase: PhaseIdle, Environment: EnvContainer, IdleScenario: IdleOrphan}},
 
 		// Bootstrap routes × steps × environments.
 		{"bootstrap/classic/discover/dynamic/container", StateEnvelope{
@@ -951,8 +950,6 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"develop-static-workflow",
 		"develop-strategy-awareness",
 		"develop-verify-matrix",
-		// idle-* (1 unpinned atom)
-		"idle-orphan-cleanup",
 		// strategy-* (4 unpinned atoms)
 		"strategy-push-git-push-container",
 		"strategy-push-git-push-local",

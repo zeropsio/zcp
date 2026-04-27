@@ -90,25 +90,6 @@ func bootstrapCoverageFixtures() []coverageFixture {
 			},
 		},
 		{
-			Name: "idle_orphan_only",
-			Envelope: StateEnvelope{
-				Phase:        PhaseIdle,
-				Environment:  EnvContainer,
-				IdleScenario: IdleOrphan,
-				Services:     nil,
-				OrphanMetas: []OrphanMeta{{
-					Hostname:         "ghostdev",
-					StageHostname:    "ghoststage",
-					BootstrapSession: "sess-deadbeef",
-					Reason:           OrphanReasonIncompleteLost,
-				}},
-			},
-			MustContain: []string{
-				`zerops_workflow action="reset" workflow="bootstrap"`,
-				"orphan",
-			},
-		},
-		{
 			Name: "bootstrap_classic_discover_dynamic",
 			Envelope: StateEnvelope{
 				Phase:       PhaseBootstrapActive,

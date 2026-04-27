@@ -23,51 +23,13 @@ type StateEnvelope struct {
 	SelfService  *SelfService             `json:"selfService,omitempty"`
 	Project      ProjectSummary           `json:"project"`
 	Services     []ServiceSnapshot        `json:"services"`
-	OrphanMetas  []OrphanMeta             `json:"orphanMetas,omitempty"`
 	WorkSession  *WorkSessionSummary      `json:"workSession,omitempty"`
 	Bootstrap    *BootstrapSessionSummary `json:"bootstrap,omitempty"`
 	Recipe       *RecipeSessionSummary    `json:"recipe,omitempty"`
 	Generated    time.Time                `json:"generated"`
 }
 
-// OrphanMeta names a ServiceMeta on disk whose corresponding live
-// service no longer exists. Surfaces externally-deleted services
-// (Zerops dashboard, zcli, manual API call) and dead bootstrap
-// sessions whose runtime never reached ACTIVE — both categories
-// would be invisible in the Services slice (which builds from live
-// API only) yet still occupy state on disk.
-//
-// Reason discriminates the two recovery affordances: LiveDeleted
-// metas can be cleaned via reset; IncompleteLost metas additionally
-// signal that the bootstrap session that owned them has died (no
-// resume possible). Both classes route to IdleOrphan when no other
-// non-self live service exists.
-type OrphanMeta struct {
-	Hostname         string       `json:"hostname"`
-	StageHostname    string       `json:"stageHostname,omitempty"`
-	BootstrapSession string       `json:"bootstrapSession,omitempty"`
-	BootstrappedAt   string       `json:"bootstrappedAt,omitempty"` // empty = incomplete
-	FirstDeployedAt  string       `json:"firstDeployedAt,omitempty"`
-	Reason           OrphanReason `json:"reason"`
-}
-
-// OrphanReason is the diagnosis attached to each OrphanMeta. It
-// drives the suggested recovery in the IdleOrphan plan branch.
-type OrphanReason string
-
-const (
-	// OrphanReasonLiveDeleted: meta on disk for a hostname/stagehostname
-	// pair where neither half exists in the live API. Most common cause:
-	// user deleted via Zerops dashboard or zcli.
-	OrphanReasonLiveDeleted OrphanReason = "live-deleted"
-	// OrphanReasonIncompleteLost: incomplete meta (BootstrappedAt empty)
-	// with a non-empty BootstrapSession that no longer corresponds to a
-	// live PID in the registry. Bootstrap died before completion AND
-	// before reset.
-	OrphanReasonIncompleteLost OrphanReason = "incomplete-lost"
-)
-
-// IdleScenario discriminates the three sub-cases of PhaseIdle so atoms can
+// IdleScenario discriminates the sub-cases of PhaseIdle so atoms can
 // filter on a single mutually-exclusive value instead of racing on overlapping
 // service-count heuristics. Empty when Phase != idle.
 type IdleScenario string
@@ -81,13 +43,6 @@ const (
 	// was interrupted before writing BootstrappedAt. Resume takes priority
 	// over adopt because ZCP already owns the service slot via that session.
 	IdleIncomplete IdleScenario = "incomplete"
-	// IdleOrphan fires when (a) no non-self live runtime services exist,
-	// AND (b) at least one ServiceMeta on disk has no live counterpart
-	// (see OrphanMeta). Surfaces a cleanup-or-recreate plan instead of
-	// IdleEmpty's "start from scratch" — the agent should clear the
-	// orphan via reset before bootstrapping fresh, otherwise the metas
-	// will conflict with new bootstrap names.
-	IdleOrphan IdleScenario = "orphan"
 )
 
 // DeployState marks a bootstrapped service's deploy progression. The

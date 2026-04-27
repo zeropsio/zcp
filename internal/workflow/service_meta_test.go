@@ -548,8 +548,8 @@ func TestPruneServiceMetas_RemovesStaleEntries(t *testing.T) {
 
 			// Verify pruned count matches removed count.
 			wantPruned := len(tt.diskMetas) - len(tt.wantRemaining)
-			if pruned != wantPruned {
-				t.Errorf("pruned count: want %d, got %d", wantPruned, pruned)
+			if len(pruned) != wantPruned {
+				t.Errorf("pruned count: want %d, got %d (deleted=%v)", wantPruned, len(pruned), pruned)
 			}
 		})
 	}

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 
 	"github.com/zeropsio/zcp/internal/topology"
 )
@@ -275,15 +276,19 @@ func ListServiceMetas(baseDir string) ([]*ServiceMeta, error) {
 
 // PruneServiceMetas removes service meta files that don't match any live hostname.
 // A meta is kept if its Hostname OR StageHostname exists in liveHostnames.
-// Returns the number of pruned entries.
-func PruneServiceMetas(baseDir string, liveHostnames map[string]bool) int {
+// Returns the sorted list of deleted primary hostnames so callers can surface
+// the cleanup transparently (e.g. bootstrap-start's `cleanedUpOrphanMetas`).
+func PruneServiceMetas(baseDir string, liveHostnames map[string]bool) []string {
 	metas, err := ListServiceMetas(baseDir)
 	if err != nil || len(metas) == 0 {
-		return 0
+		return nil
 	}
 
-	pruned := 0
+	var deleted []string
 	for _, m := range metas {
+		if m == nil {
+			continue
+		}
 		keep := false
 		for _, h := range m.Hostnames() {
 			if liveHostnames[h] {
@@ -295,10 +300,11 @@ func PruneServiceMetas(baseDir string, liveHostnames map[string]bool) int {
 			continue
 		}
 		if err := DeleteServiceMeta(baseDir, m.Hostname); err == nil {
-			pruned++
+			deleted = append(deleted, m.Hostname)
 		}
 	}
-	return pruned
+	sort.Strings(deleted)
+	return deleted
 }
 
 // IsKnownService checks if a hostname is tracked by any ServiceMeta.

@@ -419,7 +419,7 @@ func handleReset(ctx context.Context, engine *workflow.Engine, client platform.C
 	// liveness is unknown (offline / client-less callers must not
 	// trigger destructive cleanup based on missing data).
 	if livenessKnown {
-		cleared.OrphanMetas = pruneOrphanMetasPostReset(engine.StateDir(), liveServices)
+		cleared.OrphanMetas = workflow.PruneServiceMetas(engine.StateDir(), liveHostnamesMap(liveServices))
 	}
 
 	// Recompute preserved metas after reset + orphan cleanup to catch
@@ -435,39 +435,16 @@ func handleReset(ctx context.Context, engine *workflow.Engine, client platform.C
 	return jsonResult(report), nil, nil
 }
 
-// pruneOrphanMetasPostReset deletes every meta on disk whose live
-// service counterpart is gone. Pair-keyed: either half of a dev/stage
-// pair being live keeps the meta. Returns the sorted list of deleted
-// hostnames for the report. Best-effort: individual delete errors are
-// logged-but-non-fatal (matches cleanIncompleteMetasForSession's
-// posture; reset should never fail because of one bad meta file).
-func pruneOrphanMetasPostReset(stateDir string, live []platform.ServiceStack) []string {
-	metas, err := workflow.ListServiceMetas(stateDir)
-	if err != nil {
-		return nil
-	}
-	liveByName := make(map[string]struct{}, len(live))
+// liveHostnamesMap turns a platform service list into the lookup map
+// `workflow.PruneServiceMetas` consumes — a thin adapter that keeps the
+// pair-keyed pruning logic in one place (service_meta.go) while the
+// tool layer owns the platform-client I/O.
+func liveHostnamesMap(live []platform.ServiceStack) map[string]bool {
+	out := make(map[string]bool, len(live))
 	for _, s := range live {
-		liveByName[s.Name] = struct{}{}
+		out[s.Name] = true
 	}
-	var deleted []string
-	for _, m := range metas {
-		if m == nil {
-			continue
-		}
-		_, devLive := liveByName[m.Hostname]
-		stageLive := false
-		if m.StageHostname != "" {
-			_, stageLive = liveByName[m.StageHostname]
-		}
-		if devLive || stageLive {
-			continue
-		}
-		if err := workflow.DeleteServiceMeta(stateDir, m.Hostname); err == nil {
-			deleted = append(deleted, m.Hostname)
-		}
-	}
-	return deleted
+	return out
 }
 
 // buildClearedSnapshot captures everything reset will destroy: the active
@@ -760,6 +737,13 @@ func handleBootstrapStart(ctx context.Context, projectID string, engine *workflo
 	}
 
 	// Commit pass — start a session with the chosen route.
+	//
+	// Auto-prune orphan ServiceMetas (E3) BEFORE starting the new session.
+	// Stale records would otherwise collide with the new bootstrap's hostnames.
+	// Skipped when liveness is unknown so an offline/client-less invocation
+	// doesn't trigger destructive cleanup based on missing data.
+	cleanedOrphans := pruneOrphanMetasBeforeBootstrap(ctx, client, projectID, engine.StateDir())
+
 	resp, err := engine.BootstrapStartWithRoute(projectID, input.Intent, route, input.RecipeSlug)
 	if err != nil {
 		return convertError(platform.NewPlatformError(
@@ -767,8 +751,25 @@ func handleBootstrapStart(ctx context.Context, projectID string, engine *workflo
 			fmt.Sprintf("Bootstrap start failed: %v", err),
 			"Call action=start workflow=bootstrap without route to discover valid options, or action=reset to clear the existing session"), WithRecoveryStatus()), nil, nil
 	}
+	resp.CleanedUpOrphanMetas = cleanedOrphans
 	populateStacks(ctx, resp, client, cache)
 	return jsonResult(resp), nil, nil
+}
+
+// pruneOrphanMetasBeforeBootstrap deletes ServiceMeta files whose live
+// counterpart is gone, returning the sorted list of pruned hostnames so the
+// bootstrap-start response can surface the cleanup transparently. Returns
+// nil when the platform client is unavailable or the live-services lookup
+// fails — destructive cleanup must never run on stale data.
+func pruneOrphanMetasBeforeBootstrap(ctx context.Context, client platform.Client, projectID, stateDir string) []string {
+	if client == nil || projectID == "" || stateDir == "" {
+		return nil
+	}
+	live, err := ops.ListProjectServices(ctx, client, projectID)
+	if err != nil {
+		return nil
+	}
+	return workflow.PruneServiceMetas(stateDir, liveHostnamesMap(live))
 }
 
 // listExistingServices is a best-effort wrapper around ops.ListProjectServices

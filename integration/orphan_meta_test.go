@@ -1,15 +1,17 @@
-// Tests for: integration — orphan-meta visibility (G4 plan §4.6 Phase 7).
+// Tests for: integration — orphan-meta auto-cleanup at bootstrap-start (E3).
 //
-// Exercises the end-to-end path: write a complete ServiceMeta to disk for
-// a hostname that the mock platform does NOT report as live → call
-// zerops_workflow action=status through MCP → assert the response
-// includes orphanMetas + IdleOrphan + the reset recovery primary action.
+// Engine plan 2026-04-27 ticket E3 made orphan ServiceMeta cleanup a
+// transparent side-effect of `zerops_workflow action="start"
+// workflow="bootstrap"` commit. The agent never sees a dedicated reset
+// recommendation; the response surfaces the cleaned hostnames via
+// `cleanedUpOrphanMetas`.
 
 package integration_test
 
 import (
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -27,12 +29,29 @@ func fixedTimeForTest() time.Time {
 	return time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)
 }
 
-func TestIntegration_OrphanMeta_StatusSurfacesResetHint(t *testing.T) {
+// contentText concatenates the text from a tool response. Local helper so
+// the orphan-meta tests don't share assertion code with the wider
+// `multi_tool_test.go` `getTextContent`, which fatal-fails on empty bodies.
+func contentText(resp *mcp.CallToolResult) string {
+	var b strings.Builder
+	for _, c := range resp.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			b.WriteString(tc.Text)
+		}
+	}
+	return b.String()
+}
+
+// TestIntegration_OrphanMeta_StatusFallsThroughToBootstrap pins the post-E3
+// routing: with stale ServiceMetas on disk and no live services, the idle
+// scenario collapses to `empty` and status recommends starting a bootstrap.
+// The dedicated `IdleOrphan` reset path is gone — cleanup happens
+// transparently inside bootstrap-start.
+func TestIntegration_OrphanMeta_StatusFallsThroughToBootstrap(t *testing.T) {
 	t.Parallel()
 
 	stateDir := t.TempDir()
 
-	// Seed: complete meta for a hostname the mock won't return as live.
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:       "ghostdev",
 		StageHostname:  "ghoststage",
@@ -42,7 +61,6 @@ func TestIntegration_OrphanMeta_StatusSurfacesResetHint(t *testing.T) {
 		t.Fatalf("seed meta: %v", err)
 	}
 
-	// Mock: no live services (project exists, just empty).
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "proj-1", Name: "demo"}).
 		WithServices(nil)
@@ -69,7 +87,6 @@ func TestIntegration_OrphanMeta_StatusSurfacesResetHint(t *testing.T) {
 	}
 	defer session.Close()
 
-	// Call zerops_workflow action=status — canonical recovery primitive.
 	resp, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name: "zerops_workflow",
 		Arguments: map[string]any{
@@ -85,47 +102,36 @@ func TestIntegration_OrphanMeta_StatusSurfacesResetHint(t *testing.T) {
 
 	body := contentText(resp)
 
-	// Status response is markdown-rendered. Verify orphan visibility +
-	// reset primary action both appear.
-	if !strings.Contains(body, "ghostdev") {
-		t.Errorf("status response missing orphan hostname `ghostdev`:\n%s", body)
+	// Status no longer surfaces the orphan hostname or routes to reset —
+	// cleanup happens at bootstrap-start time.
+	if strings.Contains(body, "ghostdev") {
+		t.Errorf("status response leaks orphan hostname `ghostdev`:\n%s", body)
 	}
-	if !strings.Contains(body, "reset") {
-		t.Errorf("status response missing `reset` primary action:\n%s", body)
+	if strings.Contains(body, `action="reset"`) {
+		t.Errorf("status should not recommend reset for orphan-only state:\n%s", body)
 	}
-	if !strings.Contains(body, "orphan") {
-		t.Errorf("status response missing `orphan` framing:\n%s", body)
+	if !strings.Contains(body, `action="start" workflow="bootstrap"`) {
+		t.Errorf("status missing recommendation to start a bootstrap:\n%s", body)
 	}
 }
 
-// contentText extracts the concatenated text from a tool response. Used
-// by integration tests that don't care about the structured shape.
-func contentText(resp *mcp.CallToolResult) string {
-	var b strings.Builder
-	for _, c := range resp.Content {
-		if tc, ok := c.(*mcp.TextContent); ok {
-			b.WriteString(tc.Text)
-		}
-	}
-	return b.String()
-}
-
-// TestIntegration_OrphanMeta_ResetActuallyClears pins the Codex pass-2
-// finding: when status routes IdleOrphan to action=reset, executing that
-// action MUST actually remove the orphan meta. Without this, status keeps
-// reporting IdleOrphan and the agent loops without remediation.
-func TestIntegration_OrphanMeta_ResetActuallyClears(t *testing.T) {
+// TestIntegration_OrphanMeta_BootstrapStartCleansAndReports pins E3's
+// transparent-cleanup contract: a fresh `start workflow=bootstrap` with a
+// concrete route prunes orphan metas before creating the new session and
+// names the cleaned hostnames in the response.
+func TestIntegration_OrphanMeta_BootstrapStartCleansAndReports(t *testing.T) {
 	t.Parallel()
 
 	stateDir := t.TempDir()
 
-	// Seed: complete meta for a hostname not in the mock's live list.
-	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
-		Hostname:       "ghostdev",
-		Mode:           topology.PlanModeDev,
-		BootstrappedAt: "2026-04-25",
-	}); err != nil {
-		t.Fatalf("seed meta: %v", err)
+	for _, host := range []string{"ghostdev", "phantomdev"} {
+		if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+			Hostname:       host,
+			Mode:           topology.PlanModeDev,
+			BootstrappedAt: "2026-04-25",
+		}); err != nil {
+			t.Fatalf("seed meta %s: %v", host, err)
+		}
 	}
 
 	mock := platform.NewMock().
@@ -154,57 +160,50 @@ func TestIntegration_OrphanMeta_ResetActuallyClears(t *testing.T) {
 	}
 	defer session.Close()
 
-	// Step 1: status confirms orphan visible.
-	status1, err := session.CallTool(ctx, &mcp.CallToolParams{
-		Name:      "zerops_workflow",
-		Arguments: map[string]any{"action": "status"},
-	})
-	if err != nil {
-		t.Fatalf("status before reset: %v", err)
-	}
-	if !strings.Contains(contentText(status1), "ghostdev") {
-		t.Fatal("orphan ghostdev not visible in status before reset")
-	}
-
-	// Step 2: execute the recommended primary action (reset workflow=bootstrap).
-	resetResp, err := session.CallTool(ctx, &mcp.CallToolParams{
+	resp, err := session.CallTool(ctx, &mcp.CallToolParams{
 		Name: "zerops_workflow",
 		Arguments: map[string]any{
-			"action":   "reset",
+			"action":   "start",
 			"workflow": "bootstrap",
+			"route":    "classic",
+			"intent":   "fresh project after orphans",
 		},
 	})
 	if err != nil {
-		t.Fatalf("reset call: %v", err)
+		t.Fatalf("CallTool bootstrap-start: %v", err)
 	}
-	if resetResp.IsError {
-		t.Fatalf("reset returned IsError: %s", contentText(resetResp))
-	}
-	if !strings.Contains(contentText(resetResp), "ghostdev") {
-		t.Errorf("reset report should name cleared orphan ghostdev:\n%s", contentText(resetResp))
+	if resp.IsError {
+		t.Fatalf("bootstrap-start returned IsError: %s", contentText(resp))
 	}
 
-	// Step 3: status after reset must NOT route to IdleOrphan + must NOT
-	// list ghostdev. This pins the Codex pass-2 fix.
-	status2, err := session.CallTool(ctx, &mcp.CallToolParams{
-		Name:      "zerops_workflow",
-		Arguments: map[string]any{"action": "status"},
-	})
-	if err != nil {
-		t.Fatalf("status after reset: %v", err)
+	body := contentText(resp)
+	if !strings.Contains(body, `"cleanedUpOrphanMetas"`) {
+		t.Errorf("response missing cleanedUpOrphanMetas field:\n%s", body)
 	}
-	if strings.Contains(contentText(status2), "ghostdev") {
-		t.Errorf("orphan ghostdev still visible after reset:\n%s", contentText(status2))
+	for _, host := range []string{"ghostdev", "phantomdev"} {
+		if !strings.Contains(body, host) {
+			t.Errorf("response missing cleaned hostname %q:\n%s", host, body)
+		}
 	}
-	if strings.Contains(contentText(status2), "OrphanMetas:") {
-		t.Errorf("OrphanMetas section still present after reset:\n%s", contentText(status2))
+
+	// The meta files must be gone from disk after the cleanup.
+	for _, host := range []string{"ghostdev", "phantomdev"} {
+		path := filepath.Join(stateDir, "services", host+".json")
+		meta, err := workflow.ReadServiceMeta(stateDir, host)
+		if err != nil {
+			t.Fatalf("ReadServiceMeta(%s): %v", host, err)
+		}
+		if meta != nil {
+			t.Errorf("meta file %s still exists post-cleanup: %+v", path, meta)
+		}
 	}
 }
 
-// TestIntegration_OrphanMeta_EnvelopeFieldExists pins the JSON envelope
-// shape. Status renders markdown to the wire but the underlying envelope
-// can also be extracted via the structured Content path.
-func TestIntegration_OrphanMeta_EnvelopeFieldExists(t *testing.T) {
+// TestIntegration_OrphanMeta_EnvelopeOmitsOrphanField pins the post-E3
+// envelope shape: orphan metas are no longer surfaced as a first-class
+// field. The cleanup is invisible to the agent until bootstrap-start
+// reports it via `cleanedUpOrphanMetas`.
+func TestIntegration_OrphanMeta_EnvelopeOmitsOrphanField(t *testing.T) {
 	t.Parallel()
 
 	stateDir := t.TempDir()
@@ -223,25 +222,15 @@ func TestIntegration_OrphanMeta_EnvelopeFieldExists(t *testing.T) {
 		t.Fatalf("ComputeEnvelope: %v", err)
 	}
 
-	if len(env.OrphanMetas) != 1 {
-		t.Fatalf("env.OrphanMetas = %d, want 1", len(env.OrphanMetas))
-	}
-	if env.OrphanMetas[0].Hostname != "phantomdev" {
-		t.Errorf("hostname = %q, want phantomdev", env.OrphanMetas[0].Hostname)
-	}
-	if env.OrphanMetas[0].Reason != workflow.OrphanReasonLiveDeleted {
-		t.Errorf("reason = %q, want %q", env.OrphanMetas[0].Reason, workflow.OrphanReasonLiveDeleted)
-	}
-	if env.IdleScenario != workflow.IdleOrphan {
-		t.Errorf("idleScenario = %q, want %q", env.IdleScenario, workflow.IdleOrphan)
+	if env.IdleScenario != workflow.IdleEmpty {
+		t.Errorf("idleScenario = %q, want %q (orphan-only collapses to empty post-E3)", env.IdleScenario, workflow.IdleEmpty)
 	}
 
-	// Round-trip through JSON to confirm wire shape carries OrphanMetas.
 	encoded, err := json.Marshal(env)
 	if err != nil {
 		t.Fatalf("Marshal envelope: %v", err)
 	}
-	if !strings.Contains(string(encoded), `"orphanMetas"`) {
-		t.Errorf("encoded envelope missing orphanMetas key: %s", encoded)
+	if strings.Contains(string(encoded), `"orphanMetas"`) {
+		t.Errorf("encoded envelope still carries orphanMetas key: %s", encoded)
 	}
 }

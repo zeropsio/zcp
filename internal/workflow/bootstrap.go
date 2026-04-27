@@ -43,15 +43,22 @@ type BootstrapState struct {
 }
 
 // BootstrapResponse is returned from conductor actions.
+//
+// CleanedUpOrphanMetas lists ServiceMeta files the engine deleted as a
+// transparent side-effect of bootstrap-start commit (E3): primary hostnames
+// whose live counterpart is gone, pruned before the new session is created
+// so a fresh route doesn't clash with stale records. Empty/omitted when the
+// commit found no orphans (the typical case).
 type BootstrapResponse struct {
-	SessionID       string             `json:"sessionId"`
-	Intent          string             `json:"intent"`
-	Progress        BootstrapProgress  `json:"progress"`
-	Current         *BootstrapStepInfo `json:"current,omitempty"`
-	Message         string             `json:"message"`
-	AvailableStacks string             `json:"availableStacks,omitempty"`
-	CheckResult     *StepCheckResult   `json:"checkResult,omitempty"`
-	AutoMounts      []AutoMountInfo    `json:"autoMounts,omitempty"`
+	SessionID            string             `json:"sessionId"`
+	Intent               string             `json:"intent"`
+	Progress             BootstrapProgress  `json:"progress"`
+	Current              *BootstrapStepInfo `json:"current,omitempty"`
+	Message              string             `json:"message"`
+	AvailableStacks      string             `json:"availableStacks,omitempty"`
+	CheckResult          *StepCheckResult   `json:"checkResult,omitempty"`
+	AutoMounts           []AutoMountInfo    `json:"autoMounts,omitempty"`
+	CleanedUpOrphanMetas []string           `json:"cleanedUpOrphanMetas,omitempty"`
 }
 
 // BootstrapDiscoveryResponse is returned from BootstrapDiscover. Discovery
