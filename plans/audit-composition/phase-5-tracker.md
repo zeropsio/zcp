@@ -7,14 +7,14 @@ Closed: 2026-04-27
 
 | step | round type | state | output | commit |
 |---|---|---|---|---|
-| Codex axis-G CORPUS-SCAN | CORPUS-SCAN | DONE | `axis-g-candidates.md` (1 atom qualifies; ~1,960 B target) | <pending> |
+| Codex axis-G CORPUS-SCAN | CORPUS-SCAN | DONE | `axis-g-candidates.md` (1 atom qualifies; ~1,960 B target) | 4aa1d027 |
 | Codex axis-G POST-WORK | POST-WORK | SKIPPED | — | — | per §10.5 rule #3 — Codex PRE-WORK was exhaustive across 79 atoms, no need for re-grep |
 
 ## Per-atom work units
 
 | # | atom | bytes target | state | commit | notes |
 |---|---|---|---|---|---|
-| 1 | `bootstrap-env-var-discovery` (managed-service env-var catalog table) | ~1,960 B | DONE | <pending> | replaced 13-row catalog table with per-service usage-guidance bullets; `zerops_discover includeEnvs=true` is now the authoritative key-list source; preserved preference/usage nuance ("connectionString preferred", "no auth — private network", scoped-key vs masterKey for Meilisearch, etc.) which discover doesn't surface |
+| 1 | `bootstrap-env-var-discovery` (managed-service env-var catalog table) | ~1,960 B | DONE | 4aa1d027 | replaced 13-row catalog table with per-service usage-guidance bullets; `zerops_discover includeEnvs=true` is now the authoritative key-list source; preserved preference/usage nuance ("connectionString preferred", "no auth — private network", scoped-key vs masterKey for Meilisearch, etc.) which discover doesn't surface |
 
 ## Phase 5 EXIT (§7)
 
