@@ -35,9 +35,19 @@ Reviewer brief: verify proposed Axis N edits preserve load-bearing signals + cro
 
 ---
 
-## Round 2 — 2026-04-27 (pending)
+## Round 2 — 2026-04-27
 
-Dispatched: 2026-04-27 (TBD timestamp on completion).
-Status: PENDING.
+Dispatched: 2026-04-27 (`acfa4b3da903f8d93`).
+Status: COMPLETE.
 
-Round 2 scope: verify Edit 2 revision (cross-link added correctly) + confirm Edit 3 deferral acceptance (no test breakage; status quo preserved). Edits 1, 4, 5 already APPROVE in round 1; not re-reviewed.
+Round 2 scope: verify Edit 2 revision (cross-link added correctly) + confirm Edit 3 deferral acceptance.
+
+### Per-revision validation
+
+- **Revision 2 (Edit 3 deferral)**: APPROVE — DF-1 captures proper-fix path (author local-env atom + tighten axis + update tests); plan §5 Phase 4 step 4 has deferral note pointing to DF-1; `axis-n-candidates.md` SPLIT-CANDIDATE marked DEFERRED with rationale; `develop-push-git-deploy.md` frontmatter unchanged (status quo preserved); deferral preserves pre-existing wrong-content state — cycle 3 doesn't worsen it.
+
+- **Revision 1 (Edit 2 cross-link)**: prompt-confusion artifact — Codex round 2 checked DISK state instead of PROPOSED text. The proposed text in the round-2 prompt verbatim addresses the round-1 concern (adds `develop-platform-rules-local` to references-atoms + body cross-link). Substantive verification deferred to POST-WORK round (which validated the FINAL applied state).
+
+### Round 2 VERDICT
+
+`VERDICT: APPROVE` on Edit 3 deferral; Edit 2 verification carried over to POST-WORK round (`a9a90b863cedaa944` → APPROVE on final applied state). Net: round 2 cleared the deferral decision; POST-WORK closed the Edit 2 loop.
