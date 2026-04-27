@@ -12,9 +12,8 @@ title: "Pick an ongoing deploy strategy"
 The first deploy landed and verified. Before iterating, confirm how
 future deploys should work:
 
-- `push-dev` — ZCP drives direct deploys via `zerops_deploy` (zcli push
-  from your workspace: dev container → stage, or local CWD →
-  stage). Fast for tight iteration.
+- `push-dev` — ZCP drives direct deploys via `zerops_deploy`. Fast
+  for tight iteration.
 - `push-git` — source of truth moves to an external git remote; Zerops
   builds triggered by a webhook or GitHub Actions. Container push-git
   uses `GIT_TOKEN` on the project; local push-git uses your own git

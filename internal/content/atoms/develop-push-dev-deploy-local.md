@@ -10,11 +10,11 @@ title: "Push-dev strategy — deploy via zerops_deploy"
 
 ### Push-Dev Deploy Strategy
 
-`zerops_deploy` runs `zcli push` from your working directory into the
-linked Zerops stage. Requires `zcli` on PATH; `zerops.yaml` placement is
-covered by `develop-platform-rules-common`. No sourceService: local env
-deploys whatever is in CWD (or the path passed as `workingDir`) — there's
-no dev container to cross-deploy from.
+`zerops_deploy` deploys from your working directory into the linked
+Zerops stage. `zerops.yaml` placement is covered by
+`develop-platform-rules-common`. No sourceService: local env deploys
+whatever is in CWD (or the path passed as `workingDir`) — there's no
+dev container to cross-deploy from.
 
 ```
 zerops_deploy targetService="{stage-hostname}"

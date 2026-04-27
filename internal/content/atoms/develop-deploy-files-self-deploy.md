@@ -20,8 +20,9 @@ deploy:
    only the selected subset enters the artifact.
 3. The runtime container's `/var/www/` is **overwritten** with that subset —
    source files disappear.
-4. On subsequent self-deploys, `zcli push` finds no source to upload —
-   the target is unrecoverable without a manual re-push from elsewhere.
+4. On subsequent self-deploys, `zerops_deploy` finds no source to
+   upload — the target is unrecoverable without a manual re-push from
+   elsewhere.
 
 Client-side pre-flight rejects this with
 `INVALID_ZEROPS_YML` before any build triggers, so this failure mode

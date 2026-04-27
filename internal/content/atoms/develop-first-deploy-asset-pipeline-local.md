@@ -29,8 +29,8 @@ npm run build
 ```
 
 The build writes `public/build/manifest.json` locally; `zerops_deploy`
-(`zcli push`) ships the working dir, so stage receives the manifest and
-next request resolves assets.
+ships the working dir, so stage receives the manifest and next request
+resolves assets.
 
 **For iterative frontend work, run Vite locally:** `npm run dev`. The
 dev server drops `public/build/hot`; helpers route assets to local Vite.
