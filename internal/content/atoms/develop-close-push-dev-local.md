@@ -12,7 +12,7 @@ title: "Close task — push-dev"
 ### Closing the task
 
 Local mode builds from your committed tree — no SSHFS, no dev container.
-Deploy and verify from your checkout:
+Close through the deploy cadence in `develop-change-drives-deploy`:
 
 ```
 zerops_deploy targetService="{hostname}"

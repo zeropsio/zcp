@@ -10,7 +10,8 @@ title: "Close task — push-dev simple mode"
 
 ### Closing the task
 
-Simple-mode services auto-start on deploy via their `healthCheck`:
+Simple-mode services auto-start on deploy; close through the cadence in
+`develop-change-drives-deploy`:
 
 ```
 zerops_deploy targetService="{hostname}" setup="prod"

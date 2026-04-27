@@ -12,13 +12,12 @@ references-atoms: [develop-platform-rules-container]
 
 ### Development workflow
 
-Edit code on `/var/www/{hostname}/`. After each set of changes redeploy —
-the runtime container auto-starts with its `healthCheck`, no manual server start:
+Edit code on `/var/www/{hostname}/`. Redeploy for this mode (see
+`develop-change-drives-deploy`); the runtime container auto-starts with its `healthCheck`:
 
 ```
 zerops_deploy targetService="{hostname}" setup="prod"
 zerops_verify serviceHostname="{hostname}"
 ```
 
-If only `zerops.yaml` changes are config-level (no code change), the deploy
-still applies them.
+Config-only changes still follow the same deploy path.
