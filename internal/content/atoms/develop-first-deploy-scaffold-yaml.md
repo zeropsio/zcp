@@ -37,11 +37,3 @@ zerops:
 
 **Mode-aware tips:** emit separate setup entries per targeted hostname.
 See `develop-deploy-modes` for deployFiles by deploy class.
-
-**Content-root tip:** if runtime expects assets at working-dir root
-(e.g. ASP.NET `wwwroot/` at `/var/www/wwwroot/`), use tilde-extract
-(`./out/~`) so contents land at `/var/www/`. Use preserve (`./out`) when
-`run.start` references a subpath like `./out/app/App.dll`. Full decision
-rule in `develop-deploy-modes`.
-
-Schema: fetch `zerops.yaml` JSON Schema via `zerops_knowledge` if unsure.
