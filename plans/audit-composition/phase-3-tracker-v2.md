@@ -105,8 +105,7 @@ develop-push-dev-deploy-container title/H2.
 ## §15.2 EXIT enforcement
 
 - [x] Every row above has non-empty final state.
-- [x] Every row that took action cites a commit hash (filled at
-  Phase 3 EXIT commit).
+- [x] Every row that took action cites Phase 3 EXIT commit `f0893eb2`.
 - [x] No mandated Codex rounds; round state n/a.
 - [x] `Closed:` 2026-04-27.
 
