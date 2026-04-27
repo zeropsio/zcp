@@ -92,6 +92,37 @@ Mandatory facts:
 Status panel verification optional. Any browser walk that produces
 console errors is a regression — fix before close.
 
+## Layout: tabs or collapsed panels for > 3 demonstrations
+
+`zerops_browser` runs headless Chrome at ~577px viewport. Click events
+dispatch at element-center coordinates without auto-scrolling into
+view; panels below the fold receive clicks at out-of-bounds coordinates
+and the browser-walk burns time on missed interactions. Run-14 hit this
+on a 6-panel single-column layout (R-14-5) — three panels were below
+the fold, three of the per-panel browser-verification facts could not
+be recorded without manual scroll.
+
+Positive shape: when the page renders MORE THAN 3 demonstration panels,
+use a layout that keeps the active panel above the fold by construction:
+
+- **Tabs** — one tab per category (Items / Cache / Queue / Storage /
+  Search). Default selection picks Items; switching tabs swaps the
+  active panel without scrolling.
+- **Collapsed accordion** — collapsed by default, one expanded at a
+  time. Clicking a panel header expands and collapses the prior one.
+- **Two-column grid (≤3 wide)** — works only if the layout fits
+  vertically; on the headless viewport this means the bottom row's
+  CTAs land within the 577px window.
+
+Avoid: a 6-panel single-column scroll. Even with stable selectors the
+browser-walk dispatches clicks at out-of-bounds coordinates; the
+verification step takes 2-3× longer and produces partial fact coverage.
+
+The layout choice affects browser-verification reliability, not the
+porter's UX choice — the porter can re-style after porting. The recipe
+ships the layout that lets the engine's verification pass cleanly on
+the first try.
+
 ## Panel scope, not feature-kind scope
 
 The feature_kinds taxonomy (above) names the BACKEND endpoints each

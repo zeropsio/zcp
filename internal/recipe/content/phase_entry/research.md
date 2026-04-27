@@ -113,3 +113,9 @@ codebases/roles for other combinations.
    gate. Read `violations` on failure, patch via another update-plan,
    retry complete-phase. Do NOT call `zerops_knowledge` to understand
    violations — the violation message itself names the field + fix.
+3. `zerops_recipe action=enter-phase slug=<slug> phase=provision` →
+   advance into the next phase. **`complete-phase` does NOT auto-
+   advance** — it marks the current phase done; the explicit
+   `enter-phase` call is what moves the session forward. Skipping it
+   leaves the session at `phase=research` and the next `complete-phase`
+   call re-runs research gates.

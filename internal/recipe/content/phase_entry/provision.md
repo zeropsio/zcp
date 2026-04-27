@@ -64,6 +64,13 @@ exist yet and it would fail at the clone step.
 6. **Complete the phase**:
    `zerops_recipe action=complete-phase slug=<slug>`.
 
+7. **Advance to scaffold**:
+   `zerops_recipe action=enter-phase slug=<slug> phase=scaffold`.
+   `complete-phase` does NOT auto-advance — it only marks the
+   current phase done. Without the explicit `enter-phase` the
+   session stays at `phase=provision` and the next `complete-phase`
+   re-runs provision gates.
+
 ## What NOT to do
 
 - Do NOT emit a deliverable yaml at provision. Deliverable shape has
