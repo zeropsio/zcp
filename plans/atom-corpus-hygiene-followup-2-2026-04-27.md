@@ -301,14 +301,18 @@ common develop-mode flow. **Mandatory Codex per-edit round**.
 
 Edit code on `/var/www/{hostname}/`. The dev process is already
 running (see `develop-dynamic-runtime-start-container` for
-first-time start).
+first-time start). **Code-only edits never trigger
+`zerops_deploy`** — deploy is for `zerops.yaml` changes only
+(see "**`zerops.yaml` changes**" below).
 
 **Code-only edit cycle**:
-- Most dev runners (`npm run dev`, `vite`, `nodemon`, `air`,
-  `fastapi --reload`) auto-watch the SSHFS mount — no action
-  needed.
-- For non-watching runners OR if the process died,
-  `zerops_dev_server action=restart hostname="{hostname}"
+- Dev runners with file-watch (`npm run dev`, `vite`, `nodemon`,
+  `air`, `fastapi --reload`) pick up edits **only when configured
+  for polling** — SSHFS does not surface inotify events. Set
+  `CHOKIDAR_USEPOLLING=1` (vite/webpack), `--poll` (nodemon), or
+  the runner's equivalent.
+- Otherwise (non-watching runner, polling not configured, OR the
+  process died), `zerops_dev_server action=restart hostname="{hostname}"
   command="{start-command}" port={port} healthPath="{path}"`.
   The response carries `running`, `healthStatus`, `startMillis`,
   and on failure a `reason` code (see
@@ -327,6 +331,22 @@ logLines=60`. `reason` classifies the failure (connection
 refused, HTTP 5xx, spawn timeout, worker exit) without a
 follow-up call.
 ```
+
+Round-1 PER-EDIT Codex round flagged two defects in the prior
+proposal (now resolved above):
+
+- **No-redeploy guardrail lost** — current atom L25 says
+  "Code-only changes: `action=restart` is enough — no redeploy"
+  (signal #5 do-not). The first proposal dropped it. Revised
+  rewrite restores via the leading "**Code-only edits never
+  trigger `zerops_deploy`**" sentence and the explicit cross-ref
+  to the `zerops.yaml` changes section.
+- **False auto-watch claim** — "auto-watch the SSHFS mount — no
+  action needed" is wrong: SSHFS does not surface inotify events;
+  watchers need polling mode. Revised rewrite says runners with
+  file-watch "pick up edits only when configured for polling"
+  and lists concrete env vars / flags (`CHOKIDAR_USEPOLLING=1`,
+  `--poll`).
 
 1. **Codex per-edit round (MANDATORY per HIGH-risk classification)**:
    review the rewrite + verify all Axis K signals preserved
