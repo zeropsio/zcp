@@ -634,7 +634,7 @@ func matrixCoverageFixtures() []coverageFixture {
 			},
 			MustContain: []string{
 				"git-push",
-				"GIT_TOKEN",
+				"user's own git credentials",
 			},
 		},
 		{

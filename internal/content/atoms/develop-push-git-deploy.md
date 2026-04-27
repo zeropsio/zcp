@@ -4,6 +4,7 @@ priority: 2
 phases: [develop-active]
 deployStates: [deployed]
 strategies: [push-git]
+environments: [container]
 title: "Push-git strategy — deploy via git push"
 ---
 

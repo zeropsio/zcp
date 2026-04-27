@@ -946,6 +946,7 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"develop-push-dev-deploy-local",
 		"develop-push-dev-workflow-simple",
 		"develop-push-git-deploy",
+		"develop-push-git-deploy-local",
 		"develop-ready-to-deploy",
 		"develop-static-workflow",
 		"develop-strategy-awareness",
