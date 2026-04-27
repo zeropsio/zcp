@@ -171,3 +171,93 @@ G3 pass count: 4/5. Two-pair does not close strict G3 because Redundancy remains
 ### Aggregate verdict
 
 VERDICT: SHIP-WITH-NOTES
+
+## Final Phase 7 re-score (post-Phase-6 corpus)
+
+Round: CORPUS-SCAN composition cross-validation per §10.1 P7
+Date: 2026-04-27
+Reviewer: Codex
+Plan: §5 Phase 7 + §15.3 G3 (post-Phase-0 amendments 5+6)
+
+### Score table
+
+| Fixture | Coh | Den | Red | Cov-gap | Task-rel |
+|---|---:|---:|---:|---:|---:|
+| standard | 4 | 3 | 2 | 4 | 4 |
+| implicit-webserver | 3 | 3 | 2 | 3 | 4 |
+| two-pair | 4 | 3 | 1 | 4 | 4 |
+| simple-deployed | 4 | 3 | 3 | 5 | 4 |
+| hypothetical-single | 4 | 3 | 2 | 4 | 4 |
+
+### Δ vs §4.2 baseline + Δ vs post-Phase-5.3
+
+| Fixture | Coh Δ | Den Δ | Red Δ | Cov-gap Δ | Task-rel Δ | Notes |
+|---|---|---|---|---|---|---|
+| standard | +3 / +0 | +0 / +0 | +1 / +0 | +1 / +0 | +1 / +0 | vs §4.2 baseline, then vs post-Phase-5.3 |
+| implicit-webserver | +2 / +0 | +0 / +0 | +1 / +0 | +1 / +0 | +1 / +0 | vs §4.2 baseline, then vs post-Phase-5.3 |
+| two-pair | +3 / +0 | +1 / +0 | +0 / +0 | +2 / +0 | +1 / +0 | Redundancy still 7+ restated facts; structural G3 miss |
+| simple-deployed | +2 / +0 | +0 / +0 | +1 / +0 | +1 / +0 | +0 / +0 | Coverage-gap reaches flat-at-5 |
+| hypothetical-single | +0 / +0 | +0 / +0 | +0 / +0 | +0 / +0 | +0 / +0 | Hypothetical fixture has no §4.2 row; first-available post-Phase-5.3 score used as baseline |
+
+### §15.3 G3 final disposition
+
+| Fixture | Redundancy G3 | Coverage-gap G3 | overall |
+|---|---|---|---|
+| standard | PASS | PASS | PASS |
+| implicit-webserver | PASS | PASS | PASS |
+| two-pair | STRUCTURAL-FAIL | PASS | STRUCTURAL-FAIL |
+| simple-deployed | PASS | PASS | PASS |
+| hypothetical-single | STRUCTURAL-FAIL | STRUCTURAL-FAIL | STRUCTURAL-FAIL |
+
+### Per-fixture qualitative justification (verbatim analysis)
+
+#### develop_first_deploy_standard_container
+**Coh = 4**: This matches the §6.2 Coherence 4 anchor: mostly cohesive with 1-2 awkward transitions. The first-deploy path is readable from branch selection through scaffold, code, deploy, dynamic dev-server start, verify, promote, and stage verify. The awkward transitions are the broad deployFiles/env/platform reference blocks before the concrete first-deploy commands and the late container platform block after the first-deploy verdict.
+**Den = 3**: At 21,526 B, the fixture still carries enough reference prose, defensive tables, and generic platform material to fit the §6.2 Density 3 anchor (2.0-2.9 facts/KB, acceptable but rewriteable). It is operationally useful, but not lean enough for Density 4.
+**Red = 2**: I count 6 cross-atom restated facts, which maps to the §6.2 Redundancy 2 anchor (4-6 restated facts). Restated facts: `develop-first-deploy-branch` lines 13-25 + `develop-first-deploy-run` lines 347-364 both say first deploy before probing/inspection and verify next; `develop-deploy-modes` lines 80-96 + `develop-deploy-files-self-deploy` lines 230-253 restate self-deploy requires `[.]` or `[./]`; `develop-deploy-modes` lines 80-107 + `develop-first-deploy-scaffold-yaml` lines 166-188 + `develop-first-deploy-promote-stage` lines 392-404 restate cross-deploy/build-output semantics; `develop-env-var-channels` lines 108-126 + `develop-first-deploy-env-vars` lines 127-153 + `develop-first-deploy-scaffold-yaml` lines 173-179 restate runtime env-var placement/cross-service syntax; `develop-verify-matrix` lines 365-391 + `develop-first-deploy-verify` lines 405-430 + `develop-auto-close-semantics` lines 325-343 restate verify requirements and close criteria; `develop-first-deploy-write-code` lines 286-294 + `develop-first-deploy-verify` lines 412-421 restate common first-deploy failures such as bind address, start command, port, and env-name drift.
+**Cov-gap = 4**: Likely next-actions: discover env keys (covered by `develop-first-deploy-env-vars`), scaffold YAML (covered by `develop-first-deploy-scaffold-yaml`), write app code (covered), deploy `appdev` (covered by `develop-first-deploy-run`), start dynamic process (covered by `develop-dynamic-runtime-start-container`), verify `appdev` (covered), promote to `appstage` (covered), verify `appstage` (covered), diagnose failed deploy/verify (covered). One low-probability gap remains: the dev-server atom names the `zerops_dev_server action="start"` arg family but does not render a concrete command populated with this service's command, port, and health path.
+**Task-rel = 4**: The most likely task is first deploying a standard dynamic app and promoting it to stage. Roughly 75-89% of atoms are relevant or partially relevant, matching §6.2 Task-relevance 4; generic `apiMeta`, knowledge, and broad platform atoms are support material rather than central task steps.
+
+#### develop_first_deploy_implicit_webserver_standard
+**Coh = 3**: This matches §6.2 Coherence 3. Sections are readable, but the agent must mentally reset around frontend process guidance: `develop-implicit-webserver-runtime` says there is no server to start and not to SSH in to start one (lines 213-230), `develop-first-deploy-frontend-assets` tells the agent to run Vite with background SSH (lines 393-424), and `develop-platform-rules-container` warns not to hand-roll background SSH (lines 468-481). The named deploy/verify calls still agree, so this is not Coherence 1.
+**Den = 3**: At 22,880 B, the fixture contains concrete implicit-webserver and frontend asset guidance, but also broad deployFiles, env, diagnostics, knowledge, and platform sections. That is §6.2 Density 3: acceptable but rewriteable.
+**Red = 2**: I count 6 restated facts, the §6.2 Redundancy 2 anchor. Restated facts: `develop-first-deploy-branch` lines 13-25 + `develop-first-deploy-run` lines 348-365 restate deploy-first/verify-next; `develop-deploy-modes` lines 80-96 + `develop-deploy-files-self-deploy` lines 258-281 restate self-deploy `[.]` / `[./]`; `develop-deploy-modes` lines 80-107 + `develop-first-deploy-scaffold-yaml` lines 166-188 + `develop-first-deploy-promote-stage` lines 428-440 restate cross-deploy build-output semantics; `develop-env-var-channels` lines 108-126 + `develop-first-deploy-env-vars` lines 127-153 + `develop-first-deploy-scaffold-yaml` lines 173-179 restate env-var placement and cross-service references; `develop-implicit-webserver-runtime` lines 213-240 + `develop-first-deploy-frontend-assets` lines 393-427 both describe implicit-webserver serving/asset consequences; `develop-verify-matrix` lines 366-392 + `develop-first-deploy-verify` lines 441-467 restate verify status interpretation and fallback.
+**Cov-gap = 3**: Likely next-actions are scaffold implicit-webserver YAML, write app files, deploy `appdev`, prepare frontend assets, verify, promote, verify stage, and diagnose web errors. All are present, but §6.2 Coverage-gap 3 applies because one likely next-action has competing recommendations: iterative frontend/HMR handling is split between a background SSH Vite command and a platform rule saying long-running background SSH should not be hand-rolled.
+**Task-rel = 4**: The most likely task is first deploying a `php-nginx`/implicit-webserver standard app. The implicit-webserver and frontend asset atoms are central; generic env/API/platform/knowledge atoms are partial. That stays in the 75-89% relevant §6.2 anchor.
+
+#### develop_first_deploy_two_runtime_pairs_standard
+**Coh = 4**: This fits §6.2 Coherence 4. The document is mostly cohesive and consistently covers `appdev/appstage` plus `apidev/apistage`; the awkward transitions are the per-service repeated dynamic-server and promote-stage blocks, which interrupt the flow but do not create incompatible tool recommendations.
+**Den = 3**: At 23,546 B, it remains in the §6.2 Density 3 band. The fixture has many load-bearing facts, but per-service repeated sections and broad shared reference material keep it acceptable but rewriteable rather than lean.
+**Red = 1**: I count 8 cross-atom restated facts, so this remains in the §6.2 Redundancy 1 anchor (7+ restated facts), not the 4-6 bucket. Restated facts: (1) `develop-dynamic-runtime-start-container` renders as hostname-substituted copies for `appdev` lines 256-282 and `apidev` lines 283-309; (2) `develop-first-deploy-promote-stage` renders as hostname-substituted copies for `appdev -> appstage` lines 424-436 and `apidev -> apistage` lines 437-449; (3) `develop-first-deploy-branch` lines 15-27 + `develop-first-deploy-run` lines 376-396 both restate deploy before probing/inspection and verify next; (4) `develop-deploy-modes` lines 82-97 + `develop-deploy-files-self-deploy` lines 232-255 restate self-deploy `[.]` / `[./]`; (5) `develop-deploy-modes` lines 82-107 + `develop-first-deploy-scaffold-yaml` lines 166-190 + both `develop-first-deploy-promote-stage` blocks lines 424-449 restate cross-deploy build-output/cherry-pick semantics; (6) `develop-env-var-channels` lines 110-128 + `develop-first-deploy-env-vars` lines 129-155 + `develop-first-deploy-scaffold-yaml` lines 175-181 + `develop-platform-rules-common` lines 215-231 restate env-var placement, live timing, and cross-service syntax; (7) `develop-verify-matrix` lines 397-423 + `develop-first-deploy-verify` lines 450-482 + `develop-auto-close-semantics` lines 354-372 + branch guidance lines 26-27 restate verify-every-service and close criteria; (8) `develop-first-deploy-write-code` lines 315-327 + `develop-first-deploy-verify` lines 457-468 restate common first-deploy misconfigs including `0.0.0.0`, `run.start`, port mismatch, and env-name drift. Result: held at 1 STRUCTURAL.
+**Cov-gap = 4**: Likely next-actions: scaffold both runtime setup entries, discover env keys, write code, deploy `appdev`, deploy `apidev`, start/restart both dynamic dev processes, verify both dev services, promote both stage pairs, verify both stage services, and diagnose failures. These are covered. The low-probability gap is still that `zerops_dev_server action="start"` is described by arg family, not rendered as concrete per-service commands using each service's command, port, and health path.
+**Task-rel = 4**: The task is first deploying two standard runtime pairs. Most atoms are relevant or partial; generic API, knowledge, env, and platform material remain support content. The per-service duplication hurts redundancy, not relevance, so the fixture remains in the 75-89% §6.2 anchor.
+
+#### develop_first_deploy_standard_single_service
+**Coh = 4**: This is §6.2 Coherence 4. The guidance is mostly a single first-deploy narrative for `appdev`, with one awkward transition: the status lists only `appdev` while later promotion guidance uses `appstage` from the `stage=appstage` metadata, so the stage target is inferable but not as naturally grounded as in the two-service status block.
+**Den = 3**: At 21,370 B, it remains §6.2 Density 3. Concrete first-deploy commands are present, but broad deployFiles/env/platform/knowledge sections keep it rewriteable.
+**Red = 2**: I count 6 restated facts, matching the §6.2 Redundancy 2 anchor. Restated facts: `develop-first-deploy-branch` lines 12-24 + `develop-first-deploy-run` lines 346-363 restate deploy-first/verify-next; `develop-deploy-modes` lines 79-95 + `develop-deploy-files-self-deploy` lines 229-252 restate self-deploy `[.]` / `[./]`; `develop-deploy-modes` lines 79-106 + `develop-first-deploy-scaffold-yaml` lines 163-187 + `develop-first-deploy-promote-stage` lines 391-403 restate cross-deploy output semantics; `develop-env-var-channels` lines 107-125 + `develop-first-deploy-env-vars` lines 126-152 + `develop-first-deploy-scaffold-yaml` lines 172-178 restate env-var placement/cross-service syntax; `develop-verify-matrix` lines 364-390 + `develop-first-deploy-verify` lines 404-427 + `develop-auto-close-semantics` lines 324-342 restate verify and close criteria; `develop-first-deploy-write-code` lines 285-293 + `develop-first-deploy-verify` lines 411-420 restate first-deploy misconfig checks.
+**Cov-gap = 4**: Likely next-actions are discover envs, scaffold, write code, deploy `appdev`, start dynamic dev server, verify `appdev`, promote to `appstage`, verify `appstage`, and diagnose failures. All are covered except one low-probability gap: because `appstage` is not listed as a service in the status block, the rendered document does not itself support confirming the stage target exists before promotion.
+**Task-rel = 4**: The likely task is first deploying `appdev` with a stage sibling. Most atoms are relevant or partial, while generic `apiMeta`, knowledge, and platform blocks are support material. This stays within the 75-89% §6.2 relevance anchor.
+
+#### develop_simple_deployed_container
+**Coh = 4**: This is §6.2 Coherence 4. The simple-mode edit loop is cohesive: inspect/current state, edit `/var/www/weatherdash/`, deploy, verify, close. The awkward transition is that standard/cross-deploy and mode-expansion material appears inside a simple single-service fixture, but it does not contradict the main path.
+**Den = 3**: At 16,737 B, the fixture is smaller and has concrete simple-mode commands, but it still includes broad deployFiles, strategy, mode-expansion, API, and platform reference material. That remains §6.2 Density 3, not Density 4.
+**Red = 3**: I count 3 restated facts, matching the §6.2 Redundancy 3 anchor. Restated facts: `develop-change-drives-deploy` lines 47-56 + `develop-simple-development-workflow` lines 208-219 + `develop-simple-close-task` lines 362-370 restate edit/config change -> deploy -> verify; `develop-deploy-modes` lines 57-84 + `develop-push-dev-strategy` lines 143-158 + `develop-deploy-files-self-deploy` lines 164-187 restate self-deploy `[.]` and narrower-pattern destruction; `develop-deploy-modes` lines 57-84 + `develop-push-dev-strategy` lines 151-158 + `develop-mode-expansion` lines 320-361 restate cross-deploy/dev-to-stage artifact semantics.
+**Cov-gap = 5**: Likely next-actions are inspect state, edit code on `/var/www/weatherdash/`, deploy with `zerops_deploy targetService="weatherdash" setup="prod"`, verify with `zerops_verify serviceHostname="weatherdash"`, diagnose HTTP failures, handle env-var live timing, change deploy strategy, expand simple to standard if requested, and close after deploy+verify. Each has exactly one unambiguous recommendation, so this reaches the §6.2 Coverage-gap 5 anchor.
+**Task-rel = 4**: The likely task is editing an already deployed simple service and redeploying. Most atoms directly support that loop; strategy switching and mode expansion are lower-probability but still plausible support. This remains the 75-89% §6.2 anchor.
+
+### Cumulative byte recovery
+
+| Slice | First cycle | This cycle (P0→P6) | Cumulative |
+|---|---:|---:|---:|
+| 4 first-deploy | −7,461 B | −15,537 B | −22,998 B |
+| 5 fixtures aggregate | −11,344 B | −17,887 B | −29,231 B |
+
+§8 binding targets: additional ≥6,000 B (this cycle) **MET 3×**;
+cumulative ≥17,000 B **MET 1.7×**.
+
+### Final aggregate verdict
+
+VERDICT: SHIP-WITH-NOTES
+
+The corpus meets the byte-recovery targets, and the non-decreasing dimensions hold across the baseline set. It is not CLEAN-SHIP because `develop_first_deploy_two_runtime_pairs_standard` still fails the strict Redundancy G3 gate at 7+ restated facts, dominated by structural per-service rendering plus shared deploy/env/verify restatements. The hypothetical single-service fixture is also not a strict-improvement proof because its first-available baseline equals the current score and Redundancy/Coverage-gap are not flat-at-5; treat that as a comparison limitation plus a note, not evidence that the original baseline set regressed.

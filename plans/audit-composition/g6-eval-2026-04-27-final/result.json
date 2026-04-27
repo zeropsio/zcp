@@ -1,0 +1,17 @@
+{
+  "scenarioId": "develop-add-endpoint",
+  "suiteId": "2026-04-27-113615",
+  "grade": {
+    "scenarioId": "develop-add-endpoint",
+    "passed": true
+  },
+  "logFile": ".zcp/eval/results/2026-04-27-113615/develop-add-endpoint/log.jsonl",
+  "assessment": "## EVAL REPORT\n\n### Deployment outcome\nState: SUCCESS\n\n### Workflow execution\n- Steps completed: bootstrap discover, bootstrap provision, bootstrap close (auto-skipped), develop-active (deploy + verify)\n- Steps skipped: bootstrap close was auto-skipped by the system after provision complete\n- Iterations: 0 iterate cycles needed — single deploy succeeded on first try\n- Gate failures: none\n- Strategy chosen: push-dev for app\n\n### Failure chains\nNo failure chains.\n\n### Information gaps\nNo information gaps encountered. The workflow guidance at each step was sufficient to proceed without guessing.\n\n### Wasted steps\nNo wasted tool calls. Each call served a purpose:\n- `zerops_workflow status` — established idle state\n- `zerops_discover` — confirmed services and their types\n- Bootstrap discovery (without route) → commit (with route=adopt) — two-step as documented\n- `zerops_discover includeEnvs=true` — confirmed DB env var keys for the provision attestation\n- `zerops_deploy` + `curl` + `zerops_verify` — standard deploy-verify chain\n\nTotal wasted tool calls: 0\n\n### What worked well\n- `zerops_workflow action=\"status\"` returned clear service state with `not bootstrapped` labels and actionable guidance pointing directly to the adopt flow — no ambiguity.\n- The bootstrap discovery two-step protocol (`start` without route → `start` with `route=\"adopt\"`) worked exactly as documented in the guidance. The `routeOptions[]` ranking with adopt at top was unambiguous.\n- `zerops_workflow action=\"complete\" step=\"provision\"` with adopt route correctly recognized that no import was needed for existing ACTIVE services and auto-closed bootstrap.\n- The develop-active guidance clearly documented the php-nginx implicit-webserver pattern (no `run.start`, no `run.ports`, `documentRoot` handling) — prevented me from trying to start a server process.\n- `zerops_deploy` returned `subdomainUrl` directly in the response, eliminating the need to construct or look up the URL separately.\n- `zerops_verify` auto-close tracking (`ready: 1, total: 1`) confirmed session completion without a manual close call.",
+  "finalUrl": {
+    "hostname": "app",
+    "url": "https://app-21ca.prg1.zerops.app",
+    "got": 200
+  },
+  "duration": "4m58.57954095s",
+  "startedAt": "2026-04-27T11:36:15.45642527Z"
+}

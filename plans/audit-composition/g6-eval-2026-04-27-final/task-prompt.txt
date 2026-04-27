@@ -1,0 +1,93 @@
+# Úkol
+
+V projektu běží Laravel aplikace (`app` + `db`) — services byly vytvořené
+mimo ZCP (žádné metadata o bootstrap modu ani strategy). Tvým úkolem je:
+
+1. **Rozpoznat existující services z discovery** a adoptovat je do ZCP:
+   - První `zerops_workflow action="start" workflow="bootstrap"` bez
+     `route` parametru vrátí `routeOptions[]` s adopt option na top —
+     `adoptServices: ["app"]`. Commit s `route="adopt"`.
+2. Po adoptování přidat endpoint `GET /api/status`, který vrací JSON:
+
+   ```json
+   { "status": "ok", "timestamp": "<iso-8601 now>", "db": "<connected|disconnected>" }
+   ```
+
+   Endpoint musí zkusit DB ping; pokud spojení selže, `db` je
+   `"disconnected"`, ale status zůstane `"ok"` (endpoint sám nesmí failnout).
+
+Pravidla:
+
+- Začni `zerops_workflow action="status"` — zjisti stav a teprve poté se
+  rozhodni pro další kroky.
+- Bootstrap discovery je **dvoukrokový**: první call bez route = discovery
+  response, druhý call s `route=adopt` = commit.
+- Po adopci přejdi do develop workflow — tam probíhá kódová iterace +
+  deploy + verify.
+- Po deployi ověř endpoint.
+
+Verify: `curl https://<app-subdomain>/api/status` vrací 200 s validním JSON.
+
+---
+
+Po dokončení úkolu odpověz stručně na následující otázky (jedním odstavcem každá):
+1. Jak jsi poznal, že služby `app` + `db` existují, ale nemají ZCP metadata? Objevila se v discovery response adopt option?
+2. V jakém pořadí jsi šel workflow-y (bootstrap/adopt → develop)? Proč přesně v tomhle pořadí?
+3. Zvolil jsi push-dev nebo push-git strategy? Proč právě tuhle?
+
+
+---
+
+AFTER completing the deployment (or when you cannot proceed further), write a structured
+evaluation report. You are providing feedback on the ZEROPS MCP TOOLS AND KNOWLEDGE BASE
+that assisted you. This report will be used to improve the MCP server so that future LLM
+agents can deploy more successfully.
+
+Start your report with "## EVAL REPORT" and follow this EXACT structure:
+
+### Deployment outcome
+State: SUCCESS / PARTIAL (what worked, what didn't) / FAILURE (at which step)
+
+### Workflow execution
+- Steps completed: [list of step names completed successfully]
+- Steps skipped: [list of steps skipped and why]
+- Iterations: [number of iterate cycles needed]
+- Gate failures: [list of gate failures encountered]
+- Strategy chosen: [strategy per service, or "none" if step was skipped]
+
+### Failure chains
+For EACH problem you encountered, trace the full cause chain:
+- **Step**: Which bootstrap/workflow step were you in?
+- **What you received**: Quote or summarize the specific tool response or knowledge content
+  that contributed to the problem (include the tool name and key input parameters)
+- **What you did with it**: How you used that information
+- **What went wrong**: The concrete error or unexpected behavior
+- **How you recovered**: What you did to fix it (or couldn't)
+- **Root cause**: One of: WRONG_KNOWLEDGE (info was factually incorrect),
+  MISSING_KNOWLEDGE (info wasn't available), UNCLEAR_GUIDANCE (info existed but
+  was ambiguous/confusing), PLATFORM_ISSUE (Zerops itself, not the MCP)
+
+If you had no problems, write "No failure chains."
+
+### Information gaps
+List each point where you needed information but couldn't find it through any
+zerops_* tool. For each:
+- What you were trying to do
+- What query/tool you tried
+- What you had to guess or figure out on your own
+- What the knowledge base SHOULD contain to prevent this
+
+### Wasted steps
+List tool calls you made that turned out to be unnecessary or had to be repeated
+because of wrong/missing information. Include the tool name and why it was wasted.
+Total wasted tool calls: [number]
+
+### What worked well
+List specific knowledge docs or tool responses that led to correct actions on
+the first try. Reference them by tool name and query/mode used.
+
+DO NOT include:
+- Apologies or self-blame for your own mistakes
+- Comments about platform speed, timeouts, or infrastructure issues
+- Generic suggestions without referencing a specific tool response or knowledge doc
+- Speculation about what "might" help — only report what you actually experienced

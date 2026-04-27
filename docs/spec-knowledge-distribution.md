@@ -517,6 +517,137 @@ is an audit target. When adding one, commit the rationale in the map
 value. Prefer rewriting the atom — allowlisting is the escape hatch,
 not the default.
 
+### 11.5 Content-quality axes (K, L, M)
+
+Three axes apply to atom prose beyond the §11.2 lint patterns. They
+are author-facing rules, not lint-enforced (yet); the
+`atom-corpus-hygiene` cycles audit them. Each axis is documented at
+the level of the rule + a worked example; full corpus-scan ledgers
+live in `plans/audit-composition/axis-{k,l,m}-*.md`.
+
+#### Axis K — ABSTRACTION-LEAK
+
+**Definition**: an atom mentions flows, mechanisms, or
+implementation details from OUTSIDE the envelope it fires on. The
+agent reading the atom never had a reason to know about those
+things; the mention either gives them anti-information ("there's
+no X here") or implementation detail they shouldn't care about
+("Y runs under the hood").
+
+**Judgment test**: "Without this sentence, would the agent —
+operating on this envelope only AND carrying plausible cross-flow
+training reflexes — actually do the wrong thing?"
+
+**HIGH-risk signals** (mandatory KEEP unless an explicit Codex
+per-edit rejects):
+
+1. Negation tied to a tool/action: "Don't run X", "Never use Y",
+   "No Z available here". The negation IS the guardrail.
+2. Cross-env contrast as mental-model framing: "Local mode builds
+   from your committed tree — no SSHFS, no dev container" —
+   couples a positive operational claim to the negation; prevents
+   a likely cross-flow reflex.
+3. Tool-selection guidance: "Use `zerops_deploy` here, not `zcli
+   push`"; "Do NOT use `zerops_dev_server` — that tool is
+   container-only".
+4. Recovery guidance: "If X fails, do Y" — the alternative path
+   is the guardrail.
+5. Sentences with `do not` / `never` / `no X` tied to an
+   operational choice.
+
+**LOW-risk DROP candidates** (only when no HIGH-risk signal
+applies):
+
+- Pure implementation trivia, no operational consequence (e.g.
+  "`zcli push` under the hood" — agent calls `zerops_deploy`,
+  dispatch invisible).
+- Standalone negation with no operational coupling.
+- Comparative diagram of flow differences in UNRELATED env.
+- Historical context: "this used to be different in v1".
+
+**Default rule: when uncertain, KEEP**. Document the keep
+rationale in the per-atom fact inventory.
+
+#### Axis L — TITLE-OVER-QUALIFIED
+
+**Definition**: atom title (or H1/H2/H3 inside body) contains env
+qualifiers (`(container)`, `(local)`, `— container`, etc.) that
+the axis filter already implies. The agent only RECEIVES this
+atom on envelopes matching the axis; the qualifier conveys
+nothing the framing-context doesn't already convey.
+
+**Token-level rule** (split title qualifier on commas/em-dashes/
+parens):
+
+- **Env-only token** (`container`, `local`, `container env`,
+  `local env`) → DROP.
+- **Mode/runtime/strategy distinguisher** (`dev mode`, `simple
+  mode`, `standard mode`, `dynamic`, `static`, `push-dev`,
+  `push-git`, `manual`) → KEEP — distinguishes from sibling
+  atoms in the rendered output.
+- **Mechanism payload** (`GIT_TOKEN + .netrc`, `user's git`,
+  runtime constraint, credential channel) → KEEP — load-bearing
+  operational distinction.
+
+**Worked examples**:
+
+- `"Push-Dev Deploy Strategy — container"` → drop `— container`
+  (only env token).
+- `"Push-dev iteration cycle (dev mode, container)"` → drop
+  `, container`; keep `dev mode` (mode distinguisher).
+- `"push-git push setup — container env (GIT_TOKEN + .netrc)"`
+  → drop `— container env`; KEEP `(GIT_TOKEN + .netrc)`
+  (mechanism payload distinguishing from local-env credential
+  flow).
+
+**Pin-migration discipline**: before dropping a phrase from H1/H2/
+H3 that's pinned by `coverageFixtures().MustContain` in
+`internal/workflow/corpus_coverage_test.go`, migrate the pin to a
+new unique phrase from the post-edit body in the same commit.
+Pin-migration discipline mirrors `TestCorpusCoverage_RoundTrip`.
+
+#### Axis M — TERMINOLOGY-DRIFT
+
+**Definition**: same concept written differently in different
+atoms costs the agent's parsing budget. The agent has to
+canonicalise mentally to map e.g. "Zerops container" + "service
+container" + "dev container" + "the runtime" to the same
+referent.
+
+**Five drift clusters** (with risk class):
+
+| # | Concept | Risk | Canonical decision |
+|---|---|---|---|
+| 1 | Container holding user code | HIGH | Per-occurrence sub-table below |
+| 2 | Code-change → durable-state action | HIGH | `deploy` (first-action) vs `redeploy` (subsequent) — semantically distinct; per-occurrence judgment |
+| 3 | The platform itself | HIGH | `Zerops` (the platform); `ZCP` (control-plane); avoid bare "the platform" |
+| 4 | Agent's tool family | MEDIUM | `zerops_<name>` (specific); `MCP tool` (general); avoid "the tool" |
+| 5 | The agent itself | LOW | `you` (atom is direct address); avoid "the agent" / "the LLM" — those are author-perspective |
+
+**Cluster #1 container sub-table**:
+
+| Use this term | When the atom is talking about |
+|---|---|
+| `dev container` | Mutable push-dev / SSHFS context — the developer-mutable container for dev-mode-dynamic flows. |
+| `runtime container` | A running service instance generally. The default for cross-cluster references when no other distinction applies. |
+| `build container` | The build-stage filesystem (zbuilder context) before the runtime swap. Only when the atom is explicitly talking about build vs runtime. |
+| `Zerops container` | Broad first-introduction framing only — when the atom is orienting an unfamiliar reader. Avoid in detailed operational guidance. |
+| `new container` | The replacement container created on each deploy (deploy-replacement semantics specifically). |
+
+**Verification rates** per cluster (from corpus-hygiene followup
+amendment 3 / Codex C13):
+
+- HIGH-risk clusters #1, #2, #3: per-occurrence Codex review of
+  EVERY touched occurrence. Not 10% sampling. Global sed is
+  forbidden.
+- MEDIUM-risk cluster #4: ≥50% sampling.
+- LOW-risk cluster #5: 10% sampling.
+
+**Special caveat** (cluster #5): in `develop-verify-matrix`, the
+word "agent" refers to a SPAWNED SUB-AGENT (Sonnet model via the
+`Agent()` template). KEEP "agent" there — it's intentional
+sub-agent terminology, not author-perspective drift.
+
 ---
 
 ## Appendix: Code Reference Map
