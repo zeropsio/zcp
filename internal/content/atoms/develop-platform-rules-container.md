@@ -10,13 +10,13 @@ references-atoms: [develop-dynamic-runtime-start-container, develop-dev-server-r
 
 ### Platform rules (container environment)
 
-- **Code lives on an SSHFS mount** at `/var/www/<hostname>/` (one path
-  per dev/simple service). A deploy rebuilds the container from mounted
-  files; no transfer at deploy time.
-- **Read and edit directly on the mount.** Use Read/Edit/Write/Glob/Grep
-  tools against `/var/www/<hostname>/` — they work through SSHFS. Never
-  `ssh <hostname> cat/ls/tail …` for mount files; SSH adds setup cost
-  and shell-escaping bugs (nested quotes in `sed`/`awk` pipelines break).
+Mount basics in `claude_container.md` (boot shim). Container-only
+cautions on top:
+
+- **Mount caveats.** Deploy rebuilds the container from mount; no
+  transfer at deploy time. Never `ssh <hostname> cat/ls/tail …`
+  for mount files — SSH adds shell-escape bugs (nested quotes in
+  `sed`/`awk` break). One-shot SSH is for runtime CLIs only.
 - **Long-running dev processes → `zerops_dev_server`.** Don't
   hand-roll `ssh <hostname> "cmd &"` — backgrounded SSH holds the
   channel until the 120 s bash timeout. See

@@ -29,13 +29,10 @@ live on the user's machine.
 
 **After services reach RUNNING:**
 
-1. `zerops_discover includeEnvs=true` — same protocol as container
-   mode (keys only).
-2. `zerops_env action="generate-dotenv" serviceHostname="{hostname}"`
-   — resolves `${hostname_varName}` references against live data
-   and writes a `.env` file. The local app reads `.env` via
-   dotenv or framework auto-loading.
+1. `zerops_discover includeEnvs=true` — keys only.
+2. `zerops_env action="generate-dotenv" serviceHostname="{hostname}"` —
+   writes `.env` resolved from live env vars.
 3. Add `.env` to `.gitignore` — it contains secrets.
-4. Guide the user: `zcli vpn up <projectId>` to reach managed
-   services. All hostnames (`db`, `cache`, etc.) resolve over VPN.
-   One project at a time — switching disconnects the current.
+4. Guide the user to start VPN: `zcli vpn up <projectId>`. Needs
+   sudo/admin; ZCP cannot start it. Guide `local-development`
+   (via `zerops_knowledge`) covers VPN conventions.

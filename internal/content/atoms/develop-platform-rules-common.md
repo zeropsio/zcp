@@ -15,10 +15,10 @@ references-atoms: [develop-env-var-channels, develop-first-deploy-env-vars]
 - **`zerops.yaml` lives at the repo root.** Each `setup:` block (e.g.
   `prod`, `stage`, `dev`) is deployed independently — these are canonical
   recipe names, NOT hostnames.
-- **Build ≠ run container.** Runtime-only packages (`ffmpeg`,
-  `imagemagick`) go in `run.prepareCommands`; build-only packages in
-  `build.prepareCommands`. Tools available at build time may not be
-  available at run time.
+- **Build ≠ run container.** Runtime packages → `run.prepareCommands`;
+  build-only packages → `build.prepareCommands`. Tools available at
+  build time may not be at run time. See guide `deployment-lifecycle`
+  for the full split.
 - `envVariables` are declarative config, **not live** until a deploy.
   Never check them with `printenv` before deploying — they will not be
   set yet. Cross-service ref syntax + typo behavior is in

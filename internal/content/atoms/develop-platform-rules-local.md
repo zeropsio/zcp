@@ -26,22 +26,17 @@ title: "Platform rules — local env extras"
   container-only. Whatever dev command your framework gives you works:
   `npm run dev`, `bun --hot`, `vite`, `artisan serve`, `rails s`,
   `uvicorn main:app --reload`.
-- **Managed services live on Zerops.** Access them from the local dev
-  server requires VPN:
-
-  ```
-  zcli vpn up <projectId>
-  ```
-
-  VPN needs sudo/admin — guide the user to run it manually; ZCP cannot
-  start it for them.
+- **VPN for managed services.** Boot-shim `claude_local.md` shows
+  `zcli vpn up <projectId>`; remind the user it needs sudo/admin
+  and ZCP cannot start it for them.
 - **`.env` bridge.** Generate a dotenv file from live Zerops env vars:
 
   ```
   zerops_env action="generate-dotenv" serviceHostname="{stage-hostname}"
   ```
 
-  Add `.env` to `.gitignore`; it contains secrets.
+  Add `.env` to `.gitignore` (it contains secrets). Conventions:
+  guide `local-development` via `zerops_knowledge`.
 - **Health checks use localhost.** Probe your local dev server directly:
 
   ```

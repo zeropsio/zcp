@@ -199,7 +199,15 @@ func developCoverageFixtures() []coverageFixture {
 			MustContain: []string{
 				"Push-Dev Deploy Strategy",
 				"SSH",
-				"Read and edit directly on the mount",
+				// Phase-3 axis-E #5 (commit <pending>) trimmed the
+				// "Read and edit directly on the mount" prose in
+				// `develop-platform-rules-container` because
+				// `claude_container.md:5-6` already delivers the
+				// mount basics at session boot. Pin migrated to a
+				// post-dedup unique phrase ("Mount caveats" anchors
+				// the new bullet that owns the operational cautions
+				// not in the boot shim).
+				"Mount caveats",
 				"HTTP diagnostics",
 				"zerops_verify",
 				"VERDICT",

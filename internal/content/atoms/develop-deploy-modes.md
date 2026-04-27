@@ -29,10 +29,10 @@ output.
 ### Why the source tree sometimes doesn't have `./out`
 
 `deployFiles` is evaluated against the **build container's filesystem
-after `buildCommands` runs**, not your editor's working tree. A
-cross-deploy `deployFiles: [./out]` is correct even when `./out`
-doesn't exist locally — the build creates it (`dotnet publish -o out`,
-`vite build`, `go build -o out/server`, etc.).
+after `buildCommands` runs** — NOT your editor's working tree. So
+`deployFiles: [./out]` is correct even when `./out` doesn't exist
+locally; the build creates it. See guide `deployment-lifecycle` for
+the full pipeline.
 
 ZCP pre-flight does NOT check path existence for cross-deploy; the
 Zerops builder emits `WARN: deployFiles paths not found: ...` in
