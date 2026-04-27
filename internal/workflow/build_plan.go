@@ -298,19 +298,21 @@ func verifyRationale(last AttemptInfo) string {
 // for the deploy/verify Rationale. Unknown / unset returns the generic
 // "Last attempt failed" — the Reason text still carries the actionable
 // content so the agent isn't blocked on missing classification.
-func failureClassPrefix(class FailureClass) string {
+func failureClassPrefix(class topology.FailureClass) string {
 	switch class {
-	case FailureClassBuild:
+	case topology.FailureClassBuild:
 		return "Last attempt: build failed (timeout, compile, or dependency install)"
-	case FailureClassStart:
+	case topology.FailureClassStart:
 		return "Last attempt: container didn't start"
-	case FailureClassVerify:
+	case topology.FailureClassVerify:
 		return "Last attempt: verify check failed"
-	case FailureClassNetwork:
+	case topology.FailureClassNetwork:
 		return "Last attempt: network/transport error"
-	case FailureClassConfig:
+	case topology.FailureClassConfig:
 		return "Last attempt: config validation failed"
-	case FailureClassOther:
+	case topology.FailureClassCredential:
+		return "Last attempt: credential/auth rejected"
+	case topology.FailureClassOther:
 		return "Last attempt failed"
 	default:
 		return "Last attempt failed"

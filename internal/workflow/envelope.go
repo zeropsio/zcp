@@ -121,46 +121,15 @@ type WorkSessionSummary struct {
 // projection drops empty values via `omitempty` to keep envelope JSON
 // stable across attempt types.
 type AttemptInfo struct {
-	At           time.Time    `json:"at"`
-	Success      bool         `json:"success"`
-	Iteration    int          `json:"iteration"`
-	Setup        string       `json:"setup,omitempty"`
-	Strategy     string       `json:"strategy,omitempty"`
-	Reason       string       `json:"reason,omitempty"`
-	FailureClass FailureClass `json:"failureClass,omitempty"`
-	Summary      string       `json:"summary,omitempty"`
+	At           time.Time             `json:"at"`
+	Success      bool                  `json:"success"`
+	Iteration    int                   `json:"iteration"`
+	Setup        string                `json:"setup,omitempty"`
+	Strategy     string                `json:"strategy,omitempty"`
+	Reason       string                `json:"reason,omitempty"`
+	FailureClass topology.FailureClass `json:"failureClass,omitempty"`
+	Summary      string                `json:"summary,omitempty"`
 }
-
-// FailureClass is the typed category of a failed attempt. Populated at the
-// record site where the operation result distinguishes the failure mode.
-// Empty when the attempt succeeded.
-//
-// Categories are intentionally coarse — fine-grained recovery lives in the
-// atom corpus + iteration-tier logic, not here. The class drives `BuildPlan`
-// rationale phrasing ("build failed; fix and redeploy" vs. "container
-// didn't start") and may surface in render text.
-type FailureClass string
-
-const (
-	// FailureClassBuild — Zerops build pipeline failed (compile, install,
-	// dependency resolution).
-	FailureClassBuild FailureClass = "build"
-	// FailureClassStart — service didn't reach RUNNING / ACTIVE after deploy.
-	// READY_TO_DEPLOY post-deploy lands here.
-	FailureClassStart FailureClass = "start"
-	// FailureClassVerify — verify check failed (HTTP probe, status, logs).
-	// Populated by recordVerifyToWorkSession when the check fails.
-	FailureClassVerify FailureClass = "verify"
-	// FailureClassNetwork — transport-layer error (SSH, API timeout, DNS).
-	// The operation could not reach the platform.
-	FailureClassNetwork FailureClass = "network"
-	// FailureClassConfig — zerops.yaml or service config validation
-	// rejected the request.
-	FailureClassConfig FailureClass = "config"
-	// FailureClassOther — catch-all for failure modes that don't fit a
-	// specific category. Reason field still carries the raw message.
-	FailureClassOther FailureClass = "other"
-)
 
 // RecipeSessionSummary echoes the active recipe match when one exists.
 type RecipeSessionSummary struct {

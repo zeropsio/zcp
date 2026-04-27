@@ -10,6 +10,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -108,19 +109,19 @@ func recordVerifyToWorkSession(stateDir string, r *ops.VerifyResult) {
 // under FailureClassVerify (route / app / config). Anything else is
 // FailureClassVerify as a coarse catch-all — the Reason text still
 // carries the specific check name + detail.
-func classifyVerifyFailure(r *ops.VerifyResult) workflow.FailureClass {
+func classifyVerifyFailure(r *ops.VerifyResult) topology.FailureClass {
 	for _, c := range r.Checks {
 		if c.Status != statusFail {
 			continue
 		}
 		switch c.Name {
 		case "service_running":
-			return workflow.FailureClassStart
+			return topology.FailureClassStart
 		default:
-			return workflow.FailureClassVerify
+			return topology.FailureClassVerify
 		}
 	}
-	return workflow.FailureClassVerify
+	return topology.FailureClassVerify
 }
 
 // recordVerifyAllToWorkSession records results for every service verified

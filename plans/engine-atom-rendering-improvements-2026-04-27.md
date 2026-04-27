@@ -172,7 +172,26 @@ re-score; G3 strict-improvement should close on two-pair
 
 ---
 
-### Ticket E2 — `zerops_deploy` error-response enrichment
+### Ticket E2 — `zerops_deploy` error-response enrichment  *(SHIPPED 2026-04-27)*
+
+> **Outcome.** Engine + corpus migration shipped. Promoted
+> `workflow.FailureClass` → `topology.FailureClass` (single canonical enum,
+> 14 files) and added `topology.FailureClassCredential` so git-token /
+> zcli-login failures stop masquerading as network errors. New
+> `topology.DeployFailureClassification` (Category, LikelyCause,
+> SuggestedAction, Signals) populates `ops.DeployResult.FailureClassification`
+> on every BUILD/PREPARE/INIT failure (`internal/tools/deploy_poll.go`) and
+> `tools.ErrorWire.FailureClassification` on every transport/preflight
+> failure via the new `WithFailureClassification` option (4 deploy entrypoints
+> wired). Pattern library in `internal/ops/deploy_failure_signals.go` —
+> 24 signals across build / prepare / init / transport / preflight phases,
+> first-match-wins, baseline per-phase fallback when no signal matches.
+> Pinned by `internal/ops/deploy_failure_test.go` (table-driven, every signal
+> + every baseline) and `internal/tools/deploy_classification_wire_test.go`
+> (DeployResult + ErrorWire wiring). Atoms updated:
+> `develop-first-deploy-execute`, `strategy-push-git-push-container`,
+> `export` — agents now read `failureClassification` first; `buildLogs` /
+> `runtimeLogs` / `failedPhase` remain as fall-through diagnostic depth.
 
 **Problem**: when `zerops_deploy` fails, the response carries
 generic fields (`status`, `failedPhase`, `buildLogs`,

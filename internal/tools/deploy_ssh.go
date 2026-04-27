@@ -16,7 +16,7 @@ import (
 )
 
 // classifyDeployStatus maps a non-DEPLOYED platform status into the
-// workflow.FailureClass that best names the failure shape:
+// topology.FailureClass that best names the failure shape:
 //
 //   - BUILD_FAILED            — build pipeline failed (compile, install,
 //     buildCommands). FailureClassBuild.
@@ -39,14 +39,14 @@ import (
 //
 // Unknown statuses fall through to FailureClassOther — Reason still
 // carries the raw status string so the LLM has the diagnostic content.
-func classifyDeployStatus(status string) workflow.FailureClass {
+func classifyDeployStatus(status string) topology.FailureClass {
 	switch status {
 	case statusBuildFailed:
-		return workflow.FailureClassBuild
+		return topology.FailureClassBuild
 	case statusPreparingRuntimeFailed, serviceStatusReadyToDeploy, statusDeployFailed:
-		return workflow.FailureClassStart
+		return topology.FailureClassStart
 	default:
-		return workflow.FailureClassOther
+		return topology.FailureClassOther
 	}
 }
 
@@ -179,9 +179,14 @@ func RegisterDeploySSH(
 		if err != nil {
 			attempt.Error = err.Error()
 			// SSH/transport-layer failure — we never reached the build.
-			attempt.FailureClass = workflow.FailureClassNetwork
+			classification := classifyTransportError(err, string(topology.StrategyPushDev))
+			if classification != nil {
+				attempt.FailureClass = classification.Category
+			} else {
+				attempt.FailureClass = topology.FailureClassNetwork
+			}
 			_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
-			return convertError(err, WithRecoveryStatus()), nil, nil
+			return convertError(err, WithRecoveryStatus(), WithFailureClassification(classification)), nil, nil
 		}
 
 		onProgress := buildProgressCallback(ctx, req)

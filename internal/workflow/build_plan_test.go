@@ -351,25 +351,25 @@ func TestBuildPlan_FailureTargetedRationale(t *testing.T) {
 
 	cases := []struct {
 		name           string
-		failureClass   FailureClass
+		failureClass   topology.FailureClass
 		reason         string
 		wantInRational []string
 	}{
 		{
 			name:           "build_failure",
-			failureClass:   FailureClassBuild,
+			failureClass:   topology.FailureClassBuild,
 			reason:         "build timeout after 15min",
 			wantInRational: []string{"build", "timeout"},
 		},
 		{
 			name:           "start_failure",
-			failureClass:   FailureClassStart,
+			failureClass:   topology.FailureClassStart,
 			reason:         "container didn't start",
 			wantInRational: []string{"start", "didn't start"},
 		},
 		{
 			name:           "config_failure",
-			failureClass:   FailureClassConfig,
+			failureClass:   topology.FailureClassConfig,
 			reason:         "zerops.yaml: deployFiles required",
 			wantInRational: []string{"config", "deployFiles"},
 		},

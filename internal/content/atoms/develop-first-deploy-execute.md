@@ -6,7 +6,7 @@ modes: [dev, simple, standard, local-stage]
 deployStates: [never-deployed]
 multiService: aggregate
 title: "First deploy — execution rules"
-references-fields: [ops.DeployResult.Status, ops.DeployResult.BuildLogs, ops.DeployResult.RuntimeLogs, ops.DeployResult.FailedPhase, ops.DeployResult.SubdomainAccessEnabled, ops.DeployResult.SubdomainURL]
+references-fields: [ops.DeployResult.Status, ops.DeployResult.BuildLogs, ops.DeployResult.RuntimeLogs, ops.DeployResult.FailedPhase, ops.DeployResult.FailureClassification, ops.DeployResult.SubdomainAccessEnabled, ops.DeployResult.SubdomainURL]
 ---
 
 ### Run the first deploy
@@ -17,9 +17,13 @@ hit a platform placeholder — deploy first, then inspect. `zerops_deploy`
 batches build + runtime container provision + start; expect 30–90 seconds for
 dynamic runtimes and longer for `php-nginx` / `php-apache`.
 
-If `status` is non-success, read `buildLogs` / `runtimeLogs` /
-`failedPhase` before retrying — a second attempt on the same broken
-`zerops.yaml` burns another deploy slot without new information.
+If `status` is non-success, read `failureClassification` first — it
+carries the matched `category`, `likelyCause`, and `suggestedAction`
+distilled from the logs. Only fall through to `buildLogs` /
+`runtimeLogs` when the classification is missing or its
+`suggestedAction` doesn't match what you observe. A second attempt on
+the same broken `zerops.yaml` burns another deploy slot without new
+information.
 
 On first-deploy success the response carries `subdomainAccessEnabled:
 true` and a `subdomainUrl` — no manual `zerops_subdomain` call is

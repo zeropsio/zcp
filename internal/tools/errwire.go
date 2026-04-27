@@ -2,6 +2,7 @@ package tools
 
 import (
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -32,6 +33,14 @@ type ErrorWire struct {
 	// Recovery pointer. Small, static, no I/O to compute.
 	// Always points at the canonical lifecycle recovery surface.
 	Recovery *RecoveryHint `json:"recovery,omitempty"`
+
+	// FailureClassification carries the structured deploy-failure analysis
+	// when the error came from a deploy path that classified the
+	// transport/preflight phase. Same shape as
+	// DeployResult.FailureClassification (see topology pkg).
+	// Populated via WithFailureClassification — handlers that aren't
+	// deploy-related leave it nil.
+	FailureClassification *topology.DeployFailureClassification `json:"failureClassification,omitempty"`
 }
 
 // CheckWire is the wire form of a single check failure. Generic enough
@@ -104,6 +113,19 @@ func WithRecoveryStatus() ErrorOption {
 func WithRecovery(hint *RecoveryHint) ErrorOption {
 	return func(w *ErrorWire) {
 		w.Recovery = hint
+	}
+}
+
+// WithFailureClassification attaches the structured deploy-failure analysis
+// to a transport/preflight error response. nil arg is a no-op so deploy
+// handlers can call it unconditionally — `WithFailureClassification(nil)`
+// keeps the wire shape free of empty objects.
+func WithFailureClassification(c *topology.DeployFailureClassification) ErrorOption {
+	return func(w *ErrorWire) {
+		if c == nil {
+			return
+		}
+		w.FailureClassification = c
 	}
 }
 

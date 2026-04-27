@@ -3,6 +3,8 @@ package ops
 import (
 	"context"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // DeployResult contains the outcome of a deploy operation (shared by SSH and local modes).
@@ -38,6 +40,16 @@ type DeployResult struct {
 	// SubdomainAccessEnabled is true. Convenience for the agent; full list
 	// and details available via zerops_discover.
 	SubdomainURL string `json:"subdomainUrl,omitempty"`
+
+	// FailureClassification is populated by the deploy handler on any
+	// non-success outcome (build/prepare/init failures) so the agent has
+	// a structured next-step instead of having to parse buildLogs/
+	// runtimeLogs/failedPhase prose. Nil on success or when no
+	// classification was attempted (e.g. early MCP/transport errors that
+	// route through convertError instead of producing a DeployResult).
+	// Pattern library + classifier in deploy_failure.go +
+	// deploy_failure_signals.go (ticket E2).
+	FailureClassification *topology.DeployFailureClassification `json:"failureClassification,omitempty"`
 }
 
 // GitPushResult contains the outcome of a git-push deploy operation.

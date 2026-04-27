@@ -5,7 +5,7 @@ phases: [strategy-setup]
 strategies: [push-git]
 environments: [container]
 title: "push-git push setup (GIT_TOKEN + .netrc)"
-references-fields: [ops.DeployResult.Status, ops.DeployResult.Warnings, platform.APIError.Code]
+references-fields: [ops.DeployResult.Status, ops.DeployResult.Warnings, ops.DeployResult.FailureClassification]
 ---
 
 # Push path (GIT_TOKEN + .netrc)
@@ -35,9 +35,12 @@ zerops_deploy targetService="{targetHostname}" strategy="git-push" \
   remoteUrl="{repoUrl}" branch="main"
 ```
 
-The response's `status` confirms the push. If `platform.APIError.code`
-is `PREREQUISITE_MISSING: requires committed code`, the runtime container's
-`/var/www` has no commit — run the ssh commit step again and retry.
+The response's `status` confirms the push. On failure, read
+`failureClassification` first — it carries the matched `category`
+(`credential` for missing/rejected `GIT_TOKEN`, `config` for missing
+commits) plus a one-line `suggestedAction`. If category is `config`
+and the cause names committed code, `/var/www` has no commit on the
+runtime container — run the ssh commit step again and retry.
 
 Do not run `git init`, `.netrc` configuration, or `git remote add`
 manually — the deploy tool owns the git-push shape.

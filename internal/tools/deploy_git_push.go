@@ -9,6 +9,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -93,14 +94,14 @@ func handleGitPush(
 	// committed-code are FailureClassConfig; YAML validation is
 	// FailureClassConfig; the actual push failure is FailureClassNetwork
 	// (transport-layer failure to reach the remote).
-	recordAttempt := func(err string, class workflow.FailureClass) {
+	recordAttempt := func(err string, class topology.FailureClass) {
 		attempt.Error = err
 		attempt.FailureClass = class
 		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 	}
 
 	if sshDeployer == nil {
-		recordAttempt("SSH deployer not configured", workflow.FailureClassConfig)
+		recordAttempt("SSH deployer not configured", topology.FailureClassConfig)
 		return convertError(platform.NewPlatformError(
 			platform.ErrNotImplemented,
 			"SSH deployer not configured",
@@ -108,7 +109,7 @@ func handleGitPush(
 		)), nil, nil
 	}
 	if input.TargetService == "" {
-		recordAttempt("targetService missing", workflow.FailureClassConfig)
+		recordAttempt("targetService missing", topology.FailureClassConfig)
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"targetService is required for git-push",
@@ -136,7 +137,7 @@ func handleGitPush(
 	// touched the meta.
 	committedOut, err := sshDeployer.ExecSSH(ctx, hostname, committedCodeCheckCmd(workingDir))
 	if err != nil {
-		recordAttempt(fmt.Sprintf("committed-code check failed: %v", err), workflow.FailureClassNetwork)
+		recordAttempt(fmt.Sprintf("committed-code check failed: %v", err), topology.FailureClassNetwork)
 		return convertError(platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,
 			fmt.Sprintf("cannot check committed code on %s: %s", hostname, err),
@@ -144,7 +145,7 @@ func handleGitPush(
 		)), nil, nil
 	}
 	if strings.TrimSpace(string(committedOut)) != "1" {
-		recordAttempt("no committed code at workingDir", workflow.FailureClassConfig)
+		recordAttempt("no committed code at workingDir", topology.FailureClassConfig)
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
 			"git-push requires committed code at "+workingDir+" on "+hostname,
@@ -155,7 +156,7 @@ func handleGitPush(
 	// Pre-flight: check GIT_TOKEN exists on the container.
 	tokenOut, err := sshDeployer.ExecSSH(ctx, hostname, gitTokenCheckCmd)
 	if err != nil {
-		recordAttempt(fmt.Sprintf("GIT_TOKEN check failed: %v", err), workflow.FailureClassNetwork)
+		recordAttempt(fmt.Sprintf("GIT_TOKEN check failed: %v", err), topology.FailureClassNetwork)
 		return convertError(platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,
 			fmt.Sprintf("cannot check GIT_TOKEN on %s: %s", hostname, err),
@@ -163,7 +164,7 @@ func handleGitPush(
 		)), nil, nil
 	}
 	if strings.TrimSpace(string(tokenOut)) == "0" {
-		recordAttempt("GIT_TOKEN missing", workflow.FailureClassConfig)
+		recordAttempt("GIT_TOKEN missing", topology.FailureClassCredential)
 		return jsonResult(&gitPushPrerequisites{
 			Status:       platform.ErrGitTokenMissing,
 			Message:      "GIT_TOKEN is not set. This project env var is required for pushing to a git remote.",
@@ -184,7 +185,7 @@ func handleGitPush(
 				setupName = hostname
 			}
 			if vErr := ops.ValidatePreDeployContent(ctx, client, target, setupName, yamlContent); vErr != nil {
-				recordAttempt(fmt.Sprintf("zerops.yaml validation failed: %v", vErr), workflow.FailureClassConfig)
+				recordAttempt(fmt.Sprintf("zerops.yaml validation failed: %v", vErr), topology.FailureClassConfig)
 				return convertError(vErr), nil, nil
 			}
 		}
@@ -194,12 +195,21 @@ func handleGitPush(
 
 	output, err := sshDeployer.ExecSSH(ctx, hostname, cmd)
 	if err != nil {
-		recordAttempt(fmt.Sprintf("git-push failed: %v", err), workflow.FailureClassNetwork)
+		// Run the classifier so credential-class git failures land as
+		// FailureClassCredential instead of generic Network — the recovery
+		// (rotate GIT_TOKEN vs check connectivity) differs (E2).
+		classification := classifyTransportError(err, topology.StrategyPushGit)
+		category := topology.FailureClassNetwork
+		if classification != nil {
+			category = classification.Category
+		}
+		recordAttempt(fmt.Sprintf("git-push failed: %v", err), category)
+		_ = output
 		return convertError(platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,
 			fmt.Sprintf("git-push from %s failed: %s", hostname, err),
 			"Check GIT_TOKEN env var, remote URL, and git status on the container",
-		)), nil, nil
+		), WithFailureClassification(classification)), nil, nil
 	}
 
 	result := &ops.GitPushResult{

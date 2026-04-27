@@ -633,7 +633,7 @@ func TestAttemptInfo_PreservesFailureContext(t *testing.T) {
 				Setup:        "dev",
 				Strategy:     "push-dev",
 				Error:        "build timeout after 15 minutes",
-				FailureClass: FailureClassBuild,
+				FailureClass: topology.FailureClassBuild,
 			}},
 		},
 		Verifies: map[string][]VerifyAttempt{
@@ -641,7 +641,7 @@ func TestAttemptInfo_PreservesFailureContext(t *testing.T) {
 				AttemptedAt:  "2026-04-26T10:05:00Z",
 				Passed:       false,
 				Summary:      "http_root: 502 Bad Gateway",
-				FailureClass: FailureClassVerify,
+				FailureClass: topology.FailureClassVerify,
 			}},
 		},
 	}
@@ -655,8 +655,8 @@ func TestAttemptInfo_PreservesFailureContext(t *testing.T) {
 	if gotDeploy.Reason != "build timeout after 15 minutes" {
 		t.Errorf("deploy Reason: got %q, want %q", gotDeploy.Reason, "build timeout after 15 minutes")
 	}
-	if gotDeploy.FailureClass != FailureClassBuild {
-		t.Errorf("deploy FailureClass: got %q, want %q", gotDeploy.FailureClass, FailureClassBuild)
+	if gotDeploy.FailureClass != topology.FailureClassBuild {
+		t.Errorf("deploy FailureClass: got %q, want %q", gotDeploy.FailureClass, topology.FailureClassBuild)
 	}
 	if gotDeploy.Setup != "dev" {
 		t.Errorf("deploy Setup: got %q, want %q", gotDeploy.Setup, "dev")
@@ -672,8 +672,8 @@ func TestAttemptInfo_PreservesFailureContext(t *testing.T) {
 	if gotVerify.Reason != "http_root: 502 Bad Gateway" {
 		t.Errorf("verify Reason: got %q, want %q", gotVerify.Reason, "http_root: 502 Bad Gateway")
 	}
-	if gotVerify.FailureClass != FailureClassVerify {
-		t.Errorf("verify FailureClass: got %q, want %q", gotVerify.FailureClass, FailureClassVerify)
+	if gotVerify.FailureClass != topology.FailureClassVerify {
+		t.Errorf("verify FailureClass: got %q, want %q", gotVerify.FailureClass, topology.FailureClassVerify)
 	}
 	if gotVerify.Summary != "http_root: 502 Bad Gateway" {
 		t.Errorf("verify Summary: got %q, want %q", gotVerify.Summary, "http_root: 502 Bad Gateway")
@@ -711,7 +711,7 @@ func TestAttemptInfo_SuccessLeavesFailureFieldsEmpty(t *testing.T) {
 				// Stale failure fields from a previous failed retry.
 				// Projection MUST drop them on Success=true.
 				Error:        "stale: build timeout",
-				FailureClass: FailureClassBuild,
+				FailureClass: topology.FailureClassBuild,
 			}},
 		},
 		Verifies: map[string][]VerifyAttempt{
@@ -721,7 +721,7 @@ func TestAttemptInfo_SuccessLeavesFailureFieldsEmpty(t *testing.T) {
 				Passed:      true,
 				Summary:     "healthy",
 				// Stale failure class from previous attempt.
-				FailureClass: FailureClassVerify,
+				FailureClass: topology.FailureClassVerify,
 			}},
 		},
 	}

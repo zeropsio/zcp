@@ -138,9 +138,14 @@ func RegisterDeployLocal(
 			attempt.Error = err.Error()
 			// Local push failed before reaching the platform — transport-
 			// layer error (e.g. zcli auth, connection).
-			attempt.FailureClass = workflow.FailureClassNetwork
+			classification := classifyTransportError(err, string(topology.StrategyPushDev))
+			if classification != nil {
+				attempt.FailureClass = classification.Category
+			} else {
+				attempt.FailureClass = topology.FailureClassNetwork
+			}
 			_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
-			return convertError(err, WithRecoveryStatus()), nil, nil
+			return convertError(err, WithRecoveryStatus(), WithFailureClassification(classification)), nil, nil
 		}
 
 		onProgress := buildProgressCallback(ctx, req)

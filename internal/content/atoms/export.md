@@ -4,7 +4,7 @@ priority: 2
 phases: [export-active]
 environments: [container]
 title: "Export — turn a deployed service into a re-importable git repo"
-references-fields: [ops.ExportResult.ExportYAML, ops.ExportResult.Services, ops.DeployResult.Status, ops.DeployResult.Warnings, platform.APIError.Code]
+references-fields: [ops.ExportResult.ExportYAML, ops.ExportResult.Services, ops.DeployResult.Status, ops.DeployResult.Warnings, ops.DeployResult.FailureClassification]
 ---
 
 # Export procedure
@@ -200,12 +200,12 @@ The response's `status` confirms success; `warnings[]` surface
 non-fatal issues. Do NOT run `git init`, `git config user.*`, or
 `git remote add` yourself — the deploy tool owns the git-push shape.
 
-On error, read `platform.APIError.code`:
+On error, read `failureClassification`:
 
-| Error code | Fix | Then |
-|---|---|---|
-| `GIT_TOKEN_MISSING` | ask user for token (GitHub: Contents R/W; GitLab: write_repository), run `zerops_env action="set" project=true variables=["GIT_TOKEN={token}"]` | retry task 10 |
-| `PREREQUISITE_MISSING: requires committed code` | the runtime container doesn't have the `import.yaml` commit — go back to task 9 and ensure `ssh {targetHostname} "cd /var/www && git add import.yaml && git commit -m '...'"` actually committed | retry task 10 |
+| `category` | When | Fix | Then |
+|---|---|---|---|
+| `credential` | `likelyCause` mentions `GIT_TOKEN` | ask user for token (GitHub: Contents R/W; GitLab: write_repository), run `zerops_env action="set" project=true variables=["GIT_TOKEN={token}"]` | retry task 10 |
+| `config` | `likelyCause` mentions committed code | the runtime container doesn't have the `import.yaml` commit — go back to task 9 and ensure `ssh {targetHostname} "cd /var/www && git add import.yaml && git commit -m '...'"` actually committed | retry task 10 |
 
 Optional — persist strategy in service meta so future guidance knows:
 

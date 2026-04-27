@@ -136,6 +136,20 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
 
 ## Conventions
 
+- **Deploy failure response carries structured classification** — every
+  failed `zerops_deploy` invocation populates `failureClassification`
+  (`category` + `likelyCause` + `suggestedAction` + `signals[]`). Lives on
+  `ops.DeployResult.FailureClassification` for build/prepare/init failures
+  and on `tools.ErrorWire.FailureClassification` for transport/preflight
+  failures. Agents read this field FIRST; `buildLogs` / `runtimeLogs` /
+  `failedPhase` are fall-through diagnostic depth, not the primary signal.
+  Categories use `topology.FailureClass` (build/start/verify/network/config/
+  credential/other — single canonical enum, peer to ops + workflow). Pattern
+  library in `internal/ops/deploy_failure_signals.go`; classifier in
+  `deploy_failure.go`. Pinned by `TestClassifyDeployFailure_*`,
+  `TestPollDeployBuild_PopulatesFailureClassification`,
+  `TestErrorWire_FailureClassification`. Spec: ticket E2 in
+  `plans/engine-atom-rendering-improvements-2026-04-27.md`.
 - **4-layer architecture pinned** — `internal/topology/` is the
   foundational layer-2 vocabulary (Mode, DeployStrategy, RuntimeClass,
   PushGitTrigger, predicates, aliases) with zero internal/ imports.

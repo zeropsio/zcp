@@ -59,7 +59,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 	// FailureClassConfig (user repo state); the actual git push failure is
 	// FailureClassNetwork (transport to the remote). YAML validation is
 	// FailureClassConfig.
-	record := func(errMsg string, class workflow.FailureClass) {
+	record := func(errMsg string, class topology.FailureClass) {
 		attempt.Error = errMsg
 		attempt.FailureClass = class
 		_ = workflow.RecordDeployAttempt(stateDir, hostname, attempt)
@@ -84,7 +84,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 			setupName = hostname
 		}
 		if vErr := ops.RunPreDeployValidation(ctx, client, target, setupName, workingDir); vErr != nil {
-			record(fmt.Sprintf("zerops.yaml validation failed: %v", vErr), workflow.FailureClassConfig)
+			record(fmt.Sprintf("zerops.yaml validation failed: %v", vErr), topology.FailureClassConfig)
 			return convertError(vErr, WithRecoveryStatus()), nil, nil
 		}
 	}
@@ -94,7 +94,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 	//nolint:nilerr // tool-level error lives in CallToolResult
 	if _, err := runGit(ctx, workingDir, "rev-parse", "--is-inside-work-tree"); err != nil {
 		_ = err
-		record("working dir is not a git repo", workflow.FailureClassConfig)
+		record("working dir is not a git repo", topology.FailureClassConfig)
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("workingDir %q is not a git repository", workingDir),
@@ -106,7 +106,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 	//nolint:nilerr // tool-level error lives in CallToolResult
 	if _, err := runGit(ctx, workingDir, "rev-parse", "HEAD"); err != nil {
 		_ = err
-		record("no commits on HEAD", workflow.FailureClassConfig)
+		record("no commits on HEAD", topology.FailureClassConfig)
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
 			"git-push requires at least one commit on HEAD",
@@ -119,7 +119,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 	current := strings.TrimSpace(currentOrigin)
 	switch {
 	case current == "" && input.RemoteURL == "":
-		record("no origin + no remoteUrl", workflow.FailureClassConfig)
+		record("no origin + no remoteUrl", topology.FailureClassConfig)
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
 			"no origin remote configured and no remoteUrl provided",
@@ -127,7 +127,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 		), WithRecoveryStatus()), nil, nil
 	case current == "" && input.RemoteURL != "":
 		if _, err := runGit(ctx, workingDir, "remote", "add", "origin", input.RemoteURL); err != nil {
-			record(fmt.Sprintf("git remote add origin failed: %v", err), workflow.FailureClassConfig)
+			record(fmt.Sprintf("git remote add origin failed: %v", err), topology.FailureClassConfig)
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("git remote add origin %s failed: %v", input.RemoteURL, err),
@@ -135,7 +135,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 			), WithRecoveryStatus()), nil, nil
 		}
 	case current != "" && input.RemoteURL != "" && current != input.RemoteURL:
-		record("remoteUrl mismatch with existing origin", workflow.FailureClassConfig)
+		record("remoteUrl mismatch with existing origin", topology.FailureClassConfig)
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("origin is %q, you passed remoteUrl=%q — ZCP won't silently rewrite the remote", current, input.RemoteURL),
@@ -148,7 +148,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 	if branch == "" {
 		out, err := runGit(ctx, workingDir, "rev-parse", "--abbrev-ref", "HEAD")
 		if err != nil {
-			record(fmt.Sprintf("detect branch: %v", err), workflow.FailureClassConfig)
+			record(fmt.Sprintf("detect branch: %v", err), topology.FailureClassConfig)
 			return convertError(platform.NewPlatformError(
 				platform.ErrPrerequisiteMissing,
 				fmt.Sprintf("could not detect branch in %s: %v", workingDir, err),
@@ -171,12 +171,21 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 		"push", "origin", branch,
 	)
 	if pushErr != nil {
-		record(fmt.Sprintf("git push: %v", pushErr), workflow.FailureClassNetwork)
+		// Run the classifier against the git stderr — credential vs network
+		// vs ref-rejection all read differently and the agent's recovery
+		// path differs accordingly (E2).
+		gitWrap := &platform.SSHExecError{Hostname: "local-git", Output: pushOut, Err: pushErr}
+		classification := classifyTransportError(gitWrap, topology.StrategyPushGit)
+		category := topology.FailureClassNetwork
+		if classification != nil {
+			category = classification.Category
+		}
+		record(fmt.Sprintf("git push: %v", pushErr), category)
 		return convertError(platform.NewPlatformError(
 			platform.ErrDeployFailed,
 			fmt.Sprintf("git push origin %s failed: %s", branch, truncateStderr(pushOut)),
 			"Check your local git credentials (SSH keys, credential manager) and the remote URL. For passphrase-protected keys, ensure ssh-agent is running.",
-		), WithRecoveryStatus()), nil, nil
+		), WithRecoveryStatus(), WithFailureClassification(classification)), nil, nil
 	}
 
 	status2 := "PUSHED"
