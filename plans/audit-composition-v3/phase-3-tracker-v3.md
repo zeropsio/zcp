@@ -20,12 +20,12 @@ Plan: `plans/atom-corpus-hygiene-followup-2-2026-04-27.md` §5 Phase 3.
 
 | # | work unit | initial state | final state | commit | codex round | notes |
 |---|---|---|---|---|---|---|
-| 1 | F4 atom rewrite (auto-reload aware, start/restart split clarified) | atom L13-L40 says "After each edit, run `action=restart`" (over-eager, wrong about SSHFS auto-watch) | atom rewritten with polling caveat + no-redeploy guardrail + start/restart split | (this commit) | round 2 APPROVE | 2 round-1 catches addressed: no-redeploy guardrail restored; SSHFS polling caveat replaces false auto-watch claim |
+| 1 | F4 atom rewrite (auto-reload aware, start/restart split clarified) | atom L13-L40 says "After each edit, run `action=restart`" (over-eager, wrong about SSHFS auto-watch) | atom rewritten with polling caveat + no-redeploy guardrail + start/restart split | 97267c1f | round 2 APPROVE | 2 round-1 catches addressed: no-redeploy guardrail restored; SSHFS polling caveat replaces false auto-watch claim |
 | 2 | PER-EDIT Codex round 1 | not run | NEEDS-REVISION | – | NEEDS-REVISION | (1) lost no-redeploy guardrail at current atom L25; (2) false auto-watch claim — SSHFS doesn't surface inotify events |
-| 3 | Plan revisions per round 1 (§5 Phase 3 rewrite block) | original rewrite | revised rewrite (no-redeploy guardrail + polling caveat) | (this commit) | – | annotated in plan with "Round-1 PER-EDIT Codex round flagged two defects (now resolved above)" note |
-| 4 | PER-EDIT Codex round 2 | not run | APPROVE | (this commit) | APPROVE | both revisions verified; round-1 APPROVE items still hold (signals #3, #4, AST references-fields pin) |
-| 5 | Apply F4 atom edit | not applied | APPLIED | (this commit) | – | atom file 1,396 → 1,974 B (+578 B; net-positive due to round-1 corrections); first-deploy fixtures unaffected (axis mismatch) |
-| 6 | Verify gate | unknown | PASS | (this commit) | – | lint 0 issues; AST references-fields integrity test PASS |
+| 3 | Plan revisions per round 1 (§5 Phase 3 rewrite block) | original rewrite | revised rewrite (no-redeploy guardrail + polling caveat) | 97267c1f | – | annotated in plan with "Round-1 PER-EDIT Codex round flagged two defects (now resolved above)" note |
+| 4 | PER-EDIT Codex round 2 | not run | APPROVE | 97267c1f | APPROVE | both revisions verified; round-1 APPROVE items still hold (signals #3, #4, AST references-fields pin) |
+| 5 | Apply F4 atom edit | not applied | APPLIED | 97267c1f | – | atom file 1,396 → 1,974 B (+578 B; net-positive due to round-1 corrections); first-deploy fixtures unaffected (axis mismatch) |
+| 6 | Verify gate | unknown | PASS | 97267c1f | – | lint 0 issues; AST references-fields integrity test PASS |
 
 ## Probe re-run
 
