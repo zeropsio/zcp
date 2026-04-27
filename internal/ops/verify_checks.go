@@ -18,6 +18,12 @@ const (
 	runtimeNginx       = "nginx"
 	runtimePHPApach    = "php-apache"
 	runtimePHPNginx    = "php-nginx"
+	// httpRootBodyReadCap bounds the bytes we read from the GET / response
+	// body. Detail still calls truncateBody(body, 200) for envelope
+	// compactness; the larger read budget exists so the browser-render
+	// step (and any future caller that needs more raw content) does not
+	// have to re-issue the request.
+	httpRootBodyReadCap = 16 << 10
 )
 
 // RuntimeClass categorizes services for verify check dispatch.
@@ -116,7 +122,10 @@ func checkHTTPRoot(ctx context.Context, httpClient HTTPDoer, url string) CheckRe
 		return CheckResult{Name: name, Status: CheckFail, Detail: fmt.Sprintf("request failed: %v", err)}
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 201))
+	// Read up to httpRootBodyReadCap bytes. Detail still truncates to 200
+	// chars for compactness; the larger buffer exists so a future
+	// caller can forward the full body without re-issuing the request.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, httpRootBodyReadCap))
 
 	// 2xx / 3xx / 4xx — any response proves the HTTP server is up and
 	// serving. 4xx means "you asked for something I don't have" which

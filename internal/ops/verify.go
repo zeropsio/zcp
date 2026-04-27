@@ -39,6 +39,22 @@ type CheckResult struct {
 	Status     string `json:"status"`               // "pass", "fail", "skip"
 	Detail     string `json:"detail,omitempty"`     // human-readable detail on fail/skip
 	HTTPStatus int    `json:"httpStatus,omitempty"` // HTTP status code (0 = N/A)
+
+	// BodyText is document.body.innerText captured by agent-browser after
+	// the HTTP probe connected. Best-effort: populated only when an actual
+	// browser walk succeeded (so SPA-rendered pages reach a real DOM
+	// instead of an unhydrated shell, and framework error pages like
+	// Laravel Ignition surface their actual content). Capped at
+	// browserBodyTextCap. Absent on connect-failure, when agent-browser
+	// is missing, or when the walk fork-recovered / wedged. Never an
+	// error signal — its absence is normal in local dev.
+	BodyText string `json:"bodyText,omitempty"`
+
+	// ConsoleErrors is at most browserConsoleMax recent console.error /
+	// uncaught-exception messages from the same agent-browser walk that
+	// produced BodyText. Each entry is capped at browserConsoleEntryCap
+	// chars. Absent under the same conditions as BodyText.
+	ConsoleErrors []string `json:"consoleErrors,omitempty"`
 }
 
 // isManagedCategory returns true if the API category represents a managed service.
@@ -157,7 +173,20 @@ func verifyService(
 				}
 				checks = append(checks, CheckResult{Name: "http_root", Status: CheckSkip, Detail: skipDetail})
 			} else {
-				checks = append(checks, checkHTTPRoot(ctx, httpClient, subdomainURL+"/"))
+				probeURL := subdomainURL + "/"
+				check := checkHTTPRoot(ctx, httpClient, probeURL)
+				// Render augmentation runs once per service-verify call
+				// AFTER the connect probe succeeded (HTTPStatus > 0). Both
+				// 2xx (documents the rendered state) and 5xx (surfaces the
+				// framework error page) benefit. Connect failures skip the
+				// browser walk — a wedged TCP path won't render anyway and
+				// the agent-browser timeout would just delay the verdict.
+				if check.HTTPStatus > 0 {
+					bodyText, consoleErrors := renderHTTPRoot(ctx, probeURL)
+					check.BodyText = bodyText
+					check.ConsoleErrors = consoleErrors
+				}
+				checks = append(checks, check)
 			}
 			mu.Lock()
 			httpChecks = checks
