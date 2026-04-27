@@ -44,13 +44,11 @@ discovered-key catalog and the cross-service `${hostname_KEY}` syntax.
 - `standard` mode: emit separate entries for dev AND stage hostnames;
   stage's `deployFiles` points at the build output directory.
 
-**Content-root tip (ASP.NET, static-serving frameworks):**
-
-When a foreground runtime expects assets at `ContentRootPath = CWD`
-(e.g. ASP.NET's `wwwroot/` lookup at `/var/www/wwwroot/`), use
-**tilde-extract** (`./out/~`) so contents land at `/var/www/` instead
-of `/var/www/out/`. Use **preserve** (`./out`) when `run.start`
-references an explicit subpath like `./out/app/App.dll`. See
-`develop-deploy-modes` for the full decision rule.
+**Content-root tip:** for runtimes that expect assets at the
+working-dir root (e.g. ASP.NET's `wwwroot/` lookup at
+`/var/www/wwwroot/`), use **tilde-extract** (`./out/~`) so contents
+land at `/var/www/` instead of `/var/www/out/`. Use **preserve**
+(`./out`) when `run.start` references an explicit subpath like
+`./out/app/App.dll`. Full decision rule in `develop-deploy-modes`.
 
 Schema: fetch `zerops.yaml` JSON Schema via `zerops_knowledge` if unsure.

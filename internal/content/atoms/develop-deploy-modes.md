@@ -24,7 +24,7 @@ output.
 |---|---|---|
 | Self-deploy (dev, simple modes) | `[.]` | Anything narrower destroys target on deploy. |
 | Cross-deploy, preserve dir | `[./out]` | Artifact lands at `/var/www/out/...`. Pick when `start` references an explicit path (e.g. `./out/app/App.dll`) or multiple artifacts live in subdirs. |
-| Cross-deploy, extract contents | `[./out/~]` | Tilde strips the `out/` prefix; artifact lands at `/var/www/...`. Pick when the runtime expects assets at root (ASP.NET's `wwwroot/` at ContentRootPath = `/var/www/`). |
+| Cross-deploy, extract contents | `[./out/~]` | Tilde strips `out/`; artifact lands at `/var/www/...`. Pick when the runtime expects assets at the root (ASP.NET's `wwwroot/` at `/var/www/`). |
 
 ### Why the source tree sometimes doesn't have `./out`
 

@@ -24,13 +24,12 @@ is there.
    checks call the service over the container's external interface; a
    loopback-bound app reports as healthy in tests but fails in
    `zerops_verify`.
-3. **`run.start` invokes the production entry point.** Not `npm install`,
-   not `build` — the start command must launch a long-running process.
-4. **Observability hook** — implement `/status` or `/health` so
-   `zerops_verify` has a deterministic endpoint to probe. Return 200 on
-   success; embed a cheap dependency check (e.g. `SELECT 1` to the
-   database) so a failing verify immediately tells you whether the
-   problem is the app or the wiring.
+3. **`run.start` invokes the production entry point** — must launch a
+   long-running process.
+4. **Observability hook** — implement `/status` or `/health` returning
+   HTTP 200 so `zerops_verify` has a deterministic endpoint. Embedding
+   a cheap dependency check (e.g. DB ping) lets a failing verify
+   immediately distinguish app bugs from wiring issues.
 5. **Audit "developer-friendly" framework defaults.** Iterative-dev
    frameworks (Streamlit, Gradio, Vite, Jupyter) are wrong-in-container
    in two ZCP-specific ways: push-dev creates `/var/www/.git` so any

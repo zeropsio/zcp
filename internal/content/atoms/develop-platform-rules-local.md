@@ -22,10 +22,9 @@ title: "Platform rules — local env extras"
   KillBash                     shell_id={task-id}
   ```
 
-  ZCP does not spawn processes on your machine — `zerops_dev_server` is
-  container-only. Whatever dev command your framework gives you works:
-  `npm run dev`, `bun --hot`, `vite`, `artisan serve`, `rails s`,
-  `uvicorn main:app --reload`.
+  ZCP does not spawn processes on your machine — `zerops_dev_server`
+  is container-only; whatever dev command your framework provides
+  works.
 - **VPN for managed services.** Boot-shim `claude_local.md` shows
   `zcli vpn up <projectId>`; remind the user it needs sudo/admin
   and ZCP cannot start it for them.

@@ -23,19 +23,14 @@ stdio does not block the caller.
 Bash run_in_background=true  command="{start-command}"
 ```
 
-Use whatever dev command your framework offers (`npm run dev`,
-`bun --hot`, `vite`, `artisan serve`, `rails s`, `uvicorn main:app --reload`,
-…). These typically bind to `127.0.0.1` or `0.0.0.0` on the port your
-app listens on.
+Use whatever dev command your framework offers — bind to the port
+your app listens on.
 
 **Check if already running:**
 
 ```
 Bash command="curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:{port}/"
 ```
-
-A 2xx/3xx/4xx response proves the server is up. A connection refused
-means it is not listening.
 
 **Tail recent logs:**
 

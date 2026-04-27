@@ -31,9 +31,7 @@ them up immediately.
 **When the page 404s or 403s after a successful deploy:**
 
 - Wrong `documentRoot` — the web server points at a directory that lacks
-  the expected `index.php` / `index.html`.
-- Missing `index.php` entrypoint — composer-based apps often need
-  `public/index.php` but a scaffolded project may start without it.
+  the expected entrypoint.
 - `.htaccess` / rewrite rules not shipped — `deployFiles` must include
   the files the web server needs, not just the PHP sources.
 
