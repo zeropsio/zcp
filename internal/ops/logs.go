@@ -43,7 +43,7 @@ func FetchLogs(
 	if err != nil {
 		return nil, platform.NewPlatformError(platform.ErrInvalidParameter,
 			fmt.Sprintf("Invalid since value: %v", err),
-			"Use formats like 30m, 1h, 7d, or ISO 8601 (RFC3339)")
+			"Use formats like 30s, 5m, 1h, 7d, or ISO 8601 (RFC3339)")
 	}
 
 	svc, err := resolveService(ctx, client, projectID, hostname)

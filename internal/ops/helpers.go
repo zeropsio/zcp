@@ -10,7 +10,7 @@ import (
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
-var durationRegex = regexp.MustCompile(`^(\d+)(m|h|d)$`)
+var durationRegex = regexp.MustCompile(`^(\d+)(s|m|h|d)$`)
 
 // FindService resolves a service hostname to its ServiceStack against a
 // pre-fetched service list. Returns the canonical ErrServiceNotFound +
@@ -53,7 +53,7 @@ func ListHostnames(services []platform.ServiceStack) string {
 }
 
 // parseSince converts user-friendly time strings to time.Time.
-// Supports: "30m", "1h", "24h", "7d", ISO 8601 (RFC3339).
+// Supports: "30s", "30m", "1h", "24h", "7d", ISO 8601 (RFC3339).
 // Empty string defaults to 1 hour ago.
 func parseSince(s string) (time.Time, error) {
 	if s == "" {
@@ -67,6 +67,11 @@ func parseSince(s string) (time.Time, error) {
 			return time.Time{}, fmt.Errorf("invalid duration number: %s", s)
 		}
 		switch matches[2] {
+		case "s":
+			if n < 1 || n > 86400 {
+				return time.Time{}, fmt.Errorf("seconds must be 1-86400")
+			}
+			return time.Now().Add(-time.Duration(n) * time.Second), nil
 		case "m":
 			if n < 1 || n > 1440 {
 				return time.Time{}, fmt.Errorf("minutes must be 1-1440")

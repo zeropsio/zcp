@@ -89,6 +89,16 @@ func TestParseSince(t *testing.T) {
 		wantErr   bool
 	}{
 		{
+			name:      "Seconds",
+			input:     "30s",
+			wantDelta: -30 * time.Second,
+		},
+		{
+			name:      "Seconds_Ninety",
+			input:     "90s",
+			wantDelta: -90 * time.Second,
+		},
+		{
 			name:      "Minutes",
 			input:     "30m",
 			wantDelta: -30 * time.Minute,
@@ -136,6 +146,16 @@ func TestParseSince(t *testing.T) {
 		{
 			name:    "Zero_Minutes",
 			input:   "0m",
+			wantErr: true,
+		},
+		{
+			name:    "Zero_Seconds",
+			input:   "0s",
+			wantErr: true,
+		},
+		{
+			name:    "OutOfRange_Seconds",
+			input:   "100000s",
 			wantErr: true,
 		},
 	}
