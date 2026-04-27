@@ -30,32 +30,7 @@ import (
 // Per-axis allowlists (axisLAllowlist, axisKAllowlist, axisMAllowlist,
 // axisNAllowlist) carry pre-marker grandfathered entries from the
 // initial corpus seed audit. Each entry MUST carry a one-line rationale.
-
-// axisLAllowlist: <atomFile>::<exact trimmed line> → rationale.
-// HARD-FORBID forms (env-only title qualifiers) are normally fixed in
-// the atom body; an entry here means the qualifier is structurally
-// unavoidable.
-var axisLAllowlist = map[string]string{}
-
-// axisKAllowlist: <atomFile>::<exact trimmed line> → rationale.
-// Used when an HIGH-signal abstraction leak is preserved without an
-// inline `<!-- axis-k-keep -->` marker — usually because the line is
-// shared with another lint axis or markers would visually clutter a
-// table cell. Prefer the inline marker for ad-hoc cases.
-var axisKAllowlist = map[string]string{}
-
-// axisMAllowlist: <atomFile>::<exact trimmed line> → rationale.
-// Cluster-#5 grandfather: `develop-verify-matrix` uses "agent" to
-// refer to a SPAWNED SUB-AGENT, not the author-perspective LLM noun.
-// Spec: §11.5 cluster-#5 caveat.
-var axisMAllowlist = map[string]string{}
-
-// axisNAllowlist: <atomFile>::<exact trimmed line> → rationale.
-// Used when an atom WITHOUT an `environments:` axis legitimately
-// carries env-specific detail because the per-env atoms can't fully
-// substitute (e.g. a code block that has to spell out both env shells
-// for the agent to copy/paste).
-var axisNAllowlist = map[string]string{}
+// Their declarations live in atoms_lint_seed_allowlist.go.
 
 // ============================================================================
 // Axis L — TITLE-OVER-QUALIFIED (HARD-FORBID env-only title qualifiers)

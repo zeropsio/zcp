@@ -8,7 +8,7 @@ environments: [container]
 title: "Close task — push-git strategy"
 ---
 
-### Closing the task — container + push-git
+### Closing the task — push-git
 
 If push-git is already set up (GIT_TOKEN in project env, remote
 configured), commit on the dev container and push:

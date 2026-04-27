@@ -8,7 +8,7 @@ environments: [local]
 title: "Close task — push-git strategy"
 ---
 
-### Closing the task — local + push-git
+### Closing the task — push-git
 
 The dev surface is your working directory; committed code pushes out
 via your own git credentials. ZCP invokes git — no `GIT_TOKEN` on the
