@@ -1,0 +1,17 @@
+{
+  "scenarioId": "develop-add-endpoint",
+  "suiteId": "2026-04-27-083339",
+  "grade": {
+    "scenarioId": "develop-add-endpoint",
+    "passed": true
+  },
+  "logFile": ".zcp/eval/results/2026-04-27-083339/develop-add-endpoint/log.jsonl",
+  "assessment": "## EVAL REPORT\n\n### Deployment outcome\nState: SUCCESS\n\n### Workflow execution\n- Steps completed: bootstrap discover, bootstrap provision, bootstrap close (auto-skipped), develop-active (strategy, deploy, verify)\n- Steps skipped: bootstrap close was auto-skipped after provision completed adoption\n- Iterations: 0 iterate cycles needed — first deploy passed\n- Gate failures: none\n- Strategy chosen: push-dev for app\n\n### Failure chains\nNo failure chains.\n\n### Information gaps\nNo significant information gaps encountered. The workflow guidance was comprehensive at each step.\n\n### Wasted steps\n- `ToolSearch` for `zerops_verify` — needed to load the tool schema before calling it. This is a mechanical step, not a knowledge gap.\n- Total wasted tool calls: 0 (all tool calls contributed to forward progress)\n\n### What worked well\n- **`zerops_workflow action=\"status\"`** — immediately showed `not bootstrapped` state for app and db, plus clear guidance to start bootstrap with adopt route discovery.\n- **`zerops_workflow action=\"start\" workflow=\"bootstrap\"` (no route)** — the two-step discovery/commit pattern worked cleanly. `routeOptions[]` returned adopt at the top with `adoptServices` list, exactly as documented.\n- **`zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\"`** — plan submission with `isExisting: true` and `resolution: EXISTS` for db was accepted first try.\n- **`zerops_workflow action=\"start\" workflow=\"develop\"`** — the detailed guide covered implicit-webserver specifics (no `run.start`, no `run.ports`, `documentRoot` handling) which confirmed I should not touch `zerops.yml` structure.\n- **`zerops_deploy targetService=\"app\"`** — self-deploy worked seamlessly, returned `subdomainUrl` for immediate verification.\n- **`zerops_verify serviceHostname=\"app\"`** — clean pass with `autoCloseProgress` showing 1/1 ready, confirming the session would auto-close.\n- **Develop-active guidance atoms** — the \"Implicit-Webserver Runtime\" section correctly noted to omit `run.start` and `run.ports` for php-nginx, preventing a common misconfiguration. The \"Push-Dev Deploy Strategy\" section clearly explained self-deploy semantics.",
+  "finalUrl": {
+    "hostname": "app",
+    "url": "https://app-21ca.prg1.zerops.app",
+    "got": 200
+  },
+  "duration": "6m17.002821826s",
+  "startedAt": "2026-04-27T08:33:39.493359689Z"
+}
