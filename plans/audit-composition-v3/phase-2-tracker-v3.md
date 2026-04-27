@@ -32,12 +32,12 @@ Codex CORPUS-SCAN round skipped: 1-line bash grep produced identical verificatio
 
 | # | atom | line | action | commit | codex round | notes |
 |---|---|---|---|---|---|---|
-| 1 | `develop-push-dev-deploy-local.md` | L13 | DROP mechanism mention + drop "Requires `zcli` on PATH" sentence (dispatch detail) | (this commit) | POST-WORK APPROVE | CWD/workingDir, no-sourceService, no-dev-container signals preserved (Codex L13-L17) |
-| 2 | `develop-deploy-files-self-deploy.md` | L23 | REPHRASE `zcli push` → `zerops_deploy`; preserve recovery guardrail | (this commit) | POST-WORK APPROVE | CRITICAL signal verified — recovery guardrail intact at L21-L25 (Codex) |
-| 3 | `develop-platform-rules-local.md` | L31 | REPHRASE — drop `zcli push` mechanism mention; PRESERVE push-dev-vs-git-push uncommitted-tree distinction | (this commit) | POST-WORK APPROVE | Both halves of strategy distinction preserved in single line |
-| 4 | `develop-first-deploy-asset-pipeline-container.md` | L17 | REPHRASE `zcli push` → `zerops_deploy` | (this commit) | POST-WORK APPROVE | HMR-via-Vite-over-SSH semantic preserved at L16-L17 |
-| 5 | `develop-strategy-review.md` | L15 | DROP parenthetical "(zcli push from your workspace…)" | (this commit) | POST-WORK APPROVE | push-dev/push-git/manual distinctions preserved at L15-L22 |
-| 6 | `develop-first-deploy-asset-pipeline-local.md` | L32 | REPHRASE — drop "(`zcli push`)" parenthetical | (this commit) | POST-WORK APPROVE | "Working dir ships, stage receives manifest" semantic preserved at L31-L33 |
+| 1 | `develop-push-dev-deploy-local.md` | L13 | DROP mechanism mention + drop "Requires `zcli` on PATH" sentence (dispatch detail) | e736ab8c | POST-WORK APPROVE | CWD/workingDir, no-sourceService, no-dev-container signals preserved (Codex L13-L17) |
+| 2 | `develop-deploy-files-self-deploy.md` | L23 | REPHRASE `zcli push` → `zerops_deploy`; preserve recovery guardrail | e736ab8c | POST-WORK APPROVE | CRITICAL signal verified — recovery guardrail intact at L21-L25 (Codex) |
+| 3 | `develop-platform-rules-local.md` | L31 | REPHRASE — drop `zcli push` mechanism mention; PRESERVE push-dev-vs-git-push uncommitted-tree distinction | e736ab8c | POST-WORK APPROVE | Both halves of strategy distinction preserved in single line |
+| 4 | `develop-first-deploy-asset-pipeline-container.md` | L17 | REPHRASE `zcli push` → `zerops_deploy` | e736ab8c | POST-WORK APPROVE | HMR-via-Vite-over-SSH semantic preserved at L16-L17 |
+| 5 | `develop-strategy-review.md` | L15 | DROP parenthetical "(zcli push from your workspace…)" | e736ab8c | POST-WORK APPROVE | push-dev/push-git/manual distinctions preserved at L15-L22 |
+| 6 | `develop-first-deploy-asset-pipeline-local.md` | L32 | REPHRASE — drop "(`zcli push`)" parenthetical | e736ab8c | POST-WORK APPROVE | "Working dir ships, stage receives manifest" semantic preserved at L31-L33 |
 | 7 | `strategy-push-git-trigger-actions.md` | L12, L75, L112 | KEEP all | – | – | Actions trigger model (L12), literal YAML config (L75), error context (L112) — all load-bearing |
 | 8 | `strategy-push-git-intro.md` | L22 | KEEP | – | – | Actions row distinguisher; load-bearing for trigger choice |
 
