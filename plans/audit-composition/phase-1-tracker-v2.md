@@ -17,12 +17,12 @@ verification phase.)
 
 | step | sub-pass | initial state | final state | commit | notes |
 |---|---|---|---|---|---|
-| 1 | `make linux-amd` build | not built | DONE — `builds/zcp-linux-amd64` 18,976,952 B; `zcp v9.21.0-51-ga8f61d19` | `<phase-1-exit-commit>` | also built dev-tagged variant for G6 |
-| 2 | scp + install patched binary on zcp container | not deployed | DONE — `/home/zerops/.local/bin/zcp-hygiene` (dev-tagged after first round to bypass auto-update per `internal/update/once.go:33-35`) | `<phase-1-exit-commit>` | initial `zcp-hygiene` was replaced by auto-updater between calls; switched to dev-tagged binary for the G6 long-running invocation |
-| 3 | G5 idle envelope smoke (no active session) | not run | DONE — wire 3559 B / text 3349 B / overhead 210 B; markdown structure ✅ | `<phase-1-exit-commit>` | `## Status / Phase: idle / Services: db, filedrop, filestore, weatherdash`; canonical structure parsed |
-| 4 | G5 develop-active envelope smoke (`start workflow=develop scope=[weatherdash]`) | not run | DONE — wire 21549 B / text 20642 B / overhead 907 B; markdown structure ✅ | `<phase-1-exit-commit>` | weatherdash is alpine@3.21+simple+unset+deployed; doesn't match probe's go@1.22+simple+push-dev fixture; variance +2207 B / +12% — TESTING-INFRA mismatch (3 extra services + alpine vs go runtime), not corpus bug |
-| 5 | G5 close session cleanup | open | DONE — `Work session closed.` | `<phase-1-exit-commit>` | clean state in eval-zcp |
-| 6 | G5 results document | not written | DONE — `g5-smoke-test-results.md` | `<phase-1-exit-commit>` | NEEDS-ROOT-CAUSE state for variance per amendment 11; Phase 7 must close |
+| 1 | `make linux-amd` build | not built | DONE — `builds/zcp-linux-amd64` 18,976,952 B; `zcp v9.21.0-51-ga8f61d19` | `7c27e3e0` | also built dev-tagged variant for G6 |
+| 2 | scp + install patched binary on zcp container | not deployed | DONE — `/home/zerops/.local/bin/zcp-hygiene` (dev-tagged after first round to bypass auto-update per `internal/update/once.go:33-35`) | `7c27e3e0` | initial `zcp-hygiene` was replaced by auto-updater between calls; switched to dev-tagged binary for the G6 long-running invocation |
+| 3 | G5 idle envelope smoke (no active session) | not run | DONE — wire 3559 B / text 3349 B / overhead 210 B; markdown structure ✅ | `7c27e3e0` | `## Status / Phase: idle / Services: db, filedrop, filestore, weatherdash`; canonical structure parsed |
+| 4 | G5 develop-active envelope smoke (`start workflow=develop scope=[weatherdash]`) | not run | DONE — wire 21549 B / text 20642 B / overhead 907 B; markdown structure ✅ | `7c27e3e0` | weatherdash is alpine@3.21+simple+unset+deployed; doesn't match probe's go@1.22+simple+push-dev fixture; variance +2207 B / +12% — TESTING-INFRA mismatch (3 extra services + alpine vs go runtime), not corpus bug |
+| 5 | G5 close session cleanup | open | DONE — `Work session closed.` | `7c27e3e0` | clean state in eval-zcp |
+| 6 | G5 results document | not written | DONE — `g5-smoke-test-results.md` | `7c27e3e0` | NEEDS-ROOT-CAUSE state for variance per amendment 11; Phase 7 must close |
 
 **G5 disposition**: end-to-end function ✅ PASS for both
 envelopes; markdown structure ✅ PASS; wire-frame variance
@@ -36,13 +36,13 @@ either (a) probe fixture matching live envelope shape,
 
 | step | sub-pass | initial state | final state | commit | notes |
 |---|---|---|---|---|---|
-| 1 | scenario survey + selection | not chosen | DONE — `develop-add-endpoint.md` (default per amended plan; Laravel adopt + develop scenario) | `<phase-1-exit-commit>` | per `seed: deployed` flag; fixture `laravel-dev-deployed.yaml` |
-| 2 | resolve eval-runner CLI shape | not known | DONE — `zcp eval scenario --file <path>` (cmd/zcp/eval.go:104) | `<phase-1-exit-commit>` | scenarios bundled at `/home/zerops/eval-scenarios/` on zcp container per official install |
-| 3 | confirm destructive `SeedImported → CleanupProject` semantics, get user authorization | unknown | DONE — user authorized run on eval-zcp (4 manual services destroyed + re-seeded + auto-cleaned post-PASS) | `<phase-1-exit-commit>` | per `internal/eval/seed.go:24-50` SeedImported wipes project before fixture import |
-| 4 | dev-tagged binary build to skip auto-update | not built | DONE — `builds/zcp-linux-amd64-dev` 18,976,952 B; `zcp dev (a8f61d19, ...)` | `<phase-1-exit-commit>` | `Version=dev` matches `internal/update/once.go:33-35` skip path |
-| 5 | run scenario `develop-add-endpoint` on zcp container | not run | DONE — PASS verdict 6m17s, finalUrl 200 | `<phase-1-exit-commit>` | suite=2026-04-27-083339 |
-| 6 | grade verification | unknown | DONE — all `mustCallTools` ✅, `workflowCallsMin=7` exactly 7 ✅, `requiredPatterns` 4/4 ✅, `mustEnterWorkflow` bootstrap+develop ✅, `requireAssessment` EVAL REPORT success state ✅, `finalUrlStatus=200` ✅ | `<phase-1-exit-commit>` | tool-calls.json shows 27 calls, 0 wasted, 0 iterate cycles |
-| 7 | G6 results document | not written | DONE — `g6-eval-regression.md` + archived artifacts in `g6-eval-2026-04-27/` | `<phase-1-exit-commit>` | Phase 7 will run pre-vs-post comparison |
+| 1 | scenario survey + selection | not chosen | DONE — `develop-add-endpoint.md` (default per amended plan; Laravel adopt + develop scenario) | `7c27e3e0` | per `seed: deployed` flag; fixture `laravel-dev-deployed.yaml` |
+| 2 | resolve eval-runner CLI shape | not known | DONE — `zcp eval scenario --file <path>` (cmd/zcp/eval.go:104) | `7c27e3e0` | scenarios bundled at `/home/zerops/eval-scenarios/` on zcp container per official install |
+| 3 | confirm destructive `SeedImported → CleanupProject` semantics, get user authorization | unknown | DONE — user authorized run on eval-zcp (4 manual services destroyed + re-seeded + auto-cleaned post-PASS) | `7c27e3e0` | per `internal/eval/seed.go:24-50` SeedImported wipes project before fixture import |
+| 4 | dev-tagged binary build to skip auto-update | not built | DONE — `builds/zcp-linux-amd64-dev` 18,976,952 B; `zcp dev (a8f61d19, ...)` | `7c27e3e0` | `Version=dev` matches `internal/update/once.go:33-35` skip path |
+| 5 | run scenario `develop-add-endpoint` on zcp container | not run | DONE — PASS verdict 6m17s, finalUrl 200 | `7c27e3e0` | suite=2026-04-27-083339 |
+| 6 | grade verification | unknown | DONE — all `mustCallTools` ✅, `workflowCallsMin=7` exactly 7 ✅, `requiredPatterns` 4/4 ✅, `mustEnterWorkflow` bootstrap+develop ✅, `requireAssessment` EVAL REPORT success state ✅, `finalUrlStatus=200` ✅ | `7c27e3e0` | tool-calls.json shows 27 calls, 0 wasted, 0 iterate cycles |
+| 7 | G6 results document | not written | DONE — `g6-eval-regression.md` + archived artifacts in `g6-eval-2026-04-27/` | `7c27e3e0` | Phase 7 will run pre-vs-post comparison |
 
 **G6 disposition**: ✅ BASELINE GREEN. Post-Phase-0 corpus
 drives the agent through develop-add-endpoint cleanly:
