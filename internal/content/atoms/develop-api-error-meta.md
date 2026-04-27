@@ -32,22 +32,19 @@ Shape:
 }
 ```
 
-Each `apiMeta[].metadata` key is a **field path** (e.g. `{hostname}.mode`,
-`build.base`, `parameter`); each value is the list of reasons. Fix those
-specific fields in your YAML and retry — do not guess.
+Each `apiMeta[].metadata` key is a **field path** (e.g.
+`{hostname}.mode`, `build.base`, `parameter`); each value lists the
+reasons. Fix those fields in your YAML and retry — do not guess.
 
-Common shapes you will see:
+Common `apiCode` shapes:
 
-- `projectImportInvalidParameter` with `metadata: {"{host}.mode": ["..."]}` —
-  the service-type/mode combination is not allowed.
-- `projectImportMissingParameter` with `metadata: {"parameter": ["{host}.mode"]}` —
-  a required field is missing.
-- `serviceStackTypeNotFound` with `metadata: {"serviceStackTypeVersion": ["nodejs@99"]}` —
-  the version string is not in the platform catalog.
-- `zeropsYamlInvalidParameter` with `metadata: {"build.base": ["unknown ..."]}` —
-  zerops.yaml validator caught the field before the build cycle.
-- `yamlValidationInvalidYaml` with `metadata: {"reason": ["line N: ..."]}` —
-  YAML syntax error with line number.
+| `apiCode` | `metadata` key | Meaning |
+|---|---|---|
+| `projectImportInvalidParameter` | `<host>.mode` | service-type/mode combination not allowed |
+| `projectImportMissingParameter` | `parameter` (value `<host>.mode`) | required field missing |
+| `serviceStackTypeNotFound` | `serviceStackTypeVersion` | version string not in platform catalog |
+| `zeropsYamlInvalidParameter` | `build.base` etc. | zerops.yaml validator caught the field pre-build |
+| `yamlValidationInvalidYaml` | `reason` (with `line N:`) | YAML syntax error |
 
-Per-service failures on import land in `serviceErrors[].meta` with the
+Per-service import failures land in `serviceErrors[].meta` with the
 same shape — one entry per failing service-stack.

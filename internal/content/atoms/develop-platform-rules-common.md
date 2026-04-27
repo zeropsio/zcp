@@ -19,9 +19,9 @@ references-atoms: [develop-env-var-channels, develop-first-deploy-env-vars]
   build-only packages → `build.prepareCommands`. Tools available at
   build time may not be at run time. See guide `deployment-lifecycle`
   for the full split.
-- `envVariables` are declarative config, **not live** until a deploy.
-  Never check them with `printenv` before deploying — they will not be
-  set yet. Cross-service ref syntax + typo behavior is in
+- `envVariables` in `zerops.yaml` are declarative — **not live**
+  until a deploy. `printenv` before deploy returns nothing for them.
+  Cross-service ref syntax + typo behavior:
   `develop-env-var-channels` / `develop-first-deploy-env-vars`.
 - Service config changes (shared storage, scaling, nginx fragments):
   use `zerops_import` with `override: true` to update existing services.

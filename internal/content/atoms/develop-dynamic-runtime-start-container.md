@@ -13,52 +13,26 @@ references-atoms: [develop-dev-server-reason-codes, develop-platform-rules-commo
 ### Dynamic-runtime dev server (container)
 
 Dev-mode dynamic-runtime containers start running `zsc noop` after
-deploy — no dev process is live until you start one.
+deploy — no dev process is live until you start one. Action family
+on `zerops_dev_server`:
 
-**Start:**
+| Action | Use | Args |
+|---|---|---|
+| `status` | check before `start` (idempotent) — avoids duplicate listener | `hostname port healthPath` |
+| `start` | spawn the dev process | `hostname command port healthPath` |
+| `restart` | survives-the-deploy config/code change | `hostname command port healthPath` |
+| `logs` | tail recent for diagnosis | `hostname logLines=40` |
+| `stop` | end of session, free the port | `hostname port` |
 
-```
-zerops_dev_server action=start hostname={hostname} command="{start-command}" port={port} healthPath="{path}"
-```
+Args:
+- `command` — exact `run.start` from `zerops.yaml`.
+- `port` — `run.ports[0].port`.
+- `healthPath` — app-owned (`/api/health`, `/status`) or `/`.
 
-- `command`: the exact shell command from `run.start` in
-  `zerops.yaml` (e.g. `npm run start:dev`, `bun run index.ts`,
-  `python app.py`).
-- `port`: the HTTP port from `run.ports[0].port`.
-- `healthPath`: an app-owned path (`/api/health`, `/status`) if
-  defined; else `/`.
-
-The response carries `running`, `healthStatus` (HTTP status of the
+Response carries `running`, `healthStatus` (HTTP status of the
 health probe), `startMillis` (time from spawn to healthy), and on
-failure a concrete `reason` code plus `logTail` so you can diagnose
-without a follow-up call.
-
-**Check before starting (idempotent status):**
-
-```
-zerops_dev_server action=status hostname={hostname} port={port} healthPath="{path}"
-```
-
-Call this BEFORE `action=start` when uncertain — avoids spawning a
-duplicate listener on a port already bound.
-
-**Restart after config or code change that survived the deploy:**
-
-```
-zerops_dev_server action=restart hostname={hostname} command="{start-command}" port={port} healthPath="{path}"
-```
-
-**Tail recent logs for diagnosis:**
-
-```
-zerops_dev_server action=logs hostname={hostname} logLines=40
-```
-
-**Stop at end of session or to free the port:**
-
-```
-zerops_dev_server action=stop hostname={hostname} port={port}
-```
+failure a concrete `reason` code plus `logTail` — diagnose without
+a follow-up call.
 
 **After every redeploy, re-run `action=start` before `zerops_verify`** —
 the rebuild drops the dev process (see

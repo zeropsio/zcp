@@ -17,14 +17,12 @@ goes live.
 | `run.envVariables` | Edit `zerops.yaml`, commit, deploy | Full redeploy. `zerops_manage action="reload"` does NOT pick them up. |
 | `build.envVariables` | Edit `zerops.yaml`, commit, deploy | Next build uses them; not visible at runtime. |
 
-To suppress the service-level restart, pass `skipRestart=true` — the
-response then reports `restartSkipped: true` and `nextActions` tells
-you to restart manually before the value is live. Partial failures
-surface in `restartWarnings`. Read `stored` to confirm exactly which
-keys landed.
+**Suppress restart**: pass `skipRestart=true` — response reports
+`restartSkipped: true`; `nextActions` tells you to restart manually
+(the value is **not live** until that restart). Partial failures
+land in `restartWarnings`; `stored` confirms which keys landed.
 
-**Shadow-loop pitfall**: a service-level env var set via `zerops_env`
-shadows the same key declared in `run.envVariables`. If you set
-`DB_HOST` via `zerops_env` and later fix it in `zerops.yaml`,
-redeploys will not change the live value. Delete the service-level
-key first (`zerops_env action="delete"`), then redeploy.
+**Shadow-loop pitfall**: `zerops_env`-set service-level vars shadow
+the same key in `run.envVariables`. Fixing only `zerops.yaml`
+won't change the live value — delete the service-level key
+(`zerops_env action="delete"`) before redeploy.
