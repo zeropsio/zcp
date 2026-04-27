@@ -12,8 +12,8 @@ Closed: 2026-04-27
 
 | step | round type | state | output | commit |
 |---|---|---|---|---|
-| Phase 4 CORPUS-SCAN — terminology drift survey | CORPUS-SCAN | DONE — 79 atoms scanned across 5 clusters | `axis-m-candidates.md` (537 lines) + `axis-m-container-ledger.md` (168+ lines) | `<phase-4-exit-commit>` |
-| Phase 4 PER-EDIT (apply pass) — cluster #1 + #3 per-occurrence | PER-EDIT (delegated) | DONE — Codex applied 57 edits, 4 skipped with rationale | `axis-m-container-ledger.md` "Codex skipped during apply" section | `<phase-4-exit-commit>` |
+| Phase 4 CORPUS-SCAN — terminology drift survey | CORPUS-SCAN | DONE — 79 atoms scanned across 5 clusters | `axis-m-candidates.md` (537 lines) + `axis-m-container-ledger.md` (168+ lines) | `81af41bb` |
+| Phase 4 PER-EDIT (apply pass) — cluster #1 + #3 per-occurrence | PER-EDIT (delegated) | DONE — Codex applied 57 edits, 4 skipped with rationale | `axis-m-container-ledger.md` "Codex skipped during apply" section | `81af41bb` |
 | Phase 4 POST-WORK — sample audit | POST-WORK | SKIPPED per §10.5 work-economics rule #4 (Codex CORPUS-SCAN already gave per-occurrence proposals; PER-EDIT applied them; the verify gate + linter green confirms no structural regression) | n/a | n/a |
 
 ## Cluster-by-cluster summary
