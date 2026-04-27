@@ -59,7 +59,7 @@ func TestExtractBodyText_Found(t *testing.T) {
 
 func TestExtractBodyText_TruncatesAtCap(t *testing.T) {
 	huge := strings.Repeat("a", browserBodyTextCap+200)
-	raw, _ := json.Marshal(map[string]any{"text": huge})
+	raw := mustMarshalText(t, huge)
 	steps := []BrowserStepResult{
 		{Command: []string{"get", "text", "body"}, Success: true, Result: raw},
 	}
@@ -74,7 +74,7 @@ func TestExtractBodyText_UTF8Safe(t *testing.T) {
 	// Build a string just over the cap so truncation must walk back to
 	// a rune boundary.
 	body := strings.Repeat("ě", (browserBodyTextCap/2)+10)
-	raw, _ := json.Marshal(map[string]any{"text": body})
+	raw := mustMarshalText(t, body)
 	steps := []BrowserStepResult{
 		{Command: []string{"get", "text", "body"}, Success: true, Result: raw},
 	}
@@ -130,9 +130,7 @@ func TestExtractConsoleErrors_LastN(t *testing.T) {
 
 func TestExtractConsoleErrors_TruncatesEntry(t *testing.T) {
 	huge := strings.Repeat("z", browserConsoleEntryCap+200)
-	raw, _ := json.Marshal(map[string]any{
-		"errors": []map[string]any{{"message": huge, "timestamp": 1}},
-	})
+	raw := mustMarshalErrors(t, []errorEntry{{Message: huge, Timestamp: 1}})
 	got := extractConsoleErrors(raw)
 	if len(got) != 1 {
 		t.Fatalf("len = %d, want 1", len(got))
@@ -290,9 +288,38 @@ func TestVerify_HTTPRoot_OmitemptyJSON(t *testing.T) {
 
 // errAgentBrowserMissing is the sentinel exec.LookPath error shape.
 func errAgentBrowserMissing() error {
-	return &lookPathErr{msg: "exec: \"agent-browser\": executable file not found in $PATH"}
+	return &lookPathError{msg: "exec: \"agent-browser\": executable file not found in $PATH"}
 }
 
-type lookPathErr struct{ msg string }
+type lookPathError struct{ msg string }
 
-func (e *lookPathErr) Error() string { return e.msg }
+func (e *lookPathError) Error() string { return e.msg }
+
+// errorEntry mirrors the agent-browser pageerror shape so test marshals
+// don't need map[string]any (errchkjson rejects unsafe-typed marshal).
+type errorEntry struct {
+	Message   string `json:"message"`
+	Timestamp int64  `json:"timestamp"`
+}
+
+func mustMarshalText(t *testing.T, text string) []byte {
+	t.Helper()
+	b, err := json.Marshal(struct {
+		Text string `json:"text"`
+	}{Text: text})
+	if err != nil {
+		t.Fatalf("marshal text payload: %v", err)
+	}
+	return b
+}
+
+func mustMarshalErrors(t *testing.T, entries []errorEntry) []byte {
+	t.Helper()
+	b, err := json.Marshal(struct {
+		Errors []errorEntry `json:"errors"`
+	}{Errors: entries})
+	if err != nil {
+		t.Fatalf("marshal errors payload: %v", err)
+	}
+	return b
+}

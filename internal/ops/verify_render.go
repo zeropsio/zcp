@@ -129,10 +129,7 @@ func extractConsoleErrors(raw json.RawMessage) []string {
 	}
 	// The collector appends in chronological order — the spec asks for
 	// the most recent N, so walk from the tail.
-	start := len(payload.Errors) - browserConsoleMax
-	if start < 0 {
-		start = 0
-	}
+	start := max(0, len(payload.Errors)-browserConsoleMax)
 	out := make([]string, 0, len(payload.Errors)-start)
 	for _, e := range payload.Errors[start:] {
 		msg := strings.TrimSpace(e.Message)
