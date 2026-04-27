@@ -13,19 +13,19 @@ Closed: 2026-04-27
 
 | step | state | output | commit |
 |---|---|---|---|
-| Codex axis-E corpus scan (synchronous) | DONE | `axis-e-candidates.md` (9 matches: 3 STRONG / 4 MEDIUM / 2 WEAK; ~3,521 B total recoverable estimate) | <pending> |
+| Codex axis-E corpus scan (synchronous) | DONE | `axis-e-candidates.md` (9 matches: 3 STRONG / 4 MEDIUM / 2 WEAK; ~3,521 B total recoverable estimate) | 053af563 |
 
 ## Per-match work units
 
 | # | match | bucket | atom | static surface | bytes target | state | commit | notes |
 |---|---|---|---|---|---|---|---|---|
 | 1 | webhook GUI walkthrough | MEDIUM | `strategy-push-git-trigger-webhook` | `internal/knowledge/guides/ci-cd.md:7-12` | 657 B | DEFERRED-TO-PHASE-6 | — | strategy atom, off-probe; save with Phase 6 prose tightening to capture axis-justified content nuance |
-| 2 | bootstrap-provision-local VPN/.env | STRONG | `bootstrap-provision-local` (lines 30-41) | `local-development.md:31-40` + `:123-126` | 607 B | DONE | <pending> | grep-verified static surface; checklist preserved + explanatory prose dropped + cross-link |
-| 3 | platform-rules-common build/run | MEDIUM | `develop-platform-rules-common` (lines 18-21) | `deployment-lifecycle.md:152-155` | 545 B (claimed); ~17 B per fixture in probe | PARTIALLY-DONE | <pending> | trimmed prepareCommands prose; kept "build ≠ run" pitfall framing + guide link; Codex est generous, actual smaller |
+| 2 | bootstrap-provision-local VPN/.env | STRONG | `bootstrap-provision-local` (lines 30-41) | `local-development.md:31-40` + `:123-126` | 607 B | DONE | 053af563 | grep-verified static surface; checklist preserved + explanatory prose dropped + cross-link |
+| 3 | platform-rules-common build/run | MEDIUM | `develop-platform-rules-common` (lines 18-21) | `deployment-lifecycle.md:152-155` | 545 B (claimed); ~17 B per fixture in probe | PARTIALLY-DONE | 053af563 | trimmed prepareCommands prose; kept "build ≠ run" pitfall framing + guide link; Codex est generous, actual smaller |
 | 4 | strategy-push-git-trigger-actions plumbing | MEDIUM | `strategy-push-git-trigger-actions` (lines 60-78) | `ci-cd.md:13-29` + `:65-70` | 484 B | DEFERRED-TO-PHASE-6 | — | strategy atom, off-probe; uses raw zcli (different mechanism from guide's `zeropsio/actions`); Phase 6 axis-care needed |
-| 5 | platform-rules-container SSHFS | STRONG | `develop-platform-rules-container` (lines 13-19) | `claude_container.md:5-7` | 473 B (claimed); 129 B per container fixture in probe (5× = 645 B) | DONE | <pending> | grep-verified boot shim; mount basics moved to one-line link; cautions + zerops_dev_server rule preserved; MustContain pin migrated `"Read and edit directly on the mount"` → `"Mount caveats"` |
-| 6 | platform-rules-local VPN/.env | STRONG | `develop-platform-rules-local` (lines 29-44) | `claude_local.md:1-6` + `local-development.md:31-40` | 436 B | DONE | <pending> | grep-verified boot shim; VPN mention compressed to one-liner with sudo-warning; .env block kept with one-line guide reference |
-| 7 | develop-deploy-modes build pipeline | MEDIUM | `develop-deploy-modes` (lines 31-35) | `deployment-lifecycle.md:15-22` | 319 B (claimed); ~17 B per fixture | PARTIALLY-DONE | <pending> | misconception fix kept; build command examples dropped; guide link added |
+| 5 | platform-rules-container SSHFS | STRONG | `develop-platform-rules-container` (lines 13-19) | `claude_container.md:5-7` | 473 B (claimed); 129 B per container fixture in probe (5× = 645 B) | DONE | 053af563 | grep-verified boot shim; mount basics moved to one-line link; cautions + zerops_dev_server rule preserved; MustContain pin migrated `"Read and edit directly on the mount"` → `"Mount caveats"` |
+| 6 | platform-rules-local VPN/.env | STRONG | `develop-platform-rules-local` (lines 29-44) | `claude_local.md:1-6` + `local-development.md:31-40` | 436 B | DONE | 053af563 | grep-verified boot shim; VPN mention compressed to one-liner with sudo-warning; .env block kept with one-line guide reference |
+| 7 | develop-deploy-modes build pipeline | MEDIUM | `develop-deploy-modes` (lines 31-35) | `deployment-lifecycle.md:15-22` | 319 B (claimed); ~17 B per fixture | PARTIALLY-DONE | 053af563 | misconception fix kept; build command examples dropped; guide link added |
 | 8 | develop-verify-matrix as pointer | WEAK | `develop-verify-matrix` | `verify-web-agent-protocol.md:3-6` | 288 B | KEEP-AS-IS | — | already correct fetch-on-demand pattern; no edit needed |
 | 9 | idle-develop-entry command echo | WEAK | `idle-develop-entry` | `claude_shared.md:10-13` | 120 B | KEEP-AS-IS | — | intentional contextual restatement; idle CTA |
 
