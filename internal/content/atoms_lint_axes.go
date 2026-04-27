@@ -2,6 +2,7 @@ package content
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -393,14 +394,9 @@ func hasNearbyMarker(ctx atomLintCtx, lineIdx int, suffix string) bool {
 }
 
 // markerHas reports whether the given marker-axis-letter slice contains
-// suffix. nil-safe.
+// suffix. nil-safe via slices.Contains.
 func markerHas(haystack []string, suffix string) bool {
-	for _, h := range haystack {
-		if h == suffix {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(haystack, suffix)
 }
 
 // StripAxisMarkers removes `<!-- axis-{k,m,n}-... -->` comments from a

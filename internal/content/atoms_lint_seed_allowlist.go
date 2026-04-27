@@ -35,26 +35,26 @@ var axisKAllowlist = map[string]string{
 	// (signal #1 negation tied to mode/action).
 	"bootstrap-mode-prompt.md::- **dev** — single mutable dev container, SSHFS-mountable, no stage pair.": "spec §11.5 axis-K signal-#1: mode definition; `no stage pair` IS the dev-mode contract",
 	"bootstrap-mode-prompt.md::no SSHFS mutation lifecycle.":                                              "spec §11.5 axis-K signal-#1: simple-mode definition; `no SSHFS` IS the simple-mode contract",
-	"develop-close-push-dev-dev.md::Dev mode has no stage pair: deploy the single runtime container,":    "spec §11.5 axis-K signal-#1: dev-mode operational contract",
+	"develop-close-push-dev-dev.md::Dev mode has no stage pair: deploy the single runtime container,":     "spec §11.5 axis-K signal-#1: dev-mode operational contract",
 
 	// Local-mode SSHFS negation — signal #2 cross-env contrast tied to
 	// a positive operational claim (committed-tree builds vs SSHFS).
-	"bootstrap-provision-local.md::**No SSHFS** — `zerops_mount` is unavailable in local mode; files live": "spec §11.5 axis-K signal-#1+#2: local-mode tool-availability guardrail",
+	"bootstrap-provision-local.md::**No SSHFS** — `zerops_mount` is unavailable in local mode; files live":      "spec §11.5 axis-K signal-#1+#2: local-mode tool-availability guardrail",
 	"develop-close-push-dev-local.md::Local mode builds from your committed tree — no SSHFS, no dev container.": "spec §11.5 axis-K signal-#2: cross-env contrast prevents SSHFS-mode reflex",
-	"develop-local-workflow.md::ready via `zerops_deploy`. There is no SSHFS mount in local mode — the":        "spec §11.5 axis-K signal-#2: local-mode flow framing",
+	"develop-local-workflow.md::ready via `zerops_deploy`. There is no SSHFS mount in local mode — the":         "spec §11.5 axis-K signal-#2: local-mode flow framing",
 
 	// Tool-selection guardrails — signal #3 (`Do NOT use X`,
 	// `container-only`, `local-only`).
-	"develop-dynamic-runtime-start-local.md::**Do NOT use `zerops_dev_server`** — that tool is container-only (it":              "spec §11.5 axis-K signal-#3: tool-selection guardrail; `zerops_dev_server` is container-only",
-	"develop-platform-rules-container.md::Mount basics in `claude_container.md` (boot shim). Container-only":                    "spec §11.5 axis-K signal-#3: container-mode tool gating",
+	"develop-dynamic-runtime-start-local.md::**Do NOT use `zerops_dev_server`** — that tool is container-only (it":                                     "spec §11.5 axis-K signal-#3: tool-selection guardrail; `zerops_dev_server` is container-only",
+	"develop-platform-rules-container.md::Mount basics in `claude_container.md` (boot shim). Container-only":                                           "spec §11.5 axis-K signal-#3: container-mode tool gating",
 	"develop-platform-rules-local.md::| Code | Edit the working directory. No SSHFS, no `/var/www/{hostname}` mount — that shape is container-only. |": "spec §11.5 axis-K signal-#1+#3: local-mode platform-rules row contrasts container path",
-	"develop-platform-rules-local.md::container-only. Use the framework's normal dev command.":                                  "spec §11.5 axis-K signal-#3: dev-server selection rule",
-	"develop-push-git-deploy-local.md::credential manager). `GIT_TOKEN` and `.netrc` are container-only and do":                  "spec §11.5 axis-K signal-#3: credential-channel separation",
+	"develop-platform-rules-local.md::container-only. Use the framework's normal dev command.":                                                         "spec §11.5 axis-K signal-#3: dev-server selection rule",
+	"develop-push-git-deploy-local.md::credential manager). `GIT_TOKEN` and `.netrc` are container-only and do":                                        "spec §11.5 axis-K signal-#3: credential-channel separation",
 
 	// Negation tied to action — signal #1 (`Don't run X`, `Do NOT run`).
-	"bootstrap-recipe-import.md::services. Don't edit resource limits, `buildFromGit`, `priority`,":          "spec §11.5 axis-K signal-#1: recipe-import field-mutability guardrail",
-	"develop-first-deploy-write-app.md::**Don't run `git init` from the ZCP-side mount.** Push-dev deploy":   "spec §11.5 axis-K signal-#1: prevents user-init reflex on dev container",
-	"export.md::non-fatal issues. Do NOT run `git init`, `git config user.*`, or":                            "spec §11.5 axis-K signal-#1: export procedure forbids manual git init",
+	"bootstrap-recipe-import.md::services. Don't edit resource limits, `buildFromGit`, `priority`,":           "spec §11.5 axis-K signal-#1: recipe-import field-mutability guardrail",
+	"develop-first-deploy-write-app.md::**Don't run `git init` from the ZCP-side mount.** Push-dev deploy":    "spec §11.5 axis-K signal-#1: prevents user-init reflex on dev container",
+	"export.md::non-fatal issues. Do NOT run `git init`, `git config user.*`, or":                             "spec §11.5 axis-K signal-#1: export procedure forbids manual git init",
 	"strategy-push-git-push-container.md::Do not run `git init`, `.netrc` configuration, or `git remote add`": "spec §11.5 axis-K signal-#1: push-git setup forbids manual git init",
 }
 
@@ -63,8 +63,8 @@ var axisKAllowlist = map[string]string{
 // to a SPAWNED SUB-AGENT (Sonnet via the Agent template), not the
 // author-perspective LLM noun. Spec: §11.5 cluster-#5 caveat.
 var axisMAllowlist = map[string]string{
-	"develop-verify-matrix.md::- **VERDICT: FAIL** → visual/functional issue; iterate from the agent's":     "spec §11.5 cluster-#5 caveat: `agent` is the spawned sub-agent (Sonnet via Agent template)",
-	"develop-verify-matrix.md::- **VERDICT: UNCERTAIN** → fall back to `zerops_verify`; the agent could":    "spec §11.5 cluster-#5 caveat: `agent` is the spawned sub-agent (Sonnet via Agent template)",
+	"develop-verify-matrix.md::- **VERDICT: FAIL** → visual/functional issue; iterate from the agent's":  "spec §11.5 cluster-#5 caveat: `agent` is the spawned sub-agent (Sonnet via Agent template)",
+	"develop-verify-matrix.md::- **VERDICT: UNCERTAIN** → fall back to `zerops_verify`; the agent could": "spec §11.5 cluster-#5 caveat: `agent` is the spawned sub-agent (Sonnet via Agent template)",
 }
 
 // axisNAllowlist: <atomFile>::<exact trimmed line> → rationale.
@@ -74,16 +74,16 @@ var axisMAllowlist = map[string]string{
 var axisNAllowlist = map[string]string{
 	// SSHFS / stage-pair callouts that are mode-definitional rather
 	// than per-env edit guidance.
-	"bootstrap-mode-prompt.md::- **dev** — single mutable dev container, SSHFS-mountable, no stage pair.": "spec §11.6: `SSHFS-mountable` IS the dev-mode definition (not env-specific edit guidance)",
-	"bootstrap-mode-prompt.md::no SSHFS mutation lifecycle.":                                              "spec §11.6: simple-mode contract; SSHFS-absence IS the model",
+	"bootstrap-mode-prompt.md::- **dev** — single mutable dev container, SSHFS-mountable, no stage pair.":   "spec §11.6: `SSHFS-mountable` IS the dev-mode definition (not env-specific edit guidance)",
+	"bootstrap-mode-prompt.md::no SSHFS mutation lifecycle.":                                                "spec §11.6: simple-mode contract; SSHFS-absence IS the model",
 	"bootstrap-provision-rules.md::deploy; without it they sit at READY_TO_DEPLOY, blocking SSHFS and SSH.": "spec §11.6: lifecycle-state gating, SSHFS named as a downstream consequence",
 
 	// Deploy-mode atoms whose topic IS the runtime filesystem layout
 	// (`/var/www/`, deployFiles semantics).
-	"develop-deploy-files-self-deploy.md::3. The runtime container's `/var/www/` is **overwritten** with that subset —":                                "spec §11.6: deployFiles destination IS the topic",
+	"develop-deploy-files-self-deploy.md::3. The runtime container's `/var/www/` is **overwritten** with that subset —":                                                      "spec §11.6: deployFiles destination IS the topic",
 	"develop-deploy-modes.md::| Cross-deploy, preserve dir | `[./out]` | Lands at `/var/www/out/...`; use when `start` references that path or artifacts live in subdirs. |": "spec §11.6: deployFiles topology table; runtime path IS the contract",
 	"develop-deploy-modes.md::| Cross-deploy, extract contents | `[./out/~]` | Tilde strips `out/`; use when runtime expects assets at `/var/www/`. |":                       "spec §11.6: deployFiles tilde semantics; runtime path IS the contract",
-	"develop-deploy-modes.md::is correct even when `./out` is absent locally; the build creates it.":                                                                           "spec §11.6: build-vs-source contrast clarifies deploy mechanics",
+	"develop-deploy-modes.md::is correct even when `./out` is absent locally; the build creates it.":                                                                         "spec §11.6: build-vs-source contrast clarifies deploy mechanics",
 
 	// First-deploy / manual-deploy atoms that are explicitly env-aware
 	// even at the universal-atom layer (the env contrast IS the dual
@@ -94,12 +94,12 @@ var axisNAllowlist = map[string]string{
 	// push-git trigger walkthrough — the dual-env rendering IS the
 	// operational structure (each step has a container shell + a local
 	// shell side-by-side).
-	"strategy-push-git-intro.md::Before picking a trigger, confirm the git remote exists. In container env:":                       "spec §11.6: trigger-walkthrough dual-env header (one of two)",
-	"strategy-push-git-intro.md::In local env:":                                                                                    "spec §11.6: trigger-walkthrough dual-env header (one of two)",
+	"strategy-push-git-intro.md::Before picking a trigger, confirm the git remote exists. In container env:":                         "spec §11.6: trigger-walkthrough dual-env header (one of two)",
+	"strategy-push-git-intro.md::In local env:":                                                                                      "spec §11.6: trigger-walkthrough dual-env header (one of two)",
 	"strategy-push-git-trigger-actions.md::- Container env: `ssh {targetHostname} \"grep -E '^\\s*- setup:' /var/www/zerops.yaml\"`": "spec §11.6: dual-env command pair (container shell)",
-	"strategy-push-git-trigger-actions.md::- Local env: `grep -E '^\\s*- setup:' <your-project-dir>/zerops.yaml`":                   "spec §11.6: dual-env command pair (local shell)",
-	"strategy-push-git-trigger-actions.md::In local env, create this file directly in your repo; in container env":                 "spec §11.6: trigger walkthrough explicitly contrasts both envs",
-	"strategy-push-git-trigger-actions.md::- Container env: follow `strategy-push-git-push-container` to commit the":                "spec §11.6: dual-env follow-up commit instructions (container variant)",
-	"strategy-push-git-trigger-actions.md::workflow file via SSH and `zerops_deploy strategy=git-push` it.":                         "spec §11.6: continuation of the container-env follow-up line",
-	"strategy-push-git-trigger-actions.md::- Local env: commit locally and `zerops_deploy strategy=git-push` (or":                  "spec §11.6: dual-env follow-up commit instructions (local variant)",
+	"strategy-push-git-trigger-actions.md::- Local env: `grep -E '^\\s*- setup:' <your-project-dir>/zerops.yaml`":                    "spec §11.6: dual-env command pair (local shell)",
+	"strategy-push-git-trigger-actions.md::In local env, create this file directly in your repo; in container env":                   "spec §11.6: trigger walkthrough explicitly contrasts both envs",
+	"strategy-push-git-trigger-actions.md::- Container env: follow `strategy-push-git-push-container` to commit the":                 "spec §11.6: dual-env follow-up commit instructions (container variant)",
+	"strategy-push-git-trigger-actions.md::workflow file via SSH and `zerops_deploy strategy=git-push` it.":                          "spec §11.6: continuation of the container-env follow-up line",
+	"strategy-push-git-trigger-actions.md::- Local env: commit locally and `zerops_deploy strategy=git-push` (or":                    "spec §11.6: dual-env follow-up commit instructions (local variant)",
 }

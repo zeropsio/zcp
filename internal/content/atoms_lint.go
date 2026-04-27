@@ -93,7 +93,7 @@ func LintAtomCorpus() ([]AtomLintViolation, error) {
 // fires-on-fixture tests can pass synthetic atoms in directly without
 // monkeying with ReadAllAtoms.
 func lintAtomCorpus(atoms []AtomFile) []AtomLintViolation {
-	var out []AtomLintViolation
+	out := make([]AtomLintViolation, 0, len(atoms))
 	for _, atom := range atoms {
 		ctx := buildAtomLintCtx(atom)
 		out = append(out, regexLintRules(ctx)...)
@@ -221,15 +221,4 @@ func parseLintFrontmatter(front string) map[string]string {
 		fields[key] = val
 	}
 	return fields
-}
-
-// splitAtomBody returns the atom body (after the closing frontmatter
-// delimiter) plus the count of frontmatter lines — used to report
-// 1-indexed line numbers that match a text editor opening the file.
-//
-// Retained for callers outside the lint engine; lint paths use
-// splitFrontmatterForLint which returns the raw frontmatter alongside.
-func splitAtomBody(content string) (string, int) {
-	_, body, lines := splitFrontmatterForLint(content)
-	return body, lines
 }
