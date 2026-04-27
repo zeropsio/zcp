@@ -2,7 +2,9 @@
 id: develop-first-deploy-execute
 priority: 4
 phases: [develop-active]
-envelopeDeployStates: [never-deployed]
+modes: [dev, simple, standard, local-stage]
+deployStates: [never-deployed]
+multiService: aggregate
 title: "First deploy — execution rules"
 references-fields: [ops.DeployResult.Status, ops.DeployResult.BuildLogs, ops.DeployResult.RuntimeLogs, ops.DeployResult.FailedPhase, ops.DeployResult.SubdomainAccessEnabled, ops.DeployResult.SubdomainURL]
 ---
@@ -22,3 +24,9 @@ If `status` is non-success, read `buildLogs` / `runtimeLogs` /
 On first-deploy success the response carries `subdomainAccessEnabled:
 true` and a `subdomainUrl` — no manual `zerops_subdomain` call is
 needed in the happy path. Run verify next.
+
+Run for each runtime that hasn't been deployed:
+
+```
+{services-list:zerops_deploy targetService="{hostname}"}
+```

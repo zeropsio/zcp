@@ -100,6 +100,41 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]MatchedRender
 	// bodies imply identical instructions (no per-host context lost).
 	seen := make(map[string]struct{}, len(pendings))
 	for _, p := range pendings {
+		if p.atom.Axes.MultiService == MultiServiceAggregate {
+			// Aggregate mode: render once with `{services-list:TEMPLATE}`
+			// directives expanded over the matching services. Outside any
+			// directive the body sees the global primaryHostnames picker —
+			// same fallback contract as service-agnostic atoms.
+			matched := make([]ServiceSnapshot, 0, len(p.matches))
+			for _, idx := range p.matches {
+				if idx >= 0 {
+					matched = append(matched, envelope.Services[idx])
+				}
+			}
+			expanded, err := expandServicesListDirectives(p.atom.Body, matched)
+			if err != nil {
+				return nil, fmt.Errorf("atom %s: %w", p.atom.ID, err)
+			}
+			body := strings.NewReplacer(
+				"{hostname}", globalHost,
+				"{stage-hostname}", globalStage,
+				"{project-name}", envelope.Project.Name,
+			).Replace(expanded)
+			if leak := findUnknownPlaceholder(body); leak != "" {
+				return nil, fmt.Errorf("atom %s: unknown placeholder %q in atom body", p.atom.ID, leak)
+			}
+			key := p.atom.ID + "\x00" + body
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, MatchedRender{
+				AtomID:  p.atom.ID,
+				Body:    body,
+				Service: nil,
+			})
+			continue
+		}
 		for _, idx := range p.matches {
 			var svc *ServiceSnapshot
 			host, stage := globalHost, globalStage
@@ -130,6 +165,69 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]MatchedRender
 		}
 	}
 	return out, nil
+}
+
+// expandServicesListDirectives replaces each `{services-list:TEMPLATE}`
+// directive in body with one rendering of TEMPLATE per matching service,
+// joined with newlines. TEMPLATE may contain `{hostname}` and
+// `{stage-hostname}` placeholder tokens; the expander substitutes them
+// per service. Brace-matched parsing tracks nesting depth so TEMPLATE
+// can carry placeholders without escape characters: `{` increments depth,
+// `}` decrements, and the directive ends when depth returns to zero.
+//
+// Empty service list collapses the directive to "" (no error). Unbalanced
+// directives — opening prefix without a matching close — return an error
+// so the build fails loudly instead of silently emitting raw template text.
+//
+// Engine ticket E1: aggregate-mode atoms use this to enumerate matching
+// services without duplicating the surrounding prose. The four migrated
+// atoms (execute, verify, promote-stage, dynamic-runtime-start-container)
+// are the initial consumers; further atoms migrate as the corpus drift.
+func expandServicesListDirectives(body string, services []ServiceSnapshot) (string, error) {
+	const prefix = "{services-list:"
+	var out strings.Builder
+	i := 0
+	for i < len(body) {
+		idx := strings.Index(body[i:], prefix)
+		if idx < 0 {
+			out.WriteString(body[i:])
+			return out.String(), nil
+		}
+		out.WriteString(body[i : i+idx])
+		start := i + idx + len(prefix)
+		depth := 1
+		j := start
+		for j < len(body) && depth > 0 {
+			switch body[j] {
+			case '{':
+				depth++
+			case '}':
+				depth--
+				if depth == 0 {
+					break
+				}
+			}
+			if depth == 0 {
+				break
+			}
+			j++
+		}
+		if depth != 0 {
+			return "", fmt.Errorf("services-list directive starting at offset %d is unterminated", i+idx)
+		}
+		template := body[start:j]
+		for k, svc := range services {
+			if k > 0 {
+				out.WriteByte('\n')
+			}
+			out.WriteString(strings.NewReplacer(
+				"{hostname}", svc.Hostname,
+				"{stage-hostname}", svc.StageHostname,
+			).Replace(template))
+		}
+		i = j + 1
+	}
+	return out.String(), nil
 }
 
 // SynthesizeBodies is the convenience adaptor for callers that only need

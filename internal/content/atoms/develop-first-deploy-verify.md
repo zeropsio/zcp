@@ -2,7 +2,8 @@
 id: develop-first-deploy-verify
 priority: 5
 phases: [develop-active]
-envelopeDeployStates: [never-deployed]
+deployStates: [never-deployed]
+multiService: aggregate
 title: "First deploy — verify rules"
 references-fields: [ops.VerifyResult.Status, ops.VerifyResult.Checks, ops.CheckResult.Status, ops.CheckResult.Detail]
 references-atoms: [develop-auto-close-semantics, develop-verify-matrix]
@@ -27,5 +28,11 @@ between non-web and browser-backed checks, see `develop-verify-matrix`.
      the discovered catalog.
 3. Fix in place, redeploy, re-verify. Stop after 5 unsuccessful
    attempts and reassess.
+
+Run for each runtime that hasn't been deployed:
+
+```
+{services-list:zerops_verify serviceHostname="{hostname}"}
+```
 
 Auto-close behavior is described in `develop-auto-close-semantics`.

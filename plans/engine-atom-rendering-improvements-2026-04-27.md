@@ -50,7 +50,23 @@ decisions.
 
 ## 3. Tickets
 
-### Ticket E1 — Multi-service single-render atom support
+### Ticket E1 — Multi-service single-render atom support  *(SHIPPED 2026-04-27)*
+
+> **Outcome.** Engine + corpus migration shipped. New scalar axis
+> `multiService: aggregate` + body directive `{services-list:TEMPLATE}`
+> implemented in `internal/workflow/{atom,synthesize}.go`; three atoms
+> migrated (`develop-first-deploy-execute`, `develop-first-deploy-verify`,
+> `develop-first-deploy-promote-stage`); two `-cmds` split atoms
+> deleted. Two-pair fixture Redundancy 1 → 2; SHIP-WITH-NOTES on the
+> two-pair shape now CLEAN-SHIP. Probe pinned by
+> `internal/workflow/aggregate_render_probe_test.go`. Post-rescore at
+> `plans/audit-composition-v3/post-e1-rescore-2026-04-27.md`.
+>
+> The fourth atom mentioned below (`develop-dynamic-runtime-start-
+> container`) was NOT migrated — its body has no per-host placeholder so
+> the existing post-substitution dedup in `Synthesize` already collapses
+> it to 1×; the plan's "add per-service start invocations table" was
+> editorial content-add, scoped out of E1.
 
 **Problem**: when an atom has a per-service axis
 (`modes`, `runtimes`, `strategies`, etc., service-scoped) AND

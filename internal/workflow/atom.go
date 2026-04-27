@@ -73,7 +73,37 @@ type AxisVector struct {
 	// `ACTIVE` or `READY_TO_DEPLOY`. Service-scoped: at least one service
 	// in the envelope must match for the atom to fire. Empty = any status.
 	ServiceStatuses []string
+	// MultiService toggles single-render aggregation for atoms whose body
+	// needs per-service iteration only inside discrete `{services-list:
+	// TEMPLATE}` directives, not for the whole body. Default ""
+	// (`MultiServicePerService`) means the legacy per-matching-service
+	// loop: render the body once per matching service with `{hostname}`
+	// substituted from that service. `aggregate` (`MultiServiceAggregate`)
+	// means single render: the renderer expands every embedded
+	// `{services-list:TEMPLATE}` directive over the matching services,
+	// joined with newlines, and emits one MatchedRender with Service=nil.
+	// Plain `{hostname}` outside a directive falls back to the global
+	// primaryHostnames picker (same contract as service-agnostic atoms).
+	MultiService MultiServiceMode
 }
+
+// MultiServiceMode is the closed enum for the AxisVector.MultiService
+// scalar axis. Empty value = legacy per-service render. `aggregate` =
+// single render with inline `{services-list:TEMPLATE}` expansion (engine
+// ticket E1; eliminates structural per-service duplication for atoms
+// whose body is mostly envelope-scoped prose with one or two per-service
+// command blocks).
+type MultiServiceMode string
+
+const (
+	// MultiServicePerService is the default: per-matching-service iteration.
+	// One MatchedRender per service.
+	MultiServicePerService MultiServiceMode = ""
+	// MultiServiceAggregate renders the atom once. Per-service content
+	// must live inside `{services-list:TEMPLATE}` directives; everything
+	// else renders once with envelope-scoped substitutions.
+	MultiServiceAggregate MultiServiceMode = "aggregate"
+)
 
 // validAtomFrontmatterKeys is the closed set of frontmatter keys an atom
 // MAY declare. Anything outside this set is rejected at parse time —
@@ -98,6 +128,7 @@ var validAtomFrontmatterKeys = map[string]struct{}{
 	"deployStates":         {},
 	"envelopeDeployStates": {},
 	"serviceStatus":        {},
+	"multiService":         {},
 	"references-fields":    {},
 	"references-atoms":     {},
 	"pinned-by-scenario":   {},
@@ -202,6 +233,20 @@ var validAtomEnumValues = map[string]map[string]struct{}{
 	},
 }
 
+// validScalarEnumValues maps scalar (non-list) frontmatter keys to their
+// closed value sets. `multiService` is currently the only scalar enum
+// axis — `aggregate` is the single allowed non-empty value (empty means
+// per-service render, the legacy default). Validated alongside list-axis
+// enums so a typo in the value (e.g. `multiService: aggreate`) fails the
+// build instead of silently rendering as default.
+//
+//nolint:gochecknoglobals // immutable lookup table
+var validScalarEnumValues = map[string]map[string]struct{}{
+	"multiService": {
+		"aggregate": {},
+	},
+}
+
 // validateAtomFrontmatter is the strict pre-parse gate (plan C5). It runs
 // before any axis-specific parser sees the value, so a malformed atom
 // fails ParseAtom with a precise message naming the offending key — never
@@ -249,6 +294,15 @@ func validateAtomFrontmatter(fields map[string]string) error {
 			if _, ok := validSet[v]; !ok {
 				return fmt.Errorf("atom frontmatter key %q has invalid value %q (axis %s accepts: %s)", key, v, key, sortedEnumKeys(validSet))
 			}
+		}
+	}
+	for key, validSet := range validScalarEnumValues {
+		raw := strings.TrimSpace(fields[key])
+		if raw == "" {
+			continue
+		}
+		if _, ok := validSet[raw]; !ok {
+			return fmt.Errorf("atom frontmatter key %q has invalid value %q (axis %s accepts: %s)", key, raw, key, sortedEnumKeys(validSet))
 		}
 	}
 	return nil
@@ -300,6 +354,7 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 			DeployStates:         parseDeployStates(fields["deployStates"]),
 			EnvelopeDeployStates: parseDeployStates(fields["envelopeDeployStates"]),
 			ServiceStatuses:      parseYAMLList(fields["serviceStatus"]),
+			MultiService:         MultiServiceMode(strings.TrimSpace(fields["multiService"])),
 		},
 		ReferencesFields:  parseYAMLList(fields["references-fields"]),
 		ReferencesAtoms:   parseYAMLList(fields["references-atoms"]),

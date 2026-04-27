@@ -831,6 +831,156 @@ func firstLine(body string) string {
 	return body
 }
 
+// TestExpandServicesListDirectives pins the engine ticket E1 placeholder
+// expander: `{services-list:TEMPLATE}` directives are replaced with one
+// rendering of TEMPLATE per service, joined with newlines, where TEMPLATE
+// may itself contain `{hostname}` and `{stage-hostname}` tokens that the
+// expander substitutes per service. Directives are top-level brace-matched
+// (placeholder tokens like `{hostname}` increment depth and stop being a
+// terminator) so TEMPLATE can carry arbitrary placeholder substitutions
+// without escaping. Body fragments outside any directive pass through
+// unchanged. Empty service list = empty expansion (no error).
+func TestExpandServicesListDirectives(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		body     string
+		services []ServiceSnapshot
+		want     string
+		wantErr  bool
+	}{
+		{
+			name: "single_directive_two_services",
+			body: "Run for each:\n{services-list:- `zerops_deploy targetService=\"{hostname}\"`}\nDone.",
+			services: []ServiceSnapshot{
+				{Hostname: "appdev"},
+				{Hostname: "apidev"},
+			},
+			want: "Run for each:\n- `zerops_deploy targetService=\"appdev\"`\n- `zerops_deploy targetService=\"apidev\"`\nDone.",
+		},
+		{
+			name: "stage_hostname_substituted",
+			body: "{services-list:- `zerops_deploy sourceService=\"{hostname}\" targetService=\"{stage-hostname}\"`}",
+			services: []ServiceSnapshot{
+				{Hostname: "appdev", StageHostname: "appstage"},
+				{Hostname: "apidev", StageHostname: "apistage"},
+			},
+			want: "- `zerops_deploy sourceService=\"appdev\" targetService=\"appstage\"`\n- `zerops_deploy sourceService=\"apidev\" targetService=\"apistage\"`",
+		},
+		{
+			name:     "no_directive_passes_through",
+			body:     "Plain prose with no directive.",
+			services: []ServiceSnapshot{{Hostname: "appdev"}},
+			want:     "Plain prose with no directive.",
+		},
+		{
+			name:     "empty_services_yields_empty_expansion",
+			body:     "before\n{services-list:- {hostname}}\nafter",
+			services: nil,
+			want:     "before\n\nafter",
+		},
+		{
+			name: "two_directives_in_body",
+			body: "deploy:\n{services-list:- {hostname}}\nverify:\n{services-list:- {hostname}!}",
+			services: []ServiceSnapshot{
+				{Hostname: "appdev"},
+				{Hostname: "apidev"},
+			},
+			want: "deploy:\n- appdev\n- apidev\nverify:\n- appdev!\n- apidev!",
+		},
+		{
+			name:    "unterminated_directive_errors",
+			body:    "before {services-list:- {hostname} after",
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := expandServicesListDirectives(tc.body, tc.services)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil; output=%q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("expansion mismatch:\n got: %q\nwant: %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSynthesize_MultiServiceAggregateRendersOnce pins engine ticket E1
+// behavior: an atom declaring `multiService: aggregate` with multiple
+// matching services produces a SINGLE MatchedRender (Service nil) whose
+// body contains `{services-list:TEMPLATE}` expansions enumerating every
+// matching service. The same axes-without-aggregate atom would render
+// once per matching service (legacy behavior; pinned by
+// TestSynthesize_MultiMatchRendersOncePerService). The two-pair fixture
+// inherits this behavior — atoms migrated to aggregate render 1× instead
+// of 2× per dev/stage pair.
+func TestSynthesize_MultiServiceAggregateRendersOnce(t *testing.T) {
+	t.Parallel()
+
+	atom := KnowledgeAtom{
+		ID:       "test-aggregate-promote",
+		Priority: 5,
+		Axes: AxisVector{
+			Phases:       []Phase{PhaseDevelopActive},
+			Modes:        []topology.Mode{topology.ModeStandard},
+			DeployStates: []DeployState{DeployStateNeverDeployed},
+			MultiService: MultiServiceAggregate,
+		},
+		Body: "Promote each pair:\n\n{services-list:- `zerops_deploy sourceService=\"{hostname}\" targetService=\"{stage-hostname}\"`}",
+	}
+
+	twoPairEnv := StateEnvelope{
+		Phase: PhaseDevelopActive,
+		Services: []ServiceSnapshot{
+			{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", Bootstrapped: true, Deployed: false},
+			{Hostname: "appstage", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, Bootstrapped: true, Deployed: false},
+			{Hostname: "apidev", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "apistage", Bootstrapped: true, Deployed: false},
+			{Hostname: "apistage", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, Bootstrapped: true, Deployed: false},
+		},
+	}
+
+	matches, err := Synthesize(twoPairEnv, []KnowledgeAtom{atom})
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("aggregate atom rendered %d times, want 1", len(matches))
+	}
+	if matches[0].Service != nil {
+		t.Errorf("aggregate render should have nil Service, got %+v", matches[0].Service)
+	}
+	body := matches[0].Body
+	for _, want := range []string{
+		`sourceService="appdev" targetService="appstage"`,
+		`sourceService="apidev" targetService="apistage"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("aggregate body missing %q, got:\n%s", want, body)
+		}
+	}
+	// Stage-mode services don't satisfy modes:[standard], so they must
+	// NOT appear as the "from" hostname (only dev hosts are listed).
+	for _, unwanted := range []string{
+		`sourceService="appstage"`,
+		`sourceService="apistage"`,
+	} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("aggregate body wrongly includes stage host as source: %q", unwanted)
+		}
+	}
+}
+
 // TestSynthesize_PerServicePlaceholderBinding pins Phase 2 (F3/C2) of
 // the pipeline-repair plan: an atom with service-scoped axes binds
 // `{hostname}` substitution to the service that satisfied the axes, not

@@ -392,6 +392,74 @@ body`
 	}
 }
 
+// TestParseAtom_MultiServiceAxis pins the aggregate-mode opt-in
+// (engine ticket E1): atoms declaring `multiService: aggregate` render
+// once with `{services-list:TEMPLATE}` directives expanded over matching
+// services, instead of duplicating the body per service. Invalid scalar
+// values are rejected at parse time.
+func TestParseAtom_MultiServiceAxis(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name        string
+		content     string
+		wantMode    MultiServiceMode
+		wantErrFrag string
+	}{
+		{
+			name: "aggregate_value_parses",
+			content: `---
+id: aggregate-atom
+phases: [develop-active]
+deployStates: [never-deployed]
+multiService: aggregate
+---
+body`,
+			wantMode: MultiServiceAggregate,
+		},
+		{
+			name: "default_when_omitted",
+			content: `---
+id: default-atom
+phases: [develop-active]
+---
+body`,
+			wantMode: MultiServicePerService,
+		},
+		{
+			name: "invalid_value_rejected",
+			content: `---
+id: bad-multi-service
+phases: [develop-active]
+multiService: peruser
+---
+body`,
+			wantErrFrag: `key "multiService" has invalid value "peruser"`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			atom, err := ParseAtom(tc.content)
+			if tc.wantErrFrag != "" {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tc.wantErrFrag)
+				}
+				if !strings.Contains(err.Error(), tc.wantErrFrag) {
+					t.Errorf("error %q missing fragment %q", err.Error(), tc.wantErrFrag)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if atom.Axes.MultiService != tc.wantMode {
+				t.Errorf("MultiService = %q, want %q", atom.Axes.MultiService, tc.wantMode)
+			}
+		})
+	}
+}
+
 // TestParseAtom_StrictFrontmatter pins Phase 2 (C5) of the pipeline-repair
 // plan: the parser rejects malformed frontmatter at parse time instead of
 // silently degrading to wildcard-broad atoms. Three classes of failure:
