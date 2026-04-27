@@ -3,6 +3,7 @@ id: develop-dev-server-reason-codes
 priority: 4
 phases: [develop-active]
 runtimes: [dynamic]
+modes: [dev]
 deployStates: [deployed]
 title: "zerops_dev_server reason codes"
 references-fields: [ops.DevServerResult.Reason, ops.DevServerResult.Running, ops.DevServerResult.HealthStatus, ops.DevServerResult.LogTail]
