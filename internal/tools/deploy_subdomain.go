@@ -21,14 +21,16 @@ import (
 //   - **Meta present (bootstrap-managed services)** — meta.Mode is checked
 //     against modeEligibleForSubdomain (dev/stage/simple/standard/
 //     local-stage). Preserves the historical bootstrap path.
-//   - **Meta absent (recipe-authoring services)** — Cluster A.2 / R-13-12.
-//     Recipe-authoring deploys land via zerops_import content=<yaml> and
-//     never write meta. Eligibility falls back to the REST-authoritative
-//     platform state via ops.LookupService: non-system service category
-//     with at least one HTTP-supporting port. spec-workflows.md §4.8 + O3:
-//     L7 activation is the deploy handler's concern; the porter never
-//     authors a recipe that requires an explicit zerops_subdomain enable
-//     for stage subdomains.
+//   - **Meta absent (recipe-authoring services)** — Cluster A.2 / R-13-12 +
+//     run-15 R-14-1. Recipe-authoring deploys land via zerops_import
+//     content=<yaml> and never write meta. Eligibility derives from
+//     plan-declared intent persisted by the platform: the yaml's
+//     `enableSubdomainAccess: true` field becomes detail.SubdomainAccess
+//     on the service stack at import time. Reading SubdomainAccess
+//     (REST-authoritative via GetService) is propagation-race-free —
+//     unlike the run-14 fallback which read Ports[].HTTPSupport, a field
+//     that races L7 port-registration on FIRST cross-deploy of every
+//     stage slot. spec-workflows.md §4.8 + O3.
 //
 // Gate is platform-side via the ops.Subdomain call's internal
 // check-before-enable (plans/archive/subdomain-robustness.md §3.2), NOT
@@ -37,9 +39,11 @@ import (
 // half's stamp covers both hostnames, but the stage container's L7 route
 // is independent.
 //
-// I/O boundary: ops.LookupService is a single REST round trip; no
-// filesystem coherence dependency. workflow.FindServiceMeta reads the
-// per-PID local state dir (in-process consistency).
+// I/O boundary: ops.LookupService and client.GetService are REST round
+// trips; SubdomainAccess is set at yaml-import time, so reading it pre-
+// first-deploy returns the plan-declared value (not racing with deploy-
+// time port propagation). workflow.FindServiceMeta reads the per-PID
+// local state dir (in-process consistency).
 //
 // HTTP readiness wait fires only on fresh enable (status != "already_enabled").
 // Re-deploys on already-enabled subdomains skip the probe — the platform
@@ -81,10 +85,15 @@ func maybeAutoEnableSubdomain(
 		result.Warnings = append(result.Warnings, "subdomain: "+w)
 	}
 
-	// HTTP readiness wait only on fresh enable. On already_enabled the L7
-	// route has been live since the earlier enable; a probe would just add
-	// latency for no signal.
-	if subRes.Status != ops.SubdomainStatusAlreadyEnabled {
+	// HTTP readiness wait. Skip on already_enabled FOR meta-present services
+	// — they were bootstrapped earlier so the L7 route has been live for a
+	// while; a probe just adds latency. For meta-nil (recipe-authoring) the
+	// already_enabled status reflects the import-time intent flag (yaml had
+	// enableSubdomainAccess: true); this may be the FIRST deploy of the
+	// service and the L7 router may not have finished propagating ports
+	// (R-14-1). Always probe so the next zerops_verify doesn't race.
+	skipProbe := subRes.Status == ops.SubdomainStatusAlreadyEnabled && meta != nil
+	if !skipProbe {
 		for _, url := range subRes.SubdomainUrls {
 			if waitErr := ops.WaitHTTPReady(ctx, httpClient, url); waitErr != nil {
 				result.Warnings = append(result.Warnings,
@@ -116,9 +125,21 @@ func modeEligibleForSubdomain(mode topology.Mode) bool {
 }
 
 // platformEligibleForSubdomain is the meta-nil fallback predicate
-// (Cluster A.2). Recipe-authoring deploys never write ServiceMeta;
-// eligibility derives from the REST-authoritative service registry:
-// non-system service category with at least one HTTP-supporting port.
+// (Cluster A.2 + run-15 R-14-1). Recipe-authoring deploys never write
+// ServiceMeta; eligibility derives from plan-declared intent persisted
+// by the platform: the imported yaml's `enableSubdomainAccess: true`
+// field becomes detail.SubdomainAccess on the service stack record at
+// import time, before any deploy.
+//
+// The previous version read Ports[].HTTPSupport, which races L7 port-
+// registration propagation on FIRST cross-deploy of every stage slot
+// (R-14-1: every run-14 scaffold-app dispatch had to manually call
+// zerops_subdomain action=enable). SubdomainAccess is set at yaml-
+// import and does not race deploy-time port propagation — non-workers
+// import with `enableSubdomainAccess: true` (yaml_emitter.go) and
+// surface SubdomainAccess=true on every subsequent GetService;
+// workers omit the field and surface false.
+//
 // Lookup failures soft-fail (caller treats as not-eligible and skips
 // auto-enable; agent's manual zerops_subdomain stays valid).
 func platformEligibleForSubdomain(
@@ -133,10 +154,9 @@ func platformEligibleForSubdomain(
 	if svc.IsSystem() {
 		return false
 	}
-	for _, p := range svc.Ports {
-		if p.HTTPSupport {
-			return true
-		}
+	detail, err := client.GetService(ctx, svc.ID)
+	if err != nil || detail == nil {
+		return false
 	}
-	return false
+	return detail.SubdomainAccess
 }

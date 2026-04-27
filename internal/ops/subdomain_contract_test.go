@@ -31,17 +31,32 @@ func TestSubdomainRobustnessContract(t *testing.T) {
 		// GetService is the authoritative pre-check that prevents the
 		// platform's garbage FAILED process pattern on redundant enable.
 		// Removing it re-opens Bug #2 (plan §1.1).
+		//
+		// Run-15 R-14-1: Subdomain delegates the EnableSubdomainAccess
+		// call to enableSubdomainAccessWithRetry (which absorbs the
+		// noSubdomainPorts propagation race). The "EnableSubdomainAccess
+		// must still be called" check therefore searches both functions;
+		// the GetService ordering check stays scoped to Subdomain itself.
 		subdomainFn := findFunc(t, opsSubdomain, "Subdomain")
+		retryFn := findFunc(t, opsSubdomain, "enableSubdomainAccessWithRetry")
 		getServiceIdx := firstCallIndex(subdomainFn, "GetService")
-		enableIdx := firstCallIndex(subdomainFn, "EnableSubdomainAccess")
+		enableIdxInSubdomain := firstCallIndex(subdomainFn, "EnableSubdomainAccess")
+		enableIdxInRetry := firstCallIndex(retryFn, "EnableSubdomainAccess")
+		retryDispatchIdx := firstCallIndex(subdomainFn, "enableSubdomainAccessWithRetry")
 		if getServiceIdx < 0 {
 			t.Fatal("Subdomain must call client.GetService (authoritative SubdomainAccess pre-check)")
 		}
-		if enableIdx < 0 {
-			t.Fatal("Subdomain must still call EnableSubdomainAccess in the cold-enable path")
+		if enableIdxInSubdomain < 0 && enableIdxInRetry < 0 {
+			t.Fatal("EnableSubdomainAccess must still be called in the cold-enable path (directly from Subdomain or via enableSubdomainAccessWithRetry)")
 		}
-		if getServiceIdx >= enableIdx {
-			t.Errorf("GetService (index %d) must precede EnableSubdomainAccess (index %d)", getServiceIdx, enableIdx)
+		coldEnableIdx := enableIdxInSubdomain
+		if coldEnableIdx < 0 {
+			// Indirect call: use the retry-dispatch index in Subdomain as
+			// the ordering proxy for the cold-enable code path.
+			coldEnableIdx = retryDispatchIdx
+		}
+		if getServiceIdx >= coldEnableIdx {
+			t.Errorf("GetService (index %d) must precede the cold-enable path (index %d)", getServiceIdx, coldEnableIdx)
 		}
 	})
 
@@ -127,9 +142,11 @@ func findFunc(t *testing.T, file *ast.File, name string) *ast.FuncDecl {
 }
 
 // firstCallIndex returns a pseudo-ordinal position of the first call to the
-// named method within fn's body. Returns -1 when no call exists. The
+// named function within fn's body. Returns -1 when no call exists. The
 // "position" is the token offset — reliable for "A before B" comparisons.
-func firstCallIndex(fn *ast.FuncDecl, methodName string) int {
+// Matches both selector-style calls (`obj.Method`) and plain identifiers
+// (`helperFn`) so package-local helpers can be referenced.
+func firstCallIndex(fn *ast.FuncDecl, name string) int {
 	if fn == nil || fn.Body == nil {
 		return -1
 	}
@@ -139,11 +156,14 @@ func firstCallIndex(fn *ast.FuncDecl, methodName string) int {
 		if !ok {
 			return true
 		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || sel.Sel == nil {
-			return true
+		var matched bool
+		switch f := call.Fun.(type) {
+		case *ast.SelectorExpr:
+			matched = f.Sel != nil && f.Sel.Name == name
+		case *ast.Ident:
+			matched = f.Name == name
 		}
-		if sel.Sel.Name == methodName {
+		if matched {
 			pos := int(call.Pos())
 			if idx < 0 || pos < idx {
 				idx = pos

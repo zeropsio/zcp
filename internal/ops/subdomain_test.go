@@ -4,6 +4,7 @@ package ops
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -551,5 +552,75 @@ func TestSubdomain(t *testing.T) {
 				t.Error("expected non-nil process")
 			}
 		})
+	}
+}
+
+// TestSubdomain_Enable_RetriesOnNoSubdomainPorts pins run-15 R-14-1's
+// closure inside ops.Subdomain. When EnableSubdomainAccess returns the
+// platform's noSubdomainPorts rejection (L7 port-registration is still
+// propagating after a fresh deploy), Subdomain retries with bounded
+// backoff so callers don't have to. After exhausting the retry budget
+// it returns the last error verbatim.
+//
+// Transient errors are simulated via a sticky mock error; verifying the
+// retry count proves the backoff loop fired len(backoffs)+1 times before
+// surfacing the failure. The retry path exists for the agent's manual
+// `zerops_subdomain action=enable` recovery — when SubdomainAccess was
+// not initially enabled in yaml and the agent enables post-deploy, the
+// race is absorbed inside ops instead of falling out as a tool error.
+func TestSubdomain_Enable_RetriesOnNoSubdomainPorts(t *testing.T) {
+	// t.Parallel omitted — OverrideEnableRetryConfigForTest mutates a
+	// package-level config; parallel tests would clobber the backoff.
+	restore := OverrideEnableRetryConfigForTest([]time.Duration{
+		1 * time.Millisecond, 1 * time.Millisecond, 1 * time.Millisecond,
+	})
+	defer restore()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", SubdomainAccess: false},
+	}
+	mock := platform.NewMock().WithServices(services)
+	mock.WithError("EnableSubdomainAccess", &platform.PlatformError{
+		Code:    platform.ErrAPIError,
+		APICode: apiCodeNoSubdomainPorts,
+		Message: "service does not yet have HTTP-supporting ports",
+	})
+
+	_, err := Subdomain(context.Background(), mock, "proj-1", "api", "enable")
+	if err == nil {
+		t.Fatal("expected noSubdomainPorts error after retry exhaustion; got nil")
+	}
+	if !isNoSubdomainPortsErr(err) {
+		t.Errorf("final error: want noSubdomainPorts, got %v", err)
+	}
+	// 1 initial + 3 retries = 4 calls.
+	wantCalls := 1 + 3
+	if got := mock.CallCounts["EnableSubdomainAccess"]; got != wantCalls {
+		t.Errorf("EnableSubdomainAccess calls: want %d (initial + retries), got %d", wantCalls, got)
+	}
+}
+
+// TestSubdomain_Enable_NonRetryableErrorShortCircuits verifies the
+// retry loop only fires for noSubdomainPorts. Other platform errors
+// surface immediately so callers don't pay backoff latency on
+// genuinely fatal failures.
+func TestSubdomain_Enable_NonRetryableErrorShortCircuits(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", SubdomainAccess: false},
+	}
+	mock := platform.NewMock().WithServices(services)
+	mock.WithError("EnableSubdomainAccess", &platform.PlatformError{
+		Code:    platform.ErrAPIError,
+		Message: "transient platform failure",
+	})
+
+	_, err := Subdomain(context.Background(), mock, "proj-1", "api", "enable")
+	if err == nil {
+		t.Fatal("expected platform error to surface")
+	}
+	if mock.CallCounts["EnableSubdomainAccess"] != 1 {
+		t.Errorf("EnableSubdomainAccess calls: want 1 (no retry on non-noSubdomainPorts), got %d", mock.CallCounts["EnableSubdomainAccess"])
 	}
 }

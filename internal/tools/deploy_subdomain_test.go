@@ -120,30 +120,41 @@ func TestMaybeAutoEnableSubdomain_SubdomainAlreadyOn_SetsFlag_NoAPICall(t *testi
 	}
 }
 
-// TestMaybeAutoEnable_NoMeta_StillRunsForPlatformEligibleService pins
-// Cluster A.2 (R-13-12). Recipe-authoring deploys land via
-// zerops_import content=<yaml> which never writes the per-PID
-// ServiceMeta. The auto-enable path must therefore derive eligibility
-// from REST-authoritative platform state (non-system service with at
-// least one HTTP-supporting port) and fire the enable for any runtime
-// the recipe declared with httpSupport: true.
+// TestMaybeAutoEnable_NoMeta_PlanDeclaredIntent_Dispatches pins
+// Cluster A.2 (R-13-12) + run-15 R-14-1. Recipe-authoring deploys land
+// via zerops_import content=<yaml> which never writes the per-PID
+// ServiceMeta. The auto-enable path derives eligibility from plan-
+// declared intent persisted by the platform: yaml `enableSubdomainAccess:
+// true` becomes detail.SubdomainAccess at import time. With the intent
+// in place, ops.Subdomain returns already_enabled (no fresh API call)
+// and surfaces the URLs.
 //
-// I/O boundary: ops.LookupService → REST API (single network round
-// trip; no filesystem coherence concern). Read source is the platform's
-// service registry; write destination is in-memory result.* fields.
-func TestMaybeAutoEnable_NoMeta_StillRunsForPlatformEligibleService(t *testing.T) {
+// Why HTTPSupport is NOT used here: ports[].HTTPSupport races L7 port-
+// registration on the FIRST cross-deploy of every stage slot (run-14
+// scaffold-app burned three manual zerops_subdomain action=enable calls
+// on this race). detail.SubdomainAccess is set at yaml-import and does
+// not race deploy-time port propagation — that's the run-15 fix.
+//
+// I/O boundary: ops.LookupService → REST API; client.GetService → REST
+// API (REST-authoritative). Reads pre-deploy intent flag, not deploy-
+// time port propagation; no race-prone surface in the read path.
+func TestMaybeAutoEnable_NoMeta_PlanDeclaredIntent_Dispatches(t *testing.T) {
 	// Override pulled in to keep the readiness probe under test latency.
 	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
 	defer restore()
 
 	dir := t.TempDir() // no meta written — recipe-authoring scenario.
 
+	// Plan-declared intent: SubdomainAccess=true (yaml had
+	// enableSubdomainAccess: true at import). Ports DO NOT carry
+	// HTTPSupport=true — simulates the FIRST cross-deploy propagation
+	// race that R-14-1 names. The fix: don't gate on HTTPSupport.
 	svc := platform.ServiceStack{
 		ID:              autoEnableTestServiceID,
 		Name:            autoEnableTestHostname,
 		ProjectID:       "proj-1",
-		SubdomainAccess: false,
-		Ports:           []platform.Port{{Port: 3000, Protocol: "tcp", HTTPSupport: true}},
+		SubdomainAccess: true,
+		Ports:           []platform.Port{{Port: 3000, Protocol: "tcp"}},
 		ServiceStackTypeInfo: platform.ServiceTypeInfo{
 			ServiceStackTypeCategoryName: "USER",
 		},
@@ -154,42 +165,41 @@ func TestMaybeAutoEnable_NoMeta_StillRunsForPlatformEligibleService(t *testing.T
 		WithProject(&platform.Project{
 			ID: "proj-1", Name: "test", Status: statusActive,
 			SubdomainHost: "abc1.prg1.zerops.app",
-		}).
-		WithProcess(&platform.Process{
-			ID:     "proc-subdomain-enable-" + autoEnableTestServiceID,
-			Status: statusFinished,
 		})
 
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
 	maybeAutoEnableSubdomain(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
 
 	if !result.SubdomainAccessEnabled {
-		t.Error("recipe-authoring deploy with HTTP-supporting port should auto-enable; SubdomainAccessEnabled stayed false")
+		t.Error("plan-declared intent (SubdomainAccess=true) should auto-enable; stayed false")
 	}
-	if mock.CallCounts["EnableSubdomainAccess"] != 1 {
-		t.Errorf("EnableSubdomainAccess calls: want 1, got %d", mock.CallCounts["EnableSubdomainAccess"])
+	// SubdomainAccess already true → ops.Subdomain short-circuits as
+	// already_enabled; no EnableSubdomainAccess API call.
+	if mock.CallCounts["EnableSubdomainAccess"] != 0 {
+		t.Errorf("EnableSubdomainAccess calls: want 0 (already_enabled short-circuit), got %d", mock.CallCounts["EnableSubdomainAccess"])
 	}
 }
 
-// TestMaybeAutoEnable_NoMeta_NoHTTPPort_Skips pins the safety side of
-// Cluster A.2: a recipe-authoring service whose ports don't declare
-// httpSupport (managed-service-style runtime, internal-only worker)
-// should NOT trigger auto-enable.
-func TestMaybeAutoEnable_NoMeta_NoHTTPPort_Skips(t *testing.T) {
+// TestMaybeAutoEnable_NoMeta_PlanNotDeclared_Skips pins the safety side
+// of run-15 R-14-1: a recipe-authoring service whose yaml omitted
+// enableSubdomainAccess (worker, or any role the plan declared without
+// subdomain) MUST NOT trigger auto-enable. The plan's intent is the
+// gate.
+func TestMaybeAutoEnable_NoMeta_PlanNotDeclared_Skips(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir() // no meta written
 
-	// Default fixture has Ports without HTTPSupport=true.
+	// Default fixture has SubdomainAccess=false.
 	mock := autoEnableTestMock(t, false)
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
 
 	maybeAutoEnableSubdomain(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
 
 	if result.SubdomainAccessEnabled {
-		t.Error("no HTTP-supporting port should skip auto-enable; SubdomainAccessEnabled stayed true")
+		t.Error("plan-undeclared (SubdomainAccess=false) should skip auto-enable; stayed true")
 	}
 	if mock.CallCounts["EnableSubdomainAccess"] != 0 {
-		t.Errorf("EnableSubdomainAccess calls: want 0 (no HTTP port), got %d", mock.CallCounts["EnableSubdomainAccess"])
+		t.Errorf("EnableSubdomainAccess calls: want 0 (plan-undeclared), got %d", mock.CallCounts["EnableSubdomainAccess"])
 	}
 }
 

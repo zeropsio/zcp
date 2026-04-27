@@ -2,8 +2,11 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -15,6 +18,82 @@ const (
 	SubdomainStatusAlreadyEnabled  = "already_enabled"
 	SubdomainStatusAlreadyDisabled = "already_disabled"
 )
+
+// apiCodeNoSubdomainPorts is the platform's "service does not yet have
+// HTTP-supporting ports" rejection code returned by EnableSubdomainAccess
+// when the L7 port-registration is still propagating after a deploy.
+// Run-15 R-14-1 closure: ops.Subdomain absorbs this race with a bounded
+// backoff retry so callers don't have to.
+const apiCodeNoSubdomainPorts = "noSubdomainPorts"
+
+// enableRetryConfig governs the backoff sequence used when
+// EnableSubdomainAccess returns noSubdomainPorts. Tests override via
+// OverrideEnableRetryConfigForTest to keep latency negligible.
+var (
+	enableRetryMu       sync.RWMutex
+	enableRetryBackoffs = []time.Duration{
+		250 * time.Millisecond,
+		500 * time.Millisecond,
+		1 * time.Second,
+	}
+)
+
+// OverrideEnableRetryConfigForTest swaps the retry backoff sequence used
+// by Subdomain's EnableSubdomainAccess retry loop. Returns a restorer the
+// caller defers. Test-only.
+func OverrideEnableRetryConfigForTest(backoffs []time.Duration) func() {
+	enableRetryMu.Lock()
+	prev := enableRetryBackoffs
+	enableRetryBackoffs = backoffs
+	enableRetryMu.Unlock()
+	return func() {
+		enableRetryMu.Lock()
+		enableRetryBackoffs = prev
+		enableRetryMu.Unlock()
+	}
+}
+
+func enableRetrySnapshot() []time.Duration {
+	enableRetryMu.RLock()
+	defer enableRetryMu.RUnlock()
+	out := make([]time.Duration, len(enableRetryBackoffs))
+	copy(out, enableRetryBackoffs)
+	return out
+}
+
+// enableSubdomainAccessWithRetry calls EnableSubdomainAccess and retries
+// on the platform's noSubdomainPorts rejection up to len(backoffs) times.
+// Other errors short-circuit. Run-15 R-14-1 — absorbs the L7 port-
+// registration propagation race at the right layer (callers stay simple).
+func enableSubdomainAccessWithRetry(ctx context.Context, client platform.Client, serviceID string) (*platform.Process, error) {
+	backoffs := enableRetrySnapshot()
+	proc, err := client.EnableSubdomainAccess(ctx, serviceID)
+	if err == nil || !isNoSubdomainPortsErr(err) {
+		return proc, err
+	}
+	for _, d := range backoffs {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(d):
+		}
+		proc, err = client.EnableSubdomainAccess(ctx, serviceID)
+		if err == nil || !isNoSubdomainPortsErr(err) {
+			return proc, err
+		}
+	}
+	return proc, err
+}
+
+// isNoSubdomainPortsErr reports whether err is the platform's
+// "service does not yet have HTTP-supporting ports" rejection.
+func isNoSubdomainPortsErr(err error) bool {
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) {
+		return false
+	}
+	return pe.APICode == apiCodeNoSubdomainPorts
+}
 
 // SubdomainResult represents the result of a subdomain enable/disable operation.
 //
@@ -100,14 +179,16 @@ func Subdomain(
 			attachSubdomainUrlsToResult(ctx, client, result, projectID, svc.ID)
 			return result, nil
 		}
-		proc, err := client.EnableSubdomainAccess(ctx, svc.ID)
+		proc, err := enableSubdomainAccessWithRetry(ctx, client, svc.ID)
 		if err != nil {
 			// No special-case for SUBDOMAIN_ALREADY_ENABLED: the platform
 			// doesn't emit that code — empirically (plan §1.2) a redundant
 			// enable call surfaces as an HTTP 200 with a FAILED Process, not
 			// as an error. The check-before-enable gate above catches the
 			// normal idempotent case; the FAILED Process belt-and-suspenders
-			// at the tool layer covers the TOCTOU race window.
+			// at the tool layer covers the TOCTOU race window. Run-15
+			// R-14-1: noSubdomainPorts (L7 port-registration propagation
+			// race) is absorbed by the retry loop above.
 			return nil, err
 		}
 		result.Process = proc
