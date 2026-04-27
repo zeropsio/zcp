@@ -13,17 +13,17 @@ Plan: `plans/atom-corpus-hygiene-followup-2-2026-04-27.md` §5 Phase 5.
 
 | # | work unit | initial state | final state | commit | codex round | notes |
 |---|---|---|---|---|---|---|
-| 1 | Re-render 5 fixtures via probe | uncomputed | post-cycle-3 sizes captured | (this commit) | – | output: `plans/audit-composition-v3/probe-final-2026-04-27-v3.txt` |
-| 2 | Codex composition re-score (G3) | not run | APPROVE; G3 strict-improvement holds across all 5 fixtures | (this commit) | APPROVE (`a507f65c5355b72df`) | detail: `codex-round-p5-rescore-v3.md` |
-| 3 | G2: knownUnpinnedAtoms map empty | unverified | PASS | (this commit) | – | `internal/workflow/corpus_pin_density_test.go:38` confirms `var knownUnpinnedAtoms = map[string]string{}` |
-| 4 | G4: full lint + race | unverified post-Phase-4 | PASS | (this commit) | – | `make lint-local` 0 issues; `go test ./... -count=1 -race` exit 0 (background run `bimo2o3w2` confirms; tail shows all packages OK) |
-| 5 | G5: L5 live smoke (idle envelope) | not run | BINDING GREEN | (this commit) | – | detail: `g5-smoke-test-results-v3.md`; cycle-3 idle wire frame ±6 B vs cycle-2 (idle path unchanged) |
-| 6 | G6: eval-scenario regression (develop-add-endpoint) | not run | BINDING GREEN (run 2 PASS in 4m43s; run 1 FAIL flakiness) | (this commit) | – | detail: `g6-eval-regression-v3.md`; 5% faster than cycle-2; tool-call pattern matches |
+| 1 | Re-render 5 fixtures via probe | uncomputed | post-cycle-3 sizes captured | e5c44024 | – | output: `plans/audit-composition-v3/probe-final-2026-04-27-v3.txt` |
+| 2 | Codex composition re-score (G3) | not run | APPROVE; G3 strict-improvement holds across all 5 fixtures | e5c44024 | APPROVE (`a507f65c5355b72df`) | detail: `codex-round-p5-rescore-v3.md` |
+| 3 | G2: knownUnpinnedAtoms map empty | unverified | PASS | e5c44024 | – | `internal/workflow/corpus_pin_density_test.go:38` confirms `var knownUnpinnedAtoms = map[string]string{}` |
+| 4 | G4: full lint + race | unverified post-Phase-4 | PASS | e5c44024 | – | `make lint-local` 0 issues; `go test ./... -count=1 -race` exit 0 (background run `bimo2o3w2` confirms; tail shows all packages OK) |
+| 5 | G5: L5 live smoke (idle envelope) | not run | BINDING GREEN | e5c44024 | – | detail: `g5-smoke-test-results-v3.md`; cycle-3 idle wire frame ±6 B vs cycle-2 (idle path unchanged) |
+| 6 | G6: eval-scenario regression (develop-add-endpoint) | not run | BINDING GREEN (run 2 PASS in 4m43s; run 1 FAIL flakiness) | e5c44024 | – | detail: `g6-eval-regression-v3.md`; 5% faster than cycle-2; tool-call pattern matches |
 | 7 | G7: Final Codex SHIP VERDICT round 1 | not run | NEEDS-REVISION (4 procedural blockers: phase-5-tracker missing, composition re-score artifact missing, full race test undocumented, probe deletion not executed) | – | NEEDS-REVISION (`a43de8bdfaf6cbd33`) | all 4 blockers procedural — addressed in this Phase 5 commit; round 2 dispatched to verify |
-| 8 | G7: Final Codex SHIP VERDICT round 2 | not run | SHIP-WITH-NOTES | (this commit) | APPROVE (`aaad58bb6b7d519b0`) | all G1-G8 PASS; 3 notes accepted (inherited two-pair STRUCTURAL + DF-1 SPLIT-CANDIDATE deferred + G6 run-1 flakiness); detail: `codex-round-p5-shipverdict-v3.md` |
-| 9 | G8: Probe binary deletion | `cmd/atomsize_probe/` present | DELETED | (this commit) | – | per cycle-1 §15.3 G8 (probe binaries not shipped); preserved in git history |
-| 10 | final-review-v3.md | absent | written summarising cycle-3 outcome + inherited+new notes | (this commit) | – | SHIP-WITH-NOTES verdict captured |
-| 11 | Plan archived | `plans/atom-corpus-hygiene-followup-2-2026-04-27.md` | `plans/archive/atom-corpus-hygiene-followup-2-2026-04-27.md` | (this commit) | – | per CLAUDE.md maintenance convention |
+| 8 | G7: Final Codex SHIP VERDICT round 2 | not run | SHIP-WITH-NOTES | e5c44024 | APPROVE (`aaad58bb6b7d519b0`) | all G1-G8 PASS; 3 notes accepted (inherited two-pair STRUCTURAL + DF-1 SPLIT-CANDIDATE deferred + G6 run-1 flakiness); detail: `codex-round-p5-shipverdict-v3.md` |
+| 9 | G8: Probe binary deletion | `cmd/atomsize_probe/` present | DELETED | e5c44024 | – | per cycle-1 §15.3 G8 (probe binaries not shipped); preserved in git history |
+| 10 | final-review-v3.md | absent | written summarising cycle-3 outcome + inherited+new notes | e5c44024 | – | SHIP-WITH-NOTES verdict captured |
+| 11 | Plan archived | `plans/atom-corpus-hygiene-followup-2-2026-04-27.md` | `plans/archive/atom-corpus-hygiene-followup-2-2026-04-27.md` | e5c44024 | – | per CLAUDE.md maintenance convention |
 
 ## Probe re-run (post-cycle-3 final)
 
@@ -53,9 +53,9 @@ Plan: `plans/atom-corpus-hygiene-followup-2-2026-04-27.md` §5 Phase 5.
 ## Phase 5 EXIT readiness (per §5 Phase 5 EXIT)
 
 - [x] Codex SHIP VERDICT round 2 returns SHIP-WITH-NOTES (`aaad58bb6b7d519b0` → APPROVE)
-- [x] `final-review-v3.md` committed (this commit)
-- [x] Plan archived to `plans/archive/` (this commit)
-- [x] `phase-5-tracker-v3.md` committed (this commit)
+- [x] `final-review-v3.md` committed e5c44024
+- [x] Plan archived to `plans/archive/` e5c44024
+- [x] `phase-5-tracker-v3.md` committed e5c44024
 
 ## Notes inherited / new
 
