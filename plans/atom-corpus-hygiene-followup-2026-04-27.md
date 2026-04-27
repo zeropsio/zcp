@@ -83,21 +83,79 @@ don't need a comparative diagram of how-flows-differ.
 **The judgment test** (apply per leak, NOT per atom):
 
 > Without this sentence, would the agent — operating on this
-> envelope only — actually do the wrong thing?
+> envelope only AND carrying plausible cross-flow training
+> reflexes — actually do the wrong thing?
 
-- **YES** → KEEP as a guardrail. (Examples: "Don't run `git
-  init` on the SSHFS mount" — real foot-gun the agent might
-  trigger from training. "Don't hand-roll `ssh cmd &`" — same.)
-- **NO** → DROP or REPHRASE. (Examples: "No SSHFS mount in local
-  mode" — agent in local mode doesn't know SSHFS is a thing.
-  "`zcli push` under the hood" — implementation detail; agent
-  calls `zerops_deploy`, doesn't need to know what it dispatches.)
+> **Default rule: when uncertain, KEEP.** The cost of regressing
+> agent behavior far exceeds the bytes recovered by an
+> uncertain DROP. Document the keep rationale in the per-atom
+> fact inventory.
+
+**HIGH-risk signals (mandatory KEEP unless Codex per-edit
+rejects)** — any of these flags the leak as guardrail-class:
+
+1. **Negation tied to a tool/action**: "Don't run X", "Never use
+   Y", "No Z available here". The negation IS the guardrail.
+2. **Cross-env contrast as mental-model framing**: "Local mode
+   builds from your committed tree — no SSHFS, no dev container"
+   couples a positive operational claim to the negation. The
+   negation prevents a likely cross-flow reflex.
+3. **Tool-selection guidance**: "Use `zerops_deploy` here, not
+   `zcli push`"; "Do NOT use `zerops_dev_server` — that tool is
+   container-only".
+4. **Recovery guidance**: "If X fails, do Y" — the alternative
+   path the leak names is the guardrail.
+5. **Sentences with "do not" / "never" / "no X" tied to an
+   operational choice.
+
+**LOW-risk DROP candidates** (only these, and only when no
+HIGH-risk signal applies):
+
+- **Pure implementation trivia, no operational consequence**:
+  "`zcli push` under the hood" — agent calls `zerops_deploy`,
+  the dispatch path is invisible.
+- **Standalone negation with no operational coupling**: "No
+  SSHFS mount in local mode" as a bare fact (NOT framed as
+  mental-model coupling per signal #2). If the atom anywhere
+  couples the negation to a positive operational claim, treat
+  as HIGH-risk per signal #2.
+- **Comparative diagram of how flows differ in UNRELATED env**:
+  the agent in this env doesn't need to compare to others
+  unless cross-flow training is a real risk.
+- **Historical context**: "this used to be different in v1" —
+  no operational consequence.
+
+**Concrete examples (annotated)**:
+
+- KEEP: "Don't run `git init` on the SSHFS mount" — signal #1
+  (negation tied to action) + #2 (SSHFS is cross-flow).
+- KEEP: "Local mode builds from your committed tree — no SSHFS,
+  no dev container." — signal #2 (mental-model framing); the
+  no-SSHFS phrase is the guardrail when coupled to "builds from
+  committed tree".
+- KEEP: "Do NOT use `zerops_dev_server` — that tool is
+  container-only." — signal #3 (tool-selection).
+- DROP: "`zcli push` under the hood" — pure trivia, no
+  signal applies.
+- DROP: standalone "No SSHFS in local mode" with no further
+  operational framing — signal #2 does NOT apply because
+  there's no positive operational claim coupled to it.
 
 **Risk**: dropping a fact that's actually a guardrail can
-regress agent behavior. Mitigation: per-leak Codex round is
-SKIPPED only when the leak clearly satisfies "agent without
-this would not consider the wrong path". Borderline cases get
-a Codex round.
+regress agent behavior. Mitigation, layered:
+
+1. **Per-leak Codex round** mandatory for any leak with a
+   HIGH-risk signal (signals #1-5 above).
+2. **Axis K DROP ledger** committed alongside Phase 2 work
+   (`plans/audit-composition/axis-k-drops-ledger.md`): one row
+   per dropped leak — atom, exact pre-edit sentence, classification
+   rationale, signal-check, reviewer status.
+3. **Phase 2 POST-WORK Codex** samples ALL HIGH/borderline rows
+   AND every LOW-risk DROP whose pre-edit sentence contains any
+   of: `no `, `never`, `do not`, `SSHFS`, `container`, `local`,
+   `SSH`, `git`, `deploy`, or any `zerops_*` tool name.
+4. **Borderline cases**: when uncertain → KEEP; document in
+   ledger why kept.
 
 ### Axis L — TITLE-OVER-QUALIFIED (NEW)
 
@@ -112,23 +170,45 @@ distinguish sibling atoms (e.g. `(dev mode)` distinguishes
 `develop-push-dev-workflow-dev` from `-simple` and `-standard`
 siblings). Those KEEP.
 
-**The judgment test**: drop a qualifier when its information is
-already in the axis filter (env: container/local — drop). Keep
-when it disambiguates from sibling atoms in the rendered output
-(mode: dev/simple/standard — keep).
+**Mechanism qualifiers** are also different — qualifiers naming a
+load-bearing operational distinction (credentials, tooling,
+identity, runtime constraint) carry payload the axis filter does
+NOT convey. Those KEEP.
+
+**The judgment test (token-level, not whole-suffix)**: split the
+title qualifier on commas, em-dashes, or parentheses. For each
+token, ask:
+
+- Is this token an env-only label (`container`, `local`,
+  `container env`, `local env`)? → DROP that token.
+- Is this token a mode/runtime/strategy distinguisher (`dev mode`,
+  `simple mode`, `standard mode`, `dynamic`, `static`, `push-dev`,
+  `push-git`, `manual`)? → KEEP.
+- Is this token a mechanism payload (`GIT_TOKEN + .netrc`,
+  `user's git`, runtime constraint, credential channel)? → KEEP.
+- Is this token bare punctuation orphaned by the drop above? →
+  Clean up (remove orphaned `, ` / ` — ` / `()`).
 
 **Concrete examples** (from current corpus):
 
 - `"Push-Dev Deploy Strategy — container"` → drop ` — container`
+  (only env token).
 - `"Push-dev iteration cycle (dev mode, container)"` → drop
-  `, container`; keep `dev mode` (distinguishes from
-  workflow-simple sibling)
+  `, container`; keep `dev mode` (mode distinguisher).
 - `"Platform rules — container environment"` → drop
-  `— container environment` or shorten to `"Platform rules"`
-- `"Mode expansion — add a stage pair"` → KEEP (no env qualifier)
+  `— container environment` or shorten to `"Platform rules"`.
+- `"push-git push setup — container env (GIT_TOKEN + .netrc)"` →
+  drop `container env` ONLY; KEEP `(GIT_TOKEN + .netrc)` —
+  mechanism payload distinguishing from local-env credential flow.
+  Net: `"push-git push setup (GIT_TOKEN + .netrc)"`.
+- `"push-git push setup — local env (user's git)"` → drop
+  `local env` ONLY; KEEP `(user's git)`. Net:
+  `"push-git push setup (user's git)"`.
+- `"Mode expansion — add a stage pair"` → KEEP (no env qualifier).
 
 **Risk**: low. Title text is rarely pinned by `MustContain`
-phrase pins; the AST atom-ID pins are immune.
+phrase pins; the AST atom-ID pins are immune. Mechanism-qualifier
+preservation reduces the residual risk further.
 
 ### Axis M — TERMINOLOGY-DRIFT (NEW)
 
@@ -137,21 +217,48 @@ costs the agent's parsing budget. The agent has to canonicalise
 mentally to map "Zerops container" + "service container" + "dev
 container" + "the runtime" to the same referent.
 
-**Drift examples** (corpus-wide; Codex CORPUS-SCAN enumerates):
+**Drift clusters** (corpus-wide; Codex CORPUS-SCAN enumerates;
+canonicals decided BEFORE rewrite):
 
-| Concept | Drift seen | Canonical (proposed) |
-|---|---|---|
-| Container holding the user's code | "Zerops container", "the container", "service container", "dev container" | context-dependent: `dev container` for dev-mode-dynamic; `runtime container` for general; `Zerops container` for cross-flow framing |
-| Code-change → durable-state action | "deploy", "redeploy" | `deploy` is first-action; `redeploy` is subsequent. They have different meaning and `redeploy` is correct after first deploy |
-| The platform itself | "Zerops", "the platform", "ZCP" | `Zerops` for the platform; `ZCP` for the control-plane / our tool; "the platform" only when context is unambiguous |
-| The agent's tool family | "MCP tool", "zerops_* tool", "the tool" | `zerops_<name>` (specific); `MCP tool` (general protocol context); avoid "the tool" |
-| The agent itself | "you", "the agent", "the LLM" | `you` (atom is direct address); avoid "the agent" / "the LLM" — those are author-perspective |
+| # | Concept | Drift seen | Canonical decision |
+|---|---|---|---|
+| 1 | Container holding user code | "Zerops container", "the container", "service container", "dev container", "runtime container", "build container", "new container" | **Decision table below — per-occurrence review** |
+| 2 | Code-change → durable-state action | "deploy", "redeploy" | `deploy` for first-action; `redeploy` for subsequent. Semantically distinct; per-occurrence judgment required (do NOT global replace) |
+| 3 | The platform itself | "Zerops", "the platform", "ZCP" | `Zerops` for the platform; `ZCP` for the control-plane / our tool; "the platform" only when context is unambiguous |
+| 4 | Agent's tool family | "MCP tool", "zerops_* tool", "the tool" | `zerops_<name>` (specific); `MCP tool` (general protocol context); avoid "the tool" |
+| 5 | The agent itself | "you", "the agent", "the LLM" | `you` (atom is direct address); avoid "the agent" / "the LLM" — those are author-perspective |
 
-**Action**: Codex CORPUS-SCAN identifies drifted terms; per-term
-canonical chosen; corpus-wide rewrite.
+**Cluster #1 container decision table** (per-occurrence review
+mandatory):
 
-**Risk**: medium. A grep + replace can lose nuance. Per-term
-Codex sampling round catches over-aggressive replacement.
+| Use this term | When the atom is talking about |
+|---|---|
+| `dev container` | Mutable push-dev / SSHFS context — the developer-mutable container for dev-mode-dynamic flows. |
+| `runtime container` | A running service instance generally. The default for cross-cluster references when no other distinction applies. |
+| `build container` | The build-stage filesystem (zbuilder context) before the runtime swap. Only when the atom is explicitly talking about build vs runtime. |
+| `Zerops container` | Broad first-introduction framing only — when the atom is orienting an unfamiliar reader. Avoid in detailed operational guidance. |
+| `new container` | The replacement container created on each deploy (deploy-replacement semantics specifically). |
+
+**Risk classes for Axis M clusters**:
+
+- **HIGH-risk** (per-occurrence review mandatory; NOT 10%
+  sampling): cluster #1 container, cluster #2 deploy/redeploy,
+  cluster #3 Zerops/ZCP/platform. Same word can encode distinct
+  concepts in adjacent atoms; misclassification regresses agent
+  comprehension.
+- **MEDIUM-risk** (≥50% sampling): cluster #4 tool-family.
+- **LOW-risk** (10% sampling): cluster #5 agent-self.
+
+**Action**: Codex CORPUS-SCAN enumerates drifted terms with one
+row per occurrence per cluster (e.g. `axis-m-container-ledger.md`
+for cluster #1). HIGH-risk cluster rewrites get per-occurrence
+Codex review. MEDIUM-risk cluster rewrites get ≥50% sampling.
+LOW-risk cluster rewrites get 10% sampling.
+
+**Risk**: medium. A grep + replace WILL lose nuance for HIGH-risk
+clusters. Per-occurrence ledger + Codex review per HIGH-risk
+occurrence is the mitigation. Global sed is forbidden for HIGH-risk
+clusters.
 
 ## 4. Empirical baseline (snapshot 2026-04-27)
 
@@ -283,14 +390,24 @@ Per original plan §6.6 L5 procedure:
 
 **Failure handling**:
 - If wire-frame variance is large (> 50 bytes), document AND
-  proceed (variance from MCP framing is acceptable; the smoke
-  test's purpose is "does it work end-to-end", not "exact byte
-  match").
+  proceed with content-phase work (variance from MCP framing
+  is acceptable for end-to-end function), BUT G5 is NOT marked
+  GREEN. G5 stays in NEEDS-ROOT-CAUSE state until either: probe
+  is corrected, threshold is widened with explicit evidence, OR
+  the variance is downgraded to a documented deferral with the
+  user's acceptance. **Final SHIP gate (Phase 7) cannot pass G5
+  while it is NEEDS-ROOT-CAUSE.** This was tightened in PRE-WORK
+  amendment (Codex C12) — a functional smoke is not the same as
+  a green G5.
 - If decoded text fails markdown structure check, that's a
   ship-blocker — the corpus broke the rendering pipeline.
 - If SSH/zcli access fails, document as infra-blocker; G5
-  becomes DEFERRED-WITH-JUSTIFICATION (only acceptable if VPN
-  is genuinely down).
+  becomes DEFERRED-WITH-JUSTIFICATION. **Per PRE-WORK amendment
+  (Codex C11), this means clean-SHIP target is unreachable.**
+  Either fix the infra or downgrade the plan's verdict ambition
+  to SHIP-WITH-NOTES before entering Phase 2; the executor must
+  surface this decision to the user, not silently proceed under
+  the deferred-exit path.
 
 #### 1.2 — Eval-scenario regression (G6)
 
@@ -382,10 +499,17 @@ and re-do.
 
 **EXIT**:
 - G5 smoke-test results + G6 eval-regression results committed.
-- Both gates either GREEN or explicitly DOCUMENTED as deferred
-  with infra-blocker rationale (only acceptable if a CI/test
-  infra reason genuinely blocks; user has authorized eval-zcp
-  use, so default expectation is GREEN).
+- **For clean-SHIP target**: both gates GREEN. Phase 1 may not
+  EXIT under DEFERRED-WITH-JUSTIFICATION while the plan's stated
+  verdict ambition is clean SHIP — that creates the contradiction
+  Codex C11 surfaced. If genuine infra block prevents GREEN, the
+  executor MUST either (a) fix the infra, or (b) propose
+  downgrading the plan's verdict ambition to SHIP-WITH-NOTES and
+  get user acknowledgement before proceeding to Phase 2.
+- **Phase 1 establishes baseline G5/G6 only.** Final-shippable
+  G5/G6 evidence comes from a Phase 7 re-run on the post-Phase-6
+  corpus (per Codex C5 amendment). Phase 1 numbers are stale once
+  any content phase commits.
 - Tracker `phase-1-tracker-v2.md` committed.
 
 ### Phase 2 — Axis K (abstraction leakage)
@@ -398,30 +522,44 @@ and re-do.
    each cross-environment leak (atom in container env mentioning
    local; atom in local env mentioning container) and each
    implementation-detail leak (e.g. "zcli push under the hood",
-   "zsc noop", "the SDK does X"). Per leak, classify:
-   - DROP (anti-information; agent has no reason to know)
-   - KEEP-AS-GUARDRAIL (without the negation, agent might do the
-     wrong thing)
+   "zsc noop", "the SDK does X"). Per leak, classify against the
+   §3 Axis K HIGH-risk signal list (#1-5):
+   - DROP (LOW-risk only — pure trivia, no signal applies)
+   - KEEP-AS-GUARDRAIL (any HIGH-risk signal applies; default for
+     uncertain cases)
    - REPHRASE (the leak is partly load-bearing but the framing
      is over-explained)
-2. **Output**: `plans/audit-composition/axis-k-candidates.md`
+2. **Output 1**: `plans/audit-composition/axis-k-candidates.md`
    ranked by recoverable bytes + risk.
-3. **Codex round per atom** (PER-EDIT) for the HIGH-risk leaks
-   (those classified REPHRASE or borderline DROP). LOW-risk
-   leaks (clear DROP per the judgment test) self-verified.
-4. Apply per atom; commit per concept (one commit per
+3. **Output 2 — Axis K DROP ledger** (per Codex C8/C9 amendment):
+   `plans/audit-composition/axis-k-drops-ledger.md`. One row per
+   dropped leak with columns: atom-id, exact pre-edit sentence,
+   classification (LOW-risk DROP / REPHRASE), signal-check
+   (which §3 HIGH-risk signals were considered and rejected),
+   reviewer status (self-verified / Codex-PER-EDIT / borderline
+   kept). Codex POST-WORK consumes this ledger.
+4. **Codex round per atom** (PER-EDIT) for ANY leak with a §3
+   HIGH-risk signal AND for borderline classifications. LOW-risk
+   DROP leaks self-verified ONLY when no HIGH-risk signal applies.
+5. Apply per atom; commit per concept (one commit per
    "container-mentions-in-local-atoms" pass; another for
    "implementation-detail leaks"; etc.) with §6.1 fact inventory.
-5. **Codex POST-WORK** round: re-read every Phase 2 commit; flag
-   any guardrail accidentally dropped.
+6. **Codex POST-WORK** round: re-read every Phase 2 commit AND
+   the DROP ledger; sample-audit ALL HIGH/borderline rows AND
+   every LOW-risk DROP whose pre-edit sentence contains any of:
+   `no `, `never`, `do not`, `SSHFS`, `container`, `local`,
+   `SSH`, `git`, `deploy`, `zerops_*` tool name. Flag any
+   guardrail accidentally dropped.
 
 **Risk note**: the judgment test is subjective. Erring on
 "DROP if uncertain" is wrong (regression risk); erring on "KEEP
-if uncertain" is wrong (leaves the leak in place). The rule for
-borderline cases: KEEP, document rationale in the fact inventory.
+if uncertain" is wrong (leaves the leak in place). **The rule
+for borderline cases: KEEP, document rationale in the DROP
+ledger row "borderline kept".** Per §3 default rule.
 
 **EXIT**:
 - All axis-K candidates classified + actioned.
+- DROP ledger committed at `axis-k-drops-ledger.md`.
 - Codex POST-WORK clean (or all findings restored).
 - Probe re-run shows monotone or improved body-join.
 - `phase-2-tracker-v2.md` committed.
@@ -456,30 +594,43 @@ borderline cases: KEEP, document rationale in the fact inventory.
 
 1. **Codex CORPUS-SCAN** to enumerate inconsistent terms:
    walking all 79 atoms, list each cluster of terms that refer
-   to the same concept. Output:
-   `plans/audit-composition/axis-m-candidates.md`.
-2. **Per-cluster decision**: pick canonical term per cluster.
-   The §3 axis-M section above seeds the choices, but Codex's
-   findings may surface clusters not anticipated.
-3. **Apply via grep + targeted edit** (NOT global sed — context
-   matters per occurrence).
-4. **Per-atom Codex sampling round** (NOT per atom; sample
-   ~10 % of touched atoms): verify the canonical term reads
-   correctly in context.
+   to the same concept AND every occurrence per cluster. Output:
+   `plans/audit-composition/axis-m-candidates.md` + per-HIGH-risk
+   cluster occurrence ledgers (e.g. `axis-m-container-ledger.md`
+   for cluster #1 — one row per occurrence).
+2. **Per-cluster decision**: pick canonical term per cluster
+   using the §3 axis-M decision tables. Cluster #1 (container)
+   uses the §3 sub-table (dev / runtime / build / Zerops / new
+   container — context-sensitive). Cluster #2 (deploy/redeploy)
+   per-occurrence judgment (semantically distinct).
+3. **Apply via per-occurrence judgment** (NEVER global sed for
+   HIGH-risk clusters #1, #2, #3). Each replacement reviewed
+   against the cluster's decision rule before commit.
+4. **Codex sampling per cluster per Codex C13/Amendment 3**:
+   - HIGH-risk clusters #1, #2, #3: per-occurrence Codex review
+     of EVERY touched occurrence. Not 10% sampling.
+   - MEDIUM-risk cluster #4: ≥50% sampling.
+   - LOW-risk cluster #5: 10% sampling.
 
 **EXIT**:
 - All clusters canonicalised or deferred with reason.
+- HIGH-risk cluster occurrence ledgers committed.
 - `phase-4-tracker-v2.md` committed.
 
-### Phase 5 — Broad-atom cross-cluster dedup (§15.3 G3 closure)
+### Phase 5 — Broad-atom cross-cluster dedup + coverage-gap sub-pass (§15.3 G3 closure)
 
 **ENTRY**: Phase 4 EXIT satisfied.
 
 **WORK-SCOPE**:
 
 This is THE phase that closes the §15.3 G3 first-deploy
-strict-improvement gap from the first hygiene cycle. The 6
-broad atoms causing first-deploy Redundancy=1:
+strict-improvement gap from the first hygiene cycle. **G3 has
+TWO halves** — redundancy AND coverage-gap (per Codex C6/C15
+amendment + `final-review.md:21-26`). Phase 5 must close both.
+
+#### 5.1 — Redundancy sub-pass (broad-atom dedup)
+
+The 6 broad atoms causing first-deploy Redundancy=1:
 
 - `develop-api-error-meta`
 - `develop-env-var-channels`
@@ -496,7 +647,9 @@ applies):
 
 1. **Identify cross-atom restated facts** in the 6 broad
    atoms. Each fact appearing in 2+ of these atoms is a dedup
-   candidate.
+   candidate. Codex CORPUS-SCAN may surface additional atoms
+   beyond the 6 named — append to the list with rationale per
+   inherited §16 amend protocol.
 2. **Pick canonical home** per fact. Use original plan's §6.1
    methodology (lowest priority OR broadest axis OR topical
    owner).
@@ -505,10 +658,34 @@ applies):
 4. **Codex per-edit round** for each dedup (HIGH-risk because
    broad atoms are foundational).
 5. **Re-render fixtures + re-score**: verify Redundancy on
-   first-deploy fixtures moves from 1 to ≥ 2.
+   first-deploy fixtures moves from 1 to ≥ 2 AND simple-deployed
+   moves from 2 to ≥ 3 OR holds-flat-at-5 (strict-improvement
+   per refined G3 reading).
 
 **Target**: first-deploy Redundancy = 2 or 3 across all 4
-fixtures. simple-deployed already at 2; should hold or improve.
+fixtures. simple-deployed: target 3 (was 2); flat-at-2 is NOT
+strict improvement and fails refined G3.
+
+#### 5.2 — Coverage-gap sub-pass
+
+Coverage-gap on first-deploy fixtures held at 2-3 in the first
+cycle's Codex re-score (per `post-hygiene-scores.md:73-80`). The
+post-execute-cmds-fix re-run wasn't performed but is expected to
+move them to ≥ 3. simple-deployed at 4 already. Phase 5 closes:
+
+1. **Re-score coverage-gap on all 5 fixtures** post-redundancy
+   sub-pass. If first-deploy fixtures land at ≥ 3 strictly above
+   2 (the prior cycle's score), the execute-cmds fix carried
+   through. If still flat at 2, identify the residual gaps
+   (likely "what tool to call for X" for at least one likely
+   next-action) and add a targeted patch via a Phase 5.3 sub-pass:
+   author the missing guidance in the right canonical home (an
+   existing atom or a new narrow-axis atom).
+2. **simple-deployed coverage-gap target**: hold at 4 (already
+   strict-improved from 3 in prior cycle); flat-at-4 is acceptable
+   for refined G3 (was 3, now 4 — strict improvement already met).
+3. **Per-fixture pass criterion**: redundancy AND coverage-gap
+   each strictly improved vs §4.2 baseline OR flat-at-5.
 
 **Risk**: HIGHEST of any phase. Broad atoms are foundational;
 trimming them affects every develop-active envelope. Mandatory
@@ -516,20 +693,46 @@ per-edit Codex round.
 
 **EXIT**:
 - First-deploy fixtures' Redundancy strictly improved (1 → ≥ 2).
-- §15.3 G3 strict-improvement now MET on all 5 fixtures.
+- First-deploy fixtures' Coverage-gap strictly improved or
+  flat-at-5 vs §4.2 baseline.
+- simple-deployed Redundancy strictly improved (2 → ≥ 3) OR
+  flat-at-5 (currently 2 → not yet flat).
+- §15.3 G3 strict-improvement now MET on all 5 fixtures across
+  BOTH redundancy AND coverage-gap.
 - Codex per-edit rounds for each dedup APPROVE.
 - `phase-5-tracker-v2.md` committed.
 
 ### Phase 6 — Phase-6-deferred byte recovery (HIGH/MEDIUM/LOW)
 
-**ENTRY**: Phase 5 EXIT satisfied.
+**ENTRY**: Phase 5 EXIT satisfied. **Plus pre-baselining (per
+Codex C4 amendment)**: every Phase 6 atom that was also touched
+by Phase 5 (notably `develop-verify-matrix`, plus any atom that
+ended up in the Phase 5 broad-atom dedup beyond the original 6)
+MUST be re-baselined: re-read the post-Phase-5 atom; regenerate
+the byte-recovery estimate against current state; treat the
+prior cycle's `axis-b-candidates.md` numbers as STALE for those
+atoms. Document the re-baseline in
+`plans/audit-composition/axis-b-candidates-v2.md`.
+
+Additionally (per Codex C14 amendment), the 14 MEDIUM-risk atoms
+were never named in this plan. Phase 6 ENTRY MUST regenerate
+`axis-b-candidates-v2.md` as the AUTHORITATIVE work-unit list:
+- For HIGH-risk: confirm the 4 atoms below are still HIGH-risk
+  post-Phase-5; surface any newly HIGH-risk atom from Phase 5's
+  broad-atom dedup if applicable.
+- For MEDIUM-risk: enumerate all 14 atoms by name with current
+  byte estimates. Use prior cycle's `axis-b-candidates.md` as
+  starting input but regenerate against current state.
+- For LOW-risk: confirm the 7 atoms below.
 
 **WORK-SCOPE**:
 
-1. **HIGH-risk atoms** (4 from prior cycle's Phase 6):
+1. **HIGH-risk atoms** (4 from prior cycle's Phase 6, post-Phase-5
+   re-baselining):
    - `develop-ready-to-deploy`
    - `develop-first-deploy-write-app`
-   - `develop-verify-matrix`
+   - `develop-verify-matrix` (post-Phase-5 — re-baseline
+     mandatory; expected smaller delta)
    - `develop-deploy-files-self-deploy`
    - **Per atom**: mandatory per-edit Codex round per §10.1 P6
      row 2 from the original plan. Codex reads the diff, lists
@@ -542,17 +745,21 @@ per-edit Codex round.
    - `develop-implicit-webserver`
    - `bootstrap-provision-local`
    - `develop-manual-deploy`
-   - **Apply**: per-atom mechanical tightening per Codex's
-     `axis-b-candidates.md` from prior cycle. Codex POST-WORK
-     round per phase to catch fact loss.
-3. **MEDIUM-risk atoms** (14 from prior cycle): apply with
-   Codex per-edit round; estimated ~4.6 KB recoverable.
+   - **Apply**: per-atom mechanical tightening per
+     `axis-b-candidates-v2.md`. Codex POST-WORK round per phase
+     to catch fact loss.
+3. **MEDIUM-risk atoms** (14, named in `axis-b-candidates-v2.md`
+   per Phase 6 ENTRY): apply with Codex per-edit round;
+   regenerated estimate per the v2 candidates artifact.
 
-**Target**: ~6.5 KB additional body recovery. Combined with
-Phase 5 dedup, this should push first-deploy slice past §9
-8 KB target into the upper part of 8-12 KB band.
+**Target**: ≥6 KB additional body recovery. Combined with Phase 5
+dedup, this should push first-deploy slice past §9 8 KB target
+into the upper part of 8-12 KB band, satisfying §8 binding
+target (additional ≥6,000 B + cumulative ≥17,000 B per Codex
+C7/Amendment 7).
 
 **EXIT**:
+- `axis-b-candidates-v2.md` committed at Phase 6 ENTRY.
 - All HIGH-risk atom rewrites APPROVE per per-edit Codex rounds.
 - All LOW-risk + MEDIUM-risk atoms tightened.
 - Probe re-run shows aggregate body recovery ≥ 6 KB additional.
@@ -572,9 +779,30 @@ Phase 5 dedup, this should push first-deploy slice past §9
    the refined §6.2 rubric. Output
    `plans/audit-composition/post-followup-scores.md`.
 3. **Verify §15.3 G3** strict-improvement on ALL 5 fixtures
-   (not just simple-deployed). Phase 5 should have closed this
-   gap.
-4. **Final Codex SHIP VERDICT round** per §10.3 + §15.3 G7
+   for BOTH redundancy AND coverage-gap (not just simple-deployed,
+   not just redundancy — per Codex C6/C15 amendments). Phase 5
+   should have closed this gap; if any fixture's redundancy or
+   coverage-gap is still flat (not strictly improved or
+   flat-at-5), re-open Phase 5 with a targeted patch BEFORE
+   running G7.
+4. **Re-run G5 live smoke** on the post-Phase-6 binary (per
+   Codex C5 amendment). Phase 1's G5 result is stale once any
+   content phase commits; final-shippable G5 evidence is the
+   Phase 7 re-run on the post-followup binary. Save to
+   `plans/audit-composition/g5-smoke-test-results-post-followup.md`.
+   - If G5 was NEEDS-ROOT-CAUSE coming out of Phase 1 (per Phase 1
+     C12 amendment), Phase 7 must either (a) confirm root-cause
+     and produce a green re-run with corrected probe/threshold,
+     or (b) escalate to user for SHIP-target downgrade.
+5. **Re-run G6 eval-scenario regression** on the post-Phase-6
+   corpus (per Codex C5 amendment). Save to
+   `plans/audit-composition/g6-eval-regression-post-followup.md`.
+   Compare both:
+   - vs PRE-hygiene baseline (snapshot before first cycle started)
+     — should match or improve.
+   - vs Phase 1's POST-first-cycle baseline — should match or
+     improve.
+6. **Final Codex SHIP VERDICT round** per §10.3 + §15.3 G7
    from the original plan. Read all phase trackers; verify
    G1-G8; return SHIP / NO-SHIP / SHIP-WITH-NOTES.
 
@@ -589,7 +817,10 @@ SHIP verdict.
 
 **EXIT**:
 - Codex SHIP VERDICT returns SHIP (clean).
-- Final commit message cites G1-G8 evidence per §15.3.
+- Phase 7 G5 + G6 re-runs committed (final-shippable evidence).
+- Final commit message cites G1-G8 evidence per §15.3 — including
+  the Phase 7 G5 + G6 re-runs as the binding artifacts (NOT the
+  Phase 1 baselines).
 - `final-review-v2.md` committed (verbatim Codex output +
   executor disposition).
 - `phase-7-tracker-v2.md` committed.
@@ -645,13 +876,21 @@ must be updated in the same commit.
 
 - All 8 phases (0-7) closed per §15.2 trackers.
 - §15.3 G1-G8 ALL satisfied (no DEFERRED-WITH-JUSTIFICATION):
-  - G3 strict-improvement met on all 5 fixtures (Phase 5 closes).
-  - G5 L5 live smoke green (Phase 1 closes).
-  - G6 eval-scenario regression run + documented (Phase 1 closes).
+  - G3 strict-improvement met on all 5 fixtures, BOTH redundancy
+    AND coverage-gap (Phase 5 closes; Phase 7 verifies).
+  - G5 L5 live smoke green: Phase 1 establishes baseline; Phase 7
+    re-run on post-followup binary is the binding artifact (per
+    Codex C5/C12 amendments).
+  - G6 eval-scenario regression run + documented: Phase 1
+    baseline + Phase 7 re-run on post-followup corpus is the
+    binding artifact.
 - Codex final SHIP VERDICT returns clean SHIP.
-- Cumulative body recovery ≥ 13 KB across 5 fixtures (combining
-  first cycle's 11.3 KB + this cycle's ~6.5 KB Phase 6 = ~17 KB
-  upper end; realistic target ~14-15 KB).
+- **Body-recovery binding target (per Codex C7/Amendment 7)**:
+  additional ≥ 6,000 B across 5 fixtures (this cycle alone) AND
+  cumulative ≥ 17,000 B across 5 fixtures (first cycle 11,344 B
+  + this cycle ≥ 6,000 B). The "13 KB / realistic 14-15 KB"
+  numbers from the prior draft are forecast/risk notes only, NOT
+  acceptance thresholds.
 - New axes K + L + M documented in atom-authoring contract per
   original plan §11 (`docs/spec-knowledge-distribution.md` if
   that's the authoritative spec).
@@ -842,18 +1081,27 @@ This plan's Phase 7 must NOT replicate those.
 
 To avoid confusion: this plan's body recovery target is
 **ADDITIONAL** to the first cycle's 11.3 KB. **Cumulative target**
-combines both cycles.
+combines both cycles. **The §8 binding targets are these (per
+Codex C7/Amendment 7)**:
 
 | Slice | First cycle | This plan target | Cumulative target |
 |---|---:|---:|---:|
 | 4 first-deploy fixtures | −7,461 B | additional ≥ 5,000 B (Phase 5 broad-atom dedup) | ≥ 12,000 B |
-| 5 fixtures aggregate | −11,344 B | additional ≥ 6,000 B (combined Phases 5 + 6) | ≥ 17,000 B |
+| **5 fixtures aggregate** (binding) | −11,344 B | **additional ≥ 6,000 B** (combined Phases 5 + 6) | **≥ 17,000 B** |
 | Off-probe (local + bootstrap) | ~−1,500 B | additional from Phase 2/3/4 axis-K/L/M work | ≥ 3,000 B aggregate |
 
-**Pre-emptive answer to "did you reach target?"**: track these
-three numbers explicitly in `phase-7-tracker-v2.md`. Cumulative
-≥ 17 KB across 5 fixtures means the §9 acceptance criterion
-"8-12 KB body" is comfortably met.
+**Binding numbers** (the only ones that matter for SHIP):
+- additional ≥ 6,000 B aggregate across 5 fixtures (this cycle).
+- cumulative ≥ 17,000 B aggregate across 5 fixtures (both cycles).
+
+The first-deploy slice (≥ 5,000 B) and off-probe (≥ 3,000 B)
+rows are FORECAST sub-targets — useful for tracking but NOT
+SHIP-blocking on their own. The aggregate ≥ 17,000 B is the
+single binding cumulative number per §8.
+
+**Pre-emptive answer to "did you reach target?"**: track all
+three numbers explicitly in `phase-7-tracker-v2.md` but the SHIP
+gate cites only the aggregate-5-fixtures cumulative number.
 
 ## 13. First moves for the fresh instance
 
@@ -942,3 +1190,38 @@ plan order (K → L → M). Each phase's edits are committed before
 the next phase's CORPUS-SCAN, so each later phase sees the prior
 phase's results. Conflicts are resolved at the per-edit level
 during the later phase, not at plan-design level.
+
+## 16. Amendments — Phase 0 PRE-WORK Codex round (2026-04-27)
+
+The PRE-WORK Codex round at Phase 0 returned NEEDS-REVISION with
+11 amendments (10 numbered + C12 wire-frame variance). Codex's
+verbatim output is preserved at
+`plans/audit-composition/codex-round-p0-prework-followup.md`. All
+11 amendments were applied in-place to §3, §5, §8, §12 in commit
+`<phase-0-amendments-commit>` (filled in at Phase 0 EXIT). This
+section catalogs them for fresh-reader traceability.
+
+| # | Concern | Plan section(s) edited | Summary of revision |
+|---|---|---|---|
+| 1 | Axis K judgment-test ambiguity (C1) | §3 axis K | HIGH-risk signal codification (negation+action, cross-env mental-model framing, tool-selection, recovery, do-not/never/no-X tied to operational choice); "uncertain → KEEP" elevated to default rule next to DROP example; SSHFS example reclassified as KEEP when coupled to positive operational claim. |
+| 2 | Axis L compound qualifiers (C2) | §3 axis L | Token-level title edits (split on commas/em-dash/parens; per token: env-only token → DROP; mode/runtime/strategy distinguisher → KEEP; mechanism payload like `GIT_TOKEN + .netrc` → KEEP). Concrete strategy-push-git example added. |
+| 3 | Axis M canonical choices (C3, C13) | §3 axis M, §5 Phase 4 | Container concept now uses a 5-row decision sub-table (dev/runtime/build/Zerops/new container — context-sensitive); per-occurrence review mandatory for HIGH-risk clusters #1/#2/#3; ≥50% sampling for cluster #4; 10% sampling only for cluster #5. |
+| 4 | Phase 5/6 ordering re-baseline (C4) | §5 Phase 6 ENTRY | Phase 6 atoms also touched by Phase 5 (notably `develop-verify-matrix`) MUST be re-baselined; prior `axis-b-candidates.md` numbers stale; regenerate to `axis-b-candidates-v2.md`. |
+| 5 | Phase 1 baselines, Phase 7 binds (C5) | §5 Phase 1 EXIT, §5 Phase 7 work-scope, §8 acceptance | Phase 1 establishes G5/G6 baseline only; Phase 7 re-runs G5 on post-followup binary AND G6 on post-followup corpus; SHIP gate cites Phase 7 re-runs (not Phase 1) as binding. |
+| 6 | G3 wording — coverage-gap closure (C6, C15) | §5 Phase 5 (split into 5.1 + 5.2), §5 Phase 7 step 3, §8 acceptance | G3 has TWO halves — redundancy AND coverage-gap. Phase 5.1 covers redundancy; Phase 5.2 covers coverage-gap on all 5 fixtures. simple-deployed Redundancy must move 2 → 3 (flat-at-2 fails refined G3). Phase 7 step 3 re-opens Phase 5 if any fixture's redundancy or coverage-gap is still flat. |
+| 7 | Cumulative body target arithmetic (C7) | §8 acceptance, §12 framing | Binding target = additional ≥6,000 B aggregate across 5 fixtures + cumulative ≥17,000 B aggregate across 5 fixtures. The "13 KB / 14-15 KB" numbers downgraded to forecast notes. First-deploy slice + off-probe rows are sub-targets, NOT SHIP-blocking on their own. |
+| 8 | Axis K DROP ledger (C8, C9) | §3 axis K (mitigation list), §5 Phase 2 work-scope + EXIT | New artifact `axis-k-drops-ledger.md` — one row per dropped leak with atom, exact pre-edit sentence, signal-check, reviewer status. Codex POST-WORK samples ALL HIGH/borderline rows + every LOW-risk DROP whose pre-edit sentence contains `no `, `never`, `do not`, SSHFS, container, local, SSH, git, deploy, or `zerops_*` tool name. |
+| 9 | Phase 1 deferred-exit conflict (C11) | §5 Phase 1 failure handling, §5 Phase 1 EXIT | Phase 1 may not EXIT under DEFERRED-WITH-JUSTIFICATION while plan's verdict ambition is clean SHIP. Genuine infra block forces (a) fix the infra OR (b) propose downgrade to SHIP-WITH-NOTES with user acknowledgement before Phase 2. |
+| 10 | Phase 6 MEDIUM list under-specified (C14) | §5 Phase 6 ENTRY | Phase 6 ENTRY MUST regenerate `axis-b-candidates-v2.md` as authoritative work-unit list naming all 14 MEDIUM-risk atoms by current state; prior `axis-b-candidates.md` from first cycle is starting input only. |
+| 11 | G5 wire-frame variance handling (C12) | §5 Phase 1 §1.1 failure handling | Variance > 50 bytes: proceed with content phases but G5 stays NEEDS-ROOT-CAUSE; final SHIP gate cannot pass G5 while NEEDS-ROOT-CAUSE; resolution = correct probe / widen threshold with evidence / downgrade to documented deferral. |
+
+**Re-validation requirement**: future fresh sessions reading this
+plan should treat §3, §5, §8, §12 as the binding rules. §16
+preserves the *why* trail; the in-place edits are the SOURCE OF
+TRUTH. Do NOT re-apply amendments — they are already in the body.
+
+**Codex citations spot-checked** (per memory rule
+`feedback_codex_verify_specific_claims.md`): 5 out of 5 sampled
+file:line claims verified exactly against the live corpus +
+plan text. See the verification appendix in the Codex round
+artifact for evidence.
