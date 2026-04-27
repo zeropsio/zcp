@@ -1,7 +1,7 @@
 # Phase 2 tracker — Cross-atom dedup
 
 Started: 2026-04-26
-Closed: open
+Closed: 2026-04-26
 
 > Phase contract per `plans/atom-corpus-hygiene-2026-04-26.md` §7
 > Phase 2 + §15.1 schema. Phase 2 dedups facts restated across 2+

@@ -1,7 +1,7 @@
 # Phase 0 tracker — Calibration
 
 Started: 2026-04-26
-Closed: open
+Closed: 2026-04-26
 
 > Phase contract per `plans/atom-corpus-hygiene-2026-04-26.md` §7 Phase 0 +
 > §15.1 schema. Every row's "final state" is non-empty before phase EXIT.
