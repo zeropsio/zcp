@@ -34,5 +34,5 @@ cautions on top:
 
 - **Mount recovery.** If the SSHFS mount goes stale after a deploy
   (stat/ls returns empty, writes hang), remount: `zerops_mount action="mount"`.
-- **Agent Browser** — `agent-browser.dev` is on the ZCP host; use it to
-  verify deployed web apps from the browser.
+- **Agent Browser** — `agent-browser.dev` is available on the ZCP host;
+  see `develop-verify-matrix` for the web verification path.

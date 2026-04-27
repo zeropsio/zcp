@@ -26,7 +26,7 @@ zerops_verify serviceHostname="{stage-hostname}"
 Cross-deploy packages the dev tree into stage with no second
 build; stage has a real `run.start` + `healthCheck`, so the
 platform auto-starts it (no `zerops_dev_server` on the stage
-side). See `develop-auto-close-semantics` — auto-close needs
-BOTH halves verified for standard pairs. If the dev server is
-already running after a code-only change, run `action=status`
-first; if `running: true`, skip `action=start`.
+side). See `develop-auto-close-semantics` for standard-pair close
+criteria. If the dev server is already running after a code-only
+change, run `action=status` first; if `running: true`, skip
+`action=start`.

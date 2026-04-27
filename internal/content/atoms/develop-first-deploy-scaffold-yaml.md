@@ -10,9 +10,8 @@ references-atoms: [develop-deploy-modes, develop-first-deploy-env-vars]
 
 ### Scaffold `zerops.yaml`
 
-Write `zerops.yaml` at the repository root before the first deploy —
-without it, `zerops_deploy` fails at the validation stage and you
-burn a deploy slot.
+Scaffold `zerops.yaml` before the first deploy. Root placement and
+`setup:` naming rules are in `develop-platform-rules-common`.
 
 **Shape (one `zerops:` block per runtime hostname the plan targets):**
 

@@ -42,8 +42,7 @@ Read the response:
 - `running: true` with `healthStatus: 5xx` → server runs but is
   broken; read logs and response body; do NOT restart (does not
   fix bugs). Edit code, then follow the mode-specific iteration
-  cadence (dev-mode: `action=restart`; simple/stage: `zerops_deploy`)
-  per `develop-change-drives-deploy`.
+  cadence in `develop-change-drives-deploy`.
 
 For workers with no HTTP surface (`port=0`, `healthPath=""`), skip
 HTTP status; call `zerops_logs` to confirm consumption.

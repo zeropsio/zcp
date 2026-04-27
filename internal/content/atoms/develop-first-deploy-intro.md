@@ -25,9 +25,8 @@ Flow for each never-deployed runtime:
    argument. Every first deploy uses the default push path;
    `strategy=git-push` requires `GIT_TOKEN` + committed code
    (container) or a configured git remote (local), neither ready yet.
-4. **Verify** (see `develop-verify-matrix` for per-service path). A
-   passing verify + successful deploy flips the envelope's
-   `deployed: true` on the next envelope build.
+4. **Verify** (see `develop-verify-matrix` for per-service path). Close
+   and completion semantics are in `develop-auto-close-semantics`.
 
 Don't skip to edits before the first deploy lands — SSHFS mounts can
 be empty and HTTP probes return errors before any code is delivered.

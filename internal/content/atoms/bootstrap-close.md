@@ -28,8 +28,7 @@ Develop runs the full code-and-deploy loop:
 1. Scaffold `zerops.yaml` driven by the planned runtimes.
 2. Write the application code that implements the user's intent.
 3. Run the first deploy and verify — services with `deployed: false`
-   enter the first-deploy branch; the envelope flips `deployed: true`
-   after a successful deploy + passing verify.
+   enter the first-deploy branch.
 4. Iterate on failures — stop after 5 unsuccessful attempts and escalate to the user.
 
 Direct tools (`zerops_scale`, `zerops_env`, `zerops_subdomain`,

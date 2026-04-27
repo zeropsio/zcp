@@ -12,9 +12,9 @@ When the app returns 500 / 502 / empty body, follow this order. Stop at
 whichever step resolves the error — do **not** default to
 `ssh {hostname} curl localhost` for diagnosis.
 
-1. **`zerops_verify serviceHostname="{hostname}"`** — runs the canonical
-   health probe (HEAD + `/health`/`/status`) and returns a structured
-   diagnosis. This is always the first step.
+1. **`zerops_verify serviceHostname="{hostname}"`** — start with the
+   canonical health probe and structured diagnosis; see
+   `develop-verify-matrix` for the full verify path.
 2. **Subdomain URL** — format is
    `https://{hostname}-${zeropsSubdomainHost}.prg1.zerops.app/` for static
    / implicit-webserver runtimes (php-nginx, nginx), `-{port}` appended

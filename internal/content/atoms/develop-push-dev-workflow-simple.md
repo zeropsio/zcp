@@ -20,4 +20,5 @@ zerops_deploy targetService="{hostname}" setup="prod"
 zerops_verify serviceHostname="{hostname}"
 ```
 
-Config-only changes still follow the same deploy path.
+Config-only changes still deploy; env-var live timing is in
+`develop-env-var-channels`.
