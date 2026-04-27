@@ -258,7 +258,7 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 		}
 		r.Brief, r.OK = &brief, true
 	case "build-subagent-prompt":
-		prompt, err := buildSubagentPromptForPhase(sess.Plan, sess.Parent, in, sess.Current)
+		prompt, err := buildSubagentPromptForPhase(sess.Plan, sess.Parent, in, sess.Current, sess.MountRoot)
 		if err != nil {
 			r.Error = err.Error()
 			return r

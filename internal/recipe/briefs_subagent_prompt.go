@@ -26,17 +26,27 @@ import (
 // the existing research-phase teaching, so no atom extension is
 // needed for the run-13 stretch.
 func buildSubagentPrompt(plan *Plan, parent *ParentRecipe, in RecipeInput) (string, error) {
-	return buildSubagentPromptForPhase(plan, parent, in, "")
+	return buildSubagentPromptForPhase(plan, parent, in, "", "")
 }
 
-// buildSubagentPromptForPhase is buildSubagentPrompt with the
-// session's current phase explicitly threaded so the BriefFeature
-// closing footer can teach a defensive re-dispatch sub-agent "the
-// session is already at phase=<currentPhase>; do not re-walk
-// research/provision/scaffold." Run-14 §C.2 (R-13-4) — features-2
-// in run-13 burned ~50s re-walking phase transitions after a
-// compaction-driven re-dispatch landed in a fresh sub-agent session.
-func buildSubagentPromptForPhase(plan *Plan, parent *ParentRecipe, in RecipeInput, currentPhase Phase) (string, error) {
+// buildSubagentPromptForPhase is buildSubagentPrompt with the session's
+// current phase explicitly threaded so the BriefFeature closing footer
+// can teach a defensive re-dispatch sub-agent "the session is already at
+// phase=<currentPhase>; do not re-walk research/provision/scaffold."
+// Run-14 §C.2 (R-13-4) — features-2 in run-13 burned ~50s re-walking
+// phase transitions after a compaction-driven re-dispatch landed in a
+// fresh sub-agent session.
+//
+// mountRoot is the recipes-mount path (typically Session.MountRoot) used
+// by the scaffold-kind branch to enumerate reachable recipe slugs in the
+// dispatched brief. Run-15 R-14-P-1 — run-14's stealth regression: the
+// scaffold brief composer had a Resolver-aware variant
+// (BuildScaffoldBriefWithResolver) but the production dispatch path
+// called the legacy non-resolver entry point, so dispatched scaffold
+// briefs never carried "## Recipe-knowledge slugs you may consult".
+// Empty mountRoot omits the section (matches the legacy unit-test
+// shape).
+func buildSubagentPromptForPhase(plan *Plan, parent *ParentRecipe, in RecipeInput, currentPhase Phase, mountRoot string) (string, error) {
 	if plan == nil {
 		return "", errors.New("buildSubagentPrompt: nil plan")
 	}
@@ -65,7 +75,7 @@ func buildSubagentPromptForPhase(plan *Plan, parent *ParentRecipe, in RecipeInpu
 		}
 	}
 
-	brief, err := buildBriefForKind(plan, parent, kind, cb)
+	brief, err := buildBriefForKind(plan, parent, kind, cb, mountRoot)
 	if err != nil {
 		return "", err
 	}
@@ -90,10 +100,20 @@ func buildSubagentPromptForPhase(plan *Plan, parent *ParentRecipe, in RecipeInpu
 // Session.BuildBrief but operates on plan + parent directly (no Session
 // dependency) so buildSubagentPrompt is callable from tests without a
 // full session.
-func buildBriefForKind(plan *Plan, parent *ParentRecipe, kind BriefKind, cb Codebase) (Brief, error) {
+//
+// mountRoot is the recipes-mount path threaded through to the scaffold
+// composer's Resolver. Empty mountRoot keeps the legacy non-resolver
+// shape (unit tests). Production callers pass Session.MountRoot so the
+// dispatched brief carries "## Recipe-knowledge slugs you may consult"
+// (run-15 R-14-P-1).
+func buildBriefForKind(plan *Plan, parent *ParentRecipe, kind BriefKind, cb Codebase, mountRoot string) (Brief, error) {
 	switch kind {
 	case BriefScaffold:
-		return BuildScaffoldBrief(plan, cb, parent)
+		var resolver *Resolver
+		if mountRoot != "" {
+			resolver = &Resolver{MountRoot: mountRoot}
+		}
+		return BuildScaffoldBriefWithResolver(plan, cb, parent, resolver)
 	case BriefFeature:
 		return BuildFeatureBrief(plan)
 	case BriefFinalize:
