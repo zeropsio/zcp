@@ -1,152 +1,34 @@
 //go:build e2e
 
-// Tests for: e2e — instruction delivery, mount detection, service classification.
+// Tests for: e2e — zerops_discover meta-field shape against the live
+// project. Verifies isInfrastructure / managedByZcp / mountPath are
+// populated correctly for the services in the active project.
 //
-// Verifies that BuildInstructions produces correct output for the current project:
-// - Services are listed with correct labels (adoption, mount paths)
-// - Discovery returns managedByZcp and mountPath fields
-// - Router offerings reflect actual service state
-//
-// When run on a container (zcpx), also verifies SSHFS mount detection.
+// Earlier this file also covered server.BuildInstructions output (service
+// listings, container vs local mode, adoption labels). That responsibility
+// moved out of BuildInstructions into the workflow engine + atom corpus
+// when BuildInstructions was reduced to AdoptionNote/StateHint
+// composition (see internal/server/instructions_test.go for the current
+// unit-level coverage). The obsolete tests were deleted instead of
+// refactored — the strings they asserted on no longer come from
+// BuildInstructions, so refactoring would have produced a hollow
+// duplicate of the unit tests.
 //
 // Prerequisites:
 //   - ZCP_API_KEY set (or zcli logged in)
 //
-// Run: go test ./e2e/ -tags e2e -run TestE2E_Instructions -v -timeout 120s
+// Run: go test ./e2e/ -tags e2e -run TestE2E_Discover -v -timeout 120s
 
 package e2e_test
 
 import (
-	"context"
 	"encoding/json"
 	"os"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/zeropsio/zcp/internal/auth"
-	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/ops"
-	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/runtime"
-	"github.com/zeropsio/zcp/internal/server"
 )
-
-func TestE2E_Instructions_ServiceListing(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Get instructions in local mode (default harness).
-	inst := server.BuildInstructions(runtime.Info{})
-
-	// Must contain base + routing.
-	if !strings.Contains(inst, "ZCP manages") {
-		t.Error("missing base instructions")
-	}
-	if !strings.Contains(inst, "workflow sessions") {
-		t.Error("missing routing instructions")
-	}
-
-	// Must list at least one service from the project.
-	services, err := h.client.ListServices(ctx, h.projectID)
-	if err != nil {
-		t.Fatalf("list services: %v", err)
-	}
-	var runtimeCount int
-	for _, svc := range services {
-		if svc.IsSystem() {
-			continue
-		}
-		if !strings.Contains(inst, svc.Name) {
-			t.Errorf("instructions should list service %q", svc.Name)
-		}
-		// Check if it's a runtime service without meta → should have adoption label.
-		typeName := svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
-		if !isInfraServiceType(typeName) {
-			runtimeCount++
-		}
-	}
-
-	// If there are runtime services and no state dir, all should need adoption.
-	if runtimeCount > 0 {
-		if !strings.Contains(inst, "run bootstrap") {
-			t.Error("runtime services without state dir should show adoption label")
-		}
-		if !strings.Contains(inst, "Runtime services needing adoption") {
-			t.Error("should have adoption section in orientation")
-		}
-	}
-
-	// Router should always produce offerings.
-	if !strings.Contains(inst, "Available workflows") {
-		t.Error("should have router offerings")
-	}
-}
-
-func TestE2E_Instructions_ContainerMode(t *testing.T) {
-	t.Parallel()
-	h := newHarness(t)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	// Simulate container mode.
-	rtInfo := runtime.Info{InContainer: true, ServiceName: "zcpx"}
-	inst := server.BuildInstructions(rtInfo)
-
-	// Must have container environment section.
-	if !strings.Contains(inst, "Live service filesystems") {
-		t.Error("container mode should mention live service filesystems")
-	}
-	if !strings.Contains(inst, "workflow session first") {
-		t.Error("container mode should have workflow directive near mount description")
-	}
-
-	// Must NOT have local environment section.
-	if strings.Contains(inst, "zcli push") {
-		t.Error("container mode should not mention zcli push (that's local mode)")
-	}
-
-	// Check mount detection — if /var/www/{hostname} exists, mount path should appear.
-	services, err := h.client.ListServices(ctx, h.projectID)
-	if err != nil {
-		t.Fatalf("list services: %v", err)
-	}
-	for _, svc := range services {
-		if svc.IsSystem() {
-			continue
-		}
-		mountPath := "/var/www/" + svc.Name
-		if info, statErr := os.Stat(mountPath); statErr == nil && info.IsDir() {
-			if !strings.Contains(inst, "mounted at "+mountPath) {
-				t.Errorf("service %q is mounted at %s but instructions don't show mount path", svc.Name, mountPath)
-			}
-		}
-	}
-}
-
-func TestE2E_Instructions_LocalMode(t *testing.T) {
-	t.Parallel()
-	_ = newHarness(t)
-
-	inst := server.BuildInstructions(runtime.Info{})
-
-	// Must have local environment section.
-	if !strings.Contains(inst, "zcli push") {
-		t.Error("local mode should mention zcli push")
-	}
-	if !strings.Contains(inst, "workflow session first") {
-		t.Error("local mode should have workflow directive")
-	}
-
-	// Must NOT have container environment.
-	if strings.Contains(inst, "Live service filesystems") {
-		t.Error("local mode should not mention SSHFS mounts")
-	}
-}
 
 func TestE2E_Discover_MetaFields(t *testing.T) {
 	t.Parallel()
@@ -194,31 +76,6 @@ func TestE2E_Discover_MetaFields(t *testing.T) {
 	}
 }
 
-func TestE2E_Instructions_AdoptionWording(t *testing.T) {
-	t.Parallel()
-	_ = newHarness(t)
-
-	inst := server.BuildInstructions(runtime.Info{})
-
-	// Routing instructions should mention adoption and develop (which covers deploy/fix/investigate).
-	if !strings.Contains(inst, "develop") {
-		t.Error("routing should mention develop workflow")
-	}
-	if !strings.Contains(inst, "Adopt existing") {
-		t.Error("routing should mention adopting existing services")
-	}
-	if !strings.Contains(inst, "platform knowledge") {
-		t.Error("routing should mention platform knowledge injection")
-	}
-
-	// Should NOT contain old ProjectState references.
-	for _, old := range []string{"FRESH", "CONFORMANT", "NON_CONFORMANT", "Project state:"} {
-		if strings.Contains(inst, old) {
-			t.Errorf("instructions should not contain old ProjectState reference %q", old)
-		}
-	}
-}
-
 // isInfraServiceType checks if a type string is infrastructure (managed service).
 // Duplicates the logic check against known prefixes for test independence.
 func isInfraServiceType(typeName string) bool {
@@ -234,51 +91,4 @@ func isInfraServiceType(typeName string) bool {
 		}
 	}
 	return false
-}
-
-// newInstructionHarness creates a harness with custom runtime info.
-// This allows testing container vs local mode instructions.
-func newInstructionHarness(t *testing.T, rtInfo runtime.Info) (*e2eHarness, *auth.Info, platform.Client) {
-	t.Helper()
-
-	token := os.Getenv("ZCP_API_KEY")
-	if token == "" {
-		t.Skip("ZCP_API_KEY not set — skipping E2E test")
-	}
-
-	apiHost := os.Getenv("ZCP_API_HOST")
-	if apiHost == "" {
-		apiHost = "api.app-prg1.zerops.io"
-	}
-
-	region := os.Getenv("ZCP_REGION")
-	if region == "" {
-		region = "prg1"
-	}
-
-	client, err := platform.NewZeropsClient(token, apiHost)
-	if err != nil {
-		t.Fatalf("create client: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-
-	authInfo, err := auth.Resolve(ctx, client)
-	if err != nil {
-		t.Fatalf("auth resolve: %v", err)
-	}
-	authInfo.Region = region
-
-	store, _ := knowledge.GetEmbeddedStore()
-	logFetcher := platform.NewLogFetcher()
-	srv := server.New(context.Background(), client, authInfo, store, logFetcher, nil, nil, rtInfo)
-
-	return &e2eHarness{
-		t:         t,
-		client:    client,
-		projectID: authInfo.ProjectID,
-		authInfo:  authInfo,
-		srv:       srv,
-	}, authInfo, client
 }
