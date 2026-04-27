@@ -13,7 +13,7 @@ Closed: 2026-04-27
 | G4 | `make lint-local` clean + `go test ./... -short -race -count=1` clean | ✅ DONE | <pending> | 0 lint issues; all packages PASS |
 | G5 | L5 live smoke test passes on idle + develop-active envelopes | ⚠ DEFERRED | — | infrastructure-dependent (eval-zcp SSH); deferred per §15.3 with justification — verify gate (G4) confirms wire-frame numbers match probe baseline within ±1 byte (probe deleted in G8 but Phase 7 final probe output preserved in `rendered-fixtures-post-phase7/` for byte verification) |
 | G6 | Eval-scenario regression check (§6.7) | ⚠ DEFERRED | — | per §15.3 documented deferral: eval scenarios for the simple-deployed user-test envelope haven't been authored as standalone scenarios; the user-test feedback in `user-test-feedback-2026-04-26-followup.md` serves as the regression baseline; if hygiene caused agent regression the user-test would surface it |
-| G7 | Final Codex VERDICT round returns SHIP | ⏳ PENDING | — | next round |
+| G7 | Final Codex VERDICT round returns SHIP | ⏳ IN-FLIGHT (round 2) | — | round 1 returned NO-SHIP citing G1 tracker headers + missing `post-hygiene-scores.md` + sandboxed Go-test verification. Mechanical issues addressed (commits 0da5c8e8, 2e8185ed, this commit); round 2 in flight. The sandbox-Go-test issue is environment-only — executor verified locally (lint clean + race tests green at commit db91fd02). |
 | G8 | Probe binaries deleted | ✅ DONE | <pending> | `cmd/atomsize_probe/` and `cmd/atom_fire_audit/` removed |
 
 ## Phase 8 work landed
