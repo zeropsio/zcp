@@ -1173,6 +1173,24 @@ func TestWriteBootstrapOutputs_ExpansionPreservesExistingFields(t *testing.T) {
 	if got.FirstDeployedAt != existing.FirstDeployedAt {
 		t.Errorf("FirstDeployedAt: got %q, want %q (must be preserved)", got.FirstDeployedAt, existing.FirstDeployedAt)
 	}
+
+	// New per-pair dimensions: existing meta was seeded WITHOUT these
+	// fields populated, so migrateOldMeta during the existing-read
+	// derives them from the legacy DeployStrategy=push-git +
+	// FirstDeployedAt set. mergeExistingMeta carries the migrated values
+	// into the upgraded meta.
+	if got.CloseDeployMode != topology.CloseModeGitPush {
+		t.Errorf("CloseDeployMode: got %q, want %q (migrated from legacy push-git, preserved through expansion)", got.CloseDeployMode, topology.CloseModeGitPush)
+	}
+	if !got.CloseDeployModeConfirmed {
+		t.Error("CloseDeployModeConfirmed lost — should mirror StrategyConfirmed via migrate, then preserve through expansion")
+	}
+	if got.GitPushState != topology.GitPushConfigured {
+		t.Errorf("GitPushState: got %q, want %q (push-git + FirstDeployedAt set → configured)", got.GitPushState, topology.GitPushConfigured)
+	}
+	if got.BuildIntegration != topology.BuildIntegrationNone {
+		t.Errorf("BuildIntegration: got %q, want %q (no PushGitTrigger seeded → none)", got.BuildIntegration, topology.BuildIntegrationNone)
+	}
 }
 
 // TestWriteProvisionMetas_ExpansionPreservesExistingFields covers the
@@ -1248,6 +1266,12 @@ func TestWriteProvisionMetas_ExpansionPreservesExistingFields(t *testing.T) {
 // StageHostname) stay as set on the new meta; preserved fields come from
 // the existing meta. Unit test so regressions in the helper surface here
 // instead of only in the integration paths above.
+//
+// Phase 2 of the deploy-strategy decomposition extended the preserved
+// set: the new per-pair dimensions (CloseDeployMode +
+// CloseDeployModeConfirmed + GitPushState + RemoteURL + BuildIntegration)
+// AND the legacy strategy fields all carry through expansion. The legacy
+// fields are kept until Phase 10 deletes them post-migration.
 func TestMergeExistingMeta(t *testing.T) {
 	t.Parallel()
 
@@ -1255,14 +1279,26 @@ func TestMergeExistingMeta(t *testing.T) {
 		Hostname:      "appdev",
 		Mode:          topology.PlanModeStandard, // upgrade
 		StageHostname: "appstage",                // upgrade
+		// Defaults written by writeBootstrapOutputs / writeProvisionMetas
+		// for fresh bootstrap targets — the merge must overwrite these
+		// with the existing values.
+		CloseDeployMode:  topology.CloseModeUnset,
+		GitPushState:     topology.GitPushUnconfigured,
+		BuildIntegration: topology.BuildIntegrationNone,
 	}
 	existing := &ServiceMeta{
-		Hostname:          "appdev",
-		Mode:              topology.PlanModeDev,
-		BootstrappedAt:    "2026-01-15",
-		DeployStrategy:    topology.StrategyPushGit,
-		StrategyConfirmed: true,
-		FirstDeployedAt:   "2026-01-16T10:00:00Z",
+		Hostname:                 "appdev",
+		Mode:                     topology.PlanModeDev,
+		BootstrappedAt:           "2026-01-15",
+		DeployStrategy:           topology.StrategyPushGit,
+		PushGitTrigger:           topology.TriggerWebhook,
+		StrategyConfirmed:        true,
+		FirstDeployedAt:          "2026-01-16T10:00:00Z",
+		CloseDeployMode:          topology.CloseModeGitPush,
+		CloseDeployModeConfirmed: true,
+		GitPushState:             topology.GitPushConfigured,
+		RemoteURL:                "https://github.com/example/app.git",
+		BuildIntegration:         topology.BuildIntegrationWebhook,
 	}
 
 	mergeExistingMeta(meta, existing)
@@ -1276,13 +1312,81 @@ func TestMergeExistingMeta(t *testing.T) {
 	if meta.BootstrappedAt != "2026-01-15" {
 		t.Errorf("BootstrappedAt not preserved: got %q", meta.BootstrappedAt)
 	}
+	if meta.FirstDeployedAt != "2026-01-16T10:00:00Z" {
+		t.Errorf("FirstDeployedAt not preserved: got %q", meta.FirstDeployedAt)
+	}
+	// New per-pair dimensions preserved.
+	if meta.CloseDeployMode != topology.CloseModeGitPush {
+		t.Errorf("CloseDeployMode not preserved: got %q", meta.CloseDeployMode)
+	}
+	if !meta.CloseDeployModeConfirmed {
+		t.Error("CloseDeployModeConfirmed not preserved")
+	}
+	if meta.GitPushState != topology.GitPushConfigured {
+		t.Errorf("GitPushState not preserved: got %q", meta.GitPushState)
+	}
+	if meta.RemoteURL != "https://github.com/example/app.git" {
+		t.Errorf("RemoteURL not preserved: got %q", meta.RemoteURL)
+	}
+	if meta.BuildIntegration != topology.BuildIntegrationWebhook {
+		t.Errorf("BuildIntegration not preserved: got %q", meta.BuildIntegration)
+	}
+	// Legacy fields preserved through migration window.
 	if meta.DeployStrategy != topology.StrategyPushGit {
 		t.Errorf("DeployStrategy not preserved: got %q", meta.DeployStrategy)
+	}
+	if meta.PushGitTrigger != topology.TriggerWebhook {
+		t.Errorf("PushGitTrigger not preserved: got %q", meta.PushGitTrigger)
 	}
 	if !meta.StrategyConfirmed {
 		t.Error("StrategyConfirmed not preserved")
 	}
-	if meta.FirstDeployedAt != "2026-01-16T10:00:00Z" {
-		t.Errorf("FirstDeployedAt not preserved: got %q", meta.FirstDeployedAt)
+}
+
+// TestWriteBootstrapOutputs_WritesDeployDecompDefaults pins that fresh
+// bootstrap targets land on disk with the Phase 2 defaults populated:
+// CloseDeployMode=unset, GitPushState=unconfigured, BuildIntegration=none.
+// Without explicit bootstrap-side initialization, fresh metas would only
+// pick up these defaults via migrate at read time — relying on a
+// read-time normalization where bootstrap can write the canonical
+// vocabulary directly is fragile, so the plan §6 step 4 mandates explicit
+// writes. This test pins that contract.
+func TestWriteBootstrapOutputs_WritesDeployDecompDefaults(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	eng := NewEngine(dir, EnvContainer, nil)
+
+	if _, err := eng.BootstrapStart("proj-1", "phase 2 defaults"); err != nil {
+		t.Fatalf("BootstrapStart: %v", err)
+	}
+	if _, err := eng.BootstrapCompletePlan([]BootstrapTarget{{
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
+	}}, nil, nil); err != nil {
+		t.Fatalf("BootstrapCompletePlan: %v", err)
+	}
+	for _, step := range []string{"provision", "close"} {
+		if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" ok", nil); err != nil {
+			t.Fatalf("BootstrapComplete(%s): %v", step, err)
+		}
+	}
+
+	meta, err := ReadServiceMeta(dir, "appdev")
+	if err != nil || meta == nil {
+		t.Fatalf("ReadServiceMeta: meta=%v err=%v", meta, err)
+	}
+	if meta.CloseDeployMode != topology.CloseModeUnset {
+		t.Errorf("CloseDeployMode: got %q, want %q", meta.CloseDeployMode, topology.CloseModeUnset)
+	}
+	if meta.GitPushState != topology.GitPushUnconfigured {
+		t.Errorf("GitPushState: got %q, want %q", meta.GitPushState, topology.GitPushUnconfigured)
+	}
+	if meta.BuildIntegration != topology.BuildIntegrationNone {
+		t.Errorf("BuildIntegration: got %q, want %q", meta.BuildIntegration, topology.BuildIntegrationNone)
+	}
+	if meta.CloseDeployModeConfirmed {
+		t.Error("CloseDeployModeConfirmed must be false on fresh bootstrap")
+	}
+	if meta.RemoteURL != "" {
+		t.Errorf("RemoteURL must stay empty on fresh bootstrap, got %q", meta.RemoteURL)
 	}
 }

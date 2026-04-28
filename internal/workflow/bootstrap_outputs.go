@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // writeBootstrapOutputs writes final service meta files and appends a reflog entry.
@@ -13,10 +15,13 @@ import (
 //
 // Mode-expansion path: when the plan upgrades an existing runtime's
 // bootstrapMode (dev/simple → standard) with IsExisting=true, the existing
-// ServiceMeta is merged rather than overwritten — BootstrappedAt,
-// DeployStrategy, StrategyConfirmed, FirstDeployedAt are preserved so the
-// user's prior choices (and deploy history) survive the mode upgrade.
-// See §9.1 of spec-workflows.md.
+// ServiceMeta is merged rather than overwritten — BootstrappedAt, the new
+// per-pair dimensions (CloseDeployMode + CloseDeployModeConfirmed +
+// GitPushState + RemoteURL + BuildIntegration), the legacy strategy fields
+// (DeployStrategy + PushGitTrigger + StrategyConfirmed, kept through the
+// migration window), and FirstDeployedAt are preserved so the user's prior
+// choices and deploy history survive the mode upgrade. See §9.1 of
+// spec-workflows.md.
 func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 	if state.Bootstrap == nil || state.Bootstrap.Plan == nil {
 		return
@@ -42,6 +47,9 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 			Hostname:         metaHostname,
 			Mode:             mode,
 			StageHostname:    stageHostname,
+			CloseDeployMode:  topology.CloseModeUnset,
+			GitPushState:     topology.GitPushUnconfigured,
+			BuildIntegration: topology.BuildIntegrationNone,
 			DeployStrategy:   "",
 			BootstrapSession: bootstrapSession,
 			BootstrappedAt:   now,
@@ -99,6 +107,9 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 			Hostname:         metaHostname,
 			Mode:             target.Runtime.EffectiveMode(),
 			StageHostname:    stageHostname,
+			CloseDeployMode:  topology.CloseModeUnset,
+			GitPushState:     topology.GitPushUnconfigured,
+			BuildIntegration: topology.BuildIntegrationNone,
 			BootstrapSession: bootstrapSession,
 		}
 
@@ -114,14 +125,29 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 	}
 }
 
-// mergeExistingMeta preserves user-authored fields (BootstrappedAt,
-// DeployStrategy, StrategyConfirmed, FirstDeployedAt) on meta during a
+// mergeExistingMeta preserves user-authored fields on meta during a
 // mode-expansion write so a dev→standard upgrade doesn't silently clear
 // the user's strategy choice or reset deploy history. Mode and
 // StageHostname come from the plan and are left untouched.
+//
+// Preserves the new per-pair dimensions (CloseDeployMode +
+// CloseDeployModeConfirmed + GitPushState + RemoteURL + BuildIntegration —
+// post-decomposition shape) AND the legacy strategy fields (DeployStrategy
+// + PushGitTrigger + StrategyConfirmed) during the migration window. Both
+// are needed because parseMeta runs migrateOldMeta on the existing read,
+// so existing already has the new fields populated; the legacy fields stay
+// on disk until Phase 10 of the decomposition plan deletes them.
 func mergeExistingMeta(meta, existing *ServiceMeta) {
 	meta.BootstrappedAt = existing.BootstrappedAt
-	meta.DeployStrategy = existing.DeployStrategy
-	meta.StrategyConfirmed = existing.StrategyConfirmed
 	meta.FirstDeployedAt = existing.FirstDeployedAt
+
+	meta.CloseDeployMode = existing.CloseDeployMode
+	meta.CloseDeployModeConfirmed = existing.CloseDeployModeConfirmed
+	meta.GitPushState = existing.GitPushState
+	meta.RemoteURL = existing.RemoteURL
+	meta.BuildIntegration = existing.BuildIntegration
+
+	meta.DeployStrategy = existing.DeployStrategy
+	meta.PushGitTrigger = existing.PushGitTrigger
+	meta.StrategyConfirmed = existing.StrategyConfirmed
 }

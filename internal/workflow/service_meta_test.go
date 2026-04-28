@@ -990,3 +990,219 @@ func TestServiceMeta_IsAdopted(t *testing.T) {
 		})
 	}
 }
+
+// TestMigrateOldMeta pins the legacy → new field mapping for the
+// deploy-strategy decomposition (Phase 2 of plan
+// plans/deploy-strategy-decomposition-2026-04-28.md).
+//
+// Truth table covers every combination of (DeployStrategy ×
+// PushGitTrigger) plus the GitPushState heuristic dimension
+// (FirstDeployedAt set / unset on push-git) and StrategyConfirmed
+// propagation. The migrate contract is:
+//
+//   - DeployStrategy → CloseDeployMode
+//     "" / unset → CloseModeUnset
+//     push-dev   → CloseModeAuto
+//     push-git   → CloseModeGitPush
+//     manual     → CloseModeManual
+//   - PushGitTrigger → BuildIntegration
+//     "" / unset → BuildIntegrationNone
+//     webhook    → BuildIntegrationWebhook
+//     actions    → BuildIntegrationActions
+//   - GitPushState heuristic
+//     push-git AND FirstDeployedAt set → GitPushConfigured
+//     push-git AND no FirstDeployedAt  → GitPushUnknown (probe needed)
+//     anything else                     → GitPushUnconfigured
+//   - StrategyConfirmed=true → CloseDeployModeConfirmed=true
+//   - Legacy fields (DeployStrategy / PushGitTrigger / StrategyConfirmed)
+//     are PRESERVED on the meta — kept on disk through the migration
+//     window; deleted in Phase 10.
+//
+// Idempotency + non-overwrite of explicit user writes are pinned by
+// separate sibling tests below.
+func TestMigrateOldMeta(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name              string
+		deployStrategy    topology.DeployStrategy
+		pushGitTrigger    topology.PushGitTrigger
+		strategyConfirmed bool
+		firstDeployedAt   string
+		wantCloseMode     topology.CloseDeployMode
+		wantBuildInt      topology.BuildIntegration
+		wantGitPushState  topology.GitPushState
+		wantConfirmed     bool
+	}{
+		// 4×3 truth table — DeployStrategy × PushGitTrigger, FirstDeployedAt empty
+		{"empty_x_empty", "", "", false, "", topology.CloseModeUnset, topology.BuildIntegrationNone, topology.GitPushUnconfigured, false},
+		{"empty_x_webhook", "", topology.TriggerWebhook, false, "", topology.CloseModeUnset, topology.BuildIntegrationWebhook, topology.GitPushUnconfigured, false},
+		{"empty_x_actions", "", topology.TriggerActions, false, "", topology.CloseModeUnset, topology.BuildIntegrationActions, topology.GitPushUnconfigured, false},
+		{"pushdev_x_empty", topology.StrategyPushDev, "", false, "", topology.CloseModeAuto, topology.BuildIntegrationNone, topology.GitPushUnconfigured, false},
+		{"pushdev_x_webhook", topology.StrategyPushDev, topology.TriggerWebhook, false, "", topology.CloseModeAuto, topology.BuildIntegrationWebhook, topology.GitPushUnconfigured, false},
+		{"pushdev_x_actions", topology.StrategyPushDev, topology.TriggerActions, false, "", topology.CloseModeAuto, topology.BuildIntegrationActions, topology.GitPushUnconfigured, false},
+		{"pushgit_x_empty", topology.StrategyPushGit, "", false, "", topology.CloseModeGitPush, topology.BuildIntegrationNone, topology.GitPushUnknown, false},
+		{"pushgit_x_webhook", topology.StrategyPushGit, topology.TriggerWebhook, false, "", topology.CloseModeGitPush, topology.BuildIntegrationWebhook, topology.GitPushUnknown, false},
+		{"pushgit_x_actions", topology.StrategyPushGit, topology.TriggerActions, false, "", topology.CloseModeGitPush, topology.BuildIntegrationActions, topology.GitPushUnknown, false},
+		{"manual_x_empty", topology.StrategyManual, "", false, "", topology.CloseModeManual, topology.BuildIntegrationNone, topology.GitPushUnconfigured, false},
+		{"manual_x_webhook", topology.StrategyManual, topology.TriggerWebhook, false, "", topology.CloseModeManual, topology.BuildIntegrationWebhook, topology.GitPushUnconfigured, false},
+		{"manual_x_actions", topology.StrategyManual, topology.TriggerActions, false, "", topology.CloseModeManual, topology.BuildIntegrationActions, topology.GitPushUnconfigured, false},
+
+		// GitPushState heuristic: push-git + FirstDeployedAt set → configured
+		{"pushgit_with_firstDeployedAt", topology.StrategyPushGit, topology.TriggerWebhook, false, "2026-04-01", topology.CloseModeGitPush, topology.BuildIntegrationWebhook, topology.GitPushConfigured, false},
+		{"pushgit_no_trigger_with_firstDeployedAt", topology.StrategyPushGit, "", false, "2026-04-01", topology.CloseModeGitPush, topology.BuildIntegrationNone, topology.GitPushConfigured, false},
+
+		// StrategyConfirmed propagation
+		{"pushdev_strategyConfirmed", topology.StrategyPushDev, "", true, "", topology.CloseModeAuto, topology.BuildIntegrationNone, topology.GitPushUnconfigured, true},
+		{"pushgit_strategyConfirmed_with_first", topology.StrategyPushGit, topology.TriggerWebhook, true, "2026-04-01", topology.CloseModeGitPush, topology.BuildIntegrationWebhook, topology.GitPushConfigured, true},
+
+		// Typed StrategyUnset / TriggerUnset round-trip to defaults
+		{"strategyUnset_typed", topology.StrategyUnset, "", false, "", topology.CloseModeUnset, topology.BuildIntegrationNone, topology.GitPushUnconfigured, false},
+		{"trigger_unset_typed", topology.StrategyPushDev, topology.TriggerUnset, false, "", topology.CloseModeAuto, topology.BuildIntegrationNone, topology.GitPushUnconfigured, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			meta := &ServiceMeta{
+				Hostname:          "appdev",
+				DeployStrategy:    tc.deployStrategy,
+				PushGitTrigger:    tc.pushGitTrigger,
+				StrategyConfirmed: tc.strategyConfirmed,
+				FirstDeployedAt:   tc.firstDeployedAt,
+			}
+			migrateOldMeta(meta)
+
+			if meta.CloseDeployMode != tc.wantCloseMode {
+				t.Errorf("CloseDeployMode = %q, want %q", meta.CloseDeployMode, tc.wantCloseMode)
+			}
+			if meta.BuildIntegration != tc.wantBuildInt {
+				t.Errorf("BuildIntegration = %q, want %q", meta.BuildIntegration, tc.wantBuildInt)
+			}
+			if meta.GitPushState != tc.wantGitPushState {
+				t.Errorf("GitPushState = %q, want %q", meta.GitPushState, tc.wantGitPushState)
+			}
+			if meta.CloseDeployModeConfirmed != tc.wantConfirmed {
+				t.Errorf("CloseDeployModeConfirmed = %v, want %v", meta.CloseDeployModeConfirmed, tc.wantConfirmed)
+			}
+			// RemoteURL stays empty per plan §3.4 Scenario F (data lost; fills on next push/probe).
+			if meta.RemoteURL != "" {
+				t.Errorf("RemoteURL must stay empty on migration, got %q", meta.RemoteURL)
+			}
+			// Legacy fields preserved during migration window (Phase 10 deletion target).
+			if meta.DeployStrategy != tc.deployStrategy {
+				t.Errorf("legacy DeployStrategy lost: got %q, want %q", meta.DeployStrategy, tc.deployStrategy)
+			}
+			if meta.PushGitTrigger != tc.pushGitTrigger {
+				t.Errorf("legacy PushGitTrigger lost: got %q, want %q", meta.PushGitTrigger, tc.pushGitTrigger)
+			}
+			if meta.StrategyConfirmed != tc.strategyConfirmed {
+				t.Errorf("legacy StrategyConfirmed lost: got %v, want %v", meta.StrategyConfirmed, tc.strategyConfirmed)
+			}
+		})
+	}
+}
+
+// TestMigrateOldMeta_Idempotent pins that running migrate twice on the
+// same meta is a no-op. Every field guard inside migrateOldMeta is
+// "new field is empty"; the second call observes already-populated
+// fields and exits without changes. Critical for parseMeta hook safety
+// — multiple callers reading the same on-disk meta must converge on
+// identical in-memory state.
+func TestMigrateOldMeta_Idempotent(t *testing.T) {
+	t.Parallel()
+	meta := &ServiceMeta{
+		Hostname:        "appdev",
+		DeployStrategy:  topology.StrategyPushGit,
+		PushGitTrigger:  topology.TriggerWebhook,
+		FirstDeployedAt: "2026-04-01",
+	}
+	migrateOldMeta(meta)
+	first := *meta
+	migrateOldMeta(meta)
+	if *meta != first {
+		t.Errorf("migrateOldMeta is not idempotent\nfirst:  %+v\nsecond: %+v", first, *meta)
+	}
+}
+
+// TestMigrateOldMeta_DoesNotOverwriteExplicitNewFields pins the
+// non-overwrite contract: when a meta already has the new fields
+// populated (e.g. user explicitly chose CloseDeployMode=manual via
+// `action=close-mode`), migrate MUST NOT replace those values with
+// whatever the legacy DeployStrategy field would map to. This is the
+// load-bearing guard that lets the new vocabulary supersede legacy
+// reads without reverting on every parseMeta cycle.
+func TestMigrateOldMeta_DoesNotOverwriteExplicitNewFields(t *testing.T) {
+	t.Parallel()
+	meta := &ServiceMeta{
+		Hostname:                 "appdev",
+		DeployStrategy:           topology.StrategyPushDev, // legacy says auto
+		CloseDeployMode:          topology.CloseModeManual, // user explicitly chose manual
+		CloseDeployModeConfirmed: true,
+		PushGitTrigger:           topology.TriggerActions,          // legacy says actions
+		BuildIntegration:         topology.BuildIntegrationWebhook, // user explicitly chose webhook
+		GitPushState:             topology.GitPushConfigured,
+	}
+	migrateOldMeta(meta)
+	if meta.CloseDeployMode != topology.CloseModeManual {
+		t.Errorf("explicit CloseDeployMode overwritten: got %q", meta.CloseDeployMode)
+	}
+	if !meta.CloseDeployModeConfirmed {
+		t.Errorf("CloseDeployModeConfirmed cleared")
+	}
+	if meta.BuildIntegration != topology.BuildIntegrationWebhook {
+		t.Errorf("explicit BuildIntegration overwritten: got %q", meta.BuildIntegration)
+	}
+	if meta.GitPushState != topology.GitPushConfigured {
+		t.Errorf("explicit GitPushState overwritten: got %q", meta.GitPushState)
+	}
+}
+
+// TestMigrateOldMeta_NilSafe pins the nil-safe guard. The helper is
+// called on every parseMeta result; a nil pointer must not panic.
+func TestMigrateOldMeta_NilSafe(t *testing.T) {
+	t.Parallel()
+	var nilMeta *ServiceMeta
+	migrateOldMeta(nilMeta) // must not panic — defensive guard
+}
+
+// TestParseMeta_AppliesMigration pins that the parseMeta integration
+// point runs migrateOldMeta before returning. Confirms the hook covers
+// every read path (ReadServiceMeta + ListServiceMetas + FindServiceMeta
+// all go through parseMeta — see service_meta.go::parseMeta doc-comment).
+// Codex PRE-WORK Bonus surfacing: if the migration only hooked
+// ReadServiceMeta, router/envelope (which uses ListServiceMetas →
+// ManagedRuntimeIndex) would see un-migrated metas and silently corrupt
+// state.
+func TestParseMeta_AppliesMigration(t *testing.T) {
+	t.Parallel()
+	// Simulate an on-disk legacy meta — only DeployStrategy + PushGitTrigger
+	// populated, no new dimension fields.
+	jsonBytes := []byte(`{
+		"hostname": "appdev",
+		"mode": "standard",
+		"stageHostname": "appstage",
+		"deployStrategy": "push-git",
+		"pushGitTrigger": "webhook",
+		"strategyConfirmed": true,
+		"bootstrapSession": "sess1",
+		"bootstrappedAt": "2026-03-15",
+		"firstDeployedAt": "2026-03-20"
+	}`)
+	meta, err := parseMeta(jsonBytes)
+	if err != nil {
+		t.Fatalf("parseMeta: %v", err)
+	}
+	if meta.CloseDeployMode != topology.CloseModeGitPush {
+		t.Errorf("parseMeta did not migrate CloseDeployMode (got %q)", meta.CloseDeployMode)
+	}
+	if meta.BuildIntegration != topology.BuildIntegrationWebhook {
+		t.Errorf("parseMeta did not migrate BuildIntegration (got %q)", meta.BuildIntegration)
+	}
+	if meta.GitPushState != topology.GitPushConfigured {
+		t.Errorf("parseMeta did not migrate GitPushState (got %q)", meta.GitPushState)
+	}
+	if !meta.CloseDeployModeConfirmed {
+		t.Errorf("parseMeta did not migrate CloseDeployModeConfirmed")
+	}
+}
