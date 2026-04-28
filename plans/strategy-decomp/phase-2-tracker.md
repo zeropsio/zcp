@@ -1,7 +1,7 @@
 # Phase 2 tracker — ServiceMeta migration
 
 Started: 2026-04-28
-Closed: 2026-04-28 (Phase 2 EXIT commit `2a1a890b` + tracker EXIT, this commit); Phase 3 pending user go
+Closed: 2026-04-28 (Phase 2 EXIT commits `2a1a890b` + `4c61ba39`); Phase 3 pending user go
 
 > Phase contract per `plans/deploy-strategy-decomposition-2026-04-28.md`
 > §6 Phase 2. Risk classification: MEDIUM (load-bearing migration). Codex
@@ -117,10 +117,10 @@ Per §5 Phase 2 EXIT contract: APPROVE → proceed to Phase 3 on user go.
 | 12 | TestWriteBootstrapOutputs_ExpansionPreservesExistingFields extended | partial | DONE | `2a1a890b` | migrated values survive expansion-merge |
 | 13 | gofmt re-align after struct insert | unformatted | DONE | `2a1a890b` | bootstrap_outputs_test.go + service_meta_test.go |
 | 14 | verify gate (lint-fast + go test ./... -short -count=1) | green pre-changes | DONE — 0 lint issues, all packages PASS | `2a1a890b` | including 18 truth-table rows + 4 sibling guards |
-| 15 | Phase 2 POST-WORK Codex round | not run | DONE — APPROVE (zero amendments) | TBD (this commit) | output captured in `codex-round-p2-postwork.md` |
+| 15 | Phase 2 POST-WORK Codex round | not run | DONE — APPROVE (zero amendments) | `4c61ba39` | output captured in `codex-round-p2-postwork.md` |
 | 16 | apply amendments (if NEEDS-REVISION) | n/a | N/A — APPROVE, no amendments | n/a | Codex returned PASS on every question |
-| 17 | final local gate per Codex note (-race) | unrun | DONE — PASS in 1.518s, race-detector clean | TBD (this commit) | mitigates Codex sandbox restriction |
-| 18 | author phase-2-tracker.md + commit | absent | DONE | TBD (this commit) | bookkeeping closes Phase 2 |
+| 17 | final local gate per Codex note (-race) | unrun | DONE — PASS in 1.518s, race-detector clean | `4c61ba39` | mitigates Codex sandbox restriction |
+| 18 | author phase-2-tracker.md + commit | absent | DONE | `4c61ba39` | bookkeeping closes Phase 2 |
 
 ## Phase 2 EXIT (§6)
 
@@ -136,7 +136,7 @@ Per §5 Phase 2 EXIT contract: APPROVE → proceed to Phase 3 on user go.
 ## §15.2 EXIT enforcement (inherited schema)
 
 - [x] Every sub-pass row above has non-empty final state.
-- [x] Every row that took action cites a commit hash (rows 1-14 → `2a1a890b`; rows 15-18 → this commit).
+- [x] Every row that took action cites a commit hash (rows 1-14 → `2a1a890b`; rows 15-18 → `4c61ba39`).
 - [x] Codex round outcome cited (`codex-round-p2-postwork.md` + summary in §Codex rounds).
 - [x] `Closed:` 2026-04-28.
 
