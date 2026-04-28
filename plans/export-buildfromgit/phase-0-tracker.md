@@ -1,7 +1,7 @@
 # Phase 0 tracker — Calibration
 
 Started: 2026-04-28
-Closed: 2026-04-28 (Phase 0 EXIT commit pending below); Phase 1 paused awaiting user go per session instruction
+Closed: 2026-04-28 (Phase 0 EXIT commit `eed181ba`); Phase 1 paused awaiting user go per session instruction
 
 > Phase contract per `plans/export-buildfromgit-2026-04-28.md` §6 Phase 0.
 > EXIT criteria: baseline files committed, Codex PRE-WORK APPROVE (or
@@ -116,7 +116,7 @@ No structural redesign required. Plan phase order is preserved.
 - [x] All three round transcripts persisted.
 - [x] Plan amendments folded in-place; new §13 synthesis section added.
 - [x] `phase-0-tracker.md` finalized.
-- [ ] Phase 0 EXIT commit (single commit closing Phase 0 — see commit hash below once made).
+- [x] Phase 0 EXIT commit `eed181ba` (single commit closing Phase 0).
 - [ ] User explicit go to enter Phase 1 (per session instruction: pause after PRE-WORK APPROVE).
 
 ### §15.2 EXIT enforcement (inherited from sister-plan schema)
