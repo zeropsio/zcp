@@ -909,3 +909,48 @@ Three parallel Codex agents (`plans/export-buildfromgit/codex-round-p0-prework-{
 | 13 | A | §5.2 | Citation hygiene: `workflow.go:142` → `:144`/`:150`; `corpus_coverage_test.go:768` → `:766-779` with explicit `:778` `MustContain` note; `scenarios_test.go:600` → `:589-618`; full entry-points table refreshed. |
 
 All 13 amendments folded into the plan in-place. No structural redesign required. Phase 1 may enter on user explicit go (per session pause instruction).
+
+## 14. Phase 2 POST-WORK amendments (Codex round, 2026-04-28)
+
+Two parallel Codex agents (`plans/export-buildfromgit/codex-round-p2-postwork-{generator,architecture}.md`). Convergent verdict: NEEDS-REVISION → in-place amendments folded → effective APPROVE per §10.5 work-economics rule.
+
+### 14.1 Phase 2 implementation deviations from plan §6 Phase 2 step 1 (acknowledged)
+
+| plan name | implementation | ruling |
+|---|---|---|
+| `composeServiceEnvVariables` | renamed `composeProjectEnvVariables` | CORRECT — §3.4 four-category protocol applies to project-level envs, not service-level (which are platform-injected on managed services and zerops.yaml-resolved on runtime). |
+| `verifyOrFetchZeropsYAML` | pure `verifyZeropsYAMLSetup` (no SSH) | CORRECT — Phase A handler does the SSH read; Phase B generator stays pure. Matches §3.5 phase split. |
+| `scrubCorePackageDefaults` | OMITTED | CORRECT — minimal bundle shape (hostname/type/mode/buildFromGit/zeropsSetup/subdomain + managed services with hostname/type/mode/priority) doesn't emit fields needing scrubbing. The plan's helper list was aspirational. |
+| `BundleInputs.ManagedServices []ManagedServiceEntry` | NEW field on inputs | CORRECT — §3.1 said "ONE service entry"; §3.4 implies managed services are re-imported (so `${db_*}` resolves). The handler decides which managed services to bundle; composer accepts whatever's passed. |
+
+### 14.2 Phase 3 clarifications (folded into §6 Phase 3 work scope when Phase 3 starts)
+
+1. **Handler prepares `BundleInputs` upstream**: Discover-derived service metadata, SSH-read `/var/www/zerops.yaml`, project env snapshot, managed-service discovery, and live `git remote get-url origin` resolution. `BuildBundle` is pure composition — no further I/O.
+
+2. **Phase B preview redaction**: when `EnvClassifications` is incomplete, the handler MUST redact unclassified env values in the agent-facing preview response. `BuildBundle` itself emits unclassified envs verbatim with warnings; the handler decides whether to surface that body to the user vs. show a redacted version + the per-env review table.
+
+3. **Per-env review table is handler-built**, not bundle-emitted. The handler combines:
+   - Bundle output (Classifications map, ImportYAML, Warnings).
+   - Handler-tracked metadata (Evidence from agent grep input, Risk from bundle warnings + handler analysis, Override status from session state).
+   This decision overrides Codex Agent A's blocker 2 (`Reviews []EnvReview` on bundle) — Agent B's architectural framing won: composer stays minimal; review-row DTO lives at handler level.
+
+4. **RemoteURL freshness lives at handler / Phase 6 helper**, not `BuildBundle`. `BundleInputs.RepoURL` is consumed as-supplied; emptiness is a fail-fast composition error chained to setup-git-push by the handler.
+
+### 14.3 Code amendments landed in Phase 2 (commit per Phase 2 EXIT)
+
+| # | source | section touched | amendment |
+|---|---|---|---|
+| 1 | A blocker 1 | new file `internal/ops/export_bundle_classify.go` | M2 indirect-reference detector — `extractZeropsYAMLRunEnvRefs` + `parseDollarBraceRefs` + `detectIndirectInfraReferences`. Surfaces a warning when an Infrastructure-classified env is referenced by zerops.yaml's run.envVariables. Defensive only — agent retains classification authority. |
+| 2 | A polish | `composeProjectEnvVariables` external-secret branch | Sentinel pattern detection via `isLikelySentinel` (Stripe `sk_test_*` / `pk_test_*` / `rk_test_*`; common `disabled` / `none` / `null` / `false` / `off` / `n/a` / `noop`). External-secret with sentinel-pattern value emits REPLACE_ME but adds a "verify classification" warning. |
+| 3 | B 8a + 8b | this §14 | Plan retrospective + Phase 3 clarifications. |
+
+### 14.4 Tests added in Phase 2 amendment pass
+
+- `TestBuildBundle_M2IndirectInfraReference` — pins M2 warning emission for compound `DATABASE_URL` shapes referencing project-level `DB_HOST` / `DB_PASSWORD` / `DB_USER` / `DB_PORT` / `DB_NAME`.
+- `TestBuildBundle_M2NoFalsePositiveOnManagedServiceRef` — pins absence of M2 warning when zerops.yaml references managed-service envs (`${db_hostname}`) without corresponding project envs.
+- `TestBuildBundle_SentinelExternalSecretFlags` — pins sentinel warning emission per pattern (8 cases).
+- `TestParseDollarBraceRefs` — 9 cases including duplicates / unclosed / empty / compound URLs.
+- `TestExtractZeropsYAMLRunEnvRefs` — 5 cases including malformed bodies / multi-setup merge.
+- `TestIsLikelySentinel` — 17 cases pinning the conservative allowlist.
+
+Effective verdict: APPROVE. Phase 3 may enter on user explicit go.
