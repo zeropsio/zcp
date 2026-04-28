@@ -44,7 +44,7 @@ NONE. Plan §7 Phase 9 says "POST-WORK Yes Docs alignment" but it's the lowest p
 - [x] P8 invariant in spec-workflows.md updated to acknowledge handler-based orchestration.
 - [x] Verify gate green (lint-local 0 issues; full short suite PASS).
 - [x] `phase-9-tracker.md` finalized.
-- [ ] Phase 9 EXIT commit (single — see hash once made).
+- [x] Phase 9 EXIT commit `84a87748` (docs + tracker).
 
 ## Notes for Phase 10 entry
 
