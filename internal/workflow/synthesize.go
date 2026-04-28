@@ -339,6 +339,11 @@ func hasServiceScopedAxes(axes AxisVector) bool {
 // Mirrors the pre-C2 anyServiceMatchesAll loop body but exposes the
 // per-service decision so Synthesize can bind placeholder substitution
 // to the matched service.
+//
+// CloseDeployModes / GitPushStates / BuildIntegrations were introduced
+// by deploy-decomp P1 (parser) + P3 (envelope wiring); they coexist with
+// the legacy Strategies / Triggers axes through Phase 10. Both
+// vocabularies match against per-pair fields on ServiceSnapshot.
 func serviceSatisfiesAxes(svc ServiceSnapshot, axes AxisVector) bool {
 	if len(axes.Modes) > 0 && !slices.Contains(axes.Modes, svc.Mode) {
 		return false
@@ -347,6 +352,15 @@ func serviceSatisfiesAxes(svc ServiceSnapshot, axes AxisVector) bool {
 		return false
 	}
 	if len(axes.Triggers) > 0 && !slices.Contains(axes.Triggers, svc.Trigger) {
+		return false
+	}
+	if len(axes.CloseDeployModes) > 0 && !slices.Contains(axes.CloseDeployModes, svc.CloseDeployMode) {
+		return false
+	}
+	if len(axes.GitPushStates) > 0 && !slices.Contains(axes.GitPushStates, svc.GitPushState) {
+		return false
+	}
+	if len(axes.BuildIntegrations) > 0 && !slices.Contains(axes.BuildIntegrations, svc.BuildIntegration) {
 		return false
 	}
 	if len(axes.Runtimes) > 0 && !slices.Contains(axes.Runtimes, svc.RuntimeClass) {

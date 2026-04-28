@@ -143,32 +143,38 @@ func filterStaleMetas(metas []*ServiceMeta, liveServices []string) []*ServiceMet
 	return result
 }
 
-// strategyOfferings creates offerings based on the dominant deploy strategy across metas.
-// Deploy is always offered (strategy is resolved within the flow, not before).
+// strategyOfferings creates offerings based on the dominant close-deploy mode across metas.
+// Deploy is always offered (close mode is resolved within the flow, not before).
 // liveStatus + ws are threaded for deploy-state derivation (see DeriveDeployed);
 // both may be nil/empty — derivation degrades gracefully. env gates env-scoped
 // offerings (export is container-only in Release A; local export is deferred).
+//
+// Reads meta.CloseDeployMode (deploy-decomp P3) instead of the legacy
+// meta.DeployStrategy. migrateOldMeta runs in parseMeta so legacy metas
+// surface here with the migrated value populated; CloseModeUnset is
+// skipped from dominant-detection (matches the pre-decomp behaviour of
+// skipping empty DeployStrategy values).
 func strategyOfferings(metas []*ServiceMeta, liveStatus map[string]string, ws *WorkSession, env Environment) []FlowOffering {
-	strategies := make(map[topology.DeployStrategy]int)
+	closeModes := make(map[topology.CloseDeployMode]int)
 	for _, m := range metas {
-		if s := m.DeployStrategy; s != "" {
-			strategies[s]++
+		if cm := m.CloseDeployMode; cm != "" && cm != topology.CloseModeUnset {
+			closeModes[cm]++
 		}
 	}
 
-	// Find dominant strategy for additional offerings.
-	var dominant topology.DeployStrategy
+	// Find dominant close mode for additional offerings.
+	var dominant topology.CloseDeployMode
 	var maxCount int
-	for s, c := range strategies {
+	for cm, c := range closeModes {
 		if c > maxCount {
-			dominant = s
+			dominant = cm
 			maxCount = c
 		}
 	}
 
-	// Always offer deploy — strategy-aware hint when push-git is dominant.
+	// Always offer deploy — close-mode-aware hint when git-push is dominant.
 	developHint := `zerops_workflow action="start" workflow="develop"`
-	if dominant == topology.StrategyPushGit {
+	if dominant == topology.CloseModeGitPush {
 		developHint += ` — REQUIRED before pushing code to a git remote (handles auth, GIT_TOKEN, push)`
 	}
 	offerings := []FlowOffering{{

@@ -818,8 +818,17 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 			},
 		}},
 		{"develop-active/push-git/standard/container", StateEnvelope{
+			// Two-snapshot pair (dev + stage) per deploy-decomp P3 §G5 ship
+			// gate. Future close-mode-git-push atom (Phase 8, modes:
+			// [standard, simple, local-stage, local-only]) renders ONCE for
+			// the dev-half hostname; the stage-half (Mode=stage) does not
+			// match. Without the pair fixture, single-render regressions
+			// could re-introduce the original P1 double-render bug.
 			Phase: PhaseDevelopActive, Environment: EnvContainer,
-			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", Strategy: topology.StrategyPushGit, Trigger: topology.TriggerWebhook, Bootstrapped: true, Deployed: true}},
+			Services: []ServiceSnapshot{
+				{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", Strategy: topology.StrategyPushGit, Trigger: topology.TriggerWebhook, CloseDeployMode: topology.CloseModeGitPush, GitPushState: topology.GitPushConfigured, BuildIntegration: topology.BuildIntegrationWebhook, Bootstrapped: true, Deployed: true},
+				{Hostname: "appstage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, Strategy: topology.StrategyPushGit, Trigger: topology.TriggerWebhook, CloseDeployMode: topology.CloseModeGitPush, GitPushState: topology.GitPushConfigured, BuildIntegration: topology.BuildIntegrationWebhook, Bootstrapped: true, Deployed: true},
+			},
 		}},
 		{"develop-active/manual/dev/container", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvContainer,

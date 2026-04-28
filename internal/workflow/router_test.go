@@ -223,9 +223,16 @@ func TestRoute_AlwaysIncludesUtilities(t *testing.T) {
 
 func TestRoute_PushGit_DevelopHintMentionsGitPush(t *testing.T) {
 	t.Parallel()
+	// In production every meta passes through parseMeta → migrateOldMeta
+	// before reaching Route, so CloseDeployMode is always populated. This
+	// test constructs the meta directly, so set both the new and legacy
+	// fields explicitly during the migration window (deploy-decomp P3).
 	input := RouterInput{
 		ServiceMetas: []*ServiceMeta{{
-			Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: topology.StrategyPushGit,
+			Hostname:        "appdev",
+			BootstrappedAt:  "2026-01-01",
+			CloseDeployMode: topology.CloseModeGitPush,
+			DeployStrategy:  topology.StrategyPushGit,
 		}},
 		LiveServices: []string{"appdev"},
 	}
@@ -253,7 +260,10 @@ func TestRoute_PushDev_DevelopHintNoGitMention(t *testing.T) {
 	t.Parallel()
 	input := RouterInput{
 		ServiceMetas: []*ServiceMeta{{
-			Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: topology.StrategyPushDev,
+			Hostname:        "appdev",
+			BootstrappedAt:  "2026-01-01",
+			CloseDeployMode: topology.CloseModeAuto,
+			DeployStrategy:  topology.StrategyPushDev,
 		}},
 		LiveServices: []string{"appdev"},
 	}
@@ -277,8 +287,8 @@ func TestRoute_StaleMetaFiltering(t *testing.T) {
 	t.Parallel()
 	input := RouterInput{
 		ServiceMetas: []*ServiceMeta{
-			{Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: topology.StrategyPushGit},
-			{Hostname: "staleservice", BootstrappedAt: "2026-01-01", DeployStrategy: topology.StrategyPushDev},
+			{Hostname: "appdev", BootstrappedAt: "2026-01-01", CloseDeployMode: topology.CloseModeGitPush, DeployStrategy: topology.StrategyPushGit},
+			{Hostname: "staleservice", BootstrappedAt: "2026-01-01", CloseDeployMode: topology.CloseModeAuto, DeployStrategy: topology.StrategyPushDev},
 		},
 		LiveServices: []string{"appdev"},
 	}
