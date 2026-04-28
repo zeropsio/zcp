@@ -587,7 +587,15 @@ func TestScenario_S11_StrategySetupEmptyPlan(t *testing.T) {
 }
 
 // TestScenario_S12_ExportActiveEmptyPlan mirrors S11 for the export phase.
-// Same stateless contract: empty Plan, atom bodies drive guidance.
+// Same stateless contract: empty Plan, atom bodies drive guidance. Phase 4
+// of the export-buildFromGit plan replaced the legacy single 229-line
+// export.md atom with six topic-scoped atoms (intro / classify-envs /
+// validate / publish / publish-needs-setup / scaffold-zerops-yaml). All
+// six render whenever the export-active phase fires; the handler decides
+// which sections the agent acts on via the response payload's `status`
+// field — atom-axis matching does NOT discriminate per call (per Codex
+// Phase 0 rendering ruling: SynthesizeImmediatePhase passes no service
+// context, so service-scoped axes silently never fire).
 func TestScenario_S12_ExportActiveEmptyPlan(t *testing.T) {
 	t.Parallel()
 
@@ -613,8 +621,14 @@ func TestScenario_S12_ExportActiveEmptyPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
-	// Export phase has exactly one atom — exact-match contract.
-	requireAtomIDsExact(t, "S12", matches, "export")
+	requireAtomIDsExact(t, "S12", matches,
+		"export-intro",
+		"export-classify-envs",
+		"export-validate",
+		"export-publish",
+		"export-publish-needs-setup",
+		"scaffold-zerops-yaml",
+	)
 }
 
 func TestScenario_S8_DevelopIterationFailure(t *testing.T) {
@@ -966,5 +980,13 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"develop-static-workflow",
 		"develop-strategy-awareness",
 		"develop-verify-matrix",
+		// export-buildFromGit Phase 4 — six topic-scoped atoms
+		// replace the legacy export.md.
+		"export-intro",
+		"export-classify-envs",
+		"export-validate",
+		"export-publish",
+		"export-publish-needs-setup",
+		"scaffold-zerops-yaml",
 	)
 }

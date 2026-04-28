@@ -773,9 +773,16 @@ func pipelineCoverageFixtures() []coverageFixture {
 				}},
 			},
 			MustContain: []string{
+				// Phase 4 of export-buildFromGit replaced the legacy
+				// export.md atom with six topic-scoped atoms. The
+				// resulting synthesized output mentions buildFromGit
+				// (the runtime entry's pointer field) and the new
+				// canonical filename `zerops-project-import.yaml`
+				// (Q2 default 2026-04-28). The legacy `zerops_export`
+				// standalone-tool reference is gone — the new flow
+				// uses `zerops_workflow workflow="export"` only.
 				"buildFromGit",
-				"zerops_export",
-				"import.yaml",
+				"zerops-project-import.yaml",
 			},
 		},
 	}

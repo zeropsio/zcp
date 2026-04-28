@@ -162,7 +162,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				"No workflow or action specified",
-				`Use action="start" workflow="bootstrap|develop|recipe" for orchestrated workflows, or workflow="export" for immediate guidance. Configure deploy via action="close-mode" / action="git-push-setup" / action="build-integration".`), WithRecoveryStatus()), nil, nil
+				`Use action="start" workflow="bootstrap|develop|recipe" for orchestrated workflows, or workflow="export" (with optional targetService=<hostname>) for the export-buildFromGit multi-call flow. Configure deploy via action="close-mode" / action="git-push-setup" / action="build-integration".`), WithRecoveryStatus()), nil, nil
 		}
 		if !workflow.IsImmediateWorkflow(input.Workflow) {
 			return convertError(platform.NewPlatformError(

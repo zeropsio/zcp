@@ -206,7 +206,7 @@ func strategyOfferings(metas []*ServiceMeta, liveStatus map[string]string, ws *W
 				if DeriveDeployed(h, liveStatus[h], m, ws) {
 					offerings = append(offerings, FlowOffering{
 						Workflow: "export", Priority: 3,
-						Hint: `zerops_workflow action="start" workflow="export" — turn a deployed service into a re-importable git repo (import.yaml + buildFromGit)`,
+						Hint: `zerops_workflow workflow="export" — turn a deployed service into a re-importable single-repo bundle (zerops-project-import.yaml + zerops.yaml + buildFromGit). Multi-call narrowing: probe → classify envs → publish.`,
 					})
 					goto afterExport
 				}
