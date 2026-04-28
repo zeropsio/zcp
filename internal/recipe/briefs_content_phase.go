@@ -326,11 +326,15 @@ func filterOutEngineEmitted(records []FactRecord) []FactRecord {
 func writeFactSummary(b *strings.Builder, f FactRecord) {
 	switch f.Kind {
 	case FactKindPorterChange:
+		// Why is bounded by recording (typically 5-10 facts/codebase, 250-500
+		// chars each); pass through verbatim so the codebase-content sub-agent
+		// reads the full mechanism. Run-17 §4 closure of R-17-C9.
 		fmt.Fprintf(b, "- porter_change | topic=%s | class=%s | surface=%s | %s\n",
-			f.Topic, f.CandidateClass, f.CandidateSurface, truncate(f.Why, 120))
+			f.Topic, f.CandidateClass, f.CandidateSurface, f.Why)
 	case FactKindFieldRationale:
+		// Same rationale as porter_change — bounded count, pass through verbatim.
 		fmt.Fprintf(b, "- field_rationale | topic=%s | %s | %s\n",
-			f.Topic, f.FieldPath, truncate(f.Why, 120))
+			f.Topic, f.FieldPath, f.Why)
 	case FactKindTierDecision:
 		fmt.Fprintf(b, "- tier_decision | topic=%s | tier=%d | %s=%s | %s\n",
 			f.Topic, f.Tier, f.FieldPath, f.ChosenValue, truncate(f.TierContext, 120))
