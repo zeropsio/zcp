@@ -67,17 +67,32 @@ func handleExport(
 		return scopePromptResponse(ctx, client, projectID)
 	}
 
-	discover, err := ops.Discover(ctx, client, projectID, input.TargetService, false, false)
+	// Discover with NO hostname filter — we need ALL project services so
+	// collectManagedServices can include managed deps in the bundle. Per
+	// Phase 8 eval finding (2026-04-29): passing input.TargetService as the
+	// hostname filter limited Discover to a single service, leaving the
+	// managed-services collector empty and producing bundles missing the
+	// db/redis/etc. entries plan §3.4 requires for `${db_*}` reference
+	// resolution at re-import.
+	discover, err := ops.Discover(ctx, client, projectID, "", false, false)
 	if err != nil {
 		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
-	if len(discover.Services) == 0 {
+	var svc ops.ServiceInfo
+	found := false
+	for _, s := range discover.Services {
+		if s.Hostname == input.TargetService {
+			svc = s
+			found = true
+			break
+		}
+	}
+	if !found {
 		return convertError(platform.NewPlatformError(
 			platform.ErrServiceNotFound,
 			fmt.Sprintf("Service %q not found in project", input.TargetService),
 			"Pass targetService=<runtime-hostname>. Discover the project's runtimes via zerops_discover."), WithRecoveryStatus()), nil, nil
 	}
-	svc := discover.Services[0]
 	if svc.IsInfrastructure {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,

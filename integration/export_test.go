@@ -86,6 +86,21 @@ func TestExportFlow_MultiCallThroughServer(t *testing.T) {
 				Status: "ACTIVE",
 				Mode:   "NON_HA",
 			},
+			// Phase 8 eval finding: managed services MUST be in the bundle
+			// so `${db_*}` references in zerops.yaml resolve at re-import.
+			// Pre-fix the handler filtered Discover to a single hostname,
+			// leaving collectManagedServices empty. This fixture pins the
+			// fixed behavior — db appears in the bundle's services list.
+			{
+				ID:   "svc-db",
+				Name: "db",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{
+					ServiceStackTypeVersionName:  "postgresql@16",
+					ServiceStackTypeCategoryName: "DB",
+				},
+				Status: "ACTIVE",
+				Mode:   "NON_HA",
+			},
 		}).
 		WithProjectEnv([]platform.EnvVar{{Key: "LOG_LEVEL", Content: "info"}})
 
@@ -187,6 +202,17 @@ func TestExportFlow_MultiCallThroughServer(t *testing.T) {
 	}
 	if !strings.Contains(importYaml, liveRemote) {
 		t.Errorf("call 4: importYaml missing live remote URL %q, got %q", liveRemote, importYaml)
+	}
+	// Managed-deps inclusion (Phase 8 eval finding fix): bundle MUST
+	// carry `db` (managed postgresql) with `priority: 10` alongside the
+	// runtime so `${db_*}` references in zerops.yaml resolve at
+	// re-import. Without this the destination project boots with
+	// unresolved managed-service refs.
+	if !strings.Contains(importYaml, "hostname: db") {
+		t.Errorf("call 4: importYaml missing managed db service entry, got %q", importYaml)
+	}
+	if !strings.Contains(importYaml, "priority: 10") {
+		t.Errorf("call 4: importYaml missing managed-service priority: 10, got %q", importYaml)
 	}
 	steps, _ := body["nextSteps"].([]any)
 	hasDeploy := false

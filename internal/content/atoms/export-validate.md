@@ -56,6 +56,8 @@ You did not send a bucket for this env. The bundle defaults to `plain-config` (e
 
 `bundle.errors` carries blocking JSON-Schema failures from the embedded `import-project-yml-json-schema.json` + `zerops-yml-json-schema.json` (Phase 5). Each entry has `path` (JSON pointer) + `message`. When non-empty, the handler returns `status="validation-failed"` instead of `publish-ready` — fix each error at its source (env classification, zerops.yaml, or service shape) and re-call. Schema drift between the embedded copy and Zerops's current schema is possible; if `zcli project project-import` rejects a bundle that the client validator accepted, the embedded testdata needs a refresh.
 
+**Fixing live `/var/www/zerops.yaml` requires the develop workflow**, not export. Export is stateless — `zerops_mount` returns `WORKFLOW_REQUIRED` during export. To edit the runtime container's zerops.yaml: start `zerops_workflow workflow="develop" scope=[<runtime>]`, mount the service via `zerops_mount`, edit the file, deploy, then re-call export with the same `targetService` + `envClassifications`. The export workflow re-reads zerops.yaml fresh on every invocation, so the fix flows through automatically.
+
 When `publish-ready` fires, spot-check the rendered shape:
 
 - `services[].mode` is `NON_HA` (single-runtime bundles; `HA` requires explicit scaling fields).

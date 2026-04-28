@@ -3,13 +3,18 @@
 #
 # Fixture already deployed `app` (php-nginx) + `db` (postgres) via
 # buildFromGit. This preseed plants a COMPLETE ServiceMeta for `app` —
-# adopted, push-dev confirmed, FirstDeployedAt set — so the router
-# offers the export workflow (offered whenever any service has
-# FirstDeployedAt per 09ae4df "export(workflow): rewrite as single-atom
-# task checklist + widen router offer").
+# bootstrapped, FirstDeployedAt set, GitPushState=configured (so the
+# new multi-call export workflow can reach the publish-ready branch
+# without first chaining through git-push-setup), CloseDeployMode=
+# git-push, and RemoteURL pre-cached to the export target so Phase 6
+# cache-refresh produces no drift warning.
 #
 # Without FirstDeployedAt the export offering is suppressed and the
 # agent has no envelope cue pointing it at workflow="export".
+# Without GitPushState=configured the handler chains to
+# setup-git-push-container before publish — the scenario instead pre-
+# configures so the agent walks the canonical scope → classify →
+# publish narrowing without a chain detour.
 set -eu
 
 STATE="${ZCP_WORK_DIR:-.}/.zcp/state"
@@ -25,13 +30,14 @@ cat > "$STATE/services/app.json" <<JSON
 {
   "hostname": "app",
   "mode": "dev",
-  "deployStrategy": "push-dev",
-  "strategyConfirmed": true,
-  "environment": "container",
   "bootstrapSession": "sess-completed-prev",
   "bootstrappedAt": "2026-04-20T08:00:00Z",
-  "firstDeployedAt": "2026-04-20T08:30:00Z"
+  "firstDeployedAt": "2026-04-20T08:30:00Z",
+  "closeDeployMode": "git-push",
+  "closeDeployModeConfirmed": true,
+  "gitPushState": "configured",
+  "remoteUrl": "https://github.com/krls2020/eval1"
 }
 JSON
 
-echo "preseed: planted adopted+deployed meta for app (export router now offers workflow=export)"
+echo "preseed: planted ServiceMeta for app — bootstrapped+deployed+git-push-configured (export workflow walks scope→classify→publish without setup-git-push detour)"
