@@ -3,6 +3,7 @@ package tools
 import (
 	"fmt"
 	"net/url"
+	"regexp"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -10,6 +11,36 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
+
+// scpStyleRemote matches git's scp-form SSH remote syntax (e.g.
+// `git@github.com:owner/repo.git`). url.ParseRequestURI rejects this form
+// because there's no `://` scheme; git accepts it natively, so the
+// remoteUrl validator (below) needs both branches.
+//
+//nolint:gochecknoglobals // immutable regex
+var scpStyleRemote = regexp.MustCompile(`^[A-Za-z0-9_.-]+@[A-Za-z0-9_.-]+:[^/].*$`)
+
+// validateRemoteURL accepts a remoteUrl in either the URI form
+// (scheme://host/path — https / git / ssh) or git's scp-form
+// (user@host:path) used by SSH remotes. Returns nil on success or a
+// platform error with remediation pointing at the two accepted shapes.
+//
+// Phase 7 fix for the Phase 5 P0 surfaced by Codex Phase 6 review: the
+// initial url.ParseRequestURI-only validator rejected valid scp-form
+// SSH URLs (e.g. git@github.com:owner/repo.git).
+func validateRemoteURL(remote string) error {
+	if scpStyleRemote.MatchString(remote) {
+		return nil
+	}
+	if _, err := url.ParseRequestURI(remote); err != nil {
+		return platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("remoteUrl %q is not a valid git remote: %v", remote, err),
+			"Pass a fully-qualified URL (https://github.com/owner/repo.git) or scp-form SSH remote (git@github.com:owner/repo.git)",
+		)
+	}
+	return nil
+}
 
 // handleGitPushSetup walks the agent through configuring git-push capability
 // for a service: GIT_TOKEN on the container (or origin URL on local) plus
@@ -94,11 +125,8 @@ func handleGitPushSetup(input WorkflowInput, stateDir string, rt runtime.Info) (
 	// (deploy_git_push.go pre-flight); the URL-format check here closes
 	// the gap surfaced in the Phase 5 Codex POST-WORK review (a malformed
 	// URL persisted in meta would survive to deploy preflight silently).
-	if _, err := url.ParseRequestURI(input.RemoteURL); err != nil {
-		return convertError(platform.NewPlatformError(
-			platform.ErrInvalidParameter,
-			fmt.Sprintf("remoteUrl %q is not a valid URL: %v", input.RemoteURL, err),
-			"Pass a fully-qualified URL (https://github.com/owner/repo.git or git@github.com:owner/repo.git)"), WithRecoveryStatus()), nil, nil
+	if err := validateRemoteURL(input.RemoteURL); err != nil {
+		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
 	meta.GitPushState = topology.GitPushConfigured
 	meta.RemoteURL = input.RemoteURL

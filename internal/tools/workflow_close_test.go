@@ -181,7 +181,7 @@ func TestWorkflowTool_CloseAlwaysSucceeds(t *testing.T) {
 	seedOpenWorkSession(t, dir, false /*deploySucceeded*/)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "proj1", nil, nil, engine, nil, dir, "", nil, nil, runtime.Info{})
+	RegisterWorkflow(srv, nil, nil, "proj1", nil, nil, engine, nil, dir, "", nil, nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "close",

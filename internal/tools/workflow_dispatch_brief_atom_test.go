@@ -20,7 +20,7 @@ import (
 func TestWorkflowTool_DispatchBriefAtom_ReturnsBody(t *testing.T) {
 	t.Parallel()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "", nil, nil, nil, nil, "", "", nil, nil, runtime.Info{})
+	RegisterWorkflow(srv, nil, nil, "", nil, nil, nil, nil, "", "", nil, nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "dispatch-brief-atom",
@@ -55,7 +55,7 @@ func TestWorkflowTool_DispatchBriefAtom_ReturnsBody(t *testing.T) {
 func TestWorkflowTool_DispatchBriefAtom_MissingID(t *testing.T) {
 	t.Parallel()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "", nil, nil, nil, nil, "", "", nil, nil, runtime.Info{})
+	RegisterWorkflow(srv, nil, nil, "", nil, nil, nil, nil, "", "", nil, nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "dispatch-brief-atom",
@@ -78,7 +78,7 @@ func TestWorkflowTool_DispatchBriefAtom_MissingID(t *testing.T) {
 func TestWorkflowTool_DispatchBriefAtom_UnknownID(t *testing.T) {
 	t.Parallel()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, "", nil, nil, nil, nil, "", "", nil, nil, runtime.Info{})
+	RegisterWorkflow(srv, nil, nil, "", nil, nil, nil, nil, "", "", nil, nil, runtime.Info{})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action": "dispatch-brief-atom",

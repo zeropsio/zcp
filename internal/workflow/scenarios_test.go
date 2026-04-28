@@ -824,6 +824,11 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 			// the dev-half hostname; the stage-half (Mode=stage) does not
 			// match. Without the pair fixture, single-render regressions
 			// could re-introduce the original P1 double-render bug.
+			//
+			// BuildIntegration=webhook + Deployed=true makes this fixture
+			// also pin develop-record-external-deploy (deploy-decomp P7
+			// atom for record-deploy bridge guidance — frontmatter
+			// buildIntegrations: [webhook, actions]).
 			Phase: PhaseDevelopActive, Environment: EnvContainer,
 			Services: []ServiceSnapshot{
 				{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", Strategy: topology.StrategyPushGit, Trigger: topology.TriggerWebhook, CloseDeployMode: topology.CloseModeGitPush, GitPushState: topology.GitPushConfigured, BuildIntegration: topology.BuildIntegrationWebhook, Bootstrapped: true, Deployed: true},
@@ -954,6 +959,8 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"develop-push-git-deploy",
 		"develop-push-git-deploy-local",
 		"develop-ready-to-deploy",
+		"develop-record-external-deploy", // deploy-decomp P7
+
 		"develop-static-workflow",
 		"develop-strategy-awareness",
 		"develop-verify-matrix",

@@ -157,8 +157,16 @@ func (s *Server) registerTools() {
 	}
 	recipeStore := recipe.NewStore(mountRoot)
 
+	// Shared HTTP client for readiness probes (post-deploy subdomain
+	// auto-enable, post-subdomain L7 warmup). 15 s ceiling matches the
+	// per-tool maximum; individual readiness waits impose their own tight
+	// request-level timeouts on top. Constructed before workflow registration
+	// so action="record-deploy" can plumb it through to maybeAutoEnableSubdomain
+	// (deploy-decomp Phase 7).
+	httpClient := &http.Client{Timeout: 15 * time.Second}
+
 	// Read-only tools
-	tools.RegisterWorkflow(s.server, s.client, projectID, stackCache, schemaCache, wfEngine, s.logFetcher, stateDir, s.rtInfo.ServiceName, s.mounter, s.sshDeployer, s.rtInfo)
+	tools.RegisterWorkflow(s.server, s.client, httpClient, projectID, stackCache, schemaCache, wfEngine, s.logFetcher, stateDir, s.rtInfo.ServiceName, s.mounter, s.sshDeployer, s.rtInfo)
 	tools.RegisterDiscover(s.server, s.client, projectID, stateDir)
 	tools.RegisterKnowledge(s.server, s.store, s.client, stackCache, knowledgeTracker, wfEngine)
 	tools.RegisterGuidance(s.server, wfEngine)
@@ -169,12 +177,6 @@ func (s *Server) registerTools() {
 	tools.RegisterProcess(s.server, s.client)
 	tools.RegisterVerify(s.server, s.client, s.logFetcher, projectID, stateDir)
 	tools.RegisterPreprocess(s.server)
-
-	// Shared HTTP client for readiness probes (post-deploy subdomain
-	// auto-enable, post-subdomain L7 warmup). 15 s ceiling matches the
-	// per-tool maximum; individual readiness waits impose their own tight
-	// request-level timeouts on top.
-	httpClient := &http.Client{Timeout: 15 * time.Second}
 
 	// Mutating tools — deploy registration routes by environment.
 	if s.sshDeployer != nil {

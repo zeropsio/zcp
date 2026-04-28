@@ -70,7 +70,7 @@ func TestIntegration_OrphanMeta_StatusFallsThroughToBootstrap(t *testing.T) {
 		nil,
 	)
 	engine := workflow.NewEngine(stateDir, workflow.EnvLocal, nil)
-	tools.RegisterWorkflow(mcpSrv, mock, "proj-1", nil, nil, engine, nil, stateDir, "", nil, nil, runtime.Info{})
+	tools.RegisterWorkflow(mcpSrv, mock, nil, "proj-1", nil, nil, engine, nil, stateDir, "", nil, nil, runtime.Info{})
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
@@ -143,7 +143,7 @@ func TestIntegration_OrphanMeta_BootstrapStartCleansAndReports(t *testing.T) {
 		nil,
 	)
 	engine := workflow.NewEngine(stateDir, workflow.EnvLocal, nil)
-	tools.RegisterWorkflow(mcpSrv, mock, "proj-1", nil, nil, engine, nil, stateDir, "", nil, nil, runtime.Info{})
+	tools.RegisterWorkflow(mcpSrv, mock, nil, "proj-1", nil, nil, engine, nil, stateDir, "", nil, nil, runtime.Info{})
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
