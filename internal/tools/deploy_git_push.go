@@ -99,15 +99,21 @@ func committedCodeCheckCmd(workingDir string) string {
 	)
 }
 
-// gitPushSetupPointerInstructions redirects to the central deploy-config
-// action; the full setup flow is synthesized there from the atom corpus.
-const gitPushSetupPointerInstructions = `Configure push-git via the central deploy-config action:
+// gitPushSetupPointerInstructions redirects to the post-decomposition
+// git-push-setup action (deploy-decomp P5). The full setup flow is
+// synthesized there from the atom corpus. After git-push-setup completes,
+// the agent can independently wire a build integration via
+// action=build-integration if desired (orthogonal dimension).
+const gitPushSetupPointerInstructions = `Configure git-push capability via the deploy-config actions:
 
-  zerops_workflow action="strategy" strategies={"%s":"push-git"}
+  zerops_workflow action="git-push-setup" service="%s"
+  # then optionally:
+  zerops_workflow action="build-integration" service="%s" integration="webhook|actions"
 
-That returns the full setup flow — asks push-only vs full CI/CD, handles
-GIT_TOKEN permissions, and covers GitHub Actions / webhook if CI/CD chosen.
-After setup completes, retry this push.`
+git-push-setup walks through GIT_TOKEN / .netrc / remote URL setup;
+build-integration wires the ZCP-managed CI integration (independent of
+any external CI/CD you may already have). After setup completes, retry
+this push.`
 
 // handleGitPush executes the git-push strategy: push committed code to an
 // external git remote. No Zerops build is triggered directly from our side,
@@ -212,7 +218,7 @@ func handleGitPush(
 		return jsonResult(&gitPushPrerequisites{
 			Status:       platform.ErrGitTokenMissing,
 			Message:      "GIT_TOKEN is not set. This project env var is required for pushing to a git remote.",
-			Instructions: fmt.Sprintf(gitPushSetupPointerInstructions, hostname),
+			Instructions: fmt.Sprintf(gitPushSetupPointerInstructions, hostname, hostname),
 		}), nil, nil
 	}
 

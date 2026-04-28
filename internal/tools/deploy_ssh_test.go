@@ -1157,10 +1157,10 @@ func TestDeployTool_GitPush_MissingGitToken_ReturnsPrerequisites(t *testing.T) {
 	text := getTextContent(t, result)
 
 	wantParts := []string{
-		"GIT_TOKEN_MISSING",       // uses platform error constant
-		"action=\\\"strategy\\\"", // short pointer to central deploy-config action (JSON-escaped)
-		"push-git",                // the strategy being configured
-		"appdev",                  // target service hostname filled into the pointer
+		"GIT_TOKEN_MISSING",                // uses platform error constant
+		"action=\\\"git-push-setup\\\"",    // post-decomp Phase-5 action pointer (JSON-escaped)
+		"action=\\\"build-integration\\\"", // optional follow-up to wire ZCP-managed CI
+		"appdev",                           // target service hostname filled into the pointer
 	}
 	for _, part := range wantParts {
 		if !strings.Contains(text, part) {

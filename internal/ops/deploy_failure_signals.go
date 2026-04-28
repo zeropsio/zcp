@@ -495,7 +495,7 @@ func transportGitTokenMissing(_ string) *topology.DeployFailureClassification {
 	return &topology.DeployFailureClassification{
 		Category:        topology.FailureClassCredential,
 		LikelyCause:     "GIT_TOKEN env var missing on the source container.",
-		SuggestedAction: "Configure via `zerops_workflow action=\"strategy\" strategies={<svc>:\"push-git\"}` — the strategy flow walks through GIT_TOKEN setup.",
+		SuggestedAction: "Configure via `zerops_workflow action=\"git-push-setup\" service=\"<svc>\"` — walks through GIT_TOKEN, .netrc, and remote URL setup.",
 		Signals:         []string{"transport:git-token-missing"},
 	}
 }

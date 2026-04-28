@@ -209,7 +209,7 @@ func RecordDeployAttempt(stateDir, hostname string, attempt DeployAttempt) error
 		ws.Deploys[hostname] = ws.Deploys[hostname][len(ws.Deploys[hostname])-workSessionMaxHist:]
 	}
 	ws.LastActivityAt = time.Now().UTC().Format(time.RFC3339)
-	if ws.ClosedAt == "" && EvaluateAutoClose(ws) {
+	if ws.ClosedAt == "" && EvaluateAutoClose(stateDir, ws) {
 		ws.ClosedAt = ws.LastActivityAt
 		ws.CloseReason = CloseReasonAutoComplete
 	}
@@ -274,7 +274,7 @@ func RecordVerifyAttempt(stateDir, hostname string, attempt VerifyAttempt) error
 		ws.Verifies[hostname] = ws.Verifies[hostname][len(ws.Verifies[hostname])-workSessionMaxHist:]
 	}
 	ws.LastActivityAt = time.Now().UTC().Format(time.RFC3339)
-	if ws.ClosedAt == "" && EvaluateAutoClose(ws) {
+	if ws.ClosedAt == "" && EvaluateAutoClose(stateDir, ws) {
 		ws.ClosedAt = ws.LastActivityAt
 		ws.CloseReason = CloseReasonAutoComplete
 	}
@@ -328,14 +328,51 @@ func HasSuccessfulDeployFor(ws *WorkSession, hostname string) bool {
 	return false
 }
 
-// EvaluateAutoClose returns true when every service in scope has at least one
-// succeeded deploy and at least one passed verify. Empty scope → false.
-func EvaluateAutoClose(ws *WorkSession) bool {
+// EvaluateAutoClose returns true when every service in scope has at least
+// one succeeded deploy + one passed verify AND every service in scope has a
+// CloseDeployMode that participates in auto-close (auto or git-push).
+// Manual / unset close-modes block auto-close entirely — the workflow
+// stays open until the agent calls action=close explicitly. Empty scope
+// → false.
+//
+// Gate added by deploy-strategy decomposition Phase 6 (per plan §3.3
+// interaction matrix + §4 F1 decision). stateDir threads through so the
+// gate can read meta.CloseDeployMode for each in-scope service.
+func EvaluateAutoClose(stateDir string, ws *WorkSession) bool {
 	if ws == nil || len(ws.Services) == 0 {
+		return false
+	}
+	if !autoCloseGateOpen(stateDir, ws) {
 		return false
 	}
 	for _, h := range ws.Services {
 		if !serviceAutoCloseReady(ws, h) {
+			return false
+		}
+	}
+	return true
+}
+
+// autoCloseGateOpen returns false when any in-scope service has
+// CloseDeployMode ∈ {manual, unset} (or empty — pre-Phase-2 metas without
+// a migrated value). Missing metas pass through (no gate); legacy
+// adopted-without-meta services keep the pre-decomposition auto-close
+// behavior. Shared by EvaluateAutoClose and AutoCloseProgressOf.
+func autoCloseGateOpen(stateDir string, ws *WorkSession) bool {
+	if stateDir == "" {
+		return true
+	}
+	metas, err := ListServiceMetas(stateDir)
+	if err != nil {
+		return true
+	}
+	idx := ManagedRuntimeIndex(metas)
+	for _, h := range ws.Services {
+		m := idx[h]
+		if m == nil {
+			continue
+		}
+		if m.CloseDeployMode != topology.CloseModeAuto && m.CloseDeployMode != topology.CloseModeGitPush {
 			return false
 		}
 	}
@@ -347,11 +384,17 @@ func EvaluateAutoClose(ws *WorkSession) bool {
 // agent in side-effect responses (verify, deploy) so the work session is
 // observably advancing — the fizzy log shows that without this the agent
 // defaulted to curl because verify's tracking purpose wasn't visible.
+//
+// Enabled is false when at least one in-scope service has CloseDeployMode
+// ∈ {manual, unset, ""}; Reason names the blocked services so the agent
+// sees why the workflow won't auto-close. Deploy-decomp Phase 6.
 type AutoCloseProgress struct {
 	SessionID string   `json:"sessionId"`
 	Ready     int      `json:"ready"`
 	Total     int      `json:"total"`
 	Pending   []string `json:"pending,omitempty"`
+	Enabled   bool     `json:"enabled"`
+	Reason    string   `json:"reason,omitempty"`
 }
 
 // AutoCloseProgressFor loads the current-PID work session and computes the
@@ -367,20 +410,22 @@ func AutoCloseProgressFor(stateDir string) *AutoCloseProgress {
 	if err != nil || ws == nil {
 		return nil
 	}
-	return AutoCloseProgressOf(ws)
+	return AutoCloseProgressOf(stateDir, ws)
 }
 
 // AutoCloseProgressOf computes the progress snapshot from an already-loaded
 // WorkSession. Callers that already hold the struct (e.g. after
 // RecordDeployAttempt returned the mutated session) use this to avoid a
-// duplicate disk read.
-func AutoCloseProgressOf(ws *WorkSession) *AutoCloseProgress {
+// duplicate disk read. stateDir is used to read service metas for the
+// CloseDeployMode gate (Phase 6 of the deploy-strategy decomposition).
+func AutoCloseProgressOf(stateDir string, ws *WorkSession) *AutoCloseProgress {
 	if ws == nil {
 		return nil
 	}
 	progress := &AutoCloseProgress{
 		SessionID: workSessionID(ws.PID),
 		Total:     len(ws.Services),
+		Enabled:   true,
 	}
 	for _, h := range ws.Services {
 		if serviceAutoCloseReady(ws, h) {
@@ -388,6 +433,30 @@ func AutoCloseProgressOf(ws *WorkSession) *AutoCloseProgress {
 			continue
 		}
 		progress.Pending = append(progress.Pending, h)
+	}
+	// CloseDeployMode gate — auto-close fires only when every in-scope
+	// service participates (auto or git-push close-mode). Compute
+	// blocked-host list explicitly so the Reason string names the
+	// offending services.
+	if stateDir != "" {
+		metas, err := ListServiceMetas(stateDir)
+		if err == nil {
+			idx := ManagedRuntimeIndex(metas)
+			var blocked []string
+			for _, h := range ws.Services {
+				m := idx[h]
+				if m == nil {
+					continue
+				}
+				if m.CloseDeployMode != topology.CloseModeAuto && m.CloseDeployMode != topology.CloseModeGitPush {
+					blocked = append(blocked, h)
+				}
+			}
+			if len(blocked) > 0 {
+				progress.Enabled = false
+				progress.Reason = fmt.Sprintf("auto-close gated by close-mode: %s. Set close-mode via zerops_workflow action=\"close-mode\" closeMode={...}, or close explicitly via action=\"close\".", strings.Join(blocked, ", "))
+			}
+		}
 	}
 	return progress
 }

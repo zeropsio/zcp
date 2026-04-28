@@ -355,9 +355,66 @@ func TestEvaluateAutoClose(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := EvaluateAutoClose(tt.ws)
+			// Empty stateDir bypasses the deploy-decomp P6 close-mode gate
+			// (autoCloseGateOpen returns true when no metas can be loaded);
+			// the table covers the deploy/verify completion logic only.
+			got := EvaluateAutoClose("", tt.ws)
 			if got != tt.want {
 				t.Errorf("EvaluateAutoClose = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestEvaluateAutoClose_CloseDeployModeGate pins the close-mode gate
+// added by deploy-strategy decomposition Phase 6: even when every
+// service in scope has a successful deploy + passed verify, auto-close
+// must NOT fire when any in-scope service has CloseDeployMode ∈
+// {manual, unset, ""}. Three rows: auto/git-push enable, manual blocks,
+// missing-meta passes through (legacy adopted-without-meta keeps old
+// auto-close behavior).
+func TestEvaluateAutoClose_CloseDeployModeGate(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		closeMode topology.CloseDeployMode
+		writeMeta bool
+		want      bool
+	}{
+		{"auto_enables", topology.CloseModeAuto, true, true},
+		{"git-push_enables", topology.CloseModeGitPush, true, true},
+		{"manual_blocks", topology.CloseModeManual, true, false},
+		{"unset_blocks", topology.CloseModeUnset, true, false},
+		{"empty_blocks", "", true, false},
+		{"no_meta_passes_through", "", false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if tc.writeMeta {
+				meta := &ServiceMeta{
+					Hostname:         "web",
+					Mode:             topology.PlanModeStandard,
+					BootstrapSession: "test",
+					BootstrappedAt:   "2026-04-28",
+				}
+				if tc.closeMode != "" {
+					meta.CloseDeployMode = tc.closeMode
+					meta.CloseDeployModeConfirmed = true
+				}
+				if err := WriteServiceMeta(dir, meta); err != nil {
+					t.Fatalf("WriteServiceMeta: %v", err)
+				}
+			}
+			ws := &WorkSession{
+				Services: []string{"web"},
+				Deploys:  map[string][]DeployAttempt{"web": {{AttemptedAt: "t", SucceededAt: "t"}}},
+				Verifies: map[string][]VerifyAttempt{"web": {{AttemptedAt: "t", PassedAt: "t", Passed: true}}},
+			}
+			got := EvaluateAutoClose(dir, ws)
+			if got != tc.want {
+				t.Errorf("EvaluateAutoClose with closeMode=%q writeMeta=%v = %v, want %v", tc.closeMode, tc.writeMeta, got, tc.want)
 			}
 		})
 	}

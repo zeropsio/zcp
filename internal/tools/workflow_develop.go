@@ -5,14 +5,45 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
+
+// blockedManualHosts returns the in-scope hostnames whose meta has
+// CloseDeployMode ∈ {manual, unset, ""} — services that auto-close cannot
+// fire on (deploy-decomp P6 §3.4 Scenario D). Empty result when every
+// service has an auto-close-eligible mode (auto / git-push) or when meta
+// lookup fails (legacy adopted-without-meta keeps the old auto-delete
+// behavior). Hosts are returned in scope order to keep the agent's
+// remediation message stable.
+func blockedManualHosts(stateDir string, scope []string) []string {
+	if stateDir == "" || len(scope) == 0 {
+		return nil
+	}
+	metas, err := workflow.ListServiceMetas(stateDir)
+	if err != nil {
+		return nil
+	}
+	idx := workflow.ManagedRuntimeIndex(metas)
+	var blocked []string
+	for _, h := range scope {
+		m := idx[h]
+		if m == nil {
+			continue
+		}
+		if m.CloseDeployMode != topology.CloseModeAuto && m.CloseDeployMode != topology.CloseModeGitPush {
+			blocked = append(blocked, h)
+		}
+	}
+	return blocked
+}
 
 // handleDevelopBriefing returns the develop briefing and creates/resumes a
 // per-PID WorkSession that records deploy/verify lifecycle for the task.
@@ -106,11 +137,27 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 		if existing.Intent != "" && existing.Intent == input.Intent {
 			return renderDevelopBriefing(ctx, engine, client, projectID, rt)
 		}
-		// Different (or empty-vs-set) intent — new task. Auto-close the prior
-		// session and fall through to create a fresh one. "1 task = 1
-		// session" invariant: no error, no WORKFLOW_ACTIVE block, no manual
-		// close dance. Data loss is limited to in-session attempt history;
-		// git + platform hold the durable record.
+		// Different intent — manual/unset close-mode session blocks the
+		// implicit auto-delete (deploy-decomp P6 §3.4 Scenario D + §6 step 5).
+		// Auto-close cannot fire on such sessions, so silently discarding
+		// would erase the user's in-flight work without a clear close.
+		// Require an explicit close OR force=true to discard.
+		if blocked := blockedManualHosts(engine.StateDir(), existing.Services); len(blocked) > 0 && !input.Force.Bool() {
+			return jsonResult(map[string]any{
+				"status":   "manualSessionActive",
+				"intent":   existing.Intent,
+				"services": existing.Services,
+				"blocked":  blocked,
+				"reason":   fmt.Sprintf("Active develop session has services with manual/unset close-mode: %s. Auto-close cannot fire on these.", strings.Join(blocked, ", ")),
+				"options": []string{
+					"Close the active session explicitly: zerops_workflow action=\"close\"",
+					"Discard the active session and start fresh: re-call this start with force=true",
+				},
+			}), nil, nil
+		}
+		// Auto-close-eligible session OR force=true — auto-delete and create
+		// fresh. "1 task = 1 session" invariant. Data loss is limited to
+		// in-session attempt history; git + platform hold the durable record.
 		_ = workflow.DeleteWorkSession(engine.StateDir(), os.Getpid())
 		_ = workflow.UnregisterSession(engine.StateDir(), workflow.WorkSessionID(os.Getpid()))
 	}

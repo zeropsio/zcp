@@ -41,6 +41,7 @@ type WorkflowInput struct {
 	Integration string                     `json:"integration,omitempty" jsonschema:"ZCP-managed CI integration value for action=build-integration: 'webhook' (Zerops dashboard OAuth — Zerops pulls + builds on git push), 'actions' (GitHub Actions workflow runs zcli push from CI), or 'none' (no ZCP-managed integration; user may have independent CI/CD that ZCP doesn't track)."`
 	RemoteURL   string                     `json:"remoteUrl,omitempty"   jsonschema:"Remote git repository URL for action=git-push-setup confirm step. Passed after the walkthrough atom completes; writes meta.GitPushState=configured + meta.RemoteURL. Omit on the first call to receive the env-aware setup atom."`
 	Service     string                     `json:"service,omitempty"     jsonschema:"Single-target runtime service hostname for action=git-push-setup and action=build-integration. Pair-keyed lookup honors stage hostnames per spec-workflows.md §8 E8."`
+	Force       FlexBool                   `json:"force,omitempty"       jsonschema:"Discard-and-replace flag for action=start workflow=develop. Required when the active session's services include a CloseDeployMode ∈ {manual, unset} and the new intent differs — auto-close cannot fire on those services, so the prior session needs an explicit close (or a force-discard via this flag) before a fresh session takes over (deploy-decomp P6 §3.4 Scenario D)."`
 	Tier        string                     `json:"tier,omitempty"        jsonschema:"Recipe tier: minimal or showcase (recipe workflow only)."`
 	RecipePlan  *workflow.RecipePlan       `json:"recipePlan,omitempty"  jsonschema:"Structured recipe plan for research step completion. Pass as a JSON object, NOT a stringified JSON blob — e.g. recipePlan={\"slug\":\"...\",\"recipeType\":\"...\",\"features\":[...],\"targets\":[...]}, not recipePlan=\"{\\\"slug\\\":...}\". The schema validator rejects strings for this field; stringifying costs a retry round-trip."`
 
@@ -145,7 +146,7 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string,
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				"No workflow or action specified",
-				`Use action="start" workflow="bootstrap|develop|recipe" for orchestrated workflows, or workflow="export" for immediate guidance. Configure deploy strategy via action="strategy".`), WithRecoveryStatus()), nil, nil
+				`Use action="start" workflow="bootstrap|develop|recipe" for orchestrated workflows, or workflow="export" for immediate guidance. Configure deploy via action="close-mode" / action="git-push-setup" / action="build-integration".`), WithRecoveryStatus()), nil, nil
 		}
 		if !workflow.IsImmediateWorkflow(input.Workflow) {
 			return convertError(platform.NewPlatformError(

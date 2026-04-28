@@ -193,7 +193,7 @@ func sessionAnnotations(stateDir string) (string, *workflow.AutoCloseProgress) {
 	if err != nil || ws == nil || ws.ClosedAt != "" {
 		return noActiveSessionWarning, nil
 	}
-	return "", workflow.AutoCloseProgressOf(ws)
+	return "", workflow.AutoCloseProgressOf(stateDir, ws)
 }
 
 const noActiveSessionWarning = "No active develop session — deploy not tracked. Start one via zerops_workflow action=\"start\" workflow=\"develop\" intent=\"...\" scope=[...] to pick up auto-close + verify tracking."

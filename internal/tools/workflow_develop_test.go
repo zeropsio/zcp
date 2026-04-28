@@ -400,6 +400,10 @@ func TestHandleDevelopBriefing_NewIntent_AutoClosesPrior(t *testing.T) {
 		Mode:             topology.PlanModeDev,
 		BootstrapSession: "sess1",
 		BootstrappedAt:   "2026-04-18",
+		// CloseDeployMode=auto keeps the new-intent auto-delete path
+		// open under the deploy-decomp P6 close-mode gate (manual / unset
+		// services block implicit discard; auto / git-push permit it).
+		CloseDeployMode: topology.CloseModeAuto,
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}

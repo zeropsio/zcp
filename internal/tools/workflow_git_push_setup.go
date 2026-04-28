@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"net/url"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -88,10 +89,17 @@ func handleGitPushSetup(input WorkflowInput, stateDir string, rt runtime.Info) (
 		}), nil, nil
 	}
 
-	// Confirm mode: write meta state. Full GIT_TOKEN / .netrc verification
-	// happens later at deploy time (deploy_git_push.go pre-flight); this
-	// layer takes the agent's word that the walkthrough completed and the
-	// remote URL resolves.
+	// Confirm mode: validate remoteUrl format then write meta state. Full
+	// GIT_TOKEN / .netrc verification happens later at deploy time
+	// (deploy_git_push.go pre-flight); the URL-format check here closes
+	// the gap surfaced in the Phase 5 Codex POST-WORK review (a malformed
+	// URL persisted in meta would survive to deploy preflight silently).
+	if _, err := url.ParseRequestURI(input.RemoteURL); err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("remoteUrl %q is not a valid URL: %v", input.RemoteURL, err),
+			"Pass a fully-qualified URL (https://github.com/owner/repo.git or git@github.com:owner/repo.git)"), WithRecoveryStatus()), nil, nil
+	}
 	meta.GitPushState = topology.GitPushConfigured
 	meta.RemoteURL = input.RemoteURL
 	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {

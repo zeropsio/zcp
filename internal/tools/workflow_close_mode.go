@@ -90,6 +90,18 @@ func handleCloseMode(input WorkflowInput, stateDir string) (*mcp.CallToolResult,
 				"Run bootstrap first: zerops_workflow action=\"start\" workflow=\"bootstrap\""), WithRecoveryStatus()), nil, nil
 		}
 
+		// Local-only services have no Zerops runtime target — closeMode=auto
+		// (zcli push direct) makes no sense, mirroring the pre-decomp deploy
+		// gate at deploy_strategy_gate.go that rejected push-dev for
+		// PlanModeLocalOnly. Surface the same redirection here so the
+		// invalid choice is caught at intent-set time, not at deploy time.
+		if cm == topology.CloseModeAuto && meta.Mode == topology.PlanModeLocalOnly {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				fmt.Sprintf("Service %q is local-only — closeMode=auto needs a Zerops runtime target to push to", hostname),
+				"Link a Zerops runtime first: zerops_workflow action=\"adopt-local\" targetService=<runtime-hostname>. Or pick git-push / manual, which work without a stage."), WithRecoveryStatus()), nil, nil
+		}
+
 		updated = append(updated, fmt.Sprintf("%s=%s", hostname, cm))
 
 		// No-op shortcut: same close-mode + already confirmed.
