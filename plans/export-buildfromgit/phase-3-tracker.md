@@ -130,7 +130,7 @@ Single POST-WORK agent per plan §7 (Phase 3 not listed in fan-out opportunities
 - [x] Codex POST-WORK APPROVE (effective verdict after 6 in-place amendments per §10.5 work-economics).
 - [x] Codex round transcript persisted (`codex-round-p3-postwork-handler.md`).
 - [x] `phase-3-tracker.md` finalized.
-- [ ] Phase 3 EXIT commits (single bundle commit + tracker commit — see hashes below once made).
+- [x] Phase 3 EXIT commits: `d5a44cd0` (handler + amendments) + `8352dfa2` (tracker + Codex transcript).
 - [ ] User explicit go to enter Phase 4.
 
 ## Notes for Phase 4 entry
