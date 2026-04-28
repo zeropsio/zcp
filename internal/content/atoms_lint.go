@@ -101,8 +101,37 @@ func lintAtomCorpus(atoms []AtomFile) []AtomLintViolation {
 		out = append(out, axisKViolations(ctx)...)
 		out = append(out, axisMViolations(ctx)...)
 		out = append(out, axisNViolations(ctx)...)
+		out = append(out, closeDeployModeViolations(ctx)...)
+		out = append(out, gitPushStateViolations(ctx)...)
+		out = append(out, buildIntegrationViolations(ctx)...)
 	}
 	return out
+}
+
+// closeDeployModeViolations enforces axis-specific body-prose rules for
+// atoms declaring `closeDeployModes:`. Phase-1 stub introduced by the
+// deploy-strategy decomposition (plans/deploy-strategy-decomposition-2026-04-28.md);
+// rules land in Phase 8 alongside the atom corpus restructure. Candidates
+// for Phase 8 enforcement: `closeDeployModes: [manual]` atoms MUST NOT
+// contain `zerops_deploy` invocations (spec D7 — agents inform on manual
+// mode, they do not call deploy on the user's behalf).
+func closeDeployModeViolations(_ atomLintCtx) []AtomLintViolation {
+	return nil
+}
+
+// gitPushStateViolations enforces axis-specific body-prose rules for
+// atoms declaring `gitPushStates:`. Phase-1 stub. Rules land in Phase 8.
+func gitPushStateViolations(_ atomLintCtx) []AtomLintViolation {
+	return nil
+}
+
+// buildIntegrationViolations enforces axis-specific body-prose rules for
+// atoms declaring `buildIntegrations:`. Phase-1 stub. Rules land in
+// Phase 8 — candidates: enforce UTILITY framing ("ZCP-managed integration",
+// not "CI/CD"; warn if "no build will fire" appears alongside
+// `buildIntegrations: [none]` since users may have independent CI).
+func buildIntegrationViolations(_ atomLintCtx) []AtomLintViolation {
+	return nil
 }
 
 // regexLintRules runs the legacy regex rule family against the atom body.

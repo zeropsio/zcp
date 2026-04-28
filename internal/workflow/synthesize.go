@@ -311,13 +311,24 @@ func envelopeDeployStateMatches(services []ServiceSnapshot, want []DeployState) 
 }
 
 // hasServiceScopedAxes reports whether the atom declares any axis whose
-// match is per-service (modes / strategies / triggers / runtimes /
-// deployStates / serviceStatus). Service-agnostic atoms render once
-// using the global primaryHostnames picker.
+// match is per-service (modes / strategies / triggers / closeDeployModes /
+// gitPushStates / buildIntegrations / runtimes / deployStates /
+// serviceStatus). Service-agnostic atoms render once using the global
+// primaryHostnames picker.
+//
+// closeDeployModes / gitPushStates / buildIntegrations are recognized as
+// service-scoped from Phase 1 of the deploy-strategy decomposition so
+// future atoms declaring them are correctly classified. The matching
+// logic in serviceSatisfiesAxes lands in Phase 3 once ServiceSnapshot
+// exposes the corresponding fields; until then no atom in the corpus
+// declares these axes so the gap is inert.
 func hasServiceScopedAxes(axes AxisVector) bool {
 	return len(axes.Modes) > 0 ||
 		len(axes.Strategies) > 0 ||
 		len(axes.Triggers) > 0 ||
+		len(axes.CloseDeployModes) > 0 ||
+		len(axes.GitPushStates) > 0 ||
+		len(axes.BuildIntegrations) > 0 ||
 		len(axes.Runtimes) > 0 ||
 		len(axes.DeployStates) > 0 ||
 		len(axes.ServiceStatuses) > 0

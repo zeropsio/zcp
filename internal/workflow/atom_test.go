@@ -460,6 +460,206 @@ body`,
 	}
 }
 
+// TestParseAtom_DeployDecompAxes pins parser support for the three
+// frontmatter axes introduced by the deploy-strategy decomposition:
+// `closeDeployModes`, `gitPushStates`, and `buildIntegrations` (plan
+// `plans/deploy-strategy-decomposition-2026-04-28.md` Phase 1.0). Without
+// parser support, Phase 8 atom corpus restructure would fail every atom
+// that declares these axes — `validAtomFrontmatterKeys` is closed and
+// rejects unknown keys at parse time.
+//
+// Coverage: each axis on its own (positive parse), all three combined,
+// each axis with every valid enum value, and invalid-value rejection on
+// each axis (the `validAtomEnumValues` enum-set pin).
+func TestParseAtom_DeployDecompAxes(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		content string
+		wantClm []topology.CloseDeployMode
+		wantGps []topology.GitPushState
+		wantBi  []topology.BuildIntegration
+		wantErr bool
+		errFrag string
+	}{
+		{
+			name: "closeDeployModes_only",
+			content: `---
+id: cdm-only
+phases: [develop-active]
+closeDeployModes: [auto]
+---
+body`,
+			wantClm: []topology.CloseDeployMode{topology.CloseModeAuto},
+		},
+		{
+			name: "gitPushStates_only",
+			content: `---
+id: gps-only
+phases: [develop-active]
+gitPushStates: [configured]
+---
+body`,
+			wantGps: []topology.GitPushState{topology.GitPushConfigured},
+		},
+		{
+			name: "buildIntegrations_only",
+			content: `---
+id: bi-only
+phases: [develop-active]
+buildIntegrations: [webhook]
+---
+body`,
+			wantBi: []topology.BuildIntegration{topology.BuildIntegrationWebhook},
+		},
+		{
+			name: "all_three_combined",
+			content: `---
+id: combined
+phases: [develop-active]
+closeDeployModes: [git-push]
+gitPushStates: [configured]
+buildIntegrations: [actions]
+---
+body`,
+			wantClm: []topology.CloseDeployMode{topology.CloseModeGitPush},
+			wantGps: []topology.GitPushState{topology.GitPushConfigured},
+			wantBi:  []topology.BuildIntegration{topology.BuildIntegrationActions},
+		},
+		{
+			name: "closeDeployModes_full_enum",
+			content: `---
+id: cdm-full
+phases: [develop-active]
+closeDeployModes: [unset, auto, git-push, manual]
+---
+body`,
+			wantClm: []topology.CloseDeployMode{
+				topology.CloseModeUnset,
+				topology.CloseModeAuto,
+				topology.CloseModeGitPush,
+				topology.CloseModeManual,
+			},
+		},
+		{
+			name: "gitPushStates_full_enum",
+			content: `---
+id: gps-full
+phases: [develop-active]
+gitPushStates: [unconfigured, configured, broken, unknown]
+---
+body`,
+			wantGps: []topology.GitPushState{
+				topology.GitPushUnconfigured,
+				topology.GitPushConfigured,
+				topology.GitPushBroken,
+				topology.GitPushUnknown,
+			},
+		},
+		{
+			name: "buildIntegrations_full_enum",
+			content: `---
+id: bi-full
+phases: [develop-active]
+buildIntegrations: [none, webhook, actions]
+---
+body`,
+			wantBi: []topology.BuildIntegration{
+				topology.BuildIntegrationNone,
+				topology.BuildIntegrationWebhook,
+				topology.BuildIntegrationActions,
+			},
+		},
+		{
+			name: "closeDeployModes_invalid_enum",
+			content: `---
+id: cdm-bad
+phases: [develop-active]
+closeDeployModes: [auto-close]
+---
+body`,
+			wantErr: true,
+			errFrag: `key "closeDeployModes" has invalid value "auto-close"`,
+		},
+		{
+			name: "gitPushStates_invalid_enum",
+			content: `---
+id: gps-bad
+phases: [develop-active]
+gitPushStates: [partial]
+---
+body`,
+			wantErr: true,
+			errFrag: `key "gitPushStates" has invalid value "partial"`,
+		},
+		{
+			name: "buildIntegrations_invalid_enum",
+			content: `---
+id: bi-bad
+phases: [develop-active]
+buildIntegrations: [gitlab]
+---
+body`,
+			wantErr: true,
+			errFrag: `key "buildIntegrations" has invalid value "gitlab"`,
+		},
+		{
+			name: "closeDeployModes_bare_scalar_rejected",
+			content: `---
+id: cdm-scalar
+phases: [develop-active]
+closeDeployModes: auto
+---
+body`,
+			wantErr: true,
+			errFrag: `key "closeDeployModes" must be inline list form`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			atom, err := ParseAtom(tc.content)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tc.errFrag)
+				}
+				if !strings.Contains(err.Error(), tc.errFrag) {
+					t.Errorf("error %q missing fragment %q", err.Error(), tc.errFrag)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !slicesEqual(atom.Axes.CloseDeployModes, tc.wantClm) {
+				t.Errorf("CloseDeployModes = %v, want %v", atom.Axes.CloseDeployModes, tc.wantClm)
+			}
+			if !slicesEqual(atom.Axes.GitPushStates, tc.wantGps) {
+				t.Errorf("GitPushStates = %v, want %v", atom.Axes.GitPushStates, tc.wantGps)
+			}
+			if !slicesEqual(atom.Axes.BuildIntegrations, tc.wantBi) {
+				t.Errorf("BuildIntegrations = %v, want %v", atom.Axes.BuildIntegrations, tc.wantBi)
+			}
+		})
+	}
+}
+
+// slicesEqual is a small helper for the deploy-decomp axis test —
+// reflect.DeepEqual would work but is overkill for typed string slices.
+func slicesEqual[T ~string](a, b []T) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // TestParseAtom_StrictFrontmatter pins Phase 2 (C5) of the pipeline-repair
 // plan: the parser rejects malformed frontmatter at parse time instead of
 // silently degrading to wildcard-broad atoms. Three classes of failure:

@@ -48,16 +48,35 @@ type KnowledgeAtom struct {
 // axes mean "any value for this dimension" (Phases is the exception — it
 // MUST be non-empty).
 type AxisVector struct {
-	Phases        []Phase
-	Modes         []topology.Mode
-	Environments  []Environment
-	Strategies    []topology.DeployStrategy
-	Triggers      []topology.PushGitTrigger // valid only alongside strategies: [push-git]
-	Runtimes      []topology.RuntimeClass
-	Routes        []BootstrapRoute
-	Steps         []string
-	IdleScenarios []IdleScenario
-	DeployStates  []DeployState
+	Phases       []Phase
+	Modes        []topology.Mode
+	Environments []Environment
+	Strategies   []topology.DeployStrategy
+	Triggers     []topology.PushGitTrigger // valid only alongside strategies: [push-git]
+	// CloseDeployModes scopes by the per-pair close-mode dimension (see
+	// topology.CloseDeployMode). Service-scoped: at least one matching
+	// service in the envelope must declare a close mode in this set.
+	// Empty = no close-mode gate.
+	//
+	// New axis introduced by deploy-strategy decomposition Phase 1
+	// (plans/deploy-strategy-decomposition-2026-04-28.md). The synthesizer
+	// filter wiring (serviceSatisfiesAxes) lands in Phase 3 once
+	// ServiceSnapshot exposes the field; until then the parser accepts
+	// the axis but no atom declares it.
+	CloseDeployModes []topology.CloseDeployMode
+	// GitPushStates scopes by the per-pair git-push-capability dimension
+	// (see topology.GitPushState). Service-scoped. Empty = no gate.
+	// Same Phase 1 / Phase 3 wiring schedule as CloseDeployModes.
+	GitPushStates []topology.GitPushState
+	// BuildIntegrations scopes by the per-pair ZCP-managed CI integration
+	// (see topology.BuildIntegration). Service-scoped. Empty = no gate.
+	// Same Phase 1 / Phase 3 wiring schedule as CloseDeployModes.
+	BuildIntegrations []topology.BuildIntegration
+	Runtimes          []topology.RuntimeClass
+	Routes            []BootstrapRoute
+	Steps             []string
+	IdleScenarios     []IdleScenario
+	DeployStates      []DeployState
 	// EnvelopeDeployStates is the envelope-scoped twin of DeployStates:
 	// the atom matches once if at least one bootstrapped service in the
 	// envelope satisfies any of the listed states, and renders 1× via the
@@ -121,6 +140,9 @@ var validAtomFrontmatterKeys = map[string]struct{}{
 	"environments":         {},
 	"strategies":           {},
 	"triggers":             {},
+	"closeDeployModes":     {}, // deploy-decomp P1 — replaces strategies on the close-mode dimension
+	"gitPushStates":        {}, // deploy-decomp P1 — orthogonal git-push capability dimension
+	"buildIntegrations":    {}, // deploy-decomp P1 — orthogonal ZCP-managed CI integration dimension
 	"runtimes":             {},
 	"routes":               {},
 	"steps":                {},
@@ -145,6 +167,9 @@ var listAxisKeys = map[string]struct{}{
 	"environments":         {},
 	"strategies":           {},
 	"triggers":             {},
+	"closeDeployModes":     {},
+	"gitPushStates":        {},
+	"buildIntegrations":    {},
 	"runtimes":             {},
 	"routes":               {},
 	"steps":                {},
@@ -197,6 +222,23 @@ var validAtomEnumValues = map[string]map[string]struct{}{
 		"webhook": {},
 		"actions": {},
 		"unset":   {},
+	},
+	"closeDeployModes": {
+		"unset":    {},
+		"auto":     {},
+		"git-push": {},
+		"manual":   {},
+	},
+	"gitPushStates": {
+		"unconfigured": {},
+		"configured":   {},
+		"broken":       {},
+		"unknown":      {},
+	},
+	"buildIntegrations": {
+		"none":    {},
+		"webhook": {},
+		"actions": {},
 	},
 	"runtimes": {
 		"dynamic":            {},
@@ -262,7 +304,7 @@ var validScalarEnumValues = map[string]map[string]struct{}{
 func validateAtomFrontmatter(fields map[string]string) error {
 	for key := range fields {
 		if _, ok := validAtomFrontmatterKeys[key]; !ok {
-			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, strategies, triggers, runtimes, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, references-fields, references-atoms, pinned-by-scenario)", key)
+			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, strategies, triggers, closeDeployModes, gitPushStates, buildIntegrations, runtimes, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, multiService, references-fields, references-atoms, pinned-by-scenario)", key)
 		}
 	}
 	for key, raw := range fields {
@@ -347,6 +389,9 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 			Environments:         parseEnvironments(fields["environments"]),
 			Strategies:           parseStrategies(fields["strategies"]),
 			Triggers:             parseTriggers(fields["triggers"]),
+			CloseDeployModes:     parseCloseDeployModes(fields["closeDeployModes"]),
+			GitPushStates:        parseGitPushStates(fields["gitPushStates"]),
+			BuildIntegrations:    parseBuildIntegrations(fields["buildIntegrations"]),
 			Runtimes:             parseRuntimes(fields["runtimes"]),
 			Routes:               parseRoutes(fields["routes"]),
 			Steps:                parseYAMLList(fields["steps"]),
@@ -497,6 +542,45 @@ func parseTriggers(raw string) []topology.PushGitTrigger {
 	out := make([]topology.PushGitTrigger, 0, len(values))
 	for _, v := range values {
 		out = append(out, topology.PushGitTrigger(v))
+	}
+	return out
+}
+
+// parseCloseDeployModes reads the optional `closeDeployModes:` frontmatter
+// field — filters atoms by the per-pair developer choice for what the
+// develop workflow auto-does at close. Introduced by the deploy-strategy
+// decomposition (plans/deploy-strategy-decomposition-2026-04-28.md). One
+// of three orthogonal axes that replace the legacy `strategies:` /
+// `triggers:` pair on the post-decomposition corpus.
+func parseCloseDeployModes(raw string) []topology.CloseDeployMode {
+	values := parseYAMLList(raw)
+	out := make([]topology.CloseDeployMode, 0, len(values))
+	for _, v := range values {
+		out = append(out, topology.CloseDeployMode(v))
+	}
+	return out
+}
+
+// parseGitPushStates reads the optional `gitPushStates:` frontmatter
+// field — filters atoms by per-pair git-push capability state.
+func parseGitPushStates(raw string) []topology.GitPushState {
+	values := parseYAMLList(raw)
+	out := make([]topology.GitPushState, 0, len(values))
+	for _, v := range values {
+		out = append(out, topology.GitPushState(v))
+	}
+	return out
+}
+
+// parseBuildIntegrations reads the optional `buildIntegrations:` frontmatter
+// field — filters atoms by per-pair ZCP-managed CI integration. Distinct
+// from `triggers:` (which is on the legacy push-git axis); axes coexist
+// during the migration window.
+func parseBuildIntegrations(raw string) []topology.BuildIntegration {
+	values := parseYAMLList(raw)
+	out := make([]topology.BuildIntegration, 0, len(values))
+	for _, v := range values {
+		out = append(out, topology.BuildIntegration(v))
 	}
 	return out
 }
