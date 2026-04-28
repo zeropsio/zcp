@@ -89,7 +89,7 @@ Three iterations on the same scenario, narrowing in on a real bug surfaced by th
 - [x] Container binary restored to original.
 - [x] `phase-8-tracker.md` finalized.
 - [x] Stage variant + re-import explicitly waived for minimal scope (single-half fixture; re-import deferred to follow-up).
-- [ ] Phase 8 EXIT commit (single — see hash once made).
+- [x] Phase 8 EXIT commit `6e3d83e1` (handler fix + integration test + scenario + atom prose + tracker + Codex transcript).
 - [ ] User explicit go to enter Phase 9 (docs alignment).
 
 ## Notes for Phase 9 entry (if Phase 8 passes)
