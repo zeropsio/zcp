@@ -50,7 +50,7 @@ NONE. Plan §7 Codex protocol does NOT mandate POST-WORK for Phase 7 (LOW risk, 
 - [x] Scenarios + corpus_coverage + bootstrap_outputs updates accounted for (most done in earlier phases; gaps documented above as no-op-required cases).
 - [x] Verify gate green.
 - [x] `phase-7-tracker.md` finalized.
-- [ ] Phase 7 EXIT commit (single — see hash once made).
+- [x] Phase 7 EXIT commit: `c62938e8` (integration test + tracker).
 - [ ] User explicit go to enter Phase 8 (E2E LIVE on eval-zcp — requires GitHub PAT + provisioned services).
 
 ## Notes for Phase 8 entry
