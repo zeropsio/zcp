@@ -245,3 +245,57 @@ func TestBuildIntegrationValues(t *testing.T) {
 		}
 	}
 }
+
+// TestExportVariantValues pins the closed enum set for which half of a
+// pair (dev / stage) the export workflow targets. Unset is the zero-value
+// empty-string sentinel — the agent passes "" on the first export call
+// before the variant is resolved. Three values: unset / dev / stage. Per
+// plan `plans/export-buildfromgit-2026-04-28.md` §6 Phase 1.
+func TestExportVariantValues(t *testing.T) {
+	t.Parallel()
+	set := map[ExportVariant]struct{}{
+		ExportVariantUnset: {},
+		ExportVariantDev:   {},
+		ExportVariantStage: {},
+	}
+	if len(set) != 3 {
+		t.Fatalf("ExportVariant constants must be 3 distinct values, got %d", len(set))
+	}
+	for _, want := range []ExportVariant{"", "dev", "stage"} {
+		if _, ok := set[want]; !ok {
+			t.Errorf("ExportVariant missing canonical value %q", want)
+		}
+	}
+	if ExportVariantUnset != "" {
+		t.Errorf("ExportVariantUnset must be empty-string sentinel for zero-value detection, got %q", ExportVariantUnset)
+	}
+}
+
+// TestSecretClassificationValues pins the closed enum set for the
+// four-category secret classification protocol per plan §3.4. Unset is
+// the zero-value empty-string sentinel — agents pass "" for envs that
+// have not yet been bucketed during the per-env review table flow.
+// Five values: unset / infrastructure / auto-secret / external-secret /
+// plain-config. Future taxonomy changes (e.g., splitting external-secret
+// by provenance) must extend the enum AND this test in the same change.
+func TestSecretClassificationValues(t *testing.T) {
+	t.Parallel()
+	set := map[SecretClassification]struct{}{
+		SecretClassUnset:          {},
+		SecretClassInfrastructure: {},
+		SecretClassAutoSecret:     {},
+		SecretClassExternalSecret: {},
+		SecretClassPlainConfig:    {},
+	}
+	if len(set) != 5 {
+		t.Fatalf("SecretClassification constants must be 5 distinct values, got %d", len(set))
+	}
+	for _, want := range []SecretClassification{"", "infrastructure", "auto-secret", "external-secret", "plain-config"} {
+		if _, ok := set[want]; !ok {
+			t.Errorf("SecretClassification missing canonical value %q", want)
+		}
+	}
+	if SecretClassUnset != "" {
+		t.Errorf("SecretClassUnset must be empty-string sentinel for zero-value detection, got %q", SecretClassUnset)
+	}
+}
