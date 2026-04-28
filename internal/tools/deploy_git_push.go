@@ -45,6 +45,45 @@ type gitPushPrerequisites struct {
 	Instructions string `json:"instructions"`
 }
 
+// gitPushMetaPreflight runs the source-of-push + GitPushState validation
+// shared by handleGitPush (container) and handleLocalGitPush (local).
+// Returns a CallToolResult ready to return verbatim from the caller, or
+// nil when checks pass / no meta exists (legacy services without metas
+// pass through). recordAttempt is invoked exactly once on the failure
+// branch so each caller stays the canonical site of attempt persistence.
+//
+// FindServiceMeta honors the pair-keyed invariant: a stage-hostname
+// targetService resolves to the dev-keyed meta — and IsPushSourceFor
+// returns false for it (stage is the build target, not the source).
+//
+// Introduced by deploy-decomp P4 (handler validation phase).
+func gitPushMetaPreflight(
+	stateDir, targetService string,
+	recordAttempt func(string, topology.FailureClass),
+) *mcp.CallToolResult {
+	meta, _ := workflow.FindServiceMeta(stateDir, targetService)
+	if meta == nil {
+		return nil
+	}
+	if !meta.IsPushSourceFor(targetService) {
+		recordAttempt("targetService is not a push source", topology.FailureClassConfig)
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("git-push target %q is not a source-of-push (build target half of the pair); push from %q instead", targetService, meta.Hostname),
+			fmt.Sprintf("Retry with: zerops_deploy targetService=%q strategy=\"git-push\"", meta.Hostname),
+		), WithRecoveryStatus())
+	}
+	if meta.GitPushState != topology.GitPushConfigured {
+		recordAttempt(fmt.Sprintf("git-push not configured (state=%s)", meta.GitPushState), topology.FailureClassConfig)
+		return convertError(platform.NewPlatformError(
+			platform.ErrPrerequisiteMissing,
+			fmt.Sprintf("git-push not configured for service %q (current state: %s)", targetService, meta.GitPushState),
+			fmt.Sprintf("Run zerops_workflow action=\"git-push-setup\" service=%q first to set up GIT_TOKEN, .netrc, and remote URL.", targetService),
+		), WithRecoveryStatus())
+	}
+	return nil
+}
+
 const gitTokenCheckCmd = `test -n "$GIT_TOKEN" && echo 1 || echo 0`
 
 // committedCodeCheckCmd returns "1" when workingDir contains a git repo
@@ -115,6 +154,11 @@ func handleGitPush(
 			"targetService is required for git-push",
 			"Provide the hostname of the service to push from",
 		)), nil, nil
+	}
+
+	// Meta-based source-of-push + setup-state pre-flight (deploy-decomp P4).
+	if blocked := gitPushMetaPreflight(stateDir, input.TargetService, recordAttempt); blocked != nil {
+		return blocked, nil, nil
 	}
 
 	hostname := input.TargetService
@@ -188,6 +232,28 @@ func handleGitPush(
 				recordAttempt(fmt.Sprintf("zerops.yaml validation failed: %v", vErr), topology.FailureClassConfig)
 				return convertError(vErr), nil, nil
 			}
+			// Env-var pre-flight (deploy-decomp P4 R5): the build pipeline
+			// that runs on the remote's receipt of this push consumes
+			// run.envVariables refs at build time; missing peer-service
+			// refs cause silent build failures. Validate against live API
+			// state now so the user sees actionable feedback before the
+			// push transmits. Parse failures fall through (yaml schema is
+			// already validated above; a parse miss here is a content
+			// mismatch we don't want to escalate to a deploy-blocker).
+			if doc, parseErr := ops.ParseZeropsYmlContent([]byte(yamlContent), "zerops.yaml"); parseErr == nil {
+				if entry := doc.FindEntry(setupName); entry != nil && len(entry.EnvVariables) > 0 {
+					for _, c := range preflightEnvRefs(ctx, client, projectID, hostname, entry) {
+						if c.Status == statusFail {
+							recordAttempt(fmt.Sprintf("env-var pre-flight failed: %s", c.Detail), topology.FailureClassConfig)
+							return convertError(platform.NewPlatformError(
+								platform.ErrPreflightFailed,
+								"env-var references invalid: "+c.Detail,
+								"Fix env-var references in zerops.yaml run.envVariables; ${peer_var} refs must name an existing peer service + env var.",
+							), WithRecoveryStatus()), nil, nil
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -228,9 +294,20 @@ func handleGitPush(
 	attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
 	_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 
+	// Container-side trackTriggerMissingWarning parity (deploy-decomp P4
+	// R6). Surfaces the soft warning when the push succeeded but no
+	// ZCP-managed BuildIntegration is configured — same shape as the
+	// local-git path at deploy_local_git.go:212. UTILITY framing: the
+	// user may still have independent CI/CD that ZCP doesn't track.
+	var warnings []string
+	if warn := trackTriggerMissingWarning(stateDir, hostname); warn != "" {
+		warnings = append(warnings, warn)
+	}
+
 	note, progress := sessionAnnotations(stateDir)
 	return jsonResult(deployGitPushResponse{
 		GitPushResult:     result,
+		Warnings:          warnings,
 		WorkSessionNote:   note,
 		AutoCloseProgress: progress,
 	}), nil, nil
@@ -242,6 +319,7 @@ func handleGitPush(
 // interface-typed field the way we'd want.
 type deployGitPushResponse struct {
 	*ops.GitPushResult
+	Warnings          []string                    `json:"warnings,omitempty"`
 	WorkSessionNote   string                      `json:"workSessionNote,omitempty"`
 	AutoCloseProgress *workflow.AutoCloseProgress `json:"autoCloseProgress,omitempty"`
 }

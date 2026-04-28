@@ -167,16 +167,31 @@ func (e ZeropsYmlEntry) HasImplicitWebServer() bool {
 func ParseZeropsYml(workingDir string) (*ZeropsYmlDoc, error) {
 	ymlPath := filepath.Join(workingDir, "zerops.yaml")
 	data, err := os.ReadFile(ymlPath)
+	source := "zerops.yaml"
 	if err != nil {
 		ymlPath = filepath.Join(workingDir, "zerops.yml")
 		data, err = os.ReadFile(ymlPath)
 		if err != nil {
 			return nil, fmt.Errorf("zerops.yaml not found in %s (also tried zerops.yml)", workingDir)
 		}
+		source = "zerops.yml"
+	}
+	return ParseZeropsYmlContent(data, source)
+}
+
+// ParseZeropsYmlContent parses raw zerops.yaml bytes into a typed document.
+// source is the originating filename (zerops.yaml / zerops.yml) used in the
+// error message so a malformed YAML hauled in over SSH still names the right
+// file. Used by the git-push pre-flight (deploy-decomp P4): yaml content is
+// fetched from the container via SSH cat, parsed here, then env-var refs are
+// validated against live API state.
+func ParseZeropsYmlContent(data []byte, source string) (*ZeropsYmlDoc, error) {
+	if source == "" {
+		source = "zerops.yaml"
 	}
 	var doc ZeropsYmlDoc
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf("%s invalid YAML: %w", filepath.Base(ymlPath), err)
+		return nil, fmt.Errorf("%s invalid YAML: %w", source, err)
 	}
 	return &doc, nil
 }

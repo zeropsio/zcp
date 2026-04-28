@@ -74,6 +74,11 @@ func TestHandleLocalGitPush_HappyPath(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname: "myproject", Mode: topology.PlanModeLocalStage,
 		StageHostname: "apistage", BootstrappedAt: "2026-04-01",
+		// Phase 4 R-state: tests target downstream failure modes; the meta
+		// represents a service that has gone through git-push-setup so the
+		// pre-flight gate passes.
+		CloseDeployMode: topology.CloseModeGitPush,
+		GitPushState:    topology.GitPushConfigured,
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
@@ -110,6 +115,8 @@ func TestHandleLocalGitPush_NotAGitRepo_Refuses(t *testing.T) {
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname: "myproject", Mode: topology.PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
+		CloseDeployMode: topology.CloseModeGitPush,
+		GitPushState:    topology.GitPushConfigured,
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
@@ -161,6 +168,8 @@ func TestHandleLocalGitPush_NoOriginNoRemoteURL_Refuses(t *testing.T) {
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname: "myproject", Mode: topology.PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
+		CloseDeployMode: topology.CloseModeGitPush,
+		GitPushState:    topology.GitPushConfigured,
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
@@ -188,6 +197,11 @@ func TestHandleLocalGitPush_RemoteURLMismatch_Refuses(t *testing.T) {
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname: "myproject", Mode: topology.PlanModeLocalStage,
 		StageHostname: "apistage", BootstrappedAt: "2026-04-01",
+		// Phase 4 R-state: tests target downstream failure modes; the meta
+		// represents a service that has gone through git-push-setup so the
+		// pre-flight gate passes.
+		CloseDeployMode: topology.CloseModeGitPush,
+		GitPushState:    topology.GitPushConfigured,
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}

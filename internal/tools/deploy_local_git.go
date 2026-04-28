@@ -65,6 +65,12 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 		_ = workflow.RecordDeployAttempt(stateDir, hostname, attempt)
 	}
 
+	// Meta-based source-of-push + setup-state pre-flight (deploy-decomp P4).
+	// Parity with handleGitPush — local + container reject identical shapes.
+	if blocked := gitPushMetaPreflight(stateDir, hostname, record); blocked != nil {
+		return blocked, nil, nil
+	}
+
 	workingDir := input.WorkingDir
 	if workingDir == "" {
 		if cwd, err := os.Getwd(); err == nil {
@@ -279,19 +285,24 @@ func currentEffectiveOrigin(current, provided string) string {
 	return provided
 }
 
-// trackTriggerMissingWarning builds a soft warning when the target
-// service's meta is on push-git but has no PushGitTrigger recorded —
-// the push succeeded on the git side, but Zerops won't auto-build
-// without either a webhook or a GitHub Actions workflow configured.
-// FindServiceMeta honors the pair-keyed invariant — a stage-hostname
-// target resolves to the dev-keyed meta file (spec-workflows.md §8 E8).
+// trackTriggerMissingWarning builds a soft warning when the target service's
+// meta is on git-push close-mode but has no ZCP-managed BuildIntegration
+// configured — the push succeeded on the git side, but no Zerops build
+// fires unless the user has independent CI/CD (which ZCP doesn't track).
+// FindServiceMeta honors the pair-keyed invariant — a stage-hostname target
+// resolves to the dev-keyed meta file (spec-workflows.md §8 E8).
+//
+// Reads CloseDeployMode + BuildIntegration (deploy-decomp P4) instead of
+// the legacy DeployStrategy + PushGitTrigger pair. UTILITY framing: the
+// warning says "no ZCP-managed integration is configured", not "no build
+// will fire" — the user's external CI may still pick up the push.
 func trackTriggerMissingWarning(stateDir, hostname string) string {
 	meta, _ := workflow.FindServiceMeta(stateDir, hostname)
-	if meta == nil || meta.DeployStrategy != topology.StrategyPushGit {
+	if meta == nil || meta.CloseDeployMode != topology.CloseModeGitPush {
 		return ""
 	}
-	if meta.PushGitTrigger != "" {
+	if meta.BuildIntegration != "" && meta.BuildIntegration != topology.BuildIntegrationNone {
 		return ""
 	}
-	return fmt.Sprintf("service %q uses push-git but has no downstream trigger configured — the push lands in git but Zerops won't build. Run zerops_workflow action=\"strategy\" strategies={%q:%q} trigger=\"webhook|actions\" to finish setup.", hostname, hostname, topology.StrategyPushGit)
+	return fmt.Sprintf("service %q is on close-mode=git-push but has no ZCP-managed build integration configured — the push lands in git, but no Zerops build fires unless your own CI/CD picks it up. Run zerops_workflow action=\"build-integration\" service=%q integration=\"webhook|actions\" to finish setup.", hostname, hostname)
 }

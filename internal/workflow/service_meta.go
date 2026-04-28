@@ -211,6 +211,34 @@ func (m *ServiceMeta) RoleFor(hostname string) topology.Mode {
 	return ""
 }
 
+// IsPushSourceFor returns true when hostname is a source-of-push within this
+// meta's pair scope. False for stage hostnames (build target, never source)
+// and for ModeDev services (legacy dev-only mode incompatible with push-git
+// per the deploy-strategy decomposition §3.2).
+//
+// Reads meta.Mode directly (PlanMode values alias topology.Mode values, so
+// topology.IsPushSource classifies them correctly) rather than going through
+// resolveEnvelopeMode — the envelope projection collapses local-* meta modes
+// onto ModeDev for atom-rendering purposes, which loses the push-source
+// information needed here. Stage-hostname check is the explicit pair-half
+// carve-out.
+//
+// Used by handleGitPush + handleLocalGitPush (deploy-decomp P4) to reject
+// targetService that is not a source-of-push, returning a remediation
+// pointing at the correct dev hostname.
+func (m *ServiceMeta) IsPushSourceFor(hostname string) bool {
+	if m == nil || hostname == "" {
+		return false
+	}
+	if m.StageHostname != "" && hostname == m.StageHostname {
+		return false
+	}
+	if hostname != m.Hostname {
+		return false
+	}
+	return topology.IsPushSource(m.Mode)
+}
+
 // WriteServiceMeta writes service metadata to baseDir/services/{hostname}.json.
 func WriteServiceMeta(baseDir string, meta *ServiceMeta) error {
 	dir := filepath.Join(baseDir, "services")
@@ -293,8 +321,10 @@ func migrateOldMeta(meta *ServiceMeta) {
 			meta.CloseDeployMode = topology.CloseModeGitPush
 		case topology.StrategyManual:
 			meta.CloseDeployMode = topology.CloseModeManual
+		case topology.StrategyUnset:
+			meta.CloseDeployMode = topology.CloseModeUnset
 		default:
-			// Covers topology.StrategyUnset and the empty-string zero value.
+			// Empty-string zero value (legacy metas pre-StrategyUnset).
 			meta.CloseDeployMode = topology.CloseModeUnset
 		}
 	}
@@ -307,8 +337,10 @@ func migrateOldMeta(meta *ServiceMeta) {
 			meta.BuildIntegration = topology.BuildIntegrationWebhook
 		case topology.TriggerActions:
 			meta.BuildIntegration = topology.BuildIntegrationActions
+		case topology.TriggerUnset:
+			meta.BuildIntegration = topology.BuildIntegrationNone
 		default:
-			// Covers topology.TriggerUnset and the empty-string zero value.
+			// Empty-string zero value (legacy metas pre-TriggerUnset).
 			meta.BuildIntegration = topology.BuildIntegrationNone
 		}
 	}

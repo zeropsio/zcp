@@ -945,6 +945,28 @@ func setupDeployedService(t *testing.T, stateDir, hostname, stageHostname string
 	}
 }
 
+// markGitPushConfigured stamps GitPushState=GitPushConfigured on an
+// existing meta so tests that target downstream git-push failures
+// (missing GIT_TOKEN, no committed code, etc.) bypass the meta-level
+// R-state pre-flight added by deploy-decomp P4. Pair-keyed lookup:
+// hostname must match the primary meta hostname.
+//
+// reusable for any future git-push test that targets a different fixture
+// hostname; keeping the parameter keeps the call site self-documenting.
+//
+//nolint:unparam // hostname is always "appdev" today but the helper is
+func markGitPushConfigured(t *testing.T, stateDir, hostname string) {
+	t.Helper()
+	meta, err := workflow.ReadServiceMeta(stateDir, hostname)
+	if err != nil || meta == nil {
+		t.Fatalf("ReadServiceMeta: %v", err)
+	}
+	meta.GitPushState = topology.GitPushConfigured
+	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+}
+
 func TestDeployTool_AdoptionGate_BlocksUnadoptedService(t *testing.T) {
 	t.Parallel()
 
@@ -1112,6 +1134,7 @@ func TestDeployTool_GitPush_MissingGitToken_ReturnsPrerequisites(t *testing.T) {
 
 	stateDir := t.TempDir()
 	setupDeployedService(t, stateDir, "appdev", "")
+	markGitPushConfigured(t, stateDir, "appdev")
 
 	mock := platform.NewMock()
 	// GIT_TOKEN check returns "0" — token not set.
@@ -1151,6 +1174,7 @@ func TestDeployTool_GitPush_WithGitToken_Succeeds(t *testing.T) {
 
 	stateDir := t.TempDir()
 	setupDeployedService(t, stateDir, "appdev", "")
+	markGitPushConfigured(t, stateDir, "appdev")
 
 	mock := platform.NewMock()
 	// GIT_TOKEN check returns "1" — token is set.
@@ -1191,6 +1215,7 @@ func TestDeployTool_GitPush_NoCommittedCode_Refuses(t *testing.T) {
 	// Any adopted service — deploy-state no longer matters for the git-push
 	// precondition (FirstDeployedAt is dropped; see plan phase A.3).
 	setupAdoptedService(t, stateDir, "appdev", "")
+	markGitPushConfigured(t, stateDir, "appdev")
 
 	mock := platform.NewMock()
 	// Committed-code pre-flight returns "0" — no commits on container.
@@ -1234,8 +1259,13 @@ func TestDeployTool_GitPush_AdoptedNeverDeployed_Proceeds(t *testing.T) {
 
 	stateDir := t.TempDir()
 	// Adopted, no FirstDeployedAt. Under the old gate this would fail;
-	// under the new model the gate looks at the repo, not the meta.
+	// under the new model the gate looks at the repo, not the meta —
+	// FirstDeployedAt stays empty, but markGitPushConfigured stamps the
+	// post-setup GitPushState so the deploy-decomp P4 R-state pre-flight
+	// passes (the test's assertion is push proceeds despite empty
+	// FirstDeployedAt, which the helper preserves).
 	setupAdoptedService(t, stateDir, "appdev", "")
+	markGitPushConfigured(t, stateDir, "appdev")
 
 	mock := platform.NewMock()
 	ssh := &stubSSHWithCommands{
