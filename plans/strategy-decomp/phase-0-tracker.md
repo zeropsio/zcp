@@ -1,7 +1,7 @@
 # Phase 0 tracker — Calibration
 
 Started: 2026-04-28
-Closed: TBD (pending Codex PRE-WORK round outcome + user go for Phase 1)
+Closed: 2026-04-28 (Phase 0 EXIT commit `9f2b2203`); Phase 1 pending user go
 
 > Phase contract per `plans/deploy-strategy-decomposition-2026-04-28.md`
 > §6 Phase 0. EXIT criteria: baseline files committed, Codex PRE-WORK
@@ -93,26 +93,27 @@ single concern, addressed in-place, consumer (Phase 1+ executor) identified
 |---|---|---|---|---|---|
 | 1 | env verification (lint-fast + go test -short) | unverified | DONE — green | n/a | no code change required |
 | 2 | commit plan file | uncommitted | committed `1172e427` | `1172e427` | plan was untracked at session start |
-| 3 | create `plans/strategy-decomp/` + baseline files | dir absent | DONE | TBD | baseline-head/atoms/callsites |
-| 4 | Phase 0 PRE-WORK Codex round | not run | DONE — NEEDS-REVISION (1 citation fix) | TBD (this commit) | output captured in `codex-round-p0-prework.md` |
-| 5 | apply R3 citation amendment to plan | unrevised | DONE — surgical in-place edit | TBD (this commit) | only §1 R3 row touched; no decision-text change |
-| 6 | commit baseline + tracker + plan amendment + Codex artifact | uncommitted | PENDING | TBD | single commit closes Phase 0 |
-| 7 | verify gate post-snapshot + amendment | green pre-snapshot | PENDING (re-run before commit) | TBD | guards against drift |
+| 3 | create `plans/strategy-decomp/` + baseline files | dir absent | DONE | `9f2b2203` | baseline-head/atoms/callsites |
+| 4 | Phase 0 PRE-WORK Codex round | not run | DONE — NEEDS-REVISION (1 citation fix) | `9f2b2203` | output captured in `codex-round-p0-prework.md` |
+| 5 | apply R3 citation amendment to plan | unrevised | DONE — surgical in-place edit | `9f2b2203` | only §1 R3 row touched; no decision-text change |
+| 6 | commit baseline + tracker + plan amendment + Codex artifact | uncommitted | DONE | `9f2b2203` | single commit closed Phase 0 |
+| 7 | verify gate post-snapshot + amendment | green pre-snapshot | DONE (lint-fast clean; workflow + topology -short PASS) | `9f2b2203` | guarded against drift |
+| 8 | backfill EXIT commit hash into tracker | placeholders | DONE | (this backfill commit) | bookkeeping hygiene per followup-2 pattern |
 
 ## Phase 0 EXIT (§6)
 
 - [x] Baseline `baseline-head.txt`, `baseline-atoms.txt`, `baseline-callsites.txt` written.
 - [x] Codex PRE-WORK consumed: NEEDS-REVISION → 1 amendment applied in-place → effective APPROVE per §10.5 work-economics.
-- [ ] `phase-0-tracker.md` committed (this commit).
-- [ ] Verify gate green at commit time (re-run lint-fast + go test ./... -short before commit).
+- [x] `phase-0-tracker.md` committed (commit `9f2b2203`).
+- [x] Verify gate green at commit time (lint-fast clean; workflow + topology -short PASS).
 - [ ] User explicit go to enter Phase 1 (per session instruction: pause after PRE-WORK APPROVE).
 
 ## §15.2 EXIT enforcement (inherited from sister-plan schema)
 
-- [ ] Every sub-pass row above has non-empty final state at close time.
-- [ ] Every row that took action cites a commit hash.
-- [ ] Codex round outcome cited.
-- [ ] `Closed:` set to absolute date.
+- [x] Every sub-pass row above has non-empty final state at close time.
+- [x] Every row that took action cites a commit hash.
+- [x] Codex round outcome cited (`codex-round-p0-prework.md` + summary in §Codex rounds).
+- [x] `Closed:` 2026-04-28.
 
 ## Notes for Phase 1 entry
 
