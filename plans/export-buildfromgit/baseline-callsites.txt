@@ -1,0 +1,550 @@
+internal/topology/predicates.go:61:// These are standalone apps (ubuntu-based) with their own buildFromGit URL and
+internal/topology/predicates.go:70:// zeropsSetup + buildFromGit pointing at the recipe-app repo.
+internal/tools/workflow_checks_factual_claims_test.go:76:    zeropsSetup: prod
+internal/tools/workflow_checks_factual_claims_test.go:77:    buildFromGit: https://github.com/zerops-recipe-apps/example-api
+internal/tools/workflow_checks_factual_claims_test.go:89:    zeropsSetup: prod
+internal/tools/workflow_checks_factual_claims_test.go:90:    buildFromGit: https://github.com/zerops-recipe-apps/example-api
+internal/tools/workflow_immediate.go:36:		return workflow.PhaseExportActive, true
+internal/tools/workflow_checks_finalize.go:147:	ZeropsSetup         string                   `yaml:"zeropsSetup,omitempty"`
+internal/tools/workflow_checks_finalize.go:148:	BuildFromGit        string                   `yaml:"buildFromGit,omitempty"`
+internal/tools/workflow_checks_finalize.go:214:				Detail: fmt.Sprintf("service %q has startWithoutCode — recipe deliverables must use buildFromGit only (startWithoutCode is workspace-only)", svc.Hostname),
+internal/tools/workflow_checks_finalize.go:325:// checkServiceStructure validates data service priority, zeropsSetup+buildFromGit
+internal/tools/workflow_checks_finalize.go:349:	// Runtime and utility services MUST have zeropsSetup+buildFromGit.
+internal/tools/workflow_checks_finalize.go:351:	// are platform-owned; buildFromGit is inert and would add noise.
+internal/tools/workflow_checks_finalize.go:371:				Detail: fmt.Sprintf("service %q is missing zeropsSetup and buildFromGit — recipe deliverables require both (do NOT rewrite auto-generated files from scratch)", svc.Hostname),
+internal/tools/workflow_checks_finalize.go:376:				Detail: fmt.Sprintf("service %q has zeropsSetup without buildFromGit (API requires both)", svc.Hostname),
+internal/tools/workflow_checks_finalize.go:381:				Detail: fmt.Sprintf("service %q has buildFromGit without zeropsSetup (must specify which setup to build)", svc.Hostname),
+internal/tools/workflow_checks_finalize_test.go:591:	// Write hand-crafted import.yaml for env 0 WITHOUT zeropsSetup/buildFromGit.
+internal/tools/workflow_checks_finalize_test.go:643:	// Should fail: app service missing zeropsSetup+buildFromGit.
+internal/tools/workflow_checks_finalize_test.go:651:			if strings.Contains(c.Name, "setup_git") && strings.Contains(c.Detail, "missing zeropsSetup") {
+internal/tools/workflow_checks_finalize_test.go:664:		t.Error("expected setup_git check to fail for hand-written file missing zeropsSetup+buildFromGit")
+internal/tools/workflow_recipe.go:240:		message = fmt.Sprintf("Regenerated %d recipe files — no agent comments yet. The 30%% comment ratio check will fail until you provide them. Call `zerops_workflow action=\"generate-finalize\" envComments={\"0\":{\"service\":{\"appdev\":\"...\",\"appstage\":\"...\",\"db\":\"...\"},\"project\":\"...\"}, \"1\":{...}, ..., \"5\":{...}}` with one entry per env (0..5). Service keys match hostnames in that file — envs 0-1 carry appdev+appstage, envs 2-5 carry app. Each env's commentary should reflect what makes THAT env distinct. Do NOT edit import.yaml files by hand (rewriting drops auto-generated zeropsSetup/buildFromGit fields).%s", len(written), readmeNote)
+internal/tools/workflow_classify_test.go:102:			keywords:           "deployFiles tilde dist/~ zeropsSetup",
+internal/tools/workflow_bootstrap_cleanup.go:17:// across deploys (via deployFiles: [.]) and is needed for repo creation / buildFromGit.
+internal/tools/workflow.go:122:		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (create/adopt infrastructure only — not the user's application), develop (all development, deployment, fixing, investigating), recipe (create recipe repo files), export (turn a deployed service into a re-importable git repo with import.yaml + buildFromGit). Deploy configuration is split into three orthogonal actions: action=\"close-mode\" closeMode={hostname:value} sets the per-pair CloseDeployMode (auto/git-push/manual); action=\"git-push-setup\" service=hostname remoteUrl=URL provisions GIT_TOKEN/.netrc/remote URL; action=\"build-integration\" service=hostname integration=webhook|actions|none wires the ZCP-managed CI integration. After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route|close-mode|git-push-setup|build-integration\".",
+internal/recipe/roles.go:26:// subdomain, what zeropsSetup names apply) — never a framework instruction.
+internal/recipe/yaml_emitter.go:22://     so they come up empty for SSHFS-mount-and-code, no `buildFromGit`
+internal/recipe/yaml_emitter.go:23://     (the repos don't exist yet), no `zeropsSetup`, no preprocessor
+internal/recipe/yaml_emitter.go:31://     `zeropsSetup: dev|prod` + `buildFromGit` pointing at the published
+internal/recipe/yaml_emitter.go:38:// by construction — ShapeWorkspace never emits buildFromGit/zeropsSetup,
+internal/recipe/yaml_emitter.go:62:// the end-user-facing template. Full `project:` block, `zeropsSetup` +
+internal/recipe/yaml_emitter.go:63:// `buildFromGit` per runtime service, per-tier scaling/mode. Comments
+internal/recipe/yaml_emitter.go:152:// startWithoutCode: true, no zeropsSetup, no buildFromGit, subdomain
+internal/recipe/yaml_emitter.go:190:// zeropsSetup + buildFromGit pointing at the published codebase repos.
+internal/recipe/yaml_emitter.go:240:	b.WriteString("    zeropsSetup: dev\n")
+internal/recipe/yaml_emitter.go:275:	fmt.Fprintf(b, "    zeropsSetup: %s\n", c.ZeropsSetupProd)
+internal/recipe/yaml_emitter.go:293:	fmt.Fprintf(b, "    zeropsSetup: %s\n", c.ZeropsSetupProd)
+internal/recipe/yaml_emitter.go:334:		b.WriteString("    zeropsSetup: app\n")
+internal/recipe/yaml_emitter.go:377:// writeRuntimeBuildFromGit emits the buildFromGit URL. Suffix routing:
+internal/recipe/yaml_emitter.go:381:	fmt.Fprintf(b, "    buildFromGit: %s%s%s\n", RecipeAppRepoBase, plan.Slug, runtimeRepoSuffix(plan, cb))
+internal/recipe/yaml_emitter.go:404:// zeropsSetup differs.
+internal/recipe/plan.go:106:// and utility services both have zeropsSetup + buildFromGit; managed
+internal/recipe/briefs.go:178:	fmt.Fprintf(&b, "- zeropsSetup dev: %s, prod: %s\n\n",
+internal/recipe/classify.go:149:	"buildFromGit",
+internal/recipe/yaml_emitter_test.go:180:// buildFromGit (repos don't exist yet), no zeropsSetup, no project
+internal/recipe/yaml_emitter_test.go:192:		"buildFromGit:",
+internal/recipe/yaml_emitter_test.go:193:		"zeropsSetup:",
+internal/recipe/testdata/fixtures/synth-showcase/2 — Local.yaml:12:    zeropsSetup: prod
+internal/recipe/testdata/fixtures/synth-showcase/2 — Local.yaml:13:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-api
+internal/recipe/testdata/fixtures/synth-showcase/2 — Local.yaml:20:    zeropsSetup: prod
+internal/recipe/testdata/fixtures/synth-showcase/2 — Local.yaml:21:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-app
+internal/recipe/testdata/fixtures/synth-showcase/2 — Local.yaml:28:    zeropsSetup: prod
+internal/recipe/testdata/fixtures/synth-showcase/2 — Local.yaml:29:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-worker
+internal/recipe/testdata/fixtures/synth-showcase/4 — Small Production.yaml:12:    zeropsSetup: prod
+internal/recipe/testdata/fixtures/synth-showcase/4 — Small Production.yaml:13:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-api
+internal/recipe/testdata/fixtures/synth-showcase/4 — Small Production.yaml:22:    zeropsSetup: prod
+internal/recipe/testdata/fixtures/synth-showcase/4 — Small Production.yaml:23:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-app
+internal/recipe/testdata/fixtures/synth-showcase/4 — Small Production.yaml:32:    zeropsSetup: prod
+internal/recipe/testdata/fixtures/synth-showcase/4 — Small Production.yaml:33:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-worker
+internal/recipe/testdata/fixtures/synth-showcase/0 — AI Agent.yaml:16:    zeropsSetup: dev
+internal/recipe/testdata/fixtures/synth-showcase/0 — AI Agent.yaml:17:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-api
+internal/recipe/testdata/fixtures/synth-showcase/0 — AI Agent.yaml:26:    zeropsSetup: prod
+internal/recipe/testdata/fixtures/synth-showcase/0 — AI Agent.yaml:27:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-api
+internal/recipe/testdata/fixtures/synth-showcase/0 — AI Agent.yaml:34:    zeropsSetup: dev
+internal/recipe/testdata/fixtures/synth-showcase/0 — AI Agent.yaml:35:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-app
+internal/recipe/testdata/fixtures/synth-showcase/0 — AI Agent.yaml:42:    zeropsSetup: prod
+internal/recipe/testdata/fixtures/synth-showcase/0 — AI Agent.yaml:43:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-app
+internal/recipe/testdata/fixtures/synth-showcase/0 — AI Agent.yaml:50:    zeropsSetup: dev
+internal/recipe/testdata/fixtures/synth-showcase/0 — AI Agent.yaml:51:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-worker
+internal/recipe/testdata/fixtures/synth-showcase/0 — AI Agent.yaml:57:    zeropsSetup: prod
+internal/recipe/testdata/fixtures/synth-showcase/0 — AI Agent.yaml:58:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-worker
+internal/recipe/testdata/fixtures/synth-showcase/1 — Remote (CDE).yaml:12:    zeropsSetup: dev
+internal/recipe/testdata/fixtures/synth-showcase/1 — Remote (CDE).yaml:13:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-api
+internal/recipe/testdata/fixtures/synth-showcase/1 — Remote (CDE).yaml:21:    zeropsSetup: prod
+internal/recipe/testdata/fixtures/synth-showcase/1 — Remote (CDE).yaml:22:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-api
+internal/recipe/testdata/fixtures/synth-showcase/1 — Remote (CDE).yaml:29:    zeropsSetup: dev
+internal/recipe/testdata/fixtures/synth-showcase/1 — Remote (CDE).yaml:30:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-app
+internal/recipe/testdata/fixtures/synth-showcase/1 — Remote (CDE).yaml:37:    zeropsSetup: prod
+internal/recipe/testdata/fixtures/synth-showcase/1 — Remote (CDE).yaml:38:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-app
+internal/recipe/testdata/fixtures/synth-showcase/1 — Remote (CDE).yaml:45:    zeropsSetup: dev
+internal/recipe/testdata/fixtures/synth-showcase/1 — Remote (CDE).yaml:46:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-worker
+internal/recipe/testdata/fixtures/synth-showcase/1 — Remote (CDE).yaml:52:    zeropsSetup: prod
+internal/recipe/testdata/fixtures/synth-showcase/1 — Remote (CDE).yaml:53:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-worker
+internal/recipe/testdata/fixtures/synth-showcase/3 — Stage.yaml:12:    zeropsSetup: prod
+internal/recipe/testdata/fixtures/synth-showcase/3 — Stage.yaml:13:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-api
+internal/recipe/testdata/fixtures/synth-showcase/3 — Stage.yaml:21:    zeropsSetup: prod
+internal/recipe/testdata/fixtures/synth-showcase/3 — Stage.yaml:22:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-app
+internal/recipe/testdata/fixtures/synth-showcase/3 — Stage.yaml:30:    zeropsSetup: prod
+internal/recipe/testdata/fixtures/synth-showcase/3 — Stage.yaml:31:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-worker
+internal/recipe/testdata/fixtures/synth-showcase/5 — Highly-available Production.yaml:16:    zeropsSetup: prod
+internal/recipe/testdata/fixtures/synth-showcase/5 — Highly-available Production.yaml:17:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-api
+internal/recipe/testdata/fixtures/synth-showcase/5 — Highly-available Production.yaml:27:    zeropsSetup: prod
+internal/recipe/testdata/fixtures/synth-showcase/5 — Highly-available Production.yaml:28:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-app
+internal/recipe/testdata/fixtures/synth-showcase/5 — Highly-available Production.yaml:38:    zeropsSetup: prod
+internal/recipe/testdata/fixtures/synth-showcase/5 — Highly-available Production.yaml:39:    buildFromGit: https://github.com/zerops-recipe-apps/synth-showcase-worker
+internal/recipe/content/phase_entry/provision.md:13:  `READY_TO_DEPLOY`, no `buildFromGit` (repos don't exist yet), no
+internal/recipe/content/phase_entry/provision.md:14:  `zeropsSetup`, no preprocessor expressions. Submitted inline via
+internal/recipe/content/phase_entry/provision.md:19:  `zeropsSetup: dev|prod` + `buildFromGit` pointing at the published
+internal/recipe/content/phase_entry/provision.md:77:  `buildFromGit` pointing at repos that don't exist yet.
+internal/content/atoms_lint_seed_allowlist.go:55:	"bootstrap-recipe-import.md::services. Don't edit resource limits, `buildFromGit`, `priority`,":           "spec §11.5 axis-K signal-#1: recipe-import field-mutability guardrail",
+internal/content/atoms/bootstrap-recipe-match.md:14:| Runtime `hostname` via `devHostname`/`stageHostname` | `type`, `zeropsSetup`, `buildFromGit`, `priority`, `mode`, autoscaling, env vars |
+internal/content/atoms/bootstrap-recipe-match.md:19:Per runtime pair: `devHostname`/`stageHostname` from recipe's `zeropsSetup: dev`/`prod` services; `type` + `bootstrapMode` verbatim (mode from banner); `dependencies[]` hostname+type verbatim with `resolution: "CREATE"`; `isExisting: false`.
+internal/content/atoms/bootstrap-recipe-match.md:29:Do not write code — `buildFromGit` pulls the app repo at import.
+internal/content/atoms/export.md:19:For `buildFromGit` imports, services need only `type`, `zeropsSetup`,
+internal/content/atoms/export.md:20:`buildFromGit`, and platform settings (scaling, subdomain, envs). Do NOT
+internal/content/atoms/export.md:74:buildFromGit: {repoUrl}
+internal/content/atoms/export.md:75:zeropsSetup: <setup name>
+internal/content/atoms/export.md:79:`zeropsSetup` picks a `setup:` block from the repo's zerops.yaml. Standard
+internal/content/atoms/export.md:82:| Hostname suffix | zeropsSetup |
+internal/content/atoms/bootstrap-recipe-import.md:31:services. Don't edit resource limits, `buildFromGit`, `priority`,
+internal/content/atoms/bootstrap-recipe-import.md:32:`zeropsSetup`, or `type`.
+internal/content/workflows/recipe.md:180:**DO NOT add `zeropsSetup` or `buildFromGit` to the workspace import.** These fields require each other — `zeropsSetup` without `buildFromGit` causes API errors. The workspace deploys via `zerops_deploy` with the `setup` parameter instead.
+internal/content/workflows/recipe.md:279:- `zeropsSetup` / `buildFromGit` — deliverable-only fields, not workspace.
+internal/content/workflows/recipe.md:288:| NO zeropsSetup | Workspace import must NOT include zeropsSetup (requires buildFromGit) |
+internal/content/workflows/recipe.md:466:1. **Workspace import** (provision step) — creates the agent's dev/stage infrastructure. NO `zeropsSetup`, NO `buildFromGit`. Services use `startWithoutCode` (dev) or wait for deploy (stage).
+internal/content/workflows/recipe.md:467:2. **Recipe import** (finalize step) — the 6 deliverable files for end users. Uses `zeropsSetup: dev`/`zeropsSetup: prod` + `buildFromGit` to map hostnames to setup names.
+internal/content/workflows/recipe.md:469:zerops.yaml ALWAYS uses **generic setup names**: `setup: dev` and `setup: prod`. During workspace deploy, the `zerops_deploy` tool's `setup` parameter maps the service hostname to the correct setup name (e.g. `targetService="appdev" setup="dev"`). In recipe import.yaml, `zeropsSetup: dev`/`zeropsSetup: prod` does the same mapping for `buildFromGit` deploys.
+internal/content/workflows/recipe.md:499:The injected chain recipe's `## zerops.yaml template` section is the primary source: it's the same shape you're writing, for a recipe in the same framework family. For hello-world tiers (no chain predecessor) or exotic fields (buildFromGit, cache layers, per-environment overrides) not in the template, fetch the schema on demand:
+internal/content/workflows/recipe.md:2748:- 6 environment folders with import.yaml (correct structure, scaling, buildFromGit) and README.md
+internal/content/workflows/recipe.md:2754:The template emits YAML structure + scaling values only — all prose commentary comes from your `envComments` input. Editing files by hand means agents rewrite them from scratch and drop the auto-generated `zeropsSetup` + `buildFromGit` fields. **Pass structured per-env comments instead.** One call bakes all 6 files.
+internal/content/workflows/recipe.md:2779:- **What `zeropsSetup: dev` / `zeropsSetup: prod` does for THIS framework** (dev dependency install / production build + cache warming / etc.) — where it's relevant.
+internal/content/workflows/recipe.md:2820:        "appdev": "Development workspace for AI agents. zeropsSetup:dev deploys the full source tree so the agent can SSH in and edit over SSHFS. Subdomain gives the agent a URL to verify output.",
+internal/content/workflows/recipe.md:2828:        "appdev": "Remote development workspace — SSH or IDE-SSHFS into the dev container and edit source live. zeropsSetup:dev installs the full dependency set so dev tools are available on the container.",
+internal/content/workflows/recipe.md:2956:2. **HOW the platform works here** — contextual behavior that makes the file self-contained, so the reader never has to leave to understand what's happening: "project-level — propagates to all containers automatically", "priority 10 — starts before app containers so migrations don't hit an absent database", "buildFromGit clones this repo and runs the matching zeropsSetup's build pipeline". Include this whenever a field's effect isn't obvious from its name alone.
+internal/content/workflows/recipe.md:3001:  # zeropsSetup dev deploys the full dependency tree so the toolchain
+internal/content/workflows/recipe.md:3087:Spawn a sub-agent as a **{framework} code expert** — not a Zerops platform expert. The sub-agent has NO Zerops context beyond what's in its brief: no injected guidance, no schema, no platform rules, no predecessor-recipe knowledge. Asking it to review platform config (zerops.yaml, import.yaml, zeropsSetup, envReplace, etc.) invites stale or hallucinated platform knowledge and framework-shaped "fixes" to platform problems. The main agent already owns platform config (injected guidance + live schema validation at finalize); the sub-agent's unique contribution is **framework-level code review** the main agent and automated checks cannot catch.
+internal/content/workflows/recipe.md:3131:> - `zerops.yaml` fields — `build.base`, `run.base`, `healthCheck`, `readinessCheck`, `deployFiles`, `buildFromGit`, `zeropsSetup`, `envReplace`, `envSecrets`, `cpuMode`, `mode`, `priority`, `verticalAutoscaling`, `minContainers`, `corePackage`, anything prefixed with `zsc`
+internal/content/workflows/recipe/phases/provision/entry.md:27:For exotic fields (buildFromGit, cache layers, per-environment overrides) fetch the schema on demand:
+internal/content/workflows/recipe/phases/provision/entry.md:35:Provision writes a **workspace import** — one file, no `project:` section, `services:` only, no `zeropsSetup`, no `buildFromGit`, `startWithoutCode: true` on dev services. The finalize step writes six separate **recipe deliverable imports** — one per end-user environment, each carrying `project:` with `envVariables` and `zeropsSetup: dev` / `zeropsSetup: prod` plus `buildFromGit`. Provision owns the workspace shape; finalize owns the deliverable shape.
+internal/content/workflows/recipe/phases/provision/import-yaml/standard-mode.md:24:`zeropsSetup` and `buildFromGit` are deliverable-only fields — they belong in the six recipe imports finalize writes, not in the workspace import. Deploys from the workspace run through `zerops_deploy` with the `setup` parameter, which maps the service hostname to the zerops.yaml setup name (for example `targetService="appdev" setup="dev"`).
+internal/content/workflows/recipe/phases/provision/import-yaml/workspace-restrictions.md:8:- `zeropsSetup` and `buildFromGit` belong in the deliverable imports. The workspace deploys via `zerops_deploy` with the `setup` parameter.
+internal/content/workflows/recipe/phases/generate/zerops-yaml/entry.md:7:The injected chain recipe's zerops.yaml template is the primary shape source — it is written in the same framework family as the recipe in hand. For hello-world tiers with no chain predecessor, or for exotic fields not in the template (`buildFromGit`, cache layers, per-environment overrides), fetch the live schema on demand:
+internal/content/workflows/recipe/briefs/code-review/task.md:17:- `zerops.yaml`, `import.yaml`, `zeropsSetup`, `envReplace`, `envSecrets`, `cpuMode`, `mode`, `priority`, `verticalAutoscaling`, `minContainers`, `corePackage`, any `zsc*` keyword.
+internal/content/workflows/recipe/phases/finalize/env-comment-rules.md:21:- **What `zeropsSetup: dev` / `zeropsSetup: prod` does for this framework** — dev dependency install / production build + cache warming / equivalent — wherever relevant.
+internal/content/workflows/recipe/phases/finalize/env-comment-rules.md:57:2. **HOW the platform works here** — contextual behavior that makes the file self-contained so the reader never has to leave: "project-level — propagates to all containers automatically", "priority 10 — starts before app containers so migrations don't hit an absent database", "buildFromGit clones this repo and runs the matching zeropsSetup's build pipeline". Include whenever a field's effect isn't obvious from its name alone.
+internal/content/workflows/recipe/phases/finalize/env-comment-rules.md:80:        "appdev": "Development workspace for AI agents. zeropsSetup:dev deploys the full source tree so the agent can SSH in and edit over SSHFS. Subdomain gives the agent a URL to verify output.",
+internal/content/examples/env_comment_fail_field_narration.md:11:> # zeropsSetup: dev uses the dev configuration from zerops.yaml.
+internal/content/examples/env_comment_fail_field_narration.md:13:>   zeropsSetup: dev
+internal/content/examples/env_comment_fail_field_narration.md:14:>   buildFromGit: https://github.com/zerops-recipe-apps/nestjs-showcase-app
+internal/content/examples/env_comment_fail_field_narration.md:31:# alive across commits. buildFromGit points at the per-codebase repo so
+internal/content/examples/env_comment_fail_field_narration.md:35:  zeropsSetup: dev
+internal/content/examples/env_comment_fail_field_narration.md:36:  buildFromGit: https://github.com/zerops-recipe-apps/nestjs-showcase-app
+internal/schema/testdata/import_yml_schema.json:233:					"buildFromGit": {
+internal/schema/testdata/import_yml_schema.json:350:						"description": "Mount shared storages to the service, buildFromGit must be filled."
+internal/schema/testdata/import_yml_schema.json:372:					"zeropsSetup": {
+internal/knowledge/recipes/nuxt-static-hello-world.import.yml:18:    zeropsSetup: dev
+internal/knowledge/recipes/nuxt-static-hello-world.import.yml:21:    buildFromGit: https://github.com/zerops-recipe-apps/nuxt-static-hello-world-app
+internal/knowledge/recipes/nuxt-static-hello-world.import.yml:33:    zeropsSetup: prod
+internal/knowledge/recipes/nuxt-static-hello-world.import.yml:34:    buildFromGit: https://github.com/zerops-recipe-apps/nuxt-static-hello-world-app
+internal/knowledge/recipes/angular-static-hello-world.import.yml:22:    zeropsSetup: dev
+internal/knowledge/recipes/angular-static-hello-world.import.yml:26:    buildFromGit: https://github.com/zerops-recipe-apps/angular-static-hello-world-app
+internal/knowledge/recipes/angular-static-hello-world.import.yml:43:    zeropsSetup: prod
+internal/knowledge/recipes/angular-static-hello-world.import.yml:45:    buildFromGit: https://github.com/zerops-recipe-apps/angular-static-hello-world-app
+internal/knowledge/recipes/solidstart-ssr-hello-world.md:12:# development workspaces. Select via zeropsSetup in import.yaml.
+internal/knowledge/recipes/angular-ssr-hello-world.import.yml:18:    zeropsSetup: dev
+internal/knowledge/recipes/angular-ssr-hello-world.import.yml:21:    buildFromGit: https://github.com/zerops-recipe-apps/angular-ssr-hello-world-app
+internal/knowledge/recipes/angular-ssr-hello-world.import.yml:33:    zeropsSetup: prod
+internal/knowledge/recipes/angular-ssr-hello-world.import.yml:34:    buildFromGit: https://github.com/zerops-recipe-apps/angular-ssr-hello-world-app
+internal/knowledge/recipes/astro-static-hello-world.import.yml:17:    zeropsSetup: dev
+internal/knowledge/recipes/astro-static-hello-world.import.yml:20:    buildFromGit: https://github.com/zerops-recipe-apps/astro-static-hello-world-app
+internal/knowledge/recipes/astro-static-hello-world.import.yml:37:    zeropsSetup: prod
+internal/knowledge/recipes/astro-static-hello-world.import.yml:38:    buildFromGit: https://github.com/zerops-recipe-apps/astro-static-hello-world-app
+internal/knowledge/recipes/dotnet-hello-world.import.yml:11:  # from the 'buildFromGit' repo, using the 'dev' setup which
+internal/knowledge/recipes/dotnet-hello-world.import.yml:17:    zeropsSetup: dev
+internal/knowledge/recipes/dotnet-hello-world.import.yml:18:    buildFromGit: https://github.com/zerops-recipe-apps/dotnet-hello-world-app
+internal/knowledge/recipes/dotnet-hello-world.import.yml:24:  # Zerops pulls source from the 'buildFromGit' repo and uses the
+internal/knowledge/recipes/dotnet-hello-world.import.yml:25:  # 'prod' zeropsSetup to compile and deploy published artifacts.
+internal/knowledge/recipes/dotnet-hello-world.import.yml:29:    zeropsSetup: prod
+internal/knowledge/recipes/dotnet-hello-world.import.yml:30:    buildFromGit: https://github.com/zerops-recipe-apps/dotnet-hello-world-app
+internal/knowledge/recipes/zerops-showcase.import.yml:10:  # Development app — Zerops pulls source from the 'buildFromGit' repo
+internal/knowledge/recipes/zerops-showcase.import.yml:11:  # and uses the 'dev' zeropsSetup to deploy full source for live editing.
+internal/knowledge/recipes/zerops-showcase.import.yml:16:    zeropsSetup: dev
+internal/knowledge/recipes/zerops-showcase.import.yml:17:    buildFromGit: https://github.com/zerops-recipe-apps/showcase-recipe-app
+internal/knowledge/recipes/zerops-showcase.import.yml:25:  # source and zerops.yaml from 'buildFromGit', using the 'prod' setup
+internal/knowledge/recipes/zerops-showcase.import.yml:29:    zeropsSetup: prod
+internal/knowledge/recipes/zerops-showcase.import.yml:30:    buildFromGit: https://github.com/zerops-recipe-apps/showcase-recipe-app
+internal/knowledge/recipes/zerops-showcase.import.yml:42:    zeropsSetup: dev
+internal/knowledge/recipes/zerops-showcase.import.yml:43:    buildFromGit: https://github.com/zerops-recipe-apps/showcase-recipe-worker
+internal/knowledge/recipes/zerops-showcase.import.yml:51:    zeropsSetup: prod
+internal/knowledge/recipes/zerops-showcase.import.yml:52:    buildFromGit: https://github.com/zerops-recipe-apps/showcase-recipe-worker
+internal/knowledge/recipes/nestjs-minimal.import.yml:13:  # AI agent workspace — zeropsSetup:dev deploys the full source tree so the
+internal/knowledge/recipes/nestjs-minimal.import.yml:19:    zeropsSetup: dev
+internal/knowledge/recipes/nestjs-minimal.import.yml:20:    buildFromGit: https://github.com/zerops-recipe-apps/nestjs-minimal-app
+internal/knowledge/recipes/nestjs-minimal.import.yml:25:  # Staging slot for the agent — cross-deploy with zeropsSetup:prod compiles
+internal/knowledge/recipes/nestjs-minimal.import.yml:31:    zeropsSetup: prod
+internal/knowledge/recipes/nestjs-minimal.import.yml:32:    buildFromGit: https://github.com/zerops-recipe-apps/nestjs-minimal-app
+internal/knowledge/recipes/nodejs-hello-world.import.yml:10:  # source and zerops.yaml from the 'buildFromGit' repo, using
+internal/knowledge/recipes/nodejs-hello-world.import.yml:17:    zeropsSetup: dev
+internal/knowledge/recipes/nodejs-hello-world.import.yml:18:    buildFromGit: https://github.com/zerops-recipe-apps/nodejs-hello-world-app
+internal/knowledge/recipes/nodejs-hello-world.import.yml:26:  # the 'buildFromGit' repo and uses the 'prod' zeropsSetup
+internal/knowledge/recipes/nodejs-hello-world.import.yml:31:    zeropsSetup: prod
+internal/knowledge/recipes/nodejs-hello-world.import.yml:32:    buildFromGit: https://github.com/zerops-recipe-apps/nodejs-hello-world-app
+internal/knowledge/recipes/nuxt-ssr-hello-world.import.yml:13:    # zeropsSetup selects the 'dev' block from zerops.yaml —
+internal/knowledge/recipes/nuxt-ssr-hello-world.import.yml:16:    zeropsSetup: dev
+internal/knowledge/recipes/nuxt-ssr-hello-world.import.yml:17:    # buildFromGit: Zerops pulls source code and zerops.yaml
+internal/knowledge/recipes/nuxt-ssr-hello-world.import.yml:19:    buildFromGit: https://github.com/zerops-recipe-apps/nuxt-ssr-hello-world-app
+internal/knowledge/recipes/nuxt-ssr-hello-world.import.yml:30:    zeropsSetup: prod
+internal/knowledge/recipes/nuxt-ssr-hello-world.import.yml:31:    buildFromGit: https://github.com/zerops-recipe-apps/nuxt-ssr-hello-world-app
+internal/knowledge/recipes/solidstart-static-hello-world.import.yml:16:    zeropsSetup: dev
+internal/knowledge/recipes/solidstart-static-hello-world.import.yml:19:    buildFromGit: https://github.com/zerops-recipe-apps/solidstart-static-hello-world-app
+internal/knowledge/recipes/solidstart-static-hello-world.import.yml:35:    zeropsSetup: prod
+internal/knowledge/recipes/solidstart-static-hello-world.import.yml:36:    buildFromGit: https://github.com/zerops-recipe-apps/solidstart-static-hello-world-app
+internal/knowledge/recipes/sveltekit-ssr-hello-world.import.yml:14:  # zeropsSetup selects which setup block in zerops.yaml to use.
+internal/knowledge/recipes/sveltekit-ssr-hello-world.import.yml:17:    zeropsSetup: dev
+internal/knowledge/recipes/sveltekit-ssr-hello-world.import.yml:18:    # buildFromGit: Zerops pulls the source code and zerops.yaml
+internal/knowledge/recipes/sveltekit-ssr-hello-world.import.yml:20:    buildFromGit: https://github.com/zerops-recipe-apps/sveltekit-ssr-hello-world-app
+internal/knowledge/recipes/sveltekit-ssr-hello-world.import.yml:31:    zeropsSetup: prod
+internal/knowledge/recipes/sveltekit-ssr-hello-world.import.yml:32:    buildFromGit: https://github.com/zerops-recipe-apps/sveltekit-ssr-hello-world-app
+internal/knowledge/recipes/react-router-static-hello-world.import.yml:22:    buildFromGit: https://github.com/zerops-recipe-apps/react-router-static-hello-world-app
+internal/knowledge/recipes/react-router-static-hello-world.import.yml:25:    zeropsSetup: dev
+internal/knowledge/recipes/react-router-static-hello-world.import.yml:37:    buildFromGit: https://github.com/zerops-recipe-apps/react-router-static-hello-world-app
+internal/knowledge/recipes/react-router-static-hello-world.import.yml:40:    zeropsSetup: prod
+internal/knowledge/recipes/laravel-minimal.import.yml:17:  # AI agent workspace — zeropsSetup:dev deploys the full source tree so the
+internal/knowledge/recipes/laravel-minimal.import.yml:23:    zeropsSetup: dev
+internal/knowledge/recipes/laravel-minimal.import.yml:24:    buildFromGit: https://github.com/zerops-recipe-apps/laravel-minimal-app
+internal/knowledge/recipes/laravel-minimal.import.yml:29:  # Staging slot for AI agents — zeropsSetup:prod validates the production
+internal/knowledge/recipes/laravel-minimal.import.yml:35:    zeropsSetup: prod
+internal/knowledge/recipes/laravel-minimal.import.yml:36:    buildFromGit: https://github.com/zerops-recipe-apps/laravel-minimal-app
+internal/knowledge/recipes/go-hello-world.import.yml:11:  # source from the 'buildFromGit' repo using the 'dev' setup,
+internal/knowledge/recipes/go-hello-world.import.yml:13:  # 'zeropsSetup' selects which setup (prod/dev) from zerops.yaml
+internal/knowledge/recipes/go-hello-world.import.yml:17:    zeropsSetup: dev
+internal/knowledge/recipes/go-hello-world.import.yml:18:    buildFromGit: https://github.com/zerops-recipe-apps/go-hello-world-app
+internal/knowledge/recipes/go-hello-world.import.yml:24:  # pulls source and zerops.yaml from the 'buildFromGit' repo,
+internal/knowledge/recipes/go-hello-world.import.yml:25:  # using the 'prod' zeropsSetup to compile binaries and deploy.
+internal/knowledge/recipes/go-hello-world.import.yml:29:    zeropsSetup: prod
+internal/knowledge/recipes/go-hello-world.import.yml:30:    buildFromGit: https://github.com/zerops-recipe-apps/go-hello-world-app
+internal/knowledge/recipes/analog-static-hello-world.import.yml:13:    # zeropsSetup selects which setup from zerops.yaml in the source repo
+internal/knowledge/recipes/analog-static-hello-world.import.yml:16:    zeropsSetup: dev
+internal/knowledge/recipes/analog-static-hello-world.import.yml:17:    # buildFromGit triggers a build/deploy pipeline: Zerops pulls source
+internal/knowledge/recipes/analog-static-hello-world.import.yml:19:    buildFromGit: https://github.com/zerops-recipe-apps/analog-static-hello-world-app
+internal/knowledge/recipes/analog-static-hello-world.import.yml:29:    zeropsSetup: prod
+internal/knowledge/recipes/analog-static-hello-world.import.yml:30:    buildFromGit: https://github.com/zerops-recipe-apps/analog-static-hello-world-app
+internal/knowledge/recipes/php-hello-world.import.yml:11:  # from the 'buildFromGit' repo and uses the 'dev' zeropsSetup, which
+internal/knowledge/recipes/php-hello-world.import.yml:17:    zeropsSetup: dev
+internal/knowledge/recipes/php-hello-world.import.yml:18:    buildFromGit: https://github.com/zerops-recipe-apps/php-hello-world-app
+internal/knowledge/recipes/php-hello-world.import.yml:26:  # Zerops pulls source from the same 'buildFromGit' repo and uses
+internal/knowledge/recipes/php-hello-world.import.yml:27:  # the 'prod' zeropsSetup: installs production Composer dependencies,
+internal/knowledge/recipes/php-hello-world.import.yml:31:    zeropsSetup: prod
+internal/knowledge/recipes/php-hello-world.import.yml:32:    buildFromGit: https://github.com/zerops-recipe-apps/php-hello-world-app
+internal/knowledge/recipes/react-router-ssr-hello-world.import.yml:10:  # buildFromGit pulls source + zerops.yaml from the public repo
+internal/knowledge/recipes/react-router-ssr-hello-world.import.yml:15:    zeropsSetup: dev
+internal/knowledge/recipes/react-router-ssr-hello-world.import.yml:16:    buildFromGit: https://github.com/zerops-recipe-apps/react-router-ssr-hello-world-app
+internal/knowledge/recipes/react-router-ssr-hello-world.import.yml:27:    zeropsSetup: prod
+internal/knowledge/recipes/react-router-ssr-hello-world.import.yml:28:    buildFromGit: https://github.com/zerops-recipe-apps/react-router-ssr-hello-world-app
+internal/knowledge/recipes/python-hello-world.import.yml:10:  # source from the 'buildFromGit' repo and uses the 'dev'
+internal/knowledge/recipes/python-hello-world.import.yml:11:  # zeropsSetup, which installs Flask, Gunicorn, and psycopg2
+internal/knowledge/recipes/python-hello-world.import.yml:16:    zeropsSetup: dev
+internal/knowledge/recipes/python-hello-world.import.yml:17:    buildFromGit: https://github.com/zerops-recipe-apps/python-hello-world-app
+internal/knowledge/recipes/python-hello-world.import.yml:23:  # Zerops pulls source and zerops.yaml from the 'buildFromGit'
+internal/knowledge/recipes/python-hello-world.import.yml:24:  # repo, using the 'prod' zeropsSetup to compile and deploy the
+internal/knowledge/recipes/python-hello-world.import.yml:29:    zeropsSetup: prod
+internal/knowledge/recipes/python-hello-world.import.yml:30:    buildFromGit: https://github.com/zerops-recipe-apps/python-hello-world-app
+internal/knowledge/recipes/qwik-city-ssr-hello-world.import.yml:11:  # Dev service: AI agents write and push code here. zeropsSetup: dev
+internal/knowledge/recipes/qwik-city-ssr-hello-world.import.yml:15:    zeropsSetup: dev
+internal/knowledge/recipes/qwik-city-ssr-hello-world.import.yml:16:    # buildFromGit: Zerops pulls source code and zerops.yaml from this
+internal/knowledge/recipes/qwik-city-ssr-hello-world.import.yml:18:    buildFromGit: https://github.com/zerops-recipe-apps/qwik-city-ssr-hello-world-app
+internal/knowledge/recipes/qwik-city-ssr-hello-world.import.yml:29:    zeropsSetup: prod
+internal/knowledge/recipes/qwik-city-ssr-hello-world.import.yml:30:    buildFromGit: https://github.com/zerops-recipe-apps/qwik-city-ssr-hello-world-app
+internal/knowledge/recipes/java-hello-world.import.yml:11:  # Zerops pulls source and zerops.yaml from the 'buildFromGit'
+internal/knowledge/recipes/java-hello-world.import.yml:13:  # 'zcli push' and git push integration. The 'dev' zeropsSetup
+internal/knowledge/recipes/java-hello-world.import.yml:20:    zeropsSetup: dev
+internal/knowledge/recipes/java-hello-world.import.yml:21:    buildFromGit: https://github.com/zerops-recipe-apps/java-hello-world-app
+internal/knowledge/recipes/java-hello-world.import.yml:27:  # Zerops pulls source from the same 'buildFromGit' repo,
+internal/knowledge/recipes/java-hello-world.import.yml:28:  # using the 'prod' zeropsSetup to compile the fat JAR
+internal/knowledge/recipes/java-hello-world.import.yml:34:    zeropsSetup: prod
+internal/knowledge/recipes/java-hello-world.import.yml:35:    buildFromGit: https://github.com/zerops-recipe-apps/java-hello-world-app
+internal/knowledge/recipes/nextjs-static-hello-world.import.yml:24:    zeropsSetup: dev
+internal/knowledge/recipes/nextjs-static-hello-world.import.yml:27:    buildFromGit: https://github.com/zerops-recipe-apps/nextjs-static-hello-world-app
+internal/knowledge/recipes/nextjs-static-hello-world.import.yml:42:    zeropsSetup: prod
+internal/knowledge/recipes/nextjs-static-hello-world.import.yml:43:    buildFromGit: https://github.com/zerops-recipe-apps/nextjs-static-hello-world-app
+internal/knowledge/recipes/nextjs-ssr-hello-world.import.yml:15:    zeropsSetup: prod
+internal/knowledge/recipes/nextjs-ssr-hello-world.import.yml:16:    # buildFromGit pulls source code and zerops.yaml from this public
+internal/knowledge/recipes/nextjs-ssr-hello-world.import.yml:18:    buildFromGit: https://github.com/zerops-recipe-apps/nextjs-ssr-hello-world-app
+internal/knowledge/recipes/rust-hello-world.import.yml:12:  # the 'buildFromGit' repository.
+internal/knowledge/recipes/rust-hello-world.import.yml:15:    zeropsSetup: dev
+internal/knowledge/recipes/rust-hello-world.import.yml:16:    buildFromGit: https://github.com/zerops-recipe-apps/rust-hello-world-app
+internal/knowledge/recipes/rust-hello-world.import.yml:26:    zeropsSetup: prod
+internal/knowledge/recipes/rust-hello-world.import.yml:27:    buildFromGit: https://github.com/zerops-recipe-apps/rust-hello-world-app
+internal/knowledge/recipes/deno-hello-world.import.yml:10:  # pulls source from the 'buildFromGit' repo, using the
+internal/knowledge/recipes/deno-hello-world.import.yml:11:  # 'dev' zeropsSetup which ships the source code and
+internal/knowledge/recipes/deno-hello-world.import.yml:16:    zeropsSetup: dev
+internal/knowledge/recipes/deno-hello-world.import.yml:17:    buildFromGit: https://github.com/zerops-recipe-apps/deno-hello-world-app
+internal/knowledge/recipes/deno-hello-world.import.yml:23:  # and zerops.yaml from the 'buildFromGit' repo, using
+internal/knowledge/recipes/deno-hello-world.import.yml:24:  # the 'prod' zeropsSetup to compile and deploy
+internal/knowledge/recipes/deno-hello-world.import.yml:29:    zeropsSetup: prod
+internal/knowledge/recipes/deno-hello-world.import.yml:30:    buildFromGit: https://github.com/zerops-recipe-apps/deno-hello-world-app
+internal/knowledge/recipes/svelte-hello-world.import.yml:16:    zeropsSetup: dev
+internal/knowledge/recipes/svelte-hello-world.import.yml:19:    buildFromGit: https://github.com/zerops-recipe-apps/svelte-hello-world-app
+internal/knowledge/recipes/svelte-hello-world.import.yml:29:    zeropsSetup: prod
+internal/knowledge/recipes/svelte-hello-world.import.yml:30:    buildFromGit: https://github.com/zerops-recipe-apps/svelte-hello-world-app
+internal/knowledge/recipes/bun-hello-world.import.yml:10:  # the 'buildFromGit' repo, then uses the 'dev' zeropsSetup — which skips compilation
+internal/knowledge/recipes/bun-hello-world.import.yml:15:    zeropsSetup: dev
+internal/knowledge/recipes/bun-hello-world.import.yml:16:    buildFromGit: https://github.com/zerops-recipe-apps/bun-hello-world-app
+internal/knowledge/recipes/bun-hello-world.import.yml:26:    zeropsSetup: prod
+internal/knowledge/recipes/bun-hello-world.import.yml:27:    buildFromGit: https://github.com/zerops-recipe-apps/bun-hello-world-app
+internal/knowledge/recipes/laravel-showcase.import.yml:19:  # AI agent workspace — zeropsSetup:dev runs composer install (full dev deps)
+internal/knowledge/recipes/laravel-showcase.import.yml:26:    zeropsSetup: dev
+internal/knowledge/recipes/laravel-showcase.import.yml:27:    buildFromGit: https://github.com/zerops-recipe-apps/laravel-showcase-app
+internal/knowledge/recipes/laravel-showcase.import.yml:32:  # Staging slot for the agent — zeropsSetup:prod runs composer install
+internal/knowledge/recipes/laravel-showcase.import.yml:39:    zeropsSetup: prod
+internal/knowledge/recipes/laravel-showcase.import.yml:40:    buildFromGit: https://github.com/zerops-recipe-apps/laravel-showcase-app
+internal/knowledge/recipes/laravel-showcase.import.yml:45:  # Background queue worker — zeropsSetup:worker runs composer install
+internal/knowledge/recipes/laravel-showcase.import.yml:51:    zeropsSetup: worker
+internal/knowledge/recipes/laravel-showcase.import.yml:52:    buildFromGit: https://github.com/zerops-recipe-apps/laravel-showcase-app
+internal/knowledge/recipes/qwik-city-static-hello-world.import.yml:19:    zeropsSetup: dev
+internal/knowledge/recipes/qwik-city-static-hello-world.import.yml:23:    buildFromGit: https://github.com/zerops-recipe-apps/qwik-city-static-hello-world-app
+internal/knowledge/recipes/qwik-city-static-hello-world.import.yml:42:    zeropsSetup: prod
+internal/knowledge/recipes/qwik-city-static-hello-world.import.yml:44:    buildFromGit: https://github.com/zerops-recipe-apps/qwik-city-static-hello-world-app
+internal/knowledge/recipes/astro-ssr-hello-world.import.yml:21:    # zeropsSetup selects which setup block from zerops.yaml to use.
+internal/knowledge/recipes/astro-ssr-hello-world.import.yml:22:    zeropsSetup: dev
+internal/knowledge/recipes/astro-ssr-hello-world.import.yml:23:    # buildFromGit pulls source code and zerops.yaml from this public
+internal/knowledge/recipes/astro-ssr-hello-world.import.yml:25:    buildFromGit: https://github.com/zerops-recipe-apps/astro-ssr-hello-world-app
+internal/knowledge/recipes/astro-ssr-hello-world.import.yml:37:    zeropsSetup: prod
+internal/knowledge/recipes/astro-ssr-hello-world.import.yml:38:    buildFromGit: https://github.com/zerops-recipe-apps/astro-ssr-hello-world-app
+internal/knowledge/recipes/sveltekit-static-hello-world.import.yml:14:    # The dev zeropsSetup keeps Node.js at runtime via
+internal/knowledge/recipes/sveltekit-static-hello-world.import.yml:19:    zeropsSetup: dev
+internal/knowledge/recipes/sveltekit-static-hello-world.import.yml:22:    buildFromGit: https://github.com/zerops-recipe-apps/sveltekit-static-hello-world-app
+internal/knowledge/recipes/sveltekit-static-hello-world.import.yml:39:    zeropsSetup: prod
+internal/knowledge/recipes/sveltekit-static-hello-world.import.yml:40:    buildFromGit: https://github.com/zerops-recipe-apps/sveltekit-static-hello-world-app
+internal/knowledge/recipes/ruby-hello-world.import.yml:11:  # Zerops pulls source from the 'buildFromGit' repo
+internal/knowledge/recipes/ruby-hello-world.import.yml:12:  # and uses the 'dev' zeropsSetup, which ships Ruby
+internal/knowledge/recipes/ruby-hello-world.import.yml:17:    zeropsSetup: dev
+internal/knowledge/recipes/ruby-hello-world.import.yml:18:    buildFromGit: https://github.com/zerops-recipe-apps/ruby-hello-world-app
+internal/knowledge/recipes/ruby-hello-world.import.yml:27:  # 'buildFromGit' repo, using the 'prod' zeropsSetup
+internal/knowledge/recipes/ruby-hello-world.import.yml:33:    zeropsSetup: prod
+internal/knowledge/recipes/ruby-hello-world.import.yml:34:    buildFromGit: https://github.com/zerops-recipe-apps/ruby-hello-world-app
+internal/knowledge/recipes/gleam-hello-world.import.yml:11:  # and zerops.yaml from the 'buildFromGit' repo, using the 'dev'
+internal/knowledge/recipes/gleam-hello-world.import.yml:14:  # 'zeropsSetup: dev' selects the dev pipeline from zerops.yaml.
+internal/knowledge/recipes/gleam-hello-world.import.yml:17:    zeropsSetup: dev
+internal/knowledge/recipes/gleam-hello-world.import.yml:18:    buildFromGit: https://github.com/zerops-recipe-apps/gleam-hello-world-app
+internal/knowledge/recipes/gleam-hello-world.import.yml:24:  # from the 'buildFromGit' repo and uses the 'prod' zeropsSetup to
+internal/knowledge/recipes/gleam-hello-world.import.yml:29:    zeropsSetup: prod
+internal/knowledge/recipes/gleam-hello-world.import.yml:30:    buildFromGit: https://github.com/zerops-recipe-apps/gleam-hello-world-app
+internal/knowledge/recipes/solidstart-ssr-hello-world.import.yml:17:    zeropsSetup: dev
+internal/knowledge/recipes/solidstart-ssr-hello-world.import.yml:18:    # buildFromGit: Zerops pulls source code and zerops.yaml
+internal/knowledge/recipes/solidstart-ssr-hello-world.import.yml:20:    buildFromGit: https://github.com/zerops-recipe-apps/solidstart-ssr-hello-world-app
+internal/knowledge/recipes/solidstart-ssr-hello-world.import.yml:32:    zeropsSetup: prod
+internal/knowledge/recipes/solidstart-ssr-hello-world.import.yml:33:    buildFromGit: https://github.com/zerops-recipe-apps/solidstart-ssr-hello-world-app
+internal/knowledge/recipes/analog-ssr-hello-world.import.yml:15:    # zeropsSetup selects which setup block from zerops.yaml to use.
+internal/knowledge/recipes/analog-ssr-hello-world.import.yml:16:    zeropsSetup: dev
+internal/knowledge/recipes/analog-ssr-hello-world.import.yml:17:    # buildFromGit: Zerops pulls the source code and zerops.yaml
+internal/knowledge/recipes/analog-ssr-hello-world.import.yml:19:    buildFromGit: https://github.com/zerops-recipe-apps/analog-ssr-hello-world-app
+internal/knowledge/recipes/analog-ssr-hello-world.import.yml:32:    zeropsSetup: prod
+internal/knowledge/recipes/analog-ssr-hello-world.import.yml:33:    buildFromGit: https://github.com/zerops-recipe-apps/analog-ssr-hello-world-app
+internal/knowledge/recipes/react-static-hello-world.import.yml:18:    zeropsSetup: dev
+internal/knowledge/recipes/react-static-hello-world.import.yml:21:    buildFromGit: https://github.com/zerops-recipe-apps/react-static-hello-world-app
+internal/knowledge/recipes/react-static-hello-world.import.yml:31:    zeropsSetup: prod
+internal/knowledge/recipes/react-static-hello-world.import.yml:32:    buildFromGit: https://github.com/zerops-recipe-apps/react-static-hello-world-app
+internal/knowledge/recipes/vue-static-hello-world.import.yml:24:    zeropsSetup: dev
+internal/knowledge/recipes/vue-static-hello-world.import.yml:27:    buildFromGit: https://github.com/zerops-recipe-apps/vue-static-hello-world-app
+internal/knowledge/recipes/vue-static-hello-world.import.yml:37:    zeropsSetup: prod
+internal/knowledge/recipes/vue-static-hello-world.import.yml:38:    buildFromGit: https://github.com/zerops-recipe-apps/vue-static-hello-world-app
+internal/knowledge/guides/production-checklist.md:37:  buildFromGit: https://github.com/zeropsio/recipe-mailpit
+internal/knowledge/themes/core.md:29:  buildFromGit: url                    # one-time build from repo — use ONLY with verified URLs (utility recipes like mailpit). Do NOT guess URLs.
+internal/knowledge/themes/core.md:36:  zeropsSetup: string                  # inline zerops.yaml setup name
+internal/knowledge/themes/core.md:132:- **ONLY** set `zeropsSetup` in import.yaml when using `buildFromGit`. REASON: zeropsSetup requires buildFromGit (API rejects one without the other). For workspace deploys (no buildFromGit), use `zerops_deploy setup="..."` parameter instead
+internal/knowledge/themes/core.md:137:- **ALWAYS** use generic `setup:` names in zerops.yaml (`dev`, `prod`, `worker`). When deploying to a hostname that differs from the setup name, pass `setup="..."` to `zerops_deploy`. REASON: generic names work across all environments; `zeropsSetup` in recipe import.yaml + `--setup` in workspace deploy both handle the mapping
+internal/knowledge/themes/core.md:260:  | Production (buildFromGit) | Platform from git | Recipe pattern | Compiled/prod start |
+internal/knowledge/guides/cloudflare.md:51:2. **Deploy code** to the service (via `zcli push` or `buildFromGit`)
+internal/workflow/render.go:156:	case PhaseIdle, PhaseBootstrapActive, PhaseRecipeActive, PhaseStrategySetup, PhaseExportActive:
+internal/workflow/build_plan.go:43:	case PhaseStrategySetup, PhaseExportActive:
+internal/workflow/recipe_templates_dualruntime_test.go:393:		if !strings.Contains(workerBlock, "zeropsSetup: prod") {
+internal/workflow/recipe_templates_dualruntime_test.go:394:			t.Errorf("3-repo workerstage should use zeropsSetup: prod, got: %q", workerBlock)
+internal/workflow/recipe_template_dispatch_test.go:14://   - runtime services: have zeropsSetup+buildFromGit, no priority, no mode
+internal/workflow/recipe_template_dispatch_test.go:15://   - utility services: have zeropsSetup+buildFromGit (utility URL), priority:10
+internal/workflow/recipe_template_dispatch_test.go:16://   - managed services: priority:10, mode (except object-storage), no buildFromGit
+internal/workflow/recipe_template_dispatch_test.go:79:	hasSetup := strings.Contains(block, "zeropsSetup:")
+internal/workflow/recipe_template_dispatch_test.go:80:	hasGit := strings.Contains(block, "buildFromGit:")
+internal/workflow/recipe_template_dispatch_test.go:92:	// zeropsSetup+buildFromGit: runtime + utility only
+internal/workflow/recipe_template_dispatch_test.go:96:			t.Errorf("%s", ctx("MISSING zeropsSetup"))
+internal/workflow/recipe_template_dispatch_test.go:99:			t.Errorf("%s", ctx("MISSING buildFromGit"))
+internal/workflow/recipe_template_dispatch_test.go:103:			t.Errorf("%s", ctx("UNEXPECTED zeropsSetup on managed service"))
+internal/workflow/recipe_template_dispatch_test.go:106:			t.Errorf("%s", ctx("UNEXPECTED buildFromGit on managed service"))
+internal/workflow/engine_test.go:898:			ImportYAML: "services:\n  - hostname: appdev\n    type: php-nginx@8.4\n    zeropsSetup: dev\n  - hostname: appstage\n    type: php-nginx@8.4\n    zeropsSetup: prod\n",
+internal/workflow/engine_test.go:936:			ImportYAML: "services:\n  - hostname: appdev\n    type: php-nginx@8.4\n    zeropsSetup: dev\n  - hostname: appstage\n    type: php-nginx@8.4\n    zeropsSetup: prod\n",
+internal/workflow/engine_test.go:974:			ImportYAML: "services:\n  - hostname: appdev\n    type: dotnet@9\n    zeropsSetup: dev\n  - hostname: appstage\n    type: dotnet@9\n    zeropsSetup: prod\n  - hostname: db\n    type: postgresql@16\n    mode: NON_HA\n",
+internal/workflow/engine_test.go:1028:			ImportYAML: "services:\n  - hostname: appdev\n    type: dotnet@9\n    zeropsSetup: dev\n  - hostname: db\n    type: postgresql@16\n    mode: NON_HA\n",
+internal/workflow/recipe_templates_import.go:13:// Emits structural YAML (hostnames, types, zeropsSetup, scaling fields). All
+internal/workflow/recipe_templates_import.go:165:	b.WriteString("    zeropsSetup: dev\n")
+internal/workflow/recipe_templates_import.go:193:	fmt.Fprintf(b, "    zeropsSetup: %s\n", recipeSetupName(target, false))
+internal/workflow/recipe_templates_import.go:227:	// Recipe runtime services: zeropsSetup + buildFromGit.
+internal/workflow/recipe_templates_import.go:229:		fmt.Fprintf(b, "    zeropsSetup: %s\n", recipeSetupName(target, false))
+internal/workflow/recipe_templates_import.go:233:	// Utility services: zeropsSetup + buildFromGit from the utility repo.
+internal/workflow/recipe_templates_import.go:235:		b.WriteString("    zeropsSetup: app\n")
+internal/workflow/recipe_templates_import.go:236:		fmt.Fprintf(b, "    buildFromGit: %s\n", utilityBuildFromGitURL(target.Type))
+internal/workflow/recipe_templates_import.go:263:// writeRuntimeBuildFromGit writes the buildFromGit URL for recipe runtime services.
+internal/workflow/recipe_templates_import.go:279:	fmt.Fprintf(b, "    buildFromGit: %s%s%s\n", RecipeAppRepoBase, plan.Slug, runtimeRepoSuffix(plan, target))
+internal/workflow/recipe_templates_import.go:383:		return fmt.Sprintf("Dev workspace for %s — zeropsSetup:dev deploys the full source tree for SSH editing and manual process management.", host)
+internal/workflow/recipe_templates_import.go:385:	return fmt.Sprintf("Dev workspace — zeropsSetup:dev deploys the full source tree so %s is editable over SSHFS.", host)
+internal/workflow/recipe_templates_import.go:393:		return fmt.Sprintf("Stage worker — zeropsSetup:%s validates background job processing with production config.", setup)
+internal/workflow/recipe_templates_import.go:395:	return fmt.Sprintf("Staging slot — zeropsSetup:%s runs the production build for validation before release.", setup)
+internal/workflow/recipe_override_test.go:18:    zeropsSetup: dev
+internal/workflow/recipe_override_test.go:19:    buildFromGit: https://github.com/zerops-recipe-apps/dotnet-hello-world-app
+internal/workflow/recipe_override_test.go:25:    zeropsSetup: prod
+internal/workflow/recipe_override_test.go:26:    buildFromGit: https://github.com/zerops-recipe-apps/dotnet-hello-world-app
+internal/workflow/recipe_override_test.go:42:    zeropsSetup: dev
+internal/workflow/recipe_override_test.go:43:    buildFromGit: https://github.com/zerops-recipe-apps/nodejs-hello-world-app
+internal/workflow/recipe_override_test.go:237:				"zeropsSetup: dev",
+internal/workflow/recipe_override_test.go:238:				"zeropsSetup: prod",
+internal/workflow/recipe_override_test.go:239:				"buildFromGit: https://github.com/zerops-recipe-apps/dotnet-hello-world-app",
+internal/workflow/recipe_override_test.go:252:				containsAll("hostname: workdev", "zeropsSetup: dev"),
+internal/workflow/bootstrap_guide_assembly_test.go:87:		ImportYAML: "project:\n  name: nextjs-agent\nservices:\n  - hostname: appdev\n    type: nodejs@22\n    zeropsSetup: dev\n  - hostname: appstage\n    type: nodejs@22\n    zeropsSetup: prod\n",
+internal/workflow/bootstrap_guide_assembly_test.go:119:		ImportYAML: "project:\n  name: dotnet-agent\nservices:\n  - hostname: appdev\n    type: dotnet@9\n    zeropsSetup: dev\n  - hostname: appstage\n    type: dotnet@9\n    zeropsSetup: prod\n  - hostname: db\n    type: postgresql@16\n    mode: NON_HA\n",
+internal/workflow/bootstrap_guide_assembly_test.go:161:		ImportYAML: "services:\n  - hostname: appdev\n    type: nodejs@22\n    zeropsSetup: dev\n  - hostname: appstage\n    type: nodejs@22\n    zeropsSetup: prod\n  - hostname: db\n    type: postgresql@18\n    mode: NON_HA\n",
+internal/workflow/bootstrap_guide_assembly_test.go:193:		ImportYAML: "services:\n  - hostname: appdev\n    type: dotnet@9\n    zeropsSetup: dev\n",
+internal/workflow/recipe_override.go:21:// (services declaring zeropsSetup) are replaced with the matching plan
+internal/workflow/recipe_override.go:22:// target's DevHostname (zeropsSetup=dev) or ExplicitStage (any other
+internal/workflow/recipe_override.go:23:// zeropsSetup value). Managed service hostnames stay verbatim: the recipe's
+internal/workflow/recipe_override.go:72:		zSetup := mappingScalar(svc, "zeropsSetup")
+internal/workflow/recipe_override.go:89:		// Managed service (no zeropsSetup). Match by type against plan deps.
+internal/workflow/recipe_override.go:175:// recipeRuntimeRole maps zeropsSetup into the matcher role. recipeRoleDev is the
+internal/workflow/recipe_override.go:178:func recipeRuntimeRole(zeropsSetup string) string {
+internal/workflow/recipe_override.go:179:	if zeropsSetup == recipeRoleDev {
+internal/workflow/bootstrap_guide_assembly.go:255:	sb.WriteString("3. Poll `zerops_discover` until every service reports `ACTIVE`. Recipes build from `buildFromGit` URLs, so first provision can take 2–5 minutes while Zerops clones and builds.\n\n")
+internal/workflow/recipe_templates_test.go:14:// repoURL is the expected buildFromGit URL pattern.
+internal/workflow/recipe_templates_test.go:360:			// Dev service: appdev with zeropsSetup: dev + buildFromGit.
+internal/workflow/recipe_templates_test.go:364:			if !strings.Contains(yaml, "zeropsSetup: dev") {
+internal/workflow/recipe_templates_test.go:365:				t.Error("expected zeropsSetup: dev on dev service")
+internal/workflow/recipe_templates_test.go:368:			if !strings.Contains(yaml, "buildFromGit: "+expectedDevRepo) {
+internal/workflow/recipe_templates_test.go:369:				t.Errorf("expected buildFromGit on dev service")
+internal/workflow/recipe_templates_test.go:376:			// Stage service: appstage with zeropsSetup: prod, buildFromGit.
+internal/workflow/recipe_templates_test.go:380:			if !strings.Contains(yaml, "zeropsSetup: prod") {
+internal/workflow/recipe_templates_test.go:381:				t.Error("expected zeropsSetup: prod on stage service")
+internal/workflow/recipe_templates_test.go:384:			if !strings.Contains(yaml, "buildFromGit: "+expectedRepo) {
+internal/workflow/recipe_templates_test.go:385:				t.Errorf("expected buildFromGit: %s", expectedRepo)
+internal/workflow/recipe_templates_test.go:409:			// zeropsSetup: prod (maps bare hostname to setup: prod in zerops.yaml).
+internal/workflow/recipe_templates_test.go:410:			if !strings.Contains(yaml, "zeropsSetup: prod") {
+internal/workflow/recipe_templates_test.go:411:				t.Error("expected zeropsSetup: prod on app service")
+internal/workflow/recipe_templates_test.go:414:			if !strings.Contains(yaml, "buildFromGit: "+expectedRepo) {
+internal/workflow/recipe_templates_test.go:415:				t.Errorf("expected buildFromGit: %s", expectedRepo)
+internal/workflow/recipe_templates_test.go:458:			// workerstage uses zeropsSetup: worker (shared zerops.yaml's worker setup).
+internal/workflow/recipe_templates_test.go:460:			if !strings.Contains(workerstageBlock, "zeropsSetup: worker") {
+internal/workflow/recipe_templates_test.go:461:				t.Error("expected zeropsSetup: worker on workerstage")
+internal/workflow/recipe_templates_test.go:483:			// Shared-codebase worker in env 2+: zeropsSetup: worker (shared yaml).
+internal/workflow/recipe_templates_test.go:484:			if !strings.Contains(yaml, "zeropsSetup: worker") {
+internal/workflow/recipe_templates_test.go:485:				t.Error("expected zeropsSetup: worker")
+internal/workflow/recipe_templates_test.go:523:		// Separate-codebase worker stage uses zeropsSetup: prod (its own zerops.yaml).
+internal/workflow/recipe_templates_test.go:524:		if !strings.Contains(yaml, "zeropsSetup: prod") {
+internal/workflow/recipe_templates_test.go:525:			t.Error("expected zeropsSetup: prod on separate-codebase workerstage")
+internal/workflow/recipe_templates_test.go:536:		// Separate-codebase worker: zeropsSetup: prod (own zerops.yaml).
+internal/workflow/recipe_templates_test.go:545:			if inWorker && strings.Contains(line, "zeropsSetup: prod") {
+internal/workflow/recipe_templates_test.go:550:		t.Error("expected zeropsSetup: prod for separate-codebase worker in env 2")
+internal/workflow/recipe_templates_test.go:553:	t.Run("env_2_separate_codebase_buildFromGit", func(t *testing.T) {
+internal/workflow/recipe_templates_test.go:621:		// Should have buildFromGit from utility repo.
+internal/workflow/recipe_templates_test.go:622:		if !strings.Contains(yaml, "buildFromGit: "+testRepoBase+"mailpit-app") {
+internal/workflow/recipe_templates_test.go:623:			t.Error("expected buildFromGit pointing to mailpit-app utility repo")
+internal/workflow/recipe_templates_test.go:701:	if strings.Contains(yaml, "Dev workspace — zeropsSetup:dev") {
+internal/workflow/recipe_templates_test.go:1081:	longComment := "This is a realistic-length comment explaining the service's role in this environment. It covers what zeropsSetup does, why the scaling fields have their values, and what the developer should understand about this specific tier."
+internal/workflow/recipe_templates_test.go:1124:	// Env 0: buildFromGit repo, NON_HA + priority field values.
+internal/workflow/recipe_templates_test.go:1127:		"zerops-recipe-apps", // buildFromGit org in URL
+internal/workflow/scenarios_test.go:600:		Phase:       PhaseExportActive,
+internal/workflow/scenarios_test.go:882:			Phase: PhaseExportActive, Environment: EnvContainer,
+internal/workflow/corpus_coverage_test.go:768:				Phase:       PhaseExportActive,
+internal/workflow/corpus_coverage_test.go:776:				"buildFromGit",
+internal/workflow/recipe_templates_project_env_test.go:280:				// Dev slots are identifiable by "zeropsSetup: dev".
+internal/workflow/recipe_templates_project_env_test.go:284:					if !strings.Contains(line, "zeropsSetup: dev") {
+internal/workflow/recipe_templates_surface_test.go:25:// "zeropsSetup: dev") must match what GenerateEnvImportYAML(plan, envIndex)
+internal/workflow/recipe_templates_surface_test.go:135:	ZeropsSetup         string `yaml:"zeropsSetup,omitempty"`
+internal/workflow/recipe_templates_surface_test.go:248:			Name: "zeropsSetup",
+internal/workflow/recipe_templates_surface_test.go:249:			Re:   regexp.MustCompile("`?zeropsSetup:\\s*(dev|prod|app)`?"),
+internal/workflow/recipe_shape.go:12:// are identified by the presence of a `zeropsSetup` field — recipes set it on
+internal/workflow/recipe_shape.go:16://   - "standard" — two runtimes, one `zeropsSetup: dev` + one `zeropsSetup: prod`
+internal/workflow/recipe_shape.go:17://   - "simple"   — single runtime with `zeropsSetup: prod`
+internal/workflow/recipe_shape.go:18://   - "dev"      — single runtime with `zeropsSetup: dev`
+internal/workflow/recipe_shape.go:24:			ZeropsSetup string `yaml:"zeropsSetup"`
+internal/workflow/recipe_service_types.go:39://     runs both processes via SSH. zeropsSetup is "worker" (a third setup in the
+internal/workflow/recipe_service_types.go:40://     host target's shared zerops.yaml). buildFromGit inherits the host target's
+internal/workflow/recipe_service_types.go:43://     setups, own dev+stage service pair. buildFromGit points at {slug}-worker.
+internal/workflow/recipe_service_types.go:86:// recipeSetupName returns the zeropsSetup name for a recipe RUNTIME service.
+internal/workflow/recipe_service_types.go:127:// utilityBuildFromGitURL returns the buildFromGit URL for a utility service.
+internal/workflow/recipe_corpus_store_test.go:22:			ImportYAML: "services:\n  - hostname: appdev\n    type: php-nginx@8.4\n    zeropsSetup: dev\n  - hostname: appstage\n    type: php-nginx@8.4\n    zeropsSetup: prod\n",
+internal/workflow/recipe_corpus_store_test.go:28:			ImportYAML: "services:\n  - hostname: app\n    type: php-nginx@8.4\n    zeropsSetup: prod\n",
+internal/workflow/recipe_templates.go:224:// emits (`zeropsSetup: dev`, `mode: NON_HA`, `minContainers: 2`) or (c) frames
+internal/workflow/recipe_templates.go:238:			"- Iteration happens **inside** the same `zeropsSetup: dev` container the AI-Agent tier uses — the tier distinction is audience (human via CDE) not container image.\n" +
+internal/workflow/recipe_templates.go:286:			"- `import.yaml` shape is identical — same `project.name` pattern, same service list, same `mode: NON_HA` on managed services, same `zeropsSetup: dev` on runtime containers.\n" +
+internal/workflow/recipe_templates.go:338:			"- The dev container in the new project is the same `zeropsSetup: dev` shape — the tier distinction is audience (human via CDE vs AI agent over SSH), not the container image. Managed services carry the same shape too.\n" +
+internal/workflow/recipe_shape_test.go:23:    zeropsSetup: dev
+internal/workflow/recipe_shape_test.go:26:    zeropsSetup: prod
+internal/workflow/recipe_shape_test.go:38:    zeropsSetup: prod
+internal/workflow/recipe_shape_test.go:50:    zeropsSetup: dev
+internal/workflow/envelope.go:69:	PhaseExportActive    Phase = "export-active"
+internal/workflow/recipe.go:160:	// block in the host target's zerops.yaml, buildFromGit inherits the
+internal/workflow/router.go:209:						Hint: `zerops_workflow action="start" workflow="export" — turn a deployed service into a re-importable git repo (import.yaml + buildFromGit)`,
+internal/eval/scenarios/strategy-push-git-setup.md:53:`push-dev`. První deploy proběhl přes buildFromGit.
+internal/eval/seed.go:57:// (develop-flow and adopt-flow scenarios). Fixtures using buildFromGit are
+internal/eval/seed.go:59:// the slow path. Fixtures without buildFromGit rely on natural post-import
+internal/eval/scenarios/export-deployed-service.md:3:description: Deployed Laravel service `app` + managed `db` in the project; user asks to export this infra into a reusable import.yaml in the repo (via the new immediate workflow=export introduced in 09ae4df). Tests that the agent enters the export workflow, calls zerops_export + zerops_discover to gather raw state, and produces an import.yaml with buildFromGit / zeropsSetup / priority:10 for the managed service.
+internal/eval/scenarios/export-deployed-service.md:28:    # is the start-order invariant; buildFromGit+zeropsSetup tell Zerops
+internal/eval/scenarios/export-deployed-service.md:30:    - 'buildFromGit'
+internal/eval/scenarios/export-deployed-service.md:31:    - 'zeropsSetup'
+internal/eval/scenarios/export-deployed-service.md:40:  - "Jaká pole jsi přidal na runtime služby (`app`)? Proč právě `buildFromGit` + `zeropsSetup` a ne build/run pipeline z `zerops.yaml`?"
+internal/eval/scenarios/export-deployed-service.md:51:`buildFromGit` odkazem, ať si to můžu kdykoli `zcli project project-import
+internal/eval/scenarios/export-deployed-service.md:62:  - `app` (runtime php-nginx) s `buildFromGit` + `zeropsSetup` + případně
+internal/eval/scenarios/export-deployed-service.md:73:zahrnuje `buildFromGit:` + `zeropsSetup:` pro `app` a `priority: 10`
+internal/eval/scenarios/adopt-existing-laravel.md:3:description: Laravel + Postgres pre-seeded (buildFromGit, mimo ZCP) — LLM musí rozpoznat adopt z discovery response, ne re-provisionovat
+internal/eval/scenarios/preseed/develop-pivot-auto-close.sh:5:# buildFromGit. This preseed plants a COMPLETE ServiceMeta for `app` —
+internal/eval/scenarios/preseed/strategy-push-git-setup.sh:5:# Zerops via buildFromGit. This preseed plants a COMPLETE ServiceMeta for
+internal/eval/scenarios/preseed/export-deployed-service.sh:5:# buildFromGit. This preseed plants a COMPLETE ServiceMeta for `app` —
+internal/eval/scenarios/fixtures/laravel-minimal.yaml:2:# exercise the READY_TO_DEPLOY recovery path — no buildFromGit, no db, so
+internal/eval/scenarios/fixtures/laravel-existing-buildfromgit.yaml:8:# buildFromGit points at zeropsio/recipe-laravel-minimal (which ships a
+internal/eval/scenarios/fixtures/laravel-existing-buildfromgit.yaml:16:    buildFromGit: https://github.com/zeropsio/recipe-laravel-minimal
+docs/spec-workflows.md:1187:  `zerops_import` — hostnames match the plan, `zeropsSetup`/`type`/
+docs/spec-workflows.md:1188:  `buildFromGit`/`priority`/`mode` are recipe-verbatim.
+docs/spec-workflows.md:1197:| RCO-2 | Runtime-service hostname rename is the ONLY per-service field the rewrite mutates. `type`, `zeropsSetup`, `buildFromGit`, `priority`, `mode`, `enableSubdomainAccess`, `verticalAutoscaling`, `envVariables`, `envSecrets` — all pass through byte-verbatim. Changing any of these requires `route="classic"`. |
+docs/spec-workflows.md:1201:| RCO-6 | `runtimeSlot` matching consumes plan targets in first-unused order by `(type, role)` where role is `dev` (zeropsSetup=dev) or `stage` (anything else). Each runtime target's dev + stage halves MUST map to exactly one recipe runtime service; unmatched slots mean the plan declares a runtime type not present in the recipe, rejected at RCO-1. |
+internal/eval/scenarios/fixtures/laravel-dev-deployed.yaml:4:# buildFromGit clones + builds + deploys `zeropsio/recipe-laravel-minimal`,
+internal/eval/scenarios/fixtures/laravel-dev-deployed.yaml:14:    buildFromGit: https://github.com/zeropsio/recipe-laravel-minimal
+docs/plan-api-first-showcase.md:26:4. **Platform-native**: Uses Zerops `priority` ordering, `zeropsSubdomainHost` for cross-service URL construction, and separate `buildFromGit` repos
+docs/plan-api-first-showcase.md:84:| Role | Env 0-1 | Env 2-5 | buildFromGit | zeropsSetup |
+docs/plan-api-first-showcase.md:184:### Phase 2: buildFromGit Routing
+docs/plan-api-first-showcase.md:603:- [ ] Generated import.yaml has correct buildFromGit URLs per role
+docs/zcprecipator3/system.md:152:block, no `buildFromGit`, no `zeropsSetup`, no preprocessor expressions,
+docs/zcprecipator3/system.md:157:`envVariables` + `buildFromGit` + `zeropsSetup`. Written to
+docs/zcprecipator3/plans/run-16-readiness.md:1615:- [ ] Read [docs/zcprecipator3/system.md §"Workspace YAML vs deliverable YAML"](../system.md#L149-L162). Verify line range with `grep -n "Workspace YAML vs deliverable YAML" docs/zcprecipator3/system.md`. Confirm: workspace = "no `project:` block, ... `startWithoutCode: true`"; deliverable = "full `project:` + `envVariables` + `buildFromGit` + `zeropsSetup`".
+docs/zcprecipator3/CHANGELOG.md:997:- **Two distinct YAML shapes**: v2 separates the *workspace import* (provision-time, agent-authored from atoms per `workflow/phases/provision/import-yaml/workspace-restrictions.md` — services-only, `startWithoutCode: true` on dev, no `project:`, no `buildFromGit`, no `zeropsSetup`, no preprocessor expressions) from the six *deliverable imports* (finalize, Go-generated via `recipe_templates_import.go::GenerateEnvImportYAML` — full `project:` + `envVariables` + `buildFromGit` + `zeropsSetup`). v2 enforces the distinction via a validator (`internal/tools/workflow_checks_finalize.go:208-215`) that refuses `startWithoutCode` in deliverables.
+docs/zcprecipator3/CHANGELOG.md:1004:**Why it matters**: the recipe is a template that produces a reproducible click-deploy. Conflating author-workspace state with deliverable yaml breaks security (every end-user inherits the author's APP_KEY), URL resolution (author's subdomain baked in instead of `${zeropsSubdomainHost}`), and provision itself (workspace yaml with `buildFromGit` tries to clone empty repos before scaffold has pushed them).
+docs/zcprecipator3/CHANGELOG.md:1021:     it, no `project:` block, no `buildFromGit`, no `zeropsSetup`, no
+docs/zcprecipator3/CHANGELOG.md:1063:     `project:`, `buildFromGit:`, `zeropsSetup:`, preprocessor, and
+docs/zcprecipator3/plan.md:157:| **Tier metadata** | 6 typed tier structs (index, folder, label, minContainers, mode, cpuMode, zeropsSetup, devServiceKind) — these are Zerops product decisions | — |
+docs/zcprecipator2/04-verification/brief-code-review-showcase-composed.md:59:- `zerops.yaml`, `import.yaml`, `zeropsSetup`, `envReplace`, `buildFromGit`, `cpuMode`, `mode`, `priority`, `verticalAutoscaling`, `minContainers`, `corePackage`, any `zsc*` keyword.
+docs/zcprecipator2/plans/v39-fix-stack.md:50:  - (a) plan-backed: already corresponds to a field in `writeSingleService` yaml generator (mode, minContainers, zeropsSetup, priority).
+docs/zcprecipator2/plans/v39-commit1-bullet-audit.md:41:| dev service (hostname + zeropsSetup: dev + minRam 1) | `writeDevService` | env 0-1 runtime only |
+docs/zcprecipator2/plans/v39-commit1-bullet-audit.md:42:| stage service (`{host}stage` + prod zeropsSetup) | `writeStageService` | env 0-1 runtime only |
+docs/zcprecipator2/plans/v39-commit1-bullet-audit.md:43:| single service (`{host}` + prod zeropsSetup) | `writeSingleService` | env 2-5 runtime + all non-runtime |
+docs/zcprecipator2/plans/v39-commit1-bullet-audit.md:154:  env 2 emits `{host}` via writeSingleService. Autoscaling + zeropsSetup
+docs/zcprecipator2/plans/v39-commit1-bullet-audit.md:166:  block."* → **(a)** (zeropsSetup from recipeSetupName).
+docs/zcprecipator2/plans/v39-commit1-bullet-audit.md:330:for env 0 and env 1 (same `zeropsSetup: dev`, same minRam, same autoscaling).
+docs/zcprecipator2/04-verification/brief-code-review-minimal-composed.md:61:- `zerops.yaml`, `import.yaml`, `zeropsSetup`, `envReplace`, `buildFromGit`, `cpuMode`, `mode`, `priority`, `verticalAutoscaling`, `minContainers`, `corePackage`, any `zsc*` keyword.
+docs/zcprecipator2/01-flow/flow-showcase-v34-dispatches/nestjs-svelte-code-review.md:86:- `zerops.yaml`, `import.yaml`, `zeropsSetup`, `envReplace`, `buildFromGit`, `cpuMode`, `mode`, `priority`, `verticalAutoscaling`, `minContainers`, `corePackage`, `zsc*`
+docs/zcprecipator2/01-flow/flow-minimal-spec-dispatches/code-review-subagent.md:60:Spawn a sub-agent as a **{framework} code expert** — not a Zerops platform expert. The sub-agent has NO Zerops context beyond what's in its brief: no injected guidance, no schema, no platform rules, no predecessor-recipe knowledge. Asking it to review platform config (zerops.yaml, import.yaml, zeropsSetup, envReplace, etc.) invites stale or hallucinated platform knowledge and framework-shaped "fixes" to platform problems. The main agent already owns platform config (injected guidance + live schema validation at finalize); the sub-agent's unique contribution is **framework-level code review** the main agent and automated checks cannot catch.
+docs/zcprecipator2/01-flow/flow-minimal-spec-dispatches/code-review-subagent.md:104:> - `zerops.yaml` fields — `build.base`, `run.base`, `healthCheck`, `readinessCheck`, `deployFiles`, `buildFromGit`, `zeropsSetup`, `envReplace`, `envSecrets`, `cpuMode`, `mode`, `priority`, `verticalAutoscaling`, `minContainers`, `corePackage`, anything prefixed with `zsc`
+docs/zcprecipator2/runs/v36/flow-showcase-v36-main.md:228:| 186 | 2026-04-21T15:56:49 | DEPLOY | mcp:zerops_guidance | zerops_guidance  topic=env-comments-example | 3926 | ### Complete env comment template  ``` zerops_workflow action="generate-finalize" \   envComments={     "0": {       "service": {         "appdev": "Development workspace for AI agents. zeropsSetup:de |  | mcp__zerops__zerops_workflow — zerops_workflow  action=generate-finalize |
+docs/zcprecipator2/runs/v38/CORRECTIONS.md:40:| 1 | `1 — Remote (CDE)/README.md` L24 | **Fabricated mechanism** — claims dev container image differs between tier 0 and tier 1. Both tiers' import.yaml declare identical `nodejs@24` with identical `zeropsSetup: dev`; no evidence of a distinct image. | `recipe_templates.go:envDiffFromPrevious(1)` L273-276 hardcodes "Runtime containers carry an expanded toolchain — IDE Remote server, shell customizations, language-specific debug tools" and "only the dev container image differs". Neither claim is plan-derived. |
+docs/zcprecipator2/runs/v38/flow-showcase-v38-main.md:276:| 211 | 2026-04-22T10:38:32 | DEPLOY | mcp:zerops_guidance | zerops_guidance  topic=env-comments-example | 3926 | ### Complete env comment template  ``` zerops_workflow action="generate-finalize" \   envComments={     "0": {       "service": {         "appdev": "Development workspace for AI agents. zeropsSetup:de |  | mcp__zerops__zerops_guidance — zerops_guidance  topic=showcase-service-keys |
+docs/zcprecipator2/runs/v38/flow-showcase-v38-dispatches/code-review-of-recipe-scaffold-features.md:58:- `zerops.yaml`, `import.yaml`, `zeropsSetup`, `envReplace`, `envSecrets`, `cpuMode`, `mode`, `priority`, `verticalAutoscaling`, `minContainers`, `corePackage`, any `zsc*` keyword.
+docs/zcprecipator2/runs/v38/dispatch-integrity/engine-code-review.txt:45:- `zerops.yaml`, `import.yaml`, `zeropsSetup`, `envReplace`, `envSecrets`, `cpuMode`, `mode`, `priority`, `verticalAutoscaling`, `minContainers`, `corePackage`, any `zsc*` keyword.
+docs/zcprecipator2/runs/v38/dispatch-integrity/dispatch-code-review.txt:45:- `zerops.yaml`, `import.yaml`, `zeropsSetup`, `envReplace`, `envSecrets`, `cpuMode`, `mode`, `priority`, `verticalAutoscaling`, `minContainers`, `corePackage`, any `zsc*` keyword.
+docs/zcprecipator2/runs/v39/verification-checklist.md:117:- [x] `environments/0 — AI Agent/README.md:32` — *"The dev container in the new project ships the CDE toolchain; the managed-service set stays the same shape, but the containers are separate from this tier's."* — **FAIL** — Cluster A fabrication per [plans/v39-commit1-bullet-audit.md §5](../../plans/v39-commit1-bullet-audit.md): env 0 and env 1 emit IDENTICAL dev-slot yaml via `writeDevService(target)` (same `zeropsSetup: dev`, minRam, autoscaling). No field in `GenerateEnvImportYAML` distinguishes "CDE toolchain" from "agent toolchain". Rule 9: fabrication. v39 Commit 1 dropped this claim at [internal/workflow/recipe_templates.go:336-338](../../../internal/workflow/recipe_templates.go#L336) — present prose reframes as audience-not-image. Regression means the v39 run used a pre-Commit-1 binary.
+docs/zcprecipator2/runs/v39/flow-showcase-v39-main.md:192:| 145 | 2026-04-22T19:26:35 | DEPLOY | mcp:zerops_guidance | zerops_guidance  topic=env-comments-example | 3926 | ### Complete env comment template  ``` zerops_workflow action="generate-finalize" \   envComments={     "0": {       "service": {         "appdev": "Development workspace for AI agents. zeropsSetup:de |  | Read — /var/www/zcprecipator/nestjs-showcase/0 — AI Agent/import.yaml |
+docs/zcprecipator2/runs/v37/flow-showcase-v37-dispatches/code-review-nestjs-framework-expert.md:26:OUT OF SCOPE: zerops.yaml, import.yaml, zeropsSetup, envReplace/envSecrets, cpuMode, mode, priority, verticalAutoscaling, minContainers, corePackage, zsc*, hostname naming, service-version choice, cross-service ${} refs, env-tier progression, per-surface fragment content, comment ratios, any Zerops platform primitive.
+docs/zrecipator-archive/plan-recipe-accuracy-fixes.md:242:Asking it to review `zerops.yaml`, `import.yaml`, `buildFromGit`, `zeropsSetup`,
+docs/zrecipator-archive/plan-recipe-accuracy-fixes.md:271:- `buildFromGit` presence on runtime services
+docs/zrecipator-archive/plan-recipe-accuracy-fixes.md:328:   - `zeropsSetup`, `buildFromGit`, `envReplace`, `envSecrets`,
+docs/zrecipator-archive/plan-recipe-accuracy-fixes.md:403:>   readinessCheck, deployFiles, buildFromGit, zeropsSetup, envReplace,
+docs/zrecipator-archive/plan-recipe-accuracy-fixes.md:433:zerops.yaml field names, import.yaml field names, zsc, zeropsSetup,
+docs/zrecipator-archive/plan-recipe-accuracy-fixes.md:434:buildFromGit, envReplace, corePackage, VITE_API_URL, or any specific
+docs/zrecipator-archive/research-recipe-workflow-reshuffle.md:145:| Compose import.yaml | Field schema (hostname rules, type, mode, priority, minContainers, enableSubdomainAccess, startWithoutCode, envSecrets, buildFromGit, verticalAutoscaling, preprocessor functions). Workspace-specific rules: NO `project:`, NO `zeropsSetup` (would require `buildFromGit`). | `import.yaml Schema` from `themes/core.md` + provision-specific wrapper. |
+docs/zrecipator-archive/implementation-recipe-size-reduction.md:1661:- `zeropsSetup` / `buildFromGit` — deliverable-only fields, not workspace.
+docs/zrecipator-archive/implementation-recipe-size-reduction.md:1678:The injected chain recipe's `## zerops.yaml template` section is the primary source: it's the same shape you're writing, for a recipe in the same framework family. Exotic fields (buildFromGit, cache layers, per-environment overrides) are not in that template.
+docs/zrecipator-archive/recipe-via-zcp-analysis.md:825:| App zeropsSetup | dev + prod | prod | prod | prod | prod |
+docs/zrecipator-archive/recipe-via-zcp-analysis.md:948:        - Add buildFromGit, zeropsSetup, enableSubdomainAccess

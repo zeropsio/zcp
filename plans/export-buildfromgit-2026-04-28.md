@@ -45,6 +45,7 @@ investigation:
 | X6 | zerops.yaml validation | 🟡 | Atom assumes `/var/www/zerops.yaml` exists with matching `setup:` names. Never validated. Re-import failure mode (`zerops-docs/.../import.mdx:791`) is preventable client-side; today it's not. |
 | X7 | Subdomain drift | 🟡 | E2E pinned (`e2e/subdomain_lifecycle_test.go:5-9, 76-92`) that `enableSubdomainAccess` in import.yaml does NOT flip API state at import. Atom emits the field from Discover, but next export sees subdomain off and drops it. Bidirectional drift. |
 | X8 | Filename | 🟢 | Atom writes `import.yaml` at repo root (export.md:175). Recipe convention is `zerops-project-import.yaml` (recipe-create-recipe docs). User discovery / dashboard upload UX favors the recipe convention. |
+| X9 | Surface duplication | 🟢 | Standalone `zerops_export` MCP tool at `internal/tools/export.go:11-41` coexists with the workflow-phase atom path. The tool returns raw platform YAML + Discover metadata; the workflow guides a re-importable bundle. RETAINED as orthogonal raw-export surface per §4 decision 2026-04-28 (Codex Agent A). Not a regression — orthogonal-surface clarification only. |
 
 The architectural drift propagates as:
 - **Tool path**: `internal/tools/workflow_immediate.go:35-38` maps
@@ -77,7 +78,8 @@ A two-tool/four-atom decomposition that:
 7. **Surfaces drift limitations** (subdomain, private-repo auth) in
    atom prose rather than pretending to fix them.
 
-8 of 8 root problems resolved in scope; 0 deferred.
+8 of 9 root problems resolved in scope; X9 (surface duplication) is a
+clarification only (RETAIN orthogonal surface) — not a code change.
 
 ## 3. Mental model
 
@@ -135,19 +137,30 @@ For local-stage: ask same dev/stage question, but local container is the source.
 ### 3.4 Four-category LLM-driven secret classification
 
 For every env var (project envVariables AND `${var}` references in
-zerops.yaml's `run.envVariables`), the agent classifies via grep over
-source code:
+zerops.yaml's `run.envVariables`), the agent classifies by combining
+source grep, zerops.yaml reference provenance, and framework/config-file
+reads. Grep is evidence, not the whole classifier.
 
 | Category | Detection | Emit shape |
 |---|---|---|
-| **Infrastructure-derived** | resolves to managed-service-emitted shape (`${db_connectionString}`, `${redis_hostname}`) | DROP from import.yaml's `project.envVariables`; keeps `${...}` reference in zerops.yaml — re-imported managed services emit fresh values |
-| **Auto-generatable secret** | source uses var as encryption/signing key (`Cipher.encrypt(_, env.X)`, `jwt.sign(_, env.X)`) | `<@generateRandomString(32, true, false)>` in `project.envVariables` |
-| **External secret** | source calls third-party SDK (Stripe, OpenAI, GitHub, Mailgun) | Comment + placeholder: `# external secret — set in dashboard after import` + `<@pickRandom(["REPLACE_ME"])>` |
-| **Plain config** | source uses literal string-shaped (LOG_LEVEL, NODE_ENV, FEATURE_FLAGS) | Verbatim literal value |
+| **Infrastructure-derived** | value or component comes from a recognized managed-service reference in zerops.yaml or platform export metadata (`${db_*}`, `${redis_*}`, plus documented service-specific prefixes such as Mongo / Postgres / MySQL variants). Includes compound URLs assembled in app code from `${...}` components (`DATABASE_URL=postgres://${DB_USER}:${DB_PASSWORD}@${DB_HOST}/${DB_NAME}`). | DROP from import.yaml's `project.envVariables`; keep `${...}` reference in zerops.yaml — re-imported managed services emit fresh values |
+| **Auto-generatable secret** | source or framework convention uses var as local encryption/signing key (`Cipher.encrypt(_, env.X)`, `jwt.sign(_, env.X)`, Laravel `APP_KEY`, Django `SECRET_KEY`, Rails `SECRET_KEY_BASE`, Express session/JWT secrets — even when the encryption call is inside the framework). Warn before regenerating when state, cookies, sessions, or test fixtures may rely on the old value. | `<@generateRandomString(32, true, false)>` in `project.envVariables` + stability warning |
+| **External secret** | source calls third-party SDK (Stripe, OpenAI, GitHub, Mailgun) using the var, including aliased imports (`from stripe import Stripe as PaymentProvider`) and webhook verification secrets (`stripe.webhooks.constructEvent(_, _, env.X)`). Empty / sentinel external values (`STRIPE_SECRET=`, `disabled`, `test_xxx`, `sk_test_*`) are review-required — do NOT blindly substitute `REPLACE_ME` for an empty staging key. | Comment + placeholder: `# external secret — set in dashboard after import` + `<@pickRandom(["REPLACE_ME"])>`; OR empty + comment when the live value was empty/sentinel |
+| **Plain config** | source uses var as literal string-shaped runtime config (LOG_LEVEL, NODE_ENV, FEATURE_FLAGS). Flag privacy-sensitive literals (real emails, customer names, internal domain/webhook URLs, sender identities like `MAILGUN_FROM="Acme Support <support@acme.com>"`) for user review before verbatim emission. | Verbatim literal value (unless privacy-flagged) |
 
-The atom describes the protocol with one example per category; the LLM
-agent does the grep + classify per env. ZCP's Go code stays out of
-classification heuristics.
+The atom describes the protocol with worked examples per category; the
+LLM agent does grep + provenance + framework reasoning per env. ZCP's
+Go code stays out of classification heuristics.
+
+**Phase B emits a per-env review table** — env var, evidence (grep
+match / `${...}` provenance / framework convention), bucket, emitted
+value, risk note, user override status. Phase C does NOT proceed until
+the user has accepted or corrected the table. This is the recovery
+path for misclassification surfaced by Codex Agent C 2026-04-28
+(failure modes M1 aliased imports, M2 indirect resolution, M3
+multi-purpose framework keys, M4 empty-sentinel external secrets, M5
+privacy-sensitive plain config, M6 test fixtures, M7 non-default
+managed prefixes).
 
 ### 3.5 Phase shape
 
@@ -167,9 +180,10 @@ workflow="export"
    ├── Phase B: GENERATE (Go code, no git push)
    │     5. Compose `zerops-project-import.yaml` from variant + live state
    │     6. Verify zerops.yaml has matching setup name (chain to scaffold if not)
-   │     7. Classify envs (agent runs grep + four-category buckets)
+   │     7. Classify envs (agent runs grep + provenance + framework reasoning)
    │     8. Schema-validate both YAMLs against published schemas
-   │     9. Surface diff for user review
+   │     9. Emit per-env review table; user accepts or corrects classifications
+   │        before Phase C (mandatory gate per Codex Agent C 2026-04-28)
    │
    └── Phase C: PUBLISH (requires GitPushState=configured)
         10. If GitPushState != configured → chain to setup-git-push-{env}
@@ -203,8 +217,10 @@ read+generate+validate. Only Phase C (publish) needs git.
 | Q6 | **Code-comparison method**: N/A — variant 3 (both halves) dropped. Always one half, user-chosen. | ✅ N/A |
 | Q7 | **Post-import mode**: dev half → `mode: dev`; stage half → `mode: simple`. Preserves user intent (β) per §3.3. | ✅ CONFIRMED 2026-04-28 |
 | Pair handling | Always export ONE half of any pair. User chooses dev or stage. | ✅ CONFIRMED 2026-04-28 |
-| `RemoteURL` source of truth | Live `git remote get-url origin` (cache in `ServiceMeta.RemoteURL` per `internal/workflow/service_meta.go:47-48`). Refresh cache on every export pass. | ✅ DEFAULTED (matches existing `RemoteURL` semantics) |
-| Atom prereq chaining | Handler-side composition, mirrors deploy-strategy-decomposition Phase 5 pattern (`internal/tools/workflow_close_mode.go`-style chaining). | ✅ DESIGN PINNED |
+| `RemoteURL` source of truth | Live `git remote get-url origin` (cache in `ServiceMeta.RemoteURL` per `internal/workflow/service_meta.go:48`). Refresh cache on every export pass. | ✅ DEFAULTED (matches existing `RemoteURL` semantics) |
+| Atom prereq chaining | Handler-side composition. The pattern referenced as `chainSetupGitPushGuidance(...)` is INLINE at `internal/tools/workflow_close_mode.go:120-136` (no helper); export Phase 3 either reuses inline or extracts a shared helper as optional Phase 2.5. Chain pointers land in the response payload's `nextSteps` list — NOT via a `gitPushStates` atom axis (`SynthesizeImmediatePhase` passes no service context, so service-scoped axes silently never fire). | ✅ DESIGN PINNED 2026-04-28 (Codex Agent A+B) |
+| `zerops_export` standalone MCP tool | RETAIN as orthogonal raw export. `internal/tools/export.go:11-41` + `internal/server/server.go:197` registers the tool; it wraps `ops.ExportProject` for raw platform YAML. The new workflow handler is independent. Do NOT remove or redirect; the two surfaces serve different intents (raw debugging vs guided export). | ✅ DEFAULTED 2026-04-28 (Codex Agent A) |
+| JSON Schema validator for Phase 5 | Vendor `github.com/santhosh-tekuri/jsonschema/v5` for full schema validation. Current `internal/schema/validate.go::ValidateZeropsYmlRaw` only does unknown-field detection against extracted enums. Phase 5 adds `ValidateImportYAML` + `ValidateZeropsYAML` over the live JSON Schema. Embedded `internal/schema/testdata/import_yml_schema.json` is 202B behind live (`plans/export-buildfromgit/import-schema.json`); refresh testdata as part of Phase 5. | ✅ DESIGN PINNED 2026-04-28 (Codex Agent A) |
 
 ## 5. Baseline snapshot (2026-04-28)
 
@@ -217,15 +233,22 @@ read+generate+validate. Only Phase C (publish) needs git.
   schema validation + handler + tests)
 - Atoms: net +3 to +4 (replace 1, add 4-5, none deleted from outside this plan's scope)
 
-### 5.2 Current entry points (file:line)
+### 5.2 Current entry points (file:line) — verified 2026-04-28 at HEAD `b743cda0`
 
-- Tool route: `internal/tools/workflow.go:142` (router) → `synthesizeImmediateGuidance` at `:150`
-- Phase mapping: `internal/tools/workflow_immediate.go:35-38`
-- Synthesizer: `internal/workflow/synthesize.go:524-526` (`SynthesizeImmediatePhase`)
-- Plan dispatch: `internal/workflow/build_plan.go:43-48` (PhaseExportActive yields empty plan)
-- Atom: `internal/content/atoms/export.md`
-- Raw export: `internal/ops/export.go:40-79`
-- Router hint: `internal/workflow/router.go:209` (`workflow="export"` offered when bootstrapped+deployed services exist)
+- Tool route: `internal/tools/workflow.go:144` (`IsImmediateWorkflow` gate) → `synthesizeImmediateGuidance` call at `:150`
+- Standalone MCP tool: `internal/tools/export.go:19-35` (`zerops_export` registration); `internal/server/server.go:197` (server registration call site). Stays after this plan per §4 decision row.
+- Phase mapping: `internal/tools/workflow_immediate.go:36` (`workflow="export"` → `PhaseExportActive`)
+- Synthesizer: `internal/workflow/synthesize.go:524-525` (`SynthesizeImmediatePhase`); composes ALL matching atoms via priority-then-ID sort (`synthesize.go:51-81`, `atom.go:438-449`)
+- Plan dispatch: `internal/workflow/build_plan.go:43-44` (PhaseExportActive yields empty plan)
+- Atom: `internal/content/atoms/export.md` (229 lines, `priority: 2`, `phases: [export-active]`, `environments: [container]`)
+- Raw export: `internal/ops/export.go:40-79` (`ExportProject` — raw platform YAML + Discover wrapper, no transformation)
+- Router hint: `internal/workflow/router.go:208-209` (`workflow="export"` offered when bootstrapped+deployed services exist)
+- S12 scenario: `internal/workflow/scenarios_test.go:589-618` (`TestScenario_S12_ExportActiveEmptyPlan` — currently asserts EXACTLY ONE atom: `export`)
+- Corpus coverage fixture: `internal/workflow/corpus_coverage_test.go:766-779` (`Name: "export_active"`, `MustContain: ["buildFromGit", "zerops_export", "import.yaml"]`); Phase 4 must update `MustContain` to `"zerops-project-import.yaml"`
+- Atom-corpus axis parsers: `internal/workflow/atom.go:131-133` (`closeDeployModes` / `gitPushStates` / `buildIntegrations` already in `validAtomFrontmatterKeys`); `:201`/`:207`/`:213` per-axis. **No parser-extension Phase 1.0 needed** (in contrast to sister plan).
+- Handler-state guard: `TestNoCrossCallHandlerState` at `internal/topology/architecture_handler_state_test.go:117-149` (forbids zero-value package-level vars in `internal/tools/`)
+- Atom reference-field integrity: `internal/workflow/atom_reference_field_integrity_test.go:17-57` — Phase 4 atoms cannot declare `references-fields: [ops.ExportBundle.*]` until Phase 2 lands the struct
+- Template-var substitution: `internal/workflow/synthesize.go:419-480` — whitelist tokens are `{repoUrl}` (not `{repoURL}`) and `{targetHostname}`
 
 ### 5.3 Test fixtures inventory
 
@@ -331,6 +354,14 @@ read+generate+validate. Only Phase C (publish) needs git.
 
 **ENTRY**: Phase 1 EXIT satisfied.
 
+**GATE**: Phase 2 MUST land `ops.ExportBundle` (the struct shape below)
+before Phase 4 atom prose declares `references-fields:
+[ops.ExportBundle.*]`. `TestAtomReferenceFieldIntegrity` at
+`internal/workflow/atom_reference_field_integrity_test.go:17-57` fails
+at lint time when an atom references a non-existent field path. Plan
+phase order respects this — pinned explicitly per Codex Agent B
+2026-04-28.
+
 **WORK-SCOPE**:
 1. New file: `internal/ops/export_bundle.go`. Functions:
    - `BuildBundle(ctx, client, project, scope, variant, classifications) (*ExportBundle, error)` — top-level composition.
@@ -388,23 +419,42 @@ cover real-world shapes (Laravel, Node, static, PHP).
 2. Replace the immediate-phase mapping in
    `internal/tools/workflow_immediate.go:35-38` for `"export"` —
    route to `handleExport` instead of `SynthesizeImmediatePhase`.
-3. Handler returns structured response with progressive narrowing:
+3. Handler returns structured response with progressive narrowing.
+   `WorkflowInput.Variant` and `WorkflowInput.EnvClassifications` are
+   **per-request inputs supplied by the agent on every call** — NOT
+   server-side state. `TestNoCrossCallHandlerState`
+   (`internal/topology/architecture_handler_state_test.go:117-149`,
+   CLAUDE.md "Stateless STDIO tools" invariant) forbids package-level
+   mutable handler state. The agent threads the values across the
+   three calls. Pinned explicitly per Codex Agent B 2026-04-28:
    - First call (no variant set, no classifications): atom asks for
      variant choice (or skips for non-pair modes)
    - Second call (variant set, no classifications): generated YAMLs
-     + atom asks for classification per env
-   - Third call (variant + classifications set): PUBLISH; chains to
-     setup-git-push if `GitPushState != configured`
-4. Reuse existing `chainSetupGitPushGuidance(...)` pattern from
-   `internal/tools/workflow_close_mode.go` (or extract to a shared
-   helper if it lives in close-mode-only today).
+     + atom asks for classification per env (per-env review table
+     per §3.4 + §3.5 Phase B)
+   - Third call (variant + classifications set, user-accepted):
+     PUBLISH; chains to setup-git-push if `GitPushState != configured`
+4. Chain composition pattern: `chainSetupGitPushGuidance(...)` does
+   NOT exist as a function — the close-mode chaining is INLINE
+   `nextSteps` construction at
+   `internal/tools/workflow_close_mode.go:120-136` (`setupPointers =
+   append(setupPointers, fmt.Sprintf(...))`). Phase 3 either reuses
+   the inline pattern OR extracts a shared helper as an optional
+   Phase 2.5 prep (recommended if the close-mode + git-push-setup +
+   build-integration handlers also benefit). Chain pointers land in
+   the response payload's `nextSteps` list — NOT via atom front
+   matter (`SynthesizeImmediatePhase` doesn't pass services, so
+   service-scoped axes silently never fire).
 5. Tests in `internal/tools/workflow_export_test.go`:
    - First-call flow (variant prompt)
-   - Second-call flow (classification prompt + generated YAML diff)
+   - Second-call flow (classification prompt + generated YAML diff
+     + per-env review table)
    - Third-call flow (publish path)
-   - GitPushState=unconfigured chain
-   - Missing zerops.yaml chain to scaffold atom
-6. Update `internal/tools/workflow.go:142` router hint if needed.
+   - GitPushState=unconfigured chain (handler returns `nextSteps`
+     pointer to setup-git-push, no atom-axis match required)
+   - Missing zerops.yaml chain to scaffold atom (same pattern)
+6. Update `internal/tools/workflow.go` router hint at `:144`/`:150`
+   if needed.
 7. Verify gate green; commit: `tool(P3): handleExport with phased probe/generate/publish flow`.
 
 **EXIT**:
@@ -414,8 +464,8 @@ cover real-world shapes (Laravel, Node, static, PHP).
 - `phase-3-tracker.md` committed
 - Codex POST-WORK APPROVE on handler
 
-**Risk**: MEDIUM. Touches the workflow router; introduces multi-call
-state (variant + classifications carried across calls).
+**Risk**: MEDIUM. Touches the workflow router; multi-call flow
+threads state via per-request inputs (no server-side state introduced).
 
 ### Phase 4 — Atom corpus restructure
 
@@ -425,53 +475,80 @@ state (variant + classifications carried across calls).
 
 #### Atoms to ADD:
 
-1. **NEW** `export-intro.md` — entry atom; describes the goal in 1-2
-   paragraphs; for standard/local-stage modes prompts variant choice
-   (dev or stage). Front matter: `phases: [export-active]`,
-   `closeDeployModes: [unset, auto, git-push, manual]` (any),
-   `gitPushStates: [unconfigured, configured, broken, unknown]` (any).
+> **Priority discipline**: Render order is `priority` ASC then ID ASC
+> (`internal/workflow/synthesize.go:51-81`, `atom.go:438-449`). Omitted
+> `priority:` defaults to `5` — six new atoms at the same default
+> would collide. Explicit priorities below pin a deterministic order
+> per Codex Agent B 2026-04-28.
 
-2. **NEW** `export-classify-envs.md` — describes the four-category
-   protocol with one example per category. Includes the grep recipe
-   per language family. Front matter: `phases: [export-active]`.
+1. **NEW** `export-intro.md` (`priority: 1`) — entry atom; describes
+   the goal in 1-2 paragraphs; for standard/local-stage modes prompts
+   variant choice (dev or stage). Front matter: `phases: [export-active]`.
+   No `closeDeployModes` / `gitPushStates` axes — these are
+   service-scoped and `SynthesizeImmediatePhase` doesn't pass services,
+   so they would silently never fire.
 
-3. **NEW** `export-validate.md` — schema-validation surface; describes
-   what failed and what the fix is. Front matter: `phases: [export-active]`,
-   `references-fields: [ops.ExportBundle.ImportYAML, ops.ExportBundle.ZeropsYAML, ops.ExportBundle.Warnings]`.
+2. **NEW** `export-classify-envs.md` (`priority: 2`) — describes the
+   four-category protocol per §3.4 (provenance + framework + grep), one
+   worked example per category, M1–M7 mitigation patterns from Codex
+   Agent C, and the per-env review-table format (env / evidence / bucket
+   / emit / risk note / override). Front matter: `phases: [export-active]`.
 
-4. **NEW** `export-publish.md` — commit + push protocol. Notes
-   GitPushState prereq, chains to setup-git-push if missing. Front
-   matter: `phases: [export-active]`, `gitPushStates: [configured]`.
+3. **NEW** `export-validate.md` (`priority: 3`) — schema-validation
+   surface; describes what failed and what the fix is. Front matter:
+   `phases: [export-active]`, `references-fields: [ops.ExportBundle.ImportYAML, ops.ExportBundle.ZeropsYAML, ops.ExportBundle.Warnings]`.
+   **Lands AFTER Phase 2** (struct gate per Phase 2).
 
-5. **NEW** `export-publish-needs-setup.md` — fires when
-   `gitPushStates != configured`. Tells the agent to run
-   `setup-git-push-{container,local}` first. Front matter:
-   `phases: [export-active]`, `gitPushStates: [unconfigured, broken, unknown]`.
+4. **NEW** `export-publish.md` (`priority: 4`) — commit + push protocol
+   when `GitPushState=configured`. Front matter: `phases: [export-active]`.
+   Uses template vars `{repoUrl}` (lowercase `Url`) and `{targetHostname}` —
+   `{repoURL}` (capital URL) is unknown to the synth pipeline
+   (`internal/workflow/synthesize.go:419-480`). Distinguish container
+   vs local SSH push paths with prose markers
+   `<!-- axis-n-keep: signal-#N -->` per Axis N (`internal/content/atoms_lint_axes.go:256-278`)
+   instead of bare `container env` / `local env` tokens.
 
-6. **NEW** `scaffold-zerops-yaml.md` — fires when live
+5. **NEW** `export-publish-needs-setup.md` (`priority: 5`) — fires when
+   chain composition lands a pointer to setup-git-push in the handler's
+   `nextSteps` list. Front matter: `phases: [export-active]` ONLY. Do
+   NOT add `gitPushStates: [unconfigured, broken, unknown]` —
+   `SynthesizeImmediatePhase` passes no service context, so this axis
+   silently never fires. The handler routes to this atom via response
+   payload, not via atom-axis match (per Codex Agent A+B 2026-04-28).
+
+6. **NEW** `scaffold-zerops-yaml.md` (`priority: 6`) — fires when live
    `/var/www/zerops.yaml` is absent. Walks the agent through emitting
    a minimal valid zerops.yaml from runtime-detected fields (type,
-   version, ports). Front matter: `phases: [export-active]`. (May also
-   be reachable from other phases later if scaffolding becomes a
-   shared concern.)
+   version, ports). Front matter: `phases: [export-active]`. Same
+   axis-marker discipline as `export-publish.md` for SSH-path prose.
+   (May also be reachable from other phases later if scaffolding becomes
+   a shared concern.)
 
 #### Atoms to DELETE:
 
-7. **DELETE** `export.md` (229 lines) — superseded by the five new
-   `export-*.md` atoms.
+7. **DELETE** `export.md` (229 lines) — superseded by the six new
+   `export-*.md` / `scaffold-zerops-yaml.md` atoms.
 
 #### Front-matter axis usage:
 
 - All new atoms use existing axes (no new axis introduced).
 - Variant is NOT an atom axis (it's a runtime decision).
 - Classifications are NOT an atom axis (the atom describes the protocol; the agent fills the map).
+- `gitPushStates` / `closeDeployModes` / `buildIntegrations` are NOT used on export atoms — `SynthesizeImmediatePhase` passes no service context. Chain-target routing is via handler response payload.
 
 #### Tests:
 
-- `corpus_coverage_test.go`: replace export fixtures with new atoms.
-- `scenarios_test.go`: add S12 variants (S12a probe, S12b generate, S12c publish).
-- `atom_test.go`: pin front-matter + references-fields integrity.
-- Pin coverage closure update in `scenarios_test.go:882`.
+- `corpus_coverage_test.go:766-779`: update the `export_active` fixture's
+  `MustContain` from `["buildFromGit", "zerops_export", "import.yaml"]`
+  to include `"zerops-project-import.yaml"` (the new filename per §4
+  decision Q2). Optionally retain `zerops_export` if the standalone tool
+  is mentioned in atom prose; otherwise drop. Per Codex Agent A+B.
+- `scenarios_test.go:589-618`: split `TestScenario_S12_ExportActiveEmptyPlan`
+  into `S12a` (probe variant), `S12b` (generate + classify),
+  `S12c` (publish), `S12d` (publish-needs-setup chain).
+- `atom_test.go`: pin front-matter + `references-fields` integrity (gate
+  enforced once Phase 2 lands `ops.ExportBundle`).
+- Pin coverage closure update in `scenarios_test.go:881`.
 
 #### Codex involvement:
 
@@ -496,15 +573,29 @@ agent behavior end-to-end.
 
 **ENTRY**: Phase 4 EXIT satisfied.
 
+**REALITY CHECK** (Codex Agent A 2026-04-28): no JSON Schema library is
+currently vendored in `go.mod`. `internal/schema/validate.go` only does
+unknown-field detection against extracted enums (`ValidateZeropsYmlRaw`
+at `:54-57`), NOT full JSON Schema validation. Phase 5 effort is
+materially larger than the original draft implied.
+
 **WORK-SCOPE**:
-1. Read import-schema.json + zerops-schema.json fetched in Phase 0;
-   embed via `embed.FS` if not already (per
-   `internal/schema/schema.go:37-49`).
-2. Add `ValidateImportYAML(content string) []ValidationError` and
+1. **Library choice**. Vendor `github.com/santhosh-tekuri/jsonschema/v5`
+   (mature, draft-2020-12 compliant, no cgo, BSD-2). Alternative:
+   hand-roll per-rule validation against a curated allowlist of
+   required fields + enums. Default: vendor the lib for full
+   coverage; the per-rule path is fallback if vendoring is rejected.
+2. **Embed the live schemas via `embed.FS`**. Refresh
+   `internal/schema/testdata/import_yml_schema.json` from
+   `plans/export-buildfromgit/import-schema.json` (live is 202B newer
+   than embedded; `zerops_yml_schema.json` is identical). Existing
+   test data path is `internal/schema/testdata/` per
+   `internal/schema/schema.go:15-16` (`ImportYmlURL`, `ZeropsYmlURL`).
+3. Add `ValidateImportYAML(content string) []ValidationError` and
    `ValidateZeropsYAML(content string, requiredSetup string) []ValidationError`
-   to `internal/schema/`.
-3. Wire into `ops.BuildBundle` Phase B (validation step).
-4. ValidationError shape includes line/column when JSONSchema permits.
+   to `internal/schema/validate.go`. ValidationError shape includes
+   path / message; line/column when the parser surfaces it.
+4. Wire into `ops.BuildBundle` Phase B (validation step).
 5. Surface via `ExportBundle.Warnings` (non-fatal hints) and
    `ExportBundle.Errors` (blocking).
 6. Tests in `internal/schema/validate_test.go`:
@@ -513,16 +604,21 @@ agent behavior end-to-end.
    - Missing `buildFromGit:` for runtime fails
    - Mismatched `zeropsSetup` ↔ zerops.yaml setup names fails
    - Preprocessor header missing when directives present fails
+   - Refresh-drift test: embedded schema must match live (CI hint)
 7. Verify gate green; commit: `schema(P5): import + zerops yaml validation in export bundle`.
 
 **EXIT**:
+- JSON Schema lib vendored OR per-rule fallback landed
 - Validation compiles + tests pass
 - Wired into BuildBundle
+- Embedded schemas refreshed
 - `phase-5-tracker.md` committed
 - Codex POST-WORK APPROVE on validation correctness
 
-**Risk**: LOW-MEDIUM. JSONSchema is well-defined; main risk is
-mismatch between cached schema and live platform behavior.
+**Risk**: MEDIUM. JSONSchema lib vendor is a `go.mod` change; per-rule
+fallback risks coverage gaps; both need careful test design. Schema
+drift (live vs embedded) is a recurring maintenance cost — refresh
+cadence not yet pinned.
 
 ### Phase 6 — Prereq chain wiring + RemoteURL refresh
 
@@ -791,3 +887,25 @@ Estimated Codex rounds: ~10-11 across plan execution. Heavy on Phases
 All 7 design questions answered as defaults in §4. Each is challengeable in Phase 0 PRE-WORK Codex round; if any flips, this plan's structure adapts (most flips affect Phase 4 atom prose, not the phase shape).
 
 If Phase 8 E2E surfaces platform behavior diverging from this plan's assumptions, document in `phase-8-tracker.md` and amend this plan's §3.5 (phase shape) or §4 (decisions) accordingly. Plan amendment requires a follow-up commit; the plan is not frozen post-Phase-0.
+
+## 13. Phase 0 PRE-WORK amendments (Codex round, 2026-04-28)
+
+Three parallel Codex agents (`plans/export-buildfromgit/codex-round-p0-prework-{decisions,rendering,classification}.md`). Convergent verdict: NEEDS-REVISION → in-place amendments folded → effective APPROVE per sister-plan §10.5 work-economics rule.
+
+| # | source | section touched | amendment |
+|---|---|---|---|
+| 1 | A | §1 + §4 | Add row X9: standalone `zerops_export` MCP tool RETAINED as orthogonal raw-export surface. |
+| 2 | A | §4 | Add JSON Schema validator decision row: vendor `github.com/santhosh-tekuri/jsonschema/v5`. |
+| 3 | A+B | §4 + §6 P3 | Reframe atom prereq chaining: pattern is INLINE at `workflow_close_mode.go:120-136`, not a `chainSetupGitPushGuidance(...)` helper. Optional Phase 2.5 extracts a shared helper. |
+| 4 | A+B | §6 P3 + P4 | Drop `gitPushStates` axis from `export-publish-needs-setup.md`. `SynthesizeImmediatePhase` doesn't pass services, so service-scoped axes silently never fire. Chain routing via handler response payload. |
+| 5 | B | §6 P4 | Declare explicit `priority:` on all six new atoms (1–6). Default 5 collision is non-deterministic. |
+| 6 | B | §6 P4 | Use `{repoUrl}` (lowercase Url), not `{repoURL}`. Synth pipeline whitelist at `synthesize.go:419-480`. |
+| 7 | B | §6 P3 | Clarify `WorkflowInput.Variant` + `EnvClassifications` are per-request inputs (stateless). Cite `TestNoCrossCallHandlerState` at `architecture_handler_state_test.go:117-149`. |
+| 8 | B | §6 P2 | Pin Phase 2 → Phase 4 GATE: `ops.ExportBundle` lands BEFORE atom `references-fields:` declarations. `TestAtomReferenceFieldIntegrity` at `atom_reference_field_integrity_test.go:17-57` enforces. |
+| 9 | A+B | §6 P4 + P7 | `corpus_coverage_test.go:766-779` `MustContain` updates to include `"zerops-project-import.yaml"`. S12 split (a/b/c/d) per Phase 7. |
+| 10 | A | §6 P5 | Reshape Phase 5 to acknowledge no JSON Schema lib vendored; vendor + refresh embedded `import_yml_schema.json` (live is 202B newer). |
+| 11 | C | §3.4 | Five surgical edits to category descriptions: provenance + framework reasoning + aliased-import handling + empty/sentinel review-required + privacy-flag for plain config. |
+| 12 | C | §3.4 + §3.5 | Add Phase B per-env review table (env / evidence / bucket / emit / risk / override). Phase C blocked until user accepts or corrects. |
+| 13 | A | §5.2 | Citation hygiene: `workflow.go:142` → `:144`/`:150`; `corpus_coverage_test.go:768` → `:766-779` with explicit `:778` `MustContain` note; `scenarios_test.go:600` → `:589-618`; full entry-points table refreshed. |
+
+All 13 amendments folded into the plan in-place. No structural redesign required. Phase 1 may enter on user explicit go (per session pause instruction).
