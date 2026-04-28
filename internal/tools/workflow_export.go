@@ -125,6 +125,21 @@ func handleExport(
 		return gitPushSetupChainResponse(input.TargetService, nil, "no git remote configured in /var/www"), nil, nil
 	}
 
+	// Phase 6 — refresh ServiceMeta.RemoteURL cache from the live remote.
+	// The live value always wins for the bundle (handler passed it as
+	// repoURL above); the cache is just a hint for unrelated tooling
+	// that doesn't SSH-read on every invocation. When live differs from
+	// cache, surface a warning so the agent knows the cache was stale.
+	remoteWarnings, refreshErr := refreshRemoteURLCache(stateDir, meta, repoURL)
+	if refreshErr != nil {
+		// Cache write failures are non-fatal — the bundle is still
+		// publish-ready against the live remote, agents just lose the
+		// cache freshness benefit. Surface the failure as a warning.
+		remoteWarnings = append(remoteWarnings, fmt.Sprintf(
+			"refresh ServiceMeta.RemoteURL cache for %q: %v (non-fatal — bundle uses live remote regardless)",
+			input.TargetService, refreshErr))
+	}
+
 	setupName, err := pickSetupName(zeropsYAMLBody, input.TargetService, sourceMode)
 	if err != nil {
 		return convertError(err, WithRecoveryStatus()), nil, nil
@@ -155,6 +170,7 @@ func handleExport(
 	if err != nil {
 		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
+	bundle.Warnings = append(bundle.Warnings, remoteWarnings...)
 
 	if needsClassifyPrompt(input.EnvClassifications, projectEnvs) {
 		return classifyPromptResponse(bundle, projectEnvs, classifications), nil, nil

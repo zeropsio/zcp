@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -991,6 +992,334 @@ func TestHandleExport_ValidationOutranksGitPushSetup(t *testing.T) {
 	body := decodeExportJSON(t, result)
 	if body["status"] != "validation-failed" {
 		t.Errorf("expected validation-failed (outranks git-push-setup-required), got %v", body["status"])
+	}
+}
+
+// TestHandleExport_RemoteURLDrift_SurfacesWarning covers Phase 6:
+// when the chosen container's live `git remote get-url origin` differs
+// from the cached `meta.RemoteURL`, the bundle surfaces a warning AND
+// the cache gets updated to the live value so subsequent invocations
+// see consistent state.
+func TestHandleExport_RemoteURLDrift_SurfacesWarning(t *testing.T) {
+	t.Parallel()
+	mock := newExportMock(
+		[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
+		[]platform.EnvVar{{Key: "LOG_LEVEL", Content: "info"}},
+	)
+
+	dir := t.TempDir()
+	// Seed meta with a stale remote URL.
+	meta := &workflow.ServiceMeta{
+		Hostname:                 "appdev",
+		Mode:                     topology.ModeStandard,
+		BootstrapSession:         "test-session",
+		BootstrappedAt:           time.Now().UTC().Format(time.RFC3339),
+		FirstDeployedAt:          time.Now().UTC().Format(time.RFC3339),
+		CloseDeployMode:          topology.CloseModeManual,
+		CloseDeployModeConfirmed: true,
+		GitPushState:             topology.GitPushConfigured,
+		RemoteURL:                "https://github.com/old/stale-fork.git",
+	}
+	if err := workflow.WriteServiceMeta(dir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	const liveURL = "https://github.com/example/canonical.git"
+	ssh := &routedSSH{responses: map[string]string{
+		"cat /var/www/zerops.yaml": exportTestZeropsYAML,
+		"git remote get-url":       liveURL,
+	}}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"workflow":      "export",
+		"targetService": "appdev",
+		"variant":       "dev",
+		"envClassifications": map[string]any{
+			"LOG_LEVEL": "plain-config",
+		},
+	})
+	if result.IsError {
+		t.Fatalf("RemoteURL drift handling should not error, got: %s", getTextContent(t, result))
+	}
+
+	body := decodeExportJSON(t, result)
+	bundle, _ := body["bundle"].(map[string]any)
+	if bundle == nil {
+		// publish-ready returns nested bundle; classify-prompt may return preview only
+		preview, _ := body["preview"].(map[string]any)
+		if preview != nil {
+			bundle = preview
+		}
+	}
+	if bundle == nil {
+		t.Fatalf("expected bundle/preview in response, got: %s", getTextContent(t, result))
+	}
+	warnings, _ := bundle["warnings"].([]any)
+	driftFound := false
+	for _, w := range warnings {
+		s, _ := w.(string)
+		if strings.Contains(s, "RemoteURL cache") && strings.Contains(s, "drifted") {
+			driftFound = true
+			break
+		}
+	}
+	if !driftFound {
+		t.Errorf("expected RemoteURL drift warning in bundle.warnings, got %v", warnings)
+	}
+
+	// Cache should now hold the live URL.
+	refreshed, err := workflow.FindServiceMeta(dir, "appdev")
+	if err != nil {
+		t.Fatalf("re-read meta: %v", err)
+	}
+	if refreshed == nil || refreshed.RemoteURL != liveURL {
+		t.Errorf("meta.RemoteURL = %q, want refreshed to live %q", refreshedRemoteURL(refreshed), liveURL)
+	}
+}
+
+// TestHandleExport_RemoteURLAligned_NoWarning covers the happy path:
+// cache matches live, no drift warning, no meta write.
+func TestHandleExport_RemoteURLAligned_NoWarning(t *testing.T) {
+	t.Parallel()
+	mock := newExportMock(
+		[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
+		[]platform.EnvVar{{Key: "LOG_LEVEL", Content: "info"}},
+	)
+
+	dir := t.TempDir()
+	const liveURL = "https://github.com/example/canonical.git"
+	meta := &workflow.ServiceMeta{
+		Hostname:                 "appdev",
+		Mode:                     topology.ModeStandard,
+		BootstrapSession:         "test-session",
+		BootstrappedAt:           time.Now().UTC().Format(time.RFC3339),
+		FirstDeployedAt:          time.Now().UTC().Format(time.RFC3339),
+		CloseDeployMode:          topology.CloseModeManual,
+		CloseDeployModeConfirmed: true,
+		GitPushState:             topology.GitPushConfigured,
+		RemoteURL:                liveURL, // already aligned
+	}
+	if err := workflow.WriteServiceMeta(dir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	ssh := &routedSSH{responses: map[string]string{
+		"cat /var/www/zerops.yaml": exportTestZeropsYAML,
+		"git remote get-url":       liveURL,
+	}}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"workflow":      "export",
+		"targetService": "appdev",
+		"variant":       "dev",
+		"envClassifications": map[string]any{
+			"LOG_LEVEL": "plain-config",
+		},
+	})
+	if result.IsError {
+		t.Fatalf("aligned RemoteURL should not error, got: %s", getTextContent(t, result))
+	}
+
+	body := decodeExportJSON(t, result)
+	bundle, _ := body["bundle"].(map[string]any)
+	if bundle == nil {
+		t.Fatal("expected bundle in publish-ready response")
+	}
+	warnings, _ := bundle["warnings"].([]any)
+	for _, w := range warnings {
+		s, _ := w.(string)
+		if strings.Contains(s, "drifted") {
+			t.Errorf("aligned cache should produce no drift warning, got %q", s)
+		}
+	}
+}
+
+// TestHandleExport_FreshMetaCacheSeed covers the cache-empty case:
+// meta.RemoteURL is empty (never set; e.g., bootstrap predates the
+// git-push-setup confirm step). Phase 6 fills it from the live read
+// without surfacing a "drift" warning — empty → set is initialization,
+// not drift.
+func TestHandleExport_FreshMetaCacheSeed(t *testing.T) {
+	t.Parallel()
+	mock := newExportMock(
+		[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
+		[]platform.EnvVar{{Key: "LOG_LEVEL", Content: "info"}},
+	)
+
+	dir := t.TempDir()
+	const liveURL = "https://github.com/example/seed.git"
+	meta := &workflow.ServiceMeta{
+		Hostname:                 "appdev",
+		Mode:                     topology.ModeStandard,
+		BootstrapSession:         "test-session",
+		BootstrappedAt:           time.Now().UTC().Format(time.RFC3339),
+		FirstDeployedAt:          time.Now().UTC().Format(time.RFC3339),
+		CloseDeployMode:          topology.CloseModeManual,
+		CloseDeployModeConfirmed: true,
+		GitPushState:             topology.GitPushConfigured,
+		// RemoteURL deliberately empty
+	}
+	if err := workflow.WriteServiceMeta(dir, meta); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	ssh := &routedSSH{responses: map[string]string{
+		"cat /var/www/zerops.yaml": exportTestZeropsYAML,
+		"git remote get-url":       liveURL,
+	}}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"workflow":           "export",
+		"targetService":      "appdev",
+		"variant":            "dev",
+		"envClassifications": map[string]any{"LOG_LEVEL": "plain-config"},
+	})
+	if result.IsError {
+		t.Fatalf("fresh-cache seed should not error, got: %s", getTextContent(t, result))
+	}
+
+	body := decodeExportJSON(t, result)
+	bundle, _ := body["bundle"].(map[string]any)
+	if bundle == nil {
+		t.Fatal("expected bundle in publish-ready response")
+	}
+	warnings, _ := bundle["warnings"].([]any)
+	for _, w := range warnings {
+		s, _ := w.(string)
+		if strings.Contains(s, "drifted") {
+			t.Errorf("empty-to-set cache seed should NOT produce drift warning, got %q", s)
+		}
+	}
+
+	refreshed, err := workflow.FindServiceMeta(dir, "appdev")
+	if err != nil {
+		t.Fatalf("re-read meta: %v", err)
+	}
+	if refreshed == nil || refreshed.RemoteURL != liveURL {
+		t.Errorf("meta.RemoteURL = %q, want seeded to %q", refreshedRemoteURL(refreshed), liveURL)
+	}
+}
+
+func refreshedRemoteURL(m *workflow.ServiceMeta) string {
+	if m == nil {
+		return "<nil>"
+	}
+	return m.RemoteURL
+}
+
+// TestRefreshRemoteURLCache covers the helper directly across every
+// branch the handler-level tests exercise indirectly. Per Codex Phase 6
+// POST-WORK recommendation 1: helper-level table test pins each guard
+// (nil meta, empty live URL, aligned URL, empty-cache seed, stale-cache
+// drift, write failure) without MCP fixture overhead.
+func TestRefreshRemoteURLCache(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name           string
+		meta           *workflow.ServiceMeta
+		liveURL        string
+		expectWarnings int
+		expectError    bool
+		expectWrite    bool
+	}{
+		{
+			name:           "nil meta is no-op",
+			meta:           nil,
+			liveURL:        "https://github.com/example/x.git",
+			expectWarnings: 0,
+		},
+		{
+			name:           "empty liveURL is no-op",
+			meta:           &workflow.ServiceMeta{Hostname: "appdev", RemoteURL: "https://github.com/example/x.git", BootstrappedAt: "2026-04-29T00:00:00Z"},
+			liveURL:        "",
+			expectWarnings: 0,
+		},
+		{
+			name:           "aligned cache is no-op",
+			meta:           &workflow.ServiceMeta{Hostname: "appdev", RemoteURL: "https://github.com/example/x.git", BootstrappedAt: "2026-04-29T00:00:00Z"},
+			liveURL:        "https://github.com/example/x.git",
+			expectWarnings: 0,
+		},
+		{
+			name:           "empty-cache seed: no warning, write occurs",
+			meta:           &workflow.ServiceMeta{Hostname: "appdev", RemoteURL: "", BootstrappedAt: "2026-04-29T00:00:00Z"},
+			liveURL:        "https://github.com/example/seeded.git",
+			expectWarnings: 0,
+			expectWrite:    true,
+		},
+		{
+			name:           "stale-cache drift: warning + write",
+			meta:           &workflow.ServiceMeta{Hostname: "appdev", RemoteURL: "https://github.com/old/stale.git", BootstrappedAt: "2026-04-29T00:00:00Z"},
+			liveURL:        "https://github.com/example/canonical.git",
+			expectWarnings: 1,
+			expectWrite:    true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			warnings, err := refreshRemoteURLCache(dir, tt.meta, tt.liveURL)
+			if (err != nil) != tt.expectError {
+				t.Errorf("err = %v, want error=%v", err, tt.expectError)
+			}
+			if len(warnings) != tt.expectWarnings {
+				t.Errorf("warnings count = %d, want %d (warnings=%v)", len(warnings), tt.expectWarnings, warnings)
+			}
+			if tt.expectWrite {
+				if tt.meta == nil {
+					t.Fatal("test setup: expectWrite requires non-nil meta")
+				}
+				if tt.meta.RemoteURL != tt.liveURL {
+					t.Errorf("meta.RemoteURL = %q, want %q (write should land in-memory)", tt.meta.RemoteURL, tt.liveURL)
+				}
+			}
+		})
+	}
+}
+
+// TestRefreshRemoteURLCache_WriteFailure pins the non-fatal-error path:
+// when WriteServiceMeta fails (read-only state dir), the helper still
+// emits any drift warning AND returns the underlying error so the
+// handler can append a non-fatal warning. Per Codex Phase 6 POST-WORK
+// recommendation 2.
+func TestRefreshRemoteURLCache_WriteFailure(t *testing.T) {
+	t.Parallel()
+	// Read-only state directory forces WriteServiceMeta to fail.
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatalf("chmod readonly: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	meta := &workflow.ServiceMeta{
+		Hostname:       "appdev",
+		Mode:           topology.ModeStandard,
+		RemoteURL:      "https://github.com/old/stale.git",
+		BootstrappedAt: "2026-04-29T00:00:00Z",
+	}
+	warnings, err := refreshRemoteURLCache(dir, meta, "https://github.com/example/canonical.git")
+	if err == nil {
+		t.Fatal("expected write error when state dir is read-only")
+	}
+	driftSeen := false
+	for _, w := range warnings {
+		if strings.Contains(w, "drifted") {
+			driftSeen = true
+			break
+		}
+	}
+	if !driftSeen {
+		t.Errorf("expected drift warning even when write fails, got %v", warnings)
 	}
 }
 

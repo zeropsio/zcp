@@ -10,6 +10,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 const (
@@ -212,6 +213,39 @@ func readProjectEnvs(ctx context.Context, client platform.Client, projectID stri
 		out = append(out, ops.ProjectEnvVar{Key: env.Key, Value: env.Content})
 	}
 	return out, nil
+}
+
+// refreshRemoteURLCache compares the live git remote URL against the
+// cached `ServiceMeta.RemoteURL` and writes the live value when they
+// differ. Returns a warnings slice when a mismatch is observed so the
+// agent surfaces the drift, and an error when the meta-write fails
+// (the live URL is still authoritative for the current bundle either
+// way — the cache is a hint for tooling that doesn't SSH-read).
+//
+// Per plan §6 Phase 6: live `git remote get-url origin` is the source
+// of truth; the cache is refreshed on every export pass so subsequent
+// reads (e.g., `zerops_workflow action="status"`) see the same URL.
+//
+// Empty live URL is handled by the caller — the chain to setup-git-push
+// fires before this helper runs.
+func refreshRemoteURLCache(stateDir string, meta *workflow.ServiceMeta, liveURL string) ([]string, error) {
+	if meta == nil || liveURL == "" {
+		return nil, nil
+	}
+	if meta.RemoteURL == liveURL {
+		return nil, nil
+	}
+	var warnings []string
+	if meta.RemoteURL != "" {
+		warnings = append(warnings, fmt.Sprintf(
+			"ServiceMeta.RemoteURL cache for %q drifted (cache=%q, live=%q) — live value wins for the bundle; cache refreshed.",
+			meta.Hostname, meta.RemoteURL, liveURL))
+	}
+	meta.RemoteURL = liveURL
+	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		return warnings, err
+	}
+	return warnings, nil
 }
 
 // collectManagedServices walks the Discover output and returns the
