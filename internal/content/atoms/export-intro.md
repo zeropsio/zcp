@@ -15,12 +15,7 @@ If the project has multiple runtime services, the first call returns a `scope-pr
 
 ## Pick the variant (pair modes only)
 
-For `mode=standard` and `mode=local-stage` pairs, the response prompts for `variant=dev` or `variant=stage`:
-
-| Picked variant | Re-imports as | Why |
-|---|---|---|
-| `dev` | `mode=dev` | Preserves "this was our dev environment" intent. |
-| `stage` | `mode=simple` | The stage half of a pair has no dev to cross-deploy from in the new project — collapses cleanly to a standalone runtime. |
+For `mode=standard` and `mode=local-stage` pairs, pick `variant=dev` (packages the dev hostname's tree + zerops.yaml) or `variant=stage` (packages the stage hostname's tree). Both bundle entries emit Zerops scaling `mode=NON_HA` — the destination project's topology Mode is established by ZCP's bootstrap at re-import, not embedded in the bundle.
 
 <!-- axis-k-keep: signal-#3 -->
 Single-half source modes (`dev`, `simple`, `local-only`) skip this prompt — the variant is forced.

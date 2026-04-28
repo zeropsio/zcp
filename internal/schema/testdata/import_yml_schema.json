@@ -46,6 +46,14 @@
 				"sharedIpv4": {
 					"type": "boolean",
 					"description": "When enabled, project domain includes both AAAA records and an A record pointing to Zerops shared IPv4 address. When disabled, the A record is not defined. If the project has its own dedicated IPv4 address, the domain always contains an A record with this assigned IPv4 address."
+				},
+				"location": {
+					"type": "string",
+					"enum": [
+						"eu-central",
+						"us-east-1"
+					],
+					"description": "Defines project's primary/fallback location'."
 				}
 			},
 			"additionalProperties": false,
@@ -180,6 +188,7 @@
 							"static@1.0",
 							"static@latest",
 							"typesense@27.1",
+							"typesense@30.2",
 							"ubuntu@22.04",
 							"ubuntu@24.04",
 							"valkey@7.2",

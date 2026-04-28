@@ -10,6 +10,7 @@ import (
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
@@ -159,6 +160,18 @@ func handleExport(
 		return classifyPromptResponse(bundle, projectEnvs, classifications), nil, nil
 	}
 
+	// Validation gates publish ahead of git-push-setup. Per Codex Phase 5
+	// POST-WORK amendment 4: validation-failed must outrank
+	// git-push-setup-required because a schema-invalid bundle would fail
+	// at re-import even after setup completes — surfacing the publish
+	// prereq first would mask the real blocker. The git-push-setup chain
+	// includes `preview.errors` either way (via bundlePreview), so the
+	// agent doesn't lose visibility on validation issues while resolving
+	// setup separately.
+	if len(bundle.Errors) > 0 {
+		return validationFailedResponse(bundle), nil, nil
+	}
+
 	if meta.GitPushState != topology.GitPushConfigured {
 		return gitPushSetupChainResponse(input.TargetService, bundle, "GitPushState != configured"), nil, nil
 	}
@@ -242,7 +255,7 @@ func variantPromptResponse(targetService string, sourceMode topology.Mode) *mcp.
 		"targetService": targetService,
 		"sourceMode":    sourceMode,
 		"guidance": fmt.Sprintf(
-			"%q is part of a %s pair. Pick which half to package: variant=\"dev\" (re-imports as mode=dev) or variant=\"stage\" (re-imports as mode=simple). Per plan §3.3 (β).",
+			"%q is part of a %s pair. Pick which half of the pair to package: variant=\"dev\" packages the dev hostname's working tree + zerops.yaml; variant=\"stage\" packages the stage hostname's. Both bundles emit Zerops scaling mode=NON_HA — destination project topology is established by ZCP's bootstrap on import, not by the bundle. Per plan §3.3 (revised in Phase 5).",
 			targetService, sourceMode,
 		),
 		"options": []topology.ExportVariant{topology.ExportVariantDev, topology.ExportVariantStage},
@@ -335,6 +348,30 @@ func classifyPromptResponse(
 	})
 }
 
+// validationFailedResponse blocks publish when Phase 5 schema validation
+// surfaces blocking errors. The agent inspects `errors` (path + message
+// per failure) and either re-classifies envs (e.g., reclassify a
+// dropped infrastructure env to plain-config), edits the live
+// zerops.yaml (e.g., add a missing required field), or scaffolds when
+// the body is structurally absent. Re-call export with the same inputs
+// after fixing — if the validators clear, the response moves to
+// publish-ready.
+func validationFailedResponse(bundle *ops.ExportBundle) *mcp.CallToolResult {
+	return jsonResult(map[string]any{
+		"status":        "validation-failed",
+		"phase":         "export-active",
+		"targetService": bundle.TargetHostname,
+		"variant":       bundle.Variant,
+		"errors":        formatBundleErrors(bundle.Errors),
+		"preview":       bundlePreview(bundle),
+		"guidance":      "Schema validation surfaced blocking errors against the published JSON schemas. Inspect each error's path + message; fix the failing field (re-classify the env, edit the live zerops.yaml, or scaffold if structurally absent), then re-call export with the same inputs.",
+		"nextSteps": []string{
+			"Read each validation error and fix at its source (project envs, zerops.yaml, or service shape).",
+			fmt.Sprintf("Re-call zerops_workflow workflow=\"export\" targetService=%q variant=%q envClassifications=<your same map> after fixes.", bundle.TargetHostname, bundle.Variant),
+		},
+	})
+}
+
 // publishGuidanceResponse is the Phase C success body: bundle ready,
 // agent executes the SSH writes + commit + zerops_deploy.
 func publishGuidanceResponse(bundle *ops.ExportBundle) *mcp.CallToolResult {
@@ -368,8 +405,12 @@ func publishGuidanceResponse(bundle *ops.ExportBundle) *mcp.CallToolResult {
 // bundlePreview is the agent-facing summary of an ExportBundle —
 // includes the YAML bodies but trims internal fields like
 // Classifications (which the agent already supplied).
+//
+// Phase 5 lands schema validation; Errors propagates through the
+// preview so agents can surface blocking failures alongside the
+// rendered YAMLs without re-running validation in the handler.
 func bundlePreview(bundle *ops.ExportBundle) map[string]any {
-	return map[string]any{
+	preview := map[string]any{
 		"importYaml":       bundle.ImportYAML,
 		"zeropsYaml":       bundle.ZeropsYAML,
 		"zeropsYamlSource": bundle.ZeropsYAMLSource,
@@ -377,6 +418,26 @@ func bundlePreview(bundle *ops.ExportBundle) map[string]any {
 		"repoUrl":          bundle.RepoURL,
 		"warnings":         bundle.Warnings,
 	}
+	if len(bundle.Errors) > 0 {
+		preview["errors"] = formatBundleErrors(bundle.Errors)
+	}
+	return preview
+}
+
+// formatBundleErrors renders schema.ValidationError slices into the
+// agent-facing JSON shape. Each entry carries `path` (JSON pointer to
+// the failing field) + `message` (schema validator output). Empty
+// path means "root-level" error (parse failure, missing required
+// section, schema-compile failure).
+func formatBundleErrors(errs []schema.ValidationError) []map[string]any {
+	out := make([]map[string]any, 0, len(errs))
+	for _, e := range errs {
+		out = append(out, map[string]any{
+			"path":    e.Path,
+			"message": e.Message,
+		})
+	}
+	return out
 }
 
 // needsClassifyPrompt returns true when the project has any env that

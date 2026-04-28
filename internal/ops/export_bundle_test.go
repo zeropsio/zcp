@@ -259,25 +259,29 @@ func TestComposeProjectEnvVariables(t *testing.T) {
 	}
 }
 
-func TestMapImportMode(t *testing.T) {
+// TestRuntimeImportMode pins the platform-mode contract per Phase 5
+// schema-validation findings: import.yaml's `mode:` is the platform
+// scaling enum (`HA` / `NON_HA`) only. Single-runtime bundle entries
+// always emit `NON_HA` — the topology dev/stage/simple/local-only
+// distinction is destination-bootstrap concern, not import.yaml
+// content. The function preserves the topology.Mode argument as a
+// future-extension hook; current contract is mode-independent.
+func TestRuntimeImportMode(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		mode topology.Mode
-		want string
-	}{
-		{topology.ModeStandard, "dev"},   // dev half of standard pair (β)
-		{topology.ModeStage, "simple"},   // stage half collapses (β)
-		{topology.ModeDev, "dev"},        // single dev source
-		{topology.ModeSimple, "simple"},  // single standalone
-		{topology.ModeLocalStage, "dev"}, // local CWD is the dev half
-		{topology.ModeLocalOnly, "local-only"},
-		{topology.Mode("garbled"), "simple"}, // safest fallback
+	tests := []topology.Mode{
+		topology.ModeStandard,
+		topology.ModeStage,
+		topology.ModeDev,
+		topology.ModeSimple,
+		topology.ModeLocalStage,
+		topology.ModeLocalOnly,
+		topology.Mode("garbled"),
 	}
-	for _, tt := range tests {
-		t.Run(string(tt.mode), func(t *testing.T) {
+	for _, mode := range tests {
+		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
-			if got := mapImportMode(tt.mode); got != tt.want {
-				t.Errorf("mapImportMode(%q) = %q, want %q", tt.mode, got, tt.want)
+			if got := runtimeImportMode(mode); got != "NON_HA" {
+				t.Errorf("runtimeImportMode(%q) = %q, want NON_HA", mode, got)
 			}
 		})
 	}
@@ -369,7 +373,7 @@ func TestComposeImportYAML_MinimalRuntimeOnly(t *testing.T) {
 	svc, _ := services[0].(map[string]any)
 	checkServiceField(t, svc, "hostname", "appdev")
 	checkServiceField(t, svc, "type", "nodejs@22")
-	checkServiceField(t, svc, "mode", "dev")
+	checkServiceField(t, svc, "mode", "NON_HA")
 	checkServiceField(t, svc, "buildFromGit", "https://github.com/example/demo.git")
 	checkServiceField(t, svc, "zeropsSetup", "appdev")
 	if _, ok := svc["enableSubdomainAccess"]; ok {
@@ -410,7 +414,7 @@ func TestComposeImportYAML_WithSubdomainAndManagedDeps(t *testing.T) {
 	}
 
 	runtime, _ := services[0].(map[string]any)
-	checkServiceField(t, runtime, "mode", "simple") // stage half collapses (β)
+	checkServiceField(t, runtime, "mode", "NON_HA") // platform scaling mode
 	if runtime["enableSubdomainAccess"] != true {
 		t.Errorf("enableSubdomainAccess should be true, got %v", runtime["enableSubdomainAccess"])
 	}
@@ -649,8 +653,8 @@ func TestBuildBundle_NodeShape(t *testing.T) {
 		t.Fatalf("expected 2 services (api + mongo), got %d", len(services))
 	}
 	runtime, _ := services[0].(map[string]any)
-	if runtime["mode"] != "simple" { // ModeSimple → "simple"
-		t.Errorf("mode = %v, want simple", runtime["mode"])
+	if runtime["mode"] != "NON_HA" { // platform scaling mode
+		t.Errorf("mode = %v, want NON_HA", runtime["mode"])
 	}
 	envs, _ := doc["project"].(map[string]any)["envVariables"].(map[string]any)
 	if _, ok := envs["MONGO_URI"]; ok {

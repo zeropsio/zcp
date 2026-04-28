@@ -869,6 +869,131 @@ func TestResolveExportVariant(t *testing.T) {
 	}
 }
 
+// TestHandleExport_ValidationFailed covers the Phase 5 validation gate:
+// when bundle.Errors is non-empty the handler MUST return
+// status="validation-failed" instead of publish-ready, and the response
+// MUST surface the schema errors via the response payload's `errors`
+// field. Per Codex Phase 5 POST-WORK amendment 3.
+//
+// Trigger: bundled `zerops.yaml` is missing the `setup:` key in one of
+// its zerops list entries — schema enforces `setup` as required, so the
+// validator surfaces a leaf error pointing at the missing field. The
+// setup name `appdev` is still present elsewhere so the handler's pick
+// logic resolves; the schema-validate step catches the structural gap.
+func TestHandleExport_ValidationFailed(t *testing.T) {
+	t.Parallel()
+	const invalidZeropsYAML = `zerops:
+  - setup: appdev
+    build:
+      base: php@8.4
+    run:
+      base: php-apache@8.4
+  - run:
+      base: nodejs@22
+`
+	mock := newExportMock(
+		[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
+		[]platform.EnvVar{{Key: "LOG_LEVEL", Content: "info"}},
+	)
+
+	dir := t.TempDir()
+	writeBootstrappedMeta(t, dir, topology.ModeStandard, topology.GitPushConfigured)
+
+	ssh := &routedSSH{responses: map[string]string{
+		"cat /var/www/zerops.yaml": invalidZeropsYAML,
+		"git remote get-url":       "https://github.com/example/demo.git",
+	}}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"workflow":      "export",
+		"targetService": "appdev",
+		"variant":       "dev",
+		"envClassifications": map[string]any{
+			"LOG_LEVEL": "plain-config",
+		},
+	})
+	if result.IsError {
+		t.Fatalf("validation-failed response should not error, got: %s", getTextContent(t, result))
+	}
+
+	body := decodeExportJSON(t, result)
+	if body["status"] != "validation-failed" {
+		t.Errorf("expected status=validation-failed, got %v", body["status"])
+	}
+
+	errs, _ := body["errors"].([]any)
+	if len(errs) == 0 {
+		t.Fatalf("expected errors slice populated, got %v", body["errors"])
+	}
+	preview, _ := body["preview"].(map[string]any)
+	if preview == nil {
+		t.Error("preview should be present alongside errors so the agent can review")
+	}
+	previewErrors, _ := preview["errors"].([]any)
+	if len(previewErrors) == 0 {
+		t.Error("preview.errors should mirror the top-level errors field")
+	}
+	steps, _ := body["nextSteps"].([]any)
+	if len(steps) == 0 {
+		t.Error("validation-failed should carry actionable nextSteps")
+	}
+}
+
+// TestHandleExport_ValidationOutranksGitPushSetup covers the Phase 5
+// branch-order amendment: when both validation errors AND missing
+// GitPushState fire, validation-failed wins. The git-push-setup chain
+// would otherwise mask a structural bundle problem the agent must fix
+// before publish becomes meaningful.
+func TestHandleExport_ValidationOutranksGitPushSetup(t *testing.T) {
+	t.Parallel()
+	const invalidZeropsYAML = `zerops:
+  - setup: appdev
+    build:
+      base: php@8.4
+    run:
+      base: php-apache@8.4
+  - run:
+      base: nodejs@22
+`
+	mock := newExportMock(
+		[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
+		[]platform.EnvVar{{Key: "LOG_LEVEL", Content: "info"}},
+	)
+
+	dir := t.TempDir()
+	// GitPushUnconfigured AND validation errors present → validation
+	// must still win.
+	writeBootstrappedMeta(t, dir, topology.ModeStandard, topology.GitPushUnconfigured)
+
+	ssh := &routedSSH{responses: map[string]string{
+		"cat /var/www/zerops.yaml": invalidZeropsYAML,
+		"git remote get-url":       "https://github.com/example/demo.git",
+	}}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"workflow":      "export",
+		"targetService": "appdev",
+		"variant":       "dev",
+		"envClassifications": map[string]any{
+			"LOG_LEVEL": "plain-config",
+		},
+	})
+	if result.IsError {
+		t.Fatalf("validation-outranks should not error, got: %s", getTextContent(t, result))
+	}
+
+	body := decodeExportJSON(t, result)
+	if body["status"] != "validation-failed" {
+		t.Errorf("expected validation-failed (outranks git-push-setup-required), got %v", body["status"])
+	}
+}
+
 // TestPickSetupName covers the setup-resolution heuristic across hostname/
 // mode combinations and edge cases (missing zerops, malformed yaml, no
 // match with multiple options).

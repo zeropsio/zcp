@@ -122,17 +122,18 @@ For dev / simple / local-only: only one half exists, no question.
 
 For local-stage: ask same dev/stage question, but local container is the source.
 
-### 3.3 Post-import mode (decision Q7 = β)
+### 3.3 Import service scaling mode and topology metadata (revised in Phase 5)
 
-| Source half | Re-imported as |
-|---|---|
-| dev half of standard pair | `mode: dev` (preserves intent: "this was our dev environment") |
-| stage half of standard pair | `mode: simple` (no dev to cross-deploy from; collapses cleanly) |
-| dev mode (no stage) | `mode: dev` |
-| simple mode | `mode: simple` |
-| local-stage dev | `mode: dev` |
-| local-stage stage | `mode: simple` |
-| local-only | `mode: local-only` |
+`services[].mode` in `zerops-project-import.yaml` is the Zerops platform scaling enum, NOT ZCP topology. The published schema accepts only `HA` / `NON_HA` (`internal/schema/testdata/import_yml_schema.json:199-205`); single-runtime export bundles emit `mode: NON_HA` for every source topology because there is no `verticalAutoscaling` + `minContainers` declaration accompanying the runtime entry to justify HA.
+
+| Source half | Import `services[].mode` | Preserved bundle metadata |
+|---|---|---|
+| dev half of standard pair | `NON_HA` | `variant=dev`, chosen hostname, matched `zeropsSetup` |
+| stage half of standard pair | `NON_HA` | `variant=stage`, chosen hostname, matched `zeropsSetup` |
+| dev / simple / local-only | `NON_HA` | chosen hostname, matched `zeropsSetup` |
+| local-stage dev / stage | `NON_HA` | `variant=dev` or `variant=stage`, chosen hostname, matched `zeropsSetup` |
+
+**Phase 0 plan author's intent** was to encode topology-level "this was our dev environment" semantics in the bundle. Phase 5 schema validation surfaced that the `mode` field is not the right carrier — topology Mode is established by ZCP's bootstrap when the destination project is created, not by import.yaml content. The bundle preserves topology context via `bundle.variant` + `bundle.targetHostname` + `bundle.setupName` for downstream tooling (e.g., a future "import + bootstrap" companion that sets the destination project's topology Mode after re-import).
 
 ### 3.4 Four-category LLM-driven secret classification
 
@@ -215,7 +216,7 @@ read+generate+validate. Only Phase C (publish) needs git.
 | Q4 | **Secret classification**: four-category LLM-driven (no hardcoded name lists). Atom describes protocol; agent greps source per env. | ✅ CONFIRMED 2026-04-28 |
 | Q5 | **Missing live zerops.yaml**: refuse with chain to `scaffold-zerops-yaml.md` atom. NO best-effort silent scaffolding. | ✅ DEFAULTED |
 | Q6 | **Code-comparison method**: N/A — variant 3 (both halves) dropped. Always one half, user-chosen. | ✅ N/A |
-| Q7 | **Post-import mode**: dev half → `mode: dev`; stage half → `mode: simple`. Preserves user intent (β) per §3.3. | ✅ CONFIRMED 2026-04-28 |
+| Q7 | **Post-import service `mode`**: always `NON_HA` for single-runtime bundles (Zerops platform schema enforces `HA`/`NON_HA` only). Topology metadata (variant, hostname, setupName) preserved on the bundle for downstream tooling. Phase 0's β decision (`mode: dev`/`mode: simple`) was based on a topology/scaling-mode conflation surfaced by Phase 5 schema validation; revised in §3.3. | ✅ REVISED 2026-04-29 (Phase 5 amendment) |
 | Pair handling | Always export ONE half of any pair. User chooses dev or stage. | ✅ CONFIRMED 2026-04-28 |
 | `RemoteURL` source of truth | Live `git remote get-url origin` (cache in `ServiceMeta.RemoteURL` per `internal/workflow/service_meta.go:48`). Refresh cache on every export pass. | ✅ DEFAULTED (matches existing `RemoteURL` semantics) |
 | Atom prereq chaining | Handler-side composition. The pattern referenced as `chainSetupGitPushGuidance(...)` is INLINE at `internal/tools/workflow_close_mode.go:120-136` (no helper); export Phase 3 either reuses inline or extracts a shared helper as optional Phase 2.5. Chain pointers land in the response payload's `nextSteps` list — NOT via a `gitPushStates` atom axis (`SynthesizeImmediatePhase` passes no service context, so service-scoped axes silently never fire). | ✅ DESIGN PINNED 2026-04-28 (Codex Agent A+B) |
@@ -384,7 +385,7 @@ phase order respects this — pinned explicitly per Codex Agent B
        Warnings         []string
    }
    ```
-3. Stage-only mode mapping per §3.3 (β): when `variant=stage`, `mode: simple` in import.yaml.
+3. Service `mode` is always `NON_HA` per revised §3.3 (single-runtime bundles cannot justify HA without explicit scaling fields; the platform schema enforces `HA`/`NON_HA` only). Topology context preserved on `ExportBundle.Variant` + `TargetHostname` + `SetupName`.
 4. Tests in `internal/ops/export_bundle_test.go` — unit-test each composer + integration-test BuildBundle against fixture data (mock client/SSH).
 5. Verify gate green; commit: `ops(P2): export bundle generator with variant + classification`.
 
@@ -843,7 +844,7 @@ Estimated Codex rounds: ~10-11 across plan execution. Heavy on Phases
 - **Don't skip Codex PER-EDIT rounds on Phase 4**: HIGH-risk atom changes need second eyes. The classification protocol in `export-classify-envs.md` is load-bearing for agent behavior; a wrong example can mis-train every downstream export run.
 - **Don't best-effort scaffold zerops.yaml on missing**: Q5 says refuse + chain. Silent best-effort scaffolding creates broken imports that fail at re-import time with platform errors that are hard to map back to a missing live zerops.yaml.
 - **Don't hardcode secret-name lists**: Q4 = LLM-driven classification. Hardcoded lists were the main failure mode of the old atom (export.md:140-148). Resist the urge to add "just one more name" — bias toward improving the protocol prose instead.
-- **Don't conflate variant choice with mode-expansion**: when stage half is picked and re-imports as `mode: simple` (β), the imported project is NOT a degraded standard pair — it's a clean standalone. Atom prose must communicate this clearly so users don't expect dev cross-deploy in the new project.
+- **Don't conflate variant choice with platform scaling mode**: revised §3.3 — `services[].mode` in import.yaml is the Zerops platform's scaling enum (`HA`/`NON_HA`), not ZCP topology. Single-runtime bundles always emit `NON_HA`. Topology context (variant, hostname, setupName) lives on the bundle metadata, not in the rendered YAML's `mode:` field. Atom prose must NOT claim "dev variant re-imports as mode=dev" (Phase 0 plan author's β confusion, fixed in Phase 5).
 - **Don't write `import.yaml` to `/var/www/import.yaml` (legacy convention)**: Q2 = `zerops-project-import.yaml` at repo root. Mirrors recipe convention; less ambiguous in dashboard upload UX.
 - **Don't assume `git remote get-url origin` returns success**: live container may have no remote configured (push-dev only project). Phase A must handle this and chain to setup-git-push when it returns empty.
 - **Don't assume `ServiceMeta.RemoteURL` is fresh**: it's a CACHE per `service_meta.go:47-48`. Refresh from live `git remote -v` before composing buildFromGit URL (Phase 6 pin).

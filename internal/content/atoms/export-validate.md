@@ -4,7 +4,7 @@ priority: 3
 phases: [export-active]
 environments: [container]
 title: "Read the export bundle's preview + warnings before publishing"
-references-fields: [ops.ExportBundle.ImportYAML, ops.ExportBundle.ZeropsYAML, ops.ExportBundle.Warnings]
+references-fields: [ops.ExportBundle.ImportYAML, ops.ExportBundle.ZeropsYAML, ops.ExportBundle.Warnings, ops.ExportBundle.Errors]
 ---
 The Phase B response carries a generated bundle even when classifications are not yet accepted. Read every field before re-calling with `envClassifications` populated — corrections are cheaper here than after publish.
 
@@ -54,13 +54,12 @@ You did not send a bucket for this env. The bundle defaults to `plain-config` (e
 
 ## Schema validation
 
-The bundle's `importYaml` and `zeropsYaml` are not yet schema-validated client-side as of this phase — Phase 5 of the export-buildFromGit plan adds JSON-Schema validation against the published `import-project-yml-json-schema.json` and `zerops-yml-json-schema.json`. For now, the safest pre-publish check is to manually inspect:
+`bundle.errors` carries blocking JSON-Schema failures from the embedded `import-project-yml-json-schema.json` + `zerops-yml-json-schema.json` (Phase 5). Each entry has `path` (JSON pointer) + `message`. When non-empty, the handler returns `status="validation-failed"` instead of `publish-ready` — fix each error at its source (env classification, zerops.yaml, or service shape) and re-call. Schema drift between the embedded copy and Zerops's current schema is possible; if `zcli project project-import` rejects a bundle that the client validator accepted, the embedded testdata needs a refresh.
 
-<!-- axis-k-keep: signal-#3 -->
-- `services[].mode` is one of `dev` / `simple` / `local-only` — matches the variant mapping you intended.
-- `services[].buildFromGit` resolves to a HTTPS or SSH-form remote URL (no missing scheme).
+When `publish-ready` fires, spot-check the rendered shape:
+
+- `services[].mode` is `NON_HA` (single-runtime bundles; `HA` requires explicit scaling fields).
+- `services[].buildFromGit` resolves to a HTTPS or SSH-form remote URL.
 - `services[].zeropsSetup` matches a `setup:` name in the bundled `zerops.yaml`.
 - `project.envVariables` keys are not duplicated.
 - `#zeropsPreprocessor=on` header is line 1 if any value contains `<@...>`.
-
-Schema-validation errors on the Zerops side land at re-import time as `zcli project project-import` failures — easy to interpret but slower than a client check would be.

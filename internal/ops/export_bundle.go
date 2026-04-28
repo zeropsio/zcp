@@ -6,6 +6,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/zeropsio/zcp/internal/schema"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -14,10 +15,11 @@ import (
 // expansion if this header is missing or not on line 1.
 const preprocessorHeader = "#zeropsPreprocessor=on\n"
 
-// importModeSimple is emitted when a stage-half source or simple-mode
-// source re-imports — the bundle collapses to a standalone runtime
-// with no dev to cross-deploy from. Per plan §3.3 (β).
-const importModeSimple = "simple"
+// importModeNonHA is the platform scaling mode for single-runtime
+// bundle entries. Platform schema enforces `HA` / `NON_HA` only; the
+// topology dev/stage/simple/local-only distinction is destination-
+// project-bootstrap concern, not import.yaml content.
+const importModeNonHA = "NON_HA"
 
 // ExportBundle is the generator output for the export-buildFromGit
 // workflow. Self-referential single-repo shape per plan §3.1:
@@ -57,8 +59,14 @@ type ExportBundle struct {
 	Classifications map[string]topology.SecretClassification
 	// Warnings carries non-fatal hints (privacy-sensitive plain config,
 	// empty external secrets that need user review, unclassified envs,
-	// etc.). Errors will be added in Phase 5 when schema validation lands.
+	// M2 indirect references, sentinel-pattern detections).
 	Warnings []string
+	// Errors carries blocking schema-validation failures from Phase 5.
+	// When non-empty, the bundle MUST NOT be published as-is — the
+	// generated import.yaml or zerops.yaml violates the published JSON
+	// schemas and re-import would fail. The Phase 3 handler treats
+	// any non-empty Errors as a "validation-failed" response status.
+	Errors []schema.ValidationError
 }
 
 // BundleInputs captures the live state Phase A probes before BuildBundle
@@ -152,6 +160,17 @@ func BuildBundle(
 		return nil, fmt.Errorf("compose import.yaml: %w", err)
 	}
 
+	// Phase 5: schema-validate both YAMLs against the published JSON
+	// schemas (embedded testdata copies — refresh cadence is a separate
+	// concern). Errors are blocking; warnings stay non-fatal. The
+	// validators are deterministic so duplicate-call dedupe in tests
+	// holds across the validation step.
+	importErrors := schema.ValidateImportYAML(importYAML)
+	zeropsErrors := schema.ValidateZeropsYAML(inputs.ZeropsYAMLBody, inputs.SetupName)
+	validationErrors := make([]schema.ValidationError, 0, len(importErrors)+len(zeropsErrors))
+	validationErrors = append(validationErrors, importErrors...)
+	validationErrors = append(validationErrors, zeropsErrors...)
+
 	return &ExportBundle{
 		ImportYAML:       importYAML,
 		ZeropsYAML:       inputs.ZeropsYAMLBody,
@@ -162,6 +181,7 @@ func BuildBundle(
 		SetupName:        inputs.SetupName,
 		Classifications:  classifications,
 		Warnings:         warnings,
+		Errors:           validationErrors,
 	}, nil
 }
 
@@ -216,12 +236,10 @@ func composeImportYAML(
 	zeropsRefs := extractZeropsYAMLRunEnvRefs(inputs.ZeropsYAMLBody)
 	warnings = append(warnings, detectIndirectInfraReferences(inputs.ProjectEnvs, classifications, zeropsRefs)...)
 
-	importMode := mapImportMode(inputs.SourceMode)
-
 	runtimeEntry := map[string]any{
 		"hostname":     inputs.TargetHostname,
 		"type":         inputs.ServiceType,
-		"mode":         importMode,
+		"mode":         runtimeImportMode(inputs.SourceMode),
 		"buildFromGit": inputs.RepoURL,
 		"zeropsSetup":  inputs.SetupName,
 	}
@@ -315,23 +333,20 @@ func composeProjectEnvVariables(
 	return out, warnings
 }
 
-// mapImportMode translates the source runtime's topology.Mode into the
-// import.yaml `mode:` value per plan §3.3 (β). Dev halves of pairs and
-// dev-only sources re-import as `dev`; stage halves and simple-mode
-// sources re-import as `simple` (collapses cleanly to standalone — no
-// dev to cross-deploy from in the new project). Local-only retains its
-// shape; unknown sources fall back to `simple` (safest standalone).
-func mapImportMode(source topology.Mode) string {
-	switch source {
-	case topology.ModeStandard, topology.ModeDev, topology.ModeLocalStage:
-		return "dev"
-	case topology.ModeStage, topology.ModeSimple:
-		return importModeSimple
-	case topology.ModeLocalOnly:
-		return "local-only"
-	default:
-		return importModeSimple
-	}
+// runtimeImportMode returns the platform scaling-mode (`HA` / `NON_HA`)
+// for the bundle's runtime service entry. Platform schema enforces this
+// as the closed enum; the topology-level dev / stage / simple / local-only
+// shape lives in the destination project's bootstrap meta after re-import,
+// not in import.yaml.
+//
+// Single-runtime bundles always emit `NON_HA` — the bundle composes one
+// runtime entry without scaling fields, so HA (multi-container) would
+// require additional `verticalAutoscaling` / `minContainers` declarations
+// the agent has not committed to yet. NON_HA is the safe re-import shape;
+// the destination project's owner can switch to HA in dashboard later.
+func runtimeImportMode(source topology.Mode) string {
+	_ = source // topology Mode preserved on bundle.Variant for metadata; doesn't drive the platform mode
+	return importModeNonHA
 }
 
 // addPreprocessorHeader prepends `#zeropsPreprocessor=on\n` to body

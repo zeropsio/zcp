@@ -108,6 +108,6 @@ If you skip an env, the next response re-prompts with the remaining unclassified
 
 If a row's bucket is genuinely ambiguous, the safest default is `plain-config` (carries the existing value) plus a follow-up review with the user — wrong-direction errors there are fixable post-import without breaking deploy.
 
-## Forward-compat note: schema validation lands in Phase 5
+## Schema validation
 
-The classify-prompt response carries the rendered `bundle.zeropsYaml` body and per-env warnings, but it does NOT yet schema-validate the generated `zerops-project-import.yaml` against the published JSON schemas. Don't claim "validation passed" from the classify-prompt response alone — Phase 5 of the export-buildFromGit plan vendors a JSON-Schema library and adds blocking errors to the bundle. Until then, Zerops side validation at re-import is the authoritative gate.
+The classify-prompt response carries the rendered `bundle.zeropsYaml` body and per-env warnings; the publish-ready / validation-failed response also carries `bundle.errors` populated by the embedded JSON-Schema validators (Phase 5). When `bundle.errors` is non-empty the handler returns `status="validation-failed"` — fix each error at its source (env classification, zerops.yaml, or service shape) and re-call export. The on-platform validator at re-import is the authoritative gate; the embedded validator catches the same failures earlier.
