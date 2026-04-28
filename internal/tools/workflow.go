@@ -95,12 +95,18 @@ type WorkflowInput struct {
 
 	// Variant is used by workflow="export" to select which half of a
 	// pair (dev or stage) gets packaged into the export bundle. Only
-	// meaningful for ModeStandard / ModeLocalStage — other modes have
-	// a single half so the variant is forced. The agent passes "" on
-	// the first export call and receives a variant-prompt atom; the
-	// second call carries the chosen variant. Per plan §3.2 / §3.3 in
-	// `plans/export-buildfromgit-2026-04-28.md`.
-	Variant string `json:"variant,omitempty" jsonschema:"Export workflow only: which half of a pair to package — 'dev' (re-imports as mode=dev), 'stage' (re-imports as mode=simple), or omit on the first call to receive the variant-prompt atom for ModeStandard / ModeLocalStage. Single-half modes (dev / simple / local-only) ignore this field."`
+	// meaningful for ModeStandard / ModeStage / ModeLocalStage — other
+	// modes have a single half so the variant is forced. The agent
+	// passes "" on the first export call and receives a variant-prompt;
+	// the second call carries the chosen variant. Both halves emit
+	// `services[].mode: NON_HA` in the rendered import.yaml — the
+	// Zerops platform scaling enum is HA/NON_HA only, and ZCP topology
+	// (dev/simple/local-only) is established by the destination
+	// project's bootstrap on import, not embedded in the bundle (per
+	// docs/spec-workflows.md §9 invariant E4 + plan §3.3 revision in
+	// Phase 5). The variant tag is preserved on the bundle for
+	// downstream consumers.
+	Variant string `json:"variant,omitempty" jsonschema:"Export workflow only: which half of a pair to package — 'dev' packages the dev hostname's working tree, 'stage' packages the stage hostname's. Both bundle entries emit Zerops scaling mode=NON_HA; the destination project's topology Mode is established by ZCP's bootstrap on import. Omit on the first export call for ModeStandard / ModeStage / ModeLocalStage to receive the variant-prompt; single-half source modes (dev / simple / local-only) ignore this field."`
 
 	// EnvClassifications carries the per-env user-resolved classification
 	// bucket map for workflow="export" Phase B. Empty on the first two
