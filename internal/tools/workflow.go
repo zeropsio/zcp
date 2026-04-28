@@ -85,9 +85,31 @@ type WorkflowInput struct {
 
 	// TargetService is used by action="adopt-local" to specify which
 	// Zerops runtime service should be linked as this local project's
-	// stage. Resolves the ambiguity surfaced by auto-adopt when multiple
-	// runtimes exist in the project.
-	TargetService string `json:"targetService,omitempty" jsonschema:"Runtime service hostname. Used by: action=\"adopt-local\" (local env stage link target — must be a live runtime service, not managed); action=\"record-deploy\" (external-deploy ack target — stamps FirstDeployedAt on its ServiceMeta, no-op when meta is missing)."`
+	// stage, by action="record-deploy" to stamp FirstDeployedAt on a
+	// specific service's meta, and by workflow="export" (action="start")
+	// to identify the runtime service to package into a self-referential
+	// single-repo bundle. Resolves the ambiguity that surfaces when
+	// multiple runtimes exist in the project.
+	TargetService string `json:"targetService,omitempty" jsonschema:"Runtime service hostname. Used by: action=\"adopt-local\" (local env stage link target — must be a live runtime service, not managed); action=\"record-deploy\" (external-deploy ack target — stamps FirstDeployedAt on its ServiceMeta, no-op when meta is missing); workflow=\"export\" (the runtime service to package into a self-referential single-repo bundle — buildFromGit + zerops.yaml + code)."`
+
+	// Variant is used by workflow="export" to select which half of a
+	// pair (dev or stage) gets packaged into the export bundle. Only
+	// meaningful for ModeStandard / ModeLocalStage — other modes have
+	// a single half so the variant is forced. The agent passes "" on
+	// the first export call and receives a variant-prompt atom; the
+	// second call carries the chosen variant. Per plan §3.2 / §3.3 in
+	// `plans/export-buildfromgit-2026-04-28.md`.
+	Variant string `json:"variant,omitempty" jsonschema:"Export workflow only: which half of a pair to package — 'dev' (re-imports as mode=dev), 'stage' (re-imports as mode=simple), or omit on the first call to receive the variant-prompt atom for ModeStandard / ModeLocalStage. Single-half modes (dev / simple / local-only) ignore this field."`
+
+	// EnvClassifications carries the per-env user-resolved classification
+	// bucket map for workflow="export" Phase B. Empty on the first two
+	// export calls (variant prompt + classify prompt); populated on the
+	// third call after the user accepts or corrects the per-env review
+	// table per plan §3.4. Keys are env var names; values are one of
+	// "infrastructure" / "auto-secret" / "external-secret" / "plain-config"
+	// (see topology.SecretClassification). Stateless per-request input —
+	// no server-side persistence, agent threads it across calls.
+	EnvClassifications map[string]string `json:"envClassifications,omitempty" jsonschema:"Export workflow only: per-env classification map for Phase B publish. Keys are env var names; values are one of 'infrastructure' (drops from project.envVariables; keeps ${...} reference in zerops.yaml), 'auto-secret' (emits <@generateRandomString>), 'external-secret' (emits comment + <@pickRandom([\"REPLACE_ME\"])>), 'plain-config' (verbatim literal). Empty on first two export calls; populated on the third (publish) call after the agent surfaces the per-env review table and the user accepts or corrects per plan §3.4."`
 
 	// Cx-SUBAGENT-BRIEF-BUILDER (v38 F-17 close).
 	Role        string `json:"role,omitempty"        jsonschema:"Sub-agent role for action=\"build-subagent-brief\" / \"verify-subagent-dispatch\": one of writer, editorial-review, code-review."`
