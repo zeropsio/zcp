@@ -181,15 +181,18 @@ func strategyOfferings(metas []*ServiceMeta, liveStatus map[string]string, ws *W
 		Workflow: "develop", Priority: 1, Hint: developHint,
 	}}
 
-	// Strategy configuration — offer the central deploy-config entry point
-	// whenever any bootstrapped service exists. This is where strategies are
-	// set (push-dev, push-git, manual) AND, for push-git, the full setup flow
-	// (tokens, optional CI/CD, first push) is delivered as a single atom.
-	// Replaces the former workflow=cicd as the git-push setup path.
+	// Close-mode configuration — offer the central deploy-config entry
+	// point whenever any bootstrapped service exists. The deploy-strategy
+	// decomposition (Phase 5) split the legacy action=strategy into three
+	// orthogonal actions: close-mode (what fires at workflow close),
+	// git-push-setup (capability provisioning), build-integration
+	// (ZCP-managed CI). The router offering surfaces close-mode as the
+	// primary entry — the other two actions are reachable via the chained
+	// guidance in close-mode's response or via independent calls.
 	if len(metas) > 0 {
 		offerings = append(offerings, FlowOffering{
-			Workflow: "strategy", Priority: 2,
-			Hint: `zerops_workflow action="strategy" — configure deploy strategy (push-dev/push-git/manual); push-git returns full setup flow`,
+			Workflow: "close-mode", Priority: 2,
+			Hint: `zerops_workflow action="close-mode" — set per-pair close-mode (auto/git-push/manual). For git-push close-mode, follow up with action="git-push-setup" to provision GIT_TOKEN/.netrc/remote URL, and action="build-integration" to wire a ZCP-managed CI integration (webhook|actions).`,
 		})
 	}
 

@@ -28,7 +28,7 @@ type WorkflowInput struct {
 	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, develop, or export. For recipe authoring use the dedicated zerops_recipe tool (v3 engine, docs/zcprecipator3/plan.md)."`
 
 	// Multi-action fields.
-	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, reset, iterate, resume, list, route, strategy, classify, adopt-local, dispatch-brief-atom (retrieve one atom of an envelope-split dispatch brief), record-deploy (stamp FirstDeployedAt for an externally-deployed service — zcli/CI/CD bridge; pass targetService)."`
+	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, reset, iterate, resume, list, route, close-mode (set per-pair CloseDeployMode auto/git-push/manual), git-push-setup (provision GIT_TOKEN/.netrc/remote URL — pass service + remoteUrl), build-integration (wire ZCP-managed CI — pass service + integration), classify, adopt-local, dispatch-brief-atom (retrieve one atom of an envelope-split dispatch brief), record-deploy (stamp FirstDeployedAt for an externally-deployed service — zcli/CI/CD bridge; pass targetService)."`
 	Intent      string                     `json:"intent,omitempty"      jsonschema:"User intent description for start action (what you want to accomplish)."`
 	Attestation string                     `json:"attestation,omitempty" jsonschema:"Description of what was verified or accomplished (required for complete actions)."`
 	Step        string                     `json:"step,omitempty"        jsonschema:"Bootstrap step name for complete/skip actions (discover, provision, close)."`
@@ -36,7 +36,11 @@ type WorkflowInput struct {
 	Plan        []workflow.BootstrapTarget `json:"plan,omitempty"        jsonschema:"Structured service plan: array of {runtime: {devHostname, type, bootstrapMode?, stageHostname?, isExisting?}, dependencies: [{hostname, type, mode?, resolution}]}. resolution: CREATE (new service), EXISTS (already in project), SHARED (created by another target in this plan). stageHostname: explicit stage hostname for standard mode when devHostname doesn't end in 'dev' (e.g. adopting existing services)."`
 	Reason      string                     `json:"reason,omitempty"      jsonschema:"Reason for skipping a step (skip action). Defaults to 'skipped by user'."`
 	SessionID   string                     `json:"sessionId,omitempty"   jsonschema:"Session ID for resume action."`
-	Strategies  map[string]string          `json:"strategies,omitempty"  jsonschema:"Per-service strategy map for strategy action (e.g. {\"appdev\":\"push-git\"})."`
+	Strategies  map[string]string          `json:"strategies,omitempty"  jsonschema:"DEPRECATED — kept on the input shape during the deploy-strategy decomposition migration window (plans/deploy-strategy-decomposition-2026-04-28.md Phase 10 deletes it). Use action=close-mode + closeMode for setting CloseDeployMode."`
+	CloseModes  map[string]string          `json:"closeMode,omitempty"   jsonschema:"Per-service close-deploy-mode map for action=close-mode (e.g. {\"appdev\":\"git-push\"}). Valid values per service: auto (zcli push direct on develop close), git-push (commit + push to remote on close — requires action=git-push-setup), manual (ZCP yields close orchestration)."`
+	Integration string                     `json:"integration,omitempty" jsonschema:"ZCP-managed CI integration value for action=build-integration: 'webhook' (Zerops dashboard OAuth — Zerops pulls + builds on git push), 'actions' (GitHub Actions workflow runs zcli push from CI), or 'none' (no ZCP-managed integration; user may have independent CI/CD that ZCP doesn't track)."`
+	RemoteURL   string                     `json:"remoteUrl,omitempty"   jsonschema:"Remote git repository URL for action=git-push-setup confirm step. Passed after the walkthrough atom completes; writes meta.GitPushState=configured + meta.RemoteURL. Omit on the first call to receive the env-aware setup atom."`
+	Service     string                     `json:"service,omitempty"     jsonschema:"Single-target runtime service hostname for action=git-push-setup and action=build-integration. Pair-keyed lookup honors stage hostnames per spec-workflows.md §8 E8."`
 	Tier        string                     `json:"tier,omitempty"        jsonschema:"Recipe tier: minimal or showcase (recipe workflow only)."`
 	RecipePlan  *workflow.RecipePlan       `json:"recipePlan,omitempty"  jsonschema:"Structured recipe plan for research step completion. Pass as a JSON object, NOT a stringified JSON blob — e.g. recipePlan={\"slug\":\"...\",\"recipeType\":\"...\",\"features\":[...],\"targets\":[...]}, not recipePlan=\"{\\\"slug\\\":...}\". The schema validator rejects strings for this field; stringifying costs a retry round-trip."`
 
@@ -121,7 +125,7 @@ type immediateResponse struct {
 func RegisterWorkflow(srv *mcp.Server, client platform.Client, projectID string, cache *ops.StackTypeCache, schemaCache *schema.Cache, engine *workflow.Engine, logFetcher platform.LogFetcher, stateDir, selfHostname string, mounter ops.Mounter, sshDeployer ops.SSHDeployer, rt runtime.Info) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_workflow",
-		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (create/adopt infrastructure only — not the user's application), develop (all development, deployment, fixing, investigating), recipe (create recipe repo files), export (turn a deployed service into a re-importable git repo with import.yaml + buildFromGit). Deploy strategy (push-dev, push-git, manual) is configured via action=\"strategy\" strategies={hostname:value} — for push-git this returns the full setup flow (tokens, optional CI/CD, first push) in one call. After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route|strategy\".",
+		Description: "Orchestrate Zerops operations. Call with action=\"start\" workflow=\"name\" to begin a tracked session with guidance. Workflows: bootstrap (create/adopt infrastructure only — not the user's application), develop (all development, deployment, fixing, investigating), recipe (create recipe repo files), export (turn a deployed service into a re-importable git repo with import.yaml + buildFromGit). Deploy configuration is split into three orthogonal actions: action=\"close-mode\" closeMode={hostname:value} sets the per-pair CloseDeployMode (auto/git-push/manual); action=\"git-push-setup\" service=hostname remoteUrl=URL provisions GIT_TOKEN/.netrc/remote URL; action=\"build-integration\" service=hostname integration=webhook|actions|none wires the ZCP-managed CI integration. After start: action=\"complete|skip|status\" (step progression), action=\"reset|iterate|resume|list|route|close-mode|git-push-setup|build-integration\".",
 		Annotations: &mcp.ToolAnnotations{
 			Title:          "Workflow orchestration",
 			ReadOnlyHint:   false,
@@ -248,8 +252,12 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleListSessions(engine)
 	case "route":
 		return handleRoute(ctx, engine, client, projectID, stateDir, selfHostname, rt)
-	case "strategy":
-		return handleStrategy(input, stateDir, rt)
+	case "close-mode":
+		return handleCloseMode(input, stateDir)
+	case "git-push-setup":
+		return handleGitPushSetup(input, stateDir, rt)
+	case "build-integration":
+		return handleBuildIntegration(input, stateDir, rt)
 	case "classify":
 		// v39 Commit 5a — per-item classify lookup for the recipe writer
 		// sub-agent. Replaces the inlined classification-taxonomy +
@@ -262,7 +270,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Unknown action %q", input.Action),
-			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, strategy, classify, adopt-local, dispatch-brief-atom, record-deploy"), WithRecoveryStatus()), nil, nil
+			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, close-mode, git-push-setup, build-integration, classify, adopt-local, dispatch-brief-atom, record-deploy"), WithRecoveryStatus()), nil, nil
 	}
 }
 
