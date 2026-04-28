@@ -71,3 +71,28 @@ func IsUtilityType(serviceType string) bool {
 func IsRuntimeType(serviceType string) bool {
 	return !IsManagedService(serviceType) && !IsUtilityType(serviceType)
 }
+
+// IsPushSource returns true when the Mode value names a service that can
+// act as the source of a git-push or zcli-push operation. Used by handler
+// validation (handleGitPush rejects targetService whose mode is not a push
+// source) and by atom rendering (push-source-only atoms filter on this
+// predicate via the `modes:` axis).
+//
+// True for: ModeStandard (dev half of standard pair), ModeSimple (single
+// container service), ModeLocalStage (local CWD as source paired with
+// Zerops stage), ModeLocalOnly (local CWD with no Zerops link).
+//
+// False for: ModeStage (build target, not source) and ModeDev (the legacy
+// dev-only mode — invalid combo with push-git per the deploy-strategy
+// decomposition).
+//
+// Spec: `plans/deploy-strategy-decomposition-2026-04-28.md` §3.2.
+func IsPushSource(m Mode) bool {
+	switch m {
+	case ModeStandard, ModeSimple, ModeLocalStage, ModeLocalOnly:
+		return true
+	case ModeDev, ModeStage:
+		return false
+	}
+	return false
+}

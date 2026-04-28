@@ -153,3 +153,95 @@ func TestDeployRoleAliases(t *testing.T) {
 		}
 	}
 }
+
+// TestIsPushSource pins the predicate truth table for every Mode value.
+// IsPushSource is the load-bearing dispatcher used by handleGitPush
+// validation and atom-rendering filters; silent regressions corrupt
+// push-target resolution across pair scenarios. Six rows cover the closed
+// Mode set so a future Mode addition that forgets to extend the predicate
+// (or the predicate that drifts from the Mode set) fails at test time.
+func TestIsPushSource(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		mode Mode
+		want bool
+		why  string
+	}{
+		{ModeStandard, true, "dev half of standard pair — source of push"},
+		{ModeSimple, true, "single container service — source of push"},
+		{ModeLocalStage, true, "local CWD paired with Zerops stage — source of push"},
+		{ModeLocalOnly, true, "local CWD without Zerops link — source of push"},
+		{ModeDev, false, "legacy dev-only mode — invalid combo with push-git"},
+		{ModeStage, false, "build target half of standard pair — not source"},
+	}
+	for _, c := range cases {
+		t.Run(string(c.mode), func(t *testing.T) {
+			t.Parallel()
+			if got := IsPushSource(c.mode); got != c.want {
+				t.Errorf("IsPushSource(%q) = %v, want %v (%s)", c.mode, got, c.want, c.why)
+			}
+		})
+	}
+}
+
+// TestCloseDeployModeValues pins the closed enum set so a typo silently
+// introducing a new value (e.g. "auto-close" vs "auto") fails at test time
+// rather than rendering against atoms with stale axis filters.
+func TestCloseDeployModeValues(t *testing.T) {
+	t.Parallel()
+	set := map[CloseDeployMode]struct{}{
+		CloseModeUnset:   {},
+		CloseModeAuto:    {},
+		CloseModeGitPush: {},
+		CloseModeManual:  {},
+	}
+	if len(set) != 4 {
+		t.Fatalf("CloseDeployMode constants must be 4 distinct values, got %d", len(set))
+	}
+	for _, want := range []CloseDeployMode{"unset", "auto", "git-push", "manual"} {
+		if _, ok := set[want]; !ok {
+			t.Errorf("CloseDeployMode missing canonical value %q", want)
+		}
+	}
+}
+
+// TestGitPushStateValues pins the closed enum set for the per-pair
+// git-push capability dimension.
+func TestGitPushStateValues(t *testing.T) {
+	t.Parallel()
+	set := map[GitPushState]struct{}{
+		GitPushUnconfigured: {},
+		GitPushConfigured:   {},
+		GitPushBroken:       {},
+		GitPushUnknown:      {},
+	}
+	if len(set) != 4 {
+		t.Fatalf("GitPushState constants must be 4 distinct values, got %d", len(set))
+	}
+	for _, want := range []GitPushState{"unconfigured", "configured", "broken", "unknown"} {
+		if _, ok := set[want]; !ok {
+			t.Errorf("GitPushState missing canonical value %q", want)
+		}
+	}
+}
+
+// TestBuildIntegrationValues pins the closed enum set for the per-pair
+// ZCP-managed CI integration dimension. Three values: none / webhook /
+// actions. Future additions (gitlab, bitbucket, jenkins) must extend the
+// enum AND this test in the same change.
+func TestBuildIntegrationValues(t *testing.T) {
+	t.Parallel()
+	set := map[BuildIntegration]struct{}{
+		BuildIntegrationNone:    {},
+		BuildIntegrationWebhook: {},
+		BuildIntegrationActions: {},
+	}
+	if len(set) != 3 {
+		t.Fatalf("BuildIntegration constants must be 3 distinct values, got %d", len(set))
+	}
+	for _, want := range []BuildIntegration{"none", "webhook", "actions"} {
+		if _, ok := set[want]; !ok {
+			t.Errorf("BuildIntegration missing canonical value %q", want)
+		}
+	}
+}
