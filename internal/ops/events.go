@@ -91,7 +91,7 @@ func isInternalAction(actionName string) bool {
 var appVersionHintMap = map[string]string{
 	statusActive:               "DEPLOYED: App version is deployed and running. Build pipeline complete. No further polling needed.",
 	statusBuilding:             "IN_PROGRESS: Build is running. Continue polling.",
-	statusBuildFailed:          "FAILED: Build failed. Run zerops_deploy — response includes buildLogs with pipeline output.",
+	statusBuildFailed:          "FAILED: Build failed. Read failureClass + description on this event and use zerops_logs serviceHostname={service} facility=application since=5m for the build container output. Don't re-call zerops_deploy until the cause is identified — re-running without a fix loops the failure.",
 	"DEPLOYING":                "IN_PROGRESS: Deploy is running. Continue polling.",
 	"PREPARING_RUNTIME_FAILED": "FAILED: run.prepareCommands exited non-zero. Check buildLogs for stderr. Common causes: missing sudo prefix (containers run as zerops user), wrong package name (Alpine PHP: php84-<ext>).",
 	"DEPLOY_FAILED":            "FAILED: run.initCommands crashed the new container on startup (build succeeded). The deploy response 'error' field identifies the failing command. Fetch runtime stderr with zerops_logs serviceHostname={service} severity=ERROR since=5m — NOT buildLogs (that's build container output).",
