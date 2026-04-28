@@ -1,7 +1,7 @@
 # Phase 2 tracker — Generator code (`internal/ops/export_bundle.go`)
 
 Started: 2026-04-28 (immediately after Phase 1 EXIT `b3cea80f`)
-Closed: 2026-04-28 (Phase 2 EXIT commits below); Phase 3 paused awaiting user go
+Closed: 2026-04-28 (Phase 2 EXIT commits `702cad26` generator + `1df479f6` tracker/plan/codex); Phase 3 paused awaiting user go
 
 > Phase contract per `plans/export-buildfromgit-2026-04-28.md` §6 Phase 2.
 > EXIT: generator compiles + tests pass, coverage on each composer,
@@ -118,7 +118,7 @@ Two parallel POST-WORK agents per CLAUDE.local.md "maximize parallel fan-out":
 - [x] Two Codex round transcripts persisted (`codex-round-p2-postwork-{generator,architecture}.md`).
 - [x] Plan amendments folded into plan §14.
 - [x] `phase-2-tracker.md` finalized.
-- [ ] Phase 2 EXIT commits (single bundle commit + tracker commit — see commit hashes below once made).
+- [x] Phase 2 EXIT commits: `702cad26` (generator + tests) + `1df479f6` (tracker + Codex transcripts + plan §14).
 - [ ] User explicit go to enter Phase 3.
 
 ## Notes for Phase 3 entry
