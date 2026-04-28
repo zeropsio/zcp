@@ -1,109 +1,20 @@
-# Decision recording — record `porter_change` + `field_rationale` facts
+# Drop-in: Worked examples section for `decision_recording.md`
 
-You write source code + zerops.yaml at scaffold; you do NOT author IG /
-KB / yaml comments yet (a sibling content phase reads your facts +
-on-disk artifacts later and synthesizes those surfaces).
+Two append-targets:
+- `internal/recipe/content/briefs/scaffold/decision_recording.md` — primary, carries 5 worked examples
+- `internal/recipe/content/briefs/feature/decision_recording.md` — cross-references scaffold, carries 2 feature-specific examples
 
-For every non-obvious decision, record a structured fact at densest
-context — the moment you make the change. Two subtypes cover the
-codebase scope:
+The verbatim Why prose below is canonical — it's the same prose the
+engine-emit Class B/C facts carried in run-16 (verified against
+`internal/recipe/engine_emitted_facts.go:36-87` lines as of 2026-04-28).
+After Tranche 1 retracts engine-emit, agents have to record this Why
+themselves; these worked examples teach the shape.
 
-## `porter_change` — code or library decisions a porter would have to make
+---
 
-Record whenever you write code that's NOT framework-defaults: bind to
-0.0.0.0, install a specific library, configure CORS exposed-headers,
-mount a same-origin proxy, etc. Engine pre-emits Class B universal-
-for-role facts (bind-and-trust-proxy, sigterm-drain, worker-no-http);
-you fill agent-specific slots via `fill-fact-slot` after consulting
-`zerops_knowledge runtime=<svc-type>`.
+## Append to `briefs/scaffold/decision_recording.md` (after the existing content)
 
-```
-zerops_recipe action=record-fact slug=<slug>
-  fact={
-    topic: "<host>-<short-id>",
-    kind: "porter_change",
-    scope: "<host>/code/<file>",
-    phase: "scaffold",
-    changeKind: "code-addition",
-    library: "<lib-name>",
-    diff: "<the-actual-line-or-block>",
-    why: "<symptom + mechanism + fix at the platform level>",
-    candidateClass: "platform-invariant" | "intersection",
-    candidateHeading: "<surface-shaped heading>",
-    candidateSurface: "CODEBASE_IG" | "CODEBASE_KB",
-    citationGuide: "<topic-id-from-citation-map>"
-  }
-```
-
-## `field_rationale` — non-obvious zerops.yaml field decisions
-
-Record whenever a yaml field carries reasoning that's not self-evident
-from the value (e.g. S3_REGION=us-east-1 is the only region MinIO
-accepts; two separate execOnce keys so a seed failure doesn't roll back
-the schema migration).
-
-```
-zerops_recipe action=record-fact slug=<slug>
-  fact={
-    topic: "<host>-<short-id>",
-    kind: "field_rationale",
-    scope: "<host>/zerops.yaml/<field-path>",
-    phase: "scaffold",
-    fieldPath: "run.envVariables.S3_REGION",
-    fieldValue: "us-east-1",
-    why: "<reason>",
-    alternatives: "<what-fails-if-changed>",
-    compoundReasoning: "<optional, when reasoning spans multiple fields>"
-  }
-```
-
-For compound decisions (e.g. two `initCommands` entries with paired
-reasoning), record one `field_rationale` per field with a shared
-`compoundReasoning` slot. The content sub-agent merges them into one
-yaml comment block.
-
-## Filter rule — when NOT to record
-
-Skip if classification ∈ {`framework-quirk`, `library-metadata`,
-`self-inflicted`} — those have no compatible surface. Record only when
-classification ∈ {`platform-invariant`, `intersection`,
-`scaffold-decision (config|code)`}.
-
-## Examples (run-15 grounded)
-
-- `S3_REGION=us-east-1` because MinIO requires it → `field_rationale`,
-  `scope: apidev/zerops.yaml/run.envVariables.S3_REGION`.
-- `app.enableCors({ exposedHeaders: ['X-Cache'] })` because cross-origin
-  fetch strips the header → `porter_change`,
-  `candidateClass: intersection`, `candidateSurface: CODEBASE_KB`.
-- `$middleware->trustProxies(at: '*')` because L7 forwards X-Forwarded-*
-  → `porter_change`, `candidateClass: platform-invariant`,
-  `candidateSurface: CODEBASE_IG`.
-
-If a porter would ask "why?", record it.
-
-## Git hygiene (carried forward from pre-run-16)
-
-Before the first deploy in any codebase, ensure git identity is set on
-the dev container:
-
-```
-ssh <hostname>dev "git config --global user.name 'zerops-recipe-agent' \
-  && git config --global user.email 'recipe-agent@zerops.io'"
-```
-
-Then for the scaffold commit:
-
-```
-git init
-git add -A
-git commit -m 'scaffold: initial structure + zerops.yaml'
-```
-
-The scaffold sub-agent records git ops in commits, not in fragments —
-the apps-repo publish path needs a clean history precondition. (The
-phase_entry atom names the recovery path when a deploy commit already
-exists from prior runs.)
+---
 
 ## Worked examples — what good fact-recording looks like
 
@@ -284,9 +195,13 @@ TypeOrmModule.forRoot({
 })
 ```
 
-Plus an `initCommands` migrator entry in `zerops.yaml` (see the
-`init-commands-model` atom for the per-deploy-key shape — included
-in this brief only when the plan declares `HasInitCommands: true`).
+Plus an `initCommands` migrator entry in `zerops.yaml`:
+
+```yaml
+run:
+  initCommands:
+    - zsc execOnce ${appVersionId}-migrate --retryUntilSuccessful -- npm run migrate
+```
 
 **The fact you record**:
 
@@ -320,6 +235,8 @@ If you record the heading as `**TypeORM synchronize: false everywhere**`
 (the run-16 shape), refinement has to reshape it. Saving the work at
 recording time is the discipline.
 
+---
+
 ## What "good" Why content looks like across these examples
 
 Each Why names some subset of:
@@ -343,6 +260,8 @@ Each Why names some subset of:
 Cutting any of (1) through (4) weakens the synthesizer's prose. (5)
 is the route-correction; (6) is the surface-correction.
 
+---
+
 ## What "bad" Why content looks like
 
 Avoid:
@@ -359,3 +278,124 @@ Avoid:
   platform-side mechanism — that's library-metadata classification,
   not platform-invariant; usually means the fact shouldn't surface.
 
+---
+
+## Append to `briefs/feature/decision_recording.md` (after the existing content)
+
+---
+
+## Worked examples — feature-phase porter_change shapes
+
+Feature phase records typically look different from scaffold —
+narrower scope, scenario-tied, often a Class D shape (framework ×
+feature). Two canonical examples:
+
+### Worked example F1 — cross-origin custom headers (Class D, cache feature)
+
+**The change you'd make in `src/main.ts`**:
+
+```typescript
+app.enableCors({
+  origin: [process.env.APP_URL, process.env.APP_DEV_URL],
+  credentials: true,
+  exposedHeaders: ['X-Cache', 'X-Cache-Elapsed-Ms'],
+});
+```
+
+**The fact you record**:
+
+```
+zerops_recipe action=record-fact slug=<slug>
+  fact={
+    topic: "api-cors-exposed-headers",
+    kind: "porter_change",
+    scope: "api/code/main.ts",
+    phase: "feature",
+    changeKind: "code-addition",
+    diff: "exposedHeaders: ['X-Cache', 'X-Cache-Elapsed-Ms']",
+    why: "Browsers hide every non-CORS-safelisted response header from JS on cross-origin fetches. The cache panel's X-Cache: HIT|MISS and X-Cache-Elapsed-Ms headers are visible from curl but undefined from the SPA unless the api lists them in app.enableCors({ exposedHeaders: [...] }). Without exposedHeaders, the cache demo silently shows 'undefined' on every request — porter can't tell hit from miss. This is intersection — CORS spec + Zerops cross-origin-by-default subdomain shape.",
+    candidateClass: "intersection",
+    candidateHeading: "Cross-origin custom headers need exposedHeaders",
+    candidateSurface: "CODEBASE_KB",
+    citationGuide: ""
+  }
+```
+
+**Why this Why is good**: feature-phase facts often surface to KB
+(intersection class). The Why explicitly names the trigger (browsers
+hide non-safelisted headers), the symptom (undefined / can't tell
+hit from miss), the fix (exposedHeaders), and the classification
+reason (CORS spec + Zerops subdomain shape). The synthesizer at
+phase 5 has everything to author the KB bullet at 9.0 anchor shape.
+
+### Worked example F2 — streamed proxy duplex (Class D, storage feature)
+
+**The change you'd make in `src/storage/proxy.ts`**:
+
+```typescript
+const upstream = await fetch(s3Url, {
+  method: 'PUT',
+  body: req,           // streamed
+  duplex: 'half',      // required when body is a stream
+});
+```
+
+**The fact you record**:
+
+```
+zerops_recipe action=record-fact slug=<slug>
+  fact={
+    topic: "api-fetch-stream-duplex",
+    kind: "porter_change",
+    scope: "api/code/storage/proxy.ts",
+    phase: "feature",
+    changeKind: "code-addition",
+    diff: "duplex: 'half'",
+    why: "Node 18+ undici fetch rejects body=stream without duplex: 'half' — the request fails with 'TypeError: RequestInit: duplex option is required when sending a body.' This applies to any streamed-body proxy (storage upload, large-file forwarding). The error is at request-build time, not at runtime, so the proxy crashes on first call.",
+    candidateClass: "library-metadata",
+    candidateHeading: "",
+    candidateSurface: "",
+    citationGuide: ""
+  }
+```
+
+**Why this Why is good**: notice the candidate fields are empty.
+This is library-metadata classification (Node 18+ undici quirk) —
+per spec, library-metadata routes to NO surface. Recording it
+preserves the teaching for code comments at the call site, but the
+synthesizer at phase 5 sees the classification and discards from IG/
+KB candidate sets. This is a discard-class fact recorded for
+internal teaching, not for porter-facing surfaces.
+
+If you record this with `candidateSurface: "CODEBASE_KB"` and
+`candidateClass: "platform-invariant"`, the synthesizer ships a KB
+bullet that's actually about Node + undici, not about Zerops. R-17
+classification routing closure depends on getting this distinction
+right at recording time.
+
+---
+
+## Notes for the fresh instance
+
+1. Verbatim Why prose for examples 1, 2, 3 was lifted from
+   `internal/recipe/engine_emitted_facts.go` Class B/C hardcoded Why
+   strings (lines 41-105 as of pre-Tranche-1). After Tranche 1
+   retracts engine-emit, those Why values disappear from the engine —
+   these worked examples are how the deploy-phase agents learn the
+   shape.
+
+2. The "What good vs bad Why looks like" section lives in the
+   scaffold atom only; the feature atom cross-references it.
+
+3. The five scaffold examples cover Class A (engine-stamped IG #1
+   from yaml), Class B (bind, sigterm — universal-for-role), Class C
+   umbrella (own-key-aliases) + per-service (db connect), Class D
+   (framework × scenario, TypeORM synchronize). The two feature
+   examples cover intersection (CORS exposed-headers) and library-
+   metadata-discard (Node undici duplex). Together they span every
+   classification × surface row in the spec compatibility table.
+
+4. Cross-check the verbatim Why quotes against
+   `internal/recipe/engine_emitted_facts.go` lines 41-105 before
+   committing — if the source code has drifted, update the worked
+   examples to match.
