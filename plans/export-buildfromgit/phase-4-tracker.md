@@ -119,7 +119,7 @@ Per plan §7 Phase 4 has TWO MANDATORY PER-EDIT rounds + ONE POST-WORK round. Pl
 - [x] Codex PER-EDIT × 2 + POST-WORK APPROVE (effective verdict after 11 in-place amendments per §10.5).
 - [x] All three Codex round transcripts persisted.
 - [x] `phase-4-tracker.md` finalized.
-- [ ] Phase 4 EXIT commits (atoms + tests + tracker — see commit hashes once made).
+- [x] Phase 4 EXIT commits: `de285a15` (atoms + tests) + `0f49e172` (tracker + Codex transcripts).
 - [ ] User explicit go to enter Phase 5.
 
 ## Notes for Phase 5 entry
