@@ -1,0 +1,281 @@
+internal/topology/types.go:31:// DeployStrategy is the developer-chosen deploy mechanism. Use the named
+internal/topology/types.go:35:type DeployStrategy string
+internal/topology/types.go:42:// ServiceMeta.DeployStrategy. The other three are untyped string
+internal/topology/types.go:44:// surface (ServiceMeta.DeployStrategy) and to plain string fields used
+internal/topology/types.go:47:const StrategyUnset DeployStrategy = "unset"
+internal/topology/types.go:50:	StrategyPushDev = "push-dev"
+internal/topology/types.go:51:	StrategyPushGit = "push-git"
+internal/topology/types.go:52:	StrategyManual  = "manual"
+internal/topology/types.go:55:// PushGitTrigger is the downstream trigger chosen for push-git services.
+internal/topology/types.go:56:// Valid only when DeployStrategy == "push-git". TriggerUnset is the
+internal/topology/types.go:58:// — a push-git meta whose PushGitTrigger field is still empty string on
+internal/topology/types.go:61:type PushGitTrigger string
+internal/topology/types.go:64:	TriggerUnset   PushGitTrigger = "unset"
+internal/topology/types.go:65:	TriggerWebhook PushGitTrigger = "webhook"
+internal/topology/types.go:66:	TriggerActions PushGitTrigger = "actions"
+internal/topology/doc.go:2:// Zerops services. It owns the type axes (Mode, DeployStrategy,
+internal/topology/doc.go:3:// RuntimeClass, PushGitTrigger) and predicates (IsManagedService,
+internal/tools/workflow_develop_test.go:140:		DeployStrategy:    topology.StrategyPushDev,
+internal/tools/workflow_develop_test.go:426:		Strategy:    topology.StrategyPushDev,
+internal/tools/workflow_develop_test.go:482:		Strategy:    topology.StrategyPushDev,
+internal/tools/deploy_strategy_gate_test.go:15:func TestValidateDeployStrategyParam(t *testing.T) {
+internal/tools/deploy_strategy_gate_test.go:34:			err := validateDeployStrategyParam(tt.strategy)
+internal/tools/workflow_strategy.go:18:var validStrategies = map[topology.DeployStrategy]bool{
+internal/tools/workflow_strategy.go:19:	topology.StrategyPushDev: true,
+internal/tools/workflow_strategy.go:20:	topology.StrategyPushGit: true,
+internal/tools/workflow_strategy.go:21:	topology.StrategyManual:  true,
+internal/tools/workflow_strategy.go:28:	Current  topology.DeployStrategy   `json:"current"`
+internal/tools/workflow_strategy.go:29:	Options  []topology.DeployStrategy `json:"options"`
+internal/tools/workflow_strategy.go:53:	// every comparison from here on uses topology.DeployStrategy.
+internal/tools/workflow_strategy.go:54:	strategies := make(map[string]topology.DeployStrategy, len(input.Strategies))
+internal/tools/workflow_strategy.go:56:		s := topology.DeployStrategy(raw)
+internal/tools/workflow_strategy.go:69:	trigger := topology.PushGitTrigger(input.Trigger)
+internal/tools/workflow_strategy.go:76:	if trigger != "" && !anyStrategyIs(strategies, topology.StrategyPushGit) {
+internal/tools/workflow_strategy.go:104:		if strategy == topology.StrategyPushDev && meta.Mode == topology.PlanModeLocalOnly {
+internal/tools/workflow_strategy.go:114:		sameStrategy := meta.DeployStrategy == strategy && meta.StrategyConfirmed
+internal/tools/workflow_strategy.go:115:		sameTrigger := strategy != topology.StrategyPushGit || meta.PushGitTrigger == trigger
+internal/tools/workflow_strategy.go:119:		meta.DeployStrategy = strategy
+internal/tools/workflow_strategy.go:121:		if strategy == topology.StrategyPushGit {
+internal/tools/workflow_strategy.go:126:				meta.PushGitTrigger = trigger
+internal/tools/workflow_strategy.go:130:			meta.PushGitTrigger = ""
+internal/tools/workflow_strategy.go:151:	if anyStrategyIs(strategies, topology.StrategyPushGit) {
+internal/tools/workflow_strategy.go:191:	options := []topology.DeployStrategy{topology.StrategyPushDev, topology.StrategyPushGit, topology.StrategyManual}
+internal/tools/workflow_strategy.go:198:		current := m.DeployStrategy
+internal/tools/workflow_strategy.go:206:			Hint:     fmt.Sprintf(`zerops_workflow action="strategy" strategies={%q:%q}`, m.Hostname, topology.StrategyPushDev),
+internal/tools/workflow_strategy.go:226:func buildStrategyGuidance(rt runtime.Info, strategies map[string]topology.DeployStrategy) string {
+internal/tools/workflow_strategy.go:238:func buildStrategySetupSnapshots(stateDir string, strategies map[string]topology.DeployStrategy, trigger topology.PushGitTrigger) []workflow.ServiceSnapshot {
+internal/tools/workflow_strategy.go:254:		if strategy == topology.StrategyPushGit {
+internal/tools/workflow_strategy.go:267:func anyStrategyIs(strategies map[string]topology.DeployStrategy, strategy topology.DeployStrategy) bool {
+internal/tools/workflow_strategy.go:278:func allStrategiesAre(strategies map[string]topology.DeployStrategy, strategy topology.DeployStrategy) bool {
+internal/tools/deploy_strategy_gate.go:11:// validateDeployStrategyParam gates the strategy parameter to the values
+internal/tools/deploy_strategy_gate.go:20:func validateDeployStrategyParam(strategy string) error {
+internal/tools/deploy_strategy_gate.go:22:	case "", deployStrategyGitPush, topology.StrategyPushDev:
+internal/tools/deploy_strategy_gate.go:24:	case topology.StrategyManual:
+internal/tools/deploy_git_push.go:201:		classification := classifyTransportError(err, topology.StrategyPushGit)
+internal/tools/deploy_local_git.go:178:		classification := classifyTransportError(gitWrap, topology.StrategyPushGit)
+internal/tools/deploy_local_git.go:208:	// If the linked service's meta tracks a PushGitTrigger (Phase A.6 field),
+internal/tools/deploy_local_git.go:283:// service's meta is on push-git but has no PushGitTrigger recorded —
+internal/tools/deploy_local_git.go:290:	if meta == nil || meta.DeployStrategy != topology.StrategyPushGit {
+internal/tools/deploy_local_git.go:293:	if meta.PushGitTrigger != "" {
+internal/tools/deploy_local_git.go:296:	return fmt.Sprintf("service %q uses push-git but has no downstream trigger configured — the push lands in git but Zerops won't build. Run zerops_workflow action=\"strategy\" strategies={%q:%q} trigger=\"webhook|actions\" to finish setup.", hostname, hostname, topology.StrategyPushGit)
+internal/tools/workflow_develop.go:98:	// self-deploy mechanism regardless of meta.DeployStrategy. The strategy
+internal/tools/workflow_adopt_local_test.go:166:		DeployStrategy: topology.StrategyManual,
+internal/tools/workflow_adopt_local_test.go:197:	if got.DeployStrategy != "" {
+internal/tools/workflow_adopt_local_test.go:198:		t.Errorf("DeployStrategy = %q, want empty after link (router prompts)", got.DeployStrategy)
+internal/tools/deploy_local.go:82:		if err := validateDeployStrategyParam(input.Strategy); err != nil {
+internal/tools/deploy_local.go:132:			Strategy:    string(topology.StrategyPushDev),
+internal/tools/deploy_local.go:141:			classification := classifyTransportError(err, string(topology.StrategyPushDev))
+internal/tools/workflow_strategy_test.go:24:			map[string]string{"appdev": topology.StrategyPushDev},
+internal/tools/workflow_strategy_test.go:28:			map[string]string{"appdev": topology.StrategyPushGit},
+internal/tools/workflow_strategy_test.go:32:			map[string]string{"appdev": topology.StrategyManual},
+internal/tools/workflow_strategy_test.go:36:			map[string]string{"appdev": topology.StrategyPushDev, "apidev": topology.StrategyPushDev},
+internal/tools/workflow_strategy_test.go:86:				if meta.DeployStrategy != topology.DeployStrategy(strategy) {
+internal/tools/workflow_strategy_test.go:87:					t.Errorf("%s DeployStrategy: want %q, got %q", hostname, strategy, meta.DeployStrategy)
+internal/tools/workflow_strategy_test.go:119:	input := WorkflowInput{Strategies: map[string]string{"appstage": topology.StrategyPushDev}}
+internal/tools/workflow_strategy_test.go:134:	if meta.DeployStrategy != topology.StrategyPushDev {
+internal/tools/workflow_strategy_test.go:135:		t.Errorf("DeployStrategy on dev-keyed meta: want %q, got %q",
+internal/tools/workflow_strategy_test.go:136:			topology.StrategyPushDev, meta.DeployStrategy)
+internal/tools/workflow_strategy_test.go:176:		DeployStrategy: topology.StrategyPushDev,
+internal/tools/workflow_strategy_test.go:241:	if byHost["appdev"] != topology.StrategyPushDev {
+internal/tools/workflow_strategy_test.go:242:		t.Errorf("appdev current: want %q, got %q", topology.StrategyPushDev, byHost["appdev"])
+internal/tools/workflow_strategy_test.go:258:	input := WorkflowInput{Strategies: map[string]string{"newservice": topology.StrategyPushGit}}
+internal/tools/workflow_strategy_test.go:282:	input := WorkflowInput{Strategies: map[string]string{"appdev": topology.StrategyPushGit}}
+internal/tools/workflow_strategy_test.go:357:				Strategies: map[string]string{"appdev": topology.StrategyPushGit},
+internal/tools/workflow_strategy_test.go:399:		strategies   map[string]topology.DeployStrategy
+internal/tools/workflow_strategy_test.go:403:		{"push-dev", map[string]topology.DeployStrategy{"a": topology.StrategyPushDev}, "Push-Dev", true},
+internal/tools/workflow_strategy_test.go:404:		{"manual", map[string]topology.DeployStrategy{"a": topology.StrategyManual}, "Manual", true},
+internal/tools/workflow_strategy_test.go:405:		{"duplicate deduplicates", map[string]topology.DeployStrategy{"a": topology.StrategyPushDev, "b": topology.StrategyPushDev}, "Push-Dev", true},
+internal/tools/workflow_strategy_test.go:428:	once := buildStrategyGuidance(rt, map[string]topology.DeployStrategy{
+internal/tools/workflow_strategy_test.go:429:		"appdev": topology.StrategyPushDev,
+internal/tools/workflow_strategy_test.go:431:	twice := buildStrategyGuidance(rt, map[string]topology.DeployStrategy{
+internal/tools/workflow_strategy_test.go:432:		"appdev": topology.StrategyPushDev,
+internal/tools/workflow_strategy_test.go:433:		"apidev": topology.StrategyPushDev,
+internal/tools/workflow_strategy_test.go:460:		strategies map[string]topology.DeployStrategy
+internal/tools/workflow_strategy_test.go:461:		target     topology.DeployStrategy
+internal/tools/workflow_strategy_test.go:464:		{"all same", map[string]topology.DeployStrategy{"a": "push-dev", "b": "push-dev"}, "push-dev", true},
+internal/tools/workflow_strategy_test.go:465:		{"mixed", map[string]topology.DeployStrategy{"a": "push-dev", "b": "push-git"}, "push-dev", false},
+internal/tools/workflow_strategy_test.go:466:		{"empty map", map[string]topology.DeployStrategy{}, "push-dev", false},
+internal/tools/workflow_strategy_test.go:468:		{"single match", map[string]topology.DeployStrategy{"a": "manual"}, "manual", true},
+internal/tools/workflow_strategy_test.go:469:		{"single no match", map[string]topology.DeployStrategy{"a": "manual"}, "push-dev", false},
+internal/tools/workflow_strategy_test.go:486:		strategies map[string]topology.DeployStrategy
+internal/tools/workflow_strategy_test.go:487:		target     topology.DeployStrategy
+internal/tools/workflow_strategy_test.go:490:		{"none", map[string]topology.DeployStrategy{"a": "push-dev"}, "push-git", false},
+internal/tools/workflow_strategy_test.go:491:		{"one of mixed", map[string]topology.DeployStrategy{"a": "push-dev", "b": "push-git"}, "push-git", true},
+internal/tools/workflow_strategy_test.go:492:		{"all match", map[string]topology.DeployStrategy{"a": "manual", "b": "manual"}, "manual", true},
+internal/tools/workflow_strategy_test.go:493:		{"empty", map[string]topology.DeployStrategy{}, "push-git", false},
+internal/tools/workflow_adopt_local.go:118:	local.DeployStrategy = ""
+internal/tools/workflow_adopt_local.go:148:	Strategy topology.DeployStrategy `json:"strategy"`
+internal/tools/deploy_ssh.go:124:		if err := validateDeployStrategyParam(input.Strategy); err != nil {
+internal/tools/deploy_ssh.go:173:			Strategy:    string(topology.StrategyPushDev),
+internal/tools/deploy_ssh.go:182:			classification := classifyTransportError(err, string(topology.StrategyPushDev))
+internal/tools/verify_test.go:251:		"app":    {{AttemptedAt: now, SucceededAt: now, Strategy: topology.StrategyPushDev}},
+internal/tools/verify_test.go:252:		"worker": {{AttemptedAt: now, SucceededAt: now, Strategy: topology.StrategyPushDev}},
+internal/tools/workflow_test.go:133:		DeployStrategy:    topology.StrategyPushDev,
+internal/tools/workflow_test.go:186:		DeployStrategy:    topology.StrategyManual,
+internal/tools/workflow_close_test.go:52:			"appdev": {{AttemptedAt: now, SucceededAt: now, Setup: "dev", Strategy: topology.StrategyPushDev}},
+internal/workflow/bootstrap_outputs.go:17:// DeployStrategy, StrategyConfirmed, FirstDeployedAt are preserved so the
+internal/workflow/bootstrap_outputs.go:45:			DeployStrategy:   "",
+internal/workflow/bootstrap_outputs.go:80:// (partial) write doesn't lose BootstrappedAt / DeployStrategy. Without
+internal/workflow/bootstrap_outputs.go:118:// DeployStrategy, StrategyConfirmed, FirstDeployedAt) on meta during a
+internal/workflow/bootstrap_outputs.go:124:	meta.DeployStrategy = existing.DeployStrategy
+internal/workflow/compute_envelope.go:210:		snap.Strategy = meta.DeployStrategy
+internal/workflow/compute_envelope.go:214:		if snap.Strategy == topology.StrategyPushGit {
+internal/workflow/compute_envelope.go:215:			snap.Trigger = meta.PushGitTrigger
+internal/workflow/aggregate_render_probe_test.go:125:			Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: false,
+internal/workflow/aggregate_render_probe_test.go:178:					Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: false,
+internal/workflow/aggregate_render_probe_test.go:190:					Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: false,
+internal/workflow/router_test.go:60:					Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: topology.StrategyPushGit,
+internal/workflow/router_test.go:70:					Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: topology.StrategyPushDev,
+internal/workflow/router_test.go:80:					Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: topology.StrategyManual,
+internal/workflow/router_test.go:129:					Hostname: "apidev", BootstrappedAt: "2026-01-01", DeployStrategy: topology.StrategyPushDev,
+internal/workflow/router_test.go:161:			Hostname: "apidev", BootstrappedAt: "2026-01-01", DeployStrategy: topology.StrategyPushDev,
+internal/workflow/router_test.go:228:			Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: topology.StrategyPushGit,
+internal/workflow/router_test.go:256:			Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: topology.StrategyPushDev,
+internal/workflow/router_test.go:280:			{Hostname: "appdev", BootstrappedAt: "2026-01-01", DeployStrategy: topology.StrategyPushGit},
+internal/workflow/router_test.go:281:			{Hostname: "staleservice", BootstrappedAt: "2026-01-01", DeployStrategy: topology.StrategyPushDev},
+internal/workflow/router_test.go:326:					{Hostname: "appdev", BootstrappedAt: "2026-03-04", DeployStrategy: topology.StrategyPushDev},
+internal/workflow/deploy_guidance_test.go:29:		strategy topology.DeployStrategy
+internal/workflow/deploy_guidance_test.go:32:		{"push-dev", topology.StrategyPushDev, []string{"push-git", "manual"}},
+internal/workflow/deploy_guidance_test.go:33:		{"push-git", topology.StrategyPushGit, []string{"push-dev", "manual"}},
+internal/workflow/deploy_guidance_test.go:34:		{"manual", topology.StrategyManual, []string{"push-dev", "push-git"}},
+internal/workflow/strategy_guidance.go:30:func BuildStrategyGuidance(env Environment, strategies map[string]topology.DeployStrategy) (string, error) {
+internal/workflow/strategy_guidance.go:42:	selected := make(map[topology.DeployStrategy]struct{}, len(strategies))
+internal/workflow/strategy_guidance.go:81:func strategyGuidanceEnvelope(env Environment, strategies map[string]topology.DeployStrategy) StateEnvelope {
+internal/workflow/synthesize_test.go:43:				Strategies: []topology.DeployStrategy{"push-git"},
+internal/workflow/synthesize_test.go:58:func developEnvelope(env Environment, mode topology.Mode, strategy topology.DeployStrategy, runtime topology.RuntimeClass) StateEnvelope {
+internal/workflow/synthesize_test.go:420:			Axes: AxisVector{Phases: []Phase{PhaseDevelopActive}, DeployStates: []DeployState{DeployStateDeployed}, Strategies: []topology.DeployStrategy{topology.StrategyUnset}},
+internal/workflow/synthesize_test.go:430:			{Hostname: "a", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: true, Strategy: topology.StrategyPushDev},
+internal/workflow/synthesize_test.go:758:		Strategy:     topology.StrategyPushGit,
+internal/workflow/synthesize_test.go:780:		Strategy:     topology.StrategyPushGit,
+internal/workflow/synthesize_test.go:1073:			Strategies: []topology.DeployStrategy{topology.StrategyPushDev},
+internal/workflow/synthesize_test.go:1080:			{Hostname: "apidev", Bootstrapped: true, Strategy: topology.StrategyPushDev},
+internal/workflow/synthesize_test.go:1081:			{Hostname: "appdev", Bootstrapped: true, Strategy: topology.StrategyPushDev},
+internal/workflow/deploy_guidance.go:12:	topology.StrategyPushDev: "SSH self-deploy from dev container",
+internal/workflow/deploy_guidance.go:13:	topology.StrategyPushGit: "push to git remote (optional CI/CD)",
+internal/workflow/deploy_guidance.go:14:	topology.StrategyManual:  "you manage deployments yourself",
+internal/workflow/deploy_guidance.go:17:func writeStrategyNote(sb *strings.Builder, current topology.DeployStrategy) {
+internal/workflow/scenarios_test.go:562:			Strategy:     topology.StrategyPushGit,
+internal/workflow/scenarios_test.go:787:			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev, Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true, Status: "READY_TO_DEPLOY"}},
+internal/workflow/scenarios_test.go:791:			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "go@1.22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeSimple, Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true}},
+internal/workflow/scenarios_test.go:795:			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true}},
+internal/workflow/scenarios_test.go:799:			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeLocalStage, Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true}},
+internal/workflow/scenarios_test.go:803:			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev, Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true}},
+internal/workflow/scenarios_test.go:807:			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true}},
+internal/workflow/scenarios_test.go:811:			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", Strategy: topology.StrategyPushGit, Trigger: topology.TriggerWebhook, Bootstrapped: true, Deployed: true}},
+internal/workflow/scenarios_test.go:822:			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", Strategy: topology.StrategyPushGit, Trigger: topology.TriggerWebhook, Bootstrapped: true, Deployed: true}},
+internal/workflow/scenarios_test.go:826:			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev, Strategy: topology.StrategyManual, Bootstrapped: true, Deployed: true}},
+internal/workflow/scenarios_test.go:830:			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "static", RuntimeClass: topology.RuntimeStatic, Mode: topology.ModeStandard, Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true}},
+internal/workflow/scenarios_test.go:834:			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "php-nginx@8.4", RuntimeClass: topology.RuntimeImplicitWeb, Mode: topology.ModeStandard, Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true}},
+internal/workflow/scenarios_test.go:839:				{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true},
+internal/workflow/scenarios_test.go:840:				{Hostname: "appstage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true},
+internal/workflow/scenarios_test.go:850:			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, Strategy: topology.StrategyPushGit, Trigger: topology.TriggerUnset, Bootstrapped: true, Deployed: false}},
+internal/workflow/scenarios_test.go:854:			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, Strategy: topology.StrategyPushGit, Trigger: topology.TriggerActions, Bootstrapped: true, Deployed: false}},
+internal/workflow/scenarios_test.go:858:			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, Strategy: topology.StrategyPushGit, Trigger: topology.TriggerWebhook, Bootstrapped: true, Deployed: false}},
+internal/workflow/scenarios_test.go:862:			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, Strategy: topology.StrategyPushGit, Trigger: topology.TriggerWebhook, Bootstrapped: true, Deployed: false}},
+internal/workflow/scenarios_test.go:868:			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true}},
+internal/workflow/adopt_local_test.go:64:	if result.Meta.DeployStrategy != topology.StrategyManual {
+internal/workflow/adopt_local_test.go:65:		t.Errorf("DeployStrategy = %q, want manual (local-only default)", result.Meta.DeployStrategy)
+internal/workflow/corpus_coverage_test.go:386:					Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true,
+internal/workflow/corpus_coverage_test.go:404:					Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true,
+internal/workflow/corpus_coverage_test.go:714:					Strategy:      topology.StrategyPushGit,
+internal/workflow/corpus_coverage_test.go:734:					Strategy:      topology.StrategyPushGit,
+internal/workflow/corpus_coverage_test.go:753:					Strategy:      topology.StrategyPushGit,
+internal/workflow/service_meta_test.go:21:		DeployStrategy:   topology.StrategyPushDev,
+internal/workflow/service_meta_test.go:46:	if got.DeployStrategy != topology.StrategyPushDev {
+internal/workflow/service_meta_test.go:47:		t.Errorf("deployStrategy: want %s, got %s", topology.StrategyPushDev, got.DeployStrategy)
+internal/workflow/service_meta_test.go:82:		DeployStrategy:   topology.StrategyPushDev,
+internal/workflow/service_meta_test.go:95:	if got.DeployStrategy != topology.StrategyPushDev {
+internal/workflow/service_meta_test.go:96:		t.Errorf("deployStrategy: want %s, got %s", topology.StrategyPushDev, got.DeployStrategy)
+internal/workflow/service_meta_test.go:126:				DeployStrategy:   topology.StrategyPushDev,
+internal/workflow/service_meta_test.go:155:			if got.DeployStrategy != tt.meta.DeployStrategy {
+internal/workflow/service_meta_test.go:156:				t.Errorf("deployStrategy: want %s, got %s", tt.meta.DeployStrategy, got.DeployStrategy)
+internal/workflow/service_meta_test.go:168:		DeployStrategy:   topology.StrategyPushDev,
+internal/workflow/service_meta_test.go:194:		{"StrategyPushDev", topology.StrategyPushDev, "push-dev"},
+internal/workflow/service_meta_test.go:195:		{"StrategyPushGit", topology.StrategyPushGit, "push-git"},
+internal/workflow/service_meta_test.go:196:		{"StrategyManual", topology.StrategyManual, "manual"},
+internal/workflow/service_meta_test.go:217:		DeployStrategy:   topology.StrategyPushGit,
+internal/workflow/service_meta_test.go:248:	if single.DeployStrategy != list[0].DeployStrategy {
+internal/workflow/service_meta_test.go:249:		t.Errorf("DeployStrategy: Read=%q List=%q", single.DeployStrategy, list[0].DeployStrategy)
+internal/workflow/compute_envelope_test.go:68:		DeployStrategy:    topology.StrategyPushDev,
+internal/workflow/compute_envelope_test.go:142:	if appdev.Strategy != topology.DeployStrategy(topology.StrategyPushDev) {
+internal/workflow/compute_envelope_test.go:502:		DeployStrategy:   topology.StrategyPushGit,
+internal/workflow/bootstrap_outputs_test.go:424:// --- C7: Bootstrap always writes empty DeployStrategy ---
+internal/workflow/bootstrap_outputs_test.go:456:	if meta.DeployStrategy != "" {
+internal/workflow/bootstrap_outputs_test.go:457:		t.Errorf("bootstrap must write empty DeployStrategy, got %q", meta.DeployStrategy)
+internal/workflow/bootstrap_outputs_test.go:504:			if meta.DeployStrategy != "" {
+internal/workflow/bootstrap_outputs_test.go:505:				t.Errorf("DeployStrategy: want empty, got %q", meta.DeployStrategy)
+internal/workflow/bootstrap_outputs_test.go:541:	if meta.DeployStrategy != "" {
+internal/workflow/bootstrap_outputs_test.go:542:		t.Errorf("bootstrap must write empty DeployStrategy, got %q", meta.DeployStrategy)
+internal/workflow/bootstrap_outputs_test.go:964:	if meta.DeployStrategy != "" {
+internal/workflow/bootstrap_outputs_test.go:965:		t.Errorf("bootstrap must write empty DeployStrategy, got %q", meta.DeployStrategy)
+internal/workflow/bootstrap_outputs_test.go:1095:// BootstrappedAt, DeployStrategy, StrategyConfirmed, FirstDeployedAt —
+internal/workflow/bootstrap_outputs_test.go:1117:		DeployStrategy:    topology.StrategyPushGit,
+internal/workflow/bootstrap_outputs_test.go:1167:	if got.DeployStrategy != existing.DeployStrategy {
+internal/workflow/bootstrap_outputs_test.go:1168:		t.Errorf("DeployStrategy: got %q, want %q (must be preserved)", got.DeployStrategy, existing.DeployStrategy)
+internal/workflow/bootstrap_outputs_test.go:1194:		DeployStrategy:    topology.StrategyPushDev,
+internal/workflow/bootstrap_outputs_test.go:1236:	if got.DeployStrategy != topology.StrategyPushDev {
+internal/workflow/bootstrap_outputs_test.go:1237:		t.Errorf("DeployStrategy: got %q, want push-dev (preserved through provision)", got.DeployStrategy)
+internal/workflow/bootstrap_outputs_test.go:1263:		DeployStrategy:    topology.StrategyPushGit,
+internal/workflow/bootstrap_outputs_test.go:1279:	if meta.DeployStrategy != topology.StrategyPushGit {
+internal/workflow/bootstrap_outputs_test.go:1280:		t.Errorf("DeployStrategy not preserved: got %q", meta.DeployStrategy)
+internal/workflow/service_meta.go:37:	DeployStrategy    topology.DeployStrategy `json:"deployStrategy,omitempty"`
+internal/workflow/service_meta.go:38:	PushGitTrigger    topology.PushGitTrigger `json:"pushGitTrigger,omitempty"`    // valid only when DeployStrategy==push-git
+internal/workflow/envelope_test.go:72:				Strategy:      topology.StrategyPushDev,
+internal/workflow/atom.go:54:	Strategies    []topology.DeployStrategy
+internal/workflow/atom.go:55:	Triggers      []topology.PushGitTrigger // valid only alongside strategies: [push-git]
+internal/workflow/atom.go:484:func parseStrategies(raw string) []topology.DeployStrategy {
+internal/workflow/atom.go:486:	out := make([]topology.DeployStrategy, 0, len(values))
+internal/workflow/atom.go:488:		out = append(out, topology.DeployStrategy(v))
+internal/workflow/atom.go:495:func parseTriggers(raw string) []topology.PushGitTrigger {
+internal/workflow/atom.go:497:	out := make([]topology.PushGitTrigger, 0, len(values))
+internal/workflow/atom.go:499:		out = append(out, topology.PushGitTrigger(v))
+internal/workflow/envelope.go:93:	Strategy      topology.DeployStrategy `json:"strategy,omitempty"`
+internal/workflow/envelope.go:94:	Trigger       topology.PushGitTrigger `json:"trigger,omitempty"` // set only when Strategy==push-git
+internal/workflow/adopt_local.go:39://     exactly one runtime. Zero runtimes → local-only (DeployStrategy=manual
+internal/workflow/adopt_local.go:99:			DeployStrategy:   topology.StrategyManual,
+internal/workflow/router.go:152:	strategies := make(map[topology.DeployStrategy]int)
+internal/workflow/router.go:154:		if s := m.DeployStrategy; s != "" {
+internal/workflow/router.go:160:	var dominant topology.DeployStrategy
+internal/workflow/router.go:171:	if dominant == topology.StrategyPushGit {
+internal/ops/deploy_failure_signals.go:216:			strategies: []string{string(topology.StrategyPushDev)},
+internal/ops/deploy_failure_signals.go:223:			strategies: []string{topology.StrategyPushGit},
+internal/ops/deploy_failure_signals.go:231:			strategies: []string{topology.StrategyPushGit},
+internal/ops/deploy_failure_test.go:336:				Strategy: string(topology.StrategyPushDev),
+internal/ops/deploy_failure_test.go:350:				Strategy: topology.StrategyPushGit,
+internal/ops/deploy_failure_test.go:364:				Strategy: topology.StrategyPushGit,
+docs/spec-workflows.md:85:  DeployStrategy    DeployStrategy  // push-dev | push-git | manual (empty until set)
+docs/spec-workflows.md:86:  PushGitTrigger    PushGitTrigger  // webhook | actions (push-git only)
+docs/spec-workflows.md:94:The three axis-bearing fields (`Mode`, `DeployStrategy`, `PushGitTrigger`)
+docs/spec-workflows.md:110:    Evidenced --> StrategySet: action="strategy"<br/>(DeployStrategy set)
+docs/spec-workflows.md:114:        DeployStrategy empty.
+docs/spec-workflows.md:609:   - `DeployStrategy` = **empty** (NEVER set during bootstrap)
+docs/spec-workflows.md:680:   - `DeployStrategy` = empty
+docs/spec-workflows.md:760:**If strategy is NOT set** (DeployStrategy empty in meta):
+docs/spec-workflows.md:767:Strategy is always read fresh from `ServiceMeta.DeployStrategy` — no caching. Agent can change strategy at any time via `zerops_workflow action="strategy"`.
+docs/spec-workflows.md:800:- Writes to ServiceMeta.DeployStrategy.
+docs/spec-workflows.md:1044:| E2 | Bootstrap creates ServiceMeta with empty DeployStrategy |
+docs/spec-workflows.md:1050:| E8 | Runtime meta is pair-keyed, not hostname-keyed. Every managed runtime service is represented by exactly one ServiceMeta file keyed by m.Hostname. In container+standard and local+standard modes that single file represents two live hostnames — one in m.Hostname, its pair in m.StageHostname. In dev/simple/local-only modes m.StageHostname is empty. Consequences: (a) any code that maps hostnames → metas MUST iterate m.Hostnames() or use workflow.ManagedRuntimeIndex, never keying on m.Hostname alone; (b) lifecycle stamps (FirstDeployedAt, DeployStrategy) written to either half apply to the pair as a whole; (c) the envelope pipeline deliberately splits the pair into two ServiceSnapshots for atom filtering — that split is a render concern, not a storage concern. Enforced by TestNoInlineManagedRuntimeIndex. |
+docs/spec-workflows.md:1084:| D2a | First deploy always uses the default self-deploy mechanism regardless of meta.DeployStrategy; `push-git` / `manual` take effect only after `FirstDeployedAt` is stamped |
+docs/spec-workflows.md:1227:1. **Meta merge** (`writeProvisionMetas`, `writeBootstrapOutputs`): when an existing complete `ServiceMeta` is detected for the runtime hostname AND the target carries `IsExisting=true`, the about-to-be-written meta is merged with the existing one. Upgrade fields (`Mode`, `StageHostname`) come from the plan; user-authored fields (`BootstrappedAt`, `DeployStrategy`, `StrategyConfirmed`, `FirstDeployedAt`) are preserved. Without this, a dev→standard upgrade would silently revert the user's strategy choice and lose the original bootstrap date.
+docs/spec-knowledge-distribution.md:376:- Fields NOT set: `BootstrappedAt` (empty), `DeployStrategy` (empty).
+docs/spec-knowledge-distribution.md:386:- `DeployStrategy` stays empty — set separately by `action="strategy"`.
+docs/spec-knowledge-distribution.md:401:`zerops_workflow action="strategy"` updates `ServiceMeta.DeployStrategy` for specified hostnames. Validation: value must be `push-dev`, `push-git`, or `manual`. The update is written atomically.
+docs/spec-knowledge-distribution.md:411:- `ServiceSnapshot.Strategy` = `meta.DeployStrategy` (or `StrategyUnset` if empty).
+docs/audit-bootstrap-develop-team-plan.md:28:   - `ServiceMeta` per hostname at `.zcp/state/services/{hostname}.json` — `Mode`, `StageHostname`, `DeployStrategy`, `StrategyConfirmed`, `Environment`, `BootstrapSession`, `BootstrappedAt`.
+docs/spec-local-dev.md:201:    DeployStrategy    DeployStrategy `json:"deployStrategy,omitempty"`
+docs/spec-local-dev.md:202:    PushGitTrigger    PushGitTrigger `json:"pushGitTrigger,omitempty"`    // webhook | actions — push-git only
+docs/spec-local-dev.md:210:Under Release B all three axis-bearing fields (`Mode`, `DeployStrategy`,
+docs/spec-local-dev.md:211:`PushGitTrigger`) are typed Go enums rather than bare strings — the
+docs/spec-local-dev.md:359:`PushGitTrigger` is persisted on ServiceMeta. The `handleStrategy`
+docs/spec-architecture.md:54:- Types: `Mode`, `DeployStrategy`, `RuntimeClass`, `PushGitTrigger`.
+docs/spec-architecture.md:122:converted to `topology.Mode`, `topology.DeployStrategy`, etc., before
+docs/archive/spec-develop-flow-current.md:384:Old metas with `DeployStrategy="push-dev"` + `StrategyConfirmed=false` return `""` (backward compat).
+docs/archive/audit-lifecycle-team-findings.md:83:   internally). Metas are written with `DeployStrategy=""`.
+docs/archive/spec-lifecycle-analysis.md:12:| Stage | DeployStrategy | StrategyConfirmed | BootstrappedAt | IsComplete() | EffectiveStrategy() |
+docs/archive/spec-lifecycle-analysis.md:26:There is exactly ONE code path that sets `DeployStrategy`:
+docs/archive/spec-lifecycle-analysis.md:29:handleStrategy() → meta.DeployStrategy = strategy; meta.StrategyConfirmed = true
+docs/archive/spec-lifecycle-analysis.md:34:No other code writes to `DeployStrategy`. Not bootstrap, not develop, not deploy.
+docs/archive/spec-lifecycle-analysis.md:44:  → writeBootstrapOutputs (DeployStrategy="", BootstrappedAt=now)
+docs/archive/spec-lifecycle-analysis.md:244:│         DeployStrategy=""                DeployStrategy=""       │
+docs/archive/spec-lifecycle-analysis.md:258:│  → Sets DeployStrategy + StrategyConfirmed=true                   │
+docs/archive/audit-session-design.md:371:case StrategyManual:

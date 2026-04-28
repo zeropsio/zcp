@@ -31,7 +31,7 @@ This conflation manifests as 21 root problems documented across multi-round Code
 |---|---|---|---|---|
 | R1 | Atom body | 🔴 | `develop-manual-deploy.md` shows `zerops_deploy` calls — contradicts spec D7 "agent informs only" | atom L14-17 vs `spec-workflows.md:788` |
 | R2 | Atom corpus | 🔴 | `record-deploy` action is orphan — no atom mentions it | `workflow_record_deploy.go` vs grep empty |
-| R3 | Envelope | 🔴 | `Deployed` field has split semantic (push-dev=build landed; push-git=git push succeeded) | `compute_envelope.go:243-256` |
+| R3 | Envelope | 🔴 | `Deployed` field has split semantic (push-dev=build landed; push-git=git push succeeded) | `compute_envelope.go:206-210`, `compute_envelope.go:262-272`, `deploy_git_push.go:215-229` (Codex PRE-WORK 2026-04-28: stale `:243-256` citation corrected) |
 | R4 | Tool path | 🔴 | Subdomain auto-enable SKIP for entire push-git path | `deploy_ssh.go:195-202` vs `deploy_git_push.go:215-232` |
 | R5 | Tool path | 🔴 | Pre-flight harness softer for git-push (env vars, deployFiles, setup-match skip) | `deploy_ssh.go:139-158` |
 | R6 | Handler | 🟡 | Container handler missing `trackTriggerMissingWarning` (local has it) | `deploy_local_git.go:212-296` vs container |
