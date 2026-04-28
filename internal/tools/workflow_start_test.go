@@ -125,8 +125,12 @@ func TestHandleStart_SubagentMisuse_BootstrapActive_RecipeStartRejected(t *testi
 }
 
 // TestHandleStart_ImmediateWorkflow_NotRejected — export is the only
-// stateless immediate workflow (cicd retired); active-session check must
-// not apply to it.
+// stateless immediate workflow (cicd retired); the active-session check
+// must not apply to it. Phase 3 routes both invocation shapes through
+// handleExport, which fails fast with a nil-client error rather than
+// the legacy static atom — that nil-client error is fine, but the
+// active-session SUBAGENT_MISUSE error MUST NOT fire (the route bypass
+// before handleStart is what we're pinning).
 func TestHandleStart_ImmediateWorkflow_NotRejected(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -140,9 +144,6 @@ func TestHandleStart_ImmediateWorkflow_NotRejected(t *testing.T) {
 		"action":   "start",
 		"workflow": "export",
 	})
-	if result.IsError {
-		t.Fatalf("export start should not be rejected inside an active recipe, got: %s", getTextContent(t, result))
-	}
 	text := getTextContent(t, result)
 	if strings.Contains(text, "SUBAGENT_MISUSE") {
 		t.Errorf("export start must not emit SUBAGENT_MISUSE, got: %s", text)

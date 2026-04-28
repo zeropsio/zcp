@@ -20,6 +20,7 @@ const (
 	workflowBootstrap = workflow.WorkflowBootstrap
 	workflowDevelop   = workflow.WorkflowDevelop
 	workflowRecipe    = workflow.WorkflowRecipe
+	workflowExport    = "export"
 )
 
 // WorkflowInput is the input type for zerops_workflow.
@@ -169,6 +170,14 @@ func RegisterWorkflow(srv *mcp.Server, client platform.Client, httpClient ops.HT
 				fmt.Sprintf("Workflow %q requires action=\"start\"", input.Workflow),
 				fmt.Sprintf(`Use action="start" workflow=%q intent="..."`, input.Workflow)), WithRecoveryStatus()), nil, nil
 		}
+		// Export is the only immediate workflow today and has handler-side
+		// orchestration (probe → generate → publish multi-call narrowing
+		// per plan §3.5). Route to handleExport instead of the legacy atom-
+		// guidance path. Other immediate workflows fall through to the
+		// stateless atom-guidance synthesizer.
+		if input.Workflow == workflowExport {
+			return handleExport(ctx, projectID, engine, client, input, sshDeployer, stateDir, rt)
+		}
 		guidance, err := synthesizeImmediateGuidance(input.Workflow, engine, rt)
 		if err != nil {
 			return convertError(err, WithRecoveryStatus()), nil, nil
@@ -208,6 +217,17 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 
 	switch input.Action {
 	case "start":
+		// Phase 3 — export workflow has handler-based orchestration that
+		// MUST run for both invocation shapes (`workflow="export"` no-action
+		// AND `action="start" workflow="export"`). Without this fork, the
+		// `action="start"` path falls through to `handleStart` and ends up
+		// at `synthesizeImmediateGuidance` returning the legacy static atom
+		// — split-brain UX flagged by Codex Phase 3 POST-WORK Blocker 2.
+		// Phase 4 deletes the static atom; converging both paths here
+		// keeps responses coherent in the meantime.
+		if input.Workflow == workflowExport {
+			return handleExport(ctx, projectID, engine, client, input, sshDeployer, stateDir, rt)
+		}
 		return handleStart(ctx, projectID, engine, client, cache, input, rt)
 	case "reset":
 		return handleReset(ctx, engine, client, projectID)

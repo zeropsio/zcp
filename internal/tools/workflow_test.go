@@ -37,10 +37,13 @@ func TestWorkflowTool_NoParams_ReturnsError(t *testing.T) {
 	}
 }
 
-// TestWorkflowTool_Immediate_Export hits the static-guidance branch for
-// export. Under plan phase A.8 the export atom is gated to container env
-// only (local-native export is deferred), so the test runs under a
-// container-flavored runtime.Info.
+// TestWorkflowTool_Immediate_Export verifies the export workflow's
+// defensive nil-client / empty-projectID gates. Pre-Phase-3 the path
+// returned the static export.md atom; post-Phase-3 it routes to
+// handleExport which requires API access for Discover. With a nil
+// client the handler returns a structured error pointing at ZCP
+// configuration. Live integration paths exercise the full multi-call
+// flow in workflow_export_test.go (Phase 3).
 func TestWorkflowTool_Immediate_Export(t *testing.T) {
 	t.Parallel()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
@@ -48,12 +51,12 @@ func TestWorkflowTool_Immediate_Export(t *testing.T) {
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{"workflow": "export"})
 
-	if result.IsError {
-		t.Errorf("unexpected IsError: %s", getTextContent(t, result))
+	if !result.IsError {
+		t.Errorf("expected IsError when client is nil, got: %s", getTextContent(t, result))
 	}
 	text := getTextContent(t, result)
-	if text == "" {
-		t.Error("expected non-empty workflow content")
+	if !strings.Contains(text, "Platform client unavailable") {
+		t.Errorf("expected nil-client guidance, got: %s", text)
 	}
 }
 
@@ -268,43 +271,30 @@ func TestWorkflowTool_Action_Start_Develop_IncompleteMetas(t *testing.T) {
 	}
 }
 
+// TestWorkflowTool_Action_Start_Immediate verifies the export
+// invocation through the action="start" path. Phase 3 routes both
+// no-action AND action=start invocations of workflow="export" through
+// handleExport (Codex Phase 3 POST-WORK Blocker 2 — no split-brain
+// between the two entry shapes). With a nil client the handler errors
+// out the same way as the no-action path; the test pins that
+// equivalence.
 func TestWorkflowTool_Action_Start_Immediate(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name     string
-		workflow string
-	}{
-		{"export", "export"},
+	engine := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, nil, nil, "proj1", nil, nil, engine, nil, "", "", nil, nil, runtime.Info{InContainer: true, ServiceName: "zcpx"})
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "export",
+	})
+
+	if !result.IsError {
+		t.Fatalf("expected nil-client error from handleExport, got: %s", getTextContent(t, result))
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			// Export atom is gated to container env under plan A.8 — run the
-			// test in container-flavored runtime so guidance synthesizes.
-			engine := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
-			srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-			RegisterWorkflow(srv, nil, nil, "proj1", nil, nil, engine, nil, "", "", nil, nil, runtime.Info{InContainer: true, ServiceName: "zcpx"})
-
-			result := callTool(t, srv, "zerops_workflow", map[string]any{
-				"action":   "start",
-				"workflow": tt.workflow,
-			})
-
-			if result.IsError {
-				t.Errorf("unexpected error: %s", getTextContent(t, result))
-			}
-			text := getTextContent(t, result)
-			var resp immediateResponse
-			if err := json.Unmarshal([]byte(text), &resp); err != nil {
-				t.Fatalf("failed to parse immediateResponse: %v", err)
-			}
-			if resp.Workflow != tt.workflow {
-				t.Errorf("workflow = %q, want %q", resp.Workflow, tt.workflow)
-			}
-			if resp.Guidance == "" {
-				t.Error("expected non-empty guidance")
-			}
-		})
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "Platform client unavailable") {
+		t.Errorf("expected nil-client guidance, got: %s", text)
 	}
 }
 
@@ -314,13 +304,16 @@ func TestWorkflowTool_Action_Start_ImmediateNoSession(t *testing.T) {
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, nil, nil, "proj1", nil, nil, engine, nil, "", "", nil, nil, runtime.Info{})
 
-	// Start an immediate workflow — should NOT create a session.
+	// Start an immediate workflow — even on the new export path, no
+	// session must be created. The defensive nil-client error fires
+	// before any state mutation, satisfying both the original "no
+	// session" intent AND the Phase 3 routing change.
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",
 		"workflow": "export",
 	})
-	if result.IsError {
-		t.Errorf("unexpected error: %s", getTextContent(t, result))
+	if !result.IsError {
+		t.Errorf("expected error from nil-client handleExport, got: %s", getTextContent(t, result))
 	}
 
 	// Verify no session was created.

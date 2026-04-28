@@ -14,6 +14,11 @@ import (
 // expansion if this header is missing or not on line 1.
 const preprocessorHeader = "#zeropsPreprocessor=on\n"
 
+// importModeSimple is emitted when a stage-half source or simple-mode
+// source re-imports — the bundle collapses to a standalone runtime
+// with no dev to cross-deploy from. Per plan §3.3 (β).
+const importModeSimple = "simple"
+
 // ExportBundle is the generator output for the export-buildFromGit
 // workflow. Self-referential single-repo shape per plan §3.1:
 // zerops-project-import.yaml + zerops.yaml + code, all checked into
@@ -321,11 +326,11 @@ func mapImportMode(source topology.Mode) string {
 	case topology.ModeStandard, topology.ModeDev, topology.ModeLocalStage:
 		return "dev"
 	case topology.ModeStage, topology.ModeSimple:
-		return "simple"
+		return importModeSimple
 	case topology.ModeLocalOnly:
 		return "local-only"
 	default:
-		return "simple"
+		return importModeSimple
 	}
 }
 
