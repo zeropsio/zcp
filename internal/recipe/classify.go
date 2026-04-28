@@ -200,7 +200,15 @@ func IsLikelySelfInflicted(r FactRecord) bool {
 // sub-agent author has a hook to look up the exact rule that the
 // fact failed on, and to either re-record with corrected shape or
 // accept the discard.
+//
+// Run-16 §5.6: only the legacy platform-trap shape (Kind="") feeds
+// V-1's classifier. New-kind records carry their own CandidateClass
+// slot filled at record time by the agent (porter_change) or engine
+// (tier_decision) — no auto-override applies.
 func ClassifyWithNotice(r FactRecord) (Classification, string) {
+	if r.Kind != "" {
+		return "", ""
+	}
 	base := Classify(r)
 	if base == ClassSelfInflicted && IsLikelySelfInflicted(r) && r.SurfaceHint != "self-inflicted" {
 		notice := fmt.Sprintf(

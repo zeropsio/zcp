@@ -22,6 +22,93 @@ func TestSession_EnterPhase_MustBeAdjacentForward(t *testing.T) {
 	}
 }
 
+// Run-16 §6.1 — phase enum extends to 7. Walk every adjacency the new
+// pipeline introduces and confirm non-adjacent transitions still error.
+
+func TestPhase_AdjacentForward_CodebaseContentAfterFeature(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	log := OpenFactsLog(filepath.Join(dir, "facts.jsonl"))
+	s := NewSession("synth-showcase", log, dir, nil)
+	for _, p := range []Phase{PhaseProvision, PhaseScaffold, PhaseFeature} {
+		if _, _, err := s.CompletePhase(nil); err != nil {
+			t.Fatalf("CompletePhase %q: %v", s.Current, err)
+		}
+		if err := s.EnterPhase(p); err != nil {
+			t.Fatalf("EnterPhase %q: %v", p, err)
+		}
+	}
+	if _, _, err := s.CompletePhase(nil); err != nil {
+		t.Fatalf("CompletePhase feature: %v", err)
+	}
+	if err := s.EnterPhase(PhaseCodebaseContent); err != nil {
+		t.Errorf("EnterPhase codebase-content after feature should succeed: %v", err)
+	}
+}
+
+func TestPhase_AdjacentForward_EnvContentAfterCodebaseContent(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	log := OpenFactsLog(filepath.Join(dir, "facts.jsonl"))
+	s := NewSession("synth-showcase", log, dir, nil)
+	for _, p := range []Phase{PhaseProvision, PhaseScaffold, PhaseFeature, PhaseCodebaseContent} {
+		if _, _, err := s.CompletePhase(nil); err != nil {
+			t.Fatalf("CompletePhase %q: %v", s.Current, err)
+		}
+		if err := s.EnterPhase(p); err != nil {
+			t.Fatalf("EnterPhase %q: %v", p, err)
+		}
+	}
+	if _, _, err := s.CompletePhase(nil); err != nil {
+		t.Fatalf("CompletePhase codebase-content: %v", err)
+	}
+	if err := s.EnterPhase(PhaseEnvContent); err != nil {
+		t.Errorf("EnterPhase env-content after codebase-content should succeed: %v", err)
+	}
+}
+
+func TestPhase_AdjacentForward_FinalizeAfterEnvContent(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	log := OpenFactsLog(filepath.Join(dir, "facts.jsonl"))
+	s := NewSession("synth-showcase", log, dir, nil)
+	for _, p := range []Phase{PhaseProvision, PhaseScaffold, PhaseFeature, PhaseCodebaseContent, PhaseEnvContent} {
+		if _, _, err := s.CompletePhase(nil); err != nil {
+			t.Fatalf("CompletePhase %q: %v", s.Current, err)
+		}
+		if err := s.EnterPhase(p); err != nil {
+			t.Fatalf("EnterPhase %q: %v", p, err)
+		}
+	}
+	if _, _, err := s.CompletePhase(nil); err != nil {
+		t.Fatalf("CompletePhase env-content: %v", err)
+	}
+	if err := s.EnterPhase(PhaseFinalize); err != nil {
+		t.Errorf("EnterPhase finalize after env-content should succeed: %v", err)
+	}
+}
+
+func TestPhase_NonAdjacent_FeatureSkipsToFinalize_Errors(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	log := OpenFactsLog(filepath.Join(dir, "facts.jsonl"))
+	s := NewSession("synth-showcase", log, dir, nil)
+	for _, p := range []Phase{PhaseProvision, PhaseScaffold, PhaseFeature} {
+		if _, _, err := s.CompletePhase(nil); err != nil {
+			t.Fatalf("CompletePhase %q: %v", s.Current, err)
+		}
+		if err := s.EnterPhase(p); err != nil {
+			t.Fatalf("EnterPhase %q: %v", p, err)
+		}
+	}
+	if _, _, err := s.CompletePhase(nil); err != nil {
+		t.Fatalf("CompletePhase feature: %v", err)
+	}
+	if err := s.EnterPhase(PhaseFinalize); err == nil {
+		t.Error("EnterPhase finalize directly after feature should error (non-adjacent post-run-16)")
+	}
+}
+
 func TestSession_PhaseFlow(t *testing.T) {
 	t.Parallel()
 

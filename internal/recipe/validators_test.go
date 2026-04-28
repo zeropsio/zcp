@@ -386,20 +386,20 @@ none.
 	}
 }
 
-// TestValidateCLAUDE_TooLong_Flagged — run-10-readiness §P. A CLAUDE.md
-// over 60 lines emits `claude-md-too-long`. The reference
-// (laravel-showcase-app/CLAUDE.md, 33 lines) sets the upper bound;
-// run-9 shipped 99-line CLAUDE.md files because the old validator
-// pressured authors to ADD sections during finalize iteration.
+// TestValidateCLAUDE_TooLong_Flagged — run-16 §8.1. CLAUDE.md is a
+// /init-shape codebase guide; bodies over 80 lines (run-16 cap) emit
+// `claude-md-too-long`. Updated from the run-10 60-line cap and the
+// `## Zerops service facts` heading shape — both retired in §6.7a +
+// §15 in favor of the Zerops-free /init structure.
 func TestValidateCLAUDE_TooLong_Flagged(t *testing.T) {
 	t.Parallel()
 
 	var b strings.Builder
-	b.WriteString("# CLAUDE.md — api\n\n## Zerops service facts\n\n")
-	for range 70 {
-		b.WriteString("filler fact line for bulk size\n")
+	b.WriteString("# api\n\nNestJS REST API.\n\n## Build & run\n\n")
+	for range 90 {
+		b.WriteString("- npm run filler-script-line\n")
 	}
-	b.WriteString("\n## Notes\n\none note.\n")
+	b.WriteString("\n## Architecture\n\n- src/main.ts\n")
 	body := []byte(b.String())
 	vs, err := validateCodebaseCLAUDE(context.Background(),
 		"/srv/apidev/CLAUDE.md", body, SurfaceInputs{Plan: &Plan{}})
@@ -407,7 +407,7 @@ func TestValidateCLAUDE_TooLong_Flagged(t *testing.T) {
 		t.Fatalf("validate: %v", err)
 	}
 	if !containsCode(vs, "claude-md-too-long") {
-		t.Errorf("expected claude-md-too-long for 70-line body, got %+v", vs)
+		t.Errorf("expected claude-md-too-long for 90-line body, got %+v", vs)
 	}
 }
 
@@ -632,36 +632,25 @@ func TestPrinciples_InitCommandsCoversArbitraryStaticKey(t *testing.T) {
 			t.Errorf("feature brief missing init-commands-model anchor %q", anchor)
 		}
 	}
-	if !strings.Contains(brief.Body, "key shape #3") {
-		t.Errorf("content_extension.md pointer to key shape #3 missing from feature brief")
-	}
+	// Run-16 §6.2 — `content_extension.md` was retired from the feature
+	// brief; the init-commands-model atom (still embedded) carries the
+	// three-key-shape teaching directly via `principles/init-commands-model.md`.
+	// The "key shape #3" cross-include from content_extension.md no
+	// longer applies.
 }
 
-// TestBrief_Scaffold_ContainsValidatorTripwires — run-10-readiness §Q3.
-// The "Validator tripwires" section of content_authoring.md surfaces
-// six finalize-time validator rules as author-time guidance so
-// sub-agents pre-empt the iteration cost observed in run 9.
+// TestBrief_Scaffold_ContainsValidatorTripwires — RETIRED at run-16.
+// The Validator tripwires section lived in `content_authoring.md`
+// (15.3 KB) which scaffold no longer embeds (run-16 §6.2). Tripwires
+// are enforced at multiple layers:
+//   - record-time slot-shape refusal (slot_shape.go)
+//   - phase 5 codebase-content brief synthesis_workflow.md
+//   - finalize-time validators (validators_codebase.go)
+//
+// All four legacy tripwires still fire — they just no longer come
+// from a scaffold-brief teaching section.
 func TestBrief_Scaffold_ContainsValidatorTripwires(t *testing.T) {
-	t.Parallel()
-
-	plan := syntheticShowcasePlan()
-	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
-	if err != nil {
-		t.Fatalf("BuildScaffoldBrief: %v", err)
-	}
-	for _, anchor := range []string{
-		"Validator tripwires",
-		"item #1 is engine-owned",
-		"scaffold-only filenames",
-		"porter voice",
-		"Tier README intro extract",
-		"one causal word per block",
-		"CLAUDE.md: 30–50 lines",
-	} {
-		if !strings.Contains(brief.Body, anchor) {
-			t.Errorf("scaffold brief Validator tripwires missing anchor %q", anchor)
-		}
-	}
+	t.Skip("retired at run-16; tripwire enforcement moved to slot-shape refusal + finalize validators")
 }
 
 // TestBrief_Scaffold_ContainsGitInitMandate — run-11 gap Q-1.
@@ -752,58 +741,35 @@ func TestValidateCodebaseIG_PlainOrderedList_Rejected(t *testing.T) {
 	}
 }
 
-// TestBrief_Scaffold_IGMandateHeadings — run-11 gap R-2. Brief
-// mandates `### N. <title>` headers explicitly.
+// TestBrief_Scaffold_IGMandateHeadings — RETIRED at run-16. The
+// `### N. <title>` IG-shape mandate is now enforced by slot-shape
+// refusal at record-fragment time (slot_shape.go::checkSlottedIG)
+// for `codebase/<h>/integration-guide/<n>` slots, and by the
+// codebase-content brief's `synthesis_workflow.md` atom. Scaffold no
+// longer authors IG content (run-16 §6.2). Coverage moved to:
+//   - TestCheckSlotShape_SlottedIG_RefusesNoHeading (slot_shape_test.go)
+//   - TestCheckSlotShape_SlottedIG_AcceptsSingleHeading
 func TestBrief_Scaffold_IGMandateHeadings(t *testing.T) {
-	t.Parallel()
-
-	plan := syntheticShowcasePlan()
-	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
-	if err != nil {
-		t.Fatalf("BuildScaffoldBrief: %v", err)
-	}
-	if !strings.Contains(brief.Body, "### 2. <title>") {
-		t.Errorf("scaffold brief must mandate `### 2. <title>` shape; not found")
-	}
+	t.Skip("retired at run-16; coverage moved to slot-shape refusal tests")
 }
 
-// TestBrief_Scaffold_ContainsSlotHostnameTripwire — run-11 gap N-2.
-// Scaffold brief's Validator-tripwires section names the slot-vs-
-// codebase distinction explicitly so sub-agents preempt the run-10
-// scaffold-app mistake (5 fragments under codebase/appdev/*).
+// TestBrief_Scaffold_ContainsSlotHostnameTripwire — RETIRED at run-16.
+// The slot-vs-codebase tripwire was scaffold-brief teaching for an
+// authoring path scaffold no longer owns. Slot validity is enforced by
+// `validateFragmentID` + `slot_shape.checkSlotShape` regardless of
+// authoring sub-agent.
 func TestBrief_Scaffold_ContainsSlotHostnameTripwire(t *testing.T) {
-	t.Parallel()
-
-	plan := syntheticShowcasePlan()
-	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
-	if err != nil {
-		t.Fatalf("BuildScaffoldBrief: %v", err)
-	}
-	for _, anchor := range []string{
-		"cb.Hostname",
-		"slot hostname",
-		"appdev",
-	} {
-		if !strings.Contains(brief.Body, anchor) {
-			t.Errorf("scaffold brief slot tripwire missing anchor %q", anchor)
-		}
-	}
+	t.Skip("retired at run-16; scaffold doesn't author per-codebase slots anymore")
 }
 
-// TestBrief_Feature_ContainsSelfInflictedLitmus — V-5 cross-reference
-// in the feature brief. Feature sub-agents face the same temptation;
-// the litmus must follow them across phase boundaries.
+// TestBrief_Feature_ContainsSelfInflictedLitmus — RETIRED at run-16.
+// The self-inflicted litmus lived in `content_extension.md` which the
+// feature brief no longer embeds (run-16 §6.2 swap to
+// `decision_recording.md`). The classifier still applies the
+// V-1 self-inflicted auto-override (classify.go::IsLikelySelfInflicted)
+// — that's the load-bearing path.
 func TestBrief_Feature_ContainsSelfInflictedLitmus(t *testing.T) {
-	t.Parallel()
-
-	plan := syntheticShowcasePlan()
-	brief, err := BuildFeatureBrief(plan)
-	if err != nil {
-		t.Fatalf("BuildFeatureBrief: %v", err)
-	}
-	if !strings.Contains(brief.Body, "Self-inflicted litmus") {
-		t.Errorf("feature brief missing Self-inflicted litmus reference, got body without anchor")
-	}
+	t.Skip("retired at run-16; classifier-side V-1 override is the load-bearing path")
 }
 
 // TestBrief_Scaffold_UnderCap_WithValidatorTripwires — run-10-readiness
@@ -904,26 +870,16 @@ func TestBrief_Scaffold_IncludesHTTPSectionForHTTPRole(t *testing.T) {
 	}
 }
 
-// TestBrief_Scaffold_KBGuidanceMatchesTopicFormat — run-10-readiness §O.
-// The scaffold brief body teaches `**Topic** — prose` and explicitly
-// bans the `**symptom**:` triple for KB.
+// TestBrief_Scaffold_KBGuidanceMatchesTopicFormat — RETIRED at run-16.
+// KB topic-format teaching moved to:
+//   - `briefs/codebase-content/synthesis_workflow.md` (authoring atom for phase 5)
+//   - `slot_shape.checkCodebaseKB` (record-time refusal for non-`**Topic** —` bullets)
+//
+// Scaffold doesn't author KB at run-16. Coverage on the new path:
+//   - TestCheckSlotShape_KB_RefusesNonTopicBullet (slot_shape_test.go)
+//   - TestCheckSlotShape_KB_AcceptsTopicShape
 func TestBrief_Scaffold_KBGuidanceMatchesTopicFormat(t *testing.T) {
-	t.Parallel()
-
-	plan := syntheticShowcasePlan()
-	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
-	if err != nil {
-		t.Fatalf("BuildScaffoldBrief: %v", err)
-	}
-	for _, anchor := range []string{
-		"**Topic**",
-		"Do NOT use `**symptom**:`",
-		"claude-md/notes",
-	} {
-		if !strings.Contains(brief.Body, anchor) {
-			t.Errorf("scaffold brief missing KB anchor %q", anchor)
-		}
-	}
+	t.Skip("retired at run-16; coverage moved to slot-shape refusal + codebase-content brief")
 }
 
 // TestValidateCodebaseYAML_MultiLineBlockWithOneCausalWord_Passes —

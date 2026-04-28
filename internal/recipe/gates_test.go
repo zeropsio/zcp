@@ -50,10 +50,10 @@ func TestCodebaseSurfaceValidators_UsesInMemoryBodies(t *testing.T) {
 		plan.Fragments[base+"/intro"] = "Codebase intro paragraph.\n"
 		plan.Fragments[base+"/integration-guide"] = "### 2. Adding zerops.yaml — extend\n\nDescribe step.\n\n### 3. Bind to 0.0.0.0\n\nLoopback is unreachable from L7.\n"
 		plan.Fragments[base+"/knowledge-base"] = "- **Topic** — explanation that satisfies the bullet contract.\n"
-		// CLAUDE.md needs >= 1200 bytes after assembly; pad service-facts
-		// with mechanical bullets that the validator does not flag.
-		plan.Fragments[base+"/claude-md/service-facts"] = strings.Repeat("- Hostname: "+cb.Hostname+"dev — see zerops.yaml.\n", 60)
-		plan.Fragments[base+"/claude-md/notes"] = "- Dev loop: ssh " + cb.Hostname + "dev.\n"
+		// Run-16 — CLAUDE.md is single-slot, /init-shaped, ≥ 200 bytes,
+		// 2-4 ## sections, no Zerops content. The single fragment
+		// satisfies validateCodebaseCLAUDE without legacy sub-slots.
+		plan.Fragments[base+"/claude-md"] = "# " + cb.Hostname + "\n\nApplication scaffold authored by the framework's stock generator.\n\n## Build & run\n\n- npm install\n- npm test\n- npm run start:dev\n\n## Architecture\n\n- src/main.ts — bootstrap entry\n- src/app.module.ts — root module\n- src/items/ — items domain\n"
 	}
 
 	sess := &Session{

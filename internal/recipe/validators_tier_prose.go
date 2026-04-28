@@ -37,9 +37,14 @@ import (
 //     block whose `type:` is NOT `static`
 //     → tier-prose-runtime-type-mismatch
 
-// modeNonHA is the literal yaml field value the emitter writes when a
-// managed service is downgraded out of HA at tier 5.
-const modeNonHA = "NON_HA"
+// modeHA + modeNonHA are the literal yaml field values the emitter
+// writes for HA / NON_HA service-mode. modeHA is the tier-5 baseline
+// before the per-service downgrade rule (yaml_emitter.go:325) flips
+// non-HA-capable families to NON_HA.
+const (
+	modeHA    = "HA"
+	modeNonHA = "NON_HA"
+)
 
 // kindStorage tags a parsed yaml service block as object-storage so
 // the §V storage-quota check applies. Distinct from the ServiceKind

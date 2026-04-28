@@ -173,10 +173,11 @@ func validateCodebaseKB(_ context.Context, path string, body []byte, inputs Surf
 }
 
 // claudeMDLineCap is the upper length bound for a codebase-specific
-// CLAUDE.md. Reference laravel-showcase-app/CLAUDE.md is 33 lines; the
-// cap of 60 leaves headroom for frameworks that need more service-fact
-// bullets without permitting tutorial-length drift.
-const claudeMDLineCap = 60
+// CLAUDE.md. Run-16 §8.1 raised the cap from 60 → 80 to fit the
+// `/init`-shape sub-agent output (project overview + Build & run +
+// Architecture) for codebases with denser per-script labels and
+// framework-canonical layouts.
+const claudeMDLineCap = 80
 
 // claudeMDForbiddenSubsections are cross-codebase operational notes
 // that don't belong in a codebase-specific CLAUDE.md (identical across
@@ -193,33 +194,77 @@ var claudeMDForbiddenSubsections = []string{
 	"Boot-time connectivity",
 }
 
-// validateCodebaseCLAUDE enforces a minimum byte floor plus a length cap
-// (≤ 60 lines, reference is 33) and flags the cross-codebase
-// operational subsections that drifted into run-9's 99-line CLAUDE.mds.
-// The former too-few-custom-sections rule was deleted — it pressured
-// authors to ADD sections, which is the wrong direction. Run-10-readiness §P.
+// validateCodebaseCLAUDE backs up the run-16 record-time slot-shape
+// refusal at finalize. Primary contract is enforced at record-fragment
+// time (§8.1) — the claudemd-author sub-agent's brief is strictly
+// Zerops-free, slot-shape refusal blocks `## Zerops` / `zsc` /
+// `zerops_*` / `zcp` / `zcli` / managed-service hostname leakage at
+// the moment of recording. This validator runs at finalize stitch as
+// the last-line-of-defense backstop.
+//
+// Run-16 §6.8 — the validator confirms the sub-agent's output shape:
+//
+//   - body ≤ claudeMDLineCap (80 lines per §8.1)
+//   - no `## Zerops` heading variants leaked through
+//   - no authoring-tool leak (zsc / zerops_* / zcp / zcli)
+//   - legacy claudeMDForbiddenSubsections still flagged as Notice for
+//     pre-run-16 recipes the back-compat synthesis path renders
 func validateCodebaseCLAUDE(_ context.Context, path string, body []byte, _ SurfaceInputs) ([]Violation, error) {
 	var vs []Violation
-	if len(body) < 1200 {
+	if len(body) < 200 {
+		// Lowered from 1200 to 200 — the /init-shape sub-agent output is
+		// shorter than the legacy "Zerops service facts + Notes" shape
+		// (run-15 reference apidev/CLAUDE.md was ~1500 bytes; the new
+		// shape lands ~600-1000 bytes for a small codebase).
 		vs = append(vs, violation("claude-md-too-short", path,
-			fmt.Sprintf("%d bytes < 1200 minimum", len(body))))
+			fmt.Sprintf("%d bytes < 200 minimum (sub-agent likely failed to author)", len(body))))
 	}
-	// Line count cap. Count "\n" occurrences; trailing newline still
-	// counts as one line for the last content line.
 	lines := strings.Count(string(body), "\n")
 	if !strings.HasSuffix(string(body), "\n") {
 		lines++
 	}
 	if lines > claudeMDLineCap {
 		vs = append(vs, violation("claude-md-too-long", path,
-			fmt.Sprintf("%d lines > %d cap — CLAUDE.md is a codebase-scoped cheat sheet (30–50 lines target). Move cross-codebase runbooks (Quick curls, Smoke tests, etc.) to the recipe root README; keep only codebase-specific service facts + dev loop + notes.",
+			fmt.Sprintf("%d lines > %d cap — CLAUDE.md is a /init-shape codebase guide (project overview + Build & run + Architecture). The sub-agent's output drifted; re-record with `record-fragment mode=replace`.",
 				lines, claudeMDLineCap)))
 	}
-	// Forbidden-subsection headings — case-insensitive match against the
-	// header text (everything after the leading `#`s). Emits one violation
-	// per occurrence so the message names each offender.
+
+	// Run-16 §8.1 backstop — Zerops-flavored content must NOT appear in
+	// CLAUDE.md. Slot-shape refusal at record-time should have caught
+	// this; if it didn't, the validator blocks publication.
+	//
+	// Run-16 reviewer minor — uses the same word-boundary regexes as
+	// slot_shape.checkClaudeMD so the validator and record-time refusal
+	// agree on what counts as a leak. Substring matching on
+	// "zerops_" was looser (would match `Zerops_v1` in regular prose);
+	// `\bzerops_[a-z_]+` matches only the tool-name shape.
+	bodyStr := string(body)
+	if zeropsHeadingRe.MatchString(bodyStr) {
+		vs = append(vs, violation("claude-md-zerops-heading", path,
+			"`## Zerops` heading found — Zerops platform content belongs in IG/KB/zerops.yaml comments, not CLAUDE.md (R-15-4 closure)"))
+	}
+	leakChecks := []struct {
+		re    *regexp.Regexp
+		token string
+	}{
+		{zscRe, "zsc"},
+		{zeropsToolRe, "zerops_*"},
+		{zcpRe, "zcp"},
+		{zcliRe, "zcli"},
+	}
+	for _, lc := range leakChecks {
+		if lc.re.MatchString(bodyStr) {
+			vs = append(vs, violation("claude-md-tool-leak", path,
+				fmt.Sprintf("authoring-tool token %q found — CLAUDE.md is the porter's `/init` guide, framework-canonical commands only", lc.token)))
+			break // single notice per body — agent re-authors holistically
+		}
+	}
+
+	// Legacy forbidden-subsection patrol stays as Notice for back-compat
+	// (recipes synthesized via legacy sub-slot path may still carry
+	// these headings).
 	headerRE := regexp.MustCompile(`(?m)^##+\s+(.+)$`)
-	for _, m := range headerRE.FindAllStringSubmatch(string(body), -1) {
+	for _, m := range headerRE.FindAllStringSubmatch(bodyStr, -1) {
 		title := strings.TrimSpace(m[1])
 		lower := strings.ToLower(title)
 		for _, banned := range claudeMDForbiddenSubsections {

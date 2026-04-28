@@ -57,6 +57,16 @@ feature-kind from the feature brief.
    Any console error or blank view is a regression the sub-agent must
    fix before phase close.
 
+8a. **Record `porter_change` + `field_rationale` facts** for every
+   non-obvious decision you make this phase. Class D framework ×
+   scenario items typically surface here (custom response headers
+   exposed across origins, streamed proxy bodies needing
+   `duplex: 'half'`, per-feature env-var additions). The
+   codebase-content sub-agent at phase 5 reads these facts + on-disk
+   source + spec and synthesizes IG/KB. See
+   `briefs/feature/decision_recording.md` for the full recording
+   contract.
+
 8. **Cross-deploy dev → stage** for every codebase the feature
    touched: `zerops_deploy sourceService=<h>dev targetService=<h>stage`
    + `zerops_verify targetService=<h>stage`. Both slots must end
@@ -70,13 +80,21 @@ feature-kind from the feature brief.
 - **storage-upload** — upload file, receive retrievable URL
 - **search-items** — full-text search against the crud resource
 
-## Content extends scaffold
+## What you author vs what you record (run-16)
 
-Feature sub-agent extends scaffold's fragments via `record-fragment`:
-`codebase/<hostname>/integration-guide`, `knowledge-base`, and
-`claude-md/*` ids append on extend. When a feature adds a stanza to
-`zerops.yaml`, add an inline comment at the same commit — every
-stanza must carry a causal "why" comment (finalize validator).
+**You author**: feature code + `zerops.yaml` field extensions for
+this phase's needs.
+
+**You record**: `porter_change` + `field_rationale` facts naming the
+WHY behind each non-obvious decision (step 8a above + the
+`decision_recording.md` atom in your brief).
+
+**You do NOT author** documentation surfaces. No `record-fragment` on
+`codebase/<h>/integration-guide`, `knowledge-base`, `claude-md/*`,
+or `zerops-yaml-comments/*` slots — phase 5 content sub-agents own
+those surfaces. The codebase-content sub-agent reads your facts +
+on-disk source/yaml + spec and synthesizes IG/KB/yaml-comment
+fragments with full cross-surface awareness.
 
 ## After complete-phase phase=feature
 

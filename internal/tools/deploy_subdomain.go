@@ -22,15 +22,19 @@ import (
 //     against modeEligibleForSubdomain (dev/stage/simple/standard/
 //     local-stage). Preserves the historical bootstrap path.
 //   - **Meta absent (recipe-authoring services)** — Cluster A.2 / R-13-12 +
-//     run-15 R-14-1. Recipe-authoring deploys land via zerops_import
-//     content=<yaml> and never write meta. Eligibility derives from
-//     plan-declared intent persisted by the platform: the yaml's
-//     `enableSubdomainAccess: true` field becomes detail.SubdomainAccess
-//     on the service stack at import time. Reading SubdomainAccess
-//     (REST-authoritative via GetService) is propagation-race-free —
-//     unlike the run-14 fallback which read Ports[].HTTPSupport, a field
-//     that races L7 port-registration on FIRST cross-deploy of every
-//     stage slot. spec-workflows.md §4.8 + O3.
+//     run-15 R-14-1 + run-16 R-15-1. Recipe-authoring deploys land via
+//     zerops_import content=<yaml> and never write meta. Eligibility
+//     derives from REST-authoritative service-stack state via two ORed
+//     signals: detail.SubdomainAccess (end-user click-deploy path; set
+//     by the platform when the imported deliverable yaml's
+//     enableSubdomainAccess: true has actually provisioned a subdomain)
+//     OR detail.Ports[].HTTPSupport (recipe-authoring path; workspace
+//     yaml emits enableSubdomainAccess: true but the platform does not
+//     flip detail.SubdomainAccess until first enable, so the deploy-
+//     time port signal is the only intent visible during scaffold).
+//     The R-14-1 propagation race the run-14 fallback ran into is
+//     absorbed by ops.enableSubdomainAccessWithRetry's bounded backoff
+//     on noSubdomainPorts. spec-workflows.md §4.8 + O3.
 //
 // Gate is platform-side via the ops.Subdomain call's internal
 // check-before-enable (plans/archive/subdomain-robustness.md §3.2), NOT
@@ -125,20 +129,26 @@ func modeEligibleForSubdomain(mode topology.Mode) bool {
 }
 
 // platformEligibleForSubdomain is the meta-nil fallback predicate
-// (Cluster A.2 + run-15 R-14-1). Recipe-authoring deploys never write
-// ServiceMeta; eligibility derives from plan-declared intent persisted
-// by the platform: the imported yaml's `enableSubdomainAccess: true`
-// field becomes detail.SubdomainAccess on the service stack record at
-// import time, before any deploy.
+// (Cluster A.2 + run-15 R-14-1, run-16 R-15-1). Recipe-authoring
+// deploys never write ServiceMeta; eligibility derives from REST-
+// authoritative service-stack state via two ORed signals.
 //
-// The previous version read Ports[].HTTPSupport, which races L7 port-
-// registration propagation on FIRST cross-deploy of every stage slot
-// (R-14-1: every run-14 scaffold-app dispatch had to manually call
-// zerops_subdomain action=enable). SubdomainAccess is set at yaml-
-// import and does not race deploy-time port propagation — non-workers
-// import with `enableSubdomainAccess: true` (yaml_emitter.go) and
-// surface SubdomainAccess=true on every subsequent GetService;
-// workers omit the field and surface false.
+// Signal 1 — detail.SubdomainAccess: end-user click-deploy path. The
+// imported deliverable yaml carries enableSubdomainAccess: true AND
+// the platform has provisioned a subdomain. Holds for end-user runs
+// where the deliverable has already been imported + activated.
+//
+// Signal 2 — detail.Ports[].HTTPSupport: recipe-authoring path.
+// Workspace yaml emits enableSubdomainAccess: true (yaml_emitter.go:
+// 164/181) but the platform does NOT flip detail.SubdomainAccess
+// from import alone; it stays false until first enable. So on every
+// recipe-authoring first-deploy, signal 1 is false. Falling back to
+// the deploy-time port signal (any port with httpSupport=true means
+// the deployed zerops.yaml intends HTTP) auto-enables correctly for
+// recipe-authoring while staying safe for workers (no httpSupport
+// ports → returns false). The R-14-1 race the run-14 fix targeted
+// is absorbed independently by ops.enableSubdomainAccessWithRetry's
+// bounded backoff on noSubdomainPorts.
 //
 // Lookup failures soft-fail (caller treats as not-eligible and skips
 // auto-enable; agent's manual zerops_subdomain stays valid).
@@ -158,5 +168,13 @@ func platformEligibleForSubdomain(
 	if err != nil || detail == nil {
 		return false
 	}
-	return detail.SubdomainAccess
+	if detail.SubdomainAccess {
+		return true
+	}
+	for _, port := range detail.Ports {
+		if port.HTTPSupport {
+			return true
+		}
+	}
+	return false
 }

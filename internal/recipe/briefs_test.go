@@ -197,36 +197,26 @@ func TestBrief_Scaffold_TeachesAliasTypeContracts(t *testing.T) {
 	mustContain(t, brief.Body, "do NOT prepend")
 }
 
-// TestBrief_Scaffold_CLAUDEMDIsPorter — run-12 §C. Scaffold brief
-// teaches that CLAUDE.md is porter-facing — no zcp MCP refs in dev-loop
-// section; framework-canonical commands instead.
+// TestBrief_Scaffold_CLAUDEMDIsPorter — RETIRED at run-16. CLAUDE.md
+// authoring moved entirely to a dedicated `claudemd-author` sub-agent
+// at phase 5 with a Zerops-free brief (run-16 §6.7a). Scaffold doesn't
+// touch CLAUDE.md at run-16. Coverage moved to:
+//   - TestBuildClaudeMDBrief_ContainsHardProhibitionBlock
+//   - TestBuildClaudeMDBrief_NoPlatformPrinciplesAtom
+//   - TestCheckSlotShape_ClaudeMD_Refuses_zerops_Token (record-time refusal)
+//   - TestCheckSlotShape_ClaudeMD_AcceptsZeropsFreeContent
 func TestBrief_Scaffold_CLAUDEMDIsPorter(t *testing.T) {
-	t.Parallel()
-
-	plan := syntheticShowcasePlan()
-	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
-	if err != nil {
-		t.Fatalf("BuildScaffoldBrief: %v", err)
-	}
-	mustContain(t, brief.Body, "framework-canonical")
-	mustContain(t, brief.Body, "MCP tool invocations")
-	mustContain(t, brief.Body, "porter-facing")
+	t.Skip("retired at run-16; CLAUDE.md authoring moved to claudemd-author sub-agent")
 }
 
 // TestBrief_Scaffold_IGScopeRule — run-12 §I. Scaffold brief carries
-// the IG-scope rule: items 2+ are "what changes for Zerops" only;
-// recipe-internal contracts route to KB or claude-md/notes.
+// TestBrief_Scaffold_IGScopeRule — RETIRED at run-16. IG scope rule
+// (items 2+ are "what changes for Zerops") is taught in the codebase-
+// content brief's `synthesis_workflow.md` atom. IG item-count cap is
+// enforced by the slotted-IG fragment shape (slots 1..5; engine emits
+// IG #1, agent fills 2..5).
 func TestBrief_Scaffold_IGScopeRule(t *testing.T) {
-	t.Parallel()
-
-	plan := syntheticShowcasePlan()
-	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
-	if err != nil {
-		t.Fatalf("BuildScaffoldBrief: %v", err)
-	}
-	mustContain(t, brief.Body, "IG scope")
-	// Run-15 F.5 — uniform 4-5 cap replaces the run-14 4-7 sweet spot.
-	mustContain(t, brief.Body, "4-5 items per codebase")
+	t.Skip("retired at run-16; IG scope rule moved to codebase-content brief, item cap to slotted IG")
 }
 
 // TestBuildFinalizeBrief_IncludesTierMap — run-12 §B. Engine-composed

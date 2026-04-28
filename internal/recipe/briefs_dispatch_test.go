@@ -99,3 +99,97 @@ func TestScaffoldBrief_DispatchedToProductionAgent_CarriesReachableSlugList(t *t
 		t.Error("dispatched scaffold brief lists a directory without import.yaml")
 	}
 }
+
+// Run-16 §10.4 #11 — every new brief composer has an e2e dispatch test
+// that observes production output (the brief lands inside the
+// dispatched prompt byte-identically). One per kind.
+
+func TestCodebaseContentBrief_DispatchedToProductionAgent_CarriesAtoms(t *testing.T) {
+	t.Parallel()
+	outputRoot := t.TempDir()
+	store := NewStore(t.TempDir())
+	if _, err := store.OpenOrCreate("synth-showcase", outputRoot); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+
+	plan := syntheticShowcasePlan()
+	res := dispatch(context.Background(), store, RecipeInput{
+		Action: "update-plan", Slug: "synth-showcase", Plan: plan,
+	})
+	if !res.OK {
+		t.Fatalf("update-plan: %s", res.Error)
+	}
+
+	res = dispatch(context.Background(), store, RecipeInput{
+		Action:    "build-subagent-prompt",
+		Slug:      "synth-showcase",
+		BriefKind: "codebase-content",
+		Codebase:  plan.Codebases[0].Hostname,
+	})
+	if !res.OK {
+		t.Fatalf("build-subagent-prompt codebase-content: %s", res.Error)
+	}
+	if !strings.Contains(res.Prompt, "Codebase-content phase") {
+		t.Error("dispatched codebase-content prompt missing phase entry header")
+	}
+	if !strings.Contains(res.Prompt, plan.Codebases[0].Hostname) {
+		t.Error("dispatched codebase-content prompt missing target hostname")
+	}
+}
+
+func TestClaudeMDBrief_DispatchedToProductionAgent_HardProhibition(t *testing.T) {
+	t.Parallel()
+	outputRoot := t.TempDir()
+	store := NewStore(t.TempDir())
+	if _, err := store.OpenOrCreate("synth-showcase", outputRoot); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+
+	plan := syntheticShowcasePlan()
+	if res := dispatch(context.Background(), store, RecipeInput{
+		Action: "update-plan", Slug: "synth-showcase", Plan: plan,
+	}); !res.OK {
+		t.Fatalf("update-plan: %s", res.Error)
+	}
+
+	res := dispatch(context.Background(), store, RecipeInput{
+		Action:    "build-subagent-prompt",
+		Slug:      "synth-showcase",
+		BriefKind: "claudemd-author",
+		Codebase:  plan.Codebases[0].Hostname,
+	})
+	if !res.OK {
+		t.Fatalf("build-subagent-prompt claudemd-author: %s", res.Error)
+	}
+	if !strings.Contains(res.Prompt, "Hard prohibition") {
+		t.Error("dispatched claudemd-author prompt missing the hard-prohibition block (R-15-4 closure)")
+	}
+}
+
+func TestEnvContentBrief_DispatchedToProductionAgent_CarriesTierFacts(t *testing.T) {
+	t.Parallel()
+	outputRoot := t.TempDir()
+	store := NewStore(t.TempDir())
+	if _, err := store.OpenOrCreate("synth-showcase", outputRoot); err != nil {
+		t.Fatalf("OpenOrCreate: %v", err)
+	}
+
+	plan := syntheticShowcasePlan()
+	if res := dispatch(context.Background(), store, RecipeInput{
+		Action: "update-plan", Slug: "synth-showcase", Plan: plan,
+	}); !res.OK {
+		t.Fatalf("update-plan: %s", res.Error)
+	}
+
+	res := dispatch(context.Background(), store, RecipeInput{
+		Action:    "build-subagent-prompt",
+		Slug:      "synth-showcase",
+		BriefKind: "env-content",
+	})
+	if !res.OK {
+		t.Fatalf("build-subagent-prompt env-content: %s", res.Error)
+	}
+	if !strings.Contains(res.Prompt, "Per-tier capability matrix") {
+		t.Error("dispatched env-content prompt missing capability matrix")
+	}
+}

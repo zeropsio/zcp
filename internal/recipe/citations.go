@@ -39,6 +39,26 @@ var CitationMap = map[string]string{
 	// Readiness / health checks.
 	"readiness-check": "readiness-health-checks",
 	"health-check":    "readiness-health-checks",
+
+	// Run-16 §7.2 — per-managed-service idiom topics. These guide ids
+	// resolve via zerops_knowledge runtime=<type>; the agent calls the
+	// knowledge tool when filling per-service fact shells (§7.2 fact-
+	// shell pattern). Engine never duplicates atom prose into code.
+	"managed-services-postgresql":     "managed-services-postgresql",
+	"managed-services-mariadb":        "managed-services-mariadb",
+	"managed-services-keydb":          "managed-services-keydb",
+	"managed-services-valkey":         "managed-services-valkey",
+	"managed-services-redis":          "managed-services-redis",
+	"managed-services-nats":           "managed-services-nats",
+	"managed-services-rabbitmq":       "managed-services-rabbitmq",
+	"managed-services-kafka":          "managed-services-kafka",
+	"managed-services-meilisearch":    "managed-services-meilisearch",
+	"managed-services-elasticsearch":  "managed-services-elasticsearch",
+	"managed-services-typesense":      "managed-services-typesense",
+	"managed-services-qdrant":         "managed-services-qdrant",
+	"managed-services-clickhouse":     "managed-services-clickhouse",
+	"managed-services-object-storage": "object-storage",
+	"managed-services-shared-storage": "managed-services-shared-storage",
 }
 
 // GuideForTopic returns the zerops_knowledge guide id for a topic, or

@@ -29,7 +29,7 @@ func TestSubagentPrompt_FeatureCarriesCurrentPhase(t *testing.T) {
 	t.Parallel()
 
 	plan := syntheticShowcasePlan()
-	prompt, err := buildSubagentPromptForPhase(plan, nil, RecipeInput{BriefKind: "feature"}, PhaseFeature, "")
+	prompt, err := buildSubagentPromptForPhase(plan, nil, RecipeInput{BriefKind: "feature"}, PhaseFeature, "", nil)
 	if err != nil {
 		t.Fatalf("buildSubagentPromptForPhase: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestSubagentPrompt_ScaffoldOmitsCurrentPhaseHint(t *testing.T) {
 	t.Parallel()
 
 	plan := syntheticShowcasePlan()
-	prompt, err := buildSubagentPromptForPhase(plan, nil, RecipeInput{BriefKind: "scaffold", Codebase: "api"}, PhaseScaffold, "")
+	prompt, err := buildSubagentPromptForPhase(plan, nil, RecipeInput{BriefKind: "scaffold", Codebase: "api"}, PhaseScaffold, "", nil)
 	if err != nil {
 		t.Fatalf("buildSubagentPromptForPhase: %v", err)
 	}

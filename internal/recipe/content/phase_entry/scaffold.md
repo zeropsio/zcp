@@ -132,14 +132,58 @@ recipe action list still carries a recovery primitive in the engine
 for hand-composed dispatches, but the byte-identical pass-through
 path here doesn't need it.
 
-## Content authored in-phase
+## What you author vs what you record (run-16)
 
-The scaffold sub-agent records fragments at the moment of freshest
-context: `codebase/<hostname>/intro`, `integration-guide`,
-`knowledge-base`, `claude-md/service-facts`, `claude-md/notes`. The
-sub-agent also writes inline comments into its committed `zerops.yaml`
-— they ship byte-identical into the published deliverable. No
-post-hoc writer sub-agent; no journal-then-writer pattern.
+**You author**: source code + the committed `zerops.yaml` for your
+codebase. That's the deploy artifact — it has to exist for
+`zerops_deploy` to work.
+
+**You record (`zerops_recipe action=record-fact`)**: structured facts
+naming every non-obvious decision at densest context — the moment you
+make the change. Two subtypes cover scaffold scope:
+
+- `porter_change` — code or library decisions a porter would have to
+  make (bind 0.0.0.0, install a library, configure CORS, write a
+  proxy). See `briefs/scaffold/decision_recording.md`.
+- `field_rationale` — non-obvious yaml field decisions
+  (`S3_REGION=us-east-1` because MinIO requires it; two `execOnce`
+  keys to decouple migrate + seed).
+
+**You do NOT author** documentation surfaces during scaffold. No IG /
+KB / CLAUDE.md fragment recording. No `zerops.yaml` block comments
+(those are written above the yaml at codebase-content stitch). Two
+content sub-agents at phase 5 (`codebase-content` + `claudemd-author`)
+read your recorded facts + on-disk source / yaml / spec and synthesize
+all documentation surfaces.
+
+This is the run-16 architecture pivot: deploy phases capture the WHY
+at densest context; content phases author the prose with full context
++ cross-surface awareness. Closes R-15-4 (CLAUDE.md bleed-through),
+R-15-6 (cross-surface dup), R-15-7 (classification reach).
+
+## Subdomain auto-enable — happens inside `zerops_deploy`
+
+Every `zerops_deploy` of a non-worker codebase auto-enables the L7
+subdomain on first deploy when `zerops.yaml` has `httpSupport: true` on
+a port. The deploy result carries `SubdomainAccessEnabled: true` plus the
+URL in the response payload; ZCP probes HTTP-readiness before returning
+so the next `zerops_verify` doesn't race port propagation.
+
+Do NOT preemptively call `zerops_subdomain action=enable` inside the
+scaffold sub-agent or the main agent. The deploy handler owns the L7
+activation step on first deploy. Manual enable is a recovery path only,
+to be used when a deploy result returns a warning indicating auto-enable
+failed (`auto-enable subdomain failed: ...`).
+
+Eligibility derives from REST-authoritative state via two ORed signals:
+`detail.SubdomainAccess` (end-user click-deploy path; set after the
+deliverable yaml has provisioned a subdomain) OR `detail.Ports[].HTTPSupport`
+(recipe-authoring path; workspace yaml carries `enableSubdomainAccess: true`
+but the platform doesn't flip `detail.SubdomainAccess` from import alone,
+so the deploy-time port signal is the only intent visible during scaffold).
+Run-15 R-15-1 surfaced the gap: every recipe-authoring scaffold-app
+dispatch had to manually call `zerops_subdomain action=enable` on
+appdev/appstage; run-16 closes it by ORing both signals.
 
 ## Wrapper discipline — what main decides vs sub-agent discovers
 

@@ -105,7 +105,7 @@ const errSessionNotOpen = "session not open"
 
 // RecipeInput is the input schema for zerops_recipe.
 type RecipeInput struct {
-	Action           string      `json:"action"                     jsonschema:"One of: start, enter-phase, complete-phase, build-brief, build-subagent-prompt, verify-subagent-dispatch, record-fact, record-fragment, resolve-chain, emit-yaml, update-plan, stitch-content, status."`
+	Action           string      `json:"action"                     jsonschema:"One of: start, enter-phase, complete-phase, build-brief, build-subagent-prompt, verify-subagent-dispatch, record-fact, record-fragment, fill-fact-slot, resolve-chain, emit-yaml, update-plan, stitch-content, status."`
 	Slug             string      `json:"slug,omitempty"             jsonschema:"Recipe slug (e.g. {framework}-showcase). Required for every action."`
 	OutputRoot       string      `json:"outputRoot,omitempty"       jsonschema:"Directory where the recipe tree + facts log live. Required for 'start'."`
 	Phase            string      `json:"phase,omitempty"            jsonschema:"Phase name for enter-phase / complete-phase: research, provision, scaffold, feature, finalize."`
@@ -213,7 +213,7 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 		"enter-phase": true, "complete-phase": true, "build-brief": true,
 		"build-subagent-prompt":    true,
 		"verify-subagent-dispatch": true,
-		"record-fact":              true, "record-fragment": true, "emit-yaml": true,
+		"record-fact":              true, "record-fragment": true, "fill-fact-slot": true, "emit-yaml": true,
 		"status": true, "update-plan": true, "stitch-content": true,
 	}
 	var sess *Session
@@ -270,12 +270,7 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 		}
 		r.Brief, r.OK = &brief, true
 	case "build-subagent-prompt":
-		prompt, err := buildSubagentPromptForPhase(sess.Plan, sess.Parent, in, sess.Current, sess.MountRoot)
-		if err != nil {
-			r.Error = err.Error()
-			return r
-		}
-		r.Prompt, r.OK = prompt, true
+		r = handleBuildSubagentPrompt(sess, in, r)
 	case "verify-subagent-dispatch":
 		r = verifyDispatch(sess, in, r)
 	case "record-fact":
@@ -298,6 +293,8 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 		r.OK = true
 	case "record-fragment":
 		r = handleRecordFragment(sess, in, r)
+	case "fill-fact-slot":
+		r = handleFillFactSlot(sess, in, r)
 	case "resolve-chain":
 		parent, err := ResolveChain(Resolver{MountRoot: store.mountRoot}, in.Slug)
 		switch {
@@ -342,6 +339,60 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 	return r
 }
 
+// handleBuildSubagentPrompt implements the build-subagent-prompt
+// dispatch branch. Extracted from dispatch's switch (run-16 §6.2/§7.1
+// added engine-fact seeding + FactsLog threading, pushing the inline
+// branch over the maintainability index threshold).
+func handleBuildSubagentPrompt(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
+	// Run-16 §7.1 / §5.3 — seed engine-emitted facts to the session's
+	// FactsLog so the dispatched sub-agent can fill empty slots via
+	// fill-fact-slot. Per-codebase shells emit on every codebase-bound
+	// kind; tier_decision facts emit on env-content. Idempotent —
+	// duplicate topics are skipped.
+	if err := seedEngineEmittedFacts(sess, BriefKind(in.BriefKind), in.Codebase); err != nil {
+		r.Error = err.Error()
+		return r
+	}
+	// Run-16 §6.2 — content briefs (codebase-content, env-content)
+	// thread the FactsLog snapshot so the agent sees deploy-phase
+	// recorded porter_change / field_rationale / contract facts +
+	// engine-emitted shells side-by-side.
+	var factsSnapshot []FactRecord
+	if sess.FactsLog != nil {
+		recs, fErr := sess.FactsLog.Read()
+		if fErr != nil {
+			r.Error = fErr.Error()
+			return r
+		}
+		factsSnapshot = recs
+	}
+	prompt, err := buildSubagentPromptForPhase(sess.Plan, sess.Parent, in, sess.Current, sess.MountRoot, factsSnapshot)
+	if err != nil {
+		r.Error = err.Error()
+		return r
+	}
+	r.Prompt, r.OK = prompt, true
+	return r
+}
+
+// handleFillFactSlot implements the fill-fact-slot dispatch branch.
+// Run-16 §6.4 — agent fills empty slots on an engine-emitted fact shell
+// (per-managed-service IG items, worker no-HTTP heading, tier_decision
+// tierContext). The merged record replaces the shell in-place via
+// FactsLog.ReplaceByTopic.
+func handleFillFactSlot(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
+	if in.Fact == nil {
+		r.Error = "fill-fact-slot: fact payload is required"
+		return r
+	}
+	if err := sess.FillFactSlot(*in.Fact); err != nil {
+		r.Error = err.Error()
+		return r
+	}
+	r.OK = true
+	return r
+}
+
 // handleRecordFragment implements the record-fragment dispatch branch.
 // Extracted from dispatch's switch for cyclomatic-complexity hygiene
 // (run-15 F.2/F.3 added contract attachment + classification refusal,
@@ -358,6 +409,36 @@ func handleRecordFragment(sess *Session, in RecipeInput, r RecipeResult) RecipeR
 		if surf, ok := SurfaceFromFragmentID(in.FragmentID); ok {
 			if err := classificationCompatibleWithSurface(Classification(in.Classification), surf); err != nil {
 				r.Error = "record-fragment: " + err.Error()
+				return r
+			}
+		}
+	}
+	// Run-16 §8 — slot-shape refusal at record-fragment time. Per-fragment-id
+	// structural caps (line counts, heading counts, prohibited tokens) move
+	// from finalize-validator post-hoc detection to record-time refusal so
+	// the agent gets same-context recovery. Closes R-15-3, R-15-4 (in concert
+	// with §6.7a's claudemd-author Zerops-free brief), R-15-5.
+	//
+	// Implementation note: §8.2 specified `r.OK = false; r.Notice = violation`
+	// but a Notice + OK=true semantics lets the agent proceed past a slot
+	// violation, defeating the same-context-recovery loop. Set r.Error +
+	// implicit OK=false instead so the agent's record-fragment call clearly
+	// fails and it knows to re-author. The refusal message text matches the
+	// Notice prose in §8.1's table (R-id named, spec section cited).
+	if violation := checkSlotShape(in.FragmentID, in.Fragment); violation != "" {
+		r.Error = "record-fragment: " + violation
+		return r
+	}
+	// Plan-services-aware claude-md check — extends checkClaudeMD with
+	// per-hostname leakage refusal. Catches managed-service hostnames the
+	// static-token list can't enumerate (db, cache, search, meilisearch …).
+	if singleSlotClaudeMDRe.MatchString(in.FragmentID) && sess.Plan != nil {
+		for _, svc := range sess.Plan.Services {
+			if svc.Kind != ServiceKindManaged {
+				continue
+			}
+			if violation := claudeMDFragmentRefusalForHostname(in.Fragment, svc.Hostname); violation != "" {
+				r.Error = "record-fragment: " + violation
 				return r
 			}
 		}

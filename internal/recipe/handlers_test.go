@@ -1,11 +1,37 @@
 package recipe
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// initStyleClaudeMD returns a /init-shape CLAUDE.md body suitable for
+// fixtures that need a valid run-16 claudemd-author output. Big enough
+// to clear the validateCodebaseCLAUDE 200-byte minimum and shape-correct
+// (2 H2 sections, no Zerops content) to pass slot-shape refusal.
+func initStyleClaudeMD(host string) string {
+	return fmt.Sprintf(`# %s
+
+NestJS REST application that owns the showcase domain logic and exposes a HTTP API for the SPA. Framework-canonical layout with module + controller + service trios under src/.
+
+## Build & run
+
+- npm install — install dependencies (npm ci on CI)
+- npm run start:dev — local dev with hot reload
+- npm test — unit tests via jest
+- npm run build — compile to dist/ for production
+
+## Architecture
+
+- src/main.ts — application bootstrap
+- src/app.module.ts — root NestJS module
+- src/items/ — items REST controller + service
+- src/health/ — health endpoint module
+`, host)
+}
 
 func TestStore_OpenOrCreate(t *testing.T) {
 	t.Parallel()
@@ -99,6 +125,184 @@ func TestDispatch_StartStatusRecordFactEmitYAML(t *testing.T) {
 	})
 	if !res.OK || res.YAML == "" {
 		t.Errorf("emit-yaml: %+v", res)
+	}
+}
+
+// Run-16 §6.4 — fill-fact-slot wires Session.FillFactSlot through the
+// action dispatch path. The agent uses this after consulting
+// zerops_knowledge to fill engine-pre-seeded shells (§7.2).
+func TestDispatch_FillFactSlot_MergesSlotIntoEngineEmittedFact(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	outputRoot := filepath.Join(dir, "run")
+
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "start", Slug: "synth-showcase", OutputRoot: outputRoot,
+	})
+	if !res.OK {
+		t.Fatalf("start: %+v", res)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	// Seed an engine-emitted shell directly (tranche 2 wires this from
+	// emittedFactsForCodebase; tranche 1 just verifies the merge action).
+	shell := FactRecord{
+		Topic:            "apidev-connect-db",
+		Kind:             FactKindPorterChange,
+		EngineEmitted:    true,
+		CandidateClass:   "intersection",
+		CandidateSurface: "CODEBASE_IG",
+		CitationGuide:    "managed-services-postgresql",
+	}
+	if err := sess.FactsLog.Append(shell); err != nil {
+		t.Fatalf("Append shell: %v", err)
+	}
+
+	// Agent fills Why + CandidateHeading + Library after consulting the
+	// per-managed-service knowledge atom.
+	res = dispatch(t.Context(), store, RecipeInput{
+		Action: "fill-fact-slot", Slug: "synth-showcase",
+		Fact: &FactRecord{
+			Topic:            "apidev-connect-db",
+			Why:              "Postgres credentials live on db_hostname / db_user / db_password aliases via own-key projection.",
+			CandidateHeading: "Connect to PostgreSQL via own-key aliases",
+			Library:          "@nestjs/typeorm",
+		},
+	})
+	if !res.OK {
+		t.Fatalf("fill-fact-slot: %+v", res)
+	}
+
+	got, err := sess.FactsLog.Read()
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("len = %d, want 1 (merge replaces, not appends)", len(got))
+	}
+	if got[0].Why == "" || got[0].CandidateHeading == "" || got[0].Library == "" {
+		t.Errorf("merged fact missing slot values: %+v", got[0])
+	}
+	if got[0].EngineEmitted {
+		t.Error("EngineEmitted should flip to false on fill")
+	}
+}
+
+func TestDispatch_FillFactSlot_RejectsMissingTopic(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	outputRoot := filepath.Join(dir, "run")
+
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "start", Slug: "synth-showcase", OutputRoot: outputRoot,
+	})
+	if !res.OK {
+		t.Fatalf("start: %+v", res)
+	}
+
+	// No fact payload — must error.
+	res = dispatch(t.Context(), store, RecipeInput{
+		Action: "fill-fact-slot", Slug: "synth-showcase",
+	})
+	if res.OK {
+		t.Error("fill-fact-slot without fact payload should error")
+	}
+
+	// Topic that doesn't exist in the log — must error.
+	res = dispatch(t.Context(), store, RecipeInput{
+		Action: "fill-fact-slot", Slug: "synth-showcase",
+		Fact: &FactRecord{Topic: "does-not-exist", Why: "..."},
+	})
+	if res.OK {
+		t.Error("fill-fact-slot for unknown topic should error")
+	}
+}
+
+// Run-16 §8.1 — record-fragment slot-shape refusals reach the agent
+// through the dispatch path (closes R-15-3 and R-15-4 at record time).
+func TestDispatch_RecordFragment_RefusesNestedExtractMarkers(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	outputRoot := filepath.Join(dir, "run")
+
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "start", Slug: "synth-showcase", OutputRoot: outputRoot,
+	})
+	if !res.OK {
+		t.Fatalf("start: %+v", res)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	body := "Tier 0 intro\n<!-- #ZEROPS_EXTRACT_START -->\nbleed"
+	res = dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fragment", Slug: "synth-showcase",
+		FragmentID: "env/0/intro", Fragment: body,
+	})
+	if res.OK {
+		t.Error("env/<N>/intro with #ZEROPS_EXTRACT_ marker should be refused (R-15-3)")
+	}
+	if !strings.Contains(res.Error, "R-15-3") {
+		t.Errorf("error should name R-15-3: %q", res.Error)
+	}
+}
+
+func TestDispatch_RecordFragment_RefusesMultiHeadingInIGSlot(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	outputRoot := filepath.Join(dir, "run")
+
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "start", Slug: "synth-showcase", OutputRoot: outputRoot,
+	})
+	if !res.OK {
+		t.Fatalf("start: %+v", res)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	body := "### 2. Trust the L7\nbody\n### 3. Drain on SIGTERM\nbody"
+	res = dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fragment", Slug: "synth-showcase",
+		FragmentID: "codebase/api/integration-guide/2", Fragment: body,
+	})
+	if res.OK {
+		t.Error("multi-heading slotted IG should be refused (R-15-5)")
+	}
+}
+
+func TestDispatch_RecordFragment_RefusesClaudeMDZeropsContent(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	outputRoot := filepath.Join(dir, "run")
+
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "start", Slug: "synth-showcase", OutputRoot: outputRoot,
+	})
+	if !res.OK {
+		t.Fatalf("start: %+v", res)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	body := "## Build & run\n- npm test\n## Zerops service facts\n- port 3000\n## Architecture\n- src/"
+	res = dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fragment", Slug: "synth-showcase",
+		FragmentID: "codebase/api/claude-md", Fragment: body,
+	})
+	if res.OK {
+		t.Error("claude-md with `## Zerops` heading should be refused (R-15-4)")
 	}
 }
 
@@ -520,28 +724,25 @@ func TestStitch_IGSubsequentItemsArePorterItems(t *testing.T) {
 	// Fragment authored by sub-agent starts at ### 2.
 	authored := "### 2. Trust the reverse proxy\n\nSet `trust proxy` so the runtime reads `X-Forwarded-*` correctly."
 	fragmentIDs := map[string]string{
-		"root/intro":                              "intro",
-		"env/0/intro":                             "tier 0",
-		"env/1/intro":                             "tier 1",
-		"env/2/intro":                             "tier 2",
-		"env/3/intro":                             "tier 3",
-		"env/4/intro":                             "tier 4",
-		"env/5/intro":                             "tier 5",
-		"codebase/api/intro":                      "api",
-		"codebase/api/integration-guide":          authored,
-		"codebase/api/knowledge-base":             "- **Topic** — prose",
-		"codebase/api/claude-md/service-facts":    "port 3000",
-		"codebase/api/claude-md/notes":            "dev loop",
-		"codebase/app/intro":                      "app",
-		"codebase/app/integration-guide":          authored,
-		"codebase/app/knowledge-base":             "- **Topic** — prose",
-		"codebase/app/claude-md/service-facts":    "port 5173",
-		"codebase/app/claude-md/notes":            "dev loop",
-		"codebase/worker/intro":                   "worker",
-		"codebase/worker/integration-guide":       authored,
-		"codebase/worker/knowledge-base":          "- **Topic** — prose",
-		"codebase/worker/claude-md/service-facts": "worker queue",
-		"codebase/worker/claude-md/notes":         "dev loop",
+		"root/intro":                        "intro",
+		"env/0/intro":                       "tier 0",
+		"env/1/intro":                       "tier 1",
+		"env/2/intro":                       "tier 2",
+		"env/3/intro":                       "tier 3",
+		"env/4/intro":                       "tier 4",
+		"env/5/intro":                       "tier 5",
+		"codebase/api/intro":                "api",
+		"codebase/api/integration-guide":    authored,
+		"codebase/api/knowledge-base":       "- **Topic** — prose",
+		"codebase/api/claude-md":            initStyleClaudeMD("api"),
+		"codebase/app/intro":                "app",
+		"codebase/app/integration-guide":    authored,
+		"codebase/app/knowledge-base":       "- **Topic** — prose",
+		"codebase/app/claude-md":            initStyleClaudeMD("app"),
+		"codebase/worker/intro":             "worker",
+		"codebase/worker/integration-guide": authored,
+		"codebase/worker/knowledge-base":    "- **Topic** — prose",
+		"codebase/worker/claude-md":         initStyleClaudeMD("worker"),
 	}
 	for id, body := range fragmentIDs {
 		res := dispatch(t.Context(), store, RecipeInput{

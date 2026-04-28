@@ -162,11 +162,10 @@ func TestAssemble_FragmentBodyWith_JSTemplateLiteral_NotFlagged(t *testing.T) {
 	plan.Slug = "synth"
 	plan.Framework = "nest"
 	plan.Fragments = map[string]string{
-		"codebase/api/intro":                   "api",
-		"codebase/api/integration-guide":       "1. Configure `zerops.yaml` so the runtime calls `fetch(`${API_URL}/items`)` at boot — avoids hardcoding the origin.",
-		"codebase/api/knowledge-base":          "- **x** — because Y",
-		"codebase/api/claude-md/service-facts": "api",
-		"codebase/api/claude-md/notes":         "notes",
+		"codebase/api/intro":             "api",
+		"codebase/api/integration-guide": "1. Configure `zerops.yaml` so the runtime calls `fetch(`${API_URL}/items`)` at boot — avoids hardcoding the origin.",
+		"codebase/api/knowledge-base":    "- **x** — because Y",
+		"codebase/api/claude-md":         "api",
 	}
 
 	_, _, err := AssembleCodebaseREADME(plan, "api")
@@ -185,11 +184,10 @@ func TestAssemble_FragmentBodyWith_BareCurlyToken_NotFlagged(t *testing.T) {
 	plan.Slug = "synth"
 	plan.Framework = "svelte"
 	plan.Fragments = map[string]string{
-		"codebase/api/intro":                   "`{FILENAME}` routes to `src/routes/{FILENAME}.svelte` at build time.",
-		"codebase/api/integration-guide":       "1. Configure `zerops.yaml`. Use `{#if cond}…{/if}` guards as needed.",
-		"codebase/api/knowledge-base":          "- **x** — because Y",
-		"codebase/api/claude-md/service-facts": "api",
-		"codebase/api/claude-md/notes":         "notes",
+		"codebase/api/intro":             "`{FILENAME}` routes to `src/routes/{FILENAME}.svelte` at build time.",
+		"codebase/api/integration-guide": "1. Configure `zerops.yaml`. Use `{#if cond}…{/if}` guards as needed.",
+		"codebase/api/knowledge-base":    "- **x** — because Y",
+		"codebase/api/claude-md":         "api",
 	}
 
 	body, _, err := AssembleCodebaseREADME(plan, "api")
@@ -214,11 +212,10 @@ func TestStitchContent_FencedBlockTokenAllowed(t *testing.T) {
 	plan.Slug = "synth"
 	plan.Framework = "nest"
 	plan.Fragments = map[string]string{
-		"codebase/api/intro":                   "Worker example below.",
-		"codebase/api/integration-guide":       "1. Configure `zerops.yaml`.\n\n```\nworker-${HOSTNAME}-${pid}\n```\n",
-		"codebase/api/knowledge-base":          "- **x** — because Y, set `${HOSTNAME}` from env.",
-		"codebase/api/claude-md/service-facts": "api",
-		"codebase/api/claude-md/notes":         "notes",
+		"codebase/api/intro":             "Worker example below.",
+		"codebase/api/integration-guide": "1. Configure `zerops.yaml`.\n\n```\nworker-${HOSTNAME}-${pid}\n```\n",
+		"codebase/api/knowledge-base":    "- **x** — because Y, set `${HOSTNAME}` from env.",
+		"codebase/api/claude-md":         "api",
 	}
 
 	if _, _, err := AssembleCodebaseREADME(plan, "api"); err != nil {
@@ -237,11 +234,10 @@ func TestStitchContent_UnfencedTokenErrorIncludesFragmentID(t *testing.T) {
 	plan.Slug = "synth"
 	plan.Framework = "nest"
 	plan.Fragments = map[string]string{
-		"codebase/api/intro":                   "Bare ${HOSTNAME} reference outside any fence.",
-		"codebase/api/integration-guide":       "1. Configure `zerops.yaml`.",
-		"codebase/api/knowledge-base":          "- **x** — because Y",
-		"codebase/api/claude-md/service-facts": "api",
-		"codebase/api/claude-md/notes":         "notes",
+		"codebase/api/intro":             "Bare ${HOSTNAME} reference outside any fence.",
+		"codebase/api/integration-guide": "1. Configure `zerops.yaml`.",
+		"codebase/api/knowledge-base":    "- **x** — because Y",
+		"codebase/api/claude-md":         "api",
 	}
 
 	_, _, err := AssembleCodebaseREADME(plan, "api")
@@ -270,11 +266,10 @@ func TestAssemble_UnreplacedEngineToken_IsFlagged(t *testing.T) {
 	plan.Slug = "synth"
 	plan.Framework = "nest"
 	plan.Fragments = map[string]string{
-		"codebase/api/intro":                   "{SLUG} placeholder leaked into fragment body",
-		"codebase/api/integration-guide":       "1. Configure `zerops.yaml` here.",
-		"codebase/api/knowledge-base":          "- **x** — because Y",
-		"codebase/api/claude-md/service-facts": "api",
-		"codebase/api/claude-md/notes":         "notes",
+		"codebase/api/intro":             "{SLUG} placeholder leaked into fragment body",
+		"codebase/api/integration-guide": "1. Configure `zerops.yaml` here.",
+		"codebase/api/knowledge-base":    "- **x** — because Y",
+		"codebase/api/claude-md":         "api",
 	}
 
 	_, _, err := AssembleCodebaseREADME(plan, "api")
@@ -351,8 +346,7 @@ func TestAssemble_FragmentBody_CodeTokens_E2E(t *testing.T) {
 		plan.Fragments[base+"/intro"] = codeBodies
 		plan.Fragments[base+"/integration-guide"] = "1. Configure `zerops.yaml`.\n\n" + codeBodies
 		plan.Fragments[base+"/knowledge-base"] = "- **x** — because Y\n\n" + codeBodies
-		plan.Fragments[base+"/claude-md/service-facts"] = codeBodies
-		plan.Fragments[base+"/claude-md/notes"] = codeBodies
+		plan.Fragments[base+"/claude-md"] = codeBodies
 	}
 
 	// Root README.
@@ -632,8 +626,10 @@ func fillAllFragments(store *Store, plan *Plan) error {
 		ids[base+"/intro"] = "cb intro"
 		ids[base+"/integration-guide"] = "1. IG"
 		ids[base+"/knowledge-base"] = "- **x** — because"
-		ids[base+"/claude-md/service-facts"] = "port 3000"
-		ids[base+"/claude-md/notes"] = "dev loop"
+		// Run-16 §6.7a — single-slot /init-shape body. Must clear the
+		// validateCodebaseCLAUDE 200-byte minimum and the 2-4 ## section
+		// slot-shape refusal.
+		ids[base+"/claude-md"] = "# " + cb.Hostname + "\n\nFramework scaffold for the showcase.\n\n## Build & run\n\n- npm install\n- npm test\n\n## Architecture\n\n- src/main.ts — bootstrap\n- src/items/ — items domain\n"
 	}
 	for id, body := range ids {
 		res := dispatch(context.Background(), store, RecipeInput{
@@ -677,28 +673,25 @@ func TestAssemble_StitchWritesFragmentsToDisk(t *testing.T) {
 		sess.Plan.Codebases[i].SourceRoot = wsRoot
 	}
 	sess.Plan.Fragments = map[string]string{
-		"root/intro":                              "synth recipe intro",
-		"env/0/intro":                             "agent-tier intro",
-		"env/1/intro":                             "remote-tier intro",
-		"env/2/intro":                             "local-tier intro",
-		"env/3/intro":                             "stage-tier intro",
-		"env/4/intro":                             "small-prod-tier intro",
-		"env/5/intro":                             "ha-prod-tier intro",
-		"codebase/api/intro":                      "api intro",
-		"codebase/api/integration-guide":          "1. Bind to 0.0.0.0",
-		"codebase/api/knowledge-base":             "- **x** — because Y",
-		"codebase/api/claude-md/service-facts":    "port 3000, hostname api",
-		"codebase/api/claude-md/notes":            "dev loop: ssh api",
-		"codebase/app/intro":                      "app intro",
-		"codebase/app/integration-guide":          "1. Bind to 0.0.0.0",
-		"codebase/app/knowledge-base":             "- **x** — because Y",
-		"codebase/app/claude-md/service-facts":    "port 5173",
-		"codebase/app/claude-md/notes":            "dev loop: ssh app",
-		"codebase/worker/intro":                   "worker intro",
-		"codebase/worker/integration-guide":       "1. Bind to 0.0.0.0",
-		"codebase/worker/knowledge-base":          "- **x** — because Y",
-		"codebase/worker/claude-md/service-facts": "queue group: jobs",
-		"codebase/worker/claude-md/notes":         "dev loop: ssh worker",
+		"root/intro":                        "synth recipe intro",
+		"env/0/intro":                       "agent-tier intro",
+		"env/1/intro":                       "remote-tier intro",
+		"env/2/intro":                       "local-tier intro",
+		"env/3/intro":                       "stage-tier intro",
+		"env/4/intro":                       "small-prod-tier intro",
+		"env/5/intro":                       "ha-prod-tier intro",
+		"codebase/api/intro":                "api intro",
+		"codebase/api/integration-guide":    "1. Bind to 0.0.0.0",
+		"codebase/api/knowledge-base":       "- **x** — because Y",
+		"codebase/api/claude-md":            "port 3000, hostname api",
+		"codebase/app/intro":                "app intro",
+		"codebase/app/integration-guide":    "1. Bind to 0.0.0.0",
+		"codebase/app/knowledge-base":       "- **x** — because Y",
+		"codebase/app/claude-md":            "port 5173",
+		"codebase/worker/intro":             "worker intro",
+		"codebase/worker/integration-guide": "1. Bind to 0.0.0.0",
+		"codebase/worker/knowledge-base":    "- **x** — because Y",
+		"codebase/worker/claude-md":         "queue group: jobs",
 	}
 
 	// Pre-emit deliverable yamls so the env folders exist.
@@ -736,20 +729,19 @@ func TestAssemble_StitchWritesFragmentsToDisk(t *testing.T) {
 	}
 }
 
-// TestAssembleCodebaseClaudeMD_NoTemplateInjectedDevLoop — run-13 §Q.
-// The template formerly carried a hardcoded `## Zerops dev loop` block
-// telling the porter to "Iterate with `zcli push`" — authoring-tool
-// voice that contradicted both the §C scaffold-brief teaching and the
-// porter-canonical dev-loop bullet the agent records under
-// `claude-md/notes`. Template now ships only the section frame; the
-// agent-authored Notes section is the single source of truth.
+// TestAssembleCodebaseClaudeMD_NoTemplateInjectedDevLoop — run-16
+// rewrite of run-13 §Q. The template no longer carries any hardcoded
+// content (single extract marker only); the dedicated claudemd-author
+// sub-agent owns the entire CLAUDE.md body. This test verifies the
+// template stays empty of authoring-tool voice and the agent's body
+// renders verbatim.
 func TestAssembleCodebaseClaudeMD_NoTemplateInjectedDevLoop(t *testing.T) {
 	t.Parallel()
 
 	plan := syntheticShowcasePlan()
+	agentBody := "# api\n\nNestJS REST API.\n\n## Build & run\n\n- npm run start:dev\n\n## Architecture\n\n- src/main.ts"
 	plan.Fragments = map[string]string{
-		"codebase/api/claude-md/service-facts": "- Hostname: apidev\n",
-		"codebase/api/claude-md/notes":         "- Dev loop: SSH into apidev and run `npm run start:dev`\n",
+		"codebase/api/claude-md": agentBody,
 	}
 	body, _, err := AssembleCodebaseClaudeMD(plan, "api")
 	if err != nil {
@@ -765,10 +757,7 @@ func TestAssembleCodebaseClaudeMD_NoTemplateInjectedDevLoop(t *testing.T) {
 			t.Errorf("template-injected forbidden string %q in CLAUDE.md output:\n%s", s, body)
 		}
 	}
-	if !strings.Contains(body, "## Notes") {
-		t.Errorf("Notes section missing from rendered CLAUDE.md:\n%s", body)
-	}
 	if !strings.Contains(body, "npm run start:dev") {
-		t.Errorf("agent-authored dev-loop bullet missing from Notes section:\n%s", body)
+		t.Errorf("agent-authored dev-loop bullet missing from rendered CLAUDE.md:\n%s", body)
 	}
 }

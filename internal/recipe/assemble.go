@@ -2,10 +2,12 @@ package recipe
 
 import (
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -121,7 +123,12 @@ func AssembleCodebaseREADME(plan *Plan, hostname string) (string, []string, erro
 		"HOSTNAME":  hostname,
 	})
 	prefix := "codebase/" + hostname
-	body, missing, err := substituteFragmentMarkers(body, plan.Fragments, prefix)
+	// Run-16 §6.7 — slotted IG fragments: walk
+	// `codebase/<h>/integration-guide/<n>` keys and synthesize the legacy
+	// single-fragment id. Slotted form takes precedence; legacy form is
+	// used only when no slotted fragments exist (back-compat).
+	fragments := mergeSlottedIGFragments(plan.Fragments, hostname)
+	body, missing, err := substituteFragmentMarkers(body, fragments, prefix)
 	if err != nil {
 		return "", nil, fmt.Errorf("assemble codebase/%s README: %w", hostname, err)
 	}
@@ -130,6 +137,11 @@ func AssembleCodebaseREADME(plan *Plan, hostname string) (string, []string, erro
 		return "", nil, fmt.Errorf("assemble codebase/%s README: %w", hostname, err)
 	}
 	if yamlBody != "" {
+		// Run-16 §6.7 — line-anchor zerops.yaml comment injection
+		// before IG #1 stamps the yaml verbatim, so block comments
+		// authored at codebase-content phase ride along into the
+		// published surface (Surface 7).
+		yamlBody = injectZeropsYamlComments(yamlBody, plan.Fragments, hostname)
 		body = injectIGItem1(body, yamlBody)
 	}
 	if err := checkUnreplacedTokens(body); err != nil {
@@ -159,6 +171,135 @@ func readCodebaseYAMLForHost(plan *Plan, hostname string) (string, error) {
 		return raw, nil
 	}
 	return "", nil
+}
+
+// mergeSlottedIGFragments returns a copy of fragments with slotted IG
+// entries merged into the legacy single-fragment shape. Run-16 §6.7 —
+// when `codebase/<h>/integration-guide/<n>` slots exist (any n), they
+// concatenate in numeric order and override the legacy
+// `codebase/<h>/integration-guide` for the named host. When no slots
+// exist, the legacy fragment is preserved (back-compat).
+//
+// Engine-emitted IG #1 (Adding zerops.yaml) is stamped by injectIGItem1
+// AFTER substitution, so author slots are always n>=2 in practice; the
+// merge sorts numerically and concatenates, so any starting index works.
+func mergeSlottedIGFragments(fragments map[string]string, hostname string) map[string]string {
+	if fragments == nil {
+		return nil
+	}
+	prefix := "codebase/" + hostname + "/integration-guide/"
+	type slot struct {
+		index int
+		body  string
+	}
+	var slots []slot
+	for k, v := range fragments {
+		rest, ok := strings.CutPrefix(k, prefix)
+		if !ok {
+			continue
+		}
+		idx, err := parseTierIndex(rest)
+		if err != nil {
+			continue
+		}
+		slots = append(slots, slot{index: idx, body: v})
+	}
+	if len(slots) == 0 {
+		return fragments
+	}
+	sort.Slice(slots, func(i, j int) bool { return slots[i].index < slots[j].index })
+	var b strings.Builder
+	for i, s := range slots {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(strings.TrimSpace(s.body))
+	}
+	out := make(map[string]string, len(fragments))
+	maps.Copy(out, fragments)
+	out["codebase/"+hostname+"/integration-guide"] = b.String()
+	return out
+}
+
+// injectZeropsYamlComments returns a copy of yamlBody with author-
+// recorded comment fragments line-anchored above their named blocks.
+// Run-16 §6.7 — line-anchor insertion is the only-shipped path; AST
+// round-trip is deferred. Per-block fragment ids:
+// `codebase/<h>/zerops-yaml-comments/<block-name>` where <block-name>
+// matches a yaml key (e.g. `run.envVariables`, `run.initCommands`,
+// `build`, `readinessCheck`).
+//
+// The implementation walks fragments looking for matching ids, then for
+// each block name finds the corresponding yaml line via regex anchored
+// to line-start, and inserts comment-prefixed lines above with matching
+// indentation. If no matching line is found, the comment is dropped
+// silently — agent fragments referencing nonexistent yaml blocks should
+// be caught by the slot-shape refusal layer at record-fragment time
+// (the validator could later forbid missing-block fragments at finalize
+// if dogfood reveals the silent drop is too forgiving).
+func injectZeropsYamlComments(yamlBody string, fragments map[string]string, hostname string) string {
+	if yamlBody == "" || fragments == nil {
+		return yamlBody
+	}
+	prefix := "codebase/" + hostname + "/zerops-yaml-comments/"
+	// Walk fragments deterministically (sorted by block name) so
+	// comment ordering across re-renders is stable.
+	type entry struct {
+		block string
+		body  string
+	}
+	var entries []entry
+	for k, v := range fragments {
+		if rest, ok := strings.CutPrefix(k, prefix); ok && rest != "" {
+			entries = append(entries, entry{block: rest, body: v})
+		}
+	}
+	if len(entries) == 0 {
+		return yamlBody
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].block < entries[j].block })
+
+	out := yamlBody
+	for _, e := range entries {
+		// Block name encodes nesting via dots: `run.envVariables`,
+		// `run.initCommands`. Line-anchor on the leaf token's `key:`
+		// occurrence (with appropriate indentation derived from depth).
+		out = insertCommentAtBlock(out, e.block, e.body)
+	}
+	return out
+}
+
+// insertCommentAtBlock locates the named yaml block and inserts the
+// comment fragment immediately above with matching indentation. block
+// is the leaf yaml key name (dot-separated paths supported via the
+// final segment). The actual line's indentation determines the
+// comment's indent — the regex matches any line ending in `<leaf>:`
+// preceded only by whitespace, then the matched whitespace becomes
+// the comment indent.
+func insertCommentAtBlock(yamlBody, block, comment string) string {
+	parts := strings.Split(block, ".")
+	if len(parts) == 0 {
+		return yamlBody
+	}
+	leaf := parts[len(parts)-1]
+	// Match any line of the form `^( *)<leaf>:` — the captured
+	// whitespace IS the indent. Multi-line mode anchors `^` at every
+	// line-start, so we don't match `<leaf>:` inside a multi-line
+	// string value.
+	re := regexp.MustCompile(`(?m)^( *)` + regexp.QuoteMeta(leaf+":"))
+	loc := re.FindStringSubmatchIndex(yamlBody)
+	if loc == nil {
+		return yamlBody
+	}
+	indent := yamlBody[loc[2]:loc[3]]
+	var cb strings.Builder
+	for line := range strings.SplitSeq(strings.TrimRight(comment, "\n"), "\n") {
+		cb.WriteString(indent)
+		cb.WriteString("# ")
+		cb.WriteString(line)
+		cb.WriteByte('\n')
+	}
+	return yamlBody[:loc[0]] + cb.String() + yamlBody[loc[0]:]
 }
 
 // injectIGItem1 rewrites the rendered README's integration-guide extract
@@ -290,6 +431,15 @@ func joinClauses(parts []string) string {
 
 // AssembleCodebaseClaudeMD renders the per-codebase CLAUDE.md for one
 // hostname.
+//
+// Run-16 §6.7a — primary path is the single-slot
+// `codebase/<h>/claude-md` fragment authored by the dedicated
+// claudemd-author sub-agent. The template carries one extract marker
+// (`claude-md`) that resolves to that fragment. Legacy sub-slots
+// (`claude-md/service-facts`, `claude-md/notes`) stay accepted by
+// isValidFragmentID for back-compat but are NOT substituted by this
+// stitch path; recipes still relying on legacy sub-slots ship the
+// pre-run-16 template via a separate render path (none today).
 func AssembleCodebaseClaudeMD(plan *Plan, hostname string) (string, []string, error) {
 	if !codebaseKnown(plan, hostname) {
 		return "", nil, fmt.Errorf("unknown codebase %q", hostname)
@@ -303,7 +453,20 @@ func AssembleCodebaseClaudeMD(plan *Plan, hostname string) (string, []string, er
 		"FRAMEWORK": plan.Framework,
 		"HOSTNAME":  hostname,
 	})
-	prefix := "codebase/" + hostname + "/claude-md"
+	// Run-16 §6.7a — primary (and only) path is the single-slot
+	// `codebase/<h>/claude-md` fragment authored by the dedicated
+	// claudemd-author sub-agent at phase 5. Legacy sub-slot ids
+	// (`claude-md/service-facts`, `claude-md/notes`) stay accepted by
+	// isValidFragmentID for record-time back-compat, but stitch does
+	// NOT synthesize a single-slot fragment from them. The earlier
+	// synthesizer reconstructed a body opening with `## Zerops service
+	// facts` — the very heading the run-16 slot-shape refusal +
+	// finalize validator both reject, making the legacy back-compat
+	// path dead-on-arrival (reviewer D-6). Recipes still on the legacy
+	// shape fail loudly here with "missing fragment
+	// codebase/<h>/claude-md", which is the migration signal the user
+	// needs to author the single-slot form via claudemd-author.
+	prefix := "codebase/" + hostname
 	body, missing, err := substituteFragmentMarkers(body, plan.Fragments, prefix)
 	if err != nil {
 		return "", nil, fmt.Errorf("assemble codebase/%s CLAUDE.md: %w", hostname, err)

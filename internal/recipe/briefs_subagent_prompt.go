@@ -26,7 +26,7 @@ import (
 // the existing research-phase teaching, so no atom extension is
 // needed for the run-13 stretch.
 func buildSubagentPrompt(plan *Plan, parent *ParentRecipe, in RecipeInput) (string, error) {
-	return buildSubagentPromptForPhase(plan, parent, in, "", "")
+	return buildSubagentPromptForPhase(plan, parent, in, "", "", nil)
 }
 
 // buildSubagentPromptForPhase is buildSubagentPrompt with the session's
@@ -46,22 +46,25 @@ func buildSubagentPrompt(plan *Plan, parent *ParentRecipe, in RecipeInput) (stri
 // briefs never carried "## Recipe-knowledge slugs you may consult".
 // Empty mountRoot omits the section (matches the legacy unit-test
 // shape).
-func buildSubagentPromptForPhase(plan *Plan, parent *ParentRecipe, in RecipeInput, currentPhase Phase, mountRoot string) (string, error) {
+func buildSubagentPromptForPhase(plan *Plan, parent *ParentRecipe, in RecipeInput, currentPhase Phase, mountRoot string, facts []FactRecord) (string, error) {
 	if plan == nil {
 		return "", errors.New("buildSubagentPrompt: nil plan")
 	}
 	kind := BriefKind(in.BriefKind)
 	switch kind {
-	case BriefScaffold, BriefFeature, BriefFinalize:
+	case BriefScaffold, BriefFeature, BriefFinalize,
+		BriefCodebaseContent, BriefClaudeMDAuthor, BriefEnvContent:
 		// ok
 	default:
 		return "", fmt.Errorf("buildSubagentPrompt: unknown briefKind %q", in.BriefKind)
 	}
 
+	// Per-codebase kinds resolve cb from the plan; phase-wide kinds (feature,
+	// finalize, env-content) operate on plan-only context.
 	var cb Codebase
-	if kind == BriefScaffold {
+	if requiresCodebase(kind) {
 		if in.Codebase == "" {
-			return "", errors.New("buildSubagentPrompt: scaffold kind requires codebase")
+			return "", fmt.Errorf("buildSubagentPrompt: %s kind requires codebase", kind)
 		}
 		found := false
 		for _, c := range plan.Codebases {
@@ -75,7 +78,7 @@ func buildSubagentPromptForPhase(plan *Plan, parent *ParentRecipe, in RecipeInpu
 		}
 	}
 
-	brief, err := buildBriefForKind(plan, parent, kind, cb, mountRoot)
+	brief, err := buildBriefForKind(plan, parent, kind, cb, mountRoot, facts)
 	if err != nil {
 		return "", err
 	}
@@ -106,7 +109,20 @@ func buildSubagentPromptForPhase(plan *Plan, parent *ParentRecipe, in RecipeInpu
 // shape (unit tests). Production callers pass Session.MountRoot so the
 // dispatched brief carries "## Recipe-knowledge slugs you may consult"
 // (run-15 R-14-P-1).
-func buildBriefForKind(plan *Plan, parent *ParentRecipe, kind BriefKind, cb Codebase, mountRoot string) (Brief, error) {
+// requiresCodebase reports whether a BriefKind binds to a single codebase.
+// Scaffold + codebase-content + claudemd-author dispatch per-codebase;
+// feature + finalize + env-content operate on plan-wide context.
+func requiresCodebase(kind BriefKind) bool {
+	switch kind {
+	case BriefScaffold, BriefCodebaseContent, BriefClaudeMDAuthor:
+		return true
+	case BriefFeature, BriefFinalize, BriefEnvContent:
+		return false
+	}
+	return false
+}
+
+func buildBriefForKind(plan *Plan, parent *ParentRecipe, kind BriefKind, cb Codebase, mountRoot string, facts []FactRecord) (Brief, error) {
 	switch kind {
 	case BriefScaffold:
 		var resolver *Resolver
@@ -118,6 +134,12 @@ func buildBriefForKind(plan *Plan, parent *ParentRecipe, kind BriefKind, cb Code
 		return BuildFeatureBrief(plan)
 	case BriefFinalize:
 		return BuildFinalizeBrief(plan)
+	case BriefCodebaseContent:
+		return BuildCodebaseContentBrief(plan, cb, parent, facts)
+	case BriefClaudeMDAuthor:
+		return BuildClaudeMDBrief(plan, cb)
+	case BriefEnvContent:
+		return BuildEnvContentBrief(plan, parent, facts)
 	default:
 		return Brief{}, fmt.Errorf("unknown briefKind %q", kind)
 	}
@@ -132,6 +154,14 @@ func writePromptHeader(b *strings.Builder, plan *Plan, kind BriefKind, cb Codeba
 		fmt.Fprintf(b, "You are the feature sub-agent for the %s recipe.\n", plan.Slug)
 	case BriefFinalize:
 		fmt.Fprintf(b, "You are the finalize sub-agent for the %s recipe.\n", plan.Slug)
+	case BriefCodebaseContent:
+		fmt.Fprintf(b, "You are the codebase-content sub-agent for the `%s` codebase of the %s recipe.\n",
+			cb.Hostname, plan.Slug)
+	case BriefClaudeMDAuthor:
+		fmt.Fprintf(b, "You are the claudemd-author sub-agent for the `%s` codebase of the %s recipe.\n",
+			cb.Hostname, plan.Slug)
+	case BriefEnvContent:
+		fmt.Fprintf(b, "You are the env-content sub-agent for the %s recipe.\n", plan.Slug)
 	}
 	b.WriteString("Read the engine brief below verbatim and follow it; the recipe-level\n")
 	b.WriteString("context above and the closing notes below the brief are wrapper notes\n")
@@ -239,6 +269,27 @@ func writePromptCloseFooter(b *strings.Builder, kind BriefKind, codebase string,
 		b.WriteString("phase=finalize`. Address any blocking violations via\n")
 		b.WriteString("`record-fragment mode=replace` (codebase ids) or fragment\n")
 		b.WriteString("re-record (root/env ids).\n")
+	case BriefCodebaseContent:
+		b.WriteString("When you're ready to terminate: ensure every codebase fragment\n")
+		b.WriteString("(intro + IG slots + KB + zerops.yaml comments) is recorded,\n")
+		b.WriteString("and call\n\n")
+		fmt.Fprintf(b, "    zerops_recipe action=complete-phase phase=codebase-content codebase=%s\n\n", codebase)
+		b.WriteString("to self-validate. Fix violations via `record-fragment\n")
+		b.WriteString("mode=replace`, re-call until ok:true, then terminate.\n")
+	case BriefClaudeMDAuthor:
+		b.WriteString("When you're ready to terminate: record the single\n")
+		fmt.Fprintf(b, "`codebase/%s/claude-md` fragment via\n\n", codebase)
+		b.WriteString("    zerops_recipe action=record-fragment mode=replace\n")
+		fmt.Fprintf(b, "      fragmentId=codebase/%s/claude-md\n", codebase)
+		b.WriteString("      fragment=<your /init output>\n\n")
+		b.WriteString("If slot-shape refusal fires (Zerops content detected),\n")
+		b.WriteString("re-author without the offending tokens, then terminate.\n")
+	case BriefEnvContent:
+		b.WriteString("When you're ready to terminate: ensure root/intro + env/<N>/intro\n")
+		b.WriteString("(N=0..5) + per-tier import-comments are recorded, then call\n\n")
+		b.WriteString("    zerops_recipe action=complete-phase phase=env-content\n\n")
+		b.WriteString("to self-validate. Fix violations via `record-fragment\n")
+		b.WriteString("mode=replace`, re-call until ok:true, then terminate.\n")
 	}
 }
 

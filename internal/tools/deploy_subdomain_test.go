@@ -121,23 +121,19 @@ func TestMaybeAutoEnableSubdomain_SubdomainAlreadyOn_SetsFlag_NoAPICall(t *testi
 }
 
 // TestMaybeAutoEnable_NoMeta_PlanDeclaredIntent_Dispatches pins
-// Cluster A.2 (R-13-12) + run-15 R-14-1. Recipe-authoring deploys land
-// via zerops_import content=<yaml> which never writes the per-PID
-// ServiceMeta. The auto-enable path derives eligibility from plan-
-// declared intent persisted by the platform: yaml `enableSubdomainAccess:
-// true` becomes detail.SubdomainAccess at import time. With the intent
-// in place, ops.Subdomain returns already_enabled (no fresh API call)
-// and surfaces the URLs.
+// Cluster A.2 (R-13-12) + run-15 R-14-1. Covers the end-user click-
+// deploy path: the imported deliverable yaml carried
+// enableSubdomainAccess: true AND a subdomain has been provisioned
+// already, so detail.SubdomainAccess is true; ops.Subdomain returns
+// already_enabled (no fresh API call) and surfaces the URLs.
 //
-// Why HTTPSupport is NOT used here: ports[].HTTPSupport races L7 port-
-// registration on the FIRST cross-deploy of every stage slot (run-14
-// scaffold-app burned three manual zerops_subdomain action=enable calls
-// on this race). detail.SubdomainAccess is set at yaml-import and does
-// not race deploy-time port propagation — that's the run-15 fix.
+// The recipe-authoring path — where the platform does NOT flip
+// detail.SubdomainAccess from import alone, so eligibility falls back
+// to detail.Ports[].HTTPSupport — is covered by the run-16 R-15-1
+// dual-signal tests below (TestPlatformEligible_*).
 //
 // I/O boundary: ops.LookupService → REST API; client.GetService → REST
-// API (REST-authoritative). Reads pre-deploy intent flag, not deploy-
-// time port propagation; no race-prone surface in the read path.
+// API (REST-authoritative).
 func TestMaybeAutoEnable_NoMeta_PlanDeclaredIntent_Dispatches(t *testing.T) {
 	// Override pulled in to keep the readiness probe under test latency.
 	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
@@ -419,4 +415,90 @@ type countingDoer struct {
 func (d *countingDoer) Do(*http.Request) (*http.Response, error) {
 	d.calls++
 	return &http.Response{StatusCode: d.status, Body: io.NopCloser(strings.NewReader(""))}, nil
+}
+
+// platformEligibleMock builds a mock fixture targeting platformEligibleForSubdomain
+// directly with a USER-category (non-system) service. The IsSystem branch is
+// already exercised by TestMaybeAutoEnable_NoMeta_SystemService_Skips.
+func platformEligibleMock(subdomainAccess bool, ports []platform.Port) *platform.Mock {
+	svc := platform.ServiceStack{
+		ID:              autoEnableTestServiceID,
+		Name:            autoEnableTestHostname,
+		ProjectID:       "proj-1",
+		SubdomainAccess: subdomainAccess,
+		Ports:           ports,
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{
+			ServiceStackTypeCategoryName: "USER",
+		},
+	}
+	return platform.NewMock().
+		WithServices([]platform.ServiceStack{svc}).
+		WithService(&svc)
+}
+
+// TestPlatformEligible_DetailSubdomainAccessTrue_Eligible pins the end-user
+// click-deploy path: the imported deliverable yaml carried
+// enableSubdomainAccess: true AND a subdomain has actually been provisioned;
+// detail.SubdomainAccess is true; eligibility holds independently of the
+// port signal. Regression cover: existing behaviour pre-R-15-1.
+func TestPlatformEligible_DetailSubdomainAccessTrue_Eligible(t *testing.T) {
+	t.Parallel()
+	mock := platformEligibleMock(true, []platform.Port{{Port: 3000, Protocol: "tcp"}})
+
+	if !platformEligibleForSubdomain(context.Background(), mock, "proj-1", "app") {
+		t.Error("detail.SubdomainAccess=true should be eligible")
+	}
+}
+
+// TestPlatformEligible_DetailSubdomainAccessFalse_HTTPSupportTrue_Eligible
+// pins the run-16 R-15-1 closure: the recipe-authoring path. Workspace yaml
+// emits enableSubdomainAccess: true (yaml_emitter.go:164/181) but the
+// platform doesn't flip detail.SubdomainAccess until first enable, so the
+// pre-§A predicate that read SubdomainAccess alone returned false on every
+// recipe-authoring first-deploy. The dual-signal predicate falls back to
+// detail.Ports[].HTTPSupport — any port with httpSupport=true means the
+// deployed zerops.yaml intends HTTP, so auto-enable is correct.
+func TestPlatformEligible_DetailSubdomainAccessFalse_HTTPSupportTrue_Eligible(t *testing.T) {
+	t.Parallel()
+	mock := platformEligibleMock(false, []platform.Port{
+		{Port: 3000, Protocol: "tcp", HTTPSupport: true},
+	})
+
+	if !platformEligibleForSubdomain(context.Background(), mock, "proj-1", "app") {
+		t.Error("HTTPSupport=true with SubdomainAccess=false (recipe-authoring path) should be eligible")
+	}
+}
+
+// TestPlatformEligible_DetailSubdomainAccessFalse_HTTPSupportFalse_NotEligible
+// pins the worker / non-HTTP service path. Workers have no httpSupport=true
+// ports and never receive enableSubdomainAccess: true at import; both
+// signals are false; eligibility skips so the worker doesn't get an L7
+// route it has nothing to serve on.
+func TestPlatformEligible_DetailSubdomainAccessFalse_HTTPSupportFalse_NotEligible(t *testing.T) {
+	t.Parallel()
+	mock := platformEligibleMock(false, []platform.Port{
+		{Port: 4222, Protocol: "tcp"},
+	})
+
+	if platformEligibleForSubdomain(context.Background(), mock, "proj-1", "app") {
+		t.Error("worker path (both signals false) should NOT be eligible")
+	}
+}
+
+// TestPlatformEligible_GetServiceError_NotEligible pins the soft-fail path:
+// platform lookup failure returns false so the caller skips auto-enable
+// silently, leaving the agent's manual zerops_subdomain action=enable as
+// the recovery surface.
+func TestPlatformEligible_GetServiceError_NotEligible(t *testing.T) {
+	t.Parallel()
+	mock := platformEligibleMock(true, []platform.Port{
+		{Port: 3000, Protocol: "tcp", HTTPSupport: true},
+	}).WithError("GetService", &platform.PlatformError{
+		Code:    platform.ErrAPIError,
+		Message: "transient lookup failure",
+	})
+
+	if platformEligibleForSubdomain(context.Background(), mock, "proj-1", "app") {
+		t.Error("GetService failure should soft-fail to not-eligible")
+	}
 }

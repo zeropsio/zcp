@@ -9,7 +9,13 @@ import (
 // the placement rubric + fragment-id list so a sub-agent records the
 // right fragment into the right surface without the engine guessing
 // classification post-hoc. Run-8-readiness §2.F.
-func TestBrief_Scaffold_IncludesContentRubric(t *testing.T) {
+// TestBrief_Scaffold_TeachesDecisionRecording — run-16 §6.2 retired
+// the legacy placement-rubric (which taught content authoring
+// in-phase) and replaced it with `decision_recording.md`. The scaffold
+// sub-agent now records facts only; documentation surfaces are
+// authored by the codebase-content sub-agent at phase 5. Replaces the
+// pre-run-16 TestBrief_Scaffold_IncludesContentRubric expectations.
+func TestBrief_Scaffold_TeachesDecisionRecording(t *testing.T) {
 	t.Parallel()
 
 	plan := syntheticShowcasePlan()
@@ -17,33 +23,31 @@ func TestBrief_Scaffold_IncludesContentRubric(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildScaffoldBrief: %v", err)
 	}
-	// Placement rubric anchors.
 	for _, anchor := range []string{
-		"Placement",
-		"knowledge-base",
-		"integration-guide",
-		"claude-md",
-		"yaml inline comment",
+		"porter_change",
+		"field_rationale",
+		"record-fact",
 	} {
 		if !strings.Contains(brief.Body, anchor) {
-			t.Errorf("scaffold brief missing placement-rubric anchor %q", anchor)
+			t.Errorf("scaffold brief missing decision-recording anchor %q", anchor)
 		}
 	}
-	// All 5 fragment ids the scaffold sub-agent is expected to record.
-	for _, frag := range []string{
-		"codebase/<h>/intro",
+	// Citation-map reference (topic → guide binding) must still be present
+	// — scaffold reads citation guides when filling per-managed-service shells.
+	if !strings.Contains(brief.Body, "zerops_knowledge") {
+		t.Error("scaffold brief missing zerops_knowledge citation reference")
+	}
+	// The legacy fragment-id taxonomy must NOT appear in the scaffold
+	// brief — those fragments are authored by phase-5 codebase-content,
+	// not by scaffold.
+	for _, legacyFrag := range []string{
 		"codebase/<h>/integration-guide",
 		"codebase/<h>/knowledge-base",
 		"codebase/<h>/claude-md/service-facts",
-		"codebase/<h>/claude-md/notes",
 	} {
-		if !strings.Contains(brief.Body, frag) {
-			t.Errorf("scaffold brief missing fragment id %q", frag)
+		if strings.Contains(brief.Body, legacyFrag) {
+			t.Errorf("scaffold brief still teaches legacy fragment id %q — content authoring moved to phase 5 (run-16 §6.2)", legacyFrag)
 		}
-	}
-	// Citation-map reference (topic → guide binding) must be present.
-	if !strings.Contains(brief.Body, "zerops_knowledge") {
-		t.Error("scaffold brief missing zerops_knowledge citation reference")
 	}
 }
 
@@ -92,10 +96,13 @@ func TestBrief_Scaffold_OmitsInitCommandsModelWhenUnused(t *testing.T) {
 	}
 }
 
-// TestBrief_Feature_AppendSemantics — the feature brief carries the
-// content-extension rubric so the sub-agent extends scaffold's
-// fragments rather than replacing them.
-func TestBrief_Feature_AppendSemantics(t *testing.T) {
+// TestBrief_Feature_TeachesDecisionRecording — run-16 §6.2 retired the
+// content-extension rubric; feature sub-agent records `porter_change`
+// + `field_rationale` facts at densest context, and the codebase-
+// content sub-agent at phase 5 synthesizes IG/KB. Replaces the pre-
+// run-16 TestBrief_Feature_AppendSemantics that asserted EXTEND/append
+// teaching.
+func TestBrief_Feature_TeachesDecisionRecording(t *testing.T) {
 	t.Parallel()
 
 	plan := syntheticShowcasePlan()
@@ -103,11 +110,13 @@ func TestBrief_Feature_AppendSemantics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildFeatureBrief: %v", err)
 	}
-	if !strings.Contains(brief.Body, "EXTEND") {
-		t.Error("feature brief missing append-semantics anchor")
-	}
-	if !strings.Contains(brief.Body, "append") {
-		t.Error("feature brief missing 'append' term — content-extension rubric not inlined")
+	for _, anchor := range []string{
+		"porter_change",
+		"field_rationale",
+	} {
+		if !strings.Contains(brief.Body, anchor) {
+			t.Errorf("feature brief missing decision-recording anchor %q", anchor)
+		}
 	}
 }
 

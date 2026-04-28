@@ -3,6 +3,7 @@ package recipe
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -102,8 +103,24 @@ func applyEnvComment(plan *Plan, id, body string) error {
 // isAppendFragmentID reports whether an id uses append-on-extend
 // semantics. Per plan §2.A.4: feature sub-agent extends IG, KB, and
 // CLAUDE.md sections; root and env overwrite (main agent authors once).
+//
+// Run-16 §6.5 — slotted ids (`integration-guide/<n>`,
+// `zerops-yaml-comments/<block>`, single-slot `claude-md`) overwrite
+// rather than append; each slot is a single record-time author.
 func isAppendFragmentID(id string) bool {
 	if !strings.HasPrefix(id, "codebase/") {
+		return false
+	}
+	// Slotted IG: each slot overwrites; main-agent IG (no slot) appends.
+	if strings.Contains(id, "/integration-guide/") {
+		return false
+	}
+	// Slotted zerops.yaml comments: per-block, overwrite.
+	if strings.Contains(id, "/zerops-yaml-comments/") {
+		return false
+	}
+	// Single-slot claude-md (run-16 primary): overwrite.
+	if strings.HasSuffix(id, "/claude-md") {
 		return false
 	}
 	switch {
@@ -112,6 +129,7 @@ func isAppendFragmentID(id string) bool {
 	case strings.HasSuffix(id, "/knowledge-base"):
 		return true
 	case strings.Contains(id, "/claude-md/"):
+		// Legacy sub-slots — append for back-compat.
 		return true
 	}
 	return false
@@ -188,10 +206,24 @@ func isValidFragmentID(plan *Plan, id string) bool {
 			return false
 		}
 		tail := rest[slash+1:]
+		// Run-16 §6.5 — accept the run-16 single-slot claude-md primary
+		// shape in addition to the legacy back-compat sub-slots.
 		switch tail {
 		case fragmentTailIntro, "integration-guide", "knowledge-base",
-			"claude-md/service-facts", "claude-md/notes":
+			"claude-md", "claude-md/service-facts", "claude-md/notes":
 			return true
+		}
+		// Run-16 §6.5 — slotted IG: `codebase/<h>/integration-guide/<n>`.
+		if rest, ok := strings.CutPrefix(tail, "integration-guide/"); ok {
+			if _, err := parseTierIndex(rest); err == nil {
+				return true
+			}
+			return false
+		}
+		// Run-16 §6.5 — per-block zerops.yaml comments:
+		// `codebase/<h>/zerops-yaml-comments/<block-name>`.
+		if rest, ok := strings.CutPrefix(tail, "zerops-yaml-comments/"); ok {
+			return rest != "" && !strings.ContainsAny(rest, "/")
 		}
 		return false
 	}
@@ -199,11 +231,14 @@ func isValidFragmentID(plan *Plan, id string) bool {
 }
 
 // parseTierIndex returns the numeric tier index parsed from a string
-// key; returns an error on any non-numeric input.
+// key; returns an error on any non-numeric or trailing-junk input.
+//
+// Run-16 reviewer minor — switched from fmt.Sscanf to strconv.Atoi so
+// "3abc" rejects (Sscanf returned (3, nil) leaving trailing junk
+// undetected, which let `codebase/<h>/integration-guide/3abc` pass
+// isValidFragmentID silently).
 func parseTierIndex(s string) (int, error) {
-	var i int
-	_, err := fmt.Sscanf(s, "%d", &i)
-	return i, err
+	return strconv.Atoi(s)
 }
 
 // serviceKnown reports whether a hostname matches one of the plan's

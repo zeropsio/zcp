@@ -1,15 +1,27 @@
-# Finalize phase — main-agent fragments, stitch, validate
+# Finalize phase — stitch + validate (run-16)
 
-Scaffold + feature built a working deploy and authored codebase-scoped
-fragments in-phase. Finalize is assembly + validation: the main agent
-fills the root + env fragments, stitches into the 6-tier deliverable,
-then iterates on any validator failures.
+Phases 5 + 6 (codebase-content + env-content) authored every
+documentation fragment. Finalize is **stitch + validate only**:
 
-There is no writer sub-agent. Fragments are authored by whoever holds
-the densest context — scaffold/feature sub-agents for codebase-scoped
-content (already recorded during their phases), main agent for
-platform-narrative content (authored here). See run-8-readiness §2.0
-for the authorship map.
+1. Call `zerops_recipe action=stitch-content slug=<slug>` to render
+   every Surface from recorded fragments + engine-stamped IG #1.
+2. Call `zerops_recipe action=complete-phase phase=finalize` to run
+   the full validator set.
+3. If a violation surfaces, fix the underlying fragment via
+   `record-fragment mode=replace fragmentId=<id> fragment=<...>`,
+   re-stitch, re-validate. The author of the violating fragment was
+   the codebase-content / claudemd-author / env-content sub-agent at
+   phases 5+6 — main agent owns finalize-time corrections.
+
+There is no fragment authoring at finalize. The "main-agent root +
+env fragments" pattern was retired at run-16 — the env-content
+sub-agent at phase 6 owns those surfaces.
+
+Run-16 §6.1 + §6.2 — finalize was 4 jobs (stitch, render, validate,
+re-author) pre-run-16; now it is 2 (stitch, validate). The legacy
+"finalize sub-agent dispatch" option below is back-compat for recipes
+that ran the pre-run-16 pipeline; new recipes use phase-6
+`env-content` for the same surfaces.
 
 ## Sub-agent dispatch option (high-volume mechanical authoring)
 

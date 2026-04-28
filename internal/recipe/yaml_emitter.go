@@ -322,8 +322,8 @@ func writeNonRuntimeService(b *strings.Builder, svc Service, tier Tier, comments
 		// is set during plan composition (mergePlan) but fall back to
 		// the family table here so emit is correct even when fixtures
 		// or test plans pass Service literals directly.
-		if mode == "HA" && !svc.SupportsHA && !managedServiceSupportsHA(svc.Type) {
-			mode = "NON_HA"
+		if mode == modeHA && !svc.SupportsHA && !managedServiceSupportsHA(svc.Type) {
+			mode = modeNonHA
 		}
 		fmt.Fprintf(b, "    mode: %s\n", mode)
 		writeAutoscaling(b, serviceKindManaged, tier)

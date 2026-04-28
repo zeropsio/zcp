@@ -89,9 +89,22 @@ const (
 type BriefKind string
 
 const (
-	BriefScaffold BriefKind = "scaffold"
-	BriefFeature  BriefKind = "feature"
-	BriefFinalize BriefKind = "finalize"
+	BriefScaffold        BriefKind = "scaffold"
+	BriefFeature         BriefKind = "feature"
+	BriefFinalize        BriefKind = "finalize"
+	BriefCodebaseContent BriefKind = "codebase-content" // run-16 §6.3
+	BriefClaudeMDAuthor  BriefKind = "claudemd-author"  // run-16 §6.7a
+	BriefEnvContent      BriefKind = "env-content"      // run-16 §6.3
+)
+
+// Run-16 §6.2 — content-phase brief size caps. Per-codebase brief is
+// pointer-based (atoms + filtered facts + metadata + cross-include
+// pointers); target ~25-29 KB. The 40 KB cap is a regression guard
+// (§Risk 2) — accidental verbatim embeds get caught before dispatch.
+const (
+	CodebaseContentBriefCap = 40 * 1024
+	EnvContentBriefCap      = 40 * 1024
+	ClaudeMDBriefCap        = 8 * 1024 // §Risk 7 — Zerops-free brief stays small by construction
 )
 
 // FinalizeBriefCap caps the finalize brief size. Sized for a typical
@@ -166,11 +179,19 @@ func BuildScaffoldBriefWithResolver(plan *Plan, cb Codebase, parent *ParentRecip
 		contract.ZeropsSetupDev, contract.ZeropsSetupProd)
 	parts = append(parts, "role_contract")
 
+	// Run-16 §6.2 — scaffold brief no longer embeds the legacy
+	// `content_authoring.md` atom (15.3 KB; taught the agent to author
+	// IG/KB/CLAUDE.md fragments in-phase). Replaced by the much smaller
+	// `decision_recording.md` (~2 KB) that teaches porter_change +
+	// field_rationale recording. Net brief size: -13 KB. Codebase-content
+	// phase 5 sub-agent reads facts + on-disk artifacts and authors all
+	// surfaces. Legacy atom file stays in place pending tranche 6
+	// (dogfood-conditional deletion).
 	atoms := []string{
 		"briefs/scaffold/platform_principles.md",
 		"briefs/scaffold/preship_contract.md",
 		"briefs/scaffold/fact_recording.md",
-		"briefs/scaffold/content_authoring.md",
+		"briefs/scaffold/decision_recording.md",
 		"principles/dev-loop.md",
 		"principles/mount-vs-container.md",
 		"principles/yaml-comment-style.md",
@@ -274,9 +295,14 @@ func BuildFeatureBrief(plan *Plan) (Brief, error) {
 	fmt.Fprintf(&b, "# Feature brief — %s\n\n", plan.Slug)
 	parts = append(parts, "header")
 
+	// Run-16 §6.2 — feature brief swaps `content_extension.md` (7.4 KB;
+	// taught extending IG/KB) for `decision_recording.md` (~2 KB; same
+	// porter_change/field_rationale recording shape as scaffold but
+	// scoped to feature-added fields + scenario-discovered traps).
+	// Net: -5 KB. Legacy atom retired in tranche 6.
 	atoms := []string{
 		"briefs/feature/feature_kinds.md",
-		"briefs/feature/content_extension.md",
+		"briefs/feature/decision_recording.md",
 		"principles/mount-vs-container.md",
 		"principles/yaml-comment-style.md",
 	}

@@ -32,8 +32,22 @@ func gatesForPhase(p Phase) []Gate {
 	case PhaseResearch:
 		return append(base, researchGates()...)
 	case PhaseScaffold, PhaseFeature:
+		// Run-16 §6.1 — scaffold/feature stop authoring fragments. The
+		// codebase-validators set still runs so source / zerops.yaml
+		// invariants stay enforced; surface validators (IG/KB/CLAUDE)
+		// run at the per-codebase content phase below.
 		return append(base, CodebaseGates()...)
+	case PhaseCodebaseContent:
+		// Surface validators run after the content sub-agents author
+		// IG/KB/CLAUDE fragments. Codebase-scoped — env surfaces are
+		// still ahead.
+		return append(base, CodebaseGates()...)
+	case PhaseEnvContent:
+		// Env-content phase authors root + per-tier surfaces.
+		return append(base, EnvGates()...)
 	case PhaseFinalize:
+		// Finalize re-runs the full set as a backstop; stitch + validate
+		// only at this phase post-run-16.
 		base = append(base, CodebaseGates()...)
 		return append(base, EnvGates()...)
 	case PhaseProvision:

@@ -8,22 +8,30 @@ import (
 	"sync"
 )
 
-// Phase is one of the five state-machine phases a recipe run passes
+// Phase is one of the seven state-machine phases a recipe run passes
 // through. Each phase has an entry guard (precondition) and exit guard
-// (gate set) — see AdvancePhase.
+// (gate set) — see AdvancePhase. Run-16 §6.1 added codebase-content +
+// env-content between feature and finalize so deploy phases stop
+// authoring documentation surfaces; content sub-agents read recorded
+// facts + on-disk artifacts and synthesize all surfaces.
 type Phase string
 
 const (
-	PhaseResearch  Phase = "research"
-	PhaseProvision Phase = "provision"
-	PhaseScaffold  Phase = "scaffold"
-	PhaseFeature   Phase = "feature"
-	PhaseFinalize  Phase = "finalize"
+	PhaseResearch        Phase = "research"
+	PhaseProvision       Phase = "provision"
+	PhaseScaffold        Phase = "scaffold"
+	PhaseFeature         Phase = "feature"
+	PhaseCodebaseContent Phase = "codebase-content" // run-16 §6.1
+	PhaseEnvContent      Phase = "env-content"      // run-16 §6.1
+	PhaseFinalize        Phase = "finalize"
 )
 
 // Phases returns the phases in execution order.
 func Phases() []Phase {
-	return []Phase{PhaseResearch, PhaseProvision, PhaseScaffold, PhaseFeature, PhaseFinalize}
+	return []Phase{
+		PhaseResearch, PhaseProvision, PhaseScaffold, PhaseFeature,
+		PhaseCodebaseContent, PhaseEnvContent, PhaseFinalize,
+	}
 }
 
 // phaseIndex returns the zero-based index of a phase, or -1 if unknown.
@@ -166,6 +174,123 @@ func (s *Session) RecordFact(f FactRecord) error {
 	return s.FactsLog.Append(f)
 }
 
+// seedEngineEmittedFacts appends engine-emitted fact shells + tier_decision
+// facts to the session's FactsLog at brief-dispatch time. Idempotent: if
+// the topic already exists in the log, the fact is skipped (the agent may
+// have filled it via fill-fact-slot already).
+//
+// Run-16 §7.1 / §5.3 — engine emits at build-subagent-prompt rather than
+// at update-plan to keep the timing tight (agent sees freshly-emitted
+// shells in the dispatched brief). Codebase-bound kinds emit per-codebase
+// shells; env-content emits tier_decision facts; other kinds no-op.
+func seedEngineEmittedFacts(sess *Session, kind BriefKind, codebaseHostname string) error {
+	if sess == nil || sess.FactsLog == nil || sess.Plan == nil {
+		return nil
+	}
+
+	existing, err := sess.FactsLog.Read()
+	if err != nil {
+		return err
+	}
+	exists := make(map[string]bool, len(existing))
+	for _, f := range existing {
+		exists[f.Topic] = true
+	}
+
+	var toEmit []FactRecord
+
+	switch kind {
+	case BriefScaffold, BriefCodebaseContent, BriefClaudeMDAuthor:
+		if codebaseHostname == "" {
+			return nil
+		}
+		var cb Codebase
+		found := false
+		for _, c := range sess.Plan.Codebases {
+			if c.Hostname == codebaseHostname {
+				cb, found = c, true
+				break
+			}
+		}
+		if !found {
+			return nil
+		}
+		toEmit = EmittedFactsForCodebase(sess.Plan, cb)
+	case BriefEnvContent:
+		toEmit = EmittedTierDecisionFacts(sess.Plan)
+	case BriefFeature, BriefFinalize:
+		// no engine-emit at these kinds
+		return nil
+	}
+
+	for _, f := range toEmit {
+		if exists[f.Topic] {
+			continue
+		}
+		if err := sess.FactsLog.Append(f); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// FillFactSlot merges agent-supplied slot values into a previously
+// engine-emitted fact identified by topic. Run-16 §6.4 — used at
+// codebase-content phase to fill empty Why / CandidateHeading / Library
+// on per-managed-service shells (§7.2), the worker no-HTTP fact's
+// CandidateHeading (§7.1), or to extend tier_decision TierContext.
+//
+// The merge preserves the original Topic, Kind, CandidateClass,
+// CandidateSurface, CitationGuide; the agent overrides Why,
+// CandidateHeading, Library, Diff, TierContext when those are non-empty
+// in the input. EngineEmitted flips to false on merge so the validator
+// in Validate runs the full per-Kind required-field check on the now-
+// agent-owned record.
+func (s *Session) FillFactSlot(in FactRecord) error {
+	if s.FactsLog == nil {
+		return errors.New("session has no FactsLog")
+	}
+	if in.Topic == "" {
+		return errors.New("fill-fact-slot: factTopic is required")
+	}
+	existing, err := s.FactsLog.Read()
+	if err != nil {
+		return err
+	}
+	var prior *FactRecord
+	for i := range existing {
+		if existing[i].Topic == in.Topic {
+			prior = &existing[i]
+			break
+		}
+	}
+	if prior == nil {
+		return fmt.Errorf("fill-fact-slot: no fact with topic %q", in.Topic)
+	}
+	if !prior.EngineEmitted {
+		return fmt.Errorf("fill-fact-slot: fact %q is not engine-emitted (only engine shells accept slot fills)", in.Topic)
+	}
+
+	merged := *prior
+	merged.EngineEmitted = false
+	if in.Why != "" {
+		merged.Why = in.Why
+	}
+	if in.CandidateHeading != "" {
+		merged.CandidateHeading = in.CandidateHeading
+	}
+	if in.Library != "" {
+		merged.Library = in.Library
+	}
+	if in.Diff != "" {
+		merged.Diff = in.Diff
+	}
+	if in.TierContext != "" {
+		merged.TierContext = in.TierContext
+	}
+	return s.FactsLog.ReplaceByTopic(merged)
+}
+
 // BuildBrief composes a brief for a sub-agent dispatch. Kind picks the
 // composer; caller supplies the codebase (scaffold only).
 func (s *Session) BuildBrief(kind BriefKind, cb Codebase) (Brief, error) {
@@ -183,6 +308,26 @@ func (s *Session) BuildBrief(kind BriefKind, cb Codebase) (Brief, error) {
 		return BuildFeatureBrief(s.Plan)
 	case BriefFinalize:
 		return BuildFinalizeBrief(s.Plan)
+	case BriefCodebaseContent, BriefEnvContent:
+		// Run-16 §6.2 — content briefs read FactsLog so the codebase-
+		// content sub-agent sees the deploy-phase agents' recorded
+		// porter_change / field_rationale / tier_decision facts. The
+		// FactsLog read happens here (Session-level) rather than inside
+		// the composer so the package-level composer stays plan-pure.
+		var factsSnapshot []FactRecord
+		if s.FactsLog != nil {
+			recs, err := s.FactsLog.Read()
+			if err != nil {
+				return Brief{}, fmt.Errorf("read facts log for %s brief: %w", kind, err)
+			}
+			factsSnapshot = recs
+		}
+		if kind == BriefCodebaseContent {
+			return BuildCodebaseContentBrief(s.Plan, cb, s.Parent, factsSnapshot)
+		}
+		return BuildEnvContentBrief(s.Plan, s.Parent, factsSnapshot)
+	case BriefClaudeMDAuthor:
+		return BuildClaudeMDBrief(s.Plan, cb)
 	default:
 		return Brief{}, fmt.Errorf("unknown brief kind %q", kind)
 	}

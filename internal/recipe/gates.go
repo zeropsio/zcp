@@ -60,7 +60,20 @@ func CodebaseGates() []Gate {
 	return []Gate{
 		{Name: "codebase-surface-validators", Run: gateCodebaseSurfaceValidators},
 		{Name: "source-comment-voice", Run: gateSourceCommentVoice},
+		// Run-16 §6.8 — Notice-severity dedup backstops. Primary R-15-6
+		// closure is structural (single-author phase 5); these are
+		// heuristic signals.
+		{Name: "cross-surface-duplication", Run: gateCrossSurfaceDuplication},
+		{Name: "cross-recipe-duplication", Run: gateCrossRecipeDuplication},
 	}
+}
+
+func gateCrossSurfaceDuplication(ctx GateContext) []Violation {
+	return validateCrossSurfaceDuplication(context.Background(), ctx.Plan)
+}
+
+func gateCrossRecipeDuplication(ctx GateContext) []Violation {
+	return validateCrossRecipeDuplication(context.Background(), ctx.Plan, ctx.Parent)
 }
 
 // EnvGates returns the gate set that runs only at finalize close —
