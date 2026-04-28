@@ -47,7 +47,7 @@ func TestModeExpansionAtom_FiresOnlyForSingleSlotModes(t *testing.T) {
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: topology.RuntimeDynamic, Mode: tt.mode,
-					Strategy: "push-dev", Bootstrapped: true, Deployed: tt.deployed,
+					CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: tt.deployed,
 				}},
 			}
 			bodies, err := SynthesizeBodies(env, corpus)

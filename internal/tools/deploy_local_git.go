@@ -181,7 +181,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 		// vs ref-rejection all read differently and the agent's recovery
 		// path differs accordingly (E2).
 		gitWrap := &platform.SSHExecError{Hostname: "local-git", Output: pushOut, Err: pushErr}
-		classification := classifyTransportError(gitWrap, topology.StrategyPushGit)
+		classification := classifyTransportError(gitWrap, "git-push")
 		category := topology.FailureClassNetwork
 		if classification != nil {
 			category = classification.Category
@@ -211,10 +211,10 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 	attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
 	_ = workflow.RecordDeployAttempt(stateDir, hostname, attempt)
 
-	// If the linked service's meta tracks a PushGitTrigger (Phase A.6 field),
-	// the downstream trigger (webhook / actions) fires remotely. If it's
-	// empty, the push succeeded but Zerops won't auto-build. Surface that
-	// as a warning so the user isn't left wondering why nothing happens.
+	// If the linked service's meta tracks a BuildIntegration (webhook /
+	// actions), the downstream build fires remotely. If it's BuildIntegrationNone,
+	// the push succeeded but Zerops won't auto-build. Surface that as a warning
+	// so the user isn't left wondering why nothing happens.
 	if warn := trackTriggerMissingWarning(stateDir, hostname); warn != "" {
 		warnings = append(warnings, warn)
 	}
@@ -292,10 +292,9 @@ func currentEffectiveOrigin(current, provided string) string {
 // FindServiceMeta honors the pair-keyed invariant — a stage-hostname target
 // resolves to the dev-keyed meta file (spec-workflows.md §8 E8).
 //
-// Reads CloseDeployMode + BuildIntegration (deploy-decomp P4) instead of
-// the legacy DeployStrategy + PushGitTrigger pair. UTILITY framing: the
-// warning says "no ZCP-managed integration is configured", not "no build
-// will fire" — the user's external CI may still pick up the push.
+// Reads CloseDeployMode + BuildIntegration. UTILITY framing: the warning
+// says "no ZCP-managed integration is configured", not "no build will
+// fire" — the user's external CI may still pick up the push.
 func trackTriggerMissingWarning(stateDir, hostname string) string {
 	meta, _ := workflow.FindServiceMeta(stateDir, hostname)
 	if meta == nil || meta.CloseDeployMode != topology.CloseModeGitPush {

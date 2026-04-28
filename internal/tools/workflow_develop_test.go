@@ -114,8 +114,8 @@ func TestHandleDevelopBriefing_UnsetStrategy_Deployed_StrategyReview(t *testing.
 
 	text := extractText(result)
 	for _, needle := range []string{
-		"Pick an ongoing deploy strategy",
-		`action="strategy"`,
+		"Pick an ongoing close-mode",
+		`action="close-mode"`,
 	} {
 		if !strings.Contains(text, needle) {
 			t.Errorf("response missing %q — strategy-review atom did not render. Got:\n%s", needle, text)
@@ -135,13 +135,13 @@ func TestHandleDevelopBriefing_ConfirmedStrategy_Deployed_NoReview(t *testing.T)
 	engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
 
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
-		Hostname:          "appdev",
-		Mode:              topology.PlanModeDev,
-		DeployStrategy:    topology.StrategyPushDev,
-		StrategyConfirmed: true,
-		BootstrapSession:  "sess1",
-		BootstrappedAt:    "2026-04-18",
-		FirstDeployedAt:   "2026-04-19T10:00:00Z",
+		Hostname:                 "appdev",
+		Mode:                     topology.PlanModeDev,
+		CloseDeployMode:          topology.CloseModeAuto,
+		CloseDeployModeConfirmed: true,
+		BootstrapSession:         "sess1",
+		BootstrappedAt:           "2026-04-18",
+		FirstDeployedAt:          "2026-04-19T10:00:00Z",
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
@@ -171,8 +171,8 @@ func TestHandleDevelopBriefing_ConfirmedStrategy_Deployed_NoReview(t *testing.T)
 	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
 
 	text := extractText(result)
-	if strings.Contains(text, "Pick an ongoing deploy strategy") {
-		t.Errorf("strategy-review fired on a confirmed-strategy service. Got:\n%s", text)
+	if strings.Contains(text, "Pick an ongoing close-mode") {
+		t.Errorf("strategy-review fired on a confirmed-close-mode service. Got:\n%s", text)
 	}
 	if strings.Contains(text, "You're in the develop first-deploy branch") {
 		t.Errorf("first-deploy-intro fired on a deployed service. Got:\n%s", text)
@@ -427,7 +427,7 @@ func TestHandleDevelopBriefing_NewIntent_AutoClosesPrior(t *testing.T) {
 	_ = workflow.RecordDeployAttempt(dir, "appdev", workflow.DeployAttempt{
 		AttemptedAt: "2026-04-21T10:00:00Z",
 		SucceededAt: "2026-04-21T10:00:30Z",
-		Strategy:    topology.StrategyPushDev,
+		Strategy:    "push-dev",
 	})
 
 	// Second start — task B with different intent.
@@ -483,7 +483,7 @@ func TestHandleDevelopBriefing_SameIntent_Idempotent(t *testing.T) {
 	_ = workflow.RecordDeployAttempt(dir, "appdev", workflow.DeployAttempt{
 		AttemptedAt: "2026-04-21T10:00:00Z",
 		SucceededAt: "2026-04-21T10:00:30Z",
-		Strategy:    topology.StrategyPushDev,
+		Strategy:    "push-dev",
 	})
 	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
 

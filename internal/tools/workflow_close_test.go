@@ -20,7 +20,6 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/runtime"
-	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -49,7 +48,7 @@ func seedOpenWorkSession(t *testing.T, dir string, deploySucceeded bool) {
 	ws := workflow.NewWorkSession("proj1", string(workflow.EnvContainer), "test intent", []string{"appdev"})
 	if deploySucceeded {
 		ws.Deploys = map[string][]workflow.DeployAttempt{
-			"appdev": {{AttemptedAt: now, SucceededAt: now, Setup: "dev", Strategy: topology.StrategyPushDev}},
+			"appdev": {{AttemptedAt: now, SucceededAt: now, Setup: "dev", Strategy: "push-dev"}},
 		}
 	}
 	if err := workflow.SaveWorkSession(dir, ws); err != nil {

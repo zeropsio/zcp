@@ -19,9 +19,9 @@ import (
 // is identical in both envs.
 func validateDeployStrategyParam(strategy string) error {
 	switch strategy {
-	case "", deployStrategyGitPush, topology.StrategyPushDev:
+	case "", deployStrategyGitPush, "push-dev":
 		return nil
-	case topology.StrategyManual:
+	case "manual":
 		return platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"strategy \"manual\" is not a zerops_deploy option — it's a ServiceMeta declaration meaning 'ZCP stays out of the deploy loop'",

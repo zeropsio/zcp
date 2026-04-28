@@ -4,7 +4,7 @@ priority: 3
 phases: [develop-active]
 deployStates: [deployed]
 modes: [simple]
-strategies: [push-dev]
+closeDeployModes: [auto]
 environments: [container]
 title: "Push-dev iteration cycle (simple mode)"
 references-atoms: [develop-platform-rules-container]

@@ -62,13 +62,13 @@ func TestComputeEnvelope_ServicesBootstrapped(t *testing.T) {
 	dir := t.TempDir()
 	// Write a complete meta for "appdev" with stage pair "appstage".
 	meta := &ServiceMeta{
-		Hostname:          "appdev",
-		Mode:              topology.PlanModeStandard,
-		StageHostname:     "appstage",
-		DeployStrategy:    topology.StrategyPushDev,
-		StrategyConfirmed: true,
-		BootstrappedAt:    fixedTime.Format(time.RFC3339),
-		BootstrapSession:  "sess-1",
+		Hostname:                 "appdev",
+		Mode:                     topology.PlanModeStandard,
+		StageHostname:            "appstage",
+		CloseDeployMode:          topology.CloseModeAuto,
+		CloseDeployModeConfirmed: true,
+		BootstrappedAt:           fixedTime.Format(time.RFC3339),
+		BootstrapSession:         "sess-1",
 	}
 	if err := WriteServiceMeta(dir, meta); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
@@ -139,8 +139,8 @@ func TestComputeEnvelope_ServicesBootstrapped(t *testing.T) {
 	if !appdev.Bootstrapped {
 		t.Error("appdev.Bootstrapped = false, want true")
 	}
-	if appdev.Strategy != topology.DeployStrategy(topology.StrategyPushDev) {
-		t.Errorf("appdev strategy = %q, want push-dev", appdev.Strategy)
+	if appdev.CloseDeployMode != topology.CloseModeAuto {
+		t.Errorf("appdev closeDeployMode = %q, want auto", appdev.CloseDeployMode)
 	}
 	if appdev.StageHostname != "appstage" {
 		t.Errorf("appdev stage = %q, want appstage", appdev.StageHostname)
@@ -499,7 +499,7 @@ func TestComputeEnvelope_ParallelIO(t *testing.T) {
 	meta := &ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeDev,
-		DeployStrategy:   topology.StrategyPushGit,
+		CloseDeployMode:  topology.CloseModeGitPush,
 		BootstrappedAt:   fixedTime.Format(time.RFC3339),
 		BootstrapSession: "sess-1",
 	}

@@ -162,8 +162,8 @@ func TestHandleAdoptLocal_LinksRuntime_UpgradesMode(t *testing.T) {
 	dir := t.TempDir()
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname: "myproject", Mode: topology.PlanModeLocalOnly,
-		BootstrappedAt: "2026-04-01",
-		DeployStrategy: topology.StrategyManual,
+		BootstrappedAt:  "2026-04-01",
+		CloseDeployMode: topology.CloseModeManual,
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
@@ -192,10 +192,14 @@ func TestHandleAdoptLocal_LinksRuntime_UpgradesMode(t *testing.T) {
 	if got.StageHostname != "apistage" {
 		t.Errorf("StageHostname = %q, want apistage", got.StageHostname)
 	}
-	// Previous forced-manual strategy reset because linkage expands options;
-	// cleared to empty so on-disk shape matches a never-configured service.
-	if got.DeployStrategy != "" {
-		t.Errorf("DeployStrategy = %q, want empty after link (router prompts)", got.DeployStrategy)
+	// Previous forced-manual close-mode reset because linkage expands options;
+	// cleared to unset so the develop-strategy-review atom prompts on the
+	// next status round-trip.
+	if got.CloseDeployMode != topology.CloseModeUnset {
+		t.Errorf("CloseDeployMode = %q, want unset after link (router prompts)", got.CloseDeployMode)
+	}
+	if got.CloseDeployModeConfirmed {
+		t.Error("CloseDeployModeConfirmed should be cleared after link")
 	}
 	// ACTIVE target stamps FirstDeployedAt.
 	if got.FirstDeployedAt == "" {

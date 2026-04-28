@@ -3,7 +3,7 @@ id: develop-push-dev-deploy-container
 priority: 2
 phases: [develop-active]
 deployStates: [deployed]
-strategies: [push-dev]
+closeDeployModes: [auto]
 environments: [container]
 title: "Push-dev strategy — deploy via zerops_deploy"
 references-fields: [ops.DeployResult.Mode, ops.DeployResult.SourceService, ops.DeployResult.TargetService]

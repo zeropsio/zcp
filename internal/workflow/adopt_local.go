@@ -36,7 +36,7 @@ type AdoptionResult struct {
 //     Caller treats nil result as "already initialized", emits no note.
 //   - If empty → writes exactly one ServiceMeta with Hostname=project.Name,
 //     classifies Zerops-side runtimes, and auto-links a stage when there's
-//     exactly one runtime. Zero runtimes → local-only (DeployStrategy=manual
+//     exactly one runtime. Zero runtimes → local-only (CloseDeployMode=manual
 //     forced). Multiple runtimes → local-only with enumeration in
 //     UnlinkedRuntimes for the note.
 //
@@ -88,17 +88,19 @@ func LocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stat
 
 	switch len(runtimes) {
 	case 0:
-		// Local-only: no Zerops runtime to link. Strategy defaults to manual —
-		// push-dev is meaningless (no target) and push-git remains a valid
-		// opt-in (user can reconfigure via action=strategy), but unset here
-		// so the router prompts the user rather than silently picking a
-		// strategy.
+		// Local-only: no Zerops runtime to link. CloseDeployMode defaults to
+		// manual — auto is incoherent without a Zerops runtime to push to,
+		// and git-push is a valid opt-in the user can switch to via
+		// action=close-mode + action=git-push-setup once a remote is wired.
 		meta := &ServiceMeta{
-			Hostname:         project.Name,
-			Mode:             topology.PlanModeLocalOnly,
-			DeployStrategy:   topology.StrategyManual,
-			BootstrapSession: "", // adopted, not a fresh bootstrap
-			BootstrappedAt:   now,
+			Hostname:                 project.Name,
+			Mode:                     topology.PlanModeLocalOnly,
+			CloseDeployMode:          topology.CloseModeManual,
+			CloseDeployModeConfirmed: true,
+			GitPushState:             topology.GitPushUnconfigured,
+			BuildIntegration:         topology.BuildIntegrationNone,
+			BootstrapSession:         "", // adopted, not a fresh bootstrap
+			BootstrappedAt:           now,
 		}
 		if err := WriteServiceMeta(stateDir, meta); err != nil {
 			return nil, fmt.Errorf("local auto-adopt: write local-only meta: %w", err)

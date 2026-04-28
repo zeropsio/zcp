@@ -207,26 +207,13 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta, ws *WorkSess
 		snap.Bootstrapped = true
 		snap.Deployed = DeriveDeployed(svc.Name, svc.Status, meta, ws)
 		snap.Mode = resolveEnvelopeMode(meta, svc.Name)
-		// New per-pair dimensions (deploy-decomp P3). migrateOldMeta runs in
-		// parseMeta so these are always populated — fresh bootstraps land on
-		// {CloseModeUnset, GitPushUnconfigured, BuildIntegrationNone}; legacy
-		// metas get derived values from DeployStrategy / PushGitTrigger /
-		// FirstDeployedAt. No envelope-side sentinel logic needed.
 		snap.CloseDeployMode = meta.CloseDeployMode
+		if snap.CloseDeployMode == "" {
+			snap.CloseDeployMode = topology.CloseModeUnset
+		}
 		snap.GitPushState = meta.GitPushState
 		snap.BuildIntegration = meta.BuildIntegration
 		snap.RemoteURL = meta.RemoteURL
-		// Legacy strategy fields (deleted in Phase 10).
-		snap.Strategy = meta.DeployStrategy
-		if snap.Strategy == "" {
-			snap.Strategy = topology.StrategyUnset
-		}
-		if snap.Strategy == topology.StrategyPushGit {
-			snap.Trigger = meta.PushGitTrigger
-			if snap.Trigger == "" {
-				snap.Trigger = topology.TriggerUnset
-			}
-		}
 		if meta.StageHostname != "" && svc.Name == meta.Hostname {
 			snap.StageHostname = meta.StageHostname
 		}

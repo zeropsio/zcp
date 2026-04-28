@@ -5,7 +5,7 @@ phases: [develop-active]
 deployStates: [deployed]
 modes: [dev, simple]
 title: "Mode expansion — add a stage pair"
-references-fields: [workflow.ServiceSnapshot.Mode, workflow.ServiceSnapshot.Strategy, workflow.ServiceSnapshot.StageHostname, workflow.ServiceSnapshot.Bootstrapped, workflow.ServiceSnapshot.Deployed]
+references-fields: [workflow.ServiceSnapshot.Mode, workflow.ServiceSnapshot.CloseDeployMode, workflow.ServiceSnapshot.StageHostname, workflow.ServiceSnapshot.Bootstrapped, workflow.ServiceSnapshot.Deployed]
 ---
 
 ### Mode expansion — add a stage pair

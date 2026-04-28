@@ -5,7 +5,7 @@ phases: [bootstrap-active]
 routes: [recipe]
 steps: [close]
 title: "Recipe — auto-adopt on close"
-references-fields: [workflow.ServiceSnapshot.Bootstrapped, workflow.ServiceSnapshot.Strategy]
+references-fields: [workflow.ServiceSnapshot.Bootstrapped, workflow.ServiceSnapshot.CloseDeployMode]
 ---
 
 ### Close the recipe bootstrap

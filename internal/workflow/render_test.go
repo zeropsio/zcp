@@ -146,7 +146,7 @@ func TestRenderStatus_IdleRenders(t *testing.T) {
 		Envelope: StateEnvelope{
 			Phase: PhaseIdle,
 			Services: []ServiceSnapshot{
-				{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Mode: topology.ModeDev, Strategy: "push-git"},
+				{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Mode: topology.ModeDev, CloseDeployMode: topology.CloseModeGitPush},
 				{Hostname: "db", TypeVersion: "postgresql@16", RuntimeClass: topology.RuntimeManaged},
 			},
 		},
@@ -161,7 +161,7 @@ func TestRenderStatus_IdleRenders(t *testing.T) {
 		"db (postgresql@16) — managed",
 		"bootstrapped=true",
 		"mode=dev",
-		"strategy=push-git",
+		"closeMode=git-push",
 		"deployed=false",
 		"▸ Primary:",
 		"· Alternatives:",

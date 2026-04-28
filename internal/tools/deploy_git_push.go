@@ -270,7 +270,7 @@ func handleGitPush(
 		// Run the classifier so credential-class git failures land as
 		// FailureClassCredential instead of generic Network — the recovery
 		// (rotate GIT_TOKEN vs check connectivity) differs (E2).
-		classification := classifyTransportError(err, topology.StrategyPushGit)
+		classification := classifyTransportError(err, "git-push")
 		category := topology.FailureClassNetwork
 		if classification != nil {
 			category = classification.Category

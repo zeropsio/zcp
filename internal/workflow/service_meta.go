@@ -35,26 +35,18 @@ type ServiceMeta struct {
 	Mode          topology.Mode `json:"mode,omitempty"`
 	StageHostname string        `json:"stageHostname,omitempty"`
 
-	// Per-pair deploy dimensions (deploy-strategy decomposition Phase 1/2;
-	// see plans/deploy-strategy-decomposition-2026-04-28.md §3.1 for the
-	// orthogonality matrix). Three orthogonal dimensions replace the
-	// conflated DeployStrategy + PushGitTrigger pair: CloseDeployMode is
-	// what the develop workflow auto-does at close, GitPushState is whether
-	// git-push capability is set up, BuildIntegration is which ZCP-managed
-	// CI integration responds to remote git pushes.
+	// Per-pair deploy dimensions (deploy-strategy decomposition; see
+	// plans/archive/deploy-strategy-decomposition-2026-04-28.md §3.1 for
+	// the orthogonality matrix). Three independent dimensions:
+	// CloseDeployMode is what the develop workflow auto-does at close;
+	// GitPushState is whether git-push capability is set up;
+	// BuildIntegration is which ZCP-managed CI integration responds to
+	// remote git pushes.
 	CloseDeployMode          topology.CloseDeployMode  `json:"closeDeployMode,omitempty"`
 	CloseDeployModeConfirmed bool                      `json:"closeDeployModeConfirmed,omitempty"` // true after user explicitly confirms/sets close mode
 	GitPushState             topology.GitPushState     `json:"gitPushState,omitempty"`
 	RemoteURL                string                    `json:"remoteUrl,omitempty"` // cache; runtime source of truth = `git remote get-url origin`
 	BuildIntegration         topology.BuildIntegration `json:"buildIntegration,omitempty"`
-
-	// Legacy strategy fields (deprecated; deleted in Phase 10 of the
-	// decomposition plan after one migrate cycle). migrateOldMeta runs on
-	// every parseMeta call and normalizes these into the new dimensions
-	// when the new fields are unset; reads always see populated new fields.
-	DeployStrategy    topology.DeployStrategy `json:"deployStrategy,omitempty"`
-	PushGitTrigger    topology.PushGitTrigger `json:"pushGitTrigger,omitempty"`    // valid only when DeployStrategy==push-git
-	StrategyConfirmed bool                    `json:"strategyConfirmed,omitempty"` // true after user explicitly confirms/sets strategy
 
 	BootstrapSession string `json:"bootstrapSession"`
 	BootstrappedAt   string `json:"bootstrappedAt"`
@@ -263,97 +255,15 @@ func WriteServiceMeta(baseDir string, meta *ServiceMeta) error {
 }
 
 // parseMeta deserializes a ServiceMeta from JSON.
-// Single deserialization path — both ReadServiceMeta and ListServiceMetas use this.
-//
-// migrateOldMeta runs on every parseMeta result so every read path (including
-// FindServiceMeta and any consumer of ManagedRuntimeIndex) sees the new
-// per-pair dimensions populated, even on legacy on-disk metas that pre-date
-// the deploy-strategy decomposition (plan
-// plans/deploy-strategy-decomposition-2026-04-28.md Phase 2). Hooking only
-// ReadServiceMeta would leave router/envelope (which uses ListServiceMetas
-// → ManagedRuntimeIndex) seeing un-migrated metas — confirmed during
-// Codex PRE-WORK as the failure mode the parseMeta integration prevents.
+// Single deserialization path — both ReadServiceMeta and ListServiceMetas
+// route through this so any future field-level invariants land at one
+// integration point.
 func parseMeta(data []byte) (*ServiceMeta, error) {
 	var meta ServiceMeta
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return nil, err
 	}
-	migrateOldMeta(&meta)
 	return &meta, nil
-}
-
-// migrateOldMeta normalizes a freshly-parsed ServiceMeta into the
-// post-decomposition shape. Reads the legacy DeployStrategy / PushGitTrigger
-// / StrategyConfirmed fields and populates the new CloseDeployMode /
-// CloseDeployModeConfirmed / GitPushState / BuildIntegration fields when
-// the new ones are unset. Idempotent — running it twice is a no-op because
-// every branch is guarded on "new field is empty".
-//
-// Mapping (per plan §3.4 Scenario F):
-//
-//   - DeployStrategy → CloseDeployMode
-//     "" / "unset" → CloseModeUnset
-//     "push-dev"   → CloseModeAuto
-//     "push-git"   → CloseModeGitPush
-//     "manual"     → CloseModeManual
-//   - PushGitTrigger → BuildIntegration
-//     "" / "unset" → BuildIntegrationNone
-//     "webhook"    → BuildIntegrationWebhook
-//     "actions"    → BuildIntegrationActions
-//   - StrategyConfirmed → CloseDeployModeConfirmed (true→true; false leaves as-is)
-//   - GitPushState heuristic:
-//     was push-git AND FirstDeployedAt set → GitPushConfigured
-//     was push-git AND no FirstDeployedAt  → GitPushUnknown (probe needed)
-//     anything else                         → GitPushUnconfigured
-//   - RemoteURL stays empty (data lost; fills on next push or probe).
-//
-// Removed in Phase 10 of the decomposition plan once the legacy fields
-// are deleted.
-func migrateOldMeta(meta *ServiceMeta) {
-	if meta == nil {
-		return
-	}
-	if meta.CloseDeployMode == "" {
-		switch meta.DeployStrategy {
-		case topology.StrategyPushDev:
-			meta.CloseDeployMode = topology.CloseModeAuto
-		case topology.StrategyPushGit:
-			meta.CloseDeployMode = topology.CloseModeGitPush
-		case topology.StrategyManual:
-			meta.CloseDeployMode = topology.CloseModeManual
-		case topology.StrategyUnset:
-			meta.CloseDeployMode = topology.CloseModeUnset
-		default:
-			// Empty-string zero value (legacy metas pre-StrategyUnset).
-			meta.CloseDeployMode = topology.CloseModeUnset
-		}
-	}
-	if !meta.CloseDeployModeConfirmed && meta.StrategyConfirmed {
-		meta.CloseDeployModeConfirmed = true
-	}
-	if meta.BuildIntegration == "" {
-		switch meta.PushGitTrigger {
-		case topology.TriggerWebhook:
-			meta.BuildIntegration = topology.BuildIntegrationWebhook
-		case topology.TriggerActions:
-			meta.BuildIntegration = topology.BuildIntegrationActions
-		case topology.TriggerUnset:
-			meta.BuildIntegration = topology.BuildIntegrationNone
-		default:
-			// Empty-string zero value (legacy metas pre-TriggerUnset).
-			meta.BuildIntegration = topology.BuildIntegrationNone
-		}
-	}
-	if meta.GitPushState == "" {
-		switch {
-		case meta.DeployStrategy == topology.StrategyPushGit && meta.FirstDeployedAt != "":
-			meta.GitPushState = topology.GitPushConfigured
-		case meta.DeployStrategy == topology.StrategyPushGit:
-			meta.GitPushState = topology.GitPushUnknown
-		default:
-			meta.GitPushState = topology.GitPushUnconfigured
-		}
-	}
 }
 
 // ReadServiceMeta reads service metadata from baseDir/services/{hostname}.json.

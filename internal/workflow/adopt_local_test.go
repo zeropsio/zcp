@@ -61,8 +61,8 @@ func TestLocalAutoAdopt_NoRuntimes_LocalOnly(t *testing.T) {
 	if result.Meta.StageHostname != "" {
 		t.Errorf("StageHostname = %q, want empty (no runtime)", result.Meta.StageHostname)
 	}
-	if result.Meta.DeployStrategy != topology.StrategyManual {
-		t.Errorf("DeployStrategy = %q, want manual (local-only default)", result.Meta.DeployStrategy)
+	if result.Meta.CloseDeployMode != topology.CloseModeManual {
+		t.Errorf("CloseDeployMode = %q, want manual (local-only default)", result.Meta.CloseDeployMode)
 	}
 	if result.StageAutoLinked {
 		t.Error("StageAutoLinked = true, want false (no runtime)")

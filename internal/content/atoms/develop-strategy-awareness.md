@@ -2,9 +2,9 @@
 id: develop-strategy-awareness
 priority: 5
 phases: [develop-active]
-strategies: [push-dev, push-git, manual]
+closeDeployModes: [auto, git-push, manual]
 title: "Deploy strategy — current + how to change"
-references-fields: [workflow.ServiceSnapshot.Strategy, workflow.ServiceSnapshot.Trigger]
+references-fields: [workflow.ServiceSnapshot.CloseDeployMode, workflow.ServiceSnapshot.BuildIntegration]
 ---
 
 ### Deploy strategy — current + how to change

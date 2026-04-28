@@ -36,7 +36,6 @@ type WorkflowInput struct {
 	Plan        []workflow.BootstrapTarget `json:"plan,omitempty"        jsonschema:"Structured service plan: array of {runtime: {devHostname, type, bootstrapMode?, stageHostname?, isExisting?}, dependencies: [{hostname, type, mode?, resolution}]}. resolution: CREATE (new service), EXISTS (already in project), SHARED (created by another target in this plan). stageHostname: explicit stage hostname for standard mode when devHostname doesn't end in 'dev' (e.g. adopting existing services)."`
 	Reason      string                     `json:"reason,omitempty"      jsonschema:"Reason for skipping a step (skip action). Defaults to 'skipped by user'."`
 	SessionID   string                     `json:"sessionId,omitempty"   jsonschema:"Session ID for resume action."`
-	Strategies  map[string]string          `json:"strategies,omitempty"  jsonschema:"DEPRECATED — kept on the input shape during the deploy-strategy decomposition migration window (plans/deploy-strategy-decomposition-2026-04-28.md Phase 10 deletes it). Use action=close-mode + closeMode for setting CloseDeployMode."`
 	CloseModes  map[string]string          `json:"closeMode,omitempty"   jsonschema:"Per-service close-deploy-mode map for action=close-mode (e.g. {\"appdev\":\"git-push\"}). Valid values per service: auto (zcli push direct on develop close), git-push (commit + push to remote on close — requires action=git-push-setup), manual (ZCP yields close orchestration)."`
 	Integration string                     `json:"integration,omitempty" jsonschema:"ZCP-managed CI integration value for action=build-integration: 'webhook' (Zerops dashboard OAuth — Zerops pulls + builds on git push), 'actions' (GitHub Actions workflow runs zcli push from CI), or 'none' (no ZCP-managed integration; user may have independent CI/CD that ZCP doesn't track)."`
 	RemoteURL   string                     `json:"remoteUrl,omitempty"   jsonschema:"Remote git repository URL for action=git-push-setup confirm step. Passed after the walkthrough atom completes; writes meta.GitPushState=configured + meta.RemoteURL. Omit on the first call to receive the env-aware setup atom."`
@@ -89,12 +88,6 @@ type WorkflowInput struct {
 	// stage. Resolves the ambiguity surfaced by auto-adopt when multiple
 	// runtimes exist in the project.
 	TargetService string `json:"targetService,omitempty" jsonschema:"Runtime service hostname. Used by: action=\"adopt-local\" (local env stage link target — must be a live runtime service, not managed); action=\"record-deploy\" (external-deploy ack target — stamps FirstDeployedAt on its ServiceMeta, no-op when meta is missing)."`
-
-	// Trigger chooses the downstream build trigger when setting up
-	// strategy=push-git. Paired with Strategies — meaningless otherwise.
-	// Optional: omit to receive the intro atom that asks the user to
-	// pick, then re-call with the chosen value.
-	Trigger string `json:"trigger,omitempty" jsonschema:"Downstream build trigger for strategy=push-git setup: 'webhook' (Zerops dashboard integration) or 'actions' (GitHub Actions workflow). Omit on the first call to receive the intro atom that walks through the choice; pass on the follow-up call to receive the chosen setup path."`
 
 	// Cx-SUBAGENT-BRIEF-BUILDER (v38 F-17 close).
 	Role        string `json:"role,omitempty"        jsonschema:"Sub-agent role for action=\"build-subagent-brief\" / \"verify-subagent-dispatch\": one of writer, editorial-review, code-review."`

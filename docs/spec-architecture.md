@@ -51,11 +51,13 @@ not a Zerops API concept.
 **Forbidden imports**: any other `internal/` package.
 
 **Symbols**:
-- Types: `Mode`, `DeployStrategy`, `RuntimeClass`, `PushGitTrigger`.
-- Constants: `ModeDev/Standard/Stage/Simple`,
-  `StrategyUnset/PushDev/PushGit/Manual`,
+- Types: `Mode`, `RuntimeClass`, `CloseDeployMode`, `GitPushState`,
+  `BuildIntegration`, `FailureClass`.
+- Constants: `ModeDev/Standard/Stage/Simple/LocalStage/LocalOnly`,
   `RuntimeDynamic/Static/ImplicitWeb/Managed/Unknown`,
-  `TriggerUnset/Webhook/Actions`.
+  `CloseModeUnset/Auto/GitPush/Manual`,
+  `GitPushUnconfigured/Configured/Broken/Unknown`,
+  `BuildIntegrationNone/Webhook/Actions`.
 - Predicates: `IsManagedService`, `ServiceSupportsMode`,
   `IsRuntimeType`, `IsUtilityType` (+ supporting maps).
 - Aliases: `PlanModeStandard/Dev/Stage/Simple/LocalStage/LocalOnly`,
@@ -119,7 +121,7 @@ is the layering violation that motivated extracting `topology/`.
 
 CLI entrypoints, MCP server, and the per-tool handlers. This is where
 incoming MCP JSON arrives as untyped strings and gets validated +
-converted to `topology.Mode`, `topology.DeployStrategy`, etc., before
+converted to `topology.Mode`, `topology.CloseDeployMode`, etc., before
 being passed down. Inside layers 1–3, types are concrete; only the
 boundary deals with strings.
 
@@ -182,19 +184,19 @@ Anything genuinely shared between ops and workflow belongs in
 ### OK — tool boundary parses string → topology type once
 
 ```go
-// internal/tools/workflow_strategy.go
+// internal/tools/workflow_close_mode.go
 func handle(input Input) error {
     mode, err := topology.ParseMode(input.Mode)  // boundary parse
     if err != nil { return err }
     // mode is topology.Mode from here on; no more string casts.
-    return engine.UpdateStrategy(ctx, mode, ...)
+    return engine.UpdateCloseMode(ctx, mode, ...)
 }
 ```
 
 ### NOT OK — tool casts at the comparison site
 
 ```go
-if string(topology.TriggerWebhook) == input.Trigger {  // boundary leak
+if string(topology.BuildIntegrationWebhook) == input.Integration {  // boundary leak
     ...
 }
 ```

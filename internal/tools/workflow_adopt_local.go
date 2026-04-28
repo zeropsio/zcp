@@ -111,12 +111,12 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 	// Upgrade meta: local-only → local-stage, link target.
 	local.Mode = topology.PlanModeLocalStage
 	local.StageHostname = target.Name
-	// Fresh stage link loses the forced-manual from local-only adoption.
-	// Cleared to empty (not the sentinel "unset") so the persisted meta
-	// matches a never-configured service exactly — router treats both the
-	// same, empty on disk is cleaner.
-	local.DeployStrategy = ""
-	local.StrategyConfirmed = false
+	// Fresh stage link clears the forced-manual close-mode from local-only
+	// adoption — once a Zerops runtime is linked, auto / git-push become
+	// valid choices, so reset to unset and let the develop-strategy-review
+	// atom prompt the agent on the next status round-trip.
+	local.CloseDeployMode = topology.CloseModeUnset
+	local.CloseDeployModeConfirmed = false
 	if target.Status == workflow.StatusActive && local.FirstDeployedAt == "" {
 		local.FirstDeployedAt = time.Now().UTC().Format(time.RFC3339)
 	}
@@ -128,22 +128,23 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 	}
 
 	return jsonResult(adoptLocalResponse{
-		Status:   "linked",
-		Project:  local.Hostname,
-		Stage:    target.Name,
-		Mode:     topology.PlanModeLocalStage,
-		Strategy: topology.StrategyUnset,
+		Status:    "linked",
+		Project:   local.Hostname,
+		Stage:     target.Name,
+		Mode:      topology.PlanModeLocalStage,
+		CloseMode: topology.CloseModeUnset,
 	}), nil, nil
 }
 
-// G11: response carries no `next` hint. Strategy is unset on purpose;
-// the strategy-review atom (deployStates=deployed, strategies=unset)
-// fires on the next `zerops_workflow action="status"` and surfaces the
-// per-service strategy prompt with full envelope context.
+// G11: response carries no `next` hint. CloseDeployMode is unset on
+// purpose; the develop-strategy-review atom (deployStates=deployed,
+// closeDeployModes=[unset]) fires on the next `zerops_workflow
+// action="status"` and surfaces the per-service close-mode prompt with
+// full envelope context.
 type adoptLocalResponse struct {
-	Status   string                  `json:"status"`
-	Project  string                  `json:"project"`
-	Stage    string                  `json:"stage"`
-	Mode     topology.Mode           `json:"mode"`
-	Strategy topology.DeployStrategy `json:"strategy"`
+	Status    string                   `json:"status"`
+	Project   string                   `json:"project"`
+	Stage     string                   `json:"stage"`
+	Mode      topology.Mode            `json:"mode"`
+	CloseMode topology.CloseDeployMode `json:"closeMode"`
 }

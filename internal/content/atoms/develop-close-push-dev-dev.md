@@ -4,7 +4,7 @@ priority: 7
 phases: [develop-active]
 deployStates: [deployed]
 modes: [dev]
-strategies: [push-dev]
+closeDeployModes: [auto]
 environments: [container]
 title: "Close task — push-dev dev mode (no stage)"
 references-fields: [ops.DevServerResult.Running, ops.DevServerResult.HealthStatus, ops.DevServerResult.StartMillis, ops.DevServerResult.Reason, ops.DevServerResult.LogTail]

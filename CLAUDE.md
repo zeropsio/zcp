@@ -100,8 +100,9 @@ Config: `.sync.yaml` + `.env STRAPI_API_TOKEN`.
         ┌──────────────────────────────────────────┐
         │  Layer 2 — ZCP TOPOLOGY VOCABULARY       │
         │  internal/topology/                      │
-        │  Mode, DeployStrategy, RuntimeClass,     │
-        │  PushGitTrigger + predicates + aliases.  │
+        │  Mode, RuntimeClass, CloseDeployMode,    │
+        │  GitPushState, BuildIntegration +        │
+        │  predicates + aliases.                   │
         │  ZERO non-stdlib imports.                │
         └──────────────────┬───────────────────────┘
                            ↓
@@ -136,6 +137,19 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
 
 ## Conventions
 
+- **Deploy config is three orthogonal dimensions, not one strategy enum** —
+  `ServiceMeta` carries `CloseDeployMode` (unset/auto/git-push/manual —
+  what `action="close"` does), `GitPushState` (unconfigured/configured/
+  broken/unknown — git-push capability, with `RemoteURL` companion), and
+  `BuildIntegration` (none/webhook/actions — ZCP-managed CI shape, requires
+  `GitPushState=configured`). The legacy `DeployStrategy` + `PushGitTrigger`
+  conflation is gone — git-push capability and close-mode are independent,
+  so `GitPushState=configured` can hold while `CloseDeployMode=auto` (push
+  capability provisioned but close still uses default deploy). Three
+  user-facing actions own each axis: `action="close-mode"`,
+  `action="git-push-setup"`, `action="build-integration"`. Atom corpus
+  filters on `closeDeployModes` / `gitPushStates` / `buildIntegrations`
+  axes. Spec: `docs/spec-workflows.md §1.1` + `§4.3`.
 - **Deploy failure response carries structured classification** — every
   failed `zerops_deploy` invocation populates `failureClassification`
   (`category` + `likelyCause` + `suggestedAction` + `signals[]`). Lives on
@@ -151,8 +165,9 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   `TestErrorWire_FailureClassification`. Spec: ticket E2 in
   `plans/engine-atom-rendering-improvements-2026-04-27.md`.
 - **4-layer architecture pinned** — `internal/topology/` is the
-  foundational layer-2 vocabulary (Mode, DeployStrategy, RuntimeClass,
-  PushGitTrigger, predicates, aliases) with zero internal/ imports.
+  foundational layer-2 vocabulary (Mode, RuntimeClass, CloseDeployMode,
+  GitPushState, BuildIntegration, predicates, aliases) with zero
+  internal/ imports.
   `internal/ops/` and `internal/workflow/` are peer layer-3 packages —
   neither imports the other; shared types belong in `topology/`.
   `internal/platform/` is the layer-1 raw API (no internal/ imports).

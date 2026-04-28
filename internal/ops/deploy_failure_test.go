@@ -333,7 +333,7 @@ func TestClassifyDeployFailure_Transport(t *testing.T) {
 			name: "zcli-auth-failed-push-dev",
 			input: FailureInput{
 				Phase:    PhaseTransport,
-				Strategy: string(topology.StrategyPushDev),
+				Strategy: "push-dev",
 				TransportErr: &platform.SSHExecError{
 					Hostname: "src",
 					Output:   "✗ ERR unauthorized: invalid token",
@@ -347,7 +347,7 @@ func TestClassifyDeployFailure_Transport(t *testing.T) {
 			name: "git-auth-failed-push-git",
 			input: FailureInput{
 				Phase:    PhaseTransport,
-				Strategy: topology.StrategyPushGit,
+				Strategy: "git-push",
 				TransportErr: &platform.SSHExecError{
 					Hostname: "src",
 					Output:   "remote: HTTP Basic: Access denied\nfatal: Authentication failed for 'https://github.com/foo/bar.git/'",
@@ -361,11 +361,11 @@ func TestClassifyDeployFailure_Transport(t *testing.T) {
 			name: "git-token-missing",
 			input: FailureInput{
 				Phase:    PhaseTransport,
-				Strategy: topology.StrategyPushGit,
+				Strategy: "git-push",
 				APIErr: platform.NewPlatformError(
 					platform.ErrGitTokenMissing,
 					"GIT_TOKEN missing",
-					"Set via zerops_workflow strategy",
+					"Set via zerops_workflow git-push-setup",
 				),
 			},
 			wantCategory: topology.FailureClassCredential,

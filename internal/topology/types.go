@@ -28,54 +28,12 @@ const (
 	ModeLocalOnly  Mode = "local-only"
 )
 
-// DeployStrategy is the developer-chosen deploy mechanism. Use the named
-// type on typed-surface code (envelope, plan); the same string values flow
-// through persistence so legacy callers and the typed API share one
-// vocabulary.
-type DeployStrategy string
-
-// StrategyUnset is the envelope sentinel surfaced to atoms as
-// `strategies: [unset]`. The other three are the user-selectable deploy
-// mechanisms.
-//
-// StrategyUnset is typed so it can compare directly with
-// ServiceMeta.DeployStrategy. The other three are untyped string
-// constants so they remain assignable to both the typed workflow
-// surface (ServiceMeta.DeployStrategy) and to plain string fields used
-// by the deploy tool (DeployAttempt.Strategy uses the deploy-tool wire
-// vocabulary, which overlaps with these values).
-const StrategyUnset DeployStrategy = "unset"
-
-const (
-	StrategyPushDev = "push-dev"
-	StrategyPushGit = "push-git"
-	StrategyManual  = "manual"
-)
-
-// PushGitTrigger is the downstream trigger chosen for push-git services.
-// Valid only when DeployStrategy == "push-git". TriggerUnset is the
-// envelope sentinel ("unset") that atoms filter on via `triggers: [unset]`
-// — a push-git meta whose PushGitTrigger field is still empty string on
-// disk surfaces as this value in the snapshot so intro atoms can match.
-// Webhook/Actions are the two user-selectable values.
-type PushGitTrigger string
-
-const (
-	TriggerUnset   PushGitTrigger = "unset"
-	TriggerWebhook PushGitTrigger = "webhook"
-	TriggerActions PushGitTrigger = "actions"
-)
-
 // CloseDeployMode is the per-pair developer choice for what the develop
 // workflow auto-does at close. One of three orthogonal dimensions of the
-// post-decomposition deploy model — see plan
-// `plans/deploy-strategy-decomposition-2026-04-28.md` §3.1 for the full
-// orthogonality matrix vs GitPushState (whether push capability is set up)
-// and BuildIntegration (whether ZCP-managed CI is wired).
-//
-// Coexists with the legacy DeployStrategy enum through Phase 9 of that
-// plan (migrateOldMeta reads old fields, writes new fields). Phase 10
-// deletes the legacy vocabulary.
+// deploy model — see plan
+// `plans/archive/deploy-strategy-decomposition-2026-04-28.md` §3.1 for
+// the full orthogonality matrix vs GitPushState (whether push capability
+// is set up) and BuildIntegration (whether ZCP-managed CI is wired).
 type CloseDeployMode string
 
 const (
@@ -114,10 +72,9 @@ const (
 	// artifacts (.netrc partial, GIT_TOKEN expired, etc.). Recovery is
 	// explicit re-setup; ZCP does not auto-probe.
 	GitPushBroken GitPushState = "broken"
-	// GitPushUnknown is the migration sentinel — meta was adopted from
-	// an older shape (e.g. DeployStrategy=push-git with no FirstDeployedAt)
-	// and a probe is needed before the next push to determine whether
-	// the underlying capability still works.
+	// GitPushUnknown means setup was previously claimed but the
+	// capability needs a probe before the next push to confirm it
+	// still works (token rotated, .netrc rewritten externally, etc.).
 	GitPushUnknown GitPushState = "unknown"
 )
 

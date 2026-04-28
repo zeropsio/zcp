@@ -39,8 +39,8 @@ func synthCorpus() []KnowledgeAtom {
 		{
 			ID: "develop-push-git", Priority: 3,
 			Axes: AxisVector{
-				Phases:     []Phase{PhaseDevelopActive},
-				Strategies: []topology.DeployStrategy{"push-git"},
+				Phases:           []Phase{PhaseDevelopActive},
+				CloseDeployModes: []topology.CloseDeployMode{topology.CloseModeGitPush},
 			},
 			Body: "Push to git.",
 		},
@@ -55,15 +55,15 @@ func synthCorpus() []KnowledgeAtom {
 	}
 }
 
-func developEnvelope(env Environment, mode topology.Mode, strategy topology.DeployStrategy, runtime topology.RuntimeClass) StateEnvelope {
+func developEnvelope(env Environment, mode topology.Mode, closeMode topology.CloseDeployMode, runtime topology.RuntimeClass) StateEnvelope {
 	return StateEnvelope{
 		Phase:       PhaseDevelopActive,
 		Environment: env,
 		Services: []ServiceSnapshot{{
-			Hostname:     "appdev",
-			RuntimeClass: runtime,
-			Mode:         mode,
-			Strategy:     strategy,
+			Hostname:        "appdev",
+			RuntimeClass:    runtime,
+			Mode:            mode,
+			CloseDeployMode: closeMode,
 		}},
 		Generated: time.Date(2026, 4, 19, 0, 0, 0, 0, time.UTC),
 	}
@@ -90,7 +90,7 @@ func TestSynthesize_AxisFiltering(t *testing.T) {
 		},
 		{
 			name:    "develop_container_dynamic_pushdev_dev",
-			env:     developEnvelope(EnvContainer, topology.ModeDev, "push-dev", topology.RuntimeDynamic),
+			env:     developEnvelope(EnvContainer, topology.ModeDev, topology.CloseModeAuto, topology.RuntimeDynamic),
 			wantIDs: []string{"develop-dynamic-container", "develop-dev-mode"},
 			wantNone: []string{
 				"idle-entry", "develop-dynamic-local", "develop-push-git",
@@ -98,7 +98,7 @@ func TestSynthesize_AxisFiltering(t *testing.T) {
 		},
 		{
 			name:    "develop_local_dynamic_pushgit_dev",
-			env:     developEnvelope(EnvLocal, topology.ModeDev, "push-git", topology.RuntimeDynamic),
+			env:     developEnvelope(EnvLocal, topology.ModeDev, topology.CloseModeGitPush, topology.RuntimeDynamic),
 			wantIDs: []string{"develop-dynamic-local", "develop-push-git", "develop-dev-mode"},
 			wantNone: []string{
 				"idle-entry", "develop-dynamic-container",
@@ -106,7 +106,7 @@ func TestSynthesize_AxisFiltering(t *testing.T) {
 		},
 		{
 			name:    "develop_container_static_pushdev_stage",
-			env:     developEnvelope(EnvContainer, topology.ModeStage, "push-dev", topology.RuntimeStatic),
+			env:     developEnvelope(EnvContainer, topology.ModeStage, topology.CloseModeAuto, topology.RuntimeStatic),
 			wantIDs: []string{},
 			wantNone: []string{
 				"idle-entry", "develop-dynamic-container", "develop-dynamic-local",
@@ -417,7 +417,7 @@ func TestSynthesize_ServiceScopedAxesRequireSameService(t *testing.T) {
 	corpus := []KnowledgeAtom{
 		{
 			ID:   "two-axes",
-			Axes: AxisVector{Phases: []Phase{PhaseDevelopActive}, DeployStates: []DeployState{DeployStateDeployed}, Strategies: []topology.DeployStrategy{topology.StrategyUnset}},
+			Axes: AxisVector{Phases: []Phase{PhaseDevelopActive}, DeployStates: []DeployState{DeployStateDeployed}, CloseDeployModes: []topology.CloseDeployMode{topology.CloseModeUnset}},
 			Body: "Two-axis atom.",
 		},
 	}
@@ -427,8 +427,8 @@ func TestSynthesize_ServiceScopedAxesRequireSameService(t *testing.T) {
 	mixed := StateEnvelope{
 		Phase: PhaseDevelopActive,
 		Services: []ServiceSnapshot{
-			{Hostname: "a", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: true, Strategy: topology.StrategyPushDev},
-			{Hostname: "b", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: false, Strategy: topology.StrategyUnset},
+			{Hostname: "a", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: true, CloseDeployMode: topology.CloseModeAuto},
+			{Hostname: "b", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: false, CloseDeployMode: topology.CloseModeUnset},
 		},
 	}
 	got, err := SynthesizeBodies(mixed, corpus)
@@ -443,7 +443,7 @@ func TestSynthesize_ServiceScopedAxesRequireSameService(t *testing.T) {
 	match := StateEnvelope{
 		Phase: PhaseDevelopActive,
 		Services: []ServiceSnapshot{
-			{Hostname: "a", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: true, Strategy: topology.StrategyUnset},
+			{Hostname: "a", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: true, CloseDeployMode: topology.CloseModeUnset},
 		},
 	}
 	got, err = SynthesizeBodies(match, corpus)
@@ -458,7 +458,7 @@ func TestSynthesize_ServiceScopedAxesRequireSameService(t *testing.T) {
 func TestSynthesize_PrioritySort(t *testing.T) {
 	t.Parallel()
 
-	env := developEnvelope(EnvContainer, topology.ModeDev, "push-git", topology.RuntimeDynamic)
+	env := developEnvelope(EnvContainer, topology.ModeDev, topology.CloseModeGitPush, topology.RuntimeDynamic)
 	got, err := SynthesizeBodies(env, synthCorpus())
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
@@ -481,7 +481,7 @@ func TestSynthesize_PrioritySort(t *testing.T) {
 func TestSynthesize_CompactionSafe(t *testing.T) {
 	t.Parallel()
 
-	env := developEnvelope(EnvContainer, topology.ModeDev, "push-git", topology.RuntimeDynamic)
+	env := developEnvelope(EnvContainer, topology.ModeDev, topology.CloseModeGitPush, topology.RuntimeDynamic)
 	corpus := synthCorpus()
 	first, err := SynthesizeBodies(env, corpus)
 	if err != nil {
@@ -748,22 +748,23 @@ func TestSynthesize_AllowsStartCommandPlaceholder(t *testing.T) {
 // StateEnvelope{Phase=PhaseStrategySetup, Environment=local, Services}.
 // The wrapper exists so tools/ don't construct envelopes inline; this
 // test pins both halves of that contract — the envelope shape AND the
-// non-empty atom output for the standard push-git setup case.
+// non-empty atom output for the git-push capability setup case.
 func TestSynthesizeStrategySetup_LocalEnv(t *testing.T) {
 	t.Parallel()
 	snaps := []ServiceSnapshot{{
-		Hostname:     "appdev",
-		Bootstrapped: true,
-		Mode:         topology.PlanModeDev,
-		Strategy:     topology.StrategyPushGit,
-		Trigger:      topology.TriggerWebhook,
+		Hostname:         "appdev",
+		Bootstrapped:     true,
+		Mode:             topology.PlanModeDev,
+		CloseDeployMode:  topology.CloseModeGitPush,
+		GitPushState:     topology.GitPushUnconfigured,
+		BuildIntegration: topology.BuildIntegrationNone,
 	}}
 	got, err := SynthesizeStrategySetup(runtime.Info{InContainer: false}, snaps)
 	if err != nil {
 		t.Fatalf("SynthesizeStrategySetup: %v", err)
 	}
 	if got == "" {
-		t.Fatal("expected non-empty guidance for push-git/webhook setup")
+		t.Fatal("expected non-empty guidance for git-push setup on local env")
 	}
 }
 
@@ -774,11 +775,12 @@ func TestSynthesizeStrategySetup_LocalEnv(t *testing.T) {
 func TestSynthesizeStrategySetup_ContainerEnv(t *testing.T) {
 	t.Parallel()
 	snaps := []ServiceSnapshot{{
-		Hostname:     "appdev",
-		Bootstrapped: true,
-		Mode:         topology.PlanModeDev,
-		Strategy:     topology.StrategyPushGit,
-		Trigger:      topology.TriggerWebhook,
+		Hostname:         "appdev",
+		Bootstrapped:     true,
+		Mode:             topology.PlanModeDev,
+		CloseDeployMode:  topology.CloseModeGitPush,
+		GitPushState:     topology.GitPushUnconfigured,
+		BuildIntegration: topology.BuildIntegrationNone,
 	}}
 	local, err := SynthesizeStrategySetup(runtime.Info{InContainer: false}, snaps)
 	if err != nil {
@@ -1069,16 +1071,16 @@ func TestSynthesize_MultiMatchRendersOncePerService(t *testing.T) {
 		ID:       "test-strategy-iter",
 		Priority: 5,
 		Axes: AxisVector{
-			Phases:     []Phase{PhaseDevelopActive},
-			Strategies: []topology.DeployStrategy{topology.StrategyPushDev},
+			Phases:           []Phase{PhaseDevelopActive},
+			CloseDeployModes: []topology.CloseDeployMode{topology.CloseModeAuto},
 		},
 		Body: "Push-dev on {hostname}.",
 	}
 	env := StateEnvelope{
 		Phase: PhaseDevelopActive,
 		Services: []ServiceSnapshot{
-			{Hostname: "apidev", Bootstrapped: true, Strategy: topology.StrategyPushDev},
-			{Hostname: "appdev", Bootstrapped: true, Strategy: topology.StrategyPushDev},
+			{Hostname: "apidev", Bootstrapped: true, CloseDeployMode: topology.CloseModeAuto},
+			{Hostname: "appdev", Bootstrapped: true, CloseDeployMode: topology.CloseModeAuto},
 		},
 	}
 	matches, err := Synthesize(env, []KnowledgeAtom{atom})

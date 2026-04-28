@@ -25,7 +25,7 @@ Every bootstrap/develop code path is an instantiation of three independent axes.
 Three layers — each is authoritative for its domain, each has its own lifecycle:
 
 1. **Infrastructure state** (filesystem, survives process restart)
-   - `ServiceMeta` per hostname at `.zcp/state/services/{hostname}.json` — `Mode`, `StageHostname`, `DeployStrategy`, `StrategyConfirmed`, `Environment`, `BootstrapSession`, `BootstrappedAt`.
+   - `ServiceMeta` per hostname at `.zcp/state/services/{hostname}.json` — `Mode`, `StageHostname`, `CloseDeployMode`, `CloseDeployModeConfirmed`, `GitPushState`, `RemoteURL`, `BuildIntegration`, `BootstrapSession`, `BootstrappedAt`, `FirstDeployedAt`.
    - Partial meta (`BootstrappedAt == ""`) signals in-progress bootstrap → hostname lock.
    - Registry at `.zcp/state/registry.json` (flock-protected) → single source of session ownership.
    - Bootstrap/Recipe session state at `.zcp/state/sessions/{sessionID}.json`.

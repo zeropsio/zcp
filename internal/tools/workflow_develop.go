@@ -125,10 +125,11 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 			"Run bootstrap first: action=\"start\" workflow=\"bootstrap\""), WithRecoveryStatus()), nil, nil
 	}
 
-	// Strategy is NOT a gate: first deploy always uses the default
-	// self-deploy mechanism regardless of meta.DeployStrategy. The strategy
+	// Close-mode is NOT a gate: first deploy always uses the default
+	// self-deploy mechanism regardless of meta.CloseDeployMode. The close-mode
 	// decision surfaces post-first-deploy via the develop-strategy-review
-	// atom (phases=develop-active, deployStates=[deployed], strategies=[unset]).
+	// atom (phases=develop-active, deployStates=[deployed],
+	// closeDeployModes=[unset]).
 	existing, _ := workflow.CurrentWorkSession(engine.StateDir())
 	if existing != nil && existing.ClosedAt == "" {
 		// Same intent — idempotent restart, return briefing without mutating

@@ -71,8 +71,6 @@ func handleBuildIntegration(input WorkflowInput, stateDir string, rt runtime.Inf
 			Mode:             meta.Mode,
 			StageHostname:    meta.StageHostname,
 			Bootstrapped:     true,
-			Strategy:         topology.StrategyPushGit,
-			Trigger:          topology.TriggerUnset,
 			CloseDeployMode:  topology.CloseModeGitPush,
 			GitPushState:     meta.GitPushState,
 			BuildIntegration: meta.BuildIntegration,

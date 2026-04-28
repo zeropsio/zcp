@@ -1,0 +1,41 @@
+---
+id: develop-close-mode-manual
+priority: 2
+phases: [develop-active]
+closeDeployModes: [manual]
+title: "Manual close-mode = ZCP yields, your tools own the close"
+---
+This pair is on `closeDeployMode=manual`. ZCP records deploy and verify attempts when you call its tools, but the implicit auto-close at end of work session is gated off — workflows on manual close stay open until you explicitly close them.
+
+## Why pick manual
+
+Manual is the extension slot. Pick it when an external loop (your own slash command, a hook, a CI step, custom orchestration) owns the deploy/verify/close decisions. ZCP becomes a recording surface: every `zerops_*` tool you call still updates state, but ZCP never decides the workflow is "done" on its own.
+
+## What still works
+
+- All deploy tools remain callable; `zerops_deploy` records to the session as usual.
+- `zerops_verify` records to the session and surfaces results on `action=status`.
+- `zerops_workflow action=status` returns the lifecycle envelope unchanged — you see exactly which services have a successful deploy and a passed verify.
+- The `AutoCloseProgress` block on side-effect responses carries `enabled=false` plus `reason`, so callers observe the gate is closed.
+
+## What stops working
+
+The implicit auto-close on deploy/verify success. Even when every service in scope has a successful deploy + passed verify, the workflow stays open until you call:
+
+```
+zerops_workflow action="close"
+```
+
+That's the explicit close. The recovery path in `action=status` references it.
+
+## Switching back
+
+To rejoin the auto-close gate, swap close-mode for the pair:
+
+```
+zerops_workflow action="close-mode" closeMode={"{hostname}":"auto"}
+# or
+zerops_workflow action="close-mode" closeMode={"{hostname}":"git-push"}
+```
+
+The close-mode write succeeds standalone — for git-push, follow the chained `nextSteps` pointer at `action=git-push-setup` to provision the capability.

@@ -4,7 +4,7 @@ priority: 7
 phases: [develop-active]
 deployStates: [deployed]
 modes: [dev, stage]
-strategies: [push-dev]
+closeDeployModes: [auto]
 environments: [local]
 title: "Close task — push-dev"
 ---

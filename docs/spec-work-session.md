@@ -507,14 +507,14 @@ calls develop again, work session created.
 7. The actual code work survives on SSHFS mount; the deploy status can be
    re-verified via `zerops_verify`.
 
-### 9.7 push-dev → cicd switch mid-task
+### 9.7 auto → git-push close-mode switch mid-task
 
-1. Work session active, strategy=push-dev. Deployed web.
-2. User decides to set up CI/CD. LLM calls `action="strategy" strategies={web: push-git}`.
-3. ServiceMeta updated, `StrategyConfirmed=true`.
-4. Work session unchanged (strategy not stored there).
-5. Next `action="status"` reads strategy fresh → shows `web: push-git`.
-6. `suggestedNext` in status updates: "push-git strategy — use zerops_workflow action=start workflow=cicd next".
+1. Work session active, CloseDeployMode=auto. Deployed web.
+2. User decides to switch close to git-push. LLM calls `action="close-mode" closeMode={web: git-push}`.
+3. ServiceMeta updated, `CloseDeployModeConfirmed=true`.
+4. Work session unchanged (close-mode not stored there).
+5. Next `action="status"` reads close-mode fresh → shows `web: git-push`.
+6. The next chained guidance points at `action="git-push-setup"` if `GitPushState != configured`; otherwise close runs git-push directly.
 
 ---
 

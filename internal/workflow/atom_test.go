@@ -689,10 +689,10 @@ body`,
 			content: `---
 id: bare-scalar-atom
 phases: [develop-active]
-strategies: push-dev
+closeDeployModes: auto
 ---
 body`,
-			wantErrFrag: `key "strategies" must be inline list form`,
+			wantErrFrag: `key "closeDeployModes" must be inline list form`,
 		},
 		{
 			name: "invalid_enum_value",
@@ -731,7 +731,7 @@ priority: 3
 phases: [develop-active]
 modes: [dev, stage]
 environments: [container]
-strategies: [push-dev, push-git]
+closeDeployModes: [auto, git-push]
 runtimes: [dynamic]
 deployStates: [deployed]
 ---

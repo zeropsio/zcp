@@ -83,12 +83,11 @@ type ProjectSummary struct {
 // ServiceSnapshot is one service's point-in-time state inside the envelope.
 //
 // Per-pair deploy dimensions (CloseDeployMode / GitPushState /
-// BuildIntegration / RemoteURL — deploy-strategy decomposition Phase 3)
-// project the new ServiceMeta fields onto the envelope so atoms filter on
-// the post-decomposition vocabulary. The legacy Strategy / Trigger fields
-// stay through Phase 10; both vocabularies coexist during the migration
-// window. See plan plans/deploy-strategy-decomposition-2026-04-28.md §3.1
-// for the orthogonality matrix.
+// BuildIntegration / RemoteURL) project ServiceMeta state onto the
+// envelope so atoms filter on the orthogonal post-decomposition
+// vocabulary. See plan
+// `plans/archive/deploy-strategy-decomposition-2026-04-28.md` §3.1 for
+// the orthogonality matrix.
 type ServiceSnapshot struct {
 	Hostname     string                `json:"hostname"`
 	TypeVersion  string                `json:"typeVersion"`
@@ -99,15 +98,10 @@ type ServiceSnapshot struct {
 	Resumable    bool                  `json:"resumable,omitempty"`
 	Mode         topology.Mode         `json:"mode,omitempty"`
 
-	// Per-pair deploy dimensions (deploy-decomp P3).
 	CloseDeployMode  topology.CloseDeployMode  `json:"closeDeployMode,omitempty"`
 	GitPushState     topology.GitPushState     `json:"gitPushState,omitempty"`
 	BuildIntegration topology.BuildIntegration `json:"buildIntegration,omitempty"`
 	RemoteURL        string                    `json:"remoteUrl,omitempty"`
-
-	// Legacy strategy fields (deprecated; deleted in Phase 10).
-	Strategy topology.DeployStrategy `json:"strategy,omitempty"`
-	Trigger  topology.PushGitTrigger `json:"trigger,omitempty"` // set only when Strategy==push-git
 
 	StageHostname string `json:"stageHostname,omitempty"`
 }

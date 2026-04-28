@@ -170,7 +170,7 @@ func RegisterDeploySSH(
 		attempt := workflow.DeployAttempt{
 			AttemptedAt: attemptedAt,
 			Setup:       input.Setup,
-			Strategy:    string(topology.StrategyPushDev),
+			Strategy:    "push-dev",
 		}
 
 		// Default: zcli push to Zerops.
@@ -179,7 +179,7 @@ func RegisterDeploySSH(
 		if err != nil {
 			attempt.Error = err.Error()
 			// SSH/transport-layer failure — we never reached the build.
-			classification := classifyTransportError(err, string(topology.StrategyPushDev))
+			classification := classifyTransportError(err, "push-dev")
 			if classification != nil {
 				attempt.FailureClass = classification.Category
 			} else {

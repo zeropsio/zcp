@@ -129,7 +129,7 @@ func RegisterDeployLocal(
 		attempt := workflow.DeployAttempt{
 			AttemptedAt: time.Now().UTC().Format(time.RFC3339),
 			Setup:       input.Setup,
-			Strategy:    string(topology.StrategyPushDev),
+			Strategy:    "push-dev",
 		}
 
 		result, err := ops.DeployLocal(ctx, client, projectID, *authInfo,
@@ -138,7 +138,7 @@ func RegisterDeployLocal(
 			attempt.Error = err.Error()
 			// Local push failed before reaching the platform — transport-
 			// layer error (e.g. zcli auth, connection).
-			classification := classifyTransportError(err, string(topology.StrategyPushDev))
+			classification := classifyTransportError(err, "push-dev")
 			if classification != nil {
 				attempt.FailureClass = classification.Category
 			} else {

@@ -271,13 +271,13 @@ func TestScenario_S4_DevelopStrategyReviewAfterFirstDeploy(t *testing.T) {
 		Phase:       PhaseDevelopActive,
 		Environment: EnvContainer,
 		Services: []ServiceSnapshot{{
-			Hostname:     "appdev",
-			TypeVersion:  "nodejs@22",
-			RuntimeClass: topology.RuntimeDynamic,
-			Mode:         topology.ModeDev,
-			Strategy:     topology.StrategyUnset,
-			Bootstrapped: true,
-			Deployed:     true,
+			Hostname:        "appdev",
+			TypeVersion:     "nodejs@22",
+			RuntimeClass:    topology.RuntimeDynamic,
+			Mode:            topology.ModeDev,
+			CloseDeployMode: topology.CloseModeUnset,
+			Bootstrapped:    true,
+			Deployed:        true,
 		}},
 		WorkSession: &WorkSessionSummary{
 			Intent:    "fix auth",
@@ -322,12 +322,12 @@ func TestScenario_S7_DevelopClosedAuto(t *testing.T) {
 		Phase:       PhaseDevelopClosed,
 		Environment: EnvContainer,
 		Services: []ServiceSnapshot{{
-			Hostname:     "appdev",
-			TypeVersion:  "nodejs@22",
-			RuntimeClass: topology.RuntimeDynamic,
-			Mode:         topology.ModeDev,
-			Strategy:     "push-dev",
-			Bootstrapped: true,
+			Hostname:        "appdev",
+			TypeVersion:     "nodejs@22",
+			RuntimeClass:    topology.RuntimeDynamic,
+			Mode:            topology.ModeDev,
+			CloseDeployMode: topology.CloseModeAuto,
+			Bootstrapped:    true,
 		}},
 		WorkSession: &WorkSessionSummary{
 			Intent:      "fix login bug",
@@ -432,23 +432,23 @@ func TestScenario_StandardPair_FirstDeploy_PromoteToStage(t *testing.T) {
 		Environment: EnvContainer,
 		Services: []ServiceSnapshot{
 			{
-				Hostname:      "appdev",
-				TypeVersion:   "nodejs@22",
-				RuntimeClass:  topology.RuntimeDynamic,
-				Mode:          topology.ModeStandard,
-				StageHostname: "appstage",
-				Strategy:      "push-dev",
-				Bootstrapped:  true,
-				Deployed:      true,
+				Hostname:        "appdev",
+				TypeVersion:     "nodejs@22",
+				RuntimeClass:    topology.RuntimeDynamic,
+				Mode:            topology.ModeStandard,
+				StageHostname:   "appstage",
+				CloseDeployMode: topology.CloseModeAuto,
+				Bootstrapped:    true,
+				Deployed:        true,
 			},
 			{
-				Hostname:     "appstage",
-				TypeVersion:  "nodejs@22",
-				RuntimeClass: topology.RuntimeDynamic,
-				Mode:         topology.ModeStage,
-				Strategy:     "push-dev",
-				Bootstrapped: true,
-				Deployed:     false,
+				Hostname:        "appstage",
+				TypeVersion:     "nodejs@22",
+				RuntimeClass:    topology.RuntimeDynamic,
+				Mode:            topology.ModeStage,
+				CloseDeployMode: topology.CloseModeAuto,
+				Bootstrapped:    true,
+				Deployed:        false,
 			},
 		},
 		WorkSession: &WorkSessionSummary{
@@ -483,12 +483,12 @@ func TestScenario_S6_DevelopDeployOKPendingVerify(t *testing.T) {
 		Phase:       PhaseDevelopActive,
 		Environment: EnvContainer,
 		Services: []ServiceSnapshot{{
-			Hostname:     "appdev",
-			TypeVersion:  "nodejs@22",
-			RuntimeClass: topology.RuntimeDynamic,
-			Mode:         topology.ModeDev,
-			Strategy:     "push-dev",
-			Bootstrapped: true,
+			Hostname:        "appdev",
+			TypeVersion:     "nodejs@22",
+			RuntimeClass:    topology.RuntimeDynamic,
+			Mode:            topology.ModeDev,
+			CloseDeployMode: topology.CloseModeAuto,
+			Bootstrapped:    true,
 		}},
 		WorkSession: &WorkSessionSummary{
 			Intent:    "add /health endpoint",
@@ -537,14 +537,15 @@ func TestScenario_S10_RecipeActive(t *testing.T) {
 }
 
 // TestScenario_S11_StrategySetupEmptyPlan pins the stateless-synthesis contract
-// for the strategy-setup phase: synthesis emits the push-git setup atom
-// chain; Plan stays empty because the handler (handleStrategy) delivers the
-// atom directly in its response, not via Plan.
+// for the strategy-setup phase: synthesis emits the git-push capability
+// setup atoms; Plan stays empty because the handler (handleStrategy) delivers
+// the atoms directly in its response, not via Plan.
 //
-// Under plan phase A.6 the monolithic strategy-push-git atom is replaced by
-// five service-scoped atoms (intro, 2x push per env, 2x trigger per type);
-// the envelope therefore carries a synthetic service snapshot reflecting
-// the service being configured.
+// Under the orthogonal-axis decomposition the strategy-setup phase is keyed
+// on (Environment, GitPushState, BuildIntegration). When git-push capability
+// is unconfigured, the env-scoped setup-git-push-{container,local} atom
+// fires; once configured, setup-build-integration-{webhook,actions} take
+// over.
 func TestScenario_S11_StrategySetupEmptyPlan(t *testing.T) {
 	t.Parallel()
 
@@ -557,11 +558,13 @@ func TestScenario_S11_StrategySetupEmptyPlan(t *testing.T) {
 		Phase:       PhaseStrategySetup,
 		Environment: EnvContainer,
 		Services: []ServiceSnapshot{{
-			Hostname:     "appdev",
-			Bootstrapped: true,
-			Strategy:     topology.StrategyPushGit,
-			Trigger:      topology.TriggerUnset, // pre-trigger call → intro atom should fire
-			Mode:         topology.ModeDev,
+			Hostname:         "appdev",
+			Bootstrapped:     true,
+			CloseDeployMode:  topology.CloseModeGitPush,
+			GitPushState:     topology.GitPushUnconfigured,
+			BuildIntegration: topology.BuildIntegrationNone,
+			Mode:             topology.ModeDev,
+			RuntimeClass:     topology.RuntimeDynamic,
 		}},
 	}
 
@@ -577,9 +580,10 @@ func TestScenario_S11_StrategySetupEmptyPlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
-	// strategy-push-git-intro is the entry atom for the push-git setup
-	// chain; downstream atoms (push/trigger per env+type) follow.
-	requireAtomIDsContain(t, "S11", matches, "strategy-push-git-intro")
+	// setup-git-push-container is the env-scoped entry atom for the
+	// container-side capability setup; downstream build-integration atoms
+	// fire after GitPushState transitions to configured.
+	requireAtomIDsContain(t, "S11", matches, "setup-git-push-container")
 }
 
 // TestScenario_S12_ExportActiveEmptyPlan mirrors S11 for the export phase.
@@ -626,13 +630,13 @@ func TestScenario_S8_DevelopIterationFailure(t *testing.T) {
 		Phase:       PhaseDevelopActive,
 		Environment: EnvContainer,
 		Services: []ServiceSnapshot{{
-			Hostname:     "appdev",
-			TypeVersion:  "nodejs@22",
-			RuntimeClass: topology.RuntimeDynamic,
-			Mode:         topology.ModeDev,
-			Strategy:     "push-dev",
-			Bootstrapped: true,
-			Deployed:     true,
+			Hostname:        "appdev",
+			TypeVersion:     "nodejs@22",
+			RuntimeClass:    topology.RuntimeDynamic,
+			Mode:            topology.ModeDev,
+			CloseDeployMode: topology.CloseModeAuto,
+			Bootstrapped:    true,
+			Deployed:        true,
 		}},
 		WorkSession: &WorkSessionSummary{
 			Intent:    "fix auth flow",
@@ -762,59 +766,59 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		{"develop-active/first-deploy/standard/container", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvContainer,
 			Services: []ServiceSnapshot{
-				{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", Strategy: topology.StrategyUnset, Bootstrapped: true, Deployed: false},
-				{Hostname: "appstage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, Strategy: topology.StrategyUnset, Bootstrapped: true, Deployed: false},
+				{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: false},
+				{Hostname: "appstage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: false},
 			},
 		}},
 		{"develop-active/first-deploy/implicit-webserver", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvContainer,
 			Services: []ServiceSnapshot{
-				{Hostname: "appdev", TypeVersion: "php-nginx@8.4", RuntimeClass: topology.RuntimeImplicitWeb, Mode: topology.ModeStandard, StageHostname: "appstage", Strategy: topology.StrategyUnset, Bootstrapped: true, Deployed: false},
-				{Hostname: "appstage", TypeVersion: "php-nginx@8.4", RuntimeClass: topology.RuntimeImplicitWeb, Mode: topology.ModeStage, Strategy: topology.StrategyUnset, Bootstrapped: true, Deployed: false},
+				{Hostname: "appdev", TypeVersion: "php-nginx@8.4", RuntimeClass: topology.RuntimeImplicitWeb, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: false},
+				{Hostname: "appstage", TypeVersion: "php-nginx@8.4", RuntimeClass: topology.RuntimeImplicitWeb, Mode: topology.ModeStage, CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: false},
 			},
 		}},
 		{"develop-active/first-deploy/local", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvLocal,
 			Services: []ServiceSnapshot{
-				{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", Strategy: topology.StrategyUnset, Bootstrapped: true, Deployed: false},
-				{Hostname: "appstage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, Strategy: topology.StrategyUnset, Bootstrapped: true, Deployed: false},
+				{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: false},
+				{Hostname: "appstage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: false},
 			},
 		}},
 
 		// Develop-active deployed iterations across modes/strategies/triggers.
 		{"develop-active/push-dev/dev/container", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvContainer,
-			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev, Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true, Status: "READY_TO_DEPLOY"}},
+			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev, CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true, Status: "READY_TO_DEPLOY"}},
 		}},
 		{"develop-active/push-dev/simple/container", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvContainer,
-			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "go@1.22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeSimple, Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true}},
+			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "go@1.22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeSimple, CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true}},
 		}},
 		{"develop-active/push-dev/standard/container", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvContainer,
-			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true}},
+			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true}},
 		}},
 		{"develop-active/push-dev/dev/local", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvLocal,
-			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeLocalStage, Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true}},
+			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeLocalStage, CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true}},
 		}},
 		{"develop-active/push-dev/local-mode-dev-deployed", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvLocal,
-			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev, Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true}},
+			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev, CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true}},
 		}},
 		{"develop-active/push-dev/standard/local-deployed", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvLocal,
-			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true}},
+			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true}},
 		}},
 		{"develop-active/push-git/standard/local-deployed", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvLocal,
-			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", Strategy: topology.StrategyPushGit, Trigger: topology.TriggerWebhook, Bootstrapped: true, Deployed: true}},
+			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: topology.CloseModeGitPush, BuildIntegration: topology.BuildIntegrationWebhook, Bootstrapped: true, Deployed: true}},
 		}},
 		{"develop-active/first-deploy/implicit-webserver-local", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvLocal,
 			Services: []ServiceSnapshot{
-				{Hostname: "appdev", TypeVersion: "php-nginx@8.4", RuntimeClass: topology.RuntimeImplicitWeb, Mode: topology.ModeStandard, StageHostname: "appstage", Strategy: topology.StrategyUnset, Bootstrapped: true, Deployed: false},
-				{Hostname: "appstage", TypeVersion: "php-nginx@8.4", RuntimeClass: topology.RuntimeImplicitWeb, Mode: topology.ModeStage, Strategy: topology.StrategyUnset, Bootstrapped: true, Deployed: false},
+				{Hostname: "appdev", TypeVersion: "php-nginx@8.4", RuntimeClass: topology.RuntimeImplicitWeb, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: false},
+				{Hostname: "appstage", TypeVersion: "php-nginx@8.4", RuntimeClass: topology.RuntimeImplicitWeb, Mode: topology.ModeStage, CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: false},
 			},
 		}},
 		{"develop-active/push-git/standard/container", StateEnvelope{
@@ -831,55 +835,52 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 			// buildIntegrations: [webhook, actions]).
 			Phase: PhaseDevelopActive, Environment: EnvContainer,
 			Services: []ServiceSnapshot{
-				{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", Strategy: topology.StrategyPushGit, Trigger: topology.TriggerWebhook, CloseDeployMode: topology.CloseModeGitPush, GitPushState: topology.GitPushConfigured, BuildIntegration: topology.BuildIntegrationWebhook, Bootstrapped: true, Deployed: true},
-				{Hostname: "appstage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, Strategy: topology.StrategyPushGit, Trigger: topology.TriggerWebhook, CloseDeployMode: topology.CloseModeGitPush, GitPushState: topology.GitPushConfigured, BuildIntegration: topology.BuildIntegrationWebhook, Bootstrapped: true, Deployed: true},
+				{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: topology.CloseModeGitPush, GitPushState: topology.GitPushConfigured, BuildIntegration: topology.BuildIntegrationWebhook, Bootstrapped: true, Deployed: true},
+				{Hostname: "appstage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, CloseDeployMode: topology.CloseModeGitPush, GitPushState: topology.GitPushConfigured, BuildIntegration: topology.BuildIntegrationWebhook, Bootstrapped: true, Deployed: true},
 			},
 		}},
 		{"develop-active/manual/dev/container", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvContainer,
-			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev, Strategy: topology.StrategyManual, Bootstrapped: true, Deployed: true}},
+			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev, CloseDeployMode: topology.CloseModeManual, Bootstrapped: true, Deployed: true}},
 		}},
 		{"develop-active/static/standard/container", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvContainer,
-			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "static", RuntimeClass: topology.RuntimeStatic, Mode: topology.ModeStandard, Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true}},
+			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "static", RuntimeClass: topology.RuntimeStatic, Mode: topology.ModeStandard, CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true}},
 		}},
 		{"develop-active/implicit-webserver/standard/container", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvContainer,
-			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "php-nginx@8.4", RuntimeClass: topology.RuntimeImplicitWeb, Mode: topology.ModeStandard, Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true}},
+			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "php-nginx@8.4", RuntimeClass: topology.RuntimeImplicitWeb, Mode: topology.ModeStandard, CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true}},
 		}},
 		{"develop-active/standard-pair-deployed", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvContainer,
 			Services: []ServiceSnapshot{
-				{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true},
-				{Hostname: "appstage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true},
+				{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true},
+				{Hostname: "appstage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true},
 			},
 		}},
 
 		// Develop-closed-auto.
 		{"develop-closed-auto", StateEnvelope{Phase: PhaseDevelopClosed, Environment: EnvContainer}},
 
-		// Strategy-setup.
-		{"strategy-setup/push-git/unset/container", StateEnvelope{
+		// Strategy-setup — git-push capability not yet configured.
+		{"strategy-setup/git-push-unconfigured/container", StateEnvelope{
 			Phase: PhaseStrategySetup, Environment: EnvContainer,
-			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, Strategy: topology.StrategyPushGit, Trigger: topology.TriggerUnset, Bootstrapped: true, Deployed: false}},
+			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, CloseDeployMode: topology.CloseModeGitPush, GitPushState: topology.GitPushUnconfigured, BuildIntegration: topology.BuildIntegrationNone, Bootstrapped: true, Deployed: false}},
 		}},
-		{"strategy-setup/push-git/actions/container", StateEnvelope{
-			Phase: PhaseStrategySetup, Environment: EnvContainer,
-			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, Strategy: topology.StrategyPushGit, Trigger: topology.TriggerActions, Bootstrapped: true, Deployed: false}},
-		}},
-		{"strategy-setup/push-git/webhook/container", StateEnvelope{
-			Phase: PhaseStrategySetup, Environment: EnvContainer,
-			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, Strategy: topology.StrategyPushGit, Trigger: topology.TriggerWebhook, Bootstrapped: true, Deployed: false}},
-		}},
-		{"strategy-setup/push-git/local", StateEnvelope{
+		{"strategy-setup/git-push-unconfigured/local", StateEnvelope{
 			Phase: PhaseStrategySetup, Environment: EnvLocal,
-			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, Strategy: topology.StrategyPushGit, Trigger: topology.TriggerWebhook, Bootstrapped: true, Deployed: false}},
+			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, CloseDeployMode: topology.CloseModeGitPush, GitPushState: topology.GitPushUnconfigured, BuildIntegration: topology.BuildIntegrationNone, Bootstrapped: true, Deployed: false}},
+		}},
+		// Strategy-setup — git-push configured, build-integration still pending.
+		{"strategy-setup/build-integration-pending/container", StateEnvelope{
+			Phase: PhaseStrategySetup, Environment: EnvContainer,
+			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, CloseDeployMode: topology.CloseModeGitPush, GitPushState: topology.GitPushConfigured, BuildIntegration: topology.BuildIntegrationNone, Bootstrapped: true, Deployed: false}},
 		}},
 
 		// Export.
 		{"export-active", StateEnvelope{
 			Phase: PhaseExportActive, Environment: EnvContainer,
-			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true}},
+			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true}},
 		}},
 	}
 
@@ -921,13 +922,10 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"develop-change-drives-deploy",
 		"develop-checklist-dev-mode",
 		"develop-checklist-simple-mode",
-		"develop-close-manual",
 		"develop-close-push-dev-dev",
 		"develop-close-push-dev-local",
 		"develop-close-push-dev-simple",
 		"develop-close-push-dev-standard",
-		"develop-close-push-git-container",
-		"develop-close-push-git-local",
 		"develop-deploy-files-self-deploy",
 		"develop-deploy-modes",
 		"develop-dev-server-reason-codes",
@@ -949,25 +947,24 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"develop-intro",
 		"develop-knowledge-pointers",
 		"develop-local-workflow",
-		"develop-manual-deploy",
 		"develop-mode-expansion",
 		"develop-platform-rules-common",
 		"develop-platform-rules-container",
 		"develop-platform-rules-local",
 		"develop-push-dev-deploy-local",
 		"develop-push-dev-workflow-simple",
-		"develop-push-git-deploy",
-		"develop-push-git-deploy-local",
 		"develop-ready-to-deploy",
-		"develop-record-external-deploy", // deploy-decomp P7
-
+		"develop-record-external-deploy",
+		"develop-build-observe",
+		"develop-close-mode-auto",
+		"develop-close-mode-git-push",
+		"develop-close-mode-manual",
+		"setup-git-push-container",
+		"setup-git-push-local",
+		"setup-build-integration-webhook",
+		"setup-build-integration-actions",
 		"develop-static-workflow",
 		"develop-strategy-awareness",
 		"develop-verify-matrix",
-		// strategy-* (4 unpinned atoms)
-		"strategy-push-git-push-container",
-		"strategy-push-git-push-local",
-		"strategy-push-git-trigger-actions",
-		"strategy-push-git-trigger-webhook",
 	)
 }

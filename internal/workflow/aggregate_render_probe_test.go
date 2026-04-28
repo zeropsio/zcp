@@ -29,10 +29,10 @@ func TestAggregateRender_TwoPairCollapseStructural(t *testing.T) {
 		Phase:       PhaseDevelopActive,
 		Environment: EnvContainer,
 		Services: []ServiceSnapshot{
-			{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", Strategy: topology.StrategyUnset, Bootstrapped: true, Deployed: false},
-			{Hostname: "appstage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, Strategy: topology.StrategyUnset, Bootstrapped: true, Deployed: false},
-			{Hostname: "apidev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "apistage", Strategy: topology.StrategyUnset, Bootstrapped: true, Deployed: false},
-			{Hostname: "apistage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, Strategy: topology.StrategyUnset, Bootstrapped: true, Deployed: false},
+			{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: false},
+			{Hostname: "appstage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: false},
+			{Hostname: "apidev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "apistage", CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: false},
+			{Hostname: "apistage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: false},
 		},
 	}
 	matches, err := Synthesize(envelope, corpus)
@@ -122,7 +122,7 @@ func TestAggregateRender_LocalStageFiresExecuteAtom(t *testing.T) {
 		Services: []ServiceSnapshot{{
 			Hostname: "appstage", TypeVersion: "nodejs@22",
 			RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeLocalStage,
-			Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: false,
+			CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: false,
 		}},
 	}
 	matches, err := Synthesize(envelope, corpus)
@@ -175,7 +175,7 @@ func TestAggregateRender_StructuralDuplicationReduction(t *testing.T) {
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev,
-					Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: false,
+					CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: false,
 				}},
 			},
 		},
@@ -187,7 +187,7 @@ func TestAggregateRender_StructuralDuplicationReduction(t *testing.T) {
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeSimple,
-					Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: false,
+					CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: false,
 				}},
 			},
 		},

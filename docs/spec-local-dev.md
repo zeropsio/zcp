@@ -195,25 +195,30 @@ own git CLI.
 
 ```go
 type ServiceMeta struct {
-    Hostname          string         `json:"hostname"`
-    Mode              Mode           `json:"mode,omitempty"`
-    StageHostname     string         `json:"stageHostname,omitempty"`
-    DeployStrategy    DeployStrategy `json:"deployStrategy,omitempty"`
-    PushGitTrigger    PushGitTrigger `json:"pushGitTrigger,omitempty"`    // webhook | actions — push-git only
-    StrategyConfirmed bool           `json:"strategyConfirmed,omitempty"`
-    BootstrapSession  string         `json:"bootstrapSession"`
-    BootstrappedAt    string         `json:"bootstrappedAt"`
-    FirstDeployedAt   string         `json:"firstDeployedAt,omitempty"`   // stamped on successful deploy or adoption at ACTIVE
+    Hostname                 string           `json:"hostname"`
+    Mode                     Mode             `json:"mode,omitempty"`
+    StageHostname            string           `json:"stageHostname,omitempty"`
+    CloseDeployMode          CloseDeployMode  `json:"closeDeployMode,omitempty"`           // unset | auto | git-push | manual
+    CloseDeployModeConfirmed bool             `json:"closeDeployModeConfirmed,omitempty"`
+    GitPushState             GitPushState     `json:"gitPushState,omitempty"`              // unconfigured | configured | broken | unknown
+    RemoteURL                string           `json:"remoteUrl,omitempty"`                 // git remote (set when GitPushState=configured)
+    BuildIntegration         BuildIntegration `json:"buildIntegration,omitempty"`          // none | webhook | actions
+    BootstrapSession         string           `json:"bootstrapSession"`
+    BootstrappedAt           string           `json:"bootstrappedAt"`
+    FirstDeployedAt          string           `json:"firstDeployedAt,omitempty"`           // stamped on successful deploy or adoption at ACTIVE
 }
 ```
 
-Under Release B all three axis-bearing fields (`Mode`, `DeployStrategy`,
-`PushGitTrigger`) are typed Go enums rather than bare strings — the
+The axis-bearing fields (`Mode`, `CloseDeployMode`, `GitPushState`,
+`BuildIntegration`) are typed Go enums rather than bare strings — the
 vocabulary is shared with plan input and envelope assembly, so the type
-system catches drift at compile time. `Environment` is not persisted:
-env is a property of the currently running ZCP process (runtime-detected
-via `runtime.Info.InContainer`), not of a service, and storing it per
-meta created a drift vector.
+system catches drift at compile time. The three deploy-config dimensions
+are orthogonal: a service can carry `CloseDeployMode=auto` while
+`GitPushState=configured` (push capability provisioned but close still
+uses default deploy). `Environment` is not persisted: env is a property
+of the currently running ZCP process (runtime-detected via
+`runtime.Info.InContainer`), not of a service, and storing it per meta
+created a drift vector.
 
 ### Local Mode Differences
 
@@ -333,42 +338,50 @@ Same as container mode — `zerops_verify` uses API + subdomain HTTP.
 
 ---
 
-## 11. Deploy Strategies
+## 11. Close-Mode + Capability + Build Integration
 
-| Strategy | Container | Local |
-|----------|-----------|-------|
-| push-dev | SSH into dev → `zcli push` from `/var/www` | `zcli push` from user's CWD → linked stage |
-| push-git | `git push` via GIT_TOKEN + .netrc (tool-managed) | `git push` via user's local git credentials (SSH keys, credential manager) |
-| manual | ZCP stays out of the deploy loop — user handles it with their own tools |
+`zerops_deploy` accepts `strategy=""` (default) or `strategy="git-push"`
+on the wire — these are wire-vocabulary mechanism selectors, not the
+ServiceMeta close-mode. The on-disk model uses three orthogonal fields:
 
-Strategy names and on-disk enum values are the same across envs; the
-implementation branches inside the `zerops_deploy` handler. `manual`
-is a ServiceMeta declaration only — passing it as a tool param is
-invalid (the tool refuses with a message explaining the semantic).
+| Field | Wire vocabulary | Container | Local |
+|-------|-----------------|-----------|-------|
+| `CloseDeployMode=auto` | default deploy via `zerops_deploy` | SSH into dev → `zcli push` from `/var/www` | `zcli push` from user's CWD → linked stage |
+| `CloseDeployMode=git-push` | `zerops_deploy strategy="git-push"` | `git push` via GIT_TOKEN + .netrc (tool-managed) | `git push` via user's local git credentials (SSH keys, credential manager) |
+| `CloseDeployMode=manual` | (not a deploy mechanism — declares "ZCP stays out of close") | ZCP records evidence; user owns the deploy | same |
 
-### push-git has a trigger sub-axis
+`manual` is a ServiceMeta declaration only — passing `strategy="manual"`
+as a `zerops_deploy` param is invalid (the tool refuses with a message
+explaining the semantic).
 
-When a service is set to `push-git`, the setup flow asks which
-downstream trigger runs the Zerops build:
+### Git-push capability is a separate axis
 
-| Trigger | What happens after push | Setup delivered by |
-|---------|-------------------------|--------------------|
-| `webhook` | Zerops dashboard OAuths the repo; webhook fires build | `strategy-push-git-trigger-webhook` atom |
-| `actions` | GitHub Actions workflow runs `zcli push` back to Zerops | `strategy-push-git-trigger-actions` atom |
+When a service should push to an external git remote, capability setup
+is independent of close-mode. `GitPushState` tracks whether the
+capability is provisioned, and `BuildIntegration` (none/webhook/actions)
+chooses what fires after the push lands.
 
-`PushGitTrigger` is persisted on ServiceMeta. The `handleStrategy`
-handler accepts `trigger="webhook"` or `trigger="actions"` alongside
-`strategies={X:"push-git"}`; omitting it returns the intro atom that
-asks the user to pick. Only `push-git` carries a trigger; `push-dev`
-and `manual` reject the input.
+| BuildIntegration | What happens after push | Setup delivered by |
+|------------------|-------------------------|--------------------|
+| `none` | Push lands at the remote; ZCP doesn't track external CI/CD | (no atom — steady state) |
+| `webhook` | Zerops dashboard OAuths the repo; webhook fires build | `setup-build-integration-webhook` atom |
+| `actions` | GitHub Actions workflow runs `zcli push` back to Zerops | `setup-build-integration-actions` atom |
 
-### local-only + push-dev is blocked
+`GitPushState` + `RemoteURL` are persisted on ServiceMeta and updated by
+`action="git-push-setup"`. `BuildIntegration` is persisted on ServiceMeta
+and updated by `action="build-integration"` (which refuses unless
+`GitPushState=configured`). The two are independent of close-mode — a
+service can hold `GitPushState=configured` while keeping
+`CloseDeployMode=auto`, and switching to `CloseDeployMode=git-push`
+later doesn't require re-setup.
 
-`local-only` means no Zerops runtime is linked. `push-dev` needs a
-deploy target, so the strategy handler and `zerops_deploy` both
-refuse `push-dev` on local-only services. The error points at
-`adopt-local` (to link a runtime) or `git-push` (which doesn't need a
-stage).
+### local-only + default-deploy mechanism is blocked
+
+`local-only` means no Zerops runtime is linked. The default deploy
+mechanism (`strategy=""` / push-dev) needs a deploy target, so the
+close-mode handler and `zerops_deploy` both refuse `push-dev` on
+local-only services. The error points at `adopt-local` (to link a
+runtime) or `strategy="git-push"` (which doesn't need a stage).
 
 ---
 

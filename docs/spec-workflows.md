@@ -1,6 +1,6 @@
 # ZCP Workflow Specification
 
-> **Scope**: Bootstrap, adoption, strategy (central deploy-config entry — push-dev/push-git/manual; push-git returns the full setup flow including optional CI/CD), develop, recipe, export — both container and local environments, all modes; plus the envelope/plan/atom pipeline that feeds every workflow-aware response.
+> **Scope**: Bootstrap, adoption, close-mode + git-push capability + build-integration management (central deploy-config entries — `action="close-mode"`, `action="git-push-setup"`, `action="build-integration"`), develop, recipe, export — both container and local environments, all modes; plus the envelope/plan/atom pipeline that feeds every workflow-aware response.
 > **Companion docs**:
 > - `docs/spec-scenarios.md` — per-scenario acceptance walkthrough (S1–S13), pinned by `internal/workflow/scenarios_test.go`.
 > - `docs/spec-work-session.md` — per-PID Work Session for develop.
@@ -28,14 +28,14 @@ flowchart LR
     Bootstrap --> Meta["ServiceMeta<br/>(evidence file)"]
     Adoption --> Meta
     Meta --> Develop
-    Develop -->|"strategy read<br/>from meta"| Develop
+    Develop -->|"close-mode read<br/>from meta"| Develop
 
     style Meta fill:#dfd,stroke:#0a0
 ```
 
-**Phase 1 — Infrastructure**: Bootstrap creates new services (or adoption registers existing ones) and writes an evidence file (ServiceMeta). Only a **verification server** is deployed — a hello-world proving infrastructure works (/, /health, /status). No application logic, no strategy. Phase 1 answers: "can this service start, respond, and reach its dependencies?"
+**Phase 1 — Infrastructure**: Bootstrap creates new services (or adoption registers existing ones) and writes an evidence file (ServiceMeta). Only a **verification server** is deployed — a hello-world proving infrastructure works (/, /health, /status). No application logic, no close-mode. Phase 1 answers: "can this service start, respond, and reach its dependencies?"
 
-**Phase 2 — Development**: Develop flow covers ALL code work on the service — implementing the user's actual application, bug fixes, config changes, everything. It discovers what code exists (verification server from bootstrap or existing application), provides runtime knowledge, lets the agent implement what the user wants, and deploys at the end. Strategy is always read fresh from ServiceMeta.
+**Phase 2 — Development**: Develop flow covers ALL code work on the service — implementing the user's actual application, bug fixes, config changes, everything. It discovers what code exists (verification server from bootstrap or existing application), provides runtime knowledge, lets the agent implement what the user wants, and deploys at the end. CloseDeployMode + GitPushState + BuildIntegration are always read fresh from ServiceMeta.
 
 **The boundary is strict**: Bootstrap writes zerops.yaml + infrastructure verification server. The moment the agent needs to write application logic, it must be in develop flow. If the user says "create me an app for uploading photos in Bun", bootstrap creates Bun service + dependencies with a hello-world verification server, then develop flow implements the photo upload app.
 
@@ -50,12 +50,15 @@ The lifecycle above is collapsed into a single typed `Phase` field carried in ev
 | `develop-active` | A per-PID Work Session is open. | `zerops_workflow action=start workflow=develop`. |
 | `develop-closed-auto` | Work Session has `ClosedAt` set and `CloseReason=auto-complete`. Transitional phase — awaits explicit close + next. | Auto-close in `EvaluateAutoClose` when every scope service has a succeeded deploy + passed verify. |
 | `recipe-active` | A recipe-authoring session is in progress. | `zerops_workflow action=start workflow=recipe`. |
-| `strategy-setup` | Stateless synthesis phase (no session) emitted by `action=strategy` when setting push-git — delivers the full setup flow (Option A push-only vs Option B full CI/CD, GIT_TOKEN, optional GitHub Actions or webhook, first push). | `zerops_workflow action=strategy strategies={hostname:push-git}`. |
+| `strategy-setup` | Stateless synthesis phase (no session) emitted by `action="git-push-setup"` and `action="build-integration"` — delivers the env-scoped + capability-scoped setup atoms (`setup-git-push-{container,local}`, `setup-build-integration-{webhook,actions}`). | `zerops_workflow action="git-push-setup" service="..."` or `action="build-integration" service="..." integration="..."`. |
 | `export-active` | Stateless immediate workflow returning export guidance. | `zerops_workflow action=start workflow=export`. |
 
 Invariant: at most one non-idle **stateful** phase per PID at a time. `strategy-setup`/`export-active` are stateless — they synthesize guidance and return without touching session state, so they never conflict with an active bootstrap/develop/recipe session.
 
-`strategy-setup` replaces the retired `cicd-active` phase. Deploy-strategy configuration (push-dev / push-git / manual) is now a single-path operation: `zerops_workflow action=strategy strategies={hostname:value}`. For push-git, the handler probes state and returns atom-synthesized guidance with Option A/B branching for push-only vs full CI/CD. The `workflow=cicd` entry point is gone — same content reached via the central `action=strategy` path.
+`strategy-setup` replaces the retired `cicd-active` phase. Deploy configuration is now three orthogonal operations:
+- `zerops_workflow action="close-mode" closeMode={hostname:auto|git-push|manual}` — what `action="close"` does at develop close.
+- `zerops_workflow action="git-push-setup" service="..." remoteUrl="..."` — provisions GIT_TOKEN / .netrc / remote URL and stamps `GitPushState=configured`.
+- `zerops_workflow action="build-integration" service="..." integration="webhook|actions"` — chooses the ZCP-managed CI shape (requires `GitPushState=configured`).
 
 See `plans/instruction-delivery-rewrite.md` §4.1 for the concrete Go enum.
 
@@ -79,21 +82,27 @@ ServiceMeta (`.zcp/state/services/{hostname}.json`) is the persistent evidence t
 
 ```
 ServiceMeta {
-  Hostname          string          // service identifier
-  Mode              Mode            // standard | dev | simple | local-stage | local-only
-  StageHostname     string          // stage pair (standard mode only; requires ExplicitStage on the plan target — no hostname-suffix derivation since Release B.4)
-  DeployStrategy    DeployStrategy  // push-dev | push-git | manual (empty until set)
-  PushGitTrigger    PushGitTrigger  // webhook | actions (push-git only)
-  StrategyConfirmed bool            // true after user explicitly confirms/sets strategy
-  BootstrapSession  string          // session ID that created this; EMPTY for adoption
-  BootstrappedAt    string          // date — empty = incomplete (bootstrap in progress)
-  FirstDeployedAt   string          // stamped on first real deploy (session or adoption-at-ACTIVE)
+  Hostname                 string           // service identifier
+  Mode                     Mode             // standard | dev | simple | local-stage | local-only
+  StageHostname            string           // stage pair (standard mode only; requires ExplicitStage on the plan target — no hostname-suffix derivation since Release B.4)
+  CloseDeployMode          CloseDeployMode  // unset | auto | git-push | manual (how develop close runs)
+  CloseDeployModeConfirmed bool             // true after user explicitly confirms/sets close-mode
+  GitPushState             GitPushState     // unconfigured | configured | broken | unknown (git-push capability, orthogonal to close-mode)
+  RemoteURL                string           // configured git remote (set when GitPushState=configured)
+  BuildIntegration         BuildIntegration // none | webhook | actions (ZCP-managed CI shape, requires GitPushState=configured)
+  BootstrapSession         string           // session ID that created this; EMPTY for adoption
+  BootstrappedAt           string           // date — empty = incomplete (bootstrap in progress)
+  FirstDeployedAt          string           // stamped on first real deploy (session or adoption-at-ACTIVE)
 }
 ```
 
-The three axis-bearing fields (`Mode`, `DeployStrategy`, `PushGitTrigger`)
-are typed Go enums — same vocabulary as plan input and envelope
-assembly. `Environment` is not persisted: environment is a property of
+The three axis-bearing fields (`Mode`, `CloseDeployMode`,
+`GitPushState`/`BuildIntegration`) are typed Go enums living in
+`internal/topology/`. They're orthogonal — a service can be on
+`CloseDeployMode=auto` (close runs `zerops_deploy`) while
+`GitPushState=configured` (push capability exists, just not used at
+close); flipping `CloseDeployMode=git-push` later doesn't require a
+re-setup. `Environment` is not persisted: environment is a property of
 the currently running ZCP process (runtime-detected), not of a service.
 
 **`BootstrapSession == ""` convention.** Empty (JSON-wise: empty string, not
@@ -107,25 +116,27 @@ always complete, an orphan never is.
 stateDiagram-v2
     [*] --> Provisioned: bootstrap provision step<br/>(partial meta, no BootstrappedAt)
     Provisioned --> Evidenced: bootstrap close OR adoption<br/>(BootstrappedAt set)
-    Evidenced --> StrategySet: action="strategy"<br/>(DeployStrategy set)
-    StrategySet --> StrategySet: action="strategy"<br/>(strategy changed)
+    Evidenced --> CloseModeSet: action="close-mode"<br/>(CloseDeployMode set)
+    CloseModeSet --> CloseModeSet: action="close-mode"<br/>(close-mode changed)
 
     note right of Evidenced
-        DeployStrategy empty.
-        Develop flow informs agent,
-        resolves before deploying.
+        CloseDeployMode empty (renders as
+        unset). Develop flow informs agent,
+        surfaces close-mode review atom.
     end note
 
-    note right of StrategySet
-        Strategy = push-dev | push-git | manual.
-        Develop flow reads from meta each time.
+    note right of CloseModeSet
+        Close-mode = auto | git-push | manual.
+        GitPushState + BuildIntegration are
+        orthogonal capability fields.
     end note
 ```
 
 `IsComplete()` returns true when `BootstrappedAt` is set.
 `IsAdopted()` returns true when `BootstrapSession` is empty AND the meta
-`IsComplete()`. Strategy is always read from meta at the moment it's
-needed — never copied into session state.
+`IsComplete()`. CloseDeployMode + GitPushState + BuildIntegration are
+always read from meta at the moment they're needed — never copied into
+session state.
 
 ### Principles
 
@@ -191,7 +202,7 @@ Dispatch (strict order, first match wins — see `build_plan.go` for the code):
 
 Failed-last-attempt cases fold into branches 2 and 3 — `firstServiceNeedingDeploy` / `firstServiceNeedingVerify` both key off `!attempts[last].Success`, so a failed service surfaces as a deploy or verify target. Iteration-tier guidance (diagnose / systematic-check / STOP) rides along via atoms, not a distinct Plan branch.
 
-Gate semantics in the Plan are informational, not structural: e.g. `Strategy=unset` does not block the Plan from naming a deploy action. The first deploy always uses the default self-deploy mechanism regardless of strategy; once `FirstDeployedAt` is stamped, the `develop-strategy-review` atom (`phases: [develop-active]`, `deployStates: [deployed]`, `strategies: [unset]`) prompts the agent to confirm an ongoing strategy. This keeps `BuildPlan` a pure dispatch over envelope shape.
+Gate semantics in the Plan are informational, not structural: e.g. `CloseDeployMode=unset` does not block the Plan from naming a deploy action. The first deploy always uses the default self-deploy mechanism regardless of close-mode; once `FirstDeployedAt` is stamped, the `develop-strategy-review` atom (`phases: [develop-active]`, `deployStates: [deployed]`, `closeDeployModes: [unset]`) prompts the agent to confirm an ongoing close-mode. This keeps `BuildPlan` a pure dispatch over envelope shape.
 
 ### 1.5 Atom Corpus — Orthogonal Knowledge Matrix
 
@@ -225,14 +236,16 @@ the full prescription.
 | `phases` | `idle`, `bootstrap-active`, `develop-active`, `develop-closed-auto`, `recipe-active`, `strategy-setup`, `export-active` | MUST be non-empty. |
 | `modes` | `dev`, `stage`, `simple` | Empty = any mode. |
 | `environments` | `container`, `local` | Empty = either. |
-| `strategies` | `push-dev`, `push-git`, `manual`, `unset` | Empty = any strategy. |
+| `closeDeployModes` | `unset`, `auto`, `git-push`, `manual` | Empty = any close-mode. |
+| `gitPushStates` | `unconfigured`, `configured`, `broken`, `unknown` | Empty = any git-push capability state. |
+| `buildIntegrations` | `none`, `webhook`, `actions` | Empty = any build integration. |
 | `runtimes` | `dynamic`, `static`, `implicit-webserver`, `managed`, `unknown` | Empty = any runtime. |
 | `routes` | `recipe`, `classic`, `adopt` | Bootstrap-only. Empty = any route. |
 | `steps` | bootstrap step names | Bootstrap-only. Empty = any step. |
 
 **Synthesizer contract**:
 
-1. Filter: an atom matches iff every non-empty axis permits the envelope. Service-scoped axes (`modes`/`strategies`/`runtimes`) match if *any* service in `env.Services` matches.
+1. Filter: an atom matches iff every non-empty axis permits the envelope. Service-scoped axes (`modes`/`closeDeployModes`/`gitPushStates`/`buildIntegrations`/`runtimes`) match if *any* service in `env.Services` matches.
 2. Sort: priority ascending (1 first), then id lexicographically.
 3. Substitute: `{hostname}`, `{stage-hostname}`, `{project-name}` are replaced from the envelope; a whitelist of agent-filled placeholders (`{start-command}`, `{port}`, …) survives untouched. Any unknown `{word}` token is a build-time error.
 4. Return: ordered list of rendered bodies.
@@ -249,7 +262,7 @@ the full prescription.
 | `Environment` | `container` or `local`. Driven by `runtime.Info.InContainer`. |
 | `SelfService` | Hostname of the ZCP control-plane container (container env only). |
 | `Project` | `{ID, Name}` — project identity. |
-| `Services[]` | Sorted snapshots: hostname, type+version, runtime class, status, bootstrapped flag, mode, strategy, stage pair. |
+| `Services[]` | Sorted snapshots: hostname, type+version, runtime class, status, bootstrapped flag, mode, closeDeployMode, gitPushState, buildIntegration, stage pair. |
 | `WorkSession` | Open develop session summary: intent, scope, deploy/verify attempts, close state. `nil` outside develop. |
 | `Recipe` | Recipe session summary. `nil` outside recipe-active. |
 | `Bootstrap` | Bootstrap session summary: route, step, iteration. `nil` outside bootstrap-active. |
@@ -263,7 +276,7 @@ Full field-level Go definitions live in `internal/workflow/envelope.go` and `pla
 
 ## 2. Bootstrap Flow
 
-Bootstrap creates a new service on Zerops and writes the evidence file. That is its only job — it does NOT set deploy strategy.
+Bootstrap creates a new service on Zerops and writes the evidence file. That is its only job — it does NOT set close-mode or any deploy-config fields.
 
 ```mermaid
 flowchart TD
@@ -606,12 +619,14 @@ Workflow-specific endpoint-shape checks (`/api/health`, `/status`, Laravel `/up`
 **On completion** (Active→false):
 1. Write final ServiceMeta per runtime target:
    - `BootstrappedAt` = today's date
-   - `DeployStrategy` = **empty** (NEVER set during bootstrap)
+   - `CloseDeployMode` = **empty** (NEVER set during bootstrap; renders as `unset`)
+   - `GitPushState` = **empty** (renders as `unconfigured`)
+   - `BuildIntegration` = **empty** (renders as `none`)
    - Container: hostname = devHostname
    - Local + standard: hostname = stageHostname (inverted)
 2. Append reflog to CLAUDE.md.
 3. Delete session, unregister.
-4. Return completion message: service list with modes. NO strategy prompt.
+4. Return completion message: service list with modes. NO close-mode prompt.
 
 **Bootstrap is done. Services are provisioned (managed = RUNNING,
 runtimes = bootstrapped but not-yet-deployed), ServiceMeta written with
@@ -677,7 +692,7 @@ Adoption is a simplified process:
      adoption marker; combined with `IsComplete()` this makes
      `IsAdopted()` return true, see §1.1 and invariant E7)
    - `BootstrappedAt` = today's date
-   - `DeployStrategy` = empty
+   - `CloseDeployMode` = empty (renders as `unset`)
 
 No import, no code generation, no deploy. The service already exists and runs.
 
@@ -711,20 +726,13 @@ flowchart TD
     CheckEvidence -->|No| NeedBootstrap["Service not in evidence.<br/>Run bootstrap or adoption first."]
     CheckEvidence -->|Yes| StartFlow
 
-    StartFlow["START PHASE<br/>──────────────<br/>Provide knowledge<br/>Report strategy status"] --> Work
+    StartFlow["START PHASE<br/>──────────────<br/>Provide knowledge<br/>Report close-mode status"] --> Work
 
     Work["WORK PHASE<br/>──────────────<br/>Agent edits code<br/>ZCP stays out of the way"] --> PreDeploy
 
-    PreDeploy["PRE-DEPLOY<br/>──────────────<br/>Read strategy from meta"] --> StratCheck
+    PreDeploy["PRE-DEPLOY<br/>──────────────<br/>Default: zerops_deploy"] --> ExecuteDeploy
 
-    StratCheck{Strategy<br/>in meta?}
-    StratCheck -->|"Empty"| AskUser["Discuss with user:<br/>push-dev / push-git / manual<br/>→ action='strategy'"]
-    AskUser --> SetStrategy["Write strategy to meta"]
-    SetStrategy --> ExecuteDeploy
-    
-    StratCheck -->|"Set"| ExecuteDeploy
-
-    ExecuteDeploy["DEPLOY<br/>──────────────<br/>Execute per strategy<br/>(read fresh from meta)"]
+    ExecuteDeploy["DEPLOY<br/>──────────────<br/>Default self-deploy or<br/>strategy='git-push' if user chose"]
     ExecuteDeploy --> Verify
 
     Verify["VERIFY<br/>──────────────<br/>zerops_verify per target"]
@@ -751,68 +759,75 @@ Develop flow MUST start for ANY work on runtime service code:
 
 Develop flow discovers what code exists on the service (verification server from bootstrap or existing application) and acts accordingly. Bootstrap created infrastructure; develop flow is for all development.
 
-**Agent MUST NOT** edit runtime service code outside of develop flow. The flow ensures the agent has platform knowledge, knows the deploy strategy, and deploys + verifies at the end.
+**Agent MUST NOT** edit runtime service code outside of develop flow. The flow ensures the agent has platform knowledge, knows the close-mode, and deploys + verifies at the end.
 
-### 4.2 Start Phase — Strategy from Meta
+### 4.2 Start Phase — Close-Mode from Meta
 
-At the start of develop flow, the system reads ServiceMeta and informs the agent about strategy status. This is **informational, not blocking**.
+At the start of develop flow, the system reads ServiceMeta and informs the agent about close-mode status. This is **informational, not blocking**.
 
-**If strategy is NOT set** (DeployStrategy empty in meta):
-**Key principle**: Strategy is never a gate — for work-session creation or for the first deploy. The first deploy always uses the default self-deploy mechanism (`zerops_deploy targetService=X` with no strategy argument), because `push-git` and `manual` require state (committed code, `GIT_TOKEN`, or user presence) that doesn't exist before the first deploy lands. Strategy surfaces through atoms post-first-deploy:
+**Key principle**: Close-mode is never a gate — for work-session creation or for the first deploy. The first deploy always uses the default self-deploy mechanism (`zerops_deploy targetService=X` with no strategy argument), because `git-push` and `manual` require state (committed code, `GIT_TOKEN`, configured remote, or user presence) that doesn't exist before the first deploy lands. Close-mode surfaces through atoms post-first-deploy:
 
 - `deployStates: [never-deployed]` → first-deploy-branch atoms own the guidance; the `develop-strategy-review` atom does not fire.
-- `deployStates: [deployed] + strategies: [unset]` → `develop-strategy-review` fires and prompts the agent to confirm an ongoing strategy.
-- Confirmed strategy → strategy-specific atoms take over (`develop-push-git-deploy`, `develop-manual-deploy`, `develop-push-dev-workflow-*`, close sequences).
+- `deployStates: [deployed] + closeDeployModes: [unset]` → `develop-strategy-review` fires and prompts the agent to confirm an ongoing close-mode.
+- Confirmed close-mode → close-mode-specific atoms take over (`develop-close-mode-auto`, `develop-close-mode-git-push`, `develop-close-mode-manual` and their environment-scoped siblings).
 
-Strategy is always read fresh from `ServiceMeta.DeployStrategy` — no caching. Agent can change strategy at any time via `zerops_workflow action="strategy"`.
+Close-mode is always read fresh from `ServiceMeta.CloseDeployMode` — no caching. Agent can change it at any time via `zerops_workflow action="close-mode"`.
 
-### 4.3 Deploy Strategies
+### 4.3 Close-Mode Options (Three Orthogonal Dimensions)
 
-Three strategies determine how code gets to Zerops after the first deploy:
+Close-mode controls **what `zerops_workflow action="close"` does**, not how `zerops_deploy` works mid-task. After the first deploy lands, three orthogonal dimensions describe the develop session:
 
-#### push-dev
-- `zerops_deploy targetService="{hostname}"` — default self-deploy. Blocks until build completes.
-- **After deploy**: Agent starts the dev server on dev services (`zsc noop`) via `zerops_dev_server` in container env, or via the harness background task primitive (e.g. `Bash run_in_background=true` in Claude Code) in local env. Stage and simple auto-start via `healthCheck`.
-- **Good for**: Quick iterations, prototyping, direct control.
-- **First deploy**: same command — push-dev is the implicit default on any service that hasn't been deployed yet.
+| Dimension | Field | Values | Meaning |
+|---|---|---|---|
+| Close-mode | `CloseDeployMode` | unset / auto / git-push / manual | What happens at develop close |
+| Git-push capability | `GitPushState` + `RemoteURL` | unconfigured / configured / broken / unknown | Whether `strategy="git-push"` works |
+| Build integration | `BuildIntegration` | none / webhook / actions | Which ZCP-managed CI shape consumes pushes |
 
-#### push-git
-- **Mechanism**: Commit code, push to external git remote (GitHub/GitLab).
-- **First time**: Requires setup — GIT_TOKEN, `.netrc`, remote URL configuration.
-- **Command**: `zerops_deploy targetService="{hostname}" strategy="git-push" remoteUrl="{url}"`
-- **Subsequent**: `zerops_deploy targetService="{hostname}" strategy="git-push"`
-- **Pre-flight gate**: the tool refuses with `PREREQUISITE_MISSING` when the service has no `FirstDeployedAt` stamp. `push-git` requires code on the container to commit + push, which only exists after the initial default deploy lands.
-- **Optional CI/CD**: GitHub Actions workflow or webhook for automatic deploys on push.
+Capability fields are independent of close-mode: `GitPushState=configured` can coexist with `CloseDeployMode=auto` (push capability exists but close still uses the default deploy). Switching `CloseDeployMode=git-push` later doesn't require re-setup.
+
+#### auto
+- Close runs `zerops_deploy targetService="{hostname}"` directly. Default self-deploy mechanism.
+- **Good for**: Quick iteration cycles, single-developer projects.
+- **First deploy**: same command — `auto` is the implicit default for any service that hasn't been deployed yet.
+
+#### git-push
+- Close commits + pushes to a configured git remote (`RemoteURL`); Zerops or your CI picks the push up and builds.
+- **Setup prerequisite**: `GitPushState=configured` (run `action="git-push-setup"`).
+- **Optional CI**: `BuildIntegration=webhook` (Zerops dashboard pulls + builds) or `BuildIntegration=actions` (GitHub Actions runs `zcli push` from CI).
+- **Pre-flight gate** (`zerops_deploy strategy="git-push"`): refuses with `PREREQUISITE_MISSING` when `FirstDeployedAt` is empty. Git-push requires code on the container to commit + push.
 - **Good for**: Team development, CI/CD pipelines, code in git.
 
 #### manual
-- **Mechanism**: User manages deployments themselves.
-- **Agent role**: Tell user what needs to happen. User executes.
+- Close yields — user owns the deploy/verify/close decisions via slash commands, hooks, or external automation.
+- ZCP records evidence (deploys, verifies) but doesn't drive the close.
 - **Good for**: Experienced users, external CI/CD systems.
 
-### 4.4 Strategy Setting and Changing
+### 4.4 Setting and Changing Close-Mode + Capabilities
 
 ```
-zerops_workflow action="strategy" strategies={"appdev": "push-dev"}
+zerops_workflow action="close-mode"     closeMode={"appdev": "auto"}
+zerops_workflow action="git-push-setup" service="appdev" remoteUrl="git@github.com:org/repo.git"
+zerops_workflow action="build-integration" service="appdev" integration="webhook"
 ```
 
-- Validates: must be `push-dev`, `push-git`, or `manual`.
-- Writes to ServiceMeta.DeployStrategy.
-- Can be called at ANY time — before, during, or between develop flows.
-- Subsequent develop flow reads the updated value from meta.
-- Returns guidance for the chosen strategy.
+- `action="close-mode"` validates to one of `auto`, `git-push`, or `manual` and writes `ServiceMeta.CloseDeployMode` + `CloseDeployModeConfirmed=true`.
+- `action="git-push-setup"` writes `GitPushState=configured` + `RemoteURL`.
+- `action="build-integration"` writes `BuildIntegration` (only valid when `GitPushState=configured`).
+- All three actions can be called at ANY time — before, during, or between develop flows.
+- Subsequent develop flow reads the updated values from meta.
+- Returns guidance for the chosen close-mode + capability state.
 
-**Strategy is always read from meta, never cached in deploy session.** This means:
-- User changes strategy between deploys → next deploy uses new strategy automatically.
-- User changes strategy mid-flow → pre-deploy phase reads the current value.
+**Close-mode + capabilities are always read from meta, never cached in deploy session.** This means:
+- User changes close-mode between deploys → next close uses the new mode automatically.
+- User flips `BuildIntegration` mid-flow → next push picks up the new integration.
 - No "session strategy" concept — meta is the single source of truth.
 
 ### 4.5 Pre-Deploy Phase
 
 Before actual deployment, the system:
-1. Reads current strategy from ServiceMeta (fresh read, not cached).
-2. If empty → agent must discuss with user and set via `action="strategy"`.
-3. If set → proceed with deployment.
+1. Reads `CloseDeployMode` + `GitPushState` + `BuildIntegration` from ServiceMeta (fresh read, not cached).
+2. The first deploy always uses the default self-deploy mechanism regardless of close-mode.
+3. Subsequent deploys honor an explicit `strategy="git-push"` parameter on `zerops_deploy`; otherwise default self-deploy.
 
 **Deploy checker** (`checkDeployPrepare`):
 - zerops.yaml exists and parses.
@@ -1041,13 +1056,13 @@ visibility.
 | ID | Invariant |
 |----|-----------|
 | E1 | Every managed runtime service has a ServiceMeta with Mode and BootstrappedAt |
-| E2 | Bootstrap creates ServiceMeta with empty DeployStrategy |
+| E2 | Bootstrap creates ServiceMeta with empty CloseDeployMode + GitPushState + BuildIntegration |
 | E3 | Adoption creates ServiceMeta with empty BootstrapSession (marker for the adoption path) |
 | E4 | IsComplete() = BootstrappedAt is non-empty |
 | E5 | Partial meta (no BootstrappedAt) signals bootstrap in-progress |
 | E6 | Only runtime services get ServiceMeta — managed services are API-authoritative |
 | E7 | IsAdopted() = BootstrapSession is empty AND IsComplete() — disambiguates adopted metas from orphan incomplete metas |
-| E8 | Runtime meta is pair-keyed, not hostname-keyed. Every managed runtime service is represented by exactly one ServiceMeta file keyed by m.Hostname. In container+standard and local+standard modes that single file represents two live hostnames — one in m.Hostname, its pair in m.StageHostname. In dev/simple/local-only modes m.StageHostname is empty. Consequences: (a) any code that maps hostnames → metas MUST iterate m.Hostnames() or use workflow.ManagedRuntimeIndex, never keying on m.Hostname alone; (b) lifecycle stamps (FirstDeployedAt, DeployStrategy) written to either half apply to the pair as a whole; (c) the envelope pipeline deliberately splits the pair into two ServiceSnapshots for atom filtering — that split is a render concern, not a storage concern. Enforced by TestNoInlineManagedRuntimeIndex. |
+| E8 | Runtime meta is pair-keyed, not hostname-keyed. Every managed runtime service is represented by exactly one ServiceMeta file keyed by m.Hostname. In container+standard and local+standard modes that single file represents two live hostnames — one in m.Hostname, its pair in m.StageHostname. In dev/simple/local-only modes m.StageHostname is empty. Consequences: (a) any code that maps hostnames → metas MUST iterate m.Hostnames() or use workflow.ManagedRuntimeIndex, never keying on m.Hostname alone; (b) lifecycle stamps (FirstDeployedAt, CloseDeployMode, GitPushState, BuildIntegration) written to either half apply to the pair as a whole; (c) the envelope pipeline deliberately splits the pair into two ServiceSnapshots for atom filtering — that split is a render concern, not a storage concern. Enforced by TestNoInlineManagedRuntimeIndex. |
 
 ### Deploy Modes
 
@@ -1080,35 +1095,36 @@ visibility.
 |----|-----------|
 | D1 | Develop flow requires ServiceMeta with BootstrappedAt |
 | D0 | ALL code changes to runtime services MUST go through develop flow |
-| D2 | Strategy is NEVER a gate for Work Session creation — briefing always proceeds |
-| D2a | First deploy always uses the default self-deploy mechanism regardless of meta.DeployStrategy; `push-git` / `manual` take effect only after `FirstDeployedAt` is stamped |
+| D2 | Close-mode is NEVER a gate for Work Session creation — briefing always proceeds |
+| D2a | First deploy always uses the default self-deploy mechanism regardless of meta.CloseDeployMode; `git-push` / `manual` take effect only after `FirstDeployedAt` is stamped |
 | D2b | `handleGitPush` refuses with `PREREQUISITE_MISSING` when the target meta has no `FirstDeployedAt` — defense in depth against agents that ignore the atom guidance |
 | D2c | `MarkServiceDeployed` resolves the meta via `findMetaForHostname` (Hostname OR StageHostname match). Verifying either half of a container+standard pair stamps the same dev-keyed meta, so the first-deploy branch exits regardless of which half the agent verified first. |
 | D2d | Standard-mode first-deploy fires `develop-first-deploy-promote-stage` atom (`modes: [standard]`, `deployStates: [never-deployed]`) to cover dev→stage cross-deploy. Auto-close requires both halves to be deployed+verified. |
 | D2e | Local-mode close guidance lives in `develop-close-push-dev-local` atom (`modes: [dev, stage]`, `environments: [local]`). Covers local+dev and local+standard (where the envelope surfaces the stage half as `Mode=stage`). |
-| D3 | Strategy read from meta at deploy time, never cached in Work Session |
-| D4 | Strategy surfaces via `develop-strategy-review` atom (deployStates=[deployed], strategies=[unset]) — the atom layer owns the prompt, not the briefing |
-| D5 | Strategy can be changed at any time via action="strategy" |
-| D6 | push-git includes optional CI/CD setup |
-| D7 | manual strategy: agent informs, user executes |
+| D3 | CloseDeployMode + GitPushState + BuildIntegration are read from meta at deploy time, never cached in Work Session |
+| D4 | Close-mode review surfaces via `develop-strategy-review` atom (deployStates=[deployed], closeDeployModes=[unset]) — the atom layer owns the prompt, not the briefing |
+| D5 | CloseDeployMode can be changed at any time via action="close-mode"; GitPushState via "git-push-setup"; BuildIntegration via "build-integration" |
+| D6 | git-push capability setup is a separate explicit action; build-integration is a third orthogonal action |
+| D7 | manual close-mode: agent informs, user executes |
 | D8 | Deploy checkers validate platform integration, not application correctness |
 | D9 | Checker failure blocks step advancement — agent receives CheckResult with details |
-| D10 | Mixed strategies across targets in single deploy session are rejected |
+| D10 | Mixed `strategy=` values across targets in a single deploy session are rejected |
 | W1 | Work Session is per-PID, stored at `.zcp/state/work/{pid}.json` |
-| W2 | Work Session stores only intent + scope + deploy/verify history — never strategy, mode, or service status (those are read fresh) |
+| W2 | Work Session stores only intent + scope + deploy/verify history — never close-mode, mode, or service status (those are read fresh) |
 | W3 | Work Session does NOT survive process restart; dead-PID files are pruned, never claimed |
 | W4 | Deploy and verify tools append to Work Session as side-effects, capped at 10 entries per hostname |
 | W5 | Work Session auto-closes when every service in scope has a succeeded deploy AND a passed verify |
 | W6 | Work Session is advisory (Lifecycle Status in system prompt); it does not gate tool calls |
 
-### Strategy
+### Close-mode + capabilities
 
 | ID | Invariant |
 |----|-----------|
-| S1 | Three values: push-dev, push-git, manual |
-| S2 | Never auto-assigned |
-| S3 | Set via explicit action="strategy", writes to ServiceMeta |
-| S4 | Develop flow always reads fresh from meta |
+| S1 | Four CloseDeployMode values: unset, auto, git-push, manual |
+| S2 | Never auto-assigned — bootstrap leaves it `unset`; user opts in via `action="close-mode"` |
+| S3 | Set via explicit action="close-mode" / "git-push-setup" / "build-integration", writes to ServiceMeta |
+| S4 | Develop flow always reads CloseDeployMode + GitPushState + BuildIntegration fresh from meta |
+| S5 | Capability fields are orthogonal to close-mode: `GitPushState=configured` can hold while `CloseDeployMode=auto`, and switching to git-push later doesn't require re-setup |
 
 ### Operational
 
@@ -1224,7 +1240,7 @@ runtime references (`${hostname_*}` in the recipe's app repo
 
 What the engine guarantees:
 
-1. **Meta merge** (`writeProvisionMetas`, `writeBootstrapOutputs`): when an existing complete `ServiceMeta` is detected for the runtime hostname AND the target carries `IsExisting=true`, the about-to-be-written meta is merged with the existing one. Upgrade fields (`Mode`, `StageHostname`) come from the plan; user-authored fields (`BootstrappedAt`, `DeployStrategy`, `StrategyConfirmed`, `FirstDeployedAt`) are preserved. Without this, a dev→standard upgrade would silently revert the user's strategy choice and lose the original bootstrap date.
+1. **Meta merge** (`writeProvisionMetas`, `writeBootstrapOutputs`): when an existing complete `ServiceMeta` is detected for the runtime hostname AND the target carries `IsExisting=true`, the about-to-be-written meta is merged with the existing one. Upgrade fields (`Mode`, `StageHostname`) come from the plan; user-authored fields (`BootstrappedAt`, `CloseDeployMode`, `CloseDeployModeConfirmed`, `GitPushState`, `RemoteURL`, `BuildIntegration`, `FirstDeployedAt`) are preserved. Without this, a dev→standard upgrade would silently revert the user's close-mode + capability choices and lose the original bootstrap date.
 2. **Awareness atom** (`develop-mode-expansion.md`, `modes: [dev, simple]`, `deployStates: [deployed]`, priority 6): fires during develop flow for deployed single-slot services so the agent is prompted with the expansion command and the required plan shape. Gated on `deployed` because expansion is a post-first-deploy decision — suggesting it before the current single-slot setup has validated would be premature.
 3. **Fast-path**: because `plan.IsAllExisting()` returns true for an existing runtime with no new dependencies, bootstrap auto-skips the `close` step after provision — meta write fires from the provision tail via `writeBootstrapOutputs`.
 

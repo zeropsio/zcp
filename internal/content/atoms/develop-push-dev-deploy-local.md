@@ -3,7 +3,7 @@ id: develop-push-dev-deploy-local
 priority: 2
 phases: [develop-active]
 deployStates: [deployed]
-strategies: [push-dev]
+closeDeployModes: [auto]
 environments: [local]
 title: "Push-dev strategy — deploy via zerops_deploy"
 ---

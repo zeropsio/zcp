@@ -100,8 +100,6 @@ func handleGitPushSetup(input WorkflowInput, stateDir string, rt runtime.Info) (
 			Mode:            meta.Mode,
 			StageHostname:   meta.StageHostname,
 			Bootstrapped:    true,
-			Strategy:        topology.StrategyPushGit,
-			Trigger:         topology.TriggerUnset,
 			CloseDeployMode: topology.CloseModeGitPush,
 			GitPushState:    topology.GitPushUnconfigured,
 		}

@@ -373,7 +373,7 @@ ServiceMeta files (`.zcp/state/services/{hostname}.json`) are the persistent bri
 After the bootstrap provision step completes, `writeProvisionMetas()` writes a partial meta for each runtime target:
 
 - Fields set: `Hostname`, `Mode`, `StageHostname`, `Environment`, `BootstrapSession`.
-- Fields NOT set: `BootstrappedAt` (empty), `DeployStrategy` (empty).
+- Fields NOT set: `BootstrappedAt` (empty), `CloseDeployMode` / `GitPushState` / `BuildIntegration` (all empty).
 - `IsComplete()` returns `false` — signals bootstrap in-progress.
 
 **Purpose**: Hostname lock. Other sessions check for incomplete metas to prevent concurrent bootstrap of the same service. If the owning session's PID is alive, bootstrap is blocked. If PID is dead (orphaned meta), the lock auto-releases.
@@ -383,7 +383,7 @@ After the bootstrap provision step completes, `writeProvisionMetas()` writes a p
 When bootstrap completes, `writeBootstrapOutputs()` overwrites with full meta:
 
 - `BootstrappedAt` = today's date → `IsComplete()` returns `true`.
-- `DeployStrategy` stays empty — set separately by `action="strategy"`.
+- `CloseDeployMode` / `GitPushState` / `BuildIntegration` stay empty — set separately by `action="close-mode"` / `action="git-push-setup"` / `action="build-integration"`.
 - `BootstrapSession` = the 16-hex session ID that created this.
 
 Adoption follows the same pattern but writes `BootstrapSession = ""` as its marker. `IsAdopted()` returns `true` when `BootstrapSession` is empty AND the meta is complete.
@@ -394,13 +394,16 @@ Adoption follows the same pattern but writes `BootstrapSession = ""` as its mark
 
 The meta file is **pair-keyed**: `m.Hostname` and `m.StageHostname` together name every live hostname the pair represents, and they resolve to the same file on disk. See `docs/spec-workflows.md` E8 and `internal/workflow/service_meta.go::Hostnames()` for the canonical enumeration; use `ManagedRuntimeIndex` for slice→map construction and `FindServiceMeta` for disk lookup. Keying a hostname index by `m.Hostname` alone violates E8.
 
-Subdomain activation is a deploy-handler concern (see `docs/spec-workflows.md` §4.8), not a ServiceMeta field. The meta records lifecycle state owned by ZCP (bootstrapped, strategy, first-deployed-at); L7 subdomain activation is owned by the Zerops platform and reflected at read time via `GetService.SubdomainAccess`, so it is not mirrored into the meta file.
+Subdomain activation is a deploy-handler concern (see `docs/spec-workflows.md` §4.8), not a ServiceMeta field. The meta records lifecycle state owned by ZCP (bootstrapped, close-mode, git-push capability, build integration, first-deployed-at); L7 subdomain activation is owned by the Zerops platform and reflected at read time via `GetService.SubdomainAccess`, so it is not mirrored into the meta file.
 
-### 8.3 Strategy Update
+### 8.3 Close-Mode + Capability Updates
 
-`zerops_workflow action="strategy"` updates `ServiceMeta.DeployStrategy` for specified hostnames. Validation: value must be `push-dev`, `push-git`, or `manual`. The update is written atomically.
+Three orthogonal actions write to ServiceMeta atomically:
+- `zerops_workflow action="close-mode" closeMode={hostname:value}` writes `CloseDeployMode` (validates `auto` / `git-push` / `manual`) and stamps `CloseDeployModeConfirmed=true`.
+- `zerops_workflow action="git-push-setup" service="..." remoteUrl="..."` writes `GitPushState=configured` + `RemoteURL`.
+- `zerops_workflow action="build-integration" service="..." integration="..."` writes `BuildIntegration` (validates `webhook` / `actions`; refuses unless `GitPushState=configured`).
 
-Develop flow always reads strategy fresh from meta (never cached in Work Session). This means a user can change strategy mid-session via `action="strategy"` and the next deploy step picks up the new value automatically.
+Develop flow always reads these fields fresh from meta (never cached in Work Session). A user can flip any of them mid-session and the next deploy/close step picks up the new value automatically.
 
 ### 8.4 Envelope Integration
 
@@ -408,10 +411,13 @@ Develop flow always reads strategy fresh from meta (never cached in Work Session
 
 - `ServiceSnapshot.Bootstrapped` = `meta.IsComplete()`.
 - `ServiceSnapshot.Mode` = `meta.Mode`.
-- `ServiceSnapshot.Strategy` = `meta.DeployStrategy` (or `StrategyUnset` if empty).
+- `ServiceSnapshot.CloseDeployMode` = `meta.CloseDeployMode` (or `CloseModeUnset` if empty).
+- `ServiceSnapshot.GitPushState` = `meta.GitPushState`.
+- `ServiceSnapshot.BuildIntegration` = `meta.BuildIntegration`.
+- `ServiceSnapshot.RemoteURL` = `meta.RemoteURL`.
 - `ServiceSnapshot.StageHostname` = `meta.StageHostname`.
 
-The atom synthesizer filters against these fields via the `modes`, `strategies`, and (runtime-class-derived) `runtimes` axes.
+The atom synthesizer filters against these fields via the `modes`, `closeDeployModes`, `gitPushStates`, `buildIntegrations`, and (runtime-class-derived) `runtimes` axes.
 
 ---
 
@@ -490,8 +496,8 @@ Enforced by `TestAtomAuthoringLint` (`internal/content/atoms_lint.go`):
    auto-* / writes / stamps / activates", "tool … auto-…", "ZCP writes
    / stamps / activates / enables / disables".
 2. **Invisible state** — `FirstDeployedAt`, `BootstrapSession`,
-   `StrategyConfirmed` (on-disk ServiceMeta fields the agent never
-   sees).
+   `CloseDeployModeConfirmed` (on-disk ServiceMeta fields the agent
+   never sees).
 3. **Spec invariant IDs** — `DM-*`, `DS-0[1-4]`, `GLC-[1-6]`,
    `KD-NN`, `TA-NN`, `E[1-8]`, `O[1-4]`, `F#[1-9]`, `INV-*`. These
    are developer taxonomy; the agent has no use for them at runtime.

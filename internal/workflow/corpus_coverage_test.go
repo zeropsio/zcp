@@ -174,7 +174,7 @@ func developCoverageFixtures() []coverageFixture {
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev,
-					Strategy: "push-dev", Bootstrapped: true, Deployed: true,
+					CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
@@ -224,14 +224,16 @@ func developCoverageFixtures() []coverageFixture {
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
-					StageHostname: "appstage",
-					Strategy:      "push-git", Bootstrapped: true, Deployed: true,
+					StageHostname:   "appstage",
+					CloseDeployMode: topology.CloseModeGitPush,
+					GitPushState:    topology.GitPushConfigured,
+					Bootstrapped:    true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
 				"git-push",
-				"GIT_TOKEN",
-				"push-dev",
+				`closeDeployMode=git-push`,
+				"record-deploy",
 			},
 		},
 		{
@@ -242,23 +244,19 @@ func developCoverageFixtures() []coverageFixture {
 				Services: []ServiceSnapshot{{
 					Hostname: "app", TypeVersion: "nginx@1",
 					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeSimple,
-					Strategy: "manual", Bootstrapped: true, Deployed: true,
+					CloseDeployMode: topology.CloseModeManual, Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
-				"zerops_deploy",
-				"Env var channels",
-				"restartedServices",
-				"does NOT pick them up",
-				"Shadow-loop pitfall",
+				"closeDeployMode=manual",
+				"extension slot",
+				`action="close"`,
 			},
 		},
 		{
-			// Post-first-deploy with strategy still unset: strategy-review atom
-			// asks the agent to confirm an ongoing strategy now that the first
-			// deploy has landed. Pre-first-deploy branch owns the
-			// strategy-agnostic first-deploy guidance; review only fires once
-			// FirstDeployedAt is stamped.
+			// Post-first-deploy with close-mode unset: strategy-review atom
+			// asks the agent to confirm a close-mode now that the first
+			// deploy landed.
 			Name: "develop_deployed_strategy_unset",
 			Envelope: StateEnvelope{
 				Phase:       PhaseDevelopActive,
@@ -266,12 +264,12 @@ func developCoverageFixtures() []coverageFixture {
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
-					Strategy: topology.StrategyUnset, Bootstrapped: true, Deployed: true,
+					CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
-				"Pick an ongoing deploy strategy",
-				`action="strategy"`,
+				"Pick an ongoing close-mode",
+				`action="close-mode"`,
 			},
 		},
 		{
@@ -282,7 +280,7 @@ func developCoverageFixtures() []coverageFixture {
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev,
-					Strategy: "push-dev", Bootstrapped: true, Deployed: true,
+					CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
@@ -317,13 +315,13 @@ func developCoverageFixtures() []coverageFixture {
 					{
 						Hostname: "appdev", TypeVersion: "nodejs@22",
 						RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
-						StageHostname: "appstage",
-						Strategy:      topology.StrategyUnset, Bootstrapped: true, Deployed: false,
+						StageHostname:   "appstage",
+						CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: false,
 					},
 					{
 						Hostname: "appstage", TypeVersion: "nodejs@22",
 						RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage,
-						Strategy: topology.StrategyUnset, Bootstrapped: true, Deployed: false,
+						CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: false,
 					},
 				},
 			},
@@ -355,13 +353,13 @@ func developCoverageFixtures() []coverageFixture {
 					{
 						Hostname: "appdev", TypeVersion: "php-nginx@8.4",
 						RuntimeClass: topology.RuntimeImplicitWeb, Mode: topology.ModeStandard,
-						StageHostname: "appstage",
-						Strategy:      topology.StrategyUnset, Bootstrapped: true, Deployed: false,
+						StageHostname:   "appstage",
+						CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: false,
 					},
 					{
 						Hostname: "appstage", TypeVersion: "php-nginx@8.4",
 						RuntimeClass: topology.RuntimeImplicitWeb, Mode: topology.ModeStage,
-						Strategy: topology.StrategyUnset, Bootstrapped: true, Deployed: false,
+						CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: false,
 					},
 				},
 			},
@@ -383,7 +381,7 @@ func developCoverageFixtures() []coverageFixture {
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev,
-					Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true,
+					CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
@@ -401,7 +399,7 @@ func developCoverageFixtures() []coverageFixture {
 				Services: []ServiceSnapshot{{
 					Hostname: "appstage", TypeVersion: "nodejs@22",
 					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage,
-					Strategy: topology.StrategyPushDev, Bootstrapped: true, Deployed: true,
+					CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
@@ -426,24 +424,24 @@ func developCoverageFixtures() []coverageFixture {
 					{
 						Hostname: "appdev", TypeVersion: "nodejs@22",
 						RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
-						StageHostname: "appstage",
-						Strategy:      topology.StrategyUnset, Bootstrapped: true, Deployed: false,
+						StageHostname:   "appstage",
+						CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: false,
 					},
 					{
 						Hostname: "appstage", TypeVersion: "nodejs@22",
 						RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage,
-						Strategy: topology.StrategyUnset, Bootstrapped: true, Deployed: false,
+						CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: false,
 					},
 					{
 						Hostname: "apidev", TypeVersion: "nodejs@22",
 						RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
-						StageHostname: "apistage",
-						Strategy:      topology.StrategyUnset, Bootstrapped: true, Deployed: false,
+						StageHostname:   "apistage",
+						CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: false,
 					},
 					{
 						Hostname: "apistage", TypeVersion: "nodejs@22",
 						RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage,
-						Strategy: topology.StrategyUnset, Bootstrapped: true, Deployed: false,
+						CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: false,
 					},
 				},
 			},
@@ -527,7 +525,7 @@ func matrixCoverageFixtures() []coverageFixture {
 				Services: []ServiceSnapshot{{
 					Hostname: "app", TypeVersion: "bun@1",
 					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeSimple,
-					Strategy: "push-dev", Bootstrapped: true, Deployed: true,
+					CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
@@ -559,7 +557,7 @@ func matrixCoverageFixtures() []coverageFixture {
 				Services: []ServiceSnapshot{{
 					Hostname: "weatherdash", TypeVersion: "go@1.22",
 					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeSimple,
-					Strategy: "push-dev", Bootstrapped: true, Deployed: true,
+					CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
@@ -576,8 +574,8 @@ func matrixCoverageFixtures() []coverageFixture {
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
-					StageHostname: "appstage",
-					Strategy:      "push-dev", Bootstrapped: true, Deployed: true,
+					StageHostname:   "appstage",
+					CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
@@ -593,8 +591,8 @@ func matrixCoverageFixtures() []coverageFixture {
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
-					StageHostname: "appstage",
-					Strategy:      "push-dev", Bootstrapped: true, Deployed: true,
+					StageHostname:   "appstage",
+					CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
@@ -608,14 +606,16 @@ func matrixCoverageFixtures() []coverageFixture {
 				Environment: EnvLocal,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
-					StageHostname: "appstage",
-					Strategy:      "push-git", Bootstrapped: true, Deployed: true,
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeLocalStage,
+					StageHostname:   "appstage",
+					CloseDeployMode: topology.CloseModeGitPush,
+					GitPushState:    topology.GitPushConfigured,
+					Bootstrapped:    true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
 				"git-push",
-				"user's own git credentials",
+				`closeDeployMode=git-push`,
 			},
 		},
 		{
@@ -626,12 +626,12 @@ func matrixCoverageFixtures() []coverageFixture {
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev,
-					Strategy: "manual", Bootstrapped: true, Deployed: true,
+					CloseDeployMode: topology.CloseModeManual, Bootstrapped: true, Deployed: true,
 				}},
 			},
 			MustContain: []string{
-				"Manual Deploy Strategy",
-				"user controls deploy timing",
+				"closeDeployMode=manual",
+				"extension slot",
 			},
 		},
 		{
@@ -642,7 +642,7 @@ func matrixCoverageFixtures() []coverageFixture {
 				Services: []ServiceSnapshot{{
 					Hostname: "app", TypeVersion: "php-apache@8.3",
 					RuntimeClass: topology.RuntimeImplicitWeb, Mode: topology.ModeSimple,
-					Strategy: "push-dev",
+					CloseDeployMode: topology.CloseModeAuto,
 				}},
 			},
 			MustContain: []string{
@@ -659,7 +659,7 @@ func matrixCoverageFixtures() []coverageFixture {
 					{
 						Hostname: "app", TypeVersion: "php-nginx@8.4",
 						RuntimeClass: topology.RuntimeImplicitWeb, Mode: topology.ModeSimple,
-						Strategy: "push-dev",
+						CloseDeployMode: topology.CloseModeAuto,
 					},
 					{
 						Hostname: "db", TypeVersion: "postgresql@18",
@@ -684,7 +684,7 @@ func matrixCoverageFixtures() []coverageFixture {
 				Services: []ServiceSnapshot{{
 					Hostname: "web", TypeVersion: "static@1",
 					RuntimeClass: topology.RuntimeStatic, Mode: topology.ModeDev,
-					Strategy: "push-dev",
+					CloseDeployMode: topology.CloseModeAuto,
 				}},
 			},
 			MustContain: []string{
@@ -697,67 +697,69 @@ func matrixCoverageFixtures() []coverageFixture {
 }
 
 // pipelineCoverageFixtures covers strategy-setup and export-active phases.
-// strategy-setup has two sub-cases driven by the Trigger axis: the intro
-// atom fires pre-trigger-choice, the full setup chain fires once the
-// trigger is chosen. Both must render cleanly.
+// strategy-setup has two sub-cases:
+//   - GitPushState=unconfigured fires the setup-git-push-{container,local}
+//     atom that walks through GIT_TOKEN / origin URL setup.
+//   - GitPushState=configured + BuildIntegration=none fires the
+//     setup-build-integration-{webhook,actions} atoms once the agent has
+//     picked a CI integration.
 func pipelineCoverageFixtures() []coverageFixture {
 	return []coverageFixture{
 		{
-			Name: "strategy_setup_intro_pre_trigger",
+			Name: "strategy_setup_git_push_unconfigured_container",
 			Envelope: StateEnvelope{
 				Phase:       PhaseStrategySetup,
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
-					StageHostname: "appstage",
-					Strategy:      topology.StrategyPushGit,
-					Trigger:       topology.TriggerUnset,
-				}},
-			},
-			MustContain: []string{
-				"webhook",
-				"actions",
-				"Confirm the repo URL",
-				"GIT_TOKEN", // push atom fires regardless of trigger choice
-			},
-		},
-		{
-			Name: "strategy_setup_actions_full_chain",
-			Envelope: StateEnvelope{
-				Phase:       PhaseStrategySetup,
-				Environment: EnvContainer,
-				Services: []ServiceSnapshot{{
-					Hostname: "appdev", TypeVersion: "nodejs@22",
-					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
-					StageHostname: "appstage",
-					Strategy:      topology.StrategyPushGit,
-					Trigger:       topology.TriggerActions,
+					StageHostname:    "appstage",
+					CloseDeployMode:  topology.CloseModeGitPush,
+					GitPushState:     topology.GitPushUnconfigured,
+					BuildIntegration: topology.BuildIntegrationNone,
 				}},
 			},
 			MustContain: []string{
 				"GIT_TOKEN",
+				`action="git-push-setup"`,
+			},
+		},
+		{
+			Name: "strategy_setup_build_integration_actions",
+			Envelope: StateEnvelope{
+				Phase:       PhaseStrategySetup,
+				Environment: EnvContainer,
+				Services: []ServiceSnapshot{{
+					Hostname: "appdev", TypeVersion: "nodejs@22",
+					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
+					StageHostname:    "appstage",
+					CloseDeployMode:  topology.CloseModeGitPush,
+					GitPushState:     topology.GitPushConfigured,
+					BuildIntegration: topology.BuildIntegrationNone,
+				}},
+			},
+			MustContain: []string{
 				"ZEROPS_TOKEN",
 				"zcli push",
 			},
 		},
 		{
-			Name: "strategy_setup_webhook_full_chain",
+			Name: "strategy_setup_build_integration_webhook",
 			Envelope: StateEnvelope{
 				Phase:       PhaseStrategySetup,
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{{
 					Hostname: "appdev", TypeVersion: "nodejs@22",
 					RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard,
-					StageHostname: "appstage",
-					Strategy:      topology.StrategyPushGit,
-					Trigger:       topology.TriggerWebhook,
+					StageHostname:    "appstage",
+					CloseDeployMode:  topology.CloseModeGitPush,
+					GitPushState:     topology.GitPushConfigured,
+					BuildIntegration: topology.BuildIntegrationNone,
 				}},
 			},
 			MustContain: []string{
-				"GIT_TOKEN",
+				"webhook",
 				"dashboard",
-				"Trigger automatic builds",
 			},
 		},
 		{

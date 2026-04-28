@@ -5,7 +5,7 @@ phases: [bootstrap-active]
 routes: [adopt]
 steps: [discover]
 title: "Adopt — discover existing services"
-references-fields: [workflow.ServiceSnapshot.Bootstrapped, workflow.ServiceSnapshot.Mode, workflow.ServiceSnapshot.Strategy]
+references-fields: [workflow.ServiceSnapshot.Bootstrapped, workflow.ServiceSnapshot.Mode, workflow.ServiceSnapshot.CloseDeployMode]
 ---
 
 ### Adopting existing services

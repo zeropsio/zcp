@@ -149,11 +149,9 @@ func filterStaleMetas(metas []*ServiceMeta, liveServices []string) []*ServiceMet
 // both may be nil/empty — derivation degrades gracefully. env gates env-scoped
 // offerings (export is container-only in Release A; local export is deferred).
 //
-// Reads meta.CloseDeployMode (deploy-decomp P3) instead of the legacy
-// meta.DeployStrategy. migrateOldMeta runs in parseMeta so legacy metas
-// surface here with the migrated value populated; CloseModeUnset is
-// skipped from dominant-detection (matches the pre-decomp behaviour of
-// skipping empty DeployStrategy values).
+// Reads meta.CloseDeployMode for dominant detection. CloseModeUnset is
+// skipped — services without a confirmed close mode don't drive the
+// hint surface.
 func strategyOfferings(metas []*ServiceMeta, liveStatus map[string]string, ws *WorkSession, env Environment) []FlowOffering {
 	closeModes := make(map[topology.CloseDeployMode]int)
 	for _, m := range metas {

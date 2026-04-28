@@ -127,12 +127,12 @@ func TestWorkflowTool_Action_Start_Develop_ReturnsBriefing(t *testing.T) {
 
 	// Write a complete service meta so briefing finds targets.
 	meta := &workflow.ServiceMeta{
-		Hostname:          "appdev",
-		Mode:              "standard",
-		StageHostname:     "appstage",
-		DeployStrategy:    topology.StrategyPushDev,
-		StrategyConfirmed: true,
-		BootstrappedAt:    "2026-03-04T12:00:00Z",
+		Hostname:                 "appdev",
+		Mode:                     "standard",
+		StageHostname:            "appstage",
+		CloseDeployMode:          topology.CloseModeAuto,
+		CloseDeployModeConfirmed: true,
+		BootstrappedAt:           "2026-03-04T12:00:00Z",
 	}
 	if err := workflow.WriteServiceMeta(dir, meta); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
@@ -181,11 +181,11 @@ func TestWorkflowTool_Action_Start_Develop_ManualStrategy_ReturnsBriefing(t *tes
 	engine := workflow.NewEngine(dir, workflow.EnvLocal, nil)
 
 	meta := &workflow.ServiceMeta{
-		Hostname:          "appdev",
-		Mode:              "dev",
-		DeployStrategy:    topology.StrategyManual,
-		StrategyConfirmed: true,
-		BootstrappedAt:    "2026-03-04T12:00:00Z",
+		Hostname:                 "appdev",
+		Mode:                     "dev",
+		CloseDeployMode:          topology.CloseModeManual,
+		CloseDeployModeConfirmed: true,
+		BootstrappedAt:           "2026-03-04T12:00:00Z",
 	}
 	if err := workflow.WriteServiceMeta(dir, meta); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)

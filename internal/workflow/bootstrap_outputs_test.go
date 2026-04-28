@@ -453,9 +453,6 @@ func TestWriteBootstrapOutputs_AlwaysWritesEmptyStrategy(t *testing.T) {
 	if meta == nil {
 		t.Fatal("expected appdev meta")
 	}
-	if meta.DeployStrategy != "" {
-		t.Errorf("bootstrap must write empty DeployStrategy, got %q", meta.DeployStrategy)
-	}
 }
 
 func TestWriteBootstrapOutputs_DefaultEmptyStrategy(t *testing.T) {
@@ -501,9 +498,6 @@ func TestWriteBootstrapOutputs_DefaultEmptyStrategy(t *testing.T) {
 			if meta == nil {
 				t.Fatal("expected appdev meta")
 			}
-			if meta.DeployStrategy != "" {
-				t.Errorf("DeployStrategy: want empty, got %q", meta.DeployStrategy)
-			}
 		})
 	}
 }
@@ -537,9 +531,6 @@ func TestWriteBootstrapOutputs_LocalMode_DefaultEmptyStrategy(t *testing.T) {
 	}
 	if meta == nil {
 		t.Fatal("expected appdev meta")
-	}
-	if meta.DeployStrategy != "" {
-		t.Errorf("bootstrap must write empty DeployStrategy, got %q", meta.DeployStrategy)
 	}
 }
 
@@ -961,9 +952,6 @@ func TestWriteBootstrapOutputs_LocalMode_KeyedByDevHostname(t *testing.T) {
 	if meta.Mode != topology.PlanModeStandard {
 		t.Errorf("mode = %s, want standard", meta.Mode)
 	}
-	if meta.DeployStrategy != "" {
-		t.Errorf("bootstrap must write empty DeployStrategy, got %q", meta.DeployStrategy)
-	}
 
 	// No separate stage-keyed meta — the stage lives inside the dev meta's
 	// StageHostname field.
@@ -1108,15 +1096,18 @@ func TestWriteBootstrapOutputs_ExpansionPreservesExistingFields(t *testing.T) {
 	dir := t.TempDir()
 
 	// Seed the existing dev-mode meta — simulates a service the user has been
-	// running for a while with a confirmed push-git strategy.
+	// running for a while with a confirmed git-push close-mode and configured
+	// git-push capability.
 	existing := &ServiceMeta{
-		Hostname:          "appdev",
-		Mode:              topology.PlanModeDev,
-		BootstrapSession:  "original-sess",
-		BootstrappedAt:    "2026-01-15",
-		DeployStrategy:    topology.StrategyPushGit,
-		StrategyConfirmed: true,
-		FirstDeployedAt:   "2026-01-16T10:00:00Z",
+		Hostname:                 "appdev",
+		Mode:                     topology.PlanModeDev,
+		BootstrapSession:         "original-sess",
+		BootstrappedAt:           "2026-01-15",
+		CloseDeployMode:          topology.CloseModeGitPush,
+		CloseDeployModeConfirmed: true,
+		GitPushState:             topology.GitPushConfigured,
+		BuildIntegration:         topology.BuildIntegrationNone,
+		FirstDeployedAt:          "2026-01-16T10:00:00Z",
 	}
 	if err := WriteServiceMeta(dir, existing); err != nil {
 		t.Fatalf("seed WriteServiceMeta: %v", err)
@@ -1164,32 +1155,23 @@ func TestWriteBootstrapOutputs_ExpansionPreservesExistingFields(t *testing.T) {
 	if got.BootstrappedAt != existing.BootstrappedAt {
 		t.Errorf("BootstrappedAt: got %q, want %q (must be preserved)", got.BootstrappedAt, existing.BootstrappedAt)
 	}
-	if got.DeployStrategy != existing.DeployStrategy {
-		t.Errorf("DeployStrategy: got %q, want %q (must be preserved)", got.DeployStrategy, existing.DeployStrategy)
-	}
-	if !got.StrategyConfirmed {
-		t.Error("StrategyConfirmed lost — must be preserved through expansion")
-	}
 	if got.FirstDeployedAt != existing.FirstDeployedAt {
 		t.Errorf("FirstDeployedAt: got %q, want %q (must be preserved)", got.FirstDeployedAt, existing.FirstDeployedAt)
 	}
 
-	// New per-pair dimensions: existing meta was seeded WITHOUT these
-	// fields populated, so migrateOldMeta during the existing-read
-	// derives them from the legacy DeployStrategy=push-git +
-	// FirstDeployedAt set. mergeExistingMeta carries the migrated values
-	// into the upgraded meta.
+	// Per-pair dimensions seeded on the existing meta carry through
+	// expansion-merge unchanged.
 	if got.CloseDeployMode != topology.CloseModeGitPush {
-		t.Errorf("CloseDeployMode: got %q, want %q (migrated from legacy push-git, preserved through expansion)", got.CloseDeployMode, topology.CloseModeGitPush)
+		t.Errorf("CloseDeployMode: got %q, want %q (must be preserved)", got.CloseDeployMode, topology.CloseModeGitPush)
 	}
 	if !got.CloseDeployModeConfirmed {
-		t.Error("CloseDeployModeConfirmed lost — should mirror StrategyConfirmed via migrate, then preserve through expansion")
+		t.Error("CloseDeployModeConfirmed lost — must be preserved through expansion")
 	}
 	if got.GitPushState != topology.GitPushConfigured {
-		t.Errorf("GitPushState: got %q, want %q (push-git + FirstDeployedAt set → configured)", got.GitPushState, topology.GitPushConfigured)
+		t.Errorf("GitPushState: got %q, want configured (preserved through expansion)", got.GitPushState)
 	}
 	if got.BuildIntegration != topology.BuildIntegrationNone {
-		t.Errorf("BuildIntegration: got %q, want %q (no PushGitTrigger seeded → none)", got.BuildIntegration, topology.BuildIntegrationNone)
+		t.Errorf("BuildIntegration: got %q, want none (preserved through expansion)", got.BuildIntegration)
 	}
 }
 
@@ -1205,12 +1187,12 @@ func TestWriteProvisionMetas_ExpansionPreservesExistingFields(t *testing.T) {
 	dir := t.TempDir()
 
 	existing := &ServiceMeta{
-		Hostname:          "appdev",
-		Mode:              topology.PlanModeDev,
-		BootstrapSession:  "earlier",
-		BootstrappedAt:    "2026-02-01",
-		DeployStrategy:    topology.StrategyPushDev,
-		StrategyConfirmed: true,
+		Hostname:                 "appdev",
+		Mode:                     topology.PlanModeDev,
+		BootstrapSession:         "earlier",
+		BootstrappedAt:           "2026-02-01",
+		CloseDeployMode:          topology.CloseModeAuto,
+		CloseDeployModeConfirmed: true,
 	}
 	if err := WriteServiceMeta(dir, existing); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -1251,11 +1233,11 @@ func TestWriteProvisionMetas_ExpansionPreservesExistingFields(t *testing.T) {
 		t.Errorf("StageHostname: got %q, want appstage at provision", got.StageHostname)
 	}
 	// User-authored fields preserved across provision write too.
-	if got.DeployStrategy != topology.StrategyPushDev {
-		t.Errorf("DeployStrategy: got %q, want push-dev (preserved through provision)", got.DeployStrategy)
+	if got.CloseDeployMode != topology.CloseModeAuto {
+		t.Errorf("CloseDeployMode: got %q, want auto (preserved through provision)", got.CloseDeployMode)
 	}
-	if !got.StrategyConfirmed {
-		t.Error("StrategyConfirmed lost at provision write")
+	if !got.CloseDeployModeConfirmed {
+		t.Error("CloseDeployModeConfirmed lost at provision write")
 	}
 	if got.BootstrappedAt != existing.BootstrappedAt {
 		t.Errorf("BootstrappedAt: got %q, want %q at provision", got.BootstrappedAt, existing.BootstrappedAt)
@@ -1290,9 +1272,6 @@ func TestMergeExistingMeta(t *testing.T) {
 		Hostname:                 "appdev",
 		Mode:                     topology.PlanModeDev,
 		BootstrappedAt:           "2026-01-15",
-		DeployStrategy:           topology.StrategyPushGit,
-		PushGitTrigger:           topology.TriggerWebhook,
-		StrategyConfirmed:        true,
 		FirstDeployedAt:          "2026-01-16T10:00:00Z",
 		CloseDeployMode:          topology.CloseModeGitPush,
 		CloseDeployModeConfirmed: true,
@@ -1330,16 +1309,6 @@ func TestMergeExistingMeta(t *testing.T) {
 	}
 	if meta.BuildIntegration != topology.BuildIntegrationWebhook {
 		t.Errorf("BuildIntegration not preserved: got %q", meta.BuildIntegration)
-	}
-	// Legacy fields preserved through migration window.
-	if meta.DeployStrategy != topology.StrategyPushGit {
-		t.Errorf("DeployStrategy not preserved: got %q", meta.DeployStrategy)
-	}
-	if meta.PushGitTrigger != topology.TriggerWebhook {
-		t.Errorf("PushGitTrigger not preserved: got %q", meta.PushGitTrigger)
-	}
-	if !meta.StrategyConfirmed {
-		t.Error("StrategyConfirmed not preserved")
 	}
 }
 

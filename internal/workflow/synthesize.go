@@ -311,21 +311,12 @@ func envelopeDeployStateMatches(services []ServiceSnapshot, want []DeployState) 
 }
 
 // hasServiceScopedAxes reports whether the atom declares any axis whose
-// match is per-service (modes / strategies / triggers / closeDeployModes /
-// gitPushStates / buildIntegrations / runtimes / deployStates /
-// serviceStatus). Service-agnostic atoms render once using the global
-// primaryHostnames picker.
-//
-// closeDeployModes / gitPushStates / buildIntegrations are recognized as
-// service-scoped from Phase 1 of the deploy-strategy decomposition so
-// future atoms declaring them are correctly classified. The matching
-// logic in serviceSatisfiesAxes lands in Phase 3 once ServiceSnapshot
-// exposes the corresponding fields; until then no atom in the corpus
-// declares these axes so the gap is inert.
+// match is per-service (modes / closeDeployModes / gitPushStates /
+// buildIntegrations / runtimes / deployStates / serviceStatus).
+// Service-agnostic atoms render once using the global primaryHostnames
+// picker.
 func hasServiceScopedAxes(axes AxisVector) bool {
 	return len(axes.Modes) > 0 ||
-		len(axes.Strategies) > 0 ||
-		len(axes.Triggers) > 0 ||
 		len(axes.CloseDeployModes) > 0 ||
 		len(axes.GitPushStates) > 0 ||
 		len(axes.BuildIntegrations) > 0 ||
@@ -339,19 +330,8 @@ func hasServiceScopedAxes(axes AxisVector) bool {
 // Mirrors the pre-C2 anyServiceMatchesAll loop body but exposes the
 // per-service decision so Synthesize can bind placeholder substitution
 // to the matched service.
-//
-// CloseDeployModes / GitPushStates / BuildIntegrations were introduced
-// by deploy-decomp P1 (parser) + P3 (envelope wiring); they coexist with
-// the legacy Strategies / Triggers axes through Phase 10. Both
-// vocabularies match against per-pair fields on ServiceSnapshot.
 func serviceSatisfiesAxes(svc ServiceSnapshot, axes AxisVector) bool {
 	if len(axes.Modes) > 0 && !slices.Contains(axes.Modes, svc.Mode) {
-		return false
-	}
-	if len(axes.Strategies) > 0 && !slices.Contains(axes.Strategies, svc.Strategy) {
-		return false
-	}
-	if len(axes.Triggers) > 0 && !slices.Contains(axes.Triggers, svc.Trigger) {
 		return false
 	}
 	if len(axes.CloseDeployModes) > 0 && !slices.Contains(axes.CloseDeployModes, svc.CloseDeployMode) {
@@ -463,6 +443,7 @@ var allowedSurvivingPlaceholders = map[string]struct{}{
 	"{zeropsToken}":    {},
 	"{runtime}":        {},
 	"{provider}":       {},
+	"{workingDir}":     {}, // local-machine checkout dir for git-push setup
 }
 
 // findUnknownPlaceholder scans body for `{...}` tokens that are neither

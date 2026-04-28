@@ -38,7 +38,7 @@ func TestBuildPlan_IdleBootstrappedOnly(t *testing.T) {
 
 	env := planEnvelope(PhaseIdle)
 	env.Services = []ServiceSnapshot{
-		{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Mode: topology.ModeDev, Strategy: "push-git"},
+		{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Mode: topology.ModeDev, CloseDeployMode: topology.CloseModeGitPush},
 		{Hostname: "db", RuntimeClass: topology.RuntimeManaged},
 	}
 	plan := BuildPlan(env)

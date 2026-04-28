@@ -61,7 +61,7 @@ var atomLintRules = []atomLintRule{
 	{
 		name:     "invisible-state",
 		category: "invisible-state",
-		pattern:  regexp.MustCompile(`\bFirstDeployedAt\b|\bBootstrapSession\b|\bStrategyConfirmed\b`),
+		pattern:  regexp.MustCompile(`\bFirstDeployedAt\b|\bBootstrapSession\b|\bCloseDeployModeConfirmed\b`),
 	},
 	{
 		name:     "plan-doc",

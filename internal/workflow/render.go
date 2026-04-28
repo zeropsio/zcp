@@ -197,11 +197,11 @@ func renderServiceLine(svc ServiceSnapshot) string {
 
 func renderBootstrappedFields(svc ServiceSnapshot) string {
 	fields := []string{"bootstrapped=true", "mode=" + string(svc.Mode)}
-	if svc.Strategy == "" || svc.Strategy == topology.StrategyUnset {
-		fields = append(fields, "strategy=unset")
-	} else {
-		fields = append(fields, "strategy="+string(svc.Strategy))
+	closeMode := svc.CloseDeployMode
+	if closeMode == "" {
+		closeMode = topology.CloseModeUnset
 	}
+	fields = append(fields, "closeMode="+string(closeMode))
 	if svc.StageHostname != "" {
 		fields = append(fields, "stage="+svc.StageHostname)
 	}

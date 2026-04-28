@@ -4,7 +4,7 @@ priority: 7
 phases: [develop-active]
 deployStates: [deployed]
 modes: [standard]
-strategies: [push-dev]
+closeDeployModes: [auto]
 environments: [container]
 title: "Close task — push-dev standard mode"
 references-atoms: [develop-auto-close-semantics, develop-dynamic-runtime-start-container]
