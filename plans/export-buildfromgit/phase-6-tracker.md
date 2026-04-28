@@ -71,7 +71,7 @@ Closed: TBD (pending Codex POST-WORK round + user go for Phase 7)
 - [x] Codex POST-WORK SHIP-WITH-NOTES (4 recommendations; 2 folded, 2 out-of-scope).
 - [x] Codex round transcript persisted (`codex-round-p6-postwork-remoteurl.md`).
 - [x] `phase-6-tracker.md` finalized.
-- [ ] Phase 6 EXIT commits (impl + tests + tracker — see hashes once made).
+- [x] Phase 6 EXIT commits: `a1ac96e3` (impl + tests) + `aa705d5c` (tracker + Codex transcript).
 - [ ] User explicit go to enter Phase 7.
 
 ## Notes for Phase 7 entry
