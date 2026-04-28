@@ -1211,12 +1211,71 @@ runtime references (`${hostname_*}` in the recipe's app repo
 | P5 | `Plan.Primary` is never zero. If dispatch finds no branch, an empty Plan is returned and treated as a construction bug — callers MUST error, not silently continue. |
 | P6 | Each atom declares a non-empty `phases` axis. Atoms with empty phases are rejected at corpus load (`LoadAtomCorpus`). |
 | P7 | Unknown `{placeholder}` tokens in atom bodies are build-time errors — none leak to the LLM as literal braces. |
-| P8 | `strategy-setup` and `export-active` are stateless phases: they synthesize guidance from the atom corpus and return without touching session state. |
+| P8 | `strategy-setup` is a stateless phase: it synthesizes guidance from the atom corpus and returns without touching session state. The `export-active` phase still has stateless atom rendering (six topic-scoped atoms compose the agent-facing guide), BUT the underlying handler does multi-call narrowing through the `WorkflowInput.{TargetService, Variant, EnvClassifications}` per-request inputs — see §9 Export-for-buildFromGit Flow. |
 | P9 | Recipe authoring (`workflow=recipe`) uses its own section-parser pipeline (`recipe_block_parser.go`, `recipe_decisions.go`, …), NOT the atom synthesizer. The pipelines are intentionally independent. |
 
 ---
 
-## §9 Planned Features
+## 9. Export-for-buildFromGit Flow
+
+The export workflow turns a deployed runtime service into a re-importable single-repo bundle (`zerops-project-import.yaml` + `zerops.yaml` + source code) so the same infrastructure can be reproduced in a fresh project via `zcli project project-import`. Conceptually it is the inverse of `buildFromGit:` import — a snapshot+reify pass that captures live state into a self-referential repo whose `buildFromGit:` URL points at itself.
+
+Spec: `plans/archive/export-buildfromgit-2026-04-28.md` (when archived; live at `plans/export-buildfromgit-2026-04-28.md` during execution). Pinned by `internal/tools/workflow_export_test.go::TestHandleExport_*` + `internal/ops/export_bundle_test.go::TestBuildBundle_*`.
+
+### 9.1 Multi-call narrowing
+
+Stateless three-call narrowing per CLAUDE.md "Stateless STDIO tools" invariant — `WorkflowInput.{TargetService, Variant, EnvClassifications}` are per-request inputs the agent threads across calls. The handler returns one of seven structured response shapes:
+
+| Status | When | Contents |
+|---|---|---|
+| `scope-prompt` | `TargetService` empty | List of project runtimes; agent picks one. |
+| `variant-prompt` | `TargetService` set, source mode is `ModeStandard`/`ModeStage`/`ModeLocalStage`, `Variant` empty | `dev` / `stage` options for the pair half. |
+| `scaffold-required` | `/var/www/zerops.yaml` missing or empty | Chain to `scaffold-zerops-yaml` atom; do NOT silent-emit. |
+| `git-push-setup-required` | Live `git remote get-url origin` empty OR `meta.GitPushState != configured` | Chain to `setup-git-push-{container,local}`; preview included if bundle composed. |
+| `classify-prompt` | Project has envs + `EnvClassifications` incomplete | Per-env review table (key + currentBucket only — values redacted; agent fetches via `zerops_discover includeEnvs=true includeEnvValues=true`). |
+| `validation-failed` | `BuildBundle` schema validation surfaced blocking errors | `bundle.errors` carries JSON-pointer paths + messages. Validation outranks `git-push-setup-required` (a schema-invalid bundle would fail at re-import even after setup). |
+| `publish-ready` | All gates passed | `bundle.importYaml` + `bundle.zeropsYaml` + `nextSteps` (write yamls, commit, push via `zerops_deploy strategy="git-push"`). |
+
+### 9.2 Bundle shape
+
+`zerops-project-import.yaml` carries:
+
+- `project: { name, envVariables: {...} }` — name copied from source; envVariables filtered + classified per §3.4 of the export plan.
+- ONE runtime service entry with: `hostname`, `type`, `mode: NON_HA` (Zerops platform scaling enum, NOT ZCP topology — the topology dev/simple/local-only distinction is established by ZCP's bootstrap on import, not embedded in the bundle), `buildFromGit: <live-remote-url>`, `zeropsSetup: <matched-setup-name>`, `enableSubdomainAccess` (when source had it).
+- N managed service entries — included so `${db_*}` / `${redis_*}` references in the bundled `zerops.yaml` resolve at re-import. Each entry carries `hostname` + `type` + `priority: 10` + `mode` (HA/NON_HA preserved from Discover).
+
+`zerops.yaml` is the verbatim live `/var/www/zerops.yaml` body from the chosen runtime container. Pre-flight verifies the named `setup:` block exists.
+
+### 9.3 Four-category secret classification
+
+Per-env classification protocol (LLM-driven, no hardcoded heuristics in Go) — see `internal/content/atoms/export-classify-envs.md` for the full agent-facing protocol with worked examples. Buckets:
+
+| Bucket | Detection | Emit shape |
+|---|---|---|
+| `infrastructure` | Value resolves to a managed-service-emitted reference (`${db_*}`, `${redis_*}`, plus per-service variants). Includes compound URLs assembled from `${...}` components. | DROP from `project.envVariables`; `${...}` reference in zerops.yaml resolves at re-import against the (re-imported) managed service. |
+| `auto-secret` | Source/framework convention uses var as local encryption/signing key. | `<@generateRandomString(32, true, false)>` — re-import gets a fresh secret. |
+| `external-secret` | Third-party SDK call (Stripe, OpenAI, Mailgun, GitHub, …). | `<@pickRandom(["REPLACE_ME"])>` placeholder; new project owner sets the real key. |
+| `plain-config` | Literal runtime config (LOG_LEVEL, NODE_ENV, FEATURE_FLAGS). | Verbatim. |
+
+The handler emits the per-env review table on `classify-prompt`; the agent fetches values separately via `zerops_discover`, classifies, and re-calls with the populated map. Phase 3 redaction: classify-prompt rows carry `key` + `currentBucket` only — no raw value field.
+
+### 9.4 Invariants
+
+| ID | Invariant |
+|----|-----------|
+| E1 | Export bundle includes EXACTLY ONE buildFromGit-bearing runtime service. Managed services from the source project are included as plain entries (no `buildFromGit`) for `${...}` reference resolution at re-import. Pinned by `TestHandleExport_PublishReady` + `integration/export_test.go::TestExportFlow_MultiCallThroughServer`. |
+| E2 | Generated `import.yaml` and `zerops.yaml` MUST schema-validate against the published JSON schemas (`import-project-yml-json-schema.json` / `zerops-yml-json-schema.json`) BEFORE publish. Validation failures populate `ExportBundle.Errors`; the handler returns `status="validation-failed"` instead of `publish-ready`. Pinned by `TestHandleExport_ValidationFailed` + `TestValidateImportYAML_*` + `TestValidateZeropsYAML_*`. |
+| E3 | `meta.GitPushState=configured` is a Phase C (publish) prereq only — Phase A (probe) and Phase B (generate) run with no git-push capability and surface preview/classification + chain pointer when configured. Pinned by `TestHandleExport_GitPushUnconfigured_ChainsAfterClassify` + `TestHandleExport_MissingGitRemote_ChainsToGitPushSetup`. |
+| E4 | `services[].mode` in the rendered import.yaml is the Zerops platform scaling enum (`HA` / `NON_HA`), NOT ZCP topology. Single-runtime bundles always emit `NON_HA`. Pinned by `TestRuntimeImportMode` + `TestComposeImportYAML_*`. |
+| E5 | Live `git remote get-url origin` is the source of truth for the `buildFromGit:` URL; `ServiceMeta.RemoteURL` is a cache that gets refreshed on every export pass via `refreshRemoteURLCache`. Drift surfaces as a non-fatal warning in `bundle.warnings`; cache-write failures also surface as warnings (non-fatal — bundle uses live remote regardless). Pinned by `TestHandleExport_RemoteURLDrift_SurfacesWarning` + `TestRefreshRemoteURLCache`. |
+
+### 9.5 Why this is not a recipe
+
+Recipes (`zerops_recipe`) are a multi-repo, registry-published product with separation between an app-repo (source code) and a recipe-repo (zerops.yml + import.yaml templates). Export-for-buildFromGit is a SINGLE-repo self-referential snapshot: source code + `zerops.yaml` + `zerops-project-import.yaml` all live in ONE repo, and the import.yaml's `buildFromGit:` URL points at THAT same repo. The shared primitives (buildFromGit, zerops.yaml at root) make some code reuse possible but the user-facing intent differs — recipes are templated for many users; export is a single-project snapshot. The export workflow does NOT route to recipe-publish.
+
+---
+
+## 10. Planned Features
 
 ### 9.1 Mode Expansion (simple/dev → standard)
 

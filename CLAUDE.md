@@ -191,6 +191,21 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   auto-enables subdomain on first deploy for eligible modes (dev, stage,
   simple, standard, local-stage) and waits HTTP-ready. Agents/recipes never
   call `zerops_subdomain action=enable` in happy path. Spec: `spec-workflows.md §4.8`.
+- **Export-for-buildFromGit is a single-repo self-referential snapshot** —
+  `zerops_workflow workflow="export"` walks a stateless three-call narrowing
+  (scope-prompt → classify-prompt → publish-ready or validation-failed) per
+  `WorkflowInput.{TargetService, Variant, EnvClassifications}` per-request
+  inputs. Bundle carries ONE buildFromGit-bearing runtime + N managed deps
+  (so `${db_*}`/`${redis_*}` resolve at re-import). `services[].mode` is the
+  Zerops scaling enum (`HA`/`NON_HA`) — single-runtime bundles emit
+  `NON_HA`; ZCP topology (dev/simple/local-only) is destination-bootstrap
+  concern, not import.yaml content. Live `git remote get-url origin` is the
+  source of truth for `buildFromGit:`; `meta.RemoteURL` is a refreshed cache
+  with drift surfaced as warnings. Schema validation (Phase 5 jsonschema/v5)
+  populates `bundle.errors`; non-empty errors flip the response to
+  `status="validation-failed"` ahead of any git-push-setup chain. Pinned by
+  `TestHandleExport_*` + `TestBuildBundle_*` + `TestValidateImportYAML_*`.
+  Spec: `docs/spec-workflows.md §9` + invariants E1-E5.
 - **Log time comparison is parse-compare, never lexicographic** — RFC3339
   fractional precision varies (3–9 digits); string compare misorders entries
   at `.` vs `Z`. `internal/platform/logfetcher.go::filterEntries` uses
