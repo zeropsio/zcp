@@ -111,7 +111,7 @@ Phase 5 fix: emit `mode: NON_HA` for the runtime entry (single-runtime bundles c
 - [x] Codex POST-WORK APPROVE-with-amendments (6 amendments folded → effective APPROVE).
 - [x] Codex round transcript persisted (`codex-round-p5-postwork-schema.md`).
 - [x] `phase-5-tracker.md` finalized.
-- [ ] Phase 5 EXIT commits (atoms + impl + tests + tracker — see hashes once made).
+- [x] Phase 5 EXIT commits: `c33245a6` (impl + tests + atoms + plan amendments) + `e63d5ddc` (tracker + Codex transcript).
 - [ ] User explicit go to enter Phase 6.
 
 ## Notes for Phase 6 entry
