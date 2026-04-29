@@ -49,6 +49,31 @@ func BuildCodebaseContentBrief(plan *Plan, cb Codebase, parent *ParentRecipe, fa
 		b.WriteString(atom)
 		b.WriteString("\n\n")
 		parts = append(parts, "briefs/codebase-content/synthesis_workflow.md")
+
+		// Run-17 §6.4 — thread the citation-guide list right after the
+		// synthesis_workflow.md atom so the agent can resolve "the X
+		// guide" cite-by-name pattern against the actual CitationMap.
+		// citationGuides() reads from the package-global CitationMap and
+		// returns deterministic-sorted unique guide ids.
+		if guides := citationGuides(); len(guides) > 0 {
+			b.WriteString("### Citation guides for this recipe\n\n")
+			for _, g := range guides {
+				fmt.Fprintf(&b, "- `%s`\n", g)
+			}
+			b.WriteString("\n")
+			parts = append(parts, "citation-guides")
+		}
+	}
+
+	// Run-17 §6.5 — showcase tier worker codebases get an extra atom
+	// teaching the multi-replica gotchas (queue-group / SIGTERM drain)
+	// that MUST appear in the worker KB.
+	if plan.Tier == tierShowcase && cb.IsWorker {
+		if atom, err := readAtom("briefs/codebase-content/showcase_tier_supplements.md"); err == nil {
+			b.WriteString(atom)
+			b.WriteString("\n\n")
+			parts = append(parts, "briefs/codebase-content/showcase_tier_supplements.md")
+		}
 	}
 
 	// Platform principles — universal Zerops mechanics referenced by the
@@ -73,12 +98,14 @@ func BuildCodebaseContentBrief(plan *Plan, cb Codebase, parent *ParentRecipe, fa
 
 	// Filtered fact stream — only this codebase's recorded
 	// porter_change + field_rationale + Kind="" platform-trap facts.
-	// Engine-emitted shells render in their own section below; the
-	// agent-recorded facts are the bridge between deploy and content
-	// phases (plan §1, §2.3).
+	// Run-17 §6 — Class B / C / per-service engine-emit shells are
+	// retracted; the deploy-phase sub-agents record the equivalent
+	// porter_change facts per the worked examples in scaffold/feature
+	// decision_recording atoms. EmittedFactsForCodebase still runs for
+	// signature compatibility but always returns nil; defensive
+	// filterOutEngineEmitted drops any historical shells if a run-16
+	// session log replays through this composer.
 	cbFacts := FilterByCodebase(facts, cb.Hostname)
-	// Drop engine-emitted shells from this section — they have their
-	// own list and shouldn't double-render.
 	cbFacts = filterOutEngineEmitted(cbFacts)
 	if len(cbFacts) > 0 {
 		b.WriteString("## Recorded facts (codebase scope)\n\n")
@@ -87,19 +114,6 @@ func BuildCodebaseContentBrief(plan *Plan, cb Codebase, parent *ParentRecipe, fa
 		}
 		b.WriteString("\n")
 		parts = append(parts, "filtered-facts")
-	}
-
-	// Engine-emitted shells (Class B + C umbrella + per-managed-service
-	// shells). The agent fills empty slots via fill-fact-slot after
-	// consulting zerops_knowledge.
-	emitted := EmittedFactsForCodebase(plan, cb)
-	if len(emitted) > 0 {
-		b.WriteString("## Engine-emitted fact shells (fill via fill-fact-slot)\n\n")
-		for _, f := range emitted {
-			writeFactShellSummary(&b, f)
-		}
-		b.WriteString("\n")
-		parts = append(parts, "engine-emitted-shells")
 	}
 
 	// Pointer block — files the sub-agent reads on demand.
@@ -344,16 +358,6 @@ func writeFactSummary(b *strings.Builder, f FactRecord) {
 	default:
 		fmt.Fprintf(b, "- platform-trap | topic=%s | %s | %s\n", f.Topic, f.SurfaceHint, truncate(f.Symptom, 100))
 	}
-}
-
-func writeFactShellSummary(b *strings.Builder, f FactRecord) {
-	if f.Why == "" {
-		fmt.Fprintf(b, "- shell | topic=%s | citation=%s | candidate-surface=%s | FILL Why + Heading via fill-fact-slot\n",
-			f.Topic, f.CitationGuide, f.CandidateSurface)
-		return
-	}
-	fmt.Fprintf(b, "- shell | topic=%s | candidate-heading=%q | %s\n",
-		f.Topic, f.CandidateHeading, truncate(f.Why, 100))
 }
 
 func truncate(s string, n int) string {

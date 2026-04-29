@@ -2,149 +2,25 @@ package recipe
 
 import "strings"
 
-// EmittedFactsForCodebase returns the engine-emitted fact set for a
-// single codebase at scaffold dispatch time. Run-16 Tranche 2 — the
-// engine pre-fills facts whose Why prose is mechanism-level (Class B
-// universal-for-role) or whose shape is recipe-stable (Class C umbrella
-// + per-service shells per §7.1, §7.2). The agent is responsible for
-// filling slots on engine-emitted shells (CandidateHeading on the
-// worker no-HTTP fact, Why+Heading on per-managed-service shells) via
-// fill-fact-slot at codebase-content phase.
+// EmittedFactsForCodebase returns engine-pre-emitted fact shells for a
+// single codebase at scaffold dispatch time. Run-17 §6 — Class B
+// (universal-for-role), Class C umbrella (own-key-aliases), and per-
+// managed-service connect shells are retracted in favour of agent-
+// recorded porter_change facts captured during deploy phases. Worked
+// examples for the deploy-phase shape live in
+// `briefs/scaffold/decision_recording.md` and
+// `briefs/feature/decision_recording.md`.
 //
-// Plan must be non-nil; cb must be a member of plan.Codebases. Result
-// order is deterministic (Class B before Class C umbrella before per-
-// service shells, sorted by service hostname).
-func EmittedFactsForCodebase(plan *Plan, cb Codebase) []FactRecord {
-	if plan == nil {
-		return nil
-	}
-	var facts []FactRecord
-	facts = append(facts, classBFacts(cb)...)
-
-	consumed := managedServicesConsumedBy(plan, cb)
-	if len(consumed) > 0 {
-		facts = append(facts, classCUmbrellaFact(cb))
-		facts = append(facts, perServiceShells(cb, consumed)...)
-	}
-
-	return facts
-}
-
-// classBFacts emits universal-for-role facts derived from cb.Role and
-// cb.BaseRuntime. Why prose is engine-curated mechanism-level explanation;
-// framework-specific code-diff slots are agent-filled via fill-fact-slot.
-func classBFacts(cb Codebase) []FactRecord {
-	var out []FactRecord
-
-	if cb.Role == RoleAPI || cb.Role == RoleFrontend || cb.Role == RoleMonolith {
-		out = append(out, FactRecord{
-			Topic:            cb.Hostname + "-bind-and-trust-proxy",
-			Kind:             FactKindPorterChange,
-			Scope:            cb.Hostname + "/code",
-			ChangeKind:       "code-addition",
-			Why:              "Default bind to 127.0.0.1 is unreachable from the L7 balancer (which routes to the container's VXLAN IP). Trust the X-Forwarded-* headers so request.ip / request.protocol reflect the real caller.",
-			CandidateClass:   "platform-invariant",
-			CandidateHeading: "Bind 0.0.0.0 and trust the L7 proxy",
-			CandidateSurface: "CODEBASE_IG",
-			CitationGuide:    "http-support",
-			EngineEmitted:    true,
-		})
-
-		if strings.HasPrefix(cb.BaseRuntime, "nodejs") {
-			out = append(out, FactRecord{
-				Topic:            cb.Hostname + "-sigterm-drain",
-				Kind:             FactKindPorterChange,
-				Scope:            cb.Hostname + "/code",
-				ChangeKind:       "code-addition",
-				Why:              "Rolling deploys send SIGTERM to the old container while the new one warms up. Without explicit shutdown handling, in-flight requests fail mid-response.",
-				CandidateClass:   "platform-invariant",
-				CandidateHeading: "Drain in-flight requests on SIGTERM",
-				CandidateSurface: "CODEBASE_IG",
-				CitationGuide:    "rolling-deploys",
-				EngineEmitted:    true,
-			})
-		}
-	}
-
-	if cb.Role == RoleWorker && strings.HasPrefix(cb.BaseRuntime, "nodejs") {
-		// Heading is intentionally agent-filled — system.md §4 keeps
-		// framework-specific names on DISCOVER (NestJS application
-		// context vs BullMQ Worker vs plain process loop).
-		out = append(out, FactRecord{
-			Topic:            cb.Hostname + "-no-http-surface",
-			Kind:             FactKindPorterChange,
-			Scope:            cb.Hostname + "/code",
-			ChangeKind:       "code-addition",
-			Why:              "A worker has no HTTP surface. Default framework bootstraps that start an Express/Fastify listener fight the platform's empty run.ports — the listener has nothing to bind to and the framework crashes or hangs at boot. Boot the framework's no-HTTP equivalent (e.g. NestJS createApplicationContext, BullMQ Worker, plain process loop) instead.",
-			CandidateClass:   "platform-invariant",
-			CandidateHeading: "", // agent-filled per §2.7
-			CandidateSurface: "CODEBASE_IG",
-			EngineEmitted:    true,
-		})
-	}
-
-	return out
-}
-
-// classCUmbrellaFact emits the single own-key-aliases fact that applies
-// to every codebase consuming managed services regardless of which
-// services they are. The pattern itself is the platform contract; per-
-// service alias names are agent-derived from zerops_discover.
-func classCUmbrellaFact(cb Codebase) FactRecord {
-	return FactRecord{
-		Topic:            cb.Hostname + "-own-key-aliases",
-		Kind:             FactKindPorterChange,
-		Scope:            cb.Hostname + "/zerops.yaml/run.envVariables",
-		ChangeKind:       "config-addition",
-		Why:              "Cross-service references like ${db_hostname} auto-inject project-wide under platform-side keys. Reading those names directly couples the application to Zerops naming. Declare own-key aliases in zerops.yaml run.envVariables and read those.",
-		CandidateClass:   "platform-invariant",
-		CandidateHeading: "Read managed-service credentials from own-key aliases",
-		CandidateSurface: "CODEBASE_IG",
-		CitationGuide:    "env-var-model",
-		EngineEmitted:    true,
-	}
-}
-
-// perServiceShells emits one empty-Why shell per consumed managed
-// service. Why is intentionally empty — the agent fills it at codebase-
-// content phase by reading the per-service knowledge atom (§7.2 fact-
-// shell pattern). Engine pre-seeds shape + citation guide so the agent
-// can't forget per-service IG items; atom remains the single source for
-// per-service idiom prose.
-func perServiceShells(cb Codebase, services []Service) []FactRecord {
-	out := make([]FactRecord, 0, len(services))
-	for _, svc := range services {
-		out = append(out, FactRecord{
-			Topic:            cb.Hostname + "-connect-" + svc.Hostname,
-			Kind:             FactKindPorterChange,
-			Scope:            cb.Hostname + "/code",
-			ChangeKind:       "code-addition",
-			Why:              "", // agent-filled via fill-fact-slot after consulting zerops_knowledge
-			CandidateClass:   "intersection",
-			CandidateHeading: "", // agent-filled (framework-specific name)
-			CandidateSurface: "CODEBASE_IG",
-			CitationGuide:    citationGuideForServiceType(svc.Type),
-			EngineEmitted:    true,
-		})
-	}
-	return out
-}
-
-// managedServicesConsumedBy returns the managed services this codebase
-// consumes. Run-16 minimal version: every managed service in the plan
-// is assumed consumed by every codebase. Future extension can filter on
-// per-codebase service-consumption metadata.
-func managedServicesConsumedBy(plan *Plan, _ Codebase) []Service {
-	if plan == nil {
-		return nil
-	}
-	var out []Service
-	for _, svc := range plan.Services {
-		if svc.Kind == ServiceKindManaged {
-			out = append(out, svc)
-		}
-	}
-	return out
+// The function signature is retained so the brief composer
+// (`briefs_content_phase.go`) and dispatch wiring (`workflow.go`)
+// continue compiling. The returned slice is always nil; the agent-
+// recorded fact stream and engine-emitted tier_decision facts (still
+// active via EmittedTierDecisionFacts) are the only fact sources after
+// run-17.
+//
+// Pinned by TestEmittedFactsForCodebase_ReturnsEmpty.
+func EmittedFactsForCodebase(_ *Plan, _ Codebase) []FactRecord {
+	return nil
 }
 
 // citationGuideForServiceType maps a managed-service type (e.g.
@@ -152,10 +28,10 @@ func managedServicesConsumedBy(plan *Plan, _ Codebase) []Service {
 // per-service knowledge atom in CitationMap. Family-prefix matching;
 // version trailers ignored (the connection idiom is family-stable).
 //
-// Run-16 §7.2 — engine-side curation is JUST this lookup; per-service
-// connection prose lives in the atom (single source). Returning a
-// topic that maps in CitationMap is enforced by
-// TestEmittedFactShell_CitationGuideMatchesCitationMap.
+// Per-service shells are retracted in run-17, but the function is
+// retained so the family↔guide contract continues to be pinned by
+// TestEmittedFactShell_CitationGuideMatchesCitationMap. Future callers
+// (e.g. agent-side citation lookup helpers) read the same mapping.
 func citationGuideForServiceType(serviceType string) string {
 	family := serviceType
 	if i := strings.IndexByte(serviceType, '@'); i > 0 {

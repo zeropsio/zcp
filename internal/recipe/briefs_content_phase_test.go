@@ -122,15 +122,17 @@ func TestBuildCodebaseContentBrief_CarriesFilteredFieldRationaleFacts(t *testing
 func TestBuildCodebaseContentBrief_DropsEngineEmittedShellsFromRecordedFactsSection(t *testing.T) {
 	t.Parallel()
 	plan := contentPhaseTestPlan()
-	// Engine-emitted shell + agent-filled record share scope but only
-	// the agent-filled (EngineEmitted=false) one belongs in "Recorded
-	// facts" — shells render in their own engine-emitted section.
+	// Run-17 §6 — engine-emit shells are retracted, but the defensive
+	// filterOutEngineEmitted still drops EngineEmitted=true entries if
+	// a session log replay surfaces historical shells. The brief
+	// composer no longer renders an "Engine-emitted fact shells"
+	// section at all.
 	facts := []FactRecord{
 		{
 			Topic:            "api-connect-db",
 			Kind:             FactKindPorterChange,
 			Scope:            "api/code",
-			EngineEmitted:    true, // unfilled shell
+			EngineEmitted:    true, // historical shell
 			CandidateSurface: "CODEBASE_IG",
 			CitationGuide:    "managed-services-postgresql",
 		},
@@ -149,21 +151,14 @@ func TestBuildCodebaseContentBrief_DropsEngineEmittedShellsFromRecordedFactsSect
 		t.Fatalf("BuildCodebaseContentBrief: %v", err)
 	}
 
-	// Find the "Recorded facts" section and verify the shell isn't in it.
-	hdrIdx := strings.Index(brief.Body, "## Recorded facts (codebase scope)")
-	if hdrIdx < 0 {
-		t.Fatal("recorded facts section missing")
+	if strings.Contains(brief.Body, "## Engine-emitted fact shells") {
+		t.Error("Run-17 retraction: brief should not render an Engine-emitted shells section")
 	}
-	nextHdrIdx := strings.Index(brief.Body[hdrIdx+1:], "\n## ")
-	if nextHdrIdx < 0 {
-		nextHdrIdx = len(brief.Body) - hdrIdx - 1
+	if strings.Contains(brief.Body, "api-connect-db") {
+		t.Error("historical engine-emitted shell leaked into brief")
 	}
-	recordedSection := brief.Body[hdrIdx : hdrIdx+1+nextHdrIdx]
-	if strings.Contains(recordedSection, "api-connect-db") {
-		t.Error("engine-emitted shell leaked into Recorded facts section (should appear only under Engine-emitted shells)")
-	}
-	if !strings.Contains(recordedSection, "api-cors-expose-x-cache") {
-		t.Error("agent-filled fact missing from Recorded facts section")
+	if !strings.Contains(brief.Body, "api-cors-expose-x-cache") {
+		t.Error("agent-recorded fact missing from brief")
 	}
 }
 
@@ -192,24 +187,28 @@ func TestBuildEnvContentBrief_CarriesContractFacts(t *testing.T) {
 	}
 }
 
-func TestBuildCodebaseContentBrief_CarriesEngineEmittedShells(t *testing.T) {
+func TestBuildCodebaseContentBrief_NoEngineEmittedShells_AfterRun17Retraction(t *testing.T) {
 	t.Parallel()
 	plan := contentPhaseTestPlan()
 	brief, err := BuildCodebaseContentBrief(plan, plan.Codebases[0], nil, nil)
 	if err != nil {
 		t.Fatalf("BuildCodebaseContentBrief: %v", err)
 	}
-	// Class B + per-managed-service shells should appear.
-	for _, want := range []string{
+	// Run-17 §6 — Class B + per-service shells retracted. None of the
+	// historical shell topics may appear in the brief.
+	for _, forbidden := range []string{
 		"api-bind-and-trust-proxy",
 		"api-sigterm-drain",
 		"api-own-key-aliases",
 		"api-connect-db",
 		"api-connect-cache",
 	} {
-		if !strings.Contains(brief.Body, want) {
-			t.Errorf("brief missing engine-emitted topic %q", want)
+		if strings.Contains(brief.Body, forbidden) {
+			t.Errorf("Run-17 retraction: brief still contains engine-emitted topic %q", forbidden)
 		}
+	}
+	if strings.Contains(brief.Body, "## Engine-emitted fact shells") {
+		t.Error("Run-17 retraction: brief still renders Engine-emitted shells section header")
 	}
 }
 
