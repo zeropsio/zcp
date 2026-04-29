@@ -277,6 +277,38 @@ func axisNViolations(ctx atomLintCtx) []AtomLintViolation {
 	return axisMarkerViolations(ctx, "axis-n", "n", axisNEnvTokens, axisNAllowlist)
 }
 
+// axisHotShellViolations flags raw shell-backgrounding patterns
+// (`nohup ...`, `disown`, trailing ` &` on a command line) that should
+// route through the dev-server canonical primitive instead. C5 closure
+// (audit-prerelease-internal-testing-2026-04-29): the asset-pipeline
+// atom used to instruct `ssh ... 'nohup npm run dev > ... &'`, which
+// the dev-server-canonical-primitive plan (archived 2026-04-24)
+// explicitly forbade for container-env dev-server lifecycle. Sibling
+// atoms that legitimately call out the anti-pattern (anti-pattern
+// callouts in platform-rules / dev-server-reason-codes) tag with
+// `<!-- axis-hot-shell-keep: anti-pattern -->` to keep the prose.
+//
+// Heuristic patterns (false-positive surface is small — most atoms
+// don't invoke shell at all):
+//   - `\bnohup\b` — backgrounded persistent process spawn
+//   - `\bdisown\b` — explicit detach
+//   - `&['"]?\s*$` — trailing ampersand on a non-blank command line,
+//     including the `... &'` SSH-remote-quoted form. Excludes `&&`
+//     (logical AND) because a `&&` line tail wouldn't end with a single
+//     `&` followed by quote/whitespace.
+//
+// Suppressed iff a marker `<!-- axis-hot-shell-{keep,drop} -->`
+// exists on the line / prior non-blank / next non-blank, or the
+// shared allowlist contains a matching entry.
+func axisHotShellViolations(ctx atomLintCtx) []AtomLintViolation {
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`\bnohup\b`),
+		regexp.MustCompile(`\bdisown\b`),
+		regexp.MustCompile(`[^&]&['"]?\s*$`),
+	}
+	return axisMarkerViolations(ctx, "axis-hot-shell", "hot-shell", patterns, axisHotShellAllowlist)
+}
+
 // atomIsUniversal returns true when the atom has no `environments:`
 // frontmatter axis or both env values are listed (i.e. the atom fires
 // on either env).
@@ -344,11 +376,16 @@ func axisMarkerViolations(
 // Marker extraction + lookup
 // ============================================================================
 
-// axisMarkerPattern matches `<!-- axis-{k,m,n}-keep[:signal-#N] -->` and
-// `<!-- axis-{k,m,n}-drop -->`. The captured letter (k/m/n) tells the
-// caller which axis a marker applies to; the trailing free-form text
-// (signal annotation, rationale) is captured but ignored by lint.
-var axisMarkerPattern = regexp.MustCompile(`<!--\s*axis-([kmn])-(?:keep|drop)(?:\s*:[^>]*)?\s*-->`)
+// axisMarkerPattern matches `<!-- axis-{k,m,n,hot-shell}-keep[:signal-#N] -->`
+// and `<!-- axis-{k,m,n,hot-shell}-drop -->`. The captured suffix
+// (k / m / n / hot-shell) tells the caller which axis a marker applies
+// to; the trailing free-form text (signal annotation, rationale) is
+// captured but ignored by lint. axis-hot-shell is the C5 closure axis
+// flagging raw `nohup`/`disown`/`& *$` SSH backgrounding patterns
+// (audit-prerelease-internal-testing-2026-04-29) — sibling atoms that
+// LEGITIMATELY name the anti-pattern (anti-pattern callouts, examples
+// inside a forbidden-list table) tag with `axis-hot-shell-keep`.
+var axisMarkerPattern = regexp.MustCompile(`<!--\s*axis-([kmn]|hot-shell)-(?:keep|drop)(?:\s*:[^>]*)?\s*-->`)
 
 // extractAxisMarkers walks every body line and records which axis
 // markers (k/m/n) appear on it. Markers SUPPRESS lint hits on the same
@@ -430,4 +467,4 @@ func StripAxisMarkers(body string) string {
 // the same line, so an inline marker like `… text. <!-- axis-k-keep -->`
 // collapses to `… text.` cleanly. Standalone marker lines are removed
 // entirely by the StripAxisMarkers caller.
-var axisMarkerStripPattern = regexp.MustCompile(`[ \t]*<!--\s*axis-[kmn]-(?:keep|drop)(?:\s*:[^>]*)?\s*-->`)
+var axisMarkerStripPattern = regexp.MustCompile(`[ \t]*<!--\s*axis-(?:[kmn]|hot-shell)-(?:keep|drop)(?:\s*:[^>]*)?\s*-->`)

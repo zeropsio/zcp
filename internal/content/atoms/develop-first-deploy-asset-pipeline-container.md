@@ -31,16 +31,13 @@ The build writes `public/build/manifest.json` in the dev container;
 SSHFS propagates it without redeploy. PHP-FPM reads it on next request —
 no restart needed.
 
-**For iterative frontend work, start Vite over SSH**:
+**For iterative frontend work, start Vite via the dev-server primitive** (one durable lifecycle per service — survives this MCP call, restarts cleanly with `action=status` / `action=restart`):
 
 ```
-ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null {hostname} \
-  'cd /var/www && nohup npm run dev > /tmp/vite.log 2>&1 &'
+zerops_dev_server action=start hostname="{hostname}" command="npm run dev" port=5173 healthPath="/"
 ```
 
-Vite drops `public/build/hot`; helpers route assets through it. New
-containers start on every `zerops_deploy` — restart Vite after each
-redeploy.
+Vite drops `public/build/hot`; helpers route assets through it. The dev-server primitive tracks the process via the runtime container's lifecycle, so backgrounding is not your concern. New containers start on every `zerops_deploy` — re-run `action=start` after each redeploy.
 
 **Do NOT add `npm run build` to dev `buildCommands`.** It defeats
 HMR-first dev setup: every push rebuilds assets (~20–30 s penalty).

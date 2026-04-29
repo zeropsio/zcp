@@ -218,6 +218,28 @@ func TestAtomAuthoringLint_FiresOnKnownViolations(t *testing.T) {
 			wantPattern: "stale-deploy-strategy",
 			wantCat:     "stale-strategy",
 		},
+		// axis-hot-shell (raw shell backgrounding patterns — C5 closure) ----
+		{
+			name:        "axis-hot-shell-nohup",
+			frontmatter: fmHeader,
+			body:        "Run nohup npm run dev > /tmp/log 2>&1 &\n",
+			wantPattern: "leak-candidate:nohup",
+			wantCat:     "axis-hot-shell",
+		},
+		{
+			name:        "axis-hot-shell-disown",
+			frontmatter: fmHeader,
+			body:        "Run npm run dev & disown to detach.\n",
+			wantPattern: "leak-candidate:disown",
+			wantCat:     "axis-hot-shell",
+		},
+		{
+			name:        "axis-hot-shell-trailing-amp",
+			frontmatter: fmHeader,
+			body:        "ssh host 'npm run dev > /tmp/x.log 2>&1 &'\n",
+			wantPattern: "leak-candidate:",
+			wantCat:     "axis-hot-shell",
+		},
 	}
 
 	for _, tt := range tests {

@@ -68,6 +68,11 @@ var axisMAllowlist = map[string]string{
 	"develop-verify-matrix.md::- **VERDICT: UNCERTAIN** → fall back to `zerops_verify`; the agent could": "spec §11.5 cluster-#5 caveat: `agent` is the spawned sub-agent (Sonnet via Agent template)",
 }
 
+// axisHotShellAllowlist: <atomFile>::<exact trimmed line> → rationale.
+// Reserved for grandfathered cases the inline marker convention can't
+// cleanly express. New edits prefer `<!-- axis-hot-shell-keep -->`.
+var axisHotShellAllowlist = map[string]string{}
+
 // axisNAllowlist: <atomFile>::<exact trimmed line> → rationale.
 // Universal atoms whose env-specific detail is the topic itself
 // (deploy-files semantics, runtime-path mechanics) or whose dual-env
