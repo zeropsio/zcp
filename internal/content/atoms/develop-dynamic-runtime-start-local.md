@@ -4,7 +4,7 @@ priority: 3
 phases: [develop-active]
 runtimes: [dynamic]
 environments: [local]
-modes: [dev, standard]
+modes: [dev, standard, local-stage, local-only]
 title: "Dynamic runtime — local dev server"
 ---
 
