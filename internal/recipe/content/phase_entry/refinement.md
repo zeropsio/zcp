@@ -48,11 +48,21 @@ a timid hold that leaves an 8.0 surface at 8.0.
 
 ## Transactional safety
 
-Every `record-fragment mode=replace` you fire at this phase is wrapped
-in a snapshot/restore primitive: the engine snapshots the prior body
-before applying your replacement, runs the post-replace validators,
-and reverts to the snapshot if any new violation surfaces. You don't
-need to verify the rollback yourself; trust the engine.
+Each `record-fragment mode=replace` against a `codebase/<host>/...`
+fragment at this phase is wrapped in a snapshot/restore primitive:
+the engine snapshots the prior body before applying your replacement,
+runs codebase-surface validators scoped to the named codebase, and
+reverts to the snapshot if your replacement introduces a new blocking
+violation that wasn't present before. The `Notices` array on the
+response carries a `refinement-replace-reverted` entry naming the
+violation that triggered rollback — read it to understand why your
+edit didn't stick.
+
+For root and env fragments (`root/intro`, `env/<N>/intro`,
+`env/<N>/import-comments/<host>`) the wrapper does NOT fire; the
+slot-shape refusal at record time is the safety net. Refinement on
+those surfaces is best-effort — if you'd hesitate to argue the change,
+HOLD.
 
 ## Output
 

@@ -873,7 +873,7 @@ func TestBrief_Scaffold_IncludesHTTPSectionForHTTPRole(t *testing.T) {
 // TestBrief_Scaffold_KBGuidanceMatchesTopicFormat — RETIRED at run-16.
 // KB topic-format teaching moved to:
 //   - `briefs/codebase-content/synthesis_workflow.md` (authoring atom for phase 5)
-//   - `slot_shape.checkCodebaseKB` (record-time refusal for non-`**Topic** —` bullets)
+//   - `slot_shape.checkCodebaseKBAll` (record-time refusal for non-`**Topic** —` bullets)
 //
 // Scaffold doesn't author KB at run-16. Coverage on the new path:
 //   - TestCheckSlotShape_KB_RefusesNonTopicBullet (slot_shape_test.go)

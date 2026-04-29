@@ -439,9 +439,10 @@ func handleRecordFragment(sess *Session, in RecipeInput, r RecipeResult) RecipeR
 		}
 		return r
 	}
-	// Plan-services-aware claude-md check — extends checkClaudeMD with
-	// per-hostname leakage refusal. Catches managed-service hostnames the
-	// static-token list can't enumerate (db, cache, search, meilisearch …).
+	// Plan-services-aware claude-md check — extends checkClaudeMDAll
+	// with per-hostname leakage refusal. Catches managed-service
+	// hostnames the static-token list can't enumerate (db, cache,
+	// search, meilisearch …).
 	if singleSlotClaudeMDRe.MatchString(in.FragmentID) && sess.Plan != nil {
 		for _, svc := range sess.Plan.Services {
 			if svc.Kind != ServiceKindManaged {
@@ -453,6 +454,22 @@ func handleRecordFragment(sess *Session, in RecipeInput, r RecipeResult) RecipeR
 			}
 		}
 	}
+
+	// Run-17 §9.5 — refinement-phase Replace transactional wrapper.
+	// On PhaseRefinement Replace of a codebase/<host>/... fragment, run
+	// surface validators pre- and post-Replace; if the Replace
+	// introduces a new blocking violation that wasn't present before,
+	// revert the fragment to its pre-Replace body and surface a notice.
+	// Per the refinement contract: per-fragment edit cap = 1, so this
+	// is the agent's only attempt; the rollback prevents a degraded
+	// refinement from persisting.
+	wrapRefinement := sess.Current == PhaseRefinement && in.Mode == modeReplace
+	host := codebaseHostFromFragmentID(in.FragmentID)
+	var preBlocking []Violation
+	if wrapRefinement && host != "" {
+		preBlocking = refinementPreCheckScoped(sess, host)
+	}
+
 	bodyBytes, appended, priorBody, err := recordFragment(sess, in.FragmentID, in.Fragment, in.Mode)
 	if err != nil {
 		r.Error = err.Error()
@@ -462,6 +479,25 @@ func handleRecordFragment(sess *Session, in RecipeInput, r RecipeResult) RecipeR
 	r.BodyBytes = bodyBytes
 	r.Appended = appended
 	r.PriorBody = priorBody
+
+	if wrapRefinement && host != "" {
+		postBlocking := refinementPreCheckScoped(sess, host)
+		if newBlocking := newViolationsIntroduced(preBlocking, postBlocking); len(newBlocking) > 0 {
+			sess.RestoreFragment(in.FragmentID, priorBody)
+			r.BodyBytes = len(priorBody)
+			for _, v := range newBlocking {
+				r.Notices = append(r.Notices, Violation{
+					Code:     "refinement-replace-reverted",
+					Path:     in.FragmentID,
+					Severity: SeverityNotice,
+					Message: fmt.Sprintf(
+						"post-replace validator surfaced %s on %s — fragment reverted to its pre-refinement body. %s",
+						v.Code, v.Path, v.Message),
+				})
+			}
+		}
+	}
+
 	// F.2 — attach the per-surface contract for the resolved fragment id
 	// so the agent reads reader / test / caps verbatim at authoring
 	// decision time, not just at brief-preface time.
@@ -473,6 +509,42 @@ func handleRecordFragment(sess *Session, in RecipeInput, r RecipeResult) RecipeR
 	}
 	r.OK = true
 	return r
+}
+
+// refinementPreCheckScoped runs the codebase-surface-validators gate
+// scoped to the named codebase. Used by the refinement transactional
+// wrapper to compare pre- and post-Replace blocking violations. Errors
+// degrade gracefully — a missing codebase or scoping failure returns
+// nil so the wrapper falls through (the unwrapped recordFragment path
+// already wrote the new body).
+func refinementPreCheckScoped(sess *Session, host string) []Violation {
+	gates := []Gate{{Name: "codebase-surface-validators", Run: gateCodebaseSurfaceValidators}}
+	blocking, _, err := sess.CompletePhaseScoped(gates, host)
+	if err != nil {
+		return nil
+	}
+	return blocking
+}
+
+// newViolationsIntroduced returns the post-state violations whose
+// (Code, Path) tuple was absent from the pre-state violation set —
+// i.e. the violations the Replace introduced. A pre-state notice that
+// remains in post-state does not count as new; a fresh blocking
+// violation triggered by the Replace does.
+func newViolationsIntroduced(pre, post []Violation) []Violation {
+	preSet := make(map[string]bool, len(pre))
+	for _, v := range pre {
+		preSet[v.Code+"\x00"+v.Path] = true
+	}
+	var diff []Violation
+	for _, v := range post {
+		key := v.Code + "\x00" + v.Path
+		if preSet[key] {
+			continue
+		}
+		diff = append(diff, v)
+	}
+	return diff
 }
 
 // mergePlan applies an incoming partial Plan payload to the session.
