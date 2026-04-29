@@ -49,7 +49,7 @@ func TestCodebaseSurfaceValidators_UsesInMemoryBodies(t *testing.T) {
 		base := "codebase/" + cb.Hostname
 		plan.Fragments[base+"/intro"] = "Codebase intro paragraph.\n"
 		plan.Fragments[base+"/integration-guide"] = "### 2. Adding zerops.yaml — extend\n\nDescribe step.\n\n### 3. Bind to 0.0.0.0\n\nLoopback is unreachable from L7.\n"
-		plan.Fragments[base+"/knowledge-base"] = "- **Topic** — explanation that satisfies the bullet contract.\n"
+		plan.Fragments[base+"/knowledge-base"] = "- **404 on Topic** — explanation that satisfies the bullet contract.\n"
 		// Run-16 — CLAUDE.md is single-slot, /init-shaped, ≥ 200 bytes,
 		// 2-4 ## sections, no Zerops content. The single fragment
 		// satisfies validateCodebaseCLAUDE without legacy sub-slots.

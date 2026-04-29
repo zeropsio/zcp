@@ -733,15 +733,15 @@ func TestStitch_IGSubsequentItemsArePorterItems(t *testing.T) {
 		"env/5/intro":                       "tier 5",
 		"codebase/api/intro":                "api",
 		"codebase/api/integration-guide":    authored,
-		"codebase/api/knowledge-base":       "- **Topic** — prose",
+		"codebase/api/knowledge-base":       "- **404 on Topic** — prose",
 		"codebase/api/claude-md":            initStyleClaudeMD("api"),
 		"codebase/app/intro":                "app",
 		"codebase/app/integration-guide":    authored,
-		"codebase/app/knowledge-base":       "- **Topic** — prose",
+		"codebase/app/knowledge-base":       "- **404 on Topic** — prose",
 		"codebase/app/claude-md":            initStyleClaudeMD("app"),
 		"codebase/worker/intro":             "worker",
 		"codebase/worker/integration-guide": authored,
-		"codebase/worker/knowledge-base":    "- **Topic** — prose",
+		"codebase/worker/knowledge-base":    "- **404 on Topic** — prose",
 		"codebase/worker/claude-md":         initStyleClaudeMD("worker"),
 	}
 	for id, body := range fragmentIDs {
