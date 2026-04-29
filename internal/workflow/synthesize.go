@@ -48,11 +48,21 @@ type MatchedRender struct {
 // clock reads, no map iteration order, no randomness. Service-scoped
 // atoms with multiple matching services render once per service in
 // envelope's hostname-sorted order.
+//
+// Scope-narrowing (audit F9 / Lever B): when envelope.WorkSession is
+// set with a non-empty Services list, per-service axis matching narrows
+// to in-scope hostnames only. Project services outside the work session
+// scope contribute no per-service axis matches — atoms with per-service
+// axes (modes / closeDeployModes / etc.) only fire for scope services.
+// Atoms with no per-service axes ("service-agnostic") still render once
+// per envelope, unaffected by scope. WorkSession=nil (idle phase, status
+// without active session) preserves full-project axis matching.
 func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]MatchedRender, error) {
 	type pending struct {
 		atom    KnowledgeAtom
 		matches []int // -1 = atom is service-agnostic; otherwise indices into envelope.Services
 	}
+	scope := workSessionScopeSet(envelope)
 	pendings := make([]pending, 0, len(corpus))
 	for _, atom := range corpus {
 		if !atomEnvelopeAxesMatch(atom, envelope) {
@@ -64,6 +74,9 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]MatchedRender
 		}
 		var idxs []int
 		for i, svc := range envelope.Services {
+			if scope != nil && !scope[svc.Hostname] {
+				continue
+			}
 			if serviceSatisfiesAxes(svc, atom.Axes) {
 				idxs = append(idxs, i)
 			}
@@ -308,6 +321,27 @@ func envelopeDeployStateMatches(services []ServiceSnapshot, want []DeployState) 
 		}
 	}
 	return false
+}
+
+// workSessionScopeSet returns the set of in-scope hostnames from the
+// envelope's WorkSession, or nil when there is no active session (idle
+// phase, status without an active develop session). The nil return is
+// the signal "no scope filter — match against full env.Services".
+//
+// Lever B of audit F9: per-service axis matching narrows to scope when
+// a session is active so atoms like `develop-close-mode-auto-*` only
+// fire for in-scope services rather than the project's full service
+// list. WorkSession=nil leaves matching unaffected so idle / status
+// flows render the same surface they always did.
+func workSessionScopeSet(envelope StateEnvelope) map[string]bool {
+	if envelope.WorkSession == nil || len(envelope.WorkSession.Services) == 0 {
+		return nil
+	}
+	scope := make(map[string]bool, len(envelope.WorkSession.Services))
+	for _, h := range envelope.WorkSession.Services {
+		scope[h] = true
+	}
+	return scope
 }
 
 // hasServiceScopedAxes reports whether the atom declares any axis whose

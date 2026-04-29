@@ -1,8 +1,8 @@
 # ZCP Lifecycle Matrix Simulation
 
-Generated: 2026-04-29T23:37:45Z
+Generated: 2026-04-29T23:43:53Z
 Corpus: 80 atoms
-Scenarios: 45
+Scenarios: 46
 
 ---
 
@@ -939,6 +939,38 @@ _Two runtimes + managed dep — per-service rendering correctness._
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
 **Atoms** (22 unique, 25 render-instances, 29182 bytes total):
+- `develop-api-error-meta`
+- `develop-auto-close-semantics`
+- `develop-change-drives-deploy`
+- `develop-checklist-dev-mode`
+- `develop-close-mode-auto`
+- `develop-close-mode-auto-deploy-container`
+- `develop-close-mode-auto-dev`
+- `develop-close-mode-auto-workflow-dev`
+- `develop-deploy-files-self-deploy`
+- `develop-deploy-modes`
+- `develop-dev-server-reason-codes`
+- `develop-dev-server-triage`
+- `develop-dynamic-runtime-start-container`
+- `develop-env-var-channels`
+- `develop-http-diagnostic`
+- `develop-intro`
+- `develop-knowledge-pointers`
+- `develop-mode-expansion`
+- `develop-platform-rules-common`
+- `develop-platform-rules-container`
+- `develop-strategy-awareness`
+- `develop-verify-matrix`
+
+## 10.3 four runtimes scope=1 (Lever B narrow)
+
+_Project has 3 dev runtimes + 1 managed; scope is just appdev. Per-service atoms must fire only for appdev._
+
+**Phase**: `develop-active` &middot; **Env**: `container`
+
+**Plan.Primary**: `zerops_workflow` → Close develop session
+
+**Atoms** (22 unique, 22 render-instances, 24332 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`

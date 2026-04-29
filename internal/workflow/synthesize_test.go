@@ -411,6 +411,104 @@ func TestParseAtom_DeployStatesAndEnvelopeDeployStatesMutuallyExclusive(t *testi
 // references a service the atom isn't semantically about — e.g. strategy-
 // review surfacing because service A is deployed and (different) service B
 // has unset strategy.
+// TestSynthesize_WorkSessionScopeFilter pins Lever B of audit F9
+// (audit-prerelease-internal-testing-2026-04-29). When envelope.WorkSession
+// has a non-empty Services list, per-service axis matching narrows to
+// in-scope hostnames only — atoms with per-service axes only fire for
+// scope services, not the project's full service list. Without the
+// filter, status responses with scope=[1 service] in a 4-service project
+// rendered atoms 4× when only 1× was relevant.
+func TestSynthesize_WorkSessionScopeFilter(t *testing.T) {
+	t.Parallel()
+
+	corpus := []KnowledgeAtom{
+		{
+			ID:   "auto-only",
+			Axes: AxisVector{Phases: []Phase{PhaseDevelopActive}, CloseDeployModes: []topology.CloseDeployMode{topology.CloseModeAuto}},
+			Body: "auto atom for {hostname}",
+		},
+	}
+
+	// Project has 3 services on closeMode=auto. Without scope, the atom
+	// renders 3× (one per host).
+	project := []ServiceSnapshot{
+		{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: true, CloseDeployMode: topology.CloseModeAuto},
+		{Hostname: "webdev", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: true, CloseDeployMode: topology.CloseModeAuto},
+		{Hostname: "workerdev", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: true, CloseDeployMode: topology.CloseModeAuto},
+	}
+
+	// WorkSession=nil → full project, atom renders 3×.
+	envIdle := StateEnvelope{Phase: PhaseDevelopActive, Services: project}
+	gotIdle, err := SynthesizeBodies(envIdle, corpus)
+	if err != nil {
+		t.Fatalf("idle synthesize: %v", err)
+	}
+	matchesIdle := 0
+	for _, b := range gotIdle {
+		if strings.Contains(b, "auto atom for ") {
+			matchesIdle++
+		}
+	}
+	if matchesIdle != 3 {
+		t.Errorf("idle (no work session): want 3 renders, got %d", matchesIdle)
+	}
+
+	// WorkSession scoped to 1 service → atom renders 1× and only for the
+	// scope hostname.
+	envScoped := StateEnvelope{
+		Phase:    PhaseDevelopActive,
+		Services: project,
+		WorkSession: &WorkSessionSummary{
+			Intent:   "fix appdev",
+			Services: []string{"appdev"},
+		},
+	}
+	gotScoped, err := SynthesizeBodies(envScoped, corpus)
+	if err != nil {
+		t.Fatalf("scoped synthesize: %v", err)
+	}
+	joined := strings.Join(gotScoped, "\n")
+	if strings.Count(joined, "auto atom for ") != 1 {
+		t.Errorf("scoped (work session 1 host): want 1 render, got %d in %q", strings.Count(joined, "auto atom for "), joined)
+	}
+	if !strings.Contains(joined, "auto atom for appdev") {
+		t.Errorf("scoped: expected render for appdev, got %q", joined)
+	}
+	if strings.Contains(joined, "auto atom for webdev") || strings.Contains(joined, "auto atom for workerdev") {
+		t.Errorf("scoped: must not render for out-of-scope services; got %q", joined)
+	}
+}
+
+// TestSynthesize_WorkSessionScopeFilter_ServiceAgnosticUnaffected pins
+// that atoms WITHOUT per-service axes (service-agnostic) keep firing
+// once per envelope regardless of work session scope — they describe
+// project-wide concepts, not per-service ones.
+func TestSynthesize_WorkSessionScopeFilter_ServiceAgnosticUnaffected(t *testing.T) {
+	t.Parallel()
+
+	corpus := []KnowledgeAtom{
+		{
+			ID:   "project-wide",
+			Axes: AxisVector{Phases: []Phase{PhaseDevelopActive}},
+			Body: "global atom",
+		},
+	}
+	env := StateEnvelope{
+		Phase: PhaseDevelopActive,
+		Services: []ServiceSnapshot{
+			{Hostname: "appdev", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: true, CloseDeployMode: topology.CloseModeAuto},
+		},
+		WorkSession: &WorkSessionSummary{Intent: "x", Services: []string{"appdev"}},
+	}
+	got, err := SynthesizeBodies(env, corpus)
+	if err != nil {
+		t.Fatalf("synthesize: %v", err)
+	}
+	if strings.Count(strings.Join(got, "\n"), "global atom") != 1 {
+		t.Errorf("service-agnostic atom: want 1 render, got %d", strings.Count(strings.Join(got, "\n"), "global atom"))
+	}
+}
+
 func TestSynthesize_ServiceScopedAxesRequireSameService(t *testing.T) {
 	t.Parallel()
 

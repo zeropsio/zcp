@@ -915,6 +915,45 @@ func developMultiServiceScenarios() []matrixScenario {
 				},
 			},
 		},
+		{
+			// F9 Lever B (audit-prerelease-internal-testing-2026-04-29):
+			// scope=[1 host] in a 4-service project. Pre-fix synthesizer
+			// matched per-service atoms against ALL 4 services (3 dev
+			// runtimes + 1 managed) regardless of work-session scope.
+			// Post-fix it narrows to scope hostnames; out-of-scope dev
+			// runtimes contribute zero per-service axis matches.
+			Section:     sec,
+			Name:        "10.3 four runtimes scope=1 (Lever B narrow)",
+			Description: "Project has 3 dev runtimes + 1 managed; scope is just appdev. Per-service atoms must fire only for appdev.",
+			Envelope: StateEnvelope{
+				Phase: PhaseDevelopActive, Environment: EnvContainer,
+				Services: []ServiceSnapshot{
+					{Hostname: "appdev", TypeVersion: "nodejs@22",
+						RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev,
+						Bootstrapped: true, Deployed: true,
+						CloseDeployMode: topology.CloseModeAuto},
+					{Hostname: "apidev", TypeVersion: "go@1.23",
+						RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev,
+						Bootstrapped: true, Deployed: true,
+						CloseDeployMode: topology.CloseModeAuto},
+					{Hostname: "webdev", TypeVersion: "php-nginx@8.4",
+						RuntimeClass: topology.RuntimeImplicitWeb, Mode: topology.ModeDev,
+						Bootstrapped: true, Deployed: true,
+						CloseDeployMode: topology.CloseModeAuto},
+					{Hostname: "db", TypeVersion: "postgresql@16",
+						RuntimeClass: topology.RuntimeManaged},
+				},
+				WorkSession: &WorkSessionSummary{
+					Intent: "fix login appdev", Services: []string{"appdev"}, CreatedAt: now,
+					Deploys: map[string][]AttemptInfo{
+						"appdev": {{At: now, Success: true, Iteration: 1}},
+					},
+					Verifies: map[string][]AttemptInfo{
+						"appdev": {{At: now, Success: true, Iteration: 1}},
+					},
+				},
+			},
+		},
 	}
 }
 
