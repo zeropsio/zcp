@@ -425,8 +425,18 @@ func handleRecordFragment(sess *Session, in RecipeInput, r RecipeResult) RecipeR
 	// implicit OK=false instead so the agent's record-fragment call clearly
 	// fails and it knows to re-author. The refusal message text matches the
 	// Notice prose in §8.1's table (R-id named, spec section cited).
-	if violation := checkSlotShape(in.FragmentID, in.Fragment); violation != "" {
-		r.Error = "record-fragment: " + violation
+	if violations := checkSlotShape(in.FragmentID, in.Fragment); len(violations) > 0 {
+		// Run-17 §10 — aggregate refusal. KB and CLAUDE.md surfaces
+		// can carry multiple offenders per body; surfacing them all in
+		// one round-trip cuts the run-16 CLAUDE.md churn (8 successive
+		// single-violation refusals) to one re-author cycle.
+		if len(violations) == 1 {
+			r.Error = "record-fragment: " + violations[0]
+		} else {
+			r.Error = fmt.Sprintf("record-fragment: %d offenders\n  - %s",
+				len(violations),
+				strings.Join(violations, "\n  - "))
+		}
 		return r
 	}
 	// Plan-services-aware claude-md check — extends checkClaudeMD with

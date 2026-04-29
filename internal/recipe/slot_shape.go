@@ -7,41 +7,56 @@ import (
 )
 
 // checkSlotShape enforces per-fragment-id structural constraints at
-// record-fragment time (run-16 §8.1). Returns "" when the fragment body
-// passes; returns a non-empty refusal message naming the offending shape
-// when the body violates the slot's contract.
+// record-fragment time (run-16 §8.1). Returns an empty slice when the
+// fragment body passes; returns one or more refusal messages when the
+// body violates the slot's contract. Run-17 §10 — KB and CLAUDE.md
+// surfaces aggregate every offender in a single scan so the agent
+// re-authors against the full list in one round-trip (R-17-C10:
+// run-16 evidence showed scaffold-api hitting eight successive
+// CLAUDE.md refusals naming one hostname each).
 //
-// Why record-time refusal beats finalize-validator refusal: same-context
-// recovery. The agent that just wrote the fragment is still in the
-// conversation that knows why it wrote what it wrote — a refusal at
-// record time gives the agent a specific, mechanical reshape instruction
-// (e.g. "split this multi-heading IG into per-slot integration-guide/1,
-// integration-guide/2 fragments"). A refusal at finalize is cross-phase
-// and the agent has to re-load context.
+// Why record-time refusal beats finalize-validator refusal: same-
+// context recovery. The agent that just wrote the fragment is still
+// in the conversation that knows why it wrote what it wrote — a
+// refusal at record time gives the agent a specific, mechanical
+// reshape instruction (e.g. "split this multi-heading IG into per-
+// slot integration-guide/1, integration-guide/2 fragments"). A
+// refusal at finalize is cross-phase and the agent has to re-load
+// context.
 //
 // Legacy fragment IDs (back-compat per §6.5) — `codebase/<h>/integration-guide`
 // without the `/<n>` slot suffix, `codebase/<h>/claude-md/{service-facts,notes}`
-// sub-slots — are NOT subject to the new constraints; they fall through.
-func checkSlotShape(fragmentID, body string) string {
+// sub-slots — are NOT subject to the new constraints; they fall
+// through to an empty slice.
+func checkSlotShape(fragmentID, body string) []string {
 	switch {
 	case fragmentID == fragmentIDRoot:
-		return checkRootIntro(body)
+		return single(checkRootIntro(body))
 	case envIntroRe.MatchString(fragmentID):
-		return checkEnvIntro(body)
+		return single(checkEnvIntro(body))
 	case envImportCommentsRe.MatchString(fragmentID):
-		return checkEnvImportComments(body)
+		return single(checkEnvImportComments(body))
 	case codebaseIntroRe.MatchString(fragmentID):
-		return checkCodebaseIntro(body)
+		return single(checkCodebaseIntro(body))
 	case slottedIGRe.MatchString(fragmentID):
-		return checkSlottedIG(body)
+		return single(checkSlottedIG(body))
 	case codebaseKBRe.MatchString(fragmentID):
-		return checkCodebaseKB(body)
+		return checkCodebaseKBAll(body)
 	case zeropsYamlCommentsRe.MatchString(fragmentID):
-		return checkZeropsYamlComments(body)
+		return single(checkZeropsYamlComments(body))
 	case singleSlotClaudeMDRe.MatchString(fragmentID):
-		return checkClaudeMD(body)
+		return checkClaudeMDAll(body)
 	}
-	return ""
+	return nil
+}
+
+// single wraps a possibly-empty single-violation string into the
+// []string contract that checkSlotShape returns.
+func single(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return []string{s}
 }
 
 var (
@@ -142,44 +157,6 @@ func checkSlottedIG(body string) string {
 	return ""
 }
 
-func checkCodebaseKB(body string) string {
-	bulletCount := 0
-	for line := range strings.SplitSeq(body, "\n") {
-		trimmed := strings.TrimLeft(line, " \t")
-		if !strings.HasPrefix(trimmed, "- ") {
-			continue
-		}
-		bulletCount++
-		// Each `- ` bullet must start with `**Topic** —` (em-dash, U+2014)
-		// or `--` ASCII fallback. Run-15 R-15-6 evidence shows agents
-		// occasionally drop the topic-name and write free prose; refusing
-		// at record-time forces the structured shape.
-		rest := strings.TrimPrefix(trimmed, "- ")
-		if !strings.HasPrefix(rest, "**") {
-			return "codebase/<h>/knowledge-base bullets must follow `- **Topic** — 2-4 sentences` shape (no leading `**` found). See spec §Surface 5."
-		}
-		// Run-17 §7 — symptom-first stem heuristic. The text between the
-		// leading `**...**` should carry at least one of: HTTP status
-		// code, quoted error string, failure verb, or observable wrong-
-		// state phrase. Author-claim stems (recipe directives without a
-		// porter-searchable signal) are refused with a redirect to the
-		// reference atom.
-		m := kbStemBoldRE.FindStringSubmatch(rest)
-		if len(m) >= 2 {
-			stem := m[1]
-			if !kbStemMatchesSymptomFirst(stem) {
-				return fmt.Sprintf(
-					"codebase/<h>/knowledge-base stem `%s` is author-claim shape; KB stems are symptom-first or directive-tightly-mapped-to-observable-error. Reshape: name the HTTP status code, quoted error string, failure verb, or observable wrong-state phrase the porter would search for. See `briefs/refinement/reference_kb_shapes.md`.",
-					stem)
-			}
-		}
-	}
-	if bulletCount > 8 {
-		return fmt.Sprintf("codebase/<h>/knowledge-base ≤ 8 bullets; got %d. See spec §Surface 5.", bulletCount)
-	}
-	return ""
-}
-
 // kbStemMatchesSymptomFirst returns true when the stem text between
 // the leading `**...**` carries a porter-searchable signal. Stem-only
 // check per implementation guide §7 Option (A) — the heuristic ORs
@@ -193,24 +170,54 @@ func kbStemMatchesSymptomFirst(stem string) bool {
 		kbStemObservableRE.MatchString(stem)
 }
 
-func checkZeropsYamlComments(body string) string {
-	lines := strings.Count(body, "\n")
-	if !strings.HasSuffix(body, "\n") && body != "" {
-		lines++
+// checkCodebaseKBAll walks every bullet collecting refusals; returns
+// the full list so the agent can re-author against every offender in
+// one round-trip. Run-17 §10. Bullet-shape and stem-shape failures
+// are collected per bullet; the cap-violation (over 8 bullets)
+// appends after the per-bullet pass so the agent sees both surface
+// failures and the cap blocker in one response.
+func checkCodebaseKBAll(body string) []string {
+	var out []string
+	bulletCount := 0
+	for line := range strings.SplitSeq(body, "\n") {
+		trimmed := strings.TrimLeft(line, " \t")
+		if !strings.HasPrefix(trimmed, "- ") {
+			continue
+		}
+		bulletCount++
+		rest := strings.TrimPrefix(trimmed, "- ")
+		if !strings.HasPrefix(rest, "**") {
+			out = append(out,
+				"codebase/<h>/knowledge-base bullets must follow `- **Topic** — 2-4 sentences` shape (no leading `**` found). See spec §Surface 5.")
+			continue
+		}
+		m := kbStemBoldRE.FindStringSubmatch(rest)
+		if len(m) >= 2 {
+			stem := m[1]
+			if !kbStemMatchesSymptomFirst(stem) {
+				out = append(out, fmt.Sprintf(
+					"codebase/<h>/knowledge-base stem `%s` is author-claim shape; KB stems are symptom-first or directive-tightly-mapped-to-observable-error. Reshape: name the HTTP status code, quoted error string, failure verb, or observable wrong-state phrase the porter would search for. See `briefs/refinement/reference_kb_shapes.md`.",
+					stem))
+			}
+		}
 	}
-	if lines > 6 {
-		return fmt.Sprintf("codebase/<h>/zerops-yaml-comments/<block> ≤ 6 lines; got %d. See spec §Surface 7.", lines)
+	if bulletCount > 8 {
+		out = append(out, fmt.Sprintf("codebase/<h>/knowledge-base ≤ 8 bullets; got %d. See spec §Surface 5.", bulletCount))
 	}
-	return ""
+	return out
 }
 
-func checkClaudeMD(body string) string {
-	// R-15-4 closure — Zerops-flavored content must NOT appear in CLAUDE.md.
-	// Surface 6 is the porter's `claude /init` codebase guide; Zerops platform
-	// content (managed-service hostnames, `zsc`/`zerops_*`/`zcp`/`zcli` tool
-	// references, env-var aliases) belongs in IG / KB / zerops.yaml comments.
+// checkClaudeMDAll walks the body collecting every Zerops-content
+// leak and the cap/H2-shape violations in one pass. Run-17 §10 —
+// run-16 scaffold-api hit eight successive single-violation refusals
+// (one per managed-service hostname) before the agent gave up; this
+// aggregator surfaces all of them together so the agent re-authors
+// once.
+func checkClaudeMDAll(body string) []string {
+	var out []string
 	if zeropsHeadingRe.MatchString(body) {
-		return "codebase/<h>/claude-md must not contain `## Zerops` headings (R-15-4); Zerops platform content belongs in IG/KB/zerops.yaml comments per spec §Surface 6."
+		out = append(out,
+			"codebase/<h>/claude-md must not contain `## Zerops` headings (R-15-4); Zerops platform content belongs in IG/KB/zerops.yaml comments per spec §Surface 6.")
 	}
 	for _, hit := range []struct {
 		re    *regexp.Regexp
@@ -222,34 +229,45 @@ func checkClaudeMD(body string) string {
 		{zcliRe, "zcli"},
 	} {
 		if hit.re.MatchString(body) {
-			return fmt.Sprintf("codebase/<h>/claude-md must not contain `%s` tool references (R-15-4); CLAUDE.md is a Zerops-free codebase guide per spec §Surface 6.", hit.token)
+			out = append(out, fmt.Sprintf(
+				"codebase/<h>/claude-md must not contain `%s` tool references (R-15-4); CLAUDE.md is a Zerops-free codebase guide per spec §Surface 6.",
+				hit.token))
 		}
 	}
-	// 80-line cap.
 	lines := strings.Count(body, "\n")
 	if !strings.HasSuffix(body, "\n") && body != "" {
 		lines++
 	}
 	if lines > 80 {
-		return fmt.Sprintf("codebase/<h>/claude-md ≤ 80 lines; got %d. See spec §Surface 6.", lines)
+		out = append(out, fmt.Sprintf("codebase/<h>/claude-md ≤ 80 lines; got %d. See spec §Surface 6.", lines))
 	}
-	// Body must carry exactly the 3-section /init shape (project overview
-	// implicit from the H1 + intro; ## Build & run; ## Architecture; one
-	// optional extra ## section). The H2 count check is permissive — 2-4
-	// H2 sections accepted to allow framework variation.
 	h2 := headingH2Re.FindAllStringIndex(body, -1)
 	if len(h2) < 2 || len(h2) > 4 {
-		return fmt.Sprintf("codebase/<h>/claude-md must have 2-4 `## ` sections (Build & run, Architecture, optional extras); got %d. See spec §Surface 6.", len(h2))
+		out = append(out, fmt.Sprintf(
+			"codebase/<h>/claude-md must have 2-4 `## ` sections (Build & run, Architecture, optional extras); got %d. See spec §Surface 6.",
+			len(h2)))
+	}
+	return out
+}
+
+func checkZeropsYamlComments(body string) string {
+	lines := strings.Count(body, "\n")
+	if !strings.HasSuffix(body, "\n") && body != "" {
+		lines++
+	}
+	if lines > 6 {
+		return fmt.Sprintf("codebase/<h>/zerops-yaml-comments/<block> ≤ 6 lines; got %d. See spec §Surface 7.", lines)
 	}
 	return ""
 }
 
-// claudeMDFragmentRefusalForHostname extends checkClaudeMD with a
+// claudeMDFragmentRefusalForHostname extends checkClaudeMDAll with a
 // plan-time hostname check: the handler walks plan.Services and calls
-// this once per declared hostname. Static-token coverage in checkClaudeMD
-// catches `zsc` / `zerops_*` / `zcp` / `zcli` / `## Zerops`; the per-host
-// loop catches managed-service hostname leakage like `db`, `cache`,
-// `search`, `meilisearch`, etc. that the static list can't enumerate.
+// this once per declared hostname. Static-token coverage in
+// checkClaudeMDAll catches `zsc` / `zerops_*` / `zcp` / `zcli` /
+// `## Zerops`; the per-host loop catches managed-service hostname
+// leakage like `db`, `cache`, `search`, `meilisearch`, etc. that the
+// static list can't enumerate.
 func claudeMDFragmentRefusalForHostname(body, hostname string) string {
 	if hostname == "" {
 		return ""
