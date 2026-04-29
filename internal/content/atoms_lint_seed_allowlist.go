@@ -33,15 +33,16 @@ var axisLAllowlist = map[string]string{}
 var axisKAllowlist = map[string]string{
 	// Mode definitions — stage-pair / SSHFS negation IS the model
 	// (signal #1 negation tied to mode/action).
-	"bootstrap-mode-prompt.md::- **dev** — single mutable dev container, SSHFS-mountable, no stage pair.": "spec §11.5 axis-K signal-#1: mode definition; `no stage pair` IS the dev-mode contract",
-	"bootstrap-mode-prompt.md::no SSHFS mutation lifecycle.":                                              "spec §11.5 axis-K signal-#1: simple-mode definition; `no SSHFS` IS the simple-mode contract",
-	"develop-close-mode-auto-dev.md::Dev mode has no stage pair: deploy the single runtime container,":    "spec §11.5 axis-K signal-#1: dev-mode operational contract",
+	"bootstrap-mode-prompt.md::- **dev** — single mutable dev container, SSHFS-mountable, no stage pair.":                                                               "spec §11.5 axis-K signal-#1: mode definition; `no stage pair` IS the dev-mode contract",
+	"bootstrap-mode-prompt.md::no SSHFS mutation lifecycle.":                                                                                                            "spec §11.5 axis-K signal-#1: simple-mode definition; `no SSHFS` IS the simple-mode contract",
+	"develop-close-mode-auto-dev.md::Dev mode has no stage pair: deploy the single runtime container, start the dev server, verify. Run for each in-scope dev runtime:": "spec §11.5 axis-K signal-#1: dev-mode operational contract",
 
 	// Local-mode SSHFS negation — signal #2 cross-env contrast tied to
 	// a positive operational claim (committed-tree builds vs SSHFS).
-	"bootstrap-provision-local.md::**No SSHFS** — `zerops_mount` is unavailable in local mode; files live":       "spec §11.5 axis-K signal-#1+#2: local-mode tool-availability guardrail",
-	"develop-close-mode-auto-local.md::Local mode builds from your committed tree — no SSHFS, no dev container.": "spec §11.5 axis-K signal-#2: cross-env contrast prevents SSHFS-mode reflex",
-	"develop-local-workflow.md::ready via `zerops_deploy`. There is no SSHFS mount in local mode — the":          "spec §11.5 axis-K signal-#2: local-mode flow framing",
+	"bootstrap-provision-local.md::**No SSHFS** — `zerops_mount` is unavailable in local mode; files live":                                                                                                                                                                                                                                           "spec §11.5 axis-K signal-#1+#2: local-mode tool-availability guardrail",
+	"develop-close-mode-auto-local.md::Local mode builds from your committed tree — no SSHFS, no dev container. Close through the deploy cadence in `develop-change-drives-deploy`:":                                                                                                                                                                 "spec §11.5 axis-K signal-#2: cross-env contrast prevents SSHFS-mode reflex",
+	"develop-close-mode-auto-deploy-local.md::`zerops_deploy` deploys from your working directory into the linked Zerops stage. `zerops.yaml` placement is covered by `develop-platform-rules-common`. No sourceService: local env deploys whatever is in CWD (or the path passed as `workingDir`) — there's no dev container to cross-deploy from.": "spec §11.5 axis-K signal-#1: local-env deploy-source guardrail; `no dev container` IS the local-env contract",
+	"develop-local-workflow.md::ready via `zerops_deploy`. There is no SSHFS mount in local mode — the":                                                                                                                                                                                                                                              "spec §11.5 axis-K signal-#2: local-mode flow framing",
 
 	// Tool-selection guardrails — signal #3 (`Do NOT use X`,
 	// `container-only`, `local-only`).

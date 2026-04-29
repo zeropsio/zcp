@@ -4,6 +4,7 @@ priority: 2
 phases: [develop-active]
 deployStates: [deployed]
 closeDeployModes: [unset]
+multiService: aggregate
 title: "Pick an ongoing close-mode"
 ---
 
@@ -15,8 +16,10 @@ The first deploy landed and verified. Before iterating, confirm how the develop 
 - `git-push` — close commits + pushes to a configured git remote. Zerops or your CI picks the push up and builds. Requires `git-push-setup` first.
 - `manual` — **you** orchestrate close. ZCP yields; your slash commands / hooks / external loop own the deploy/verify/close decisions.
 
+Pick a close-mode per service:
+
 ```
-zerops_workflow action="close-mode" closeMode={"{hostname}":"auto"}
+{services-list:zerops_workflow action="close-mode" closeMode={"{hostname}":"auto"}}
 ```
 
 Replace `auto` with `git-push` or `manual` to match your workflow. Switching to `git-push` returns chained guidance pointing at `action="git-push-setup"` to provision GIT_TOKEN / .netrc / remote URL. The build integration (webhook / actions) is independent — wire it via `action="build-integration"` whenever git-push capability lands.

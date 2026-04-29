@@ -5,6 +5,7 @@ phases: [develop-active]
 closeDeployModes: [git-push]
 buildIntegrations: [webhook, actions]
 deployStates: [deployed]
+multiService: aggregate
 title: "Observe an async build after a git push"
 ---
 With `build-integration=webhook` or `build-integration=actions`, `zerops_deploy strategy=git-push` returns as soon as the push transmits — the build runs separately and asynchronously. You observe it via `zerops_events`, then bridge the result back into the local develop session with `record-deploy`.
@@ -12,10 +13,10 @@ With `build-integration=webhook` or `build-integration=actions`, `zerops_deploy 
 ## Watch the appVersion
 
 ```
-zerops_events serviceHostname="{hostname}"
+{services-list:zerops_events serviceHostname="{hostname}"}
 ```
 
-A new push triggers a build appVersion. Look for:
+A new push triggers a build appVersion per service. Look for:
 
 | `Status` | Meaning |
 |---|---|
@@ -27,13 +28,13 @@ The events tool is an envelope-aware lookup — pass `since=<duration>` to limit
 
 ## Bridge the deploy back
 
-Once `Status=ACTIVE`:
+Once `Status=ACTIVE`, run record-deploy per service:
 
 ```
-zerops_workflow action="record-deploy" targetService="{hostname}"
+{services-list:zerops_workflow action="record-deploy" targetService="{hostname}"}
 ```
 
-This records the deploy so the next envelope render sees the service as deployed. From here the develop atoms gated on `deployStates: [deployed]` start firing, and a `zerops_verify` confirms the new code is healthy.
+This records each deploy so the next envelope render sees the service as deployed. From here the develop atoms gated on `deployStates: [deployed]` start firing, and a `zerops_verify` confirms the new code is healthy.
 
 ## When the build doesn't fire
 

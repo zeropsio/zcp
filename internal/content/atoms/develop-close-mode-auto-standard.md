@@ -6,27 +6,22 @@ deployStates: [deployed]
 modes: [standard]
 closeDeployModes: [auto]
 environments: [container]
+multiService: aggregate
 title: "Close task — close-mode=auto, standard mode"
 references-atoms: [develop-auto-close-semantics, develop-dynamic-runtime-start-container]
 ---
 
 ### Closing the task
 
-Deploy dev first, start the dev server, verify, then promote to stage:
+Deploy dev first, start the dev server, verify, then promote to stage. Run per dev/stage pair in scope:
 
 ```
-zerops_deploy targetService="{hostname}" setup="dev"
+{services-list:zerops_deploy targetService="{hostname}" setup="dev"
 zerops_dev_server action=start hostname="{hostname}" command="{start-command}" port={port} healthPath="{path}"
 zerops_verify serviceHostname="{hostname}"
 
 zerops_deploy sourceService="{hostname}" targetService="{stage-hostname}" setup="prod"
-zerops_verify serviceHostname="{stage-hostname}"
+zerops_verify serviceHostname="{stage-hostname}"}
 ```
 
-Cross-deploy packages the dev tree into stage with no second
-build; stage has a real `run.start` + `healthCheck`, so the
-platform auto-starts it (no `zerops_dev_server` on the stage
-side). See `develop-auto-close-semantics` for standard-pair close
-criteria. If the dev server is already running after a code-only
-change, run `action=status` first; if `running: true`, skip
-`action=start`.
+Cross-deploy packages the dev tree into stage with no second build; stage has a real `run.start` + `healthCheck`, so it auto-starts (no `zerops_dev_server` on the stage side). See `develop-auto-close-semantics` for standard-pair close criteria. If the dev server is already running after a code-only change, run `action=status` first; if `running: true`, skip `action=start`.

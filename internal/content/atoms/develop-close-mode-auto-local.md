@@ -6,18 +6,17 @@ deployStates: [deployed]
 modes: [dev, stage]
 closeDeployModes: [auto]
 environments: [local]
+multiService: aggregate
 title: "Close task — close-mode=auto"
 ---
 
 ### Closing the task
 
-Local mode builds from your committed tree — no SSHFS, no dev container.
-Close through the deploy cadence in `develop-change-drives-deploy`:
+Local mode builds from your committed tree — no SSHFS, no dev container. Close through the deploy cadence in `develop-change-drives-deploy`:
 
 ```
-zerops_deploy targetService="{hostname}"
-zerops_verify serviceHostname="{hostname}"
+{services-list:zerops_deploy targetService="{hostname}"
+zerops_verify serviceHostname="{hostname}"}
 ```
 
-For local+standard, `{hostname}` is the stage service — there is no separate
-dev container to cross-deploy from, so a single deploy+verify covers the close.
+For local+standard the targeted hostname is the stage service — there is no separate dev container to cross-deploy from, so a single deploy+verify per service covers the close.

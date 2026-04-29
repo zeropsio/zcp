@@ -4,6 +4,7 @@ priority: 3
 phases: [develop-active]
 closeDeployModes: [auto]
 deployStates: [deployed]
+multiService: aggregate
 title: "Close = direct deploy via zerops_deploy"
 ---
 This pair is on `closeDeployMode=auto`. The develop close action runs `zerops_deploy` directly from ZCP — fast, synchronous, and the canonical default for tight iteration cycles.
@@ -23,7 +24,13 @@ The mechanics underneath:
 
 `auto` is great for "make a change, see it live, repeat." If the workflow grows — multiple contributors landing changes, CI pipelines that should run before deploy, release branches — switch:
 
-- `git-push` if pushing to a git remote should trigger the build (Zerops webhook or GitHub Actions). Use `action=close-mode closeMode={"{hostname}":"git-push"}`, then `action=git-push-setup` for the capability.
+- `git-push` if pushing to a git remote should trigger the build (Zerops webhook or GitHub Actions). After the close-mode flip, `action=git-push-setup` provisions the capability.
 - `manual` if external orchestration owns close decisions. ZCP still records every deploy/verify; auto-close just doesn't fire.
 
-The default stays auto until you explicitly switch via `action=close-mode`.
+Switch close-mode per service:
+
+```
+{services-list:zerops_workflow action="close-mode" closeMode={"{hostname}":"git-push"}}
+```
+
+(Replace `git-push` with `manual` to yield to user orchestration.) The default stays auto until you explicitly switch.

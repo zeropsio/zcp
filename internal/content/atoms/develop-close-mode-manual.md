@@ -3,6 +3,7 @@ id: develop-close-mode-manual
 priority: 2
 phases: [develop-active]
 closeDeployModes: [manual]
+multiService: aggregate
 title: "Manual close-mode = ZCP yields, your tools own the close"
 ---
 This pair is on `closeDeployMode=manual`. ZCP records deploy and verify attempts when you call its tools, but the implicit auto-close at end of work session is gated off — workflows on manual close stay open until you explicitly close them.
@@ -30,12 +31,10 @@ That's the explicit close. The recovery path in `action=status` references it.
 
 ## Switching back
 
-To rejoin the auto-close gate, swap close-mode for the pair:
+To rejoin the auto-close gate, swap close-mode per service:
 
 ```
-zerops_workflow action="close-mode" closeMode={"{hostname}":"auto"}
-# or
-zerops_workflow action="close-mode" closeMode={"{hostname}":"git-push"}
+{services-list:zerops_workflow action="close-mode" closeMode={"{hostname}":"auto"}}
 ```
 
-The close-mode write succeeds standalone — for git-push, follow the chained `nextSteps` pointer at `action=git-push-setup` to provision the capability.
+(Or `"git-push"` instead of `"auto"`.) The close-mode write succeeds standalone — for git-push, follow the chained `nextSteps` pointer at `action=git-push-setup` to provision the capability.

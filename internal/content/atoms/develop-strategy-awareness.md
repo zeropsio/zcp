@@ -3,6 +3,7 @@ id: develop-strategy-awareness
 priority: 5
 phases: [develop-active]
 closeDeployModes: [auto, git-push, manual]
+multiService: aggregate
 title: "Deploy config — current axes + how to change"
 references-fields: [workflow.ServiceSnapshot.CloseDeployMode, workflow.ServiceSnapshot.GitPushState, workflow.ServiceSnapshot.BuildIntegration]
 ---
@@ -27,12 +28,12 @@ rendered Services block shows them as
   Actions workflow YAML). Requires `gitPush=configured`.
 
 Switch any axis without closing the session — three actions, one per
-axis:
+axis. Each takes a per-service argument:
 
 ```
-zerops_workflow action="close-mode"  closeMode={"{hostname}":"auto"}
+{services-list:zerops_workflow action="close-mode"  closeMode={"{hostname}":"auto"}
 zerops_workflow action="git-push-setup" service="{hostname}" remoteUrl="..."
-zerops_workflow action="build-integration" service="{hostname}" integration="webhook"
+zerops_workflow action="build-integration" service="{hostname}" integration="webhook"}
 ```
 
 Mixed config across services in one project is fine — each
