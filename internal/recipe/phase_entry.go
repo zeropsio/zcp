@@ -54,6 +54,13 @@ func gatesForPhase(p Phase) []Gate {
 		base = append(base, CodebaseScaffoldGates()...)
 		base = append(base, CodebaseContentGates()...)
 		return append(base, EnvGates()...)
+	case PhaseRefinement:
+		// Run-17 §9 — refinement runs post-finalize as a single
+		// transactional pass. Per-fragment validators fire inside the
+		// snapshot/restore wrapper at record-fragment time; the phase
+		// has no exit gates beyond the default fact-quality + citation
+		// timestamp checks.
+		return base
 	case PhaseProvision:
 		return base
 	}

@@ -108,8 +108,8 @@ type RecipeInput struct {
 	Action           string      `json:"action"                     jsonschema:"One of: start, enter-phase, complete-phase, build-brief, build-subagent-prompt, verify-subagent-dispatch, record-fact, record-fragment, fill-fact-slot, resolve-chain, emit-yaml, update-plan, stitch-content, status."`
 	Slug             string      `json:"slug,omitempty"             jsonschema:"Recipe slug (e.g. {framework}-showcase). Required for every action."`
 	OutputRoot       string      `json:"outputRoot,omitempty"       jsonschema:"Directory where the recipe tree + facts log live. Required for 'start'."`
-	Phase            string      `json:"phase,omitempty"            jsonschema:"Phase name for enter-phase / complete-phase: research, provision, scaffold, feature, finalize."`
-	BriefKind        string      `json:"briefKind,omitempty"        jsonschema:"For build-brief: scaffold, feature, finalize."`
+	Phase            string      `json:"phase,omitempty"            jsonschema:"Phase name for enter-phase / complete-phase: research, provision, scaffold, feature, codebase-content, env-content, finalize, refinement."`
+	BriefKind        string      `json:"briefKind,omitempty"        jsonschema:"For build-brief: scaffold, feature, codebase-content, claudemd-author, env-content, finalize, refinement."`
 	Codebase         string      `json:"codebase,omitempty"         jsonschema:"For build-brief when kind=scaffold: the codebase hostname to compose for. For complete-phase: when set, scopes codebase-surface validators to that one codebase only — the sub-agent's pre-termination self-validate path. Phase advance only fires when codebase is empty (the main-agent's post-sub-agent-return path)."`
 	Shape            string      `json:"shape,omitempty"            jsonschema:"For emit-yaml: 'workspace' (services-only YAML for zerops_import at provision) or 'deliverable' (full published template for tierIndex, written to disk)."`
 	TierIndex        int         `json:"tierIndex,omitempty"        jsonschema:"For emit-yaml shape=deliverable: tier 0..5. Ignored when shape=workspace."`

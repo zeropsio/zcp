@@ -24,13 +24,17 @@ const (
 	PhaseCodebaseContent Phase = "codebase-content" // run-16 §6.1
 	PhaseEnvContent      Phase = "env-content"      // run-16 §6.1
 	PhaseFinalize        Phase = "finalize"
+	PhaseRefinement      Phase = "refinement" // run-17 §9
 )
 
-// Phases returns the phases in execution order.
+// Phases returns the phases in execution order. Run-17 §9 — refinement
+// runs post-finalize as a single transactional pass over the stitched
+// output; the refinement sub-agent reshapes voice / KB stem / IG
+// fusion against the rubric and reverts on validator violation.
 func Phases() []Phase {
 	return []Phase{
 		PhaseResearch, PhaseProvision, PhaseScaffold, PhaseFeature,
-		PhaseCodebaseContent, PhaseEnvContent, PhaseFinalize,
+		PhaseCodebaseContent, PhaseEnvContent, PhaseFinalize, PhaseRefinement,
 	}
 }
 
@@ -218,8 +222,9 @@ func seedEngineEmittedFacts(sess *Session, kind BriefKind, codebaseHostname stri
 		toEmit = EmittedFactsForCodebase(sess.Plan, cb)
 	case BriefEnvContent:
 		toEmit = EmittedTierDecisionFacts(sess.Plan)
-	case BriefFeature, BriefFinalize:
-		// no engine-emit at these kinds
+	case BriefFeature, BriefFinalize, BriefRefinement:
+		// no engine-emit at these kinds — refinement (run-17 §9) reads
+		// the recorded facts log; engine-emit is research-phase only.
 		return nil
 	}
 
@@ -328,6 +333,16 @@ func (s *Session) BuildBrief(kind BriefKind, cb Codebase) (Brief, error) {
 		return BuildEnvContentBrief(s.Plan, s.Parent, factsSnapshot)
 	case BriefClaudeMDAuthor:
 		return BuildClaudeMDBrief(s.Plan, cb)
+	case BriefRefinement:
+		var factsSnapshot []FactRecord
+		if s.FactsLog != nil {
+			recs, err := s.FactsLog.Read()
+			if err != nil {
+				return Brief{}, fmt.Errorf("read facts log for refinement brief: %w", err)
+			}
+			factsSnapshot = recs
+		}
+		return BuildRefinementBrief(s.Plan, s.Parent, s.OutputRoot, factsSnapshot)
 	default:
 		return Brief{}, fmt.Errorf("unknown brief kind %q", kind)
 	}
