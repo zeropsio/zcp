@@ -185,6 +185,16 @@ linters:
       - linters:
           - goconst
         path: _test\.go
+      # SA5011 in test files — the idiomatic `if x == nil { t.Fatalf(...) }
+      # ; x.Field` pattern relies on t.Fatalf calling runtime.Goexit, which
+      # staticcheck v0.5 (bundled with golangci-lint v2.8) doesn't always
+      # recognize as terminating across subtest closures. Bulk-suppressing
+      # SA5011 in _test.go to keep the test surface readable; production
+      # code still gets the check.
+      - linters:
+          - staticcheck
+        path: _test\.go
+        text: 'SA5011'
       - linters:
           - gosec
         text: 'G101:'
