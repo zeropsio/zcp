@@ -1419,6 +1419,10 @@ func TestDispatch_CompletePhaseScaffold_AutoStitchesCodebases(t *testing.T) {
 // codebase's violation does NOT surface; the named codebase's
 // violation does. Closes the §G actor mismatch — sub-agent self-
 // validates before terminating, sees only its own work.
+//
+// Run-17 §8 — scoped close at codebase-content phase runs the
+// content-surface validators (IG/KB/CLAUDE) since scaffold/feature no
+// longer own content authoring.
 func TestDispatch_CompletePhase_CodebaseScoped_OnlyValidatesNamedCodebase(t *testing.T) {
 	t.Parallel()
 
@@ -1431,7 +1435,7 @@ func TestDispatch_CompletePhase_CodebaseScoped_OnlyValidatesNamedCodebase(t *tes
 	sess, _ := store.Get("synth-showcase")
 	sess.Plan = syntheticShowcasePlan()
 	stageScaffoldYAMLs(t, dir, sess.Plan)
-	sess.Current = PhaseScaffold
+	sess.Current = PhaseCodebaseContent
 
 	// api gets a violating IG (plain ordered list — codebase-ig-plain-
 	// ordered-list fires); app gets a clean IG.

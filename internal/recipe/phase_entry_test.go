@@ -47,28 +47,43 @@ func stageScaffoldYAMLs(t *testing.T, base string, plan *Plan) {
 	}
 }
 
-// TestGatesForPhase_Scaffold_IncludesCodebaseGates — run-12 §G.
-// scaffold + feature complete-phase runs codebase-scoped surface
-// validators (IG/KB/CLAUDE/yaml-comments + source-comment-voice). The
-// right author is in-session and can fix violations via
-// record-fragment mode=replace.
-func TestGatesForPhase_Scaffold_IncludesCodebaseGates(t *testing.T) {
+// TestGatesForPhase_Scaffold_RunsFactQualityGatesOnly — run-17 §8
+// (R-16-1 closure). scaffold complete-phase runs fact-quality gates +
+// source-comment-voice; content-surface validators move to the
+// codebase-content phase where the content sub-agent owns authorship.
+func TestGatesForPhase_Scaffold_RunsFactQualityGatesOnly(t *testing.T) {
 	t.Parallel()
 	gates := gatesForPhase(PhaseScaffold)
-	mustHaveGate(t, gates, "codebase-surface-validators")
+	mustHaveGate(t, gates, "facts-recorded")
+	mustHaveGate(t, gates, "engine-shells-filled")
 	mustHaveGate(t, gates, "source-comment-voice")
+	mustNotHaveGate(t, gates, "codebase-surface-validators")
 	mustNotHaveGate(t, gates, "env-imports-present")
 	mustNotHaveGate(t, gates, "env-surface-validators")
 }
 
-// TestGatesForPhase_Feature_IncludesCodebaseGates — feature phase
-// re-runs codebase gates so feature-authored extensions are also
-// validated.
-func TestGatesForPhase_Feature_IncludesCodebaseGates(t *testing.T) {
+// TestGatesForPhase_Feature_RunsFactQualityGatesOnly — feature phase
+// follows scaffold's fact-quality contract.
+func TestGatesForPhase_Feature_RunsFactQualityGatesOnly(t *testing.T) {
 	t.Parallel()
 	gates := gatesForPhase(PhaseFeature)
-	mustHaveGate(t, gates, "codebase-surface-validators")
+	mustHaveGate(t, gates, "facts-recorded")
 	mustHaveGate(t, gates, "source-comment-voice")
+	mustNotHaveGate(t, gates, "codebase-surface-validators")
+	mustNotHaveGate(t, gates, "env-imports-present")
+}
+
+// TestGatesForPhase_CodebaseContent_RunsContentSurfaceValidators —
+// codebase-content owns content-surface authoring; surface validators
+// run here so the agent that just authored the content sees
+// violations and can correct them via record-fragment mode=replace.
+func TestGatesForPhase_CodebaseContent_RunsContentSurfaceValidators(t *testing.T) {
+	t.Parallel()
+	gates := gatesForPhase(PhaseCodebaseContent)
+	mustHaveGate(t, gates, "codebase-surface-validators")
+	mustHaveGate(t, gates, "cross-surface-duplication")
+	mustHaveGate(t, gates, "cross-recipe-duplication")
+	mustNotHaveGate(t, gates, "facts-recorded")
 	mustNotHaveGate(t, gates, "env-imports-present")
 }
 
