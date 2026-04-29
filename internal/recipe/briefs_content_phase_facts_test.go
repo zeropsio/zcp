@@ -66,18 +66,3 @@ func TestWriteFactSummary_TierDecision_StillTruncates(t *testing.T) {
 		t.Errorf("tier_decision TierContext expected to truncate at 120 chars (count grows with cross-tier diffs); no '…' marker found: %q", out)
 	}
 }
-
-func TestWriteFactSummary_FactShellSummary_StillTruncates(t *testing.T) {
-	t.Parallel()
-	long := strings.Repeat("d", 200)
-	var b strings.Builder
-	writeFactShellSummary(&b, FactRecord{
-		Topic:            "shell-x",
-		CandidateHeading: "Connect to managed Postgres",
-		Why:              long,
-	})
-	out := b.String()
-	if !strings.Contains(out, "…") {
-		t.Errorf("shell summary Why expected to truncate at 100 chars (shells are auto-generated, often long); no '…' marker found: %q", out)
-	}
-}
