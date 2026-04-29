@@ -16,25 +16,16 @@ import (
 // auto-enable is skipped or fails, the agent's manual zerops_subdomain
 // action=enable call remains a valid recovery path.
 //
-// Eligibility is computed from one of two sources:
-//
-//   - **Meta present (bootstrap-managed services)** — meta.Mode is checked
-//     against modeEligibleForSubdomain (dev/stage/simple/standard/
-//     local-stage). Preserves the historical bootstrap path.
-//   - **Meta absent (recipe-authoring services)** — Cluster A.2 / R-13-12 +
-//     run-15 R-14-1 + run-16 R-15-1. Recipe-authoring deploys land via
-//     zerops_import content=<yaml> and never write meta. Eligibility
-//     derives from REST-authoritative service-stack state via two ORed
-//     signals: detail.SubdomainAccess (end-user click-deploy path; set
-//     by the platform when the imported deliverable yaml's
-//     enableSubdomainAccess: true has actually provisioned a subdomain)
-//     OR detail.Ports[].HTTPSupport (recipe-authoring path; workspace
-//     yaml emits enableSubdomainAccess: true but the platform does not
-//     flip detail.SubdomainAccess until first enable, so the deploy-
-//     time port signal is the only intent visible during scaffold).
-//     The R-14-1 propagation race the run-14 fallback ran into is
-//     absorbed by ops.enableSubdomainAccessWithRetry's bounded backoff
-//     on noSubdomainPorts. spec-workflows.md §4.8 + O3.
+// Eligibility is a SINGLE predicate call to serviceEligibleForSubdomain
+// (no upstream branching on meta presence). The predicate consumes the
+// optional ServiceMeta as one input among several, and ALWAYS consults
+// the live HTTP-route signal (detail.SubdomainAccess OR any
+// detail.Ports[].HTTPSupport). This closes the F8 asymmetry: a
+// dev+dynamic service with `zsc noop` start (no HTTP listener, no port
+// flagged HTTPSupport) used to slip past the pre-fix mode-only check,
+// then the platform rejected enable with "Service stack is not http or
+// https". The unified predicate matches the platform contract — no
+// stack-shape mismatch surfaces.
 //
 // Gate is platform-side via the ops.Subdomain call's internal
 // check-before-enable (plans/archive/subdomain-robustness.md §3.2), NOT
@@ -61,11 +52,7 @@ func maybeAutoEnableSubdomain(
 	result *ops.DeployResult,
 ) {
 	meta, _ := workflow.FindServiceMeta(stateDir, targetService)
-	if meta != nil {
-		if !modeEligibleForSubdomain(meta.Mode) {
-			return
-		}
-	} else if !platformEligibleForSubdomain(ctx, client, projectID, targetService) {
+	if !serviceEligibleForSubdomain(ctx, client, meta, projectID, targetService) {
 		return
 	}
 
@@ -89,13 +76,14 @@ func maybeAutoEnableSubdomain(
 		result.Warnings = append(result.Warnings, "subdomain: "+w)
 	}
 
-	// HTTP readiness wait. Skip on already_enabled FOR meta-present services
-	// — they were bootstrapped earlier so the L7 route has been live for a
-	// while; a probe just adds latency. For meta-nil (recipe-authoring) the
-	// already_enabled status reflects the import-time intent flag (yaml had
-	// enableSubdomainAccess: true); this may be the FIRST deploy of the
-	// service and the L7 router may not have finished propagating ports
-	// (R-14-1). Always probe so the next zerops_verify doesn't race.
+	// HTTP readiness wait. Skip on already_enabled when ServiceMeta is
+	// supplied — meta presence proves the service was bootstrapped earlier,
+	// so the L7 route has been live for a while; a probe just adds latency.
+	// Without ServiceMeta (recipe-authoring scaffolds), an already_enabled
+	// status reflects the import-time intent flag (yaml had
+	// enableSubdomainAccess: true) without proving the L7 router has finished
+	// propagating ports (R-14-1). Always probe in that case so the next
+	// zerops_verify doesn't race.
 	skipProbe := subRes.Status == ops.SubdomainStatusAlreadyEnabled && meta != nil
 	if !skipProbe {
 		for _, url := range subRes.SubdomainUrls {
@@ -107,14 +95,16 @@ func maybeAutoEnableSubdomain(
 	}
 }
 
-// modeEligibleForSubdomain is the allow-list that decides whether a
-// deploy should trigger subdomain auto-enable. Production and unknown
+// modeAllowsSubdomain is the topology-side guard: production and unknown
 // modes default to no auto-enable — explicit opt-in via extending the
-// switch when the mode lands. Dev/stage/simple/standard name live Zerops
-// runtimes that serve HTTP; local-stage is the stage half of a local
-// standard pair (the remote runtime that serves traffic). ModeLocalOnly
-// has no remote runtime at all, so there is nothing to auto-enable.
-func modeEligibleForSubdomain(mode topology.Mode) bool {
+// switch when a new mode lands. Dev/stage/simple/standard name live
+// Zerops runtimes that serve HTTP; local-stage is the stage half of a
+// local standard pair (the remote runtime that serves traffic).
+// ModeLocalOnly has no remote runtime at all, so there is nothing to
+// auto-enable. The unified predicate AND-combines this with a live-port
+// HTTP signal — the platform is the source of truth on whether the
+// service stack is HTTP-shaped.
+func modeAllowsSubdomain(mode topology.Mode) bool {
 	switch mode {
 	case topology.PlanModeDev,
 		topology.PlanModeStandard,
@@ -128,35 +118,44 @@ func modeEligibleForSubdomain(mode topology.Mode) bool {
 	return false
 }
 
-// platformEligibleForSubdomain is the meta-nil fallback predicate
-// (Cluster A.2 + run-15 R-14-1, run-16 R-15-1). Recipe-authoring
-// deploys never write ServiceMeta; eligibility derives from REST-
-// authoritative service-stack state via two ORed signals.
+// serviceEligibleForSubdomain is the post-deploy auto-enable predicate.
+// One function, no branching on meta presence at the caller — the
+// optional ServiceMeta is just one of several inputs. Eligibility holds
+// when the platform-side service stack carries an HTTP route AND (when
+// meta is supplied) the topology mode is in the allow-list.
 //
-// Signal 1 — detail.SubdomainAccess: end-user click-deploy path. The
-// imported deliverable yaml carries enableSubdomainAccess: true AND
-// the platform has provisioned a subdomain. Holds for end-user runs
-// where the deliverable has already been imported + activated.
+// Live HTTP signal sources (ORed):
 //
-// Signal 2 — detail.Ports[].HTTPSupport: recipe-authoring path.
-// Workspace yaml emits enableSubdomainAccess: true (yaml_emitter.go:
-// 164/181) but the platform does NOT flip detail.SubdomainAccess
-// from import alone; it stays false until first enable. So on every
-// recipe-authoring first-deploy, signal 1 is false. Falling back to
-// the deploy-time port signal (any port with httpSupport=true means
-// the deployed zerops.yaml intends HTTP) auto-enables correctly for
-// recipe-authoring while staying safe for workers (no httpSupport
-// ports → returns false). The R-14-1 race the run-14 fix targeted
-// is absorbed independently by ops.enableSubdomainAccessWithRetry's
-// bounded backoff on noSubdomainPorts.
+//   - detail.SubdomainAccess — set by the platform when the imported
+//     deliverable yaml's enableSubdomainAccess: true has actually
+//     provisioned a subdomain. End-user click-deploy path.
+//   - detail.Ports[].HTTPSupport — set per port from zerops.yaml
+//     run.ports[].httpSupport. Recipe-authoring path: workspace yaml
+//     emits enableSubdomainAccess: true but the platform doesn't flip
+//     detail.SubdomainAccess until first enable, so the deploy-time
+//     port signal is the only intent visible during scaffold. Workers
+//     with no httpSupport ports stay correctly false.
 //
-// Lookup failures soft-fail (caller treats as not-eligible and skips
-// auto-enable; agent's manual zerops_subdomain stays valid).
-func platformEligibleForSubdomain(
+// F8 closure: a dev+dynamic service whose zerops.yaml `start` is `zsc
+// noop` (deferred dev-server start) has no port flagged HTTPSupport
+// at deploy time. The old mode-only predicate triggered enable, the
+// platform rejected with "Service stack is not http or https", and
+// the agent saw a confusing warning. Now we skip silently — the
+// deferred hint pattern (run zerops_dev_server action=start, then a
+// zerops_subdomain action=enable will succeed) is the agent's normal
+// recovery path.
+//
+// Lookup failures soft-fail (returns false → caller skips auto-enable,
+// agent's manual zerops_subdomain stays valid).
+func serviceEligibleForSubdomain(
 	ctx context.Context,
 	client platform.Client,
+	meta *workflow.ServiceMeta,
 	projectID, targetService string,
 ) bool {
+	if meta != nil && !modeAllowsSubdomain(meta.Mode) {
+		return false
+	}
 	svc, err := ops.LookupService(ctx, client, projectID, targetService)
 	if err != nil || svc == nil {
 		return false

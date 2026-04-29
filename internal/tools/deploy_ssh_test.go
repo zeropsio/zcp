@@ -118,12 +118,18 @@ func TestDeployTool_SSHMode_AutoEnablesSubdomain(t *testing.T) {
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-1", Name: "app",
 				SubdomainAccess: false,
-				Ports:           []platform.Port{{Port: 3000, Protocol: "tcp"}}},
+				Ports:           []platform.Port{{Port: 3000, Protocol: "tcp", HTTPSupport: true}},
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{
+					ServiceStackTypeCategoryName: "USER",
+				}},
 		}).
 		WithService(&platform.ServiceStack{
 			ID: "svc-1", Name: "app",
 			SubdomainAccess: false,
-			Ports:           []platform.Port{{Port: 3000, Protocol: "tcp"}},
+			Ports:           []platform.Port{{Port: 3000, Protocol: "tcp", HTTPSupport: true}},
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{
+				ServiceStackTypeCategoryName: "USER",
+			},
 		}).
 		WithProject(&platform.Project{
 			ID: "proj-1", Name: "test", Status: statusActive,

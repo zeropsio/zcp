@@ -53,6 +53,12 @@ func classifyDeployStatus(status string) topology.FailureClass {
 // deployStrategyGitPush is the deploy tool strategy for git-push deploys.
 const deployStrategyGitPush = "git-push"
 
+// deployStrategyManualLabel is the per-service close-mode value that names
+// a service as user-orchestrated. NOT a zerops_deploy strategy parameter
+// (that's gated separately) — it lives on ServiceMeta.CloseDeployMode and
+// reaches gate error/suggestion text when an agent confuses the two.
+const deployStrategyManualLabel = "manual"
+
 // DeploySSHInput is the input type for zerops_deploy in SSH (container) mode.
 //
 // includeGit is not user-facing: ZCP enables -g on self-deploys (so a

@@ -36,7 +36,12 @@ const (
 )
 
 // autoEnableTestMock builds a mock with the default single-service
-// fixture. subdomainOn controls platform-side SubdomainAccess.
+// fixture. subdomainOn controls platform-side SubdomainAccess. The
+// default port carries HTTPSupport=true so the unified eligibility
+// predicate fires the auto-enable path (representing a runtime whose
+// zerops.yaml has run.ports[].httpSupport: true). Tests that need to
+// pin "no HTTP signal" — e.g. dev+dynamic+zsc-noop or worker shapes
+// — build their own fixture with HTTPSupport omitted.
 func autoEnableTestMock(t *testing.T, subdomainOn bool) *platform.Mock {
 	t.Helper()
 	svc := platform.ServiceStack{
@@ -44,7 +49,10 @@ func autoEnableTestMock(t *testing.T, subdomainOn bool) *platform.Mock {
 		Name:            autoEnableTestHostname,
 		ProjectID:       "proj-1",
 		SubdomainAccess: subdomainOn,
-		Ports:           []platform.Port{{Port: 3000, Protocol: "tcp"}},
+		Ports:           []platform.Port{{Port: 3000, Protocol: "tcp", HTTPSupport: true}},
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{
+			ServiceStackTypeCategoryName: "USER",
+		},
 	}
 	return platform.NewMock().
 		WithServices([]platform.ServiceStack{svc}).
@@ -178,21 +186,38 @@ func TestMaybeAutoEnable_NoMeta_PlanDeclaredIntent_Dispatches(t *testing.T) {
 
 // TestMaybeAutoEnable_NoMeta_PlanNotDeclared_Skips pins the safety side
 // of run-15 R-14-1: a recipe-authoring service whose yaml omitted
-// enableSubdomainAccess (worker, or any role the plan declared without
-// subdomain) MUST NOT trigger auto-enable. The plan's intent is the
-// gate.
+// enableSubdomainAccess AND has no port flagged httpSupport (worker, or
+// any role the plan declared without HTTP intent) MUST NOT trigger
+// auto-enable. The plan's intent is the gate.
 func TestMaybeAutoEnable_NoMeta_PlanNotDeclared_Skips(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir() // no meta written
 
-	// Default fixture has SubdomainAccess=false.
-	mock := autoEnableTestMock(t, false)
+	// Worker-shaped fixture: SubdomainAccess=false, port without HTTPSupport.
+	// Both ORed eligibility signals are off → unified predicate returns false.
+	svc := platform.ServiceStack{
+		ID:              autoEnableTestServiceID,
+		Name:            autoEnableTestHostname,
+		ProjectID:       "proj-1",
+		SubdomainAccess: false,
+		Ports:           []platform.Port{{Port: 4222, Protocol: "tcp"}},
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{
+			ServiceStackTypeCategoryName: "USER",
+		},
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{svc}).
+		WithService(&svc).
+		WithProject(&platform.Project{
+			ID: "proj-1", Name: "test", Status: statusActive,
+			SubdomainHost: "abc1.prg1.zerops.app",
+		})
 	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
 
 	maybeAutoEnableSubdomain(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
 
 	if result.SubdomainAccessEnabled {
-		t.Error("plan-undeclared (SubdomainAccess=false) should skip auto-enable; stayed true")
+		t.Error("plan-undeclared (SubdomainAccess=false, no HTTPSupport port) should skip auto-enable; stayed true")
 	}
 	if mock.CallCounts["EnableSubdomainAccess"] != 0 {
 		t.Errorf("EnableSubdomainAccess calls: want 0 (plan-undeclared), got %d", mock.CallCounts["EnableSubdomainAccess"])
@@ -352,18 +377,23 @@ func TestMaybeAutoEnableSubdomain_StageCrossDeploy_EnablesForStage(t *testing.T)
 	}
 
 	// Stage service (different serviceID), SubdomainAccess=false (platform
-	// truth: stage L7 hasn't been activated).
+	// truth: stage L7 hasn't been activated). HTTPSupport=true on the port
+	// — stage runs the same code as dev, with zerops.yaml's run.ports
+	// httpSupport flag intact, so the unified predicate fires.
 	stageSvc := platform.ServiceStack{
 		ID:              "svc-stage",
 		Name:            "appstage",
 		ProjectID:       "proj-1",
 		SubdomainAccess: false,
-		Ports:           []platform.Port{{Port: 3000, Protocol: "tcp"}},
+		Ports:           []platform.Port{{Port: 3000, Protocol: "tcp", HTTPSupport: true}},
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{
+			ServiceStackTypeCategoryName: "USER",
+		},
 	}
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-dev", Name: "appdev", SubdomainAccess: true,
-				Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}}},
+				Ports: []platform.Port{{Port: 3000, Protocol: "tcp", HTTPSupport: true}}},
 			stageSvc,
 		}).
 		WithService(&stageSvc).
@@ -417,9 +447,10 @@ func (d *countingDoer) Do(*http.Request) (*http.Response, error) {
 	return &http.Response{StatusCode: d.status, Body: io.NopCloser(strings.NewReader(""))}, nil
 }
 
-// platformEligibleMock builds a mock fixture targeting platformEligibleForSubdomain
-// directly with a USER-category (non-system) service. The IsSystem branch is
-// already exercised by TestMaybeAutoEnable_NoMeta_SystemService_Skips.
+// platformEligibleMock builds a mock fixture targeting
+// serviceEligibleForSubdomain (called with meta=nil) directly with a
+// USER-category (non-system) service. The IsSystem branch is already
+// exercised by TestMaybeAutoEnable_NoMeta_SystemService_Skips.
 func platformEligibleMock(subdomainAccess bool, ports []platform.Port) *platform.Mock {
 	svc := platform.ServiceStack{
 		ID:              autoEnableTestServiceID,
@@ -445,7 +476,7 @@ func TestPlatformEligible_DetailSubdomainAccessTrue_Eligible(t *testing.T) {
 	t.Parallel()
 	mock := platformEligibleMock(true, []platform.Port{{Port: 3000, Protocol: "tcp"}})
 
-	if !platformEligibleForSubdomain(context.Background(), mock, "proj-1", "app") {
+	if !serviceEligibleForSubdomain(context.Background(), mock, nil, "proj-1", "app") {
 		t.Error("detail.SubdomainAccess=true should be eligible")
 	}
 }
@@ -464,7 +495,7 @@ func TestPlatformEligible_DetailSubdomainAccessFalse_HTTPSupportTrue_Eligible(t 
 		{Port: 3000, Protocol: "tcp", HTTPSupport: true},
 	})
 
-	if !platformEligibleForSubdomain(context.Background(), mock, "proj-1", "app") {
+	if !serviceEligibleForSubdomain(context.Background(), mock, nil, "proj-1", "app") {
 		t.Error("HTTPSupport=true with SubdomainAccess=false (recipe-authoring path) should be eligible")
 	}
 }
@@ -480,8 +511,119 @@ func TestPlatformEligible_DetailSubdomainAccessFalse_HTTPSupportFalse_NotEligibl
 		{Port: 4222, Protocol: "tcp"},
 	})
 
-	if platformEligibleForSubdomain(context.Background(), mock, "proj-1", "app") {
+	if serviceEligibleForSubdomain(context.Background(), mock, nil, "proj-1", "app") {
 		t.Error("worker path (both signals false) should NOT be eligible")
+	}
+}
+
+// TestMaybeAutoEnableSubdomain_DevModeDynamicZscNoop_SkipsEnable pins the
+// F8 closure (audit-prerelease-internal-testing-2026-04-29). A dev+dynamic
+// service whose zerops.yaml `start` is `zsc noop --silent` (the canonical
+// deferred-start pattern for container env where the agent runs the dev
+// server via zerops_dev_server) has no port flagged HTTPSupport at deploy
+// time — the platform reflects no HTTP route on the service stack. The
+// pre-fix mode-only predicate triggered enable, the platform rejected
+// with "Service stack is not http or https", and the agent saw a
+// confusing warning even though the situation is normal pre-dev-server.
+//
+// Now serviceEligibleForSubdomain consults the live HTTPSupport signal,
+// matches platform reality, and skips silently — no spurious
+// enable attempt, no warning. The agent's normal recovery is to start
+// the dev server (zerops_dev_server action=start) and then either
+// re-deploy (auto-enable will fire once the platform sees an HTTP port)
+// or call zerops_subdomain action=enable manually.
+func TestMaybeAutoEnableSubdomain_DevModeDynamicZscNoop_SkipsEnable(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeMeta(t, dir, topology.PlanModeDev)
+
+	// zsc noop fixture: mode=dev (in allow-list) but no port flagged
+	// HTTPSupport. SubdomainAccess=false (platform never enabled).
+	svc := platform.ServiceStack{
+		ID:              autoEnableTestServiceID,
+		Name:            autoEnableTestHostname,
+		ProjectID:       "proj-1",
+		SubdomainAccess: false,
+		Ports:           []platform.Port{{Port: 3000, Protocol: "tcp"}},
+		ServiceStackTypeInfo: platform.ServiceTypeInfo{
+			ServiceStackTypeCategoryName: "USER",
+		},
+	}
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{svc}).
+		WithService(&svc).
+		WithProject(&platform.Project{
+			ID: "proj-1", Name: "test", Status: statusActive,
+			SubdomainHost: "abc1.prg1.zerops.app",
+		})
+
+	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
+	maybeAutoEnableSubdomain(context.Background(), mock, okHTTP, "proj-1", dir, "app", result)
+
+	if result.SubdomainAccessEnabled {
+		t.Error("dev+dynamic+zsc-noop must skip auto-enable (no HTTP route on stack); got enabled=true")
+	}
+	if mock.CallCounts["EnableSubdomainAccess"] != 0 {
+		t.Errorf("EnableSubdomainAccess calls: want 0 (no HTTP signal), got %d", mock.CallCounts["EnableSubdomainAccess"])
+	}
+	// Crucially: no "Service stack is not http or https" warning leaked
+	// onto the deploy result. The pre-fix path ran ops.Subdomain even
+	// without HTTP signal and surfaced the platform rejection as a
+	// best-effort warning. The unified predicate skips before ops.Subdomain
+	// is touched, so the warning never appears.
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "auto-enable subdomain") {
+			t.Errorf("dev+dynamic+zsc-noop must NOT surface a subdomain warning; got %q", w)
+		}
+	}
+}
+
+// TestServiceEligibleForSubdomain_MetaPresent_ZscNoop pins the predicate
+// itself for the F8 case: meta is present (mode=dev) but the platform-
+// side service stack has no HTTPSupport port and SubdomainAccess=false.
+// Even though dev mode is in the allow-list, the unified predicate
+// AND-combines mode + HTTP signal — neither half alone is sufficient.
+func TestServiceEligibleForSubdomain_MetaPresent_ZscNoop(t *testing.T) {
+	t.Parallel()
+	mock := platformEligibleMock(false, []platform.Port{
+		{Port: 3000, Protocol: "tcp"},
+	})
+	meta := &workflow.ServiceMeta{Hostname: "app", Mode: topology.PlanModeDev}
+
+	if serviceEligibleForSubdomain(context.Background(), mock, meta, "proj-1", "app") {
+		t.Error("dev mode + no HTTP port signal should not be eligible (F8 closure)")
+	}
+}
+
+// TestServiceEligibleForSubdomain_MetaPresent_HTTPSupport pins the
+// happy-path: meta=dev mode, port flagged HTTPSupport=true → eligible.
+// The platform reads run.ports[].httpSupport from zerops.yaml, so a real
+// dev runtime that declared its HTTP port lands here.
+func TestServiceEligibleForSubdomain_MetaPresent_HTTPSupport(t *testing.T) {
+	t.Parallel()
+	mock := platformEligibleMock(false, []platform.Port{
+		{Port: 3000, Protocol: "tcp", HTTPSupport: true},
+	})
+	meta := &workflow.ServiceMeta{Hostname: "app", Mode: topology.PlanModeDev}
+
+	if !serviceEligibleForSubdomain(context.Background(), mock, meta, "proj-1", "app") {
+		t.Error("dev mode + HTTPSupport=true port should be eligible")
+	}
+}
+
+// TestServiceEligibleForSubdomain_MetaPresent_LocalOnly pins the mode
+// guard: even with HTTPSupport on the port, local-only mode must skip
+// (no Zerops runtime to route to). Live signal can't override a topology
+// mode that's structurally incompatible with subdomain hosting.
+func TestServiceEligibleForSubdomain_MetaPresent_LocalOnly(t *testing.T) {
+	t.Parallel()
+	mock := platformEligibleMock(true, []platform.Port{
+		{Port: 3000, Protocol: "tcp", HTTPSupport: true},
+	})
+	meta := &workflow.ServiceMeta{Hostname: "app", Mode: topology.PlanModeLocalOnly}
+
+	if serviceEligibleForSubdomain(context.Background(), mock, meta, "proj-1", "app") {
+		t.Error("local-only mode must skip auto-enable regardless of HTTP signal")
 	}
 }
 
@@ -498,7 +640,7 @@ func TestPlatformEligible_GetServiceError_NotEligible(t *testing.T) {
 		Message: "transient lookup failure",
 	})
 
-	if platformEligibleForSubdomain(context.Background(), mock, "proj-1", "app") {
+	if serviceEligibleForSubdomain(context.Background(), mock, nil, "proj-1", "app") {
 		t.Error("GetService failure should soft-fail to not-eligible")
 	}
 }

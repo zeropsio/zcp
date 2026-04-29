@@ -21,11 +21,11 @@ func validateDeployStrategyParam(strategy string) error {
 	switch strategy {
 	case "", deployStrategyGitPush:
 		return nil
-	case "manual":
+	case deployStrategyManualLabel:
 		return platform.NewPlatformError(
 			platform.ErrInvalidParameter,
-			"strategy \"manual\" is not a zerops_deploy option — it's a ServiceMeta declaration meaning 'ZCP stays out of the deploy loop'",
-			"Use zerops_workflow action=\"close-mode\" closeMode={\"<service>\":\"manual\"} to mark a service as manual; don't call zerops_deploy on it. Valid deploy strategies: omit (default push) or 'git-push'.",
+			fmt.Sprintf("strategy %q is not a zerops_deploy option — it's a ServiceMeta declaration meaning 'ZCP stays out of the deploy loop'", deployStrategyManualLabel),
+			fmt.Sprintf("Use zerops_workflow action=\"close-mode\" closeMode={\"<service>\":%q} to mark a service as %s; don't call zerops_deploy on it. Valid deploy strategies: omit (default push) or 'git-push'.", deployStrategyManualLabel, deployStrategyManualLabel),
 		)
 	default:
 		return platform.NewPlatformError(
