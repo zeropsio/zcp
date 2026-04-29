@@ -53,7 +53,8 @@ func buildSubagentPromptForPhase(plan *Plan, parent *ParentRecipe, in RecipeInpu
 	kind := BriefKind(in.BriefKind)
 	switch kind {
 	case BriefScaffold, BriefFeature, BriefFinalize,
-		BriefCodebaseContent, BriefClaudeMDAuthor, BriefEnvContent:
+		BriefCodebaseContent, BriefClaudeMDAuthor, BriefEnvContent,
+		BriefRefinement:
 		// ok
 	default:
 		return "", fmt.Errorf("buildSubagentPrompt: unknown briefKind %q", in.BriefKind)
@@ -116,7 +117,7 @@ func requiresCodebase(kind BriefKind) bool {
 	switch kind {
 	case BriefScaffold, BriefCodebaseContent, BriefClaudeMDAuthor:
 		return true
-	case BriefFeature, BriefFinalize, BriefEnvContent:
+	case BriefFeature, BriefFinalize, BriefEnvContent, BriefRefinement:
 		return false
 	}
 	return false
@@ -140,6 +141,12 @@ func buildBriefForKind(plan *Plan, parent *ParentRecipe, kind BriefKind, cb Code
 		return BuildClaudeMDBrief(plan, cb)
 	case BriefEnvContent:
 		return BuildEnvContentBrief(plan, parent, facts)
+	case BriefRefinement:
+		// Run-17 §9 — refinement composer wired without runDir; the
+		// dispatcher path passes outputRoot via Session.OutputRoot at
+		// the handler boundary. Static composition (no Session)
+		// passes empty runDir; the brief still carries atoms + rubric.
+		return BuildRefinementBrief(plan, parent, "", facts)
 	default:
 		return Brief{}, fmt.Errorf("unknown briefKind %q", kind)
 	}
@@ -162,6 +169,8 @@ func writePromptHeader(b *strings.Builder, plan *Plan, kind BriefKind, cb Codeba
 			cb.Hostname, plan.Slug)
 	case BriefEnvContent:
 		fmt.Fprintf(b, "You are the env-content sub-agent for the %s recipe.\n", plan.Slug)
+	case BriefRefinement:
+		fmt.Fprintf(b, "You are the refinement sub-agent for the %s recipe.\n", plan.Slug)
 	}
 	b.WriteString("Read the engine brief below verbatim and follow it; the recipe-level\n")
 	b.WriteString("context above and the closing notes below the brief are wrapper notes\n")
@@ -290,6 +299,15 @@ func writePromptCloseFooter(b *strings.Builder, kind BriefKind, codebase string,
 		b.WriteString("    zerops_recipe action=complete-phase phase=env-content\n\n")
 		b.WriteString("to self-validate. Fix violations via `record-fragment\n")
 		b.WriteString("mode=replace`, re-call until ok:true, then terminate.\n")
+	case BriefRefinement:
+		b.WriteString("When you've refined every fragment that meets the 100%-sure\n")
+		b.WriteString("threshold, call\n\n")
+		b.WriteString("    zerops_recipe action=complete-phase phase=refinement\n\n")
+		b.WriteString("to close the run. Each `record-fragment mode=replace` you fire\n")
+		b.WriteString("at this phase is wrapped in a snapshot/restore primitive — if\n")
+		b.WriteString("a post-replace validator surfaces a new violation, the engine\n")
+		b.WriteString("reverts the fragment to its pre-refinement body. Per-fragment\n")
+		b.WriteString("edit cap is 1 attempt; do NOT loop.\n")
 	}
 }
 

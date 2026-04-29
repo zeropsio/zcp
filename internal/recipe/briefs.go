@@ -95,6 +95,7 @@ const (
 	BriefCodebaseContent BriefKind = "codebase-content" // run-16 §6.3
 	BriefClaudeMDAuthor  BriefKind = "claudemd-author"  // run-16 §6.7a
 	BriefEnvContent      BriefKind = "env-content"      // run-16 §6.3
+	BriefRefinement      BriefKind = "refinement"       // run-17 §9
 )
 
 // Run-16 §6.2 — content-phase brief size caps. Per-codebase brief is
