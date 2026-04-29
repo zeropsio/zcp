@@ -107,6 +107,65 @@ func TestHandleLocalGitPush_HappyPath(t *testing.T) {
 	}
 }
 
+// TestHandleLocalGitPush_DoesNotStampDeployed pins C2 closure (audit-
+// prerelease-internal-testing-2026-04-29). The pre-fix path stamped
+// FirstDeployedAt synchronously on git-push success, racing ahead of
+// the actual async build landing. After the fix, push success records
+// an in-flight DeployAttempt (no SucceededAt) and the response carries
+// NextActions guidance pointing the agent at zerops_events +
+// record-deploy. FirstDeployedAt must NOT be stamped at this stage.
+func TestHandleLocalGitPush_DoesNotStampDeployed(t *testing.T) {
+	workDir, _ := gitRepoFixture(t)
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname: "myproject", Mode: topology.PlanModeLocalStage,
+		StageHostname: "apistage", BootstrappedAt: "2026-04-01",
+		CloseDeployMode: topology.CloseModeGitPush,
+		GitPushState:    topology.GitPushConfigured,
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	result, _, err := handleLocalGitPush(
+		context.Background(), nil, "proj-test", auth.Info{Email: "t@t.com", FullName: "test"},
+		DeployLocalInput{
+			TargetService: "myproject",
+			WorkingDir:    workDir,
+			Strategy:      deployStrategyGitPush,
+			Branch:        "main",
+		},
+		stateDir,
+	)
+	if err != nil {
+		t.Fatalf("handleLocalGitPush: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected push success; got: %s", getTextContent(t, result))
+	}
+
+	// FirstDeployedAt must remain empty after a successful git-push —
+	// the actual deploy hasn't landed yet (build is async); only
+	// record-deploy after Status=ACTIVE should stamp.
+	meta, err := workflow.ReadServiceMeta(stateDir, "myproject")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta: %v", err)
+	}
+	if meta == nil {
+		t.Fatal("expected meta to exist")
+	}
+	if meta.FirstDeployedAt != "" {
+		t.Errorf("FirstDeployedAt = %q, want empty (git-push must not auto-stamp; record-deploy is the bridge)", meta.FirstDeployedAt)
+	}
+
+	// Response must carry NextActions naming record-deploy as the bridge.
+	text := getTextContent(t, result)
+	for _, want := range []string{"record-deploy", "zerops_events", "Status=ACTIVE"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("response missing %q in NextActions; got:\n%s", want, text)
+		}
+	}
+}
+
 func TestHandleLocalGitPush_NotAGitRepo_Refuses(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not on PATH")

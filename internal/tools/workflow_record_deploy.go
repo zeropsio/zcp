@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"errors"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
@@ -29,15 +31,26 @@ type recordDeployResult struct {
 }
 
 // handleRecordDeploy bridges deploys that happened outside ZCP (zcli,
-// CI/CD, custom platform calls) to MCP-tracked state by stamping the
-// service meta's FirstDeployedAt. Once stamped, develop atoms gated on
-// `deployStates: [deployed]` start firing for the service in subsequent
-// envelope renders.
+// CI/CD, custom platform calls, or async builds triggered by a prior
+// zerops_deploy strategy="git-push") to MCP-tracked state by stamping
+// the service meta's FirstDeployedAt. After this call the develop
+// envelope reports Deployed=true for the host, develop atoms gated on
+// `deployStates: [never-deployed]` (e.g. develop-record-external-deploy)
+// stop firing, and the Plan moves on from "Deploy" guidance.
 //
 // Workflow-less by design: external deployers happen outside any session
 // life-cycle. Idempotent — re-stamping is a no-op that returns the
 // existing timestamp. Missing meta returns a non-error response noting
 // the service is not yet bootstrapped/adopted (nothing to stamp).
+//
+// Work-session bridge: when a develop session is active for the
+// hostname, record-deploy ALSO appends a synthetic successful
+// DeployAttempt so the per-session Plan dispatch (needsDeploy /
+// EvaluateAutoClose) moves on. Without this, the in-flight push attempt
+// recorded by zerops_deploy strategy="git-push" stays as the LAST
+// attempt and the Plan keeps emitting "Deploy" guidance even after the
+// agent has acked the deploy. Out-of-scope hostnames silently no-op
+// (workflow-less ack of a service outside the current scope).
 //
 // Phase 7 of the deploy-strategy decomposition: on successful stamp
 // (stamped=true), call maybeAutoEnableSubdomain so the L7 route lands
@@ -84,16 +97,37 @@ func handleRecordDeploy(
 		resp.Note = "already stamped — no change"
 	}
 
+	// Work-session bridge: append a synthetic successful DeployAttempt so
+	// the per-session Plan dispatch reflects the ack. RecordDeployAttempt
+	// returns ErrHostnameOutOfScope when the hostname isn't in the current
+	// session's scope — that's a legitimate workflow-less ack of an
+	// out-of-scope deploy; we ignore it. Other errors are best-effort
+	// (record-deploy stays successful even if the work-session write
+	// fails).
+	if firstAt != "" {
+		recordErr := workflow.RecordDeployAttempt(stateDir, input.TargetService, workflow.DeployAttempt{
+			AttemptedAt: time.Now().UTC().Format(time.RFC3339),
+			SucceededAt: time.Now().UTC().Format(time.RFC3339),
+			Strategy:    "record-deploy",
+		})
+		if recordErr != nil && !errors.Is(recordErr, workflow.ErrHostnameOutOfScope) {
+			resp.Warnings = append(resp.Warnings,
+				"record-deploy: meta stamp ok, work-session record-keeping failed: "+recordErr.Error())
+		}
+	}
+
 	// Phase 7: auto-enable subdomain on a fresh stamp (matches the in-tree
 	// deploy paths). maybeAutoEnableSubdomain mutates a *ops.DeployResult,
 	// so build a synthetic and copy fields back. Eligibility, idempotency,
 	// and platform-side check-before-enable all live inside the helper.
+	// Append (not replace) the helper's warnings so any earlier work-
+	// session bridge warning above survives.
 	if stamped && client != nil && httpClient != nil {
 		dr := &ops.DeployResult{}
 		maybeAutoEnableSubdomain(ctx, client, httpClient, projectID, stateDir, input.TargetService, dr)
 		resp.SubdomainAccessEnabled = dr.SubdomainAccessEnabled
 		resp.SubdomainURL = dr.SubdomainURL
-		resp.Warnings = dr.Warnings
+		resp.Warnings = append(resp.Warnings, dr.Warnings...)
 	}
 
 	return jsonResult(resp), resp, nil

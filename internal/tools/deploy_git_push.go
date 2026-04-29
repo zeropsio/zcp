@@ -350,8 +350,23 @@ func handleGitPush(
 		result.Message = fmt.Sprintf("Nothing to push from %s — remote is up to date", hostname)
 	}
 
-	attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
+	// C2 closure (audit-prerelease-internal-testing-2026-04-29): the
+	// pre-fix path stamped attempt.SucceededAt = time.Now() right here,
+	// which RecordDeployAttempt then propagated to FirstDeployedAt via
+	// stampFirstDeployedAt (work_session.go:220). For
+	// BuildIntegration ∈ {webhook, actions} the build was still async at
+	// this point — meta.IsDeployed() flipped true while the actual deploy
+	// hadn't landed yet. Agents observed Deployed=true post-push, ran
+	// zerops_verify against stale state, and retried. Now we record the
+	// in-flight push attempt (no SucceededAt) and require explicit
+	// record-deploy after the agent observes Status=ACTIVE on
+	// zerops_events. The result.NextActions text below names that bridge.
 	_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
+
+	result.NextActions = fmt.Sprintf(
+		"Watch the build via zerops_events filterServices=[%q] until Status=ACTIVE, then ack with zerops_workflow action=\"record-deploy\" targetService=%q. The push transmitted bytes; the platform build runs async and FirstDeployedAt will not stamp until you bridge it.",
+		input.TargetService, input.TargetService,
+	)
 
 	// Container-side trackTriggerMissingWarning parity (deploy-decomp P4
 	// R6). Surfaces the soft warning when the push succeeded but no

@@ -843,15 +843,22 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 			// the dev-half hostname; the stage-half (Mode=stage) does not
 			// match. Without the pair fixture, single-render regressions
 			// could re-introduce the original P1 double-render bug.
-			//
-			// BuildIntegration=webhook + Deployed=true makes this fixture
-			// also pin develop-record-external-deploy (deploy-decomp P7
-			// atom for record-deploy bridge guidance — frontmatter
-			// buildIntegrations: [webhook, actions]).
 			Phase: PhaseDevelopActive, Environment: EnvContainer,
 			Services: []ServiceSnapshot{
 				{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: topology.CloseModeGitPush, GitPushState: topology.GitPushConfigured, BuildIntegration: topology.BuildIntegrationWebhook, Bootstrapped: true, Deployed: true},
 				{Hostname: "appstage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, CloseDeployMode: topology.CloseModeGitPush, GitPushState: topology.GitPushConfigured, BuildIntegration: topology.BuildIntegrationWebhook, Bootstrapped: true, Deployed: true},
+			},
+		}},
+		{"develop-active/git-push/standard/container-never-deployed", StateEnvelope{
+			// BuildIntegration=webhook + Deployed=false fires
+			// develop-record-external-deploy (post-C2 closure: atom carries
+			// `deployStates: [never-deployed]` + `buildIntegrations:
+			// [webhook, actions]` — agent pushed via git-push, build is
+			// async, atom prompts the record-deploy bridge call).
+			Phase: PhaseDevelopActive, Environment: EnvContainer,
+			Services: []ServiceSnapshot{
+				{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: topology.CloseModeGitPush, GitPushState: topology.GitPushConfigured, BuildIntegration: topology.BuildIntegrationWebhook, Bootstrapped: true, Deployed: false},
+				{Hostname: "appstage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, CloseDeployMode: topology.CloseModeGitPush, GitPushState: topology.GitPushConfigured, BuildIntegration: topology.BuildIntegrationWebhook, Bootstrapped: true, Deployed: false},
 			},
 		}},
 		{"develop-active/manual/dev/container", StateEnvelope{

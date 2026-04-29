@@ -1,6 +1,6 @@
 # ZCP Lifecycle Matrix Simulation
 
-Generated: 2026-04-29T23:06:13Z
+Generated: 2026-04-29T23:21:23Z
 Corpus: 80 atoms
 Scenarios: 45
 
@@ -565,7 +565,7 @@ _Full git-push setup with webhook integration._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (17 unique, 17 render-instances, 19638 bytes total):
+**Atoms** (16 unique, 16 render-instances, 18412 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-build-observe`
@@ -580,7 +580,6 @@ _Full git-push setup with webhook integration._
 - `develop-knowledge-pointers`
 - `develop-platform-rules-common`
 - `develop-platform-rules-container`
-- `develop-record-external-deploy`
 - `develop-strategy-awareness`
 - `develop-verify-matrix`
 
@@ -734,7 +733,7 @@ _Full webhook CI._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (17 unique, 17 render-instances, 19638 bytes total):
+**Atoms** (16 unique, 16 render-instances, 18412 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-build-observe`
@@ -749,7 +748,6 @@ _Full webhook CI._
 - `develop-knowledge-pointers`
 - `develop-platform-rules-common`
 - `develop-platform-rules-container`
-- `develop-record-external-deploy`
 - `develop-strategy-awareness`
 - `develop-verify-matrix`
 
@@ -761,7 +759,7 @@ _GitHub Actions CI._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (17 unique, 17 render-instances, 19638 bytes total):
+**Atoms** (16 unique, 16 render-instances, 18412 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-build-observe`
@@ -776,7 +774,6 @@ _GitHub Actions CI._
 - `develop-knowledge-pointers`
 - `develop-platform-rules-common`
 - `develop-platform-rules-container`
-- `develop-record-external-deploy`
 - `develop-strategy-awareness`
 - `develop-verify-matrix`
 
@@ -788,7 +785,7 @@ _Push capability previously broken; recovery atom expected._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (17 unique, 17 render-instances, 19638 bytes total):
+**Atoms** (16 unique, 16 render-instances, 18412 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-build-observe`
@@ -803,7 +800,6 @@ _Push capability previously broken; recovery atom expected._
 - `develop-knowledge-pointers`
 - `develop-platform-rules-common`
 - `develop-platform-rules-container`
-- `develop-record-external-deploy`
 - `develop-strategy-awareness`
 - `develop-verify-matrix`
 

@@ -53,12 +53,23 @@ type DeployResult struct {
 }
 
 // GitPushResult contains the outcome of a git-push deploy operation.
+//
+// NextActions is the post-push guidance the agent must follow before any
+// subsequent zerops_verify / close cadence: git-push transmitted bytes
+// but the build is async, so the deploy hasn't actually landed yet.
+// Agent must watch the async build via zerops_events and explicitly
+// call zerops_workflow action="record-deploy" once Status=ACTIVE so
+// FirstDeployedAt stamps. Without that bridge, ServiceSnapshot.Deployed
+// stays false and verify/close gates won't progress. C2 audit closure
+// (audit-prerelease-internal-testing-2026-04-29) — pre-fix the handler
+// auto-stamped on push, racing the async build.
 type GitPushResult struct {
-	Status    string   `json:"status"`              // "PUSHED" or "NOTHING_TO_PUSH"
-	RemoteURL string   `json:"remoteUrl,omitempty"` // The remote URL used
-	Branch    string   `json:"branch"`              // Branch pushed to
-	Message   string   `json:"message"`             // Human-readable summary
-	Warnings  []string `json:"warnings,omitempty"`  // Non-fatal warnings
+	Status      string   `json:"status"`                // "PUSHED" or "NOTHING_TO_PUSH"
+	RemoteURL   string   `json:"remoteUrl,omitempty"`   // The remote URL used
+	Branch      string   `json:"branch"`                // Branch pushed to
+	Message     string   `json:"message"`               // Human-readable summary
+	Warnings    []string `json:"warnings,omitempty"`    // Non-fatal warnings
+	NextActions string   `json:"nextActions,omitempty"` // Post-push agent guidance
 }
 
 // DeployClass classifies a deploy invocation as self-deploy (source container

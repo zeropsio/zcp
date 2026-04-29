@@ -212,8 +212,21 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 		Message:   message,
 	}
 
-	attempt.SucceededAt = time.Now().UTC().Format(time.RFC3339)
+	// C2 closure (audit-prerelease-internal-testing-2026-04-29): see the
+	// extended rationale comment at the matching site in
+	// internal/tools/deploy_git_push.go. Local git-push has the same
+	// async-build-vs-stamp gap as the container path; auto-stamping
+	// FirstDeployedAt on push success made Deployed=true race ahead of the
+	// actual build. Now we record the in-flight push attempt (no
+	// SucceededAt) and require explicit record-deploy after the agent
+	// observes Status=ACTIVE on zerops_events. The result.NextActions text
+	// below names that bridge.
 	_ = workflow.RecordDeployAttempt(stateDir, hostname, attempt)
+
+	result.NextActions = fmt.Sprintf(
+		"Watch the build via zerops_events filterServices=[%q] until Status=ACTIVE, then ack with zerops_workflow action=\"record-deploy\" targetService=%q. The push transmitted bytes; the platform build runs async and FirstDeployedAt will not stamp until you bridge it.",
+		hostname, hostname,
+	)
 
 	// If the linked service's meta tracks a BuildIntegration (webhook /
 	// actions), the downstream build fires remotely. If it's BuildIntegrationNone,

@@ -1208,6 +1208,64 @@ func TestDeployTool_GitPush_WithGitToken_Succeeds(t *testing.T) {
 	}
 }
 
+// TestDeployTool_GitPush_DoesNotStampDeployed pins C2 closure (audit-
+// prerelease-internal-testing-2026-04-29). Container path: the pre-fix
+// handler stamped FirstDeployedAt synchronously after `git push`
+// returned, which made ServiceSnapshot.Deployed report true while the
+// platform-side build (BuildIntegration={webhook,actions}) was still
+// running async. Agents then verified against stale state. After the
+// fix, push success records an in-flight DeployAttempt (no SucceededAt)
+// without auto-stamping; the response carries NextActions naming
+// zerops_events + record-deploy as the bridge.
+func TestDeployTool_GitPush_DoesNotStampDeployed(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	// Use setupAdoptedService so FirstDeployedAt starts empty (a
+	// previously-deployed setup would have FirstDeployedAt already set
+	// and mask the regression we're guarding against).
+	setupAdoptedService(t, stateDir, "appdev", "")
+	markGitPushConfigured(t, stateDir, "appdev")
+
+	mock := platform.NewMock()
+	ssh := &stubSSHWithCommands{
+		committedOutput: []byte("1"),
+		tokenOutput:     []byte("1"),
+		pushOutput:      []byte("ok"),
+	}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1", Email: "t@t.com", FullName: "T"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t))
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "appdev",
+		"strategy":      "git-push",
+		"remoteUrl":     "https://github.com/example/repo",
+	})
+	if result.IsError {
+		t.Fatalf("expected success on git-push, got error: %s", getTextContent(t, result))
+	}
+
+	meta, err := workflow.ReadServiceMeta(stateDir, "appdev")
+	if err != nil {
+		t.Fatalf("ReadServiceMeta: %v", err)
+	}
+	if meta == nil {
+		t.Fatal("expected meta to exist")
+	}
+	if meta.FirstDeployedAt != "" {
+		t.Errorf("FirstDeployedAt = %q, want empty (git-push must not auto-stamp; record-deploy bridges after Status=ACTIVE)", meta.FirstDeployedAt)
+	}
+
+	text := getTextContent(t, result)
+	for _, want := range []string{"record-deploy", "zerops_events", "Status=ACTIVE"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("response missing %q in NextActions; got:\n%s", want, text)
+		}
+	}
+}
+
 // TestDeployTool_GitPush_NoCommittedCode_Refuses pins the committed-code
 // guard in handleGitPush: git-push requires an actual commit at workingDir
 // so the push has something to transmit. If the working dir isn't a git

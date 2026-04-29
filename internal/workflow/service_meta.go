@@ -69,10 +69,13 @@ func (m *ServiceMeta) IsDeployed() bool {
 }
 
 // RecordExternalDeploy stamps FirstDeployedAt on the meta for the given
-// hostname WITHOUT requiring an active work session. Bridges manual
-// deployers (zcli, CI/CD outside MCP, custom platform calls) to MCP-tracked
-// state — once stamped, ServiceSnapshot.Deployed flips to true and develop
-// atoms gated on `deployStates: [deployed]` start firing for that service.
+// hostname WITHOUT requiring an active work session. Bridges deploys
+// that happen outside the synchronous ZCP push path — git-push (where
+// the platform build is async, post C2 audit closure), CI/CD outside
+// MCP, custom platform calls — to MCP-tracked state. Once stamped,
+// ServiceSnapshot.Deployed flips to true and develop atoms gated on
+// `deployStates: [never-deployed]` (e.g. develop-record-external-deploy)
+// stop firing for that service in subsequent envelope renders.
 //
 // Idempotent: when FirstDeployedAt is already set, returns the existing
 // timestamp without rewriting. Stage hostnames resolve to the dev-keyed
