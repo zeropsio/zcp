@@ -243,6 +243,18 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   see the metadata. Per-line allowlist entries (`atoms_lint_seed_allowlist.go`)
   are reserved for grandfathered or structurally-unavoidable cases; new
   edits prefer markers. Spec: `spec-knowledge-distribution.md §11.5/§11.6/§11.7`.
+- **Recipe-specific findings go in recipes, not atoms or audits** — framework
+  gotchas (Razor hot-reload, EF Core EnsureCreated quirks, Laravel+Vite manifest
+  timing, Next.js cache semantics), library-version pitfalls, framework-specific
+  dev workflows: edit `internal/knowledge/recipes/<slug>.md` directly, then
+  `zcp sync push recipes <slug>` to publish via PR. **NOT atoms** — atoms carry
+  platform mechanics that apply to ANY user of a Zerops service-stack type;
+  framework knowledge in atoms would explode the corpus and lose axis-filter
+  meaning. **NOT audit reports** — those are transient. Recipe markdown is
+  durable knowledge. Whether a `## Gotchas` section is mandatory across all
+  recipes is open: only ~4/36 recipes carry one today (richer/more-mature ones),
+  and the authoring contract doesn't enforce it. Add the section when you have
+  concrete, verified pain points; don't fabricate placeholders.
 - **Service by hostname** — agents/tools speak hostnames; resolve to ID internally.
 - **Lifecycle recovery is via `action="status"`** — `zerops_workflow
   action="status"` is the canonical lifecycle envelope (envelope + plan +

@@ -1,6 +1,6 @@
 # ZCP Lifecycle Matrix Simulation
 
-Generated: 2026-04-29T19:35:07Z
+Generated: 2026-04-29T21:07:14Z
 Corpus: 80 atoms
 Scenarios: 45
 
@@ -978,7 +978,7 @@ _action=git-push-setup synthesizes setup-git-push-container._
 
 **Plan.Primary**: `` → 
 
-**Atoms** (1 unique, 1 render-instances, 1719 bytes total):
+**Atoms** (1 unique, 1 render-instances, 2369 bytes total):
 - `setup-git-push-container`
 
 ## 11.2 strategy-setup local
@@ -989,7 +989,7 @@ _Local-env git-push setup atom._
 
 **Plan.Primary**: `` → 
 
-**Atoms** (1 unique, 1 render-instances, 1623 bytes total):
+**Atoms** (1 unique, 1 render-instances, 1948 bytes total):
 - `setup-git-push-local`
 
 ---
