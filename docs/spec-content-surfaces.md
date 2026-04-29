@@ -40,7 +40,7 @@ Hard caps for every surface. Both reference recipes settle within these caps; ru
 | Apps-repo README intro extract (between markers) | 1–3 sentences ≤ 500 chars | n/a | Apps-repo browser |
 | **Apps-repo Integration Guide** | n/a | **4–5 items per codebase** (incl. engine-emitted IG #1) | Porter bringing own code |
 | **Apps-repo Knowledge Base / Gotchas** | n/a | **5–8 bullets per codebase** | Porter hitting a failure |
-| Apps-repo CLAUDE.md | 50 lines | 3 fixed top sections + 3–5 Notes bullets | AI/human operating the repo |
+| Apps-repo CLAUDE.md | ~30–50 lines (no hard cap) | 2–4 H2 sections, `claude /init`-shape, Zerops-free | AI/human operating the repo |
 | Apps-repo zerops.yaml comments | n/a | one comment block per directive group / per directive — author's choice | Porter editing the deploy config |
 
 These are caps, not targets. Below the cap = clean. Over the cap = padding that signals the agent didn't understand the surface's purpose.
@@ -105,12 +105,12 @@ Footer (related recipes link + Discord)
 
 **Does not belong here (anywhere)**:
 - Ladder structures inside the extract markers (the recipe-page UI renders all of it).
-- Tier-promotion narratives (→ tier `import.yaml` comments where decisions can be explained per service).
+- Tier-promotion narratives — neither reference recipe writes them; cross-tier shifts surface implicitly through the contrast between tiers.
 - Service-by-service rationale (→ tier `import.yaml` comments).
 - Framework quirks (→ per-codebase README / KB).
 - Platform mechanisms (→ `zerops_knowledge` guides; cite, don't duplicate).
 
-**Anti-pattern (run-14)**: 35-line ladder content (Shape at a glance / Who fits / How iteration works / What you give up / When to outgrow / What changes at next tier) wrapped inside the extract markers. The recipe-page UI then renders 35 lines of ladder content as the tier-card description. Both reference recipes wrap a single sentence.
+**Anti-pattern (run-14)**: 35-line ladder content (Shape at a glance / Who fits / How iteration works / What you give up) wrapped inside the extract markers. The recipe-page UI then renders 35 lines of ladder content as the tier-card description. Both reference recipes wrap a single sentence.
 
 **Length**: 7–10 lines total. Body content (if any) caps at 5 additional lines after the closing marker.
 
@@ -128,8 +128,9 @@ Footer (related recipes link + Discord)
 - **Why this service at this tier** (why db is NON_HA on stage, why worker is HA on env 5).
 - **Why this scale** (throughput vs HA rationale for `minContainers: 2`, cost-trade rationale for single replica).
 - **Why this mode** (NON_HA durability trade-off, HA failover cost justification).
-- **Cross-tier promotion context** (what changes when promoting to the next tier).
 - **Tier-specific env-var reasoning** (why `DEV_*` + `STAGE_*` constants exist at project level).
+
+Cross-tier shifts surface implicitly through the contrast between adjacent tier yamls — neither reference recipe writes "promote to tier N when…" sentences in service blocks. Don't.
 
 **Does not belong here**:
 - App-code details, framework quirks, library versions (→ per-codebase zerops.yaml comments or README).
@@ -220,50 +221,54 @@ If the answer is "yes, it surprises you even knowing both" → this is a gotcha.
 
 ### Surface 6 — Per-codebase CLAUDE.md
 
-**Reader**: Someone (human or AI agent) with THIS repo checked out locally, working on the codebase.
+**Reader**: Someone (human or AI agent) with this repo checked out locally, working on the codebase.
 
-**Purpose**: Operational guide for running the dev loop, iterating on the repo, exercising features by hand.
+**Purpose**: Generic codebase operating guide — the same shape `claude /init` would produce. Project overview, build/run/test commands, code architecture. Zero Zerops-specific content; the Zerops integration is documented in IG (Surface 4) / KB (Surface 5) / zerops.yaml comments (Surface 7).
 
-**The test**: *"Is this useful for operating THIS repo specifically — not for deploying it to Zerops, not for porting it to other code?"*
+**The test**: *"Would `claude /init` produce content of this shape for this repo? Is anything Zerops-specific here that belongs in IG / KB / yaml comments instead?"*
 
-**Structure (fixed; both reference recipes converge on this 3-section shape)**:
+**Authoring**: SUB-AGENT-AUTHORED via a dedicated `claudemd-author` peer dispatched in parallel with the codebase-content sub-agent at phase 5. Brief is **strictly Zerops-free** (no platform principles, no env-var aliasing, no managed-service hints, no dev-loop teaching) so that the bleed-through that produced the old run-15 shape (`## Zerops service facts`) cannot recur. The sub-agent reads the codebase (`Read`, `Glob`, `Bash`) and produces `/init`-quality output for any framework — no engine-side framework registry.
+
+**Structure (matches `/init` shape)**:
 
 ```
 # <repo-name>
 
-<1-sentence framing — framework, version, services>
+<1-sentence framing — framework, version, what this codebase does>
 
-## Zerops service facts
-- HTTP port: …
-- Siblings: … (env-var pattern: ${hostname_*})
-- Runtime base: …
-- Additional setups (if any): …
+## Build & run
 
-## Zerops dev (hybrid)
-<paragraph: how the dev loop works on this codebase>
-<paragraph: any hybrid quirks — e.g. Vite manifest missing after fresh deploy>
-<one-shot vs HMR options if applicable>
-<one "Don't" rule if applicable>
+- <command from package.json/composer.json scripts, with one-line label>
+- ...
 
-## Notes
-- <3-5 dense porter-relevant operational bullets>
+## Architecture
+
+- `src/<entry>` — <auto-derived label>
+- `src/<dir>/` — <auto-derived label per framework convention>
+- ...
 ```
 
+Optional 3rd–4th H2 section when the codebase warrants — e.g. `## Adding a feature panel` for an SPA, `## Worker pattern` for a queue consumer, `## Testing` when a non-obvious test command exists. Sections follow the codebase's actual operational concerns; no fixed Zerops-flavoured headings.
+
 **Belongs here**:
-- Dev loop (SSH commands, dev-server startup, port, health path).
-- Migration and seed commands (how to run them by hand for iteration).
-- Resetting dev state without a redeploy (truncate scripts, index deletes).
-- Driving a feature end-to-end by hand (curl recipes for each endpoint).
-- Repo-local container traps (SSHFS uid issues, dev-deps pruning gotchas, watcher PID volatility).
-- Testing commands (typecheck, build, feature sweep scripts).
+- Project overview line.
+- Build/dev/test commands enumerated from `package.json` / `composer.json` scripts.
+- Top-level src/ structure with one-line per-entry labels.
+- Codebase-specific operational sections (feature flow, worker pattern, etc.) when the repo warrants them.
 
 **Does not belong here**:
-- Deploy instructions (→ zerops.yaml comments, IG).
-- Platform gotchas (→ knowledge-base fragment).
-- Framework basics (assume the operator knows the framework).
-- Authoring-tool names (`zcli`, `zerops_*`, `zcp`, `zerops_dev_server`) — the porter operates with framework-canonical commands.
+- Zerops platform mechanics (→ IG / KB / zerops.yaml comments).
+- Managed-service hostnames or env-var aliases (→ zerops.yaml comments).
+- Migration / seed recovery procedures (→ zerops.yaml comments at `initCommands`, OR code comments in the migration script).
+- Cross-codebase contracts (→ code comments at publish/subscribe sites).
+- Recipe-internal architectural decisions (→ code comments).
+- Authoring-tool names (`zcli`, `zerops_*`, `zcp`, `zsc`, `zerops_dev_server`).
 
-**Length**: ~33–50 lines; 1200-byte floor; ≥ 2 custom Notes bullets beyond the template.
+**Length**: ~30–50 lines depending on codebase complexity. No hard cap; shape and Zerops-content-absence are the contract.
+
+**Validator**: `validateCodebaseCLAUDE` confirms the sub-agent's output shape held — title + framing line + 2–4 H2 sections, no `## Zerops` headings, no managed-service hostname references, no `zsc` / `zerops_*` / `zcp` / `zcli` tool name leaks. Blocking violation if shape drift. Record-time slot-shape refusal at `record-fragment` catches violations earlier with same-context recovery; the validator is the finalize backstop.
+
+**Anti-pattern**: any of the older reference recipes' CLAUDE.md sections that embed Zerops platform facts (`## Zerops service facts` listing managed services; `## Zerops dev (hybrid)` describing dev-loop quirks). Those facts belong in zerops.yaml comments / IG / KB. The reference recipes set this precedent before the dedicated `claudemd-author` brief existed; they will be updated separately.
 
 ---
 
@@ -313,7 +318,7 @@ Examples drawn from the references:
 
 **Where it applies**:
 - `zerops.yaml` comments (Surface 7) — primary site for friendly authority.
-- Tier `import.yaml` comments (Surface 3) — secondary site, especially around tier-promotion paths (Mailpit removed at prod tiers, etc.).
+- Tier `import.yaml` comments (Surface 3) — secondary site, where a per-service decision has obvious adapt-for-your-needs follow-through (Mailpit removed at prod tiers, etc.).
 - IG prose (Surface 4) — sparingly, where a config has multiple valid shapes.
 
 **Where it does NOT apply**:
