@@ -66,11 +66,20 @@ func ValidatePreDeployContent(
 	if setupName == "" {
 		setupName = target.Name
 	}
-	return client.ValidateZeropsYaml(ctx, platform.ValidateZeropsYamlInput{
+	err := client.ValidateZeropsYaml(ctx, platform.ValidateZeropsYamlInput{
 		ServiceStackTypeID:      target.ServiceStackTypeInfo.ServiceStackTypeID,
 		ServiceStackTypeVersion: target.ServiceStackTypeInfo.ServiceStackTypeVersionName,
 		ServiceStackName:        setupName,
 		ZeropsYaml:              yamlContent,
 		Operation:               platform.ValidationOperationBuildAndDeploy,
 	})
+	// F3 closure: when the platform rejects setup-name-not-found, attach the
+	// locally-known available-setups list so the agent doesn't have to fetch
+	// or guess. Parsed YAML enumerates the declared setups via SetupNames;
+	// EnrichSetupNotFound appends one APIMeta entry on a match and is a
+	// no-op for any other failure shape.
+	if doc, parseErr := ParseZeropsYmlContent([]byte(yamlContent), "zerops.yaml"); parseErr == nil {
+		err = EnrichSetupNotFound(err, setupName, doc.SetupNames())
+	}
+	return err
 }
