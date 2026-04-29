@@ -1,12 +1,12 @@
 ---
-id: develop-close-push-dev-local
+id: develop-close-mode-auto-local
 priority: 7
 phases: [develop-active]
 deployStates: [deployed]
 modes: [dev, stage]
 closeDeployModes: [auto]
 environments: [local]
-title: "Close task — push-dev"
+title: "Close task — close-mode=auto"
 ---
 
 ### Closing the task

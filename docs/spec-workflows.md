@@ -911,8 +911,8 @@ Both environments follow the same flows but with different mechanisms.
 
 - **Detection**: `serviceId` env var present.
 - **Code access**: SSHFS mounts at `/var/www/{hostname}/`.
-- **Deploy (push-dev)**: SSH into service, git init + zcli push from inside.
-- **Deploy (push-git)**: SSH into service, git commit + push to remote.
+- **Deploy (close-mode=auto)**: SSH into service, git init + zcli push from inside.
+- **Deploy (close-mode=git-push)**: SSH into service, git commit + push to remote.
 - **Server start**: `zerops_dev_server action=start` for dev (`zsc noop`) in container env. Auto for stage/simple via `healthCheck`.
 - **Commands**: `ssh {hostname} "cd /var/www && {command}"`.
 - **Mount tool**: Available.
@@ -940,8 +940,8 @@ Both environments follow the same flows but with different mechanisms.
 
 - **Detection**: `serviceId` env var absent.
 - **Code access**: Working directory.
-- **Deploy (push-dev)**: `zcli push` from local machine.
-- **Deploy (push-git)**: git commit + push from local.
+- **Deploy (close-mode=auto)**: `zcli push` from local machine.
+- **Deploy (close-mode=git-push)**: git commit + push from local.
 - **Server start**: Real start command in zerops.yaml. healthCheck always.
 - **Mount tool**: Not available.
 - **ServiceMeta hostname**: stageHostname for standard (inverted), hostname for dev/simple.
@@ -959,12 +959,12 @@ Environment-specific guidance is handled at the atom level, not in conductor cod
 **Priority ordering**:
 1. (P1) Incomplete bootstrap → resume/start hint
 2. (P1) Unmanaged runtimes → adoption offering
-3. (P1-P2) Managed services with push-dev/push-git → deploy offering
-4. (P1-P2) Managed services with push-git → CI/CD setup hint
+3. (P1-P2) Managed services with closeMode in {auto, git-push} → deploy offering
+4. (P1-P2) Managed services with closeMode=git-push → git-push-setup / build-integration hints
 5. (P3) Add new services → bootstrap hint
 6. (P4-P5) Utilities → recipe, scale
 
-Manual strategy → no deploy offering (user manages directly).
+Manual close-mode → no deploy offering (user manages directly).
 
 Route returns **facts, not recommendations**.
 
@@ -1100,7 +1100,7 @@ visibility.
 | D2b | `handleGitPush` refuses with `PREREQUISITE_MISSING` when the target meta has no `FirstDeployedAt` — defense in depth against agents that ignore the atom guidance |
 | D2c | `MarkServiceDeployed` resolves the meta via `findMetaForHostname` (Hostname OR StageHostname match). Verifying either half of a container+standard pair stamps the same dev-keyed meta, so the first-deploy branch exits regardless of which half the agent verified first. |
 | D2d | Standard-mode first-deploy fires `develop-first-deploy-promote-stage` atom (`modes: [standard]`, `deployStates: [never-deployed]`) to cover dev→stage cross-deploy. Auto-close requires both halves to be deployed+verified. |
-| D2e | Local-mode close guidance lives in `develop-close-push-dev-local` atom (`modes: [dev, stage]`, `environments: [local]`). Covers local+dev and local+standard (where the envelope surfaces the stage half as `Mode=stage`). |
+| D2e | Local-mode close guidance lives in `develop-close-mode-auto-local` atom (`modes: [dev, stage]`, `environments: [local]`). Covers local+dev and local+standard (where the envelope surfaces the stage half as `Mode=stage`). |
 | D3 | CloseDeployMode + GitPushState + BuildIntegration are read from meta at deploy time, never cached in Work Session |
 | D4 | Close-mode review surfaces via `develop-strategy-review` atom (deployStates=[deployed], closeDeployModes=[unset]) — the atom layer owns the prompt, not the briefing |
 | D5 | CloseDeployMode can be changed at any time via action="close-mode"; GitPushState via "git-push-setup"; BuildIntegration via "build-integration" |

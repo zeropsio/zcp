@@ -35,7 +35,7 @@ func TestWorkSession_SaveLoad_RoundTrip(t *testing.T) {
 				CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 				LastActivityAt: time.Now().UTC().Format(time.RFC3339),
 				Deploys: map[string][]DeployAttempt{
-					"web": {{AttemptedAt: "2026-04-17T10:00:00Z", SucceededAt: "2026-04-17T10:01:00Z", Setup: "dev", Strategy: "push-dev"}},
+					"web": {{AttemptedAt: "2026-04-17T10:00:00Z", SucceededAt: "2026-04-17T10:01:00Z", Setup: "dev"}},
 				},
 				Verifies: map[string][]VerifyAttempt{
 					"web": {{AttemptedAt: "2026-04-17T10:02:00Z", PassedAt: "2026-04-17T10:02:30Z", Summary: "HTTP 200", Passed: true}},
@@ -501,7 +501,6 @@ func TestRecordDeployAttempt_TriggersAutoClose(t *testing.T) {
 		AttemptedAt: time.Now().UTC().Format(time.RFC3339),
 		SucceededAt: time.Now().UTC().Format(time.RFC3339),
 		Setup:       "dev",
-		Strategy:    "push-dev",
 	})
 	if err != nil {
 		t.Fatalf("record: %v", err)

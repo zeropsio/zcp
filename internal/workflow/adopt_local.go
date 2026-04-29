@@ -110,7 +110,7 @@ func LocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stat
 
 	case 1:
 		// Exactly one runtime: auto-link as stage. Strategy stays unset so
-		// the router prompts for an explicit choice (push-dev / push-git /
+		// the router prompts for an explicit choice (auto / git-push /
 		// manual). If the platform service is already ACTIVE, stamp
 		// FirstDeployedAt — the adopted+ACTIVE case means code has landed
 		// there before ZCP was aware of it.
@@ -179,15 +179,15 @@ func FormatAdoptionNote(result *AdoptionResult) string {
 	case len(result.UnlinkedRuntimes) > 0:
 		return fmt.Sprintf(
 			"Adopted project %q as local-only. Multiple Zerops runtime services exist (%s) — none linked as stage. "+
-				"Strategy options: `push-git` (push to an external remote, ZCP doesn't track what happens downstream) or `manual` (nothing automated). "+
-				"`push-dev` requires linking one runtime as stage first: zerops_workflow action=\"adopt-local\" targetService=\"<chosen-hostname>\".",
+				"Close-mode options: `git-push` (push to an external remote, ZCP doesn't track what happens downstream) or `manual` (nothing automated). "+
+				"`auto` requires linking one runtime as stage first: zerops_workflow action=\"adopt-local\" targetService=\"<chosen-hostname>\".",
 			project, strings.Join(result.UnlinkedRuntimes, ", "),
 		)
 
 	default:
 		base := fmt.Sprintf(
 			"Adopted project %q as local-only. No Zerops runtime services exist. "+
-				"Strategy options: `push-git` (push to an external remote; whatever happens downstream is your setup, ZCP doesn't track) or `manual`.",
+				"Close-mode options: `git-push` (push to an external remote; whatever happens downstream is your setup, ZCP doesn't track) or `manual`.",
 			project,
 		)
 		if managedLine != "" {

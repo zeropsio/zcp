@@ -1,12 +1,12 @@
 ---
-id: develop-push-dev-workflow-simple
+id: develop-close-mode-auto-workflow-simple
 priority: 3
 phases: [develop-active]
 deployStates: [deployed]
 modes: [simple]
 closeDeployModes: [auto]
 environments: [container]
-title: "Push-dev iteration cycle (simple mode)"
+title: "close-mode=auto iteration cycle (simple mode)"
 references-atoms: [develop-platform-rules-container]
 ---
 

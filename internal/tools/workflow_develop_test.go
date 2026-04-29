@@ -427,7 +427,6 @@ func TestHandleDevelopBriefing_NewIntent_AutoClosesPrior(t *testing.T) {
 	_ = workflow.RecordDeployAttempt(dir, "appdev", workflow.DeployAttempt{
 		AttemptedAt: "2026-04-21T10:00:00Z",
 		SucceededAt: "2026-04-21T10:00:30Z",
-		Strategy:    "push-dev",
 	})
 
 	// Second start — task B with different intent.
@@ -483,7 +482,6 @@ func TestHandleDevelopBriefing_SameIntent_Idempotent(t *testing.T) {
 	_ = workflow.RecordDeployAttempt(dir, "appdev", workflow.DeployAttempt{
 		AttemptedAt: "2026-04-21T10:00:00Z",
 		SucceededAt: "2026-04-21T10:00:30Z",
-		Strategy:    "push-dev",
 	})
 	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
 

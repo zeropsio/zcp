@@ -315,7 +315,7 @@ func TestBuildTaskPrompt(t *testing.T) {
 	for _, unwanted := range []string{
 		`zerops_workflow action="start"`,
 		`action="complete"`,
-		`action="strategy"`,
+		`action="close-mode"`,
 		"EXACT hostnames",
 	} {
 		if strings.Contains(prompt, unwanted) {

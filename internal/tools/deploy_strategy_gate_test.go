@@ -23,7 +23,7 @@ func TestValidateDeployStrategyParam(t *testing.T) {
 	}{
 		{"empty → accept (default push)", "", false, ""},
 		{"git-push → accept", "git-push", false, ""},
-		{"push-dev → accept", "push-dev", false, ""},
+		{"retired push-dev alias → reject", "push-dev", true, platform.ErrInvalidParameter},
 		{"manual → reject (declaration, not a dispatch value)", "manual", true, platform.ErrInvalidParameter},
 		{"unknown → reject", "gopher", true, platform.ErrInvalidParameter},
 	}
@@ -65,19 +65,11 @@ func TestCheckLocalOnlyGate(t *testing.T) {
 		wantErr  bool
 	}{
 		{
-			name: "local-only + empty strategy (default push-dev) → reject",
+			name: "local-only + empty strategy (default zcli push) → reject",
 			meta: &workflow.ServiceMeta{
 				Hostname: "myproject", Mode: topology.PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
 			},
 			strategy: "",
-			wantErr:  true,
-		},
-		{
-			name: "local-only + explicit push-dev → reject",
-			meta: &workflow.ServiceMeta{
-				Hostname: "myproject", Mode: topology.PlanModeLocalOnly, BootstrappedAt: "2026-04-01",
-			},
-			strategy: "push-dev",
 			wantErr:  true,
 		},
 		{
@@ -89,7 +81,7 @@ func TestCheckLocalOnlyGate(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			name: "local-stage + push-dev → accept",
+			name: "local-stage + default → accept",
 			meta: &workflow.ServiceMeta{
 				Hostname: "myproject", StageHostname: "apistage", Mode: topology.PlanModeLocalStage, BootstrappedAt: "2026-04-01",
 			},
@@ -97,7 +89,7 @@ func TestCheckLocalOnlyGate(t *testing.T) {
 			wantErr:  false,
 		},
 		{
-			name: "container dev + push-dev → accept",
+			name: "container dev + default → accept",
 			meta: &workflow.ServiceMeta{
 				Hostname: "appdev", Mode: topology.PlanModeDev, BootstrappedAt: "2026-04-01",
 			},

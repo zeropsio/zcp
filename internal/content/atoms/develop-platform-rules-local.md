@@ -28,5 +28,5 @@ container-only. Use the framework's normal dev command.
 | VPN | For managed services, use `zcli vpn up <projectId>` from `claude_local.md`; it needs sudo/admin and ZCP cannot start it. |
 | `.env` bridge | Generate live vars with `zerops_env action="generate-dotenv" serviceHostname="{stage-hostname}"`; add `.env` to `.gitignore` because it contains secrets. |
 | Health checks | Probe localhost directly: `curl -s localhost:{port}/health`. Port comes from `zerops.yaml` `run.ports` or the user's command. |
-| Deploy source | `zerops_deploy` deploys from the working directory. Check `git status` before deploying uncommitted edits: `strategy=git-push` needs commits; `strategy=push-dev` ships the tree. |
-| Git-push setup | Before `zerops_deploy strategy=git-push`, verify `git status` + `git log`. If there is no work tree or commit, ask the user to run `git init && git add -A && git commit -m 'initial'`; ZCP does NOT initialize git in the user's working directory. Default push-dev needs no git state. |
+| Deploy source | `zerops_deploy` deploys from the working directory. Check `git status` before deploying uncommitted edits: `strategy=git-push` needs commits; the default zcli-push path ships the tree. |
+| Git-push setup | Before `zerops_deploy strategy=git-push`, verify `git status` + `git log`. If there is no work tree or commit, ask the user to run `git init && git add -A && git commit -m 'initial'`; ZCP does NOT initialize git in the user's working directory. The default zcli-push path needs no git state. |

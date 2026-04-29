@@ -54,7 +54,7 @@ func TestRoute_AllBootstrapped(t *testing.T) {
 		wantTop string
 	}{
 		{
-			name: "push-git strategy",
+			name: "git-push close-mode",
 			input: RouterInput{
 				ServiceMetas: []*ServiceMeta{{
 					Hostname: "appdev", BootstrappedAt: "2026-01-01", CloseDeployMode: topology.CloseModeGitPush,
@@ -64,7 +64,7 @@ func TestRoute_AllBootstrapped(t *testing.T) {
 			wantTop: "develop",
 		},
 		{
-			name: "push-dev strategy",
+			name: "auto close-mode",
 			input: RouterInput{
 				ServiceMetas: []*ServiceMeta{{
 					Hostname: "appdev", BootstrappedAt: "2026-01-01", CloseDeployMode: topology.CloseModeAuto,
@@ -74,14 +74,14 @@ func TestRoute_AllBootstrapped(t *testing.T) {
 			wantTop: "develop",
 		},
 		{
-			name: "manual strategy — develop still offered",
+			name: "manual close-mode — develop still offered",
 			input: RouterInput{
 				ServiceMetas: []*ServiceMeta{{
 					Hostname: "appdev", BootstrappedAt: "2026-01-01", CloseDeployMode: topology.CloseModeManual,
 				}},
 				LiveServices: []string{"appdev"},
 			},
-			wantTop: "develop", // Deploy always offered — strategy is informational, not a gate
+			wantTop: "develop", // Deploy always offered — close-mode is informational, not a gate
 		},
 	}
 	for _, tt := range tests {
@@ -221,10 +221,9 @@ func TestRoute_AlwaysIncludesUtilities(t *testing.T) {
 	}
 }
 
-func TestRoute_PushGit_DevelopHintMentionsGitPush(t *testing.T) {
+func TestRoute_GitPush_DevelopHintMentionsGitPush(t *testing.T) {
 	t.Parallel()
-	// In production every meta passes through parseMeta → migrateOldMeta
-	// before reaching Route, so CloseDeployMode is always populated. This
+	// Every meta reaches Route via parseMeta with CloseDeployMode populated.
 	input := RouterInput{
 		ServiceMetas: []*ServiceMeta{{
 			Hostname:        "appdev",
@@ -243,17 +242,17 @@ func TestRoute_PushGit_DevelopHintMentionsGitPush(t *testing.T) {
 	if developHint == "" {
 		t.Fatal("expected develop offering")
 	}
-	// When push-git is dominant, the develop hint must tell the agent that
-	// pushing to a git remote requires starting this workflow first.
+	// When git-push close-mode is dominant, the develop hint must tell the
+	// agent that pushing to a git remote requires starting this workflow first.
 	wantParts := []string{"git", "remote", "push"}
 	for _, part := range wantParts {
 		if !strings.Contains(strings.ToLower(developHint), part) {
-			t.Errorf("develop hint should mention %q for push-git strategy, got: %s", part, developHint)
+			t.Errorf("develop hint should mention %q for git-push close-mode, got: %s", part, developHint)
 		}
 	}
 }
 
-func TestRoute_PushDev_DevelopHintNoGitMention(t *testing.T) {
+func TestRoute_AutoCloseMode_DevelopHintNoGitMention(t *testing.T) {
 	t.Parallel()
 	input := RouterInput{
 		ServiceMetas: []*ServiceMeta{{
@@ -273,9 +272,9 @@ func TestRoute_PushDev_DevelopHintNoGitMention(t *testing.T) {
 	if developHint == "" {
 		t.Fatal("expected develop offering")
 	}
-	// push-dev strategy should NOT have the git-specific hint.
+	// Auto close-mode should NOT have the git-specific hint.
 	if strings.Contains(strings.ToLower(developHint), "git remote") {
-		t.Errorf("push-dev develop hint should NOT mention git remote, got: %s", developHint)
+		t.Errorf("auto close-mode develop hint should NOT mention git remote, got: %s", developHint)
 	}
 }
 
@@ -290,7 +289,7 @@ func TestRoute_StaleMetaFiltering(t *testing.T) {
 	}
 	offerings := Route(input)
 	if offerings[0].Workflow != "develop" {
-		t.Errorf("top = %q, want develop (stale meta should be filtered, push-git dominant)", offerings[0].Workflow)
+		t.Errorf("top = %q, want develop (stale meta should be filtered, git-push dominant)", offerings[0].Workflow)
 	}
 }
 

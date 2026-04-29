@@ -1,6 +1,6 @@
 # ZCP Lifecycle Matrix Simulation
 
-Generated: 2026-04-29T21:07:14Z
+Generated: 2026-04-29T22:29:11Z
 Corpus: 80 atoms
 Scenarios: 45
 
@@ -225,7 +225,7 @@ _Recipe close — finalize meta, hand off to develop._
 
 **Plan.Primary**: `zerops_workflow` → Continue bootstrap
 
-**Atoms** (6 unique, 6 render-instances, 5879 bytes total):
+**Atoms** (6 unique, 6 render-instances, 5945 bytes total):
 - `bootstrap-close`
 - `bootstrap-intro`
 - `bootstrap-recipe-close`
@@ -294,7 +294,7 @@ _Just bootstrapped, dev mode dynamic runtime, first develop iteration._
 
 **Plan.Primary**: `zerops_deploy` → Deploy appdev
 
-**Atoms** (19 unique, 19 render-instances, 20485 bytes total):
+**Atoms** (19 unique, 19 render-instances, 20492 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -323,7 +323,7 @@ _Simple-mode single service, healthCheck-driven start._
 
 **Plan.Primary**: `zerops_deploy` → Deploy app
 
-**Atoms** (18 unique, 18 render-instances, 19085 bytes total):
+**Atoms** (18 unique, 18 render-instances, 19092 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -351,7 +351,7 @@ _Standard-mode dev half, stage entry not yet written._
 
 **Plan.Primary**: `zerops_deploy` → Deploy appdev
 
-**Atoms** (19 unique, 19 render-instances, 20446 bytes total):
+**Atoms** (19 unique, 19 render-instances, 20453 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -380,7 +380,7 @@ _PHP simple — no `start:`; healthCheck on `/`._
 
 **Plan.Primary**: `zerops_deploy` → Deploy site
 
-**Atoms** (20 unique, 20 render-instances, 21572 bytes total):
+**Atoms** (20 unique, 20 render-instances, 21579 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -410,7 +410,7 @@ _Static runtime — buildCommands generate dist; deployFiles selects ./dist._
 
 **Plan.Primary**: `zerops_deploy` → Deploy spa
 
-**Atoms** (19 unique, 19 render-instances, 20037 bytes total):
+**Atoms** (19 unique, 19 render-instances, 20042 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -439,7 +439,7 @@ _Local-machine first deploy — local workflow atom path._
 
 **Plan.Primary**: `zerops_deploy` → Deploy app
 
-**Atoms** (16 unique, 16 render-instances, 17004 bytes total):
+**Atoms** (16 unique, 16 render-instances, 17028 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -469,7 +469,7 @@ _First deploy succeeded; close-mode still unset → review prompt should fire._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (18 unique, 18 render-instances, 19191 bytes total):
+**Atoms** (18 unique, 18 render-instances, 19198 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -497,13 +497,15 @@ _Iteration after picking auto close-mode — strategy-review should NOT fire._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (22 unique, 22 render-instances, 23359 bytes total):
+**Atoms** (22 unique, 22 render-instances, 24061 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-checklist-dev-mode`
 - `develop-close-mode-auto`
-- `develop-close-push-dev-dev`
+- `develop-close-mode-auto-deploy-container`
+- `develop-close-mode-auto-dev`
+- `develop-close-mode-auto-workflow-dev`
 - `develop-deploy-files-self-deploy`
 - `develop-deploy-modes`
 - `develop-dev-server-reason-codes`
@@ -516,8 +518,6 @@ _Iteration after picking auto close-mode — strategy-review should NOT fire._
 - `develop-mode-expansion`
 - `develop-platform-rules-common`
 - `develop-platform-rules-container`
-- `develop-push-dev-deploy-container`
-- `develop-push-dev-workflow-dev`
 - `develop-strategy-awareness`
 - `develop-verify-matrix`
 
@@ -533,13 +533,15 @@ _Default close path — auto = run zerops_deploy at close._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (22 unique, 22 render-instances, 23359 bytes total):
+**Atoms** (22 unique, 22 render-instances, 24061 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-checklist-dev-mode`
 - `develop-close-mode-auto`
-- `develop-close-push-dev-dev`
+- `develop-close-mode-auto-deploy-container`
+- `develop-close-mode-auto-dev`
+- `develop-close-mode-auto-workflow-dev`
 - `develop-deploy-files-self-deploy`
 - `develop-deploy-modes`
 - `develop-dev-server-reason-codes`
@@ -552,8 +554,6 @@ _Default close path — auto = run zerops_deploy at close._
 - `develop-mode-expansion`
 - `develop-platform-rules-common`
 - `develop-platform-rules-container`
-- `develop-push-dev-deploy-container`
-- `develop-push-dev-workflow-dev`
 - `develop-strategy-awareness`
 - `develop-verify-matrix`
 
@@ -565,7 +565,7 @@ _Full git-push setup with webhook integration._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (17 unique, 17 render-instances, 18934 bytes total):
+**Atoms** (17 unique, 17 render-instances, 19638 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-build-observe`
@@ -592,7 +592,7 @@ _Manual close — ZCP records evidence but user owns deploys._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (19 unique, 19 render-instances, 20574 bytes total):
+**Atoms** (19 unique, 19 render-instances, 21278 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -621,7 +621,7 @@ _Agent set close-mode before first deploy — atoms must explain D2a (default se
 
 **Plan.Primary**: `zerops_deploy` → Deploy appdev
 
-**Atoms** (20 unique, 20 render-instances, 21174 bytes total):
+**Atoms** (20 unique, 20 render-instances, 21878 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -655,12 +655,13 @@ _Default — git push capability not provisioned._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (17 unique, 17 render-instances, 17289 bytes total):
+**Atoms** (17 unique, 17 render-instances, 17991 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-close-mode-auto`
-- `develop-close-push-dev-standard`
+- `develop-close-mode-auto-deploy-container`
+- `develop-close-mode-auto-standard`
 - `develop-deploy-files-self-deploy`
 - `develop-deploy-modes`
 - `develop-dynamic-runtime-start-container`
@@ -670,7 +671,6 @@ _Default — git push capability not provisioned._
 - `develop-knowledge-pointers`
 - `develop-platform-rules-common`
 - `develop-platform-rules-container`
-- `develop-push-dev-deploy-container`
 - `develop-strategy-awareness`
 - `develop-verify-matrix`
 
@@ -682,12 +682,13 @@ _Capability provisioned; close still does zcli (auto)._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (17 unique, 17 render-instances, 17289 bytes total):
+**Atoms** (17 unique, 17 render-instances, 17991 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-close-mode-auto`
-- `develop-close-push-dev-standard`
+- `develop-close-mode-auto-deploy-container`
+- `develop-close-mode-auto-standard`
 - `develop-deploy-files-self-deploy`
 - `develop-deploy-modes`
 - `develop-dynamic-runtime-start-container`
@@ -697,7 +698,6 @@ _Capability provisioned; close still does zcli (auto)._
 - `develop-knowledge-pointers`
 - `develop-platform-rules-common`
 - `develop-platform-rules-container`
-- `develop-push-dev-deploy-container`
 - `develop-strategy-awareness`
 - `develop-verify-matrix`
 
@@ -709,7 +709,7 @@ _Mode flipped to git-push but capability missing — must chain to setup._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (15 unique, 15 render-instances, 16058 bytes total):
+**Atoms** (15 unique, 15 render-instances, 16762 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -734,7 +734,7 @@ _Full webhook CI._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (17 unique, 17 render-instances, 18934 bytes total):
+**Atoms** (17 unique, 17 render-instances, 19638 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-build-observe`
@@ -761,7 +761,7 @@ _GitHub Actions CI._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (17 unique, 17 render-instances, 18934 bytes total):
+**Atoms** (17 unique, 17 render-instances, 19638 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-build-observe`
@@ -788,7 +788,7 @@ _Push capability previously broken; recovery atom expected._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (17 unique, 17 render-instances, 18934 bytes total):
+**Atoms** (17 unique, 17 render-instances, 19638 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-build-observe`
@@ -819,7 +819,7 @@ _First failure — DIAGNOSE tier._
 
 **Plan.Primary**: `zerops_deploy` → Deploy appdev
 
-**Atoms** (20 unique, 20 render-instances, 21213 bytes total):
+**Atoms** (20 unique, 20 render-instances, 21917 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -849,7 +849,7 @@ _After 3 failures — SYSTEMATIC tier kicks in._
 
 **Plan.Primary**: `zerops_deploy` → Deploy appdev
 
-**Atoms** (20 unique, 20 render-instances, 21213 bytes total):
+**Atoms** (20 unique, 20 render-instances, 21917 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -879,7 +879,7 @@ _Hit iteration cap — STOP tier should surface._
 
 **Plan.Primary**: `zerops_deploy` → Deploy appdev
 
-**Atoms** (20 unique, 20 render-instances, 21213 bytes total):
+**Atoms** (20 unique, 20 render-instances, 21917 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -913,7 +913,7 @@ _Standard pair — atoms should fire per-half with correct hostnames._
 
 **Plan.Primary**: `zerops_deploy` → Deploy appdev
 
-**Atoms** (19 unique, 19 render-instances, 20487 bytes total):
+**Atoms** (19 unique, 19 render-instances, 20494 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -942,13 +942,15 @@ _Two runtimes + managed dep — per-service rendering correctness._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (22 unique, 30 render-instances, 32774 bytes total):
+**Atoms** (22 unique, 30 render-instances, 34171 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-checklist-dev-mode`
 - `develop-close-mode-auto`
-- `develop-close-push-dev-dev`
+- `develop-close-mode-auto-deploy-container`
+- `develop-close-mode-auto-dev`
+- `develop-close-mode-auto-workflow-dev`
 - `develop-deploy-files-self-deploy`
 - `develop-deploy-modes`
 - `develop-dev-server-reason-codes`
@@ -961,8 +963,6 @@ _Two runtimes + managed dep — per-service rendering correctness._
 - `develop-mode-expansion`
 - `develop-platform-rules-common`
 - `develop-platform-rules-container`
-- `develop-push-dev-deploy-container`
-- `develop-push-dev-workflow-dev`
 - `develop-strategy-awareness`
 - `develop-verify-matrix`
 
@@ -1030,7 +1030,7 @@ _All services deployed+verified, session auto-closed._
 
 ---
 
-# Anomalies (23)
+# Anomalies (5)
 
 ## ERROR (3)
 
@@ -1038,26 +1038,8 @@ _All services deployed+verified, session auto-closed._
 - **11.2 strategy-setup local** — Plan.Primary is zero (empty Plan)
 - **12.1 export-active container** — Plan.Primary is zero (empty Plan)
 
-## WARN (20)
+## WARN (2)
 
-- **3.3 recipe/close (container)** — legacy `strategy` vocab in bootstrap-recipe-close — should use closeDeployMode
-- **5.6 develop never-deployed dev/dynamic (LOCAL env)** — legacy `strategy` vocab in develop-platform-rules-local — should use closeDeployMode
-- **6.2 develop deployed CloseMode=auto (steady-state iteration)** — legacy `strategy` vocab in develop-strategy-awareness — should use closeDeployMode
-- **7.1 close-mode=auto + dev mode (container)** — legacy `strategy` vocab in develop-strategy-awareness — should use closeDeployMode
-- **7.2 close-mode=git-push + GitPushState=configured + webhook** — legacy `strategy` vocab in develop-strategy-awareness — should use closeDeployMode
-- **7.3 close-mode=manual (yield to user)** — legacy `strategy` vocab in develop-strategy-awareness — should use closeDeployMode
-- **7.4 close-mode=git-push BUT FirstDeployedAt empty (D2a edge)** — legacy `strategy` vocab in develop-strategy-awareness — should use closeDeployMode
-- **8.1 auto / unconfigured / none** — legacy `strategy` vocab in develop-strategy-awareness — should use closeDeployMode
-- **8.2 auto / configured / none** — legacy `strategy` vocab in develop-strategy-awareness — should use closeDeployMode
-- **8.3 git-push / unconfigured / none** — legacy `strategy` vocab in develop-strategy-awareness — should use closeDeployMode
-- **8.4 git-push / configured / webhook** — legacy `strategy` vocab in develop-strategy-awareness — should use closeDeployMode
-- **8.5 git-push / configured / actions** — legacy `strategy` vocab in develop-strategy-awareness — should use closeDeployMode
-- **8.6 git-push / broken / webhook** — legacy `strategy` vocab in develop-strategy-awareness — should use closeDeployMode
-- **9.1 iteration tier 1 (1 failed)** — legacy `strategy` vocab in develop-strategy-awareness — should use closeDeployMode
-- **9.2 iteration tier 3 (3 failed)** — legacy `strategy` vocab in develop-strategy-awareness — should use closeDeployMode
-- **9.3 iteration tier 5 (5 failed, STOP)** — legacy `strategy` vocab in develop-strategy-awareness — should use closeDeployMode
-- **10.2 mixed runtimes (api + web + db)** — briefing 32774 bytes > 25KB soft cap
-- **10.2 mixed runtimes (api + web + db)** — legacy `strategy` vocab in develop-strategy-awareness — should use closeDeployMode
-- **10.2 mixed runtimes (api + web + db)** — legacy `strategy` vocab in develop-strategy-awareness — should use closeDeployMode
+- **10.2 mixed runtimes (api + web + db)** — briefing 34171 bytes > 25KB soft cap
 - **12.1 export-active container** — briefing 27945 bytes > 25KB soft cap
 

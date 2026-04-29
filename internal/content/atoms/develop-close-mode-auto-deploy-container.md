@@ -1,16 +1,16 @@
 ---
-id: develop-push-dev-deploy-container
+id: develop-close-mode-auto-deploy-container
 priority: 2
 phases: [develop-active]
 deployStates: [deployed]
 closeDeployModes: [auto]
 environments: [container]
-title: "Push-dev strategy — deploy via zerops_deploy"
+title: "close-mode=auto — deploy via zerops_deploy"
 references-fields: [ops.DeployResult.Mode, ops.DeployResult.SourceService, ops.DeployResult.TargetService]
 references-atoms: [develop-deploy-modes, develop-deploy-files-self-deploy, develop-platform-rules-container]
 ---
 
-### Push-Dev Deploy Strategy
+### close-mode=auto Deploy
 
 The dev container uses SSH push — `zerops_deploy` uploads the
 working tree from `/var/www/{hostname}/` straight into the service

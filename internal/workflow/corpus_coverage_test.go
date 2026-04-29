@@ -142,7 +142,7 @@ func bootstrapCoverageFixtures() []coverageFixture {
 			},
 			MustContain: []string{
 				`zerops_workflow action="complete" step="close"`,
-				`strategies={"<hostname>":"<value>"}`,
+				`closeMode={"<hostname>":"auto|git-push|manual"}`,
 			},
 		},
 		{
@@ -178,7 +178,7 @@ func developCoverageFixtures() []coverageFixture {
 				}},
 			},
 			MustContain: []string{
-				"Push-Dev Deploy Strategy",
+				"close-mode=auto Deploy",
 				"SSH",
 				// Phase-3 axis-E #5 (commit <pending>) trimmed the
 				// "Read and edit directly on the mount" prose in
@@ -194,8 +194,8 @@ func developCoverageFixtures() []coverageFixture {
 				"VERDICT",
 				"agent-browser",
 				// Phase-1 additions — load-bearing awareness + KB pointers.
-				"Deploy strategy — current + how to change",
-				`action="strategy"`,
+				"Deploy config — current axes + how to change",
+				`action="close-mode"`,
 				// Phase-2 dedup #5 (commit <pending>) replaced the
 				// blanket "edit → deploy → verify" framing in
 				// `develop-change-drives-deploy` with mode-aware
@@ -372,8 +372,8 @@ func developCoverageFixtures() []coverageFixture {
 			},
 		},
 		{
-			// Local+dev push-dev: close-push-dev-local fills the gap left by
-			// close-push-dev-dev's environments=[container] restriction.
+			// Local+dev close-mode=auto: close-mode-auto-local fills the gap
+			// left by close-mode-auto-dev's environments=[container] restriction.
 			Name: "develop_close_local_dev",
 			Envelope: StateEnvelope{
 				Phase:       PhaseDevelopActive,
@@ -390,8 +390,8 @@ func developCoverageFixtures() []coverageFixture {
 			},
 		},
 		{
-			// Local+standard push-dev: the snapshot's Mode=ModeStage (per
-			// resolveEnvelopeMode). close-push-dev-local must still fire.
+			// Local+standard close-mode=auto: the snapshot's Mode=ModeStage
+			// (per resolveEnvelopeMode). close-mode-auto-local must still fire.
 			Name: "develop_close_local_standard",
 			Envelope: StateEnvelope{
 				Phase:       PhaseDevelopActive,
@@ -544,9 +544,9 @@ func matrixCoverageFixtures() []coverageFixture {
 			// MustContain pins were grep-verified UNIQUE to their anchor atoms
 			// (Codex round 3 verdict 2026-04-26: UNIQUE-MATCH-CONFIRMED;
 			// post-hygiene-followup Phase 3 axis-L migration 2026-04-27):
-			//   develop-push-dev-deploy-container ⟶ "The dev container uses SSH push"
-			//   develop-push-dev-workflow-simple  ⟶ "auto-starts with its `healthCheck`"
-			//   develop-close-push-dev-simple     ⟶ "Simple-mode services auto-start on deploy"
+			//   develop-close-mode-auto-deploy-container ⟶ "The dev container uses SSH push"
+			//   develop-close-mode-auto-workflow-simple  ⟶ "auto-starts with its `healthCheck`"
+			//   develop-close-mode-auto-simple           ⟶ "Simple-mode services auto-start on deploy"
 			// None contain placeholders; survive Synthesize substitution.
 			// If a later axis-tightening silently dropped any, TestCorpusCoverage_RoundTrip
 			// fails on the named target.
@@ -579,7 +579,7 @@ func matrixCoverageFixtures() []coverageFixture {
 				}},
 			},
 			MustContain: []string{
-				"Push-Dev Deploy Strategy",
+				"close-mode=auto Deploy",
 				"sourceService",
 			},
 		},

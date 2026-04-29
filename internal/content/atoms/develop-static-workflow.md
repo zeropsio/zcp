@@ -24,8 +24,8 @@ process — nginx serves files as soon as the deploy lands.
 runs in the Zerops build container at deploy time. Local builds are
 preview-only; Zerops rebuilds anyway.
 
-**Strategy fit:** `manual` for low-traffic sites; `push-git` when the
-site has CI; `push-dev` for fast iteration.
+**Close-mode fit:** `manual` for low-traffic sites; `git-push` when the
+site has CI; `auto` for fast iteration.
 
 A deploy that lands files but serves 404 / 403 is a `deployFiles` path
 mistake, not a runtime failure.

@@ -1,12 +1,12 @@
 ---
-id: develop-close-push-dev-standard
+id: develop-close-mode-auto-standard
 priority: 7
 phases: [develop-active]
 deployStates: [deployed]
 modes: [standard]
 closeDeployModes: [auto]
 environments: [container]
-title: "Close task — push-dev standard mode"
+title: "Close task — close-mode=auto, standard mode"
 references-atoms: [develop-auto-close-semantics, develop-dynamic-runtime-start-container]
 ---
 

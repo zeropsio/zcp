@@ -19,7 +19,7 @@ import (
 // is identical in both envs.
 func validateDeployStrategyParam(strategy string) error {
 	switch strategy {
-	case "", deployStrategyGitPush, "push-dev":
+	case "", deployStrategyGitPush:
 		return nil
 	case "manual":
 		return platform.NewPlatformError(
@@ -36,8 +36,8 @@ func validateDeployStrategyParam(strategy string) error {
 	}
 }
 
-// checkLocalOnlyGate rejects push-dev against a local-only meta (no
-// Zerops runtime is linked — push-dev has no deploy target). Returns nil
+// checkLocalOnlyGate rejects the default zcli push against a local-only
+// meta (no Zerops runtime linked — there is no deploy target). Returns nil
 // in every other situation, including container env (meta exists but has
 // a container-native mode) and all git-push calls (git-push doesn't need
 // a stage).

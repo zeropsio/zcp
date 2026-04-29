@@ -1,6 +1,18 @@
-# Develop Flow Enhancements — Implementation Plan
+# Develop Flow Enhancements — Implementation Plan (ARCHIVED 2026-04-30)
 
-> **Status**: In-progress implementation plan.
+> **Status**: ARCHIVED 2026-04-30 by `cleanup-pre-internal-testing` Phase 1 (audit C7).
+> **Outcome**:
+>  - Phase 1 (content polish — strategy-awareness atom + change-drives-deploy atom): SHIPPED.
+>  - Phase 2 (Plan per-service): SHIPPED.
+>  - Phase 3 (close-without-deploy guard): IMPLEMENTED then **REVERTED** —
+>    created friction on legitimate pivots; agents worked around it via direct
+>    tools. Rationale lives in `internal/tools/workflow_close_test.go:1-13`.
+>  - Phase 4 (mode expansion dev → standard): SHIPPED — see
+>    `internal/content/atoms/develop-mode-expansion.md` + writeProvisionMetas
+>    expansion branch + spec §9.1.
+> **Note**: Field names cited below (`DeployStrategy`, `StrategyConfirmed`)
+> were retired in `deploy-strategy-decomposition` (2026-04-28); current names
+> are `CloseDeployMode` / `CloseDeployModeConfirmed` on `ServiceMeta`.
 > **Date**: 2026-04-20
 > **Scope**: Make develop flow self-describing at start, surface strategy/mode awareness, enforce code-change → deploy discipline, enable dev→standard expansion.
 

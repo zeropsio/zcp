@@ -1,11 +1,11 @@
 ---
-id: develop-close-push-dev-simple
+id: develop-close-mode-auto-simple
 priority: 7
 phases: [develop-active]
 deployStates: [deployed]
 modes: [simple]
 closeDeployModes: [auto]
-title: "Close task — push-dev simple mode"
+title: "Close task — close-mode=auto, simple mode"
 ---
 
 ### Closing the task

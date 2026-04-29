@@ -203,6 +203,21 @@ func TestAtomAuthoringLint_FiresOnKnownViolations(t *testing.T) {
 			wantPattern: "leak-candidate:/var/www/",
 			wantCat:     "axis-n",
 		},
+		// stale-action / stale-strategy (drift after vocabulary refactors) ---
+		{
+			name:        "stale-action-strategy",
+			frontmatter: fmHeader,
+			body:        "Run zerops_workflow action=\"strategy\" strategies={\"app\":\"push-dev\"}.\n",
+			wantPattern: "stale-workflow-action",
+			wantCat:     "stale-action",
+		},
+		{
+			name:        "stale-strategy-push-dev",
+			frontmatter: fmHeader,
+			body:        "Use zerops_deploy strategy=\"push-dev\" to ship the tree.\n",
+			wantPattern: "stale-deploy-strategy",
+			wantCat:     "stale-strategy",
+		},
 	}
 
 	for _, tt := range tests {

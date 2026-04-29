@@ -247,8 +247,8 @@ func TestVerifyTool_ReportsAutoCloseProgress(t *testing.T) {
 	// one awaiting verify. Verifying the second advances ready 1→2.
 	ws := workflow.NewWorkSession("proj-1", string(workflow.EnvContainer), "scope demo", []string{"app", "worker"})
 	ws.Deploys = map[string][]workflow.DeployAttempt{
-		"app":    {{AttemptedAt: now, SucceededAt: now, Strategy: "push-dev"}},
-		"worker": {{AttemptedAt: now, SucceededAt: now, Strategy: "push-dev"}},
+		"app":    {{AttemptedAt: now, SucceededAt: now}},
+		"worker": {{AttemptedAt: now, SucceededAt: now}},
 	}
 	ws.Verifies = map[string][]workflow.VerifyAttempt{
 		"app": {{AttemptedAt: now, PassedAt: now, Passed: true}},

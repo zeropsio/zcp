@@ -682,11 +682,12 @@ func TestScenario_S8_DevelopIterationFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Synthesize: %v", err)
 	}
-	// Develop-active push-dev atoms are load-bearing at deploy iteration —
-	// SSH mechanics and iteration tier guidance both belong to this set.
+	// Develop-active close-mode=auto atoms are load-bearing at deploy
+	// iteration — SSH mechanics and iteration tier guidance both belong
+	// to this set.
 	requireAtomIDsContain(t, "S8", matches,
-		"develop-push-dev-deploy-container",
-		"develop-push-dev-workflow-dev")
+		"develop-close-mode-auto-deploy-container",
+		"develop-close-mode-auto-workflow-dev")
 }
 
 // TestScenario_PinCoverage_AllAtomsReachable is the Phase 8 G2 pin-density
@@ -799,32 +800,32 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 			},
 		}},
 
-		// Develop-active deployed iterations across modes/strategies/triggers.
-		{"develop-active/push-dev/dev/container", StateEnvelope{
+		// Develop-active deployed iterations across modes/close-modes/triggers.
+		{"develop-active/auto/dev/container", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvContainer,
 			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev, CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true, Status: "READY_TO_DEPLOY"}},
 		}},
-		{"develop-active/push-dev/simple/container", StateEnvelope{
+		{"develop-active/auto/simple/container", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvContainer,
 			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "go@1.22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeSimple, CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true}},
 		}},
-		{"develop-active/push-dev/standard/container", StateEnvelope{
+		{"develop-active/auto/standard/container", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvContainer,
 			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true}},
 		}},
-		{"develop-active/push-dev/dev/local", StateEnvelope{
+		{"develop-active/auto/dev/local", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvLocal,
 			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeLocalStage, CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true}},
 		}},
-		{"develop-active/push-dev/local-mode-dev-deployed", StateEnvelope{
+		{"develop-active/auto/local-mode-dev-deployed", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvLocal,
 			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeDev, CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true}},
 		}},
-		{"develop-active/push-dev/standard/local-deployed", StateEnvelope{
+		{"develop-active/auto/standard/local-deployed", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvLocal,
 			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true}},
 		}},
-		{"develop-active/push-git/standard/local-deployed", StateEnvelope{
+		{"develop-active/git-push/standard/local-deployed", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvLocal,
 			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: topology.CloseModeGitPush, BuildIntegration: topology.BuildIntegrationWebhook, Bootstrapped: true, Deployed: true}},
 		}},
@@ -835,7 +836,7 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 				{Hostname: "appstage", TypeVersion: "php-nginx@8.4", RuntimeClass: topology.RuntimeImplicitWeb, Mode: topology.ModeStage, CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: false},
 			},
 		}},
-		{"develop-active/push-git/standard/container", StateEnvelope{
+		{"develop-active/git-push/standard/container", StateEnvelope{
 			// Two-snapshot pair (dev + stage) per deploy-decomp P3 §G5 ship
 			// gate. Future close-mode-git-push atom (Phase 8, modes:
 			// [standard, simple, local-stage, local-only]) renders ONCE for
@@ -936,10 +937,10 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"develop-change-drives-deploy",
 		"develop-checklist-dev-mode",
 		"develop-checklist-simple-mode",
-		"develop-close-push-dev-dev",
-		"develop-close-push-dev-local",
-		"develop-close-push-dev-simple",
-		"develop-close-push-dev-standard",
+		"develop-close-mode-auto-dev",
+		"develop-close-mode-auto-local",
+		"develop-close-mode-auto-simple",
+		"develop-close-mode-auto-standard",
 		"develop-deploy-files-self-deploy",
 		"develop-deploy-modes",
 		"develop-dev-server-reason-codes",
@@ -965,8 +966,8 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"develop-platform-rules-common",
 		"develop-platform-rules-container",
 		"develop-platform-rules-local",
-		"develop-push-dev-deploy-local",
-		"develop-push-dev-workflow-simple",
+		"develop-close-mode-auto-deploy-local",
+		"develop-close-mode-auto-workflow-simple",
 		"develop-ready-to-deploy",
 		"develop-record-external-deploy",
 		"develop-build-observe",

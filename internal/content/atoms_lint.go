@@ -37,6 +37,33 @@ type atomLintRule struct {
 	pattern  *regexp.Regexp
 }
 
+// AcceptedWorkflowActions lists every `action="X"` value that
+// `zerops_workflow`'s dispatcher accepts. Source of truth is
+// `internal/tools/workflow.go::handleWorkflowAction` — the early
+// `if input.Action == "X"` guards plus the `switch input.Action` cases.
+// This duplicate is here because content/ cannot import tools/ (layer
+// inversion); `TestAtomLintAcceptedActionsMatchDispatcher` keeps the two
+// in sync. If you add a new action there, add it here too.
+var AcceptedWorkflowActions = []string{
+	"start", "reset", "iterate", "complete", "generate-finalize",
+	"skip", "status", "close", "resume", "list", "route",
+	"close-mode", "git-push-setup", "build-integration",
+	"classify", "adopt-local",
+	"dispatch-brief-atom", "build-subagent-brief",
+	"verify-subagent-dispatch", "record-deploy",
+}
+
+// AcceptedDeployStrategies lists every `strategy="X"` value that
+// `zerops_deploy` accepts. Source of truth is `validateDeployStrategyParam`
+// at `internal/tools/deploy_strategy_gate.go`. The empty string (default
+// zcli push) is always allowed and does not appear in atom-body
+// `strategy="..."` literals — so the list only enumerates non-default
+// values that may appear quoted.
+// `TestAtomLintAcceptedStrategiesMatchGate` keeps the two in sync.
+var AcceptedDeployStrategies = []string{
+	"git-push",
+}
+
 var atomLintRules = []atomLintRule{
 	{
 		name:     "spec-id",
@@ -104,6 +131,87 @@ func lintAtomCorpus(atoms []AtomFile) []AtomLintViolation {
 		out = append(out, closeDeployModeViolations(ctx)...)
 		out = append(out, gitPushStateViolations(ctx)...)
 		out = append(out, buildIntegrationViolations(ctx)...)
+		out = append(out, staleActionViolations(ctx)...)
+		out = append(out, staleStrategyViolations(ctx)...)
+	}
+	return out
+}
+
+var (
+	workflowActionRe = regexp.MustCompile(`zerops_workflow[^\n]{0,200}\baction="([a-z][a-z0-9-]*)"`)
+	deployStrategyRe = regexp.MustCompile(`zerops_deploy[^\n]{0,200}\bstrategy="([a-z][a-z0-9-]*)"`)
+)
+
+// staleActionViolations flags `zerops_workflow action="X"` literals in atom
+// bodies where X is not in AcceptedWorkflowActions. This is the
+// class-prevention net for vocab drift after refactors like
+// deploy-strategy-decomposition (which retired `action="strategy"`).
+// Bodies that reference renamed actions surface immediately.
+func staleActionViolations(ctx atomLintCtx) []AtomLintViolation {
+	var out []AtomLintViolation
+	accepted := make(map[string]bool, len(AcceptedWorkflowActions))
+	for _, a := range AcceptedWorkflowActions {
+		accepted[a] = true
+	}
+	for i, line := range ctx.bodyLines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		matches := workflowActionRe.FindAllStringSubmatch(line, -1)
+		for _, m := range matches {
+			action := m[1]
+			if accepted[action] {
+				continue
+			}
+			key := ctx.file + "::" + trimmed
+			if _, allowed := atomLintAllowlist[key]; allowed {
+				continue
+			}
+			out = append(out, AtomLintViolation{
+				AtomFile: ctx.file,
+				Category: "stale-action",
+				Pattern:  "stale-workflow-action",
+				Line:     ctx.frontmatterLines + i + 1,
+				Snippet:  trimmed,
+			})
+		}
+	}
+	return out
+}
+
+// staleStrategyViolations flags `zerops_deploy strategy="X"` literals in
+// atom bodies where X is not in AcceptedDeployStrategies. Catches retired
+// values like "push-dev" reappearing post-decomposition.
+func staleStrategyViolations(ctx atomLintCtx) []AtomLintViolation {
+	var out []AtomLintViolation
+	accepted := make(map[string]bool, len(AcceptedDeployStrategies))
+	for _, s := range AcceptedDeployStrategies {
+		accepted[s] = true
+	}
+	for i, line := range ctx.bodyLines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		matches := deployStrategyRe.FindAllStringSubmatch(line, -1)
+		for _, m := range matches {
+			value := m[1]
+			if accepted[value] {
+				continue
+			}
+			key := ctx.file + "::" + trimmed
+			if _, allowed := atomLintAllowlist[key]; allowed {
+				continue
+			}
+			out = append(out, AtomLintViolation{
+				AtomFile: ctx.file,
+				Category: "stale-strategy",
+				Pattern:  "stale-deploy-strategy",
+				Line:     ctx.frontmatterLines + i + 1,
+				Snippet:  trimmed,
+			})
+		}
 	}
 	return out
 }

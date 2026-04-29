@@ -1,14 +1,14 @@
 ---
-id: develop-push-dev-deploy-local
+id: develop-close-mode-auto-deploy-local
 priority: 2
 phases: [develop-active]
 deployStates: [deployed]
 closeDeployModes: [auto]
 environments: [local]
-title: "Push-dev strategy — deploy via zerops_deploy"
+title: "close-mode=auto — deploy via zerops_deploy"
 ---
 
-### Push-Dev Deploy Strategy
+### close-mode=auto Deploy
 
 `zerops_deploy` deploys from your working directory into the linked
 Zerops stage. `zerops.yaml` placement is covered by

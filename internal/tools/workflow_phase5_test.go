@@ -245,8 +245,8 @@ func TestHandleGitPush_RejectsUnconfiguredState(t *testing.T) {
 		StageHostname:    "appstage",
 		BootstrapSession: "test",
 		BootstrappedAt:   "2026-04-28",
-		// GitPushState left unset — migrate at parseMeta lands at
-		// GitPushUnconfigured given DeployStrategy is also empty.
+		// GitPushState left unset — parseMeta lands at GitPushUnconfigured
+		// given closeDeployMode is also empty (no migration triggers).
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}

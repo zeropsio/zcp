@@ -421,14 +421,14 @@ func TestProvisionMeta_PreExistingDepMetaSurvives(t *testing.T) {
 	}
 }
 
-// --- C7: Bootstrap always writes empty DeployStrategy ---
+// --- C7: Bootstrap always writes empty CloseDeployMode ---
 
-func TestWriteBootstrapOutputs_AlwaysWritesEmptyStrategy(t *testing.T) {
+func TestWriteBootstrapOutputs_AlwaysWritesEmptyCloseDeployMode(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvContainer, nil)
 
-	_, err := eng.BootstrapStart("proj-1", "strategy must be empty")
+	_, err := eng.BootstrapStart("proj-1", "closeDeployMode must be empty")
 	if err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
@@ -453,18 +453,21 @@ func TestWriteBootstrapOutputs_AlwaysWritesEmptyStrategy(t *testing.T) {
 	if meta == nil {
 		t.Fatal("expected appdev meta")
 	}
+	if meta.CloseDeployMode != topology.CloseModeUnset {
+		t.Errorf("CloseDeployMode = %q, want %q (develop picks on first use)", meta.CloseDeployMode, topology.CloseModeUnset)
+	}
 }
 
-func TestWriteBootstrapOutputs_DefaultEmptyStrategy(t *testing.T) {
+func TestWriteBootstrapOutputs_DefaultEmptyCloseDeployMode(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name          string
 		bootstrapMode topology.Mode
 		env           Environment
 	}{
-		{"dev mode gets empty strategy", topology.PlanModeDev, EnvLocal},
-		{"simple mode gets empty strategy", topology.PlanModeSimple, EnvLocal},
-		{"standard mode gets empty strategy", topology.PlanModeStandard, EnvContainer},
+		{"dev mode gets empty closeDeployMode", topology.PlanModeDev, EnvLocal},
+		{"simple mode gets empty closeDeployMode", topology.PlanModeSimple, EnvLocal},
+		{"standard mode gets empty closeDeployMode", topology.PlanModeStandard, EnvContainer},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -484,7 +487,7 @@ func TestWriteBootstrapOutputs_DefaultEmptyStrategy(t *testing.T) {
 				t.Fatalf("BootstrapCompletePlan: %v", err)
 			}
 
-			// Bootstrap always writes empty strategy — user sets it later.
+			// Bootstrap always writes empty closeDeployMode — user sets it later.
 			for _, step := range []string{"provision", "close"} {
 				if _, err := eng.BootstrapComplete(context.Background(), step, "Attestation for "+step+" step completed ok", nil); err != nil {
 					t.Fatalf("BootstrapComplete(%s): %v", step, err)
@@ -498,16 +501,19 @@ func TestWriteBootstrapOutputs_DefaultEmptyStrategy(t *testing.T) {
 			if meta == nil {
 				t.Fatal("expected appdev meta")
 			}
+			if meta.CloseDeployMode != topology.CloseModeUnset {
+				t.Errorf("CloseDeployMode = %q, want %q", meta.CloseDeployMode, topology.CloseModeUnset)
+			}
 		})
 	}
 }
 
-func TestWriteBootstrapOutputs_LocalMode_DefaultEmptyStrategy(t *testing.T) {
+func TestWriteBootstrapOutputs_LocalMode_DefaultEmptyCloseDeployMode(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	eng := NewEngine(dir, EnvLocal, nil)
 
-	_, err := eng.BootstrapStart("proj-1", "local mode strategy test")
+	_, err := eng.BootstrapStart("proj-1", "local mode close-mode test")
 	if err != nil {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
@@ -531,6 +537,9 @@ func TestWriteBootstrapOutputs_LocalMode_DefaultEmptyStrategy(t *testing.T) {
 	}
 	if meta == nil {
 		t.Fatal("expected appdev meta")
+	}
+	if meta.CloseDeployMode != topology.CloseModeUnset {
+		t.Errorf("CloseDeployMode = %q, want %q (local mode bootstrap)", meta.CloseDeployMode, topology.CloseModeUnset)
 	}
 }
 
@@ -635,7 +644,7 @@ func TestBuildTransitionMessage_WithPlan_IncludesServices(t *testing.T) {
 	}
 }
 
-func TestBuildTransitionMessage_WithPlan_NoStrategySection(t *testing.T) {
+func TestBuildTransitionMessage_WithPlan_NoCloseModeSection(t *testing.T) {
 	t.Parallel()
 	state := &WorkflowState{
 		Bootstrap: &BootstrapState{
@@ -653,12 +662,16 @@ func TestBuildTransitionMessage_WithPlan_NoStrategySection(t *testing.T) {
 		},
 	}
 	msg := BuildTransitionMessage(state)
-	// Bootstrap must NOT include strategy selection.
-	if strings.Contains(msg, "Deploy Strategy") {
-		t.Error("bootstrap transition must NOT contain Deploy Strategy section")
+	// Bootstrap must NOT include close-mode / git-push-setup /
+	// build-integration selection — develop picks close-mode on first use.
+	if strings.Contains(msg, `action="close-mode"`) {
+		t.Error("bootstrap transition must NOT contain close-mode action command")
 	}
-	if strings.Contains(msg, `action="strategy"`) {
-		t.Error("bootstrap transition must NOT contain strategy action command")
+	if strings.Contains(msg, `action="git-push-setup"`) {
+		t.Error("bootstrap transition must NOT contain git-push-setup action command")
+	}
+	if strings.Contains(msg, `action="build-integration"`) {
+		t.Error("bootstrap transition must NOT contain build-integration action command")
 	}
 }
 
@@ -751,7 +764,7 @@ func TestBuildTransitionMessage_WithMultipleServices_ListsAll(t *testing.T) {
 	}
 }
 
-func TestBuildTransitionMessage_NoStrategyOptions(t *testing.T) {
+func TestBuildTransitionMessage_NoCloseModeOptions(t *testing.T) {
 	t.Parallel()
 	state := &WorkflowState{
 		Bootstrap: &BootstrapState{
@@ -769,15 +782,17 @@ func TestBuildTransitionMessage_NoStrategyOptions(t *testing.T) {
 		},
 	}
 	msg := BuildTransitionMessage(state)
-	// Bootstrap transition must NOT list strategy options.
-	if strings.Contains(msg, "push-dev") {
-		t.Error("bootstrap transition must NOT list push-dev strategy")
-	}
-	if strings.Contains(msg, "push-git") {
-		t.Error("bootstrap transition must NOT list push-git strategy")
+	// Bootstrap transition must NOT list close-mode options — develop picks
+	// closeDeployMode on first use.
+	if strings.Contains(msg, "git-push") {
+		t.Error("bootstrap transition must NOT list git-push close-mode")
 	}
 	if strings.Contains(msg, "manual") {
-		t.Error("bootstrap transition must NOT list manual strategy")
+		t.Error("bootstrap transition must NOT list manual close-mode")
+	}
+	// "auto" is a common English word; pin specifically the closeMode JSON form.
+	if strings.Contains(msg, `closeMode={`) {
+		t.Error("bootstrap transition must NOT carry closeMode={...} payload")
 	}
 }
 
@@ -801,11 +816,11 @@ func TestBuildTransitionMessage_EmptyTargets_ManagedOnly(t *testing.T) {
 		t.Error("message should mention managed services provisioned")
 	}
 	// Should NOT contain runtime-oriented sections.
-	if strings.Contains(msg, "Deploy Strategy") {
-		t.Error("managed-only message should NOT contain Deploy Strategy section")
+	if strings.Contains(msg, "Close Mode") || strings.Contains(msg, "close-mode Gate") {
+		t.Error("managed-only message should NOT contain Close Mode section")
 	}
-	if strings.Contains(msg, "push-git Gate") {
-		t.Error("managed-only message should NOT contain push-git Gate section")
+	if strings.Contains(msg, "git-push Gate") {
+		t.Error("managed-only message should NOT contain git-push Gate section")
 	}
 	// Should offer utility operations.
 	if !strings.Contains(msg, "scale") {
@@ -1080,10 +1095,10 @@ func TestProvisionMeta_AdoptedService_EmptyBootstrapSession(t *testing.T) {
 }
 
 // Mode-expansion path (§9.1): the existing runtime's user-authored fields —
-// BootstrappedAt, DeployStrategy, StrategyConfirmed, FirstDeployedAt —
-// must survive the upgrade. Only Mode / StageHostname change. Without the
-// merge, a dev→standard upgrade would silently revert the user's push-git
-// choice and lose deploy history.
+// BootstrappedAt, CloseDeployMode, CloseDeployModeConfirmed, GitPushState,
+// BuildIntegration, FirstDeployedAt — must survive the upgrade. Only Mode /
+// StageHostname change. Without the merge, a dev→standard upgrade would
+// silently revert the user's git-push close-mode and lose deploy history.
 //
 // Flow note: when the single runtime target is IsExisting=true with no
 // live-new dependencies, bootstrap's fast-path auto-skips `close` (set by

@@ -631,7 +631,7 @@ func TestAttemptInfo_PreservesFailureContext(t *testing.T) {
 			"apidev": {{
 				AttemptedAt:  "2026-04-26T10:00:00Z",
 				Setup:        "dev",
-				Strategy:     "push-dev",
+				Strategy:     "git-push",
 				Error:        "build timeout after 15 minutes",
 				FailureClass: topology.FailureClassBuild,
 			}},
@@ -661,8 +661,8 @@ func TestAttemptInfo_PreservesFailureContext(t *testing.T) {
 	if gotDeploy.Setup != "dev" {
 		t.Errorf("deploy Setup: got %q, want %q", gotDeploy.Setup, "dev")
 	}
-	if gotDeploy.Strategy != "push-dev" {
-		t.Errorf("deploy Strategy: got %q, want %q", gotDeploy.Strategy, "push-dev")
+	if gotDeploy.Strategy != "git-push" {
+		t.Errorf("deploy Strategy: got %q, want %q", gotDeploy.Strategy, "git-push")
 	}
 	if gotDeploy.Success {
 		t.Errorf("deploy Success: got true, want false")
@@ -707,7 +707,7 @@ func TestAttemptInfo_SuccessLeavesFailureFieldsEmpty(t *testing.T) {
 				AttemptedAt: "2026-04-26T10:00:00Z",
 				SucceededAt: "2026-04-26T10:02:00Z",
 				Setup:       "dev",
-				Strategy:    "push-dev",
+				Strategy:    "git-push",
 				// Stale failure fields from a previous failed retry.
 				// Projection MUST drop them on Success=true.
 				Error:        "stale: build timeout",

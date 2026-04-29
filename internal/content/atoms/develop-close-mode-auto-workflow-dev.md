@@ -1,12 +1,12 @@
 ---
-id: develop-push-dev-workflow-dev
+id: develop-close-mode-auto-workflow-dev
 priority: 3
 phases: [develop-active]
 deployStates: [deployed]
 modes: [dev]
 closeDeployModes: [auto]
 environments: [container]
-title: "Push-dev iteration cycle (dev mode)"
+title: "close-mode=auto iteration cycle (dev mode)"
 references-fields: [ops.DevServerResult.Reason, ops.DevServerResult.Running, ops.DevServerResult.HealthStatus, ops.DevServerResult.LogTail, ops.DevServerResult.StartMillis]
 references-atoms: [develop-dev-server-reason-codes, develop-platform-rules-container, develop-platform-rules-common]
 ---

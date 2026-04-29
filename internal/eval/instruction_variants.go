@@ -45,7 +45,7 @@ Before ANY work on service code (reading, debugging, fixing, deploying), start a
   develop — develop, deploy, fix, or investigate services (requires scope)
   bootstrap — create/adopt services
   export — turn a deployed service into a re-importable git repo
-Deploy strategy: action="strategy" strategies={host:"push-dev|push-git|manual"}.
+Close-mode: action="close-mode" closeMode={host:"auto|git-push|manual"}.
 Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_deploy, zerops_discover, zerops_knowledge.`,
 			Container: sharedContainer,
 			Local:     sharedLocal,
@@ -59,7 +59,7 @@ Service code depends on platform config NOT in source files (env vars, runtime s
   zerops_discover — see services, state, env vars (ALWAYS call first)
   zerops_workflow action="start" workflow="develop|bootstrap|export" scope=[hosts] — get full platform context
   develop — fix/investigate/deploy (requires scope)   bootstrap — create/adopt   export — re-importable repo
-Deploy strategy (post-first-deploy): action="strategy" strategies={host:value}.
+Close-mode (post-first-deploy): action="close-mode" closeMode={host:"auto|git-push|manual"}.
 Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge.`,
 			Container: sharedContainer,
 			Local:     sharedLocal,
@@ -74,7 +74,7 @@ For ANY task involving services, follow this process:
 2. zerops_workflow action="start" workflow="develop" scope=[hosts] — get platform context
 3. Then read/edit code with full understanding
 Workflows: develop (fix/investigate/deploy, requires scope), bootstrap (create/adopt), export (re-importable repo).
-Deploy strategy: action="strategy" strategies={host:"push-dev|push-git|manual"}.
+Close-mode: action="close-mode" closeMode={host:"auto|git-push|manual"}.
 Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge.`,
 			Container: sharedContainer,
 			Local:     sharedLocal,
@@ -88,7 +88,7 @@ Files on services are live — editing without platform context causes incorrect
   zerops_discover — call FIRST (shows services, env vars, state)
   zerops_workflow action="start" workflow="develop" scope=[hosts] — provides platform docs and constraints
   develop — fix/investigate/deploy (requires scope)   bootstrap — create/adopt   export — re-importable repo
-Deploy strategy (post-first-deploy): action="strategy" strategies={host:value}.
+Close-mode (post-first-deploy): action="close-mode" closeMode={host:"auto|git-push|manual"}.
 Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge.`,
 			Container: sharedContainer,
 			Local:     sharedLocal,
@@ -101,7 +101,7 @@ Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_
 Your first action for ANY task: zerops_discover (understand services and state).
 Then: zerops_workflow action="start" workflow="develop" scope=[hosts] for platform context.
   develop — fix/investigate/deploy (requires scope)   bootstrap — create/adopt   export — re-importable repo
-Deploy strategy: action="strategy" strategies={host:"push-dev|push-git|manual"}.
+Close-mode: action="close-mode" closeMode={host:"auto|git-push|manual"}.
 Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge.`,
 			Container: sharedContainer,
 			Local:     sharedLocal,
@@ -116,7 +116,7 @@ THEN: zerops_workflow action="start" workflow="..." — platform context for cod
   develop scope=[hosts] — develop, deploy, fix, or investigate code
   bootstrap — create new or adopt existing services
   export — turn a deployed service into a re-importable git repo
-Deploy strategy (post-first-deploy): action="strategy" strategies={host:"push-dev|push-git|manual"}.
+Close-mode (post-first-deploy): action="close-mode" closeMode={host:"auto|git-push|manual"}.
 Without discover you don't know the platform state. Without workflow you lack runtime docs and constraints.
 Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge.`,
 			Container: sharedContainer,
@@ -132,7 +132,7 @@ Before working on any service, check:
 - Do I have platform context for this service? → zerops_workflow action="start" workflow="develop" scope=[hosts]
 - Am I editing a live mount (/var/www/{hostname}/)? → these are live services, not local files
 Workflows: develop (fix/investigate/deploy, requires scope), bootstrap (create/adopt), export (re-importable repo).
-Deploy strategy: action="strategy" strategies={host:value}.
+Close-mode: action="close-mode" closeMode={host:"auto|git-push|manual"}.
 Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge.`,
 			Container: sharedContainer,
 			Local:     sharedLocal,
@@ -146,7 +146,7 @@ STOP. Do not Read, Edit, or Grep service files until you have:
 1. Called zerops_discover (shows services, env vars, platform state)
 2. Started zerops_workflow action="start" workflow="develop" scope=[hosts] (provides runtime docs and constraints)
 Other workflows: bootstrap (create/adopt services), export (re-importable repo).
-Deploy strategy: action="strategy" strategies={host:"push-dev|push-git|manual"}.
+Close-mode: action="close-mode" closeMode={host:"auto|git-push|manual"}.
 Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge.`,
 			Container: sharedContainer,
 			Local:     sharedLocal,
@@ -156,7 +156,7 @@ Direct tools: zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_
 			Name:        "Ultra-minimal",
 			Description: "Absolute minimum — one-liner, maximize dynamic content space",
 			Base: `ZCP manages Zerops PaaS. Always: zerops_discover first, then zerops_workflow action="start" workflow="develop" scope=[hosts] before code work.
-Workflows: develop (requires scope), bootstrap, export. Deploy strategy: action="strategy". Direct: zerops_scale, zerops_manage, zerops_env, zerops_knowledge.`,
+Workflows: develop (requires scope), bootstrap, export. Close-mode: action="close-mode" closeMode={host:"auto|git-push|manual"}. Direct: zerops_scale, zerops_manage, zerops_env, zerops_knowledge.`,
 			Container: `
 Control plane. /var/www/{hostname}/ = live SSHFS mount. ssh {hostname} for commands.`,
 			Local: `
@@ -171,7 +171,7 @@ Pre-flight (complete before ANY service code work):
 [ ] zerops_discover — I know services, state, env vars
 [ ] zerops_workflow action="start" workflow="develop" scope=[hosts] — I have platform context (runtime docs, constraints)
 Workflows: develop (fix/investigate/deploy, requires scope), bootstrap (create/adopt), export (re-importable repo).
-Deploy strategy: action="strategy" strategies={host:"push-dev|push-git|manual"}.
+Close-mode: action="close-mode" closeMode={host:"auto|git-push|manual"}.
 Direct tools (skip checklist): zerops_scale, zerops_manage, zerops_env, zerops_subdomain, zerops_knowledge.`,
 			Container: sharedContainer,
 			Local:     sharedLocal,

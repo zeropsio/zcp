@@ -226,7 +226,7 @@ func TestFormatAdoptionNote_Shapes(t *testing.T) {
 				"local-only",
 				"api, web, worker",
 				"adopt-local",
-				"push-dev",
+				"`auto`",
 			},
 		},
 		{
@@ -239,7 +239,7 @@ func TestFormatAdoptionNote_Shapes(t *testing.T) {
 				`"myproject"`,
 				"local-only",
 				"No Zerops runtime",
-				"push-git",
+				"git-push",
 				"manual",
 				"db",
 			},

@@ -48,7 +48,7 @@ func seedOpenWorkSession(t *testing.T, dir string, deploySucceeded bool) {
 	ws := workflow.NewWorkSession("proj1", string(workflow.EnvContainer), "test intent", []string{"appdev"})
 	if deploySucceeded {
 		ws.Deploys = map[string][]workflow.DeployAttempt{
-			"appdev": {{AttemptedAt: now, SucceededAt: now, Setup: "dev", Strategy: "push-dev"}},
+			"appdev": {{AttemptedAt: now, SucceededAt: now, Setup: "dev"}},
 		}
 	}
 	if err := workflow.SaveWorkSession(dir, ws); err != nil {
