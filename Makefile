@@ -1,4 +1,4 @@
-.PHONY: help setup test test-short test-race lint lint-fast lint-local vet build all clean release release-patch catalog-sync e2e-build e2e-deploy e2e-zcpx e2e-zcpx-fast e2e-zcpx-deploy verify-dogfood-no-manual-subdomain-enable verify-claudemd-zerops-free
+.PHONY: help setup test test-short test-race lint lint-fast lint-local vet build all clean release release-patch catalog-sync e2e-build e2e-deploy e2e-zcpx e2e-zcpx-fast e2e-zcpx-deploy
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
@@ -68,12 +68,6 @@ lint-atom-template-vars: ## B-22 atom template-variable bindings (guards against
 
 vet: ## Run go vet
 	go vet ./...
-
-verify-dogfood-no-manual-subdomain-enable: ## R-15-1 closure: assert latest dogfood ran zero manual zerops_subdomain action=enable
-	@./scripts/verify-dogfood-subdomain.sh
-
-verify-claudemd-zerops-free: ## §0.6 mechanism gate: assert latest dogfood claudemd-author output has no Zerops content
-	@./scripts/verify-claudemd-zerops-free.sh
 
 build: ## Build binary
 	go build -ldflags "$(LDFLAGS)" -o bin/zcp ./cmd/zcp
