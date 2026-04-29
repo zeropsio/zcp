@@ -118,11 +118,24 @@ any fragment whose body would re-author parent material, HOLD. The
 porter reads parent + this recipe together; duplicating parent
 content here weakens both.
 
-## Per-fragment edit cap
+## Per-fragment edit cap + revert semantics
 
-You make ONE replace attempt per fragment. If the engine reverts your
-replacement (a post-replace validator fires), the fragment stays at
-its pre-refinement body and you record a notice. Do NOT loop.
+You make ONE replace attempt per fragment. For codebase fragments
+(`codebase/<host>/integration-guide/<n>`, `codebase/<host>/knowledge-
+base`, `codebase/<host>/zerops-yaml-comments/<block>`,
+`codebase/<host>/claude-md`, `codebase/<host>/intro`), the engine
+wraps your Replace in a snapshot/restore transaction: surface
+validators run scoped to the named codebase before AND after your
+Replace; if the post-replace set has a new blocking violation absent
+from the pre-replace set, the engine reverts to your pre-Replace
+body. The response surfaces a `refinement-replace-reverted` notice
+naming the violation that fired.
+
+For env / root fragments the wrapper does not fire — slot-shape is
+the only safety net at record time. HOLD on those if the reshape
+isn't 100% sure.
+
+Either way: do NOT loop. One attempt per fragment.
 
 ## End of refinement
 

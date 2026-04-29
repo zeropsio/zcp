@@ -139,6 +139,22 @@ func isAppendFragmentID(id string) bool {
 // a typo here from silently diverging from the assembler's marker id.
 const fragmentIDRoot = "root/intro"
 
+// codebaseHostFromFragmentID returns the codebase hostname for a
+// `codebase/<host>/...` fragment id, or "" for root/env ids that
+// don't bind to a single codebase. Run-17 §9.5 — used by the
+// refinement transactional wrapper to scope post-replace validators
+// to the codebase whose fragment was just modified.
+func codebaseHostFromFragmentID(id string) string {
+	rest, ok := strings.CutPrefix(id, "codebase/")
+	if !ok {
+		return ""
+	}
+	if i := strings.IndexByte(rest, '/'); i > 0 {
+		return rest[:i]
+	}
+	return ""
+}
+
 // fragmentTailIntro is the leaf tail used by `env/<N>/intro` and
 // `codebase/<host>/intro` fragment ids. Constant keeps the literal
 // single-source across handlers_fragments.go and surfaces.go's

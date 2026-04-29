@@ -234,8 +234,8 @@ func validateCodebaseCLAUDE(_ context.Context, path string, body []byte, _ Surfa
 	// this; if it didn't, the validator blocks publication.
 	//
 	// Run-16 reviewer minor — uses the same word-boundary regexes as
-	// slot_shape.checkClaudeMD so the validator and record-time refusal
-	// agree on what counts as a leak. Substring matching on
+	// slot_shape.checkClaudeMDAll so the validator and record-time
+	// refusal agree on what counts as a leak. Substring matching on
 	// "zerops_" was looser (would match `Zerops_v1` in regular prose);
 	// `\bzerops_[a-z_]+` matches only the tool-name shape.
 	bodyStr := string(body)

@@ -83,22 +83,29 @@ func BuildRefinementBrief(plan *Plan, parent *ParentRecipe, runDir string, facts
 	// Per-recipe context: pointer block to stitched output on disk.
 	// Tier directories use Tier.Folder (e.g. "0 — AI Agent",
 	// "4 — Small Production") — engine-stable per tiers.go.
-	b.WriteString("## Stitched output to refine\n\n")
-	b.WriteString("Read each path in order; refine fragments where the 100%-sure threshold holds.\n\n")
-	if runDir != "" {
-		fmt.Fprintf(&b, "1. `%s/README.md` — root README\n", runDir)
-		for _, t := range Tiers() {
-			fmt.Fprintf(&b, "2. `%s/environments/%s/README.md` + `import.yaml`\n", runDir, t.Folder)
+	hasStitchedBody := runDir != "" || (parent != nil && parent.Slug != "" && parent.SourceRoot != "")
+	if hasStitchedBody {
+		b.WriteString("## Stitched output to refine\n\n")
+		b.WriteString("Read each path; refine fragments where the 100%-sure threshold holds.\n\n")
+		if runDir != "" {
+			b.WriteString("**Root**\n\n")
+			fmt.Fprintf(&b, "- `%s/README.md` — root README\n", runDir)
+			b.WriteString("\n**Tier environments**\n\n")
+			for _, t := range Tiers() {
+				fmt.Fprintf(&b, "- `%s/environments/%s/README.md` + `import.yaml`\n", runDir, t.Folder)
+			}
+			b.WriteString("\n**Codebases**\n\n")
+			for _, cb := range plan.Codebases {
+				fmt.Fprintf(&b, "- `%s/%s/README.md` + `zerops.yaml` + `CLAUDE.md`\n", runDir, cb.Hostname)
+			}
 		}
-		for _, cb := range plan.Codebases {
-			fmt.Fprintf(&b, "3. `%s/%s/README.md` + `zerops.yaml` + `CLAUDE.md`\n", runDir, cb.Hostname)
+		if parent != nil && parent.Slug != "" && parent.SourceRoot != "" {
+			b.WriteString("\n**Parent recipe (read-only)**\n\n")
+			fmt.Fprintf(&b, "- parent recipe `%s` published surfaces (under the parent's source root). Refinement HOLDS on any fragment whose body would re-author parent material.\n", parent.Slug)
 		}
+		b.WriteString("\n")
+		parts = append(parts, "stitched-output-pointer-block")
 	}
-	if parent != nil && parent.Slug != "" && parent.SourceRoot != "" {
-		fmt.Fprintf(&b, "4. parent recipe `%s` published surfaces (under the parent's source root). Refinement HOLDS on any fragment whose body would re-author parent material.\n", parent.Slug)
-	}
-	b.WriteString("\n")
-	parts = append(parts, "stitched-output-pointer-block")
 
 	// Facts log — full snapshot, no truncation. The refinement sub-
 	// agent uses recorded facts to validate trade-off two-sidedness
