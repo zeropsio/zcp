@@ -74,6 +74,7 @@ func CodebaseScaffoldGates() []Gate {
 func CodebaseContentGates() []Gate {
 	return []Gate{
 		{Name: "codebase-surface-validators", Run: gateCodebaseSurfaceValidators},
+		{Name: "deploy-files-narrowness", Run: gateDeployFilesNarrowness},
 		{Name: "cross-surface-duplication", Run: gateCrossSurfaceDuplication},
 		{Name: "cross-recipe-duplication", Run: gateCrossRecipeDuplication},
 	}
