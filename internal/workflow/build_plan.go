@@ -1,6 +1,6 @@
 package workflow
 
-import
+import "github.com/zeropsio/zcp/internal/topology"
 
 // BuildPlan is the single entry point for producing the typed Plan from an
 // envelope. Pure — no I/O, no state, deterministic given the input JSON.
@@ -26,8 +26,6 @@ import
 // Any branch whose precondition is not met falls through — no fallbacks,
 // no defaults. If the envelope hits no branch, an empty Plan is returned,
 // signalling a bug in envelope construction.
-"github.com/zeropsio/zcp/internal/topology"
-
 func BuildPlan(env StateEnvelope) Plan {
 	switch env.Phase {
 	case PhaseDevelopClosed:
@@ -81,7 +79,7 @@ func planDevelopActive(env StateEnvelope) Plan {
 		for _, host := range env.WorkSession.Services {
 			if needsDeploy(env.WorkSession, host) {
 				last := lastAttempt(env.WorkSession.Deploys[host])
-				return Plan{Primary: deployActionFor(host, last), PerService: perService}
+				return Plan{Primary: deployActionFor(host, last, env.Services), PerService: perService}
 			}
 		}
 		for _, host := range env.WorkSession.Services {
@@ -116,7 +114,7 @@ func perServiceDevelopActions(env StateEnvelope) map[string]NextAction {
 	for _, host := range env.WorkSession.Services {
 		switch {
 		case needsDeploy(env.WorkSession, host):
-			out[host] = deployActionFor(host, lastAttempt(env.WorkSession.Deploys[host]))
+			out[host] = deployActionFor(host, lastAttempt(env.WorkSession.Deploys[host]), env.Services)
 		case needsVerify(env.WorkSession, host):
 			out[host] = verifyActionFor(host, lastAttempt(env.WorkSession.Verifies[host]))
 		}
@@ -239,13 +237,57 @@ func countIdleServices(env StateEnvelope) (bootstrapped, adoptable int) {
 // failure shape ("Last attempt: build failed — <reason>") so the LLM has
 // the recovery context inline. The Reason text is included verbatim so a
 // post-compaction `action="status"` reconstructs the actionable diagnosis.
-func deployActionFor(host string, last AttemptInfo) NextAction {
+//
+// Stage half of a standard pair (Mode=stage AND a matching dev half exists
+// in services with StageHostname=host) emits a CROSS-deploy:
+// sourceService=<dev host>, targetService=host, setup="prod" — matching
+// the cadence pinned by the develop-close-mode-auto-standard atom (and
+// the develop-first-deploy-promote-stage atom for the never-deployed
+// case). Without the cross-deploy framing the agent would see a SELF-
+// deploy of stage in the typed Plan (no sourceService) which DM-2 would
+// then reject with `ErrInvalidZeropsYml` because stage's `deployFiles`
+// is post-build-tree (cherry-picked), not the full source tree.
+//
+// TODO: replace with a workflow-side `DeployIntent` resolver that
+// computes (mode, deploy-class, source, target, setup) once and
+// flows it through both build_plan and ops.ClassifyDeploy. The current
+// implementation is a symptom fix that infers the same data inline at
+// dispatch time. See audit-prerelease-internal-testing-2026-04-29.md
+// H1 + plan §3 for the structural target.
+func deployActionFor(host string, last AttemptInfo, services []ServiceSnapshot) NextAction {
+	if devHost := findDevHalfForStage(host, services); devHost != "" {
+		return NextAction{
+			Label: "Deploy " + host,
+			Tool:  "zerops_deploy",
+			Args: map[string]string{
+				"sourceService": devHost,
+				"targetService": host,
+				"setup":         "prod",
+			},
+			Rationale: deployRationale(last),
+		}
+	}
 	return NextAction{
 		Label:     "Deploy " + host,
 		Tool:      "zerops_deploy",
 		Args:      map[string]string{"targetService": host},
 		Rationale: deployRationale(last),
 	}
+}
+
+// findDevHalfForStage returns the dev hostname of the standard pair when
+// host is the stage half of one. Empty when host is not a stage half. The
+// dev half is the snapshot whose StageHostname == host. ServiceSnapshot
+// for a stage half does NOT carry the paired dev hostname directly — only
+// the dev half has StageHostname populated — so the lookup is a forward
+// scan over services.
+func findDevHalfForStage(host string, services []ServiceSnapshot) string {
+	for _, svc := range services {
+		if svc.StageHostname == host && svc.Mode == topology.ModeStandard {
+			return svc.Hostname
+		}
+	}
+	return ""
 }
 
 // verifyActionFor mirrors deployActionFor for verify attempts. When the

@@ -131,6 +131,77 @@ func TestBuildPlan_DevelopActiveDeployPending(t *testing.T) {
 	if plan.Primary.Args["targetService"] != "appdev" {
 		t.Errorf("targetService = %q, want appdev", plan.Primary.Args["targetService"])
 	}
+	if plan.Primary.Args["sourceService"] != "" {
+		t.Errorf("sourceService = %q, want empty (self-deploy)", plan.Primary.Args["sourceService"])
+	}
+}
+
+// TestBuildPlan_DevelopActiveDeployPending_StageHalf_CrossDeploy pins H1
+// (audit-prerelease-internal-testing-2026-04-29). Iterating
+// WorkSession.Services with a stage half pending used to emit
+// `zerops_deploy targetService=<stagehost>` — a self-deploy of stage,
+// which DM-2 then rejects because stage's deployFiles is post-build-tree
+// (cross-deploy from dev), not the full source. Now planDevelopActive
+// looks up the dev half via env.Services and emits the cross-deploy
+// shape: sourceService=<devhost>, targetService=<stagehost>, setup="prod".
+// Mirrors the cadence pinned by develop-close-mode-auto-standard.
+func TestBuildPlan_DevelopActiveDeployPending_StageHalf_CrossDeploy(t *testing.T) {
+	t.Parallel()
+
+	env := planEnvelope(PhaseDevelopActive)
+	env.Services = []ServiceSnapshot{
+		{Hostname: "appdev", Mode: topology.ModeStandard, StageHostname: "appstage", Bootstrapped: true, Deployed: true},
+		{Hostname: "appstage", Mode: topology.ModeStage, Bootstrapped: true, Deployed: false},
+	}
+	env.WorkSession = &WorkSessionSummary{
+		Intent:   "promote first deploy",
+		Services: []string{"appstage"},
+		Deploys:  map[string][]AttemptInfo{},
+	}
+	plan := BuildPlan(env)
+
+	if plan.Primary.Tool != "zerops_deploy" {
+		t.Fatalf("tool = %q, want zerops_deploy", plan.Primary.Tool)
+	}
+	if got := plan.Primary.Args["targetService"]; got != "appstage" {
+		t.Errorf("targetService = %q, want appstage", got)
+	}
+	if got := plan.Primary.Args["sourceService"]; got != "appdev" {
+		t.Errorf("sourceService = %q, want appdev (cross-deploy from dev half)", got)
+	}
+	if got := plan.Primary.Args["setup"]; got != "prod" {
+		t.Errorf("setup = %q, want prod (matches develop-close-mode-auto-standard cadence)", got)
+	}
+}
+
+// TestBuildPlan_DevelopActiveDeployPending_DevHalf_SelfDeploy pins the
+// other half: when the dev hostname is pending, the typed Plan emits a
+// SELF-deploy (no sourceService, no setup) — the dev runtime's
+// deployFiles is `[.]`, full source, no cross-deploy needed.
+func TestBuildPlan_DevelopActiveDeployPending_DevHalf_SelfDeploy(t *testing.T) {
+	t.Parallel()
+
+	env := planEnvelope(PhaseDevelopActive)
+	env.Services = []ServiceSnapshot{
+		{Hostname: "appdev", Mode: topology.ModeStandard, StageHostname: "appstage", Bootstrapped: true, Deployed: false},
+		{Hostname: "appstage", Mode: topology.ModeStage, Bootstrapped: true, Deployed: false},
+	}
+	env.WorkSession = &WorkSessionSummary{
+		Intent:   "first deploy",
+		Services: []string{"appdev"},
+		Deploys:  map[string][]AttemptInfo{},
+	}
+	plan := BuildPlan(env)
+
+	if got := plan.Primary.Args["targetService"]; got != "appdev" {
+		t.Errorf("targetService = %q, want appdev", got)
+	}
+	if got := plan.Primary.Args["sourceService"]; got != "" {
+		t.Errorf("sourceService = %q, want empty (dev half is self-deploy)", got)
+	}
+	if got := plan.Primary.Args["setup"]; got != "" {
+		t.Errorf("setup = %q, want empty (dev half uses default setup)", got)
+	}
 }
 
 func TestBuildPlan_DevelopActiveVerifyPending(t *testing.T) {
