@@ -81,11 +81,35 @@ func handleGitPushSetup(input WorkflowInput, stateDir string, rt runtime.Info) (
 			fmt.Sprintf("Service %q is not bootstrapped", input.Service),
 			"Run bootstrap first: zerops_workflow action=\"start\" workflow=\"bootstrap\""), WithRecoveryStatus()), nil, nil
 	}
-	if !meta.IsPushSourceFor(input.Service) {
+	switch meta.PushSourceCheckFor(input.Service) {
+	case topology.PushSourceOK:
+		// proceed
+	case topology.PushSourceIsStageHalf:
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
-			fmt.Sprintf("git-push-setup target %q is not a source-of-push (build target half of the pair); set up from %q instead", input.Service, meta.Hostname),
+			fmt.Sprintf("git-push-setup target %q is the stage half of a pair (build target, never push source); set up from the dev half %q instead", input.Service, meta.Hostname),
 			fmt.Sprintf("Retry with: zerops_workflow action=\"git-push-setup\" service=%q", meta.Hostname),
+		), WithRecoveryStatus()), nil, nil
+	case topology.PushSourceModeUnsupported:
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("git-push-setup target %q is in mode %q which does not support push-git (only Standard/Simple/LocalStage/LocalOnly do)", input.Service, meta.Mode),
+			"Run mode-expansion to upgrade ModeDev → ModeStandard (adds a stage half) before configuring git-push: zerops_workflow action=\"mode-expansion\" service=\""+input.Service+"\"",
+		), WithRecoveryStatus()), nil, nil
+	case topology.PushSourceUnknownHost:
+		return convertError(platform.NewPlatformError(
+			platform.ErrServiceNotFound,
+			fmt.Sprintf("git-push-setup target %q is not part of meta scope keyed at %q", input.Service, meta.Hostname),
+			"The meta lookup matched a different service. Verify the hostname or re-run bootstrap on the right pair.",
+		), WithRecoveryStatus()), nil, nil
+	default:
+		// Defensive: future PushSourceResult variants must be classified
+		// explicitly. Falling through silently as if OK would let a new
+		// rejection case slip past validation.
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("internal classifier returned an unexpected PushSourceResult for service %q — please file a bug", input.Service),
+			"Run zerops_workflow action=\"status\" to recover and report the issue.",
 		), WithRecoveryStatus()), nil, nil
 	}
 

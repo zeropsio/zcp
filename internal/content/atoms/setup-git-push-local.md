@@ -21,24 +21,24 @@ git -C {workingDir} remote -v
 
 If `origin` is empty, pass `remoteUrl=` on the first push and ZCP adds it. If `origin` exists with a different URL, ZCP refuses rather than silently rewrite — fix `origin` manually first.
 
-## 3. Commit + first push
+## 3. Stamp git-push capability BEFORE the first push
 
-```
-git -C {workingDir} add -A && git -C {workingDir} commit -m "initial commit"
-
-zerops_deploy targetService="{hostname}" strategy="git-push" \
-  remoteUrl="{repoUrl}" branch="main"
-```
-
-The response's `status` confirms the push. On `failureClassification.category=network` (transport-layer), check VPN / proxy / network reachability of the remote. On `category=credential`, fix git auth on this workstation; ZCP can't help — it never sees the credential.
-
-## 4. Confirm setup
-
-After the first push lands:
+`zerops_deploy strategy=git-push` refuses with `PREREQUISITE_MISSING` until `GitPushState=configured` is stamped on the service meta — the setup call is a pre-flight handshake, not a post-deploy confirmation:
 
 ```
 zerops_workflow action="git-push-setup" service="{hostname}" \
   remoteUrl="{repoUrl}"
 ```
 
-This stamps `GitPushState=configured` plus `RemoteURL`. Subsequent pushes via `zerops_deploy strategy=git-push` skip this walkthrough, and `action=build-integration` stops blocking on the prereq chain.
+This validates the URL shape and stamps `GitPushState=configured` plus `RemoteURL`. It does NOT push anything yet — the actual transmission happens in the next step.
+
+## 4. Commit + first push
+
+```
+git -C {workingDir} add -A && git -C {workingDir} commit -m "initial commit"
+
+zerops_deploy targetService="{hostname}" strategy="git-push" \
+  branch="main"
+```
+
+The response's `status` confirms the push. On `failureClassification.category=network` (transport-layer), check VPN / proxy / network reachability of the remote. On `category=credential`, fix git auth on this workstation; ZCP can't help — it never sees the credential. The `remoteUrl` arg is optional after step 3 (handler reads it from the stamped meta); pass it on the deploy call only when you want to override the stamped value.

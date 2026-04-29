@@ -203,10 +203,14 @@ func (m *ServiceMeta) RoleFor(hostname string) topology.Mode {
 	return ""
 }
 
-// IsPushSourceFor returns true when hostname is a source-of-push within this
-// meta's pair scope. False for stage hostnames (build target, never source)
-// and for ModeDev services (legacy dev-only mode incompatible with push-git
-// per the deploy-strategy decomposition §3.2).
+// PushSourceCheckFor classifies whether hostname is a source-of-push within
+// this meta's pair scope, returning the discriminating reason so callers can
+// render reason-specific remediation. Replaced the boolean IsPushSourceFor
+// once handlers grew the need to distinguish "stage half — push from dev"
+// from "mode unsupported — expand to ModeStandard first" from "unknown
+// host" — all of which the boolean form collapsed onto a single false,
+// producing nonsensical "X instead of X" error messages for standalone
+// ModeDev services where input.Service == meta.Hostname.
 //
 // Reads meta.Mode directly (PlanMode values alias topology.Mode values, so
 // topology.IsPushSource classifies them correctly) rather than going through
@@ -215,20 +219,23 @@ func (m *ServiceMeta) RoleFor(hostname string) topology.Mode {
 // information needed here. Stage-hostname check is the explicit pair-half
 // carve-out.
 //
-// Used by handleGitPush + handleLocalGitPush (deploy-decomp P4) to reject
-// targetService that is not a source-of-push, returning a remediation
-// pointing at the correct dev hostname.
-func (m *ServiceMeta) IsPushSourceFor(hostname string) bool {
+// Used by handleGitPush + handleGitPushSetup to reject targetService that
+// is not a source-of-push, returning a remediation pointing at the correct
+// dev hostname OR a mode-expansion pointer OR a meta-scope-mismatch hint.
+func (m *ServiceMeta) PushSourceCheckFor(hostname string) topology.PushSourceResult {
 	if m == nil || hostname == "" {
-		return false
+		return topology.PushSourceUnknownHost
 	}
 	if m.StageHostname != "" && hostname == m.StageHostname {
-		return false
+		return topology.PushSourceIsStageHalf
 	}
 	if hostname != m.Hostname {
-		return false
+		return topology.PushSourceUnknownHost
 	}
-	return topology.IsPushSource(m.Mode)
+	if !topology.IsPushSource(m.Mode) {
+		return topology.PushSourceModeUnsupported
+	}
+	return topology.PushSourceOK
 }
 
 // WriteServiceMeta writes service metadata to baseDir/services/{hostname}.json.

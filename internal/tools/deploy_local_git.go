@@ -120,23 +120,27 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 		), WithRecoveryStatus()), nil, nil
 	}
 
-	// 3. Resolve origin URL.
+	// 3. Resolve effective remote URL via shared helper — see
+	// deploy_git_push.go::resolveEffectiveRemote for the rationale.
+	effectiveRemote := resolveEffectiveRemote(stateDir, hostname, input.RemoteURL)
+
+	// 4. Resolve origin URL.
 	currentOrigin, _ := runGit(ctx, workingDir, "remote", "get-url", "origin")
 	current := strings.TrimSpace(currentOrigin)
 	switch {
-	case current == "" && input.RemoteURL == "":
-		record("no origin + no remoteUrl", topology.FailureClassConfig)
+	case current == "" && effectiveRemote == "":
+		record("no origin + no remoteUrl + no stamped meta.RemoteURL", topology.FailureClassConfig)
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
-			"no origin remote configured and no remoteUrl provided",
-			"Either configure origin in your repo (git remote add origin <url>) or pass remoteUrl=<url> to this call.",
+			"no origin remote configured, no remoteUrl provided, and no remote stamped in service meta",
+			"Either configure origin in your repo (git remote add origin <url>), pass remoteUrl=<url> on this call, or run zerops_workflow action=\"git-push-setup\" service=<hostname> remoteUrl=<url> first.",
 		), WithRecoveryStatus()), nil, nil
-	case current == "" && input.RemoteURL != "":
-		if _, err := runGit(ctx, workingDir, "remote", "add", "origin", input.RemoteURL); err != nil {
+	case current == "" && effectiveRemote != "":
+		if _, err := runGit(ctx, workingDir, "remote", "add", "origin", effectiveRemote); err != nil {
 			record(fmt.Sprintf("git remote add origin failed: %v", err), topology.FailureClassConfig)
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
-				fmt.Sprintf("git remote add origin %s failed: %v", input.RemoteURL, err),
+				fmt.Sprintf("git remote add origin %s failed: %v", effectiveRemote, err),
 				"",
 			), WithRecoveryStatus()), nil, nil
 		}
@@ -195,7 +199,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 	}
 
 	status2 := "PUSHED"
-	message := fmt.Sprintf("Pushed %s to origin (%s)", branch, currentEffectiveOrigin(current, input.RemoteURL))
+	message := fmt.Sprintf("Pushed %s to origin (%s)", branch, currentEffectiveOrigin(current, effectiveRemote))
 	if strings.Contains(pushOut, "Everything up-to-date") {
 		status2 = "NOTHING_TO_PUSH"
 		message = fmt.Sprintf("Nothing to push on %s — remote already up-to-date", branch)
@@ -203,7 +207,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 
 	result := &ops.GitPushResult{
 		Status:    status2,
-		RemoteURL: currentEffectiveOrigin(current, input.RemoteURL),
+		RemoteURL: currentEffectiveOrigin(current, effectiveRemote),
 		Branch:    branch,
 		Message:   message,
 	}

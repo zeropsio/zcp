@@ -96,3 +96,28 @@ func IsPushSource(m Mode) bool {
 	}
 	return false
 }
+
+// PushSourceResult discriminates the four reasons a hostname may or may not
+// be a valid push-source within a ServiceMeta's scope. The plain boolean
+// `IsPushSource` (and ServiceMeta.IsPushSourceFor before its replacement)
+// collapsed these cases onto a single false, leading handlers to render
+// generic "not a source-of-push (build target half of the pair)" messages
+// that nonsensically pointed users back at themselves when the real reason
+// was an unsupported mode (e.g. standalone ModeDev). Each result carries a
+// distinct remediation path:
+//
+//   - PushSourceOK — proceed; the hostname can push.
+//   - PushSourceIsStageHalf — push from the paired dev hostname instead.
+//   - PushSourceModeUnsupported — the service's Mode (ModeDev standalone
+//     or ModeStage standalone) does not support push-git; the user must
+//     run mode-expansion before push-git becomes available.
+//   - PushSourceUnknownHost — the hostname is not part of this meta's
+//     pair scope at all; the meta lookup matched a different service.
+type PushSourceResult int
+
+const (
+	PushSourceOK              PushSourceResult = iota // valid push source
+	PushSourceIsStageHalf                             // hostname is the stage half — push from dev half
+	PushSourceModeUnsupported                         // Mode rejects push-git (ModeDev / ModeStage standalone)
+	PushSourceUnknownHost                             // hostname is unrelated to this meta's pair scope
+)

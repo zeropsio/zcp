@@ -11,7 +11,7 @@ The runtime container has no user credentials, so pushes to an external git remo
 
 ## 1. Set `GIT_TOKEN` as a project env var
 
-Token scopes (push-only is the minimum; add scopes for the build-integration you plan to wire):
+**Default to a fine-grained PAT scoped ONLY to the single `{owner}/{repo}` you intend to push to.** Single-repo blast radius — the container can only mutate this one repository, can't reach anything else in your account/org. GitHub fine-grained PATs require an expiration; pick the longest you're comfortable with (max 1 year). Token scopes (push-only is the minimum; add scopes for the build-integration you plan to wire): <!-- axis-m-keep -->
 
 | Host | Minimum scope |
 |---|---|
@@ -22,24 +22,24 @@ Token scopes (push-only is the minimum; add scopes for the build-integration you
 zerops_env action="set" project=true variables=["GIT_TOKEN={token}"]
 ```
 
-## 2. Commit + first push
+## 2. Stamp git-push capability BEFORE the first push
 
-```
-ssh {hostname} "cd /var/www && git add -A && git commit -m 'initial commit'"
-
-zerops_deploy targetService="{hostname}" strategy="git-push" \
-  remoteUrl="{repoUrl}" branch="main"
-```
-
-The response's `status` confirms the push. On failure, read `failureClassification` first — `category=credential` indicates a missing or rejected `GIT_TOKEN`; `category=config` with a committed-code cause means `/var/www` has no commit yet (re-run the ssh commit step). `zerops_deploy strategy="git-push"` handles `git init`, `.netrc` configuration, and `git remote add` internally — these are not separate manual steps.
-
-## 3. Confirm setup
-
-After the first push lands:
+`zerops_deploy strategy=git-push` refuses with `PREREQUISITE_MISSING` until `GitPushState=configured` is stamped on the service meta — the setup call is a pre-flight handshake, not a post-deploy confirmation:
 
 ```
 zerops_workflow action="git-push-setup" service="{hostname}" \
   remoteUrl="{repoUrl}"
 ```
 
-This stamps `GitPushState=configured` plus `RemoteURL`. Now `zerops_deploy strategy=git-push` deploys without re-running through this atom, and `action=build-integration` stops blocking on the prereq chain.
+This validates the URL shape and stamps `GitPushState=configured` plus `RemoteURL`. It does NOT push anything yet — the actual transmission happens in the next step.
+
+## 3. Commit + first push
+
+```
+ssh {hostname} "cd /var/www && git add -A && git commit -m 'initial commit'"
+
+zerops_deploy targetService="{hostname}" strategy="git-push" \
+  branch="main"
+```
+
+The response's `status` confirms the push. On failure, read `failureClassification` first — `category=credential` indicates a missing or rejected `GIT_TOKEN`; `category=config` with a committed-code cause means `/var/www` has no commit yet (re-run the ssh commit step). `zerops_deploy strategy="git-push"` handles `git init`, `.netrc` configuration, and `git remote add` internally — these are not separate manual steps. The `remoteUrl` arg is optional after step 2 (handler reads it from the stamped meta); pass it on the deploy call only when you want to override the stamped value.

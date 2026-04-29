@@ -967,3 +967,96 @@ func TestServiceMeta_IsAdopted(t *testing.T) {
 		})
 	}
 }
+
+// TestPushSourceCheckFor pins the four-result discrimination introduced when
+// the boolean IsPushSourceFor was replaced. The legacy form collapsed every
+// non-OK case onto a single false, which produced the "X instead of X"
+// rendering when handlers spliced both input.Service and meta.Hostname into
+// the error message — both were the same value for standalone ModeDev.
+// The new form returns:
+//
+//   - PushSourceOK: hostname == meta.Hostname AND mode supports push.
+//   - PushSourceIsStageHalf: hostname == meta.StageHostname (legitimate "push
+//     from dev half" remediation case).
+//   - PushSourceModeUnsupported: hostname == meta.Hostname BUT mode is ModeDev
+//     standalone or ModeStage — handler renders "run mode-expansion first".
+//   - PushSourceUnknownHost: hostname is neither meta.Hostname nor
+//     meta.StageHostname — meta lookup matched a different service.
+func TestPushSourceCheckFor(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		meta     *ServiceMeta
+		hostname string
+		want     topology.PushSourceResult
+	}{
+		{
+			name:     "nil meta returns unknown",
+			meta:     nil,
+			hostname: "appdev",
+			want:     topology.PushSourceUnknownHost,
+		},
+		{
+			name:     "empty hostname returns unknown",
+			meta:     &ServiceMeta{Hostname: "appdev", Mode: topology.ModeStandard},
+			hostname: "",
+			want:     topology.PushSourceUnknownHost,
+		},
+		{
+			name:     "standard pair dev half is OK",
+			meta:     &ServiceMeta{Hostname: "appdev", StageHostname: "appstage", Mode: topology.ModeStandard},
+			hostname: "appdev",
+			want:     topology.PushSourceOK,
+		},
+		{
+			name:     "standard pair stage half is stage-half result",
+			meta:     &ServiceMeta{Hostname: "appdev", StageHostname: "appstage", Mode: topology.ModeStandard},
+			hostname: "appstage",
+			want:     topology.PushSourceIsStageHalf,
+		},
+		{
+			name:     "standalone ModeDev returns mode-unsupported (regression for X-instead-of-X bug)",
+			meta:     &ServiceMeta{Hostname: "remindersdev", Mode: topology.ModeDev},
+			hostname: "remindersdev",
+			want:     topology.PushSourceModeUnsupported,
+		},
+		{
+			name:     "standalone ModeStage as meta.Hostname returns mode-unsupported",
+			meta:     &ServiceMeta{Hostname: "appstage", Mode: topology.ModeStage},
+			hostname: "appstage",
+			want:     topology.PushSourceModeUnsupported,
+		},
+		{
+			name:     "ModeSimple is OK",
+			meta:     &ServiceMeta{Hostname: "app", Mode: topology.ModeSimple},
+			hostname: "app",
+			want:     topology.PushSourceOK,
+		},
+		{
+			name:     "ModeLocalStage is OK",
+			meta:     &ServiceMeta{Hostname: "app", Mode: topology.ModeLocalStage},
+			hostname: "app",
+			want:     topology.PushSourceOK,
+		},
+		{
+			name:     "ModeLocalOnly is OK",
+			meta:     &ServiceMeta{Hostname: "app", Mode: topology.ModeLocalOnly},
+			hostname: "app",
+			want:     topology.PushSourceOK,
+		},
+		{
+			name:     "unknown hostname returns unknown-host",
+			meta:     &ServiceMeta{Hostname: "appdev", StageHostname: "appstage", Mode: topology.ModeStandard},
+			hostname: "otherservice",
+			want:     topology.PushSourceUnknownHost,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.meta.PushSourceCheckFor(tt.hostname); got != tt.want {
+				t.Errorf("PushSourceCheckFor(%q) = %v, want %v", tt.hostname, got, tt.want)
+			}
+		})
+	}
+}

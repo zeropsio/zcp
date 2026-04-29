@@ -53,8 +53,11 @@ type gitPushPrerequisites struct {
 // branch so each caller stays the canonical site of attempt persistence.
 //
 // FindServiceMeta honors the pair-keyed invariant: a stage-hostname
-// targetService resolves to the dev-keyed meta — and IsPushSourceFor
-// returns false for it (stage is the build target, not the source).
+// targetService resolves to the dev-keyed meta — and PushSourceCheckFor
+// classifies why a target may be invalid (stage half / mode unsupported /
+// unknown host) so the rejection message is reason-specific rather than
+// the generic "build target half" wording that misled users on standalone
+// ModeDev services where target == meta.Hostname.
 //
 // Introduced by deploy-decomp P4 (handler validation phase).
 func gitPushMetaPreflight(
@@ -65,12 +68,39 @@ func gitPushMetaPreflight(
 	if meta == nil {
 		return nil
 	}
-	if !meta.IsPushSourceFor(targetService) {
-		recordAttempt("targetService is not a push source", topology.FailureClassConfig)
+	switch meta.PushSourceCheckFor(targetService) {
+	case topology.PushSourceOK:
+		// proceed to GitPushState check below
+	case topology.PushSourceIsStageHalf:
+		recordAttempt("targetService is the stage half of a pair", topology.FailureClassConfig)
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
-			fmt.Sprintf("git-push target %q is not a source-of-push (build target half of the pair); push from %q instead", targetService, meta.Hostname),
+			fmt.Sprintf("git-push target %q is the stage half of a pair (build target, never push source); push from the dev half %q instead", targetService, meta.Hostname),
 			fmt.Sprintf("Retry with: zerops_deploy targetService=%q strategy=\"git-push\"", meta.Hostname),
+		), WithRecoveryStatus())
+	case topology.PushSourceModeUnsupported:
+		recordAttempt(fmt.Sprintf("targetService mode %q does not support push-git", meta.Mode), topology.FailureClassConfig)
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("git-push target %q is in mode %q which does not support push-git (only Standard/Simple/LocalStage/LocalOnly do)", targetService, meta.Mode),
+			"Run mode-expansion to upgrade ModeDev → ModeStandard (adds a stage half) before deploying with strategy=git-push: zerops_workflow action=\"mode-expansion\" service=\""+targetService+"\"",
+		), WithRecoveryStatus())
+	case topology.PushSourceUnknownHost:
+		recordAttempt("targetService not part of meta scope", topology.FailureClassConfig)
+		return convertError(platform.NewPlatformError(
+			platform.ErrServiceNotFound,
+			fmt.Sprintf("git-push target %q is not part of meta scope keyed at %q", targetService, meta.Hostname),
+			"The meta lookup matched a different service. Verify the hostname or re-run bootstrap on the right pair.",
+		), WithRecoveryStatus())
+	default:
+		// Defensive: future PushSourceResult variants must be classified
+		// explicitly. Falling through silently as if OK would let a new
+		// rejection case slip past validation.
+		recordAttempt("internal classifier returned an unexpected PushSourceResult", topology.FailureClassConfig)
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("internal classifier returned an unexpected PushSourceResult for target %q — please file a bug", targetService),
+			"Run zerops_workflow action=\"status\" to recover and report the issue.",
 		), WithRecoveryStatus())
 	}
 	if meta.GitPushState != topology.GitPushConfigured {
@@ -85,6 +115,27 @@ func gitPushMetaPreflight(
 }
 
 const gitTokenCheckCmd = `test -n "$GIT_TOKEN" && echo 1 || echo 0`
+
+// resolveEffectiveRemote picks the URL the deploy handler should push to:
+// the explicit input arg wins (lets the agent override on a one-off push),
+// falling back to the remote stamped in meta during
+// action="git-push-setup" so atoms can honestly say "remoteUrl is optional
+// after setup". Without this fallback, BuildGitPushCommand would receive
+// an empty remote and the push would either default to working-tree
+// origin (wrong) or fail.
+//
+// Shared by handleGitPush (container) and handleLocalGitPush (local) so
+// both halves of the deploy stack honor the same atom claim.
+func resolveEffectiveRemote(stateDir, targetService, inputRemote string) string {
+	if inputRemote != "" {
+		return inputRemote
+	}
+	meta, _ := workflow.FindServiceMeta(stateDir, targetService)
+	if meta == nil {
+		return ""
+	}
+	return meta.RemoteURL
+}
 
 // committedCodeCheckCmd returns "1" when workingDir contains a git repo
 // with at least one commit reachable from HEAD, "0" otherwise. This is the
@@ -177,6 +228,8 @@ func handleGitPush(
 		branch = "main"
 	}
 
+	effectiveRemote := resolveEffectiveRemote(stateDir, input.TargetService, input.RemoteURL)
+
 	// Pre-flight: the container must have a git repo with at least one
 	// commit at workingDir. A git push with nothing to transmit is either
 	// a user bug or a silent fallback we refuse to ship (an earlier
@@ -263,7 +316,7 @@ func handleGitPush(
 		}
 	}
 
-	cmd := ops.BuildGitPushCommand(workingDir, input.RemoteURL, branch)
+	cmd := ops.BuildGitPushCommand(workingDir, effectiveRemote, branch)
 
 	output, err := sshDeployer.ExecSSH(ctx, hostname, cmd)
 	if err != nil {
@@ -286,9 +339,9 @@ func handleGitPush(
 
 	result := &ops.GitPushResult{
 		Status:    "PUSHED",
-		RemoteURL: input.RemoteURL,
+		RemoteURL: effectiveRemote,
 		Branch:    branch,
-		Message:   fmt.Sprintf("Code pushed from %s to %s (branch: %s)", hostname, input.RemoteURL, branch),
+		Message:   fmt.Sprintf("Code pushed from %s to %s (branch: %s)", hostname, effectiveRemote, branch),
 	}
 
 	// Check for "Everything up-to-date" in output.
