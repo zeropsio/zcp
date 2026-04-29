@@ -422,15 +422,15 @@ func TestDispatch_StitchContent_AssemblesFromFragments(t *testing.T) {
 		"env/5/intro":                       "HA Prod tier",
 		"codebase/api/intro":                "api intro",
 		"codebase/api/integration-guide":    "1. Bind to 0.0.0.0",
-		"codebase/api/knowledge-base":       "- **x** — because Y",
+		"codebase/api/knowledge-base":       "- **404 on x** — because Y",
 		"codebase/api/claude-md":            initStyleClaudeMD("api"),
 		"codebase/app/intro":                "app intro",
 		"codebase/app/integration-guide":    "1. Bind to 0.0.0.0",
-		"codebase/app/knowledge-base":       "- **x** — because Y",
+		"codebase/app/knowledge-base":       "- **404 on x** — because Y",
 		"codebase/app/claude-md":            initStyleClaudeMD("app"),
 		"codebase/worker/intro":             "worker intro",
 		"codebase/worker/integration-guide": "1. queue group",
-		"codebase/worker/knowledge-base":    "- **x** — because Y",
+		"codebase/worker/knowledge-base":    "- **404 on x** — because Y",
 		"codebase/worker/claude-md":         initStyleClaudeMD("worker"),
 	}
 	for id, body := range fragments {
@@ -493,7 +493,7 @@ func TestDispatch_StitchContent_AssemblesFromFragments(t *testing.T) {
 	if !strings.Contains(string(apiREADME), "1. Bind to 0.0.0.0") {
 		t.Errorf("api README missing IG body:\n%s", apiREADME)
 	}
-	if !strings.Contains(string(apiREADME), "**x** — because Y") {
+	if !strings.Contains(string(apiREADME), "**404 on x** — because Y") {
 		t.Errorf("api README missing KB body:\n%s", apiREADME)
 	}
 }

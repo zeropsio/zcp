@@ -98,7 +98,9 @@ func TestCheckSlotShape_KB_RefusesNonTopicBullet(t *testing.T) {
 
 func TestCheckSlotShape_KB_AcceptsTopicShape(t *testing.T) {
 	t.Parallel()
-	body := "- **Custom response headers** — browsers strip headers cross-origin.\n- **CORS expose** — fix via exposeHeaders."
+	// Stems must carry a symptom-first signal per Tranche 2 — first uses
+	// HTTP status (`403`), second uses backtick-quoted error string.
+	body := "- **403 on custom response headers** — browsers strip non-CORS-safelisted headers cross-origin.\n- **`Access-Control-Expose-Headers` missing** — fix via exposeHeaders."
 	if msg := checkSlotShape("codebase/api/knowledge-base", body); msg != "" {
 		t.Errorf("KB with topic-shape bullets should pass: %s", msg)
 	}
@@ -106,7 +108,9 @@ func TestCheckSlotShape_KB_AcceptsTopicShape(t *testing.T) {
 
 func TestCheckSlotShape_KB_RefusesOverEightBullets(t *testing.T) {
 	t.Parallel()
-	body := strings.Repeat("- **T** — body\n", 9)
+	// Stems carry a symptom-first signal so the cap check (not the stem
+	// heuristic) is what fires.
+	body := strings.Repeat("- **HTTP 503 on boot** — body\n", 9)
 	if msg := checkSlotShape("codebase/api/knowledge-base", body); msg == "" {
 		t.Error("KB > 8 bullets should be refused")
 	}

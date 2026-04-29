@@ -60,6 +60,21 @@ var (
 	zscRe                 = regexp.MustCompile(`\bzsc\b`)
 	zcpRe                 = regexp.MustCompile(`\bzcp\b`)
 	zcliRe                = regexp.MustCompile(`\bzcli\b`)
+
+	// Run-17 §7 — KB stem symptom-first heuristic. Any one of these
+	// signals is sufficient: HTTP status code, backtick or double-
+	// quoted token, failure verb, or observable wrong-state phrase.
+	// Per implementation guide §7 Option (A): the heuristic is stem-
+	// only and accepts the `synchronize: false` style false-positive
+	// (the backtick regex matches both error strings and config keys).
+	// Refinement at Tranche 4 catches the residual author-claim stems.
+	kbStemBoldRE        = regexp.MustCompile(`\*\*([^*]+)\*\*`)
+	kbStemHTTPCodeRE    = regexp.MustCompile(`\b[1-5]\d{2}\b`)
+	kbStemQuotedErrorRE = regexp.MustCompile("`[^`]+`|\"[^\"]+\"")
+	kbStemFailureVerbRE = regexp.MustCompile(
+		`(?i)\b(fails|crashes|corrupts|deadlocks|silently exits|silently stops|returns null|breaks|drops|rejects|missing|hangs|times out|panics|leaks|stalls|truncates|drained)\b`)
+	kbStemObservableRE = regexp.MustCompile(
+		`(?i)\b(empty body|wrong header|null where|404 on|502 on|empty response|stale data|zero rows|no rows|unbound|undefined|forbidden)\b`)
 )
 
 func checkRootIntro(body string) string {
@@ -143,11 +158,39 @@ func checkCodebaseKB(body string) string {
 		if !strings.HasPrefix(rest, "**") {
 			return "codebase/<h>/knowledge-base bullets must follow `- **Topic** — 2-4 sentences` shape (no leading `**` found). See spec §Surface 5."
 		}
+		// Run-17 §7 — symptom-first stem heuristic. The text between the
+		// leading `**...**` should carry at least one of: HTTP status
+		// code, quoted error string, failure verb, or observable wrong-
+		// state phrase. Author-claim stems (recipe directives without a
+		// porter-searchable signal) are refused with a redirect to the
+		// reference atom.
+		m := kbStemBoldRE.FindStringSubmatch(rest)
+		if len(m) >= 2 {
+			stem := m[1]
+			if !kbStemMatchesSymptomFirst(stem) {
+				return fmt.Sprintf(
+					"codebase/<h>/knowledge-base stem `%s` is author-claim shape; KB stems are symptom-first or directive-tightly-mapped-to-observable-error. Reshape: name the HTTP status code, quoted error string, failure verb, or observable wrong-state phrase the porter would search for. See `briefs/refinement/reference_kb_shapes.md`.",
+					stem)
+			}
+		}
 	}
 	if bulletCount > 8 {
 		return fmt.Sprintf("codebase/<h>/knowledge-base ≤ 8 bullets; got %d. See spec §Surface 5.", bulletCount)
 	}
 	return ""
+}
+
+// kbStemMatchesSymptomFirst returns true when the stem text between
+// the leading `**...**` carries a porter-searchable signal. Stem-only
+// check per implementation guide §7 Option (A) — the heuristic ORs
+// across multiple signal classes and accepts the backtick-config-key
+// false-positive. Refinement (Tranche 4) catches the residual author-
+// claim stems.
+func kbStemMatchesSymptomFirst(stem string) bool {
+	return kbStemHTTPCodeRE.MatchString(stem) ||
+		kbStemQuotedErrorRE.MatchString(stem) ||
+		kbStemFailureVerbRE.MatchString(stem) ||
+		kbStemObservableRE.MatchString(stem)
 }
 
 func checkZeropsYamlComments(body string) string {

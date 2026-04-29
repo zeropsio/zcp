@@ -164,7 +164,7 @@ func TestAssemble_FragmentBodyWith_JSTemplateLiteral_NotFlagged(t *testing.T) {
 	plan.Fragments = map[string]string{
 		"codebase/api/intro":             "api",
 		"codebase/api/integration-guide": "1. Configure `zerops.yaml` so the runtime calls `fetch(`${API_URL}/items`)` at boot — avoids hardcoding the origin.",
-		"codebase/api/knowledge-base":    "- **x** — because Y",
+		"codebase/api/knowledge-base":    "- **404 on x** — because Y",
 		"codebase/api/claude-md":         "api",
 	}
 
@@ -186,7 +186,7 @@ func TestAssemble_FragmentBodyWith_BareCurlyToken_NotFlagged(t *testing.T) {
 	plan.Fragments = map[string]string{
 		"codebase/api/intro":             "`{FILENAME}` routes to `src/routes/{FILENAME}.svelte` at build time.",
 		"codebase/api/integration-guide": "1. Configure `zerops.yaml`. Use `{#if cond}…{/if}` guards as needed.",
-		"codebase/api/knowledge-base":    "- **x** — because Y",
+		"codebase/api/knowledge-base":    "- **404 on x** — because Y",
 		"codebase/api/claude-md":         "api",
 	}
 
@@ -214,7 +214,7 @@ func TestStitchContent_FencedBlockTokenAllowed(t *testing.T) {
 	plan.Fragments = map[string]string{
 		"codebase/api/intro":             "Worker example below.",
 		"codebase/api/integration-guide": "1. Configure `zerops.yaml`.\n\n```\nworker-${HOSTNAME}-${pid}\n```\n",
-		"codebase/api/knowledge-base":    "- **x** — because Y, set `${HOSTNAME}` from env.",
+		"codebase/api/knowledge-base":    "- **404 on x** — because Y, set `${HOSTNAME}` from env.",
 		"codebase/api/claude-md":         "api",
 	}
 
@@ -236,7 +236,7 @@ func TestStitchContent_UnfencedTokenErrorIncludesFragmentID(t *testing.T) {
 	plan.Fragments = map[string]string{
 		"codebase/api/intro":             "Bare ${HOSTNAME} reference outside any fence.",
 		"codebase/api/integration-guide": "1. Configure `zerops.yaml`.",
-		"codebase/api/knowledge-base":    "- **x** — because Y",
+		"codebase/api/knowledge-base":    "- **404 on x** — because Y",
 		"codebase/api/claude-md":         "api",
 	}
 
@@ -268,7 +268,7 @@ func TestAssemble_UnreplacedEngineToken_IsFlagged(t *testing.T) {
 	plan.Fragments = map[string]string{
 		"codebase/api/intro":             "{SLUG} placeholder leaked into fragment body",
 		"codebase/api/integration-guide": "1. Configure `zerops.yaml` here.",
-		"codebase/api/knowledge-base":    "- **x** — because Y",
+		"codebase/api/knowledge-base":    "- **404 on x** — because Y",
 		"codebase/api/claude-md":         "api",
 	}
 
@@ -345,7 +345,7 @@ func TestAssemble_FragmentBody_CodeTokens_E2E(t *testing.T) {
 		base := "codebase/" + cb.Hostname
 		plan.Fragments[base+"/intro"] = codeBodies
 		plan.Fragments[base+"/integration-guide"] = "1. Configure `zerops.yaml`.\n\n" + codeBodies
-		plan.Fragments[base+"/knowledge-base"] = "- **x** — because Y\n\n" + codeBodies
+		plan.Fragments[base+"/knowledge-base"] = "- **404 on x** — because Y\n\n" + codeBodies
 		plan.Fragments[base+"/claude-md"] = codeBodies
 	}
 
@@ -625,7 +625,7 @@ func fillAllFragments(store *Store, plan *Plan) error {
 		base := "codebase/" + cb.Hostname
 		ids[base+"/intro"] = "cb intro"
 		ids[base+"/integration-guide"] = "1. IG"
-		ids[base+"/knowledge-base"] = "- **x** — because"
+		ids[base+"/knowledge-base"] = "- **404 on x** — because"
 		// Run-16 §6.7a — single-slot /init-shape body. Must clear the
 		// validateCodebaseCLAUDE 200-byte minimum and the 2-4 ## section
 		// slot-shape refusal.
@@ -682,15 +682,15 @@ func TestAssemble_StitchWritesFragmentsToDisk(t *testing.T) {
 		"env/5/intro":                       "ha-prod-tier intro",
 		"codebase/api/intro":                "api intro",
 		"codebase/api/integration-guide":    "1. Bind to 0.0.0.0",
-		"codebase/api/knowledge-base":       "- **x** — because Y",
+		"codebase/api/knowledge-base":       "- **404 on x** — because Y",
 		"codebase/api/claude-md":            "port 3000, hostname api",
 		"codebase/app/intro":                "app intro",
 		"codebase/app/integration-guide":    "1. Bind to 0.0.0.0",
-		"codebase/app/knowledge-base":       "- **x** — because Y",
+		"codebase/app/knowledge-base":       "- **404 on x** — because Y",
 		"codebase/app/claude-md":            "port 5173",
 		"codebase/worker/intro":             "worker intro",
 		"codebase/worker/integration-guide": "1. Bind to 0.0.0.0",
-		"codebase/worker/knowledge-base":    "- **x** — because Y",
+		"codebase/worker/knowledge-base":    "- **404 on x** — because Y",
 		"codebase/worker/claude-md":         "queue group: jobs",
 	}
 
