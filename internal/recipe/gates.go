@@ -48,24 +48,101 @@ func DefaultGates() []Gate {
 	}
 }
 
-// CodebaseGates returns the gate set that runs at scaffold + feature
-// complete-phase. These validators target codebase-scoped surfaces
-// (IG, KB, CLAUDE, zerops.yaml comments) plus the source-comment voice
-// scan — content authored by the scaffold/feature sub-agent in their
-// own session, where they can correct violations via
-// `record-fragment mode=replace`. Run-12 §G splits the prior
-// FinalizeGates() so codebase-scoped checks fire when the right author
-// is in-session, not at finalize when only main is left to hand-edit.
-func CodebaseGates() []Gate {
+// CodebaseScaffoldGates runs at scaffold + feature complete-phase.
+// Run-17 §8 (R-16-1 closure) — content-surface validators are NOT
+// included here; they run at codebase-content complete-phase via
+// CodebaseContentGates. The scaffold/feature sub-agent records facts
+// only; authoring IG/KB/zerops.yaml-comments/CLAUDE.md is strictly
+// the codebase-content sub-agent's job. Source-comment voice still
+// fires here because committed source comments are scaffold-owned
+// (the scaffold agent SSH-edits the codebase).
+func CodebaseScaffoldGates() []Gate {
+	return []Gate{
+		{Name: "facts-recorded", Run: gateFactsRecorded},
+		{Name: "engine-shells-filled", Run: gateEngineShellsFilled},
+		{Name: "source-comment-voice", Run: gateSourceCommentVoice},
+	}
+}
+
+// CodebaseContentGates runs at codebase-content complete-phase. Owns
+// content-surface validation now that codebase-content is the sole
+// content-authoring phase for codebase-scoped surfaces (IG, KB,
+// CLAUDE, zerops.yaml comments). Cross-surface + cross-recipe
+// duplication checks fire here too — both span only codebase
+// surfaces and are meaningful once the content phase has authored
+// them.
+func CodebaseContentGates() []Gate {
 	return []Gate{
 		{Name: "codebase-surface-validators", Run: gateCodebaseSurfaceValidators},
-		{Name: "source-comment-voice", Run: gateSourceCommentVoice},
-		// Run-16 §6.8 — Notice-severity dedup backstops. Primary R-15-6
-		// closure is structural (single-author phase 5); these are
-		// heuristic signals.
 		{Name: "cross-surface-duplication", Run: gateCrossSurfaceDuplication},
 		{Name: "cross-recipe-duplication", Run: gateCrossRecipeDuplication},
 	}
+}
+
+// CodebaseGates is retained for callers that pre-date the run-17 split.
+// Returns the union of CodebaseScaffoldGates + CodebaseContentGates so
+// existing tests and back-compat consumers keep producing the same
+// result. New code uses the per-phase variants directly. Deleted in
+// run-18 cleanup once the back-compat callers are migrated.
+func CodebaseGates() []Gate {
+	out := CodebaseScaffoldGates()
+	out = append(out, CodebaseContentGates()...)
+	return out
+}
+
+// gateFactsRecorded — every codebase has at least one porter_change
+// or field_rationale fact in scope. Run-17 §8 — catches the scaffold-
+// skip-to-finalize case where the agent never recorded anything for a
+// codebase and the codebase-content sub-agent has no fact stream to
+// synthesize from. Notice severity (not blocking) — some codebases
+// genuinely have no platform-forced changes and the agent legitimately
+// records zero facts.
+func gateFactsRecorded(ctx GateContext) []Violation {
+	if ctx.FactsLog == nil || ctx.Plan == nil {
+		return nil
+	}
+	records, err := ctx.FactsLog.Read()
+	if err != nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, f := range records {
+		if f.Kind != FactKindPorterChange && f.Kind != FactKindFieldRationale {
+			continue
+		}
+		host := f.Scope
+		if i := strings.IndexByte(host, '/'); i > 0 {
+			host = host[:i]
+		}
+		if host != "" {
+			seen[host] = true
+		}
+	}
+	var out []Violation
+	for _, cb := range ctx.Plan.Codebases {
+		if cb.Hostname == "" || cb.SourceRoot == "" {
+			continue
+		}
+		if !seen[cb.Hostname] {
+			out = append(out, Violation{
+				Code:     "codebase-no-facts-recorded",
+				Path:     cb.Hostname,
+				Severity: SeverityNotice,
+				Message:  fmt.Sprintf("codebase/%s recorded no porter_change or field_rationale facts during scaffold/feature; codebase-content sub-agent will have no fact stream to synthesize from", cb.Hostname),
+			})
+		}
+	}
+	return out
+}
+
+// gateEngineShellsFilled — Run-17 §6 retracted Class B/C/per-service
+// engine-emit shells, so the gate has nothing to enforce. Kept as a
+// no-op so the registered name stays referenceable from future
+// tranches without re-adding the entry to CodebaseScaffoldGates.
+// Deleted in run-18 cleanup along with the back-compat CodebaseGates
+// shim.
+func gateEngineShellsFilled(_ GateContext) []Violation {
+	return nil
 }
 
 func gateCrossSurfaceDuplication(ctx GateContext) []Violation {

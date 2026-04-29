@@ -161,6 +161,13 @@ at densest context; content phases author the prose with full context
 + cross-surface awareness. Closes R-15-4 (CLAUDE.md bleed-through),
 R-15-6 (cross-surface dup), R-15-7 (classification reach).
 
+The gate set running at scaffold complete-phase (`CodebaseScaffoldGates`,
+introduced in run-17 §8) checks fact-recording quality only — it does
+NOT check IG / KB / CLAUDE.md / zerops.yaml comment fragments.
+Recording a fragment to "clear the gate" is wrong: the gate is already
+satisfied by your fact-recording work. Fragment authoring runs at
+codebase-content phase 5 with a different sub-agent.
+
 ## Subdomain auto-enable — happens inside `zerops_deploy`
 
 Every `zerops_deploy` of a non-worker codebase auto-enables the L7

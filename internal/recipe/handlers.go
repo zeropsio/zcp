@@ -554,8 +554,21 @@ func completePhase(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
 		}
 	}
 	if in.Codebase != "" {
-		// Sub-agent's pre-termination self-validate.
-		blocking, notices, err := sess.CompletePhaseScoped(CodebaseGates(), in.Codebase)
+		// Sub-agent's pre-termination self-validate. Run-17 §8 — pick
+		// the gate set matching the current phase so scaffold/feature
+		// scoped close runs only the fact-quality gates and codebase-
+		// content scoped close runs the surface validators.
+		var scopedGates []Gate
+		//exhaustive:ignore — fall-through covers Research/Provision/Env/Finalize.
+		switch sess.Current {
+		case PhaseScaffold, PhaseFeature:
+			scopedGates = CodebaseScaffoldGates()
+		case PhaseCodebaseContent:
+			scopedGates = CodebaseContentGates()
+		default:
+			scopedGates = CodebaseGates()
+		}
+		blocking, notices, err := sess.CompletePhaseScoped(scopedGates, in.Codebase)
 		if err != nil {
 			r.Error = err.Error()
 			return r
