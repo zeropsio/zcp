@@ -1,6 +1,6 @@
 # ZCP Lifecycle Matrix Simulation
 
-Generated: 2026-04-30T10:53:10Z
+Generated: 2026-04-30T11:11:45Z
 Corpus: 81 atoms
 Scenarios: 46
 
@@ -457,7 +457,7 @@ _First deploy succeeded; close-mode still unset → review prompt should fire._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (18 unique, 18 render-instances, 19230 bytes total):
+**Atoms** (18 unique, 18 render-instances, 19505 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -485,7 +485,7 @@ _Iteration after picking auto close-mode — strategy-review should NOT fire._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (22 unique, 22 render-instances, 24332 bytes total):
+**Atoms** (22 unique, 22 render-instances, 24546 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -521,7 +521,7 @@ _Default close path — auto = run zerops_deploy at close._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (22 unique, 22 render-instances, 24332 bytes total):
+**Atoms** (22 unique, 22 render-instances, 24546 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -553,7 +553,7 @@ _Full git-push setup with webhook integration._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (16 unique, 16 render-instances, 19029 bytes total):
+**Atoms** (16 unique, 16 render-instances, 19195 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-build-observe`
@@ -642,7 +642,7 @@ _Default — git push capability not provisioned._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (16 unique, 16 render-instances, 17290 bytes total):
+**Atoms** (16 unique, 16 render-instances, 17504 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -668,7 +668,7 @@ _Capability provisioned; close still does zcli (auto)._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (16 unique, 16 render-instances, 17290 bytes total):
+**Atoms** (16 unique, 16 render-instances, 17504 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -719,7 +719,7 @@ _Full webhook CI._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (16 unique, 16 render-instances, 19029 bytes total):
+**Atoms** (16 unique, 16 render-instances, 19195 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-build-observe`
@@ -745,7 +745,7 @@ _GitHub Actions CI._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (16 unique, 16 render-instances, 19029 bytes total):
+**Atoms** (16 unique, 16 render-instances, 19195 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-build-observe`
@@ -924,7 +924,7 @@ _Two runtimes + managed dep — per-service rendering correctness._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (22 unique, 25 render-instances, 29182 bytes total):
+**Atoms** (22 unique, 25 render-instances, 29396 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -956,7 +956,7 @@ _Project has 3 dev runtimes + 1 managed; scope is just appdev. Per-service atoms
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (22 unique, 22 render-instances, 24332 bytes total):
+**Atoms** (22 unique, 22 render-instances, 24546 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -1048,6 +1048,6 @@ _All services deployed+verified, session auto-closed._
 
 ## WARN (2)
 
-- **10.2 mixed runtimes (api + web + db)** — briefing 29182 bytes > 25KB soft cap
+- **10.2 mixed runtimes (api + web + db)** — briefing 29396 bytes > 25KB soft cap
 - **12.1 export-active container** — briefing 27945 bytes > 25KB soft cap
 

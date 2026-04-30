@@ -56,7 +56,7 @@ The lifecycle above is collapsed into a single typed `Phase` field carried in ev
 Invariant: at most one non-idle **stateful** phase per PID at a time. `strategy-setup`/`export-active` are stateless — they synthesize guidance and return without touching session state, so they never conflict with an active bootstrap/develop/recipe session.
 
 `strategy-setup` replaces the retired `cicd-active` phase. Deploy configuration is now three orthogonal operations:
-- `zerops_workflow action="close-mode" closeMode={hostname:auto|git-push|manual}` — what `action="close"` does at develop close.
+- `zerops_workflow action="close-mode" closeMode={hostname:auto|git-push|manual}` — declares the develop session's delivery pattern. Drives auto-close gating + selects which `develop-close-mode-*` atoms fire.
 - `zerops_workflow action="git-push-setup" service="..." remoteUrl="..."` — provisions GIT_TOKEN / .netrc / remote URL and stamps `GitPushState=configured`.
 - `zerops_workflow action="build-integration" service="..." integration="webhook|actions"` — chooses the ZCP-managed CI shape (requires `GitPushState=configured`).
 
@@ -656,32 +656,36 @@ Close-mode is always read fresh from `ServiceMeta.CloseDeployMode` — no cachin
 
 ### 4.3 Close-Mode Options (Three Orthogonal Dimensions)
 
-Close-mode controls **what `zerops_workflow action="close"` does**, not how `zerops_deploy` works mid-task. After the first deploy lands, three orthogonal dimensions describe the develop session:
+Close-mode declares the develop session's **delivery pattern** — it tells the agent (via the `develop-close-mode-*` atoms that fire on its value) what command to run before invoking close, and it gates whether auto-close fires. It does NOT make the close handler dispatch anything: `zerops_workflow action="close"` is always a session-teardown call (`internal/tools/workflow.go::handleWorkSessionClose`) that deletes the WorkSession file, unregisters from the registry, and returns `Work session closed.` regardless of `CloseDeployMode`. The mode shapes the agent's pre-close ritual; the close call itself is pure teardown.
+
+After the first deploy lands, three orthogonal dimensions describe the develop session:
 
 | Dimension | Field | Values | Meaning |
 |---|---|---|---|
-| Close-mode | `CloseDeployMode` | unset / auto / git-push / manual | What happens at develop close |
+| Close-mode | `CloseDeployMode` | unset / auto / git-push / manual | Delivery pattern + auto-close gating |
 | Git-push capability | `GitPushState` + `RemoteURL` | unconfigured / configured / broken / unknown | Whether `strategy="git-push"` works |
 | Build integration | `BuildIntegration` | none / webhook / actions | Which ZCP-managed CI shape consumes pushes |
 
-Capability fields are independent of close-mode: `GitPushState=configured` can coexist with `CloseDeployMode=auto` (push capability exists but close still uses the default deploy). Switching `CloseDeployMode=git-push` later doesn't require re-setup.
+Capability fields are independent of close-mode: `GitPushState=configured` can coexist with `CloseDeployMode=auto` (push capability exists but the agent's delivery pattern stays zcli). Switching `CloseDeployMode=git-push` later doesn't require re-setup.
 
 #### auto
-- Close runs `zerops_deploy targetService="{hostname}"` directly. Default self-deploy mechanism.
-- **Good for**: Quick iteration cycles, single-developer projects.
+- **Delivery pattern**: agent runs `zerops_deploy targetService="{hostname}"` directly (default self-deploy via zcli).
+- **Auto-close**: fires when scope-services are green (succeeded deploy + passed verify on every hostname in scope). The deploys that landed during iterations ARE the close deploys — there's no separate close-time push.
+- **Good for**: quick iteration cycles, single-developer projects.
 - **First deploy**: same command — `auto` is the implicit default for any service that hasn't been deployed yet.
 
 #### git-push
-- Close commits + pushes to a configured git remote (`RemoteURL`); Zerops or your CI picks the push up and builds.
+- **Delivery pattern**: agent runs `zerops_deploy targetService="{hostname}" strategy="git-push"` to commit + push to the configured remote (`RemoteURL`). Zerops or your CI picks the push up and builds.
+- **Auto-close**: fires when scope-services are green; for async builds (webhook / actions), the agent records the build with `action="record-deploy"` once `zerops_events` confirms `Status: ACTIVE` so auto-close becomes eligible.
 - **Setup prerequisite**: `GitPushState=configured` (run `action="git-push-setup"`).
 - **Optional CI**: `BuildIntegration=webhook` (Zerops dashboard pulls + builds) or `BuildIntegration=actions` (GitHub Actions runs `zcli push` from CI).
 - **Pre-flight gate** (`zerops_deploy strategy="git-push"`): refuses with `PREREQUISITE_MISSING` when there is no committed code at the working directory (`/var/www` for container, the local workspace otherwise). The earlier `meta.IsDeployed()` / `FirstDeployedAt` gate was replaced because it false-positived on adopted services that the platform had deployed before ZCP ever wrote the meta. See §8 D2b for the canonical invariant text and pinning tests.
-- **Good for**: Team development, CI/CD pipelines, code in git.
+- **Good for**: team development, CI/CD pipelines, code in git.
 
 #### manual
-- Close yields — user owns the deploy/verify/close decisions via slash commands, hooks, or external automation.
-- ZCP records evidence (deploys, verifies) but doesn't drive the close.
-- **Good for**: Experienced users, external CI/CD systems.
+- **Delivery pattern**: ZCP yields. The agent doesn't initiate deploys — the user owns deploy/verify/close decisions via slash commands, hooks, or external automation.
+- **Auto-close**: disabled. ZCP still records every `zerops_deploy`/`zerops_verify` you call, but the auto-close gate stays open until you call `action="close"` explicitly.
+- **Good for**: experienced users, external CI/CD systems.
 
 ### 4.4 Setting and Changing Close-Mode + Capabilities
 

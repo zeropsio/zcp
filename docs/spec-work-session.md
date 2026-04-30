@@ -419,7 +419,9 @@ with the default self-deploy mechanism regardless of the (still-empty)
 an ongoing close-mode via `action="close-mode" closeMode={…}` — three
 orthogonal axes follow:
 
-   - `close-mode`        — what `action="close"` does:
+   - `close-mode`        — develop session's delivery pattern
+                           (drives auto-close gating + per-mode atoms;
+                           `action="close"` itself is always teardown):
                            auto / git-push / manual
    - `git-push-setup`    — provisions GIT_TOKEN / .netrc / remote URL,
                            stamps `GitPushState=configured`

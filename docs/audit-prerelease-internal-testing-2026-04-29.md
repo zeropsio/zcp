@@ -39,13 +39,13 @@ Bootstrap NEVER deploys app code — develop owns the first deploy and stamps `F
 
 Status pipeline: `ComputeEnvelope` (live API + meta + session) → `BuildPlan` (pure dispatch) → `Synthesize` (atom corpus filter+render) → `RenderStatus` (markdown). All three middle stages are pure functions over the envelope JSON — same input, byte-identical output (compaction-safety).
 
-**Three close-modes** = what `action="close"` does:
-- `auto` → `zerops_deploy` directly (zcli push)
-- `git-push` → commit + push to configured remote (Zerops/CI builds)
-- `manual` → ZCP yields, user owns
+**Three close-modes** = develop session's delivery pattern (drives auto-close gating + per-mode atoms; `action="close"` itself is always teardown):
+- `auto` → agent runs `zerops_deploy` directly (zcli push)
+- `git-push` → agent runs `zerops_deploy strategy="git-push"` (commit + push; Zerops/CI builds)
+- `manual` → ZCP yields; user runs all deploys; auto-close disabled
 
 **Three orthogonal axes** (CLAUDE.md "Deploy config is three orthogonal dimensions"):
-- `CloseDeployMode` (what close does)
+- `CloseDeployMode` (delivery pattern + auto-close gate)
 - `GitPushState` (capability provisioned?)
 - `BuildIntegration` (which CI shape)
 

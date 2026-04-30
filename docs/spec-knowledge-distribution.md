@@ -129,13 +129,13 @@ Service-scoped axis — see §3.8 for conjunction semantics across service-scope
 
 Three orthogonal per-pair axes, projected from the corresponding `ServiceMeta` fields.
 
-`closeDeployModes` — what `zerops_workflow action="close"` does:
+`closeDeployModes` — develop session's delivery pattern (drives auto-close gating + which `develop-close-mode-*` atoms fire). Note: `action="close"` itself is always a session-teardown call regardless of mode; the mode shapes the agent's pre-close ritual, not the close handler.
 
 | Value | Meaning |
 |---|---|
-| `auto` | Default zcli push at close (default-deploy mechanism, `AttemptInfo.Strategy="zcli"`). |
-| `git-push` | Commit + push to configured remote at close. Build trigger is `BuildIntegration`'s concern. |
-| `manual` | ZCP yields close orchestration. Tools remain callable; auto-close DOES NOT fire. |
+| `auto` | Default zcli push delivery (default-deploy mechanism, `AttemptInfo.Strategy="zcli"`). Auto-close fires on green-scope. |
+| `git-push` | Commit + push to configured remote delivery. Build trigger is `BuildIntegration`'s concern. Auto-close fires on green-scope. |
+| `manual` | ZCP yields delivery orchestration. Tools remain callable; auto-close DOES NOT fire — explicit `action="close"` only. |
 | `unset` | Never chosen yet. Bootstrap leaves it empty; develop's `develop-strategy-review` atom prompts the agent post-first-deploy. |
 
 `gitPushStates` — git-push capability provisioned?

@@ -5,13 +5,13 @@ phases: [develop-active]
 closeDeployModes: [auto]
 deployStates: [deployed]
 multiService: aggregate
-title: "Close = direct deploy via zerops_deploy"
+title: "Delivery pattern = direct deploy via zerops_deploy"
 ---
-This pair is on `closeDeployMode=auto`. The develop close action runs `zerops_deploy` directly from ZCP — fast, synchronous, and the canonical default for tight iteration cycles.
+This pair is on `closeDeployMode=auto`. Your delivery pattern is direct `zerops_deploy` calls via zcli — fast, synchronous, the canonical default for tight iteration cycles. `action="close"` itself is a session-teardown call regardless of close-mode; auto-close fires when the deploys you ran during iterations satisfy the green-scope gate.
 
-## How close fires
+## How auto-close fires
 
-When auto-close conditions land (every service in scope has a successful deploy + passed verify), ZCP closes the develop session automatically. The deploy that landed during develop iterations is the close deploy — there's no separate close-time push.
+When auto-close conditions land (every service in scope has a successful deploy + passed verify), ZCP closes the develop session automatically. The deploys that landed during develop iterations ARE the close deploys — there's no separate close-time push, and no special call from the close handler.
 
 The mechanics underneath:
 
