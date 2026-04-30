@@ -18,6 +18,11 @@ submitting the plan.
 - **standard** — dev + stage pair. The envelope reports `stageHostname`
   on the dev snapshot and a separate snapshot with `mode: stage` for
   the stage service.
+  - **Plan MUST set `stageHostname` explicitly on every standard target**
+    (e.g. `{"runtime": {"devHostname": "appdev", "type": "...", "bootstrapMode": "standard", "stageHostname": "appstage"}}`).
+    Hostname-suffix derivation (`appdev` → `appstage`) was removed in
+    Release B.4. A submission omitting `stageHostname` rejects with
+    `INVALID_PARAMETER: standard mode requires explicit stageHostname`.
 - **simple** — single runtime container that starts real code on every redeploy;
   no SSHFS mutation lifecycle.
 - **stage** — never bootstrapped alone; it is the stage half of a

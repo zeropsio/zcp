@@ -7,7 +7,11 @@ expect:
   mustCallTools:
     - zerops_workflow
     - zerops_discover
-  workflowCallsMin: 7
+  # Pure-adopt fast path = 5-6 workflow calls (start discovery + start route=adopt
+  # + complete×2-3 — close is skippable per spec §2.8 — + start workflow=develop).
+  # mustEnterWorkflow + requiredPatterns below already enforce the SHAPE; this
+  # floor is a coarse "did you actually drive the workflow" check.
+  workflowCallsMin: 5
   mustEnterWorkflow:
     - bootstrap
   requiredPatterns:

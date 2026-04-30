@@ -8,7 +8,12 @@ expect:
     - zerops_import
     - zerops_deploy
     - zerops_verify
-  workflowCallsMin: 9
+  # Greenfield bootstrap+develop = 7-9 workflow calls depending on which
+  # mode the agent picks (simple skips a beat vs standard) and whether
+  # close steps are explicit. mustEnterWorkflow + requiredPatterns enforce
+  # the SHAPE; this floor is a coarse "did you actually drive the workflow"
+  # check. Calibrated against a 7-call standard-mode run.
+  workflowCallsMin: 7
   mustEnterWorkflow:
     - bootstrap
     - develop

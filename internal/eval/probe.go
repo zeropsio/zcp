@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -76,6 +77,15 @@ func ProbeFinalURL(
 // greenfield scenarios don't need to hard-code a hostname the LLM is free to
 // choose. Returns an error when 0 or >1 candidates are found — both cases
 // mean the scenario author must set Expect.FinalURLHostname explicitly.
+//
+// Filters out anything that is never a deployment target:
+//   - System services (CORE/BUILD/INTERNAL/PREPARE_RUNTIME/HTTP_L7_BALANCER)
+//     via ServiceStack.IsSystem
+//   - The ZCP control-plane container itself (type prefix "zcp@") — it
+//     advertises a subdomain for VS Code remote, but it is the runner host,
+//     not a candidate target. Without this exclusion an eval-zcp project
+//     with the agent-deployed dev/stage pair would surface 3 candidates
+//     (zcp, appdev, appstage) and the resolver would refuse.
 func ResolveProbeHostname(ctx context.Context, client platform.Client, projectID string) (string, error) {
 	services, err := ops.ListProjectServices(ctx, client, projectID)
 	if err != nil {
@@ -83,6 +93,12 @@ func ResolveProbeHostname(ctx context.Context, client platform.Client, projectID
 	}
 	var candidates []string
 	for _, svc := range services {
+		if svc.IsSystem() {
+			continue
+		}
+		if strings.HasPrefix(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName, "zcp@") {
+			continue
+		}
 		if svc.SubdomainAccess && len(svc.Ports) > 0 {
 			candidates = append(candidates, svc.Name)
 		}
@@ -93,6 +109,22 @@ func ResolveProbeHostname(ctx context.Context, client platform.Client, projectID
 	case 1:
 		return candidates[0], nil
 	default:
+		// Standard-pair heuristic: when the agent picks standard mode, a
+		// scenario gets BOTH dev + stage halves as web-facing candidates.
+		// Conceptually that is ONE app with two deploy targets and the
+		// probe wants the production endpoint — i.e. the stage half. If
+		// exactly one candidate hostname ends with "stage", auto-pick it.
+		// Anything else (no stage suffix, or multiple stage suffixes) is a
+		// real ambiguity and the scenario must set finalUrlHostname.
+		var stageCandidates []string
+		for _, c := range candidates {
+			if strings.HasSuffix(c, "stage") {
+				stageCandidates = append(stageCandidates, c)
+			}
+		}
+		if len(stageCandidates) == 1 {
+			return stageCandidates[0], nil
+		}
 		return "", fmt.Errorf("multiple web-facing services (%v) — set finalUrlHostname on the scenario", candidates)
 	}
 }
