@@ -44,7 +44,7 @@ func recordFragment(sess *Session, id, body, mode string) (int, bool, string, er
 		return 0, false, "", fmt.Errorf("record-fragment: %w", err)
 	}
 	if strings.HasPrefix(id, "env/") && strings.Contains(id, "/import-comments/") {
-		if err := applyEnvComment(sess.Plan, id, body); err != nil {
+		if err := ApplyEnvComment(sess.Plan, id, body); err != nil {
 			return 0, false, "", err
 		}
 		return len(body), false, "", nil
@@ -72,10 +72,14 @@ func recordFragment(sess *Session, id, body, mode string) (int, bool, string, er
 	return len(body), false, priorBody, nil
 }
 
-// applyEnvComment routes env/<N>/import-comments/<target> into the
+// ApplyEnvComment routes env/<N>/import-comments/<target> into the
 // typed plan.EnvComments map so the yaml emitter reads writer-authored
 // comments without a separate fragment-consumption layer.
-func applyEnvComment(plan *Plan, id, body string) error {
+//
+// Exported so cmd/zcp-recipe-sim's stitch subcommand can use the
+// canonical routing path. id shape: `env/<N>/import-comments/<target>`
+// where <target> is `project` or a service hostname.
+func ApplyEnvComment(plan *Plan, id, body string) error {
 	// id = "env/<N>/import-comments/<target>"
 	rest := strings.TrimPrefix(id, "env/")
 	slash := strings.IndexByte(rest, '/')

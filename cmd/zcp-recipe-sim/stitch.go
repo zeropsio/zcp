@@ -48,10 +48,17 @@ func runStitch(args []string) error {
 	for _, cb := range plan.Codebases {
 		codebaseHosts[cb.Hostname] = true
 	}
-	if err := loadFragmentsTree(fragsRoot, plan.Fragments, codebaseHosts); err != nil {
+	if err := loadFragmentsTree(fragsRoot, plan, codebaseHosts); err != nil {
 		return fmt.Errorf("load fragments: %w", err)
 	}
-	fmt.Printf("loaded %d fragments\n", len(plan.Fragments))
+	envCommentCount := 0
+	for _, ec := range plan.EnvComments {
+		if ec.Project != "" {
+			envCommentCount++
+		}
+		envCommentCount += len(ec.Service)
+	}
+	fmt.Printf("loaded %d codebase fragments + %d env comments\n", len(plan.Fragments), envCommentCount)
 
 	absDir, err := filepath.Abs(*dir)
 	if err != nil {
@@ -130,12 +137,17 @@ func runStitch(args []string) error {
 }
 
 // loadFragmentsTree walks fragments-new/ subdirectories and loads
-// every `*.md` file into the fragments map. Filename `__`-separator
-// converts back to fragment id via `/` per the replay-adapter
-// convention. Directories are accepted regardless of name; codebase
-// hosts and the literal "env" subdir are the expected layout but
-// unrecognized subdirs aren't an error (just informational).
-func loadFragmentsTree(root string, frags map[string]string, codebaseHosts map[string]bool) error {
+// every `*.md` file into the plan. Codebase fragments land in
+// `plan.Fragments`; `env/<N>/import-comments/<target>` fragments route
+// into the typed `plan.EnvComments` map via `recipe.ApplyEnvComment`
+// (matching the production record-fragment path).
+//
+// Filename `__`-separator converts back to fragment id via `/` per the
+// replay-adapter convention. Directories are accepted regardless of
+// name; codebase hosts and the literal "env" subdir are the expected
+// layout but unrecognized subdirs aren't an error (just informational).
+func loadFragmentsTree(root string, planForRouting *recipe.Plan, codebaseHosts map[string]bool) error {
+	frags := planForRouting.Fragments
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -166,6 +178,18 @@ func loadFragmentsTree(root string, frags map[string]string, codebaseHosts map[s
 			body, err := os.ReadFile(filepath.Join(subDir, f.Name()))
 			if err != nil {
 				return fmt.Errorf("read %s: %w", f.Name(), err)
+			}
+			// env/<N>/import-comments/<target> fragments don't go into
+			// plan.Fragments — they route into the typed plan.EnvComments
+			// map via the canonical engine helper. The yaml emitter
+			// reads from EnvComments, not Fragments, so skipping this
+			// step leaves every tier yaml uncommented.
+			if strings.HasPrefix(fragmentID, "env/") && strings.Contains(fragmentID, "/import-comments/") {
+				if err := recipe.ApplyEnvComment(planForRouting, fragmentID, string(body)); err != nil {
+					return fmt.Errorf("ApplyEnvComment %s: %w", fragmentID, err)
+				}
+				loaded++
+				continue
 			}
 			frags[fragmentID] = string(body)
 			loaded++

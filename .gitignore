@@ -2,9 +2,11 @@
 bin/
 builds/
 /zcp
+/zcp-recipe-sim
 *.test
 RECIPE_RUNS/
 docs/zcprecipator3/runs/
+docs/zcprecipator3/simulations/
 
 # Secrets
 .env
