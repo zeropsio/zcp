@@ -15,12 +15,15 @@ expect:
     - zerops_workflow
     - zerops_deploy
     - zerops_verify
-  # 3 is the realistic floor for the first-deploy branch (status + start
-  # develop + close-manually). Raising it blocks valid agent paths
-  # (re-import with startWithoutCode) without catching a deeper failure —
-  # the `"workflow":"develop"` required pattern + `"workflow":"bootstrap"`
-  # forbidden pattern are the real signals we care about.
-  workflowCallsMin: 3
+  # 1 is the realistic floor for the first-deploy branch on a single-
+  # service preseed: one `zerops_workflow workflow="develop"` start is
+  # enough — re-import + write + deploy + verify use other tools, and
+  # auto-close fires without a manual close call when scope is covered.
+  # Phase 1.5 calibration (B14) — the previous floor of 3 blocked valid
+  # paths and didn't catch any deeper failure since
+  # `"workflow":"develop"` + the bootstrap-forbidden pattern are the
+  # load-bearing signals.
+  workflowCallsMin: 1
   # Develop is the right entry point — bootstrap is already complete.
   # The agent starting bootstrap when meta.IsComplete() would be a bug.
   mustEnterWorkflow:
