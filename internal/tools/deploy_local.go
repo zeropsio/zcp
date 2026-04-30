@@ -160,40 +160,81 @@ func RegisterDeployLocal(
 		}
 		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 
-		note, progress := sessionAnnotations(stateDir)
 		return jsonResult(deployLocalResponse{
-			DeployResult:      result,
-			WorkSessionNote:   note,
-			AutoCloseProgress: progress,
+			DeployResult:     result,
+			WorkSessionState: sessionAnnotations(stateDir),
 		}), nil, nil
 	})
 }
 
-// deployLocalResponse wraps the local-mode deploy result with session
-// annotations: a warning when no active work session is tracking the
-// deploy, and the auto-close progress snapshot when one is. Both fields
-// are omitted when empty/nil so the response shape stays compatible
-// with non-session callers.
+// deployLocalResponse wraps the local-mode deploy result with the
+// structured WorkSessionState lifecycle signal (F5 closure). The agent
+// reads .workSessionState.status to know whether the deploy landed
+// inside an open session, on an auto-closed one (typically the deploy
+// that COMPLETED the session), or with no session tracking at all.
 type deployLocalResponse struct {
 	*ops.DeployResult
-	WorkSessionNote   string                      `json:"workSessionNote,omitempty"`
-	AutoCloseProgress *workflow.AutoCloseProgress `json:"autoCloseProgress,omitempty"`
+	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
+}
+
+// WorkSessionState is the lifecycle signal returned alongside every
+// deploy/verify response. F5 closure (audit-prerelease-internal-testing-
+// 2026-04-29): pre-fix sessionAnnotations collapsed every non-open state
+// onto one constant warning, so the agent could not distinguish "session
+// never opened" from "session auto-closed seconds ago" — the auto-close
+// timestamp + reason were on disk but discarded at the tool boundary.
+//
+// Status field is the canonical lifecycle vocabulary mirrored from the
+// envelope's `develop-closed-auto` semantics:
+//
+//   - "open" — an active develop session is tracking this deploy.
+//   - "auto-closed" — the session reached scope-all-green and ZCP closed
+//     it; the agent was iterating against a session that just terminated.
+//   - "none" — no session ever opened (or it was deleted/garbage-collected).
+//
+// ClosedAt + CloseReason populate only on "auto-closed". Progress
+// populates only on "open" — the per-call snapshot of how close auto-
+// close is to firing.
+//
+// Note carries a human-readable summary of the same data so a stringly
+// rendering of the response (e.g. RenderStatus or a CLI dump) keeps the
+// signal even without structured field access.
+type WorkSessionState struct {
+	Status      string                      `json:"status"` // "open" | "auto-closed" | "none"
+	ClosedAt    string                      `json:"closedAt,omitempty"`
+	CloseReason string                      `json:"closeReason,omitempty"`
+	Note        string                      `json:"note,omitempty"`
+	Progress    *workflow.AutoCloseProgress `json:"progress,omitempty"`
 }
 
 // sessionAnnotations loads the current-PID work session once and derives
-// both the "no active session" warning and the auto-close progress
-// snapshot. A single disk read serves all response annotations, where
-// previously each deploy/verify handler made two independent
-// CurrentWorkSession calls.
+// the structured lifecycle state for the deploy response. A single disk
+// read serves all response annotations.
 //
-// Either return value may be empty/nil depending on session state; the
-// response wrappers use `omitempty` so missing values drop out cleanly.
-func sessionAnnotations(stateDir string) (string, *workflow.AutoCloseProgress) {
+// Distinguishes open / auto-closed / none so the agent doesn't have to
+// round-trip through `action="status"` to learn that a session
+// terminated mid-iteration. Mirrors the envelope's `develop-closed-auto`
+// signal so the same lifecycle vocabulary surfaces at every boundary.
+func sessionAnnotations(stateDir string) *WorkSessionState {
 	ws, err := workflow.CurrentWorkSession(stateDir)
-	if err != nil || ws == nil || ws.ClosedAt != "" {
-		return noActiveSessionWarning, nil
+	if err != nil || ws == nil {
+		return &WorkSessionState{
+			Status: "none",
+			Note:   noActiveSessionNote,
+		}
 	}
-	return "", workflow.AutoCloseProgressOf(stateDir, ws)
+	if ws.ClosedAt != "" {
+		return &WorkSessionState{
+			Status:      "auto-closed",
+			ClosedAt:    ws.ClosedAt,
+			CloseReason: ws.CloseReason,
+			Note:        fmt.Sprintf("Develop session auto-closed at %s (reason: %s). Start a new session for this work.", ws.ClosedAt, ws.CloseReason),
+		}
+	}
+	return &WorkSessionState{
+		Status:   "open",
+		Progress: workflow.AutoCloseProgressOf(stateDir, ws),
+	}
 }
 
-const noActiveSessionWarning = "No active develop session — deploy not tracked. Start one via zerops_workflow action=\"start\" workflow=\"develop\" intent=\"...\" scope=[...] to pick up auto-close + verify tracking."
+const noActiveSessionNote = "No active develop session — deploy not tracked. Start one via zerops_workflow action=\"start\" workflow=\"develop\" intent=\"...\" scope=[...] to pick up auto-close + verify tracking."

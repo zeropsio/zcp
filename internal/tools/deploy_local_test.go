@@ -166,27 +166,37 @@ func TestDeployLocalTool_SameToolName(t *testing.T) {
 	}
 }
 
-// sessionAnnotations emits a warning + nil progress when a deploy lands
-// without an active work session, or empty warning + non-nil progress
-// when one is open. Soft nudge, not a hard block — agent keeps discretion.
-func TestSessionAnnotations_NoSession_WarnsWithoutProgress(t *testing.T) {
+// F5 closure (audit-prerelease-internal-testing-2026-04-29):
+// sessionAnnotations returns a structured WorkSessionState mirroring the
+// envelope's `develop-closed-auto` lifecycle vocabulary. The three
+// status values (none / open / auto-closed) carry distinct field shapes
+// so the agent distinguishes "session never opened" from "session
+// auto-closed mid-iteration" without an extra round-trip through
+// action="status".
+func TestSessionAnnotations_NoSession_StatusNone(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	note, progress := sessionAnnotations(dir)
-	if note == "" {
-		t.Fatal("expected warning when no session is open")
+	got := sessionAnnotations(dir)
+	if got == nil {
+		t.Fatal("expected non-nil WorkSessionState")
+	}
+	if got.Status != "none" {
+		t.Errorf("Status = %q, want %q", got.Status, "none")
 	}
 	for _, needle := range []string{"No active develop session", "scope="} {
-		if !strings.Contains(note, needle) {
-			t.Errorf("warning missing %q: %s", needle, note)
+		if !strings.Contains(got.Note, needle) {
+			t.Errorf("Note missing %q: %s", needle, got.Note)
 		}
 	}
-	if progress != nil {
-		t.Errorf("no progress expected when session is missing, got: %+v", progress)
+	if got.Progress != nil {
+		t.Errorf("Progress: want nil for status=none, got %+v", got.Progress)
+	}
+	if got.ClosedAt != "" || got.CloseReason != "" {
+		t.Errorf("ClosedAt/CloseReason: want empty for status=none, got %q / %q", got.ClosedAt, got.CloseReason)
 	}
 }
 
-func TestSessionAnnotations_ActiveSession_ProgressWithoutWarning(t *testing.T) {
+func TestSessionAnnotations_ActiveSession_StatusOpen(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	ws := workflow.NewWorkSession("proj-1", string(workflow.EnvContainer), "test", []string{"appdev"})
@@ -195,34 +205,53 @@ func TestSessionAnnotations_ActiveSession_ProgressWithoutWarning(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
 
-	note, progress := sessionAnnotations(dir)
-	if note != "" {
-		t.Errorf("no warning expected with open session, got: %s", note)
+	got := sessionAnnotations(dir)
+	if got == nil {
+		t.Fatal("expected non-nil WorkSessionState")
 	}
-	if progress == nil {
-		t.Fatal("expected non-nil progress with open session")
+	if got.Status != "open" {
+		t.Errorf("Status = %q, want %q", got.Status, "open")
 	}
-	if progress.Total != 1 {
-		t.Errorf("progress.Total = %d, want 1", progress.Total)
+	if got.Progress == nil {
+		t.Fatal("expected non-nil Progress on status=open")
+	}
+	if got.Progress.Total != 1 {
+		t.Errorf("Progress.Total = %d, want 1", got.Progress.Total)
+	}
+	if got.Note != "" {
+		t.Errorf("Note: want empty for status=open, got %q", got.Note)
 	}
 }
 
-func TestSessionAnnotations_ClosedSession_WarnsWithoutProgress(t *testing.T) {
+func TestSessionAnnotations_ClosedSession_StatusAutoClosed(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
+	closedAt := time.Now().UTC().Format(time.RFC3339)
 	ws := workflow.NewWorkSession("proj-1", string(workflow.EnvContainer), "done", []string{"appdev"})
-	ws.ClosedAt = time.Now().UTC().Format(time.RFC3339)
+	ws.ClosedAt = closedAt
 	ws.CloseReason = workflow.CloseReasonAutoComplete
 	if err := workflow.SaveWorkSession(dir, ws); err != nil {
 		t.Fatalf("SaveWorkSession: %v", err)
 	}
 	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
 
-	note, progress := sessionAnnotations(dir)
-	if note == "" {
-		t.Error("expected warning when session is closed")
+	got := sessionAnnotations(dir)
+	if got == nil {
+		t.Fatal("expected non-nil WorkSessionState")
 	}
-	if progress != nil {
-		t.Errorf("no progress expected when session is closed, got: %+v", progress)
+	if got.Status != "auto-closed" {
+		t.Errorf("Status = %q, want %q", got.Status, "auto-closed")
+	}
+	if got.ClosedAt != closedAt {
+		t.Errorf("ClosedAt = %q, want %q", got.ClosedAt, closedAt)
+	}
+	if got.CloseReason != workflow.CloseReasonAutoComplete {
+		t.Errorf("CloseReason = %q, want %q", got.CloseReason, workflow.CloseReasonAutoComplete)
+	}
+	if !strings.Contains(got.Note, "auto-closed") || !strings.Contains(got.Note, closedAt) {
+		t.Errorf("Note missing auto-close summary: %q", got.Note)
+	}
+	if got.Progress != nil {
+		t.Errorf("Progress: want nil for status=auto-closed, got %+v", got.Progress)
 	}
 }

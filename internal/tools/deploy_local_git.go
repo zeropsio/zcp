@@ -236,20 +236,17 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 		warnings = append(warnings, warn)
 	}
 
-	note, progress := sessionAnnotations(stateDir)
 	type localGitPushResponse struct {
 		*ops.GitPushResult
-		Warnings          []string                    `json:"warnings,omitempty"`
-		WorkSessionNote   string                      `json:"workSessionNote,omitempty"`
-		AutoCloseProgress *workflow.AutoCloseProgress `json:"autoCloseProgress,omitempty"`
-		_                 struct{}                    `json:"-"` // authInfo kept for symmetry with SSH handler
+		Warnings         []string          `json:"warnings,omitempty"`
+		WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
+		_                struct{}          `json:"-"` // authInfo kept for symmetry with SSH handler
 	}
 	_ = authInfo
 	return jsonResult(localGitPushResponse{
-		GitPushResult:     result,
-		Warnings:          warnings,
-		WorkSessionNote:   note,
-		AutoCloseProgress: progress,
+		GitPushResult:    result,
+		Warnings:         warnings,
+		WorkSessionState: sessionAnnotations(stateDir),
 	}), nil, nil
 }
 

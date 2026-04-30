@@ -378,22 +378,20 @@ func handleGitPush(
 		warnings = append(warnings, warn)
 	}
 
-	note, progress := sessionAnnotations(stateDir)
 	return jsonResult(deployGitPushResponse{
-		GitPushResult:     result,
-		Warnings:          warnings,
-		WorkSessionNote:   note,
-		AutoCloseProgress: progress,
+		GitPushResult:    result,
+		Warnings:         warnings,
+		WorkSessionState: sessionAnnotations(stateDir),
 	}), nil, nil
 }
 
-// deployGitPushResponse wraps the push-git result with session
-// annotations. Same shape as the local/batch wrappers; the three exist
-// because their underlying result types differ and Go can't embed an
-// interface-typed field the way we'd want.
+// deployGitPushResponse wraps the push-git result with the structured
+// WorkSessionState lifecycle signal (F5 closure). Same shape as the
+// local/batch wrappers; the three exist because their underlying result
+// types differ and Go can't embed an interface-typed field the way we'd
+// want.
 type deployGitPushResponse struct {
 	*ops.GitPushResult
-	Warnings          []string                    `json:"warnings,omitempty"`
-	WorkSessionNote   string                      `json:"workSessionNote,omitempty"`
-	AutoCloseProgress *workflow.AutoCloseProgress `json:"autoCloseProgress,omitempty"`
+	Warnings         []string          `json:"warnings,omitempty"`
+	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
 }
