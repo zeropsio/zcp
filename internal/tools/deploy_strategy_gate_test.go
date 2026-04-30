@@ -72,7 +72,7 @@ func TestValidateDeployStrategyParam(t *testing.T) {
 			// "gopher" is the unknown-value path; the redirect must mention
 			// "zcli" so the same agent who tries `strategy="zcli"` from a
 			// typo'd path also gets pointed at the omit-the-parameter form.
-			if tt.strategy == "gopher" && !strings.Contains(pe.Suggestion, "'zcli' is the internal label") {
+			if tt.strategy == "gopher" && !strings.Contains(pe.Suggestion, `"zcli" is the internal label`) {
 				t.Errorf("unknown-value rejection Suggestion should mention zcli internal label; got: %s", pe.Suggestion)
 			}
 		})
