@@ -25,7 +25,7 @@ expect:
 followUp:
   - "Jak jsi poznal, že služby `app` + `db` existují, ale nemají ZCP metadata? Objevila se v discovery response adopt option?"
   - "V jakém pořadí jsi šel workflow-y (bootstrap/adopt → develop)? Proč přesně v tomhle pořadí?"
-  - "Zvolil jsi push-dev nebo push-git strategy? Proč právě tuhle?"
+  - "Zvolil jsi closeMode=auto nebo closeMode=git-push? Proč právě tuhle?"
 ---
 
 # Úkol

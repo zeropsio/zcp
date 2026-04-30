@@ -1,5 +1,27 @@
-# Pre-internal-testing fixes — plan (2026-04-30)
+# Pre-internal-testing fixes — plan (2026-04-30) — ARCHIVED
 
+> **Status**: SHIPPED + ARCHIVED 2026-04-30 by branch
+> `cleanup-pre-internal-testing` (P0-P7 complete).
+>
+> **Outcome**: 17/17 audit findings resolved or filed to `plans/backlog/`.
+> Matrix simulator anomalies dropped 23 → 5 (-18); legacy `strategy`
+> vocab WARN class fully eliminated (16 → 0); F9 narrow-scope briefing
+> dropped from 35KB live-feedback shape to 24KB matrix demonstration
+> (under 25KB cap).
+>
+> **Resolution table**: see
+> `docs/audit-prerelease-internal-testing-2026-04-29.md` "Resolution
+> status (2026-04-30)" section for the per-finding commit-hash map.
+>
+> **Backlog entries created**:
+> - `plans/backlog/c3-failure-classification-async-events.md`
+> - `plans/backlog/c9-recipe-git-push-scaffolding.md` (linked to existing
+>   `plans/backlog/auto-wire-github-actions-secret.md`)
+> - `plans/backlog/m1-glc-safety-net-identity-reset.md`
+> - `plans/backlog/m2-stage-timing-validation-gate.md`
+> - `plans/backlog/m4-aggregate-atom-placeholder-lint.md`
+> - `plans/backlog/deploy-intent-resolver.md`
+>
 > **Reader contract.** Self-contained for a fresh Claude session opened with no
 > prior context. Read this entire file before starting Phase 0.
 >
@@ -13,8 +35,6 @@
 > **This plan**: ships the pre-internal-testing fix-set in 7 phases, each
 > independently committable, each gated by TDD + Codex PRE/POST review. The
 > goal is a clean baseline before live agent testing starts.
->
-> **Status**: DRAFT (2026-04-30) — not yet started.
 
 ---
 
@@ -39,14 +59,14 @@ because they touch async paths.
 
 | # | Phase | Status | Exit commit |
 |---|---|---|---|
-| P0 | Pre-flight — branch, baseline matrix sim, audit verification | pending | n/a |
-| P1 | Vocabulary sweep (C1, C6, C7, C8, C11) — atomic commit, ~25 files | pending | tbd |
-| P2 | Subdomain eligibility unification (F8 root) | pending | tbd |
-| P3 | Plan/spec alignment (H1, H2, C10) | pending | tbd |
-| P4 | Git-push lifecycle separation (C2 root) | pending | tbd |
-| P5 | Response size dual-fix (H3 / F9 — atom aggregate + scope filter) | pending | tbd |
-| P6 | UX bundle (C4, C5+nohup-lint, F3 root, F5 root, M3) | pending | tbd |
-| P7 | Verification + audit close + matrix sim final | pending | tbd |
+| P0 | Pre-flight — branch, baseline matrix sim, audit verification | DONE | `9669ebb5` |
+| P1 | Vocabulary sweep (C1, C6, C7, C8, C11) — atomic commit, 40 files | DONE | `9e31c19b` |
+| P2 | Subdomain eligibility unification (F8 root) | DONE | `287c821a` |
+| P3 | Plan/spec alignment (H1, H2, C10) | DONE | `cfbd0793` |
+| P4 | Git-push lifecycle separation (C2 root + C4) | DONE | `0ad55b35` |
+| P5 | Response size dual-fix (H3 / F9 — atom aggregate + scope filter) | DONE | `7dcb1b46` (Lever A) + `c4140954` (Lever B) |
+| P6 | UX bundle (C5+nohup-lint, F3 root, F5 root, M3, verify F5 follow-up) | DONE | `5d1eee18` (M3) + `7aacce24` (C5+lint) + `8ed3c365` (F3) + `d7486bb9` (F5) + `34d3403b` (verify F5 follow-up) |
+| P7 | Verification + audit close + matrix sim final | DONE | (this commit) |
 
 Update this table after each phase ships. Reference exit commit hash in the
 table; full message body lives in the commit per `feedback_commits_as_llm_reflog.md`.

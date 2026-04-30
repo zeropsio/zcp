@@ -530,3 +530,50 @@ Group by "blocks first-day testing" vs "shows up in week 1" vs "queue".
 16. **M1, M2, M4** — structural defenses (silent identity, stage-timing validation, aggregate-atom placeholder lint). Queue for a focused pass after testing reveals which one bites first.
 
 After Round 1+2 land, the user can start internal testing with confidence the agent isn't being told to call a non-existent action, the deploy hand-off is consistent, and the failure classifier guidance matches the actual data shape.
+
+---
+
+## Resolution status (2026-04-30)
+
+Closed by branch `cleanup-pre-internal-testing` (`plans/archive/pre-internal-testing-fixes-2026-04-30.md` Phase 1-7).
+
+| Finding | Status | Resolution |
+|---|---|---|
+| C1 | RESOLVED | Phase 1 commit `9e31c19b` — atom slug renames + body sweeps + eval scaffolding sweep + test fixture sweeps + spec sweep + plan archive (40 files). |
+| C2 | RESOLVED | Phase 4 commit `0ad55b35` — auto-stamp removed from BOTH git-push handlers; record-deploy bridge appends synthetic successful DeployAttempt to work session. |
+| C3 | DEFERRED | `plans/backlog/c3-failure-classification-async-events.md` — propagate `topology.FailureClass` into `TimelineEvent`. |
+| C4 | RESOLVED | Phase 4 commit `0ad55b35` — `develop-record-external-deploy` axis flipped from `[deployed]` to `[never-deployed]`. |
+| C5 | RESOLVED | Phase 6 commit `7aacce24` — asset-pipeline atom rewritten to use `zerops_dev_server action=start`; class-prevention `axis-hot-shell` lint added. |
+| C6 | RESOLVED | Phase 1 commit `9e31c19b` — `develop-platform-rules-local` retired-vocab swept inside the C1 atomic sweep. |
+| C7 | RESOLVED | Phase 1 commit `9e31c19b` — `plans/develop-flow-enhancements.md` archived to `plans/archive/develop-flow-enhancements-2026-04-20.md` with header note documenting Phase 3 reverted + Phase 4 shipped. |
+| C8 | RESOLVED | Phase 1 commit `9e31c19b` — test-comment field-name sweep folded into the C1 atomic sweep. |
+| C9 | DEFERRED | `plans/backlog/c9-recipe-git-push-scaffolding.md` (linked to existing `plans/backlog/auto-wire-github-actions-secret.md`). |
+| C10 | RESOLVED | Phase 3 commit `cfbd0793` — spec D2b row rewritten to describe the actual committed-code-at-workingDir guard at `internal/tools/deploy_git_push.go:233-240`; pin tests already exist (no new pin needed). |
+| C11 | RESOLVED | Phase 1 commit `9e31c19b` — `case "push-dev"` retired alias removed from `deploy_strategy_gate.go::validateDeployStrategyParam`. |
+| H1 | RESOLVED | Phase 3 commit `cfbd0793` — `deployActionFor` extended to take `env.Services` + emit cross-deploy args for stage halves. TODO names DeployIntent as the structural target. |
+| H2 | RESOLVED | Phase 3 commit `cfbd0793` — `develop-first-deploy-promote-stage.md` adds `setup="prod"`. |
+| H3 / F9 | RESOLVED | Phase 5 commits `7dcb1b46` (Lever A — 14 atoms aggregate-mode) + `c4140954` (Lever B — Synthesize work-session scope filter). 4-service scope=1 case drops to 24KB (under 25KB cap). |
+| M1 | DEFERRED | `plans/backlog/m1-glc-safety-net-identity-reset.md`. |
+| M2 | DEFERRED | `plans/backlog/m2-stage-timing-validation-gate.md`. |
+| M3 | RESOLVED | Phase 6 commit `5d1eee18` — `local-stage` / `local-only` added to 3 atom mode axes. |
+| M4 | DEFERRED | `plans/backlog/m4-aggregate-atom-placeholder-lint.md` — class-prevention lint for future aggregate atoms. |
+| F3 | RESOLVED | Phase 6 commit `8ed3c365` — `internal/ops/EnrichSetupNotFound` helper + integration in `ValidatePreDeployContent`. Local preflight sites left as-is (different surface — StepCheck.Detail strings, already enrich locally). |
+| F5 | RESOLVED | Phase 6 commits `d7486bb9` + `34d3403b` — structured `WorkSessionState` (status: open/auto-closed/none) replaces old `WorkSessionNote` + `AutoCloseProgress` field pair across all 4 deploy paths and both verify response wrappers. |
+| F6, F7 | RESOLVED PRE-PHASE-1 | `## Gotchas` section landed in `internal/knowledge/recipes/dotnet-hello-world.md` per per-recipe knowledge convention (CLAUDE.md). |
+| F8 | RESOLVED | Phase 2 commit `287c821a` — `serviceEligibleForSubdomain` unified predicate consults HTTP signal (mode + ports[].HTTPSupport), eliminates dev+dynamic+zsc-noop spurious enable + warning. |
+| L1, L2, L3 | OPEN | Low-priority UX atom edits; not in scope for the pre-internal-testing fix bundle. Re-evaluate if internal testing surfaces specific friction. |
+| DeployIntent resolver | DEFERRED | `plans/backlog/deploy-intent-resolver.md` — structural follow-up the H1 TODO points at. |
+
+### Matrix simulator anomaly delta (P0 → P7)
+
+| Class | Before (baseline) | After | Delta |
+|---|---|---|---|
+| ERROR (Plan.Primary zero — by design for strategy-setup + export-active phases) | 3 | 3 | 0 |
+| WARN: legacy `strategy` vocab | 16 | 0 | -16 |
+| WARN: briefing > 25KB (10.2 + 12.1) | 2 | 2 | 0 |
+| WARN: nohup pattern | 0 | 0 | 0 |
+| **Total anomalies** | **23** | **5** | **-18** |
+
+Matrix scenario `10.3 four runtimes scope=1 (Lever B narrow)` added in Phase 5 demonstrates the F9 narrow-scope case landing UNDER the 25KB cap (24,332 bytes) — the audit's 35KB live-feedback shape now renders compliant.
+
+The 2 remaining briefing-size WARN scenarios (`10.2 mixed runtimes`, `12.1 export-active`) are by-design-large-briefing scenarios that cover the full corpus surface; not eligible for further trim without losing guidance.

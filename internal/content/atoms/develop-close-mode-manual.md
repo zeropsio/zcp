@@ -17,7 +17,7 @@ Manual is the extension slot. Pick it when an external loop (your own slash comm
 - All deploy tools remain callable; `zerops_deploy` records to the session as usual.
 - `zerops_verify` records to the session and surfaces results on `action=status`.
 - `zerops_workflow action=status` returns the lifecycle envelope unchanged — you see exactly which services have a successful deploy and a passed verify.
-- The `AutoCloseProgress` block on side-effect responses carries `enabled=false` plus `reason`, so callers observe the gate is closed.
+- The `workSessionState` block on side-effect responses carries `status` (open / auto-closed / none) plus the per-service progress so callers observe whether auto-close gating fires; on a manual-close pair the gate stays open until you call `action="close"` explicitly.
 
 ## What stops working
 
