@@ -278,6 +278,15 @@ Apply friendly-authority voice (above) primarily here. Each comment
 block: declarative state of the field choice + named porter signal
 that triggers an adapt path.
 
+> **Do NOT edit `<SourceRoot>/zerops.yaml` on disk to add comments.**
+> The fragments you record here are the canonical source. The engine's
+> stitch step strips the on-disk yaml's existing `^\s*#` comments and
+> re-injects every recorded fragment via line-anchored insertion above
+> the matching block. Direct on-disk edits get clobbered by stitch's
+> strip pass; recording overlapping fragments AND inline-editing
+> double-comments. Stay in the fragment lane and stitch handles the
+> on-disk write.
+
 ## Step 5 — Author intro (Surface 4 head)
 
 `codebase/<h>/intro` — 1-2 sentence framing. ≤ 350 chars, no `## `

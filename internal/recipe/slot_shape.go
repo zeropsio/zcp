@@ -33,7 +33,7 @@ func checkSlotShape(fragmentID, body string) []string {
 }
 
 // CheckSlotShapeForReplay is the exported entry point used by the
-// `cmd/zcp-replay-content/validate` tool to run the dispatcher against
+// `cmd/zcp-recipe-sim (validate subcommand)` tool to run the dispatcher against
 // fragments authored offline. Identical to the internal
 // `checkSlotShapeWithPlan` — exported only to let the throwaway replay
 // CLI consume it without forking the recipe package.

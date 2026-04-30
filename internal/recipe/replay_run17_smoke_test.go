@@ -14,7 +14,7 @@ import (
 // reconstruct the codebase-content brief offline — no session log
 // digging, no engine session needed.
 //
-// This is the load-bearing pre-condition for cmd/zcp-replay-content:
+// This is the load-bearing pre-condition for cmd/zcp-recipe-sim:
 // if this fails, the replay loop can't function. If it passes, the
 // remaining replay work is plumbing.
 func TestReplay_Run17_BriefComposes(t *testing.T) {

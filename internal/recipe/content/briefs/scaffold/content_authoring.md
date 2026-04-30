@@ -18,8 +18,18 @@ BAD  `# Private (showcase default) — tradeoff.`
 GOOD `// /health returns 200 once runtime is ready.`
 BAD  `// /health added per pre-ship contract item 1.`
 
-Produce your codebase's `zerops.yaml` (with inline comments) + record
-5 fragments by invoking the `zerops_recipe` MCP tool with
+Produce your codebase's `zerops.yaml` **without inline causal comments**
+— the bare yaml is the scaffold contract. Causal comments are authored
+later at codebase-content phase via per-block fragments and stamped
+back into the on-disk file by the engine's stitch step. Inlining
+comments here forces a strip-and-re-inject round-trip and risks
+double-comments if the codebase-content sub-agent records overlapping
+fragments. The only `#` lines you may keep in the yaml are the
+`#zeropsPreprocessor=on` shebang (when present) and trailing comments
+on data lines (e.g. `port: 3000  # see <link>`); both are passthrough
+material the strip step preserves.
+
+Then record 5 fragments by invoking the `zerops_recipe` MCP tool with
 `action: record-fragment` (JSON tool call — NOT a shell command):
 
 - `codebase/<h>/intro` — one paragraph

@@ -30,7 +30,7 @@ func buildSubagentPrompt(plan *Plan, parent *ParentRecipe, in RecipeInput) (stri
 }
 
 // BuildSubagentPromptForReplay is the exported entry the
-// `cmd/zcp-replay-content` tool calls so offline replay dispatches use
+// `cmd/zcp-recipe-sim` tool calls so offline replay dispatches use
 // the byte-identical prompt the production handler would compose. The
 // replay tool prepends a thin "REPLAY MODE" adapter (file-write
 // redirect) and otherwise sends this string verbatim to the dispatched

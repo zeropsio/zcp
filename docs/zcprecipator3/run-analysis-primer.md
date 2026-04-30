@@ -207,65 +207,73 @@ plus shared surfaces):
 - Per-codebase README intro, IG slots #2-#5, KB, zerops-yaml-comments
   blocks, CLAUDE.md (×N codebases)
 
-For deterministic anti-pattern checks, use the validator binary:
+For deterministic anti-pattern checks, use the simulation tool's
+`validate` subcommand:
 
 ```bash
-go run ./cmd/zcp-replay-content/validate \
-  -frags <run-dir>/<codebase>dev \
-  -plan <run-dir>/environments
+go run ./cmd/zcp-recipe-sim validate -dir <sim-dir>
 ```
 
-Note: the validator runs against fragment-shaped files (`/`-replaced
-filenames). For a published run, fragments are stitched into READMEs;
-for a SIMULATION run, fragments are at `/tmp/replay/fragments-new/`.
+`<sim-dir>` is a simulation directory previously populated by `emit`
++ Agent dispatches. The validator runs `checkSlotShapeWithPlan` over
+every authored fragment under `<sim-dir>/fragments-new/<host>/`
+(filename → fragment id via `__` → `/`).
 
-## 7. Simulation infrastructure (when a fix needs validating)
+## 7. End-to-end simulation infrastructure
 
 If your analysis identifies a residual issue that requires an engine
 fix (validator regex extension, brief atom edit, etc.), use the
-replay tool to test the fix against the frozen run corpus before any
-re-dogfood:
+`zcp-recipe-sim` tool to test the fix against the frozen run corpus
+before any re-dogfood. The tool runs three subcommands matching the
+phases of the simulation loop:
 
 ```bash
-# 1. Generate dispatch prompts (canonical engine-emitted + thin
-#    file-write adapter only — byte-identical to production)
-go run ./cmd/zcp-replay-content \
-  -run docs/zcprecipator3/runs/<N> \
-  -out /tmp/replay
-
-# Output:
-#   /tmp/replay/briefs/<codebase>-prompt.md  (per codebase)
-#   /tmp/replay/briefs/env-prompt.md
-#   /tmp/replay/fragments-new/<codebase>/    (target dirs)
-
-# 2. Edit the atom / brief composer / validator (whatever your fix is)
-# 3. Rebuild
+# 1. Edit the atom / brief composer / validator (whatever your fix is)
+# 2. Rebuild
 go build ./...
 
-# 4. Re-generate prompts (incorporates your edit)
-go run ./cmd/zcp-replay-content \
+# 3. Stage frozen scaffold output + emit dispatch prompts.
+#    Reads:  runs/<N>/environments/{plan.json,facts.jsonl}
+#            runs/<N>/<host>dev/zerops.yaml (comments stripped on copy)
+#    Writes: simulations/<M>/environments/{plan.json,facts.jsonl}
+#            simulations/<M>/<host>dev/zerops.yaml (bare)
+#            simulations/<M>/briefs/{<host>,env}-prompt.md
+#            simulations/<M>/fragments-new/{<host>,env}/  (empty)
+#    The plan.json's SourceRoot fields are rewritten to point at the
+#    staged simulation paths so stitch reads from the staged tree.
+go run ./cmd/zcp-recipe-sim emit \
   -run docs/zcprecipator3/runs/<N> \
-  -out /tmp/replay
+  -out docs/zcprecipator3/simulations/<M>
 
-# 5. Dispatch sub-agents (in parallel for codebase-content; one for
-#    env-content) via the Agent tool. Pass each prompt file path; the
-#    agent reads it and writes fragments to the target dir.
+# 4. Dispatch one Agent per prompt, in parallel via the Agent tool.
+#    Each agent reads simulations/<M>/<host>dev/zerops.yaml +
+#    simulations/<M>/environments/{plan.json,facts.jsonl}, writes
+#    fragments to simulations/<M>/fragments-new/<host>/ as markdown
+#    files (filename = fragmentId with `/` → `__`).
 
-# 6. Validate the new outputs
-go run ./cmd/zcp-replay-content/validate \
-  -frags /tmp/replay/fragments-new \
-  -plan docs/zcprecipator3/runs/<N>/environments
+# 5. Stitch fragments into the simulated recipe shape.
+#    Calls the canonical engine assembles (AssembleRootREADME,
+#    AssembleEnvREADME, AssembleCodebaseREADME, AssembleCodebaseClaudeMD,
+#    EmitDeliverableYAML) and the new WriteCodebaseYAMLWithComments
+#    that strips on-disk comments and re-injects the recorded
+#    zerops-yaml-comments fragments. Output mirrors the runs/<N>/
+#    layout so the simulation can be diffed against the baseline.
+go run ./cmd/zcp-recipe-sim stitch -dir docs/zcprecipator3/simulations/<M>
+
+# 6. Run slot-shape refusals over every fragment.
+go run ./cmd/zcp-recipe-sim validate -dir docs/zcprecipator3/simulations/<M>
 
 # 7. Diff against reference recipes for quality verdict; ship to
 #    codex (codex:codex-rescue agent) for an independent read.
 ```
 
-The replay tool's prompt is **byte-identical** to what the engine
-emits in production via `zerops_recipe action=build-subagent-prompt`,
-plus a 20-line `<replay-adapter>` prefix that redirects record-
-fragment to file-write. **Atom and composer changes land identically
-in simulation and production** — you can iterate quickly without
-running an A-to-Z dogfood.
+The dispatch prompts emitted by `emit` are **byte-identical** to what
+the engine emits in production via
+`zerops_recipe action=build-subagent-prompt`, plus a 20-line
+`<replay-adapter>` prefix that redirects record-fragment to file-write.
+**Atom, brief, and validator changes land identically in simulation
+and production** — you can iterate quickly without running an A-to-Z
+dogfood.
 
 ## 8. When to escalate to codex
 

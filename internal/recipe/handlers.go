@@ -926,6 +926,15 @@ func writeCodebaseSurfaces(plan *Plan) ([]string, error) {
 		if err := writeSurfaceFile(filepath.Join(cb.SourceRoot, "CLAUDE.md"), claudeBody); err != nil {
 			return nil, err
 		}
+		// Run-19 prep — close the run-18 §1.3 bare-runtime-yaml gap.
+		// codebase-content sub-agents record yaml-comments fragments;
+		// the IG-#1 stitch path embedded them in the README, but no
+		// engine step wrote them back to <SourceRoot>/zerops.yaml.
+		// run-18 apidev + workerdev shipped bare on-disk yaml because
+		// of that gap. WriteCodebaseYAMLWithComments closes it.
+		if err := WriteCodebaseYAMLWithComments(plan, cb.Hostname); err != nil {
+			return nil, fmt.Errorf("stitch codebase %s zerops.yaml: %w", cb.Hostname, err)
+		}
 	}
 	return missing, nil
 }
