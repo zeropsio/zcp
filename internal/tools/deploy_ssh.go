@@ -59,6 +59,15 @@ const deployStrategyGitPush = "git-push"
 // reaches gate error/suggestion text when an agent confuses the two.
 const deployStrategyManualLabel = "manual"
 
+// deployStrategyZCLILabel is the internal Strategy LABEL written into
+// DeployAttempt records by the default zcli-push branch (deploy_ssh.go +
+// deploy_local.go). NOT a valid zerops_deploy strategy parameter — agents
+// who guess it from attempt-history surfaces are redirected to "omit the
+// strategy parameter" by validateDeployStrategyParam. Constant so the
+// label has one source of truth across handlers + the gate's rejection
+// message + classifyTransportError calls.
+const deployStrategyZCLILabel = "zcli"
+
 // DeploySSHInput is the input type for zerops_deploy in SSH (container) mode.
 //
 // includeGit is not user-facing: ZCP enables -g on self-deploys (so a
@@ -178,7 +187,7 @@ func RegisterDeploySSH(
 		attempt := workflow.DeployAttempt{
 			AttemptedAt: attemptedAt,
 			Setup:       input.Setup,
-			Strategy:    "zcli",
+			Strategy:    deployStrategyZCLILabel,
 		}
 
 		// Default: zcli push to Zerops.
@@ -187,7 +196,7 @@ func RegisterDeploySSH(
 		if err != nil {
 			attempt.Error = err.Error()
 			// SSH/transport-layer failure — we never reached the build.
-			classification := classifyTransportError(err, "zcli")
+			classification := classifyTransportError(err, deployStrategyZCLILabel)
 			if classification != nil {
 				attempt.FailureClass = classification.Category
 			} else {

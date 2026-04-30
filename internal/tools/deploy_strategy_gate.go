@@ -34,17 +34,17 @@ func validateDeployStrategyParam(strategy string) error {
 			fmt.Sprintf("strategy %q is not a zerops_deploy option — it's a ServiceMeta declaration meaning 'ZCP stays out of the deploy loop'", deployStrategyManualLabel),
 			fmt.Sprintf("Use zerops_workflow action=\"close-mode\" closeMode={\"<service>\":%q} to mark a service as %s; don't call zerops_deploy on it. Valid deploy strategies: omit (default push) or 'git-push'.", deployStrategyManualLabel, deployStrategyManualLabel),
 		)
-	case "zcli":
+	case deployStrategyZCLILabel:
 		return platform.NewPlatformError(
 			platform.ErrInvalidParameter,
-			`strategy "zcli" is the internal label recorded into DeployAttempt — not a tool argument`,
-			`Omit the strategy parameter to invoke the default zcli push (the path that records Strategy: "zcli" in attempt history). Valid deploy strategies: omit (default push) or 'git-push'.`,
+			fmt.Sprintf("strategy %q is the internal label recorded into DeployAttempt — not a tool argument", deployStrategyZCLILabel),
+			fmt.Sprintf("Omit the strategy parameter to invoke the default zcli push (the path that records Strategy: %q in attempt history). Valid deploy strategies: omit (default push) or 'git-push'.", deployStrategyZCLILabel),
 		)
 	default:
 		return platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Invalid strategy %q", strategy),
-			"Valid values: omit (default push) or 'git-push'. Note: 'zcli' is the internal label for the default path — to invoke it, omit the strategy parameter.",
+			fmt.Sprintf("Valid values: omit (default push) or 'git-push'. Note: %q is the internal label for the default path — to invoke it, omit the strategy parameter.", deployStrategyZCLILabel),
 		)
 	}
 }
