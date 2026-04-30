@@ -70,3 +70,36 @@ func TestDevelopReadyToDeployAtom_NoSelfDeployContradiction(t *testing.T) {
 		t.Error("atom must not show a `zerops_deploy targetService=...` example — self-deploy on READY_TO_DEPLOY is fictional (DeploySSH source unreachable), and the recovery is re-import, not deploy")
 	}
 }
+
+// TestDevelopReadyToDeployAtom_ManualSubdomainFallback pins B12: when
+// the post-recovery code deploy doesn't auto-enable the L7 subdomain
+// (eval `develop-first-deploy-branch` saw `http_root: skip "subdomain
+// not enabled"` after a `startWithoutCode override=true` re-import +
+// code deploy), the atom must surface the one-shot manual recovery —
+// `zerops_subdomain action="enable"` — so the agent doesn't have to
+// derive it from a verify hint. This is reactive guidance grounded in
+// the eval observation; we deliberately do NOT bake in a particular
+// hypothesis about WHY auto-enable misses (that's a separate
+// investigation against the live platform, not an atom claim).
+func TestDevelopReadyToDeployAtom_ManualSubdomainFallback(t *testing.T) {
+	t.Parallel()
+
+	atoms, err := ReadAllAtoms()
+	if err != nil {
+		t.Fatalf("ReadAllAtoms: %v", err)
+	}
+	var body string
+	for _, a := range atoms {
+		if a.Name == "develop-ready-to-deploy.md" {
+			body = a.Content
+			break
+		}
+	}
+	if body == "" {
+		t.Fatal("develop-ready-to-deploy.md not found in corpus")
+	}
+
+	if !strings.Contains(body, `zerops_subdomain action="enable"`) {
+		t.Error("atom must name the `zerops_subdomain action=\"enable\"` manual fallback for cases where post-recovery auto-enable misses (B12 eval observation)")
+	}
+}
