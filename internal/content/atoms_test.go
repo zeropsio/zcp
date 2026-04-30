@@ -180,3 +180,44 @@ func TestDevelopDeployModesAtom_CrossDeployYamlLocation(t *testing.T) {
 		t.Error("atom must recommend project root as the canonical location for shared zerops.yaml in standard pairs")
 	}
 }
+
+// TestDevelopFirstDeployIntroAtom_CloseModePrerequisite pins B7: the
+// first-deploy intro atom must surface the `closeDeployMode` gate so
+// an agent who finishes deploy + verify and waits for auto-close has
+// the explicit "set close-mode" tool call without having to derive it
+// from `workSessionState.reason`. Tier-3 eval
+// `bootstrap-classic-node-standard` had to figure this out reactively.
+//
+// The example syntax must NOT use the `{services-list:...}` directive
+// — this atom's frontmatter has no `multiService: aggregate` field, so
+// the synthesizer leaves the directive unexpanded and agents see the
+// raw template literal. Plain-text with a `<host>` placeholder renders
+// correctly in any atom context.
+func TestDevelopFirstDeployIntroAtom_CloseModePrerequisite(t *testing.T) {
+	t.Parallel()
+
+	atoms, err := ReadAllAtoms()
+	if err != nil {
+		t.Fatalf("ReadAllAtoms: %v", err)
+	}
+	var body string
+	for _, a := range atoms {
+		if a.Name == "develop-first-deploy-intro.md" {
+			body = a.Content
+			break
+		}
+	}
+	if body == "" {
+		t.Fatal("develop-first-deploy-intro.md not found in corpus")
+	}
+
+	if !strings.Contains(body, "closeDeployMode") {
+		t.Error("atom must name `closeDeployMode` as the auto-close gate so agents know what blocks the close")
+	}
+	if !strings.Contains(body, `action="close-mode"`) {
+		t.Error("atom must show the `zerops_workflow action=\"close-mode\"` invocation — knowing the field name without the call shape costs a turn")
+	}
+	if strings.Contains(body, "{services-list:") {
+		t.Error("atom must not use the `{services-list:...}` directive — this atom is non-aggregate (multiService unset), so the directive ships as raw text. Use plain syntax with a `<host>` placeholder instead.")
+	}
+}
