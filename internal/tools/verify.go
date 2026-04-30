@@ -44,8 +44,8 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 			}
 			recordVerifyAllToWorkSession(stateDir, result)
 			return jsonResult(verifyAllResponse{
-				VerifyAllResult:   result,
-				AutoCloseProgress: workflow.AutoCloseProgressFor(stateDir),
+				VerifyAllResult:  result,
+				WorkSessionState: sessionAnnotations(stateDir),
 			}), nil, nil
 		}
 		result, err := ops.Verify(ctx, client, fetcher, httpClient, projectID, input.ServiceHostname)
@@ -54,27 +54,28 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 		}
 		recordVerifyToWorkSession(stateDir, result)
 		return jsonResult(verifyResponse{
-			VerifyResult:      result,
-			AutoCloseProgress: workflow.AutoCloseProgressFor(stateDir),
+			VerifyResult:     result,
+			WorkSessionState: sessionAnnotations(stateDir),
 		}), nil, nil
 	})
 }
 
-// verifyResponse wraps ops.VerifyResult with the auto-close progress
-// snapshot. Surfacing the snapshot turns verify from a pure HTTP probe
-// into an observable lifecycle event — the agent sees how this call
-// advanced the work session toward auto-close.
+// verifyResponse wraps ops.VerifyResult with the structured
+// WorkSessionState lifecycle signal (F5 closure). Surfacing the
+// session state turns verify from a pure HTTP probe into an observable
+// lifecycle event — the agent sees whether this call landed inside an
+// open session, on an auto-closed one, or with no session tracking.
 type verifyResponse struct {
 	*ops.VerifyResult
-	AutoCloseProgress *workflow.AutoCloseProgress `json:"autoCloseProgress,omitempty"`
+	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
 }
 
 // verifyAllResponse mirrors verifyResponse for the multi-service VerifyAll
-// path. Each service's attempt is already recorded; one progress snapshot
-// at the response root reflects the whole scope.
+// path. Each service's attempt is already recorded; one session-state
+// snapshot at the response root reflects the whole scope.
 type verifyAllResponse struct {
 	*ops.VerifyAllResult
-	AutoCloseProgress *workflow.AutoCloseProgress `json:"autoCloseProgress,omitempty"`
+	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
 }
 
 // recordVerifyToWorkSession records one service verify result as a WorkSession attempt.

@@ -235,10 +235,13 @@ func TestVerifyTool_SingleMode(t *testing.T) {
 }
 
 // P7: verify response includes autoCloseProgress so the agent sees how
-// the call advanced the work session (ready/total + pending hostnames).
-// Without this the agent can't tell verify apart from a plain curl probe
-// and defaults to curl — the exact pattern the fizzy log showed.
-func TestVerifyTool_ReportsAutoCloseProgress(t *testing.T) {
+// the call advanced the work session — either via in-flight progress
+// (status=open + progress.ready/total) or by triggering auto-close
+// (status=auto-closed + closedAt + closeReason). Without this the agent
+// can't tell verify apart from a plain curl probe and defaults to curl —
+// the exact pattern the fizzy log showed. F5 closure: signal lives on
+// workSessionState now, not a top-level autoCloseProgress field.
+func TestVerifyTool_ReportsLifecycleState(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -273,8 +276,12 @@ func TestVerifyTool_ReportsAutoCloseProgress(t *testing.T) {
 	}
 
 	text := getTextContent(t, result)
-	// Raw substring checks — avoid coupling to the wrapper struct shape.
-	for _, needle := range []string{`"autoCloseProgress"`, `"ready":2`, `"total":2`} {
+	// Verifying the worker is the LAST in-scope service to land green —
+	// auto-close fires and the session terminates as part of this call.
+	// Response carries status=auto-closed + closedAt + closeReason so the
+	// agent knows the lifecycle terminated mid-call (no extra round-trip
+	// through action="status" needed).
+	for _, needle := range []string{`"workSessionState"`, `"status":"auto-closed"`, `"closedAt"`, `"closeReason":"auto-complete"`} {
 		if !contains(text, needle) {
 			t.Errorf("response missing %q:\n%s", needle, text)
 		}
