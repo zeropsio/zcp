@@ -51,3 +51,24 @@ dev→stage cross-deploy.
 
 Expected post-import states: Dev/Simple → RUNNING, Stage →
 READY_TO_DEPLOY, Managed → RUNNING/ACTIVE.
+
+### Import YAML — `project:` block dichotomy
+
+`zerops_import` operates within an EXISTING project (the one ZCP is
+attached to) and **rejects YAML containing a top-level `project:`
+block** with `IMPORT_HAS_PROJECT`. The block is only valid for the
+`zcli project project-import` create-new-project flow.
+
+If the YAML you constructed (or copied from a recipe template, or saw
+in a Zerops doc) starts with `project:` → strip that block before
+calling `zerops_import`. If it carried project-level env vars, set
+them at project scope FIRST via:
+
+```
+zerops_env action="set" scope="project" key="<KEY>" value="<value-or-preprocessor-directive>"
+```
+
+Preprocessor directives (e.g. `<@generateRandomString(<32>)>`)
+evaluate server-side; pass the literal string, not a pre-rendered
+value. After all project-level keys are set, submit `services:`
+verbatim to `zerops_import`.

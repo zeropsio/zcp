@@ -89,12 +89,16 @@ func Import(
 
 	// Check for project: key — K12 in the validation-plumbing plan. The
 	// platform's projectImportInvalidParameter for this case is generic;
-	// the specific code IMPORT_HAS_PROJECT is clearer.
+	// the specific code IMPORT_HAS_PROJECT is clearer. Recovery hint
+	// names the env-var-first path explicitly so agents who copied a
+	// recipe template (which DOES carry `project:` for the create-new-
+	// project flow) recover one-shot instead of asking what to do with
+	// the project-level envVariables they just stripped.
 	if _, ok := doc["project"]; ok {
 		return nil, platform.NewPlatformError(
 			platform.ErrImportHasProject,
-			"import YAML must not contain a 'project:' section",
-			"Remove the 'project:' section. Import works within an existing project.",
+			"import YAML must not contain a 'project:' section — zerops_import operates within the existing project",
+			"Strip the 'project:' block, then resubmit. If it carried envVariables, set them FIRST via `zerops_env action=\"set\" scope=\"project\" key=\"<KEY>\" value=\"<value>\"` (preprocessor directives like `<@generateRandomString(<32>)>` are passed literally and evaluated server-side).",
 		)
 	}
 

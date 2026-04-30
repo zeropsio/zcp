@@ -71,6 +71,48 @@ func TestImport_Success(t *testing.T) {
 	}
 }
 
+// Recipe import templates carry a top-level `project:` block (used by the
+// create-new-project flow). When an agent copies that template into
+// zerops_import within an existing project, the preflight rejects with
+// IMPORT_HAS_PROJECT. The recovery hint must explicitly name the env-var
+// fallback path because most occurrences of `project:` carry envVariables
+// the agent needs to preserve — surfaced by Tier-2 eval
+// `bootstrap-user-forces-classic` (2026-04-30): agent stripped the block
+// but then asked what to do with the project-level envVariables.
+func TestImport_RejectsProjectBlockWithDirectiveHint(t *testing.T) {
+	t.Parallel()
+	content := `project:
+  name: myproject
+  envVariables:
+    APP_KEY: <@generateRandomString(<32>)>
+services:
+  - hostname: api
+    type: nodejs@22
+    mode: NON_HA
+`
+	mock := platform.NewMock()
+	_, err := Import(context.Background(), mock, "proj-1", content, "", false)
+	if err == nil {
+		t.Fatal("expected IMPORT_HAS_PROJECT rejection")
+	}
+	pe, ok := err.(*platform.PlatformError)
+	if !ok {
+		t.Fatalf("expected *PlatformError, got %T: %v", err, err)
+	}
+	if pe.Code != platform.ErrImportHasProject {
+		t.Errorf("expected code %s, got %s", platform.ErrImportHasProject, pe.Code)
+	}
+	for _, want := range []string{
+		"zerops_env",      // names the recovery tool
+		`scope="project"`, // names the right scope (raw string — actual hint is unescaped)
+		"preprocessor",    // explains directives are passed literally
+	} {
+		if !strings.Contains(pe.Suggestion, want) {
+			t.Errorf("suggestion missing %q; got %q", want, pe.Suggestion)
+		}
+	}
+}
+
 func TestImport_NoInput(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock()
