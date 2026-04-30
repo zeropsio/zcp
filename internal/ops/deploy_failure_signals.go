@@ -203,6 +203,19 @@ func buildSignalLibrary() []failureSignal {
 			build:      transportSSHUnreachable,
 		},
 		{
+			// B13: when /var/www/.git/ pre-exists from buildFromGit's
+			// upstream clone but carries no user.email/user.name, `git
+			// commit -m 'deploy'` aborts with one of these messages. Fires
+			// before the network baseline so the agent sees a config-class
+			// suggestion (rerun the SSH config dance) instead of being
+			// pointed at VPN/connectivity.
+			id:         "transport:git-identity-missing",
+			phases:     []DeployFailurePhase{PhaseTransport},
+			logRegex:   regexp.MustCompile(`(?:unable to auto-detect email address|empty ident name|Please tell me who you are)`),
+			requireLog: true,
+			build:      transportGitIdentityMissing,
+		},
+		{
 			id:         "transport:zcli-tty-required",
 			phases:     []DeployFailurePhase{PhaseTransport},
 			logRegex:   regexp.MustCompile(`(?:allowed only in interactive terminal|requires a terminal|tty required)`),
@@ -461,6 +474,15 @@ func transportSSHUnreachable(_ string) *topology.DeployFailureClassification {
 		LikelyCause:     "Source container unreachable over SSH (connection refused / no route).",
 		SuggestedAction: "Verify the source service is RUNNING via `zerops_discover service=<source>`. If it's not, start it via `zerops_manage action=start`.",
 		Signals:         []string{"transport:ssh-unreachable"},
+	}
+}
+
+func transportGitIdentityMissing(_ string) *topology.DeployFailureClassification {
+	return &topology.DeployFailureClassification{
+		Category:        topology.FailureClassConfig,
+		LikelyCause:     "Source container's /var/www/.git/ has no user.email/user.name configured — `git commit` for the deploy snapshot aborts before zcli can push. Common when the service was provisioned via buildFromGit and the upstream clone never set an identity.",
+		SuggestedAction: "ZCP normally writes the deploy identity into git config on every SSH deploy — if you see this, the safety-net regressed; file a bug. Workaround: `ssh <source> \"cd /var/www && git config user.email agent@zerops.io && git config user.name 'Zerops Agent'\"` and retry.",
+		Signals:         []string{"transport:git-identity-missing"},
 	}
 }
 

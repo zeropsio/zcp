@@ -182,27 +182,36 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup stri
 	loginCmd := fmt.Sprintf("zcli login -- %s", shellQuote(authInfo.Token))
 	parts = append(parts, loginCmd)
 
-	// Atomic safety-net for the .git lifecycle (GLC-2). Happy path: bootstrap
-	// already ran InitServiceGit on this service so .git/ exists + identity
-	// is persisted in .git/config. test -d short-circuits the OR and we
-	// move straight to commit.
+	// .git lifecycle (GLC-2 / GLC-3). Three cases must reach a state where
+	// `git commit` succeeds with the canonical Zerops Agent identity:
 	//
-	// Cold path (only two cases reach it):
-	//  1. Migration — service provisioned before this file existed, no .git/.
-	//  2. Recovery — operator ran `sudo rm -rf /var/www/.git`.
-	// In either case the OR branch runs init AND identity config together
-	// so the following `git add -A && git commit` has everything it needs.
-	// Splitting config out of the OR re-introduces the "Please tell me who
-	// you are" failure on migrated services — don't.
+	//   1. Bootstrap-mounted service: InitServiceGit ran post-mount, .git/
+	//      exists with identity already configured. gitInit no-ops, gitConfig
+	//      re-asserts the same values (idempotent).
+	//   2. Cold path (migration / `sudo rm -rf /var/www/.git`): no .git/.
+	//      gitInit creates it, gitConfig writes identity.
+	//   3. Service provisioned via buildFromGit (or any flow where /var/www/
+	//      came from an upstream git clone): .git/ exists but its config
+	//      carries the cloning user's identity (or none at all). gitInit
+	//      no-ops, gitConfig OVERWRITES with the deploy identity. Without
+	//      this overwrite, services where the upstream repo never set
+	//      user.email/user.name fail with `fatal: unable to auto-detect
+	//      email address` on the deploy commit (B13).
+	//
+	// gitConfig must therefore live OUTSIDE the OR branch — the same shape
+	// InitServiceGit uses — so case (3) actually runs it. The previous
+	// "atomic safety-net" form (config inside OR) handled (1) and (2) but
+	// silently broke (3); the buildFromGit-deploy regression surfaced in
+	// Phase 1.5 eval `develop-pivot-auto-close`. Identity comes from the
+	// DeployGitIdentity package constant — single source of truth shared
+	// with InitServiceGit, no shell-injection surface.
 	email := shellQuote(DeployGitIdentity.Email)
 	name := shellQuote(DeployGitIdentity.Name)
-	gitSafety := fmt.Sprintf(
-		"(test -d .git || (git init -q -b main && git config user.email %s && git config user.name %s))",
-		email, name,
-	)
+	gitInit := "(test -d .git || git init -q -b main)"
+	gitConfig := fmt.Sprintf("git config user.email %s && git config user.name %s", email, name)
 
 	// Stage + commit. Skip commit if nothing changed (diff-index quiet).
-	// On fresh init after safety-net, HEAD doesn't exist → diff-index fails
+	// On fresh init after gitInit, HEAD doesn't exist → diff-index fails
 	// → || fires → commit runs.
 	gitCommit := "git add -A && (git diff-index --quiet HEAD 2>/dev/null || git commit -q -m 'deploy')"
 
@@ -215,8 +224,8 @@ func buildSSHCommand(authInfo auth.Info, targetServiceID, workingDir, setup stri
 		pushArgs += " -g"
 	}
 
-	pushCmd := fmt.Sprintf("cd %s && %s && %s && %s",
-		workingDir, gitSafety, gitCommit, pushArgs)
+	pushCmd := fmt.Sprintf("cd %s && %s && %s && %s && %s",
+		workingDir, gitInit, gitConfig, gitCommit, pushArgs)
 	parts = append(parts, pushCmd)
 
 	return strings.Join(parts, " && ")

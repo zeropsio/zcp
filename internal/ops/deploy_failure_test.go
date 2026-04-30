@@ -380,6 +380,51 @@ func TestClassifyDeployFailure_Transport(t *testing.T) {
 			wantCategory: topology.FailureClassNetwork,
 			wantSignal:   "phase:transport",
 		},
+		// B13: git identity errors used to fall through to the network
+		// baseline because no signal recognized them. The agent then
+		// chased "Transport-layer error reaching the platform" hints
+		// (VPN / connectivity) when the actual fix was a git config
+		// inside /var/www/.git/. Three regex variants cover the messages
+		// modern git emits when user.email / user.name aren't set.
+		{
+			name: "git-identity-missing-auto-detect",
+			input: FailureInput{
+				Phase: PhaseTransport,
+				TransportErr: &platform.SSHExecError{
+					Hostname: "appdev",
+					Output:   "[main (root-commit) abc123] deploy\nfatal: unable to auto-detect email address (got 'zerops@runtime.(none)')",
+					Err:      errors.New("exit status 128"),
+				},
+			},
+			wantCategory: topology.FailureClassConfig,
+			wantSignal:   "transport:git-identity-missing",
+		},
+		{
+			name: "git-identity-missing-empty-ident",
+			input: FailureInput{
+				Phase: PhaseTransport,
+				TransportErr: &platform.SSHExecError{
+					Hostname: "appdev",
+					Output:   "fatal: empty ident name (for <>) not allowed",
+					Err:      errors.New("exit status 128"),
+				},
+			},
+			wantCategory: topology.FailureClassConfig,
+			wantSignal:   "transport:git-identity-missing",
+		},
+		{
+			name: "git-identity-missing-tell-me-who",
+			input: FailureInput{
+				Phase: PhaseTransport,
+				TransportErr: &platform.SSHExecError{
+					Hostname: "appdev",
+					Output:   "*** Please tell me who you are.\nRun\n  git config --global user.email \"you@example.com\"",
+					Err:      errors.New("exit status 128"),
+				},
+			},
+			wantCategory: topology.FailureClassConfig,
+			wantSignal:   "transport:git-identity-missing",
+		},
 	}
 
 	for _, tc := range cases {

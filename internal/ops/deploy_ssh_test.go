@@ -482,12 +482,13 @@ func TestIsSSHBuildTriggered(t *testing.T) {
 }
 
 // TestBuildSSHCommand_Shape locks the canonical shape of the command:
-// atomic safety-net, no top-level `git config user.*`, identity + init
-// paired inside the OR branch, followed by commit + push. Identity lands
-// from the DeployGitIdentity package constant — not from a caller — so
-// shell escaping of user-controlled strings no longer applies (the
-// attack surface vanished when the GitIdentity parameter was removed).
-// shellQuote itself is exercised by TestShellQuote below.
+// gitInit guarded by `(test -d .git || ...)` (only runs when needed),
+// gitConfig top-level (always runs so identity gets written even when
+// .git/ pre-exists from buildFromGit / upstream clone — B13), followed
+// by commit + push. Identity lands from the DeployGitIdentity package
+// constant — not from a caller — so shell escaping of user-controlled
+// strings no longer applies. shellQuote itself is exercised by
+// TestShellQuote below.
 func TestBuildSSHCommand_Shape(t *testing.T) {
 	t.Parallel()
 
@@ -498,11 +499,11 @@ func TestBuildSSHCommand_Shape(t *testing.T) {
 	}
 	cmd := buildSSHCommand(authInfo, "svc-target", "/var/www", "", false)
 
-	// Must contain: login, atomic safety-net, commit, push.
 	wantContains := []string{
 		"zcli login -- 'test-token'",
 		"cd /var/www",
-		"(test -d .git || (git init -q -b main && git config user.email 'agent@zerops.io' && git config user.name 'Zerops Agent'))",
+		"(test -d .git || git init -q -b main)",
+		"git config user.email 'agent@zerops.io' && git config user.name 'Zerops Agent'",
 		"git add -A",
 		"git commit -q -m 'deploy'",
 		"zcli push --service-id svc-target",
@@ -513,25 +514,17 @@ func TestBuildSSHCommand_Shape(t *testing.T) {
 		}
 	}
 
-	// Must NOT contain: top-level (outside OR branch) git config. The
-	// safety-net form keeps identity paired with init, so migration +
-	// recovery paths pick up both atomically. A regression that splits
-	// config out would re-introduce the "Please tell me who you are"
-	// failure on services with no pre-existing .git/.
-	//
-	// Checking this by ensuring the only occurrence of the config
-	// statements is inside the parenthesized OR branch — test by ruling
-	// out the old top-level form entirely.
-	forbidden := " && git config user.email " // note leading/trailing space — matches top-level position
-	// After the OR branch, the `&& git config` appears inside parens, not
-	// as a top-level conjunct. Easier check: count occurrences outside the
-	// OR branch. Simplest conservative check: the pattern `) && git config
-	// user.email` (identity right after the safety-net OR branch closes)
-	// would mean config was split.
-	if containsSubstring(cmd, ")) && git config user.email") {
-		t.Errorf("git config lives outside the OR branch — regression toward split identity:\n%s", cmd)
+	// gitConfig must NOT live inside the gitInit OR branch. The bug it
+	// guards against (B13): a buildFromGit-provisioned service has
+	// /var/www/.git/ from the upstream clone but no user.email/user.name
+	// configured. Inside-OR config short-circuits via test -d, leaving
+	// identity unset, and the deploy commit fails with `fatal: unable to
+	// auto-detect email address`. Always-running config matches
+	// InitServiceGit.
+	forbidden := "(git init -q -b main && git config user.email"
+	if containsSubstring(cmd, forbidden) {
+		t.Errorf("git config nested inside the gitInit OR branch — regression of B13: buildFromGit services with pre-existing .git/ skip identity setup. Got:\n%s", cmd)
 	}
-	_ = forbidden
 }
 
 // TestBuildSSHCommand_FreshInitPath executes the emitted command against

@@ -33,15 +33,18 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 		wantAbsent []string
 	}{
 		{
-			name:      "basic command with atomic safety-net and always-commit",
+			name:      "basic command with split init/config and always-commit",
 			authInfo:  testAuthInfo(),
 			serviceID: "svc-123",
 			workDir:   "/var/www",
 			wantParts: []string{
-				// Atomic OR branch: init AND config paired so migrated
-				// services (no pre-existing .git/) still get identity set
-				// before the downstream `git add -A && git commit`.
-				"(test -d .git || (git init -q -b main && git config user.email 'agent@zerops.io' && git config user.name 'Zerops Agent'))",
+				// gitInit only fires when .git/ is missing (cold path /
+				// migration). gitConfig is top-level — runs always — so a
+				// pre-existing .git/ from buildFromGit clone (B13) still
+				// gets the canonical Zerops Agent identity written before
+				// the downstream `git add -A && git commit`.
+				"(test -d .git || git init -q -b main)",
+				"git config user.email 'agent@zerops.io' && git config user.name 'Zerops Agent'",
 				"git add -A",
 				"git diff-index --quiet HEAD 2>/dev/null || git commit -q -m 'deploy'",
 				"zcli push --service-id svc-123",
@@ -50,10 +53,11 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 				"rm -rf .git",
 				"git remote",
 				".gitignore",
-				// Top-level identity lines (outside the OR branch) would
-				// mean a regression toward the split form that used to
-				// fire "Please tell me who you are" on migrated services.
-				")) && git config user.email",
+				// gitConfig nested inside the gitInit OR branch reverts
+				// the B13 fix — the buildFromGit case (.git/ exists from
+				// upstream clone, but no identity) would short-circuit and
+				// fail with `fatal: unable to auto-detect email address`.
+				"(git init -q -b main && git config user.email",
 			},
 		},
 		{
@@ -67,7 +71,8 @@ func TestBuildSSHCommand_GitGuard(t *testing.T) {
 			workDir:   "/var/www",
 			wantParts: []string{
 				"zcli login -- 'my-token'",
-				"(test -d .git || (git init -q -b main",
+				"(test -d .git || git init -q -b main)",
+				"git config user.email 'agent@zerops.io'",
 				"zcli push --service-id svc-789",
 			},
 		},
