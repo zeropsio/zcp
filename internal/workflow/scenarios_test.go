@@ -631,6 +631,60 @@ func TestScenario_S12_ExportActiveEmptyPlan(t *testing.T) {
 	)
 }
 
+// TestScenario_S13_GitPushNeedsSetup pins develop-close-mode-git-push-needs-setup
+// to the develop-active envelope where CloseDeployMode=git-push but
+// GitPushState is not yet configured (unconfigured/broken/unknown). The
+// regular develop-close-mode-git-push atom is now gated on
+// gitPushStates: [configured]; this companion atom takes its place when
+// capability is missing and chains to action="git-push-setup".
+func TestScenario_S13_GitPushNeedsSetup(t *testing.T) {
+	t.Parallel()
+
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+
+	now := time.Now().UTC()
+	env := StateEnvelope{
+		Phase:       PhaseDevelopActive,
+		Environment: EnvContainer,
+		Services: []ServiceSnapshot{{
+			Hostname:        "appdev",
+			TypeVersion:     "nodejs@22",
+			RuntimeClass:    topology.RuntimeDynamic,
+			Mode:            topology.ModeStandard,
+			StageHostname:   "appstage",
+			Bootstrapped:    true,
+			Deployed:        true,
+			CloseDeployMode: topology.CloseModeGitPush,
+			GitPushState:    topology.GitPushUnconfigured,
+		}},
+		WorkSession: &WorkSessionSummary{
+			Intent:    "iterate after git-push close-mode flip",
+			Services:  []string{"appdev"},
+			CreatedAt: now,
+			Deploys:   map[string][]AttemptInfo{"appdev": {{At: now, Success: true, Iteration: 1}}},
+			Verifies:  map[string][]AttemptInfo{"appdev": {{At: now, Success: true, Iteration: 1}}},
+		},
+	}
+
+	matches, err := Synthesize(env, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	requireAtomIDsContain(t, "S13 git-push needs-setup", matches,
+		"develop-close-mode-git-push-needs-setup",
+	)
+	// The plain develop-close-mode-git-push atom must NOT fire here —
+	// gating on gitPushStates: [configured] excludes the unconfigured pair.
+	for _, m := range matches {
+		if m.AtomID == "develop-close-mode-git-push" {
+			t.Errorf("S13 git-push needs-setup: develop-close-mode-git-push fired despite GitPushState=unconfigured — capability gate missing")
+		}
+	}
+}
+
 func TestScenario_S8_DevelopIterationFailure(t *testing.T) {
 	t.Parallel()
 
@@ -829,6 +883,18 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 			Phase: PhaseDevelopActive, Environment: EnvLocal,
 			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: topology.CloseModeGitPush, BuildIntegration: topology.BuildIntegrationWebhook, Bootstrapped: true, Deployed: true}},
 		}},
+		{"develop-active/git-push/standard/container-needs-setup", StateEnvelope{
+			// CloseDeployMode=git-push + GitPushState=unconfigured →
+			// develop-close-mode-git-push-needs-setup atom fires; the
+			// configured-only develop-close-mode-git-push must NOT fire
+			// (gating contract from N4 closure). Pair fixture so the
+			// stage half doesn't accidentally double-render either atom.
+			Phase: PhaseDevelopActive, Environment: EnvContainer,
+			Services: []ServiceSnapshot{
+				{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: topology.CloseModeGitPush, GitPushState: topology.GitPushUnconfigured, Bootstrapped: true, Deployed: true},
+				{Hostname: "appstage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, CloseDeployMode: topology.CloseModeGitPush, GitPushState: topology.GitPushUnconfigured, Bootstrapped: true, Deployed: true},
+			},
+		}},
 		{"develop-active/first-deploy/implicit-webserver-local", StateEnvelope{
 			Phase: PhaseDevelopActive, Environment: EnvLocal,
 			Services: []ServiceSnapshot{
@@ -980,6 +1046,7 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"develop-build-observe",
 		"develop-close-mode-auto",
 		"develop-close-mode-git-push",
+		"develop-close-mode-git-push-needs-setup",
 		"develop-close-mode-manual",
 		"setup-git-push-container",
 		"setup-git-push-local",

@@ -87,7 +87,12 @@ func TestLifecycleMatrixDump(t *testing.T) {
 			fmt.Fprintln(&rep)
 			fmt.Fprintf(&rep, "\n**Plan.Primary**: `%s` → %s\n",
 				plan.Primary.Tool, plan.Primary.Label)
-			if plan.Primary.Tool == "" {
+			// Strategy-setup and export phases intentionally return an empty
+			// Plan — their handlers emit guidance directly without a typed
+			// next-action. See BuildPlan switch in build_plan.go.
+			if plan.Primary.Tool == "" &&
+				sc.Envelope.Phase != PhaseStrategySetup &&
+				sc.Envelope.Phase != PhaseExportActive {
 				addAnom(sc.Name, "ERROR", "Plan.Primary is zero (empty Plan)")
 			}
 

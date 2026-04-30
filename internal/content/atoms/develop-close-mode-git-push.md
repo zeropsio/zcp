@@ -3,11 +3,13 @@ id: develop-close-mode-git-push
 priority: 2
 phases: [develop-active]
 closeDeployModes: [git-push]
+gitPushStates: [configured]
 modes: [standard, simple, local-stage, local-only]
 deployStates: [deployed]
 multiService: aggregate
 title: "Close = commit + git push to the remote"
 references-fields: [ops.GitPushResult.Status, ops.GitPushResult.RemoteURL, ops.GitPushResult.Branch]
+references-atoms: [develop-close-mode-git-push-needs-setup]
 ---
 This pair is on `closeDeployMode=git-push`. The develop close action commits whatever is live in the workspace and pushes to the configured remote — Zerops (or your CI) sees the push and runs the build separately.
 

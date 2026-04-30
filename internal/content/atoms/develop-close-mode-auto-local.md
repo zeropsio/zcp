@@ -3,7 +3,7 @@ id: develop-close-mode-auto-local
 priority: 7
 phases: [develop-active]
 deployStates: [deployed]
-modes: [dev, stage, local-stage, local-only]
+modes: [dev, stage, local-stage]
 closeDeployModes: [auto]
 environments: [local]
 multiService: aggregate
