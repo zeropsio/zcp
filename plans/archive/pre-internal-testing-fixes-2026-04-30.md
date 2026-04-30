@@ -66,7 +66,7 @@ because they touch async paths.
 | P4 | Git-push lifecycle separation (C2 root + C4) | DONE | `0ad55b35` |
 | P5 | Response size dual-fix (H3 / F9 — atom aggregate + scope filter) | DONE | `7dcb1b46` (Lever A) + `c4140954` (Lever B) |
 | P6 | UX bundle (C5+nohup-lint, F3 root, F5 root, M3, verify F5 follow-up) | DONE | `5d1eee18` (M3) + `7aacce24` (C5+lint) + `8ed3c365` (F3) + `d7486bb9` (F5) + `34d3403b` (verify F5 follow-up) |
-| P7 | Verification + audit close + matrix sim final | DONE | (this commit) |
+| P7 | Verification + audit close + matrix sim final | DONE | `db05aa04` |
 
 Update this table after each phase ships. Reference exit commit hash in the
 table; full message body lives in the commit per `feedback_commits_as_llm_reflog.md`.
