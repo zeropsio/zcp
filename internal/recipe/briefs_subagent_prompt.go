@@ -29,6 +29,18 @@ func buildSubagentPrompt(plan *Plan, parent *ParentRecipe, in RecipeInput) (stri
 	return buildSubagentPromptForPhase(plan, parent, in, "", "", nil)
 }
 
+// BuildSubagentPromptForReplay is the exported entry the
+// `cmd/zcp-replay-content` tool calls so offline replay dispatches use
+// the byte-identical prompt the production handler would compose. The
+// replay tool prepends a thin "REPLAY MODE" adapter (file-write
+// redirect) and otherwise sends this string verbatim to the dispatched
+// Agent. Keeping replay on the same composition path means a brief or
+// atom edit lands identically in simulation and production — divergence
+// lives only in the leading adapter, never in the engine output.
+func BuildSubagentPromptForReplay(plan *Plan, parent *ParentRecipe, in RecipeInput, currentPhase Phase, mountRoot string, facts []FactRecord) (string, error) {
+	return buildSubagentPromptForPhase(plan, parent, in, currentPhase, mountRoot, facts)
+}
+
 // buildSubagentPromptForPhase is buildSubagentPrompt with the session's
 // current phase explicitly threaded so the BriefFeature closing footer
 // can teach a defensive re-dispatch sub-agent "the session is already at

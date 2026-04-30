@@ -36,8 +36,6 @@ homogenize.
 > *"- hostname: app"*
 > *"  type: php-nginx@8.4"*
 
-**Source**: `recipes/laravel-jetstream/4 — Small Production/import.yaml:9-12`.
-
 **Why this works**: comment names what's deployed (Laravel Jetstream
 app) and the runtime stack (PHP 8.4 + Nginx FastCGI). The yaml below
 carries the runtime version — comment doesn't restate it. The porter
@@ -49,8 +47,6 @@ field values.
 > *"    # Disabling the subdomain access is recommended,"*
 > *"    # after you set up access through your own domain(s)."*
 > *"    enableSubdomainAccess: true"*
-
-**Source**: `recipes/laravel-jetstream/4 — Small Production/import.yaml:15-17`.
 
 **Why this works**: tight 2-line comment above a single boolean
 field. Names the recommended adapt path (disable subdomain) and the
@@ -71,8 +67,6 @@ lands at 8.5 on Criterion 2 by itself.
 > *"    mode: HA"*
 > *"    priority: 10"*
 
-**Source**: `recipes/laravel-jetstream/4 — Small Production/import.yaml:32-41`.
-
 **Why this works**: meta-comment explains the `priority: 10` choice
 across multiple services (databases + storages); per-service comment
 names the mode (`HA`) and one tier-specific feature (encrypted
@@ -87,8 +81,6 @@ field.
 > *"  # traffic while the other rebuilds). Zerops autoscales RAM within"*
 > *"  # verticalAutoscaling bounds to absorb traffic spikes without manual"*
 > *"  # intervention."*
-
-**Source**: `recipes/laravel-showcase/4 — Small Production/import.yaml:15-19`.
 
 **Why this works**: comment opens with "Small production —" (tier
 identity, not field name), names `minContainers: 2` inline as part of
@@ -105,8 +97,6 @@ serves the mechanism prose, not the other way around.
 > *"  # policy. Single container sufficient for moderate job volumes; scale"*
 > *"  # minContainers if queue depth grows."*
 
-**Source**: `recipes/laravel-showcase/4 — Small Production/import.yaml:30-32`.
-
 **Why this works**: 3-line tight comment. Names the worker's job
 ("processes background jobs"), the chosen retry policy
 ("--tries=3"), the current scale rationale ("Single container
@@ -122,8 +112,6 @@ growth). This is the showcase shape at its cleanest.
 > *"  # Svelte frontend in zeropsSetup: prod, 0.5 GB shared CPU, minContainers: 2."*
 > *"  # Static bundle served from two replicas behind the public subdomain — a"*
 > *"  # rolling deploy doesn't drop the dashboard while it ships."*
-
-**Source**: `docs/zcprecipator3/runs/16/environments/4 — Small Production/import.yaml:28-30`.
 
 **Why this fails**: opens with three field-value tokens
 (`zeropsSetup: prod`, `0.5 GB shared CPU`, `minContainers: 2`)
@@ -153,8 +141,6 @@ named porter signal.
 > *"  # processes"*
 > *"  # each message, so doubling the count actually doubles throughput rather"*
 > *"  # than duplicating work."*
-
-**Source**: `docs/zcprecipator3/runs/16/environments/4 — Small Production/import.yaml:41-45`.
 
 **Why this fails**: same field-restatement preamble shape as Fail 1.
 The mechanism prose afterward is genuinely good — explains the queue

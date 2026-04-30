@@ -1,6 +1,12 @@
 package recipe
 
-import "strings"
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
 
 // Plan is the authoritative state of a recipe run. Phases mutate specific
 // fields; handlers gate mutation through workflow transitions (see
@@ -138,4 +144,54 @@ type ParentCodebase struct {
 	README     string `json:"readme,omitempty"`
 	ZeropsYAML string `json:"zeropsYaml,omitempty"`
 	SourceRoot string `json:"sourceRoot,omitempty"`
+}
+
+// WritePlan persists the session's Plan to <outputRoot>/plan.json so the
+// content-phase replay tooling can reconstruct the brief without walking
+// session jsonl logs. Atomic via temp+rename to match facts.go's pattern.
+// No-op when outputRoot is empty (in-memory tests construct sessions
+// without an on-disk root).
+func WritePlan(outputRoot string, plan *Plan) error {
+	if outputRoot == "" || plan == nil {
+		return nil
+	}
+	body, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal plan: %w", err)
+	}
+	body = append(body, '\n')
+	dst := filepath.Join(outputRoot, "plan.json")
+	tmp, err := os.CreateTemp(outputRoot, "plan.json.*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp plan: %w", err)
+	}
+	tmpPath := tmp.Name()
+	if _, wErr := tmp.Write(body); wErr != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("write temp plan: %w", wErr)
+	}
+	if cErr := tmp.Close(); cErr != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("close temp plan: %w", cErr)
+	}
+	if rErr := os.Rename(tmpPath, dst); rErr != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("rename temp plan: %w", rErr)
+	}
+	return nil
+}
+
+// ReadPlan loads a Plan from <outputRoot>/plan.json. Used by replay
+// tooling and tests that pin against on-disk plan artifacts.
+func ReadPlan(outputRoot string) (*Plan, error) {
+	body, err := os.ReadFile(filepath.Join(outputRoot, "plan.json"))
+	if err != nil {
+		return nil, fmt.Errorf("read plan: %w", err)
+	}
+	var p Plan
+	if err := json.Unmarshal(body, &p); err != nil {
+		return nil, fmt.Errorf("unmarshal plan: %w", err)
+	}
+	return &p, nil
 }

@@ -36,8 +36,6 @@ zero inline cite).
 > *"only the failing step. The Zerops `init-commands` reference covers"*
 > *"per-deploy key shape and the in-script-guard pitfall."*
 
-**Source**: `docs/zcprecipator3/runs/16/apidev/README.md:253`.
-
 **Why this works**: final sentence names the guide (`init-commands`)
 AND tells the porter what's in the guide (per-deploy key shape +
 in-script-guard pitfall). The porter who reads the bullet and wants
@@ -53,8 +51,6 @@ the canonical 8.5 anchor for Criterion 3.
 > *"intermittently. Fix: hard-code `synchronize: false`, own the schema"*
 > *"via the `zsc execOnce`-fired migrator (see the `init-commands`"*
 > *"guide for \`${appVersionId}\` semantics)."*
-
-**Source**: `docs/zcprecipator3/runs/16/workerdev/README.md:140`.
 
 **Why this works**: parenthetical "see the `init-commands` guide for
 \`${appVersionId}\` semantics" names the guide AND the specific
@@ -72,8 +68,6 @@ Same 8.5 tier as Pass 1, different prose shape.
 > *"options against a credential-free `host:port` string (Pattern A"*
 > *"from the NATS knowledge guide)."*
 
-**Source**: `docs/zcprecipator3/runs/16/workerdev/README.md:138`.
-
 **Why this works**: parenthetical "(Pattern A from the NATS knowledge
 guide)" names the guide AND the specific pattern within it. Porter
 who hits this trap knows there's a named pattern, not just one-off
@@ -82,8 +76,6 @@ recipe advice. Tight integration — cite in 7 tokens.
 ### Pass 4 — URL-link variant from references (jetstream zerops.yaml)
 
 > *"# Read more about it here: https://docs.zerops.io/php/how-to/customize-web-server#customize-nginx-configuration"*
-
-**Source**: `laravel-jetstream-app/zerops.yaml:45`.
 
 **Why this works (8.0 — between 7.0 and 8.5)**: links to the docs
 page AND the specific anchor. Doesn't name the guide ID in prose,
@@ -125,8 +117,6 @@ describes.
 > *"(`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF NOT EXISTS`) fired"*
 > *"once per deploy from `run.initCommands`."*
 
-**Source**: `docs/zcprecipator3/runs/16/apidev/README.md:252`.
-
 **Why this fails**: body covers `init-commands` territory
 (`run.initCommands`, per-deploy schema setup). The Citation Map names
 this topic. No inline cite. A porter reaching this bullet doesn't
@@ -159,8 +149,6 @@ shape.
 > *"`${search_zeropsSubdomain}` works but routes the call out and back"*
 > *"through the public balancer for no reason."*
 
-**Source**: `docs/zcprecipator3/runs/16/apidev/README.md:254`.
-
 **Why this fails**: body covers `http-support` / `l7-balancer` and
 `env-var-model` (cross-service refs) territory. Citation Map names
 both. No inline cite. The bullet is otherwise excellent (symptom-
@@ -189,8 +177,6 @@ routing model). One-sentence addition; bullet stays within body cap.
 > *"— virtual-hosted-style requests fail. Region must be set to"*
 > *"`us-east-1` even though MinIO ignores the value, because every S3"*
 > *"client refuses to sign without one."*
-
-**Source**: `docs/zcprecipator3/runs/16/apidev/README.md:228`.
 
 **Why this fails**: IG body covers `object-storage` territory.
 Citation Map names this topic. No inline cite. IG H3s often skip

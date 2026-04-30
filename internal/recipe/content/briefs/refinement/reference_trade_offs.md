@@ -25,8 +25,6 @@ bullet past the body cap.
 > *"package and set `REDIS_CLIENT=predis` to avoid \"class Redis not"*
 > *"found\" errors."*
 
-**Source**: `laravel-showcase-app/README.md:353` (Gotchas section).
-
 **Why this works**: names the chosen path (`predis`) and the
 rejected alternative (`phpredis` C extension) and the reason rejected
 (base image doesn't include it → "class Redis not found" at runtime).
@@ -41,8 +39,6 @@ this recipe didn't use it.
 > *"while the runtime serves from `/var/www/`. Caching during build"*
 > *"produces paths like `/build/source/storage/...` that crash at runtime"*
 > *"with \"directory not found.\""*
-
-**Source**: `laravel-showcase-app/README.md:350`.
 
 **Why this works**: stem itself names the chosen path
 (`initCommands`) and the rejected alternative (`buildCommands`).
@@ -64,8 +60,6 @@ why their intuition is wrong on Zerops.
 > *"to dev `buildCommands`** — it adds ~20–30 s to every `zcli push`"*
 > *"and defeats the HMR-first design."*
 
-**Source**: `laravel-showcase-app/README.md:355`.
-
 **Why this works**: names the chosen path (HMR-first dev with
 manual `npm run build`), names the porter's likely instinct
 ("just add `npm run build` to dev `buildCommands`"), and names the
@@ -82,8 +76,6 @@ implicit but the rejection cost is concrete.
 > *"`${search_zeropsSubdomain}` works but routes the call out and back"*
 > *"through the public balancer for no reason."*
 
-**Source**: `docs/zcprecipator3/runs/16/apidev/README.md:254`.
-
 **Why this works**: chosen path (`http://` between services).
 Rejected alternative #1 (`https://` between services) — fails the
 TLS handshake. Rejected alternative #2 (public subdomain) — works
@@ -98,8 +90,6 @@ to teach the sub-agent that the same author can hit both shapes.
 > *"worker both need the same key for sessions and encrypted columns)."*
 > *"Set it once at project level in Zerops; do not add it per-service"*
 > *"or in `zerops.yaml envVariables`."*
-
-**Source**: `laravel-showcase-app/README.md:351`.
 
 **Why this works**: names the chosen path (project level) and the
 rejected alternative (per-service or per-zerops.yaml). Names *why*
@@ -137,8 +127,6 @@ switch decisions. The 9.0 lift over Pass 1 is the trigger condition.
 > *"Postgres. Document this on the dashboard so on-call engineers"*
 > *"don't reach for the missing health endpoint."*
 
-**Source**: `docs/zcprecipator3/runs/16/workerdev/README.md:148`.
-
 **Why this fails**: names the chosen liveness probe (SQL count from
 events). No rejected alternative — the bullet implies "you can't use
 HTTP because there's no port" but doesn't name the obvious alternative
@@ -170,8 +158,6 @@ why it loses (queue-AND-HTTP cost) and a trigger to revisit
 > *"idle. Symptom: api logs successful publishes, the events table"*
 > *"never grows. Cross-check the publisher and subscriber strings"*
 > *"before assuming the broker is broken."*
-
-**Source**: `docs/zcprecipator3/runs/16/workerdev/README.md:142`.
 
 **Why this fails**: names the chosen verification approach
 ("cross-check strings"). No rejected alternative — there's a

@@ -27,9 +27,6 @@ intro. Refinement HOLDS on those surfaces.
 > *"Feel free to change this value to your own custom domain,"*
 > *"after setting up the domain access."*
 
-**Source**: `laravel-jetstream-app/zerops.yaml:27-29` (block comment
-above `APP_URL: ${zeropsSubdomain}`).
-
 **Why this works**: states the platform mechanism (Laravel checks the
 Host header against APP_URL), names the adapt path (your own custom
 domain), and ties to a concrete porter signal (after setting up the
@@ -42,9 +39,6 @@ the trailing condition tells the porter when they're ready to act.
 > *"in true production setups. This default configuration"*
 > *"expects 'mailpit' to be deployed along the app."*
 
-**Source**: `laravel-jetstream-app/zerops.yaml:61-63` (block comment
-above `MAIL_*` variables).
-
 **Why this works**: names the default ("mailpit"), names the porter-
 adapt path ("real SMTP sinks"), and ties to a concrete porter signal
 ("true production setups"). "Configure this to" is imperative-as-
@@ -54,9 +48,6 @@ permission — the porter knows the recipe expects them to override.
 
 > *"Mail set to log driver — no external SMTP configured."*
 > *"Replace with real SMTP credentials for production use."*
-
-**Source**: `laravel-showcase-app/zerops.yaml:131-132` (block comment
-above `MAIL_MAILER: log`).
 
 **Why this works**: declarative state ("set to log driver"),
 explicit signal of incompleteness ("no external SMTP configured"),
@@ -68,10 +59,6 @@ Same pattern as Pass 2, tighter prose.
 
 > *"Disabling the subdomain access is recommended,"*
 > *"after you set up access through your own domain(s)."*
-
-**Source**: `recipes/laravel-jetstream/4 — Small Production/import.yaml:15-16`
-(block comment above `enableSubdomainAccess: true` on the `app`
-service).
 
 **Why this works**: names the adapt path ("disable subdomain access")
 and the prerequisite trigger ("after you set up access through your
@@ -86,9 +73,6 @@ set up", the porter might disable the subdomain and lose access.
 > *"Feel free to remove this service, if you wish to stage-test"*
 > *"your app with as-close-as-possible production setup."*
 
-**Source**: `recipes/laravel-jetstream/3 — Stage/import.yaml:47-50`
-(block comment above the `mailpit` service).
-
 **Why this works**: "Optionally" signals the service is non-load-
 bearing; "Feel free to remove" gives explicit permission; "if you
 wish to stage-test ... production setup" names the porter's actual
@@ -102,8 +86,6 @@ mailpit is reasonable, not just that it's allowed.
 > *"# Svelte frontend in zeropsSetup: prod, 0.5 GB shared CPU, minContainers: 2."*
 > *"# Static bundle served from two replicas behind the public subdomain — a"*
 > *"# rolling deploy doesn't drop the dashboard while it ships."*
-
-**Source**: `docs/zcprecipator3/runs/16/environments/4 — Small Production/import.yaml:28-30`.
 
 **Why this fails**: the comment opens with a restatement of the
 yaml fields (`zeropsSetup: prod`, `0.5 GB shared CPU`, `minContainers:
@@ -131,8 +113,6 @@ usage growth). Field echoes deleted; mechanism + invitation kept.
 > *"# processes"*
 > *"# each message, so doubling the count actually doubles throughput rather"*
 > *"# than duplicating work."*
-
-**Source**: `docs/zcprecipator3/runs/16/environments/4 — Small Production/import.yaml:41-45`.
 
 **Why this fails**: same shape as Fail 1 — leading field echo, then
 a mechanism. The mechanism prose is genuinely good (queue group

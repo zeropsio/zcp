@@ -23,8 +23,6 @@ the porter's search path before they wrote the stem.
 > *"vars, causing `env()` to return `null` for every key that appears"*
 > *"in `.env` even if the platform has a value set."*
 
-**Source**: `laravel-showcase-app/README.md:349`.
-
 **Why this works**: stem names the *thing porters do wrong* (creating
 a `.env` file). Body's first sentence carries the platform mechanism
 (env vars injected as OS env vars), the second sentence carries the
@@ -43,8 +41,6 @@ This is the canonical 8.5 anchor for symptom-first shape.
 > *"produces paths like `/build/source/storage/...` that crash at runtime"*
 > *"with \"directory not found.\""*
 
-**Source**: `laravel-showcase-app/README.md:350`.
-
 **Why this works**: stem is a directive ("put cache in initCommands,
 not buildCommands"), but body opens with the platform mechanism
 (absolute path baking + container path divergence) and lands on the
@@ -60,8 +56,6 @@ explicitly in the body.
 > *"it, the SDK attempts virtual-hosted bucket URLs that MinIO cannot"*
 > *"resolve."*
 
-**Source**: `laravel-showcase-app/README.md:354`.
-
 **Why this works**: stem is a directive ("object storage requires
 path-style"), but body opens with the platform mechanism (MinIO
 backing) and the rejected alternative's failure ("MinIO cannot
@@ -76,8 +70,6 @@ URL" or "S3 path-style on Zerops" finds this. Tight 3-sentence body.
 > *"rendering `@vite(...)` therefore 500s with `Vite manifest not"*
 > *"found at: /var/www/public/build/manifest.json` on the first"*
 > *"request after a `zerops_deploy`."*
-
-**Source**: `laravel-showcase-app/README.md:355`.
 
 **Why this works**: stem names the symptom ("Vite manifest missing
 on dev after fresh deploy"). Body explains the platform-side cause
@@ -120,8 +112,6 @@ execOnce migrator). Three search paths all converge on this bullet.
 > idempotent script (`CREATE TABLE IF NOT EXISTS`, `CREATE INDEX IF
 > NOT EXISTS`) fired once per deploy from `run.initCommands`.
 
-**Source**: run-16 apidev README KB.
-
 **Why this fails**: stem is the recipe author's directive
 (`synchronize: false`). A porter who hits the symptom would search
 for "schema corruption on deploy", "ALTER TABLE deadlock", "relation
@@ -151,8 +141,6 @@ keeps the mechanism + fix prose intact.
 > failure does not burn the migrate key — the next redeploy re-fires
 > only the failing step. The Zerops `init-commands` reference covers
 > per-deploy key shape and the in-script-guard pitfall.
-
-**Source**: run-16 apidev README KB.
 
 **Why this fails**: stem is the recipe author's directive ("decompose
 execOnce keys"). Body's first sentence carries the observable wrong
@@ -190,8 +178,6 @@ citation.
 > `${search_zeropsSubdomain}` works but routes the call out and back
 > through the public balancer for no reason.
 
-**Source**: run-16 apidev README KB.
-
 **Why this is shown as a HOLD case (not a FAIL)**: stem names the
 mechanism (internal traffic = plain HTTP) which is itself a directive,
 but body opens with "SSL terminates at the L7 balancer; `https://...`
@@ -213,8 +199,6 @@ ACT).
 > broker restart during a rolling upgrade then leaves the worker
 > disconnected forever, even though the process is still healthy. Set
 > the option to `-1` (unlimited) on every long-running subscriber.
-
-**Source**: run-16 workerdev README KB.
 
 **Why this fails**: stem names the *fix* (the option value), not the
 *symptom*. Body's first sentence is the rejected alternative's
@@ -244,8 +228,6 @@ healthy but no messages flow"). Fix preserved.
 > control to the shell, the supervisor sees exit code 0, and restarts
 > in a tight loop. Run the Nest standalone process directly (`node
 > dist/main.js`) so the supervisor's view matches the lifecycle.
-
-**Source**: run-16 workerdev README KB.
 
 **Why this fails**: stem names the *rule* (`run.start` foreground),
 not the *symptom*. Body's first sentence is the platform's behavior,

@@ -247,7 +247,10 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 			return r
 		}
 		if sess.Current == PhaseScaffold {
-			populateSourceRootsForScaffold(sess)
+			if err := populateSourceRootsForScaffold(sess); err != nil {
+				r.Error = err.Error()
+				return r
+			}
 		}
 		snap := sess.Snapshot()
 		r.Status = &snap
@@ -425,7 +428,7 @@ func handleRecordFragment(sess *Session, in RecipeInput, r RecipeResult) RecipeR
 	// implicit OK=false instead so the agent's record-fragment call clearly
 	// fails and it knows to re-author. The refusal message text matches the
 	// Notice prose in §8.1's table (R-id named, spec section cited).
-	if violations := checkSlotShape(in.FragmentID, in.Fragment); len(violations) > 0 {
+	if violations := checkSlotShapeWithPlan(in.FragmentID, in.Fragment, sess.Plan); len(violations) > 0 {
 		// Run-17 §10 — aggregate refusal. KB and CLAUDE.md surfaces
 		// can carry multiple offenders per body; surfacing them all in
 		// one round-trip cuts the run-16 CLAUDE.md churn (8 successive
@@ -556,7 +559,6 @@ func mergePlan(sess *Session, incoming *Plan) error {
 		return errors.New("update-plan: missing plan payload")
 	}
 	sess.mu.Lock()
-	defer sess.mu.Unlock()
 	cur := sess.Plan
 	if cur == nil {
 		cur = &Plan{Slug: sess.Slug}
@@ -602,7 +604,13 @@ func mergePlan(sess *Session, incoming *Plan) error {
 		cur.FeatureKinds = incoming.FeatureKinds
 	}
 	sess.Plan = cur
-	return nil
+	// Snapshot before releasing the lock so file IO runs unlocked
+	// (CLAUDE.md "Hold mutexes during I/O" convention).
+	planSnapshot := *cur
+	outputRoot := sess.OutputRoot
+	sess.mu.Unlock()
+
+	return WritePlan(outputRoot, &planSnapshot)
 }
 
 // completePhase runs the gate set for the current phase and advances
@@ -667,14 +675,34 @@ func completePhase(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
 		r.Error = err.Error()
 		return r
 	}
-	snap := sess.Snapshot()
-	r.Violations, r.Notices, r.Status = blocking, notices, &snap
+	r.Violations, r.Notices = blocking, notices
 	r.OK = len(blocking) == 0
 	if r.OK {
 		if next, ok := nextPhase(sess.Current); ok {
+			// Run-18: finalize → refinement is always-on. Snapshot/
+			// restore (run-17 §9 T4) wraps every refinement
+			// `record-fragment mode=replace` so a regression-causing
+			// edit reverts; the editorial pass therefore costs at most
+			// the wall-time of one extra sub-agent dispatch and never
+			// makes the artifact worse. Mandatory refinement closes
+			// run-17's failure mode where the agent saw notices and
+			// declined the optional pass.
+			//
+			// All other phase transitions remain explicit (the agent
+			// calls `enter-phase` after a sub-agent terminates).
+			// Refinement is the one place the engine drives the
+			// transition because it's the ALWAYS-ON quality gate.
+			if sess.Current == PhaseFinalize {
+				if eErr := sess.EnterPhase(next); eErr != nil {
+					r.Error = "complete-phase: auto-advance to refinement: " + eErr.Error()
+					return r
+				}
+			}
 			r.Guidance = "Next phase: " + string(next) + "\n\n" + loadPhaseEntry(next)
 		}
 	}
+	snap := sess.Snapshot()
+	r.Status = &snap
 	return r
 }
 
@@ -889,17 +917,26 @@ func DefaultSourceRoot(hostname string) string {
 // with the convention-based path at the moment scaffold authoring
 // begins. Explicit values (chain-resolver or non-standard mount) are
 // preserved. Run-9-readiness Workstream A2.
-func populateSourceRootsForScaffold(sess *Session) {
+//
+// After mutation, persists the refreshed Plan to <outputRoot>/plan.json
+// so on-disk replay tooling sees the post-scaffold-entry state (with
+// SourceRoots populated) and not the pre-scaffold initial plan.
+func populateSourceRootsForScaffold(sess *Session) error {
 	sess.mu.Lock()
-	defer sess.mu.Unlock()
 	if sess.Plan == nil {
-		return
+		sess.mu.Unlock()
+		return nil
 	}
 	for i, cb := range sess.Plan.Codebases {
 		if cb.SourceRoot == "" {
 			sess.Plan.Codebases[i].SourceRoot = DefaultSourceRoot(cb.Hostname)
 		}
 	}
+	snapshot := *sess.Plan
+	outputRoot := sess.OutputRoot
+	sess.mu.Unlock()
+
+	return WritePlan(outputRoot, &snapshot)
 }
 
 func writeSurfaceFile(path, body string) error {

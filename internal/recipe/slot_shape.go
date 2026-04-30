@@ -29,21 +29,46 @@ import (
 // sub-slots — are NOT subject to the new constraints; they fall
 // through to an empty slice.
 func checkSlotShape(fragmentID, body string) []string {
+	return checkSlotShapeWithPlan(fragmentID, body, nil)
+}
+
+// CheckSlotShapeForReplay is the exported entry point used by the
+// `cmd/zcp-replay-content/validate` tool to run the dispatcher against
+// fragments authored offline. Identical to the internal
+// `checkSlotShapeWithPlan` — exported only to let the throwaway replay
+// CLI consume it without forking the recipe package.
+func CheckSlotShapeForReplay(fragmentID, body string, plan *Plan) []string {
+	return checkSlotShapeWithPlan(fragmentID, body, plan)
+}
+
+// checkSlotShapeWithPlan is the plan-aware dispatcher. The IG fusion
+// check (run-18 §3.1 check 4) needs the plan's managed-service hostname
+// set to detect multi-service fusion in one slotted IG body. Body-only
+// authoring-discipline checks (run-18 checks 1/2/3) don't need plan
+// context; tests can keep calling checkSlotShape with no plan and still
+// exercise everything except Check 4.
+func checkSlotShapeWithPlan(fragmentID, body string, plan *Plan) []string {
 	switch {
 	case fragmentID == fragmentIDRoot:
 		return single(checkRootIntro(body))
 	case envIntroRe.MatchString(fragmentID):
 		return single(checkEnvIntro(body))
 	case envImportCommentsRe.MatchString(fragmentID):
-		return single(checkEnvImportComments(body))
+		out := single(checkEnvImportComments(body))
+		out = append(out, commentSurfaceSlugCitationRefusals(body, "env/<N>/import-comments/<host>")...)
+		return out
 	case codebaseIntroRe.MatchString(fragmentID):
 		return single(checkCodebaseIntro(body))
 	case slottedIGRe.MatchString(fragmentID):
-		return single(checkSlottedIG(body))
+		out := single(checkSlottedIG(body))
+		out = append(out, igSlotAuthoringRefusals(body, managedServiceHostnames(plan))...)
+		return out
 	case codebaseKBRe.MatchString(fragmentID):
 		return checkCodebaseKBAll(body)
 	case zeropsYamlCommentsRe.MatchString(fragmentID):
-		return single(checkZeropsYamlComments(body))
+		out := single(checkZeropsYamlComments(body))
+		out = append(out, commentSurfaceSlugCitationRefusals(body, "codebase/<h>/zerops-yaml-comments/<block>")...)
+		return out
 	case singleSlotClaudeMDRe.MatchString(fragmentID):
 		return checkClaudeMDAll(body)
 	}
@@ -192,14 +217,21 @@ func checkCodebaseKBAll(body string) []string {
 			continue
 		}
 		m := kbStemBoldRE.FindStringSubmatch(rest)
+		stem := ""
 		if len(m) >= 2 {
-			stem := m[1]
+			stem = m[1]
 			if !kbStemMatchesSymptomFirst(stem) {
 				out = append(out, fmt.Sprintf(
 					"codebase/<h>/knowledge-base stem `%s` is author-claim shape; KB stems are symptom-first or directive-tightly-mapped-to-observable-error. Reshape: name the HTTP status code, quoted error string, failure verb, or observable wrong-state phrase the porter would search for. See `briefs/refinement/reference_kb_shapes.md`.",
 					stem))
 			}
 		}
+		// Run-18 §3.1 — authoring-discipline body checks (self-inflicted,
+		// scaffold-internal, slug citation). Bullet body is the whole
+		// line past `- ` — the run-17 corpus shows KB bullets land as
+		// single-line paragraphs, matching the existing line-iteration
+		// assumption.
+		out = append(out, kbBulletAuthoringRefusals(stem, rest)...)
 	}
 	if bulletCount > 8 {
 		out = append(out, fmt.Sprintf("codebase/<h>/knowledge-base ≤ 8 bullets; got %d. See spec §Surface 5.", bulletCount))

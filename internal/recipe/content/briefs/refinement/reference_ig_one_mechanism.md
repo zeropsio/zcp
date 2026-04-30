@@ -24,23 +24,6 @@ HOLD), and when a misrouted H3 should leave the IG entirely.
 
 ### Pass 1, 2, 3 — laravel-showcase sequential H3s, each one mechanism
 
-**Source**: `laravel-showcase-app/README.md:310-334` (IG items 2-4).
-
-Three sequential H3s, each one platform-forced change:
-
-> *"### 2. Trust the reverse proxy"*
->
-> *"Zerops terminates SSL at its L7 balancer and forwards requests via"*
-> *"reverse proxy. Without trusting the proxy, Laravel rejects CSRF"*
-> *"tokens and generates `http://` URLs instead of `https://`. In"*
-> *"`bootstrap/app.php`:"*
->
-> ```php
-> ->withMiddleware(function (Middleware $middleware): void {
->     $middleware->trustProxies(at: '*');
-> })
-> ```
-
 **Why this works**: heading names exactly one platform-forced
 change ("Trust the reverse proxy"). Body opens with the platform
 mechanism (SSL termination + reverse proxy forwarding), names the
@@ -110,8 +93,6 @@ that hop and during rolling deploys:
    requests fail mid-response. Wire NestJS's
    `enableShutdownHooks()` so the framework drains before exit.
 ```
-
-**Source**: run-16 apidev README IG #2.
 
 **Why this fails**: H3 heading bundles three independent platform
 mechanisms into one. The body actually does the right thing — three
@@ -193,8 +174,6 @@ envVariables:
 ```
 ```
 
-**Source**: run-16 apidev README IG #3.
-
 **Why this fails**: this is recipe *preference*, not platform-forced.
 A porter can read `${db_hostname}` directly in code and the app
 works fine. The recipe author chose to alias for portability — that's
@@ -241,8 +220,6 @@ runs against MinIO behind the scenes. Two AWS-SDK options matter:
 - `endpoint: storage_apiUrl` — point the SDK at the project-internal
   apiUrl, not the public AWS-region endpoint.
 ```
-
-**Source**: run-16 apidev README IG #5.
 
 **Why this is borderline (HOLD case)**: H3 heading IS one mechanism
 (talking to Zerops object storage) and the body covers two specific

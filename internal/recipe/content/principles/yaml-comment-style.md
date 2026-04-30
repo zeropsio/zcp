@@ -9,8 +9,7 @@ block as paragraph separators.
 **One causal word per block is enough.** The validator checks each
 block (not each line) for `because` / `so that` / `otherwise` /
 `trade-off` / em-dash. Do NOT stuff every line with `because` — the
-reference (`laravel-showcase-app/zerops.yaml`) lets a block's first
-paragraph carry rationale and the rest carry detail.
+first paragraph carries rationale; the rest carries detail.
 
 Short labels (≤40 chars) pass unconditionally — `# Base image`,
 `# Bucket policy` need no rationale.
@@ -31,5 +30,3 @@ BAD (single-line run-on, stuffed causal words):
 ```
 # Dev setup — deploys the source tree so that SSH sessions and `zerops_dev_server` can drive `nest start --watch` without a rebuild. `zsc noop --silent` keeps the container idle so that an external watcher owns the process, otherwise every code edit would force a redeploy.
 ```
-
-Shape reference: `/Users/fxck/www/laravel-showcase-app/zerops.yaml`.

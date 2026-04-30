@@ -116,16 +116,22 @@ func BuildCodebaseContentBrief(plan *Plan, cb Codebase, parent *ParentRecipe, fa
 		parts = append(parts, "filtered-facts")
 	}
 
-	// Pointer block — files the sub-agent reads on demand.
+	// Pointer block — files the sub-agent reads on demand. The Surface
+	// contracts + classification taxonomy live in the embedded
+	// synthesis_workflow.md atom above, NOT in an external file pointer
+	// (a hardcoded absolute path in the brief was dev-machine-specific
+	// and broke every other run target — the atom is portable).
 	b.WriteString("## On-disk content (Read on demand)\n\n")
-	b.WriteString("Before authoring any fragment, Read these in order:\n\n")
-	b.WriteString("1. `/Users/fxck/www/zcp/docs/spec-content-surfaces.md` — the seven Surface contracts + classification taxonomy.\n")
 	if cb.SourceRoot != "" {
-		fmt.Fprintf(&b, "2. `%s/zerops.yaml` — the deploy config you're commenting.\n", cb.SourceRoot)
-		fmt.Fprintf(&b, "3. `Glob %s/src/**` then `Read` key files for code-grounded references.\n", cb.SourceRoot)
-	}
-	if parent != nil && parent.Slug != "" && parent.SourceRoot != "" {
-		fmt.Fprintf(&b, "4. `%s/...` — parent recipe (`%s`) published surfaces. Cross-reference instead of re-author when the parent already covers a topic.\n", parent.SourceRoot, parent.Slug)
+		b.WriteString("Before authoring any fragment, Read in order:\n\n")
+		fmt.Fprintf(&b, "1. `%s/zerops.yaml` — the deploy config you're commenting.\n", cb.SourceRoot)
+		fmt.Fprintf(&b, "2. `Glob %s/src/**` then `Read` key files for code-grounded references.\n", cb.SourceRoot)
+		nextIdx := 3
+		if parent != nil && parent.Slug != "" && parent.SourceRoot != "" {
+			fmt.Fprintf(&b, "%d. `%s/...` — parent recipe (`%s`) published surfaces. Cross-reference instead of re-author when the parent already covers a topic.\n", nextIdx, parent.SourceRoot, parent.Slug)
+		}
+	} else if parent != nil && parent.Slug != "" && parent.SourceRoot != "" {
+		fmt.Fprintf(&b, "Before authoring any fragment, Read `%s/...` — parent recipe (`%s`) published surfaces. Cross-reference instead of re-author when the parent already covers a topic.\n", parent.SourceRoot, parent.Slug)
 	}
 	b.WriteString("\nFor every engine-pre-seeded fact with empty Why, call `zerops_knowledge runtime=<svc-type>` first, then fill Why + Heading via `fill-fact-slot` grounded in the atom — do NOT paraphrase from memory.\n\n")
 	parts = append(parts, "pointer-block")
@@ -237,9 +243,9 @@ func BuildEnvContentBrief(plan *Plan, parent *ParentRecipe, facts []FactRecord) 
 		parts = append(parts, "parent-pointer")
 	}
 
-	b.WriteString("## On-disk content (Read on demand)\n\n")
-	b.WriteString("- `/Users/fxck/www/zcp/docs/spec-content-surfaces.md` — Surface 1/2/3 contracts.\n\n")
-	parts = append(parts, "pointer-block")
+	// Surface 1/2/3 contracts live in the embedded per_tier_authoring.md
+	// + intro.md atoms above. No external file pointer — those were
+	// dev-machine-specific absolute paths.
 
 	out := Brief{
 		Kind:  BriefEnvContent,
