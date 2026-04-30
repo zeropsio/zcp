@@ -2,6 +2,7 @@
 id: develop-close-mode-git-push-needs-setup
 priority: 2
 phases: [develop-active]
+modes: [standard, simple, local-stage, local-only]
 closeDeployModes: [git-push]
 gitPushStates: [unconfigured, broken, unknown]
 deployStates: [deployed]

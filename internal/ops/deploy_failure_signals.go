@@ -213,7 +213,7 @@ func buildSignalLibrary() []failureSignal {
 			id:         "transport:zcli-auth-failed",
 			phases:     []DeployFailurePhase{PhaseTransport},
 			logRegex:   regexp.MustCompile(`(?:invalid token|unauthorized|401|forbidden|403)`),
-			strategies: []string{"push-dev"},
+			strategies: []string{"zcli"},
 			requireLog: true,
 			build:      transportZCLIAuth,
 		},

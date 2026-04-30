@@ -224,7 +224,7 @@ func handleLocalGitPush(ctx context.Context, client platform.Client, projectID s
 	_ = workflow.RecordDeployAttempt(stateDir, hostname, attempt)
 
 	result.NextActions = fmt.Sprintf(
-		"Watch the build via zerops_events filterServices=[%q] until Status=ACTIVE, then ack with zerops_workflow action=\"record-deploy\" targetService=%q. The push transmitted bytes; the platform build runs async and FirstDeployedAt will not stamp until you bridge it.",
+		"Watch the build via zerops_events serviceHostname=%q until Status=ACTIVE, then ack with zerops_workflow action=\"record-deploy\" targetService=%q. The push transmitted bytes; the platform build runs async and FirstDeployedAt will not stamp until you bridge it.",
 		hostname, hostname,
 	)
 

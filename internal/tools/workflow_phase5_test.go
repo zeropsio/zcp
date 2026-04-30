@@ -82,6 +82,49 @@ func TestHandleCloseMode_GitPushChainsSetup(t *testing.T) {
 	}
 }
 
+// TestHandleCloseMode_GitPushRejectsNonPushSourceMode pins the O3 fix
+// (round-3 audit): close-mode=git-push is invalid for modes that cannot
+// act as a push source (ModeDev, ModeStage). Without this gate an agent
+// can set close-mode=git-push for a dev-mode service, walk the
+// git-push-setup chain to provision GIT_TOKEN/.netrc — then hit a hard
+// rejection at deploy time when handleGitPush returns
+// PushSourceModeUnsupported. The gate catches the invalid combination at
+// intent-set time, mirroring the local-only gate.
+func TestHandleCloseMode_GitPushRejectsNonPushSourceMode(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             topology.PlanModeDev, // not a push source
+		BootstrapSession: "test",
+		BootstrappedAt:   "2026-04-28",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	result, _, err := handleCloseMode(WorkflowInput{
+		CloseModes: map[string]string{"appdev": string(topology.CloseModeGitPush)},
+	}, stateDir)
+	if err != nil {
+		t.Fatalf("handleCloseMode: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error: ModeDev cannot act as git-push source")
+	}
+	body := getTextContent(t, result)
+	for _, want := range []string{"cannot push", "Standard/Simple/LocalStage/LocalOnly", "mode-expansion"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("response missing %q: %s", want, body)
+		}
+	}
+
+	// Meta must be untouched — the gate runs BEFORE the write.
+	meta, _ := workflow.ReadServiceMeta(stateDir, "appdev")
+	if meta.CloseDeployMode != "" {
+		t.Errorf("CloseDeployMode should not be persisted on rejection, got %q", meta.CloseDeployMode)
+	}
+}
+
 // TestHandleCloseMode_InvalidValue pins the value-validation gate:
 // closeMode values outside the closed enum set are rejected with
 // ErrInvalidParameter and the valid-set listing.

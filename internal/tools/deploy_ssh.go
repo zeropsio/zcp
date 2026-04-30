@@ -214,6 +214,25 @@ func RegisterDeploySSH(
 		}
 		_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 
-		return jsonResult(result), nil, nil
+		// F10 fix (round-3 audit): default container SSH zerops_deploy was
+		// the sole deploy path returning raw *ops.DeployResult — the F5
+		// `WorkSessionState` lifecycle signal was already on every other
+		// deploy path (deploy_local, deploy_batch, deploy_git_push,
+		// deploy_local_git, verify, record-deploy) but not here. The
+		// asymmetry meant container agents had to call status after every
+		// deploy to discover whether auto-close fired; local agents got the
+		// signal inline. Wrap to match.
+		return jsonResult(deploySSHResponse{
+			DeployResult:     result,
+			WorkSessionState: sessionAnnotations(stateDir),
+		}), nil, nil
 	})
+}
+
+// deploySSHResponse mirrors deployLocalResponse — wraps the SSH-mode
+// deploy result with the structured WorkSessionState lifecycle signal so
+// container deploys get the same F5 surface local deploys already have.
+type deploySSHResponse struct {
+	*ops.DeployResult
+	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
 }

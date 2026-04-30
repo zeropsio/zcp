@@ -570,7 +570,13 @@ func matrixCoverageFixtures() []coverageFixture {
 			},
 		},
 		{
-			Name: "develop_push_dev_standard_container",
+			// Renamed from `develop_push_dev_standard_container` (legacy
+			// vocab); after F8 (round-3 audit), the deploy-container atom
+			// gates to modes [dev, simple] only — standard mode now matches
+			// `develop-close-mode-auto-standard.md` exclusively, whose body
+			// emits the proper cross-deploy cadence ("Closing the task" →
+			// `sourceService=...` `targetService={stage-hostname}`).
+			Name: "develop_close_mode_auto_standard_container",
 			Envelope: StateEnvelope{
 				Phase:       PhaseDevelopActive,
 				Environment: EnvContainer,
@@ -582,8 +588,10 @@ func matrixCoverageFixtures() []coverageFixture {
 				}},
 			},
 			MustContain: []string{
-				"close-mode=auto Deploy",
-				"sourceService",
+				"Closing the task",
+				`sourceService="appdev"`,
+				`targetService="appstage"`,
+				`setup="prod"`,
 			},
 		},
 		{

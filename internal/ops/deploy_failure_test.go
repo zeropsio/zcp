@@ -330,10 +330,10 @@ func TestClassifyDeployFailure_Transport(t *testing.T) {
 			wantSignal:   "transport:zcli-tty-required",
 		},
 		{
-			name: "zcli-auth-failed-push-dev",
+			name: "zcli-auth-failed-zcli",
 			input: FailureInput{
 				Phase:    PhaseTransport,
-				Strategy: "push-dev",
+				Strategy: "zcli",
 				TransportErr: &platform.SSHExecError{
 					Hostname: "src",
 					Output:   "✗ ERR unauthorized: invalid token",

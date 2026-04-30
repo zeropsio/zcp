@@ -296,6 +296,57 @@ func TestEvents_FilterByService_SummaryCounts(t *testing.T) {
 	}
 }
 
+// TestEvents_SkipsStartWithoutCode pins the F1 fix (round-3 audit):
+// appVersions created by bootstrap with `startWithoutCode: true` (Source="NONE",
+// no Build info) MUST be filtered out at the timeline-construction site so
+// downstream consumers (recordDeployBuildStatusGate) don't treat the pre-existing
+// ACTIVE bootstrap stamp as a successful deploy. progress.go::PollBuild already
+// filters at the poll site; this test pins the equivalent filter on the
+// generic events path.
+func TestEvents_SkipsStartWithoutCode(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{{ID: "svc-1", Name: "api"}}
+
+	appVersions := []platform.AppVersionEvent{
+		{
+			ID:             "av-startwithoutcode",
+			ServiceStackID: "svc-1",
+			Status:         "ACTIVE",
+			Created:        "2024-01-01T00:01:00Z",
+			Source:         "NONE", // bootstrap startWithoutCode marker
+			Build:          nil,
+		},
+		{
+			ID:             "av-real-build",
+			ServiceStackID: "svc-1",
+			Status:         "ACTIVE",
+			Created:        "2024-01-01T00:02:00Z",
+			Source:         "git", // any non-"NONE" with non-nil Build
+			Build:          &platform.BuildInfo{PipelineStart: strPtr("2024-01-01T00:02:01Z")},
+		},
+	}
+
+	mock := platform.NewMock().
+		WithServices(services).
+		WithProcessEvents(nil).
+		WithAppVersionEvents(appVersions)
+
+	result, err := Events(context.Background(), mock, nil, "proj-1", "api", 50)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result.Events) != 1 {
+		t.Fatalf("expected 1 event (startWithoutCode filtered), got %d:\n%+v",
+			len(result.Events), result.Events)
+	}
+	if result.Events[0].Timestamp != "2024-01-01T00:02:00Z" {
+		t.Errorf("expected the real-build event to survive, got timestamp %s",
+			result.Events[0].Timestamp)
+	}
+}
+
 func TestEvents_ParallelFetchError(t *testing.T) {
 	t.Parallel()
 

@@ -25,6 +25,7 @@ func TestValidateDeployStrategyParam(t *testing.T) {
 		{"git-push → accept", "git-push", false, ""},
 		{"retired push-dev alias → reject", "push-dev", true, platform.ErrInvalidParameter},
 		{"manual → reject (declaration, not a dispatch value)", "manual", true, platform.ErrInvalidParameter},
+		{"zcli → reject (internal label, not a tool argument)", "zcli", true, platform.ErrInvalidParameter},
 		{"unknown → reject", "gopher", true, platform.ErrInvalidParameter},
 	}
 
@@ -50,6 +51,29 @@ func TestValidateDeployStrategyParam(t *testing.T) {
 			}
 			if tt.strategy == "manual" && !strings.Contains(pe.Error(), "ServiceMeta declaration") {
 				t.Errorf("manual-rejection message should explain ServiceMeta scope; got: %s", pe.Error())
+			}
+			// O5 fix (round-3 audit): the "zcli" rejection must redirect to
+			// "omit the strategy parameter" rather than handing back a
+			// generic "Invalid strategy" — atom prose and DeployAttempt
+			// records both surface "zcli" so an agent guessing this value
+			// must learn the actual mapping. Assert on Message + Suggestion
+			// since the redirect lives in Suggestion (PlatformError.Error()
+			// is Message-only).
+			if tt.strategy == "zcli" {
+				if !strings.Contains(pe.Message, "internal label") {
+					t.Errorf("zcli-rejection Message missing 'internal label'; got: %s", pe.Message)
+				}
+				for _, want := range []string{"Omit the strategy parameter", `Strategy: "zcli"`} {
+					if !strings.Contains(pe.Suggestion, want) {
+						t.Errorf("zcli-rejection Suggestion missing %q; got: %s", want, pe.Suggestion)
+					}
+				}
+			}
+			// "gopher" is the unknown-value path; the redirect must mention
+			// "zcli" so the same agent who tries `strategy="zcli"` from a
+			// typo'd path also gets pointed at the omit-the-parameter form.
+			if tt.strategy == "gopher" && !strings.Contains(pe.Suggestion, "'zcli' is the internal label") {
+				t.Errorf("unknown-value rejection Suggestion should mention zcli internal label; got: %s", pe.Suggestion)
 			}
 		})
 	}

@@ -29,7 +29,7 @@ type WorkflowInput struct {
 	Workflow string `json:"workflow,omitempty" jsonschema:"Workflow name: bootstrap, develop, or export. For recipe authoring use the dedicated zerops_recipe tool (v3 engine, docs/zcprecipator3/plan.md)."`
 
 	// Multi-action fields.
-	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, reset, iterate, resume, list, route, close-mode (set per-pair CloseDeployMode auto/git-push/manual), git-push-setup (provision GIT_TOKEN/.netrc/remote URL — pass service + remoteUrl), build-integration (wire ZCP-managed CI — pass service + integration), classify, adopt-local, dispatch-brief-atom (retrieve one atom of an envelope-split dispatch brief), record-deploy (stamp FirstDeployedAt for an externally-deployed service — zcli/CI/CD bridge; pass targetService)."`
+	Action      string                     `json:"action,omitempty"      jsonschema:"Orchestration action: start, complete, skip, status, close, reset, iterate, resume, list, route, close-mode (set per-pair CloseDeployMode auto/git-push/manual), git-push-setup (provision GIT_TOKEN/.netrc/remote URL — pass service + remoteUrl), build-integration (wire ZCP-managed CI — pass service + integration), classify, adopt-local, dispatch-brief-atom (retrieve one atom of an envelope-split dispatch brief), record-deploy (stamp FirstDeployedAt for an externally-deployed service — zcli/CI/CD bridge; pass targetService), generate-finalize (recipe-flow generate-step finalization), build-subagent-brief (recipe-flow sub-agent dispatch brief), verify-subagent-dispatch (recipe-flow sub-agent dispatch brief)."`
 	Intent      string                     `json:"intent,omitempty"      jsonschema:"User intent description for start action (what you want to accomplish)."`
 	Attestation string                     `json:"attestation,omitempty" jsonschema:"Description of what was verified or accomplished (required for complete actions)."`
 	Step        string                     `json:"step,omitempty"        jsonschema:"Bootstrap step name for complete/skip actions (discover, provision, close)."`
@@ -312,7 +312,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Unknown action %q", input.Action),
-			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, close-mode, git-push-setup, build-integration, classify, adopt-local, dispatch-brief-atom, record-deploy"), WithRecoveryStatus()), nil, nil
+			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, close-mode, git-push-setup, build-integration, classify, adopt-local, dispatch-brief-atom, record-deploy, generate-finalize, build-subagent-brief, verify-subagent-dispatch"), WithRecoveryStatus()), nil, nil
 	}
 }
 

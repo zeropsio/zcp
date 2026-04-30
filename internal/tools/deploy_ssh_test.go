@@ -83,6 +83,14 @@ func TestDeployTool_SSHMode(t *testing.T) {
 	if !parsed.SSHReady {
 		t.Error("expected SSHReady=true after successful deploy with SSH deployer")
 	}
+
+	// F10 fix (round-3 audit): SSH deploy response MUST carry the
+	// workSessionState lifecycle signal — pre-fix only local/batch/
+	// git-push/verify/record-deploy paths included it, leaving the
+	// container default deploy as the asymmetric outlier.
+	if !strings.Contains(getTextContent(t, result), `"workSessionState"`) {
+		t.Errorf("response missing workSessionState field; got:\n%s", getTextContent(t, result))
+	}
 }
 
 // Plan 2: after a successful deploy on a dev/stage/simple/standard/local-stage
@@ -1259,10 +1267,22 @@ func TestDeployTool_GitPush_DoesNotStampDeployed(t *testing.T) {
 	}
 
 	text := getTextContent(t, result)
-	for _, want := range []string{"record-deploy", "zerops_events", "Status=ACTIVE"} {
+	// F2/F3 fix (round-3 audit): tighten substring asserts to also pin the
+	// canonical events arg name. Pre-fix the response said
+	// `zerops_events filterServices=[..]` — an arg the events tool does not
+	// accept; the loose 3-substring check let the typo land in green.
+	for _, want := range []string{
+		"record-deploy",
+		"zerops_events",
+		"Status=ACTIVE",
+		"serviceHostname=",
+	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("response missing %q in NextActions; got:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "filterServices") {
+		t.Errorf("response uses retired arg `filterServices` (events tool only accepts serviceHostname):\n%s", text)
 	}
 }
 

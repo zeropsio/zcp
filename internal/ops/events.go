@@ -225,6 +225,18 @@ func Events(
 	// Map app version events.
 	for i := range appVersions {
 		av := appVersions[i]
+		// Skip startWithoutCode appVersions (Source="NONE", no build info).
+		// These are pre-existing ACTIVE entries created by bootstrap with
+		// `startWithoutCode: true` that would otherwise be the latest
+		// "deploy" event for a never-pushed service — leading consumers
+		// (`recordDeployBuildStatusGate`) to treat the bootstrap stamp as
+		// a successful deploy. `progress.go::PollBuild` filters them at the
+		// poll site; we filter here at the timeline-construction site so
+		// every TimelineEvent represents a real build/deploy. F1 fix
+		// (round-3 audit). Pinned by `TestEvents_SkipsStartWithoutCode`.
+		if av.Source == "NONE" && av.Build == nil {
+			continue
+		}
 		svcName := svcMap[av.ServiceStackID]
 		if svcName == "" {
 			svcName = av.ServiceStackID

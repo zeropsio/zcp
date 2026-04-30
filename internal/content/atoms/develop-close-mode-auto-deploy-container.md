@@ -3,6 +3,7 @@ id: develop-close-mode-auto-deploy-container
 priority: 2
 phases: [develop-active]
 deployStates: [deployed]
+modes: [dev, simple]
 closeDeployModes: [auto]
 environments: [container]
 multiService: aggregate

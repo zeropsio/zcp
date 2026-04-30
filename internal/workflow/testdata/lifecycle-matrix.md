@@ -1,6 +1,6 @@
 # ZCP Lifecycle Matrix Simulation
 
-Generated: 2026-04-30T08:57:03Z
+Generated: 2026-04-30T10:53:10Z
 Corpus: 81 atoms
 Scenarios: 46
 
@@ -553,7 +553,7 @@ _Full git-push setup with webhook integration._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (16 unique, 16 render-instances, 18864 bytes total):
+**Atoms** (16 unique, 16 render-instances, 19029 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-build-observe`
@@ -642,12 +642,11 @@ _Default — git push capability not provisioned._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (17 unique, 17 render-instances, 18165 bytes total):
+**Atoms** (16 unique, 16 render-instances, 17290 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-close-mode-auto`
-- `develop-close-mode-auto-deploy-container`
 - `develop-close-mode-auto-standard`
 - `develop-deploy-files-self-deploy`
 - `develop-deploy-modes`
@@ -669,12 +668,11 @@ _Capability provisioned; close still does zcli (auto)._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (17 unique, 17 render-instances, 18165 bytes total):
+**Atoms** (16 unique, 16 render-instances, 17290 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-close-mode-auto`
-- `develop-close-mode-auto-deploy-container`
 - `develop-close-mode-auto-standard`
 - `develop-deploy-files-self-deploy`
 - `develop-deploy-modes`
@@ -721,7 +719,7 @@ _Full webhook CI._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (16 unique, 16 render-instances, 18864 bytes total):
+**Atoms** (16 unique, 16 render-instances, 19029 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-build-observe`
@@ -747,7 +745,7 @@ _GitHub Actions CI._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (16 unique, 16 render-instances, 18864 bytes total):
+**Atoms** (16 unique, 16 render-instances, 19029 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-build-observe`
@@ -773,7 +771,7 @@ _Push capability previously broken; recovery atom expected._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (16 unique, 16 render-instances, 17734 bytes total):
+**Atoms** (16 unique, 16 render-instances, 17899 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-build-observe`

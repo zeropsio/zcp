@@ -94,7 +94,7 @@ func handleGitPushSetup(input WorkflowInput, stateDir string, rt runtime.Info) (
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("git-push-setup target %q is in mode %q which does not support push-git (only Standard/Simple/LocalStage/LocalOnly do)", input.Service, meta.Mode),
-			"Run mode-expansion to upgrade ModeDev → ModeStandard (adds a stage half) before configuring git-push: zerops_workflow action=\"mode-expansion\" service=\""+input.Service+"\"",
+			"Mode expansion (ModeDev → ModeStandard adds a stage half) is a bootstrap-with-isExisting flow, not a workflow action. Re-run bootstrap with route=adopt and a plan target that carries isExisting=true + bootstrapMode=\"standard\" + an explicit stageHostname. See develop-mode-expansion atom for the plan shape.",
 		), WithRecoveryStatus()), nil, nil
 	case topology.PushSourceUnknownHost:
 		return convertError(platform.NewPlatformError(

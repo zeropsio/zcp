@@ -15,6 +15,13 @@ import (
 // something (the default dispatch path), which contradicts the user's
 // declared intent. Unknown values are rejected with a concrete list.
 //
+// "zcli" is the internal Strategy LABEL written into DeployAttempt records
+// (deploy_ssh.go records `Strategy: "zcli"` for the default zcli-push
+// branch). Atom prose and audit-trail readers see this label and may try
+// it as a tool argument. Reject explicitly with the redirect to omit, so
+// the agent doesn't have to learn from a generic "Invalid strategy" — they
+// get the actual mapping.
+//
 // Shared between RegisterDeploySSH and RegisterDeployLocal so the error
 // is identical in both envs.
 func validateDeployStrategyParam(strategy string) error {
@@ -27,11 +34,17 @@ func validateDeployStrategyParam(strategy string) error {
 			fmt.Sprintf("strategy %q is not a zerops_deploy option — it's a ServiceMeta declaration meaning 'ZCP stays out of the deploy loop'", deployStrategyManualLabel),
 			fmt.Sprintf("Use zerops_workflow action=\"close-mode\" closeMode={\"<service>\":%q} to mark a service as %s; don't call zerops_deploy on it. Valid deploy strategies: omit (default push) or 'git-push'.", deployStrategyManualLabel, deployStrategyManualLabel),
 		)
+	case "zcli":
+		return platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			`strategy "zcli" is the internal label recorded into DeployAttempt — not a tool argument`,
+			`Omit the strategy parameter to invoke the default zcli push (the path that records Strategy: "zcli" in attempt history). Valid deploy strategies: omit (default push) or 'git-push'.`,
+		)
 	default:
 		return platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Invalid strategy %q", strategy),
-			"Valid values: omit (default push) or 'git-push'",
+			"Valid values: omit (default push) or 'git-push'. Note: 'zcli' is the internal label for the default path — to invoke it, omit the strategy parameter.",
 		)
 	}
 }

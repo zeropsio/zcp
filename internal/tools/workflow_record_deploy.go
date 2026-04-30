@@ -85,21 +85,28 @@ func handleRecordDeploy(
 			"Pass targetService=\"<hostname>\" — the runtime service whose external deploy you are acknowledging."), WithRecoveryStatus()), nil, nil
 	}
 
-	// N2 build-status pre-flight: when the meta would actually flip
-	// (no FirstDeployedAt yet), gate on the latest appVersion event being
-	// ACTIVE. Push transmits ≠ build lands; agents that ack too early
-	// stamp Deployed=true while the webhook/actions build is still
-	// running, then verify against stale code and (worst case) auto-close
-	// against an unfinished deploy. The atom layer
-	// (`develop-build-observe`) tells the agent to wait for ACTIVE before
-	// calling record-deploy — this is the defense-in-depth.
+	// Build-status pre-flight: gate on the latest appVersion event being
+	// ACTIVE before stamping or appending a synthetic deploy attempt to the
+	// work session. Push transmits ≠ build lands; agents that ack too early
+	// flip Deployed=true while the webhook/actions build is still running,
+	// then verify against stale code and (worst case) auto-close against an
+	// unfinished deploy. The atom layer (`develop-build-observe`) tells the
+	// agent to wait for ACTIVE before calling record-deploy — this is the
+	// defense-in-depth.
 	//
-	// Skipped when the meta is already stamped (idempotent re-run — no
-	// state change either way) or absent (no-op response below). Skipped
-	// when client is nil (test/mock setup with no platform reach).
+	// F1 fix (round-3 audit): the gate ran ONLY when meta.FirstDeployedAt
+	// was empty (first record-deploy on a never-stamped service). Iterating
+	// agents who ran zerops_deploy strategy="git-push" repeatedly and acked
+	// each push with record-deploy bypassed the gate after the first stamp,
+	// allowing every subsequent ack to write a synthetic SucceededAt for a
+	// build that may still be in flight. Drop the FirstDeployedAt condition
+	// so the gate runs on EVERY record-deploy that has a meta to read.
+	//
+	// Skipped when client is nil (test/mock setup with no platform reach)
+	// or when no meta exists yet (handled by the no-op response below).
 	if client != nil {
 		meta, _ := workflow.FindServiceMeta(stateDir, input.TargetService)
-		if meta != nil && meta.FirstDeployedAt == "" {
+		if meta != nil {
 			if blocked := recordDeployBuildStatusGate(ctx, client, projectID, input.TargetService); blocked != nil {
 				return blocked, nil, nil
 			}
@@ -226,7 +233,7 @@ func recordDeployBuildStatusGate(
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("record-deploy: latest appVersion did not land successfully (status=%s) — there is no successful deploy to record", latest.Status),
-			"Read zerops_logs serviceHostname=\""+targetService+"\" facility=application since=5m for the failure cause, fix the issue, push again, and call record-deploy after the next build reaches Status=ACTIVE."),
+			"Read zerops_logs serviceHostname=\""+targetService+"\" facility=application since=5m for the failure cause, fix the issue, push again, and call record-deploy after the next build reaches Status=ACTIVE. NOTE: this may also be a stale event from a previous failed attempt — if you've just pushed again, poll zerops_events serviceHostname=\""+targetService+"\" again until the new build event appears at the top before retrying."),
 			WithRecoveryStatus())
 	default:
 		return convertError(platform.NewPlatformError(

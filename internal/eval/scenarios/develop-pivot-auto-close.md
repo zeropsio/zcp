@@ -53,7 +53,7 @@ followUp:
 # Úkol
 
 V projektu běží Laravel služba `app` (php-nginx, dev mode) + managed `db`
-(postgres). Služba je adoptovaná a běží pod push-dev strategy.
+(postgres). Služba je adoptovaná, `closeDeployMode=auto`.
 
 Chci, abys udělal **dvě oddělené změny, každou jako vlastní develop
 session** (1 task = 1 session — nepoužívej jeden session pro obojí,

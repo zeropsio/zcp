@@ -83,7 +83,7 @@ func gitPushMetaPreflight(
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("git-push target %q is in mode %q which does not support push-git (only Standard/Simple/LocalStage/LocalOnly do)", targetService, meta.Mode),
-			"Run mode-expansion to upgrade ModeDev → ModeStandard (adds a stage half) before deploying with strategy=git-push: zerops_workflow action=\"mode-expansion\" service=\""+targetService+"\"",
+			"Mode expansion (ModeDev → ModeStandard adds a stage half) is a bootstrap-with-isExisting flow, not a workflow action. Re-run bootstrap with route=adopt and a plan target that carries isExisting=true + bootstrapMode=\"standard\" + an explicit stageHostname. See develop-mode-expansion atom for the plan shape.",
 		), WithRecoveryStatus())
 	case topology.PushSourceUnknownHost:
 		recordAttempt("targetService not part of meta scope", topology.FailureClassConfig)
@@ -364,7 +364,7 @@ func handleGitPush(
 	_ = workflow.RecordDeployAttempt(stateDir, input.TargetService, attempt)
 
 	result.NextActions = fmt.Sprintf(
-		"Watch the build via zerops_events filterServices=[%q] until Status=ACTIVE, then ack with zerops_workflow action=\"record-deploy\" targetService=%q. The push transmitted bytes; the platform build runs async and FirstDeployedAt will not stamp until you bridge it.",
+		"Watch the build via zerops_events serviceHostname=%q until Status=ACTIVE, then ack with zerops_workflow action=\"record-deploy\" targetService=%q. The push transmitted bytes; the platform build runs async and FirstDeployedAt will not stamp until you bridge it.",
 		input.TargetService, input.TargetService,
 	)
 

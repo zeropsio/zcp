@@ -158,11 +158,21 @@ func TestHandleLocalGitPush_DoesNotStampDeployed(t *testing.T) {
 	}
 
 	// Response must carry NextActions naming record-deploy as the bridge.
+	// F2/F3 fix (round-3 audit): also pin the canonical events arg name
+	// so a `filterServices=` typo regression surfaces as a test failure.
 	text := getTextContent(t, result)
-	for _, want := range []string{"record-deploy", "zerops_events", "Status=ACTIVE"} {
+	for _, want := range []string{
+		"record-deploy",
+		"zerops_events",
+		"Status=ACTIVE",
+		"serviceHostname=",
+	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("response missing %q in NextActions; got:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "filterServices") {
+		t.Errorf("response uses retired arg `filterServices` (events tool only accepts serviceHostname):\n%s", text)
 	}
 }
 

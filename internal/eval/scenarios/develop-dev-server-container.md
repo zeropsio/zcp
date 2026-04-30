@@ -1,6 +1,6 @@
 ---
 id: develop-dev-server-container
-description: Container env + push-dev + dev mode + dynamic runtime (Node.js). Agent must use zerops_dev_server for dev-server lifecycle — not raw ssh backgrounding.
+description: Container env + close-mode=auto + dev mode + dynamic runtime (Node.js). Agent must use zerops_dev_server for dev-server lifecycle — not raw ssh backgrounding.
 seed: deployed
 fixture: fixtures/laravel-dev-deployed.yaml
 expect:

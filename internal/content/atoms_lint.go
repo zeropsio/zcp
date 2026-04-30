@@ -217,15 +217,91 @@ func staleStrategyViolations(ctx atomLintCtx) []AtomLintViolation {
 	return out
 }
 
-// closeDeployModeViolations enforces axis-specific body-prose rules for
-// atoms declaring `closeDeployModes:`. Phase-1 stub introduced by the
-// deploy-strategy decomposition (plans/deploy-strategy-decomposition-2026-04-28.md);
-// rules land in Phase 8 alongside the atom corpus restructure. Candidates
-// for Phase 8 enforcement: `closeDeployModes: [manual]` atoms MUST NOT
-// contain `zerops_deploy` invocations (spec D7 — agents inform on manual
-// mode, they do not call deploy on the user's behalf).
-func closeDeployModeViolations(_ atomLintCtx) []AtomLintViolation {
+// closeDeployModeViolations enforces axis-specific structural rules for
+// atoms declaring `closeDeployModes:`. Catches a recurring class of bugs
+// where an atom routes via a deploy-side close-mode axis without also
+// scoping to the modes that can act as the deploy SOURCE for that close
+// mechanism — letting the atom render guidance for non-source modes
+// (e.g. ModeStage in a standard pair) where the rendered command is
+// either incomplete (F8 round-3 audit: container atom renders self-deploy
+// of stage half, violating DM-2) or outright impossible (F12 round-3
+// audit: needs-setup atom fires for ModeDev → walks through git-push-setup
+// → deploy hard-rejects with PushSourceModeUnsupported).
+//
+// Scope: triggers ONLY when `closeDeployModes` is exactly `[git-push]`
+// (single value). Multi-value lists like `[auto, git-push, manual]` are
+// awareness-class atoms describing the close-mode taxonomy itself rather
+// than instructing a specific deploy command — they correctly fire for
+// any mode with any close-mode set, so the modes-filter requirement
+// doesn't apply. The defense-in-depth target is single-purpose
+// instructive atoms whose body emits a git-push command/walkthrough.
+//
+// Rules (single-value `[git-push]` atoms only):
+//
+//   - MUST declare `modes:` with values ⊆ IsPushSource set (standard,
+//     simple, local-stage, local-only). ModeDev and ModeStage cannot push;
+//     an atom firing for them leads the agent into a guaranteed handler
+//     rejection (PushSourceModeUnsupported).
+//
+// `closeDeployModes: [auto]` and `[manual]` are NOT covered yet — auto
+// can fire for any deployable mode, and manual yields to the user (no
+// command rendered). Future Phase 8 may extend with `[manual]` MUST NOT
+// invoke `zerops_deploy` per spec D7.
+func closeDeployModeViolations(ctx atomLintCtx) []AtomLintViolation {
+	closeModesRaw, ok := ctx.frontmatter["closeDeployModes"]
+	if !ok {
+		return nil
+	}
+	closeModes := axisListValues(closeModesRaw)
+	// Only flag single-value `[git-push]` atoms — multi-value lists are
+	// awareness-class and legitimately span all modes.
+	if len(closeModes) != 1 || closeModes[0] != "git-push" {
+		return nil
+	}
+	modesRaw, hasModes := ctx.frontmatter["modes"]
+	if !hasModes {
+		return []AtomLintViolation{{
+			AtomFile: ctx.file,
+			Category: "axis-conjunction",
+			Pattern:  "closeDeployModes:[git-push]-without-modes:[push-source]",
+			Line:     1,
+			Snippet:  "closeDeployModes: [git-push] — must also declare modes: with push-source-only values (standard, simple, local-stage, local-only). Otherwise the atom fires for ModeDev/ModeStage where the git-push handler hard-rejects.",
+		}}
+	}
+	const pushSources = "standard simple local-stage local-only"
+	for _, m := range axisListValues(modesRaw) {
+		if !strings.Contains(pushSources, m) {
+			return []AtomLintViolation{{
+				AtomFile: ctx.file,
+				Category: "axis-conjunction",
+				Pattern:  "closeDeployModes:[git-push]-with-non-push-source-mode",
+				Line:     1,
+				Snippet:  "modes: " + modesRaw + " contains a non-push-source mode (" + m + "). closeDeployModes: [git-push] requires modes ⊆ {standard, simple, local-stage, local-only}.",
+			}}
+		}
+	}
 	return nil
+}
+
+// axisListValues parses the YAML-flow-style axis list `[a, b, c]` into a
+// slice of trimmed string values. Returns nil for malformed input rather
+// than erroring — atoms_lint already enforces frontmatter shape elsewhere.
+func axisListValues(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	raw = strings.TrimPrefix(raw, "[")
+	raw = strings.TrimSuffix(raw, "]")
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		v := strings.TrimSpace(p)
+		if v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // gitPushStateViolations enforces axis-specific body-prose rules for

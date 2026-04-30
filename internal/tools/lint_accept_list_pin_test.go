@@ -111,9 +111,19 @@ func TestAtomLintAcceptedStrategiesMatchGate(t *testing.T) {
 			for _, expr := range cc.List {
 				if lit, ok := expr.(*ast.BasicLit); ok && lit.Kind == token.STRING {
 					v := strings.Trim(lit.Value, `"`)
-					if v != "" && v != "manual" {
-						got[v] = true
+					// Skip explicit-rejection cases: these branches reject the
+					// value with a redirect, they don't accept it. "manual"
+					// is a ServiceMeta declaration; "zcli" is the internal
+					// Strategy label recorded into DeployAttempt — both are
+					// known-bad-as-tool-arg labels surfaced to nudge the
+					// agent toward the right form (close-mode action / omit
+					// the parameter respectively). They MUST stay out of
+					// `content.AcceptedDeployStrategies` because that list
+					// gates atom-body lint of `strategy="X"` mentions.
+					if v == "" || v == "manual" || v == "zcli" {
+						continue
 					}
+					got[v] = true
 				}
 				if id, ok := expr.(*ast.Ident); ok && id.Name == "deployStrategyGitPush" {
 					got["git-push"] = true

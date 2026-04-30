@@ -102,6 +102,22 @@ func handleCloseMode(input WorkflowInput, stateDir string) (*mcp.CallToolResult,
 				"Link a Zerops runtime first: zerops_workflow action=\"adopt-local\" targetService=<runtime-hostname>. Or pick git-push / manual, which work without a stage."), WithRecoveryStatus()), nil, nil
 		}
 
+		// O3 fix (round-3 audit): close-mode=git-push only makes sense for
+		// modes that can act as a push source. ModeDev (legacy dev-only) and
+		// ModeStage (stage half — build target, never push source) cannot
+		// run `zerops_deploy strategy="git-push"` (handler rejects with
+		// PushSourceModeUnsupported). Without this gate, an agent can set
+		// closeMode=git-push for ModeDev, walk the git-push-setup chain,
+		// configure GIT_TOKEN/remote — then hit a hard rejection at deploy
+		// time with mode-expansion guidance. Catch the invalid combination
+		// at intent-set time, mirroring the local-only gate above.
+		if cm == topology.CloseModeGitPush && !topology.IsPushSource(meta.Mode) {
+			return convertError(platform.NewPlatformError(
+				platform.ErrInvalidParameter,
+				fmt.Sprintf("Service %q is in mode %q which cannot push (only Standard/Simple/LocalStage/LocalOnly can act as push source)", hostname, meta.Mode),
+				"Either pick closeMode=auto/manual, or expand the service to standard mode first (re-run bootstrap with route=adopt + isExisting=true + bootstrapMode=\"standard\" + an explicit stageHostname). See develop-mode-expansion atom for the plan shape."), WithRecoveryStatus()), nil, nil
+		}
+
 		updated = append(updated, fmt.Sprintf("%s=%s", hostname, cm))
 
 		// No-op shortcut: same close-mode + already confirmed.
