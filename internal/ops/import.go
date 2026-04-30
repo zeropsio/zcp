@@ -104,12 +104,26 @@ func Import(
 
 	// When override is requested, set `override: true` on each service and
 	// re-marshal so the API replaces existing service stacks instead of
-	// rejecting with serviceStackNameUnavailable.
+	// rejecting with serviceStackNameUnavailable. Replacement is destructive
+	// — the previous container, deployed code, env vars, and the SSHFS
+	// mount it backs are all lost on the replaced service. ZCP collects the
+	// list of pre-existing hostnames here (B10) so the response can name
+	// them in `Warnings` instead of letting the destruction be silent.
+	var overrideReplacements []string
 	if override {
+		existing, err := listExistingHostnames(ctx, client, projectID)
+		if err != nil {
+			return nil, err
+		}
 		if raw, ok := doc["services"].([]any); ok {
 			for _, svc := range raw {
-				if svcMap, ok := svc.(map[string]any); ok {
-					svcMap["override"] = true
+				svcMap, ok := svc.(map[string]any)
+				if !ok {
+					continue
+				}
+				svcMap["override"] = true
+				if hostname, ok := svcMap["hostname"].(string); ok && existing[hostname] {
+					overrideReplacements = append(overrideReplacements, hostname)
 				}
 			}
 		}
@@ -146,6 +160,18 @@ func Import(
 				))
 			}
 		}
+	}
+
+	// B10: surface the destructive blast radius of override=true. Replacing
+	// a service stack tears down its container, deployed code, env vars,
+	// and the SSHFS mount path becomes empty as the new (often empty)
+	// container reattaches. Naming the affected hostnames keeps later
+	// agent reasoning honest about what just happened.
+	if len(overrideReplacements) > 0 {
+		warnings = append(warnings, fmt.Sprintf(
+			"override=true REPLACED existing service stack(s) %v — the previous container, deployed code, env vars, and SSHFS mount contents (/var/www/<hostname>/) on those services are gone. Re-deploy any code that was on them; re-set any per-service env vars. Mount path now reflects the new (likely empty) container.",
+			overrideReplacements,
+		))
 	}
 
 	// Wait for any DELETING services with conflicting hostnames to finish.
@@ -191,6 +217,22 @@ func Import(
 		ServiceErrors: serviceErrors,
 		Warnings:      warnings,
 	}, nil
+}
+
+// listExistingHostnames returns the set of hostnames currently provisioned
+// in the project. Used by Import (override=true) to identify which target
+// services would be REPLACED — destructive — so the response can name
+// them explicitly instead of leaving the wipe silent (B10).
+func listExistingHostnames(ctx context.Context, client platform.Client, projectID string) (map[string]bool, error) {
+	services, err := client.ListServices(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("list services for override warning: %w", err)
+	}
+	out := make(map[string]bool, len(services))
+	for _, svc := range services {
+		out[svc.Name] = true
+	}
+	return out, nil
 }
 
 // extractHostnames parses service hostnames from the parsed import YAML document.

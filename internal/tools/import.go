@@ -37,7 +37,7 @@ func importInputSchema() *jsonschema.Schema {
 			Type:        "string",
 			Description: "Path to a YAML file containing the import definition. Provide either filePath or content.",
 		},
-		"override": flexBoolSchema("Set override: true on every imported service so the API replaces existing service stacks with matching hostnames. Required when re-importing a service that already exists (e.g. to transition READY_TO_DEPLOY to ACTIVE by adding startWithoutCode: true)."),
+		"override": flexBoolSchema("Set override: true on every imported service so the API replaces existing service stacks with matching hostnames. DESTRUCTIVE: replacement tears down the previous container, deployed code, env vars, and the SSHFS mount on those services — back up any uncommitted work first. The response Warnings name the replaced hostnames so the destruction is never silent. Required when re-importing a service that already exists (e.g. to transition READY_TO_DEPLOY to ACTIVE by adding startWithoutCode: true)."),
 	})
 }
 

@@ -18,8 +18,11 @@ Bring it to ACTIVE first by re-importing with `startWithoutCode: true`:
 regenerate the import YAML setting `startWithoutCode: true` on the
 target runtime, then `zerops_import content="<yaml>" override=true`.
 Without `override` the call fails with `serviceStackNameUnavailable`.
-Zerops replaces the service and lifts it to ACTIVE via empty
-`stack.deploy`. Then proceed with the normal first-deploy.
+**Destructive**: override REPLACES the existing service stack — any
+uncommitted work in `/var/www/<hostname>/` is gone after the new
+(empty) container reattaches. Back up first, or write your `zerops.yaml`
+to a non-mount path until the runtime is ACTIVE. The response Warnings
+name the replaced hostnames.
 
 Check `zerops_discover` first. `ACTIVE` is ready; `READY_TO_DEPLOY`
 means re-import before anything else.

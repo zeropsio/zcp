@@ -774,6 +774,89 @@ func TestImport_Override_Disabled_Passthrough(t *testing.T) {
 	}
 }
 
+// TestImport_Override_ReplacementWarning pins B10: when override=true is
+// used and one or more target hostnames already exist in the project, the
+// response Warnings explicitly name the replaced services. The replacement
+// is destructive (container, deployed code, env vars, SSHFS mount all torn
+// down) — leaving it silent let the agent in `develop-ambiguous-state`
+// blow away their scaffolded zerops.yaml + index.php without notice.
+func TestImport_Override_ReplacementWarning(t *testing.T) {
+	t.Parallel()
+	content := `services:
+  - hostname: appdev
+    type: php-nginx@8.4
+    startWithoutCode: true
+  - hostname: brandnew
+    type: nodejs@22
+`
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "appdev", Status: "READY_TO_DEPLOY"},
+		}).
+		WithImportResult(&platform.ImportResult{
+			ProjectID:   "proj-1",
+			ProjectName: "myproject",
+			ServiceStacks: []platform.ImportedServiceStack{
+				{ID: "svc-1", Name: "appdev"},
+				{ID: "svc-2", Name: "brandnew"},
+			},
+		})
+
+	result, err := Import(context.Background(), mock, "proj-1", content, "", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var found string
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "override=true REPLACED") {
+			found = w
+			break
+		}
+	}
+	if found == "" {
+		t.Fatalf("expected destructive-replacement warning when override=true hits a pre-existing service.\nWarnings: %+v", result.Warnings)
+	}
+	if !strings.Contains(found, "appdev") {
+		t.Errorf("warning must name the replaced hostname (appdev), got: %s", found)
+	}
+	// `brandnew` is not pre-existing — it's a fresh import with override=true (a
+	// no-op for that service), so it must NOT appear in the warning.
+	if strings.Contains(found, "brandnew") {
+		t.Errorf("warning must NOT name brand-new hostnames (no replacement happened for them), got: %s", found)
+	}
+}
+
+// TestImport_Override_NoExistingServices_NoWarning pins the inverse: when
+// override=true is set but NONE of the target hostnames pre-exist, no
+// destructive warning fires (the override flag is a no-op for those calls).
+func TestImport_Override_NoExistingServices_NoWarning(t *testing.T) {
+	t.Parallel()
+	content := `services:
+  - hostname: freshapp
+    type: nodejs@22
+    startWithoutCode: true
+`
+	mock := platform.NewMock().
+		WithImportResult(&platform.ImportResult{
+			ProjectID:   "proj-1",
+			ProjectName: "myproject",
+			ServiceStacks: []platform.ImportedServiceStack{
+				{ID: "svc-1", Name: "freshapp"},
+			},
+		})
+
+	result, err := Import(context.Background(), mock, "proj-1", content, "", true)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "override=true REPLACED") {
+			t.Errorf("must not emit destructive warning when no service was actually replaced, got: %s", w)
+		}
+	}
+}
+
 func TestImport_APIError(t *testing.T) {
 	t.Parallel()
 	content := `services:

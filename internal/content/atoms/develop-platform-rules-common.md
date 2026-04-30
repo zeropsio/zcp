@@ -23,3 +23,7 @@ references-atoms: [develop-env-var-channels, develop-first-deploy-env-vars]
 - Service config changes (shared storage, scaling, nginx fragments):
   use `zerops_import` with `override: true` to update existing services.
   This is separate from `zerops_deploy`, which only updates code.
+  **Destructive**: override REPLACES the service stack — the running
+  container, deployed code, per-service env vars, and any
+  work-in-progress on the service's filesystem are all torn down. The
+  response Warnings name the replaced hostnames; back up first.
