@@ -142,3 +142,41 @@ func TestDevelopPlatformRulesLocalAtom_BackgroundTaskCallout(t *testing.T) {
 		t.Error("atom must include an Anti-pattern callout — recognition of the foreground-bash trap before invocation depends on the example being adjacent to the rule")
 	}
 }
+
+// TestDevelopDeployModesAtom_CrossDeployYamlLocation pins B6: the
+// deploy-modes atom must spell out where pre-flight searches for
+// zerops.yaml AND that the source mount is excluded. Tier-3 eval
+// `bootstrap-recipe-static-simple` hit `PREFLIGHT_FAILED: zerops.yaml
+// not found: tried /var/www/appstage, /var/www` because the agent
+// scaffolded under `/var/www/appdev/` (source mount) and pre-flight
+// only consults the per-target mount + project root. The atom names
+// the search order plus the project-root recommendation so the agent
+// places the yaml correctly the first time.
+func TestDevelopDeployModesAtom_CrossDeployYamlLocation(t *testing.T) {
+	t.Parallel()
+
+	atoms, err := ReadAllAtoms()
+	if err != nil {
+		t.Fatalf("ReadAllAtoms: %v", err)
+	}
+	var body string
+	for _, a := range atoms {
+		if a.Name == "develop-deploy-modes.md" {
+			body = a.Content
+			break
+		}
+	}
+	if body == "" {
+		t.Fatal("develop-deploy-modes.md not found in corpus")
+	}
+
+	if !strings.Contains(body, "Where pre-flight finds zerops.yaml") {
+		t.Error("atom must contain a `### Where pre-flight finds zerops.yaml` subsection")
+	}
+	if !strings.Contains(body, "source mount is never searched") {
+		t.Error("atom must explicitly state that the source mount is excluded from pre-flight search — that's the cross-deploy gotcha")
+	}
+	if !strings.Contains(body, "project root") {
+		t.Error("atom must recommend project root as the canonical location for shared zerops.yaml in standard pairs")
+	}
+}
