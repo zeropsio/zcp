@@ -38,8 +38,8 @@ builder emits `WARN: deployFiles paths not found: ...` in
 
 Pre-flight searches by **target hostname**, in this order:
 
-1. **Per-target mount** — on a container, `/var/www/<targetService>/zerops.yaml`; locally, the deploy `workingDir`. <!-- axis-n-keep -->
-2. **Project root fallback** — on a container, `/var/www/zerops.yaml`; locally, `<workingDir>/zerops.yaml`. <!-- axis-n-keep -->
+1. **Per-target subdirectory** — `<projectRoot>/<targetService>/zerops.yaml` (`/var/www/<targetService>/zerops.yaml` in container env). <!-- axis-n-keep -->
+2. **Project root fallback** — `<projectRoot>/zerops.yaml` (`/var/www/zerops.yaml` in container env). <!-- axis-n-keep -->
 
 The **source mount is never searched**. Self-deploy works transparently
 because source == target; cross-deploy
