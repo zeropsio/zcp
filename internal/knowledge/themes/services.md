@@ -132,12 +132,19 @@ Below, **VARS** = config values, **SECRETS** = credentials. Wire ALL cross-servi
 
 ## NATS
 **Type**: `nats` (check live stacks for versions) | **Mode**: optional (default NON_HA), immutable
-**Use for**: **messaging / queue broker for every showcase recipe**. NATS is the canonical queue service for Zerops showcases — the `queue` target in the showcase service list. It is a dedicated broker, NOT a generic KV store or cache substitute. Pub/sub for fan-out, JetStream for persistent queues with delivery guarantees. Workers subscribe to subjects; dashboards publish test messages. The NATS connection is framework-agnostic, which is why it's a better default than a language-bound queue library.
+**Use for**: **messaging / queue broker for every showcase recipe**. NATS is the canonical queue service for Zerops showcases — the `queue` target in the showcase service list. It is a dedicated broker, NOT a generic KV store or cache substitute. Workers subscribe to subjects; dashboards publish test messages. The NATS connection is framework-agnostic, which is why it's a better default than a language-bound queue library.
+
+**Two distinct messaging shapes — pick ONE per recipe and document only that one in yaml comments / KB:**
+- **Core pub/sub + queue groups** — `nc.subscribe('subject', { queue: 'workers' })`. Fire-and-forget delivery; queue groups load-balance across replicas; nothing is persisted server-side. HA story: cluster nodes preserve pub/sub liveness on node loss; **there is no stream state to replicate** because no streams exist. Use this when "fan-out + load balance + at-most-once redelivery" is enough — most showcase recipes.
+- **JetStream streams + durable consumers** — `js = jetstream(nc); await jsm.streams.add({ name, subjects }); js.subscribe('subject', { config: { durable_name: '...' } })`. Persistent message store on top of NATS; durable consumers replay on reconnect; ack/redeliver semantics. HA story: cluster replicates stream state across nodes, surviving node loss without losing acked-but-unprocessed messages. Use this when at-least-once + replay + persistence are required.
+
+**Authoring rule**: when a recipe uses ONLY core pub/sub (no `jetstream(nc)` call, no `JetStreamManager`, no streams created), the import-yaml + KB content must NOT invoke JetStream framing — there's no stream to discuss, and "JetStream replication" claims become misleading at HA tiers. When a recipe uses JetStream, the JetStream framing is the relevant HA story and core pub/sub is irrelevant. Match yaml/KB language to actual code, not to the union of NATS features.
+
 **Canonical hostname**: `queue` (literal) — keeps env var references readable: `${queue_hostname}`, `${queue_port}`, `${queue_user}`, `${queue_password}`. Do not name it `nats` in the showcase target list even though the type is `nats@2.12`.
 **Ports**: 4222 (client), 8222 (HTTP monitoring)
 **Env**: `hostname`, `user` (always `zerops`), `password`, `connectionString`
-**Config**: `JET_STREAM_ENABLED` (default 1), `MAX_PAYLOAD` (default 8 MB, max 64 MB)
-**Gotchas**: Config changes require restart. JetStream HA sync lag 1 min. Set `JET_STREAM_ENABLED=0` for core pub-sub only.
+**Config**: `JET_STREAM_ENABLED` (default 1; the platform enables JetStream by capability — recipes opt in by writing JetStream client code), `MAX_PAYLOAD` (default 8 MB, max 64 MB)
+**Gotchas**: Config changes require restart. JetStream HA sync lag 1 min applies only to recipes that actually open streams. Set `JET_STREAM_ENABLED=0` only if you want to hard-disable the capability across the project.
 **Wiring** (sample hostname: `queue`) — **two supported patterns, pick ONE**:
 
 **Pattern A — separate env vars** (recommended; works with every NATS client library):

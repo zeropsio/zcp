@@ -187,6 +187,19 @@ func writePromptHeader(b *strings.Builder, plan *Plan, kind BriefKind, cb Codeba
 	b.WriteString("Read the engine brief below verbatim and follow it; the recipe-level\n")
 	b.WriteString("context above and the closing notes below the brief are wrapper notes\n")
 	b.WriteString("from the engine.\n\n")
+	// Run-19 prep — `zerops_recipe` is an MCP tool. Sub-agents that
+	// read the brief literally have, in past dogfoods, run
+	// `Bash("zerops_recipe action=foo slug=...")` because the brief
+	// uses the shorthand `<tool> <action> <args>` to refer to a JSON
+	// invocation. That always fails (`command not found`) and wastes a
+	// dispatch round-trip. Make the contract explicit at the top of
+	// every emitted prompt so the next paste-as-shell attempt doesn't
+	// happen.
+	b.WriteString("**Tool-call shape**: `zerops_recipe` is an **MCP tool** invoked as a\n")
+	b.WriteString("JSON tool call (e.g. `{\"action\": \"record-fragment\", \"slug\": \"...\", ...}`).\n")
+	b.WriteString("It is NOT a shell command. The brief uses backtick shorthand\n")
+	b.WriteString("`zerops_recipe action=X slug=Y` to refer to an MCP invocation; do\n")
+	b.WriteString("not run it via Bash.\n\n")
 }
 
 func writePromptRecipeContext(b *strings.Builder, plan *Plan, kind BriefKind, cb Codebase) {

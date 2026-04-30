@@ -193,10 +193,16 @@ func TestEnvREADME_ExtractCharCap(t *testing.T) {
 	}
 }
 
-// TestValidator_EnvREADME_TierPromotionVerb — §2.D: env README must
-// carry tier promotion vocabulary so the porter knows when to move
-// up.
-func TestValidator_EnvREADME_TierPromotionVerb(t *testing.T) {
+// TestValidator_EnvREADME_NoTierPromotionVerbRequirement pins
+// docs/spec-content-surfaces.md §108 ("Tier-promotion narratives —
+// neither reference recipe writes them; cross-tier shifts surface
+// implicitly through the contrast between tiers. Don't.") The earlier
+// `tier-promotion-verb-missing` validator forced "promote/outgrow/
+// upgrade" verbs into env README extracts and contradicted the spec
+// (run-18 §1.4). Validator deleted in run-19 prep; this test guards
+// against re-adding it. A README without any promotion verb must NOT
+// fire the notice.
+func TestValidator_EnvREADME_NoTierPromotionVerbRequirement(t *testing.T) {
 	t.Parallel()
 
 	body := []byte(`# Stage
@@ -210,8 +216,8 @@ This tier runs your app in non-HA mode.
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	if !containsCode(vs, "tier-promotion-verb-missing") {
-		t.Errorf("expected tier-promotion-verb-missing, got %+v", vs)
+	if containsCode(vs, "tier-promotion-verb-missing") {
+		t.Errorf("tier-promotion-verb-missing must not fire — spec §108 forbids tier-promotion narratives; got %+v", vs)
 	}
 }
 

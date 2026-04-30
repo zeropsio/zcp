@@ -78,11 +78,12 @@ framework CLIs via `ssh <hostname>dev "..."`.
 # Recording feature-phase facts
 
 Record every platform-trap, porter-change, scaffold-decision, and
-browser-verification fact via **`zerops_recipe action=record-fact`**
-(the v3 tool) — **NOT** the legacy `zerops_record_fact` tool. v3
-records land in `facts.jsonl` where the classifier and surface
-validators see them; the legacy tool writes to `legacy-facts.jsonl`
-(invisible to v3's classification pipeline).
+browser-verification fact by invoking the **`zerops_recipe` MCP tool**
+with **`action: record-fact`** (a JSON tool call — NOT a shell
+command). Use the v3 `zerops_recipe` tool, **NOT** the legacy
+`zerops_record_fact` tool. v3 records land in `facts.jsonl` where the
+classifier and surface validators see them; the legacy tool writes to
+`legacy-facts.jsonl` (invisible to v3's classification pipeline).
 
 Shape (all fields required — camelCase):
 
@@ -138,9 +139,10 @@ KB bullet), include the prior content verbatim plus your additions in
 the new body. The engine returns the prior body in `response.priorBody`
 on every successful `record-fragment mode=replace` call, so the merge
 baseline is always one tool call away — read it from the immediately
-preceding response or call `zerops_recipe action=status` and inspect
-`Plan.Fragments[<id>]`. Do NOT reconstruct from working memory or grep
-the on-disk README; both lose fragment fidelity.
+preceding response or invoke the `zerops_recipe` MCP tool with
+`action: status` (JSON tool call) and inspect `Plan.Fragments[<id>]`.
+Do NOT reconstruct from working memory or grep the on-disk README;
+both lose fragment fidelity.
 
 Calling `complete-phase phase=feature` without a codebase is also
 valid — it validates ALL touched codebases at once. Use the scoped

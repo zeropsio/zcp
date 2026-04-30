@@ -347,12 +347,21 @@ func TestRecordFragment_RefusesIncompatibleClassification(t *testing.T) {
 		t.Errorf("record-fragment: platform-invariant on KB should accept; got %s", res.Error)
 	}
 
-	// Empty classification: back-compat — accepts.
+	// Empty classification on multi-class surface — refused.
+	//
+	// Run-19 prep: surfaces that admit multiple classes (KB and IG)
+	// REQUIRE Classification at record-time. The earlier back-compat
+	// path silently let agents skip the field, masking the run-18
+	// wrong-surface routing. Single-class surfaces still accept empty
+	// classification (covered by TestRecordFragment_RequiresClassification_OnKBAndIG).
 	res = dispatch(t.Context(), store, RecipeInput{
 		Action: "record-fragment", Slug: "synth-showcase",
 		FragmentID: "codebase/api/integration-guide", Fragment: "scaffold body",
 	})
-	if !res.OK {
-		t.Errorf("record-fragment without classification should accept (back-compat): %s", res.Error)
+	if res.OK {
+		t.Errorf("record-fragment without classification on IG should refuse (run-19 require-classification rule); got OK")
+	}
+	if !strings.Contains(res.Error, "classification is required") {
+		t.Errorf("refusal message must reference required classification; got %q", res.Error)
 	}
 }

@@ -43,13 +43,6 @@ var metaVoiceWords = []string{
 	"the scaffolder", "our scaffold",
 }
 
-// tierPromotionVerbs — at least one must appear in an env README body.
-var tierPromotionVerbs = []string{
-	"promote", "outgrow", "upgrade",
-	"when you move to", "from tier", "to tier",
-	"next tier", "previous tier",
-}
-
 // boldBulletRE matches a markdown bullet that opens with `**...**`
 // (the bold symptom the KB contract requires on every bullet).
 var boldBulletRE = regexp.MustCompile(`(?m)^\s*-\s+\*\*[^*]+\*\*`)

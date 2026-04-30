@@ -19,7 +19,8 @@ GOOD `// /health returns 200 once runtime is ready.`
 BAD  `// /health added per pre-ship contract item 1.`
 
 Produce your codebase's `zerops.yaml` (with inline comments) + record
-5 fragments via `zerops_recipe action=record-fragment`:
+5 fragments by invoking the `zerops_recipe` MCP tool with
+`action: record-fragment` (JSON tool call — NOT a shell command):
 
 - `codebase/<h>/intro` — one paragraph
 - `codebase/<h>/integration-guide` — porter items starting at `### 2.`
@@ -259,9 +260,10 @@ needs to rewrite (rare; prefer extending).
 
 ## record-fragment carries the surface contract
 
-Every successful `zerops_recipe action=record-fragment` response
-carries a `surfaceContract` object describing the surface the fragment
-just landed on:
+Every successful `zerops_recipe` MCP invocation with
+`action: record-fragment` returns a response that carries a
+`surfaceContract` object describing the surface the fragment just
+landed on:
 
 - `name` — surface enum (CODEBASE_IG / CODEBASE_KB / CODEBASE_CLAUDE / …)
 - `reader` — one-sentence description of who reads this surface

@@ -145,6 +145,8 @@ block, skip the comment.
 
 ## Self-validate
 
-`zerops_recipe action=complete-phase phase=env-content` runs
-EnvGates() validators. Fix violations via `record-fragment mode=replace`
-until the gate passes.
+`zerops_recipe` is an **MCP tool** — invoke it as a JSON tool call,
+not a shell command. Invoke `zerops_recipe` with
+`action: complete-phase` and `phase: env-content` to run EnvGates()
+validators. Fix violations by re-invoking `zerops_recipe` with
+`action: record-fragment` and `mode: replace` until the gate passes.

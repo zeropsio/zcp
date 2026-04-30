@@ -427,34 +427,34 @@ func TestDispatch_StitchContent_AssemblesFromFragments(t *testing.T) {
 	sess.Plan = syntheticShowcasePlan()
 	stageScaffoldYAMLs(t, dir, sess.Plan)
 
-	fragments := map[string]string{
-		"root/intro":                        "synth showcase intro",
-		"env/0/intro":                       "AI Agent tier",
-		"env/1/intro":                       "Remote CDE tier",
-		"env/2/intro":                       "Local tier",
-		"env/3/intro":                       "Stage tier",
-		"env/4/intro":                       "Small Prod tier",
-		"env/5/intro":                       "HA Prod tier",
-		"codebase/api/intro":                "api intro",
-		"codebase/api/integration-guide":    "1. Bind to 0.0.0.0",
-		"codebase/api/knowledge-base":       "- **404 on x** — because Y",
-		"codebase/api/claude-md":            initStyleClaudeMD("api"),
-		"codebase/app/intro":                "app intro",
-		"codebase/app/integration-guide":    "1. Bind to 0.0.0.0",
-		"codebase/app/knowledge-base":       "- **404 on x** — because Y",
-		"codebase/app/claude-md":            initStyleClaudeMD("app"),
-		"codebase/worker/intro":             "worker intro",
-		"codebase/worker/integration-guide": "1. queue group",
-		"codebase/worker/knowledge-base":    "- **404 on x** — because Y",
-		"codebase/worker/claude-md":         initStyleClaudeMD("worker"),
+	fragments := []recordFragmentCall{
+		{ID: "root/intro", Body: "synth showcase intro"},
+		{ID: "env/0/intro", Body: "AI Agent tier"},
+		{ID: "env/1/intro", Body: "Remote CDE tier"},
+		{ID: "env/2/intro", Body: "Local tier"},
+		{ID: "env/3/intro", Body: "Stage tier"},
+		{ID: "env/4/intro", Body: "Small Prod tier"},
+		{ID: "env/5/intro", Body: "HA Prod tier"},
+		{ID: "codebase/api/intro", Body: "api intro"},
+		{ID: "codebase/api/integration-guide", Body: "1. Bind to 0.0.0.0", Class: "platform-invariant"},
+		{ID: "codebase/api/knowledge-base", Body: "- **404 on x** — because Y", Class: "platform-invariant"},
+		{ID: "codebase/api/claude-md", Body: initStyleClaudeMD("api")},
+		{ID: "codebase/app/intro", Body: "app intro"},
+		{ID: "codebase/app/integration-guide", Body: "1. Bind to 0.0.0.0", Class: "platform-invariant"},
+		{ID: "codebase/app/knowledge-base", Body: "- **404 on x** — because Y", Class: "platform-invariant"},
+		{ID: "codebase/app/claude-md", Body: initStyleClaudeMD("app")},
+		{ID: "codebase/worker/intro", Body: "worker intro"},
+		{ID: "codebase/worker/integration-guide", Body: "1. queue group", Class: "platform-invariant"},
+		{ID: "codebase/worker/knowledge-base", Body: "- **404 on x** — because Y", Class: "platform-invariant"},
+		{ID: "codebase/worker/claude-md", Body: initStyleClaudeMD("worker")},
 	}
-	for id, body := range fragments {
+	for _, f := range fragments {
 		res := dispatch(t.Context(), store, RecipeInput{
 			Action: "record-fragment", Slug: "synth-showcase",
-			FragmentID: id, Fragment: body,
+			FragmentID: f.ID, Fragment: f.Body, Classification: f.Class,
 		})
 		if !res.OK {
-			t.Fatalf("record-fragment %s: %+v", id, res)
+			t.Fatalf("record-fragment %s: %+v", f.ID, res)
 		}
 	}
 

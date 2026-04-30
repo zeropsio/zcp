@@ -44,11 +44,25 @@ var (
 
 	// Run-18 §3.1 check 3 — internal-slug citation leakage.
 	//
-	// Trailing form: "See: <slug> guide." (with or without backticks
-	// around the slug). Catches the agent's authoring marker that
-	// shipped to porter-facing surfaces in run-17.
+	// Trailing form: a citation verb (See/Cite/Per/Ref/cf) followed by
+	// colon, optional backticked slug, optional "guide" suffix. Catches:
+	//
+	//   See: env-var-model guide.        (run-17 form)
+	//   Cite: managed-services-nats.     (run-18 worker form)
+	//   Cite: `managed-services-nats`.   (run-18 worker backticked)
+	//   Cite: `rolling-deploys`, `managed-services-nats`.   (multi-slug)
+	//   Per: rolling-deploys             (variant)
+	//   Ref: env-var-model               (variant)
+	//   cf: object-storage               (variant)
+	//
+	// Inline prose ("see the http-support guide") does NOT match because
+	// no colon follows the verb — that shape is legitimate per spec §216.
+	// Run-18 caught only `See: <slug> guide`; run-19 prep extends to
+	// every colon-prefixed citation-verb shape because the agent
+	// rephrased to evade the narrower regex (catalog drift signature
+	// per docs/zcprecipator3/system.md §4).
 	slugTrailingCitationRE = regexp.MustCompile(
-		"(?i)\\bSee:\\s*`?[a-z][a-z0-9-]+`?\\s+guide\\b")
+		"(?i)\\b(?:See|Cite|Per|Ref|cf):\\s*`?[a-z][a-z0-9-]+`?")
 	// Backtick form: a citation verb (see / cf / per / cited in) within
 	// a short window of a backticked slug. The window allows optional
 	// articles/connective words ("see the `foo`", "Cited in the `foo`
@@ -128,7 +142,7 @@ func kbBulletAuthoringRefusals(stem, body string) []string {
 	// Check 3 — internal-slug citation leakage.
 	if slugTrailingCitationRE.MatchString(body) {
 		out = append(out,
-			"knowledge-base bullet ends with `See: <slug> guide.` — that's the agent's `zerops_knowledge` tool slug surfacing on porter-facing copy. Cite by inline prose (e.g. \"the L7 balancer doc explains…\") or drop the trailing citation; a porter cannot resolve the slug as a docs URL. Spec §216.")
+			"knowledge-base bullet contains a trailing citation label (`See:`/`Cite:`/`Per:`/`Ref:`/`cf:` followed by a `zerops_knowledge` tool slug). Porters cannot resolve the slug as a docs URL. Cite by inline prose instead (e.g. \"the L7 balancer doc explains…\") or drop the trailing label. Spec §216.")
 	}
 	if slug, ok := hasBacktickKnownSlugCitation(body); ok {
 		out = append(out, fmt.Sprintf(
@@ -181,7 +195,7 @@ func igSlotAuthoringRefusals(body string, hostnames []string) []string {
 	// Check 3 — slug citation in IG body.
 	if slugTrailingCitationRE.MatchString(body) {
 		out = append(out,
-			"integration-guide slot ends with `See: <slug> guide.` — porter-facing surfaces cite by inline prose, not the agent's `zerops_knowledge` tool slug. Spec §216.")
+			"integration-guide slot contains a trailing citation label (`See:`/`Cite:`/`Per:`/`Ref:`/`cf:` followed by a `zerops_knowledge` tool slug). Porter-facing surfaces cite by inline prose. Spec §216.")
 	}
 	if slug, ok := hasBacktickKnownSlugCitation(body); ok {
 		out = append(out, fmt.Sprintf(
@@ -199,7 +213,7 @@ func commentSurfaceSlugCitationRefusals(body, surfaceName string) []string {
 	var out []string
 	if slugTrailingCitationRE.MatchString(body) {
 		out = append(out, fmt.Sprintf(
-			"%s ends with `See: <slug> guide.` — porter-facing comments cite by inline prose, not the agent's tool slug. Spec §216.",
+			"%s contains a trailing citation label (`See:`/`Cite:`/`Per:`/`Ref:`/`cf:` followed by a `zerops_knowledge` tool slug). Porter-facing comments cite by inline prose. Spec §216.",
 			surfaceName))
 	}
 	if slug, ok := hasBacktickKnownSlugCitation(body); ok {

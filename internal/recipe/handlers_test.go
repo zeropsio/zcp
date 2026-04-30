@@ -8,6 +8,15 @@ import (
 	"testing"
 )
 
+// recordFragmentCall is a test-side fixture for batch-dispatching
+// record-fragment calls. The Class field carries the run-19-required
+// Classification for KB/IG fragmentIDs (other surfaces leave it empty).
+type recordFragmentCall struct {
+	ID    string
+	Body  string
+	Class string
+}
+
 // initStyleClaudeMD returns a /init-shape CLAUDE.md body suitable for
 // fixtures that need a valid run-16 claudemd-author output. Big enough
 // to clear the validateCodebaseCLAUDE 200-byte minimum and shape-correct
@@ -273,7 +282,9 @@ func TestDispatch_RecordFragment_RefusesMultiHeadingInIGSlot(t *testing.T) {
 	body := "### 2. Trust the L7\nbody\n### 3. Drain on SIGTERM\nbody"
 	res = dispatch(t.Context(), store, RecipeInput{
 		Action: "record-fragment", Slug: "synth-showcase",
-		FragmentID: "codebase/api/integration-guide/2", Fragment: body,
+		FragmentID:     "codebase/api/integration-guide/2",
+		Fragment:       body,
+		Classification: "platform-invariant",
 	})
 	if res.OK {
 		t.Error("multi-heading slotted IG should be refused (R-15-5)")
@@ -723,34 +734,34 @@ func TestStitch_IGSubsequentItemsArePorterItems(t *testing.T) {
 
 	// Fragment authored by sub-agent starts at ### 2.
 	authored := "### 2. Trust the reverse proxy\n\nSet `trust proxy` so the runtime reads `X-Forwarded-*` correctly."
-	fragmentIDs := map[string]string{
-		"root/intro":                        "intro",
-		"env/0/intro":                       "tier 0",
-		"env/1/intro":                       "tier 1",
-		"env/2/intro":                       "tier 2",
-		"env/3/intro":                       "tier 3",
-		"env/4/intro":                       "tier 4",
-		"env/5/intro":                       "tier 5",
-		"codebase/api/intro":                "api",
-		"codebase/api/integration-guide":    authored,
-		"codebase/api/knowledge-base":       "- **404 on Topic** — prose",
-		"codebase/api/claude-md":            initStyleClaudeMD("api"),
-		"codebase/app/intro":                "app",
-		"codebase/app/integration-guide":    authored,
-		"codebase/app/knowledge-base":       "- **404 on Topic** — prose",
-		"codebase/app/claude-md":            initStyleClaudeMD("app"),
-		"codebase/worker/intro":             "worker",
-		"codebase/worker/integration-guide": authored,
-		"codebase/worker/knowledge-base":    "- **404 on Topic** — prose",
-		"codebase/worker/claude-md":         initStyleClaudeMD("worker"),
+	fragments := []recordFragmentCall{
+		{ID: "root/intro", Body: "intro"},
+		{ID: "env/0/intro", Body: "tier 0"},
+		{ID: "env/1/intro", Body: "tier 1"},
+		{ID: "env/2/intro", Body: "tier 2"},
+		{ID: "env/3/intro", Body: "tier 3"},
+		{ID: "env/4/intro", Body: "tier 4"},
+		{ID: "env/5/intro", Body: "tier 5"},
+		{ID: "codebase/api/intro", Body: "api"},
+		{ID: "codebase/api/integration-guide", Body: authored, Class: "platform-invariant"},
+		{ID: "codebase/api/knowledge-base", Body: "- **404 on Topic** — prose", Class: "platform-invariant"},
+		{ID: "codebase/api/claude-md", Body: initStyleClaudeMD("api")},
+		{ID: "codebase/app/intro", Body: "app"},
+		{ID: "codebase/app/integration-guide", Body: authored, Class: "platform-invariant"},
+		{ID: "codebase/app/knowledge-base", Body: "- **404 on Topic** — prose", Class: "platform-invariant"},
+		{ID: "codebase/app/claude-md", Body: initStyleClaudeMD("app")},
+		{ID: "codebase/worker/intro", Body: "worker"},
+		{ID: "codebase/worker/integration-guide", Body: authored, Class: "platform-invariant"},
+		{ID: "codebase/worker/knowledge-base", Body: "- **404 on Topic** — prose", Class: "platform-invariant"},
+		{ID: "codebase/worker/claude-md", Body: initStyleClaudeMD("worker")},
 	}
-	for id, body := range fragmentIDs {
+	for _, f := range fragments {
 		res := dispatch(t.Context(), store, RecipeInput{
 			Action: "record-fragment", Slug: "synth-showcase",
-			FragmentID: id, Fragment: body,
+			FragmentID: f.ID, Fragment: f.Body, Classification: f.Class,
 		})
 		if !res.OK {
-			t.Fatalf("record-fragment %s: %+v", id, res)
+			t.Fatalf("record-fragment %s: %+v", f.ID, res)
 		}
 	}
 	res := dispatch(t.Context(), store, RecipeInput{
@@ -948,8 +959,9 @@ func TestRecordFragment_ResponseEchoesID(t *testing.T) {
 
 	res := dispatch(t.Context(), store, RecipeInput{
 		Action: "record-fragment", Slug: "synth-showcase",
-		FragmentID: "codebase/api/integration-guide",
-		Fragment:   "scaffold body",
+		FragmentID:     "codebase/api/integration-guide",
+		Fragment:       "scaffold body",
+		Classification: "platform-invariant",
 	})
 	if !res.OK {
 		t.Fatalf("record-fragment: %+v", res)
@@ -987,18 +999,20 @@ func TestRecordFragment_ResponseCarriesSurfaceContract(t *testing.T) {
 	cases := []struct {
 		fragmentID string
 		wantSurf   Surface
+		class      string // empty for single-class surfaces; required for KB/IG
 	}{
-		{"root/intro", SurfaceRootREADME},
-		{"env/2/intro", SurfaceEnvREADME},
-		{"env/2/import-comments/api", SurfaceEnvImportComments},
-		{"codebase/api/integration-guide", SurfaceCodebaseIG},
-		{"codebase/api/knowledge-base", SurfaceCodebaseKB},
-		{"codebase/api/claude-md/notes", SurfaceCodebaseCLAUDE},
+		{"root/intro", SurfaceRootREADME, ""},
+		{"env/2/intro", SurfaceEnvREADME, ""},
+		{"env/2/import-comments/api", SurfaceEnvImportComments, ""},
+		{"codebase/api/integration-guide", SurfaceCodebaseIG, "platform-invariant"},
+		{"codebase/api/knowledge-base", SurfaceCodebaseKB, "platform-invariant"},
+		{"codebase/api/claude-md/notes", SurfaceCodebaseCLAUDE, ""},
 	}
 	for _, tc := range cases {
 		res := dispatch(t.Context(), store, RecipeInput{
 			Action: "record-fragment", Slug: "synth-showcase",
 			FragmentID: tc.fragmentID, Fragment: "stub body",
+			Classification: tc.class,
 		})
 		if !res.OK {
 			t.Errorf("%q: dispatch failed: %+v", tc.fragmentID, res)
@@ -1040,10 +1054,12 @@ func TestRecordFragment_AppendSetsAppendedTrue(t *testing.T) {
 	dispatch(t.Context(), store, RecipeInput{
 		Action: "record-fragment", Slug: "synth-showcase",
 		FragmentID: "codebase/api/integration-guide", Fragment: "scaffold",
+		Classification: "platform-invariant",
 	})
 	res := dispatch(t.Context(), store, RecipeInput{
 		Action: "record-fragment", Slug: "synth-showcase",
 		FragmentID: "codebase/api/integration-guide", Fragment: "feature",
+		Classification: "platform-invariant",
 	})
 	if !res.OK {
 		t.Fatalf("append: %+v", res)
@@ -1107,10 +1123,12 @@ func TestRecordFragment_DefaultModeAppendsOnCodebaseID(t *testing.T) {
 	dispatch(t.Context(), store, RecipeInput{
 		Action: "record-fragment", Slug: "synth-showcase",
 		FragmentID: "codebase/api/integration-guide", Fragment: "first body",
+		Classification: "platform-invariant",
 	})
 	dispatch(t.Context(), store, RecipeInput{
 		Action: "record-fragment", Slug: "synth-showcase",
 		FragmentID: "codebase/api/integration-guide", Fragment: "second body",
+		Classification: "platform-invariant",
 	})
 	got := sess.Plan.Fragments["codebase/api/integration-guide"]
 	if got != "first body\n\nsecond body" {
@@ -1135,11 +1153,13 @@ func TestRecordFragment_ModeReplaceOverwrites(t *testing.T) {
 	dispatch(t.Context(), store, RecipeInput{
 		Action: "record-fragment", Slug: "synth-showcase",
 		FragmentID: "codebase/api/integration-guide", Fragment: "first body",
+		Classification: "platform-invariant",
 	})
 	res := dispatch(t.Context(), store, RecipeInput{
 		Action: "record-fragment", Slug: "synth-showcase",
 		FragmentID: "codebase/api/integration-guide", Fragment: "corrected body",
-		Mode: "replace",
+		Mode:           "replace",
+		Classification: "platform-invariant",
 	})
 	if !res.OK {
 		t.Fatalf("replace dispatch: %+v", res)
@@ -1202,15 +1222,17 @@ func TestRecordFragment_ReplaceReturnsPriorBody(t *testing.T) {
 
 	dispatch(t.Context(), store, RecipeInput{
 		Action: "record-fragment", Slug: "synth-showcase",
-		FragmentID: "codebase/api/integration-guide",
-		Fragment:   "ORIGINAL\n",
+		FragmentID:     "codebase/api/integration-guide",
+		Fragment:       "ORIGINAL\n",
+		Classification: "platform-invariant",
 	})
 
 	res := dispatch(t.Context(), store, RecipeInput{
 		Action: "record-fragment", Slug: "synth-showcase",
-		FragmentID: "codebase/api/integration-guide",
-		Fragment:   "REPLACED\n",
-		Mode:       "replace",
+		FragmentID:     "codebase/api/integration-guide",
+		Fragment:       "REPLACED\n",
+		Mode:           "replace",
+		Classification: "platform-invariant",
 	})
 	if !res.OK {
 		t.Fatalf("replace dispatch: %+v", res)
@@ -1238,10 +1260,12 @@ func TestRecordFragment_AppendDoesNotReturnPriorBody(t *testing.T) {
 	dispatch(t.Context(), store, RecipeInput{
 		Action: "record-fragment", Slug: "synth-showcase",
 		FragmentID: "codebase/api/integration-guide", Fragment: "first",
+		Classification: "platform-invariant",
 	})
 	res := dispatch(t.Context(), store, RecipeInput{
 		Action: "record-fragment", Slug: "synth-showcase",
 		FragmentID: "codebase/api/integration-guide", Fragment: "second",
+		Classification: "platform-invariant",
 	})
 	if !res.OK {
 		t.Fatalf("append: %+v", res)
@@ -1396,8 +1420,9 @@ func TestDispatch_CompletePhaseScaffold_AutoStitchesCodebases(t *testing.T) {
 
 	dispatch(t.Context(), store, RecipeInput{
 		Action: "record-fragment", Slug: "synth-showcase",
-		FragmentID: "codebase/api/integration-guide",
-		Fragment:   "### 2. Bind 0.0.0.0\n\nLoopback is unreachable.\n",
+		FragmentID:     "codebase/api/integration-guide",
+		Fragment:       "### 2. Bind 0.0.0.0\n\nLoopback is unreachable.\n",
+		Classification: "platform-invariant",
 	})
 
 	dispatch(t.Context(), store, RecipeInput{
@@ -1441,13 +1466,15 @@ func TestDispatch_CompletePhase_CodebaseScoped_OnlyValidatesNamedCodebase(t *tes
 	// ordered-list fires); app gets a clean IG.
 	dispatch(t.Context(), store, RecipeInput{
 		Action: "record-fragment", Slug: "synth-showcase",
-		FragmentID: "codebase/api/integration-guide",
-		Fragment:   "1. plain ordered\n2. list shape\n",
+		FragmentID:     "codebase/api/integration-guide",
+		Fragment:       "1. plain ordered\n2. list shape\n",
+		Classification: "platform-invariant",
 	})
 	dispatch(t.Context(), store, RecipeInput{
 		Action: "record-fragment", Slug: "synth-showcase",
-		FragmentID: "codebase/app/integration-guide",
-		Fragment:   "### 2. Bind 0.0.0.0\n\nLoopback is unreachable.\n### 3. Use `vite preview`\n\nDev mode is wrong for prod.\n### 4. Object-storage path style\n\nForce path style.\n### 5. Trust proxy\n\nBehind L7.\n",
+		FragmentID:     "codebase/app/integration-guide",
+		Fragment:       "### 2. Bind 0.0.0.0\n\nLoopback is unreachable.\n### 3. Use `vite preview`\n\nDev mode is wrong for prod.\n### 4. Object-storage path style\n\nForce path style.\n### 5. Trust proxy\n\nBehind L7.\n",
+		Classification: "platform-invariant",
 	})
 
 	apiResult := dispatch(t.Context(), store, RecipeInput{

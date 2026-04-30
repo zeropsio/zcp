@@ -315,7 +315,7 @@ func categorizeKBRefusal(msg string) string {
 		return "scaffold-wildcard-proxy"
 	case strings.Contains(msg, "UI element"):
 		return "scaffold-ui-noun"
-	case strings.Contains(msg, "See: <slug>"):
+	case strings.Contains(msg, "trailing citation label"):
 		return "slug-trailing"
 	case strings.Contains(msg, "backticked"):
 		return "slug-backtick"

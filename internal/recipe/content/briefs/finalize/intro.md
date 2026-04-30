@@ -8,8 +8,9 @@ author. Never write "the scaffold", "the recipe author", "we chose",
 
 Your fragments are mechanical: root README intro, per-tier env READMEs,
 per-tier per-service import.yaml comments. Each fragment overwrites
-(no append-on-extend semantics in the finalize set). Use
-`zerops_recipe action=record-fragment` for every fragment.
+(no append-on-extend semantics in the finalize set). Invoke the
+`zerops_recipe` MCP tool with `action: record-fragment` (JSON tool
+call — NOT a shell command) for every fragment.
 
 Finalize fragments are NOT KB / IG / CLAUDE.md fragments — those
 landed in scaffold + feature phases and are already stitched. Do

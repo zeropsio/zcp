@@ -26,11 +26,12 @@ func TestRefinementReplace_ValidatorsViolate_FragmentReverts(t *testing.T) {
 	// validateCodebaseIG fires `codebase-ig-plain-ordered-list` on the
 	// assembled README post-replace.
 	in := RecipeInput{
-		Action:     "record-fragment",
-		Slug:       sess.Slug,
-		FragmentID: fragmentID,
-		Fragment:   "### 2. Trust the reverse proxy\n\n1. plain ordered\n2. list shape\n",
-		Mode:       "replace",
+		Action:         "record-fragment",
+		Slug:           sess.Slug,
+		FragmentID:     fragmentID,
+		Fragment:       "### 2. Trust the reverse proxy\n\n1. plain ordered\n2. list shape\n",
+		Mode:           "replace",
+		Classification: "platform-invariant",
 	}
 	r := handleRecordFragment(sess, in, RecipeResult{Action: "record-fragment", Slug: sess.Slug})
 
@@ -63,11 +64,12 @@ func TestRefinementReplace_ValidatorsPass_FragmentChanged(t *testing.T) {
 	// Replace body with a clean H3 that introduces no new violations.
 	newBody := "### 2. Trust the L7 proxy for `request.ip` and HTTPS\n\nWithout `trust proxy`, NestJS sees the balancer's internal IP.\n"
 	in := RecipeInput{
-		Action:     "record-fragment",
-		Slug:       sess.Slug,
-		FragmentID: fragmentID,
-		Fragment:   newBody,
-		Mode:       "replace",
+		Action:         "record-fragment",
+		Slug:           sess.Slug,
+		FragmentID:     fragmentID,
+		Fragment:       newBody,
+		Mode:           "replace",
+		Classification: "platform-invariant",
 	}
 	r := handleRecordFragment(sess, in, RecipeResult{Action: "record-fragment", Slug: sess.Slug})
 
@@ -121,11 +123,12 @@ func TestRefinementReplace_NonRefinementPhase_BypassesWrapper(t *testing.T) {
 	sess.Current = PhaseCodebaseContent
 
 	in := RecipeInput{
-		Action:     "record-fragment",
-		Slug:       sess.Slug,
-		FragmentID: "codebase/api/integration-guide/2",
-		Fragment:   "### 2. Trust the reverse proxy\n\n1. plain\n2. ordered\n",
-		Mode:       "replace",
+		Action:         "record-fragment",
+		Slug:           sess.Slug,
+		FragmentID:     "codebase/api/integration-guide/2",
+		Fragment:       "### 2. Trust the reverse proxy\n\n1. plain\n2. ordered\n",
+		Mode:           "replace",
+		Classification: "platform-invariant",
 	}
 	r := handleRecordFragment(sess, in, RecipeResult{Action: "record-fragment", Slug: sess.Slug})
 	if r.Error != "" {

@@ -408,8 +408,33 @@ func handleRecordFragment(sess *Session, in RecipeInput, r RecipeResult) RecipeR
 	// F.3 — classification × surface compatibility refusal. Runs BEFORE
 	// recordFragment so an incompatible classification never touches the
 	// plan's fragment store.
-	if in.Classification != "" {
-		if surf, ok := SurfaceFromFragmentID(in.FragmentID); ok {
+	//
+	// Run-19 prep: surfaces that admit MULTIPLE compatible classes
+	// (KB takes platform-invariant + intersection; IG takes
+	// platform-invariant + scaffold-decision-config + scaffold-decision-
+	// code) REQUIRE classification at record-time. Run-18 surfaced the
+	// failure mode: codebase-content-app submitted 5 KB bullets without
+	// Classification, the optional check skipped, and four bullets with
+	// agent-set candidateClass of framework-quirk / library-metadata /
+	// self-inflicted shipped to porter-facing KB despite spec §337-347
+	// forbidding any surface for those classes. Single-class surfaces
+	// (zerops-yaml-comments, CLAUDE.md, intro) keep classification
+	// optional — the surface itself disambiguates.
+	if surf, ok := SurfaceFromFragmentID(in.FragmentID); ok {
+		// Intro fragments (`codebase/<h>/intro`, `env/<N>/intro`,
+		// `root/intro`) are 1-2 sentence engine-shaped extracts — they
+		// don't carry classified facts, so the require-classification
+		// rule doesn't apply even though the legacy SurfaceFromFragmentID
+		// maps codebase intros to IG. Other intro fragmentIDs are
+		// multi-surface in their own right.
+		isIntro := strings.HasSuffix(in.FragmentID, "/intro") || in.FragmentID == fragmentIDRoot
+		if !isIntro && in.Classification == "" && surfaceRequiresClassification(surf) {
+			r.Error = fmt.Sprintf(
+				"record-fragment: classification is required for fragments on surface %q (multiple spec-compatible classes; engine cannot disambiguate). Set the `classification` field to one of: %s. See docs/spec-content-surfaces.md#classification--surface-compatibility.",
+				surf, surfaceClassesList(surf))
+			return r
+		}
+		if in.Classification != "" {
 			if err := classificationCompatibleWithSurface(Classification(in.Classification), surf); err != nil {
 				r.Error = "record-fragment: " + err.Error()
 				return r

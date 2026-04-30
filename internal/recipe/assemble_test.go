@@ -417,16 +417,18 @@ func TestHandler_RecordFragment_AppendVsOverwrite(t *testing.T) {
 	// Append semantics — codebase IG extended by a feature sub-agent.
 	res := dispatch(t.Context(), store, RecipeInput{
 		Action: "record-fragment", Slug: "synth-showcase",
-		FragmentID: "codebase/api/integration-guide",
-		Fragment:   "scaffold body",
+		FragmentID:     "codebase/api/integration-guide",
+		Fragment:       "scaffold body",
+		Classification: "platform-invariant",
 	})
 	if !res.OK {
 		t.Fatalf("record scaffold IG: %+v", res)
 	}
 	res = dispatch(t.Context(), store, RecipeInput{
 		Action: "record-fragment", Slug: "synth-showcase",
-		FragmentID: "codebase/api/integration-guide",
-		Fragment:   "feature body",
+		FragmentID:     "codebase/api/integration-guide",
+		Fragment:       "feature body",
+		Classification: "platform-invariant",
 	})
 	if !res.OK {
 		t.Fatalf("record feature IG: %+v", res)
@@ -614,30 +616,39 @@ func TestAssemble_DeliverableSplit(t *testing.T) {
 // fillAllFragments populates every fragment id the synthetic plan
 // declares so stitchContent runs without surfacing missing ids. Shared
 // between tests that need a clean assemble.
+//
+// Run-19 prep: KB/IG fragmentIDs require Classification at record-time;
+// we set "platform-invariant" by default since the placeholder bodies
+// describe a generic platform trap.
 func fillAllFragments(store *Store, plan *Plan) error {
-	ids := map[string]string{
-		"root/intro": "intro",
+	type frag struct {
+		id, body, class string
 	}
-	for i := range Tiers() {
-		ids[fmt.Sprintf("env/%d/intro", i)] = fmt.Sprintf("tier %d", i)
+	tiers := Tiers()
+	frags := make([]frag, 0, 1+len(tiers)+4*len(plan.Codebases))
+	frags = append(frags, frag{id: "root/intro", body: "intro"})
+	for i := range tiers {
+		frags = append(frags, frag{id: fmt.Sprintf("env/%d/intro", i), body: fmt.Sprintf("tier %d", i)})
 	}
 	for _, cb := range plan.Codebases {
 		base := "codebase/" + cb.Hostname
-		ids[base+"/intro"] = "cb intro"
-		ids[base+"/integration-guide"] = "1. IG"
-		ids[base+"/knowledge-base"] = "- **404 on x** — because"
-		// Run-16 §6.7a — single-slot /init-shape body. Must clear the
-		// validateCodebaseCLAUDE 200-byte minimum and the 2-4 ## section
-		// slot-shape refusal.
-		ids[base+"/claude-md"] = "# " + cb.Hostname + "\n\nFramework scaffold for the showcase.\n\n## Build & run\n\n- npm install\n- npm test\n\n## Architecture\n\n- src/main.ts — bootstrap\n- src/items/ — items domain\n"
+		frags = append(frags,
+			frag{id: base + "/intro", body: "cb intro"},
+			frag{id: base + "/integration-guide", body: "1. IG", class: "platform-invariant"},
+			frag{id: base + "/knowledge-base", body: "- **404 on x** — because", class: "platform-invariant"},
+			// Run-16 §6.7a — single-slot /init-shape body. Must clear
+			// the validateCodebaseCLAUDE 200-byte minimum and the 2-4
+			// `## ` section slot-shape refusal.
+			frag{id: base + "/claude-md", body: "# " + cb.Hostname + "\n\nFramework scaffold for the showcase.\n\n## Build & run\n\n- npm install\n- npm test\n\n## Architecture\n\n- src/main.ts — bootstrap\n- src/items/ — items domain\n"},
+		)
 	}
-	for id, body := range ids {
+	for _, f := range frags {
 		res := dispatch(context.Background(), store, RecipeInput{
 			Action: "record-fragment", Slug: plan.Slug,
-			FragmentID: id, Fragment: body,
+			FragmentID: f.id, Fragment: f.body, Classification: f.class,
 		})
 		if !res.OK {
-			return fmt.Errorf("record-fragment %s: %s", id, res.Error)
+			return fmt.Errorf("record-fragment %s: %s", f.id, res.Error)
 		}
 	}
 	return nil

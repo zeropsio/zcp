@@ -30,6 +30,13 @@ read the corresponding `<SourceRoot>/zerops.yaml` block.
 The engine refuses incompatible (classification, fragmentId) pairs at
 `record-fragment` time. Use this table to route every recorded fact:
 
+> **Classification is REQUIRED on KB and IG fragmentIDs** —
+> `record-fragment` refuses any KB or IG call without an explicit
+> `classification` field set to one of the values in the table below.
+> Every IG/KB record-fragment call you issue MUST include the field.
+> Single-class surfaces (zerops-yaml-comments, claude-md, intros)
+> accept empty classification because the surface itself disambiguates.
+
 | Classification | Compatible surfaces | Refused with redirect |
 |---|---|---|
 | platform-invariant | KB, IG (if porter applies a diff) | CLAUDE.md (→ KB), zerops.yaml comments (→ IG/KB) |
@@ -280,10 +287,16 @@ line).
 
 ## Self-validate
 
-Call `zerops_recipe action=complete-phase phase=codebase-content
-codebase=<host>` to run codebase-scoped validators against your
-codebase only. Fix violations via `record-fragment mode=replace`
-until the gate passes, then terminate.
+`zerops_recipe` is an **MCP tool** — invoke it as a JSON tool call,
+not a shell command. The brief uses the shorthand
+`<tool> <action> <args>` to refer to a JSON invocation; the actual
+call shape is `{"action": "...", "slug": "...", ...}`.
+
+Invoke the `zerops_recipe` MCP tool with `action: complete-phase`,
+`phase: codebase-content`, and `codebase: <host>` to run codebase-
+scoped validators against your codebase only. Fix violations by
+re-invoking `zerops_recipe` with `action: record-fragment` and
+`mode: replace` until the gate passes, then terminate.
 
 ## What you do NOT author
 

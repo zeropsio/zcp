@@ -265,13 +265,28 @@ func SurfaceFromFragmentID(fragmentID string) (Surface, bool) {
 			return "", false
 		}
 		tail := rest[slash+1:]
-		switch tail {
-		case fragmentTailIntro, "integration-guide":
+		switch {
+		case tail == fragmentTailIntro:
 			return SurfaceCodebaseIG, true
-		case "knowledge-base":
+		case tail == "integration-guide",
+			strings.HasPrefix(tail, "integration-guide/"):
+			// Both legacy non-slotted (`integration-guide`) and slotted
+			// (`integration-guide/<n>`) shapes resolve to IG. Without the
+			// slotted branch the run-15 §F.3 classification refusal
+			// silently bypasses every IG slot the agent records — the
+			// run-18 §6.5 codebase-content path uses the slotted form.
+			return SurfaceCodebaseIG, true
+		case tail == "knowledge-base":
 			return SurfaceCodebaseKB, true
-		case "claude-md/service-facts", "claude-md/notes":
+		case tail == "claude-md",
+			strings.HasPrefix(tail, "claude-md/"):
+			// Run-15 collapsed CLAUDE.md to a single fragment id
+			// (`codebase/<h>/claude-md`); the legacy split forms
+			// (`claude-md/service-facts`, `claude-md/notes`) remain
+			// recognized for back-compat.
 			return SurfaceCodebaseCLAUDE, true
+		case strings.HasPrefix(tail, "zerops-yaml-comments/"):
+			return SurfaceCodebaseZeropsComments, true
 		}
 		return "", false
 	}

@@ -374,3 +374,44 @@ func surfaceList(ss []Surface) string {
 	}
 	return strings.Join(out, ", ")
 }
+
+// surfaceRequiresClassification reports whether a surface admits more
+// than one spec-compatible class. Multi-class surfaces require the
+// agent to set Classification on every record-fragment call so the
+// engine can refuse incompatible classes deterministically (run-19
+// prep — closes the run-18 §1.2.4 / §1.2.5 wrong-surface routing).
+//
+// Single-class surfaces (zerops-yaml-comments only takes
+// scaffold-decision; CLAUDE.md only takes operational; intro and
+// import-comments are engine-emitted or have no classification
+// discriminator) keep classification optional.
+func surfaceRequiresClassification(s Surface) bool {
+	switch s {
+	case SurfaceCodebaseKB, SurfaceCodebaseIG:
+		return true
+	case SurfaceRootREADME, SurfaceEnvREADME, SurfaceEnvImportComments,
+		SurfaceCodebaseCLAUDE, SurfaceCodebaseZeropsComments:
+		return false
+	}
+	return false
+}
+
+// surfaceClassesList renders the spec-compatible classes for a surface,
+// used in the require-classification refusal message so the agent
+// reads the valid options inline instead of having to consult the spec.
+func surfaceClassesList(s Surface) string {
+	allClasses := []Classification{
+		ClassPlatformInvariant, ClassIntersection, ClassScaffoldDecision,
+		ClassOperational,
+	}
+	var compat []string
+	for _, c := range allClasses {
+		if slices.Contains(compatibleSurfaces(c), s) {
+			compat = append(compat, string(c))
+		}
+	}
+	if len(compat) == 0 {
+		return "(no compatible classes — surface accepts no facts)"
+	}
+	return strings.Join(compat, ", ")
+}

@@ -101,10 +101,13 @@ func validateEnvREADME(_ context.Context, path string, body []byte, _ SurfaceInp
 		vs = append(vs, notice("meta-agent-voice", path,
 			"env README is porter-facing; contains meta-agent-voice words (agent, zerops_knowledge, sub-agent, scaffolder)"))
 	}
-	if !containsAny(s, tierPromotionVerbs) {
-		vs = append(vs, notice("tier-promotion-verb-missing", path,
-			"env README must teach when to outgrow this tier (promote/outgrow/upgrade/from tier N)"))
-	}
+	// Run-19 prep: the legacy `tier-promotion-verb-missing` notice was
+	// removed because it forced "promote/outgrow/upgrade" verbs into
+	// every env README extract and directly contradicted
+	// docs/spec-content-surfaces.md §108 ("Tier-promotion narratives —
+	// don't"). Tier shifts surface implicitly through the contrast
+	// between tier yamls; this validator was the run-18 §1.4 axis the
+	// spec resolves on the spec's side.
 	return vs, nil
 }
 
