@@ -65,9 +65,9 @@ Each opens a GitHub PR in `zeropsio/recipes`. Merge, then `zcp sync cache-clear 
 
 ## Refs
 
-- B3 round-1 commit: `83a5d820 fix(recipe-laravel): flag APP_KEY base64 prefix requirement (B3)` — recipe markdown edits local-only (`.md` is gitignored), test pin made CI-safe via skip-on-stub.
-- Codex adversarial review verdict: WRONG-SCOPE — recipe prose changes don't fix the `.import.yml` source of the bad default.
-- Tier-2 eval triage: `/Users/macbook/Documents/Zerops-MCP-evals/2026-04-30/TIER2-TRIAGE.md` §B3.
+- **Supersedes** `plans/backlog/laravel-app-key-base64-prefix.md` (be8b4846, Phase 1 closeout B3 entry). Same APP_KEY observation; this entry replaces it with the resolved fix direction (drop preprocessor APP_KEY + manual `key:generate`) plus the syslog logging follow-up.
+- Tier-2 eval triage: `/Users/macbook/Documents/Zerops-MCP-evals/2026-04-30/TIER2-TRIAGE.md` §B3 — sole eval signal grounding the APP_KEY portion. The syslog portion is operator follow-up, NOT eval-grounded; bundling is for shipping convenience (same recipes, same `zcp sync push` round).
+- B3 round-1 attempt removed: the previous local commit `83a5d820 fix(recipe-laravel): flag APP_KEY base64 prefix requirement (B3)` was dropped during cleanup because its `.md` recipe edits were gitignored and didn't ship; the test pin without behavior change was misleading. The real fix lives here as a deferred plan.
 - Recipe import templates: `internal/knowledge/recipes/laravel-minimal.import.yml:14`, `internal/knowledge/recipes/laravel-showcase.import.yml:16`.
 - Recipe knowledge (gitignored): `internal/knowledge/recipes/laravel-minimal.md`, `internal/knowledge/recipes/laravel-showcase.md`.
 - Sync workflow: `zcp sync push recipes <slug>`, `zcp sync cache-clear`, `zcp sync pull recipes`.
