@@ -214,7 +214,7 @@ func recordDeployBuildStatusGate(
 			WithRecoveryStatus())
 	}
 	switch latest.Status {
-	case "ACTIVE":
+	case statusActive:
 		return nil
 	case "BUILDING", "DEPLOYING", "PREPARING_RUNTIME", "WAITING_TO_BUILD", "WAITING_TO_DEPLOY", "UPLOADING":
 		return convertError(platform.NewPlatformError(
@@ -222,7 +222,7 @@ func recordDeployBuildStatusGate(
 			fmt.Sprintf("record-deploy: latest appVersion is still in flight (status=%s) — wait for ACTIVE before recording the deploy", latest.Status),
 			"Poll zerops_events serviceHostname=\""+targetService+"\" until the topmost appVersion event reports Status=ACTIVE, then re-run record-deploy. Pushes transmit instantly; webhook/actions builds run for tens of seconds."),
 			WithRecoveryStatus())
-	case "BUILD_FAILED", "DEPLOY_FAILED", "PREPARING_RUNTIME_FAILED", "CANCELED":
+	case statusBuildFailed, statusDeployFailed, statusPreparingRuntimeFailed, statusCanceled:
 		return convertError(platform.NewPlatformError(
 			platform.ErrPrerequisiteMissing,
 			fmt.Sprintf("record-deploy: latest appVersion did not land successfully (status=%s) — there is no successful deploy to record", latest.Status),
