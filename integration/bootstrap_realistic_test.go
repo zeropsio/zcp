@@ -141,7 +141,7 @@ func setupRealisticServer(t *testing.T, mock *platform.Mock) (*mcp.ClientSession
 	tools.RegisterDeploySSH(mcpSrv, mock, nopHTTPDoer{}, projectID, &nopSSH{}, authInfo, logFetcher, runtime.Info{}, "", engine)
 	tools.RegisterSubdomain(mcpSrv, mock, nopHTTPDoer{}, projectID)
 	tools.RegisterLogs(mcpSrv, mock, logFetcher, projectID)
-	tools.RegisterEvents(mcpSrv, mock, projectID)
+	tools.RegisterEvents(mcpSrv, mock, logFetcher, projectID)
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()

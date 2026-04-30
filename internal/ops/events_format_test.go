@@ -113,7 +113,7 @@ func TestEvents_StatusHints(t *testing.T) {
 				ID: "av4", ServiceStackID: "svc-1", Status: statusBuildFailed,
 				Created: "2024-01-01T00:04:00Z",
 			},
-			wantHint: "FAILED: Build failed. Read failureClass + description on this event and use zerops_logs serviceHostname={service} facility=application since=5m for the build container output. Don't re-call zerops_deploy until the cause is identified — re-running without a fix loops the failure.",
+			wantHint: "FAILED: Build failed. Read this event's `failureClass` + `failureCause` for the structured diagnosis (populated when LogFetcher is available — same shape as DeployResult.FailureClassification). Tail `zerops_logs serviceHostname={service} facility=application since=5m` for full build-container output. Don't re-call zerops_deploy until the cause is identified — re-running without a fix loops the failure.",
 		},
 		{
 			name: "appVersion DEPLOYING",
@@ -179,7 +179,7 @@ func TestEvents_StatusHints(t *testing.T) {
 				WithProcessEvents(processes).
 				WithAppVersionEvents(appVersions)
 
-			result, err := Events(context.Background(), mock, "proj-1", "", 50)
+			result, err := Events(context.Background(), mock, nil, "proj-1", "", 50)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -218,7 +218,7 @@ func TestEvents_InternalActionsFiltered(t *testing.T) {
 		WithProcessEvents(processes).
 		WithAppVersionEvents(nil)
 
-	result, err := Events(context.Background(), mock, "proj-1", "", 50)
+	result, err := Events(context.Background(), mock, nil, "proj-1", "", 50)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestEvents_FailReasonPropagated(t *testing.T) {
 		WithProcessEvents(processes).
 		WithAppVersionEvents(nil)
 
-	result, err := Events(context.Background(), mock, "proj-1", "", 50)
+	result, err := Events(context.Background(), mock, nil, "proj-1", "", 50)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -24,7 +24,7 @@ func TestEventsTool_Basic(t *testing.T) {
 		WithAppVersionEvents([]platform.AppVersionEvent{})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEvents(srv, mock, "proj-1")
+	RegisterEvents(srv, mock, nil, "proj-1")
 
 	result := callTool(t, srv, "zerops_events", nil)
 
@@ -57,7 +57,7 @@ func TestEventsTool_WithService(t *testing.T) {
 		WithAppVersionEvents([]platform.AppVersionEvent{})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEvents(srv, mock, "proj-1")
+	RegisterEvents(srv, mock, nil, "proj-1")
 
 	result := callTool(t, srv, "zerops_events", map[string]any{"serviceHostname": "api"})
 
@@ -84,7 +84,7 @@ func TestEventsTool_WithLimit(t *testing.T) {
 		WithAppVersionEvents([]platform.AppVersionEvent{})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEvents(srv, mock, "proj-1")
+	RegisterEvents(srv, mock, nil, "proj-1")
 
 	result := callTool(t, srv, "zerops_events", map[string]any{"limit": 5})
 
@@ -99,7 +99,7 @@ func TestEventsTool_Error(t *testing.T) {
 		WithError("SearchProcesses", platform.NewPlatformError(platform.ErrAPIError, "API error", ""))
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterEvents(srv, mock, "proj-1")
+	RegisterEvents(srv, mock, nil, "proj-1")
 
 	result := callTool(t, srv, "zerops_events", nil)
 

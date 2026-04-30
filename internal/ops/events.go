@@ -26,18 +26,29 @@ type EventsSummary struct {
 }
 
 // TimelineEvent represents a single event in the activity timeline.
+//
+// FailureClass + FailureCause carry the structured classification for
+// failed appVersion events (BUILD_FAILED / DEPLOY_FAILED /
+// PREPARING_RUNTIME_FAILED). They mirror DeployResult.FailureClassification
+// from the synchronous deploy path so async webhook/actions builds get
+// the same diagnostic vocabulary the agent already knows from
+// `zerops_deploy strategy="push-dev"` failures. Empty when the event
+// is non-failure or a LogFetcher was not provided. C3 closure (audit
+// 2026-04-29 + round-2 follow-up).
 type TimelineEvent struct {
-	Timestamp  string `json:"timestamp"`
-	Type       string `json:"type"`
-	Action     string `json:"action"`
-	Status     string `json:"status"`
-	Service    string `json:"service"`
-	Detail     string `json:"detail,omitempty"`
-	Duration   string `json:"duration,omitempty"`
-	User       string `json:"user,omitempty"`
-	ProcessID  string `json:"processId,omitempty"`
-	FailReason string `json:"failReason,omitempty"`
-	Hint       string `json:"hint,omitempty"`
+	Timestamp    string `json:"timestamp"`
+	Type         string `json:"type"`
+	Action       string `json:"action"`
+	Status       string `json:"status"`
+	Service      string `json:"service"`
+	Detail       string `json:"detail,omitempty"`
+	Duration     string `json:"duration,omitempty"`
+	User         string `json:"user,omitempty"`
+	ProcessID    string `json:"processId,omitempty"`
+	FailReason   string `json:"failReason,omitempty"`
+	FailureClass string `json:"failureClass,omitempty"`
+	FailureCause string `json:"failureCause,omitempty"`
+	Hint         string `json:"hint,omitempty"`
 }
 
 // Event type constants.
@@ -91,7 +102,7 @@ func isInternalAction(actionName string) bool {
 var appVersionHintMap = map[string]string{
 	statusActive:               "DEPLOYED: App version is deployed and running. Build pipeline complete. No further polling needed.",
 	statusBuilding:             "IN_PROGRESS: Build is running. Continue polling.",
-	statusBuildFailed:          "FAILED: Build failed. Read failureClass + description on this event and use zerops_logs serviceHostname={service} facility=application since=5m for the build container output. Don't re-call zerops_deploy until the cause is identified — re-running without a fix loops the failure.",
+	statusBuildFailed:          "FAILED: Build failed. Read this event's `failureClass` + `failureCause` for the structured diagnosis (populated when LogFetcher is available — same shape as DeployResult.FailureClassification). Tail `zerops_logs serviceHostname={service} facility=application since=5m` for full build-container output. Don't re-call zerops_deploy until the cause is identified — re-running without a fix loops the failure.",
 	"DEPLOYING":                "IN_PROGRESS: Deploy is running. Continue polling.",
 	"PREPARING_RUNTIME_FAILED": "FAILED: run.prepareCommands exited non-zero. Check buildLogs for stderr. Common causes: missing sudo prefix (containers run as zerops user), wrong package name (Alpine PHP: php84-<ext>).",
 	"DEPLOY_FAILED":            "FAILED: run.initCommands crashed the new container on startup (build succeeded). The deploy response 'error' field identifies the failing command. Fetch runtime stderr with zerops_logs serviceHostname={service} severity=ERROR since=5m — NOT buildLogs (that's build container output).",
@@ -108,10 +119,17 @@ func statusHint(status string, hints map[string]string) string {
 const defaultEventsLimit = 50
 
 // Events fetches and merges the project activity timeline.
-// Parallel fetch of processes, app versions, and services.
+// Parallel fetch of processes, app versions, and services. When fetcher
+// is non-nil, failed appVersion events are enriched with structured
+// FailureClass + FailureCause via the deploy-failure classifier — same
+// classification taxonomy the synchronous deploy path produces, so the
+// agent gets a unified diagnostic vocabulary across sync and async
+// build paths. fetcher=nil keeps the call lean (no log round-trip), used
+// by tests and any callsite that only needs metadata.
 func Events(
 	ctx context.Context,
 	client platform.Client,
+	fetcher platform.LogFetcher,
 	projectID string,
 	serviceHostname string,
 	limit int,
@@ -205,7 +223,8 @@ func Events(
 	}
 
 	// Map app version events.
-	for _, av := range appVersions {
+	for i := range appVersions {
+		av := appVersions[i]
 		svcName := svcMap[av.ServiceStackID]
 		if svcName == "" {
 			svcName = av.ServiceStackID
@@ -215,14 +234,38 @@ func Events(
 			eventType = eventTypeBuild
 		}
 
-		events = append(events, TimelineEvent{
+		te := TimelineEvent{
 			Timestamp: av.Created,
 			Type:      eventType,
 			Action:    eventType,
 			Status:    av.Status,
 			Service:   svcName,
 			Hint:      statusHint(av.Status, appVersionHintMap),
-		})
+		}
+
+		// C3 closure: classify failed async builds. The deploy-failure
+		// classifier already handles the synchronous deploy path
+		// (deploy_poll.go); wiring it here gives webhook/actions builds
+		// the same `failureClass` + `failureCause` shape the agent
+		// already knows from sync deploys, so atoms can read one field
+		// regardless of whether the build was ZCP-driven or external.
+		// Skipped when fetcher is nil (test/mock callsites that only
+		// need metadata) or when status isn't a failure.
+		if fetcher != nil {
+			if phase := FailurePhaseFromStatus(av.Status); phase != "" {
+				logs := FetchBuildLogs(ctx, client, fetcher, projectID, &av, 200)
+				if cls := ClassifyDeployFailure(FailureInput{
+					Phase:     phase,
+					Status:    av.Status,
+					BuildLogs: logs,
+				}); cls != nil {
+					te.FailureClass = string(cls.Category)
+					te.FailureCause = cls.LikelyCause
+				}
+			}
+		}
+
+		events = append(events, te)
 	}
 
 	// Filter by service if specified.

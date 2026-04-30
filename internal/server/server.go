@@ -173,7 +173,7 @@ func (s *Server) registerTools() {
 	tools.RegisterRecordFact(s.server, wfEngine, recipeStore)
 	tools.RegisterWorkspaceManifest(s.server, wfEngine, recipeStore)
 	tools.RegisterLogs(s.server, s.client, s.logFetcher, projectID)
-	tools.RegisterEvents(s.server, s.client, projectID)
+	tools.RegisterEvents(s.server, s.client, s.logFetcher, projectID)
 	tools.RegisterProcess(s.server, s.client)
 	tools.RegisterVerify(s.server, s.client, s.logFetcher, projectID, stateDir)
 	tools.RegisterPreprocess(s.server)

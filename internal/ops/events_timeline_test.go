@@ -62,7 +62,7 @@ func TestEvents_MergedTimeline(t *testing.T) {
 		WithProcessEvents(processes).
 		WithAppVersionEvents(appVersions)
 
-	result, err := Events(context.Background(), mock, "proj-1", "", 50)
+	result, err := Events(context.Background(), mock, nil, "proj-1", "", 50)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestEvents_FilterByService(t *testing.T) {
 		WithProcessEvents(processes).
 		WithAppVersionEvents(nil)
 
-	result, err := Events(context.Background(), mock, "proj-1", "api", 50)
+	result, err := Events(context.Background(), mock, nil, "proj-1", "api", 50)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestEvents_LimitApplied(t *testing.T) {
 		WithProcessEvents(processes).
 		WithAppVersionEvents(nil)
 
-	result, err := Events(context.Background(), mock, "proj-1", "", 3)
+	result, err := Events(context.Background(), mock, nil, "proj-1", "", 3)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestEvents_EmptyResult(t *testing.T) {
 		WithProcessEvents(nil).
 		WithAppVersionEvents(nil)
 
-	result, err := Events(context.Background(), mock, "proj-1", "", 50)
+	result, err := Events(context.Background(), mock, nil, "proj-1", "", 50)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestEvents_DefaultLimit(t *testing.T) {
 		WithProcessEvents(nil).
 		WithAppVersionEvents(nil)
 
-	result, err := Events(context.Background(), mock, "proj-1", "", 0)
+	result, err := Events(context.Background(), mock, nil, "proj-1", "", 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestEvents_FilterByService_SummaryCounts(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			result, err := Events(context.Background(), mock, "proj-1", tt.service, 50)
+			result, err := Events(context.Background(), mock, nil, "proj-1", tt.service, 50)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -307,7 +307,7 @@ func TestEvents_ParallelFetchError(t *testing.T) {
 		WithServices(nil).
 		WithAppVersionEvents(nil)
 
-	_, err := Events(context.Background(), mock, "proj-1", "", 50)
+	_, err := Events(context.Background(), mock, nil, "proj-1", "", 50)
 	if err == nil {
 		t.Fatal("expected error from SearchProcesses")
 	}

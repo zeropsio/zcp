@@ -22,7 +22,7 @@ A new push triggers a build appVersion per service. Look for:
 |---|---|
 | `BUILDING` | The build pipeline is running. Re-call `zerops_events` to advance. |
 | `ACTIVE` | Build completed; the runtime now serves the new code. Proceed to record-deploy + verify. |
-| `FAILED` | Build failed. Read the latest event's `failureClass` + `description` for the cause; the recovery is whatever fixed the build (yaml, missing env var, code issue) plus a fresh push. |
+| `BUILD_FAILED` / `DEPLOY_FAILED` / `PREPARING_RUNTIME_FAILED` | Build or deploy failed. Read the latest event's `failureClass` (build / start / verify / network / config / credential / other) + `failureCause` for the structured diagnosis — same vocabulary the synchronous deploy path produces in DeployResult.FailureClassification. For full build-container output, tail `zerops_logs serviceHostname="{hostname}" facility=application since=5m`. Recovery is whatever fixed the build (yaml, missing env var, code issue) plus a fresh push. |
 
 The events tool is an envelope-aware lookup — pass `since=<duration>` to limit the window if the service has long history.
 
