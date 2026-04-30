@@ -103,3 +103,42 @@ func TestDevelopReadyToDeployAtom_ManualSubdomainFallback(t *testing.T) {
 		t.Error("atom must name the `zerops_subdomain action=\"enable\"` manual fallback for cases where post-recovery auto-enable misses (B12 eval observation)")
 	}
 }
+
+// TestDevelopPlatformRulesLocalAtom_BackgroundTaskCallout pins B15: the
+// local-mode platform rules must promote the "dev server runs through
+// the harness background-task primitive" guardrail OUT of the table
+// into a dedicated section with the failure mode named explicitly.
+// Phase 1.5 eval `develop-dev-server-local` hit max-turns because the
+// agent ran `php artisan serve` foreground and the bash channel blocked
+// — a class of failure that recurs on every local-mode dev-server
+// scenario when the guardrail is buried in a table cell. The section
+// must show both the canonical pattern AND an anti-pattern callout so
+// recognition fires before invocation.
+func TestDevelopPlatformRulesLocalAtom_BackgroundTaskCallout(t *testing.T) {
+	t.Parallel()
+
+	atoms, err := ReadAllAtoms()
+	if err != nil {
+		t.Fatalf("ReadAllAtoms: %v", err)
+	}
+	var body string
+	for _, a := range atoms {
+		if a.Name == "develop-platform-rules-local.md" {
+			body = a.Content
+			break
+		}
+	}
+	if body == "" {
+		t.Fatal("develop-platform-rules-local.md not found in corpus")
+	}
+
+	if !strings.Contains(body, "### Dev server") {
+		t.Error("dev-server guidance must live in its own H3 subsection — burying it in the table cell was the B15 failure mode")
+	}
+	if !strings.Contains(body, "run_in_background=true") {
+		t.Error("atom must show the canonical `run_in_background=true` example")
+	}
+	if !strings.Contains(body, "Anti-pattern") {
+		t.Error("atom must include an Anti-pattern callout — recognition of the foreground-bash trap before invocation depends on the example being adjacent to the rule")
+	}
+}

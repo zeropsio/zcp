@@ -8,23 +8,42 @@ title: "Platform rules"
 
 ### Platform rules
 
+### Dev server — always background
+
+**ZCP does not spawn processes on your machine; `zerops_dev_server`
+runs inside Zerops containers and never reaches your laptop.** You
+start the dev server yourself, but it MUST run through the harness
+background-task primitive — a foreground `Bash` call to `npm run dev`
+/ `php artisan serve` / `bun --watch` blocks your turn until the
+per-call bash timeout fires (2 minutes in Claude Code, then the
+harness kills it). You're then stuck mid-step; the runner-level
+scenario timeout eventually clears the seat. This is the dominant
+local-mode failure mode — the anti-pattern below fires it every time.
+
+In Claude Code, the canonical pattern is `run_in_background=true`:
+
+```
+Bash run_in_background=true  command="npm run dev"            ← spawns + returns
+Bash                         command="curl -s -o /dev/null -w '%{http_code}' http://localhost:5173/"
+BashOutput                   bash_id={task-id}                ← read stdout/stderr
+KillBash                     shell_id={task-id}               ← cleanup
+```
+
+Anti-pattern (will hang the loop):
+
+```
+Bash command="npm run dev"          ← foreground, never returns
+Bash command="php artisan serve"    ← same
+```
+
+Use the framework's normal dev command — bun, vite, npm run dev,
+artisan serve, rails server, mix phx.server, etc. — wrapped in
+`run_in_background=true`. Probe via `curl` from a separate
+foreground `Bash` call once the background task is up.
+
 | Topic | Local rule |
 |---|---|
 | Code | Edit the working directory. No SSHFS, no `/var/www/{hostname}` mount — that shape is container-only. |
-| Dev server | Run it on your machine with the harness background-task primitive so the process survives the ZCP call and stdio does not block. In Claude Code: |
-
-  ```
-  Bash run_in_background=true  command="npm run dev"
-  Bash                         command="curl -s -o /dev/null -w '%{http_code}' http://localhost:5173/"
-  BashOutput                   bash_id={task-id}
-  KillBash                     shell_id={task-id}
-  ```
-
-ZCP does not spawn processes on your machine; `zerops_dev_server` is
-container-only. Use the framework's normal dev command.
-
-| Topic | Local rule |
-|---|---|
 | VPN | For managed services, use `zcli vpn up <projectId>` from `claude_local.md`; it needs sudo/admin and ZCP cannot start it. |
 | `.env` bridge | Generate live vars with `zerops_env action="generate-dotenv" serviceHostname="{stage-hostname}"`; add `.env` to `.gitignore` because it contains secrets. |
 | Health checks | Probe localhost directly: `curl -s localhost:{port}/health`. Port comes from `zerops.yaml` `run.ports` or the user's command. |
