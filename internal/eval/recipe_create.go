@@ -230,12 +230,12 @@ func (s *RecipeCreateSuite) CreateAll(ctx context.Context, frameworks []string, 
 		}
 		result.Results = append(result.Results, runResult)
 
-		status := "PASS"
+		status := statusPass
 		if !createResult.Success {
-			status = "FAIL"
+			status = statusFail
 		}
 		if createResult.Error != "" {
-			status = "ERROR"
+			status = statusError
 		}
 		fmt.Fprintf(os.Stderr, "  %s: %s (%s)\n", createResult.Slug, status, createResult.Duration)
 	}
