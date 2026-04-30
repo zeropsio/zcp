@@ -103,7 +103,8 @@ func bootstrapCoverageFixtures() []coverageFixture {
 			},
 			MustContain: []string{
 				"dynamic runtime",
-				"verification server",
+				"startWithoutCode: true",
+				"workflow=develop",
 				"dev/stage pairing",
 			},
 		},
@@ -142,7 +143,9 @@ func bootstrapCoverageFixtures() []coverageFixture {
 			},
 			MustContain: []string{
 				`zerops_workflow action="complete" step="close"`,
-				`closeMode={"<hostname>":"auto|git-push|manual"}`,
+				`closeMode: unset`,
+				`develop-strategy-review`,
+				`zerops_workflow action="start" workflow="develop"`,
 			},
 		},
 		{

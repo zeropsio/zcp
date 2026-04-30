@@ -20,16 +20,8 @@ services and recipes that deployed during bootstrap show `deployed: true`.
 No application code is written, no `zerops.yaml` generated, and no
 deploy runs as part of bootstrap close itself.
 
-**Next step — `zerops_workflow action="start" workflow="develop"`.**
-Develop owns:
+**Next step — `zerops_workflow action="start" workflow="develop"`.** Develop owns code, the first deploy, verify, iteration, and close-mode setup; `develop-first-deploy-intro` fires on entry for services with `deployed: false`.
 
-1. Scaffold `zerops.yaml`.
-2. Write application code.
-3. Run first deploy and verify for services with `deployed: false`.
-4. Iterate failures; after 5 unsuccessful attempts, escalate.
-
-Direct tools (`zerops_scale`, `zerops_env`, `zerops_subdomain`,
-`zerops_discover`) stay callable without a workflow wrapper for one-shot
-infra changes.
+Direct tools (`zerops_scale`, `zerops_env`, `zerops_subdomain`, `zerops_discover`) stay callable without a workflow wrapper for one-shot infra changes.
 
 Complete this step before starting develop.

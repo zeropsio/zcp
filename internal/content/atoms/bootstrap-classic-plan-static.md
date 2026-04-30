@@ -10,15 +10,11 @@ title: "Classic bootstrap — static runtime plan"
 
 ### Static runtime plan
 
-Static runtime containers (nginx) come up serving an empty document root — no
-verification server needed.
+Static runtime containers (`nginx`, `static`) come up serving an empty document root after bootstrap. The first build artifact lands in develop via `zerops_deploy`; bootstrap creates the empty container and stops there.
 
-Before deploy, confirm with the user:
+Before submitting the plan, confirm with the user:
 
 - the chosen runtime hostname (`appdev` is the standard convention)
-- whether a stage pair is wanted (dev/stage pattern) or single runtime container
-  dev mode
-- deploy strategy for each runtime service
+- whether a stage pair is wanted (`standard` mode) or a single container (`simple` / `dev` mode)
 
-Static runtimes accept `deployFiles` that point at an empty directory; the
-initial deploy will succeed without any real build artifacts.
+Close-mode, git-push capability, and the actual `zerops.yaml` (including `deployFiles` shape) are decided in develop after the first deploy lands — not here.

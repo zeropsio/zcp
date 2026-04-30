@@ -9,20 +9,13 @@ title: "Runtime classes — pick the right stack"
 
 ### Runtime classes
 
-Each runtime type falls into one of four classes that shape deploy and
-lifecycle behaviour:
+Each runtime type falls into one of four classes — pick the right class for each runtime in the plan:
 
-- **Dynamic** (nodejs, go, python, bun, ruby, …) — dev setup starts with
-  `zsc noop`; the real dev process starts via `zerops_dev_server`
-  (container) or via your harness background task primitive (local) after
-  each redeploy. Stage setup uses a real `run.start` + `healthCheck` so the
-  platform auto-starts it.
-- **Static** (nginx, static) — auto-start after deploy, no manual step.
-- **Implicit-webserver** (php-apache, php-nginx) — auto-start; set
-  `documentRoot` in `zerops.yaml` and omit `run.start`.
-- **Managed** (postgresql, mariadb, redis/valkey, keydb, rabbitmq, nats,
-  object storage) — no deploy; scale and connect only.
+- **Dynamic** (nodejs, go, python, bun, ruby, …) — needs an explicit dev-server lifecycle in develop (container: `zerops_dev_server`; local: harness background task).
+- **Static** (nginx, static) — serves files from `deployFiles`; platform auto-starts after deploy.
+- **Implicit-webserver** (php-apache, php-nginx) — webserver is part of the runtime; platform auto-starts after deploy.
+- **Managed** (postgresql, mariadb, redis/valkey, keydb, rabbitmq, nats, object storage) — no deploy; scale and connect only.
 
-Pick runtime types from the live Zerops catalog (check `zerops_knowledge`
-for current versions). Managed services initialize first (`priority: 10`
-in import YAML) so runtimes that depend on them can connect at start.
+Pick runtime types from the live Zerops catalog (check `zerops_knowledge` for current versions). Managed services initialize first (`priority: 10` in import YAML) so runtimes that depend on them can connect at start.
+
+Lifecycle and `zerops.yaml` mechanics for each class (start commands, healthCheck, deployFiles, dev-server primitives) are delivered in develop atoms — `develop-dynamic-runtime-start-container`, `develop-dynamic-runtime-start-local`, `develop-implicit-webserver`, `develop-first-deploy-scaffold-yaml` — at first-deploy time.

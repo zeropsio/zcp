@@ -16,12 +16,8 @@ Complete the close step:
 zerops_workflow action="complete" step="close" attestation="Recipe bootstrapped — services active and verified"
 ```
 
-After close, every service the recipe provisioned appears in the
-envelope with `bootstrapped: true` and `closeMode: unset` —
-close-mode is not chosen at bootstrap; develop picks it on first use.
-`zerops_workflow action="status"` summarises the transition and
-points at the primary follow-ups: `develop` (iterate on the code the
-recipe provided) and `close-mode` (set per-service close behaviour
-via `zerops_workflow action="close-mode" closeMode={"<hostname>":"auto|git-push|manual"}`).
-Switching to `git-push` additionally requires `action="git-push-setup"`
-to provision the remote.
+After close, every service the recipe provisioned appears in the envelope with `bootstrapped: true` and `closeMode: unset`. Close-mode and git-push capability are configured in develop after the first deploy lands — `develop-strategy-review` surfaces the menu when actionable. Start develop next:
+
+```
+zerops_workflow action="start" workflow="develop"
+```

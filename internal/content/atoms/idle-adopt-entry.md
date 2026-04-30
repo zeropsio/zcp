@@ -25,5 +25,4 @@ the adoption with:
 zerops_workflow action="start" workflow="bootstrap" route="adopt" intent="adopt existing"
 ```
 
-After close, the envelope shows each adopted hostname with
-`bootstrapped: true` and its existing mode/strategy preserved.
+After close, the envelope shows each adopted hostname with `bootstrapped: true` and the existing mode preserved. Close-mode + git-push capability stay empty (develop configures them on first use).

@@ -1,7 +1,7 @@
 ---
 id: develop-platform-rules-common
 priority: 2
-phases: [bootstrap-active, develop-active]
+phases: [develop-active]
 title: "Platform rules"
 references-atoms: [develop-env-var-channels, develop-first-deploy-env-vars]
 ---

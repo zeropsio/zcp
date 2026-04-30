@@ -10,11 +10,7 @@ references-fields: [workflow.ServiceSnapshot.Bootstrapped, workflow.ServiceSnaps
 
 ### Adopting existing services
 
-Adoption attaches ZCP tracking to an existing runtime service without
-touching its code, configuration, or scale. After adopt close, the
-envelope reports each adopted hostname with `bootstrapped: true`; the
-rendered Services block shows them with their existing mode and
-strategy state.
+Adoption attaches ZCP tracking to an existing runtime service without touching its code, configuration, or scale. After adopt close, the envelope reports each adopted hostname with `bootstrapped: true`; close-mode + git-push capability are left empty (develop configures them on first use).
 
 List what's there:
 

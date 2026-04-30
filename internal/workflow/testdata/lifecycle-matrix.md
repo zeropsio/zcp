@@ -1,7 +1,7 @@
 # ZCP Lifecycle Matrix Simulation
 
-Generated: 2026-04-29T23:43:53Z
-Corpus: 80 atoms
+Generated: 2026-04-30T08:21:45Z
+Corpus: 81 atoms
 Scenarios: 46
 
 ---
@@ -28,7 +28,7 @@ _Project has runtime services but no ServiceMeta files — adoption path._
 
 **Plan.Primary**: `zerops_workflow` → Adopt unmanaged runtimes
 
-**Atoms** (2 unique, 2 render-instances, 2281 bytes total):
+**Atoms** (2 unique, 2 render-instances, 2356 bytes total):
 - `bootstrap-route-options`
 - `idle-adopt-entry`
 
@@ -81,13 +81,12 @@ _Free-form plan: dynamic runtime in standard mode + dev/stage hostnames._
 
 **Plan.Primary**: `zerops_workflow` → Continue bootstrap
 
-**Atoms** (6 unique, 6 render-instances, 5148 bytes total):
+**Atoms** (5 unique, 5 render-instances, 4717 bytes total):
 - `bootstrap-classic-plan-dynamic`
 - `bootstrap-intro`
 - `bootstrap-mode-prompt`
 - `bootstrap-runtime-classes`
 - `develop-api-error-meta`
-- `develop-platform-rules-common`
 
 ## 2.2 classic/discover static SPA (container)
 
@@ -97,13 +96,12 @@ _Static-runtime path (Vite SPA, etc.) — different deploy/build vocabulary._
 
 **Plan.Primary**: `zerops_workflow` → Continue bootstrap
 
-**Atoms** (6 unique, 6 render-instances, 5308 bytes total):
+**Atoms** (5 unique, 5 render-instances, 4844 bytes total):
 - `bootstrap-classic-plan-static`
 - `bootstrap-intro`
 - `bootstrap-mode-prompt`
 - `bootstrap-runtime-classes`
 - `develop-api-error-meta`
-- `develop-platform-rules-common`
 
 ## 2.3 classic/discover implicit-webserver (PHP simple)
 
@@ -113,12 +111,11 @@ _PHP implicit-webserver: no `start:` block, real start path._
 
 **Plan.Primary**: `zerops_workflow` → Continue bootstrap
 
-**Atoms** (5 unique, 5 render-instances, 4796 bytes total):
+**Atoms** (4 unique, 4 render-instances, 4222 bytes total):
 - `bootstrap-intro`
 - `bootstrap-mode-prompt`
 - `bootstrap-runtime-classes`
 - `develop-api-error-meta`
-- `develop-platform-rules-common`
 
 ## 2.4 classic/provision (container, dev mode)
 
@@ -128,13 +125,12 @@ _Provision step — agent should see import.yaml + auto-mount guidance._
 
 **Plan.Primary**: `zerops_workflow` → Continue bootstrap
 
-**Atoms** (6 unique, 6 render-instances, 6839 bytes total):
+**Atoms** (5 unique, 5 render-instances, 5169 bytes total):
 - `bootstrap-env-var-discovery`
 - `bootstrap-intro`
 - `bootstrap-provision-rules`
 - `bootstrap-wait-active`
 - `develop-api-error-meta`
-- `develop-platform-rules-common`
 
 ## 2.5 classic/close (container, simple mode)
 
@@ -144,12 +140,11 @@ _Close step — finalize ServiceMeta, no first deploy._
 
 **Plan.Primary**: `zerops_workflow` → Continue bootstrap
 
-**Atoms** (5 unique, 5 render-instances, 5179 bytes total):
+**Atoms** (4 unique, 4 render-instances, 4350 bytes total):
 - `bootstrap-close`
 - `bootstrap-intro`
 - `bootstrap-verify`
 - `develop-api-error-meta`
-- `develop-platform-rules-common`
 
 ## 2.6 classic/discover (LOCAL env)
 
@@ -159,14 +154,13 @@ _Local-mode bootstrap discover — should suppress mount/SSH guidance._
 
 **Plan.Primary**: `zerops_workflow` → Continue bootstrap
 
-**Atoms** (7 unique, 7 render-instances, 6041 bytes total):
+**Atoms** (6 unique, 6 render-instances, 5610 bytes total):
 - `bootstrap-classic-plan-dynamic`
 - `bootstrap-discover-local`
 - `bootstrap-intro`
 - `bootstrap-mode-prompt`
 - `bootstrap-runtime-classes`
 - `develop-api-error-meta`
-- `develop-platform-rules-common`
 
 ## 2.7 classic/provision (LOCAL env)
 
@@ -176,14 +170,13 @@ _Local provision — no auto-mount path._
 
 **Plan.Primary**: `zerops_workflow` → Continue bootstrap
 
-**Atoms** (7 unique, 7 render-instances, 7856 bytes total):
+**Atoms** (6 unique, 6 render-instances, 6186 bytes total):
 - `bootstrap-env-var-discovery`
 - `bootstrap-intro`
 - `bootstrap-provision-local`
 - `bootstrap-provision-rules`
 - `bootstrap-wait-active`
 - `develop-api-error-meta`
-- `develop-platform-rules-common`
 
 ---
 
@@ -197,11 +190,10 @@ _Recipe discover: agent picks slug `nodejs-hello-world`._
 
 **Plan.Primary**: `zerops_workflow` → Continue bootstrap
 
-**Atoms** (4 unique, 4 render-instances, 4015 bytes total):
+**Atoms** (3 unique, 3 render-instances, 3226 bytes total):
 - `bootstrap-intro`
 - `bootstrap-recipe-match`
 - `develop-api-error-meta`
-- `develop-platform-rules-common`
 
 ## 3.2 recipe/provision (container, multi-service Laravel)
 
@@ -211,11 +203,10 @@ _Laravel-minimal recipe: php-apache + db._
 
 **Plan.Primary**: `zerops_workflow` → Continue bootstrap
 
-**Atoms** (4 unique, 4 render-instances, 4083 bytes total):
+**Atoms** (3 unique, 3 render-instances, 3294 bytes total):
 - `bootstrap-intro`
 - `bootstrap-recipe-import`
 - `develop-api-error-meta`
-- `develop-platform-rules-common`
 
 ## 3.3 recipe/close (container)
 
@@ -225,13 +216,12 @@ _Recipe close — finalize meta, hand off to develop._
 
 **Plan.Primary**: `zerops_workflow` → Continue bootstrap
 
-**Atoms** (6 unique, 6 render-instances, 5945 bytes total):
+**Atoms** (5 unique, 5 render-instances, 4888 bytes total):
 - `bootstrap-close`
 - `bootstrap-intro`
 - `bootstrap-recipe-close`
 - `bootstrap-verify`
 - `develop-api-error-meta`
-- `develop-platform-rules-common`
 
 ---
 
@@ -245,12 +235,11 @@ _Single existing runtime to adopt as dev mode._
 
 **Plan.Primary**: `zerops_workflow` → Continue bootstrap
 
-**Atoms** (5 unique, 5 render-instances, 4408 bytes total):
+**Atoms** (4 unique, 4 render-instances, 3623 bytes total):
 - `bootstrap-adopt-discover`
 - `bootstrap-intro`
 - `bootstrap-mode-prompt`
 - `develop-api-error-meta`
-- `develop-platform-rules-common`
 
 ## 4.2 adopt/discover (container, dev+stage pair)
 
@@ -260,12 +249,11 @@ _Two existing runtimes with dev/stage suffix → adopt as standard._
 
 **Plan.Primary**: `zerops_workflow` → Continue bootstrap
 
-**Atoms** (5 unique, 5 render-instances, 4408 bytes total):
+**Atoms** (4 unique, 4 render-instances, 3623 bytes total):
 - `bootstrap-adopt-discover`
 - `bootstrap-intro`
 - `bootstrap-mode-prompt`
 - `develop-api-error-meta`
-- `develop-platform-rules-common`
 
 ## 4.3 adopt/provision (pure-adoption fast path)
 
@@ -275,12 +263,11 @@ _Plan all-existing — close should be skippable._
 
 **Plan.Primary**: `zerops_workflow` → Continue bootstrap
 
-**Atoms** (5 unique, 5 render-instances, 6379 bytes total):
+**Atoms** (4 unique, 4 render-instances, 4709 bytes total):
 - `bootstrap-env-var-discovery`
 - `bootstrap-intro`
 - `bootstrap-provision-rules`
 - `develop-api-error-meta`
-- `develop-platform-rules-common`
 
 ---
 
@@ -294,7 +281,7 @@ _Just bootstrapped, dev mode dynamic runtime, first develop iteration._
 
 **Plan.Primary**: `zerops_deploy` → Deploy appdev
 
-**Atoms** (19 unique, 19 render-instances, 20492 bytes total):
+**Atoms** (19 unique, 19 render-instances, 21770 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -323,7 +310,7 @@ _Simple-mode single service, healthCheck-driven start._
 
 **Plan.Primary**: `zerops_deploy` → Deploy app
 
-**Atoms** (18 unique, 18 render-instances, 19092 bytes total):
+**Atoms** (18 unique, 18 render-instances, 20370 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -351,7 +338,7 @@ _Standard-mode dev half, stage entry not yet written._
 
 **Plan.Primary**: `zerops_deploy` → Deploy appdev
 
-**Atoms** (19 unique, 19 render-instances, 20466 bytes total):
+**Atoms** (19 unique, 19 render-instances, 21744 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -380,7 +367,7 @@ _PHP simple — no `start:`; healthCheck on `/`._
 
 **Plan.Primary**: `zerops_deploy` → Deploy site
 
-**Atoms** (20 unique, 20 render-instances, 21579 bytes total):
+**Atoms** (20 unique, 20 render-instances, 23091 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -410,7 +397,7 @@ _Static runtime — buildCommands generate dist; deployFiles selects ./dist._
 
 **Plan.Primary**: `zerops_deploy` → Deploy spa
 
-**Atoms** (19 unique, 19 render-instances, 20042 bytes total):
+**Atoms** (19 unique, 19 render-instances, 21320 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -439,12 +426,13 @@ _Local-machine first deploy — local workflow atom path._
 
 **Plan.Primary**: `zerops_deploy` → Deploy app
 
-**Atoms** (16 unique, 16 render-instances, 17028 bytes total):
+**Atoms** (17 unique, 17 render-instances, 19399 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
 - `develop-deploy-files-self-deploy`
 - `develop-deploy-modes`
+- `develop-dynamic-runtime-start-local`
 - `develop-env-var-channels`
 - `develop-first-deploy-env-vars`
 - `develop-first-deploy-intro`
@@ -565,7 +553,7 @@ _Full git-push setup with webhook integration._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (16 unique, 16 render-instances, 18521 bytes total):
+**Atoms** (16 unique, 16 render-instances, 18864 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-build-observe`
@@ -591,7 +579,7 @@ _Manual close — ZCP records evidence but user owns deploys._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (19 unique, 19 render-instances, 21278 bytes total):
+**Atoms** (19 unique, 19 render-instances, 21413 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -620,7 +608,7 @@ _Agent set close-mode before first deploy — atoms must explain D2a (default se
 
 **Plan.Primary**: `zerops_deploy` → Deploy appdev
 
-**Atoms** (20 unique, 20 render-instances, 21926 bytes total):
+**Atoms** (20 unique, 20 render-instances, 23204 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -708,11 +696,11 @@ _Mode flipped to git-push but capability missing — must chain to setup._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (15 unique, 15 render-instances, 16827 bytes total):
+**Atoms** (15 unique, 15 render-instances, 15697 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
-- `develop-close-mode-git-push`
+- `develop-close-mode-git-push-needs-setup`
 - `develop-deploy-files-self-deploy`
 - `develop-deploy-modes`
 - `develop-dynamic-runtime-start-container`
@@ -733,7 +721,7 @@ _Full webhook CI._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (16 unique, 16 render-instances, 18521 bytes total):
+**Atoms** (16 unique, 16 render-instances, 18864 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-build-observe`
@@ -759,7 +747,7 @@ _GitHub Actions CI._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (16 unique, 16 render-instances, 18521 bytes total):
+**Atoms** (16 unique, 16 render-instances, 18864 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-build-observe`
@@ -785,12 +773,12 @@ _Push capability previously broken; recovery atom expected._
 
 **Plan.Primary**: `zerops_workflow` → Close develop session
 
-**Atoms** (16 unique, 16 render-instances, 18521 bytes total):
+**Atoms** (16 unique, 16 render-instances, 17734 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-build-observe`
 - `develop-change-drives-deploy`
-- `develop-close-mode-git-push`
+- `develop-close-mode-git-push-needs-setup`
 - `develop-deploy-files-self-deploy`
 - `develop-deploy-modes`
 - `develop-dynamic-runtime-start-container`
@@ -815,7 +803,7 @@ _First failure — DIAGNOSE tier._
 
 **Plan.Primary**: `zerops_deploy` → Deploy appdev
 
-**Atoms** (20 unique, 20 render-instances, 21952 bytes total):
+**Atoms** (20 unique, 20 render-instances, 23230 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -845,7 +833,7 @@ _After 3 failures — SYSTEMATIC tier kicks in._
 
 **Plan.Primary**: `zerops_deploy` → Deploy appdev
 
-**Atoms** (20 unique, 20 render-instances, 21952 bytes total):
+**Atoms** (20 unique, 20 render-instances, 23230 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -875,7 +863,7 @@ _Hit iteration cap — STOP tier should surface._
 
 **Plan.Primary**: `zerops_deploy` → Deploy appdev
 
-**Atoms** (20 unique, 20 render-instances, 21952 bytes total):
+**Atoms** (20 unique, 20 render-instances, 23230 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -909,7 +897,7 @@ _Standard pair — atoms should fire per-half with correct hostnames._
 
 **Plan.Primary**: `zerops_deploy` → Deploy appdev
 
-**Atoms** (19 unique, 19 render-instances, 20507 bytes total):
+**Atoms** (19 unique, 19 render-instances, 21785 bytes total):
 - `develop-api-error-meta`
 - `develop-auto-close-semantics`
 - `develop-change-drives-deploy`
@@ -1006,7 +994,7 @@ _action=git-push-setup synthesizes setup-git-push-container._
 
 **Plan.Primary**: `` → 
 
-**Atoms** (1 unique, 1 render-instances, 2369 bytes total):
+**Atoms** (1 unique, 1 render-instances, 2647 bytes total):
 - `setup-git-push-container`
 
 ## 11.2 strategy-setup local
@@ -1058,13 +1046,7 @@ _All services deployed+verified, session auto-closed._
 
 ---
 
-# Anomalies (5)
-
-## ERROR (3)
-
-- **11.1 strategy-setup container (git-push setup)** — Plan.Primary is zero (empty Plan)
-- **11.2 strategy-setup local** — Plan.Primary is zero (empty Plan)
-- **12.1 export-active container** — Plan.Primary is zero (empty Plan)
+# Anomalies (2)
 
 ## WARN (2)
 

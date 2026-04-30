@@ -33,11 +33,11 @@ flowchart LR
     style Meta fill:#dfd,stroke:#0a0
 ```
 
-**Phase 1 — Infrastructure**: Bootstrap creates new services (or adoption registers existing ones) and writes an evidence file (ServiceMeta). Only a **verification server** is deployed — a hello-world proving infrastructure works (/, /health, /status). No application logic, no close-mode. Phase 1 answers: "can this service start, respond, and reach its dependencies?"
+**Phase 1 — Infrastructure** (Option A since v8.100+): Bootstrap creates new services (or adoption registers existing ones) and writes an evidence file (ServiceMeta). Services come up with `startWithoutCode: true` so dev containers reach RUNNING with empty filesystems; managed dependencies reach RUNNING/ACTIVE. **No application code, no `zerops.yaml`, no first deploy.** Phase 1 answers: "are the services provisioned, mounted, and discoverable?"
 
-**Phase 2 — Development**: Develop flow covers ALL code work on the service — implementing the user's actual application, bug fixes, config changes, everything. It discovers what code exists (verification server from bootstrap or existing application), provides runtime knowledge, lets the agent implement what the user wants, and deploys at the end. CloseDeployMode + GitPushState + BuildIntegration are always read fresh from ServiceMeta.
+**Phase 2 — Development**: Develop flow covers ALL code work on the service AND the first deploy — scaffold `zerops.yaml`, write the user's actual application, deploy, verify, iterate. CloseDeployMode + GitPushState + BuildIntegration are always read fresh from ServiceMeta and become actionable post-first-deploy via `develop-strategy-review`.
 
-**The boundary is strict**: Bootstrap writes zerops.yaml + infrastructure verification server. The moment the agent needs to write application logic, it must be in develop flow. If the user says "create me an app for uploading photos in Bun", bootstrap creates Bun service + dependencies with a hello-world verification server, then develop flow implements the photo upload app.
+**The boundary is strict**: Bootstrap stops at infrastructure provisioning. The moment any application code, `zerops.yaml`, or `zerops_deploy` is needed, it belongs to develop. If the user says "create me an app for uploading photos in Bun", bootstrap creates the Bun service + dependencies (empty containers); develop scaffolds `zerops.yaml`, implements the photo upload app, runs the first deploy, and stamps `FirstDeployedAt`.
 
 ### 1.2 Phase Enum — The Single State Variable
 
@@ -62,19 +62,19 @@ Invariant: at most one non-idle **stateful** phase per PID at a time. `strategy-
 
 See `plans/instruction-delivery-rewrite.md` §4.1 for the concrete Go enum.
 
-### Why Verification-First — The Foundational Principle
+### Why Infrastructure-First — The Foundational Principle
 
-The two-phase separation (bootstrap verification → develop application) is the foundational architectural decision of the workflow system. It applies to **ALL modes** — standard, dev, and simple — without exception, even when it appears as overhead for simple setups.
+The two-phase separation (bootstrap infra → develop application + first deploy) is the foundational architectural decision of the workflow system. It applies to **ALL modes** — standard, dev, and simple — without exception.
 
-**Fault isolation.** When bootstrap and application are separate, failures have unambiguous origin. If verification fails during bootstrap, the problem is infrastructure — service config, env vars, managed service connectivity. If the app fails during develop, infrastructure is already proven healthy. Without this separation, every failure requires diagnosing both layers simultaneously, which is exponentially harder for an AI agent.
+**Fault isolation.** When bootstrap and application are separate, failures have unambiguous origin. If bootstrap fails, the problem is infrastructure — service config, import YAML shape, env-var discovery, managed-service initialization. If develop fails (during scaffolding, first deploy, or iteration), infrastructure is already proven (services reached RUNNING + env catalogue is complete). Without this separation, every failure requires diagnosing both layers simultaneously, which is exponentially harder for an AI agent.
 
-**Universal deployment flow.** By always following the same two-phase pattern, every mode behaves predictably. The deploy step's structure (deploy → verify → iterate) is identical regardless of whether it's standard mode with dev/stage pairs or simple mode with a single service. This universality makes the deployment flow stable and eliminates mode-specific edge cases.
+**Universal deploy flow.** Develop's deploy → verify → iterate cadence is identical regardless of mode (standard dev/stage pairs, single dev container, simple single service). This universality makes the deployment flow stable and eliminates mode-specific edge cases.
 
-**Reduced blast radius.** Infrastructure problems are caught before any application code exists. The verification server is ~50 lines — when it fails, there are very few places the bug can hide. Once infra is proven, the develop workflow adds application complexity on a stable foundation.
+**Reduced blast radius.** Bootstrap creates services with `startWithoutCode: true` so dev containers reach RUNNING with empty filesystems and managed services initialize cleanly. Bugs at this layer are config-only (wrong type, hostname collision, missing env). Once infra is proven, develop adds application complexity on a stable foundation.
 
-**Faster iteration in develop.** Once bootstrap completes, the develop workflow knows that env vars resolve, managed services connect, and the service can start and respond. Develop iterations focus purely on application logic — no re-verification of infrastructure plumbing.
+**Faster iteration in develop.** Once bootstrap completes, develop knows that services exist, env vars resolve, managed services connect. Develop iterations focus purely on application logic + `zerops.yaml` shape — no re-verification of infrastructure plumbing.
 
-This principle must never be bypassed. An agent that writes application code during bootstrap (even for simple mode) violates this boundary and loses all four benefits above.
+This principle must never be bypassed. An agent that writes `zerops.yaml` or application code during bootstrap (even for simple mode) violates B7/B10 and loses all four benefits above.
 
 ### ServiceMeta — The Evidence File
 
@@ -399,7 +399,7 @@ stateDiagram-v2
 - `discover` and `provision`: NEVER skippable.
 - `close`: skippable only when the plan has no runtime targets
   (managed-only) OR every runtime target has `IsExisting=true`
-  (pure-adoption). See §2.8.
+  (pure-adoption). See §2.6.
 
 **Iterate**: Bootstrap never iterates under Option A. Provision failure
 is a hard stop — retrying the same infra-create call without user
@@ -493,126 +493,7 @@ Mount + InitServiceGit are skipped entirely in local env (`mounter == nil`, `ssh
 
 **Checker**: All services exist, types match, status correct, managed dependency env vars discovered.
 
-### 2.5 Step 3: Generate
-
-**Purpose**: Write zerops.yaml and an **infrastructure verification server** proving services are reachable. NOT the user's application.
-
-**Scope boundary**: Generate writes the MINIMUM needed to verify infrastructure:
-- zerops.yaml with mode-specific rules
-- A verification server with exactly three endpoints (/, /health, /status) — under 50 lines
-- Env var wiring to prove dependency connectivity
-
-Generate does NOT write application logic, business features, or the user's actual request. That happens in develop flow (§4). If the user asked for "a photo upload app", generate creates a verification server with /status proving S3 connectivity — the photo upload implementation comes in develop flow.
-
-**Skip**: Only if managed-only.
-
-**Required endpoints** (minimal proof-of-concept):
-
-| Endpoint | Response | Purpose |
-|----------|----------|---------|
-| `GET /` | `"Service: {hostname}"` | Smoke test |
-| `GET /health` | `{"status":"ok"}` (200) | Liveness probe |
-| `GET /status` | Connectivity JSON (200) | Proves managed service connections |
-
-`/status` must actually connect to each dependency:
-```json
-{
-  "service": "{hostname}",
-  "status": "ok",
-  "connections": {
-    "db": {"status": "ok", "latency_ms": 5},
-    "cache": {"status": "ok", "latency_ms": 1}
-  }
-}
-```
-
-**zerops.yaml rules by mode**:
-
-| Property | Standard (dev entry) | Standard (stage entry) | Dev | Simple |
-|----------|---------------------|----------------------|-----|--------|
-| `start` | `zsc noop --silent` | real command | `zsc noop --silent` | real command |
-| `healthCheck` | none | required | none | required |
-| `deployFiles` | `[.]` | build output (NOT `[.]`) | `[.]` | `[.]` |
-| `buildCommands` | deps install | deps + compile | deps install | deps + compile |
-| PHP runtimes | omit `start:` | omit `start:` | omit `start:` | omit `start:` |
-| Stage entry | NOT YET (written after dev verified) | — | N/A | N/A |
-
-**Why `zsc noop`**: Manual server lifecycle control. With real start, deploy auto-starts and agent can't iterate without redeploying.
-
-**Why no healthCheck on dev**: `zsc noop` exits immediately — healthCheck would restart container in a loop.
-
-**Why stage entry deferred**: Written after dev verification. Prevents deploying untested config.
-
-**Why stage `deployFiles` is build output, NOT `[.]`**: Stage receives compiled artifacts optimized for production. Dev uses `[.]` because it iterates on source.
-
-**Pre-deploy checklist** (agent verifies before completing step):
-- [ ] `setup:` hostname matches plan
-- [ ] `deployFiles: [.]` for dev services (NO EXCEPTIONS)
-- [ ] `start:` correct for mode (noop for standard/dev, real for simple, omit for PHP)
-- [ ] `run.ports` matches app listen port (omit for PHP)
-- [ ] `envVariables` uses ONLY discovered var names
-- [ ] App binds to `0.0.0.0:{port}` (NOT localhost)
-- [ ] Simple mode: `healthCheck` present
-- [ ] Standard mode: NO stage entry yet
-
-**Checker**: zerops.yaml exists, setup entries match plan, env refs match discovered vars, ports defined, deployFiles set.
-
-### 2.6 Step 4: Deploy
-
-**Purpose**: Deploy code, start servers, enable subdomains, verify health.
-
-**Skip**: Only if managed-only.
-
-**Standard mode (container)**:
-```
-Phase 1 — Deploy Dev:
-  1. zerops_deploy targetService={dev}     ← blocks until build completes;
-                                             auto-enables L7 subdomain on
-                                             first deploy (response carries
-                                             subdomainAccessEnabled + URL)
-  2. zerops_dev_server action=start         ← dev has zsc noop; container env
-  3. zerops_verify serviceHostname={dev}
-
-Phase 2 — Deploy Stage (after dev healthy):
-  4. Write stage entry in zerops.yaml (real start, healthCheck, deployFiles=build output)
-  5. zerops_deploy sourceService={dev} targetService={stage}  ← cross-deploy
-                                                                 also auto-enables
-                                                                 stage subdomain
-  6. zerops_manage action="connect-storage" (if shared-storage)
-  7. zerops_verify serviceHostname={stage}
-
-Phase 3 — Cross-verify:
-  8. zerops_verify (batch, all targets)
-```
-
-**Dev mode**: Steps 1-3 only.
-
-**Simple mode**: Deploy → auto-starts (healthCheck) → verify.
-
-**Local (any mode)**: Per-target `zcli push` → verify. No SSH.
-
-**Dev iteration cycle** (code-only changes, container):
-1. Edit code on SSHFS mount → changes instant on service
-2. Kill previous server, start new via SSH
-3. Check startup via TaskOutput
-4. Test: `ssh {dev} "curl -s localhost:{port}/health"` | jq .
-5. Redeploy ONLY if zerops.yaml changed. Code-only → server restart only.
-
-**Multi-service orchestration** (3+ services): Parent agent spawns sub-agents per service pair in parallel. Each gets mount path, env vars, runtime knowledge. Parent runs final cross-verification.
-
-**Checker**: `VerifyAll()` (HTTP + logs + startup) + subdomain access.
-
-**Verification failure diagnosis**:
-
-| Failed check | Diagnosis | Fix |
-|-------------|-----------|-----|
-| `service_running`: fail | Service not running | Check deploy status, `zerops_logs severity=error` |
-| `error_logs`: info | Advisory — errors found | Read detail. Infra noise → ignore. App errors → investigate. |
-| `http_root`: fail | HTTP server returned 5xx or refused connection (4xx passes — proof-of-life check, not an endpoint contract check) | Check port, binding, start command, runtime logs |
-
-Workflow-specific endpoint-shape checks (`/api/health`, `/status`, Laravel `/up`, etc.) are NOT in `zerops_verify` — their paths are framework-dependent. Verify those paths with explicit `curl` commands in the workflow that knows them (bootstrap's `/status` curl, recipe's `feature-sweep-dev` sub-step iterating `plan.Features`).
-
-### 2.7 Step 5: Close
+### 2.5 Step 3: Close
 
 **Purpose**: Write final evidence file. Bootstrap is done.
 
@@ -638,7 +519,7 @@ entering develop with empty `FirstDeployedAt` trigger the first-deploy
 branch (`deployStates: [never-deployed]` atoms) — scaffold
 `zerops.yaml`, write code, deploy, verify, stamp `FirstDeployedAt`.
 
-### 2.8 Fast Paths — Managed-Only and Pure-Adoption
+### 2.6 Fast Paths — Managed-Only and Pure-Adoption
 
 `validateSkip` allows `close` to be skipped in either of two shapes:
 
@@ -652,7 +533,7 @@ In both shapes the bootstrap walks discover → provision → SKIP close.
 Mixed plans (some new runtime targets + some adopted) walk the full
 flow and write close normally.
 
-### 2.9 Mode Behavior Matrix
+### 2.7 Mode Behavior Matrix
 
 | Aspect | Standard | Dev | Simple |
 |--------|----------|-----|--------|
@@ -703,7 +584,7 @@ When the user wants to adopt existing services AND create new ones, this goes th
 - Existing targets: ServiceMeta written inline by the provision step
 
 **Pure-adoption fast path**: When *every* runtime target in the plan has
-`IsExisting=true`, bootstrap routes through the fast path in §2.8 — the
+`IsExisting=true`, bootstrap routes through the fast path in §2.6 — the
 `close` step is skipped because adoption writes ServiceMeta from
 provision directly. Mixed plans (any new runtime target) walk the full
 three-step flow and complete close normally.
@@ -751,13 +632,13 @@ flowchart TD
 
 Develop flow MUST start for ANY work on runtime service code:
 
-- **After bootstrap**: Service has only a verification server — develop flow implements the user's actual application
+- **After bootstrap**: Service is RUNNING with an empty filesystem — develop flow scaffolds `zerops.yaml`, writes the user's application, and runs the first deploy
 - **Implementing features**: User said "add photo upload" → develop flow
 - **Bug fixes**: "Login doesn't work" → develop flow
 - **Config changes**: "Change the port" → develop flow
 - **Any code modification**: If it touches a runtime service's files → develop flow
 
-Develop flow discovers what code exists on the service (verification server from bootstrap or existing application) and acts accordingly. Bootstrap created infrastructure; develop flow is for all development.
+Develop flow discovers what code (if any) exists on the service via `zerops_discover` + SSH inspection and acts accordingly. Bootstrap created infrastructure; develop flow owns code, the first deploy, iteration, and close-mode setup.
 
 **Agent MUST NOT** edit runtime service code outside of develop flow. The flow ensures the agent has platform knowledge, knows the close-mode, and deploys + verifies at the end.
 
@@ -794,7 +675,7 @@ Capability fields are independent of close-mode: `GitPushState=configured` can c
 - Close commits + pushes to a configured git remote (`RemoteURL`); Zerops or your CI picks the push up and builds.
 - **Setup prerequisite**: `GitPushState=configured` (run `action="git-push-setup"`).
 - **Optional CI**: `BuildIntegration=webhook` (Zerops dashboard pulls + builds) or `BuildIntegration=actions` (GitHub Actions runs `zcli push` from CI).
-- **Pre-flight gate** (`zerops_deploy strategy="git-push"`): refuses with `PREREQUISITE_MISSING` when `FirstDeployedAt` is empty. Git-push requires code on the container to commit + push.
+- **Pre-flight gate** (`zerops_deploy strategy="git-push"`): refuses with `PREREQUISITE_MISSING` when there is no committed code at the working directory (`/var/www` for container, the local workspace otherwise). The earlier `meta.IsDeployed()` / `FirstDeployedAt` gate was replaced because it false-positived on adopted services that the platform had deployed before ZCP ever wrote the meta. See §8 D2b for the canonical invariant text and pinning tests.
 - **Good for**: Team development, CI/CD pipelines, code in git.
 
 #### manual
@@ -1079,7 +960,7 @@ visibility.
 | ID | Invariant |
 |----|-----------|
 | B1 | 3 steps in strict order: discover → provision → close |
-| B2 | discover/provision always mandatory; close skippable only for managed-only or pure-adoption plans (§2.8) |
+| B2 | discover/provision always mandatory; close skippable only for managed-only or pure-adoption plans (§2.6) |
 | B3 | Starting bootstrap is a two-call flow: first call without `route` returns `routeOptions[]` (no session); second call with `route=<chosen>` commits. Empty-route commits are rejected except the classic-default convenience wrapper `BootstrapStart(pid, intent)` used by internal callers |
 | B4 | Attestation ≥ 10 chars on completion |
 | B5 | Checker failure blocks step advancement; bootstrap **hard-stops** on retry — iterate is disabled and escalates to the user |
