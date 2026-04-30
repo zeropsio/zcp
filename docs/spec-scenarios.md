@@ -73,7 +73,7 @@ User's first action in any session is always `zerops_workflow action=status`. Th
 
 ### 1.3 All services bootstrapped (ServiceMeta complete for every non-managed service)
 
-- **Envelope**: `Services=[{laraveldev, mode=dev, strategy=push-dev}, {laravelstage, mode=stage, strategy=push-git}, {db, managed}]`.
+- **Envelope**: `Services=[{laraveldev, mode=dev, closeDeployMode=auto}, {laravelstage, mode=stage, closeDeployMode=git-push, gitPushState=configured}, {db, managed}]`.
 - **Plan.Primary** = `{start develop, rationale: "All services ready for code work."}`
 - **Plan.Alternatives** = `[{start bootstrap, rationale: "Add more services."}]`
 - **Atoms**: `idle-develop-entry`.
@@ -195,25 +195,25 @@ Flow: edit code → `zerops_deploy` (strategy-dispatched) → `zerops_verify` �
 
 ### 3.2 Strategy × runtime × environment matrix
 
-Synthesizer runs a per-service pass; each service's atoms are filtered by that service's axis tuple `{modes, strategies, runtimes, environments, deployStates}`. Axis values come from `internal/workflow/envelope.go` constants; an atom fires only when a single service satisfies every declared service-scoped axis.
+Synthesizer runs a per-service pass; each service's atoms are filtered by that service's axis tuple `{modes, closeDeployModes, gitPushStates, buildIntegrations, runtimes, environments, deployStates}`. Axis values come from `internal/workflow/envelope.go` constants; an atom fires only when a single service satisfies every declared service-scoped axis.
 
-Services with `deployStates=never-deployed` route to the first-deploy branch atoms (`develop-first-deploy-*`). Services with `deployStates=deployed` route to the edit-loop branch.
+Services with `deployStates=never-deployed` route to the first-deploy branch atoms (`develop-first-deploy-*`). Services with `deployStates=deployed` route to the edit-loop branch (close-mode-specific atoms).
 
 Valid cells (invalid combinations error at envelope validation):
 
-| Mode | Strategy | Runtime | Env | Key atoms (edit-loop branch) |
+| Mode | CloseDeployMode | Runtime | Env | Key atoms (edit-loop branch) |
 |---|---|---|---|---|
-| dev | push-dev | dynamic | container | `develop-push-dev-deploy`, `develop-dynamic-runtime-start-container`, `develop-platform-rules-container` |
-| dev | push-dev | dynamic | local | `develop-push-dev-deploy`, `develop-dynamic-runtime-start-local`, `develop-local-workflow` |
-| dev | push-dev | static | any | `develop-push-dev-deploy`, `develop-static-workflow` (no post-deploy start) |
-| dev | push-dev | implicit-webserver | any | `develop-push-dev-deploy`, `develop-implicit-webserver` |
-| stage | push-git | any | any | `develop-push-git-deploy` |
-| simple | push-dev | dynamic | any | `develop-push-dev-workflow-simple`, `develop-dynamic-runtime-start-*` (env-scoped) |
-| any | manual | any | any | `develop-manual-deploy` — no `zerops_deploy` call; user deploys externally, then `zerops_verify` |
-| any | unset | any | any | `develop-strategy-review` (on `deployStates=deployed`) — Plan.Primary stays at the envelope-shape dispatch; the atom body surfaces `zerops_workflow action="strategy"` as the gate the agent must honour before attempting a subsequent deploy |
+| dev | auto | dynamic | container | `develop-close-mode-auto-deploy-container`, `develop-close-mode-auto-dev`, `develop-dynamic-runtime-start-container`, `develop-platform-rules-container` |
+| dev | auto | dynamic | local | `develop-close-mode-auto-deploy-local`, `develop-dynamic-runtime-start-local`, `develop-local-workflow` |
+| dev | auto | static | any | env-scoped `develop-close-mode-auto-deploy-{container,local}`, `develop-static-workflow` (no post-deploy start) |
+| dev | auto | implicit-webserver | any | env-scoped `develop-close-mode-auto-deploy-{container,local}`, `develop-implicit-webserver` |
+| standard \| simple \| local-stage \| local-only | git-push | any | any | `develop-close-mode-git-push` (requires `gitPushStates=configured`) |
+| simple | auto | dynamic | any | `develop-close-mode-auto-simple`, `develop-dynamic-runtime-start-*` (env-scoped) |
+| any | manual | any | any | `develop-close-mode-manual` — informs only; deploy tools remain callable but ZCP does not auto-deploy at close |
+| any | unset | any | any | `develop-strategy-review` (on `deployStates=deployed`) — Plan.Primary stays at the envelope-shape dispatch; the atom body offers the three close-mode options and points at `action="close-mode"` as the commit step |
 | any | any | managed | any | no deploy atoms; managed services are not targets of `zerops_deploy` |
 
-Invalid combinations (e.g. stage + push-dev, dev + push-git, simple + stage) are blocked at pre-flight with an explicit error.
+Invalid combinations are blocked at the close-mode setter (e.g. `auto` for `local-only` has no Zerops runtime to push to — `workflow_close_mode.go` rejects with `PREREQUISITE_MISSING` and points at `action="adopt-local"`). `git-push` requires `gitPushStates=configured` — when missing, `develop-close-mode-git-push` does not fire and `setup-git-push-{container,local}` (strategy-setup phase) carries the walkthrough.
 
 ### 3.3 Deploy state transitions per service
 
@@ -398,11 +398,11 @@ Guidance is pulled on demand via `zerops_guidance` rather than pushed as a singl
 - **Response**: `develop-platform-rules-container` atom body carries the remount guidance in the next develop-active turn.
 - **Plan.Primary** = unchanged; remount is advisory, not a gated action.
 
-### 6.10 Strategy mismatch with mode
+### 6.10 Close-mode mismatch with mode
 
-- **Trigger**: user calls `zerops_manage action=set-strategy args={hostname: devservice, strategy: push-git}`. Dev mode services don't use push-git.
-- **Response**: error `STRATEGY_INVALID_FOR_MODE` with allowed set.
-- **Plan.Primary** = `{retry with valid strategy, rationale: "Dev mode supports push-dev or manual only."}`
+- **Trigger**: user calls `zerops_workflow action="close-mode" closeMode={"localonly": "auto"}`. `local-only` services have no Zerops runtime to push to with the default zcli mechanism.
+- **Response**: error `PREREQUISITE_MISSING` from `workflow_close_mode.go` with hint pointing at `action="adopt-local"` (link a runtime) or switching to `closeMode=git-push` / `closeMode=manual` (which don't need a stage).
+- **Plan.Primary** = `{retry with valid close-mode, rationale: "local-only supports git-push or manual only."}`
 
 ### 6.11 Managed service deploy attempt
 
@@ -502,8 +502,8 @@ LLM calls: zerops_workflow action=status (first call in container env)
     Phase: idle
     Self: zcp-host
     Services:
-      - laraveldev (php-nginx@8.3): mode=dev, strategy=push-dev
-      - laravelstage (php-nginx@8.3): mode=stage, strategy=push-git, stage-of=laraveldev
+      - laraveldev (php-nginx@8.3): mode=dev, closeDeployMode=auto
+      - laravelstage (php-nginx@8.3): mode=stage, closeDeployMode=git-push, gitPushState=configured, stage-of=laraveldev
       - newservice (nodejs@20): not bootstrapped — auto-adopted on develop start
       - db (mariadb@11): managed
     Next:
@@ -529,7 +529,7 @@ LLM calls: zerops_verify args={hostname: laraveldev}
 
     Guidance:
       [BuildIterationDelta tier-2 systematic-check text]
-      [develop-push-dev-deploy atom body]
+      [develop-close-mode-auto-deploy-container atom body]
       [develop-platform-rules-container atom body]
 
     (remaining session attempts: 2)

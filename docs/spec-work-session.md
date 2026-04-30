@@ -132,7 +132,7 @@ type DeployAttempt struct {
     AttemptedAt string `json:"attemptedAt"`
     SucceededAt string `json:"succeededAt,omitempty"`
     Setup       string `json:"setup,omitempty"`       // dev | prod
-    Strategy    string `json:"strategy,omitempty"`    // push-dev | git-push | manual
+    Strategy    string `json:"strategy,omitempty"`    // "zcli" (default zcli push) | "git-push" | "record-deploy" (external bridge)
     Error       string `json:"error,omitempty"`
 }
 
@@ -206,7 +206,7 @@ workflow for any code task."
 ```
 ## Lifecycle Status
 Work session active (1h 23m) — intent: "add login form"
-  Services: web (push-dev), api (push-dev)
+  Services: web (closeMode=auto), api (closeMode=auto)
   Deploys: web ✓ 3m ago | api ✗ 2 attempts (last: build timeout 1m ago)
   Verifies: web ✓ 2m ago | api —
   → Next: fix build error on api, redeploy
@@ -258,14 +258,14 @@ Infrastructure session is rendered without a Work Session block.
      atoms guide the agent through scaffold + write + deploy. The
      first deploy always uses the default self-deploy mechanism
      (`zerops_deploy targetService=X` with no strategy argument),
-     regardless of the eventual persistent strategy.
-   - `deployStates: [deployed] + strategies: [unset]` services → the
-     `develop-strategy-review` atom asks the agent to confirm an
-     ongoing strategy (`push-dev` / `push-git` / `manual`). Leaving it
+     regardless of the eventual persistent close-mode.
+   - `deployStates: [deployed] + closeDeployModes: [unset]` services →
+     the `develop-strategy-review` atom asks the agent to confirm an
+     ongoing close-mode (`auto` / `git-push` / `manual`). Leaving it
      unset keeps the default mechanism but re-fires the atom every
      session until confirmed.
-   - Confirmed strategies unlock the strategy-specific atoms
-     (push-git deploy / manual deploy / push-dev iteration loops).
+   - Confirmed close-mode unlocks the close-mode-specific atoms
+     (`develop-close-mode-{auto,git-push,manual}-*`).
 
 ### 6.2 `action="status"` (no workflow argument)
 
@@ -282,10 +282,10 @@ Routing precedence:
   "workflow": "develop",
   "intent": "add login form",
   "services": [
-    {"hostname": "web", "strategy": "push-dev", "mode": "dev",
+    {"hostname": "web", "closeDeployMode": "auto", "mode": "dev",
      "deploys": {"attempted": 1, "succeeded": 1, "lastError": ""},
      "verifies": {"attempted": 1, "passed": 1}},
-    {"hostname": "api", "strategy": "push-dev", "mode": "dev",
+    {"hostname": "api", "closeDeployMode": "auto", "mode": "dev",
      "deploys": {"attempted": 2, "succeeded": 0, "lastError": "build timeout"},
      "verifies": {"attempted": 0, "passed": 0}}
   ],
@@ -407,24 +407,31 @@ Services:
   - web (nodejs, standard mode)
   - api (go, standard mode)
 
-Next steps (do these in order):
+Next step:
 
-1. Set deploy strategy for each service:
-     zerops_workflow action="strategy"
-       strategies={"web": "push-dev", "api": "push-dev"}
-   Options:
-     - push-dev — self-deploy from dev container (recommended for iterative work)
-     - push-git — git push triggers CI/CD
-     - manual — user controls deployments
+   zerops_workflow action="start" workflow="develop"
+     intent="<what you'll implement>"
 
-2. Start a work session for your first task:
-     zerops_workflow action="start" workflow="develop"
-       intent="<what you'll implement>"
+Close-mode is NOT chosen at bootstrap. Develop owns the first deploy
+with the default self-deploy mechanism regardless of the (still-empty)
+`CloseDeployMode`. After the first deploy lands the
+`develop-strategy-review` atom (priority 2) prompts the agent to pick
+an ongoing close-mode via `action="close-mode" closeMode={…}` — three
+orthogonal axes follow:
+
+   - `close-mode`        — what `action="close"` does:
+                           auto / git-push / manual
+   - `git-push-setup`    — provisions GIT_TOKEN / .netrc / remote URL,
+                           stamps `GitPushState=configured`
+   - `build-integration` — wires ZCP-managed CI:
+                           none / webhook / actions
+                           (requires `GitPushState=configured`)
 ```
 
 For adoption flow (auto-adopt inside `handleDevelopStart`), the same
-two-step is implied but collapsed: briefing prompts strategy, LLM sets it,
-calls develop again, work session created.
+flow holds: bootstrap-side metas land with empty close-mode + git-push
+state + build-integration; develop briefing surfaces the review atoms
+post-first-deploy.
 
 ---
 
@@ -435,23 +442,26 @@ calls develop again, work session created.
 1. User imports recipe. Opens Claude Code. `zcp` starts (PID 1001).
 2. LLM sees base instructions, no lifecycle hint (no work session yet).
 3. LLM calls `action="start" workflow="develop" intent="build the app"`.
-4. Server: no metas → auto-adopt → metas written with empty strategy.
-5. Server: strategy unset on all services → briefing prompts strategy.
-   **Work session NOT created yet.**
-6. LLM discusses with user, calls `action="strategy" strategies={web: push-dev, api: push-dev}`.
-7. LLM calls `action="start" workflow="develop" intent="build the app"`.
-8. Work session created. File `work/1001.json`. Registered.
-9. LLM codes on mount, using `action="status"` whenever it needs to check
+4. Server: no metas → auto-adopt → metas written with empty close-mode +
+   git-push state + build-integration (per spec-workflows.md E2 / S2).
+5. Work session created immediately. File `work/1001.json`. Registered.
+   Briefing surfaces `develop-first-deploy-intro` (deployStates=never-deployed).
+6. LLM codes on mount, using `action="status"` whenever it needs to check
    where it is.
-10. Compaction at 1h. LLM's next instruction-following step calls
-    `action="status"` (taught by the init instructions); the Lifecycle
-    Status block re-orients it and it continues.
-11. Deploys web → succeeded. Verifies web → passed.
-12. Deploys api → succeeded. Verifies api → passed.
-13. Auto-close fires. Next `action="status"` renders the "task complete,
-    close or next" variant.
-14. LLM calls `action="close"` → file deleted, summary returned.
-15. For next task → repeat from step 3 (strategy already set, briefing direct).
+7. Compaction at 1h. LLM's next instruction-following step calls
+   `action="status"` (taught by the init instructions); the Lifecycle
+   Status block re-orients it and it continues.
+8. Deploys web → succeeded. Verifies web → passed.
+9. Deploys api → succeeded. Verifies api → passed.
+10. Post-first-deploy briefing surfaces `develop-strategy-review` atom
+    (deployStates=deployed, closeDeployModes=unset). LLM offers the agent
+    `action="close-mode" closeMode={web:auto, api:auto}` to commit.
+11. Auto-close fires (close-mode now set, every scope service green).
+    Next `action="status"` renders the "task complete, close or next"
+    variant.
+12. LLM calls `action="close"` → file deleted, summary returned.
+13. For next task → repeat from step 3 (close-mode already set on metas,
+    briefing skips review atom).
 
 ### 9.2 Deploy-fail-fix-redeploy
 

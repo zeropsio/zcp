@@ -124,7 +124,7 @@ ServicePlan
             └─ Resolution     "CREATE" | "EXISTS" | "SHARED"
 ```
 
-**Standard mode** (default): runtime gets a dev+stage pair. Dev uses `deployFiles: [.]` and `startWithoutCode: true`; stage builds from committed code via `push-git`.
+**Standard mode** (default): runtime gets a dev+stage pair. Dev uses `deployFiles: [.]` and `startWithoutCode: true`; stage builds from committed code (cross-deploy from dev or git-push).
 
 **Dev mode**: single dev service, no stage. For prototyping and quick iterations.
 
@@ -138,8 +138,8 @@ Every task that changes code or deploys runs under a per-PID Work Session at `.z
 
 Two branches, selected by `deployStates`:
 
-- **`never-deployed`** — first-deploy branch atoms scaffold `zerops.yaml`, write application code, run the first deploy, stamp `FirstDeployedAt`. First deploy always uses the default self-deploy mechanism regardless of `ServiceMeta.DeployStrategy`.
-- **`deployed`** — edit-loop branch; strategy (`push-dev` / `push-git` / `manual`) drives per-service atoms.
+- **`never-deployed`** — first-deploy branch atoms scaffold `zerops.yaml`, write application code, run the first deploy, stamp `FirstDeployedAt`. First deploy always uses the default self-deploy mechanism regardless of `ServiceMeta.CloseDeployMode`.
+- **`deployed`** — edit-loop branch; per-service close-mode (`auto` / `git-push` / `manual`) drives the atoms that fire at develop close.
 
 Auto-close fires when every scope service has `Deploys[last].Success=true AND Verifies[last].Success=true`. Failure-path iteration tiers (diagnose → systematic → STOP) are surfaced via `BuildIterationDelta`; `defaultMaxIterations=5` caps the session, after which it closes with `CloseReason=iteration-cap`.
 
@@ -210,12 +210,13 @@ Recipe metadata persists at `{stateDir}/recipes/{slug}.json`.
 | Field | Written by | Meaning |
 |---|---|---|
 | `Hostname`, `Mode`, `StageHostname` | bootstrap close | Identifies the service and its standard-mode pairing |
-| `Environment` | bootstrap close | `container` or `local` |
-| `BootstrappedAt` | bootstrap close | Stamped when bootstrap completes; `IsComplete()` returns true |
-| `DeployStrategy` | `zerops_workflow action="strategy"` | `push-dev` / `push-git` / `manual` (left unset at bootstrap close) |
+| `BootstrappedAt`, `BootstrapSession` | bootstrap close | `BootstrappedAt` stamped on completion; `BootstrapSession` empty marks adoption |
+| `CloseDeployMode` (+ `CloseDeployModeConfirmed`) | `zerops_workflow action="close-mode"` | What `action="close"` does: `auto` (zcli push) / `git-push` (commit + push to remote) / `manual` (ZCP yields). Empty until the user opts in. |
+| `GitPushState` (+ `RemoteURL`) | `zerops_workflow action="git-push-setup"` | Git-push capability state: `unconfigured` / `configured` / `broken` / `unknown`. Orthogonal to close-mode — `git-push-setup` can land while close-mode stays `auto`. |
+| `BuildIntegration` | `zerops_workflow action="build-integration"` | ZCP-managed CI shape consuming git pushes: `none` / `webhook` / `actions`. Requires `GitPushState=configured`. |
 | `FirstDeployedAt` | develop first-deploy verify | Stamped once the first deploy has passed verify |
 
-Strategy is read fresh from disk on every workflow turn — never cached in session state. The develop workflow gates `push-git` on `FirstDeployedAt` being present.
+Close-mode + git-push state + build-integration are read fresh from disk on every workflow turn — never cached in session state. The `git-push` deploy strategy gates on the working tree carrying a commit (per spec D2b), not on `FirstDeployedAt`.
 
 ---
 
@@ -271,7 +272,7 @@ State lives at `.zcp/state/`:
 |------|---------|
 | `sessions/{id}.json` | Infrastructure session (bootstrap or recipe) — route, step, plan, env vars |
 | `work/{pid}.json` | Per-PID develop Work Session — intent, services in scope, deploy/verify attempt history |
-| `services/{hostname}.json` | ServiceMeta (mode, strategy, stage pairing, first-deploy stamp) |
+| `services/{hostname}.json` | ServiceMeta (mode, close-mode + git-push state + build-integration, stage pairing, first-deploy stamp) |
 | `recipes/{slug}.json` | Recipe metadata (slug, framework, tier, runtimeType) |
 | `registry.json` | Tracks both infrastructure sessions and work sessions; auto-prunes dead PIDs and sessions > 24h old |
 

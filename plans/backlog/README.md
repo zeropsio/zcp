@@ -35,6 +35,16 @@ archives. This folder is the durable register.
 3. **When you reject for good**: move to `plans/backlog/rejected/<slug>.md`
    with a one-line **Why rejected** at the top so we don't keep
    re-discovering the same idea.
+4. **When the underlying work ships outside the deferral path** (a fix
+   lands organically while pursuing something else, or a sister plan
+   absorbs the scope): `git rm plans/backlog/<slug>.md` IN THE SAME
+   COMMIT as the shipping change. A stale backlog entry that points at
+   already-shipped code is a documented bug class —
+   `docs/audit-prerelease-internal-testing-2026-04-30-roundtwo.md`
+   caught one (`c3-failure-classification-async-events.md` survived
+   for ~24h after `internal/ops/events.go:30-50` shipped the fix).
+   The `TestNoRetiredVocabAcrossRepo` drift gate is the safety net,
+   but atomic backlog closure is the upstream discipline.
 
 Append-only between extract / reject events. Don't silently rewrite a
 historical entry — append `**Update YYYY-MM-DD**:` lines if context shifts.

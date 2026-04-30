@@ -42,8 +42,8 @@ const (
 	// workflow surfaces a choice atom.
 	CloseModeUnset CloseDeployMode = "unset"
 	// CloseModeAuto means develop close auto-runs zcli push direct to the
-	// dev half — current "push-dev" mechanics. Auto-close fires on
-	// deploy+verify success per scope.
+	// dev half (the AttemptInfo.Strategy="zcli" mechanism). Auto-close fires
+	// on deploy+verify success per scope.
 	CloseModeAuto CloseDeployMode = "auto"
 	// CloseModeGitPush means develop close auto-commits + pushes to the
 	// configured remote. Build trigger is BuildIntegration's concern

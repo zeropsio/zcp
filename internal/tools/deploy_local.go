@@ -122,14 +122,14 @@ func RegisterDeployLocal(
 			input.Setup = resolvedSetup
 		}
 
-		// Strategy on the local deploy path is push-dev (zcli push from the
+		// Strategy on the local deploy path is "zcli" (zcli push from the
 		// developer's machine). The local-env git-push branch lives in
 		// deploy_local_git.go and records its own attempt with
-		// Strategy=push-git.
+		// `Strategy: "git-push"`.
 		attempt := workflow.DeployAttempt{
 			AttemptedAt: time.Now().UTC().Format(time.RFC3339),
 			Setup:       input.Setup,
-			Strategy:    "push-dev",
+			Strategy:    "zcli",
 		}
 
 		result, err := ops.DeployLocal(ctx, client, projectID, *authInfo,
@@ -138,7 +138,7 @@ func RegisterDeployLocal(
 			attempt.Error = err.Error()
 			// Local push failed before reaching the platform — transport-
 			// layer error (e.g. zcli auth, connection).
-			classification := classifyTransportError(err, "push-dev")
+			classification := classifyTransportError(err, "zcli")
 			if classification != nil {
 				attempt.FailureClass = classification.Category
 			} else {

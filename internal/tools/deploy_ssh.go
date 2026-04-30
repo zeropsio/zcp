@@ -169,14 +169,16 @@ func RegisterDeploySSH(
 		}
 
 		// Record attempt up front so a crash still leaves a trace.
-		// Strategy is "push-dev" for the default zcli-push path; the
-		// git-push branch above takes its own handler before we reach
-		// here, so this site is exclusively the push-dev case.
+		// Strategy is "zcli" for the default zcli-push mechanism; the
+		// git-push branch above takes its own handler (`Strategy: "git-push"`)
+		// before we reach here, so this site is exclusively the default-zcli
+		// case. `record-deploy` writes `Strategy: "record-deploy"` for
+		// externally-stamped deploys.
 		attemptedAt := time.Now().UTC().Format(time.RFC3339)
 		attempt := workflow.DeployAttempt{
 			AttemptedAt: attemptedAt,
 			Setup:       input.Setup,
-			Strategy:    "push-dev",
+			Strategy:    "zcli",
 		}
 
 		// Default: zcli push to Zerops.
@@ -185,7 +187,7 @@ func RegisterDeploySSH(
 		if err != nil {
 			attempt.Error = err.Error()
 			// SSH/transport-layer failure — we never reached the build.
-			classification := classifyTransportError(err, "push-dev")
+			classification := classifyTransportError(err, "zcli")
 			if classification != nil {
 				attempt.FailureClass = classification.Category
 			} else {

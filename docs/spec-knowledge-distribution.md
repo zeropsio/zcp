@@ -98,7 +98,7 @@ Six axes decompose the guidance space. Each axis is declared in an atom's frontm
 | `develop-active` | Work Session open. |
 | `develop-closed-auto` | Work Session auto-closed — awaiting explicit close + next. |
 | `recipe-active` | Recipe session in progress. |
-| `strategy-setup` | Stateless synthesis phase emitted from `action=strategy` for push-git (Option A/B, tokens, optional CI/CD, first push). Replaces retired `cicd-active`. |
+| `strategy-setup` | Stateless synthesis phase emitted from `action="git-push-setup"` (provisions GIT_TOKEN / .netrc / RemoteURL) and `action="build-integration"` (wires webhook / actions). Replaces retired `cicd-active` and the conflated `action="strategy"` entry point. |
 | `export-active` | Stateless export immediate workflow. |
 
 **Empty = error.** No atom applies to "any phase" — the phase determines workflow fundamentals. Atoms missing a `phases` declaration fail `LoadAtomCorpus`.
@@ -125,16 +125,37 @@ Service-scoped axis — see §3.8 for conjunction semantics across service-scope
 
 **Empty = either.**
 
-### 3.4 `strategies` (service-scoped, optional)
+### 3.4 `closeDeployModes`, `gitPushStates`, `buildIntegrations` (service-scoped, optional)
+
+Three orthogonal per-pair axes, projected from the corresponding `ServiceMeta` fields.
+
+`closeDeployModes` — what `zerops_workflow action="close"` does:
 
 | Value | Meaning |
 |---|---|
-| `push-dev` | SSH-based self-deploy (`zerops_deploy targetService=...`). |
-| `push-git` | Commit + push to git remote, CI/CD picks up. |
-| `manual` | User handles deploy externally. |
-| `unset` | No strategy set yet on the service's ServiceMeta. |
+| `auto` | Default zcli push at close (default-deploy mechanism, `AttemptInfo.Strategy="zcli"`). |
+| `git-push` | Commit + push to configured remote at close. Build trigger is `BuildIntegration`'s concern. |
+| `manual` | ZCP yields close orchestration. Tools remain callable; auto-close DOES NOT fire. |
+| `unset` | Never chosen yet. Bootstrap leaves it empty; develop's `develop-strategy-review` atom prompts the agent post-first-deploy. |
 
-**Empty = any strategy.** Service-scoped axis — see §3.8 for conjunction semantics.
+`gitPushStates` — git-push capability provisioned?
+
+| Value | Meaning |
+|---|---|
+| `unconfigured` | Default — no `GIT_TOKEN` / `.netrc` / RemoteURL stamped. |
+| `configured` | `action="git-push-setup"` succeeded; capability is ready. |
+| `broken` | Setup attempted but artifact damaged. |
+| `unknown` | Adopted/migrated meta — needs probe. |
+
+`buildIntegrations` — ZCP-managed CI on remote git push (requires `gitPushStates=configured`):
+
+| Value | Meaning |
+|---|---|
+| `none` | ZCP hasn't wired anything (user may have independent CI/CD that ZCP doesn't track). |
+| `webhook` | Zerops dashboard OAuth — Zerops pulls + builds on git push. |
+| `actions` | GitHub Actions runs `zcli push` from CI. |
+
+**Empty axis = any value.** All three are service-scoped — see §3.8 for conjunction semantics.
 
 ### 3.5 `runtimes` (service-scoped, optional)
 
@@ -185,7 +206,7 @@ Example: `develop-ready-to-deploy` atom describes recovery for services stuck in
 
 ### 3.10 Service-scoped axis conjunction
 
-The five service-scoped axes (`modes`, `strategies`, `runtimes`, `deployStates`, `serviceStatus`) evaluate **together per service**: an atom fires only when a single service in the envelope satisfies EVERY declared service-scoped axis. Axis independence (ANY service satisfies X while a DIFFERENT service satisfies Y) would fire atoms whose `{hostname}` substitution references a service the atom isn't semantically about — e.g. `develop-strategy-review (deployStates=[deployed], strategies=[unset])` would surface when service A is deployed+push-dev and service B is never-deployed+unset, despite no single service being both deployed AND unset.
+The seven service-scoped axes (`modes`, `closeDeployModes`, `gitPushStates`, `buildIntegrations`, `runtimes`, `deployStates`, `serviceStatus`) evaluate **together per service**: an atom fires only when a single service in the envelope satisfies EVERY declared service-scoped axis. Axis independence (ANY service satisfies X while a DIFFERENT service satisfies Y) would fire atoms whose `{hostname}` substitution references a service the atom isn't semantically about — e.g. `develop-strategy-review (deployStates=[deployed], closeDeployModes=[unset])` would surface when service A is deployed+`auto` and service B is never-deployed+`unset`, despite no single service being both deployed AND unset.
 
 Envelope-wide axes (`phases`, `environments`, `routes`, `steps`, `idleScenarios`) match the envelope directly — conjunction only applies to the service-scoped group.
 
@@ -272,7 +293,7 @@ func Synthesize(envelope StateEnvelope, corpus []KnowledgeAtom) ([]string, error
 
 ### 5.2 Rendering into the tool response
 
-Callers are responsible for joining. The status renderer (`RenderStatus`) emits each body as a separate paragraph in the "Guidance" section, separated by blank lines. Stateless synthesis (`strategy-setup`, `export-active`) uses `SynthesizeImmediateWorkflow(phase, env)` which joins bodies with `\n\n---\n\n` and returns a single string. `strategy-setup` is invoked from `handleStrategy` when a push-git strategy is set; `export-active` is invoked from the `workflow=export` immediate entry.
+Callers are responsible for joining. The status renderer (`RenderStatus`) emits each body as a separate paragraph in the "Guidance" section, separated by blank lines. Stateless synthesis (`strategy-setup`, `export-active`) uses `SynthesizeImmediateWorkflow(phase, env)` which joins bodies with `\n\n---\n\n` and returns a single string. `strategy-setup` is invoked from `handleGitPushSetup` and `handleBuildIntegration` (the two split actions that replaced the retired `action="strategy"`); `export-active` is invoked from the `workflow=export` immediate entry.
 
 ### 5.3 Determinism guarantees
 
@@ -293,9 +314,9 @@ Inventory as of 2026-04-19 (74 atoms total):
 |---|---|---|
 | `idle-*` | 3 | Entry atoms for idle phase. |
 | `bootstrap-*` | 27 | Split by mode × environment × runtime × route × step. |
-| `develop-*` | 25 | Split by mode × strategy × runtime × environment × close path. |
-| `strategy-push-git` | 1 | Central push-git setup atom — emitted from `action=strategy` for push-git. Replaces the retired 6-atom cicd-* set. |
-| `export` | 1 | Single-atom task list for `workflow=export`. |
+| `develop-*` | 25 | Split by mode × close-mode × runtime × environment × deploy state. |
+| `setup-git-push-{container,local}`, `setup-build-integration-{webhook,actions}` | 4 | Strategy-setup phase atoms — emitted from `action="git-push-setup"` (GIT_TOKEN / .netrc / RemoteURL) and `action="build-integration"` (webhook / actions). Replace the retired 6-atom cicd-* set. |
+| `export-*` | 6 | Topic-scoped atoms for `workflow=export` (intro / classify-envs / validate / publish / publish-needs-setup / scaffold-yaml). |
 
 ---
 
@@ -451,7 +472,7 @@ Every invariant here is a property of the implementation and can be verified by 
 | KD-04 | Every atom declares a non-empty `phases` axis. | `ParseAtom` rejects empty `phases` in `internal/workflow/atom.go` |
 | KD-05 | Unknown `{placeholder}` tokens in atom bodies fail the corpus load. | `findUnknownPlaceholder` in `synthesize.go` |
 | KD-06 | `Plan.Primary` is never zero in a well-formed response. | Gated by `BuildPlan` tests; callers error on empty Plan. |
-| KD-07 | `strategy-setup` (from `handleStrategy` push-git) and `export-active` are stateless — no session file is written. | `internal/tools/workflow_strategy.go`, `workflow_immediate.go` |
+| KD-07 | `strategy-setup` (from `handleGitPushSetup` + `handleBuildIntegration`) and `export-active` are stateless — no session file is written. | `internal/tools/workflow_git_push_setup.go`, `internal/tools/workflow_build_integration.go`, `workflow_export.go` |
 | KD-08 | Recipe authoring runs through `recipe_*.go` section parsers, NOT the atom synthesizer. | `internal/workflow/recipe_guidance.go` does not call `Synthesize` |
 | KD-09 | Iteration-tier text (`BuildIterationDelta`) is emitted as an addendum to synthesized atoms, not as an atom. | `internal/workflow/iteration_delta.go` is called independently by deploy handlers |
 | KD-10 | Envelope slice ordering is deterministic: services sort by hostname, attempts by time, map keys by string order. | `envelope.go` encoder + `compute_envelope.go` sort passes |
@@ -596,9 +617,9 @@ parens):
 
 - **Env-only token** (`container`, `local`, `container env`,
   `local env`) → DROP.
-- **Mode/runtime/strategy distinguisher** (`dev mode`, `simple
-  mode`, `standard mode`, `dynamic`, `static`, `push-dev`,
-  `push-git`, `manual`) → KEEP — distinguishes from sibling
+- **Mode/runtime/close-mode distinguisher** (`dev mode`, `simple
+  mode`, `standard mode`, `dynamic`, `static`, `auto`,
+  `git-push`, `manual`) → KEEP — distinguishes from sibling
   atoms in the rendered output.
 - **Mechanism payload** (`GIT_TOKEN + .netrc`, `user's git`,
   runtime constraint, credential channel) → KEEP — load-bearing
@@ -606,11 +627,11 @@ parens):
 
 **Worked examples**:
 
-- `"Push-Dev Deploy Strategy — container"` → drop `— container`
+- `"close-mode=auto Deploy — container"` → drop `— container`
   (only env token).
-- `"Push-dev iteration cycle (dev mode, container)"` → drop
+- `"close-mode=auto iteration cycle (dev mode, container)"` → drop
   `, container`; keep `dev mode` (mode distinguisher).
-- `"push-git push setup — container env (GIT_TOKEN + .netrc)"`
+- `"git-push setup — container env (GIT_TOKEN + .netrc)"`
   → drop `— container env`; KEEP `(GIT_TOKEN + .netrc)`
   (mechanism payload distinguishing from local-env credential
   flow).
@@ -643,7 +664,7 @@ referent.
 
 | Use this term | When the atom is talking about |
 |---|---|
-| `dev container` | Mutable push-dev / SSHFS context — the developer-mutable container for dev-mode-dynamic flows. |
+| `dev container` | Mutable SSHFS-mounted context — the developer-mutable container for dev-mode-dynamic flows (close-mode=auto path). |
 | `runtime container` | A running service instance generally. The default for cross-cluster references when no other distinction applies. |
 | `build container` | The build-stage filesystem (zbuilder context) before the runtime swap. Only when the atom is explicitly talking about build vs runtime. |
 | `Zerops container` | Broad first-introduction framing only — when the atom is orienting an unfamiliar reader. Avoid in detailed operational guidance. |
@@ -692,7 +713,7 @@ model?
 - `SSHFS`, `/var/www/{hostname}`, `container env`, `local env`
 - `on your CWD`, `on the mount`, `via SSH`, `over SSH`,
   `dev container` (when the atom isn't intrinsically about
-  push-dev container flows)
+  close-mode=auto container flows)
 
 **Per-match classification**:
 
@@ -718,7 +739,7 @@ model?
 - `develop-strategy-review.md` L15 parenthetical "(zcli push from
   your workspace: dev container → stage, or local CWD → stage)"
   → DROP-LEAK; drop the parenthetical. Per-env shape is in
-  `develop-push-dev-deploy-{container,local}`.
+  `develop-close-mode-auto-deploy-{container,local}`.
 
 **Inverse rule (UNIFICATION candidate)**:
 

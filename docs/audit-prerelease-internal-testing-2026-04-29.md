@@ -541,7 +541,7 @@ Closed by branch `cleanup-pre-internal-testing` (`plans/archive/pre-internal-tes
 |---|---|---|
 | C1 | RESOLVED | Phase 1 commit `9e31c19b` — atom slug renames + body sweeps + eval scaffolding sweep + test fixture sweeps + spec sweep + plan archive (40 files). |
 | C2 | RESOLVED | Phase 4 commit `0ad55b35` — auto-stamp removed from BOTH git-push handlers; record-deploy bridge appends synthetic successful DeployAttempt to work session. |
-| C3 | DEFERRED | `plans/backlog/c3-failure-classification-async-events.md` — propagate `topology.FailureClass` into `TimelineEvent`. |
+| C3 | RESOLVED | `internal/ops/events.go:30-50` — `TimelineEvent` carries `FailureClass` + `FailureCause`; classifier wired at `events.go:262`. Backlog plan deleted (was stale — work shipped without closing the entry). |
 | C4 | RESOLVED | Phase 4 commit `0ad55b35` — `develop-record-external-deploy` axis flipped from `[deployed]` to `[never-deployed]`. |
 | C5 | RESOLVED | Phase 6 commit `7aacce24` — asset-pipeline atom rewritten to use `zerops_dev_server action=start`; class-prevention `axis-hot-shell` lint added. |
 | C6 | RESOLVED | Phase 1 commit `9e31c19b` — `develop-platform-rules-local` retired-vocab swept inside the C1 atomic sweep. |

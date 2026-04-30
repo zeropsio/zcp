@@ -9,9 +9,11 @@ import (
 )
 
 // synthesizeImmediateGuidance returns the atom-composed body for a stateless
-// workflow. Currently only `export` — `cicd` retired in favour of
-// `action=strategy strategies={X:push-git}` as the central deploy-config
-// entry point.
+// workflow. Currently only `export`. The retired `cicd` immediate workflow
+// was replaced by the three-action central-point split:
+// `action="close-mode"` + `action="git-push-setup"` +
+// `action="build-integration"` — each is stateful (writes ServiceMeta) so
+// they don't reach this immediate-synthesis path.
 func synthesizeImmediateGuidance(name string, _ *workflow.Engine, rt runtime.Info) (string, error) {
 	phase, ok := immediatePhaseFor(name)
 	if !ok {

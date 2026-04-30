@@ -25,9 +25,8 @@ cat > "$STATE/services/app.json" <<JSON
 {
   "hostname": "app",
   "mode": "dev",
-  "deployStrategy": "push-dev",
-  "strategyConfirmed": true,
-  "environment": "container",
+  "closeDeployMode": "auto",
+  "closeDeployModeConfirmed": true,
   "bootstrapSession": "sess-completed-prev",
   "bootstrappedAt": "2026-04-20T08:00:00Z",
   "firstDeployedAt": "2026-04-20T08:30:00Z"

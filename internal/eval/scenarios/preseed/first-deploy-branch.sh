@@ -19,14 +19,13 @@ cat > "$STATE/registry.json" <<'JSON'
 JSON
 rm -f "$STATE/session-registry.json"
 
-# Complete meta, strategy confirmed, never deployed.
+# Complete meta, close-mode confirmed, never deployed.
 cat > "$STATE/services/appdev.json" <<JSON
 {
   "hostname": "appdev",
   "mode": "dev",
-  "deployStrategy": "push-dev",
-  "strategyConfirmed": true,
-  "environment": "container",
+  "closeDeployMode": "auto",
+  "closeDeployModeConfirmed": true,
   "bootstrapSession": "sess-completed-01",
   "bootstrappedAt": "2026-04-20T08:00:00Z"
 }

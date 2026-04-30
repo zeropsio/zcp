@@ -116,10 +116,10 @@ refuses to guess which one is stage and asks the user via the
 ServiceMeta:
 ```
 {
-  "hostname":       "<project-name>",
-  "stageHostname":  "",
-  "mode":           "local-only",
-  "deployStrategy": "manual",   // forced on local-only (no push target)
+  "hostname":         "<project-name>",
+  "stageHostname":    "",
+  "mode":             "local-only",
+  "closeDeployMode":  "manual",   // forced on local-only (no push target)
   "bootstrapSession": ""
 }
 ```
@@ -378,10 +378,11 @@ later doesn't require re-setup.
 ### local-only + default-deploy mechanism is blocked
 
 `local-only` means no Zerops runtime is linked. The default deploy
-mechanism (`strategy=""` / push-dev) needs a deploy target, so the
-close-mode handler and `zerops_deploy` both refuse `push-dev` on
-local-only services. The error points at `adopt-local` (to link a
-runtime) or `strategy="git-push"` (which doesn't need a stage).
+mechanism (zcli push, `AttemptInfo.Strategy="zcli"`) needs a deploy
+target, so the close-mode handler and `zerops_deploy` both refuse
+`closeMode=auto` on local-only services. The error points at
+`action="adopt-local"` (to link a runtime) or
+`zerops_deploy strategy="git-push"` (which doesn't need a stage).
 
 ---
 

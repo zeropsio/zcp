@@ -53,10 +53,9 @@ var axisKAllowlist = map[string]string{
 	"develop-push-git-deploy-local.md::credential manager). `GIT_TOKEN` and `.netrc` are container-only and do":                                        "spec §11.5 axis-K signal-#3: credential-channel separation",
 
 	// Negation tied to action — signal #1 (`Don't run X`, `Do NOT run`).
-	"bootstrap-recipe-import.md::services. Don't edit resource limits, `buildFromGit`, `priority`,":           "spec §11.5 axis-K signal-#1: recipe-import field-mutability guardrail",
-	"develop-first-deploy-write-app.md::**Don't run `git init` from the ZCP-side mount.** Push-dev deploy":    "spec §11.5 axis-K signal-#1: prevents user-init reflex on dev container",
-	"export.md::non-fatal issues. Do NOT run `git init`, `git config user.*`, or":                             "spec §11.5 axis-K signal-#1: export procedure forbids manual git init",
-	"strategy-push-git-push-container.md::Do not run `git init`, `.netrc` configuration, or `git remote add`": "spec §11.5 axis-K signal-#1: push-git setup forbids manual git init",
+	"bootstrap-recipe-import.md::services. Don't edit resource limits, `buildFromGit`, `priority`,":        "spec §11.5 axis-K signal-#1: recipe-import field-mutability guardrail",
+	"develop-first-deploy-write-app.md::**Don't run `git init` from the ZCP-side mount.** Push-dev deploy": "spec §11.5 axis-K signal-#1: prevents user-init reflex on dev container",
+	"export.md::non-fatal issues. Do NOT run `git init`, `git config user.*`, or":                          "spec §11.5 axis-K signal-#1: export procedure forbids manual git init",
 }
 
 // axisMAllowlist: <atomFile>::<exact trimmed line> → rationale.
@@ -91,21 +90,13 @@ var axisNAllowlist = map[string]string{
 	"develop-deploy-modes.md::| Cross-deploy, extract contents | `[./out/~]` | Tilde strips `out/`; use when runtime expects assets at `/var/www/`. |":                       "spec §11.6: deployFiles tilde semantics; runtime path IS the contract",
 	"develop-deploy-modes.md::is correct even when `./out` is absent locally; the build creates it.":                                                                         "spec §11.6: build-vs-source contrast clarifies deploy mechanics",
 
-	// First-deploy / manual-deploy atoms that are explicitly env-aware
-	// even at the universal-atom layer (the env contrast IS the dual
-	// guardrail).
+	// First-deploy atoms that are explicitly env-aware even at the
+	// universal-atom layer (the env contrast IS the dual guardrail).
+	// (`develop-manual-deploy.md` and `strategy-push-git-*` allowlist
+	// entries were removed when those atoms were retired in the
+	// deploy-strategy decomposition; the equivalent close-mode atoms
+	// — develop-close-mode-{auto,git-push,manual} and
+	// setup-git-push-{container,local} — carry env-scoped axes
+	// directly so they don't trip axis-N lint.)
 	"develop-first-deploy-execute.md::its subdomain or (in container env) SSHing into it first will fail or": "spec §11.6: container-env-only side-effect call-out; per-env atom doesn't carry it",
-	"develop-manual-deploy.md::`zerops_dev_server` in container env, or harness background task in local":    "spec §11.6: dual-env tool-selection contrast (cluster-#3 of axis-M too)",
-
-	// push-git trigger walkthrough — the dual-env rendering IS the
-	// operational structure (each step has a container shell + a local
-	// shell side-by-side).
-	"strategy-push-git-intro.md::Before picking a trigger, confirm the git remote exists. In container env:":                         "spec §11.6: trigger-walkthrough dual-env header (one of two)",
-	"strategy-push-git-intro.md::In local env:":                                                                                      "spec §11.6: trigger-walkthrough dual-env header (one of two)",
-	"strategy-push-git-trigger-actions.md::- Container env: `ssh {targetHostname} \"grep -E '^\\s*- setup:' /var/www/zerops.yaml\"`": "spec §11.6: dual-env command pair (container shell)",
-	"strategy-push-git-trigger-actions.md::- Local env: `grep -E '^\\s*- setup:' <your-project-dir>/zerops.yaml`":                    "spec §11.6: dual-env command pair (local shell)",
-	"strategy-push-git-trigger-actions.md::In local env, create this file directly in your repo; in container env":                   "spec §11.6: trigger walkthrough explicitly contrasts both envs",
-	"strategy-push-git-trigger-actions.md::- Container env: follow `strategy-push-git-push-container` to commit the":                 "spec §11.6: dual-env follow-up commit instructions (container variant)",
-	"strategy-push-git-trigger-actions.md::workflow file via SSH and `zerops_deploy strategy=git-push` it.":                          "spec §11.6: continuation of the container-env follow-up line",
-	"strategy-push-git-trigger-actions.md::- Local env: commit locally and `zerops_deploy strategy=git-push` (or":                    "spec §11.6: dual-env follow-up commit instructions (local variant)",
 }

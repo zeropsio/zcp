@@ -44,7 +44,7 @@ func TestWriteServiceMeta_Success(t *testing.T) {
 		t.Errorf("stageHostname: want appstage, got %s", got.StageHostname)
 	}
 	if got.CloseDeployMode != topology.CloseModeAuto {
-		t.Errorf("deployStrategy: want %s, got %s", topology.CloseModeAuto, got.CloseDeployMode)
+		t.Errorf("closeDeployMode: want %s, got %s", topology.CloseModeAuto, got.CloseDeployMode)
 	}
 }
 
@@ -93,7 +93,7 @@ func TestReadServiceMeta_Success(t *testing.T) {
 		t.Fatalf("ReadServiceMeta: %v", err)
 	}
 	if got.CloseDeployMode != topology.CloseModeAuto {
-		t.Errorf("deployStrategy: want %s, got %s", topology.CloseModeAuto, got.CloseDeployMode)
+		t.Errorf("closeDeployMode: want %s, got %s", topology.CloseModeAuto, got.CloseDeployMode)
 	}
 }
 
@@ -153,7 +153,7 @@ func TestServiceMeta_JSONRoundTrip(t *testing.T) {
 				t.Errorf("hostname: want %s, got %s", tt.meta.Hostname, got.Hostname)
 			}
 			if got.CloseDeployMode != tt.meta.CloseDeployMode {
-				t.Errorf("deployStrategy: want %s, got %s", tt.meta.CloseDeployMode, got.CloseDeployMode)
+				t.Errorf("closeDeployMode: want %s, got %s", tt.meta.CloseDeployMode, got.CloseDeployMode)
 			}
 		})
 	}
@@ -815,7 +815,7 @@ func TestServiceMeta_NoStatusFieldInJSON(t *testing.T) {
 		t.Error("type field should NOT exist in JSON — Type was removed")
 	}
 	if _, ok := raw["decisions"]; ok {
-		t.Error("decisions field should NOT exist in JSON — replaced by deployStrategy")
+		t.Error("decisions field should NOT exist in JSON — replaced by closeDeployMode + gitPushState + buildIntegration")
 	}
 	if _, ok := raw["dependencies"]; ok {
 		t.Error("dependencies field should NOT exist in JSON — removed (never read in production)")

@@ -31,10 +31,10 @@ type EventsSummary struct {
 // failed appVersion events (BUILD_FAILED / DEPLOY_FAILED /
 // PREPARING_RUNTIME_FAILED). They mirror DeployResult.FailureClassification
 // from the synchronous deploy path so async webhook/actions builds get
-// the same diagnostic vocabulary the agent already knows from
-// `zerops_deploy strategy="push-dev"` failures. Empty when the event
-// is non-failure or a LogFetcher was not provided. C3 closure (audit
-// 2026-04-29 + round-2 follow-up).
+// the same diagnostic vocabulary the agent already knows from default
+// `zerops_deploy` (zcli) failures. Empty when the event is non-failure
+// or a LogFetcher was not provided. C3 closure (audit 2026-04-29 +
+// round-2 follow-up).
 type TimelineEvent struct {
 	Timestamp    string `json:"timestamp"`
 	Type         string `json:"type"`
