@@ -194,7 +194,7 @@ func actionsConfirmResponse(
 		"buildIntegration": topology.BuildIntegrationActions,
 		"workflowFile": map[string]any{
 			"path":    ".github/workflows/zerops.yml",
-			"content": actionsWorkflowYAML(serviceID),
+			"content": actionsWorkflowYAML(serviceID, hostname),
 		},
 		"secrets": []map[string]any{
 			{
@@ -268,9 +268,11 @@ func webhookConfirmResponse(
 	return jsonResult(body)
 }
 
-// actionsWorkflowYAML returns the .github/workflows/zerops.yml body with the
-// target service ID wired through a GitHub secret.
-func actionsWorkflowYAML(serviceID string) string {
+// actionsWorkflowYAML returns the .github/workflows/zerops.yml body with
+// serviceId and setup-name prefilled. setup-name defaults to the runtime
+// hostname; if the user customized the setup block in zerops.yaml they can
+// edit the rendered file before committing.
+func actionsWorkflowYAML(serviceID, hostname string) string {
 	idExpr := "${{ secrets.ZEROPS_SERVICE_ID }}"
 	if serviceID == "" {
 		// Fall back to the secret reference; the user must still set
@@ -286,11 +288,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: zeropsio/actions@v1.0.2
-        with:
-          access-token: ${{ secrets.ZEROPS_TOKEN }}
-          service-id: %s
-`, idExpr)
+      - uses: zeropsio/actions-setup-zcli@v1
+      - run: zcli push --serviceId %s --setup %s
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+`, idExpr, hostname)
 }
 
 // actionsLookupServiceID is a thin wrapper around ops.LookupService that
