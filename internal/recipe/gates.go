@@ -67,6 +67,13 @@ func CodebaseScaffoldGates() []Gate {
 		// line comments). Closes the run-19 leakage that hit the engine
 		// stitch path's strip-then-inject contract.
 		{Name: "scaffold-bare-yaml", Run: gateScaffoldBareYAML},
+		// Run-20 C5 — facts-rationale completeness. Refuses scaffold/
+		// feature complete-phase when any directive group in the
+		// committed yaml lacks an attesting `field_rationale` fact. The
+		// agent records one fact per directive group at scaffold/feature
+		// time so the codebase-content sub-agent has the rationale stream
+		// it needs to author yaml-comment fragments.
+		{Name: "fact-rationale-completeness", Run: gateFactRationaleCompleteness},
 	}
 }
 
