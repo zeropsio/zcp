@@ -42,22 +42,40 @@ deploy. Parallel scaffold dispatch makes the race common.
 
 Set project-scope env constants derived from `${zeropsSubdomainHost}`
 + the known peer hostname + the peer's port. These resolve at
-provision time, before any scaffold sub-agent runs:
+provision time, before any scaffold sub-agent runs.
+
+**Port-suffix rule (read this BEFORE composing URLs):** when the
+runtime exposes httpSupport on a non-default port (Vite dev = 5173,
+NestJS = 3000, anything dynamic), the platform-issued subdomain
+carries a `-PORT` segment. When the runtime is `base: static`
+(Nginx serving built assets on default 80/443), the subdomain has
+no port segment. The project-env URL must match what the platform
+actually issues:
+
+```
+https://{hostname}-${zeropsSubdomainHost}-{port}.prg1.zerops.app   # dynamic runtime, non-default port
+https://{hostname}-${zeropsSubdomainHost}.prg1.zerops.app          # base: static (Nginx default 80/443)
+```
+
+In the canonical SPA + API pair, `app{stage}` ships compiled assets
+on `base: static` (no port) but `appdev` runs the framework's dev
+server on Vite's 5173 (port-suffixed). `api{stage}` runs the
+framework's start command on its own port (3000 NestJS / 8000 Django
+/ etc) — port-suffixed. So:
 
 ```bash
 zerops_env project=true action=set \
   STAGE_API_URL="https://apistage-${zeropsSubdomainHost}-3000.prg1.zerops.app" \
   STAGE_FRONTEND_URL="https://appstage-${zeropsSubdomainHost}.prg1.zerops.app" \
   DEV_API_URL="https://apidev-${zeropsSubdomainHost}-3000.prg1.zerops.app" \
-  DEV_FRONTEND_URL="https://appdev-${zeropsSubdomainHost}.prg1.zerops.app"
+  DEV_FRONTEND_URL="https://appdev-${zeropsSubdomainHost}-5173.prg1.zerops.app"
 ```
 
-URL format is a platform constant:
-
-```
-https://{hostname}-${zeropsSubdomainHost}-{port}.prg1.zerops.app   # dynamic runtime on port N
-https://{hostname}-${zeropsSubdomainHost}.prg1.zerops.app          # static (Nginx, no port segment)
-```
+`DEV_FRONTEND_URL` carries `-5173` because appdev runs Vite on 5173;
+`STAGE_FRONTEND_URL` does not because appstage serves a built bundle
+on `base: static`. Match this to whatever ports / runtimes the
+recipe's dev/stage pair actually uses (port-suffix follows the
+runtime, not the env tier).
 
 The frontend SPA reads `${STAGE_API_URL}` in `build.envVariables` —
 build-time bake works because the constant resolved at provision
@@ -148,14 +166,17 @@ If your recipe has a frontend + api pair, the provision phase sets
 
 ```bash
 # Envs 0-1 (dev-pair): both DEV_* and STAGE_*
+# DEV_FRONTEND_URL carries -5173 because appdev runs Vite on 5173 (dynamic).
+# STAGE_FRONTEND_URL has no port suffix because appstage runs base: static.
 zerops_env project=true action=set \
   STAGE_API_URL="https://apistage-${zeropsSubdomainHost}-3000.prg1.zerops.app" \
   STAGE_FRONTEND_URL="https://appstage-${zeropsSubdomainHost}.prg1.zerops.app" \
   DEV_API_URL="https://apidev-${zeropsSubdomainHost}-3000.prg1.zerops.app" \
-  DEV_FRONTEND_URL="https://appdev-${zeropsSubdomainHost}.prg1.zerops.app"
+  DEV_FRONTEND_URL="https://appdev-${zeropsSubdomainHost}-5173.prg1.zerops.app"
 
 # Envs 2-5 (single-slot): only STAGE_* (single-slot hostnames are
-# `api` / `app`, not `apistage` / `appstage`)
+# `api` / `app`, not `apistage` / `appstage`). `app` is base: static
+# in stage/prod tiers — no port suffix.
 zerops_env project=true action=set \
   STAGE_API_URL="https://api-${zeropsSubdomainHost}-3000.prg1.zerops.app" \
   STAGE_FRONTEND_URL="https://app-${zeropsSubdomainHost}.prg1.zerops.app"

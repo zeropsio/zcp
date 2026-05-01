@@ -255,10 +255,15 @@ func patchPlanProjectEnvs(rootDir string) error {
 	if plan.ProjectEnvVars["workspace"] == nil {
 		plan.ProjectEnvVars["workspace"] = map[string]string{}
 	}
+	// Run-23 fix-5 — port-suffix follows the runtime, not the env tier.
+	// `appstage` ships compiled assets via `base: static` (no port);
+	// `appdev` runs Vite on 5173 (dynamic, port-suffixed). `apistage` /
+	// `apidev` both run their framework start command on 3000.
+	// See content/principles/cross-service-urls.md §"port-suffix rule".
 	plan.ProjectEnvVars["workspace"]["STAGE_API_URL"] = "https://apistage-${zeropsSubdomainHost}-3000.prg1.zerops.app"
 	plan.ProjectEnvVars["workspace"]["STAGE_FRONTEND_URL"] = "https://appstage-${zeropsSubdomainHost}.prg1.zerops.app"
 	plan.ProjectEnvVars["workspace"]["DEV_API_URL"] = "https://apidev-${zeropsSubdomainHost}-3000.prg1.zerops.app"
-	plan.ProjectEnvVars["workspace"]["DEV_FRONTEND_URL"] = "https://appdev-${zeropsSubdomainHost}.prg1.zerops.app"
+	plan.ProjectEnvVars["workspace"]["DEV_FRONTEND_URL"] = "https://appdev-${zeropsSubdomainHost}-5173.prg1.zerops.app"
 	out, err := json.MarshalIndent(&plan, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal plan: %w", err)
