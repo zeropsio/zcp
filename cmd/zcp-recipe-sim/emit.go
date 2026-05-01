@@ -147,32 +147,14 @@ func runEmit(args []string) error {
 		fmt.Printf("%s: %d bytes → %s\n", cb.Hostname, len(full), promptPath)
 	}
 
-	// Run-21 §3 — One prompt per codebase for the claudemd-author sub-
-	// agent. Production dispatches this in parallel with codebase-content
-	// at phase 5 (briefs_subagent_prompt.go::isCodebaseScopedKind=true).
-	// Without it, sim's CLAUDE.md output stays as the 82-byte placeholder
-	// the template emits.
-	for _, cb := range plan.Codebases {
-		cbFragDir := filepath.Join(fragsRoot, cb.Hostname)
-		if err := os.MkdirAll(cbFragDir, 0o755); err != nil {
-			return err
-		}
-		input := recipe.RecipeInput{
-			BriefKind: string(recipe.BriefClaudeMDAuthor),
-			Codebase:  cb.Hostname,
-			Slug:      plan.Slug,
-		}
-		canonical, err := recipe.BuildSubagentPromptForReplay(plan, parent, input, recipe.PhaseCodebaseContent, *mountRoot, facts)
-		if err != nil {
-			return fmt.Errorf("BuildSubagentPromptForReplay claudemd-author codebase=%s: %w", cb.Hostname, err)
-		}
-		full := replayAdapter(cbFragDir) + canonical
-		promptPath := filepath.Join(briefsDir, cb.Hostname+"-claudemd-prompt.md")
-		if err := os.WriteFile(promptPath, []byte(full), 0o600); err != nil {
-			return fmt.Errorf("write claudemd prompt: %w", err)
-		}
-		fmt.Printf("%s claudemd-author: %d bytes → %s\n", cb.Hostname, len(full), promptPath)
-	}
+	// Run-23 §sim-scope — claudemd-author is part of the production
+	// pipeline (Phase 4b per pipeline-actor-map.md) but the sim
+	// deliberately skips it. The Zerops-free `/init` shape brief is
+	// validation-noise for the engine paths sim exercises (stitch +
+	// gates + content quality vs goldens); it adds 3 dispatches per
+	// cycle without testing anything sim-scoped. Production keeps it.
+	// CLAUDE.md will land as the engine's placeholder template at
+	// stitch time; that's expected for sim output.
 
 	// One prompt for env-content (single sub-agent for all env surfaces).
 	envFragDir := filepath.Join(fragsRoot, "env")
@@ -195,7 +177,7 @@ func runEmit(args []string) error {
 	fmt.Printf("env: %d bytes → %s\n", len(envFull), envPromptPath)
 
 	fmt.Printf("\nready: dispatch %d Agent calls (one per prompt) then run `zcp-recipe-sim stitch -dir %s`\n",
-		2*len(plan.Codebases)+1, *outDir)
+		len(plan.Codebases)+1, *outDir)
 	return nil
 }
 
