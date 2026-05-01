@@ -110,15 +110,6 @@ The porter operates with framework-canonical commands (`npm`,
 explain a dev-loop affordance, name the **outcome** + **canonical
 porter mechanism**, not the authoring tool that sets it up.
 
-**Carve-out — `zsc` inside a yaml fence is fine.** The `zsc execOnce …`
-and `zsc noop --silent` directives are the literal start commands the
-zerops.yaml `start:` / `initCommands:` fields dispatch — when you cite
-a yaml fragment verbatim inside a fenced ```yaml block, `zsc` is the
-content of the platform contract, not authoring prose. The validator
-only flags `zsc` when it appears in IG/KB PROSE outside a fence
-("the agent runs `zsc noop`" → leak; the same string inside ```yaml
-… ``` → fine).
-
 **FAIL** (run-21 apidev/zerops.yaml dev start):
 
 ```yaml

@@ -306,36 +306,12 @@ var authoringToolPatrolNeedles = []string{
 	"zcp ",
 }
 
-// fenceAwareNeedles — tokens that are LEGITIMATE inside a fenced
-// ```yaml … ``` code block (because they're the verbatim directive
-// from a zerops.yaml `start:` / `initCommands` field) but signal
-// authoring leakage when they appear in IG/KB prose. Run-23 fix-4
-// closes the run-22 gap where `zsc execOnce …` was added to the
-// codebase-content brief as a yaml-fence example but the validator
-// had no carve-out — adding plain `"zsc "` to the list above would
-// have flagged the brief's PASS example. Fence depth is tracked via
-// a simple ```-pair counter; nesting isn't supported (markdown
-// doesn't nest fences).
-var fenceAwareNeedles = []string{
-	"zsc ",
-}
-
 // scanAuthoringToolLeaks returns one notice per authoring-tool needle
 // hit in a piece of body text. Used by codebase yaml + IG/KB
 // validators to enforce the porter-voice audience rule across every
 // apps-repo surface, not just CLAUDE.md.
-//
-// Run-23 fix-4 — fence-aware for `zsc`. `zsc execOnce …` / `zsc noop
-// --silent` inside a fenced ```yaml block is the directive verbatim
-// from zerops.yaml `start:` / `initCommands:`; in IG/KB PROSE it's a
-// porter-facing leak ("the agent runs zsc noop"). Walks line-by-line
-// tracking ``` open/close depth; only fires the `zsc` rule when the
-// line sits at fence depth 0. Other needles (`zerops_*` / `zcli` /
-// `zcp`) fire everywhere — those tokens never appear as legitimate
-// yaml syntax.
 func scanAuthoringToolLeaks(path, body, surface string) []Violation {
 	var vs []Violation
-	// Fence-unaware needles — fire on the whole-body lowercase.
 	lower := strings.ToLower(body)
 	for _, needle := range authoringToolPatrolNeedles {
 		if !strings.Contains(lower, strings.ToLower(needle)) {
@@ -344,31 +320,6 @@ func scanAuthoringToolLeaks(path, body, surface string) []Violation {
 		vs = append(vs, notice("authoring-tool-leak", path,
 			fmt.Sprintf("%s contains authoring-tool name %q — comments / IG / KB are porter-facing; the porter operates with framework-canonical commands (`npm`, `composer`, `ssh`, `git`), never %s",
 				surface, needle, needle)))
-	}
-	// Fence-aware needles — only fire on lines at fence depth 0.
-	depth := 0
-	for _, raw := range strings.Split(body, "\n") {
-		trimmed := strings.TrimLeft(raw, " \t")
-		if strings.HasPrefix(trimmed, "```") {
-			if depth == 0 {
-				depth = 1
-			} else {
-				depth = 0
-			}
-			continue
-		}
-		if depth > 0 {
-			continue
-		}
-		lowerLine := strings.ToLower(raw)
-		for _, needle := range fenceAwareNeedles {
-			if !strings.Contains(lowerLine, strings.ToLower(needle)) {
-				continue
-			}
-			vs = append(vs, notice("authoring-tool-leak", path,
-				fmt.Sprintf("%s contains authoring-tool name %q in prose — the porter SSHs in and runs framework-canonical commands. `%s` inside a ```yaml fence is fine (it's the directive verbatim); in prose it's authoring-perspective leak.",
-					surface, strings.TrimRight(needle, " "), strings.TrimRight(needle, " "))))
-		}
 	}
 	return vs
 }
