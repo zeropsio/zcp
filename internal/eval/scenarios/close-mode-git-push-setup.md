@@ -1,6 +1,6 @@
 ---
 id: close-mode-git-push-setup
-description: App is deployed with closeMode=auto; user asks to switch to closeMode=git-push via the per-axis decomposition — close-mode picks the close behaviour, git-push-setup provisions GIT_TOKEN/.netrc/remote, build-integration wires the GitHub Actions workflow YAML.
+description: Simple-mode app is deployed with closeMode=auto; user asks to switch to closeMode=git-push via the per-axis decomposition — close-mode picks the close behaviour, git-push-setup provisions GIT_TOKEN/.netrc/remote, build-integration wires the GitHub Actions workflow YAML.
 seed: deployed
 fixture: fixtures/laravel-dev-deployed.yaml
 preseedScript: preseed/close-mode-git-push-setup.sh
@@ -45,7 +45,7 @@ followUp:
 
 # Úkol
 
-V projektu běží Laravel služba `app` (php-nginx, dev mode) s databází `db`
+V projektu běží Laravel služba `app` (php-nginx, simple mode) s databází `db`
 (postgres). App už je adoptovaná v ZCP a má confirmed close-mode `auto`.
 První deploy proběhl přes buildFromGit.
 

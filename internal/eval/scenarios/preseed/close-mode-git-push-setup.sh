@@ -25,11 +25,14 @@ cat > "$STATE/registry.json" <<'JSON'
 JSON
 rm -f "$STATE/session-registry.json"
 
-# `app` meta — adopted, closeDeployMode=auto confirmed, first deploy landed.
+# `app` meta — adopted, simple mode, closeDeployMode=auto confirmed, first
+# deploy landed. git-push is only valid for push-source modes (standard/simple/
+# local-stage/local-only); a standalone dev-mode service is rejected by the
+# close-mode handler before setup.
 cat > "$STATE/services/app.json" <<JSON
 {
   "hostname": "app",
-  "mode": "dev",
+  "mode": "simple",
   "closeDeployMode": "auto",
   "closeDeployModeConfirmed": true,
   "gitPushState": "unconfigured",
@@ -41,4 +44,4 @@ cat > "$STATE/services/app.json" <<JSON
 }
 JSON
 
-echo "preseed: planted adopted+deployed meta for app (closeDeployMode=auto confirmed, FirstDeployedAt set)"
+echo "preseed: planted adopted+deployed simple-mode meta for app (closeDeployMode=auto confirmed, FirstDeployedAt set)"
