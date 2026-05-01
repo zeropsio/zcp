@@ -365,3 +365,127 @@ func TestRecordFragment_RefusesIncompatibleClassification(t *testing.T) {
 		t.Errorf("refusal message must reference required classification; got %q", res.Error)
 	}
 }
+
+// TestRecordFragment_Run20V2_RoutingEnforcementOnKBAndIG pins Run-20
+// V2: at record-fragment time, when fragmentId is a codebase KB or
+// slotted IG, refuse the spec-§349-362 forbidden classes
+// (library-metadata, self-inflicted, scaffold-decision-on-KB) AND
+// emit a redirect message that names the spec-table row + offers
+// the right surface. Closes the run-19 ANALYSIS gap (1 library-
+// metadata + 3 scaffold-decision facts shipped on KB despite the
+// existing classificationCompatibleWithSurface check; the prep
+// confirmed routing is still fragile in practice and asks for
+// explicit pinning at record-fragment time).
+//
+// Test fixture rows:
+//   - (library-metadata, codebase/api/knowledge-base) → refuse, redirect
+//   - (self-inflicted, codebase/api/knowledge-base) → refuse, redirect
+//   - (scaffold-decision, codebase/api/knowledge-base) → refuse, redirect to IG/yaml-comments
+//   - (platform-invariant, codebase/api/knowledge-base) → pass
+//   - (library-metadata, codebase/api/integration-guide/2) → refuse
+//   - (scaffold-decision, codebase/api/integration-guide/2) → pass (IG accepts scaffold-decision)
+//   - (platform-invariant, codebase/api/integration-guide/2) → pass
+func TestRecordFragment_Run20V2_RoutingEnforcementOnKBAndIG(t *testing.T) {
+	t.Parallel()
+
+	type spec struct {
+		name           string
+		fragmentID     string
+		classification string
+		fragment       string
+		wantRefuse     bool
+		wantInRefusal  []string // substrings the refusal message MUST contain
+	}
+	cases := []spec{
+		{
+			name:           "library-metadata on KB — DISCARD class refused",
+			fragmentID:     "codebase/api/knowledge-base",
+			classification: "library-metadata",
+			fragment:       "- **EPEERINVALID** — pin svelte ^4.",
+			wantRefuse:     true,
+			wantInRefusal:  []string{"library-metadata", "no compatible surfaces"},
+		},
+		{
+			name:           "self-inflicted on KB — DISCARD class refused",
+			fragmentID:     "codebase/api/knowledge-base",
+			classification: "self-inflicted",
+			fragment:       "- **Removed dist from .deployignore** — fix in code.",
+			wantRefuse:     true,
+			wantInRefusal:  []string{"self-inflicted", "no compatible surfaces"},
+		},
+		{
+			name:           "scaffold-decision on KB — incompatible, redirect to IG/yaml-comments",
+			fragmentID:     "codebase/api/knowledge-base",
+			classification: "scaffold-decision",
+			fragment:       "- **execOnce keys decoupled** — migrate + seed.",
+			wantRefuse:     true,
+			// Refusal MUST name (a) the offending class, (b) the
+			// surface symbol, and (c) the spec-redirect to IG /
+			// zerops.yaml comments per spec-content-surfaces.md §349-362.
+			wantInRefusal: []string{"scaffold-decision", "incompatible", "CODEBASE_KB", "Surface 7", "Surface 4"},
+		},
+		{
+			name:           "platform-invariant on KB — accepted",
+			fragmentID:     "codebase/api/knowledge-base",
+			classification: "platform-invariant",
+			fragment:       "- **No `.env` file** — Zerops injects vars.",
+			wantRefuse:     false,
+		},
+		{
+			name:           "library-metadata on slotted IG — DISCARD class refused",
+			fragmentID:     "codebase/api/integration-guide/2",
+			classification: "library-metadata",
+			fragment:       "### 2. Pin svelte ^4 in package.json\nbody",
+			wantRefuse:     true,
+			wantInRefusal:  []string{"library-metadata", "no compatible surfaces"},
+		},
+		{
+			name:           "scaffold-decision on slotted IG — accepted (spec table allows IG)",
+			fragmentID:     "codebase/api/integration-guide/2",
+			classification: "scaffold-decision",
+			fragment:       "### 2. Configure execOnce keys\nbody",
+			wantRefuse:     false,
+		},
+		{
+			name:           "platform-invariant on slotted IG — accepted",
+			fragmentID:     "codebase/api/integration-guide/2",
+			classification: "platform-invariant",
+			fragment:       "### 2. Trust the L7\nbody",
+			wantRefuse:     false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			store := NewStore(dir)
+			if _, err := store.OpenOrCreate("synth-showcase", dir+"/run"); err != nil {
+				t.Fatalf("OpenOrCreate: %v", err)
+			}
+			sess, _ := store.Get("synth-showcase")
+			sess.Plan = syntheticShowcasePlan()
+
+			res := dispatch(t.Context(), store, RecipeInput{
+				Action: "record-fragment", Slug: "synth-showcase",
+				FragmentID:     tc.fragmentID,
+				Fragment:       tc.fragment,
+				Classification: tc.classification,
+			})
+			if tc.wantRefuse {
+				if res.OK {
+					t.Fatalf("expected refusal for (%s, %s); got OK=true",
+						tc.classification, tc.fragmentID)
+				}
+				for _, want := range tc.wantInRefusal {
+					if !strings.Contains(res.Error, want) {
+						t.Errorf("refusal message missing %q; got %q", want, res.Error)
+					}
+				}
+			} else if !res.OK {
+				t.Fatalf("expected accept for (%s, %s); got refusal: %s",
+					tc.classification, tc.fragmentID, res.Error)
+			}
+		})
+	}
+}
