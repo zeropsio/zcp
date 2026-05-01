@@ -9,10 +9,12 @@ feature-kind from the feature brief.
 1. **Compose dispatch prompt**: `zerops_recipe
    action=build-subagent-prompt slug=<slug> briefKind=feature`. Returns
    the engine-owned recipe-level context block + the feature brief
-   body verbatim (feature-kind catalog, `content_extension.md`
-   append-semantics rubric, scaffold-phase symbol table, the
-   showcase scenario spec when `Plan.Tier == "showcase"`, and — when
-   `Plan.FeatureKinds` declares `seed` or `scout-import` — the
+   body verbatim (feature-kind catalog, `decision_recording.md`
+   porter_change/field_rationale recording rubric,
+   `mount-vs-container.md` + `yaml-comment-style.md` principles,
+   scaffold-phase symbol table, the showcase scenario spec when
+   `Plan.Tier == "showcase"`, and — when `Plan.FeatureKinds` declares
+   `seed`, `scout-import`, or `bootstrap` — the `init-commands-model.md`
    execOnce key-shape concept atom) + closing notes naming the
    self-validate path.
 
