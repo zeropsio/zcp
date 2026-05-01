@@ -7,27 +7,45 @@ import (
 	"strings"
 )
 
-// stitch_yaml.go — run-19 prep. Closes the run-18 §1.3 bare-runtime-yaml
-// gap: codebase-content sub-agents recorded
-// `codebase/<h>/zerops-yaml-comments/<block>` fragments correctly, but
-// the existing stitch path (assemble.go::injectZeropsYamlComments) only
-// embedded those fragments into IG #1 of the README. The on-disk
-// `<SourceRoot>/zerops.yaml` stayed bare for apidev + workerdev because
-// no engine step wrote the commented version back.
+// stitch_yaml.go — codebase zerops.yaml stitcher.
 //
-// WriteCodebaseYAMLWithComments closes that loop: read bare yaml from
-// disk, strip prior comments (idempotence — re-running stitch after a
-// fragment edit must not duplicate prior content), inject fragments via
-// injectZeropsYamlComments, write back. Stitch path runs this once per
-// codebase right after writeCodebaseSurfaces emits README + CLAUDE.md.
+// Authoring contract (run-21-prep): the codebase-content sub-agent
+// records ONE fragment per codebase named `codebase/<host>/zerops-yaml`
+// whose body is the entire commented zerops.yaml. The stitcher writes
+// the body verbatim to `<SourceRoot>/zerops.yaml`, replacing the bare
+// scaffold version.
+//
+// This replaces the legacy per-block fragment shape
+// (`codebase/<h>/zerops-yaml-comments/<setup>.<path>.<leaf>`) where the
+// agent emitted N small fragments and the engine merged them via
+// per-block injection. The audit on sim 21-input-1 found that shape
+// produces uneven comment coverage because the agent loses sight of the
+// document as a whole — see docs/zcprecipator3/runs/20/ANALYSIS.md and
+// run-21-prep notes.
+//
+// Stitcher behavior:
+//   - Fragment present → write body verbatim to disk. The agent owns
+//     yaml structure + comment placement + voice.
+//   - Fragment absent → leave on-disk bare yaml untouched. Pre-codebase-
+//     content callers (refinement-before-codebase-content, sim emit
+//     before any agent dispatch) hit this path.
+//   - Refuse-to-wipe — if the fragment body is empty bytes AND the
+//     on-disk yaml is non-empty, refuse rather than blow away scaffold
+//     output. Carry-over from run-23 fix-2 (run-20 prod hit a 0-byte
+//     zerops.yaml on appdev/workerdev that ZCP couldn't reproduce
+//     locally; refusing-to-wipe closes that vector by construction).
 
-// WriteCodebaseYAMLWithComments stamps fragment-recorded yaml comments
-// into the on-disk `<SourceRoot>/zerops.yaml` for one codebase. Reads
-// the current on-disk yaml, strips comments above directive groups
-// (preserves the `#zeropsPreprocessor=on` shebang if present), applies
-// every matching `codebase/<hostname>/zerops-yaml-comments/<block>`
-// fragment, and writes the result back. Idempotent — calling twice with
-// the same plan produces byte-identical output.
+// fragmentIDCodebaseZeropsYAML returns the canonical whole-yaml fragment
+// id for a given codebase hostname.
+func fragmentIDCodebaseZeropsYAML(hostname string) string {
+	return "codebase/" + hostname + "/zerops-yaml"
+}
+
+// WriteCodebaseYAMLWithComments writes the codebase-content sub-agent's
+// authored zerops.yaml (`codebase/<hostname>/zerops-yaml` fragment) to
+// `<SourceRoot>/zerops.yaml`. Idempotent — calling twice with the same
+// plan produces byte-identical output. When no fragment is recorded yet
+// the on-disk bare yaml is left untouched.
 func WriteCodebaseYAMLWithComments(plan *Plan, hostname string) error {
 	if plan == nil {
 		return fmt.Errorf("WriteCodebaseYAMLWithComments: nil plan")
@@ -43,36 +61,31 @@ func WriteCodebaseYAMLWithComments(plan *Plan, hostname string) error {
 		return fmt.Errorf("WriteCodebaseYAMLWithComments: no SourceRoot for codebase %q", hostname)
 	}
 	yamlPath := filepath.Join(srcRoot, "zerops.yaml")
-	raw, err := os.ReadFile(yamlPath)
-	if err != nil {
-		// No yaml means scaffold didn't run for this codebase yet —
-		// silent skip rather than error so early-phase callers
-		// (refinement before scaffold) don't fail.
-		if os.IsNotExist(err) {
-			return nil
+
+	body, ok := plan.Fragments[fragmentIDCodebaseZeropsYAML(hostname)]
+	if !ok {
+		// No whole-yaml fragment recorded yet — early phase or pre-
+		// codebase-content. Leave bare scaffold yaml on disk untouched.
+		return nil
+	}
+
+	// Refuse-to-wipe guard: empty fragment body would blow away the bare
+	// scaffold yaml. Surface as an error so the next codebase-content
+	// pass investigates rather than silently corrupting.
+	if strings.TrimSpace(body) == "" {
+		raw, err := os.ReadFile(yamlPath)
+		if err == nil && len(raw) > 0 {
+			return fmt.Errorf("refuse-to-wipe: empty %s fragment body would erase non-empty on-disk %s — leaving file untouched",
+				fragmentIDCodebaseZeropsYAML(hostname), yamlPath)
 		}
-		return fmt.Errorf("read %s: %w", yamlPath, err)
 	}
-	stripped := stripYAMLComments(string(raw))
-	commented := injectZeropsYamlComments(stripped, plan.Fragments, hostname)
-	// Run-23 fix-2 — refuse-to-wipe guard. Run-20 prod hit a 0-byte
-	// zerops.yaml on appdev/workerdev (TIMELINE Issue 3) that ZCP
-	// could not reproduce locally. Whatever the upstream pipeline
-	// glitch, refusing to overwrite a non-empty on-disk file with 0
-	// bytes makes the wipe vector closed by construction. If the
-	// stripped+commented body is empty AND the original was non-empty,
-	// keep the original on disk and surface a clear error so the next
-	// invocation can investigate without silent corruption.
-	if strings.TrimSpace(commented) == "" && len(raw) > 0 {
-		return fmt.Errorf("refuse-to-wipe: stripped+commented zerops.yaml for %q produced empty bytes despite non-empty source — leaving on-disk file at %s untouched (likely missing-fragment + strip-everything edge case)",
-			hostname, yamlPath)
-	}
+
 	// Preserve original file mode if possible (default 0o600 if stat fails).
 	mode := os.FileMode(0o600)
 	if info, err := os.Stat(yamlPath); err == nil {
 		mode = info.Mode().Perm()
 	}
-	if err := os.WriteFile(yamlPath, []byte(commented), mode); err != nil {
+	if err := os.WriteFile(yamlPath, []byte(body), mode); err != nil {
 		return fmt.Errorf("write %s: %w", yamlPath, err)
 	}
 	return nil

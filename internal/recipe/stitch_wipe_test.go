@@ -93,12 +93,13 @@ func TestStitchContent_DoesNotWipeCodebaseFiles(t *testing.T) {
 	}
 }
 
-// TestStitchYAML_RefusesEmptyWriteOverNonEmpty — run-23 fix-2 guard.
-// Even if the upstream pipeline produces an empty body for some
-// reason (missing-fragment edge case, all-comment yaml stripped to
-// nothing, classifier returning empty), we MUST refuse to overwrite
-// a non-empty on-disk file with 0 bytes. The wipe vector in run-20
-// resulted in 0-byte zerops.yaml; this guard makes it impossible.
+// TestStitchYAML_RefusesEmptyWriteOverNonEmpty — run-23 fix-2 guard
+// kept under run-21-prep whole-yaml shape. If the agent records an
+// empty/whitespace-only body for `codebase/<h>/zerops-yaml` (broken
+// edit, accidental wipe, copy-paste failure), the stitcher MUST refuse
+// rather than overwrite the bare scaffold yaml with 0 bytes. The wipe
+// vector in run-20 resulted in 0-byte zerops.yaml on appdev/workerdev;
+// this guard closes it by construction.
 func TestStitchYAML_RefusesEmptyWriteOverNonEmpty(t *testing.T) {
 	t.Parallel()
 
@@ -113,29 +114,33 @@ func TestStitchYAML_RefusesEmptyWriteOverNonEmpty(t *testing.T) {
 		t.Fatalf("write yaml: %v", err)
 	}
 
-	// Plan with a codebase whose fragments DELIBERATELY transform the
-	// stripped yaml to empty — exercise the wipe path.
+	// Whole-yaml fragment recorded with whitespace-only body — exercises
+	// the wipe path. Pre-fix the test recorded NO fragment, hit the
+	// "fragment absent" early-return, and never validated the guard.
 	plan := &Plan{
 		Slug: "wipe-test",
 		Codebases: []Codebase{
 			{Hostname: "app", SourceRoot: srcRoot},
 		},
+		Fragments: map[string]string{
+			"codebase/app/zerops-yaml": "   \n  \n",
+		},
 	}
 
-	if err := WriteCodebaseYAMLWithComments(plan, "app"); err != nil {
-		t.Fatalf("WriteCodebaseYAMLWithComments: %v", err)
+	err := WriteCodebaseYAMLWithComments(plan, "app")
+	if err == nil {
+		t.Fatalf("WriteCodebaseYAMLWithComments should refuse empty fragment over non-empty disk")
+	}
+	if !strings.Contains(err.Error(), "refuse-to-wipe") {
+		t.Errorf("error should name refuse-to-wipe; got %v", err)
 	}
 
 	// File must still be non-empty; original yaml content survives.
-	info, err := os.Stat(yamlPath)
-	if err != nil {
-		t.Fatalf("stat yaml: %v", err)
+	body, readErr := os.ReadFile(yamlPath)
+	if readErr != nil {
+		t.Fatalf("stat yaml: %v", readErr)
 	}
-	if info.Size() == 0 {
-		t.Fatalf("WIPE — yaml was overwritten with 0 bytes despite original being non-empty")
-	}
-	body, _ := os.ReadFile(yamlPath)
-	if !strings.Contains(string(body), "zerops:") {
-		t.Errorf("yaml body should still contain `zerops:` directive; got %q", body)
+	if string(body) != original {
+		t.Errorf("on-disk yaml mutated despite refusal\n--- got\n%s\n--- want\n%s", body, original)
 	}
 }

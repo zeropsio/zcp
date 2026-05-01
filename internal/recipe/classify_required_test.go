@@ -83,8 +83,7 @@ func TestSurfaceFromFragmentID_SlottedIG(t *testing.T) {
 		{"codebase/api/integration-guide/2", SurfaceCodebaseIG, true},
 		{"codebase/api/integration-guide/5", SurfaceCodebaseIG, true},
 		{"codebase/worker/knowledge-base", SurfaceCodebaseKB, true},
-		{"codebase/api/zerops-yaml-comments/run.start", SurfaceCodebaseZeropsComments, true},
-		{"codebase/api/zerops-yaml-comments/build.deployFiles", SurfaceCodebaseZeropsComments, true},
+		{"codebase/api/zerops-yaml", SurfaceCodebaseZeropsComments, true},
 		{"codebase/api/claude-md", SurfaceCodebaseCLAUDE, true},
 		{"codebase/api/claude-md/notes", SurfaceCodebaseCLAUDE, true},
 	}

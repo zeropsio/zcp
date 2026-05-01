@@ -104,13 +104,23 @@ func TestGatesForPhase_Finalize_IncludesAllGates(t *testing.T) {
 // violations (TIMELINE Issue 4 in run-20). The sim's
 // `cmd/zcp-recipe-sim/gate.go` already dropped scaffold gates from its
 // finalize set in run-22; production engine must match.
+//
+// Run-21-prep RC2 carve-out: `zerops-yaml-schema` is registered in BOTH
+// scaffold and codebase-content gate sets. It checks live-schema
+// conformance, which is true at any phase — neither PRE- nor POST-stitch
+// specific. The exclusion-from-finalize invariant doesn't apply to it.
 func TestGatesForPhase_FinalizeExcludesScaffoldGates(t *testing.T) {
 	t.Parallel()
 	finalize := gatesForPhase(PhaseFinalize)
-	// Every gate name in CodebaseScaffoldGates() must be absent from the
-	// finalize set.
+	// Phase-agnostic gates that scaffold and content/finalize both share.
+	phaseAgnostic := map[string]bool{
+		"zerops-yaml-schema": true,
+	}
 	scaffold := CodebaseScaffoldGates()
 	for _, sg := range scaffold {
+		if phaseAgnostic[sg.Name] {
+			continue
+		}
 		mustNotHaveGate(t, finalize, sg.Name)
 	}
 }

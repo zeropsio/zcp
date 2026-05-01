@@ -93,10 +93,10 @@ WHY behind each non-obvious decision (step 8a above + the
 
 **You do NOT author** documentation surfaces. No `record-fragment` on
 `codebase/<h>/integration-guide`, `knowledge-base`, `claude-md/*`,
-or `zerops-yaml-comments/*` slots — phase 5 content sub-agents own
-those surfaces. The codebase-content sub-agent reads your facts +
-on-disk source/yaml + spec and synthesizes IG/KB/yaml-comment
-fragments with full cross-surface awareness.
+or `zerops-yaml` — phase 5 content sub-agents own those surfaces.
+The codebase-content sub-agent reads your facts + on-disk source/yaml
++ spec and synthesizes IG/KB + the whole commented zerops.yaml with
+full cross-surface awareness.
 
 ## After complete-phase phase=feature
 

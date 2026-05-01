@@ -6,10 +6,12 @@ You are authoring documentation surfaces for ONE codebase
 on-disk source / zerops.yaml / spec and synthesize:
 
 - `codebase/<h>/intro`
-- `codebase/<h>/integration-guide/<n>` (slotted, n=2..5; engine
-  pre-stamps IG #1)
+- `codebase/<h>/integration-guide/<n>` (slotted; engine pre-stamps
+  n=1, you author n=2 through 5 — see brief cap reminders)
 - `codebase/<h>/knowledge-base`
-- `codebase/<h>/zerops-yaml-comments/<block>`
+- `codebase/<h>/zerops-yaml` (the whole commented zerops.yaml as one
+  fragment; engine writes the body verbatim to
+  `<SourceRoot>/zerops.yaml`)
 
 You do NOT author CLAUDE.md — a sibling `claudemd-author` sub-agent
 handles Surface 6 with a Zerops-free brief.

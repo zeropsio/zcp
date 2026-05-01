@@ -9,6 +9,31 @@ import (
 	"testing"
 )
 
+// TestAssemble_TierLinks_PrefixEnvironments — Run-21-prep §RC6. Tier
+// links in the recipe-root README must carry the `environments/`
+// prefix because tier folders live nested under
+// `<recipe-root>/environments/<folder>/` (v3 production + sim layout),
+// not at recipe-root level. Pre-fix, the link form was `/<folder>`
+// (root-relative, resolves to filesystem root) → every link 404s.
+// Real symptom: codex audit on sim 21-input-1.
+func TestAssemble_TierLinks_PrefixEnvironments(t *testing.T) {
+	t.Parallel()
+	plan := syntheticShowcasePlan()
+	plan.Slug = "nestjs-showcase"
+	plan.Framework = "nestjs"
+
+	out, _, err := AssembleRootREADME(plan)
+	if err != nil {
+		t.Fatalf("AssembleRootREADME: %v", err)
+	}
+	if strings.Contains(out, "[[info]](/") {
+		t.Errorf("a [[info]] link rendered root-relative; want environments-prefixed\n%s", out)
+	}
+	if !strings.Contains(out, "[[info]](environments/") {
+		t.Errorf("no [[info]] link carries the environments/ prefix; got:\n%s", out)
+	}
+}
+
 // TestAssemble_TemplateRendersStructuralData — Workstream A1: when a
 // surface's structural template is rendered with a Plan, the output
 // carries plan-derived tokens (title, slug, framework, tier list) even

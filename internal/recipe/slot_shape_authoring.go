@@ -259,7 +259,7 @@ func igSlotAuthoringRefusals(body string, hostnames []string) []string {
 }
 
 // commentSurfaceSlugCitationRefusals is shared by env import-comments,
-// codebase zerops-yaml-comments — both porter-facing yaml comment
+// codebase zerops-yaml (whole-yaml) — both porter-facing yaml comment
 // surfaces where slug-citation is the same anti-pattern.
 func commentSurfaceSlugCitationRefusals(body, surfaceName string) []string {
 	var out []string

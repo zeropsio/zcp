@@ -3,12 +3,12 @@
 Produce your codebase's `zerops.yaml` **without inline causal comments**.
 
 The bare yaml is the scaffold contract. Causal comments are authored
-later at codebase-content phase via per-block fragments
-(`codebase/<h>/zerops-yaml-comments/<block-name>`) and stamped back
-into the on-disk file by the engine's stitch step. Inlining comments
-during scaffold forces a strip-and-re-inject round-trip and risks
-double-comments if the codebase-content sub-agent records overlapping
-fragments.
+later at codebase-content phase as one whole-yaml fragment
+(`codebase/<h>/zerops-yaml`) and written to the on-disk file by the
+engine's stitch step. Inlining comments during scaffold forces a
+strip-and-rewrite round-trip and risks duplicate comments mixing
+scaffold's voice with the porter-facing comments authored at
+codebase-content.
 
 The only `#` lines you may keep in scaffold-authored yaml are:
 

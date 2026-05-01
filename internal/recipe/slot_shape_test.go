@@ -1,6 +1,8 @@
 package recipe
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -126,11 +128,135 @@ func TestCheckSlotShape_KB_AcceptsBulletlessBody(t *testing.T) {
 	}
 }
 
-func TestCheckSlotShape_ZeropsYamlComments_RefusesOversize(t *testing.T) {
+// TestCheckSlotShape_ZeropsYaml_RefusesEmptyBody — Run-21-prep
+// whole-yaml contract. The agent records `codebase/<h>/zerops-yaml`
+// with the entire commented zerops.yaml as body; an empty body would
+// erase the bare scaffold yaml on stitch.
+func TestCheckSlotShape_ZeropsYaml_RefusesEmptyBody(t *testing.T) {
 	t.Parallel()
-	body := strings.Repeat("# line\n", 7)
-	if msgs := checkSlotShape("codebase/api/zerops-yaml-comments/run.envVariables", body); len(msgs) == 0 {
-		t.Error("zerops-yaml-comments block > 6 lines should be refused")
+	if msgs := checkSlotShape("codebase/api/zerops-yaml", ""); len(msgs) == 0 {
+		t.Error("empty zerops-yaml body should be refused")
+	}
+}
+
+// TestCheckSlotShape_ZeropsYaml_RefusesDocLinkPunt — anti-pattern
+// regression caught at run-21-prep: yaml comments ending with "Read
+// more about it here: <URL>". Inline the rationale instead.
+func TestCheckSlotShape_ZeropsYaml_RefusesDocLinkPunt(t *testing.T) {
+	t.Parallel()
+	body := `zerops:
+  - setup: prod
+    run:
+      # The L7 balancer terminates TLS.
+      # Read more about it here: https://docs.zerops.io/zerops-yaml/specification#ports
+      ports:
+        - port: 3000
+          httpSupport: true
+`
+	msgs := checkSlotShape("codebase/api/zerops-yaml", body)
+	if len(msgs) == 0 {
+		t.Error("zerops-yaml body with 'Read more about it here:' should be refused")
+	}
+}
+
+// TestCheckSlotShape_ZeropsYaml_AcceptsCommentedYaml — sanity: a
+// well-shaped commented yaml passes slot-shape.
+func TestCheckSlotShape_ZeropsYaml_AcceptsCommentedYaml(t *testing.T) {
+	t.Parallel()
+	body := `zerops:
+  - setup: prod
+    run:
+      # 0.0.0.0 binding gates the L7 balancer routing.
+      ports:
+        - port: 3000
+          httpSupport: true
+      start: node dist/main.js
+`
+	if msgs := checkSlotShape("codebase/api/zerops-yaml", body); len(msgs) != 0 {
+		t.Errorf("well-shaped commented yaml should pass slot-shape; got: %v", msgs)
+	}
+}
+
+// TestCheckSlotShape_ZeropsYaml_RefusesStructuralChange — the agent
+// adds comments only; modifying yaml keys (add/remove/reorder) breaks
+// scaffold's contract and is refused at record-fragment time.
+func TestCheckSlotShape_ZeropsYaml_RefusesStructuralChange(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	srcRoot := filepath.Join(dir, "apidev")
+	if err := os.MkdirAll(srcRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bare := `zerops:
+  - setup: prod
+    run:
+      base: nodejs@22
+      start: node dist/main.js
+`
+	if err := os.WriteFile(filepath.Join(srcRoot, "zerops.yaml"), []byte(bare), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan := &Plan{
+		Slug:      "test",
+		Codebases: []Codebase{{Hostname: "api", Role: RoleAPI, SourceRoot: srcRoot}},
+	}
+	// Modified body: agent added a `ports` block that wasn't in scaffold.
+	body := `zerops:
+  - setup: prod
+    run:
+      base: nodejs@22
+      # Agent invented this entire ports block — refused.
+      ports:
+        - port: 3000
+          httpSupport: true
+      start: node dist/main.js
+`
+	msgs := checkSlotShapeWithPlan("codebase/api/zerops-yaml", body, plan)
+	if len(msgs) == 0 {
+		t.Error("structural change to yaml should be refused")
+	}
+	hasStructMsg := false
+	for _, m := range msgs {
+		if strings.Contains(m, "structural changes to yaml refused") {
+			hasStructMsg = true
+		}
+	}
+	if !hasStructMsg {
+		t.Errorf("expected structural-changes refusal; got: %v", msgs)
+	}
+}
+
+// TestCheckSlotShape_ZeropsYaml_AcceptsCommentsOnly — adding ONLY
+// comment lines (matching bare structure) passes.
+func TestCheckSlotShape_ZeropsYaml_AcceptsCommentsOnly(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	srcRoot := filepath.Join(dir, "apidev")
+	if err := os.MkdirAll(srcRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bare := `zerops:
+  - setup: prod
+    run:
+      base: nodejs@22
+      start: node dist/main.js
+`
+	if err := os.WriteFile(filepath.Join(srcRoot, "zerops.yaml"), []byte(bare), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan := &Plan{
+		Slug:      "test",
+		Codebases: []Codebase{{Hostname: "api", Role: RoleAPI, SourceRoot: srcRoot}},
+	}
+	commented := `zerops:
+  - setup: prod
+    run:
+      base: nodejs@22
+      # Run the compiled entry under the platform supervisor.
+      start: node dist/main.js
+`
+	if msgs := checkSlotShapeWithPlan("codebase/api/zerops-yaml", commented, plan); len(msgs) != 0 {
+		t.Errorf("comment-only addition should pass slot-shape; got: %v", msgs)
 	}
 }
 

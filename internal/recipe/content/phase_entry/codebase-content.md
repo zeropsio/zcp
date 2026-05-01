@@ -4,11 +4,12 @@ After scaffold + feature complete, every codebase gets two sub-agents
 dispatched in parallel:
 
 1. **`codebase-content`** — Zerops-aware. Authors `codebase/<h>/intro`,
-   `codebase/<h>/integration-guide/<n>` (slotted, n=1..5),
-   `codebase/<h>/knowledge-base`, and the per-block
-   `codebase/<h>/zerops-yaml-comments/<block>` fragments. Reads the
-   recorded fact stream (porter_change + field_rationale +
-   tier_decision) plus on-disk source / zerops.yaml / spec.
+   `codebase/<h>/integration-guide/<n>` (slotted; engine pre-stamps
+   n=1, agent authors n=2 through 5),
+   `codebase/<h>/knowledge-base`, and the whole commented zerops.yaml
+   as one fragment `codebase/<h>/zerops-yaml`. Reads the recorded fact
+   stream (porter_change + field_rationale + tier_decision) plus on-
+   disk source / zerops.yaml / spec.
 
 2. **`claudemd-author`** — Zerops-free. Authors only
    `codebase/<h>/claude-md` (single slot). Brief is strictly platform-
@@ -58,7 +59,7 @@ and fills via `fill-fact-slot factTopic=<topic> why=... heading=...`.
 
 ## Complete-phase gate
 
-Every codebase declared in `plan.codebases` must have all five fragment
-ids recorded (intro + ≥1 integration-guide slot + knowledge-base + at
-least one zerops-yaml-comments block + claude-md). Codebase-scoped
+Every codebase declared in `plan.codebases` must have all five
+fragment ids recorded (intro + ≥1 integration-guide slot + knowledge-
+base + zerops-yaml whole-yaml + claude-md). Codebase-scoped
 validators run.

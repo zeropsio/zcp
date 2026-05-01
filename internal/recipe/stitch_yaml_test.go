@@ -7,6 +7,106 @@ import (
 	"testing"
 )
 
+// TestWriteCodebaseYAML_WholeFragment_WritesVerbatim — Run-21-prep
+// whole-yaml authoring contract. The codebase-content sub-agent records
+// ONE fragment per codebase named `codebase/<host>/zerops-yaml` whose
+// body is the entire commented zerops.yaml. Stitcher writes the body
+// verbatim to `<SourceRoot>/zerops.yaml`, replacing the bare scaffold
+// version. No per-block injection, no setup-scoped anchor matching, no
+// comment stripping prior to write — the agent owns the whole document.
+//
+// This replaces the per-block fragment shape
+// (`codebase/<h>/zerops-yaml-comments/<setup>.<path>.<leaf>`) that the
+// run-21-prep audit found produces uneven coverage because the agent
+// loses sight of the document as a whole.
+func TestWriteCodebaseYAML_WholeFragment_WritesVerbatim(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	bare := `zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+      buildCommands:
+        - npm install
+      deployFiles: ./
+    run:
+      base: nodejs@22
+      ports:
+        - port: 3000
+          httpSupport: true
+      start: zsc noop --silent
+`
+	yamlPath := filepath.Join(dir, "zerops.yaml")
+	if err := os.WriteFile(yamlPath, []byte(bare), 0o600); err != nil {
+		t.Fatalf("seed bare: %v", err)
+	}
+	commented := `zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+      buildCommands:
+        - npm install
+      # Whole-tree deploy ships source so SSHFS editing has files.
+      deployFiles: ./
+    run:
+      base: nodejs@22
+      # 0.0.0.0 binding, VXLAN routing rationale.
+      ports:
+        - port: 3000
+          httpSupport: true
+      # zsc noop keeps container alive for SSH workflow.
+      start: zsc noop --silent
+`
+	plan := &Plan{
+		Codebases: []Codebase{{Hostname: "api", SourceRoot: dir}},
+		Fragments: map[string]string{
+			"codebase/api/zerops-yaml": commented,
+		},
+	}
+
+	if err := WriteCodebaseYAMLWithComments(plan, "api"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got, err := os.ReadFile(yamlPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != commented {
+		t.Errorf("on-disk yaml != fragment body\n--- got\n%s\n--- want\n%s", got, commented)
+	}
+}
+
+// TestWriteCodebaseYAML_NoFragment_LeavesBareYaml — when no whole-yaml
+// fragment exists for the codebase (codebase-content phase hasn't run
+// yet, or the agent hasn't authored it), the stitcher leaves the on-disk
+// bare scaffold yaml untouched. Mirrors the pre-fragment scaffold-only
+// state.
+func TestWriteCodebaseYAML_NoFragment_LeavesBareYaml(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	bare := "zerops:\n  - setup: dev\n    run:\n      start: zsc noop --silent\n"
+	yamlPath := filepath.Join(dir, "zerops.yaml")
+	if err := os.WriteFile(yamlPath, []byte(bare), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan := &Plan{
+		Codebases: []Codebase{{Hostname: "api", SourceRoot: dir}},
+		Fragments: map[string]string{},
+	}
+	if err := WriteCodebaseYAMLWithComments(plan, "api"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got, err := os.ReadFile(yamlPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != bare {
+		t.Errorf("on-disk yaml changed despite no fragment\n--- got\n%s\n--- want\n%s", got, bare)
+	}
+}
+
 // TestStripYAMLComments_RemovesIndentedHashLines pins the helper that
 // makes WriteCodebaseYAMLWithComments idempotent. Stitch must be safe
 // to re-run after a fragment edit without duplicating prior comments.
@@ -66,77 +166,12 @@ project:
 	}
 }
 
-// TestWriteCodebaseYAMLWithComments_StripsThenInjects pins the canonical
-// stitch path the run-19 prep added: bare `<SourceRoot>/zerops.yaml`
-// (scaffold output) gets recorded comment fragments injected by
-// `injectZeropsYamlComments`, and the result is written BACK to disk.
-//
-// Run-18 surfaced the gap: codebase-content recorded
-// `zerops-yaml-comments/<block>` fragments correctly but the stitch
-// path only injected them into IG #1's README inline yaml. The on-disk
-// `<SourceRoot>/zerops.yaml` stayed bare for apidev + workerdev. This
-// test pins that the new stitch step closes the gap.
-func TestWriteCodebaseYAMLWithComments_StripsThenInjects(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	srcRoot := filepath.Join(dir, "apidev")
-	if err := os.MkdirAll(srcRoot, 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-
-	// Scaffold output: bare yaml (no causal comments).
-	bare := `zerops:
-  - setup: prod
-    run:
-      base: nodejs@22
-      envVariables:
-        DB_HOST: ${db_hostname}
-        S3_REGION: us-east-1
-      initCommands:
-        - zsc execOnce ${appVersionId}-migrate
-`
-	yamlPath := filepath.Join(srcRoot, "zerops.yaml")
-	if err := os.WriteFile(yamlPath, []byte(bare), 0o600); err != nil {
-		t.Fatalf("write yaml: %v", err)
-	}
-
-	plan := &Plan{
-		Slug: "test",
-		Codebases: []Codebase{
-			{Hostname: "api", Role: RoleAPI, SourceRoot: srcRoot},
-		},
-		Fragments: map[string]string{
-			"codebase/api/zerops-yaml-comments/run.envVariables": "Aliasing cross-service refs to own keys.",
-			"codebase/api/zerops-yaml-comments/run.initCommands": "Two execOnce keys: per-deploy + first-time-only.",
-		},
-	}
-
-	if err := WriteCodebaseYAMLWithComments(plan, "api"); err != nil {
-		t.Fatalf("WriteCodebaseYAMLWithComments: %v", err)
-	}
-
-	got, err := os.ReadFile(yamlPath)
-	if err != nil {
-		t.Fatalf("read post-stitch: %v", err)
-	}
-	body := string(got)
-	if !strings.Contains(body, "# Aliasing cross-service refs to own keys.") {
-		t.Errorf("envVariables comment not injected:\n%s", body)
-	}
-	if !strings.Contains(body, "# Two execOnce keys: per-deploy + first-time-only.") {
-		t.Errorf("initCommands comment not injected:\n%s", body)
-	}
-	if !strings.Contains(body, "envVariables:") {
-		t.Errorf("yaml body lost envVariables key:\n%s", body)
-	}
-}
-
-// TestWriteCodebaseYAMLWithComments_Idempotent — second run with
-// identical fragments produces byte-identical output. Re-running stitch
-// after a re-record must not duplicate prior comments. Idempotence is
-// the load-bearing safety property: refinement HOLDs that edit a
-// single fragment then re-stitch can't drift the on-disk yaml.
+// TestWriteCodebaseYAMLWithComments_Idempotent — re-running stitch with
+// the same fragment body produces byte-identical on-disk output. Run-21-
+// prep contract: the agent owns the whole yaml; the stitcher just writes
+// it. Idempotence here is `os.WriteFile(same body)`, but pin the property
+// since refinement HOLDs that re-stitching after an unchanged fragment
+// can't drift the on-disk yaml.
 func TestWriteCodebaseYAMLWithComments_Idempotent(t *testing.T) {
 	t.Parallel()
 
@@ -156,10 +191,18 @@ func TestWriteCodebaseYAMLWithComments_Idempotent(t *testing.T) {
 	if err := os.WriteFile(yamlPath, []byte(bare), 0o600); err != nil {
 		t.Fatalf("write yaml: %v", err)
 	}
+	commented := `zerops:
+  - setup: prod
+    run:
+      base: nodejs@22
+      # Cross-service refs aliased under stable own-keys.
+      envVariables:
+        DB_HOST: ${db_hostname}
+`
 	plan := &Plan{
 		Codebases: []Codebase{{Hostname: "api", Role: RoleAPI, SourceRoot: srcRoot}},
 		Fragments: map[string]string{
-			"codebase/api/zerops-yaml-comments/run.envVariables": "Alias rationale.",
+			"codebase/api/zerops-yaml": commented,
 		},
 	}
 	if err := WriteCodebaseYAMLWithComments(plan, "api"); err != nil {
@@ -179,9 +222,8 @@ func TestWriteCodebaseYAMLWithComments_Idempotent(t *testing.T) {
 	if string(first) != string(second) {
 		t.Errorf("stitch is not idempotent:\n--- first\n%s\n--- second\n%s", first, second)
 	}
-	// Sanity: only one occurrence of the comment, not two.
-	if strings.Count(string(second), "# Alias rationale.") != 1 {
+	if strings.Count(string(second), "# Cross-service refs") != 1 {
 		t.Errorf("expected exactly 1 occurrence of comment, got %d:\n%s",
-			strings.Count(string(second), "# Alias rationale."), second)
+			strings.Count(string(second), "# Cross-service refs"), second)
 	}
 }

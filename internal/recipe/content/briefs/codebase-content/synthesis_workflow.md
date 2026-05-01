@@ -46,7 +46,7 @@ The engine refuses incompatible (classification, fragmentId) pairs at
 > `record-fragment` refuses any KB or IG call without an explicit
 > `classification` field set to one of the values in the table below.
 > Every IG/KB record-fragment call you issue MUST include the field.
-> Single-class surfaces (zerops-yaml-comments, claude-md, intros)
+> Single-class surfaces (zerops-yaml whole-yaml, claude-md, intros)
 > accept empty classification because the surface itself disambiguates.
 
 | Classification | Compatible surfaces | Refused with redirect |
@@ -169,14 +169,13 @@ prose.
 Adds the line between the guide's general teaching and this recipe's
 specific application.
 
-**URL-link variant** — acceptable on Surface 7 (yaml comments) where
-guide-id naming feels stamped:
-
-> *"# Read more about it here: https://docs.zerops.io/php/how-to/customize-web-server#customize-nginx-configuration"*
-> — laravel-jetstream zerops.yaml
-
-The porter reaches a concrete resource; the URL anchors at the
-specific subsection.
+**URL-link variant is forbidden on Surface 7** — yaml comments must
+inline the rationale. Phrases like "Read more about it here:",
+"More information at:", "See docs:", or "For more details, see"
+are refused at record-fragment time. The doc URL is fine in the IG
+citation slot (Surface 4 item bodies), where a porter is already
+reading prose; not in yaml comments where it disrupts the field-
+adjacent rationale shape.
 
 ## KB stem shape — symptom-first vs author-claim (Surface 5)
 
@@ -388,55 +387,76 @@ porter what's in it. The rule applies to KB only — IG already has
 its own citation rule (above), and yaml-comment fragments (Surface 7)
 follow the URL-link variant.
 
-## Step 4 — Author zerops.yaml comments (Surface 7)
+## Step 4 — Author the whole commented zerops.yaml (Surface 7)
 
-For each `field_rationale` fact, emit one
-`codebase/<h>/zerops-yaml-comments/<block-name>` fragment per yaml
-block. 6-line cap per block. Compound-decision facts sharing
-`compoundReasoning` merge into one block.
+Record ONE fragment per codebase named `codebase/<h>/zerops-yaml`
+whose body is the **entire commented zerops.yaml** — every yaml line
+preserved, plus `# ` comment lines wherever a porter would benefit
+from one. The engine writes the body verbatim to
+`<SourceRoot>/zerops.yaml`; you own the document end to end.
 
-Apply friendly-authority voice (above) primarily here. Each comment
-block: declarative state of the field choice + named porter signal
-that triggers an adapt path.
+### Walk every field
 
-### Block-name shape
+Read the bare yaml, walk every `key:` line, and decide for each one:
+does a porter encountering this field get value from a why-line above
+it? If yes, write one. If the field is plainly self-explanatory
+(e.g. `os: ubuntu` is mostly aesthetic, `cache: [node_modules]` is
+routine), skip it.
 
-The engine anchors each fragment by its `<block-name>` against the
-yaml's leaf key. **For multi-setup yamls, prefix the block name with
-the setup name** so dev + prod (or appdev + appstage, etc.) get
-independent comment slots:
+Fields that almost always deserve a comment:
 
-```
-codebase/api/zerops-yaml-comments/dev.run.envVariables
-codebase/api/zerops-yaml-comments/prod.run.envVariables
-codebase/api/zerops-yaml-comments/dev.run.initCommands
-codebase/api/zerops-yaml-comments/prod.deploy.readinessCheck
-```
+- `build.buildCommands` at production tiers — sequence rationale
+  (why `npm ci` not `npm install`, why `--omit=dev`).
+- `build.deployFiles` — what's shipped, what's not, why.
+- `build.cache` — what survives between builds and why it matters.
+- `run.ports` — listener-binding contract (`0.0.0.0`, VXLAN routing).
+- `run.envVariables` — own-key-alias rationale, `S3_REGION` literal,
+  any project-scope env.
+- `run.start` — process supervision / SIGTERM contract.
+- `run.initCommands` — execOnce key shape and per-deploy semantics.
+- `run.healthCheck` / `deploy.readinessCheck` — what it gates and
+  why the path is what it is.
+- `run.base: static` and similar non-default base choices.
+- Worker-specific structural identity (no `ports`, no `healthCheck`,
+  no `readinessCheck`) — call it out explicitly.
+- Setup-level rationale (above each `- setup: <name>` line) when
+  the setup's role isn't already obvious from the surrounding fields.
 
-The `<setup>` prefix MUST match a `- setup: <setup>` line in the
-on-disk yaml verbatim. If the codebase has only one setup, the prefix
-is optional — `run.envVariables` works the same as
-`<single-setup>.run.envVariables`. **Never repeat a leaf key across
-multiple block names without setup prefixes** — every name must
-resolve to a unique line in the yaml.
+### Voice
+
+Apply friendly-authority voice (above). Every comment block:
+
+- Declarative statement of the field choice or its consequence.
+- Named symptom or porter signal that triggers an adapt path.
+- Inline rationale — never punt to a doc URL.
+
+**Anti-pattern (refused at record-fragment time):** any line ending
+with phrasing like `Read more about it here: https://...`,
+`More information at:`, `See docs:`, or `For more details, see`.
+Inline the explanation. The doc URL is fine in the IG citation
+slot; not in yaml comments.
+
+### Structure preservation
+
+The agent owns the document, but **only adds comments — does not
+change yaml structure**. Same keys, same nesting, same values, same
+order as the bare yaml. Adding fields, removing fields, or reordering
+keys breaks the agent's contract with scaffold (which authored the
+shape) and with downstream tools (zcli push, the platform import
+schema). Schema validation fires at codebase-content complete-phase;
+mismatches refuse the phase exit.
 
 ### Body shape
 
-Each fragment body is the comment prose, one paragraph per line break.
-Wrap each line at ~65 characters. **You MAY pre-hash with `# ` per
-line OR write raw prose** — the engine canonicalizes either form
-before injection. A bare `#` line is a paragraph separator. The
-yaml-comment-style atom shows the rendered shape; whichever form your
-fragment body takes lands as that single-hash shape on disk.
+Use canonical YAML 1.2 indentation (2 spaces). Wrap comment lines at
+~65 characters. A bare `#` is a paragraph separator inside a comment
+block. Pre-hash every comment line with `# ` followed by the prose;
+the engine writes the body verbatim — no re-canonicalization.
 
-> **Do NOT edit `<SourceRoot>/zerops.yaml` on disk to add comments.**
-> The fragments you record here are the canonical source. The engine's
-> stitch step strips the on-disk yaml's existing `^\s*#` comments and
-> re-injects every recorded fragment via line-anchored insertion above
-> the matching block. Direct on-disk edits get clobbered by stitch's
-> strip pass; recording overlapping fragments AND inline-editing
-> double-comments. Stay in the fragment lane and stitch handles the
-> on-disk write.
+> **Do NOT edit `<SourceRoot>/zerops.yaml` on disk.** The fragment
+> you record IS the source of truth. The engine's stitch step writes
+> your fragment body over the bare scaffold yaml. Direct on-disk
+> edits get clobbered. Stay in the fragment lane.
 
 ## Step 5 — Author intro (Surface 4 head)
 
@@ -469,4 +489,6 @@ re-invoking `zerops_recipe` with `action: record-fragment` and
 - Codebase intro: ≤ 350 chars.
 - IG: ≤ 5 numbered items per codebase (incl. engine-emitted IG #1).
 - KB: 5-8 bullets per codebase.
-- zerops.yaml comment block: ≤ 6 lines per block.
+- zerops.yaml: ONE whole-yaml fragment per codebase; comment density
+  is judgment, not capped — comment every field a porter benefits
+  from, skip routine ones.

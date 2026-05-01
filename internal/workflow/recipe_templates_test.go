@@ -156,6 +156,12 @@ func TestGenerateRecipeREADME_Minimal(t *testing.T) {
 			t.Errorf("expected README to list environment %q", env.Label)
 		}
 	}
+	// Run-21-prep §RC6 — tier links must be document-relative, not
+	// root-relative. The README ships into recipes-repo `environments/`
+	// subdir; a leading `/` resolves against repo root and 404s.
+	if strings.Contains(readme, "[[info]](/") {
+		t.Errorf("tier link rendered root-relative; want document-relative (no leading slash). README:\n%s", readme)
+	}
 }
 
 func TestGenerateRecipeREADME_Showcase(t *testing.T) {

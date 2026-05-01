@@ -2,9 +2,18 @@ package recipe
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 )
+
+// readFileBytes is a thin wrapper around os.ReadFile that lets
+// slot-shape's structural-preservation check stay testable. Returns
+// (nil, err) on any read error so callers can no-op rather than
+// crashing on missing/unreadable files.
+func readFileBytes(path string) ([]byte, error) {
+	return os.ReadFile(path)
+}
 
 // checkSlotShape enforces per-fragment-id structural constraints at
 // record-fragment time (run-16 §8.1). Returns an empty slice when the
@@ -65,10 +74,8 @@ func checkSlotShapeWithPlan(fragmentID, body string, plan *Plan) []string {
 		return out
 	case codebaseKBRe.MatchString(fragmentID):
 		return checkCodebaseKBAll(body)
-	case zeropsYamlCommentsRe.MatchString(fragmentID):
-		out := single(checkZeropsYamlComments(body))
-		out = append(out, commentSurfaceSlugCitationRefusals(body, "codebase/<h>/zerops-yaml-comments/<block>")...)
-		return out
+	case codebaseZeropsYamlRe.MatchString(fragmentID):
+		return checkCodebaseZeropsYaml(fragmentID, body, plan)
 	case singleSlotClaudeMDRe.MatchString(fragmentID):
 		return checkClaudeMDAll(body)
 	}
@@ -90,7 +97,7 @@ var (
 	codebaseIntroRe       = regexp.MustCompile(`^codebase/[A-Za-z0-9_-]+/intro$`)
 	slottedIGRe           = regexp.MustCompile(`^codebase/[A-Za-z0-9_-]+/integration-guide/[0-9]+$`)
 	codebaseKBRe          = regexp.MustCompile(`^codebase/[A-Za-z0-9_-]+/knowledge-base$`)
-	zeropsYamlCommentsRe  = regexp.MustCompile(`^codebase/[A-Za-z0-9_-]+/zerops-yaml-comments/[A-Za-z0-9_.-]+$`)
+	codebaseZeropsYamlRe  = regexp.MustCompile(`^codebase/[A-Za-z0-9_-]+/zerops-yaml$`)
 	singleSlotClaudeMDRe  = regexp.MustCompile(`^codebase/[A-Za-z0-9_-]+/claude-md$`)
 	headingH2Re           = regexp.MustCompile(`(?m)^##\s+`)
 	headingH3Re           = regexp.MustCompile(`(?m)^###\s+`)
@@ -282,15 +289,120 @@ func checkClaudeMDAll(body string) []string {
 	return out
 }
 
-func checkZeropsYamlComments(body string) string {
-	lines := strings.Count(body, "\n")
-	if !strings.HasSuffix(body, "\n") && body != "" {
-		lines++
+// checkCodebaseZeropsYaml runs whole-yaml refusals on a
+// `codebase/<h>/zerops-yaml` fragment body. Run-21-prep — the agent
+// records the entire commented zerops.yaml as one fragment; refusals
+// here cover authoring-discipline (no doc-link punts), citation shape
+// (cite-by-mechanism, not by slug), and structural preservation (the
+// agent owns comments, NOT yaml structure).
+//
+// Schema-conformance is NOT checked here — it fires at codebase-content
+// complete-phase via gateZeropsYamlSchema (which reads on-disk yaml).
+// Slot-shape stays cheap; gate-time runs the heavier check.
+func checkCodebaseZeropsYaml(fragmentID, body string, plan *Plan) []string {
+	var out []string
+	if strings.TrimSpace(body) == "" {
+		return []string{"codebase/<h>/zerops-yaml: body is empty; record the whole commented zerops.yaml as one fragment"}
 	}
-	if lines > 6 {
-		return fmt.Sprintf("codebase/<h>/zerops-yaml-comments/<block> ≤ 6 lines; got %d. See spec §Surface 7.", lines)
+	// Anti-pattern: doc-link punts. The fragment-shape audit (run-21-
+	// prep) caught a regression at apidev/zerops.yaml:131 where a yaml
+	// comment ended with `Read more about it here: https://...`. Inline
+	// the rationale; never punt to a URL.
+	for ln := range strings.SplitSeq(body, "\n") {
+		trimmed := strings.TrimSpace(ln)
+		if !strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		lower := strings.ToLower(trimmed)
+		switch {
+		case strings.Contains(lower, "read more about it here"),
+			strings.Contains(lower, "more information at"),
+			strings.Contains(lower, "more info at"),
+			strings.Contains(lower, "see docs:"),
+			strings.Contains(lower, "see also:"),
+			strings.Contains(lower, "for more details, see"):
+			out = append(out, fmt.Sprintf("codebase/<h>/zerops-yaml: yaml comment punts to a URL/docs reference (%q); inline the rationale instead — name the constraint, the symptom, and the fix",
+				trimForMessage(trimmed)))
+		}
 	}
-	return ""
+	// Cite-by-mechanism on every comment line. The legacy per-block
+	// validator scoped this to comment fragments; whole-yaml inherits
+	// the same rule across every `# ...` line in the body.
+	out = append(out, commentSurfaceSlugCitationRefusals(body, "codebase/<h>/zerops-yaml")...)
+
+	// Structural preservation: agent owns comments only; yaml shape is
+	// scaffold's contract. Strip comments from the fragment body AND
+	// from the current on-disk yaml; compare. If they differ, the agent
+	// added/removed/reordered keys.
+	if msg := checkZeropsYamlStructurePreserved(fragmentID, body, plan); msg != "" {
+		out = append(out, msg)
+	}
+	return out
+}
+
+// checkZeropsYamlStructurePreserved verifies the agent's whole-yaml
+// fragment body, when comments are stripped, matches the on-disk bare
+// yaml byte-for-byte. The fragment may add `# ` comment lines wherever
+// porter-value calls for one; it may not modify any non-comment line.
+//
+// On-disk yaml at record-fragment time:
+//   - First record after scaffold → bare scaffold yaml (no comments).
+//     stripYAMLComments(bare) == bare. Compare to stripYAMLComments(body).
+//   - Re-record (refinement HOLD): on-disk = previously-committed
+//     commented yaml. stripYAMLComments(on-disk) == bare again. Compare
+//     to stripYAMLComments(body). Same bare, both ways.
+//
+// Skips the check if SourceRoot or on-disk yaml is missing — early-
+// phase tests + chain-parent codebases don't have one.
+func checkZeropsYamlStructurePreserved(fragmentID, body string, plan *Plan) string {
+	if plan == nil {
+		return ""
+	}
+	host := codebaseHostFromFragmentID(fragmentID)
+	if host == "" {
+		return ""
+	}
+	var srcRoot string
+	for _, cb := range plan.Codebases {
+		if cb.Hostname == host {
+			srcRoot = cb.SourceRoot
+			break
+		}
+	}
+	if srcRoot == "" {
+		return ""
+	}
+	yamlPath := srcRoot + "/zerops.yaml"
+	raw, err := readFileBytes(yamlPath)
+	if err != nil {
+		return ""
+	}
+	expected := normalizeYAMLForCompare(stripYAMLComments(string(raw)))
+	actual := normalizeYAMLForCompare(stripYAMLComments(body))
+	if expected == actual {
+		return ""
+	}
+	return fmt.Sprintf("codebase/<h>/zerops-yaml: structural changes to yaml refused — agent owns comments, not the yaml shape. Add `# ` lines wherever porter value calls for one; do not add/remove/reorder yaml keys. Diff (stripped):\n--- bare (on-disk)\n%s\n--- fragment\n%s",
+		expected, actual)
+}
+
+// normalizeYAMLForCompare canonicalizes yaml text for byte-equality
+// comparison: strips a leading UTF-8 BOM, normalizes CRLF/CR line
+// endings to LF, trims trailing whitespace from each line, and trims
+// trailing blank lines. Without normalization the structural-
+// preservation check false-refuses on agents that author with editor
+// defaults (CRLF on Windows shells, BOM from some editors, trailing
+// spaces). The check measures yaml SHAPE, not byte exactness.
+func normalizeYAMLForCompare(s string) string {
+	s = strings.TrimPrefix(s, "\ufeff")
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		lines[i] = strings.TrimRight(ln, " \t")
+	}
+	out := strings.Join(lines, "\n")
+	return strings.TrimRight(out, "\n")
 }
 
 // claudeMDFragmentRefusalForHostname extends checkClaudeMDAll with a

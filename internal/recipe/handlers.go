@@ -115,7 +115,7 @@ type RecipeInput struct {
 	TierIndex        int         `json:"tierIndex,omitempty"        jsonschema:"For emit-yaml shape=deliverable: tier 0..5. Ignored when shape=workspace."`
 	Fact             *FactRecord `json:"fact,omitempty"             jsonschema:"For record-fact: a FactRecord object with topic, symptom, mechanism, surfaceHint, citation fields."`
 	Plan             *Plan       `json:"plan,omitempty"             jsonschema:"For update-plan: partial Plan object. Fields present overwrite session.Plan; omitted fields untouched."`
-	FragmentID       string      `json:"fragmentId,omitempty"       jsonschema:"For record-fragment: fragment identifier. Valid shapes: root/intro, env/<N>/intro (N=0..5), env/<N>/import-comments/<hostname>, env/<N>/import-comments/project, codebase/<hostname>/intro, codebase/<hostname>/integration-guide, codebase/<hostname>/knowledge-base, codebase/<hostname>/claude-md/service-facts, codebase/<hostname>/claude-md/notes."`
+	FragmentID       string      `json:"fragmentId,omitempty"       jsonschema:"For record-fragment: fragment identifier. Valid shapes: root/intro, env/<N>/intro (N=0..5), env/<N>/import-comments/<hostname>, env/<N>/import-comments/project, codebase/<hostname>/intro, codebase/<hostname>/integration-guide, codebase/<hostname>/integration-guide/<n> (slotted, n is the IG item index — engine pre-stamps n=1, agent authors 2+), codebase/<hostname>/knowledge-base, codebase/<hostname>/zerops-yaml (whole commented yaml — one per codebase), codebase/<hostname>/claude-md, codebase/<hostname>/claude-md/service-facts (legacy), codebase/<hostname>/claude-md/notes (legacy)."`
 	Fragment         string      `json:"fragment,omitempty"         jsonschema:"For record-fragment: the fragment body. Overwrite for root/* and env/* ids; append-on-extend for codebase/*/integration-guide, knowledge-base, claude-md/* ids so a feature sub-agent extends scaffold's body rather than replacing it."`
 	Mode             string      `json:"mode,omitempty"             jsonschema:"For record-fragment: 'append' (default for codebase IG/KB/claude-md ids; concatenates with prior body) or 'replace' (overwrites prior body). Use 'replace' to correct a fragment you authored earlier in the same recipe session, e.g. after a complete-phase validator violation."`
 	DispatchedPrompt string      `json:"dispatchedPrompt,omitempty" jsonschema:"For verify-subagent-dispatch: the prompt the main agent intends to pass to Agent. Engine recomposes the brief and confirms its body appears byte-identical inside the dispatched prompt. Wrapper text around the brief (header lines before, context notes after) is allowed; only truncations and paraphrases are rejected."`
@@ -418,7 +418,7 @@ func handleRecordFragment(sess *Session, in RecipeInput, r RecipeResult) RecipeR
 	// agent-set candidateClass of framework-quirk / library-metadata /
 	// self-inflicted shipped to porter-facing KB despite spec §337-347
 	// forbidding any surface for those classes. Single-class surfaces
-	// (zerops-yaml-comments, CLAUDE.md, intro) keep classification
+	// (zerops-yaml whole-yaml, CLAUDE.md, intro) keep classification
 	// optional — the surface itself disambiguates.
 	if surf, ok := SurfaceFromFragmentID(in.FragmentID); ok {
 		// Intro fragments (`codebase/<h>/intro`, `env/<N>/intro`,
@@ -679,8 +679,18 @@ func completePhase(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
 			return r
 		}
 	}
-	if sess.Current == PhaseScaffold || sess.Current == PhaseFeature {
-		if err := stitchCodebases(sess); err != nil {
+	// Run-21-prep — pre-stitch at codebase-content too so the
+	// codebase-content sub-agent's whole-yaml fragment lands on disk
+	// before validateCodebaseYAML / gateZeropsYamlSchema read it.
+	// Pre-fix, those gates read the bare scaffold yaml and missed
+	// regressions in the agent's authored body until finalize.
+	//
+	// When the call is scoped (in.Codebase != ""), pre-stitch only the
+	// requested codebase so an unrelated codebase's missing fragment +
+	// empty-yaml hardening doesn't abort the named codebase's self-
+	// validate. Preserves the scoped-isolation contract.
+	if sess.Current == PhaseScaffold || sess.Current == PhaseFeature || sess.Current == PhaseCodebaseContent {
+		if err := preStitchCodebases(sess, in.Codebase); err != nil {
 			r.Error = "complete-phase: pre-stitch codebases: " + err.Error()
 			return r
 		}
@@ -900,13 +910,13 @@ func validateCodebaseSourceRoots(plan *Plan) error {
 	return nil
 }
 
-// stitchCodebases writes per-codebase README + CLAUDE.md to each
-// <cb.SourceRoot>/ — the apps-repo shape. Used at scaffold + feature
-// complete-phase to materialize fragments authored in-phase so the
-// codebase surface validators (which read from disk) can see them.
-// Root + env surfaces are NOT written here; finalize owns those.
-// Run-13 §3.
-func stitchCodebases(sess *Session) error {
+// preStitchCodebases is the scoped pre-stitch path called by
+// completePhase. When `only` is non-empty, the stitch loop runs ONLY
+// for the matching hostname so an unrelated codebase's stitch failure
+// doesn't abort a scoped self-validate (run-21-prep — the F2 empty-disk
+// hardening would otherwise leak across codebases). When `only` is empty
+// every codebase gets stitched.
+func preStitchCodebases(sess *Session, only string) error {
 	sess.mu.Lock()
 	plan := sess.Plan
 	sess.mu.Unlock()
@@ -916,12 +926,30 @@ func stitchCodebases(sess *Session) error {
 	if err := validateCodebaseSourceRoots(plan); err != nil {
 		return err
 	}
-	_, err := writeCodebaseSurfaces(plan)
+	if only == "" {
+		_, err := writeCodebaseSurfaces(plan)
+		return err
+	}
+	_, err := writeCodebaseSurfacesScoped(plan, only)
 	return err
 }
 
+// writeCodebaseSurfacesScoped writes README + CLAUDE.md + zerops.yaml
+// for ONE codebase only, mirroring writeCodebaseSurfaces' shape. Used by
+// preStitchCodebases for scoped completePhase calls.
+func writeCodebaseSurfacesScoped(plan *Plan, hostname string) ([]string, error) {
+	single := *plan
+	for _, cb := range plan.Codebases {
+		if cb.Hostname == hostname {
+			single.Codebases = []Codebase{cb}
+			return writeCodebaseSurfaces(&single)
+		}
+	}
+	return nil, fmt.Errorf("codebase %q not in plan", hostname)
+}
+
 // writeCodebaseSurfaces is the shared codebase-write loop used by both
-// stitchContent and stitchCodebases. Returns missing fragment ids
+// stitchContent and preStitchCodebases. Returns missing fragment ids
 // surfaced by the assemble pipeline; caller decides whether to treat
 // them as fatal.
 func writeCodebaseSurfaces(plan *Plan) ([]string, error) {

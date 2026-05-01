@@ -60,7 +60,7 @@ func gateScaffoldBareYAML(ctx GateContext) []Violation {
 			Code: "scaffold-yaml-leaked-comment",
 			Path: yamlPath,
 			Message: fmt.Sprintf(
-				"scaffold-authored zerops.yaml contains %d single-`#` causal comment line(s) — bare yaml is the scaffold contract per `principles/bare-yaml-prohibition.md`. Causal comments are authored later as `codebase/%s/zerops-yaml-comments/<block>` fragments and stamped by the engine's stitch step. Strip these lines:\n  %s",
+				"scaffold-authored zerops.yaml contains %d single-`#` causal comment line(s) — bare yaml is the scaffold contract per `principles/bare-yaml-prohibition.md`. Causal comments are authored later as the `codebase/%s/zerops-yaml` whole-yaml fragment and written by the engine's stitch step. Strip these lines:\n  %s",
 				len(violations), cb.Hostname, strings.Join(lineNums, "\n  "),
 			),
 		})

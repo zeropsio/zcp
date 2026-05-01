@@ -140,7 +140,7 @@ func TestGateScaffoldBareYAML_Run20C3(t *testing.T) {
 		if !strings.Contains(v.Message, "bare-yaml-prohibition.md") {
 			t.Errorf("message must cite the principle; got %q", v.Message)
 		}
-		if !strings.Contains(v.Message, "codebase/api/zerops-yaml-comments") {
+		if !strings.Contains(v.Message, "codebase/api/zerops-yaml") {
 			t.Errorf("message must redirect to fragment-recording path; got %q", v.Message)
 		}
 	})

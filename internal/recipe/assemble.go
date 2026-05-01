@@ -132,31 +132,52 @@ func AssembleCodebaseREADME(plan *Plan, hostname string) (string, []string, erro
 	if err != nil {
 		return "", nil, fmt.Errorf("assemble codebase/%s README: %w", hostname, err)
 	}
-	yamlBody, err := readCodebaseYAMLForHost(plan, hostname)
-	if err != nil {
-		return "", nil, fmt.Errorf("assemble codebase/%s README: %w", hostname, err)
+	// Run-21-prep — IG #1 embeds the whole commented zerops.yaml. The
+	// codebase-content sub-agent records `codebase/<host>/zerops-yaml`
+	// (whole-yaml fragment); use that body directly. Falls back to the
+	// on-disk bare yaml when no fragment is recorded yet (early phase,
+	// pre-codebase-content) so the README still renders something.
+	//
+	// Run-11 M-2 hardening: when the codebase HAS a SourceRoot, an
+	// empty/zero-byte on-disk yaml AND no fragment is a real corruption
+	// signal — fail loud rather than silently shipping a README without
+	// IG #1. Pre-scaffold (SourceRoot empty) still soft-skips so
+	// research/provision-phase renders don't error.
+	var yamlBody string
+	if frag, ok := plan.Fragments[fragmentIDCodebaseZeropsYAML(hostname)]; ok {
+		yamlBody = frag
+	} else {
+		raw, err := readCodebaseYAMLForHost(plan, hostname)
+		if err != nil {
+			return "", nil, fmt.Errorf("assemble codebase/%s README: %w", hostname, err)
+		}
+		if strings.TrimSpace(raw) == "" && hasNonEmptySourceRoot(plan, hostname) {
+			return "", nil, fmt.Errorf("assemble codebase/%s README: on-disk zerops.yaml is empty/whitespace AND no `codebase/%s/zerops-yaml` fragment recorded — IG #1 cannot render. Either author the whole-yaml fragment or restore the bare scaffold yaml at <SourceRoot>/zerops.yaml",
+				hostname, hostname)
+		}
+		yamlBody = raw
 	}
 	if yamlBody != "" {
-		// Run-16 §6.7 — line-anchor zerops.yaml comment injection
-		// before IG #1 stamps the yaml verbatim, so block comments
-		// authored at codebase-content phase ride along into the
-		// published surface (Surface 7).
-		//
-		// Run-20 E1 — strip prior `# #` engine-comment blocks before
-		// re-injecting. Multiple stitchCodebases rounds (scaffold,
-		// feature, finalize stitch-content) read this on-disk yaml,
-		// inject comments, write back; without strip the on-disk file
-		// accumulates duplicated blocks, and the IG #1 inline yaml
-		// inherits them. Mirrors WriteCodebaseYAMLWithComments's strip-
-		// then-inject contract. Pinned by
-		// TestAssembleCodebaseREADME_RemovesDuplicateYAMLComments.
-		yamlBody = injectZeropsYamlComments(stripYAMLComments(yamlBody), plan.Fragments, hostname)
 		body = injectIGItem1(body, yamlBody)
 	}
 	if err := checkUnreplacedTokens(body); err != nil {
 		return "", nil, fmt.Errorf("assemble codebase/%s README: %w", hostname, err)
 	}
 	return body, missing, nil
+}
+
+// hasNonEmptySourceRoot reports whether the named codebase has a non-
+// empty SourceRoot in plan. Used by AssembleCodebaseREADME to decide
+// whether an empty on-disk yaml + missing fragment is a real corruption
+// (codebase scaffolded but yaml lost) vs an early-phase soft-skip (no
+// scaffold yet → no SourceRoot → no on-disk yaml expected).
+func hasNonEmptySourceRoot(plan *Plan, hostname string) bool {
+	for _, cb := range plan.Codebases {
+		if cb.Hostname == hostname {
+			return cb.SourceRoot != ""
+		}
+	}
+	return false
 }
 
 // readCodebaseYAMLForHost returns the committed zerops.yaml bytes for
@@ -228,132 +249,6 @@ func mergeSlottedIGFragments(fragments map[string]string, hostname string) map[s
 	maps.Copy(out, fragments)
 	out["codebase/"+hostname+"/integration-guide"] = b.String()
 	return out
-}
-
-// injectZeropsYamlComments returns a copy of yamlBody with author-
-// recorded comment fragments line-anchored above their named blocks.
-// Run-16 §6.7 — line-anchor insertion is the only-shipped path; AST
-// round-trip is deferred. Per-block fragment ids:
-// `codebase/<h>/zerops-yaml-comments/<block-name>` where <block-name>
-// matches a yaml key (e.g. `run.envVariables`, `run.initCommands`,
-// `build`, `readinessCheck`).
-//
-// The implementation walks fragments looking for matching ids, then for
-// each block name finds the corresponding yaml line via regex anchored
-// to line-start, and inserts comment-prefixed lines above with matching
-// indentation. If no matching line is found, the comment is dropped
-// silently — agent fragments referencing nonexistent yaml blocks should
-// be caught by the slot-shape refusal layer at record-fragment time
-// (the validator could later forbid missing-block fragments at finalize
-// if dogfood reveals the silent drop is too forgiving).
-func injectZeropsYamlComments(yamlBody string, fragments map[string]string, hostname string) string {
-	if yamlBody == "" || fragments == nil {
-		return yamlBody
-	}
-	prefix := "codebase/" + hostname + "/zerops-yaml-comments/"
-	// Walk fragments deterministically (sorted by block name) so
-	// comment ordering across re-renders is stable.
-	type entry struct {
-		block string
-		body  string
-	}
-	var entries []entry
-	for k, v := range fragments {
-		if rest, ok := strings.CutPrefix(k, prefix); ok && rest != "" {
-			entries = append(entries, entry{block: rest, body: v})
-		}
-	}
-	if len(entries) == 0 {
-		return yamlBody
-	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].block < entries[j].block })
-
-	out := yamlBody
-	for _, e := range entries {
-		// Block name encodes nesting via dots: `run.envVariables`,
-		// `run.initCommands`. Line-anchor on the leaf token's `key:`
-		// occurrence (with appropriate indentation derived from depth).
-		out = insertCommentAtBlock(out, e.block, e.body)
-	}
-	return out
-}
-
-// insertCommentAtBlock locates the named yaml block and inserts the
-// comment fragment immediately above with matching indentation. block
-// is a dot-separated yaml path; the LAST segment names the leaf key
-// to anchor on (e.g. `envVariables`, `build`, `readinessCheck`). When
-// the FIRST segment matches a `- setup: <name>` line, the leaf-key
-// search is scoped to that setup's range — this lets a multi-setup
-// codebase yaml carry one comment block per (setup, leaf) pair without
-// every fragment collapsing onto the first setup. Block names without
-// a setup prefix retain the run-16 single-match shape for back-compat.
-//
-// Fragment-body normalization: each line is canonicalized before re-
-// prefixing. Lines starting with `# ` or bare `#` have that prefix
-// stripped first so the engine's `# ` re-prefix never produces double-
-// hash artifacts (`# #`); a line that's bare `#` (paragraph separator
-// in the agent's body) emits as bare `#` (no trailing space) to match
-// the golden reference shape. Idempotent regardless of whether the
-// agent pre-hashed the fragment body or wrote raw prose.
-func insertCommentAtBlock(yamlBody, block, comment string) string {
-	parts := strings.Split(block, ".")
-	if len(parts) == 0 {
-		return yamlBody
-	}
-	leaf := parts[len(parts)-1]
-
-	// Determine the search range: full body, or scoped to a setup
-	// block when the first dot-segment names one. Run-21 §1 — closes
-	// the dual-setup leaf-collision bug (assemble.go pre-fix matched
-	// only the first occurrence of `<leaf>:` regardless of setup).
-	searchStart, searchEnd := 0, len(yamlBody)
-	if len(parts) >= 2 {
-		setupName := parts[0]
-		setupRe := regexp.MustCompile(`(?m)^\s*-\s*setup:\s*` + regexp.QuoteMeta(setupName) + `\s*$`)
-		if loc := setupRe.FindStringIndex(yamlBody); loc != nil {
-			searchStart = loc[1]
-			nextRe := regexp.MustCompile(`(?m)^\s*-\s*setup:`)
-			if nextLoc := nextRe.FindStringIndex(yamlBody[searchStart:]); nextLoc != nil {
-				searchEnd = searchStart + nextLoc[0]
-			}
-		}
-	}
-
-	leafRe := regexp.MustCompile(`(?m)^( *)` + regexp.QuoteMeta(leaf+":"))
-	scoped := yamlBody[searchStart:searchEnd]
-	loc := leafRe.FindStringSubmatchIndex(scoped)
-	if loc == nil {
-		return yamlBody
-	}
-	insertAt := searchStart + loc[0]
-	indent := scoped[loc[2]:loc[3]]
-	var cb strings.Builder
-	for line := range strings.SplitSeq(strings.TrimRight(comment, "\n"), "\n") {
-		body := stripFragmentLinePrefix(line)
-		cb.WriteString(indent)
-		if strings.TrimSpace(body) == "" {
-			cb.WriteString("#\n")
-			continue
-		}
-		cb.WriteString("# ")
-		cb.WriteString(body)
-		cb.WriteByte('\n')
-	}
-	return yamlBody[:insertAt] + cb.String() + yamlBody[insertAt:]
-}
-
-// stripFragmentLinePrefix removes a leading `# ` or bare `#` from a
-// fragment-body line so the engine's re-prefix never double-hashes.
-// Returns the body content without the prefix. A bare `#` returns "";
-// a `# Body` returns "Body"; a `Body` (no hash) returns "Body".
-func stripFragmentLinePrefix(line string) string {
-	if after, ok := strings.CutPrefix(line, "# "); ok {
-		return after
-	}
-	if after, ok := strings.CutPrefix(line, "#"); ok {
-		return after
-	}
-	return line
 }
 
 // injectIGItem1 rewrites the rendered README's integration-guide extract
@@ -534,8 +429,20 @@ func AssembleCodebaseClaudeMD(plan *Plan, hostname string) (string, []string, er
 // renderRootTokens resolves the root-template tokens. Tier list is
 // emitted as a bulleted list, one row per tier, each row showing an
 // info link + a deploy-with-one-click link whose URL encodes the tier's
-// Folder into the path segment. Matches the shape of the reference
-// laravel-showcase root README.
+// Folder into the path segment. Tier links carry the `environments/`
+// prefix because the user-facing root README ships at recipe-root level
+// while tier folders live nested under `environments/<folder>/` (sim +
+// production v3 layout). Pre-fix, `[[info]](/folder)` was root-relative
+// to filesystem root → 404s; intermediate fix `[[info]](folder)` was
+// document-relative without the prefix → resolves to `<root>/<folder>`
+// (also doesn't exist). Run-21-prep §RC6.
+//
+// The engine also writes the same body to `<outputRoot>/README.md`
+// (i.e. `environments/README.md` in production + sim). That duplicate
+// is a dead artifact — the orchestration / sim driver writes the
+// user-facing copy at recipe-root. The duplicate's links resolve to
+// `environments/environments/<folder>` and 404, which is fine because
+// nothing reads it.
 func renderRootTokens(tpl string, plan *Plan) string {
 	tiers := Tiers()
 	var rows strings.Builder
@@ -544,7 +451,7 @@ func renderRootTokens(tpl string, plan *Plan) string {
 			rows.WriteByte('\n')
 		}
 		folderURL := url.PathEscape(t.Folder)
-		fmt.Fprintf(&rows, "- **%s** [[info]](/%s) — [[deploy with one click]](https://app.zerops.io/recipes/%s?environment=%s)",
+		fmt.Fprintf(&rows, "- **%s** [[info]](environments/%s) — [[deploy with one click]](https://app.zerops.io/recipes/%s?environment=%s)",
 			t.Label, folderURL, plan.Slug, tierDeploySuffix(t))
 	}
 	return replaceTokens(tpl, map[string]string{

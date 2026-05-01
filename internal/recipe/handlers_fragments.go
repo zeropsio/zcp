@@ -108,9 +108,11 @@ func ApplyEnvComment(plan *Plan, id, body string) error {
 // semantics. Per plan §2.A.4: feature sub-agent extends IG, KB, and
 // CLAUDE.md sections; root and env overwrite (main agent authors once).
 //
-// Run-16 §6.5 — slotted ids (`integration-guide/<n>`,
-// `zerops-yaml-comments/<block>`, single-slot `claude-md`) overwrite
-// rather than append; each slot is a single record-time author.
+// Run-16 §6.5 — slotted ids (`integration-guide/<n>`, single-slot
+// `claude-md`) overwrite rather than append; each slot is a single
+// record-time author. Run-21-prep — `zerops-yaml` is whole-yaml,
+// overwrite (replaces the legacy per-block `zerops-yaml-comments/<block>`
+// shape).
 func isAppendFragmentID(id string) bool {
 	if !strings.HasPrefix(id, "codebase/") {
 		return false
@@ -119,8 +121,8 @@ func isAppendFragmentID(id string) bool {
 	if strings.Contains(id, "/integration-guide/") {
 		return false
 	}
-	// Slotted zerops.yaml comments: per-block, overwrite.
-	if strings.Contains(id, "/zerops-yaml-comments/") {
+	// Whole-yaml fragment: one per codebase, overwrite.
+	if strings.HasSuffix(id, "/zerops-yaml") {
 		return false
 	}
 	// Single-slot claude-md (run-16 primary): overwrite.
@@ -226,11 +228,13 @@ func isValidFragmentID(plan *Plan, id string) bool {
 			return false
 		}
 		tail := rest[slash+1:]
-		// Run-16 §6.5 — accept the run-16 single-slot claude-md primary
-		// shape in addition to the legacy back-compat sub-slots.
+		// Run-16 §6.5 — single-slot claude-md primary, plus legacy
+		// back-compat sub-slots. Run-21-prep — whole-yaml `zerops-yaml`
+		// replaces the per-block `zerops-yaml-comments/<block>` shape.
 		switch tail {
 		case fragmentTailIntro, "integration-guide", "knowledge-base",
-			"claude-md", "claude-md/service-facts", "claude-md/notes":
+			"claude-md", "claude-md/service-facts", "claude-md/notes",
+			"zerops-yaml":
 			return true
 		}
 		// Run-16 §6.5 — slotted IG: `codebase/<h>/integration-guide/<n>`.
@@ -239,11 +243,6 @@ func isValidFragmentID(plan *Plan, id string) bool {
 				return true
 			}
 			return false
-		}
-		// Run-16 §6.5 — per-block zerops.yaml comments:
-		// `codebase/<h>/zerops-yaml-comments/<block-name>`.
-		if rest, ok := strings.CutPrefix(tail, "zerops-yaml-comments/"); ok {
-			return rest != "" && !strings.ContainsAny(rest, "/")
 		}
 		return false
 	}

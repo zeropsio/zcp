@@ -285,7 +285,9 @@ func SurfaceFromFragmentID(fragmentID string) (Surface, bool) {
 			// (`claude-md/service-facts`, `claude-md/notes`) remain
 			// recognized for back-compat.
 			return SurfaceCodebaseCLAUDE, true
-		case strings.HasPrefix(tail, "zerops-yaml-comments/"):
+		case tail == "zerops-yaml":
+			// Run-21-prep — whole-yaml fragment shape replaces the per-
+			// block `zerops-yaml-comments/<block>` slotted shape.
 			return SurfaceCodebaseZeropsComments, true
 		}
 		return "", false

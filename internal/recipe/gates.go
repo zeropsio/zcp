@@ -82,6 +82,15 @@ func CodebaseScaffoldGates() []Gate {
 		// invocations on workerdev — worker behavior was attested only on
 		// the compiled-entry workerstage path).
 		{Name: "worker-dev-server-started", Run: gateWorkerDevServerStarted},
+		// Run-21-prep RC2 — schema-conformance at the producer. Without
+		// this, scaffold can ship a yaml with fields invalid under the
+		// live zerops-yml schema (e.g. `verticalAutoscaling` placed
+		// inside `run:`, when it's an import.yaml service-level field).
+		// Pre-fix the violation only surfaced at codebase-content + finalize,
+		// long after the agent that authored the bad shape had moved on.
+		// Catching at scaffold complete-phase puts the refusal in the
+		// authoring agent's same-context window where the fix is cheap.
+		{Name: "zerops-yaml-schema", Run: gateZeropsYamlSchema},
 	}
 }
 
@@ -98,6 +107,7 @@ func CodebaseContentGates() []Gate {
 		{Name: "deploy-files-narrowness", Run: gateDeployFilesNarrowness},
 		{Name: "cross-surface-duplication", Run: gateCrossSurfaceDuplication},
 		{Name: "cross-recipe-duplication", Run: gateCrossRecipeDuplication},
+		{Name: "zerops-yaml-schema", Run: gateZeropsYamlSchema},
 	}
 }
 

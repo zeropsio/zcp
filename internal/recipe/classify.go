@@ -381,7 +381,7 @@ func surfaceList(ss []Surface) string {
 // engine can refuse incompatible classes deterministically (run-19
 // prep — closes the run-18 §1.2.4 / §1.2.5 wrong-surface routing).
 //
-// Single-class surfaces (zerops-yaml-comments only takes
+// Single-class surfaces (zerops-yaml whole-yaml only takes
 // scaffold-decision; CLAUDE.md only takes operational; intro and
 // import-comments are engine-emitted or have no classification
 // discriminator) keep classification optional.
