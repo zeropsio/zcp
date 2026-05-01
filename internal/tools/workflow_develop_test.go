@@ -309,6 +309,234 @@ func TestHandleDevelopBriefing_StandardPair_StageInScope_Accepted(t *testing.T) 
 	}
 }
 
+// Standard-mode scope auto-expansion: agent passes only the dev half;
+// validateDevelopScope auto-includes the paired stage hostname so the
+// auto-close gate counts both halves and develop-active atoms can fire
+// on the (standard, deployed, unset) triple. Without this, both real
+// sessions stopped at the dev URL because appstage was invisible to the
+// session-progress accounting (see plans/develop-stage-promotion-2026-05-01.md).
+func TestHandleDevelopBriefing_StandardPair_DevOnlyInScope_AutoExpandsStage(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+
+	// Pair-keyed: ONE meta with Hostname=appdev, StageHostname=appstage.
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		StageHostname:    "appstage",
+		Mode:             topology.PlanModeStandard,
+		BootstrapSession: "sess1",
+		BootstrappedAt:   "2026-04-22",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-appdev", Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{ID: "svc-appstage", Name: "appstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "static"}},
+	})
+
+	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
+		WorkflowInput{Intent: "iterate then promote", Scope: []string{"appdev"}},
+		runtime.Info{InContainer: true})
+	if err != nil {
+		t.Fatalf("handleDevelopBriefing: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("scope=[appdev] for standard pair must be accepted — got error:\n%s", extractText(result))
+	}
+
+	ws, _ := workflow.CurrentWorkSession(dir)
+	if ws == nil {
+		t.Fatal("work session expected")
+	}
+	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
+
+	if len(ws.Services) != 2 {
+		t.Fatalf("expected scope auto-expanded to [appdev,appstage], got %v", ws.Services)
+	}
+	if ws.Services[0] != "appdev" || ws.Services[1] != "appstage" {
+		t.Errorf("scope order: want sorted [appdev,appstage], got %v", ws.Services)
+	}
+}
+
+// Idempotent: when the agent already passed both halves explicitly, the
+// expansion must not duplicate the stage hostname.
+func TestHandleDevelopBriefing_StandardPair_BothHalvesInScope_NoDuplicate(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		StageHostname:    "appstage",
+		Mode:             topology.PlanModeStandard,
+		BootstrapSession: "sess1",
+		BootstrappedAt:   "2026-04-22",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-appdev", Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{ID: "svc-appstage", Name: "appstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "static"}},
+	})
+
+	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
+		WorkflowInput{Intent: "explicit both", Scope: []string{"appdev", "appstage"}},
+		runtime.Info{InContainer: true})
+	if err != nil {
+		t.Fatalf("handleDevelopBriefing: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("explicit pair scope rejected:\n%s", extractText(result))
+	}
+
+	ws, _ := workflow.CurrentWorkSession(dir)
+	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
+
+	if len(ws.Services) != 2 {
+		t.Fatalf("expected scope to stay [appdev,appstage], got %v", ws.Services)
+	}
+}
+
+// Stage-only scope (agent passes only the stage hostname) must NOT be
+// expanded — there's no "stage half" to add. The validation accepts it as-is.
+func TestHandleDevelopBriefing_StandardPair_StageOnlyInScope_NoExpansion(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		StageHostname:    "appstage",
+		Mode:             topology.PlanModeStandard,
+		BootstrapSession: "sess1",
+		BootstrappedAt:   "2026-04-22",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-appdev", Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{ID: "svc-appstage", Name: "appstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "static"}},
+	})
+
+	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
+		WorkflowInput{Intent: "stage only", Scope: []string{"appstage"}},
+		runtime.Info{InContainer: true})
+	if err != nil {
+		t.Fatalf("handleDevelopBriefing: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("stage-only scope rejected:\n%s", extractText(result))
+	}
+
+	ws, _ := workflow.CurrentWorkSession(dir)
+	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
+
+	if len(ws.Services) != 1 || ws.Services[0] != "appstage" {
+		t.Errorf("expected scope=[appstage], got %v", ws.Services)
+	}
+}
+
+// Broken pair: meta carries StageHostname but the stage service was
+// deleted from the project. PruneServiceMetas keeps the meta as long as
+// either half is alive (the dev half here), so naive scope expansion
+// would silently widen scope to a hostname deploy/verify can't reach
+// — auto-close would never fire. validateDevelopScope must fail-fast
+// with repair guidance instead.
+func TestHandleDevelopBriefing_StandardPair_StageMissingFromLive_FailsWithRepairGuidance(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+
+	// Pair meta names appstage as the stage half.
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		StageHostname:    "appstage",
+		Mode:             topology.PlanModeStandard,
+		BootstrapSession: "sess1",
+		BootstrappedAt:   "2026-04-22",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	// Live services include only appdev — appstage was deleted from Zerops UI
+	// while the meta still references it. PruneServiceMetas keeps the meta
+	// (Hostname matches a live service).
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-appdev", Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	})
+
+	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
+		WorkflowInput{Intent: "iterate broken pair", Scope: []string{"appdev"}},
+		runtime.Info{InContainer: true})
+	if err != nil {
+		t.Fatalf("handleDevelopBriefing: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("broken pair must surface as error, got success:\n%s", extractText(result))
+	}
+	body := extractText(result)
+	if !strings.Contains(body, "appstage") {
+		t.Errorf("error message must name the missing stage hostname; got:\n%s", body)
+	}
+	if !strings.Contains(body, "bootstrap") {
+		t.Errorf("error suggestion must point at re-bootstrap as repair path; got:\n%s", body)
+	}
+
+	// Session must NOT be created — broken pair is a precondition failure,
+	// not a "try again with different scope" scenario.
+	if ws, _ := workflow.CurrentWorkSession(dir); ws != nil {
+		t.Errorf("work session must not be created for broken pair; found %+v", ws)
+		_ = workflow.DeleteWorkSession(dir, os.Getpid())
+	}
+}
+
+// Non-standard modes must NOT trigger expansion (dev / simple have no
+// stage to promote to). Codex's recommendation §5.
+func TestHandleDevelopBriefing_DevMode_NoExpansion(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	engine := workflow.NewEngine(dir, workflow.EnvContainer, nil)
+
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             topology.PlanModeDev,
+		BootstrapSession: "sess1",
+		BootstrappedAt:   "2026-04-22",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	mock := platform.NewMock().WithServices([]platform.ServiceStack{
+		{ID: "svc-appdev", Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	})
+
+	result, _, err := handleDevelopBriefing(context.Background(), engine, mock, "proj1",
+		WorkflowInput{Intent: "dev mode iterate", Scope: []string{"appdev"}},
+		runtime.Info{InContainer: true})
+	if err != nil {
+		t.Fatalf("handleDevelopBriefing: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("dev-mode scope rejected:\n%s", extractText(result))
+	}
+
+	ws, _ := workflow.CurrentWorkSession(dir)
+	t.Cleanup(func() { _ = workflow.DeleteWorkSession(dir, os.Getpid()) })
+
+	if len(ws.Services) != 1 || ws.Services[0] != "appdev" {
+		t.Errorf("dev mode must not auto-expand; got %v", ws.Services)
+	}
+}
+
 // P1: scope must be supplied at start — no implicit derivation from metas.
 func TestHandleDevelopBriefing_MissingScope_Rejected(t *testing.T) {
 	t.Parallel()

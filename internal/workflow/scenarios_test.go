@@ -946,6 +946,21 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 				{Hostname: "appstage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true},
 			},
 		}},
+		{"develop-active/standard-pair-unset", StateEnvelope{
+			// Adopted standard pair, close-mode never picked. Most common
+			// state after `bootstrap route=adopt` — both halves carry
+			// Deployed=true (lifetime flag on adopted ACTIVE services) but
+			// the dev half just iterated and the stage half is still on
+			// the adopt-time artifact. develop-standard-unset-promote-stage
+			// is the only atom in the (standard, deployed, unset)
+			// triple that surfaces a cross-deploy template; without it,
+			// both real-world sessions stopped at the dev URL.
+			Phase: PhaseDevelopActive, Environment: EnvContainer,
+			Services: []ServiceSnapshot{
+				{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, StageHostname: "appstage", CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: true},
+				{Hostname: "appstage", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStage, CloseDeployMode: topology.CloseModeUnset, Bootstrapped: true, Deployed: true},
+			},
+		}},
 
 		// Develop-closed-auto.
 		{"develop-closed-auto", StateEnvelope{Phase: PhaseDevelopClosed, Environment: EnvContainer}},
@@ -1027,6 +1042,7 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"develop-first-deploy-execute",
 		"develop-first-deploy-intro",
 		"develop-first-deploy-promote-stage",
+		"develop-standard-unset-promote-stage",
 		"develop-first-deploy-scaffold-yaml",
 		"develop-first-deploy-verify",
 		"develop-first-deploy-write-app",

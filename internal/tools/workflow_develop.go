@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -76,14 +77,20 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 
 	// Prune stale metas against live services — keeps envelope coherent if
 	// someone deleted a service in the Zerops UI while ZCP state lingered.
+	// liveHostnames is also passed to validateDevelopScope below to catch
+	// the half-pair case (PruneServiceMetas keeps a pair meta as long as
+	// either half is alive, so the disk-side StageHostname can outlive the
+	// stage service itself; auto-expanding scope to a dead hostname would
+	// permanently block auto-close).
+	var liveHostnames map[string]bool
 	if client != nil {
 		services, listErr := ops.ListProjectServices(ctx, client, projectID)
 		if listErr == nil {
-			live := make(map[string]bool, len(services))
+			liveHostnames = make(map[string]bool, len(services))
 			for _, svc := range services {
-				live[svc.Name] = true
+				liveHostnames[svc.Name] = true
 			}
-			workflow.PruneServiceMetas(engine.StateDir(), live)
+			workflow.PruneServiceMetas(engine.StateDir(), liveHostnames)
 
 			metas, err = workflow.ListServiceMetas(engine.StateDir())
 			if err != nil {
@@ -167,8 +174,18 @@ func handleDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 	// no "latest bootstrap targets", no fallback. Agent names the services
 	// this task works on — the invariant CLAUDE.md promises: "auto-closes
 	// once the services you're working on are deployed and verified."
-	scope, err := validateDevelopScope(input.Scope, runtimeMetas)
+	scope, err := validateDevelopScope(input.Scope, runtimeMetas, liveHostnames)
 	if err != nil {
+		if errors.Is(err, errStandardPairStageMissing) {
+			// Disk meta points at a stage hostname that's no longer in the
+			// live service list. Surfacing this as PrerequisiteMissing
+			// (not InvalidParameter) signals the agent to repair the pair
+			// rather than retry with a different scope shape.
+			return convertError(platform.NewPlatformError(
+				platform.ErrPrerequisiteMissing,
+				err.Error(),
+				"Re-bootstrap to refresh the pair meta: zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\". If the stage half was intentionally removed, delete the dev meta and re-bootstrap with mode=dev or mode=simple."), WithRecoveryStatus()), nil, nil
+		}
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			err.Error(),
@@ -226,14 +243,37 @@ func renderDevelopBriefing(ctx context.Context, engine *workflow.Engine, client 
 	})), nil, nil
 }
 
+// errStandardPairStageMissing is returned by validateDevelopScope when a
+// standard pair's meta names a stage hostname that's not present in the
+// live service list. PruneServiceMetas keeps a pair meta as long as
+// either half is alive, so the disk-side StageHostname can outlive the
+// stage service itself. Detected via errors.Is by handleDevelopBriefing
+// to switch the convertError code/suggestion to a repair guide.
+var errStandardPairStageMissing = errors.New("standard pair stage half is not a live service")
+
 // validateDevelopScope checks the agent-supplied scope against runtime metas.
 // Returns the ordered, deduplicated scope on success. Rejects empty scope,
 // unknown hostnames, and hostnames that resolve to managed services (which
 // have no mode/stage and cannot be deploy targets).
 //
+// Standard-mode dev halves auto-include their paired stage hostname so the
+// auto-close gate counts both halves of the pair and develop-active atoms
+// can fire on the (standard, deployed, unset) triple — without this the
+// stage half is invisible to session progress and the agent stops at the
+// dev URL with the stage artifact stale (real-session evidence in two
+// adopted-pair workflows that ended at the dev preview without promoting).
+// Local pair modes are pair-keyed differently and not expanded here.
+//
+// liveHostnames (when non-nil) is consulted before adding a stage hostname
+// to scope — if the meta names a stage that's not in the live set, the
+// pair is broken and validateDevelopScope returns errStandardPairStageMissing
+// rather than silently widening scope to a hostname deploy/verify can't
+// reach. liveHostnames==nil signals the platform listing wasn't available
+// (degraded mode); the live-aware check is skipped and the meta is trusted.
+//
 // The returned slice is sorted by hostname for deterministic work session
 // serialization — envelope and status output depend on stable ordering.
-func validateDevelopScope(requested []string, runtimeMetas map[string]*workflow.ServiceMeta) ([]string, error) {
+func validateDevelopScope(requested []string, runtimeMetas map[string]*workflow.ServiceMeta, liveHostnames map[string]bool) ([]string, error) {
 	available := sortedHostnames(runtimeMetas)
 	if len(requested) == 0 {
 		return nil, fmt.Errorf("scope is required — name the runtime service hostnames this task works on. Available: %v", available)
@@ -257,6 +297,29 @@ func validateDevelopScope(requested []string, runtimeMetas map[string]*workflow.
 	}
 	if len(scope) == 0 {
 		return nil, fmt.Errorf("scope is empty after deduplication — name at least one runtime service")
+	}
+	// Auto-include the paired stage hostname for any standard-mode dev
+	// half present in scope. runtimeMetas is pair-keyed (ManagedRuntimeIndex)
+	// so both halves resolve to the same meta; we only expand when the
+	// scoped hostname IS the dev half (m.Hostname == h), never when the
+	// agent already named the stage half directly.
+	for _, h := range append([]string(nil), scope...) {
+		m := runtimeMetas[h]
+		if m == nil || m.Mode != topology.PlanModeStandard {
+			continue
+		}
+		stage := m.StageHostname
+		if stage == "" || h != m.Hostname {
+			continue
+		}
+		if liveHostnames != nil && !liveHostnames[stage] {
+			return nil, fmt.Errorf("%w: dev half %q meta names stage %q, but %q is not in the project's live service list", errStandardPairStageMissing, h, stage, stage)
+		}
+		if seen[stage] {
+			continue
+		}
+		seen[stage] = true
+		scope = append(scope, stage)
 	}
 	sort.Strings(scope)
 	return scope, nil
