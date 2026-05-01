@@ -19,9 +19,9 @@ The frontend codebase MUST render these panels:
 | **Items / DB** | crud through database | Form to create + list view; row count survives container restart. |
 | **Cache** | cache-demo (read-through) | `X-Cache: HIT/MISS` header visible in the panel; trigger button + display. |
 | **Queue / Broker** | queue-demo through worker | Trigger button publishes a job; live feed shows the worker processed it (log tail or status indicator); resulting indexed document appears in the search panel within seconds. |
-| **Storage** | storage-upload (object storage) | File picker + upload button; on success, signed URL displayed; clicking URL retrieves the same bytes. |
+| **Storage** | storage-upload (object storage) | File picker + upload; on success the uploaded file appears in the list. Browser-walk MUST observe a UI change from the click handler — curl-reaching the signed URL is insufficient; the handler must demonstrably fire. |
 | **Search** | search-items (full-text) | Search box; query against the items list with ranked results. |
-| **Status** (optional but recommended) | per-service liveness | One row per managed service (api, db, cache, broker, search, storage); per-service ping result `ok` / `down`. |
+| **Status** | per-service liveness | One row per managed service (api, db, cache, broker, search, storage); per-service ping `ok` / `down`. Mandatory when the recipe provisions any managed services. |
 
 Scope the panels to the managed-service categories the recipe actually
 provisions. A recipe without a queue/broker doesn't render a Queue
@@ -37,9 +37,9 @@ panel; a recipe without object-storage doesn't render a Storage panel.
   HIT/MISS indicator, the search results ranking) — NOT on branding,
   hero sections, marketing copy, multi-column dashboards, or
   decorative iconography.
-- **Reading order is panel-first.** A porter scanning the page sees
-  panels in the order: Items, Cache, Queue, Storage, Search, Status.
-  Headings explain what each panel proves.
+- **Reading order is panel-first.** Order: Status, Items, Cache,
+  Queue, Storage, Search. Status leads — it answers "is anything
+  wired?" before the porter touches a CRUD form.
 - **Data is real.** Panels exercise the actual deployed managed
   services; no mock data, no client-only fixtures. The Items panel
   shows real Postgres rows; the Queue panel shows real worker output;
@@ -79,18 +79,20 @@ zerops_recipe action=record-fact slug=<slug>
   extra.screenshot=<path or none-snapshot-only>
 ```
 
-Mandatory facts:
+Mandatory facts (one per panel rendered):
 
+- `<frontend-cb>-status-browser` — every provisioned managed service
+  has a row reading `ok`; any `down` row is a wiring regression
 - `<frontend-cb>-items-browser` — Items panel renders + create works
-- `<frontend-cb>-cache-browser` — Cache panel shows `X-Cache: MISS` on
-  first call, `HIT` on second
-- `<frontend-cb>-queue-browser` — Queue panel: publish trigger fires;
-  worker processes (visible somehow); indexed document appears
-- `<frontend-cb>-storage-browser` — Upload + signed-URL retrieve
-- `<frontend-cb>-search-browser` — Search query returns ranked hits
+- `<frontend-cb>-cache-browser` — `X-Cache: MISS` first call, `HIT` second
+- `<frontend-cb>-queue-browser` — publish fires; worker processes visibly;
+  indexed document appears
+- `<frontend-cb>-storage-browser` — upload click handler demonstrably
+  fires (uploaded file appears in the list); curl-reaching the signed
+  URL alone is insufficient
+- `<frontend-cb>-search-browser` — search query returns ranked hits
 
-Status panel verification optional. Any browser walk that produces
-console errors is a regression — fix before close.
+Any browser walk producing console errors is a regression — fix before close.
 
 ## Layout: tabs or collapsed panels for > 3 demonstrations
 
@@ -105,9 +107,9 @@ be recorded without manual scroll.
 Positive shape: when the page renders MORE THAN 3 demonstration panels,
 use a layout that keeps the active panel above the fold by construction:
 
-- **Tabs** — one tab per category (Items / Cache / Queue / Storage /
-  Search). Default selection picks Items; switching tabs swaps the
-  active panel without scrolling.
+- **Tabs** — one tab per category (Status / Items / Cache / Queue /
+  Storage / Search). Default selection picks Status; switching tabs
+  swaps the active panel without scrolling.
 - **Collapsed accordion** — collapsed by default, one expanded at a
   time. Clicking a panel header expands and collapses the prior one.
 - **Two-column grid (≤3 wide)** — works only if the layout fits
