@@ -139,11 +139,12 @@ sections are estimated from typical run shapes.
 ║   ▶ codebase/<h>/integration-        ║  ║                          ║
 ║       guide/<n>                      ║  ║                          ║
 ║   ▶ codebase/<h>/knowledge-base      ║  ║                          ║
-║   ▶ codebase/<h>/zerops-yaml-        ║  ║                          ║
-║       comments/<block>               ║  ║                          ║
-║     (FACT-DRIVEN: one slot per       ║  ║                          ║
-║      field_rationale fact, per       ║  ║                          ║
-║      synthesis_workflow.md rules)    ║  ║                          ║
+║   ▶ codebase/<h>/zerops-yaml         ║  ║                          ║
+║     (v9.46.0 — WHOLE commented       ║  ║                          ║
+║      zerops.yaml as ONE fragment;    ║  ║                          ║
+║      stitcher writes verbatim;       ║  ║                          ║
+║      replaces per-block              ║  ║                          ║
+║      `zerops-yaml-comments/<block>`) ║  ║                          ║
 ╚══════════════════════════════════════╝  ╚══════════════════════════╝
                                   │
                                   ▼
@@ -212,7 +213,9 @@ sections are estimated from typical run shapes.
 ║   ▶ AssembleRoot/Env/Codebase READMEs                                ║
 ║   ▶ AssembleCodebaseClaudeMD                                         ║
 ║   ▶ EmitDeliverableYAML × 6                                          ║
-║   ▶ WriteCodebaseYAMLWithComments  (← double-inject site)            ║
+║   ▶ WriteCodebaseYAMLWithComments  (v9.46.0 — write-through:         ║
+║       reads `codebase/<h>/zerops-yaml` whole-yaml fragment + writes  ║
+║       verbatim; refuse-to-wipe guard for empty body)                 ║
 ╚══════════════════════════════════════════════════════════════════════╝
                                   │
                                   ▼   optional
@@ -351,6 +354,22 @@ inside the sub-agent brief, not the main-agent context.)
 - Dev process running via `zerops_dev_server`
 - Facts via `record-fact`
 
+### Complete-phase gates (relevant subset)
+
+- `scaffold-bare-yaml` — refuses `^\s+#` causal comment lines
+  (carve-outs for shebang + trailing data-line comments)
+- `fact-rationale-completeness` — every directive group in committed
+  yaml needs an attesting `field_rationale` fact
+- `worker-dev-server-started` — dev codebase with `start: zsc noop
+  --silent` needs a `worker_dev_server_started` fact (or
+  `worker_no_dev_server` bypass)
+- `zerops-yaml-schema` (v9.46.0 RC2) — strict-mode schema validation
+  against the live zerops-yml schema. Catches schema-invalid fields
+  (e.g. `verticalAutoscaling` placed under `run:` — it's an
+  import.yaml service-level field, not a zerops.yaml run-level field)
+  in the producer's same-context window, not deferred to codebase-
+  content / finalize where the authoring agent has moved on.
+
 ### Approximate brief size by codebase shape
 
 | Codebase shape              | ~size   |
@@ -446,9 +465,25 @@ in parallel with claudemd-author).
 - `codebase/<h>/intro`
 - `codebase/<h>/integration-guide/<n>`
 - `codebase/<h>/knowledge-base`
-- `codebase/<h>/zerops-yaml-comments/<block>` — **fact-driven**: one
-  slot per `field_rationale` fact (per the synthesis_workflow.md atom
-  rules)
+- `codebase/<h>/zerops-yaml` — **v9.46.0 whole-yaml**: ONE fragment
+  per codebase whose body is the entire commented zerops.yaml. Agent
+  walks every field, comments where porter value calls for one,
+  preserves yaml structure from the bare scaffold output. Stitcher
+  writes the body verbatim to `<SourceRoot>/zerops.yaml`. Replaces the
+  per-block `zerops-yaml-comments/<block>` shape because the per-
+  block contract produced uneven coverage (the agent lost sight of the
+  document when authoring N small slots).
+
+  Slot-shape refusals at record time: empty body, doc-link punts
+  (`Read more about it here:`, `More information at:`, `See docs:`,
+  `For more details, see`, `See also:`), slug citations, structural
+  changes vs the bare yaml (CRLF/BOM/trailing-whitespace normalized
+  before structural compare).
+
+  Schema gate (`gateZeropsYamlSchema`) fires at this phase's complete-
+  phase AND at scaffold complete-phase (RC2 — producer-side catch).
+  Pre-stitch at PhaseCodebaseContent so the gate reads the agent's
+  fragment-derived on-disk yaml, not stale bare scaffold output.
 
 ### Approximate brief size
 
