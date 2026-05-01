@@ -164,6 +164,12 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   `TestPollDeployBuild_PopulatesFailureClassification`,
   `TestErrorWire_FailureClassification`. Spec: ticket E2 in
   `plans/engine-atom-rendering-improvements-2026-04-27.md`.
+- **Verify checks carry structured Recovery for actionable preconditions** —
+  when an infrastructure precondition that the agent can fix is missing
+  (e.g. subdomain access disabled), the failing CheckResult MUST carry a
+  Recovery struct (tool + action + args) pointing at the exact next call.
+  Skip status reserved for non-actionable transients (URL not yet resolved).
+  Pinned by TestVerify_* cases asserting Recovery shape on http_root failure.
 - **4-layer architecture pinned** — `internal/topology/` is the
   foundational layer-2 vocabulary (Mode, RuntimeClass, CloseDeployMode,
   GitPushState, BuildIntegration, predicates, aliases) with zero

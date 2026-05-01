@@ -153,7 +153,8 @@ func TestClassifyRuntime_Worker(t *testing.T) {
 func TestVerify_DynamicRuntime_AllChecks(t *testing.T) {
 	t.Parallel()
 
-	// Dynamic runtime (nodejs) with subdomain disabled → HTTP checks skip. Log+service checks all pass.
+	// Dynamic runtime (nodejs) with subdomain disabled → HTTP check fails with recovery.
+	// Log+service checks still pass, so aggregate is degraded.
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "ACTIVE", SubdomainAccess: false, Ports: []platform.Port{{Port: 3000}}},
@@ -181,8 +182,8 @@ func TestVerify_DynamicRuntime_AllChecks(t *testing.T) {
 	if result.Type != "runtime" {
 		t.Errorf("Type = %q, want %q", result.Type, "runtime")
 	}
-	if result.Status != "healthy" {
-		t.Errorf("Status = %q, want %q", result.Status, "healthy")
+	if result.Status != "degraded" {
+		t.Errorf("Status = %q, want %q", result.Status, "degraded")
 	}
 	// Dynamic: service_running, error_logs, http_root = 3
 	if len(result.Checks) != 3 {
@@ -191,8 +192,7 @@ func TestVerify_DynamicRuntime_AllChecks(t *testing.T) {
 
 	findCheck(t, result, "service_running", "pass")
 	findCheck(t, result, "error_logs", "pass")
-	// HTTP check skip (no subdomain).
-	findCheck(t, result, "http_root", "skip")
+	findCheck(t, result, "http_root", "fail")
 }
 
 func TestVerify_RuntimeStopped(t *testing.T) {
@@ -234,7 +234,7 @@ func TestVerify_RuntimeErrorLogs(t *testing.T) {
 	// Error logs are advisory (CheckInfo) — they should NOT cause degraded status.
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING", Ports: []platform.Port{{Port: 3000}}},
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING", SubdomainAccess: true, Ports: []platform.Port{{Port: 3000}}},
 		}).
 		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})
 
@@ -280,10 +280,58 @@ func TestVerify_RuntimeNoSubdomain(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// No subdomain → http_root skips, but service+logs pass
+	if result.Status != "degraded" {
+		t.Errorf("Status = %q, want degraded", result.Status)
+	}
+	httpRoot := findCheck(t, result, "http_root", "fail")
+	if httpRoot.Detail != "subdomain access not enabled — service is not reachable via HTTP" {
+		t.Errorf("http_root detail = %q, want subdomain-access failure", httpRoot.Detail)
+	}
+	if httpRoot.Recovery == nil {
+		t.Fatal("http_root recovery is nil")
+	}
+	if httpRoot.Recovery.Tool != "zerops_subdomain" {
+		t.Errorf("recovery.tool = %q, want zerops_subdomain", httpRoot.Recovery.Tool)
+	}
+	if httpRoot.Recovery.Action != "enable" {
+		t.Errorf("recovery.action = %q, want enable", httpRoot.Recovery.Action)
+	}
+	if got := httpRoot.Recovery.Args["serviceHostname"]; got != "app" {
+		t.Errorf("recovery.args.serviceHostname = %q, want app", got)
+	}
+}
+
+func TestVerify_RuntimeSubdomainAccessUnresolved_SkipsHTTPRoot(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING", SubdomainAccess: true, Ports: []platform.Port{{Port: 3000}}},
+		}).
+		WithProject(&platform.Project{ID: "proj-1", SubdomainHost: "1df2"}).
+		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})
+
+	fetcher := &callbackLogFetcher{fn: func(params platform.LogFetchParams) ([]platform.LogEntry, error) {
+		if params.Search != "" {
+			return []platform.LogEntry{{Message: "listening"}}, nil
+		}
+		return nil, nil
+	}}
+
+	result, err := Verify(context.Background(), mock, fetcher, http.DefaultClient, "proj-1", "app")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if result.Status != "healthy" {
+		t.Errorf("Status = %q, want healthy", result.Status)
+	}
 	httpRoot := findCheck(t, result, "http_root", "skip")
-	if !strings.Contains(httpRoot.Detail, "subdomain not enabled") {
-		t.Errorf("http_root detail = %q, want to contain 'subdomain not enabled'", httpRoot.Detail)
+	if httpRoot.Detail != "cannot resolve subdomain URL" {
+		t.Errorf("http_root detail = %q, want cannot resolve subdomain URL", httpRoot.Detail)
+	}
+	if httpRoot.Recovery != nil {
+		t.Errorf("http_root recovery = %+v, want nil", httpRoot.Recovery)
 	}
 }
 
@@ -302,8 +350,9 @@ func TestVerify_RuntimeCrashLoop(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING", Ports: []platform.Port{{Port: 3000}}},
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING", SubdomainAccess: true, Ports: []platform.Port{{Port: 3000}}},
 		}).
+		WithProject(&platform.Project{ID: "proj-1", SubdomainHost: "1df2"}).
 		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})
 
 	fetcher := &callbackLogFetcher{fn: func(params platform.LogFetchParams) ([]platform.LogEntry, error) {
@@ -318,9 +367,12 @@ func TestVerify_RuntimeCrashLoop(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Aggregate is healthy because error_logs is advisory; subdomain not
-	// enabled so http_root skips. Detail of error_logs carries the crash
-	// trace for agent introspection.
+	if result.Status != "healthy" {
+		t.Errorf("Status = %q, want healthy", result.Status)
+	}
+	// Aggregate is healthy because error_logs is advisory; the unresolved
+	// subdomain URL skips. Detail of error_logs carries the crash trace for
+	// agent introspection.
 	findCheck(t, result, "service_running", "pass")
 	errLog := findCheck(t, result, "error_logs", "info")
 	if !strings.Contains(errLog.Detail, "Cannot find module") {
@@ -342,15 +394,15 @@ func TestVerify_StaticRuntime_SkipsStatusAndStartup(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.Status != "healthy" {
-		t.Errorf("Status = %q, want healthy", result.Status)
+	if result.Status != "degraded" {
+		t.Errorf("Status = %q, want degraded", result.Status)
 	}
 	// Static: service_running + http_root = 2 checks (no logs, no startup, no status)
 	if len(result.Checks) != 2 {
 		t.Fatalf("Checks count = %d, want 2; checks: %v", len(result.Checks), checkNames(result.Checks))
 	}
 	findCheck(t, result, "service_running", "pass")
-	findCheck(t, result, "http_root", "skip") // no subdomain
+	findCheck(t, result, "http_root", "fail") // subdomain access disabled
 }
 
 func TestVerify_ImplicitWebserver_SkipsStartup(t *testing.T) {
@@ -371,8 +423,8 @@ func TestVerify_ImplicitWebserver_SkipsStartup(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result.Status != "healthy" {
-		t.Errorf("Status = %q, want healthy", result.Status)
+	if result.Status != "degraded" {
+		t.Errorf("Status = %q, want degraded", result.Status)
 	}
 	// Implicit: service_running + error_logs + http_root = 3 checks (no startup)
 	if len(result.Checks) != 3 {
@@ -380,7 +432,7 @@ func TestVerify_ImplicitWebserver_SkipsStartup(t *testing.T) {
 	}
 	findCheck(t, result, "service_running", "pass")
 	findCheck(t, result, "error_logs", "pass")
-	findCheck(t, result, "http_root", "skip") // no subdomain
+	findCheck(t, result, "http_root", "fail") // subdomain access disabled
 }
 
 func TestVerify_WorkerRuntime_NoHTTPChecks(t *testing.T) {
@@ -858,9 +910,10 @@ func TestVerifyAll_AllHealthy(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
-			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING", Ports: []platform.Port{{Port: 3000}}},
+			{ID: "svc-1", Name: "app", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}, Status: "RUNNING", SubdomainAccess: true, Ports: []platform.Port{{Port: 3000}}},
 			{ID: "svc-2", Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16", ServiceStackTypeCategoryName: "STANDARD"}, Status: "RUNNING"},
 		}).
+		WithProject(&platform.Project{ID: "proj-1", SubdomainHost: "1df2"}).
 		WithLogAccess(&platform.LogAccess{URL: "http://logs.test"})
 
 	fetcher := &callbackLogFetcher{fn: func(params platform.LogFetchParams) ([]platform.LogEntry, error) {

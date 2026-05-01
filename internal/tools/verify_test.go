@@ -18,7 +18,7 @@ func TestVerifyTool_RuntimeHealthy(t *testing.T) {
 	t.Parallel()
 
 	// No log access configured → log checks skip (not fail).
-	// No subdomain → HTTP checks skip. Service running → pass.
+	// No ports → worker runtime, so no HTTP check. Service running → pass.
 	// All pass/skip → healthy.
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{
@@ -42,7 +42,7 @@ func TestVerifyTool_RuntimeHealthy(t *testing.T) {
 	if vr.Type != "runtime" {
 		t.Errorf("Type = %q, want runtime", vr.Type)
 	}
-	// service_running=pass, log checks=skip (no log access), HTTP=skip (no subdomain) → healthy.
+	// service_running=pass, log checks=skip (no log access), no HTTP checks for a worker → healthy.
 	if vr.Status != "healthy" {
 		t.Errorf("Status = %q, want healthy", vr.Status)
 	}
@@ -197,8 +197,8 @@ func TestVerifyTool_BatchMode(t *testing.T) {
 	if len(vr.Services) != 2 {
 		t.Errorf("Services count = %d, want 2", len(vr.Services))
 	}
-	if vr.Status != "healthy" {
-		t.Errorf("Status = %q, want healthy", vr.Status)
+	if vr.Status != "degraded" {
+		t.Errorf("Status = %q, want degraded", vr.Status)
 	}
 }
 

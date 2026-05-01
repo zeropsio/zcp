@@ -33,12 +33,20 @@ type VerifyResult struct {
 	Checks   []CheckResult `json:"checks"`
 }
 
+// Recovery carries a structured next-tool pointer for a failing check. Plain DTO — ops cannot import tools, so this is the ops-side mirror of tools.RecoveryHint.
+type Recovery struct {
+	Tool   string            `json:"tool"`
+	Action string            `json:"action"`
+	Args   map[string]string `json:"args,omitempty"`
+}
+
 // CheckResult is the result of a single verification check.
 type CheckResult struct {
-	Name       string `json:"name"`                 // "service_running", "error_logs", etc.
-	Status     string `json:"status"`               // "pass", "fail", "skip"
-	Detail     string `json:"detail,omitempty"`     // human-readable detail on fail/skip
-	HTTPStatus int    `json:"httpStatus,omitempty"` // HTTP status code (0 = N/A)
+	Name       string    `json:"name"`                 // "service_running", "error_logs", etc.
+	Status     string    `json:"status"`               // "pass", "fail", "skip"
+	Detail     string    `json:"detail,omitempty"`     // human-readable detail on fail/skip
+	HTTPStatus int       `json:"httpStatus,omitempty"` // HTTP status code (0 = N/A)
+	Recovery   *Recovery `json:"recovery,omitempty"`
 
 	// BodyText is document.body.innerText captured by agent-browser after
 	// the HTTP probe connected. Best-effort: populated only when an actual
@@ -167,11 +175,20 @@ func verifyService(
 			subdomainURL := ResolveSubdomainURL(ctx, client, projectID, svc)
 			var checks []CheckResult
 			if subdomainURL == "" {
-				skipDetail := "subdomain not enabled — call zerops_subdomain action=enable first"
 				if svc.SubdomainAccess {
-					skipDetail = "cannot resolve subdomain URL"
+					checks = append(checks, CheckResult{
+						Name:   "http_root",
+						Status: CheckSkip,
+						Detail: "cannot resolve subdomain URL",
+					})
+				} else {
+					checks = append(checks, CheckResult{
+						Name:     "http_root",
+						Status:   CheckFail,
+						Detail:   "subdomain access not enabled — service is not reachable via HTTP",
+						Recovery: &Recovery{Tool: "zerops_subdomain", Action: subdomainActionEnable, Args: map[string]string{"serviceHostname": svc.Name}},
+					})
 				}
-				checks = append(checks, CheckResult{Name: "http_root", Status: CheckSkip, Detail: skipDetail})
 			} else {
 				probeURL := subdomainURL + "/"
 				check := checkHTTPRoot(ctx, httpClient, probeURL)

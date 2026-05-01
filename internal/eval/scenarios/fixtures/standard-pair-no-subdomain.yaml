@@ -1,0 +1,22 @@
+# Replicates the broken initial state from session 2 (grofovo redesign):
+# a web-facing runtime with subdomain access OFF on the platform side.
+# Verify must surface this as a failing http_root check carrying
+# structured Recovery (tool=zerops_subdomain action=enable), not silently
+# skip it — that silent skip is what made session 2 burn a wasted
+# 1m38s deploy + user pushback before subdomain got enabled.
+#
+# Single `static` service: classifies as RuntimeStatic in verify regardless
+# of import-yaml port config (the import schema does not expose `ports`),
+# so http_root fires + the recovery path triggers. startWithoutCode keeps
+# the seed buildFromGit-free and reliable (the previous nodejs+buildFromGit
+# variant hit transient recipe-build failures).
+
+services:
+  - hostname: appdev
+    type: static
+    enableSubdomainAccess: false   # ← deliberately off — the bug condition
+    startWithoutCode: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      minRam: 0.25

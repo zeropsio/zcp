@@ -17,6 +17,8 @@ import (
 const (
 	SubdomainStatusAlreadyEnabled  = "already_enabled"
 	SubdomainStatusAlreadyDisabled = "already_disabled"
+	subdomainActionEnable          = "enable"
+	subdomainActionDisable         = "disable"
 )
 
 // apiCodeNoSubdomainPorts is the platform's "service does not yet have
@@ -139,7 +141,7 @@ func Subdomain(
 	hostname string,
 	action string,
 ) (*SubdomainResult, error) {
-	if action != "enable" && action != "disable" {
+	if action != subdomainActionEnable && action != subdomainActionDisable {
 		return nil, platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			"action must be 'enable' or 'disable'",
@@ -170,7 +172,7 @@ func Subdomain(
 		Action:    action,
 	}
 
-	if action == "enable" {
+	if action == subdomainActionEnable {
 		if detail.SubdomainAccess {
 			// Already enabled on the platform side — do NOT call
 			// EnableSubdomainAccess. This prevents the garbage-FAILED-process
