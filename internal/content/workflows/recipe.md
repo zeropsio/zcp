@@ -1,5 +1,33 @@
 # Recipe Workflow
 
+> ## ⚠️ DEPRECATED — zcprecipator2 / `zerops_workflow workflow="recipe"`
+>
+> **This document drives the legacy `zerops_workflow` recipe-creation
+> path (zcprecipator2). It is NOT read by zcprecipator3** (the
+> `zerops_recipe` MCP tool — actions: `start`, `enter-phase`,
+> `complete-phase`, `build-brief`, `build-subagent-prompt`,
+> `record-fact`, `record-fragment`, `stitch-content`, `status`, etc.).
+>
+> **If you are authoring or operating a zcprecipator3 recipe run,
+> ignore this file entirely.** zcprecipator3's actor reading list is:
+>
+> - per-phase entry: `internal/recipe/content/phase_entry/<phase>.md`
+> - per-phase brief composition: `internal/recipe/content/briefs/<phase>/*.md`
+> - cross-phase principles: `internal/recipe/content/principles/*.md`
+> - atom corpus pulls: `internal/content/atoms/*.md` (filtered by phase + axes)
+>
+> **Where some content here HAS landed in zcprecipator3:** sections
+> like the dual-runtime URL pattern (`${zeropsSubdomainHost}` via
+> project envs) live in this doc but were never lifted into the
+> zcprecipator3 brief composer. That's a known content-routing gap
+> tracked in run-20 prep — fix is to extract the relevant sections
+> into zcprecipator3 principles/atoms, NOT to teach zcprecipator3 to
+> read this file.
+>
+> Authoritative spec for zcprecipator3: `docs/zcprecipator3/system.md`.
+
+---
+
 Create a Zerops recipe: a deployable reference implementation with 6 environment tiers and structured documentation.
 
 <section name="research-minimal">
