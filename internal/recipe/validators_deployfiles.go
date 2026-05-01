@@ -88,12 +88,17 @@ func validateDeployFilesNarrowness(_ context.Context, path string, body []byte, 
 		if len(entries) == 0 {
 			continue
 		}
-		// Reference text — anything in run.start / run.initCommands
-		// / run.envVariables values that an entry name might appear
-		// in. Substring match is sufficient — deployFiles entries are
-		// project-relative and don't normalize across forms.
+		// Reference text — anything in run.start / run.initCommands /
+		// run.envVariables / run.documentRoot values that an entry name
+		// might appear in. Substring match is sufficient.
+		//
+		// Run-22 §N6-N12 — `run.documentRoot` joined the reference set
+		// because base:static codebases reference `dist` via
+		// `documentRoot: dist` instead of run.start.
 		var refBuf strings.Builder
 		refBuf.WriteString(stringValue(mappingChild(runNode, "start")))
+		refBuf.WriteByte('\n')
+		refBuf.WriteString(stringValue(mappingChild(runNode, "documentRoot")))
 		refBuf.WriteByte('\n')
 		for _, line := range stringSeqOrSingle(mappingChild(runNode, "initCommands")) {
 			refBuf.WriteString(line)
@@ -110,16 +115,21 @@ func validateDeployFilesNarrowness(_ context.Context, path string, body []byte, 
 			if entry == "" || entry == "." {
 				continue
 			}
-			if isCanonicalRuntimeDep(entry) {
+			// Run-22 §N6-N12 — normalize `./` prefix before every
+			// downstream check. `./dist` and `dist` describe the same
+			// directory; the canonical-runtime-dep table + reference-
+			// text substring match both use the bare form.
+			normalized := strings.TrimPrefix(entry, "./")
+			if isCanonicalRuntimeDep(normalized) {
 				// node_modules / package.json / vendor / composer.json
 				// etc. are loaded implicitly by language runtimes; the
 				// porter doesn't need to name them in run.start.
 				continue
 			}
-			if strings.Contains(ref, entry) {
+			if strings.Contains(ref, normalized) {
 				continue
 			}
-			if hasFieldRationaleForEntry(inputs.Facts, entry) {
+			if hasFieldRationaleForEntry(inputs.Facts, normalized) {
 				continue
 			}
 			out = append(out, Violation{
@@ -127,7 +137,7 @@ func validateDeployFilesNarrowness(_ context.Context, path string, body []byte, 
 				Path:     path,
 				Severity: SeverityNotice,
 				Message: fmt.Sprintf(
-					"setup %q deployFiles entry %q is not referenced by run.start / run.initCommands / run.envVariables and has no field_rationale fact justifying its presence; either drop the entry or record a field_rationale explaining why it ships",
+					"setup %q deployFiles entry %q is not referenced by run.start / run.initCommands / run.envVariables / run.documentRoot and has no field_rationale fact justifying its presence; either drop the entry or record a field_rationale explaining why it ships",
 					setup, entry),
 			})
 		}

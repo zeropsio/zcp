@@ -35,7 +35,7 @@ services[]:                            # REQUIRED
   nginxConfig: string                  # custom nginx config for PHP/static/nginx services
   zeropsSetup: string                  # inline zerops.yaml setup name
   zeropsYaml: object                   # inline zerops.yaml configuration in import
-  verticalAutoscaling:                 # RUNTIME + DB/CACHE ONLY (not shared-storage, not object-storage)
+  verticalAutoscaling:                 # runtime + every managed service (db, cache, broker, search, vector store) EXCEPT shared-storage + object-storage
     cpuMode: SHARED | DEDICATED        # default SHARED
     minCpu/maxCpu: int                 # CPU threads
     startCpuCoreCount: int             # CPU at container start

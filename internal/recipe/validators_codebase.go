@@ -411,18 +411,20 @@ func blockNeedsCausalWord(block []string) bool {
 	return false
 }
 
-// blockHasCausalWord reports whether any line in the block carries a
-// causal word / em-dash.
+// blockHasCausalWord reports whether the block carries a causal word /
+// em-dash anywhere. Lines are joined with a single space before the
+// scan so:
+//
+//   - causal phrases that wrap across line breaks ("…burn the migrate
+//     key, so the\nnext container retry…") still match the trailing-
+//     space-scoped tokens like "so the ".
+//   - em-dashes at end-of-line ("…by default —\n") sit inside " — "
+//     after the join, satisfying the em-dash token.
+//
+// Run-22 §N2-N5.
 func blockHasCausalWord(block []string) bool {
-	for _, line := range block {
-		if line == "" {
-			continue
-		}
-		if containsAnyCausal(line) {
-			return true
-		}
-	}
-	return false
+	joined := " " + strings.Join(block, " ") + " "
+	return containsAnyCausal(joined)
 }
 
 func trimForMessage(s string) string {

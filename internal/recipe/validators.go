@@ -24,6 +24,7 @@ import (
 // risk note §6.
 var causalWords = []string{
 	"because", "so that", "so the ", "so we ", "so it ",
+	"so a ", "so an ", "so each ", "so any ", "so every ",
 	"otherwise", "required for", "required so", "required because",
 	"trade-off", "trade off",
 	"avoids", "avoid ", "prevents", "prevent ",

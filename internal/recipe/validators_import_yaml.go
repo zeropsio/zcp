@@ -121,6 +121,18 @@ func scanEnvYAMLAudienceLeaks(path, body string) []Violation {
 // violation per fabricated path. Tokens that DO appear in the yaml pass
 // silently (correct cross-references). Tokens whose shape doesn't match
 // envYAMLFieldTokenRE (English prose words) are never inspected.
+//
+// Run-21 §A4 — three context-based escapes that suppress validator
+// over-fire on legitimate non-yaml-field tokens:
+//
+//   - Backtick-wrapped (`tasks.created`, `vite.config.js`) — agents
+//     deliberately mark non-yaml strings as code; respect the marker.
+//   - `${...}` interpolation prose (`${cache_hostname}`) — managed-
+//     service aliases the brief teaches; regex sees `cache_hostname`
+//     after stripping the `${}`.
+//   - File-extension tail (`.json`, `.yaml`, `.ts`, `.js`, ...) —
+//     filename references (`config.json`, `vite.config.js`,
+//     `tsconfig.json`) shaped like dotted paths.
 func scanFabricatedYAMLFieldNames(path, body string, knownPaths map[string]bool) []Violation {
 	var vs []Violation
 	seen := map[string]bool{}
@@ -147,6 +159,16 @@ func scanFabricatedYAMLFieldNames(path, body string, knownPaths map[string]bool)
 			if isLikelyProseToken(tok) {
 				continue
 			}
+			// Run-21 §A4 — three context-based escapes.
+			if tokenIsBacktickWrapped(comment, tok) {
+				continue
+			}
+			if tokenIsAliasInterpolation(comment, tok) {
+				continue
+			}
+			if tokenHasFileExtension(tok) {
+				continue
+			}
 			key := fmt.Sprintf("%d:%s", i+1, tok)
 			if seen[key] {
 				continue
@@ -161,6 +183,76 @@ func scanFabricatedYAMLFieldNames(path, body string, knownPaths map[string]bool)
 		}
 	}
 	return vs
+}
+
+// tokenIsBacktickWrapped reports whether `tok` appears inside a
+// backtick-quoted span on `comment`. Agents mark strings (NATS subjects,
+// filenames, code identifiers) with backticks; the validator must
+// respect that marker. Walks the comment looking for an opening backtick
+// that precedes `tok`'s first occurrence with no closing backtick
+// between them.
+func tokenIsBacktickWrapped(comment, tok string) bool {
+	idx := strings.Index(comment, tok)
+	if idx < 0 {
+		return false
+	}
+	open := strings.LastIndex(comment[:idx], "`")
+	if open < 0 {
+		return false
+	}
+	// A `closing` backtick between `open` and `idx` would mean the open
+	// already terminated; tok is outside the quoted span.
+	if strings.Contains(comment[open+1:idx], "`") {
+		return false
+	}
+	// Closing backtick must exist after tok.
+	tail := comment[idx+len(tok):]
+	return strings.Contains(tail, "`")
+}
+
+// tokenIsAliasInterpolation reports whether `tok` appears inside a
+// `${...}` interpolation span on `comment` — e.g. `${cache_hostname}`,
+// `${db_dbName}`, `${broker_user}`. The regex strips `${}` and matches
+// the inner identifier; without this escape every alias mention
+// triggers a false fabrication.
+func tokenIsAliasInterpolation(comment, tok string) bool {
+	idx := strings.Index(comment, tok)
+	if idx < 0 {
+		return false
+	}
+	if idx < 2 {
+		return false
+	}
+	if comment[idx-2:idx] != "${" {
+		return false
+	}
+	tail := comment[idx+len(tok):]
+	return strings.HasPrefix(tail, "}")
+}
+
+// tokenHasFileExtension reports whether `tok` ends in a recognized
+// source / config file extension OR domain TLD. Filenames
+// (`config.json`, `vite.config.js`, `tsconfig.json`) match the dotted-
+// path regex; so do bare domain references (`zerops.app`, `zerops.io`,
+// `app.zerops.io`) — neither is a yaml-field claim.
+func tokenHasFileExtension(tok string) bool {
+	exts := []string{
+		// Source / config file extensions.
+		".json", ".yaml", ".yml", ".toml", ".env",
+		".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+		".svelte", ".vue",
+		".go", ".py", ".rb", ".php", ".rs", ".java", ".cs",
+		".md", ".txt", ".sql", ".lock", ".sh",
+		// Domain TLDs that commonly appear in Zerops recipe content
+		// (`zerops.app`, `zerops.io`, `*.dev`, `*.com`, `*.net`).
+		".app", ".io", ".com", ".net", ".dev", ".org", ".sh",
+	}
+	for _, ext := range exts {
+		if strings.HasSuffix(tok, ext) {
+			return true
+		}
+	}
+	return false
 }
 
 // collectYAMLPaths walks a parsed yaml.Node and returns a set of every

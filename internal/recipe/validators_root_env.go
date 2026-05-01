@@ -39,6 +39,13 @@ func validateRootREADME(_ context.Context, path string, body []byte, inputs Surf
 // factualityCheck looks for common framework names in the body and
 // compares them to plan.Framework. Mismatch is a violation. Node-only
 // at run-8; plan Q5 defers multi-manifest generalization.
+//
+// Run-21 §A3 — multi-codebase recipes carry one framework per codebase
+// (e.g. apidev=NestJS, appdev=Svelte, workerdev=NestJS). Plan.Framework
+// is single-valued (the dominant label), so the check now accepts any
+// framework also named in plan.Research.Description (which scaffold
+// authors as a free-text catalog) as a per-codebase fallback. A future
+// schema iteration may add Codebase.Framework for an explicit set.
 func factualityCheck(path, body string, inputs SurfaceInputs) []Violation {
 	if inputs.Plan == nil || inputs.Plan.Framework == "" {
 		return nil
@@ -48,11 +55,20 @@ func factualityCheck(path, body string, inputs SurfaceInputs) []Violation {
 		"Flask", "Next.js", "Remix", "Angular", "Vue",
 	}
 	declared := strings.ToLower(inputs.Plan.Framework)
+	descLower := strings.ToLower(inputs.Plan.Research.Description)
 	for _, c := range candidates {
 		if !strings.Contains(body, c) {
 			continue
 		}
-		if strings.ToLower(c) == declared {
+		clower := strings.ToLower(c)
+		if clower == declared {
+			continue
+		}
+		// Run-21 §A3 — graceful fallback for multi-codebase recipes.
+		// If the framework is also named in the plan's research
+		// description, the README mention is part of the recipe's
+		// declared scope, not a fabrication.
+		if descLower != "" && strings.Contains(descLower, clower) {
 			continue
 		}
 		return []Violation{violation("factuality-mismatch", path,
@@ -97,7 +113,13 @@ func validateEnvREADME(_ context.Context, path string, body []byte, _ SurfaceInp
 				)))
 		}
 	}
-	if containsAny(s, metaVoiceWords) {
+	// Run-22 §N14 — strip the canonical "AI Agent" tier name (engine-
+	// emitted from `tier.Label` on tier 0) before the meta-voice scan.
+	// Without this, the literal substring " agent " in `metaVoiceWords`
+	// fires on the tier name itself ("# AI Agent", "AI Agent tier — ...")
+	// and produces a false positive on every tier-0 README.
+	scanBody := strings.ReplaceAll(s, "AI Agent", "")
+	if containsAny(scanBody, metaVoiceWords) {
 		vs = append(vs, notice("meta-agent-voice", path,
 			"env README is porter-facing; contains meta-agent-voice words (agent, zerops_knowledge, sub-agent, scaffolder)"))
 	}

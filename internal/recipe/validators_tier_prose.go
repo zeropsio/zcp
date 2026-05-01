@@ -63,6 +63,12 @@ var (
 	haClaimRE          = regexp.MustCompile(`(?i)\b(HA(\s+mode)?|high[- ]availability|backed[- ]up|replicated)\b`)
 	storageSizeClaimRE = regexp.MustCompile(`\b(\d+)\s*(GB|MB)\b`)
 	staticRuntimeRE    = regexp.MustCompile(`(?i)\bstatic[- ]runtime\b`)
+	// nonHAExplicitRE matches phrases that explicitly disclose the
+	// service is single-node / NON_HA. Run-22 §N15 — when the same
+	// comment block pairs an "HA tier" reference with a "stays single-
+	// node" attestation, the prose is correctly disclosing non-HA
+	// status; the HA word match is contextual, not a misclaim.
+	nonHAExplicitRE = regexp.MustCompile(`(?i)\b(single[- ]node|single[- ]instance|NON[_-]HA|no\s+HA(\s+mode)?|not\s+HA|family\s+is\s+single[- ]node)\b`)
 )
 
 // wordToInt resolves the written-out forms one..ten to their integer
@@ -146,8 +152,11 @@ func validateTierProseVsEmit(path string, body []byte, inputs SurfaceInputs) []V
 						tierIdx, blk.hostname, claimed, actual, excerpt(comment))))
 			}
 		}
-		// HA claim vs `mode: NON_HA` field.
-		if haClaimRE.MatchString(comment) && blk.mode == modeNonHA {
+		// HA claim vs `mode: NON_HA` field. Run-22 §N15 — suppress
+		// when the same comment block carries an explicit single-node /
+		// NON_HA attestation. The HA word is then contextual ("even at
+		// the HA tier this service stays single-node"), not a misclaim.
+		if haClaimRE.MatchString(comment) && blk.mode == modeNonHA && !nonHAExplicitRE.MatchString(comment) {
 			vs = append(vs, notice("tier-prose-ha-claim-vs-non-ha", path,
 				fmt.Sprintf("tier %d / %s: prose claims HA / replicated / backed-up; field emits mode: NON_HA (%s) (excerpt: %s)",
 					tierIdx, blk.hostname, capabilityHint(blk.serviceType), excerpt(comment))))

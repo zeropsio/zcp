@@ -166,12 +166,23 @@ func topicsOverlap(a, b string) bool {
 // topicStopwords filters short connective words that appear in nearly
 // every topic phrase and inflate the overlap signal. Tuned against
 // the run-15 corpus.
+//
+// Run-22 §N13 — added two high-frequency domain tokens (`api`, `origin`)
+// that share between distinct facets (build-time bundle bake vs runtime
+// CORS allow-list) and tripped the 2-word threshold despite teaching
+// orthogonal mechanisms. The pinned `TestTopicWords_*` calibration
+// expects `response` to remain meaningful so it's NOT stripped.
 var topicStopwords = map[string]bool{
 	"a": true, "an": true, "and": true, "the": true, "for": true, "of": true,
 	"on": true, "in": true, "to": true, "with": true, "via": true, "by": true,
 	"is": true, "are": true, "be": true, "or": true, "as": true, "at": true,
 	"how": true, "your": true, "use": true, "using": true, "this": true,
 	"that": true, "from": true, "into": true, "across": true,
+	// Run-22 §N13 — `api` and `origin` are high-frequency domain
+	// tokens that don't distinguish facets. The plural `origins` is
+	// preserved as a topic-distinguishing signal per
+	// `TestTopicWords_StripsStopwordsAndShortTokens` calibration.
+	"api": true, "origin": true,
 }
 
 // topicWords splits a topic phrase into normalized content words.
