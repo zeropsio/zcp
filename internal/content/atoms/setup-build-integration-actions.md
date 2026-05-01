@@ -28,13 +28,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: zeropsio/actions-setup-zcli@v1
-      - run: zcli push --serviceId ${{ secrets.ZEROPS_SERVICE_ID }} --setup {hostname}
-        env:
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+      - uses: zeropsio/actions@v1.0.2
+        with:
+          access-token: ${{ secrets.ZEROPS_TOKEN }}
+          service-id: ${{ secrets.ZEROPS_SERVICE_ID }}
 ```
 
-Replace `{hostname}` with the setup name in your `zerops.yaml` if it differs from the runtime hostname.
+The action pushes the checked-out repository contents to the target Zerops
+service ID. No setup-name argument is needed in the workflow.
 
 ## 3. Add the GitHub Actions secrets
 
@@ -70,4 +71,6 @@ zerops_workflow action="build-integration" service="{hostname}" \
 
 This persists `BuildIntegration=actions` and returns the workflow YAML + secret commands prefilled with `serviceId` and `owner/repo` (parsed from the stamped `meta.RemoteURL`). The response is ready to paste — no extra lookups needed.
 
-Note the orthogonality: Actions runs `zcli push` from CI, which mechanically pushes the build to the runtime via the same path `zerops_deploy` uses. The difference vs `webhook` is who owns the pull (GitHub Actions vs Zerops).
+Note the orthogonality: Actions pushes the checked-out code from CI to the
+runtime via the same service-ID path `zerops_deploy` uses. The difference vs
+`webhook` is who owns the pull (GitHub Actions vs Zerops).
