@@ -75,8 +75,15 @@ import (
 // validator-tripwire updates (IG/KB caps, fabricated-yaml-field rule,
 // import.yaml audience-voice rule). Scaffold lands ~32 KB when the
 // frontend-conditional atoms are active.
+//
+// Run-20 C2 + C3 raise the cap 34 → 44 KB to fit the new principles:
+// cross-service-urls (~5 KB; teaches workspace dual-runtime URL
+// pattern), spa_static_runtime (~3 KB; frontend-only `base: static`
+// teaching), bare-yaml-prohibition (~2 KB; scaffold yaml without
+// inline comments), nats-shapes (~3 KB; pub/sub vs JetStream
+// dichotomy). Frontend codebases land near 42 KB.
 const (
-	ScaffoldBriefCap = 34 * 1024
+	ScaffoldBriefCap = 44 * 1024
 	FeatureBriefCap  = 20 * 1024
 )
 
@@ -196,6 +203,23 @@ func BuildScaffoldBriefWithResolver(plan *Plan, cb Codebase, parent *ParentRecip
 		"principles/dev-loop.md",
 		"principles/mount-vs-container.md",
 		"principles/yaml-comment-style.md",
+		// Run-20 C2 layer 1 — workspace dual-runtime URL pattern via
+		// project envs. The orphaned-from-zcprecipator3 teaching at
+		// internal/content/workflows/recipe.md:534-561 lifted into a
+		// principle the scaffold brief actually loads. Closes the
+		// run-19 SPA build-time-bake trap that bit appdev/appstage.
+		"principles/cross-service-urls.md",
+		// Run-20 C3 — bare-yaml prohibition. The legacy
+		// content_authoring.md atom was retired in run-16 §6.2 (15.3 KB
+		// vs the 34 KB scaffold cap), but its bare-yaml clause was
+		// load-bearing: run-19 scaffold sub-agents wrote `# causal
+		// comment` lines into zerops.yaml because the active brief no
+		// longer prohibited them, and the imitation pressure from the
+		// embedded yaml-comment-style atom (which teaches what good
+		// comments look like) reinforced the wrong behavior. This
+		// focused principle re-adds only the bare-yaml clause; the
+		// scaffold validator backstops at complete-phase.
+		"principles/bare-yaml-prohibition.md",
 	}
 	if anyCodebaseHasInitCommands(plan) {
 		atoms = append(atoms, "principles/init-commands-model.md")
@@ -207,6 +231,12 @@ func BuildScaffoldBriefWithResolver(plan *Plan, cb Codebase, parent *ParentRecip
 	// other roles don't author bundler config.
 	if cb.Role == RoleFrontend && strings.HasPrefix(cb.BaseRuntime, "nodejs") {
 		atoms = append(atoms, "briefs/scaffold/build_tool_host_allowlist.md")
+		// Run-20 C2 layer 3 — frontend codebases that compile to a
+		// static dist (the dominant SPA shape) ship on `base: static`,
+		// not nodejs@22 + npx serve. Conditional on frontend role +
+		// nodejs base for the build container; the runtime flips to
+		// static. Closes the run-19 SPA wrong-base shape.
+		atoms = append(atoms, "briefs/scaffold/spa_static_runtime.md")
 	}
 	for _, atom := range atoms {
 		body, err := readAtom(atom)

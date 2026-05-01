@@ -61,6 +61,12 @@ func CodebaseScaffoldGates() []Gate {
 		{Name: "facts-recorded", Run: gateFactsRecorded},
 		{Name: "engine-shells-filled", Run: gateEngineShellsFilled},
 		{Name: "source-comment-voice", Run: gateSourceCommentVoice},
+		// Run-20 C3 — bare-yaml prohibition enforcement. Refuses scaffold
+		// complete-phase when any committed codebase zerops.yaml carries
+		// `^\s+# ` causal comments (carve-outs: shebang, trailing data-
+		// line comments). Closes the run-19 leakage that hit the engine
+		// stitch path's strip-then-inject contract.
+		{Name: "scaffold-bare-yaml", Run: gateScaffoldBareYAML},
 	}
 }
 
