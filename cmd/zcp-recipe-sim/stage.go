@@ -11,14 +11,21 @@
 // reads `package.json`, `composer.json`, `src/**`, `app/**`
 // (briefs_content_phase.go:304). We stage the union; the replayed
 // agent runs against the same file shape it would in production.
+//
+// loadEmitParent (S4) loads a *ParentRecipe via the recipe chain
+// resolver so the codebase-content brief composer's
+// parent_recipe_dedup logic is exercised in sim.
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/zeropsio/zcp/internal/recipe"
 )
 
 // stagedTopLevelFiles is the file allowlist at the root of a codebase
@@ -144,6 +151,43 @@ func dirContainsSkippedSegment(rel string) bool {
 		}
 	}
 	return false
+}
+
+// loadEmitParent resolves the parent *ParentRecipe for the given
+// child slug via the recipe chain resolver. Returns:
+//
+//   - (nil, nil) when mountRoot is empty (no chain to walk)
+//   - (nil, nil) when ResolveChain reports ErrNoParent (the slug has
+//     no parent — minimal / hello-world recipes)
+//   - (parent, nil) when the parent tree exists at
+//     <mountRoot>/<parent>/
+//
+// `parentOverride` lets the sim caller force a specific parent slug
+// when the production chain rule (parentSlugFor: `<base>-showcase` →
+// `<base>-minimal`) doesn't match the test fixture. With override
+// set, the resolver is called with `<override>-showcase` so it
+// derives `<override>-minimal` — matching the production code path
+// without depending on a private loadParent helper.
+func loadEmitParent(planSlug, parentOverride, mountRoot string) (*recipe.ParentRecipe, error) {
+	if mountRoot == "" {
+		return nil, nil
+	}
+	r := recipe.Resolver{MountRoot: mountRoot}
+	resolveSlug := planSlug
+	if parentOverride != "" {
+		// strings.CutSuffix in chain.go's parentSlugFor matches a
+		// `-showcase` suffix on the input. To make ResolveChain look
+		// up <override>, fabricate a child slug ending in -showcase.
+		resolveSlug = strings.TrimSuffix(parentOverride, "-minimal") + "-showcase"
+	}
+	parent, err := recipe.ResolveChain(r, resolveSlug)
+	if err != nil {
+		if errors.Is(err, recipe.ErrNoParent) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("resolve parent for %s under %s: %w", resolveSlug, mountRoot, err)
+	}
+	return parent, nil
 }
 
 // copyFileMode copies src → dst preserving the source mode bits and

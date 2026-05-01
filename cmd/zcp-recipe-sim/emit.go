@@ -22,15 +22,19 @@ import (
 )
 
 func runEmit(args []string) error {
-	fs := flag.NewFlagSet("emit", flag.ExitOnError)
+	fs := flag.NewFlagSet("emit", flag.ContinueOnError)
 	runDir := fs.String("run", "", "frozen run directory containing environments/{plan.json,facts.jsonl} and <host>dev/zerops.yaml")
 	outDir := fs.String("out", "", "simulation output directory (typically docs/zcprecipator3/simulations/<N>)")
-	mountRoot := fs.String("mount-root", "", "recipes mount root (threaded into engine for chain resolution; empty for showcase recipes)")
+	mountRoot := fs.String("mount-root", "", "recipes mount root for parent chain resolution (run-20 prep S4); when set, the emit step loads parent via ResolveChain(plan.Slug) and threads it through the brief composers")
+	parentSlugOverride := fs.String("parent", "", "parent recipe slug override (run-20 prep S4); when set, plan.Slug is rewritten in-memory to <parent>-showcase before chain resolution; requires -mount-root")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *runDir == "" || *outDir == "" {
 		return errors.New("emit: -run and -out are required")
+	}
+	if *parentSlugOverride != "" && *mountRoot == "" {
+		return errors.New("emit: -parent requires -mount-root (chain resolver loads the parent tree from <mount-root>/<parent>/)")
 	}
 
 	envIn := filepath.Join(*runDir, "environments")
@@ -107,6 +111,17 @@ func runEmit(args []string) error {
 		return err
 	}
 
+	// Run-20 prep S4 — load parent recipe via chain resolver when
+	// `-mount-root` is set. Production sessions populate Session.Parent
+	// from ResolveChain at session bootstrap; the codebase-content
+	// brief composer's parent_recipe_dedup pointer block depends on a
+	// non-nil *ParentRecipe. Without this, the sim path verifies the
+	// composer at parent=nil only.
+	parent, err := loadEmitParent(plan.Slug, *parentSlugOverride, *mountRoot)
+	if err != nil {
+		return err
+	}
+
 	// One prompt per codebase (codebase-content kind).
 	for _, cb := range plan.Codebases {
 		cbFragDir := filepath.Join(fragsRoot, cb.Hostname)
@@ -118,7 +133,7 @@ func runEmit(args []string) error {
 			Codebase:  cb.Hostname,
 			Slug:      plan.Slug,
 		}
-		canonical, err := recipe.BuildSubagentPromptForReplay(plan, nil, input, recipe.PhaseCodebaseContent, *mountRoot, facts)
+		canonical, err := recipe.BuildSubagentPromptForReplay(plan, parent, input, recipe.PhaseCodebaseContent, *mountRoot, facts)
 		if err != nil {
 			return fmt.Errorf("BuildSubagentPromptForReplay codebase=%s: %w", cb.Hostname, err)
 		}
@@ -139,7 +154,7 @@ func runEmit(args []string) error {
 		BriefKind: string(recipe.BriefEnvContent),
 		Slug:      plan.Slug,
 	}
-	envCanonical, err := recipe.BuildSubagentPromptForReplay(plan, nil, envInput, recipe.PhaseEnvContent, *mountRoot, facts)
+	envCanonical, err := recipe.BuildSubagentPromptForReplay(plan, parent, envInput, recipe.PhaseEnvContent, *mountRoot, facts)
 	if err != nil {
 		return fmt.Errorf("BuildSubagentPromptForReplay env-content: %w", err)
 	}
