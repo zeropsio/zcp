@@ -63,6 +63,28 @@ var (
 	// per docs/zcprecipator3/system.md §4).
 	slugTrailingCitationRE = regexp.MustCompile(
 		"(?i)\\b(?:See|Cite|Per|Ref|cf):\\s*`?[a-z][a-z0-9-]+`?")
+	// Run-20 V1 — noun-phrase slug citations.
+	//
+	// Run-19 dropped the colon-prefixed regex above to zero hits because
+	// the agent rephrased again — apidev/README.md shipped 11 instances
+	// of "The Zerops `<slug>` reference covers …", and workerdev/README.md
+	// shipped 2 of "see `zerops_knowledge` guide `<slug>`". Both shapes
+	// carry the slug as a backticked noun rather than after a colon-
+	// prefixed verb. Catalog drift signature again. Each pattern targets
+	// exactly one rephrasing the run-19 corpus shows. Inline prose
+	// without a backticked slug ("see the rolling-deploys guide on
+	// Zerops docs") still passes — that's the canonical mechanism-
+	// citation shape per spec §216.
+	slugNounPhraseCitationREs = []*regexp.Regexp{
+		// "The Zerops `<slug>` reference …"
+		regexp.MustCompile("\\bThe Zerops `[a-z][a-z0-9-]+` reference\\b"),
+		// "see/per/cite `zerops_knowledge` guide `<slug>`"
+		regexp.MustCompile("(?i)\\b(?:see|per|cite) `zerops_knowledge` guide `[a-z][a-z0-9-]+`"),
+		// "see/per/cite guide `<slug>`"
+		regexp.MustCompile("(?i)\\b(?:see|per|cite) guide `[a-z][a-z0-9-]+`"),
+		// "`<slug>` reference|guide covers|documents|explains"
+		regexp.MustCompile("`[a-z][a-z0-9-]+` (?:reference|guide) (?:covers|documents|explains)\\b"),
+	}
 	// Backtick form: a citation verb (see / cf / per / cited in) within
 	// a short window of a backticked slug. The window allows optional
 	// articles/connective words ("see the `foo`", "Cited in the `foo`
@@ -101,6 +123,26 @@ func hasBacktickKnownSlugCitation(body string) (slug string, ok bool) {
 	}
 	return "", false
 }
+
+// hasNounPhraseSlugCitation reports whether body matches any of the
+// noun-phrase slug-citation shapes the run-19 corpus surfaced. Returns
+// the verbatim matched substring so refusal messages can name the
+// offending phrasing without re-quoting the regex.
+func hasNounPhraseSlugCitation(body string) (match string, ok bool) {
+	for _, re := range slugNounPhraseCitationREs {
+		if loc := re.FindString(body); loc != "" {
+			return loc, true
+		}
+	}
+	return "", false
+}
+
+// nounPhraseSlugRedirect is the Run-20 V1 refusal teaching shared by
+// every porter-facing surface that catches a noun-phrase slug
+// citation. Steers the agent toward the canonical mechanism-citation
+// shape per spec §216 — inline prose linking to a `zerops_knowledge`
+// guide by docs URL, not by tool slug.
+const nounPhraseSlugRedirect = "noun-phrase slug citation %q — porters cannot resolve `<slug>` as a docs URL. Cite by mechanism, not by slug — e.g. \"see the rolling-deploys guide on Zerops docs\" or inline `[label](url)`. Spec §216."
 
 // kbBulletAuthoringRefusals walks one bullet collecting authoring-
 // discipline violations. The stem (text inside leading `**...**`) is
@@ -148,6 +190,11 @@ func kbBulletAuthoringRefusals(stem, body string) []string {
 		out = append(out, fmt.Sprintf(
 			"knowledge-base bullet uses backticked `%s` as a citation reference — that's the agent's `zerops_knowledge` tool slug, which porters cannot resolve as a docs URL. Convert to inline prose mention. Spec §216.",
 			slug))
+	}
+	// Run-20 V1 — noun-phrase slug citation (run-19 dominant shape).
+	if match, ok := hasNounPhraseSlugCitation(body); ok {
+		out = append(out, "knowledge-base bullet contains "+
+			fmt.Sprintf(nounPhraseSlugRedirect, match))
 	}
 
 	return out
@@ -202,6 +249,11 @@ func igSlotAuthoringRefusals(body string, hostnames []string) []string {
 			"integration-guide slot uses backticked `%s` as a citation reference. Convert to inline prose mention. Spec §216.",
 			slug))
 	}
+	// Run-20 V1 — noun-phrase slug citation (run-19 dominant shape).
+	if match, ok := hasNounPhraseSlugCitation(body); ok {
+		out = append(out, "integration-guide slot contains "+
+			fmt.Sprintf(nounPhraseSlugRedirect, match))
+	}
 
 	return out
 }
@@ -220,6 +272,11 @@ func commentSurfaceSlugCitationRefusals(body, surfaceName string) []string {
 		out = append(out, fmt.Sprintf(
 			"%s uses backticked `%s` as a citation reference. Convert to inline prose mention. Spec §216.",
 			surfaceName, slug))
+	}
+	// Run-20 V1 — noun-phrase slug citation (run-19 dominant shape).
+	if match, ok := hasNounPhraseSlugCitation(body); ok {
+		out = append(out, surfaceName+" contains "+
+			fmt.Sprintf(nounPhraseSlugRedirect, match))
 	}
 	return out
 }
@@ -243,6 +300,65 @@ func stripCodeFences(body string) string {
 		out = out[:i] + out[i+len(fence)+j+len(fence):]
 	}
 	return out
+}
+
+// jetStreamTokenRE matches token shapes the run-19 corpus showed
+// fabricating JetStream framing onto core-pub/sub recipes. Each token
+// is a stream-state concept that has no meaning when no stream is
+// opened — the recipe documentation must NOT invoke them unless the
+// recipe code actually opens streams. Run-20 C1.
+var jetStreamTokenRE = regexp.MustCompile(
+	`(?i)\bJetStream\b|\bquorum-replicated streams?\b|\bdurable consumers?\b`)
+
+// envCommentJetStreamRefusal returns a refusal message when an env
+// import-comment body invokes JetStream framing without an attesting
+// fact in the run's FactsLog. Returns "" when the body is clean OR
+// when an attesting fact is present.
+//
+// "Attesting" is liberal: a fact whose Topic matches one of the
+// canonical jetstream attestations (`nats-jetstream-enabled` /
+// `nats-jetstream-streams`) on any codebase scope satisfies the
+// check. The agent records the attestation fact at scaffold/feature
+// time when scaffolding code that calls `jetstream(nc)` /
+// `jsm.streams.add(...)`. Run-20 C1.
+func envCommentJetStreamRefusal(body string, log *FactsLog) string {
+	if !jetStreamTokenRE.MatchString(body) {
+		return ""
+	}
+	if factsAttestJetStream(log) {
+		return ""
+	}
+	return "env/<N>/import-comments/<host> body invokes JetStream framing (token matched: " +
+		jetStreamTokenRE.FindString(body) +
+		") without an attesting fact in the run's facts.jsonl. " +
+		"Per `principles/nats-shapes.md`: when the recipe uses ONLY core pub/sub " +
+		"(no `jetstream(nc)` / `jsm.streams.add` calls), import-comments and KB " +
+		"MUST NOT invoke JetStream / quorum-replicated-streams / durable-consumer " +
+		"framing — there is no stream to discuss. If the recipe DOES use JetStream, " +
+		"record a fact with topic `nats-jetstream-enabled` or `nats-jetstream-streams` " +
+		"during scaffold/feature first; this gate then passes."
+}
+
+// factsAttestJetStream reports whether any record in the FactsLog
+// names JetStream usage as recipe-deliberate. Topic matching is
+// fuzzy-prefix to admit recipe-specific suffixes
+// (`nats-jetstream-enabled`, `nats-jetstream-streams`,
+// `nats-jetstream-orders-stream`, etc.). Returns false on nil log
+// or read error — the conservative default is "no attestation".
+func factsAttestJetStream(log *FactsLog) bool {
+	if log == nil {
+		return false
+	}
+	records, err := log.Read()
+	if err != nil {
+		return false
+	}
+	for _, f := range records {
+		if strings.HasPrefix(f.Topic, "nats-jetstream") {
+			return true
+		}
+	}
+	return false
 }
 
 // managedServiceHostnames extracts the deduplicated managed-service

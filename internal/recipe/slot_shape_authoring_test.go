@@ -48,6 +48,124 @@ func TestSlugTrailingCitation_CatchesAllVerbVariants(t *testing.T) {
 	}
 }
 
+// TestNounPhraseSlugCitation_CatchesRun19DominantShapes — Run-20 V1.
+// Run-19 caught zero hits on the colon-prefixed regex above because
+// the agent rephrased to noun-phrase shapes that the prior regex
+// missed entirely (apidev/README.md: 11 "The Zerops `<slug>`
+// reference covers …"; workerdev/README.md: 2 "see `zerops_knowledge`
+// guide `<slug>`"). Each of the four extension regex MUST catch its
+// targeted shape; legitimate inline prose without backticked slugs
+// still passes.
+func TestNounPhraseSlugCitation_CatchesRun19DominantShapes(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		// Run-19 apidev shape: "The Zerops `<slug>` reference …"
+		{"The Zerops `<slug>` reference (apidev shape)",
+			"The Zerops `rolling-deploys` reference covers SIGTERM handling.",
+			true},
+		// Run-19 workerdev shape: "see `zerops_knowledge` guide `<slug>`"
+		{"see `zerops_knowledge` guide `<slug>` (workerdev shape)",
+			"For more, see `zerops_knowledge` guide `managed-services-nats`.",
+			true},
+		// Variant: "per/cite `zerops_knowledge` guide `<slug>`"
+		{"Per `zerops_knowledge` guide `<slug>` (verb variant)",
+			"Per `zerops_knowledge` guide `env-var-model`, the alias resolves on start.",
+			true},
+		// Variant: "see guide `<slug>`"
+		{"see guide `<slug>` (short variant)",
+			"To learn more, see guide `http-support`.",
+			true},
+		// Reference/guide noun + verb covers/documents/explains
+		{"`<slug>` reference covers …",
+			"The `rolling-deploys` reference covers drain ordering.",
+			true},
+		{"`<slug>` guide explains …",
+			"The `managed-services-nats` guide explains JetStream usage.",
+			true},
+		{"`<slug>` reference documents …",
+			"The `env-var-model` reference documents alias shadowing.",
+			true},
+		// Legitimate inline-prose citations — no backticks around the
+		// slug, full mechanism words: must NOT match.
+		{"Inline prose without backticked slug — legitimate",
+			"see the rolling-deploys guide on Zerops docs", false},
+		{"Inline prose with mechanism phrase — legitimate",
+			"the env-var-model guide covers cross-service auto-injection", false},
+		{"Plain code reference (`foo`) — legitimate",
+			"the `process.env.FOO` env var resolves at runtime", false},
+		{"Backticked slug without citation framing — legitimate",
+			"set `S3_REGION` so MinIO accepts uploads", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			match, got := hasNounPhraseSlugCitation(tc.body)
+			if got != tc.want {
+				t.Errorf("hasNounPhraseSlugCitation on %q: got match=%v (text=%q), want=%v",
+					tc.body, got, match, tc.want)
+			}
+		})
+	}
+}
+
+// TestNounPhraseSlugCitation_RefusalSurfaces — pins that the run-20
+// V1 refusal fires through every porter-facing surface: KB bullets,
+// IG slot bodies, and yaml-comment surfaces (codebase + env). The
+// prep-doc redirect message must steer toward mechanism citation,
+// not slug citation.
+func TestNounPhraseSlugCitation_RefusalSurfaces(t *testing.T) {
+	t.Parallel()
+
+	body := "The Zerops `rolling-deploys` reference covers SIGTERM ordering."
+	wantSubstrings := []string{"noun-phrase slug citation", "mechanism, not by slug", "Spec §216"}
+
+	t.Run("kbBullet", func(t *testing.T) {
+		t.Parallel()
+		refusals := kbBulletAuthoringRefusals("**Stem**", body)
+		if len(refusals) == 0 {
+			t.Fatalf("kbBulletAuthoringRefusals returned no refusals")
+		}
+		joined := strings.Join(refusals, " | ")
+		for _, want := range wantSubstrings {
+			if !strings.Contains(joined, want) {
+				t.Errorf("kb refusal missing %q; got %q", want, joined)
+			}
+		}
+	})
+	t.Run("igSlot", func(t *testing.T) {
+		t.Parallel()
+		refusals := igSlotAuthoringRefusals(body, nil)
+		if len(refusals) == 0 {
+			t.Fatalf("igSlotAuthoringRefusals returned no refusals")
+		}
+		joined := strings.Join(refusals, " | ")
+		for _, want := range wantSubstrings {
+			if !strings.Contains(joined, want) {
+				t.Errorf("ig refusal missing %q; got %q", want, joined)
+			}
+		}
+	})
+	t.Run("commentSurface", func(t *testing.T) {
+		t.Parallel()
+		refusals := commentSurfaceSlugCitationRefusals(body, "codebase zerops.yaml comment")
+		if len(refusals) == 0 {
+			t.Fatalf("commentSurfaceSlugCitationRefusals returned no refusals")
+		}
+		joined := strings.Join(refusals, " | ")
+		for _, want := range wantSubstrings {
+			if !strings.Contains(joined, want) {
+				t.Errorf("comment refusal missing %q; got %q", want, joined)
+			}
+		}
+	})
+}
+
 // TestSlugTrailingCitation_RefusalMessage pins that the refusal message
 // names the offending pattern intelligibly so the agent reauthors
 // correctly. The earlier message hard-coded "See: <slug> guide." — now
