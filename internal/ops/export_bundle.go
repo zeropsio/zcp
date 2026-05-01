@@ -21,6 +21,8 @@ const preprocessorHeader = "#zeropsPreprocessor=on\n"
 // project-bootstrap concern, not import.yaml content.
 const importModeNonHA = "NON_HA"
 
+const autoSecretPreprocessor = "<@generateRandomString(<32>)>"
+
 // ExportBundle is the generator output for the export-buildFromGit
 // workflow. Self-referential single-repo shape per plan §3.1:
 // zerops-project-import.yaml + zerops.yaml + code, all checked into
@@ -303,7 +305,7 @@ func composeProjectEnvVariables(
 			// Drop — re-imported managed services emit fresh ${...} values.
 			continue
 		case topology.SecretClassAutoSecret:
-			out[env.Key] = "<@generateRandomString(32, true, false)>"
+			out[env.Key] = autoSecretPreprocessor
 		case topology.SecretClassExternalSecret:
 			if env.Value == "" {
 				out[env.Key] = ""

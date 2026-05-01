@@ -1,11 +1,13 @@
 package ops
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/zeropsio/zcp/internal/preprocess"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -144,7 +146,7 @@ func TestComposeProjectEnvVariables(t *testing.T) {
 				"APP_KEY": topology.SecretClassAutoSecret,
 			},
 			wantOut: map[string]string{
-				"APP_KEY": "<@generateRandomString(32, true, false)>",
+				"APP_KEY": "<@generateRandomString(<32>)>",
 			},
 		},
 		{
@@ -287,6 +289,26 @@ func TestRuntimeImportMode(t *testing.T) {
 	}
 }
 
+func TestComposeProjectEnvVariables_AutoSecretDirectiveExpands(t *testing.T) {
+	t.Parallel()
+
+	out, warnings := composeProjectEnvVariables(
+		[]ProjectEnvVar{{Key: "APP_KEY", Value: "base64:old"}},
+		map[string]topology.SecretClassification{"APP_KEY": topology.SecretClassAutoSecret},
+	)
+	if len(warnings) != 0 {
+		t.Fatalf("expected no warnings, got %v", warnings)
+	}
+
+	expanded, err := preprocess.Expand(context.Background(), out["APP_KEY"])
+	if err != nil {
+		t.Fatalf("auto-secret preprocessor directive should expand via zParser: %v", err)
+	}
+	if len(expanded) != 32 {
+		t.Fatalf("expanded auto-secret length = %d, want 32 (value %q)", len(expanded), expanded)
+	}
+}
+
 func TestAddPreprocessorHeader(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -310,7 +332,7 @@ func TestAddPreprocessorHeader(t *testing.T) {
 		{
 			name:        "auto-secret directive — header prepended",
 			body:        "project:\n  name: x\n",
-			projectEnvs: map[string]string{"APP_KEY": "<@generateRandomString(32, true, false)>"},
+			projectEnvs: map[string]string{"APP_KEY": "<@generateRandomString(<32>)>"},
 			wantHeader:  true,
 		},
 		{
@@ -455,7 +477,7 @@ func TestComposeImportYAML_PreprocessorHeaderOnAutoSecret(t *testing.T) {
 	if !strings.HasPrefix(body, preprocessorHeader) {
 		t.Errorf("expected preprocessor header on line 1, got body starting with %q", body[:40])
 	}
-	if !strings.Contains(body, "<@generateRandomString(32, true, false)>") {
+	if !strings.Contains(body, "<@generateRandomString(<32>)>") {
 		t.Errorf("expected generateRandomString directive in body, body=%q", body)
 	}
 }
@@ -528,7 +550,7 @@ func TestBuildBundle_HappyPath(t *testing.T) {
 	if _, ok := envs["DB_HOST"]; ok {
 		t.Error("DB_HOST should be dropped (infrastructure-derived)")
 	}
-	if envs["APP_KEY"] != "<@generateRandomString(32, true, false)>" {
+	if envs["APP_KEY"] != "<@generateRandomString(<32>)>" {
 		t.Errorf("APP_KEY = %v, want generateRandomString directive", envs["APP_KEY"])
 	}
 	if envs["LOG_LEVEL"] != "info" {

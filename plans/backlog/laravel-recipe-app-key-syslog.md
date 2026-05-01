@@ -1,53 +1,54 @@
-# Laravel recipes — drop preprocessor APP_KEY + standardize on syslog logging
+# Laravel recipes — verify APP_KEY failure source + standardize syslog logging
 
-**Surfaced**: 2026-04-30 — Phase 1.5 / Tier-2 eval signal (B3) plus operator follow-up. Laravel recipes ship two `envVariables:` defaults that bite at runtime:
+**Surfaced**: 2026-04-30 — Phase 1.5 / Tier-2 eval signal (B3) plus operator follow-up.
 
-1. **APP_KEY**: `internal/knowledge/recipes/laravel-{minimal,showcase}.import.yml` set `APP_KEY: <@generateRandomString(<32>)>` at project scope. The preprocessor produces 32 raw ASCII chars; newer Laravel rejects with `RuntimeException: Unsupported cipher or incorrect key length`. Adding a literal `base64:` prefix doesn't help — the suffix has to be valid base64-encoded 32 random bytes (~44 chars), which the current preprocessor doesn't produce.
-2. **Logging**: Recipes set `LOG_CHANNEL: stderr` in both `dev` and `prod` setups (and project-level envVariables in some templates). We want `LOG_CHANNEL: syslog` + new `LOG_SYSLOG_FACILITY: local0` so the platform's log viewer captures via syslog facility, preserving level/facility metadata that the platform's log filters key off.
+**2026-05-01 rescan**: the original APP_KEY hypothesis was too broad. ZCP and `../recipe-repos` do **not** currently contain `APP_KEY: base64:<@...>` in Laravel import files. The Laravel recipe repos (`recipe-laravel-jetstream`, `recipe-laravel-minimal`, `recipe-filament`, `recipe-twill`) all use `APP_KEY: <@generateRandomString(<32>)>`. Laravel 11-13 accepts a raw 32-byte key when the value has no `base64:` prefix; the failing shape is `base64:<@generateRandomString(<32>)>` because Laravel decodes the 32 generated chars to about 24 bytes. zParser v2.1.2 has no base64 encode modifier, so the preprocessor still cannot emit the exact `php artisan key:generate` shape.
 
-**Why deferred**: B3 round-1 fix (`83a5d820`) was atom/recipe-prose only — covered the APP_KEY workaround in the recipe's `Gotchas`. Codex adversarial review correctly flagged that the shipped `.import.yml` defaults are unchanged, so agents still hit the broken APP_KEY on first import. The clean fix is two recipe edits + a confirmed `php artisan key:generate` workflow; bundling with the syslog change is natural since both touch the same `envVariables:` blocks and ship through one round of `zcp sync push recipes laravel-*`.
+Two separate follow-ups remain:
+
+1. **APP_KEY failure attribution**: if `Unsupported cipher or incorrect key length` recurs, capture the exact runtime value source before changing recipe imports. Likely candidates are a missing key, a deployed `.env` shadowing platform envs, or a `zerops.yaml` line like `APP_KEY: ${APP_KEY}` leaving a literal unresolved reference.
+2. **Logging**: recipes should use `LOG_CHANNEL: syslog` + `LOG_SYSLOG_FACILITY: local0` so the platform log viewer captures Laravel logs via syslog facility metadata instead of plain stderr.
+
+**Why deferred**: APP_KEY no longer has a known recipe-file fix from this scan. Dropping APP_KEY from imports would make first boot fail loudly and is not justified without a fresh reproducible failure. Syslog is still recipe content work and should ship through the recipe sync flow.
 
 **Trigger to promote**: any of —
-- Another eval scenario fires `Unsupported cipher or incorrect key length` against the shipped recipe.
-- We're cutting a Laravel recipe revision (`zcp sync push recipes laravel-*`) and want both fixes in the same PR.
-- Operator wants the syslog-facility logging in place before a demo / live customer deploy.
+- Another eval scenario fires `Unsupported cipher or incorrect key length` against a shipped Laravel recipe.
+- We are cutting a Laravel recipe revision (`zcp sync push recipes laravel-*`) and want the syslog change in the same PR.
+- Operator wants syslog-facility logging in place before a demo / live customer deploy.
 
 ## Sketch
 
-### APP_KEY drop
+### APP_KEY verification
 
-Both `.import.yml` files: remove the `project.envVariables.APP_KEY` block entirely. The recipe markdown `Gotchas` already documents the post-deploy recovery (B3 round-1):
+On the next failure, record:
 
 ```
-ssh appdev "cd /var/www && php artisan key:generate --show"
-# → outputs: base64:<base64-of-32-random-bytes>
-
-zerops_env action="set" scope="project" key="APP_KEY" value="base64:..."
-zerops_manage action="restart" service="appdev"   # PHP-FPM rereads env
-zerops_manage action="restart" service="appstage"
+zerops_env action="get" scope="project" key="APP_KEY"
+zerops_discover hostname="app..." includeEnvs=true includeEnvValues=true
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null app... "cd /var/www && php -r 'var_dump(getenv(\"APP_KEY\"), strlen((string) getenv(\"APP_KEY\")));'"
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null app... "cd /var/www && test -f .env && sed -n '1,20p' .env || true"
 ```
 
-**Open question**: does zParser expose a preprocessor that emits `base64:<base64-of-32-random-bytes>` directly? Something like `<@generateBase64Key(<32>)>` or a `| base64encode` modifier on `generateRandomString`. If yes, we keep `APP_KEY` in `.import.yml` and the manual step disappears. If no, drop is the shipping default and the manual step stays.
+If the value is raw 32 ASCII chars and Laravel still rejects it, capture the exact Laravel version and stack trace before changing recipes. If the value is `base64:<@...>`, `${APP_KEY}`, empty, or shadowed by `.env`, fix that source.
 
-To answer: search zParser source (`github.com/zeropsio/zParser/v2`) or `internal/preprocess/preprocess_test.go` for any base64-aware modifier.
+Do **not** add a literal `base64:` prefix to preprocessor output. Valid options are either raw `<@generateRandomString(<32>)>` or a pre-encoded literal `base64:<44-char-artisan-key>`.
 
 ### Syslog logging
 
-Wherever `LOG_CHANNEL: stderr` appears in either Laravel recipe (`zerops.yaml` `prod` setup, `dev` setup, project-level envVariables in `.import.yml`), replace with:
+Wherever Laravel recipes still use stderr logging, replace with:
 
 ```yaml
-envVariables:
-  LOG_CHANNEL: syslog
-  LOG_SYSLOG_FACILITY: local0
+LOG_CHANNEL: syslog
+LOG_SYSLOG_FACILITY: local0
 ```
 
 Laravel's default `config/logging.php` (>= 9.x) carries the `syslog` channel; `LOG_SYSLOG_FACILITY` lands as the second arg to `openlog()`. `local0` is the canonical user-app facility code on Alpine/Debian.
 
-Recipe markdown `Gotchas` should mention: Zerops log viewer captures via syslog — using stderr loses level/facility metadata that the platform's log filters key off.
+Recipe markdown `Gotchas` should mention: Zerops log viewer captures via syslog; stderr loses facility metadata that platform log filters can key off.
 
 ### Push pipeline
 
-After both edits land in `internal/knowledge/recipes/laravel-{minimal,showcase}.{md,import.yml}`:
+After recipe edits land in `internal/knowledge/recipes/laravel-{minimal,showcase}.{md,import.yml}`:
 
 ```
 zcp sync push recipes laravel-minimal
@@ -58,17 +59,13 @@ Each opens a GitHub PR in `zeropsio/recipes`. Merge, then `zcp sync cache-clear 
 
 ## Risks
 
-- Dropping APP_KEY means the **first agent run boots Laravel without a key set**. App may 500 on session/encryption paths until the agent runs `key:generate` and propagates. Acceptable: failure is loud, recovery is one tool call. Shipping a placeholder agent-must-rotate invites "forgot to rotate" leaks.
+- Leaving APP_KEY as raw preprocessor output is correct for Laravel runtime key-length validation, but it is not the exact `key:generate` display shape. Tooling that assumes `base64:` form may still warn; distinguish tooling preference from runtime failure.
 - Syslog facility `local0` collides if another service in the project also routes its app logs to the same facility. Unlikely in standard Zerops projects but worth one line in Gotchas.
-- `LOG_SYSLOG_FACILITY` is a Laravel-specific env var (consumed by `config/logging.php` syslog channel). Other PHP frameworks won't read it — keep guidance in Laravel recipes only.
-- The B3 round-1 commit (`83a5d820`) didn't actually ship the Laravel recipe markdown edits because `.md` files are gitignored. Promoting this entry to a real plan-doc means accepting that the *recipe* edit ships through `zcp sync push` (Strapi → GitHub PR), separate from the source-tree commit cycle.
+- `LOG_SYSLOG_FACILITY` is Laravel-specific (consumed by `config/logging.php` syslog channel). Other PHP frameworks will not read it.
 
 ## Refs
 
-- **Supersedes** `plans/backlog/laravel-app-key-base64-prefix.md` (be8b4846, Phase 1 closeout B3 entry). Same APP_KEY observation; this entry replaces it with the resolved fix direction (drop preprocessor APP_KEY + manual `key:generate`) plus the syslog logging follow-up.
-- Tier-2 eval triage: `/Users/macbook/Documents/Zerops-MCP-evals/2026-04-30/TIER2-TRIAGE.md` §B3 — sole eval signal grounding the APP_KEY portion. The syslog portion is operator follow-up, NOT eval-grounded; bundling is for shipping convenience (same recipes, same `zcp sync push` round).
-- B3 round-1 attempt removed: the previous local commit `83a5d820 fix(recipe-laravel): flag APP_KEY base64 prefix requirement (B3)` was dropped during cleanup because its `.md` recipe edits were gitignored and didn't ship; the test pin without behavior change was misleading. The real fix lives here as a deferred plan.
+- Tier-2 eval triage: `/Users/macbook/Documents/Zerops-MCP-evals/2026-04-30/TIER2-TRIAGE.md` §B3.
 - Recipe import templates: `internal/knowledge/recipes/laravel-minimal.import.yml:14`, `internal/knowledge/recipes/laravel-showcase.import.yml:16`.
-- Recipe knowledge (gitignored): `internal/knowledge/recipes/laravel-minimal.md`, `internal/knowledge/recipes/laravel-showcase.md`.
-- Sync workflow: `zcp sync push recipes <slug>`, `zcp sync cache-clear`, `zcp sync pull recipes`.
-- zParser preprocessor entry-point (for the modifier-search question): `internal/preprocess/preprocess.go`, `internal/preprocess/preprocess_test.go`.
+- Current external recipe repos: `../recipe-repos/recipe-laravel-jetstream`, `../recipe-repos/recipe-laravel-minimal`, `../recipe-repos/recipe-filament`, `../recipe-repos/recipe-twill`.
+- zParser preprocessor entry point: `internal/preprocess/preprocess.go`, `internal/preprocess/preprocess_test.go`.

@@ -1138,7 +1138,7 @@ Per-env classification protocol (LLM-driven, no hardcoded heuristics in Go) — 
 | Bucket | Detection | Emit shape |
 |---|---|---|
 | `infrastructure` | Value resolves to a managed-service-emitted reference (`${db_*}`, `${redis_*}`, plus per-service variants). Includes compound URLs assembled from `${...}` components. | DROP from `project.envVariables`; `${...}` reference in zerops.yaml resolves at re-import against the (re-imported) managed service. |
-| `auto-secret` | Source/framework convention uses var as local encryption/signing key. | `<@generateRandomString(32, true, false)>` — re-import gets a fresh secret. |
+| `auto-secret` | Source/framework convention uses var as local encryption/signing key. | `<@generateRandomString(<32>)>` — re-import gets a fresh secret. |
 | `external-secret` | Third-party SDK call (Stripe, OpenAI, Mailgun, GitHub, …). | `<@pickRandom(["REPLACE_ME"])>` placeholder; new project owner sets the real key. |
 | `plain-config` | Literal runtime config (LOG_LEVEL, NODE_ENV, FEATURE_FLAGS). | Verbatim. |
 

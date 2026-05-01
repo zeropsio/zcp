@@ -12,7 +12,7 @@ The export bundle's `project.envVariables` block holds the values that re-import
 | Bucket | Detection signal | Emit in `zerops-project-import.yaml` |
 |---|---|---|
 | `infrastructure` | Value (or a component thereof) comes from a managed-service reference (`${db_*}`, `${redis_*}`, `${mongo_*}`, plus documented per-service prefixes). Includes app-built compound URLs assembled in code from `${...}` components. | DROP from `project.envVariables`. The reference still lives in `zerops.yaml`'s `run.envVariables`, and the re-imported managed service emits a fresh value. |
-| `auto-secret` | Source code or framework convention uses the var as a local encryption / signing key. Even when the encryption call lives inside the framework. | `<@generateRandomString(32, true, false)>`. Each re-import gets a fresh secret. |
+| `auto-secret` | Source code or framework convention uses the var as a local encryption / signing key. Even when the encryption call lives inside the framework. | `<@generateRandomString(<32>)>`. Each re-import gets a fresh secret. |
 | `external-secret` | Source calls a third-party SDK using the var (Stripe, OpenAI, Mailgun, GitHub, …). Includes aliased imports and webhook verification secrets. | Comment + `<@pickRandom(["REPLACE_ME"])>`. The new project's owner pastes the real key into the dashboard before deploying. |
 | `plain-config` | Source uses the var as literal runtime config (LOG_LEVEL, NODE_ENV, FEATURE_FLAGS, …). | The literal value verbatim. |
 
@@ -34,7 +34,7 @@ Compound case: `DATABASE_URL` is built in app code from `${DB_USER}`, `${DB_PASS
 ### Auto-secret
 
 ```
-APP_KEY=base64:abcd…    # Laravel — encrypts cookies/session
+APP_KEY=existing-key    # Laravel — encrypts cookies/session
 SECRET_KEY=django…      # Django — signs sessions, CSRF, password tokens
 JWT_SECRET=long-bytes   # Node/Express — signs tokens
 ```

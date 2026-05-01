@@ -159,7 +159,7 @@ const (
 	// uses the var as a local encryption / signing key. Includes Laravel
 	// APP_KEY, Django SECRET_KEY, Rails SECRET_KEY_BASE, Express
 	// session/JWT secrets — even when the encryption call lives inside
-	// the framework. Emits as `<@generateRandomString(32, true, false)>`
+	// the framework. Emits as `<@generateRandomString(<32>)>`
 	// in import.yaml; the atom must warn before regenerating when state,
 	// cookies, sessions, or test fixtures depend on the old value.
 	SecretClassAutoSecret SecretClassification = "auto-secret"

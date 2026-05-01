@@ -485,6 +485,9 @@ func validateImportYml(t *testing.T, block, rawSection string) {
 		if strings.Contains(rawSection, "#yamlPreprocessor=on") {
 			t.Error("import.yaml uses #yamlPreprocessor=on (wrong — use #zeropsPreprocessor=on)")
 		}
+		if strings.Contains(rawSection, "base64:<@") {
+			t.Error("import.yaml wraps preprocessor output in base64:, which makes frameworks decode a non-base64 generated string; generate a raw secret or pre-encode a literal value instead")
+		}
 		_ = firstLine // used above indirectly
 	}
 }
