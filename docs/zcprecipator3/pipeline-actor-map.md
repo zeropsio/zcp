@@ -66,10 +66,6 @@ sections are estimated from typical run shapes.
 ║   ▶ zerops.yaml  (must be bare — comments forbidden at scaffold)     ║
 ║   ▶ dev process running via zerops_dev_server                        ║
 ║   ▶ facts (record-fact)                                              ║
-║                                                                      ║
-║ NOT INCLUDED                                                         ║
-║   ✗ briefs/scaffold/content_authoring.md         (run-16 §6.2)       ║
-║   ✗ internal/content/workflows/recipe.md         (different package) ║
 ╚══════════════════════════════════════════════════════════════════════╝
                                   │
                                   ▼
@@ -94,9 +90,6 @@ sections are estimated from typical run shapes.
 ║   ▶ extended code                                                    ║
 ║   ▶ feature facts (porter_change, field_rationale)                   ║
 ║   ▶ browser-walk facts (zerops_browser + record-fact)                ║
-║                                                                      ║
-║ NOT INCLUDED                                                         ║
-║   ✗ briefs/feature/content_extension.md          (run-16 §6.2)       ║
 ╚══════════════════════════════════════════════════════════════════════╝
                                   │
                 ┌─────────────────┴─────────────────┐
@@ -135,9 +128,9 @@ sections are estimated from typical run shapes.
 ║   citation-guide list        ~0.6 KB ║  ║       claude-md          ║
 ║   filtered facts            ~1–5 KB ║  ║     (single fragment)    ║
 ║     (FilterByCodebase, drop          ║  ║                          ║
-║      EngineEmitted=true; mix:        ║  ║ NOT INCLUDED             ║
-║      porter_change +                 ║  ║   ✗ intro.md             ║
-║      field_rationale +               ║  ║   ✗ init_voice.md        ║
+║      EngineEmitted=true; mix:        ║  ║                          ║
+║      porter_change +                 ║  ║                          ║
+║      field_rationale +               ║  ║                          ║
 ║      platform-trap)                  ║  ║                          ║
 ║   on-demand pointer block    ~0.5 KB ║  ║                          ║
 ║                                      ║  ║                          ║
@@ -151,12 +144,6 @@ sections are estimated from typical run shapes.
 ║     (FACT-DRIVEN: one slot per       ║  ║                          ║
 ║      field_rationale fact, per       ║  ║                          ║
 ║      synthesis_workflow.md rules)    ║  ║                          ║
-║                                      ║  ║                          ║
-║ NOT INCLUDED                         ║  ║                          ║
-║   ✗ briefs/codebase-content/         ║  ║                          ║
-║       intro.md                       ║  ║                          ║
-║   ✗ briefs/codebase-content/         ║  ║                          ║
-║       parent_recipe_dedup.md         ║  ║                          ║
 ╚══════════════════════════════════════╝  ╚══════════════════════════╝
                                   │
                                   ▼
@@ -183,9 +170,6 @@ sections are estimated from typical run shapes.
 ║ WRITES (record-fragment)                                             ║
 ║   ▶ env/N/intro × 6 tiers                                            ║
 ║   ▶ env/N/import-comments/<svc> per tier per host                    ║
-║                                                                      ║
-║ NOT INCLUDED                                                         ║
-║   ✗ briefs/env-content/intro.md                                      ║
 ╚══════════════════════════════════════════════════════════════════════╝
                                   │
                                   ▼
@@ -375,13 +359,6 @@ inside the sub-agent brief, not the main-agent context.)
 | api / worker (with seed)    | ~43 KB  |
 | frontend nodejs (showcase)  | ~48 KB  |
 
-### NOT INCLUDED
-
-- `briefs/scaffold/content_authoring.md` — orphaned; retired in run-16
-  §6.2; never referenced from the composer.
-- `internal/content/workflows/recipe.md` — lives in a different content
-  package, not a recipe-brief atom; zcprecipator2-era, ignored.
-
 ---
 
 ## Phase 3 — Feature
@@ -424,11 +401,6 @@ inside the sub-agent brief, not the main-agent context.)
 |----------------------------|--------:|
 | hello-world / minimal      | ~14 KB  |
 | showcase (with seed)       | ~22 KB  |
-
-### NOT INCLUDED
-
-- `briefs/feature/content_extension.md` — orphaned; retired in run-16
-  §6.2; the file is on disk but never read by the composer.
 
 ---
 
@@ -482,14 +454,6 @@ in parallel with claudemd-author).
 
 ~45–50 KB per codebase (showcase worker codebases hit the cap).
 
-### NOT INCLUDED
-
-- `briefs/codebase-content/intro.md` — orphaned (file on disk, not
-  read).
-- `briefs/codebase-content/parent_recipe_dedup.md` — orphaned; parent
-  dedup teaching now lives in `synthesis_workflow.md` + on-demand
-  pointer.
-
 ---
 
 ## Phase 4b — CLAUDE.md author
@@ -522,11 +486,6 @@ codebase-content).
 ### Approximate brief size
 
 ~3.5–4 KB per codebase.
-
-### NOT INCLUDED
-
-- `briefs/claudemd-author/intro.md` — orphaned.
-- `briefs/claudemd-author/init_voice.md` — orphaned.
 
 ---
 
@@ -564,10 +523,6 @@ codebase-content).
 ### Approximate brief size
 
 ~20–25 KB.
-
-### NOT INCLUDED
-
-- `briefs/env-content/intro.md` — orphaned.
 
 ---
 
