@@ -69,20 +69,18 @@ curl -fsS \
   -H "Content-Type: application/json" \
   --data-binary "$env_payload" >/dev/null
 
-if ! ssh $SSH_OPTS app 'test -n "$GIT_TOKEN"' 2>/dev/null; then
-  zcli service stop app -P "$PROJECT_ID" >/dev/null 2>&1 || true
-  zcli service start app -P "$PROJECT_ID" >/dev/null 2>&1 || true
-fi
+zcli service stop app -P "$PROJECT_ID" >/dev/null 2>&1 || true
+zcli service start app -P "$PROJECT_ID" >/dev/null 2>&1 || true
 
 for _ in $(seq 1 60); do
-  if ssh $SSH_OPTS app 'test -n "$GIT_TOKEN"' 2>/dev/null; then
+  if ssh $SSH_OPTS app 'test -n "$GIT_TOKEN" && curl -fsS -H "Authorization: Bearer ${GIT_TOKEN}" -H "Accept: application/vnd.github+json" https://api.github.com/user >/dev/null' 2>/dev/null; then
     break
   fi
   sleep 5
 done
 
-if ! ssh $SSH_OPTS app 'test -n "$GIT_TOKEN"' 2>/dev/null; then
-  echo "preseed: GIT_TOKEN did not become visible inside app runtime" >&2
+if ! ssh $SSH_OPTS app 'test -n "$GIT_TOKEN" && curl -fsS -H "Authorization: Bearer ${GIT_TOKEN}" -H "Accept: application/vnd.github+json" https://api.github.com/user >/dev/null' 2>/dev/null; then
+  echo "preseed: GIT_TOKEN did not become visible and valid inside app runtime" >&2
   exit 1
 fi
 
@@ -121,11 +119,29 @@ git config user.name "Zerops Agent"
 git add -A
 git commit -m "baseline for zcp eval" >/dev/null 2>&1 || true
 git remote add origin "$REMOTE_URL" 2>/dev/null || git remote set-url origin "$REMOTE_URL"
-trap 'rm -f ~/.netrc' EXIT
-umask 077
-printf 'machine github.com login oauth2 password %s\n' "$GIT_TOKEN" > ~/.netrc
-chmod 600 ~/.netrc
-git push --force -u origin main >/dev/null
+askpass="$(mktemp)"
+trap 'rm -f "$askpass"' EXIT
+cat > "$askpass" <<'EOF'
+#!/bin/sh
+case "$1" in
+  *Username*) printf '%s\n' x-access-token ;;
+  *Password*) printf '%s\n' "$GIT_TOKEN" ;;
+  *) printf '\n' ;;
+esac
+EOF
+chmod 700 "$askpass"
+export GIT_TOKEN
+for attempt in 1 2 3; do
+  if GIT_TERMINAL_PROMPT=0 GIT_ASKPASS="$askpass" git push --force -u origin main >/dev/null 2>/tmp/zcp-eval-git-push.err; then
+    rm -f /tmp/zcp-eval-git-push.err
+    break
+  fi
+  if [ "$attempt" = 3 ]; then
+    cat /tmp/zcp-eval-git-push.err >&2
+    exit 1
+  fi
+  sleep "$((attempt * 2))"
+done
 REMOTE
 
 echo "preseed: app ServiceMeta planted, GIT_TOKEN set, eval2 main reset to runtime baseline"

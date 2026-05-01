@@ -186,6 +186,10 @@ func deleteServices(ctx context.Context, client platform.Client, services []plat
 	for _, svc := range services {
 		proc, err := client.DeleteService(ctx, svc.ID)
 		if err != nil {
+			if isPlatformErrorCode(err, platform.ErrServiceNotFound) {
+				fmt.Fprintf(os.Stderr, "  service %q already gone; skipping\n", svc.Name)
+				continue
+			}
 			return fmt.Errorf("delete %q: %w", svc.Name, err)
 		}
 		if proc != nil {
@@ -195,6 +199,11 @@ func deleteServices(ctx context.Context, client platform.Client, services []plat
 		}
 	}
 	return nil
+}
+
+func isPlatformErrorCode(err error, code string) bool {
+	var pe *platform.PlatformError
+	return errors.As(err, &pe) && pe.Code == code
 }
 
 // cleanClaudeMemory removes Claude auto-memory files so the next eval run

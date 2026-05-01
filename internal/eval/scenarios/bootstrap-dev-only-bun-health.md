@@ -40,6 +40,7 @@ Požadavky:
 - Jeden mutable dev runtime s hostname `appdev`.
 - Žádná databáze.
 - Žádný stage target teď nechci.
+- Endpoint `GET /` vrací HTTP 200 s krátkým textem `Bun dev API`.
 - Endpoint `GET /health` vrací JSON `{ "ok": true, "mode": "dev" }`.
 - Veřejná subdomain URL musí vrátit HTTP 200.
 

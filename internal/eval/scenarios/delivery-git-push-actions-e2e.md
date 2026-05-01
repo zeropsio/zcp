@@ -70,7 +70,9 @@ neechoj a nevkládej do odpovědi.
 9. Protože GitHub Actions build běží asynchronně, sleduj `zerops_events`, dokud
    poslední appVersion pro `app` nebude `ACTIVE`.
 10. Teprve potom zavolej `zerops_workflow action="record-deploy"` pro `app`.
-11. Ověř public URL `app` a potvrď, že stránka obsahuje nový text.
+11. Ověř public URL `app` přes `zerops_verify` a potvrď, že stránka obsahuje
+    nový text. Samotný `curl` nestačí jako splnění ověřovacího kroku; můžeš ho
+    použít až jako doplňkovou kontrolu obsahu po `zerops_verify`.
 
 Tento scénář netestuje Zerops dashboard webhook OAuth. Testuje jen git-push
 capability a GitHub Actions delivery.
