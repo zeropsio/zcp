@@ -84,6 +84,17 @@ func BuildCodebaseContentBrief(plan *Plan, cb Codebase, parent *ParentRecipe, fa
 		parts = append(parts, "briefs/scaffold/platform_principles.md")
 	}
 
+	// Run-20 C1 — NATS messaging-shape teaching. Loaded for every
+	// codebase-content dispatch (cheap; ~1.5 KB) so the agent never
+	// fabricates JetStream framing on a recipe that uses only core
+	// pub/sub. Same atom is loaded by env-content; both phases pull
+	// from one source so the teaching can't drift.
+	if atom, err := readAtom("principles/nats-shapes.md"); err == nil {
+		b.WriteString(atom)
+		b.WriteString("\n\n")
+		parts = append(parts, "principles/nats-shapes.md")
+	}
+
 	// Codebase metadata block — what this dispatch is for.
 	b.WriteString("## Codebase\n\n")
 	fmt.Fprintf(&b, "- Hostname: %s\n", cb.Hostname)
@@ -175,6 +186,18 @@ func BuildEnvContentBrief(plan *Plan, parent *ParentRecipe, facts []FactRecord) 
 		b.WriteString(atom)
 		b.WriteString("\n\n")
 		parts = append(parts, "briefs/env-content/per_tier_authoring.md")
+	}
+
+	// Run-20 C1 — NATS messaging-shape teaching is shared with the
+	// codebase-content brief composer. Run-19 dropped JetStream
+	// fabrication into tier 0 + tier 5 import.yaml comments because
+	// the env-content sub-agent didn't see this teaching; only
+	// codebase-content did. Pulling from one source keeps the framing
+	// aligned across phases.
+	if atom, err := readAtom("principles/nats-shapes.md"); err == nil {
+		b.WriteString(atom)
+		b.WriteString("\n\n")
+		parts = append(parts, "principles/nats-shapes.md")
 	}
 
 	// Per-tier capability matrix (already computed) + cross-tier deltas.

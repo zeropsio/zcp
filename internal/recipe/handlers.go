@@ -483,6 +483,23 @@ func handleRecordFragment(sess *Session, in RecipeInput, r RecipeResult) RecipeR
 		}
 	}
 
+	// Run-20 C1 — facts-attestation check for JetStream framing in
+	// env-content import-comment fragments. Run-19 shipped fabricated
+	// JetStream framing on a recipe that uses only core pub/sub,
+	// because the env-content composer didn't see the NATS atom that
+	// distinguishes the two shapes. The atom is now wired in
+	// briefs_content_phase.go::BuildEnvContentBrief (C1 layer 1). This
+	// refusal is the layer-2 backstop: if an env import-comment body
+	// names JetStream / quorum-replicated streams / durable consumers
+	// without an attesting `nats-jetstream-*` fact in the FactsLog,
+	// refuse with a redirect to record the attestation first.
+	if envImportCommentsRe.MatchString(in.FragmentID) {
+		if msg := envCommentJetStreamRefusal(in.Fragment, sess.FactsLog); msg != "" {
+			r.Error = "record-fragment: " + msg
+			return r
+		}
+	}
+
 	// Run-17 §9.5 — refinement-phase Replace transactional wrapper.
 	// On PhaseRefinement Replace of a codebase/<host>/... fragment, run
 	// surface validators pre- and post-Replace; if the Replace
