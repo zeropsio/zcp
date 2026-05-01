@@ -932,6 +932,18 @@ func writeCodebaseSurfaces(plan *Plan) ([]string, error) {
 			return nil, fmt.Errorf("assemble codebase %s README: %w", cb.Hostname, err)
 		}
 		missing = append(missing, m...)
+		// Run-23 fix-2 — refuse-to-wipe guard. The README template
+		// always carries the codebase H1 + back-link + at least the
+		// engine-stamped IG #1 yaml block, so an empty body indicates
+		// upstream corruption (template-read fail, marker substitution
+		// edge case). Refuse rather than silently writing 0 bytes over
+		// a previous round's content. Run-20 prod hit a 0-byte README
+		// wipe on appdev/workerdev (TIMELINE Issue 3); ZCP could not
+		// reproduce locally — this guard makes the silent-wipe vector
+		// closed by construction.
+		if strings.TrimSpace(readmeBody) == "" {
+			return nil, fmt.Errorf("refuse-to-wipe: assemble codebase %s README produced empty body", cb.Hostname)
+		}
 		if err := writeSurfaceFile(filepath.Join(cb.SourceRoot, "README.md"), readmeBody); err != nil {
 			return nil, err
 		}
@@ -940,6 +952,9 @@ func writeCodebaseSurfaces(plan *Plan) ([]string, error) {
 			return nil, fmt.Errorf("assemble codebase %s CLAUDE.md: %w", cb.Hostname, err)
 		}
 		missing = append(missing, m...)
+		if strings.TrimSpace(claudeBody) == "" {
+			return nil, fmt.Errorf("refuse-to-wipe: assemble codebase %s CLAUDE.md produced empty body", cb.Hostname)
+		}
 		if err := writeSurfaceFile(filepath.Join(cb.SourceRoot, "CLAUDE.md"), claudeBody); err != nil {
 			return nil, err
 		}

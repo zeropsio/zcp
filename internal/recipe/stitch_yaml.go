@@ -55,6 +55,18 @@ func WriteCodebaseYAMLWithComments(plan *Plan, hostname string) error {
 	}
 	stripped := stripYAMLComments(string(raw))
 	commented := injectZeropsYamlComments(stripped, plan.Fragments, hostname)
+	// Run-23 fix-2 — refuse-to-wipe guard. Run-20 prod hit a 0-byte
+	// zerops.yaml on appdev/workerdev (TIMELINE Issue 3) that ZCP
+	// could not reproduce locally. Whatever the upstream pipeline
+	// glitch, refusing to overwrite a non-empty on-disk file with 0
+	// bytes makes the wipe vector closed by construction. If the
+	// stripped+commented body is empty AND the original was non-empty,
+	// keep the original on disk and surface a clear error so the next
+	// invocation can investigate without silent corruption.
+	if strings.TrimSpace(commented) == "" && len(raw) > 0 {
+		return fmt.Errorf("refuse-to-wipe: stripped+commented zerops.yaml for %q produced empty bytes despite non-empty source — leaving on-disk file at %s untouched (likely missing-fragment + strip-everything edge case)",
+			hostname, yamlPath)
+	}
 	// Preserve original file mode if possible (default 0o600 if stat fails).
 	mode := os.FileMode(0o600)
 	if info, err := os.Stat(yamlPath); err == nil {
