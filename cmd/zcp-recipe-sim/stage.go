@@ -156,18 +156,22 @@ func dirContainsSkippedSegment(rel string) bool {
 // loadEmitParent resolves the parent *ParentRecipe for the given
 // child slug via the recipe chain resolver. Returns:
 //
-//   - (nil, nil) when mountRoot is empty (no chain to walk)
-//   - (nil, nil) when ResolveChain reports ErrNoParent (the slug has
-//     no parent — minimal / hello-world recipes)
+//   - (nil, nil) when mountRoot is empty (no chain to walk) or the
+//     slug has no parent (recipe.ErrNoParent — minimal / hello-world).
+//     Parent absence is a normal control-flow case, not an error;
+//     the caller passes nil through to the brief composer (which
+//     handles parent=nil natively).
 //   - (parent, nil) when the parent tree exists at
 //     <mountRoot>/<parent>/
 //
 // `parentOverride` lets the sim caller force a specific parent slug
-// when the production chain rule (parentSlugFor: `<base>-showcase` →
+// when the production chain rule (parentSlugFor: `<base>-showcase` ->
 // `<base>-minimal`) doesn't match the test fixture. With override
 // set, the resolver is called with `<override>-showcase` so it
 // derives `<override>-minimal` — matching the production code path
 // without depending on a private loadParent helper.
+//
+//nolint:nilnil // parent absence is a normal case, not an error
 func loadEmitParent(planSlug, parentOverride, mountRoot string) (*recipe.ParentRecipe, error) {
 	if mountRoot == "" {
 		return nil, nil
