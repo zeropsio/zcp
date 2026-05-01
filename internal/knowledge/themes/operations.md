@@ -64,9 +64,11 @@ jobs:
       - name: Install zcli
         run: |
           curl -sSL https://zerops.io/zcli/install.sh | sh
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Deploy
-        run: zcli push --serviceId <service-id> --setup <setup-name>
+        run: |
+          zcli login "$ZEROPS_TOKEN"
+          zcli push --service-id "<service-id>" --setup <setup-name>
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
 ```
@@ -139,4 +141,3 @@ Use Valkey for sessions and cache when running multiple containers.
 
 ### DNS and SSL
 Cloudflare with **Full (strict)** SSL. WAF exception for ACME challenge. Both A and AAAA records for shared IPv4.
-

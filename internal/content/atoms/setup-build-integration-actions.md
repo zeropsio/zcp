@@ -16,7 +16,10 @@ This atom assumes `GitPushState=configured`. If you haven't run the setup yet, `
 
 ## 2. Add the workflow file
 
-Create `.github/workflows/zerops.yml` in the repo:
+Create `.github/workflows/zerops.yml` in the repo. The default workflow uses
+`zcli` directly because it can pass `--setup`; this is required when
+`zerops.yaml` has multiple setup blocks or when the setup name must be selected
+explicitly.
 
 ```yaml
 name: Zerops deploy
@@ -28,13 +31,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: zeropsio/actions-setup-zcli@v1
-      - run: zcli push --serviceId ${{ secrets.ZEROPS_SERVICE_ID }} --setup {hostname}
+      - name: Install zcli
+        run: |
+          curl -sSL https://zerops.io/zcli/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Deploy to Zerops
+        run: |
+          zcli login "$ZEROPS_TOKEN"
+          zcli push --service-id "${{ secrets.ZEROPS_SERVICE_ID }}" --setup {hostname}
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
 ```
 
 Replace `{hostname}` with the setup name in your `zerops.yaml` if it differs from the runtime hostname.
+
+If the repository has exactly one setup and you do not need explicit setup
+selection, the compact wrapper action also works:
+
+```yaml
+      - uses: zeropsio/actions@v1.0.2
+        with:
+          access-token: ${{ secrets.ZEROPS_TOKEN }}
+          service-id: ${{ secrets.ZEROPS_SERVICE_ID }}
+```
 
 ## 3. Add the GitHub Actions secrets
 

@@ -402,7 +402,16 @@ func TestHandleBuildIntegration_ActionsConfirmEnrichesResponse(t *testing.T) {
 		`"workflowFile"`,
 		".github/workflows/zerops.yml",
 		"actions/checkout@v4",
-		"zeropsio/actions-setup-zcli@v1",
+		"setup-aware-zcli",
+		"curl -sSL https://zerops.io/zcli/install.sh",
+		"zcli login",
+		"zcli push --service-id",
+		"--setup",
+		"appdev",
+		"single-setup-action",
+		"zeropsio/actions@v1.0.2",
+		"access-token",
+		"service-id",
 		`"secrets"`,
 		"ZEROPS_TOKEN",
 		"ZEROPS_SERVICE_ID",
@@ -422,6 +431,9 @@ func TestHandleBuildIntegration_ActionsConfirmEnrichesResponse(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("response missing %q in body: %s", want, body)
 		}
+	}
+	if strings.Contains(body, "zeropsio/actions-setup-zcli") {
+		t.Errorf("response must not reference nonexistent setup action: %s", body)
 	}
 
 	// Container env path: $ZCP_API_KEY substitution instead of jq.

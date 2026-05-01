@@ -193,8 +193,19 @@ func actionsConfirmResponse(
 		"service":          hostname,
 		"buildIntegration": topology.BuildIntegrationActions,
 		"workflowFile": map[string]any{
-			"path":    ".github/workflows/zerops.yml",
-			"content": actionsWorkflowYAML(serviceID, hostname),
+			"path":        ".github/workflows/zerops.yml",
+			"variant":     "setup-aware-zcli",
+			"setup":       hostname,
+			"description": "Default workflow: installs zcli directly and passes --setup, so it works when zerops.yaml has multiple setups or the setup must be selected explicitly.",
+			"content":     actionsWorkflowYAML(hostname),
+		},
+		"alternateWorkflowFiles": []map[string]any{
+			{
+				"path":        ".github/workflows/zerops.yml",
+				"variant":     "single-setup-action",
+				"description": "Use only when zerops.yaml has a single setup and no explicit --setup selection is required; zeropsio/actions exposes service-id/access-token only.",
+				"content":     actionsSingleSetupWorkflowYAML(),
+			},
 		},
 		"secrets": []map[string]any{
 			{
@@ -214,7 +225,7 @@ func actionsConfirmResponse(
 			},
 		},
 		"ghPatRecommendation": "Default to a fine-grained GitHub PAT scoped ONLY to " + ownerRepo + " with `Secrets: Read and write` (single-repo blast radius). GitHub PATs require an expiration — pick the longest you're comfortable with (max 1 year); set a calendar reminder to regenerate + re-run `gh secret set` before it lapses.",
-		"nextStep":            "1) Write the workflow file at .github/workflows/zerops.yml. 2) Run the two `gh secret set` commands above. 3) Push the workflow file. From then on every push to main triggers the GitHub Actions deploy.",
+		"nextStep":            "1) Write workflowFile.content at .github/workflows/zerops.yml. 2) Run the two `gh secret set` commands above. 3) Push the workflow file. From then on every push to main triggers the GitHub Actions deploy. Keep the default setup-aware zcli workflow unless you are certain the repository has only one setup.",
 	}
 	if !repoOK {
 		body["repoParseWarning"] = fmt.Sprintf(
@@ -268,17 +279,13 @@ func webhookConfirmResponse(
 	return jsonResult(body)
 }
 
-// actionsWorkflowYAML returns the .github/workflows/zerops.yml body with
-// serviceId and setup-name prefilled. setup-name defaults to the runtime
-// hostname; if the user customized the setup block in zerops.yaml they can
-// edit the rendered file before committing.
-func actionsWorkflowYAML(serviceID, hostname string) string {
-	idExpr := "${{ secrets.ZEROPS_SERVICE_ID }}"
-	if serviceID == "" {
-		// Fall back to the secret reference; the user must still set
-		// ZEROPS_SERVICE_ID via gh secret set, but the workflow is valid.
-		_ = idExpr
-	}
+// actionsWorkflowYAML returns the default .github/workflows/zerops.yml body.
+// It installs zcli directly instead of using zeropsio/actions because the
+// public action exposes only service-id/access-token inputs and cannot pass
+// zcli's --setup selector. setupName defaults to the runtime hostname; if the
+// user customized the setup block in zerops.yaml they can edit the setup name
+// before committing.
+func actionsWorkflowYAML(setupName string) string {
 	return fmt.Sprintf(`name: Zerops deploy
 on:
   push:
@@ -288,11 +295,37 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: zeropsio/actions-setup-zcli@v1
-      - run: zcli push --serviceId %s --setup %s
+      - name: Install zcli
+        run: |
+          curl -sSL https://zerops.io/zcli/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Deploy to Zerops
+        run: |
+          zcli login "$ZEROPS_TOKEN"
+          zcli push --service-id "${{ secrets.ZEROPS_SERVICE_ID }}" --setup %s
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-`, idExpr, hostname)
+`, quoteShellLiteral(setupName))
+}
+
+// actionsSingleSetupWorkflowYAML returns the compact wrapper-action variant.
+// It intentionally does not support setup selection because zeropsio/actions
+// currently exposes no setup input.
+func actionsSingleSetupWorkflowYAML() string {
+	return `name: Zerops deploy
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: zeropsio/actions@v1.0.2
+        with:
+          access-token: ${{ secrets.ZEROPS_TOKEN }}
+          service-id: ${{ secrets.ZEROPS_SERVICE_ID }}
+`
 }
 
 // actionsLookupServiceID is a thin wrapper around ops.LookupService that
