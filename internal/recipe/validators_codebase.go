@@ -347,7 +347,7 @@ func scanAuthoringToolLeaks(path, body, surface string) []Violation {
 	}
 	// Fence-aware needles — only fire on lines at fence depth 0.
 	depth := 0
-	for raw := range strings.SplitSeq(body, "\n") {
+	for _, raw := range strings.Split(body, "\n") {
 		trimmed := strings.TrimLeft(raw, " \t")
 		if strings.HasPrefix(trimmed, "```") {
 			if depth == 0 {
