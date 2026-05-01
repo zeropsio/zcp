@@ -240,7 +240,7 @@ func TestBuildCodebaseContentBrief_NoParent_NoParentBlock(t *testing.T) {
 	}
 }
 
-func TestBuildCodebaseContentBrief_SizeUnder40KB(t *testing.T) {
+func TestBuildCodebaseContentBrief_SizeUnderCap(t *testing.T) {
 	t.Parallel()
 	plan := contentPhaseTestPlan()
 	brief, err := BuildCodebaseContentBrief(plan, plan.Codebases[0], nil, nil)
@@ -295,7 +295,7 @@ func TestBuildEnvContentBrief_CarriesParentRecipePointer_WhenParentNonNil(t *tes
 	}
 }
 
-func TestBuildEnvContentBrief_SizeUnder40KB(t *testing.T) {
+func TestBuildEnvContentBrief_SizeUnderCap(t *testing.T) {
 	t.Parallel()
 	plan := contentPhaseTestPlan()
 	brief, err := BuildEnvContentBrief(plan, nil, nil)

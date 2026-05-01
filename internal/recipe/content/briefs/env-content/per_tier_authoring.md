@@ -128,6 +128,41 @@ porter doesn't operate as part of the authoring run.
 don't resolve as docs URLs for porters. Cite by inline prose mention
 or omit the citation.
 
+**Platform-internal claims that exceed the corpus** — *"already
+redundant at the platform layer"*, *"the bucket lives on a replicated
+backend"*, *"Zerops automatically synchronizes…"*. The corpus
+(`themes/services.md` + `themes/core.md`) is the authoritative source
+for what the platform does and does not promise. If a service has no
+HA mode, name that fact as the porter sees it (single instance, no
+replica option, recovery via X) — do NOT extrapolate into hidden
+platform behaviour the corpus does not document.
+
+**FAIL** (run-21 tier-5 storage block):
+
+```yaml
+# Object storage is already redundant at the platform layer — the
+# bucket lives on a replicated backend regardless of mode, so no
+# service-mode upgrade exists to flip.
+```
+
+The "already redundant at the platform layer" + "replicated backend"
+claims are stronger than `services.md` supports — the corpus only
+states "no HA mode" and "S3-compatible MinIO backend".
+
+**PASS** (corpus-grounded shape):
+
+```yaml
+# Object storage stays on the same shape every tier — there is no
+# `mode` field on this service type (NON_HA only) and no replica
+# option to flip. Production scaling here means raising
+# objectStorageSize; durability and availability are whatever the
+# managed S3-compatible backend provides, not a recipe knob.
+```
+
+The mechanism (no mode field, no replica option) is named without
+inventing platform-internal redundancy; the porter knob (objectStorageSize)
+is the correct adapt path.
+
 **Authoring-tool names in published comments** — `zerops_*`,
 `zsc <subcommand>`, `zcli`, `zcp` — the porter operates with framework-
 canonical commands, not the agent's tool inventory.

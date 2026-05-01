@@ -2,31 +2,79 @@
 
 ASCII `#` only, one hash per line, one space after, then prose.
 
-Wrap at ~65 chars. Use **multi-line blocks** — a run of adjacent `#`
-lines reads as one prose paragraph. Bare `#` lines stay inside the
-block as paragraph separators.
+## The shape
 
-**One causal word per block is enough.** The validator checks each
-block (not each line) for `because` / `so that` / `otherwise` /
-`trade-off` / em-dash. Do NOT stuff every line with `because` — the
-first paragraph carries rationale; the rest carries detail.
+Each comment is a **multi-line block**. Each line carries up to ~65
+characters of prose. A run of adjacent `#` lines reads as one
+paragraph. To start a new paragraph inside the same block, use a
+bare `#` line (not an empty line — yaml block continuity needs the
+hash).
+
+**Wrap, do NOT stuff.** A 500-char line of prose with no breaks is
+not a "block" — it's a single line that happens to start with `#`.
+Goldens never do this. Look at any block in
+`/Users/fxck/www/laravel-showcase-app/zerops.yaml` — every line
+ends well before 70 chars.
+
+**One causal word per block is enough.** The first paragraph
+carries rationale (`because` / `so that` / `otherwise` /
+`trade-off` / em-dash). Following paragraphs carry detail or
+porter-adapt invitations. Do NOT stuff every sentence with a
+because.
 
 Short labels (≤40 chars) pass unconditionally — `# Base image`,
 `# Bucket policy` need no rationale.
 
-GOOD (multi-line block, one causal word, natural wrap):
+## GOOD vs BAD — the same content authored two ways
 
-```
-# Config, route, and view caches MUST be built at runtime.
-# Build runs at /build/source/ but the app serves from
-# /var/www/ — caching during build bakes wrong paths.
+### GOOD (multi-line wrap, ~60 chars per line, paragraph break, voice)
+
+```yaml
+# Cross-service refs (db_*, cache_*, broker_*) re-aliased under
+# stable own-keys (DB_HOST, CACHE_HOST, NATS_HOST, etc.) so the
+# application code reads its own names — swap a managed service
+# later with a yaml-only edit, no code rewrite.
 #
-# Migrations run exactly once per deploy via zsc execOnce,
-# regardless of how many containers start in parallel.
+# Replace S3_REGION with whatever your library expects; the value
+# is irrelevant for the platform's S3-compatible storage but must
+# be set or the SDK refuses to construct.
+envVariables:
+  DB_HOST: ${db_hostname}
+  CACHE_HOST: ${cache_hostname}
+  NATS_HOST: ${broker_hostname}
+  S3_REGION: us-east-1
 ```
 
-BAD (single-line run-on, stuffed causal words):
+### BAD (one long line + empty `#` separator + another long line)
 
+```yaml
+# Cross-service refs (db_*, cache_*, broker_*) re-aliased under stable own-keys (DB_HOST, CACHE_HOST, NATS_HOST, etc.) so the application code reads its own names — swap a managed service later with a yaml-only edit, no code rewrite.
+# 
+# Replace S3_REGION with whatever your library expects; the value is irrelevant for the platform's S3-compatible storage but must be set or the SDK refuses to construct.
+envVariables:
+  ...
 ```
-# Dev setup — deploys the source tree so that SSH sessions and `zerops_dev_server` can drive `nest start --watch` without a rebuild. `zsc noop --silent` keeps the container idle so that an external watcher owns the process, otherwise every code edit would force a redeploy.
-```
+
+Same words, but the BAD shape is one ~400-char line followed by an
+empty `#` followed by another long line. The browser / file viewer
+soft-wraps it, but it reads as a wall of prose, not a paragraph.
+The empty `#` separator with no content is also wrong — the GOOD
+shape uses `#` as a paragraph separator BETWEEN body lines, not as
+a decorative gap.
+
+## Anti-patterns to NOT produce
+
+- One unwrapped sentence per block. Wrap to ~65 chars.
+- `# ` lines with no body text. Either drop them or use them as
+  paragraph separators between actual `#`-prefixed body lines.
+- Decorative dividers (`# =====` or `# ---`). Block boundaries are
+  the directive lines themselves, not ASCII art.
+- Restating the field name. `# initCommands: runs init commands` is
+  filler — the field name is right there. Lead with the WHY.
+
+## When in doubt — read the goldens
+
+`/Users/fxck/www/laravel-showcase-app/zerops.yaml` and
+`/Users/fxck/www/laravel-jetstream-app/zerops.yaml` are the two
+reference shapes. Every block in those yamls is a multi-line
+paragraph wrapping at ~65 chars. Match that.

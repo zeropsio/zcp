@@ -10,13 +10,25 @@ is authored by a sibling claudemd-author sub-agent — do NOT touch.
 1. The recorded facts (codebase scope) above this section.
 2. `[hostname]/zerops.yaml` on disk.
 3. `[hostname]/src/**` for code-grounded references.
-4. (If parent != nil) the parent recipe's published surfaces — cross-
+4. **The goldens** (mandatory before authoring yaml-comment fragments
+   or IG bodies):
+   - `Read /Users/fxck/www/laravel-showcase-app/zerops.yaml` — the
+     density floor. Notice the per-directive multi-line wrapped
+     comments, the friendly authority voice, the porter-adapt
+     invitations.
+   - `Read /Users/fxck/www/laravel-jetstream-app/zerops.yaml` — the
+     voice floor. Notice the inline doc URLs (real, not
+     `<placeholder>`), the `> [!CAUTION]` callouts, the honest
+     `# FIXME` markers.
+5. (If parent != nil) the parent recipe's published surfaces — cross-
    reference instead of re-author when the parent already covers a
    topic.
 
 The recorded facts are the bridge: the deploy-phase agents recorded
-WHY they made each non-obvious change at densest context. Group them
-into surface-shaped output.
+WHY they made each non-obvious change at densest context. The goldens
+are the bar: every directive group in your zerops.yaml deserves a
+comment block in their style. Group facts + directives into
+surface-shaped output, matching the goldens' density and shape.
 
 ## Step 1 — Read facts + on-disk content
 
@@ -90,6 +102,38 @@ named porter signal that triggers the adapt path.
 this could be one option"). The voice is "this is the choice; here's
 why; you can change it for your needs" — not "this could maybe be one
 option among many."
+
+**Authoring-tool words leak agent perspective into porter content.**
+The porter operates with framework-canonical commands (`npm`,
+`composer`, `ssh`, `git`); they never invoke `zerops_dev_server`,
+`zerops_deploy`, `zcli`, or "the agent". When a comment needs to
+explain a dev-loop affordance, name the **outcome** + **canonical
+porter mechanism**, not the authoring tool that sets it up.
+
+**FAIL** (run-21 apidev/zerops.yaml dev start):
+
+```yaml
+# `zsc noop --silent` keeps the container alive without
+# starting the application — the agent owns the long-running
+# process via `zerops_dev_server` so code edits over SSHFS
+# don't force a full redeploy.
+```
+
+"the agent owns" + "via `zerops_dev_server`" both leak.
+
+**PASS** (laravel-showcase apidev/zerops.yaml dev start, voice-clean):
+
+```yaml
+# `zsc noop --silent` keeps the container alive without binding
+# the runtime to a foreground process — the dev container is a
+# remote-development workspace, the porter SSHs in and runs
+# `npm run start:dev` (or framework-equivalent watcher) by hand.
+# Code edits over SSHFS rebuild in place, no redeploy.
+```
+
+The mechanism is named (zsc noop keeps the container alive), the
+porter's affordance is named (SSH in, run the framework's watcher),
+and no authoring-tool token appears.
 
 ## Citation map (BINDING for KB and IG)
 
@@ -246,6 +290,49 @@ valid synthesis (jetstream IG #3 "Utilize Environment Variables"
 absorbs TRUSTED_PROXIES alongside `${db_hostname}` cross-service
 references).
 
+### IG body — no scaffold-only filenames
+
+The Integration Guide is read by porters bringing **their own code**.
+A porter wiring a fresh project doesn't have your scaffold's
+`src/main.ts`, `src/data-source.ts`, `App.svelte`, or `vite.config.ts`
+— those are artifacts of the showcase you happen to demonstrate
+against. IG bodies that anchor on those filenames don't help the
+porter port the teaching.
+
+**FAIL** (run-21 apidev IG #2):
+
+```markdown
+Add the CORS allowlist via `setGlobalPrefix('api', { exclude: ['/health'] })`
+in `src/main.ts` and read `process.env.CORS_ORIGINS` at boot.
+```
+
+The mechanism (CORS allowlist from env var) is right; the file
+anchor is scaffold-specific. A porter using Express, Fastify, or
+non-NestJS Node has no `src/main.ts`.
+
+**PASS** (laravel-showcase IG #2):
+
+```markdown
+Trust the reverse proxy so the application sees the porter's IP, not
+the L7 balancer's. Laravel: set `TrustProxies` middleware to `'*'`.
+Other frameworks: configure `trust proxy` (Express), `forwarded` (Go),
+or `RemoteIPHeader` (any).
+```
+
+The mechanism (trust the reverse proxy) is named platform-side, the
+canonical config is shown in the host framework's idiom, and *adapt
+paths for other frameworks* are listed. Porter brings their code,
+porter knows where to apply.
+
+**Heuristic**: if your IG body names a `.ts` / `.js` / `.svelte` /
+`.php` file from the scaffold tree, replace with the platform-side
+mechanism + a one-line adapt path naming the framework feature
+("Express: `app.set('trust proxy', true)`", "any: search your
+framework's request-pipeline middleware list for the `trust-proxy`
+or `forwarded-headers` knob"). Code diffs are fine when they show the
+**framework idiom** (the `TrustProxies` middleware), not the
+**file location** (the scaffold's path to it).
+
 ## Step 3 — Author KB (Surface 5)
 
 For each `CandidateSurface=CODEBASE_KB` fact, emit one bullet in the
@@ -266,17 +353,81 @@ one-sided; "Pin `synchronize: false` and own DDL in an idempotent
 script — auto-sync's appeal is zero-config, but two containers racing
 the same DDL corrupt the schema intermittently" is two-sided.
 
+### KB body — inline the guide name when the validator requires it
+
+The `kb-citation-required` validator pattern-matches well-known
+service tokens (`MinIO`, `forcePathStyle`, `object-storage`,
+`JetStream`, etc.) and asserts each appears within ~6 lines of a
+`zerops_knowledge` guide name (`object-storage`, `managed-services-nats`,
+etc.). If your KB body mentions one of those tokens and doesn't
+inline the guide name, the validator refuses.
+
+**FAIL** (run-21 worker KB):
+
+```markdown
+- **Object-storage 403 on every request** — Zerops uses MinIO; the
+  AWS SDK signs requests with virtual-hosted style by default but
+  MinIO needs path style. Set `forcePathStyle: true`.
+```
+
+Mentions `MinIO`, `object-storage`, `forcePathStyle` — every one
+maps to the `object-storage` guide. None named in prose → refusal.
+
+**PASS** (run-21 worker KB, after fix):
+
+```markdown
+- **Object-storage 403 on every request** — Zerops uses MinIO; the
+  AWS SDK signs requests with virtual-hosted style by default but
+  MinIO needs path style. Set `forcePathStyle: true`. The
+  `object-storage` guide covers the MinIO + region default + path-
+  style triplet for every S3 SDK family.
+```
+
+The trailing sentence names the `object-storage` guide AND tells the
+porter what's in it. The rule applies to KB only — IG already has
+its own citation rule (above), and yaml-comment fragments (Surface 7)
+follow the URL-link variant.
+
 ## Step 4 — Author zerops.yaml comments (Surface 7)
 
 For each `field_rationale` fact, emit one
 `codebase/<h>/zerops-yaml-comments/<block-name>` fragment per yaml
-block (e.g. `run.envVariables`, `run.initCommands`, `build`,
-`readinessCheck`). 6-line cap per block. Compound-decision facts
-sharing `compoundReasoning` merge into one block.
+block. 6-line cap per block. Compound-decision facts sharing
+`compoundReasoning` merge into one block.
 
 Apply friendly-authority voice (above) primarily here. Each comment
 block: declarative state of the field choice + named porter signal
 that triggers an adapt path.
+
+### Block-name shape
+
+The engine anchors each fragment by its `<block-name>` against the
+yaml's leaf key. **For multi-setup yamls, prefix the block name with
+the setup name** so dev + prod (or appdev + appstage, etc.) get
+independent comment slots:
+
+```
+codebase/api/zerops-yaml-comments/dev.run.envVariables
+codebase/api/zerops-yaml-comments/prod.run.envVariables
+codebase/api/zerops-yaml-comments/dev.run.initCommands
+codebase/api/zerops-yaml-comments/prod.deploy.readinessCheck
+```
+
+The `<setup>` prefix MUST match a `- setup: <setup>` line in the
+on-disk yaml verbatim. If the codebase has only one setup, the prefix
+is optional — `run.envVariables` works the same as
+`<single-setup>.run.envVariables`. **Never repeat a leaf key across
+multiple block names without setup prefixes** — every name must
+resolve to a unique line in the yaml.
+
+### Body shape
+
+Each fragment body is the comment prose, one paragraph per line break.
+Wrap each line at ~65 characters. **You MAY pre-hash with `# ` per
+line OR write raw prose** — the engine canonicalizes either form
+before injection. A bare `#` line is a paragraph separator. The
+yaml-comment-style atom shows the rendered shape; whichever form your
+fragment body takes lands as that single-hash shape on disk.
 
 > **Do NOT edit `<SourceRoot>/zerops.yaml` on disk to add comments.**
 > The fragments you record here are the canonical source. The engine's

@@ -95,6 +95,42 @@ func BuildCodebaseContentBrief(plan *Plan, cb Codebase, parent *ParentRecipe, fa
 		parts = append(parts, "principles/nats-shapes.md")
 	}
 
+	// Run-20 C2 — workspace dual-runtime URL pattern. Loaded for every
+	// codebase-content dispatch so the re-authoring sub-agent sees the
+	// `${zeropsSubdomainHost}`-via-project-envs solution and stops
+	// recommending the deploy-peer-first dance in IG slots. Cross-
+	// referenced from the scaffold brief's platform_principles.md so
+	// scaffold-time and codebase-content-time teaching stay aligned.
+	if atom, err := readAtom("principles/cross-service-urls.md"); err == nil {
+		b.WriteString(atom)
+		b.WriteString("\n\n")
+		parts = append(parts, "principles/cross-service-urls.md")
+	}
+
+	// Run-20 (post sub-agent C verification) — Zerops platform claim
+	// attestation. Closes the corePackage / mode / httpSupport /
+	// ${zeropsSubdomain*} fabrication class that surfaced in the first
+	// sim verification. TEACH-side: positive shape teaching + named
+	// attractor topics + zerops_knowledge query-first rule. Replaces the
+	// catalog-drift instinct (one validator per fabricated string).
+	if atom, err := readAtom("principles/zerops-knowledge-attestation.md"); err == nil {
+		b.WriteString(atom)
+		b.WriteString("\n\n")
+		parts = append(parts, "principles/zerops-knowledge-attestation.md")
+	}
+
+	// Run-20 (post sub-agent C verification) — sharpened
+	// yaml-comment-style atom carries explicit GOOD/BAD examples
+	// showing multi-line wrap vs one-long-line anti-pattern. The
+	// codebase-content sub-agent authors the zerops.yaml comments,
+	// so the rule has to land here too (the scaffold brief already
+	// loads it for source-comment shape).
+	if atom, err := readAtom("principles/yaml-comment-style.md"); err == nil {
+		b.WriteString(atom)
+		b.WriteString("\n\n")
+		parts = append(parts, "principles/yaml-comment-style.md")
+	}
+
 	// Codebase metadata block — what this dispatch is for.
 	b.WriteString("## Codebase\n\n")
 	fmt.Fprintf(&b, "- Hostname: %s\n", cb.Hostname)
@@ -198,6 +234,26 @@ func BuildEnvContentBrief(plan *Plan, parent *ParentRecipe, facts []FactRecord) 
 		b.WriteString(atom)
 		b.WriteString("\n\n")
 		parts = append(parts, "principles/nats-shapes.md")
+	}
+
+	// Run-20 (post sub-agent C verification) — Zerops platform claim
+	// attestation. Closes corePackage / mode / placeholder-URL
+	// fabrications surfaced in the first sim verification. Tier yaml
+	// comments are the densest fabrication site; this atom is most
+	// load-bearing here.
+	if atom, err := readAtom("principles/zerops-knowledge-attestation.md"); err == nil {
+		b.WriteString(atom)
+		b.WriteString("\n\n")
+		parts = append(parts, "principles/zerops-knowledge-attestation.md")
+	}
+
+	// Run-20 — sharpened yaml-comment-style atom (multi-line wrap +
+	// GOOD/BAD examples). The env-content sub-agent authors tier
+	// import.yaml comments; same wrap rule applies.
+	if atom, err := readAtom("principles/yaml-comment-style.md"); err == nil {
+		b.WriteString(atom)
+		b.WriteString("\n\n")
+		parts = append(parts, "principles/yaml-comment-style.md")
 	}
 
 	// Per-tier capability matrix (already computed) + cross-tier deltas.

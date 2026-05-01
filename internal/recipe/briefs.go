@@ -83,7 +83,7 @@ import (
 // inline comments), nats-shapes (~3 KB; pub/sub vs JetStream
 // dichotomy). Frontend codebases land near 42 KB.
 const (
-	ScaffoldBriefCap = 44 * 1024
+	ScaffoldBriefCap = 48 * 1024
 	FeatureBriefCap  = 20 * 1024
 )
 
@@ -107,11 +107,13 @@ const (
 
 // Run-16 §6.2 — content-phase brief size caps. Per-codebase brief is
 // pointer-based (atoms + filtered facts + metadata + cross-include
-// pointers); target ~25-29 KB. The 40 KB cap is a regression guard
+// pointers); target ~28-44 KB. The 48 KB cap is a regression guard
 // (§Risk 2) — accidental verbatim embeds get caught before dispatch.
+// Run-21 bumped 40→48 KB after synthesis_workflow.md gained
+// IG-scaffold-filename, KB-citation, and voice rules (~5 KB).
 const (
-	CodebaseContentBriefCap = 40 * 1024
-	EnvContentBriefCap      = 40 * 1024
+	CodebaseContentBriefCap = 48 * 1024
+	EnvContentBriefCap      = 48 * 1024
 	ClaudeMDBriefCap        = 8 * 1024 // §Risk 7 — Zerops-free brief stays small by construction
 )
 

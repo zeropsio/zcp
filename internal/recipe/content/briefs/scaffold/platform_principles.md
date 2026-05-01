@@ -79,27 +79,19 @@ shapes. Use them as-is; do not compose, prefix, or transform.
 
 **Resolution timing.** `${<host>_zeropsSubdomain}` is a literal token
 (`${...}` verbatim) until the target service's first deploy mints the
-URL. Build-time-baked references (Vite `define`, Webpack
-`DefinePlugin`, Astro/Next/SvelteKit static-site builds) must order
-the dependency's first deploy BEFORE consuming the alias — otherwise
-the build container reads the literal token and the bundle ships with
-`${apistage_zeropsSubdomain}` baked in instead of the resolved URL.
+URL. For runtime references (`process.env.APISTAGE_URL` read at
+request time), the alias resolves on container start — no ordering concern.
 
-For runtime references (`process.env.APISTAGE_URL` read at request
-time), the alias resolves on container start — no ordering concern.
-The race only bites build-time consumers.
+**Build-time-baked references** (Vite `define`, Webpack
+`DefinePlugin`, Astro/Next/SvelteKit static-site builds) use the
+`${zeropsSubdomainHost}` workspace pattern instead — see the
+included `cross-service-urls.md` principle. `${zeropsSubdomainHost}`
+is a project-scope env var that resolves at provision time, before
+any peer service deploys, so build-time bake works without an
+ordering dance.
 
-Recovery for build-time consumers: deploy the target service first,
-verify the subdomain is minted, THEN trigger the consumer's build.
-Parallel scaffold dispatch makes this race visible — an SPA build
-running in parallel with the api's first deploy is the canonical
-scenario.
-
-`${zeropsSubdomainHost}` is a different beast — it's the
-deliverable-template variable that stays LITERAL in published
-import.yaml; the platform substitutes the end-user's host suffix at
-their click-deploy. Use only inside finalize-phase tier yaml
-templates.
+The deploy-peer-first fallback is a last resort, not the canonical
+fix. Reach for the project-envs pattern first.
 
 When the ORIGIN must be derived (CORS allow-list, Referer check):
 
