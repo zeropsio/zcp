@@ -594,7 +594,11 @@ func TestStitch_IGFirstItemIsEmbeddedYaml(t *testing.T) {
 		if err := os.MkdirAll(srcDir, 0o755); err != nil {
 			t.Fatalf("mkdir: %v", err)
 		}
-		body := "zerops:\n  - setup: prod\n    # " + cb.Hostname + " — because reference style\n    run:\n      base: nodejs@22\n"
+		// Run-20 E1 — scaffold-leaked indented `#` comments are stripped
+		// before IG #1 stamps the yaml. The bare-yaml fixture matches
+		// the post-strip shape so the byte-for-byte assertion below
+		// holds across the strip-then-inject path.
+		body := "zerops:\n  - setup: prod\n    run:\n      base: nodejs@22\n"
 		if err := os.WriteFile(filepath.Join(srcDir, "zerops.yaml"), []byte(body), 0o600); err != nil {
 			t.Fatalf("write yaml: %v", err)
 		}

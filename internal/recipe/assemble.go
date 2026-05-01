@@ -141,7 +141,16 @@ func AssembleCodebaseREADME(plan *Plan, hostname string) (string, []string, erro
 		// before IG #1 stamps the yaml verbatim, so block comments
 		// authored at codebase-content phase ride along into the
 		// published surface (Surface 7).
-		yamlBody = injectZeropsYamlComments(yamlBody, plan.Fragments, hostname)
+		//
+		// Run-20 E1 — strip prior `# #` engine-comment blocks before
+		// re-injecting. Multiple stitchCodebases rounds (scaffold,
+		// feature, finalize stitch-content) read this on-disk yaml,
+		// inject comments, write back; without strip the on-disk file
+		// accumulates duplicated blocks, and the IG #1 inline yaml
+		// inherits them. Mirrors WriteCodebaseYAMLWithComments's strip-
+		// then-inject contract. Pinned by
+		// TestAssembleCodebaseREADME_RemovesDuplicateYAMLComments.
+		yamlBody = injectZeropsYamlComments(stripYAMLComments(yamlBody), plan.Fragments, hostname)
 		body = injectIGItem1(body, yamlBody)
 	}
 	if err := checkUnreplacedTokens(body); err != nil {

@@ -1,6 +1,7 @@
 package recipe
 
 import (
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -272,5 +273,61 @@ func TestAssembleClaudeMD_SingleSlot_StitchesCleanly(t *testing.T) {
 	}
 	if !strings.Contains(body, "# api") {
 		t.Error("single-slot fragment body should be substituted into CLAUDE.md")
+	}
+}
+
+// TestAssembleCodebaseREADME_RemovesDuplicateYAMLComments — Run-20 E1.
+// AssembleCodebaseREADME reads the on-disk zerops.yaml when SourceRoot
+// is set; after the first stitch round writes engine `# #`-prefixed
+// comment blocks above directives, subsequent rounds must NOT
+// re-inject duplicate blocks above the same directive. The fix is a
+// strip-then-inject in AssembleCodebaseREADME mirroring
+// WriteCodebaseYAMLWithComments. Without it, the IG #1 inline yaml
+// shows the same block twice (run-19 §1).
+func TestAssembleCodebaseREADME_RemovesDuplicateYAMLComments(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sourceRoot := dir + "/apidev"
+	if err := os.MkdirAll(sourceRoot, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Pre-existing on-disk yaml with a prior engine-injected comment
+	// block above `envVariables:` — exactly the shape the assembler
+	// would re-encounter on a second stitchCodebases round.
+	yamlBody := `zerops:
+  - setup: api
+    run:
+      base: nodejs@22
+      # NODE_ENV=production: framework needs production-mode at start.
+      envVariables:
+        NODE_ENV: production
+`
+	if err := os.WriteFile(sourceRoot+"/zerops.yaml", []byte(yamlBody), 0o600); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+	plan := &Plan{
+		Slug:      "synth",
+		Framework: "nest",
+		Codebases: []Codebase{{Hostname: "api", Role: RoleAPI, BaseRuntime: "nodejs@22", SourceRoot: sourceRoot}},
+		Fragments: map[string]string{
+			"codebase/api/intro":             "Synthetic API.",
+			"codebase/api/integration-guide": "### 2. Trust the L7\nbody",
+			"codebase/api/knowledge-base":    "- **No `.env` file** — Zerops injects vars.",
+			"codebase/api/claude-md":         "# api\n",
+			// Recorded fragment matches the prior comment block on disk.
+			"codebase/api/zerops-yaml-comments/envVariables": "NODE_ENV=production: framework needs production-mode at start.",
+		},
+	}
+
+	body, _, err := AssembleCodebaseREADME(plan, "api")
+	if err != nil {
+		t.Fatalf("AssembleCodebaseREADME: %v", err)
+	}
+	// The exact comment line must appear EXACTLY once in IG #1.
+	wantLine := "# NODE_ENV=production: framework needs production-mode at start."
+	count := strings.Count(body, wantLine)
+	if count != 1 {
+		t.Errorf("comment line %q appears %d times in IG #1; want exactly 1\n---\n%s",
+			wantLine, count, body)
 	}
 }
