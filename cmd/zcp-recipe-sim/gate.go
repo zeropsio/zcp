@@ -27,9 +27,32 @@ import (
 // Each entry is the union of the phase's gate set + DefaultGates so
 // the citations + fact-required-fields rails fire too — production
 // always runs DefaultGates as the base; the sim path matches.
+//
+// `finalize` is the most thorough sim option — it runs the full
+// CodebaseScaffoldGates + CodebaseContentGates + EnvGates union that
+// production runs at the post-stitch backstop. Use this for end-to-
+// end sim verification.
 var gateSetByName = map[string]func() []recipe.Gate{
 	"codebase-content": func() []recipe.Gate {
 		return append(recipe.DefaultGates(), recipe.CodebaseContentGates()...)
+	},
+	"scaffold": func() []recipe.Gate {
+		return append(recipe.DefaultGates(), recipe.CodebaseScaffoldGates()...)
+	},
+	"env-content": func() []recipe.Gate {
+		return append(recipe.DefaultGates(), recipe.EnvGates()...)
+	},
+	"finalize": func() []recipe.Gate {
+		// Run-21 §A5 — scaffold gates assert PRE-stitch state (bare yaml,
+		// no `^\s*#` lines). Running them post-stitch on the correctly-
+		// commented output produces phantom `scaffold-yaml-leaked-comment`
+		// violations. Production engine fires CodebaseScaffoldGates only
+		// at `complete-phase phase=scaffold`, never at finalize. Sim
+		// finalize is post-stitch + post-content, so it skips them.
+		gates := recipe.DefaultGates()
+		gates = append(gates, recipe.CodebaseContentGates()...)
+		gates = append(gates, recipe.EnvGates()...)
+		return gates
 	},
 }
 
@@ -49,9 +72,16 @@ func runGatesAfterStitch(name string, plan *recipe.Plan, absDir, envDir string) 
 	}
 	gates := build()
 	factsLog := recipe.OpenFactsLog(filepath.Join(envDir, "facts.jsonl"))
+	// Run-21 §5 — sim layout mirrors runs/<N>/ on-disk shape: tier
+	// folders live under `<absDir>/environments/<tier>/`, NOT directly
+	// under `<absDir>/`. Production engine's gate (gateEnvImportsPresent,
+	// resolveSurfacePaths) treats OutputRoot AS the env-root, so sim
+	// passes the env-root explicitly. Without this, every tier-presence
+	// gate fires false `env-import-missing` against
+	// `<absDir>/<tier>/import.yaml` (which doesn't exist).
 	ctx := recipe.GateContext{
 		Plan:       plan,
-		OutputRoot: absDir,
+		OutputRoot: filepath.Join(absDir, "environments"),
 		FactsLog:   factsLog,
 	}
 	violations := recipe.RunGates(gates, ctx)

@@ -85,9 +85,11 @@ func runEmit(args []string) error {
 		}
 		// Run-20 prep S3 — codebase-content + claudemd-author briefs
 		// reference src/**, package.json, composer.json, app/**. Stage
-		// the union from the frozen run dir so the replayed sub-agent
+		// the union from the frozen run dir so each replayed sub-agent
 		// runs against the same file shape it would in production.
-		// Skips node_modules/, vendor/, .git/ at every depth.
+		// Skips node_modules/, vendor/, .git/ at every depth. Both the
+		// codebase-content and claudemd-author prompts (run-21 §3) read
+		// from this staged tree.
 		if err := stageCodebaseArtifacts(runHostDir, simSrcRoot); err != nil {
 			return fmt.Errorf("stage codebase %s artifacts: %w", cb.Hostname, err)
 		}
@@ -145,6 +147,33 @@ func runEmit(args []string) error {
 		fmt.Printf("%s: %d bytes → %s\n", cb.Hostname, len(full), promptPath)
 	}
 
+	// Run-21 §3 — One prompt per codebase for the claudemd-author sub-
+	// agent. Production dispatches this in parallel with codebase-content
+	// at phase 5 (briefs_subagent_prompt.go::isCodebaseScopedKind=true).
+	// Without it, sim's CLAUDE.md output stays as the 82-byte placeholder
+	// the template emits.
+	for _, cb := range plan.Codebases {
+		cbFragDir := filepath.Join(fragsRoot, cb.Hostname)
+		if err := os.MkdirAll(cbFragDir, 0o755); err != nil {
+			return err
+		}
+		input := recipe.RecipeInput{
+			BriefKind: string(recipe.BriefClaudeMDAuthor),
+			Codebase:  cb.Hostname,
+			Slug:      plan.Slug,
+		}
+		canonical, err := recipe.BuildSubagentPromptForReplay(plan, parent, input, recipe.PhaseCodebaseContent, *mountRoot, facts)
+		if err != nil {
+			return fmt.Errorf("BuildSubagentPromptForReplay claudemd-author codebase=%s: %w", cb.Hostname, err)
+		}
+		full := replayAdapter(cbFragDir) + canonical
+		promptPath := filepath.Join(briefsDir, cb.Hostname+"-claudemd-prompt.md")
+		if err := os.WriteFile(promptPath, []byte(full), 0o600); err != nil {
+			return fmt.Errorf("write claudemd prompt: %w", err)
+		}
+		fmt.Printf("%s claudemd-author: %d bytes → %s\n", cb.Hostname, len(full), promptPath)
+	}
+
 	// One prompt for env-content (single sub-agent for all env surfaces).
 	envFragDir := filepath.Join(fragsRoot, "env")
 	if err := os.MkdirAll(envFragDir, 0o755); err != nil {
@@ -166,20 +195,27 @@ func runEmit(args []string) error {
 	fmt.Printf("env: %d bytes → %s\n", len(envFull), envPromptPath)
 
 	fmt.Printf("\nready: dispatch %d Agent calls (one per prompt) then run `zcp-recipe-sim stitch -dir %s`\n",
-		len(plan.Codebases)+1, *outDir)
+		2*len(plan.Codebases)+1, *outDir)
 	return nil
 }
 
 // replayAdapter is the only divergence from the canonical engine
 // prompt: it tells the agent to write fragments as plain markdown
-// files instead of calling the record-fragment MCP tool. Everything
-// the agent should learn about the recipe, voice, surfaces, anti-
-// patterns, etc. lives downstream in the engine-emitted brief.
+// files instead of calling the record-fragment MCP tool, AND it
+// substitutes on-disk file reads for the MCP knowledge channels
+// (`zerops_knowledge`, `zerops_discover`) that the brief instructs
+// the agent to query. Everything else — recipe context, voice,
+// surfaces, anti-patterns — lives downstream in the engine-emitted
+// brief.
 func replayAdapter(fragmentsDir string) string {
 	return fmt.Sprintf(`<replay-adapter>
 This is an offline replay. There is no live recipe session and no MCP
-endpoint. Wherever the engine brief below instructs you to call
-`+"`zerops_recipe action=record-fragment`"+`, instead use the `+"`Write`"+`
+endpoint. Two substitutions apply for the duration of this prompt:
+
+## 1. record-fragment → write file
+
+Wherever the engine brief below instructs you to call
+`+"`zerops_recipe action=record-fragment`"+`, use the `+"`Write`"+`
 tool to author the fragment as a markdown file under:
 
     %s/
@@ -190,12 +226,44 @@ replaced by '__', plus the '.md' suffix. Example: fragment id
 `+"`codebase__api__integration-guide__2.md`"+`. Body = the fragment body
 verbatim, no JSON wrapper.
 
-Other MCP tools (`+"`zerops_recipe`"+` action=*, `+"`zerops_knowledge`"+`,
-`+"`zerops_*`"+`) will fail in this replay — read on-disk content via
-`+"`Read`"+` / `+"`Glob`"+` / `+"`Grep`"+` instead. The `+"`complete-phase`"+`
-self-validate step has no analog here; just author every required
-fragment, then terminate with a final report listing every file you
-wrote and any close-criteria you couldn't satisfy.
+## 2. zerops_knowledge → read the on-disk knowledge corpus
+
+Wherever the brief instructs you to call
+`+"`zerops_knowledge query=<topic>`"+` or
+`+"`zerops_knowledge runtime=<type>`"+`, instead use `+"`Read`"+` /
+`+"`Glob`"+` / `+"`Grep`"+` against the on-disk knowledge corpus rooted at:
+
+    /Users/fxck/www/zcp/internal/knowledge/
+
+The corpus layout:
+
+- `+"`internal/knowledge/themes/services.md`"+` — per-service catalog
+  (PostgreSQL, MariaDB, Valkey, NATS, Meilisearch, object-storage,
+  every managed-service family). Search by service-type heading.
+- `+"`internal/knowledge/themes/core.md`"+` — yaml schema reference
+  (workspace + deliverable shapes, every directive's allowed values).
+- `+"`internal/knowledge/guides/<topic>.md`"+` — platform-wide topic
+  guides (deployment-lifecycle, scaling, networking, environment-
+  variables, public-access, production-checklist, init-commands,
+  rolling-deploys, build-cache, logging, metrics, smtp, vpn,
+  zerops-yaml-advanced, etc.). List the directory to see all topics.
+- `+"`internal/knowledge/recipes/<slug>.md`"+` — per-recipe markdown
+  with framework-specific findings, when present.
+
+If the topic the brief named has no matching file, that's the
+"guide silent" fallback — the attestation principle's omit-the-claim
+rule applies.
+
+`+"`zerops_discover`"+` and other live-platform MCP tools have no
+sim equivalent. The brief's recipe-level metadata (codebases,
+services, plan envs) is in the prompt above; use it for any
+"discover the env keys this service exposes" type question.
+
+## 3. complete-phase has no analog
+
+Just author every required fragment, then terminate with a final
+report listing every file you wrote and any close-criteria you
+couldn't satisfy.
 </replay-adapter>
 
 `, fragmentsDir)

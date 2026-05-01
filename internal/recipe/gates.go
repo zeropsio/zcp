@@ -74,6 +74,14 @@ func CodebaseScaffoldGates() []Gate {
 		// time so the codebase-content sub-agent has the rationale stream
 		// it needs to author yaml-comment fragments.
 		{Name: "fact-rationale-completeness", Run: gateFactRationaleCompleteness},
+		// Run-20 C4 — worker dev-server attestation. Refuses scaffold
+		// complete-phase when a dev codebase whose start is `zsc noop
+		// --silent` lacks a `worker_dev_server_started` fact. Bypass
+		// via `worker_no_dev_server` for one-shot batch codebases.
+		// Closes the run-19 scaffold-worker gap (zero MCP zerops_dev_server
+		// invocations on workerdev — worker behavior was attested only on
+		// the compiled-entry workerstage path).
+		{Name: "worker-dev-server-started", Run: gateWorkerDevServerStarted},
 	}
 }
 
@@ -427,8 +435,7 @@ func gateSourceCommentVoice(ctx GateContext) []Violation {
 // output tree.
 func gateEnvImportsPresent(ctx GateContext) []Violation {
 	var out []Violation
-	for i := range 6 {
-		tier, _ := TierAt(i)
+	for i, tier := range Tiers() {
 		path := filepath.Join(ctx.OutputRoot, tier.Folder, "import.yaml")
 		if _, err := os.Stat(path); err != nil {
 			out = append(out, Violation{

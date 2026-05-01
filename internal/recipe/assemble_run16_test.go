@@ -227,6 +227,151 @@ func firstFragKey(m map[string]string) string {
 	return ""
 }
 
+// Run-21 §1 — setup-scoped block matching closes the dual-setup
+// leaf-collision bug. With a multi-setup yaml, fragments named
+// `<setup>.<path>.<leaf>` must anchor INSIDE the named setup's range,
+// not on the file's first occurrence of `<leaf>:`. Pre-fix, both
+// `dev.run.envVariables` and `prod.run.envVariables` collapsed onto
+// the first `envVariables:` line (always the dev block), leaving the
+// prod block bare.
+func TestInjectZeropsYamlComments_SetupScoped_AnchorsInsideNamedSetup(t *testing.T) {
+	t.Parallel()
+	yamlBody := `zerops:
+  - setup: dev
+    run:
+      envVariables:
+        NODE_ENV: development
+      start: zsc noop --silent
+  - setup: prod
+    run:
+      envVariables:
+        NODE_ENV: production
+      start: node dist/main.js
+`
+	fragments := map[string]string{
+		"codebase/api/zerops-yaml-comments/dev.run.envVariables":  "Dev env-vars: NODE_ENV=development gates plugins.",
+		"codebase/api/zerops-yaml-comments/prod.run.envVariables": "Prod env-vars: NODE_ENV=production strips dev tooling.",
+		"codebase/api/zerops-yaml-comments/dev.run.start":         "Dev start: zsc noop hands the process to zerops_dev_server.",
+		"codebase/api/zerops-yaml-comments/prod.run.start":        "Prod start: platform supervises the compiled entry.",
+	}
+	out := injectZeropsYamlComments(yamlBody, fragments, "api")
+
+	devSetup := strings.Index(out, "- setup: dev")
+	prodSetup := strings.Index(out, "- setup: prod")
+	if devSetup < 0 || prodSetup < 0 {
+		t.Fatalf("setup boundaries missing in output:\n%s", out)
+	}
+
+	devSlice := out[devSetup:prodSetup]
+	prodSlice := out[prodSetup:]
+
+	if !strings.Contains(devSlice, "NODE_ENV=development gates plugins") {
+		t.Errorf("dev env-vars comment must land in dev setup range; got dev:\n%s", devSlice)
+	}
+	if strings.Contains(devSlice, "NODE_ENV=production strips dev tooling") {
+		t.Errorf("prod env-vars comment leaked into dev setup range:\n%s", devSlice)
+	}
+	if !strings.Contains(prodSlice, "NODE_ENV=production strips dev tooling") {
+		t.Errorf("prod env-vars comment must land in prod setup range; got prod:\n%s", prodSlice)
+	}
+	if !strings.Contains(devSlice, "zsc noop hands the process") {
+		t.Error("dev start comment must land in dev setup")
+	}
+	if !strings.Contains(prodSlice, "platform supervises the compiled entry") {
+		t.Error("prod start comment must land in prod setup")
+	}
+}
+
+// Run-21 §1 — back-compat: a block name without a setup prefix still
+// matches first-occurrence (single-setup yaml, or pre-run-21 fragments
+// already in the wild). The setup-scope branch only fires when the
+// first dot-segment matches a `- setup: <name>` line.
+func TestInjectZeropsYamlComments_NoSetupPrefix_FirstMatchPreserved(t *testing.T) {
+	t.Parallel()
+	yamlBody := `zerops:
+  - setup: app
+    run:
+      envVariables:
+        FOO: bar
+`
+	fragments := map[string]string{
+		"codebase/api/zerops-yaml-comments/run.envVariables": "Run-time env-vars are own-key aliases.",
+	}
+	out := injectZeropsYamlComments(yamlBody, fragments, "api")
+	if !strings.Contains(out, "# Run-time env-vars are own-key aliases.") {
+		t.Errorf("non-setup-prefixed block should still anchor on first match; got:\n%s", out)
+	}
+}
+
+// Run-21 §4 — engine strips a leading `# ` (or bare `#`) from each
+// fragment line before re-prefixing, so agents that pre-hash their
+// fragment bodies (per yaml-comment-style atom) don't produce double-
+// hash artifacts (`# #`) in the rendered yaml. Bare `#` paragraph
+// separators emit as bare `#` (no trailing space) to match the
+// laravel-showcase golden shape.
+func TestInjectZeropsYamlComments_PrehashedBody_NormalizedToSingleHash(t *testing.T) {
+	t.Parallel()
+	yamlBody := `zerops:
+  - setup: app
+    run:
+      envVariables:
+        FOO: bar
+`
+	fragments := map[string]string{
+		"codebase/api/zerops-yaml-comments/envVariables": "# Cross-service refs re-aliased under stable own-keys.\n#\n# Replace S3_REGION with whatever your library expects.",
+	}
+	out := injectZeropsYamlComments(yamlBody, fragments, "api")
+
+	if strings.Contains(out, "# # Cross-service") {
+		t.Errorf("double-hash artifact present in output (engine should strip leading `# `):\n%s", out)
+	}
+	if !strings.Contains(out, "# Cross-service refs re-aliased under stable own-keys.") {
+		t.Errorf("normalized comment line missing:\n%s", out)
+	}
+	// Paragraph separator: bare `#` (no `# #`, no trailing space).
+	lines := strings.Split(out, "\n")
+	hasBareHash := false
+	for _, ln := range lines {
+		trimmed := strings.TrimLeft(ln, " ")
+		if trimmed == "#" {
+			hasBareHash = true
+			break
+		}
+	}
+	if !hasBareHash {
+		t.Errorf("bare `#` paragraph separator missing in output:\n%s", out)
+	}
+	if strings.Contains(out, "# # Replace") || strings.Contains(out, "# #\n") {
+		t.Errorf("double-hash artifact present (`# #`):\n%s", out)
+	}
+}
+
+// Run-21 §4 — agents that DON'T pre-hash (write raw prose as the
+// fragment body) still get correct output: the engine adds `# ` to
+// each line, no double-hash, no missing prefix.
+func TestInjectZeropsYamlComments_RawProseBody_PrefixedOnce(t *testing.T) {
+	t.Parallel()
+	yamlBody := `zerops:
+  - setup: app
+    run:
+      envVariables:
+        FOO: bar
+`
+	fragments := map[string]string{
+		"codebase/api/zerops-yaml-comments/envVariables": "Two setups, two build shapes.\nDev ships source unfiltered.",
+	}
+	out := injectZeropsYamlComments(yamlBody, fragments, "api")
+	if !strings.Contains(out, "# Two setups, two build shapes.") {
+		t.Errorf("raw prose line should get single `# ` prefix:\n%s", out)
+	}
+	if !strings.Contains(out, "# Dev ships source unfiltered.") {
+		t.Error("raw prose continuation line must also get `# ` prefix")
+	}
+	if strings.Contains(out, "# # Two setups") {
+		t.Errorf("raw prose must not gain a double-hash:\n%s", out)
+	}
+}
+
 // Run-16 reviewer D-6 — the legacy `claude-md/{service-facts,notes}`
 // sub-slot back-compat synthesizer was dropped because its synthesized
 // body opened with the very `## Zerops service facts` heading that the

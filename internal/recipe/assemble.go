@@ -280,35 +280,80 @@ func injectZeropsYamlComments(yamlBody string, fragments map[string]string, host
 
 // insertCommentAtBlock locates the named yaml block and inserts the
 // comment fragment immediately above with matching indentation. block
-// is the leaf yaml key name (dot-separated paths supported via the
-// final segment). The actual line's indentation determines the
-// comment's indent — the regex matches any line ending in `<leaf>:`
-// preceded only by whitespace, then the matched whitespace becomes
-// the comment indent.
+// is a dot-separated yaml path; the LAST segment names the leaf key
+// to anchor on (e.g. `envVariables`, `build`, `readinessCheck`). When
+// the FIRST segment matches a `- setup: <name>` line, the leaf-key
+// search is scoped to that setup's range — this lets a multi-setup
+// codebase yaml carry one comment block per (setup, leaf) pair without
+// every fragment collapsing onto the first setup. Block names without
+// a setup prefix retain the run-16 single-match shape for back-compat.
+//
+// Fragment-body normalization: each line is canonicalized before re-
+// prefixing. Lines starting with `# ` or bare `#` have that prefix
+// stripped first so the engine's `# ` re-prefix never produces double-
+// hash artifacts (`# #`); a line that's bare `#` (paragraph separator
+// in the agent's body) emits as bare `#` (no trailing space) to match
+// the golden reference shape. Idempotent regardless of whether the
+// agent pre-hashed the fragment body or wrote raw prose.
 func insertCommentAtBlock(yamlBody, block, comment string) string {
 	parts := strings.Split(block, ".")
 	if len(parts) == 0 {
 		return yamlBody
 	}
 	leaf := parts[len(parts)-1]
-	// Match any line of the form `^( *)<leaf>:` — the captured
-	// whitespace IS the indent. Multi-line mode anchors `^` at every
-	// line-start, so we don't match `<leaf>:` inside a multi-line
-	// string value.
-	re := regexp.MustCompile(`(?m)^( *)` + regexp.QuoteMeta(leaf+":"))
-	loc := re.FindStringSubmatchIndex(yamlBody)
+
+	// Determine the search range: full body, or scoped to a setup
+	// block when the first dot-segment names one. Run-21 §1 — closes
+	// the dual-setup leaf-collision bug (assemble.go pre-fix matched
+	// only the first occurrence of `<leaf>:` regardless of setup).
+	searchStart, searchEnd := 0, len(yamlBody)
+	if len(parts) >= 2 {
+		setupName := parts[0]
+		setupRe := regexp.MustCompile(`(?m)^\s*-\s*setup:\s*` + regexp.QuoteMeta(setupName) + `\s*$`)
+		if loc := setupRe.FindStringIndex(yamlBody); loc != nil {
+			searchStart = loc[1]
+			nextRe := regexp.MustCompile(`(?m)^\s*-\s*setup:`)
+			if nextLoc := nextRe.FindStringIndex(yamlBody[searchStart:]); nextLoc != nil {
+				searchEnd = searchStart + nextLoc[0]
+			}
+		}
+	}
+
+	leafRe := regexp.MustCompile(`(?m)^( *)` + regexp.QuoteMeta(leaf+":"))
+	scoped := yamlBody[searchStart:searchEnd]
+	loc := leafRe.FindStringSubmatchIndex(scoped)
 	if loc == nil {
 		return yamlBody
 	}
-	indent := yamlBody[loc[2]:loc[3]]
+	insertAt := searchStart + loc[0]
+	indent := scoped[loc[2]:loc[3]]
 	var cb strings.Builder
 	for line := range strings.SplitSeq(strings.TrimRight(comment, "\n"), "\n") {
+		body := stripFragmentLinePrefix(line)
 		cb.WriteString(indent)
+		if strings.TrimSpace(body) == "" {
+			cb.WriteString("#\n")
+			continue
+		}
 		cb.WriteString("# ")
-		cb.WriteString(line)
+		cb.WriteString(body)
 		cb.WriteByte('\n')
 	}
-	return yamlBody[:loc[0]] + cb.String() + yamlBody[loc[0]:]
+	return yamlBody[:insertAt] + cb.String() + yamlBody[insertAt:]
+}
+
+// stripFragmentLinePrefix removes a leading `# ` or bare `#` from a
+// fragment-body line so the engine's re-prefix never double-hashes.
+// Returns the body content without the prefix. A bare `#` returns "";
+// a `# Body` returns "Body"; a `Body` (no hash) returns "Body".
+func stripFragmentLinePrefix(line string) string {
+	if after, ok := strings.CutPrefix(line, "# "); ok {
+		return after
+	}
+	if after, ok := strings.CutPrefix(line, "#"); ok {
+		return after
+	}
+	return line
 }
 
 // injectIGItem1 rewrites the rendered README's integration-guide extract
