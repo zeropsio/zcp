@@ -47,11 +47,14 @@ func gatesForPhase(p Phase) []Gate {
 		// Env-content phase authors root + per-tier surfaces.
 		return append(base, EnvGates()...)
 	case PhaseFinalize:
-		// Finalize re-runs the full set as a backstop; stitch +
-		// validate only at this phase post-run-16. Both gate sets
-		// run here so feature appends and missed corrections still
-		// get caught.
-		base = append(base, CodebaseScaffoldGates()...)
+		// Run-23 fix-1 — scaffold gates assert PRE-stitch state (bare
+		// yaml, no `^\s+#` causal comments). Running them post-stitch
+		// on the engine's own commented output produces phantom
+		// `scaffold-yaml-leaked-comment` violations (run-20 TIMELINE
+		// Issue 4). Sim driver already dropped scaffold gates from its
+		// finalize set in run-22; production now matches. Finalize
+		// re-runs only content + env gates so feature appends and
+		// missed corrections still get caught.
 		base = append(base, CodebaseContentGates()...)
 		return append(base, EnvGates()...)
 	case PhaseRefinement:

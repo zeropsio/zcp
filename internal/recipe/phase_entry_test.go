@@ -97,6 +97,83 @@ func TestGatesForPhase_Finalize_IncludesAllGates(t *testing.T) {
 	mustHaveGate(t, gates, "env-imports-present")
 }
 
+// TestGatesForPhase_FinalizeExcludesScaffoldGates — run-20 §A5 / run-23
+// fix-1. Scaffold gates assert PRE-stitch state (bare yaml, no `^\s+#`
+// causal comments). Running them post-stitch on the engine's own
+// commented output produces phantom `scaffold-yaml-leaked-comment`
+// violations (TIMELINE Issue 4 in run-20). The sim's
+// `cmd/zcp-recipe-sim/gate.go` already dropped scaffold gates from its
+// finalize set in run-22; production engine must match.
+func TestGatesForPhase_FinalizeExcludesScaffoldGates(t *testing.T) {
+	t.Parallel()
+	finalize := gatesForPhase(PhaseFinalize)
+	// Every gate name in CodebaseScaffoldGates() must be absent from the
+	// finalize set.
+	scaffold := CodebaseScaffoldGates()
+	for _, sg := range scaffold {
+		mustNotHaveGate(t, finalize, sg.Name)
+	}
+}
+
+// TestGatesForPhase_SimProdParity — run-23 fix-1. For every phase the
+// sim driver knows about (`scaffold`, `codebase-content`, `env-content`,
+// `finalize`), the production engine's `gatesForPhase(p)` must return
+// the same gate set the sim's `gateSetByName[name]()` returns. The two
+// drift histories must converge: anytime the sim diverges, the engine
+// must follow (or vice versa). Pinned by this test.
+//
+// The sim's mapping lives in cmd/zcp-recipe-sim/gate.go. We reproduce
+// it locally rather than import it (cmd packages aren't importable
+// without breaking the layer boundary) — keep both sides in sync.
+func TestGatesForPhase_SimProdParity(t *testing.T) {
+	t.Parallel()
+	// Mirror cmd/zcp-recipe-sim/gate.go::gateSetByName.
+	simSets := map[Phase]func() []Gate{
+		PhaseScaffold: func() []Gate {
+			return append(DefaultGates(), CodebaseScaffoldGates()...)
+		},
+		PhaseFeature: func() []Gate {
+			return append(DefaultGates(), CodebaseScaffoldGates()...)
+		},
+		PhaseCodebaseContent: func() []Gate {
+			return append(DefaultGates(), CodebaseContentGates()...)
+		},
+		PhaseEnvContent: func() []Gate {
+			return append(DefaultGates(), EnvGates()...)
+		},
+		PhaseFinalize: func() []Gate {
+			gates := DefaultGates()
+			gates = append(gates, CodebaseContentGates()...)
+			gates = append(gates, EnvGates()...)
+			return gates
+		},
+	}
+	for phase, build := range simSets {
+		simGates := build()
+		prodGates := gatesForPhase(phase)
+		if !sameGateNames(simGates, prodGates) {
+			t.Errorf("phase %q: sim/prod gate sets diverge\n  sim:  %v\n  prod: %v",
+				phase, gateNames(simGates), gateNames(prodGates))
+		}
+	}
+}
+
+// sameGateNames returns true when two gate slices have identical
+// ordered name lists. Order matters for stable parity (engine + sim
+// should run gates in the same order so violation order is
+// reproducible).
+func sameGateNames(a, b []Gate) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Name != b[i].Name {
+			return false
+		}
+	}
+	return true
+}
+
 func TestPhaseEntry_AllPhasesPresent(t *testing.T) {
 	t.Parallel()
 	for _, p := range Phases() {
