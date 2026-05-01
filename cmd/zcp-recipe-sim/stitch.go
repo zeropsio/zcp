@@ -22,9 +22,10 @@ import (
 // directly into Plan.Fragments without append-vs-replace semantics.
 
 func runStitch(args []string) error {
-	fs := flag.NewFlagSet("stitch", flag.ExitOnError)
+	fs := flag.NewFlagSet("stitch", flag.ContinueOnError)
 	dir := fs.String("dir", "", "simulation directory previously populated by `emit` and per-codebase Agent dispatches")
-	rounds := fs.Int("rounds", 2, "number of stitch rounds to run; rounds≥2 enable the multi-stitch idempotence assertion (run-20 prep S1)")
+	rounds := fs.Int("rounds", 2, "number of stitch rounds to run; rounds>=2 enable the multi-stitch idempotence assertion (run-20 prep S1)")
+	gateSet := fs.String("gates", "", "gate set to run after stitch (run-20 prep S6); 'codebase-content' invokes CodebaseContentGates+DefaultGates against the staged plan + facts + materialized fragments. Empty = skip gate-running.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -107,6 +108,12 @@ func runStitch(args []string) error {
 			return fmt.Errorf("multi-stitch idempotence violated (round %d vs round 1):\n%s", i, diff)
 		}
 		fmt.Printf("round %d byte-equal to round 1 (%d files snapshotted)\n", i, len(snap))
+	}
+
+	if *gateSet != "" {
+		if err := runGatesAfterStitch(*gateSet, plan, absDir, envDir); err != nil {
+			return err
+		}
 	}
 
 	return nil

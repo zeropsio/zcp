@@ -57,10 +57,14 @@ func writeMinimalSimulationOpts(t *testing.T, root string, withYamlComments bool
 		return err
 	}
 	frags := map[string]string{
-		"codebase/api/intro":               "API codebase: NestJS minimal entry.\n",
-		"codebase/api/integration-guide/1": "Integration step one — read the zerops.yaml below.\n",
-		"codebase/api/knowledge-base":      "## Operations\n\nAuthored knowledge-base body.\n",
-		"codebase/api/claude-md":           "# api\n\nAuthored CLAUDE.md body for the api codebase.\n",
+		"codebase/api/intro": "API codebase: NestJS minimal entry.\n",
+		// At least 2 IG numbered headings — codebase-ig-too-few-items
+		// gate floor.
+		"codebase/api/integration-guide/1": "### 1. Read the zerops.yaml\n\nIntegration step one — read the zerops.yaml below.\n",
+		"codebase/api/integration-guide/2": "### 2. Wire the database\n\nAdd a `DATABASE_URL` env binding to your service config.\n",
+		"codebase/api/knowledge-base":      "## Operations\n\nAuthored knowledge-base body covering build, deploy, and run-time observations.\n",
+		// CLAUDE.md must clear the claude-md-too-short floor (>=200 bytes).
+		"codebase/api/claude-md": claudeMDFixtureBody,
 	}
 	if withYamlComments {
 		// Engine routes `zerops-yaml-comments/<directive>` fragments
@@ -109,6 +113,24 @@ func minimalPlan(sourceRoot string) *recipe.Plan {
 		},
 	}
 }
+
+// claudeMDFixtureBody clears the claude-md-too-short gate floor
+// (>=200 bytes) without any Zerops content (the brief composer's
+// hard-prohibition validator refuses platform terms).
+const claudeMDFixtureBody = `# api codebase
+
+## Architecture
+
+The api codebase is a small NestJS application that exposes a REST surface
+backed by a Postgres database. Controllers live under src/modules/* and
+DTOs map cleanly to entity rows.
+
+## Build & run
+
+- pnpm install
+- pnpm build  (compiles to dist/)
+- pnpm start  (boots the dev server)
+`
 
 // minimalYAML is a bare-comments zerops.yaml. Engine reads this from
 // disk during stitch; the assembler's injectZeropsYamlComments stamps
