@@ -63,7 +63,8 @@ func runEmit(args []string) error {
 		return fmt.Errorf("abs(%s): %w", *outDir, err)
 	}
 	for i, cb := range plan.Codebases {
-		runYAML := filepath.Join(*runDir, cb.Hostname+"dev", "zerops.yaml")
+		runHostDir := filepath.Join(*runDir, cb.Hostname+"dev")
+		runYAML := filepath.Join(runHostDir, "zerops.yaml")
 		raw, err := os.ReadFile(runYAML)
 		if err != nil {
 			return fmt.Errorf("read %s: %w", runYAML, err)
@@ -78,8 +79,16 @@ func runEmit(args []string) error {
 		if err := os.WriteFile(filepath.Join(simSrcRoot, "zerops.yaml"), []byte(bare), 0o600); err != nil {
 			return fmt.Errorf("write bare yaml: %w", err)
 		}
+		// Run-20 prep S3 — codebase-content + claudemd-author briefs
+		// reference src/**, package.json, composer.json, app/**. Stage
+		// the union from the frozen run dir so the replayed sub-agent
+		// runs against the same file shape it would in production.
+		// Skips node_modules/, vendor/, .git/ at every depth.
+		if err := stageCodebaseArtifacts(runHostDir, simSrcRoot); err != nil {
+			return fmt.Errorf("stage codebase %s artifacts: %w", cb.Hostname, err)
+		}
 		plan.Codebases[i].SourceRoot = simSrcRoot
-		fmt.Printf("staged %s/zerops.yaml (%d → %d bytes after strip)\n",
+		fmt.Printf("staged %s/zerops.yaml (%d → %d bytes after strip) + code artifacts\n",
 			cb.Hostname, len(raw), len(bare))
 	}
 	// Persist the SourceRoot-rewritten plan so stitch reads the staged

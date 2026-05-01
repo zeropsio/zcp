@@ -265,7 +265,7 @@ func firstSnapshotDiff(want, got map[string]string) string {
 // which two strings differ, or len(min(a,b)) if one is a prefix.
 func firstDiffOffset(a, b string) int {
 	n := min(len(a), len(b))
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if a[i] != b[i] {
 			return i
 		}
