@@ -329,7 +329,12 @@ func TestMaybeAutoEnableSubdomain_AllEligibleModes_TriggerEnable(t *testing.T) {
 		{"LocalStage", topology.PlanModeLocalStage, true},
 		{"LocalOnly", topology.PlanModeLocalOnly, false},
 		{"Unknown", topology.Mode("production-future"), false}, // future-proof: new modes default to skip
-		{"Empty", topology.Mode(""), false},
+		// Run-20 C7 closure: empty Mode falls through to the live HTTP-route
+		// check (HTTPSupport=true on port 3000 in this fixture), so eligibility
+		// holds. Pre-fix this case returned false, silently skipping
+		// auto-enable for the recipe-authoring scaffold path that records
+		// ServiceMeta without populating Mode (run-19 apidev/apistage gap).
+		{"Empty", topology.Mode(""), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -497,6 +502,41 @@ func TestPlatformEligible_DetailSubdomainAccessFalse_HTTPSupportTrue_Eligible(t 
 
 	if !serviceEligibleForSubdomain(context.Background(), mock, nil, "proj-1", "app") {
 		t.Error("HTTPSupport=true with SubdomainAccess=false (recipe-authoring path) should be eligible")
+	}
+}
+
+// TestPlatformEligible_MetaWithEmptyMode_HTTPSupportTrue_Eligible pins the
+// run-20 C7 closure: the recipe-authoring scaffold's provision phase
+// records ServiceMeta without populating Mode (the meta exists but its
+// Mode field is the empty string). Pre-fix, the mode check at the top of
+// the predicate fell through modeAllowsSubdomain's default branch and
+// returned false, short-circuiting the live-port HTTPSupport check below.
+// Run-19 reproduced the bug: apidev/apistage/appstage skipped auto-enable
+// despite httpSupport:true on port 3000. Empty Mode is "unknown" — fall
+// through to the detail checks rather than treat it as a hard reject.
+func TestPlatformEligible_MetaWithEmptyMode_HTTPSupportTrue_Eligible(t *testing.T) {
+	t.Parallel()
+	mock := platformEligibleMock(false, []platform.Port{
+		{Port: 3000, Protocol: "tcp", HTTPSupport: true},
+	})
+	emptyModeMeta := &workflow.ServiceMeta{Hostname: autoEnableTestHostname} // Mode left empty
+	if !serviceEligibleForSubdomain(context.Background(), mock, emptyModeMeta, "proj-1", autoEnableTestHostname) {
+		t.Error("meta with empty Mode + httpSupport:true should be eligible (recipe-authoring path)")
+	}
+}
+
+// TestPlatformEligible_MetaWithExplicitWrongMode_NotEligible confirms the
+// mode check still rejects when Mode is explicitly set to a value outside
+// the allow-list (production codebases shouldn't auto-enable). The C7 fix
+// only relaxes the EMPTY-string case, not all mode-mismatch cases.
+func TestPlatformEligible_MetaWithExplicitWrongMode_NotEligible(t *testing.T) {
+	t.Parallel()
+	mock := platformEligibleMock(true, []platform.Port{
+		{Port: 3000, Protocol: "tcp", HTTPSupport: true},
+	})
+	prodMeta := &workflow.ServiceMeta{Hostname: autoEnableTestHostname, Mode: topology.ModeLocalOnly}
+	if serviceEligibleForSubdomain(context.Background(), mock, prodMeta, "proj-1", autoEnableTestHostname) {
+		t.Error("meta with explicit ModeLocalOnly should NOT be eligible even with HTTPSupport=true")
 	}
 }
 

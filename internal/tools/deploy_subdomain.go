@@ -153,7 +153,18 @@ func serviceEligibleForSubdomain(
 	meta *workflow.ServiceMeta,
 	projectID, targetService string,
 ) bool {
-	if meta != nil && !modeAllowsSubdomain(meta.Mode) {
+	// Run-20 C7 closure: empty meta.Mode is treated as "no constraint,
+	// fall through to detail checks." The recipe-authoring scaffold's
+	// provision phase records ServiceMeta without populating Mode, so the
+	// pre-fix predicate hit the default branch in modeAllowsSubdomain
+	// (return false), short-circuiting before the live HTTP-route check
+	// at the end of this function. Run-19 reproduced the bug:
+	// apidev/apistage/appstage all skipped auto-enable despite their
+	// workspace yaml setting enableSubdomainAccess: true and httpSupport
+	// on port 3000. Empty Mode is "unknown" — the platform-side detail
+	// checks (SubdomainAccess OR Ports[].HTTPSupport) are authoritative
+	// and shouldn't be bypassed by a missing-but-not-nil meta.
+	if meta != nil && meta.Mode != "" && !modeAllowsSubdomain(meta.Mode) {
 		return false
 	}
 	svc, err := ops.LookupService(ctx, client, projectID, targetService)
