@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/recipe"
@@ -23,11 +24,15 @@ import (
 func runStitch(args []string) error {
 	fs := flag.NewFlagSet("stitch", flag.ExitOnError)
 	dir := fs.String("dir", "", "simulation directory previously populated by `emit` and per-codebase Agent dispatches")
+	rounds := fs.Int("rounds", 2, "number of stitch rounds to run; rounds≥2 enable the multi-stitch idempotence assertion (run-20 prep S1)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *dir == "" {
 		return errors.New("stitch: -dir is required")
+	}
+	if *rounds < 1 {
+		return fmt.Errorf("stitch: -rounds must be >= 1, got %d", *rounds)
 	}
 
 	envDir := filepath.Join(*dir, "environments")
@@ -65,13 +70,64 @@ func runStitch(args []string) error {
 		return fmt.Errorf("abs(%s): %w", *dir, err)
 	}
 
-	// Root README.
-	rootBody, missing, err := recipe.AssembleRootREADME(plan)
-	if err != nil {
-		return fmt.Errorf("AssembleRootREADME: %w", err)
+	// Multi-stitch idempotence (run-20 prep S1) — production runs
+	// `stitchCodebases` at every phase boundary (scaffold, feature,
+	// finalize). The run-19 inline-yaml block-doubling regression only
+	// surfaces on round ≥2, so a single linear pass misses it. This
+	// driver runs the assemble+write loop `rounds` times and byte-
+	// diffs round N vs round 1; equal = idempotent, unequal = the
+	// engine accumulates state across rounds (typically duplicated
+	// `# #` comment blocks in codebase READMEs).
+	var firstSnapshot map[string]string
+	for i := 1; i <= *rounds; i++ {
+		fmt.Printf("\n=== stitch round %d/%d ===\n", i, *rounds)
+		missing, err := stitchOnce(plan, absDir)
+		if err != nil {
+			return fmt.Errorf("stitch round %d: %w", i, err)
+		}
+		if i == 1 {
+			if len(missing) > 0 {
+				fmt.Printf("\nmissing fragments: %s\n", strings.Join(uniqueSorted(missing), ", "))
+			} else {
+				fmt.Println("\nall fragments resolved")
+			}
+		}
+		if *rounds < 2 {
+			continue
+		}
+		snap, err := snapshotStitchOutputs(plan, absDir)
+		if err != nil {
+			return fmt.Errorf("stitch round %d snapshot: %w", i, err)
+		}
+		if i == 1 {
+			firstSnapshot = snap
+			continue
+		}
+		if diff := firstSnapshotDiff(firstSnapshot, snap); diff != "" {
+			return fmt.Errorf("multi-stitch idempotence violated (round %d vs round 1):\n%s", i, diff)
+		}
+		fmt.Printf("round %d byte-equal to round 1 (%d files snapshotted)\n", i, len(snap))
 	}
+
+	return nil
+}
+
+// stitchOnce runs one full assemble+write pass: root README, every
+// per-tier README + import.yaml, and every per-codebase
+// {README.md, CLAUDE.md, zerops.yaml}. Returns the union of missing
+// fragments collected across the assemblers — caller decides what
+// (if anything) to print on a partial corpus.
+func stitchOnce(plan *recipe.Plan, absDir string) ([]string, error) {
+	var missing []string
+
+	// Root README.
+	rootBody, m, err := recipe.AssembleRootREADME(plan)
+	if err != nil {
+		return nil, fmt.Errorf("AssembleRootREADME: %w", err)
+	}
+	missing = append(missing, m...)
 	if err := os.WriteFile(filepath.Join(absDir, "README.md"), []byte(rootBody), 0o600); err != nil {
-		return fmt.Errorf("write root README: %w", err)
+		return nil, fmt.Errorf("write root README: %w", err)
 	}
 	fmt.Printf("wrote README.md (%d bytes)\n", len(rootBody))
 
@@ -79,26 +135,26 @@ func runStitch(args []string) error {
 	for i := range recipe.Tiers() {
 		envBody, m, err := recipe.AssembleEnvREADME(plan, i)
 		if err != nil {
-			return fmt.Errorf("AssembleEnvREADME tier=%d: %w", i, err)
+			return nil, fmt.Errorf("AssembleEnvREADME tier=%d: %w", i, err)
 		}
 		missing = append(missing, m...)
 		tier, ok := recipe.TierAt(i)
 		if !ok {
-			return fmt.Errorf("TierAt(%d): no such tier", i)
+			return nil, fmt.Errorf("TierAt(%d): no such tier", i)
 		}
 		tierDir := filepath.Join(absDir, "environments", tier.Folder)
 		if err := os.MkdirAll(tierDir, 0o755); err != nil {
-			return err
+			return nil, err
 		}
 		if err := os.WriteFile(filepath.Join(tierDir, "README.md"), []byte(envBody), 0o600); err != nil {
-			return fmt.Errorf("write env %d README: %w", i, err)
+			return nil, fmt.Errorf("write env %d README: %w", i, err)
 		}
 		yamlBody, err := recipe.EmitDeliverableYAML(plan, i)
 		if err != nil {
-			return fmt.Errorf("EmitDeliverableYAML tier=%d: %w", i, err)
+			return nil, fmt.Errorf("EmitDeliverableYAML tier=%d: %w", i, err)
 		}
 		if err := os.WriteFile(filepath.Join(tierDir, "import.yaml"), []byte(yamlBody), 0o600); err != nil {
-			return fmt.Errorf("write env %d import.yaml: %w", i, err)
+			return nil, fmt.Errorf("write env %d import.yaml: %w", i, err)
 		}
 		fmt.Printf("wrote environments/%s/{README.md,import.yaml}\n", tier.Folder)
 	}
@@ -107,33 +163,114 @@ func runStitch(args []string) error {
 	for _, cb := range plan.Codebases {
 		readmeBody, m, err := recipe.AssembleCodebaseREADME(plan, cb.Hostname)
 		if err != nil {
-			return fmt.Errorf("AssembleCodebaseREADME %s: %w", cb.Hostname, err)
+			return nil, fmt.Errorf("AssembleCodebaseREADME %s: %w", cb.Hostname, err)
 		}
 		missing = append(missing, m...)
 		if err := os.WriteFile(filepath.Join(cb.SourceRoot, "README.md"), []byte(readmeBody), 0o600); err != nil {
-			return fmt.Errorf("write %s README: %w", cb.Hostname, err)
+			return nil, fmt.Errorf("write %s README: %w", cb.Hostname, err)
 		}
 		claudeBody, m, err := recipe.AssembleCodebaseClaudeMD(plan, cb.Hostname)
 		if err != nil {
-			return fmt.Errorf("AssembleCodebaseClaudeMD %s: %w", cb.Hostname, err)
+			return nil, fmt.Errorf("AssembleCodebaseClaudeMD %s: %w", cb.Hostname, err)
 		}
 		missing = append(missing, m...)
 		if err := os.WriteFile(filepath.Join(cb.SourceRoot, "CLAUDE.md"), []byte(claudeBody), 0o600); err != nil {
-			return fmt.Errorf("write %s CLAUDE.md: %w", cb.Hostname, err)
+			return nil, fmt.Errorf("write %s CLAUDE.md: %w", cb.Hostname, err)
 		}
 		// Strip-then-inject yaml comments back into <SourceRoot>/zerops.yaml.
 		if err := recipe.WriteCodebaseYAMLWithComments(plan, cb.Hostname); err != nil {
-			return fmt.Errorf("WriteCodebaseYAMLWithComments %s: %w", cb.Hostname, err)
+			return nil, fmt.Errorf("WriteCodebaseYAMLWithComments %s: %w", cb.Hostname, err)
 		}
 		fmt.Printf("wrote %sdev/{README.md,CLAUDE.md,zerops.yaml}\n", cb.Hostname)
 	}
 
-	if len(missing) > 0 {
-		fmt.Printf("\nmissing fragments: %s\n", strings.Join(uniqueSorted(missing), ", "))
-	} else {
-		fmt.Println("\nall fragments resolved")
+	return missing, nil
+}
+
+// snapshotStitchOutputs reads every file written by stitchOnce into a
+// path → contents map. Used by the multi-stitch idempotence assertion
+// to byte-diff round N vs round 1.
+func snapshotStitchOutputs(plan *recipe.Plan, absDir string) (map[string]string, error) {
+	out := map[string]string{}
+	add := func(path string) error {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+		out[path] = string(body)
+		return nil
 	}
-	return nil
+	if err := add(filepath.Join(absDir, "README.md")); err != nil {
+		return nil, err
+	}
+	for _, t := range recipe.Tiers() {
+		tierDir := filepath.Join(absDir, "environments", t.Folder)
+		if err := add(filepath.Join(tierDir, "README.md")); err != nil {
+			return nil, err
+		}
+		if err := add(filepath.Join(tierDir, "import.yaml")); err != nil {
+			return nil, err
+		}
+	}
+	for _, cb := range plan.Codebases {
+		if cb.SourceRoot == "" {
+			continue
+		}
+		if err := add(filepath.Join(cb.SourceRoot, "README.md")); err != nil {
+			return nil, err
+		}
+		if err := add(filepath.Join(cb.SourceRoot, "CLAUDE.md")); err != nil {
+			return nil, err
+		}
+		if err := add(filepath.Join(cb.SourceRoot, "zerops.yaml")); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// firstSnapshotDiff returns a human-readable description of the first
+// path that differs between two snapshots, or empty when equal.
+// Includes byte counts and a short context window so the failure
+// message is actionable. Sorts paths so the report is deterministic.
+func firstSnapshotDiff(want, got map[string]string) string {
+	keys := make([]string, 0, len(want))
+	for k := range want {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		w := want[k]
+		g, ok := got[k]
+		if !ok {
+			return fmt.Sprintf("file %q present round 1, missing later round", k)
+		}
+		if w == g {
+			continue
+		}
+		// First-divergence offset for an actionable message.
+		d := firstDiffOffset(w, g)
+		return fmt.Sprintf("file %q diverges (round1=%d bytes, later=%d bytes, first divergence at offset %d)",
+			k, len(w), len(g), d)
+	}
+	for k := range got {
+		if _, ok := want[k]; !ok {
+			return fmt.Sprintf("file %q appeared in later round but not round 1", k)
+		}
+	}
+	return ""
+}
+
+// firstDiffOffset returns the byte offset of the first character at
+// which two strings differ, or len(min(a,b)) if one is a prefix.
+func firstDiffOffset(a, b string) int {
+	n := min(len(a), len(b))
+	for i := 0; i < n; i++ {
+		if a[i] != b[i] {
+			return i
+		}
+	}
+	return n
 }
 
 // loadFragmentsTree walks fragments-new/ subdirectories and loads
