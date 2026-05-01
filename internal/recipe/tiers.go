@@ -31,13 +31,23 @@ type Tier struct {
 
 var tiers = [6]Tier{
 	{
-		Index: 0, Folder: "0 — AI Agent", Label: "AI Agent", Suffix: "agent",
+		// Run-23 fix-9 — audience-first label. Folder name (the
+		// spec-fixed "0 — AI Agent" published path) keeps its canonical
+		// shape; the audience Label that lands in tier README headings,
+		// brief intros, and engine fact strings names WHO the tier is
+		// for (porter brings coding agents into the dev loop), not
+		// WHAT the tier is.
+		Index: 0, Folder: "0 — AI Agent", Label: "Include Coding Agents", Suffix: "agent",
 		RunsDevContainer: true, ServiceMode: "NON_HA",
 		RuntimeMinContainers: 1,
 		RuntimeMinRAM:        0.5, ManagedMinRAM: 0.25,
 	},
 	{
-		Index: 1, Folder: "1 — Remote (CDE)", Label: "Remote (CDE)", Suffix: "remote",
+		// Run-23 fix-9 — audience-first label. Folder stays canonical;
+		// audience Label names the developer affordance (porter brings
+		// a Cloud IDE into the loop, e.g. VS Code Remote / Cursor over
+		// SSH) rather than the protocol acronym ("Remote (CDE)").
+		Index: 1, Folder: "1 — Remote (CDE)", Label: "Include Cloud IDE", Suffix: "remote",
 		RunsDevContainer: true, ServiceMode: "NON_HA",
 		RuntimeMinContainers: 1,
 		RuntimeMinRAM:        0.5, ManagedMinRAM: 0.25,

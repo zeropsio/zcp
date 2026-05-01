@@ -113,12 +113,15 @@ func validateEnvREADME(_ context.Context, path string, body []byte, _ SurfaceInp
 				)))
 		}
 	}
-	// Run-22 §N14 — strip the canonical "AI Agent" tier name (engine-
-	// emitted from `tier.Label` on tier 0) before the meta-voice scan.
-	// Without this, the literal substring " agent " in `metaVoiceWords`
-	// fires on the tier name itself ("# AI Agent", "AI Agent tier — ...")
-	// and produces a false positive on every tier-0 README.
+	// Run-22 §N14 / run-23 fix-9 — strip canonical tier-0 audience labels
+	// before the meta-voice scan. tier.Label is engine-emitted into the
+	// tier README (`# {TIER_LABEL}`, "{TIER_LABEL} tier — ...") and the
+	// meta-voice patrol's " agent " / "agent-" needles would otherwise
+	// fire on the tier name itself. Strip both the legacy "AI Agent" and
+	// the run-23 "Include Coding Agents" forms so back-compat content +
+	// freshly-emitted content both pass cleanly.
 	scanBody := strings.ReplaceAll(s, "AI Agent", "")
+	scanBody = strings.ReplaceAll(scanBody, "Include Coding Agents", "")
 	if containsAny(scanBody, metaVoiceWords) {
 		vs = append(vs, notice("meta-agent-voice", path,
 			"env README is porter-facing; contains meta-agent-voice words (agent, zerops_knowledge, sub-agent, scaffolder)"))

@@ -5,8 +5,9 @@ Finalize gates reject on these — fix at author-time:
 - IG item #1 is engine-owned; per-codebase IG items already authored.
   Do NOT touch `codebase/<h>/integration-guide` ids.
 - Env READMEs use porter voice. Forbidden: "agent", "sub-agent",
-  "zerops_knowledge", "scaffold", "feature phase". The "AI Agent" tier
-  label is allowed (it's the literal tier name).
+  "zerops_knowledge", "scaffold", "feature phase". The tier-0 label
+  ("Include Coding Agents", legacy "AI Agent") is allowed — it's the
+  literal tier name and the validator strips it before scanning.
 - **Tier README intro extract** (between `<!-- #ZEROPS_EXTRACT_START:intro# -->`
   markers) is **1-2 sentences ≤ 350 chars**. The recipe-page UI
   renders this content as the tier-card description; ladder content
