@@ -39,6 +39,8 @@ func main() {
 	switch sub {
 	case "emit":
 		err = runEmit(args)
+	case "emit-refinement":
+		err = runEmitRefinement(args)
 	case "stitch":
 		err = runStitch(args)
 	case "validate":
@@ -83,6 +85,16 @@ Subcommands:
             Reads:  <dir>/environments/plan.json
                     <dir>/fragments-new/<host>/*.md
             Flags:  -dir
+
+  emit-refinement  Compose the refinement sub-agent prompt against the
+                   stitched simulation. Run after the codebase-content
+                   + env-content sub-agents have authored fragments and
+                   `+"`stitch`"+` has assembled the full corpus.
+                   Reads:  <dir>/environments/{plan.json,facts.jsonl}
+                           <dir>/{README.md, environments/*, *dev/*}
+                   Writes: <dir>/briefs/refinement-prompt.md
+                           <dir>/fragments-new/refinement/  (empty)
+                   Flags:  -dir, -mount-root, -parent
 
 `)
 }
