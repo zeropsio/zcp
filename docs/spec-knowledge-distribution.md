@@ -522,6 +522,16 @@ per-topic contract tests exist, and none should be added.
 5. **Preventive rules** — anti-patterns the agent should not attempt.
 6. **Cross-references to other atoms** — via `references-atoms`
    frontmatter (rename tracking).
+7. **Procedural rules over declarative state.** An atom MAY assert a
+   fact about the world iff that fact is universally true across every
+   envelope configuration the atom's frontmatter axes match. State
+   that varies WITHIN matching axes must be inspected (instruct the
+   agent to consult the observable signal and act on what's seen) or
+   the axis must be tightened to a scope where the assertion is
+   universal. Verbs that implicitly presume a starting state
+   (`scaffold` → `establish`, `write from scratch` → `adapt or
+   scaffold`) carry the same risk. See §11.8 for the worked
+   procedural-form discipline + verify-state and evidence rules.
 
 ### 11.2 What atoms MUST NOT describe
 
@@ -538,6 +548,19 @@ Enforced by `TestAtomAuthoringLint` (`internal/content/atoms_lint.go`):
    are developer taxonomy; the agent has no use for them at runtime.
 4. **Plan document paths** — `plans/<slug>.md` in atom prose.
    Superseded plans drift; spec should be self-contained.
+5. **Configuration-conditional state as universal fact.**
+   *"Bootstrap does NOT ship a stub"* (lie for recipe-route),
+   *"every service reports ACTIVE"* (managed services report RUNNING),
+   *"the dev process is already running"* (post-redeploy / first-time
+   break it), *"Recipes with X..."* (pattern reachable from any route),
+   *"You are at status=X"* (when other atoms in the same phase assume
+   different status). Use disk/status inspection, a tighter
+   frontmatter axis, or a new axis if the atom-model lacks the
+   dimension you need to filter. The procedural-form principle in
+   §11.1 bullet 7 + §11.8 governs the rewriting discipline; the
+   atom-corpus-verification plan's master defect ledger
+   (`internal/workflow/testdata/atom-goldens/_review-ledger.md`)
+   is the worked-example archive.
 
 ### 11.3 Enforcement
 
@@ -826,9 +849,91 @@ to grandfather HIGH-signal guardrails, sub-agent terminology
 (cluster-#5), and structurally unavoidable env-tokens; new edits
 should prefer markers.
 
----
+### 11.8 Procedural-form principle (verify-state and evidence rules)
 
-## Appendix: Code Reference Map
+The §11.1 bullet 7 + §11.2 bullet 5 pair is the headline; this section
+expands the principle into operational discipline.
+
+**Authoring discipline.** When you find yourself asserting a current-state
+fact about the world ("the dev process is already running", "every service
+is ACTIVE", "you are at status=X"), before committing the prose ask three
+questions:
+
+1. **Does this fact hold across every envelope my axes match?** If you
+   can construct a plausible envelope that matches your axes but where
+   the fact is false, the assertion is a lie-class candidate.
+2. **Does the envelope expose a field for the fact?** If yes, instruct
+   the agent to inspect it. The synthesizer renders the envelope JSON
+   alongside the body — the agent has the field at hand.
+3. **Does the model lack a dimension that would make my axis universal?**
+   If yes, propose a new axis (closed enum), wire it through
+   `internal/workflow/atom.go::validAtomFrontmatterKeys` +
+   `validAtomEnumValues`, and gate the atom on it.
+
+**Inspection idioms.** Replace declarative state with procedural
+inspection. Examples from the atom-corpus-verification work:
+
+- *"The dev process is already running"* → *"Verify the dev process is
+  up first — `zerops_dev_server action=status`; if `running: false`,
+  run `action=start`"* (from `develop-close-mode-auto-workflow-dev`).
+- *"`closeReason: auto-complete` are set"* → *"read
+  `workSession.closeReason` from the envelope to know which:
+  `auto-complete` (success) OR `iteration-cap` (give-up)"* (from
+  `develop-closed-auto`).
+- *"The first deploy landed and verified"* → *"The first deploy is on
+  record (`deployed: true`)"* — drop the verify-state assertion
+  because the synthesizer doesn't pin verify-pass; see §11.9 below.
+- *"Every service reaches `status: ACTIVE`"* → *"every service reaches
+  a running state (`RUNNING` or `ACTIVE`); the readiness predicate at
+  `internal/tools/workflow_checks.go::checkServiceRunning` accepts
+  both"* — corpus-wide RUNNING-vs-ACTIVE sweep from Cycle 3.
+
+### 11.9 Verify-state assertion rule
+
+Atoms MUST NOT assert that verify has passed unless the envelope axis
+model exposes that condition explicitly. The synthesizer derives only
+`never-deployed` vs `deployed` from `ServiceSnapshot.Deployed`
+(`internal/workflow/synthesize.go::envelopeDeployStateMatches`); a
+service can be `deployed=true` yet have a failing verify. If the atom
+needs to differentiate, propose a new axis (e.g. `verifyState:`) — do
+not encode the assertion in prose. Worked example: `develop-strategy-
+review` originally said "The first deploy landed and verified"; rewritten
+to "The first deploy is on record (`deployed: true`)" because the
+`deployStates: [deployed]` axis cannot pin verify outcomes.
+
+### 11.10 Evidence-required for non-obvious platform-mechanics claims
+
+When an atom asserts platform behavior beyond what
+`references-fields` / `references-atoms` covers (e.g. "Zerops L7
+balancer terminates SSL", "managed services report RUNNING not ACTIVE",
+"subdomain takes 440ms-1.3s to propagate", "`zerops_deploy` SSHes
+using ZCP's runtime container internal key"), the assertion MUST be
+backed by either:
+
+- (a) an observable response field cited in `references-fields`,
+- (b) a comment pointer to a live-eval that exercised the claim, or
+- (c) a Zerops docs reference (link or `zcp sync guides` slug).
+
+This is a review gate, not a lint — reviewer asks "where's the
+evidence?" for any non-obvious mechanics claim during golden bless.
+Worked examples from Cycle 3: dropped *"expect 30–90 seconds for
+dynamic runtimes and longer for `php-nginx` / `php-apache`"* (timing
+empirical, no backing) and *"`zerops_deploy` SSHes using ZCP's runtime
+container internal key"* (auth implementation detail; agent doesn't
+need it to use the tool).
+
+### 11.11 Operational application — the master defect ledger
+
+The atom-corpus-verification plan (`plans/atom-corpus-verification-
+2026-05-02.md`) Phase 2 ran a 6-agent review pass over all 30
+canonical scenarios and produced 74 defect entries. The master ledger
+at `internal/workflow/testdata/atom-goldens/_review-ledger.md` is the
+worked-example archive: every Cycle 1/2/3 fix references the ledger
+ID it addresses. New atom authors and reviewers should consult the
+ledger when in doubt — it's the authoritative collection of "this
+phrasing was a lie, here's why, here's how it was fixed".
+
+Scenario growth and pruning policy: see §12 (added in Phase 5).
 
 | Section | Primary code location |
 |---------|----------------------|
