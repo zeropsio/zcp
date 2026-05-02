@@ -294,6 +294,9 @@ func atomEnvelopeAxesMatch(atom KnowledgeAtom, env StateEnvelope) bool {
 	if len(atom.Axes.EnvelopeDeployStates) > 0 && !envelopeDeployStateMatches(env.Services, atom.Axes.EnvelopeDeployStates) {
 		return false
 	}
+	if len(atom.Axes.ExportStatuses) > 0 && !slices.Contains(atom.Axes.ExportStatuses, env.ExportStatus) {
+		return false
+	}
 	return true
 }
 

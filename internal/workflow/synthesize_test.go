@@ -384,6 +384,123 @@ func TestSynthesize_EnvelopeDeployStateFilter(t *testing.T) {
 	}
 }
 
+// TestSynthesize_ExportStatusFilter pins the new exportStatus: axis
+// introduced by the atom-corpus-verification plan (Phase 0a). The axis
+// is envelope-scoped — matches against StateEnvelope.ExportStatus
+// directly. An atom declaring exportStatus: [publish-ready] fires only
+// when env.ExportStatus == "publish-ready"; doesn't fire on other
+// statuses or on a zero-value envelope.ExportStatus. Atoms without the
+// axis are unaffected (no gate).
+func TestSynthesize_ExportStatusFilter(t *testing.T) {
+	t.Parallel()
+
+	corpus := []KnowledgeAtom{
+		{
+			ID: "publish-only", Priority: 1,
+			Axes: AxisVector{
+				Phases:         []Phase{PhaseExportActive},
+				ExportStatuses: []topology.ExportStatus{topology.ExportStatusPublishReady},
+			},
+			Body: "Publish-ready guidance.",
+		},
+		{
+			ID: "scope-or-variant", Priority: 2,
+			Axes: AxisVector{
+				Phases: []Phase{PhaseExportActive},
+				ExportStatuses: []topology.ExportStatus{
+					topology.ExportStatusScopePrompt,
+					topology.ExportStatusVariantPrompt,
+				},
+			},
+			Body: "Scope or variant prompt.",
+		},
+		{
+			ID: "any-export", Priority: 3,
+			Axes: AxisVector{
+				Phases: []Phase{PhaseExportActive},
+			},
+			Body: "Universal export framing.",
+		},
+	}
+
+	cases := []struct {
+		name      string
+		envStatus topology.ExportStatus
+		wantIDs   []string
+	}{
+		{
+			name:      "publish_ready_matches_publish_only",
+			envStatus: topology.ExportStatusPublishReady,
+			wantIDs:   []string{"publish-only", "any-export"},
+		},
+		{
+			name:      "scope_prompt_matches_scope_or_variant",
+			envStatus: topology.ExportStatusScopePrompt,
+			wantIDs:   []string{"scope-or-variant", "any-export"},
+		},
+		{
+			name:      "variant_prompt_matches_scope_or_variant",
+			envStatus: topology.ExportStatusVariantPrompt,
+			wantIDs:   []string{"scope-or-variant", "any-export"},
+		},
+		{
+			name:      "scaffold_required_matches_only_universal",
+			envStatus: topology.ExportStatusScaffoldRequired,
+			wantIDs:   []string{"any-export"},
+		},
+		{
+			name:      "unset_env_status_matches_only_universal",
+			envStatus: topology.ExportStatusUnset,
+			wantIDs:   []string{"any-export"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := StateEnvelope{
+				Phase:        PhaseExportActive,
+				ExportStatus: tc.envStatus,
+			}
+			matches, err := Synthesize(env, corpus)
+			if err != nil {
+				t.Fatalf("Synthesize: %v", err)
+			}
+			gotIDs := make([]string, 0, len(matches))
+			for _, m := range matches {
+				gotIDs = append(gotIDs, m.AtomID)
+			}
+			if len(gotIDs) != len(tc.wantIDs) {
+				t.Fatalf("matched %d atoms, want %d (got %v, want %v)", len(gotIDs), len(tc.wantIDs), gotIDs, tc.wantIDs)
+			}
+			for i, want := range tc.wantIDs {
+				if gotIDs[i] != want {
+					t.Errorf("match[%d] = %q, want %q (full got: %v, want: %v)", i, gotIDs[i], want, gotIDs, tc.wantIDs)
+				}
+			}
+		})
+	}
+
+	// Atoms with exportStatus: gate but envelope is in a non-export phase
+	// must NOT fire — the phases axis already rejects them, but pin the
+	// behavior so a future refactor of atomEnvelopeAxesMatch ordering
+	// doesn't accidentally surface non-export atoms by export status.
+	t.Run("non_export_phase_blocks_atom", func(t *testing.T) {
+		t.Parallel()
+		env := StateEnvelope{
+			Phase:        PhaseDevelopActive,
+			ExportStatus: topology.ExportStatusPublishReady,
+		}
+		matches, err := Synthesize(env, corpus)
+		if err != nil {
+			t.Fatalf("Synthesize: %v", err)
+		}
+		for _, m := range matches {
+			t.Errorf("export-active atom %q must not fire under PhaseDevelopActive (got match)", m.AtomID)
+		}
+	})
+}
+
 // TestParseAtom_DeployStatesAndEnvelopeDeployStatesMutuallyExclusive
 // pins the parse-time guard: an atom declaring BOTH service-scoped
 // deployStates and envelope-scoped envelopeDeployStates is ambiguous —

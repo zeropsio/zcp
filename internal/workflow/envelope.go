@@ -20,6 +20,13 @@ type StateEnvelope struct {
 	Phase        Phase                    `json:"phase"`
 	Environment  Environment              `json:"environment"`
 	IdleScenario IdleScenario             `json:"idleScenario,omitempty"`
+	// ExportStatus discriminates the sub-state of PhaseExportActive — see
+	// topology.ExportStatus. Set by BuildExportEnvelope when the export
+	// workflow handler routes through atom synthesis; zero-value (unset)
+	// for non-export phases. Atoms filter on this via exportStatus:
+	// frontmatter; service-scoped axes paired with this gate fire on the
+	// single targetService snapshot the export envelope carries.
+	ExportStatus topology.ExportStatus    `json:"exportStatus,omitempty"`
 	SelfService  *SelfService             `json:"selfService,omitempty"`
 	Project      ProjectSummary           `json:"project"`
 	Services     []ServiceSnapshot        `json:"services"`
