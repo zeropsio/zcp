@@ -208,7 +208,19 @@ Example: `develop-ready-to-deploy` atom describes recovery for services stuck in
 
 The seven service-scoped axes (`modes`, `closeDeployModes`, `gitPushStates`, `buildIntegrations`, `runtimes`, `deployStates`, `serviceStatus`) evaluate **together per service**: an atom fires only when a single service in the envelope satisfies EVERY declared service-scoped axis. Axis independence (ANY service satisfies X while a DIFFERENT service satisfies Y) would fire atoms whose `{hostname}` substitution references a service the atom isn't semantically about — e.g. `develop-strategy-review (deployStates=[deployed], closeDeployModes=[unset])` would surface when service A is deployed+`auto` and service B is never-deployed+`unset`, despite no single service being both deployed AND unset.
 
-Envelope-wide axes (`phases`, `environments`, `routes`, `steps`, `idleScenarios`) match the envelope directly — conjunction only applies to the service-scoped group.
+Envelope-wide axes (`phases`, `environments`, `routes`, `steps`, `idleScenarios`, `exportStatus`) match the envelope directly — conjunction only applies to the service-scoped group.
+
+### 3.11 `exportStatus` (envelope-scoped, optional)
+
+The export workflow's per-call sub-status — the value of `StateEnvelope.ExportStatus`, which is `topology.ExportStatus`. Closed enum of seven values: `scope-prompt`, `variant-prompt`, `scaffold-required`, `git-push-setup-required`, `classify-prompt`, `validation-failed`, `publish-ready`. Only meaningful when paired with `phases: [export-active]`; ignored on non-export envelopes (zero-value `ExportStatus` on those rejects atoms that gate on this axis).
+
+**Empty = any status.** Atoms without this axis fire regardless of which export sub-status is active. Use the axis to scope status-specific imperative guidance to its triggering branch.
+
+**Service context.** When an atom combines `exportStatus:` with service-scoped axes (e.g. `runtimes: [implicit-webserver]` + `exportStatus: [scaffold-required]`), the service-scoped axes evaluate against the **single targetService snapshot** that `BuildExportEnvelope` populates in `env.Services` — see `internal/workflow/synthesize_export.go::BuildExportEnvelope` and the audit decision in `internal/workflow/synthesize_export_audit.md`. The `scope-prompt` case has no target yet, so atoms gated on `exportStatus: [scope-prompt]` MUST NOT use service-scoped axes (no anchor service to satisfy them).
+
+Example: `export-classify-envs` declares `exportStatus: [classify-prompt]`; it renders alongside the universal `export-intro` only when the handler returns the `classify-prompt` response. Six other status atoms each pin their own value; together they replace the legacy six-atoms-rendering-together overmatch.
+
+**Maintenance burden.** Adding a new export response status (e.g. handler grows a `git-push-conflict` substatus) requires updating ALL of: (a) the `topology.ExportStatus` closed enum + its constant, (b) `validAtomEnumValues["exportStatus"]` in `internal/workflow/atom.go`, (c) the `TestExportStatusValues` topology test, (d) at least one atom whose body covers the new state, (e) the corresponding scenario test in `scenarios_test.go::S12`, (f) the golden file when Phase 1 of the atom-corpus-verification plan lands, and (g) this spec section. The structural axis is the cost paid for not relying on hardcoded inline guidance strings; the alternative — handler-emitted prose drifts from atom prose — was the dual-source-of-truth defect the axis closes (plan `plans/atom-corpus-verification-2026-05-02.md` Phase 0).
 
 ---
 
@@ -239,7 +251,9 @@ canonicalization rationale.
 | `runtimes` | no | Service-scoped (§3.5). |
 | `routes` | no | Bootstrap-only (§3.6). |
 | `steps` | no | Bootstrap-only (§3.7). |
-| `deployStates` | no | Service-scoped (§3.8). Combines with other service-scoped axes under §3.9 conjunction. |
+| `deployStates` | no | Service-scoped (§3.8). Combines with other service-scoped axes under §3.10 conjunction. |
+| `serviceStatus` | no | Service-scoped (§3.9). Combines with other service-scoped axes under §3.10 conjunction. |
+| `exportStatus` | no | Envelope-scoped (§3.11). Closed enum of seven export sub-statuses. Only meaningful with `phases: [export-active]`. |
 | `references-fields` | no | List of Go struct fields in `pkg.Type.Field` form (e.g. `ops.DeployResult.Status`) cited by the atom body. Validated: parser enforces the shape regex, `TestAtomReferenceFieldIntegrity` (in `internal/workflow/`) resolves each entry against `internal/{ops,tools,platform,workflow}/*.go` via AST scan. Part of the authoring contract (§11). |
 | `references-atoms` | no | List of atom IDs the body cross-references. Validated by `TestAtomReferencesAtomsIntegrity` (target atom must exist). Prevents rename drift; part of the authoring contract (§11). |
 | `pinned-by-scenario` | no | List of scenario-test anchors (e.g. `S7_DevelopClosedAuto`). Informational — helps future edits locate downstream test expectations. Not validated at runtime. |
