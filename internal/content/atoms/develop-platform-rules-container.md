@@ -8,7 +8,7 @@ references-fields: [ops.DevServerResult.Running, ops.DevServerResult.HealthStatu
 references-atoms: [develop-dynamic-runtime-start-container, develop-dev-server-reason-codes]
 ---
 
-### Platform rules
+### Platform rules — container additions
 
 Mount basics in `claude_container.md` (boot shim). Container-only
 cautions on top:

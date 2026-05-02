@@ -7,13 +7,13 @@ package workflow
 // deterministic; comparison is byte-exact (mod trailing newline +
 // stripping the optional UNREVIEWED marker).
 //
-// Two env-var gates:
-//   - ZCP_GOLDEN_COMPARE: when set, the comparison test runs. Default
-//     (unset) skips with a TODO message — Phase 1 commits leave goldens
-//     UNREVIEWED, Phase 2 blesses them and flips the default on.
-//   - ZCP_UPDATE_ATOM_GOLDENS: when set, the test regenerates each
-//     golden file from the live envelope+corpus. Mutually exclusive
-//     with CI=true via guardCIRegenerate (panics if both are set).
+// Behavior: comparison is the default (post-Phase-2 acceptance). The
+// only env-var gate is ZCP_UPDATE_ATOM_GOLDENS — when set, the test
+// regenerates each golden from the live envelope+corpus instead of
+// comparing. Mutually exclusive with CI=true via guardCIRegenerate
+// (panics if both are set), so a CI run can never overwrite blessed
+// goldens. Phase 1 / Phase 2 used a ZCP_GOLDEN_COMPARE opt-in gate;
+// that's gone — comparison runs every test invocation.
 //
 // goldenScenario is the in-test shape — id, description, envelope
 // fixture, and an isExportRender flag that selects the export-aware
@@ -60,13 +60,12 @@ func TestScenarios_GoldenComparison(t *testing.T) {
 	}
 
 	regenerate := os.Getenv("ZCP_UPDATE_ATOM_GOLDENS") != ""
-	compare := os.Getenv("ZCP_GOLDEN_COMPARE") != ""
 	if regenerate {
 		guardCIRegenerate()
 	}
-	if !regenerate && !compare {
-		t.Skip("TODO: Phase 2 blesses goldens — set ZCP_GOLDEN_COMPARE=1 to enforce, ZCP_UPDATE_ATOM_GOLDENS=1 to regenerate locally")
-	}
+	// Phase 2 finalize (Cycle 3): goldens are blessed; comparison is the
+	// default behavior. ZCP_UPDATE_ATOM_GOLDENS=1 still regenerates
+	// locally; otherwise every run compares.
 
 	for _, scn := range scenarios {
 		t.Run(scn.id, func(t *testing.T) {
@@ -194,7 +193,7 @@ func regenerateGolden(t *testing.T, scn goldenScenario, atomIDs []string, body s
 	if err := ensureGoldenDir(path); err != nil {
 		t.Fatalf("ensure golden dir: %v", err)
 	}
-	content := renderGoldenFile(scn.id, scn.description, atomIDs, body, true /* unreviewed */)
+	content := renderGoldenFile(scn.id, scn.description, atomIDs, body, false /* unreviewed — Phase 2 finalized */)
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write golden %q: %v", path, err)
 	}

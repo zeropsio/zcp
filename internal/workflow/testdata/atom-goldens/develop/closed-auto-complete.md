@@ -3,8 +3,6 @@ id: develop/closed-auto-complete
 atomIds: [develop-closed-auto, develop-auto-close-semantics]
 description: "develop-closed-auto phase, close reason auto-complete (all services deployed and verified)."
 ---
-<!-- UNREVIEWED -->
-
 The envelope's `phase: develop-closed-auto` is set. The session was closed automatically by one of two close mechanisms — read `workSession.closeReason` from the envelope to know which: `auto-complete` (every in-scope service deployed and verified) OR `iteration-cap` (workflow exhausted its retry budget).
 
 `auto-complete` is the success path: work landed cleanly. Pick a new task and start the next session.

@@ -14,8 +14,10 @@ references-fields: [ops.DeployResult.Status, ops.DeployResult.BuildLogs, ops.Dep
 The Zerops container is empty until the deploy call lands, so probing
 its subdomain or (in container env) SSHing into it first will fail or
 hit a platform placeholder — deploy first, then inspect. `zerops_deploy`
-batches build + runtime container provision + start; expect 30–90 seconds for
-dynamic runtimes and longer for `php-nginx` / `php-apache`.
+batches build + runtime container provision + start. The call returns
+when build completes; runtime container start is a separate phase
+surfaced by `failureClassification.failedPhase` if it fails — read
+that field rather than waiting on a fixed timeout.
 
 If `status` is non-success, read `failureClassification` first — it
 carries the matched `category`, `likelyCause`, and `suggestedAction`

@@ -3,8 +3,6 @@ id: develop/post-adopt-standard-unset
 atomIds: [develop-intro, develop-api-error-meta, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-http-diagnostic, develop-platform-rules-common, develop-strategy-review, develop-deploy-files-self-deploy, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-standard-unset-iterate, develop-standard-unset-promote-stage, develop-auto-close-semantics, develop-verify-matrix, develop-platform-rules-container]
 description: "Adopted standard pair, both halves running, close-mode never picked."
 ---
-<!-- UNREVIEWED -->
-
 ### Development & Deploy
 
 Infrastructure is provisioned and at least one runtime already has a
@@ -193,31 +191,18 @@ Pick explicitly before iterating; the default keeps working but committed close-
 
 ---
 
-### Self-deploy invariant
+### Self-deploy destruction risk
 
-Any service self-deploying MUST have `deployFiles: [.]` or `[./]` in
-the matching setup block. See `develop-deploy-modes` for how ZCP
-classifies self-deploy vs cross-deploy.
+`develop-deploy-modes` covers the high-level self-deploy vs cross-deploy classification + the deployFiles table. This atom drills into the specific destruction-risk path that motivates the `[.]` invariant.
 
-A narrower pattern destroys the target's working tree on the next
-deploy:
+When a self-deploying service uses a narrower deployFiles pattern (e.g. `[./out]`):
 
-1. The build container assembles the artifact from the upload + any
-   `buildCommands` output.
-2. `deployFiles` selects — with a cherry-pick pattern like `[./out]`,
-   only the selected subset enters the artifact.
-3. The runtime container's `/var/www/` is **overwritten** with that subset —
-   source files disappear.
-4. On subsequent self-deploys, `zerops_deploy` finds no source to
-   upload — the target is unrecoverable without a manual re-push from
-   elsewhere.
+1. The build container assembles the artifact from the upload + any `buildCommands` output.
+2. `deployFiles` selects — with a cherry-pick pattern, only the selected subset enters the artifact.
+3. The runtime container's `/var/www/` is **overwritten** with that subset — source files disappear.
+4. On subsequent self-deploys, `zerops_deploy` finds no source to upload — the target is unrecoverable without a manual re-push from elsewhere.
 
-Client-side pre-flight rejects this with
-`INVALID_ZEROPS_YML` before any build triggers, so this failure mode
-cannot reach Zerops.
-
-Cross-deploy has opposite semantics; see `develop-deploy-modes` for
-the full contrast.
+Client-side pre-flight rejects this with `INVALID_ZEROPS_YML` before any build triggers, so this failure mode cannot reach Zerops. (The atom fires for `closeDeployModes:[auto, manual, unset]` because git-push delivery uses cross-deploy semantics where this risk class doesn't apply.)
 
 ---
 
@@ -362,7 +347,7 @@ It has the `Agent(model="sonnet", prompt=...)` template; substitute
 
 ---
 
-### Platform rules
+### Platform rules — container additions
 
 Mount basics in `claude_container.md` (boot shim). Container-only
 cautions on top:

@@ -127,10 +127,13 @@ func TestScenario_S1_NewProjectRecipeMatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Synthesize bootstrap-active: %v", err)
 	}
-	// bootstrap-recipe-import drives "use zerops_import to provision";
-	// bootstrap-intro is the orienting frame for the recipe route.
+	// bootstrap-recipe-import drives "use zerops_import to provision".
+	// (Cycle 3 R3: bootstrap-intro is now steps:[discover]-only — at
+	// provision step the route is committed and the framing overview is
+	// no longer the relevant content; bootstrap-recipe-import owns the
+	// step-specific imperative.)
 	requireAtomIDsContain(t, "S1 bootstrap-active", matchesAfter,
-		"bootstrap-intro", "bootstrap-recipe-import")
+		"bootstrap-recipe-import")
 }
 
 func TestScenario_S5_MixedBootstrappedAndUnmanaged(t *testing.T) {
@@ -1174,6 +1177,7 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"bootstrap-discover-local",
 		"bootstrap-env-var-discovery",
 		"bootstrap-mode-prompt",
+		"bootstrap-intro",
 		"bootstrap-provision-local",
 		"bootstrap-provision-rules",
 		"bootstrap-recipe-close",

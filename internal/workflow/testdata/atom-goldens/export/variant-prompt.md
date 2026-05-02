@@ -3,11 +3,9 @@ id: export/variant-prompt
 atomIds: [export-intro, export-variant-prompt]
 description: "Export workflow, targetService picked but Variant unset on a mode=standard pair — agent picks dev or stage half."
 ---
-<!-- UNREVIEWED -->
-
 You are exporting a deployed runtime so a fresh Zerops project can reproduce the same infrastructure from a single git repo. The output is one repository at the chosen runtime's `/var/www` containing source code, `zerops.yaml` (build/run/deploy pipeline), and `zerops-project-import.yaml` (project + service definitions with `buildFromGit:` pointing back at the same repo). Re-import on a new project happens via `zcli project project-import zerops-project-import.yaml` or the dashboard.
 
-The export workflow is a three-call narrowing — probe, generate, publish — and `zerops_workflow workflow="export"` carries each call.
+The export workflow is a three-call narrowing — probe, generate, publish — and `zerops_workflow workflow="export"` carries each call. Some companion atoms refer to these as **Phase A** (probe — scope/variant prompts), **Phase B** (generate — classify/validate), and **Phase C** (publish — bundle + push).
 
 ## Pick the runtime
 

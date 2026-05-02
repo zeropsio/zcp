@@ -3,8 +3,6 @@ id: develop/first-deploy-recipe-implicit-standard
 atomIds: [develop-first-deploy-intro, develop-api-error-meta, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-first-deploy-env-vars, develop-first-deploy-scaffold-yaml, develop-http-diagnostic, develop-implicit-webserver, develop-platform-rules-common, develop-deploy-files-self-deploy, develop-first-deploy-write-app, develop-knowledge-pointers, develop-auto-close-semantics, develop-first-deploy-execute, develop-verify-matrix, develop-first-deploy-asset-pipeline-container, develop-first-deploy-promote-stage, develop-first-deploy-verify, develop-platform-rules-container, develop-strategy-awareness]
 description: "develop-active, mode=standard pair, php-nginx implicit-webserver runtime + db, never-deployed; bootstrap arrived via recipe route."
 ---
-<!-- UNREVIEWED -->
-
 ### You're in the develop first-deploy branch
 
 The envelope reports at least one in-scope service with
@@ -311,31 +309,18 @@ triage; there is no app process to crash.
 
 ---
 
-### Self-deploy invariant
+### Self-deploy destruction risk
 
-Any service self-deploying MUST have `deployFiles: [.]` or `[./]` in
-the matching setup block. See `develop-deploy-modes` for how ZCP
-classifies self-deploy vs cross-deploy.
+`develop-deploy-modes` covers the high-level self-deploy vs cross-deploy classification + the deployFiles table. This atom drills into the specific destruction-risk path that motivates the `[.]` invariant.
 
-A narrower pattern destroys the target's working tree on the next
-deploy:
+When a self-deploying service uses a narrower deployFiles pattern (e.g. `[./out]`):
 
-1. The build container assembles the artifact from the upload + any
-   `buildCommands` output.
-2. `deployFiles` selects — with a cherry-pick pattern like `[./out]`,
-   only the selected subset enters the artifact.
-3. The runtime container's `/var/www/` is **overwritten** with that subset —
-   source files disappear.
-4. On subsequent self-deploys, `zerops_deploy` finds no source to
-   upload — the target is unrecoverable without a manual re-push from
-   elsewhere.
+1. The build container assembles the artifact from the upload + any `buildCommands` output.
+2. `deployFiles` selects — with a cherry-pick pattern, only the selected subset enters the artifact.
+3. The runtime container's `/var/www/` is **overwritten** with that subset — source files disappear.
+4. On subsequent self-deploys, `zerops_deploy` finds no source to upload — the target is unrecoverable without a manual re-push from elsewhere.
 
-Client-side pre-flight rejects this with
-`INVALID_ZEROPS_YML` before any build triggers, so this failure mode
-cannot reach Zerops.
-
-Cross-deploy has opposite semantics; see `develop-deploy-modes` for
-the full contrast.
+Client-side pre-flight rejects this with `INVALID_ZEROPS_YML` before any build triggers, so this failure mode cannot reach Zerops. (The atom fires for `closeDeployModes:[auto, manual, unset]` because git-push delivery uses cross-deploy semantics where this risk class doesn't apply.)
 
 ---
 
@@ -424,8 +409,10 @@ in git, infrastructure is on Zerops.
 The Zerops container is empty until the deploy call lands, so probing
 its subdomain or (in container env) SSHing into it first will fail or
 hit a platform placeholder — deploy first, then inspect. `zerops_deploy`
-batches build + runtime container provision + start; expect 30–90 seconds for
-dynamic runtimes and longer for `php-nginx` / `php-apache`.
+batches build + runtime container provision + start. The call returns
+when build completes; runtime container start is a separate phase
+surfaced by `failureClassification.failedPhase` if it fails — read
+that field rather than waiting on a fixed timeout.
 
 If `status` is non-success, read `failureClassification` first — it
 carries the matched `category`, `likelyCause`, and `suggestedAction`
@@ -563,7 +550,7 @@ Auto-close behavior is described in `develop-auto-close-semantics`.
 
 ---
 
-### Platform rules
+### Platform rules — container additions
 
 Mount basics in `claude_container.md` (boot shim). Container-only
 cautions on top:

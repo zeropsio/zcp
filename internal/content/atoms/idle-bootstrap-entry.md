@@ -6,14 +6,6 @@ idleScenarios: [empty]
 title: "Bootstrap entry"
 ---
 
-Start a bootstrap workflow to provision infrastructure:
+This is an empty project. Bootstrap provisions the initial infrastructure — `bootstrap-route-options` (rendered alongside) walks through route discovery and dispatch. After the first bootstrap call returns the ranked routes, pick one and call `start` again with `route=...` to commit the session; a service plan is then proposed for you to approve before any services are created.
 
-```
-zerops_workflow action="start" workflow="bootstrap" intent="{your-description}"
-```
-
-Keep the intent one sentence. The first call returns a ranked list of
-route options (recipe matches, adopt, classic) — pick one and call
-start again with `route=...` to commit the session. A service plan is
-then proposed for you to approve or adjust before any services are
-created.
+Keep the `intent` to one sentence — it scopes route ranking but doesn't constrain the plan.

@@ -1,10 +1,8 @@
 ---
 id: develop/git-push-unconfigured
-atomIds: [develop-intro, develop-api-error-meta, develop-change-drives-deploy, develop-close-mode-git-push-needs-setup, develop-deploy-modes, develop-env-var-channels, develop-http-diagnostic, develop-platform-rules-common, develop-deploy-files-self-deploy, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-auto-close-semantics, develop-verify-matrix, develop-platform-rules-container, develop-strategy-awareness]
+atomIds: [develop-intro, develop-api-error-meta, develop-change-drives-deploy, develop-close-mode-git-push-needs-setup, develop-deploy-modes, develop-env-var-channels, develop-http-diagnostic, develop-platform-rules-common, develop-knowledge-pointers, develop-auto-close-semantics, develop-verify-matrix, develop-platform-rules-container, develop-strategy-awareness]
 description: "Standard pair, close-mode git-push, GitPushState unconfigured — agent must run git-push-setup before close."
 ---
-<!-- UNREVIEWED -->
-
 ### Development & Deploy
 
 Infrastructure is provisioned and at least one runtime already has a
@@ -187,64 +185,6 @@ default to
 
 ---
 
-### Self-deploy invariant
-
-Any service self-deploying MUST have `deployFiles: [.]` or `[./]` in
-the matching setup block. See `develop-deploy-modes` for how ZCP
-classifies self-deploy vs cross-deploy.
-
-A narrower pattern destroys the target's working tree on the next
-deploy:
-
-1. The build container assembles the artifact from the upload + any
-   `buildCommands` output.
-2. `deployFiles` selects — with a cherry-pick pattern like `[./out]`,
-   only the selected subset enters the artifact.
-3. The runtime container's `/var/www/` is **overwritten** with that subset —
-   source files disappear.
-4. On subsequent self-deploys, `zerops_deploy` finds no source to
-   upload — the target is unrecoverable without a manual re-push from
-   elsewhere.
-
-Client-side pre-flight rejects this with
-`INVALID_ZEROPS_YML` before any build triggers, so this failure mode
-cannot reach Zerops.
-
-Cross-deploy has opposite semantics; see `develop-deploy-modes` for
-the full contrast.
-
----
-
-### Dynamic-runtime dev server
-
-Dev-mode dynamic runtime containers start running `zsc noop` after
-deploy — no dev process is live until you start one. Action family
-on `zerops_dev_server`:
-
-| Action | Use | Args |
-|---|---|---|
-| `status` | check before `start` (idempotent) — avoids duplicate listener | `hostname port healthPath` |
-| `start` | spawn the dev process | `hostname command port healthPath` |
-| `restart` | survives-the-deploy config/code change | `hostname command port healthPath` |
-| `logs` | tail recent for diagnosis | `hostname logLines=40` |
-| `stop` | end of session, free the port | `hostname port` |
-
-Args:
-- `command` — exact `run.start` from `zerops.yaml`.
-- `port` — `run.ports[0].port`.
-- `healthPath` — app-owned (`/api/health`, `/status`) or `/`.
-
-Response carries `running`, `healthStatus`, `reason`, and `logTail`
-— read these before making another call.
-
-**After every redeploy, re-run `action=start` before `zerops_verify`** —
-the rebuild drops the dev process (see `develop-platform-rules-common`).
-The hand-roll `ssh appdev "cmd &"` anti-pattern is in
-`develop-platform-rules-container`. See `develop-dev-server-reason-codes`
-for `reason` values.
-
----
-
 ### Knowledge on demand — where to pull extra context
 
 When the embedded guidance is not enough, these are the canonical lookups:
@@ -329,7 +269,7 @@ It has the `Agent(model="sonnet", prompt=...)` template; substitute
 
 ---
 
-### Platform rules
+### Platform rules — container additions
 
 Mount basics in `claude_container.md` (boot shim). Container-only
 cautions on top:

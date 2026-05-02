@@ -3,8 +3,6 @@ id: idle/bootstrapped-with-managed
 atomIds: [bootstrap-route-options, idle-develop-entry]
 description: "Idle project with one runtime + one managed dep, both bootstrapped and deployed."
 ---
-<!-- UNREVIEWED -->
-
 ### Bootstrap route discovery
 
 Start with discovery:

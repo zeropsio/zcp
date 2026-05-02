@@ -37,11 +37,8 @@ services. Don't edit resource limits, `buildFromGit`, `priority`,
 zerops_discover
 ```
 
-Every runtime must reach `status: ACTIVE` before `deploy`; managed deps
-usually transition first.
+Runtimes must reach a running state (`RUNNING` or `ACTIVE`) before `deploy`; the readiness predicate at `internal/tools/workflow_checks.go::checkServiceRunning` accepts both. Managed deps usually transition first.
 
 4. **Record discovered env vars.**
 
-After ACTIVE, include managed-service env var keys in the provision
-attestation (e.g. `db: connectionString, port`) for later
-`run.envVariables` references.
+After services are running, include managed-service env var keys in the provision attestation (e.g. `db: connectionString, port`) for later `run.envVariables` references.

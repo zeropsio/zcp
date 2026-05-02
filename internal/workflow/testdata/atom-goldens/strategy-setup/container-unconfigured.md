@@ -3,8 +3,6 @@ id: strategy-setup/container-unconfigured
 atomIds: [setup-git-push-container]
 description: "strategy-setup phase, in-container, GitPushState unconfigured — agent walks through GIT_TOKEN/.netrc setup."
 ---
-<!-- UNREVIEWED -->
-
 The runtime container has no user credentials, so pushes to an external git remote run under `GIT_TOKEN`. Procedure: set the token, mark the capability configured (stamps `GitPushState=configured` + cached `RemoteURL`), then commit and run the first push so deploy and build-integration actions stop blocking on the prereq chain.
 
 ## 1. Set `GIT_TOKEN` as a project env var

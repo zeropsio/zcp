@@ -3,8 +3,6 @@ id: strategy-setup/configured-build-integration
 atomIds: [setup-build-integration-actions, setup-build-integration-webhook]
 description: "strategy-setup phase, GitPushState configured, BuildIntegration none — agent picks webhook vs actions."
 ---
-<!-- UNREVIEWED -->
-
 The Actions integration is one specific ZCP-managed CI shape: a GitHub Actions workflow runs `zcli push` from CI on every push that matches the workflow trigger. ZCP doesn't track or manage external workflows you may already have, so `build-integration=actions` is additive — independent CI/CD keeps running unchanged.
 
 After you call `zerops_workflow action="build-integration" service="appdev" integration="actions"`, the response carries the workflow YAML body + prefilled `gh secret set` commands ready to paste. This atom is the human-readable companion that explains what each piece does and the recommended GitHub PAT shape.

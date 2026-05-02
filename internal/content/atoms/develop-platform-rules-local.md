@@ -6,7 +6,7 @@ environments: [local]
 title: "Platform rules"
 ---
 
-### Platform rules
+### Platform rules — local additions
 
 ### Dev server — always background
 

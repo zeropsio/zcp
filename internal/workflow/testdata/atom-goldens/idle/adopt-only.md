@@ -3,8 +3,6 @@ id: idle/adopt-only
 atomIds: [bootstrap-route-options, idle-adopt-entry]
 description: "Idle project with one unmanaged runtime — eligible for adoption."
 ---
-<!-- UNREVIEWED -->
-
 ### Bootstrap route discovery
 
 Start with discovery:
