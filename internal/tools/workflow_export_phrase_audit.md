@@ -73,7 +73,7 @@ procedural-form principle in plan §11.1 bullet 7)?
 | 5.4 | `grep against source code` | `survived-as-correct` | True per classification protocol. Already in atom. |
 | 5.5 | `re-call with envClassifications={key:bucket} populated to publish` | `survived-as-correct` | True per WorkflowInput contract. Already in atom. |
 | 5.6 | `plan §3.4 four-category classification protocol` | `dropped-pre-migration` | Plan reference. Same rot-vector argument as 2.7. The four bucket names already convey the protocol; the plan cite adds no agent-actionable info. |
-| 5.7 | `per-env review table per amendment 12` | `dropped-pre-migration` | Plan reference / amendment cite. Same as above; the table itself is the response payload, naming the amendment in prose adds noise. |
+| 5.7 | `per-env review table per amendment 12` | `dropped-pre-migration` | Plan reference / amendment cite. Same as above; the table itself is the response payload, naming the amendment in prose adds noise. **Test note**: this phrase lives in the `protocolRef` field today, not `guidance`. The migration retires the entire `protocolRef` field; absence of "amendment 12" is implicit in that field-removal, not explicitly asserted by the substring test (which scopes to `guidance` only). |
 
 ### 6. validation-failed — `validationFailedResponse` (lines 390-403)
 
@@ -156,6 +156,20 @@ The substrings are deliberately loose (single words / short phrases)
 rather than exact-string matches, so atom-body editorial improvements
 during Phase 2 don't break the test. The contract is "these concepts
 must surface in the rendered guidance for this status."
+
+**Absence-check scope**: the RED test asserts dropped substrings are
+absent from `body["guidance"]` only. Two related concerns are
+intentionally out of scope:
+
+1. `bundle.warnings` (from `ops.BuildBundle`) currently appends
+   `(plan §3.4)` to each unclassified-env warning — that's an
+   ops-layer composer, not handler-inline prose. Phase 0b migration
+   retains it; cleanup is a separate concern.
+2. The `protocolRef` field that today carries "amendment 12" is
+   retired entirely by the migration's response-shape simplification.
+   Absence of the phrase becomes implicit in the field's removal,
+   verified by code-review of the 0b.6 commit rather than by an
+   explicit substring assertion.
 
 ## Awaiting user approval
 
