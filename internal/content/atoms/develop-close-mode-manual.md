@@ -5,8 +5,9 @@ phases: [develop-active]
 closeDeployModes: [manual]
 multiService: aggregate
 title: "Manual close-mode = ZCP yields, your tools own the close"
+coverageExempt: "manual close-mode is the rare external-orchestration path — 30 canonical scenarios cover auto + git-push (the common cases); manual is <1% of agent sessions per Phase 4 heuristic"
 ---
-This pair is on `closeDeployMode=manual`. ZCP records deploy and verify attempts when you call its tools, but the implicit auto-close at end of work session is gated off — workflows on manual close stay open until you explicitly close them.
+This service is on `closeDeployMode=manual`. ZCP records deploy and verify attempts when you call its tools, but the implicit auto-close at end of work session is gated off — workflows on manual close stay open until you explicitly close them.
 
 ## Why pick manual
 

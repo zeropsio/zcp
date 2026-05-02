@@ -6,6 +6,7 @@ modes: [dev, simple, standard, local-stage]
 environments: [container]
 serviceStatus: [READY_TO_DEPLOY]
 title: "READY_TO_DEPLOY — bring to ACTIVE first"
+coverageExempt: "rare recovery atom — fires only when serviceStatus=READY_TO_DEPLOY (services created without startWithoutCode:true). Bootstrap-with-startWithoutCode (the common case) leaves services ACTIVE; this atom is the <1%-session recovery for the misconfigured shape"
 ---
 
 ### READY_TO_DEPLOY runtime

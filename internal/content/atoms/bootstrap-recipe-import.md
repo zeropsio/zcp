@@ -31,7 +31,7 @@ already applied plan hostnames and dropped EXISTS-resolved managed
 services. Don't edit resource limits, `buildFromGit`, `priority`,
 `zeropsSetup`, or `type`.
 
-3. **Wait until every service reports `ACTIVE`.** Poll:
+3. **Wait until every service reaches a running state.** Stage services in standard mode legitimately sit at `READY_TO_DEPLOY` until the first dev → stage cross-deploy; that's acceptable here. Poll:
 
 ```
 zerops_discover

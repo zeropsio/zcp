@@ -128,6 +128,7 @@ func lintAtomCorpus(atoms []AtomFile) []AtomLintViolation {
 		out = append(out, axisKViolations(ctx)...)
 		out = append(out, axisMViolations(ctx)...)
 		out = append(out, axisNViolations(ctx)...)
+		out = append(out, axisOViolations(ctx)...)
 		out = append(out, axisHotShellViolations(ctx)...)
 		out = append(out, closeDeployModeViolations(ctx)...)
 		out = append(out, gitPushStateViolations(ctx)...)

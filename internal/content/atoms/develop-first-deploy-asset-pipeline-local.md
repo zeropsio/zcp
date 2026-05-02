@@ -7,6 +7,7 @@ runtimes: [implicit-webserver]
 environments: [local]
 deployStates: [never-deployed]
 title: "Asset pipeline — local build before verify"
+coverageExempt: "local-mode asset pipeline for implicit-webserver — 30 canonical scenarios are container-focused; covered by Phase 5 quarterly live-eval"
 ---
 
 ### Frontend asset pipeline

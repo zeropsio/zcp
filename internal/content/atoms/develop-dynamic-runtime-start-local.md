@@ -6,6 +6,7 @@ runtimes: [dynamic]
 environments: [local]
 modes: [dev, standard, local-stage, local-only]
 title: "Dynamic runtime — local dev server"
+coverageExempt: "local-mode dynamic-runtime dev server — 30 canonical scenarios are container-focused; covered by Phase 5 quarterly live-eval (eval-zcp local-mode runs)"
 ---
 
 ### Dynamic-runtime dev server

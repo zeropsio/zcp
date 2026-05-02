@@ -5,6 +5,7 @@ phases: [bootstrap-active]
 routes: [recipe]
 steps: [discover]
 title: "Recipe matched — plan from the import YAML"
+coverageExempt: "recipe+discover step — 30 canonical scenarios cover recipe at provision + close; discover step is a one-shot transition before route is committed (<1% session frequency where this atom is the actionable signal)"
 ---
 
 ### Field mutability (change an immutable → `route="classic"`)

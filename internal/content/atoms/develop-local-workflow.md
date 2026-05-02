@@ -4,6 +4,7 @@ priority: 3
 phases: [develop-active]
 environments: [local]
 title: "Local development workflow"
+coverageExempt: "local-mode develop overview — 30 canonical scenarios are container-focused; covered by Phase 5 quarterly live-eval"
 ---
 
 ### Development workflow

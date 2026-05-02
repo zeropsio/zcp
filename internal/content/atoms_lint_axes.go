@@ -373,19 +373,64 @@ func axisMarkerViolations(
 }
 
 // ============================================================================
+// Axis O — STATE-DECLARATIVE-LEAK (narrow, post-Phase-2)
+// ============================================================================
+//
+// Spec §11.2 bullet 5 + §11.8: configuration-conditional state asserted
+// as universal fact. Phase 2 of the atom-corpus-verification plan
+// surfaced 13+ instances corpus-wide — many already fixed in Cycles
+// 1-3, but the regression guard belongs at commit time so re-introduced
+// drift fails fast.
+//
+// Five HIGH-signal anti-phrases. NOT including `status="..."` because
+// post-Phase-0b the export status atoms legitimately encode their
+// status via the exportStatus: axis — surfacing the value in body
+// prose would false-positive on tightly-axed atoms.
+var axisOLeakPatterns = []*regexp.Regexp{
+	// "is already running" / "is already configured" — deploy-state /
+	// readiness assumptions that depend on a redeploy-volatile signal.
+	regexp.MustCompile(`(?i)\b(?:is|are)\s+already\s+running\b`),
+	// "every service ACTIVE" / "every service is ACTIVE" — service-
+	// status assertion that matches managed-service status RUNNING too.
+	regexp.MustCompile(`(?i)\bevery\s+service\b[^.]*\bACTIVE\b`),
+	// "is empty" / "are empty" tied to a working-tree / mount /
+	// container — implies a starting state the axis can't guarantee.
+	regexp.MustCompile(`(?i)\b(?:tree|mount|container|workspace)\s+is\s+empty\b`),
+	// "landed and verified" — verify-state assertion (see §11.9 rule).
+	// The axis model does not pin verify-pass; deployStates:[deployed]
+	// covers verify-pass AND verify-fail, so the prose lies in the
+	// fail case.
+	regexp.MustCompile(`(?i)\blanded\s+and\s+verified\b`),
+	// "Bootstrap does NOT ship" — recipe/bootstrap state assertion that
+	// holds for some routes but not others. Variant of the pattern
+	// captured by the master defect ledger.
+	regexp.MustCompile(`(?i)\bBootstrap\s+does\s+NOT\s+ship\b`),
+}
+
+// axisOViolations runs the axis-O patterns against each body line.
+// Markers are the only escape mechanism (no per-axis allowlist —
+// post-Phase-2 the corpus passed clean and seeded allowlists invite
+// drift).
+func axisOViolations(ctx atomLintCtx) []AtomLintViolation {
+	return axisMarkerViolations(ctx, "axis-o", "o", axisOLeakPatterns, nil)
+}
+
+// ============================================================================
 // Marker extraction + lookup
 // ============================================================================
 
-// axisMarkerPattern matches `<!-- axis-{k,m,n,hot-shell}-keep[:signal-#N] -->`
-// and `<!-- axis-{k,m,n,hot-shell}-drop -->`. The captured suffix
-// (k / m / n / hot-shell) tells the caller which axis a marker applies
-// to; the trailing free-form text (signal annotation, rationale) is
-// captured but ignored by lint. axis-hot-shell is the C5 closure axis
-// flagging raw `nohup`/`disown`/`& *$` SSH backgrounding patterns
-// (audit-prerelease-internal-testing-2026-04-29) — sibling atoms that
-// LEGITIMATELY name the anti-pattern (anti-pattern callouts, examples
-// inside a forbidden-list table) tag with `axis-hot-shell-keep`.
-var axisMarkerPattern = regexp.MustCompile(`<!--\s*axis-([kmn]|hot-shell)-(?:keep|drop)(?:\s*:[^>]*)?\s*-->`)
+// axisMarkerPattern matches `<!-- axis-{k,m,n,o,hot-shell}-keep[:signal-#N] -->`
+// and `<!-- axis-{k,m,n,o,hot-shell}-drop -->`. The captured suffix
+// (k / m / n / o / hot-shell) tells the caller which axis a marker
+// applies to; the trailing free-form text (signal annotation,
+// rationale) is captured but ignored by lint. axis-hot-shell is the
+// C5 closure axis flagging raw `nohup`/`disown`/`& *$` SSH
+// backgrounding patterns (audit-prerelease-internal-testing-2026-04-29).
+// axis-o (added 2026-05-02 per atom-corpus-verification Phase 4) is
+// the state-declarative-leak guard; sibling atoms that LEGITIMATELY
+// name a state assertion (forbidden-list tables, anti-pattern
+// callouts) tag with `axis-o-keep`.
+var axisMarkerPattern = regexp.MustCompile(`<!--\s*axis-([kmno]|hot-shell)-(?:keep|drop)(?:\s*:[^>]*)?\s*-->`)
 
 // extractAxisMarkers walks every body line and records which axis
 // markers (k/m/n) appear on it. Markers SUPPRESS lint hits on the same
@@ -467,4 +512,4 @@ func StripAxisMarkers(body string) string {
 // the same line, so an inline marker like `… text. <!-- axis-k-keep -->`
 // collapses to `… text.` cleanly. Standalone marker lines are removed
 // entirely by the StripAxisMarkers caller.
-var axisMarkerStripPattern = regexp.MustCompile(`[ \t]*<!--\s*axis-(?:[kmn]|hot-shell)-(?:keep|drop)(?:\s*:[^>]*)?\s*-->`)
+var axisMarkerStripPattern = regexp.MustCompile(`[ \t]*<!--\s*axis-(?:[kmno]|hot-shell)-(?:keep|drop)(?:\s*:[^>]*)?\s*-->`)

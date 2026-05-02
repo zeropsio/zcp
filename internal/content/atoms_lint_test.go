@@ -203,6 +203,42 @@ func TestAtomAuthoringLint_FiresOnKnownViolations(t *testing.T) {
 			wantPattern: "leak-candidate:/var/www/",
 			wantCat:     "axis-n",
 		},
+		// axis-o (state-declarative-leak) — Phase 4 of atom-corpus-verification
+		{
+			name:        "axis-o-already-running",
+			frontmatter: fmHeader,
+			body:        "The dev process is already running on the dev container.\n",
+			wantPattern: "leak-candidate:is already running",
+			wantCat:     "axis-o",
+		},
+		{
+			name:        "axis-o-every-service-active",
+			frontmatter: fmHeader,
+			body:        "Every service is ACTIVE before deploy.\n",
+			wantPattern: "leak-candidate:every service",
+			wantCat:     "axis-o",
+		},
+		{
+			name:        "axis-o-tree-empty",
+			frontmatter: fmHeader,
+			body:        "The working tree is empty until deploy lands.\n",
+			wantPattern: "leak-candidate:tree is empty",
+			wantCat:     "axis-o",
+		},
+		{
+			name:        "axis-o-landed-and-verified",
+			frontmatter: fmHeader,
+			body:        "The first deploy landed and verified successfully.\n",
+			wantPattern: "leak-candidate:landed and verified",
+			wantCat:     "axis-o",
+		},
+		{
+			name:        "axis-o-bootstrap-does-not-ship",
+			frontmatter: fmHeader,
+			body:        "Bootstrap does NOT ship a stub for recipe routes.\n",
+			wantPattern: "leak-candidate:bootstrap does not ship",
+			wantCat:     "axis-o",
+		},
 		// stale-action / stale-strategy (drift after vocabulary refactors) ---
 		{
 			name:        "stale-action-strategy",
@@ -370,6 +406,16 @@ func TestAtomAuthoringLint_MarkersSuppressAxes(t *testing.T) {
 			name:      "axis-n-marker-suppresses",
 			body:      "Edit files locally. <!-- axis-n-keep -->\n",
 			wantClean: true,
+		},
+		{
+			name:      "axis-o-marker-suppresses",
+			body:      "The dev process is already running. <!-- axis-o-keep -->\n",
+			wantClean: true,
+		},
+		{
+			name:      "axis-o-no-marker-fires",
+			body:      "The dev process is already running across all envelopes.\n",
+			wantClean: false,
 		},
 		{
 			name:      "axis-k-no-marker-fires",

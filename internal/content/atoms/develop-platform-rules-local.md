@@ -4,6 +4,7 @@ priority: 5
 phases: [develop-active]
 environments: [local]
 title: "Platform rules"
+coverageExempt: "local-mode platform rules — 30 canonical scenarios are container-focused; covered by Phase 5 quarterly live-eval"
 ---
 
 ### Platform rules — local additions

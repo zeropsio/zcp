@@ -809,9 +809,41 @@ DROP-LEAK applied here regresses to missing-information; the
 cycle-3 Phase 4 POST-WORK Codex round verified the cross-link
 holds at the time of the corpus pass.
 
-### 11.7 Marker convention (axes K, M, N)
+### 11.6.5 Axis O — STATE-DECLARATIVE-LEAK (narrow)
 
-The axis-K, axis-M, and axis-N lints (`atoms_lint_axes.go`) are
+Phase 4 of the atom-corpus-verification plan adds the `axisOLeakPatterns`
+lint (`internal/content/atoms_lint_axes.go::axisOViolations`). Five
+HIGH-signal phrases caught at commit time:
+
+- `is/are already running` — deploy-state / readiness assumption
+  (volatile across redeploys).
+- `every service ... ACTIVE` — service-status assertion that lies
+  for managed-service status `RUNNING`.
+- `(tree|mount|container|workspace) is empty` — implied starting
+  state the atom's axes can't guarantee.
+- `landed and verified` — verify-state assertion (see §11.9 rule).
+- `Bootstrap does NOT ship` — recipe/bootstrap state that varies by
+  route.
+
+`status="..."` is intentionally NOT flagged — post-Phase-0b export
+status atoms legitimately encode their status via the `exportStatus:`
+axis, and surfacing the value in body prose would false-positive on
+tightly-axed atoms.
+
+**Marker convention.** Like axes K, M, N, axis O honors inline
+`<!-- axis-o-keep: <reason> -->` markers on the same line, the prior
+non-blank line, or the next non-blank line. No per-axis allowlist —
+markers are the only escape mechanism. Reasons: `platform-invariant`,
+`route-gated`, `tightly-axed`, or any one-line rationale.
+
+**False-positive expectation.** Some legitimate conditional state
+assertions (e.g. *"After deploy, the web server is already running"*
+in `develop-implicit-webserver`) trip the regex; tag with
+`axis-o-keep` plus a one-line rationale that names the conditional.
+
+### 11.7 Marker convention (axes K, M, N, O)
+
+The axis-K, axis-M, axis-N, and axis-O lints (`atoms_lint_axes.go`) are
 heuristic — the patterns flag CANDIDATES, not certain violations.
 Authors who want to KEEP a flagged phrase add an inline HTML comment
 on the SAME line, the IMMEDIATELY PREVIOUS non-blank line, or the
@@ -847,7 +879,32 @@ documented rationale.
 in the map value. Allowlists were seeded during the 2026-04-27 audit
 to grandfather HIGH-signal guardrails, sub-agent terminology
 (cluster-#5), and structurally unavoidable env-tokens; new edits
-should prefer markers.
+should prefer markers. Axis O (Phase 4 addition) deliberately has NO
+allowlist — markers are the only escape mechanism.
+
+### 11.7.5 Coverage gate (atom ↔ scenario)
+
+Phase 4 of the atom-corpus-verification plan adds the
+`TestCoverageGate` test (`internal/workflow/coverage_gate_test.go`).
+Every atom in the corpus MUST EITHER appear in at least one canonical
+scenario's expected atom IDs OR carry a non-empty `coverageExempt:`
+frontmatter field. Atoms that are silently uncovered (no golden, no
+exemption) drift into a state where their prose can't be regression-
+checked by the goldens approach; the gate closes that loop.
+
+**Heuristic for exemption** (per plan §4.7): if the atom's typical
+render-occasion appears in <1% of agent sessions, exemption is
+appropriate. Otherwise, add a scenario. Each `coverageExempt:` entry
+MUST have a one-line rationale referencing this heuristic. Reviewer
+demands strong justification on each entry — a `coverageExempt:` is a
+code-review red flag.
+
+**Companion to pin density** (`corpus_pin_density_test.go`): the
+pin-density test asserts every atom ID appears as an arg to
+`requireAtomIDsContain` or `requireAtomIDsExact` in `scenarios_test.go`
+(selection reachability via the AST-parsed haystack). Coverage gate
+verifies scenario-fixture coverage (the goldens). Both stay; cross-
+reference comments at the top of each test file point to the other.
 
 ### 11.8 Procedural-form principle (verify-state and evidence rules)
 

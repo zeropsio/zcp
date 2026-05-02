@@ -8,6 +8,7 @@ title: "Implicit-webserver runtime"
 
 ### Implicit-Webserver Runtime (`php-apache`, `php-nginx`)
 
+<!-- axis-o-keep: "After deploy, the web server is already running" is conditional, not a universal state assertion (the body explicitly distinguishes after-deploy from before-first-deploy) -->
 Apache or nginx is bundled into the runtime image — **no manual `start:` and no `zerops_dev_server` cycling**. After deploy, the web server is already running and serves disk contents; before first deploy the runtime container exists but no web server has been provisioned yet (deploy is the moment that lands files + activates the server). **Do not SSH in to start a server** — there is no `{start-command}` to run.
 
 **`zerops.yaml` differences vs. dynamic runtimes:**

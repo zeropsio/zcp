@@ -4,6 +4,7 @@ priority: 2
 phases: [develop-active]
 runtimes: [static]
 title: "Static runtime — develop workflow"
+coverageExempt: "static-runtime workflow — 30 canonical scenarios use dynamic + implicit-webserver runtimes (the common cases). Static (nginx, plain static) is a smaller share of agent sessions; covered by Phase 5 quarterly live-eval if a static-runtime project surfaces"
 ---
 
 ### Static runtime — develop workflow

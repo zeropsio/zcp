@@ -5,6 +5,7 @@ phases: [bootstrap-active]
 environments: [local]
 steps: [discover]
 title: "Bootstrap — discovery addendum"
+coverageExempt: "local-mode bootstrap discovery — local scenarios are intentionally absent from the 30 container-focused canonical fixtures; covered by Phase 5 quarterly live-eval (eval-zcp local-mode runs)"
 ---
 
 ### Local-mode discovery

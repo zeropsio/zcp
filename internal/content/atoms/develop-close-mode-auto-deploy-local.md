@@ -8,6 +8,7 @@ closeDeployModes: [auto]
 environments: [local]
 multiService: aggregate
 title: "close-mode=auto — deploy via zerops_deploy"
+coverageExempt: "local-mode close-mode-auto deploy — 30 canonical scenarios are container-focused; covered by Phase 5 quarterly live-eval (eval-zcp local-mode runs)"
 ---
 
 ### close-mode=auto Deploy

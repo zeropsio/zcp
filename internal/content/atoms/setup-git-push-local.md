@@ -6,6 +6,7 @@ gitPushStates: [unconfigured, broken, unknown]
 environments: [local]
 title: "Configure git-push capability from the local machine"
 references-fields: [ops.DeployResult.Status, ops.DeployResult.Warnings, ops.DeployResult.FailureClassification]
+coverageExempt: "local-mode git-push setup — strategy-setup/container-unconfigured is the canonical scenario; local variant covered by Phase 5 quarterly live-eval"
 ---
 On a local workstation, ZCP delegates auth to your existing git setup — SSH keys, macOS Keychain, or the system credential helper your local git already uses. ZCP never reads or writes credentials. Walk through a first push, then mark the capability configured.
 

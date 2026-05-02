@@ -42,6 +42,14 @@ type KnowledgeAtom struct {
 	// appearance in the synthesized body. Informational; helps future
 	// edits locate downstream test expectations.
 	PinnedByScenarios []string
+	// CoverageExempt is the human-readable rationale for why this atom
+	// has no canonical-scenario coverage (Phase 4 coverage gate). Empty
+	// when the atom appears in at least one golden's expected atom set.
+	// Non-empty value means the gate test (TestCoverageGate) accepts
+	// the atom as deliberately uncovered — typical reason: rare error-
+	// path edge case rendered <1% of agent sessions per the heuristic
+	// in plan §4.7. Reviewer demands strong justification on each entry.
+	CoverageExempt string
 }
 
 // AxisVector is the subset of envelope dimensions an atom applies to. Empty
@@ -150,6 +158,7 @@ var validAtomFrontmatterKeys = map[string]struct{}{
 	"references-fields":    {},
 	"references-atoms":     {},
 	"pinned-by-scenario":   {},
+	"coverageExempt":       {},
 }
 
 // listAxisKeys is the subset of frontmatter keys whose value MUST be in
@@ -297,7 +306,7 @@ var validScalarEnumValues = map[string]map[string]struct{}{
 func validateAtomFrontmatter(fields map[string]string) error {
 	for key := range fields {
 		if _, ok := validAtomFrontmatterKeys[key]; !ok {
-			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, closeDeployModes, gitPushStates, buildIntegrations, runtimes, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, exportStatus, multiService, references-fields, references-atoms, pinned-by-scenario)", key)
+			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, closeDeployModes, gitPushStates, buildIntegrations, runtimes, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, exportStatus, multiService, references-fields, references-atoms, pinned-by-scenario, coverageExempt)", key)
 		}
 	}
 	for key, raw := range fields {
@@ -396,6 +405,7 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 		ReferencesFields:  parseYAMLList(fields["references-fields"]),
 		ReferencesAtoms:   parseYAMLList(fields["references-atoms"]),
 		PinnedByScenarios: parseYAMLList(fields["pinned-by-scenario"]),
+		CoverageExempt:    strings.TrimSpace(fields["coverageExempt"]),
 	}
 	if atom.ID == "" {
 		return atom, fmt.Errorf("atom missing required field: id")

@@ -5,6 +5,7 @@ priority: 4
 phases: [develop-active]
 deployStates: [never-deployed]
 buildIntegrations: [webhook, actions]
+coverageExempt: "fires only on never-deployed runtimes with buildIntegrations:[webhook, actions] — narrow intersection; the develop/git-push-configured-webhook scenario uses deployed=true so this atom doesn't fire there. The intersection (never-deployed + webhook/actions) is rare in practice (<1% session frequency)"
 ---
 A deploy that happens outside the synchronous ZCP push path — `zerops_deploy strategy="git-push"` (Zerops builds async after the push lands), a webhook firing on a remote push, GitHub Actions running zcli push, or a teammate running zcli push directly — does not record the deploy in local state on its own. Without that record the service stays at `deployState=never-deployed` here. ZCP-managed BuildIntegration `webhook` / `actions` services rely on this bridge.
 

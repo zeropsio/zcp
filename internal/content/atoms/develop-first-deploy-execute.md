@@ -11,6 +11,7 @@ references-fields: [ops.DeployResult.Status, ops.DeployResult.BuildLogs, ops.Dep
 
 ### Run the first deploy
 
+<!-- axis-o-keep: container is empty is universal at first-deploy (deployStates: [never-deployed] is the matching axis) -->
 The Zerops container is empty until the deploy call lands, so probing
 its subdomain or (in container env) SSHing into it first will fail or
 hit a platform placeholder — deploy first, then inspect. `zerops_deploy`

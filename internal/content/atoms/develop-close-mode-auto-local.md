@@ -8,6 +8,7 @@ closeDeployModes: [auto]
 environments: [local]
 multiService: aggregate
 title: "Close task — close-mode=auto"
+coverageExempt: "local-mode close-mode-auto — 30 canonical scenarios are container-focused; covered by Phase 5 quarterly live-eval"
 ---
 
 ### Closing the task
