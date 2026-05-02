@@ -9,12 +9,22 @@ package workflow
 // prose can't be regression-checked by the goldens approach — Phase 4
 // closes that gap with a hard test gate.
 //
-// Companion to TestCorpusCoverage_PinDensity (corpus_pin_density_test.go):
-// pin-density verifies atom IDs appear as args to requireAtomIDsContain
-// or requireAtomIDsExact in scenarios_test.go (different surface — selection
-// reachability via the AST-parsed haystack). Coverage gate verifies
-// scenario-fixture coverage (the goldens). Both stay; cross-reference
-// in the file headers.
+// COMPANION TEST — see also `corpus_pin_density_test.go::TestCorpus
+// Coverage_PinDensity`. The two tests check related-but-distinct
+// properties:
+//
+//   - Pin density: atom IDs appear as args to requireAtomIDsContain /
+//     requireAtomIDsExact in scenarios_test.go. Surface = AST-parsed
+//     scenario test calls (selection reachability).
+//   - Coverage gate (this file): atoms appear in at least one canonical
+//     scenario's expected atom-IDs OR carry coverageExempt: frontmatter.
+//     Surface = synthesized golden output (composition / fixture
+//     coverage).
+//
+// Both tests stay; they're not redundant. An atom can be covered by
+// the 30 canonical goldens but not pinned by an explicit string-arg
+// in a scenario test — that's a legitimate state pin-density catches
+// but coverage gate does not. Per plan §4.8.
 
 import (
 	"testing"

@@ -413,7 +413,7 @@ func gitPushSetupChainResponse(
 		"guidance":      guidance,
 		"nextSteps": []string{
 			fmt.Sprintf("Run zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<URL>", targetService),
-			"After confirmation, re-call: zerops_workflow workflow=\"export\" targetService=\"" + targetService + "\" with the same inputs.",
+			fmt.Sprintf("After confirm, re-call: zerops_workflow workflow=\"export\" targetService=%q", targetService),
 		},
 	}
 	if bundle != nil {
@@ -470,7 +470,8 @@ func classifyPromptResponse(
 		"guidance":               guidance,
 		"fetchValuesVia":         fmt.Sprintf("zerops_discover hostname=%q includeEnvs=true includeEnvValues=true", bundle.TargetHostname),
 		"nextSteps": []string{
-			fmt.Sprintf("Re-call zerops_workflow workflow=\"export\" targetService=%q variant=%q envClassifications={key:bucket,...}", bundle.TargetHostname, bundle.Variant),
+			fmt.Sprintf("Re-call: zerops_workflow workflow=\"export\" targetService=%q", bundle.TargetHostname),
+			fmt.Sprintf("        variant=%q envClassifications={key:bucket,...}", bundle.Variant),
 		},
 	})
 }
@@ -502,8 +503,9 @@ func validationFailedResponse(
 		"preview":       bundlePreview(bundle),
 		"guidance":      guidance,
 		"nextSteps": []string{
-			"Read each validation error and fix at its source (project envs, zerops.yaml, or service shape).",
-			fmt.Sprintf("Re-call zerops_workflow workflow=\"export\" targetService=%q variant=%q envClassifications=<your same map> after fixes.", bundle.TargetHostname, bundle.Variant),
+			"Fix each validation error at its source.",
+			fmt.Sprintf("Re-call: zerops_workflow workflow=\"export\" targetService=%q", bundle.TargetHostname),
+			fmt.Sprintf("        variant=%q envClassifications=<your same map>", bundle.Variant),
 		},
 	})
 }
@@ -540,8 +542,8 @@ func publishGuidanceResponse(
 		"guidance": guidance,
 		"nextSteps": []string{
 			fmt.Sprintf("ssh %s 'cat > %s/%s' <<'EOF'\n%s\nEOF", bundle.TargetHostname, repoRoot, importFile, bundle.ImportYAML),
-			fmt.Sprintf("ssh %s 'cat > %s/zerops.yaml' <<'EOF'\n%s\nEOF (skip if zerops.yaml already matches)", bundle.TargetHostname, repoRoot, bundle.ZeropsYAML),
-			fmt.Sprintf("ssh %s 'cd %s && git add -A && git commit -m \"export: zerops-project-import.yaml + zerops.yaml for buildFromGit re-import\"'", bundle.TargetHostname, repoRoot),
+			fmt.Sprintf("ssh %s 'cat > %s/zerops.yaml' <<'EOF'\n%s\nEOF", bundle.TargetHostname, repoRoot, bundle.ZeropsYAML),
+			fmt.Sprintf("ssh %s 'cd %s && git add -A && git commit -m \"export bundle\"'", bundle.TargetHostname, repoRoot),
 			fmt.Sprintf("zerops_deploy targetService=%q strategy=\"git-push\"", bundle.TargetHostname),
 		},
 	})

@@ -6,6 +6,22 @@
 // comments + the allowlist's own declaration text, neither of which
 // represents a real assertion).
 //
+// COMPANION TEST — see also `coverage_gate_test.go::TestCoverageGate`
+// (atom-corpus-verification plan §4.5-4.8). The two tests check
+// related-but-distinct properties:
+//
+//   - Pin density (this file): atom IDs appear as args to
+//     requireAtomIDsContain / requireAtomIDsExact in scenarios_test.go.
+//     Surface = AST-parsed scenario test calls (selection reachability).
+//   - Coverage gate: atoms appear in at least one canonical scenario's
+//     expected atom-IDs OR carry coverageExempt: frontmatter. Surface
+//     = synthesized golden output (composition / fixture coverage).
+//
+// Both tests stay; they're not redundant. An atom can be pinned via
+// requireAtomIDsContain in a non-canonical scenario test but uncovered
+// by the 30 goldens — that's a legitimate gap the coverage gate
+// catches but pin density does not. Per plan §4.8.
+//
 // The allowlist `knownUnpinnedAtoms` ratchets shrink-only via
 // TestCorpusCoverage_PinDensity_StillUnpinned; Phase 8 EXIT empties
 // the allowlist.
