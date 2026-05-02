@@ -1,0 +1,16 @@
+# CODEOWNERS for zcp.
+#
+# Entries here trigger GitHub's review-request mechanism: a PR
+# touching a matched path automatically requests review from the
+# named owners. Wildcards apply per gitignore-like glob; later
+# rules win.
+
+# Atom-corpus live-eval evidence ledger — Phase 5 of
+# plans/atom-corpus-verification-2026-05-02.md.
+#
+# Touching the live-eval evidence log is a quarterly cross-check of
+# fixture-vs-production drift; the named owner is accountable for
+# the cadence + dispositioning findings (file follow-up plans,
+# propose atom edits, or mark "clean"). See
+# `internal/workflow/testdata/atom-goldens/_live-eval-protocol.md`.
+/internal/workflow/testdata/atom-goldens/_live-eval-runs.md @krls2020

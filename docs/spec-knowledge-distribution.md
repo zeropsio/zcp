@@ -990,7 +990,94 @@ ID it addresses. New atom authors and reviewers should consult the
 ledger when in doubt — it's the authoritative collection of "this
 phrasing was a lie, here's why, here's how it was fixed".
 
-Scenario growth and pruning policy: see §12 (added in Phase 5).
+Scenario growth and pruning policy: see §12.
+
+---
+
+## 12. Goldens — Scenario growth + maintenance
+
+The 30 canonical scenarios at `internal/workflow/testdata/atom-goldens/`
+are the regression boundary for atom-rendered guidance. This section
+governs how the suite evolves.
+
+### 12.1 Scenario growth policy
+
+The friction-fix PR adds a scenario when production friction reveals
+an envelope shape not pinned by any existing scenario. **Owner**: PR
+author. **Timing**: in the same PR as the atom fix. **Reviewer's
+question**: "does this fix close the friction class, or just this
+instance?" — if class-level, scenario MUST be added.
+
+Adding a scenario means:
+1. New entry in `internal/workflow/scenarios_fixtures_test.go` (typed
+   `StateEnvelope` literal in the appropriate per-phase helper).
+2. Regenerate goldens: `ZCP_UPDATE_ATOM_GOLDENS=1 go test ./internal/workflow/...`.
+3. Inline `requireAtomIDsExact` pin in `scenarios_test.go::TestScenario_S12_*`
+   or sibling so the atom IDs are visible to `corpus_pin_density_test.go`'s
+   AST parser.
+4. Sample-check the rendered golden body in PR review.
+
+### 12.2 Scenario pruning policy
+
+When the suite crosses 40 scenarios, audit for scenarios that don't
+add unique atom fire-set, response status, or known failure class.
+Merge or retire. **Annual cadence sufficient** unless count grows
+fast.
+
+Pre-40 trigger: spot duplicates aggressively (per Phase 2 A5-S1
+finding — `develop/steady-dev-auto-container` and `develop/mode-
+expansion-source` were byte-identical). The fix in Cycle 1 was to
+DIFFERENTIATE one to ModeSimple rather than retire — preferred path.
+
+### 12.3 Fixture authoring guidance
+
+**Service order is behavior**, not cosmetic. `compute_envelope.go`
+sorts services by hostname; `build_plan.go` iterates work-session
+order. Fixtures must deliberately set:
+
+- `StateEnvelope.Services []ServiceSnapshot` order — affects
+  `{services-list:...}` directive enumeration, primary-hostname picker
+  fallback, and per-service axis match order.
+- `WorkSession.Services []string` order — affects scope-narrowing
+  and per-service iteration in develop atoms.
+
+Disagreement between fixture and intended render is a **fixture bug**,
+not a synthesizer bug. Production session-start auto-expands a
+standard pair scope to BOTH halves (`workflow_develop.go:301-323`);
+fixtures matching that production shape MUST also set both halves
+(per Phase 2 A3-F1 finding).
+
+**Time-pinning.** Use deterministic time literals (e.g.
+`time.Date(2026, 5, 2, 9, 0, 0, 0, time.UTC)`) — never `time.Now()` —
+so regenerated goldens are byte-stable across runs.
+
+### 12.4 Maintenance — when StateEnvelope shape changes
+
+When `StateEnvelope` (or any embedded type — `ServiceSnapshot`,
+`WorkSessionSummary`, `BootstrapSessionSummary`) shape changes:
+
+1. Fixture compilation breaks — Go compile-error pinpoints every
+   call site.
+2. Update fixtures to populate / drop the changed field.
+3. Regenerate goldens (`ZCP_UPDATE_ATOM_GOLDENS=1 ...`).
+4. Review the diff for INTENDED consequences only — unintended
+   regressions block merge.
+5. Bless and commit.
+
+**Owner**: PR author of the schema change. **Cost-of-determinism**: a
+sort-logic change in `compute_envelope.go` cascades through every
+golden; that's the price of byte-exact comparison and is GOOD signal
+(forces review of every render).
+
+### 12.5 Live-eval protocol (post-merge cross-check)
+
+The protocol lives at `internal/workflow/testdata/atom-goldens/_live-
+eval-protocol.md` — named owner, scenario subset, evidence ledger.
+Post-merge cross-check of fixture-vs-production drift; quarterly
+cadence + ad-hoc when production friction surfaces. CODEOWNERS for
+`_live-eval-runs.md` enforces accountability.
+
+---
 
 | Section | Primary code location |
 |---------|----------------------|
