@@ -12,9 +12,8 @@ references-atoms: [develop-env-var-channels, develop-first-deploy-env-vars]
   (`sudo apk add …` on Alpine, `sudo apt-get install …` on Debian/Ubuntu).
 - **Deploy = new container.** Local files in the current runtime container are
   lost; only content covered by `deployFiles` survives across redeploys.
-- **`zerops.yaml` lives at the repo root.** Each `setup:` block (e.g.
-  `prod`, `stage`, `dev`) is deployed independently — these are canonical
-  recipe names, NOT hostnames.
+- **Setup blocks (`prod`, `stage`, `dev`) are canonical recipe names,
+  NOT hostnames.** Each block deploys independently.
 - **Build ≠ runtime container.** Runtime packages → `run.prepareCommands`;
   build-only packages → `build.prepareCommands`. Build-time tools may
   not exist at run time; see guide `deployment-lifecycle`.
