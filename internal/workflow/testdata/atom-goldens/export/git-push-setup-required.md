@@ -65,7 +65,7 @@ The bundle preview you saw before the chain may differ slightly if the project s
 
 ## What if the remote URL has changed
 
-`meta.RemoteURL` is cached when `git-push-setup` confirm mode runs (`zerops_workflow action="git-push-setup"` with `remoteUrl=<url>` writes the cache). If `git remote get-url origin` now returns a different URL than `meta.RemoteURL`, run `git-push-setup` again with the corrected `remoteUrl=` — that overwrites the cache with the new value. The export workflow always reads the live remote (not the cache), so after the cache is fixed both sources agree and Phase C unblocks. (Phase 6 of the export-buildFromGit plan adds an automatic refresh on every export pass — once that lands, the manual re-run is reserved for intentional remote-URL changes, not ordinary cache drift.)
+`meta.RemoteURL` is cached when `git-push-setup` confirm mode runs (`zerops_workflow action="git-push-setup"` with `remoteUrl=<url>` writes the cache). If `git remote get-url origin` now returns a different URL than `meta.RemoteURL`, run `git-push-setup` again with the corrected `remoteUrl=` — that overwrites the cache with the new value. The export workflow always reads the live remote (not the cache), so after the cache is fixed both sources agree and the publish step unblocks. The export handler also refreshes `meta.RemoteURL` from the live remote on every pass (and surfaces a warning when they diverged) — so a manual `git-push-setup` re-run is reserved for intentional remote-URL changes, not ordinary cache drift.
 
 ## What if you cannot resolve the prereq
 

@@ -715,9 +715,13 @@ func TestScenario_S12_ExportActiveEmptyPlan(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Synthesize: %v", err)
 		}
+		// Cycle 2 A6-L3: export-validate widened to fire for both
+		// classify-prompt (warnings actionable) AND validation-failed
+		// (errors actionable). Both atoms now co-fire here.
 		requireAtomIDsExact(t, "S12.classify-prompt", matches,
 			"export-intro",
 			"export-classify-envs",
+			"export-validate",
 		)
 	})
 
@@ -1202,6 +1206,7 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"develop-first-deploy-execute",
 		"develop-first-deploy-intro",
 		"develop-first-deploy-promote-stage",
+		"develop-standard-unset-iterate",
 		"develop-standard-unset-promote-stage",
 		"develop-first-deploy-scaffold-yaml",
 		"develop-first-deploy-verify",

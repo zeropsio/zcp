@@ -68,7 +68,7 @@ Shape:
 }
 ```
 
-Each `apiMeta[].metadata` key is a **field path** (`appdev.mode`,
+Each `apiMeta[].metadata` key is a **field path** (`<host>.mode`,
 `build.base`, `parameter`); values list reasons. Fix those YAML fields
 and retry — do not guess.
 
@@ -261,9 +261,7 @@ default to
 
 ### Implicit-Webserver Runtime (`php-apache`, `php-nginx`)
 
-Apache or nginx is already running and serves disk contents. **Do not SSH
-in to start a server** — there is no `{start-command}`. Deploy lands
-files; the web server picks them up immediately.
+Apache or nginx is bundled into the runtime image — **no manual `start:` and no `zerops_dev_server` cycling**. After deploy, the web server is already running and serves disk contents; before first deploy the runtime container exists but no web server has been provisioned yet (deploy is the moment that lands files + activates the server). **Do not SSH in to start a server** — there is no `{start-command}` to run.
 
 **`zerops.yaml` differences vs. dynamic runtimes:**
 
@@ -396,7 +394,9 @@ When the embedded guidance is not enough, these are the canonical lookups:
 
 ### Work session auto-close
 
-Work sessions close automatically when either of two conditions hold:
+Auto-close is gated on every in-scope service carrying `closeDeployMode ∈ {auto, git-push}`. Services with `closeDeployMode=unset` or `closeDeployMode=manual` BLOCK the auto-close trigger — the session stays open until you either pick a close-mode for those services or call `action="close"` explicitly. (Verified by `internal/workflow/work_session_test.go::TestEvaluateAutoClose` — `unset_blocks` and `manual_blocks` both return `want: false`.)
+
+When the gate is open (every in-scope service is `auto` or `git-push`), the session closes automatically under either of two conditions:
 
 - **`auto-complete`** — every service in scope has both a successful
   deploy and a passing verify. The envelope's `workSession.closedAt`

@@ -10,11 +10,7 @@ references-fields: [workflow.ServiceSnapshot.Mode, workflow.ServiceSnapshot.Clos
 
 ### Mode expansion — add a stage pair
 
-The envelope reports your current service with `mode: dev` or
-`mode: simple` (single-slot). Expanding to **standard** adds a stage
-sibling without touching the existing service. Expansion is an
-infrastructure change — it runs through the bootstrap workflow, not
-develop.
+This atom fires once per in-scope `mode: dev` or `mode: simple` (single-slot) service — for each, expanding to **standard** adds a stage sibling without touching the existing service. Expansion is an infrastructure change — it runs through the bootstrap workflow, not develop. Repeat the procedure below per service when multiple in-scope services need stage pairs.
 
 ```
 zerops_workflow action="start" workflow="bootstrap"

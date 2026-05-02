@@ -1,6 +1,6 @@
 ---
 id: bootstrap/classic/discover-standard-dynamic
-atomIds: [bootstrap-intro, develop-api-error-meta, bootstrap-mode-prompt, bootstrap-runtime-classes]
+atomIds: [bootstrap-intro, bootstrap-classic-plan-dynamic, bootstrap-classic-plan-static, develop-api-error-meta, bootstrap-mode-prompt, bootstrap-runtime-classes]
 description: "Classic route, discover step — agent inspecting an empty project for a dynamic runtime in mode=standard."
 ---
 <!-- UNREVIEWED -->
@@ -14,6 +14,27 @@ Three routes:
 - **Adopt** — attach `ServiceMeta` to existing non-managed services; no infra change.
 
 Route is chosen at bootstrap start and persists for the session. The 3 steps are `discover → provision → close` in fixed order; follow the step list from `zerops_workflow action="status"`.
+
+---
+
+### Dynamic runtime plan
+
+If the plan you're about to submit includes a dynamic runtime (Node, Go, Python, Bun, Ruby, …), apply this section. (Static-runtime planning lives in the sibling `bootstrap-classic-plan-static`.) Classic bootstrap creates the runtime + managed services with `startWithoutCode: true` so dev containers reach RUNNING with an empty filesystem; `workflow=develop` then scaffolds `zerops.yaml`, writes the application, and runs the first deploy.
+
+Confirm dev/stage pairing with the user before submitting the plan. Mode + close-mode + git-push capability decisions all happen later in develop, not here.
+
+---
+
+### Static runtime plan
+
+If the plan you're about to submit includes a static-runtime container (`nginx`, `static`), apply this section. (Dynamic-runtime planning lives in the sibling `bootstrap-classic-plan-dynamic`.) Static-runtime containers come up serving an empty document root after bootstrap. The first build artifact lands in develop via `zerops_deploy`; bootstrap creates the empty container and stops there.
+
+Before submitting the plan, confirm with the user:
+
+- the chosen runtime hostname (`appdev` is the standard convention)
+- whether a stage pair is wanted (`standard` mode) or a single container (`simple` / `dev` mode)
+
+Close-mode, git-push capability, and the actual `zerops.yaml` (including `deployFiles` shape) are decided in develop after the first deploy lands — not here.
 
 ---
 
@@ -42,7 +63,7 @@ Shape:
 }
 ```
 
-Each `apiMeta[].metadata` key is a **field path** (`.mode`,
+Each `apiMeta[].metadata` key is a **field path** (`<host>.mode`,
 `build.base`, `parameter`); values list reasons. Fix those YAML fields
 and retry — do not guess.
 

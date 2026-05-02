@@ -10,7 +10,7 @@ title: "Pick an ongoing close-mode"
 
 ### Pick an ongoing close-mode
 
-The first deploy landed and verified. Before iterating, declare the develop session's delivery pattern. Close-mode does not change what `action="close"` does (close is always a session-teardown call) — it picks the per-mode atoms that guide every subsequent deploy and gates auto-close:
+The first deploy is on record (`deployed: true`). Before iterating, declare the develop session's delivery pattern. Close-mode does not change what `action="close"` does (close is always a session-teardown call) — it picks the per-mode atoms that guide every subsequent deploy and gates auto-close:
 
 - `auto` — agent runs `zerops_deploy` directly via zcli. Auto-close fires when scope-services are green. Fast for tight iteration cycles.
 - `git-push` — agent runs `zerops_deploy strategy="git-push"` to commit + push to a configured remote. Zerops or your CI picks the push up and builds. Requires `git-push-setup` first.

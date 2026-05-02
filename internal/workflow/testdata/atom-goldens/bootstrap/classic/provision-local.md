@@ -141,7 +141,7 @@ Shape:
 }
 ```
 
-Each `apiMeta[].metadata` key is a **field path** (`.mode`,
+Each `apiMeta[].metadata` key is a **field path** (`<host>.mode`,
 `build.base`, `parameter`); values list reasons. Fix those YAML fields
 and retry — do not guess.
 
@@ -174,7 +174,7 @@ Record one row per service in the provision attestation. Keys are enough — val
 
 ---
 
-### Wait until services are ACTIVE
+### Wait until services are running
 
 After `zerops_import` completes, the Zerops engine provisions runtime containers
 asynchronously. Subsequent deploy or verify calls against a service that is
@@ -186,6 +186,4 @@ Poll service state:
 zerops_discover
 ```
 
-Repeat until every service reports `status: ACTIVE`. Production services
-take 30–90 seconds to transition; managed services (databases) usually
-longer.
+Repeat until every service reports a running status. Per `bootstrap-provision-rules`, the expected transitions are: dev / simple runtimes → `RUNNING` (with `startWithoutCode: true`) or `ACTIVE` once a deploy lands; stage runtimes → `READY_TO_DEPLOY` (waiting for the first dev → stage cross-deploy); managed services → `RUNNING` / `ACTIVE`. The readiness predicate at `internal/tools/workflow_checks.go::checkServiceRunning` accepts BOTH `RUNNING` and `ACTIVE` as the operational state — do not block on a specific string. `READY_TO_DEPLOY` is acceptable for stage services in standard mode at this step.

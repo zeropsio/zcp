@@ -1,6 +1,6 @@
 ---
 id: develop/post-adopt-standard-unset
-atomIds: [develop-intro, develop-api-error-meta, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-http-diagnostic, develop-platform-rules-common, develop-strategy-review, develop-deploy-files-self-deploy, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-standard-unset-promote-stage, develop-auto-close-semantics, develop-verify-matrix, develop-platform-rules-container]
+atomIds: [develop-intro, develop-api-error-meta, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-http-diagnostic, develop-platform-rules-common, develop-strategy-review, develop-deploy-files-self-deploy, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-standard-unset-iterate, develop-standard-unset-promote-stage, develop-auto-close-semantics, develop-verify-matrix, develop-platform-rules-container]
 description: "Adopted standard pair, both halves running, close-mode never picked."
 ---
 <!-- UNREVIEWED -->
@@ -38,7 +38,7 @@ Shape:
 }
 ```
 
-Each `apiMeta[].metadata` key is a **field path** (`appdev.mode`,
+Each `apiMeta[].metadata` key is a **field path** (`<host>.mode`,
 `build.base`, `parameter`); values list reasons. Fix those YAML fields
 and retry — do not guess.
 
@@ -175,7 +175,7 @@ default to
 
 ### Pick an ongoing close-mode
 
-The first deploy landed and verified. Before iterating, declare the develop session's delivery pattern. Close-mode does not change what `action="close"` does (close is always a session-teardown call) — it picks the per-mode atoms that guide every subsequent deploy and gates auto-close:
+The first deploy is on record (`deployed: true`). Before iterating, declare the develop session's delivery pattern. Close-mode does not change what `action="close"` does (close is always a session-teardown call) — it picks the per-mode atoms that guide every subsequent deploy and gates auto-close:
 
 - `auto` — agent runs `zerops_deploy` directly via zcli. Auto-close fires when scope-services are green. Fast for tight iteration cycles.
 - `git-push` — agent runs `zerops_deploy strategy="git-push"` to commit + push to a configured remote. Zerops or your CI picks the push up and builds. Requires `git-push-setup` first.
@@ -274,6 +274,20 @@ When the embedded guidance is not enough, these are the canonical lookups:
 
 ---
 
+### Dev iteration loop (close-mode unset)
+
+`develop-strategy-review` advises picking a close-mode before iterating, but the dev iteration steps are the SAME regardless of which mode you eventually pick — close-mode only changes what the *close* call does, not what the iteration looks like. While close-mode is `unset`, run the same per-iteration sequence on the dev half:
+
+```
+zerops_deploy targetService="appdev" setup="dev"
+zerops_dev_server action=start hostname="appdev" command="{start-command}" port={port} healthPath="{path}"
+zerops_verify serviceHostname="appdev"
+```
+
+After each iteration lands cleanly on the dev half, the stage half stays at adopt-time content until you cross-deploy — see `develop-standard-unset-promote-stage` for the dev → stage promotion. Auto-close stays blocked while close-mode is `unset` (per `develop-auto-close-semantics`); pick a close-mode (`auto`, `git-push`, or `manual`) via `develop-strategy-review` once you've confirmed the iteration loop works for this task.
+
+---
+
 ### Promote dev to stage
 
 After each successful `zerops_deploy` + `zerops_verify` on the dev half, cross-deploy the dev tree into the paired stage so the stage's public artifact reflects current code:
@@ -289,7 +303,9 @@ Cross-deploy packages the dev tree without a second build; stage runs its own `r
 
 ### Work session auto-close
 
-Work sessions close automatically when either of two conditions hold:
+Auto-close is gated on every in-scope service carrying `closeDeployMode ∈ {auto, git-push}`. Services with `closeDeployMode=unset` or `closeDeployMode=manual` BLOCK the auto-close trigger — the session stays open until you either pick a close-mode for those services or call `action="close"` explicitly. (Verified by `internal/workflow/work_session_test.go::TestEvaluateAutoClose` — `unset_blocks` and `manual_blocks` both return `want: false`.)
+
+When the gate is open (every in-scope service is `auto` or `git-push`), the session closes automatically under either of two conditions:
 
 - **`auto-complete`** — every service in scope has both a successful
   deploy and a passing verify. The envelope's `workSession.closedAt`

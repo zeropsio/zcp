@@ -7,8 +7,8 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | Atom ID | Scenario count | Scenarios |
 |---|---|---|
 | `bootstrap-adopt-discover` | 1 | bootstrap/adopt/discover-existing-pair |
-| `bootstrap-classic-plan-dynamic` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
-| `bootstrap-classic-plan-static` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
+| `bootstrap-classic-plan-dynamic` | 1 | bootstrap/classic/discover-standard-dynamic |
+| `bootstrap-classic-plan-static` | 1 | bootstrap/classic/discover-standard-dynamic |
 | `bootstrap-close` | 1 | bootstrap/recipe/close |
 | `bootstrap-discover-local` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `bootstrap-env-var-discovery` | 1 | bootstrap/classic/provision-local |
@@ -70,6 +70,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `develop-platform-rules-local` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-ready-to-deploy` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-record-external-deploy` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
+| `develop-standard-unset-iterate` | 1 | develop/post-adopt-standard-unset |
 | `develop-standard-unset-promote-stage` | 1 | develop/post-adopt-standard-unset |
 | `develop-static-workflow` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-strategy-awareness` | 9 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/git-push-configured-webhook, develop/git-push-unconfigured, develop/mode-expansion-source, develop/multi-service-scope-narrow, develop/standard-auto-pair, develop/steady-dev-auto-container |
@@ -80,7 +81,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `export-publish` | 1 | export/publish-ready |
 | `export-publish-needs-setup` | 1 | export/git-push-setup-required |
 | `export-scope-prompt` | 1 | export/scope-prompt |
-| `export-validate` | 1 | export/validation-failed |
+| `export-validate` | 2 | export/classify-prompt, export/validation-failed |
 | `export-variant-prompt` | 1 | export/variant-prompt |
 | `idle-adopt-entry` | 1 | idle/adopt-only |
 | `idle-bootstrap-entry` | 1 | idle/empty |

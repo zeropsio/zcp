@@ -30,7 +30,7 @@ Shape:
 }
 ```
 
-Each `apiMeta[].metadata` key is a **field path** (`{hostname}.mode`,
+Each `apiMeta[].metadata` key is a **field path** (`<host>.mode`,
 `build.base`, `parameter`); values list reasons. Fix those YAML fields
 and retry — do not guess.
 

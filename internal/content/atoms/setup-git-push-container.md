@@ -7,7 +7,7 @@ environments: [container]
 title: "Configure git-push capability on the container"
 references-fields: [ops.DeployResult.Status, ops.DeployResult.Warnings, ops.DeployResult.FailureClassification]
 ---
-The runtime container has no user credentials, so pushes to an external git remote run under `GIT_TOKEN`. Set the token, walk through a first push, then mark the capability configured so deploy and build-integration actions stop blocking on the prereq chain.
+The runtime container has no user credentials, so pushes to an external git remote run under `GIT_TOKEN`. Procedure: set the token, mark the capability configured (stamps `GitPushState=configured` + cached `RemoteURL`), then commit and run the first push so deploy and build-integration actions stop blocking on the prereq chain.
 
 ## 1. Set `GIT_TOKEN` as a project env var
 
