@@ -32,11 +32,19 @@ import (
 //     plus the SSH write + commit + zerops_deploy strategy="git-push"
 //     instruction set the agent executes.
 //
-// Chain pattern matches the inline `nextSteps` shape used by
-// handleCloseMode (`internal/tools/workflow_close_mode.go:120-136`) —
-// no shared helper, no atom-axis routing (SynthesizeImmediatePhase
-// passes no service context, so service-scoped axes silently never
-// fire per Codex Agent A+B 2026-04-28).
+// Atom synthesis with service context: each per-status response
+// constructs a typed StateEnvelope via workflow.BuildExportEnvelope —
+// single-entry Services slice carrying the targetService snapshot for
+// known-target statuses, empty Services for scope-prompt — and renders
+// the matching atom(s) into the `guidance` field via
+// workflow.RenderExportGuidance. The new `exportStatus:` axis on each
+// export atom plus the `phases: [export-active]` gate disambiguates
+// per-status fire sets so atoms no longer overmatch (six-atom together
+// render fixed in 0b.7). Service-scoped axes paired with `exportStatus:`
+// (e.g. `runtimes: [implicit-webserver]` + `exportStatus:
+// [scaffold-required]`) fire on the targetService's snapshot — the
+// silent-non-firing problem SynthesizeImmediatePhase had is gone. Plan
+// `plans/atom-corpus-verification-2026-05-02.md` Phase 0b.
 //
 // sshDeployer may be nil when zcp runs outside a Zerops container —
 // the handler returns a clear error pointing the user to a container
@@ -49,7 +57,7 @@ func handleExport(
 	input WorkflowInput,
 	sshDeployer ops.SSHDeployer,
 	stateDir string,
-	_ runtime.Info,
+	rt runtime.Info,
 ) (*mcp.CallToolResult, any, error) {
 	if client == nil {
 		return convertError(platform.NewPlatformError(
@@ -63,8 +71,20 @@ func handleExport(
 			"Project ID unavailable — export requires a configured project context",
 			"Ensure ZCP is bound to a Zerops project (ZCP_PROJECT_ID or zcp config)."), WithRecoveryStatus()), nil, nil
 	}
+
+	corpus, err := workflow.LoadAtomCorpus()
+	if err != nil {
+		return convertError(err, WithRecoveryStatus()), nil, nil
+	}
+	envOpts := workflow.ExportEnvelopeOpts{
+		Client:      client,
+		ProjectID:   projectID,
+		StateDir:    stateDir,
+		Environment: workflow.DetectEnvironment(rt),
+	}
+
 	if input.TargetService == "" {
-		return scopePromptResponse(ctx, client, projectID)
+		return scopePromptResponse(ctx, client, projectID, envOpts, corpus)
 	}
 
 	// Discover with NO hostname filter — we need ALL project services so
@@ -112,7 +132,7 @@ func handleExport(
 	}
 	sourceMode := meta.Mode
 
-	variant, prompt := resolveExportVariant(input, sourceMode)
+	variant, prompt := resolveExportVariant(ctx, input, sourceMode, envOpts, corpus)
 	if prompt != nil {
 		return prompt, nil, nil
 	}
@@ -129,7 +149,7 @@ func handleExport(
 		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
 	if strings.TrimSpace(zeropsYAMLBody) == "" {
-		return scaffoldChainResponse(input.TargetService), nil, nil
+		return scaffoldChainResponse(ctx, input.TargetService, envOpts, corpus), nil, nil
 	}
 
 	repoURL, err := readGitRemoteURL(ctx, sshDeployer, input.TargetService)
@@ -137,7 +157,7 @@ func handleExport(
 		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
 	if strings.TrimSpace(repoURL) == "" {
-		return gitPushSetupChainResponse(input.TargetService, nil, "no git remote configured in /var/www"), nil, nil
+		return gitPushSetupChainResponse(ctx, input.TargetService, nil, "no git remote configured in /var/www", envOpts, corpus), nil, nil
 	}
 
 	// Phase 6 — refresh ServiceMeta.RemoteURL cache from the live remote.
@@ -188,7 +208,7 @@ func handleExport(
 	bundle.Warnings = append(bundle.Warnings, remoteWarnings...)
 
 	if needsClassifyPrompt(input.EnvClassifications, projectEnvs) {
-		return classifyPromptResponse(bundle, projectEnvs, classifications), nil, nil
+		return classifyPromptResponse(ctx, bundle, projectEnvs, classifications, envOpts, corpus), nil, nil
 	}
 
 	// Validation gates publish ahead of git-push-setup. Per Codex Phase 5
@@ -200,21 +220,48 @@ func handleExport(
 	// agent doesn't lose visibility on validation issues while resolving
 	// setup separately.
 	if len(bundle.Errors) > 0 {
-		return validationFailedResponse(bundle), nil, nil
+		return validationFailedResponse(ctx, bundle, envOpts, corpus), nil, nil
 	}
 
 	if meta.GitPushState != topology.GitPushConfigured {
-		return gitPushSetupChainResponse(input.TargetService, bundle, "GitPushState != configured"), nil, nil
+		return gitPushSetupChainResponse(ctx, input.TargetService, bundle, "GitPushState != configured", envOpts, corpus), nil, nil
 	}
 
-	return publishGuidanceResponse(bundle), nil, nil
+	return publishGuidanceResponse(ctx, bundle, envOpts, corpus), nil, nil
+}
+
+// renderExportStatusGuidance builds the per-status export envelope and
+// returns the atom-rendered guidance body. Single-entry Services
+// semantics (one snapshot for a known target, empty for scope-prompt)
+// per the audit decision in
+// internal/workflow/synthesize_export_audit.md. Caller is one of the
+// per-status response builders below.
+func renderExportStatusGuidance(
+	ctx context.Context,
+	targetService string,
+	status topology.ExportStatus,
+	opts workflow.ExportEnvelopeOpts,
+	corpus []workflow.KnowledgeAtom,
+) (string, error) {
+	env, err := workflow.BuildExportEnvelope(ctx, targetService, status, opts)
+	if err != nil {
+		return "", err
+	}
+	return workflow.RenderExportGuidance(env, corpus)
 }
 
 // resolveExportVariant returns the chosen variant + nil prompt when the
 // source mode resolves to a forced single half OR when the agent has
 // supplied a Variant. For pair modes (ModeStandard / ModeLocalStage)
-// with no Variant supplied, returns the variant-prompt response.
-func resolveExportVariant(input WorkflowInput, sourceMode topology.Mode) (topology.ExportVariant, *mcp.CallToolResult) {
+// with no Variant supplied, returns the variant-prompt response built
+// from the export-variant-prompt atom.
+func resolveExportVariant(
+	ctx context.Context,
+	input WorkflowInput,
+	sourceMode topology.Mode,
+	opts workflow.ExportEnvelopeOpts,
+	corpus []workflow.KnowledgeAtom,
+) (topology.ExportVariant, *mcp.CallToolResult) {
 	supplied := topology.ExportVariant(input.Variant)
 
 	switch sourceMode {
@@ -231,7 +278,7 @@ func resolveExportVariant(input WorkflowInput, sourceMode topology.Mode) (topolo
 				"Either pass the stage hostname as targetService OR set variant=\"dev\". For ModeStandard pairs, the chosen hostname's mode determines the variant."), WithRecoveryStatus())
 		}
 		if supplied == topology.ExportVariantUnset {
-			return topology.ExportVariantUnset, variantPromptResponse(input.TargetService, sourceMode)
+			return topology.ExportVariantUnset, variantPromptResponse(ctx, input.TargetService, sourceMode, opts, corpus)
 		}
 		return supplied, nil
 	case topology.ModeStage:
@@ -243,7 +290,7 @@ func resolveExportVariant(input WorkflowInput, sourceMode topology.Mode) (topolo
 				"Either pass the dev hostname as targetService OR set variant=\"stage\"."), WithRecoveryStatus())
 		}
 		if supplied == topology.ExportVariantUnset {
-			return topology.ExportVariantUnset, variantPromptResponse(input.TargetService, sourceMode)
+			return topology.ExportVariantUnset, variantPromptResponse(ctx, input.TargetService, sourceMode, opts, corpus)
 		}
 		return supplied, nil
 	default:
@@ -254,8 +301,16 @@ func resolveExportVariant(input WorkflowInput, sourceMode topology.Mode) (topolo
 
 // scopePromptResponse returns a list of runtime hostnames in the
 // project so the agent can pick a TargetService. Phase A.1 entry point
-// when the agent calls workflow="export" without targetService.
-func scopePromptResponse(ctx context.Context, client platform.Client, projectID string) (*mcp.CallToolResult, any, error) {
+// when the agent calls workflow="export" without targetService. Atom-
+// rendered guidance composes export-intro (universal framing) + export-
+// scope-prompt (status-specific imperative).
+func scopePromptResponse(
+	ctx context.Context,
+	client platform.Client,
+	projectID string,
+	opts workflow.ExportEnvelopeOpts,
+	corpus []workflow.KnowledgeAtom,
+) (*mcp.CallToolResult, any, error) {
 	discover, err := ops.Discover(ctx, client, projectID, "", false, false)
 	if err != nil {
 		return convertError(err, WithRecoveryStatus()), nil, nil
@@ -267,43 +322,65 @@ func scopePromptResponse(ctx context.Context, client platform.Client, projectID 
 		}
 	}
 	sort.Strings(runtimes)
+	guidance, err := renderExportStatusGuidance(ctx, "", topology.ExportStatusScopePrompt, opts, corpus)
+	if err != nil {
+		return convertError(err, WithRecoveryStatus()), nil, nil
+	}
 	return jsonResult(map[string]any{
 		"status":   "scope-prompt",
 		"phase":    "export-active",
-		"guidance": "Pick the runtime service to export. Pass targetService=<hostname> on the next call.",
+		"guidance": guidance,
 		"runtimes": runtimes,
 	}), nil, nil
 }
 
 // variantPromptResponse asks the agent to pick which half of a pair
-// to package. ModeStandard and ModeLocalStage trigger this; the chosen
-// hostname's mode would resolve the variant automatically once
-// targetService is the half-specific hostname.
-func variantPromptResponse(targetService string, sourceMode topology.Mode) *mcp.CallToolResult {
+// to package. ModeStandard / ModeLocalStage / ModeStage trigger this;
+// the chosen hostname's mode resolves the variant on the next call.
+// Atom-rendered guidance composes export-intro + export-variant-prompt.
+func variantPromptResponse(
+	ctx context.Context,
+	targetService string,
+	sourceMode topology.Mode,
+	opts workflow.ExportEnvelopeOpts,
+	corpus []workflow.KnowledgeAtom,
+) *mcp.CallToolResult {
+	guidance, err := renderExportStatusGuidance(ctx, targetService, topology.ExportStatusVariantPrompt, opts, corpus)
+	if err != nil {
+		return convertError(err, WithRecoveryStatus())
+	}
 	return jsonResult(map[string]any{
 		"status":        "variant-prompt",
 		"phase":         "export-active",
 		"targetService": targetService,
 		"sourceMode":    sourceMode,
-		"guidance": fmt.Sprintf(
-			"%q is part of a %s pair. Pick which half of the pair to package: variant=\"dev\" packages the dev hostname's working tree + zerops.yaml; variant=\"stage\" packages the stage hostname's. Both bundles emit Zerops scaling mode=NON_HA — destination project topology is established by ZCP's bootstrap on import, not by the bundle. Per plan §3.3 (revised in Phase 5).",
-			targetService, sourceMode,
-		),
-		"options": []topology.ExportVariant{topology.ExportVariantDev, topology.ExportVariantStage},
+		"guidance":      guidance,
+		"options":       []topology.ExportVariant{topology.ExportVariantDev, topology.ExportVariantStage},
 	})
 }
 
 // scaffoldChainResponse fires when /var/www/zerops.yaml is absent or
-// empty — Q5 default refuse + chain. Bundle generation is impossible
-// without a setup block to reference at re-import time.
-func scaffoldChainResponse(targetService string) *mcp.CallToolResult {
+// empty. Atom-rendered guidance is the scaffold-zerops-yaml body
+// (filtered by exportStatus: [scaffold-required]) plus universal export-
+// intro. The structural nextSteps array carries the dynamic targetService
+// substitution since atoms don't yet template runtime values.
+func scaffoldChainResponse(
+	ctx context.Context,
+	targetService string,
+	opts workflow.ExportEnvelopeOpts,
+	corpus []workflow.KnowledgeAtom,
+) *mcp.CallToolResult {
+	guidance, err := renderExportStatusGuidance(ctx, targetService, topology.ExportStatusScaffoldRequired, opts, corpus)
+	if err != nil {
+		return convertError(err, WithRecoveryStatus())
+	}
 	return jsonResult(map[string]any{
 		"status":        "scaffold-required",
 		"phase":         "export-active",
 		"targetService": targetService,
-		"guidance":      "/var/www/zerops.yaml is missing — export cannot compose a bundle without a setup block. Run the scaffold-zerops-yaml atom flow to emit a minimal valid zerops.yaml, then re-call export.",
+		"guidance":      guidance,
 		"nextSteps": []string{
-			"Read the scaffold-zerops-yaml atom: it walks the agent through emitting a minimal zerops.yaml from runtime-detected fields (type, version, ports). After scaffolding, re-call: zerops_workflow workflow=\"export\" targetService=\"" + targetService + "\".",
+			"After scaffolding, re-call: zerops_workflow workflow=\"export\" targetService=\"" + targetService + "\".",
 		},
 	})
 }
@@ -313,14 +390,27 @@ func scaffoldChainResponse(targetService string) *mcp.CallToolResult {
 // records GitPushState != GitPushConfigured. Both require the
 // git-push-setup action to land before publish. The bundle (when
 // available) is included so the agent can preview the YAMLs while
-// the user resolves the prereq.
-func gitPushSetupChainResponse(targetService string, bundle *ops.ExportBundle, reason string) *mcp.CallToolResult {
+// the user resolves the prereq. Atom-rendered guidance composes export-
+// intro + export-publish-needs-setup; the dynamic `reason` and dynamic
+// targetService substitutions stay in the response top-level + nextSteps.
+func gitPushSetupChainResponse(
+	ctx context.Context,
+	targetService string,
+	bundle *ops.ExportBundle,
+	reason string,
+	opts workflow.ExportEnvelopeOpts,
+	corpus []workflow.KnowledgeAtom,
+) *mcp.CallToolResult {
+	guidance, err := renderExportStatusGuidance(ctx, targetService, topology.ExportStatusGitPushSetupRequired, opts, corpus)
+	if err != nil {
+		return convertError(err, WithRecoveryStatus())
+	}
 	body := map[string]any{
 		"status":        "git-push-setup-required",
 		"phase":         "export-active",
 		"targetService": targetService,
 		"reason":        reason,
-		"guidance":      fmt.Sprintf("Export Phase C requires GitPushState=configured. Reason: %s. Run the git-push-setup action to provision GIT_TOKEN/.netrc/remote URL, then re-call export.", reason),
+		"guidance":      guidance,
 		"nextSteps": []string{
 			fmt.Sprintf("Run zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<URL>", targetService),
 			"After confirmation, re-call: zerops_workflow workflow=\"export\" targetService=\"" + targetService + "\" with the same inputs.",
@@ -346,9 +436,12 @@ func gitPushSetupChainResponse(targetService string, bundle *ops.ExportBundle, r
 // SSH access to (no incremental leak), and warnings carry only env
 // names + structural notes (no raw values).
 func classifyPromptResponse(
+	ctx context.Context,
 	bundle *ops.ExportBundle,
 	envs []ops.ProjectEnvVar,
 	classifications map[string]topology.SecretClassification,
+	opts workflow.ExportEnvelopeOpts,
+	corpus []workflow.KnowledgeAtom,
 ) *mcp.CallToolResult {
 	rows := make([]map[string]any, 0, len(envs))
 	for _, env := range envs {
@@ -362,6 +455,10 @@ func classifyPromptResponse(
 		}
 		rows = append(rows, row)
 	}
+	guidance, err := renderExportStatusGuidance(ctx, bundle.TargetHostname, topology.ExportStatusClassifyPrompt, opts, corpus)
+	if err != nil {
+		return convertError(err, WithRecoveryStatus())
+	}
 	return jsonResult(map[string]any{
 		"status":                 "classify-prompt",
 		"phase":                  "export-active",
@@ -370,9 +467,8 @@ func classifyPromptResponse(
 		"zeropsYaml":             bundle.ZeropsYAML,
 		"warnings":               bundle.Warnings,
 		"envClassificationTable": rows,
-		"guidance":               "Classify each project env per plan §3.4 (infrastructure / auto-secret / external-secret / plain-config). Inspect values via zerops_discover (includeEnvs=true, includeEnvValues=true) to grep against source code. Then re-call with envClassifications={key:bucket} populated to publish.",
+		"guidance":               guidance,
 		"fetchValuesVia":         fmt.Sprintf("zerops_discover hostname=%q includeEnvs=true includeEnvValues=true", bundle.TargetHostname),
-		"protocolRef":            "plan §3.4 four-category classification protocol; per-env review table per amendment 12.",
 		"nextSteps": []string{
 			fmt.Sprintf("Re-call zerops_workflow workflow=\"export\" targetService=%q variant=%q envClassifications={key:bucket,...}", bundle.TargetHostname, bundle.Variant),
 		},
@@ -387,7 +483,16 @@ func classifyPromptResponse(
 // the body is structurally absent. Re-call export with the same inputs
 // after fixing — if the validators clear, the response moves to
 // publish-ready.
-func validationFailedResponse(bundle *ops.ExportBundle) *mcp.CallToolResult {
+func validationFailedResponse(
+	ctx context.Context,
+	bundle *ops.ExportBundle,
+	opts workflow.ExportEnvelopeOpts,
+	corpus []workflow.KnowledgeAtom,
+) *mcp.CallToolResult {
+	guidance, err := renderExportStatusGuidance(ctx, bundle.TargetHostname, topology.ExportStatusValidationFailed, opts, corpus)
+	if err != nil {
+		return convertError(err, WithRecoveryStatus())
+	}
 	return jsonResult(map[string]any{
 		"status":        "validation-failed",
 		"phase":         "export-active",
@@ -395,7 +500,7 @@ func validationFailedResponse(bundle *ops.ExportBundle) *mcp.CallToolResult {
 		"variant":       bundle.Variant,
 		"errors":        formatBundleErrors(bundle.Errors),
 		"preview":       bundlePreview(bundle),
-		"guidance":      "Schema validation surfaced blocking errors against the published JSON schemas. Inspect each error's path + message; fix the failing field (re-classify the env, edit the live zerops.yaml, or scaffold if structurally absent), then re-call export with the same inputs.",
+		"guidance":      guidance,
 		"nextSteps": []string{
 			"Read each validation error and fix at its source (project envs, zerops.yaml, or service shape).",
 			fmt.Sprintf("Re-call zerops_workflow workflow=\"export\" targetService=%q variant=%q envClassifications=<your same map> after fixes.", bundle.TargetHostname, bundle.Variant),
@@ -405,10 +510,19 @@ func validationFailedResponse(bundle *ops.ExportBundle) *mcp.CallToolResult {
 
 // publishGuidanceResponse is the Phase C success body: bundle ready,
 // agent executes the SSH writes + commit + zerops_deploy.
-func publishGuidanceResponse(bundle *ops.ExportBundle) *mcp.CallToolResult {
+func publishGuidanceResponse(
+	ctx context.Context,
+	bundle *ops.ExportBundle,
+	opts workflow.ExportEnvelopeOpts,
+	corpus []workflow.KnowledgeAtom,
+) *mcp.CallToolResult {
 	const importFile = "zerops-project-import.yaml"
 	const repoRoot = "/var/www"
 
+	guidance, err := renderExportStatusGuidance(ctx, bundle.TargetHostname, topology.ExportStatusPublishReady, opts, corpus)
+	if err != nil {
+		return convertError(err, WithRecoveryStatus())
+	}
 	return jsonResult(map[string]any{
 		"status":        "publish-ready",
 		"phase":         "export-active",
@@ -423,7 +537,7 @@ func publishGuidanceResponse(bundle *ops.ExportBundle) *mcp.CallToolResult {
 			"importFile": importFile,
 			"zeropsFile": "zerops.yaml",
 		},
-		"guidance": "Bundle composed. Write the YAMLs at repo root, commit, and push via zerops_deploy strategy=\"git-push\".",
+		"guidance": guidance,
 		"nextSteps": []string{
 			fmt.Sprintf("ssh %s 'cat > %s/%s' <<'EOF'\n%s\nEOF", bundle.TargetHostname, repoRoot, importFile, bundle.ImportYAML),
 			fmt.Sprintf("ssh %s 'cat > %s/zerops.yaml' <<'EOF'\n%s\nEOF (skip if zerops.yaml already matches)", bundle.TargetHostname, repoRoot, bundle.ZeropsYAML),

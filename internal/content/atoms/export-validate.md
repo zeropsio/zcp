@@ -2,6 +2,7 @@
 id: export-validate
 priority: 3
 phases: [export-active]
+exportStatus: [validation-failed]
 environments: [container]
 title: "Read the export bundle's preview + warnings before publishing"
 references-fields: [ops.ExportBundle.ImportYAML, ops.ExportBundle.ZeropsYAML, ops.ExportBundle.Warnings, ops.ExportBundle.Errors]

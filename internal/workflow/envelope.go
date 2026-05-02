@@ -17,9 +17,9 @@ import (
 // alphabetically, so plain json.Marshal is deterministic once slice order
 // is controlled at construction.
 type StateEnvelope struct {
-	Phase        Phase                    `json:"phase"`
-	Environment  Environment              `json:"environment"`
-	IdleScenario IdleScenario             `json:"idleScenario,omitempty"`
+	Phase        Phase        `json:"phase"`
+	Environment  Environment  `json:"environment"`
+	IdleScenario IdleScenario `json:"idleScenario,omitempty"`
 	// ExportStatus discriminates the sub-state of PhaseExportActive — see
 	// topology.ExportStatus. Set by BuildExportEnvelope when the export
 	// workflow handler routes through atom synthesis; zero-value (unset)

@@ -13,10 +13,18 @@ import (
 // needs to populate the Services slice for a known target. Caller is
 // expected to be the export tool handler, which already holds the
 // platform client + projectID + stateDir from its own setup.
+//
+// Environment must be set so atoms with `environments: [container]` /
+// `[local]` axes filter correctly — every export atom in the corpus
+// today declares `environments: [container]`, so an unset Environment
+// rejects the entire fire-set and the rendered guidance comes back
+// empty. Callers typically derive it from runtime.Info via
+// DetectEnvironment(rt).
 type ExportEnvelopeOpts struct {
-	Client    platform.Client
-	ProjectID string
-	StateDir  string
+	Client      platform.Client
+	ProjectID   string
+	StateDir    string
+	Environment Environment
 }
 
 // BuildExportEnvelope returns the typed StateEnvelope for the export
@@ -50,6 +58,7 @@ func BuildExportEnvelope(
 ) (StateEnvelope, error) {
 	env := StateEnvelope{
 		Phase:        PhaseExportActive,
+		Environment:  opts.Environment,
 		ExportStatus: status,
 	}
 	if targetServiceHostname == "" {

@@ -2,10 +2,11 @@
 id: scaffold-zerops-yaml
 priority: 6
 phases: [export-active]
+exportStatus: [scaffold-required]
 environments: [container]
 title: "Scaffold a minimal zerops.yaml when /var/www is missing one"
 ---
-You hit `status="scaffold-required"`. The chosen container's `/var/www/zerops.yaml` (or `.yml`) is missing or empty. Bundle composition can't continue without a `setup:` block to reference at re-import — write a minimal valid yaml first, commit it, then re-run export.
+You hit `status="scaffold-required"`. The chosen container's `/var/www/zerops.yaml` (or `.yml`) is missing or empty. Bundle composition can't continue without a `setup:` block to reference at re-import — write a minimal valid yaml first, commit it, then re-call export.
 
 ## Detect what to put in the setup
 
@@ -58,7 +59,7 @@ ssh {targetHostname} "cd /var/www && git add zerops.yaml && git commit -m 'chore
 
 This commit lands inside the bundle when the export publishes — the destination project sees the same `zerops.yaml` you scaffolded.
 
-## Re-run export
+## Re-call export
 
 ```
 zerops_workflow workflow="export" \

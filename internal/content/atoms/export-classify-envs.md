@@ -2,9 +2,12 @@
 id: export-classify-envs
 priority: 2
 phases: [export-active]
+exportStatus: [classify-prompt]
 environments: [container]
 title: "Classify project envVariables before publishing the export bundle"
 ---
+You are at `status="classify-prompt"`. Classify each project env into one of four buckets — `infrastructure`, `auto-secret`, `external-secret`, `plain-config` — before re-calling with `envClassifications` populated.
+
 The export bundle's `project.envVariables` block holds the values that re-imported services see at boot. Each project env needs a bucket so the generator knows whether to drop it (managed services regenerate the value), inject a preprocessor directive (auto-secret or external-secret placeholder), or emit it verbatim. Classification is your job — `zerops_workflow` does NOT auto-bucket.
 
 ## The four buckets

@@ -83,12 +83,15 @@ func runtimeService(hostname, typeVersion string, subdomain bool) platform.Servi
 	}
 }
 
-func managedService(hostname, typeVersion string) platform.ServiceStack {
+// managedService returns a fixed db@postgresql@16 stub. Every export
+// test today uses the same managed dep shape; parametrize when a second
+// shape is needed.
+func managedService() platform.ServiceStack {
 	return platform.ServiceStack{
-		ID:   "svc-" + hostname,
-		Name: hostname,
+		ID:   "svc-db",
+		Name: "db",
 		ServiceStackTypeInfo: platform.ServiceTypeInfo{
-			ServiceStackTypeVersionName:  typeVersion,
+			ServiceStackTypeVersionName:  "postgresql@16",
 			ServiceStackTypeCategoryName: "DB", // any non-USER category surfaces as infrastructure
 		},
 		Status: "ACTIVE",
@@ -136,7 +139,7 @@ func TestHandleExport_NoTargetService_ReturnsScopePrompt(t *testing.T) {
 	mock := newExportMock([]platform.ServiceStack{
 		runtimeService("appdev", "php-apache@8.4", false),
 		runtimeService("workerdev", "nodejs@22", false),
-		managedService("db", "postgresql@16"),
+		managedService(),
 	}, nil)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
@@ -432,7 +435,7 @@ func TestHandleExport_PublishReady(t *testing.T) {
 	mock := newExportMock(
 		[]platform.ServiceStack{
 			runtimeService("appdev", "php-apache@8.4", true), // subdomain enabled
-			managedService("db", "postgresql@16"),
+			managedService(),
 		},
 		[]platform.EnvVar{
 			{Key: "APP_KEY", Content: "old-key"},
@@ -551,7 +554,7 @@ func TestHandleExport_UnbootstrappedService_Errors(t *testing.T) {
 // gate: managed services cannot be export targets.
 func TestHandleExport_ManagedServiceTarget_Errors(t *testing.T) {
 	t.Parallel()
-	mock := newExportMock([]platform.ServiceStack{managedService("db", "postgresql@16")}, nil)
+	mock := newExportMock([]platform.ServiceStack{managedService()}, nil)
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, t.TempDir(), "", nil, nil, runtime.Info{InContainer: true})
@@ -851,10 +854,22 @@ func TestResolveExportVariant(t *testing.T) {
 		{"ModeSimple → forced unset (no prompt)", topology.ModeSimple, "", topology.ExportVariantUnset, false, false},
 		{"ModeLocalOnly → forced unset (no prompt)", topology.ModeLocalOnly, "", topology.ExportVariantUnset, false, false},
 	}
+	mock := newExportMock([]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)}, nil)
+	corpus, err := workflow.LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, prompt := resolveExportVariant(WorkflowInput{TargetService: "appdev", Variant: tt.variant}, tt.mode)
+			opts := workflow.ExportEnvelopeOpts{Client: mock, ProjectID: "proj1", StateDir: t.TempDir()}
+			got, prompt := resolveExportVariant(
+				context.Background(),
+				WorkflowInput{TargetService: "appdev", Variant: tt.variant},
+				tt.mode,
+				opts,
+				corpus,
+			)
 			if got != tt.wantVariant {
 				t.Errorf("variant = %q, want %q", got, tt.wantVariant)
 			}

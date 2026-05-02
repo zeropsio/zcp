@@ -2,6 +2,7 @@
 id: export-publish-needs-setup
 priority: 5
 phases: [export-active]
+exportStatus: [git-push-setup-required]
 environments: [container]
 title: "Configure git-push capability before publishing the export bundle"
 ---

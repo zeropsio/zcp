@@ -586,16 +586,17 @@ func TestScenario_S11_StrategySetupEmptyPlan(t *testing.T) {
 	requireAtomIDsContain(t, "S11", matches, "setup-git-push-container")
 }
 
-// TestScenario_S12_ExportActiveEmptyPlan mirrors S11 for the export phase.
-// Same stateless contract: empty Plan, atom bodies drive guidance. Phase 4
-// of the export-buildFromGit plan replaced the legacy single 229-line
-// export.md atom with six topic-scoped atoms (intro / classify-envs /
-// validate / publish / publish-needs-setup / scaffold-zerops-yaml). All
-// six render whenever the export-active phase fires; the handler decides
-// which sections the agent acts on via the response payload's `status`
-// field — atom-axis matching does NOT discriminate per call (per Codex
-// Phase 0 rendering ruling: SynthesizeImmediatePhase passes no service
-// context, so service-scoped axes silently never fire).
+// TestScenario_S12_ExportActiveEmptyPlan pins the export-active phase
+// per-sub-status atom fire-set after Phase 0b of the atom-corpus-
+// verification plan. The legacy single-test "all 6 export atoms render
+// together for empty envelope" overmatch was the bug the new
+// `exportStatus:` axis closes — every export atom now declares which
+// sub-statuses it applies to, and Synthesize emits exactly those plus
+// the universal export-intro framing.
+//
+// Same stateless Plan contract as before (empty Plan, atom bodies drive
+// guidance). Sub-tests cover each of the seven export statuses the
+// handler emits.
 func TestScenario_S12_ExportActiveEmptyPlan(t *testing.T) {
 	t.Parallel()
 
@@ -604,12 +605,9 @@ func TestScenario_S12_ExportActiveEmptyPlan(t *testing.T) {
 		t.Fatalf("LoadAtomCorpus: %v", err)
 	}
 
-	env := StateEnvelope{
-		Phase:       PhaseExportActive,
-		Environment: EnvContainer,
-	}
-
-	plan := BuildPlan(env)
+	// Plan is independent of ExportStatus — assert once.
+	planEnv := StateEnvelope{Phase: PhaseExportActive, Environment: EnvContainer}
+	plan := BuildPlan(planEnv)
 	if plan.Primary.Tool != "" {
 		t.Errorf("S12: expected empty Plan (stateless workflow contract), got tool=%q", plan.Primary.Tool)
 	}
@@ -617,18 +615,147 @@ func TestScenario_S12_ExportActiveEmptyPlan(t *testing.T) {
 		t.Errorf("S12: expected no secondary/alternatives, got secondary=%v alts=%d", plan.Secondary, len(plan.Alternatives))
 	}
 
-	matches, err := Synthesize(env, corpus)
-	if err != nil {
-		t.Fatalf("Synthesize: %v", err)
+	// standardPairSnap is reused across sub-tests that need a service in
+	// the envelope (variant-prompt's modes axis fires per-snapshot;
+	// status atoms without service-scoped axes still work with this
+	// slice — conjunction-match rules tolerate over-supply).
+	standardPairSnap := ServiceSnapshot{
+		Hostname:     "appdev",
+		TypeVersion:  "php-apache@8.4",
+		RuntimeClass: topology.RuntimeImplicitWeb,
+		Mode:         topology.ModeStandard,
+		Bootstrapped: true,
 	}
-	requireAtomIDsExact(t, "S12", matches,
-		"export-intro",
-		"export-classify-envs",
-		"export-validate",
-		"export-publish",
-		"export-publish-needs-setup",
-		"scaffold-zerops-yaml",
-	)
+
+	// Sub-tests inline the requireAtomIDsExact calls with literal string
+	// arguments (rather than table-driven wantIDs) so corpus_pin_density_
+	// test.go's AST-parser sees each atom ID at a recognized call site.
+
+	t.Run("S12.scope-prompt", func(t *testing.T) {
+		t.Parallel()
+		env := StateEnvelope{
+			Phase:        PhaseExportActive,
+			Environment:  EnvContainer,
+			ExportStatus: topology.ExportStatusScopePrompt,
+			// Services nil: target unknown per audit decision (single-entry semantics).
+		}
+		matches, err := Synthesize(env, corpus)
+		if err != nil {
+			t.Fatalf("Synthesize: %v", err)
+		}
+		requireAtomIDsExact(t, "S12.scope-prompt", matches,
+			"export-intro",
+			"export-scope-prompt",
+		)
+	})
+
+	t.Run("S12.variant-prompt", func(t *testing.T) {
+		t.Parallel()
+		env := StateEnvelope{
+			Phase:        PhaseExportActive,
+			Environment:  EnvContainer,
+			ExportStatus: topology.ExportStatusVariantPrompt,
+			Services:     []ServiceSnapshot{standardPairSnap},
+		}
+		matches, err := Synthesize(env, corpus)
+		if err != nil {
+			t.Fatalf("Synthesize: %v", err)
+		}
+		requireAtomIDsExact(t, "S12.variant-prompt", matches,
+			"export-intro",
+			"export-variant-prompt",
+		)
+	})
+
+	t.Run("S12.scaffold-required", func(t *testing.T) {
+		t.Parallel()
+		env := StateEnvelope{
+			Phase:        PhaseExportActive,
+			Environment:  EnvContainer,
+			ExportStatus: topology.ExportStatusScaffoldRequired,
+			Services:     []ServiceSnapshot{standardPairSnap},
+		}
+		matches, err := Synthesize(env, corpus)
+		if err != nil {
+			t.Fatalf("Synthesize: %v", err)
+		}
+		requireAtomIDsExact(t, "S12.scaffold-required", matches,
+			"export-intro",
+			"scaffold-zerops-yaml",
+		)
+	})
+
+	t.Run("S12.git-push-setup-required", func(t *testing.T) {
+		t.Parallel()
+		env := StateEnvelope{
+			Phase:        PhaseExportActive,
+			Environment:  EnvContainer,
+			ExportStatus: topology.ExportStatusGitPushSetupRequired,
+			Services:     []ServiceSnapshot{standardPairSnap},
+		}
+		matches, err := Synthesize(env, corpus)
+		if err != nil {
+			t.Fatalf("Synthesize: %v", err)
+		}
+		requireAtomIDsExact(t, "S12.git-push-setup-required", matches,
+			"export-intro",
+			"export-publish-needs-setup",
+		)
+	})
+
+	t.Run("S12.classify-prompt", func(t *testing.T) {
+		t.Parallel()
+		env := StateEnvelope{
+			Phase:        PhaseExportActive,
+			Environment:  EnvContainer,
+			ExportStatus: topology.ExportStatusClassifyPrompt,
+			Services:     []ServiceSnapshot{standardPairSnap},
+		}
+		matches, err := Synthesize(env, corpus)
+		if err != nil {
+			t.Fatalf("Synthesize: %v", err)
+		}
+		requireAtomIDsExact(t, "S12.classify-prompt", matches,
+			"export-intro",
+			"export-classify-envs",
+		)
+	})
+
+	t.Run("S12.validation-failed", func(t *testing.T) {
+		t.Parallel()
+		env := StateEnvelope{
+			Phase:        PhaseExportActive,
+			Environment:  EnvContainer,
+			ExportStatus: topology.ExportStatusValidationFailed,
+			Services:     []ServiceSnapshot{standardPairSnap},
+		}
+		matches, err := Synthesize(env, corpus)
+		if err != nil {
+			t.Fatalf("Synthesize: %v", err)
+		}
+		requireAtomIDsExact(t, "S12.validation-failed", matches,
+			"export-intro",
+			"export-validate",
+		)
+	})
+
+	t.Run("S12.publish-ready", func(t *testing.T) {
+		t.Parallel()
+		env := StateEnvelope{
+			Phase:        PhaseExportActive,
+			Environment:  EnvContainer,
+			ExportStatus: topology.ExportStatusPublishReady,
+			Services:     []ServiceSnapshot{standardPairSnap},
+		}
+		matches, err := Synthesize(env, corpus)
+		if err != nil {
+			t.Fatalf("Synthesize: %v", err)
+		}
+		requireAtomIDsExact(t, "S12.publish-ready", matches,
+			"export-intro",
+			"export-publish",
+		)
+	})
 }
 
 // TestScenario_S13_GitPushNeedsSetup pins develop-close-mode-git-push-needs-setup
@@ -980,10 +1107,43 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, CloseDeployMode: topology.CloseModeGitPush, GitPushState: topology.GitPushConfigured, BuildIntegration: topology.BuildIntegrationNone, Bootstrapped: true, Deployed: false}},
 		}},
 
-		// Export.
-		{"export-active", StateEnvelope{
+		// Export — every sub-status drives a distinct atom fire-set per
+		// the new exportStatus: axis. Cover all 7 so each status-specific
+		// atom appears at least once in the panel union.
+		{"export-active/scope-prompt", StateEnvelope{
 			Phase: PhaseExportActive, Environment: EnvContainer,
-			Services: []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, CloseDeployMode: topology.CloseModeAuto, Bootstrapped: true, Deployed: true}},
+			ExportStatus: topology.ExportStatusScopePrompt,
+			// Services empty: target unknown at scope-prompt.
+		}},
+		{"export-active/variant-prompt", StateEnvelope{
+			Phase: PhaseExportActive, Environment: EnvContainer,
+			ExportStatus: topology.ExportStatusVariantPrompt,
+			Services:     []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, Bootstrapped: true}},
+		}},
+		{"export-active/scaffold-required", StateEnvelope{
+			Phase: PhaseExportActive, Environment: EnvContainer,
+			ExportStatus: topology.ExportStatusScaffoldRequired,
+			Services:     []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, Bootstrapped: true}},
+		}},
+		{"export-active/git-push-setup-required", StateEnvelope{
+			Phase: PhaseExportActive, Environment: EnvContainer,
+			ExportStatus: topology.ExportStatusGitPushSetupRequired,
+			Services:     []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, Bootstrapped: true}},
+		}},
+		{"export-active/classify-prompt", StateEnvelope{
+			Phase: PhaseExportActive, Environment: EnvContainer,
+			ExportStatus: topology.ExportStatusClassifyPrompt,
+			Services:     []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, Bootstrapped: true}},
+		}},
+		{"export-active/validation-failed", StateEnvelope{
+			Phase: PhaseExportActive, Environment: EnvContainer,
+			ExportStatus: topology.ExportStatusValidationFailed,
+			Services:     []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, Bootstrapped: true}},
+		}},
+		{"export-active/publish-ready", StateEnvelope{
+			Phase: PhaseExportActive, Environment: EnvContainer,
+			ExportStatus: topology.ExportStatusPublishReady,
+			Services:     []ServiceSnapshot{{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Mode: topology.ModeStandard, Bootstrapped: true}},
 		}},
 	}
 
@@ -1071,9 +1231,14 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"develop-static-workflow",
 		"develop-strategy-awareness",
 		"develop-verify-matrix",
-		// export-buildFromGit Phase 4 — six topic-scoped atoms
-		// replace the legacy export.md.
+		// export-buildFromGit — eight atoms now (six existing + two new
+		// status-specific scope-prompt / variant-prompt added in atom-
+		// corpus-verification Phase 0b). Each non-intro atom carries an
+		// exportStatus: axis so the panel needs all 7 sub-status envelopes
+		// above to surface them.
 		"export-intro",
+		"export-scope-prompt",
+		"export-variant-prompt",
 		"export-classify-envs",
 		"export-validate",
 		"export-publish",

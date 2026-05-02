@@ -29,12 +29,6 @@ import (
 // ancillary response fields like `protocolRef` is implicit in the
 // migration commit's response-shape change, not pinned by this test.
 //
-// RED today: the absence assertions fail because today's inline guidance
-// strings still embed the dropped plan / amendment cites ("§3.3", "§3.4").
-// After Phase 0b.6 (handleExport renders atoms with service context,
-// atoms migrated in 0b.2-0b.5), the cites are gone from `guidance` and
-// the test goes GREEN.
-//
 // Loose substring matching (single words / short phrases) is intentional
 // — atom-body editorial improvements during Phase 2 must not break the
 // migration contract. The contract is "these concepts surface", not
@@ -43,41 +37,22 @@ func TestHandleExport_ExpectedSubstringsPostMigration(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		name           string
-		drive          func(t *testing.T) *mcp.CallToolResult
-		wantPresent    []string
-		wantAbsent     []string
-		todoPhase2Note string
+		name        string
+		drive       func(t *testing.T) *mcp.CallToolResult
+		wantPresent []string
+		wantAbsent  []string
 	}{
 		{
-			name: "scope_prompt",
-			drive: func(t *testing.T) *mcp.CallToolResult {
-				mock := newExportMock([]platform.ServiceStack{
-					runtimeService("appdev", "php-apache@8.4", false),
-					managedService("db", "postgresql@16"),
-				}, nil)
-				srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-				RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, t.TempDir(), "", nil, nil, runtime.Info{InContainer: true})
-				return callTool(t, srv, "zerops_workflow", map[string]any{"workflow": "export"})
-			},
+			name:  "scope_prompt",
+			drive: driveScopePrompt,
 			wantPresent: []string{
 				"Pick the runtime",
 				"targetService",
 			},
 		},
 		{
-			name: "variant_prompt",
-			drive: func(t *testing.T) *mcp.CallToolResult {
-				mock := newExportMock([]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)}, nil)
-				dir := t.TempDir()
-				writeBootstrappedMeta(t, dir, topology.ModeStandard, topology.GitPushUnconfigured)
-				srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-				RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, nil, runtime.Info{InContainer: true})
-				return callTool(t, srv, "zerops_workflow", map[string]any{
-					"workflow":      "export",
-					"targetService": "appdev",
-				})
-			},
+			name:  "variant_prompt",
+			drive: driveVariantPrompt,
 			wantPresent: []string{
 				"pair",
 				"dev",
@@ -86,51 +61,21 @@ func TestHandleExport_ExpectedSubstringsPostMigration(t *testing.T) {
 				"destination project",
 			},
 			wantAbsent: []string{
-				"§3.3",  // dropped-pre-migration 2.7 — plan reference
+				"§3.3", // dropped-pre-migration 2.7 — plan reference
 			},
 		},
 		{
-			name: "scaffold_required",
-			drive: func(t *testing.T) *mcp.CallToolResult {
-				mock := newExportMock([]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)}, nil)
-				dir := t.TempDir()
-				writeBootstrappedMeta(t, dir, topology.ModeStandard, topology.GitPushUnconfigured)
-				ssh := &routedSSH{responses: map[string]string{
-					"cat /var/www/zerops.yaml": "", // empty body forces scaffold-required
-				}}
-				srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-				RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
-				return callTool(t, srv, "zerops_workflow", map[string]any{
-					"workflow":      "export",
-					"targetService": "appdev",
-					"variant":       "dev",
-				})
-			},
+			name:  "scaffold_required",
+			drive: driveScaffoldRequired,
 			wantPresent: []string{
-				"/var/www/zerops.yaml",     // 3.1 (TODO Phase 2 — wording precision around "missing or empty")
-				"minimal",                   // 3.2 (TODO Phase 2 — self-ref clarity)
+				"/var/www/zerops.yaml", // 3.1 (TODO Phase 2 — wording precision around "missing or empty")
+				"minimal",              // 3.2 (TODO Phase 2 — self-ref clarity)
 				"re-call",
 			},
-			todoPhase2Note: "scaffold-required: revisit 3.1 (literal 'is missing' vs 'missing or empty') + 3.2 (drop self-ref 'Run the X atom flow' phrasing) during Phase 2 review pass.",
 		},
 		{
-			name: "git_push_setup_required",
-			drive: func(t *testing.T) *mcp.CallToolResult {
-				mock := newExportMock([]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)}, nil)
-				dir := t.TempDir()
-				writeBootstrappedMeta(t, dir, topology.ModeStandard, topology.GitPushUnconfigured)
-				ssh := &routedSSH{responses: map[string]string{
-					"cat /var/www/zerops.yaml": exportTestZeropsYAML,
-					"git remote get-url":       "", // empty remote → git-push-setup-required
-				}}
-				srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-				RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
-				return callTool(t, srv, "zerops_workflow", map[string]any{
-					"workflow":      "export",
-					"targetService": "appdev",
-					"variant":       "dev",
-				})
-			},
+			name:  "git_push_setup_required",
+			drive: driveGitPushSetupRequired,
 			wantPresent: []string{
 				"GitPushState=configured",
 				"git-push-setup",
@@ -138,29 +83,8 @@ func TestHandleExport_ExpectedSubstringsPostMigration(t *testing.T) {
 			},
 		},
 		{
-			name: "classify_prompt",
-			drive: func(t *testing.T) *mcp.CallToolResult {
-				mock := newExportMock(
-					[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
-					[]platform.EnvVar{
-						{Key: "APP_KEY", Content: "old-key"},
-						{Key: "DB_HOST", Content: "${db_hostname}"},
-					},
-				)
-				dir := t.TempDir()
-				writeBootstrappedMeta(t, dir, topology.ModeStandard, topology.GitPushConfigured)
-				ssh := &routedSSH{responses: map[string]string{
-					"cat /var/www/zerops.yaml": exportTestZeropsYAML,
-					"git remote get-url":       "https://github.com/example/demo.git",
-				}}
-				srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-				RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
-				return callTool(t, srv, "zerops_workflow", map[string]any{
-					"workflow":      "export",
-					"targetService": "appdev",
-					"variant":       "dev",
-				})
-			},
+			name:  "classify_prompt",
+			drive: driveClassifyPrompt,
 			wantPresent: []string{
 				"Classify",
 				"infrastructure",
@@ -171,42 +95,12 @@ func TestHandleExport_ExpectedSubstringsPostMigration(t *testing.T) {
 				"envClassifications",
 			},
 			wantAbsent: []string{
-				"§3.4", // dropped-pre-migration 5.6 — plan reference (in `guidance` today; ops.BuildBundle warnings are out of scope)
+				"§3.4", // dropped-pre-migration 5.6 — plan reference
 			},
 		},
 		{
-			name: "validation_failed",
-			drive: func(t *testing.T) *mcp.CallToolResult {
-				const invalidZeropsYAML = `zerops:
-  - setup: appdev
-    build:
-      base: php@8.4
-    run:
-      base: php-apache@8.4
-  - run:
-      base: nodejs@22
-`
-				mock := newExportMock(
-					[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
-					[]platform.EnvVar{{Key: "LOG_LEVEL", Content: "info"}},
-				)
-				dir := t.TempDir()
-				writeBootstrappedMeta(t, dir, topology.ModeStandard, topology.GitPushConfigured)
-				ssh := &routedSSH{responses: map[string]string{
-					"cat /var/www/zerops.yaml": invalidZeropsYAML,
-					"git remote get-url":       "https://github.com/example/demo.git",
-				}}
-				srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-				RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
-				return callTool(t, srv, "zerops_workflow", map[string]any{
-					"workflow":      "export",
-					"targetService": "appdev",
-					"variant":       "dev",
-					"envClassifications": map[string]any{
-						"LOG_LEVEL": "plain-config",
-					},
-				})
-			},
+			name:  "validation_failed",
+			drive: driveValidationFailed,
 			wantPresent: []string{
 				"Schema validation",
 				"path",
@@ -215,38 +109,8 @@ func TestHandleExport_ExpectedSubstringsPostMigration(t *testing.T) {
 			},
 		},
 		{
-			name: "publish_ready",
-			drive: func(t *testing.T) *mcp.CallToolResult {
-				mock := newExportMock(
-					[]platform.ServiceStack{
-						runtimeService("appdev", "php-apache@8.4", true),
-						managedService("db", "postgresql@16"),
-					},
-					[]platform.EnvVar{
-						{Key: "APP_KEY", Content: "old-key"},
-						{Key: "DB_HOST", Content: "${db_hostname}"},
-						{Key: "LOG_LEVEL", Content: "info"},
-					},
-				)
-				dir := t.TempDir()
-				writeBootstrappedMeta(t, dir, topology.ModeStandard, topology.GitPushConfigured)
-				ssh := &routedSSH{responses: map[string]string{
-					"cat /var/www/zerops.yaml": exportTestZeropsYAML,
-					"git remote get-url":       "https://github.com/example/demo.git",
-				}}
-				srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-				RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
-				return callTool(t, srv, "zerops_workflow", map[string]any{
-					"workflow":      "export",
-					"targetService": "appdev",
-					"variant":       "dev",
-					"envClassifications": map[string]any{
-						"APP_KEY":   "auto-secret",
-						"DB_HOST":   "infrastructure",
-						"LOG_LEVEL": "plain-config",
-					},
-				})
-			},
+			name:  "publish_ready",
+			drive: drivePublishReady,
 			wantPresent: []string{
 				"Bundle composed",
 				"git-push",
@@ -279,4 +143,171 @@ func TestHandleExport_ExpectedSubstringsPostMigration(t *testing.T) {
 			}
 		})
 	}
+}
+
+// driveScopePrompt configures the handler to emit `status="scope-prompt"`
+// — agent calls workflow="export" without targetService.
+func driveScopePrompt(t *testing.T) *mcp.CallToolResult {
+	t.Helper()
+	mock := newExportMock([]platform.ServiceStack{
+		runtimeService("appdev", "php-apache@8.4", false),
+		managedService(),
+	}, nil)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, t.TempDir(), "", nil, nil, runtime.Info{InContainer: true})
+	return callTool(t, srv, "zerops_workflow", map[string]any{"workflow": "export"})
+}
+
+// driveVariantPrompt configures the handler to emit `status="variant-prompt"`
+// — ModeStandard pair with no Variant supplied.
+func driveVariantPrompt(t *testing.T) *mcp.CallToolResult {
+	t.Helper()
+	mock := newExportMock([]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)}, nil)
+	dir := t.TempDir()
+	writeBootstrappedMeta(t, dir, topology.ModeStandard, topology.GitPushUnconfigured)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, nil, runtime.Info{InContainer: true})
+	return callTool(t, srv, "zerops_workflow", map[string]any{
+		"workflow":      "export",
+		"targetService": "appdev",
+	})
+}
+
+// driveScaffoldRequired configures the handler to emit
+// `status="scaffold-required"` — empty /var/www/zerops.yaml on the
+// chosen runtime.
+func driveScaffoldRequired(t *testing.T) *mcp.CallToolResult {
+	t.Helper()
+	mock := newExportMock([]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)}, nil)
+	dir := t.TempDir()
+	writeBootstrappedMeta(t, dir, topology.ModeStandard, topology.GitPushUnconfigured)
+	ssh := &routedSSH{responses: map[string]string{
+		"cat /var/www/zerops.yaml": "", // empty body forces scaffold-required
+	}}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	return callTool(t, srv, "zerops_workflow", map[string]any{
+		"workflow":      "export",
+		"targetService": "appdev",
+		"variant":       "dev",
+	})
+}
+
+// driveGitPushSetupRequired configures the handler to emit
+// `status="git-push-setup-required"` — empty git remote on the
+// chosen runtime.
+func driveGitPushSetupRequired(t *testing.T) *mcp.CallToolResult {
+	t.Helper()
+	mock := newExportMock([]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)}, nil)
+	dir := t.TempDir()
+	writeBootstrappedMeta(t, dir, topology.ModeStandard, topology.GitPushUnconfigured)
+	ssh := &routedSSH{responses: map[string]string{
+		"cat /var/www/zerops.yaml": exportTestZeropsYAML,
+		"git remote get-url":       "", // empty remote → git-push-setup-required
+	}}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	return callTool(t, srv, "zerops_workflow", map[string]any{
+		"workflow":      "export",
+		"targetService": "appdev",
+		"variant":       "dev",
+	})
+}
+
+// driveClassifyPrompt configures the handler to emit
+// `status="classify-prompt"` — project envs present, no
+// envClassifications supplied.
+func driveClassifyPrompt(t *testing.T) *mcp.CallToolResult {
+	t.Helper()
+	mock := newExportMock(
+		[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
+		[]platform.EnvVar{
+			{Key: "APP_KEY", Content: "old-key"},
+			{Key: "DB_HOST", Content: "${db_hostname}"},
+		},
+	)
+	dir := t.TempDir()
+	writeBootstrappedMeta(t, dir, topology.ModeStandard, topology.GitPushConfigured)
+	ssh := &routedSSH{responses: map[string]string{
+		"cat /var/www/zerops.yaml": exportTestZeropsYAML,
+		"git remote get-url":       "https://github.com/example/demo.git",
+	}}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	return callTool(t, srv, "zerops_workflow", map[string]any{
+		"workflow":      "export",
+		"targetService": "appdev",
+		"variant":       "dev",
+	})
+}
+
+// driveValidationFailed configures the handler to emit
+// `status="validation-failed"` — invalid zerops.yaml drives schema
+// validation failure during BuildBundle.
+func driveValidationFailed(t *testing.T) *mcp.CallToolResult {
+	t.Helper()
+	const invalidZeropsYAML = `zerops:
+  - setup: appdev
+    build:
+      base: php@8.4
+    run:
+      base: php-apache@8.4
+  - run:
+      base: nodejs@22
+`
+	mock := newExportMock(
+		[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
+		[]platform.EnvVar{{Key: "LOG_LEVEL", Content: "info"}},
+	)
+	dir := t.TempDir()
+	writeBootstrappedMeta(t, dir, topology.ModeStandard, topology.GitPushConfigured)
+	ssh := &routedSSH{responses: map[string]string{
+		"cat /var/www/zerops.yaml": invalidZeropsYAML,
+		"git remote get-url":       "https://github.com/example/demo.git",
+	}}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	return callTool(t, srv, "zerops_workflow", map[string]any{
+		"workflow":      "export",
+		"targetService": "appdev",
+		"variant":       "dev",
+		"envClassifications": map[string]any{
+			"LOG_LEVEL": "plain-config",
+		},
+	})
+}
+
+// drivePublishReady configures the handler to emit `status="publish-ready"`
+// — full bundle ready, classifications accepted, GitPushState=configured.
+func drivePublishReady(t *testing.T) *mcp.CallToolResult {
+	t.Helper()
+	mock := newExportMock(
+		[]platform.ServiceStack{
+			runtimeService("appdev", "php-apache@8.4", true),
+			managedService(),
+		},
+		[]platform.EnvVar{
+			{Key: "APP_KEY", Content: "old-key"},
+			{Key: "DB_HOST", Content: "${db_hostname}"},
+			{Key: "LOG_LEVEL", Content: "info"},
+		},
+	)
+	dir := t.TempDir()
+	writeBootstrappedMeta(t, dir, topology.ModeStandard, topology.GitPushConfigured)
+	ssh := &routedSSH{responses: map[string]string{
+		"cat /var/www/zerops.yaml": exportTestZeropsYAML,
+		"git remote get-url":       "https://github.com/example/demo.git",
+	}}
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+	return callTool(t, srv, "zerops_workflow", map[string]any{
+		"workflow":      "export",
+		"targetService": "appdev",
+		"variant":       "dev",
+		"envClassifications": map[string]any{
+			"APP_KEY":   "auto-secret",
+			"DB_HOST":   "infrastructure",
+			"LOG_LEVEL": "plain-config",
+		},
+	})
 }
