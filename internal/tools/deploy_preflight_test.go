@@ -858,6 +858,132 @@ func TestDeployPreFlight_ContainerMode_NoProjectRootFallback(t *testing.T) {
 	}
 }
 
+// TestDeployPreFlight_SourceWinsOverProjectRoot pins precedence: when both
+// `<projectRoot>/<source>/zerops.yaml` AND `<projectRoot>/zerops.yaml`
+// exist, container-env preflight must resolve from the source mount and
+// completely ignore the project-root file. Closes a Codex-flagged gap —
+// without this pin a future regression that re-introduced "try mount,
+// fallback to root" would silently revalidate against the wrong yaml when
+// the source mount happens to also have a file.
+func TestDeployPreFlight_SourceWinsOverProjectRoot(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Source mount yaml — declares only setup "dev". This is what preflight
+	// must resolve.
+	scaffoldServiceYaml(t, dir, "appdev", `zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+    run:
+      start: node index.js
+`)
+
+	// Project-root yaml — declares only setup "prod". If preflight ever
+	// fell back here, calling with empty setup + dev role would still pass
+	// (resolves to "dev" — absent in this file → setup_fail). The pass
+	// below proves preflight read the SOURCE file, not the root file.
+	if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte(`zerops:
+  - setup: prod
+    build:
+      base: nodejs@22
+    run:
+      start: node dist/main.js
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	meta := &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             "dev",
+		BootstrapSession: "s1",
+		BootstrappedAt:   "2026-04-01T00:00:00Z",
+	}
+	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := platform.NewMock()
+	resolved, result, err := deployPreFlight(
+		context.Background(), mock, "proj-1", stateDir,
+		"appdev", "appdev", "",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || !result.Passed {
+		t.Fatalf("preflight must pass against source-mount yaml; got: %+v", result)
+	}
+	// Empty input setup + DeployRoleDev would resolve to "dev". The source
+	// yaml has "dev"; the root yaml does not. Resolved="dev" proves source
+	// won; resolved="" or anything else means root yaml was read.
+	if resolved != "dev" {
+		t.Errorf("resolvedSetup=%q, want %q — preflight likely read project-root yaml instead of source mount", resolved, "dev")
+	}
+}
+
+// TestDeployPreFlight_CrossDeploy_LegacyRootLayoutRejected pins the
+// negative cross-deploy case: source=appdev, target=appstage, yaml ONLY at
+// `<projectRoot>/zerops.yaml` (the legacy / e769c9f7-doctrine layout) must
+// FAIL — never silently succeed off the wrong file. The existing
+// `_NoProjectRootFallback` test covers self-deploy; this one closes the
+// cross-deploy variant.
+func TestDeployPreFlight_CrossDeploy_LegacyRootLayoutRejected(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Legacy layout: yaml only at project root, with both setups.
+	if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte(`zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+    run:
+      start: node index.js
+  - setup: prod
+    build:
+      base: nodejs@22
+    run:
+      start: node dist/main.js
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Standard pair meta — preflight resolves stage role correctly, so the
+	// only thing that can fail is yaml lookup itself.
+	meta := &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		StageHostname:    "appstage",
+		Mode:             "standard",
+		BootstrapSession: "s1",
+		BootstrappedAt:   "2026-04-01T00:00:00Z",
+	}
+	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := platform.NewMock()
+	_, result, err := deployPreFlight(
+		context.Background(), mock, "proj-1", stateDir,
+		"appdev", "appstage", "prod",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || result.Passed {
+		t.Fatalf("cross-deploy preflight must fail with yaml only at project root (legacy e769c9f7 layout); got: %+v", result)
+	}
+}
+
 func containsString(haystack, needle string) bool {
 	for i := 0; i+len(needle) <= len(haystack); i++ {
 		if haystack[i:i+len(needle)] == needle {
