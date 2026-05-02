@@ -27,15 +27,21 @@ cat > "$STATE/services/appdev.json" <<JSON
 }
 JSON
 
-# Seed the working dir with a PHP hello-world and a broken zerops.yaml.
+# Seed the source mount with a PHP hello-world and a broken zerops.yaml.
 # The zerops.yaml has deployFiles pointing to a non-existent 'dist' path,
 # which triggers a zbuilder warning on the first deploy. The agent fixes it
 # and deploys again.
+#
+# Container-env layout: yaml + source live on the source service's SSHFS
+# mount (`<projectRoot>/<hostname>/`), the canonical per-codebase location
+# `ops.deploySSH` reads from at deploy time.
 WORK="${ZCP_WORK_DIR:-.}"
-cat > "$WORK/index.php" <<'PHP'
+MOUNT="$WORK/appdev"
+mkdir -p "$MOUNT"
+cat > "$MOUNT/index.php" <<'PHP'
 <?php echo "hello world @ " . date('c'); ?>
 PHP
-cat > "$WORK/zerops.yaml" <<'YAML'
+cat > "$MOUNT/zerops.yaml" <<'YAML'
 zerops:
   - setup: appdev
     build:
@@ -49,4 +55,4 @@ zerops:
       documentRoot: public
 YAML
 
-echo "preseed: planted bootstrapped-never-deployed meta for appdev + broken zerops.yaml (deployFiles: ./dist)"
+echo "preseed: planted bootstrapped-never-deployed meta for appdev + broken zerops.yaml on source mount (deployFiles: ./dist)"
