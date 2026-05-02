@@ -52,6 +52,10 @@ func (m *mockSSHDeployer) ExecSSHBackground(_ context.Context, hostname, command
 
 // startDevelopWorkflow writes a service meta, zerops.yaml, and starts a develop workflow via MCP.
 // Pre-flight validation in zerops_deploy requires both the meta and zerops.yaml to exist.
+//
+// Container-env shape: zerops.yaml lives on the service's SSHFS mount
+// (`<projectRoot>/<hostname>/zerops.yaml`), the canonical per-codebase
+// location preflight reads from after the e769c9f7 reverse.
 func startDevelopWorkflow(t *testing.T, session *mcp.ClientSession) {
 	t.Helper()
 
@@ -65,15 +69,18 @@ func startDevelopWorkflow(t *testing.T, session *mcp.ClientSession) {
 		t.Fatalf("write test meta: %v", err)
 	}
 
-	// Write minimal zerops.yaml for pre-flight validation.
+	// Write minimal zerops.yaml on the source service's mount.
+	if err := os.MkdirAll("app", 0o755); err != nil {
+		t.Fatalf("mkdir app mount: %v", err)
+	}
 	zeropsYaml := "zerops:\n  - setup: prod\n    build:\n      base: nodejs@22\n    run:\n      start: node index.js\n"
-	if err := os.WriteFile("zerops.yaml", []byte(zeropsYaml), 0o600); err != nil {
+	if err := os.WriteFile("app/zerops.yaml", []byte(zeropsYaml), 0o600); err != nil {
 		t.Fatalf("write zerops.yaml: %v", err)
 	}
 
 	t.Cleanup(func() {
 		os.RemoveAll(".zcp")
-		os.Remove("zerops.yaml")
+		os.RemoveAll("app")
 	})
 
 	// Start develop workflow via MCP.

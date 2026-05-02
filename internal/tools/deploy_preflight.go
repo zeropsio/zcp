@@ -14,15 +14,28 @@ import (
 // deployPreFlight validates zerops.yaml configuration BEFORE deploy execution.
 // This is the harness: it catches config errors that would cause silent deploy failures.
 // Returns nil when stateDir is empty (no state directory = skip validation).
-func deployPreFlight(ctx context.Context, client platform.Client, projectID, stateDir, targetHostname, setup string) (resolvedSetup string, result *workflow.StepCheckResult, err error) {
+//
+// Asymmetric source/target semantics mirror `ops.deploySSH` (the deploy that
+// fires after pre-flight): yaml + working-tree live on the SOURCE service's
+// mount; the role/mode/setup-resolution rules apply to the TARGET. This
+// distinction is load-bearing for cross-deploy (`appdev → appstage`),
+// where the canonical yaml is at `<projectRoot>/<sourceHostname>/zerops.yaml`
+// while role-driven setup matching keys off the target's pair role.
+//
+// Pass sourceHostname == "" for local-environment deploys (no per-service
+// SSHFS mount; yaml lives at `<projectRoot>/zerops.yaml`).
+func deployPreFlight(ctx context.Context, client platform.Client, projectID, stateDir, sourceHostname, targetHostname, setup string) (resolvedSetup string, result *workflow.StepCheckResult, err error) {
 	if stateDir == "" {
 		return setup, nil, nil
 	}
 
-	// Read ServiceMeta for target to derive role and mode.
-	meta, err := workflow.ReadServiceMeta(stateDir, targetHostname)
+	// Resolve target ServiceMeta via the pair-aware lookup so a stage
+	// hostname (the secondary half of a standard pair) finds the dev meta
+	// it shares — spec-workflows.md §8 E8 ("runtime meta is pair-keyed";
+	// keying by m.Hostname alone violates the invariant).
+	meta, err := workflow.FindServiceMeta(stateDir, targetHostname)
 	if err != nil {
-		return setup, nil, fmt.Errorf("preflight read meta: %w", err)
+		return setup, nil, fmt.Errorf("preflight find meta: %w", err)
 	}
 	// No meta = not adopted, but requireAdoption handles that gate.
 	// If meta is nil, skip pre-flight (permissive).
@@ -33,8 +46,9 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	projectRoot := projectRootFromState(stateDir)
 	var checks []workflow.StepCheck
 
-	// Find and parse zerops.yaml.
-	doc, _, parseErr := findAndParseZeropsYml(projectRoot, targetHostname)
+	// Find and parse zerops.yaml from the source mount (container env) or
+	// project root (local env). See findAndParseZeropsYml's contract.
+	doc, _, parseErr := findAndParseZeropsYml(projectRoot, sourceHostname)
 	if parseErr != nil {
 		checks = append(checks, workflow.StepCheck{
 			Name: "zerops_yml_exists", Status: statusFail,
@@ -55,7 +69,15 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	// Without this, pre-flight silently matched the right setup but zcli
 	// received an empty flag and failed with "Cannot find corresponding
 	// setup in zerops.yaml" — the exact failure in session-log-16 (L145).
-	role := meta.PrimaryRole()
+	//
+	// Role keys off the TARGET — stage half of a pair returns
+	// DeployRoleStage (→ "prod" setup), dev half returns DeployRoleDev
+	// (→ "dev" setup). PrimaryRole() would mis-classify a stage target as
+	// dev because it ignores StageHostname.
+	role := meta.RoleFor(targetHostname)
+	if role == "" {
+		role = meta.PrimaryRole()
+	}
 	entry := resolveSetupEntry(doc, setup, role, targetHostname)
 	if entry == nil {
 		tried := targetHostname

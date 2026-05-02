@@ -78,7 +78,14 @@ func RegisterDeployBatch(
 		// through to batch.
 		for i := range input.Targets {
 			t := input.Targets[i]
-			resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, t.TargetService, t.Setup)
+			// Source defaults to target for self-deploy (mirrors
+			// ops.DeploySSH auto-infer). Pre-flight reads yaml from the
+			// source service's mount.
+			sourceForPreflight := t.SourceService
+			if sourceForPreflight == "" {
+				sourceForPreflight = t.TargetService
+			}
+			resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, sourceForPreflight, t.TargetService, t.Setup)
 			if pfErr != nil {
 				return convertError(platform.NewPlatformError(
 					platform.ErrInvalidParameter,

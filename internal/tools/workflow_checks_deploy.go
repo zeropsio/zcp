@@ -5,7 +5,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/workflow"
@@ -51,70 +50,61 @@ func checkDevProdEnvDivergence(doc *ops.ZeropsYmlDoc) []workflow.StepCheck {
 	}}
 }
 
-// findAndParseZeropsYml locates and parses zerops.yaml from project root or mount paths.
+// findAndParseZeropsYml locates and parses zerops.yaml.
 // Returns the parsed doc and the directory where zerops.yaml was found.
-// hostname is used to check the mount path (container env: /projectRoot/{hostname}/zerops.yaml).
 //
-// Lookup precedence:
+// Lookup is split by environment, mirroring the deploy pipeline that runs
+// after pre-flight (`ops.deploySSH` reads from `/var/www/<sourceService>/`,
+// `ops.deployLocal` reads from `workingDir`):
 //
-//   - If hostname is set AND the per-service mount has a present zerops.yaml,
-//     that file is canonical. A parse failure on the present file is
-//     returned immediately — falling back to projectRoot's yaml here would
-//     silently validate an unrelated config (Codex review of G16 fix).
-//   - If the per-service mount probe ERRORS (permission denied, stale
-//     SSHFS, anything other than confirmed absence), return that error
-//     immediately. Falling back to projectRoot under degraded mount
-//     conditions reproduces the same shadow class.
-//   - If the per-service mount is confirmed absent OR is a clean directory
-//     with no zerops.yaml present, the projectRoot is tried as a fallback
-//     (local-env shape).
-//   - On total miss, the returned error names every directory searched
-//     plus the hostname context so the agent scaffolds at the right
-//     per-service mount without re-deriving the SSHFS layout from
-//     CLAUDE.md prose.
-func findAndParseZeropsYml(projectRoot, hostname string) (*ops.ZeropsYmlDoc, string, error) {
-	var triedPaths []string
-
-	// Try mount path for target hostname (container environment).
-	if hostname != "" {
-		mountPath := filepath.Join(projectRoot, hostname)
-		state, probeErr := probeMountForZeropsYml(mountPath)
-		switch {
-		case probeErr != nil:
-			// Probe itself failed (permission denied, stale SSHFS,
-			// non-directory, etc.). Don't fall back — surfacing the
-			// real cause beats validating an unrelated root yaml.
-			return nil, mountPath, fmt.Errorf("per-service mount %s probe failed: %w", mountPath, probeErr)
-		case state == mountStatePresent:
-			// File present in the canonical location — its parse
-			// outcome owns the result. Don't fall back; another
-			// path's yaml describes a different service.
-			doc, parseErr := ops.ParseZeropsYml(mountPath)
-			if parseErr != nil {
-				return nil, mountPath, fmt.Errorf("per-service zerops.yaml at %s is invalid: %w", mountPath, parseErr)
-			}
-			return doc, mountPath, nil
-		case state == mountStateNoYaml:
-			triedPaths = append(triedPaths, mountPath+" (per-service mount, no zerops.yaml present)")
-		case state == mountStateAbsent:
-			triedPaths = append(triedPaths, mountPath+" (per-service mount, missing)")
+//   - sourceHostname != "": container environment — yaml MUST live on the
+//     source service's SSHFS mount at `<projectRoot>/<sourceHostname>/`.
+//     This is the canonical per-codebase layout (spec-workflows.md §1132,
+//     spec-workflows.md §8 E8). No project-root fallback: a yaml at
+//     `<projectRoot>/zerops.yaml` describes nothing the platform
+//     understands, and silently validating it masked the cross-deploy
+//     "/var/www/<targetService> not found" failure (commit e769c9f7
+//     papered over the same regression in atom guidance).
+//   - sourceHostname == "": local environment — yaml lives at
+//     `<projectRoot>/zerops.yaml` (the user's working directory). No
+//     per-service subdirectories exist on a developer's local box.
+//
+// On parse failure of a present file, the error is returned immediately;
+// silently falling back would validate the wrong config (Codex review of
+// G16 fix). Probe errors (permission denied, stale SSHFS, non-directory)
+// surface immediately for the same reason.
+func findAndParseZeropsYml(projectRoot, sourceHostname string) (*ops.ZeropsYmlDoc, string, error) {
+	if sourceHostname == "" {
+		// Local environment: yaml at projectRoot.
+		doc, err := ops.ParseZeropsYml(projectRoot)
+		if err != nil {
+			return nil, projectRoot, fmt.Errorf("zerops.yaml not found at %s (local environment): %w",
+				projectRoot, err)
 		}
-	}
-
-	// Fall back to project root (local environment).
-	doc, err := ops.ParseZeropsYml(projectRoot)
-	if err == nil {
 		return doc, projectRoot, nil
 	}
-	triedPaths = append(triedPaths, projectRoot+" (project root)")
 
-	hint := ""
-	if hostname != "" {
-		hint = fmt.Sprintf(" — scaffold zerops.yaml for service %q at %s",
-			hostname, filepath.Join(projectRoot, hostname))
+	// Container environment: yaml on the source service's mount.
+	mountPath := filepath.Join(projectRoot, sourceHostname)
+	state, probeErr := probeMountForZeropsYml(mountPath)
+	switch {
+	case probeErr != nil:
+		return nil, mountPath, fmt.Errorf("source mount %s probe failed: %w", mountPath, probeErr)
+	case state == mountStatePresent:
+		doc, parseErr := ops.ParseZeropsYml(mountPath)
+		if parseErr != nil {
+			return nil, mountPath, fmt.Errorf("source-mount zerops.yaml at %s is invalid: %w",
+				mountPath, parseErr)
+		}
+		return doc, mountPath, nil
+	case state == mountStateAbsent:
+		return nil, mountPath, fmt.Errorf("source mount %s missing — scaffold zerops.yaml for service %q there",
+			mountPath, sourceHostname)
+	default:
+		// mountStateNoYaml.
+		return nil, mountPath, fmt.Errorf("zerops.yaml not present on source mount %s — scaffold it for service %q",
+			mountPath, sourceHostname)
 	}
-	return nil, projectRoot, fmt.Errorf("zerops.yaml not found: tried %s%s",
-		strings.Join(triedPaths, ", "), hint)
 }
 
 // mountState distinguishes the three outcomes of probing a per-service

@@ -11,6 +11,20 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
+// scaffoldServiceYaml writes zerops.yaml on the per-service SSHFS mount
+// (`<projectRoot>/<hostname>/zerops.yaml`) — the canonical container-env
+// layout that mirrors what `ops.deploySSH` reads at deploy time.
+func scaffoldServiceYaml(t *testing.T, projectRoot, hostname, body string) {
+	t.Helper()
+	mountDir := filepath.Join(projectRoot, hostname)
+	if err := os.MkdirAll(mountDir, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", mountDir, err)
+	}
+	if err := os.WriteFile(filepath.Join(mountDir, "zerops.yaml"), []byte(body), 0o600); err != nil {
+		t.Fatalf("write zerops.yaml: %v", err)
+	}
+}
+
 func TestDeployPreFlight_ValidConfig_Passes(t *testing.T) {
 	t.Parallel()
 
@@ -20,8 +34,8 @@ func TestDeployPreFlight_ValidConfig_Passes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Write zerops.yaml at project root.
-	yaml := `zerops:
+	// Container-env shape: yaml on the source service's mount.
+	scaffoldServiceYaml(t, dir, "appdev", `zerops:
   - setup: dev
     build:
       base: nodejs@22
@@ -29,12 +43,8 @@ func TestDeployPreFlight_ValidConfig_Passes(t *testing.T) {
       start: node index.js
       envVariables:
         NODE_ENV: development
-`
-	if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte(yaml), 0o600); err != nil {
-		t.Fatal(err)
-	}
+`)
 
-	// Write ServiceMeta.
 	meta := &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             "dev",
@@ -46,7 +56,7 @@ func TestDeployPreFlight_ValidConfig_Passes(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -82,9 +92,9 @@ func TestDeployPreFlight_MissingZeropsYaml_Fails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// No zerops.yaml written.
+	// No zerops.yaml written anywhere.
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -105,14 +115,14 @@ func TestDeployPreFlight_MissingZeropsYaml_Fails(t *testing.T) {
 	}
 }
 
-// TestDeployPreFlight_MissingZeropsYaml_NamesPerServicePath pins G16:
-// when zerops.yaml is missing in container env (per-service mount exists
-// but is empty, and project root has no fallback), the failure detail
-// must name BOTH paths searched AND point the agent at the per-service
-// mount as the canonical scaffold location. Pre-fix the detail named
-// only the project root and the agent had to infer the right directory
-// from CLAUDE.md prose after the error.
-func TestDeployPreFlight_MissingZeropsYaml_NamesPerServicePath(t *testing.T) {
+// TestDeployPreFlight_MissingZeropsYaml_NamesSourceMount pins the failure
+// detail when zerops.yaml is missing on the source service's mount: the
+// agent must see the canonical mount path AND the hostname so they can
+// scaffold at the right location without re-deriving the SSHFS layout
+// from CLAUDE.md prose. (Replaces G16's "names per-service path" pin —
+// the project-root fallback was removed in the e769c9f7 reverse, so the
+// detail no longer mentions it.)
+func TestDeployPreFlight_MissingZeropsYaml_NamesSourceMount(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -120,8 +130,7 @@ func TestDeployPreFlight_MissingZeropsYaml_NamesPerServicePath(t *testing.T) {
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Container-env shape: per-service mount directory exists at the
-	// SSHFS path, but it is empty (no zerops.yaml scaffolded yet).
+	// Mount directory exists but is empty (no zerops.yaml scaffolded yet).
 	if err := os.MkdirAll(filepath.Join(dir, "probe"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +146,7 @@ func TestDeployPreFlight_MissingZeropsYaml_NamesPerServicePath(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "probe", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "probe", "probe", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -158,8 +167,7 @@ func TestDeployPreFlight_MissingZeropsYaml_NamesPerServicePath(t *testing.T) {
 
 	mountPath := filepath.Join(dir, "probe")
 	for _, want := range []string{
-		mountPath, // per-service mount path explicitly named
-		dir,       // project root also named (fallback path)
+		mountPath, // source mount path explicitly named
 		"probe",   // hostname surfaced for clarity
 	} {
 		if !strings.Contains(detail, want) {
@@ -168,15 +176,13 @@ func TestDeployPreFlight_MissingZeropsYaml_NamesPerServicePath(t *testing.T) {
 	}
 }
 
-// TestDeployPreFlight_InvalidMountYaml_DoesNotFallBackToRoot pins the
-// Codex finding: when the per-service mount has an INVALID zerops.yaml
-// (file present, parser rejects), the preflight must NOT silently fall
-// back to a valid project-root zerops.yaml — the per-service file is
-// canonical for the targetHostname; falling back would validate an
-// unrelated config and surface the real failure later. Pre-fix the
-// mount-path parse error was discarded and the root yaml short-circuited
-// the path search.
-func TestDeployPreFlight_InvalidMountYaml_DoesNotFallBackToRoot(t *testing.T) {
+// TestDeployPreFlight_InvalidMountYaml pins that a present-but-malformed
+// yaml on the source mount produces a parse-failure diagnostic naming the
+// invalid file. The Codex G16 review pinned "no silent fallback" — that
+// constraint stayed; the project-root fallback path was removed entirely
+// (no fallback anywhere when sourceHostname is set), so the test focuses
+// on parse-failure surface clarity.
+func TestDeployPreFlight_InvalidMountYaml(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -185,25 +191,11 @@ func TestDeployPreFlight_InvalidMountYaml_DoesNotFallBackToRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Per-service mount: zerops.yaml exists but is malformed YAML.
 	mountDir := filepath.Join(dir, "probe")
 	if err := os.MkdirAll(mountDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(mountDir, "zerops.yaml"), []byte(":not valid: yaml: ["), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	// Project root: a perfectly valid zerops.yaml — would silently
-	// shadow the broken per-service one if the fallback fired.
-	rootYaml := `zerops:
-  - setup: probe
-    build:
-      base: nodejs@22
-    run:
-      start: node index.js
-`
-	if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte(rootYaml), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -218,12 +210,12 @@ func TestDeployPreFlight_InvalidMountYaml_DoesNotFallBackToRoot(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "probe", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "probe", "probe", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result == nil || result.Passed {
-		t.Fatalf("preflight must fail when per-service yaml is invalid; got: %+v", result)
+		t.Fatalf("preflight must fail when source-mount yaml is invalid; got: %+v", result)
 	}
 
 	var detail string
@@ -236,24 +228,21 @@ func TestDeployPreFlight_InvalidMountYaml_DoesNotFallBackToRoot(t *testing.T) {
 	if detail == "" {
 		t.Fatal("expected zerops_yml_exists fail check with detail naming the invalid file")
 	}
-	// Detail must name the per-service mount path AND signal that the
-	// failure is parse-not-missing (so the agent fixes the right file).
 	if !strings.Contains(detail, mountDir) {
-		t.Errorf("detail must name the per-service mount path %q\ndetail: %q", mountDir, detail)
+		t.Errorf("detail must name the source mount path %q\ndetail: %q", mountDir, detail)
 	}
-	if !strings.Contains(detail, "invalid YAML") && !strings.Contains(detail, "invalid") {
-		t.Errorf("detail must signal that the per-service file is invalid (not just missing)\ndetail: %q", detail)
+	if !strings.Contains(detail, "invalid") {
+		t.Errorf("detail must signal that the source-mount file is invalid (not just missing)\ndetail: %q", detail)
 	}
 }
 
-// TestDeployPreFlight_MountProbeError_DoesNotFallBackToRoot pins the
-// degraded-mount tri-state guard: when the per-service mount path
-// probe fails for any reason OTHER than confirmed absence (permission
-// denied, stale SSHFS, non-directory), the preflight must surface
-// that error immediately rather than silently fall back to the
-// project-root zerops.yaml. The fallback is only safe on confirmed
-// absence — Codex re-review of the G16 follow-up.
-func TestDeployPreFlight_MountProbeError_DoesNotFallBackToRoot(t *testing.T) {
+// TestDeployPreFlight_MountProbeError pins the degraded-mount tri-state
+// guard: when the source-mount probe fails for any reason OTHER than
+// confirmed absence (permission denied, stale SSHFS, non-directory),
+// preflight surfaces that error immediately rather than silently
+// succeeding or falling through to a different lookup. The Codex G16
+// re-review motivated the guard.
+func TestDeployPreFlight_MountProbeError(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -270,19 +259,6 @@ func TestDeployPreFlight_MountProbeError_DoesNotFallBackToRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Project root with a perfectly valid zerops.yaml — would silently
-	// shadow the broken mount probe if the fallback fired.
-	rootYaml := `zerops:
-  - setup: probe
-    build:
-      base: nodejs@22
-    run:
-      start: node index.js
-`
-	if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte(rootYaml), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
 	meta := &workflow.ServiceMeta{
 		Hostname:         "probe",
 		Mode:             "simple",
@@ -294,12 +270,12 @@ func TestDeployPreFlight_MountProbeError_DoesNotFallBackToRoot(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "probe", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "probe", "probe", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result == nil || result.Passed {
-		t.Fatalf("preflight must fail when per-service mount probe errors; got: %+v", result)
+		t.Fatalf("preflight must fail when source-mount probe errors; got: %+v", result)
 	}
 
 	var detail string
@@ -313,7 +289,7 @@ func TestDeployPreFlight_MountProbeError_DoesNotFallBackToRoot(t *testing.T) {
 		t.Fatal("expected zerops_yml_exists fail check with detail naming the probe failure")
 	}
 	if !strings.Contains(detail, mountPath) {
-		t.Errorf("detail must name the per-service mount path that failed to probe (%q)\ndetail: %q", mountPath, detail)
+		t.Errorf("detail must name the source mount path that failed to probe (%q)\ndetail: %q", mountPath, detail)
 	}
 	if !strings.Contains(detail, "probe failed") && !strings.Contains(detail, "not a directory") {
 		t.Errorf("detail must signal probe failure / non-directory, not just 'not found'\ndetail: %q", detail)
@@ -330,16 +306,13 @@ func TestDeployPreFlight_MissingSetupEntry_Fails(t *testing.T) {
 	}
 
 	// zerops.yaml with "prod" setup but no "dev" setup.
-	yaml := `zerops:
+	scaffoldServiceYaml(t, dir, "appdev", `zerops:
   - setup: prod
     build:
       base: nodejs@22
     run:
       start: node index.js
-`
-	if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte(yaml), 0o600); err != nil {
-		t.Fatal(err)
-	}
+`)
 
 	meta := &workflow.ServiceMeta{
 		Hostname:         "appdev",
@@ -352,7 +325,7 @@ func TestDeployPreFlight_MissingSetupEntry_Fails(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -382,16 +355,13 @@ func TestDeployPreFlight_ExplicitSetup_Passes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	yaml := `zerops:
+	scaffoldServiceYaml(t, dir, "app", `zerops:
   - setup: prod
     build:
       base: nodejs@22
     run:
       start: node index.js
-`
-	if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte(yaml), 0o600); err != nil {
-		t.Fatal(err)
-	}
+`)
 
 	// Simple mode service — role "simple" maps to "prod" only via explicit param.
 	meta := &workflow.ServiceMeta{
@@ -405,7 +375,7 @@ func TestDeployPreFlight_ExplicitSetup_Passes(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "app", "prod")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "app", "app", "prod")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -420,7 +390,7 @@ func TestDeployPreFlight_ExplicitSetup_Passes(t *testing.T) {
 func TestDeployPreFlight_EmptyStateDir_ReturnsNil(t *testing.T) {
 	t.Parallel()
 
-	_, result, err := deployPreFlight(context.Background(), nil, "", "", "appdev", "")
+	_, result, err := deployPreFlight(context.Background(), nil, "", "", "appdev", "appdev", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -433,7 +403,7 @@ func TestDeployPreFlight_NoMeta_ReturnsNil(t *testing.T) {
 	t.Parallel()
 
 	stateDir := t.TempDir()
-	_, result, err := deployPreFlight(context.Background(), nil, "", stateDir, "unknown", "")
+	_, result, err := deployPreFlight(context.Background(), nil, "", stateDir, "unknown", "unknown", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -460,17 +430,14 @@ func TestDeployPreFlight_DeployFilesNotCheckedInPreflight(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	yaml := `zerops:
+	scaffoldServiceYaml(t, dir, "appdev", `zerops:
   - setup: dev
     build:
       base: nodejs@22
       deployFiles: dist
     run:
       start: node index.js
-`
-	if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte(yaml), 0o600); err != nil {
-		t.Fatal(err)
-	}
+`)
 
 	meta := &workflow.ServiceMeta{
 		Hostname:         "appdev",
@@ -483,7 +450,7 @@ func TestDeployPreFlight_DeployFilesNotCheckedInPreflight(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -515,7 +482,7 @@ func TestDeployPreFlight_ResolvedSetupEchoedBack(t *testing.T) {
 	// zerops.yaml with BOTH dev and prod — like every recipe ships. An
 	// empty setup param with hostname=apidev (role=dev) must resolve to
 	// "dev", and the resolver must echo "dev" back.
-	yaml := `zerops:
+	scaffoldServiceYaml(t, dir, "apidev", `zerops:
   - setup: dev
     build:
       base: nodejs@22
@@ -536,10 +503,7 @@ func TestDeployPreFlight_ResolvedSetupEchoedBack(t *testing.T) {
         - port: 3000
       envVariables:
         NODE_ENV: production
-`
-	if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte(yaml), 0o600); err != nil {
-		t.Fatal(err)
-	}
+`)
 	meta := &workflow.ServiceMeta{
 		Hostname:         "apidev",
 		Mode:             "dev",
@@ -551,7 +515,7 @@ func TestDeployPreFlight_ResolvedSetupEchoedBack(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	resolved, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "apidev", "")
+	resolved, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "apidev", "apidev", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -579,7 +543,7 @@ func TestDeployPreFlight_UnknownSetup_ListsAvailable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	yaml := `zerops:
+	scaffoldServiceYaml(t, dir, "apidev", `zerops:
   - setup: dev
     build:
       base: nodejs@22
@@ -600,10 +564,7 @@ func TestDeployPreFlight_UnknownSetup_ListsAvailable(t *testing.T) {
         - port: 3000
       envVariables:
         NODE_ENV: production
-`
-	if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte(yaml), 0o600); err != nil {
-		t.Fatal(err)
-	}
+`)
 	meta := &workflow.ServiceMeta{
 		Hostname:         "apidev",
 		Mode:             "dev",
@@ -615,7 +576,7 @@ func TestDeployPreFlight_UnknownSetup_ListsAvailable(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "apidev", "apidev")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "apidev", "apidev", "apidev")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -637,6 +598,263 @@ func TestDeployPreFlight_UnknownSetup_ListsAvailable(t *testing.T) {
 		if !containsString(detail, want) {
 			t.Errorf("error detail missing %q; got: %q", want, detail)
 		}
+	}
+}
+
+// TestDeployPreFlight_CrossDeploy_ReadsFromSourceMount pins the source-mount
+// canonical layout for cross-deploy (docs/spec-workflows.md §1132 + §8 E8).
+// `zerops_deploy sourceService=appdev targetService=appstage setup=prod` is
+// the dev→stage promotion every standard pair runs at first deploy. Yaml
+// lives on the source service's mount; preflight MUST resolve it from
+// there. Pre-fix (commit c53e86b1, 2026-04-14) preflight searched
+// /var/www/<targetHostname>/zerops.yaml and fell back to /var/www/zerops.yaml,
+// neither of which the recipe layout populates — every cross-deploy bounced
+// off PREFLIGHT_FAILED until the agent manually copied yaml to project root
+// (commit e769c9f7 documented that workaround as canonical instead of
+// fixing the lookup).
+func TestDeployPreFlight_CrossDeploy_ReadsFromSourceMount(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Standard-pair recipe layout: yaml lives on the dev (source) mount.
+	// Stage's mount stays empty until the cross-deploy lands code there.
+	scaffoldServiceYaml(t, dir, "appdev", `zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+      deployFiles: [.]
+    run:
+      start: node dist/main.js
+      ports:
+        - port: 3000
+      envVariables:
+        NODE_ENV: development
+  - setup: prod
+    build:
+      base: nodejs@22
+      deployFiles: [./dist]
+    run:
+      start: node dist/main.js
+      ports:
+        - port: 3000
+      envVariables:
+        NODE_ENV: production
+`)
+
+	// Pair-keyed meta: one file represents both dev and stage halves
+	// (spec-workflows.md §8 E8).
+	meta := &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		StageHostname:    "appstage",
+		Mode:             "standard",
+		BootstrapSession: "s1",
+		BootstrappedAt:   "2026-04-01T00:00:00Z",
+	}
+	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := platform.NewMock()
+	_, result, err := deployPreFlight(
+		context.Background(), mock, "proj-1", stateDir,
+		"appdev", "appstage", "prod",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if !result.Passed {
+		t.Errorf("cross-deploy preflight must succeed with yaml on source mount; got: %s", result.Summary)
+		for _, c := range result.Checks {
+			if c.Status == statusFail {
+				t.Errorf("  fail %s: %s", c.Name, c.Detail)
+			}
+		}
+	}
+}
+
+// TestDeployPreFlight_PairAwareStageMetaLookup pins spec-workflows.md §8 E8.
+// Stage hostname is a field on the dev meta (one file per pair, not two).
+// Reading meta by `appstage` directly (the pre-fix `ReadServiceMeta` path)
+// returned nil → preflight bailed out permissively. Switching to
+// `FindServiceMeta` resolves the dev meta via StageHostname, and
+// `RoleFor("appstage")` returns DeployRoleStage so role-based setup
+// resolution maps to "prod" (not "dev").
+func TestDeployPreFlight_PairAwareStageMetaLookup(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	scaffoldServiceYaml(t, dir, "appdev", `zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+      deployFiles: [.]
+    run:
+      start: node dist/main.js
+      ports:
+        - port: 3000
+      envVariables:
+        NODE_ENV: development
+  - setup: prod
+    build:
+      base: nodejs@22
+      deployFiles: [./dist]
+    run:
+      start: node dist/main.js
+      ports:
+        - port: 3000
+      envVariables:
+        NODE_ENV: production
+`)
+
+	meta := &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		StageHostname:    "appstage",
+		Mode:             "standard",
+		BootstrapSession: "s1",
+		BootstrappedAt:   "2026-04-01T00:00:00Z",
+	}
+	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := platform.NewMock()
+	resolved, result, err := deployPreFlight(
+		context.Background(), mock, "proj-1", stateDir,
+		"appdev", "appstage", "",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result (pair-aware meta lookup must resolve dev meta via StageHostname)")
+	}
+	if !result.Passed {
+		t.Fatalf("preflight must pass for stage cross-deploy with pair-keyed meta; got: %s", result.Summary)
+	}
+	// Empty input setup + stage role must resolve to "prod" — proves
+	// RoleFor(target) is being used, not PrimaryRole() (which would have
+	// returned dev role and resolved to "dev").
+	if resolved != "prod" {
+		t.Errorf("expected resolvedSetup=\"prod\" via DeployRoleStage; got %q (RoleFor likely not consulted)", resolved)
+	}
+}
+
+// TestDeployPreFlight_LocalMode_ReadsFromProjectRoot pins the local-env
+// lookup path: when sourceHostname is empty (no per-service SSHFS mount —
+// the user's developer box), yaml lives at the project root. This is the
+// path `ops.deployLocal` reads from, and the only path that makes sense
+// when there are no per-service subdirectories.
+func TestDeployPreFlight_LocalMode_ReadsFromProjectRoot(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Local layout: yaml at the user's working directory.
+	if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte(`zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+    run:
+      start: node index.js
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	meta := &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             "dev",
+		BootstrapSession: "s1",
+		BootstrappedAt:   "2026-04-01T00:00:00Z",
+	}
+	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := platform.NewMock()
+	_, result, err := deployPreFlight(
+		context.Background(), mock, "proj-1", stateDir,
+		"", "appdev", "",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if !result.Passed {
+		t.Errorf("local-mode preflight must read yaml from project root; got: %s", result.Summary)
+	}
+}
+
+// TestDeployPreFlight_ContainerMode_NoProjectRootFallback pins the
+// container-env contract: when sourceHostname is set, preflight MUST
+// resolve yaml from the source mount only — never from the project root.
+// A stray `<projectRoot>/zerops.yaml` describes nothing the platform
+// understands (the recipe-route scaffold places it on the source mount;
+// no other valid layout produces a project-root yaml in container env),
+// and silently validating it masked the dev→stage cross-deploy failure
+// the e769c9f7 atom documentation papered over.
+func TestDeployPreFlight_ContainerMode_NoProjectRootFallback(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// A perfectly valid yaml at project root — pre-fix the fallback would
+	// have silently used it.
+	if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte(`zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+    run:
+      start: node index.js
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Source-mount directory does not exist (or, equivalently, has no
+	// zerops.yaml). Either way the source-mount lookup misses; preflight
+	// must NOT silently pick up the project-root yaml.
+	meta := &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             "dev",
+		BootstrapSession: "s1",
+		BootstrappedAt:   "2026-04-01T00:00:00Z",
+	}
+	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := platform.NewMock()
+	_, result, err := deployPreFlight(
+		context.Background(), mock, "proj-1", stateDir,
+		"appdev", "appdev", "",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || result.Passed {
+		t.Fatalf("container-env preflight must NOT fall back to project-root yaml; got: %+v", result)
 	}
 }
 

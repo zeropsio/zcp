@@ -103,7 +103,11 @@ func RegisterDeployLocal(
 
 		// Pre-flight validation (harness). v8.85 — pre-flight echoes the
 		// effective setup so zcli always invokes with --setup=<resolved>.
-		resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, input.TargetService, input.Setup)
+		//
+		// Local mode: yaml lives at the project root (the user's working
+		// directory), so sourceHostname is empty — there are no per-service
+		// SSHFS mounts on a developer's local box.
+		resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, "", input.TargetService, input.Setup)
 		if pfErr != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,

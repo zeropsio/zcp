@@ -151,8 +151,17 @@ func RegisterDeploySSH(
 		// empty string and pre-flight found the match via role/hostname
 		// fallback. Closes session-log-16 L145 where setup was resolved in
 		// pre-flight but zcli still got empty and failed.
+		//
+		// Source defaults to target for self-deploy (mirrors ops.DeploySSH
+		// auto-infer). Pre-flight reads yaml from the source service's mount
+		// — the canonical per-codebase location and the same path
+		// `ops.deploySSH` reads from after pre-flight.
 		if input.Strategy != deployStrategyGitPush {
-			resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, input.TargetService, input.Setup)
+			sourceForPreflight := input.SourceService
+			if sourceForPreflight == "" {
+				sourceForPreflight = input.TargetService
+			}
+			resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, sourceForPreflight, input.TargetService, input.Setup)
 			if pfErr != nil {
 				return convertError(platform.NewPlatformError(
 					platform.ErrInvalidParameter,

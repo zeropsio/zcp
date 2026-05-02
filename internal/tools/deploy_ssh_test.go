@@ -105,8 +105,10 @@ func TestDeployTool_SSHMode_AutoEnablesSubdomain(t *testing.T) {
 	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
 	defer restore()
 
-	// Pre-flight reads zerops.yaml from projectRoot (two levels up from
-	// stateDir). Structure paths so preflight finds a minimal valid file.
+	// Pre-flight reads zerops.yaml from the source service's SSHFS mount
+	// (`<projectRoot>/<sourceHostname>/zerops.yaml`) — the canonical
+	// container-env layout that mirrors what `ops.deploySSH` reads at
+	// deploy time.
 	projectRoot := t.TempDir()
 	stateDir := filepath.Join(projectRoot, ".zcp", "state")
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
@@ -117,8 +119,12 @@ func TestDeployTool_SSHMode_AutoEnablesSubdomain(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
+	mountDir := filepath.Join(projectRoot, "app")
+	if err := os.MkdirAll(mountDir, 0o755); err != nil {
+		t.Fatalf("mkdir mount: %v", err)
+	}
 	minimalYaml := "zerops:\n  - setup: app\n    build:\n      base: nodejs@22\n      deployFiles: [.]\n    run:\n      ports:\n        - port: 3000\n          httpSupport: true\n      start: node server.js\n"
-	if err := os.WriteFile(filepath.Join(projectRoot, "zerops.yaml"), []byte(minimalYaml), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(mountDir, "zerops.yaml"), []byte(minimalYaml), 0o600); err != nil {
 		t.Fatalf("write zerops.yaml: %v", err)
 	}
 
