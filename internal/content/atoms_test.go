@@ -143,16 +143,21 @@ func TestDevelopPlatformRulesLocalAtom_BackgroundTaskCallout(t *testing.T) {
 	}
 }
 
-// TestDevelopDeployModesAtom_CrossDeployYamlLocation pins B6: the
-// deploy-modes atom must spell out where pre-flight searches for
-// zerops.yaml AND that the source mount is excluded. Tier-3 eval
-// `bootstrap-recipe-static-simple` hit `PREFLIGHT_FAILED: zerops.yaml
-// not found: tried /var/www/appstage, /var/www` because the agent
-// scaffolded under `/var/www/appdev/` (source mount) and pre-flight
-// only consults the per-target mount + project root. The atom names
-// the search order plus the project-root recommendation so the agent
-// places the yaml correctly the first time.
-func TestDevelopDeployModesAtom_CrossDeployYamlLocation(t *testing.T) {
+// TestDevelopDeployModesAtom_NoProjectRootYamlGuidance pins the inverse
+// of the original B6 fix: the deploy-modes atom must NOT reintroduce the
+// "place yaml at project root" / "source mount is never searched"
+// guidance that commit e769c9f7 added in response to a preflight bug
+// (yaml was looked up by target hostname instead of source). The bug was
+// fixed at the root in `deployPreFlight` — yaml lookup now resolves from
+// the source service's SSHFS mount, mirroring `ops.deploySSH`. The atom's
+// previous documentation taught a workaround for a layer that no longer
+// exists; recipe layouts (yaml at the source repo root, lands on source
+// mount via buildFromGit) now Just Work for both self-deploy and
+// cross-deploy without manual copy/symlink.
+//
+// If this test fails, the atom is teaching agents to do work that ZCP
+// already handles — drift back into the e769c9f7-class symptom-doctrine.
+func TestDevelopDeployModesAtom_NoProjectRootYamlGuidance(t *testing.T) {
 	t.Parallel()
 
 	atoms, err := ReadAllAtoms()
@@ -170,14 +175,15 @@ func TestDevelopDeployModesAtom_CrossDeployYamlLocation(t *testing.T) {
 		t.Fatal("develop-deploy-modes.md not found in corpus")
 	}
 
-	if !strings.Contains(body, "Where pre-flight finds zerops.yaml") {
-		t.Error("atom must contain a `### Where pre-flight finds zerops.yaml` subsection")
-	}
-	if !strings.Contains(body, "source mount is never searched") {
-		t.Error("atom must explicitly state that the source mount is excluded from pre-flight search — that's the cross-deploy gotcha")
-	}
-	if !strings.Contains(body, "project root") {
-		t.Error("atom must recommend project root as the canonical location for shared zerops.yaml in standard pairs")
+	for _, forbidden := range []string{
+		"Where pre-flight finds zerops.yaml",
+		"source mount is never searched",
+		"copy (or symlink) it to the project root",
+		"Place a single shared `zerops.yaml` at the project root",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("atom must not reintroduce %q — preflight reads yaml from the source mount; project-root copies are not part of the architecture", forbidden)
+		}
 	}
 }
 

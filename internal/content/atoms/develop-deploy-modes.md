@@ -33,20 +33,3 @@ See guide `deployment-lifecycle`.
 ZCP pre-flight does NOT check cross-deploy path existence; Zerops
 builder emits `WARN: deployFiles paths not found: ...` in
 `DeployResult.BuildLogs` only if the build produces no matches.
-
-### Where pre-flight finds zerops.yaml
-
-Pre-flight searches by **target hostname**, in this order:
-
-1. **Per-target subdirectory** — `<projectRoot>/<targetService>/zerops.yaml` (`/var/www/<targetService>/zerops.yaml` in container env). <!-- axis-n-keep -->
-2. **Project root fallback** — `<projectRoot>/zerops.yaml` (`/var/www/zerops.yaml` in container env). <!-- axis-n-keep -->
-
-The **source mount is never searched**. Self-deploy works transparently
-because source == target; cross-deploy
-(`sourceService != targetService`) does NOT pick up the yaml you
-scaffolded under the source mount.
-
-Place a single shared `zerops.yaml` at the project root when you have
-standard pairs. Every deploy — self or cross — finds it there without
-per-service copies. If you already wrote it under the source mount,
-copy (or symlink) it to the project root before the cross-deploy.
