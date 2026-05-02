@@ -180,12 +180,7 @@ This service is on `closeDeployMode=auto`. Your delivery pattern is direct `zero
 
 When auto-close conditions land (every service in scope has a successful deploy + passed verify), ZCP closes the develop session automatically. The deploys that landed during develop iterations ARE the close deploys — there's no separate close-time push, and no special call from the close handler.
 
-The mechanics underneath:
-
-| environment | what `zerops_deploy` does |
-|---|---|
-| container | SSH to the dev hostname → `zcli push` from `/var/www` to the runtime. Synchronous: deploy result lands when the build pipeline completes. |
-| local | `zcli push` from the local workspace to the linked Zerops stage. Same shape, different source. |
+The env-specific mechanics (SSH push from `/var/www` for container, `zcli push` from CWD for local) live in the env-scoped deploy guidance fired alongside this atom.
 
 ## When you might switch
 
@@ -245,8 +240,6 @@ Args:
 Response carries `running`, `healthStatus`, `reason`, and `logTail`
 — read these before making another call.
 
-**After every redeploy, re-run `action=start` before `zerops_verify`** —
-the rebuild drops the dev process.
 Don't hand-roll `ssh appdev "cmd &"`: the SSH session ends with
 the call and kills the process. Always go through `zerops_dev_server`.
 

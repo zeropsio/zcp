@@ -1,48 +1,35 @@
 ---
 id: develop-build-observe
-priority: 3
+priority: 5
 phases: [develop-active]
 modes: [standard, simple, local-stage, local-only]
 closeDeployModes: [git-push]
 buildIntegrations: [webhook, actions]
 deployStates: [deployed]
 multiService: aggregate
-title: "Observe an async build after a git push"
+title: "Async build — failure triage when zerops_events surfaces a failed appVersion"
 ---
-With `build-integration=webhook` or `build-integration=actions`, `zerops_deploy strategy=git-push` returns as soon as the push transmits — the build runs separately and asynchronously. You observe it via `zerops_events`, then bridge the result back into the local develop session with `record-deploy`.
+The git-push delivery pattern (push command, async-build framing, and
+record-deploy on `Status=ACTIVE`) lives in the close-mode-git-push
+guidance fired alongside this atom. Use this section when the watched
+appVersion lands on a failure status instead.
 
-## Watch the appVersion
+## Failure statuses
 
-```
-{services-list:zerops_events serviceHostname="{hostname}"}
-```
+When `zerops_events serviceHostname="<hostname>"` reports
+`BUILD_FAILED`, `DEPLOY_FAILED`, or `PREPARING_RUNTIME_FAILED`, read
+the failed event's `failureClass` (build / start / verify / network /
+config / credential / other) + `failureCause` for the structured
+diagnosis — same vocabulary the synchronous deploy path produces in
+`DeployResult.FailureClassification`. Recovery is whatever fixed the
+build (yaml change, missing env var, code issue) plus a fresh push.
 
-A new push triggers a build appVersion per service. Look for:
-
-| `Status` | Meaning |
-|---|---|
-| `BUILDING` | The build pipeline is running. Re-call `zerops_events` to advance. |
-| `ACTIVE` | Build completed; the runtime now serves the new code. Proceed to record-deploy + verify. |
-| `BUILD_FAILED` / `DEPLOY_FAILED` / `PREPARING_RUNTIME_FAILED` | Build or deploy failed. Read the latest event's `failureClass` (build / start / verify / network / config / credential / other) + `failureCause` for the structured diagnosis — same vocabulary the synchronous deploy path produces in DeployResult.FailureClassification. For full build-container output, tail `zerops_logs` per failing service (see command block below). Recovery is whatever fixed the build (yaml, missing env var, code issue) plus a fresh push. |
-
-When a service surfaces a failure status, tail its build container output (per failing service):
+For full build-container output, tail `zerops_logs` per failing
+service:
 
 ```
 {services-list:zerops_logs serviceHostname="{hostname}" facility=application since=5m}
 ```
 
-The events tool is an envelope-aware lookup — pass `since=<duration>` to limit the window if the service has long history.
-
-## Bridge the deploy back
-
-Once `Status=ACTIVE`, run record-deploy per service:
-
-```
-{services-list:zerops_workflow action="record-deploy" targetService="{hostname}"}
-```
-
-This records each deploy so the next envelope render sees the service as deployed. From here the develop atoms gated on `deployStates: [deployed]` start firing, and a `zerops_verify` confirms the new code is healthy.
-
-## When the build doesn't fire
-
-`Warnings` on the push response calls out the case where `build-integration=none` left the push archived at the remote. If you intended to wire a build trigger, run `action=build-integration` now. If your team owns the CI side independently, ignore the warning — ZCP doesn't track external CI/CD by design.
+`zerops_events` accepts `since=<duration>` to limit the window if the
+service has long history.

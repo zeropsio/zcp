@@ -34,19 +34,30 @@ includeEnvs=true` returns the key list. Values are redacted by default;
 names alone are enough for cross-service wiring. Add
 `includeEnvValues=true` only for troubleshooting.
 
-### Per-service canonical env-var reference
+### Per-managed-type guidance (when the envelope has managed services)
 
-Patterns for the most common managed-service types when wiring `run.envVariables`. Always verify against `zerops_discover` for the live key list — types update versions and key sets.
+If the envelope has zero managed deps (a runtime-only project), this
+section is a no-op. Otherwise, run `zerops_discover service="<dep>"
+includeEnvs=true` per managed dep — that returns the live key set for
+the actual service version. Patterns to remember when wiring:
 
-| Service | Use |
-|---|---|
-| PostgreSQL / MariaDB / ClickHouse | Prefer `connectionString` over assembling `hostname:port:user:password:dbName`. PostgreSQL + ClickHouse expose `superUser` / `superUserPassword` for DDL; ClickHouse port must match the driver (`portHttp`, `portMysql`, `portNative`, `portPostgresql`). |
-| Valkey / KeyDB | No auth on private network; KeyDB has no TLS port. |
-| NATS | URI is `connectionString`. |
-| Kafka | No `connectionString`; build broker URL from `hostname:port`. |
-| Elasticsearch | HTTP basic auth via `user`/`password`. |
-| Meilisearch | Use scoped keys (`defaultAdminKey`, `defaultSearchKey`, `defaultReadOnlyKey`, `defaultChatKey`), not `masterKey`. |
-| Typesense | Single `apiKey`. |
-| Qdrant | HTTP + gRPC via `connectionString` / `grpcConnectionString`; read-only via `readOnlyApiKey`. |
-| object-storage | S3-compatible: `apiUrl`, `accessKeyId`, `secretAccessKey`, `bucketName`; no `region` env var. |
-| shared-storage | `hostname` only; mounted via `mount:` in zerops.yaml, not a network service. |
+- Databases / message brokers usually expose `connectionString` —
+  prefer it over assembling `hostname:port:user:password:dbName`.
+- Some types expose elevated credentials (`superUser` /
+  `superUserPassword` on Postgres + ClickHouse) for DDL — pull from
+  the catalog only when DDL is actually needed.
+- ClickHouse + Kafka have multiple ports; match the driver
+  (`portHttp` / `portMysql` / `portNative` / `portPostgresql` for
+  ClickHouse; build broker URL from `hostname:port` for Kafka — no
+  `connectionString`).
+- Object storage is S3-compatible: `apiUrl`, `accessKeyId`,
+  `secretAccessKey`, `bucketName` — no `region` env var.
+- Shared storage is a `hostname`-only mount (`mount:` in zerops.yaml,
+  not a network service).
+- Search / vector services (Meilisearch, Typesense, Qdrant) ship
+  scoped API keys; pick the narrow key for app code, never the master
+  key. Qdrant has both HTTP (`connectionString`) and gRPC
+  (`grpcConnectionString`); pick to match the client library.
+
+For exotic types, `zerops_knowledge query="<service>"` returns the
+canonical reference page.

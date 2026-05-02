@@ -17,7 +17,7 @@ Route is chosen at bootstrap start and persists for the session. The 3 steps are
 
 ### Adopting existing services
 
-Adoption attaches ZCP tracking to an existing runtime service without touching its code, configuration, or scale. After adopt close, the envelope reports each adopted hostname with `bootstrapped: true`; close-mode + git-push capability are left empty (develop configures them on first use).
+Adoption attaches ZCP tracking to an existing runtime service without touching its code, configuration, or scale. After adopt close, the envelope reports each adopted hostname with `bootstrapped: true` and an empty close-mode / git-push capability — populated later when the develop session needs them.
 
 List what's there:
 

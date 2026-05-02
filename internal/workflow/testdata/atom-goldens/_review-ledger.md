@@ -1,6 +1,6 @@
 # Master defect ledger — Phase 2 Step 4
 
-**Status**: Awaiting human approval (Phase 2 Step 5 PAUSE POINT).
+**Status**: Cycle-3 follow-ups landed 2026-05-03 (A1-2 + Tier-3 redundancy + cosmetic sweep). All Cycle 1/2/3 items in this ledger that the user approved are now closed; remaining bullets are accepted-as-documented and tracked here for archival.
 **Plan**: `plans/atom-corpus-verification-2026-05-02.md` §2.
 **Method**: 6 parallel review sub-agents (A1-A6) covering all 30 canonical scenarios at full body depth, plus initial single-conversation pass that produced the L1-C1 baseline. Each agent prefixed defects with their ID (A1-, A2-, …, A6-). This ledger consolidates findings.
 
@@ -261,10 +261,17 @@ That's **8 Cycle 1 fixes**. Goldens regenerate for ~20 of 30 affected goldens. R
 - Order (A2-O2, O2/A4-O2)
 
 **Cycle 3 candidates** (or accept as documented):
-- Evidence-required (A2-E1, A2-E2, A3-E1, A6-E2, A6-E3, A6-E4, baseline E1)
-- Cosmetic
+- Evidence-required (A2-E1, A2-E2, A3-E1, A6-E2, A6-E3, A6-E4, baseline E1) — A2-E2 closed 2026-05-03 (forward-looking parenthetical replaced with empty-state observation)
+- Cosmetic — A2-O2 closed 2026-05-03 (provision-local split into intro + finalize atom; finalize at priority 4 renders after wait-active so post-RUNNING steps land in correct order)
 - Path-leak (A1-4)
-- Cross-ref hygiene (A1-2 — Phase 4 lint candidate)
+- Cross-ref hygiene (A1-2) — closed 2026-05-03 (axis-r lint shipped; 76 corpus violations swept)
+- Tier-3 redundancy:
+  - A4-R1 closed 2026-05-03 (build-observe trimmed to failure-class triage + log-fetch only; close-mode-git-push retains push command + record-deploy)
+  - A6-R10 closed 2026-05-03 (schema-validation moved to export-validate only; classify-envs no longer carries the duplicate paragraph)
+  - A6-R11 closed 2026-05-03 (export-intro "What the next calls do" table trimmed to call-shape — inputs + status name only)
+  - A3-R1 closed 2026-05-03 (close-mode-auto retains high-level framing; env-mechanic table dropped — env-scoped deploy atoms own it)
+  - A3-R2 closed 2026-05-03 (per-managed-type catalog compressed to compact pointer + zerops_discover guidance; zero-managed envelopes see a no-op single sentence)
+  - A3-R4 closed 2026-05-03 ("after every redeploy" paragraph dropped from runtime-start; triage owns the dev-process-volatility callout)
 
 **Out-of-cycle (structural — needs new axis)**:
 - **S7 (A3-L5)** — failure-tier session awareness. Needs new `attemptTier:` envelope axis. Plan §11.x scope creep; defer to follow-up plan.

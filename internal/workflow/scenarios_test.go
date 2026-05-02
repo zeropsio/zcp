@@ -1179,6 +1179,7 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"bootstrap-mode-prompt",
 		"bootstrap-intro",
 		"bootstrap-provision-local",
+		"bootstrap-provision-local-finalize",
 		"bootstrap-provision-rules",
 		"bootstrap-recipe-close",
 		"bootstrap-recipe-match",

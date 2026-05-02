@@ -1,6 +1,6 @@
 ---
 id: bootstrap/classic/provision-local
-atomIds: [bootstrap-provision-local, bootstrap-provision-rules, develop-api-error-meta, bootstrap-env-var-discovery, bootstrap-wait-active]
+atomIds: [bootstrap-provision-local, bootstrap-provision-rules, develop-api-error-meta, bootstrap-env-var-discovery, bootstrap-wait-active, bootstrap-provision-local-finalize]
 description: "Classic route, provision step on a local-machine env (no Zerops container)."
 ---
 ### Local-mode provision
@@ -22,15 +22,6 @@ Import shape depends on mode:
 
 **No SSHFS** — `zerops_mount` is unavailable in local mode; files live
 on the user's machine.
-
-**After services reach RUNNING:**
-
-1. `zerops_discover includeEnvs=true` — keys only.
-2. `zerops_env action="generate-dotenv" serviceHostname=""` —
-   writes `.env` resolved from live env vars.
-3. Add `.env` to `.gitignore` — it contains secrets.
-4. Guide the user to start VPN: `zcli vpn up <projectId>`. Needs
-   sudo/admin; ZCP cannot start it. Guide `local-development` covers VPN.
 
 ---
 
@@ -173,3 +164,15 @@ zerops_discover
 ```
 
 Repeat until every service reports a running status. Expected transitions: dev / simple runtimes → `RUNNING` (with `startWithoutCode: true`) or `ACTIVE` once a deploy lands; stage runtimes → `READY_TO_DEPLOY` (waiting for the first dev → stage cross-deploy); managed services → `RUNNING` / `ACTIVE`. The readiness predicate accepts BOTH `RUNNING` and `ACTIVE` as the operational state — do not block on a specific string. `READY_TO_DEPLOY` is acceptable for stage services in standard mode at this step.
+
+---
+
+### After services reach RUNNING
+
+1. `zerops_discover includeEnvs=true` — keys only.
+2. `zerops_env action="generate-dotenv" serviceHostname=""` —
+   writes `.env` resolved from live env vars.
+3. Add `.env` to `.gitignore` — it contains secrets.
+4. Guide the user to start VPN: `zcli vpn up <projectId>`. Needs
+   sudo/admin; ZCP cannot start it. The `local-development` guide
+   covers VPN.

@@ -110,7 +110,3 @@ If you skip an env, the next response re-prompts with the remaining unclassified
 - **Non-default managed-service prefixes** (M7): a custom Mongo/Postgres/MySQL service may emit envs as `${mongo_connectionString}` / `${postgres_password}` / `${mysql_dbName}` instead of the documented `${db_*}` shape. The protocol still buckets these `infrastructure` if the live `zerops_discover` shows the value resolving to a managed-service env — verify by inspecting the discover response's `services[].envs` array, not just the `${db_*}` sample. False-negative `plain-config` here would emit a literal hostname/password into the bundle.
 
 If a row's bucket is genuinely ambiguous, the safest default is `plain-config` (carries the existing value) plus a follow-up review with the user — wrong-direction errors there are fixable post-import without breaking deploy.
-
-## Schema validation
-
-The classify-prompt response carries the rendered `bundle.zeropsYaml` body and per-env warnings; the publish-ready / validation-failed response also carries `bundle.errors` populated by the embedded JSON-Schema validators (Phase 5). When `bundle.errors` is non-empty the handler returns `status="validation-failed"` — fix each error at its source (env classification, zerops.yaml, or service shape) and re-call export. The on-platform validator at re-import is the authoritative gate; the embedded validator catches the same failures earlier.

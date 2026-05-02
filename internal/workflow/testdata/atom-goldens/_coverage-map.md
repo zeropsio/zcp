@@ -15,6 +15,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `bootstrap-intro` | 2 | bootstrap/adopt/discover-existing-pair, bootstrap/classic/discover-standard-dynamic |
 | `bootstrap-mode-prompt` | 1 | bootstrap/classic/discover-standard-dynamic |
 | `bootstrap-provision-local` | 1 | bootstrap/classic/provision-local |
+| `bootstrap-provision-local-finalize` | 1 | bootstrap/classic/provision-local |
 | `bootstrap-provision-rules` | 1 | bootstrap/classic/provision-local |
 | `bootstrap-recipe-close` | 1 | bootstrap/recipe/close |
 | `bootstrap-recipe-import` | 1 | bootstrap/recipe/provision |

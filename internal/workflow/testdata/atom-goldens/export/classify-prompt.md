@@ -19,10 +19,12 @@ Single-half source modes (`dev`, `simple`, `local-only`) skip this prompt — th
 
 ## What the next calls do
 
-| Call | Inputs you add | Response |
+| Call | Inputs you add | Returns `status=` |
 |---|---|---|
-| 2 | `targetService` + `variant` (if pair) | Generated bundle + per-env classification table (only env keys; values fetched separately via `zerops_discover` to keep secrets out of the response). |
-| 3 | + `envClassifications` map (key → bucket per env) | `publish-ready` body with `importYaml`/`zeropsYaml` contents + `nextSteps` (write yamls, commit, push). |
+| 2 | `targetService` + `variant` (if pair) | `classify-prompt` |
+| 3 | + `envClassifications` map (key → bucket per env) | `publish-ready` (or `validation-failed`) |
+
+The status-specific section of the response carries content + commands; this table is a call-shape map, not a content cheatsheet.
 
 If `/var/www/zerops.yaml` is missing or git remote is unconfigured, the response carries a status that walks the prereq (zerops.yaml scaffold or `git-push-setup`) instead — complete the prereq, then re-call export.
 
@@ -132,10 +134,6 @@ If you skip an env, the next response re-prompts with the remaining unclassified
 - **Non-default managed-service prefixes** (M7): a custom Mongo/Postgres/MySQL service may emit envs as `${mongo_connectionString}` / `${postgres_password}` / `${mysql_dbName}` instead of the documented `${db_*}` shape. The protocol still buckets these `infrastructure` if the live `zerops_discover` shows the value resolving to a managed-service env — verify by inspecting the discover response's `services[].envs` array, not just the `${db_*}` sample. False-negative `plain-config` here would emit a literal hostname/password into the bundle.
 
 If a row's bucket is genuinely ambiguous, the safest default is `plain-config` (carries the existing value) plus a follow-up review with the user — wrong-direction errors there are fixable post-import without breaking deploy.
-
-## Schema validation
-
-The classify-prompt response carries the rendered `bundle.zeropsYaml` body and per-env warnings; the publish-ready / validation-failed response also carries `bundle.errors` populated by the embedded JSON-Schema validators (Phase 5). When `bundle.errors` is non-empty the handler returns `status="validation-failed"` — fix each error at its source (env classification, zerops.yaml, or service shape) and re-call export. The on-platform validator at re-import is the authoritative gate; the embedded validator catches the same failures earlier.
 
 ---
 

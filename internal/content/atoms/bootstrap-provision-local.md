@@ -27,12 +27,3 @@ Import shape depends on mode:
 
 **No SSHFS** — `zerops_mount` is unavailable in local mode; files live
 on the user's machine.
-
-**After services reach RUNNING:**
-
-1. `zerops_discover includeEnvs=true` — keys only.
-2. `zerops_env action="generate-dotenv" serviceHostname="{hostname}"` —
-   writes `.env` resolved from live env vars.
-3. Add `.env` to `.gitignore` — it contains secrets.
-4. Guide the user to start VPN: `zcli vpn up <projectId>`. Needs
-   sudo/admin; ZCP cannot start it. Guide `local-development` covers VPN.

@@ -19,10 +19,12 @@ Single-half source modes (`dev`, `simple`, `local-only`) skip this prompt — th
 
 ## What the next calls do
 
-| Call | Inputs you add | Response |
+| Call | Inputs you add | Returns `status=` |
 |---|---|---|
-| 2 | `targetService` + `variant` (if pair) | Generated bundle + per-env classification table (only env keys; values fetched separately via `zerops_discover` to keep secrets out of the response). |
-| 3 | + `envClassifications` map (key → bucket per env) | `publish-ready` body with `importYaml`/`zeropsYaml` contents + `nextSteps` (write yamls, commit, push). |
+| 2 | `targetService` + `variant` (if pair) | `classify-prompt` |
+| 3 | + `envClassifications` map (key → bucket per env) | `publish-ready` (or `validation-failed`) |
+
+The status-specific section of the response carries content + commands; this table is a call-shape map, not a content cheatsheet.
 
 If `/var/www/zerops.yaml` is missing or git remote is unconfigured, the response carries a status that walks the prereq (zerops.yaml scaffold or `git-push-setup`) instead — complete the prereq, then re-call export.
 
