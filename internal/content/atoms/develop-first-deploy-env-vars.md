@@ -16,9 +16,8 @@ not guess alternatives**. The catalog is the authoritative source; the
 host key is **`hostname`** (never `host`), but every other key varies
 per service type, so don't hardcode from memory.
 
-Place runtime env vars in `run.envVariables`; channel timing and
-service-level shadowing rules are in `develop-env-var-channels`.
-Cross-service references use this form:
+Place runtime env vars in `run.envVariables`. Cross-service references
+use this form:
 
 ```yaml
 envVariables:

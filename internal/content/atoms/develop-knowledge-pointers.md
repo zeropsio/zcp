@@ -19,9 +19,11 @@ When the embedded guidance is not enough, these are the canonical lookups:
   `zerops_discover includeEnvs=true`. Add `includeEnvValues=true` only
   for troubleshooting.
 - **Infrastructure changes** (shared storage, scaling rules, nginx
-  fragments): see `develop-platform-rules-common`. For dev → standard
-  mode expansion, start a new bootstrap session with `isExisting=true`
-  on the existing service plus a `stageHostname` for the new stage pair.
+  fragments): platform-rules guidance in the develop response covers
+  base mechanics; deeper detail comes from `zerops_knowledge
+  query="<topic>"`. For dev → standard mode expansion, start a new
+  bootstrap session with `isExisting=true` on the existing runtime
+  plus a `stageHostname` for the new stage pair.
 - **Platform constants** (status codes, managed service categories,
   runtime classes): `zerops_knowledge query="<topic>"` — examples:
   `"service status"`, `"managed services"`, `"subdomain"`.

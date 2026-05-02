@@ -49,4 +49,5 @@ zerops_workflow action="start" workflow="develop" intent="{task-description}" sc
 
 The envelope will flip to `phase: develop-active`; subsequent status
 calls show `workSession.deploys[]` and `workSession.verifies[]` as
-you iterate. Auto-close semantics: `develop-auto-close-semantics`.
+you iterate. Once the develop session is active, auto-close semantics
+land in the develop response.

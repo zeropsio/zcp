@@ -11,7 +11,7 @@ Complete the close step:
 zerops_workflow action="complete" step="close" attestation="Recipe bootstrapped — services active and verified"
 ```
 
-After close, every service the recipe provisioned appears in the envelope with `bootstrapped: true` and `closeMode: unset`. Close-mode and git-push capability are configured in develop after the first deploy lands — `develop-strategy-review` surfaces the menu when actionable. Start develop next:
+After close, every service the recipe provisioned appears in the envelope with `bootstrapped: true` and `closeMode: unset`. Close-mode and git-push capability are configured in develop after the first deploy lands; the develop response surfaces the menu when actionable. Start develop next:
 
 ```
 zerops_workflow action="start" workflow="develop"
@@ -107,7 +107,7 @@ services and recipes that deployed during bootstrap show `deployed: true`.
 No application code is written, no `zerops.yaml` generated, and no
 deploy runs as part of bootstrap close itself.
 
-**Next step — `zerops_workflow action="start" workflow="develop"`.** Develop owns code, the first deploy, verify, iteration, and close-mode setup; `develop-first-deploy-intro` fires on entry for services with `deployed: false`.
+**Next step — `zerops_workflow action="start" workflow="develop"`.** Develop owns code, the first deploy, verify, iteration, and close-mode setup. Services with `deployed: false` enter the first-deploy branch on develop entry.
 
 Direct tools (`zerops_scale`, `zerops_env`, `zerops_subdomain`, `zerops_discover`) stay callable without a workflow wrapper for one-shot infra changes.
 

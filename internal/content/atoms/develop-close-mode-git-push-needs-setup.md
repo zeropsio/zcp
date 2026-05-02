@@ -19,6 +19,6 @@ Run the capability setup first; the env-aware setup atom will be returned synchr
 {services-list:zerops_workflow action="git-push-setup" service="{hostname}"}
 ```
 
-Follow the returned setup atom (sets `GIT_TOKEN`, configures the remote, stamps `GitPushState=configured`). `git-push-setup` is per-pair (one call from the dev half writes capability for both halves of a standard pair); once it lands, `develop-close-mode-git-push` takes over with the actual push command.
+Follow the returned setup walkthrough (sets `GIT_TOKEN`, configures the remote, stamps `GitPushState=configured`). `git-push-setup` is per-pair (one call from the dev half writes capability for both halves of a standard pair); once `gitPushState=configured`, the next develop response delivers the actual push command.
 
 If the previous state was `broken` (a setup attempt left the artifact damaged), the setup walkthrough re-runs the token + remote stamp from scratch — no manual cleanup needed.

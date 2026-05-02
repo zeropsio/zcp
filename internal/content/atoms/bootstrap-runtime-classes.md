@@ -18,4 +18,4 @@ Each runtime type falls into one of four classes — pick the right class for ea
 
 Pick runtime types from the live Zerops catalog (check `zerops_knowledge` for current versions). Managed services initialize first (`priority: 10` in import YAML) so runtimes that depend on them can connect at start.
 
-Lifecycle and `zerops.yaml` mechanics for each class (start commands, healthCheck, deployFiles, dev-server primitives) are delivered in develop atoms — `develop-dynamic-runtime-start-container`, `develop-dynamic-runtime-start-local`, `develop-implicit-webserver`, `develop-first-deploy-scaffold-yaml` — at first-deploy time.
+Lifecycle and `zerops.yaml` mechanics for each class (start commands, healthCheck, deployFiles, dev-server primitives) are delivered by the develop response at first-deploy time.

@@ -27,8 +27,7 @@ before deciding.
 | Health | Add `/status` or `/health` returning HTTP 200 so `zerops_verify` has a deterministic endpoint; include a cheap dependency check when useful. |
 | Framework defaults | For Streamlit, Gradio, Vite, Jupyter, etc., pin container-correct dev/proxy/headless settings in the framework config. Push-dev creates `/var/www/.git`, so auto-detecting dev mode from parent `.git/` misfires. Don't suppress dev mode — fix the operational mismatch and keep hot-reload. |
 
-**Mount for files, SSH for commands** — see
-`develop-platform-rules-container`. Runtime CLIs (`go build`,
+**Mount for files, SSH for commands.** Runtime CLIs (`go build`,
 `php artisan`, `pytest`) need SSH because most are not on the ZCP host.
 
 **Don't run `git init` from the ZCP-side mount.** Push-dev deploy

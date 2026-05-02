@@ -19,10 +19,9 @@ cautions on top:
   SSH is for runtime CLIs only.
 - **Long-running dev processes → `zerops_dev_server`.** Don't
   hand-roll `ssh <hostname> "cmd &"` — backgrounded SSH holds the
-  channel until the 120 s bash timeout. See
-  `develop-dynamic-runtime-start-container` for actions, parameters,
-  and response shape; `develop-dev-server-reason-codes` for `reason`
-  triage.
+  channel until the 120 s bash timeout. The dev-server response
+  carries `running`, `healthStatus`, `startMillis`, and on failure
+  a `reason` code — read it before another call.
 - **One-shot commands over SSH.** Framework CLIs, git ops,
   `curl localhost` exit quickly — no channel-lifetime concern:
 
@@ -34,5 +33,6 @@ cautions on top:
 
 - **Mount recovery.** If the SSHFS mount goes stale after a deploy
   (stat/ls returns empty, writes hang), remount: `zerops_mount action="mount"`.
-- **Agent Browser** — `agent-browser.dev` is available on the ZCP host;
-  see `develop-verify-matrix` for the web verification path.
+- **Agent Browser** — `agent-browser.dev` is available on the ZCP host
+  for browser-backed verify checks (`zerops_verify` selects the right
+  route per service shape).

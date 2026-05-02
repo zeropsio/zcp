@@ -15,6 +15,6 @@ Once newly-provisioned (classic) or newly-attached (adopt) services have reached
 zerops_discover includeEnvs=true
 ```
 
-Record one row per service in the provision attestation. Keys are enough — values stay redacted; discovery is for cataloguing, not consumption. Develop atoms (`develop-first-deploy-env-vars`) cover per-service canonical key names + cross-service reference syntax (`${hostname_varName}`) — those fire when wiring `run.envVariables` at first deploy.
+Record one row per service in the provision attestation. Keys are enough — values stay redacted; discovery is for cataloguing, not consumption. The develop response covers per-service canonical key names plus cross-service reference syntax (`${hostname_varName}`) when wiring `run.envVariables` at first deploy.
 
 **Pre-first-deploy caveat (classic route)**: classic creates runtime services with `startWithoutCode: true` so they reach RUNNING before any code lands; env vars in such containers live in the project catalogue, not `process.env`, until develop runs the first deploy and references fire. Adopted services are typically already deployed, so this caveat doesn't apply on the adopt route.

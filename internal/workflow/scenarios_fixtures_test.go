@@ -259,7 +259,7 @@ func developGoldenScenarios() []goldenScenario {
 				Phase:       PhaseDevelopActive,
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{
-					fixSnapDeployedDevAuto("appdev", "nodejs@22", topology.RuntimeDynamic),
+					fixSnapDeployedDevAuto("appdev"),
 				},
 				WorkSession: fixSession("appdev"),
 			},
@@ -324,8 +324,8 @@ func developGoldenScenarios() []goldenScenario {
 				Phase:       PhaseDevelopActive,
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{
-					fixSnapDeployedDevAuto("appdev", "nodejs@22", topology.RuntimeDynamic),
-					fixSnapDeployedDevAuto("workerdev", "nodejs@22", topology.RuntimeDynamic),
+					fixSnapDeployedDevAuto("appdev"),
+					fixSnapDeployedDevAuto("workerdev"),
 				},
 				WorkSession: fixSession("appdev"),
 			},
@@ -337,7 +337,7 @@ func developGoldenScenarios() []goldenScenario {
 				Phase:       PhaseDevelopClosed,
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{
-					fixSnapDeployedDevAuto("appdev", "nodejs@22", topology.RuntimeDynamic),
+					fixSnapDeployedDevAuto("appdev"),
 				},
 				WorkSession: &WorkSessionSummary{
 					Intent:      "deploy",
@@ -616,12 +616,14 @@ func fixSnapBootstrappedNeverDeployedPair(devHost, stageHost, typeVersion string
 	}
 }
 
-// fixSnapDeployedDevAuto returns a deployed dev-mode close-auto snapshot.
-func fixSnapDeployedDevAuto(hostname, typeVersion string, rc topology.RuntimeClass) ServiceSnapshot {
+// fixSnapDeployedDevAuto returns a deployed dev-mode close-auto snapshot
+// (nodejs@22 dynamic runtime — every existing caller uses the same shape;
+// inline a snapshot literal if a scenario needs to vary the stack).
+func fixSnapDeployedDevAuto(hostname string) ServiceSnapshot {
 	return ServiceSnapshot{
 		Hostname:        hostname,
-		TypeVersion:     typeVersion,
-		RuntimeClass:    rc,
+		TypeVersion:     "nodejs@22",
+		RuntimeClass:    topology.RuntimeDynamic,
 		Mode:            topology.ModeDev,
 		CloseDeployMode: topology.CloseModeAuto,
 		Bootstrapped:    true,

@@ -571,7 +571,7 @@ rule changes do not churn atom files:
 |---|---|---|
 | `TestAtomReferenceFieldIntegrity` | `internal/workflow/atom_reference_field_integrity_test.go` | Every `references-fields` entry resolves to a named struct field via AST scan. |
 | `TestAtomReferencesAtomsIntegrity` | `internal/workflow/atom_references_atoms_integrity_test.go` | Every `references-atoms` entry resolves to an existing atom. |
-| `TestAtomAuthoringLint` | `internal/content/atoms_lint_test.go` | Body prose matches no forbidden pattern (§11.2) and no axis K/L/M/N drift (§11.5/§11.6). |
+| `TestAtomAuthoringLint` | `internal/content/atoms_lint_test.go` | Body prose matches no forbidden pattern (§11.2) and no axis K/L/M/N/O/R drift (§11.5/§11.6/§11.6.5/§11.6.6). |
 
 ### 11.4 Allowlist policy
 
@@ -841,7 +841,17 @@ assertions (e.g. *"After deploy, the web server is already running"*
 in `develop-implicit-webserver`) trip the regex; tag with
 `axis-o-keep` plus a one-line rationale that names the conditional.
 
-### 11.7 Marker convention (axes K, M, N, O)
+### 11.6.6 Axis R — ATOM-ID FORWARD-REFERENCE (no atom-ids in body prose)
+
+Phase 4 follow-up adds the `axisRViolations` lint (`internal/content/atoms_lint_axes.go`). Backticked atom-id mentions in body prose are forbidden because the agent has no atom-lookup mechanism beyond what fires in the current envelope: a pointer to `develop-X` is either redundant (target atom co-fires) or a dead-end (target atom doesn't fire).
+
+**Detection is corpus-aware.** The lint enumerates every atom basename from the input slice and only flags backticked tokens that match a real atom-ID. Backticked platform vocabulary (`auto-complete`, `git-push`, `local-stage`, `iteration-cap`, `multi-service`, `record-deploy`, …) is silently ignored.
+
+**Marker convention.** Like axes K, M, N, O, axis R honors inline `<!-- axis-r-keep: <reason> -->` markers on the same line, the prior non-blank line, or the next non-blank line. Reserved for narrow recovery-chain cases where the agent will navigate to a different workflow that fires the target atom and naming the destination atom-id materially helps. Most cases should be **inlined** (write the actual instruction the referenced atom would have given) or **dropped** (action-instruction is the better hint than an atom-id pointer).
+
+**Why not link/anchor/render-references-atoms.** The composed render is a flat markdown blob with no atom-id anchors; the agent cannot navigate by atom-id even when both atoms are in the same render. The fix is to write the prose so atom-id navigation isn't needed — actions, observable response fields, and procedural inspection do the work.
+
+### 11.7 Marker convention (axes K, M, N, O, R)
 
 The axis-K, axis-M, axis-N, and axis-O lints (`atoms_lint_axes.go`) are
 heuristic — the patterns flag CANDIDATES, not certain violations.

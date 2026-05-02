@@ -144,7 +144,13 @@ func bootstrapCoverageFixtures() []coverageFixture {
 			MustContain: []string{
 				`zerops_workflow action="complete" step="close"`,
 				`closeMode: unset`,
-				`develop-strategy-review`,
+				// Surfaces the menu when actionable — pins post-A1-2
+				// rephrasing (the prior `develop-strategy-review` atom-id
+				// pointer was removed per axis-r ledger; the workflow
+				// action below + this surface phrase keeps the recipe-
+				// close → develop transition pinned without dead-end
+				// atom-id navigation).
+				`surfaces the menu when actionable`,
 				`zerops_workflow action="start" workflow="develop"`,
 			},
 		},

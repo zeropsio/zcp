@@ -31,5 +31,5 @@ submitting the plan.
 Default to **dev** for services under active iteration, **simple** for
 immutable workers. The plan commits the mode when you submit it; after
 bootstrap closes, the envelope exposes the chosen mode as
-`ServiceSnapshot.Mode`. Changing mode later requires the
-mode-expansion flow (see `develop-mode-expansion`).
+`ServiceSnapshot.Mode`. Changing mode later requires a mode-expansion
+bootstrap session, surfaced in develop when actionable.

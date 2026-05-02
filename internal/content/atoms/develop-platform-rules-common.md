@@ -17,8 +17,10 @@ references-atoms: [develop-env-var-channels, develop-first-deploy-env-vars]
 - **Build ≠ runtime container.** Runtime packages → `run.prepareCommands`;
   build-only packages → `build.prepareCommands`. Build-time tools may
   not exist at run time; see guide `deployment-lifecycle`.
-- Env var live timing and cross-service syntax:
-  `develop-env-var-channels` / `develop-first-deploy-env-vars`.
+- Env vars use `${hostname_KEY}` syntax for cross-service references
+  (Zerops rewrites at deploy from the named service's catalog). Local
+  vars in `run.envVariables` shadow project-level entries with the
+  same key.
 - Service config changes (shared storage, scaling, nginx fragments):
   use `zerops_import` with `override: true` to update existing services.
   This is separate from `zerops_deploy`, which only updates code.

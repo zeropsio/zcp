@@ -8,7 +8,10 @@ title: "Self-deploy destruction risk — narrower deployFiles destroys the targe
 
 ### Self-deploy destruction risk
 
-`develop-deploy-modes` covers the high-level self-deploy vs cross-deploy classification + the deployFiles table. This atom drills into the specific destruction-risk path that motivates the `[.]` invariant.
+In a self-deploy, `sourceService == targetService` — the runtime is both
+the build source AND the destination. `deployFiles` selects which build
+artifacts overwrite the runtime's deploy root. When that selection is
+narrower than `[.]`, the result destroys the target.
 
 When a self-deploying service uses a narrower deployFiles pattern (e.g. `[./out]`):
 

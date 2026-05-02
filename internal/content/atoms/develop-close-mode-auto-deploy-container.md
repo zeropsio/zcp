@@ -23,4 +23,4 @@ The dev container uses SSH push — `zerops_deploy` uploads the working tree fro
 {services-list:zerops_deploy targetService="{hostname}"}
 ```
 
-`deployFiles` discipline differs per class: self-deploy needs `[.]` (narrower patterns destroy the target's source); cross-deploy cherry-picks build output. See `develop-deploy-modes` for the full rule and `develop-deploy-files-self-deploy` for the self-deploy invariant.
+`deployFiles` discipline differs per class: self-deploy needs `[.]` (narrower patterns destroy the target's source); cross-deploy cherry-picks build output.

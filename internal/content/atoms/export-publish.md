@@ -45,7 +45,7 @@ On error, read `failureClassification.category`:
 
 | Category | Likely cause | Fix |
 |---|---|---|
-| `credential` | `GIT_TOKEN` missing or rejected | `setup-git-push-container` walks the token + scope setup. |
+| `credential` | `GIT_TOKEN` missing or rejected | Re-run `zerops_workflow action="git-push-setup" service="{targetHostname}"` to refresh the token + scope. |
 | `config` | The runtime container's `/var/www` does not have the bundle commit | Re-run step 2; verify `git log -1` shows the export commit. |
 | `network` | Remote unreachable | Confirm `bundle.repoUrl` resolves; check VPN / firewall. |
 | `build` / `start` | Re-import on the destination project failed at build/start | These do NOT come from the push — only from re-import. The push itself succeeded; the destination project's build/start logs are where to look. |

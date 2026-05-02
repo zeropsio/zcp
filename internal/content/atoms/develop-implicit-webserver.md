@@ -22,7 +22,7 @@ Apache or nginx is bundled into the runtime image — **no manual `start:` and n
 
 1. Write or edit application files.
 2. Run the strategy-specific deploy (see the active strategy atom).
-3. Verify as a web-facing service; see `develop-verify-matrix`.
+3. Verify as a web-facing service via `zerops_verify`.
 
 **When 404/403 follows successful deploy:**
 

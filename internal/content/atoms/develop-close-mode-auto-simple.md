@@ -11,7 +11,7 @@ title: "Close task — close-mode=auto, simple mode"
 
 ### Closing the task
 
-Simple-mode services auto-start on deploy; close through the cadence in `develop-change-drives-deploy`:
+Simple-mode services auto-start on deploy; every code change → `zerops_deploy`:
 
 ```
 {services-list:zerops_deploy targetService="{hostname}" setup="prod"

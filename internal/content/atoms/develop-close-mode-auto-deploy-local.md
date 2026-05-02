@@ -13,7 +13,7 @@ coverageExempt: "local-mode close-mode-auto deploy — 30 canonical scenarios ar
 
 ### close-mode=auto Deploy
 
-`zerops_deploy` deploys from your working directory into the linked Zerops runtime. `zerops.yaml` placement is covered by `develop-platform-rules-common`. No sourceService: local env deploys whatever is in CWD (or the path passed as `workingDir`) — there's no dev container to cross-deploy from.
+`zerops_deploy` deploys from your working directory into the linked Zerops runtime. `zerops.yaml` lives at the repo root (build/run blocks share the same file). No sourceService: local env deploys whatever is in CWD (or the path passed as `workingDir`) — there's no dev container to cross-deploy from.
 
 ```
 {services-list:zerops_deploy targetService="{hostname}"}

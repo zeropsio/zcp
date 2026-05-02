@@ -6,7 +6,7 @@ exportStatus: [git-push-setup-required]
 environments: [container]
 title: "Configure git-push capability before publishing the export bundle"
 ---
-You hit `status="git-push-setup-required"`. Phase C cannot publish until `meta.GitPushState=configured` (and `meta.RemoteURL` is cached). The chain target is `setup-git-push-container` — the same atom the develop workflow uses to provision GIT_TOKEN, .netrc, and the remote URL.
+You hit `status="git-push-setup-required"`. Phase C cannot publish until `meta.GitPushState=configured` (and `meta.RemoteURL` is cached). Run the `git-push-setup` action below — it provisions GIT_TOKEN, .netrc, and the remote URL the same way the develop workflow does.
 
 ## Why this fires
 
@@ -14,7 +14,7 @@ Either (a) `git remote get-url origin` returned empty in the chosen container's 
 
 ## Resolve in two steps
 
-### 1. Run setup-git-push-container
+### 1. Run `git-push-setup`
 
 ```
 zerops_workflow action="git-push-setup" service="{targetHostname}" remoteUrl="{repoUrl}"
@@ -25,7 +25,7 @@ If `GIT_TOKEN` is not yet set on the runtime container, the response is the walk
 `git-push-setup` confirm mode validates URL format and writes `meta.GitPushState=configured` + `meta.RemoteURL`, but it does NOT verify that `GIT_TOKEN` actually authenticates against the remote. A subsequent push (during export Phase C, or any later `zerops_deploy strategy="git-push"`) can still surface `failureClassification.category=credential` if the token is rejected — re-run `git-push-setup` to rotate the token and try again.
 
 <!-- axis-k-keep: signal-#3 -->
-The walkthrough atom that fires from `git-push-setup` (`setup-git-push-container` or `setup-git-push-local`) is selected by the current ZCP runtime environment, not the chosen service's mode. If you are running zcp inside a Zerops container, you get the container walkthrough; if you are running locally, you get the local walkthrough. For a runtime that lives on the local machine (`mode=local-stage` / `mode=local-only`), invoke `git-push-setup` from a local zcp invocation so the local walkthrough fires.
+The walkthrough returned by `git-push-setup` is selected by the current ZCP runtime environment, not the chosen service's mode. If you are running zcp inside a Zerops container, you get the container walkthrough; if you are running locally, you get the local walkthrough. For a runtime that lives on the local machine (`mode=local-stage` / `mode=local-only`), invoke `git-push-setup` from a local zcp invocation so the local walkthrough fires.
 
 ### 2. Re-call export with the same inputs
 

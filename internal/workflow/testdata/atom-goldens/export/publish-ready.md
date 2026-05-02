@@ -24,7 +24,7 @@ Single-half source modes (`dev`, `simple`, `local-only`) skip this prompt — th
 | 2 | `targetService` + `variant` (if pair) | Generated bundle + per-env classification table (only env keys; values fetched separately via `zerops_discover` to keep secrets out of the response). |
 | 3 | + `envClassifications` map (key → bucket per env) | `publish-ready` body with `importYaml`/`zeropsYaml` contents + `nextSteps` (write yamls, commit, push). |
 
-If `/var/www/zerops.yaml` is missing or git remote is unconfigured, the response chains to `scaffold-zerops-yaml` or `setup-git-push-container` (or `setup-git-push-local` for local-mode runtimes) instead — complete the prereq, then re-call export.
+If `/var/www/zerops.yaml` is missing or git remote is unconfigured, the response carries a status that walks the prereq (zerops.yaml scaffold or `git-push-setup`) instead — complete the prereq, then re-call export.
 
 ---
 
@@ -66,7 +66,7 @@ On error, read `failureClassification.category`:
 
 | Category | Likely cause | Fix |
 |---|---|---|
-| `credential` | `GIT_TOKEN` missing or rejected | `setup-git-push-container` walks the token + scope setup. |
+| `credential` | `GIT_TOKEN` missing or rejected | Re-run `zerops_workflow action="git-push-setup" service="{targetHostname}"` to refresh the token + scope. |
 | `config` | The runtime container's `/var/www` does not have the bundle commit | Re-run step 2; verify `git log -1` shows the export commit. |
 | `network` | Remote unreachable | Confirm `bundle.repoUrl` resolves; check VPN / firewall. |
 | `build` / `start` | Re-import on the destination project failed at build/start | These do NOT come from the push — only from re-import. The push itself succeeded; the destination project's build/start logs are where to look. |

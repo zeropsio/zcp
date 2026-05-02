@@ -22,5 +22,5 @@ zerops_verify serviceHostname="{stage-hostname}"}
 ```
 
 No second build — cross-deploy packages the dev tree straight into
-stage. Standard-pair close criteria are in
-`develop-auto-close-semantics`.
+stage. Auto-close fires once both halves carry a successful deploy +
+passing verify.

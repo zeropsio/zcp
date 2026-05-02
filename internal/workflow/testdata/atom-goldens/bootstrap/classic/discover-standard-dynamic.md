@@ -17,7 +17,7 @@ Route is chosen at bootstrap start and persists for the session. The 3 steps are
 
 ### Dynamic runtime plan
 
-If the plan you're about to submit includes a dynamic runtime (Node, Go, Python, Bun, Ruby, …), apply this section. (Static-runtime planning lives in the sibling `bootstrap-classic-plan-static`.) Classic bootstrap creates the runtime + managed services with `startWithoutCode: true` so dev containers reach RUNNING with an empty filesystem; `workflow=develop` then scaffolds `zerops.yaml`, writes the application, and runs the first deploy.
+If the plan you're about to submit includes a dynamic runtime (Node, Go, Python, Bun, Ruby, …), apply this section. Classic bootstrap creates the runtime + managed services with `startWithoutCode: true` so dev containers reach RUNNING with an empty filesystem; `workflow=develop` then scaffolds `zerops.yaml`, writes the application, and runs the first deploy.
 
 Confirm dev/stage pairing with the user before submitting the plan. Mode + close-mode + git-push capability decisions all happen later in develop, not here.
 
@@ -25,7 +25,7 @@ Confirm dev/stage pairing with the user before submitting the plan. Mode + close
 
 ### Static runtime plan
 
-If the plan you're about to submit includes a static-runtime container (`nginx`, `static`), apply this section. (Dynamic-runtime planning lives in the sibling `bootstrap-classic-plan-dynamic`.) Static-runtime containers come up serving an empty document root after bootstrap. The first build artifact lands in develop via `zerops_deploy`; bootstrap creates the empty container and stops there.
+If the plan you're about to submit includes a static-runtime container (`nginx`, `static`), apply this section. Static-runtime containers come up serving an empty document root after bootstrap. The first build artifact lands in develop via `zerops_deploy`; bootstrap creates the empty container and stops there.
 
 Before submitting the plan, confirm with the user:
 
@@ -103,8 +103,8 @@ submitting the plan.
 Default to **dev** for services under active iteration, **simple** for
 immutable workers. The plan commits the mode when you submit it; after
 bootstrap closes, the envelope exposes the chosen mode as
-`ServiceSnapshot.Mode`. Changing mode later requires the
-mode-expansion flow (see `develop-mode-expansion`).
+`ServiceSnapshot.Mode`. Changing mode later requires a mode-expansion
+bootstrap session, surfaced in develop when actionable.
 
 ---
 
@@ -119,4 +119,4 @@ Each runtime type falls into one of four classes — pick the right class for ea
 
 Pick runtime types from the live Zerops catalog (check `zerops_knowledge` for current versions). Managed services initialize first (`priority: 10` in import YAML) so runtimes that depend on them can connect at start.
 
-Lifecycle and `zerops.yaml` mechanics for each class (start commands, healthCheck, deployFiles, dev-server primitives) are delivered in develop atoms — `develop-dynamic-runtime-start-container`, `develop-dynamic-runtime-start-local`, `develop-implicit-webserver`, `develop-first-deploy-scaffold-yaml` — at first-deploy time.
+Lifecycle and `zerops.yaml` mechanics for each class (start commands, healthCheck, deployFiles, dev-server primitives) are delivered by the develop response at first-deploy time.

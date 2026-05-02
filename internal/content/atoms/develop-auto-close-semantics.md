@@ -15,7 +15,7 @@ When the gate is open (every in-scope service is `auto` or `git-push`), the sess
 - **`auto-complete`** — every service in scope has both a successful
   deploy and a passing verify. The envelope's `workSession.closedAt`
   becomes set, `closeReason: auto-complete`, and `phase` flips to
-  `develop-closed-auto`.
+  the closed state.
 - **`iteration-cap`** — the workflow's retry ceiling was hit. Same
   close-state shape; `closeReason: iteration-cap`.
 

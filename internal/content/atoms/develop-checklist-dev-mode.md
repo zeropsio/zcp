@@ -14,8 +14,8 @@ references-fields: [workflow.ServiceSnapshot.Mode, workflow.ServiceSnapshot.Runt
 Applies to **dynamic runtimes only** (Node, Bun, Deno, Go, Rust, Python,
 Ruby, Java, .NET — anything with a long-running app process under
 manual control). For implicit-webserver runtimes (`php-apache`,
-`php-nginx`) see `develop-implicit-webserver`; for static runtimes the
-web server auto-starts and this checklist does not apply.
+`php-nginx`) the implicit-webserver guidance fires instead; for static
+runtimes the web server auto-starts and this checklist does not apply.
 
 - Dev setup block in `zerops.yaml`: `start: zsc noop --silent`, **no**
   `healthCheck`. Zerops keeps the runtime container idle; you start

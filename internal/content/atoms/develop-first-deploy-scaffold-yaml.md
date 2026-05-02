@@ -10,8 +10,9 @@ references-atoms: [develop-deploy-modes, develop-first-deploy-env-vars]
 
 ### Establish `zerops.yaml`
 
-Scaffold `zerops.yaml` if absent or refine it in place if already present.
-Root placement and `setup:` naming rules are in `develop-platform-rules-common`.
+Scaffold `zerops.yaml` if absent or refine it in place if already
+present. The file lives at the repo root; `setup:` matches the runtime
+hostname (one `zerops:` entry per in-scope runtime).
 
 **Shape (one `zerops:` block per targeted runtime hostname):**
 
@@ -21,7 +22,7 @@ zerops:
     build:
       base: <runtime-only key, e.g. nodejs@22 — NOT the composite run key>
       buildCommands: [...]       # optional for pre-built artefacts
-      deployFiles: [...]         # see develop-deploy-modes for deployFiles per class
+      deployFiles: [...]         # [.] for self-deploy; build-output subset for cross-deploy
     run:
       base: <run key, may be composite: php-nginx@8.4, nodejs@22, ...>
       ports:
@@ -32,8 +33,10 @@ zerops:
       start: <run command, not a build command>
 ```
 
-**Env var references** — see `develop-first-deploy-env-vars` for
-`${hostname_KEY}` syntax and `develop-env-var-channels` for live timing.
+**Env var references** use `${hostname_KEY}` syntax — Zerops rewrites
+the placeholder at deploy time from the named service's catalog. Wrong
+spelling stays literal and the app fails at connect.
 
 **Mode-aware tips:** emit separate setup entries per targeted hostname.
-See `develop-deploy-modes` for deployFiles by deploy class.
+`deployFiles: [.]` for self-deploys (single service); narrower patterns
+only for cross-deploys where the source ≠ target.

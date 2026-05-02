@@ -22,6 +22,6 @@ zerops_dev_server action=start hostname="{hostname}" command="{start-command}" p
 zerops_verify serviceHostname="{hostname}"}
 ```
 
-Each redeploy gives a new container with no dev server — check `action=status` first; if `running: false`, call `action=start`. See `develop-dynamic-runtime-start-container` for parameters and response shape; `develop-dev-server-reason-codes` for `reason` triage.
+Each redeploy gives a new container with no dev server — check `action=status` first; if `running: false`, call `action=start`. The response carries `running`, `healthStatus`, `startMillis`, and on failure a `reason` code — read it before issuing another call.
 
 For no-HTTP workers (no `port`/`healthPath`), `running` derives from the post-spawn liveness check; `healthStatus` stays 0 — use `action=logs` to confirm consumption.

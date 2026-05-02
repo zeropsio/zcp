@@ -13,8 +13,8 @@ default to
 `ssh {hostname} curl localhost` for diagnosis.
 
 1. **`zerops_verify serviceHostname="{hostname}"`** — start with the
-   canonical health probe and structured diagnosis; see
-   `develop-verify-matrix` for the full verify path.
+   canonical health probe and structured diagnosis (it picks the right
+   check route per service shape).
 2. **Subdomain URL** — static / implicit-webserver:
    `https://{hostname}-${zeropsSubdomainHost}.prg1.zerops.app/`; dynamic
    adds `-{port}`. `${zeropsSubdomainHost}` is numeric and project-scope,
@@ -24,9 +24,8 @@ default to
    (nginx, crash traces, deploy failures) without opening a shell.
 4. **Framework log file** — read via Read tool at the framework's
    project-relative log path (`storage/logs/laravel.log`,
-   `var/log/...`). Per-env access detail in
-   `develop-platform-rules-container` (mount-vs-SSH split) and
-   `develop-platform-rules-local` (CWD reads).
+   `var/log/...`). Path resolves against the runtime root configured
+   for the active environment.
 5. **Last resort: SSH + curl localhost** — only when earlier checks miss
    container-local state (worker-only service, non-default bind). Even
    then, `zerops_verify` usually already encodes the check.

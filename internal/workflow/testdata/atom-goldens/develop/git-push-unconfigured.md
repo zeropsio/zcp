@@ -59,12 +59,14 @@ shape, one entry per failing service-stack.
 
 Iteration cadence is mode-specific:
 
-- Dev-mode dynamic runtime container: see
-  `develop-close-mode-auto-workflow-dev`.
+- Dev-mode dynamic runtime: edit code in place; reload via
+  `zerops_dev_server` (no full redeploy for code-only changes).
 - Simple / standard / local / first-deploy: every change →
   `zerops_deploy`.
 
-Auto-close: see `develop-auto-close-semantics`.
+Once close-mode is `auto` or `git-push` and every in-scope service has
+both a successful deploy and passing verify, the work session
+auto-closes (`closeReason=auto-complete`).
 
 ---
 
@@ -76,7 +78,7 @@ Run the capability setup first; the env-aware setup atom will be returned synchr
 zerops_workflow action="git-push-setup" service="appdev"
 ```
 
-Follow the returned setup atom (sets `GIT_TOKEN`, configures the remote, stamps `GitPushState=configured`). `git-push-setup` is per-pair (one call from the dev half writes capability for both halves of a standard pair); once it lands, `develop-close-mode-git-push` takes over with the actual push command.
+Follow the returned setup walkthrough (sets `GIT_TOKEN`, configures the remote, stamps `GitPushState=configured`). `git-push-setup` is per-pair (one call from the dev half writes capability for both halves of a standard pair); once `gitPushState=configured`, the next develop response delivers the actual push command.
 
 If the previous state was `broken` (a setup attempt left the artifact damaged), the setup walkthrough re-runs the token + remote stamp from scratch — no manual cleanup needed.
 
@@ -142,8 +144,8 @@ default to
 `ssh appdev curl localhost` for diagnosis.
 
 1. **`zerops_verify serviceHostname="appdev"`** — start with the
-   canonical health probe and structured diagnosis; see
-   `develop-verify-matrix` for the full verify path.
+   canonical health probe and structured diagnosis (it picks the right
+   check route per service shape).
 2. **Subdomain URL** — static / implicit-webserver:
    `https://appdev-${zeropsSubdomainHost}.prg1.zerops.app/`; dynamic
    adds `-{port}`. `${zeropsSubdomainHost}` is numeric and project-scope,
@@ -153,9 +155,8 @@ default to
    (nginx, crash traces, deploy failures) without opening a shell.
 4. **Framework log file** — read via Read tool at the framework's
    project-relative log path (`storage/logs/laravel.log`,
-   `var/log/...`). Per-env access detail in
-   `develop-platform-rules-container` (mount-vs-SSH split) and
-   `develop-platform-rules-local` (CWD reads).
+   `var/log/...`). Path resolves against the runtime root configured
+   for the active environment.
 5. **Last resort: SSH + curl localhost** — only when earlier checks miss
    container-local state (worker-only service, non-default bind). Even
    then, `zerops_verify` usually already encodes the check.
@@ -173,8 +174,10 @@ default to
 - **Build ≠ runtime container.** Runtime packages → `run.prepareCommands`;
   build-only packages → `build.prepareCommands`. Build-time tools may
   not exist at run time; see guide `deployment-lifecycle`.
-- Env var live timing and cross-service syntax:
-  `develop-env-var-channels` / `develop-first-deploy-env-vars`.
+- Env vars use `${hostname_KEY}` syntax for cross-service references
+  (Zerops rewrites at deploy from the named service's catalog). Local
+  vars in `run.envVariables` shadow project-level entries with the
+  same key.
 - Service config changes (shared storage, scaling, nginx fragments):
   use `zerops_import` with `override: true` to update existing services.
   This is separate from `zerops_deploy`, which only updates code.
@@ -199,9 +202,11 @@ When the embedded guidance is not enough, these are the canonical lookups:
   `zerops_discover includeEnvs=true`. Add `includeEnvValues=true` only
   for troubleshooting.
 - **Infrastructure changes** (shared storage, scaling rules, nginx
-  fragments): see `develop-platform-rules-common`. For dev → standard
-  mode expansion, start a new bootstrap session with `isExisting=true`
-  on the existing service plus a `stageHostname` for the new stage pair.
+  fragments): platform-rules guidance in the develop response covers
+  base mechanics; deeper detail comes from `zerops_knowledge
+  query="<topic>"`. For dev → standard mode expansion, start a new
+  bootstrap session with `isExisting=true` on the existing runtime
+  plus a `stageHostname` for the new stage pair.
 - **Platform constants** (status codes, managed service categories,
   runtime classes): `zerops_knowledge query="<topic>"` — examples:
   `"service status"`, `"managed services"`, `"subdomain"`.
@@ -217,7 +222,7 @@ When the gate is open (every in-scope service is `auto` or `git-push`), the sess
 - **`auto-complete`** — every service in scope has both a successful
   deploy and a passing verify. The envelope's `workSession.closedAt`
   becomes set, `closeReason: auto-complete`, and `phase` flips to
-  `develop-closed-auto`.
+  the closed state.
 - **`iteration-cap`** — the workflow's retry ceiling was hit. Same
   close-state shape; `closeReason: iteration-cap`.
 
@@ -280,10 +285,9 @@ cautions on top:
   SSH is for runtime CLIs only.
 - **Long-running dev processes → `zerops_dev_server`.** Don't
   hand-roll `ssh <hostname> "cmd &"` — backgrounded SSH holds the
-  channel until the 120 s bash timeout. See
-  `develop-dynamic-runtime-start-container` for actions, parameters,
-  and response shape; `develop-dev-server-reason-codes` for `reason`
-  triage.
+  channel until the 120 s bash timeout. The dev-server response
+  carries `running`, `healthStatus`, `startMillis`, and on failure
+  a `reason` code — read it before another call.
 - **One-shot commands over SSH.** Framework CLIs, git ops,
   `curl localhost` exit quickly — no channel-lifetime concern:
 
@@ -295,8 +299,9 @@ cautions on top:
 
 - **Mount recovery.** If the SSHFS mount goes stale after a deploy
   (stat/ls returns empty, writes hang), remount: `zerops_mount action="mount"`.
-- **Agent Browser** — `agent-browser.dev` is available on the ZCP host;
-  see `develop-verify-matrix` for the web verification path.
+- **Agent Browser** — `agent-browser.dev` is available on the ZCP host
+  for browser-backed verify checks (`zerops_verify` selects the right
+  route per service shape).
 
 ---
 

@@ -416,12 +416,87 @@ func axisOViolations(ctx atomLintCtx) []AtomLintViolation {
 }
 
 // ============================================================================
+// Axis R — ATOM-ID FORWARD-REFERENCE (no atom-ids in body prose)
+// ============================================================================
+//
+// Spec §11.2 bullet 6 + §11.10: backticked atom-id mentions in body prose
+// are dead-ends. The agent has no atom-lookup mechanism beyond what fires
+// in the current envelope, so a body-prose pointer to `develop-X` is
+// either redundant (target atom co-fires) or unreachable (target atom
+// does not fire). Per master defect ledger A1-2 (atom-corpus-verification
+// 2026-05-02 Phase 4 lint candidate, finding "Cross-ref hygiene MED").
+//
+// Detection is corpus-aware: `lintAtomCorpus` enumerates every atom
+// basename in the input slice and passes the set into `axisRViolations`.
+// Backticked tokens that don't correspond to a known atom-id (e.g.
+// `auto-complete`, `git-push`, `local-stage`) are ignored — they're
+// values or platform vocabulary, not atom navigation.
+//
+// Marker `<!-- axis-r-keep: <reason> -->` is reserved for the narrow
+// set of legitimate cases:
+//   - recovery-chain: the agent will navigate to a different workflow
+//     that fires the target atom (e.g. export-publish-needs-setup
+//     pointing at setup-git-push-container, which `git-push-setup`
+//     workflow renders).
+//
+// Most cases should be inlined or dropped: the agent benefits more from
+// "call zerops_workflow action=X" than from "see atom Y".
+func axisRViolations(ctx atomLintCtx, atomIDs map[string]struct{}) []AtomLintViolation {
+	if len(atomIDs) == 0 {
+		return nil
+	}
+	var out []AtomLintViolation
+	for i, line := range ctx.bodyLines {
+		if ctx.inCodeFence[i] {
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		seen := map[string]struct{}{}
+		for _, m := range axisRBacktickedIDPattern.FindAllStringSubmatchIndex(line, -1) {
+			id := line[m[2]:m[3]]
+			if _, isAtomID := atomIDs[id]; !isAtomID {
+				continue
+			}
+			if _, dup := seen[id]; dup {
+				continue
+			}
+			seen[id] = struct{}{}
+			if hasNearbyMarker(ctx, i, "r") {
+				continue
+			}
+			key := ctx.file + "::" + trimmed
+			if _, allowed := atomLintAllowlist[key]; allowed {
+				continue
+			}
+			out = append(out, AtomLintViolation{
+				AtomFile: ctx.file,
+				Category: "axis-r",
+				Pattern:  "atom-id-in-body:" + id,
+				Line:     ctx.frontmatterLines + i + 1,
+				Snippet:  trimmed,
+			})
+		}
+	}
+	return out
+}
+
+// axisRBacktickedIDPattern matches a single-backticked kebab-case token
+// of length ≥ 2 with at least one hyphen — the shape every atom-id in
+// the corpus carries. The corpus-aware filter in `axisRViolations` then
+// drops matches that don't correspond to an actual atom basename, so
+// `git-push` / `auto-complete` / `local-stage` are silently ignored.
+var axisRBacktickedIDPattern = regexp.MustCompile("`([a-z][a-z0-9]*(?:-[a-z0-9]+)+)`")
+
+// ============================================================================
 // Marker extraction + lookup
 // ============================================================================
 
-// axisMarkerPattern matches `<!-- axis-{k,m,n,o,hot-shell}-keep[:signal-#N] -->`
-// and `<!-- axis-{k,m,n,o,hot-shell}-drop -->`. The captured suffix
-// (k / m / n / o / hot-shell) tells the caller which axis a marker
+// axisMarkerPattern matches `<!-- axis-{k,m,n,o,r,hot-shell}-keep[:signal-#N] -->`
+// and `<!-- axis-{k,m,n,o,r,hot-shell}-drop -->`. The captured suffix
+// (k / m / n / o / r / hot-shell) tells the caller which axis a marker
 // applies to; the trailing free-form text (signal annotation,
 // rationale) is captured but ignored by lint. axis-hot-shell is the
 // C5 closure axis flagging raw `nohup`/`disown`/`& *$` SSH
@@ -429,8 +504,11 @@ func axisOViolations(ctx atomLintCtx) []AtomLintViolation {
 // axis-o (added 2026-05-02 per atom-corpus-verification Phase 4) is
 // the state-declarative-leak guard; sibling atoms that LEGITIMATELY
 // name a state assertion (forbidden-list tables, anti-pattern
-// callouts) tag with `axis-o-keep`.
-var axisMarkerPattern = regexp.MustCompile(`<!--\s*axis-([kmno]|hot-shell)-(?:keep|drop)(?:\s*:[^>]*)?\s*-->`)
+// callouts) tag with `axis-o-keep`. axis-r (added 2026-05-02 per
+// atom-corpus-verification Phase 4 — A1-2 ledger) flags backticked
+// atom-id mentions in body prose; recovery-chain pointers tag with
+// `axis-r-keep`.
+var axisMarkerPattern = regexp.MustCompile(`<!--\s*axis-([kmnor]|hot-shell)-(?:keep|drop)(?:\s*:[^>]*)?\s*-->`)
 
 // extractAxisMarkers walks every body line and records which axis
 // markers (k/m/n) appear on it. Markers SUPPRESS lint hits on the same
@@ -512,4 +590,4 @@ func StripAxisMarkers(body string) string {
 // the same line, so an inline marker like `… text. <!-- axis-k-keep -->`
 // collapses to `… text.` cleanly. Standalone marker lines are removed
 // entirely by the StripAxisMarkers caller.
-var axisMarkerStripPattern = regexp.MustCompile(`[ \t]*<!--\s*axis-(?:[kmno]|hot-shell)-(?:keep|drop)(?:\s*:[^>]*)?\s*-->`)
+var axisMarkerStripPattern = regexp.MustCompile(`[ \t]*<!--\s*axis-(?:[kmnor]|hot-shell)-(?:keep|drop)(?:\s*:[^>]*)?\s*-->`)

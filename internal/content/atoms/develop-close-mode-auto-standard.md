@@ -25,4 +25,4 @@ zerops_verify serviceHostname="{stage-hostname}"}
 ```
 
 <!-- axis-o-keep: conditional inspection — phrase is "If the dev server is already running" inside an `action=status`-then-decide flow, not a state assertion -->
-Cross-deploy packages the dev tree into stage with no second build; stage has a real `run.start` + `healthCheck`, so it auto-starts (no `zerops_dev_server` on the stage side). See `develop-auto-close-semantics` for standard-pair close criteria. If the dev server is already running after a code-only change, run `action=status` first; if `running: true`, skip `action=start`.
+Cross-deploy packages the dev tree into stage with no second build; stage has a real `run.start` + `healthCheck`, so it auto-starts (no `zerops_dev_server` on the stage side). The work session closes once both halves have a successful deploy + passing verify (`closeReason=auto-complete`). If the dev server is already running after a code-only change, run `action=status` first; if `running: true`, skip `action=start`.

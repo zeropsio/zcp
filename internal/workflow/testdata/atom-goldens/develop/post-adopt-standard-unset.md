@@ -59,12 +59,14 @@ shape, one entry per failing service-stack.
 
 Iteration cadence is mode-specific:
 
-- Dev-mode dynamic runtime container: see
-  `develop-close-mode-auto-workflow-dev`.
+- Dev-mode dynamic runtime: edit code in place; reload via
+  `zerops_dev_server` (no full redeploy for code-only changes).
 - Simple / standard / local / first-deploy: every change →
   `zerops_deploy`.
 
-Auto-close: see `develop-auto-close-semantics`.
+Once close-mode is `auto` or `git-push` and every in-scope service has
+both a successful deploy and passing verify, the work session
+auto-closes (`closeReason=auto-complete`).
 
 ---
 
@@ -128,8 +130,8 @@ default to
 `ssh appdev curl localhost` for diagnosis.
 
 1. **`zerops_verify serviceHostname="appdev"`** — start with the
-   canonical health probe and structured diagnosis; see
-   `develop-verify-matrix` for the full verify path.
+   canonical health probe and structured diagnosis (it picks the right
+   check route per service shape).
 2. **Subdomain URL** — static / implicit-webserver:
    `https://appdev-${zeropsSubdomainHost}.prg1.zerops.app/`; dynamic
    adds `-{port}`. `${zeropsSubdomainHost}` is numeric and project-scope,
@@ -139,9 +141,8 @@ default to
    (nginx, crash traces, deploy failures) without opening a shell.
 4. **Framework log file** — read via Read tool at the framework's
    project-relative log path (`storage/logs/laravel.log`,
-   `var/log/...`). Per-env access detail in
-   `develop-platform-rules-container` (mount-vs-SSH split) and
-   `develop-platform-rules-local` (CWD reads).
+   `var/log/...`). Path resolves against the runtime root configured
+   for the active environment.
 5. **Last resort: SSH + curl localhost** — only when earlier checks miss
    container-local state (worker-only service, non-default bind). Even
    then, `zerops_verify` usually already encodes the check.
@@ -159,8 +160,10 @@ default to
 - **Build ≠ runtime container.** Runtime packages → `run.prepareCommands`;
   build-only packages → `build.prepareCommands`. Build-time tools may
   not exist at run time; see guide `deployment-lifecycle`.
-- Env var live timing and cross-service syntax:
-  `develop-env-var-channels` / `develop-first-deploy-env-vars`.
+- Env vars use `${hostname_KEY}` syntax for cross-service references
+  (Zerops rewrites at deploy from the named service's catalog). Local
+  vars in `run.envVariables` shadow project-level entries with the
+  same key.
 - Service config changes (shared storage, scaling, nginx fragments):
   use `zerops_import` with `override: true` to update existing services.
   This is separate from `zerops_deploy`, which only updates code.
@@ -193,7 +196,10 @@ Pick explicitly before iterating; the default keeps working but committed close-
 
 ### Self-deploy destruction risk
 
-`develop-deploy-modes` covers the high-level self-deploy vs cross-deploy classification + the deployFiles table. This atom drills into the specific destruction-risk path that motivates the `[.]` invariant.
+In a self-deploy, `sourceService == targetService` — the runtime is both
+the build source AND the destination. `deployFiles` selects which build
+artifacts overwrite the runtime's deploy root. When that selection is
+narrower than `[.]`, the result destroys the target.
 
 When a self-deploying service uses a narrower deployFiles pattern (e.g. `[./out]`):
 
@@ -229,10 +235,9 @@ Response carries `running`, `healthStatus`, `reason`, and `logTail`
 — read these before making another call.
 
 **After every redeploy, re-run `action=start` before `zerops_verify`** —
-the rebuild drops the dev process (see `develop-platform-rules-common`).
-The hand-roll `ssh appdev "cmd &"` anti-pattern is in
-`develop-platform-rules-container`. See `develop-dev-server-reason-codes`
-for `reason` values.
+the rebuild drops the dev process.
+Don't hand-roll `ssh appdev "cmd &"`: the SSH session ends with
+the call and kills the process. Always go through `zerops_dev_server`.
 
 ---
 
@@ -250,9 +255,11 @@ When the embedded guidance is not enough, these are the canonical lookups:
   `zerops_discover includeEnvs=true`. Add `includeEnvValues=true` only
   for troubleshooting.
 - **Infrastructure changes** (shared storage, scaling rules, nginx
-  fragments): see `develop-platform-rules-common`. For dev → standard
-  mode expansion, start a new bootstrap session with `isExisting=true`
-  on the existing service plus a `stageHostname` for the new stage pair.
+  fragments): platform-rules guidance in the develop response covers
+  base mechanics; deeper detail comes from `zerops_knowledge
+  query="<topic>"`. For dev → standard mode expansion, start a new
+  bootstrap session with `isExisting=true` on the existing runtime
+  plus a `stageHostname` for the new stage pair.
 - **Platform constants** (status codes, managed service categories,
   runtime classes): `zerops_knowledge query="<topic>"` — examples:
   `"service status"`, `"managed services"`, `"subdomain"`.
@@ -261,7 +268,7 @@ When the embedded guidance is not enough, these are the canonical lookups:
 
 ### Dev iteration loop (close-mode unset)
 
-`develop-strategy-review` advises picking a close-mode before iterating, but the dev iteration steps are the SAME regardless of which mode you eventually pick — close-mode only changes what the *close* call does, not what the iteration looks like. While close-mode is `unset`, run the same per-iteration sequence on the dev half:
+The strategy-review section of this response advises picking a close-mode before iterating, but the dev iteration steps are the SAME regardless of which mode you eventually pick — close-mode only changes what the *close* call does, not what the iteration looks like. While close-mode is `unset`, run the same per-iteration sequence on the dev half:
 
 ```
 zerops_deploy targetService="appdev" setup="dev"
@@ -269,7 +276,7 @@ zerops_dev_server action=start hostname="appdev" command="{start-command}" port=
 zerops_verify serviceHostname="appdev"
 ```
 
-After each iteration lands cleanly on the dev half, the stage half stays at adopt-time content until you cross-deploy — see `develop-standard-unset-promote-stage` for the dev → stage promotion. Auto-close stays blocked while close-mode is `unset` (per `develop-auto-close-semantics`); pick a close-mode (`auto`, `git-push`, or `manual`) via `develop-strategy-review` once you've confirmed the iteration loop works for this task.
+After each iteration lands cleanly on the dev half, the stage half stays at adopt-time content until you cross-deploy — the promote-stage section of this response carries the dev → stage cross-deploy template. Auto-close stays blocked while close-mode is `unset` (auto-close requires every in-scope service to carry `closeDeployMode ∈ {auto, git-push}`); pick a close-mode (`auto`, `git-push`, or `manual`) once you've confirmed the iteration loop works for this task.
 
 ---
 
@@ -282,7 +289,7 @@ zerops_deploy sourceService="appdev" targetService="appstage" setup="prod"
 zerops_verify serviceHostname="appstage"
 ```
 
-Cross-deploy packages the dev tree without a second build; stage runs its own `run.start`. Independent of close-mode — close-mode picks the per-mode atoms for the dev iteration loop, not whether the stage half stays current. See `develop-strategy-review` to commit a delivery pattern and `develop-auto-close-semantics` for standard-pair close criteria.
+Cross-deploy packages the dev tree without a second build; stage runs its own `run.start`. Independent of close-mode — close-mode picks the per-mode iteration cadence on the dev side, not whether the stage half stays current. Standard-pair auto-close requires both halves to carry a successful deploy + passing verify and `closeDeployMode ∈ {auto, git-push}`; while `unset`, the session stays open until you commit a delivery pattern.
 
 ---
 
@@ -295,7 +302,7 @@ When the gate is open (every in-scope service is `auto` or `git-push`), the sess
 - **`auto-complete`** — every service in scope has both a successful
   deploy and a passing verify. The envelope's `workSession.closedAt`
   becomes set, `closeReason: auto-complete`, and `phase` flips to
-  `develop-closed-auto`.
+  the closed state.
 - **`iteration-cap`** — the workflow's retry ceiling was hit. Same
   close-state shape; `closeReason: iteration-cap`.
 
@@ -358,10 +365,9 @@ cautions on top:
   SSH is for runtime CLIs only.
 - **Long-running dev processes → `zerops_dev_server`.** Don't
   hand-roll `ssh <hostname> "cmd &"` — backgrounded SSH holds the
-  channel until the 120 s bash timeout. See
-  `develop-dynamic-runtime-start-container` for actions, parameters,
-  and response shape; `develop-dev-server-reason-codes` for `reason`
-  triage.
+  channel until the 120 s bash timeout. The dev-server response
+  carries `running`, `healthStatus`, `startMillis`, and on failure
+  a `reason` code — read it before another call.
 - **One-shot commands over SSH.** Framework CLIs, git ops,
   `curl localhost` exit quickly — no channel-lifetime concern:
 
@@ -373,5 +379,6 @@ cautions on top:
 
 - **Mount recovery.** If the SSHFS mount goes stale after a deploy
   (stat/ls returns empty, writes hang), remount: `zerops_mount action="mount"`.
-- **Agent Browser** — `agent-browser.dev` is available on the ZCP host;
-  see `develop-verify-matrix` for the web verification path.
+- **Agent Browser** — `agent-browser.dev` is available on the ZCP host
+  for browser-backed verify checks (`zerops_verify` selects the right
+  route per service shape).

@@ -13,7 +13,7 @@ coverageExempt: "local-mode close-mode-auto — 30 canonical scenarios are conta
 
 ### Closing the task
 
-Local mode builds from your committed tree — no SSHFS, no dev container. Close through the deploy cadence in `develop-change-drives-deploy`:
+Local mode builds from your committed tree — no SSHFS, no dev container. Every code change → `zerops_deploy`:
 
 ```
 {services-list:zerops_deploy targetService="{hostname}"

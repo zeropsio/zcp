@@ -13,11 +13,11 @@ references-atoms: [develop-platform-rules-container]
 
 ### Development workflow
 
-Edit code at `/var/www/<hostname>/` for each in-scope simple-mode runtime. Redeploy for this mode (see `develop-change-drives-deploy`); the runtime container auto-starts with its `healthCheck`:
+Edit code at `/var/www/<hostname>/` for each in-scope simple-mode runtime. Every code change → redeploy; the runtime container auto-starts with its `healthCheck`:
 
 ```
 {services-list:zerops_deploy targetService="{hostname}" setup="prod"
 zerops_verify serviceHostname="{hostname}"}
 ```
 
-Config-only changes still deploy; env-var live timing is in `develop-env-var-channels`.
+Config-only changes still deploy; env-var live timing rules carry the same axis.

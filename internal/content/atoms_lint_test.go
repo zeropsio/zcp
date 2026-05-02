@@ -276,6 +276,16 @@ func TestAtomAuthoringLint_FiresOnKnownViolations(t *testing.T) {
 			wantPattern: "leak-candidate:",
 			wantCat:     "axis-hot-shell",
 		},
+		// axis-r (atom-id forward-reference in body prose) — A1-2 ledger.
+		// Test fixtures are saved as <name>-fixture.md; atom-id is the
+		// basename, so body must reference `<name>-fixture` to self-match.
+		{
+			name:        "axis-r-self-reference",
+			frontmatter: fmHeader,
+			body:        "See `axis-r-self-reference-fixture` for the canonical answer.\n",
+			wantPattern: "atom-id-in-body:axis-r-self-reference-fixture",
+			wantCat:     "axis-r",
+		},
 	}
 
 	for _, tt := range tests {
@@ -418,6 +428,21 @@ func TestAtomAuthoringLint_MarkersSuppressAxes(t *testing.T) {
 			wantClean: false,
 		},
 		{
+			name:      "axis-r-marker-suppresses",
+			body:      "See `axis-r-marker-suppresses-fixture` for context. <!-- axis-r-keep: recovery-chain -->\n",
+			wantClean: true,
+		},
+		{
+			name:      "axis-r-no-marker-fires",
+			body:      "See `axis-r-no-marker-fires-fixture` for context.\n",
+			wantClean: false,
+		},
+		{
+			name:      "axis-r-non-atom-id-backticked-clean",
+			body:      "Use `auto-complete` and `git-push` and `local-stage` — these are values, not atom-ids.\n",
+			wantClean: true,
+		},
+		{
 			name:      "axis-k-no-marker-fires",
 			body:      "Do NOT use that tool.\n",
 			wantClean: false,
@@ -551,6 +576,16 @@ func TestStripAxisMarkers(t *testing.T) {
 			name: "all-three-axes-supported",
 			in:   "<!-- axis-k-keep -->\n<!-- axis-m-keep -->\n<!-- axis-n-keep -->\nProse line.",
 			want: "Prose line.",
+		},
+		{
+			name: "axis-r-keep-stripped",
+			in:   "Recovery via `setup-foo`. <!-- axis-r-keep: recovery -->",
+			want: "Recovery via `setup-foo`.",
+		},
+		{
+			name: "axis-r-only-line-dropped",
+			in:   "Above.\n<!-- axis-r-keep: recovery -->\nBelow.",
+			want: "Above.\nBelow.",
 		},
 	}
 

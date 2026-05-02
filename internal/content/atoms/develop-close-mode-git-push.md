@@ -19,7 +19,7 @@ This service is on `closeDeployMode=git-push`. Your delivery pattern is `zerops_
 {services-list:zerops_deploy targetService="{hostname}" strategy="git-push"}
 ```
 
-The deploy tool fetches the working tree from `/var/www` (container) or the local workspace, ensures there's a fresh commit, and pushes to the configured remote on the configured branch. Use `setup-git-push-container` (or `setup-git-push-local`) if `failureClassification.category=credential` surfaces — that means GIT_TOKEN or local credentials are missing.
+The deploy tool fetches the working tree from `/var/www` (container) or the local workspace, ensures there's a fresh commit, and pushes to the configured remote on the configured branch. If `failureClassification.category=credential` surfaces (GIT_TOKEN or local credentials missing), re-run `zerops_workflow action="git-push-setup" service="{hostname}"` to refresh the capability.
 
 ## What runs the build depends on `BuildIntegration`
 

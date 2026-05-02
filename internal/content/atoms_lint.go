@@ -119,7 +119,18 @@ func LintAtomCorpus() ([]AtomLintViolation, error) {
 // (which sources atoms from the embedded corpus). The helper exists so
 // fires-on-fixture tests can pass synthetic atoms in directly without
 // monkeying with ReadAllAtoms.
+//
+// Axis R (atom-id-in-body) needs the set of known atom basenames so it
+// can distinguish `develop-strategy-review` (atom navigation) from
+// `git-push` / `auto-complete` (platform vocabulary). The set is
+// derived from the input slice's filenames and passed into
+// `axisRViolations` once.
 func lintAtomCorpus(atoms []AtomFile) []AtomLintViolation {
+	atomIDs := make(map[string]struct{}, len(atoms))
+	for _, atom := range atoms {
+		id := strings.TrimSuffix(atom.Name, ".md")
+		atomIDs[id] = struct{}{}
+	}
 	out := make([]AtomLintViolation, 0, len(atoms))
 	for _, atom := range atoms {
 		ctx := buildAtomLintCtx(atom)
@@ -129,6 +140,7 @@ func lintAtomCorpus(atoms []AtomFile) []AtomLintViolation {
 		out = append(out, axisMViolations(ctx)...)
 		out = append(out, axisNViolations(ctx)...)
 		out = append(out, axisOViolations(ctx)...)
+		out = append(out, axisRViolations(ctx, atomIDs)...)
 		out = append(out, axisHotShellViolations(ctx)...)
 		out = append(out, closeDeployModeViolations(ctx)...)
 		out = append(out, gitPushStateViolations(ctx)...)

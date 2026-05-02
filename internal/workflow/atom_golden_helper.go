@@ -56,7 +56,7 @@ func parseGoldenFile(path string, content string) (goldenFile, error) {
 		return goldenFile{}, fmt.Errorf("golden %q missing closing `\\n---\\n` delimiter", path)
 	}
 	gf := goldenFile{Body: body}
-	for _, line := range strings.Split(front, "\n") {
+	for line := range strings.SplitSeq(front, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -82,7 +82,7 @@ func parseGoldenFile(path string, content string) (goldenFile, error) {
 	if gf.ID == "" {
 		return goldenFile{}, fmt.Errorf("golden %q missing required frontmatter key: id", path)
 	}
-	for _, line := range strings.Split(gf.Body, "\n") {
+	for line := range strings.SplitSeq(gf.Body, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue

@@ -34,7 +34,7 @@ Response carries `running`, `healthStatus`, `reason`, and `logTail`
 — read these before making another call.
 
 **After every redeploy, re-run `action=start` before `zerops_verify`** —
-the rebuild drops the dev process (see `develop-platform-rules-common`).
-The hand-roll `ssh {hostname} "cmd &"` anti-pattern is in
-`develop-platform-rules-container`. See `develop-dev-server-reason-codes`
-for `reason` values.
+the rebuild drops the dev process.
+<!-- axis-k-keep: signal-#1 — anti-pattern callout for ssh-backgrounded dev process -->
+Don't hand-roll `ssh {hostname} "cmd &"`: the SSH session ends with
+the call and kills the process. Always go through `zerops_dev_server`.

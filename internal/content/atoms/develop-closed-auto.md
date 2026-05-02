@@ -21,5 +21,3 @@ Next actions:
 zerops_workflow action="start" workflow="develop" intent="{next-task}"
 zerops_workflow action="close" workflow="develop"
 ```
-
-Full auto-close and explicit-close semantics: `develop-auto-close-semantics`.

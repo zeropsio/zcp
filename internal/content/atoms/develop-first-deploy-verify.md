@@ -13,8 +13,8 @@ references-atoms: [develop-auto-close-semantics, develop-verify-matrix]
 
 After running `zerops_verify`, the returned `status` is `healthy`,
 `degraded`, or `unhealthy`; scan `checks[]` for any with `status: fail`
-and read its `detail` for the specific failure. For route selection
-between non-web and browser-backed checks, see `develop-verify-matrix`.
+and read its `detail` for the specific failure. The verify flow picks
+the right check route per service shape (web / worker / managed).
 
 **If unhealthy:**
 
@@ -34,5 +34,3 @@ Run for each runtime that hasn't been deployed:
 ```
 {services-list:zerops_verify serviceHostname="{hostname}"}
 ```
-
-Auto-close behavior is described in `develop-auto-close-semantics`.
