@@ -220,10 +220,10 @@ func developGoldenScenarios() []goldenScenario {
 			envelope: StateEnvelope{
 				Phase:       PhaseDevelopActive,
 				Environment: EnvContainer,
-				Services: []ServiceSnapshot{
-					fixSnapBootstrappedNeverDeployedPair("appdev", "appstage", "php-nginx@8.4", topology.RuntimeImplicitWeb, topology.ModeStandard),
+				Services: append(
+					fixSnapBootstrappedNeverDeployedPair("appdev", "appstage", "php-nginx@8.4", topology.RuntimeImplicitWeb),
 					fixSnapManaged("db", "postgresql@16"),
-				},
+				),
 				WorkSession: fixSession("appdev"),
 			},
 		},
@@ -233,9 +233,7 @@ func developGoldenScenarios() []goldenScenario {
 			envelope: StateEnvelope{
 				Phase:       PhaseDevelopActive,
 				Environment: EnvContainer,
-				Services: []ServiceSnapshot{
-					fixSnapDeployedPairUnset("appdev", "appstage", "nodejs@22", topology.RuntimeDynamic),
-				},
+				Services:    fixSnapDeployedPairUnset("appdev", "appstage", "nodejs@22", topology.RuntimeDynamic),
 				WorkSession: fixSession("appdev"),
 			},
 		},
@@ -269,9 +267,7 @@ func developGoldenScenarios() []goldenScenario {
 			envelope: StateEnvelope{
 				Phase:       PhaseDevelopActive,
 				Environment: EnvContainer,
-				Services: []ServiceSnapshot{
-					fixSnapDeployedPairAuto("appdev", "appstage", "nodejs@22", topology.RuntimeDynamic),
-				},
+				Services:    fixSnapDeployedPairAuto("appdev", "appstage", "nodejs@22", topology.RuntimeDynamic),
 				WorkSession: fixSession("appdev", "appstage"),
 			},
 		},
@@ -281,9 +277,7 @@ func developGoldenScenarios() []goldenScenario {
 			envelope: StateEnvelope{
 				Phase:       PhaseDevelopActive,
 				Environment: EnvContainer,
-				Services: []ServiceSnapshot{
-					fixSnapGitPushIntegration("appdev", "appstage", "nodejs@22", topology.RuntimeDynamic, topology.GitPushConfigured, topology.BuildIntegrationWebhook),
-				},
+				Services:    fixSnapGitPushIntegration("appdev", "appstage", "nodejs@22", topology.RuntimeDynamic, topology.GitPushConfigured, topology.BuildIntegrationWebhook),
 				WorkSession: fixSession("appdev", "appstage"),
 			},
 		},
@@ -293,9 +287,7 @@ func developGoldenScenarios() []goldenScenario {
 			envelope: StateEnvelope{
 				Phase:       PhaseDevelopActive,
 				Environment: EnvContainer,
-				Services: []ServiceSnapshot{
-					fixSnapGitPushIntegration("appdev", "appstage", "nodejs@22", topology.RuntimeDynamic, topology.GitPushUnconfigured, topology.BuildIntegrationNone),
-				},
+				Services:    fixSnapGitPushIntegration("appdev", "appstage", "nodejs@22", topology.RuntimeDynamic, topology.GitPushUnconfigured, topology.BuildIntegrationNone),
 				WorkSession: fixSession("appdev", "appstage"),
 			},
 		},
@@ -592,14 +584,33 @@ func fixSnapBootstrappedNeverDeployed(hostname, typeVersion string, rc topology.
 	}
 }
 
-// fixSnapBootstrappedNeverDeployedPair returns the dev half of a pair
-// snapshot (with StageHostname populated) in never-deployed state.
-// Pair fixtures emit ONE snapshot per pair — the dev meta carries the
-// StageHostname, matching compute_envelope.go::buildOneSnapshot output.
-func fixSnapBootstrappedNeverDeployedPair(devHost, stageHost, typeVersion string, rc topology.RuntimeClass, mode topology.Mode) ServiceSnapshot {
-	snap := fixSnapBootstrappedNeverDeployed(devHost, typeVersion, rc, mode)
-	snap.StageHostname = stageHost
-	return snap
+// fixSnapBootstrappedNeverDeployedPair returns BOTH halves of a
+// never-deployed standard pair as separate snapshots, matching
+// production buildServiceSnapshots which emits one snapshot per
+// platform.ServiceStack. The dev half carries StageHostname (per
+// buildOneSnapshot:217-219) — the stage half does not. Mode resolves
+// to ModeStandard for the dev half and ModeStage for the stage half
+// (per resolveEnvelopeMode).
+func fixSnapBootstrappedNeverDeployedPair(devHost, stageHost, typeVersion string, rc topology.RuntimeClass) []ServiceSnapshot {
+	return []ServiceSnapshot{
+		{
+			Hostname:        devHost,
+			TypeVersion:     typeVersion,
+			RuntimeClass:    rc,
+			Mode:            topology.ModeStandard,
+			CloseDeployMode: topology.CloseModeAuto,
+			StageHostname:   stageHost,
+			Bootstrapped:    true,
+		},
+		{
+			Hostname:        stageHost,
+			TypeVersion:     typeVersion,
+			RuntimeClass:    rc,
+			Mode:            topology.ModeStage,
+			CloseDeployMode: topology.CloseModeAuto,
+			Bootstrapped:    true,
+		},
+	}
 }
 
 // fixSnapDeployedDevAuto returns a deployed dev-mode close-auto snapshot.
@@ -615,53 +626,91 @@ func fixSnapDeployedDevAuto(hostname, typeVersion string, rc topology.RuntimeCla
 	}
 }
 
-// fixSnapDeployedPairAuto returns the dev half of a deployed standard
-// pair (close-mode auto on the dev half).
-func fixSnapDeployedPairAuto(devHost, stageHost, typeVersion string, rc topology.RuntimeClass) ServiceSnapshot {
-	return ServiceSnapshot{
-		Hostname:        devHost,
-		TypeVersion:     typeVersion,
-		RuntimeClass:    rc,
-		Mode:            topology.ModeStandard,
-		CloseDeployMode: topology.CloseModeAuto,
-		StageHostname:   stageHost,
-		Bootstrapped:    true,
-		Deployed:        true,
+// fixSnapDeployedPairAuto returns BOTH halves of a deployed standard
+// pair in close-mode auto. Production emits one snapshot per
+// ServiceStack; fixtures match that shape so atoms gated on
+// modes:[stage] fire on the stage-half snapshot just as they would in
+// the live envelope.
+func fixSnapDeployedPairAuto(devHost, stageHost, typeVersion string, rc topology.RuntimeClass) []ServiceSnapshot {
+	return []ServiceSnapshot{
+		{
+			Hostname:        devHost,
+			TypeVersion:     typeVersion,
+			RuntimeClass:    rc,
+			Mode:            topology.ModeStandard,
+			CloseDeployMode: topology.CloseModeAuto,
+			StageHostname:   stageHost,
+			Bootstrapped:    true,
+			Deployed:        true,
+		},
+		{
+			Hostname:        stageHost,
+			TypeVersion:     typeVersion,
+			RuntimeClass:    rc,
+			Mode:            topology.ModeStage,
+			CloseDeployMode: topology.CloseModeAuto,
+			Bootstrapped:    true,
+			Deployed:        true,
+		},
 	}
 }
 
-// fixSnapDeployedPairUnset returns the dev half of a deployed standard
+// fixSnapDeployedPairUnset returns BOTH halves of a deployed standard
 // pair with CloseDeployMode=unset — the post-adopt shape where the
-// agent has not yet picked a close mode.
-func fixSnapDeployedPairUnset(devHost, stageHost, typeVersion string, rc topology.RuntimeClass) ServiceSnapshot {
-	return ServiceSnapshot{
-		Hostname:        devHost,
-		TypeVersion:     typeVersion,
-		RuntimeClass:    rc,
-		Mode:            topology.ModeStandard,
-		CloseDeployMode: topology.CloseModeUnset,
-		StageHostname:   stageHost,
-		Bootstrapped:    true,
-		Deployed:        true,
+// agent has not yet picked a close mode for either half.
+func fixSnapDeployedPairUnset(devHost, stageHost, typeVersion string, rc topology.RuntimeClass) []ServiceSnapshot {
+	return []ServiceSnapshot{
+		{
+			Hostname:        devHost,
+			TypeVersion:     typeVersion,
+			RuntimeClass:    rc,
+			Mode:            topology.ModeStandard,
+			CloseDeployMode: topology.CloseModeUnset,
+			StageHostname:   stageHost,
+			Bootstrapped:    true,
+			Deployed:        true,
+		},
+		{
+			Hostname:        stageHost,
+			TypeVersion:     typeVersion,
+			RuntimeClass:    rc,
+			Mode:            topology.ModeStage,
+			CloseDeployMode: topology.CloseModeUnset,
+			Bootstrapped:    true,
+			Deployed:        true,
+		},
 	}
 }
 
-// fixSnapGitPushIntegration returns the dev half of a standard pair
-// configured for close-mode git-push, parameterized over GitPushState
-// + BuildIntegration so a single helper covers both
+// fixSnapGitPushIntegration returns BOTH halves of a standard pair
+// configured for close-mode git-push, parameterized over
+// GitPushState + BuildIntegration so a single helper covers both
 // configured/webhook and unconfigured shapes.
-func fixSnapGitPushIntegration(devHost, stageHost, typeVersion string, rc topology.RuntimeClass, gps topology.GitPushState, bi topology.BuildIntegration) ServiceSnapshot {
-	return ServiceSnapshot{
-		Hostname:         devHost,
-		TypeVersion:      typeVersion,
-		RuntimeClass:     rc,
-		Mode:             topology.ModeStandard,
-		CloseDeployMode:  topology.CloseModeGitPush,
-		GitPushState:     gps,
-		BuildIntegration: bi,
-		StageHostname:    stageHost,
-		Bootstrapped:     true,
-		Deployed:         true,
+func fixSnapGitPushIntegration(devHost, stageHost, typeVersion string, rc topology.RuntimeClass, gps topology.GitPushState, bi topology.BuildIntegration) []ServiceSnapshot {
+	return []ServiceSnapshot{
+		{
+			Hostname:         devHost,
+			TypeVersion:      typeVersion,
+			RuntimeClass:     rc,
+			Mode:             topology.ModeStandard,
+			CloseDeployMode:  topology.CloseModeGitPush,
+			GitPushState:     gps,
+			BuildIntegration: bi,
+			StageHostname:    stageHost,
+			Bootstrapped:     true,
+			Deployed:         true,
+		},
+		{
+			Hostname:         stageHost,
+			TypeVersion:      typeVersion,
+			RuntimeClass:     rc,
+			Mode:             topology.ModeStage,
+			CloseDeployMode:  topology.CloseModeGitPush,
+			GitPushState:     gps,
+			BuildIntegration: bi,
+			Bootstrapped:     true,
+			Deployed:         true,
+		},
 	}
 }
 

@@ -442,6 +442,9 @@ axis. Each takes a per-service argument:
 zerops_workflow action="close-mode"  closeMode={"appdev":"auto"}
 zerops_workflow action="git-push-setup" service="appdev" remoteUrl="..."
 zerops_workflow action="build-integration" service="appdev" integration="webhook"
+zerops_workflow action="close-mode"  closeMode={"appstage":"auto"}
+zerops_workflow action="git-push-setup" service="appstage" remoteUrl="..."
+zerops_workflow action="build-integration" service="appstage" integration="webhook"
 ```
 
 Mixed config across services in one project is fine — each

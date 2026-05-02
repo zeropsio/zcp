@@ -189,6 +189,7 @@ Switch close-mode per service:
 
 ```
 zerops_workflow action="close-mode" closeMode={"appdev":"git-push"}
+zerops_workflow action="close-mode" closeMode={"appstage":"git-push"}
 ```
 
 (Replace `git-push` with `manual` to yield to user orchestration.) The default stays auto until you explicitly switch.
@@ -400,6 +401,9 @@ axis. Each takes a per-service argument:
 zerops_workflow action="close-mode"  closeMode={"appdev":"auto"}
 zerops_workflow action="git-push-setup" service="appdev" remoteUrl="..."
 zerops_workflow action="build-integration" service="appdev" integration="webhook"
+zerops_workflow action="close-mode"  closeMode={"appstage":"auto"}
+zerops_workflow action="git-push-setup" service="appstage" remoteUrl="..."
+zerops_workflow action="build-integration" service="appstage" integration="webhook"
 ```
 
 Mixed config across services in one project is fine — each
