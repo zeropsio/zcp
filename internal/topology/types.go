@@ -131,6 +131,58 @@ const (
 	ExportVariantStage ExportVariant = "stage"
 )
 
+// ExportStatus discriminates the sub-states of `PhaseExportActive`. The
+// export workflow is a stateless three-call narrowing (probe → generate →
+// publish); each call returns one of these statuses on the response
+// envelope plus the matching atom guidance. Atoms filter on this axis
+// via `exportStatus:` frontmatter so a single phase carries seven
+// distinct sub-renders without overmatch.
+//
+// Lives in topology (not workflow) because tools/workflow_export.go owns
+// the handler-side status emission and consumes the typed enum to call
+// BuildExportEnvelope. Mirrors ExportVariant placement.
+type ExportStatus string
+
+const (
+	// ExportStatusUnset is the zero-value sentinel — the envelope was
+	// constructed without an export status (e.g., non-export phases).
+	ExportStatusUnset ExportStatus = ""
+	// ExportStatusScopePrompt fires on the first export call with no
+	// targetService selected. The handler returns the project's runtime
+	// list and the agent picks one. Service-scoped axes MUST NOT be used
+	// on atoms that match this status — target is unknown, so per-service
+	// filtering has no anchor.
+	ExportStatusScopePrompt ExportStatus = "scope-prompt"
+	// ExportStatusVariantPrompt fires when targetService is a half of a
+	// ModeStandard / ModeLocalStage pair and Variant is unset. The agent
+	// picks "dev" or "stage" on the next call.
+	ExportStatusVariantPrompt ExportStatus = "variant-prompt"
+	// ExportStatusScaffoldRequired fires when the chosen runtime
+	// container's /var/www/zerops.yaml is missing or empty. Bundle
+	// composition is impossible without a setup block to reference at
+	// re-import. The agent emits a minimal yaml, commits, and re-calls.
+	ExportStatusScaffoldRequired ExportStatus = "scaffold-required"
+	// ExportStatusGitPushSetupRequired fires when meta.GitPushState !=
+	// configured (or git remote is empty in /var/www). Phase C cannot
+	// publish until git-push capability is provisioned. The response
+	// chains to setup-git-push-container.
+	ExportStatusGitPushSetupRequired ExportStatus = "git-push-setup-required"
+	// ExportStatusClassifyPrompt fires when project envs are present but
+	// EnvClassifications is incomplete. The handler returns the per-env
+	// review table for the agent to bucket each env (infrastructure /
+	// auto-secret / external-secret / plain-config).
+	ExportStatusClassifyPrompt ExportStatus = "classify-prompt"
+	// ExportStatusValidationFailed fires when bundle.Errors is non-empty
+	// after Phase 5 schema validation. The agent inspects each error's
+	// path + message and re-calls after fixing the offending field.
+	ExportStatusValidationFailed ExportStatus = "validation-failed"
+	// ExportStatusPublishReady is the Phase C success state: bundle
+	// composed, classifications accepted, GitPushState=configured, schema
+	// clean. The agent writes the YAMLs, commits, and pushes via
+	// zerops_deploy strategy="git-push".
+	ExportStatusPublishReady ExportStatus = "publish-ready"
+)
+
 // SecretClassification buckets project envVariables and zerops.yaml
 // run.envVariables references into the four-category protocol per plan
 // §3.4. The agent classifies each env via grep + zerops.yaml provenance +

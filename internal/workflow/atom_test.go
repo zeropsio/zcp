@@ -646,6 +646,119 @@ body`,
 	}
 }
 
+// TestParseAtom_ExportStatusAxis pins the new exportStatus: frontmatter
+// axis introduced by the atom-corpus-verification plan (Phase 0a). The
+// axis is envelope-scoped (matches against StateEnvelope.ExportStatus),
+// closed enum of seven values from topology.ExportStatus. Mirrors
+// TestParseAtom_DeployDecompAxes — single, multiple, full enum,
+// invalid-value rejection, bare-scalar rejection.
+func TestParseAtom_ExportStatusAxis(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		content string
+		wantES  []topology.ExportStatus
+		wantErr bool
+		errFrag string
+	}{
+		{
+			name: "single_publish_ready",
+			content: `---
+id: es-publish
+phases: [export-active]
+exportStatus: [publish-ready]
+---
+body`,
+			wantES: []topology.ExportStatus{topology.ExportStatusPublishReady},
+		},
+		{
+			name: "multiple_scope_and_variant",
+			content: `---
+id: es-multi
+phases: [export-active]
+exportStatus: [scope-prompt, variant-prompt]
+---
+body`,
+			wantES: []topology.ExportStatus{
+				topology.ExportStatusScopePrompt,
+				topology.ExportStatusVariantPrompt,
+			},
+		},
+		{
+			name: "full_enum",
+			content: `---
+id: es-full
+phases: [export-active]
+exportStatus: [scope-prompt, variant-prompt, scaffold-required, git-push-setup-required, classify-prompt, validation-failed, publish-ready]
+---
+body`,
+			wantES: []topology.ExportStatus{
+				topology.ExportStatusScopePrompt,
+				topology.ExportStatusVariantPrompt,
+				topology.ExportStatusScaffoldRequired,
+				topology.ExportStatusGitPushSetupRequired,
+				topology.ExportStatusClassifyPrompt,
+				topology.ExportStatusValidationFailed,
+				topology.ExportStatusPublishReady,
+			},
+		},
+		{
+			name: "absent_axis_yields_nil",
+			content: `---
+id: es-absent
+phases: [export-active]
+---
+body`,
+			wantES: nil,
+		},
+		{
+			name: "invalid_enum_value",
+			content: `---
+id: es-bad
+phases: [export-active]
+exportStatus: [publish]
+---
+body`,
+			wantErr: true,
+			errFrag: `key "exportStatus" has invalid value "publish"`,
+		},
+		{
+			name: "bare_scalar_rejected",
+			content: `---
+id: es-scalar
+phases: [export-active]
+exportStatus: publish-ready
+---
+body`,
+			wantErr: true,
+			errFrag: `key "exportStatus" must be inline list form`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			atom, err := ParseAtom(tc.content)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tc.errFrag)
+				}
+				if !strings.Contains(err.Error(), tc.errFrag) {
+					t.Errorf("error %q missing fragment %q", err.Error(), tc.errFrag)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !slicesEqual(atom.Axes.ExportStatuses, tc.wantES) {
+				t.Errorf("ExportStatuses = %v, want %v", atom.Axes.ExportStatuses, tc.wantES)
+			}
+		})
+	}
+}
+
 // slicesEqual is a small helper for the deploy-decomp axis test —
 // reflect.DeepEqual would work but is overkill for typed string slices.
 func slicesEqual[T ~string](a, b []T) bool {

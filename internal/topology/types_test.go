@@ -271,6 +271,46 @@ func TestExportVariantValues(t *testing.T) {
 	}
 }
 
+// TestExportStatusValues pins the closed enum set for the export workflow's
+// per-call sub-status. Eight values — Unset (zero-value sentinel for
+// non-export envelopes) plus seven handler-emitted statuses spanning the
+// three-call narrowing (probe → generate → publish). The handler in
+// tools/workflow_export.go MUST emit one of these on every export
+// response; atoms filter on the same set via exportStatus: frontmatter.
+func TestExportStatusValues(t *testing.T) {
+	t.Parallel()
+	set := map[ExportStatus]struct{}{
+		ExportStatusUnset:                {},
+		ExportStatusScopePrompt:          {},
+		ExportStatusVariantPrompt:        {},
+		ExportStatusScaffoldRequired:     {},
+		ExportStatusGitPushSetupRequired: {},
+		ExportStatusClassifyPrompt:       {},
+		ExportStatusValidationFailed:     {},
+		ExportStatusPublishReady:         {},
+	}
+	if len(set) != 8 {
+		t.Fatalf("ExportStatus constants must be 8 distinct values, got %d", len(set))
+	}
+	for _, want := range []ExportStatus{
+		"",
+		"scope-prompt",
+		"variant-prompt",
+		"scaffold-required",
+		"git-push-setup-required",
+		"classify-prompt",
+		"validation-failed",
+		"publish-ready",
+	} {
+		if _, ok := set[want]; !ok {
+			t.Errorf("ExportStatus missing canonical value %q", want)
+		}
+	}
+	if ExportStatusUnset != "" {
+		t.Errorf("ExportStatusUnset must be empty-string sentinel for zero-value detection, got %q", ExportStatusUnset)
+	}
+}
+
 // TestSecretClassificationValues pins the closed enum set for the
 // four-category secret classification protocol per plan §3.4. Unset is
 // the zero-value empty-string sentinel — agents pass "" for envs that

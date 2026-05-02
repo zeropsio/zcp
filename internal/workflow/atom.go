@@ -82,6 +82,13 @@ type AxisVector struct {
 	// `ACTIVE` or `READY_TO_DEPLOY`. Service-scoped: at least one service
 	// in the envelope must match for the atom to fire. Empty = any status.
 	ServiceStatuses []string
+	// ExportStatuses scopes the atom to a specific export-workflow sub-
+	// state (see topology.ExportStatus). Envelope-scoped: matches against
+	// `StateEnvelope.ExportStatus` directly — the export workflow has at
+	// most one active sub-status per envelope. Only meaningful when paired
+	// with `phases: [export-active]`. Empty = any export status (or
+	// non-export phases — the atom just doesn't gate on this axis).
+	ExportStatuses []topology.ExportStatus
 	// MultiService toggles single-render aggregation for atoms whose body
 	// needs per-service iteration only inside discrete `{services-list:
 	// TEMPLATE}` directives, not for the whole body. Default ""
@@ -138,6 +145,7 @@ var validAtomFrontmatterKeys = map[string]struct{}{
 	"deployStates":         {},
 	"envelopeDeployStates": {},
 	"serviceStatus":        {},
+	"exportStatus":         {},
 	"multiService":         {},
 	"references-fields":    {},
 	"references-atoms":     {},
@@ -163,6 +171,7 @@ var listAxisKeys = map[string]struct{}{
 	"deployStates":         {},
 	"envelopeDeployStates": {},
 	"serviceStatus":        {},
+	"exportStatus":         {},
 	"references-fields":    {},
 	"references-atoms":     {},
 	"pinned-by-scenario":   {},
@@ -248,6 +257,15 @@ var validAtomEnumValues = map[string]map[string]struct{}{
 		"never-deployed": {},
 		"deployed":       {},
 	},
+	"exportStatus": {
+		"scope-prompt":            {},
+		"variant-prompt":          {},
+		"scaffold-required":       {},
+		"git-push-setup-required": {},
+		"classify-prompt":         {},
+		"validation-failed":       {},
+		"publish-ready":           {},
+	},
 }
 
 // validScalarEnumValues maps scalar (non-list) frontmatter keys to their
@@ -279,7 +297,7 @@ var validScalarEnumValues = map[string]map[string]struct{}{
 func validateAtomFrontmatter(fields map[string]string) error {
 	for key := range fields {
 		if _, ok := validAtomFrontmatterKeys[key]; !ok {
-			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, closeDeployModes, gitPushStates, buildIntegrations, runtimes, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, multiService, references-fields, references-atoms, pinned-by-scenario)", key)
+			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, closeDeployModes, gitPushStates, buildIntegrations, runtimes, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, exportStatus, multiService, references-fields, references-atoms, pinned-by-scenario)", key)
 		}
 	}
 	for key, raw := range fields {
@@ -372,6 +390,7 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 			DeployStates:         parseDeployStates(fields["deployStates"]),
 			EnvelopeDeployStates: parseDeployStates(fields["envelopeDeployStates"]),
 			ServiceStatuses:      parseYAMLList(fields["serviceStatus"]),
+			ExportStatuses:       parseExportStatuses(fields["exportStatus"]),
 			MultiService:         MultiServiceMode(strings.TrimSpace(fields["multiService"])),
 		},
 		ReferencesFields:  parseYAMLList(fields["references-fields"]),
@@ -570,6 +589,19 @@ func parseDeployStates(raw string) []DeployState {
 	out := make([]DeployState, 0, len(values))
 	for _, v := range values {
 		out = append(out, DeployState(v))
+	}
+	return out
+}
+
+// parseExportStatuses reads the optional `exportStatus:` frontmatter field
+// — filters atoms by the export workflow's per-call sub-state. Closed
+// enum validated up front by validateAtomFrontmatter; this parser just
+// types the strings.
+func parseExportStatuses(raw string) []topology.ExportStatus {
+	values := parseYAMLList(raw)
+	out := make([]topology.ExportStatus, 0, len(values))
+	for _, v := range values {
+		out = append(out, topology.ExportStatus(v))
 	}
 	return out
 }
