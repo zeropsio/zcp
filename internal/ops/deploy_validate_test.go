@@ -1338,3 +1338,39 @@ func TestValidateZeropsYml_DM4_YamlShapeOnly(t *testing.T) {
 	runValidateTestWithOpts(t, "appstage", ymlWithBuildOutputs, 0, "", true,
 		validateTestOpts{class: DeployClassCross})
 }
+
+// TestHasPkgInstallWithoutSudo pins the predicate that flags
+// `apk add` / `apt-get install` invocations missing the leading `sudo`.
+// Runtime user is `zerops`, not root; package installs without sudo fail.
+// Pre-fix the test lived in tools/workflow_checks_generate_test.go alongside
+// the now-deleted bootstrap `checkGenerate` checker that consumed it; it
+// belongs in the same package as the predicate it pins.
+func TestHasPkgInstallWithoutSudo(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		commands any
+		want     bool
+	}{
+		{"nil_commands", nil, false},
+		{"empty_string", "", false},
+		{"sudo_apk_add", "sudo apk add --no-cache php84-ctype", false},
+		{"apk_add_no_sudo", "apk add --no-cache php84-ctype", true},
+		{"sudo_apt_get", "sudo apt-get install -y php8.4-ctype", false},
+		{"apt_get_no_sudo", "apt-get install -y php8.4-ctype", true},
+		{"list_with_sudo", []any{"sudo apk add --no-cache php84-ctype"}, false},
+		{"list_without_sudo", []any{"apk add --no-cache php84-ctype"}, true},
+		{"mixed_list_one_bad", []any{"sudo apk add --no-cache php84-gd", "apk add php84-ctype"}, true},
+		{"unrelated_command", []any{"echo hello"}, false},
+		{"chained_with_sudo", "sudo apt-get update && sudo apt-get install -y imagemagick", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := HasPkgInstallWithoutSudo(tt.commands)
+			if got != tt.want {
+				t.Errorf("HasPkgInstallWithoutSudo(%v) = %v, want %v", tt.commands, got, tt.want)
+			}
+		})
+	}
+}

@@ -77,7 +77,8 @@ var placeholderRe = regexp.MustCompile(`(?i)(PLACEHOLDER_\w+|<your-[^>]+>|TODO\b
 var requiredFragments = []string{"integration-guide", "knowledge-base", "intro"}
 
 // checkRecipeGenerate validates the generate step for recipe workflow.
-// Extends bootstrap's checkGenerate with recipe-specific fragment quality checks.
+// Recipe-specific generate-step checker — fragment quality, env-shadow,
+// scaffold-artifact, ASCII-only visual style.
 // validFields, when non-nil, enables zerops.yaml field validation against the live JSON schema.
 // kp, when non-nil, enables the predecessor-as-floor check on each codebase's README.
 func checkRecipeGenerate(stateDir string, validFields *schema.ValidFields, kp knowledge.Provider) workflow.RecipeStepChecker {
