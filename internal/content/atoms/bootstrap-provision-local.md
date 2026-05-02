@@ -2,9 +2,10 @@
 id: bootstrap-provision-local
 priority: 2
 phases: [bootstrap-active]
+routes: [classic]
 environments: [local]
 steps: [provision]
-title: "Local provision addendum"
+title: "Local provision addendum (classic route)"
 ---
 
 ### Local-mode provision

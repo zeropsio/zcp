@@ -2,9 +2,9 @@
 id: bootstrap-mode-prompt
 priority: 3
 phases: [bootstrap-active]
-routes: [classic, adopt]
+routes: [classic]
 steps: [discover]
-title: "Confirm mode — dev / standard / simple per service"
+title: "Confirm mode — dev / standard / simple per service (classic route)"
 references-fields: [workflow.ServiceSnapshot.Mode, workflow.ServiceSnapshot.StageHostname]
 ---
 

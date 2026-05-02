@@ -2,9 +2,9 @@
 id: bootstrap-provision-rules
 priority: 2
 phases: [bootstrap-active]
-routes: [classic, adopt]
+routes: [classic]
 steps: [provision]
-title: "Provision rules"
+title: "Provision rules (classic route — import-yaml construction)"
 ---
 
 ### Hostname format constraint

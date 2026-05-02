@@ -1,9 +1,17 @@
 ---
 id: develop/post-adopt-standard-unset
-atomIds: [develop-api-error-meta, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-http-diagnostic, develop-platform-rules-common, develop-strategy-review, develop-deploy-files-self-deploy, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-standard-unset-promote-stage, develop-auto-close-semantics, develop-verify-matrix, develop-intro, develop-platform-rules-container]
+atomIds: [develop-intro, develop-api-error-meta, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-http-diagnostic, develop-platform-rules-common, develop-strategy-review, develop-deploy-files-self-deploy, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-standard-unset-promote-stage, develop-auto-close-semantics, develop-verify-matrix, develop-platform-rules-container]
 description: "Adopted standard pair, both halves running, close-mode never picked."
 ---
 <!-- UNREVIEWED -->
+
+### Development & Deploy
+
+Infrastructure is provisioned and at least one runtime already has a
+successful first deploy on record. You're in the edit loop: discover
+the current state, implement the user's request, redeploy, verify.
+
+---
 
 ### Read `apiMeta` on every error response
 
@@ -335,14 +343,6 @@ It has the `Agent(model="sonnet", prompt=...)` template; substitute
 - **VERDICT: UNCERTAIN** → fall back to `zerops_verify`; the agent could
   not determine the outcome.
 - **Malformed output or timeout** → UNCERTAIN; fall back to `zerops_verify`.
-
----
-
-### Development & Deploy
-
-Infrastructure is provisioned and at least one runtime already has a
-successful first deploy on record. You're in the edit loop: discover
-the current state, implement the user's request, redeploy, verify.
 
 ---
 

@@ -1,9 +1,17 @@
 ---
 id: develop/git-push-configured-webhook
-atomIds: [develop-api-error-meta, develop-change-drives-deploy, develop-close-mode-git-push, develop-deploy-modes, develop-env-var-channels, develop-http-diagnostic, develop-platform-rules-common, develop-build-observe, develop-deploy-files-self-deploy, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-auto-close-semantics, develop-verify-matrix, develop-intro, develop-platform-rules-container, develop-strategy-awareness]
+atomIds: [develop-intro, develop-api-error-meta, develop-change-drives-deploy, develop-close-mode-git-push, develop-deploy-modes, develop-env-var-channels, develop-http-diagnostic, develop-platform-rules-common, develop-build-observe, develop-deploy-files-self-deploy, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-auto-close-semantics, develop-verify-matrix, develop-platform-rules-container, develop-strategy-awareness]
 description: "Standard pair, close-mode git-push, GitPushState configured, BuildIntegration webhook."
 ---
 <!-- UNREVIEWED -->
+
+### Development & Deploy
+
+Infrastructure is provisioned and at least one runtime already has a
+successful first deploy on record. You're in the edit loop: discover
+the current state, implement the user's request, redeploy, verify.
+
+---
 
 ### Read `apiMeta` on every error response
 
@@ -62,7 +70,7 @@ Auto-close: see `develop-auto-close-semantics`.
 
 ---
 
-This pair is on `closeDeployMode=git-push`. Your delivery pattern is `zerops_deploy strategy="git-push"` — commits whatever is live in the workspace and pushes to the configured remote, then Zerops (or your CI) sees the push and runs the build separately. `action="close"` itself is a session-teardown call regardless of close-mode; run the push call below before invoking close.
+This service is on `closeDeployMode=git-push`. Your delivery pattern is `zerops_deploy strategy="git-push"` — commits whatever is live in the workspace and pushes to the configured remote, then Zerops (or your CI) sees the push and runs the build separately. `action="close"` itself is a session-teardown call regardless of close-mode; run the push call below before invoking close.
 
 ## Push the build commit
 
@@ -377,14 +385,6 @@ It has the `Agent(model="sonnet", prompt=...)` template; substitute
 
 ---
 
-### Development & Deploy
-
-Infrastructure is provisioned and at least one runtime already has a
-successful first deploy on record. You're in the edit loop: discover
-the current state, implement the user's request, redeploy, verify.
-
----
-
 ### Platform rules
 
 Mount basics in `claude_container.md` (boot shim). Container-only
@@ -435,17 +435,18 @@ rendered Services block shows them as
   `webhook` (Zerops webhook drives the build), or `actions` (GitHub
   Actions workflow YAML). Requires `gitPush=configured`.
 
-Switch any axis without closing the session — three actions, one per
-axis. Each takes a per-service argument:
+Switch any axis without closing the session — three actions, each
+operating at a different scope:
+
+- `close-mode` is **per-service** and accepts a multi-entry map: one call sets close-mode for any subset of services in one shot. For a standard pair, set both halves in the same call.
+- `git-push-setup` and `build-integration` are **per-pair**: call only on the dev half (or single-runtime hostname). The handler rejects stage-half targets with `INVALID_PARAMETER` because both halves of a pair share the same git-push / build-integration capability stamped on the dev meta.
 
 ```
-zerops_workflow action="close-mode"  closeMode={"appdev":"auto"}
+zerops_workflow action="close-mode" closeMode={"appdev":"auto"}
 zerops_workflow action="git-push-setup" service="appdev" remoteUrl="..."
 zerops_workflow action="build-integration" service="appdev" integration="webhook"
-zerops_workflow action="close-mode"  closeMode={"appstage":"auto"}
-zerops_workflow action="git-push-setup" service="appstage" remoteUrl="..."
-zerops_workflow action="build-integration" service="appstage" integration="webhook"
 ```
 
-Mixed config across services in one project is fine — each
-service's three axes are independent in the envelope.
+Substitute `appdev` with the dev-half hostname (or single-runtime hostname). For a multi-service project, repeat each call once per dev-half service — never per stage-half.
+
+Mixed config across services in one project is fine — each service's three axes are independent in the envelope.

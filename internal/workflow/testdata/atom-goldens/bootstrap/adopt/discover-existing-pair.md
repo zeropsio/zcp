@@ -1,9 +1,21 @@
 ---
 id: bootstrap/adopt/discover-existing-pair
-atomIds: [bootstrap-adopt-discover, develop-api-error-meta, bootstrap-mode-prompt, bootstrap-intro]
+atomIds: [bootstrap-intro, bootstrap-adopt-discover, develop-api-error-meta]
 description: "Adopt route, discover step — pre-existing dev/stage pair present in the project, agent adopting."
 ---
 <!-- UNREVIEWED -->
+
+Bootstrap is **infrastructure-only** (Option A since v8.100+): create services, mount filesystems, discover env var keys, write the evidence file. No application code, no `zerops.yaml`, no first deploy — those belong to the develop workflow.
+
+Three routes:
+
+- **Recipe** — services come from a matched recipe's import YAML.
+- **Classic** — agent constructs the import YAML from the user's intent.
+- **Adopt** — attach `ServiceMeta` to existing non-managed services; no infra change.
+
+Route is chosen at bootstrap start and persists for the session. The 3 steps are `discover → provision → close` in fixed order; follow the step list from `zerops_workflow action="status"`.
+
+---
 
 ### Adopting existing services
 
@@ -64,43 +76,3 @@ Common `apiCode` shapes:
 
 Per-service import failures use `serviceErrors[].meta` with the same
 shape, one entry per failing service-stack.
-
----
-
-### Confirm mode per service
-
-Every runtime service needs a **mode**; confirm with the user before
-submitting the plan.
-
-- **dev** — single mutable dev container, SSHFS-mountable, no stage pair.
-  Best for active iteration.
-- **standard** — dev + stage pair. The envelope reports `stageHostname`
-  on the dev snapshot and a separate snapshot with `mode: stage` for
-  the stage service.
-  - **Plan MUST set `stageHostname` explicitly on every standard target**
-    (e.g. `{"runtime": {"devHostname": "appdev", "type": "...", "bootstrapMode": "standard", "stageHostname": "appstage"}}`).
-    Hostname-suffix derivation (`appdev` → `appstage`) was removed in
-    Release B.4. A submission omitting `stageHostname` rejects with
-    `INVALID_PARAMETER: standard mode requires explicit stageHostname`.
-- **simple** — single runtime container that starts real code on every redeploy;
-  no SSHFS mutation lifecycle.
-- **stage** — never bootstrapped alone; it is the stage half of a
-  standard pair.
-
-Default to **dev** for services under active iteration, **simple** for
-immutable workers. The plan commits the mode when you submit it; after
-bootstrap closes, the envelope exposes the chosen mode as
-`ServiceSnapshot.Mode`. Changing mode later requires the
-mode-expansion flow (see `develop-mode-expansion`).
-
----
-
-Bootstrap is **infrastructure-only** (Option A since v8.100+): create services, mount filesystems, discover env var keys, write the evidence file. No application code, no `zerops.yaml`, no first deploy — those belong to the develop workflow.
-
-Three routes:
-
-- **Recipe** — services come from a matched recipe's import YAML.
-- **Classic** — agent constructs the import YAML from the user's intent.
-- **Adopt** — attach `ServiceMeta` to existing non-managed services; no infra change.
-
-Route is chosen at bootstrap start and persists for the session. The 3 steps are `discover → provision → close` in fixed order; follow the step list from `zerops_workflow action="status"`.

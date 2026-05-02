@@ -1,9 +1,21 @@
 ---
 id: bootstrap/classic/discover-standard-dynamic
-atomIds: [develop-api-error-meta, bootstrap-mode-prompt, bootstrap-runtime-classes, bootstrap-intro]
+atomIds: [bootstrap-intro, develop-api-error-meta, bootstrap-mode-prompt, bootstrap-runtime-classes]
 description: "Classic route, discover step — agent inspecting an empty project for a dynamic runtime in mode=standard."
 ---
 <!-- UNREVIEWED -->
+
+Bootstrap is **infrastructure-only** (Option A since v8.100+): create services, mount filesystems, discover env var keys, write the evidence file. No application code, no `zerops.yaml`, no first deploy — those belong to the develop workflow.
+
+Three routes:
+
+- **Recipe** — services come from a matched recipe's import YAML.
+- **Classic** — agent constructs the import YAML from the user's intent.
+- **Adopt** — attach `ServiceMeta` to existing non-managed services; no infra change.
+
+Route is chosen at bootstrap start and persists for the session. The 3 steps are `discover → provision → close` in fixed order; follow the step list from `zerops_workflow action="status"`.
+
+---
 
 ### Read `apiMeta` on every error response
 
@@ -89,15 +101,3 @@ Each runtime type falls into one of four classes — pick the right class for ea
 Pick runtime types from the live Zerops catalog (check `zerops_knowledge` for current versions). Managed services initialize first (`priority: 10` in import YAML) so runtimes that depend on them can connect at start.
 
 Lifecycle and `zerops.yaml` mechanics for each class (start commands, healthCheck, deployFiles, dev-server primitives) are delivered in develop atoms — `develop-dynamic-runtime-start-container`, `develop-dynamic-runtime-start-local`, `develop-implicit-webserver`, `develop-first-deploy-scaffold-yaml` — at first-deploy time.
-
----
-
-Bootstrap is **infrastructure-only** (Option A since v8.100+): create services, mount filesystems, discover env var keys, write the evidence file. No application code, no `zerops.yaml`, no first deploy — those belong to the develop workflow.
-
-Three routes:
-
-- **Recipe** — services come from a matched recipe's import YAML.
-- **Classic** — agent constructs the import YAML from the user's intent.
-- **Adopt** — attach `ServiceMeta` to existing non-managed services; no infra change.
-
-Route is chosen at bootstrap start and persists for the session. The 3 steps are `discover → provision → close` in fixed order; follow the step list from `zerops_workflow action="status"`.

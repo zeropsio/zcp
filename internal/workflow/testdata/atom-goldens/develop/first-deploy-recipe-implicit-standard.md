@@ -556,6 +556,7 @@ Run for each runtime that hasn't been deployed:
 
 ```
 zerops_verify serviceHostname="appdev"
+zerops_verify serviceHostname="appstage"
 ```
 
 Auto-close behavior is described in `develop-auto-close-semantics`.
@@ -612,14 +613,18 @@ rendered Services block shows them as
   `webhook` (Zerops webhook drives the build), or `actions` (GitHub
   Actions workflow YAML). Requires `gitPush=configured`.
 
-Switch any axis without closing the session — three actions, one per
-axis. Each takes a per-service argument:
+Switch any axis without closing the session — three actions, each
+operating at a different scope:
+
+- `close-mode` is **per-service** and accepts a multi-entry map: one call sets close-mode for any subset of services in one shot. For a standard pair, set both halves in the same call.
+- `git-push-setup` and `build-integration` are **per-pair**: call only on the dev half (or single-runtime hostname). The handler rejects stage-half targets with `INVALID_PARAMETER` because both halves of a pair share the same git-push / build-integration capability stamped on the dev meta.
 
 ```
-zerops_workflow action="close-mode"  closeMode={"appdev":"auto"}
+zerops_workflow action="close-mode" closeMode={"appdev":"auto"}
 zerops_workflow action="git-push-setup" service="appdev" remoteUrl="..."
 zerops_workflow action="build-integration" service="appdev" integration="webhook"
 ```
 
-Mixed config across services in one project is fine — each
-service's three axes are independent in the envelope.
+Substitute `appdev` with the dev-half hostname (or single-runtime hostname). For a multi-service project, repeat each call once per dev-half service — never per stage-half.
+
+Mixed config across services in one project is fine — each service's three axes are independent in the envelope.

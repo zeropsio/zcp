@@ -135,7 +135,7 @@ body`,
 			wantErr: true,
 		},
 		{
-			name: "priority_below_one_defaults",
+			name: "priority_zero_renders_first",
 			content: `---
 id: low
 priority: 0
@@ -143,6 +143,30 @@ phases: [idle]
 ---
 body`,
 			wantID:     "low",
+			wantPhases: []Phase{PhaseIdle},
+			wantPrio:   0,
+		},
+		{
+			name: "priority_negative_defaults",
+			content: `---
+id: neg
+priority: -1
+phases: [idle]
+---
+body`,
+			wantID:     "neg",
+			wantPhases: []Phase{PhaseIdle},
+			wantPrio:   5,
+		},
+		{
+			name: "priority_above_nine_defaults",
+			content: `---
+id: high
+priority: 10
+phases: [idle]
+---
+body`,
+			wantID:     "high",
 			wantPhases: []Phase{PhaseIdle},
 			wantPrio:   5,
 		},

@@ -11,7 +11,7 @@ title: "Delivery pattern = commit + git push to the remote"
 references-fields: [ops.GitPushResult.Status, ops.GitPushResult.RemoteURL, ops.GitPushResult.Branch]
 references-atoms: [develop-close-mode-git-push-needs-setup]
 ---
-This pair is on `closeDeployMode=git-push`. Your delivery pattern is `zerops_deploy strategy="git-push"` — commits whatever is live in the workspace and pushes to the configured remote, then Zerops (or your CI) sees the push and runs the build separately. `action="close"` itself is a session-teardown call regardless of close-mode; run the push call below before invoking close.
+This service is on `closeDeployMode=git-push`. Your delivery pattern is `zerops_deploy strategy="git-push"` — commits whatever is live in the workspace and pushes to the configured remote, then Zerops (or your CI) sees the push and runs the build separately. `action="close"` itself is a session-teardown call regardless of close-mode; run the push call below before invoking close.
 
 ## Push the build commit
 

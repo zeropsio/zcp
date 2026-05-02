@@ -1,9 +1,21 @@
 ---
 id: bootstrap/classic/provision-local
-atomIds: [bootstrap-provision-local, bootstrap-provision-rules, develop-api-error-meta, bootstrap-env-var-discovery, bootstrap-wait-active, bootstrap-intro]
+atomIds: [bootstrap-intro, bootstrap-provision-local, bootstrap-provision-rules, develop-api-error-meta, bootstrap-env-var-discovery, bootstrap-wait-active]
 description: "Classic route, provision step on a local-machine env (no Zerops container)."
 ---
 <!-- UNREVIEWED -->
+
+Bootstrap is **infrastructure-only** (Option A since v8.100+): create services, mount filesystems, discover env var keys, write the evidence file. No application code, no `zerops.yaml`, no first deploy — those belong to the develop workflow.
+
+Three routes:
+
+- **Recipe** — services come from a matched recipe's import YAML.
+- **Classic** — agent constructs the import YAML from the user's intent.
+- **Adopt** — attach `ServiceMeta` to existing non-managed services; no infra change.
+
+Route is chosen at bootstrap start and persists for the session. The 3 steps are `discover → provision → close` in fixed order; follow the step list from `zerops_workflow action="status"`.
+
+---
 
 ### Local-mode provision
 
@@ -150,7 +162,7 @@ shape, one entry per failing service-stack.
 
 ### Discover env vars during provision
 
-After import, run discovery so the session records env-var KEYS for every managed service. This is authoritative — do not guess alternative spellings; unknown cross-service references become literal strings at runtime and fail silently.
+Once newly-provisioned (classic) or newly-attached (adopt) services have reached RUNNING / ACTIVE, run discovery so the session records env-var KEYS for every managed service. This is authoritative — do not guess alternative spellings; unknown cross-service references become literal strings at runtime and fail silently.
 
 ```
 zerops_discover includeEnvs=true
@@ -158,7 +170,7 @@ zerops_discover includeEnvs=true
 
 Record one row per service in the provision attestation. Keys are enough — values stay redacted; discovery is for cataloguing, not consumption. Develop atoms (`develop-first-deploy-env-vars`) cover per-service canonical key names + cross-service reference syntax (`${hostname_varName}`) — those fire when wiring `run.envVariables` at first deploy.
 
-**Runtime container caveat**: env vars resolve at deploy time, not as OS env on a never-deployed `startWithoutCode: true` dev container. They live in the project catalogue, not `process.env`. Develop runs the first deploy; references fire then.
+**Pre-first-deploy caveat (classic route)**: classic creates runtime services with `startWithoutCode: true` so they reach RUNNING before any code lands; env vars in such containers live in the project catalogue, not `process.env`, until develop runs the first deploy and references fire. Adopted services are typically already deployed, so this caveat doesn't apply on the adopt route.
 
 ---
 
@@ -177,15 +189,3 @@ zerops_discover
 Repeat until every service reports `status: ACTIVE`. Production services
 take 30–90 seconds to transition; managed services (databases) usually
 longer.
-
----
-
-Bootstrap is **infrastructure-only** (Option A since v8.100+): create services, mount filesystems, discover env var keys, write the evidence file. No application code, no `zerops.yaml`, no first deploy — those belong to the develop workflow.
-
-Three routes:
-
-- **Recipe** — services come from a matched recipe's import YAML.
-- **Classic** — agent constructs the import YAML from the user's intent.
-- **Adopt** — attach `ServiceMeta` to existing non-managed services; no infra change.
-
-Route is chosen at bootstrap start and persists for the session. The 3 steps are `discover → provision → close` in fixed order; follow the step list from `zerops_workflow action="status"`.

@@ -5,10 +5,13 @@ description: "develop-closed-auto phase, close reason iteration-cap — workflow
 ---
 <!-- UNREVIEWED -->
 
-The envelope's `phase: develop-closed-auto` and `closeReason:
-auto-complete` are set; full close criteria are in
-`develop-auto-close-semantics`. Work is durable — code is in git,
-infrastructure on Zerops.
+The envelope's `phase: develop-closed-auto` is set. The session was closed automatically by one of two close mechanisms — read `workSession.closeReason` from the envelope to know which: `auto-complete` (every in-scope service deployed and verified) OR `iteration-cap` (workflow exhausted its retry budget).
+
+`auto-complete` is the success path: work landed cleanly. Pick a new task and start the next session.
+
+`iteration-cap` is the give-up path: the same fix kept failing. Before starting a new session, **inspect `workSession.deploys[].reason`** for the recurring failure — repeating the same approach with the same intent re-hits the cap. If multiple iterations failed for the same reason (build base mismatch, env-var name drift, port mismatch), fix the root cause first; if iterations failed for *different* reasons, the task may be too broad — split it.
+
+Either way, work is durable: code is in git, infrastructure is on Zerops.
 
 Next actions:
 
@@ -17,8 +20,7 @@ zerops_workflow action="start" workflow="develop" intent="{next-task}"
 zerops_workflow action="close" workflow="develop"
 ```
 
-Full auto-close and explicit-close semantics:
-`develop-auto-close-semantics`.
+Full auto-close and explicit-close semantics: `develop-auto-close-semantics`.
 
 ---
 

@@ -458,11 +458,13 @@ func atomPriority(raw string) int {
 	if raw == "" {
 		return 5
 	}
-	// Deliberate: invalid priority silently maps to default (5). Keeps the
-	// parser tolerant while still deterministic.
+	// Valid range: 0..9 (10 buckets). 0 = highest, 9 = lowest. Convention:
+	// 0 = framing intro, 1 = essential, 5 = default, 9 = late/optional.
+	// Deliberate: out-of-range priority silently maps to default (5);
+	// keeps the parser tolerant while still deterministic.
 	var n int
 	_, err := fmt.Sscanf(raw, "%d", &n)
-	if err != nil || n < 1 || n > 9 {
+	if err != nil || n < 0 || n > 9 {
 		return 5
 	}
 	return n

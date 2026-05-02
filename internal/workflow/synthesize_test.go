@@ -835,16 +835,23 @@ func TestSynthesize_RouteAxisFiltering(t *testing.T) {
 	}
 }
 
-// TestSynthesize_LocalModeAtomsFireForAllRoutes is the regression guard for
-// the Option A refactor that removed `routes: [classic]` from the local-mode
-// atoms (bootstrap-discover-local, bootstrap-provision-local). Before the
-// refactor, recipe-route and adopt-route bootstraps on a local environment
-// missed the local-specific guidance entirely — the atom filter excluded
-// them. After the refactor, any local-environment bootstrap gets the local
-// topology rules regardless of route.
+// TestSynthesize_LocalDiscoverAtomFiresForAllRoutes pins that
+// `bootstrap-discover-local` (the local-mode topology overview) fires
+// across ALL three bootstrap routes (recipe / classic / adopt). The
+// VPN + .env-bridge guidance in this atom is operational, not route-
+// specific.
 //
-// This test fails if someone adds `routes:` back to either atom.
-func TestSynthesize_LocalModeAtomsFireForAllRoutes(t *testing.T) {
+// Originally this test covered both bootstrap-discover-local AND
+// bootstrap-provision-local — the latter was tightened to
+// `routes: [classic]` per the atom-corpus-verification review (Cycle 1
+// S5: bootstrap-provision-local body is classic-construction-specific
+// — "Import shape depends on mode" + "Stage properties" don't apply
+// to recipe/adopt). The provision-local route-agnostic-firing
+// contract is INTENTIONALLY no longer pinned. See
+// `internal/workflow/testdata/atom-goldens/_review-ledger.md` S5.
+//
+// This test fails if someone adds `routes:` back to bootstrap-discover-local.
+func TestSynthesize_LocalDiscoverAtomFiresForAllRoutes(t *testing.T) {
 	t.Parallel()
 
 	corpus, err := LoadAtomCorpus()
@@ -852,59 +859,105 @@ func TestSynthesize_LocalModeAtomsFireForAllRoutes(t *testing.T) {
 		t.Fatalf("LoadAtomCorpus: %v", err)
 	}
 
-	// The local atoms under test. Discover step for bootstrap-discover-local,
-	// provision step for bootstrap-provision-local.
-	targets := []struct {
-		atomID string
-		step   string
-	}{
-		{"bootstrap-discover-local", StepDiscover},
-		{"bootstrap-provision-local", StepProvision},
+	atom := findAtom(corpus, "bootstrap-discover-local")
+	if atom.ID == "" {
+		t.Fatal("atom bootstrap-discover-local missing from corpus")
+	}
+	if len(atom.Axes.Routes) > 0 {
+		t.Errorf("bootstrap-discover-local has routes filter %v — local-mode discovery must stay route-agnostic",
+			atom.Axes.Routes)
 	}
 
-	for _, target := range targets {
-		atom := findAtom(corpus, target.atomID)
-		if atom.ID == "" {
-			t.Fatalf("atom %s missing from corpus", target.atomID)
-		}
-		// Sanity: atom should declare environments: [local] and no route filter.
-		if len(atom.Axes.Routes) > 0 {
-			t.Errorf("%s has routes filter %v — local-mode atoms must be route-agnostic",
-				target.atomID, atom.Axes.Routes)
-		}
+	routes := []BootstrapRoute{
+		BootstrapRouteClassic,
+		BootstrapRouteRecipe,
+		BootstrapRouteAdopt,
+	}
+	for _, route := range routes {
+		t.Run("bootstrap-discover-local_"+string(route), func(t *testing.T) {
+			t.Parallel()
+			env := StateEnvelope{
+				Phase:       PhaseBootstrapActive,
+				Environment: EnvLocal,
+				Bootstrap: &BootstrapSessionSummary{
+					Route: route,
+					Step:  StepDiscover,
+				},
+				Services: []ServiceSnapshot{{
+					Hostname:     "appdev",
+					RuntimeClass: topology.RuntimeDynamic,
+					Mode:         topology.ModeDev,
+				}},
+			}
+			got, err := SynthesizeBodies(env, corpus)
+			if err != nil {
+				t.Fatalf("Synthesize: %v", err)
+			}
+			joined := strings.Join(got, "\n")
+			if !strings.Contains(joined, atom.Body[:min(60, len(atom.Body))]) {
+				t.Errorf("bootstrap-discover-local not in synthesis output for local+%s — did someone re-add routes: filter?",
+					route)
+			}
+		})
+	}
+}
 
-		routes := []BootstrapRoute{
-			BootstrapRouteClassic,
-			BootstrapRouteRecipe,
-			BootstrapRouteAdopt,
-		}
-		for _, route := range routes {
-			t.Run(target.atomID+"_"+string(route), func(t *testing.T) {
-				t.Parallel()
-				env := StateEnvelope{
-					Phase:       PhaseBootstrapActive,
-					Environment: EnvLocal,
-					Bootstrap: &BootstrapSessionSummary{
-						Route: route,
-						Step:  target.step,
-					},
-					Services: []ServiceSnapshot{{
-						Hostname:     "appdev",
-						RuntimeClass: topology.RuntimeDynamic,
-						Mode:         topology.ModeDev,
-					}},
-				}
-				got, err := SynthesizeBodies(env, corpus)
-				if err != nil {
-					t.Fatalf("Synthesize: %v", err)
-				}
-				joined := strings.Join(got, "\n")
-				if !strings.Contains(joined, atom.Body[:min(60, len(atom.Body))]) {
-					t.Errorf("%s not in synthesis output for local+%s — did someone re-add routes: filter?",
-						target.atomID, route)
-				}
-			})
-		}
+// TestSynthesize_LocalProvisionAtomIsClassicOnly pins the post-S5
+// behavior: bootstrap-provision-local fires ONLY for the classic route
+// (its body is classic-construction-specific — see `_review-ledger.md`
+// S5). Recipe + adopt routes get minimal local-mode provision content
+// today; sibling adopt/recipe-provision-local atoms are a Cycle 2
+// candidate.
+func TestSynthesize_LocalProvisionAtomIsClassicOnly(t *testing.T) {
+	t.Parallel()
+
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+	atom := findAtom(corpus, "bootstrap-provision-local")
+	if atom.ID == "" {
+		t.Fatal("atom bootstrap-provision-local missing from corpus")
+	}
+	if len(atom.Axes.Routes) != 1 || atom.Axes.Routes[0] != BootstrapRouteClassic {
+		t.Errorf("bootstrap-provision-local routes = %v, want [classic] (post-S5 tightening)", atom.Axes.Routes)
+	}
+
+	cases := []struct {
+		route   BootstrapRoute
+		wantHit bool
+	}{
+		{BootstrapRouteClassic, true},
+		{BootstrapRouteRecipe, false},
+		{BootstrapRouteAdopt, false},
+	}
+	for _, tc := range cases {
+		t.Run("bootstrap-provision-local_"+string(tc.route), func(t *testing.T) {
+			t.Parallel()
+			env := StateEnvelope{
+				Phase:       PhaseBootstrapActive,
+				Environment: EnvLocal,
+				Bootstrap: &BootstrapSessionSummary{
+					Route: tc.route,
+					Step:  StepProvision,
+				},
+				Services: []ServiceSnapshot{{
+					Hostname:     "appdev",
+					RuntimeClass: topology.RuntimeDynamic,
+					Mode:         topology.ModeDev,
+				}},
+			}
+			got, err := SynthesizeBodies(env, corpus)
+			if err != nil {
+				t.Fatalf("Synthesize: %v", err)
+			}
+			joined := strings.Join(got, "\n")
+			present := strings.Contains(joined, atom.Body[:min(60, len(atom.Body))])
+			if present != tc.wantHit {
+				t.Errorf("bootstrap-provision-local present=%v for local+%s, want %v",
+					present, tc.route, tc.wantHit)
+			}
+		})
 	}
 }
 

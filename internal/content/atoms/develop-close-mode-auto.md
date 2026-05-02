@@ -7,7 +7,7 @@ deployStates: [deployed]
 multiService: aggregate
 title: "Delivery pattern = direct deploy via zerops_deploy"
 ---
-This pair is on `closeDeployMode=auto`. Your delivery pattern is direct `zerops_deploy` calls via zcli — fast, synchronous, the canonical default for tight iteration cycles. `action="close"` itself is a session-teardown call regardless of close-mode; auto-close fires when the deploys you ran during iterations satisfy the green-scope gate.
+This service is on `closeDeployMode=auto`. Your delivery pattern is direct `zerops_deploy` calls via zcli — fast, synchronous, the canonical default for tight iteration cycles. `action="close"` itself is a session-teardown call regardless of close-mode; auto-close fires when the deploys you ran during iterations satisfy the green-scope gate.
 
 ## How auto-close fires
 

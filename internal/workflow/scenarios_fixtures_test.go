@@ -224,7 +224,10 @@ func developGoldenScenarios() []goldenScenario {
 					fixSnapBootstrappedNeverDeployedPair("appdev", "appstage", "php-nginx@8.4", topology.RuntimeImplicitWeb),
 					fixSnapManaged("db", "postgresql@16"),
 				),
-				WorkSession: fixSession("appdev"),
+				// A3-F1 fix: production session-start auto-expands a standard
+				// pair to BOTH halves (per workflow_develop.go:301-323; pinned
+				// by workflow_develop_test.go:341-361). Fixture matches.
+				WorkSession: fixSession("appdev", "appstage"),
 			},
 		},
 		{
@@ -239,12 +242,12 @@ func developGoldenScenarios() []goldenScenario {
 		},
 		{
 			id:          "develop/mode-expansion-source",
-			description: "Deployed dev/simple service running close-mode auto — common starter shape before agent expands to a standard pair.",
+			description: "Deployed simple-mode service running close-mode auto — single-slot non-mutating runtime, common starter shape for a worker / API before considering pair expansion. S8 differentiation: ModeSimple (vs steady-dev's ModeDev) covers the simple arm of develop-mode-expansion's modes:[dev,simple] axis.",
 			envelope: StateEnvelope{
 				Phase:       PhaseDevelopActive,
 				Environment: EnvContainer,
 				Services: []ServiceSnapshot{
-					fixSnapDeployedDevAuto("appdev", "nodejs@22", topology.RuntimeDynamic),
+					fixSnapDeployedSimpleAuto("appdev", "nodejs@22", topology.RuntimeDynamic),
 				},
 				WorkSession: fixSession("appdev"),
 			},
@@ -620,6 +623,22 @@ func fixSnapDeployedDevAuto(hostname, typeVersion string, rc topology.RuntimeCla
 		TypeVersion:     typeVersion,
 		RuntimeClass:    rc,
 		Mode:            topology.ModeDev,
+		CloseDeployMode: topology.CloseModeAuto,
+		Bootstrapped:    true,
+		Deployed:        true,
+	}
+}
+
+// fixSnapDeployedSimpleAuto returns a deployed simple-mode close-auto
+// snapshot. Simple is the single-slot non-mutating mode used for
+// workers and immutable APIs; covers the simple arm of any
+// modes:[dev, simple] axis (e.g. develop-mode-expansion).
+func fixSnapDeployedSimpleAuto(hostname, typeVersion string, rc topology.RuntimeClass) ServiceSnapshot {
+	return ServiceSnapshot{
+		Hostname:        hostname,
+		TypeVersion:     typeVersion,
+		RuntimeClass:    rc,
+		Mode:            topology.ModeSimple,
 		CloseDeployMode: topology.CloseModeAuto,
 		Bootstrapped:    true,
 		Deployed:        true,

@@ -1,9 +1,17 @@
 ---
 id: develop/mode-expansion-source
-atomIds: [develop-api-error-meta, develop-change-drives-deploy, develop-close-mode-auto-deploy-container, develop-deploy-modes, develop-dev-server-triage, develop-env-var-channels, develop-http-diagnostic, develop-platform-rules-common, develop-checklist-dev-mode, develop-close-mode-auto, develop-close-mode-auto-workflow-dev, develop-deploy-files-self-deploy, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-auto-close-semantics, develop-dev-server-reason-codes, develop-verify-matrix, develop-intro, develop-platform-rules-container, develop-strategy-awareness, develop-mode-expansion, develop-close-mode-auto-dev]
-description: "Deployed dev/simple service running close-mode auto — common starter shape before agent expands to a standard pair."
+atomIds: [develop-intro, develop-api-error-meta, develop-change-drives-deploy, develop-close-mode-auto-deploy-container, develop-deploy-modes, develop-env-var-channels, develop-http-diagnostic, develop-platform-rules-common, develop-checklist-simple-mode, develop-close-mode-auto, develop-close-mode-auto-workflow-simple, develop-deploy-files-self-deploy, develop-knowledge-pointers, develop-auto-close-semantics, develop-verify-matrix, develop-platform-rules-container, develop-strategy-awareness, develop-mode-expansion, develop-close-mode-auto-simple]
+description: "Deployed simple-mode service running close-mode auto — single-slot non-mutating runtime, common starter shape for a worker / API before considering pair expansion. S8 differentiation: ModeSimple (vs steady-dev's ModeDev) covers the simple arm of develop-mode-expansion's modes:[dev,simple] axis."
 ---
 <!-- UNREVIEWED -->
+
+### Development & Deploy
+
+Infrastructure is provisioned and at least one runtime already has a
+successful first deploy on record. You're in the edit loop: discover
+the current state, implement the user's request, redeploy, verify.
+
+---
 
 ### Read `apiMeta` on every error response
 
@@ -108,58 +116,6 @@ builder emits `WARN: deployFiles paths not found: ...` in
 
 ---
 
-### Dev-server state triage
-
-Before deploying, verifying, or iterating on a runtime service, run
-the triage rather than blind-starting a process.
-
-**Step 1 — Determine the expectation** from `runtimeClass` + `mode`
-in the envelope:
-
-Only `runtimeClass: dynamic` + `mode: dev` needs a manual dev-server
-action — its `zsc noop` idle runtime container waits for `zerops_dev_server
-action=start`. Implicit-webserver, static, and dynamic + simple/stage
-are platform-owned post-deploy; triage ends there.
-
-**Step 2 — Check current state** for dev-mode dynamic:
-
-```
-# container env
-zerops_dev_server action=status hostname="appdev" port={port} healthPath="{path}"
-
-# local env — runs on your machine
-Bash command="curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:{port}{path}"
-```
-
-Read the response:
-
-- `running: true` with HTTP 2xx/3xx/4xx `healthStatus` → proceed to
-  `zerops_verify`.
-- `running: false` with `reason: health_probe_connection_refused` →
-  start (step 3).
-- `running: true` with `healthStatus: 5xx` → server runs but is
-  broken; read logs and response body; do NOT restart (does not
-  fix bugs). Edit code, then follow the mode-specific iteration
-  cadence in `develop-change-drives-deploy`.
-
-For workers with no HTTP surface (`port=0`, `healthPath=""`), skip
-HTTP status; call `zerops_logs` to confirm consumption.
-
-**Step 3 — Act on the delta.**
-
-```
-# container env
-zerops_dev_server action=start hostname="appdev" command="{start-command}" port={port} healthPath="{path}"
-
-# local env
-Bash run_in_background=true command="{start-command}"
-```
-
-After every redeploy the dev process is gone — re-run Step 2 before
-`zerops_verify`.
-
----
-
 ### Env var channels
 
 Channel determines when a value goes live.
@@ -232,25 +188,15 @@ default to
 
 ---
 
-### Checklist (dev-mode dynamic-runtime services)
+### Checklist (simple-mode services)
 
-Applies to **dynamic runtimes only** (Node, Bun, Deno, Go, Rust, Python,
-Ruby, Java, .NET — anything with a long-running app process under
-manual control). For implicit-webserver runtimes (`php-apache`,
-`php-nginx`) see `develop-implicit-webserver`; for static runtimes the
-web server auto-starts and this checklist does not apply.
-
-- Dev setup block in `zerops.yaml`: `start: zsc noop --silent`, **no**
-  `healthCheck`. Zerops keeps the runtime container idle; you start
-  the dev process yourself via `zerops_dev_server action=start` after
-  each deploy.
-- Stage setup block (if a dev+stage pair exists): real `start:`
-  command **plus** a `healthCheck`. Stage auto-starts on deploy and
-  Zerops probes it on its configured interval.
+- The entry in `zerops.yaml` must have a real `start:` command **and** a
+  `healthCheck` — simple services auto-start and are probed on deploy.
+- There is no dev+stage pair; `appdev` is the single runtime container.
 
 ---
 
-This pair is on `closeDeployMode=auto`. Your delivery pattern is direct `zerops_deploy` calls via zcli — fast, synchronous, the canonical default for tight iteration cycles. `action="close"` itself is a session-teardown call regardless of close-mode; auto-close fires when the deploys you ran during iterations satisfy the green-scope gate.
+This service is on `closeDeployMode=auto`. Your delivery pattern is direct `zerops_deploy` calls via zcli — fast, synchronous, the canonical default for tight iteration cycles. `action="close"` itself is a session-teardown call regardless of close-mode; auto-close fires when the deploys you ran during iterations satisfy the green-scope gate.
 
 ## How auto-close fires
 
@@ -282,27 +228,14 @@ zerops_workflow action="close-mode" closeMode={"appdev":"git-push"}
 
 ### Development workflow
 
-Edit code at `/var/www/<hostname>/` for each in-scope dev runtime. The dev process is already running (see `develop-dynamic-runtime-start-container` for first-time start). **Code-only edits never trigger `zerops_deploy`** — deploy is for `zerops.yaml` changes only (see "**`zerops.yaml` changes**" below).
-
-**Code-only edit cycle**:
-- Dev runners with file-watch (`npm run dev`, `vite`, `nodemon`, `air`, `fastapi --reload`) pick up edits **only when configured for polling** — SSHFS does not surface inotify events. Set `CHOKIDAR_USEPOLLING=1` (vite/webpack), `--poll` (nodemon), or the runner's equivalent.
-- Otherwise (non-watching runner, polling not configured, OR the process died), restart the dev server per service:
+Edit code at `/var/www/<hostname>/` for each in-scope simple-mode runtime. Redeploy for this mode (see `develop-change-drives-deploy`); the runtime container auto-starts with its `healthCheck`:
 
 ```
-zerops_dev_server action=restart hostname="appdev" command="{start-command}" port={port} healthPath="{path}"
+zerops_deploy targetService="appdev" setup="prod"
+zerops_verify serviceHostname="appdev"
 ```
 
-  The response carries `running`, `healthStatus`, `startMillis`, and on failure a `reason` code (see `develop-dev-server-reason-codes`) — read it before issuing another call.
-
-**`zerops.yaml` changes** (env vars, ports, run-block fields): `zerops_deploy` first; container is replaced; on the rebuilt runtime container use `action=start` (NOT restart). See `develop-platform-rules-common` for the deploy=new-container rule.
-
-**Diagnostic**: tail the log ring per service:
-
-```
-zerops_dev_server action=logs hostname="appdev" logLines=60
-```
-
-`reason` classifies the failure (connection refused, HTTP 5xx, spawn timeout, worker exit) without a follow-up call.
+Config-only changes still deploy; env-var live timing is in `develop-env-var-channels`.
 
 ---
 
@@ -331,36 +264,6 @@ cannot reach Zerops.
 
 Cross-deploy has opposite semantics; see `develop-deploy-modes` for
 the full contrast.
-
----
-
-### Dynamic-runtime dev server
-
-Dev-mode dynamic runtime containers start running `zsc noop` after
-deploy — no dev process is live until you start one. Action family
-on `zerops_dev_server`:
-
-| Action | Use | Args |
-|---|---|---|
-| `status` | check before `start` (idempotent) — avoids duplicate listener | `hostname port healthPath` |
-| `start` | spawn the dev process | `hostname command port healthPath` |
-| `restart` | survives-the-deploy config/code change | `hostname command port healthPath` |
-| `logs` | tail recent for diagnosis | `hostname logLines=40` |
-| `stop` | end of session, free the port | `hostname port` |
-
-Args:
-- `command` — exact `run.start` from `zerops.yaml`.
-- `port` — `run.ports[0].port`.
-- `healthPath` — app-owned (`/api/health`, `/status`) or `/`.
-
-Response carries `running`, `healthStatus`, `reason`, and `logTail`
-— read these before making another call.
-
-**After every redeploy, re-run `action=start` before `zerops_verify`** —
-the rebuild drops the dev process (see `develop-platform-rules-common`).
-The hand-roll `ssh appdev "cmd &"` anti-pattern is in
-`develop-platform-rules-container`. See `develop-dev-server-reason-codes`
-for `reason` values.
 
 ---
 
@@ -412,26 +315,6 @@ in git, infrastructure is on Zerops.
 
 ---
 
-### `reason` values (DevServerResult)
-
-When `zerops_dev_server` actions fail, the response's `reason` field
-classifies the failure so you don't need a follow-up call to
-diagnose. Dispatch table:
-
-| `reason` | Meaning | Action |
-|---|---|---|
-| `spawn_timeout` | The remote shell did not detach; stdio handle still owned by child. | You likely hand-rolled `ssh ... "cmd &"` — re-run through `zerops_dev_server action=start`. |
-| `health_probe_connection_refused` | Spawn succeeded but nothing is listening on `port`. | Check that your app binds to `0.0.0.0` (not `localhost`), that `port` matches `run.ports[0].port`, and that your start command actually starts a server. Read `logTail` for crash output. |
-| `health_probe_http_<code>` | Server runs but returned `<code>` (e.g. 500, 404). | Do NOT restart — it does not fix bugs. Read `logTail` + response body, edit code, deploy. |
-| `post_spawn_exit` | No-probe-mode process died after spawn (port=0/healthPath=""). | `action=logs` for consumption errors; typical for worker crashes. |
-
-Observable always: `running` (bool), `healthStatus` (HTTP status
-when `port` set, 0 otherwise), `startMillis` (time from spawn to
-healthy), `logTail` (last log lines). Use these to confirm state
-without a second tool call.
-
----
-
 ### Per-service verify matrix
 
 Deploy success does not prove user behavior. Use `zerops_discover`:
@@ -463,14 +346,6 @@ It has the `Agent(model="sonnet", prompt=...)` template; substitute
 - **VERDICT: UNCERTAIN** → fall back to `zerops_verify`; the agent could
   not determine the outcome.
 - **Malformed output or timeout** → UNCERTAIN; fall back to `zerops_verify`.
-
----
-
-### Development & Deploy
-
-Infrastructure is provisioned and at least one runtime already has a
-successful first deploy on record. You're in the edit loop: discover
-the current state, implement the user's request, redeploy, verify.
 
 ---
 
@@ -524,17 +399,21 @@ rendered Services block shows them as
   `webhook` (Zerops webhook drives the build), or `actions` (GitHub
   Actions workflow YAML). Requires `gitPush=configured`.
 
-Switch any axis without closing the session — three actions, one per
-axis. Each takes a per-service argument:
+Switch any axis without closing the session — three actions, each
+operating at a different scope:
+
+- `close-mode` is **per-service** and accepts a multi-entry map: one call sets close-mode for any subset of services in one shot. For a standard pair, set both halves in the same call.
+- `git-push-setup` and `build-integration` are **per-pair**: call only on the dev half (or single-runtime hostname). The handler rejects stage-half targets with `INVALID_PARAMETER` because both halves of a pair share the same git-push / build-integration capability stamped on the dev meta.
 
 ```
-zerops_workflow action="close-mode"  closeMode={"appdev":"auto"}
+zerops_workflow action="close-mode" closeMode={"appdev":"auto"}
 zerops_workflow action="git-push-setup" service="appdev" remoteUrl="..."
 zerops_workflow action="build-integration" service="appdev" integration="webhook"
 ```
 
-Mixed config across services in one project is fine — each
-service's three axes are independent in the envelope.
+Substitute `appdev` with the dev-half hostname (or single-runtime hostname). For a multi-service project, repeat each call once per dev-half service — never per stage-half.
+
+Mixed config across services in one project is fine — each service's three axes are independent in the envelope.
 
 ---
 
@@ -585,14 +464,9 @@ end-to-end.
 
 ### Closing the task
 
-Dev mode has no stage pair: deploy the single runtime container, start the dev server, verify. Run for each in-scope dev runtime:
+Simple-mode services auto-start on deploy; close through the cadence in `develop-change-drives-deploy`:
 
 ```
-zerops_deploy targetService="appdev" setup="dev"
-zerops_dev_server action=start hostname="appdev" command="{start-command}" port={port} healthPath="{path}"
+zerops_deploy targetService="appdev" setup="prod"
 zerops_verify serviceHostname="appdev"
 ```
-
-Each redeploy gives a new container with no dev server — check `action=status` first; if `running: false`, call `action=start`. See `develop-dynamic-runtime-start-container` for parameters and response shape; `develop-dev-server-reason-codes` for `reason` triage.
-
-For no-HTTP workers (no `port`/`healthPath`), `running` derives from the post-spawn liveness check; `healthStatus` stays 0 — use `action=logs` to confirm consumption.

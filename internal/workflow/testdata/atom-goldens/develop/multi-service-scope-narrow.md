@@ -1,9 +1,17 @@
 ---
 id: develop/multi-service-scope-narrow
-atomIds: [develop-api-error-meta, develop-change-drives-deploy, develop-close-mode-auto-deploy-container, develop-deploy-modes, develop-dev-server-triage, develop-env-var-channels, develop-http-diagnostic, develop-platform-rules-common, develop-checklist-dev-mode, develop-close-mode-auto, develop-close-mode-auto-workflow-dev, develop-deploy-files-self-deploy, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-auto-close-semantics, develop-dev-server-reason-codes, develop-verify-matrix, develop-intro, develop-platform-rules-container, develop-strategy-awareness, develop-mode-expansion, develop-close-mode-auto-dev]
+atomIds: [develop-intro, develop-api-error-meta, develop-change-drives-deploy, develop-close-mode-auto-deploy-container, develop-deploy-modes, develop-dev-server-triage, develop-env-var-channels, develop-http-diagnostic, develop-platform-rules-common, develop-checklist-dev-mode, develop-close-mode-auto, develop-close-mode-auto-workflow-dev, develop-deploy-files-self-deploy, develop-dynamic-runtime-start-container, develop-knowledge-pointers, develop-auto-close-semantics, develop-dev-server-reason-codes, develop-verify-matrix, develop-platform-rules-container, develop-strategy-awareness, develop-mode-expansion, develop-close-mode-auto-dev]
 description: "Project has multiple runtimes; the active work session scopes to a single hostname so per-service axes only fire on that one."
 ---
 <!-- UNREVIEWED -->
+
+### Development & Deploy
+
+Infrastructure is provisioned and at least one runtime already has a
+successful first deploy on record. You're in the edit loop: discover
+the current state, implement the user's request, redeploy, verify.
+
+---
 
 ### Read `apiMeta` on every error response
 
@@ -250,7 +258,7 @@ web server auto-starts and this checklist does not apply.
 
 ---
 
-This pair is on `closeDeployMode=auto`. Your delivery pattern is direct `zerops_deploy` calls via zcli — fast, synchronous, the canonical default for tight iteration cycles. `action="close"` itself is a session-teardown call regardless of close-mode; auto-close fires when the deploys you ran during iterations satisfy the green-scope gate.
+This service is on `closeDeployMode=auto`. Your delivery pattern is direct `zerops_deploy` calls via zcli — fast, synchronous, the canonical default for tight iteration cycles. `action="close"` itself is a session-teardown call regardless of close-mode; auto-close fires when the deploys you ran during iterations satisfy the green-scope gate.
 
 ## How auto-close fires
 
@@ -282,7 +290,7 @@ zerops_workflow action="close-mode" closeMode={"appdev":"git-push"}
 
 ### Development workflow
 
-Edit code at `/var/www/<hostname>/` for each in-scope dev runtime. The dev process is already running (see `develop-dynamic-runtime-start-container` for first-time start). **Code-only edits never trigger `zerops_deploy`** — deploy is for `zerops.yaml` changes only (see "**`zerops.yaml` changes**" below).
+Edit code at `/var/www/<hostname>/` for each in-scope dev runtime. **Verify the dev process is up first** — every redeploy drops it, and the deployed-state axis only confirms a deploy landed at some point, not that the dev server is currently live. Run `zerops_dev_server action=status hostname="appdev" port={port} healthPath="{path}"` per service; if `running: false`, run `action=start` (see `develop-dynamic-runtime-start-container`). **Code-only edits never trigger `zerops_deploy`** — deploy is for `zerops.yaml` changes only (see "**`zerops.yaml` changes**" below).
 
 **Code-only edit cycle**:
 - Dev runners with file-watch (`npm run dev`, `vite`, `nodemon`, `air`, `fastapi --reload`) pick up edits **only when configured for polling** — SSHFS does not surface inotify events. Set `CHOKIDAR_USEPOLLING=1` (vite/webpack), `--poll` (nodemon), or the runner's equivalent.
@@ -466,14 +474,6 @@ It has the `Agent(model="sonnet", prompt=...)` template; substitute
 
 ---
 
-### Development & Deploy
-
-Infrastructure is provisioned and at least one runtime already has a
-successful first deploy on record. You're in the edit loop: discover
-the current state, implement the user's request, redeploy, verify.
-
----
-
 ### Platform rules
 
 Mount basics in `claude_container.md` (boot shim). Container-only
@@ -524,17 +524,21 @@ rendered Services block shows them as
   `webhook` (Zerops webhook drives the build), or `actions` (GitHub
   Actions workflow YAML). Requires `gitPush=configured`.
 
-Switch any axis without closing the session — three actions, one per
-axis. Each takes a per-service argument:
+Switch any axis without closing the session — three actions, each
+operating at a different scope:
+
+- `close-mode` is **per-service** and accepts a multi-entry map: one call sets close-mode for any subset of services in one shot. For a standard pair, set both halves in the same call.
+- `git-push-setup` and `build-integration` are **per-pair**: call only on the dev half (or single-runtime hostname). The handler rejects stage-half targets with `INVALID_PARAMETER` because both halves of a pair share the same git-push / build-integration capability stamped on the dev meta.
 
 ```
-zerops_workflow action="close-mode"  closeMode={"appdev":"auto"}
+zerops_workflow action="close-mode" closeMode={"appdev":"auto"}
 zerops_workflow action="git-push-setup" service="appdev" remoteUrl="..."
 zerops_workflow action="build-integration" service="appdev" integration="webhook"
 ```
 
-Mixed config across services in one project is fine — each
-service's three axes are independent in the envelope.
+Substitute `appdev` with the dev-half hostname (or single-runtime hostname). For a multi-service project, repeat each call once per dev-half service — never per stage-half.
+
+Mixed config across services in one project is fine — each service's three axes are independent in the envelope.
 
 ---
 
