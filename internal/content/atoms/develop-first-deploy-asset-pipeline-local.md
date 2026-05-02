@@ -11,9 +11,9 @@ title: "Asset pipeline — local build before verify"
 
 ### Frontend asset pipeline
 
-Recipes with frontend asset pipelines (Laravel+Vite, Symfony+Encore,
-…) intentionally OMIT `npm run build` from dev `buildCommands`. Dev
-assumes local Vite HMR and a built artifact for stage.
+Services with frontend asset pipelines (Laravel+Vite, Symfony+Encore, …)
+typically OMIT `npm run build` from dev `buildCommands`. Dev assumes local
+Vite HMR and a built artifact for stage.
 
 **Consequence:** after first deploy, stage lacks
 `public/build/manifest.json`. Vite helpers (`@vite(...)`,

@@ -5,22 +5,22 @@ phases: [develop-active]
 envelopeDeployStates: [never-deployed]
 title: "First-deploy branch — scaffold + write + deploy + stamp"
 references-fields: [workflow.ServiceSnapshot.Deployed, ops.VerifyResult.Status, workflow.ServiceSnapshot.CloseDeployMode]
-references-atoms: [develop-first-deploy-scaffold-yaml, develop-verify-matrix, develop-strategy-awareness]
+references-atoms: [develop-first-deploy-scaffold-yaml, develop-first-deploy-write-app, develop-verify-matrix, develop-strategy-awareness]
 ---
 
 ### You're in the develop first-deploy branch
 
 The envelope reports at least one in-scope service with
 `deployed: false` (bootstrapped but never received code). Finish that
-here: scaffold `zerops.yaml`, write the app, deploy, verify.
+here: establish `zerops.yaml` and the app, deploy, verify.
 
 Flow for each never-deployed runtime:
 
-1. **Scaffold `zerops.yaml`** from the planned runtime + env-var
-   catalog from `zerops_discover` (see
-   `develop-first-deploy-scaffold-yaml`).
-2. **Write the application code** that implements the user's intent —
-   not a placeholder, real code.
+1. **Establish `zerops.yaml`** — scaffold if absent, refine in place if
+   already present (see `develop-first-deploy-scaffold-yaml`).
+2. **Establish the application code** — adapt existing source if the
+   mount carries it, scaffold real code otherwise (see
+   `develop-first-deploy-write-app`).
 3. **Run `zerops_deploy targetService=<hostname>`** with NO `strategy`
    argument. Every first deploy uses the default push path;
    `strategy=git-push` requires `GIT_TOKEN` + committed code

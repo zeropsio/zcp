@@ -3,15 +3,15 @@ id: develop-first-deploy-scaffold-yaml
 priority: 2
 phases: [develop-active]
 envelopeDeployStates: [never-deployed]
-title: "Scaffold zerops.yaml"
+title: "Scaffold or refine zerops.yaml"
 references-fields: [ops.DiscoverResult.Services, workflow.ServiceSnapshot.Mode, workflow.ServiceSnapshot.StageHostname]
 references-atoms: [develop-deploy-modes, develop-first-deploy-env-vars]
 ---
 
-### Scaffold `zerops.yaml`
+### Establish `zerops.yaml`
 
-Scaffold `zerops.yaml` before first deploy. Root placement and `setup:`
-naming rules are in `develop-platform-rules-common`.
+Scaffold `zerops.yaml` if absent or refine it in place if already present.
+Root placement and `setup:` naming rules are in `develop-platform-rules-common`.
 
 **Shape (one `zerops:` block per targeted runtime hostname):**
 

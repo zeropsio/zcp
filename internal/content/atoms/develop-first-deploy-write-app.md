@@ -11,8 +11,11 @@ references-atoms: [develop-platform-rules-container]
 
 ### Write the application code
 
-Bootstrap does NOT ship a stub or hello-world — `/var/www/<hostname>/`
-on SSHFS is empty. First deploy needs real code.
+Inspect `/var/www/<hostname>/` first. If the mount carries source — adapt
+to the user's intent; preserve the existing scaffold rather than rewriting.
+If empty — scaffold from scratch using the runtime + env-var catalog.
+If `ls` errors (stale SSHFS), run `zerops_mount action="mount"` to recover
+before deciding.
 
 **Checklist before deploying:**
 

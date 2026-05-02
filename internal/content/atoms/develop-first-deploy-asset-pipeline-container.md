@@ -11,10 +11,10 @@ title: "Asset pipeline — SSH build before verify"
 
 ### Frontend asset pipeline
 
-Recipes with `php-nginx` / `php-apache` plus frontend build pipeline
-(Laravel+Vite, Symfony+Encore, …) intentionally OMIT `npm run build`
-from dev `buildCommands`. Dev assumes HMR via Vite over SSH, not a
-production asset rebuild on every `zerops_deploy`.
+`php-nginx` / `php-apache` services with a frontend build pipeline
+(Laravel+Vite, Symfony+Encore, …) typically OMIT `npm run build` from dev
+`buildCommands`. Dev assumes HMR via Vite over SSH, not a production asset
+rebuild on every `zerops_deploy`.
 
 **Consequence:** after first deploy, `public/build/manifest.json` is
 missing. Vite helpers throw HTTP 500 ("Vite manifest not found"), so
