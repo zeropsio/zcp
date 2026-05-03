@@ -336,6 +336,13 @@ func BuildFeatureBrief(plan *Plan) (Brief, error) {
 	// porter_change/field_rationale recording shape as scaffold but
 	// scoped to feature-added fields + scenario-discovered traps).
 	// Net: -5 KB. Legacy atom retired in tranche 6.
+	//
+	// Run-21 R3-2 — drop `principles/yaml-comment-style.md`. Same
+	// reasoning as scaffold-brief R2-1 drop: feature briefs operate
+	// under the bare-yaml authoring contract (the comment-style
+	// teaching contradicts it). The teaching belongs in the codebase-
+	// content brief (which authors the published zerops.yaml comments)
+	// where R2-2 already carries it.
 	atoms := []string{
 		// Run-21 R2-7 — SSHFS warning loaded first so the agent
 		// encounters it before any feature-content guidance. Pre-fix
@@ -347,7 +354,6 @@ func BuildFeatureBrief(plan *Plan) (Brief, error) {
 		"briefs/feature/feature_kinds.md",
 		"briefs/feature/decision_recording.md",
 		"principles/mount-vs-container.md",
-		"principles/yaml-comment-style.md",
 	}
 	if planDeclaresSeed(plan) {
 		atoms = append(atoms, "principles/init-commands-model.md")

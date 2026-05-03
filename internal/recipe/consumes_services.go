@@ -134,6 +134,28 @@ func shouldLoadNATSShapes(plan *Plan, cb Codebase) bool {
 	return false
 }
 
+// planUsesNATS reports whether the plan declares any nats-family
+// managed service. Used by BuildEnvContentBrief (Run-21 R3-2) to drop
+// `principles/nats-shapes.md` from briefs the plan can never apply
+// (the env-content composer is plan-wide, not per-codebase, so it
+// can't use cb.ConsumesServices like the codebase-content composer
+// does — plan.Services is the right precision lever).
+func planUsesNATS(plan *Plan) bool {
+	if plan == nil {
+		return false
+	}
+	for _, svc := range plan.Services {
+		family := svc.Type
+		if i := strings.IndexByte(family, '@'); i > 0 {
+			family = family[:i]
+		}
+		if family == "nats" {
+			return true
+		}
+	}
+	return false
+}
+
 // shouldLoadCrossServiceURLs returns true when the codebase-content
 // brief for cb should embed `principles/cross-service-urls.md`. The
 // atom teaches the workspace dual-runtime URL pattern via

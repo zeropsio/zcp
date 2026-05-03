@@ -449,6 +449,27 @@ func TestBuildFeatureBrief_MinimalTierOmitsScenarioSpec(t *testing.T) {
 	mustNotContain(t, brief.Body, "Showcase scenario specification")
 }
 
+// TestBuildFeatureBrief_OmitsYamlCommentStyle — run-21 R3-2.
+// Feature brief operates under the bare-yaml authoring contract; the
+// yaml-comment-style teaching contradicts that contract and lives in
+// the codebase-content brief (R2-2) where authored comments actually
+// land. The atom must not appear in the feature brief body OR the
+// composer's atom Parts list.
+func TestBuildFeatureBrief_OmitsYamlCommentStyle(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildFeatureBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFeatureBrief: %v", err)
+	}
+	for _, p := range brief.Parts {
+		if strings.Contains(p, "yaml-comment-style") {
+			t.Errorf("feature brief Parts unexpectedly carries %q", p)
+		}
+	}
+}
+
 // TestBuildSubagentPrompt_Scaffold_IncludesRecipeLevelContext — run-13
 // §B2. The new dispatch-prompt composer wraps the engine brief with
 // the recipe-level context the main agent's hand-typed wrapper used to

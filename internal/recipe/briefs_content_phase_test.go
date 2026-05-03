@@ -307,6 +307,49 @@ func TestBuildEnvContentBrief_SizeUnderCap(t *testing.T) {
 	}
 }
 
+// TestBuildEnvContentBrief_OmitsNATSWhenNoBroker — run-21 R3-2.
+// Env-content brief loads `principles/nats-shapes.md` only when the
+// plan declares a nats-family managed service. contentPhaseTestPlan
+// has only postgres + valkey; the NATS atom must be absent.
+func TestBuildEnvContentBrief_OmitsNATSWhenNoBroker(t *testing.T) {
+	t.Parallel()
+	plan := contentPhaseTestPlan()
+	brief, err := BuildEnvContentBrief(plan, nil, nil)
+	if err != nil {
+		t.Fatalf("BuildEnvContentBrief: %v", err)
+	}
+	for _, p := range brief.Parts {
+		if strings.Contains(p, "nats-shapes") {
+			t.Errorf("env-content brief Parts unexpectedly carries %q for plan with no nats@* service", p)
+		}
+	}
+}
+
+// TestBuildEnvContentBrief_LoadsNATSWhenPlanHasBroker — run-21 R3-2
+// counterpart. Plan with a nats@* managed service still loads the
+// teaching (no regression of the run-20 C1 fix).
+func TestBuildEnvContentBrief_LoadsNATSWhenPlanHasBroker(t *testing.T) {
+	t.Parallel()
+	plan := contentPhaseTestPlan()
+	plan.Services = append(plan.Services, Service{
+		Kind: ServiceKindManaged, Hostname: "broker", Type: "nats@2",
+	})
+	brief, err := BuildEnvContentBrief(plan, nil, nil)
+	if err != nil {
+		t.Fatalf("BuildEnvContentBrief: %v", err)
+	}
+	found := false
+	for _, p := range brief.Parts {
+		if strings.Contains(p, "nats-shapes") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("env-content brief Parts missing nats-shapes for plan with nats@* service")
+	}
+}
+
 func TestBuildClaudeMDBrief_ContainsHardProhibitionBlock(t *testing.T) {
 	t.Parallel()
 	plan := contentPhaseTestPlan()

@@ -235,10 +235,18 @@ func BuildEnvContentBrief(plan *Plan, parent *ParentRecipe, facts []FactRecord) 
 	// the env-content sub-agent didn't see this teaching; only
 	// codebase-content did. Pulling from one source keeps the framing
 	// aligned across phases.
-	if atom, err := readAtom("principles/nats-shapes.md"); err == nil {
-		b.WriteString(atom)
-		b.WriteString("\n\n")
-		parts = append(parts, "principles/nats-shapes.md")
+	//
+	// Run-21 R3-2 — gate on plan-level NATS presence. Env-content is
+	// plan-wide so it can't use cb.ConsumesServices the way R2-2's
+	// codebase-content composer does; the right precision lever is
+	// `planUsesNATS(plan)`. Plans without a nats@* service can't
+	// author NATS comments at any tier — the teaching is dead weight.
+	if planUsesNATS(plan) {
+		if atom, err := readAtom("principles/nats-shapes.md"); err == nil {
+			b.WriteString(atom)
+			b.WriteString("\n\n")
+			parts = append(parts, "principles/nats-shapes.md")
+		}
 	}
 
 	// Run-20 (post sub-agent C verification) — Zerops platform claim
