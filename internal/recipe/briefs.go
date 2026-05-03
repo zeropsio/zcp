@@ -337,6 +337,13 @@ func BuildFeatureBrief(plan *Plan) (Brief, error) {
 	// scoped to feature-added fields + scenario-discovered traps).
 	// Net: -5 KB. Legacy atom retired in tranche 6.
 	atoms := []string{
+		// Run-21 R2-7 — SSHFS warning loaded first so the agent
+		// encounters it before any feature-content guidance. Pre-fix
+		// the warning sat mid-document at content_extension.md (which
+		// is no longer composed into the feature brief — retired in
+		// run-16 §6.2), making it effectively invisible. Run-21
+		// features-2nd burned 8 min in a Vite-on-SSHFS rabbit hole.
+		"briefs/feature/sshfs_warning.md",
 		"briefs/feature/feature_kinds.md",
 		"briefs/feature/decision_recording.md",
 		"principles/mount-vs-container.md",

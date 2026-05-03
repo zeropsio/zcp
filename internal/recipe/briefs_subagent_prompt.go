@@ -301,6 +301,15 @@ func writePromptCloseFooter(b *strings.Builder, kind BriefKind, codebase string,
 			b.WriteString("the on-disk state is already correct. Resume work at the\n")
 			b.WriteString("current phase.\n\n")
 		}
+		// Run-21 R2-7 — re-state the SSHFS-no-local-build rule at brief
+		// close so the agent re-encounters it before terminating. Build
+		// failures debugged on the wrong site are the leading scope-
+		// creep cause at feature phase (run-21 features-2nd burned 8 min
+		// in a Vite-on-SSHFS ESM-import rabbit hole).
+		b.WriteString("Reminder before you terminate: build/install commands run via\n")
+		b.WriteString("`ssh <hostname>dev \"cd /var/www && <cmd>\"`, NOT against the\n")
+		b.WriteString("local SSHFS mount. If you see an unfamiliar build failure,\n")
+		b.WriteString("check the build site FIRST.\n\n")
 		b.WriteString("When you're ready to terminate: ensure per-feature commits are\n")
 		b.WriteString("in place, browser-verification facts recorded for each panel\n")
 		b.WriteString("you exercised, and call\n\n")

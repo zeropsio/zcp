@@ -265,6 +265,63 @@ func TestBrief_Scaffold_FrontendSPA_UnderTargetSize(t *testing.T) {
 	}
 }
 
+// TestFeatureBrief_SSHFSWarningInFirstSection — Run-21 R2-7.
+//
+// Pre-fix the SSHFS-no-local-build warning sat mid-document at
+// content_extension.md:72-76 (under the "IG scope" section). Run-21
+// features-2nd burned 8 minutes in a Vite-on-SSHFS rabbit hole
+// because the warning was at the wrong site. R2-7 moved it to the
+// top of content_extension.md and added a footer reminder in
+// BuildFeatureBrief's closing notes. This test asserts the warning
+// appears in the first 4 KB of brief body.
+func TestFeatureBrief_SSHFSWarningInFirstSection(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildFeatureBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFeatureBrief: %v", err)
+	}
+	const previewBytes = 4096
+	preview := brief.Body
+	if len(preview) > previewBytes {
+		preview = preview[:previewBytes]
+	}
+	for _, anchor := range []string{
+		"SSHFS warning",
+		"never local-build under the mount",
+	} {
+		if !strings.Contains(preview, anchor) {
+			t.Errorf("SSHFS warning anchor %q missing from first %d bytes of feature brief", anchor, previewBytes)
+		}
+	}
+}
+
+// TestFeatureBrief_SSHFSReminderInFooter — Run-21 R2-7.
+//
+// Closing footer for BriefFeature re-states the SSHFS rule so the
+// agent re-encounters it before terminating. The dispatched prompt
+// (not just the engine brief body) must carry the reminder, so we
+// verify via buildSubagentPrompt.
+func TestFeatureBrief_SSHFSReminderInFooter(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	in := RecipeInput{BriefKind: "feature"}
+	prompt, err := buildSubagentPrompt(plan, nil, in)
+	if err != nil {
+		t.Fatalf("buildSubagentPrompt feature: %v", err)
+	}
+	for _, anchor := range []string{
+		"check the build site FIRST",
+		"NOT against the\nlocal SSHFS mount",
+	} {
+		if !strings.Contains(prompt, anchor) {
+			t.Errorf("feature brief footer missing SSHFS reminder anchor %q", anchor)
+		}
+	}
+}
+
 // TestFeatureBrief_IncludesV3FactRecordingSection — run-9-readiness §2.B.
 // The feature brief teaches sub-agents to use v3's `zerops_recipe
 // action=record-fact` (not the legacy `zerops_record_fact`) so facts
