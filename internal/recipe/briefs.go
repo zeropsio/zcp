@@ -82,9 +82,14 @@ import (
 // teaching), bare-yaml-prohibition (~2 KB; scaffold yaml without
 // inline comments), nats-shapes (~3 KB; pub/sub vs JetStream
 // dichotomy). Frontend codebases land near 42 KB.
+//
+// Run-21 R2-4 raised FeatureBriefCap 20 → 22 KB to absorb the
+// stage-slot negative rule appended to mount-vs-container.md (feature
+// brief was saturated at ~20.3 KB pre-edit). R3-2 will tighten the
+// cap back down once feature/env-content briefs are slimmed.
 const (
 	ScaffoldBriefCap = 48 * 1024
-	FeatureBriefCap  = 20 * 1024
+	FeatureBriefCap  = 22 * 1024
 )
 
 // BriefKind identifies a sub-agent role. Scaffold + feature have

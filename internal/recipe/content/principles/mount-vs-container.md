@@ -8,6 +8,10 @@ Local `Read`, `Edit`, `Write`, `Glob`, `Grep` against
 `/var/www/<hostname>dev/` work transparently — SSHFS bridges every
 read/write. No ssh indirection; it's a normal filesystem.
 
+Only `<hostname>dev` is the source mount. `<hostname>stage` is a
+deployed runtime — verify via `zerops_verify` / `zerops_logs` / URL.
+Never search `/var/www/<hostname>stage` for source.
+
 ## Framework CLIs via ssh to the container
 
 `npm install`, `npx build`, `tsc`, `nest build`, `artisan`, `composer`,
