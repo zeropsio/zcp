@@ -819,6 +819,33 @@ func TestBrief_Scaffold_HeaderIsBehavioralGate(t *testing.T) {
 	}
 }
 
+// TestPreshipContract_BoundsScaffoldScope — Run-21 R2-6.
+//
+// Scaffold preship contract must explicitly delegate behavior fan-out
+// to feature phase. Run-21 evidence: scaffold-api spent ~10 min on
+// POST 500 debugging, class-validator wiring, behavior fan-out across
+// all 5 services because the brief licensed it. The rewrite scopes
+// scaffold to the runnable surface; cross-service behavior matrices
+// move to feature phase.
+func TestPreshipContract_BoundsScaffoldScope(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	for _, anchor := range []string{
+		"feature phase",
+		"runnable surface",
+		"Out of scope at scaffold",
+	} {
+		if !strings.Contains(brief.Body, anchor) {
+			t.Errorf("preship contract missing scope-bounding anchor %q", anchor)
+		}
+	}
+}
+
 // TestBrief_Scaffold_OmitsHTTPSectionForNonHTTPRole — run-10-readiness
 // §Q1. Scaffold brief for a role whose contract has ServesHTTP=false
 // (worker / job-consumer) does not emit the `## HTTP` section; the

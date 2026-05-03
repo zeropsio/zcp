@@ -1,14 +1,26 @@
 # Behavioral gate
 
-Verify behavior, not code. The gate passes when all five checks are
-green on the dev container.
+Scaffold verifies the runnable surface only:
 
-1. `curl ${appdev-subdomain}/health` → 200 + body.
-2. `curl -H "X-Forwarded-For: 1.2.3.4" /debug/remote-ip` echoes
-   `1.2.3.4`. Remove `/debug/remote-ip` before prod tiers.
-3. Restart the service while a 2s+ request is in flight — request
-   finishes 200, new requests hit the new container.
-4. Migrations attested once post-deploy; second deploy does not re-run.
-5. stderr in first 10s post-boot is empty of error-level logs.
+1. Deploy succeeds (build passes, runtime starts).
+2. `/health` returns 200 (or equivalent for non-HTTP services).
+3. ONE happy-path read endpoint returns a valid shape.
 
-Record a fact for any deviation.
+Cross-service fan-out, behavior matrices, end-to-end smoke tests,
+multi-step user flows — these belong in **feature phase**. Do NOT
+exercise every managed service from scaffold; trust scaffold to
+produce a deployable shell, feature to verify behavior.
+
+In scope at scaffold (runtime-required):
+- `initCommands` (migrations, seed bootstrap) must succeed — without
+  them the runtime won't boot.
+- Trust-proxy / SIGTERM-drain / stderr-clean checks if the runtime
+  framework needs them to start cleanly.
+
+Out of scope at scaffold (move to feature):
+- POST/PUT roundtrips against managed services (db CRUD, cache hits,
+  broker publish/consume).
+- Cross-service URL fetches between dev runtimes.
+- Behavior matrices (auth flows, panel-by-panel browser exercises).
+
+Record a fact for any deviation from the runnable-surface contract.
