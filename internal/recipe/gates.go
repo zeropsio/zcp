@@ -354,9 +354,15 @@ func runSurfaceValidatorsForKinds(ctx GateContext, kinds []Surface, bodies map[s
 // on-disk path each fragment-backed codebase surface (IG, KB,
 // CLAUDE.md) renders to. Skips codebases without a SourceRoot —
 // chain-parent codebases or pre-scaffold states — so the validator's
-// disk fall-through still applies for those. zerops.yaml is omitted
-// intentionally: the sub-agent ssh-edits it; no fragment-side
-// stitch-race exists for it (validator falls through to disk).
+// disk fall-through still applies for those.
+//
+// Run-21 R3-1 — the prior comment claimed zerops.yaml is "ssh-edited"
+// and omitted on that basis. That's stale: the codebase-content phase
+// records `codebase/<h>/zerops-yaml` as a whole-yaml fragment and the
+// engine pre-stitches it back to disk via WriteCodebaseYAMLWithComments
+// before gates run. Validator reads the post-stitch on-disk yaml; the
+// in-memory body map only carries fragment-stitched README surfaces
+// (IG/KB/CLAUDE.md), not yaml.
 func collectCodebaseBodies(plan *Plan) (map[string]string, error) {
 	bodies := map[string]string{}
 	if plan == nil {

@@ -8,7 +8,10 @@ is authored by a sibling claudemd-author sub-agent — do NOT touch.
 ## Read order
 
 1. The recorded facts (codebase scope) above this section.
-2. `[hostname]/zerops.yaml` on disk.
+2. `[hostname]/zerops.yaml` on disk — the bare scaffold yaml. This is
+   your starting baseline for the whole-yaml fragment you will author;
+   the fragment you record is the new source of truth (post-R1-A the
+   engine stitches it back to disk before gates run).
 3. `[hostname]/src/**` for code-grounded references.
 4. **Golden excerpts** (inline calibration anchors — do NOT shell
    out to host paths).
