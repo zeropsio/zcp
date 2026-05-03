@@ -4,14 +4,14 @@
 //
 // Verifies whether .git directory survives on the target service (appdev)
 // after deploy with various freshGit/includeGit flag combinations.
-// Uses existing services: zcpx (zcp@1, deploy source) and appdev (php-nginx@8.4, target).
+// Uses existing services: zcp (zcp@1, deploy source) and appdev (php-nginx@8.4, target).
 //
 // This is an observational test — it records .git existence after each deploy
 // scenario to inform tool description and documentation accuracy.
 //
 // Prerequisites:
 //   - ZCP_API_KEY set
-//   - zcli vpn up <project-id> active (SSH access to both zcpx and appdev)
+//   - zcli vpn up <project-id> active (SSH access to both zcp and appdev)
 //
 // Run: go test ./e2e/ -tags e2e -run TestE2E_DeployGitPersistence -v -timeout 600s
 
@@ -50,7 +50,7 @@ func TestE2E_DeployGitPersistence(t *testing.T) {
 	s := newSession(t, h.srv)
 
 	const (
-		sourceHost = "zcpx"
+		sourceHost = "zcp"
 		targetHost = "appdev"
 		deployDir  = "/tmp/gitpersist"
 	)
@@ -83,7 +83,7 @@ func TestE2E_DeployGitPersistence(t *testing.T) {
 	token := h.authInfo.Token
 	t.Logf("Target: %s (ID: %s)", targetHost, targetServiceID)
 
-	// Prepare deploy payload on zcpx via base64-encoded files.
+	// Prepare deploy payload on zcp via base64-encoded files.
 	// Uses bun@1.2 runtime matching the current appdev service type.
 	zeropsYml := fmt.Sprintf(`zerops:
   - setup: %s
@@ -120,7 +120,7 @@ console.log("listening on " + server.port);
 	if err != nil {
 		t.Fatalf("prepare deploy dir on %s: %s (%v)", sourceHost, out, err)
 	}
-	t.Log("Prepared deploy directory on zcpx")
+	t.Log("Prepared deploy directory on zcp")
 
 	// Verify files were written correctly.
 	out, err = sshExec(t, sourceHost, fmt.Sprintf("cat %s/zerops.yml", deployDir))
@@ -134,7 +134,7 @@ console.log("listening on " + server.port);
 		_, _ = sshExec(t, sourceHost, fmt.Sprintf("rm -rf %s", deployDir))
 	})
 
-	// buildDeployCmd constructs the SSH command to run on zcpx for deploying to appdev.
+	// buildDeployCmd constructs the SSH command to run on zcp for deploying to appdev.
 	// Mirrors the logic in ops.buildSSHCommand().
 	buildDeployCmd := func(freshGit, includeGit bool) string {
 		var parts []string
@@ -189,7 +189,7 @@ console.log("listening on " + server.port);
 		return strings.Contains(out, "EXISTS")
 	}
 
-	// checkGitOnSource checks .git existence in the deploy dir on zcpx.
+	// checkGitOnSource checks .git existence in the deploy dir on zcp.
 	checkGitOnSource := func() bool {
 		t.Helper()
 		out, _ := sshExec(t, sourceHost, fmt.Sprintf("test -d %s/.git && echo EXISTS || echo MISSING", deployDir))
@@ -256,7 +256,7 @@ console.log("listening on " + server.port);
 		tgtBefore := checkGitOnTarget()
 		t.Logf("  .git on target (before): %v", tgtBefore)
 
-		// Deploy from zcpx to appdev.
+		// Deploy from zcp to appdev.
 		cmd := buildDeployCmd(sc.freshGit, sc.includeGit)
 		t.Logf("  Deploying (freshGit=%v, includeGit=%v)...", sc.freshGit, sc.includeGit)
 

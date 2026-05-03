@@ -13,11 +13,11 @@
 //   2. The raw diagnostic output is PRESERVED (not discarded)
 //   3. Self-deploy on fresh containers works (the exact scenario that failed 5x)
 //
-// Uses zcpx as the SSH source for cross-service deploys.
+// Uses zcp as the SSH source for cross-service deploys.
 //
 // Prerequisites:
 //   - ZCP_API_KEY set
-//   - SSH access to zcpx (running on Zerops container)
+//   - SSH access to zcp (running on Zerops container)
 //
 // Run: go test ./e2e/ -tags e2e -run TestE2E_Deploy_Error -v -timeout 600s
 
@@ -37,10 +37,10 @@ import (
 // TestE2E_Deploy_ErrorClassification_BadAuth tests that a deploy with invalid
 // auth produces a DIAGNOSTIC error, not a false "zerops.yml not found".
 //
-// Scenario: Write valid zerops.yml + app to zcpx, then deploy with a
+// Scenario: Write valid zerops.yml + app to zcp, then deploy with a
 // deliberately broken zcli auth state on the target service.
 func TestE2E_Deploy_ErrorClassification_SelfDeploy(t *testing.T) {
-	requireSSH(t, "zcpx")
+	requireSSH(t, "zcp")
 	h := newHarness(t)
 	s := newSession(t, h.srv)
 
@@ -53,7 +53,7 @@ func TestE2E_Deploy_ErrorClassification_SelfDeploy(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 		defer cancel()
 		cleanupServices(ctx, h.client, h.projectID, appHostname)
-		_, _ = sshExec(t, "zcpx", fmt.Sprintf("rm -rf %s", deployDir))
+		_, _ = sshExec(t, "zcp", fmt.Sprintf("rm -rf %s", deployDir))
 	})
 
 	step := 0
@@ -86,9 +86,9 @@ func TestE2E_Deploy_ErrorClassification_SelfDeploy(t *testing.T) {
 	logStep(t, step, "waiting for %s to be ready", appHostname)
 	waitForServiceReady(s, appHostname)
 
-	// --- Step 4: Write valid app to zcpx ---
+	// --- Step 4: Write valid app to zcp ---
 	step++
-	logStep(t, step, "writing minimal app to zcpx:%s", deployDir)
+	logStep(t, step, "writing minimal app to zcp:%s", deployDir)
 
 	zeropsYml := fmt.Sprintf(`zerops:
   - setup: %s
@@ -109,13 +109,13 @@ func TestE2E_Deploy_ErrorClassification_SelfDeploy(t *testing.T) {
 http.createServer((req, res) => res.end("ok")).listen(3000);
 `
 
-	writeAppViaSSH(t, "zcpx", deployDir, zeropsYml, serverJS)
+	writeAppViaSSH(t, "zcp", deployDir, zeropsYml, serverJS)
 
-	// --- Step 5: Deploy (cross-service: zcpx → app) --- should succeed ---
+	// --- Step 5: Deploy (cross-service: zcp → app) --- should succeed ---
 	step++
-	logStep(t, step, "zerops_deploy zcpx → %s (should succeed)", appHostname)
+	logStep(t, step, "zerops_deploy zcp → %s (should succeed)", appHostname)
 	deployText := s.mustCallSuccess("zerops_deploy", map[string]any{
-		"sourceService": "zcpx",
+		"sourceService": "zcp",
 		"targetService": appHostname,
 		"workingDir":    deployDir,
 	})
@@ -136,7 +136,7 @@ http.createServer((req, res) => res.end("ok")).listen(3000);
 
 	// --- Step 6: Now write BROKEN zerops.yml (missing setup entry) and deploy again ---
 	step++
-	logStep(t, step, "writing BROKEN zerops.yml (wrong setup hostname) to zcpx")
+	logStep(t, step, "writing BROKEN zerops.yml (wrong setup hostname) to zcp")
 
 	brokenYml := `zerops:
   - setup: wronghostname
@@ -154,7 +154,7 @@ http.createServer((req, res) => res.end("ok")).listen(3000);
 `
 	brokenB64 := base64.StdEncoding.EncodeToString([]byte(brokenYml))
 	writeCmd2 := fmt.Sprintf("echo %s | base64 -d > %s/zerops.yml", brokenB64, deployDir)
-	out, err := sshExec(t, "zcpx", writeCmd2)
+	out, err := sshExec(t, "zcp", writeCmd2)
 	if err != nil {
 		t.Fatalf("write broken zerops.yml: %s (%v)", out, err)
 	}
@@ -163,7 +163,7 @@ http.createServer((req, res) => res.end("ok")).listen(3000);
 	step++
 	logStep(t, step, "zerops_deploy with wrong setup entry (expect build failure)")
 	deployResult2 := s.callTool("zerops_deploy", map[string]any{
-		"sourceService": "zcpx",
+		"sourceService": "zcp",
 		"targetService": appHostname,
 		"workingDir":    deployDir,
 	})

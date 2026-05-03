@@ -1,7 +1,7 @@
 #!/bin/bash
 # Run a functional eval: deploy Bun+PostgreSQL app on Zerops and verify.
 #
-# This runs on zcpx via SSH — Claude creates services, writes code,
+# This runs on zcp via SSH — Claude creates services, writes code,
 # deploys, and runs the 7-point verification protocol.
 #
 # Usage:

@@ -10,10 +10,11 @@
 // transport-error classification): this file pins the post-trigger
 // classifier path through pollDeployBuild → ops.ClassifyDeployFailure.
 //
-// Uses `zcp` as the SSH source (the live container running ZCP on
-// eval-zcp). The legacy build_logs_test.go / deploy_prepare_fail_test.go
-// expect a `zcpx` source which doesn't exist on eval-zcp; this test is
-// designed to run against the canonical CI/dev environment.
+// Uses `zcp` as the SSH source — the live container running ZCP on
+// eval-zcp (project ID `i6HLVWoiQeeLv8tV0ZZ0EQ`, see CLAUDE.local.md).
+// `zcp` is the default ZCP_HOST in the Makefile and the SSH source for
+// every e2e test in this package; override via `ZCP_HOST=<hostname>
+// make e2e-zcp` when targeting a different runtime.
 //
 // Prerequisites:
 //   - ZCP_API_KEY set (extract from .mcp.json on local dev box)

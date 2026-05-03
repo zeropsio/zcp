@@ -4,7 +4,7 @@
 //
 // PREREQUISITE: appdev, db, mydb, cache, storage services exist with code in /var/www.
 //
-// Run on zcpx: /tmp/e2e-test -test.run TestLaravelFullStack -test.v -test.timeout 300s
+// Run on zcp: /tmp/e2e-test -test.run TestLaravelFullStack -test.v -test.timeout 300s
 
 package e2e_test
 

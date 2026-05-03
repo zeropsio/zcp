@@ -6,13 +6,13 @@ Your working directory is `/Users/macbook/Documents/Zerops-MCP/zcp`.
 
 ## Overview
 
-ZCP is an MCP server that helps Claude configure Zerops PaaS infrastructure. Its knowledge base (7 theme files + 31 recipes in `internal/knowledge/`) drives the quality of service configuration. You will test this knowledge by running diverse scenarios on a remote server (`zcpx`), analyzing execution logs for gaps, fixing the knowledge using official Zerops docs as reference, and rebuilding.
+ZCP is an MCP server that helps Claude configure Zerops PaaS infrastructure. Its knowledge base (7 theme files + 31 recipes in `internal/knowledge/`) drives the quality of service configuration. You will test this knowledge by running diverse scenarios on a remote server (`zcp`), analyzing execution logs for gaps, fixing the knowledge using official Zerops docs as reference, and rebuilding.
 
 ## Environment
 
 | Item | Value |
 |------|-------|
-| Remote host | `zcpx` (SSH configured) |
+| Remote host | `zcp` (SSH configured) |
 | Remote binary | `/usr/local/bin/zcp` (`~/.local/bin/zcp` is a symlink) |
 | Remote MCP config | `~/.mcp.json` (server: `zerops`, cmd: `zcp serve`) |
 | Remote Claude | `/home/zerops/.local/bin/claude` |
@@ -44,20 +44,20 @@ python3 eval/scripts/generate.py --task functional-fullstack
 ```bash
 ./eval/scripts/build-deploy.sh
 ```
-This builds `linux-amd64` binary and SCPs it to zcpx with hash verification.
+This builds `linux-amd64` binary and SCPs it to zcp with hash verification.
 
-### 3. Execute Scenario on zcpx
+### 3. Execute Scenario on zcp
 
 Run the scenario via SSH. The output must be written on the remote side first, then SCPed back (streaming over SSH has buffering issues):
 
 ```bash
 # Write scenario prompt to a temp file on remote
-ssh zcpx "cat > /tmp/eval_prompt.txt << 'PROMPT_EOF'
+ssh zcp "cat > /tmp/eval_prompt.txt << 'PROMPT_EOF'
 <SCENARIO_PROMPT>
 PROMPT_EOF"
 
 # Run Claude headless on remote (writes output to file)
-ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=20 zcpx \
+ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=20 zcp \
   'claude --dangerously-skip-permissions \
   -p "$(cat /tmp/eval_prompt.txt)" \
   --model opus \
@@ -67,7 +67,7 @@ ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=20 zcpx \
   --no-session-persistence > /tmp/eval_run.jsonl 2>&1'
 
 # Copy results back
-scp zcpx:/tmp/eval_run.jsonl eval/results/<tag>/run_<N>.jsonl
+scp zcp:/tmp/eval_run.jsonl eval/results/<tag>/run_<N>.jsonl
 ```
 
 **Important notes**:
@@ -85,7 +85,7 @@ Then read BOTH the raw `.jsonl` and parsed `.json` to understand the full pictur
 
 ### 5. Cleanup eval Services
 ```bash
-ssh -o ServerAliveInterval=30 zcpx \
+ssh -o ServerAliveInterval=30 zcp \
   'claude --dangerously-skip-permissions \
   -p "List all services. Then delete every service whose hostname starts with eval. Confirm deletion for each." \
   --model haiku \
@@ -207,7 +207,7 @@ Write `eval/results/<tag>/SUMMARY.md` with:
 - **SSH timeout**: Use `-o ServerAliveInterval=30 -o ServerAliveCountMax=20` on ssh commands
 - **Empty stream-json**: `--verbose` flag is REQUIRED with `--output-format stream-json`
 - **SSH buffering**: Never pipe remote Claude stdout directly over SSH. Always write to file on remote, then scp back.
-- **Claude CLI errors on zcpx**: Claude Code v2.1.42, binary at `/home/zerops/.local/bin/claude`
+- **Claude CLI errors on zcp**: Claude Code v2.1.42, binary at `/home/zerops/.local/bin/claude`
 - **No eval services to clean**: That's fine — cleanup is idempotent
 - **Build fails**: Run `go test ./... -short` first to catch compilation errors
 - **Binary hash mismatch**: Retry scp, check disk space on remote

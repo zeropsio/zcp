@@ -8,7 +8,7 @@
 //
 // Prerequisites:
 //   - ZCP_API_KEY set
-//   - zcli vpn up <project-id> active (SSH access to zcpx)
+//   - zcli vpn up <project-id> active (SSH access to zcp)
 //
 // Run: go test ./e2e/ -tags e2e -run TestE2E_DeployPrepareCommandsFailed -v -timeout 600s
 
@@ -24,7 +24,7 @@ import (
 )
 
 func TestE2E_DeployPrepareCommandsFailed(t *testing.T) {
-	const sourceHost = "zcpx"
+	const sourceHost = "zcp"
 	requireSSH(t, sourceHost)
 	h := newHarness(t)
 	s := newSession(t, h.srv)
@@ -88,7 +88,7 @@ func TestE2E_DeployPrepareCommandsFailed(t *testing.T) {
 	waitForServiceReady(s, appHostname)
 	t.Log("  Service ready")
 
-	// --- Step 4: Write app with broken prepareCommands to zcpx ---
+	// --- Step 4: Write app with broken prepareCommands to zcp ---
 	step++
 	logStep(t, step, "writing app with broken prepareCommands to %s:%s", sourceHost, deployDir)
 
@@ -124,11 +124,11 @@ http.createServer((req, res) => res.end("ok")).listen(3000);
 	if !strings.Contains(out, "nonexistent_prepare_cmd_xyz_12345") {
 		t.Fatalf("broken prepareCommand not found in zerops.yml: %s", out)
 	}
-	t.Log("  App with broken prepareCommands written to zcpx")
+	t.Log("  App with broken prepareCommands written to zcp")
 
 	// --- Step 5: Deploy and measure time ---
 	step++
-	logStep(t, step, "zerops_deploy sourceService=zcpx targetService=%s workingDir=%s", appHostname, deployDir)
+	logStep(t, step, "zerops_deploy sourceService=zcp targetService=%s workingDir=%s", appHostname, deployDir)
 
 	deployStart := time.Now()
 	deployResult := s.callTool("zerops_deploy", map[string]any{

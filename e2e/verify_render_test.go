@@ -7,7 +7,7 @@
 // real browser walk so framework error pages (Laravel Ignition,
 // Symfony, Rails) surface as searchable text — not just "HTTP 500".
 //
-// Run on zcpx (eval-zcp project, agent-browser pre-installed):
+// Run on zcp (eval-zcp project, agent-browser pre-installed):
 //
 //	/tmp/e2e-test -test.run TestVerifyRenderedText -test.v -test.timeout 300s
 //

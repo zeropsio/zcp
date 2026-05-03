@@ -10,7 +10,7 @@
 //
 // Prerequisites:
 //   - ZCP_API_KEY set
-//   - SSH access to zcpx and freshly created services
+//   - SSH access to zcp and freshly created services
 //
 // Run: go test ./e2e/ -tags e2e -run TestE2E_Deploy -v -timeout 900s
 
@@ -60,7 +60,7 @@ server.listen(3000, () => console.log('listening on 3000'));
 // TestE2E_Deploy_SelfDeploy tests the self-deploy pattern:
 // service deploys itself from /var/www after code is written via SSH.
 func TestE2E_Deploy_SelfDeploy(t *testing.T) {
-	requireSSH(t, "zcpx")
+	requireSSH(t, "zcp")
 	h := newHarness(t)
 	s := newSession(t, h.srv)
 
@@ -182,7 +182,7 @@ func TestE2E_Deploy_SelfDeploy(t *testing.T) {
 // TestE2E_Deploy_CrossService tests the cross-service deploy pattern:
 // code on source (dev) is pushed to target (stage).
 func TestE2E_Deploy_CrossService(t *testing.T) {
-	requireSSH(t, "zcpx")
+	requireSSH(t, "zcp")
 	h := newHarness(t)
 	s := newSession(t, h.srv)
 
@@ -196,7 +196,7 @@ func TestE2E_Deploy_CrossService(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 		defer cancel()
 		cleanupServices(ctx, h.client, h.projectID, devHostname, stageHostname)
-		_, _ = sshExec(t, "zcpx", fmt.Sprintf("rm -rf %s", deployDir))
+		_, _ = sshExec(t, "zcp", fmt.Sprintf("rm -rf %s", deployDir))
 	})
 
 	step := 0
@@ -236,18 +236,18 @@ func TestE2E_Deploy_CrossService(t *testing.T) {
 	waitForServiceStatus(s, devHostname, "RUNNING", "ACTIVE")
 	waitForServiceStatus(s, stageHostname, "RUNNING", "ACTIVE")
 
-	// --- Step 4: Write app to zcpx deploy dir (source for cross-deploy) ---
+	// --- Step 4: Write app to zcp deploy dir (source for cross-deploy) ---
 	// zerops.yml setup must match TARGET hostname (stage), not source.
 	step++
-	logStep(t, step, "writing app to zcpx:%s (setup=%s)", deployDir, stageHostname)
-	writeAppViaSSH(t, "zcpx", deployDir, minimalZeropsYml(stageHostname), minimalServerJS)
-	t.Log("  App written to zcpx")
+	logStep(t, step, "writing app to zcp:%s (setup=%s)", deployDir, stageHostname)
+	writeAppViaSSH(t, "zcp", deployDir, minimalZeropsYml(stageHostname), minimalServerJS)
+	t.Log("  App written to zcp")
 
-	// --- Step 5: Cross-deploy: zcpx → stage ---
+	// --- Step 5: Cross-deploy: zcp → stage ---
 	step++
-	logStep(t, step, "zerops_deploy source=zcpx target=%s", stageHostname)
+	logStep(t, step, "zerops_deploy source=zcp target=%s", stageHostname)
 	deployText := s.mustCallSuccess("zerops_deploy", map[string]any{
-		"sourceService": "zcpx",
+		"sourceService": "zcp",
 		"targetService": stageHostname,
 		"workingDir":    deployDir,
 	})

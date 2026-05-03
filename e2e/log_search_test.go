@@ -7,7 +7,7 @@
 //
 // Prerequisites:
 //   - ZCP_API_KEY set
-//   - existing zcpx service in the project
+//   - existing zcp service in the project
 //
 // Run: go test ./e2e/ -tags e2e -run TestE2E_LogSearch -v -timeout 300s
 
@@ -22,7 +22,7 @@ func TestE2E_LogSearch(t *testing.T) {
 	h := newHarness(t)
 	s := newSession(t, h.srv)
 
-	const hostname = "zcpx"
+	const hostname = "zcp"
 
 	tests := []struct {
 		name   string

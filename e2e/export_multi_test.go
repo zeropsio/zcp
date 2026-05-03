@@ -84,7 +84,7 @@ func TestE2E_ExportMulti_RuntimeAndManaged(t *testing.T) {
 	// --- Step 5: Validate export covers all service types ---
 	t.Log("Step 5: Validate export result")
 
-	// Must have at least our 2 services + zcpx.
+	// Must have at least our 2 services + zcp.
 	if len(export.Services) < 3 {
 		t.Errorf("expected at least 3 services, got %d", len(export.Services))
 	}
@@ -145,7 +145,7 @@ func TestE2E_ExportMulti_RuntimeAndManaged(t *testing.T) {
 	if len(managed) == 0 {
 		t.Error("expected at least 1 managed service")
 	}
-	// Runtime count depends on project state (zcpx + our rtHostname).
+	// Runtime count depends on project state (zcp + our rtHostname).
 	if len(runtimes) < 1 {
 		t.Error("expected at least 1 runtime service")
 	}
