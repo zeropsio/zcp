@@ -1045,9 +1045,15 @@ func TestValidate_CodebaseSurface_ReadsSourceRoot(t *testing.T) {
 	}
 }
 
-// TestBrief_Scaffold_IncludesYamlCommentStyle — run-9-readiness §2.H
-// brief-side atom. Scaffold + feature briefs both inject.
-func TestBrief_Scaffold_IncludesYamlCommentStyle(t *testing.T) {
+// TestBrief_Scaffold_OmitsYamlCommentStyle — run-21 R2-1.
+//
+// Pre-fix the scaffold brief embedded `principles/yaml-comment-style.md`
+// (taught what good causal comments look like). That contradicted the
+// scaffold contract enforced by `principles/bare-yaml-prohibition.md`
+// which says scaffold yaml is bare; causal comments land via the
+// codebase-content phase whole-yaml fragment. The atom is loaded only
+// at codebase-content scope now.
+func TestBrief_Scaffold_OmitsYamlCommentStyle(t *testing.T) {
 	t.Parallel()
 
 	plan := syntheticShowcasePlan()
@@ -1055,8 +1061,8 @@ func TestBrief_Scaffold_IncludesYamlCommentStyle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildScaffoldBrief: %v", err)
 	}
-	if !strings.Contains(brief.Body, "YAML comment style") {
-		t.Errorf("scaffold brief missing yaml-comment-style atom header")
+	if strings.Contains(brief.Body, "YAML comment style") {
+		t.Errorf("scaffold brief still embeds yaml-comment-style atom — contradicts bare-yaml-prohibition")
 	}
 }
 

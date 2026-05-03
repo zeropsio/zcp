@@ -194,41 +194,39 @@ func BuildScaffoldBriefWithResolver(plan *Plan, cb Codebase, parent *ParentRecip
 		contract.ZeropsSetupDev, contract.ZeropsSetupProd)
 	parts = append(parts, "role_contract")
 
-	// Run-16 §6.2 — scaffold brief no longer embeds the legacy
-	// `content_authoring.md` atom (15.3 KB; taught the agent to author
-	// IG/KB/CLAUDE.md fragments in-phase). Replaced by the much smaller
-	// `decision_recording.md` (~2 KB) that teaches porter_change +
-	// field_rationale recording. Net brief size: -13 KB. Codebase-content
-	// phase 5 sub-agent reads facts + on-disk artifacts and authors all
-	// surfaces. Legacy atom file stays in place pending tranche 6
-	// (dogfood-conditional deletion).
+	// Run-21 R2-1 — scaffold brief slim. The full `decision_recording.md`
+	// (~14 KB of backend-flavored worked examples) drops in favor of the
+	// schema-only `decision_recording_slim.md` (~1.5 KB); the full schema
+	// description in handlers.go (run-21 R1-B) is the authoritative
+	// reference. `yaml-comment-style.md` drops universally (it taught
+	// what good causal comments look like, which contradicts the
+	// `bare-yaml-prohibition.md` scaffold rule that yaml is bare and
+	// causal comments land via codebase-content fragments). The full
+	// `decision_recording.md` stays on disk (worked-example test still
+	// pins it); the scaffold composer just stops loading it.
 	atoms := []string{
 		"briefs/scaffold/platform_principles.md",
 		"briefs/scaffold/preship_contract.md",
 		"briefs/scaffold/fact_recording.md",
-		"briefs/scaffold/decision_recording.md",
+		"briefs/scaffold/decision_recording_slim.md",
 		"principles/dev-loop.md",
 		"principles/mount-vs-container.md",
-		"principles/yaml-comment-style.md",
 		// Run-20 C2 layer 1 — workspace dual-runtime URL pattern via
 		// project envs. The orphaned-from-zcprecipator3 teaching at
 		// internal/content/workflows/recipe.md:534-561 lifted into a
 		// principle the scaffold brief actually loads. Closes the
 		// run-19 SPA build-time-bake trap that bit appdev/appstage.
 		"principles/cross-service-urls.md",
-		// Run-20 C3 — bare-yaml prohibition. The legacy
-		// content_authoring.md atom was retired in run-16 §6.2 (15.3 KB
-		// vs the 34 KB scaffold cap), but its bare-yaml clause was
-		// load-bearing: run-19 scaffold sub-agents wrote `# causal
-		// comment` lines into zerops.yaml because the active brief no
-		// longer prohibited them, and the imitation pressure from the
-		// embedded yaml-comment-style atom (which teaches what good
-		// comments look like) reinforced the wrong behavior. This
-		// focused principle re-adds only the bare-yaml clause; the
-		// scaffold validator backstops at complete-phase.
+		// Run-20 C3 — bare-yaml prohibition. Re-added the bare-yaml
+		// clause after run-19 scaffold sub-agents wrote `# causal
+		// comment` lines into zerops.yaml; codebase-content phase
+		// authors causal comments later as the whole-yaml fragment.
 		"principles/bare-yaml-prohibition.md",
 	}
-	if anyCodebaseHasInitCommands(plan) {
+	// Run-21 R2-1 (#5) — predicate scoped to THIS codebase. Pre-fix the
+	// init-commands atom leaked into every codebase's brief whenever any
+	// peer authored initCommands.
+	if cb.HasInitCommands {
 		atoms = append(atoms, "principles/init-commands-model.md")
 	}
 	// Run-14 §D.3 (R-13-15) — frontend codebases on a Node base ship a

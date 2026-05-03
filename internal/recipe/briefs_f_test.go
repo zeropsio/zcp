@@ -51,19 +51,29 @@ func TestBrief_Scaffold_TeachesDecisionRecording(t *testing.T) {
 	}
 }
 
-// TestBrief_Scaffold_IncludesInitCommandsModel — when any codebase in
-// the plan declares HasInitCommands, the brief injects the execOnce
-// key-shape concept atom so the sub-agent picks the right key shape.
+// TestBrief_Scaffold_IncludesInitCommandsModel — Run-21 R2-1 (#5).
+//
+// Pre-fix the predicate was `anyCodebaseHasInitCommands(plan)` — leaked
+// the atom into every codebase's brief whenever any peer declared
+// initCommands. Fixed to `cb.HasInitCommands` (per-codebase). This test
+// now asserts:
+//  1. The brief for the codebase that DOES author initCommands carries
+//     the atom.
+//  2. The brief for a SIBLING codebase that does NOT author initCommands
+//     omits the atom — even though a peer in the same plan does.
 func TestBrief_Scaffold_IncludesInitCommandsModel(t *testing.T) {
 	t.Parallel()
 
 	plan := syntheticShowcasePlan()
-	// Mark the API codebase as authoring initCommands.
+	// API authors initCommands; the SPA + worker do not.
 	plan.Codebases[0].HasInitCommands = true
+	for i := 1; i < len(plan.Codebases); i++ {
+		plan.Codebases[i].HasInitCommands = false
+	}
 
-	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
+	apiBrief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
 	if err != nil {
-		t.Fatalf("BuildScaffoldBrief: %v", err)
+		t.Fatalf("BuildScaffoldBrief api: %v", err)
 	}
 	for _, anchor := range []string{
 		"execOnce",
@@ -71,8 +81,26 @@ func TestBrief_Scaffold_IncludesInitCommandsModel(t *testing.T) {
 		"In-script guard",
 		"Decomposition",
 	} {
-		if !strings.Contains(brief.Body, anchor) {
-			t.Errorf("scaffold brief missing init-commands-model anchor %q", anchor)
+		if !strings.Contains(apiBrief.Body, anchor) {
+			t.Errorf("api brief missing init-commands-model anchor %q", anchor)
+		}
+	}
+
+	// Sister codebase (SPA / worker) — must NOT carry the atom body
+	// even though API peer authors initCommands. Anchor `In-script
+	// guard` is unique to the atom body; bare `execOnce` plus the
+	// atom header `execOnce — key shape by lifetime` both appear as
+	// cross-references in cross-service-urls.md and are not load
+	// signals.
+	for i := 1; i < len(plan.Codebases); i++ {
+		sib := plan.Codebases[i]
+		sibBrief, err := BuildScaffoldBrief(plan, sib, nil)
+		if err != nil {
+			t.Fatalf("BuildScaffoldBrief %s: %v", sib.Hostname, err)
+		}
+		if strings.Contains(sibBrief.Body, "In-script guard") ||
+			strings.Contains(sibBrief.Body, "Three key shapes, three lifetimes") {
+			t.Errorf("init-commands-model leaked into sibling %q brief (cb.HasInitCommands=false but peer api has it)", sib.Hostname)
 		}
 	}
 }
@@ -205,6 +233,35 @@ func TestBrief_Scaffold_UnderCap_WithDevLoop(t *testing.T) {
 	}
 	if brief.Bytes > ScaffoldBriefCap {
 		t.Errorf("scaffold brief %d bytes exceeds cap %d", brief.Bytes, ScaffoldBriefCap)
+	}
+}
+
+// TestBrief_Scaffold_FrontendSPA_UnderTargetSize — Run-21 R2-1.
+//
+// Frontend-SPA scaffold brief should drop from the pre-R2-1 ~49 KB
+// down to ~32 KB after the slim-down (full decision_recording.md
+// → slim variant; yaml-comment-style.md drop). 35 KB is the soft
+// target; the hard upper bound is ScaffoldBriefCap (48 KB).
+func TestBrief_Scaffold_FrontendSPA_UnderTargetSize(t *testing.T) {
+	t.Parallel()
+
+	const targetCap = 35 * 1024
+	plan := syntheticShowcasePlan()
+	// app is the RoleFrontend codebase (largest scaffold brief shape —
+	// adds tier-fact table + build-tool-host-allowlist + spa-static).
+	var spa Codebase
+	for _, cb := range plan.Codebases {
+		if cb.Role == RoleFrontend {
+			spa = cb
+			break
+		}
+	}
+	brief, err := BuildScaffoldBrief(plan, spa, nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	if brief.Bytes > targetCap {
+		t.Errorf("frontend SPA scaffold brief %d bytes exceeds R2-1 target %d (post-slim ceiling)", brief.Bytes, targetCap)
 	}
 }
 
