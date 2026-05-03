@@ -10,16 +10,54 @@ is authored by a sibling claudemd-author sub-agent — do NOT touch.
 1. The recorded facts (codebase scope) above this section.
 2. `[hostname]/zerops.yaml` on disk.
 3. `[hostname]/src/**` for code-grounded references.
-4. **The goldens** (mandatory before authoring yaml-comment fragments
-   or IG bodies):
-   - `Read /Users/fxck/www/laravel-showcase-app/zerops.yaml` — the
-     density floor. Notice the per-directive multi-line wrapped
-     comments, the friendly authority voice, the porter-adapt
-     invitations.
-   - `Read /Users/fxck/www/laravel-jetstream-app/zerops.yaml` — the
-     voice floor. Notice the inline doc URLs (real, not
-     `<placeholder>`), the `> [!CAUTION]` callouts, the honest
-     `# FIXME` markers.
+4. **Golden excerpts** (inline calibration anchors — do NOT shell
+   out to host paths).
+
+   *Density floor* — comment block per non-trivial directive,
+   rationale-above-field (laravel-showcase build):
+
+   ```yaml
+   build:
+     # Multi-base: PHP for Composer, Node for Vite. Both runtimes
+     # are on PATH during the build — no manual install needed.
+     base: [php@8.4, nodejs@22]
+     buildCommands:
+       # Production install — no dev packages, classmap optimized.
+       - composer install --no-dev --optimize-autoloader
+       # Vite compiles Tailwind + JS into content-hashed bundles
+       # in public/build/ — all the runtime needs from Node.
+       - npm install
+       - npm run build
+     deployFiles:
+       # Explicit list — deploying ./ would ship node_modules and
+       # other build-only artifacts the runtime doesn't need.
+       - app
+       - public
+       - vendor
+     # Cache deps so re-runs skip network.
+     cache: [vendor, node_modules]
+   ```
+
+   *Voice floor* — declarative fact + adapt invitation + porter
+   signal; inline rationale, no doc-URL punt (laravel-jetstream env):
+
+   ```yaml
+   envVariables:
+     # Laravel checks the 'Host' header against this value. Feel
+     # free to change to your own custom domain after setting up
+     # the domain access.
+     APP_URL: ${zeropsSubdomain}
+     # Zerops' S3-like storage uses path-style endpoints; required
+     # by most AWS S3 libraries.
+     AWS_USE_PATH_STYLE_ENDPOINT: true
+     # Use real SMTP in production. Default expects 'mailpit'
+     # deployed alongside; port 25 is restricted.
+     MAIL_HOST: mailpit
+     MAIL_MAILER: smtp
+   ```
+
+   Match the excerpts' density and voice. SSH-edited yaml diverged
+   from the fragment needs a fresh `record-fragment` to revalidate.
 5. (If parent != nil) the parent recipe's published surfaces — cross-
    reference instead of re-author when the parent already covers a
    topic.
