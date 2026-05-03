@@ -774,7 +774,7 @@ Both environments follow the same flows but with different mechanisms.
 
 ```
 ┌─────────────────────────────────────┐
-│  zcpx container (ZCP service)       │
+│  zcp container (ZCP service)        │
 │                                     │
 │  SSHFS mounts:                      │
 │    /var/www/appdev/  ──────────┐    │

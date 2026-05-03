@@ -28,7 +28,7 @@ ZCP does NOT:
 // workflow/environment.go
 type Environment string
 const (
-    EnvContainer Environment = "container"  // zcpx on Zerops
+    EnvContainer Environment = "container"  // zcp on Zerops
     EnvLocal     Environment = "local"      // user's machine
 )
 func DetectEnvironment(rt runtime.Info) Environment

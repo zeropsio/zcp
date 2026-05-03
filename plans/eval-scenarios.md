@@ -159,7 +159,7 @@ services:
 ### 3.2 `internal/eval/seed.go` (~120 LOC)
 - `seedEmpty(ctx, client, projectID)` — aliases `CleanupProject`
 - `seedImported(ctx, client, projectID, fixtureYAML)` — cleanup + `client.ImportProject(yaml)` + `pollUntilActive(services)`
-- `seedDeployed(ctx, client, projectID, recipeName)` — imported + invoke `zcli push` over SSH na zcpx
+- `seedDeployed(ctx, client, projectID, recipeName)` — imported + invoke `zcli push` over SSH na zcp
 - Všechny idempotentní (každá volá cleanup jako první).
 
 ### 3.3 `cmd/zcp/eval.go` (+40 LOC)
@@ -199,7 +199,7 @@ Pro každý scénář (1 → 5):
    - Root-cause hypotéza (code path, atom, template)
    - Navrhovaný fix (konkrétní soubor + změna)
 5. **User**: schvaluje fix, upravuje scénář, nebo odkládá
-6. **Apply fix**: code change + unit/integration test (RED-GREEN) + rebuild linux binárky + scp na zcpx
+6. **Apply fix**: code change + unit/integration test (RED-GREEN) + rebuild linux binárky + scp na zcp
 7. **Re-run scénář** → musí PASS před postupem na scénář N+1
 
 **Pravidlo**: nepřeskakuju na scénář N+1, dokud N nepasuje. Zabraňuje stohování nesouvisejících fixů.
