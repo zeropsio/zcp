@@ -215,8 +215,9 @@ func agentDiscover(t *testing.T, session *mcp.ClientSession) {
 		"plan": []map[string]any{
 			{
 				"runtime": map[string]any{
-					"devHostname": "bundev",
-					"type":        "bun@1",
+					"devHostname":   "bundev",
+					"type":          "bun@1",
+					"bootstrapMode": "dev",
 				},
 				"dependencies": []map[string]any{
 					{"hostname": "bunstage", "type": "bun@1", "mode": "NON_HA", "resolution": "CREATE"},

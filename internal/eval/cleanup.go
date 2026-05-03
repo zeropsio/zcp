@@ -71,20 +71,17 @@ func CleanupEvalServices(ctx context.Context, client platform.Client, projectID,
 //  3. Reset workflow state
 //
 // This is the deterministic equivalent of the zcp /cleanup slash command,
-// saving tokens by not requiring an LLM agent.
+// saving tokens by not requiring an LLM agent. Cleanup is dynamic by design:
+// the list is fetched fresh and ANY non-system, non-zcp service is deleted,
+// regardless of name. Stale ServiceMeta entries from prior runs naming
+// services that no longer exist are tolerated.
 func CleanupProject(ctx context.Context, client platform.Client, projectID, workDir string) error {
-	// 1. Delete all non-protected services
-	services, err := ops.ListProjectServices(ctx, client, projectID)
+	// 1. Delete all non-protected services. The list is the live truth — we
+	// never carry hostnames across runs. deleteServices tolerates services
+	// that vanish between list and delete (scenario races, retries).
+	toDelete, err := listDeletableServices(ctx, client, projectID)
 	if err != nil {
 		return fmt.Errorf("cleanup list services: %w", err)
-	}
-
-	var toDelete []platform.ServiceStack
-	for _, svc := range services {
-		if svc.IsSystem() || svc.Name == ProtectedService {
-			continue
-		}
-		toDelete = append(toDelete, svc)
 	}
 
 	if len(toDelete) > 0 {
@@ -181,12 +178,39 @@ func unmountStaleEntries(ctx context.Context, dir string) {
 	}
 }
 
+// listDeletableServices returns the live set of services in the project that
+// cleanup should delete: every non-system service whose hostname is not the
+// protected zcp control-plane container. Centralising the predicate lets
+// callers re-list immediately before delete (race defense) without
+// duplicating the filter.
+func listDeletableServices(ctx context.Context, client platform.Client, projectID string) ([]platform.ServiceStack, error) {
+	services, err := ops.ListProjectServices(ctx, client, projectID)
+	if err != nil {
+		return nil, err
+	}
+	var out []platform.ServiceStack
+	for _, svc := range services {
+		if svc.IsSystem() || svc.Name == ProtectedService {
+			continue
+		}
+		out = append(out, svc)
+	}
+	return out, nil
+}
+
 // deleteServices deletes a list of services and polls each to completion.
+// Already-deleted services are tolerated: the API may report "not found" via
+// any of three paths (404 → ErrServiceNotFound, errCode like serviceNotFound /
+// serviceStackNotFound on a non-404 status, or just the message text). All
+// three are treated as benign skips because cleanup runs in environments
+// where services can disappear between list and delete (concurrent scenarios,
+// retried evals, manual mid-run cleanup). Any other error aborts the
+// cleanup.
 func deleteServices(ctx context.Context, client platform.Client, services []platform.ServiceStack) error {
 	for _, svc := range services {
 		proc, err := client.DeleteService(ctx, svc.ID)
 		if err != nil {
-			if isPlatformErrorCode(err, platform.ErrServiceNotFound) {
+			if isServiceAlreadyGone(err) {
 				fmt.Fprintf(os.Stderr, "  service %q already gone; skipping\n", svc.Name)
 				continue
 			}
@@ -199,6 +223,25 @@ func deleteServices(ctx context.Context, client platform.Client, services []plat
 		}
 	}
 	return nil
+}
+
+// isServiceAlreadyGone reports whether err means "the service we tried to
+// delete doesn't exist anymore" — true regardless of which channel the API
+// used to convey it. Substring fallback on the message is intentional: the
+// platform error mapper may not always classify non-404 paths as
+// ErrServiceNotFound.
+func isServiceAlreadyGone(err error) bool {
+	if isPlatformErrorCode(err, platform.ErrServiceNotFound) {
+		return true
+	}
+	var pe *platform.PlatformError
+	if errors.As(err, &pe) {
+		apiCode := strings.ToLower(pe.APICode)
+		if strings.Contains(apiCode, "notfound") {
+			return true
+		}
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "not found")
 }
 
 func isPlatformErrorCode(err error, code string) bool {

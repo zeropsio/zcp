@@ -3,6 +3,7 @@ id: develop-checklist-simple-mode
 priority: 3
 phases: [develop-active]
 modes: [simple]
+runtimes: [dynamic, implicit-webserver]
 environments: [container]
 title: "Simple-mode checklist extras"
 ---

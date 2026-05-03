@@ -14,7 +14,7 @@ func TestAppendReflogEntry_NewFile(t *testing.T) {
 
 	targets := []BootstrapTarget{
 		{
-			Runtime:      RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"},
+			Runtime:      RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"},
 			Dependencies: []Dependency{{Hostname: "db", Type: "postgresql@16"}},
 		},
 	}
@@ -61,7 +61,7 @@ func TestAppendReflogEntry_ExistingFile_Appends(t *testing.T) {
 	}
 
 	targets := []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "appstage"}},
 	}
 
 	err := AppendReflogEntry(path, "Test append", targets, "sess456", "2026-03-04")
@@ -88,8 +88,8 @@ func TestAppendReflogEntry_MultipleEntries(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "CLAUDE.md")
 
-	t1 := []BootstrapTarget{{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}}}
-	t2 := []BootstrapTarget{{Runtime: RuntimeTarget{DevHostname: "apidev", Type: "go@1"}}}
+	t1 := []BootstrapTarget{{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "appstage"}}}
+	t2 := []BootstrapTarget{{Runtime: RuntimeTarget{DevHostname: "apidev", Type: "go@1", BootstrapMode: "standard", ExplicitStage: "apistage"}}}
 
 	if err := AppendReflogEntry(path, "First bootstrap", t1, "sess1", "2026-03-01"); err != nil {
 		t.Fatalf("first entry: %v", err)
@@ -147,7 +147,7 @@ func TestAppendReflogEntry_SanitizesNewlinesAndHeaders(t *testing.T) {
 	path := filepath.Join(dir, "CLAUDE.md")
 
 	targets := []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}},
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"}},
 	}
 
 	maliciousIntent := "Normal intent\n# Injected\nmalicious content"
@@ -184,7 +184,7 @@ func TestAppendReflogEntry_PreservesHashInIntent(t *testing.T) {
 	path := filepath.Join(dir, "CLAUDE.md")
 
 	targets := []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "dotnet@9"}},
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "dotnet@9", BootstrapMode: "standard", ExplicitStage: "appstage"}},
 	}
 
 	err := AppendReflogEntry(path, "Add C# service", targets, "sess-hash", "2026-03-17")
@@ -210,11 +210,11 @@ func TestAppendReflogEntry_MultiTarget(t *testing.T) {
 
 	targets := []BootstrapTarget{
 		{
-			Runtime:      RuntimeTarget{DevHostname: "webdev", Type: "php-nginx@8.4"},
+			Runtime:      RuntimeTarget{DevHostname: "webdev", Type: "php-nginx@8.4", BootstrapMode: "standard", ExplicitStage: "webstage"},
 			Dependencies: []Dependency{{Hostname: "db", Type: "postgresql@16"}},
 		},
 		{
-			Runtime:      RuntimeTarget{DevHostname: "apidev", Type: "nodejs@22"},
+			Runtime:      RuntimeTarget{DevHostname: "apidev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "apistage"},
 			Dependencies: []Dependency{{Hostname: "db", Type: "postgresql@16"}, {Hostname: "cache", Type: "valkey@7.2"}},
 		},
 	}

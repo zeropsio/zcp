@@ -1,6 +1,6 @@
 ---
 id: develop/first-deploy-recipe-implicit-standard
-atomIds: [develop-first-deploy-intro, develop-api-error-meta, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-first-deploy-env-vars, develop-first-deploy-scaffold-yaml, develop-http-diagnostic, develop-implicit-webserver, develop-platform-rules-common, develop-deploy-files-self-deploy, develop-first-deploy-write-app, develop-knowledge-pointers, develop-auto-close-semantics, develop-first-deploy-execute, develop-verify-matrix, develop-first-deploy-asset-pipeline-container, develop-first-deploy-promote-stage, develop-first-deploy-verify, develop-platform-rules-container, develop-strategy-awareness]
+atomIds: [develop-first-deploy-intro, develop-api-error-meta, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-first-deploy-env-vars, develop-first-deploy-scaffold-yaml, develop-http-diagnostic, develop-implicit-webserver, develop-platform-rules-common, develop-deploy-files-self-deploy, develop-first-deploy-write-app, develop-knowledge-pointers, develop-auto-close-semantics, develop-first-deploy-execute, develop-verify-matrix, develop-first-deploy-asset-pipeline-container, develop-first-deploy-promote-stage, develop-first-deploy-verify, develop-strategy-awareness]
 description: "develop-active, mode=standard pair, php-nginx implicit-webserver runtime + db, never-deployed; bootstrap arrived via recipe route."
 ---
 ### You're in the develop first-deploy branch
@@ -573,37 +573,6 @@ Run for each runtime that hasn't been deployed:
 zerops_verify serviceHostname="appdev"
 zerops_verify serviceHostname="appstage"
 ```
-
----
-
-### Platform rules — container additions
-
-Mount basics in `claude_container.md` (boot shim). Container-only
-cautions on top:
-
-- **Mount caveats.** Mount is the build source for each new container.
-  Never `ssh <hostname> cat/ls/tail …` for mount files — SSH adds
-  shell-escape bugs (nested quotes in `sed`/`awk` break). One-shot
-  SSH is for runtime CLIs only.
-- **Long-running dev processes → `zerops_dev_server`.** Don't
-  hand-roll `ssh <hostname> "cmd &"` — backgrounded SSH holds the
-  channel until the 120 s bash timeout. The dev-server response
-  carries `running`, `healthStatus`, `startMillis`, and on failure
-  a `reason` code — read it before another call.
-- **One-shot commands over SSH.** Framework CLIs, git ops,
-  `curl localhost` exit quickly — no channel-lifetime concern:
-
-  ```
-  ssh <hostname> "cd /var/www && npm install"
-  ssh <hostname> "cd /var/www && php artisan migrate"
-  ssh <hostname> "curl -s http://localhost:{port}/api/health"
-  ```
-
-- **Mount recovery.** If the SSHFS mount goes stale after a deploy
-  (stat/ls returns empty, writes hang), remount: `zerops_mount action="mount"`.
-- **Agent Browser** — `agent-browser.dev` is available on the ZCP host
-  for browser-backed verify checks (`zerops_verify` selects the right
-  route per service shape).
 
 ---
 

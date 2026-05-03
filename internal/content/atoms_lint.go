@@ -142,11 +142,59 @@ func lintAtomCorpus(atoms []AtomFile) []AtomLintViolation {
 		out = append(out, axisOViolations(ctx)...)
 		out = append(out, axisRViolations(ctx, atomIDs)...)
 		out = append(out, axisHotShellViolations(ctx)...)
+		out = append(out, axisRuntimeViolations(ctx)...)
 		out = append(out, closeDeployModeViolations(ctx)...)
 		out = append(out, gitPushStateViolations(ctx)...)
 		out = append(out, buildIntegrationViolations(ctx)...)
 		out = append(out, staleActionViolations(ctx)...)
 		out = append(out, staleStrategyViolations(ctx)...)
+	}
+	return out
+}
+
+// runtimeMechanicTokens matches body content that describes runtime
+// mechanics — start commands, dev-server orchestration, health checks,
+// or runtime-class-specific noop primitives. Develop-active atoms that
+// emit any of these tokens but lack a `runtimes:` axis fire for ALL
+// runtime classes (dynamic, implicit-webserver, static), polluting the
+// develop-step response for runtimes the guidance doesn't apply to.
+//
+// Codex's exact predicate (flow-eval suite 20260503-144814 review): scan
+// the body INCLUDING code fences (command blocks are the highest-risk
+// surface). The lint pins the corpus against future drift.
+//
+//nolint:gochecknoglobals // value-only regex, immutable after init.
+var runtimeMechanicTokens = regexp.MustCompile(`\brun\.start\b|\brun\.ports\b|\bhealthCheck\b|\bzsc\s+noop\b|\bzerops_dev_server\b`)
+
+// axisRuntimeViolations enforces: every develop-active atom that mentions
+// runtime-mechanic tokens MUST declare a `runtimes:` axis. Universal
+// atoms (workflow state, error meta, deploy strategy, close-mode taxonomy)
+// don't trip the regex and remain wildcard-targeted.
+func axisRuntimeViolations(ctx atomLintCtx) []AtomLintViolation {
+	phases := ctx.frontmatter["phases"]
+	if !strings.Contains(phases, "develop-active") {
+		return nil
+	}
+	runtimes := strings.TrimSpace(ctx.frontmatter["runtimes"])
+	// Treat empty / `[]` / unset as "no axis" — both forms are wildcard.
+	if runtimes != "" && runtimes != "[]" {
+		return nil
+	}
+	var out []AtomLintViolation
+	for i, line := range ctx.bodyLines {
+		// Body INCLUDING code fences: command blocks are the highest-risk
+		// surface (Codex explicit on this).
+		loc := runtimeMechanicTokens.FindStringIndex(line)
+		if loc == nil {
+			continue
+		}
+		out = append(out, AtomLintViolation{
+			AtomFile: ctx.file,
+			Category: "axis-runtime",
+			Pattern:  "develop-active-runtime-token-no-axis:" + strings.TrimSpace(line[loc[0]:loc[1]]),
+			Line:     ctx.frontmatterLines + i + 1,
+			Snippet:  strings.TrimSpace(line),
+		})
 	}
 	return out
 }

@@ -2,6 +2,7 @@
 id: develop-first-deploy-write-app
 priority: 3
 phases: [develop-active]
+runtimes: [dynamic, implicit-webserver]
 environments: [container]
 envelopeDeployStates: [never-deployed]
 title: "Write the application code"

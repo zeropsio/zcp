@@ -240,7 +240,7 @@ func TestEngine_HostnameLock_BlocksSameService(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 	_, err := eng1.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"},
 	}}, nil, nil)
 	if err != nil {
 		t.Fatalf("CompletePlan: %v", err)
@@ -256,7 +256,7 @@ func TestEngine_HostnameLock_BlocksSameService(t *testing.T) {
 		t.Fatalf("second BootstrapStart: %v", err)
 	}
 	_, err = eng2.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"},
 	}}, nil, nil)
 	if err == nil {
 		t.Fatal("expected error: same hostname locked by first session")
@@ -276,7 +276,7 @@ func TestEngine_HostnameLock_AllowsDifferentService(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 	if _, err := eng1.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"},
 	}}, nil, nil); err != nil {
 		t.Fatalf("CompletePlan: %v", err)
 	}
@@ -290,7 +290,7 @@ func TestEngine_HostnameLock_AllowsDifferentService(t *testing.T) {
 		t.Fatalf("second BootstrapStart: %v", err)
 	}
 	_, err := eng2.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "webdev", Type: "nodejs@22", ExplicitStage: "webstage"},
+		Runtime: RuntimeTarget{DevHostname: "webdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "webstage"},
 	}}, nil, nil)
 	if err != nil {
 		t.Fatalf("different hostname should not be blocked: %v", err)
@@ -553,7 +553,7 @@ func TestEngine_BootstrapComplete_FullSequence(t *testing.T) {
 
 	// Complete discover with plan
 	resp, err := eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"},
 	}}, nil, nil)
 	if err != nil {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
@@ -597,7 +597,7 @@ func TestEngine_BootstrapComplete_AdoptionFastPath(t *testing.T) {
 
 	// Submit plan with all targets isExisting=true, all deps EXISTS.
 	_, err := eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: true, ExplicitStage: "appstage"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", IsExisting: true, ExplicitStage: "appstage"},
 		Dependencies: []Dependency{
 			{Hostname: "db", Type: "postgresql@16", Resolution: "EXISTS"},
 		},
@@ -665,8 +665,8 @@ func TestEngine_BootstrapComplete_AdoptionFastPath_MixedPlan_NoSkip(t *testing.T
 
 	// Mixed plan: one existing, one new — should NOT fast-path.
 	_, err := eng.BootstrapCompletePlan([]BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", IsExisting: true, ExplicitStage: "appstage"}},
-		{Runtime: RuntimeTarget{DevHostname: "apidev", Type: "nodejs@22", IsExisting: false, ExplicitStage: "apistage"}},
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", IsExisting: true, ExplicitStage: "appstage"}},
+		{Runtime: RuntimeTarget{DevHostname: "apidev", Type: "nodejs@22", BootstrapMode: "standard", IsExisting: false, ExplicitStage: "apistage"}},
 	}, nil, nil)
 	if err != nil {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
@@ -842,7 +842,7 @@ func TestEngine_BootstrapCompletePlan_Valid(t *testing.T) {
 
 	plan := []BootstrapTarget{
 		{
-			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", ExplicitStage: "appstage"},
+			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "appstage"},
 			Dependencies: []Dependency{
 				{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
 			},
@@ -1069,7 +1069,7 @@ func TestEngine_BootstrapCompletePlan_WrongStep(t *testing.T) {
 	}
 
 	plan := []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", ExplicitStage: "appstage"}},
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "appstage"}},
 	}
 	_, err := eng.BootstrapCompletePlan(plan, nil, nil)
 	if err == nil {
@@ -1548,7 +1548,7 @@ func TestEngine_BootstrapComplete_DeletesSessionFile(t *testing.T) {
 
 	// Complete discover with a plan.
 	if _, err := eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"},
 	}}, nil, nil); err != nil {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}
@@ -1650,7 +1650,7 @@ func TestEngine_BootstrapComplete_CleanupWarningInResponse(t *testing.T) {
 
 	// Complete discover with a plan.
 	if _, err := eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"},
 	}}, nil, nil); err != nil {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}

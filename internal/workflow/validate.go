@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -22,11 +23,15 @@ const (
 	ResolutionShared = "SHARED"
 )
 
-// validBootstrapModes is the set of valid BootstrapMode values (including empty for default).
+// validBootstrapModes is the set of valid BootstrapMode values. Empty is NOT
+// valid: bootstrapMode is required on every runtime target. The earlier
+// empty→standard default trapped agents who omitted mode for a single dev
+// container — they hit "standard mode requires explicit stageHostname" with
+// no link to the actual cause (missing mode).
 //
 //nolint:gochecknoglobals // enum-set table; value-only, not mutated.
 var validBootstrapModes = map[topology.Mode]bool{
-	"": true, topology.PlanModeStandard: true, topology.PlanModeDev: true, topology.PlanModeSimple: true,
+	topology.PlanModeStandard: true, topology.PlanModeDev: true, topology.PlanModeSimple: true,
 }
 
 // BootstrapTarget represents one runtime service and its dependencies in the bootstrap plan.
@@ -35,20 +40,61 @@ type BootstrapTarget struct {
 	Dependencies []Dependency  `json:"dependencies,omitempty"`
 }
 
+// flattenedRuntimeFields are RuntimeTarget keys that agents reflexively place
+// at the top level of a plan target. json.Unmarshal silently drops unknown
+// keys, so a flatten goes undetected and the agent later sees a confusing
+// mode/stage error. UnmarshalJSON catches them at parse time with an
+// actionable diagnostic.
+//
+//nolint:gochecknoglobals // value-only enum table.
+var flattenedRuntimeFields = []string{"bootstrapMode", "stageHostname", "devHostname", "type", "isExisting"}
+
+// UnmarshalJSON hard-rejects flattened RuntimeTarget fields at the top level
+// of a plan target. The actionable diagnostic tells the agent the exact
+// nesting required, so they don't waste a turn investigating a downstream
+// validator complaint about a field that was silently discarded upstream.
+// All flattened fields are reported in one error so the agent can fix the
+// shape in one round-trip.
+func (t *BootstrapTarget) UnmarshalJSON(data []byte) error {
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return err
+	}
+	var leaked []string
+	for _, key := range flattenedRuntimeFields {
+		if _, ok := probe[key]; ok {
+			leaked = append(leaked, key)
+		}
+	}
+	if len(leaked) > 0 {
+		quoted := make([]string, len(leaked))
+		for i, k := range leaked {
+			quoted[i] = fmt.Sprintf("%q", k)
+		}
+		return fmt.Errorf(`plan target: [%s] must nest inside runtime, e.g. {"runtime":{%q:...}}`, strings.Join(quoted, ", "), leaked[0])
+	}
+	type alias BootstrapTarget
+	var a alias
+	if err := json.Unmarshal(data, &a); err != nil {
+		return err
+	}
+	*t = BootstrapTarget(a)
+	return nil
+}
+
 // RuntimeTarget describes a runtime service to bootstrap.
 type RuntimeTarget struct {
 	DevHostname   string        `json:"devHostname"`
 	Type          string        `json:"type"`
 	IsExisting    bool          `json:"isExisting,omitempty"`
-	BootstrapMode topology.Mode `json:"bootstrapMode,omitempty"` // standard, dev, or simple
-	ExplicitStage string        `json:"stageHostname,omitempty"` // explicit stage hostname override for standard mode
+	BootstrapMode topology.Mode `json:"bootstrapMode"`           // required: standard, dev, or simple
+	ExplicitStage string        `json:"stageHostname,omitempty"` // explicit stage hostname for standard mode
 }
 
-// EffectiveMode returns the bootstrap mode, defaulting to standard if empty.
+// EffectiveMode returns the bootstrap mode. Empty is no longer mapped to
+// standard — it indicates a missing required field caught by
+// ValidateBootstrapTargets.
 func (r RuntimeTarget) EffectiveMode() topology.Mode {
-	if r.BootstrapMode == "" {
-		return topology.PlanModeStandard
-	}
 	return r.BootstrapMode
 }
 
@@ -185,7 +231,11 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 			continue
 		}
 
-		// Validate bootstrap mode.
+		// Validate bootstrap mode (required, no default).
+		if rt.BootstrapMode == "" {
+			errs = append(errs, fmt.Sprintf("target %q: runtime.bootstrapMode is required: dev, simple, or standard", rt.DevHostname))
+			continue
+		}
 		if !validBootstrapModes[rt.BootstrapMode] {
 			errs = append(errs, fmt.Sprintf("target %q: invalid bootstrapMode %q (must be standard, dev, or simple)", rt.DevHostname, rt.BootstrapMode))
 			continue
@@ -203,12 +253,14 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 
 		// Standard-mode targets must carry an explicit stageHostname.
 		// Hostnames are arbitrary strings; ZCP refuses to guess a stage
-		// pair from dev-hostname structure.
+		// pair from dev-hostname structure. The error hints at the dev-mode
+		// alternative since "I want a single dev container" is the most
+		// common reason an agent omits stage and hits this check.
 		var stageHostname string
 		if rt.EffectiveMode() == topology.PlanModeStandard {
 			stageHostname = rt.StageHostname()
 			if stageHostname == "" {
-				errs = append(errs, fmt.Sprintf("target %q: standard mode requires explicit stageHostname", rt.DevHostname))
+				errs = append(errs, fmt.Sprintf(`target %q: standard mode requires explicit stageHostname; for a single mutable dev container use bootstrapMode="dev"`, rt.DevHostname))
 				continue
 			}
 			if err := ValidatePlanHostname(stageHostname); err != nil {

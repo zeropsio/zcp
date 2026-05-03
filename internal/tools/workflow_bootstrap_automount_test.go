@@ -90,8 +90,8 @@ func TestAutoMountTargets_CallsInitServiceGit(t *testing.T) {
 	dir := t.TempDir()
 	eng := workflow.NewEngine(dir, workflow.EnvContainer, nil)
 	seedBootstrapPlan(t, eng, []workflow.BootstrapTarget{
-		{Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"}},
-		{Runtime: workflow.RuntimeTarget{DevHostname: "workerdev", Type: "nodejs@22", ExplicitStage: "workerstage"}},
+		{Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"}},
+		{Runtime: workflow.RuntimeTarget{DevHostname: "workerdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "workerstage"}},
 	})
 
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
@@ -148,8 +148,8 @@ func TestAutoMountTargets_SkipsInitOnMountFailure(t *testing.T) {
 	dir := t.TempDir()
 	eng := workflow.NewEngine(dir, workflow.EnvContainer, nil)
 	seedBootstrapPlan(t, eng, []workflow.BootstrapTarget{
-		{Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"}},
-		{Runtime: workflow.RuntimeTarget{DevHostname: "workerdev", Type: "nodejs@22", ExplicitStage: "workerstage"}},
+		{Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"}},
+		{Runtime: workflow.RuntimeTarget{DevHostname: "workerdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "workerstage"}},
 	})
 
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
@@ -181,7 +181,7 @@ func TestAutoMountTargets_NilSSHDeployer(t *testing.T) {
 	dir := t.TempDir()
 	eng := workflow.NewEngine(dir, workflow.EnvContainer, nil)
 	seedBootstrapPlan(t, eng, []workflow.BootstrapTarget{
-		{Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"}},
+		{Runtime: workflow.RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"}},
 	})
 
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{

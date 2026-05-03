@@ -2,6 +2,7 @@
 id: develop-platform-rules-container
 priority: 5
 phases: [develop-active]
+runtimes: [dynamic]
 environments: [container]
 title: "Platform rules"
 references-fields: [ops.DevServerResult.Running, ops.DevServerResult.HealthStatus, ops.DevServerResult.StartMillis, ops.DevServerResult.Reason, ops.DevServerResult.LogTail]

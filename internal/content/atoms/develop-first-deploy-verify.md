@@ -3,6 +3,7 @@ id: develop-first-deploy-verify
 priority: 5
 phases: [develop-active]
 deployStates: [never-deployed]
+runtimes: [dynamic, implicit-webserver]
 multiService: aggregate
 title: "First deploy — verify rules"
 references-fields: [ops.VerifyResult.Status, ops.VerifyResult.Checks, ops.CheckResult.Status, ops.CheckResult.Detail]

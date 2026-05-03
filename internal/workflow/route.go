@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 	"gopkg.in/yaml.v3"
 )
@@ -123,6 +124,7 @@ func BuildBootstrapRouteOptions(
 	existing []platform.ServiceStack,
 	metas []*ServiceMeta,
 	recipes RecipeCorpus,
+	self runtime.Info,
 ) ([]BootstrapRouteOption, error) {
 	var options []BootstrapRouteOption
 
@@ -131,10 +133,15 @@ func BuildBootstrapRouteOptions(
 		options = append(options, opt)
 	}
 
-	if opt, ok := adoptOption(existing, metas); ok {
+	if opt, ok := adoptOption(existing, metas, self); ok {
 		options = append(options, opt)
 	}
 
+	intentDeps := ExtractIntentDependencies(intent)
+
+	// Recipe candidates split into "kept" (rank above classic) and "demoted"
+	// (rank below classic). Drops disappear from the response entirely.
+	var keptRecipes, demotedRecipes []BootstrapRouteOption
 	if strings.TrimSpace(intent) != "" && recipes != nil {
 		matches, err := recipes.FindRankedMatches(intent, MaxRecipeOptions)
 		if err != nil {
@@ -144,21 +151,36 @@ func BuildBootstrapRouteOptions(
 			if m.Confidence < MinRecipeConfidence {
 				continue
 			}
-			options = append(options, BootstrapRouteOption{
+			recipeTypes := RecipeServiceTypes([]byte(m.ImportYAML))
+			mismatch := CompareStacks(intentDeps, recipeTypes)
+			if mismatch.HasContradiction() {
+				// Recipe provisions a different DB/cache family than the user
+				// asked for — drop entirely (would silently over-or-under-
+				// provision, which the agent has to undo manually).
+				continue
+			}
+			opt := BootstrapRouteOption{
 				Route:      BootstrapRouteRecipe,
 				RecipeSlug: m.Slug,
 				Confidence: m.Confidence,
 				ImportYAML: m.ImportYAML,
-				Why:        recipeWhy(m),
+				Why:        recipeWhyWithMismatch(m, mismatch),
 				Collisions: recipeCollisions(m.ImportYAML, existing),
-			})
+			}
+			if mismatch.HasMissing() {
+				demotedRecipes = append(demotedRecipes, opt)
+			} else {
+				keptRecipes = append(keptRecipes, opt)
+			}
 		}
 	}
 
+	options = append(options, keptRecipes...)
 	options = append(options, BootstrapRouteOption{
 		Route: BootstrapRouteClassic,
 		Why:   "Manual plan — user describes services directly, no recipe template.",
 	})
+	options = append(options, demotedRecipes...)
 
 	return options, nil
 }
@@ -166,8 +188,8 @@ func BuildBootstrapRouteOptions(
 // adoptOption returns an adopt route option when the project has at least
 // one runtime service without a complete ServiceMeta AND with no incomplete
 // ServiceMeta tagged to any session (those are resumable, not adoptable).
-func adoptOption(existing []platform.ServiceStack, metas []*ServiceMeta) (BootstrapRouteOption, bool) {
-	adoptable := adoptableServices(existing, metas)
+func adoptOption(existing []platform.ServiceStack, metas []*ServiceMeta, self runtime.Info) (BootstrapRouteOption, bool) {
+	adoptable := adoptableServices(existing, metas, self)
 	if len(adoptable) == 0 {
 		return BootstrapRouteOption{}, false
 	}
@@ -202,8 +224,12 @@ func resumeOption(existing []platform.ServiceStack, metas []*ServiceMeta) (Boots
 
 // adoptableServices returns the hostnames of runtime services that lack a
 // complete ServiceMeta and whose meta (if any) carries no BootstrapSession.
-// Managed and system services are excluded — they are never adopted.
-func adoptableServices(existing []platform.ServiceStack, metas []*ServiceMeta) []string {
+// Managed and system services are excluded — they are never adopted. The
+// agent's own host (the ZCP control-plane container) is also excluded:
+// adopting it would point ZCP at itself. ServiceID is the canonical invariant
+// (`serviceId` env var); ServiceName/hostname is a fallback for local dev
+// where the platform ID isn't injected.
+func adoptableServices(existing []platform.ServiceStack, metas []*ServiceMeta, self runtime.Info) []string {
 	metaByHost := ManagedRuntimeIndex(metas)
 	var out []string
 	for _, svc := range existing {
@@ -211,6 +237,9 @@ func adoptableServices(existing []platform.ServiceStack, metas []*ServiceMeta) [
 			continue
 		}
 		if topology.IsManagedService(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName) {
+			continue
+		}
+		if isSelf(svc, self) {
 			continue
 		}
 		meta := metaByHost[svc.Name]
@@ -224,6 +253,19 @@ func adoptableServices(existing []platform.ServiceStack, metas []*ServiceMeta) [
 		out = append(out, svc.Name)
 	}
 	return out
+}
+
+// isSelf returns true when svc names the agent's own host. ServiceID is
+// preferred (Zerops invariant); ServiceName/hostname is the fallback when
+// platform ID is unavailable (local dev, mock environments).
+func isSelf(svc platform.ServiceStack, self runtime.Info) bool {
+	if self.ServiceID != "" && svc.ID == self.ServiceID {
+		return true
+	}
+	if self.ServiceID == "" && self.ServiceName != "" && svc.Name == self.ServiceName {
+		return true
+	}
+	return false
 }
 
 // resumableServices returns the hostnames of services whose ServiceMeta is
@@ -312,14 +354,30 @@ func resumeWhy(services []string) string {
 	}
 }
 
-func recipeWhy(m RecipeMatch) string {
-	if m.Description != "" {
-		return m.Description
+// recipeWhyWithMismatch prefixes the base description with stack-mismatch
+// hints when the recipe diverges from the user's intent. Missing deps and
+// extras are surfaced so the agent can decide whether to accept the recipe
+// or fall through to classic. Contradictions never reach this function —
+// callers drop the recipe before assembling Why.
+func recipeWhyWithMismatch(m RecipeMatch, mismatch StackMismatch) string {
+	base := m.Description
+	if base == "" {
+		base = m.Title
 	}
-	if m.Title != "" {
-		return m.Title
+	if base == "" {
+		base = "Recipe `" + m.Slug + "` matches the intent."
 	}
-	return "Recipe `" + m.Slug + "` matches the intent."
+	var prefix []string
+	if mismatch.HasMissing() {
+		prefix = append(prefix, "INCOMPLETE STACK: missing ["+strings.Join(mismatch.MissingFromRecipe, ", ")+"] you mentioned")
+	}
+	if len(mismatch.Extras) > 0 {
+		prefix = append(prefix, "Over-provisions: adds ["+strings.Join(mismatch.Extras, ", ")+"] not in your intent")
+	}
+	if len(prefix) == 0 {
+		return base
+	}
+	return strings.Join(prefix, ". ") + ". " + base
 }
 
 // plural is a tiny English pluralizer so the Why messages scale without

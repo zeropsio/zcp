@@ -22,7 +22,7 @@ func TestBootstrapComplete_WritesServiceMeta(t *testing.T) {
 
 	// Submit plan.
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"},
 		Dependencies: []Dependency{
 			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
 		},
@@ -64,7 +64,7 @@ func TestBootstrapComplete_AppendsReflog(t *testing.T) {
 	}
 
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", ExplicitStage: "appstage"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "appstage"},
 	}}, nil, nil)
 	if err != nil {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
@@ -166,7 +166,7 @@ func TestWriteBootstrapOutputs_NeverWritesDepMetas(t *testing.T) {
 			}
 
 			_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-				Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
+				Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"},
 				Dependencies: []Dependency{
 					{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: tt.resolution},
 				},
@@ -223,7 +223,7 @@ func TestWriteBootstrapOutputs_PreExistingDepMetaSurvives(t *testing.T) {
 	}
 
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"},
 		Dependencies: []Dependency{
 			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "EXISTS"},
 		},
@@ -262,7 +262,7 @@ func TestWriteBootstrapOutputs_SetsBootstrappedAt(t *testing.T) {
 	}
 
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"},
 		Dependencies: []Dependency{
 			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
 		},
@@ -304,7 +304,7 @@ func TestProvisionMeta_NoMetaAfterPlan(t *testing.T) {
 	}
 
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"},
 		Dependencies: []Dependency{
 			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
 		},
@@ -334,7 +334,7 @@ func TestProvisionMeta_WritesPartialMeta(t *testing.T) {
 	}
 
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"},
 		Dependencies: []Dependency{
 			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "CREATE"},
 		},
@@ -394,7 +394,7 @@ func TestProvisionMeta_PreExistingDepMetaSurvives(t *testing.T) {
 	}
 
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"},
 		Dependencies: []Dependency{
 			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA", Resolution: "EXISTS"},
 		},
@@ -434,7 +434,7 @@ func TestWriteBootstrapOutputs_AlwaysWritesEmptyCloseDeployMode(t *testing.T) {
 	}
 
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"},
 	}}, nil, nil)
 	if err != nil {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
@@ -551,7 +551,7 @@ func TestProvisionMeta_SetsMode(t *testing.T) {
 		wantMode      topology.Mode
 		env           Environment
 	}{
-		{"standard mode (default)", "", topology.PlanModeStandard, EnvContainer},
+		{"standard mode explicit", topology.PlanModeStandard, topology.PlanModeStandard, EnvContainer},
 		{"dev mode", topology.PlanModeDev, topology.PlanModeDev, EnvLocal},
 		{"simple mode", topology.PlanModeSimple, topology.PlanModeSimple, EnvLocal},
 	}
@@ -868,7 +868,7 @@ func TestBuildTransitionMessage_DropsDeployModelPrimer(t *testing.T) {
 		Bootstrap: &BootstrapState{
 			Plan: &ServicePlan{
 				Targets: []BootstrapTarget{
-					{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"}},
+					{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"}},
 				},
 			},
 		},
@@ -940,7 +940,7 @@ func TestWriteBootstrapOutputs_LocalMode_KeyedByDevHostname(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 	_, err = eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"},
 	}}, nil, nil)
 	if err != nil {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
@@ -1008,6 +1008,7 @@ func TestWriteBootstrapOutputs_AdoptedService_EmptyBootstrapSession(t *testing.T
 					DevHostname:   "appdev",
 					Type:          "nodejs@22",
 					IsExisting:    tt.isExisting,
+					BootstrapMode: "standard",
 					ExplicitStage: "appstage",
 				},
 			}}, nil, nil)
@@ -1069,6 +1070,7 @@ func TestProvisionMeta_AdoptedService_EmptyBootstrapSession(t *testing.T) {
 			DevHostname:   "appdev",
 			Type:          "nodejs@22",
 			IsExisting:    true,
+			BootstrapMode: "standard",
 			ExplicitStage: "appstage",
 		},
 	}}, nil, nil)
@@ -1344,7 +1346,7 @@ func TestWriteBootstrapOutputs_WritesDeployDecompDefaults(t *testing.T) {
 		t.Fatalf("BootstrapStart: %v", err)
 	}
 	if _, err := eng.BootstrapCompletePlan([]BootstrapTarget{{
-		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", ExplicitStage: "appstage"},
+		Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage"},
 	}}, nil, nil); err != nil {
 		t.Fatalf("BootstrapCompletePlan: %v", err)
 	}

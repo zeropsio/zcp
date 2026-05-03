@@ -6,9 +6,11 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
@@ -79,7 +81,7 @@ func TestBuildBootstrapRouteOptions_EmptyProject_GoodIntent_RanksRecipesThenClas
 		{Slug: "laravel-octane", Confidence: 0.67, ImportYAML: "services:\n  - hostname: octane\n    type: php-nginx@8.4\n"},
 	}}
 
-	opts, err := BuildBootstrapRouteOptions(context.Background(), "laravel weather", nil, nil, corpus)
+	opts, err := BuildBootstrapRouteOptions(context.Background(), "laravel weather", nil, nil, corpus, runtime.Info{})
 	if err != nil {
 		t.Fatalf("BuildBootstrapRouteOptions: %v", err)
 	}
@@ -100,7 +102,7 @@ func TestBuildBootstrapRouteOptions_EmptyProject_EmptyIntent_ClassicOnly(t *test
 	corpus := &fakeRecipeCorpus{matches: []RecipeMatch{
 		{Slug: "laravel", Confidence: 0.99, ImportYAML: "services:\n  - hostname: app\n    type: php-nginx@8.4\n"},
 	}}
-	opts, err := BuildBootstrapRouteOptions(context.Background(), "", nil, nil, corpus)
+	opts, err := BuildBootstrapRouteOptions(context.Background(), "", nil, nil, corpus, runtime.Info{})
 	if err != nil {
 		t.Fatalf("BuildBootstrapRouteOptions: %v", err)
 	}
@@ -117,7 +119,7 @@ func TestBuildBootstrapRouteOptions_EmptyProject_NoiseFloor_DropsWeakMatches(t *
 	corpus := &fakeRecipeCorpus{matches: []RecipeMatch{
 		{Slug: "weak", Confidence: 0.3, ImportYAML: "services:\n  - hostname: app\n    type: php@8.4\n"},
 	}}
-	opts, err := BuildBootstrapRouteOptions(context.Background(), "anything", nil, nil, corpus)
+	opts, err := BuildBootstrapRouteOptions(context.Background(), "anything", nil, nil, corpus, runtime.Info{})
 	if err != nil {
 		t.Fatalf("BuildBootstrapRouteOptions: %v", err)
 	}
@@ -128,7 +130,7 @@ func TestBuildBootstrapRouteOptions_EmptyProject_NoiseFloor_DropsWeakMatches(t *
 
 func TestBuildBootstrapRouteOptions_NilCorpus_ClassicOnly(t *testing.T) {
 	t.Parallel()
-	opts, err := BuildBootstrapRouteOptions(context.Background(), "laravel", nil, nil, nil)
+	opts, err := BuildBootstrapRouteOptions(context.Background(), "laravel", nil, nil, nil, runtime.Info{})
 	if err != nil {
 		t.Fatalf("BuildBootstrapRouteOptions: %v", err)
 	}
@@ -144,7 +146,7 @@ func TestBuildBootstrapRouteOptions_AdoptableRuntime_IncludesAdoptBeforeRecipe(t
 	}}
 	existing := []platform.ServiceStack{userSvc("appdev", "nodejs@22")}
 
-	opts, err := BuildBootstrapRouteOptions(context.Background(), "node todo app", existing, nil, corpus)
+	opts, err := BuildBootstrapRouteOptions(context.Background(), "node todo app", existing, nil, corpus, runtime.Info{})
 	if err != nil {
 		t.Fatalf("BuildBootstrapRouteOptions: %v", err)
 	}
@@ -167,7 +169,7 @@ func TestBuildBootstrapRouteOptions_ManagedOnly_NoAdopt(t *testing.T) {
 	}}
 	existing := []platform.ServiceStack{userSvc("db", "postgresql@16")}
 
-	opts, err := BuildBootstrapRouteOptions(context.Background(), "laravel", existing, nil, corpus)
+	opts, err := BuildBootstrapRouteOptions(context.Background(), "laravel", existing, nil, corpus, runtime.Info{})
 	if err != nil {
 		t.Fatalf("BuildBootstrapRouteOptions: %v", err)
 	}
@@ -179,7 +181,7 @@ func TestBuildBootstrapRouteOptions_ManagedOnly_NoAdopt(t *testing.T) {
 func TestBuildBootstrapRouteOptions_SystemServicesIgnored(t *testing.T) {
 	t.Parallel()
 	existing := []platform.ServiceStack{systemSvc("l7-balancer")}
-	opts, err := BuildBootstrapRouteOptions(context.Background(), "", existing, nil, nil)
+	opts, err := BuildBootstrapRouteOptions(context.Background(), "", existing, nil, nil, runtime.Info{})
 	if err != nil {
 		t.Fatalf("BuildBootstrapRouteOptions: %v", err)
 	}
@@ -198,7 +200,7 @@ func TestBuildBootstrapRouteOptions_BootstrappedMeta_NoAdopt(t *testing.T) {
 		Mode:           topology.PlanModeDev,
 		BootstrappedAt: "2026-04-18T10:00:00Z",
 	}}
-	opts, err := BuildBootstrapRouteOptions(context.Background(), "", existing, metas, nil)
+	opts, err := BuildBootstrapRouteOptions(context.Background(), "", existing, metas, nil, runtime.Info{})
 	if err != nil {
 		t.Fatalf("BuildBootstrapRouteOptions: %v", err)
 	}
@@ -218,7 +220,7 @@ func TestBuildBootstrapRouteOptions_IncompleteMeta_PrefersResumeOverAdopt(t *tes
 		BootstrapSession: "sess-abc",
 		// BootstrappedAt intentionally empty — incomplete.
 	}}
-	opts, err := BuildBootstrapRouteOptions(context.Background(), "", existing, metas, nil)
+	opts, err := BuildBootstrapRouteOptions(context.Background(), "", existing, metas, nil, runtime.Info{})
 	if err != nil {
 		t.Fatalf("BuildBootstrapRouteOptions: %v", err)
 	}
@@ -245,7 +247,7 @@ func TestBuildBootstrapRouteOptions_IncompleteMetaOrphan_AdoptNotResume(t *testi
 		Mode:     topology.PlanModeDev,
 		// Neither BootstrappedAt nor BootstrapSession set.
 	}}
-	opts, err := BuildBootstrapRouteOptions(context.Background(), "", existing, metas, nil)
+	opts, err := BuildBootstrapRouteOptions(context.Background(), "", existing, metas, nil, runtime.Info{})
 	if err != nil {
 		t.Fatalf("BuildBootstrapRouteOptions: %v", err)
 	}
@@ -264,7 +266,7 @@ func TestBuildBootstrapRouteOptions_RecipeCollisions_AnnotatedNotSuppressed(t *t
 	corpus := &fakeRecipeCorpus{matches: []RecipeMatch{
 		{Slug: "laravel", Confidence: 0.95, ImportYAML: "services:\n  - hostname: appdev\n    type: php-nginx@8.4\n  - hostname: db\n    type: postgresql@16\n"},
 	}}
-	opts, err := BuildBootstrapRouteOptions(context.Background(), "laravel", existing, nil, corpus)
+	opts, err := BuildBootstrapRouteOptions(context.Background(), "laravel", existing, nil, corpus, runtime.Info{})
 	if err != nil {
 		t.Fatalf("BuildBootstrapRouteOptions: %v", err)
 	}
@@ -299,7 +301,7 @@ func TestBuildBootstrapRouteOptions_ClassicAlwaysLast(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			corpus := &fakeRecipeCorpus{matches: tt.matches}
-			opts, err := BuildBootstrapRouteOptions(context.Background(), tt.intent, tt.existing, tt.metas, corpus)
+			opts, err := BuildBootstrapRouteOptions(context.Background(), tt.intent, tt.existing, tt.metas, corpus, runtime.Info{})
 			if err != nil {
 				t.Fatalf("BuildBootstrapRouteOptions: %v", err)
 			}
@@ -317,7 +319,7 @@ func TestBuildBootstrapRouteOptions_CorpusError_Propagates(t *testing.T) {
 	t.Parallel()
 	wantErr := errors.New("corpus unreachable")
 	corpus := &fakeRecipeCorpus{err: wantErr}
-	_, err := BuildBootstrapRouteOptions(context.Background(), "laravel", nil, nil, corpus)
+	_, err := BuildBootstrapRouteOptions(context.Background(), "laravel", nil, nil, corpus, runtime.Info{})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("err = %v, want wrapping %v", err, wantErr)
 	}
@@ -334,7 +336,7 @@ func TestBuildBootstrapRouteOptions_CapsRecipeCountAtMaxRecipeOptions(t *testing
 		{Slug: "e", Confidence: 0.75, ImportYAML: "services:\n  - hostname: e\n    type: php@8\n"},
 	}
 	corpus := &fakeRecipeCorpus{matches: matches}
-	opts, err := BuildBootstrapRouteOptions(context.Background(), "anything", nil, nil, corpus)
+	opts, err := BuildBootstrapRouteOptions(context.Background(), "anything", nil, nil, corpus, runtime.Info{})
 	if err != nil {
 		t.Fatalf("BuildBootstrapRouteOptions: %v", err)
 	}
@@ -365,5 +367,146 @@ func TestRecipeCollisions_EmptyInputs(t *testing.T) {
 	}
 	if got := recipeCollisions("services:\n  - hostname: db\n", nil); got != nil {
 		t.Errorf("empty existing should return nil, got %v", got)
+	}
+}
+
+// userSvcWithID builds a service stack with explicit Zerops service ID so
+// self-host filter tests can match by ServiceID (the canonical invariant).
+func userSvcWithID(name, typeVersion, serviceID string) platform.ServiceStack {
+	svc := userSvc(name, typeVersion)
+	svc.ID = serviceID
+	return svc
+}
+
+// Phase 2.1 — adoptableServices filters the agent's own host (ZCP control-plane
+// container) so it never appears as an "adoptable" candidate. Live eval
+// observed `adopt zcp` ranked #1 because the filter was missing.
+
+func TestAdoptableServices_ExcludesSelfByServiceID(t *testing.T) {
+	t.Parallel()
+	existing := []platform.ServiceStack{
+		userSvcWithID("zcp", "go@1", "service-zcp-id"),
+		userSvcWithID("appdev", "nodejs@22", "service-app-id"),
+	}
+	self := runtime.Info{InContainer: true, ServiceID: "service-zcp-id", ServiceName: "zcp"}
+	got := adoptableServices(existing, nil, self)
+	if slices.Contains(got, "zcp") {
+		t.Errorf("self host should be excluded; got %v", got)
+	}
+	if !slices.Contains(got, "appdev") {
+		t.Errorf("non-self host should remain adoptable; got %v", got)
+	}
+}
+
+func TestAdoptableServices_FallsBackToHostnameWhenNoServiceID(t *testing.T) {
+	t.Parallel()
+	// Local mode: runtime.Info has no ServiceID but DOES have ServiceName.
+	// Filter should still exclude by hostname match.
+	existing := []platform.ServiceStack{
+		userSvc("zcp", "go@1"), // no platform ID at all
+		userSvc("appdev", "nodejs@22"),
+	}
+	self := runtime.Info{InContainer: false, ServiceName: "zcp"}
+	got := adoptableServices(existing, nil, self)
+	if slices.Contains(got, "zcp") {
+		t.Errorf("hostname-fallback filter should exclude zcp; got %v", got)
+	}
+}
+
+// Phase 2.2 — stack-mismatch filter wired into BuildBootstrapRouteOptions.
+// Live eval observed laravel-minimal (Postgres) ranked at confidence 0.95
+// even when the user explicitly said "MySQL + Valkey". Filter must drop or
+// demote.
+
+func TestBuildBootstrapRouteOptions_DropsRecipeWithContradictedDB(t *testing.T) {
+	t.Parallel()
+	corpus := &fakeRecipeCorpus{matches: []RecipeMatch{
+		{Slug: "laravel-minimal", Confidence: 0.95, ImportYAML: "services:\n  - hostname: appdev\n    type: php-nginx@8.4\n  - hostname: db\n    type: postgresql@18\n"},
+	}}
+	opts, err := BuildBootstrapRouteOptions(context.Background(), "Laravel app with MySQL", nil, nil, corpus, runtime.Info{})
+	if err != nil {
+		t.Fatalf("BuildBootstrapRouteOptions: %v", err)
+	}
+	for _, o := range opts {
+		if o.Route == BootstrapRouteRecipe && o.RecipeSlug == "laravel-minimal" {
+			t.Errorf("recipe with contradicted DB family must be dropped, got %v", o)
+		}
+	}
+}
+
+func TestBuildBootstrapRouteOptions_DemotesRecipeWithMissingDep(t *testing.T) {
+	t.Parallel()
+	// User wants Valkey cache; recipe has Postgres but no cache. Recipe
+	// should still appear but ranked AFTER classic.
+	corpus := &fakeRecipeCorpus{matches: []RecipeMatch{
+		{Slug: "no-cache", Confidence: 0.95, ImportYAML: "services:\n  - hostname: appdev\n    type: nodejs@22\n  - hostname: db\n    type: postgresql@18\n"},
+	}}
+	opts, err := BuildBootstrapRouteOptions(context.Background(), "node app with valkey caching", nil, nil, corpus, runtime.Info{})
+	if err != nil {
+		t.Fatalf("BuildBootstrapRouteOptions: %v", err)
+	}
+	classicIdx := -1
+	recipeIdx := -1
+	for i, o := range opts {
+		switch o.Route {
+		case BootstrapRouteClassic:
+			classicIdx = i
+		case BootstrapRouteRecipe:
+			recipeIdx = i
+		case BootstrapRouteAdopt, BootstrapRouteResume:
+			// not relevant to ordering assertion below
+		}
+	}
+	if classicIdx == -1 || recipeIdx == -1 {
+		t.Fatalf("missing routes: classicIdx=%d recipeIdx=%d, opts=%v", classicIdx, recipeIdx, routesOf(opts))
+	}
+	if recipeIdx < classicIdx {
+		t.Errorf("recipe with missing dep must rank BELOW classic; classic=%d recipe=%d", classicIdx, recipeIdx)
+	}
+	if !strings.Contains(opts[recipeIdx].Why, "INCOMPLETE STACK") {
+		t.Errorf("Why must flag missing dep: got %q", opts[recipeIdx].Why)
+	}
+}
+
+func TestBuildBootstrapRouteOptions_KeepsCompatibleRecipe(t *testing.T) {
+	t.Parallel()
+	// User wants Postgres + Valkey; recipe matches exactly.
+	corpus := &fakeRecipeCorpus{matches: []RecipeMatch{
+		{Slug: "good", Confidence: 0.95, ImportYAML: "services:\n  - hostname: appdev\n    type: nodejs@22\n  - hostname: db\n    type: postgresql@18\n  - hostname: cache\n    type: valkey@7.2\n"},
+	}}
+	opts, err := BuildBootstrapRouteOptions(context.Background(), "node app with postgres + valkey", nil, nil, corpus, runtime.Info{})
+	if err != nil {
+		t.Fatalf("BuildBootstrapRouteOptions: %v", err)
+	}
+	classicIdx := -1
+	recipeIdx := -1
+	for i, o := range opts {
+		switch o.Route {
+		case BootstrapRouteClassic:
+			classicIdx = i
+		case BootstrapRouteRecipe:
+			recipeIdx = i
+		case BootstrapRouteAdopt, BootstrapRouteResume:
+			// not relevant to ordering assertion below
+		}
+	}
+	if recipeIdx == -1 || classicIdx == -1 {
+		t.Fatalf("missing routes: classicIdx=%d recipeIdx=%d", classicIdx, recipeIdx)
+	}
+	if recipeIdx > classicIdx {
+		t.Errorf("compatible recipe must rank ABOVE classic; classic=%d recipe=%d", classicIdx, recipeIdx)
+	}
+}
+
+func TestAdoptableServices_LocalModeNoSelf_KeepsAllNonSystem(t *testing.T) {
+	t.Parallel()
+	existing := []platform.ServiceStack{
+		userSvc("appdev", "nodejs@22"),
+		userSvc("apidev", "go@1"),
+	}
+	self := runtime.Info{} // local dev — no self info at all
+	got := adoptableServices(existing, nil, self)
+	if len(got) != 2 {
+		t.Errorf("local mode with no self info: want 2 adoptable, got %d (%v)", len(got), got)
 	}
 }

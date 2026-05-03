@@ -4,6 +4,7 @@ priority: 3
 phases: [develop-active]
 deployStates: [deployed]
 modes: [dev]
+runtimes: [dynamic]
 closeDeployModes: [auto]
 environments: [container]
 multiService: aggregate

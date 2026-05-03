@@ -34,7 +34,7 @@ type WorkflowInput struct {
 	Attestation string                     `json:"attestation,omitempty" jsonschema:"Description of what was verified or accomplished (required for complete actions)."`
 	Step        string                     `json:"step,omitempty"        jsonschema:"Bootstrap step name for complete/skip actions (discover, provision, close)."`
 	SubStep     string                     `json:"substep,omitempty"     jsonschema:"Optional sub-step name for recipe complete action (e.g. scaffold, zerops-yaml, app-code, readme, smoke-test). Completes a sub-step within the current step instead of the full step."`
-	Plan        []workflow.BootstrapTarget `json:"plan,omitempty"        jsonschema:"Structured service plan. Submit via action=\"complete\" step=\"discover\" — NOT accepted on action=\"start\" (start commits the route only; the plan is produced during the discover step from route-specific materials and submitted on the next call). Shape: array of {runtime: {devHostname, type, bootstrapMode?, stageHostname?, isExisting?}, dependencies: [{hostname, type, mode?, resolution}]}. bootstrapMode and stageHostname MUST nest inside the runtime object — top-level placement rejects with INVALID_PARAMETER. resolution: CREATE (new service), EXISTS (already in project), SHARED (created by another target in this plan). stageHostname: required for bootstrapMode=standard (no hostname-suffix derivation); explicit per-runtime stage hostname (e.g. devHostname=appdev, stageHostname=appstage)."`
+	Plan        []workflow.BootstrapTarget `json:"plan,omitempty"        jsonschema:"Structured service plan. Submit via action=\"complete\" step=\"discover\" — NOT accepted on action=\"start\" (start commits the route only; the plan is produced during the discover step from route-specific materials and submitted on the next call). Shape: array of {runtime: {devHostname, type, bootstrapMode, stageHostname?, isExisting?}, dependencies: [{hostname, type, mode?, resolution}]}. bootstrapMode is REQUIRED (dev|simple|standard). bootstrapMode and stageHostname MUST nest inside the runtime object — flattened top-level placement is hard-rejected with an actionable diagnostic. Examples: single dev container = [{\"runtime\":{\"devHostname\":\"appdev\",\"type\":\"go@1\",\"bootstrapMode\":\"dev\"}}]; dev/stage pair = [{\"runtime\":{\"devHostname\":\"appdev\",\"stageHostname\":\"appstage\",\"type\":\"go@1\",\"bootstrapMode\":\"standard\"}}]. resolution: CREATE (new service), EXISTS (already in project), SHARED (created by another target in this plan). stageHostname: required for bootstrapMode=standard (no hostname-suffix derivation); explicit per-runtime stage hostname (e.g. devHostname=appdev, stageHostname=appstage)."`
 	Reason      string                     `json:"reason,omitempty"      jsonschema:"Reason for skipping a step (skip action). Defaults to 'skipped by user'."`
 	SessionID   string                     `json:"sessionId,omitempty"   jsonschema:"Session ID for resume action."`
 	CloseModes  map[string]string          `json:"closeMode,omitempty"   jsonschema:"Per-service close-deploy-mode map for action=close-mode (e.g. {\"appdev\":\"git-push\"}). Valid values per service: auto (zcli push direct on develop close), git-push (commit + push to remote on close — requires action=git-push-setup), manual (ZCP yields close orchestration)."`
@@ -357,7 +357,7 @@ func handleStart(ctx context.Context, projectID string, engine *workflow.Engine,
 
 	// Bootstrap conductor — discovery + commit split.
 	if input.Workflow == workflowBootstrap {
-		return handleBootstrapStart(ctx, projectID, engine, client, cache, input)
+		return handleBootstrapStart(ctx, projectID, engine, client, cache, input, rt)
 	}
 
 	// Develop workflow — stateless briefing, no session created.
@@ -736,7 +736,7 @@ func handleResume(ctx context.Context, engine *workflow.Engine, client platform.
 //     resumeSession field.
 //  3. route=adopt|recipe|classic → commits session via
 //     BootstrapStartWithRoute with the LLM's explicit choice.
-func handleBootstrapStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput) (*mcp.CallToolResult, any, error) {
+func handleBootstrapStart(ctx context.Context, projectID string, engine *workflow.Engine, client platform.Client, cache *ops.StackTypeCache, input WorkflowInput, rt runtime.Info) (*mcp.CallToolResult, any, error) {
 	// Parse the route at the boundary so all downstream comparisons use the
 	// typed BootstrapRoute and the engine API takes its native vocabulary.
 	route := workflow.BootstrapRoute(input.Route)
@@ -765,7 +765,7 @@ func handleBootstrapStart(ctx context.Context, projectID string, engine *workflo
 				fmt.Sprintf("Bootstrap discovery failed: %v", listErr),
 				"Check project access and try again"), WithRecoveryStatus()), nil, nil
 		}
-		resp, err := engine.BootstrapDiscover(projectID, input.Intent, existing) //nolint:contextcheck // BootstrapDiscover is synchronous, no I/O to cancel
+		resp, err := engine.BootstrapDiscover(projectID, input.Intent, existing, rt) //nolint:contextcheck // BootstrapDiscover is synchronous, no I/O to cancel
 		if err != nil {
 			return convertError(platform.NewPlatformError(
 				platform.ErrAPIError,

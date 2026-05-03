@@ -10,6 +10,7 @@ import (
 
 	"github.com/zeropsio/zcp/internal/knowledge"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
 )
 
 // Engine orchestrates the workflow lifecycle.
@@ -288,7 +289,7 @@ func (e *Engine) ListActiveSessions() ([]SessionEntry, error) {
 //
 // `existing` comes from the caller (the tool layer holds the platform
 // client); metas are read from stateDir.
-func (e *Engine) BootstrapDiscover(projectID, intent string, existing []platform.ServiceStack) (*BootstrapDiscoveryResponse, error) {
+func (e *Engine) BootstrapDiscover(projectID, intent string, existing []platform.ServiceStack, self runtime.Info) (*BootstrapDiscoveryResponse, error) {
 	metas, err := ListServiceMetas(e.stateDir)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap discover: list metas: %w", err)
@@ -297,7 +298,7 @@ func (e *Engine) BootstrapDiscover(projectID, intent string, existing []platform
 	if e.recipeCorpus != nil {
 		recipes = e.recipeCorpus
 	}
-	options, err := BuildBootstrapRouteOptions(context.Background(), intent, existing, metas, recipes)
+	options, err := BuildBootstrapRouteOptions(context.Background(), intent, existing, metas, recipes, self)
 	if err != nil {
 		return nil, fmt.Errorf("bootstrap discover: %w", err)
 	}

@@ -454,7 +454,7 @@ ServicePlan {
 }
 ```
 
-**Validation**: Hostnames `[a-z0-9]` max 25 chars. Standard mode: devHostname must end in "dev", stage derived as `{prefix}stage`. Types against live catalog. Resolution: CREATE = must not exist, EXISTS = must exist, SHARED = another target creates it. Hostname lock check. Errors accumulated (all reported at once).
+**Validation**: Hostnames `[a-z0-9]` max 25 chars. Standard mode: explicit `stageHostname` required on the plan target — no hostname-suffix derivation (since Release B.4). Types against live catalog. Resolution: CREATE = must not exist, EXISTS = must exist, SHARED = another target creates it. Hostname lock check. Errors accumulated (all reported at once).
 
 ### 2.4 Step 2: Provision
 

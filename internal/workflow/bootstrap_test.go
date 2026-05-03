@@ -517,7 +517,7 @@ func TestPlanMode(t *testing.T) {
 		{
 			"standard_mode",
 			&ServicePlan{Targets: []BootstrapTarget{
-				{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+				{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "appstage"}},
 			}},
 			"standard",
 		},
@@ -538,7 +538,7 @@ func TestPlanMode(t *testing.T) {
 		{
 			"mixed_with_standard_returns_standard",
 			&ServicePlan{Targets: []BootstrapTarget{
-				{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+				{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "appstage"}},
 				{Runtime: RuntimeTarget{DevHostname: "api", Type: "go@1", BootstrapMode: "simple"}},
 			}},
 			"standard",
@@ -576,7 +576,7 @@ func TestBuildResponse_PlanMode(t *testing.T) {
 
 	// After plan submission, PlanMode should reflect the plan.
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "appstage"}},
 	}}
 	resp = bs.BuildResponse("sess1", "test", 0, EnvLocal, nil)
 	if resp.Current.PlanMode != "standard" {
@@ -628,7 +628,7 @@ func TestBuildResponse_Iteration_YieldsHardStop(t *testing.T) {
 	t.Parallel()
 	bs := NewBootstrapState()
 	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{
-		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2"}},
+		{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "bun@1.2", BootstrapMode: "standard", ExplicitStage: "appstage"}},
 	}}
 	bs.Steps[0].Status = stepComplete
 	bs.Steps[0].Attestation = "discover complete"

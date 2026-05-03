@@ -131,10 +131,10 @@ func TestValidateBootstrapRecipeMode(t *testing.T) {
 			errMatch: "recipe \"nextjs-ssr-hello-world\" is simple mode",
 		},
 		{
-			name:  "missing_mode_on_target_defaults_to_standard_matches",
+			name:  "explicit_standard_matches_recipe",
 			match: &RecipeMatch{Slug: "r", Mode: "standard"},
 			targets: []BootstrapTarget{
-				{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22"}}, // empty mode defaults to standard
+				{Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard"}},
 			},
 		},
 	}
