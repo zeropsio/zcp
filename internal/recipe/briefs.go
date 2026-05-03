@@ -116,9 +116,13 @@ const (
 // (§Risk 2) — accidental verbatim embeds get caught before dispatch.
 // Run-21 bumped 40→48 KB after synthesis_workflow.md gained
 // IG-scaffold-filename, KB-citation, and voice rules (~5 KB).
+// Run-22 R1-RC-2 + R1-RC-4 bumped 48→52 KB after platform_principles.md
+// extended the same-key shadow trap to project-level vars and
+// yaml-comment-style.md added the Unicode box-drawing forbid (~1 KB
+// across both atoms; both load into the codebase-content brief).
 const (
-	CodebaseContentBriefCap = 48 * 1024
-	EnvContentBriefCap      = 48 * 1024
+	CodebaseContentBriefCap = 52 * 1024
+	EnvContentBriefCap      = 52 * 1024
 	ClaudeMDBriefCap        = 8 * 1024 // §Risk 7 — Zerops-free brief stays small by construction
 )
 

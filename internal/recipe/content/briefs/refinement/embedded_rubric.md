@@ -484,6 +484,26 @@ point of having five criteria.
 
 ---
 
+### Tier-promotion narrative (forbidden per spec §108)
+
+Tier README extracts must NOT include narratives that frame the
+current tier as a stepping-stone to a higher tier. Concretely,
+fail any extract matching (case-insensitive):
+- `\bpromote\b.*\btier\b`
+- `\boutgrow\w*`
+- `\bupgrade from tier\b`
+- `\bgraduate (to|out of)\b`
+- `\bmove (up|to) tier\b`
+
+Each tier stands on its own merits. Trade-offs go in the intro;
+upgrade narratives don't.
+
+When refinement finds a match, hold the surface and rewrite to
+remove the promotion framing — describe what THIS tier is for,
+not what tier it leads to.
+
+---
+
 ## Updates
 
 This rubric ships in run-17. Run-18 dogfood findings inform whether

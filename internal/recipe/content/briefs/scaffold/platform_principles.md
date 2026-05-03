@@ -48,13 +48,30 @@ Different-key aliasing does NOT self-shadow — the platform injects
 `db_hostname=...` and your envVariables writes `DB_HOST=...`; two
 distinct env entries.
 
-**Same-key shadow trap** — declaring `db_hostname: ${db_hostname}`
-(SAME key as the platform's auto-inject) self-shadows. The
-per-service envVariables write runs after the project-wide
-auto-inject; the literal `${db_hostname}` token wins; the OS env var
-becomes the literal string. Symptom: NATS `Invalid URL`, Postgres
-`getaddrinfo ENOTFOUND ${db_hostname}`. Never use the same key as
-the source.
+**Same-key shadow trap** — declaring any per-service env under the
+SAME key as something already auto-injected self-shadows. The
+per-service `envVariables` write runs after the auto-inject; the
+literal `${KEY}` token wins; the OS env var becomes the literal
+string. Symptom: NATS `Invalid URL`, Postgres
+`getaddrinfo ENOTFOUND ${db_hostname}`, JWT signing produces literal
+"${APP_SECRET}" hashes.
+
+The rule applies identically to:
+- **Cross-service auto-injects** — declaring
+  `db_hostname: ${db_hostname}` (or any
+  `<peer-host>_<key>: ${<peer-host>_<key>}`) self-shadows.
+- **Project-level envs** — declaring `APP_SECRET: ${APP_SECRET}` (or
+  `STAGE_API_URL: ${STAGE_API_URL}`, or any project-level secret /
+  URL constant under its own name) self-shadows the same way.
+
+Project-level envs and cross-service envs both auto-propagate to
+every container. Re-declaring them under the same name is never
+necessary.
+
+**Right pattern**: rename to a different own-key
+(`API_SIGNING_KEY: ${APP_SECRET}` or `DB_HOST: ${db_hostname}`), OR
+omit the per-service declaration entirely (the auto-inject is already
+in the container's env).
 
 Reference: `internal/knowledge/guides/environment-variables.md` —
 fetch via `zerops_knowledge query=env-var-model` for the full

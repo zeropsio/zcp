@@ -67,8 +67,14 @@ a decorative gap.
 - One unwrapped sentence per block. Wrap to ~65 chars.
 - `# ` lines with no body text. Either drop them or use them as
   paragraph separators between actual `#`-prefixed body lines.
-- Decorative dividers (`# =====` or `# ---`). Block boundaries are
-  the directive lines themselves, not ASCII art.
+- Decorative dividers — ANY shape, not just ASCII. Forbidden:
+  `# =====`, `# ---`, `# ----`, AND Unicode box-drawing glyphs
+  `# ──`, `# ━━`, `# ══` (codepoints U+2500..U+257F + block
+  elements U+2580..U+259F). Block boundaries are the directive
+  lines themselves, not ASCII art and not pretty-print Unicode.
+  Cross-terminal rendering breaks: some renderers show real
+  box-drawing, some show mojibake. Plain ASCII is the only
+  portable choice.
 - Restating the field name. `# initCommands: runs init commands` is
   filler — the field name is right there. Lead with the WHY.
 
