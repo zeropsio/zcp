@@ -84,27 +84,32 @@ func BuildCodebaseContentBrief(plan *Plan, cb Codebase, parent *ParentRecipe, fa
 		parts = append(parts, "briefs/scaffold/platform_principles.md")
 	}
 
-	// Run-20 C1 — NATS messaging-shape teaching. Loaded for every
-	// codebase-content dispatch (cheap; ~1.5 KB) so the agent never
-	// fabricates JetStream framing on a recipe that uses only core
-	// pub/sub. Same atom is loaded by env-content; both phases pull
-	// from one source so the teaching can't drift.
-	if atom, err := readAtom("principles/nats-shapes.md"); err == nil {
-		b.WriteString(atom)
-		b.WriteString("\n\n")
-		parts = append(parts, "principles/nats-shapes.md")
+	// Run-21 R2-2 — NATS messaging-shape teaching now filtered by
+	// per-codebase consumption. Pre-fix, every codebase (including
+	// SPAs that don't speak NATS) carried this atom unconditionally.
+	// Frontend codebases drop it; other roles keep it only when they
+	// consume a nats-typed service. Falls back to load-everything when
+	// ConsumesServices is nil (sim path that skipped scaffold).
+	if shouldLoadNATSShapes(plan, cb) {
+		if atom, err := readAtom("principles/nats-shapes.md"); err == nil {
+			b.WriteString(atom)
+			b.WriteString("\n\n")
+			parts = append(parts, "principles/nats-shapes.md")
+		}
 	}
 
-	// Run-20 C2 — workspace dual-runtime URL pattern. Loaded for every
-	// codebase-content dispatch so the re-authoring sub-agent sees the
-	// `${zeropsSubdomainHost}`-via-project-envs solution and stops
-	// recommending the deploy-peer-first dance in IG slots. Cross-
-	// referenced from the scaffold brief's platform_principles.md so
-	// scaffold-time and codebase-content-time teaching stay aligned.
-	if atom, err := readAtom("principles/cross-service-urls.md"); err == nil {
-		b.WriteString(atom)
-		b.WriteString("\n\n")
-		parts = append(parts, "principles/cross-service-urls.md")
+	// Run-21 R2-2 — workspace dual-runtime URL teaching filtered by
+	// per-codebase consumption. Pre-fix, every codebase carried this
+	// atom even when it consumes nothing managed (and therefore has no
+	// URL bake to author). Loaded only when the codebase consumes any
+	// managed service (URL pattern is the bridge), or when
+	// ConsumesServices is nil (sim fallback).
+	if shouldLoadCrossServiceURLs(cb) {
+		if atom, err := readAtom("principles/cross-service-urls.md"); err == nil {
+			b.WriteString(atom)
+			b.WriteString("\n\n")
+			parts = append(parts, "principles/cross-service-urls.md")
+		}
 	}
 
 	// Run-20 (post sub-agent C verification) — Zerops platform claim

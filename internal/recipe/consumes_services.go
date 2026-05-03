@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -93,6 +94,64 @@ func parseConsumedServicesFromYaml(yamlBody string, plan *Plan) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// shouldLoadNATSShapes returns true when the codebase-content brief
+// for cb should embed `principles/nats-shapes.md`. Run-21 R2-2.
+//
+// Decision matrix:
+//   - cb.ConsumesServices == nil → sim/back-compat fallback, load (the
+//     pre-R2-2 unconditional shape).
+//   - cb.Role == RoleFrontend → drop unconditionally (SPA never speaks
+//     NATS directly; bundler-baked envvars are URL/key pairs, not pub/
+//     sub topics).
+//   - else → load only when cb consumes a nats-family managed service.
+func shouldLoadNATSShapes(plan *Plan, cb Codebase) bool {
+	if cb.ConsumesServices == nil {
+		return true
+	}
+	if cb.Role == RoleFrontend {
+		return false
+	}
+	if plan == nil {
+		return false
+	}
+	natsHosts := map[string]bool{}
+	for _, svc := range plan.Services {
+		family := svc.Type
+		if i := strings.IndexByte(family, '@'); i > 0 {
+			family = family[:i]
+		}
+		if family == "nats" {
+			natsHosts[svc.Hostname] = true
+		}
+	}
+	for _, h := range cb.ConsumesServices {
+		if natsHosts[h] {
+			return true
+		}
+	}
+	return false
+}
+
+// shouldLoadCrossServiceURLs returns true when the codebase-content
+// brief for cb should embed `principles/cross-service-urls.md`. The
+// atom teaches the workspace dual-runtime URL pattern via
+// `${zeropsSubdomainHost}` / `${<host>_zeropsSubdomain}` aliases. A
+// codebase that consumes nothing managed has no URL bake to author.
+//
+// Loaded when:
+//   - cb.ConsumesServices == nil → sim/back-compat fallback, load.
+//   - cb.ConsumesServices is non-empty → load (the codebase has at
+//     least one managed-service URL bake).
+//
+// Dropped when cb.ConsumesServices is empty non-nil (analyzed, no
+// managed deps).
+func shouldLoadCrossServiceURLs(cb Codebase) bool {
+	if cb.ConsumesServices == nil {
+		return true
+	}
+	return len(cb.ConsumesServices) > 0
 }
 
 // filterConsumedServices narrows a Service slice down to the
