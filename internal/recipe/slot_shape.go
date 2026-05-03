@@ -102,11 +102,6 @@ var (
 	headingH2Re           = regexp.MustCompile(`(?m)^##\s+`)
 	headingH3Re           = regexp.MustCompile(`(?m)^###\s+`)
 	zeropsExtractMarkerRe = regexp.MustCompile(`<!--\s*#ZEROPS_EXTRACT_`)
-	zeropsHeadingRe       = regexp.MustCompile(`(?m)^##\s+Zerops\b`)
-	zeropsToolRe          = regexp.MustCompile(`\bzerops_[a-z_]+`)
-	zscRe                 = regexp.MustCompile(`\bzsc\b`)
-	zcpRe                 = regexp.MustCompile(`\bzcp\b`)
-	zcliRe                = regexp.MustCompile(`\bzcli\b`)
 
 	// Run-17 §7 — KB stem symptom-first heuristic. Any one of these
 	// signals is sufficient: HTTP status code, backtick or double-

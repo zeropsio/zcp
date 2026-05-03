@@ -111,11 +111,16 @@ func managedServiceSupportsHA(serviceType string) bool {
 		family = serviceType[:i]
 	}
 	switch family {
-	case "postgresql", "valkey", "redis", "nats", "rabbitmq", "elasticsearch":
+	case "postgresql", "valkey", "redis", serviceFamilyNATS, "rabbitmq", "elasticsearch":
 		return true
 	}
 	return false
 }
+
+// serviceFamilyNATS is the canonical type-prefix for the NATS managed
+// service family ("nats@<version>"). Centralised because several
+// composers / validators short-circuit on it.
+const serviceFamilyNATS = "nats"
 
 // ServiceKind classifies a service for YAML emission branches. Runtime
 // and utility services both have zeropsSetup + buildFromGit; managed

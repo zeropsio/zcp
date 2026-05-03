@@ -401,6 +401,7 @@ func TestClaudeMDGuard_StructuralOnly(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			msgs := checkSlotShape("codebase/api/claude-md", tt.body)
 			if tt.mustRefuse && len(msgs) == 0 {
 				t.Errorf("expected structural refusal, got pass")

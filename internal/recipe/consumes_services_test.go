@@ -92,6 +92,7 @@ func TestParseConsumedServicesFromYaml(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := parseConsumedServicesFromYaml(tt.yaml, plan)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("parseConsumedServicesFromYaml = %v, want %v", got, tt.want)
@@ -136,7 +137,7 @@ func TestRecipeContext_FiltersServicesByCodebaseConsumption(t *testing.T) {
 
 	// SPA brief — Managed services block should be absent.
 	in := RecipeInput{BriefKind: "scaffold", Codebase: "spa"}
-	prompt, err := buildSubagentPrompt(plan, nil, in)
+	prompt, err := buildSubagentPrompt(plan, in)
 	if err != nil {
 		t.Fatalf("buildSubagentPrompt spa: %v", err)
 	}
@@ -146,7 +147,7 @@ func TestRecipeContext_FiltersServicesByCodebaseConsumption(t *testing.T) {
 
 	// API brief — Managed services block lists db + cache, excludes broker.
 	in.Codebase = "api"
-	prompt, err = buildSubagentPrompt(plan, nil, in)
+	prompt, err = buildSubagentPrompt(plan, in)
 	if err != nil {
 		t.Fatalf("buildSubagentPrompt api: %v", err)
 	}
@@ -181,7 +182,7 @@ func TestRecipeContext_NilConsumesServices_FallsBackToAll(t *testing.T) {
 		},
 	}
 	in := RecipeInput{BriefKind: "scaffold", Codebase: "api"}
-	prompt, err := buildSubagentPrompt(plan, nil, in)
+	prompt, err := buildSubagentPrompt(plan, in)
 	if err != nil {
 		t.Fatalf("buildSubagentPrompt: %v", err)
 	}

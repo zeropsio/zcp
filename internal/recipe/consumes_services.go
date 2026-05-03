@@ -122,7 +122,7 @@ func shouldLoadNATSShapes(plan *Plan, cb Codebase) bool {
 		if i := strings.IndexByte(family, '@'); i > 0 {
 			family = family[:i]
 		}
-		if family == "nats" {
+		if family == serviceFamilyNATS {
 			natsHosts[svc.Hostname] = true
 		}
 	}
@@ -149,7 +149,7 @@ func planUsesNATS(plan *Plan) bool {
 		if i := strings.IndexByte(family, '@'); i > 0 {
 			family = family[:i]
 		}
-		if family == "nats" {
+		if family == serviceFamilyNATS {
 			return true
 		}
 	}

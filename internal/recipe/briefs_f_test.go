@@ -308,7 +308,7 @@ func TestFeatureBrief_SSHFSReminderInFooter(t *testing.T) {
 
 	plan := syntheticShowcasePlan()
 	in := RecipeInput{BriefKind: "feature"}
-	prompt, err := buildSubagentPrompt(plan, nil, in)
+	prompt, err := buildSubagentPrompt(plan, in)
 	if err != nil {
 		t.Fatalf("buildSubagentPrompt feature: %v", err)
 	}

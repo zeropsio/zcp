@@ -25,8 +25,8 @@ import (
 // plan.Research.Description — agents already record those there per
 // the existing research-phase teaching, so no atom extension is
 // needed for the run-13 stretch.
-func buildSubagentPrompt(plan *Plan, parent *ParentRecipe, in RecipeInput) (string, error) {
-	return buildSubagentPromptForPhase(plan, parent, in, "", "", nil)
+func buildSubagentPrompt(plan *Plan, in RecipeInput) (string, error) {
+	return buildSubagentPromptForPhase(plan, nil, in, "", "", nil)
 }
 
 // BuildSubagentPromptForReplay is the exported entry the

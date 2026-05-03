@@ -610,21 +610,6 @@ func excerptREADME(body string, n int) string {
 	return cut
 }
 
-// anyCodebaseHasInitCommands reports whether any codebase in the plan
-// authors initCommands. Briefs use this to decide whether to inject the
-// execOnce key-shape concept atom — run-8-readiness §2.F.
-func anyCodebaseHasInitCommands(plan *Plan) bool {
-	if plan == nil {
-		return false
-	}
-	for _, cb := range plan.Codebases {
-		if cb.HasInitCommands {
-			return true
-		}
-	}
-	return false
-}
-
 // citationGuides returns the unique guide ids from CitationMap in
 // deterministic order so brief composition is reproducible.
 func citationGuides() []string {

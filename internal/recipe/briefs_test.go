@@ -480,7 +480,7 @@ func TestBuildSubagentPrompt_Scaffold_IncludesRecipeLevelContext(t *testing.T) {
 
 	plan := syntheticShowcasePlan()
 	plan.Research.Description = "SPA is Svelte+Vite compiled to static; api is NestJS+TypeORM"
-	prompt, err := buildSubagentPrompt(plan, nil, RecipeInput{
+	prompt, err := buildSubagentPrompt(plan, RecipeInput{
 		BriefKind: "scaffold",
 		Codebase:  "api",
 	})
@@ -510,7 +510,7 @@ func TestBuildSubagentPrompt_WrapperShareIsSmall(t *testing.T) {
 	for i := range plan.Codebases {
 		plan.Codebases[i].SourceRoot = "/var/www/" + plan.Codebases[i].Hostname + "dev"
 	}
-	prompt, err := buildSubagentPrompt(plan, nil, RecipeInput{
+	prompt, err := buildSubagentPrompt(plan, RecipeInput{
 		BriefKind: "finalize",
 	})
 	if err != nil {
@@ -532,7 +532,7 @@ func TestBuildSubagentPrompt_Feature_NoCodebaseScope(t *testing.T) {
 	t.Parallel()
 
 	plan := syntheticShowcasePlan()
-	prompt, err := buildSubagentPrompt(plan, nil, RecipeInput{
+	prompt, err := buildSubagentPrompt(plan, RecipeInput{
 		BriefKind: "feature",
 	})
 	if err != nil {
@@ -558,7 +558,7 @@ func TestBuildSubagentPrompt_DisambiguatesSkillFromMCP(t *testing.T) {
 	t.Parallel()
 
 	plan := syntheticShowcasePlan()
-	prompt, err := buildSubagentPrompt(plan, nil, RecipeInput{
+	prompt, err := buildSubagentPrompt(plan, RecipeInput{
 		BriefKind: "scaffold",
 		Codebase:  "api",
 	})
