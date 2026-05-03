@@ -340,9 +340,7 @@ Every observation from a recipe run — whether a surprise, an incident, a scaff
 | **Platform × framework intersection** | Fact is specific to this framework AND caused by a platform behavior. Neither side alone would produce it. | Knowledge-Base gotcha, naming both sides clearly |
 | **Framework quirk** | Fact is about the framework's own behavior, unrelated to Zerops. Any user of that framework hits it regardless of where they deploy. | **DISCARD** — belongs in framework docs, not a Zerops recipe |
 | **Library metadata** | Fact is about npm, composer, pip, cargo — dependency-resolution or version-pinning concerns. | **DISCARD** — belongs in dep manifest comments, not recipe content |
-| **Scaffold decision (config)** | "We chose X over Y for this recipe" — visible in `zerops.yaml` field values. | Per-codebase `zerops.yaml` comment (Surface 7) |
-| **Scaffold decision (code)** | "We chose X over Y for this recipe" — code-level decision the porter literally copies as a diff. | IG item with the diff (Surface 4) |
-| **Scaffold decision (recipe-internal)** | "Our scaffold has X" but the porter would have different code. | **DISCARD** or move principle (without specific implementation) to IG |
+| **Scaffold decision** | "We chose X over Y for this recipe" — config-level (visible in `zerops.yaml` field values), code-level (a decision the porter literally copies as a diff), or recipe-internal (our scaffold has X but the porter's code would differ). | Config flavor → per-codebase `zerops.yaml` comment (Surface 7); code flavor → IG item with the diff (Surface 4); recipe-internal → **DISCARD** or move the principle (without specific implementation) to IG |
 | **Operational** | How to iterate / test / reset this specific repo locally. | `CLAUDE.md` (Surface 6) |
 | **Self-inflicted** | Our code had a bug; we fixed it; a reasonable porter would not hit it because their code doesn't have that specific bug. | **DISCARD** entirely — not content material |
 
@@ -355,9 +353,7 @@ The engine refuses incompatible (classification, fragmentId) pairs at `record-fr
 | platform-invariant | KB, IG (if porter applies a diff) | CLAUDE.md (→ KB), zerops.yaml comments (→ IG/KB) |
 | intersection | KB | All others |
 | framework-quirk / library-metadata | none | All — content does not belong on any published surface |
-| scaffold-decision (config) | zerops.yaml comments, IG (if porter copies the config) | KB, CLAUDE.md |
-| scaffold-decision (code) | IG (with diff) | KB, CLAUDE.md |
-| scaffold-decision (recipe-internal) | none | All — discard or move principle to IG |
+| scaffold-decision | zerops.yaml comments (config flavor), IG with the diff (code flavor) | KB, CLAUDE.md (recipe-internal flavor: all surfaces — discard or move the principle to IG) |
 | operational | CLAUDE.md | All others |
 | self-inflicted | none | All — discard |
 

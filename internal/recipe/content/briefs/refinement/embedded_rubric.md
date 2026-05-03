@@ -376,13 +376,15 @@ Aggregate per-bullet; surface score is the mean.
 ## Criterion 5 — Classification × surface routing
 
 **Why this matters**: every recorded fact has a classification
-(platform-invariant, intersection, scaffold-decision (config/code),
-operational, etc.) and the spec's Classification × surface
-compatibility table defines which surfaces each classification can
-land on. A scaffold-decision (recipe-internal) on the KB is
-misrouted; an operational fact on the IG is misrouted; a platform-
-invariant on the CLAUDE.md is misrouted (should be on KB). Misrouting
-sends the porter to the wrong surface for the question they have.
+(platform-invariant, intersection, scaffold-decision, operational,
+framework-quirk, library-metadata, self-inflicted) and the spec's
+Classification × surface compatibility table defines which surfaces
+each classification can land on. A scaffold-decision routed to the KB
+is misrouted (config flavor belongs on the zerops.yaml comment, code
+flavor on the IG diff); an operational fact on the IG is misrouted; a
+platform-invariant on the CLAUDE.md is misrouted (should be on KB).
+Misrouting sends the porter to the wrong surface for the question
+they have.
 
 ### 7.0 anchor — ≥1 misrouted item per codebase
 
@@ -398,9 +400,10 @@ Misrouted.
 ### 8.5 anchor — zero misrouted items; every routing passes the spec table
 
 Every KB bullet is platform-invariant or intersection. Every IG H3
-is platform-invariant. Every zerops.yaml block comment is
-scaffold-decision (config) or scaffold-decision (code). Every
-CLAUDE.md item is operational. No item violates the spec table.
+is platform-invariant or scaffold-decision (code flavor — porter
+copies the diff). Every zerops.yaml block comment is scaffold-decision
+(config flavor — visible in field values). Every CLAUDE.md item is
+operational. No item violates the spec table.
 
 ### 9.0 anchor — zero misrouted items + every routing decision is *visibly* intentional from facts.jsonl
 

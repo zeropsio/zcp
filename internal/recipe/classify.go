@@ -243,7 +243,7 @@ func ClassifyLog(records []FactRecord) (publishable, dropped []FactRecord) {
 //
 // Run-15 F.3 — operationalizes the spec table at record-fragment time so
 // a sub-agent with a self-inflicted observation can't quietly route it
-// into a KB bullet, and a scaffold-decision (config) fact can't land in
+// into a KB bullet, and a scaffold-decision fact can't land in
 // CLAUDE.md. Empty class always passes (back-compat: callers that don't
 // classify yet keep working).
 //

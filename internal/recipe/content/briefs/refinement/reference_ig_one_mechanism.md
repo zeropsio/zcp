@@ -177,8 +177,9 @@ envVariables:
 **Why this fails**: this is recipe *preference*, not platform-forced.
 A porter can read `${db_hostname}` directly in code and the app
 works fine. The recipe author chose to alias for portability — that's
-a scaffold-decision (config), which per spec routes to zerops.yaml
-block comments (Surface 7), not IG (Surface 4).
+a scaffold-decision visible in `zerops.yaml` field values, which per
+spec routes to zerops.yaml block comments (Surface 7), not IG
+(Surface 4).
 
 Compounding: the env-var block is already shipped verbatim in IG #1
 (the engine-stamped `Adding zerops.yaml`), so the porter sees the
