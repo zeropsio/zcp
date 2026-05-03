@@ -19,9 +19,12 @@ import (
 // any baseline; this helper reads the embedded `.md` so the scaffold
 // brief can include the parent-convention baseline as a fallback.
 //
-// Used by `BuildScaffoldBriefWithResolver` only — fires when the chain
-// resolver returns no parent AND the slug has a recognized chain
-// parent (`*-showcase` → `*-minimal`).
+// Used by all four phase composers that emit a parent baseline —
+// scaffold (`BuildScaffoldBriefWithResolver`, R3-RC-0), codebase-content
+// + env-content (run-22 followup F-6 via `appendEmbeddedParentBaseline`),
+// and refinement (F-6 via `appendEmbeddedParentBaselineRefinement`).
+// Fires when the chain resolver returns no parent AND the slug has a
+// recognized chain parent (`*-showcase` → `*-minimal`).
 func loadEmbeddedRecipeMD(slug string) (string, error) {
 	store, err := knowledge.GetEmbeddedStore()
 	if err != nil {

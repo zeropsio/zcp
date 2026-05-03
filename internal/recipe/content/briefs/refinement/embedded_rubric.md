@@ -514,8 +514,14 @@ box-drawing doesn't.
 
 Flag any fragment whose body contains characters in the Unicode
 ranges U+2500..U+257F or U+2580..U+259F (the `─━─━┃┏┓┗┛` /
-`▀▁▂▃▄▅▆▇█` glyph families). Replace with a single blank line or a
-`# section ---` ASCII line if the author wants visual grouping.
+`▀▁▂▃▄▅▆▇█` glyph families). Concrete pattern to scan against:
+
+```
+[─-╿▀-▟]
+```
+
+Replace with a single blank line or a `# section ---` ASCII line if
+the author wants visual grouping.
 
 Per-recipe TEACH-channel reference: `principles/yaml-comment-style.md`
 (loaded at codebase-content + env-content; the positive-shape atom

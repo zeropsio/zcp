@@ -926,6 +926,13 @@ func TestRefinementRubric_FlagsUnicodeBoxDrawing(t *testing.T) {
 		// The cross-ref to the TEACH-channel atom (system.md §4 channel
 		// hierarchy: rubric is editorial-pass backstop, not redundant).
 		"yaml-comment-style.md",
+		// run-22 fixup F-3 — codex review caught that prose-only
+		// glyph descriptions let an LLM editor ignore the rubric. The
+		// rubric MUST embed a concrete regex literal so an agent can
+		// pattern-scan rather than glyph-spot. The pattern below is the
+		// character-class shape covering both Unicode ranges
+		// (U+2500..U+257F box-drawing + U+2580..U+259F block elements).
+		"[─-╿▀-▟]",
 	} {
 		if !strings.Contains(body, mustHave) {
 			t.Errorf("embedded_rubric.md missing Unicode box-drawing flag anchor %q", mustHave)

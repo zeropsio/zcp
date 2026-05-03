@@ -45,7 +45,6 @@ sections are estimated from typical run shapes.
 ║   briefs/scaffold/platform_principles.md   (run-22 R1-RC-2)  ~5.6 KB ║
 ║     (same-key shadow extended to project-level vars)                 ║
 ║   briefs/scaffold/preship_contract.md                          ~1 KB ║
-║   briefs/scaffold/fact_recording.md                          ~0.6 KB ║
 ║   briefs/scaffold/decision_recording_slim.md  (run-21 R2-1   ~3.6 KB ║
 ║                                       + run-22 R3-C-2/4/5)           ║
 ║     (full decision_recording.md retired from scaffold; agent reads   ║
@@ -447,7 +446,6 @@ inside the sub-agent brief, not the main-agent context.)
 |   ↑ run-21 R2-6 rewrite: bounds verification to runnable surface     |
 |     (deploy + /health + ONE happy-path read); cross-service +        |
 |     behavior matrices explicitly delegated to feature                |
-| `briefs/scaffold/fact_recording.md`                 | ~0.6 KB |
 | `briefs/scaffold/decision_recording_slim.md` (run-21 R2-1 | ~3.6 KB |
 |                                + run-22 R3-C-2/4/5)                  |
 |   ↑ run-21 R2-1 replaced legacy 14 KB `decision_recording.md`;       |

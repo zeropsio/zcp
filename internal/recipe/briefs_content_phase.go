@@ -552,15 +552,26 @@ func ifEmpty(v, fallback string) string {
 // header, no `##` heading) because refinement's parent block is
 // nested inside a list-style "stitched-output / parent recipe"
 // section pre-existing from run-17 §9.
+//
+// Run-22 fixup F-6 (Opus adversarial review) — codebase-content +
+// env-content framings extended with concrete cross-reference shape
+// strings. Pre-fixup the framings narrated WHY parent matters but
+// didn't show what to write when the agent identifies overlap; an
+// agent reading "cross-reference instead of re-author" had no template
+// to follow. Refinement framing was already operational — HOLD is a
+// defined refinement action.
 const (
-	codebaseContentEmbeddedFraming = "Parent slug: %s — read this for IG/KB framing inheritance " +
+	codebaseContentEmbeddedFraming = "Parent slug: %[1]s — read this for IG/KB framing inheritance " +
 		"(what topics the parent already covers; cross-reference instead of " +
-		"re-author when the parent already explains a mechanism).\n\n"
+		"re-author when the parent already explains a mechanism). " +
+		"Cross-reference shape when parent already covers a topic: " +
+		"`See parent recipe `%[1]s` for <topic>.`\n\n"
 
-	envContentEmbeddedFraming = "Parent slug: %s — read this for tier-decision and per-tier " +
+	envContentEmbeddedFraming = "Parent slug: %[1]s — read this for tier-decision and per-tier " +
 		"framing inheritance. Align tier intros + import comments with the " +
 		"parent's tier-flavor voice; don't re-author what the parent already " +
-		"established.\n\n"
+		"established. Cross-reference shape when parent already shaped a " +
+		"tier: `See parent recipe `%[1]s` tier <N> for <topic>.`\n\n"
 
 	refinementEmbeddedFraming = "Parent slug: %s. Read the embedded baseline before " +
 		"flagging cross-recipe duplication; refinement HOLDS on any fragment " +
@@ -599,8 +610,9 @@ func appendEmbeddedParentBaseline(b *strings.Builder, slug string, parent *Paren
 	b.WriteString("## Parent recipe baseline (embedded)\n\n")
 	fmt.Fprintf(b, framing, parentSlug)
 	b.WriteString("```md\n")
-	b.WriteString(excerptREADME(embeddedParent, excerptCap))
-	if !strings.HasSuffix(embeddedParent, "\n") {
+	excerpt := excerptREADME(embeddedParent, excerptCap)
+	b.WriteString(excerpt)
+	if !strings.HasSuffix(excerpt, "\n") {
 		b.WriteByte('\n')
 	}
 	b.WriteString("```\n\n")
@@ -626,8 +638,9 @@ func appendEmbeddedParentBaselineRefinement(b *strings.Builder, slug string, par
 	b.WriteString("**Parent recipe baseline (embedded)**\n\n")
 	fmt.Fprintf(b, framing, parentSlug)
 	b.WriteString("```md\n")
-	b.WriteString(excerptREADME(embeddedParent, excerptCap))
-	if !strings.HasSuffix(embeddedParent, "\n") {
+	excerpt := excerptREADME(embeddedParent, excerptCap)
+	b.WriteString(excerpt)
+	if !strings.HasSuffix(excerpt, "\n") {
 		b.WriteByte('\n')
 	}
 	b.WriteString("```\n\n")

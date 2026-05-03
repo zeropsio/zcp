@@ -352,8 +352,9 @@ func BuildScaffoldBriefWithResolver(plan *Plan, cb Codebase, parent *ParentRecip
 				"Don't re-invent; your showcase should be a superset of these conventions.\n\n",
 				parentSlug)
 			b.WriteString("```md\n")
-			b.WriteString(excerptREADME(embeddedParent, 4000))
-			if !strings.HasSuffix(embeddedParent, "\n") {
+			excerpt := excerptREADME(embeddedParent, 4000)
+			b.WriteString(excerpt)
+			if !strings.HasSuffix(excerpt, "\n") {
 				b.WriteByte('\n')
 			}
 			b.WriteString("```\n\n")
