@@ -243,10 +243,21 @@ func writePromptRecipeContext(b *strings.Builder, plan *Plan, kind BriefKind, cb
 		}
 	}
 
+	// Run-21 R2-3 — filter by per-codebase ConsumesServices so a SPA
+	// codebase that only consumes `${api_zeropsSubdomain}` doesn't see
+	// db/cache/broker in its brief. Empty ConsumesServices (slice is
+	// nil) falls back to the full list — preserves the pre-R2-3 shape
+	// for codebases the engine couldn't analyze (sim path that skips
+	// scaffold, codebases without on-disk yaml). Empty BUT non-nil
+	// (slice has len 0 from successful parse) emits nothing — the
+	// codebase consumes no managed service.
 	if len(plan.Services) > 0 {
-		b.WriteString("\n### Managed services\n\n")
-		for _, svc := range plan.Services {
-			fmt.Fprintf(b, "- `%s` (%s) — kind=%s\n", svc.Hostname, svc.Type, svc.Kind)
+		filtered := filterConsumedServices(plan.Services, cb.ConsumesServices)
+		if len(filtered) > 0 {
+			b.WriteString("\n### Managed services\n\n")
+			for _, svc := range filtered {
+				fmt.Fprintf(b, "- `%s` (%s) — kind=%s\n", svc.Hostname, svc.Type, svc.Kind)
+			}
 		}
 	}
 

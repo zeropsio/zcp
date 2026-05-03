@@ -70,6 +70,15 @@ type Codebase struct {
 	// execOnce key-shape concept atom — see briefs.go. Main agent sets
 	// this at update-plan time before build-brief kind=scaffold.
 	HasInitCommands bool `json:"hasInitCommands,omitempty"`
+	// ConsumesServices lists the managed-service hostnames this
+	// codebase references via `${<host>_*}` / `${<host>}` patterns in
+	// the scaffold-authored zerops.yaml's run.envVariables. Engine-
+	// populated by parseConsumedServicesFromYaml at scaffold completion;
+	// codebase-content brief composer + recipe-context Services block
+	// filter on this list so a frontend SPA doesn't see db/cache/broker
+	// in its brief when it only consumes `${api_zeropsSubdomain}`.
+	// Run-21 R2-3.
+	ConsumesServices []string `json:"consumesServices,omitempty"`
 }
 
 // Service is a managed or utility service in the recipe (database, cache,

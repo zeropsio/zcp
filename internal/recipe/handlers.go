@@ -729,6 +729,17 @@ func completePhase(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
 	}
 	r.Violations, r.Notices = blocking, notices
 	r.OK = len(blocking) == 0
+	if r.OK && sess.Current == PhaseScaffold {
+		// Run-21 R2-3 — bare scaffold yaml is on disk now (pre-stitch
+		// above ran). Parse run.envVariables for `${<host>_*}` /
+		// `${<host>}` references and record per-codebase
+		// ConsumesServices so the codebase-content brief composer +
+		// recipe-context Services block can filter precisely.
+		if pErr := populateConsumesServicesFromYaml(sess); pErr != nil {
+			r.Error = "complete-phase: populate consumes-services: " + pErr.Error()
+			return r
+		}
+	}
 	if r.OK {
 		if next, ok := nextPhase(sess.Current); ok {
 			// Run-18: finalize → refinement is always-on. Snapshot/
