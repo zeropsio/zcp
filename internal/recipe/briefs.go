@@ -324,6 +324,30 @@ func BuildScaffoldBriefWithResolver(plan *Plan, cb Codebase, parent *ParentRecip
 			}
 			parts = append(parts, "parent_excerpt")
 		}
+	} else if parentSlug := parentSlugFor(plan.Slug); parentSlug != "" {
+		// Run-22 R3-RC-0 — embedded-parent fallback. When the chain
+		// resolver returns no parent (filesystem mount empty) but the
+		// slug has a recognized chain parent (*-showcase → *-minimal),
+		// inject the embedded recipe `.md` from internal/knowledge/recipes/
+		// as a baseline section so scaffold sub-agents can inherit setup
+		// naming, project-secret posture, and codebase yaml shape from a
+		// deployment-verified predecessor. Pre-fix the binary IS
+		// carrying this content but the v3 chain resolver doesn't read
+		// it; this is the missing accessor.
+		if embeddedParent, err := loadEmbeddedRecipeMD(parentSlug); err == nil {
+			b.WriteString("## Parent recipe baseline (embedded)\n\n")
+			fmt.Fprintf(&b, "Parent slug: %s — read this for convention inheritance "+
+				"(setup names, project-secret posture, comment style, codebase yaml shape). "+
+				"Don't re-invent; your showcase should be a superset of these conventions.\n\n",
+				parentSlug)
+			b.WriteString("```md\n")
+			b.WriteString(excerptREADME(embeddedParent, 4000))
+			if !strings.HasSuffix(embeddedParent, "\n") {
+				b.WriteByte('\n')
+			}
+			b.WriteString("```\n\n")
+			parts = append(parts, "embedded_parent_baseline")
+		}
 	}
 
 	body := b.String()

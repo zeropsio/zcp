@@ -240,12 +240,16 @@ func TestBrief_Scaffold_UnderCap_WithDevLoop(t *testing.T) {
 //
 // Frontend-SPA scaffold brief should drop from the pre-R2-1 ~49 KB
 // down to ~32 KB after the slim-down (full decision_recording.md
-// → slim variant; yaml-comment-style.md drop). 35 KB is the soft
-// target; the hard upper bound is ScaffoldBriefCap (48 KB).
+// → slim variant; yaml-comment-style.md drop). The hard upper bound
+// is ScaffoldBriefCap (48 KB). Run-22 R3-RC-3 bumped the soft target
+// 35 → 41 KB to absorb cross-service-urls.md's update-plan teaching
+// (~1.6 KB) plus decision_recording_slim.md's R3-C-2/4/5 worked
+// examples (~2.5 KB). Both additions are spec-required content —
+// the brief still has 7 KB headroom under the hard cap.
 func TestBrief_Scaffold_FrontendSPA_UnderTargetSize(t *testing.T) {
 	t.Parallel()
 
-	const targetCap = 35 * 1024
+	const targetCap = 41 * 1024
 	plan := syntheticShowcasePlan()
 	// app is the RoleFrontend codebase (largest scaffold brief shape —
 	// adds tier-fact table + build-tool-host-allowlist + spa-static).

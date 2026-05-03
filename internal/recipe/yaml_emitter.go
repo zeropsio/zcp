@@ -105,6 +105,15 @@ func writeProject(b *strings.Builder, plan *Plan, tier Tier) {
 
 	hasSecret := plan.Research.NeedsAppSecret && plan.Research.AppSecretKey != ""
 	envVars := plan.ProjectEnvVars[envKey(tier)]
+	// Run-22 R3-RC-3 — single-slot tiers (2-5; RunsDevContainer=false)
+	// rewrite slot-named hostnames in URL values to bare hostnames
+	// (`apistage-` → `api-`, `appdev-` → `app-`) and drop DEV_* keys.
+	// The agent records the dev-pair (env 0/1) baseline; the engine
+	// emits the per-tier shape so authors don't have to enumerate all
+	// 6 envs by hand.
+	if !tier.RunsDevContainer && len(envVars) > 0 {
+		envVars = rewriteURLsForSingleSlot(envVars)
+	}
 	if !hasSecret && len(envVars) == 0 {
 		b.WriteByte('\n')
 		return
@@ -122,6 +131,50 @@ func writeProject(b *strings.Builder, plan *Plan, tier Tier) {
 		fmt.Fprintf(b, "    %s: %s\n", name, envVars[name])
 	}
 	b.WriteByte('\n')
+}
+
+// rewriteURLsForSingleSlot rewrites slot-named hostnames in URL values
+// to bare hostnames for single-slot tiers (envs 2-5). The dev-pair
+// baseline (envs 0/1) carries `apistage-`/`appdev-` etc. because dev
+// and stage exist as distinct services there; envs 2-5 collapse the
+// pair into a bare hostname. This rewrite means agents author URL
+// constants once at env 0/1 and the engine handles per-tier reshape.
+//
+// Run-22 R3-RC-3 — closes the channel sync gap between the agent's
+// `zerops_env action=set` (live workspace) and `Plan.ProjectEnvVars`
+// (tier yaml emit). The agent recorded provision-time URLs with
+// dev-pair hostnames; the engine emits per-tier with the right shape.
+//
+// Rules:
+//   - Drop entries whose key starts with `DEV_` (single-slot tiers
+//     have no dev runtime; DEV_API_URL would dangle).
+//   - Replace `apidev-`/`apistage-`/`appdev-`/`appstage-`/`workerdev-`/
+//     `workerstage-` with bare `api-`/`app-`/`worker-`.
+//   - Preserve `${zeropsSubdomainHost}` and any other `${...}` token.
+//
+// The rewrite is shallow string-replace — sufficient because URL values
+// follow a fixed pattern (`https://<slot>-${zeropsSubdomainHost}-PORT...`).
+// No need for parsed URL handling.
+func rewriteURLsForSingleSlot(envVars map[string]string) map[string]string {
+	out := make(map[string]string, len(envVars))
+	replacements := []struct{ from, to string }{
+		{"apidev-", "api-"},
+		{"apistage-", "api-"},
+		{"appdev-", "app-"},
+		{"appstage-", "app-"},
+		{"workerdev-", "worker-"},
+		{"workerstage-", "worker-"},
+	}
+	for k, v := range envVars {
+		if strings.HasPrefix(k, "DEV_") {
+			continue
+		}
+		for _, r := range replacements {
+			v = strings.ReplaceAll(v, r.from, r.to)
+		}
+		out[k] = v
+	}
+	return out
 }
 
 // writeWorkspaceServices emits the provision-time service list. Every

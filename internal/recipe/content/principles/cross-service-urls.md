@@ -71,6 +71,43 @@ zerops_env project=true action=set \
   DEV_FRONTEND_URL="https://appdev-${zeropsSubdomainHost}-5173.prg1.zerops.app"
 ```
 
+After the `zerops_env` call above, also record the same constants in
+the recipe plan via `update-plan` so the engine can emit them in the
+tier yamls' `project.envVariables` block. The two channels solve
+different halves of the same problem:
+
+- **`zerops_env action=set`** populates the live workspace project's
+  envs (resolves at provision time so scaffold sub-agents bake real
+  URLs into the dev/stage build).
+- **`update-plan` `projectEnvVars`** populates the published tier
+  deliverable yamls (so the end-user's click-deploy mints the same
+  constants in their own project).
+
+Both are required. Setting one without the other reintroduces the
+build-time-bake trap on the missing channel.
+
+```bash
+zerops_recipe action=update-plan slug=<slug> plan='{
+  "projectEnvVars": {
+    "0": {
+      "STAGE_API_URL": "https://apistage-${zeropsSubdomainHost}-3000.prg1.zerops.app",
+      "STAGE_FRONTEND_URL": "https://appstage-${zeropsSubdomainHost}.prg1.zerops.app",
+      "DEV_API_URL": "https://apidev-${zeropsSubdomainHost}-3000.prg1.zerops.app",
+      "DEV_FRONTEND_URL": "https://appdev-${zeropsSubdomainHost}-5173.prg1.zerops.app"
+    },
+    "1": { "STAGE_API_URL": "...", "STAGE_FRONTEND_URL": "...", "DEV_API_URL": "...", "DEV_FRONTEND_URL": "..." }
+  }
+}'
+```
+
+Provide the env-0 / env-1 (dev-pair) baseline; the engine rewrites
+the slot-named hostnames automatically when emitting single-slot
+tiers (envs 2-5). `apidev-`/`apistage-` collapse to `api-`,
+`appdev-`/`appstage-` collapse to `app-`, and `DEV_*` keys drop on
+single-slot tiers (they have no dev runtime). You don't have to
+re-author the per-tier shape — set env 0/1 once, the engine handles
+2-5.
+
 `DEV_FRONTEND_URL` carries `-5173` because appdev runs Vite on 5173;
 `STAGE_FRONTEND_URL` does not because appstage serves a built bundle
 on `base: static`. Match this to whatever ports / runtimes the

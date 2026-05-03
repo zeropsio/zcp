@@ -293,6 +293,22 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 		if _, notice := ClassifyWithNotice(*in.Fact); notice != "" {
 			r.Notice = notice
 		}
+		// Run-22 R3-C-3 — warn-on-record when the (candidateClass,
+		// candidateSurface) pair violates the spec compatibility table.
+		// Fragment-time refusal (validateRecordFragment) still applies
+		// downstream; this is the earlier signal so the agent doesn't
+		// burn 6+ tool-call hops between record-fact and the eventual
+		// fragment refusal. DISCARD classes (framework-quirk,
+		// library-metadata, self-inflicted) on any surface trip this;
+		// publishable classes on a wrong surface trip this too.
+		if r.Notice == "" && in.Fact.CandidateClass != "" && in.Fact.CandidateSurface != "" {
+			if err := classificationCompatibleWithSurface(
+				Classification(in.Fact.CandidateClass),
+				Surface(in.Fact.CandidateSurface),
+			); err != nil {
+				r.Notice = "record-fact warn: " + err.Error()
+			}
+		}
 		r.OK = true
 	case "record-fragment":
 		r = handleRecordFragment(sess, in, r)

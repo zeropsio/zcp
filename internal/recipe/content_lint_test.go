@@ -556,3 +556,212 @@ func TestShowcaseTierSupplementsAtom_NamesValidatorGate(t *testing.T) {
 		t.Error("showcase_tier_supplements.md must reference the validator gate (validators_worker_subscription.go)")
 	}
 }
+
+// run-22 R3-RC-0 — research atom must allow `zerops_knowledge recipe=<slug>`
+// for parent-convention inheritance. Pre-fix the atom blanket-forbade
+// `zerops_knowledge` for parent fallback, leaving the embedded baseline
+// recipe corpus unreachable. The atom now distinguishes the canonical
+// service set / runtime versions (forbidden) from convention inheritance
+// (encouraged via zerops_knowledge recipe=<slug>).
+func TestResearchAtom_EncouragesZeropsKnowledgeForParentConvention(t *testing.T) {
+	t.Parallel()
+	body, err := readAtom("phase_entry/research.md")
+	if err != nil {
+		t.Fatalf("read research.md: %v", err)
+	}
+	if !strings.Contains(body, "zerops_knowledge recipe=") {
+		t.Error("research.md should encourage `zerops_knowledge recipe=<slug>` for parent-convention inheritance")
+	}
+	if !strings.Contains(body, "convention inheritance") {
+		t.Error("research.md should distinguish convention-inheritance use case (allowed) from canonical-service-set substitution (forbidden)")
+	}
+}
+
+// run-22 R3-RC-0 — scaffold brief embeds the parent recipe `.md` from
+// the embedded knowledge corpus when the chain resolver returns no parent
+// AND the slug is `*-showcase` AND the embedded `.md` exists. Closes the
+// channel mismatch where the binary IS carrying the baseline recipe but
+// the v3 chain resolver only reads the filesystem mount.
+func TestScaffoldBrief_EmbedsParentMD_WhenParentAbsent_ShowcaseSlug(t *testing.T) {
+	t.Parallel()
+	plan := syntheticShowcasePlan()
+	plan.Slug = "nestjs-showcase" // chains to nestjs-minimal.md in embedded corpus
+	plan.Framework = "nestjs"
+	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	if !strings.Contains(brief.Body, "Parent recipe baseline (embedded)") {
+		t.Errorf("scaffold brief missing embedded-parent-baseline section for showcase slug with no resolved parent")
+	}
+	// The embedded nestjs-minimal.md teaches `setup: prod`. Match that
+	// substring to confirm the actual baseline content reached the brief.
+	if !strings.Contains(brief.Body, "setup: prod") {
+		t.Errorf("scaffold brief embedded-parent block missing expected `setup: prod` content from nestjs-minimal.md")
+	}
+}
+
+// TestScaffoldBrief_OmitsEmbeddedParent_WhenParentMounted — when the
+// filesystem mount has the parent (parent != nil), the existing
+// parent-excerpt block fires INSTEAD of the embedded fallback. Don't
+// double-load.
+func TestScaffoldBrief_OmitsEmbeddedParent_WhenParentMounted(t *testing.T) {
+	t.Parallel()
+	plan := syntheticShowcasePlan()
+	plan.Slug = "nestjs-showcase"
+	plan.Framework = "nestjs"
+	parent := &ParentRecipe{
+		Slug: "nestjs-minimal",
+		Tier: "minimal",
+		Codebases: map[string]ParentCodebase{
+			"api": {README: "# parent api readme — load me, not the embed"},
+		},
+	}
+	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], parent)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	if strings.Contains(brief.Body, "Parent recipe baseline (embedded)") {
+		t.Errorf("scaffold brief should NOT include embedded-parent block when filesystem-mount parent is present")
+	}
+	if !strings.Contains(brief.Body, "Parent recipe excerpt") {
+		t.Errorf("scaffold brief missing the standard mount-based parent-excerpt section")
+	}
+}
+
+// TestScaffoldBrief_OmitsEmbeddedParent_WhenSlugIsMinimal — minimal /
+// hello-world slugs have no chain parent (parentSlugFor returns ""),
+// so the embedded fallback must not fire.
+func TestScaffoldBrief_OmitsEmbeddedParent_WhenSlugIsMinimal(t *testing.T) {
+	t.Parallel()
+	plan := syntheticShowcasePlan()
+	plan.Slug = "nestjs-minimal"
+	plan.Framework = "nestjs"
+	plan.Tier = "minimal"
+	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	if strings.Contains(brief.Body, "Parent recipe baseline (embedded)") {
+		t.Errorf("scaffold brief should NOT embed parent baseline when slug has no chain parent (minimal/hello-world)")
+	}
+}
+
+// run-22 R3-RC-3 — cross-service-urls.md must teach the agent to record
+// URL constants in the recipe plan via update-plan projectEnvVars in
+// addition to the live-workspace `zerops_env action=set` channel. Both
+// channels are required: zerops_env populates the live workspace project,
+// projectEnvVars populates the published tier deliverable yamls.
+func TestCrossServiceURLsAtom_TeachesUpdatePlanProjectEnvVars(t *testing.T) {
+	t.Parallel()
+	body, err := readAtom("principles/cross-service-urls.md")
+	if err != nil {
+		t.Fatalf("read cross-service-urls.md: %v", err)
+	}
+	if !strings.Contains(body, "update-plan") {
+		t.Error("cross-service-urls.md must teach the `update-plan` channel for tier-yaml emit")
+	}
+	if !strings.Contains(body, "projectEnvVars") {
+		t.Error("cross-service-urls.md must reference the `projectEnvVars` plan field")
+	}
+	// Confirm BOTH channels are still taught; the live `zerops_env`
+	// channel is not replaced.
+	if !strings.Contains(body, "zerops_env") {
+		t.Error("cross-service-urls.md must continue to teach the `zerops_env` live-workspace channel")
+	}
+}
+
+// run-22 R3-C-1 — refinement rubric flags subdomain "rotate" overclaim.
+// Platform-issued subdomains are stable per service identity; they do
+// not rotate. Run-22 evidence: appdev/README.md L166 claimed "those
+// domains rotate" with no factual basis.
+func TestRefinementRubric_FlagsSubdomainRotateClaim(t *testing.T) {
+	t.Parallel()
+	body, err := readAtom("briefs/refinement/embedded_rubric.md")
+	if err != nil {
+		t.Fatalf("read embedded_rubric.md: %v", err)
+	}
+	// The rubric must teach refinement to flag the overclaim phrase.
+	if !strings.Contains(body, "rotate") {
+		t.Error("embedded_rubric.md should mention the subdomain rotation overclaim guard")
+	}
+	if !strings.Contains(body, "stable per service") && !strings.Contains(body, "do not rotate") {
+		t.Error("embedded_rubric.md should explain why the rotate claim is wrong")
+	}
+}
+
+// run-22 R3-C-2 + R3-C-5 — decision_recording_slim must clarify that
+// `topic` is freeform (and must be unique-per-fact-purpose) and that
+// `kind` is a fixed enum (porter_change / field_rationale / etc).
+// Run-22 evidence: `worker_dev_server_started` reused 5x across 5 scopes
+// describing 3 different processes; 2/53 record-fact calls used a topic
+// name as a kind value.
+func TestScaffoldBrief_TeachesTopicVsKindSeparation(t *testing.T) {
+	t.Parallel()
+	body, err := readAtom("briefs/scaffold/decision_recording_slim.md")
+	if err != nil {
+		t.Fatalf("read decision_recording_slim.md: %v", err)
+	}
+	if !strings.Contains(body, "freeform") {
+		t.Error("decision_recording_slim.md should describe `topic` as freeform")
+	}
+	if !strings.Contains(body, "enum") {
+		t.Error("decision_recording_slim.md should describe `kind` as an enum")
+	}
+}
+
+// run-22 R3-C-3 — record-fact emits a non-blocking warning when the
+// candidate (class, surface) pair violates the spec compatibility table.
+// Faster feedback than waiting for fragment-time refusal. Fragment-time
+// refusal still applies; this is an earlier signal.
+func TestRecordFact_WarnsOnIncompatibleClassSurface(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store := NewStore(dir)
+	outputRoot := filepath.Join(dir, "run")
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "start", Slug: "synth-showcase", OutputRoot: outputRoot,
+	})
+	if !res.OK {
+		t.Fatalf("start: %+v", res)
+	}
+	sess, _ := store.Get("synth-showcase")
+	sess.Plan = syntheticShowcasePlan()
+
+	res = dispatch(t.Context(), store, RecipeInput{
+		Action: "record-fact",
+		Slug:   "synth-showcase",
+		Fact: &FactRecord{
+			Topic:            "meilisearch-version-pin",
+			Kind:             FactKindPorterChange,
+			Why:              "lock the version so the search index migration is deterministic",
+			CandidateClass:   "library-metadata",
+			CandidateSurface: "CODEBASE_KB",
+		},
+	})
+	if !res.OK {
+		t.Fatalf("record-fact: %+v", res)
+	}
+	if res.Notice == "" {
+		t.Errorf("record-fact should emit a Notice when class library-metadata is paired with a non-DISCARD surface; got empty notice")
+	}
+	if !strings.Contains(res.Notice, "library-metadata") {
+		t.Errorf("record-fact notice should name the offending class; got %q", res.Notice)
+	}
+}
+
+// run-22 R3-C-4 — the citationGuide field is supported by the engine but
+// no run-22 fact populated it. Rather than delete the field (which would
+// break test pins in classify_test.go / engine_emitted_facts_test.go /
+// briefs_content_phase_run17_test.go), the slim brief atom is extended
+// with a worked example so authors see how to populate it.
+func TestDecisionRecordingAtom_HasCitationGuideExample(t *testing.T) {
+	t.Parallel()
+	body, err := readAtom("briefs/scaffold/decision_recording_slim.md")
+	if err != nil {
+		t.Fatalf("read decision_recording_slim.md: %v", err)
+	}
+	if !strings.Contains(body, "citationGuide") {
+		t.Error("decision_recording_slim.md should include a citationGuide worked example")
+	}
+}

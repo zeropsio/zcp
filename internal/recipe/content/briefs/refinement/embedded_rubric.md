@@ -504,6 +504,26 @@ not what tier it leads to.
 
 ---
 
+### Subdomain rotation overclaim (factual)
+
+Platform-issued Zerops subdomains are stable per service identity —
+the `<host>-${zeropsSubdomainHost}.prg1.zerops.app` URL doesn't
+change for the lifetime of the service. They do not rotate. Fail
+any prose that claims subdomains rotate, are randomized after
+deploy, change between deploys, or are otherwise unstable. Common
+overclaim phrases (case-insensitive):
+- `\bdomain[s]? rotate\b`
+- `\bsubdomain[s]? (rotate|change|randomize)\b`
+- `\b(rotate|rotates|rotated|rotation) (the|each|every|after) (subdomain|domain|deploy|build)\b`
+- `\bunstable\b.*\bsubdomain\b`
+
+Subdomains are stable per service; rewrites should describe the URL
+as a porter-controlled value (custom domain swaps it; `enableSubdomainAccess: false`
+turns it off; otherwise it's stable). Do not rotate is the correct
+framing.
+
+---
+
 ## Updates
 
 This rubric ships in run-17. Run-18 dogfood findings inform whether

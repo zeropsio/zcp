@@ -69,10 +69,25 @@ resolver found a published predecessor:
   `parent.envImports["0"]` verbatim. Inherit hostnames, runtime type,
   and services — don't re-derive. Add only showcase-new services.
 - **`parent` is null**: first-time run for this framework (or parent
-  not mounted at `~/recipes/`). Proceed from your framework training
-  + this atom. **Do not call `zerops_knowledge` to substitute for the
-  missing parent** — the service set and versions above are
-  authoritative whether or not parent exists.
+  not mounted at `~/recipes/`). Three cases govern what's allowed:
+  - **For the canonical service set + runtime versions**: proceed
+    from this atom only. Don't call `zerops_knowledge` to substitute
+    for these — they're authoritative whether or not parent exists.
+  - **For convention inheritance** (setup naming, project-secret
+    posture, comment style, codebase yaml shape): if your slug is
+    `<framework>-showcase`, call
+    `zerops_knowledge recipe=<framework>-minimal` to read the proven
+    minimal-tier convention. Inherit setup names, project-env
+    posture, and structural patterns — don't re-invent. The
+    embedded minimal recipe has been deployment-verified; your
+    showcase extension should be a superset of its conventions, not
+    a parallel one. The scaffold brief auto-embeds this same content
+    as a baseline section when the filesystem mount is empty, so
+    the call is a refresher when you need to re-read mid-phase.
+  - **For platform mechanics** (env-var rules, alias contracts,
+    L7 balancer behavior): use `zerops_knowledge query=<topic>`
+    for the relevant guide. Always preferred over agent
+    extrapolation.
 
 ## Payload shape for update-plan
 

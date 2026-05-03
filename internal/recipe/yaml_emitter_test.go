@@ -399,3 +399,109 @@ func firstLine(s string) string {
 	line, _, _ := strings.Cut(s, "\n")
 	return line
 }
+
+// TestEmitDeliverableYAML_DeclaresURLConstantsInProjectEnvVars — run-22
+// R3-RC-3 part B. The emitter writes Plan.ProjectEnvVars[envKey(tier)]
+// into the project.envVariables block. Pre-fix this contract was already
+// honored end-to-end; the regression class targeted by R3 was the agent
+// not populating ProjectEnvVars. Pin the existing emit so future
+// refactors don't drop it.
+func TestEmitDeliverableYAML_DeclaresURLConstantsInProjectEnvVars(t *testing.T) {
+	t.Parallel()
+	plan := syntheticShowcasePlan()
+	plan.ProjectEnvVars = map[string]map[string]string{
+		"0": {
+			"STAGE_API_URL":      "https://apistage-${zeropsSubdomainHost}-3000.prg1.zerops.app",
+			"STAGE_FRONTEND_URL": "https://appstage-${zeropsSubdomainHost}.prg1.zerops.app",
+			"DEV_API_URL":        "https://apidev-${zeropsSubdomainHost}-3000.prg1.zerops.app",
+			"DEV_FRONTEND_URL":   "https://appdev-${zeropsSubdomainHost}-5173.prg1.zerops.app",
+		},
+	}
+	got, err := EmitDeliverableYAML(plan, 0)
+	if err != nil {
+		t.Fatalf("EmitDeliverableYAML: %v", err)
+	}
+	for _, want := range []string{
+		"STAGE_API_URL: https://apistage-${zeropsSubdomainHost}-3000.prg1.zerops.app",
+		"STAGE_FRONTEND_URL: https://appstage-${zeropsSubdomainHost}.prg1.zerops.app",
+		"DEV_API_URL: https://apidev-${zeropsSubdomainHost}-3000.prg1.zerops.app",
+		"DEV_FRONTEND_URL: https://appdev-${zeropsSubdomainHost}-5173.prg1.zerops.app",
+	} {
+		mustContain(t, got, want)
+	}
+}
+
+// TestEmitDeliverableYAML_RewritesURLsForSingleSlotTiers — run-22 R3-RC-3.
+// Tiers 2-5 collapse the dev/stage slot pair into a bare hostname
+// (`api`/`app`/`worker`). The emitter must rewrite slot-named hostnames
+// in URL values for these tiers and drop the DEV_* keys (single-slot
+// tiers don't have a dev runtime). Preserves `${zeropsSubdomainHost}`.
+func TestEmitDeliverableYAML_RewritesURLsForSingleSlotTiers(t *testing.T) {
+	t.Parallel()
+	plan := syntheticShowcasePlan()
+	plan.ProjectEnvVars = map[string]map[string]string{
+		"4": {
+			"STAGE_API_URL":      "https://apistage-${zeropsSubdomainHost}-3000.prg1.zerops.app",
+			"STAGE_FRONTEND_URL": "https://appstage-${zeropsSubdomainHost}.prg1.zerops.app",
+			"DEV_API_URL":        "https://apidev-${zeropsSubdomainHost}-3000.prg1.zerops.app",
+			"DEV_FRONTEND_URL":   "https://appdev-${zeropsSubdomainHost}-5173.prg1.zerops.app",
+		},
+	}
+	got, err := EmitDeliverableYAML(plan, 4)
+	if err != nil {
+		t.Fatalf("EmitDeliverableYAML: %v", err)
+	}
+	// Single-slot tier rewrites apistage- → api-, appstage- → app-.
+	mustContain(t, got, "STAGE_API_URL: https://api-${zeropsSubdomainHost}-3000.prg1.zerops.app")
+	mustContain(t, got, "STAGE_FRONTEND_URL: https://app-${zeropsSubdomainHost}.prg1.zerops.app")
+	// Slot-named hostnames must NOT survive on tier 4.
+	mustNotContain(t, got, "apistage-")
+	mustNotContain(t, got, "appstage-")
+	// DEV_* drops on single-slot tiers.
+	mustNotContain(t, got, "DEV_API_URL")
+	mustNotContain(t, got, "DEV_FRONTEND_URL")
+	mustNotContain(t, got, "apidev-")
+	mustNotContain(t, got, "appdev-")
+	// `${zeropsSubdomainHost}` literal must survive untouched.
+	mustContain(t, got, "${zeropsSubdomainHost}")
+}
+
+// TestEmitDeliverableYAML_PreservesAppSecretAlongsideURLConstants —
+// run-22 R3-RC-3 regression guard. The single-slot rewrite must not
+// accidentally swallow APP_SECRET or other unrelated project envs.
+func TestEmitDeliverableYAML_PreservesAppSecretAlongsideURLConstants(t *testing.T) {
+	t.Parallel()
+	plan := syntheticShowcasePlan()
+	plan.ProjectEnvVars = map[string]map[string]string{
+		"4": {
+			"STAGE_API_URL": "https://apistage-${zeropsSubdomainHost}-3000.prg1.zerops.app",
+		},
+	}
+	got, err := EmitDeliverableYAML(plan, 4)
+	if err != nil {
+		t.Fatalf("EmitDeliverableYAML: %v", err)
+	}
+	mustContain(t, got, "APP_SECRET: <@generateRandomString(<32>)>")
+	mustContain(t, got, "STAGE_API_URL: https://api-${zeropsSubdomainHost}-3000.prg1.zerops.app")
+}
+
+// TestEmitDeliverableYAML_KeepsDevPairURLsForTiers0And1 — run-22 R3-RC-3
+// guard. Tiers 0 and 1 are dev-pair tiers (RunsDevContainer=true) — the
+// single-slot rewrite must NOT fire there; the dev/stage slot URLs are
+// the load-bearing values.
+func TestEmitDeliverableYAML_KeepsDevPairURLsForTiers0And1(t *testing.T) {
+	t.Parallel()
+	plan := syntheticShowcasePlan()
+	plan.ProjectEnvVars = map[string]map[string]string{
+		"1": {
+			"DEV_API_URL":   "https://apidev-${zeropsSubdomainHost}-3000.prg1.zerops.app",
+			"STAGE_API_URL": "https://apistage-${zeropsSubdomainHost}-3000.prg1.zerops.app",
+		},
+	}
+	got, err := EmitDeliverableYAML(plan, 1)
+	if err != nil {
+		t.Fatalf("EmitDeliverableYAML: %v", err)
+	}
+	mustContain(t, got, "DEV_API_URL: https://apidev-${zeropsSubdomainHost}-3000.prg1.zerops.app")
+	mustContain(t, got, "STAGE_API_URL: https://apistage-${zeropsSubdomainHost}-3000.prg1.zerops.app")
+}
