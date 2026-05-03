@@ -140,9 +140,9 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
 - **Deploy config is three orthogonal dimensions** — `ServiceMeta` carries
   `CloseDeployMode`, `GitPushState` (with `RemoteURL`), and `BuildIntegration`,
   each owned by one user-facing action (`close-mode` / `git-push-setup` /
-  `build-integration`). The legacy `DeployStrategy` + `PushGitTrigger`
-  conflation is gone: git-push capability and close-mode are independent
-  (configured push can coexist with auto close-mode). `BuildIntegration`
+  `build-integration`). The legacy single-field conflation is gone:
+  git-push capability and close-mode are independent (configured push can
+  coexist with auto close-mode). `BuildIntegration`
   requires `GitPushState=configured`. Atom corpus filters on the three
   matching axes. Spec: `docs/spec-workflows.md §1.1` + `§4.3`.
 - **Deploy failure response carries structured classification** — every

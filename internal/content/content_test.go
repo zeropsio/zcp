@@ -71,6 +71,9 @@ func TestGetTemplate_AllTemplates(t *testing.T) {
 		{"mcp-config.json"},
 		{"ssh-config"},
 		{"settings-local.json"},
+		{"vscode-settings.json"},
+		{"vscode-bootstrap-package.json"},
+		{"vscode-bootstrap-extension.js"},
 	}
 
 	for _, tt := range tests {

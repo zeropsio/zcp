@@ -1,6 +1,8 @@
 {
   "workbench.startupEditor": "none",
   "workbench.colorTheme": "Default Dark+",
+  "workbench.secondarySideBar.defaultVisibility": "hidden",
+  "workbench.welcomePage.walkthroughs.openOnInstall": false,
   "terminal.integrated.defaultProfile.linux": "zsh",
   "editor.fontSize": 14,
   "editor.tabSize": 2,
@@ -8,5 +10,7 @@
   "workbench.activityBar.visible": true,
   "workbench.sideBar.location": "left",
   "claudeCode.allowDangerouslySkipPermissions": true,
-  "claudeCode.dangerouslySkipPermissions": true
+  "claudeCode.initialPermissionMode": "bypassPermissions",
+  "claudeCode.preferredLocation": "panel",
+  "claudeCode.hideOnboarding": true
 }

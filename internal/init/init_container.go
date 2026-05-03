@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/content"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -87,7 +88,9 @@ const defaultVSCodeWorkDir = "/var/www"
 var vsCodeWorkDir = defaultVSCodeWorkDir
 
 // configureVSCode writes code-server user settings, terminal config, and
-// installs the Claude Code extension. Only called when ZCP_VSCODE=true.
+// installs the Claude Code extension + the zcp-bootstrap companion that
+// auto-opens Claude Code as a tab on workspace start. Only called when
+// ZCP_VSCODE=true.
 func configureVSCode(_ string, _ runtime.Info) error {
 	home := resolveHome()
 
@@ -106,12 +109,134 @@ func configureVSCode(_ string, _ runtime.Info) error {
 		fmt.Fprintf(os.Stderr, "    (warning: extension install failed: %v)\n", err)
 	}
 
+	// Install zcp-bootstrap (file-based; runs after Anthropic install so the
+	// CLI's index update lands first and we extend it without racing).
+	fmt.Fprintln(os.Stderr, "    installing zcp-bootstrap extension...")
+	if err := installBootstrapExtension(home); err != nil {
+		fmt.Fprintf(os.Stderr, "    (warning: bootstrap install failed: %v)\n", err)
+	}
+
 	// Point the Claude Code extension at the claude CLI binary.
 	if err := patchVSCodeClaudeWrapper(settingsPath); err != nil {
 		fmt.Fprintf(os.Stderr, "    (warning: claude wrapper patch failed: %v)\n", err)
 	}
 
 	return nil
+}
+
+const (
+	bootstrapExtName    = "zcp-bootstrap"
+	bootstrapExtID      = "zerops.zcp-bootstrap"
+	bootstrapExtVersion = "0.1.1"
+)
+
+// installBootstrapExtension renders the zcp-bootstrap extension files into
+// the code-server extensions dir and registers it in the user-extensions
+// index. Idempotent — re-runs overwrite the rendered files and update the
+// index entry in place (preserving installedTimestamp on the existing entry).
+func installBootstrapExtension(home string) error {
+	extDir := filepath.Join(home, ".local", "share", "code-server", "extensions", bootstrapExtName)
+	if err := os.MkdirAll(extDir, 0755); err != nil {
+		return fmt.Errorf("mkdir bootstrap dir: %w", err)
+	}
+	if err := writeTemplate("vscode-bootstrap-package.json", filepath.Join(extDir, "package.json")); err != nil {
+		return fmt.Errorf("write bootstrap package.json: %w", err)
+	}
+	if err := writeTemplate("vscode-bootstrap-extension.js", filepath.Join(extDir, "extension.js")); err != nil {
+		return fmt.Errorf("write bootstrap extension.js: %w", err)
+	}
+	indexPath := filepath.Join(home, ".local", "share", "code-server", "extensions", "extensions.json")
+	if err := upsertExtensionsIndex(indexPath, extDir); err != nil {
+		return fmt.Errorf("update extensions index: %w", err)
+	}
+	return nil
+}
+
+// upsertExtensionsIndex idempotently registers the zcp-bootstrap extension
+// in code-server's user-extension index. Other entries are round-tripped
+// through []map[string]any so unknown fields they carry (e.g. custom
+// metadata written by `code-server --install-extension`) survive the
+// rewrite. On re-runs the bootstrap entry's installedTimestamp is
+// preserved — without that, every retry of `zcp init` would churn it.
+func upsertExtensionsIndex(indexPath, extDir string) error {
+	raw, err := os.ReadFile(indexPath)
+	var entries []map[string]any
+	switch {
+	case err == nil:
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, &entries); err != nil {
+				return fmt.Errorf("parse %s: %w", indexPath, err)
+			}
+		}
+	case os.IsNotExist(err):
+		// empty index — start fresh
+	default:
+		return fmt.Errorf("read %s: %w", indexPath, err)
+	}
+
+	var existingTimestamp int64
+	filtered := make([]map[string]any, 0, len(entries))
+	for _, e := range entries {
+		if extensionEntryID(e) == bootstrapExtID {
+			existingTimestamp = extensionEntryTimestamp(e)
+			continue
+		}
+		filtered = append(filtered, e)
+	}
+	if existingTimestamp == 0 {
+		existingTimestamp = time.Now().UnixMilli()
+	}
+
+	fileURI := "file://" + extDir
+	filtered = append(filtered, map[string]any{
+		"identifier": map[string]any{"id": bootstrapExtID},
+		"version":    bootstrapExtVersion,
+		"location": map[string]any{
+			"$mid":     1,
+			"fsPath":   extDir,
+			"external": fileURI,
+			"path":     extDir,
+			"scheme":   "file",
+		},
+		"relativeLocation": bootstrapExtName,
+		"metadata": map[string]any{
+			"installedTimestamp": existingTimestamp,
+			"pinned":             true,
+			"source":             "vsix",
+		},
+	})
+
+	out, err := json.Marshal(filtered)
+	if err != nil {
+		return fmt.Errorf("marshal index: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(indexPath), 0755); err != nil {
+		return fmt.Errorf("mkdir index dir: %w", err)
+	}
+	return os.WriteFile(indexPath, out, 0644) //nolint:gosec // G306: index file must be readable by code-server
+}
+
+// extensionEntryID extracts identifier.id from a generic extensions.json
+// entry, returning "" if the field is missing or malformed.
+func extensionEntryID(e map[string]any) string {
+	id, ok := e["identifier"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	s, _ := id["id"].(string)
+	return s
+}
+
+// extensionEntryTimestamp extracts metadata.installedTimestamp as int64.
+// JSON numbers decode to float64 by default; values up to 2^53 (year 287396)
+// round-trip without precision loss.
+func extensionEntryTimestamp(e map[string]any) int64 {
+	md, ok := e["metadata"].(map[string]any)
+	if !ok {
+		return 0
+	}
+	t, _ := md["installedTimestamp"].(float64)
+	return int64(t)
 }
 
 // patchVSCodeClaudeWrapper adds claudeCode.claudeProcessWrapper to VS Code settings.
