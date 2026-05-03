@@ -504,6 +504,29 @@ not what tier it leads to.
 
 ---
 
+### Unicode box-drawing separators (forbidden)
+
+Yaml comments must be ASCII-only. Box-drawing characters (codepoints
+U+2500..U+257F and block elements U+2580..U+259F) render as visual
+separators in some terminals but ship mojibake in others. Recipe
+yamls go through copy-paste-share lifecycles; ASCII survives,
+box-drawing doesn't.
+
+Flag any fragment whose body contains characters in the Unicode
+ranges U+2500..U+257F or U+2580..U+259F (the `─━─━┃┏┓┗┛` /
+`▀▁▂▃▄▅▆▇█` glyph families). Replace with a single blank line or a
+`# section ---` ASCII line if the author wants visual grouping.
+
+Per-recipe TEACH-channel reference: `principles/yaml-comment-style.md`
+(loaded at codebase-content + env-content; the positive-shape atom
+at the authoring phase). This rubric entry is the refinement-pass
+backstop for fragments that slipped past the authoring phases (parent
+absorption, copy from a prior recipe, etc.). If the rule's rationale
+matters at refinement time, query `zerops_knowledge query=yaml-comment-style`
+on demand.
+
+---
+
 ### Subdomain rotation overclaim (factual)
 
 Platform-issued Zerops subdomains are stable per service identity —

@@ -765,3 +765,208 @@ func TestDecisionRecordingAtom_HasCitationGuideExample(t *testing.T) {
 		t.Error("decision_recording_slim.md should include a citationGuide worked example")
 	}
 }
+
+// run-22 followup F-1 — `phase_entry/finalize.md` must NOT mandate
+// tier-promotion vocabulary. The atom acknowledges at L13-18 that
+// phase 6 (env-content) owns env intros; the legacy "Tone rules"
+// section also REQUIRED the agent use the exact vocabulary that the
+// run-22 R1-RC-7 refinement rubric forbids ("outgrow", "promote",
+// "graduate", "move to tier"). The self-contradiction landed banned
+// vocabulary in run-22's tier 4 README intro. Sweep the file body
+// against the same regex set the rubric uses.
+func TestFinalizePhaseEntry_DoesNotMandateTierPromotionVocab(t *testing.T) {
+	t.Parallel()
+	body, err := readAtom("phase_entry/finalize.md")
+	if err != nil {
+		t.Fatalf("read finalize.md: %v", err)
+	}
+	for _, banned := range []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\boutgrow\w*`),
+		regexp.MustCompile(`(?i)\bpromote\b.*\btier\b`),
+		regexp.MustCompile(`(?i)\bupgrade from tier\b`),
+		regexp.MustCompile(`(?i)\bgraduate (to|out of)\b`),
+		regexp.MustCompile(`(?i)\bmove (up|to) tier\b`),
+	} {
+		if loc := banned.FindStringIndex(body); loc != nil {
+			t.Errorf("phase_entry/finalize.md still mandates banned tier-promotion vocab matching %s: %q",
+				banned, body[loc[0]:loc[1]])
+		}
+	}
+}
+
+// run-22 followup F-1 — finalize.md is stitch+validate only (run-16
+// §6.1 retired authoring at finalize). The legacy "Fragment authoring"
+// section instructed the agent to author env/* fragments which are
+// owned by phase 6 (env-content); the contradiction surfaced in run-22
+// when the finalize sub-agent picked the authoring path because it was
+// more concrete. Assert no `record-fragment fragmentId=env/` example or
+// instruction remains.
+func TestFinalizePhaseEntry_DoesNotInstructEnvFragmentAuthoring(t *testing.T) {
+	t.Parallel()
+	body, err := readAtom("phase_entry/finalize.md")
+	if err != nil {
+		t.Fatalf("read finalize.md: %v", err)
+	}
+	// The whole fragmentId=env/<N>/intro/import-comments/<host> family
+	// is owned by phase 6 (env-content); finalize must not carry
+	// record-fragment examples for those. The finalize-owned slot is
+	// `env/<N>/import-comments/project` only — pointer mentions of the
+	// upstream surfaces are allowed because the upstream-pointer
+	// paragraph names them; what's forbidden is an executable
+	// record-fragment example or instruction targeting them.
+	bannedRE := []*regexp.Regexp{
+		// `record-fragment ... fragmentId=env/<N>/intro` shape.
+		regexp.MustCompile(`record-fragment[^\n]*fragmentId=env/[^/]+/intro\b`),
+		// `record-fragment ... fragmentId=env/<N>/import-comments/<not-project>` shape.
+		regexp.MustCompile(`record-fragment[^\n]*fragmentId=env/[^/]+/import-comments/(?:[^/p \n][^\n]*|p[^r\n][^\n]*|pr[^o\n][^\n]*)`),
+		// Bullet-shaped authoring instruction for env intros.
+		regexp.MustCompile(`(?m)^[\-*]\s*\x60env/[^/]+/intro\x60\s*[—-]\s*per-tier`),
+	}
+	for _, banned := range bannedRE {
+		if loc := banned.FindStringIndex(body); loc != nil {
+			t.Errorf("phase_entry/finalize.md instructs authoring of an env-content-owned fragment matching %s: %q",
+				banned, body[loc[0]:loc[1]])
+		}
+	}
+}
+
+// run-22 followup F-2 — only ONE atom may teach the canonical fact
+// schema at scaffold. The legacy `briefs/scaffold/fact_recording.md`
+// described the platform-trap shape (topic + symptom + mechanism +
+// surfaceHint + citation) as if it were canonical alongside
+// `briefs/scaffold/decision_recording_slim.md` (the actual canonical
+// schema with topic + per-kind fields where kind ∈
+// porter_change/field_rationale/tier_decision/contract). Two parallel
+// schemas in two atoms is the catalog-drift signature: agent reads
+// both, conflates them, then records facts with topic-as-kind values.
+//
+// After F-2, fact_recording.md is gone; decision_recording_slim.md is
+// the only teaching site. Walk the corpus; assert no other brief atom
+// or composer-loaded content carries the legacy header phrasing.
+func TestScaffoldBrief_TeachesOnlyOneFactSchema(t *testing.T) {
+	t.Parallel()
+	// The canonical-schema atom — must exist + must remain the only
+	// teaching site.
+	if _, err := readAtom("briefs/scaffold/decision_recording_slim.md"); err != nil {
+		t.Fatalf("decision_recording_slim.md must remain the canonical fact-schema atom: %v", err)
+	}
+	// The deprecated atom — must NOT exist.
+	if _, err := readAtom("briefs/scaffold/fact_recording.md"); err == nil {
+		t.Errorf("briefs/scaffold/fact_recording.md must be deleted (run-22 followup F-2); two parallel fact-schema atoms is catalog drift")
+	}
+	// No remaining atom names the legacy file as the schema source.
+	roots := []string{
+		"content/briefs",
+		"content/principles",
+		"content/phase_entry",
+	}
+	for _, root := range roots {
+		err := fs.WalkDir(recipeV3Content, root, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(p, ".md") {
+				return nil
+			}
+			data, rerr := fs.ReadFile(recipeV3Content, p)
+			if rerr != nil {
+				return rerr
+			}
+			body := string(data)
+			if strings.Contains(body, "fact_recording.md") {
+				for i, line := range strings.Split(body, "\n") {
+					if strings.Contains(line, "fact_recording.md") {
+						t.Errorf("%s:%d still references the deleted atom fact_recording.md (run-22 followup F-2; point at decision_recording_slim.md instead): %s",
+							p, i+1, strings.TrimSpace(line))
+					}
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", root, err)
+		}
+	}
+}
+
+// run-22 followup F-3 — the embedded refinement rubric must carry a
+// Unicode box-drawing flag-pattern parallel to the tier-promotion
+// section. `principles/yaml-comment-style.md` already TEACHES the
+// positive-shape rule at codebase-content + env-content; refinement is
+// the editorial-pass backstop for fragments that slipped past the
+// authoring phases (parent absorption, copy-from-prior-recipe drift).
+// Per spec §4 the rubric flag-list is the right tool for the editorial
+// actor — TEACH-channel atom-load + DISCOVER-channel rubric-flag are
+// parallel channels, not redundant.
+func TestRefinementRubric_FlagsUnicodeBoxDrawing(t *testing.T) {
+	t.Parallel()
+	body, err := readAtom("briefs/refinement/embedded_rubric.md")
+	if err != nil {
+		t.Fatalf("read embedded_rubric.md: %v", err)
+	}
+	for _, mustHave := range []string{
+		// The flag section name must surface in the rubric.
+		"Unicode box-drawing",
+		// Codepoint anchors so authors can search.
+		"U+2500",
+		"U+257F",
+		"U+2580",
+		"U+259F",
+		// The cross-ref to the TEACH-channel atom (system.md §4 channel
+		// hierarchy: rubric is editorial-pass backstop, not redundant).
+		"yaml-comment-style.md",
+	} {
+		if !strings.Contains(body, mustHave) {
+			t.Errorf("embedded_rubric.md missing Unicode box-drawing flag anchor %q", mustHave)
+		}
+	}
+}
+
+// run-22 followup F-11 — refinement atoms must teach the CURRENT
+// `codebase/<h>/zerops-yaml` whole-yaml fragment id, not the legacy
+// `codebase/<h>/zerops-yaml-comments/<block>` shape.
+//
+// Run-19 prep introduced the whole-yaml fragment (one fragment per
+// codebase) and `isValidFragmentID` (handlers_fragments.go) rejects
+// the legacy per-block ids. If a refinement sub-agent issues
+// `record-fragment mode=replace fragmentId=codebase/<h>/zerops-yaml-comments/run.start`
+// the engine refuses with "unknown fragmentId"; the refinement edit
+// no-ops + errors. Refinement is the always-on quality gate; silently-
+// failed edits are exactly the failure mode it cannot have.
+//
+// Walk every refinement-brief atom; assert zero hits of the legacy
+// prefix `zerops-yaml-comments/`. Bridges to the strategic F-12
+// fragment-id type registry once that lands.
+func TestRefinementAtoms_DoNotReferenceLegacyFragmentIDs(t *testing.T) {
+	t.Parallel()
+	const root = "content/briefs/refinement"
+	const legacy = "zerops-yaml-comments/"
+	err := fs.WalkDir(recipeV3Content, root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(p, ".md") {
+			return nil
+		}
+		data, rerr := fs.ReadFile(recipeV3Content, p)
+		if rerr != nil {
+			return rerr
+		}
+		body := string(data)
+		if !strings.Contains(body, legacy) {
+			return nil
+		}
+		// Surface every offending line so a single grep gives the full
+		// fix list.
+		for i, line := range strings.Split(body, "\n") {
+			if strings.Contains(line, legacy) {
+				t.Errorf("%s:%d references legacy fragment id prefix %q (use `codebase/<h>/zerops-yaml` whole-yaml shape per handlers_fragments.go isValidFragmentID): %s",
+					p, i+1, legacy, strings.TrimSpace(line))
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", root, err)
+	}
+}

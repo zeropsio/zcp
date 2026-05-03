@@ -418,22 +418,25 @@ func TestBrief_Feature_SeedInjectsInitCommandsModel(t *testing.T) {
 	}
 }
 
-// TestPhaseEntry_Finalize_ListsRootEnvFragments — the finalize atom
-// tells the main agent exactly which root + env fragment ids to
-// author, so no guessing happens at finalize time.
-func TestPhaseEntry_Finalize_ListsRootEnvFragments(t *testing.T) {
+// TestPhaseEntry_Finalize_ListsFinalizeOwnedFragments — run-22
+// followup F-1. Pre-fix the finalize atom listed every root + env
+// fragment id, including env intros + per-service import-comments
+// owned by phase 6 (env-content). That listing was the run-16 residue
+// that produced the run-22 R1-RC-7 tier-promotion violations. Phase 6
+// owns env intros + per-service import-comments; finalize owns only
+// `root/intro` + per-tier `env/<N>/import-comments/project`. Pin the
+// finalize-owned set so the atom doesn't drift back to authoring
+// upstream surfaces.
+func TestPhaseEntry_Finalize_ListsFinalizeOwnedFragments(t *testing.T) {
 	t.Parallel()
 
 	body := loadPhaseEntry("finalize")
 	for _, id := range []string{
 		"root/intro",
-		"env/0/intro",
-		"env/5/intro",
 		"env/<N>/import-comments/project",
-		"env/<N>/import-comments/<hostname>",
 	} {
 		if !strings.Contains(body, id) {
-			t.Errorf("finalize atom missing fragment id %q", id)
+			t.Errorf("finalize atom missing finalize-owned fragment id %q", id)
 		}
 	}
 }

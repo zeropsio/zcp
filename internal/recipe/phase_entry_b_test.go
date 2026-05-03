@@ -100,20 +100,31 @@ func TestFeatureAtom_StageCrossDeploy(t *testing.T) {
 	}
 }
 
-// TestFinalizeAtom_SurfaceTestQuestions — §2.B.5 finalize atom carries
-// the one-question test for each surface so the main agent filters
-// fragments before recording.
-func TestFinalizeAtom_SurfaceTestQuestions(t *testing.T) {
+// TestFinalizeAtom_PointsAtUpstreamSurfaceContracts — run-22
+// followup F-1 reframed §2.B.5. Pre-fix the finalize atom carried the
+// per-surface single-question tests for env intros + per-service
+// comments; those surfaces are owned by phase 6 (env-content) since
+// run-16 §6.1, so the per-surface tests live in the env-content
+// phase-entry + per_tier_authoring atoms now. Finalize's job is to
+// point at those upstream contracts, not duplicate them. Pin the
+// upstream-pointer claim so a future trim doesn't re-introduce
+// authoring guidance for fragments finalize doesn't own.
+func TestFinalizeAtom_PointsAtUpstreamSurfaceContracts(t *testing.T) {
 	t.Parallel()
 
 	body := loadPhaseEntry(PhaseFinalize)
 	for _, anchor := range []string{
-		"Can a reader decide in 30 seconds",
-		"Does this teach me when to outgrow this",
-		"not narrate what the",
+		// Section name signalling the upstream-pointer reframe.
+		"Fragment authoring is upstream",
+		// Concrete pointers at the env-content authoring atoms.
+		"phase_entry/env-content.md",
+		"per_tier_authoring.md",
+		// The two surfaces finalize DOES own (negative carve-out).
+		"root/intro",
+		"env/<N>/import-comments/project",
 	} {
 		if !strings.Contains(body, anchor) {
-			t.Errorf("finalize atom missing surface-test-question anchor %q", anchor)
+			t.Errorf("finalize atom missing upstream-pointer anchor %q", anchor)
 		}
 	}
 }

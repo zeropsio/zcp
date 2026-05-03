@@ -13,9 +13,13 @@ documentation fragment. Finalize is **stitch + validate only**:
    the codebase-content / claudemd-author / env-content sub-agent at
    phases 5+6 — main agent owns finalize-time corrections.
 
-There is no fragment authoring at finalize. The "main-agent root +
-env fragments" pattern was retired at run-16 — the env-content
-sub-agent at phase 6 owns those surfaces.
+Almost no fragment authoring at finalize. The "main-agent authors
+every env-content surface" pattern was retired at run-16 — the
+env-content sub-agent at phase 6 owns env intros + per-service
+import-comments. Finalize still authors the two project-level
+surfaces phase 6 does not own (`root/intro` and per-tier
+`env/<N>/import-comments/project`); see "Fragment authoring is
+upstream" below.
 
 Run-16 §6.1 + §6.2 — finalize was 4 jobs (stitch, render, validate,
 re-author) pre-run-16; now it is 2 (stitch, validate). The legacy
@@ -62,58 +66,32 @@ secrets. That means:
   - Envs 2-5 (Local, Stage, Small-Prod, HA-Prod — single-slot `api`/`app`):
     carry `STAGE_*` only, with hostnames `api`/`app`.
 
-## Fragment authoring
+## Fragment authoring is upstream
 
-The main agent authors these fragment ids, one at a time, via
-`zerops_recipe action=record-fragment slug=<slug> fragmentId=<id>
-fragment=<body>`:
+env intros (`env/<N>/intro`) and per-service import-comments
+(`env/<N>/import-comments/<hostname>`) are authored at phase 6
+(env-content) by the env-content sub-agent. codebase/<h>/* fragments
+are authored at phase 5 (codebase-content) by the codebase-content
+sub-agent. At finalize you only author the two surfaces phase 6 does
+NOT own:
 
 - `root/intro` — one sentence naming every managed service + tier count
-- `env/0/intro` … `env/5/intro` — per-tier audience + outgrow signal +
-  what changes at the next tier (spec-content-surfaces §Surface 2)
-- `env/<N>/import-comments/project` — per-tier project-level comment in
-  the import.yaml
-- `env/<N>/import-comments/<hostname>` — per-tier per-service comment
-  explaining why THIS service at THIS tier at THIS mode/scale (never
-  the narration of what the field does)
+- `env/<N>/import-comments/project` — per-tier project-level comment
+  in the import.yaml (the project-level tier yaml comments not owned
+  by env-content)
 
-### Single-question test per surface (spec-content-surfaces.md)
-
-Apply ONE test per fragment before recording:
-
-- **Root README intro** — "Can a reader decide in 30 seconds whether
-  this recipe deploys what they need?"
-- **Env README intro** — "Does this teach me when to outgrow this
-  tier and what changes at the next one?"
-- **Env import-comments** — "Does each service block explain a
-  decision (why this scale / mode / presence), not narrate what the
-  field does?"
-
-Items that fail their surface's test are REMOVED, not rewritten —
-failure means the content doesn't belong on that surface, not that
-it's phrased wrong.
-
-### Tone rules
-
-- Env READMEs: porter-facing, never uses the word "agent". Tier
-  promotion vocabulary present ("outgrow", "promote", "when you move
-  to tier N+1").
-- Import-comments: causal words (`because`, `so that`, `otherwise`,
-  `trade-off`). First sentence must differ across runtime-service
-  blocks (no templated opening).
-
-### Citation-map attachment
-
-When your fragment touches a topic in the engine's citation map
-(env-var-model, init-commands, rolling-deploys, object-storage,
-http-support, deploy-files, readiness-health-checks), fetch the guide
-via `zerops_knowledge` FIRST and cite it by name. Writing new mental
-models for topics the platform already documents is how folk-doctrine
-ships (run 7 workerdev gotcha #1 class).
+For per-fragment surface contracts on the upstream surfaces, refer to
+`phase_entry/env-content.md` (env intros + per-service comments) and
+`briefs/env-content/per_tier_authoring.md` (env import comments,
+including the canonical-set-vs-flavor distinction). Do NOT re-author
+those fragments here — re-authoring at finalize either no-ops (if the
+fragment is already recorded) or overwrites the upstream sub-agent's
+work with a less-informed shape.
 
 ## Stitch + validate loop
 
-1. **Author every fragment** listed above.
+1. **Author the two finalize-owned fragments** above (`root/intro`
+   plus per-tier `env/<N>/import-comments/project`).
 2. `zerops_recipe action=stitch-content slug=<slug>` — renders every
    surface into outputRoot. Missing fragments return as an error with
    the list of unset ids.

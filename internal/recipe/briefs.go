@@ -219,7 +219,14 @@ func BuildScaffoldBriefWithResolver(plan *Plan, cb Codebase, parent *ParentRecip
 	atoms := []string{
 		"briefs/scaffold/platform_principles.md",
 		"briefs/scaffold/preship_contract.md",
-		"briefs/scaffold/fact_recording.md",
+		// run-22 followup F-2 — `briefs/scaffold/fact_recording.md` was
+		// the legacy platform-trap-shape teaching (topic + symptom +
+		// mechanism + surfaceHint + citation) and competed with
+		// `decision_recording_slim.md` (the canonical kind-keyed schema).
+		// Two parallel schemas in two atoms produced 2/53 record-fact
+		// failures using a topic name as a kind value. Atom deleted; the
+		// runtime back-compat path in `facts.go::Validate` still accepts
+		// empty-Kind records, but the teaching channel collapses to one.
 		"briefs/scaffold/decision_recording_slim.md",
 		"principles/dev-loop.md",
 		"principles/mount-vs-container.md",

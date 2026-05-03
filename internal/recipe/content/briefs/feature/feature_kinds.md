@@ -48,7 +48,7 @@ new managed services beyond what `Plan.Services` declares.
 
 # Record facts during implementation
 
-Same fact schema as scaffold (see fact_recording.md). Feature-phase facts
+Same fact schema as scaffold (see decision_recording_slim.md for the canonical schema). Feature-phase facts
 commonly surface: platform × library intersections (broker client quirks),
 cross-service contract mismatches (worker reading from broker but writing
 back via HTTP), and object-storage path-style nuances.

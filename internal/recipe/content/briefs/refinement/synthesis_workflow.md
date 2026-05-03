@@ -26,17 +26,22 @@ Walk every `codebase/<h>/knowledge-base` fragment. For each `- **stem**
 
 ### Criterion 2 — Voice (Surface 7 zerops.yaml + Surface 3 tier yaml)
 
-Walk every `codebase/<h>/zerops-yaml-comments/<block>` fragment AND
-every tier `import.yaml` service-block comment. Count friendly-
-authority phrasings per `reference_voice_patterns.md` "The heuristic":
+Walk every `codebase/<h>/zerops-yaml` whole-yaml fragment (one per
+codebase, owns every block-level comment in that codebase's
+zerops.yaml) AND every tier `import.yaml` service-block comment.
+Count friendly-authority phrasings per `reference_voice_patterns.md`
+"The heuristic":
 
 1. If the fragment carries ≥1 phrasing tied to a named porter signal,
    HOLD.
 2. If the fragment carries 0 phrasings AND a porter-adapt path is
-   namable from the field semantics + recorded facts, ACT — append
-   one phrasing pointing at that adapt path. Anchor on the 4 reference
-   shapes (Feel free to / Configure this to / Replace ... with /
-   Disabling ... is recommended).
+   namable from the field semantics + recorded facts, ACT — read the
+   current whole-yaml body, edit the relevant block-level comment in
+   place, and `record-fragment mode=replace
+   fragmentId=codebase/<h>/zerops-yaml fragment=<full yaml with edited
+   comments>`. Anchor the new phrasing on the 4 reference shapes
+   (Feel free to / Configure this to / Replace ... with / Disabling
+   ... is recommended).
 3. If 0 phrasings AND no adapt path is namable (the field has only one
    valid value, e.g. `httpSupport: true` on a public port), HOLD.
 4. NEVER touch KB / CLAUDE.md / Root README — voice criterion is
@@ -103,7 +108,9 @@ discretionary.
 
 Refine in this order so cross-surface dependencies stabilize:
 
-1. `codebase/<h>/zerops-yaml-comments/<block>` (Surface 7 voice)
+1. `codebase/<h>/zerops-yaml` (Surface 7 voice — whole-yaml fragment;
+   read it, edit the comment block(s) in place, replace the whole-yaml
+   body)
 2. `codebase/<h>/knowledge-base` (Surface 5 stem + trade-off + cite)
 3. `codebase/<h>/integration-guide/<n>` (Surface 4 one-mechanism + cite)
 4. `env/<N>/import-comments/<host>` (Surface 3 voice)
@@ -122,8 +129,8 @@ content here weakens both.
 
 You make ONE replace attempt per fragment. For codebase fragments
 (`codebase/<host>/integration-guide/<n>`, `codebase/<host>/knowledge-
-base`, `codebase/<host>/zerops-yaml-comments/<block>`,
-`codebase/<host>/claude-md`, `codebase/<host>/intro`), the engine
+base`, `codebase/<host>/zerops-yaml`, `codebase/<host>/claude-md`,
+`codebase/<host>/intro`), the engine
 wraps your Replace in a snapshot/restore transaction: surface
 validators run scoped to the named codebase before AND after your
 Replace; if the post-replace set has a new blocking violation absent

@@ -190,16 +190,26 @@ adding teaching.
 
 The refinement sub-agent emits two `record-fragment` calls:
 
-1. `record-fragment fragmentId=codebase/apidev/zerops-yaml-comments/run-envvars-aliasing` with body:
+1. Read the current `codebase/apidev/zerops-yaml` whole-yaml body
+   (the codebase-content sub-agent already authored every block-level
+   comment in it), splice the new comment block above the existing
+   `run.envVariables:` block, then replace the whole-yaml fragment
+   verbatim with the edited body:
 
-```
-# Zerops injects cross-service refs project-wide as ${db_hostname},
-# ${cache_port}, ${storage_apiUrl}, ${search_masterKey}, etc. Reading
-# those directly from code couples the app to Zerops naming — the
-# aliasing below maps them once so your runtime reads its own names.
-# Feel free to drop this aliasing if you don't mind reading
-# ${db_hostname} directly.
-```
+   ```
+   record-fragment mode=replace fragmentId=codebase/apidev/zerops-yaml fragment=<full edited yaml>
+   ```
+
+   The new block to splice in (above `run.envVariables:`):
+
+   ```
+   # Zerops injects cross-service refs project-wide as ${db_hostname},
+   # ${cache_port}, ${storage_apiUrl}, ${search_masterKey}, etc. Reading
+   # those directly from code couples the app to Zerops naming — the
+   # aliasing below maps them once so your runtime reads its own names.
+   # Feel free to drop this aliasing if you don't mind reading
+   # ${db_hostname} directly.
+   ```
 
 2. `record-fragment fragmentId=codebase/apidev/integration-guide/3 mode=replace` with body that REMOVES the H3 entirely. (Refinement renumbers: original IG #4 becomes #3, #5 becomes #4. Cap holds at 5 ≤ 5; if cap was tight, this drop frees a slot.)
 
