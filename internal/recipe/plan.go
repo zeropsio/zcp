@@ -56,6 +56,25 @@ func (p *Plan) HasWorkerCodebase() bool {
 	return false
 }
 
+// HasUICodebase reports whether any codebase in the plan ships UI —
+// frontend SPAs (RoleFrontend) OR view-rendering monoliths (RoleMonolith
+// like Laravel/Rails/Django/Blade). Used by the feature-phase brief
+// composer to gate the design-token table inline-load: only ship the
+// Material 3 token table when the recipe actually has a UI surface.
+// API-only / worker-only plans don't render anything visible to a human
+// porter — design tokens are dead weight in their feature brief.
+func (p *Plan) HasUICodebase() bool {
+	if p == nil {
+		return false
+	}
+	for _, cb := range p.Codebases {
+		if cb.Role == RoleFrontend || cb.Role == RoleMonolith {
+			return true
+		}
+	}
+	return false
+}
+
 // ResearchResult is the output of the research phase. All fields are
 // framework-agnostic; strings are filled by the agent from framework
 // knowledge + Zerops contracts.

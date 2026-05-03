@@ -34,6 +34,7 @@ func TestStore_ThemeDocsEmbedded(t *testing.T) {
 		"zerops://themes/core",
 		"zerops://themes/services",
 		"zerops://themes/operations",
+		"zerops://themes/design-system",
 	}
 	for _, uri := range themeURIs {
 		doc, err := store.Get(uri)
@@ -43,6 +44,47 @@ func TestStore_ThemeDocsEmbedded(t *testing.T) {
 		}
 		if len(doc.Content) < 50 {
 			t.Errorf("theme doc %s content too short (%d bytes)", uri, len(doc.Content))
+		}
+	}
+}
+
+// TestStore_DesignSystemThemeIsFrameworkNeutral pins the cross-recipe
+// visual style consistency contract: the design-system theme must teach
+// principles that hold regardless of framework binding (Angular Material,
+// Tailwind, shadcn, Laravel Blade). The Components section must reach
+// across multiple framework lineages — naming only Angular Material
+// would under-serve Laravel/Blade and pure Tailwind showcases.
+func TestStore_DesignSystemThemeIsFrameworkNeutral(t *testing.T) {
+	store := newTestStore(t)
+	doc, err := store.Get("zerops://themes/design-system")
+	if err != nil {
+		t.Fatalf("design-system theme not found: %v", err)
+	}
+	// Per-framework lineage section must enumerate at least Angular,
+	// Tailwind, and Blade so showcases of every shape have a starting
+	// point.
+	for _, lineage := range []string{
+		"Angular + Material 3",
+		"React/Vue + Tailwind",
+		"Laravel Blade + Tailwind",
+	} {
+		if !strings.Contains(doc.Content, lineage) {
+			t.Errorf("design-system theme missing per-framework lineage %q", lineage)
+		}
+	}
+	// Load-bearing body anchors — the doc Content has frontmatter
+	// stripped, so assertions read against the human-readable body
+	// only. The frontmatter dictionary is exercised separately by the
+	// recipe-engine BuildDesignTokenTable composer.
+	for _, anchor := range []string{
+		"#00CCBB",        // brand seeds line
+		"JetBrains Mono", // typography rule
+		"Geologica",      // typography rule
+		"12px",           // canonical card radius
+		"pill",           // button shape language
+	} {
+		if !strings.Contains(doc.Content, anchor) {
+			t.Errorf("design-system theme missing load-bearing anchor %q", anchor)
 		}
 	}
 }

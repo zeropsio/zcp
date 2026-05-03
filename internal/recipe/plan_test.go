@@ -69,6 +69,68 @@ func TestPlan_HasWorkerCodebase(t *testing.T) {
 	}
 }
 
+// TestPlan_HasUICodebase — design-system landing. Helper used by the
+// feature-brief composer to gate the design-token table inline-load:
+// only ship the design-system table when the plan actually scaffolds a
+// UI codebase. UI codebase = RoleFrontend (React/Vue/Svelte SPA) OR
+// RoleMonolith (Laravel/Rails/Django renders views from same codebase).
+// API-only or worker-only plans don't ship UI; design tokens are dead
+// weight in their feature brief.
+func TestPlan_HasUICodebase(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		plan *Plan
+		want bool
+	}{
+		{
+			name: "no codebases",
+			plan: &Plan{Slug: "x"},
+			want: false,
+		},
+		{
+			name: "only api + worker codebases",
+			plan: &Plan{
+				Slug: "x",
+				Codebases: []Codebase{
+					{Hostname: "api", Role: RoleAPI},
+					{Hostname: "worker", Role: RoleWorker, IsWorker: true},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "frontend codebase present",
+			plan: &Plan{
+				Slug: "x",
+				Codebases: []Codebase{
+					{Hostname: "api", Role: RoleAPI},
+					{Hostname: "app", Role: RoleFrontend},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "monolith codebase present (laravel-style)",
+			plan: &Plan{
+				Slug: "x",
+				Codebases: []Codebase{
+					{Hostname: "app", Role: RoleMonolith},
+				},
+			},
+			want: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.plan.HasUICodebase(); got != tc.want {
+				t.Errorf("HasUICodebase() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestWritePlan_RoundTrip(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

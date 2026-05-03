@@ -440,6 +440,21 @@ func BuildFeatureBrief(plan *Plan) (Brief, error) {
 		parts = append(parts, atom)
 	}
 
+	// design-system landing — showcase recipes that ship a UI codebase
+	// (frontend SPA OR view-rendering monolith) get a compact inline
+	// Material 3 design-token table so feature implementations across
+	// frameworks (laravel-showcase Blade views, nestjs-showcase SPA
+	// panels) land with the same color/type/radius vocabulary. Full
+	// spec (per-framework component lineages, do/don't details) lives
+	// at `zerops://themes/design-system` and is fetched on demand via
+	// `zerops_knowledge`. Token corpus is identical across recipes by
+	// construction; the per-component class/element name is whatever
+	// is idiomatic for the framework.
+	if plan.Tier == tierShowcase && plan.HasUICodebase() {
+		b.WriteString(BuildDesignTokenTable())
+		parts = append(parts, "design-tokens")
+	}
+
 	b.WriteString("## Symbol table (from scaffold phase)\n\n")
 	b.WriteString("### Codebases\n\n")
 	for _, cb := range plan.Codebases {
