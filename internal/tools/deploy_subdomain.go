@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/zeropsio/zcp/internal/ops"
@@ -10,39 +11,52 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
+// apiCodeServiceStackIsNotHTTP is the platform's "this service stack is not
+// HTTP-shaped" rejection on EnableSubdomainAccess. Returned for workers, for
+// dev runtimes whose start command hasn't published a listening HTTP port
+// yet (e.g. F8: `zsc noop` deferred dev-server start), and for any other
+// stack the platform won't route via L7. In the auto-enable context this is
+// not an error — just a "not for this service" signal that we silently
+// swallow. In the EXPLICIT zerops_subdomain enable context this is a real
+// diagnostic the user needs (their yaml is missing httpSupport: true), so
+// ops.Subdomain.Enable still returns it as an error to that caller.
+const apiCodeServiceStackIsNotHTTP = "serviceStackIsNotHttp"
+
 // maybeAutoEnableSubdomain activates the L7 subdomain route for a freshly
-// deployed runtime when the service is eligible. Best-effort: every
-// failure path appends to result.Warnings and lets the deploy succeed — if
-// auto-enable is skipped or fails, the agent's manual zerops_subdomain
-// action=enable call remains a valid recovery path.
+// deployed runtime. Called from every deploy handler after the platform
+// reports the deploy succeeded (result.Status == DEPLOYED).
 //
-// Eligibility is a SINGLE predicate call to serviceEligibleForSubdomain
-// (no upstream branching on meta presence). The predicate consumes the
-// optional ServiceMeta as one input among several, and ALWAYS consults
-// the live HTTP-route signal (detail.SubdomainAccess OR any
-// detail.Ports[].HTTPSupport). This closes the F8 asymmetry: a
-// dev+dynamic service with `zsc noop` start (no HTTP listener, no port
-// flagged HTTPSupport) used to slip past the pre-fix mode-only check,
-// then the platform rejected enable with "Service stack is not http or
-// https". The unified predicate matches the platform contract — no
-// stack-shape mismatch surfaces.
+// Design: let the platform answer "should this have a subdomain?" rather
+// than predicting from local signals. The flow:
 //
-// Gate is platform-side via the ops.Subdomain call's internal
-// check-before-enable (plans/archive/subdomain-robustness.md §3.2), NOT
-// meta-side (FirstDeployedAt). meta.FirstDeployedAt is pair-keyed
-// (invariant E8) and unusable for stage cross-deploy detection — the dev
-// half's stamp covers both hostnames, but the stage container's L7 route
-// is independent.
+//  1. Mode allow-list: production / unknown modes opt out (modeAllowsSubdomain).
+//  2. IsSystem() defensive guard: BUILD/CORE/INTERNAL/PREPARE_RUNTIME/
+//     HTTP_L7_BALANCER stacks are never routed via L7. Five upstream filters
+//     (discover, route, compute_envelope, adopt) make these unreachable on
+//     normal codepaths, but the guard defends against future call sites.
+//  3. ops.Subdomain.Enable does check-before-mutate internally (returns
+//     SubdomainStatusAlreadyEnabled when subdomain is currently active) and
+//     bounded retry on noSubdomainPorts (L7 propagation race).
+//  4. Classify the response:
+//     - success → set SubdomainAccessEnabled + URL, probe HTTP-ready.
+//     - already_enabled → set SubdomainAccessEnabled + URL, skip probe
+//     when ServiceMeta is supplied (bootstrapped earlier, route is live).
+//     - serviceStackIsNotHttp → silent benign skip (worker, F8 zsc-noop,
+//     any non-HTTP stack the platform refuses to route).
+//     - other error → result.Warnings entry, deploy still succeeds.
 //
-// I/O boundary: ops.LookupService and client.GetService are REST round
-// trips; SubdomainAccess is set at yaml-import time, so reading it pre-
-// first-deploy returns the plan-declared value (not racing with deploy-
-// time port propagation). workflow.FindServiceMeta reads the per-PID
-// local state dir (in-process consistency).
-//
-// HTTP readiness wait fires only on fresh enable (status != "already_enabled").
-// Re-deploys on already-enabled subdomains skip the probe — the platform
-// state is authoritative and the URL is already reachable.
+// Why no DTO checks (the historical wrong path): the previous predicate read
+// detail.SubdomainAccess and detail.Ports[].HTTPSupport as if they reflected
+// import-yaml intent. Live verification (plan §2.2) proved both flip true
+// only AFTER a successful EnableSubdomainAccess call. The platform DTO
+// `ServicePort.HttpRouting` (mapped to ZCP's HTTPSupport in
+// internal/platform/zerops_mappers.go) is the post-enable routing flag, NOT
+// the deployed zerops.yaml's ports[].httpSupport intent — the SDK type at
+// /Users/macbook/go/pkg/mod/github.com/zeropsio/zerops-go@v1.0.17/dto/output/
+// servicePort.go has no httpSupport field at all. Reading these fields as
+// pre-enable intent always returned false → predicate skipped enable → user
+// had to call zerops_subdomain manually. Plan archive details the chain of
+// fixes (R-13-12, R-14-1, F8) that all operated on this misunderstanding.
 func maybeAutoEnableSubdomain(
 	ctx context.Context,
 	client platform.Client,
@@ -56,13 +70,16 @@ func maybeAutoEnableSubdomain(
 		return
 	}
 
-	// ops.Subdomain does check-before-enable internally: it returns
-	// status=already_enabled without touching the platform API when the
-	// subdomain is already active. On fresh enable it calls the API and
-	// populates URLs. Warnings (FailReason, poll timeouts, etc.) get
-	// surfaced up the stack.
 	subRes, err := ops.Subdomain(ctx, client, projectID, targetService, "enable")
 	if err != nil {
+		if isServiceStackIsNotHTTPErr(err) {
+			// Platform: "service stack is not http or https". Worker, F8
+			// zsc-noop deferred dev-server, or any other non-HTTP-shaped
+			// stack. Benign signal in the auto-enable context — silently
+			// swallow. Explicit zerops_subdomain enable callers still get
+			// this error from ops.Subdomain (the downgrade is contextual).
+			return
+		}
 		result.Warnings = append(result.Warnings,
 			fmt.Sprintf("auto-enable subdomain failed: %v (run zerops_subdomain action=enable manually)", err))
 		return
@@ -79,11 +96,11 @@ func maybeAutoEnableSubdomain(
 	// HTTP readiness wait. Skip on already_enabled when ServiceMeta is
 	// supplied — meta presence proves the service was bootstrapped earlier,
 	// so the L7 route has been live for a while; a probe just adds latency.
-	// Without ServiceMeta (recipe-authoring scaffolds), an already_enabled
-	// status reflects the import-time intent flag (yaml had
-	// enableSubdomainAccess: true) without proving the L7 router has finished
-	// propagating ports (R-14-1). Always probe in that case so the next
-	// zerops_verify doesn't race.
+	// Without ServiceMeta (recipe-authoring scaffolds, manual import,
+	// adoption), an already_enabled status reflects the import-time state
+	// without proving the L7 router has finished propagating ports
+	// (R-14-1 race). Always probe in that case so the next zerops_verify
+	// doesn't race.
 	skipProbe := subRes.Status == ops.SubdomainStatusAlreadyEnabled && meta != nil
 	if !skipProbe {
 		for _, url := range subRes.SubdomainUrls {
@@ -101,9 +118,7 @@ func maybeAutoEnableSubdomain(
 // Zerops runtimes that serve HTTP; local-stage is the stage half of a
 // local standard pair (the remote runtime that serves traffic).
 // ModeLocalOnly has no remote runtime at all, so there is nothing to
-// auto-enable. The unified predicate AND-combines this with a live-port
-// HTTP signal — the platform is the source of truth on whether the
-// service stack is HTTP-shaped.
+// auto-enable.
 func modeAllowsSubdomain(mode topology.Mode) bool {
 	switch mode {
 	case topology.PlanModeDev,
@@ -118,32 +133,23 @@ func modeAllowsSubdomain(mode topology.Mode) bool {
 	return false
 }
 
-// serviceEligibleForSubdomain is the post-deploy auto-enable predicate.
-// One function, no branching on meta presence at the caller — the
-// optional ServiceMeta is just one of several inputs. Eligibility holds
-// when the platform-side service stack carries an HTTP route AND (when
-// meta is supplied) the topology mode is in the allow-list.
+// serviceEligibleForSubdomain decides whether to attempt auto-enable. Two
+// cheap checks, no platform DTO inspection — the platform's response on
+// the actual Enable call is the source of truth for "is this HTTP-shaped?".
 //
-// Live HTTP signal sources (ORed):
+//  1. Mode allow-list (when meta is supplied with a non-empty Mode).
+//     Empty Mode or nil meta → permissive: pass through to the system
+//     check. Recipe-authoring and manual-import paths are meta-less; their
+//     intent is signaled by import yaml's enableSubdomainAccess: true and
+//     verified by the Enable response (success or serviceStackIsNotHttp).
 //
-//   - detail.SubdomainAccess — set by the platform when the imported
-//     deliverable yaml's enableSubdomainAccess: true has actually
-//     provisioned a subdomain. End-user click-deploy path.
-//   - detail.Ports[].HTTPSupport — set per port from zerops.yaml
-//     run.ports[].httpSupport. Recipe-authoring path: workspace yaml
-//     emits enableSubdomainAccess: true but the platform doesn't flip
-//     detail.SubdomainAccess until first enable, so the deploy-time
-//     port signal is the only intent visible during scaffold. Workers
-//     with no httpSupport ports stay correctly false.
-//
-// F8 closure: a dev+dynamic service whose zerops.yaml `start` is `zsc
-// noop` (deferred dev-server start) has no port flagged HTTPSupport
-// at deploy time. The old mode-only predicate triggered enable, the
-// platform rejected with "Service stack is not http or https", and
-// the agent saw a confusing warning. Now we skip silently — the
-// deferred hint pattern (run zerops_dev_server action=start, then a
-// zerops_subdomain action=enable will succeed) is the agent's normal
-// recovery path.
+//  2. IsSystem() defensive guard via ops.LookupService (one ListServices
+//     RT). Five upstream filters already keep system stacks off this code-
+//     path (discover.go:101, route.go:210/238/276, compute_envelope.go:186,
+//     adopt_local.go:75, workflow_adopt_local.go:91), but explicit-hostname
+//     paths through FindService/GetService accept any input. The guard
+//     defends against future call sites and maintains the invariant that
+//     L7 routing is never auto-enabled on platform-internal stacks.
 //
 // Lookup failures soft-fail (returns false → caller skips auto-enable,
 // agent's manual zerops_subdomain stays valid).
@@ -153,17 +159,6 @@ func serviceEligibleForSubdomain(
 	meta *workflow.ServiceMeta,
 	projectID, targetService string,
 ) bool {
-	// Run-20 C7 closure: empty meta.Mode is treated as "no constraint,
-	// fall through to detail checks." The recipe-authoring scaffold's
-	// provision phase records ServiceMeta without populating Mode, so the
-	// pre-fix predicate hit the default branch in modeAllowsSubdomain
-	// (return false), short-circuiting before the live HTTP-route check
-	// at the end of this function. Run-19 reproduced the bug:
-	// apidev/apistage/appstage all skipped auto-enable despite their
-	// workspace yaml setting enableSubdomainAccess: true and httpSupport
-	// on port 3000. Empty Mode is "unknown" — the platform-side detail
-	// checks (SubdomainAccess OR Ports[].HTTPSupport) are authoritative
-	// and shouldn't be bypassed by a missing-but-not-nil meta.
 	if meta != nil && meta.Mode != "" && !modeAllowsSubdomain(meta.Mode) {
 		return false
 	}
@@ -174,17 +169,22 @@ func serviceEligibleForSubdomain(
 	if svc.IsSystem() {
 		return false
 	}
-	detail, err := client.GetService(ctx, svc.ID)
-	if err != nil || detail == nil {
+	return true
+}
+
+// isServiceStackIsNotHTTPErr classifies a platform error as the
+// "stack is not HTTP-shaped" rejection. Used by maybeAutoEnableSubdomain
+// to swallow this specific signal silently — workers, F8 deferred dev-
+// servers, and any non-HTTP stack land here without polluting result.Warnings.
+//
+// Lives in tools/ (caller-side), not in ops/, so ops.Subdomain.Enable stays
+// honest: explicit zerops_subdomain enable callers still receive the error
+// as a real diagnostic ("your yaml is missing httpSupport: true on the
+// port"). The downgrade is contextual to auto-enable, not structural.
+func isServiceStackIsNotHTTPErr(err error) bool {
+	var pe *platform.PlatformError
+	if !errors.As(err, &pe) {
 		return false
 	}
-	if detail.SubdomainAccess {
-		return true
-	}
-	for _, port := range detail.Ports {
-		if port.HTTPSupport {
-			return true
-		}
-	}
-	return false
+	return pe.APICode == apiCodeServiceStackIsNotHTTP
 }

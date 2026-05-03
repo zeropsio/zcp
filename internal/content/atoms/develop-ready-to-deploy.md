@@ -25,10 +25,5 @@ uncommitted work in `/var/www/<hostname>/` is gone after the new
 to a non-mount path until the runtime is ACTIVE. The response Warnings
 name the replaced hostnames.
 
-After re-import + code deploy, if `zerops_verify` reports `http_root:
-skip` "subdomain not enabled", run `zerops_subdomain action="enable"`
-on the runtime as a one-shot fix and re-verify. Auto-enable can miss
-the post-recovery deploy; the manual call covers it.
-
 Check `zerops_discover` first. `ACTIVE` is ready; `READY_TO_DEPLOY`
 means re-import before anything else.
