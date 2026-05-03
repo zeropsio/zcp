@@ -107,6 +107,23 @@ func BuildRefinementBrief(plan *Plan, parent *ParentRecipe, runDir string, facts
 		parts = append(parts, "stitched-output-pointer-block")
 	}
 
+	// Run-22 followup F-6 — embedded-parent fallback at refinement,
+	// mirror of the R3-RC-0 scaffold pattern. When the chain resolver
+	// returns no parent (filesystem mount empty in dogfood) but the
+	// slug has a recognized chain parent (`*-showcase` → `*-minimal`),
+	// inject the embedded recipe `.md` as a read-only baseline so the
+	// refinement sub-agent's anti-cross-recipe-duplication HOLD rule
+	// has something concrete to compare against. Filesystem-mount
+	// path (above) wins when present.
+	//
+	// Excerpt cap is 4000 bytes here (matches scaffold). Refinement
+	// has no enforced cap; the embedded fallback only fires in the
+	// dogfood path, and the per-recipe brief is composed once per
+	// run.
+	if appendEmbeddedParentBaselineRefinement(&b, plan.Slug, parent, refinementEmbeddedFraming, 4000) {
+		parts = append(parts, "embedded_parent_baseline")
+	}
+
 	// Facts log — full snapshot, no truncation. The refinement sub-
 	// agent uses recorded facts to validate trade-off two-sidedness
 	// (rejected alternatives are usually in the recorded Why prose)

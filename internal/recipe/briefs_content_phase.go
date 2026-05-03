@@ -193,6 +193,33 @@ func BuildCodebaseContentBrief(plan *Plan, cb Codebase, parent *ParentRecipe, fa
 	b.WriteString("\nFor any platform mechanism your synthesis touches, call `zerops_knowledge runtime=<svc-type>` first and ground the prose in the atom — do NOT paraphrase from memory.\n\n")
 	parts = append(parts, "pointer-block")
 
+	// Run-22 followup F-6 — embedded-parent fallback. Mirror the
+	// R3-RC-0 scaffold pattern (briefs.go::BuildScaffoldBriefWithResolver
+	// ~L338-361). When the chain resolver returns no parent (filesystem
+	// mount empty in dogfood) but the slug has a recognized chain
+	// parent (`*-showcase` → `*-minimal`), inject the embedded recipe
+	// `.md` so the codebase-content sub-agent has IG/KB framing
+	// inheritance — what topics the parent already covers, so it can
+	// cross-reference instead of re-author. Filesystem-mount path wins
+	// when present (parent.SourceRoot != ""); the embedded fallback
+	// only fires when no filesystem parent is available.
+	//
+	// Excerpt cap is 1000 bytes here (vs scaffold's 4000) because
+	// codebase-content has tight headroom under the 56 KB cap on the
+	// showcase + worker variant — R2 left only ~1.1 KB of headroom and
+	// the worker brief is the highest-load shape (worker_kb_supplements
+	// already loads). 1000 bytes still carries the parent's frontmatter
+	// + Gotchas section + the leading zerops.yaml shape (setup-naming,
+	// comment style, opening of build section) — signal density is
+	// highest in the first ~1 KB of every minimal recipe `.md`.
+	// Earlier iterations of this fix tested 2500-byte (worker brief
+	// 58.8 KB / cap 56 KB — over) and 1500-byte (57.8 KB — still over)
+	// excerpts before settling on 1000. Resist the cap-bump habit —
+	// the 56 KB cap was already bumped 44→48→52→56 over recent runs.
+	if appendEmbeddedParentBaseline(&b, plan.Slug, parent, codebaseContentEmbeddedFraming, 1000) {
+		parts = append(parts, "embedded_parent_baseline")
+	}
+
 	// Sibling sub-agent note — codebase-content does NOT author CLAUDE.md.
 	b.WriteString("## A sibling claudemd-author sub-agent authors CLAUDE.md in parallel\n\n")
 	b.WriteString("You do NOT author CLAUDE.md content. If you encounter Zerops-platform content that belongs in a porter dev guide, check whether it actually belongs in IG/KB/zerops.yaml comments instead — those are your surfaces.\n\n")
@@ -355,6 +382,22 @@ func BuildEnvContentBrief(plan *Plan, parent *ParentRecipe, facts []FactRecord) 
 	if parent != nil && parent.Slug != "" && parent.SourceRoot != "" {
 		fmt.Fprintf(&b, "## Parent recipe `%s`\n\nRead `%s/...` and cross-reference parent's per-tier intros instead of re-authoring.\n\n", parent.Slug, parent.SourceRoot)
 		parts = append(parts, "parent-pointer")
+	} else if appendEmbeddedParentBaseline(&b, plan.Slug, parent, envContentEmbeddedFraming, 4000) {
+		// Run-22 followup F-6 — embedded-parent fallback at env-content,
+		// mirror of the R3-RC-0 scaffold pattern. When the chain
+		// resolver returns no parent (filesystem mount empty in
+		// dogfood) but the slug has a recognized chain parent
+		// (`*-showcase` → `*-minimal`), inject the embedded recipe
+		// `.md` so the env-content sub-agent has tier-decision and
+		// per-tier framing inheritance — align tier intros + import
+		// comments with the parent's tier-flavor voice instead of
+		// re-authoring.
+		//
+		// Excerpt cap is 4000 bytes here (matches scaffold). Env-
+		// content sat at 34,558 bytes / 56 KB cap after R2 with
+		// 22,786 bytes of headroom; +4 KB lands at ~38.5 KB, well
+		// inside the cap.
+		parts = append(parts, "embedded_parent_baseline")
 	}
 
 	// Surface 1/2/3 contracts live in the embedded per_tier_authoring.md
@@ -492,4 +535,101 @@ func ifEmpty(v, fallback string) string {
 		return fallback
 	}
 	return v
+}
+
+// Run-22 followup F-6 — embedded-parent fallback framing strings.
+// One per downstream phase. Each carries a `%s` placeholder for the
+// parent slug. Framing rationale per phase:
+//
+//   - codebase-content: parent's IG/KB framing (what topics parent
+//     already covers — cross-reference instead of re-author).
+//   - env-content: tier-decision facts + per-tier voice inheritance
+//     (align with parent's tier-flavor voice).
+//   - refinement: parent's published surfaces (refinement HOLDS on
+//     fragments that re-author parent material).
+//
+// Refinement uses a slightly different markdown shape (bold-strong
+// header, no `##` heading) because refinement's parent block is
+// nested inside a list-style "stitched-output / parent recipe"
+// section pre-existing from run-17 §9.
+const (
+	codebaseContentEmbeddedFraming = "Parent slug: %s — read this for IG/KB framing inheritance " +
+		"(what topics the parent already covers; cross-reference instead of " +
+		"re-author when the parent already explains a mechanism).\n\n"
+
+	envContentEmbeddedFraming = "Parent slug: %s — read this for tier-decision and per-tier " +
+		"framing inheritance. Align tier intros + import comments with the " +
+		"parent's tier-flavor voice; don't re-author what the parent already " +
+		"established.\n\n"
+
+	refinementEmbeddedFraming = "Parent slug: %s. Read the embedded baseline before " +
+		"flagging cross-recipe duplication; refinement HOLDS on any fragment " +
+		"whose body would re-author what the parent already covers.\n\n"
+)
+
+// appendEmbeddedParentBaseline emits a parent-recipe-baseline section
+// to b when filesystem-mounted parent is absent AND the slug has a
+// recognized chain parent (`*-showcase` → `*-minimal`) AND the
+// embedded recipe `.md` exists in `internal/knowledge/recipes/`.
+// Returns true when the section was appended (caller should append
+// the corresponding "embedded_parent_baseline" Parts entry). Returns
+// false otherwise (filesystem parent present, no chain parent, or
+// embedded `.md` missing).
+//
+// `framing` is a `fmt.Sprintf`-style string with one `%s` slot for
+// the parent slug. `excerptCap` is the per-phase byte cap on the
+// embedded body (1000 for codebase-content, 4000 for env-content +
+// refinement; see per-phase rationale in each composer). Section
+// header is fixed: `## Parent recipe baseline (embedded)` for
+// composer phases that emit Markdown headings; refinement uses a
+// bold-paragraph variant via `appendEmbeddedParentBaselineRefinement`
+// so it nests cleanly inside the run-17 stitched-output list.
+func appendEmbeddedParentBaseline(b *strings.Builder, slug string, parent *ParentRecipe, framing string, excerptCap int) bool {
+	if parent != nil && parent.SourceRoot != "" {
+		return false
+	}
+	parentSlug := parentSlugFor(slug)
+	if parentSlug == "" {
+		return false
+	}
+	embeddedParent, err := loadEmbeddedRecipeMD(parentSlug)
+	if err != nil {
+		return false
+	}
+	b.WriteString("## Parent recipe baseline (embedded)\n\n")
+	fmt.Fprintf(b, framing, parentSlug)
+	b.WriteString("```md\n")
+	b.WriteString(excerptREADME(embeddedParent, excerptCap))
+	if !strings.HasSuffix(embeddedParent, "\n") {
+		b.WriteByte('\n')
+	}
+	b.WriteString("```\n\n")
+	return true
+}
+
+// appendEmbeddedParentBaselineRefinement is the refinement-shape
+// variant of appendEmbeddedParentBaseline — bold-paragraph header
+// (no `##`) so the block nests inside refinement's stitched-output
+// pointer list authored by run-17 §9. Returns true when appended.
+func appendEmbeddedParentBaselineRefinement(b *strings.Builder, slug string, parent *ParentRecipe, framing string, excerptCap int) bool {
+	if parent != nil && parent.SourceRoot != "" {
+		return false
+	}
+	parentSlug := parentSlugFor(slug)
+	if parentSlug == "" {
+		return false
+	}
+	embeddedParent, err := loadEmbeddedRecipeMD(parentSlug)
+	if err != nil {
+		return false
+	}
+	b.WriteString("**Parent recipe baseline (embedded)**\n\n")
+	fmt.Fprintf(b, framing, parentSlug)
+	b.WriteString("```md\n")
+	b.WriteString(excerptREADME(embeddedParent, excerptCap))
+	if !strings.HasSuffix(embeddedParent, "\n") {
+		b.WriteByte('\n')
+	}
+	b.WriteString("```\n\n")
+	return true
 }
