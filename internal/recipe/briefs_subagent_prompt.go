@@ -197,9 +197,10 @@ func writePromptHeader(b *strings.Builder, plan *Plan, kind BriefKind, cb Codeba
 	// happen.
 	b.WriteString("**Tool-call shape**: `zerops_recipe` is an **MCP tool** invoked as a\n")
 	b.WriteString("JSON tool call (e.g. `{\"action\": \"record-fragment\", \"slug\": \"...\", ...}`).\n")
-	b.WriteString("It is NOT a shell command. The brief uses backtick shorthand\n")
-	b.WriteString("`zerops_recipe action=X slug=Y` to refer to an MCP invocation; do\n")
-	b.WriteString("not run it via Bash.\n\n")
+	b.WriteString("It is NOT a shell command. There is no Skill named `zerops_recipe` —\n")
+	b.WriteString("calling it via the Skill tool will fail with `Unknown skill`. The\n")
+	b.WriteString("brief uses backtick shorthand `zerops_recipe action=X slug=Y` to\n")
+	b.WriteString("refer to an MCP invocation; do not run it via Bash.\n\n")
 }
 
 func writePromptRecipeContext(b *strings.Builder, plan *Plan, kind BriefKind, cb Codebase) {

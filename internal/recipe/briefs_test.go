@@ -546,6 +546,28 @@ func TestBuildSubagentPrompt_Feature_NoCodebaseScope(t *testing.T) {
 	}
 }
 
+// TestBuildSubagentPrompt_DisambiguatesSkillFromMCP — run-21 R3-2/R3-3.
+// Run-21 evidence: features-nestjs-1st (a8564faab515ffa5c) died after
+// 27 events trying `Skill("zerops_recipe")` on its very first action
+// attempt. The brief's existing teaching uses backtick shorthand for
+// the MCP tool, which the agent confused with a Skill name. Re-dispatch
+// as features-nestjs-2nd (ad28da90a89e2bc38) used the MCP tool
+// correctly. The Tool-call shape preamble must explicitly state the
+// Skill negative so future dispatches don't repeat the same wall.
+func TestBuildSubagentPrompt_DisambiguatesSkillFromMCP(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	prompt, err := buildSubagentPrompt(plan, nil, RecipeInput{
+		BriefKind: "scaffold",
+		Codebase:  "api",
+	})
+	if err != nil {
+		t.Fatalf("buildSubagentPrompt: %v", err)
+	}
+	mustContain(t, prompt, "There is no Skill named `zerops_recipe`")
+}
+
 // TestDispatch_BuildSubagentPrompt_ReturnsPromptField — run-13 §B2
 // integration. The new MCP action populates RecipeResult.Prompt; main
 // dispatches with prompt=<response.prompt> byte-identical.
