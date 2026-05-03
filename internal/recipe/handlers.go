@@ -467,21 +467,11 @@ func handleRecordFragment(sess *Session, in RecipeInput, r RecipeResult) RecipeR
 		}
 		return r
 	}
-	// Plan-services-aware claude-md check — extends checkClaudeMDAll
-	// with per-hostname leakage refusal. Catches managed-service
-	// hostnames the static-token list can't enumerate (db, cache,
-	// search, meilisearch …).
-	if singleSlotClaudeMDRe.MatchString(in.FragmentID) && sess.Plan != nil {
-		for _, svc := range sess.Plan.Services {
-			if svc.Kind != ServiceKindManaged {
-				continue
-			}
-			if violation := claudeMDFragmentRefusalForHostname(in.Fragment, svc.Hostname); violation != "" {
-				r.Error = "record-fragment: " + violation
-				return r
-			}
-		}
-	}
+	// Run-21 R2-5 — per-hostname leakage refusal removed. The
+	// 4-letter-hostname matcher (db, cache, search, broker) collided
+	// with English prose; brief teaching is the right surface for the
+	// Zerops-free CLAUDE.md contract. See
+	// `briefs/claudemd-author/zerops_free_prohibition.md`.
 
 	// Run-20 C1 — facts-attestation check for JetStream framing in
 	// env-content import-comment fragments. Run-19 shipped fabricated

@@ -34,18 +34,17 @@ func TestCheckSlotShape_AggregatesAllOffenders_KBMultipleAuthorClaim(t *testing.
 	}
 }
 
-func TestCheckSlotShape_AggregatesAllOffenders_ClaudeMDMultipleZeropsLeaks(t *testing.T) {
+// TestCheckSlotShape_ClaudeMD_AcceptsZeropsTokens_R2_5 — Run-21 R2-5.
+//
+// Aggregator no longer flags Zerops tokens (the brief is the authoring
+// contract). Body that previously hit 4 token-leak violations now
+// passes; only structural checks remain.
+func TestCheckSlotShape_ClaudeMD_AcceptsZeropsTokens_R2_5(t *testing.T) {
 	t.Parallel()
 	body := "# api\n\nframing\n\n## Build & run\n\n- run zsc noop\n- call zerops_deploy\n- use zcp sync push\n- zcli login\n\n## Architecture\n\n- src/main.ts"
 	violations := checkSlotShape("codebase/api/claude-md", body)
-	if len(violations) < 4 {
-		t.Fatalf("expected 4 violations (zsc + zerops_* + zcp + zcli); got %d (%v)", len(violations), violations)
-	}
-	joined := strings.Join(violations, "\n")
-	for _, token := range []string{"zsc", "zerops_*", "zcp", "zcli"} {
-		if !strings.Contains(joined, "`"+token+"`") {
-			t.Errorf("aggregate refusal should name token `%s`; got: %s", token, joined)
-		}
+	if len(violations) > 0 {
+		t.Errorf("R2-5: claude-md with zerops tokens must pass slot-shape (brief teaches Zerops-free); got %v", violations)
 	}
 }
 

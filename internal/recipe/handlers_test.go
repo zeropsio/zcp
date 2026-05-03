@@ -291,7 +291,16 @@ func TestDispatch_RecordFragment_RefusesMultiHeadingInIGSlot(t *testing.T) {
 	}
 }
 
-func TestDispatch_RecordFragment_RefusesClaudeMDZeropsContent(t *testing.T) {
+// TestDispatch_RecordFragment_AcceptsClaudeMDZeropsContent — Run-21 R2-5.
+//
+// Pre-R2-5 the engine refused CLAUDE.md fragments containing `## Zerops`
+// headings or hostname mentions. R2-5 dropped those guards: the brief
+// at `briefs/claudemd-author/zerops_free_prohibition.md` is the
+// authoring contract; engine-side word-blacklisting added false-
+// positive friction (4× rejection cycle in run-21 around common
+// English tokens). The dispatch now passes content the prior guard
+// refused; structural-only checks remain.
+func TestDispatch_RecordFragment_AcceptsClaudeMDZeropsContent(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -312,8 +321,8 @@ func TestDispatch_RecordFragment_RefusesClaudeMDZeropsContent(t *testing.T) {
 		Action: "record-fragment", Slug: "synth-showcase",
 		FragmentID: "codebase/api/claude-md", Fragment: body,
 	})
-	if res.OK {
-		t.Error("claude-md with `## Zerops` heading should be refused (R-15-4)")
+	if !res.OK {
+		t.Errorf("R2-5: claude-md with `## Zerops` heading must pass record-fragment now; got %+v", res)
 	}
 }
 

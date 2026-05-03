@@ -267,38 +267,42 @@ func TestCheckSlotShape_CodebaseIntro_RefusesHeadings(t *testing.T) {
 	}
 }
 
-// CLAUDE.md slot-shape refusal — R-15-4 closure. Bodies must be
-// /init-shaped, Zerops-free.
+// CLAUDE.md slot-shape — Run-21 R2-5 dropped Zerops-content guards.
+// The brief at `briefs/claudemd-author/zerops_free_prohibition.md`
+// teaches the agent; the engine policies only structural shape (line
+// cap + 2-4 H2 sections + minimum size). Tests below assert the
+// engine PASSES content the pre-R2-5 guards refused, so the brief
+// teaching is the single source of truth.
 
-func TestCheckSlotShape_ClaudeMD_RefusesZeropsHeading(t *testing.T) {
+func TestCheckSlotShape_ClaudeMD_AllowsZeropsHeading_BriefTeachingHandlesIt(t *testing.T) {
 	t.Parallel()
 	body := "## Build & run\n- npm test\n## Zerops service facts\n- db: postgres\n## Architecture\n- src/"
-	if msgs := checkSlotShape("codebase/api/claude-md", body); len(msgs) == 0 {
-		t.Error("claude-md with `## Zerops` heading should be refused")
+	if msgs := checkSlotShape("codebase/api/claude-md", body); len(msgs) > 0 {
+		t.Errorf("claude-md with `## Zerops` heading must pass slot-shape (R2-5: brief teaches Zerops-free); got %v", msgs)
 	}
 }
 
-func TestCheckSlotShape_ClaudeMD_Refuses_zsc_Token(t *testing.T) {
+func TestCheckSlotShape_ClaudeMD_Allows_zsc_Token_BriefTeachingHandlesIt(t *testing.T) {
 	t.Parallel()
 	body := "## Build & run\n- npm test\n## Architecture\n- run zsc noop\n- src/"
-	if msgs := checkSlotShape("codebase/api/claude-md", body); len(msgs) == 0 {
-		t.Error("claude-md with `zsc` token should be refused")
+	if msgs := checkSlotShape("codebase/api/claude-md", body); len(msgs) > 0 {
+		t.Errorf("claude-md with `zsc` token must pass slot-shape (R2-5); got %v", msgs)
 	}
 }
 
-func TestCheckSlotShape_ClaudeMD_Refuses_zerops_Token(t *testing.T) {
+func TestCheckSlotShape_ClaudeMD_Allows_zerops_Token_BriefTeachingHandlesIt(t *testing.T) {
 	t.Parallel()
 	body := "## Build & run\n- npm test\n## Architecture\n- call zerops_deploy\n- src/"
-	if msgs := checkSlotShape("codebase/api/claude-md", body); len(msgs) == 0 {
-		t.Error("claude-md with `zerops_deploy` token should be refused")
+	if msgs := checkSlotShape("codebase/api/claude-md", body); len(msgs) > 0 {
+		t.Errorf("claude-md with `zerops_deploy` token must pass slot-shape (R2-5); got %v", msgs)
 	}
 }
 
-func TestCheckSlotShape_ClaudeMD_Refuses_zcp_Token(t *testing.T) {
+func TestCheckSlotShape_ClaudeMD_Allows_zcp_Token_BriefTeachingHandlesIt(t *testing.T) {
 	t.Parallel()
 	body := "## Build & run\n- zcp sync push\n## Architecture\n- src/"
-	if msgs := checkSlotShape("codebase/api/claude-md", body); len(msgs) == 0 {
-		t.Error("claude-md with `zcp` token should be refused")
+	if msgs := checkSlotShape("codebase/api/claude-md", body); len(msgs) > 0 {
+		t.Errorf("claude-md with `zcp` token must pass slot-shape (R2-5); got %v", msgs)
 	}
 }
 
@@ -358,19 +362,52 @@ func TestCheckSlotShape_UnknownFragment_NoOpinion(t *testing.T) {
 	}
 }
 
-func TestClaudeMDFragmentRefusalForHostname_FlagsLeakedHostname(t *testing.T) {
+// TestClaudeMDGuard_StructuralOnly — Run-21 R2-5.
+//
+// The CLAUDE.md slot-shape guard fires ONLY on structural shape
+// (line cap + 2-4 H2 count). Hostname mentions, `## Zerops` headings,
+// and tool-token leaks pass through; the brief at
+// `briefs/claudemd-author/zerops_free_prohibition.md` is the
+// authoring contract for those.
+func TestClaudeMDGuard_StructuralOnly(t *testing.T) {
 	t.Parallel()
 
-	body := "## Build & run\n- npm test\n## Architecture\n- connect to db.local"
-	if msg := claudeMDFragmentRefusalForHostname(body, "db"); msg == "" {
-		t.Error("body referencing managed-service hostname `db` should be refused")
+	tests := []struct {
+		name       string
+		body       string
+		mustRefuse bool
+	}{
+		{
+			name:       "structural pass with bare hostnames + zsc token",
+			body:       "# api\n\nbody intro.\n\n## Build & run\n- npm test\n- ssh apidev 'zsc noop --silent'\n\n## Architecture\n- connect to db.local\n- search via meilisearch\n",
+			mustRefuse: false,
+		},
+		{
+			name:       "structural fail: only one H2",
+			body:       "# api\nintro\n\n## Build & run\n- npm test\n",
+			mustRefuse: true,
+		},
+		{
+			name:       "structural fail: 5 H2 sections (over cap)",
+			body:       "## A\n## B\n## C\n## D\n## E\n",
+			mustRefuse: true,
+		},
+		{
+			name:       "structural fail: over 80 lines",
+			body:       "## Build & run\n## Architecture\n" + strings.Repeat("filler\n", 100),
+			mustRefuse: true,
+		},
 	}
 
-	if msg := claudeMDFragmentRefusalForHostname(body, "search"); msg != "" {
-		t.Errorf("hostname `search` not in body should pass: %s", msg)
-	}
-
-	if msg := claudeMDFragmentRefusalForHostname(body, ""); msg != "" {
-		t.Errorf("empty hostname should pass: %s", msg)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msgs := checkSlotShape("codebase/api/claude-md", tt.body)
+			if tt.mustRefuse && len(msgs) == 0 {
+				t.Errorf("expected structural refusal, got pass")
+			}
+			if !tt.mustRefuse && len(msgs) > 0 {
+				t.Errorf("expected structural pass, got refusal: %v", msgs)
+			}
+		})
 	}
 }

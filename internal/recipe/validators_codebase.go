@@ -229,40 +229,21 @@ func validateCodebaseCLAUDE(_ context.Context, path string, body []byte, _ Surfa
 				lines, claudeMDLineCap)))
 	}
 
-	// Run-16 §8.1 backstop — Zerops-flavored content must NOT appear in
-	// CLAUDE.md. Slot-shape refusal at record-time should have caught
-	// this; if it didn't, the validator blocks publication.
-	//
-	// Run-16 reviewer minor — uses the same word-boundary regexes as
-	// slot_shape.checkClaudeMDAll so the validator and record-time
-	// refusal agree on what counts as a leak. Substring matching on
-	// "zerops_" was looser (would match `Zerops_v1` in regular prose);
-	// `\bzerops_[a-z_]+` matches only the tool-name shape.
-	bodyStr := string(body)
-	if zeropsHeadingRe.MatchString(bodyStr) {
-		vs = append(vs, violation("claude-md-zerops-heading", path,
-			"`## Zerops` heading found — Zerops platform content belongs in IG/KB/zerops.yaml comments, not CLAUDE.md (R-15-4 closure)"))
-	}
-	leakChecks := []struct {
-		re    *regexp.Regexp
-		token string
-	}{
-		{zscRe, "zsc"},
-		{zeropsToolRe, "zerops_*"},
-		{zcpRe, "zcp"},
-		{zcliRe, "zcli"},
-	}
-	for _, lc := range leakChecks {
-		if lc.re.MatchString(bodyStr) {
-			vs = append(vs, violation("claude-md-tool-leak", path,
-				fmt.Sprintf("authoring-tool token %q found — CLAUDE.md is the porter's `/init` guide, framework-canonical commands only", lc.token)))
-			break // single notice per body — agent re-authors holistically
-		}
-	}
+	// Run-21 R2-5 — Zerops-content guards on CLAUDE.md retired.
+	// `## Zerops` heading + `zsc`/`zerops_*`/`zcp`/`zcli` tool-token
+	// checks + per-managed-service hostname refusal are gone. The
+	// brief at `briefs/claudemd-author/zerops_free_prohibition.md`
+	// teaches the agent to author Zerops-free CLAUDE.md; engine-side
+	// word-blacklisting added false-positive friction (4× rejection
+	// cycle in run-21 around common English tokens). Cross-surface
+	// duplication is covered by `gateCrossSurfaceDuplication` at
+	// codebase-content phase, not by content guards here. Spec:
+	// docs/spec-content-surfaces.md §Surface 6.
 
 	// Legacy forbidden-subsection patrol stays as Notice for back-compat
 	// (recipes synthesized via legacy sub-slot path may still carry
 	// these headings).
+	bodyStr := string(body)
 	headerRE := regexp.MustCompile(`(?m)^##+\s+(.+)$`)
 	for _, m := range headerRE.FindAllStringSubmatch(bodyStr, -1) {
 		title := strings.TrimSpace(m[1])

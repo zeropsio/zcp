@@ -246,33 +246,18 @@ func checkCodebaseKBAll(body string) []string {
 	return out
 }
 
-// checkClaudeMDAll walks the body collecting every Zerops-content
-// leak and the cap/H2-shape violations in one pass. Run-17 §10 —
-// run-16 scaffold-api hit eight successive single-violation refusals
-// (one per managed-service hostname) before the agent gave up; this
-// aggregator surfaces all of them together so the agent re-authors
-// once.
+// checkClaudeMDAll walks the body collecting structural-shape
+// violations only — line cap + H2 count. Run-21 R2-5 dropped the
+// Zerops-content guards (`## Zerops` heading, `zsc`/`zerops_*`/`zcp`/
+// `zcli` tool tokens, managed-service hostname leakage). The brief
+// at `briefs/claudemd-author/zerops_free_prohibition.md` teaches the
+// agent to author Zerops-free CLAUDE.md; symptom-policing at the
+// engine added false-positive friction (run-21: 4× rejection cycle on
+// claudemd-author-api around common English tokens). If teaching
+// fails, fix the brief — the engine doesn't word-blacklist for an
+// authoring failure. Spec: docs/spec-content-surfaces.md §Surface 6.
 func checkClaudeMDAll(body string) []string {
 	var out []string
-	if zeropsHeadingRe.MatchString(body) {
-		out = append(out,
-			"codebase/<h>/claude-md must not contain `## Zerops` headings (R-15-4); Zerops platform content belongs in IG/KB/zerops.yaml comments per spec §Surface 6.")
-	}
-	for _, hit := range []struct {
-		re    *regexp.Regexp
-		token string
-	}{
-		{zscRe, "zsc"},
-		{zeropsToolRe, "zerops_*"},
-		{zcpRe, "zcp"},
-		{zcliRe, "zcli"},
-	} {
-		if hit.re.MatchString(body) {
-			out = append(out, fmt.Sprintf(
-				"codebase/<h>/claude-md must not contain `%s` tool references (R-15-4); CLAUDE.md is a Zerops-free codebase guide per spec §Surface 6.",
-				hit.token))
-		}
-	}
 	lines := strings.Count(body, "\n")
 	if !strings.HasSuffix(body, "\n") && body != "" {
 		lines++
@@ -405,20 +390,10 @@ func normalizeYAMLForCompare(s string) string {
 	return strings.TrimRight(out, "\n")
 }
 
-// claudeMDFragmentRefusalForHostname extends checkClaudeMDAll with a
-// plan-time hostname check: the handler walks plan.Services and calls
-// this once per declared hostname. Static-token coverage in
-// checkClaudeMDAll catches `zsc` / `zerops_*` / `zcp` / `zcli` /
-// `## Zerops`; the per-host loop catches managed-service hostname
-// leakage like `db`, `cache`, `search`, `meilisearch`, etc. that the
-// static list can't enumerate.
-func claudeMDFragmentRefusalForHostname(body, hostname string) string {
-	if hostname == "" {
-		return ""
-	}
-	re := regexp.MustCompile(`\b` + regexp.QuoteMeta(hostname) + `\b`)
-	if re.MatchString(body) {
-		return fmt.Sprintf("codebase/<h>/claude-md must not reference managed-service hostname `%s` (R-15-4); the Zerops integration belongs in IG/KB/zerops.yaml comments per spec §Surface 6.", hostname)
-	}
-	return ""
-}
+// claudeMDFragmentRefusalForHostname removed in Run-21 R2-5. The
+// bare-hostname matcher was the false-positive driver (4-letter
+// tokens like `db`, `cache`, `search` collide with English prose).
+// CLAUDE.md content quality is the brief's contract via
+// `briefs/claudemd-author/zerops_free_prohibition.md`, not the
+// engine's word-blacklist. Spec: docs/spec-content-surfaces.md
+// §Surface 6.

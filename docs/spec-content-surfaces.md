@@ -266,7 +266,7 @@ Optional 3rd–4th H2 section when the codebase warrants — e.g. `## Adding a f
 
 **Length**: ~30–50 lines depending on codebase complexity. No hard cap; shape and Zerops-content-absence are the contract.
 
-**Validator**: `validateCodebaseCLAUDE` confirms the sub-agent's output shape held — title + framing line + 2–4 H2 sections, no `## Zerops` headings, no managed-service hostname references, no `zsc` / `zerops_*` / `zcp` / `zcli` tool name leaks. Blocking violation if shape drift. Record-time slot-shape refusal at `record-fragment` catches violations earlier with same-context recovery; the validator is the finalize backstop.
+**Validator**: `validateCodebaseCLAUDE` confirms the sub-agent's output shape held — title + framing line + 2–4 H2 sections, ≥200 bytes, ≤80 lines. Zerops-content absence is the brief's contract (`briefs/claudemd-author/zerops_free_prohibition.md`), not the validator's. Run-21 R2-5 dropped engine-side word-blacklisting (hostname mentions, `## Zerops` headings, `zsc`/`zerops_*`/`zcp`/`zcli` tokens) after run-21 evidence showed 4× rejection cycles around common English tokens (`db`, `cache`, `search` collide with prose). The validator is the structural-shape backstop; brief teaching is the content contract.
 
 **Anti-pattern**: any of the older reference recipes' CLAUDE.md sections that embed Zerops platform facts (`## Zerops service facts` listing managed services; `## Zerops dev (hybrid)` describing dev-loop quirks). Those facts belong in zerops.yaml comments / IG / KB. The reference recipes set this precedent before the dedicated `claudemd-author` brief existed; they will be updated separately.
 
