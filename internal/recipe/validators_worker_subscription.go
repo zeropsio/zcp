@@ -17,9 +17,15 @@ import (
 // instead of `await sub.drain()` drops in-flight events on every
 // rolling deploy.
 //
-// `briefs/codebase-content/showcase_tier_supplements.md` teaches both
-// rules; this gate is the engine-side teeth that catches violations
-// even when the agent skips the brief content.
+// `briefs/feature/worker_subscription_shape.md` teaches the source-code
+// contract at feature (where worker source is authored) and
+// `briefs/codebase-content/worker_kb_supplements.md` teaches the KB
+// content shape that explains the same trap to porter readers. This
+// gate is the engine-side teeth that catches violations even when the
+// agent skips both atoms — the split landed in run-22 followup F-5
+// after evidence that the previous combined `showcase_tier_supplements.md`
+// arrived one phase too late (codebase-content, after worker source was
+// already authored).
 //
 // Regex-based source scan (per FIX_SPEC R2-WK-* "Start with a regex
 // implementation that catches the common shapes"). Upgrade to AST

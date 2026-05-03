@@ -477,12 +477,16 @@ func TestPerTierAuthoringAtom_DistinguishesCanonicalSetFromFlavor(t *testing.T) 
 	}
 }
 
-// TestFeatureBrief_TeachesQueueGroup_ForShowcaseWorker — run-22 R2-WK-1.
-// The codebase-content brief (loaded for showcase worker codebases via
-// showcase_tier_supplements.md) MUST teach the queue-group requirement
-// for NATS subscriptions. Run-22 evidence:
-// `this.nc.subscribe(ITEMS_EVENT_SUBJECT)` without queue option →
-// every replica double-indexes at tier 4-5 (minContainers: 2).
+// TestFeatureBrief_TeachesQueueGroup_ForShowcaseWorker — run-22 R2-WK-1
+// (atom path updated by run-22 followup F-5). The codebase-content
+// brief (loaded for showcase worker codebases via
+// briefs/codebase-content/worker_kb_supplements.md after the F-5 split)
+// MUST teach the queue-group requirement for NATS subscriptions, since
+// the worker's KB consumer (porter) needs to know why the gotcha
+// matters. Run-22 evidence: `this.nc.subscribe(ITEMS_EVENT_SUBJECT)`
+// without queue option → every replica double-indexes at tier 4-5
+// (minContainers: 2). The corresponding source-code-shape teaching now
+// lives at briefs/feature/worker_subscription_shape.md (TestFeatureBrief_LoadsWorkerSubscriptionTeaching_*).
 func TestFeatureBrief_TeachesQueueGroup_ForShowcaseWorker(t *testing.T) {
 	t.Parallel()
 
@@ -542,18 +546,25 @@ func TestFeatureBrief_TeachesDrainShutdown_ForShowcaseWorker(t *testing.T) {
 	}
 }
 
-// TestShowcaseTierSupplementsAtom_NamesValidatorGate — atom-level pin.
-// The atom must reference the new validator gate file so future authors
-// know enforcement teeth exist.
-func TestShowcaseTierSupplementsAtom_NamesValidatorGate(t *testing.T) {
+// TestWorkerSubscriptionAtoms_NameValidatorGate — atom-level pin (run-22
+// followup F-5 split the previous showcase_tier_supplements.md). Both
+// atoms MUST reference the validator gate file so future authors know
+// enforcement teeth exist. The feature atom carries the source-code
+// contract; the codebase-content atom carries the KB content shape.
+func TestWorkerSubscriptionAtoms_NameValidatorGate(t *testing.T) {
 	t.Parallel()
 
-	body, err := readAtom("briefs/codebase-content/showcase_tier_supplements.md")
-	if err != nil {
-		t.Fatalf("read atom: %v", err)
-	}
-	if !strings.Contains(body, "validators_worker_subscription.go") {
-		t.Error("showcase_tier_supplements.md must reference the validator gate (validators_worker_subscription.go)")
+	for _, atomPath := range []string{
+		"briefs/feature/worker_subscription_shape.md",
+		"briefs/codebase-content/worker_kb_supplements.md",
+	} {
+		body, err := readAtom(atomPath)
+		if err != nil {
+			t.Fatalf("read atom %s: %v", atomPath, err)
+		}
+		if !strings.Contains(body, "validators_worker_subscription.go") {
+			t.Errorf("%s must reference the validator gate (validators_worker_subscription.go)", atomPath)
+		}
 	}
 }
 

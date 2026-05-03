@@ -1,47 +1,17 @@
-# Showcase tier supplements
+# Worker KB content shape — multi-replica gotchas
 
 Conditionally appended to the codebase-content brief when this recipe
 is the showcase tier and this codebase is a separate worker codebase
-(`cb.IsWorker == true`). At showcase tier the worker runs at
-`minContainers ≥ 2` from tier-4 onwards, so the multi-replica failure
-modes are first-class concerns.
+(`plan.Tier == "showcase" && cb.IsWorker`). At showcase tier the
+worker runs at `minContainers ≥ 2` from tier 4 onwards, so the
+multi-replica failure modes are first-class KB concerns.
 
-## Worker subscriptions: queue group + drain are MANDATORY
-
-This recipe ships at tiers 0-5. Tiers 4-5 set `minContainers: 2` for
-the worker — at least two replicas in production. A NATS subscription
-without a queue group fans out each message to every replica
-(double-indexing, double-marker, broken ordering). The queue group is
-what makes the worker horizontally scalable.
-
-**Required at every `nc.subscribe(...)` in worker code**:
-
-```ts
-this.sub = this.nc.subscribe(SUBJECT, { queue: 'workers' });
-```
-
-The queue name is stable per logical workload — replicas that share
-the name share the work. Pick one name per worker; don't randomize
-per-replica.
-
-**Required in shutdown handler** (NestJS `OnModuleDestroy` /
-`process.on('SIGTERM', ...)`):
-
-```ts
-await this.sub.drain();   // stop receiving + finish iterator
-await this.nc.drain();    // flush pending writes
-await app.close();        // run framework lifecycle hooks
-```
-
-`unsubscribe()` is NOT a substitute. It stops receiving but abandons
-in-flight messages — rolling deploys (tier 4-5) lose events on every
-replacement. Always `drain()` before exiting.
-
-Both rules are validated at codebase-content phase by the
-worker-pattern gate (see
-`internal/recipe/validators_worker_subscription.go`). Naked
-`nc.subscribe(SUBJECT)` without a `queue:` option, or `unsubscribe()`
-inside the shutdown handler, refuses `complete-phase`.
+The corresponding **code shape** taught to the feature sub-agent at
+authoring time lives at
+`briefs/feature/worker_subscription_shape.md`. That atom carries the
+MANDATORY queue-group + drain source-level contract; this atom
+covers how to phrase the same trap for the worker's KB readers (the
+porter humans / agents who skim the KB before editing the worker).
 
 ## Required worker KB gotchas
 
@@ -108,3 +78,13 @@ Both items cite the rolling-deploys platform topic (Citation map →
 - Either gotcha is already authored under a symptom-first stem — no
   new bullet needed. The contract is "topics covered", not "exact
   stem text".
+
+## Engine-side enforcement of the source code
+
+The worker's actual source-code shape (`{queue: 'workers'}` on
+subscribe + `await sub.drain()` on shutdown) is enforced at
+codebase-content `complete-phase` by `gateWorkerSubscription` (see
+`internal/recipe/validators_worker_subscription.go`). The teaching
+that lands the right code AT WRITE TIME is at feature — see
+`briefs/feature/worker_subscription_shape.md`. Your job here is the
+KB prose only.

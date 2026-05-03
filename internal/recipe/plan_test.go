@@ -6,6 +6,69 @@ import (
 	"testing"
 )
 
+// TestPlan_HasWorkerCodebase — run-22 followup F-5. Helper used by the
+// feature-brief composer to gate worker-shape teaching: load
+// `worker_subscription_shape.md` only when the plan actually has a
+// worker codebase. Three cases: no codebases at all, codebases without
+// any worker, codebases with at least one worker (the predicate must
+// match a `IsWorker=true` row anywhere in the slice, not only at index 0).
+func TestPlan_HasWorkerCodebase(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		plan *Plan
+		want bool
+	}{
+		{
+			name: "no codebases",
+			plan: &Plan{Slug: "x"},
+			want: false,
+		},
+		{
+			name: "codebases without any worker",
+			plan: &Plan{
+				Slug: "x",
+				Codebases: []Codebase{
+					{Hostname: "api", Role: RoleAPI},
+					{Hostname: "app", Role: RoleFrontend},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "worker is last codebase",
+			plan: &Plan{
+				Slug: "x",
+				Codebases: []Codebase{
+					{Hostname: "api", Role: RoleAPI},
+					{Hostname: "app", Role: RoleFrontend},
+					{Hostname: "worker", Role: RoleWorker, IsWorker: true},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "worker is first codebase",
+			plan: &Plan{
+				Slug: "x",
+				Codebases: []Codebase{
+					{Hostname: "worker", Role: RoleWorker, IsWorker: true},
+					{Hostname: "api", Role: RoleAPI},
+				},
+			},
+			want: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.plan.HasWorkerCodebase(); got != tc.want {
+				t.Errorf("HasWorkerCodebase() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestWritePlan_RoundTrip(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

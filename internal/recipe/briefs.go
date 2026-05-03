@@ -121,13 +121,17 @@ const (
 // yaml-comment-style.md added the Unicode box-drawing forbid (~1 KB
 // across both atoms; both load into the codebase-content brief).
 // Run-22 R2-WK-1 + R2-WK-2 bumped CodebaseContentBriefCap 52→56 KB
-// after showcase_tier_supplements.md added the queue-group + drain
-// MANDATORY teaching (~1 KB) and per_tier_authoring.md gained the
-// canonical-set-vs-per-tier-flavor clarification (~1.5 KB; loaded via
-// env-content but the codebase-content worker variant pushes the
-// hardest because showcase_tier_supplements.md only loads here). The
-// EnvContentBriefCap matches because per_tier_authoring.md is loaded
-// there too.
+// after the queue-group + drain MANDATORY teaching landed (~1 KB) and
+// per_tier_authoring.md gained the canonical-set-vs-per-tier-flavor
+// clarification (~1.5 KB; loaded via env-content but the codebase-
+// content worker variant pushed the hardest). Run-22 followup F-5 then
+// split that combined atom (`showcase_tier_supplements.md`) — the
+// code-shape MANDATORY moved to the feature brief
+// (`worker_subscription_shape.md`) and only the KB-content shape
+// (`worker_kb_supplements.md`) remains at codebase-content. The
+// EnvContentBriefCap still matches because per_tier_authoring.md is
+// loaded there too, and run-22 followup F-4 added the cross-service-
+// urls atom (~10.5 KB) at env-content.
 const (
 	CodebaseContentBriefCap = 56 * 1024
 	EnvContentBriefCap      = 56 * 1024
@@ -408,6 +412,19 @@ func BuildFeatureBrief(plan *Plan) (Brief, error) {
 	// recipes don't get this — they have fewer managed services.
 	if plan.Tier == tierShowcase {
 		atoms = append(atoms, "briefs/feature/showcase_scenario.md")
+	}
+	// Run-22 followup F-5 — worker-subscription code shape (queue group +
+	// drain MANDATORY) was previously taught at codebase-content via the
+	// combined `showcase_tier_supplements.md` atom. Worker source is
+	// authored at the feature phase (per `feature_kinds.md`); the old
+	// placement meant the agent first authored worker code with the
+	// wrong mental model and was then forced into edit-in-place by
+	// `gateWorkerSubscription`. The split atom carries the code shape
+	// here at feature; KB-content shape stays at codebase-content
+	// (`worker_kb_supplements.md`). Same gate as the codebase-content
+	// peer: showcase tier + plan has at least one worker codebase.
+	if plan.Tier == tierShowcase && plan.HasWorkerCodebase() {
+		atoms = append(atoms, "briefs/feature/worker_subscription_shape.md")
 	}
 	for _, atom := range atoms {
 		body, err := readAtom(atom)

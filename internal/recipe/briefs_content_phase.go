@@ -65,14 +65,19 @@ func BuildCodebaseContentBrief(plan *Plan, cb Codebase, parent *ParentRecipe, fa
 		}
 	}
 
-	// Run-17 §6.5 — showcase tier worker codebases get an extra atom
-	// teaching the multi-replica gotchas (queue-group / SIGTERM drain)
-	// that MUST appear in the worker KB.
+	// Run-17 §6.5 + run-22 followup F-5 — showcase tier worker codebases
+	// get an extra atom teaching the multi-replica gotchas (queue-group /
+	// SIGTERM drain) that MUST appear in the worker KB. F-5 split the
+	// previous `showcase_tier_supplements.md` into two atoms — the code-
+	// shape contract moved to the feature brief
+	// (`briefs/feature/worker_subscription_shape.md`) where worker source
+	// is actually authored, and only the KB-content shape (how to phrase
+	// the gotcha for porter readers) remains here.
 	if plan.Tier == tierShowcase && cb.IsWorker {
-		if atom, err := readAtom("briefs/codebase-content/showcase_tier_supplements.md"); err == nil {
+		if atom, err := readAtom("briefs/codebase-content/worker_kb_supplements.md"); err == nil {
 			b.WriteString(atom)
 			b.WriteString("\n\n")
-			parts = append(parts, "briefs/codebase-content/showcase_tier_supplements.md")
+			parts = append(parts, "briefs/codebase-content/worker_kb_supplements.md")
 		}
 	}
 
@@ -227,6 +232,23 @@ func BuildEnvContentBrief(plan *Plan, parent *ParentRecipe, facts []FactRecord) 
 		b.WriteString(atom)
 		b.WriteString("\n\n")
 		parts = append(parts, "briefs/env-content/per_tier_authoring.md")
+	}
+
+	// Run-22 followup F-4 — workspace dual-runtime URL teaching reaches
+	// env-content unconditionally. The per-tier import-comments fragments
+	// authored at this phase routinely narrate URL constants
+	// (`${zeropsSubdomainHost}`, `STAGE_API_URL`, etc); without the atom
+	// the env-content sub-agent lacks (a) the literal-stays-literal rule
+	// for the deliverable tier yaml and (b) the `update-plan
+	// projectEnvVars` channel-sync teaching that explains why those
+	// constants exist. Loaded unconditionally because the brief has
+	// >25 KB headroom under the 56 KB cap and gating on
+	// `len(plan.ProjectEnvVars) > 0` would only save ~10.5 KB on plans
+	// that ALSO don't have URL-pair codebases — a vanishing sub-class.
+	if atom, err := readAtom("principles/cross-service-urls.md"); err == nil {
+		b.WriteString(atom)
+		b.WriteString("\n\n")
+		parts = append(parts, "principles/cross-service-urls.md")
 	}
 
 	// Run-20 C1 — NATS messaging-shape teaching is shared with the

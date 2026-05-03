@@ -38,6 +38,24 @@ type Plan struct {
 	FeatureKinds []string `json:"featureKinds,omitempty"`
 }
 
+// HasWorkerCodebase reports whether any codebase in the plan has
+// IsWorker=true. Used by the feature-phase brief composer (run-22
+// followup F-5) to gate the worker-shape teaching atom: only load
+// `worker_subscription_shape.md` when the plan actually scaffolds a
+// worker codebase. Predicate is a plain slice scan; cost is negligible
+// vs. the readAtom that follows it on the gate's true branch.
+func (p *Plan) HasWorkerCodebase() bool {
+	if p == nil {
+		return false
+	}
+	for _, cb := range p.Codebases {
+		if cb.IsWorker {
+			return true
+		}
+	}
+	return false
+}
+
 // ResearchResult is the output of the research phase. All fields are
 // framework-agnostic; strings are filled by the agent from framework
 // knowledge + Zerops contracts.

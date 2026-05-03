@@ -94,11 +94,13 @@ already catches many misroutings; refinement is the backstop:
 ## Showcase tier worker supplements
 
 Refinement is the place to enforce the showcase tier worker supplement
-contract from `briefs/codebase-content/showcase_tier_supplements.md`.
-If `plan.Tier == "showcase"` AND the worker codebase's KB lacks BOTH
-the queue-group / consumer-group gotcha AND the SIGTERM drain gotcha,
-ACT — append the missing bullet(s) using the sample shapes in the
-supplement atom.
+contract from `briefs/codebase-content/worker_kb_supplements.md` (the
+KB-content-shape atom; the code-shape contract lives at
+`briefs/feature/worker_subscription_shape.md` and is enforced earlier
+by `gateWorkerSubscription`). If `plan.Tier == "showcase"` AND the
+worker codebase's KB lacks BOTH the queue-group / consumer-group
+gotcha AND the SIGTERM drain gotcha, ACT — append the missing
+bullet(s) using the sample shapes in the supplement atom.
 
 This is the ONE exception to the "no NEW content" rule: the queue-
 group + SIGTERM drain bullets are required by tier shape, not

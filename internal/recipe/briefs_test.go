@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -466,6 +467,78 @@ func TestBuildFeatureBrief_OmitsYamlCommentStyle(t *testing.T) {
 	for _, p := range brief.Parts {
 		if strings.Contains(p, "yaml-comment-style") {
 			t.Errorf("feature brief Parts unexpectedly carries %q", p)
+		}
+	}
+}
+
+// TestFeatureBrief_LoadsWorkerSubscriptionTeaching_WhenShowcaseAndHasWorker
+// — run-22 followup F-5. The MANDATORY queue-group + drain code-shape
+// teaching now lives at the feature phase (worker source is authored
+// here, not at codebase-content). Loaded only on the showcase + has-
+// worker variant; other shapes don't author worker source.
+func TestFeatureBrief_LoadsWorkerSubscriptionTeaching_WhenShowcaseAndHasWorker(t *testing.T) {
+	t.Parallel()
+	plan := syntheticShowcasePlan() // tier=showcase + worker codebase
+	brief, err := BuildFeatureBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFeatureBrief: %v", err)
+	}
+	wantPart := "briefs/feature/worker_subscription_shape.md"
+	if !slices.Contains(brief.Parts, wantPart) {
+		t.Errorf("feature brief Parts missing %q (got %v)", wantPart, brief.Parts)
+	}
+	for _, anchor := range []string{
+		"queue: 'workers'",
+		"await this.sub.drain()",
+		"unsubscribe()",
+	} {
+		if !strings.Contains(brief.Body, anchor) {
+			t.Errorf("feature brief missing worker-subscription anchor %q", anchor)
+		}
+	}
+}
+
+// TestFeatureBrief_OmitsWorkerSubscriptionTeaching_WhenNoWorker —
+// showcase tier without a worker codebase has no source to scaffold
+// the queue-group / drain pattern into; the atom is dead weight.
+func TestFeatureBrief_OmitsWorkerSubscriptionTeaching_WhenNoWorker(t *testing.T) {
+	t.Parallel()
+	plan := syntheticShowcasePlan()
+	plan.Tier = "showcase"
+	// Drop every worker codebase from the synthetic plan.
+	filtered := plan.Codebases[:0]
+	for _, cb := range plan.Codebases {
+		if !cb.IsWorker {
+			filtered = append(filtered, cb)
+		}
+	}
+	plan.Codebases = filtered
+
+	brief, err := BuildFeatureBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFeatureBrief: %v", err)
+	}
+	for _, p := range brief.Parts {
+		if p == "briefs/feature/worker_subscription_shape.md" {
+			t.Errorf("feature brief unexpectedly loaded worker-subscription atom for plan without worker (Parts=%v)", brief.Parts)
+		}
+	}
+}
+
+// TestFeatureBrief_OmitsWorkerSubscriptionTeaching_WhenNotShowcase —
+// non-showcase tiers don't run the worker at minContainers≥2, so the
+// multi-replica failure modes the atom guards against are vacuous.
+func TestFeatureBrief_OmitsWorkerSubscriptionTeaching_WhenNotShowcase(t *testing.T) {
+	t.Parallel()
+	plan := syntheticShowcasePlan() // has worker codebase
+	plan.Tier = "minimal"
+	brief, err := BuildFeatureBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFeatureBrief: %v", err)
+	}
+	for _, p := range brief.Parts {
+		if p == "briefs/feature/worker_subscription_shape.md" {
+			t.Errorf("feature brief unexpectedly loaded worker-subscription atom for non-showcase tier (Parts=%v)", brief.Parts)
 		}
 	}
 }

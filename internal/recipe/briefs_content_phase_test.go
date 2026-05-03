@@ -1,6 +1,7 @@
 package recipe
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -304,6 +305,42 @@ func TestBuildEnvContentBrief_SizeUnderCap(t *testing.T) {
 	}
 	if brief.Bytes > EnvContentBriefCap {
 		t.Errorf("env-content brief over cap: %d bytes (cap %d)", brief.Bytes, EnvContentBriefCap)
+	}
+}
+
+// TestEnvContentBrief_LoadsCrossServiceURLsAtom — run-22 followup F-4.
+// The env-content sub-agent authors per-tier import-comments fragments
+// that routinely discuss URL constants (`${zeropsSubdomainHost}`,
+// `STAGE_API_URL`, etc). Without principles/cross-service-urls.md the
+// agent lacks the literal-stays-literal rule for the deliverable yaml
+// AND the projectEnvVars channel-sync teaching that explains why those
+// constants exist. Loaded unconditionally — the env-content brief has
+// 27 KB of headroom under the 56 KB cap and the teaching is universally
+// applicable to per-tier yaml comment authoring.
+func TestEnvContentBrief_LoadsCrossServiceURLsAtom(t *testing.T) {
+	t.Parallel()
+	plan := contentPhaseTestPlan()
+	brief, err := BuildEnvContentBrief(plan, nil, nil)
+	if err != nil {
+		t.Fatalf("BuildEnvContentBrief: %v", err)
+	}
+
+	// Parts entry pinned so the dispatch trace shows the atom landed.
+	wantPart := "principles/cross-service-urls.md"
+	if !slices.Contains(brief.Parts, wantPart) {
+		t.Errorf("env-content brief Parts missing %q (got %v)", wantPart, brief.Parts)
+	}
+
+	// Body anchors — the literal-stays-literal teaching for the
+	// deliverable yaml plus the projectEnvVars channel-sync rule are
+	// the two halves env-content authors comments around.
+	for _, anchor := range []string{
+		"literal-stays-literal",
+		"projectEnvVars",
+	} {
+		if !strings.Contains(brief.Body, anchor) {
+			t.Errorf("env-content brief missing cross-service-urls anchor %q", anchor)
+		}
 	}
 }
 

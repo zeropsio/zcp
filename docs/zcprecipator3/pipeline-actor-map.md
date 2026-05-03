@@ -185,13 +185,13 @@ sections are estimated from typical run shapes.
 ║      is empty non-nil; run-22        ║  ║ WRITES                   ║
 ║      R3-RC-3 update-plan teaching    ║  ║   ▶ codebase/<h>/        ║
 ║      added)                 ~10.5 KB ║  ║       claude-md          ║
-║   showcase_tier_supplements.md       ║  ║     (single fragment)    ║
+║   worker_kb_supplements.md           ║  ║     (single fragment)    ║
 ║   ─ showcase tier + cb.IsWorker      ║  ║                          ║
-║     (run-22 R2-WK-1+2:         ~4 KB ║  ║                          ║
-║      MANDATORY queue-group +         ║  ║                          ║
-║      drain teaching for showcase     ║  ║                          ║
-║      worker; names the validator     ║  ║                          ║
-║      gate by file path)              ║  ║                          ║
+║     (run-22 R2-WK-1+2 + followup     ║  ║                          ║
+║      F-5: KB-content shape only      ║  ║                          ║
+║      after split — code shape moved  ║  ║                          ║
+║      to feature; ~3 KB; names the    ║  ║                          ║
+║      validator gate by file path)    ║  ║                          ║
 ║                                      ║  ║                          ║
 ║ ENGINE-DERIVED                       ║  ║                          ║
 ║   citation-guide list        ~0.6 KB ║  ║                          ║
@@ -650,7 +650,7 @@ in parallel with claudemd-author).
 |---------------------------------------------------------------|--------:|------------------------------------------------------------------------|
 | `principles/nats-shapes.md` (run-20 C1)                       | ~2.7 KB | `shouldLoadNATSShapes(plan, cb)` (run-21 R2-2): drop for frontends; load only when cb consumes a `nats@*` service |
 | `principles/cross-service-urls.md` (run-20 C2 + run-22 R3-RC-3) | ~10.5 KB | `shouldLoadCrossServiceURLs(cb)` (run-21 R2-2): drop when `cb.ConsumesServices` is empty non-nil (codebase analyzed, no managed deps); R3-RC-3 added update-plan projectEnvVars channel-sync teaching |
-| `briefs/codebase-content/showcase_tier_supplements.md` (run-22 R2-WK-1+2) | ~4 KB  | `plan.Tier == "showcase" && cb.IsWorker` — R2-WK-1+2 prepended "Worker subscriptions: queue group + drain are MANDATORY" section naming the new validator gate by file path |
+| `briefs/codebase-content/worker_kb_supplements.md` (run-22 R2-WK-1+2 + followup F-5) | ~3 KB  | `plan.Tier == "showcase" && cb.IsWorker` — KB-content shape only after the F-5 split (code-shape MANDATORY moved to `briefs/feature/worker_subscription_shape.md`); names the validator gate by file path |
 
 Both NATS-shapes and cross-service-urls fall back to load-all when
 `cb.ConsumesServices == nil` (sim-path back-compat for codebases the
@@ -737,8 +737,9 @@ verbatim shape pin in `TestGateWorkerSubscription_FlagsRun22ShapeExactly`).
 ~40–55 KB per codebase. SPAs that consume nothing managed drop the
 NATS + cross-service-URL atoms (~13 KB lighter); showcase worker
 codebases that load every conditional sit just under the 56 KB cap
-(worker variant pushed hardest because `showcase_tier_supplements.md`
-only loads here).
+(worker variant pushed hardest because `worker_kb_supplements.md`
+only loads here — its code-shape sibling lives at the feature brief
+since run-22 followup F-5).
 
 ---
 
@@ -995,7 +996,8 @@ R3-C-2/4/5 worked examples + R2-RC-1/R3-RC-3 cross-service-urls
 extensions); feature +2 KB (R2-RC-5 mount-vs-container edit-in-place
 section); codebase-content +1.5 KB (R1-RC-2 platform_principles
 project-level shadow extension + R1-RC-4 yaml-comment-style Unicode
-forbid + R2-WK-1+2 showcase_tier_supplements queue+drain mandatory);
+forbid + R2-WK-1+2 worker queue+drain mandatory, split across feature
++ codebase-content by run-22 followup F-5);
 env-content +2.5 KB (R2-RC-6 per_tier_authoring canonical-set vs
 flavor + R1-RC-4); refinement +1 KB (R1-RC-7 tier-promotion regex +
 R3-C-1 subdomain-rotate guard). Net cap bumps:
