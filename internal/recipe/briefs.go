@@ -120,9 +120,17 @@ const (
 // extended the same-key shadow trap to project-level vars and
 // yaml-comment-style.md added the Unicode box-drawing forbid (~1 KB
 // across both atoms; both load into the codebase-content brief).
+// Run-22 R2-WK-1 + R2-WK-2 bumped CodebaseContentBriefCap 52→56 KB
+// after showcase_tier_supplements.md added the queue-group + drain
+// MANDATORY teaching (~1 KB) and per_tier_authoring.md gained the
+// canonical-set-vs-per-tier-flavor clarification (~1.5 KB; loaded via
+// env-content but the codebase-content worker variant pushes the
+// hardest because showcase_tier_supplements.md only loads here). The
+// EnvContentBriefCap matches because per_tier_authoring.md is loaded
+// there too.
 const (
-	CodebaseContentBriefCap = 52 * 1024
-	EnvContentBriefCap      = 52 * 1024
+	CodebaseContentBriefCap = 56 * 1024
+	EnvContentBriefCap      = 56 * 1024
 	ClaudeMDBriefCap        = 8 * 1024 // §Risk 7 — Zerops-free brief stays small by construction
 )
 

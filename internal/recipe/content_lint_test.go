@@ -19,9 +19,8 @@ func scanYAMLBoxDrawing(t *testing.T, path, body string) {
 	inYAML := false
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") {
+		if lang, ok := strings.CutPrefix(trimmed, "```"); ok {
 			if !inYAML {
-				lang := strings.TrimPrefix(trimmed, "```")
 				if lang == "yaml" || lang == "yml" {
 					inYAML = true
 				}
@@ -243,9 +242,8 @@ func TestNoBriefAtomTeachesSameKeyShadow(t *testing.T) {
 			inYAML := false
 			for i, line := range lines {
 				trimmed := strings.TrimSpace(line)
-				if strings.HasPrefix(trimmed, "```") {
+				if lang, ok := strings.CutPrefix(trimmed, "```"); ok {
 					if !inYAML {
-						lang := strings.TrimPrefix(trimmed, "```")
 						if lang == "yaml" || lang == "yml" {
 							inYAML = true
 						}
@@ -270,5 +268,291 @@ func TestNoBriefAtomTeachesSameKeyShadow(t *testing.T) {
 		if err != nil {
 			t.Fatalf("walk %s: %v", root, err)
 		}
+	}
+}
+
+// run-22 Round 2 regressions.
+
+// TestAtomSetupNamesMatchRoleContract — run-22 R2-RC-1. Walk every atom
+// under `internal/recipe/content/`; for each `- setup: <name>` line in
+// a yaml fenced block, assert `<name>` is in the union of
+// `RoleContract.ZeropsSetupDev` / `ZeropsSetupProd` across all roles
+// (`dev` / `prod`). Slot-named setups (`appdev` / `apistage` /
+// `workerdev`) drift from `themes/core.md`'s "ALWAYS use generic
+// `setup:` names" rule and leave tier import.yamls' `zeropsSetup: prod`
+// references orphaned. Pin the rule across the whole content tree.
+func TestAtomSetupNamesMatchRoleContract(t *testing.T) {
+	t.Parallel()
+
+	allowed := map[string]bool{}
+	for _, role := range Roles() {
+		c, ok := role.Contract()
+		if !ok {
+			continue
+		}
+		allowed[c.ZeropsSetupDev] = true
+		allowed[c.ZeropsSetupProd] = true
+	}
+	// Sanity — tests rely on the canonical pair.
+	if !allowed["dev"] || !allowed["prod"] {
+		t.Fatalf("role contract should include `dev` and `prod` setups; got %v", allowed)
+	}
+
+	setupRE := regexp.MustCompile(`^\s*-\s*setup:\s*([A-Za-z0-9_-]+)\s*$`)
+	roots := []string{
+		"content/briefs",
+		"content/principles",
+	}
+	for _, root := range roots {
+		err := fs.WalkDir(recipeV3Content, root, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(p, ".md") {
+				return nil
+			}
+			data, rerr := fs.ReadFile(recipeV3Content, p)
+			if rerr != nil {
+				return rerr
+			}
+			lines := strings.Split(string(data), "\n")
+			inYAML := false
+			for i, line := range lines {
+				trimmed := strings.TrimSpace(line)
+				if lang, ok := strings.CutPrefix(trimmed, "```"); ok {
+					if !inYAML {
+						if lang == "yaml" || lang == "yml" {
+							inYAML = true
+						}
+					} else {
+						inYAML = false
+					}
+					continue
+				}
+				if !inYAML {
+					continue
+				}
+				m := setupRE.FindStringSubmatch(line)
+				if m == nil {
+					continue
+				}
+				name := m[1]
+				if !allowed[name] {
+					t.Errorf("%s:%d uses non-generic setup name %q in yaml block; allowed: %v (themes/core.md `ALWAYS use generic setup: names`)", p, i+1, name, sortedAllowedSetups(allowed))
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", root, err)
+		}
+	}
+}
+
+func sortedAllowedSetups(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	// stable order for error messages
+	for i := 1; i < len(out); i++ {
+		for j := i; j > 0 && out[j-1] > out[j]; j-- {
+			out[j-1], out[j] = out[j], out[j-1]
+		}
+	}
+	return out
+}
+
+// TestFeatureBrief_TeachesEditInPlace — run-22 R2-RC-5. The feature
+// brief loads `principles/mount-vs-container.md` (per Table B); the
+// edit-in-place rule MUST reach feature-phase agents so they stop
+// thrashing dev slots with redundant `zerops_deploy` calls. Run-22
+// evidence: 5 unnecessary feature-phase dev redeploys (apidev, appdev,
+// workerdev) reasoned as "make new code live" / "apply env-var
+// changes". The mount IS already live; restart the dev server for
+// env-var changes; redeploy stage only at end of feature.
+func TestFeatureBrief_TeachesEditInPlace(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildFeatureBrief(plan)
+	if err != nil {
+		t.Fatalf("BuildFeatureBrief: %v", err)
+	}
+	for _, anchor := range []string{
+		"edit in place",
+		"do not redeploy dev slots",
+		// At least one of the forbidden examples reaches the brief.
+		"zerops_deploy targetService=<host>dev",
+	} {
+		if !strings.Contains(brief.Body, anchor) {
+			t.Errorf("feature brief missing edit-in-place anchor %q", anchor)
+		}
+	}
+}
+
+// TestScaffoldBrief_TeachesEditInPlace — same atom reaches scaffold
+// via the shared `principles/mount-vs-container.md` load.
+func TestScaffoldBrief_TeachesEditInPlace(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildScaffoldBrief(plan, plan.Codebases[0], nil)
+	if err != nil {
+		t.Fatalf("BuildScaffoldBrief: %v", err)
+	}
+	if !strings.Contains(brief.Body, "edit in place") {
+		t.Error("scaffold brief missing edit-in-place anchor (shared principles/mount-vs-container.md)")
+	}
+	if !strings.Contains(brief.Body, "do not redeploy dev slots") {
+		t.Error("scaffold brief missing dev-slot redeploy forbid anchor")
+	}
+}
+
+// TestContentExtensionAtom_MarkedDeprecated — run-22 R2-RC-5. The atom
+// is no longer loaded by `BuildFeatureBrief` (retired in run-16 §6.2)
+// and feature-phase teaching now lives in mount-vs-container.md. The
+// header comment marks the atom as deprecated so future authors don't
+// extend it.
+func TestContentExtensionAtom_MarkedDeprecated(t *testing.T) {
+	t.Parallel()
+
+	body, err := readAtom("briefs/feature/content_extension.md")
+	if err != nil {
+		t.Fatalf("read atom: %v", err)
+	}
+	if !strings.Contains(body, "Deprecated") {
+		t.Error("content_extension.md must carry a Deprecated marker (run-22 R2-RC-5)")
+	}
+	if !strings.Contains(body, "no longer loaded") {
+		t.Error("content_extension.md deprecation note must explain the atom is no longer loaded")
+	}
+}
+
+// TestEnvContentBrief_KeepsTierFlavorComments — run-22 R2-RC-6. The
+// per_tier_authoring atom must distinguish "canonical-set dedup"
+// (strip cross-tier repetition) from "per-tier flavor" (keep 1-2 line
+// framing on every service block at every tier). Run-22 stripped
+// flavor along with canonical-set, leaving tiers 1-3 with 6 lines vs
+// golden ~25.
+func TestEnvContentBrief_KeepsTierFlavorComments(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	brief, err := BuildEnvContentBrief(plan, nil, nil)
+	if err != nil {
+		t.Fatalf("BuildEnvContentBrief: %v", err)
+	}
+	for _, anchor := range []string{
+		"canonical-set",
+		"per-tier flavor",
+		// The new rule explicitly calls out keeping a 1-2 line block
+		// even when the field shape is identical to the prior tier.
+		"1-2 line",
+	} {
+		if !strings.Contains(brief.Body, anchor) {
+			t.Errorf("env-content brief missing tier-flavor anchor %q", anchor)
+		}
+	}
+}
+
+// TestPerTierAuthoringAtom_DistinguishesCanonicalSetFromFlavor — atom-
+// level pin for R2-RC-6. The clarification text must be present on
+// disk regardless of how the brief composer evolves.
+func TestPerTierAuthoringAtom_DistinguishesCanonicalSetFromFlavor(t *testing.T) {
+	t.Parallel()
+
+	body, err := readAtom("briefs/env-content/per_tier_authoring.md")
+	if err != nil {
+		t.Fatalf("read atom: %v", err)
+	}
+	for _, anchor := range []string{
+		"Cross-tier dedup is for the canonical-set teaching",
+		"per-tier flavor",
+		"Keep at least 1-2 lines of flavor framing",
+	} {
+		if !strings.Contains(body, anchor) {
+			t.Errorf("per_tier_authoring.md missing anchor %q", anchor)
+		}
+	}
+}
+
+// TestFeatureBrief_TeachesQueueGroup_ForShowcaseWorker — run-22 R2-WK-1.
+// The codebase-content brief (loaded for showcase worker codebases via
+// showcase_tier_supplements.md) MUST teach the queue-group requirement
+// for NATS subscriptions. Run-22 evidence:
+// `this.nc.subscribe(ITEMS_EVENT_SUBJECT)` without queue option →
+// every replica double-indexes at tier 4-5 (minContainers: 2).
+func TestFeatureBrief_TeachesQueueGroup_ForShowcaseWorker(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.Tier = tierShowcase
+	var worker Codebase
+	for _, cb := range plan.Codebases {
+		if cb.IsWorker {
+			worker = cb
+			break
+		}
+	}
+	if worker.Hostname == "" {
+		t.Fatalf("synthetic plan must include a worker codebase")
+	}
+	brief, err := BuildCodebaseContentBrief(plan, worker, nil, nil)
+	if err != nil {
+		t.Fatalf("BuildCodebaseContentBrief: %v", err)
+	}
+	for _, anchor := range []string{
+		"queue group",
+		"queue: 'workers'",
+	} {
+		if !strings.Contains(brief.Body, anchor) {
+			t.Errorf("showcase worker brief missing queue-group anchor %q", anchor)
+		}
+	}
+}
+
+// TestFeatureBrief_TeachesDrainShutdown_ForShowcaseWorker — run-22
+// R2-WK-2. The showcase-worker brief MUST teach `await sub.drain()`
+// shutdown ordering — `unsubscribe()` drops in-flight events on
+// rolling deploys.
+func TestFeatureBrief_TeachesDrainShutdown_ForShowcaseWorker(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.Tier = tierShowcase
+	var worker Codebase
+	for _, cb := range plan.Codebases {
+		if cb.IsWorker {
+			worker = cb
+			break
+		}
+	}
+	brief, err := BuildCodebaseContentBrief(plan, worker, nil, nil)
+	if err != nil {
+		t.Fatalf("BuildCodebaseContentBrief: %v", err)
+	}
+	for _, anchor := range []string{
+		"drain",
+		"unsubscribe()",
+	} {
+		if !strings.Contains(brief.Body, anchor) {
+			t.Errorf("showcase worker brief missing drain-shutdown anchor %q", anchor)
+		}
+	}
+}
+
+// TestShowcaseTierSupplementsAtom_NamesValidatorGate — atom-level pin.
+// The atom must reference the new validator gate file so future authors
+// know enforcement teeth exist.
+func TestShowcaseTierSupplementsAtom_NamesValidatorGate(t *testing.T) {
+	t.Parallel()
+
+	body, err := readAtom("briefs/codebase-content/showcase_tier_supplements.md")
+	if err != nil {
+		t.Fatalf("read atom: %v", err)
+	}
+	if !strings.Contains(body, "validators_worker_subscription.go") {
+		t.Error("showcase_tier_supplements.md must reference the validator gate (validators_worker_subscription.go)")
 	}
 }

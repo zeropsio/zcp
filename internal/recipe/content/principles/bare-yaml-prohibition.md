@@ -26,7 +26,7 @@ GOOD (bare yaml; comments authored later):
 
 ```yaml
 zerops:
-  - setup: api
+  - setup: prod
     run:
       base: nodejs@22
       ports:
@@ -39,7 +39,7 @@ BAD (inline causal comments — refused):
 
 ```yaml
 zerops:
-  - setup: api
+  - setup: prod
     run:
       # API runs on Node 22 because the build container is also Node 22.
       base: nodejs@22

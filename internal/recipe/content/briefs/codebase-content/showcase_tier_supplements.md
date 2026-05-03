@@ -6,6 +6,43 @@ is the showcase tier and this codebase is a separate worker codebase
 `minContainers ≥ 2` from tier-4 onwards, so the multi-replica failure
 modes are first-class concerns.
 
+## Worker subscriptions: queue group + drain are MANDATORY
+
+This recipe ships at tiers 0-5. Tiers 4-5 set `minContainers: 2` for
+the worker — at least two replicas in production. A NATS subscription
+without a queue group fans out each message to every replica
+(double-indexing, double-marker, broken ordering). The queue group is
+what makes the worker horizontally scalable.
+
+**Required at every `nc.subscribe(...)` in worker code**:
+
+```ts
+this.sub = this.nc.subscribe(SUBJECT, { queue: 'workers' });
+```
+
+The queue name is stable per logical workload — replicas that share
+the name share the work. Pick one name per worker; don't randomize
+per-replica.
+
+**Required in shutdown handler** (NestJS `OnModuleDestroy` /
+`process.on('SIGTERM', ...)`):
+
+```ts
+await this.sub.drain();   // stop receiving + finish iterator
+await this.nc.drain();    // flush pending writes
+await app.close();        // run framework lifecycle hooks
+```
+
+`unsubscribe()` is NOT a substitute. It stops receiving but abandons
+in-flight messages — rolling deploys (tier 4-5) lose events on every
+replacement. Always `drain()` before exiting.
+
+Both rules are validated at codebase-content phase by the
+worker-pattern gate (see
+`internal/recipe/validators_worker_subscription.go`). Naked
+`nc.subscribe(SUBJECT)` without a `queue:` option, or `unsubscribe()`
+inside the shutdown handler, refuses `complete-phase`.
+
 ## Required worker KB gotchas
 
 When the worker runs at tier ≥ small-production, two gotchas MUST
@@ -35,7 +72,9 @@ Sample shape:
 Rolling deploys send SIGTERM to the outgoing container while the new
 one warms up. Without explicit drain, in-flight messages die mid-
 handler → poison-pill loops or lost work depending on the broker's
-ack semantics.
+ack semantics. `unsubscribe()` is the wrong call here — it stops
+accepting new messages but abandons whatever the iterator hasn't
+processed.
 
 The KB stem names SIGTERM or "drain" or "graceful shutdown". The body
 carries a fenced code block showing the catch → drain → exit
@@ -45,8 +84,8 @@ Sample shape:
 
 > *"**In-flight messages dropped on rolling deploy** — Without a
 > SIGTERM handler, the outgoing replica exits while the broker still
-> has unacked messages assigned to it. Wire a handler that stops
-> accepting new work, drains the in-flight set, then exits cleanly."*
+> has unacked messages assigned to it. Wire a handler that calls
+> `await sub.drain()` (NOT `unsubscribe()`) before exiting."*
 
 ```typescript
 process.on('SIGTERM', async () => {

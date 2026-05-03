@@ -84,9 +84,9 @@ time, not at peer-service first-deploy time. The api reads
 runtime.
 
 ```yaml
-# appdev/zerops.yaml — frontend SPA
+# appdev/zerops.yaml — frontend SPA (the `prod` setup block)
 zerops:
-  - setup: appstage
+  - setup: prod
     build:
       envVariables:
         VITE_API_URL: ${STAGE_API_URL}     # bakes a real URL into the bundle
@@ -95,13 +95,22 @@ zerops:
 ```
 
 ```yaml
-# apidev/zerops.yaml — backend API
+# apidev/zerops.yaml — backend API (the `prod` setup block)
 zerops:
-  - setup: apistage
+  - setup: prod
     run:
       envVariables:
         CORS_ORIGINS: ${DEV_FRONTEND_URL},${STAGE_FRONTEND_URL}
 ```
+
+The `setup:` name MUST be the generic role-contract value (`dev` /
+`prod` / `worker`) — never the slot hostname (`appdev` / `appstage` /
+`apistage`). Tier import.yamls reference `zeropsSetup: prod` (or
+`zeropsSetup: dev`) and the slot mapping happens at the import-yaml
+layer (`zeropsSetup` per slot block + `--setup` on workspace deploy).
+A slot-named setup in the codebase yaml leaves every tier yaml's
+`zeropsSetup: prod` reference orphaned. See `themes/core.md` —
+"ALWAYS use generic `setup:` names".
 
 **Naming convention** for the project-env constants:
 

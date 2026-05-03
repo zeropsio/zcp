@@ -8,7 +8,7 @@ Wrong shape (what run-19 shipped, fail validation):
 
 ```yaml
 zerops:
-  - setup: appstage
+  - setup: prod
     build:
       base: nodejs@22
       buildCommands:
@@ -26,7 +26,7 @@ Right shape:
 
 ```yaml
 zerops:
-  - setup: appstage
+  - setup: prod
     build:
       base: nodejs@22                # build container is nodejs (Vite needs node)
       buildCommands:
@@ -40,6 +40,13 @@ zerops:
       # No `ports:` — `base: static` defaults to 80 + httpSupport
       # No `start:` — Nginx handles process supervision
 ```
+
+The `setup:` name is the generic role-contract value (`prod` for the
+production-shape block, `dev` for the dev-pair block) — NOT the slot
+hostname (`appstage` / `appdev`). Slot mapping happens at the
+import-yaml layer via `zeropsSetup`; the codebase yaml setup names
+must match what every tier import.yaml references. See `themes/core.md`
+— "ALWAYS use generic `setup:` names".
 
 Why this is the right shape:
 

@@ -47,6 +47,47 @@ Framework CLIs are one-shot — they exit in seconds, no channel-
 lifetime concern. Dev servers are long-running — they need
 `zerops_dev_server` (see `principles/dev-loop.md`), not ssh.
 
+## During feature phase: edit in place, do not redeploy dev slots
+
+The dev container's source tree is SSHFS-mounted at
+`/var/www/<hostname>dev/`. Edit/Write tool changes flow through the
+mount immediately — they're live in the container the moment your
+tool call returns.
+
+The dev server (started via `zerops_dev_server`) picks up source
+changes via the framework's watch mode (`nest --watch`, Vite HMR,
+`vite dev`, Next.js dev, etc.). **No redeploy is needed for code
+changes.**
+
+When you change `zerops.yaml` env vars during feature phase,
+restart the dev server via
+`zerops_dev_server action=restart hostname=<host>dev` — NOT a
+redeploy. The runtime container's env is re-read on dev-server
+respawn.
+
+Cross-deploy to stage (e.g. `zerops_deploy targetService=apistage`)
+is the only legitimate `zerops_deploy` during feature phase. That's
+the "snapshot to production-shape" step. Verify-in-place via SSH or
+`zerops_browser` against the dev URL until the feature works; deploy
+to stage once at the end of the feature.
+
+Forbidden in feature phase:
+
+- `zerops_deploy targetService=<host>dev` (apidev, appdev,
+  workerdev — any dev slot). The mount IS the source of truth; a
+  deploy doesn't make the source any more "live" than it already
+  is.
+- `zerops_deploy` triggered "to make new code live" — code is
+  already live via SSHFS the moment your Edit/Write returns.
+- `zerops_deploy` triggered "to apply env-var changes" — restart
+  the dev server instead.
+
+The codebase yaml comments encode this as the recipe's own
+documented pattern (e.g. *"Idle the container so the porter owns
+the long-running dev process"*). Honor it during feature phase too
+— don't redeploy dev slots to thrash the mount-state you just
+edited.
+
 ## zcli scope
 
 `zcli` is a host-side tool. Inside the dev container (over `ssh

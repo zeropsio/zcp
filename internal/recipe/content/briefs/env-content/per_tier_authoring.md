@@ -66,21 +66,66 @@ without downtime) → operational reality (autoscaling absorbs spikes).
 
 ## One causal teaching per block, deduped across services + tiers
 
-Each block teaches a non-obvious choice. **Skip blocks where every
-service in this tier shares the same teaching as the previous tier.**
-Tier 0 ships full per-block teaching because there's no prior tier to
-inherit from. Tiers 1-5 ship comments only on blocks where this tier
-introduces a causal change relative to the previous tier — a mode
-flip, a corePackage upgrade, a minContainers bump, a service
-appearance/removal. Identical-to-prior-tier service blocks need no
-comment.
+Each block teaches a non-obvious choice. Two different dedup rules
+operate at two different scopes — confusing them strips per-tier
+flavor and leaves the porter without operational framing.
 
-Cross-service dedup within a tier: if all four managed services share
-the same NON_HA-with-snapshots-and-no-replica story at tier 0, the
-project-level and per-service blocks each carry the part the porter
-needs at THAT scope — the project block names project-wide invariants
-(secret scope, corePackage), and each service block names ONLY what's
-specific to that service (RAM target, priority, peer dependency).
+### Cross-tier dedup is for the canonical-set teaching, NOT for per-tier flavor
+
+The **canonical service set** (which services exist, what each one
+is for, the `${db_*}`/`${queue_*}` env-injection contract) is
+authored once at tier 0 and not re-explained at every subsequent
+tier. That's the canonical-set dedup — it strips repetition.
+
+The **per-tier flavor** (what the runtime / mode / minContainers
+shape MEANS for THIS service at THIS tier — single instance vs
+NON_HA-with-snapshots vs HA-with-failover; what the operational
+reality is for the porter at this scale) is per-tier teaching.
+**Keep at least 1-2 lines of flavor framing per service block at
+every tier**, even when no field changes from the previous tier.
+
+Concretely: at tier 1 (Remote CDE), the postgres block looks
+field-identical to tier 0 (same NON_HA mode, same priority). But
+the FLAVOR is different — tier 0 is the agent's workspace where
+data is replaceable; tier 1 is the human-porter dev workspace
+where data is also replaceable but the porter expectation (single
+instance for CDE iteration, snapshot for safety net) is worth
+naming. Keep that 1-2 line framing on the postgres block at tier 1.
+Drop the canonical-set "Postgres stores the items table" prose
+(already in tier 0).
+
+Example tier-1 postgres block flavor (1-2 lines, kept):
+
+```yaml
+# Same NON_HA shape as tier 0 — single instance for the human-
+# porter dev workspace; snapshots cover restoration if needed.
+- hostname: db
+  ...
+```
+
+Tier 0 ships full per-block teaching (canonical-set + flavor)
+because there's no prior tier to inherit from. Tiers 1-5 inherit
+the canonical-set silently AND ship per-tier flavor comments on
+every block. A bump (mode flip, corePackage upgrade, minContainers
+bump) gets fuller teaching (3-5 lines naming the change + its
+operational consequence); identical-shape blocks still get the
+1-2 line flavor framing.
+
+The run-17 baseline (100-135 indented `#` lines per tier) was
+canonical-set repetition — the same NON_HA-with-snapshots paragraph
+on db, cache, broker, search at every tier. The run-22 baseline
+(6 lines per tier at tiers 1-3) over-corrected — every service
+lost its per-tier flavor. The target is ~15-25 lines per tier:
+canonical-set stripped, per-tier flavor preserved.
+
+### Cross-service dedup within a tier
+
+If all four managed services share the same NON_HA-with-snapshots-
+and-no-replica story at tier 0, the project-level and per-service
+blocks each carry the part the porter needs at THAT scope — the
+project block names project-wide invariants (secret scope,
+corePackage), and each service block names ONLY what's specific
+to that service (RAM target, priority, peer dependency).
 
 ## Anti-patterns
 

@@ -108,6 +108,13 @@ func CodebaseContentGates() []Gate {
 		{Name: "cross-surface-duplication", Run: gateCrossSurfaceDuplication},
 		{Name: "cross-recipe-duplication", Run: gateCrossRecipeDuplication},
 		{Name: "zerops-yaml-schema", Run: gateZeropsYamlSchema},
+		// Run-22 R2-WK-1 + R2-WK-2 — source-scanning gate for showcase-
+		// tier worker codebases. Refuses codebase-content complete-phase
+		// when worker source has naked `nc.subscribe(SUBJECT)` (no queue
+		// option) or `unsubscribe()` in the shutdown handler instead of
+		// `await sub.drain()`. Both are deploy-breaking patterns at tier
+		// 4-5 (minContainers: 2).
+		{Name: "worker-subscription", Run: gateWorkerSubscription},
 	}
 }
 

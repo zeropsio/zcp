@@ -1,5 +1,17 @@
 # Content extension
 
+> **Deprecated** (run-22 R2-RC-5). This atom is no longer loaded by
+> `BuildFeatureBrief` (retired in run-16 §6.2 — see `briefs.go:338`)
+> and is no longer the operational source-of-truth for feature-phase
+> content authoring. Kept on disk only because
+> `TestFeatureContentExtensionAtom_TeachesIGScopeRule` still pins
+> the IG-scope anchors below. New feature-phase teaching lands in
+> `principles/mount-vs-container.md` (loaded by both scaffold and
+> feature briefs); the IG-scope rules below are preserved for
+> historical reference only. Do not extend this file — extend
+> `synthesis_workflow.md` (codebase-content authoring) or
+> `mount-vs-container.md` (feature-phase rules) instead.
+
 ## Voice — the reader is a porter, never another recipe author
 
 Everything you write — fragment bodies, `zerops.yaml` inline comments,
