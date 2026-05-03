@@ -300,7 +300,7 @@ func TestServer_New_LocalAutoAdopt(t *testing.T) {
 		},
 		{
 			name: "container env → no adoption",
-			rt:   runtime.Info{InContainer: true, ServiceName: "zcpx"},
+			rt:   runtime.Info{InContainer: true, ServiceName: "zcp"},
 			services: []platform.ServiceStack{{
 				ID: "s1", Name: "apistage", Status: "ACTIVE",
 				ServiceStackTypeInfo: platform.ServiceTypeInfo{

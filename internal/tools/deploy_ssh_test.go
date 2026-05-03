@@ -861,7 +861,7 @@ func TestDeployTool_DescriptionByEnvironment(t *testing.T) {
 	}{
 		{
 			name:         "container_omit_workingDir",
-			rtInfo:       runtime.Info{InContainer: true, ServiceName: "zcpx"},
+			rtInfo:       runtime.Info{InContainer: true, ServiceName: "zcp"},
 			wantContains: "Omit workingDir",
 		},
 		{

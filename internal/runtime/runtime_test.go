@@ -18,10 +18,10 @@ func TestDetect(t *testing.T) {
 		{
 			name:          "full container env",
 			serviceID:     "hffVp74hRXiVpkxyFRRmiQ",
-			hostname:      "zcpx",
+			hostname:      "zcp",
 			projectID:     "Ul8Eyr4DTme8fAMKcYSFaw",
 			wantContainer: true,
-			wantService:   "zcpx",
+			wantService:   "zcp",
 			wantServiceID: "hffVp74hRXiVpkxyFRRmiQ",
 			wantProjectID: "Ul8Eyr4DTme8fAMKcYSFaw",
 		},

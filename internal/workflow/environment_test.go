@@ -15,7 +15,7 @@ func TestDetectEnvironment(t *testing.T) {
 	}{
 		{
 			name: "container",
-			rt:   runtime.Info{InContainer: true, ServiceName: "zcpx", ServiceID: "abc"},
+			rt:   runtime.Info{InContainer: true, ServiceName: "zcp", ServiceID: "abc"},
 			want: EnvContainer,
 		},
 		{

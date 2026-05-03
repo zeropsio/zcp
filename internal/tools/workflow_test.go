@@ -47,7 +47,7 @@ func TestWorkflowTool_NoParams_ReturnsError(t *testing.T) {
 func TestWorkflowTool_Immediate_Export(t *testing.T) {
 	t.Parallel()
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, nil, "", nil, nil, nil, nil, "", "", nil, nil, runtime.Info{InContainer: true, ServiceName: "zcpx"})
+	RegisterWorkflow(srv, nil, nil, "", nil, nil, nil, nil, "", "", nil, nil, runtime.Info{InContainer: true, ServiceName: "zcp"})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{"workflow": "export"})
 
@@ -282,7 +282,7 @@ func TestWorkflowTool_Action_Start_Immediate(t *testing.T) {
 	t.Parallel()
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterWorkflow(srv, nil, nil, "proj1", nil, nil, engine, nil, "", "", nil, nil, runtime.Info{InContainer: true, ServiceName: "zcpx"})
+	RegisterWorkflow(srv, nil, nil, "proj1", nil, nil, engine, nil, "", "", nil, nil, runtime.Info{InContainer: true, ServiceName: "zcp"})
 
 	result := callTool(t, srv, "zerops_workflow", map[string]any{
 		"action":   "start",

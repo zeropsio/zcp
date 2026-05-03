@@ -397,7 +397,7 @@ func TestMountTool_SelfMount_Blocked(t *testing.T) {
 	t.Parallel()
 
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "svc-1", Name: "zcpx"},
+		{ID: "svc-1", Name: "zcp"},
 	})
 	mounter := newStubMounter()
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
@@ -407,12 +407,12 @@ func TestMountTool_SelfMount_Blocked(t *testing.T) {
 
 	srv := mountServerWithRT(mock, mounter, runtime.Info{
 		InContainer: true,
-		ServiceName: "zcpx",
+		ServiceName: "zcp",
 	}, engine)
 
 	result := callTool(t, srv, "zerops_mount", map[string]any{
 		"action":          "mount",
-		"serviceHostname": "zcpx",
+		"serviceHostname": "zcp",
 	})
 
 	if !result.IsError {
@@ -428,7 +428,7 @@ func TestMountTool_SelfMount_CaseInsensitive(t *testing.T) {
 	t.Parallel()
 
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "svc-1", Name: "zcpx"},
+		{ID: "svc-1", Name: "zcp"},
 	})
 	mounter := newStubMounter()
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
@@ -438,12 +438,12 @@ func TestMountTool_SelfMount_CaseInsensitive(t *testing.T) {
 
 	srv := mountServerWithRT(mock, mounter, runtime.Info{
 		InContainer: true,
-		ServiceName: "zcpx",
+		ServiceName: "zcp",
 	}, engine)
 
 	result := callTool(t, srv, "zerops_mount", map[string]any{
 		"action":          "mount",
-		"serviceHostname": "ZCPX",
+		"serviceHostname": "ZCP",
 	})
 
 	if !result.IsError {
@@ -455,7 +455,7 @@ func TestMountTool_SelfMount_LocalDev_Allowed(t *testing.T) {
 	t.Parallel()
 
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "svc-1", Name: "zcpx"},
+		{ID: "svc-1", Name: "zcp"},
 	})
 	mounter := newStubMounter()
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
@@ -468,7 +468,7 @@ func TestMountTool_SelfMount_LocalDev_Allowed(t *testing.T) {
 
 	result := callTool(t, srv, "zerops_mount", map[string]any{
 		"action":          "mount",
-		"serviceHostname": "zcpx",
+		"serviceHostname": "zcp",
 	})
 
 	if result.IsError {
@@ -480,19 +480,19 @@ func TestMountTool_SelfUnmount_Allowed(t *testing.T) {
 	t.Parallel()
 
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "svc-1", Name: "zcpx"},
+		{ID: "svc-1", Name: "zcp"},
 	})
 	mounter := newStubMounter()
 
 	// Even in container, unmount of self should be allowed (cleanup).
 	srv := mountServerWithRT(mock, mounter, runtime.Info{
 		InContainer: true,
-		ServiceName: "zcpx",
+		ServiceName: "zcp",
 	}, nil)
 
 	result := callTool(t, srv, "zerops_mount", map[string]any{
 		"action":          "unmount",
-		"serviceHostname": "zcpx",
+		"serviceHostname": "zcp",
 	})
 
 	if result.IsError {
@@ -504,19 +504,19 @@ func TestMountTool_SelfStatus_Allowed(t *testing.T) {
 	t.Parallel()
 
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
-		{ID: "svc-1", Name: "zcpx"},
+		{ID: "svc-1", Name: "zcp"},
 	})
 	mounter := newStubMounter()
 
 	// Even in container, status of self should be allowed.
 	srv := mountServerWithRT(mock, mounter, runtime.Info{
 		InContainer: true,
-		ServiceName: "zcpx",
+		ServiceName: "zcp",
 	}, nil)
 
 	result := callTool(t, srv, "zerops_mount", map[string]any{
 		"action":          "status",
-		"serviceHostname": "zcpx",
+		"serviceHostname": "zcp",
 	})
 
 	if result.IsError {

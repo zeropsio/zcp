@@ -90,12 +90,12 @@ func TestClassifySSHError_NoFalsePositive_ZeropsYml(t *testing.T) {
 	// Old code would match "zerops.yml" and return "zerops.yml not found".
 	// New code should show the actual error.
 	sshErr := &platform.SSHExecError{
-		Hostname: "zcpx",
+		Hostname: "zcp",
 		Output:   "Using config file: /home/zerops/.config/zerops/.zcli.yml\n✓ Parsing zerops.yml\n✗ ERR allowed only in interactive terminal\n",
 		Err:      fmt.Errorf("exit status 1"),
 	}
 
-	pe := classifySSHError(sshErr, "zcpx", "app")
+	pe := classifySSHError(sshErr, "zcp", "app")
 
 	// Must NOT say "zerops.yml not found".
 	if contains(pe.Message, "zerops.yml not found") {

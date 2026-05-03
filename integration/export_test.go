@@ -126,7 +126,7 @@ func TestExportFlow_MultiCallThroughServer(t *testing.T) {
 		t.Fatalf("knowledge store: %v", err)
 	}
 
-	srv := server.New(context.Background(), mock, authInfo, store, nil, ssh, nil, runtime.Info{InContainer: true, ServiceName: "zcpx"})
+	srv := server.New(context.Background(), mock, authInfo, store, nil, ssh, nil, runtime.Info{InContainer: true, ServiceName: "zcp"})
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
 	ss, err := srv.MCPServer().Connect(ctx, st, nil)
