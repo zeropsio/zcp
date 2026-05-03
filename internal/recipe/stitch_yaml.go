@@ -81,12 +81,42 @@ func WriteCodebaseYAMLWithComments(plan *Plan, hostname string) error {
 	}
 
 	// Preserve original file mode if possible (default 0o600 if stat fails).
+	// os.CreateTemp defaults to 0600 and os.Rename inherits the temp's mode,
+	// so file permissions silently change unless explicitly chmod'd before
+	// the rename.
 	mode := os.FileMode(0o600)
 	if info, err := os.Stat(yamlPath); err == nil {
 		mode = info.Mode().Perm()
 	}
-	if err := os.WriteFile(yamlPath, []byte(body), mode); err != nil {
-		return fmt.Errorf("write %s: %w", yamlPath, err)
+
+	// Atomic write (run-21 race fix Layer B): write-temp + chmod + rename
+	// rather than os.WriteFile so concurrent readers (e.g. gateZeropsYamlSchema
+	// running in a sibling goroutine) never see the truncate-then-write
+	// window. Layer A short-circuits the gate to the in-memory fragment;
+	// this layer is defense-in-depth for any remaining disk-read path
+	// (SSH-edited yaml, replay tooling, future readers).
+	tmp, err := os.CreateTemp(filepath.Dir(yamlPath), ".zerops.yaml.tmp.*")
+	if err != nil {
+		return fmt.Errorf("create temp for %s: %w", yamlPath, err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath) // no-op if rename succeeded
+	if _, err := tmp.WriteString(body); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write temp %s: %w", tmpPath, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("sync temp %s: %w", tmpPath, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp %s: %w", tmpPath, err)
+	}
+	if err := os.Chmod(tmpPath, mode); err != nil {
+		return fmt.Errorf("chmod temp %s: %w", tmpPath, err)
+	}
+	if err := os.Rename(tmpPath, yamlPath); err != nil {
+		return fmt.Errorf("rename %s -> %s: %w", tmpPath, yamlPath, err)
 	}
 	return nil
 }

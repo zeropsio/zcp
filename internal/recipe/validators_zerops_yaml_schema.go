@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/zeropsio/zcp/internal/schema"
 )
@@ -37,6 +38,31 @@ func gateZeropsYamlSchema(ctx GateContext) []Violation {
 			continue
 		}
 		yamlPath := filepath.Join(cb.SourceRoot, "zerops.yaml")
+
+		// Layer A (run-21 race fix): prefer the in-memory whole-yaml
+		// fragment when one is recorded for this codebase. Validating the
+		// in-memory body eliminates the disk-read race against
+		// WriteCodebaseYAMLWithComments — agents in run-21 saw 0-byte
+		// reads catching the writer's truncate-then-write window even
+		// though the eventual on-disk content was a 6-8 KB valid yaml.
+		// Disk fallback below handles the SSH-edit-only path
+		// (system.md:384-394) where no fragment has been re-recorded.
+		fragID := fragmentIDCodebaseZeropsYAML(cb.Hostname)
+		if ctx.Plan.Fragments != nil {
+			if body, ok := ctx.Plan.Fragments[fragID]; ok && strings.TrimSpace(body) != "" {
+				errs := schema.ValidateZeropsYAML(body, "")
+				for _, ve := range errs {
+					out = append(out, Violation{
+						Code:     "zerops-yaml-schema-violation",
+						Path:     fragID,
+						Severity: SeverityBlocking,
+						Message:  ve.Error(),
+					})
+				}
+				continue
+			}
+		}
+
 		raw, err := os.ReadFile(yamlPath)
 		if err != nil {
 			if os.IsNotExist(err) {
