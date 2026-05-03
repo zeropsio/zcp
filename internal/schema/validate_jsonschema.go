@@ -139,7 +139,7 @@ func ValidateZeropsYAML(content string, requiredSetup string) []ValidationError 
 // guarantee uniform.
 func yamlToJSONForValidate(content string) (any, []ValidationError) {
 	if strings.TrimSpace(content) == "" {
-		return nil, []ValidationError{{Message: "yaml content is empty"}}
+		return nil, []ValidationError{{Message: fmt.Sprintf("yaml content is empty at read time (raw bytes received=%d)", len(content))}}
 	}
 	var raw any
 	if err := yaml.Unmarshal([]byte(content), &raw); err != nil {
