@@ -85,7 +85,9 @@ func RegisterDeployBatch(
 			if sourceForPreflight == "" {
 				sourceForPreflight = t.TargetService
 			}
-			resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, sourceForPreflight, t.TargetService, t.Setup)
+			// Batch entries are container-env SSH deploys; workingDir is "".
+			// See deploy_ssh.go for the same threading rationale.
+			resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, sourceForPreflight, t.TargetService, t.Setup, "")
 			if pfErr != nil {
 				return convertError(platform.NewPlatformError(
 					platform.ErrInvalidParameter,

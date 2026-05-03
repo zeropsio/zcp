@@ -56,7 +56,7 @@ func TestDeployPreFlight_ValidConfig_Passes(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestDeployPreFlight_MissingZeropsYaml_Fails(t *testing.T) {
 
 	// No zerops.yaml written anywhere.
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestDeployPreFlight_MissingZeropsYaml_NamesSourceMount(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "probe", "probe", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "probe", "probe", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestDeployPreFlight_InvalidMountYaml(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "probe", "probe", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "probe", "probe", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -270,7 +270,7 @@ func TestDeployPreFlight_MountProbeError(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "probe", "probe", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "probe", "probe", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -325,7 +325,7 @@ func TestDeployPreFlight_MissingSetupEntry_Fails(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -375,7 +375,7 @@ func TestDeployPreFlight_ExplicitSetup_Passes(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "app", "app", "prod")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "app", "app", "prod", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -390,7 +390,7 @@ func TestDeployPreFlight_ExplicitSetup_Passes(t *testing.T) {
 func TestDeployPreFlight_EmptyStateDir_ReturnsNil(t *testing.T) {
 	t.Parallel()
 
-	_, result, err := deployPreFlight(context.Background(), nil, "", "", "appdev", "appdev", "")
+	_, result, err := deployPreFlight(context.Background(), nil, "", "", "appdev", "appdev", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -403,7 +403,7 @@ func TestDeployPreFlight_NoMeta_ReturnsNil(t *testing.T) {
 	t.Parallel()
 
 	stateDir := t.TempDir()
-	_, result, err := deployPreFlight(context.Background(), nil, "", stateDir, "unknown", "unknown", "")
+	_, result, err := deployPreFlight(context.Background(), nil, "", stateDir, "unknown", "unknown", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -450,7 +450,7 @@ func TestDeployPreFlight_DeployFilesNotCheckedInPreflight(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "appdev", "appdev", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -515,7 +515,7 @@ func TestDeployPreFlight_ResolvedSetupEchoedBack(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	resolved, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "apidev", "apidev", "")
+	resolved, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "apidev", "apidev", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -576,7 +576,7 @@ func TestDeployPreFlight_UnknownSetup_ListsAvailable(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "apidev", "apidev", "apidev")
+	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "apidev", "apidev", "apidev", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -662,7 +662,7 @@ func TestDeployPreFlight_CrossDeploy_ReadsFromSourceMount(t *testing.T) {
 	mock := platform.NewMock()
 	_, result, err := deployPreFlight(
 		context.Background(), mock, "proj-1", stateDir,
-		"appdev", "appstage", "prod",
+		"appdev", "appstage", "prod", "",
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -733,7 +733,7 @@ func TestDeployPreFlight_PairAwareStageMetaLookup(t *testing.T) {
 	mock := platform.NewMock()
 	resolved, result, err := deployPreFlight(
 		context.Background(), mock, "proj-1", stateDir,
-		"appdev", "appstage", "",
+		"appdev", "appstage", "", "",
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -790,7 +790,7 @@ func TestDeployPreFlight_LocalMode_ReadsFromProjectRoot(t *testing.T) {
 	mock := platform.NewMock()
 	_, result, err := deployPreFlight(
 		context.Background(), mock, "proj-1", stateDir,
-		"", "appdev", "",
+		"", "appdev", "", "",
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -848,7 +848,7 @@ func TestDeployPreFlight_ContainerMode_NoProjectRootFallback(t *testing.T) {
 	mock := platform.NewMock()
 	_, result, err := deployPreFlight(
 		context.Background(), mock, "proj-1", stateDir,
-		"appdev", "appdev", "",
+		"appdev", "appdev", "", "",
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -911,7 +911,7 @@ func TestDeployPreFlight_SourceWinsOverProjectRoot(t *testing.T) {
 	mock := platform.NewMock()
 	resolved, result, err := deployPreFlight(
 		context.Background(), mock, "proj-1", stateDir,
-		"appdev", "appdev", "",
+		"appdev", "appdev", "", "",
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -974,13 +974,164 @@ func TestDeployPreFlight_CrossDeploy_LegacyRootLayoutRejected(t *testing.T) {
 	mock := platform.NewMock()
 	_, result, err := deployPreFlight(
 		context.Background(), mock, "proj-1", stateDir,
-		"appdev", "appstage", "prod",
+		"appdev", "appstage", "prod", "",
 	)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if result == nil || result.Passed {
 		t.Fatalf("cross-deploy preflight must fail with yaml only at project root (legacy e769c9f7 layout); got: %+v", result)
+	}
+}
+
+// TestDeployPreFlight_LocalMode_WorkingDirOverridesProjectRoot pins the
+// advertised `workingDir` parameter contract for local-environment deploys.
+// When the agent passes workingDir explicitly, preflight checks the yaml
+// at THAT directory — not at the state-derived projectRoot. End-to-end
+// consistency: ops.DeployLocal already reads from workingDir at deploy
+// time; without this gate preflight would silently validate (or reject)
+// a different file than the deploy actually uses.
+func TestDeployPreFlight_LocalMode_WorkingDirOverridesProjectRoot(t *testing.T) {
+	t.Parallel()
+
+	// projectRoot has a yaml that would PASS validation; workingDir has
+	// no yaml at all. Pre-fix preflight read projectRoot and falsely
+	// reported PASS for a deploy whose workingDir was empty.
+	projectRoot := t.TempDir()
+	stateDir := filepath.Join(projectRoot, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, "zerops.yaml"), []byte(`zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+    run:
+      start: node index.js
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// workingDir is a separate temp dir with NO yaml.
+	workingDir := t.TempDir()
+
+	meta := &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             "dev",
+		BootstrapSession: "s1",
+		BootstrappedAt:   "2026-04-01T00:00:00Z",
+	}
+	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := platform.NewMock()
+	_, result, err := deployPreFlight(
+		context.Background(), mock, "proj-1", stateDir,
+		"", "appdev", "", workingDir,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || result.Passed {
+		t.Fatalf("preflight must FAIL when workingDir has no yaml — even if projectRoot has one (single-source contract); got: %+v", result)
+	}
+	// The error must name the workingDir path so the user can fix the right
+	// file. Pointing at projectRoot would be misleading.
+	if len(result.Checks) == 0 || !containsString(result.Checks[0].Detail, workingDir) {
+		t.Errorf("preflight failure must name the workingDir path %q in the detail; got: %+v", workingDir, result.Checks)
+	}
+}
+
+// TestDeployPreFlight_LocalMode_WorkingDirHasYaml_PassesEvenIfProjectRootEmpty
+// is the symmetric positive case: workingDir holds a valid yaml; projectRoot
+// holds nothing. Pre-fix this scenario failed (preflight checked projectRoot
+// and reported missing yaml even though the deploy would have succeeded).
+func TestDeployPreFlight_LocalMode_WorkingDirHasYaml_PassesEvenIfProjectRootEmpty(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir() // no yaml here
+	stateDir := filepath.Join(projectRoot, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	workingDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workingDir, "zerops.yaml"), []byte(`zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+    run:
+      start: node index.js
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	meta := &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             "dev",
+		BootstrapSession: "s1",
+		BootstrappedAt:   "2026-04-01T00:00:00Z",
+	}
+	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := platform.NewMock()
+	_, result, err := deployPreFlight(
+		context.Background(), mock, "proj-1", stateDir,
+		"", "appdev", "", workingDir,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || !result.Passed {
+		t.Fatalf("preflight must PASS when workingDir has a valid yaml (regardless of projectRoot); got: %+v", result)
+	}
+}
+
+// TestDeployPreFlight_LocalMode_EmptyWorkingDir_FallsBackToProjectRoot
+// keeps the legacy "ZCP invoked from repo root" convenience working. When
+// no workingDir is passed, preflight falls back to projectRoot. Existing
+// users who run ZCP from their repo root (the common case) see no change.
+func TestDeployPreFlight_LocalMode_EmptyWorkingDir_FallsBackToProjectRoot(t *testing.T) {
+	t.Parallel()
+
+	projectRoot := t.TempDir()
+	stateDir := filepath.Join(projectRoot, ".zcp", "state")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projectRoot, "zerops.yaml"), []byte(`zerops:
+  - setup: dev
+    build:
+      base: nodejs@22
+    run:
+      start: node index.js
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	meta := &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             "dev",
+		BootstrapSession: "s1",
+		BootstrappedAt:   "2026-04-01T00:00:00Z",
+	}
+	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		t.Fatal(err)
+	}
+
+	mock := platform.NewMock()
+	_, result, err := deployPreFlight(
+		context.Background(), mock, "proj-1", stateDir,
+		"", "appdev", "", "", // workingDir empty → fallback to projectRoot
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil || !result.Passed {
+		t.Fatalf("preflight must PASS with empty workingDir + valid projectRoot yaml (fallback contract); got: %+v", result)
 	}
 }
 

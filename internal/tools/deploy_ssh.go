@@ -161,7 +161,11 @@ func RegisterDeploySSH(
 			if sourceForPreflight == "" {
 				sourceForPreflight = input.TargetService
 			}
-			resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, sourceForPreflight, input.TargetService, input.Setup)
+			// SSH deploy is container env (yaml on the source SSHFS mount);
+			// workingDir parameter here names a CONTAINER path, irrelevant for
+			// dev-side yaml lookup. Pass "" to keep the local-mode workingDir
+			// branch from firing.
+			resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, sourceForPreflight, input.TargetService, input.Setup, "")
 			if pfErr != nil {
 				return convertError(platform.NewPlatformError(
 					platform.ErrInvalidParameter,

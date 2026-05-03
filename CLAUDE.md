@@ -193,6 +193,21 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
 - **Check-before-mutate for non-idempotent platform APIs** — read state via
   REST-authoritative endpoint, short-circuit when desired state holds.
   Canonical: `ops.Subdomain`. Spec: `spec-workflows.md §8 O3`.
+- **Local-mode preflight respects `workingDir`** — when `zerops_deploy` is
+  registered in local mode (no SSH deployer; user's dev machine), the
+  `workingDir` parameter is the source of truth for `zerops.yaml` location.
+  `deployPreFlight` honors it end-to-end: `findAndParseZeropsYml` searches
+  `<workingDir>/zerops.yaml` when `workingDir != ""` (sourceHostname empty),
+  falling back to the state-derived `projectRoot` only when `workingDir` is
+  empty. Without this, preflight validated a different file than
+  `ops.DeployLocal` would deploy from — false positives (preflight pass on a
+  yaml that's not the deployed one) and false negatives (preflight fail
+  pointing at the wrong path) both surfaced. Container-env callers
+  (deploy_ssh, deploy_batch) pass `workingDir=""` because their workingDir
+  parameter names a CONTAINER path, irrelevant for dev-side yaml lookup.
+  Pinned by `TestDeployPreFlight_LocalMode_WorkingDirOverridesProjectRoot`,
+  `TestDeployPreFlight_LocalMode_WorkingDirHasYaml_PassesEvenIfProjectRootEmpty`,
+  `TestDeployPreFlight_LocalMode_EmptyWorkingDir_FallsBackToProjectRoot`.
 - **Subdomain L7 activation is the deploy handler's concern, with platform-as-classifier** —
   `zerops_deploy` auto-enables subdomain on first deploy for eligible modes
   (dev, stage, simple, standard, local-stage) and waits HTTP-ready. Predicate

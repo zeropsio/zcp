@@ -65,23 +65,40 @@ func checkDevProdEnvDivergence(doc *ops.ZeropsYmlDoc) []workflow.StepCheck {
 //     understands, and silently validating it masked the cross-deploy
 //     "/var/www/<targetService> not found" failure (commit e769c9f7
 //     papered over the same regression in atom guidance).
-//   - sourceHostname == "": local environment — yaml lives at
-//     `<projectRoot>/zerops.yaml` (the user's working directory). No
-//     per-service subdirectories exist on a developer's local box.
+//   - sourceHostname == "": local environment — yaml lookup honors the
+//     advertised workingDir contract. When `workingDir != ""`, parse
+//     `<workingDir>/zerops.yaml`; otherwise fall back to
+//     `<projectRoot>/zerops.yaml` (the legacy "ZCP invoked from repo
+//     root" convenience). The fall-through avoids a breaking change for
+//     users who don't pass workingDir — both branches search a single
+//     directory, so there's no silent-shadow risk.
 //
 // On parse failure of a present file, the error is returned immediately;
 // silently falling back would validate the wrong config (Codex review of
 // G16 fix). Probe errors (permission denied, stale SSHFS, non-directory)
 // surface immediately for the same reason.
-func findAndParseZeropsYml(projectRoot, sourceHostname string) (*ops.ZeropsYmlDoc, string, error) {
+//
+// The workingDir parameter is meaningful only for local env (sourceHostname
+// == ""). Container-env callers should pass "" — workingDir for SSH deploys
+// names a CONTAINER path (default `/var/www`), not a dev-machine path, so
+// it's irrelevant for the dev-side yaml lookup.
+func findAndParseZeropsYml(projectRoot, sourceHostname, workingDir string) (*ops.ZeropsYmlDoc, string, error) {
 	if sourceHostname == "" {
-		// Local environment: yaml at projectRoot.
-		doc, err := ops.ParseZeropsYml(projectRoot)
-		if err != nil {
-			return nil, projectRoot, fmt.Errorf("zerops.yaml not found at %s (local environment): %w",
-				projectRoot, err)
+		// Local environment. workingDir wins when set — that honors the
+		// `workingDir` parameter advertised on `zerops_deploy` (mode=local)
+		// and matches what ops.DeployLocal actually reads at deploy time.
+		// Empty workingDir falls back to projectRoot for the
+		// "ZCP invoked from repo root" common case.
+		searchDir := workingDir
+		if searchDir == "" {
+			searchDir = projectRoot
 		}
-		return doc, projectRoot, nil
+		doc, err := ops.ParseZeropsYml(searchDir)
+		if err != nil {
+			return nil, searchDir, fmt.Errorf("zerops.yaml not found at %s (local environment): %w",
+				searchDir, err)
+		}
+		return doc, searchDir, nil
 	}
 
 	// Container environment: yaml on the source service's mount.

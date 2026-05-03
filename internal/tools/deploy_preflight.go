@@ -23,8 +23,16 @@ import (
 // while role-driven setup matching keys off the target's pair role.
 //
 // Pass sourceHostname == "" for local-environment deploys (no per-service
-// SSHFS mount; yaml lives at `<projectRoot>/zerops.yaml`).
-func deployPreFlight(ctx context.Context, client platform.Client, projectID, stateDir, sourceHostname, targetHostname, setup string) (resolvedSetup string, result *workflow.StepCheckResult, err error) {
+// SSHFS mount; yaml lives at workingDir or projectRoot).
+//
+// workingDir is the dev-machine path the agent passed to zerops_deploy
+// (local mode). When set on a local-env deploy, it overrides the
+// state-derived projectRoot for yaml lookup — honoring the advertised
+// `workingDir` contract end-to-end (preflight checks the same yaml that
+// ops.DeployLocal will deploy from). Container-env callers pass "" because
+// workingDir there is a CONTAINER path and not relevant for dev-side
+// yaml lookup.
+func deployPreFlight(ctx context.Context, client platform.Client, projectID, stateDir, sourceHostname, targetHostname, setup, workingDir string) (resolvedSetup string, result *workflow.StepCheckResult, err error) {
 	if stateDir == "" {
 		return setup, nil, nil
 	}
@@ -47,8 +55,9 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	var checks []workflow.StepCheck
 
 	// Find and parse zerops.yaml from the source mount (container env) or
-	// project root (local env). See findAndParseZeropsYml's contract.
-	doc, _, parseErr := findAndParseZeropsYml(projectRoot, sourceHostname)
+	// workingDir / project root (local env). See findAndParseZeropsYml's
+	// contract for the workingDir-vs-projectRoot precedence.
+	doc, _, parseErr := findAndParseZeropsYml(projectRoot, sourceHostname, workingDir)
 	if parseErr != nil {
 		checks = append(checks, workflow.StepCheck{
 			Name: "zerops_yml_exists", Status: statusFail,
