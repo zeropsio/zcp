@@ -224,17 +224,17 @@ Every observation a recipe run produces — surprise, incident, scaffold decisio
 
 **The router as a one-line predicate per surface:**
 
-| Classification | Test | Route to |
+| Classification (enum) | Test | Route to |
 |---|---|---|
-| Platform invariant | Hits regardless of framework | KB (Surface 5) — cite guide if one exists |
-| Platform × framework | This framework on this platform | KB — name both sides |
-| Framework quirk | Same framework off-platform hits it too | DISCARD |
-| Library/dep metadata | npm/Composer/cargo concern | DISCARD |
-| Scaffold config choice (visible in yaml fields) | "We use X over Y" — config decision | zerops.yaml comment (Surface 7) |
-| Scaffold code choice (porter literally copies code) | "We use X over Y" — code-level | IG item with the diff (Surface 4) |
-| Scaffold code choice (porter does NOT copy) | "Our scaffold has X" but porter has different code | DISCARD or move principle to IG |
-| Operational detail | "How to iterate THIS repo" | CLAUDE.md (Surface 6) |
-| Self-inflicted | "Our code had a bug; we fixed it" | DISCARD entirely |
+| `platform-invariant` | Hits regardless of framework | KB (Surface 5) — cite guide if one exists |
+| `intersection` | This framework on this platform | KB — name both sides |
+| `framework-quirk` | Same framework off-platform hits it too | DISCARD |
+| `library-metadata` | npm/Composer/cargo concern | DISCARD |
+| `scaffold-decision` | "We use X over Y" — recipe-specific choice | Routing depends on *flavor* (English description, NOT enum value): config flavor (visible in yaml fields) → zerops.yaml comment (Surface 7); code flavor (porter literally copies the diff) → IG item with the diff (Surface 4); recipe-internal flavor (porter would have different code) → DISCARD or move the principle (without specific implementation) to IG |
+| `operational` | "How to iterate THIS repo" | CLAUDE.md (Surface 6) |
+| `self-inflicted` | "Our code had a bug; we fixed it" | DISCARD entirely |
+
+The `Classification` enum in [internal/recipe/classify.go](../../internal/recipe/classify.go) has exactly these 7 values. There is no parenthesized variant of `scaffold-decision` — the (config / code / recipe-internal) split is an *English description* of where a given scaffold-decision routes, not a separate enum value. Run-21 P0-2 + R3-4 cleaned up the engine, brief, and spec sites that had the parenthesized form leaking as if they were enum values; sub-agents who read those leaks invented kinds (`scaffold-decision`, `platform-invariant`) as bogus `kind` values and got 24% record-fact reject rates.
 
 The same routing structure lives in [docs/spec-content-surfaces.md §Classification × surface compatibility](../spec-content-surfaces.md#classification--surface-compatibility) as the engine refusal table; that's the operational form.
 
@@ -244,18 +244,18 @@ The same routing structure lives in [docs/spec-content-surfaces.md §Classificat
 
 Walking facts from a typical run through the router. Each row demonstrates one classification + routing decision; reading them as a set builds the routing reflex.
 
-| Observed during run | Classification | Routes to | Surface form |
+| Observed during run | Classification (enum) | Routes to | Surface form |
 |---|---|---|---|
-| "predis is needed because php-nginx@8.4 doesn't include phpredis C extension" | Platform × framework | KB | `**Predis over phpredis** — The php-nginx@8.4 base image does not include the phpredis C extension. Use the predis/predis Composer package and set REDIS_CLIENT=predis to avoid 'class Redis not found' errors.` |
+| "predis is needed because php-nginx@8.4 doesn't include phpredis C extension" | `intersection` | KB | `**Predis over phpredis** — The php-nginx@8.4 base image does not include the phpredis C extension. Use the predis/predis Composer package and set REDIS_CLIENT=predis to avoid 'class Redis not found' errors.` |
 | "We chose predis over phpredis" (the same fact, but framed as a decision) | (same as above) | (same as above) | (same as above; classify by what the fact IS, not how the agent encountered it) |
-| "The agent's appstage build ran before the api was deployed; literal `${apistage_zeropsSubdomain}` shipped" | Platform invariant (build-time consumer + alias resolution timing) | KB + cite `env-var-model` | `**Build-time consumers freeze unresolved aliases** — VITE_* envs replace at bundle time. If the api hasn't deployed when the app's build runs, the literal token ships in the JS. Order the api's first deploy before the app's first build. (See env-var-model guide.)` |
-| "We picked tabbed layout because zerops_browser's headless viewport clips clicks below 577px" | Self-inflicted (recipe-internal scaffold decision driven by an authoring-tool constraint that the porter never operates) | DISCARD | (don't ship; the porter gets the working layout, not the diagnostic narrative) |
-| "Cache commands belong in initCommands not buildCommands because the build path differs from the runtime path" | Platform × framework | KB + cite `init-commands` | (verbatim from laravel-showcase reference) |
-| "We use `zsc execOnce ${appVersionId}-migrate` per command for distinct lock keys" | Scaffold config choice (visible in yaml) | Surface 7 (zerops.yaml comment) | The yaml itself carries the comment; IG #1 inherits it. Doesn't ALSO go in KB. |
-| "minContainers: 2 because rolling deploys need a second healthy peer" | Scaffold config choice (visible in yaml) | Surface 7 | Tier 4+ yaml comment per `app` block. |
-| "@sveltejs/vite-plugin-svelte^5 peer-requires Vite 6" | Framework-only quirk | DISCARD | npm registry metadata; not Zerops content. |
-| "`nest start --watch` rotates child PIDs so pidfile-based liveness is unreliable" | Operational | CLAUDE.md | Notes bullet. |
-| "Mailpit included for SMTP testing in dev, production tier uses real SMTP" | Scaffold config choice + tier-promotion concern | Surface 3 (tier import.yaml comment) | Tier-0/1 yaml: "Mailpit is included for SMTP testing." Tier-4/5 yaml: "Mailpit removed; replace MAIL_* with your provider." |
+| "The agent's appstage build ran before the api was deployed; literal `${apistage_zeropsSubdomain}` shipped" | `platform-invariant` (build-time consumer + alias resolution timing) | KB + cite `env-var-model` | `**Build-time consumers freeze unresolved aliases** — VITE_* envs replace at bundle time. If the api hasn't deployed when the app's build runs, the literal token ships in the JS. Order the api's first deploy before the app's first build. (See env-var-model guide.)` |
+| "We picked tabbed layout because zerops_browser's headless viewport clips clicks below 577px" | `self-inflicted` (recipe-internal scaffold decision driven by an authoring-tool constraint that the porter never operates) | DISCARD | (don't ship; the porter gets the working layout, not the diagnostic narrative) |
+| "Cache commands belong in initCommands not buildCommands because the build path differs from the runtime path" | `intersection` | KB + cite `init-commands` | (verbatim from laravel-showcase reference) |
+| "We use `zsc execOnce ${appVersionId}-migrate` per command for distinct lock keys" | `scaffold-decision` (config flavor — visible in yaml) | Surface 7 (zerops.yaml comment) | The yaml itself carries the comment; IG #1 inherits it. Doesn't ALSO go in KB. |
+| "minContainers: 2 because rolling deploys need a second healthy peer" | `scaffold-decision` (config flavor — visible in yaml) | Surface 7 | Tier 4+ yaml comment per `app` block. |
+| "@sveltejs/vite-plugin-svelte^5 peer-requires Vite 6" | `framework-quirk` | DISCARD | npm registry metadata; not Zerops content. |
+| "`nest start --watch` rotates child PIDs so pidfile-based liveness is unreliable" | `operational` | CLAUDE.md | Notes bullet. |
+| "Mailpit included for SMTP testing in dev, production tier uses real SMTP" | `scaffold-decision` (config flavor + tier-promotion concern) | Surface 3 (tier import.yaml comment) | Tier-0/1 yaml: "Mailpit is included for SMTP testing." Tier-4/5 yaml: "Mailpit removed; replace MAIL_* with your provider." |
 
 **How to use this table:** when a new observation surfaces during a run, find the closest analog in this table; the routing decision should match. If no analog fits, walk the decision tree in Part 5 from Q1.
 

@@ -32,8 +32,10 @@ A successful recipe authoring run produces:
   inherits per-recipe knowledge the agent learned during the run.
 
 zcprecipator3 (v3) is the **engine** that drives the run: a typed
-5-phase state machine in `internal/recipe/` that orchestrates a main
-agent + sub-agents against the live Zerops platform. The engine is
+8-phase state machine in `internal/recipe/` (research → provision →
+scaffold → feature → codebase-content → env-content → finalize →
+refinement) that orchestrates a main agent + sub-agents against the
+live Zerops platform. The engine is
 deterministic. It knows platform invariants up-front and refuses to
 proceed when its own contracts are violated. It does **not** know
 framework specifics, library quirks, or per-recipe scenarios — those
@@ -165,9 +167,16 @@ literally cannot emit deliverable-only fields and vice versa.
 
 ## 3. The runtime sequence
 
-The 5 phases of `internal/recipe/workflow.go::Phase`. Each has an
-adjacent-forward entry guard and a gate-set exit guard. Phases do not
-skip; phases do not retreat.
+The 8 phases of `internal/recipe/workflow.go::Phase`
+(research → provision → scaffold → feature → codebase-content →
+env-content → finalize → refinement). Each has an adjacent-forward
+entry guard and a gate-set exit guard. Phases do not skip; phases do
+not retreat. The one engine-driven transition is finalize →
+refinement (run-18: refinement is the always-on quality gate).
+
+[pipeline-actor-map.md](pipeline-actor-map.md) carries the
+per-phase brief composition + atom budgets + writes; this section
+describes intent + actor + output.
 
 ### Phase 1 — Research (main agent only)
 
@@ -199,46 +208,92 @@ skip; phases do not retreat.
   carrying: codebase identity, role (monolith / api / frontend /
   worker), platform obligations (HTTP gated on `role.ServesHTTP`),
   citation map, writing contract.
-- **Sub-agent**: writes minimal source + `zerops.yaml` to `<SourceRoot>/`,
-  deploys via `zerops_deploy`, iterates against real platform errors,
-  consults `zerops_knowledge` for managed-service connection idioms
-  before writing client code.
-- **Sub-agent authors codebase-scoped fragments in-phase** at densest
-  context: integration-guide items #2+, knowledge-base bullets,
-  CLAUDE.md notes, cited gotchas. Recorded via `zerops_recipe action=
-  record-fragment`.
+- **Sub-agent**: writes minimal source + `zerops.yaml` (bare — no
+  causal comments) to `<SourceRoot>/`, deploys via `zerops_deploy`,
+  iterates against real platform errors, consults `zerops_knowledge`
+  for managed-service connection idioms before writing client code.
 - **Sub-agent records facts** via `zerops_recipe action=record-fact`
   (camelCase schema). Engine classifies + routes per the taxonomy.
-- **Engine role**: composes briefs; receives fragments + facts;
-  classifies; does not author content.
-- **Output**: every codebase has working dev-deploy + scaffold-authored
-  fragments + recorded facts. At scaffold close, each `<SourceRoot>/`
-  has `git init` + initial commit.
+- **Engine role**: composes briefs; populates `Codebase.ConsumesServices`
+  at complete-phase by parsing each codebase's bare yaml
+  `run.envVariables` (run-21 R2-3); receives + classifies facts;
+  does not author content.
+- **Output**: every codebase has working dev-deploy + recorded facts +
+  bare scaffold yaml. At scaffold close, each `<SourceRoot>/` has
+  `git init` + initial commit.
 
-### Phase 4 — Feature (sub-agent dispatch, may serialize)
+### Phase 4 — Feature (1 cross-codebase sub-agent)
 
 - **Action**: feature sub-agent extends each codebase with the scenario
   logic (the "thing this recipe demonstrates").
-- **Sub-agent**: authors per-codebase content extensions (additional KB
-  bullets, additional CLAUDE notes, per-feature commits). Browser-walks
-  the running app via `zerops_browser`; records `browser_verification`
-  facts (one per browser call).
-- **Engine role**: composes feature brief; receives fragments + facts.
-- **Output**: every codebase dev + stage green; scenario verified end-
-  to-end; per-feature commits in apps repo.
+- **Sub-agent**: extends code, browser-walks the running app via
+  `zerops_browser`, records `browser_verification` facts (one per
+  browser call) + per-feature `porter_change` / `field_rationale`
+  facts.
+- **Engine role**: composes feature brief (loads SSHFS warning first
+  + closing-footer reminder per run-21 R2-7); receives + classifies
+  facts.
+- **Output**: every codebase dev + stage green; scenario verified
+  end-to-end; per-feature commits in apps repo.
 
-### Phase 5 — Finalize (main agent, may dispatch)
+### Phase 5 — Codebase content (N parallel sub-agents)
 
-- **Action**: author root + env fragments (intros, per-tier import-
-  comments). Stitch every surface into `outputRoot`. Run validator
-  gates. Iterate on failures via `record-fragment` → re-stitch.
-- **Engine role**: stitches surfaces; runs gates; gates publication.
-- **Output**: complete deliverable on disk; `zcp sync recipe export` →
+- **Action**: per-codebase content sub-agent (`codebase-content`)
+  reads the codebase's facts + on-disk artifacts and authors the four
+  per-codebase published surfaces: codebase intro, integration-guide
+  items #2+, knowledge-base bullets, and the whole-yaml comment fragment
+  (`codebase/<h>/zerops-yaml`). A **sibling** `claudemd-author` sub-
+  agent authors `codebase/<h>/claude-md` in parallel — Zerops-free by
+  brief contract (`briefs/claudemd-author/zerops_free_prohibition.md`),
+  no cross-fragment coordination needed.
+- **Engine role**: filters atoms per `cb.ConsumesServices` (run-21
+  R2-2); pre-stitches the whole-yaml fragment to disk via
+  `WriteCodebaseYAMLWithComments` (atomic write, run-21 P0-1) before
+  gates run; `gateZeropsYamlSchema` prefers the in-memory fragment
+  body over disk read (run-21 P0-1 Layer A).
+- **Output**: every codebase's published surfaces complete; on-disk
+  `zerops.yaml` carries the agent's commented version; CLAUDE.md
+  shape passes structural validation only (run-21 R2-5 retired
+  Zerops-content guards).
+
+### Phase 6 — Env content (1 sub-agent)
+
+- **Action**: env-content sub-agent authors per-tier `env/N/intro` +
+  `env/N/import-comments/<svc>` fragments × 6 tiers, grounded in the
+  per-tier capability matrix + cross-tier deltas the engine emits.
+- **Engine role**: composes env-content brief (loads `nats-shapes.md`
+  only when `planUsesNATS(plan)` per run-21 R3-2); receives fragments;
+  emits engine-derived `tier_decision` facts.
+- **Output**: every tier's intro + per-service import-comments
+  authored.
+
+### Phase 7 — Finalize (1 sub-agent)
+
+- **Action**: finalize sub-agent authors root + env fragments
+  (`root/intro`, project-level import-comments). Calls `stitch-content`
+  to materialize every surface into `outputRoot`. Iterates on
+  validation failures via `record-fragment mode=replace` →
+  re-stitch.
+- **Engine role**: assembles READMEs / CLAUDE.md / per-tier
+  import.yaml; runs the finalize gate set; auto-advances to
+  refinement on success.
+- **Output**: complete deliverable on disk.
+
+### Phase 8 — Refinement (1 sub-agent, always-on)
+
+- **Action**: refinement sub-agent reads every stitched surface + the
+  full facts log + the embedded rubric and flips quality-gap surfaces
+  via `record-fragment mode=replace` only when the 100%-sure
+  threshold holds.
+- **Engine role**: snapshot/restore around each replace so a
+  regression-causing edit reverts; `zcp sync recipe export` →
   `publish` ready.
+- **Output**: `outputRoot` ready for publication.
 
-The **discovery loop** lives in phases 3 + 4. Phase 5 is assembly +
-quality, not new discovery. Phase 5 is allowed to fail loudly; it is
-not allowed to invent knowledge that earlier phases didn't capture.
+The **discovery loop** lives in phases 3 + 4. Phases 5–8 are
+synthesis + assembly + quality, not new discovery. They are allowed
+to fail loudly; they are not allowed to invent knowledge that earlier
+phases didn't capture.
 
 ---
 
@@ -405,6 +460,9 @@ through deploy iteration (when not).
 | Authoring-tool patrol extension into IG / KB / apps-repo zerops.yaml (run-15 §E.2) | DISCOVER | ✅ Notice — `scanAuthoringToolLeaks` extends the CLAUDE.md tool-name patrol (`zcli`, `zerops_*`, `zcp `) into apps-repo zerops.yaml comment lines, codebase IG bodies, and codebase KB bodies. The porter operates with framework-canonical commands; tool names signal authoring leakage |
 | Phase-advance asymmetry teaching (run-15 §E.1) | TEACH | ✅ `research.md` + `provision.md` phase-entry atoms close with the explicit `enter-phase` step. `complete-phase` does NOT auto-advance; the explicit transition is required. Closes R-14-2 |
 | Always-on refinement: finalize → refinement auto-advance (run-18) | TEACH | ✅ The ONE engine-driven phase transition: when `complete-phase phase=finalize` closes ok, engine auto-calls `EnterPhase(refinement)`. Refinement is the always-on quality gate; snapshot/restore (run-17 §9 T4) reverts any replace that fails validation, so the editorial pass costs at most one sub-agent dispatch and never makes the artifact worse. Closes run-17's failure mode where the agent saw notices and declined the optional pass. All other transitions remain explicit (the agent's `enter-phase` call), preserving the run-15 §E.1 teaching for every other boundary. Pinned by `TestCompletePhaseFinalize_AutoAdvancesToRefinement` + `TestCompletePhaseEarlierPhases_DoNotAutoAdvance` |
+| `Codebase.ConsumesServices` per-codebase service consumption (run-21 R2-3) | TEACH | ✅ Engine populates at scaffold complete-phase by parsing each codebase's bare zerops.yaml `run.envVariables` for `${<host>_*}` / `${<host>}` references that match a managed-service hostname. Recipe-context Managed-services block + codebase-content brief filter (NATS shapes, cross-service URLs) read this field. SPA codebase that consumes only `${api_zeropsSubdomain}` no longer sees db/cache/broker in its dispatched brief context. Three-state semantics: nil (back-compat, unanalyzed) / empty non-nil (analyzed-empty) / populated (filtered). Pinned by `TestParseConsumedServicesFromYaml` + `TestRecipeContext_FiltersServicesByCodebaseConsumption` + `TestRecipeContext_NilConsumesServices_FallsBackToAll` |
+| CLAUDE.md Zerops-content guards (run-21 R2-5) | DISCOVER | ✅ Removed — engine-side word-blacklisting (`## Zerops` heading, `zsc`/`zerops_*`/`zcp`/`zcli` token checks, per-managed-service hostname matcher) was wrong-side: it added 4× rejection cycles around common English tokens (`db`, `cache`, `search` collide with prose). Brief at `briefs/claudemd-author/zerops_free_prohibition.md` is the authoring contract; validators do structural shape only (line cap ≤80, H2 count 2–4, min size ≥200 bytes). Symptom-policing for an authoring failure was the catalog-drift signature in §4 Test ("expressed as a *string* the engine bans"). Pinned by `TestClaudeMDGuard_StructuralOnly` + a half-dozen `TestCheckSlotShape_ClaudeMD_Allows*_BriefTeachingHandlesIt` inversions |
+| In-memory schema gate + atomic yaml write (run-21 P0-1) | TEACH | ✅ `gateZeropsYamlSchema` Layer A reads `Plan.Fragments[codebase/<h>/zerops-yaml]` body directly when present, eliminating the disk-read race against `WriteCodebaseYAMLWithComments`. Layer B switches the writer to write-temp + sync + chmod + rename so any remaining disk-read path (SSH-edited yaml, replay tooling) never sees the truncate-then-write window. Closes the run-21 yaml-empty wall that blocked all 3 codebase-content sub-agents in parallel |
 
 ### What "wrong side" means concretely
 
@@ -436,10 +494,19 @@ recoverable as TEACH-shape or only sits as DISCOVER:
 
 Three legitimate channels:
 
-1. **Always-on principle atoms** — injected into every brief by the
-   composer. Defined under `internal/recipe/content/principles/`.
-   Examples: `env-var-model.md`, `init-commands-model.md`,
-   `mount-vs-container.md`, `dev-loop.md`, `yaml-comment-style.md`.
+1. **Phase-conditional principle atoms** — injected by the brief
+   composer based on which phase is dispatching. Defined under
+   `internal/recipe/content/principles/`. Examples: `mount-vs-container.md`
+   (scaffold + feature + codebase-content), `dev-loop.md` (scaffold),
+   `bare-yaml-prohibition.md` (scaffold), `cross-service-urls.md`
+   (scaffold + codebase-content via per-codebase `cb.ConsumesServices`
+   gate), `nats-shapes.md` (codebase-content via per-codebase NATS
+   consumption + env-content via plan-level `planUsesNATS`),
+   `yaml-comment-style.md` (codebase-content + env-content; **dropped
+   from scaffold + feature** in run-21 R2-1/R3-2 because those phases
+   author bare yaml and the comment-style teaching contradicted the
+   contract). Per-phase atom maps live in
+   [pipeline-actor-map.md](pipeline-actor-map.md).
 
 2. **Brief-conditional content** — included by the brief composer based
    on `Plan` structure. `BuildScaffoldBrief` includes the `## HTTP`
