@@ -48,6 +48,8 @@ func runEval(args []string) {
 		runEvalResults(args[1:])
 	case "triage":
 		runEvalTriage(args[1:])
+	case "behavioral":
+		runEvalBehavioral(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown eval subcommand: %s\n", args[0])
 		printEvalUsage()
@@ -67,7 +69,8 @@ Commands:
   create-suite   --frameworks <a,b> --tier <t>  Batch-create recipes
   cleanup        [--prefix <prefix>]            Full project cleanup (or prefix-only with --prefix)
   results        [--suite <id>]                 Show latest results summary
-  triage         [--suite <id>] [--out <path>]  Aggregate scenario suite EVAL REPORTs into triage.md`)
+  triage         [--suite <id>] [--out <path>]  Aggregate scenario suite EVAL REPORTs into triage.md
+  behavioral     <list|run|all> [args...]       Two-shot resume scenario runs (interactive C4 eval)`)
 }
 
 func runEvalRun(args []string) {

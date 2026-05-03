@@ -29,6 +29,32 @@ type Scenario struct {
 	FollowUp      []string
 	Prompt        string
 	SourcePath    string
+
+	// Behavioral-mode fields (optional). When Retrospective is non-nil the
+	// scenario is intended for RunBehavioralScenario instead of RunScenario:
+	// the runner uses two-shot resume (run + post-hoc retrospective) instead
+	// of one-shot grading. Tags/Area/NotableFriction are descriptive metadata
+	// for the local Claude session to surface and reason over — they do not
+	// gate the run.
+	Tags            []string
+	Area            string
+	NotableFriction []NotableFrictionEntry
+	Retrospective   *RetrospectiveConfig
+}
+
+// RetrospectiveConfig points at a retrospective prompt embedded in the binary
+// under internal/eval/retrospective_prompts/<promptStyle>.md.
+type RetrospectiveConfig struct {
+	PromptStyle string `yaml:"promptStyle"`
+}
+
+// NotableFrictionEntry documents an expected pain-point for the local
+// session to look for in the agent's retrospective. Informational only —
+// not asserted by the runner.
+type NotableFrictionEntry struct {
+	ID              string   `yaml:"id"`
+	Description     string   `yaml:"description"`
+	SuspectedCauses []string `yaml:"suspectedCauses,omitempty"`
 }
 
 // Expectation captures assertions the grader runs against the agent's output.
@@ -46,13 +72,17 @@ type Expectation struct {
 }
 
 type scenarioFrontmatter struct {
-	ID            string      `yaml:"id"`
-	Description   string      `yaml:"description"`
-	Seed          string      `yaml:"seed"`
-	Fixture       string      `yaml:"fixture"`
-	PreseedScript string      `yaml:"preseedScript"`
-	Expect        Expectation `yaml:"expect"`
-	FollowUp      []string    `yaml:"followUp"`
+	ID              string                 `yaml:"id"`
+	Description     string                 `yaml:"description"`
+	Seed            string                 `yaml:"seed"`
+	Fixture         string                 `yaml:"fixture"`
+	PreseedScript   string                 `yaml:"preseedScript"`
+	Expect          Expectation            `yaml:"expect"`
+	FollowUp        []string               `yaml:"followUp"`
+	Tags            []string               `yaml:"tags"`
+	Area            string                 `yaml:"area"`
+	NotableFriction []NotableFrictionEntry `yaml:"notableFriction"`
+	Retrospective   *RetrospectiveConfig   `yaml:"retrospective"`
 }
 
 // ParseScenario reads a scenario markdown file and returns the parsed structure.
@@ -75,15 +105,19 @@ func ParseScenario(path string) (*Scenario, error) {
 	}
 
 	sc := &Scenario{
-		ID:            fm.ID,
-		Description:   fm.Description,
-		Seed:          SeedMode(fm.Seed),
-		Fixture:       fm.Fixture,
-		PreseedScript: fm.PreseedScript,
-		Expect:        fm.Expect,
-		FollowUp:      fm.FollowUp,
-		Prompt:        strings.TrimSpace(body),
-		SourcePath:    path,
+		ID:              fm.ID,
+		Description:     fm.Description,
+		Seed:            SeedMode(fm.Seed),
+		Fixture:         fm.Fixture,
+		PreseedScript:   fm.PreseedScript,
+		Expect:          fm.Expect,
+		FollowUp:        fm.FollowUp,
+		Prompt:          strings.TrimSpace(body),
+		SourcePath:      path,
+		Tags:            fm.Tags,
+		Area:            fm.Area,
+		NotableFriction: fm.NotableFriction,
+		Retrospective:   fm.Retrospective,
 	}
 
 	if err := sc.validate(); err != nil {
@@ -108,7 +142,16 @@ func (s *Scenario) validate() error {
 	if s.Prompt == "" {
 		return fmt.Errorf("prompt body required")
 	}
+	if s.Retrospective != nil && s.Retrospective.PromptStyle == "" {
+		return fmt.Errorf("retrospective.promptStyle required when retrospective is set")
+	}
 	return nil
+}
+
+// IsBehavioral reports whether the scenario is intended for behavioral
+// (two-shot resume) execution. Detected by presence of retrospective config.
+func (s *Scenario) IsBehavioral() bool {
+	return s.Retrospective != nil
 }
 
 // splitFrontmatter returns the YAML block between the first two --- lines and
