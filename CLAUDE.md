@@ -114,8 +114,8 @@ Config: `.sync.yaml` + `.env STRAPI_API_TOKEN`.
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**Dependency rule** (pinned by `.golangci.yml::depguard` +
-`internal/architecture_test.go`):
+**Dependency rule** (pinned by `.golangci.yaml::depguard` +
+`internal/topology/architecture_test.go`):
 
 | Rule | Reason |
 |------|--------|
@@ -125,11 +125,11 @@ Config: `.sync.yaml` + `.env STRAPI_API_TOKEN`.
 | `workflow/` does NOT import `ops/`, `tools/`, `recipe/` | Peer/upper |
 | New shared type → `topology/` first, never `workflow/` | Promotion rule |
 
-**Cross-cutting packages** (peer-of-equal-level, not strict layered):
-`auth/` (pre-engine startup, talks to platform), `runtime/`, `knowledge/`,
-`content/`, `recipe/` (v3 engine, separate scope), `eval/`, `preprocess/`,
-`schema/`, `catalog/`, `sync/`, `init/`, `update/`, `service/` (exec
-wrappers, name-collision-distinct from `topology/`).
+**Cross-cutting packages** (peer-of-equal-level, not strict layered) live
+under `internal/`; key non-obvious ones: `auth/` runs pre-engine and talks
+to platform directly, `recipe/` is a separate v3-engine scope, `service/`
+exec wrappers are name-collision-distinct from `topology/`. Full list via
+`ls internal/`.
 
 Spec: `docs/spec-architecture.md` — per-package mapping + examples.
 
@@ -137,49 +137,31 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
 
 ## Conventions
 
-- **Deploy config is three orthogonal dimensions, not one strategy enum** —
-  `ServiceMeta` carries `CloseDeployMode` (unset/auto/git-push/manual —
-  what `action="close"` does), `GitPushState` (unconfigured/configured/
-  broken/unknown — git-push capability, with `RemoteURL` companion), and
-  `BuildIntegration` (none/webhook/actions — ZCP-managed CI shape, requires
-  `GitPushState=configured`). The legacy `DeployStrategy` + `PushGitTrigger`
-  conflation is gone — git-push capability and close-mode are independent,
-  so `GitPushState=configured` can hold while `CloseDeployMode=auto` (push
-  capability provisioned but close still uses default deploy). Three
-  user-facing actions own each axis: `action="close-mode"`,
-  `action="git-push-setup"`, `action="build-integration"`. Atom corpus
-  filters on `closeDeployModes` / `gitPushStates` / `buildIntegrations`
-  axes. Spec: `docs/spec-workflows.md §1.1` + `§4.3`.
+- **Deploy config is three orthogonal dimensions** — `ServiceMeta` carries
+  `CloseDeployMode`, `GitPushState` (with `RemoteURL`), and `BuildIntegration`,
+  each owned by one user-facing action (`close-mode` / `git-push-setup` /
+  `build-integration`). The legacy `DeployStrategy` + `PushGitTrigger`
+  conflation is gone: git-push capability and close-mode are independent
+  (configured push can coexist with auto close-mode). `BuildIntegration`
+  requires `GitPushState=configured`. Atom corpus filters on the three
+  matching axes. Spec: `docs/spec-workflows.md §1.1` + `§4.3`.
 - **Deploy failure response carries structured classification** — every
-  failed `zerops_deploy` invocation populates `failureClassification`
-  (`category` + `likelyCause` + `suggestedAction` + `signals[]`). Lives on
-  `ops.DeployResult.FailureClassification` for build/prepare/init failures
-  and on `tools.ErrorWire.FailureClassification` for transport/preflight
-  failures. Agents read this field FIRST; `buildLogs` / `runtimeLogs` /
-  `failedPhase` are fall-through diagnostic depth, not the primary signal.
-  Categories use `topology.FailureClass` (build/start/verify/network/config/
-  credential/other — single canonical enum, peer to ops + workflow). Pattern
-  library in `internal/ops/deploy_failure_signals.go`; classifier in
-  `deploy_failure.go`. Pinned by `TestClassifyDeployFailure_*`,
+  failed `zerops_deploy` populates `failureClassification` (category +
+  likelyCause + suggestedAction + signals). Lives on
+  `ops.DeployResult.FailureClassification` (build/prepare/init failures) and
+  `tools.ErrorWire.FailureClassification` (transport/preflight). Agents read
+  this FIRST; `buildLogs`/`runtimeLogs`/`failedPhase` are fall-through
+  diagnostic depth. Categories live in `topology.FailureClass` (single
+  canonical enum, peer to ops + workflow); classifier + pattern library in
+  `internal/ops/deploy_failure*.go`. Pinned by `TestClassifyDeployFailure_*`,
   `TestPollDeployBuild_PopulatesFailureClassification`,
-  `TestErrorWire_FailureClassification`. Spec: ticket E2 in
-  `plans/engine-atom-rendering-improvements-2026-04-27.md`.
+  `TestErrorWire_FailureClassification`.
 - **Verify checks carry structured Recovery for actionable preconditions** —
   when an infrastructure precondition that the agent can fix is missing
   (e.g. subdomain access disabled), the failing CheckResult MUST carry a
   Recovery struct (tool + action + args) pointing at the exact next call.
   Skip status reserved for non-actionable transients (URL not yet resolved).
   Pinned by TestVerify_* cases asserting Recovery shape on http_root failure.
-- **4-layer architecture pinned** — `internal/topology/` is the
-  foundational layer-2 vocabulary (Mode, RuntimeClass, CloseDeployMode,
-  GitPushState, BuildIntegration, predicates, aliases) with zero
-  internal/ imports.
-  `internal/ops/` and `internal/workflow/` are peer layer-3 packages —
-  neither imports the other; shared types belong in `topology/`.
-  `internal/platform/` is the layer-1 raw API (no internal/ imports).
-  Upper layers (`internal/server/`, `internal/tools/`, `cmd/`) are
-  entry points and can reach down freely. Pinned by `architecture_test.go`
-  + `.golangci.yaml::depguard`. Spec: `docs/spec-architecture.md`.
 - **tools/eval reach platform via ops** — `client.ListServices` /
   `client.GetServiceEnv` is forbidden outside of `internal/ops/`,
   `internal/platform/`, and `internal/workflow/` (peer layer). Use
@@ -193,50 +175,44 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
 - **Check-before-mutate for non-idempotent platform APIs** — read state via
   REST-authoritative endpoint, short-circuit when desired state holds.
   Canonical: `ops.Subdomain`. Spec: `spec-workflows.md §8 O3`.
-- **Local-mode preflight respects `workingDir`** — when `zerops_deploy` is
-  registered in local mode (no SSH deployer; user's dev machine), the
-  `workingDir` parameter is the source of truth for `zerops.yaml` location.
-  `deployPreFlight` honors it end-to-end: `findAndParseZeropsYml` searches
-  `<workingDir>/zerops.yaml` when `workingDir != ""` (sourceHostname empty),
-  falling back to the state-derived `projectRoot` only when `workingDir` is
-  empty. Without this, preflight validated a different file than
-  `ops.DeployLocal` would deploy from — false positives (preflight pass on a
-  yaml that's not the deployed one) and false negatives (preflight fail
-  pointing at the wrong path) both surfaced. Container-env callers
-  (deploy_ssh, deploy_batch) pass `workingDir=""` because their workingDir
-  parameter names a CONTAINER path, irrelevant for dev-side yaml lookup.
-  Pinned by `TestDeployPreFlight_LocalMode_WorkingDirOverridesProjectRoot`,
-  `TestDeployPreFlight_LocalMode_WorkingDirHasYaml_PassesEvenIfProjectRootEmpty`,
-  `TestDeployPreFlight_LocalMode_EmptyWorkingDir_FallsBackToProjectRoot`.
-- **Subdomain L7 activation is the deploy handler's concern, with platform-as-classifier** —
+- **Local-mode preflight respects `workingDir`** — in local mode (no SSH
+  deployer; user's dev machine), `workingDir` is the source of truth for
+  `zerops.yaml` location; `deployPreFlight` honors it end-to-end, falling
+  back to state-derived `projectRoot` only when `workingDir` is empty.
+  Without this, preflight validated a different file than `ops.DeployLocal`
+  deployed from — both false positives (preflight pass on yaml that's not
+  the deployed one) and false negatives (preflight fail at wrong path)
+  surfaced. Container-env callers (`deploy_ssh`, `deploy_batch`) pass
+  `workingDir=""` because their workingDir names a CONTAINER path,
+  irrelevant for dev-side yaml lookup. Pinned by
+  `TestDeployPreFlight_LocalMode_*`.
+- **Subdomain L7 activation is the deploy handler's concern, platform classifies** —
   `zerops_deploy` auto-enables subdomain on first deploy for eligible modes
-  (dev, stage, simple, standard, local-stage) and waits HTTP-ready. Predicate
-  is mode-allowlist + `IsSystem()` defensive guard (no DTO inspection — the
-  earlier `detail.SubdomainAccess`/`Ports[].HTTPSupport` checks read post-enable
-  state as if it were import-yaml intent and broke first-deploy auto-enable;
-  smoking gun in `internal/tools/deploy_subdomain.go` doc-comment). Platform
-  classifies via the Enable response — `serviceStackIsNotHttp` (worker, F8
-  deferred-start) is silently swallowed in `maybeAutoEnableSubdomain` only,
-  while `ops.Subdomain.Enable` keeps surfacing it for explicit-recovery
-  callers. Agents/recipes never call `zerops_subdomain action=enable` in
-  happy path. Pinned by `TestServiceEligible_*` and
-  `TestMaybeAutoEnable_ServiceStackIsNotHttp_BenignSkip`. Spec:
-  `spec-workflows.md §4.8` + invariant O3.
+  (dev/stage/simple/standard/local-stage) and waits HTTP-ready. Predicate is
+  mode-allowlist + `IsSystem()` defensive guard ONLY — earlier DTO checks
+  (`SubdomainAccess`/`Ports[].HTTPSupport`) read post-enable state as if it
+  were import-yaml intent and broke first-deploy auto-enable (smoking gun in
+  `internal/tools/deploy_subdomain.go` doc-comment). Platform-classified
+  `serviceStackIsNotHttp` (worker, F8 deferred-start) is silently swallowed
+  in `maybeAutoEnableSubdomain` only; `ops.Subdomain.Enable` still surfaces
+  it for explicit-recovery callers. Agents/recipes never call
+  `zerops_subdomain action=enable` in happy path. Pinned by
+  `TestServiceEligible_*`, `TestMaybeAutoEnable_ServiceStackIsNotHttp_BenignSkip`.
+  Spec: `spec-workflows.md §4.8` + O3.
 - **Export-for-buildFromGit is a single-repo self-referential snapshot** —
-  `zerops_workflow workflow="export"` walks a stateless three-call narrowing
-  (scope-prompt → classify-prompt → publish-ready or validation-failed) per
-  `WorkflowInput.{TargetService, Variant, EnvClassifications}` per-request
-  inputs. Bundle carries ONE buildFromGit-bearing runtime + N managed deps
-  (so `${db_*}`/`${redis_*}` resolve at re-import). `services[].mode` is the
-  Zerops scaling enum (`HA`/`NON_HA`) — single-runtime bundles emit
-  `NON_HA`; ZCP topology (dev/simple/local-only) is destination-bootstrap
-  concern, not import.yaml content. Live `git remote get-url origin` is the
-  source of truth for `buildFromGit:`; `meta.RemoteURL` is a refreshed cache
-  with drift surfaced as warnings. Schema validation (Phase 5 jsonschema/v5)
-  populates `bundle.errors`; non-empty errors flip the response to
-  `status="validation-failed"` ahead of any git-push-setup chain. Pinned by
-  `TestHandleExport_*` + `TestBuildBundle_*` + `TestValidateImportYAML_*`.
-  Spec: `docs/spec-workflows.md §9` + invariants E1-E5.
+  `zerops_workflow workflow="export"` is a stateless three-call narrowing
+  (scope-prompt → classify-prompt → publish-ready / validation-failed) keyed
+  by per-request `WorkflowInput.{TargetService, Variant, EnvClassifications}`.
+  Bundle carries ONE buildFromGit-bearing runtime + N managed deps so
+  `${db_*}`/`${redis_*}` resolve at re-import. `services[].mode` is the Zerops
+  scaling enum (`HA`/`NON_HA`) — ZCP topology (dev/simple/local-only) is a
+  destination-bootstrap concern, NOT import.yaml content. Live
+  `git remote get-url origin` is source of truth for `buildFromGit:`;
+  `meta.RemoteURL` is a refreshed cache with drift surfaced as warnings.
+  Schema-validation errors populate `bundle.errors` and flip the response to
+  `status="validation-failed"` before any git-push-setup chain runs. Pinned by
+  `TestHandleExport_*`, `TestBuildBundle_*`, `TestValidateImportYAML_*`.
+  Spec: `docs/spec-workflows.md §9` + E1-E5.
 - **Log time comparison is parse-compare, never lexicographic** — RFC3339
   fractional precision varies (3–9 digits); string compare misorders entries
   at `.` vs `Z`. `internal/platform/logfetcher.go::filterEntries` uses
@@ -254,47 +230,33 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   Cross-deploy deployFiles is post-build-tree; ZCP doesn't stat-check source
   (DM-3/DM-4 — builder's job). Pinned by `TestValidateZeropsYml_DM2_*`/`DM3_*`.
 - **Atom authoring contract is unified** — atoms in `internal/content/atoms/`
-  describe observable state (envelope/response, backed by `references-fields`
-  AST-pinned to Go struct fields), orchestration, concepts, pitfalls, cross-refs.
-  MUST NOT contain spec invariant IDs (`DM-*`, `E*`, `O*`, etc.),
-  handler-behavior verbs ("auto-*", "stamps", "activates"), invisible-state
-  field names, or plan-doc paths. MUST NOT carry env-only title/heading
-  qualifiers (`container`, `local`, `container env`, `local env` as
-  standalone tokens — Axis L is HARD-FORBID). Three tests enforce:
-  `TestAtomAuthoringLint`, `TestAtomReferenceFieldIntegrity`,
-  `TestAtomReferencesAtomsIntegrity`. Don't add per-topic
-  `*_atom_contract_test.go` — extend `internal/content/atoms_lint.go`
-  (or `atoms_lint_axes.go` for axis K/L/M/N rules). Spec:
-  `spec-knowledge-distribution.md §11`.
-- **Axis K/M/N marker convention** — heuristic axis lints fire CANDIDATES;
-  authors mark intentional keeps with inline `<!-- axis-{k,m,n}-keep:
-  signal-#N -->` (or `-drop`) on the same line, the prior non-blank line,
-  or the next non-blank line. Markers are stripped from rendered atom
-  bodies via `content.StripAxisMarkers` in `ParseAtom` — agents never
-  see the metadata. Per-line allowlist entries (`atoms_lint_seed_allowlist.go`)
-  are reserved for grandfathered or structurally-unavoidable cases; new
-  edits prefer markers. Spec: `spec-knowledge-distribution.md §11.5/§11.6/§11.7`.
+  describe observable state, orchestration, concepts, pitfalls, cross-refs;
+  observable fields are AST-pinned via `references-fields`. MUST NOT contain
+  spec invariant IDs (`DM-*`/`E*`/`O*`), handler-behavior verbs (`auto-*`,
+  `stamps`, `activates`), invisible-state field names, plan-doc paths, or
+  env-only title/heading qualifiers (`container`/`local` as standalone
+  tokens — Axis L is HARD-FORBID). Don't add per-topic
+  `*_atom_contract_test.go` — extend `internal/content/atoms_lint.go` (or
+  `atoms_lint_axes.go` for axis K/L/M/N). Pinned by `TestAtomAuthoringLint`,
+  `TestAtomReferenceFieldIntegrity`, `TestAtomReferencesAtomsIntegrity`.
+  Spec: `spec-knowledge-distribution.md §11`.
 - **Recipe-specific findings go in recipes, not atoms or audits** — framework
-  gotchas (Razor hot-reload, EF Core EnsureCreated quirks, Laravel+Vite manifest
+  gotchas (Razor hot-reload, EF Core EnsureCreated, Laravel+Vite manifest
   timing, Next.js cache semantics), library-version pitfalls, framework-specific
-  dev workflows: edit `internal/knowledge/recipes/<slug>.md` directly, then
-  `zcp sync push recipes <slug>` to publish via PR. **NOT atoms** — atoms carry
-  platform mechanics that apply to ANY user of a Zerops service-stack type;
-  framework knowledge in atoms would explode the corpus and lose axis-filter
-  meaning. **NOT audit reports** — those are transient. Recipe markdown is
-  durable knowledge. Whether a `## Gotchas` section is mandatory across all
-  recipes is open: only ~4/36 recipes carry one today (richer/more-mature ones),
-  and the authoring contract doesn't enforce it. Add the section when you have
-  concrete, verified pain points; don't fabricate placeholders.
+  dev workflows: edit `internal/knowledge/recipes/<slug>.md`, then
+  `zcp sync push recipes <slug>` to publish via PR. NOT atoms (atoms carry
+  platform mechanics that apply to ANY user of a service-stack type; framework
+  knowledge would explode the corpus and break axis-filter meaning). NOT audit
+  reports (transient). `## Gotchas` section is optional and not enforced —
+  add when you have concrete verified pain points, don't fabricate placeholders.
 - **Service by hostname** — agents/tools speak hostnames; resolve to ID internally.
 - **Lifecycle recovery is via `action="status"`** — `zerops_workflow
   action="status"` is the canonical lifecycle envelope (envelope + plan +
   guidance) and the supported recovery primitive after context compaction.
-  Mutation tool responses MAY be terse (do not require the lifecycle
-  envelope); error responses MUST remain leaf payloads (`convertError`
-  does not attach an envelope). Pinned by P4 in `docs/spec-workflows.md`.
-  Adding envelope to a mutation response is acceptable when the handler
-  has ComputeEnvelope inputs already; not required.
+  Mutation responses MAY be terse — envelope optional, attach only when the
+  handler already has ComputeEnvelope inputs. Error responses MUST remain
+  leaf payloads (`convertError` does not attach an envelope). Pinned by P4
+  in `docs/spec-workflows.md`.
 - **JSON-only stdout** — debug to stderr; MCP protocol depends on it.
   Pinned by `TestNoStdoutOutsideJSONPath` (scans `internal/...` for
   `fmt.Print*`, `fmt.Fprint*(os.Stdout, ...)`, `os.Stdout.Write*`,
@@ -315,8 +277,9 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   lookup tables, interface assertions, literals — remain allowed).
 - **Shell interpolation via `shellQuote()`** — POSIX single-quote; never strip-only.
 - **Error wrapping** — `fmt.Errorf("op: %w", err)`; never bare `return err`.
-- **350-line soft cap per `.go` file** — split when growing. Frozen v2 cluster
-  (`internal/workflow/recipe_*.go`) exempt until deletion.
+- **File splits driven by cohesion, not line count** — split a `.go` file
+  when responsibilities diverge, not when it crosses an arbitrary length.
+  Frozen v2 cluster (`internal/workflow/recipe_*.go`) exempt until deletion.
 - **English everywhere** — code, comments, docs, commits.
 - **Phased refactors** — verify each phase before continuing; no half-finished states.
 - **Rename safety** — no AST-aware tooling; grep separately for calls, types,
