@@ -32,6 +32,10 @@ On first-deploy success the response carries `subdomainAccessEnabled:
 true` and a `subdomainUrl` — no manual `zerops_subdomain` call is
 needed in the happy path. Run verify next.
 
+If you imported a service that you deliberately want to keep without a
+public subdomain (internal-only HTTP service), call `zerops_subdomain
+action="disable"` after the deploy.
+
 Run for each runtime that hasn't been deployed:
 
 ```

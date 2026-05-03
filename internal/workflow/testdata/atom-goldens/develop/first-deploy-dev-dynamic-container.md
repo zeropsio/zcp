@@ -462,6 +462,10 @@ On first-deploy success the response carries `subdomainAccessEnabled:
 true` and a `subdomainUrl` — no manual `zerops_subdomain` call is
 needed in the happy path. Run verify next.
 
+If you imported a service that you deliberately want to keep without a
+public subdomain (internal-only HTTP service), call `zerops_subdomain
+action="disable"` after the deploy.
+
 Run for each runtime that hasn't been deployed:
 
 ```
@@ -478,6 +482,10 @@ subdomain URL means web-facing; managed/no HTTP port means non-web.
 Run `zerops_verify` first. If any returned check has a `recovery` field,
 execute that recovery (`tool` + `action` + `args`) and re-run verify before
 any browser/HTTP probe.
+
+If you adopted or imported a service that you deliberately want to keep
+without a public subdomain (internal-only HTTP service), call
+`zerops_subdomain action="disable"` after the next deploy.
 
 | Service shape | Required check |
 |---|---|

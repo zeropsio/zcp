@@ -1,11 +1,15 @@
 //go:build e2e
 
-// Tests for: e2e — subdomain activation lifecycle via zerops_subdomain.
+// Tests for: e2e — explicit subdomain enable lifecycle via zerops_subdomain.
 //
-// This test verifies that enableSubdomainAccess=true in import YAML
-// pre-configures the subdomain URL but does NOT activate routing.
-// An explicit zerops_subdomain action="enable" call is required after
-// deploy for the subdomain to respond with HTTP 200 instead of 502.
+// This test exercises the EXPLICIT recovery path: provision, deploy, then
+// call zerops_subdomain action="enable" to confirm idempotency + HTTP 200.
+// As of plans/subdomain-auto-enable-foundation-fix-2026-05-03.md (Phase 1),
+// zerops_deploy auto-enables the L7 subdomain on first deploy for eligible
+// modes — agents do NOT need to call zerops_subdomain manually in the happy
+// path. This test still calls it explicitly to verify the recovery primitive
+// (idempotent re-enable, URL retrieval, HTTP reachability). The companion
+// auto-enable test lives in subdomain_autoenable_test.go.
 //
 // Prerequisites:
 //   - ZCP_API_KEY set

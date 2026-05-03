@@ -193,10 +193,20 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
 - **Check-before-mutate for non-idempotent platform APIs** — read state via
   REST-authoritative endpoint, short-circuit when desired state holds.
   Canonical: `ops.Subdomain`. Spec: `spec-workflows.md §8 O3`.
-- **Subdomain L7 activation is the deploy handler's concern** — `zerops_deploy`
-  auto-enables subdomain on first deploy for eligible modes (dev, stage,
-  simple, standard, local-stage) and waits HTTP-ready. Agents/recipes never
-  call `zerops_subdomain action=enable` in happy path. Spec: `spec-workflows.md §4.8`.
+- **Subdomain L7 activation is the deploy handler's concern, with platform-as-classifier** —
+  `zerops_deploy` auto-enables subdomain on first deploy for eligible modes
+  (dev, stage, simple, standard, local-stage) and waits HTTP-ready. Predicate
+  is mode-allowlist + `IsSystem()` defensive guard (no DTO inspection — the
+  earlier `detail.SubdomainAccess`/`Ports[].HTTPSupport` checks read post-enable
+  state as if it were import-yaml intent and broke first-deploy auto-enable;
+  smoking gun in `internal/tools/deploy_subdomain.go` doc-comment). Platform
+  classifies via the Enable response — `serviceStackIsNotHttp` (worker, F8
+  deferred-start) is silently swallowed in `maybeAutoEnableSubdomain` only,
+  while `ops.Subdomain.Enable` keeps surfacing it for explicit-recovery
+  callers. Agents/recipes never call `zerops_subdomain action=enable` in
+  happy path. Pinned by `TestServiceEligible_*` and
+  `TestMaybeAutoEnable_ServiceStackIsNotHttp_BenignSkip`. Spec:
+  `spec-workflows.md §4.8` + invariant O3.
 - **Export-for-buildFromGit is a single-repo self-referential snapshot** —
   `zerops_workflow workflow="export"` walks a stateless three-call narrowing
   (scope-prompt → classify-prompt → publish-ready or validation-failed) per

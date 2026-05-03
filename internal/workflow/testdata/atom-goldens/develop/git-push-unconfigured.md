@@ -249,6 +249,10 @@ Run `zerops_verify` first. If any returned check has a `recovery` field,
 execute that recovery (`tool` + `action` + `args`) and re-run verify before
 any browser/HTTP probe.
 
+If you adopted or imported a service that you deliberately want to keep
+without a public subdomain (internal-only HTTP service), call
+`zerops_subdomain action="disable"` after the next deploy.
+
 | Service shape | Required check |
 |---|---|
 | Non-web: managed DB/cache/worker/no HTTP port | Run `zerops_verify serviceHostname="{targetHostname}"`. `status=healthy` is enough; nothing to browse. |
