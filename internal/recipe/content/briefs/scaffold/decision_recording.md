@@ -8,14 +8,47 @@ For every non-obvious decision, record a structured fact at densest
 context — the moment you make the change. Two subtypes cover the
 codebase scope:
 
+## FactRecord shape
+
+Two orthogonal taxonomies — `Kind` and `Classification` — go on
+every fact. Don't mix them.
+
+### Kind (the discriminator — 4 values, picks the validation path)
+
+| Kind | Required fields |
+|---|---|
+| `porter_change` | `topic`, `why`, `candidateClass`, `candidateSurface` |
+| `field_rationale` | `topic`, `fieldPath`, `why` |
+| `tier_decision` | `topic`, `tier` (0-5), `fieldPath`, `chosenValue` |
+| `contract` | `topic`, `publishers`, `subscribers`, `subject`, `purpose` |
+
+Unknown `kind` values reject. There is no `classification` field on
+`FactRecord` — the classification of a `porter_change` fact lives on
+the `candidateClass` slot (table below).
+
+### Classification (porter_change.candidateClass — 7 values)
+
+| Class | Surface routing |
+|---|---|
+| `platform-invariant` | record (CODEBASE_IG) |
+| `intersection` | record (CODEBASE_KB) |
+| `scaffold-decision` | record (CODEBASE_IG for config; CODEBASE_KB for code) |
+| `framework-quirk` | skip — no porter-facing surface |
+| `library-metadata` | skip — no porter-facing surface |
+| `operational` | skip — sibling claudemd-author owns CLAUDE.md |
+| `self-inflicted` | skip — discard |
+
+Record only when `candidateClass` is one of the three surface-bearing
+classes. Skip-classes have no landing point — recording them costs
+brief budget for content the synthesizer will discard.
+
 ## `porter_change` — code or library decisions a porter would have to make
 
 Record whenever you write code that's NOT framework-defaults: bind to
 0.0.0.0, install a specific library, configure CORS exposed-headers,
-mount a same-origin proxy, etc. Engine pre-emits Class B universal-
-for-role facts (bind-and-trust-proxy, sigterm-drain, worker-no-http);
-you fill agent-specific slots via `fill-fact-slot` after consulting
-`zerops_knowledge runtime=<svc-type>`.
+mount a same-origin proxy, etc. Consult `zerops_knowledge
+runtime=<svc-type>` before authoring the Why so the platform mechanism
+prose is grounded in the live atom, not paraphrased from memory.
 
 ```
 zerops_recipe action=record-fact slug=<slug>
@@ -64,10 +97,11 @@ yaml comment block.
 
 ## Filter rule — when NOT to record
 
-Skip if classification ∈ {`framework-quirk`, `library-metadata`,
-`self-inflicted`} — those have no compatible surface. Record only when
-classification ∈ {`platform-invariant`, `intersection`,
-`scaffold-decision (config|code)`}.
+See the Classification table above. The 4 skip-classes
+(`framework-quirk`, `library-metadata`, `operational`,
+`self-inflicted`) have no landing point. Record only when
+`candidateClass` ∈ {`platform-invariant`, `intersection`,
+`scaffold-decision`}.
 
 ## Examples (run-15 grounded)
 
@@ -215,17 +249,17 @@ zerops_recipe action=record-fact slug=<slug>
     phase: "scaffold",
     fieldPath: "run.envVariables",
     fieldValue: "<see zerops.yaml>",
-    why: "Zerops injects cross-service refs as ${db_hostname}, ${cache_port}, ${storage_apiUrl}, etc. Reading those directly couples the app to Zerops naming. Aliasing once at run.envVariables lets the runtime read its own names — DB_HOST, CACHE_PORT, S3_ENDPOINT — and a porter could swap the cluster's naming without code changes. This is recipe preference (porter can read ${db_hostname} directly), not platform-forced.",
-    classification: "scaffold-decision (config)"
+    why: "Zerops injects cross-service refs as ${db_hostname}, ${cache_port}, ${storage_apiUrl}, etc. Reading those directly couples the app to Zerops naming. Aliasing once at run.envVariables lets the runtime read its own names — DB_HOST, CACHE_PORT, S3_ENDPOINT — and a porter could swap the cluster's naming without code changes. This is recipe preference (porter can read ${db_hostname} directly), not platform-forced."
   }
 ```
 
-**Why this Why is good**: explicitly names the classification
-("scaffold-decision (config)") AND the reasoning ("recipe
-preference, not platform-forced"). The codebase-content sub-agent
-reads "recipe preference" and routes to zerops.yaml block comment
-(Surface 7), not IG (Surface 4). The misroute that bit run-16 (R-17-C3)
-gets prevented at recording time.
+**Why this Why is good**: the prose itself names the routing signal
+("recipe preference, not platform-forced") so the codebase-content
+sub-agent reads it and routes to zerops.yaml block comment
+(Surface 7), not IG (Surface 4). `field_rationale` carries no
+`candidateClass` slot — the routing teaching lives in the Why prose.
+The misroute that bit run-16 (R-17-C3) gets prevented at recording
+time by the "recipe preference" anchor in Why.
 
 ### Worked example 4 — per-managed-service connect (Class C per-service)
 

@@ -180,7 +180,7 @@ func BuildCodebaseContentBrief(plan *Plan, cb Codebase, parent *ParentRecipe, fa
 	} else if parent != nil && parent.Slug != "" && parent.SourceRoot != "" {
 		fmt.Fprintf(&b, "Before authoring any fragment, Read `%s/...` — parent recipe (`%s`) published surfaces. Cross-reference instead of re-author when the parent already covers a topic.\n", parent.SourceRoot, parent.Slug)
 	}
-	b.WriteString("\nFor every engine-pre-seeded fact with empty Why, call `zerops_knowledge runtime=<svc-type>` first, then fill Why + Heading via `fill-fact-slot` grounded in the atom — do NOT paraphrase from memory.\n\n")
+	b.WriteString("\nFor any platform mechanism your synthesis touches, call `zerops_knowledge runtime=<svc-type>` first and ground the prose in the atom — do NOT paraphrase from memory.\n\n")
 	parts = append(parts, "pointer-block")
 
 	// Sibling sub-agent note — codebase-content does NOT author CLAUDE.md.

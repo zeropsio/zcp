@@ -23,15 +23,16 @@ func TestBuildCodebaseContentBrief_EmbedsClassificationTable(t *testing.T) {
 	if !strings.Contains(brief.Body, "Classification × surface compatibility") {
 		t.Error("brief missing classification × surface compatibility section header")
 	}
-	// All eight classification rows from spec §349-362 must be present.
+	// Run-21 fix P0-2: all seven Classification enum values from
+	// `internal/recipe/classify.go` must be named. The parenthesized
+	// `(config|code|recipe-internal)` variants of `scaffold-decision`
+	// don't exist as enum values; agents reading them invented kinds.
 	for _, want := range []string{
 		"platform-invariant",
 		"intersection",
 		"framework-quirk",
 		"library-metadata",
-		"scaffold-decision (config)",
-		"scaffold-decision (code)",
-		"scaffold-decision (recipe-internal)",
+		"scaffold-decision",
 		"operational",
 		"self-inflicted",
 	} {

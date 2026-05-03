@@ -15,10 +15,12 @@ you do NOT author content.
 
 ## When to record
 
-Same filter rule: classification ∈ {`platform-invariant`,
-`intersection`, `scaffold-decision (config|code)`} → record. Other
-classes → discard (framework-quirk / library-metadata / self-inflicted)
-or anchor at code site (operational facts not surfaceable).
+Same filter rule as scaffold: `candidateClass` ∈ {`platform-invariant`,
+`intersection`, `scaffold-decision`} → record. Other classes
+(`framework-quirk`, `library-metadata`, `operational`,
+`self-inflicted`) → skip; no porter-facing surface. See the
+Classification table in `scaffold/decision_recording.md` for
+per-class surface routing.
 
 ## When in doubt
 

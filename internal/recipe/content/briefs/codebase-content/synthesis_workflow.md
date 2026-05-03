@@ -91,10 +91,9 @@ The engine refuses incompatible (classification, fragmentId) pairs at
 |---|---|---|
 | platform-invariant | KB, IG (if porter applies a diff) | CLAUDE.md (→ KB), zerops.yaml comments (→ IG/KB) |
 | intersection | KB | All others |
-| framework-quirk / library-metadata | none | All — content does not belong on any published surface |
-| scaffold-decision (config) | zerops.yaml comments, IG (if porter copies the config) | KB, CLAUDE.md |
-| scaffold-decision (code) | IG (with diff) | KB, CLAUDE.md |
-| scaffold-decision (recipe-internal) | none | All — discard or move principle to IG |
+| scaffold-decision | zerops.yaml comments + IG when the porter copies the config; IG-with-diff when the porter copies code | KB, CLAUDE.md |
+| framework-quirk | none | All — content does not belong on any published surface |
+| library-metadata | none | All — content does not belong on any published surface |
 | operational | CLAUDE.md (NOT YOUR SURFACE — sibling authors) | All others |
 | self-inflicted | none | All — discard |
 
