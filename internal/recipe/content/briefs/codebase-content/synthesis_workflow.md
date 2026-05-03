@@ -21,23 +21,19 @@ is authored by a sibling claudemd-author sub-agent — do NOT touch.
 
    ```yaml
    build:
-     # Multi-base: PHP for Composer, Node for Vite. Both runtimes
-     # are on PATH during the build — no manual install needed.
+     # Multi-base: PHP for Composer, Node for Vite. Both runtimes on
+     # PATH during build — no manual install needed.
      base: [php@8.4, nodejs@22]
      buildCommands:
        # Production install — no dev packages, classmap optimized.
        - composer install --no-dev --optimize-autoloader
-       # Vite compiles Tailwind + JS into content-hashed bundles
-       # in public/build/ — all the runtime needs from Node.
+       # Vite compiles Tailwind + JS into content-hashed bundles in
+       # public/build/.
        - npm install
        - npm run build
-     deployFiles:
-       # Explicit list — deploying ./ would ship node_modules and
-       # other build-only artifacts the runtime doesn't need.
-       - app
-       - public
-       - vendor
-     # Cache deps so re-runs skip network.
+     # Explicit deployFiles — `./` would ship node_modules + build-only
+     # artifacts the runtime doesn't need.
+     deployFiles: [app, public, vendor]
      cache: [vendor, node_modules]
    ```
 
@@ -46,15 +42,14 @@ is authored by a sibling claudemd-author sub-agent — do NOT touch.
 
    ```yaml
    envVariables:
-     # Laravel checks the 'Host' header against this value. Feel
-     # free to change to your own custom domain after setting up
-     # the domain access.
+     # Laravel checks the 'Host' header against this value. Change
+     # to your own custom domain after setting up domain access.
      APP_URL: ${zeropsSubdomain}
-     # Zerops' S3-like storage uses path-style endpoints; required
-     # by most AWS S3 libraries.
+     # Zerops' S3-like storage uses path-style endpoints — most AWS
+     # S3 libraries require this.
      AWS_USE_PATH_STYLE_ENDPOINT: true
-     # Use real SMTP in production. Default expects 'mailpit'
-     # deployed alongside; port 25 is restricted.
+     # Real SMTP in production. Default expects 'mailpit' alongside;
+     # port 25 is restricted.
      MAIL_HOST: mailpit
      MAIL_MAILER: smtp
    ```
