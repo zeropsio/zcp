@@ -303,6 +303,7 @@ func (e *Engine) BootstrapDiscover(projectID, intent string, existing []platform
 		return nil, fmt.Errorf("bootstrap discover: %w", err)
 	}
 	return &BootstrapDiscoveryResponse{
+		Kind:         BootstrapKindRouteMenu,
 		Intent:       intent,
 		ProjectID:    projectID,
 		RouteOptions: options,
@@ -413,12 +414,16 @@ func (e *Engine) resolveRecipeMatch(slug string) (*RecipeMatch, error) {
 
 // buildDiscoveryMessage is the human-readable summary included in the
 // discovery response. Enumerates options inline so a client without atom
-// rendering still gets an intelligible payload.
+// rendering still gets an intelligible payload. Leads with the two-call
+// pattern (kind="route-menu" now → re-call start with route to get
+// kind="session-active") because eval retros showed agents misreading the
+// first response as a successful start when no SessionID came back.
 func buildDiscoveryMessage(options []BootstrapRouteOption) string {
 	var sb strings.Builder
-	sb.WriteString("Bootstrap route discovery — pick one by calling ")
+	sb.WriteString(`This is the route-menu phase (kind="route-menu") — NO session is open yet. Pick one option and call `)
 	sb.WriteString(`zerops_workflow action="start" workflow="bootstrap" route="<route>"`)
-	sb.WriteString(" (recipe requires `recipeSlug`; resume requires existing session via `action=\"resume\"`).\n\nOptions:\n")
+	sb.WriteString(" again to commit the route and open the session (kind=\"session-active\"). ")
+	sb.WriteString("Recipe requires `recipeSlug`; resume requires existing session via `action=\"resume\"`.\n\nOptions:\n")
 	for i, opt := range options {
 		fmt.Fprintf(&sb, "  %d. route=%q", i+1, string(opt.Route))
 		if opt.RecipeSlug != "" {

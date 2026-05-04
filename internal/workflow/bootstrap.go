@@ -50,22 +50,47 @@ type BootstrapState struct {
 // so a fresh route doesn't clash with stale records. Empty/omitted when the
 // commit found no orphans (the typical case).
 type BootstrapResponse struct {
-	SessionID            string             `json:"sessionId"`
-	Intent               string             `json:"intent"`
-	Progress             BootstrapProgress  `json:"progress"`
-	Current              *BootstrapStepInfo `json:"current,omitempty"`
-	Message              string             `json:"message"`
-	AvailableStacks      string             `json:"availableStacks,omitempty"`
-	CheckResult          *StepCheckResult   `json:"checkResult,omitempty"`
-	AutoMounts           []AutoMountInfo    `json:"autoMounts,omitempty"`
-	CleanedUpOrphanMetas []string           `json:"cleanedUpOrphanMetas,omitempty"`
+	Kind                 BootstrapResponseKind `json:"kind"`
+	SessionID            string                `json:"sessionId"`
+	Intent               string                `json:"intent"`
+	Progress             BootstrapProgress     `json:"progress"`
+	Current              *BootstrapStepInfo    `json:"current,omitempty"`
+	Message              string                `json:"message"`
+	AvailableStacks      string                `json:"availableStacks,omitempty"`
+	CheckResult          *StepCheckResult      `json:"checkResult,omitempty"`
+	AutoMounts           []AutoMountInfo       `json:"autoMounts,omitempty"`
+	CleanedUpOrphanMetas []string              `json:"cleanedUpOrphanMetas,omitempty"`
 }
+
+// BootstrapResponseKind discriminates the two distinct bootstrap-start
+// response shapes so agents can pattern-match on Kind instead of inferring
+// from field presence (eval friction: 5+ scenarios across runs flagged
+// "first call returns options + message, I almost moved on thinking start
+// succeeded; only second call gives the session"). Self-describing
+// envelope shape replaces structural-induction reading.
+type BootstrapResponseKind string
+
+const (
+	// BootstrapKindRouteMenu is returned by the first `zerops_workflow
+	// action=start workflow=bootstrap` call when no `route` argument is
+	// supplied. The response is a ranked list of route options
+	// (classic / adopt / recipe) — NO session is open yet, no SessionID
+	// is assigned. The agent picks one and re-calls `start` with
+	// `route=<chosen>` to commit.
+	BootstrapKindRouteMenu BootstrapResponseKind = "route-menu"
+	// BootstrapKindSessionActive is returned by every bootstrap-start /
+	// complete / status response that operates on a live session. SessionID
+	// is populated; Current names the in-flight step. Agent acts on the
+	// step's detailedGuide and continues with `complete step=<name>`.
+	BootstrapKindSessionActive BootstrapResponseKind = "session-active"
+)
 
 // BootstrapDiscoveryResponse is returned from BootstrapDiscover. Discovery
 // does not create a session — it inspects project state and returns a ranked
 // list of route options for the LLM to pick from. The session is only
 // committed when the LLM follows up with an explicit `route` parameter.
 type BootstrapDiscoveryResponse struct {
+	Kind         BootstrapResponseKind  `json:"kind"`
 	Intent       string                 `json:"intent,omitempty"`
 	ProjectID    string                 `json:"projectId"`
 	RouteOptions []BootstrapRouteOption `json:"routeOptions"`
@@ -224,6 +249,7 @@ func (b *BootstrapState) BuildResponse(sessionID, intent string, iteration int, 
 	}
 
 	resp := &BootstrapResponse{
+		Kind:      BootstrapKindSessionActive,
 		SessionID: sessionID,
 		Intent:    intent,
 		Progress: BootstrapProgress{
