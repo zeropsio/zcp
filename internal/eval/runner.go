@@ -29,11 +29,12 @@ type RunnerConfig struct {
 
 // Runner executes single recipe evaluations.
 type Runner struct {
-	config    RunnerConfig
-	store     *knowledge.Store
-	client    platform.Client
-	projectID string
-	httpDoer  ops.HTTPDoer
+	config          RunnerConfig
+	store           *knowledge.Store
+	client          platform.Client
+	projectID       string
+	httpDoer        ops.HTTPDoer
+	userSimOverride UserSimRunner
 }
 
 // NewRunner creates a new eval runner.

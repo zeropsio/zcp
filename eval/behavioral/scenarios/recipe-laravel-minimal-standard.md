@@ -11,6 +11,15 @@ tags: [bootstrap, recipe-route, standard-pair, implicit-webserver, php, laravel,
 area: bootstrap
 retrospective:
   promptStyle: briefing-future-agent
+userPersona: |
+  You are a developer setting up a Laravel app on Zerops with a dev
+  environment plus a staging slot. Compatible catalog substitutions
+  (MariaDB for MySQL, Valkey or KeyDB for Redis) are fine — accept them
+  and ask the agent to mention what was substituted in the final summary.
+  You don't know the Zerops catalog internals; trust the agent's
+  recommendation when it has a clear reason. Push back only if the agent
+  suggests something outside your stated goal (e.g. proposing HA tier
+  when you didn't ask for it, or skipping the staging slot you asked for).
 notableFriction:
   - id: recipe-vs-classic-pick
     description: |

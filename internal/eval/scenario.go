@@ -40,6 +40,29 @@ type Scenario struct {
 	Area            string
 	NotableFriction []NotableFrictionEntry
 	Retrospective   *RetrospectiveConfig
+
+	// User-sim fields (optional). UserPersona is a free-form prose block
+	// describing the simulated user the runner spawns to answer agent
+	// clarifying questions. Empty → default persona ("developer who initiated
+	// the task"). UserSim configures the simulator transport (model override,
+	// per-stage iteration cap, wall-time budget). Both default-safe.
+	UserPersona string
+	UserSim     *UserSimConfig
+}
+
+// UserSimConfig configures the user-sim simulator transport. All fields
+// optional; runner applies sensible defaults when nil/zero. Per
+// plans/flow-eval-usersim-2026-05-04.md.
+type UserSimConfig struct {
+	// Model overrides the default Haiku 4.5 user-sim model. Use the canonical
+	// `claude-<family>-<version>` id; falls back to default when empty.
+	Model string `yaml:"model"`
+	// MaxTurns caps user-sim invocations per stage. 0 → runner default (10).
+	MaxTurns int `yaml:"maxTurns"`
+	// StageTimeoutSeconds caps wall-time per stage including agent + user-sim
+	// turns. 0 → runner default (900s = 15min). Whole-number seconds for
+	// frontmatter readability; runner converts to time.Duration.
+	StageTimeoutSeconds int `yaml:"stageTimeoutSeconds"`
 }
 
 // RetrospectiveConfig points at a retrospective prompt embedded in the binary
@@ -83,6 +106,8 @@ type scenarioFrontmatter struct {
 	Area            string                 `yaml:"area"`
 	NotableFriction []NotableFrictionEntry `yaml:"notableFriction"`
 	Retrospective   *RetrospectiveConfig   `yaml:"retrospective"`
+	UserPersona     string                 `yaml:"userPersona"`
+	UserSim         *UserSimConfig         `yaml:"userSim"`
 }
 
 // ParseScenario reads a scenario markdown file and returns the parsed structure.
@@ -118,6 +143,8 @@ func ParseScenario(path string) (*Scenario, error) {
 		Area:            fm.Area,
 		NotableFriction: fm.NotableFriction,
 		Retrospective:   fm.Retrospective,
+		UserPersona:     strings.TrimSpace(fm.UserPersona),
+		UserSim:         fm.UserSim,
 	}
 
 	if err := sc.validate(); err != nil {
@@ -144,6 +171,14 @@ func (s *Scenario) validate() error {
 	}
 	if s.Retrospective != nil && s.Retrospective.PromptStyle == "" {
 		return fmt.Errorf("retrospective.promptStyle required when retrospective is set")
+	}
+	if s.UserSim != nil {
+		if s.UserSim.MaxTurns < 0 {
+			return fmt.Errorf("userSim.maxTurns must be >= 0 (got %d)", s.UserSim.MaxTurns)
+		}
+		if s.UserSim.StageTimeoutSeconds < 0 {
+			return fmt.Errorf("userSim.stageTimeoutSeconds must be >= 0 (got %d)", s.UserSim.StageTimeoutSeconds)
+		}
 	}
 	return nil
 }

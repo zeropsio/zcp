@@ -35,7 +35,11 @@ type BehavioralResult struct {
 	TranscriptFile        string    `json:"transcriptFile"`
 	RetrospectiveFile     string    `json:"retrospectiveFile"`
 	SelfReviewFile        string    `json:"selfReviewFile"`
-	Error                 string    `json:"error,omitempty"`
+	// UserSim captures the user-sim loop trace when the scenario triggered
+	// at least one classify cycle. Nil when the agent terminated cleanly
+	// before any classifier check (rare — the loop runs unconditionally).
+	UserSim *UserSimResult `json:"userSim,omitempty"`
+	Error   string         `json:"error,omitempty"`
 }
 
 // RunBehavioralScenario executes a behavioral scenario (two-shot resume).
@@ -139,6 +143,23 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	}
 	result.SessionID = sessionID
 
+	// User-sim loop — drive multi-turn realistic conversation while the agent
+	// is awaiting input. Cumulative resumes append to the same transcriptFile
+	// so the classifier sees accumulated state. Stage timeout overrides the
+	// scenario context's remaining budget when scenario.UserSim sets a tighter
+	// cap. Errors here are non-fatal: we still want the retrospective to fire
+	// and capture whatever the agent / user-sim produced.
+	loopTimeout := defaultUserSimStageTimeout
+	if sc.UserSim != nil && sc.UserSim.StageTimeoutSeconds > 0 {
+		loopTimeout = time.Duration(sc.UserSim.StageTimeoutSeconds) * time.Second
+	}
+	loopCtx, cancelLoop := context.WithTimeout(ctx, loopTimeout)
+	simRunner := r.userSimRunner(sc)
+	if loopErr := runUserSimLoop(loopCtx, sc, sessionID, transcriptFile, simRunner, r.spawnClaudeResumeAppend, ClassifyTranscriptTail, result); loopErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: user-sim loop: %v\n", loopErr)
+	}
+	cancelLoop()
+
 	retroFile := filepath.Join(outDir, "retrospective.jsonl")
 	result.RetrospectiveFile = retroFile
 
@@ -180,6 +201,30 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	return result, nil
 }
 
+// userSimRunner returns the UserSimRunner the loop should call for the given
+// scenario. Production path: claudeUserSimRunner with the scenario-specified
+// model (or default Haiku). Tests can override via WithUserSimRunner to
+// inject a stub. Override is sticky — once set on the Runner it applies to
+// every scenario in the suite.
+func (r *Runner) userSimRunner(sc *Scenario) UserSimRunner {
+	if r.userSimOverride != nil {
+		return r.userSimOverride
+	}
+	model := defaultUserSimModel
+	if sc.UserSim != nil && sc.UserSim.Model != "" {
+		model = sc.UserSim.Model
+	}
+	return NewClaudeUserSimRunner(model)
+}
+
+// WithUserSimRunner replaces the user-sim spawn path with sim. Tests use this
+// to drive the loop with canned replies; production callers leave it alone.
+// Returns the receiver for chaining.
+func (r *Runner) WithUserSimRunner(sim UserSimRunner) *Runner {
+	r.userSimOverride = sim
+	return r
+}
+
 // spawnClaudeFresh is spawnClaude minus --no-session-persistence so the
 // session is captured by Claude Code's persistence layer for later --resume.
 func (r *Runner) spawnClaudeFresh(ctx context.Context, prompt, logFile string) error {
@@ -194,12 +239,14 @@ func (r *Runner) spawnClaudeFresh(ctx context.Context, prompt, logFile string) e
 	if r.config.MCPConfig != "" {
 		args = append(args, "--mcp-config", r.config.MCPConfig)
 	}
-	return r.execClaude(ctx, args, logFile)
+	return r.execClaude(ctx, args, logFile, false)
 }
 
 // spawnClaudeResume runs `claude --resume <sessionID> -p <retroPrompt>` with a
 // short max-turns cap (3). Output is streamed into logFile alongside the
 // scenario transcript so the operator can see the entire two-shot exchange.
+// The retrospective uses its own logFile so we can extract self-review.md
+// independently — separate from the transcript that captured the agent's run.
 func (r *Runner) spawnClaudeResume(ctx context.Context, sessionID, retroPrompt, logFile string) error {
 	args := []string{
 		"--resume", sessionID,
@@ -212,19 +259,48 @@ func (r *Runner) spawnClaudeResume(ctx context.Context, sessionID, retroPrompt, 
 	if r.config.MCPConfig != "" {
 		args = append(args, "--mcp-config", r.config.MCPConfig)
 	}
-	return r.execClaude(ctx, args, logFile)
+	return r.execClaude(ctx, args, logFile, false)
 }
 
-// execClaude is the shared exec path for spawn variants. Output goes to logFile
-// (creates fresh file). cwd respects RunnerConfig.WorkDir.
-func (r *Runner) execClaude(ctx context.Context, args []string, logFile string) error {
+// spawnClaudeResumeAppend resumes the agent session with userMsg and APPENDS
+// the resulting events to transcriptFile. Used by the user-sim loop so the
+// classifier sees cumulative state across multiple resumes. Higher max-turns
+// cap than the retrospective resume because user-sim turns can drive
+// substantial follow-up work (deploy, verify, etc.). Mirrors spawnClaudeFresh
+// argument set otherwise.
+func (r *Runner) spawnClaudeResumeAppend(ctx context.Context, sessionID, userMsg, transcriptFile string) error {
+	args := []string{
+		"--resume", sessionID,
+		"-p", userMsg,
+		"--output-format", "stream-json",
+		"--verbose",
+		"--dangerously-skip-permissions",
+		"--model", r.config.Model,
+		"--max-turns", fmt.Sprintf("%d", r.config.MaxTurns),
+	}
+	if r.config.MCPConfig != "" {
+		args = append(args, "--mcp-config", r.config.MCPConfig)
+	}
+	return r.execClaude(ctx, args, transcriptFile, true)
+}
+
+// execClaude is the shared exec path for spawn variants. Output goes to logFile;
+// when appendMode is true the file is opened O_APPEND so multi-call resumes
+// accumulate in one transcript. cwd respects RunnerConfig.WorkDir.
+func (r *Runner) execClaude(ctx context.Context, args []string, logFile string, appendMode bool) error {
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	if r.config.WorkDir != "" {
 		cmd.Dir = r.config.WorkDir
 	}
-	out, err := os.Create(logFile)
+	var out *os.File
+	var err error
+	if appendMode {
+		out, err = os.OpenFile(logFile, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o600)
+	} else {
+		out, err = os.Create(logFile)
+	}
 	if err != nil {
-		return fmt.Errorf("create log file: %w", err)
+		return fmt.Errorf("open log file: %w", err)
 	}
 	defer out.Close()
 	cmd.Stdout = out
@@ -243,7 +319,11 @@ func (r *Runner) execClaude(ctx context.Context, args []string, logFile string) 
 const (
 	eventTypeSystem    = "system"
 	eventTypeAssistant = "assistant"
+	eventTypeUser      = "user"
+	eventTypeResult    = "result"
 	contentTypeText    = "text"
+	contentTypeToolUse = "tool_use"
+	contentTypeToolRes = "tool_result"
 )
 
 // extractSessionID scans a stream-json log for the first system-init event and

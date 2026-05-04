@@ -1,0 +1,2 @@
+{"type":"system","subtype":"init","cwd":"/var/www","session_id":"test-working","model":"claude-opus-4-6"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_w1","name":"mcp__zerops__zerops_discover","input":{}}],"stop_reason":null}}

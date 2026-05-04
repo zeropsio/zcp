@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","cwd":"/var/www","session_id":"test-err-maxturns","model":"claude-opus-4-6"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_x1","name":"mcp__zerops__zerops_workflow","input":{"action":"start","route":"classic"}}],"stop_reason":null}}
+{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_x1","type":"tool_result","content":[{"type":"text","text":"{\"error\":\"INVALID_PARAMETER\"}"}]}]}}
+{"type":"result","subtype":"error_max_turns","is_error":true,"num_turns":80,"result":"","stop_reason":"max_turns","session_id":"test-err-maxturns"}

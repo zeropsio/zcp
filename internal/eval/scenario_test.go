@@ -144,6 +144,75 @@ func TestParseScenario_FollowUp_Parsed(t *testing.T) {
 	}
 }
 
+// TestParseScenario_UserPersonaAndSim covers the user-sim schema fields:
+// userPersona is a free-form string the user-sim simulator runs against, and
+// userSim is an optional config block (model override, max iterations, stage
+// timeout). Absence of these fields must remain valid — most scenarios run
+// with the default persona.
+func TestParseScenario_UserPersonaAndSim(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	scPath := filepath.Join(dir, "scenario.md")
+	content := `---
+id: persona-test
+description: persona + user-sim config
+seed: empty
+userPersona: |
+  You are a developer who knows Python but not Zerops.
+  Compatible substitutions are fine; mention them in the summary.
+userSim:
+  model: claude-haiku-4-5-20251001
+  maxTurns: 6
+  stageTimeoutSeconds: 900
+expect:
+  mustCallTools:
+    - zerops_workflow
+---
+
+Set up a Python service.
+`
+	if err := os.WriteFile(scPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("write scenario: %v", err)
+	}
+	sc, err := ParseScenario(scPath)
+	if err != nil {
+		t.Fatalf("ParseScenario: %v", err)
+	}
+	if !strings.Contains(sc.UserPersona, "Compatible substitutions") {
+		t.Errorf("UserPersona: missing expected substring, got %q", sc.UserPersona)
+	}
+	if sc.UserSim == nil {
+		t.Fatal("UserSim: nil, want config block populated")
+	}
+	if sc.UserSim.Model != "claude-haiku-4-5-20251001" {
+		t.Errorf("UserSim.Model: got %q", sc.UserSim.Model)
+	}
+	if sc.UserSim.MaxTurns != 6 {
+		t.Errorf("UserSim.MaxTurns: got %d, want 6", sc.UserSim.MaxTurns)
+	}
+	if sc.UserSim.StageTimeoutSeconds != 900 {
+		t.Errorf("UserSim.StageTimeoutSeconds: got %d, want 900", sc.UserSim.StageTimeoutSeconds)
+	}
+}
+
+// TestParseScenario_NoUserSim_DefaultsAllowed asserts that a scenario without
+// userPersona / userSim still parses cleanly — the runner falls back to the
+// default persona and built-in caps.
+func TestParseScenario_NoUserSim_DefaultsAllowed(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join("testdata", "scenarios", "empty_seed.md")
+	sc, err := ParseScenario(path)
+	if err != nil {
+		t.Fatalf("ParseScenario: %v", err)
+	}
+	if sc.UserPersona != "" {
+		t.Errorf("UserPersona: want empty for default fallback, got %q", sc.UserPersona)
+	}
+	if sc.UserSim != nil {
+		t.Errorf("UserSim: want nil for default fallback, got %+v", sc.UserSim)
+	}
+}
+
 // TestParseScenario_PreseedScript covers the state-detection scenarios that
 // need local state pre-populated after init wipes the workdir. The frontmatter
 // field resolves relative to the scenario file so authors don't have to
