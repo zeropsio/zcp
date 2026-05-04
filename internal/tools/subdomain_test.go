@@ -13,6 +13,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // stubHTTPAlwaysOK is a minimal ops.HTTPDoer that returns 200 for every
@@ -48,7 +50,7 @@ func TestSubdomainTool_EnableReturnsUrls(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, okHTTP, "proj-1")
+	RegisterSubdomain(srv, mock, okHTTP, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_subdomain", map[string]any{
 		"serviceHostname": "app", "action": "enable",
@@ -95,7 +97,7 @@ func TestSubdomainTool_EnableReturnsUrls_BarePrefix(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, okHTTP, "proj-1")
+	RegisterSubdomain(srv, mock, okHTTP, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_subdomain", map[string]any{
 		"serviceHostname": "app", "action": "enable",
@@ -128,7 +130,7 @@ func TestSubdomainTool_Enable_PollsProcess(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, okHTTP, "proj-1")
+	RegisterSubdomain(srv, mock, okHTTP, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_subdomain", map[string]any{
 		"serviceHostname": "api", "action": "enable",
@@ -163,7 +165,7 @@ func TestSubdomainTool_Disable_PollsProcess(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, okHTTP, "proj-1")
+	RegisterSubdomain(srv, mock, okHTTP, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_subdomain", map[string]any{
 		"serviceHostname": "api", "action": "disable",
@@ -191,7 +193,7 @@ func TestSubdomainTool_InvalidAction(t *testing.T) {
 		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, okHTTP, "proj-1")
+	RegisterSubdomain(srv, mock, okHTTP, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_subdomain", map[string]any{
 		"serviceHostname": "api", "action": "toggle",
@@ -208,7 +210,7 @@ func TestSubdomainTool_EmptyHostname(t *testing.T) {
 		WithServices([]platform.ServiceStack{})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, okHTTP, "proj-1")
+	RegisterSubdomain(srv, mock, okHTTP, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_subdomain", map[string]any{
 		"serviceHostname": "", "action": "enable",
@@ -240,7 +242,7 @@ func TestSubdomainTool_Enable_FailedProcess_TreatedAsAlreadyEnabled(t *testing.T
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, okHTTP, "proj-1")
+	RegisterSubdomain(srv, mock, okHTTP, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_subdomain", map[string]any{
 		"serviceHostname": "app", "action": "enable",
@@ -298,7 +300,7 @@ func TestSubdomainTool_Enable_FailedWithFailReason_PreservedInWarnings(t *testin
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, okHTTP, "proj-1")
+	RegisterSubdomain(srv, mock, okHTTP, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_subdomain", map[string]any{
 		"serviceHostname": "app", "action": "enable",
@@ -352,7 +354,7 @@ func TestSubdomainTool_Enable_PollFailure_SurfacedAsWarning(t *testing.T) {
 		})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, okHTTP, "proj-1")
+	RegisterSubdomain(srv, mock, okHTTP, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_subdomain", map[string]any{
 		"serviceHostname": "app", "action": "enable",
@@ -425,7 +427,7 @@ func TestSubdomainTool_Enable_WaitsForHTTPReady(t *testing.T) {
 	stub := &sequencingHTTPFor500{remaining5xx: 2}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, stub, "proj-1")
+	RegisterSubdomain(srv, mock, stub, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_subdomain", map[string]any{
 		"serviceHostname": "app", "action": "enable",
@@ -477,7 +479,7 @@ func TestSubdomainTool_Enable_HTTPReadyTimeout_WarningNotFatal(t *testing.T) {
 	stub := &sequencingHTTPFor500{remaining5xx: 999}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, stub, "proj-1")
+	RegisterSubdomain(srv, mock, stub, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_subdomain", map[string]any{
 		"serviceHostname": "app", "action": "enable",
@@ -508,7 +510,7 @@ func TestSubdomainTool_EmptyAction(t *testing.T) {
 		WithServices([]platform.ServiceStack{})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterSubdomain(srv, mock, okHTTP, "proj-1")
+	RegisterSubdomain(srv, mock, okHTTP, "proj-1", "")
 
 	result := callTool(t, srv, "zerops_subdomain", map[string]any{
 		"serviceHostname": "api", "action": "",
@@ -516,5 +518,142 @@ func TestSubdomainTool_EmptyAction(t *testing.T) {
 
 	if !result.IsError {
 		t.Error("expected IsError for empty action")
+	}
+}
+
+// TestSubdomainTool_Enable_DeferredStart_SkipsProbe pins the explicit-enable
+// counterpart of the deferred-start probe-skip rule (see
+// deploy_subdomain_test.go for the auto-enable path). When ServiceMeta is
+// present and the runtime is dev-mode dynamic, the L7 probe is silenced
+// because 502 is the expected steady state until zerops_dev_server runs.
+//
+// Stub HTTP always returns 502 — if the probe ran we'd see a "not HTTP-ready"
+// warning. Skipped probe means no warning AND no Do() calls.
+func TestSubdomainTool_Enable_DeferredStart_SkipsProbe(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname:         "app",
+		Mode:             topology.PlanModeDev,
+		BootstrapSession: "sess1",
+		BootstrappedAt:   "2026-04-22",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app",
+				Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}},
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{
+					ServiceStackTypeVersionName: "nodejs@22",
+				}},
+		}).
+		WithService(&platform.ServiceStack{
+			ID: "svc-1", Name: "app",
+			Ports: []platform.Port{{Port: 3000, Protocol: "tcp"}},
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{
+				ServiceStackTypeVersionName: "nodejs@22",
+			},
+		}).
+		WithProject(&platform.Project{
+			ID: "proj-1", Name: "myproject", Status: statusActive,
+			SubdomainHost: "abc1.prg1.zerops.app",
+		}).
+		WithProcess(&platform.Process{
+			ID:     "proc-subdomain-enable-svc-1",
+			Status: statusFinished,
+		})
+
+	stub := &sequencingHTTPFor500{remaining5xx: 999}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterSubdomain(srv, mock, stub, "proj-1", dir)
+
+	result := callTool(t, srv, "zerops_subdomain", map[string]any{
+		"serviceHostname": "app", "action": "enable",
+	})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	}
+
+	var sr ops.SubdomainResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &sr); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	for _, w := range sr.Warnings {
+		if strings.Contains(w, "not HTTP-ready") {
+			t.Errorf("deferred-start dev-mode dynamic must NOT emit not-HTTP-ready warning; got %q", w)
+		}
+	}
+}
+
+// TestSubdomainTool_Enable_DeferredStart_StaticStillProbes pins the negative:
+// dev-mode + static runtime (nginx) auto-serves; 502 there IS a real problem.
+// Probe must run, warning fires on persistent 502.
+func TestSubdomainTool_Enable_DeferredStart_StaticStillProbes(t *testing.T) {
+	// t.Parallel omitted — OverrideHTTPReadyConfigForTest mutates package state.
+	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 10*time.Millisecond)
+	defer restore()
+
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname:         "app",
+		Mode:             topology.PlanModeDev,
+		BootstrapSession: "sess1",
+		BootstrappedAt:   "2026-04-22",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "app",
+				Ports: []platform.Port{{Port: 80, Protocol: "tcp"}},
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{
+					ServiceStackTypeVersionName: "nginx@1.22",
+				}},
+		}).
+		WithService(&platform.ServiceStack{
+			ID: "svc-1", Name: "app",
+			Ports: []platform.Port{{Port: 80, Protocol: "tcp"}},
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{
+				ServiceStackTypeVersionName: "nginx@1.22",
+			},
+		}).
+		WithProject(&platform.Project{
+			ID: "proj-1", Name: "myproject", Status: statusActive,
+			SubdomainHost: "abc1.prg1.zerops.app",
+		}).
+		WithProcess(&platform.Process{
+			ID:     "proc-subdomain-enable-svc-1",
+			Status: statusFinished,
+		})
+
+	stub := &sequencingHTTPFor500{remaining5xx: 999}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterSubdomain(srv, mock, stub, "proj-1", dir)
+
+	result := callTool(t, srv, "zerops_subdomain", map[string]any{
+		"serviceHostname": "app", "action": "enable",
+	})
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	}
+
+	var sr ops.SubdomainResult
+	if err := json.Unmarshal([]byte(getTextContent(t, result)), &sr); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	found := false
+	for _, w := range sr.Warnings {
+		if strings.Contains(w, "not HTTP-ready") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("static runtime in dev mode must still probe and warn on persistent 502; got %v", sr.Warnings)
 	}
 }

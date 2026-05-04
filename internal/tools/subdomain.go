@@ -7,6 +7,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 const actionEnable = "enable"
@@ -22,7 +24,15 @@ type SubdomainInput struct {
 // FINISHED does not guarantee the L7 balancer is serving traffic (propagation
 // measured at 440ms–1.3s after Process completion). Tests inject a stub
 // HTTPDoer to bypass the wait without real network I/O.
-func RegisterSubdomain(srv *mcp.Server, client platform.Client, httpClient ops.HTTPDoer, projectID string) {
+//
+// stateDir is the per-pid Work Session directory for ServiceMeta lookup. The
+// looked-up meta supplies Mode, which combines with the service's runtime
+// class to gate the L7-readiness probe — deferred-start runtimes (dev-mode
+// dynamic with `zsc noop --silent`) skip the probe, since 502 is the
+// expected steady state until `zerops_dev_server action=start` runs.
+// Empty stateDir (no Work Session, recipe-authoring scaffold path) leaves
+// meta nil and the probe runs unconditionally.
+func RegisterSubdomain(srv *mcp.Server, client platform.Client, httpClient ops.HTTPDoer, projectID, stateDir string) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name:        "zerops_subdomain",
 		Description: "Enable or disable zerops.app subdomain. Idempotent. The L7 route is enabled by zerops_deploy on first deploy for eligible modes (dev / stage / simple / standard / local-stage); this tool is for explicit recovery, production opt-in, or disable operations. Check zerops_discover for current status and URL.",
@@ -73,7 +83,13 @@ func RegisterSubdomain(srv *mcp.Server, client platform.Client, httpClient ops.H
 		// Wait for each SubdomainUrl to respond with <500 before returning,
 		// so the agent's next zerops_verify doesn't race the L7 balancer.
 		// Best-effort — timeout appends to Warnings, never fails the call.
-		if input.Action == actionEnable && len(result.SubdomainUrls) > 0 {
+		//
+		// Deferred-start exception: dev-mode dynamic runtimes serve 502 by
+		// design (start command is `zsc noop --silent`; the real app starts
+		// only via zerops_dev_server). Skip the probe so the response stays
+		// silent on the expected 502 — agents misread the warning as a
+		// failure (eval suite 20260503-211240, multiple scenarios).
+		if input.Action == actionEnable && len(result.SubdomainUrls) > 0 && !skipDeferredStartProbe(ctx, client, projectID, stateDir, input.ServiceHostname) {
 			for _, url := range result.SubdomainUrls {
 				if err := ops.WaitHTTPReady(ctx, httpClient, url); err != nil {
 					result.Warnings = append(result.Warnings,
@@ -86,4 +102,39 @@ func RegisterSubdomain(srv *mcp.Server, client platform.Client, httpClient ops.H
 		}
 		return jsonResult(result), nil, nil
 	})
+}
+
+// skipDeferredStartProbe returns true when the L7-readiness probe should be
+// silenced because the runtime is in deferred-start state (dev-mode dynamic
+// with `zsc noop --silent` boot command). Combines a ServiceMeta lookup
+// (Mode source) with a platform service lookup (RuntimeClass source) and
+// runs them through topology.IsDeferredStart.
+//
+// Returns false when:
+//   - stateDir is empty (no Work Session — recipe-authoring scaffold path).
+//   - ServiceMeta is missing (service not bootstrapped under the current
+//     session — explicit enable on an unrelated service).
+//   - LookupService fails (transient platform failure — fail closed, probe
+//     runs and any genuine 502 still surfaces).
+//   - The (mode, class) pair is not deferred-start (stage / simple modes,
+//     static / implicit-webserver classes — the probe is meaningful there).
+//
+// Lookup errors are intentionally swallowed: this is a probe-gating
+// helper, not an error path. A failed lookup degrades to "probe runs"
+// which preserves the original behavior — 502 surfaces if the runtime is
+// actually broken; the deferred-start optimization just doesn't apply.
+func skipDeferredStartProbe(ctx context.Context, client platform.Client, projectID, stateDir, hostname string) bool {
+	if stateDir == "" {
+		return false
+	}
+	meta, _ := workflow.FindServiceMeta(stateDir, hostname)
+	if meta == nil {
+		return false
+	}
+	svc, err := ops.LookupService(ctx, client, projectID, hostname)
+	if err != nil || svc == nil {
+		return false
+	}
+	class := topology.RuntimeClassFor(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName)
+	return topology.IsDeferredStart(meta.Mode, class)
 }

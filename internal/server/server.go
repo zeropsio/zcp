@@ -208,7 +208,7 @@ func (s *Server) registerTools() {
 
 	tools.RegisterImport(s.server, s.client, projectID, wfEngine, stateDir, recipeStore)
 	tools.RegisterDelete(s.server, s.client, projectID, stateDir, s.mounter, s.rtInfo)
-	tools.RegisterSubdomain(s.server, s.client, httpClient, projectID)
+	tools.RegisterSubdomain(s.server, s.client, httpClient, projectID, stateDir)
 	tools.RegisterMount(s.server, s.client, projectID, s.mounter, s.rtInfo, stateDir, wfEngine, recipeStore)
 
 	// Container-only: zerops_browser wraps agent-browser with a guaranteed

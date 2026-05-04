@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -201,7 +200,7 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta, ws *WorkSess
 		Hostname:     svc.Name,
 		TypeVersion:  typeVersion,
 		Status:       svc.Status,
-		RuntimeClass: classifyEnvelopeRuntime(typeVersion),
+		RuntimeClass: topology.RuntimeClassFor(typeVersion),
 	}
 	if meta != nil && meta.IsComplete() {
 		snap.Bootstrapped = true
@@ -269,27 +268,14 @@ func DeriveDeployed(hostname, status string, meta *ServiceMeta, ws *WorkSession)
 	return false
 }
 
-// classifyEnvelopeRuntime maps a service type to the envelope's RuntimeClass
-// vocabulary. Distinct from `verify.classifyRuntime` — verify's enum is
-// check-dispatch oriented (Worker = dynamic-without-ports), while the
-// envelope models managed services as a first-class class (not "skip all
-// checks") and collapses worker/dynamic into one class because no atom
-// needs the port distinction.
+// classifyEnvelopeRuntime is preserved as a thin alias for topology's
+// authoritative classifier so callers in this package keep their
+// envelope-shaped naming. New call sites should use topology.RuntimeClassFor
+// directly. The envelope's RuntimeClass and verify's classifyRuntime remain
+// distinct enums — verify treats Worker (dynamic-without-ports) as its own
+// class for check-dispatch, while the envelope collapses worker/dynamic.
 func classifyEnvelopeRuntime(typeVersion string) topology.RuntimeClass {
-	if typeVersion == "" {
-		return topology.RuntimeUnknown
-	}
-	if topology.IsManagedService(typeVersion) {
-		return topology.RuntimeManaged
-	}
-	lower := strings.ToLower(typeVersion)
-	if strings.HasPrefix(lower, "php-apache") || strings.HasPrefix(lower, "php-nginx") {
-		return topology.RuntimeImplicitWeb
-	}
-	if strings.HasPrefix(lower, "static") || strings.HasPrefix(lower, "nginx") {
-		return topology.RuntimeStatic
-	}
-	return topology.RuntimeDynamic
+	return topology.RuntimeClassFor(typeVersion)
 }
 
 // resolveEnvelopeMode maps a service's (meta, hostname) pair to the envelope

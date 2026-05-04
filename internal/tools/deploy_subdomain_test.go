@@ -42,6 +42,15 @@ const (
 // and predicate truth values stay correct.
 func autoEnableTestMock(t *testing.T, subdomainOn bool) *platform.Mock {
 	t.Helper()
+	return autoEnableTestMockWithType(t, subdomainOn, "")
+}
+
+// autoEnableTestMockWithType is autoEnableTestMock with an explicit service
+// type version (e.g. "nodejs@22", "nginx@1.22", "php-nginx@8.4"). Used by
+// deferred-start probe-skip tests where the runtime class derived from
+// the type version drives whether the HTTP probe fires.
+func autoEnableTestMockWithType(t *testing.T, subdomainOn bool, typeVersion string) *platform.Mock {
+	t.Helper()
 	svc := platform.ServiceStack{
 		ID:              autoEnableTestServiceID,
 		Name:            autoEnableTestHostname,
@@ -50,6 +59,7 @@ func autoEnableTestMock(t *testing.T, subdomainOn bool) *platform.Mock {
 		Ports:           []platform.Port{{Port: 3000, Protocol: "tcp"}},
 		ServiceStackTypeInfo: platform.ServiceTypeInfo{
 			ServiceStackTypeCategoryName: "USER",
+			ServiceStackTypeVersionName:  typeVersion,
 		},
 	}
 	return platform.NewMock().
@@ -118,8 +128,12 @@ func writeMeta(t *testing.T, dir string, mode topology.Mode) {
 func TestServiceEligible_NoMeta_NonSystem_True(t *testing.T) {
 	t.Parallel()
 	mock := autoEnableTestMock(t, false)
-	if !serviceEligibleForSubdomain(context.Background(), mock, nil, "proj-1", "app") {
+	svc, ok := serviceEligibleForSubdomain(context.Background(), mock, nil, "proj-1", "app")
+	if !ok {
 		t.Error("no meta + USER-category service should be eligible (recipe-authoring / manual import path)")
+	}
+	if svc == nil {
+		t.Error("eligible path must return the looked-up service for downstream classification")
 	}
 }
 
@@ -129,8 +143,12 @@ func TestServiceEligible_NoMeta_SystemStack_False(t *testing.T) {
 		t.Run(category, func(t *testing.T) {
 			t.Parallel()
 			mock := systemStackMock(t, category)
-			if serviceEligibleForSubdomain(context.Background(), mock, nil, "proj-1", "app") {
+			svc, ok := serviceEligibleForSubdomain(context.Background(), mock, nil, "proj-1", "app")
+			if ok {
 				t.Errorf("system-category %q should be ineligible (defensive guard)", category)
+			}
+			if svc != nil {
+				t.Errorf("ineligible path must return nil service; got %+v", svc)
 			}
 		})
 	}
@@ -149,7 +167,7 @@ func TestServiceEligible_MetaMode_AllowList_NonSystem_True(t *testing.T) {
 			t.Parallel()
 			meta := &workflow.ServiceMeta{Hostname: autoEnableTestHostname, Mode: mode}
 			mock := autoEnableTestMock(t, false)
-			if !serviceEligibleForSubdomain(context.Background(), mock, meta, "proj-1", "app") {
+			if _, ok := serviceEligibleForSubdomain(context.Background(), mock, meta, "proj-1", "app"); !ok {
 				t.Errorf("mode %q should be eligible", mode)
 			}
 		})
@@ -160,7 +178,7 @@ func TestServiceEligible_LocalOnly_False(t *testing.T) {
 	t.Parallel()
 	meta := &workflow.ServiceMeta{Hostname: autoEnableTestHostname, Mode: topology.ModeLocalOnly}
 	mock := autoEnableTestMock(t, false)
-	if serviceEligibleForSubdomain(context.Background(), mock, meta, "proj-1", "app") {
+	if _, ok := serviceEligibleForSubdomain(context.Background(), mock, meta, "proj-1", "app"); ok {
 		t.Error("local-only mode must be ineligible (no Zerops runtime to route to)")
 	}
 }
@@ -169,7 +187,7 @@ func TestServiceEligible_UnknownMode_False(t *testing.T) {
 	t.Parallel()
 	meta := &workflow.ServiceMeta{Hostname: autoEnableTestHostname, Mode: topology.Mode("production-future")}
 	mock := autoEnableTestMock(t, false)
-	if serviceEligibleForSubdomain(context.Background(), mock, meta, "proj-1", "app") {
+	if _, ok := serviceEligibleForSubdomain(context.Background(), mock, meta, "proj-1", "app"); ok {
 		t.Error("unknown mode must default to ineligible (future-proof: explicit opt-in via modeAllowsSubdomain switch)")
 	}
 }
@@ -178,7 +196,7 @@ func TestServiceEligible_EmptyMode_NonSystem_True(t *testing.T) {
 	t.Parallel()
 	meta := &workflow.ServiceMeta{Hostname: autoEnableTestHostname} // Mode left empty
 	mock := autoEnableTestMock(t, false)
-	if !serviceEligibleForSubdomain(context.Background(), mock, meta, "proj-1", "app") {
+	if _, ok := serviceEligibleForSubdomain(context.Background(), mock, meta, "proj-1", "app"); !ok {
 		t.Error("empty Mode should be permissive (recipe-authoring scaffold path)")
 	}
 }
@@ -189,7 +207,7 @@ func TestServiceEligible_LookupFails_False(t *testing.T) {
 		Code:    platform.ErrAPIError,
 		Message: "transient lookup failure",
 	})
-	if serviceEligibleForSubdomain(context.Background(), mock, nil, "proj-1", "app") {
+	if _, ok := serviceEligibleForSubdomain(context.Background(), mock, nil, "proj-1", "app"); ok {
 		t.Error("LookupService failure should soft-fail to ineligible")
 	}
 }
@@ -469,6 +487,136 @@ func TestMaybeAutoEnableSubdomain_StageCrossDeploy_EnablesForStage(t *testing.T)
 	}
 	if mock.CallCounts["EnableSubdomainAccess"] != 1 {
 		t.Errorf("EnableSubdomainAccess calls: want 1 for stage cross-deploy, got %d", mock.CallCounts["EnableSubdomainAccess"])
+	}
+}
+
+// --- Deferred-start probe-skip tests ---------------------------------------
+//
+// Subtractive root fix for the post-deploy 502 friction (eval suite
+// 20260503-211240, 4-of-9 scenarios flagged the noise): when the runtime
+// is dev-mode dynamic with `zsc noop --silent` start command, no app is
+// expected to be HTTP-reachable until `zerops_dev_server action=start`
+// fires. Probing in this state always returns 502 and emits a misleading
+// warning. Skip the probe entirely; the agent's next move (dev_server
+// start) tests HTTP readiness more reliably anyway.
+//
+// The predicate (topology.IsDeferredStart) gates only on (mode in
+// {Dev, Standard}) AND (class == Dynamic). Stage / simple modes auto-start
+// via run.start; static + implicit-webserver runtimes auto-serve regardless
+// of mode — those keep the probe + warning path.
+
+func TestMaybeAutoEnable_DevModeDynamic_SkipsHTTPProbe(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeMeta(t, dir, topology.PlanModeDev)
+
+	mock := autoEnableTestMockWithType(t, false, "nodejs@22")
+	doer := &countingDoer{status: 200}
+	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
+
+	maybeAutoEnableSubdomain(context.Background(), mock, doer, "proj-1", dir, "app", result)
+
+	if !result.SubdomainAccessEnabled {
+		t.Error("auto-enable must succeed for dev-mode dynamic")
+	}
+	if doer.calls != 0 {
+		t.Errorf("HTTP probe must be skipped on deferred-start (dev-mode dynamic); got %d calls", doer.calls)
+	}
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "not HTTP-ready") {
+			t.Errorf("must not emit not-HTTP-ready warning on deferred-start; got %q", w)
+		}
+	}
+}
+
+func TestMaybeAutoEnable_StandardModeDynamic_SkipsHTTPProbe(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	writeMeta(t, dir, topology.PlanModeStandard)
+
+	mock := autoEnableTestMockWithType(t, false, "go@1")
+	doer := &countingDoer{status: 200}
+	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
+
+	maybeAutoEnableSubdomain(context.Background(), mock, doer, "proj-1", dir, "app", result)
+
+	if doer.calls != 0 {
+		t.Errorf("HTTP probe must be skipped on standard-mode dynamic dev half; got %d calls", doer.calls)
+	}
+}
+
+func TestMaybeAutoEnable_DevModeStatic_StillProbes(t *testing.T) {
+	// t.Parallel omitted — OverrideHTTPReadyConfigForTest mutates package
+	// state shared with WaitHTTPReady; sibling parallel tests would race.
+	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
+	defer restore()
+
+	dir := t.TempDir()
+	writeMeta(t, dir, topology.PlanModeDev)
+
+	mock := autoEnableTestMockWithType(t, false, "nginx@1.22")
+	doer := &countingDoer{status: 200}
+	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
+
+	maybeAutoEnableSubdomain(context.Background(), mock, doer, "proj-1", dir, "app", result)
+
+	if doer.calls == 0 {
+		t.Error("static runtime must still probe — nginx auto-serves; 502 in dev mode is a real problem there")
+	}
+}
+
+func TestMaybeAutoEnable_DevModePHPNginx_StillProbes(t *testing.T) {
+	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
+	defer restore()
+
+	dir := t.TempDir()
+	writeMeta(t, dir, topology.PlanModeDev)
+
+	mock := autoEnableTestMockWithType(t, false, "php-nginx@8.4")
+	doer := &countingDoer{status: 200}
+	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
+
+	maybeAutoEnableSubdomain(context.Background(), mock, doer, "proj-1", dir, "app", result)
+
+	if doer.calls == 0 {
+		t.Error("implicit-webserver must still probe — php-nginx auto-starts; 502 means the deploy is broken")
+	}
+}
+
+func TestMaybeAutoEnable_StageDynamic_StillProbes(t *testing.T) {
+	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
+	defer restore()
+
+	dir := t.TempDir()
+	writeMeta(t, dir, topology.ModeStage)
+
+	mock := autoEnableTestMockWithType(t, false, "nodejs@22")
+	doer := &countingDoer{status: 200}
+	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
+
+	maybeAutoEnableSubdomain(context.Background(), mock, doer, "proj-1", dir, "app", result)
+
+	if doer.calls == 0 {
+		t.Error("stage mode must still probe — run.start runs the real app; 502 means the deploy is broken")
+	}
+}
+
+func TestMaybeAutoEnable_NoMeta_DynamicType_StillProbes(t *testing.T) {
+	// No meta = no mode info, so we can't classify deferred-start. Fail
+	// closed: probe runs (recipe-authoring / manual-import path).
+	restore := ops.OverrideHTTPReadyConfigForTest(1*time.Millisecond, 50*time.Millisecond)
+	defer restore()
+
+	dir := t.TempDir() // no meta written
+
+	mock := autoEnableTestMockWithType(t, false, "nodejs@22")
+	doer := &countingDoer{status: 200}
+	result := &ops.DeployResult{TargetService: "app", TargetServiceID: "svc-1"}
+
+	maybeAutoEnableSubdomain(context.Background(), mock, doer, "proj-1", dir, "app", result)
+
+	if doer.calls == 0 {
+		t.Error("no-meta path must still probe (fail closed) — recipe-authoring / manual import has no mode info")
 	}
 }
 

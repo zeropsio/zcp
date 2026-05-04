@@ -66,7 +66,8 @@ func maybeAutoEnableSubdomain(
 	result *ops.DeployResult,
 ) {
 	meta, _ := workflow.FindServiceMeta(stateDir, targetService)
-	if !serviceEligibleForSubdomain(ctx, client, meta, projectID, targetService) {
+	svc, eligible := serviceEligibleForSubdomain(ctx, client, meta, projectID, targetService)
+	if !eligible {
 		return
 	}
 
@@ -93,15 +94,32 @@ func maybeAutoEnableSubdomain(
 		result.Warnings = append(result.Warnings, "subdomain: "+w)
 	}
 
-	// HTTP readiness wait. Skip on already_enabled when ServiceMeta is
-	// supplied — meta presence proves the service was bootstrapped earlier,
-	// so the L7 route has been live for a while; a probe just adds latency.
-	// Without ServiceMeta (recipe-authoring scaffolds, manual import,
-	// adoption), an already_enabled status reflects the import-time state
-	// without proving the L7 router has finished propagating ports
-	// (R-14-1 race). Always probe in that case so the next zerops_verify
-	// doesn't race.
-	skipProbe := subRes.Status == ops.SubdomainStatusAlreadyEnabled && meta != nil
+	// HTTP readiness wait. Skip in two cases:
+	//
+	//  1. already_enabled with ServiceMeta — meta presence proves the
+	//     service was bootstrapped earlier, so the L7 route has been live
+	//     for a while; a probe just adds latency. Without ServiceMeta
+	//     (recipe-authoring scaffolds, manual import, adoption), an
+	//     already_enabled status reflects the import-time state without
+	//     proving the L7 router has finished propagating ports (R-14-1
+	//     race) — always probe in that case so the next zerops_verify
+	//     doesn't race.
+	//
+	//  2. deferred-start runtime (dev-mode dynamic with `zsc noop --silent`).
+	//     The container is alive but no app process exists yet by design;
+	//     HTTP probe returns 502 until the agent invokes
+	//     `zerops_dev_server action=start`. Surfacing the 502 as a warning
+	//     trains agents to misread successful deploys as failures (eval:
+	//     suite 20260503-211240, 4-of-9 scenarios flagged the noise).
+	//     Subtractive root fix — silence the probe; agent's next move
+	//     (dev_server start) tests HTTP readiness more reliably anyway.
+	deferredStart := false
+	if svc != nil && meta != nil {
+		runtimeClass := topology.RuntimeClassFor(svc.ServiceStackTypeInfo.ServiceStackTypeVersionName)
+		deferredStart = topology.IsDeferredStart(meta.Mode, runtimeClass)
+	}
+
+	skipProbe := (subRes.Status == ops.SubdomainStatusAlreadyEnabled && meta != nil) || deferredStart
 	if !skipProbe {
 		for _, url := range subRes.SubdomainUrls {
 			if waitErr := ops.WaitHTTPReady(ctx, httpClient, url); waitErr != nil {
@@ -133,9 +151,14 @@ func modeAllowsSubdomain(mode topology.Mode) bool {
 	return false
 }
 
-// serviceEligibleForSubdomain decides whether to attempt auto-enable. Two
-// cheap checks, no platform DTO inspection — the platform's response on
-// the actual Enable call is the source of truth for "is this HTTP-shaped?".
+// serviceEligibleForSubdomain decides whether to attempt auto-enable, and
+// returns the looked-up service alongside the boolean so callers that
+// proceed to enable can read its TypeVersion for runtime-class
+// classification (used by the deferred-start probe-skip predicate).
+//
+// Two cheap checks, no platform DTO inspection — the platform's response
+// on the actual Enable call is the source of truth for "is this
+// HTTP-shaped?".
 //
 //  1. Mode allow-list (when meta is supplied with a non-empty Mode).
 //     Empty Mode or nil meta → permissive: pass through to the system
@@ -151,25 +174,25 @@ func modeAllowsSubdomain(mode topology.Mode) bool {
 //     defends against future call sites and maintains the invariant that
 //     L7 routing is never auto-enabled on platform-internal stacks.
 //
-// Lookup failures soft-fail (returns false → caller skips auto-enable,
+// Lookup failures soft-fail (returns nil, false → caller skips auto-enable,
 // agent's manual zerops_subdomain stays valid).
 func serviceEligibleForSubdomain(
 	ctx context.Context,
 	client platform.Client,
 	meta *workflow.ServiceMeta,
 	projectID, targetService string,
-) bool {
+) (*platform.ServiceStack, bool) {
 	if meta != nil && meta.Mode != "" && !modeAllowsSubdomain(meta.Mode) {
-		return false
+		return nil, false
 	}
 	svc, err := ops.LookupService(ctx, client, projectID, targetService)
 	if err != nil || svc == nil {
-		return false
+		return nil, false
 	}
 	if svc.IsSystem() {
-		return false
+		return nil, false
 	}
-	return true
+	return svc, true
 }
 
 // isServiceStackIsNotHTTPErr classifies a platform error as the
