@@ -9,9 +9,9 @@ import (
 )
 
 // Instructions delivered to the MCP client at server init are RUNTIME-ONLY.
-// Static project rules (Three entry points, intent rule, env preamble,
-// project idioms) live in CLAUDE.md (env-rendered at zcp init) — the
-// strong-adherence surface. MCP init carries only what cannot be
+// Static project rules (routing table, discovery floor, smells, env
+// preamble, project idioms) live in CLAUDE.md (env-rendered at zcp init) —
+// the strong-adherence surface. MCP init carries only what cannot be
 // pre-rendered: per-server-start runtime context.
 //
 // Two runtime injections feed RuntimeContext:

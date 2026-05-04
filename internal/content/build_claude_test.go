@@ -29,9 +29,9 @@ func TestBuildClaudeMD_Container_HasContainerFacts(t *testing.T) {
 		"/var/www/{hostname}/",
 		"SSHFS",
 		"Read", "Edit", "Write",
-		"Three entry points",
+		"Route every user turn",
 		"Don't guess",
-		"intent` is your one-line proposal",
+		"`intent` = one-line proposal",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("container CLAUDE.md missing %q", want)
@@ -43,9 +43,9 @@ func TestBuildClaudeMD_Container_NoLocalLeak(t *testing.T) {
 	t.Parallel()
 	out, _ := BuildClaudeMD(runtime.Info{InContainer: true, ServiceName: "zcp"})
 	for _, forbidden := range []string{
-		"developer machine",
+		"Developer machine",
 		"zcli vpn up",
-		"working directory is the source of truth",
+		"Working dir = source of truth",
 	} {
 		if strings.Contains(out, forbidden) {
 			t.Errorf("container CLAUDE.md leaked local content %q", forbidden)
@@ -58,11 +58,11 @@ func TestBuildClaudeMD_Local_HasLocalFacts(t *testing.T) {
 	out, _ := BuildClaudeMD(runtime.Info{InContainer: false})
 	for _, want := range []string{
 		"# Zerops",
-		"developer machine",
+		"Developer machine",
 		"zerops_deploy",
 		"zerops.yaml",
 		"zcli vpn up",
-		"Three entry points",
+		"Route every user turn",
 		"Don't guess",
 	} {
 		if !strings.Contains(out, want) {
@@ -99,15 +99,15 @@ func TestBuildClaudeMD_Deterministic(t *testing.T) {
 func TestBuildClaudeMD_DevelopFirst(t *testing.T) {
 	t.Parallel()
 	out, _ := BuildClaudeMD(runtime.Info{InContainer: true, ServiceName: "zcp"})
-	devIdx := strings.Index(out, "1. **Develop**")
-	bootIdx := strings.Index(out, "2. **Bootstrap**")
-	recipeIdx := strings.Index(out, "3. **Recipe")
+	devIdx := strings.Index(out, "- `develop`")
+	bootIdx := strings.Index(out, "- `bootstrap`")
+	recipeIdx := strings.Index(out, "- `recipe`")
 	if devIdx < 0 || bootIdx < 0 || recipeIdx < 0 {
-		t.Fatalf("missing one of the three entry-point headers: develop=%d bootstrap=%d recipe=%d\n%s",
+		t.Fatalf("missing one of the workflow-detail bullets: develop=%d bootstrap=%d recipe=%d\n%s",
 			devIdx, bootIdx, recipeIdx, out)
 	}
 	if devIdx >= bootIdx || bootIdx >= recipeIdx {
-		t.Errorf("entry points out of order: develop=%d, bootstrap=%d, recipe=%d",
+		t.Errorf("workflow detail bullets out of order: develop=%d, bootstrap=%d, recipe=%d",
 			devIdx, bootIdx, recipeIdx)
 	}
 }
@@ -124,8 +124,8 @@ func TestClaudeShared_NoEnvLeak(t *testing.T) {
 	forbidden := []string{
 		"/var/www/",
 		"SSHFS",
-		"developer machine",
-		"working directory is the source of truth",
+		"Developer machine",
+		"Working dir = source of truth",
 		"zcli vpn up",
 		"{{.SelfHostname}}",
 	}

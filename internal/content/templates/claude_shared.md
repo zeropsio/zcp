@@ -1,72 +1,38 @@
-Zerops has its own syntax and conventions. Don't guess — look them up
-via `zerops_knowledge`, and inspect live state via `zerops_*` tools.
-Runtime app code always runs in Zerops runtime containers.
+Zerops has its own syntax. Don't guess — look up via `zerops_knowledge`, inspect live state via `zerops_*`. Runtime code runs in Zerops containers, not here.
 
-## Three entry points
+## Route every user turn
 
-1. **Develop** — every task that touches a specific service's code
-   (editing, scaffolding, debugging, deploying, planning):
+| Intent | First action | Don't |
+|---|---|---|
+| Build/edit/scaffold/fix/deploy/debug a service | `zerops_discover`/`zerops_workflow action="status"` first if target/session unclear, then `zerops_workflow action="start" workflow="develop" intent="..." scope=["<host>"]` | Write code, run Bash/npx/SSH, or scaffold to scratch dirs before workflow start |
+| No service yet, or infra/topology change | `zerops_workflow action="start" workflow="bootstrap" intent="..."` | Write app code in bootstrap |
+| Create/publish a recipe (user said "recipe" or named a slug) | `zerops_recipe action="start" slug="..." outputRoot="..."` | Start develop/bootstrap inside recipe |
+| Read or set platform state — logs/env/status/scale/subdomain/manage/events/verify | matching `zerops_*` tool | Guess values when live state exists |
+| Pure concept Q unrelated to this project | prose, no tool | Re-route when user pivots to build/change |
 
-   ```
-   zerops_workflow action="start" workflow="develop" \
-     intent="<one-line proposal>" scope=["<runtime-hostname>"]
-   ```
+## Discovery floor
 
-   `scope` lists the runtime services this task touches — get the
-   actual hostnames from `zerops_discover` first; never copy the
-   placeholder verbatim. `intent` is your one-line proposal — pick
-   a sensible default ("Streamlit weather dashboard, python@3.12,
-   public subdomain"), start, refine inside the plan-adjust step.
-   Don't ask the user for details the workflow itself collects.
-   1 task = 1 session: a new `intent` on an open develop session
-   auto-closes the prior one.
+Before service-scoped work: `zerops_workflow action="status"` if a session may exist (post-compact), else `zerops_discover`. User didn't name service + multiple plausible targets → ask once. Never invent hostnames, env keys, service types, subdomain URLs.
 
-2. **Bootstrap** — when no services exist yet, or you need to add
-   infrastructure (new service, mode expansion):
+## Smells — catch & re-route
 
-   ```
-   zerops_workflow action="start" workflow="bootstrap" intent="<...>"
-   ```
+- Multi-section prose analysis (framework cmp, IA, "let me first analyze") for service-shaped task → workflow start IS the analysis surface (returns plan + atoms scoped to your `intent`). Pick a sensible default, start, react to the response. User saying "analyze first" / "make a plan" doesn't bypass.
+- Writing code or `zerops.yaml` before workflow/status/discover selected service.
+- Files in `/tmp` or random scratch dirs for app code.
+- Asking whether to deploy to Zerops when ZCP is already bound to this project.
+- Bash/SSH for platform ops covered by `zerops_*` (env, logs, scale, restart, etc.).
+- Diagnosing live errors/502s/build failures from prose instead of `zerops_verify`/`zerops_logs`/`zerops_events`/`zerops_env`.
 
-   Provisions services. After it closes, continue in develop. If
-   infrastructure work comes up mid-develop, start bootstrap — your
-   develop work session persists.
+## Workflow detail
 
-3. **Recipe authoring** — only when the user said "create a
-   {framework} recipe", "build a recipe", or named a slug like
-   `nestjs-showcase`:
+- `develop` — service code edit. `scope` = runtime services this touches; get from `zerops_discover`, don't invent. `intent` = one-line proposal; workflow returns the plan, react to that. 1 task = 1 session; new `intent` auto-closes prior.
+- `bootstrap` — provision services / change infra. Closes → continue in develop. Mid-develop infra side-trip: start bootstrap; develop session persists.
+- `recipe` — self-contained pipeline; atoms guide every step.
 
-   ```
-   zerops_recipe action="start" slug="<slug>" outputRoot="<dir>"
-   ```
+## Recovery
 
-   Self-contained pipeline (research → provision → scaffold → feature
-   → finalize). Do NOT start bootstrap or develop during recipe
-   authoring — the recipe atoms guide every step.
-
-If state is unclear (after compaction or between tasks):
-`zerops_workflow action="status"` (or `zerops_recipe action="status"`
-for recipe sessions) returns the current phase and next action.
-
-Read-only / one-shot tools may be called outside an active workflow:
-`zerops_discover`, `zerops_logs`, `zerops_env`, `zerops_manage`,
-`zerops_scale`, `zerops_knowledge`. `zerops_subdomain` is for explicit
-recovery, production opt-in, or disable — first-deploy subdomain
-activation is handled by `zerops_deploy`, not by this tool.
+Phase unclear (post-compact, mid-task): `zerops_workflow action="status"` (or `zerops_recipe action="status"`). Returns envelope, plan, next action.
 
 ## Tool errors
 
-Every tool error returns the same JSON shape:
-`{code, error, suggestion?, apiCode?, diagnostic?, apiMeta?, checks?, recovery?}`.
-`code` and `error` are always present (typed); the rest are optional.
-
-When `recovery` is present (workflow-aware tools attach it), the call it
-names is the canonical lifecycle recovery surface — call it before
-retrying or asking the user, not after blind retries. When `recovery`
-is absent (read-only tools), fall back to
-`zerops_workflow action="status"` yourself. `status` returns the live
-envelope, plan, and guidance for the current phase.
-
-`checks` carries multi-check failures (preflight, verify, mount) with
-a `kind` discriminator and optional `preAttestCmd`/`expectedExit` so
-you can re-run the failing check directly.
+Shape: `{code, error, suggestion?, apiCode?, diagnostic?, apiMeta?, checks?, recovery?}`. `code`+`error` always present. `recovery` set → call before retry/ask. Absent → fall back to `zerops_workflow action="status"`. `checks` = multi-check failures (`kind` + optional `preAttestCmd`/`expectedExit`).

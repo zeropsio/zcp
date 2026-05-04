@@ -98,10 +98,10 @@ func TestGetTemplate_ClaudeSharedContent(t *testing.T) {
 		t.Fatalf("GetTemplate: %v", err)
 	}
 
-	// Shared body must mention the Three entry points header (the static
+	// Shared body must mention the routing header (the static
 	// project-rule layer all envs share).
-	if !strings.Contains(body, "Three entry points") {
-		t.Error("claude_shared.md should contain 'Three entry points' header")
+	if !strings.Contains(body, "Route every user turn") {
+		t.Error("claude_shared.md should contain 'Route every user turn' header")
 	}
 }
 
