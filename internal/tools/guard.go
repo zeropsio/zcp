@@ -20,9 +20,17 @@ import (
 // the agent is in a recipe-only context — ok=false when zero or >1
 // recipe sessions are open, so ambiguity becomes an explicit error
 // instead of a guessed write.
+//
+// CoversHost lets the deploy-adoption gate (requireAdoption) skip the
+// bootstrap-adoption check when an open recipe session owns the deploy
+// target. A recipe authoring session legitimately deploys its own
+// `apistage` / `appdev` cross-targets before any bootstrap workflow
+// exists; without this exemption, the gate would refuse every
+// recipe cross-deploy.
 type RecipeSessionProbe interface {
 	HasAnySession() bool
 	CurrentSingleSession() (slug, legacyFactsPath, manifestPath string, ok bool)
+	CoversHost(host string) bool
 }
 
 // requireWorkflowContext checks that the agent is in an active workflow:
@@ -58,7 +66,12 @@ func requireWorkflowContext(engine *workflow.Engine, stateDir string, recipeProb
 //   - stateDir is empty (no state directory configured)
 //   - services/ directory doesn't exist (no bootstrap ever ran — gate activates
 //     once the first service is adopted, giving a clean migration path)
-func requireAdoption(stateDir string, hostnames ...string) *mcp.CallToolResult {
+//   - recipeProbe.CoversHost(h) — an open recipe session's Plan owns the
+//     hostname; recipe authoring legitimately deploys its own dev/stage slots
+//     before any bootstrap workflow exists. recipeProbe may be nil; the
+//     exemption is opt-in and narrow to this gate (requireWorkflowContext
+//     uses the same probe but for a different purpose).
+func requireAdoption(stateDir string, recipeProbe RecipeSessionProbe, hostnames ...string) *mcp.CallToolResult {
 	if stateDir == "" {
 		return nil
 	}
@@ -71,13 +84,22 @@ func requireAdoption(stateDir string, hostnames ...string) *mcp.CallToolResult {
 		if h == "" {
 			continue
 		}
-		if !workflow.IsKnownService(stateDir, h) {
-			return convertError(platform.NewPlatformError(
-				platform.ErrServiceNotFound,
-				fmt.Sprintf("Service %q is not adopted by ZCP — deploy blocked", h),
-				fmt.Sprintf("Adopt it first: zerops_workflow action=\"start\" workflow=\"bootstrap\" (with isExisting=true for %s)", h),
-			))
+		if workflow.IsKnownService(stateDir, h) {
+			continue
 		}
+		// Recipe-authoring exemption: an open recipe session whose Plan
+		// owns this hostname satisfies the gate. Pre-fix, run-24
+		// surfaced the failure mode — the recipe cross-deploy
+		// `apidev → apistage` returned SERVICE_NOT_FOUND because no
+		// bootstrap had ever adopted `apistage`.
+		if recipeProbe != nil && recipeProbe.CoversHost(h) {
+			continue
+		}
+		return convertError(platform.NewPlatformError(
+			platform.ErrServiceNotFound,
+			fmt.Sprintf("Service %q is not adopted by ZCP — deploy blocked", h),
+			fmt.Sprintf("Adopt it first: zerops_workflow action=\"start\" workflow=\"bootstrap\" (with isExisting=true for %s)", h),
+		))
 	}
 	return nil
 }

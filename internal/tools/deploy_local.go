@@ -61,6 +61,7 @@ func RegisterDeployLocal(
 	logFetcher platform.LogFetcher,
 	stateDir string,
 	engine *workflow.Engine,
+	recipeProbe RecipeSessionProbe,
 ) {
 	mcp.AddTool(srv, &mcp.Tool{
 		Name: "zerops_deploy",
@@ -83,8 +84,10 @@ func RegisterDeployLocal(
 			return convertError(err, WithRecoveryStatus()), nil, nil
 		}
 
-		// Gate: target must be adopted by ZCP.
-		if blocked := requireAdoption(stateDir, input.TargetService); blocked != nil {
+		// Gate: target must be adopted by ZCP. Recipe-authoring sessions
+		// whose Plan owns the host bypass adoption — see requireAdoption
+		// for the exemption rationale.
+		if blocked := requireAdoption(stateDir, recipeProbe, input.TargetService); blocked != nil {
 			return blocked, nil, nil
 		}
 

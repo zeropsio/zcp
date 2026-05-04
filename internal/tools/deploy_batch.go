@@ -41,6 +41,7 @@ func RegisterDeployBatch(
 	logFetcher platform.LogFetcher,
 	stateDir string,
 	engine *workflow.Engine,
+	recipeProbe RecipeSessionProbe,
 ) {
 	desc := "Deploy multiple services in parallel — single MCP call kicks off N builds server-side. " +
 		"Closes the MCP STDIO serialization penalty (calling zerops_deploy multiple times in parallel returns 'Not connected'). " +
@@ -64,9 +65,11 @@ func RegisterDeployBatch(
 				WithRecoveryStatus()), nil, nil
 		}
 
-		// Gate: each target (and its source, when set) must be adopted by ZCP.
+		// Gate: each target (and its source, when set) must be adopted by
+		// ZCP. Recipe-authoring sessions whose Plan owns the host bypass
+		// adoption — see requireAdoption for the exemption rationale.
 		for _, t := range input.Targets {
-			if blocked := requireAdoption(stateDir, t.TargetService, t.SourceService); blocked != nil {
+			if blocked := requireAdoption(stateDir, recipeProbe, t.TargetService, t.SourceService); blocked != nil {
 				return blocked, nil, nil
 			}
 		}

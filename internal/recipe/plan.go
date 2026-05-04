@@ -56,6 +56,41 @@ func (p *Plan) HasWorkerCodebase() bool {
 	return false
 }
 
+// CoversHost reports whether the plan owns the given Zerops service
+// hostname. A plan owns a host when (a) `host` matches any
+// Plan.Services[].Hostname exactly, OR (b) `host` matches a
+// Plan.Codebases[].Hostname directly, OR (c) `host` is the dev-slot
+// (`<hostname>dev`) or stage-slot (`<hostname>stage`) of a
+// Plan.Codebases[] entry.
+//
+// Strict matching: empty Plan.Codebases + empty Plan.Services returns
+// false (no permissive fallback). Empty `host` returns false.
+//
+// Used by Store.CoversHost so the deploy-adoption gate
+// (internal/tools.requireAdoption) can skip the bootstrap-adoption check
+// when an open recipe session owns the deploy target — recipes
+// legitimately deploy `apistage` / `appdev` cross-targets before any
+// bootstrap workflow exists.
+func (p *Plan) CoversHost(host string) bool {
+	if p == nil || host == "" {
+		return false
+	}
+	for _, svc := range p.Services {
+		if svc.Hostname == host {
+			return true
+		}
+	}
+	for _, cb := range p.Codebases {
+		if cb.Hostname == "" {
+			continue
+		}
+		if cb.Hostname == host || cb.Hostname+"dev" == host || cb.Hostname+"stage" == host {
+			return true
+		}
+	}
+	return false
+}
+
 // HasUICodebase reports whether any codebase in the plan ships UI —
 // frontend SPAs (RoleFrontend) OR view-rendering monoliths (RoleMonolith
 // like Laravel/Rails/Django/Blade). Used by the feature-phase brief

@@ -35,7 +35,7 @@ func TestDeployBatch_ThreeTargetsAllSucceed(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeployBatch(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, "", testDeployEngine(t))
+	RegisterDeployBatch(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, "", testDeployEngine(t), nil)
 
 	result := callTool(t, srv, "zerops_deploy_batch", map[string]any{
 		"targets": []map[string]any{
@@ -84,7 +84,7 @@ func TestDeployBatch_EmptyTargetsFails(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeployBatch(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, "", testDeployEngine(t))
+	RegisterDeployBatch(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, "", testDeployEngine(t), nil)
 
 	result := callTool(t, srv, "zerops_deploy_batch", map[string]any{
 		"targets": []map[string]any{},
@@ -179,7 +179,7 @@ func TestDeployBatch_CrossDeploy_PreflightReadsSourceMounts(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeployBatch(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, stateDir, testDeployEngine(t))
+	RegisterDeployBatch(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, stateDir, testDeployEngine(t), nil)
 
 	result := callTool(t, srv, "zerops_deploy_batch", map[string]any{
 		"targets": []map[string]any{

@@ -22,7 +22,7 @@ func TestDeployLocalTool_Schema_NoSourceService(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeployLocal(srv, mock, okHTTP, "proj-1", authInfo, nil, "", nil)
+	RegisterDeployLocal(srv, mock, okHTTP, "proj-1", authInfo, nil, "", nil, nil)
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
@@ -86,7 +86,7 @@ func TestDeployLocalTool_Description_MentionsZcli(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeployLocal(srv, mock, okHTTP, "proj-1", authInfo, nil, "", nil)
+	RegisterDeployLocal(srv, mock, okHTTP, "proj-1", authInfo, nil, "", nil, nil)
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()
@@ -133,7 +133,7 @@ func TestDeployLocalTool_SameToolName(t *testing.T) {
 	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
-	RegisterDeployLocal(srv, mock, okHTTP, "proj-1", authInfo, nil, "", nil)
+	RegisterDeployLocal(srv, mock, okHTTP, "proj-1", authInfo, nil, "", nil, nil)
 
 	ctx := context.Background()
 	st, ct := mcp.NewInMemoryTransports()

@@ -48,6 +48,41 @@ func (s *Store) HasAnySession() bool {
 	return len(s.sessions) > 0
 }
 
+// CoversHost reports whether any open recipe session's Plan owns the
+// given service hostname. Strict matching via Plan.CoversHost — empty
+// Plan returns false (NO permissive fallback).
+//
+// Used by the deploy-adoption gate (internal/tools.requireAdoption) so a
+// recipe authoring session can deploy its own `apistage` / `appdev`
+// cross-targets without first running the bootstrap workflow. The
+// exemption is narrow: only `requireAdoption` consults the probe.
+//
+// Concurrency: snapshots the session pointers under Store.mu, releases
+// the store lock, then takes each Session.mu while reading its Plan.
+// Holding Store.mu across Session reads would race with mergePlan and
+// other handler code that locks Session.mu under Store.mu first.
+func (s *Store) CoversHost(host string) bool {
+	if host == "" {
+		return false
+	}
+	s.mu.Lock()
+	sessions := make([]*Session, 0, len(s.sessions))
+	for _, sess := range s.sessions {
+		sessions = append(sessions, sess)
+	}
+	s.mu.Unlock()
+
+	for _, sess := range sessions {
+		sess.mu.Lock()
+		plan := sess.Plan
+		sess.mu.Unlock()
+		if plan.CoversHost(host) {
+			return true
+		}
+	}
+	return false
+}
+
 // CurrentSingleSession returns the slug + per-session file paths for the
 // single open recipe session, or ok=false when zero or >1 sessions are open.
 // Ambiguity must not be resolved by inference — the caller should surface an
@@ -79,6 +114,17 @@ func (s *Store) CurrentSingleSession() (slug, legacyFactsPath, manifestPath stri
 
 // OpenOrCreate returns an existing session, or creates one at the given
 // outputRoot with a freshly-resolved parent recipe.
+//
+// Rehydration: when no in-memory session exists for slug AND
+// <outputRoot>/plan.json exists on disk, the freshly-created session's
+// Plan is loaded from disk before return. Run-24 surfaced the gap: a
+// sub-agent dispatch runs in a separate MCP server instance from the
+// main agent; without rehydration the sub-agent saw `Plan codebases:
+// []` while the on-disk plan.json carried the full plan, breaking
+// `complete-phase scoped` validation. A read failure is non-fatal — we
+// log via the FactsLog rather than refusing the open (a corrupted
+// plan.json shouldn't block recipe progress entirely; the agent can
+// re-issue update-plan to repair).
 func (s *Store) OpenOrCreate(slug, outputRoot string) (*Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -95,6 +141,17 @@ func (s *Store) OpenOrCreate(slug, outputRoot string) (*Session, error) {
 	}
 	sess := NewSession(slug, log, outputRoot, parent)
 	sess.MountRoot = s.mountRoot
+	// Rehydrate Plan from disk when plan.json exists. Cross-process
+	// continuity: dispatched sub-agents share outputRoot with the main
+	// agent's recipe state, so reading the persisted plan keeps their
+	// view consistent. ReadPlan fails fast on absent file; we test
+	// existence first so an absent plan.json is the no-op fresh path.
+	planPath := filepath.Join(outputRoot, "plan.json")
+	if _, statErr := os.Stat(planPath); statErr == nil {
+		if persisted, readErr := ReadPlan(outputRoot); readErr == nil && persisted != nil {
+			sess.Plan = persisted
+		}
+	}
 	s.sessions[slug] = sess
 	return sess, nil
 }

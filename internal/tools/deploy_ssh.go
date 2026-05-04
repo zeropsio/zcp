@@ -101,6 +101,11 @@ func deploySSHInputSchema() *jsonschema.Schema {
 // L7 readiness before returning — empirically the L7 route takes 440ms-1.3s
 // to propagate after EnableSubdomainAccess finishes
 // (plans/archive/subdomain-robustness.md §1.3). Tests inject a stub.
+//
+// recipeProbe wires the recipe-authoring exemption into requireAdoption:
+// a recipe session whose Plan owns the deploy target satisfies the
+// adoption gate so cross-deploys (e.g. `apidev → apistage`) succeed
+// before any bootstrap workflow runs. May be nil in tests.
 func RegisterDeploySSH(
 	srv *mcp.Server,
 	client platform.Client,
@@ -112,6 +117,7 @@ func RegisterDeploySSH(
 	rtInfo runtime.Info,
 	stateDir string,
 	engine *workflow.Engine,
+	recipeProbe RecipeSessionProbe,
 ) {
 	desc := "Deploy code via SSH — blocks until build completes. "
 	if rtInfo.InContainer {
@@ -140,8 +146,10 @@ func RegisterDeploySSH(
 			return convertError(err, WithRecoveryStatus()), nil, nil
 		}
 
-		// Gate: target (and source) must be adopted by ZCP.
-		if blocked := requireAdoption(stateDir, input.TargetService, input.SourceService); blocked != nil {
+		// Gate: target (and source) must be adopted by ZCP. Recipe-
+		// authoring sessions whose Plan owns the host bypass adoption —
+		// see requireAdoption for the exemption rationale.
+		if blocked := requireAdoption(stateDir, recipeProbe, input.TargetService, input.SourceService); blocked != nil {
 			return blocked, nil, nil
 		}
 
