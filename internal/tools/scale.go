@@ -35,7 +35,7 @@ func RegisterScale(srv *mcp.Server, client platform.Client, projectID string) {
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Scale a service",
 			IdempotentHint:  true,
-			DestructiveHint: boolPtr(true),
+			DestructiveHint: boolPtr(false),
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ScaleInput) (*mcp.CallToolResult, any, error) {
 		if input.ServiceHostname == "" {

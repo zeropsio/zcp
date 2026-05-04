@@ -30,7 +30,7 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 		Annotations: &mcp.ToolAnnotations{
 			Title:           "Manage service lifecycle",
 			IdempotentHint:  true,
-			DestructiveHint: boolPtr(true),
+			DestructiveHint: boolPtr(false),
 		},
 	}, func(ctx context.Context, req *mcp.CallToolRequest, input ManageInput) (*mcp.CallToolResult, any, error) {
 		if input.Action == "" {

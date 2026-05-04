@@ -77,8 +77,8 @@ func TestAnnotations_AllToolsHaveTitleAndAnnotations(t *testing.T) {
 
 		// Mutating tools
 		{name: "zerops_process", title: "Check or cancel async process", idempotent: true, destructive: boolPtr(false)},
-		{name: "zerops_manage", title: "Manage service lifecycle", idempotent: true, destructive: boolPtr(true)},
-		{name: "zerops_scale", title: "Scale a service", idempotent: true, destructive: boolPtr(true)},
+		{name: "zerops_manage", title: "Manage service lifecycle", idempotent: true, destructive: boolPtr(false)},
+		{name: "zerops_scale", title: "Scale a service", idempotent: true, destructive: boolPtr(false)},
 		{name: "zerops_delete", title: "Delete a service", destructive: boolPtr(true)},
 		{name: "zerops_subdomain", title: "Enable or disable subdomain", idempotent: true, destructive: boolPtr(false)},
 		{name: "zerops_deploy", title: "Deploy code to a service", destructive: boolPtr(true)},
