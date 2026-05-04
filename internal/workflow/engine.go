@@ -427,7 +427,7 @@ func buildDiscoveryMessage(options []BootstrapRouteOption) string {
 	for i, opt := range options {
 		fmt.Fprintf(&sb, "  %d. route=%q", i+1, string(opt.Route))
 		if opt.RecipeSlug != "" {
-			fmt.Fprintf(&sb, " recipeSlug=%q (confidence %.2f)", opt.RecipeSlug, opt.Confidence)
+			fmt.Fprintf(&sb, " recipeSlug=%q fit=%q", opt.RecipeSlug, string(opt.Fit))
 		}
 		sb.WriteString(" — ")
 		sb.WriteString(opt.Why)

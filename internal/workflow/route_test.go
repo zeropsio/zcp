@@ -92,8 +92,8 @@ func TestBuildBootstrapRouteOptions_EmptyProject_GoodIntent_RanksRecipesThenClas
 	if opts[0].RecipeSlug != "laravel-minimal" {
 		t.Errorf("first recipe: want laravel-minimal, got %q", opts[0].RecipeSlug)
 	}
-	if opts[0].Confidence <= opts[1].Confidence {
-		t.Errorf("confidence sort broken: %.2f <= %.2f", opts[0].Confidence, opts[1].Confidence)
+	if opts[0].RetrievalScore <= opts[1].RetrievalScore {
+		t.Errorf("retrievalScore sort broken: %.2f <= %.2f", opts[0].RetrievalScore, opts[1].RetrievalScore)
 	}
 }
 
@@ -508,5 +508,86 @@ func TestAdoptableServices_LocalModeNoSelf_KeepsAllNonSystem(t *testing.T) {
 	got := adoptableServices(existing, nil, self)
 	if len(got) != 2 {
 		t.Errorf("local mode with no self info: want 2 adoptable, got %d (%v)", len(got), got)
+	}
+}
+
+// --- RecipeFit classification tests --------------------------------------
+//
+// Pin the structured Fit signal that replaced raw RetrievalScore as the
+// primary recommendation cue. Eval friction (suite 144814 + 211240): agents
+// read 0.85 confidence as "high recommendation" while the recipe was
+// over-provisioning the user's intent. The Fit enum + structured FitExtras
+// / FitMissing render the actual decision signal alongside RetrievalScore
+// (which retains its sort-order role but is demoted from primary display).
+
+func TestBuildBootstrapRouteOptions_RecipeFit_OverProvisions(t *testing.T) {
+	t.Parallel()
+	// Intent: nodejs (no DB). Recipe: nodejs + postgresql. Fit must be
+	// over-provisions; FitExtras must list postgresql.
+	corpus := &fakeRecipeCorpus{matches: []RecipeMatch{
+		{Slug: "node-todo", Confidence: 0.95,
+			ImportYAML: "services:\n  - hostname: app\n    type: nodejs@22\n  - hostname: db\n    type: postgresql@16\n"},
+	}}
+	opts, err := BuildBootstrapRouteOptions(context.Background(), "node app", nil, nil, corpus, runtime.Info{})
+	if err != nil {
+		t.Fatalf("BuildBootstrapRouteOptions: %v", err)
+	}
+	recipe := findOption(opts, BootstrapRouteRecipe)
+	if recipe == nil {
+		t.Fatal("recipe option missing")
+	}
+	if recipe.Fit != RecipeFitOverProvisions {
+		t.Errorf("Fit = %q, want %q", recipe.Fit, RecipeFitOverProvisions)
+	}
+	if !slices.Contains(recipe.FitExtras, "postgresql") {
+		t.Errorf("FitExtras = %v, want to contain postgresql", recipe.FitExtras)
+	}
+	if recipe.RetrievalScore != 0.95 {
+		t.Errorf("RetrievalScore = %.2f, want 0.95 (sort-order signal preserved)", recipe.RetrievalScore)
+	}
+}
+
+func TestBuildBootstrapRouteOptions_RecipeFit_Exact(t *testing.T) {
+	t.Parallel()
+	// Intent: laravel + postgres. Recipe: php-nginx + postgresql. Stacks match.
+	corpus := &fakeRecipeCorpus{matches: []RecipeMatch{
+		{Slug: "laravel-pg", Confidence: 0.92,
+			ImportYAML: "services:\n  - hostname: app\n    type: php-nginx@8.4\n  - hostname: db\n    type: postgresql@16\n"},
+	}}
+	opts, err := BuildBootstrapRouteOptions(context.Background(), "laravel postgres app", nil, nil, corpus, runtime.Info{})
+	if err != nil {
+		t.Fatalf("BuildBootstrapRouteOptions: %v", err)
+	}
+	recipe := findOption(opts, BootstrapRouteRecipe)
+	if recipe == nil {
+		t.Fatal("recipe option missing")
+	}
+	if recipe.Fit != RecipeFitExact {
+		t.Errorf("Fit = %q, want %q (stacks match)", recipe.Fit, RecipeFitExact)
+	}
+	if len(recipe.FitExtras) != 0 || len(recipe.FitMissing) != 0 {
+		t.Errorf("exact fit must have empty extras/missing; got extras=%v missing=%v", recipe.FitExtras, recipe.FitMissing)
+	}
+}
+
+func TestClassifyFit_Table(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		mismatch StackMismatch
+		want     RecipeFit
+	}{
+		{"exact", StackMismatch{}, RecipeFitExact},
+		{"over-provisions", StackMismatch{Extras: []string{"postgres"}}, RecipeFitOverProvisions},
+		{"incomplete", StackMismatch{MissingFromRecipe: []string{"redis"}}, RecipeFitIncomplete},
+		{"mixed", StackMismatch{Extras: []string{"postgres"}, MissingFromRecipe: []string{"redis"}}, RecipeFitMixed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := classifyFit(tc.mismatch); got != tc.want {
+				t.Errorf("classifyFit(%+v) = %q, want %q", tc.mismatch, got, tc.want)
+			}
+		})
 	}
 }

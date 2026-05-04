@@ -73,25 +73,75 @@ const MaxRecipeOptions = 3
 // response. The engine ranks options and the LLM picks one by name (with
 // the recipe slug as a secondary parameter when the route is recipe).
 //
+// RecipeFit categorizes how a recipe option's stack matches the user's
+// intent. Set only on Route == recipe options. Replaces the previous
+// reliance on RetrievalScore (formerly Confidence) as a recommendation
+// signal — eval retros showed agents reading 0.85 as "high recommendation"
+// when recipes scored that high purely on runtime match while
+// over-provisioning the dependency stack (e.g. recipe adds Postgres when
+// user asked for a Mariadb-backed app).
+//
+// Fit derives from `CompareStacks(intentDeps, recipeTypes)`:
+//
+//   - Exact: recipe stack matches intent (no extras, no missing).
+//   - OverProvisions: recipe adds services beyond intent (Extras non-empty).
+//   - Incomplete: recipe missing services intent has (Missing non-empty).
+//   - Mixed: both extras and missing.
+//
+// FitExtras and FitMissing carry the structured detail; Why renders the
+// human-readable summary that mirrors them.
+type RecipeFit string
+
+const (
+	RecipeFitExact          RecipeFit = "exact"
+	RecipeFitOverProvisions RecipeFit = "over-provisions"
+	RecipeFitIncomplete     RecipeFit = "incomplete"
+	RecipeFitMixed          RecipeFit = "mixed"
+)
+
 // The fields are scope-specific rather than polymorphic so JSON consumers
 // (the LLM) never have to guess which slice a given list belongs to:
 //
 //   - AdoptServices is set only when Route == adopt.
 //   - ResumeSession is set only when Route == resume.
-//   - RecipeSlug/Confidence/ImportYAML/Collisions are set only when
-//     Route == recipe.
+//   - RecipeSlug/Fit/FitExtras/FitMissing/RetrievalScore/ImportYAML/
+//     Collisions are set only when Route == recipe.
 //   - Why is always set — a one-sentence rationale the atom layer renders
 //     for the LLM.
+//
+// RetrievalScore is the recipe-corpus retrieval similarity (cosine match);
+// it drives sort order but MUST NOT be read as a recommendation strength —
+// agents have repeatedly misread it that way (eval suite 144814 + 211240).
+// Fit is the authoritative recommendation signal.
 type BootstrapRouteOption struct {
 	Route          BootstrapRoute `json:"route"`
 	Why            string         `json:"why"`
 	RecipeSlug     string         `json:"recipeSlug,omitempty"`
-	Confidence     float64        `json:"confidence,omitempty"`
+	Fit            RecipeFit      `json:"fit,omitempty"`
+	FitExtras      []string       `json:"fitExtras,omitempty"`
+	FitMissing     []string       `json:"fitMissing,omitempty"`
+	RetrievalScore float64        `json:"retrievalScore,omitempty"`
 	ImportYAML     string         `json:"importYaml,omitempty"`
 	Collisions     []string       `json:"collisions,omitempty"`
 	AdoptServices  []string       `json:"adoptServices,omitempty"`
 	ResumeSession  string         `json:"resumeSession,omitempty"`
 	ResumeServices []string       `json:"resumeServices,omitempty"`
+}
+
+// classifyFit derives a RecipeFit enum from a StackMismatch.
+func classifyFit(mismatch StackMismatch) RecipeFit {
+	hasMissing := mismatch.HasMissing()
+	hasExtras := len(mismatch.Extras) > 0
+	switch {
+	case hasMissing && hasExtras:
+		return RecipeFitMixed
+	case hasMissing:
+		return RecipeFitIncomplete
+	case hasExtras:
+		return RecipeFitOverProvisions
+	default:
+		return RecipeFitExact
+	}
 }
 
 // BuildBootstrapRouteOptions is the discovery-phase entry point: it inspects
@@ -160,12 +210,15 @@ func BuildBootstrapRouteOptions(
 				continue
 			}
 			opt := BootstrapRouteOption{
-				Route:      BootstrapRouteRecipe,
-				RecipeSlug: m.Slug,
-				Confidence: m.Confidence,
-				ImportYAML: m.ImportYAML,
-				Why:        recipeWhyWithMismatch(m, mismatch),
-				Collisions: recipeCollisions(m.ImportYAML, existing),
+				Route:          BootstrapRouteRecipe,
+				RecipeSlug:     m.Slug,
+				Fit:            classifyFit(mismatch),
+				FitExtras:      mismatch.Extras,
+				FitMissing:     mismatch.MissingFromRecipe,
+				RetrievalScore: m.Confidence,
+				ImportYAML:     m.ImportYAML,
+				Why:            recipeWhyWithMismatch(m, mismatch),
+				Collisions:     recipeCollisions(m.ImportYAML, existing),
 			}
 			if mismatch.HasMissing() {
 				demotedRecipes = append(demotedRecipes, opt)
