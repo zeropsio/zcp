@@ -29,7 +29,7 @@ func TestSubagentPrompt_FeatureCarriesCurrentPhase(t *testing.T) {
 	t.Parallel()
 
 	plan := syntheticShowcasePlan()
-	prompt, err := buildSubagentPromptForPhase(plan, nil, RecipeInput{BriefKind: "feature"}, PhaseFeature, "", nil)
+	prompt, err := buildSubagentPromptForPhase(plan, nil, RecipeInput{BriefKind: "feature", FeaturePass: string(FeaturePassFrontend)}, PhaseFeature, "", nil)
 	if err != nil {
 		t.Fatalf("buildSubagentPromptForPhase: %v", err)
 	}

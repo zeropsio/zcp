@@ -344,18 +344,23 @@ sections are estimated from typical run shapes.
 ║ READS — always                                                       ║
 ║   phase_entry/refinement.md                                  ~3.7 KB ║
 ║   briefs/refinement/synthesis_workflow.md                    ~6.5 KB ║
-║   briefs/refinement/reference_kb_shapes.md                   ~14.7 KB║
-║   briefs/refinement/reference_ig_one_mechanism.md             ~13 KB ║
-║   briefs/refinement/reference_voice_patterns.md              ~8.6 KB ║
-║   briefs/refinement/reference_yaml_comments.md               ~9.8 KB ║
-║   briefs/refinement/reference_citations.md                   ~13.1 KB║
-║   briefs/refinement/reference_trade_offs.md                  ~11.6 KB║
-║   briefs/refinement/refinement_thresholds.md                  ~13 KB ║
 ║   briefs/refinement/embedded_rubric.md  (run-22 R1-RC-7 +    ~21 KB  ║
 ║                                          R3-C-1 additions)           ║
 ║     (R1-RC-7 added "Tier-promotion narrative (forbidden per spec     ║
 ║      §108)" section with case-insensitive regex set;                 ║
 ║      R3-C-1 added subdomain "rotate" overclaim guard)                ║
+║                                                                      ║
+║ READS — fetched on demand via discovery channel (run-23 F-25)        ║
+║   zerops://themes/refinement-references/kb_shapes            ~14.7 KB║
+║   zerops://themes/refinement-references/ig_one_mechanism      ~13 KB ║
+║   zerops://themes/refinement-references/voice_patterns       ~8.6 KB ║
+║   zerops://themes/refinement-references/yaml_comments        ~9.8 KB ║
+║   zerops://themes/refinement-references/citations            ~13.1 KB║
+║   zerops://themes/refinement-references/trade_offs           ~11.6 KB║
+║   zerops://themes/refinement-references/refinement_thresholds ~13 KB ║
+║     (the agent fetches one matching the suspect class via            ║
+║      `zerops_knowledge mode=uri uri=<...>`; not preloaded into       ║
+║      the brief)                                                      ║
 ║                                                                      ║
 ║ ENGINE-DERIVED                                                       ║
 ║   on-disk pointers to every stitched surface                  ~1–2 KB║
@@ -363,8 +368,9 @@ sections are estimated from typical run shapes.
 ║                                                                      ║
 ║ WRITES                                                               ║
 ║   ▶ record-fragment mode=replace on quality-gap surfaces             ║
-║     (no append; flips fragments only when 100%-sure threshold        ║
-║      holds per the rubric)                                           ║
+║     (no append; flips fragments when the agent can cite the          ║
+║      violated rubric criterion + exact fragment + preserving         ║
+║      edit per the rubric — run-23 F-27)                              ║
 ╚══════════════════════════════════════════════════════════════════════╝
 ```
 
@@ -928,20 +934,32 @@ shape for their tier.
 |------------------------------------------------------|--------:|
 | `phase_entry/refinement.md`                          | ~3.7 KB |
 | `briefs/refinement/synthesis_workflow.md`            | ~6.5 KB |
-| `briefs/refinement/reference_kb_shapes.md`           | ~14.7 KB |
-| `briefs/refinement/reference_ig_one_mechanism.md`    | ~13 KB  |
-| `briefs/refinement/reference_voice_patterns.md`      | ~8.6 KB |
-| `briefs/refinement/reference_yaml_comments.md`       | ~9.8 KB |
-| `briefs/refinement/reference_citations.md`           | ~13.1 KB |
-| `briefs/refinement/reference_trade_offs.md`          | ~11.6 KB |
-| `briefs/refinement/refinement_thresholds.md`         | ~13 KB  |
 | `briefs/refinement/embedded_rubric.md` (run-22 R1-RC-7 + R3-C-1) | ~21 KB  |
 |   ↑ run-22 R1-RC-7 added "Tier-promotion narrative (forbidden per   |
 |     spec §108)" section with case-insensitive regex set —           |
 |     `\bpromote\b.*\btier\b`, `\boutgrow\w*`, etc. — so refinement   |
 |     has reason to flag run-22's tier-4-README "promote to tier 5"   |
 |     leak. R3-C-1 added subdomain "rotate" overclaim guard.          |
-| **Always-loaded subtotal**                           | **~115 KB** |
+| **Always-loaded subtotal**                           | **~31 KB** |
+
+### Refinement reference atoms (discovery channel — fetched on demand)
+
+Run-23 F-25 moved the seven distillation references off the inline
+brief and onto the discovery channel. The agent fetches the one
+matching the suspect class via
+`zerops_knowledge mode=uri uri=zerops://themes/refinement-references/<name>`
+when investigating a flagged fragment; the brief lists them as a
+fetchable catalog with one-line descriptions.
+
+| URI                                                          | Size    |
+|--------------------------------------------------------------|--------:|
+| `zerops://themes/refinement-references/kb_shapes`            | ~14.7 KB|
+| `zerops://themes/refinement-references/ig_one_mechanism`     | ~13 KB  |
+| `zerops://themes/refinement-references/voice_patterns`       | ~8.6 KB |
+| `zerops://themes/refinement-references/yaml_comments`        | ~9.8 KB |
+| `zerops://themes/refinement-references/citations`            | ~13.1 KB|
+| `zerops://themes/refinement-references/trade_offs`           | ~11.6 KB|
+| `zerops://themes/refinement-references/refinement_thresholds`| ~13 KB  |
 
 ### Engine-derived sections
 
@@ -953,12 +971,21 @@ shape for their tier.
 ### Sub-agent output
 
 - `record-fragment mode=replace` on quality-gap surfaces (no append;
-  the rubric flips fragments only when the 100%-sure threshold holds).
+  the rubric flips fragments when the agent can cite the violated
+  rubric criterion + exact fragment + preserving edit per the
+  threshold language at `docs/spec-content-quality-rubric.md` —
+  run-23 F-27).
 
 ### Approximate brief size
 
-~115–130 KB. By far the heaviest brief — refinement is an entire-corpus
-re-read, deliberately context-dense.
+~30–50 KB after run-23 F-24 + F-25. Pre-run-23 the brief was ~115–130
+KB (entire-corpus re-read with seven distillation atoms preloaded).
+Run-23 moved the distillation atoms to the discovery channel
+(`zerops://themes/refinement-references/<name>` via `zerops_knowledge
+mode=uri`); the dispatched brief now carries the rubric + synthesis
+workflow + per-codebase scoped facts + pre-flagged suspect list, and
+the agent fetches a reference atom only when investigating a specific
+class.
 
 ---
 

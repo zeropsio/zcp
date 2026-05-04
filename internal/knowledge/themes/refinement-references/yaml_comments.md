@@ -206,6 +206,6 @@ authority) to 9.0 is unambiguous when:
   graduate before wanting adapt-paths. Reshape is welcome but the
   bar is lower; HOLD if the rewrite feels forced.
 
-The 100%-sure threshold: if the reshape's mechanism prose isn't
+The edit threshold: if the reshape's mechanism prose isn't
 clearly equivalent to the original's claims, HOLD. Refinement is
 not a rewrite of the recipe author's choices.

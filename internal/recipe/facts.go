@@ -84,10 +84,12 @@ type FactRecord struct {
 // Fact Kind discriminator values. Empty Kind preserves the legacy
 // platform-trap shape (Kind="" path in Validate).
 const (
-	FactKindPorterChange   = "porter_change"
-	FactKindFieldRationale = "field_rationale"
-	FactKindTierDecision   = "tier_decision"
-	FactKindContract       = "contract"
+	FactKindPorterChange        = "porter_change"
+	FactKindFieldRationale      = "field_rationale"
+	FactKindTierDecision        = "tier_decision"
+	FactKindContract            = "contract"
+	FactKindCurlVerification    = "curl_verification"
+	FactKindBrowserVerification = "browser_verification"
 )
 
 // Validate returns an error if any required field is empty for the
@@ -109,6 +111,10 @@ func (f FactRecord) Validate() error {
 		return f.validateTierDecision()
 	case FactKindContract:
 		return f.validateContract()
+	case FactKindCurlVerification:
+		return f.validateCurlVerification()
+	case FactKindBrowserVerification:
+		return f.validateBrowserVerification()
 	default:
 		return fmt.Errorf("fact record has unknown kind %q", f.Kind)
 	}
@@ -187,6 +193,41 @@ func (f FactRecord) validateContract() error {
 		return errors.New("contract fact missing required field \"subject\"")
 	case f.Purpose:
 		return errors.New("contract fact missing required field \"purpose\"")
+	}
+	return nil
+}
+
+// validateCurlVerification enforces the curl_verification shape.
+// Subject names the route or queue subject the curl exercised; service
+// names the slot it hit; Why carries the prose recap of the
+// verification (status code + observed response shape). Run-23 F-22 —
+// backend pass close-out signal recorded after the curl smoke-test
+// confirms an endpoint returns the expected shape.
+func (f FactRecord) validateCurlVerification() error {
+	switch "" {
+	case f.Subject:
+		return errors.New("curl_verification fact missing required field \"subject\"")
+	case f.Service:
+		return errors.New("curl_verification fact missing required field \"service\"")
+	case f.Why:
+		return errors.New("curl_verification fact missing required field \"why\" (recap status + response shape)")
+	}
+	return nil
+}
+
+// validateBrowserVerification enforces the browser_verification shape.
+// Subject names the panel the browser walked; service names the slot
+// it loaded; Why carries the visual evidence (what rendered + how
+// many items / which state). Run-23 F-23 — frontend pass post-wiring
+// signal that the panel is integrated end-to-end.
+func (f FactRecord) validateBrowserVerification() error {
+	switch "" {
+	case f.Subject:
+		return errors.New("browser_verification fact missing required field \"subject\"")
+	case f.Service:
+		return errors.New("browser_verification fact missing required field \"service\"")
+	case f.Why:
+		return errors.New("browser_verification fact missing required field \"why\" (recap visual evidence)")
 	}
 	return nil
 }

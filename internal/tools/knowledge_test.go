@@ -221,6 +221,64 @@ func TestKnowledgeTool_ModeMixError_AllFourCombination(t *testing.T) {
 	}
 }
 
+// TestKnowledgeTool_FetchMode_ReturnsFullDocumentBody — run-23 F-25.
+// A new fetch mode (URI=zerops://...) returns the full Document body
+// for an explicit URI rather than a SearchResult list. Used by the
+// refinement sub-agent to fetch a specific reference distillation atom
+// on demand instead of preloading all 7 into the brief.
+func TestKnowledgeTool_FetchMode_ReturnsFullDocumentBody(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeStore(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil, nil)
+
+	result := callTool(t, srv, "zerops_knowledge", map[string]any{
+		"uri": "zerops://themes/core",
+	})
+
+	if result.IsError {
+		t.Fatalf("unexpected error: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "Universal rules here") {
+		t.Errorf("fetch mode should return full body of zerops://themes/core; got: %s", text)
+	}
+}
+
+// TestKnowledgeTool_FetchMode_UnknownURI_Errors — fetch mode rejects
+// an unknown URI with a recovery-class platform error so the agent can
+// retry rather than treat the empty body as success.
+func TestKnowledgeTool_FetchMode_UnknownURI_Errors(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeStore(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil, nil)
+
+	result := callTool(t, srv, "zerops_knowledge", map[string]any{
+		"uri": "zerops://themes/nonexistent",
+	})
+	if !result.IsError {
+		t.Fatal("expected error for unknown uri")
+	}
+}
+
+// TestKnowledgeTool_FetchMode_RejectsCombinedWithOtherModes — like
+// other modes, fetch is exclusive.
+func TestKnowledgeTool_FetchMode_RejectsCombinedWithOtherModes(t *testing.T) {
+	t.Parallel()
+	store := testKnowledgeStore(t)
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterKnowledge(srv, store, nil, nil, nil, nil)
+
+	result := callTool(t, srv, "zerops_knowledge", map[string]any{
+		"uri":   "zerops://themes/core",
+		"query": "anything",
+	})
+	if !result.IsError {
+		t.Fatal("expected error when uri + query are combined")
+	}
+}
+
 func TestKnowledgeTool_NoModeError(t *testing.T) {
 	t.Parallel()
 	store := testKnowledgeStore(t)

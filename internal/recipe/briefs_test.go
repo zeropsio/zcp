@@ -302,7 +302,7 @@ func TestBriefCompose_FeatureUnderCap(t *testing.T) {
 	t.Parallel()
 
 	plan := syntheticShowcasePlan()
-	brief, err := BuildFeatureBrief(plan)
+	brief, err := BuildFeatureBrief(plan, FeaturePassFrontend)
 	if err != nil {
 		t.Fatalf("BuildFeatureBrief: %v", err)
 	}
@@ -424,7 +424,7 @@ func TestBuildFeatureBrief_ShowcaseTierIncludesScenarioSpec(t *testing.T) {
 
 	plan := syntheticShowcasePlan()
 	plan.Tier = "showcase"
-	brief, err := BuildFeatureBrief(plan)
+	brief, err := BuildFeatureBrief(plan, FeaturePassFrontend)
 	if err != nil {
 		t.Fatalf("BuildFeatureBrief: %v", err)
 	}
@@ -443,7 +443,7 @@ func TestBuildFeatureBrief_MinimalTierOmitsScenarioSpec(t *testing.T) {
 
 	plan := syntheticShowcasePlan()
 	plan.Tier = "minimal"
-	brief, err := BuildFeatureBrief(plan)
+	brief, err := BuildFeatureBrief(plan, FeaturePassFrontend)
 	if err != nil {
 		t.Fatalf("BuildFeatureBrief: %v", err)
 	}
@@ -460,7 +460,7 @@ func TestBuildFeatureBrief_OmitsYamlCommentStyle(t *testing.T) {
 	t.Parallel()
 
 	plan := syntheticShowcasePlan()
-	brief, err := BuildFeatureBrief(plan)
+	brief, err := BuildFeatureBrief(plan, FeaturePassFrontend)
 	if err != nil {
 		t.Fatalf("BuildFeatureBrief: %v", err)
 	}
@@ -479,7 +479,7 @@ func TestBuildFeatureBrief_OmitsYamlCommentStyle(t *testing.T) {
 func TestFeatureBrief_LoadsWorkerSubscriptionTeaching_WhenShowcaseAndHasWorker(t *testing.T) {
 	t.Parallel()
 	plan := syntheticShowcasePlan() // tier=showcase + worker codebase
-	brief, err := BuildFeatureBrief(plan)
+	brief, err := BuildFeatureBrief(plan, FeaturePassBackend)
 	if err != nil {
 		t.Fatalf("BuildFeatureBrief: %v", err)
 	}
@@ -514,7 +514,7 @@ func TestFeatureBrief_OmitsWorkerSubscriptionTeaching_WhenNoWorker(t *testing.T)
 	}
 	plan.Codebases = filtered
 
-	brief, err := BuildFeatureBrief(plan)
+	brief, err := BuildFeatureBrief(plan, FeaturePassBackend)
 	if err != nil {
 		t.Fatalf("BuildFeatureBrief: %v", err)
 	}
@@ -532,7 +532,7 @@ func TestFeatureBrief_OmitsWorkerSubscriptionTeaching_WhenNotShowcase(t *testing
 	t.Parallel()
 	plan := syntheticShowcasePlan() // has worker codebase
 	plan.Tier = "minimal"
-	brief, err := BuildFeatureBrief(plan)
+	brief, err := BuildFeatureBrief(plan, FeaturePassBackend)
 	if err != nil {
 		t.Fatalf("BuildFeatureBrief: %v", err)
 	}
@@ -606,14 +606,15 @@ func TestBuildSubagentPrompt_Feature_NoCodebaseScope(t *testing.T) {
 
 	plan := syntheticShowcasePlan()
 	prompt, err := buildSubagentPrompt(plan, RecipeInput{
-		BriefKind: "feature",
+		BriefKind:   "feature",
+		FeaturePass: string(FeaturePassFrontend),
 	})
 	if err != nil {
 		t.Fatalf("buildSubagentPrompt: %v", err)
 	}
 	mustContain(t, prompt, "## Recipe-level context")
 	mustContain(t, prompt, "synth-showcase")
-	feature, _ := BuildFeatureBrief(plan)
+	feature, _ := BuildFeatureBrief(plan, FeaturePassFrontend)
 	if !strings.Contains(prompt, feature.Body) {
 		t.Errorf("feature prompt does not contain brief body verbatim")
 	}

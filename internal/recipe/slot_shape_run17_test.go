@@ -70,8 +70,8 @@ func TestCheckCodebaseKB_AuthorClaim_DecomposeExecOnce_Refused(t *testing.T) {
 	if !strings.Contains(strings.Join(msgs, "\n"), "author-claim") {
 		t.Errorf("refusal message should name `author-claim` shape; got: %v", msgs)
 	}
-	if !strings.Contains(strings.Join(msgs, "\n"), "reference_kb_shapes.md") {
-		t.Errorf("refusal message should redirect to reference_kb_shapes.md; got: %v", msgs)
+	if !strings.Contains(strings.Join(msgs, "\n"), "refinement-references/kb_shapes") {
+		t.Errorf("refusal message should redirect to refinement-references/kb_shapes URI; got: %v", msgs)
 	}
 }
 

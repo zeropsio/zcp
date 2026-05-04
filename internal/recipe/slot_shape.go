@@ -224,7 +224,7 @@ func checkCodebaseKBAll(body string) []string {
 			stem = m[1]
 			if !kbStemMatchesSymptomFirst(stem) {
 				out = append(out, fmt.Sprintf(
-					"codebase/<h>/knowledge-base stem `%s` is author-claim shape; KB stems are symptom-first or directive-tightly-mapped-to-observable-error. Reshape: name the HTTP status code, quoted error string, failure verb, or observable wrong-state phrase the porter would search for. See `briefs/refinement/reference_kb_shapes.md`.",
+					"codebase/<h>/knowledge-base stem `%s` is author-claim shape; KB stems are symptom-first or directive-tightly-mapped-to-observable-error. Reshape: name the HTTP status code, quoted error string, failure verb, or observable wrong-state phrase the porter would search for. Fetch `zerops_knowledge uri=zerops://themes/refinement-references/kb_shapes` for worked-example anchors.",
 					stem))
 			}
 		}

@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-//go:embed themes/*.md bases/*.md all:recipes all:guides all:decisions
+//go:embed themes/*.md themes/*/*.md bases/*.md all:recipes all:guides all:decisions
 var contentFS embed.FS
 
 // knowledgeDirs lists the top-level directories in the embedded knowledge filesystem.

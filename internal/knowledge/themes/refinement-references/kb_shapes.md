@@ -296,6 +296,6 @@ search paths converge: symptom phrase + error string + status code.
   (e.g. "Subdomain refs already carry `https://`") — there's no
   symptom to name; the directive IS the teaching. HOLD.
 
-The 100%-sure threshold: if you couldn't argue the symptom phrase in
+The edit threshold: if you couldn't argue the symptom phrase in
 a code review against the recorded fact's Why, you can't add it to
 the stem. HOLD.

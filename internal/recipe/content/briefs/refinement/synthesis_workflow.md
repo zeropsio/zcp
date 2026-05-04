@@ -2,9 +2,33 @@
 
 You walk every stitched fragment in the run output and decide for each
 whether to ACT (replace via `record-fragment mode=replace`) or HOLD.
-The decision is rubric-driven — embedded_rubric.md is the contract;
-the seven reference_*.md atoms below are the worked-example library
-that disambiguates ACT vs HOLD on a given surface.
+The decision is rubric-driven — `embedded_rubric.md` is the contract;
+the seven reference distillation atoms (KB shapes, IG one-mechanism,
+voice patterns, yaml comments, citations, trade-offs, refinement
+thresholds) live on the discovery channel. Fetch the one matching the
+class you're investigating via:
+
+    zerops_knowledge uri=zerops://themes/refinement-references/<name>
+
+The brief lists every fetchable URI under "Reference atoms — fetch on
+demand" with a one-line description per atom. Don't preload them all;
+fetch the atom WHEN you're scoring a suspect against its criterion.
+
+## Fragment id reads BARE codebase name (not slot hostname)
+
+Fragment ids use `codebase/<bare-host>/...` where `<bare-host>` is the
+name from `Plan.Codebases[].Hostname` (e.g. `api`, `app`, `worker`).
+This is NOT the same as the `service` field on facts, which can be
+slot-named (`apidev`, `apidev/runtime`, `workerdev`) — those are
+deploy-slot identifiers, not fragment-id components.
+
+Worked example:
+
+- Fact `{ "service": "workerdev", "topic": "worker_keepalive_heartbeat", ... }` — `service` = `workerdev` (slot)
+- The corresponding worker codebase fragment id: `codebase/worker/knowledge-base` ← uses `worker` (bare), not `workerdev`
+
+If the engine returns "unknown codebase 'workerdev' (Plan codebases:
+[api app worker])", drop the slot suffix and retry with the bare name.
 
 ## Refinement actions, by criterion
 
@@ -13,7 +37,7 @@ that disambiguates ACT vs HOLD on a given surface.
 Walk every `codebase/<h>/knowledge-base` fragment. For each `- **stem**
 — body`:
 
-1. Score the stem against `reference_kb_shapes.md` Pass examples.
+1. Score the stem against `zerops://themes/refinement-references/kb_shapes` Pass examples.
 2. If the stem is symptom-first OR directive-tightly-mapped (body
    carries the observable in its first sentence), HOLD.
 3. If the stem is author-claim AND a symptom-first reshape is
@@ -29,7 +53,7 @@ Walk every `codebase/<h>/knowledge-base` fragment. For each `- **stem**
 Walk every `codebase/<h>/zerops-yaml` whole-yaml fragment (one per
 codebase, owns every block-level comment in that codebase's
 zerops.yaml) AND every tier `import.yaml` service-block comment.
-Count friendly-authority phrasings per `reference_voice_patterns.md`
+Count friendly-authority phrasings per `zerops://themes/refinement-references/voice_patterns`
 "The heuristic":
 
 1. If the fragment carries ≥1 phrasing tied to a named porter signal,
@@ -57,14 +81,14 @@ under "Citation guides for this recipe"):
    by name in prose, HOLD.
 2. If the topic IS on the Citation Map AND the body lacks the cite,
    ACT — append the cite-by-name pattern from
-   `reference_citations.md` Pass 1 (final sentence: "The Zerops
+   `zerops://themes/refinement-references/citations` Pass 1 (final sentence: "The Zerops
    `<guide>` reference covers ..."). Be precise about the guide id.
 3. If the topic is NOT on the Citation Map (or the recipe has no
    citationGuides at all), HOLD.
 
 ### Criterion 4 — Trade-off two-sidedness (KB)
 
-Walk every KB bullet body. Per `reference_trade_offs.md`:
+Walk every KB bullet body. Per `zerops://themes/refinement-references/trade_offs`:
 
 1. If the body names both the chosen path AND the rejected
    alternative (with the consequence of the rejected one), HOLD.
@@ -141,8 +165,9 @@ body. The response surfaces a `refinement-replace-reverted` notice
 naming the violation that fired.
 
 For env / root fragments the wrapper does not fire — slot-shape is
-the only safety net at record time. HOLD on those if the reshape
-isn't 100% sure.
+the only safety net at record time. Apply the edit threshold (cite
+the violated rubric criterion + the exact fragment + the preserving
+edit); HOLD when any of the three is fuzzy.
 
 Either way: do NOT loop. One attempt per fragment.
 

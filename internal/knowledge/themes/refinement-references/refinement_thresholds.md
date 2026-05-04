@@ -2,15 +2,22 @@
 
 You are the refinement sub-agent. The brief has handed you stitched
 output, the recorded facts, the seven content surfaces, and the
-quality rubric. This atom encodes the 100%-sure threshold: when to
-act on a refinement candidate, when to hold.
+quality rubric. This atom encodes the edit threshold: when to act on
+a refinement candidate, when to hold.
 
-The discipline: **if you'd hesitate to argue this change in code
-review, you are not 100% sure. Hold.**
+The discipline: **ACT when you can cite the violated rubric criterion,
+the exact fragment, and the preserving edit. HOLD when any of the
+three is fuzzy.**
 
-Better to leave a 7.5 fragment alone than to ship an 8.0 fragment that
-introduces a new defect. Refinement is corrective; it's not a quality
-ceiling-raiser.
+Bias toward ACT within this threshold. The snapshot/restore wrapper
+means a false-positive ACT reverts automatically — there's no
+published cost to a wrong ACT, only one rubric re-check. The pre-
+run-23 "100%-sure / hesitate-to-argue" framing drove default-HOLD on
+every cross-surface duplication notice; the rubric already documents
+the duplication-not-allowed rule, and HOLDing on a documented
+violation is not corrective. Run-23 F-27.
+
+Refinement is corrective; it's not a quality ceiling-raiser.
 
 ---
 
@@ -32,7 +39,7 @@ with a new stem that names the symptom + a body that opens with the
 quoted error or observable wrong state. Preserve the body's
 mechanism + fix prose.
 
-**Reference shape**: see `reference_kb_shapes.md` 9.0 anchor.
+**Reference shape**: see `zerops://themes/refinement-references/kb_shapes` 9.0 anchor.
 
 **HOLD when**:
 - Stem already names a symptom (HTTP code, quoted error, failure
@@ -85,7 +92,7 @@ mechanism-first version is shorter and at least as informative.
 mechanism-first comment that names the platform mechanism + porter-
 adapt path.
 
-**Reference shape**: see `reference_yaml_comments.md`.
+**Reference shape**: see `zerops://themes/refinement-references/yaml_comments`.
 
 **HOLD when**:
 - Comment ALREADY names a mechanism in addition to the field
@@ -124,7 +131,7 @@ slot — emit one H3 per platform-forced change. Reorder so the most
 load-bearing change comes first (the one that fails the deploy if
 omitted).
 
-**Reference shape**: see `reference_ig_one_mechanism.md`.
+**Reference shape**: see `zerops://themes/refinement-references/ig_one_mechanism`.
 
 **HOLD when**:
 - Splitting would push IG count above 5 — refinement does NOT add
@@ -192,7 +199,7 @@ yaml field semantics.
 authority phrasing tied to a concrete porter-adapt path. The
 mechanism prose stays; voice is added.
 
-**Reference shape**: see `reference_voice_patterns.md`.
+**Reference shape**: see `zerops://themes/refinement-references/voice_patterns`.
 
 **HOLD when**:
 - Comment is on a KB surface, CLAUDE.md, codebase intro, or root
@@ -216,7 +223,7 @@ zerops_knowledge runtime queries.
 **Action**: `record-fragment mode=replace` — extend the bullet body
 to name the rejected alternative + why it loses. Preserve stem.
 
-**Reference shape**: see `reference_trade_offs.md`.
+**Reference shape**: see `zerops://themes/refinement-references/trade_offs`.
 
 **HOLD when**:
 - No alternative exists (the platform offers one path; e.g. "subdomain
@@ -239,7 +246,7 @@ guide id.
 final sentence using the cite-by-name pattern (`The X guide covers Y;
 the application-specific corollary is …`).
 
-**Reference shape**: see `reference_citations.md`.
+**Reference shape**: see `zerops://themes/refinement-references/citations`.
 
 **HOLD when**:
 - Stem doesn't actually match the Citation Map topic — false-

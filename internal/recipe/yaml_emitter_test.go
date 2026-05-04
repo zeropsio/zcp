@@ -367,6 +367,39 @@ func TestEmitDeliverableYAML_Tier0_DistinctSlotKeysBothEmit(t *testing.T) {
 	mustContain(t, got, "Stage slot — stable demo target")
 }
 
+// TestEmitDeliverableYAML_DevPairTier_StageSlotSuppressedToAvoidDuplicate
+// — run-23 F-19 deferral guard. F-19 (stamping `import-comments/<bare>`
+// above EVERY slot at dev-pair tiers) was deferred because the run-13
+// §Y2D suppression at writeRuntimeStage:303-317 deliberately drops the
+// stage slot's bare-codebase fallback when it would render byte-
+// identical prose to what the dev slot already emitted. This test pins
+// the Y2D contract so a future refactor can't accidentally undo it: at
+// a dev-pair tier with a bare-codebase comment in EnvComments, the
+// stage slot must NOT receive a duplicate comment block. See FIX_SPEC.md
+// F-19 DEFERRED for the prerequisite (fragment-id model expansion to
+// accept `env/<N>/import-comments/<slot>` per-slot ids).
+func TestEmitDeliverableYAML_DevPairTier_StageSlotSuppressedToAvoidDuplicate(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	// Bare-codebase comment present (Y2 fallback shape). At dev-pair
+	// tier 0 this would render above apidev; without Y2D suppression it
+	// would also render above apistage, producing a visual duplicate.
+	plan.EnvComments = map[string]EnvComments{
+		"0": {Service: map[string]string{
+			"api": "Two slots — apidev and apistage — share one source tree.",
+		}},
+	}
+	got, err := EmitDeliverableYAML(plan, 0)
+	if err != nil {
+		t.Fatalf("EmitDeliverableYAML: %v", err)
+	}
+	occurrences := strings.Count(got, "share one source tree")
+	if occurrences != 1 {
+		t.Errorf("Y2D suppression broken — bare-codebase comment rendered %d times above the dev-pair runtime; expected 1 (stage slot suppressed):\n%s", occurrences, got)
+	}
+}
+
 // TestWriteComment_BareProseUnchanged — run-12 §Y1. Plain prose without
 // a leading `#` still gets prefixed once; no doubled-prefix regression.
 func TestWriteComment_BareProseUnchanged(t *testing.T) {

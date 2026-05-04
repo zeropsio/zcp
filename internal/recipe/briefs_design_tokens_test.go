@@ -58,7 +58,7 @@ func TestBuildDesignTokenTable_IncludesLoadBearingTokens(t *testing.T) {
 func TestFeatureBrief_LoadsDesignTokens_WhenShowcaseAndHasUI(t *testing.T) {
 	t.Parallel()
 	plan := syntheticShowcasePlan() // showcase + frontend "app" codebase
-	brief, err := BuildFeatureBrief(plan)
+	brief, err := BuildFeatureBrief(plan, FeaturePassFrontend)
 	if err != nil {
 		t.Fatalf("BuildFeatureBrief: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestFeatureBrief_LoadsDesignTokens_WhenShowcaseAndMonolith(t *testing.T) {
 			{Hostname: "db", Type: "postgresql@18", Kind: ServiceKindManaged, Priority: 10},
 		},
 	}
-	brief, err := BuildFeatureBrief(plan)
+	brief, err := BuildFeatureBrief(plan, FeaturePassFrontend)
 	if err != nil {
 		t.Fatalf("BuildFeatureBrief: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestFeatureBrief_OmitsDesignTokens_WhenNoUI(t *testing.T) {
 			{Hostname: "worker", Role: RoleWorker, BaseRuntime: "nodejs@22", IsWorker: true},
 		},
 	}
-	brief, err := BuildFeatureBrief(plan)
+	brief, err := BuildFeatureBrief(plan, FeaturePassFrontend)
 	if err != nil {
 		t.Fatalf("BuildFeatureBrief: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestFeatureBrief_OmitsDesignTokens_WhenNotShowcase(t *testing.T) {
 	t.Parallel()
 	plan := syntheticShowcasePlan() // has frontend codebase
 	plan.Tier = "minimal"
-	brief, err := BuildFeatureBrief(plan)
+	brief, err := BuildFeatureBrief(plan, FeaturePassFrontend)
 	if err != nil {
 		t.Fatalf("BuildFeatureBrief: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestFeatureBrief_OmitsDesignTokens_WhenNotShowcase(t *testing.T) {
 func TestFeatureBrief_CapWithDesignTokens_StaysUnderLimit(t *testing.T) {
 	t.Parallel()
 	plan := syntheticShowcasePlan() // showcase + worker + frontend (highest-load shape)
-	brief, err := BuildFeatureBrief(plan)
+	brief, err := BuildFeatureBrief(plan, FeaturePassFrontend)
 	if err != nil {
 		t.Fatalf("BuildFeatureBrief: %v", err)
 	}

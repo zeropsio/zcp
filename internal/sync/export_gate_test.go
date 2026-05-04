@@ -50,8 +50,21 @@ func recipeStateWithCloseStatus(status string) *workflow.RecipeState {
 }
 
 // minimalRecipeDir sets up a minimal recipe dir with one env folder so
-// ExportRecipe can proceed past the directory existence check.
+// ExportRecipe can proceed past the directory existence check. The
+// helper also writes the run-23 F-26 .refinement-closed marker so
+// existing close-step-gate tests aren't blocked on the new refinement
+// gate; tests that target the refinement gate explicitly call
+// minimalRecipeDirWithoutRefinementClose.
 func minimalRecipeDir(t *testing.T, root string) string {
+	t.Helper()
+	recipeDir := minimalRecipeDirWithoutRefinementClose(t, root)
+	writeFile(t, filepath.Join(recipeDir, ".refinement-closed"), "")
+	return recipeDir
+}
+
+// minimalRecipeDirWithoutRefinementClose is the no-marker variant for
+// tests that exercise the F-26 refinement gate.
+func minimalRecipeDirWithoutRefinementClose(t *testing.T, root string) string {
 	t.Helper()
 	recipeDir := filepath.Join(root, "test-showcase")
 	writeFile(t, filepath.Join(recipeDir, "README.md"), "# root")
@@ -250,5 +263,38 @@ func TestResolveSessionID_PrecedenceExplicitOverEnv(t *testing.T) {
 	}
 	if source != "" {
 		t.Errorf("expected empty source when neither set; got %q", source)
+	}
+}
+
+// TestExportRecipe_RefusesWhenRefinementNotClosed — run-23 F-26.
+// Even with a workflow session whose close step is complete, the
+// export gate refuses unless the .refinement-closed marker exists in
+// the recipe dir. The agent that closes the workflow's `close` step
+// without dispatching the recipe-engine refinement pass would
+// otherwise ship an unaudited deliverable.
+func TestExportRecipe_RefusesWhenRefinementNotClosed(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+
+	stateDir := filepath.Join(root, ".zcp", "state")
+	writeSessionState(t, stateDir, "sess-no-refine", recipeStateWithCloseStatus("complete"))
+
+	_, err := ExportRecipe(ExportOpts{
+		RecipeDir:       minimalRecipeDirWithoutRefinementClose(t, root),
+		SessionID:       "sess-no-refine",
+		SessionStateDir: stateDir,
+	})
+	if err == nil {
+		t.Fatal("expected ErrExportBlocked when refinement marker missing, got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "EXPORT_BLOCKED") {
+		t.Errorf("error missing EXPORT_BLOCKED code; got: %s", msg)
+	}
+	if !strings.Contains(msg, "refinement phase has not closed") {
+		t.Errorf("error must name the refinement gate; got: %s", msg)
+	}
+	if !strings.Contains(msg, "complete-phase phase=refinement") {
+		t.Errorf("error must name the recovery action; got: %s", msg)
 	}
 }

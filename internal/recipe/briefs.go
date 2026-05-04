@@ -87,9 +87,23 @@ import (
 // stage-slot negative rule appended to mount-vs-container.md (feature
 // brief was saturated at ~20.3 KB pre-edit). R3-2 will tighten the
 // cap back down once feature/env-content briefs are slimmed.
+//
+// Run-23 F-21 raised FeatureBriefCap 22 → 32 KB to absorb the pass-
+// split atoms: contract_authoring (~3 KB, backend pass) +
+// tailwind_componentry (~4 KB, frontend pass) + integration_validator
+// (~3 KB, frontend pass). Each atom only loads on its matching pass,
+// so an individual brief is always under the cap. The cap covers the
+// WORST-CASE per-pass load: the frontend pass on a showcase recipe
+// with a UI codebase + design-system table + Tailwind atom +
+// integration-validator atom; or the backend pass on a recipe with
+// a worker codebase that loads worker_subscription_shape +
+// contract_authoring on top of the always-loaded scaffold-residual
+// atoms. Pass dispatch is now mandatory — the legacy "single dispatch
+// on a non-split caller" path is gone (BuildFeatureBrief rejects
+// empty pass per TestBuildFeatureBrief_RejectsEmptyPass).
 const (
 	ScaffoldBriefCap = 48 * 1024
-	FeatureBriefCap  = 22 * 1024
+	FeatureBriefCap  = 32 * 1024
 )
 
 // BriefKind identifies a sub-agent role. Scaffold + feature have
@@ -132,8 +146,14 @@ const (
 // EnvContentBriefCap still matches because per_tier_authoring.md is
 // loaded there too, and run-22 followup F-4 added the cross-service-
 // urls atom (~10.5 KB) at env-content.
+// Run-23 F-18 bumped CodebaseContentBriefCap 56→60 KB after the
+// "common record-fragment rejections — pre-empt these" section
+// landed in `phase_entry/codebase-content.md` (~1.2 KB). The
+// rejection-pattern pre-warning targets the 85% iteration rate seen
+// at cc-api in run-23; small-brief growth, large authoring-quality
+// signal.
 const (
-	CodebaseContentBriefCap = 56 * 1024
+	CodebaseContentBriefCap = 60 * 1024
 	EnvContentBriefCap      = 56 * 1024
 	ClaudeMDBriefCap        = 8 * 1024 // §Risk 7 — Zerops-free brief stays small by construction
 )
@@ -366,12 +386,41 @@ func BuildScaffoldBriefWithResolver(plan *Plan, cb Codebase, parent *ParentRecip
 	return Brief{Kind: BriefScaffold, Body: body, Bytes: len(body), Parts: parts}, nil
 }
 
-// BuildFeatureBrief composes the feature sub-agent brief. Feature kind
-// catalog + scaffold symbol table from the plan's codebases + services.
-// Symbol table is flat data — no framework instructions.
-func BuildFeatureBrief(plan *Plan) (Brief, error) {
+// FeaturePass discriminates the feature-phase brief composer between
+// the backend pass (api + worker scope; routes/queue/contract authoring
+// + curl smoke-tests; no design-system / Tailwind atoms) and the
+// frontend pass (SPA / monolith UI scope; design-system + Tailwind +
+// browser-walk + bounded cross-codebase edit authority). Run-23 F-21
+// split the prior single-pass cross-codebase agent into sequential
+// backend → frontend passes so each brief loads only what its scope
+// needs.
+type FeaturePass string
+
+const (
+	FeaturePassBackend  FeaturePass = "backend"
+	FeaturePassFrontend FeaturePass = "frontend"
+)
+
+// BuildFeatureBrief composes the feature sub-agent brief for the named
+// pass. Feature kind catalog + scaffold symbol table from the plan's
+// codebases + services. Symbol table is flat data — no framework
+// instructions.
+//
+// Run-23 F-21 — pass discriminator. The backend pass loads contract
+// authoring + worker subscription shape (when applicable); the frontend
+// pass loads design-system tokens + Tailwind componentry +
+// integration-validator atoms. Showcase scenario + sshfs warning + the
+// universal sub-agent bookkeeping atoms load on both passes.
+func BuildFeatureBrief(plan *Plan, pass FeaturePass) (Brief, error) {
 	if plan == nil {
 		return Brief{}, errors.New("nil plan")
+	}
+	switch pass {
+	case FeaturePassBackend, FeaturePassFrontend:
+		// ok
+	default:
+		return Brief{}, fmt.Errorf("BuildFeatureBrief: unknown pass %q (want %q or %q)",
+			pass, FeaturePassBackend, FeaturePassFrontend)
 	}
 	var b strings.Builder
 	var parts []string
@@ -424,8 +473,31 @@ func BuildFeatureBrief(plan *Plan) (Brief, error) {
 	// here at feature; KB-content shape stays at codebase-content
 	// (`worker_kb_supplements.md`). Same gate as the codebase-content
 	// peer: showcase tier + plan has at least one worker codebase.
-	if plan.Tier == tierShowcase && plan.HasWorkerCodebase() {
+	//
+	// Run-23 F-21 — restricted to backend pass. Frontend pass consumes
+	// the worker contract via curl/browser-walk; it doesn't author
+	// worker source. Loading the code-shape atom into the frontend pass
+	// is dead weight that bloats the brief.
+	if pass == FeaturePassBackend && plan.Tier == tierShowcase && plan.HasWorkerCodebase() {
 		atoms = append(atoms, "briefs/feature/worker_subscription_shape.md")
+	}
+	// Run-23 F-22 (backend pass) — contract authoring atom. Teaches
+	// recording `contract`-kind facts + curl smoke-tests at backend
+	// close. Frontend pass consumes the contract; backend pass
+	// authors it.
+	if pass == FeaturePassBackend {
+		atoms = append(atoms, "briefs/feature/contract_authoring.md")
+	}
+	// Run-23 F-22 (frontend pass) — Tailwind / componentry atom +
+	// integration-validator atom (curl-before-UI + bounded cross-
+	// codebase edit authority). Loaded only on the frontend pass + only
+	// when the plan ships a UI codebase (api-only / worker-only recipes
+	// don't render anything visible).
+	if pass == FeaturePassFrontend && plan.HasUICodebase() {
+		atoms = append(atoms,
+			"briefs/feature/tailwind_componentry.md",
+			"briefs/feature/integration_validator.md",
+		)
 	}
 	for _, atom := range atoms {
 		body, err := readAtom(atom)
@@ -450,7 +522,11 @@ func BuildFeatureBrief(plan *Plan) (Brief, error) {
 	// `zerops_knowledge`. Token corpus is identical across recipes by
 	// construction; the per-component class/element name is whatever
 	// is idiomatic for the framework.
-	if plan.Tier == tierShowcase && plan.HasUICodebase() {
+	//
+	// Run-23 F-21 — frontend-pass-only. The backend pass authors
+	// routes/queue/contract; design tokens never reach api+worker
+	// briefs that don't render anything visible.
+	if pass == FeaturePassFrontend && plan.Tier == tierShowcase && plan.HasUICodebase() {
 		b.WriteString(BuildDesignTokenTable())
 		parts = append(parts, "design-tokens")
 	}

@@ -30,16 +30,20 @@ type KnowledgeInput struct {
 	Services []string `json:"services,omitempty" jsonschema:"MODE 2 (briefing — stack-specific rules). Pass service types with versions, e.g. [postgresql@16, valkey@7.2]. Combine with runtime= for full-stack briefings; use either field alone is also valid. Do NOT combine with query/scope/recipe."`
 	Recipe   string   `json:"recipe,omitempty"   jsonschema:"MODE 4 (recipe — consume an existing published guide). Valid shapes: {runtime}-hello-world, {framework}-{ssr,static}-hello-world, {framework}-minimal. For named lookups of already-published guides, use this field instead of query=. Do NOT use while authoring a new recipe via zerops_recipe — authoring has its own research pipeline. Use alone — combining with query/runtime/services/scope is rejected."`
 	Scope    string   `json:"scope,omitempty"    jsonschema:"MODE 3 (scope — full platform reference). Only valid value is 'infrastructure' — returns complete Zerops knowledge (YAML schemas, env vars, build/deploy lifecycle). Required before generating YAML in develop/bootstrap workflows. Do NOT call during zerops_recipe authoring — that pipeline emits YAML deterministically from typed plan state. Use alone — combining with query/runtime/services/recipe is rejected."`
+	URI      string   `json:"uri,omitempty"      jsonschema:"MODE 5 (fetch — full document body by URI). Pass an exact zerops:// URI (e.g. zerops://themes/refinement-references/kb_shapes) to retrieve that document's complete body. Used by sub-agents (refinement, scaffold) to pull a specific reference atom on demand instead of having every reference preloaded into the brief. Use alone — combining with query/runtime/services/recipe/scope is rejected."`
 	Mode     string   `json:"mode,omitempty"     jsonschema:"OPTIONAL helper, ANY mode — override the auto-detected workflow mode filter (dev, standard, simple, stage). Auto-detected from the active workflow session when omitted. Common use: mode=stage during a dev/standard workflow to see prod deploy patterns. Does NOT count as a mode-selecting field."`
 }
 
 // describeKnowledgeModes renders the modes the caller passed as a
 // readable list for use in rejection messages. Order matches the
-// canonical decision tree in the tool description (recipe → scope →
-// briefing → query) so the agent's mental map of mode taxonomy stays
-// consistent across passes.
-func describeKnowledgeModes(hasRecipe, hasScope, hasBriefing, hasQuery bool) string {
+// canonical decision tree in the tool description (fetch → recipe →
+// scope → briefing → query) so the agent's mental map of mode taxonomy
+// stays consistent across passes.
+func describeKnowledgeModes(hasFetch, hasRecipe, hasScope, hasBriefing, hasQuery bool) string {
 	var parts []string
+	if hasFetch {
+		parts = append(parts, "MODE 5 uri=")
+	}
 	if hasRecipe {
 		parts = append(parts, "MODE 4 recipe=")
 	}
@@ -91,6 +95,7 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 		hasBriefing := input.Runtime != "" || len(input.Services) > 0
 		hasRecipe := input.Recipe != ""
 		hasScope := input.Scope != ""
+		hasFetch := input.URI != ""
 
 		modeCount := 0
 		if hasQuery {
@@ -105,12 +110,15 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 		if hasScope {
 			modeCount++
 		}
+		if hasFetch {
+			modeCount++
+		}
 
 		if modeCount == 0 {
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
-				"No mode selected — zerops_knowledge requires exactly one of: recipe, scope, runtime/services, or query",
-				"Pick the mode that matches your intent: recipe=\"NAME\" for named guide, scope=\"infrastructure\" before writing YAML, runtime=/services= for stack briefing, query=\"phrase\" for free-text search."), WithRecoveryStatus()), nil, nil
+				"No mode selected — zerops_knowledge requires exactly one of: uri, recipe, scope, runtime/services, or query",
+				"Pick the mode that matches your intent: uri=\"zerops://...\" for full-body fetch by URI, recipe=\"NAME\" for named guide, scope=\"infrastructure\" before writing YAML, runtime=/services= for stack briefing, query=\"phrase\" for free-text search."), WithRecoveryStatus()), nil, nil
 		}
 
 		if modeCount > 1 {
@@ -118,11 +126,11 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 			// rejection points at the conflict instead of restating the
 			// rule generically. The agent can fix the call from the
 			// "what was passed" list alone.
-			combo := describeKnowledgeModes(hasRecipe, hasScope, hasBriefing, hasQuery)
+			combo := describeKnowledgeModes(hasFetch, hasRecipe, hasScope, hasBriefing, hasQuery)
 			return convertError(platform.NewPlatformError(
 				platform.ErrInvalidParameter,
 				fmt.Sprintf("Multiple modes selected (%s) — pick exactly one", combo),
-				"Re-call with only one of: recipe=\"NAME\" alone, OR scope=\"infrastructure\" alone, OR runtime=/services= alone, OR query=\"phrase\" alone. The mode= field is the only one that combines with any of these."), WithRecoveryStatus()), nil, nil
+				"Re-call with only one of: uri=\"zerops://...\" alone, OR recipe=\"NAME\" alone, OR scope=\"infrastructure\" alone, OR runtime=/services= alone, OR query=\"phrase\" alone. The mode= field is the only one that combines with any of these."), WithRecoveryStatus()), nil, nil
 		}
 
 		// Mode 1: Scope (platform reference) — always returns full content.
@@ -188,6 +196,21 @@ func RegisterKnowledge(srv *mcp.Server, store knowledge.Provider, client platfor
 				tracker.RecordBriefing(input.Runtime, input.Services)
 			}
 			return textResult(briefing), nil, nil
+		}
+
+		// Mode 5: Fetch — full document body retrieval by URI. Used by
+		// sub-agents (refinement, scaffold) to pull a specific reference
+		// atom on demand without preloading every reference into the brief.
+		// Run-23 F-25.
+		if hasFetch {
+			doc, err := store.Get(input.URI)
+			if err != nil {
+				return convertError(platform.NewPlatformError(
+					platform.ErrFileNotFound,
+					fmt.Sprintf("Document not found for uri %q: %v", input.URI, err),
+					"Check the URI spelling. Use query= to discover candidate URIs by free-text search, or recipe=NAME to fetch a published recipe."), WithRecoveryStatus()), nil, nil
+			}
+			return textResult(doc.Content), nil, nil
 		}
 
 		// Mode 4: Recipe retrieval — mode-adapted when session context available.

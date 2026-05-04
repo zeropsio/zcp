@@ -257,7 +257,7 @@ corollary (9.0) is unambiguous when:
   passing reference, no load-bearing teaching. Adding the cite would
   promote an incidental mention to a load-bearing claim. HOLD.
 
-The 100%-sure threshold: if you can't write the corollary clause
+The edit threshold: if you can't write the corollary clause
 without inventing a recipe-side claim that isn't in the recorded
 facts, HOLD. Citation refinement extends what's already there; it
 doesn't author new platform claims.

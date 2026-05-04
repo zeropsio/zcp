@@ -375,7 +375,7 @@ func TestFeatureBrief_TeachesEditInPlace(t *testing.T) {
 	t.Parallel()
 
 	plan := syntheticShowcasePlan()
-	brief, err := BuildFeatureBrief(plan)
+	brief, err := BuildFeatureBrief(plan, FeaturePassFrontend)
 	if err != nil {
 		t.Fatalf("BuildFeatureBrief: %v", err)
 	}

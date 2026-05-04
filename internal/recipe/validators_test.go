@@ -625,7 +625,7 @@ func TestPrinciples_InitCommandsCoversArbitraryStaticKey(t *testing.T) {
 
 	plan := syntheticShowcasePlan()
 	plan.FeatureKinds = []string{"seed", "scout-import"}
-	brief, err := BuildFeatureBrief(plan)
+	brief, err := BuildFeatureBrief(plan, FeaturePassFrontend)
 	if err != nil {
 		t.Fatalf("BuildFeatureBrief: %v", err)
 	}
@@ -684,7 +684,7 @@ func TestBrief_Feature_ContainsPerFeatureCommitGuidance(t *testing.T) {
 	t.Parallel()
 
 	plan := syntheticShowcasePlan()
-	brief, err := BuildFeatureBrief(plan)
+	brief, err := BuildFeatureBrief(plan, FeaturePassFrontend)
 	if err != nil {
 		t.Fatalf("BuildFeatureBrief: %v", err)
 	}

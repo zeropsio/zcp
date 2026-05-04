@@ -175,25 +175,84 @@ func TestBuildCodebaseContentBrief_ShowcaseNonWorkerSkipsSupplement(t *testing.T
 	}
 }
 
-// Atom inventory: the seven Tranche 0.5 reference distillation atoms
-// must exist on disk. This test pins the contract between Tranche 0.5
-// (atoms shipped) and Tranche 4 (refinement composer reads them).
+// TestBuildCodebaseContentBrief_PreWarnsTopRejectionPatterns — run-23
+// F-18 pin. cc-api hit 17 errors / 20 record-fragment calls (~85%
+// iteration rate) at run-23; the validator catches three rejection
+// classes that account for most of the churn. Front-load a "common
+// rejection patterns — pre-empt these" section in the codebase-content
+// phase-entry atom so the agent authors with these in mind from the
+// start. Codex flag: framing must NOT read as exhaustive — the brief
+// MUST cite the surface contract for the full set + use language that
+// makes the three an enumerated subset, not a closed list.
+func TestBuildCodebaseContentBrief_PreWarnsTopRejectionPatterns(t *testing.T) {
+	t.Parallel()
+	plan := contentPhaseTestPlan()
+	brief, err := BuildCodebaseContentBrief(plan, plan.Codebases[0], nil, nil)
+	if err != nil {
+		t.Fatalf("BuildCodebaseContentBrief: %v", err)
+	}
+	// Section header naming the pattern enumeration.
+	if !strings.Contains(brief.Body, "Common record-fragment rejections") {
+		t.Error("codebase-content brief missing common-rejections section header")
+	}
+	// Three pattern names — KB stem shape, slug citation prose, and
+	// classification × surface routing.
+	for _, want := range []string{
+		"KB stem",
+		"Slug citations",
+		"Classification × surface",
+	} {
+		if !strings.Contains(brief.Body, want) {
+			t.Errorf("codebase-content brief missing rejection-pattern name %q", want)
+		}
+	}
+	// Worked-example anchors — at least one concrete WRONG/RIGHT pair
+	// per pattern reduces ambiguity.
+	for _, want := range []string{
+		"Re-fire seeds",         // KB stem WRONG example token
+		"Seed silently skipped", // KB stem RIGHT example token
+		"env-var-model",         // citation example slug
+		"intersection",          // classification × surface refusal example
+	} {
+		if !strings.Contains(brief.Body, want) {
+			t.Errorf("codebase-content brief missing worked-example token %q", want)
+		}
+	}
+	// Codex framing fix: the three MUST NOT read as exhaustive. Assert
+	// "not exhaustive" framing — both "most-frequent" wording AND a
+	// pointer to the surface contract for the full set.
+	if !strings.Contains(brief.Body, "most-frequent") {
+		t.Error("rejection-patterns section missing 'most-frequent' framing — risks reading as exhaustive list")
+	}
+	if !strings.Contains(brief.Body, "spec-content-surfaces") {
+		t.Error("rejection-patterns section must point at the surface contract for the full validator set")
+	}
+}
+
+// Atom inventory: the seven distillation atoms must exist on disk so
+// the refinement sub-agent can fetch them via `zerops_knowledge
+// uri=zerops://themes/refinement-references/<name>`. Run-23 F-25
+// moved them from `internal/recipe/content/briefs/refinement/` to
+// `internal/knowledge/themes/refinement-references/` so they live on
+// the discovery channel rather than preloaded into the brief.
 
 func TestRefinementAtoms_AllSevenPresent(t *testing.T) {
 	t.Parallel()
 	want := []string{
-		"reference_kb_shapes.md",
-		"reference_ig_one_mechanism.md",
-		"reference_voice_patterns.md",
-		"reference_yaml_comments.md",
-		"reference_citations.md",
-		"reference_trade_offs.md",
+		"kb_shapes.md",
+		"ig_one_mechanism.md",
+		"voice_patterns.md",
+		"yaml_comments.md",
+		"citations.md",
+		"trade_offs.md",
 		"refinement_thresholds.md",
 	}
 	for _, name := range want {
-		path := filepath.Join("content", "briefs", "refinement", name)
+		// Tests run in the package dir (internal/recipe). The knowledge
+		// theme tree lives one level up.
+		path := filepath.Join("..", "knowledge", "themes", "refinement-references", name)
 		if _, err := os.Stat(path); err != nil {
-			t.Errorf("Tranche 0.5 atom missing: %s (%v)", path, err)
+			t.Errorf("refinement-reference atom missing: %s (%v)", path, err)
 		}
 	}
 }

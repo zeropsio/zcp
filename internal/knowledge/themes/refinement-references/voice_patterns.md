@@ -189,6 +189,6 @@ phrasing, not friendly authority.
   Voice-insertion is welcome but the bar is lower; HOLD if the
   reshape would feel forced.
 
-The 100%-sure threshold: if you can't name a concrete signal the
+The edit threshold: if you can't name a concrete signal the
 porter would act on, you can't add the friendly-authority phrasing.
 HOLD and surface the gap.

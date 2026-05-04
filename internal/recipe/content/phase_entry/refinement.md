@@ -6,8 +6,8 @@ every cap is satisfied; every classification routing is internally
 consistent. Run-17 §9 introduces this phase as the post-finalize
 quality refinement pass.
 
-Your job: read the entire stitched output and refine where the
-100%-sure threshold holds. Below the threshold, you do not act.
+Your job: read the entire stitched output and refine where the edit
+threshold holds. Below the threshold, you do not act.
 
 ## What you can do
 
@@ -38,13 +38,19 @@ For every fragment:
    (multiple reasonable refinements), HOLD.
 5. If a criterion lands ≥8.5, HOLD.
 
-## The 100%-sure threshold
+## The refinement edit threshold
 
-If you would hesitate to argue this change in a code review, you are
-not 100% sure. Hold. The cost of an unhelpful change is high — agent
-post-finalize reshape is a one-shot move with no repetition; an over-
-eager refinement that drops a load-bearing sentence costs more than
-a timid hold that leaves an 8.0 surface at 8.0.
+ACT when you can cite the violated rubric criterion, the exact
+fragment, and the preserving edit. HOLD when any of the three is
+fuzzy.
+
+Bias toward ACT within this threshold. The snapshot/restore wrapper
+means a false-positive ACT reverts automatically when the post-replace
+validator catches a regression — the cost of a wrong ACT is one
+rubric re-check, not a published mistake. The pre-run-23 "100%-sure /
+hesitate-to-argue" framing drove default-HOLD on every cross-surface
+duplication notice and shipped recipes with documented duplication
+the rubric already named as a violation. Run-23 F-27.
 
 ## Transactional safety
 
@@ -61,8 +67,9 @@ edit didn't stick.
 For root and env fragments (`root/intro`, `env/<N>/intro`,
 `env/<N>/import-comments/<host>`) the wrapper does NOT fire; the
 slot-shape refusal at record time is the safety net. Refinement on
-those surfaces is best-effort — if you'd hesitate to argue the change,
-HOLD.
+those surfaces is best-effort — apply the rubric-criterion + fragment
++ preserving-edit citation rule, and HOLD when any of the three
+isn't namable.
 
 ## Output
 
@@ -74,15 +81,19 @@ calls. End with `complete-phase phase=refinement`.
 1. `phase_entry/refinement.md` — this atom.
 2. `briefs/refinement/synthesis_workflow.md` — refinement actions,
    classification × surface table, surface-by-surface decision rules.
-3. The seven distillation atoms under `briefs/refinement/`:
-   - `reference_kb_shapes.md` — KB stem symptom-first heuristic.
-   - `reference_ig_one_mechanism.md` — IG one-mechanism-per-H3.
-   - `reference_voice_patterns.md` — friendly-authority phrasings.
-   - `reference_yaml_comments.md` — yaml-comment shape.
-   - `reference_citations.md` — cite-by-name pattern.
-   - `reference_trade_offs.md` — two-sided trade-offs in KB bodies.
-   - `refinement_thresholds.md` — the 100%-sure decision rules.
-4. `briefs/refinement/embedded_rubric.md` — the rubric, embedded
+3. `briefs/refinement/embedded_rubric.md` — the rubric, embedded
    verbatim from the spec.
+4. The "Engine-flagged suspects" section, when present — fragments
+   the engine's pre-scan flagged for investigation. Investigate each
+   against the rubric.
 5. The pointer block listing every stitched output path under
    `runDir`. Read each path; refine where the threshold holds.
+6. The seven reference distillation atoms — fetch on demand via
+   `zerops_knowledge uri=zerops://themes/refinement-references/<name>`:
+   - `kb_shapes` — KB stem symptom-first heuristic.
+   - `ig_one_mechanism` — IG one-mechanism-per-H3.
+   - `voice_patterns` — friendly-authority phrasings.
+   - `yaml_comments` — yaml-comment shape.
+   - `citations` — cite-by-name pattern.
+   - `trade_offs` — two-sided trade-offs in KB bodies.
+   - `refinement_thresholds` — the ACT vs HOLD decision rules.

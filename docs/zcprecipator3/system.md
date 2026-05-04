@@ -286,10 +286,11 @@ describes intent + actor + output.
 
 ### Phase 8 — Refinement (1 sub-agent, always-on)
 
-- **Action**: refinement sub-agent reads every stitched surface + the
-  full facts log + the embedded rubric and flips quality-gap surfaces
-  via `record-fragment mode=replace` only when the 100%-sure
-  threshold holds.
+- **Action**: refinement sub-agent reads stitched surfaces + per-codebase
+  scoped facts + the embedded rubric + a pre-flagged suspect-fragment
+  list (run-23 F-24) and flips quality-gap surfaces via
+  `record-fragment mode=replace` when it can cite the violated rubric
+  criterion, the exact fragment, and the preserving edit.
 - **Engine role**: snapshot/restore around each replace so a
   regression-causing edit reverts; `zcp sync recipe export` →
   `publish` ready.

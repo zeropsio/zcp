@@ -65,6 +65,19 @@ type Session struct {
 	MountRoot string
 	// Completed records phases whose exit gates passed.
 	Completed map[Phase]bool
+	// RefinementDispatched flips to true the first time
+	// `build-subagent-prompt briefKind=refinement` returns ok. The
+	// `complete-phase phase=finalize` handler refuses unless this flag
+	// is set so the always-on quality gate (system.md §3 phase 8)
+	// stops being silently skipped. Run-23 F-26.
+	RefinementDispatched bool
+	// RefinementClosed flips to true when `complete-phase
+	// phase=refinement` returns ok. The export gate
+	// (`zcp sync recipe export`) refuses unless this flag is set —
+	// dispatch-attempted is not the same as phase-completed; an agent
+	// that crashes mid-dispatch leaves RefinementDispatched=true but
+	// RefinementClosed=false. Run-23 F-26.
+	RefinementClosed bool
 }
 
 // NewSession bootstraps a session at PhaseResearch with an empty plan.
@@ -297,22 +310,38 @@ func (s *Session) FillFactSlot(in FactRecord) error {
 }
 
 // BuildBrief composes a brief for a sub-agent dispatch. Kind picks the
-// composer; caller supplies the codebase (scaffold only).
-func (s *Session) BuildBrief(kind BriefKind, cb Codebase) (Brief, error) {
+// composer; caller supplies the codebase (scaffold only) and optional
+// featurePass (BriefFeature only). For non-feature kinds the pass
+// argument is ignored.
+//
+// CLAUDE.md convention — copy under lock, release, then I/O.
+// FactsLog.Read() touches disk; holding s.mu across that read serialized
+// every concurrent BuildBrief on a single I/O. The function snapshots
+// the per-Session inputs the composers need (Plan, Parent, MountRoot,
+// OutputRoot, FactsLog handle) under the lock, releases, then runs the
+// composer + any FactsLog read. The composers receive plain values that
+// were copied / are themselves immutable from the call site's
+// perspective.
+func (s *Session) BuildBrief(kind BriefKind, cb Codebase, featurePass FeaturePass) (Brief, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	plan := s.Plan
+	parent := s.Parent
+	mountRoot := s.MountRoot
+	outputRoot := s.OutputRoot
+	factsLog := s.FactsLog
+	s.mu.Unlock()
 
 	switch kind {
 	case BriefScaffold:
 		var resolver *Resolver
-		if s.MountRoot != "" {
-			resolver = &Resolver{MountRoot: s.MountRoot}
+		if mountRoot != "" {
+			resolver = &Resolver{MountRoot: mountRoot}
 		}
-		return BuildScaffoldBriefWithResolver(s.Plan, cb, s.Parent, resolver)
+		return BuildScaffoldBriefWithResolver(plan, cb, parent, resolver)
 	case BriefFeature:
-		return BuildFeatureBrief(s.Plan)
+		return BuildFeatureBrief(plan, featurePass)
 	case BriefFinalize:
-		return BuildFinalizeBrief(s.Plan)
+		return BuildFinalizeBrief(plan)
 	case BriefCodebaseContent, BriefEnvContent:
 		// Run-16 §6.2 — content briefs read FactsLog so the codebase-
 		// content sub-agent sees the deploy-phase agents' recorded
@@ -320,29 +349,29 @@ func (s *Session) BuildBrief(kind BriefKind, cb Codebase) (Brief, error) {
 		// FactsLog read happens here (Session-level) rather than inside
 		// the composer so the package-level composer stays plan-pure.
 		var factsSnapshot []FactRecord
-		if s.FactsLog != nil {
-			recs, err := s.FactsLog.Read()
+		if factsLog != nil {
+			recs, err := factsLog.Read()
 			if err != nil {
 				return Brief{}, fmt.Errorf("read facts log for %s brief: %w", kind, err)
 			}
 			factsSnapshot = recs
 		}
 		if kind == BriefCodebaseContent {
-			return BuildCodebaseContentBrief(s.Plan, cb, s.Parent, factsSnapshot)
+			return BuildCodebaseContentBrief(plan, cb, parent, factsSnapshot)
 		}
-		return BuildEnvContentBrief(s.Plan, s.Parent, factsSnapshot)
+		return BuildEnvContentBrief(plan, parent, factsSnapshot)
 	case BriefClaudeMDAuthor:
-		return BuildClaudeMDBrief(s.Plan, cb)
+		return BuildClaudeMDBrief(plan, cb)
 	case BriefRefinement:
 		var factsSnapshot []FactRecord
-		if s.FactsLog != nil {
-			recs, err := s.FactsLog.Read()
+		if factsLog != nil {
+			recs, err := factsLog.Read()
 			if err != nil {
 				return Brief{}, fmt.Errorf("read facts log for refinement brief: %w", err)
 			}
 			factsSnapshot = recs
 		}
-		return BuildRefinementBrief(s.Plan, s.Parent, s.OutputRoot, factsSnapshot)
+		return BuildRefinementBrief(plan, parent, outputRoot, factsSnapshot)
 	default:
 		return Brief{}, fmt.Errorf("unknown brief kind %q", kind)
 	}

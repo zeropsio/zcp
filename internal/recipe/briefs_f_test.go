@@ -134,7 +134,7 @@ func TestBrief_Feature_TeachesDecisionRecording(t *testing.T) {
 	t.Parallel()
 
 	plan := syntheticShowcasePlan()
-	brief, err := BuildFeatureBrief(plan)
+	brief, err := BuildFeatureBrief(plan, FeaturePassFrontend)
 	if err != nil {
 		t.Fatalf("BuildFeatureBrief: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestBrief_Feature_IncludesMountVsContainerAtom(t *testing.T) {
 	t.Parallel()
 
 	plan := syntheticShowcasePlan()
-	brief, err := BuildFeatureBrief(plan)
+	brief, err := BuildFeatureBrief(plan, FeaturePassFrontend)
 	if err != nil {
 		t.Fatalf("BuildFeatureBrief: %v", err)
 	}
@@ -282,7 +282,7 @@ func TestFeatureBrief_SSHFSWarningInFirstSection(t *testing.T) {
 	t.Parallel()
 
 	plan := syntheticShowcasePlan()
-	brief, err := BuildFeatureBrief(plan)
+	brief, err := BuildFeatureBrief(plan, FeaturePassFrontend)
 	if err != nil {
 		t.Fatalf("BuildFeatureBrief: %v", err)
 	}
@@ -311,7 +311,7 @@ func TestFeatureBrief_SSHFSReminderInFooter(t *testing.T) {
 	t.Parallel()
 
 	plan := syntheticShowcasePlan()
-	in := RecipeInput{BriefKind: "feature"}
+	in := RecipeInput{BriefKind: "feature", FeaturePass: string(FeaturePassFrontend)}
 	prompt, err := buildSubagentPrompt(plan, in)
 	if err != nil {
 		t.Fatalf("buildSubagentPrompt feature: %v", err)
@@ -334,7 +334,7 @@ func TestFeatureBrief_IncludesV3FactRecordingSection(t *testing.T) {
 	t.Parallel()
 
 	plan := syntheticShowcasePlan()
-	brief, err := BuildFeatureBrief(plan)
+	brief, err := BuildFeatureBrief(plan, FeaturePassFrontend)
 	if err != nil {
 		t.Fatalf("BuildFeatureBrief: %v", err)
 	}
@@ -401,7 +401,7 @@ func TestBrief_Feature_SeedInjectsInitCommandsModel(t *testing.T) {
 	plan := syntheticShowcasePlan()
 	plan.FeatureKinds = []string{"crud", "seed", "search-items"}
 
-	brief, err := BuildFeatureBrief(plan)
+	brief, err := BuildFeatureBrief(plan, FeaturePassFrontend)
 	if err != nil {
 		t.Fatalf("BuildFeatureBrief: %v", err)
 	}
@@ -412,7 +412,7 @@ func TestBrief_Feature_SeedInjectsInitCommandsModel(t *testing.T) {
 	// Without seed, no injection.
 	plan2 := syntheticShowcasePlan()
 	plan2.FeatureKinds = []string{"crud"}
-	brief2, _ := BuildFeatureBrief(plan2)
+	brief2, _ := BuildFeatureBrief(plan2, FeaturePassFrontend)
 	if strings.Contains(brief2.Body, "${appVersionId}") {
 		t.Error("init-commands-model injected when no seed/scout-import declared")
 	}

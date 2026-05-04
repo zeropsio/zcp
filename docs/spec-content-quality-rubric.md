@@ -484,6 +484,30 @@ point of having five criteria.
 
 ---
 
+## Refinement edit threshold
+
+Per-fragment edit threshold for the refinement sub-agent: **I can
+cite the violated rubric criterion, the exact fragment, and the
+preserving edit.** When you can name all three, ACT. When any of the
+three is fuzzy, HOLD.
+
+The snapshot/restore wrapper means a false-positive ACT reverts
+automatically when the post-replace validator catches a regression —
+the cost of a wrong ACT is one rubric re-check, not a published
+mistake. **Bias toward ACT within this threshold;** HOLD only when
+you genuinely cannot point at the rubric line that was violated, the
+exact fragment that violates it, or the precise edit that brings
+it back into compliance.
+
+Pre-run-23 the threshold was "100%-sure / would hesitate to argue in
+code review", which mapped in agent-mental-model to "would I bet my
+job on this" and drove default-HOLD on every cross-surface
+duplication notice. Snapshot/restore makes that conservatism
+ill-calibrated — there is no career cost to a reverted ACT. Run-23
+F-27.
+
+---
+
 ## Updates
 
 This rubric ships in run-17. Run-18 dogfood findings inform whether

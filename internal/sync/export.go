@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/recipe"
 )
 
 // skipDirs are directories to exclude from the export archive.
@@ -125,6 +126,20 @@ func enforceCloseGate(opts ExportOpts) error {
 		return fmt.Errorf(
 			"%s: close step is %s — dispatch the code-review subagent, run the close browser walk, then `zerops_workflow action=complete step=close` before exporting; exporting without close produces an incomplete deliverable (per-codebase READMEs + CLAUDE.md not staged, no code-review signals)",
 			platform.ErrExportBlocked, shown,
+		)
+	}
+	// Run-23 F-26 — refinement closure gate. The recipe engine writes
+	// a .refinement-closed marker into the recipe output dir when
+	// `complete-phase phase=refinement` returns ok. Export refuses
+	// unless the marker exists so an agent that crashes mid-dispatch
+	// (workflow close marked complete but refinement never closed)
+	// can't ship an unaudited deliverable. system.md §3 phase 8 names
+	// refinement the always-on quality gate; the marker is the
+	// cross-process signal that gate fired.
+	if !recipe.IsRefinementClosed(opts.RecipeDir) {
+		return fmt.Errorf(
+			"%s: refinement phase has not closed for recipe-dir %q — run the refinement sub-agent (`zerops_recipe action=build-subagent-prompt briefKind=refinement` then dispatch) and call `zerops_recipe action=complete-phase phase=refinement` before exporting. Refinement is the always-on quality gate (system.md §3 phase 8); exporting without it ships an unaudited deliverable",
+			platform.ErrExportBlocked, opts.RecipeDir,
 		)
 	}
 	return nil

@@ -233,7 +233,7 @@ is unambiguous when:
   8.5+ tier. HOLD unless adding a revisit-trigger lifts to 9.0
   unambiguously.
 
-The 100%-sure threshold: if the rejected alternative requires
+The edit threshold: if the rejected alternative requires
 inventing a porter context the recipe doesn't actually witness,
 HOLD. Refinement is post-hoc shaping, not speculative balance-
 adding.

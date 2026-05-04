@@ -57,6 +57,30 @@ For every shell with empty Why (per-managed-service shells, worker no-
 HTTP heading), the agent calls `zerops_knowledge runtime=<svc-type>`
 and fills via `fill-fact-slot factTopic=<topic> why=... heading=...`.
 
+## Common record-fragment rejections — pre-empt these
+
+The validator catches many drift classes; these three are the
+**most-frequent** rejection patterns observed across recent runs and
+account for the bulk of record-fragment iteration. Author with these
+in mind from the start. This is NOT an exhaustive list — `docs/spec-
+content-surfaces.md` is the surface contract and lists the full
+validator set; treat the three below as a head-start, not a
+sufficient checklist.
+
+1. **KB stem must be symptom-first or directive-tightly-mapped-to-
+   observable.** WRONG: `Re-fire seeds without re-running migrations`
+   (author-claim). RIGHT: `Seed silently skipped after a partial-
+   failure redeploy` (symptom-first — names what the porter actually
+   sees).
+2. **Slug citations are inline prose, never noun-phrase.** WRONG:
+   ``the `env-var-model` guide covers ...`` (backticked slug as
+   noun). RIGHT: `the env-var-model guide on Zerops docs covers ...`
+   (inline prose; slug is referenced, not named as the subject).
+3. **Classification × surface refusal**: `intersection` is KB-only,
+   never IG. If a fact records `candidateClass=intersection`, route
+   the body to KB; for IG, restate the principle without the
+   intersection class.
+
 ## Complete-phase gate
 
 Every codebase declared in `plan.codebases` must have all five

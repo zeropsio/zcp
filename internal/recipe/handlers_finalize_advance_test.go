@@ -37,6 +37,13 @@ func TestCompletePhaseFinalize_AutoAdvancesToRefinement(t *testing.T) {
 		sess.Completed[p] = true
 	}
 
+	// Run-23 F-26 — finalize-close gate refuses unless refinement
+	// dispatch has been recorded. Simulate the dispatch by flipping the
+	// session flag directly (the handler path that flips this is
+	// build-subagent-prompt briefKind=refinement; this test isolates
+	// the close-gate transition behavior).
+	sess.RefinementDispatched = true
+
 	// Drive a finalize complete-phase via the handler entry point.
 	in := RecipeInput{Action: "complete-phase", Phase: string(PhaseFinalize)}
 	r := completePhase(sess, in, RecipeResult{Action: "complete-phase"})

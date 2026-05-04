@@ -113,7 +113,7 @@ type RecipeInput struct {
 	Codebase         string      `json:"codebase,omitempty"         jsonschema:"For build-brief when kind=scaffold: the codebase hostname to compose for. For complete-phase: when set, scopes codebase-surface validators to that one codebase only — the sub-agent's pre-termination self-validate path. Phase advance only fires when codebase is empty (the main-agent's post-sub-agent-return path)."`
 	Shape            string      `json:"shape,omitempty"            jsonschema:"For emit-yaml: 'workspace' (services-only YAML for zerops_import at provision) or 'deliverable' (full published template for tierIndex, written to disk)."`
 	TierIndex        int         `json:"tierIndex,omitempty"        jsonschema:"For emit-yaml shape=deliverable: tier 0..5. Ignored when shape=workspace."`
-	Fact             *FactRecord `json:"fact,omitempty"             jsonschema:"For record-fact: a FactRecord object. Required: topic + a kind discriminator picking the validation path. Allowed kind values: 'porter_change' (requires why + candidateClass + candidateSurface), 'field_rationale' (requires fieldPath + why), 'tier_decision' (requires tier in 0..5 + fieldPath + chosenValue), 'contract' (requires publishers + subscribers + subject + purpose). Empty kind is the legacy platform-trap shape (requires symptom + mechanism + surfaceHint + citation). For porter_change, candidateClass takes one of: platform-invariant, intersection, scaffold-decision, framework-quirk, library-metadata, operational, self-inflicted; the first three are surface-bearing, the rest are skip-classes. There is no separate 'classification' field — the candidateClass slot carries it."`
+	Fact             *FactRecord `json:"fact,omitempty"             jsonschema:"For record-fact: a FactRecord object. Required: topic + a kind discriminator picking the validation path. Allowed kind values: 'porter_change' (requires why + candidateClass + candidateSurface), 'field_rationale' (requires fieldPath + why), 'tier_decision' (requires tier in 0..5 + fieldPath + chosenValue), 'contract' (requires publishers + subscribers + subject + purpose), 'curl_verification' (requires subject + service + why; the close signal for the feature backend pass after the curl smoke-test confirms an endpoint), 'browser_verification' (requires subject + service + why; the close signal for the feature frontend pass after browser-walk confirms a panel renders). Empty kind is the legacy platform-trap shape (requires symptom + mechanism + surfaceHint + citation). For porter_change, candidateClass takes one of: platform-invariant, intersection, scaffold-decision, framework-quirk, library-metadata, operational, self-inflicted; the first three are surface-bearing, the rest are skip-classes. There is no separate 'classification' field — the candidateClass slot carries it."`
 	Plan             *Plan       `json:"plan,omitempty"             jsonschema:"For update-plan: partial Plan object. Fields present overwrite session.Plan; omitted fields untouched."`
 	FragmentID       string      `json:"fragmentId,omitempty"       jsonschema:"For record-fragment: fragment identifier. Valid shapes: root/intro, env/<N>/intro (N=0..5), env/<N>/import-comments/<hostname>, env/<N>/import-comments/project, codebase/<hostname>/intro, codebase/<hostname>/integration-guide, codebase/<hostname>/integration-guide/<n> (slotted, n is the IG item index — engine pre-stamps n=1, agent authors 2+), codebase/<hostname>/knowledge-base, codebase/<hostname>/zerops-yaml (whole commented yaml — one per codebase), codebase/<hostname>/claude-md, codebase/<hostname>/claude-md/service-facts (legacy), codebase/<hostname>/claude-md/notes (legacy)."`
 	Fragment         string      `json:"fragment,omitempty"         jsonschema:"For record-fragment: the fragment body. Overwrite for root/* and env/* ids; append-on-extend for codebase/*/integration-guide, knowledge-base, claude-md/* ids so a feature sub-agent extends scaffold's body rather than replacing it."`
@@ -125,6 +125,11 @@ type RecipeInput struct {
 	// docs/spec-content-surfaces.md compatibility table. Empty
 	// classification keeps prior behavior (no refusal).
 	Classification string `json:"classification,omitempty" jsonschema:"For record-fragment: optional fact classification — one of platform-invariant, intersection, framework-quirk, library-metadata, scaffold-decision, operational, self-inflicted. The engine refuses classifications that don't belong on the fragment's surface (e.g. self-inflicted on KB, scaffold-decision on CLAUDE.md). See docs/spec-content-surfaces.md#classification--surface-compatibility."`
+	// FeaturePass — for build-brief / build-subagent-prompt with
+	// briefKind=feature. Run-23 F-21 split the feature phase into a
+	// sequential backend pass + frontend-integration pass; the brief
+	// composer loads disjoint atom sets per pass.
+	FeaturePass string `json:"featurePass,omitempty" jsonschema:"For build-brief / build-subagent-prompt with briefKind=feature: 'backend' (api + worker scope; routes/queue/contract authoring + curl smoke-tests; no design-system / Tailwind atoms) or 'frontend' (SPA / monolith UI scope; design-system + Tailwind componentry + integration validator + bounded cross-codebase edit authority). Required for feature briefs."`
 }
 
 // RecipeResult is the generic envelope returned from zerops_recipe.
@@ -389,6 +394,16 @@ func handleBuildSubagentPrompt(sess *Session, in RecipeInput, r RecipeResult) Re
 	if err != nil {
 		r.Error = err.Error()
 		return r
+	}
+	// Run-23 F-26 — flip RefinementDispatched on a successful
+	// briefKind=refinement build so `complete-phase phase=finalize`
+	// can refuse closure until the refinement sub-agent has been
+	// dispatched at least once. Single-flip is fine; the gate only
+	// reads the boolean.
+	if BriefKind(in.BriefKind) == BriefRefinement {
+		sess.mu.Lock()
+		sess.RefinementDispatched = true
+		sess.mu.Unlock()
 	}
 	r.Prompt, r.OK = prompt, true
 	return r
@@ -685,6 +700,24 @@ func completePhase(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
 			return r
 		}
 	}
+	// Run-23 F-26 — finalize-phase closure refuses unless the refinement
+	// sub-agent has been dispatched. Pre-fix the auto-advance from
+	// finalize → refinement only moved phase state; the dispatch was
+	// main-agent-driven and silently skipped on 3 of 5 recent runs
+	// (system.md §3 phase 8 claim that refinement is "always-on" was
+	// empirically false). Engine-side refusal closes the gap. The
+	// Codebase scope (sub-agent self-validate) is not the close-out
+	// transition; only the no-codebase main-agent path triggers the
+	// gate.
+	if in.Codebase == "" && sess.Current == PhaseFinalize {
+		sess.mu.Lock()
+		dispatched := sess.RefinementDispatched
+		sess.mu.Unlock()
+		if !dispatched {
+			r.Error = "complete-phase: phase=finalize requires refinement sub-agent dispatch first; call `zerops_recipe action=build-subagent-prompt briefKind=refinement` and dispatch the agent before closing finalize. The refinement pass is the always-on quality gate (system.md §3 phase 8); skipping it produces an unaudited deliverable."
+			return r
+		}
+	}
 	// Run-21-prep — pre-stitch at codebase-content too so the
 	// codebase-content sub-agent's whole-yaml fragment lands on disk
 	// before validateCodebaseYAML / gateZeropsYamlSchema read it.
@@ -747,6 +780,33 @@ func completePhase(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
 		}
 	}
 	if r.OK {
+		// Run-23 F-26 — flip RefinementClosed when refinement closes.
+		// Used by the export gate (`zcp sync recipe export`) so an
+		// agent that crashes mid-dispatch (RefinementDispatched=true
+		// but the phase never closed) doesn't slip through.
+		if sess.Current == PhaseRefinement {
+			sess.mu.Lock()
+			sess.RefinementClosed = true
+			outputRoot := sess.OutputRoot
+			sess.mu.Unlock()
+			// Persist the close marker to disk so a separate-process
+			// export caller can read it without reconstructing the
+			// in-memory Session. If the marker write fails, the in-
+			// memory state still says RefinementClosed=true but cross-
+			// process state diverges (the export gate would refuse).
+			// Surface a notice so the user can see the divergence and
+			// re-attempt the close (or write the marker by hand).
+			if outputRoot != "" {
+				if err := writeRefinementCloseMarker(outputRoot); err != nil {
+					r.Notices = append(r.Notices, Violation{
+						Code:     "refinement-marker-write-failed",
+						Path:     outputRoot,
+						Message:  "session shows RefinementClosed=true but the on-disk marker did not persist (" + err.Error() + "). The export gate (zcp sync recipe export) reads the marker; without it, export would refuse. Retry complete-phase or write " + RefinementClosedMarkerName + " under outputRoot manually.",
+						Severity: SeverityNotice,
+					})
+				}
+			}
+		}
 		if next, ok := nextPhase(sess.Current); ok {
 			// Run-18: finalize → refinement is always-on. Snapshot/
 			// restore (run-17 §9 T4) wraps every refinement
@@ -832,7 +892,7 @@ func buildBriefForRequest(sess *Session, in RecipeInput) (Brief, error) {
 			)
 		}
 	}
-	return sess.BuildBrief(BriefKind(in.BriefKind), cb)
+	return sess.BuildBrief(BriefKind(in.BriefKind), cb, FeaturePass(in.FeaturePass))
 }
 
 // stitchContent walks the surface templates, renders each with the

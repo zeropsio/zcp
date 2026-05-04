@@ -91,7 +91,7 @@ func buildSubagentPromptForPhase(plan *Plan, parent *ParentRecipe, in RecipeInpu
 		}
 	}
 
-	brief, err := buildBriefForKind(plan, parent, kind, cb, mountRoot, facts)
+	brief, err := buildBriefForKind(plan, parent, kind, cb, mountRoot, facts, FeaturePass(in.FeaturePass))
 	if err != nil {
 		return "", err
 	}
@@ -135,7 +135,7 @@ func requiresCodebase(kind BriefKind) bool {
 	return false
 }
 
-func buildBriefForKind(plan *Plan, parent *ParentRecipe, kind BriefKind, cb Codebase, mountRoot string, facts []FactRecord) (Brief, error) {
+func buildBriefForKind(plan *Plan, parent *ParentRecipe, kind BriefKind, cb Codebase, mountRoot string, facts []FactRecord, featurePass FeaturePass) (Brief, error) {
 	switch kind {
 	case BriefScaffold:
 		var resolver *Resolver
@@ -144,7 +144,7 @@ func buildBriefForKind(plan *Plan, parent *ParentRecipe, kind BriefKind, cb Code
 		}
 		return BuildScaffoldBriefWithResolver(plan, cb, parent, resolver)
 	case BriefFeature:
-		return BuildFeatureBrief(plan)
+		return BuildFeatureBrief(plan, featurePass)
 	case BriefFinalize:
 		return BuildFinalizeBrief(plan)
 	case BriefCodebaseContent:
@@ -346,8 +346,9 @@ func writePromptCloseFooter(b *strings.Builder, kind BriefKind, codebase string,
 		b.WriteString("to self-validate. Fix violations via `record-fragment\n")
 		b.WriteString("mode=replace`, re-call until ok:true, then terminate.\n")
 	case BriefRefinement:
-		b.WriteString("When you've refined every fragment that meets the 100%-sure\n")
-		b.WriteString("threshold, call\n\n")
+		b.WriteString("When you've refined every fragment where you can cite the\n")
+		b.WriteString("violated rubric criterion, the exact fragment, and the\n")
+		b.WriteString("preserving edit, call\n\n")
 		b.WriteString("    zerops_recipe action=complete-phase phase=refinement\n\n")
 		b.WriteString("to close the run. Each `record-fragment mode=replace` you fire\n")
 		b.WriteString("at this phase is wrapped in a snapshot/restore primitive — if\n")
