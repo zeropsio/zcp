@@ -61,6 +61,8 @@ no duplicated cleanup, no duplicated scenario parser.
 eval/behavioral/
   scenarios/                        Scenario files (YAML frontmatter + markdown body)
     greenfield-node-postgres-dev-stage.md
+    fixtures/                       Optional import YAML for non-empty seeds
+    preseed/                        Optional scripts for state-specific fixtures
   audits/                           Committed audit notes per phase
     scenario-coverage-rationale.md
   runs/                             Per-run output (gitignored, scp'd back from zcp)
@@ -109,7 +111,7 @@ The wrapper:
 
 1. Runs `go run ./cmd/zcp eval behavioral list ...` locally for `list` (no remote needed).
 2. For run/all: `eval/scripts/build-deploy.sh` (build + scp + hash + kill stale `zcp serve`).
-3. SCPs scenario files to `zcp:/tmp/zcp-behavioral-scenarios/`.
+3. SCPs the scenario directory to `zcp:/tmp/zcp-behavioral-scenarios/`.
 4. SSH-invokes `zcp eval behavioral run|all --scenarios-dir /tmp/...`.
 5. Captures the suite ID printed on stderr.
 6. SCPs results back from `zcp:/var/www/.zcp/eval/results/<suiteId>` to `eval/behavioral/runs/<suiteId>`.
@@ -131,7 +133,7 @@ fail-loud on any error:
 
 1. `eval/scripts/build-deploy.sh` — builds `linux-amd64` from current source,
    scp + sudo install on `zcp`, hash verify, kills stale `zcp serve`.
-2. SCP scenarios from `eval/behavioral/scenarios/*.md` to
+2. SCP scenarios from `eval/behavioral/scenarios/` to
    `zcp:/tmp/zcp-behavioral-scenarios/`.
 3. SSH `zcp eval behavioral …`. The Go runner inside zcp:
    - **Cleanup project** (`CleanupProject`) — deletes all non-zcp services,

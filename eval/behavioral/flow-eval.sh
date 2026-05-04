@@ -46,7 +46,7 @@ log "Building + deploying current zcp binary"
 log "Syncing scenarios to $REMOTE_HOST:$SCENARIOS_DIR_REMOTE"
 ssh "${SSH_OPTS[@]}" "$REMOTE_HOST" \
   "rm -rf '$SCENARIOS_DIR_REMOTE' && mkdir -p '$SCENARIOS_DIR_REMOTE'"
-scp "${SSH_OPTS[@]}" -q "$SCENARIOS_DIR_LOCAL"/*.md "$REMOTE_HOST:$SCENARIOS_DIR_REMOTE/"
+scp "${SSH_OPTS[@]}" -rq "$SCENARIOS_DIR_LOCAL"/. "$REMOTE_HOST:$SCENARIOS_DIR_REMOTE/"
 
 # Capture suite ID from the run so we can scp just that suite back.
 LOCAL_LOG=$(mktemp)

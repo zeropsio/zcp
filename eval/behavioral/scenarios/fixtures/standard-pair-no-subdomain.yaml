@@ -1,0 +1,13 @@
+# Web-facing runtime with subdomain access deliberately disabled. Verify
+# should surface this as an http_root failure with structured Recovery
+# pointing at subdomain enablement.
+
+services:
+  - hostname: appdev
+    type: static
+    enableSubdomainAccess: false
+    startWithoutCode: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      minRam: 0.25

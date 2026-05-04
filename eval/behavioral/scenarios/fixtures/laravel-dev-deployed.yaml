@@ -1,0 +1,24 @@
+#yamlPreprocessor=on
+
+# Live Laravel app used by delivery scenarios. The fixture intentionally
+# writes no ZCP ServiceMeta; preseed scripts add the exact workflow state
+# needed by each scenario after the platform services are deployed.
+
+services:
+  - hostname: app
+    type: php-nginx@8.4
+    buildFromGit: https://github.com/zeropsio/recipe-laravel-minimal
+    enableSubdomainAccess: true
+    envSecrets:
+      APP_KEY: <@generateRandomString(<32>)>
+      APP_DEBUG: true
+      APP_ENV: development
+    verticalAutoscaling:
+      minRam: 0.5
+
+  - hostname: db
+    type: postgresql@18
+    priority: 10
+    mode: NON_HA
+    verticalAutoscaling:
+      minRam: 0.25
