@@ -1,0 +1,14 @@
+# Single simple-mode Python API deployed externally — no dev/stage pair,
+# no managed dep. Adopt-only-into-simple is a different flow than the
+# standard-pair adopt fixture: there is no stage to promote to and no
+# develop scope question; the agent owns one immutable runtime.
+
+services:
+  - hostname: api
+    type: python@3.12
+    buildFromGit: https://github.com/zerops-recipe-apps/python-hello-world-app
+    enableSubdomainAccess: true
+    minContainers: 1
+    maxContainers: 1
+    verticalAutoscaling:
+      minRam: 0.25
