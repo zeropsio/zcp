@@ -40,6 +40,34 @@ did; the dual-gate scheme produced "three refinement passes, wrong
 order" runs where refinement-1 ran twice). Finalize is stitch +
 validate only; refinement happens HERE, at this phase.
 
+### Dispatch each sub-agent exactly once per recipe
+
+`refinement-1` and `refinement-2` each dispatch **exactly once per
+recipe** — NOT once per phase entry. The engine tracks each
+dispatch on the session via the `RefinementDispatched` and
+`Refinement2Dispatched` flags. Both flags survive context compaction
+and are surfaced on every `status` response.
+
+**Before dispatching either sub-agent, read the prior phase's
+status response (or call `zerops_recipe action=status`)** and check
+the flags. If `RefinementDispatched` is already true, the
+refinement-1 pass has already run — do NOT re-dispatch. Same for
+`Refinement2Dispatched`. The dispatch-flag gate at refinement-close
+enforces "both flags true" before the close succeeds, so the only
+way to land at this phase with one flag false is if the sub-agent
+genuinely hasn't run yet. **A status check before each dispatch is
+the agent-side primitive that closes the run-42 re-dispatch
+failure** (forensics §B-3 — run-42 dispatched a third
+refinement-class sub-agent because the rulewalk agent thought it
+was the first refinement pass and didn't know refinement-2 had
+already run).
+
+The five-step flow assumes both flags start false at this phase's
+first entry. If the recipe re-enters this phase post-compaction or
+after a separate session, the flags carry forward — skip the
+dispatch step whose flag is already true and proceed to triage /
+re-stitch / close.
+
 ---
 
 ## Sub-agent contract (everything below)

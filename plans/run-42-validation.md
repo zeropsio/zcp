@@ -633,6 +633,30 @@ All seven priorities + two follow-up issues are DONE. The substrate
 work for run-43 is complete; run-44 dogfood is gated on no further
 substrate edits.
 
+### Run-43 follow-up substrate fixes (F1–F7)
+
+Seven additional substrate fixes landed post-run-43 based on a
+three-way review (code-review + codex independent read + opus
+sub-agent + forensics-logs sub-agent over runs 40/41/42 session
+JSONL). All seven are confirmed-and-verified findings from
+plans/run-42-forensics.md or codex/opus/user direction.
+
+| Fix | Status | Source |
+|---|---|---|
+| F1 — refinement-1 + refinement-2 briefs name `classification` for CODEBASE_KB/IG record-fragment ACTs | **DONE** | Forensics §B-1 — recurring run-40 + run-42; two wasted record-fragment calls per ambiguous fragment. |
+| F2 — KB-below-floor removed; spec §S5 declares "no floor; cap 8" (goldens span 2-7) | **DONE** | Codex + opus + user direction — goldens contradict the 5-floor (jetstream=2, showcase=7). |
+| F3 — citation URL form (b)/(c) prose rewrite: host+path match + fragment branching | **DONE** | Codex flagged three internal contradictions in the prior path-starts-with framing; same-path wrong-fragment false-negative edge case. |
+| F4 — end-to-end fixture pins Edit D refinement-close gate catches post-ACT regressions | **DONE** | Three-way confirmed (codex + opus + user) — prior gate-flip test short-circuited. |
+| F5 — F-XSURF-REF reframe to LLM-judgment-with-examples + tier-2 verbatim shapes | **DONE** | User direction + opus — literal-pattern enumeration is whack-a-mole; tier-2 wording (`Same X as the previous tier`) missed. |
+| F6 — new F-FRIENDLY-AUTH derived rule for porter-tunable yaml comments | **DONE** | User direction — adaptation-pattern check (declarative + invitation + named porter-side trigger). |
+| F7 — phase-entry refinement guidance against re-dispatch (status-check + exactly-once-per-recipe) | **DONE** | Forensics §B-3 — run-42 third refinement-class dispatch (refinement-rulewalk) post-finalize. |
+
+Deferred from this batch (not blockers for run-44 dogfood):
+- **B-2** — features-frontend silent self-stop (forensics §B-2); needs feature-phase verification-gate work (count expected
+  record-facts vs emitted) outside this scope.
+- **N-1** — run-42 sub-agents 1.5-3.4× slower than run-40/41 peers; wall-time observation, not a substrate bug.
+- **N-4** — main-agent path-resolution miss (`environments/<N>/import.yaml` vs `<N - Name>/import.yaml`); brief should hand canonical stitched paths but the immediate fix is a brief-composer wording change separable from this batch.
+
 ### Substrate priority 1 — self-inflicted classifier
 
 **Spec citation**: [§Fact classification taxonomy → Self-inflicted](docs/spec-content-surfaces.md#fact-classification-taxonomy)
