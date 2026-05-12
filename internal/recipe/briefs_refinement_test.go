@@ -133,8 +133,11 @@ func TestBuildRefinementBrief_BodyUnderShrinkTarget(t *testing.T) {
 	// 46→48 KB for F-XSURF-REF LLM-judgment reframe (extra examples
 	// + GOOD worked anchor) + new F-FRIENDLY-AUTH derived rule
 	// (declarative + invitation + porter-side trigger pattern;
-	// LLM-judgment based, not regex).
-	const briefShrinkCap = 48 * 1024
+	// LLM-judgment based, not regex). Run-43 F7 — cap raised 48→50
+	// KB for the phase-entry anti-redispatch tightening (status-check
+	// + exactly-once-per-recipe guidance against run-42 third-pass
+	// failure).
+	const briefShrinkCap = 50 * 1024
 	if brief.Bytes > briefShrinkCap {
 		t.Errorf("refinement brief %d bytes exceeds %d cap (F-24 shrink target; run-32 phase 2 raised to 75K)", brief.Bytes, briefShrinkCap)
 	}
