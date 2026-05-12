@@ -147,90 +147,69 @@ surface owns a distinct content class per spec-content-surfaces §§4, 7:
    level teaching (general rule + adapt-path for other frameworks)
    lives here, with one copyable artifact (3-5 line code diff or
    `npm install` line).
-2. **Author zerops.yaml comments second, as field-adjacent WHY-choices
-   that may cross-reference IG.** When a yaml field's choice flows from
-   a mechanism IG already teaches, the comment is short and references
-   IG by name: *"`DB_HOST` is the own-key alias for `${db_hostname}` —
-   see IG #5 for the same-key shadow trap that mandates a different
-   own-key on the left."* The comment owns WHY-this-name-here; IG owns
-   the mechanism that justifies the rule.
+2. **Author zerops.yaml comments second, as self-contained
+   field-adjacent WHY-choices.** State mechanism + reason in one
+   breath; the yaml comment must stand on its own. If a topic needs
+   more depth, KB carries the full teaching (with a `zerops_knowledge`
+   citation when one exists) — the yaml comment does NOT defer via
+   *"see IG #N"* / *"see KB"* meta-prose (spec §"Surface 7"
+   anti-pattern; run-42 audit `cross-surface-reference` class).
+   Worked **GOOD**: *"`DB_HOST` aliases `${db_hostname}` so app code
+   reads its own constant — pick an own-key name different from the
+   platform side or the per-service write self-shadows the
+   auto-inject."* Mechanism (alias rename) + reason (avoid
+   self-shadow) in one breath; no surface reference. Worked **BAD**:
+   *"`DB_HOST` is the own-key alias for `${db_hostname}` — see IG #5
+   for the same-key shadow trap..."* — meta-prose deferring to
+   another surface.
 3. **Author KB last.** If a KB candidate restates an IG mechanism, drop
    it. KB only adds value when it surfaces a symptom mechanism-teaching
    wouldn't preempt.
 
-Each Zerops mechanism is taught on exactly ONE surface (IG); the yaml
-comment cross-references when the field's choice flows from that
-mechanism. Cross-references replace duplications.
+Each Zerops mechanism is taught on exactly ONE surface (IG). The
+yaml comment owns its own field-adjacent WHY-choice in one breath —
+no cross-surface deferral (spec §"Surface 7" anti-pattern).
 
 ### Worked example — same-key shadow trap (api codebase)
 
-**BAD** — yaml comment over-reaches into IG territory (mechanism on
-two surfaces):
+**BAD** — yaml comment teaches the mechanism (Surface 7 over-reaches
+into IG territory):
 
 - `zerops.yaml` comment (8 lines): *"Same-key aliasing self-shadows:
-  declaring `db_hostname: ${db_hostname}` writes the literal
-  `${db_hostname}` string to the OS env because the per-service
-  envVariables write runs after the auto-inject. Pick own-key names
-  that are different..."*
-- IG #5: *"Pick own-key names that are DIFFERENT from the platform-side
-  keys. Declaring `db_hostname: ${db_hostname}` self-shadows: the
-  per-service envVariables write runs after the auto-inject..."*
+  declaring `db_hostname: ${db_hostname}` writes the literal string
+  to OS env because the per-service envVariables write runs after
+  the auto-inject..."*
+- IG #5: *"Pick own-key names DIFFERENT from the platform side..."*
 
-The yaml comment teaches the mechanism. Surface 7 owns field-adjacent
-choices, not mechanism teaching. Cross-surface duplication; surface
-ownership violation.
+Cross-surface duplication.
 
-**GOOD** — IG owns the mechanism; yaml comment is short field-adjacent
-reason cross-referencing IG:
+**GOOD** — IG owns the full mechanism + adapt-path; yaml comment is
+short, self-contained, field-adjacent: *"`DB_HOST` aliases
+`${db_hostname}` — same-key would self-shadow the auto-inject."*
+Mechanism (alias rename) + reason (avoid self-shadow) in one breath;
+no "see IG #5" deferral.
 
-- IG #5: full mechanism teaching as above (the same-key self-shadow
-  rule, adapt-path for any framework reading `process.env.DB_HOST`).
-- `zerops.yaml` comment (1-2 lines next to the alias block): *"`DB_HOST`
-  is the own-key alias for `${db_hostname}` — same-key would
-  self-shadow (see IG #5 for the resolution-order mechanism)."*
+### Yaml comments stand alone
 
-The mechanism lives on IG (Surface 4). The yaml comment owns the
-WHY-choice for THIS specific alias name.
-
-### Cross-reference is not a license to restate
-
-A yaml comment that ends with *"see IG #N for the mechanism"* doesn't
-buy the right to teach the mechanism in the body above the reference.
-The cross-reference IS the surface-ownership transfer — the body must
-stay field-adjacent after the reference, not before-and-after it.
-
-If the yaml comment runs more than ~6 lines after a cross-reference,
-the body has over-reached. Trim the body to the field-adjacent
-WHY-this-name-here / WHY-this-value-here, and let the cross-reference
-do the mechanism work.
-
-**BAD** — yaml comment cross-references IG + KB at the end but the
-body above restates the Pattern B failure mode prose KB owns AND the
-Authorization Violation cause prose KB also owns (workerdev NATS
-pattern from run-29 dogfood evidence: ~13-line comment teaching
-client parser failure, double-auth handshake, server reject sequence
-above the four `NATS_HOST/PORT/USER/PASS` mappings — the cross-
-reference ran out of work three lines in; the next ten lines were
-mechanism teaching that KB and IG together already deliver).
-
-**GOOD** — short field-adjacent reason; cross-references do the work:
+Spec §"Surface 7" voice is mechanism+reason in one breath. Comments
+do NOT defer via *"see IG #N for the mechanism"* / *"see KB"*
+meta-prose — that pattern is the run-42 `cross-surface-reference`
+defect (refinement-1 derived rule). If a topic needs more depth than
+fits in a self-contained comment, KB carries it with a
+`zerops_knowledge` citation; the yaml comment is still self-contained.
 
 ```yaml
-- hostname: worker
-  envVariables:
-    # NATS Pattern A — host / port / user / pass passed as separate
-    # alias keys (own-key naming per IG; the connection-string
-    # alternative is rejected by this recipe per the Authorization
-    # Violation KB entry).
-    NATS_HOST: ${broker_hostname}
-    NATS_PORT: ${broker_port}
-    NATS_USER: ${broker_user}
-    NATS_PASS: ${broker_password}
+# NATS Pattern A — host / port / user / pass as separate alias keys;
+# the connection-string alternative double-authenticates and the
+# server rejects with Authorization Violation.
+NATS_HOST: ${broker_hostname}
+NATS_PORT: ${broker_port}
+NATS_USER: ${broker_user}
+NATS_PASS: ${broker_password}
 ```
 
-The yaml comment owns "Pattern A is the alias shape, here are the four
-keys"; IG owns the alias mechanism; KB owns the Authorization Violation
-crash story. Each surface earns its keep.
+Mechanism (Pattern A is separate aliases) + reason (Pattern B crashes
+with the named error) in one breath. No "see IG/KB" reference.
 
 ### Special case — IG #1 is engine-stamped
 
@@ -325,14 +304,17 @@ prefix or `reference`/`guide`/`service` suffix. Forbidden:
 `[Zerops rolling-deploys reference]`. Use a porter-recognized
 concept or in-body completion.
 
-**8.5 anchor — in-body completion**:
+**8.5 anchor — in-body completion** (key shape by lifetime — per
+[`principles/init-commands-model.md`](../../principles/init-commands-model.md);
+`${appVersionId}` keys re-run every deploy, static keys run once
+per service lifetime):
 
-> *"Decompose execOnce keys into migrate + seed. Zerops stamps each
-> `key:` value into a per-deploy ledger and skips a key whose value
-> has already run; a single combined key marks the whole script
-> succeeded even when the seed step crashed. Two keys
-> (`${appVersionId}-migrate` / `${appVersionId}-seed`) re-fire only
-> the failing step."*
+> *"Match execOnce key shape to lifetime: `${appVersionId}-migrate`
+> changes every deploy and re-runs (per-deploy gate — right for
+> idempotent migrations); `bootstrap-seed` is a static key, runs
+> once per service lifetime (right for non-idempotent seeds). A
+> single combined key marks the whole script succeeded even when
+> the seed step crashed."*
 
 **8.5 anchor — descriptive-labeled link variant**:
 
@@ -666,8 +648,20 @@ with `${appVersionId}`, `${db_*}` injection, `readinessCheck` +
 SIGTERM)? Platform-agnostic → DISCARD. Zerops-required →
 intersection → KB.
 
-Drop ONLY when (i) AND (ii) AND (iii) all return "no Zerops thread".
-A single anchor anywhere flips to KB-eligible.
+Drop when (i) AND (ii) AND (iii) all return "no Zerops thread".
+
+**(iv) Self-inflicted litmus test (decisive over a shallow
+Zerops-anchor pass).** Anchors alone don't promote to KB. Ask:
+would a porter copying IG #1's shipped `envVariables` block
+verbatim hit this trap? If NO — the trap fires only when the porter
+deviates from the shipped config — discard as `self-inflicted`.
+Spec §"Fact classification taxonomy" → litmus #4: *"Could this
+observation be summarized as 'our code did X, we fixed it to do Y'?
+If yes, discard."* The shipped IG #1 yaml encodes the fix; the
+porter cannot hit it without un-doing the fix.
+
+KEEP only when (i)+(ii)+(iii) pass AND (iv) confirms the trap fires
+for a porter following IG #1's shipped envVariables verbatim.
 
 **DROP** (framework / spec / library quirks):
 
@@ -681,19 +675,38 @@ A single anchor anywhere flips to KB-eligible.
 
 **KEEP** (intersection):
 
-- *"`fetch().headers.get('X-Cache')` returns null"* with body naming
-  project-scope URL constants driving the CORS allow-list — abstract
-  Zerops reference + scaffold dependency.
 - *"TypeORM `synchronize: true` corrupts schema on multi-replica
   boot"* — framework fact (DDL on boot) AND platform fact
-  (`minContainers ≥ 2` parallel boots) both contribute.
+  (`minContainers ≥ 2` parallel boots); porter following IG #1's
+  shipped yaml with `minContainers ≥ 2` hits it.
 - *"nats.js v2 strips URL-embedded creds silently"* — library fact +
-  `${broker_*}` injection both contribute.
+  `${broker_*}` injection; trap fires when porter tries Pattern B
+  (connection-string assembly), a legitimate alternative IG #1 does
+  NOT ship. Contrast with DISCARD below: no "alternative shape" a
+  porter would reach for — trap only fires by un-doing the fix.
+
+**DISCARD — `self-inflicted`** (scaffold-time mistakes the author
+fixed before shipping):
+
+- *"`UnknownError` on first `GetObject` because `S3_ENDPOINT` resolved
+  to `http://${storage_apiHost}`"* — earlier scaffold composed
+  `http://${storage_apiHost}`, hit 301, switched to shipped
+  `${storage_apiUrl}`. IG #1 ships `S3_ENDPOINT: ${storage_apiUrl}`;
+  porter following shipped envVariables verbatim never composes the
+  broken URL. (Run-42 dogfood: apidev KB #2 shipped this bullet;
+  spec §"Self-inflicted" routes to DROP.)
+- *"`fetch().headers.get('X-Cache')` returns null from the SPA"* —
+  scaffolded without `exposedHeaders`, hit cross-origin header
+  invisibility, added `exposedHeaders: ['X-Cache']`. The shipped IG
+  #1 config encodes the fix; porter following it hits zero of this.
+  (Run-42 dogfood: apidev KB #3 shipped this bullet; spec routes to
+  DROP.)
 
 **Anti-pattern: the "headline test".** Classify by BODY, not stem.
-*"X-Cache returns null"* with body citing `env-var-model` + project-
-scope envs → KB; same stem with body mentioning only `Access-
-Control-Expose-Headers` + zero env vars → pure W3C CORS, DISCARD.
+*"connect() crashes with Invalid URL"* with body citing
+`${broker_*}` injection + nats.js library parser quirk → KB
+(intersection); same stem with body mentioning only the framework
+library exception → pure library quirk, DISCARD.
 
 Applying this at authoring time reduces refinement load — the
 refinement-pass Action 1a is the safety net, not the primary filter.
