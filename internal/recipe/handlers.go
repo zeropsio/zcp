@@ -1100,25 +1100,25 @@ func completePhase(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
 			return r
 		}
 	}
-	// Run-23 F-26 — finalize-phase closure refuses unless the refinement
-	// sub-agent has been dispatched. Pre-fix the auto-advance from
-	// finalize → refinement only moved phase state; the dispatch was
-	// main-agent-driven and silently skipped on 3 of 5 recent runs
-	// (system.md §3 phase 8 claim that refinement is "always-on" was
-	// empirically false). Engine-side refusal closes the gap. The
-	// Codebase scope (sub-agent self-validate) is not the close-out
-	// transition; only the no-codebase main-agent path triggers the
-	// gate.
-	if in.Codebase == "" && sess.Current == PhaseFinalize {
-		sess.mu.Lock()
-		dispatched := sess.RefinementDispatched
-		sess.mu.Unlock()
-		if !dispatched {
-			r.Error = "complete-phase: phase=finalize requires refinement sub-agent dispatch first; call `zerops_recipe action=build-subagent-prompt briefKind=refinement` and dispatch the agent before closing finalize. The refinement pass is the always-on quality gate (system.md §3 phase 8); skipping it produces an unaudited deliverable."
-			return r
-		}
-	}
-	// Run-41 — refinement-phase closure refuses unless BOTH refinement
+	// Run-43 Edit D / P6 — consolidated refinement state machine.
+	// Pre-Edit-D the engine had TWO refinement-dispatch gates: one
+	// at finalize-close (demanding RefinementDispatched) and one at
+	// refinement-close (demanding BOTH RefinementDispatched +
+	// Refinement2Dispatched). Run-42 dogfood produced "three
+	// refinement passes, wrong order" runs: main agent dispatched
+	// refinement-1 + refinement-2 during finalize-close demand
+	// iteration (because the finalize gate refused), then redispatched
+	// refinement-1 at refinement phase (because phase-8 entry guidance
+	// led there). Run-43 Edit D drops the finalize-phase gate
+	// entirely; refinement happens at the refinement phase, and the
+	// refinement-close gate (below) enforces both refinement-1 +
+	// refinement-2 dispatched AND re-runs surface validators on
+	// any ACTs the main agent made on refinement-2 findings. The
+	// finalize-phase gate this comment block formerly housed has been
+	// removed; see TestCompletePhaseFinalize_DoesNotDemandRefinementDispatch
+	// (the inversion pin against re-introduction).
+	//
+	// Refinement-phase closure refuses unless BOTH refinement
 	// sub-agents have been dispatched. Refinement-1 walks per-fragment
 	// rules (`derived_rules.md`); refinement-2 walks cross-surface
 	// defect classes (KB↔IG duplication, surface-misplacement,

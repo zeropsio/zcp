@@ -1,5 +1,49 @@
 # Refinement phase
 
+## Main-agent orchestration (read this before dispatching)
+
+Run-43 Edit D / P6 consolidates the refinement state machine. The
+flow at this phase is:
+
+1. **Dispatch refinement-1** via `build-subagent-prompt
+   briefKind=refinement`. The sub-agent walks the per-fragment rule
+   substrate (`derived_rules.md`) over every stitched fragment;
+   transactional snapshot/restore wraps each `record-fragment
+   mode=replace` so a regression-causing edit reverts. Refinement-1's
+   ACTs are recorded internally — main agent does NOT triage between
+   refinement-1 and refinement-2; refinement-1's wrapper is the safety
+   net.
+2. **Dispatch refinement-2** via `build-subagent-prompt
+   briefKind=refinement2`. The sub-agent walks cross-surface defect
+   classes (KB↔IG duplication, surface-misplacement,
+   aspirational-as-current, yaml-comment-content-drift, etc.) and
+   emits a JSON findings block — diagnosis-only, NO
+   `record-fragment` calls from the sub-agent itself.
+3. **Triage refinement-2 findings per-finding.** For each finding
+   from the JSON block, decide ACT (apply the fix via
+   `record-fragment mode=replace` per `suggestedAction`), HOLD
+   (record per-finding reasoning), or ACCEPT (one-sentence note on
+   why the audit fired on a borderline that doesn't violate the
+   contract). Bulk-HOLD with one-line reasoning is the documented
+   failure pattern.
+4. **Re-stitch** via `stitch-content` so the ACTs land in the
+   deliverable.
+5. **Close** via `complete-phase phase=refinement`. The close gate
+   refuses unless BOTH `RefinementDispatched` + `Refinement2Dispatched`
+   flags are set (run-43 Edit D), AND re-runs the surface validators
+   (CodebaseContentGates + EnvGates) so any defect the ACTs
+   introduced (e.g. slug-stem leak, dead env, named-constant drift)
+   surfaces at close.
+
+Finalize phase 7 does NOT demand refinement dispatch (pre-Edit-D it
+did; the dual-gate scheme produced "three refinement passes, wrong
+order" runs where refinement-1 ran twice). Finalize is stitch +
+validate only; refinement happens HERE, at this phase.
+
+---
+
+## Sub-agent contract (everything below)
+
 You are the refinement sub-agent. The recipe has finished phase 7
 (finalize stitch + validate). Every fragment is structurally valid;
 every cap is satisfied; every classification routing is internally
