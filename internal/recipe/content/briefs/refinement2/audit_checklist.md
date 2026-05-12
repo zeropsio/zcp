@@ -65,8 +65,8 @@ validators in refinement-1 already gate over-cap.
 | S1 Root README | n/a | 35 lines | refinement-1 catches over-cap |
 | S2 Tier README extract | 1 sentence | 2 sentences ≤ 350 chars | refinement-1 catches |
 | S3 Tier yaml | 3 lines/svc | 8 lines/svc | refinement-1 catches |
-| **S4 IG items / codebase** | **4** | **5** (incl. engine-emitted IG #1) | `kb-below-floor` if < 4 (use `surface: "S4"`); `kb-over-cap` if > 5 |
-| **S5 KB bullets / codebase** | **5** | **8** | `kb-below-floor` if < 5 (use `surface: "S5"`); `kb-over-cap` if > 8 |
+| **S4 IG items / codebase** | **4** | **5** (incl. engine-emitted IG #1) | `kb-over-cap` if > 5 (IG floor enforced by refinement-1, not here) |
+| **S5 KB bullets / codebase** | **no floor** | **8** | `kb-over-cap` if > 8 (no floor — bullets stand on their own editorial-test merit, not on count; spec §S5) |
 | S6 CLAUDE.md | ~30 lines | 50 lines (soft) | refinement-1 catches |
 
 ---
@@ -117,12 +117,19 @@ KB, then blocker (the KB has become an IG echo).
 
 ---
 
-## Defect class: kb-below-floor / kb-over-cap (+ S4 IG counts)
+## Defect class: kb-over-cap (+ S4 IG counts)
+
+**Run-43 F2** — the floor side of the prior count-based class is
+REMOVED. Spec §S5 now declares "no floor; cap 8" — KB bullets stand
+on their own editorial-test merit, not on count. The empirical span
+across the two reference recipes is 2 (jetstream) to 7 (showcase);
+the prior 5-bullet floor was an invented number that the goldens
+contradicted. Refinement-2 no longer flags KBs by count below the
+cap. The cap side remains — only `kb-over-cap` fires here.
 
 **Check S5 KB**: For each codebase, count `### H3` headings inside
 the `codebase/<host>/knowledge-base` fragment.
 
-- < 5 bullets → `kb-below-floor` (advisory).
 - > 8 bullets → `kb-over-cap` (blocker — refinement-1 should have
   caught this; double-check).
 
@@ -130,19 +137,15 @@ the `codebase/<host>/knowledge-base` fragment.
 engine-emitted from the codebase's `zerops-yaml` fragment; items
 #2+ are `codebase/<host>/integration-guide/<N>` fragments).
 
-- < 4 items → `kb-below-floor` (advisory) with `surface: "S4"` and
-  `fragmentId: "codebase/<host>/integration-guide"`.
 - > 5 items → `kb-over-cap` (blocker).
 
-**suggestedAction enum** for both classes: `"drop"` is the only
-applicable enum value when no concrete fix exists at this boundary
-(below-floor needs new content, not removal; over-cap needs
+**suggestedAction enum**: `"drop"` is the only applicable enum value
+when no concrete fix exists at this boundary (over-cap needs
 selection). Emit findings with `suggestedAction: "drop"` and
-explain in `rationale` that the main agent must decide whether to
-add bullets from the facts log (for below-floor) or rank-and-cut
-(for over-cap). The `suggestedAction` field is required by the
-JSON schema defined earlier in this brief; "drop" is the
-conservative fallback when no specific action applies.
+explain in `rationale` that the main agent must rank-and-cut. The
+`suggestedAction` field is required by the JSON schema defined
+earlier in this brief; "drop" is the conservative fallback when no
+specific action applies.
 
 ---
 
@@ -673,7 +676,7 @@ the keyword fires but the topic is foreign, pass.
 ## Findings emission
 
 Walk EVERY defect class in this checklist in order — the full
-set is `kb-ig-duplication`, `kb-below-floor` / `kb-over-cap`,
+set is `kb-ig-duplication`, `kb-over-cap`,
 `surface-misplacement`, `scaffold-code-in-kb`,
 `aspirational-as-current`, `yaml-comment-content-drift`,
 `cross-codebase-named-constant-drift`,
