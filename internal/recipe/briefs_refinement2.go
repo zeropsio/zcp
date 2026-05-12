@@ -161,6 +161,34 @@ func BuildRefinement2Brief(plan *Plan, parent *ParentRecipe, runDir string, fact
 // feature stamps each `key:` value"*) from being read as a real
 // citation when the bullet doesn't actually point the porter at
 // the guide.
+//
+// Run-43 P7 — citation URLs are exposed as named constants below.
+// Form (b) tightening: the brief now demands the URL exactly match
+// the map's URL for the topic. Run-42 dogfood evidence: workerdev
+// README #5 (slug-stem-fix replacement) shipped
+// `docs.zerops.io/features/env-variables#env-var-model` while the
+// brief's citation map specifies
+// `docs.zerops.io/zerops-yaml/specification#envvariables-`. Phase-8
+// refinement-1 caught the slug-stem leak on app KB but missed the
+// fabricated URL fragment on worker KB because the validator only
+// checked the `docs.zerops.io` host. The constants below + the
+// brief-composer test `TestBuildRefinement2Brief_CitationMapURLsAreStable`
+// pin every URL to a single source of truth.
+
+// citation-map URL constants — exposed for test pinning and brief
+// rendering. Order matches the citation map row order.
+const (
+	citationURLRollingDeploys      = "docs.zerops.io/features/scaling-ha"
+	citationURLInitCommands        = "docs.zerops.io/zerops-yaml/specification#initcommands-"
+	citationURLObjectStorage       = "docs.zerops.io/services/object-storage"
+	citationURLEnvVarModel         = "docs.zerops.io/zerops-yaml/specification#envvariables-"
+	citationURLHTTPSupport         = "docs.zerops.io/features/access"
+	citationURLDeployFiles         = "docs.zerops.io/zerops-yaml/specification#deployfiles-"
+	citationURLReadinessChecks     = "docs.zerops.io/zerops-yaml/specification#readinesscheck-"
+	citationURLManagedNATS         = "docs.zerops.io/services/nats"
+	citationURLManagedMeilisearch  = "docs.zerops.io/services/meilisearch"
+)
+
 func citationMapBlock() string {
 	return `## Citation map — topics requiring zerops_knowledge citation
 
@@ -182,20 +210,30 @@ porter at the guide), not as a passing mention of the literal token:
   the guide — fails this form.
 - (b) **Friendly display name as markdown link text** —
   ` + "`[zero-downtime deploys with multi-container setups](URL)`" + `;
-  the link text spells out the friendly name verbatim and the URL
-  is a docs.zerops.io link.
+  the link text spells out the friendly name verbatim AND the URL
+  EXACTLY matches the topic's URL in the citation map below. Host-
+  only matches (any ` + "`docs.zerops.io/<anything>`" + ` URL passes the
+  bullet) DO NOT count — the URL fragment must match the map. Run-42
+  worker README shipped ` + "`docs.zerops.io/features/env-variables#env-var-model`" + ` for an env-var-model citation; the map specifies
+  ` + "`docs.zerops.io/zerops-yaml/specification#envvariables-`" + `. The
+  host-only check passed but the link points the porter at a
+  fabricated URL fragment. Fail with ` + "`missing-citation`" + ` when the
+  link text claims to cite topic ` + "`X`" + ` but the URL doesn't match
+  topic ` + "`X`" + `'s row in the citation map.
 - (c) **Bare docs URL** — the literal ` + "`docs.zerops.io/...`" + ` URL
-  for the guide, present in the bullet body.
+  for the guide, present in the bullet body — the URL must EXACTLY
+  match the topic's URL in the citation map (no host-only acceptance,
+  same rule as form (b)).
 
-- ` + "`rolling-deploys`" + ` / ` + "`minContainers-semantics`" + ` / multi-container setups / minContainers≥2 / zero-downtime / SIGTERM-before-teardown / drain semantics → cite guide ID ` + "`rolling-deploys`" + ` OR friendly ` + "`zero-downtime deploys with multi-container setups`" + ` OR URL ` + "`docs.zerops.io/features/scaling-ha`" + `
-- ` + "`init-commands`" + ` / ` + "`zsc execOnce`" + ` / ` + "`${appVersionId}`" + ` / per-deploy lock / ` + "`--retryUntilSuccessful`" + ` → cite guide ID ` + "`init-commands`" + ` OR friendly ` + "`zsc execOnce + per-deploy key model`" + ` OR URL ` + "`docs.zerops.io/zerops-yaml/specification#initcommands-`" + `
-- ` + "`object-storage`" + ` / MinIO / S3 / forcePathStyle / presigned URL / ` + "`storage_*`" + ` env vars → cite guide ID ` + "`object-storage`" + ` OR friendly ` + "`S3-compatible storage on the MinIO backend`" + ` OR URL ` + "`docs.zerops.io/services/object-storage`" + `
-- ` + "`env-var-model`" + ` / cross-service alias / same-key shadow / ` + "`${<host>_<key>}`" + ` / envIsolation / project-level vs service-level → cite guide ID ` + "`env-var-model`" + ` OR friendly ` + "`per-key env shape and cross-service aliases`" + ` OR URL ` + "`docs.zerops.io/zerops-yaml/specification#envvariables-`" + `
-- ` + "`http-support`" + ` / ` + "`l7-balancer`" + ` / subdomain access / ` + "`httpSupport`" + ` / VXLAN routing / TLS termination / ` + "`trust proxy`" + ` / bind 0.0.0.0 → cite guide ID ` + "`http-support`" + ` OR ` + "`l7-balancer`" + ` OR friendly ` + "`Zerops L7 balancer + subdomain access`" + ` OR URL ` + "`docs.zerops.io/features/access`" + `
-- ` + "`deploy-files`" + ` / ` + "`static-runtime`" + ` / tilde suffix / ` + "`./dist/~`" + ` strip-prefix / ` + "`base: static`" + ` runtime / Nginx SPA fallback → cite guide ID ` + "`deploy-files`" + ` OR ` + "`static-runtime`" + ` OR friendly ` + "`deploy-files tilde syntax + static runtime`" + ` OR URL ` + "`docs.zerops.io/zerops-yaml/specification#deployfiles-`" + `
-- ` + "`readiness-health-checks`" + ` / readiness check / health check / routing gates / what routes traffic vs restarts container → cite guide ID ` + "`readiness-health-checks`" + ` OR friendly ` + "`readiness + health checks`" + ` OR URL ` + "`docs.zerops.io/zerops-yaml/specification#readinesscheck-`" + `
-- managed NATS / queue groups / pub-sub → cite ` + "`managed NATS broker`" + ` (docs.zerops.io/services/nats)
-- managed Meilisearch / search keys / index admin → cite ` + "`managed Meilisearch service`" + ` (docs.zerops.io/services/meilisearch)
+- ` + "`rolling-deploys`" + ` / ` + "`minContainers-semantics`" + ` / multi-container setups / minContainers≥2 / zero-downtime / SIGTERM-before-teardown / drain semantics → cite guide ID ` + "`rolling-deploys`" + ` OR friendly ` + "`zero-downtime deploys with multi-container setups`" + ` OR URL ` + "`" + citationURLRollingDeploys + "`" + `
+- ` + "`init-commands`" + ` / ` + "`zsc execOnce`" + ` / ` + "`${appVersionId}`" + ` / per-deploy lock / ` + "`--retryUntilSuccessful`" + ` → cite guide ID ` + "`init-commands`" + ` OR friendly ` + "`zsc execOnce + per-deploy key model`" + ` OR URL ` + "`" + citationURLInitCommands + "`" + `
+- ` + "`object-storage`" + ` / MinIO / S3 / forcePathStyle / presigned URL / ` + "`storage_*`" + ` env vars → cite guide ID ` + "`object-storage`" + ` OR friendly ` + "`S3-compatible storage on the MinIO backend`" + ` OR URL ` + "`" + citationURLObjectStorage + "`" + `
+- ` + "`env-var-model`" + ` / cross-service alias / same-key shadow / ` + "`${<host>_<key>}`" + ` / envIsolation / project-level vs service-level → cite guide ID ` + "`env-var-model`" + ` OR friendly ` + "`per-key env shape and cross-service aliases`" + ` OR URL ` + "`" + citationURLEnvVarModel + "`" + `
+- ` + "`http-support`" + ` / ` + "`l7-balancer`" + ` / subdomain access / ` + "`httpSupport`" + ` / VXLAN routing / TLS termination / ` + "`trust proxy`" + ` / bind 0.0.0.0 → cite guide ID ` + "`http-support`" + ` OR ` + "`l7-balancer`" + ` OR friendly ` + "`Zerops L7 balancer + subdomain access`" + ` OR URL ` + "`" + citationURLHTTPSupport + "`" + `
+- ` + "`deploy-files`" + ` / ` + "`static-runtime`" + ` / tilde suffix / ` + "`./dist/~`" + ` strip-prefix / ` + "`base: static`" + ` runtime / Nginx SPA fallback → cite guide ID ` + "`deploy-files`" + ` OR ` + "`static-runtime`" + ` OR friendly ` + "`deploy-files tilde syntax + static runtime`" + ` OR URL ` + "`" + citationURLDeployFiles + "`" + `
+- ` + "`readiness-health-checks`" + ` / readiness check / health check / routing gates / what routes traffic vs restarts container → cite guide ID ` + "`readiness-health-checks`" + ` OR friendly ` + "`readiness + health checks`" + ` OR URL ` + "`" + citationURLReadinessChecks + "`" + `
+- managed NATS / queue groups / pub-sub → cite ` + "`managed NATS broker`" + ` (` + citationURLManagedNATS + `)
+- managed Meilisearch / search keys / index admin → cite ` + "`managed Meilisearch service`" + ` (` + citationURLManagedMeilisearch + `)
 
 A bullet covering a topic NOT in this list has no required citation;
 ` + "`missing-citation`" + ` does not fire.

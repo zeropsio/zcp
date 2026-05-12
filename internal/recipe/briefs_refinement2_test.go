@@ -467,6 +467,110 @@ func TestBuildRefinement2Brief_P2_PhaseEntryEnumIncludesSelfInflicted(t *testing
 	}
 }
 
+// TestBuildRefinement2Brief_CitationMapURLsAreStable — Run-43 P7.
+// The citation-map block now exposes URL fragments as named constants
+// (`citationURL*`) and the brief renders them verbatim. Form (b) and
+// form (c) acceptance tightened to demand EXACT URL match — host-
+// only matches no longer pass. Run-42 dogfood evidence:
+// workerdev/README.md:241 shipped
+// `docs.zerops.io/features/env-variables#env-var-model` for an
+// env-var-model citation; the brief's citation map specifies
+// `docs.zerops.io/zerops-yaml/specification#envvariables-`. The
+// fabricated fragment passed the loose docs.zerops.io host check.
+// Pin every URL fragment as it should appear in the brief, so a
+// future drift surfaces here, not in the next dogfood run.
+func TestBuildRefinement2Brief_CitationMapURLsAreStable(t *testing.T) {
+	t.Parallel()
+	plan := &Plan{
+		Slug:      "synth-showcase",
+		Codebases: []Codebase{{Hostname: "api", Role: RoleAPI, BaseRuntime: "nodejs@22"}},
+	}
+	brief, err := BuildRefinement2Brief(plan, nil, "/run/dir", nil)
+	if err != nil {
+		t.Fatalf("BuildRefinement2Brief: %v", err)
+	}
+	// Every citation-map URL renders verbatim in the brief body —
+	// pin against the named constants so the test fails fast if the
+	// brief composer drifts from the constants OR the constants
+	// drift from the spec.
+	urls := []struct {
+		name string
+		url  string
+	}{
+		{"rollingDeploys", citationURLRollingDeploys},
+		{"initCommands", citationURLInitCommands},
+		{"objectStorage", citationURLObjectStorage},
+		{"envVarModel", citationURLEnvVarModel},
+		{"httpSupport", citationURLHTTPSupport},
+		{"deployFiles", citationURLDeployFiles},
+		{"readinessChecks", citationURLReadinessChecks},
+		{"managedNATS", citationURLManagedNATS},
+		{"managedMeilisearch", citationURLManagedMeilisearch},
+	}
+	for _, u := range urls {
+		if !strings.Contains(brief.Body, u.url) {
+			t.Errorf("brief body missing citation URL for %s: %q", u.name, u.url)
+		}
+	}
+	// Form (b) tightening — the brief explicitly demands EXACT URL
+	// match for citation forms (b) and (c).
+	for _, want := range []string{
+		"the URL\n  EXACTLY matches the topic's URL in the citation map",
+		"Host-\n  only matches",
+		"DO NOT count",
+		// Run-42 worked example of the gap closure.
+		"docs.zerops.io/features/env-variables#env-var-model",
+		"fabricated URL fragment",
+	} {
+		if !strings.Contains(brief.Body, want) {
+			t.Errorf("brief body missing form-(b) tightening anchor %q", want)
+		}
+	}
+}
+
+// TestBuildRefinement2Brief_CitationMapURLConstants_MatchSpec — pin
+// the named URL constants against the spec's authoritative shape.
+// The spec map at docs/spec-content-surfaces.md §"Citation map"
+// lists guide IDs; the actual docs URLs are inferred from
+// zerops_knowledge guide structure. This test guards against an
+// inadvertent constant edit that diverges the brief from production
+// docs URLs without surfacing the divergence in CI.
+func TestBuildRefinement2Brief_CitationMapURLConstants_MatchSpec(t *testing.T) {
+	t.Parallel()
+	expected := map[string]string{
+		"rolling-deploys":         "docs.zerops.io/features/scaling-ha",
+		"init-commands":           "docs.zerops.io/zerops-yaml/specification#initcommands-",
+		"object-storage":          "docs.zerops.io/services/object-storage",
+		"env-var-model":           "docs.zerops.io/zerops-yaml/specification#envvariables-",
+		"http-support":            "docs.zerops.io/features/access",
+		"deploy-files":            "docs.zerops.io/zerops-yaml/specification#deployfiles-",
+		"readiness-health-checks": "docs.zerops.io/zerops-yaml/specification#readinesscheck-",
+		"managed-nats":            "docs.zerops.io/services/nats",
+		"managed-meilisearch":     "docs.zerops.io/services/meilisearch",
+	}
+	actual := map[string]string{
+		"rolling-deploys":         citationURLRollingDeploys,
+		"init-commands":           citationURLInitCommands,
+		"object-storage":          citationURLObjectStorage,
+		"env-var-model":           citationURLEnvVarModel,
+		"http-support":            citationURLHTTPSupport,
+		"deploy-files":            citationURLDeployFiles,
+		"readiness-health-checks": citationURLReadinessChecks,
+		"managed-nats":            citationURLManagedNATS,
+		"managed-meilisearch":     citationURLManagedMeilisearch,
+	}
+	for k, want := range expected {
+		got, ok := actual[k]
+		if !ok {
+			t.Errorf("constant for topic %q missing", k)
+			continue
+		}
+		if got != want {
+			t.Errorf("citation URL drift for topic %q: got %q, want %q", k, got, want)
+		}
+	}
+}
+
 // TestBuildRefinement2Brief_NewDefectClassesAreBlocker — the three
 // run-41 spec-anchored classes are blocker severity because the
 // spec's classification taxonomy + cross-surface duplication rule
