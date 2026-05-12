@@ -514,32 +514,53 @@ func TestBuildRefinement2Brief_CitationMapURLsAreStable(t *testing.T) {
 			t.Errorf("brief body missing citation URL for %s: %q", u.name, u.url)
 		}
 	}
-	// Form (b) tightening — the brief explicitly demands path-starts-with
-	// semantics for citation forms (b) and (c): the link's URL path must
-	// match the map URL's path, with fragment extensions on the same path
-	// tolerated. Run-43 Edit A relaxed the prior "EXACTLY matches" wording
-	// because legitimate fragment extensions (e.g.
-	// `docs.zerops.io/features/scaling-ha` map URL vs link
-	// `docs.zerops.io/features/scaling-ha#high-availability-via-rolling-deploys`)
-	// false-positive on the strict-equality reading.
+	// Run-43 F3 — citation URL form (b)/(c) wording rewrite. Codex
+	// flagged three internal contradictions in the prior "path-starts-with"
+	// framing:
+	//   (1) Title said "path-starts-with" but the definition required
+	//       host+path EQUALITY (not prefix-matching). Self-contradictory.
+	//   (2) "The anchor extends the same path" conflated URL fragments
+	//       with path components — fragments don't extend paths, they
+	//       select anchors within a document.
+	//   (3) No URL normalization rule (trailing slash, scheme casing) —
+	//       cosmetic variants could false-positive.
+	//
+	// Edge case: a link to
+	// `docs.zerops.io/zerops-yaml/specification#some-wrong-fragment`
+	// (same path as the map URL `...#envvariables-`, but wrong
+	// fragment) would FALSE-NEGATIVE under the prior "anchor extends
+	// path" tolerance — the defect was invisible when the citation map
+	// URL had a specific anchor.
+	//
+	// The rewrite:
+	//   - Renames the rule "host+path match" (accurate; not
+	//     prefix-matching).
+	//   - Defines normalization: scheme-and-host-case-insensitive,
+	//     trailing slash optional on path.
+	//   - Fragment rule: if the citation map URL has NO fragment, any
+	//     fragment on the link passes. If the map URL has a SPECIFIC
+	//     fragment, the link's fragment must match it exactly.
+	//   - Three worked examples (two PASSES, two FAILS).
 	for _, want := range []string{
-		// New path-starts-with wording — host + path must match;
-		// fragment extensions on the same path pass.
-		"path-starts-with",
-		// Worked example: fragment-extended same-path link passes.
+		// New "host+path match" wording.
+		"host+path match",
+		// Normalization rule.
+		"scheme-and-host-case-insensitive",
+		"trailing slash optional",
+		// Worked example 1 — PASSES: bare map URL + fragment-extended
+		// link (same-path in-page anchor).
 		"docs.zerops.io/features/scaling-ha#high-availability-via-rolling-deploys",
-		"passes form (b) because the path is identical",
-		// Host-only matches still fail.
-		"Host-only matches",
-		"DO NOT pass",
-		// Run-42 worked example of the gap closure — different path
-		// fails even though host + fragment shape look citation-like.
+		// Worked example 2 — PASSES: exact-fragment match.
+		"exact anchor match",
+		// Worked example 3 — FAILS: same path, wrong fragment.
+		"same-path wrong-fragment",
+		// Worked example 4 — FAILS: different path entirely (Run-42
+		// fabricated URL).
 		"docs.zerops.io/features/env-variables#env-var-model",
-		"FAILS because the path is `features/env-variables`",
-		"fabricated URL fragment",
+		"different path from map's",
 	} {
 		if !strings.Contains(brief.Body, want) {
-			t.Errorf("brief body missing form-(b) tightening anchor %q", want)
+			t.Errorf("brief body missing F3 citation-rule rewrite anchor %q", want)
 		}
 	}
 }

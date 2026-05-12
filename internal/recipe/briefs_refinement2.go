@@ -163,25 +163,24 @@ func BuildRefinement2Brief(plan *Plan, parent *ParentRecipe, runDir string, fact
 // the guide.
 //
 // Run-43 P7 — citation URLs are exposed as named constants below.
-// Form (b) tightening: the brief demands path-starts-with semantics
-// for the URL match — the link's URL path must equal the map URL's
-// path (host + path identical) AND the link either has no anchor or
-// the anchor extends the same path. Run-42 dogfood evidence:
-// workerdev README #5 (slug-stem-fix replacement) shipped
-// `docs.zerops.io/features/env-variables#env-var-model` while the
-// brief's citation map specifies
-// `docs.zerops.io/zerops-yaml/specification#envvariables-`. Phase-8
-// refinement-1 caught the slug-stem leak on app KB but missed the
-// fabricated URL fragment on worker KB because the validator only
-// checked the `docs.zerops.io` host. Run-43 Edit A loosened the
-// initial "EXACTLY matches" wording to path-starts-with because
-// legitimate fragment extensions (e.g.
-// `citationURLRollingDeploys = "docs.zerops.io/features/scaling-ha"`
-// vs link
-// `docs.zerops.io/features/scaling-ha#high-availability-via-rolling-deploys`)
-// were false-positiving on strict equality. The constants below + the
-// brief-composer test `TestBuildRefinement2Brief_CitationMapURLsAreStable`
-// pin every URL to a single source of truth.
+// Form (b)/(c) match: the brief demands HOST+PATH MATCH semantics —
+// the link's URL host equals the map URL's host (case-insensitive),
+// AND the link's URL path equals the map URL's path (trailing slash
+// optional). The fragment rule branches on the map URL's fragment:
+// if the map URL has no fragment, any fragment on the link is
+// acceptable (in-page anchor on the same doc); if the map URL has
+// a specific fragment, the link's fragment must match it exactly.
+// Run-43 Edit A loosened the initial "EXACTLY matches" wording for
+// fragment extensions; Run-43 F3 (this revision) rewrote the prose
+// to fix three codex-flagged contradictions: (1) the title said
+// "path-starts-with" but the rule actually required equality;
+// (2) "anchor extends path" conflated fragments with path
+// components; (3) no URL normalization rule was specified — cosmetic
+// variants could false-positive. The edge case codex flagged
+// (same-path wrong-fragment, e.g. `...#env-var-model` vs map's
+// `...#envvariables-` on the same `zerops-yaml/specification` path)
+// is now caught explicitly under the specific-fragment branch.
+// Pinned by `TestBuildRefinement2Brief_CitationMapURLsAreStable`.
 
 // citation-map URL constants — exposed for test pinning and brief
 // rendering. Order matches the citation map row order.
@@ -219,48 +218,64 @@ porter at the guide), not as a passing mention of the literal token:
 - (b) **Friendly display name as markdown link text** —
   ` + "`[zero-downtime deploys with multi-container setups](URL)`" + `;
   the link text spells out the friendly name verbatim AND the URL
-  passes a **path-starts-with** check against the topic's URL in the
-  citation map below. Path-starts-with means: (i) the link's URL host
-  + path equal the map URL's host + path, AND (ii) the link either has
-  no anchor (fragment) or the anchor extends the same path. So
-  ` + "`docs.zerops.io/features/scaling-ha`" + ` (bare map URL) and
-  ` + "`docs.zerops.io/features/scaling-ha#high-availability-via-rolling-deploys`" + `
-  (fragment-extended link) both pass — the path is identical, the
-  fragment is an in-page anchor on the same doc.
-  **Host-only matches DO NOT pass**: any
-  ` + "`docs.zerops.io/<different-path>`" + ` URL fails even if the host
-  matches. Run-42 worker README shipped
-  ` + "`docs.zerops.io/features/env-variables#env-var-model`" + ` for an
-  env-var-model citation; the map specifies
-  ` + "`docs.zerops.io/zerops-yaml/specification#envvariables-`" + `. The
-  host-only check passed but the link points the porter at a
-  fabricated URL fragment — the same anchor name (` + "`#env-var-model`" + `)
-  on a DIFFERENT path FAILS because the path is ` + "`features/env-variables`" + `,
-  not the map's ` + "`zerops-yaml/specification`" + `. Fail with
-  ` + "`missing-citation`" + ` when the link text claims to cite topic
-  ` + "`X`" + ` but the URL path doesn't start with topic ` + "`X`" + `'s row
-  in the citation map.
+  passes the **host+path match** check defined below.
 - (c) **Bare docs URL** — the literal ` + "`docs.zerops.io/...`" + ` URL
   for the guide, present in the bullet body — the URL must pass the
-  same **path-starts-with** check as form (b): host + path equal, with
-  fragment extensions on the same path tolerated. No host-only
-  acceptance.
+  same **host+path match** check as form (b).
 
-**Worked example — fragment extension PASSES**: the rolling-deploys
-citation map row carries URL ` + "`docs.zerops.io/features/scaling-ha`" + `.
-A KB bullet linking to
+**The host+path match rule** (forms (b) and (c)): a link's URL
+passes the check against the topic's map URL when ALL of the
+following hold:
+
+1. **Host match** — the link's host equals the map URL's host. Match
+   is **scheme-and-host-case-insensitive** (` + "`HTTPS://Docs.Zerops.IO`" + `
+   matches ` + "`docs.zerops.io`" + `; the protocol prefix is ignored).
+2. **Path match** — the link's path equals the map URL's path. Match
+   is exact, with **trailing slash optional** (` + "`/features/scaling-ha`" + `
+   and ` + "`/features/scaling-ha/`" + ` are the same path). This is
+   NOT prefix-matching — different paths on the same host fail.
+3. **Fragment rule** — depends on whether the map URL has a fragment:
+   - **Map URL has NO fragment** (e.g. ` + "`docs.zerops.io/features/scaling-ha`" + `):
+     any fragment on the link's URL is acceptable — it's an in-page
+     anchor on the same doc.
+   - **Map URL has a SPECIFIC fragment** (e.g.
+     ` + "`docs.zerops.io/zerops-yaml/specification#envvariables-`" + `):
+     the link's fragment must be an **exact anchor match** to the
+     map URL's fragment. A link to the same path with a different
+     (or no) fragment is a **same-path wrong-fragment** miss and
+     FAILS the check — the bullet points the porter at the wrong
+     anchor within the right doc.
+
+Three worked examples:
+
+**Worked example — PASSES (no-fragment map + extended-fragment link)**:
+the rolling-deploys map URL is ` + "`docs.zerops.io/features/scaling-ha`" + `
+(no fragment). A KB bullet linking to
 ` + "`docs.zerops.io/features/scaling-ha#high-availability-via-rolling-deploys`" + `
-passes form (b) because the path is identical and ` + "`#high-availability-via-rolling-deploys`" + `
-is an in-page anchor on the same doc.
+passes — the path matches and the fragment is an in-page anchor on
+the same doc the map URL points at.
 
-**Worked example — different path FAILS**: a KB bullet linking to
-` + "`docs.zerops.io/features/env-variables#env-var-model`" + ` for an
-env-var-model citation FAILS because the path is ` + "`features/env-variables`" + ` not the map's
-` + "`zerops-yaml/specification`" + `. The anchor name (` + "`#env-var-model`" + `)
-happens to align with the topic key but the path is wrong — same
-fragment name on the map's actual path
-(` + "`docs.zerops.io/zerops-yaml/specification#env-var-model`" + ` —
-hypothetical) would pass.
+**Worked example — PASSES (specific-fragment map + exact-fragment link)**:
+the env-var-model map URL is
+` + "`docs.zerops.io/zerops-yaml/specification#envvariables-`" + `. A KB
+bullet linking to the same URL passes — the host, path, AND
+fragment all match.
+
+**Worked example — FAILS (same-path wrong-fragment)**: a KB bullet
+linking to
+` + "`docs.zerops.io/zerops-yaml/specification#env-var-model`" + ` for an
+env-var-model citation FAILS — same path as the map URL, but the
+fragment ` + "`#env-var-model`" + ` is different from the map's
+` + "`#envvariables-`" + `. The link points the porter at the wrong
+anchor within the right doc; flag with ` + "`missing-citation`" + `.
+
+**Worked example — FAILS (different path)**: Run-42 worker README
+shipped ` + "`docs.zerops.io/features/env-variables#env-var-model`" + `
+for an env-var-model citation. The map specifies
+` + "`docs.zerops.io/zerops-yaml/specification#envvariables-`" + `. The
+link path ` + "`features/env-variables`" + ` is a **different path from map's** ` + "`zerops-yaml/specification`" + ` — the link points
+the porter at a fabricated URL fragment on the wrong page. FAILS
+the host+path match; flag with ` + "`missing-citation`" + `.
 
 - ` + "`rolling-deploys`" + ` / ` + "`minContainers-semantics`" + ` / multi-container setups / minContainers≥2 / zero-downtime / SIGTERM-before-teardown / drain semantics → cite guide ID ` + "`rolling-deploys`" + ` OR friendly ` + "`zero-downtime deploys with multi-container setups`" + ` OR URL ` + "`" + citationURLRollingDeploys + "`" + `
 - ` + "`init-commands`" + ` / ` + "`zsc execOnce`" + ` / ` + "`${appVersionId}`" + ` / per-deploy lock / ` + "`--retryUntilSuccessful`" + ` → cite guide ID ` + "`init-commands`" + ` OR friendly ` + "`zsc execOnce + per-deploy key model`" + ` OR URL ` + "`" + citationURLInitCommands + "`" + `
