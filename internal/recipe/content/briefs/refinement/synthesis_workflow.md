@@ -189,6 +189,25 @@ any fragment whose body would re-author parent material, HOLD. The
 porter reads parent + this recipe together; duplicating parent
 content here weakens both.
 
+## record-fragment classification field is required
+
+`record-fragment mode=replace` on `CODEBASE_KB`
+(`codebase/<host>/knowledge-base`) or `CODEBASE_IG`
+(`codebase/<host>/integration-guide/<N>`) MUST carry a
+`classification` argument; the engine refuses with
+`classification is required for fragments on surface "CODEBASE_KB"`
+/ `"CODEBASE_IG"` when missing (recurring run-40 + run-42 failure
+— two wasted record-fragment calls per ambiguous fragment +
+re-read cycle).
+
+Seven enum values per [spec-content-surfaces.md §"Fact classification taxonomy"](../../../../docs/spec-content-surfaces.md#fact-classification-taxonomy):
+`platform-invariant`, `intersection`, `framework-quirk`,
+`library-metadata`, `scaffold-decision`, `operational`,
+`self-inflicted`. The common KB classification is `intersection`
+(platform × framework, both contribute materially); worked example:
+a `codebase/api/knowledge-base` bullet on nats.js v2 URL-credential
+parsing → `classification: intersection`.
+
 ## Per-fragment edit cap + revert semantics
 
 You make ONE replace attempt per fragment. For codebase fragments
