@@ -588,6 +588,16 @@ func ifEmpty(v, fallback string) string {
 func appendCodebaseContentAtoms(b *strings.Builder, parts []string, plan *Plan, cb Codebase) []string {
 	parts = appendAtomIfFound(b, parts, "phase_entry/codebase-content.md")
 	parts = appendSynthesisWorkflowBlock(b, parts)
+	// Run-43 Edit C — golden voice principles atom. The reference
+	// recipes (laravel-jetstream + laravel-showcase) define the
+	// empirical floor for voice + structure; the goldens themselves
+	// are NOT embedded (large + frequently iterated). This atom
+	// describes the golden voice on PRINCIPLE — operational over
+	// defensive, friendly-authority adaptation pattern, self-contained
+	// yaml comments, citation pattern — citing the goldens by name as
+	// anchors without quoting them verbatim. Pinned by
+	// TestGoldenVoicePrinciples_AtomPresent.
+	parts = appendAtomIfFound(b, parts, "briefs/codebase-content/golden_voice_principles.md")
 	if plan.Tier == tierShowcase && cb.IsWorker {
 		writeWorkerKBSupplementsPointer(b)
 		parts = append(parts, "worker_kb_supplements (deferred)")
