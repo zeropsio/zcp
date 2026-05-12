@@ -67,7 +67,9 @@ func TestBuildRefinement2Brief_CarriesAuditDefectClasses(t *testing.T) {
 	}
 	for _, defectClass := range []string{
 		"kb-ig-duplication",
-		"kb-below-floor",
+		// Run-43 F2 — `kb-below-floor` removed (spec §S5 now declares
+		// "no floor; cap 8"; goldens span 2-7 bullets). `kb-over-cap`
+		// retained.
 		"kb-over-cap",
 		"surface-misplacement",
 		"aspirational-as-current",

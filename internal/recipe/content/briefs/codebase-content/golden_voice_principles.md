@@ -81,8 +81,13 @@ derived rule F-XSURF-REF.)
 - App-repo IG: porter-transferable concrete steps + one copyable
   artifact (3-5 line code diff or `npm install` / `composer require`
   line).
-- App-repo KB: 2-5 bullets of operational + intersection content,
-  NOT a wall of defensive trap-cataloging.
+- App-repo KB: as many bullets as the spec's editorial test admits,
+  capped at 8 — both goldens span 2 (jetstream) to 7 (showcase) so
+  the count is shape-by-content, not target-by-floor. Bullets that
+  pass the §S5 test ("Would a developer who read the Zerops docs AND
+  the framework docs STILL be surprised by this?") ship; bullets
+  that fail it get discarded. NOT a wall of defensive
+  trap-cataloging.
 
 ## Citation pattern
 

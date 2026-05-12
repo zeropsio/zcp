@@ -39,7 +39,7 @@ Hard caps for every surface. Both reference recipes settle within these caps; ru
 | **Tier `import.yaml` comments** | 40 indented comment lines per tier | 3–5 lines per service block | Dashboard manifest reader |
 | Apps-repo README intro extract (between markers) | 1–3 sentences ≤ 500 chars | n/a | Apps-repo browser |
 | **Apps-repo Integration Guide** | n/a | **4–5 items per codebase** (incl. engine-emitted IG #1) | Porter bringing own code |
-| **Apps-repo Knowledge Base / Gotchas** | n/a | **5–8 bullets per codebase** | Porter hitting a failure |
+| **Apps-repo Knowledge Base / Gotchas** | n/a | **no floor; cap 8 bullets per codebase** | Porter hitting a failure |
 | Apps-repo CLAUDE.md | ~30–50 lines (no hard cap) | 2–4 H2 sections, `claude /init`-shape, Zerops-free | AI/human operating the repo |
 | Apps-repo zerops.yaml comments | n/a | one comment block per directive group / per directive — author's choice | Porter editing the deploy config |
 
@@ -211,7 +211,7 @@ If the answer is "yes, it surprises you even knowing both" → this is a gotcha.
 - **Authoring-tool names** — `zerops_browser`, `zerops_subdomain`, `zerops_knowledge`, `zcli`, `zcp` are tools the recipe agent used, not tools the porter operates.
 - **Restatements of IG items** — if IG #4 teaches `forcePathStyle`, the gotcha must add value beyond that (e.g. the symptom, not the fix).
 
-**Length**: **5–8 bullets per codebase. Hard cap 8.** Run-14 shipped 11–12; that's over-collection.
+**Length**: **Cap 8 bullets per codebase. No floor** — bullets stand on their own merit, not on count. The empirical span across the two reference recipes is 2 (jetstream) to 7 (showcase) — count is shape-by-content, not target-by-floor. The Surface-5 editorial test (*"Would a developer who read the Zerops docs AND the framework docs STILL be surprised by this?"*) is the gating signal; bullets that pass it ship, bullets that fail get discarded. Run-14 shipped 11–12; that's over-collection above the cap.
 
 **Citation rule**: If the gotcha's topic is covered by a `zerops_knowledge` guide (env-var-model, execOnce, rolling-deploys, object-storage, cross-service-refs), the gotcha MUST cite that guide by name. Pattern: *"The `<guide-id>` guide covers <basic mechanism>; the application-specific corollary is …"*. Writing new mental models for topics the platform already documents is how folk-doctrine ships.
 
