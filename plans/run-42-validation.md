@@ -610,23 +610,28 @@ ranked by content-quality impact.
 
 ### Run-43 status snapshot
 
-Run-43 lands the substrate work in five commits on `main`:
+Run-43 lands the substrate work in nine commits on `main` — five
+priority commits (P1/P2/P3/P5/P7), two follow-up fixes (Edit A / B)
+and two newly-completed priorities (P4 / P6).
 
 | Priority | Status | Commit | Notes |
 |---|---|---|---|
 | P1 — synthesis_workflow.md voice + KB classification (author brief) | **DONE** | `0196fd12` | Drops the "see IG #N" deferral pattern; adds litmus #4 (self-inflicted test); moves X-Cache + storage_apiHost examples to DISCARD; rewrites the 8.5 anchor to teach per-deploy vs once-ever lifetimes correctly. |
 | P2 — `self-inflicted-as-gotcha` defect class (refinement-2 audit) | **DONE** | `f8c9e490` | Decisive Check #1: porter-following-IG#1-verbatim test. Worked example (storage_apiHost UnknownError) + counter-example (NATS Pattern A/B). Blocker severity, action `drop`. |
 | P3 — F-EXECONCE-SEMANTICS factuality guard (refinement-1) | **DONE** | `4c0dc93b` | Walks every `zsc execOnce` line; FAILs on `${appVersionId}` key + non-idempotent op + once-only prose. Cross-links `principles/init-commands-model.md`. |
-| P4 — voice-vs-golden classifier (operational vs defensive KB voice) | **REMAINING** | — | Separate scope; requires goldens-embedding effort and content-quality rubric design. |
+| P4 — golden voice principles atom (codebase-content brief) | **DONE** | `9a0f951a` (Edit C) | New atom `briefs/codebase-content/golden_voice_principles.md` — operational vs defensive voice, friendly-authority adaptation pattern, self-contained yaml comments, citation pattern. Goldens (laravel-jetstream + laravel-showcase) cited as anchors, NOT quoted verbatim. Threaded into `BuildCodebaseContentBrief` via `appendCodebaseContentAtoms`. Avoids the synthesis_workflow.md 96.7%-token-ceiling constraint. |
 | P5 — F-XSURF-REF cross-surface-reference rule (refinement-1) | **DONE** | `5a364523` | Combines the validation report's §priority-4 cross-tier rule with the §"Headline (4)" Surface 7 cross-codebase-surface deferral catch. Scans both shapes; cites spec §"Surface 7" + §"Surface 3". |
-| P6 — kb-floor post-ACT re-audit OR refinement-1 floor validator | **REMAINING** | — | Engine state-machine work at `handlers.go:1103/:1121`; deferred to separate scope. |
-| P7 — URL-fragment validator at brief-composer time + form-(b) tightening | **DONE** | `65ef0f2f` | Citation URLs are now named constants (`citationURLEnvVarModel`, etc.); brief demands EXACT URL match for forms (b) + (c); run-42 workerdev/README.md:241 fabricated-URL-fragment gap is closed. |
+| P6 — refinement state machine consolidation | **DONE** | `a9dcf8dd` (Edit D) | Drops the finalize-phase refinement-dispatch gate (handlers.go:1112-1120); refinement-close enforces both `RefinementDispatched` + `Refinement2Dispatched` AND re-runs surface validators (`CodebaseContentGates` + `EnvGates` added to `gatesForPhase(PhaseRefinement)`). Closes the run-42 "three refinement passes, wrong order" failure mode. Inverted-pin test against re-introduction. |
+| P7 — URL-fragment validator at brief-composer time + form-(b) tightening | **DONE** | `65ef0f2f` (orig) + `fb934be6` (Edit A loosening) | Citation URLs are named constants (`citationURLEnvVarModel`, etc.); brief demands **path-starts-with** semantics (not EXACT match) for forms (b) + (c) so legitimate fragment extensions (e.g. `scaling-ha#high-availability-via-rolling-deploys` on the bare `scaling-ha` map URL) pass while host-only different-path matches (the run-42 fabricated `features/env-variables#env-var-model` for an env-var-model citation) still fail. |
 
-P1+P2+P3+P5+P7 land the content-quality substrate work (the
-spec-spirit gaps the run-42 audit couldn't see). P4 + P6 are
-deliberately scoped out — P4 needs goldens-embedding work + a voice
-rubric; P6 needs engine state-machine changes. Run-44 dogfood is
-gated on P1-P3+P5+P7 only; P4 + P6 are tracked separately.
+| Follow-up issue | Status | Commit | Notes |
+|---|---|---|---|
+| Issue 1 — P7 URL fragment-extension tolerance | **DONE** | `fb934be6` (Edit A) | Loosens "EXACTLY matches" to path-starts-with semantics; supersedes the strict-equality reading at 65ef0f2f. |
+| Issue 2 — F-XSURF-REF pattern broadening | **DONE** | `321f4792` (Edit B) | Broadens cross-tier pattern enumeration to also match `Same <anything> as tier <digit>` (e.g. *"Same dev / stage pair as tier 0"* — run-42 verbatim wording); adds the run-42 verbatim phrase as a named worked-example anchor. Supersedes the narrow enumeration at 5a364523. |
+
+All seven priorities + two follow-up issues are DONE. The substrate
+work for run-43 is complete; run-44 dogfood is gated on no further
+substrate edits.
 
 ### Substrate priority 1 — self-inflicted classifier
 
