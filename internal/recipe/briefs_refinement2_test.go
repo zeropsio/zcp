@@ -512,14 +512,28 @@ func TestBuildRefinement2Brief_CitationMapURLsAreStable(t *testing.T) {
 			t.Errorf("brief body missing citation URL for %s: %q", u.name, u.url)
 		}
 	}
-	// Form (b) tightening — the brief explicitly demands EXACT URL
-	// match for citation forms (b) and (c).
+	// Form (b) tightening — the brief explicitly demands path-starts-with
+	// semantics for citation forms (b) and (c): the link's URL path must
+	// match the map URL's path, with fragment extensions on the same path
+	// tolerated. Run-43 Edit A relaxed the prior "EXACTLY matches" wording
+	// because legitimate fragment extensions (e.g.
+	// `docs.zerops.io/features/scaling-ha` map URL vs link
+	// `docs.zerops.io/features/scaling-ha#high-availability-via-rolling-deploys`)
+	// false-positive on the strict-equality reading.
 	for _, want := range []string{
-		"the URL\n  EXACTLY matches the topic's URL in the citation map",
-		"Host-\n  only matches",
-		"DO NOT count",
-		// Run-42 worked example of the gap closure.
+		// New path-starts-with wording — host + path must match;
+		// fragment extensions on the same path pass.
+		"path-starts-with",
+		// Worked example: fragment-extended same-path link passes.
+		"docs.zerops.io/features/scaling-ha#high-availability-via-rolling-deploys",
+		"passes form (b) because the path is identical",
+		// Host-only matches still fail.
+		"Host-only matches",
+		"DO NOT pass",
+		// Run-42 worked example of the gap closure — different path
+		// fails even though host + fragment shape look citation-like.
 		"docs.zerops.io/features/env-variables#env-var-model",
+		"FAILS because the path is `features/env-variables`",
 		"fabricated URL fragment",
 	} {
 		if !strings.Contains(brief.Body, want) {
