@@ -78,6 +78,13 @@ func TestDerivedRules_P3_ExecOnceSemanticsRuleSurfacesInBrief(t *testing.T) {
 // (apidev/zerops.yaml:47-48 + :63-64 "see IG #N" / "the pattern is
 // taught in IG #3") and Surface 3 cross-tier deferrals (environments/1
 // + /2 "Same as tier 0") slipped past refinement-1.
+//
+// Run-43 Edit B broadens the cross-tier pattern enumeration so the
+// rule matches `Same <anything> as tier <digit>` framings — the
+// run-42 actual wording was "Same dev / stage pair as tier 0", which
+// the original `Same as tier <digit>` substring couldn't match
+// literally. The run-42 verbatim worked-example anchor is added so
+// the LLM auditor has the exact phrase to scan for.
 func TestDerivedRules_P5_CrossSurfaceReferenceRulePresent(t *testing.T) {
 	t.Parallel()
 	body, err := readAtom("briefs/refinement/derived_rules.md")
@@ -92,9 +99,20 @@ func TestDerivedRules_P5_CrossSurfaceReferenceRulePresent(t *testing.T) {
 		"the pattern is taught in",
 		"live below",
 		"at the field site",
-		// Cross-tier deferral patterns the rule scans for.
+		// Cross-tier deferral patterns — original literal forms.
 		"Same as tier <digit>",
 		"see tier <digit>",
+		// Run-43 Edit B — broadened cross-tier patterns. The run-42
+		// wording "Same dev / stage pair as tier 0" doesn't match
+		// `Same as tier <digit>` as a substring; broaden so
+		// `Same <anything> as tier <digit>` and the trailing
+		// `as tier <digit>` reference phrase also match.
+		"Same <anything> as tier <digit>",
+		"same shape as tier <digit>",
+		"as tier <digit>",
+		// Run-43 Edit B — verbatim run-42 worked-example anchor so
+		// the LLM has the literal phrase to match.
+		"Same dev / stage pair as tier 0",
 		// Spec citations.
 		"§\"Surface 7\"",
 		"§\"Surface 3\"",
