@@ -418,6 +418,80 @@ unambiguous on this routing.
 
 ---
 
+## Defect class: self-inflicted-as-gotcha
+
+**What**: A KB bullet documents a scaffold-time mistake the recipe
+author hit and fixed before shipping — the trap fires only when the
+porter deviates from IG #1's shipped configuration. The content-
+surface contract classifies these as `self-inflicted` and routes
+them to **DISCARD** entirely — they are not content material per
+[spec-content-surfaces.md §"Fact classification taxonomy" litmus
+#4](docs/spec-content-surfaces.md#fact-classification-taxonomy):
+*"Could this observation be summarized as 'our code did X, we fixed
+it to do Y'? If yes, discard."*
+
+The trap class slips past `framework-quirk-as-gotcha` because there
+IS a shallow Zerops-side mechanism the bullet can anchor on
+(MinIO gateway redirect, per-service subdomain, cross-origin
+headers). The new rule asks a sharper question: would a porter
+copying IG #1's shipped envVariables verbatim hit this on a clean
+deploy?
+
+**Check**: For each KB bullet, run the porter-following-shipped-
+config test.
+
+1. **Decisive Check #1 — porter-following-IG#1-verbatim test**:
+   identify the platform env var(s) the trap's mechanism cites
+   (`${storage_apiHost}`, `${storage_apiUrl}`, `${db_*}`,
+   `${broker_*}`, etc.). Cross-reference against IG #1's shipped
+   envVariables block in the SAME codebase. If the trap fires only
+   when the porter uses a different env var than what IG #1 ships
+   (e.g. composes `http://${storage_apiHost}` when IG #1 ships
+   `S3_ENDPOINT: ${storage_apiUrl}`), → `self-inflicted` → fire.
+   If the trap fires for a porter copying IG #1's shipped block
+   verbatim, → legitimate intersection → do NOT fire (defer to
+   `framework-quirk-as-gotcha` and the existing classification).
+2. **Author-fix signal (CONFIRMS)**: bullet body narrates the
+   recipe's fix sequence — "the recipe scaffolded without X, hit Y,
+   added Z" — first-person scaffold-history voice. This signal alone
+   does not fire the rule; legitimate intersections sometimes
+   describe the fix shape too. Check #1's porter-following-shipped
+   verdict overrides.
+3. **Generic-platform-affordance test (CONFIRMS)**: the fix the
+   bullet documents is generic platform configuration any application
+   would set up the same way (CORS exposed headers, S3 endpoint
+   URL, basic env-var aliasing) — there is no Zerops-specific
+   teaching once the shipped IG #1 yaml encodes the fix. Confirms
+   Check #1; does NOT elevate a legitimate intersection.
+
+**Worked example**: a KB bullet titled *"`UnknownError` on first
+`GetObject`"* describing how `S3_ENDPOINT` resolved to
+`http://${storage_apiHost}` and produced a 301 redirect from the
+MinIO gateway. IG #1's shipped envVariables block now ships
+`S3_ENDPOINT: ${storage_apiUrl}` directly. A porter copying that
+block verbatim never composes the broken URL — the trap only fires
+if the porter un-does the shipped fix. Self-inflicted; DISCARD.
+(Run-42 dogfood: apidev KB #2 shipped this bullet; spec routes to
+DROP, not KB.)
+
+**Counter-example (NOT self-inflicted)**: a KB bullet titled *"NATS
+`connect()` crashes with Invalid URL on the first boot"* describing
+nats.js v2's `hostPort()` parser stripping URL-embedded credentials.
+IG #1 ships Pattern A (four separate `${broker_*}` aliases:
+`NATS_HOST`/`NATS_PORT`/`NATS_USER`/`NATS_PASS`). The trap fires
+when the porter deviates to Pattern B (connection-string assembly
+like `nats://${broker_user}:${broker_password}@${broker_hostname}`)
+— but Pattern B is a legitimate alternative the porter could
+reasonably reach for; it's a real platform-library intersection,
+not a recipe scaffold-time mistake. Keep.
+
+**Action**: `drop`.
+
+**Severity**: **blocker** — spec §"Fact classification taxonomy"
+routes `self-inflicted` to DISCARD unambiguously.
+
+---
+
 ## Defect class: scaffold-decision-as-gotcha
 
 **What**: A KB bullet documents a choice the recipe made (CDN over
@@ -604,9 +678,9 @@ set is `kb-ig-duplication`, `kb-below-floor` / `kb-over-cap`,
 `aspirational-as-current`, `yaml-comment-content-drift`,
 `cross-codebase-named-constant-drift`,
 `ig-cites-recipe-internal-file`, `framework-quirk-as-gotcha`,
-`scaffold-decision-as-gotcha`, `cross-codebase-content-duplication`,
-`missing-citation`. For each hit, emit ONE finding. Empty findings
-list = pass.
+`self-inflicted-as-gotcha`, `scaffold-decision-as-gotcha`,
+`cross-codebase-content-duplication`, `missing-citation`. For each
+hit, emit ONE finding. Empty findings list = pass.
 
 After the walk, emit the single fenced JSON block in the shape
 defined at the top of this brief (the `findings` array). No prose
