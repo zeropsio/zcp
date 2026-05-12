@@ -68,15 +68,28 @@ func gatesForPhase(p Phase) []Gate {
 	case PhaseRefinement:
 		// Run-17 §9 — refinement runs post-finalize as a single
 		// transactional pass. Per-fragment validators fire inside the
-		// snapshot/restore wrapper at record-fragment time; the phase
-		// has no exit gates beyond the default fact-quality + citation
-		// timestamp checks.
+		// snapshot/restore wrapper at record-fragment time.
 		//
 		// Run-40 ENG-6 — refinement close adds the stitched-matches-plan
 		// gate as the final safety net against plan.json↔disk divergence.
 		// Catches any future regression where one side of the
 		// fragment-write path skips its counterpart (the run-39 S1-5
 		// failure mode that motivated this gate).
+		//
+		// Run-43 Edit D / P6 — refinement-close now also re-runs the
+		// surface validators (CodebaseContentGates + EnvGates). Before
+		// Edit D the engine demanded refinement-1 dispatch at finalize
+		// close; main-agent ACTs (record-fragment mode=replace) on
+		// refinement-2 findings happened DURING the finalize-close
+		// demand iteration, which is where the surface validators
+		// re-ran implicitly and caught any regressions the ACTs
+		// introduced (e.g. the run-42 slug-stem leak the validator
+		// flagged). After Edit D consolidates the dispatch demand to
+		// refinement-close, those validators must run explicitly here
+		// — otherwise an ACT that introduces a slug-stem leak / dead
+		// env / named-constant drift would slip past close.
+		base = append(base, CodebaseContentGates()...)
+		base = append(base, EnvGates()...)
 		return append(base, Gate{Name: "stitched-matches-plan", Run: gateStitchedMatchesPlan})
 	case PhaseProvision:
 		return base
