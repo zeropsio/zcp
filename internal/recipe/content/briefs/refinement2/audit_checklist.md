@@ -115,6 +115,20 @@ covers the symptom too).
 **Severity**: advisory unless > 2 duplications in the same codebase
 KB, then blocker (the KB has become an IG echo).
 
+**Run-44 G4 — per-bullet blocker promotion clause** (pure-IG-echo
+detection): when a single KB bullet's stem symptom AND the
+fix mechanism BOTH appear in the matching IG body (the IG's prose names
+the same observable failure AND its code block ships the same fix),
+promote that finding to **blocker** with `suggestedAction: "drop"`.
+The KB bullet is a pure IG echo — there is no symptom dimension to
+preserve, and the porter has already read the IG by the time they
+hit the KB. Run-43 dogfood evidence: appdev KB #1 + #2 against
+appdev IG #2 + #3 — IG #3 quoted *"Blocked request. This host is
+not allowed."* AND shipped the `allowedHosts: true` fix in a code
+block; KB #1 restated the same symptom + fix with no added depth.
+Single-bullet promotion fires before the `> 2 duplications` whole-KB
+escalation; both rules can coexist on the same KB.
+
 ---
 
 ## Defect class: kb-over-cap (+ S4 IG counts)
@@ -454,6 +468,38 @@ config test.
    If the trap fires for a porter copying IG #1's shipped block
    verbatim, → legitimate intersection → do NOT fire (defer to
    `framework-quirk-as-gotcha` and the existing classification).
+
+   **Run-44 G3 — named-artifact patterns**. Check #1's env-var-only
+   form caught the apidev KB #2 trap (`S3_ENDPOINT` deviation) but
+   missed apidev KB #3 X-Cache cross-origin (the trap's deviation
+   point is CORS code config, NOT a yaml env var). Extend the check
+   with a SECOND step — scan for these named artifacts in IG #1's
+   shipped code blocks (NOT a generic fenced-code scan; the explicit
+   pattern list keeps the audit narrow). The list comes from
+   `briefs/codebase-content/synthesis_workflow.md` §"DISCARD —
+   `self-inflicted`":
+
+   - **`${storage_apiHost}` / `${storage_apiUrl}` confusion** — if
+     IG #1 ships `S3_ENDPOINT: ${storage_apiUrl}` AND a KB bullet
+     narrates `http://${storage_apiHost}` produced a 301 redirect →
+     `self-inflicted` (the porter following the shipped block never
+     composes the broken URL).
+   - **`exposedHeaders` / CORS custom response headers** — if IG #1
+     ships an `exposedHeaders: [...]` allowlist in a code block AND a
+     KB bullet narrates "browsers hide custom headers cross-origin"
+     or "`fetch().headers.get('X-Cache')` returns null from the SPA"
+     → `self-inflicted` (the shipped IG block encodes the fix; porter
+     following it hits zero of this).
+
+   These are the ONLY two named-artifact patterns currently anchored
+   in the synthesis_workflow.md DISCARD list. Do NOT extend the list
+   without an explicit spec source — a fenced-code scan against
+   arbitrary IG content over-fires on legitimate intersections (the
+   NATS Pattern A vs Pattern B counter-example below would trip a
+   generic scanner). If you encounter a KB bullet whose trap
+   matches one of these two patterns → fire. If it does NOT match
+   the env-var-only test (step 1 above) AND does NOT match either
+   named-artifact pattern → defer to legitimate intersection.
 2. **Author-fix signal (CONFIRMS)**: bullet body narrates the
    recipe's fix sequence — "the recipe scaffolded without X, hit Y,
    added Z" — first-person scaffold-history voice. This signal alone
@@ -614,25 +660,37 @@ noise.
 
 ## Defect class: missing-citation
 
-**What**: A KB bullet covers a topic that has a dedicated
-`zerops_knowledge` guide, but the bullet doesn't cite the guide by
-name.
+**What**: A KB bullet (S5) OR an IG item (S4) covers a topic that has
+a dedicated `zerops_knowledge` guide, but the body doesn't cite the
+guide by name.
 
-**Check**: For each KB bullet, scan body for topic keywords. The
-authoritative list of {topic → required-citation} pairs is the
+**Run-44 G2** — IG citation enforcement. The prior rule walked only
+KB bullets; run-43 evidence showed IG citation coverage held at 0/12
+H3 items across three codebases despite the writer-brief contract
+demanding Citation-Map-matching IG items to cite (`apidev` IG #2/#3
+→ `http-support`; apidev IG #4 → `rolling-deploys`; appdev IG #4 →
+`deploy-files`). Refinement-2 now walks both surfaces. The audit's
+emitted `surface` field distinguishes them: `CODEBASE_KB` for an S5
+hit, `CODEBASE_IG` for an S4 hit. The `fragmentId` follows: short-form
+`codebase/<host>/knowledge-base` for KB findings,
+`codebase/<host>/integration-guide/<N>` for IG findings.
+
+**Check**: Walk BOTH surfaces — every KB bullet AND every IG H3 item
+body. The check logic is identical across surfaces. The authoritative
+list of {topic → required-citation} pairs is the
 `## Citation map — topics requiring zerops_knowledge citation`
 section rendered into this brief by the engine composer (below the
 audit checklist). Walk THAT map, not a hardcoded list — the brief's
 citation map is engine-versioned and will evolve.
 
-For each KB bullet:
+For each KB bullet AND for each IG H3 item body:
 
-1. Identify the topic family the bullet covers (rolling-deploys,
+1. Identify the topic family the item covers (rolling-deploys,
    init-commands, object-storage, env-var-model, http-support,
    deploy-files, readiness-health-checks, managed-nats,
    managed-meilisearch, etc.).
-2. Match against the citation map below. If the bullet's topic has
-   a required citation, scan the bullet body for ANY of the three
+2. Match against the citation map below. If the item's topic has
+   a required citation, scan the item body for ANY of the three
    acceptable forms named in the citation-map block's "Acceptable
    citation forms" paragraph: (a) canonical guide ID IN CITATION
    FRAMING — `` `the \`<guide-id>\` guide covers …` `` or
@@ -640,9 +698,11 @@ For each KB bullet:
    (b) friendly display name as markdown link text
    (`` `[friendly name](URL)` ``), or (c) the literal docs URL.
    The scan passes on any of the three.
-3. If none of the three forms appears, flag.
+3. If none of the three forms appears, flag. Set `surface` to
+   `CODEBASE_KB` for an S5 hit, `CODEBASE_IG` for an S4 hit; set
+   `fragmentId` to the matching short-form key.
 
-**Worked counter-example**: a bullet says *"Zerops's
+**Worked counter-example (KB)**: a bullet says *"Zerops's
 `init-commands` feature stamps each `key:` value into a per-deploy
 ledger"* — the literal backticked token `init-commands` appears,
 but the framing is descriptive prose ("the feature stamps…"), not
@@ -650,24 +710,39 @@ citation framing ("the guide covers…"). Form (a) does NOT match.
 If the bullet covers the init-commands topic (it does) and contains
 no form-(b) link / form-(c) URL either, flag as `missing-citation`.
 
-**Worked tolerance**: a bullet may legitimately reference multiple
-guide topics. The citation is required ONCE per bullet, not once
-per topic mention. If bullet body cites the guide for any of its
-topics, the bullet passes.
+**Worked counter-example (IG)**: an IG item titled *"Trust the L7
+proxy"* teaches `app.set('trust proxy', true)` for Express — topic
+is `http-support`. The item body explains why (the L7 balancer
+terminates TLS and forwards the client IP via `X-Forwarded-For`) but
+never cites the `http-support` guide, the friendly label
+`Zerops L7 balancer + subdomain access`, or the canonical URL
+(`docs.zerops.io/features/access`). Flag with `surface: "CODEBASE_IG"`
+and `fragmentId: "codebase/<host>/integration-guide/<N>"`.
+
+**Worked tolerance**: a bullet or IG item may legitimately reference
+multiple guide topics. The citation is required ONCE per bullet/item,
+not once per topic mention. If the body cites the guide for any of
+its topics, the item passes.
 
 **Keyword-over-match guard**: topic matching is topic-family, not raw
 substring. A bare keyword mention does NOT trigger the citation
-requirement unless the bullet's TOPIC is the matched family. Worked
+requirement unless the item's TOPIC is the matched family. Worked
 example: `SIGTERM` appears in the rolling-deploys row keywords
 (`SIGTERM-before-teardown`), but a Node-stdout-buffering bullet
 that merely mentions `SIGTERM` as the trigger for log loss is NOT
 about rolling deploys — its topic is generic Node process-exit +
 stdout flushing. Don't fire `missing-citation` on it. The check is
-"is this bullet's PRIMARY teaching covered by the guide?" — not
-"does this bullet contain any keyword from the guide's row?". When
+"is this item's PRIMARY teaching covered by the guide?" — not
+"does this item contain any keyword from the guide's row?". When
 the keyword fires but the topic is foreign, pass.
 
-**Action**: `add-citation`.
+**Action**: `add-citation`. Emit `suggestedReplacement` as a concrete
+form-(b) markdown link the main agent can copy verbatim — the citation
+map's friendly-display-name + canonical URL pair forms the canonical
+shape (e.g. `[zero-downtime deploys with multi-container setups](https://docs.zerops.io/features/scaling-ha)`).
+Pre-resolving the citation prose closes the main-agent compose-and-
+match cycle that ran into slug-stem-leak / wrong-URL-form regressions
+in prior runs (Run-44 G6).
 
 **Severity**: advisory.
 

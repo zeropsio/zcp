@@ -34,7 +34,7 @@ If the answer is "no, the platform docs cover it" — remove; it is not a gotcha
 If the answer is "no, the framework docs cover it" — remove; framework quirks belong in framework docs.
 If the answer is "yes, it surprises you even after reading both" — this is a gotcha.
 
-Shape: an H3 `### Gotchas` section with 3 to 6 bullets inside the `knowledge-base` fragment markers. Each bullet:
+Shape: an H3 `### Gotchas` section with up to 8 bullets inside the `knowledge-base` fragment markers. Each bullet:
 
 ```
 - **<concrete observable symptom>** — <mechanism>. <evidence or 1-2 sentence explanation>.
@@ -42,7 +42,7 @@ Shape: an H3 `### Gotchas` section with 3 to 6 bullets inside the `knowledge-bas
 
 The stem names an HTTP status, a quoted error string, a measurable wrong state — not "it breaks". The body names the platform mechanism and, when the topic matches the Citation Map, references the platform topic.
 
-Length range: 3 to 6 bullets.
+Length range: no floor; cap 8 bullets per codebase. Bullets stand on their own editorial-test merit, not on count — the empirical span across the two reference recipes is 2 (jetstream) to 7 (showcase). The Surface-2 single-question test (*"Would a developer who read the Zerops docs AND the framework docs STILL be surprised by this?"*) is the gating signal; bullets that pass it ship, bullets that fail get discarded. Spec: `docs/spec-content-surfaces.md` §S5 (Run-43 F2).
 
 Citation requirement: every gotcha whose topic matches the Citation Map MUST reference the cited platform topic in the body. Every gotcha manifest entry (`content_gotcha`) must also carry at least one `citations` entry with a non-empty `guide_fetched_at` timestamp — the completion gate at `complete substep=readmes` refuses entries missing it. A gotcha without a citation is folk-doctrine shipping. Concrete drop patterns (self-inflicted / framework-only / tooling-metadata / scaffold-code rationale / IG-restatement) are shipped as FAIL examples in the "Pre-loaded input" section — pattern-match against them, don't re-derive the list.
 
@@ -87,7 +87,7 @@ Citation requirement: when the decision touches a topic on the Citation Map (env
 | # | Surface | Reader | Canonical length |
 |---|---|---|---|
 | 1 | README integration-guide fragment | Porter with own app | 3–6 H3 items |
-| 2 | README knowledge-base fragment | Dev hitting platform failure | 3–6 gotcha bullets |
+| 2 | README knowledge-base fragment | Dev hitting platform failure | no floor; cap 8 gotcha bullets |
 | 3 | Per-codebase CLAUDE.md | Repo operator | ≥1200 bytes, ≥2 custom sections |
 | 4 | Env `import.yaml` comments (payload) | Dashboard-manifest reader | 4–10 lines per service block |
 

@@ -30,7 +30,8 @@ A structured findings list. ONE block of JSON wrapped in fence:
       },
       "rationale": "<one paragraph — what's wrong, what the audit-checklist rule says>",
       "suggestedAction": "drop" | "rewrite-as-symptom" | "move-to-<surface-id>" | "reword-conditional" | "fix-named-constant" | "add-citation" | "cross-reference-canonical-surface",
-      "suggestedReplacement": "<optional — only when an exact replacement is short and obvious>"
+      "suggestedReplacement": "<optional — only when an exact replacement is short and obvious>",
+      "classification": "platform-invariant" | "intersection" | "framework-quirk" | "library-metadata" | "scaffold-decision" | "operational" | "self-inflicted"
     }
   ]
 }
@@ -42,6 +43,30 @@ to ACT, HOLD, or accept-as-known. Refinement-1's transactional
 snapshot/restore wrapper protected against cross-rule conflicts at
 the per-fragment level; cross-surface edits are higher-conflict and
 the main agent triages.
+
+**Run-44 G5 — `classification` field**: REQUIRED on every finding
+whose `suggestedAction` turns into a `record-fragment mode=replace`
+on a `CODEBASE_KB` (S5) or `CODEBASE_IG` (S4) surface — that's
+`rewrite-as-symptom`, `reword-conditional`, `add-citation`,
+`fix-named-constant`, and `cross-reference-canonical-surface`. Pick
+the value matching the spec's seven-class taxonomy (see the section
+*Main-agent record-fragment ACTs MUST carry `classification`* below
+for the value definitions). Emitting `classification` on the finding
+lets the main agent copy the value verbatim onto its
+`record-fragment` ACT call — closes the three-wasted-call cycle
+seen in run-40 + run-42 + run-43 where the engine rejected the
+first ACT with `classification is required for fragments on surface
+"CODEBASE_KB"` and the agent had to guess + retry.
+
+OPTIONAL on findings whose `suggestedAction` is `drop` (the replacement
+removes the bullet; the engine's classification requirement is on
+the surviving fragment, and surrounding bullets retain their own
+class). May be omitted on `move-to-<surface-id>` until the target
+surface is known.
+
+Acceptable values: `platform-invariant`, `intersection`,
+`framework-quirk`, `library-metadata`, `scaffold-decision`,
+`operational`, `self-inflicted`.
 
 ## Severity is a starting point, NOT the conclusion
 

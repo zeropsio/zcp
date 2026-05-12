@@ -18,7 +18,7 @@ The engine runs gate checks at `complete substep=readmes` — manifest presence 
 
 ## Surface 2 — Per-codebase README knowledge-base fragment
 
-- 3–6 gotcha bullets in the `### Gotchas` section. The stem names an HTTP status, a quoted error string, or a measurable wrong-state — not "it breaks".
+- No floor; cap 8 gotcha bullets in the `### Gotchas` section. Bullets stand on their own editorial-test merit, not on count (jetstream golden ships 2; showcase ships 7). The stem names an HTTP status, a quoted error string, or a measurable wrong-state — not "it breaks".
 - Every bullet classified in {framework-invariant, framework × platform intersection, scaffold-decision-reframed, framework-quirk-reframed}. Self-inflicted routed here without `override_reason` reframing is a dropped bullet, not a rewritten one.
 - Every bullet on a Citation Map row cites the guide in prose AND records a citation on the manifest entry.
 - No bullet is a paraphrase of an IG item in the same README (IG teaches the fix; gotcha adds the symptom + mechanism + cross-codebase context).

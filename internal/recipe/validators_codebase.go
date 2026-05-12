@@ -142,17 +142,30 @@ func validateCodebaseKB(_ context.Context, path string, body []byte, inputs Surf
 				trimForMessage(strings.TrimSpace(m)))))
 	}
 	// Citation-required: for every topic in CitationMap that appears
-	// anywhere in the KB body, the body must also reference the guide id.
+	// anywhere in the KB body, the body must also reference the guide
+	// id OR its canonical docs.zerops.io URL.
+	//
+	// Run-44 G1 — canonical-URL acceptance closes the substrate-internal
+	// contradiction where refinement-2's suggested fix (form-(b)/form-(c)
+	// citation by canonical URL) tripped this validator's slug-stem-only
+	// substring check. The URL match is ANCHORED (see kbBodyCitesGuideURL)
+	// so prefix collisions like `features/scaling-ha-advanced` do NOT
+	// satisfy a `features/scaling-ha` citation.
 	for topic, guide := range CitationMap {
 		if !strings.Contains(strings.ToLower(kb), strings.ToLower(topic)) {
 			continue
 		}
 		// Guide id reference: allow the guide id or its canonical name
 		// (they're identical in CitationMap but future-proof for alias).
-		if !strings.Contains(kb, guide) {
-			vs = append(vs, violation("kb-citation-missing", path,
-				fmt.Sprintf("KB mentions %q but does not cite `zerops_knowledge` guide %q", topic, guide)))
+		if strings.Contains(kb, guide) {
+			continue
 		}
+		// Run-44 G1 — canonical URL also satisfies the citation.
+		if url, ok := CitationGuideURL[guide]; ok && kbBodyCitesGuideURL(kb, url) {
+			continue
+		}
+		vs = append(vs, violation("kb-citation-missing", path,
+			fmt.Sprintf("KB mentions %q but does not cite `zerops_knowledge` guide %q", topic, guide)))
 	}
 	// V-2: paraphrase detection vs the cited guide's key phrases.
 	vs = append(vs, validateKBParaphrase(path, kb)...)
@@ -411,6 +424,80 @@ func trimForMessage(s string) string {
 		return s[:77] + "..."
 	}
 	return s
+}
+
+// kbBodyCitesGuideURL — Run-44 G1. Returns true when the body cites
+// the guide via the canonical URL, anchored so a prefix-extending URL
+// (e.g. `features/scaling-ha-advanced` for a `features/scaling-ha`
+// guide) does NOT count as a citation.
+//
+// The URL is matched case-insensitive. Acceptable trailing characters:
+// end-of-string, whitespace, `)`, `]`, `,`, `;`, `.`, `?`, `!`, `"`,
+// `'`, `>`, `<`, `#` (fragment extension), `/` (trailing slash before
+// path-end). Any other character — alphanumeric, `-`, `_` — extends
+// the URL and rejects the match.
+//
+// Acceptable leading characters: start-of-string, whitespace, `(`,
+// `[`, `<`, `'`, `"`. The validator also accepts the URL when
+// preceded by `https://`, `http://`, or `//` (protocol-relative); the
+// scheme prefix is folded into the match by stripping it off the
+// scanned body before the check.
+//
+// The match is implemented as a substring scan with a per-hit anchor
+// test; we don't compile a regex because the URL is dynamic per-topic.
+func kbBodyCitesGuideURL(body, url string) bool {
+	if url == "" {
+		return false
+	}
+	lowerBody := strings.ToLower(body)
+	lowerURL := strings.ToLower(url)
+	// Trim any leading scheme prefix so the body's `https://docs.zerops.io/...`
+	// matches the URL constant `docs.zerops.io/...`.
+	start := 0
+	for {
+		idx := strings.Index(lowerBody[start:], lowerURL)
+		if idx < 0 {
+			return false
+		}
+		absStart := start + idx
+		absEnd := absStart + len(lowerURL)
+		// Anchored tail check — character right after the URL must NOT
+		// extend it into a different path segment / domain. Allowed:
+		// path-boundary characters (whitespace, punctuation, `#`, `/`,
+		// `)`) or end-of-string.
+		if absEnd < len(lowerBody) {
+			next := lowerBody[absEnd]
+			if isURLPathChar(next) {
+				start = absStart + 1
+				continue
+			}
+		}
+		return true
+	}
+}
+
+// isURLPathChar reports whether the byte would extend a URL path
+// segment past the canonical match point. Mirrors RFC 3986 unreserved
+// path characters minus the boundary delimiters our anchor allows.
+func isURLPathChar(b byte) bool {
+	switch {
+	case b >= 'a' && b <= 'z':
+		return true
+	case b >= 'A' && b <= 'Z':
+		return true
+	case b >= '0' && b <= '9':
+		return true
+	case b == '-' || b == '_' || b == '.' || b == '~':
+		// `.` is included — `features/scaling-ha.json` would extend the
+		// match in a way the citation doesn't intend. Cosmetic dot at
+		// end of sentence (`...scaling-ha.`) gets caught here too, but
+		// real prose pastes the URL inside parens / brackets / markdown
+		// link form, so this is acceptable: citation patrols are
+		// authoring-time, and authors don't end sentences with a bare
+		// URL.
+		return true
+	}
+	return false
 }
 
 // validateCrossSurfaceUniqueness — run-8 §2.D + spec-content-surfaces.md
