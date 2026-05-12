@@ -1280,13 +1280,19 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"export-publish",
 		"export-publish-needs-setup",
 		"scaffold-zerops-yaml",
-		// launch-production — Phase E pin. The six launch atoms fire on
-		// the PhaseLaunchProductionActive envelope above.
+		// launch-production — Phase E pin. The launch atoms fire on the
+		// PhaseLaunchProductionActive envelope above. Part 1 atoms + Part 2
+		// pipeline atoms (configuring / configure-dashboard / skipped /
+		// configured) all share the same active phase.
 		"launch-intro",
 		"launch-scope-prompt",
 		"launch-mutation-key-required",
 		"launch-write-prod-setup",
 		"launch-delete-key",
 		"launch-post-checklist",
+		"launch-pipeline-configuring",
+		"launch-pipeline-configure-dashboard",
+		"launch-pipeline-skipped",
+		"launch-pipeline-configured",
 	)
 }

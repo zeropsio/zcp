@@ -305,3 +305,58 @@ func TestProjectAdminClient_AfterClose_ReturnsErrClientClosed(t *testing.T) {
 		t.Fatalf("expected ErrClientClosed, got %v", err)
 	}
 }
+
+// TestProjectAdminClient_GetServiceStackIntegrationStatus_NotConfiguredLive
+// verifies Phase A B.1 finding against real Zerops API: a freshly imported
+// service-stack returns IntegrationNotConfigured (the HTTP 400
+// noExternalRepositoryIntegration code is mapped, not propagated).
+//
+// Uses buildFromGit to ensure the service has an associated repo URL but
+// no integration PUT yet. Path B v1: ZCP never PUTs; this is the only
+// integration call the real client makes.
+func TestProjectAdminClient_GetServiceStackIntegrationStatus_NotConfiguredLive(t *testing.T) {
+	admin := newAdminClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	name := throwawayName(t)
+	yaml := fmt.Sprintf(`project:
+  name: %s
+  tags:
+    - zcp-launch-spike
+services:
+  - hostname: app
+    type: nodejs@22
+    mode: NON_HA
+    enableSubdomainAccess: false
+    minContainers: 1
+    maxContainers: 1
+    buildFromGit: https://github.com/krls2020/zcp-pipeline-probe
+    zeropsSetup: prod
+`, name)
+	result, err := admin.CreateAndImportProject(ctx, yaml, platform.CreateOpts{Location: "eu-central"})
+	if err != nil {
+		t.Fatalf("create throwaway: %v", err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_, _ = admin.DeleteProject(ctx, result.ProjectID)
+	})
+
+	if len(result.ServiceStacks) == 0 {
+		t.Fatal("expected at least one service stack in import result")
+	}
+	svcID := result.ServiceStacks[0].ID
+
+	status, err := admin.GetServiceStackIntegrationStatus(ctx, svcID)
+	if err != nil {
+		t.Fatalf("GetServiceStackIntegrationStatus: %v", err)
+	}
+	if status.State != platform.IntegrationNotConfigured {
+		t.Errorf("State: got %q want %q (Phase A B.1 expects NotConfigured for fresh service)", status.State, platform.IntegrationNotConfigured)
+	}
+	if status.Provider != "" {
+		t.Errorf("Provider: got %q want empty (NotConfigured state has no provider)", status.Provider)
+	}
+}

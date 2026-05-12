@@ -9,18 +9,16 @@ import (
 )
 
 // TestProjectAdminClientRestrictedImport pins P-LP-2: the constructor
-// NewProjectAdminClient is callable ONLY from
-// internal/tools/workflow_launch_production.go (and the CLI entrypoint
-// once it exists). Every other file in internal/tools/ that references
-// platform.NewProjectAdminClient or platform.ProjectAdminClient is a
-// discipline violation.
+// NewProjectAdminClient is callable ONLY from the launch-production
+// workflow surface — workflow_launch_production.go (handler entrypoint)
+// and launch_pipeline.go (Part 2 sibling: pipeline-config check). Both
+// files are part of the same trust boundary; every other file in
+// internal/tools/ that references platform.NewProjectAdminClient or
+// platform.ProjectAdminClient is a discipline violation.
 //
 // This is a structural grep test, NOT a method-call-graph analyzer —
 // the goal is unambiguous failure when bleed happens. Strong signal,
 // trivial to maintain.
-//
-// Phase D.1 adds the canonical caller. Until then this test passes
-// vacuously (zero violators, zero allowed callers — still consistent).
 func TestProjectAdminClientRestrictedImport(t *testing.T) {
 	t.Parallel()
 
@@ -29,6 +27,7 @@ func TestProjectAdminClientRestrictedImport(t *testing.T) {
 
 	allowedFiles := map[string]bool{
 		"workflow_launch_production.go": true,
+		"launch_pipeline.go":            true,
 	}
 
 	toolsDir := filepath.Join(root, "internal", "tools")

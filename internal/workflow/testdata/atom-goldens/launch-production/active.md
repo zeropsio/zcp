@@ -1,6 +1,6 @@
 ---
 id: launch-production/active
-atomIds: [launch-delete-key, launch-intro, launch-post-checklist, launch-scope-prompt, launch-mutation-key-required, launch-write-prod-setup]
+atomIds: [launch-delete-key, launch-intro, launch-pipeline-configure-dashboard, launch-post-checklist, launch-scope-prompt, launch-mutation-key-required, launch-pipeline-configuring, launch-pipeline-configured, launch-pipeline-skipped, launch-write-prod-setup]
 description: "Launch-production workflow mid-flow on a source project — bundle composed, awaiting one-shot launch key for the mutation pipeline."
 ---
 ### Delete the launch-window API key
@@ -34,6 +34,27 @@ ZCP has **zero standing access** to the production project. The one-shot key flo
 
 ---
 
+### Configure CD pipeline in Zerops dashboard
+
+The production runtime has no CD pipeline yet — ongoing pushes will NOT auto-build. Configure it once via dashboard. (ZCP cannot do this through the launch-window key; see `plans/backlog/launch-pipeline-close-loop-oauth.md` for the Path A future.)
+
+For each runtime listed in the `pipeline-not-configured-*` blockers:
+
+1. Open the **deep-link** from the blocker (`https://app.zerops.io/dashboard/project/<projectID>/service-stack/<svcID>/service-stack-source-code`).
+2. Click **Connect to GitHub** (or GitLab). Authorize Zerops if asked — uses your existing org-level grant, no extra setup.
+3. Select the source repository listed in the blocker's `recommendation.repositoryFullName`.
+4. Set the trigger:
+   - **Event type:** `Tag`
+   - **Tag regex:** the value from `recommendation.tagRegex` (default `^v\d+\.\d+\.\d+$` per Zerops production-checklist).
+   - **Zerops YAML setup:** `prod` (matches the setup block written during launch).
+5. Save.
+
+Repeat for each runtime in the blockers list. When done, re-call `workflow="launch-production"` with the same `launchKey` — ZCP reads the live integration status and clears the blockers from the response.
+
+To deploy after setup: `git tag v1.0.0 && git push --tags` (matching your tag regex).
+
+---
+
 ### Launch complete — user-owned steps remaining
 
 ZCP has imported services and validated first deploy. The following steps require the user to act in the Zerops dashboard. ZCP cannot perform them (no standing prod access).
@@ -44,6 +65,8 @@ ZCP has imported services and validated first deploy. The following steps requir
 4. **Verify production smoke test** — hit the live URL with a known request shape; check response and logs in dashboard.
 
 After step 4 passes, the launch is complete. For ongoing prod iteration: generate a separate project-scoped `ZCP_API_KEY` (Custom access per project, this one project, Full access) and configure a fresh ZCP MCP session against the production project.
+
+5. **Pipeline trigger (if launched response had no `pipeline-not-configured-*` blockers)** — push a release tag to deploy: `git tag v1.0.0 && git push --tags` (matching the integration's tag regex, default `^v\d+\.\d+\.\d+$`). If the launched response carried such blockers, configure each runtime via Zerops dashboard first using the deep-link the blocker provides.
 
 ---
 
@@ -75,6 +98,41 @@ ZCP cannot create the production project with its standing token (project-scoped
 Re-call the launch workflow with the publish action and the token value passed as `launchKey`.
 
 The key flows through the workflow handler only — never persisted to state, logs, or transcripts. Once the launch reaches `launched` status, ZCP returns a mandatory checklist that includes **deleting the key** at the same dashboard URL.
+
+---
+
+### Checking pipeline integration for ongoing CD
+
+ZCP is verifying whether each runtime service in the new production project has a CD pipeline integration configured. This reads-only — ZCP never mutates pipeline config (Path B trust model, see `docs/spec-launch-production-platform-spike.md §B.3`).
+
+Possible outcomes:
+
+- **Configured** → ongoing builds will fire on the integration's trigger (tag-push for prod-recommended setup).
+- **Not configured** → response will carry a `pipeline-not-configured-<hostname>` blocker with a Zerops dashboard deep-link and the recommended config payload (`repositoryFullName`, `eventType=TAG`, `tagRegex`, `zeropsYamlSetup=prod`). User configures via dashboard, then re-calls `workflow="launch-production"` with the same `launchKey` to recheck.
+
+---
+
+### Pipeline integration confirmed
+
+ZCP read each runtime's `external-repository-integration-status` and saw all configured. Ongoing CD is wired:
+
+- Tag pushes matching the configured regex trigger Zerops builds automatically.
+- Push to deploy: `git tag v1.0.0 && git push --tags` (substituting your version).
+
+State file (`.zcp/state/launch-production/<launchID>.json`) records the live config under `pipelineConfigurations` for audit.
+
+---
+
+### Pipeline configuration skipped
+
+`skipPipelineSetup=true` told ZCP not to check or recommend pipeline integration. The production project is live; the first deploy ran from source HEAD via `buildFromGit`.
+
+Without an integration, subsequent code changes do NOT auto-build. Options:
+
+- **Manual `zcli push`** from local or CI per release.
+- **Add integration later** in Zerops dashboard (`Project → Service → Source code → Connect to GitHub/GitLab`). Set the event type to `Tag`, the tag regex to `^v\d+\.\d+\.\d+$` (or your release-version convention), and the Zerops YAML setup to `prod`.
+
+Re-run `workflow="launch-production"` with the same `launchKey` if you want ZCP to verify integration setup; that lifts the skip and runs the configuring-pipeline check.
 
 ---
 

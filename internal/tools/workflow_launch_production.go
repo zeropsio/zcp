@@ -125,10 +125,20 @@ func handleLaunchProduction(
 		), WithRecoveryStatus()), nil, nil
 	}
 
-	// If we already created the target project on a prior call, return
-	// the current state regardless of launchKey. This is the recovery
-	// primitive (action="status" semantics).
+	// If we already created the target project on a prior call, two
+	// resume sub-cases:
+	//   - launchKey supplied AND pipeline check is pending OR
+	//     SkipPipelineSetup=true and not yet recorded: re-run pipeline
+	//     check with a fresh ProjectAdminClient (post-dashboard-config
+	//     refresh).
+	//   - otherwise: return the current launched/failed view as-is.
+	// This is the recovery primitive (action="status" semantics).
 	if existing != nil && existing.TargetProjectID != "" {
+		if existing.Status == topology.LaunchStatusLaunched && input.LaunchKey != "" {
+			if pendingPipelineConfigurations(existing) || (input.SkipPipelineSetup.Bool() && !pipelineSkipRecorded(existing)) {
+				return executeLaunchPipelineResume(ctx, input, corpus, stateDir, existing)
+			}
+		}
 		return launchResumeResponse(corpus, existing), nil, nil
 	}
 
@@ -138,6 +148,55 @@ func handleLaunchProduction(
 
 	// Mutation pipeline — LaunchKey supplied, no existing target.
 	return executeLaunchMutation(ctx, projectID, client, sshDeployer, rt, input, sourceEnvs, classifications, corpus, stateDir, launchID)
+}
+
+// pipelineSkipRecorded returns true when state.PipelineConfigurations
+// already has entries with SkipReason=pipelineSkipReasonOptedOut — so we
+// don't re-run the skip on every resume.
+func pipelineSkipRecorded(state *launchState) bool {
+	for _, entry := range state.PipelineConfigurations {
+		if entry.SkipReason == pipelineSkipReasonOptedOut {
+			return true
+		}
+	}
+	return false
+}
+
+// executeLaunchPipelineResume re-runs the pipeline check on an existing
+// launched state. Constructs a fresh ProjectAdminClient from the
+// supplied launchKey, runs executeLaunchPipelineCheck, writes the
+// updated state, and returns the launched response with refreshed
+// blockers. ZCP never PUTs (Path B); this is GetStatus-only.
+func executeLaunchPipelineResume(
+	ctx context.Context,
+	input WorkflowInput,
+	corpus []workflow.KnowledgeAtom,
+	stateDir string,
+	state *launchState,
+) (*mcp.CallToolResult, any, error) {
+	admin, err := projectAdminClientFactory(input.LaunchKey, "")
+	if err != nil {
+		return launchFailedAuthResponse(corpus, err), nil, nil
+	}
+	defer admin.Close()
+
+	checkInputs := pipelineCheckInputs{
+		SkipPipelineSetup: input.SkipPipelineSetup.Bool(),
+		TagRegexOverride:  input.PipelineTagRegex,
+		RuntimeHostname:   state.TargetServiceHostname,
+		RepoURL:           state.SourceRepoURL,
+	}
+	executeLaunchPipelineCheck(ctx, admin, state, checkInputs)
+	_ = writeLaunchState(stateDir, state)
+	_ = appendAuditLog(stateDir, launchAuditEntry{
+		LaunchID:          state.LaunchID,
+		Action:            "pipeline-recheck",
+		SourceProjectID:   state.SourceProjectID,
+		TargetProjectID:   state.TargetProjectID,
+		TargetProjectName: state.TargetProjectName,
+		Result:            "success",
+	})
+	return launchLaunchedResponse(corpus, state), nil, nil
 }
 
 // executeLaunchMutation runs the read-modify-write mutation pipeline:
@@ -228,12 +287,14 @@ func executeLaunchMutation(
 	// the process dies before completion, the state file shows the
 	// attempt and the source-snapshot for forensics.
 	state := &launchState{
-		LaunchID:          launchID,
-		SourceProjectID:   sourceProjectID,
-		TargetProjectName: input.ProductionProjectName,
-		SourceSnapshot:    bundle.SourceSnapshot,
-		Classifications:   classifications,
-		Status:            topology.LaunchStatusLaunching,
+		LaunchID:              launchID,
+		SourceProjectID:       sourceProjectID,
+		SourceRepoURL:         source.RepoURL,
+		TargetProjectName:     input.ProductionProjectName,
+		TargetServiceHostname: input.TargetService,
+		SourceSnapshot:        bundle.SourceSnapshot,
+		Classifications:       classifications,
+		Status:                topology.LaunchStatusLaunching,
 	}
 	if err := writeLaunchState(stateDir, state); err != nil {
 		// Non-fatal — proceed with the mutation, but warn.
@@ -309,6 +370,18 @@ func executeLaunchMutation(
 			state.Status = topology.LaunchStatusFailed
 			state.LastError = pollErr.Error()
 		} else {
+			// Transition to configuring-pipeline before the GetStatus
+			// loop so the state file reflects the in-progress phase
+			// observable to action="status" resume calls.
+			state.Status = topology.LaunchStatusConfiguringPipeline
+			_ = writeLaunchState(stateDir, state)
+			checkInputs := pipelineCheckInputs{
+				SkipPipelineSetup: input.SkipPipelineSetup.Bool(),
+				TagRegexOverride:  input.PipelineTagRegex,
+				RuntimeHostname:   input.TargetService,
+				RepoURL:           source.RepoURL,
+			}
+			executeLaunchPipelineCheck(ctx, admin, state, checkInputs)
 			state.Status = topology.LaunchStatusLaunched
 		}
 		_ = writeLaunchState(stateDir, state)
@@ -620,19 +693,19 @@ func launchReadyToLaunchResponse(
 }
 
 // launchResumeResponse returns the current state of a launch that has
-// already created the target project (idempotent resume).
+// already created the target project (idempotent resume). For launched
+// state, delegates to launchLaunchedResponse so pipeline blockers
+// surface consistently with first-call responses.
 func launchResumeResponse(corpus []workflow.KnowledgeAtom, state *launchState) *mcp.CallToolResult {
+	if state.Status == topology.LaunchStatusLaunched {
+		return launchLaunchedResponse(corpus, state)
+	}
 	resp := launchProductionResponse{
 		Workflow: workflowLaunchProduction,
 		Status:   state.Status,
 		Phase:    workflow.PhaseLaunchProductionActive,
 	}
 	switch state.Status {
-	case topology.LaunchStatusLaunched:
-		resp.Guidance = atomBody(corpus, "launch-post-checklist")
-		if resp.Guidance == "" {
-			resp.Guidance = fmt.Sprintf("Production project %s launched. Delete the launch-window key + set external secrets in Zerops UI.", state.TargetProjectID)
-		}
 	case topology.LaunchStatusFailed:
 		resp.Guidance = "Prior launch reached failed status. Inspect lastError in state file; retry by clearing the state file and re-calling publish."
 		resp.Blockers = []topology.Blocker{{
@@ -645,10 +718,13 @@ func launchResumeResponse(corpus []workflow.KnowledgeAtom, state *launchState) *
 		topology.LaunchStatusScopePrompt,
 		topology.LaunchStatusClassifyPrompt,
 		topology.LaunchStatusReadyToLaunch,
-		topology.LaunchStatusLaunching:
+		topology.LaunchStatusLaunching,
+		topology.LaunchStatusConfiguringPipeline:
 		// Resume found state with a pre-terminal status — surface
 		// in-progress guidance; agent re-polls via action="status".
 		resp.Guidance = "Launch in progress. State file shows targetProjectID " + state.TargetProjectID + "."
+	case topology.LaunchStatusLaunched:
+		// Handled by the early-return above; case kept for exhaustiveness.
 	}
 	return jsonResult(resp)
 }
@@ -714,12 +790,22 @@ func launchFailedResponse(corpus []workflow.KnowledgeAtom, category topology.Blo
 
 // launchLaunchedResponse builds the terminal-success response with the
 // mandatory delete-key atom (P-LP-4 invariant) + post-launch checklist.
+// Attaches pipeline blockers when any runtime is unconfigured (P-LP-8).
 func launchLaunchedResponse(corpus []workflow.KnowledgeAtom, state *launchState) *mcp.CallToolResult {
 	// Concatenate the mandatory delete-key atom + post-checklist for the
-	// composite "what you do next" surface.
+	// composite "what you do next" surface. Append the pipeline atom
+	// when applicable (configured / configure-dashboard / skipped).
 	deleteAtom := atomBody(corpus, "launch-delete-key")
 	checklistAtom := atomBody(corpus, "launch-post-checklist")
+	pipelineAtomID := pickPipelineAtomID(state)
+	pipelineAtom := atomBody(corpus, pipelineAtomID)
 	guidance := deleteAtom
+	if pipelineAtom != "" {
+		if guidance != "" {
+			guidance += "\n\n"
+		}
+		guidance += pipelineAtom
+	}
 	if checklistAtom != "" {
 		if guidance != "" {
 			guidance += "\n\n"
@@ -735,10 +821,28 @@ func launchLaunchedResponse(corpus []workflow.KnowledgeAtom, state *launchState)
 		Status:   topology.LaunchStatusLaunched,
 		Phase:    workflow.PhaseLaunchProductionActive,
 		Guidance: guidance,
+		Blockers: pipelineBlockers(state),
 		Inputs: &launchInputsEcho{
 			ProductionProjectName: state.TargetProjectName,
 		},
 	})
+}
+
+// pickPipelineAtomID selects which pipeline-related atom to render in
+// the launched response based on the observed pipeline state. Empty
+// string when no pipeline check has run yet (mutation pipeline came
+// from a pre-Part2 state file).
+func pickPipelineAtomID(state *launchState) string {
+	if state.PipelineCheckedAt.IsZero() {
+		return ""
+	}
+	if pendingPipelineConfigurations(state) {
+		return "launch-pipeline-configure-dashboard"
+	}
+	if pipelineSkipRecorded(state) {
+		return "launch-pipeline-skipped"
+	}
+	return "launch-pipeline-configured"
 }
 
 // echoInputs returns a sanitized snapshot of scope inputs — never

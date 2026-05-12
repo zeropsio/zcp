@@ -8,6 +8,7 @@ import (
 
 	"github.com/zeropsio/zerops-go/dto/input/body"
 	"github.com/zeropsio/zerops-go/dto/input/path"
+	"github.com/zeropsio/zerops-go/dto/output"
 	zgotypes "github.com/zeropsio/zerops-go/types"
 	"github.com/zeropsio/zerops-go/types/enum"
 	"github.com/zeropsio/zerops-go/types/uuid"
@@ -88,6 +89,24 @@ type ProjectAdminClient interface {
 	// BASIC_USER, READ_ONLY, NO_ACCESS. Launch-production grants ADMIN
 	// so the workflow can read envs + manage the project.
 	GrantSelfRole(ctx context.Context, projectID string, roleCode string) error
+
+	// GetServiceStackIntegrationStatus reads the pipeline-integration state
+	// of a runtime service-stack. Used by launch-production's
+	// configuring-pipeline status to verify that the user has wired
+	// ongoing CD via the Zerops dashboard.
+	//
+	// Maps the SDK's
+	// GetServiceStackExternalRepositoryIntegrationStatus call. Phase A
+	// B.1 finding: the platform expresses "not configured" as HTTP 400
+	// with `code: noExternalRepositoryIntegration`. This wrapper treats
+	// that code as a state read (IntegrationNotConfigured), NOT a
+	// failure to propagate. Any other 4xx/5xx propagates as platform
+	// error.
+	//
+	// Path B v1: ZCP only reads; user configures via Zerops dashboard.
+	// Path A close-loop is in backlog
+	// (plans/backlog/launch-pipeline-close-loop-oauth.md).
+	GetServiceStackIntegrationStatus(ctx context.Context, serviceStackID string) (IntegrationStatus, error)
 }
 
 // CreateOpts holds project-creation options NOT derived from the import yaml.
@@ -362,6 +381,74 @@ func (p *projectAdminClient) DeleteProject(ctx context.Context, projectID string
 func (p *projectAdminClient) Close() {
 	p.zerops = nil
 	p.clientID = ""
+}
+
+// GetServiceStackIntegrationStatus implements ProjectAdminClient. Maps
+// HTTP 400 with `code: noExternalRepositoryIntegration` to
+// IntegrationNotConfigured per Phase A B.1 finding. Other errors propagate.
+func (p *projectAdminClient) GetServiceStackIntegrationStatus(ctx context.Context, serviceStackID string) (IntegrationStatus, error) {
+	if p.zerops == nil {
+		return IntegrationStatus{}, ErrClientClosed
+	}
+	if serviceStackID == "" {
+		return IntegrationStatus{}, errors.New("project admin: serviceStackID empty; cannot read integration status")
+	}
+
+	pathParam := path.ServiceStackId{Id: uuid.ServiceStackId(serviceStackID)}
+	resp, err := p.zerops.handler.GetServiceStackExternalRepositoryIntegrationStatus(ctx, pathParam)
+	if err != nil {
+		return IntegrationStatus{}, fmt.Errorf("get integration status: %w", mapSDKError(err, "service-stack"))
+	}
+	out, err := resp.Output()
+	if err != nil {
+		mapped := mapSDKError(err, "service-stack")
+		// Phase A B.1: the platform expresses "no integration yet" as HTTP 400
+		// with code noExternalRepositoryIntegration. Treat as state read.
+		var pe *PlatformError
+		if errors.As(mapped, &pe) && pe.APICode == apiCodeNoExternalRepositoryIntegration {
+			return IntegrationStatus{State: IntegrationNotConfigured}, nil
+		}
+		return IntegrationStatus{}, fmt.Errorf("get integration status output: %w", mapped)
+	}
+	return mapIntegrationOutput(out.GithubIntegration, out.GitlabIntegration), nil
+}
+
+// mapIntegrationOutput maps the SDK's external-repository-integration output
+// (one of github / gitlab non-nil) onto IntegrationStatus. If both are nil
+// (defensive — should never happen on a 200 response), returns
+// IntegrationNotConfigured.
+func mapIntegrationOutput(gh *output.GithubIntegration, gl *output.GitlabIntegration) IntegrationStatus {
+	if gh != nil {
+		branchName, _ := gh.BranchName.Get()
+		tagRegex, _ := gh.TagRegex.Get()
+		zSetup, _ := gh.ZeropsYamlSetup.Get()
+		return IntegrationStatus{
+			State:              IntegrationConfigured,
+			Provider:           IntegrationProviderGitHub,
+			RepositoryFullName: gh.RepositoryFullName.Native(),
+			EventType:          IntegrationEventType(gh.EventType.Native()),
+			BranchName:         branchName.Native(),
+			TagRegex:           tagRegex.Native(),
+			ZeropsYamlSetup:    zSetup.Native(),
+			IsActive:           gh.IsActive.Native(),
+		}
+	}
+	if gl != nil {
+		branchName, _ := gl.BranchName.Get()
+		tagRegex, _ := gl.TagRegex.Get()
+		zSetup, _ := gl.ZeropsYamlSetup.Get()
+		return IntegrationStatus{
+			State:              IntegrationConfigured,
+			Provider:           IntegrationProviderGitLab,
+			RepositoryFullName: gl.RepositoryFullName.Native(),
+			EventType:          IntegrationEventType(gl.EventType.Native()),
+			BranchName:         branchName.Native(),
+			TagRegex:           tagRegex.Native(),
+			ZeropsYamlSetup:    zSetup.Native(),
+			IsActive:           gl.IsActive.Native(),
+		}
+	}
+	return IntegrationStatus{State: IntegrationNotConfigured}
 }
 
 // stripEnvValues maps []EnvVar (with Content) to []EnvKey (without Content).

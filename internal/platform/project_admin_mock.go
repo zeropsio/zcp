@@ -42,6 +42,11 @@ type MockProjectAdminClient struct {
 	CapturedGrantSelfRoleProject string
 	CapturedGrantSelfRoleCode    string
 	grantSelfRoleErr             error
+
+	// GetServiceStackIntegrationStatus configurable results + capture
+	integrationStatuses               map[string]IntegrationStatus // keyed by serviceStackID
+	integrationStatusErr              error
+	CapturedIntegrationStatusServices []string
 }
 
 // WithClientUserID sets the ClientUserID() return value for tests.
@@ -83,9 +88,48 @@ func (m *MockProjectAdminClient) WithGrantSelfRoleError(err error) *MockProjectA
 // NewMockProjectAdminClient creates a fresh mock.
 func NewMockProjectAdminClient() *MockProjectAdminClient {
 	return &MockProjectAdminClient{
-		serviceEnvKeys: make(map[string][]EnvKey),
-		projectEnvKeys: make(map[string][]EnvKey),
+		serviceEnvKeys:      make(map[string][]EnvKey),
+		projectEnvKeys:      make(map[string][]EnvKey),
+		integrationStatuses: make(map[string]IntegrationStatus),
 	}
+}
+
+// WithIntegrationStatus configures GetServiceStackIntegrationStatus result
+// for a given serviceStackID. Tests that want to assert per-service
+// behavior populate the map per service.
+func (m *MockProjectAdminClient) WithIntegrationStatus(serviceStackID string, status IntegrationStatus) *MockProjectAdminClient {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.integrationStatuses[serviceStackID] = status
+	return m
+}
+
+// WithIntegrationStatusError configures the error returned by
+// GetServiceStackIntegrationStatus.
+func (m *MockProjectAdminClient) WithIntegrationStatusError(err error) *MockProjectAdminClient {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.integrationStatusErr = err
+	return m
+}
+
+// GetServiceStackIntegrationStatus implements ProjectAdminClient. Returns
+// the configured per-service status; unconfigured serviceIDs default to
+// IntegrationNotConfigured so tests focus on the configured cases.
+func (m *MockProjectAdminClient) GetServiceStackIntegrationStatus(_ context.Context, serviceStackID string) (IntegrationStatus, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Closed {
+		return IntegrationStatus{}, ErrClientClosed
+	}
+	m.CapturedIntegrationStatusServices = append(m.CapturedIntegrationStatusServices, serviceStackID)
+	if m.integrationStatusErr != nil {
+		return IntegrationStatus{}, m.integrationStatusErr
+	}
+	if status, ok := m.integrationStatuses[serviceStackID]; ok {
+		return status, nil
+	}
+	return IntegrationStatus{State: IntegrationNotConfigured}, nil
 }
 
 // WithImportResult configures the result returned by CreateAndImportProject.

@@ -471,3 +471,195 @@ Phase B can start. The `ProjectAdminClient` interface and types are locked above
 1. **Admin one-shot token** for live e2e verification (used once to run the 6 e2e tests listed above, then deleted). Without this, Phase B ships with mock + SDK-derived contracts only; live API behavior assumptions remain unverified until provided.
 
 That's the only blocking item, and it's a clean ask for a one-shot resource — exactly the model the plan validates.
+
+---
+
+# §B — Part 2 (Pipeline Extension) spike (2026-05-12)
+
+Goal: verify SDK behavior for `ExternalRepositoryIntegration` endpoints
+before committing Part 2 handler contracts. Originally targeted Path A
+(programmatic close-loop); empirical findings reshaped the plan to Path B
+(dashboard-driven).
+
+## B.0 — OAuth grant scope on Zerops is per-clientUser, not per-client
+
+Account-wide token (`canCreateProjects: true`, name `zcp-part2-phaseB-e2e`)
+auto-creates its own machine `clientUser` on the org with email pattern
+`token-<userId>@zerops.io`. The human user who created the token has a
+separate `clientUser` with their own GitHub OAuth grant linked.
+
+**Machine clientUser does NOT inherit human's GitHub OAuth grant.** Probes:
+
+| Probe | Result |
+|---|---|
+| `GET /github/repository?clientId=<KRLS>` (machine token) | HTTP 400 `githubAuthorizationRequired` |
+| `GET /github/auth-url?action=REPOSITORY&redirectUrl=https://app.zerops.io/github-auth` | HTTP 200, returns fresh OAuth handshake URL with scope=repo |
+| Karel-human's clientUser, by contrast | already linked (org-level dashboard grant from earlier) |
+
+**Implication for Part 2 design:** PUT integration requires the calling
+clientUser to have GitHub OAuth grant. Pure close-loop with launch-window
+machine token is BLOCKED. Path A backlogged at
+`plans/backlog/launch-pipeline-close-loop-oauth.md`.
+
+## B.1 — `GetServiceStackExternalRepositoryIntegrationStatus` on fresh service
+
+Setup: created throwaway `zcp-part2-spike-probe` project (id
+`uLEASWAJRYADHMsBEDKkYw`), one nodejs@22 service `app` (id
+`VW0QnAX4S2OzuDp9vYoN7g`) with `buildFromGit: https://github.com/krls2020/
+zcp-pipeline-probe` + `zeropsSetup: prod`. Project auto-grants OWNER role
+to creating clientUser (verified — same Part 1 A.10 behavior).
+
+**Result on fresh service (no PUT yet):**
+- HTTP **400** with `code: noExternalRepositoryIntegration` ("No external
+  repository is integrated")
+
+This is the canonical "not configured" state — expressed as a 400 error,
+NOT a 200 with state field.
+
+**ZCP wrapper contract:** map `code: noExternalRepositoryIntegration` to
+`IntegrationState.NotConfigured` (treat 400 as state-read result, not
+error to propagate). Other HTTP 400s propagate as errors.
+
+## B.2 — `PutServiceStackExternalRepositoryIntegration` body shape
+
+SDK source (`dto/input/body/externalRepositoryIntegration.go` +
+`githubIntegration.go` + `gitlabIntegration.go`):
+
+```json
+{
+  "githubIntegration": {
+    "repositoryFullName": "krls2020/zcp-pipeline-probe",
+    "eventType": "TAG",
+    "branchName": null,
+    "tagRegex": "^v\\d+\\.\\d+\\.\\d+$",
+    "isActive": true,
+    "zeropsYamlSetup": "prod",
+    "triggerBuild": false
+  },
+  "gitlabIntegration": null
+}
+```
+
+Required server-side fields: `repositoryFullName`, `eventType`, `isActive`,
+`triggerBuild`. Optional: `branchName`, `tagRegex`, `zeropsYamlSetup`.
+
+**`eventType` enum:** `BRANCH | TAG` (no other values; SDK
+`enum.GithubIntegrationEventTypeEnum`). Path A would have wanted `TAG` for
+prod; Path B doesn't PUT.
+
+**Constraint observed:** `triggerBuild=true` requires `eventType=BRANCH`.
+With TAG + triggerBuild=true → HTTP 400 `triggerBuildRequiresBranchEventType`.
+TAG events trigger builds implicitly; `triggerBuild` is reserved for BRANCH
+push semantics ("build on every push to this branch").
+
+**Pre-correction no-op pitfall:** PUT with wrong body shape (`{github: {...}}`
+instead of `{githubIntegration: {...}}`, missing `repositoryFullName`)
+returned `HTTP 200 {"process": null}` but did NOT configure anything.
+GetStatus continued to return `noExternalRepositoryIntegration`. The
+server silently swallowed the malformed body. **Implication if Path A ever
+unblocks:** never trust a 200 from PUT alone — always GetStatus to verify.
+
+## B.3 — PUT requires per-clientUser GitHub OAuth → blocks Path A
+
+With correct body shape + valid combination + machine token without
+OAuth: HTTP **400** with `code: githubAuthorizationRequired` ("Github
+authorization required").
+
+The calling clientUser must have completed GitHub OAuth handshake before
+PUT can succeed. The launch-window machine token, by default, has NOT
+done this (it's a fresh machine identity).
+
+**OAuth handshake attempt for machine clientUser (empirically tested):**
+1. `GET /github/auth-url?action=REPOSITORY&redirectUrl=https%3A%2F%2Fapp.zerops.io%2Fgithub-auth`
+   → HTTP 200, returns `githubUrl` with scope=repo + state token.
+2. User opens URL in browser, GitHub redirects to
+   `https://app.zerops.io/github-auth?code=AAA&state=BBB`.
+3. SPA at `/github-auth` consumes the OAuth code on page-load
+   atomically (calls `POST /github/user-repository-access` with browser
+   session cookie, NOT with the machine token's Authorization header).
+4. Server-side attribution: grant attached to whichever clientUser the
+   browser session corresponds to (Karel-human's session), NOT to the
+   machine token's clientUser as state-key would suggest.
+5. Subsequent `POST /github/user-repository-access` with machine token's
+   Bearer fails: code already consumed → HTTP 400
+   `githubVerificationExpired`.
+6. GET /github/repository with machine token still returns
+   `githubAuthorizationRequired`.
+
+**Conclusion:** Browser-mediated OAuth handshake to attach a grant to a
+machine clientUser is not practically achievable in v1 because:
+- Code is consumed atomically by SPA (race condition on paste-back).
+- Even if intercepted (incognito with no Zerops session), server-side
+  attribution model is the calling Authorization header at POST time,
+  not the state-token's stored clientUserId.
+
+Path A is backlogged pending a non-browser API
+(`PostClientUserGithubLink(installationId)` or similar) from Zerops
+platform team.
+
+## B.4 — PUT with existing integration: deferred indefinitely (Path B)
+
+Not relevant for v1 Path B (ZCP doesn't PUT).
+
+For backlog Path A: SDK shape (`output.ProcessNil`) and Put (not Patch)
+verb suggest full replace, no conflict error on re-PUT. To be empirically
+verified when Path A unblocks.
+
+## B.5 — Tag-regex syntax: deferred indefinitely (Path B)
+
+Not directly relevant for v1 Path B (user types regex in dashboard, not
+ZCP). Recommendation atom embeds `^v\d+\.\d+\.\d+$` as text guidance —
+user enters in dashboard's UI input.
+
+For backlog Path A: expected RE2 syntax (Go's stdlib `regexp`); server
+likely validates server-side. Empty regex → trigger on every tag (per
+the StringNull → null serialization).
+
+## B.6 — Real tag-push fires build: deferred to Phase E e2e
+
+Cannot verify without a configured integration. Phase E e2e setup:
+operator configures integration manually via dashboard on the eval-zcp
+throwaway service, ZCP push tag, observe `service.processList[]`
+gains a new build process.
+
+---
+
+## Locked contracts for Phase B (Path B)
+
+### `ProjectAdminClient` extension (one new method)
+
+```go
+type ProjectAdminClient interface {
+    // ...existing methods from Part 1...
+
+    GetServiceStackIntegrationStatus(ctx context.Context, serviceStackID string) (
+        IntegrationStatus, error,
+    )
+}
+
+type IntegrationStatus struct {
+    State              IntegrationState  // not-configured | configured
+    Provider           string            // "github" | "gitlab" | ""
+    RepositoryFullName string
+    EventType          string            // "BRANCH" | "TAG"
+    TagRegex           string
+    BranchName         string
+    ZeropsYamlSetup    string
+    IsActive           bool
+}
+
+type IntegrationState string
+const (
+    IntegrationNotConfigured IntegrationState = "not-configured"
+    IntegrationConfigured    IntegrationState = "configured"
+)
+```
+
+Concrete behavior: wrap SDK `GetServiceStackExternalRepositoryIntegrationStatus`.
+HTTP 400 with `code: noExternalRepositoryIntegration` →
+`IntegrationState.NotConfigured`. Other errors propagate.
+
+### Cleanup
+
+Spike throwaway project `uLEASWAJRYADHMsBEDKkYw` deleted at end of
+Phase A (per cleanup invariant).

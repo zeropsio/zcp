@@ -262,13 +262,26 @@ const (
 	// is calling CreateAndImportProject + polling first deploy +
 	// verifying secret presence.
 	LaunchStatusLaunching LaunchProductionStatus = "launching"
+	// LaunchStatusConfiguringPipeline fires after the mutation pipeline
+	// completes (prod project exists + first deploy ran) and before the
+	// terminal LaunchStatusLaunched. Per runtime service with buildFromGit,
+	// the handler reads integration status. Not-configured runtimes
+	// produce blocker[pipeline-not-configured] with a dashboard deep-link
+	// and recommendation payload; user configures via Zerops UI then
+	// re-runs the workflow with the same launchKey to recheck. Path B
+	// design per docs/spec-launch-production-platform-spike.md §B and
+	// plans/production-lifecycle-part2-2026-05-12.md.
+	LaunchStatusConfiguringPipeline LaunchProductionStatus = "configuring-pipeline"
 	// LaunchStatusFailed indicates a mutation step failed. Structured
 	// blockers[] describes recovery; the agent reads them and either
-	// retries with a fresh launchKey or aborts.
+	// retries with a fresh launchKey or aborts. Pipeline-config issues
+	// never resolve to this state (P-LP-8) — they live as blockers on
+	// LaunchStatusLaunched.
 	LaunchStatusFailed LaunchProductionStatus = "failed"
 	// LaunchStatusLaunched is the terminal success state. Response
 	// carries the post-launch checklist + mandatory key-deletion atom
-	// (P-LP-4 invariant).
+	// (P-LP-4 invariant). May include blockers[] for runtimes still
+	// needing pipeline-config (P-LP-8).
 	LaunchStatusLaunched LaunchProductionStatus = "launched"
 )
 

@@ -150,6 +150,20 @@ type WorkflowInput struct {
 	// serialized to state, logs, or response. json:"-" prevents accidental
 	// inclusion in any response JSON the handler emits.
 	LaunchKey string `json:"-"`
+	// SkipPipelineSetup is the launch-production v1 escape hatch: when
+	// true, the handler skips the configuring-pipeline status check and
+	// proceeds directly to launched. Use when the user explicitly does
+	// not want ongoing CD configured for the new prod project (manual
+	// `zcli push` workflow, or pre-existing integration the user wants
+	// preserved). See plans/production-lifecycle-part2-2026-05-12.md §5.5.
+	SkipPipelineSetup FlexBool `json:"skipPipelineSetup,omitempty" jsonschema:"Launch-production only: skip configuring-pipeline status and proceed straight to launched. Use when ongoing CD setup is not wanted (manual zcli push only)."`
+	// PipelineTagRegex overrides the default tag-trigger regex
+	// (^v\\d+\\.\\d+\\.\\d+$, the Zerops-documented production
+	// recommendation). Surface only — the value is embedded in the
+	// recommendation payload of the not-configured blocker so the agent
+	// can echo it to the user when guiding dashboard setup. ZCP itself
+	// never PUTs to the platform's integration endpoint in v1 (Path B).
+	PipelineTagRegex string `json:"pipelineTagRegex,omitempty" jsonschema:"Launch-production only: tag-trigger regex to recommend when guiding dashboard setup (default '^v\\d+\\.\\d+\\.\\d+$' per Zerops production-checklist)."`
 }
 
 // immediateResponse is returned from immediate (stateless) workflows.

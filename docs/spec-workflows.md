@@ -1160,7 +1160,57 @@ Recipes (`zerops_recipe`) are a multi-repo, registry-published product with sepa
 
 ---
 
-## 10. Planned Features
+## 10. Launch Production Flow
+
+`zerops_workflow workflow="launch-production"` is a stateless multi-call narrowing that takes a working dev/stage source project all the way to a healthy production deployment in a SEPARATE Zerops project, under a strict one-shot trust boundary: ZCP never holds standing prod access.
+
+### 10.1 Seven-state machine
+
+```
+scope-prompt → classify-prompt → ready-to-launch → launching →
+                                                       │
+                                              ┌────────┴────────┐
+                                              │                 │
+                                      configuring-pipeline    failed
+                                              │
+                                           launched
+```
+
+Status semantics — read-side narrowing (no mutation, no launch key needed):
+- `scope-prompt` — `productionProjectName`, `region`, `customDomain`, `keepNonHA` missing.
+- `classify-prompt` — source-project envs present, classifications incomplete.
+- `ready-to-launch` — bundle composed, source-control changes pushed (`setup: prod` block in source `zerops.yaml`), schema clean, blockers cleared. Awaits the one-shot launchKey.
+
+Mutation pipeline (`launchKey` required from this point on):
+- `launching` — `ProjectAdminClient.CreateAndImportProject` invoked, A.10 `GrantSelfRole` applied, per-service import processes polled.
+- `configuring-pipeline` — transient; for each runtime in the bundle that has `buildFromGit` set, the handler reads `GetServiceStackExternalRepositoryIntegrationStatus` and records the result in `state.PipelineConfigurations`. Path B: ZCP **never PUTs** integration config (P-LP-7). Per Phase A spike (`docs/spec-launch-production-platform-spike.md §B.3`), the launch-window machine token lacks the per-clientUser GitHub OAuth grant PUT requires; the Path A close-loop is backlogged at `plans/backlog/launch-pipeline-close-loop-oauth.md`.
+- `launched` — terminal success. Response carries the mandatory `launch-delete-key` atom (P-LP-4) and a `launch-pipeline-configured` / `-configure-dashboard` / `-skipped` atom depending on the pipeline observation. Unconfigured runtimes surface as `pipeline-not-configured-<hostname>` blockers with `Severity=warn` (P-LP-8 — pipeline issues never block the launched status) carrying a Zerops dashboard deep-link and a recommendation payload (`repositoryFullName`, `eventType=TAG`, `tagRegex` default `^v\d+\.\d+\.\d+$`, `zeropsYamlSetup=prod`).
+- `failed` — any mutation pipeline step failed (auth, import, deploy poll). Structured `blockers[]` describes recovery; agent reads them and either retries with a fresh launchKey or aborts. Pipeline-config issues NEVER reach this status.
+
+### 10.2 Resume + idempotent re-check
+
+A second call with the same `productionProjectName` + same launchID reads the existing state file. Two sub-cases:
+
+- `state.Status == launched` AND `launchKey` supplied AND `pendingPipelineConfigurations(state)` → handler constructs a fresh `ProjectAdminClient`, re-runs `executeLaunchPipelineCheck`, refreshes `state.PipelineConfigurations`, and returns the launched response with updated blockers. Use this after the user has configured a runtime via the Zerops dashboard.
+- Otherwise → handler returns the current launched/failed/in-progress view as-is (`action="status"` semantics).
+
+### 10.3 Invariants
+
+| ID | Invariant |
+|----|-----------|
+| P-LP-1 | The launch-window key is NEVER written to state, log, or response. `launchState` struct has no field for it; sentinel-leak tests greps all serialization surfaces. |
+| P-LP-2 | `platform.NewProjectAdminClient` / `platform.ProjectAdminClient` symbols are reachable only from `internal/tools/workflow_launch_production.go` and `internal/tools/launch_pipeline.go` (Part 2 sibling). Pinned by `TestProjectAdminClientRestrictedImport`. |
+| P-LP-3 | Source-immutability guard fires before every mutation: re-hash `SourceSnapshot` and refuse on drift. Pinned by source-state-validation tests. |
+| P-LP-4 | The `launched` response ALWAYS surfaces the mandatory delete-key atom. Pinned by `TestLaunchedResponse_AlwaysContainsKeyDeletionStep`. |
+| P-LP-5 | External secret values are NEVER read by ZCP. `EnvKey` carries no `Value` field by type definition (compile-time enforcement); the omit-Value invariant is unconditional. |
+| P-LP-6 | Audit log entries are append-only (`O_APPEND`, `0o600`). Pinned by audit-log mode tests. |
+| P-LP-7 | ZCP does NOT call `PutServiceStackIntegration` in v1 (Path B). The pipeline-check uses `GetServiceStackIntegrationStatus` only. Path A is backlogged. Pinned by `TestExecuteLaunchPipelineCheck_NoPutCallsByZCP`. |
+| P-LP-8 | Pipeline-config issues surface as warn-severity blockers on the `launched` response — never failure. Prod project IS created + deployed; pipeline-config is recoverable via dashboard + workflow re-call. Pinned by `TestExecuteLaunchPipelineCheck_NotConfigured_PopulatesBlocker`. |
+| P-LP-9 | `GetServiceStackIntegrationStatus` HTTP 400 with code `noExternalRepositoryIntegration` maps to canonical `IntegrationState.NotConfigured` — error is NOT propagated as failure. Pinned by `TestApiCodeNoExternalRepositoryIntegration_Constant` + live `TestProjectAdminClient_GetServiceStackIntegrationStatus_NotConfiguredLive`. |
+
+---
+
+## 11. Planned Features
 
 ### 9.1 Mode Expansion (simple/dev → standard)
 

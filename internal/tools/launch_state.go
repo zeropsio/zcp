@@ -22,14 +22,16 @@ import (
 // P-LP-1 invariant: the launchKey is NEVER written here. The struct has
 // no field for it. Tests pin via TestLaunchState_NoLaunchKeyFieldExists.
 type launchState struct {
-	LaunchID          string                                   `json:"launchId"`
-	SourceProjectID   string                                   `json:"sourceProjectId"`
-	TargetProjectID   string                                   `json:"targetProjectId,omitempty"`
-	TargetProjectName string                                   `json:"targetProjectName"`
-	ImportedServices  []importedServiceEntry                   `json:"importedServices,omitempty"`
-	SourceSnapshot    ops.SourceSnapshot                       `json:"sourceSnapshot"`
-	Classifications   map[string]topology.SecretClassification `json:"classifications,omitempty"`
-	Status            topology.LaunchProductionStatus          `json:"status"`
+	LaunchID              string                                   `json:"launchId"`
+	SourceProjectID       string                                   `json:"sourceProjectId"`
+	SourceRepoURL         string                                   `json:"sourceRepoUrl,omitempty"`
+	TargetProjectID       string                                   `json:"targetProjectId,omitempty"`
+	TargetProjectName     string                                   `json:"targetProjectName"`
+	TargetServiceHostname string                                   `json:"targetServiceHostname,omitempty"`
+	ImportedServices      []importedServiceEntry                   `json:"importedServices,omitempty"`
+	SourceSnapshot        ops.SourceSnapshot                       `json:"sourceSnapshot"`
+	Classifications       map[string]topology.SecretClassification `json:"classifications,omitempty"`
+	Status                topology.LaunchProductionStatus          `json:"status"`
 	// CreatedAt is the moment launchID was first written.
 	CreatedAt time.Time `json:"createdAt"`
 	// LastUpdate is the latest mutation timestamp.
@@ -37,6 +39,60 @@ type launchState struct {
 	// LastError carries the structured failure reason when Status=failed.
 	// Excludes launchKey unconditionally.
 	LastError string `json:"lastError,omitempty"`
+	// PipelineConfigurations records per-runtime pipeline-integration state
+	// observed at the most recent configuring-pipeline check. Populated
+	// after the mutation pipeline lands and re-populated on every resume
+	// call with a launchKey. P-LP-7: ZCP only reads (never PUTs); these
+	// entries are observation, not mutation records.
+	PipelineConfigurations map[string]pipelineConfigEntry `json:"pipelineConfigurations,omitempty"`
+	// PipelineCheckedAt is the timestamp of the last successful pipeline
+	// check. Zero when no check has been run yet.
+	PipelineCheckedAt time.Time `json:"pipelineCheckedAt,omitzero"`
+}
+
+// pipelineConfigEntry records one runtime's pipeline-integration observation.
+// Captured at every configuring-pipeline check; updated in place on resume.
+type pipelineConfigEntry struct {
+	// Configured is true when GetServiceStackIntegrationStatus returned
+	// IntegrationConfigured for this runtime's service-stack.
+	Configured bool `json:"configured"`
+	// SkipReason carries why this runtime was skipped (e.g.
+	// "user-opted-out" when SkipPipelineSetup=true, or "lookup-failed"
+	// when GetStatus returned a non-NotConfigured error).
+	SkipReason string `json:"skipReason,omitempty"`
+	// DeepLink is the Zerops dashboard URL pointing at this runtime's
+	// source-code config page. Populated when not configured.
+	DeepLink string `json:"deepLink,omitempty"`
+	// CurrentConfig is the live integration shape read from the platform.
+	// Populated when Configured == true so resumes display "what's
+	// already wired" without re-querying.
+	CurrentConfig *pipelineConfigCurrent `json:"currentConfig,omitempty"`
+	// Recommendation is the suggested config the agent surfaces in the
+	// dashboard-config blocker (populated when not configured).
+	Recommendation *pipelineConfigRecommendation `json:"recommendation,omitempty"`
+}
+
+// pipelineConfigCurrent mirrors platform.IntegrationStatus.Configured shape
+// for state-file storage. Omits the IntegrationState (always Configured
+// when this struct is non-nil).
+type pipelineConfigCurrent struct {
+	Provider           string `json:"provider"`
+	RepositoryFullName string `json:"repositoryFullName"`
+	EventType          string `json:"eventType"`
+	BranchName         string `json:"branchName,omitempty"`
+	TagRegex           string `json:"tagRegex,omitempty"`
+	ZeropsYamlSetup    string `json:"zeropsYamlSetup,omitempty"`
+	IsActive           bool   `json:"isActive"`
+}
+
+// pipelineConfigRecommendation is the suggested config payload surfaced in
+// the not-configured blocker. Agent echoes these to the user when guiding
+// dashboard setup.
+type pipelineConfigRecommendation struct {
+	RepositoryFullName string `json:"repositoryFullName"`
+	EventType          string `json:"eventType"`
+	TagRegex           string `json:"tagRegex"`
+	ZeropsYamlSetup    string `json:"zeropsYamlSetup"`
 }
 
 // importedServiceEntry records one service stack created by
