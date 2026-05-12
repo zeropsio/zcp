@@ -79,12 +79,19 @@ func TestDerivedRules_P3_ExecOnceSemanticsRuleSurfacesInBrief(t *testing.T) {
 // taught in IG #3") and Surface 3 cross-tier deferrals (environments/1
 // + /2 "Same as tier 0") slipped past refinement-1.
 //
-// Run-43 Edit B broadens the cross-tier pattern enumeration so the
-// rule matches `Same <anything> as tier <digit>` framings — the
-// run-42 actual wording was "Same dev / stage pair as tier 0", which
-// the original `Same as tier <digit>` substring couldn't match
-// literally. The run-42 verbatim worked-example anchor is added so
-// the LLM auditor has the exact phrase to scan for.
+// Run-43 Edit B broadens the cross-tier pattern enumeration; run-43
+// F5 (this revision) reframes the rule from literal-enumeration to
+// LLM-judgment-with-examples. User direction: shift the rule from
+// pattern-matching to judgment — the patterns listed are NOT
+// exhaustive; ask the LLM to judge intent (does this comment defer
+// to another surface/tier?), not pattern-match a regex. Tier-2's
+// actual wording is *"Same single-instance Postgres shape as the
+// previous tier"* — literal-pattern enumeration is whack-a-mole.
+// Keep all current example patterns as non-exhaustive examples; add
+// "Same X as the previous tier" + the bare "Same X shape" form;
+// replace "Scan" framing with "Judge each comment for cross-surface
+// or cross-tier deferral intent, using these patterns as
+// non-exhaustive examples".
 func TestDerivedRules_P5_CrossSurfaceReferenceRulePresent(t *testing.T) {
 	t.Parallel()
 	body, err := readAtom("briefs/refinement/derived_rules.md")
@@ -94,24 +101,27 @@ func TestDerivedRules_P5_CrossSurfaceReferenceRulePresent(t *testing.T) {
 	for _, want := range []string{
 		"F-XSURF-REF",
 		"mechanism+reason in one breath",
-		// Cross-codebase-surface deferral patterns the rule scans for.
+		// Run-43 F5 — LLM-judgment framing.
+		"Judge each comment",
+		"non-exhaustive examples",
+		// Run-43 F5 — tier-2 verbatim wording added as additional example.
+		"as the previous tier",
+		"Same X shape",
+		// Cross-codebase-surface deferral patterns (kept as
+		// non-exhaustive examples).
 		"see IG #<digit>",
 		"the pattern is taught in",
 		"live below",
 		"at the field site",
-		// Cross-tier deferral patterns — original literal forms.
+		// Cross-tier deferral patterns — original literal forms (kept
+		// as non-exhaustive examples).
 		"Same as tier <digit>",
 		"see tier <digit>",
-		// Run-43 Edit B — broadened cross-tier patterns. The run-42
-		// wording "Same dev / stage pair as tier 0" doesn't match
-		// `Same as tier <digit>` as a substring; broaden so
-		// `Same <anything> as tier <digit>` and the trailing
-		// `as tier <digit>` reference phrase also match.
+		// Run-43 Edit B — broadened cross-tier patterns.
 		"Same <anything> as tier <digit>",
 		"same shape as tier <digit>",
 		"as tier <digit>",
-		// Run-43 Edit B — verbatim run-42 worked-example anchor so
-		// the LLM has the literal phrase to match.
+		// Run-43 Edit B — verbatim run-42 worked-example anchor.
 		"Same dev / stage pair as tier 0",
 		// Spec citations.
 		"§\"Surface 7\"",
@@ -121,6 +131,9 @@ func TestDerivedRules_P5_CrossSurfaceReferenceRulePresent(t *testing.T) {
 		"environments/1 + environments/2",
 		// Cross-link to synthesis_workflow.md's complementary rule.
 		"Yaml comments stand alone",
+		// Run-43 F5 — GOOD worked example: self-contained per-tier
+		// sizing rationale.
+		"Single-instance Postgres on NON_HA",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("derived_rules.md missing F-XSURF-REF anchor %q", want)
