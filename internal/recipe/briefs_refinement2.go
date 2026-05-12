@@ -178,15 +178,15 @@ func BuildRefinement2Brief(plan *Plan, parent *ParentRecipe, runDir string, fact
 // citation-map URL constants — exposed for test pinning and brief
 // rendering. Order matches the citation map row order.
 const (
-	citationURLRollingDeploys      = "docs.zerops.io/features/scaling-ha"
-	citationURLInitCommands        = "docs.zerops.io/zerops-yaml/specification#initcommands-"
-	citationURLObjectStorage       = "docs.zerops.io/services/object-storage"
-	citationURLEnvVarModel         = "docs.zerops.io/zerops-yaml/specification#envvariables-"
-	citationURLHTTPSupport         = "docs.zerops.io/features/access"
-	citationURLDeployFiles         = "docs.zerops.io/zerops-yaml/specification#deployfiles-"
-	citationURLReadinessChecks     = "docs.zerops.io/zerops-yaml/specification#readinesscheck-"
-	citationURLManagedNATS         = "docs.zerops.io/services/nats"
-	citationURLManagedMeilisearch  = "docs.zerops.io/services/meilisearch"
+	citationURLRollingDeploys     = "docs.zerops.io/features/scaling-ha"
+	citationURLInitCommands       = "docs.zerops.io/zerops-yaml/specification#initcommands-"
+	citationURLObjectStorage      = "docs.zerops.io/services/object-storage"
+	citationURLEnvVarModel        = "docs.zerops.io/zerops-yaml/specification#envvariables-"
+	citationURLHTTPSupport        = "docs.zerops.io/features/access"
+	citationURLDeployFiles        = "docs.zerops.io/zerops-yaml/specification#deployfiles-"
+	citationURLReadinessChecks    = "docs.zerops.io/zerops-yaml/specification#readinesscheck-"
+	citationURLManagedNATS        = "docs.zerops.io/services/nats"
+	citationURLManagedMeilisearch = "docs.zerops.io/services/meilisearch"
 )
 
 func citationMapBlock() string {
