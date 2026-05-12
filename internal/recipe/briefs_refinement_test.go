@@ -129,9 +129,12 @@ func TestBuildRefinementBrief_BodyUnderShrinkTarget(t *testing.T) {
 	// 45→46 KB to accommodate the classification-field guidance
 	// (record-fragment on CODEBASE_KB/CODEBASE_IG requires
 	// `classification` per spec; recurring run-40 + run-42 failure
-	// where the field was omitted; ~140 bytes of necessary
-	// instructions + seven enum values + worked example).
-	const briefShrinkCap = 46 * 1024
+	// where the field was omitted). Run-43 F5 + F6 — cap raised
+	// 46→48 KB for F-XSURF-REF LLM-judgment reframe (extra examples
+	// + GOOD worked anchor) + new F-FRIENDLY-AUTH derived rule
+	// (declarative + invitation + porter-side trigger pattern;
+	// LLM-judgment based, not regex).
+	const briefShrinkCap = 48 * 1024
 	if brief.Bytes > briefShrinkCap {
 		t.Errorf("refinement brief %d bytes exceeds %d cap (F-24 shrink target; run-32 phase 2 raised to 75K)", brief.Bytes, briefShrinkCap)
 	}
