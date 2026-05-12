@@ -71,3 +71,61 @@ func TestDerivedRules_P3_ExecOnceSemanticsRuleSurfacesInBrief(t *testing.T) {
 		}
 	}
 }
+
+// TestDerivedRules_P5_CrossSurfaceReferenceRulePresent pins the
+// F-XSURF-REF factuality guard. Run-42 dogfood proved the rule is
+// necessary; both Surface 7 yaml-comment deferrals
+// (apidev/zerops.yaml:47-48 + :63-64 "see IG #N" / "the pattern is
+// taught in IG #3") and Surface 3 cross-tier deferrals (environments/1
+// + /2 "Same as tier 0") slipped past refinement-1.
+func TestDerivedRules_P5_CrossSurfaceReferenceRulePresent(t *testing.T) {
+	t.Parallel()
+	body, err := readAtom("briefs/refinement/derived_rules.md")
+	if err != nil {
+		t.Fatalf("read derived_rules.md: %v", err)
+	}
+	for _, want := range []string{
+		"F-XSURF-REF",
+		"mechanism+reason in one breath",
+		// Cross-codebase-surface deferral patterns the rule scans for.
+		"see IG #<digit>",
+		"the pattern is taught in",
+		"live below",
+		"at the field site",
+		// Cross-tier deferral patterns the rule scans for.
+		"Same as tier <digit>",
+		"see tier <digit>",
+		// Spec citations.
+		"§\"Surface 7\"",
+		"§\"Surface 3\"",
+		// Run-42 worked-example anchors.
+		"apidev/zerops.yaml:47-48",
+		"environments/1 + environments/2",
+		// Cross-link to synthesis_workflow.md's complementary rule.
+		"Yaml comments stand alone",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("derived_rules.md missing F-XSURF-REF anchor %q", want)
+		}
+	}
+}
+
+// TestDerivedRules_P5_CrossSurfaceReferenceRuleSurfacesInBrief —
+// refinement brief composer threads the F-XSURF-REF rule into the
+// brief body so the sub-agent sees it during rule-walk.
+func TestDerivedRules_P5_CrossSurfaceReferenceRuleSurfacesInBrief(t *testing.T) {
+	t.Parallel()
+	plan := &Plan{Slug: "x", Codebases: []Codebase{{Hostname: "api"}}}
+	brief, err := BuildRefinementBrief(plan, nil, "/run", nil)
+	if err != nil {
+		t.Fatalf("BuildRefinementBrief: %v", err)
+	}
+	for _, want := range []string{
+		"F-XSURF-REF",
+		"no cross-surface deferrals",
+	} {
+		if !strings.Contains(brief.Body, want) {
+			t.Errorf("refinement brief missing F-XSURF-REF surface anchor %q", want)
+		}
+	}
+}
