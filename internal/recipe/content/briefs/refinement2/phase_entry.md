@@ -20,7 +20,7 @@ A structured findings list. ONE block of JSON wrapped in fence:
 {
   "findings": [
     {
-      "defectClass": "kb-ig-duplication" | "kb-below-floor" | "kb-over-cap" | "surface-misplacement" | "aspirational-as-current" | "yaml-comment-content-drift" | "scaffold-code-in-kb" | "ig-cites-recipe-internal-file" | "missing-citation" | "cross-codebase-named-constant-drift" | "framework-quirk-as-gotcha" | "scaffold-decision-as-gotcha" | "cross-codebase-content-duplication",
+      "defectClass": "kb-ig-duplication" | "kb-below-floor" | "kb-over-cap" | "surface-misplacement" | "aspirational-as-current" | "yaml-comment-content-drift" | "scaffold-code-in-kb" | "ig-cites-recipe-internal-file" | "missing-citation" | "cross-codebase-named-constant-drift" | "framework-quirk-as-gotcha" | "self-inflicted-as-gotcha" | "scaffold-decision-as-gotcha" | "cross-codebase-content-duplication",
       "severity": "blocker" | "advisory",
       "surface": "<surface-id>",
       "fragmentId": "<plan.fragments key — short codebase name (api/app/worker), NOT <host>dev SSHFS form>",

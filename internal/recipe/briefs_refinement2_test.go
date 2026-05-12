@@ -81,6 +81,9 @@ func TestBuildRefinement2Brief_CarriesAuditDefectClasses(t *testing.T) {
 		"framework-quirk-as-gotcha",
 		"scaffold-decision-as-gotcha",
 		"cross-codebase-content-duplication",
+		// Run-43 P2 — self-inflicted classifier (spec §"Fact
+		// classification taxonomy" litmus #4).
+		"self-inflicted-as-gotcha",
 	} {
 		if !strings.Contains(brief.Body, defectClass) {
 			t.Errorf("brief.Body missing defect class %q", defectClass)
@@ -351,6 +354,116 @@ func TestBuildRefinement2Brief_PerFindingTriageContract(t *testing.T) {
 		if !strings.Contains(brief.Body, want) {
 			t.Errorf("brief.Body missing per-finding-triage substring %q", want)
 		}
+	}
+}
+
+// TestBuildRefinement2Brief_P2_SelfInflictedAsGotchaClass — Run-43
+// P2. The refinement-2 audit checklist gains a new defect class
+// `self-inflicted-as-gotcha` that fires when a KB bullet documents
+// a trap firing only when the porter deviates from IG #1's shipped
+// envVariables. Spec citation: docs/spec-content-surfaces.md
+// §"Fact classification taxonomy" litmus #4 + §"Self-inflicted
+// (should have been discarded)". Run-42 dogfood evidence: apidev
+// KB #2 `UnknownError on first GetObject` + apidev KB #3
+// `fetch().headers.get('X-Cache') returns null` both fail the
+// porter-following-IG#1-verbatim test; both should have routed to
+// DROP.
+func TestBuildRefinement2Brief_P2_SelfInflictedAsGotchaClass(t *testing.T) {
+	t.Parallel()
+	plan := &Plan{
+		Slug:      "synth-showcase",
+		Codebases: []Codebase{{Hostname: "api", Role: RoleAPI, BaseRuntime: "nodejs@22"}},
+	}
+	brief, err := BuildRefinement2Brief(plan, nil, "/run/dir", nil)
+	if err != nil {
+		t.Fatalf("BuildRefinement2Brief: %v", err)
+	}
+	// Class header lands.
+	if !strings.Contains(brief.Body, "## Defect class: self-inflicted-as-gotcha") {
+		t.Error("audit_checklist missing self-inflicted-as-gotcha class header")
+	}
+	// Decisive Check #1 — porter-following-IG#1-verbatim test.
+	for _, want := range []string{
+		"porter-following-IG#1-verbatim test",
+		"copying IG #1's shipped envVariables verbatim",
+		"http://${storage_apiHost}",
+		"S3_ENDPOINT: ${storage_apiUrl}",
+		"Run-42 dogfood: apidev KB #2",
+	} {
+		if !strings.Contains(brief.Body, want) {
+			t.Errorf("self-inflicted-as-gotcha class missing anchor %q", want)
+		}
+	}
+	// Counter-example — NATS Pattern A vs Pattern B is NOT self-inflicted.
+	for _, want := range []string{
+		"Counter-example (NOT self-inflicted)",
+		"Pattern A (four separate `${broker_*}`",
+		"Pattern B (connection-string assembly",
+	} {
+		if !strings.Contains(brief.Body, want) {
+			t.Errorf("self-inflicted-as-gotcha counter-example missing anchor %q", want)
+		}
+	}
+	// Severity is blocker (spec routes to DISCARD unambiguously).
+	idx := strings.Index(brief.Body, "## Defect class: self-inflicted-as-gotcha")
+	if idx < 0 {
+		t.Fatal("class header missing")
+	}
+	tail := brief.Body[idx:]
+	next := strings.Index(tail[1:], "\n## Defect class:")
+	var chunk string
+	if next > 0 {
+		chunk = tail[:next+1]
+	} else {
+		chunk = tail
+	}
+	if !strings.Contains(chunk, "**Severity**: **blocker**") {
+		t.Error("self-inflicted-as-gotcha must declare **Severity**: **blocker**")
+	}
+	if !strings.Contains(chunk, "**Action**: `drop`") {
+		t.Error("self-inflicted-as-gotcha must declare **Action**: `drop`")
+	}
+}
+
+// TestBuildRefinement2Brief_P2_PhaseEntryEnumIncludesSelfInflicted —
+// Run-43 P2. The defectClass JSON enum in phase_entry.md must
+// include the new class so the audit sub-agent's emitted JSON
+// findings block lists it among valid values.
+func TestBuildRefinement2Brief_P2_PhaseEntryEnumIncludesSelfInflicted(t *testing.T) {
+	t.Parallel()
+	plan := &Plan{
+		Slug:      "synth-showcase",
+		Codebases: []Codebase{{Hostname: "api", Role: RoleAPI, BaseRuntime: "nodejs@22"}},
+	}
+	brief, err := BuildRefinement2Brief(plan, nil, "/run/dir", nil)
+	if err != nil {
+		t.Fatalf("BuildRefinement2Brief: %v", err)
+	}
+	// Locate the defectClass enum line in phase_entry.md as embedded
+	// in the brief body. It's the long pipe-separated alternation;
+	// pin the new class is one of the alternatives.
+	enumIdx := strings.Index(brief.Body, `"defectClass":`)
+	if enumIdx < 0 {
+		t.Fatal("defectClass enum line missing from brief")
+	}
+	enumEnd := strings.Index(brief.Body[enumIdx:], ",\n")
+	if enumEnd < 0 {
+		t.Fatal("defectClass enum line not terminated")
+	}
+	enumLine := brief.Body[enumIdx : enumIdx+enumEnd]
+	if !strings.Contains(enumLine, `"self-inflicted-as-gotcha"`) {
+		t.Errorf("phase_entry.md defectClass enum missing `self-inflicted-as-gotcha`; got: %s", enumLine)
+	}
+	// Walk-every-class summary at the audit_checklist.md tail must
+	// also list the new class.
+	walkIdx := strings.Index(brief.Body, "Walk EVERY defect class in this checklist")
+	if walkIdx < 0 {
+		t.Fatal("walk-every-class summary missing")
+	}
+	walkEnd := min(walkIdx+600, len(brief.Body))
+	walkWindow := brief.Body[walkIdx:walkEnd]
+	if !strings.Contains(walkWindow, "self-inflicted-as-gotcha") {
+		t.Errorf("walk-every-class summary missing `self-inflicted-as-gotcha`; got chunk: %s", walkWindow)
 	}
 }
 
