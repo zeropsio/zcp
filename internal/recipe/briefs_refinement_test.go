@@ -125,8 +125,13 @@ func TestBuildRefinementBrief_BodyUnderShrinkTarget(t *testing.T) {
 	// Y13 (causal-command-sequence rule restored from
 	// run-32-rules-from-jetstream.md:405). Run-34 Fix A — embedded_rubric
 	// retired and deleted (~35 KB removed); cap dropped to 45 KB to
-	// catch any future re-inlining regression.
-	const briefShrinkCap = 45 * 1024
+	// catch any future re-inlining regression. Run-43 F1 — cap raised
+	// 45→46 KB to accommodate the classification-field guidance
+	// (record-fragment on CODEBASE_KB/CODEBASE_IG requires
+	// `classification` per spec; recurring run-40 + run-42 failure
+	// where the field was omitted; ~140 bytes of necessary
+	// instructions + seven enum values + worked example).
+	const briefShrinkCap = 46 * 1024
 	if brief.Bytes > briefShrinkCap {
 		t.Errorf("refinement brief %d bytes exceeds %d cap (F-24 shrink target; run-32 phase 2 raised to 75K)", brief.Bytes, briefShrinkCap)
 	}

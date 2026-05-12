@@ -81,6 +81,50 @@ Bulk dismissals like "all advisories HELD" are not acceptable. The
 audit's job is to surface candidates; the main agent's job is to
 weigh each against the contract.
 
+## Main-agent record-fragment ACTs MUST carry `classification`
+
+When the main agent ACTs on a finding via `record-fragment
+mode=replace` against a `CODEBASE_KB`
+(`codebase/<host>/knowledge-base`) or `CODEBASE_IG`
+(`codebase/<host>/integration-guide/<N>`) surface, the call MUST
+include a `classification` argument. The engine refuses such
+fragments with `classification is required for fragments on surface
+"CODEBASE_KB"` / `"CODEBASE_IG"` when the field is missing —
+documented run-40 + run-42 recurring failure mode where every
+ambiguous ACT cost two record-fragment calls plus a slow re-read
+cycle.
+
+The seven valid enum values are defined in
+[spec-content-surfaces.md §"Fact classification taxonomy"](../../../../docs/spec-content-surfaces.md#fact-classification-taxonomy):
+
+- `platform-invariant` — fact is true of Zerops regardless of recipe
+  scaffold; a different framework would hit the same trap.
+- `intersection` — platform × framework intersection (the most
+  common KB classification; both sides contribute materially).
+- `framework-quirk` — framework's own behavior; spec routes to
+  DISCARD, so this rarely shipped on a KB surface in the first
+  place.
+- `library-metadata` — npm/composer/pip dep-resolution; spec routes
+  to DISCARD.
+- `scaffold-decision` — recipe-internal choice; config flavor →
+  Surface 7, code flavor → Surface 4, recipe-internal flavor →
+  DISCARD.
+- `operational` — how to operate THIS repo; routes to CLAUDE.md.
+- `self-inflicted` — "our code had a bug we fixed"; spec routes to
+  DISCARD entirely.
+
+Worked example: triaging a finding that flags a KB bullet about
+nats.js v2's URL-credential parsing trap — the bullet documents an
+intersection (platform's separate `${broker_*}` env injection × the
+client library's hostPort() parser). The main agent's record-fragment
+ACT replacing that bullet's body MUST pass `classification:
+intersection`.
+
+When the suggestedAction is `drop` (e.g. for `self-inflicted-as-gotcha`
+findings) the replacement body removes the bullet entirely — pass
+the classification matching the surrounding bullets that remain
+(typically `intersection` or `platform-invariant`).
+
 ## How you investigate
 
 1. Read every stitched surface listed in the brief's "Stitched output
