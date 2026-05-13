@@ -26,7 +26,7 @@ var services = map[string]execConfig{
 	},
 	"vscode": {
 		binary: "code-server",
-		args:   []string{"code-server", "--auth", "none", "--bind-addr", "127.0.0.1:8081", "--disable-workspace-trust", "/var/www"},
+		args:   []string{"code-server", "--auth", "none", "--bind-addr", "0.0.0.0:8081", "--disable-workspace-trust", "/var/www"},
 	},
 }
 

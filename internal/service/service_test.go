@@ -60,7 +60,7 @@ func TestStart_KnownService_ArgsCorrect(t *testing.T) {
 		{
 			"vscode",
 			"vscode",
-			[]string{"code-server", "--auth", "none", "--bind-addr", "127.0.0.1:8081", "--disable-workspace-trust", "/var/www"},
+			[]string{"code-server", "--auth", "none", "--bind-addr", "0.0.0.0:8081", "--disable-workspace-trust", "/var/www"},
 		},
 	}
 	for _, tt := range tests {
