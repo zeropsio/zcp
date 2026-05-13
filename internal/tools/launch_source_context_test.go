@@ -212,10 +212,12 @@ func TestGatherLaunchSourceContext_FiltersByRuntimeHostname(t *testing.T) {
 	}
 }
 
-// TestGatherLaunchSourceContext_CollapsesStandardPair pins F2.2:
+// TestGatherLaunchSourceContext_CollapsesStandardPair pins F13.1:
 // when ZCP holds a ServiceMeta for a dev/stage pair (mode=standard),
-// the stage-half is hidden from AvailableRuntimes and the dev-half
-// surfaces with StageHostname populated.
+// the dev-half is hidden from AvailableRuntimes and the STAGE-half
+// surfaces as the promotion headline with DevHostname populated for
+// disclosure. Stage is the validated last-known-good copy — the
+// natural promotion-source mental model.
 func TestGatherLaunchSourceContext_CollapsesStandardPair(t *testing.T) {
 	t.Parallel()
 	stateDir := writeRuntimeMeta(t, &workflow.ServiceMeta{
@@ -254,28 +256,23 @@ func TestGatherLaunchSourceContext_CollapsesStandardPair(t *testing.T) {
 		t.Fatalf("AvailableRuntimes: got %d entries want 1 (pair collapsed)\n%+v", len(got.AvailableRuntimes), got.AvailableRuntimes)
 	}
 	rc := got.AvailableRuntimes[0]
-	if rc.Hostname != "appdev" {
-		t.Errorf("collapsed pair Hostname: got %q want appdev (dev-half)", rc.Hostname)
+	if rc.Hostname != "appstage" {
+		t.Errorf("collapsed pair Hostname: got %q want appstage (stage-half headline)", rc.Hostname)
 	}
-	if rc.StageHostname != "appstage" {
-		t.Errorf("collapsed pair StageHostname: got %q want appstage", rc.StageHostname)
+	if rc.DevHostname != "appdev" {
+		t.Errorf("collapsed pair DevHostname: got %q want appdev (dev-half disclosure)", rc.DevHostname)
 	}
 	if rc.Mode != string(topology.ModeStandard) {
 		t.Errorf("collapsed pair Mode: got %q want %q", rc.Mode, topology.ModeStandard)
 	}
-	// F13: SuggestedRuntime defaults to the stage-half when the entry is
-	// a standard pair. Stage is the validated last-known-good copy and
-	// the natural promotion-source mental model. Dev-half stays the
-	// canonical Hostname (= ServiceMeta primary key); the handler
-	// normalizes stage-half input to dev-half internally.
 	if got.SuggestedRuntime != "appstage" {
-		t.Errorf("SuggestedRuntime: got %q want appstage (stage-half is the validated headline)", got.SuggestedRuntime)
+		t.Errorf("SuggestedRuntime: got %q want appstage (stage-half headline)", got.SuggestedRuntime)
 	}
 }
 
 // TestGatherLaunchSourceContext_SimpleAndDevModesUnaffected verifies
-// that non-pair modes pass through unchanged — no stage-half collapse,
-// no StageHostname populated.
+// that non-pair modes pass through unchanged — no pair collapse,
+// no DevHostname populated.
 func TestGatherLaunchSourceContext_SimpleAndDevModesUnaffected(t *testing.T) {
 	t.Parallel()
 	stateDir := writeRuntimeMeta(t, &workflow.ServiceMeta{
@@ -305,8 +302,8 @@ func TestGatherLaunchSourceContext_SimpleAndDevModesUnaffected(t *testing.T) {
 	if rc.Hostname != "app" {
 		t.Errorf("Hostname: got %q want app", rc.Hostname)
 	}
-	if rc.StageHostname != "" {
-		t.Errorf("StageHostname: got %q want empty (no stage-half)", rc.StageHostname)
+	if rc.DevHostname != "" {
+		t.Errorf("DevHostname: got %q want empty (no pair)", rc.DevHostname)
 	}
 	if rc.Mode != string(topology.ModeSimple) {
 		t.Errorf("Mode: got %q want %q", rc.Mode, topology.ModeSimple)

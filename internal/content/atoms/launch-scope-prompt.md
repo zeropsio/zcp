@@ -13,7 +13,7 @@ references-fields: []
 Apply suggestions from `sourceContext`:
 
 - **`productionProjectName`** — `sourceContext.suggestedTargetName` (`<source>-dev` / `<source>-stage` → `<source>-prod`, else `<source>-prod` appended). Confirm name with user; don't silently rename.
-- **`targetService`** — `sourceContext.suggestedRuntime` when single. The new prod project rebuilds fresh from git, so promotion is the dev/stage pair *as a unit*; for standard-mode pairs the headline is the stage hostname (validated last-known-good). Either half is accepted — the handler normalizes to the canonical key. Managed deps are bundled implicitly.
+- **`targetService`** — `sourceContext.suggestedRuntime` when single. For standard-mode pairs the headline is the stage hostname (validated last-known-good); `devHostname` field discloses the iteration half. The new prod project rebuilds fresh from git, so promotion is the dev/stage pair *as a unit*. Either half is accepted as input — the handler normalizes internally. Managed deps are bundled implicitly.
 - **`region`** — optional, default `eu-central`.
 - **`customDomain`** — optional; ZCP emits DNS records + verification probes, user attaches in Zerops UI.
 - **`keepNonHA`** — optional `[]hostname` to keep at `NON_HA` (default: all managed deps go `HA`).

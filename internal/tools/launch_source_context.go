@@ -47,9 +47,12 @@ type launchSourceContext struct {
 // pair) and surfaces the platform-level type so the agent can briefly
 // disclose what the user is choosing among.
 type runtimeChoice struct {
-	// Hostname is the dev-half hostname — the canonical `targetService`
-	// value. The launch handler treats stage-half input as an error
-	// (scope-prompt blocker `scope-stage-half-not-promotable`).
+	// Hostname is the user-facing promotion headline. For standard or
+	// local-stage pairs this is the STAGE-half hostname (the validated
+	// last-known-good copy is the natural promotion source). For
+	// dev/simple/local-only runtimes it is the only hostname. Either
+	// half of a pair is accepted as `targetService`; the handler
+	// normalizes to the canonical dev-half key internally.
 	Hostname string `json:"hostname"`
 	// Type is the service-stack type version name as the platform
 	// reports it (e.g. "nodejs@22", "php-nginx@8.4"). Empty when type
@@ -57,13 +60,15 @@ type runtimeChoice struct {
 	Type string `json:"type,omitempty"`
 	// Mode is the ZCP topology mode for this runtime (dev | simple |
 	// standard | local-stage | local-only). Empty when ZCP has no
-	// ServiceMeta for the service (raw-platform discovery only).
+	// ServiceMeta for the service (raw-platform discovery only). When
+	// Mode=standard or local-stage, the entry represents the stage-half
+	// of a pair and DevHostname names the iteration-half.
 	Mode string `json:"mode,omitempty"`
-	// StageHostname is the stage-half of a standard or local-stage pair.
-	// Empty for dev/simple/local-only runtimes. When set, the agent
-	// should disclose: "promoting `<hostname>` ships the dev-stage
-	// pair's published source — `<stageHostname>` is the staging half."
-	StageHostname string `json:"stageHostname,omitempty"`
+	// DevHostname is the dev-half of a standard or local-stage pair.
+	// Empty for dev/simple/local-only runtimes. Disclosed so the agent
+	// can explain "promoting `<hostname>` ships the dev-stage pair's
+	// validated source — `<devHostname>` is the iteration half."
+	DevHostname string `json:"devHostname,omitempty"`
 }
 
 // gatherLaunchSourceContext probes the source project for hint data
@@ -75,11 +80,13 @@ type runtimeChoice struct {
 // hints and forces user-driven input via scope-prompt blockers.
 //
 // Pair-keyed collapse: when ZCP holds a ServiceMeta for a standard or
-// local-stage pair, the stage-half is hidden from AvailableRuntimes
-// (only the dev-half surfaces, with stageHostname exposed on the
-// runtimeChoice). Without a state directory or matching metas, the
-// function falls back to raw service-list output — each USER-category
-// hostname becomes its own runtimeChoice with empty Mode/StageHostname.
+// local-stage pair, the dev-half is hidden from AvailableRuntimes
+// (only the stage-half surfaces, with devHostname exposed on the
+// runtimeChoice). Stage is the validated last-known-good copy and the
+// natural promotion headline. Without a state directory or matching
+// metas, the function falls back to raw service-list output — each
+// USER-category hostname becomes its own runtimeChoice with empty
+// Mode/DevHostname.
 //
 // Self-filter: the ZCP control-plane container's own service-stack
 // (type `zcp@1`) is excluded so the launch flow can't suggest
@@ -119,32 +126,23 @@ func gatherLaunchSourceContext(ctx context.Context, client platform.Client, sour
 				continue
 			}
 			meta := lookupMeta(metaByHost, s.Name)
-			// Stage-half collapse: when this hostname is the stage-half
-			// of a managed dev/stage pair, skip — the dev-half will
-			// surface independently with stageHostname populated.
-			if meta != nil && meta.StageHostname == s.Name {
+			// Dev-half collapse: when this hostname is the dev-half of a
+			// managed pair, skip — the stage-half will surface
+			// independently as the promotion headline with devHostname
+			// disclosed. Singletons (dev/simple/local-only) fall through
+			// to the append below.
+			if meta != nil && meta.Hostname == s.Name && meta.StageHostname != "" {
 				continue
 			}
 			out.AvailableRuntimes = append(out.AvailableRuntimes, runtimeChoice{
-				Hostname:      s.Name,
-				Type:          s.ServiceStackTypeInfo.ServiceStackTypeVersionName,
-				Mode:          metaModeString(meta),
-				StageHostname: metaStageHostname(meta),
+				Hostname:    s.Name,
+				Type:        s.ServiceStackTypeInfo.ServiceStackTypeVersionName,
+				Mode:        metaModeString(meta),
+				DevHostname: pairDevHostname(meta, s.Name),
 			})
 		}
 		if len(out.AvailableRuntimes) == 1 {
-			// For standard-mode pairs, suggest the stage-half — stage is
-			// the validated last-known-good copy; dev iterates. Both
-			// halves are accepted by the handler (same git source, same
-			// setup blocks), but the stage-half is the natural promotion
-			// headline. For non-pair runtimes (dev/simple/local-only),
-			// suggest the canonical hostname.
-			rc := out.AvailableRuntimes[0]
-			if rc.StageHostname != "" {
-				out.SuggestedRuntime = rc.StageHostname
-			} else {
-				out.SuggestedRuntime = rc.Hostname
-			}
+			out.SuggestedRuntime = out.AvailableRuntimes[0].Hostname
 		}
 	}
 	if out.SourceProjectName == "" && len(out.AvailableRuntimes) == 0 {
@@ -189,13 +187,18 @@ func metaModeString(meta *workflow.ServiceMeta) string {
 	return string(meta.Mode)
 }
 
-// metaStageHostname returns the stage-half hostname when this meta is a
-// standard or local-stage pair, otherwise empty.
-func metaStageHostname(meta *workflow.ServiceMeta) string {
-	if meta == nil {
+// pairDevHostname returns the dev-half hostname for disclosure on a
+// stage-half runtimeChoice entry. Returns empty when the meta doesn't
+// represent a pair OR when this hostname IS the dev-half (in which
+// case the entry already names the only hostname).
+func pairDevHostname(meta *workflow.ServiceMeta, hostname string) string {
+	if meta == nil || meta.StageHostname == "" {
 		return ""
 	}
-	return meta.StageHostname
+	if meta.StageHostname == hostname {
+		return meta.Hostname
+	}
+	return ""
 }
 
 // normalizeTargetServiceForLaunch resolves the user-supplied
