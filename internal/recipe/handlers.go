@@ -891,6 +891,20 @@ func handleRecordFragment(sess *Session, in RecipeInput, r RecipeResult) RecipeR
 	// Zerops-free CLAUDE.md contract. See
 	// `briefs/claudemd-author/zerops_free_prohibition.md`.
 
+	// Run-46 Item 7 — self-referential-naming linter for codebase KB
+	// fragments. Scoped to `codebase/<host>/knowledge-base` (KB is
+	// where the run-45 violations landed). Refuses backticked tokens
+	// that resolve to recipe-internal symbols (src/ filenames, class
+	// exports, NestJS module-pattern suffixes). Closes the loop on
+	// spec §"Self-referential decoration prohibition" — the principle
+	// was in the audit substrate; refinement-2 didn't catch it across
+	// run-45. Structural validator at authoring time is the same shape
+	// as the named-constant-drift gate.
+	if errMsg := selfReferentialKBRefusal(sess, in.FragmentID, in.Fragment); errMsg != "" {
+		r.Error = errMsg
+		return r
+	}
+
 	// Run-20 C1 — facts-attestation check for JetStream framing in
 	// env-content import-comment fragments. Run-19 shipped fabricated
 	// JetStream framing on a recipe that uses only core pub/sub,
