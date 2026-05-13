@@ -922,48 +922,26 @@ func handleRecordFragment(sess *Session, in RecipeInput, r RecipeResult) RecipeR
 		}
 	}
 
-	// Run-17 §9.5 — refinement-phase Replace transactional wrapper.
-	// On PhaseRefinement Replace of a codebase/<host>/... fragment, run
-	// surface validators pre- and post-Replace; if the Replace
-	// introduces a new blocking violation that wasn't present before,
-	// revert the fragment to its pre-Replace body and surface a notice.
-	// Per the refinement contract: per-fragment edit cap = 1, so this
-	// is the agent's only attempt; the rollback prevents a degraded
-	// refinement from persisting.
-	wrapRefinement := sess.Current == PhaseRefinement && in.Mode == modeReplace
-	host := codebaseHostFromFragmentID(in.FragmentID)
-	var preBlocking []Violation
-	if wrapRefinement && host != "" {
-		preBlocking = refinementPreCheckScoped(sess, host)
-	}
-
-	bodyBytes, appended, priorBody, err := recordFragment(sess, in.FragmentID, in.Fragment, in.Mode)
+	// Run-17 §9.5 + Run-46 Item 3 — refinement-phase transactional
+	// snapshot/restore wrapper. Codebase fragments (S4-S7) gate against
+	// codebase-surface-validators; env fragments (S3 tier import-comments)
+	// gate against EnvGates. Both branches snapshot the prior body,
+	// apply the Replace, re-run the validator set, and revert when the
+	// Replace introduces a new blocking violation. Implementation lives
+	// in performRefinementWrap so handleRecordFragment stays under the
+	// maintainability index threshold.
+	wrapResult, err := performRefinementWrap(sess, in)
 	if err != nil {
 		r.Error = err.Error()
 		return r
 	}
 	r.FragmentID = in.FragmentID
-	r.BodyBytes = bodyBytes
-	r.Appended = appended
-	r.PriorBody = priorBody
-
-	if wrapRefinement && host != "" {
-		postBlocking := refinementPreCheckScoped(sess, host)
-		if newBlocking := newViolationsIntroduced(preBlocking, postBlocking); len(newBlocking) > 0 {
-			sess.RestoreFragment(in.FragmentID, priorBody)
-			r.BodyBytes = len(priorBody)
-			for _, v := range newBlocking {
-				r.Notices = append(r.Notices, Violation{
-					Code:     "refinement-replace-reverted",
-					Path:     in.FragmentID,
-					Severity: SeverityNotice,
-					Message: fmt.Sprintf(
-						"post-replace validator surfaced %s on %s — fragment reverted to its pre-refinement body. %s",
-						v.Code, v.Path, v.Message),
-				})
-			}
-		}
-	}
+	r.BodyBytes = wrapResult.BodyBytes
+	r.Appended = wrapResult.Appended
+	r.PriorBody = wrapResult.PriorBody
+	r.Notices = append(r.Notices, wrapResult.Notices...)
+	tierIdx := wrapResult.TierIdx
+	wrapRefinement := wrapResult.WrapRefinement
 
 	// Run-34 Fix 1 — refinement-time env-fragment persistence parity.
 	// `record-fragment mode=replace` on `env/<N>/intro` or
@@ -975,18 +953,16 @@ func handleRecordFragment(sess *Session, in RecipeInput, r RecipeResult) RecipeR
 	// gate yet), but persistence-to-disk MUST happen regardless.
 	//
 	// Diagnosed in plans/run-34-validation.md §"Top 5 surprises" #1.
-	if wrapRefinement {
-		if tierIdx := envTierIndexFromFragmentID(in.FragmentID); tierIdx >= 0 {
-			if err := preStitchEnv(sess, tierIdx); err != nil {
-				r.Notices = append(r.Notices, Violation{
-					Code:     "refinement-env-stitch-failed",
-					Path:     in.FragmentID,
-					Severity: SeverityNotice,
-					Message: fmt.Sprintf(
-						"env-fragment Replace landed in plan state but on-disk stitch failed: %s. Re-run stitch-content to reconcile.",
-						err.Error()),
-				})
-			}
+	if wrapRefinement && tierIdx >= 0 {
+		if err := preStitchEnv(sess, tierIdx); err != nil {
+			r.Notices = append(r.Notices, Violation{
+				Code:     "refinement-env-stitch-failed",
+				Path:     in.FragmentID,
+				Severity: SeverityNotice,
+				Message: fmt.Sprintf(
+					"env-fragment Replace landed in plan state but on-disk stitch failed: %s. Re-run stitch-content to reconcile.",
+					err.Error()),
+			})
 		}
 	}
 
@@ -1125,6 +1101,202 @@ func refinementPreCheckScoped(sess *Session, host string) []Violation {
 		return nil
 	}
 	return blocking
+}
+
+// codeRefinementReplaceReverted is the Notice.Code used by both the
+// codebase + env refinement wrappers when a post-replace validator
+// surfaces a new blocking violation and the fragment is reverted to
+// its pre-replace body.
+const codeRefinementReplaceReverted = "refinement-replace-reverted"
+
+// refinementWrapResult carries the outcomes of performRefinementWrap so
+// handleRecordFragment can stay short. BodyBytes / Appended / PriorBody
+// are recordFragment's return values; Notices are the per-wrap revert
+// notices; TierIdx + WrapRefinement let the caller dispatch later
+// post-wrap steps (env stitch + plan.json write-back) without
+// re-deriving them.
+type refinementWrapResult struct {
+	BodyBytes      int
+	Appended       bool
+	PriorBody      string
+	Notices        []Violation
+	TierIdx        int
+	WrapRefinement bool
+}
+
+// performRefinementWrap encapsulates the run-17/run-46 refinement
+// transactional snapshot/restore wrapper. Run-46 Item 3 — symmetric
+// branches: codebase fragments gate against
+// refinementPreCheckScoped(host); env import-comment fragments gate
+// against refinementPreCheckEnv(tierIdx). Both branches snapshot prior
+// body, apply Replace via recordFragment, re-run gate set, revert on
+// new blocking violations.
+//
+// Returns the body byte count + append flag + prior body recordFragment
+// would have returned, plus a flat slice of refinement-replace-reverted
+// notices the caller surfaces on the response envelope.
+func performRefinementWrap(sess *Session, in RecipeInput) (refinementWrapResult, error) {
+	res := refinementWrapResult{}
+	res.WrapRefinement = sess.Current == PhaseRefinement && in.Mode == modeReplace
+	host := codebaseHostFromFragmentID(in.FragmentID)
+	res.TierIdx = envTierIndexFromFragmentID(in.FragmentID)
+	isEnvImport := res.TierIdx >= 0 && envImportCommentsRe.MatchString(in.FragmentID)
+	var preBlocking []Violation
+	var envPriorBody string
+	if res.WrapRefinement && host != "" {
+		preBlocking = refinementPreCheckScoped(sess, host)
+	}
+	if res.WrapRefinement && isEnvImport {
+		preBlocking = refinementPreCheckEnv(sess, res.TierIdx)
+		envPriorBody = sess.SnapshotFragment(in.FragmentID)
+	}
+	bodyBytes, appended, priorBody, err := recordFragment(sess, in.FragmentID, in.Fragment, in.Mode)
+	if err != nil {
+		return res, err
+	}
+	res.BodyBytes = bodyBytes
+	res.Appended = appended
+	res.PriorBody = priorBody
+	if isEnvImport && priorBody == "" {
+		res.PriorBody = envPriorBody
+	}
+	if res.WrapRefinement && host != "" {
+		notices := runCodebaseRefinementWrapper(sess, in.FragmentID, host, priorBody, preBlocking)
+		res.Notices = append(res.Notices, notices...)
+		if revertedSize := envRevertedBodyBytes(sess, in.FragmentID, priorBody, notices); revertedSize >= 0 {
+			res.BodyBytes = revertedSize
+		}
+	}
+	if res.WrapRefinement && isEnvImport {
+		notices := runEnvRefinementWrapper(sess, in.FragmentID, res.TierIdx, envPriorBody, preBlocking)
+		res.Notices = append(res.Notices, notices...)
+		if revertedSize := envRevertedBodyBytes(sess, in.FragmentID, envPriorBody, notices); revertedSize >= 0 {
+			res.BodyBytes = revertedSize
+		}
+	}
+	return res, nil
+}
+
+// runCodebaseRefinementWrapper runs the post-replace codebase gate
+// set, diffs against the pre-replace blocking violations, and reverts
+// the fragment when new blocking violations appear. Returns the notice
+// list the caller surfaces on the response envelope. Empty notices =
+// no revert; the post-replace body remains canonical.
+func runCodebaseRefinementWrapper(sess *Session, fragmentID, host, priorBody string, preBlocking []Violation) []Violation {
+	postBlocking := refinementPreCheckScoped(sess, host)
+	newBlocking := newViolationsIntroduced(preBlocking, postBlocking)
+	if len(newBlocking) == 0 {
+		return nil
+	}
+	sess.RestoreFragment(fragmentID, priorBody)
+	notices := make([]Violation, 0, len(newBlocking))
+	for _, v := range newBlocking {
+		notices = append(notices, Violation{
+			Code:     codeRefinementReplaceReverted,
+			Path:     fragmentID,
+			Severity: SeverityNotice,
+			Message: fmt.Sprintf(
+				"post-replace validator surfaced %s on %s — fragment reverted to its pre-refinement body. %s",
+				v.Code, v.Path, v.Message),
+		})
+	}
+	return notices
+}
+
+// runEnvRefinementWrapper executes the env-tier snapshot/restore
+// refinement wrapper: re-stitch the tier so the post-gate sees the
+// new disk body, run EnvGates, diff against pre-blocking, revert +
+// re-stitch when new violations appear. Returns the notice list the
+// caller surfaces on the response envelope. Run-46 Item 3.
+func runEnvRefinementWrapper(sess *Session, fragmentID string, tierIdx int, envPriorBody string, preBlocking []Violation) []Violation {
+	var notices []Violation
+	if err := preStitchEnv(sess, tierIdx); err != nil {
+		notices = append(notices, Violation{
+			Code:     "refinement-env-stitch-failed",
+			Path:     fragmentID,
+			Severity: SeverityNotice,
+			Message: fmt.Sprintf(
+				"env-fragment Replace landed in plan state but on-disk stitch failed pre-validate: %s. Wrapper revert decision may be incorrect.",
+				err.Error()),
+		})
+	}
+	postBlocking := refinementPreCheckEnv(sess, tierIdx)
+	newBlocking := newViolationsIntroduced(preBlocking, postBlocking)
+	if len(newBlocking) == 0 {
+		return notices
+	}
+	sess.RestoreFragment(fragmentID, envPriorBody)
+	_ = preStitchEnv(sess, tierIdx)
+	for _, v := range newBlocking {
+		notices = append(notices, Violation{
+			Code:     codeRefinementReplaceReverted,
+			Path:     fragmentID,
+			Severity: SeverityNotice,
+			Message: fmt.Sprintf(
+				"post-replace validator surfaced %s on %s — fragment reverted to its pre-refinement body. %s",
+				v.Code, v.Path, v.Message),
+		})
+	}
+	return notices
+}
+
+// envRevertedBodyBytes returns the byte count of the reverted prior
+// body when the env wrapper's notices include a
+// refinement-replace-reverted entry. Returns -1 when the wrapper did
+// not revert (caller leaves r.BodyBytes at the recordFragment value).
+func envRevertedBodyBytes(_ *Session, _ string, envPriorBody string, notices []Violation) int {
+	for _, n := range notices {
+		if n.Code == codeRefinementReplaceReverted {
+			return len(envPriorBody)
+		}
+	}
+	return -1
+}
+
+// refinementPreCheckEnv runs the env-tier gate set (EnvGates) and
+// returns blocking violations filtered to the named tier's
+// import.yaml path. Run-46 Item 3 — the refinement-phase snapshot/
+// restore wrapper uses this to compare pre- and post-Replace env-
+// comment fragments symmetrically with the codebase path. Filtering
+// by tier is the env-side analog of the codebase wrapper's per-host
+// scoping (refinementPreCheckScoped) — without it, sibling tiers'
+// pre-existing violations would dominate the diff and a Replace on
+// tier N would surface violations from tier M as "newly introduced."
+//
+// Phase state is NOT mutated; this is a pre-flight, not a transition.
+// Errors degrade to nil (the unwrapped recordFragment already wrote
+// the new body).
+func refinementPreCheckEnv(sess *Session, tierIndex int) []Violation {
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.Plan == nil {
+		return nil
+	}
+	ctx := GateContext{
+		Plan:          sess.Plan,
+		OutputRoot:    sess.OutputRoot,
+		FactsLog:      sess.FactsLog,
+		Parent:        sess.Parent,
+		EngineVersion: sess.EngineVersion,
+	}
+	blocking, _ := PartitionBySeverity(RunGates(EnvGates(), ctx))
+	tier, ok := TierAt(tierIndex)
+	if !ok {
+		return blocking
+	}
+	folder := tier.Folder
+	var filtered []Violation
+	for _, v := range blocking {
+		// Tier scope check: violation path is anchored at
+		// `<outputRoot>/<tier-folder>/...` for tier-bound validators.
+		// Validators without a tier-anchored path (gate output that
+		// names a fragment id or has an empty path) fall through to
+		// the unscoped set so unrelated paths don't silently disappear.
+		if v.Path == "" || strings.Contains(v.Path, folder+"/") || strings.HasSuffix(v.Path, folder) {
+			filtered = append(filtered, v)
+		}
+	}
+	return filtered
 }
 
 // newViolationsIntroduced returns the post-state violations whose
