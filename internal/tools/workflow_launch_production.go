@@ -31,9 +31,14 @@ import (
 //	failed          → mutation step failed (D.2)
 //	launched        → terminal success (D.2)
 //
-// P-LP-1: input.LaunchKey is json:"-" so it never appears in any
-// JSON-serialized response. Handler must not log it, write it to state,
-// or include it in error messages.
+// P-LP-1 is enforced at the OUTPUT boundary: no field on
+// launchProductionResponse, launchState, or launchAuditEntry carries
+// the LaunchKey value. The auth-failure error wrapper never echoes it.
+// The input field accepts the value (json:"launchKey") so the mcp-go
+// schema exposes the property — without this, every call returns
+// "unexpected additional properties [launchKey]". Handler must still
+// not log it, structured-log it (reflect-based loggers would expose
+// it), or include it in error messages we author.
 //
 // P-LP-2: this is the ONLY file in internal/tools/ that may construct
 // platform.ProjectAdminClient. Pinned by

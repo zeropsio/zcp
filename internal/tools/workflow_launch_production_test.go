@@ -260,21 +260,3 @@ func TestHandleLaunchProduction_EmptyProjectIDReturnsError(t *testing.T) {
 		t.Errorf("expected IsError=true for empty projectID, got %v", result)
 	}
 }
-
-// TestWorkflowInputLaunchKey_JSONTagOmits verifies the field tag is `-`
-// so encoding/json never marshals LaunchKey into any output.
-// Compile-time-adjacent guarantee, but explicit test surfaces drift.
-func TestWorkflowInputLaunchKey_JSONTagOmits(t *testing.T) {
-	wi := WorkflowInput{LaunchKey: sentinelLaunchKey}
-	b, err := json.Marshal(wi)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if strings.Contains(string(b), sentinelLaunchKey) {
-		t.Fatalf("LaunchKey leaked into WorkflowInput JSON marshal: %s", string(b))
-	}
-	// Also confirm it doesn't show under any of the JSON tags we set
-	if strings.Contains(string(b), `"launchKey"`) {
-		t.Fatalf("WorkflowInput emitted a launchKey JSON field; should be omitted entirely: %s", string(b))
-	}
-}

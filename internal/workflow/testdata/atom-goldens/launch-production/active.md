@@ -30,7 +30,7 @@ Six top-level statuses gate progress:
 | `failed` | A mutation step failed; `blockers[]` describes recovery. |
 | `launched` | Done. Delete the launch key. Set external secrets in Zerops UI. Attach custom domain in Zerops UI per emitted DNS records. |
 
-ZCP has **zero standing access** to the production project. The one-shot key flows in via the `launchKey` parameter only during `publish` action; it is never written to state, logs, or transcripts.
+ZCP has **zero standing access** to the production project. The one-shot key flows in via the `launchKey` parameter only during `publish` action; ZCP never writes it to state, logs, or audit trail. The MCP tool-call transcript itself records the parameter (that surface is your client's, not ZCP's) — generate the key right before `publish`, then revoke it in the Zerops dashboard the moment `launched` status returns.
 
 ---
 
