@@ -76,6 +76,15 @@ func TestCompletePhaseRefinement_GatesCatchPostACTRegression(t *testing.T) {
 	if _, err := stitchContent(sess); err != nil {
 		t.Fatalf("post-injection stitch-content: %v", err)
 	}
+	// Run-46 Item 1 — populate walked-ledger BEFORE the close call so
+	// the gate-set test isolates the surface-validator path (the walked-
+	// ledger refusal is exercised separately in
+	// TestCompletePhaseRefinement_RefusesIncompleteWalkedLedger).
+	manifest, mErr := BuildRefinement2Manifest(sess.Plan)
+	if mErr != nil {
+		t.Fatalf("BuildRefinement2Manifest: %v", mErr)
+	}
+	sess.Refinement2Ledger = &Refinement2Ledger{Walked: manifest.AllKeys()}
 
 	in := RecipeInput{Action: "complete-phase", Phase: string(PhaseRefinement)}
 	r := completePhase(sess, in, RecipeResult{Action: "complete-phase"})

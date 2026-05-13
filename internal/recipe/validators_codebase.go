@@ -167,6 +167,11 @@ func validateCodebaseKB(_ context.Context, path string, body []byte, inputs Surf
 		vs = append(vs, violation("kb-citation-missing", path,
 			fmt.Sprintf("KB mentions %q but does not cite `zerops_knowledge` guide %q", topic, guide)))
 	}
+	// Run-46 Item 5 — citation display-text ↔ URL ↔ topic agreement.
+	// Closes the run-45 apidev IG #4 hole where a wrong-URL form-(b)
+	// citation passed kb-citation-missing because the URL canonical-
+	// matched a different guide than the bullet's stated topic.
+	vs = append(vs, validateCitationDisplayAgreement(path, kb)...)
 	// V-2: paraphrase detection vs the cited guide's key phrases.
 	vs = append(vs, validateKBParaphrase(path, kb)...)
 	// V-3: each bullet must mention at least one platform-side
@@ -424,6 +429,258 @@ func trimForMessage(s string) string {
 		return s[:77] + "..."
 	}
 	return s
+}
+
+// markdownLinkRE matches a markdown link — `[display text](URL)`. The
+// URL is the second capture group; display text is the first. Run-46
+// Item 5 — the citation-display-text validator parses these to check
+// display↔URL agreement.
+var markdownLinkRE = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
+
+// DetectBulletTopic returns the canonical topic id when a KB bullet's
+// PRIMARY teaching is unambiguously one citation-map topic. Returns ""
+// on ambiguity (multi-topic bullets are legitimate; only hard-fail on
+// clearly mis-cited single-topic bullets).
+//
+// Heuristic: scan the body for canonical-topic keywords. A topic
+// "dominates" when its distinct keyword hits ≥ 2 AND no other topic
+// has any hit. Single-keyword-only bullets return "" (not enough
+// signal). Multi-topic bullets return "" (ambiguity).
+//
+// Run-46 Item 5 — the validator caller hard-fails ONLY on
+// unambiguous topic detection; ambiguous bullets pass through to the
+// pre-existing kb-citation-missing check. Multi-topic bullets are
+// legitimate per the writer contract.
+func DetectBulletTopic(body string) string {
+	// Per-topic keyword sets. The keys are the canonical guide ids
+	// (CitationMap values); the slice carries unambiguous keywords for
+	// that topic — terms that, if they appear in a bullet, strongly
+	// suggest the bullet's PRIMARY teaching is the topic. Single-token
+	// citation-map keys (e.g. `init-commands`) appear here as the
+	// hyphenated form. Drift from CitationMap to here is intentional —
+	// CitationMap is the over-broad "topic appears anywhere on this
+	// surface" lookup; DetectBulletTopic is the narrow "this bullet is
+	// PRIMARILY about" decision.
+	topicKeywords := map[string][]string{
+		"rolling-deploys": {
+			"rolling-deploy", "rolling deploys",
+			"mincontainers", "zero-downtime",
+			"sigterm",
+		},
+		"init-commands": {
+			"init-command", "init commands", "initcommands",
+			"execonce", "${appversionid}",
+		},
+		"object-storage": {
+			"object storage", "object-storage",
+			"forcepathstyle", "minio", "s3",
+		},
+		"env-var-model": {
+			"env-var-model", "cross-service env",
+			"self-shadow", "envisolation",
+		},
+		"http-support": {
+			"http-support", "l7-balancer", "l7 balancer",
+			"trust proxy", "trust-proxy",
+			"subdomain access", "httpsupport",
+			"bind 0.0.0.0", "bind to 0.0.0.0",
+		},
+		"deploy-files": {
+			"deploy-files", "deployfiles",
+			"tilde syntax", "tilde-suffix",
+			"static runtime",
+		},
+		"readiness-health-checks": {
+			"readiness check", "readiness-check",
+			"health check", "health-check",
+		},
+	}
+	lower := strings.ToLower(body)
+	type hit struct {
+		topic string
+		count int
+	}
+	var hits []hit
+	for topic, kws := range topicKeywords {
+		c := 0
+		for _, k := range kws {
+			if strings.Contains(lower, k) {
+				c++
+			}
+		}
+		if c > 0 {
+			hits = append(hits, hit{topic: topic, count: c})
+		}
+	}
+	if len(hits) == 0 {
+		return ""
+	}
+	if len(hits) == 1 {
+		// Single topic — require ≥ 2 distinct keyword hits to call it
+		// "primary." A bare keyword mention does not trigger the topic
+		// requirement (matches the brief's "Keyword-over-match guard"
+		// clause).
+		if hits[0].count >= 2 {
+			return hits[0].topic
+		}
+		return ""
+	}
+	// Multiple topics — find the dominant. A topic "dominates" when its
+	// hit count is at least twice the second-best AND ≥ 2 distinct
+	// keywords matched. The 2x ratio guard keeps mixed-topic bullets
+	// (where multiple topics carry comparable weight) ambiguous.
+	bestIdx := 0
+	for i := range hits {
+		if hits[i].count > hits[bestIdx].count {
+			bestIdx = i
+		}
+	}
+	best := hits[bestIdx]
+	secondBest := 0
+	for i := range hits {
+		if i == bestIdx {
+			continue
+		}
+		if hits[i].count > secondBest {
+			secondBest = hits[i].count
+		}
+	}
+	if best.count >= 2 && best.count >= 2*secondBest+1 {
+		return best.topic
+	}
+	return ""
+}
+
+// lookupGuideIDFromURL returns the guide id whose canonical URL
+// host+path matches the link URL, or "" when no map URL matches. Mirrors
+// the host+path-match rule defined in briefs_refinement2.go (scheme +
+// host case-insensitive, path equality with trailing slash optional,
+// fragment anchored to map URL's fragment).
+func lookupGuideIDFromURL(linkURL string) string {
+	// Normalize: strip scheme, lowercase host portion.
+	stripped := strings.TrimPrefix(linkURL, "https://")
+	stripped = strings.TrimPrefix(stripped, "http://")
+	stripped = strings.TrimPrefix(stripped, "//")
+	// Split off any fragment for the path-match phase.
+	pathPart, _, _ := strings.Cut(stripped, "#")
+	pathPart = strings.TrimRight(pathPart, "/")
+	pathPartLower := strings.ToLower(pathPart)
+	for guide, url := range CitationGuideURL {
+		canonical := url
+		canonPath, _, _ := strings.Cut(canonical, "#")
+		canonPath = strings.TrimRight(canonPath, "/")
+		if strings.EqualFold(canonPath, pathPartLower) {
+			return guide
+		}
+	}
+	return ""
+}
+
+// citationFormARE matches a form-(a) citation: the backticked guide id
+// used IN citation framing. Captures the guide id (group 1). Anchored
+// to "the `<id>` guide" / "see the `<id>` guide" / "`<id>` guide
+// covers" etc. — the same shape briefs_refinement2.go::citationMapBlock
+// teaches.
+var citationFormARE = regexp.MustCompile("`([a-z][a-z0-9-]+)`\\s+(?:guide|reference)")
+
+// validateCitationDisplayAgreement — Run-46 Item 5. Three checks across
+// the per-bullet citation set:
+//
+//  1. Display-text ↔ URL agreement: when a markdown link's URL matches a
+//     known guide URL, the display text MUST be the friendly display
+//     name for THAT guide. Run-45 apidev IG #4 fixture: display named
+//     rolling-deploys; URL was init-commands canonical — the wrong-URL
+//     form-(b) citation passed kbBodyCitesGuideURL's anchored-match
+//     check because the URL was a valid init-commands citation.
+//
+//  2. URL ↔ topic agreement: when the bullet's topic is unambiguously
+//     detectable (DetectBulletTopic returns a topic, not ""), the URL
+//     in any form-(b) citation MUST match the canonical for that topic.
+//
+//  3. Form-(a) guide-id ↔ topic agreement: when the bullet's topic is
+//     unambiguously detectable AND the bullet cites a guide id via the
+//     "the `<id>` guide" shape, the cited guide MUST match the topic.
+//
+// Bullets without any citation don't fire; the existing
+// kb-citation-missing check covers the missing-citation case.
+func validateCitationDisplayAgreement(path, kb string) []Violation {
+	var vs []Violation
+	// Walk each bullet separately so topic-detection works per-bullet,
+	// not over the whole KB. Reuse the bullet boundary regex from
+	// validators_codebase.go's local bullet parser.
+	bulletStarts := boldBulletRE.FindAllStringIndex(kb, -1)
+	if len(bulletStarts) == 0 {
+		return nil
+	}
+	for i, m := range bulletStarts {
+		var end int
+		if i+1 < len(bulletStarts) {
+			end = bulletStarts[i+1][0]
+		} else {
+			end = len(kb)
+		}
+		bullet := kb[m[0]:end]
+		// Find every markdown link + form-(a) backtick citation in the
+		// bullet.
+		links := markdownLinkRE.FindAllStringSubmatch(bullet, -1)
+		formAMatches := citationFormARE.FindAllStringSubmatch(bullet, -1)
+		if len(links) == 0 && len(formAMatches) == 0 {
+			continue
+		}
+		// Detect bullet topic ONCE per bullet — best-effort. Ambiguity
+		// returns "" and the topic-match check is silently skipped on
+		// this bullet.
+		bulletTopic := DetectBulletTopic(bullet)
+		for _, link := range links {
+			displayText := strings.TrimSpace(link[1])
+			linkURL := strings.TrimSpace(link[2])
+			matchedGuide := lookupGuideIDFromURL(linkURL)
+			if matchedGuide == "" {
+				// URL doesn't match any known guide — skip; this isn't
+				// a citation-map URL, so display-text doesn't have to
+				// match anything in particular.
+				continue
+			}
+			// Check 1 — display text MUST be the friendly name for the
+			// URL's matched guide.
+			expectedDisplay := FriendlyDisplayName(matchedGuide)
+			if expectedDisplay != "" && !strings.EqualFold(displayText, expectedDisplay) {
+				vs = append(vs, violation("kb-citation-display-mismatch", path,
+					fmt.Sprintf("citation display text %q does not match the friendly name %q for the URL's matched guide %q (URL %s). Either fix the display text to match the URL's guide, or change the URL to point at the guide the display text names.",
+						displayText, expectedDisplay, matchedGuide, linkURL)))
+			}
+			// Check 2 — if topic is unambiguous, URL MUST canonical-match.
+			if bulletTopic != "" && matchedGuide != bulletTopic {
+				canonicalURL := CitationGuideURL[bulletTopic]
+				vs = append(vs, violation("kb-citation-topic-mismatch", path,
+					fmt.Sprintf("citation URL %s does not match canonical for the bullet's detected topic %q (canonical is %s). The bullet's primary teaching is the detected topic; the citation must point the porter at that guide.",
+						linkURL, bulletTopic, canonicalURL)))
+			}
+		}
+		// Check 3 — form-(a) backtick guide-id citations. Each match
+		// captures the cited guide id; if a known guide is named AND
+		// the bullet's topic is unambiguous AND they disagree, fire.
+		if bulletTopic == "" {
+			continue
+		}
+		for _, fa := range formAMatches {
+			citedGuide := fa[1]
+			// Only check against known guides — random backticked
+			// tokens that happen to precede the word "guide" are not
+			// citation-map matches.
+			if _, ok := CitationGuideURL[citedGuide]; !ok {
+				continue
+			}
+			if citedGuide == bulletTopic {
+				continue
+			}
+			canonicalURL := CitationGuideURL[bulletTopic]
+			vs = append(vs, violation("kb-citation-topic-mismatch", path,
+				fmt.Sprintf("citation names the %q guide but the bullet's detected topic is %q (canonical URL %s). The bullet's primary teaching is the detected topic; cite the guide that matches.",
+					citedGuide, bulletTopic, canonicalURL)))
+		}
+	}
+	return vs
 }
 
 // kbBodyCitesGuideURL — Run-44 G1. Returns true when the body cites

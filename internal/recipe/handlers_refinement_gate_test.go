@@ -225,6 +225,14 @@ func TestCompletePhaseRefinement_FlipsClosedFlagAndWritesMarker(t *testing.T) {
 	// before complete-phase phase=refinement closes. Set the flag so
 	// this test exercises the close path, not the dispatch gate.
 	sess.Refinement2Dispatched = true
+	// Run-46 Item 1 — walked-ledger receipt gate. Set a full-coverage
+	// ledger so the close path runs past the gate (other tests exercise
+	// the gate's refusal branch).
+	manifest, mErr := BuildRefinement2Manifest(sess.Plan)
+	if mErr != nil {
+		t.Fatalf("BuildRefinement2Manifest: %v", mErr)
+	}
+	sess.Refinement2Ledger = &Refinement2Ledger{Walked: manifest.AllKeys()}
 	// Run-43 Edit D — leave Completed[PhaseRefinement]=true so
 	// CompletePhase's short-circuit isolates the flag-flip path from
 	// the surface-validator set (which would require materializing

@@ -187,6 +187,56 @@ func leadingDigits(s string) string {
 	return s[:end]
 }
 
+// friendlyDisplayNames — derived from the citation-map block's
+// "OR friendly `<name>`" clauses in briefs_refinement2.go. Run-46 Item 5
+// exposes a public lookup via FriendlyDisplayName so the citation
+// validator can do display-text↔URL agreement.
+var friendlyDisplayNames = map[string]string{
+	"rolling-deploys":         "zero-downtime deploys with multi-container setups",
+	"init-commands":           "zsc execOnce + per-deploy key model",
+	"object-storage":          "S3-compatible storage on the MinIO backend",
+	"env-var-model":           "per-key env shape and cross-service aliases",
+	"http-support":            "Zerops L7 balancer + subdomain access",
+	"deploy-files":            "deploy-files tilde syntax + static runtime",
+	"readiness-health-checks": "readiness + health checks",
+}
+
+// managedFriendlyNames — managed-service rows use the row label as the
+// link text — pinned in the citation-map block as `managed NATS broker`
+// etc.
+var managedFriendlyNames = map[string]string{
+	"managed-services-nats":           "managed NATS broker",
+	"managed-services-meilisearch":    "managed Meilisearch service",
+	"managed-services-postgresql":     "managed PostgreSQL database",
+	"managed-services-valkey":         "managed Valkey cache",
+	"managed-services-keydb":          "managed KeyDB cache",
+	"managed-services-redis":          "managed Redis cache",
+	"managed-services-rabbitmq":       "managed RabbitMQ broker",
+	"managed-services-kafka":          "managed Kafka broker",
+	"managed-services-elasticsearch":  "managed Elasticsearch service",
+	"managed-services-typesense":      "managed Typesense service",
+	"managed-services-qdrant":         "managed Qdrant service",
+	"managed-services-clickhouse":     "managed ClickHouse service",
+	"managed-services-mariadb":        "managed MariaDB database",
+	"managed-services-object-storage": "managed Object Storage",
+	"managed-services-shared-storage": "managed Shared Storage",
+}
+
+// FriendlyDisplayName returns the friendly display name for a guide id
+// (e.g. "rolling-deploys" → "zero-downtime deploys with multi-container
+// setups"). Empty when the guide is unknown. Used by the Run-46 Item 5
+// citation-display-text validator + the engine-side suggested-
+// replacement renderer.
+func FriendlyDisplayName(guide string) string {
+	if d := friendlyDisplayNames[guide]; d != "" {
+		return d
+	}
+	if d := managedFriendlyNames[guide]; d != "" {
+		return d
+	}
+	return ""
+}
+
 // suggestedReplacementForTopic renders the canonical form-(b) markdown
 // link for a citation topic. Returns empty when topic is unknown.
 //
@@ -195,40 +245,7 @@ func leadingDigits(s string) string {
 // names + URLs are pinned (run-43 P7) so the sub-agent doesn't have to
 // compose them.
 func suggestedReplacementForTopic(topic string) string {
-	// Friendly display names — derived from the citation-map block's
-	// "OR friendly `<name>`" clauses in briefs_refinement2.go.
-	friendlyDisplay := map[string]string{
-		"rolling-deploys":         "zero-downtime deploys with multi-container setups",
-		"init-commands":           "zsc execOnce + per-deploy key model",
-		"object-storage":          "S3-compatible storage on the MinIO backend",
-		"env-var-model":           "per-key env shape and cross-service aliases",
-		"http-support":            "Zerops L7 balancer + subdomain access",
-		"deploy-files":            "deploy-files tilde syntax + static runtime",
-		"readiness-health-checks": "readiness + health checks",
-	}
-	// Managed-service rows use the row label as the link text — pinned
-	// in the citation-map block as `managed NATS broker` etc.
-	managedFriendly := map[string]string{
-		"managed-services-nats":           "managed NATS broker",
-		"managed-services-meilisearch":    "managed Meilisearch service",
-		"managed-services-postgresql":     "managed PostgreSQL database",
-		"managed-services-valkey":         "managed Valkey cache",
-		"managed-services-keydb":          "managed KeyDB cache",
-		"managed-services-redis":          "managed Redis cache",
-		"managed-services-rabbitmq":       "managed RabbitMQ broker",
-		"managed-services-kafka":          "managed Kafka broker",
-		"managed-services-elasticsearch":  "managed Elasticsearch service",
-		"managed-services-typesense":      "managed Typesense service",
-		"managed-services-qdrant":         "managed Qdrant service",
-		"managed-services-clickhouse":     "managed ClickHouse service",
-		"managed-services-mariadb":        "managed MariaDB database",
-		"managed-services-object-storage": "managed Object Storage",
-		"managed-services-shared-storage": "managed Shared Storage",
-	}
-	display := friendlyDisplay[topic]
-	if display == "" {
-		display = managedFriendly[topic]
-	}
+	display := FriendlyDisplayName(topic)
 	if display == "" {
 		return ""
 	}

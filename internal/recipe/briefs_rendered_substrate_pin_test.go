@@ -163,6 +163,11 @@ var auditChecklistRequiredSubstrings = []string{
 	"cross-surface uniqueness",
 	// Self-referential decoration prohibition.
 	"Self-referential decoration",
+	// Run-46 Item 1 + S6 contract update — S6 explicitly out of scope.
+	// audit_checklist.md MUST carry the out-of-scope marker and the
+	// walk loop MUST NOT include S6.
+	"S6 is also out of scope",
+	"For SURFACE in {S3, S4, S5, S7}",
 }
 
 // TestRefinement2Brief_AuditChecklistRequiredSubstringsRender — every

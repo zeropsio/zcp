@@ -93,6 +93,14 @@ type Session struct {
 	// RefinementClosed=false. Run-23 F-26.
 	RefinementClosed bool
 
+	// Refinement2Ledger holds the walked-ledger receipt the sub-agent
+	// emits alongside its findings. Run-46 Item 1 — the close-gate
+	// refuses refinement-phase close when the ledger does not cover
+	// every manifest entry the engine enumerated. nil when no ledger
+	// has been received yet; set by `enrich-findings` action when the
+	// caller forwards the sub-agent's `walked` array.
+	Refinement2Ledger *Refinement2Ledger
+
 	// parentResolved guards lazy parent resolution. LoadParent runs at
 	// most once per session — subsequent calls return the cached Parent.
 	// True after the first LoadParent attempt regardless of outcome

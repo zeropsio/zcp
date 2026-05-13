@@ -212,6 +212,17 @@ type RecipeInput struct {
 	// emit it.
 	Findings     *FindingsEnvelope `json:"findings,omitempty"     jsonschema:"For enrich-findings: the refinement-2 audit's slim findings envelope. Either this OR findingsJson must be set."`
 	FindingsJSON string            `json:"findingsJson,omitempty" jsonschema:"For enrich-findings: the audit sub-agent's fenced JSON findings block, raw. Engine parses + strips the fence. Either this OR findings must be set."`
+	// Walked — Run-46 Item 1 walked-ledger receipt. Sub-agent emits the
+	// manifest IDKeys it evaluated alongside its findings; the engine
+	// persists the ledger on the session via `enrich-findings` and the
+	// refinement close-gate refuses when the ledger doesn't cover every
+	// manifest entry.
+	Walked []string `json:"walked,omitempty" jsonschema:"For enrich-findings: the refinement-2 audit's walked-ledger — every manifest idKey the sub-agent evaluated. The close-gate refuses refinement-phase close when this set doesn't cover the full manifest. Run-46 Item 1."`
+	// CrossSurfaceUniquenessScanned + Duplicates — Run-46 Item 6 ledger
+	// (data path lands now alongside Item 1; the close-gate consumer
+	// lands in PR 5).
+	CrossSurfaceUniquenessScanned int      `json:"crossSurfaceUniquenessScanned,omitempty" jsonschema:"For enrich-findings: count of manifest items the sub-agent compared in the cross-surface uniqueness pass. Run-46 Item 6."`
+	Duplicates                    []string `json:"duplicates,omitempty"                    jsonschema:"For enrich-findings: pair references to duplicate teachings flagged in the cross-surface uniqueness pass. Run-46 Item 6."`
 }
 
 // RecipeResult is the generic envelope returned from zerops_recipe.
@@ -492,6 +503,17 @@ func handleBuildSubagentPrompt(sess *Session, in RecipeInput, r RecipeResult) Re
 		r.Error = err.Error()
 		return r
 	}
+	// Run-46 Item 1 — for refinement-2 dispatches, write the surface
+	// manifest to disk so the sub-agent can Read it. The brief renders
+	// the path; the manifest enumerates every in-scope item across S3 +
+	// S4 + S5 + S7. Empty outputRoot (unit-test fixtures) skips silently
+	// — the brief's manifest section only renders when runDir != "" too.
+	if BriefKind(in.BriefKind) == BriefRefinement2 && sess.OutputRoot != "" {
+		if _, mErr := WriteRefinement2Manifest(sess.OutputRoot, sess.Plan); mErr != nil {
+			r.Error = "build-subagent-prompt: write refinement-2 manifest: " + mErr.Error()
+			return r
+		}
+	}
 	if indexPath != "" {
 		// Multi-file path. The composer already wrote the index + parts
 		// to disk; populate BriefPath with the index. BriefSize carries
@@ -704,6 +726,21 @@ func enrichFindingsAction(sess *Session, in RecipeInput, r RecipeResult) RecipeR
 		}
 	}
 	r.EnrichedFindings = EnrichFindings(env, facts)
+	// Run-46 Item 1 — persist the walked-ledger receipt the main agent
+	// forwarded alongside the findings. The refinement close-gate reads
+	// sess.Refinement2Ledger to refuse close when the ledger doesn't
+	// cover the full manifest. We persist on every enrich-findings call
+	// (latest-wins) so a re-dispatch + re-enrich path replaces a
+	// partial earlier ledger with the most recent emission.
+	if len(in.Walked) > 0 || in.CrossSurfaceUniquenessScanned > 0 || len(in.Duplicates) > 0 {
+		sess.mu.Lock()
+		sess.Refinement2Ledger = &Refinement2Ledger{
+			Walked:                        append([]string(nil), in.Walked...),
+			CrossSurfaceUniquenessScanned: in.CrossSurfaceUniquenessScanned,
+			Duplicates:                    append([]string(nil), in.Duplicates...),
+		}
+		sess.mu.Unlock()
+	}
 	r.OK = true
 	return r
 }
@@ -1024,6 +1061,43 @@ func persistPlanAfterRefinementReplace(sess *Session, fragmentID string) *Violat
 	return nil
 }
 
+// checkRefinementCloseGates encapsulates the refinement-phase close
+// preconditions (run-41 + run-46 Item 1). Returns the error message
+// that should be reported on r.Error, or "" when all preconditions
+// pass.
+//
+//  1. refinement-1 dispatched
+//  2. refinement-2 dispatched
+//  3. walked-ledger receipt covers every manifest entry (Run-46 Item 1).
+func checkRefinementCloseGates(sess *Session) string {
+	sess.mu.Lock()
+	ref1 := sess.RefinementDispatched
+	ref2 := sess.Refinement2Dispatched
+	ledger := sess.Refinement2Ledger
+	plan := sess.Plan
+	sess.mu.Unlock()
+	if !ref1 {
+		return "complete-phase: phase=refinement requires the refinement-1 sub-agent (intra-fragment rule walk) to be dispatched first; call `zerops_recipe action=build-subagent-prompt briefKind=refinement` and dispatch the agent before closing refinement."
+	}
+	if !ref2 {
+		return "complete-phase: phase=refinement requires the refinement-2 sub-agent (cross-surface audit) to be dispatched after refinement-1 closes; call `zerops_recipe action=build-subagent-prompt briefKind=refinement2` and dispatch the agent before closing refinement. The cross-surface audit catches KB↔IG duplication, surface-misplacement, aspirational-as-current prose, and yaml-comment ↔ yaml-content drift — defect classes refinement-1's per-fragment rule walk cannot see."
+	}
+	manifest, mErr := BuildRefinement2Manifest(plan)
+	if mErr != nil {
+		return "complete-phase: build refinement-2 manifest: " + mErr.Error()
+	}
+	if ledger == nil {
+		return "complete-phase: phase=refinement requires the refinement-2 audit's walked-ledger receipt. The sub-agent emits a `walked` array listing the manifest idKey of every item it evaluated; forward it via `zerops_recipe action=enrich-findings walked=<array>` after the sub-agent returns. Run-46 Item 1 closes the run-41 → run-45 pattern where the sub-agent walked partial state and emitted 0 findings on un-walked surfaces."
+	}
+	if missing := ledger.Missing(manifest); len(missing) > 0 {
+		return fmt.Sprintf(
+			"complete-phase: phase=refinement walked-ledger covers %d of %d manifest entries; %d entries un-walked. Examples: %s. Re-dispatch refinement-2 and ensure the sub-agent evaluates every manifest entry — zero-finding is acceptable ONLY when the idKey is in `walked` (which proves the surface test ran). Run-46 Item 1.",
+			len(ledger.Walked), len(manifest.AllKeys()), len(missing), strings.Join(missingHead(missing, 5), ", "),
+		)
+	}
+	return ""
+}
+
 // refinementPreCheckScoped runs the codebase-surface-validators gate
 // scoped to the named codebase. Used by the refinement transactional
 // wrapper to compare pre- and post-Replace blocking violations. Errors
@@ -1211,16 +1285,8 @@ func completePhase(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
 	// fires on the no-codebase main-agent close (refinement-2 is a
 	// single-pass main-agent dispatch, not a per-codebase sub-agent).
 	if in.Codebase == "" && sess.Current == PhaseRefinement {
-		sess.mu.Lock()
-		ref1 := sess.RefinementDispatched
-		ref2 := sess.Refinement2Dispatched
-		sess.mu.Unlock()
-		if !ref1 {
-			r.Error = "complete-phase: phase=refinement requires the refinement-1 sub-agent (intra-fragment rule walk) to be dispatched first; call `zerops_recipe action=build-subagent-prompt briefKind=refinement` and dispatch the agent before closing refinement."
-			return r
-		}
-		if !ref2 {
-			r.Error = "complete-phase: phase=refinement requires the refinement-2 sub-agent (cross-surface audit) to be dispatched after refinement-1 closes; call `zerops_recipe action=build-subagent-prompt briefKind=refinement2` and dispatch the agent before closing refinement. The cross-surface audit catches KB↔IG duplication, surface-misplacement, aspirational-as-current prose, and yaml-comment ↔ yaml-content drift — defect classes refinement-1's per-fragment rule walk cannot see."
+		if errMsg := checkRefinementCloseGates(sess); errMsg != "" {
+			r.Error = errMsg
 			return r
 		}
 	}

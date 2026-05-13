@@ -66,7 +66,12 @@ func TestBuildRefinement2Brief_PerSurfaceWalkShape(t *testing.T) {
 	for _, want := range []string{
 		"**S4 (Integration Guide) — single-question test**",
 		"**S5 (Knowledge Base) — single-question test**",
-		"**S6 (Per-codebase CLAUDE.md) — single-question test**",
+		// Run-46 Item 1 / S6 contract update — S6 is OUT OF SCOPE. Pin the
+		// retired in-scope test text + the new out-of-scope marker. The
+		// reference single-question test string itself stays in the brief
+		// for writer/auditor parity, but the audit walk no longer runs
+		// over S6.
+		"S6 (Per-codebase CLAUDE.md) — OUT OF SCOPE",
 		"**S7 (Per-codebase `zerops.yaml`) — single-question test**",
 		"**S3 (Tier `import.yaml` comments) — single-question test**",
 		// Failure-mode emission shape.
@@ -74,13 +79,21 @@ func TestBuildRefinement2Brief_PerSurfaceWalkShape(t *testing.T) {
 		"**DROP**",
 		"**MOVE-TO-",
 		"**REWRITE**",
-		// Mechanical walk loop.
-		"For SURFACE in {S3, S4, S5, S6, S7}",
+		// Mechanical walk loop — Run-46 Item 1 dropped S6 from the loop.
+		"For SURFACE in {S3, S4, S5, S7}",
 		// Cross-surface uniqueness pass.
 		"## Cross-surface uniqueness pass",
 	} {
 		if !strings.Contains(brief.Body, want) {
 			t.Errorf("brief.Body missing per-surface-walk anchor %q", want)
+		}
+	}
+	// Run-46 Item 1 — assert the OLD in-scope loop wording is gone.
+	for _, forbidden := range []string{
+		"For SURFACE in {S3, S4, S5, S6, S7}",
+	} {
+		if strings.Contains(brief.Body, forbidden) {
+			t.Errorf("brief.Body still carries pre-run-46 walk loop %q (S6 must be dropped from the walk)", forbidden)
 		}
 	}
 }

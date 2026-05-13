@@ -39,13 +39,21 @@ The seven content surfaces (audit numbering):
   to the underlying yaml fragment via `codebase/<host>/zerops-yaml`
   (S7)).
 - S5 — Per-codebase Knowledge Base (`codebase/<host>/knowledge-base`).
-- S6 — Per-codebase CLAUDE.md (`codebase/<host>/claude-md`).
+- S6 — Per-codebase CLAUDE.md (`codebase/<host>/claude-md`) — **OUT OF
+  SCOPE for refinement-2 (run-46 design)**. CLAUDE.md is repo-local
+  (operator-of-this-repo facing), not published with the recipe;
+  refinement effort here is wasted. The codebase-content phase's own
+  CLAUDE.md authoring gates (validateCodebaseCLAUDE +
+  claudemd-author brief) carry the load. The surface ID is retained
+  in this enumeration for stable cross-reference, but the per-surface
+  walk loop below does NOT include S6.
 - S7 — Per-codebase `zerops.yaml` comments
   (`codebase/<host>/zerops-yaml`) — the WHOLE yaml is one fragment;
   IG #1 on S4 is engine-rendered FROM this fragment.
 
-This audit walks S3, S4, S5, S6, S7. S1 + S2 are intentionally out of
-scope.
+This audit walks **S3, S4, S5, S7**. S1 + S2 are intentionally out of
+scope (refinement-1 walks them); **S6 is also out of scope** (repo-local,
+not published — run-46 design).
 
 ---
 
@@ -81,17 +89,17 @@ list — the test catches the bullet by principle.
   - If the answer is "yes, it surprises you even after reading both"
     — keep.
 
-- **S6 (Per-codebase CLAUDE.md) — single-question test**:
-  *"Is this useful for operating THIS repo specifically — not for deploying it, not for porting it to other code?"*
+- **S6 (Per-codebase CLAUDE.md) — OUT OF SCOPE for this audit (run-46
+  design)**. The single-question test below is retained for
+  cross-reference with the writer's `content-surface-contracts.md §S6`,
+  but the per-item walk and emission below DOES NOT run on S6 fragments.
+  The codebase-content phase's `validateCodebaseCLAUDE` + the
+  claudemd-author brief carry the authoring gates; refinement-2 does
+  not re-walk a repo-local surface.
 
-  - **Pass**: dev-loop instructions, test-driving guidance, container
-    traps the operator hits while iterating, "how to reset dev
-    state", log-tailing, recovering from a burned execOnce key.
-  - **Fail**: deployment teaching (belongs on S4 IG), platform-trap
-    teaching (belongs on S5 KB), zerops.yaml field rationale
-    (belongs on S7 yaml comments). A `## Zerops <topic>` section on
-    CLAUDE.md typically fails this test — Zerops content belongs on
-    IG/KB/yaml comments.
+  Reference test (for parity with the writer contract — do NOT emit
+  findings against S6 fragments):
+  *"Is this useful for operating THIS repo specifically — not for deploying it, not for porting it to other code?"*
 
 - **S7 (Per-codebase `zerops.yaml`) — single-question test**:
   *"Does each comment explain a trade-off the reader couldn't infer from the field name?"*
@@ -159,13 +167,16 @@ practice DROP wins.
 ## How you walk
 
 ```
-For SURFACE in {S3, S4, S5, S6, S7}:
+For SURFACE in {S3, S4, S5, S7}:        # S6 explicitly out of scope (run-46)
   For each ITEM on SURFACE:
     Apply SURFACE's single-question test.
     If the answer fails the test:
       Emit a finding with surface, fragmentId, itemReference,
       surfaceTestFailureMode (DROP/MOVE-TO/REWRITE), rationale.
       Optionally emit topic (for citation matches — see below).
+    Always record the item's idKey in the walked-ledger receipt
+      (Run-46 Item 1 — proves the per-item test ran; zero-finding is
+      only acceptable when the idKey is in `walked`).
 
 After the per-item walk:
   Run the cross-surface uniqueness pass (next section).
@@ -188,7 +199,7 @@ flags only if refinement-1 missed.
 |---|---|---|---|
 | S4 IG items / codebase | 4 | 5 (incl. engine-emitted IG #1) | DROP / REWRITE the surplus |
 | S5 KB bullets / codebase | no floor | 8 | DROP the surplus |
-| S6 CLAUDE.md | substantive (~30 lines + 2 custom sections) | 50 lines (soft) | refinement-1 catches |
+| S6 CLAUDE.md | — | — | OUT OF SCOPE (run-46) — codebase-content phase + claudemd-author brief carry the load |
 | S7 yaml comments | 3 lines/svc | 8 lines/svc | refinement-1 catches |
 | S3 tier yaml comments | 4 lines/svc | 10 lines/svc | refinement-1 catches |
 

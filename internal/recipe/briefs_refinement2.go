@@ -83,6 +83,25 @@ func BuildRefinement2Brief(plan *Plan, parent *ParentRecipe, runDir string, fact
 	// BuildRefinementBrief (run-40 S-3).
 	if runDir != "" {
 		runDir = strings.TrimRight(runDir, "/")
+
+		// Run-46 Item 1 — surface manifest. The engine writes
+		// `<runDir>/.refinement-2-manifest.json` BEFORE this brief is
+		// dispatched (see handlers.go::handleBuildSubagentPrompt). The
+		// brief tells the sub-agent to Read the manifest FIRST and emit a
+		// `walked` ledger naming every IDKey it evaluated; the close-gate
+		// refuses if the ledger doesn't cover every manifest entry.
+		// Run-41 → run-45 dogfood: sub-agents walked partial state in
+		// five distinct ways even when the brief carried absolute paths
+		// to the codebase READMEs. Removing the filesystem walk from the
+		// sub-agent's responsibility is the structural fix; the ledger
+		// closes the loop on "agent emitted findings on a subset and
+		// stopped."
+		b.WriteString("## Refinement-2 manifest — Read this FIRST\n\n")
+		fmt.Fprintf(&b, "Engine has enumerated every in-scope item across S3 (tier yaml comments), S4 (codebase IG), S5 (codebase KB), and S7 (codebase zerops.yaml) into one comparable corpus at:\n\n- `%s/%s`\n\n", runDir, Refinement2ManifestFileName)
+		b.WriteString("Read the manifest end-to-end before applying any per-surface test. Each entry carries an `idKey` (stable identifier), `body` (the prose to audit), and per-surface metadata (`slot`/`stem`/`service`).\n\n")
+		b.WriteString("**Walked-ledger receipt**: emit a `walked` array alongside `findings` listing the `idKey` of every manifest entry you evaluated. Zero-finding is allowed ONLY when the `idKey` is in `walked` (this proves you applied the surface test). The close-gate refuses if `walked` doesn't cover 100% of the manifest — \"didn't dispatch\" and \"walked-but-found-nothing\" become distinguishable failure modes.\n\n")
+		b.WriteString("**S6 (CLAUDE.md) is NOT in the manifest** — per run-46 design, CLAUDE.md is repo-local (not published with the recipe); refinement effort there is wasted. The audit checklist below formally marks S6 out-of-scope.\n\n")
+
 		b.WriteString("## Stitched output to audit\n\n")
 		b.WriteString("Read each path end-to-end before running cross-surface checks. Don't `Grep`; cross-surface defects need full surfaces held in working memory.\n\n")
 		b.WriteString("**Root**\n\n")
