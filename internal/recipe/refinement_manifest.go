@@ -50,6 +50,25 @@ type Refinement2ManifestEntry struct {
 	// Service — S3 only. The hostname the comment block is bound to
 	// (`project` for the tier-level block).
 	Service string `json:"service,omitempty"`
+
+	// TopicCandidates — S3/S4/S5 only. The citation-map topic ids the
+	// body's keywords match (best-effort via DetectBulletTopicAll). Empty
+	// when no topic family matches. Populated by the engine so the
+	// refinement-2 audit can route findings against the right citation
+	// guide without a re-detect per dispatch. Run-46 Item 1 G2-followup.
+	TopicCandidates []string `json:"topicCandidates,omitempty"`
+	// PorterTunableDirectives — S3 and S7 only. The list of porter-tunable
+	// field names found in the adjacent yaml fragment (S7 = whole yaml;
+	// S3 = comment block's owning service yaml). Run-46 Item 1
+	// G2-followup. Field-name allowlist matches
+	// EnumeratePorterTunableDirectives.
+	PorterTunableDirectives []string `json:"porterTunableDirectives,omitempty"`
+	// PerFieldComments — S7 only. Per porter-tunable field, the
+	// contiguous comment block immediately preceding the field
+	// declaration. Run-46 Item 1 G2-followup. The audit reads per-field
+	// rationale to detect bare-mechanism comments vs friendly-authority
+	// adapt-paths.
+	PerFieldComments []PerFieldComment `json:"perFieldComments,omitempty"`
 }
 
 // Refinement2Manifest is the structured corpus the refinement-2 audit
@@ -160,9 +179,10 @@ func BuildRefinement2Manifest(plan *Plan) (*Refinement2Manifest, error) {
 		ec := plan.EnvComments[tierIdx]
 		if strings.TrimSpace(ec.Project) != "" {
 			m.TierYAMLComments[tierIdx] = append(m.TierYAMLComments[tierIdx], Refinement2ManifestEntry{
-				IDKey:   "tier_yaml_comments:" + tierIdx + ":project",
-				Body:    ec.Project,
-				Service: "project",
+				IDKey:           "tier_yaml_comments:" + tierIdx + ":project",
+				Body:            ec.Project,
+				Service:         "project",
+				TopicCandidates: DetectBulletTopicCandidates(ec.Project),
 			})
 		}
 		// Sort service keys so the manifest is stable run-to-run.
@@ -176,10 +196,17 @@ func BuildRefinement2Manifest(plan *Plan) (*Refinement2Manifest, error) {
 			if strings.TrimSpace(body) == "" {
 				continue
 			}
+			// S3 PorterTunableDirectives — comment block targets the
+			// service's yaml shape (tier yaml = import.yaml); recipe
+			// authors annotate `verticalAutoscaling.*` / `minContainers`
+			// rationale here. Enumerate against the comment body so the
+			// audit can connect block→directive without an extra walk.
 			m.TierYAMLComments[tierIdx] = append(m.TierYAMLComments[tierIdx], Refinement2ManifestEntry{
-				IDKey:   "tier_yaml_comments:" + tierIdx + ":" + svc,
-				Body:    body,
-				Service: svc,
+				IDKey:                   "tier_yaml_comments:" + tierIdx + ":" + svc,
+				Body:                    body,
+				Service:                 svc,
+				TopicCandidates:         DetectBulletTopicCandidates(body),
+				PorterTunableDirectives: EnumeratePorterTunableDirectives(body),
 			})
 		}
 	}
@@ -231,8 +258,10 @@ func BuildRefinement2Manifest(plan *Plan) (*Refinement2Manifest, error) {
 		// no acknowledgement.
 		yamlBody := plan.Fragments["codebase/"+host+"/zerops-yaml"]
 		m.CodebaseZeropsYAML[host] = []Refinement2ManifestEntry{{
-			IDKey: "codebase_zerops_yaml:" + host,
-			Body:  yamlBody,
+			IDKey:                   "codebase_zerops_yaml:" + host,
+			Body:                    yamlBody,
+			PorterTunableDirectives: EnumeratePorterTunableDirectives(yamlBody),
+			PerFieldComments:        ExtractPerFieldComments(yamlBody),
 		}}
 	}
 	return m, nil
@@ -312,9 +341,10 @@ func codebaseIGSlotEntries(fragments map[string]string, host string) []Refinemen
 			continue
 		}
 		out = append(out, Refinement2ManifestEntry{
-			IDKey: "codebase_ig:" + host + ":" + slot,
-			Body:  body,
-			Slot:  slot,
+			IDKey:           "codebase_ig:" + host + ":" + slot,
+			Body:            body,
+			Slot:            slot,
+			TopicCandidates: DetectBulletTopicCandidates(body),
 		})
 	}
 	return out
@@ -354,9 +384,10 @@ func parseUnslottedIGEntries(host, body string) []Refinement2ManifestEntry {
 		}
 		segment := strings.TrimSpace(body[m[0]:end])
 		out = append(out, Refinement2ManifestEntry{
-			IDKey: "codebase_ig:" + host + ":" + slot,
-			Body:  segment,
-			Slot:  slot,
+			IDKey:           "codebase_ig:" + host + ":" + slot,
+			Body:            segment,
+			Slot:            slot,
+			TopicCandidates: DetectBulletTopicCandidates(segment),
 		})
 	}
 	return out
@@ -390,9 +421,10 @@ func parseKBBullets(host, body string) []Refinement2ManifestEntry {
 		}
 		segment := strings.TrimSpace(body[m[0]:end])
 		out = append(out, Refinement2ManifestEntry{
-			IDKey: "codebase_kb:" + host + ":" + strconv.Itoa(i),
-			Body:  segment,
-			Stem:  stem,
+			IDKey:           "codebase_kb:" + host + ":" + strconv.Itoa(i),
+			Body:            segment,
+			Stem:            stem,
+			TopicCandidates: DetectBulletTopicCandidates(segment),
 		})
 	}
 	return out

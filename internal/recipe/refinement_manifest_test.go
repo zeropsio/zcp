@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -91,6 +92,89 @@ func TestRefinement2Manifest_EnumeratesEveryFragment(t *testing.T) {
 	}
 	if strings.Contains(string(marshaled), "claudeMd") || strings.Contains(string(marshaled), "CodebaseCLAUDE") {
 		t.Errorf("manifest must not enumerate S6 CLAUDE.md per run-46 design; got JSON: %s", marshaled)
+	}
+}
+
+// TestRefinement2Manifest_CarriesG2Metadata — Run-46 Item 1 G2-followup.
+// The codex review found Refinement2ManifestEntry missing the
+// downstream-gate metadata fields the plan promised:
+// TopicCandidates, PorterTunableDirectives, PerFieldComments. This test
+// pins the shape — S4 entries carry topic candidates when detectable;
+// S7 entries carry both PorterTunableDirectives + PerFieldComments;
+// S3 entries carry PorterTunableDirectives per-service.
+func TestRefinement2Manifest_CarriesG2Metadata(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	// S4 IG slot — body contains rolling-deploys keywords (minContainers
+	// + zero-downtime + SIGTERM) so DetectBulletTopicCandidates returns
+	// the rolling-deploys family.
+	plan.Fragments = map[string]string{
+		"codebase/api/integration-guide/2": `## IG slot 2 — SIGTERM and rolling-deploys
+
+minContainers≥2 enables zero-downtime rolling-deploys with SIGTERM drain.`,
+		"codebase/api/knowledge-base": "<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->\n- **L7 balancer trust proxy** — trust-proxy.\n<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->",
+		"codebase/api/zerops-yaml": `zerops:
+  - setup: api
+    run:
+      base: nodejs@22
+      # Bump minContainers to 4 once your traffic profile warrants it
+      # — the L7 balancer load tests on stage show 2 handles ~1k rps.
+      minContainers: 2
+      verticalAutoscaling:
+        # Feel free to swap minRam upward once container metrics show
+        # steady-state heap above 75% of this floor.
+        minRam: 0.5
+`,
+		"codebase/app/zerops-yaml":       "zerops:\n  - setup: app\n",
+		"codebase/app/knowledge-base":    "<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->\n- **App** — body.\n<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->",
+		"codebase/worker/zerops-yaml":    "zerops:\n  - setup: worker\n",
+		"codebase/worker/knowledge-base": "<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->\n- **Worker** — body.\n<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->",
+	}
+
+	m, err := BuildRefinement2Manifest(plan)
+	if err != nil {
+		t.Fatalf("BuildRefinement2Manifest: %v", err)
+	}
+
+	// S4 — IG slot 2 body carries SIGTERM + zero-downtime + minContainers,
+	// so TopicCandidates should include "rolling-deploys".
+	apiIG := m.CodebaseIG["api"]
+	if len(apiIG) == 0 {
+		t.Fatal("api IG entries empty")
+	}
+	var igGotTopic bool
+	for _, e := range apiIG {
+		if slices.Contains(e.TopicCandidates, "rolling-deploys") {
+			igGotTopic = true
+			break
+		}
+	}
+	if !igGotTopic {
+		t.Errorf("S4 IG entries must carry TopicCandidates with rolling-deploys; got entries=%+v", apiIG)
+	}
+
+	// S7 — api yaml has minContainers + verticalAutoscaling.minRam (two
+	// porter-tunable directives) AND per-field comments adjacent to each.
+	apiYaml := m.CodebaseZeropsYAML["api"]
+	if len(apiYaml) == 0 {
+		t.Fatal("api S7 yaml entry empty")
+	}
+	if len(apiYaml[0].PorterTunableDirectives) < 2 {
+		t.Errorf("S7 PorterTunableDirectives should list ≥2 fields (minContainers + verticalAutoscaling.minRam); got %v",
+			apiYaml[0].PorterTunableDirectives)
+	}
+	if len(apiYaml[0].PerFieldComments) < 2 {
+		t.Errorf("S7 PerFieldComments should carry ≥2 entries with comment lines; got %v",
+			apiYaml[0].PerFieldComments)
+	}
+	for _, pfc := range apiYaml[0].PerFieldComments {
+		if !pfc.PorterTunable {
+			t.Errorf("S7 PerFieldComments entry PorterTunable must be true for tunable fields; got %+v", pfc)
+		}
+		if len(pfc.CommentLines) == 0 {
+			t.Errorf("S7 PerFieldComments entry %q should carry adjacent comment block; got empty", pfc.Field)
+		}
 	}
 }
 

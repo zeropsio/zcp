@@ -82,26 +82,106 @@ var adaptPathPhrases = []string{
 // across multiple setup entries (each `- setup: <name>` block) counts
 // each occurrence — the porter tunes each setup independently.
 func countPorterTunableDirectives(yaml string) int {
-	// Strip nested-map context: when the yaml has a top-level
-	// `verticalAutoscaling:` parent line, every following indented
-	// `minRam:`/`maxRam:`/`minCpu:`/`maxCpu:` line counts. We use the
-	// dedicated nested regex so a stand-alone `verticalAutoscaling:`
-	// header (no value) doesn't get double-counted by the top-level
-	// regex.
-	count := 0
-	// Top-level field matches — minContainers / maxContainers /
-	// objectStorageSize / priority appear as `<key>: <value>`.
+	return len(EnumeratePorterTunableDirectives(yaml))
+}
+
+// EnumeratePorterTunableDirectives returns the ordered list of porter-
+// tunable directive field names found in the yaml body. Each match in
+// the slice corresponds to one directive instance (the same field
+// repeating across setup blocks contributes one entry per occurrence).
+// Run-46 Item 1 G2-followup — refinement-2 manifest entries surface
+// this list per-codebase so downstream uniqueness + adapt-path coverage
+// gates have structured input.
+//
+// Detection mirrors countPorterTunableDirectives: top-level + nested
+// verticalAutoscaling.* shapes plus the static allowlist
+// porterTunableFieldNames. Future G4 followup will extend the detector
+// with `ports[].port` + env-var URL/HOST patterns; the enumeration
+// shape (returning field names) is the stable API the manifest
+// consumes regardless of detector coverage.
+func EnumeratePorterTunableDirectives(yaml string) []string {
+	var out []string
 	for _, m := range porterTunableFieldRE.FindAllStringSubmatch(yaml, -1) {
-		// Skip nested fields handled by the dedicated regex below.
 		key := m[1]
 		if strings.HasPrefix(key, "verticalAutoscaling.") {
 			continue
 		}
-		count++
+		out = append(out, key)
 	}
-	// Nested verticalAutoscaling.* fields.
-	count += len(porterTunableNestedFieldRE.FindAllString(yaml, -1))
-	return count
+	for _, m := range porterTunableNestedFieldRE.FindAllStringSubmatch(yaml, -1) {
+		out = append(out, "verticalAutoscaling."+m[1])
+	}
+	return out
+}
+
+// PerFieldComment is one porter-tunable field's adjacent-comment context.
+// Run-46 Item 1 G2-followup — refinement-2 manifest carries this per
+// codebase yaml so downstream gates can audit per-field rationale.
+type PerFieldComment struct {
+	Field         string   `json:"field"`
+	Value         string   `json:"value,omitempty"`
+	CommentLines  []string `json:"commentLines,omitempty"`
+	PorterTunable bool     `json:"porterTunable"`
+}
+
+// ExtractPerFieldComments walks the yaml body and returns one
+// PerFieldComment per porter-tunable field declaration encountered.
+// The Comment lines are the contiguous `#` block immediately preceding
+// the field (no blank-line separation). PorterTunable mirrors the
+// allowlist used by EnumeratePorterTunableDirectives.
+//
+// Run-46 Item 1 G2-followup — manifest enumeration for S7 entries.
+// The data feeds the refinement-2 audit's per-field reasoning prompt
+// (engine-side data, not agent-narrated).
+func ExtractPerFieldComments(yaml string) []PerFieldComment {
+	lines := strings.Split(yaml, "\n")
+	tunableSet := map[string]bool{}
+	for _, name := range porterTunableFieldNames {
+		tunableSet[name] = true
+	}
+	// nested vert-autoscaling field names — porter-tunable too.
+	for _, name := range []string{"minRam", "maxRam", "minCpu", "maxCpu"} {
+		tunableSet[name] = true
+	}
+	var out []PerFieldComment
+	for i, line := range lines {
+		trimmed := strings.TrimLeft(line, " \t")
+		// Skip non-field lines (comments + blanks + continuation).
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "-") && !strings.Contains(trimmed, ":") {
+			continue
+		}
+		// Field shape: `<name>: <value>`. Skip lines without a colon.
+		key, value, ok := strings.Cut(trimmed, ":")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		// Strip leading `- ` for list-item shape (`- port: 3000`).
+		key = strings.TrimPrefix(key, "- ")
+		key = strings.TrimSpace(key)
+		if !tunableSet[key] {
+			continue
+		}
+		// Collect contiguous comment block immediately above this line.
+		var comments []string
+		for j := i - 1; j >= 0; j-- {
+			prev := strings.TrimLeft(lines[j], " \t")
+			if prev == "" {
+				break
+			}
+			if !strings.HasPrefix(prev, "#") {
+				break
+			}
+			comments = append([]string{strings.TrimSpace(strings.TrimPrefix(prev, "#"))}, comments...)
+		}
+		out = append(out, PerFieldComment{
+			Field:         key,
+			Value:         strings.TrimSpace(value),
+			CommentLines:  comments,
+			PorterTunable: true,
+		})
+	}
+	return out
 }
 
 // countAdaptPaths walks the yaml body's comments + prose and counts

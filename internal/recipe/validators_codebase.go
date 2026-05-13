@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -93,6 +94,15 @@ func validateCodebaseIG(_ context.Context, path string, body []byte, _ SurfaceIn
 	// framework-canonical commands; tool names like `zerops_*` / `zcli`
 	// signal authoring leakage.
 	vs = append(vs, scanAuthoringToolLeaks(path, ig, "codebase IG")...)
+	// Run-46 Item 5 G1-followup — citation display-text ↔ URL ↔ topic
+	// agreement also runs on IG bodies. The motivating run-45 fixture
+	// (apidev IG #4: rolling-deploys friendly text + init-commands
+	// canonical URL) was an IG bullet, not a KB bullet; the validator
+	// was originally wired only to KB. The check is surface-agnostic —
+	// it parses markdown links + form-(a) backtick citations from any
+	// bullet-shaped markdown and asserts agreement against
+	// CitationGuideURL / FriendlyDisplayName.
+	vs = append(vs, validateCitationDisplayAgreement(path, ig)...)
 	return vs, nil
 }
 
@@ -452,56 +462,19 @@ var markdownLinkRE = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
 // pre-existing kb-citation-missing check. Multi-topic bullets are
 // legitimate per the writer contract.
 func DetectBulletTopic(body string) string {
-	// Per-topic keyword sets. The keys are the canonical guide ids
-	// (CitationMap values); the slice carries unambiguous keywords for
-	// that topic — terms that, if they appear in a bullet, strongly
-	// suggest the bullet's PRIMARY teaching is the topic. Single-token
-	// citation-map keys (e.g. `init-commands`) appear here as the
-	// hyphenated form. Drift from CitationMap to here is intentional —
-	// CitationMap is the over-broad "topic appears anywhere on this
-	// surface" lookup; DetectBulletTopic is the narrow "this bullet is
-	// PRIMARILY about" decision.
-	topicKeywords := map[string][]string{
-		"rolling-deploys": {
-			"rolling-deploy", "rolling deploys",
-			"mincontainers", "zero-downtime",
-			"sigterm",
-		},
-		"init-commands": {
-			"init-command", "init commands", "initcommands",
-			"execonce", "${appversionid}",
-		},
-		"object-storage": {
-			"object storage", "object-storage",
-			"forcepathstyle", "minio", "s3",
-		},
-		"env-var-model": {
-			"env-var-model", "cross-service env",
-			"self-shadow", "envisolation",
-		},
-		"http-support": {
-			"http-support", "l7-balancer", "l7 balancer",
-			"trust proxy", "trust-proxy",
-			"subdomain access", "httpsupport",
-			"bind 0.0.0.0", "bind to 0.0.0.0",
-		},
-		"deploy-files": {
-			"deploy-files", "deployfiles",
-			"tilde syntax", "tilde-suffix",
-			"static runtime",
-		},
-		"readiness-health-checks": {
-			"readiness check", "readiness-check",
-			"health check", "health-check",
-		},
-	}
+	// Per-topic keyword sets live in bulletTopicKeywords (package scope
+	// since Run-46 Item 1 G2-followup added DetectBulletTopicCandidates).
+	// Drift from CitationMap is intentional — CitationMap is the over-
+	// broad "topic appears anywhere on this surface" lookup;
+	// DetectBulletTopic is the narrow "this bullet is PRIMARILY about"
+	// decision.
 	lower := strings.ToLower(body)
 	type hit struct {
 		topic string
 		count int
 	}
 	var hits []hit
-	for topic, kws := range topicKeywords {
+	for topic, kws := range bulletTopicKeywords {
 		c := 0
 		for _, k := range kws {
 			if strings.Contains(lower, k) {
@@ -551,6 +524,84 @@ func DetectBulletTopic(body string) string {
 	return ""
 }
 
+// DetectBulletTopicCandidates returns every citation-map topic id whose
+// keyword set produces at least one hit in the body. Sort order is
+// stable (alphabetical by topic id). Used by the refinement-2 manifest
+// generator to surface per-entry topic candidates without forcing the
+// per-bullet "dominant topic" decision DetectBulletTopic makes.
+//
+// Run-46 Item 1 G2-followup — manifest entries surface candidates so
+// the audit can route findings to the matching citation guide(s)
+// without re-detecting per dispatch.
+func DetectBulletTopicCandidates(body string) []string {
+	lower := strings.ToLower(body)
+	type hit struct {
+		topic string
+		count int
+	}
+	var hits []hit
+	for topic, kws := range bulletTopicKeywords {
+		c := 0
+		for _, k := range kws {
+			if strings.Contains(lower, k) {
+				c++
+			}
+		}
+		if c > 0 {
+			hits = append(hits, hit{topic: topic, count: c})
+		}
+	}
+	if len(hits) == 0 {
+		return nil
+	}
+	sort.SliceStable(hits, func(i, j int) bool { return hits[i].topic < hits[j].topic })
+	out := make([]string, 0, len(hits))
+	for _, h := range hits {
+		out = append(out, h.topic)
+	}
+	return out
+}
+
+// bulletTopicKeywords mirrors the topic→keyword map literal inside
+// DetectBulletTopic. Lifted to package scope so DetectBulletTopicCandidates
+// reuses the same source-of-truth without copy/pasting per call site.
+// Drift between the literal in DetectBulletTopic and this map is
+// pinned by TestBulletTopicKeywords_Symmetric.
+var bulletTopicKeywords = map[string][]string{
+	"rolling-deploys": {
+		"rolling-deploy", "rolling deploys",
+		"mincontainers", "zero-downtime",
+		"sigterm",
+	},
+	"init-commands": {
+		"init-command", "init commands", "initcommands",
+		"execonce", "${appversionid}",
+	},
+	"object-storage": {
+		"object storage", "object-storage",
+		"forcepathstyle", "minio", "s3",
+	},
+	"env-var-model": {
+		"env-var-model", "cross-service env",
+		"self-shadow", "envisolation",
+	},
+	"http-support": {
+		"http-support", "l7-balancer", "l7 balancer",
+		"trust proxy", "trust-proxy",
+		"subdomain access", "httpsupport",
+		"bind 0.0.0.0", "bind to 0.0.0.0",
+	},
+	"deploy-files": {
+		"deploy-files", "deployfiles",
+		"tilde syntax", "tilde-suffix",
+		"static runtime",
+	},
+	"readiness-health-checks": {
+		"readiness check", "readiness-check",
+		"health check", "health-check",
+	},
+}
+
 // lookupGuideIDFromURL returns the guide id whose canonical URL
 // host+path matches the link URL, or "" when no map URL matches. Mirrors
 // the host+path-match rule defined in briefs_refinement2.go (scheme +
@@ -584,7 +635,7 @@ func lookupGuideIDFromURL(linkURL string) string {
 var citationFormARE = regexp.MustCompile("`([a-z][a-z0-9-]+)`\\s+(?:guide|reference)")
 
 // validateCitationDisplayAgreement — Run-46 Item 5. Three checks across
-// the per-bullet citation set:
+// the per-bullet/per-IG-item citation set:
 //
 //  1. Display-text ↔ URL agreement: when a markdown link's URL matches a
 //     known guide URL, the display text MUST be the friendly display
@@ -593,44 +644,40 @@ var citationFormARE = regexp.MustCompile("`([a-z][a-z0-9-]+)`\\s+(?:guide|refere
 //     form-(b) citation passed kbBodyCitesGuideURL's anchored-match
 //     check because the URL was a valid init-commands citation.
 //
-//  2. URL ↔ topic agreement: when the bullet's topic is unambiguously
+//  2. URL ↔ topic agreement: when the block's topic is unambiguously
 //     detectable (DetectBulletTopic returns a topic, not ""), the URL
 //     in any form-(b) citation MUST match the canonical for that topic.
 //
-//  3. Form-(a) guide-id ↔ topic agreement: when the bullet's topic is
-//     unambiguously detectable AND the bullet cites a guide id via the
+//  3. Form-(a) guide-id ↔ topic agreement: when the block's topic is
+//     unambiguously detectable AND the block cites a guide id via the
 //     "the `<id>` guide" shape, the cited guide MUST match the topic.
 //
-// Bullets without any citation don't fire; the existing
+// Blocks without any citation don't fire; the existing
 // kb-citation-missing check covers the missing-citation case.
-func validateCitationDisplayAgreement(path, kb string) []Violation {
+//
+// G1-followup — surface-symmetric. KB bodies are split per `- **stem**`
+// bullet; IG bodies are split per `### N. <title>` heading section.
+// citationBlockSplits picks the right delimiter automatically. The
+// motivating run-45 case was an IG bullet (apidev IG #4); the validator
+// is wired into both validateCodebaseKB and validateCodebaseIG.
+func validateCitationDisplayAgreement(path, body string) []Violation {
 	var vs []Violation
-	// Walk each bullet separately so topic-detection works per-bullet,
-	// not over the whole KB. Reuse the bullet boundary regex from
-	// validators_codebase.go's local bullet parser.
-	bulletStarts := boldBulletRE.FindAllStringIndex(kb, -1)
-	if len(bulletStarts) == 0 {
+	blocks := citationBlockSplits(body)
+	if len(blocks) == 0 {
 		return nil
 	}
-	for i, m := range bulletStarts {
-		var end int
-		if i+1 < len(bulletStarts) {
-			end = bulletStarts[i+1][0]
-		} else {
-			end = len(kb)
-		}
-		bullet := kb[m[0]:end]
+	for _, block := range blocks {
 		// Find every markdown link + form-(a) backtick citation in the
-		// bullet.
-		links := markdownLinkRE.FindAllStringSubmatch(bullet, -1)
-		formAMatches := citationFormARE.FindAllStringSubmatch(bullet, -1)
+		// block.
+		links := markdownLinkRE.FindAllStringSubmatch(block, -1)
+		formAMatches := citationFormARE.FindAllStringSubmatch(block, -1)
 		if len(links) == 0 && len(formAMatches) == 0 {
 			continue
 		}
-		// Detect bullet topic ONCE per bullet — best-effort. Ambiguity
+		// Detect block topic ONCE per block — best-effort. Ambiguity
 		// returns "" and the topic-match check is silently skipped on
-		// this bullet.
-		bulletTopic := DetectBulletTopic(bullet)
+		// this block.
+		blockTopic := DetectBulletTopic(block)
 		for _, link := range links {
 			displayText := strings.TrimSpace(link[1])
 			linkURL := strings.TrimSpace(link[2])
@@ -650,17 +697,17 @@ func validateCitationDisplayAgreement(path, kb string) []Violation {
 						displayText, expectedDisplay, matchedGuide, linkURL)))
 			}
 			// Check 2 — if topic is unambiguous, URL MUST canonical-match.
-			if bulletTopic != "" && matchedGuide != bulletTopic {
-				canonicalURL := CitationGuideURL[bulletTopic]
+			if blockTopic != "" && matchedGuide != blockTopic {
+				canonicalURL := CitationGuideURL[blockTopic]
 				vs = append(vs, violation("kb-citation-topic-mismatch", path,
-					fmt.Sprintf("citation URL %s does not match canonical for the bullet's detected topic %q (canonical is %s). The bullet's primary teaching is the detected topic; the citation must point the porter at that guide.",
-						linkURL, bulletTopic, canonicalURL)))
+					fmt.Sprintf("citation URL %s does not match canonical for the block's detected topic %q (canonical is %s). The block's primary teaching is the detected topic; the citation must point the porter at that guide.",
+						linkURL, blockTopic, canonicalURL)))
 			}
 		}
 		// Check 3 — form-(a) backtick guide-id citations. Each match
 		// captures the cited guide id; if a known guide is named AND
-		// the bullet's topic is unambiguous AND they disagree, fire.
-		if bulletTopic == "" {
+		// the block's topic is unambiguous AND they disagree, fire.
+		if blockTopic == "" {
 			continue
 		}
 		for _, fa := range formAMatches {
@@ -671,16 +718,55 @@ func validateCitationDisplayAgreement(path, kb string) []Violation {
 			if _, ok := CitationGuideURL[citedGuide]; !ok {
 				continue
 			}
-			if citedGuide == bulletTopic {
+			if citedGuide == blockTopic {
 				continue
 			}
-			canonicalURL := CitationGuideURL[bulletTopic]
+			canonicalURL := CitationGuideURL[blockTopic]
 			vs = append(vs, violation("kb-citation-topic-mismatch", path,
-				fmt.Sprintf("citation names the %q guide but the bullet's detected topic is %q (canonical URL %s). The bullet's primary teaching is the detected topic; cite the guide that matches.",
-					citedGuide, bulletTopic, canonicalURL)))
+				fmt.Sprintf("citation names the %q guide but the block's detected topic is %q (canonical URL %s). The block's primary teaching is the detected topic; cite the guide that matches.",
+					citedGuide, blockTopic, canonicalURL)))
 		}
 	}
 	return vs
+}
+
+// citationBlockSplits returns the per-block substrings the citation
+// display-text validator walks. The function picks the right delimiter
+// per surface shape:
+//
+//   - KB bodies open each bullet with `- **stem**` — split on
+//     boldBulletRE.
+//   - IG bodies open each item with `### N. <title>` — split on
+//     igHeadingItemRE.
+//
+// When both shapes match (mixed body) the boldBulletRE delimiter wins.
+// When neither matches (no bullets, no headings) returns an empty slice
+// so the caller treats the body as carrying no countable blocks.
+func citationBlockSplits(body string) []string {
+	if starts := boldBulletRE.FindAllStringIndex(body, -1); len(starts) > 0 {
+		return splitAtIndexes(body, starts)
+	}
+	if starts := igHeadingItemRE.FindAllStringIndex(body, -1); len(starts) > 0 {
+		return splitAtIndexes(body, starts)
+	}
+	return nil
+}
+
+// splitAtIndexes carves body into substrings — each starts at one of the
+// given match start positions and extends to the next match start (or
+// end-of-body for the last).
+func splitAtIndexes(body string, starts [][]int) []string {
+	out := make([]string, 0, len(starts))
+	for i, m := range starts {
+		var end int
+		if i+1 < len(starts) {
+			end = starts[i+1][0]
+		} else {
+			end = len(body)
+		}
+		out = append(out, body[m[0]:end])
+	}
+	return out
 }
 
 // kbBodyCitesGuideURL — Run-44 G1. Returns true when the body cites
