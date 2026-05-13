@@ -120,11 +120,17 @@ func TestLaravelRecipe_FullStack(t *testing.T) {
 		cleanupServices(ctx, h.client, h.projectID, allHosts...)
 	})
 
-	// Start workflow and import all services at once.
+	// Start workflow (two-phase) and import all services at once.
 	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
 	s.mustCallSuccess("zerops_workflow", map[string]any{
 		"action":   "start",
 		"workflow": "bootstrap",
+		"intent":   "Laravel recipe E2E: full stack verification",
+	})
+	s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "bootstrap",
+		"route":    "classic",
 		"intent":   "Laravel recipe E2E: full stack verification",
 	})
 

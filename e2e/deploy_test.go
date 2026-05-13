@@ -80,9 +80,17 @@ func TestE2E_Deploy_SelfDeploy(t *testing.T) {
 	step++
 	logStep(t, step, "zerops_workflow bootstrap")
 	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
+	// Phase 1: discovery (no route).
 	s.mustCallSuccess("zerops_workflow", map[string]any{
 		"action":   "start",
 		"workflow": "bootstrap",
+		"intent":   "e2e self-deploy test",
+	})
+	// Phase 2: commit with route=classic.
+	s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "bootstrap",
+		"route":    "classic",
 		"intent":   "e2e self-deploy test",
 	})
 
@@ -137,12 +145,14 @@ func TestE2E_Deploy_SelfDeploy(t *testing.T) {
 	})
 
 	var deployResult struct {
-		Status            string `json:"status"`
-		Mode              string `json:"mode"`
-		BuildStatus       string `json:"buildStatus"`
-		TargetServiceType string `json:"targetServiceType"`
-		SourceService     string `json:"sourceService"`
-		TargetService     string `json:"targetService"`
+		Status                 string `json:"status"`
+		Mode                   string `json:"mode"`
+		BuildStatus            string `json:"buildStatus"`
+		TargetServiceType      string `json:"targetServiceType"`
+		SourceService          string `json:"sourceService"`
+		TargetService          string `json:"targetService"`
+		SubdomainAccessEnabled bool   `json:"subdomainAccessEnabled,omitempty"`
+		SubdomainURL           string `json:"subdomainUrl,omitempty"`
 	}
 	if err := json.Unmarshal([]byte(deployText), &deployResult); err != nil {
 		t.Fatalf("parse deploy result: %v", err)
@@ -160,13 +170,26 @@ func TestE2E_Deploy_SelfDeploy(t *testing.T) {
 	if !strings.Contains(deployResult.TargetServiceType, "nodejs") {
 		t.Errorf("targetServiceType = %q, want to contain 'nodejs'", deployResult.TargetServiceType)
 	}
-	t.Logf("  Deploy: status=%s mode=%s source=%s target=%s", deployResult.Status, deployResult.Mode, deployResult.SourceService, deployResult.TargetService)
+	// Auto-enable subdomain invariant: zerops_deploy auto-enables subdomain on
+	// first deploy for eligible modes (spec-workflows.md §4.8). Recovery
+	// (explicit zerops_subdomain enable) is exercised by subdomain_test.go.
+	if !deployResult.SubdomainAccessEnabled {
+		t.Errorf("deploy did not auto-enable subdomain (subdomainAccessEnabled=false)")
+	}
+	if deployResult.SubdomainURL == "" {
+		t.Errorf("deploy response missing subdomainUrl despite SubdomainAccessEnabled=true")
+	}
+	t.Logf("  Deploy: status=%s mode=%s source=%s target=%s subdomain=%s",
+		deployResult.Status, deployResult.Mode, deployResult.SourceService, deployResult.TargetService, deployResult.SubdomainURL)
 
 	// --- Step 7: Wait for RUNNING + HTTP health check ---
 	step++
-	logStep(t, step, "verify RUNNING + HTTP 200")
+	logStep(t, step, "verify RUNNING + HTTP 200 via auto-enabled subdomain")
 	waitForServiceStatus(s, appHostname, "RUNNING", "ACTIVE")
-	deployAndVerifyHTTP(t, s, appHostname)
+	if code, ok := pollHTTPHealth(deployResult.SubdomainURL+"/health", 5*time.Second, 90*time.Second); !ok {
+		t.Fatalf("%s: HTTP health check failed (last=%d) on auto-enabled subdomain %s", appHostname, code, deployResult.SubdomainURL)
+	}
+	t.Logf("  %s: HTTP 200 OK on %s", appHostname, deployResult.SubdomainURL)
 
 	// --- Step 8: Delete ---
 	step++
@@ -205,9 +228,17 @@ func TestE2E_Deploy_CrossService(t *testing.T) {
 	step++
 	logStep(t, step, "zerops_workflow bootstrap")
 	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
+	// Phase 1: discovery (no route).
 	s.mustCallSuccess("zerops_workflow", map[string]any{
 		"action":   "start",
 		"workflow": "bootstrap",
+		"intent":   "e2e cross-service deploy test",
+	})
+	// Phase 2: commit with route=classic.
+	s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "bootstrap",
+		"route":    "classic",
 		"intent":   "e2e cross-service deploy test",
 	})
 
@@ -253,11 +284,13 @@ func TestE2E_Deploy_CrossService(t *testing.T) {
 	})
 
 	var deployResult struct {
-		Status        string `json:"status"`
-		Mode          string `json:"mode"`
-		BuildStatus   string `json:"buildStatus"`
-		SourceService string `json:"sourceService"`
-		TargetService string `json:"targetService"`
+		Status                 string `json:"status"`
+		Mode                   string `json:"mode"`
+		BuildStatus            string `json:"buildStatus"`
+		SourceService          string `json:"sourceService"`
+		TargetService          string `json:"targetService"`
+		SubdomainAccessEnabled bool   `json:"subdomainAccessEnabled,omitempty"`
+		SubdomainURL           string `json:"subdomainUrl,omitempty"`
 	}
 	if err := json.Unmarshal([]byte(deployText), &deployResult); err != nil {
 		t.Fatalf("parse deploy result: %v", err)
@@ -269,13 +302,25 @@ func TestE2E_Deploy_CrossService(t *testing.T) {
 	if deployResult.SourceService == deployResult.TargetService {
 		t.Errorf("cross-deploy: source=%q should differ from target=%q", deployResult.SourceService, deployResult.TargetService)
 	}
-	t.Logf("  Deploy: status=%s source=%s target=%s", deployResult.Status, deployResult.SourceService, deployResult.TargetService)
+	// Auto-enable subdomain invariant — applies to cross-deploy stage too
+	// (spec-workflows.md §4.8 + TestMaybeAutoEnableSubdomain_StageCrossDeploy_EnablesForStage).
+	if !deployResult.SubdomainAccessEnabled {
+		t.Errorf("cross-deploy did not auto-enable subdomain on stage")
+	}
+	if deployResult.SubdomainURL == "" {
+		t.Errorf("deploy response missing subdomainUrl for stage")
+	}
+	t.Logf("  Deploy: status=%s source=%s target=%s subdomain=%s",
+		deployResult.Status, deployResult.SourceService, deployResult.TargetService, deployResult.SubdomainURL)
 
 	// --- Step 6: Wait for stage RUNNING + HTTP health check ---
 	step++
-	logStep(t, step, "verify stage RUNNING + HTTP 200")
+	logStep(t, step, "verify stage RUNNING + HTTP 200 via auto-enabled subdomain")
 	waitForServiceStatus(s, stageHostname, "RUNNING", "ACTIVE")
-	deployAndVerifyHTTP(t, s, stageHostname)
+	if code, ok := pollHTTPHealth(deployResult.SubdomainURL+"/health", 5*time.Second, 90*time.Second); !ok {
+		t.Fatalf("%s: HTTP health check failed (last=%d) on auto-enabled subdomain %s", stageHostname, code, deployResult.SubdomainURL)
+	}
+	t.Logf("  %s: HTTP 200 OK on %s", stageHostname, deployResult.SubdomainURL)
 
 	// --- Step 7: Delete ---
 	step++

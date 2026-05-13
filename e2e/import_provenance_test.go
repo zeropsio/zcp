@@ -48,14 +48,22 @@ func TestE2E_ImportProvenance_StoredInState(t *testing.T) {
 	step++
 	logStep(t, step, "start bootstrap workflow")
 	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
-	startText := s.mustCallSuccess("zerops_workflow", map[string]any{
+	// Phase 1: discovery (no route).
+	s.mustCallSuccess("zerops_workflow", map[string]any{
 		"action":   "start",
 		"workflow": "bootstrap",
 		"intent":   "e2e import provenance test",
 	})
+	// Phase 2: commit with route=classic — returns progress envelope.
+	startText := s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "bootstrap",
+		"route":    "classic",
+		"intent":   "e2e import provenance test",
+	})
 	var startResp bootstrapProgress
 	if err := json.Unmarshal([]byte(startText), &startResp); err != nil {
-		t.Fatalf("parse start: %v", err)
+		t.Fatalf("parse start (phase 2): %v", err)
 	}
 	t.Logf("  Session: %s", startResp.SessionID)
 

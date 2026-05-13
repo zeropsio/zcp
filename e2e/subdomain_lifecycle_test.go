@@ -282,6 +282,28 @@ func TestE2E_SubdomainLifecycle(t *testing.T) {
 	}
 }
 
+// assertSubdomainURL pins the well-formedness of a subdomain URL returned by
+// zerops_subdomain enable: must be HTTPS, contain .zerops.app and the hostname,
+// and not be truncated.
+func assertSubdomainURL(t *testing.T, url, hostname string) {
+	t.Helper()
+	if url == "" {
+		t.Fatal("empty subdomain URL")
+	}
+	if strings.HasSuffix(url, ".") {
+		t.Errorf("URL ends with dot (truncated): %s", url)
+	}
+	if !strings.Contains(url, ".zerops.app") {
+		t.Errorf("URL missing .zerops.app domain: %s", url)
+	}
+	if !strings.HasPrefix(url, "https://") {
+		t.Errorf("URL not HTTPS: %s", url)
+	}
+	if !strings.Contains(url, hostname) {
+		t.Errorf("URL should contain hostname %q: %s", hostname, url)
+	}
+}
+
 // mustGetServiceByHostname resolves a service by hostname using the platform client.
 func mustGetServiceByHostname(t *testing.T, h *e2eHarness, ctx context.Context, hostname string) *platformServiceInfo {
 	t.Helper()

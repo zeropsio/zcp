@@ -53,24 +53,38 @@ func buildImportYAML(services []importService) string {
 }
 
 // bootstrapAndProvision runs a full bootstrap flow through provision completion.
-// Steps: reset → start → complete discover (plan) → import → wait → complete provision.
-// Returns parsed bootstrapProgress for assertions.
+// Steps: reset → start (two-phase: discover + classic commit) → complete discover (plan)
+// → import → wait → complete provision. Returns parsed bootstrapProgress.
+//
+// Bootstrap start is two-phase: Phase 1 (no route) returns route options without
+// committing a session; Phase 2 (route=classic) commits and returns sessionId +
+// progress. See plans/backlog/e2e-bootstrap-helper-two-phase-wiring.md.
 func bootstrapAndProvision(t *testing.T, s *e2eSession, plan []any, importYAML string, waitHostnames []string) bootstrapProgress {
 	t.Helper()
 
 	// Reset and start bootstrap.
 	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
-	startText := s.mustCallSuccess("zerops_workflow", map[string]any{
+
+	// Phase 1: discovery (no route) — establishes workflow context; response
+	// is BootstrapDiscoveryResponse (no sessionId), so we drop it.
+	s.mustCallSuccess("zerops_workflow", map[string]any{
 		"action":   "start",
 		"workflow": "bootstrap",
 		"intent":   t.Name(),
 	})
+	// Phase 2: commit with route=classic — returns standard progress envelope.
+	startText := s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "bootstrap",
+		"route":    "classic",
+		"intent":   t.Name(),
+	})
 	var startResp bootstrapProgress
 	if err := json.Unmarshal([]byte(startText), &startResp); err != nil {
-		t.Fatalf("parse bootstrap start: %v", err)
+		t.Fatalf("parse bootstrap start (phase 2): %v", err)
 	}
 	if startResp.SessionID == "" {
-		t.Fatal("expected non-empty sessionId")
+		t.Fatal("phase-2 commit must return sessionId")
 	}
 	if startResp.Current == nil || startResp.Current.Name != "discover" {
 		t.Fatal("expected current step to be 'discover'")
@@ -132,17 +146,24 @@ func bootstrapAndProvision(t *testing.T, s *e2eSession, plan []any, importYAML s
 func bootstrapAndProvisionExpectFail(t *testing.T, s *e2eSession, plan []any, importYAML string, waitHostnames []string) bootstrapProgress {
 	t.Helper()
 
-	// Reset and start bootstrap.
+	// Reset and start bootstrap (two-phase — see bootstrapAndProvision godoc).
 	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
-	startText := s.mustCallSuccess("zerops_workflow", map[string]any{
+	s.mustCallSuccess("zerops_workflow", map[string]any{
 		"action":   "start",
 		"workflow": "bootstrap",
 		"intent":   t.Name(),
 	})
+	startText := s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "bootstrap",
+		"route":    "classic",
+		"intent":   t.Name(),
+	})
 	var startResp bootstrapProgress
 	if err := json.Unmarshal([]byte(startText), &startResp); err != nil {
-		t.Fatalf("parse bootstrap start: %v", err)
+		t.Fatalf("parse bootstrap start (phase 2): %v", err)
 	}
+	_ = startResp
 
 	// Complete discover with plan.
 	s.mustCallSuccess("zerops_workflow", map[string]any{

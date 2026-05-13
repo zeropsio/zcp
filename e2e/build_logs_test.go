@@ -50,9 +50,17 @@ func TestE2E_BuildLogsOnFailure(t *testing.T) {
 	logStep(t, step, "starting bootstrap workflow session")
 	// Reset any stale session from a previous run.
 	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
+	// Phase 1: discovery (no route).
 	s.mustCallSuccess("zerops_workflow", map[string]any{
 		"action":   "start",
 		"workflow": "bootstrap",
+		"intent":   "e2e build_logs test — create service then intentionally fail build",
+	})
+	// Phase 2: commit with route=classic.
+	s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "bootstrap",
+		"route":    "classic",
 		"intent":   "e2e build_logs test — create service then intentionally fail build",
 	})
 	t.Log("  Workflow session started")

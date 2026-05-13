@@ -28,19 +28,16 @@ import (
 
 // testServicePrefixes lists all hostname prefixes used by e2e tests.
 var testServicePrefixes = []string{
-	"bs", "in", "inc",                           // bootstrap_workflow_test.go
-	"b2", "b3", "b4", "b5", "b9",                // bootstrap_modes_test.go
-	"b6", "b8", "ba", "bb", "bad",               // bootstrap_advanced_test.go
-	"zcprt", "zcpdb",                             // lifecycle_test.go, verify_test.go
-	"zcppf", "zcpdpl", "zcpddev", "zcpdstg", "zcpld", // deploy tests (ssh + local)
-	"zcpvrt", "zcpvdb",                           // verify_test.go
-	"zcpsub", "zcpbl",                            // subdomain, build_logs
-	"zcpmnt", "zcpapp",                           // mount_test.go
-	"zcpsd",                                      // discover_subdomain_test.go
-	"zcpsl",                                      // subdomain_lifecycle_test.go
-	"zcpex", "zcped",                             // export_multi_test.go
-	"bn",                                         // bootstrap_negative_test.go
-	"lrv",                                        // laravel_recipe_test.go
+	"bs", "in", "inc", // bootstrap_workflow_test.go
+	"b6", "b8", "ba", "bb", "bad", // bootstrap_advanced_test.go, bootstrap_git_init_test.go
+	"zcpdb",                                          // env_generate_test.go
+	"zcppf", "zcpdpl", "zcpddev", "zcpdstg", "zcpld", // deploy_test, deploy_local_test, deploy_prepare_fail_test, deploy_failure_classification_e2_test, env_generate_test
+	"zcpvrt", "zcpvdb",                               // verify_test.go
+	"zcpsub", "zcpbl",                                // subdomain_test.go, build_logs_test.go
+	"zcpmnt", "zcpapp",                               // import_provenance_test.go
+	"zcpsl",                                          // subdomain_lifecycle_test.go
+	"zcpex", "zcped",                                 // export_multi_test.go
+	"lrv",                                            // laravel_recipe_test.go
 }
 
 func TestMain(m *testing.M) {
@@ -309,7 +306,115 @@ server.listen(3000, () => console.log('listening on 3000'));
 		t.Fatalf("write server.js: %v", err)
 	}
 
-	// zcli push requires a git-initialized directory.
+	gitInit(t, dir)
+	return dir
+}
+
+// createMinimalPHPApp creates a temp directory with a minimal PHP app and zerops.yml.
+func createMinimalPHPApp(t *testing.T, hostname string) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	zeropsYML := fmt.Sprintf(`zerops:
+  - setup: %s
+    build:
+      base: php-nginx@8.4
+      buildCommands:
+        - echo "build done"
+      deployFiles: ./
+    run:
+      base: php-nginx@8.4
+      documentRoot: public
+      ports:
+        - port: 80
+          httpSupport: true
+`, hostname)
+
+	if err := os.MkdirAll(filepath.Join(dir, "public"), 0o755); err != nil {
+		t.Fatalf("mkdir public: %v", err)
+	}
+
+	indexPHP := `<?php
+if ($_SERVER['REQUEST_URI'] === '/health') {
+    http_response_code(200);
+    echo 'ok';
+    exit;
+}
+echo 'hello from e2e php test';
+`
+
+	if err := os.WriteFile(filepath.Join(dir, "zerops.yml"), []byte(zeropsYML), 0o644); err != nil {
+		t.Fatalf("write zerops.yml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "public", "index.php"), []byte(indexPHP), 0o644); err != nil {
+		t.Fatalf("write index.php: %v", err)
+	}
+
+	gitInit(t, dir)
+	return dir
+}
+
+// createMinimalGoApp creates a temp directory with a minimal Go app and zerops.yml.
+func createMinimalGoApp(t *testing.T, hostname string) string {
+	t.Helper()
+	dir := t.TempDir()
+
+	zeropsYML := fmt.Sprintf(`zerops:
+  - setup: %s
+    build:
+      base: go@1
+      buildCommands:
+        - go build -o app ./main.go
+      deployFiles: ./app
+    run:
+      base: go@1
+      ports:
+        - port: 8080
+          httpSupport: true
+      start: ./app
+`, hostname)
+
+	mainGo := `package main
+
+import (
+	"fmt"
+	"net/http"
+)
+
+func main() {
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		fmt.Fprint(w, "ok")
+	})
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+		fmt.Fprint(w, "hello from e2e go test")
+	})
+	fmt.Println("listening on 8080")
+	http.ListenAndServe(":8080", nil)
+}
+`
+
+	goMod := fmt.Sprintf("module %s\n\ngo 1.22\n", hostname)
+
+	if err := os.WriteFile(filepath.Join(dir, "zerops.yml"), []byte(zeropsYML), 0o644); err != nil {
+		t.Fatalf("write zerops.yml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte(mainGo), 0o644); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	gitInit(t, dir)
+	return dir
+}
+
+// gitInit initializes a git repo in dir with a single "init" commit.
+// Required by zcli push (which needs a git-initialized working tree).
+func gitInit(t *testing.T, dir string) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	for _, args := range [][]string{
@@ -319,14 +424,13 @@ server.listen(3000, () => console.log('listening on 3000'));
 	} {
 		cmd := exec.CommandContext(ctx, "git", args...)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
 			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v failed: %s (%v)", args, string(out), err)
 		}
 	}
-
-	return dir
 }
 
 // writeAppViaSSH writes zerops.yml + server.js to a remote service via SSH.
@@ -366,6 +470,21 @@ func deployAndVerifyHTTP(t *testing.T, s *e2eSession, hostname string) {
 		t.Fatalf("%s: HTTP health check failed (last=%d), want 200", hostname, code)
 	}
 	t.Logf("  %s: HTTP %d OK", hostname, code)
+}
+
+// sshExec runs a command on a remote Zerops service via SSH.
+// Requires active VPN connection (zcli vpn up).
+func sshExec(t *testing.T, hostname, command string) (string, error) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ssh",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "ConnectTimeout=10",
+		hostname, command,
+	).CombinedOutput()
+	return strings.TrimSpace(string(out)), err
 }
 
 // requireSSH skips the test if SSH to the given hostname is not available.

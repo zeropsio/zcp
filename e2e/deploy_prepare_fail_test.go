@@ -48,9 +48,17 @@ func TestE2E_DeployPrepareCommandsFailed(t *testing.T) {
 	step++
 	logStep(t, step, "starting bootstrap workflow session")
 	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
+	// Phase 1: discovery (no route).
 	s.mustCallSuccess("zerops_workflow", map[string]any{
 		"action":   "start",
 		"workflow": "bootstrap",
+		"intent":   "e2e prepare fail test — trigger PREPARING_RUNTIME_FAILED",
+	})
+	// Phase 2: commit with route=classic.
+	s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "bootstrap",
+		"route":    "classic",
 		"intent":   "e2e prepare fail test — trigger PREPARING_RUNTIME_FAILED",
 	})
 	t.Log("  Workflow session started")

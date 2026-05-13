@@ -114,9 +114,17 @@ func TestE2E_LocalDeploy_Success(t *testing.T) {
 	step++
 	logStep(t, step, "zerops_workflow bootstrap")
 	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
+	// Phase 1: discovery (no route).
 	s.mustCallSuccess("zerops_workflow", map[string]any{
 		"action":   "start",
 		"workflow": "bootstrap",
+		"intent":   "e2e local deploy test",
+	})
+	// Phase 2: commit with route=classic.
+	s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "bootstrap",
+		"route":    "classic",
 		"intent":   "e2e local deploy test",
 	})
 
@@ -282,10 +290,13 @@ func TestE2E_LocalDeploy_MissingZeropsYml(t *testing.T) {
 		cleanupServices(ctx, h.client, h.projectID, hostname)
 	})
 
-	// Start workflow (import requires session).
+	// Start workflow (two-phase: discovery + classic commit).
 	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
 	s.mustCallSuccess("zerops_workflow", map[string]any{
 		"action": "start", "workflow": "bootstrap", "intent": "e2e missing yml test",
+	})
+	s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action": "start", "workflow": "bootstrap", "route": "classic", "intent": "e2e missing yml test",
 	})
 
 	// Create service so it exists.
@@ -338,6 +349,9 @@ func TestE2E_LocalDeploy_BuildFailed(t *testing.T) {
 	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
 	s.mustCallSuccess("zerops_workflow", map[string]any{
 		"action": "start", "workflow": "bootstrap", "intent": "e2e build fail test",
+	})
+	s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action": "start", "workflow": "bootstrap", "route": "classic", "intent": "e2e build fail test",
 	})
 
 	// Import service.
@@ -407,6 +421,9 @@ func TestE2E_LocalDeploy_EnvVarBridge(t *testing.T) {
 	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
 	s.mustCallSuccess("zerops_workflow", map[string]any{
 		"action": "start", "workflow": "bootstrap", "intent": "e2e env bridge test",
+	})
+	s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action": "start", "workflow": "bootstrap", "route": "classic", "intent": "e2e env bridge test",
 	})
 
 	// Create a managed service to discover env vars from.

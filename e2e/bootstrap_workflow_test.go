@@ -72,14 +72,22 @@ func TestE2E_BootstrapFresh_FullFlow(t *testing.T) {
 	step++
 	logStep(t, step, "start bootstrap workflow")
 	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
-	startText := s.mustCallSuccess("zerops_workflow", map[string]any{
+	// Phase 1: discovery (no route) — drops discovery response.
+	s.mustCallSuccess("zerops_workflow", map[string]any{
 		"action":   "start",
 		"workflow": "bootstrap",
 		"intent":   "e2e bootstrap test — fresh runtime + db",
 	})
+	// Phase 2: commit with route=classic — returns progress envelope.
+	startText := s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "bootstrap",
+		"route":    "classic",
+		"intent":   "e2e bootstrap test — fresh runtime + db",
+	})
 	var startResp bootstrapProgress
 	if err := json.Unmarshal([]byte(startText), &startResp); err != nil {
-		t.Fatalf("parse bootstrap start: %v", err)
+		t.Fatalf("parse bootstrap start (phase 2): %v", err)
 	}
 	if startResp.SessionID == "" {
 		t.Fatal("expected non-empty sessionId")
@@ -218,9 +226,17 @@ func TestE2E_BootstrapIncremental_ExistingRuntime(t *testing.T) {
 	step++
 	logStep(t, step, "initial bootstrap — create runtime + db")
 	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
+	// Phase 1: discovery (no route).
 	s.mustCallSuccess("zerops_workflow", map[string]any{
 		"action":   "start",
 		"workflow": "bootstrap",
+		"intent":   "e2e phase 1 — initial services for incremental test",
+	})
+	// Phase 2: commit with route=classic.
+	s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "bootstrap",
+		"route":    "classic",
 		"intent":   "e2e phase 1 — initial services for incremental test",
 	})
 
@@ -283,14 +299,22 @@ func TestE2E_BootstrapIncremental_ExistingRuntime(t *testing.T) {
 	step++
 	logStep(t, step, "start incremental bootstrap")
 	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
-	startText := s.mustCallSuccess("zerops_workflow", map[string]any{
+	// Phase 1: discovery (no route).
+	s.mustCallSuccess("zerops_workflow", map[string]any{
 		"action":   "start",
 		"workflow": "bootstrap",
 		"intent":   "e2e incremental — add valkey to existing runtime",
 	})
+	// Phase 2: commit with route=adopt (IsExisting=true plan below).
+	startText := s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "bootstrap",
+		"route":    "adopt",
+		"intent":   "e2e incremental — add valkey to existing runtime",
+	})
 	var startResp bootstrapProgress
 	if err := json.Unmarshal([]byte(startText), &startResp); err != nil {
-		t.Fatalf("parse start: %v", err)
+		t.Fatalf("parse start (phase 2): %v", err)
 	}
 	if startResp.Current.Name != "discover" {
 		t.Fatalf("expected discover step, got %s", startResp.Current.Name)

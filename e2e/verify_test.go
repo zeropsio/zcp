@@ -25,10 +25,17 @@ func TestE2E_Verify(t *testing.T) {
 	dbHostname := "zcpvdb" + suffix
 
 	// Start workflow session — zerops_import requires an active session.
+	// Bootstrap start is two-phase: Phase 1 returns route options, Phase 2 commits.
 	s.callTool("zerops_workflow", map[string]any{"action": "reset"})
 	s.mustCallSuccess("zerops_workflow", map[string]any{
 		"action":   "start",
 		"workflow": "bootstrap",
+		"intent":   "e2e verify test",
+	})
+	s.mustCallSuccess("zerops_workflow", map[string]any{
+		"action":   "start",
+		"workflow": "bootstrap",
+		"route":    "classic",
 		"intent":   "e2e verify test",
 	})
 

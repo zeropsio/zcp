@@ -325,6 +325,11 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 		}
 
 		// Ports and EnvVars: check against claims for running managed services.
+		// Tracking counters surface coverage at end of Phase 2 — a fresh eval-zcp
+		// project with zero managed services would otherwise pass silently
+		// despite validating zero claims.
+		var validatedTypes int
+		validatedSet := make(map[string]bool)
 		for bt, svcsWithEnv := range managedWithEnvs {
 			claim := claimsByType[bt]
 			for _, swe := range svcsWithEnv {
@@ -349,6 +354,7 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 							}
 						}
 					})
+					validatedSet[bt] = true
 				}
 
 				if len(claim.expectedEnvKeys) > 0 || len(claim.forbiddenEnvKeys) > 0 {
@@ -366,22 +372,39 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 							}
 						}
 					})
+					validatedSet[bt] = true
 				}
 			}
 		}
+		validatedTypes = len(validatedSet)
 
-		// Report skipped service types (in claims but not running).
+		// Coverage gate: count claim types worth testing, fail loudly if we
+		// validated none of them. A test that silently skips its entire
+		// purpose is a false-green; better to surface "no managed services
+		// in project — provision at least one to exercise this contract."
+		var expectedTypes int
+		var missing []string
 		for _, claim := range serviceClaims {
 			if len(claim.expectedPorts) == 0 && len(claim.expectedEnvKeys) == 0 {
 				continue
 			}
-			if _, running := managedWithEnvs[claim.typePattern]; !running {
-				t.Run("Ports/"+claim.typePattern+"(not_running)", func(t *testing.T) {
-					t.Skipf("no running %s service in project", claim.typePattern)
-				})
-				t.Run("EnvVars/"+claim.typePattern+"(not_running)", func(t *testing.T) {
-					t.Skipf("no running %s service in project", claim.typePattern)
-				})
+			expectedTypes++
+			if !validatedSet[claim.typePattern] {
+				missing = append(missing, claim.typePattern)
+			}
+		}
+		t.Logf("Phase 2 coverage: validated %d of %d managed service types (missing: %v)",
+			validatedTypes, expectedTypes, missing)
+		if expectedTypes > 0 && validatedTypes == 0 {
+			// Visible warning in the run log without failing — operators see
+			// "0 of N validated" in CI summary and can choose to provision
+			// services. Strict fail-on-empty is opt-in via ZCP_E2E_REQUIRE_MANAGED.
+			msg := fmt.Sprintf("Phase 2 validated 0 of %d claim types — eval-zcp has no managed services running. "+
+				"Provision at least postgresql or valkey to exercise this contract.", expectedTypes)
+			if os.Getenv("ZCP_E2E_REQUIRE_MANAGED") != "" {
+				t.Error(msg)
+			} else {
+				t.Log("WARNING: " + msg)
 			}
 		}
 	})
