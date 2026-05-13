@@ -248,6 +248,66 @@ func TestSelfReferentialNamingLinter_NestModulePatternFires(t *testing.T) {
 	}
 }
 
+// TestSelfReferentialNamingLinter_GoBlockDeclarationsRefuse — Run-46
+// followup. The Go export parser's per-line regex caught `func X` /
+// `type X` / `var X` / `const X` at column 0 but skipped Go's block-
+// form `var (` / `const (` declarations. Constants exported via the
+// block form (the canonical idiom for grouped package-level symbols)
+// slipped past the linter — a backticked `APP_NAME` or `DefaultPort`
+// in a KB body referencing a Go recipe's scaffold would not fire.
+// This test pins the block-form fix.
+func TestSelfReferentialNamingLinter_GoBlockDeclarationsRefuse(t *testing.T) {
+	t.Parallel()
+	codebaseDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(codebaseDir, "src"), 0o755); err != nil {
+		t.Fatalf("mkdir src: %v", err)
+	}
+	// Stage a Go file that declares constants via the block form. Both
+	// `var (` and `const (` blocks — the linter must reach both.
+	constsBody := `package main
+
+var (
+	APP_NAME = "showcase"
+	APP_VERSION = "1.0.0"
+)
+
+const (
+	DefaultPort = 3000
+	MaxRetries = 5
+)
+`
+	if err := os.WriteFile(filepath.Join(codebaseDir, "src", "constants.go"),
+		[]byte(constsBody), 0o644); err != nil {
+		t.Fatalf("write constants.go: %v", err)
+	}
+	// Empty deps so the npm allow-list path doesn't mask a violation
+	// (the linter's PackageDeps short-circuit returns false-on-match —
+	// we want the test to isolate the Go-export-parser path).
+	if err := os.WriteFile(filepath.Join(codebaseDir, "package.json"),
+		[]byte(`{"name":"go-recipe","dependencies":{}}`), 0o644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+
+	body := `<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->
+- **Recipe-internal constants** — bump ` + "`APP_NAME`" + ` and ` + "`DefaultPort`" + `
+  in the scaffold when forking this recipe for a new tenant.
+<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->
+`
+	vs, err := lintSelfReferentialKB(body, codebaseDir)
+	if err != nil {
+		t.Fatalf("lintSelfReferentialKB: %v", err)
+	}
+	if len(vs) == 0 {
+		t.Fatal("expected refusal on Go block-decl backticks; got no violations")
+	}
+	joined := strings.Join(vs, "\n")
+	for _, want := range []string{"APP_NAME", "DefaultPort"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("violation message must name %q (Go block-form export); got %s", want, joined)
+		}
+	}
+}
+
 // TestRecordFragmentSelfReferential_RefusesKBBody — the linter is wired
 // into handleRecordFragment for fragmentIds matching
 // `codebase/<host>/knowledge-base`. Refusal sets r.Error and leaves the

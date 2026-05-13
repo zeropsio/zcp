@@ -99,13 +99,37 @@ func TestRefinement2Manifest_EnumeratesEveryFragment(t *testing.T) {
 // The codex review found Refinement2ManifestEntry missing the
 // downstream-gate metadata fields the plan promised:
 // TopicCandidates, PorterTunableDirectives, PerFieldComments. This test
-// pins the shape — S4 entries carry topic candidates when detectable;
-// S7 entries carry both PorterTunableDirectives + PerFieldComments;
-// S3 entries carry PorterTunableDirectives per-service.
+// pins the shape — S3 entries carry TopicCandidates from citation-
+// keyword detection on the comment body AND PorterTunableDirectives
+// when the comment body carries yaml-shape annotations; S4 entries
+// carry topic candidates when detectable; S7 entries carry both
+// PorterTunableDirectives + PerFieldComments.
 func TestRefinement2Manifest_CarriesG2Metadata(t *testing.T) {
 	t.Parallel()
 
 	plan := syntheticShowcasePlan()
+	// S3 — override the tier-0 EnvComments with a service block whose
+	// comment body literally carries rolling-deploys citation keywords
+	// AND a yaml-shape `  minContainers: 2` annotation. The audit
+	// reads tier-yaml comment bodies for both topic-candidate routing
+	// + porter-tunable enumeration (per refinement_manifest.go S3
+	// branch). A second service block (`db`) carries plain prose with
+	// no annotations — manifest must NOT spuriously attach metadata
+	// to that entry.
+	plan.EnvComments = map[string]EnvComments{
+		"0": {
+			Project: "AI agent workspace — dev slot per codebase.",
+			Service: map[string]string{
+				"apidev": "API dev — rolling-deploys with SIGTERM drain;\n" +
+					"once traffic warrants it bump:\n" +
+					"  minContainers: 2\n" +
+					"so zero-downtime rolling-deploys land cleanly.",
+				"db": "Postgres for the greetings table.",
+			},
+		},
+		"5": plan.EnvComments["5"],
+	}
+
 	// S4 IG slot — body contains rolling-deploys keywords (minContainers
 	// + zero-downtime + SIGTERM) so DetectBulletTopicCandidates returns
 	// the rolling-deploys family.
@@ -135,6 +159,50 @@ minContainers≥2 enables zero-downtime rolling-deploys with SIGTERM drain.`,
 	m, err := BuildRefinement2Manifest(plan)
 	if err != nil {
 		t.Fatalf("BuildRefinement2Manifest: %v", err)
+	}
+
+	// S3 — tier-0 entries enumerated. Find the apidev service block.
+	// The comment body contains "rolling-deploys" + "SIGTERM" +
+	// "zero-downtime" + a yaml-shape `  minContainers: 2` line, so:
+	//   - TopicCandidates MUST contain "rolling-deploys"
+	//   - PorterTunableDirectives MUST contain "minContainers"
+	tier0Entries, ok := m.TierYAMLComments["0"]
+	if !ok || len(tier0Entries) == 0 {
+		t.Fatal("S3 tier-0 entries empty; manifest should enumerate apidev + db comment blocks")
+	}
+	var s3ApidevEntry, s3DbEntry *Refinement2ManifestEntry
+	for i := range tier0Entries {
+		switch tier0Entries[i].Service {
+		case "apidev":
+			s3ApidevEntry = &tier0Entries[i]
+		case "db":
+			s3DbEntry = &tier0Entries[i]
+		}
+	}
+	if s3ApidevEntry == nil {
+		t.Fatal("S3 tier-0 apidev entry not found")
+	}
+	if !slices.Contains(s3ApidevEntry.TopicCandidates, "rolling-deploys") {
+		t.Errorf("S3 apidev TopicCandidates must include rolling-deploys (body carries SIGTERM + zero-downtime + minContainers); got %v",
+			s3ApidevEntry.TopicCandidates)
+	}
+	if !slices.Contains(s3ApidevEntry.PorterTunableDirectives, "minContainers") {
+		t.Errorf("S3 apidev PorterTunableDirectives must include minContainers (comment body carries the yaml-shape annotation); got %v",
+			s3ApidevEntry.PorterTunableDirectives)
+	}
+	// Negative-shape: the db block is plain prose without citation
+	// keywords or yaml-shape annotations — must NOT receive spurious
+	// metadata.
+	if s3DbEntry == nil {
+		t.Fatal("S3 tier-0 db entry not found")
+	}
+	if len(s3DbEntry.TopicCandidates) != 0 {
+		t.Errorf("S3 db TopicCandidates must be empty for plain-prose comment; got %v",
+			s3DbEntry.TopicCandidates)
+	}
+	if len(s3DbEntry.PorterTunableDirectives) != 0 {
+		t.Errorf("S3 db PorterTunableDirectives must be empty for plain-prose comment; got %v",
+			s3DbEntry.PorterTunableDirectives)
 	}
 
 	// S4 — IG slot 2 body carries SIGTERM + zero-downtime + minContainers,

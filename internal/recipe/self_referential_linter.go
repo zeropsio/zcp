@@ -174,8 +174,8 @@ var exportTSNamedListRE = regexp.MustCompile(`(?m)^\s*export\s*\{([^}]+)\}`)
 // goPackageLevelDeclRE matches Go package-level `func`/`type`/`var`/
 // `const` declarations whose identifier starts with an uppercase letter
 // (Go's export rule). Captures the identifier (group 2). Skips the
-// `var (` / `const (` block-open lines — block contents need a separate
-// pass.
+// `var (` / `const (` block-open lines — block contents are harvested
+// by extractGoBlockDecls's state-machine pass.
 var goPackageLevelDeclRE = regexp.MustCompile(
 	`(?m)^(?:func|type|var|const)\s+(?:\([^)]*\)\s+)?([A-Z][A-Za-z0-9_]*)`,
 )
@@ -317,6 +317,62 @@ func extractGoPackageLevelDecls(content string) []string {
 	out := make([]string, 0, len(matches))
 	for _, m := range matches {
 		out = append(out, m[1])
+	}
+	// Run-46 followup — handle Go block-form `var (` / `const (` at
+	// column 0. The single-line regex above only catches the
+	// `var X = …` / `const X = …` shape; block contents like
+	//   var (
+	//       APP_NAME = "…"
+	//   )
+	// declare exported identifiers indented inside the block and were
+	// invisible to the per-line scanner. Walk the file in a small state
+	// machine that flips on `var (` / `const (` at column 0 and harvests
+	// uppercase-leading identifiers until the matching `)` at column 0.
+	out = append(out, extractGoBlockDecls(content)...)
+	return out
+}
+
+// goBlockIdentRE matches a single identifier-bearing line inside a
+// `var (` / `const (` block — leading whitespace, an UpperCamel
+// identifier, then either ` `, `\t`, `=`, `:`, or end-of-line. Captures
+// the identifier (group 1). Lowercase-leading identifiers (package-
+// private) are intentionally skipped — only Go-exported (capital first
+// letter) symbols match.
+var goBlockIdentRE = regexp.MustCompile(`^\s+([A-Z][A-Za-z0-9_]*)(?:\s|=|:|$)`)
+
+// extractGoBlockDecls walks the file line-by-line, detects Go
+// block-form `var (` / `const (` declarations starting at column 0, and
+// returns the exported (uppercase-leading) identifiers declared within.
+// Blank lines and `//` comment lines inside the block are skipped.
+//
+// Run-46 followup — closes the leaf-block gap in the Go export parser
+// (codex APPROVE-WITH-CHANGES verdict).
+func extractGoBlockDecls(content string) []string {
+	var out []string
+	inBlock := false
+	for line := range strings.SplitSeq(content, "\n") {
+		if !inBlock {
+			// Block-open detector — `var (` or `const (` at column 0.
+			// Trailing whitespace tolerated; nothing else on the line.
+			trimmed := strings.TrimRight(line, " \t\r")
+			if trimmed == "var (" || trimmed == "const (" {
+				inBlock = true
+			}
+			continue
+		}
+		// Block-close — `)` at column 0.
+		if strings.HasPrefix(line, ")") {
+			inBlock = false
+			continue
+		}
+		// Skip blank lines + block comments inside the block.
+		stripped := strings.TrimSpace(line)
+		if stripped == "" || strings.HasPrefix(stripped, "//") {
+			continue
+		}
+		if m := goBlockIdentRE.FindStringSubmatch(line); m != nil {
+			out = append(out, m[1])
+		}
 	}
 	return out
 }
