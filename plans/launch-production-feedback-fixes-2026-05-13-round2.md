@@ -143,4 +143,63 @@ Per round-1 plan §5 (testing methodology forward):
 
 ---
 
-**End of plan. Implementation starts: F6a → F6b → re-eval → F5 → re-eval → ship.**
+**End of plan. Implementation: F6a + F6b → eval-verified (v9.90.1) → F5 → eval-verified end-to-end (v9.90.2).**
+
+---
+
+## 7. Round-2 verification + new findings for round 3
+
+### What round 2 actually delivered (shipped + verified)
+
+| Verze | Fix | Eval evidence |
+|---|---|---|
+| v9.90.1 | F6 (routing table + `idle-launch-entry` atom) | `flow-eval launch-production-from-standard-pair` 20260513-132735 — agent called `zerops_workflow workflow="launch-production"` successfully, advanced through scope-prompt + classify-prompt. **Zero zcli fallback.** |
+| v9.90.2 | F5 (mutation error surface helper + Blocker extension + 4 emit sites refactored) | `flow-eval launch-production-from-standard-pair` 20260513-133625 — full end-to-end walk, parameter accumulation correct. Mutation path not reached in eval (agent ran out of turns at classify-prompt), but Karel's failure shape covered by `TestLaunchFailedFromPlatformError_PreservesStructuredDetail` reproduction. |
+
+### Round-3 backlog (eval-surfaced new findings)
+
+Captured here so round 3's planning can triage; each is its own item with self-contained reproduction.
+
+#### F7 — `launch-classify-platform-envs` atom directs misleading `zerops_discover` invocation 🟠 HIGH
+
+Self-review (20260513-132735):
+> "The classify-prompt guidance does mention this ('Fetch values via `zerops_discover hostname=\"{targetHostname}\" includeEnvs=true includeEnvValues=true`') but that suggested invocation is actively misleading — passing a hostname returns the runtime service's own envs, not the project-wide ones you need to classify."
+
+**Fix:** atom guidance should say `zerops_discover includeEnvs=true includeEnvValues=true` (no hostname) so project envs surface in `project.envs[]`.
+
+#### F8 — `action="complete"` on launch-production returns BOOTSTRAP_NOT_ACTIVE 🟠 HIGH
+
+Self-review (20260513-133625):
+> "I burned two cycles trying `action='complete' step='scope-prompt'` and `action='complete' step='classify-prompt'`, and both came back with `BOOTSTRAP_NOT_ACTIVE: bootstrap not active`. That error is misleading — there *was* no bootstrap running, and the workflow I was trying to advance wasn't bootstrap."
+
+**Fix shape:** route `action="complete"` to a more specific error when the active context is launch-production (or no workflow at all). Don't pretend bootstrap is the only stateful workflow.
+
+#### F9 — Stateless multi-call narrowing not documented as such 🟡 MEDIUM
+
+Self-review (20260513-133625):
+> "The biggest trap is that launch-production looks like a stateful multi-step session ... but it's not. It's *stateless* — every advance is just another `action='start'` call with the same `workflow='launch-production'` plus all previously-accepted parameters."
+
+**Fix:** atom (`launch-intro` or `launch-scope-prompt`) should explicit say "launch-production is stateless; treat `inputs` block in the response as the running accumulator; keep passing them forward on every `action=\"start\"` call."
+
+#### F10 — Late detection of "project not bootstrapped" 🟡 MEDIUM
+
+Self-review (20260513-133625):
+> "The launch-production workflow refuses to run against a project that isn't bootstrapped in ZCP's tracking sense ... The first `start launch-production` call succeeded and got me to `scope-prompt`, which made me think the workflow was happy. It wasn't — it just hadn't checked yet."
+
+**Fix:** at scope-prompt time, if `gatherLaunchSourceContext` shows any USER-category service with `!managedByZcp`, emit an `adopt-required` blocker pointing at `zerops_workflow workflow="bootstrap" route="adopt"` BEFORE accepting any scope inputs. Spares the agent the dead-end run.
+
+#### F11 — Adopt-provision step ambiguous for already-ACTIVE services 🟢 LOW
+
+(Adopt scope, not launch-production — flagged for the adopt path's own review queue.)
+
+#### F12 — Classify-prompt has no rubric for "orphan env that app never reads" 🟢 LOW
+
+Self-review (20260513-133625):
+> "The classify-prompt guidance is detailed about how to grep for SDK usage and frame-convention secrets, but it doesn't have a clean answer for 'this env is a leftover that the app never reads.'"
+
+**Fix:** add a section to `export-classify-envs` (shared atom) for the orphan case — recommend `plain-config` as the safe default since wrong-direction errors are post-import fixable.
+
+### Methodology note for round 3
+
+Per round-1 §5 testing methodology — F7..F12 surfaced because F6 unblocked the workflow at all. Each successful eval iteration reveals the next-layer friction. This is the expected pattern: ship the unblock, observe, surface the next layer, iterate. The plan-doc tracks open backlog so future rounds don't lose the trail.
+
