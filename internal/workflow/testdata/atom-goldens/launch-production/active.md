@@ -1,6 +1,6 @@
 ---
 id: launch-production/active
-atomIds: [launch-delete-key, launch-intro, launch-pipeline-configure-dashboard, launch-post-checklist, launch-scope-prompt, launch-classify-platform-envs, launch-mutation-key-required, launch-pipeline-configuring, launch-pipeline-configured, launch-pipeline-skipped, launch-write-prod-setup]
+atomIds: [launch-delete-key, launch-intro, launch-pipeline-configure-dashboard, launch-post-checklist, launch-scope-prompt, launch-classify-platform-envs, launch-mutation-key-required, launch-pipeline-configuring, launch-pipeline-configured, launch-pipeline-skipped, launch-status-recovery, launch-write-prod-setup]
 description: "Launch-production workflow mid-flow on a source project — bundle composed, awaiting one-shot launch key for the mutation pipeline."
 ---
 ### Delete the launch-window API key
@@ -151,6 +151,27 @@ Without an integration, subsequent code changes do NOT auto-build. Options:
 - **Add integration later** in Zerops dashboard (`Project → Service → Source code → Connect to GitHub/GitLab`). Set the event type to `Tag`, the tag regex to `^v\d+\.\d+\.\d+$` (or your release-version convention), and the Zerops YAML setup to `prod`.
 
 Re-run `workflow="launch-production"` with the same `launchKey` if you want ZCP to verify integration setup; that lifts the skip and runs the configuring-pipeline check.
+
+---
+
+### Launch status — mid-flight recovery
+
+When `action="status"` returns `kind: "launch-active"`, a launch-production workflow is mid-flight for this source project. Conversation context was likely lost (compaction, restart). The envelope carries enough state to resume:
+
+| Field | Use |
+|---|---|
+| `targetProjectName` | Pass back as `productionProjectName` on the resume call. |
+| `status` | Tells you which phase to expect on the next response (e.g. `ready-to-launch` means you still need `launchKey`; `launching` / `configuring-pipeline` means polling). |
+| `lastUpdate` | Sanity-check that this is the launch you remember — if minutes old, it's the active one; if days old, the user may have abandoned it (ask before resuming). |
+| `ambiguousChoices` | When present, multiple non-terminal launches exist for this source. Pick a `productionProjectName` from the list before the resume call. |
+
+Resume call shape:
+
+```
+zerops_workflow workflow="launch-production" productionProjectName="<from envelope>"
+```
+
+The `launchKey` is NOT required at the status step — only generate and pass it when the workflow re-enters `ready-to-launch` and you intend to advance to `launching`. Status is read-only; ZCP never constructs a project-admin client on this path.
 
 ---
 

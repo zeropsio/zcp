@@ -1287,6 +1287,7 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"launch-intro",
 		"launch-scope-prompt",
 		"launch-classify-platform-envs",
+		"launch-status-recovery",
 		"launch-mutation-key-required",
 		"launch-write-prod-setup",
 		"launch-delete-key",

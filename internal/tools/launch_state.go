@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/zeropsio/zcp/internal/ops"
@@ -181,6 +182,102 @@ func writeLaunchState(stateDir string, state *launchState) error {
 		return fmt.Errorf("rename to final: %w", err)
 	}
 	return nil
+}
+
+// findActiveLaunchState walks the launch-production state directory and
+// returns the most-recently-updated non-terminal launch matching the
+// given sourceProjectID. Used by the generic status handler to surface
+// a launch-active envelope when the workflow was interrupted mid-flight
+// (typical compaction-recovery path).
+//
+// Returns:
+//
+//   - active: the non-terminal state with the latest LastUpdate, or nil
+//     when none exists for this sourceProjectID.
+//   - all:    every non-terminal state for this sourceProjectID, sorted
+//     LastUpdate descending. Allows the caller to disambiguate when
+//     multiple are active.
+//   - err:    propagated only on filesystem traversal failure. A missing
+//     state directory is NOT an error (returns nil active + nil slice +
+//     nil error).
+//
+// Pure read-only — does not construct ProjectAdminClient or hit any
+// network endpoint. P-LP-2 (no admin client outside the launch handler)
+// is preserved.
+//
+// Terminal states (LaunchStatusLaunched, LaunchStatusFailed) are
+// filtered out — once a launch reaches a terminal state, status
+// recovery should fall through to the generic envelope so the user can
+// start a fresh workflow or use the dedicated launch resume path.
+func findActiveLaunchState(stateDir, sourceProjectID string) (*launchState, []*launchState, error) {
+	if stateDir == "" || sourceProjectID == "" {
+		return nil, nil, nil
+	}
+	dir := filepath.Join(stateDir, launchStateDir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil, nil
+		}
+		return nil, nil, fmt.Errorf("read %s: %w", dir, err)
+	}
+
+	var active []*launchState
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		// One JSON state file per launchID; ignore audit log + temp files.
+		if name == launchAuditLogName || !hasJSONSuffix(name) || hasTempSuffix(name) {
+			continue
+		}
+		launchID := stripJSONSuffix(name)
+		state, readErr := readLaunchState(stateDir, launchID)
+		if readErr != nil || state == nil {
+			// Corrupt file or stale temp left behind — skip silently.
+			// Recovery is a best-effort surface; one bad entry must not
+			// block status for the rest.
+			continue
+		}
+		if state.SourceProjectID != sourceProjectID {
+			continue
+		}
+		if isTerminalLaunchStatus(state.Status) {
+			continue
+		}
+		active = append(active, state)
+	}
+
+	if len(active) == 0 {
+		return nil, nil, nil
+	}
+
+	sort.Slice(active, func(i, j int) bool {
+		return active[i].LastUpdate.After(active[j].LastUpdate)
+	})
+	return active[0], active, nil
+}
+
+// isTerminalLaunchStatus reports whether the given status is a launch
+// terminal state — recovery should fall through to generic envelope.
+func isTerminalLaunchStatus(s topology.LaunchProductionStatus) bool {
+	return s == topology.LaunchStatusLaunched || s == topology.LaunchStatusFailed
+}
+
+func hasJSONSuffix(name string) bool {
+	return len(name) > len(".json") && name[len(name)-len(".json"):] == ".json"
+}
+
+func hasTempSuffix(name string) bool {
+	return len(name) > len(".tmp") && name[len(name)-len(".tmp"):] == ".tmp"
+}
+
+func stripJSONSuffix(name string) string {
+	if !hasJSONSuffix(name) {
+		return name
+	}
+	return name[:len(name)-len(".json")]
 }
 
 // launchAuditLogPath returns the path to the append-only audit log.

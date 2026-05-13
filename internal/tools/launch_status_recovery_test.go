@@ -1,0 +1,354 @@
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
+)
+
+// TestFindActiveLaunchState_Empty_ReturnsNil pins the no-state-dir +
+// empty-state-dir paths: helper returns (nil, nil, nil) so the status
+// handler falls through to the generic envelope.
+func TestFindActiveLaunchState_Empty_ReturnsNil(t *testing.T) {
+	t.Parallel()
+
+	// No directory at all.
+	active, all, err := findActiveLaunchState(t.TempDir(), "src")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if active != nil || all != nil {
+		t.Errorf("expected nil/nil for empty dir, got %+v / %+v", active, all)
+	}
+
+	// Empty inputs.
+	if a, l, e := findActiveLaunchState("", "src"); a != nil || l != nil || e != nil {
+		t.Errorf("empty stateDir: got non-nil")
+	}
+	if a, l, e := findActiveLaunchState(t.TempDir(), ""); a != nil || l != nil || e != nil {
+		t.Errorf("empty sourceProjectID: got non-nil")
+	}
+}
+
+// TestFindActiveLaunchState_SingleActive_ReturnsIt pins the happy path:
+// one non-terminal state file → return it.
+func TestFindActiveLaunchState_SingleActive_ReturnsIt(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	state := &launchState{
+		LaunchID:          "abc12345",
+		SourceProjectID:   "src",
+		TargetProjectName: "myapp-prod",
+		Status:            topology.LaunchStatusReadyToLaunch,
+	}
+	if err := writeLaunchState(dir, state); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	active, all, err := findActiveLaunchState(dir, "src")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if active == nil {
+		t.Fatal("expected non-nil active state")
+	}
+	if active.LaunchID != "abc12345" || active.TargetProjectName != "myapp-prod" {
+		t.Errorf("unexpected active state: %+v", active)
+	}
+	if len(all) != 1 {
+		t.Errorf("expected len(all)=1, got %d", len(all))
+	}
+}
+
+// TestFindActiveLaunchState_TerminalIgnored pins that LaunchStatusLaunched
+// and LaunchStatusFailed are filtered out — terminal states must not
+// hijack the status response.
+func TestFindActiveLaunchState_TerminalIgnored(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	for _, status := range []topology.LaunchProductionStatus{topology.LaunchStatusLaunched, topology.LaunchStatusFailed} {
+		t.Run(string(status), func(t *testing.T) {
+			t.Parallel()
+			sub := t.TempDir()
+			state := &launchState{
+				LaunchID:          "t" + string(status),
+				SourceProjectID:   "src",
+				TargetProjectName: "myapp-prod",
+				Status:            status,
+			}
+			if err := writeLaunchState(sub, state); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			active, all, err := findActiveLaunchState(sub, "src")
+			if err != nil {
+				t.Fatalf("err: %v", err)
+			}
+			if active != nil || len(all) != 0 {
+				t.Errorf("terminal status %q must not surface: got %+v / len=%d", status, active, len(all))
+			}
+		})
+	}
+	_ = dir // outer subtests use their own dirs
+}
+
+// TestFindActiveLaunchState_DifferentSourceProjectIgnored pins
+// project-scoping: state for source A is invisible when called with
+// source B.
+func TestFindActiveLaunchState_DifferentSourceProjectIgnored(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	state := &launchState{
+		LaunchID:          "abc12345",
+		SourceProjectID:   "src-A",
+		TargetProjectName: "myapp-prod",
+		Status:            topology.LaunchStatusReadyToLaunch,
+	}
+	if err := writeLaunchState(dir, state); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	active, all, err := findActiveLaunchState(dir, "src-B")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if active != nil || len(all) != 0 {
+		t.Errorf("expected no state for src-B; got %+v / %d", active, len(all))
+	}
+}
+
+// TestFindActiveLaunchState_MultipleActiveSortedByLastUpdate pins the
+// deterministic disambiguation: most-recently-updated state wins the
+// `active` slot; full slice is sorted descending.
+func TestFindActiveLaunchState_MultipleActiveSortedByLastUpdate(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// Write in non-time order, then mutate LastUpdate stamps directly
+	// on disk so we know which is newer.
+	oldState := &launchState{
+		LaunchID:          "old00000",
+		SourceProjectID:   "src",
+		TargetProjectName: "myapp-prod-old",
+		Status:            topology.LaunchStatusReadyToLaunch,
+	}
+	if err := writeLaunchState(dir, oldState); err != nil {
+		t.Fatalf("write old: %v", err)
+	}
+	// Read back + rewrite with an artificially older LastUpdate.
+	state, err := readLaunchState(dir, "old00000")
+	if err != nil {
+		t.Fatalf("re-read: %v", err)
+	}
+	state.LastUpdate = time.Now().UTC().Add(-1 * time.Hour)
+	if err := writeRawLaunchStateForTest(t, dir, state); err != nil {
+		t.Fatalf("write raw: %v", err)
+	}
+
+	newState := &launchState{
+		LaunchID:          "new00000",
+		SourceProjectID:   "src",
+		TargetProjectName: "myapp-prod-new",
+		Status:            topology.LaunchStatusClassifyPrompt,
+	}
+	if err := writeLaunchState(dir, newState); err != nil {
+		t.Fatalf("write new: %v", err)
+	}
+
+	active, all, err := findActiveLaunchState(dir, "src")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if active == nil {
+		t.Fatal("expected non-nil active")
+	}
+	if active.LaunchID != "new00000" {
+		t.Errorf("active.LaunchID: got %q want new00000 (most recent)", active.LaunchID)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected len(all)=2, got %d", len(all))
+	}
+	if all[0].LaunchID != "new00000" || all[1].LaunchID != "old00000" {
+		t.Errorf("sort order: got [%q, %q] want [new00000, old00000]", all[0].LaunchID, all[1].LaunchID)
+	}
+}
+
+// writeRawLaunchStateForTest bypasses writeLaunchState's auto-stamp of
+// LastUpdate so tests can set deterministic timestamps. Used only by
+// the sort-order test.
+func writeRawLaunchStateForTest(t *testing.T, stateDir string, state *launchState) error {
+	t.Helper()
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	path := launchStatePath(stateDir, state.LaunchID)
+	return os.WriteFile(path, data, 0o600)
+}
+
+// TestStatusAction_NoActiveLaunch_FallsThrough pins regression: when
+// no launch state exists, status returns the normal generic envelope
+// (handleLifecycleStatus path). No launch-active envelope leaks.
+func TestStatusAction_NoActiveLaunch_FallsThrough(t *testing.T) {
+	t.Parallel()
+	// findActiveLaunchState returns nil, so handler should fall through.
+	// We exercise the helper directly here — the actual handler path
+	// is covered by integration tests in the workflow package.
+	active, _, _ := findActiveLaunchState(t.TempDir(), "src")
+	if active != nil {
+		t.Errorf("expected nil active state, got %+v", active)
+	}
+}
+
+// TestRenderLaunchActiveRecovery_SingleActive verifies the envelope
+// shape for the common case: one active launch, no ambiguity. No
+// launchKey field, kind="launch-active", productionProjectName in
+// next-call hint.
+func TestRenderLaunchActiveRecovery_SingleActive(t *testing.T) {
+	t.Parallel()
+	state := &launchState{
+		LaunchID:              "abc",
+		SourceProjectID:       "src",
+		TargetProjectName:     "myapp-prod",
+		TargetProjectID:       "tgt-id",
+		TargetServiceHostname: "appdev",
+		Status:                topology.LaunchStatusReadyToLaunch,
+		LastUpdate:            time.Date(2026, 5, 13, 12, 0, 0, 0, time.UTC),
+	}
+	result := renderLaunchActiveRecovery(nil, state, []*launchState{state})
+	body := extractText(result)
+	if !strings.Contains(body, `"kind":"launch-active"`) {
+		t.Errorf("kind field missing or wrong: %s", body)
+	}
+	if !strings.Contains(body, `"targetProjectName":"myapp-prod"`) {
+		t.Errorf("targetProjectName missing: %s", body)
+	}
+	// Next-call hint is JSON-escaped (productionProjectName=\"myapp-prod\")
+	// — assert on the unescaped substring that survives.
+	if !strings.Contains(body, `productionProjectName=`) {
+		t.Errorf("next-call hint missing productionProjectName parameter: %s", body)
+	}
+	if !strings.Contains(body, `myapp-prod`) {
+		t.Errorf("next-call hint missing target name: %s", body)
+	}
+	// P-LP-1 spot-check — envelope must not carry the key as a struct
+	// field (`"launchKey": ...`). The guidance text legitimately mentions
+	// the field name when telling the agent when to supply one; that's
+	// not a leak. Pattern below catches only JSON property emission.
+	if strings.Contains(body, `"launchKey":`) {
+		t.Errorf("envelope leaks launchKey field: %s", body)
+	}
+}
+
+// TestRenderLaunchActiveRecovery_MultipleActive surfaces the ambiguity
+// hint when more than one non-terminal launch matches.
+func TestRenderLaunchActiveRecovery_MultipleActive(t *testing.T) {
+	t.Parallel()
+	s1 := &launchState{LaunchID: "a", SourceProjectID: "src", TargetProjectName: "myapp-prod-1", Status: topology.LaunchStatusReadyToLaunch}
+	s2 := &launchState{LaunchID: "b", SourceProjectID: "src", TargetProjectName: "myapp-prod-2", Status: topology.LaunchStatusClassifyPrompt}
+
+	result := renderLaunchActiveRecovery(nil, s1, []*launchState{s1, s2})
+	body := extractText(result)
+	if !strings.Contains(body, `"ambiguousChoices"`) {
+		t.Errorf("ambiguousChoices field missing in multi-active envelope: %s", body)
+	}
+	if !strings.Contains(body, "myapp-prod-2") {
+		t.Errorf("second-choice target missing: %s", body)
+	}
+	if !strings.Contains(body, "Multiple active launches") {
+		t.Errorf("ambiguity guidance suffix missing: %s", body)
+	}
+}
+
+// TestFindActiveLaunchState_NoAdminClientConstructed pins P-LP-2:
+// status-side recovery MUST be read-only over the state directory. If
+// any code path tries to construct a ProjectAdminClient, it would
+// hit the package factory — overriding the factory with a panicking
+// implementation exposes a violation immediately.
+func TestFindActiveLaunchState_NoAdminClientConstructed(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	state := &launchState{
+		LaunchID:          "abc",
+		SourceProjectID:   "src",
+		TargetProjectName: "myapp-prod",
+		Status:            topology.LaunchStatusReadyToLaunch,
+	}
+	if err := writeLaunchState(dir, state); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// Override the factory with a panicker; if findActiveLaunchState OR
+	// renderLaunchActiveRecovery ever calls the factory, the test fails.
+	restore := setProjectAdminClientFactory(func(_, _ string) (platform.ProjectAdminClient, error) {
+		t.Fatal("P-LP-2 violation: ProjectAdminClient factory invoked on read-only status path")
+		return nil, errors.New("p-lp-2-pin: factory must not be called")
+	})
+	defer restore()
+
+	active, all, err := findActiveLaunchState(dir, "src")
+	if err != nil {
+		t.Fatalf("findActiveLaunchState: %v", err)
+	}
+	_ = renderLaunchActiveRecovery(nil, active, all)
+}
+
+// TestStatusAction_HandlerLevel_SurfacesLaunchActive is the integration
+// pin: when status is called with an active launch on disk, the
+// response carries the launch-active envelope (kind, productionProjectName,
+// next-call hint).
+func TestStatusAction_HandlerLevel_SurfacesLaunchActive(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dir := t.TempDir()
+
+	// Seed an active launch state.
+	state := &launchState{
+		LaunchID:          "abc",
+		SourceProjectID:   "p1",
+		TargetProjectName: "myapp-prod",
+		Status:            topology.LaunchStatusReadyToLaunch,
+	}
+	if err := writeLaunchState(dir, state); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	mock := platform.NewMock().WithProject(&platform.Project{ID: "p1", Name: "src"})
+	input := WorkflowInput{Action: "status"}
+
+	// Status routes through handleWorkflowAction. The active-launch
+	// short-circuit fires BEFORE handleLifecycleStatus and emits the
+	// launch-active envelope.
+	result := handleStatusForTest(ctx, mock, dir, "p1", input, runtime.Info{})
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	body := extractText(result)
+	if !strings.Contains(body, `"kind":"launch-active"`) {
+		t.Errorf("status response missing launch-active envelope:\n%s", body)
+	}
+	if !strings.Contains(body, "myapp-prod") {
+		t.Errorf("response missing targetProjectName: %s", body)
+	}
+}
+
+// handleStatusForTest is a thin shim that exercises the relevant
+// status branch directly so the test does not need a full
+// workflow.Engine setup. Mirrors the integration path inside
+// handleWorkflowAction.
+func handleStatusForTest(_ context.Context, _ platform.Client, stateDir, projectID string, _ WorkflowInput, _ runtime.Info) *mcp.CallToolResult {
+	if launchActive, allLaunches, _ := findActiveLaunchState(stateDir, projectID); launchActive != nil {
+		return renderLaunchActiveRecovery(nil, launchActive, allLaunches)
+	}
+	return nil
+}

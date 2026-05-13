@@ -326,6 +326,14 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		if active == workflowBootstrap {
 			return handleBootstrapStatus(ctx, engine, client, cache)
 		}
+		// Mid-flight launch-production recovery: when a non-terminal
+		// state file exists for this source project, surface the
+		// launch-active envelope so the agent can resume. Read-only
+		// (P-LP-2: no ProjectAdminClient construction).
+		if launchActive, allLaunches, _ := findActiveLaunchState(stateDir, projectID); launchActive != nil {
+			corpus, _ := workflow.LoadAtomCorpus()
+			return renderLaunchActiveRecovery(corpus, launchActive, allLaunches), nil, nil
+		}
 		return handleLifecycleStatus(ctx, engine, client, projectID, rt)
 	case "close":
 		return handleWorkSessionClose(engine, input)

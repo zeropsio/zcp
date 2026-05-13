@@ -1,0 +1,96 @@
+package tools
+
+import (
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/zeropsio/zcp/internal/topology"
+	"github.com/zeropsio/zcp/internal/workflow"
+)
+
+// launchActiveEnvelope is the JSON shape surfaced when `action=status`
+// discovers a non-terminal launch-production state file. Gives the
+// agent enough information to resume the workflow with a single
+// follow-up call.
+//
+// Shape stays small and self-describing — the agent reads `kind` to
+// route, then uses `productionProjectName` to seed the next call. No
+// launchKey field (P-LP-1) and no admin-side state.
+type launchActiveEnvelope struct {
+	Kind                  string                          `json:"kind"`
+	Workflow              string                          `json:"workflow"`
+	Status                topology.LaunchProductionStatus `json:"status"`
+	LaunchID              string                          `json:"launchId"`
+	SourceProjectID       string                          `json:"sourceProjectId"`
+	TargetProjectName     string                          `json:"targetProjectName"`
+	TargetProjectID       string                          `json:"targetProjectId,omitempty"`
+	TargetServiceHostname string                          `json:"targetServiceHostname,omitempty"`
+	LastUpdate            string                          `json:"lastUpdate,omitempty"`
+	// AmbiguousChoices is populated when MORE than one active launch
+	// state matches the source project. Each entry carries the minimum
+	// info the agent needs to disambiguate.
+	AmbiguousChoices []launchActiveChoice `json:"ambiguousChoices,omitempty"`
+	Guidance         string               `json:"guidance"`
+	NextCall         string               `json:"nextCall"`
+}
+
+// launchActiveChoice is one entry in the ambiguous-choices list.
+type launchActiveChoice struct {
+	TargetProjectName string                          `json:"targetProjectName"`
+	Status            topology.LaunchProductionStatus `json:"status"`
+	LastUpdate        string                          `json:"lastUpdate,omitempty"`
+}
+
+// renderLaunchActiveRecovery builds the launch-active envelope from a
+// findActiveLaunchState result. When the caller passed a single match,
+// the envelope points at that target directly. When more than one
+// non-terminal state exists for the same source project, the envelope
+// surfaces an ambiguity hint and asks the agent to specify
+// productionProjectName.
+//
+// guidance is loaded from the launch-status-recovery atom; falls back
+// to a static line when the corpus is unavailable.
+func renderLaunchActiveRecovery(corpus []workflow.KnowledgeAtom, active *launchState, all []*launchState) *mcp.CallToolResult {
+	guidance := atomBody(corpus, "launch-status-recovery")
+	if guidance == "" {
+		guidance = "Launch-production workflow is mid-flight. Re-call zerops_workflow workflow=\"launch-production\" with the same productionProjectName to advance. Provide a fresh launchKey when the status is ready-to-launch."
+	}
+
+	env := launchActiveEnvelope{
+		Kind:                  "launch-active",
+		Workflow:              workflowLaunchProduction,
+		Status:                active.Status,
+		LaunchID:              active.LaunchID,
+		SourceProjectID:       active.SourceProjectID,
+		TargetProjectName:     active.TargetProjectName,
+		TargetProjectID:       active.TargetProjectID,
+		TargetServiceHostname: active.TargetServiceHostname,
+		LastUpdate:            formatLaunchStateTimestamp(active),
+		Guidance:              guidance,
+		NextCall:              `zerops_workflow workflow="launch-production" productionProjectName="` + active.TargetProjectName + `"`,
+	}
+
+	if len(all) > 1 {
+		choices := make([]launchActiveChoice, 0, len(all))
+		for _, s := range all {
+			choices = append(choices, launchActiveChoice{
+				TargetProjectName: s.TargetProjectName,
+				Status:            s.Status,
+				LastUpdate:        formatLaunchStateTimestamp(s),
+			})
+		}
+		env.AmbiguousChoices = choices
+		env.Guidance = guidance + " (Multiple active launches detected — pick one productionProjectName from ambiguousChoices.)"
+	}
+
+	return jsonResult(env)
+}
+
+// formatLaunchStateTimestamp returns the RFC3339 form of LastUpdate (or
+// empty when zero), wrapped in a helper so the response builder reads
+// cleanly.
+func formatLaunchStateTimestamp(s *launchState) string {
+	if s == nil || s.LastUpdate.IsZero() {
+		return ""
+	}
+	return s.LastUpdate.UTC().Format("2006-01-02T15:04:05Z")
+}
