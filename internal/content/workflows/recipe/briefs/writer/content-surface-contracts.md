@@ -80,6 +80,8 @@ Citation requirement: when the decision touches a topic on the Citation Map (env
 
 **Factuality rule**: any number in your comment must match the adjacent YAML field exactly. Use qualitative phrasing ("single-replica", "HA mode", "modest quota") when the YAML has no number to match — never invent a number from memory. The check enforces this: a numeric claim that contradicts the adjacent YAML fails with a detail of the form `comment claims "N <unit>" but adjacent YAML has <key>: M`. Subjunctive phrasing ("bump to 50 GB when usage grows") bypasses the check — use it for tier-promotion guidance, not for current-configuration assertions. Default to qualitative phrasing; earn the number by matching the YAML.
 
+> **Writer scope vs. audit scope** — the writer's four surfaces above are the *published-content* surfaces and map onto the cross-surface audit's numbering as: writer S1 (IG) = audit S4, writer S2 (KB) = audit S5, writer S3 (CLAUDE.md) = audit S6, writer S4 (env yaml) = audit S3. The audit additionally covers one audit-internal surface — codebase `zerops.yaml` comments (audit's S7) — which is not authored via the writer's content path; the audit's per-surface single-question test governs it directly. The asymmetry is by design (the writer ships content; the audit walks the deliverable, including comments the writer doesn't directly author).
+
 ---
 
 ## Surface summary table

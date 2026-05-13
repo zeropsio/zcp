@@ -177,7 +177,7 @@ const errSessionNotOpen = "session not open"
 
 // RecipeInput is the input schema for zerops_recipe.
 type RecipeInput struct {
-	Action           string      `json:"action"                     jsonschema:"One of: start, enter-phase, complete-phase, build-brief, build-subagent-prompt, verify-subagent-dispatch, record-fact, record-fragment, fill-fact-slot, resolve-chain, emit-yaml, update-plan, stitch-content, status. For build-subagent-prompt: bodies > 40 KB return 'briefPath' (absolute path under <outputRoot>/.briefs/) instead of 'prompt'; dispatch the sub-agent with a thin wrapper telling it to Read briefPath first thing. Either-or — branch on briefPath != ''."`
+	Action           string      `json:"action"                     jsonschema:"One of: start, enter-phase, complete-phase, build-brief, build-subagent-prompt, verify-subagent-dispatch, record-fact, record-fragment, fill-fact-slot, resolve-chain, emit-yaml, update-plan, stitch-content, status, enrich-findings. For build-subagent-prompt: bodies > 40 KB return 'briefPath' (absolute path under <outputRoot>/.briefs/) instead of 'prompt'; dispatch the sub-agent with a thin wrapper telling it to Read briefPath first thing. Either-or — branch on briefPath != ''. For enrich-findings: pass the refinement-2 audit sub-agent's slim findings JSON via 'findings' (parsed envelope) or 'findingsJson' (raw fenced block); engine returns 'enrichedFindings' with deterministic fragmentId / classification / suggestedReplacement filled."`
 	Slug             string      `json:"slug,omitempty"             jsonschema:"Recipe slug (e.g. {framework}-showcase). Required for every action."`
 	OutputRoot       string      `json:"outputRoot,omitempty"       jsonschema:"Directory where the recipe tree + facts log live. Required for 'start'. Canonical shape: '/var/www/zcprecipator/<slug>/' — outputs MUST nest one level under the SSHFS mount base ('/var/www/'); the engine refuses outputRoot at or above the mount base because that path hosts dev-codebase mounts (apidev/, appdev/, workerdev/) and stitched output would shadow source."`
 	Phase            string      `json:"phase,omitempty"            jsonschema:"Phase name for enter-phase / complete-phase: research, provision, scaffold, feature, codebase-content, env-content, finalize, refinement."`
@@ -202,6 +202,16 @@ type RecipeInput struct {
 	// sequential backend pass + frontend-integration pass; the brief
 	// composer loads disjoint atom sets per pass.
 	FeaturePass string `json:"featurePass,omitempty" jsonschema:"For build-brief / build-subagent-prompt with briefKind=feature: 'backend' (api + worker scope; routes/queue/contract authoring + curl smoke-tests; no design-system / Tailwind atoms) or 'frontend' (SPA / monolith UI scope; design-system + Tailwind componentry + integration validator + bounded cross-codebase edit authority). Required for feature briefs."`
+	// Findings + FindingsJSON — input for action=enrich-findings. The
+	// refinement-2 audit sub-agent emits a slim findings JSON; the main
+	// agent passes the parsed envelope here OR the raw fenced JSON
+	// string verbatim. Engine returns the enriched form with
+	// fragmentId / classification / suggestedReplacement filled. Run-45
+	// Pillar C — closes the run-40 → 44 monkey-patch cycle where the
+	// brief demanded `classification` on findings and the agent didn't
+	// emit it.
+	Findings     *FindingsEnvelope `json:"findings,omitempty"     jsonschema:"For enrich-findings: the refinement-2 audit's slim findings envelope. Either this OR findingsJson must be set."`
+	FindingsJSON string            `json:"findingsJson,omitempty" jsonschema:"For enrich-findings: the audit sub-agent's fenced JSON findings block, raw. Engine parses + strips the fence. Either this OR findings must be set."`
 }
 
 // RecipeResult is the generic envelope returned from zerops_recipe.
@@ -271,8 +281,13 @@ type RecipeResult struct {
 	// sanity-check the pointer before dispatching the sub-agent.
 	// Populated alongside BriefPath; zero on the inline path.
 	// Run-29 Fix #1.
-	BriefSize int    `json:"briefSize,omitempty"`
-	Error     string `json:"error,omitempty"`
+	BriefSize int `json:"briefSize,omitempty"`
+	// EnrichedFindings is the enriched-shape response from
+	// action=enrich-findings — slim findings PLUS deterministic
+	// engine-derived fragmentId / classification / suggestedReplacement.
+	// Run-45 Pillar C.
+	EnrichedFindings *EnrichedFindingsEnvelope `json:"enrichedFindings,omitempty"`
+	Error            string                    `json:"error,omitempty"`
 }
 
 // Register installs the zerops_recipe tool. server.go gates it behind
@@ -305,6 +320,9 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 		"verify-subagent-dispatch": true,
 		"record-fact":              true, "record-fragment": true, "fill-fact-slot": true, "emit-yaml": true,
 		"status": true, "update-plan": true, "stitch-content": true,
+		// enrich-findings reads the session's facts log for the
+		// classification candidateClass lookup.
+		"enrich-findings": true,
 	}
 	var sess *Session
 	if needsSession[in.Action] {
@@ -317,42 +335,9 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 	}
 	switch in.Action {
 	case "start":
-		if in.OutputRoot == "" {
-			r.Error = "outputRoot is required"
-			return r
-		}
-		sess, err := store.OpenOrCreate(in.Slug, in.OutputRoot)
-		if err != nil {
-			r.Error = err.Error()
-			return r
-		}
-		// Lazy parent shape: sess.Parent is nil here (resolution
-		// deferred to scaffold-brief dispatch). parentStatus at start
-		// reports the chain prediction — "embedded" / "absent" — from
-		// the cheap parentSlugFor check + embed.FS existence probe,
-		// without populating the full ParentRecipe body. The agent
-		// knows what's coming; the body lands on the first
-		// build-subagent-prompt call that needs it.
-		snap := sess.Snapshot()
-		r.Status = &snap
-		r.ParentStatus = predictParentStatus(in.Slug)
-		r.Guidance = loadPhaseEntry(sess.Current)
-		r.OK = true
+		r = startAction(store, in, r)
 	case "enter-phase":
-		if err := sess.EnterPhase(Phase(in.Phase)); err != nil {
-			r.Error = err.Error()
-			return r
-		}
-		if sess.Current == PhaseScaffold {
-			if err := populateSourceRootsForScaffold(sess); err != nil {
-				r.Error = err.Error()
-				return r
-			}
-		}
-		snap := sess.Snapshot()
-		r.Status = &snap
-		r.Guidance = loadPhaseEntry(sess.Current)
-		r.OK = true
+		r = enterPhaseAction(sess, in, r)
 	case "complete-phase":
 		r = completePhase(sess, in, r)
 	case "update-plan":
@@ -374,51 +359,7 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 	case "verify-subagent-dispatch":
 		r = verifyDispatch(sess, in, r)
 	case "record-fact":
-		if in.Fact == nil {
-			r.Error = "record-fact: fact payload is required"
-			return r
-		}
-		// Run-34 Fix 3 — engine-side runtime gate for forbidden
-		// recipe-author voice tokens. Brief teaches REQUIRED → engine
-		// enforces REQUIRED. Refusal is BLOCKING (not a notice) so the
-		// agent cannot ignore the rule at runtime — empirically the
-		// notice signal was insufficient (12.8% strict-token
-		// contamination rate UNCHANGED from run-33 to run-34 even after
-		// the brief edits landed). Validate BEFORE RecordFact so a
-		// rejected fact never lands on facts.jsonl.
-		if err := validateFactVoiceTokens(*in.Fact); err != nil {
-			r.Error = err.Error()
-			return r
-		}
-		if err := sess.RecordFact(*in.Fact); err != nil {
-			r.Error = err.Error()
-			return r
-		}
-		// V-1 — notice when the classifier auto-overrides the agent's
-		// surfaceHint to self-inflicted. The fact is recorded either way
-		// (the override only affects publish-time routing), but the
-		// notice gives the author a chance to course-correct on the next
-		// call.
-		if _, notice := ClassifyWithNotice(*in.Fact); notice != "" {
-			r.Notice = notice
-		}
-		// Run-22 R3-C-3 — warn-on-record when the (candidateClass,
-		// candidateSurface) pair violates the spec compatibility table.
-		// Fragment-time refusal (validateRecordFragment) still applies
-		// downstream; this is the earlier signal so the agent doesn't
-		// burn 6+ tool-call hops between record-fact and the eventual
-		// fragment refusal. DISCARD classes (framework-quirk,
-		// library-metadata, self-inflicted) on any surface trip this;
-		// publishable classes on a wrong surface trip this too.
-		if r.Notice == "" && in.Fact.CandidateClass != "" && in.Fact.CandidateSurface != "" {
-			if err := classificationCompatibleWithSurface(
-				Classification(in.Fact.CandidateClass),
-				Surface(in.Fact.CandidateSurface),
-			); err != nil {
-				r.Notice = "record-fact warn: " + err.Error()
-			}
-		}
-		r.OK = true
+		r = recordFactAction(sess, in, r)
 	case "record-fragment":
 		r = handleRecordFragment(sess, in, r)
 	case "fill-fact-slot":
@@ -461,6 +402,8 @@ func dispatch(_ context.Context, store *Store, in RecipeInput) RecipeResult {
 		r.Status = &snap
 		r.Guidance = loadPhaseEntry(sess.Current)
 		r.OK = true
+	case "enrich-findings":
+		r = enrichFindingsAction(sess, in, r)
 	default:
 		r.Error = fmt.Sprintf("unknown action %q", in.Action)
 	}
@@ -623,7 +566,146 @@ func refinement2MainAgentTriageGuidance(kind BriefKind) string {
 	if kind != BriefRefinement2 {
 		return ""
 	}
-	return "\n\nMAIN AGENT — refinement-2 triage contract: when the sub-agent returns its findings JSON block, you MUST record an ACT / HOLD / ACCEPT decision per finding, NOT a bulk dismissal. `advisory` severity does NOT mean ignore — it means YOU triage. Bulk-HOLD with one-line reasoning like `all advisory severity, recipe ships acceptably` is the documented failure pattern and violates the contract. For each finding: ACT (apply the fix via `record-fragment mode=replace` per the suggestedAction), HOLD (record per-finding reasoning why the advisory is acceptable for ship — not bulk), or ACCEPT (record one sentence on why the audit fired on a borderline that doesn't actually violate the contract). Blocker-severity HOLD requires contract-anchored justification — name the rule and explain why this specific instance falls outside its scope. The contract exists because severity is a prior, not a verdict; the seven-surface content rules require per-finding judgment."
+	return "\n\nMAIN AGENT — refinement-2 triage contract: when the sub-agent returns its findings JSON block (the slim shape — surface + scope + itemReference + surfaceTestFailureMode + topic + rationale), call `zerops_recipe action=enrich-findings findings=<the parsed envelope>` (or `findingsJson=<the raw fenced block>`) FIRST. The engine returns the enriched form with `fragmentId`, `classification`, and `suggestedReplacement` filled deterministically — copy those fields verbatim onto your `record-fragment mode=replace` ACT calls. This closes the run-40 → 44 cycle where the sub-agent omitted `classification` and your ACTs got refused with `classification is required for fragments on surface \"CODEBASE_KB\"`. AFTER enrichment: record an ACT / HOLD / ACCEPT decision per finding, NOT a bulk dismissal. `advisory` severity does NOT mean ignore — it means YOU triage. Bulk-HOLD with one-line reasoning like `all advisory severity, recipe ships acceptably` is the documented failure pattern and violates the contract. For each finding: ACT (apply the fix via `record-fragment mode=replace` per the surfaceTestFailureMode), HOLD (record per-finding reasoning why the advisory is acceptable for ship — not bulk), or ACCEPT (record one sentence on why the audit fired on a borderline that doesn't actually violate the contract). Blocker-severity HOLD requires contract-anchored justification — name the surface, name the test, explain why this specific instance falls outside the test's scope. The contract exists because severity is a prior, not a verdict; the seven-surface content rules require per-finding judgment."
+}
+
+// startAction handles `action=start`. Bootstraps the session, returns
+// the research-phase guidance + the parent-status prediction. Extracted
+// from dispatch() for maintainability index headroom.
+func startAction(store *Store, in RecipeInput, r RecipeResult) RecipeResult {
+	if in.OutputRoot == "" {
+		r.Error = "outputRoot is required"
+		return r
+	}
+	sess, err := store.OpenOrCreate(in.Slug, in.OutputRoot)
+	if err != nil {
+		r.Error = err.Error()
+		return r
+	}
+	// Lazy parent shape: sess.Parent is nil here (resolution deferred
+	// to scaffold-brief dispatch). parentStatus at start reports the
+	// chain prediction — "embedded" / "absent" — from the cheap
+	// parentSlugFor check + embed.FS existence probe, without
+	// populating the full ParentRecipe body. The agent knows what's
+	// coming; the body lands on the first build-subagent-prompt call
+	// that needs it.
+	snap := sess.Snapshot()
+	r.Status = &snap
+	r.ParentStatus = predictParentStatus(in.Slug)
+	r.Guidance = loadPhaseEntry(sess.Current)
+	r.OK = true
+	return r
+}
+
+// enterPhaseAction handles `action=enter-phase`. Advances the session
+// phase and runs scaffold-phase prep when entering scaffold.
+func enterPhaseAction(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
+	if err := sess.EnterPhase(Phase(in.Phase)); err != nil {
+		r.Error = err.Error()
+		return r
+	}
+	if sess.Current == PhaseScaffold {
+		if err := populateSourceRootsForScaffold(sess); err != nil {
+			r.Error = err.Error()
+			return r
+		}
+	}
+	snap := sess.Snapshot()
+	r.Status = &snap
+	r.Guidance = loadPhaseEntry(sess.Current)
+	r.OK = true
+	return r
+}
+
+// recordFactAction handles `action=record-fact`. Runs the voice-token
+// validation, records the fact, then surfaces the V-1 self-inflicted
+// override notice + the R3-C-3 surface-classification compatibility
+// warning.
+func recordFactAction(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
+	if in.Fact == nil {
+		r.Error = "record-fact: fact payload is required"
+		return r
+	}
+	// Run-34 Fix 3 — engine-side runtime gate for forbidden recipe-
+	// author voice tokens. Brief teaches REQUIRED → engine enforces
+	// REQUIRED. Refusal is BLOCKING (not a notice) so the agent cannot
+	// ignore the rule at runtime — empirically the notice signal was
+	// insufficient (12.8% strict-token contamination rate UNCHANGED
+	// from run-33 to run-34 even after the brief edits landed).
+	// Validate BEFORE RecordFact so a rejected fact never lands on
+	// facts.jsonl.
+	if err := validateFactVoiceTokens(*in.Fact); err != nil {
+		r.Error = err.Error()
+		return r
+	}
+	if err := sess.RecordFact(*in.Fact); err != nil {
+		r.Error = err.Error()
+		return r
+	}
+	// V-1 — notice when the classifier auto-overrides the agent's
+	// surfaceHint to self-inflicted. The fact is recorded either way
+	// (the override only affects publish-time routing), but the notice
+	// gives the author a chance to course-correct on the next call.
+	if _, notice := ClassifyWithNotice(*in.Fact); notice != "" {
+		r.Notice = notice
+	}
+	// Run-22 R3-C-3 — warn-on-record when the (candidateClass,
+	// candidateSurface) pair violates the spec compatibility table.
+	// Fragment-time refusal (validateRecordFragment) still applies
+	// downstream; this is the earlier signal so the agent doesn't burn
+	// 6+ tool-call hops between record-fact and the eventual fragment
+	// refusal. DISCARD classes (framework-quirk, library-metadata,
+	// self-inflicted) on any surface trip this; publishable classes on
+	// a wrong surface trip this too.
+	if r.Notice == "" && in.Fact.CandidateClass != "" && in.Fact.CandidateSurface != "" {
+		if err := classificationCompatibleWithSurface(
+			Classification(in.Fact.CandidateClass),
+			Surface(in.Fact.CandidateSurface),
+		); err != nil {
+			r.Notice = "record-fact warn: " + err.Error()
+		}
+	}
+	r.OK = true
+	return r
+}
+
+// enrichFindingsAction handles `action=enrich-findings`. The
+// refinement-2 audit sub-agent emits a SLIM findings envelope; this
+// handler fills the three deterministic fields (fragmentId,
+// classification, suggestedReplacement) by reading the session's
+// facts.jsonl + the Citation Map. Run-45 Pillar C.
+//
+// Input contract: either `findings` (parsed envelope) OR `findingsJSON`
+// (raw fenced JSON block). Both empty → error. Both set → `findings`
+// wins; `findingsJSON` is ignored.
+//
+// Reads facts via `sess.FactsLog.Read()`. Missing facts.jsonl is not
+// fatal — the engine falls back to per-surface defaults
+// (`intersection` for S4/S5) when no fact records `candidateClass` for
+// the topic + scope.
+func enrichFindingsAction(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
+	env := in.Findings
+	if env == nil {
+		if in.FindingsJSON == "" {
+			r.Error = "enrich-findings: at least one of `findings` (parsed) or `findingsJson` (raw) must be set"
+			return r
+		}
+		parsed, err := ParseFindingsJSON(in.FindingsJSON)
+		if err != nil {
+			r.Error = fmt.Sprintf("enrich-findings: %v", err)
+			return r
+		}
+		env = parsed
+	}
+	var facts []FactRecord
+	if sess.FactsLog != nil {
+		if records, err := sess.FactsLog.Read(); err == nil {
+			facts = records
+		}
+	}
+	r.EnrichedFindings = EnrichFindings(env, facts)
+	r.OK = true
+	return r
 }
 
 // writeBriefToDisk persists an oversized sub-agent dispatch prompt to

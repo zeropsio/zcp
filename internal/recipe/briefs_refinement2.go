@@ -199,11 +199,16 @@ const (
 func citationMapBlock() string {
 	return `## Citation map — topics requiring zerops_knowledge citation
 
-When a KB bullet covers one of these topics, the body MUST cite the
-named guide. Missing citations get flagged with
-` + "`missing-citation`" + ` (advisory).
+When any KB bullet (S5) OR IG item (S4) covers one of these topics,
+the body MUST cite the named guide. The citation requirement is a
+topic-family invariant — it applies uniformly to BOTH surfaces
+(audit_checklist §"Citation requirement (S4 + S5)" + writer
+content-surface-contracts §S1/§S2 each independently require it).
+Items whose topic matches the map but carry no form-(a)/(b)/(c)
+shape get a REWRITE finding with ` + "`topic`" + ` set to the matched
+family; engine-side enrichment renders the canonical replacement.
 
-**Acceptable citation forms** — for each topic, a bullet passes if
+**Acceptable citation forms** — for each topic, an item passes if
 its body contains ANY of these, USED AS A CITATION (pointing the
 porter at the guide), not as a passing mention of the literal token:
 
@@ -287,8 +292,8 @@ the host+path match; flag with ` + "`missing-citation`" + `.
 - managed NATS / queue groups / pub-sub → cite ` + "`managed NATS broker`" + ` (` + citationURLManagedNATS + `)
 - managed Meilisearch / search keys / index admin → cite ` + "`managed Meilisearch service`" + ` (` + citationURLManagedMeilisearch + `)
 
-A bullet covering a topic NOT in this list has no required citation;
-` + "`missing-citation`" + ` does not fire.
+An item (KB bullet or IG item) covering a topic NOT in this list has
+no required citation; ` + "`missing-citation`" + ` does not fire.
 
 `
 }
