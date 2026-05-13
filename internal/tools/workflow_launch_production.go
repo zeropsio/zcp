@@ -334,7 +334,7 @@ func executeLaunchMutation(
 	})
 	if err != nil {
 		state.Status = topology.LaunchStatusFailed
-		state.LastError = err.Error()
+		state.LastError = formatPlatformErrorForAudit(err)
 		_ = writeLaunchState(stateDir, state)
 		_ = appendAuditLog(stateDir, launchAuditEntry{
 			LaunchID:          launchID,
@@ -346,11 +346,17 @@ func executeLaunchMutation(
 			Classifications:   classifications,
 			HAOptOut:          input.KeepNonHA,
 			Result:            "failure",
-			ErrorMessage:      err.Error(),
+			ErrorMessage:      formatPlatformErrorForAudit(err),
 		})
-		return launchFailedResponse(corpus, topology.BlockerCategoryAuth,
+		// Fallback category=Other so the blocker doesn't mislead the
+		// agent into a token-regeneration loop when the actual cause is
+		// schema validation, project-name collision, or rate limiting.
+		// launchFailedFromPlatformError will override with a derived
+		// category when pe.Code is in the typed-mapping table.
+		return launchFailedFromPlatformError(corpus, err,
+			topology.BlockerCategoryOther,
 			"create-import-failed",
-			"CreateAndImportProject failed: "+err.Error()), nil, nil
+			"CreateAndImportProject failed: %v"), nil, nil
 	}
 
 	// Success — record imported services in state.
@@ -393,7 +399,7 @@ func executeLaunchMutation(
 		pollErr := pollImportedServices(ctx, admin, state)
 		if pollErr != nil {
 			state.Status = topology.LaunchStatusFailed
-			state.LastError = pollErr.Error()
+			state.LastError = formatPlatformErrorForAudit(pollErr)
 		} else {
 			// Transition to configuring-pipeline before the GetStatus
 			// loop so the state file reflects the in-progress phase
@@ -427,10 +433,7 @@ func executeLaunchMutation(
 	})
 
 	if hasPerServiceError {
-		return launchFailedResponse(corpus, topology.BlockerCategoryOrphan,
-			"orphan-project",
-			fmt.Sprintf("Target project %s created but one or more services had import errors. Inspect imported-services in state file; delete via Zerops dashboard or retry with corrected inputs.", result.ProjectID),
-		), nil, nil
+		return launchOrphanProjectResponse(state, result.ProjectID), nil, nil
 	}
 	if state.Status == topology.LaunchStatusFailed {
 		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
@@ -604,6 +607,14 @@ type launchProductionResponse struct {
 	// succeeded. The agent SHOULD apply `suggestedTargetName` and
 	// `suggestedRuntime` rather than ask the user when populated.
 	SourceContext *launchSourceContext `json:"sourceContext,omitempty"`
+	// ImportedServices surfaces the per-service create+import outcomes
+	// when CreateAndImportProject succeeded at the project level but
+	// one or more services reported a per-service error. Without this,
+	// the orphan-project blocker is actionable only via "inspect state
+	// file" guidance — agents can't read state files directly. Each
+	// entry's ImportError captures the API code + message + per-field
+	// detail so the agent sees exactly which service rejected and why.
+	ImportedServices []importedServiceEntry `json:"importedServices,omitempty"`
 }
 
 // launchInputsEcho echoes the scope inputs the workflow saw on the call,
@@ -819,19 +830,10 @@ func launchResumeResponse(corpus []workflow.KnowledgeAtom, state *launchState) *
 // fails to authenticate. The error from the constructor never contains
 // the key value (per P-LP-1) — we just wrap its message.
 func launchFailedAuthResponse(corpus []workflow.KnowledgeAtom, err error) *mcp.CallToolResult {
-	_ = corpus
-	return jsonResult(launchProductionResponse{
-		Workflow: workflowLaunchProduction,
-		Status:   topology.LaunchStatusFailed,
-		Phase:    workflow.PhaseLaunchProductionActive,
-		Guidance: "Launch-window key validation failed. Generate a new account-wide token in Zerops dashboard and retry.",
-		Blockers: []topology.Blocker{{
-			ID:       "launch-key-invalid",
-			Severity: topology.BlockerSeverityBlock,
-			Category: topology.BlockerCategoryAuth,
-			Message:  "ProjectAdminClient construction failed: " + err.Error(),
-		}},
-	})
+	return launchFailedFromPlatformError(corpus, err,
+		topology.BlockerCategoryAuth,
+		"launch-key-invalid",
+		"ProjectAdminClient construction failed: %v")
 }
 
 // launchSourceControlBlockerResponse fires when source-control fields

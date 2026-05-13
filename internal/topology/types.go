@@ -323,4 +323,29 @@ type Blocker struct {
 	// + action + args the agent invokes to clear this blocker. Mirrors
 	// the existing Recovery hint shape on CheckResult.
 	Recovery *Recovery `json:"recovery,omitempty"`
+	// Suggestion is the human-readable actionable summary derived from
+	// upstream platform error detail (e.g. expanded apiMeta field
+	// rejections). Populated when the blocker originated from a typed
+	// platform.PlatformError so the agent sees what to fix without
+	// parsing APIMeta manually.
+	Suggestion string `json:"suggestion,omitempty"`
+	// APICode is the raw Zerops API error code when the blocker came
+	// from an upstream API call (e.g. "errorList",
+	// "projectImportInvalidParameter"). Empty for blockers ZCP synthesizes
+	// locally.
+	APICode string `json:"apiCode,omitempty"`
+	// APIMeta is the structured field-level detail from the platform
+	// (one entry per failing field). Surfaces the same data the
+	// platform sends, so callers/agents can act on specific field
+	// rejections instead of inferring from the message.
+	APIMeta []APIMetaItem `json:"apiMeta,omitempty"`
+}
+
+// APIMetaItem mirrors one element of the Zerops API's error.meta[]
+// array. Layer-2 promotion of platform.APIMetaItem so Blocker can
+// expose it without an upward dependency.
+type APIMetaItem struct {
+	Code     string              `json:"code,omitempty"`
+	Error    string              `json:"error,omitempty"`
+	Metadata map[string][]string `json:"metadata,omitempty"`
 }
