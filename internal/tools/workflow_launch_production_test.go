@@ -263,12 +263,16 @@ func TestHandleLaunchProduction_EmptyProjectIDReturnsError(t *testing.T) {
 	}
 }
 
-// TestHandleLaunchProduction_StageHalfTarget_ScopePromptBlocker pins F2.3:
-// when the user supplies `targetService` as the stage-half of a known
-// dev/stage pair, the handler returns scope-prompt with the
-// `scope-stage-half-not-promotable` blocker — instead of silently
-// using the wrong source tree or surfacing a confusing late failure.
-func TestHandleLaunchProduction_StageHalfTarget_ScopePromptBlocker(t *testing.T) {
+// TestHandleLaunchProduction_StageHalfTarget_NormalizedToDevHalf pins
+// F13: stage-half input is accepted (no blocker) and normalized
+// internally to the canonical dev-half meta key. Both halves of a
+// standard pair share the same git source and setup blocks, so the
+// distinction is presentational — stage is the validated headline,
+// dev is the build key. Pre-F13 the handler rejected stage-half with
+// a scope-stage-half-not-promotable blocker, forcing the agent to
+// re-call with the dev-half. Karel pushback: stage is the natural
+// promotion-source mental model; accept it.
+func TestHandleLaunchProduction_StageHalfTarget_NormalizedToDevHalf(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	stateDir := writeRuntimeMeta(t, &workflow.ServiceMeta{
@@ -285,7 +289,8 @@ func TestHandleLaunchProduction_StageHalfTarget_ScopePromptBlocker(t *testing.T)
 	input := WorkflowInput{
 		Workflow:              workflowLaunchProduction,
 		ProductionProjectName: "myapp-prod",
-		TargetService:         "appstage",
+		TargetService:         "appstage", // stage-half input
+		EnvClassifications:    map[string]string{"LOG_LEVEL": "plain-config"},
 	}
 	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, input, stateDir, runtime.Info{}, nil)
 	if err != nil {
@@ -293,21 +298,15 @@ func TestHandleLaunchProduction_StageHalfTarget_ScopePromptBlocker(t *testing.T)
 	}
 	resp := decodeLaunchResp(t, []byte(extractText(result)))
 
-	if resp.Status != "scope-prompt" {
-		t.Fatalf("status: got %q want scope-prompt", resp.Status)
+	// Stage-half acceptance: advance past scope-prompt (the F13 fix).
+	if resp.Status != "ready-to-launch" {
+		t.Fatalf("status: got %q want ready-to-launch (stage-half should advance, not block)", resp.Status)
 	}
-	foundBlocker := false
+	// No leftover stage-half rejection blocker.
 	for _, b := range resp.Blockers {
 		if b.ID == "scope-stage-half-not-promotable" {
-			foundBlocker = true
-			if !strings.Contains(b.Message, "appdev") {
-				t.Errorf("blocker message should mention dev-half hostname appdev; got: %s", b.Message)
-			}
-			break
+			t.Errorf("stage-half blocker should be gone post-F13; got %+v", b)
 		}
-	}
-	if !foundBlocker {
-		t.Fatalf("expected scope-stage-half-not-promotable blocker; got %+v", resp.Blockers)
 	}
 }
 

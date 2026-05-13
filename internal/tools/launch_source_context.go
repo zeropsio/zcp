@@ -133,7 +133,18 @@ func gatherLaunchSourceContext(ctx context.Context, client platform.Client, sour
 			})
 		}
 		if len(out.AvailableRuntimes) == 1 {
-			out.SuggestedRuntime = out.AvailableRuntimes[0].Hostname
+			// For standard-mode pairs, suggest the stage-half — stage is
+			// the validated last-known-good copy; dev iterates. Both
+			// halves are accepted by the handler (same git source, same
+			// setup blocks), but the stage-half is the natural promotion
+			// headline. For non-pair runtimes (dev/simple/local-only),
+			// suggest the canonical hostname.
+			rc := out.AvailableRuntimes[0]
+			if rc.StageHostname != "" {
+				out.SuggestedRuntime = rc.StageHostname
+			} else {
+				out.SuggestedRuntime = rc.Hostname
+			}
 		}
 	}
 	if out.SourceProjectName == "" && len(out.AvailableRuntimes) == 0 {
@@ -187,23 +198,31 @@ func metaStageHostname(meta *workflow.ServiceMeta) string {
 	return meta.StageHostname
 }
 
-// stageHalfForTarget resolves the user-supplied targetService through
-// the pair-keyed ServiceMeta index. Returns (devHostname, true) when
-// the input is the stage-half of a known pair so the handler can fire
-// the `scope-stage-half-not-promotable` blocker; returns ("", false)
-// for dev-half input, standalone runtimes, or unknown hostnames.
-func stageHalfForTarget(stateDir, targetService string) (string, bool) {
+// normalizeTargetServiceForLaunch resolves the user-supplied
+// targetService through the pair-keyed ServiceMeta index and returns
+// the canonical dev-half hostname (= ServiceMeta primary key). When
+// the user supplied the stage-half of a standard pair, this returns
+// the corresponding dev-half — both halves of a pair share the same
+// git source and setup blocks, so promotion accepts either. When the
+// hostname isn't part of any tracked pair, returns the input unchanged
+// (lookup fall-through; downstream validation handles unknown hosts).
+//
+// The dev-half is the canonical key because the bundle composer reads
+// ServiceMeta to resolve `setup:` block name + runtime type, and meta
+// is keyed by dev-hostname. Stage-half input as TargetHostname into
+// the bundle would also poison the prod project's runtime naming.
+func normalizeTargetServiceForLaunch(stateDir, targetService string) string {
 	if stateDir == "" || targetService == "" {
-		return "", false
+		return targetService
 	}
 	meta, err := workflow.FindServiceMeta(stateDir, targetService)
 	if err != nil || meta == nil {
-		return "", false
+		return targetService
 	}
 	if meta.StageHostname == targetService {
-		return meta.Hostname, true
+		return meta.Hostname
 	}
-	return "", false
+	return targetService
 }
 
 // deriveProductionProjectName transforms a source-project name into a

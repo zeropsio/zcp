@@ -263,8 +263,13 @@ func TestGatherLaunchSourceContext_CollapsesStandardPair(t *testing.T) {
 	if rc.Mode != string(topology.ModeStandard) {
 		t.Errorf("collapsed pair Mode: got %q want %q", rc.Mode, topology.ModeStandard)
 	}
-	if got.SuggestedRuntime != "appdev" {
-		t.Errorf("SuggestedRuntime: got %q want appdev (single collapsed pair)", got.SuggestedRuntime)
+	// F13: SuggestedRuntime defaults to the stage-half when the entry is
+	// a standard pair. Stage is the validated last-known-good copy and
+	// the natural promotion-source mental model. Dev-half stays the
+	// canonical Hostname (= ServiceMeta primary key); the handler
+	// normalizes stage-half input to dev-half internally.
+	if got.SuggestedRuntime != "appstage" {
+		t.Errorf("SuggestedRuntime: got %q want appstage (stage-half is the validated headline)", got.SuggestedRuntime)
 	}
 }
 
@@ -308,10 +313,13 @@ func TestGatherLaunchSourceContext_SimpleAndDevModesUnaffected(t *testing.T) {
 	}
 }
 
-// TestStageHalfForTarget_DetectsStageHostname pins the resolver used by
-// the scope-prompt blocker. Stage-half input returns (devHost, true);
-// dev-half and standalone inputs return ("", false).
-func TestStageHalfForTarget_DetectsStageHostname(t *testing.T) {
+// TestNormalizeTargetServiceForLaunch_StageInputCollapsesToDev pins
+// the F13 acceptance path: stage-half hostname normalizes to the
+// canonical dev-half (ServiceMeta primary key) so downstream meta
+// lookup and bundle composition use the consistent key. Pre-F13 this
+// resolver fired a scope-prompt blocker instead — Karel pushback
+// flipped the model to accept both halves.
+func TestNormalizeTargetServiceForLaunch_StageInputCollapsesToDev(t *testing.T) {
 	t.Parallel()
 	stateDir := writeRuntimeMeta(t, &workflow.ServiceMeta{
 		Hostname:       "appdev",
@@ -320,17 +328,17 @@ func TestStageHalfForTarget_DetectsStageHostname(t *testing.T) {
 		BootstrappedAt: "2026-05-01T00:00:00Z",
 	})
 
-	if devHost, isStage := stageHalfForTarget(stateDir, "appstage"); !isStage || devHost != "appdev" {
-		t.Errorf("appstage: got (%q,%v) want (appdev,true)", devHost, isStage)
+	if got := normalizeTargetServiceForLaunch(stateDir, "appstage"); got != "appdev" {
+		t.Errorf("stage-half input: got %q want appdev (normalized to dev-half meta key)", got)
 	}
-	if _, isStage := stageHalfForTarget(stateDir, "appdev"); isStage {
-		t.Errorf("appdev: expected not-stage-half")
+	if got := normalizeTargetServiceForLaunch(stateDir, "appdev"); got != "appdev" {
+		t.Errorf("dev-half input: got %q want appdev (passthrough)", got)
 	}
-	if _, isStage := stageHalfForTarget(stateDir, "unknown"); isStage {
-		t.Errorf("unknown hostname: expected not-stage-half")
+	if got := normalizeTargetServiceForLaunch(stateDir, "unknown"); got != "unknown" {
+		t.Errorf("unknown hostname: got %q want unknown (fall through, downstream validates)", got)
 	}
-	if _, isStage := stageHalfForTarget("", "appstage"); isStage {
-		t.Errorf("empty stateDir: expected not-stage-half")
+	if got := normalizeTargetServiceForLaunch("", "appstage"); got != "appstage" {
+		t.Errorf("empty stateDir: got %q want appstage (no state to consult)", got)
 	}
 }
 
