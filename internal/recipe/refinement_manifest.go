@@ -111,6 +111,20 @@ func (m *Refinement2Manifest) AllKeys() []string {
 	return keys
 }
 
+// AllKeysSet returns AllKeys() materialized as a set so callers can
+// do O(1) membership tests. Used by enrichFindingsAction to validate
+// the walked-ledger receipt against the manifest grammar BEFORE
+// mutating sess.Refinement2Ledger — refusal must not corrupt prior
+// ledger state. Run-47 Item A.
+func (m *Refinement2Manifest) AllKeysSet() map[string]bool {
+	keys := m.AllKeys()
+	out := make(map[string]bool, len(keys))
+	for _, k := range keys {
+		out[k] = true
+	}
+	return out
+}
+
 // Refinement2Ledger is the receipt the sub-agent emits. `Walked` lists
 // the IDKey of every manifest item the sub-agent applied the single-
 // question test against — zero-finding allowed only when the item is in

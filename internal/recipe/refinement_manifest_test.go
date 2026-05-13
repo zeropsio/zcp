@@ -422,7 +422,10 @@ func TestCompletePhaseRefinement_RefusesIncompleteWalkedLedger(t *testing.T) {
 	}
 	sess.RefinementDispatched = true
 	sess.Refinement2Dispatched = true
-	// Partial coverage — walk only one item.
+	// Partial coverage — walked array has the manifest-total LENGTH
+	// (so the run-47 Item C counter-consistency checks pass) but
+	// includes duplicates of a single manifest key so the set Missing
+	// check still surfaces N-1 un-walked entries.
 	manifest, mErr := BuildRefinement2Manifest(sess.Plan)
 	if mErr != nil {
 		t.Fatalf("BuildRefinement2Manifest: %v", mErr)
@@ -431,7 +434,14 @@ func TestCompletePhaseRefinement_RefusesIncompleteWalkedLedger(t *testing.T) {
 	if len(all) < 2 {
 		t.Fatalf("test fixture: manifest must have ≥ 2 keys to exercise partial coverage; got %d", len(all))
 	}
-	sess.Refinement2Ledger = &Refinement2Ledger{Walked: all[:1]}
+	walkedDup := make([]string, len(all))
+	for i := range walkedDup {
+		walkedDup[i] = all[0]
+	}
+	sess.Refinement2Ledger = &Refinement2Ledger{
+		Walked:                        walkedDup,
+		CrossSurfaceUniquenessScanned: len(all),
+	}
 	sess.Completed[PhaseRefinement] = false
 	sess.Current = PhaseRefinement
 
@@ -447,13 +457,20 @@ func TestCompletePhaseRefinement_RefusesIncompleteWalkedLedger(t *testing.T) {
 
 // TestEnrichFindings_PersistsLedgerOnSession — `enrich-findings` writes
 // the `walked` payload to sess.Refinement2Ledger. This is the wire-up
-// the close-gate consumes.
+// the close-gate consumes. Run-47 Item A: walked keys must match
+// manifest grammar, so the fixture populates fragments so the manifest
+// enumerates `codebase_kb:<host>:0` entries instead of `<empty>`
+// placeholders.
 func TestEnrichFindings_PersistsLedgerOnSession(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	log := OpenFactsLog(filepath.Join(dir, "facts.jsonl"))
 	sess := NewSession("synth-showcase", "dev", log, dir, nil)
 	sess.Plan = syntheticShowcasePlan()
+	sess.Plan.Fragments = map[string]string{
+		"codebase/api/knowledge-base": "<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->\n- **APP_SECRET shadow** — body.\n<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->",
+		"codebase/app/knowledge-base": "<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->\n- **L7 balancer** — body.\n<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->",
+	}
 	sess.OutputRoot = dir
 
 	in := RecipeInput{

@@ -706,6 +706,41 @@ func recordFactAction(sess *Session, in RecipeInput, r RecipeResult) RecipeResul
 // (`intersection` for S4/S5) when no fact records `candidateClass` for
 // the topic + scope.
 func enrichFindingsAction(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
+	// Run-47 Item A — validate walked-ledger idKey grammar at the audit
+	// boundary BEFORE any session mutation. Refusal must not overwrite a
+	// prior valid ledger (the existing assignment below is latest-wins).
+	// The manifest defines the canonical idKey shapes; enrich-findings is
+	// the first call where the sub-agent's walked array reaches the
+	// engine — refusal here symmetric to existing classification +
+	// suggestedReplacement validations downstream.
+	if len(in.Walked) > 0 {
+		manifest, mErr := BuildRefinement2Manifest(sess.Plan)
+		if mErr != nil {
+			r.Error = "enrich-findings: build refinement-2 manifest: " + mErr.Error()
+			return r
+		}
+		validKeys := manifest.AllKeysSet()
+		var invalid []string
+		for _, key := range in.Walked {
+			if !validKeys[key] {
+				invalid = append(invalid, key)
+			}
+		}
+		if len(invalid) > 0 {
+			head := invalid
+			if len(head) > 5 {
+				head = head[:5]
+			}
+			r.Error = fmt.Sprintf(
+				"enrich-findings: %d walked-ledger key(s) do not match the manifest idKey grammar. "+
+					"Valid idKey shapes: codebase_ig:<host>:<slot>, codebase_kb:<host>:<index|empty>, "+
+					"codebase_zerops_yaml:<host>, tier_yaml_comments:<tier>:<service|project>. "+
+					"Read .refinement-2-manifest.json end-to-end to enumerate every valid idKey. "+
+					"Invalid keys received (first 5): %v",
+				len(invalid), head)
+			return r
+		}
+	}
 	env := in.Findings
 	if env == nil {
 		if in.FindingsJSON == "" {
@@ -1079,22 +1114,42 @@ func checkRefinementCloseGates(sess *Session) string {
 	if ledger == nil {
 		return "complete-phase: phase=refinement requires the refinement-2 audit's walked-ledger receipt. The sub-agent emits a `walked` array listing the manifest idKey of every item it evaluated; forward it via `zerops_recipe action=enrich-findings walked=<array>` after the sub-agent returns. Run-46 Item 1 closes the run-41 → run-45 pattern where the sub-agent walked partial state and emitted 0 findings on un-walked surfaces."
 	}
+	// Run-46 Item 6 + Run-47 Item C — cross-surface uniqueness pass gate
+	// with counter consistency. The audit MUST scan every manifest entry
+	// for cross-codebase duplicates (one-fact-one-surface per
+	// audit_checklist.md §"Cross-surface uniqueness pass"). Sub-agent
+	// emits `crossSurfaceUniquenessScanned` as the count of items
+	// compared.
+	//
+	// Three-stage refusal — ordered so the most diagnostic message
+	// surfaces first when multiple invariants are broken:
+	//   1. scanned != manifest-total (Run-47 Item C tightened from < to
+	//      != so over-counted scans surface as refusals rather than
+	//      silent passes — Run-46 audit emitted 95 vs manifest 71).
+	//   2. walked-len != scanned (Run-47 Item C — surfaces the audit's
+	//      own internal counter contradiction; Run-46 emitted 92 walked
+	//      / 95 scanned in the same JSON block). Fires BEFORE the
+	//      walked-set coverage check so the contradiction's both-numbers
+	//      diagnosis is not masked by a partial-coverage refusal.
+	//   3. walked-set missing coverage (Run-46 Item 1) — final fall-
+	//      through for the "walked array isn't the full manifest" case.
+	totalItems := len(manifest.AllKeys())
+	if ledger.CrossSurfaceUniquenessScanned != totalItems {
+		return fmt.Sprintf(
+			"complete-phase: phase=refinement cross-surface uniqueness pass crossSurfaceUniquenessScanned=%d does not equal manifest total=%d. The audit's second pass (each fact on exactly one surface; other surfaces cross-reference rather than re-author) must compare the full corpus — partial or over-counted scans indicate the sub-agent did not run the pass against the manifest. Re-dispatch refinement-2 and forward the corrected `crossSurfaceUniquenessScanned` count + any `duplicates` pair references via `zerops_recipe action=enrich-findings`. Run-46 Item 6 + Run-47 Item C closes the run-45 pattern where cross-codebase KB duplications shipped without cross-reference because the audit didn't verifiably run the pass.",
+			ledger.CrossSurfaceUniquenessScanned, totalItems,
+		)
+	}
+	if walked := len(ledger.Walked); walked != ledger.CrossSurfaceUniquenessScanned {
+		return fmt.Sprintf(
+			"complete-phase: phase=refinement walked-ledger length=%d does not equal crossSurfaceUniquenessScanned=%d. The same corpus must be walked for findings + uniqueness pass; the audit's internal counters contradict each other. Re-dispatch refinement-2 and emit one walked entry per manifest item AND scan the same set in the uniqueness pass. Run-47 Item C.",
+			walked, ledger.CrossSurfaceUniquenessScanned,
+		)
+	}
 	if missing := ledger.Missing(manifest); len(missing) > 0 {
 		return fmt.Sprintf(
 			"complete-phase: phase=refinement walked-ledger covers %d of %d manifest entries; %d entries un-walked. Examples: %s. Re-dispatch refinement-2 and ensure the sub-agent evaluates every manifest entry — zero-finding is acceptable ONLY when the idKey is in `walked` (which proves the surface test ran). Run-46 Item 1.",
 			len(ledger.Walked), len(manifest.AllKeys()), len(missing), strings.Join(missingHead(missing, 5), ", "),
-		)
-	}
-	// Run-46 Item 6 — cross-surface uniqueness pass gate. The audit
-	// MUST scan every manifest entry for cross-codebase duplicates
-	// (one-fact-one-surface per audit_checklist.md §"Cross-surface
-	// uniqueness pass"). Sub-agent emits `crossSurfaceUniquenessScanned`
-	// as the count of items compared; refuse when scanned < total.
-	totalItems := len(manifest.AllKeys())
-	if ledger.CrossSurfaceUniquenessScanned < totalItems {
-		return fmt.Sprintf(
-			"complete-phase: phase=refinement cross-surface uniqueness pass scanned %d of %d manifest entries — the audit's second pass (each fact on exactly one surface; other surfaces cross-reference rather than re-author) is not verifiable. Re-dispatch refinement-2 and forward the `crossSurfaceUniquenessScanned` count + any `duplicates` pair references via `zerops_recipe action=enrich-findings`. Run-46 Item 6 closes the run-45 pattern where cross-codebase KB duplications (APP_SECRET shadow on apidev IG #5 + worker KB #4; https-Meilisearch on apidev KB #3 + worker KB #5) shipped without cross-reference because the audit didn't verifiably run the pass.",
-			ledger.CrossSurfaceUniquenessScanned, totalItems,
 		)
 	}
 	return ""

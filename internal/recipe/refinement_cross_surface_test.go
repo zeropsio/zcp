@@ -129,14 +129,19 @@ func TestRefinement2CloseGate_AcceptsFullCrossSurfaceScan(t *testing.T) {
 
 // TestEnrichFindings_PersistsCrossSurfacePayload — `enrich-findings`
 // passes through the `crossSurfaceUniquenessScanned` + `duplicates`
-// input fields to sess.Refinement2Ledger. Item 1 already added the
-// data path; Item 6 makes the close-gate read it.
+// input fields to sess.Refinement2Ledger. Item 1 added the data path;
+// Item 6 makes the close-gate read it; Run-47 Item A validates walked
+// keys against the manifest grammar (fixture populates fragments so
+// the manifest enumerates `codebase_kb:api:0` instead of `<empty>`).
 func TestEnrichFindings_PersistsCrossSurfacePayload(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	log := OpenFactsLog(filepath.Join(dir, "facts.jsonl"))
 	sess := NewSession("synth-showcase", "dev", log, dir, nil)
 	sess.Plan = syntheticShowcasePlan()
+	sess.Plan.Fragments = map[string]string{
+		"codebase/api/knowledge-base": "<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->\n- **APP_SECRET shadow** — body.\n<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->",
+	}
 	sess.OutputRoot = dir
 
 	in := RecipeInput{

@@ -603,28 +603,68 @@ var bulletTopicKeywords = map[string][]string{
 }
 
 // lookupGuideIDFromURL returns the guide id whose canonical URL
-// host+path matches the link URL, or "" when no map URL matches. Mirrors
-// the host+path-match rule defined in briefs_refinement2.go (scheme +
-// host case-insensitive, path equality with trailing slash optional,
-// fragment anchored to map URL's fragment).
+// host+path+fragment matches the link URL, or "" when no map URL
+// matches. Mirrors the host+path-match rule defined in
+// briefs_refinement2.go (scheme + host case-insensitive, path equality
+// with trailing slash optional, fragment anchored to map URL's
+// fragment).
+//
+// Run-47 Item B — fragment-distinguished entries on the same canonical
+// path (#initcommands- / #deployfiles- / #envvariables- all on
+// /zerops-yaml/specification) used to collapse to a single guide
+// because the lookup stripped fragments before path-match. The fix
+// matches on host+path+fragment so each fragment-bearing map entry
+// resolves to its own guide; fragment-less map entries still match
+// fragment-less link URLs (the no-fragment-map rule).
 func lookupGuideIDFromURL(linkURL string) string {
 	// Normalize: strip scheme, lowercase host portion.
 	stripped := strings.TrimPrefix(linkURL, "https://")
 	stripped = strings.TrimPrefix(stripped, "http://")
 	stripped = strings.TrimPrefix(stripped, "//")
-	// Split off any fragment for the path-match phase.
-	pathPart, _, _ := strings.Cut(stripped, "#")
-	pathPart = strings.TrimRight(pathPart, "/")
-	pathPartLower := strings.ToLower(pathPart)
+	fullWithFrag := canonicalURLPathWithFragment(stripped)
+	pathOnly := canonicalURLPath(stripped)
 	for guide, url := range CitationGuideURL {
-		canonical := url
-		canonPath, _, _ := strings.Cut(canonical, "#")
-		canonPath = strings.TrimRight(canonPath, "/")
-		if strings.EqualFold(canonPath, pathPartLower) {
+		_, _, mapHasFrag := strings.Cut(url, "#")
+		if mapHasFrag {
+			// Fragment-distinguished map entry: require exact path+frag
+			// match (the run-47 Item B fix — `#deployfiles-` no longer
+			// collapses into `#initcommands-` on the same path).
+			if strings.EqualFold(canonicalURLPathWithFragment(url), fullWithFrag) {
+				return guide
+			}
+			continue
+		}
+		// No-fragment map entry: any in-page anchor on the same doc is
+		// acceptable; match on path only (briefs_refinement2.go's
+		// no-fragment-map rule).
+		if strings.EqualFold(canonicalURLPath(url), pathOnly) {
 			return guide
 		}
 	}
 	return ""
+}
+
+// canonicalURLPath returns the path portion of a citation URL with the
+// fragment stripped. Used by callers that want fragment-blind path-
+// family matching (e.g., the no-fragment-map fall-through where any
+// in-page anchor on the same doc is acceptable).
+func canonicalURLPath(url string) string {
+	path, _, _ := strings.Cut(url, "#")
+	path = strings.TrimRight(path, "/")
+	return strings.ToLower(path)
+}
+
+// canonicalURLPathWithFragment returns the path+fragment portion of a
+// citation URL. Run-47 Item B — used by lookupGuideIDFromURL so
+// fragment-distinguished entries on the same canonical path resolve
+// to their own guide ids.
+func canonicalURLPathWithFragment(url string) string {
+	path, frag, hasFrag := strings.Cut(url, "#")
+	path = strings.TrimRight(path, "/")
+	if !hasFrag {
+		return strings.ToLower(path)
+	}
+	return strings.ToLower(path + "#" + frag)
 }
 
 // citationFormARE matches a form-(a) citation: the backticked guide id
