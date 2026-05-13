@@ -1555,6 +1555,16 @@ func completePhase(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
 			return r
 		}
 	}
+	// Run-46 Item 4 — populate porter-tunable directive enumeration
+	// before CodebaseContentGates runs the F-FRIENDLY-AUTH floor gate.
+	// Counts plan.ObservedFacts.PorterTunableDirectives[host] from each
+	// codebase's zerops.yaml so downstream consumers (refinement brief,
+	// status response) see the same source-of-truth as the gate.
+	if sess.Current == PhaseCodebaseContent {
+		sess.mu.Lock()
+		populatePorterTunableDirectives(sess.Plan)
+		sess.mu.Unlock()
+	}
 	blocking, notices, err := sess.CompletePhase(gatesForPhase(sess.Current))
 	if err != nil {
 		r.Error = err.Error()

@@ -168,6 +168,11 @@ func CodebaseContentGates() []Gate {
 		// are forbidden on every apps-repo, including the canonical api
 		// codebase and workers.
 		{Name: "apps-repo-no-recipe-level-sections", Run: gateForbidRecipeLevelSectionsOnAppsRepos},
+		// Run-46 Item 4 — F-FRIENDLY-AUTH floor proportional to porter-
+		// tunable directive count. Closes the substrate-stochastic-
+		// adherence gap where F-FRIENDLY-AUTH taught the pattern but
+		// authors hit ~2-7 adapt-paths across 3 yamls run-to-run.
+		{Name: "friendly-auth-floor", Run: gateFriendlyAuthorityFloor},
 	}
 }
 

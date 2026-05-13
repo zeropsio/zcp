@@ -87,6 +87,14 @@ type ObservedFacts struct {
 	// zerops.yaml run.envVariables declares keys the source can't
 	// reach. Run-40 B1.
 	EnvReads map[string][]string `json:"envReads,omitempty"`
+
+	// PorterTunableDirectives maps codebase hostname to the count of
+	// porter-tunable directives in that codebase's zerops.yaml
+	// (minContainers / maxContainers / verticalAutoscaling.* / priority
+	// / objectStorageSize). Populated at codebase-content close; read
+	// by the F-FRIENDLY-AUTH gate to enforce proportional adapt-path
+	// coverage (Run-46 Item 4).
+	PorterTunableDirectives map[string]int `json:"porterTunableDirectives,omitempty"`
 }
 
 // HasWorkerCodebase reports whether any codebase in the plan has
