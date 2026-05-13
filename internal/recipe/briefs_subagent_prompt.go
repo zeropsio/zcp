@@ -421,6 +421,32 @@ func writePromptRecipeContext(b *strings.Builder, plan *Plan, kind BriefKind, cb
 	b.WriteString("  verification, allowed.\n\n")
 	b.WriteString("When unsure, `zerops_recipe` is the recipe-authoring tool; everything\n")
 	b.WriteString("else is platform infrastructure or porter-facing.\n")
+
+	// Run-46 dogfood — the scaffold-phase main agent picked
+	// `subagent_type="claude"` on its dispatch (FleetView system-reminder
+	// frames it as the default when no agent name is typed). The Claude
+	// Code 2.1.119 VSCode-native harness defaults that subagent_type to
+	// worktree isolation; the worktree-create then fails on the recipe-
+	// authoring outputRoot (`/var/www/zcprecipator/<slug>/`) because that
+	// path isn't a git repo (`Cannot create agent worktree: not in a git
+	// repository and no WorktreeCreate hooks are configured.`). Run-45
+	// happened to pick `general-purpose` autonomously and shipped; the
+	// engine never told either run which type to use — relied on luck.
+	// Recipe-authoring sub-agents share fragment-store + facts.jsonl +
+	// `.refinement-2-manifest.json` state with the main agent via the
+	// `zerops_recipe` MCP; isolated worktrees break that shared state
+	// outright. `general-purpose` has the same tool surface (`*`) and
+	// runs inline. Make the directive explicit so the next dispatch can't
+	// silently land on the worktree-isolated default.
+	b.WriteString("\n## Sub-agent dispatch — subagent_type\n\n")
+	b.WriteString("Agent-tool dispatch MUST pass `subagent_type=\"general-purpose\"`.\n")
+	b.WriteString("Do NOT use `subagent_type=\"claude\"` even when FleetView frames\n")
+	b.WriteString("it as the default — that subagent_type defaults to worktree\n")
+	b.WriteString("isolation, which fails on the non-git recipe-authoring\n")
+	b.WriteString("outputRoot. Sub-agents share fragment-store + facts.jsonl state\n")
+	b.WriteString("with this main agent via `zerops_recipe`; isolated worktrees\n")
+	b.WriteString("would break that shared state. `general-purpose` has the same\n")
+	b.WriteString("tool surface (`*`) and runs inline.\n")
 }
 
 func writePromptCloseFooter(b *strings.Builder, kind BriefKind, codebase string, currentPhase Phase) {

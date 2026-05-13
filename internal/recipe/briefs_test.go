@@ -582,9 +582,13 @@ func TestBuildSubagentPrompt_Scaffold_IncludesRecipeLevelContext(t *testing.T) {
 }
 
 // TestBuildSubagentPrompt_WrapperShareIsSmall — run-13 §B2 acceptance
-// criterion 27 (carry-forward of run-12 acceptance 15). Engine
-// wrapper around the brief stays under 2.5 KB, dropping wrapper share
-// well below the run-12 28-38% range.
+// criterion 27 (carry-forward of run-12 acceptance 15). Engine wrapper
+// around the brief stays bounded so wrapper share stays well below the
+// run-12 28-38% range. Cap was 2.5 KB at run-13; run-46 raised the
+// floor by ~500 bytes for the `subagent_type="general-purpose"`
+// dispatch directive (writePromptRecipeContext §"Sub-agent dispatch
+// — subagent_type"). New cap is 3 KB — still ~17% share on a
+// minimal-finalize brief, far below the run-12 baseline.
 func TestBuildSubagentPrompt_WrapperShareIsSmall(t *testing.T) {
 	t.Parallel()
 
@@ -600,8 +604,8 @@ func TestBuildSubagentPrompt_WrapperShareIsSmall(t *testing.T) {
 	}
 	brief, _ := BuildFinalizeBrief(plan)
 	wrapperBytes := len(prompt) - len(brief.Body)
-	if wrapperBytes > 2500 {
-		t.Errorf("wrapper too large (%d bytes); criterion-15 target is < 2 KB", wrapperBytes)
+	if wrapperBytes > 3000 {
+		t.Errorf("wrapper too large (%d bytes); criterion-15 target is < 3 KB after run-46 subagent_type directive", wrapperBytes)
 	}
 }
 
@@ -654,6 +658,15 @@ func TestBuildSubagentPrompt_DisambiguatesSkillFromMCP(t *testing.T) {
 // TestDispatch_BuildSubagentPrompt_ReturnsPromptField — run-13 §B2
 // integration. The new MCP action populates RecipeResult.Prompt; main
 // dispatches with prompt=<response.prompt> byte-identical.
+//
+// Brief kind is `finalize` because that's the inline-path kind whose
+// composed body sits comfortably below BriefDiskFallbackThreshold
+// (40 KB). The scaffold brief has been size-adjacent to the threshold
+// since run-15 (Resolver slug-list section) and any future preamble
+// addition flips it to the disk-fallback path; finalize gives the
+// inline-Prompt contract a stable substrate. The dispatch envelope's
+// either-or semantics (BriefPath vs Prompt) are tested at the disk-
+// fallback layer (briefs_disk_fallback_test.go).
 func TestDispatch_BuildSubagentPrompt_ReturnsPromptField(t *testing.T) {
 	t.Parallel()
 
@@ -667,7 +680,7 @@ func TestDispatch_BuildSubagentPrompt_ReturnsPromptField(t *testing.T) {
 
 	res := dispatch(t.Context(), store, RecipeInput{
 		Action: "build-subagent-prompt", Slug: "synth-showcase",
-		BriefKind: "scaffold", Codebase: "api",
+		BriefKind: "finalize",
 	})
 	if !res.OK {
 		t.Fatalf("build-subagent-prompt: %+v", res)

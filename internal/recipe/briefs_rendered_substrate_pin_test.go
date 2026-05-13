@@ -700,3 +700,99 @@ func TestComposeRefinementFactsBlock_ProseAnchors(t *testing.T) {
 		}
 	}
 }
+
+// subagentDispatchTypeAnchors — Pillar A pin coverage for the shared
+// "Sub-agent dispatch — subagent_type" directive emitted by
+// `writePromptRecipeContext`. Run-46 dogfood blocked at scaffold phase
+// because the recipe-authoring main agent picked
+// `subagent_type="claude"` (FleetView's default when no agent name is
+// typed) and the Claude Code 2.1.119 VSCode-native harness defaults
+// that subagent_type to worktree isolation, which fails on the non-git
+// recipe-authoring outputRoot. The engine never instructed which type
+// to use; run-45 happened to pick `general-purpose` autonomously and
+// shipped. The directive lives in the shared recipe-context preamble
+// so every dispatched brief carries it; these anchors guard against
+// silent drift removing the directive.
+var subagentDispatchTypeAnchors = []string{
+	// Section header.
+	"## Sub-agent dispatch — subagent_type",
+	// The positive directive — `general-purpose` as the required value
+	// for `subagent_type` on every Agent-tool dispatch.
+	`subagent_type="general-purpose"`,
+	// The negative — explicit prohibition on `claude` even when the
+	// harness frames it as the default. Drift here re-opens the run-46
+	// wall.
+	`subagent_type="claude"`,
+	"FleetView",
+	// "worktree" + "isolation" pinned separately — the rendered prose
+	// wraps them across a line break (`defaults to worktree\nisolation`).
+	// Either token disappearing means the run-46 dogfood explanation is
+	// broken in the brief.
+	"worktree",
+	"isolation",
+	// Why-it-matters anchor — shared state via MCP would break under
+	// worktree isolation. This is the load-bearing rationale; drop it
+	// and the directive reads as arbitrary policy.
+	"zerops_recipe",
+	"share fragment-store",
+	// Tool-surface equivalence — preempts the next-most-likely
+	// objection ("why not `claude` for better tooling?"). Tokens pinned
+	// separately for the same line-wrap reason.
+	"same",
+	"tool surface",
+}
+
+// TestBuildSubagentPrompt_AllKindsCarrySubagentDispatchTypeDirective —
+// the shared recipe-authoring preamble emits the
+// `subagent_type="general-purpose"` directive into every dispatched
+// brief, regardless of kind. Run-46 follow-up: the previous run picked
+// `subagent_type="claude"` because the engine never instructed which
+// type, and the VSCode-native harness defaults `claude` to worktree
+// isolation which fails on the non-git outputRoot. Pin every kind so a
+// future preamble edit can't silently drop the directive from any one.
+func TestBuildSubagentPrompt_AllKindsCarrySubagentDispatchTypeDirective(t *testing.T) {
+	t.Parallel()
+
+	plan := syntheticShowcasePlan()
+	plan.Research.Description = "Recipe-authoring dispatch shape pin"
+
+	// Every kind that goes through buildSubagentPrompt[ForPhase]. Multi-
+	// file kinds (codebase-content / env-content / refinement) take the
+	// dispatchForPhase path; single-file kinds (scaffold / feature /
+	// finalize / claudemd-author / refinement2) stay on the legacy
+	// composition path. Both paths route through writePromptRecipeContext,
+	// so a single per-kind invocation of buildSubagentPrompt suffices
+	// to assert the shared preamble landed.
+	type kindCase struct {
+		kind     string
+		codebase string // empty for phase-wide kinds.
+	}
+	cases := []kindCase{
+		{kind: "scaffold", codebase: "api"},
+		{kind: "feature"},
+		{kind: "finalize"},
+		{kind: "codebase-content", codebase: "api"},
+		{kind: "claudemd-author", codebase: "api"},
+		{kind: "env-content"},
+		{kind: "refinement"},
+		{kind: "refinement2"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.kind, func(t *testing.T) {
+			t.Parallel()
+			in := RecipeInput{BriefKind: tc.kind, Codebase: tc.codebase}
+			if tc.kind == "feature" {
+				in.FeaturePass = string(FeaturePassFrontend)
+			}
+			prompt, err := buildSubagentPrompt(plan, in)
+			if err != nil {
+				t.Fatalf("buildSubagentPrompt(kind=%s): %v", tc.kind, err)
+			}
+			for _, want := range subagentDispatchTypeAnchors {
+				if !strings.Contains(prompt, want) {
+					t.Errorf("dispatched %s brief missing subagent_type-directive anchor %q (silent-drop guard against run-46 worktree-isolation regression)", tc.kind, want)
+				}
+			}
+		})
+	}
+}
