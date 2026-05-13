@@ -29,7 +29,13 @@ import (
 
 // TestSelfReferentialNamingLinter_RecipeSymbolsRefuse — run-45 apidev
 // KB #6 body as failing fixture. Bullet backticks `cache.module.ts` +
-// `CacheService` — both recipe-internal symbols. Linter MUST refuse.
+// `CacheService` + `REDIS_CLIENT` — all recipe-internal symbols. The
+// fixture stages `cache.tokens.ts` exporting `REDIS_CLIENT` so the
+// G3-followup src-export parser has data to consume; without that
+// parser, leaf-module symbols like `REDIS_CLIENT` slip past the
+// filename-prefix cross-match. Linter MUST refuse and the refusal
+// message MUST name both the filename hit (`cache.module.ts`) AND the
+// export-parser hit (`REDIS_CLIENT`).
 func TestSelfReferentialNamingLinter_RecipeSymbolsRefuse(t *testing.T) {
 	t.Parallel()
 	codebaseDir := t.TempDir()
@@ -41,6 +47,14 @@ func TestSelfReferentialNamingLinter_RecipeSymbolsRefuse(t *testing.T) {
 		[]byte("export class CacheService {}\nexport class CacheController {}\n"),
 		0o644); err != nil {
 		t.Fatalf("write cache.module.ts: %v", err)
+	}
+	// G3-followup — `cache.tokens.ts` exports `REDIS_CLIENT`. The token
+	// is declared on a leaf module; without export-parsing the linter
+	// would miss it.
+	if err := os.WriteFile(filepath.Join(codebaseDir, "src", "cache", "cache.tokens.ts"),
+		[]byte("export const REDIS_CLIENT = Symbol('redis-client');\n"),
+		0o644); err != nil {
+		t.Fatalf("write cache.tokens.ts: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(codebaseDir, "package.json"),
 		[]byte(`{"name":"api","dependencies":{}}`),
@@ -60,11 +74,14 @@ func TestSelfReferentialNamingLinter_RecipeSymbolsRefuse(t *testing.T) {
 	if len(vs) == 0 {
 		t.Fatal("expected self-referential-naming refusal; got no violations")
 	}
-	// The message must name the offending token + redirect to the
-	// principle level + cite the spec.
+	// G6-followup — the message must name BOTH the filename hit AND the
+	// exported-symbol hit so a regression in either detection path
+	// surfaces in the test instead of being silently masked by the
+	// other.
 	joined := strings.Join(vs, "\n")
 	for _, want := range []string{
 		"cache.module.ts",
+		"REDIS_CLIENT",
 		"principle",
 		"Self-referential decoration",
 	} {
@@ -74,9 +91,84 @@ func TestSelfReferentialNamingLinter_RecipeSymbolsRefuse(t *testing.T) {
 	}
 }
 
-// TestSelfReferentialNamingLinter_AllowsGenericTokens — `X-Cache`
-// header NAME is platform-spec content (not recipe-internal symbol).
-// Linter MUST NOT fire on generic HTTP header names.
+// TestSelfReferentialNamingLinter_ExportedClassRefuses — Run-46 Item 7
+// G3-followup. A class exported from a non-eponymous file (cache class
+// declared in `cache.service.ts` but the published symbol is
+// `CacheService`) must be flagged when backticked. The filename
+// `cache.service.ts` matches `cache.service` kebab; the export parser
+// also picks up the exported identifier directly. Either path catches
+// the class — the test pins both reach.
+func TestSelfReferentialNamingLinter_ExportedClassRefuses(t *testing.T) {
+	t.Parallel()
+	codebaseDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(codebaseDir, "src", "cache"), 0o755); err != nil {
+		t.Fatalf("mkdir src/cache: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(codebaseDir, "src", "cache", "cache.service.ts"),
+		[]byte("export class CacheService {\n  resolve() {}\n}\n"),
+		0o644); err != nil {
+		t.Fatalf("write cache.service.ts: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(codebaseDir, "package.json"),
+		[]byte(`{"name":"api","dependencies":{}}`),
+		0o644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	body := `<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->
+- **Cache injection** — wire ` + "`CacheService`" + ` into the DI graph at
+  bootstrap so request handlers can inject it.
+<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->
+`
+	vs, err := lintSelfReferentialKB(body, codebaseDir)
+	if err != nil {
+		t.Fatalf("lintSelfReferentialKB: %v", err)
+	}
+	if len(vs) == 0 {
+		t.Fatal("expected refusal on exported-class backtick; got no violations")
+	}
+	joined := strings.Join(vs, "\n")
+	if !strings.Contains(joined, "CacheService") {
+		t.Errorf("violation message must name `CacheService`; got %s", joined)
+	}
+}
+
+// TestSelfReferentialNamingLinter_AllowsNpmDependency — Run-46 Item 7
+// G7-followup. Backticking an npm dependency name (e.g. `redis`,
+// `@nestjs/common`) is platform-spec content, NOT recipe-internal
+// scaffold decoration. The linter MUST NOT fire on dependency names.
+func TestSelfReferentialNamingLinter_AllowsNpmDependency(t *testing.T) {
+	t.Parallel()
+	codebaseDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(codebaseDir, "src"), 0o755); err != nil {
+		t.Fatalf("mkdir src: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(codebaseDir, "package.json"),
+		[]byte(`{"name":"api","dependencies":{"redis":"^4.0.0","@nestjs/common":"^10.0.0"}}`),
+		0o644); err != nil {
+		t.Fatalf("write package.json: %v", err)
+	}
+	body := `<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->
+- **Redis driver selection** — the ` + "`redis`" + ` npm package speaks the
+  binary RESP protocol; ` + "`@nestjs/common`" + ` wires the Redis client
+  module into the DI graph at bootstrap.
+<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->
+`
+	vs, err := lintSelfReferentialKB(body, codebaseDir)
+	if err != nil {
+		t.Fatalf("lintSelfReferentialKB: %v", err)
+	}
+	if len(vs) != 0 {
+		t.Errorf("expected no violations on npm-dependency backticks; got %v", vs)
+	}
+}
+
+// TestSelfReferentialNamingLinter_AllowsGenericTokens — Run-46 Item 7
+// G7-followup. The original test used prose `Vary header` text and
+// would have passed even if the allow-list path completely broke.
+// This version backticks platform-spec content the allow-list MUST
+// pass — `X-Cache` / `X-Cache-Elapsed-Ms` / `X-Cache-Key` HTTP-header
+// NAMES belong to the platform's response shape, not the recipe's
+// scaffold; backticking them is a legitimate teaching pattern.
 func TestSelfReferentialNamingLinter_AllowsGenericTokens(t *testing.T) {
 	t.Parallel()
 	codebaseDir := t.TempDir()
@@ -90,8 +182,11 @@ func TestSelfReferentialNamingLinter_AllowsGenericTokens(t *testing.T) {
 	}
 
 	body := `<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->
-- **Cross-origin cache headers** — the Vary header keys on Origin so
-  upstream caches don't return a CORS-mismatched response.
+- **Cross-origin headers** — the ` + "`X-Cache`" + `, ` + "`X-Cache-Elapsed-Ms`" + `,
+  and ` + "`X-Cache-Key`" + ` response headers are visible to ` + "`curl`" + ` but
+  undefined when the SPA reads them via ` + "`fetch().headers.get(...)`" + `.
+  Browsers hide non-CORS-safelisted headers from cross-origin JS unless
+  the api enumerates them under ` + "`exposedHeaders`" + `.
 <!-- #ZEROPS_EXTRACT_END:knowledge-base# -->
 `
 	vs, err := lintSelfReferentialKB(body, codebaseDir)
@@ -99,7 +194,7 @@ func TestSelfReferentialNamingLinter_AllowsGenericTokens(t *testing.T) {
 		t.Fatalf("lintSelfReferentialKB: %v", err)
 	}
 	if len(vs) != 0 {
-		t.Errorf("expected no violations on generic content; got %v", vs)
+		t.Errorf("expected no violations on backticked HTTP-header allow-list tokens; got %v", vs)
 	}
 }
 

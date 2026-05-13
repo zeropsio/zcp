@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -127,15 +128,70 @@ type codebaseSymbols struct {
 	// keys in `<codebaseDir>/package.json`. Used to skip false positives
 	// on backticked dependency names (e.g. `redis` the npm package).
 	PackageDeps map[string]bool
+	// ExportedSymbols is the set of exported identifiers parsed from
+	// `<codebaseDir>/src/**/*.{ts,js,tsx,jsx,go,py}` — TypeScript/JS
+	// `export {const,class,function,interface,type} <X>` declarations,
+	// Go package-level `func`/`type`/`var`/`const` with uppercase first
+	// letter, Python module-level `class`/`def`. Run-46 Item 7
+	// G3-followup — without this set, leaf-module symbols like
+	// `REDIS_CLIENT` exported from `cache.tokens.ts` would slip past
+	// the filename-prefix cross-match in isLikelyClassExport.
+	ExportedSymbols map[string]bool
 }
 
+// exportParseExtensions are the file extensions the export parser walks.
+// Each maps to the patterns ParseExportedSymbols uses. Extensions not
+// in this set are silently skipped — adding new languages means
+// extending this slice + the regex table in extractExportedSymbols.
+var exportParseExtensions = []string{".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".py"}
+
+// exportParseSkipDirs are directories the export-parser walk skips for
+// performance + correctness — these don't carry recipe-internal symbol
+// declarations, only third-party / build artifacts.
+var exportParseSkipDirs = map[string]bool{
+	"node_modules": true,
+	"__pycache__":  true,
+	"dist":         true,
+	"build":        true,
+	".git":         true,
+	"vendor":       true,
+}
+
+// exportTSConstClassFuncRE matches TypeScript / JavaScript export
+// declarations: `export const X`, `export class X`, `export function X`,
+// `export interface X`, `export type X`, `export default class X`,
+// `export default function X`, `export abstract class X`. Captures the
+// identifier (group 1).
+var exportTSConstClassFuncRE = regexp.MustCompile(
+	`(?m)^\s*export\s+(?:default\s+)?(?:abstract\s+)?(?:async\s+)?(?:const|let|var|class|function|interface|type|enum)\s+([A-Za-z_][A-Za-z0-9_]*)`,
+)
+
+// exportTSNamedListRE matches `export { Foo, Bar as Baz }` block
+// declarations. Captures the whole identifier list (group 1) — split +
+// trim per token afterwards.
+var exportTSNamedListRE = regexp.MustCompile(`(?m)^\s*export\s*\{([^}]+)\}`)
+
+// goPackageLevelDeclRE matches Go package-level `func`/`type`/`var`/
+// `const` declarations whose identifier starts with an uppercase letter
+// (Go's export rule). Captures the identifier (group 2). Skips the
+// `var (` / `const (` block-open lines — block contents need a separate
+// pass.
+var goPackageLevelDeclRE = regexp.MustCompile(
+	`(?m)^(?:func|type|var|const)\s+(?:\([^)]*\)\s+)?([A-Z][A-Za-z0-9_]*)`,
+)
+
+// pythonModuleLevelDeclRE matches Python module-level `class X` /
+// `def X` declarations (no indent). Captures the identifier (group 2).
+var pythonModuleLevelDeclRE = regexp.MustCompile(`(?m)^(class|def)\s+([A-Za-z_][A-Za-z0-9_]*)`)
+
 // collectCodebaseSymbols walks the codebase dir and collects file
-// names + package deps. Returns an empty symbol set on missing dir
-// (silent no-op).
+// names + package deps + exported identifiers. Returns an empty symbol
+// set on missing dir (silent no-op).
 func collectCodebaseSymbols(codebaseDir string) (codebaseSymbols, error) {
 	syms := codebaseSymbols{
-		Filenames:   map[string]bool{},
-		PackageDeps: map[string]bool{},
+		Filenames:       map[string]bool{},
+		PackageDeps:     map[string]bool{},
+		ExportedSymbols: map[string]bool{},
 	}
 	if codebaseDir == "" {
 		return syms, nil
@@ -150,14 +206,32 @@ func collectCodebaseSymbols(codebaseDir string) (codebaseSymbols, error) {
 	if _, err := os.Stat(srcDir); err == nil {
 		// WalkDir errors propagate; the linter is best-effort and the
 		// outer caller can surface transient FS hiccups as needed.
-		walkErr := filepath.WalkDir(srcDir, func(_ string, d fs.DirEntry, err error) error {
+		walkErr := filepath.WalkDir(srcDir, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
 			if d.IsDir() {
+				if exportParseSkipDirs[d.Name()] {
+					return filepath.SkipDir
+				}
 				return nil
 			}
 			syms.Filenames[d.Name()] = true
+			ext := strings.ToLower(filepath.Ext(d.Name()))
+			if !exportParseExtIsCovered(ext) {
+				return nil
+			}
+			data, readErr := os.ReadFile(path)
+			if readErr != nil {
+				// Don't fail the walk on a single unreadable file — best-
+				// effort symbol collection. The error is intentionally
+				// swallowed so a transient FS hiccup doesn't kill the
+				// entire walk; lint-quiet via the nolint pragma.
+				return nil //nolint:nilerr // best-effort walk
+			}
+			for _, sym := range extractExportedSymbols(string(data), ext) {
+				syms.ExportedSymbols[sym] = true
+			}
 			return nil
 		})
 		if walkErr != nil {
@@ -180,6 +254,80 @@ func collectCodebaseSymbols(codebaseDir string) (codebaseSymbols, error) {
 		}
 	}
 	return syms, nil
+}
+
+// exportParseExtIsCovered reports whether the file extension belongs to
+// the export-parser's supported language set.
+func exportParseExtIsCovered(ext string) bool {
+	return slices.Contains(exportParseExtensions, ext)
+}
+
+// extractExportedSymbols runs the per-language regex set against the
+// file content + returns the identifiers exported from the file. The
+// parser is intentionally regex-based — the linter classifies "is this
+// backticked token a recipe-internal symbol" and false positives are
+// preferable to false negatives (recipe-internal symbols leaking past
+// the linter is the regression class Item 7 closes).
+//
+// Run-46 Item 7 G3-followup.
+func extractExportedSymbols(content, ext string) []string {
+	switch ext {
+	case ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs":
+		return extractTSExportedSymbols(content)
+	case ".go":
+		return extractGoPackageLevelDecls(content)
+	case ".py":
+		return extractPythonModuleLevelDecls(content)
+	}
+	return nil
+}
+
+func extractTSExportedSymbols(content string) []string {
+	directMatches := exportTSConstClassFuncRE.FindAllStringSubmatch(content, -1)
+	namedListMatches := exportTSNamedListRE.FindAllStringSubmatch(content, -1)
+	out := make([]string, 0, len(directMatches)+len(namedListMatches))
+	for _, m := range directMatches {
+		out = append(out, m[1])
+	}
+	for _, m := range namedListMatches {
+		// Split `Foo, Bar as Baz, Default as default` into tokens, take
+		// the exported identifier.
+		for raw := range strings.SplitSeq(m[1], ",") {
+			tok := strings.TrimSpace(raw)
+			if tok == "" {
+				continue
+			}
+			// `Foo as Bar` → take Bar (the exported name).
+			if idx := strings.Index(tok, " as "); idx >= 0 {
+				tok = strings.TrimSpace(tok[idx+4:])
+			}
+			// `default as Foo` covered by `as` branch; bare `default`
+			// keyword we skip.
+			if tok == "" || tok == "default" {
+				continue
+			}
+			out = append(out, tok)
+		}
+	}
+	return out
+}
+
+func extractGoPackageLevelDecls(content string) []string {
+	matches := goPackageLevelDeclRE.FindAllStringSubmatch(content, -1)
+	out := make([]string, 0, len(matches))
+	for _, m := range matches {
+		out = append(out, m[1])
+	}
+	return out
+}
+
+func extractPythonModuleLevelDecls(content string) []string {
+	matches := pythonModuleLevelDeclRE.FindAllStringSubmatch(content, -1)
+	out := make([]string, 0, len(matches))
+	for _, m := range matches {
+		out = append(out, m[2])
+	}
+	return out
 }
 
 // scanBulletForRecipeInternalSymbols returns the set of backticked
@@ -214,6 +362,11 @@ func scanBulletForRecipeInternalSymbols(bullet string, syms codebaseSymbols) []s
 //  2. Bare filename present in the codebase's `src/` glob.
 //  3. Token resembles a TypeScript/JavaScript class export — UpperCamelCase
 //     + a kebab/dot variant present in the codebase's src/ filenames.
+//  4. Token matches an exported identifier parsed from the codebase's
+//     src/ files (TS/JS export {const,class,function,interface,type},
+//     Go uppercase package-level declarations, Python module-level
+//     class/def). Run-46 Item 7 G3-followup — closes the leaf-module
+//     hole (e.g. `REDIS_CLIENT` exported from `cache.tokens.ts`).
 func isRecipeInternalSymbol(token string, syms codebaseSymbols) bool {
 	lower := strings.ToLower(token)
 	if genericHTTPHeaderTokens[lower] {
@@ -232,6 +385,15 @@ func isRecipeInternalSymbol(token string, syms codebaseSymbols) bool {
 	}
 	// (2) Bare filename in src/.
 	if syms.Filenames[token] {
+		return true
+	}
+	// (4) Exported identifier — handles leaf modules where the token
+	// resembles a constant (`REDIS_CLIENT`) or a class exported from a
+	// non-eponymous file (`CacheService` in `cache.service.ts` →
+	// matches the filename rule above; but `CacheService` exported from
+	// `cache.module.ts` does NOT match filename, only this rule).
+	// Also catches the bare-symbol form of class names directly.
+	if syms.ExportedSymbols[token] {
 		return true
 	}
 	// (3) UpperCamelCase class-name. Heuristic: starts with uppercase
