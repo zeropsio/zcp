@@ -422,6 +422,83 @@ func TestScenario_S2_IdleBootstrappedReady(t *testing.T) {
 	requireAtomIDsContain(t, "S2", matches, "idle-develop-entry")
 }
 
+// TestScenario_S9_IdleBootstrappedDeployedPromotionCandidate pins
+// idle-launch-entry: when an idle project has bootstrapped, deployed
+// services, the launch-production discovery atom surfaces alongside
+// the develop entry so the agent can choose the right workflow when
+// the user's intent is "promote to prod" / "go live". Without this
+// atom, the only entry-point signal for launch-production lives in
+// the tool description's trigger-phrase list — too weak for prompts
+// that paraphrase ("Create a separate production project").
+func TestScenario_S9_IdleBootstrappedDeployedPromotionCandidate(t *testing.T) {
+	t.Parallel()
+
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+
+	env := StateEnvelope{
+		Phase:        PhaseIdle,
+		Environment:  EnvContainer,
+		IdleScenario: IdleBootstrapped,
+		Services: []ServiceSnapshot{{
+			Hostname:      "appdev",
+			TypeVersion:   "nodejs@22",
+			RuntimeClass:  topology.RuntimeDynamic,
+			Mode:          topology.ModeStandard,
+			StageHostname: "appstage",
+			Bootstrapped:  true,
+			Deployed:      true,
+		}},
+	}
+
+	matches, err := Synthesize(env, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	// Both entries fire — agent sees develop as primary, launch as
+	// alternative for promotion intent.
+	requireAtomIDsContain(t, "S9", matches, "idle-develop-entry", "idle-launch-entry")
+}
+
+// TestScenario_S9b_IdleBootstrappedNotYetDeployed pins the partner
+// behavior: idle-launch-entry must NOT fire when the bootstrapped
+// project has not received a deploy. envelopeDeployStates:[deployed]
+// gates promotion candidacy to projects with shipped code.
+func TestScenario_S9b_IdleBootstrappedNotYetDeployed(t *testing.T) {
+	t.Parallel()
+
+	corpus, err := LoadAtomCorpus()
+	if err != nil {
+		t.Fatalf("LoadAtomCorpus: %v", err)
+	}
+
+	env := StateEnvelope{
+		Phase:        PhaseIdle,
+		Environment:  EnvContainer,
+		IdleScenario: IdleBootstrapped,
+		Services: []ServiceSnapshot{{
+			Hostname:     "appdev",
+			TypeVersion:  "nodejs@22",
+			RuntimeClass: topology.RuntimeDynamic,
+			Mode:         topology.ModeDev,
+			Bootstrapped: true,
+			Deployed:     false, // never-deployed: not a promotion candidate
+		}},
+	}
+
+	matches, err := Synthesize(env, corpus)
+	if err != nil {
+		t.Fatalf("Synthesize: %v", err)
+	}
+	for _, m := range matches {
+		if m.AtomID == "idle-launch-entry" {
+			t.Errorf("S9b: idle-launch-entry must not fire when no service is deployed; got it in matches")
+		}
+	}
+}
+
 // TestScenario_S6_DevelopDeployOKPendingVerify pins the
 // deploy-succeeded/verify-not-yet branch of planDevelopActive. Branch 2
 // passes (no deploy needed) and branch 3 fires (verify pending).
