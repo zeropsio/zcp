@@ -91,9 +91,15 @@ func handleLaunchProduction(
 		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
 
+	// Source discovery (project name + service list) feeds the
+	// scope-prompt SourceContext hint and the classify-prompt env table.
+	// Best-effort: errors return nil and the response surfaces the
+	// missing fields via blockers without the discovery hint.
+	sourceContext := gatherLaunchSourceContext(ctx, client, projectID)
+
 	// Status 1 — scope-prompt: required scope fields incomplete.
-	if missing := missingScopeFields(input); len(missing) > 0 {
-		return launchScopePromptResponse(corpus, input, missing), nil, nil
+	if missing := missingScopeFields(input, sourceContext); len(missing) > 0 {
+		return launchScopePromptResponse(corpus, input, missing, sourceContext), nil, nil
 	}
 
 	// Read source project envs (needed for both classify-prompt and
@@ -106,7 +112,7 @@ func handleLaunchProduction(
 	// Status 2 — classify-prompt: source envs present, not all bucketed.
 	if needsClassifyPrompt(input.EnvClassifications, sourceEnvs) {
 		classifications := convertClassificationsInput(input.EnvClassifications)
-		return launchClassifyPromptResponse(corpus, sourceEnvs, classifications), nil, nil
+		return launchClassifyPromptResponse(corpus, sourceEnvs, classifications, sourceContext), nil, nil
 	}
 
 	classifications := convertClassificationsInput(input.EnvClassifications)
@@ -143,7 +149,7 @@ func handleLaunchProduction(
 	}
 
 	if input.LaunchKey == "" {
-		return launchReadyToLaunchResponse(corpus, input, sourceEnvs), nil, nil
+		return launchReadyToLaunchResponse(corpus, input, sourceEnvs, sourceContext), nil, nil
 	}
 
 	// Mutation pipeline — LaunchKey supplied, no existing target.
@@ -572,6 +578,13 @@ type launchProductionResponse struct {
 	// Classifications is the classify-prompt review table — emitted when
 	// status is classify-prompt. Per-env rows omit values per P-LP-5.
 	Classifications []launchClassifyRow `json:"classifications,omitempty"`
+	// SourceContext carries discovery hints about the source dev/stage
+	// project: derived production-project name, available runtimes,
+	// suggested runtime when source has exactly one. Best-effort —
+	// populated on scope/classify/ready responses when source discovery
+	// succeeded. The agent SHOULD apply `suggestedTargetName` and
+	// `suggestedRuntime` rather than ask the user when populated.
+	SourceContext *launchSourceContext `json:"sourceContext,omitempty"`
 }
 
 // launchInputsEcho echoes the scope inputs the workflow saw on the call,
@@ -594,10 +607,20 @@ type launchClassifyRow struct {
 
 // missingScopeFields returns the names of scope fields that are still
 // missing. Empty result = scope complete enough to advance.
-func missingScopeFields(input WorkflowInput) []string {
+//
+// Surfaces TargetService here (not late in executeLaunchMutation) so
+// the scope-prompt response carries the agent the full picture in one
+// pass. sourceContext is read-only: when it carries a SuggestedRuntime
+// the agent can fill TargetService on the next call without prompting
+// the user (single-runtime case); the field is still listed missing so
+// the agent acts on the suggestion rather than silently defaulting.
+func missingScopeFields(input WorkflowInput, _ *launchSourceContext) []string {
 	var missing []string
 	if input.ProductionProjectName == "" {
 		missing = append(missing, "productionProjectName")
+	}
+	if input.TargetService == "" {
+		missing = append(missing, "targetService")
 	}
 	// Region defaults to eu-central at compose-time if empty (per spec-
 	// launch-production-platform-spike A.4) — don't require it from
@@ -606,12 +629,15 @@ func missingScopeFields(input WorkflowInput) []string {
 }
 
 // launchScopePromptResponse builds the scope-prompt response.
-func launchScopePromptResponse(corpus []workflow.KnowledgeAtom, input WorkflowInput, missing []string) *mcp.CallToolResult {
+// SourceContext (when populated) gives the agent the suggested
+// productionProjectName + suggested runtime — agent applies without
+// asking the user when single-runtime, asks the user when multi-runtime.
+func launchScopePromptResponse(corpus []workflow.KnowledgeAtom, input WorkflowInput, missing []string, sourceCtx *launchSourceContext) *mcp.CallToolResult {
 	guidance := atomBody(corpus, "launch-scope-prompt")
 	if guidance == "" {
 		// Fallback when corpus load left the atom out — shouldn't happen
 		// in practice, but better than a silent empty response.
-		guidance = "Provide productionProjectName, region (optional, defaults to eu-central), and custom-domain options."
+		guidance = "Provide productionProjectName + targetService (runtime hostname). Region defaults to eu-central. Use sourceContext.suggestedTargetName + sourceContext.suggestedRuntime when populated."
 	}
 
 	blockers := make([]topology.Blocker, 0, len(missing))
@@ -625,12 +651,13 @@ func launchScopePromptResponse(corpus []workflow.KnowledgeAtom, input WorkflowIn
 	}
 
 	return jsonResult(launchProductionResponse{
-		Workflow: workflowLaunchProduction,
-		Status:   topology.LaunchStatusScopePrompt,
-		Phase:    workflow.PhaseLaunchProductionActive,
-		Guidance: guidance,
-		Blockers: blockers,
-		Inputs:   echoInputs(input),
+		Workflow:      workflowLaunchProduction,
+		Status:        topology.LaunchStatusScopePrompt,
+		Phase:         workflow.PhaseLaunchProductionActive,
+		Guidance:      guidance,
+		Blockers:      blockers,
+		Inputs:        echoInputs(input),
+		SourceContext: sourceCtx,
 	})
 }
 
@@ -639,6 +666,7 @@ func launchClassifyPromptResponse(
 	corpus []workflow.KnowledgeAtom,
 	sourceEnvs []ops.ProjectEnvVar,
 	classifications map[string]topology.SecretClassification,
+	sourceCtx *launchSourceContext,
 ) *mcp.CallToolResult {
 	guidance := atomBody(corpus, "launch-classify-prompt")
 	if guidance == "" {
@@ -664,6 +692,7 @@ func launchClassifyPromptResponse(
 		Phase:           workflow.PhaseLaunchProductionActive,
 		Guidance:        guidance,
 		Classifications: rows,
+		SourceContext:   sourceCtx,
 	})
 }
 
@@ -676,6 +705,7 @@ func launchReadyToLaunchResponse(
 	corpus []workflow.KnowledgeAtom,
 	input WorkflowInput,
 	sourceEnvs []ops.ProjectEnvVar,
+	sourceCtx *launchSourceContext,
 ) *mcp.CallToolResult {
 	guidance := atomBody(corpus, "launch-mutation-key-required")
 	if guidance == "" {
@@ -684,11 +714,12 @@ func launchReadyToLaunchResponse(
 	_ = sourceEnvs // Phase D.2 will surface classified-env summary
 
 	return jsonResult(launchProductionResponse{
-		Workflow: workflowLaunchProduction,
-		Status:   topology.LaunchStatusReadyToLaunch,
-		Phase:    workflow.PhaseLaunchProductionActive,
-		Guidance: guidance,
-		Inputs:   echoInputs(input),
+		Workflow:      workflowLaunchProduction,
+		Status:        topology.LaunchStatusReadyToLaunch,
+		Phase:         workflow.PhaseLaunchProductionActive,
+		Guidance:      guidance,
+		Inputs:        echoInputs(input),
+		SourceContext: sourceCtx,
 	})
 }
 

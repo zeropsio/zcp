@@ -122,7 +122,7 @@ func TestE2E_EnvGenerateDotenv_RecursiveConnectionString(t *testing.T) {
 	}
 
 	// Call generate-dotenv via direct ops API.
-	result, err := ops.EnvGenerateDotenv(ctx, h.client, h.projectID, appHost, workdir)
+	result, err := ops.EnvGenerateDotenv(ctx, h.client, h.projectID, appHost, workdir, ops.EnvGenerateDotenvOptions{})
 	if err != nil {
 		t.Fatalf("EnvGenerateDotenv: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestE2E_EnvGenerateDotenv_FlatVsRecursiveTogether(t *testing.T) {
 		t.Fatalf("write zerops.yaml: %v", err)
 	}
 
-	result, err := ops.EnvGenerateDotenv(ctx, h.client, h.projectID, appHost, workdir)
+	result, err := ops.EnvGenerateDotenv(ctx, h.client, h.projectID, appHost, workdir, ops.EnvGenerateDotenvOptions{})
 	if err != nil {
 		t.Fatalf("EnvGenerateDotenv: %v", err)
 	}

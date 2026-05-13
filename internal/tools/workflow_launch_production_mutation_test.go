@@ -47,10 +47,13 @@ func completeLaunchInput() WorkflowInput {
 	}
 }
 
-// TestHandleLaunchProduction_Mutation_MissingTargetService fires when
-// publish is called without targetService — handler short-circuits to
-// a source-control blocker BEFORE attempting source-state read.
-func TestHandleLaunchProduction_Mutation_MissingTargetService(t *testing.T) {
+// TestHandleLaunchProduction_MissingTargetService_ScopePromptEarly pins
+// that missing targetService surfaces as a scope-prompt blocker (early
+// fail), NOT as a late mutation failure. Part of the Part-2 ergonomics
+// pass — scope-check is the right layer for must-have inputs, and the
+// scope-prompt response carries the available-runtimes hint so the
+// agent can re-call with the right value on the next turn.
+func TestHandleLaunchProduction_MissingTargetService_ScopePromptEarly(t *testing.T) {
 	stateDir := withTempState(t)
 	mock := platform.NewMockProjectAdminClient()
 	defer installMockAdminFactory(t, mock)()
@@ -67,11 +70,18 @@ func TestHandleLaunchProduction_Mutation_MissingTargetService(t *testing.T) {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
 	resp := decodeLaunchResp(t, []byte(extractText(result)))
-	if resp.Status != "failed" {
-		t.Fatalf("status: got %q want failed", resp.Status)
+	if resp.Status != "scope-prompt" {
+		t.Fatalf("status: got %q want scope-prompt (missing targetService surfaces in scope-check now)", resp.Status)
 	}
-	if len(resp.Blockers) == 0 || resp.Blockers[0].Category != "source-control" {
-		t.Fatalf("expected source-control blocker, got %+v", resp.Blockers)
+	foundTargetService := false
+	for _, b := range resp.Blockers {
+		if b.ID == "scope-missing-targetService" {
+			foundTargetService = true
+			break
+		}
+	}
+	if !foundTargetService {
+		t.Fatalf("expected scope-missing-targetService blocker; got %+v", resp.Blockers)
 	}
 }
 

@@ -139,10 +139,11 @@ func TestHandleLaunchProduction_FullSequence_HappyPath(t *testing.T) {
 		t.Errorf("call 1 status: got %q want scope-prompt", resp1.Status)
 	}
 
-	// Call 2 — classify-prompt: project name set, classifications empty.
+	// Call 2 — classify-prompt: project name + targetService set, classifications empty.
 	call2, _, err := handleLaunchProduction(ctx, "source-id", mockClient, WorkflowInput{
 		Workflow:              workflowLaunchProduction,
 		ProductionProjectName: "myapp-prod",
+		TargetService:         "app",
 		Region:                "eu-central",
 	}, stateDir, rt, ssh)
 	if err != nil {

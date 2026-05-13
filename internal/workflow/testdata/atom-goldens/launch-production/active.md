@@ -72,15 +72,14 @@ After step 4 passes, the launch is complete. For ongoing prod iteration: generat
 
 ### Launch scope — collect production target details
 
-Ask the user for the target shape, then re-call with the inputs.
+The scope-prompt response carries a `sourceContext` block when source-project discovery succeeded. Apply the suggestions on the next workflow call:
 
-| Input | Required | Notes |
-|---|---|---|
-| `productionProjectName` | yes | New Zerops project name (must not collide with existing projects in the org). |
-| `region` | yes | Default `eu-central`. Other supported values from Zerops dashboard. |
-| `customDomain` | no | If set, ZCP synthesizes DNS records + verification probes; user attaches in Zerops UI. |
-| `keepNonHA` | no | Array of managed-service hostnames to keep at `NON_HA` in prod (default: all promoted to `HA`). |
-| `envOverrides` | no | Plain-config env value overrides for the prod bundle. **No secret values here** — ZCP never receives them. |
+- **`productionProjectName`** — use `sourceContext.suggestedTargetName` (derived: `<source>-dev` / `<source>-stage` → `<source>-prod`, otherwise `<source>-prod` appended). Confirm the name with the user briefly; do not silently rename if it differs from what the user already mentioned in conversation.
+- **`targetService`** — runtime hostname to promote. If `sourceContext.suggestedRuntime` is populated (source has exactly ONE user runtime), use it without asking. If `sourceContext.availableRuntimes` lists multiple, ask the user which to promote (e.g., "frontend vs api vs worker"). Managed services are excluded from the list — they get bundled implicitly.
+- **`region`** — optional; defaults to `eu-central`. Other values via Zerops dashboard.
+- **`customDomain`** — optional; if set, ZCP emits DNS records + verification probes; user attaches in Zerops UI.
+- **`keepNonHA`** — optional; array of managed-service hostnames to keep at `NON_HA` in prod (default: all promoted to `HA`).
+- **`envOverrides`** — optional plain-config env overrides for the prod bundle. **No secret values here** — ZCP never receives them.
 
 After scope is complete, ZCP advances to `classify-prompt` for the project-env classification pass.
 
@@ -88,14 +87,15 @@ After scope is complete, ZCP advances to `classify-prompt` for the project-env c
 
 ### One-shot API key required for publish
 
-ZCP cannot create the production project with its standing token (project-scoped). The user generates a temporary **account-wide** Zerops API key for the launch window:
+ZCP cannot create the production project with its standing token (project-scoped). Walk the user through generating a temporary **account-wide** Zerops API key for the launch window — and wait for them to paste the value back before calling the workflow again:
 
 1. Open [Settings → Access Tokens Management](https://app.zerops.io/settings/token-management).
 2. Click **Create token**. Name it `zcp-launch-<production-project-name>`.
 3. Leave **Custom access per project** UNCHECKED — needs account-wide scope to create projects.
 4. Copy the token value (shown once).
+5. Paste the value back into the conversation.
 
-Re-call the launch workflow with the publish action and the token value passed as `launchKey`.
+When the value lands, re-call the launch workflow with the publish action and the token value passed as `launchKey`. Do NOT invent or guess a value, and do NOT proceed without it — the key is the gate.
 
 The key flows through the workflow handler only — never persisted to state, logs, or transcripts. Once the launch reaches `launched` status, ZCP returns a mandatory checklist that includes **deleting the key** at the same dashboard URL.
 

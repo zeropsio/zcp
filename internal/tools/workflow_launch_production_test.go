@@ -74,6 +74,7 @@ func TestHandleLaunchProduction_ClassifyPrompt(t *testing.T) {
 	input := WorkflowInput{
 		Workflow:              workflowLaunchProduction,
 		ProductionProjectName: "myapp-prod",
+		TargetService:         "app",
 		// EnvClassifications empty — every env unclassified
 	}
 
@@ -110,6 +111,7 @@ func TestHandleLaunchProduction_ClassifyPrompt_PartialClassifications(t *testing
 	input := WorkflowInput{
 		Workflow:              workflowLaunchProduction,
 		ProductionProjectName: "myapp-prod",
+		TargetService:         "app",
 		EnvClassifications:    map[string]string{"LOG_LEVEL": "plain-config"}, // only one of two
 	}
 
@@ -135,6 +137,7 @@ func TestHandleLaunchProduction_ReadyToLaunch_NoLaunchKey(t *testing.T) {
 	input := WorkflowInput{
 		Workflow:              workflowLaunchProduction,
 		ProductionProjectName: "myapp-prod",
+		TargetService:         "app",
 		Region:                "eu-central",
 		EnvClassifications:    map[string]string{"LOG_LEVEL": "plain-config"},
 	}
@@ -163,6 +166,7 @@ func TestHandleLaunchProduction_NoSourceEnvs_AdvancesToReadyToLaunch(t *testing.
 	input := WorkflowInput{
 		Workflow:              workflowLaunchProduction,
 		ProductionProjectName: "myapp-prod",
+		TargetService:         "app",
 	}
 
 	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, input, "/tmp", runtime.Info{}, nil)
@@ -201,6 +205,7 @@ func TestHandleLaunchProduction_LaunchKeyNeverInResponse(t *testing.T) {
 			input: WorkflowInput{
 				Workflow:              workflowLaunchProduction,
 				ProductionProjectName: "myapp-prod",
+				TargetService:         "app",
 				LaunchKey:             sentinelLaunchKey,
 			},
 		},
@@ -209,6 +214,7 @@ func TestHandleLaunchProduction_LaunchKeyNeverInResponse(t *testing.T) {
 			input: WorkflowInput{
 				Workflow:              workflowLaunchProduction,
 				ProductionProjectName: "myapp-prod",
+				TargetService:         "app",
 				EnvClassifications:    map[string]string{"LOG_LEVEL": "plain-config"},
 				LaunchKey:             sentinelLaunchKey,
 			},
