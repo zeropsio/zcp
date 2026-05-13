@@ -121,12 +121,20 @@ func handleLaunchProduction(
 	}
 
 	// Status 2 — classify-prompt: source envs present, not all bucketed.
-	if needsClassifyPrompt(input.EnvClassifications, sourceEnvs) {
+	// Auto-classified platform envs (e.g. zeropsSubdomainHost, ZCP_*)
+	// satisfy themselves without agent judgment per F3.
+	if needsClassifyPromptForLaunch(input.EnvClassifications, sourceEnvs) {
 		classifications := convertClassificationsInput(input.EnvClassifications)
 		return launchClassifyPromptResponse(corpus, sourceEnvs, classifications, sourceContext), nil, nil
 	}
 
-	classifications := convertClassificationsInput(input.EnvClassifications)
+	// Effective classifications for bundle composition: user-supplied
+	// merged with platform auto-classifications (e.g. zeropsSubdomain*).
+	// Bundle composer routes by this map; "drop" envs are excluded
+	// implicitly by absence from the map. Raw sourceEnvs stays intact
+	// for SourceSnapshot hashing (P-LP-3 source-immutability digest is
+	// computed over the unfiltered snapshot).
+	classifications := mergePlatformAutoClassifications(convertClassificationsInput(input.EnvClassifications))
 
 	// Status 3+ — ready-to-launch / mutation pipeline.
 	// Check for existing launch state — if a prior publish already created
@@ -719,8 +727,14 @@ func launchClassifyPromptResponse(
 		guidance = "Classify each source env into infrastructure / auto-secret / external-secret / plain-config buckets."
 	}
 
-	rows := make([]launchClassifyRow, 0, len(sourceEnvs))
-	for _, env := range sourceEnvs {
+	// Hide platform-auto-classified envs from the prompt rows. The agent
+	// has no business classifying zeropsSubdomain* / ZCP_* / project-level
+	// settings — those are bucketed (or dropped) deterministically by
+	// classifyPlatformEnv. Raw sourceEnvs stays intact for P-LP-3
+	// source-immutability hashing in BuildLaunchBundle.
+	userEnvs := filterUserClassificationEnvs(sourceEnvs)
+	rows := make([]launchClassifyRow, 0, len(userEnvs))
+	for _, env := range userEnvs {
 		rows = append(rows, launchClassifyRow{
 			Key:           env.Key,
 			CurrentBucket: classifications[env.Key],

@@ -442,6 +442,47 @@ func TestBuildLaunchBundle_SetupNameDefaultsToProd(t *testing.T) {
 	}
 }
 
+// TestBuildLaunchBundle_SourceSnapshotHashesRawEnvs pins P-LP-3
+// preservation across the F3 auto-classification work: SourceSnapshot
+// digests the raw input env list, NOT the post-classification view.
+// Two bundles built from inputs that differ ONLY in one env value
+// must produce DIFFERENT ProjectEnvsDigest values — even when both
+// envs would auto-bucket the same way.
+//
+// Without this guarantee, the workflow handler's drift-rejection
+// before mutation would not see env changes that escaped
+// classification (a real source-state mutation between compose and
+// publish would slip past the source-immutability guard).
+func TestBuildLaunchBundle_SourceSnapshotHashesRawEnvs(t *testing.T) {
+	t.Parallel()
+
+	base := minimalLaunchInputs()
+	bundleA, err := ops.BuildLaunchBundle(base, classifyAllPlain(base.ProjectEnvs))
+	if err != nil {
+		t.Fatalf("BuildLaunchBundle A: %v", err)
+	}
+
+	mutated := minimalLaunchInputs()
+	// Same key, different value — the bundle composer might handle them
+	// identically, but the immutability guard must distinguish them.
+	if len(mutated.ProjectEnvs) == 0 {
+		t.Fatal("minimalLaunchInputs must include at least one env")
+	}
+	mutated.ProjectEnvs[0].Value += "-mutated"
+	bundleB, err := ops.BuildLaunchBundle(mutated, classifyAllPlain(mutated.ProjectEnvs))
+	if err != nil {
+		t.Fatalf("BuildLaunchBundle B: %v", err)
+	}
+
+	if bundleA.SourceSnapshot.ProjectEnvsDigest == "" {
+		t.Fatal("ProjectEnvsDigest must be populated")
+	}
+	if bundleA.SourceSnapshot.ProjectEnvsDigest == bundleB.SourceSnapshot.ProjectEnvsDigest {
+		t.Errorf("digest unchanged despite env mutation; raw envs must reach the hash\nA=%s\nB=%s",
+			bundleA.SourceSnapshot.ProjectEnvsDigest, bundleB.SourceSnapshot.ProjectEnvsDigest)
+	}
+}
+
 // --- helpers ---
 
 func parseImportYAML(t *testing.T, body string) map[string]any {
