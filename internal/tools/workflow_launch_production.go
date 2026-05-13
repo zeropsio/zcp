@@ -100,11 +100,17 @@ func handleLaunchProduction(
 	// scope-prompt SourceContext hint and the classify-prompt env table.
 	// Best-effort: errors return nil and the response surfaces the
 	// missing fields via blockers without the discovery hint.
-	sourceContext := gatherLaunchSourceContext(ctx, client, projectID)
+	// stateDir + rt enable pair-keyed collapse and ZCP self-filter.
+	sourceContext := gatherLaunchSourceContext(ctx, client, projectID, stateDir, rt)
 
-	// Status 1 — scope-prompt: required scope fields incomplete.
+	// Status 1 — scope-prompt: required scope fields incomplete OR
+	// targetService names the stage-half of a dev/stage pair (which
+	// the launch flow refuses — promotion always uses the dev-half).
 	if missing := missingScopeFields(input, sourceContext); len(missing) > 0 {
 		return launchScopePromptResponse(corpus, input, missing, sourceContext), nil, nil
+	}
+	if devHost, isStageHalf := stageHalfForTarget(stateDir, input.TargetService); isStageHalf {
+		return launchStageHalfBlockedResponse(corpus, input, devHost, sourceContext), nil, nil
 	}
 
 	// Read source project envs (needed for both classify-prompt and
@@ -655,6 +661,36 @@ func launchScopePromptResponse(corpus []workflow.KnowledgeAtom, input WorkflowIn
 		})
 	}
 
+	return jsonResult(launchProductionResponse{
+		Workflow:      workflowLaunchProduction,
+		Status:        topology.LaunchStatusScopePrompt,
+		Phase:         workflow.PhaseLaunchProductionActive,
+		Guidance:      guidance,
+		Blockers:      blockers,
+		Inputs:        echoInputs(input),
+		SourceContext: sourceCtx,
+	})
+}
+
+// launchStageHalfBlockedResponse fires when the agent supplied
+// `targetService` as the stage-half of a dev/stage pair (e.g.
+// `appstage` when the meta records {Hostname: appdev, StageHostname:
+// appstage}). Promotion always uses the dev-half — silently
+// rewriting could publish from the wrong source tree (the stage-half
+// is a deploy target, not a source). A scope-prompt blocker tells the
+// agent to re-call with the dev-half hostname, keeping the user in
+// the loop on which half ships.
+func launchStageHalfBlockedResponse(corpus []workflow.KnowledgeAtom, input WorkflowInput, devHost string, sourceCtx *launchSourceContext) *mcp.CallToolResult {
+	guidance := atomBody(corpus, "launch-scope-prompt")
+	if guidance == "" {
+		guidance = "targetService names a stage-half. Re-call with the dev-half hostname (the platform's authoritative source of truth)."
+	}
+	blockers := []topology.Blocker{{
+		ID:       "scope-stage-half-not-promotable",
+		Severity: topology.BlockerSeverityBlock,
+		Category: topology.BlockerCategoryScope,
+		Message:  fmt.Sprintf("targetService %q is the stage-half of dev/stage pair (dev-half=%q). Promotion uses the dev-half — re-call with targetService=%q.", input.TargetService, devHost, devHost),
+	}}
 	return jsonResult(launchProductionResponse{
 		Workflow:      workflowLaunchProduction,
 		Status:        topology.LaunchStatusScopePrompt,

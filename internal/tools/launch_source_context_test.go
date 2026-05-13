@@ -2,10 +2,15 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // TestDeriveProductionProjectName_TableDriven pins the dev/stage →
@@ -41,17 +46,17 @@ func TestDeriveProductionProjectName_TableDriven(t *testing.T) {
 // scope-prompt response omits the sourceContext field entirely.
 func TestGatherLaunchSourceContext_NilOrEmptyClient(t *testing.T) {
 	t.Parallel()
-	if got := gatherLaunchSourceContext(context.Background(), nil, "p"); got != nil {
+	if got := gatherLaunchSourceContext(context.Background(), nil, "p", "", runtime.Info{}); got != nil {
 		t.Errorf("nil client: got %+v want nil", got)
 	}
-	if got := gatherLaunchSourceContext(context.Background(), platform.NewMock(), ""); got != nil {
+	if got := gatherLaunchSourceContext(context.Background(), platform.NewMock(), "", "", runtime.Info{}); got != nil {
 		t.Errorf("empty projectID: got %+v want nil", got)
 	}
 }
 
 // TestGatherLaunchSourceContext_SingleRuntime_SuggestsAll surfaces the
 // fully-populated hint when source has exactly one USER-category service.
-// 90% case for typical dev/stage shape.
+// 90% case for typical dev/simple shapes.
 func TestGatherLaunchSourceContext_SingleRuntime_SuggestsAll(t *testing.T) {
 	t.Parallel()
 	client := platform.NewMock().
@@ -77,7 +82,7 @@ func TestGatherLaunchSourceContext_SingleRuntime_SuggestsAll(t *testing.T) {
 			},
 		})
 
-	got := gatherLaunchSourceContext(context.Background(), client, "src")
+	got := gatherLaunchSourceContext(context.Background(), client, "src", "", runtime.Info{})
 	if got == nil {
 		t.Fatal("expected non-nil source context")
 	}
@@ -88,8 +93,11 @@ func TestGatherLaunchSourceContext_SingleRuntime_SuggestsAll(t *testing.T) {
 		t.Errorf("SuggestedTargetName: got %q want myapp-prod", got.SuggestedTargetName)
 	}
 	// "db" is system-category — must NOT appear in AvailableRuntimes.
-	if len(got.AvailableRuntimes) != 1 || got.AvailableRuntimes[0] != "app" {
+	if len(got.AvailableRuntimes) != 1 || got.AvailableRuntimes[0].Hostname != "app" {
 		t.Errorf("AvailableRuntimes: got %+v want [app] (managed dep filtered)", got.AvailableRuntimes)
+	}
+	if got.AvailableRuntimes[0].Type != "nodejs@22" {
+		t.Errorf("AvailableRuntimes[0].Type: got %q want nodejs@22", got.AvailableRuntimes[0].Type)
 	}
 	if got.SuggestedRuntime != "app" {
 		t.Errorf("SuggestedRuntime: got %q want app", got.SuggestedRuntime)
@@ -115,7 +123,7 @@ func TestGatherLaunchSourceContext_MultiRuntime_NoSuggestion(t *testing.T) {
 				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeCategoryName: "USER"},
 			},
 		})
-	got := gatherLaunchSourceContext(context.Background(), client, "src")
+	got := gatherLaunchSourceContext(context.Background(), client, "src", "", runtime.Info{})
 	if got == nil {
 		t.Fatal("expected non-nil")
 	}
@@ -130,6 +138,202 @@ func TestGatherLaunchSourceContext_MultiRuntime_NoSuggestion(t *testing.T) {
 	}
 }
 
+// TestGatherLaunchSourceContext_FiltersZCPByTypeName pins the F2.1
+// self-filter: any service-stack of type zcp@1 is excluded from
+// AvailableRuntimes regardless of hostname. The control-plane container
+// reports USER category to the platform but must never appear as a
+// promotion candidate.
+func TestGatherLaunchSourceContext_FiltersZCPByTypeName(t *testing.T) {
+	t.Parallel()
+	client := platform.NewMock().
+		WithProject(&platform.Project{ID: "src", Name: "myapp-dev"}).
+		WithServices([]platform.ServiceStack{
+			{
+				ID:   "svc-zcp",
+				Name: "zcp",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{
+					ServiceStackTypeVersionName:  "zcp@1",
+					ServiceStackTypeCategoryName: "USER",
+				},
+			},
+			{
+				ID:   "svc-app",
+				Name: "app",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{
+					ServiceStackTypeVersionName:  "nodejs@22",
+					ServiceStackTypeCategoryName: "USER",
+				},
+			},
+		})
+
+	got := gatherLaunchSourceContext(context.Background(), client, "src", "", runtime.Info{})
+	if got == nil {
+		t.Fatal("expected non-nil")
+	}
+	if len(got.AvailableRuntimes) != 1 || got.AvailableRuntimes[0].Hostname != "app" {
+		t.Errorf("AvailableRuntimes: got %+v want [app] (zcp@1 filtered)", got.AvailableRuntimes)
+	}
+}
+
+// TestGatherLaunchSourceContext_FiltersByRuntimeHostname pins the
+// defense-in-depth hostname branch: a USER-category runtime named the
+// same as rt.ServiceName is excluded even if its type is normal. Uses
+// a non-zcp@1 type to isolate the hostname-filter branch from the
+// type-filter branch.
+func TestGatherLaunchSourceContext_FiltersByRuntimeHostname(t *testing.T) {
+	t.Parallel()
+	client := platform.NewMock().
+		WithProject(&platform.Project{ID: "src", Name: "myapp-dev"}).
+		WithServices([]platform.ServiceStack{
+			{
+				ID:   "svc-self",
+				Name: "appdev",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{
+					ServiceStackTypeVersionName:  "nodejs@22",
+					ServiceStackTypeCategoryName: "USER",
+				},
+			},
+			{
+				ID:   "svc-other",
+				Name: "worker",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{
+					ServiceStackTypeVersionName:  "nodejs@22",
+					ServiceStackTypeCategoryName: "USER",
+				},
+			},
+		})
+
+	got := gatherLaunchSourceContext(context.Background(), client, "src", "", runtime.Info{ServiceName: "appdev"})
+	if got == nil {
+		t.Fatal("expected non-nil")
+	}
+	if len(got.AvailableRuntimes) != 1 || got.AvailableRuntimes[0].Hostname != "worker" {
+		t.Errorf("AvailableRuntimes: got %+v want [worker] (self-hostname appdev filtered)", got.AvailableRuntimes)
+	}
+}
+
+// TestGatherLaunchSourceContext_CollapsesStandardPair pins F2.2:
+// when ZCP holds a ServiceMeta for a dev/stage pair (mode=standard),
+// the stage-half is hidden from AvailableRuntimes and the dev-half
+// surfaces with StageHostname populated.
+func TestGatherLaunchSourceContext_CollapsesStandardPair(t *testing.T) {
+	t.Parallel()
+	stateDir := writeRuntimeMeta(t, &workflow.ServiceMeta{
+		Hostname:       "appdev",
+		Mode:           topology.ModeStandard,
+		StageHostname:  "appstage",
+		BootstrappedAt: "2026-05-01T00:00:00Z",
+	})
+
+	client := platform.NewMock().
+		WithProject(&platform.Project{ID: "src", Name: "myapp-dev"}).
+		WithServices([]platform.ServiceStack{
+			{
+				ID:   "svc-appdev",
+				Name: "appdev",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{
+					ServiceStackTypeVersionName:  "nodejs@22",
+					ServiceStackTypeCategoryName: "USER",
+				},
+			},
+			{
+				ID:   "svc-appstage",
+				Name: "appstage",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{
+					ServiceStackTypeVersionName:  "nodejs@22",
+					ServiceStackTypeCategoryName: "USER",
+				},
+			},
+		})
+
+	got := gatherLaunchSourceContext(context.Background(), client, "src", stateDir, runtime.Info{})
+	if got == nil {
+		t.Fatal("expected non-nil")
+	}
+	if len(got.AvailableRuntimes) != 1 {
+		t.Fatalf("AvailableRuntimes: got %d entries want 1 (pair collapsed)\n%+v", len(got.AvailableRuntimes), got.AvailableRuntimes)
+	}
+	rc := got.AvailableRuntimes[0]
+	if rc.Hostname != "appdev" {
+		t.Errorf("collapsed pair Hostname: got %q want appdev (dev-half)", rc.Hostname)
+	}
+	if rc.StageHostname != "appstage" {
+		t.Errorf("collapsed pair StageHostname: got %q want appstage", rc.StageHostname)
+	}
+	if rc.Mode != string(topology.ModeStandard) {
+		t.Errorf("collapsed pair Mode: got %q want %q", rc.Mode, topology.ModeStandard)
+	}
+	if got.SuggestedRuntime != "appdev" {
+		t.Errorf("SuggestedRuntime: got %q want appdev (single collapsed pair)", got.SuggestedRuntime)
+	}
+}
+
+// TestGatherLaunchSourceContext_SimpleAndDevModesUnaffected verifies
+// that non-pair modes pass through unchanged — no stage-half collapse,
+// no StageHostname populated.
+func TestGatherLaunchSourceContext_SimpleAndDevModesUnaffected(t *testing.T) {
+	t.Parallel()
+	stateDir := writeRuntimeMeta(t, &workflow.ServiceMeta{
+		Hostname:       "app",
+		Mode:           topology.ModeSimple,
+		BootstrappedAt: "2026-05-01T00:00:00Z",
+	})
+
+	client := platform.NewMock().
+		WithProject(&platform.Project{ID: "src", Name: "myapp-dev"}).
+		WithServices([]platform.ServiceStack{
+			{
+				ID:   "svc-app",
+				Name: "app",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{
+					ServiceStackTypeVersionName:  "nodejs@22",
+					ServiceStackTypeCategoryName: "USER",
+				},
+			},
+		})
+
+	got := gatherLaunchSourceContext(context.Background(), client, "src", stateDir, runtime.Info{})
+	if got == nil || len(got.AvailableRuntimes) != 1 {
+		t.Fatalf("expected single entry, got %+v", got)
+	}
+	rc := got.AvailableRuntimes[0]
+	if rc.Hostname != "app" {
+		t.Errorf("Hostname: got %q want app", rc.Hostname)
+	}
+	if rc.StageHostname != "" {
+		t.Errorf("StageHostname: got %q want empty (no stage-half)", rc.StageHostname)
+	}
+	if rc.Mode != string(topology.ModeSimple) {
+		t.Errorf("Mode: got %q want %q", rc.Mode, topology.ModeSimple)
+	}
+}
+
+// TestStageHalfForTarget_DetectsStageHostname pins the resolver used by
+// the scope-prompt blocker. Stage-half input returns (devHost, true);
+// dev-half and standalone inputs return ("", false).
+func TestStageHalfForTarget_DetectsStageHostname(t *testing.T) {
+	t.Parallel()
+	stateDir := writeRuntimeMeta(t, &workflow.ServiceMeta{
+		Hostname:       "appdev",
+		StageHostname:  "appstage",
+		Mode:           topology.ModeStandard,
+		BootstrappedAt: "2026-05-01T00:00:00Z",
+	})
+
+	if devHost, isStage := stageHalfForTarget(stateDir, "appstage"); !isStage || devHost != "appdev" {
+		t.Errorf("appstage: got (%q,%v) want (appdev,true)", devHost, isStage)
+	}
+	if _, isStage := stageHalfForTarget(stateDir, "appdev"); isStage {
+		t.Errorf("appdev: expected not-stage-half")
+	}
+	if _, isStage := stageHalfForTarget(stateDir, "unknown"); isStage {
+		t.Errorf("unknown hostname: expected not-stage-half")
+	}
+	if _, isStage := stageHalfForTarget("", "appstage"); isStage {
+		t.Errorf("empty stateDir: expected not-stage-half")
+	}
+}
+
 // TestHandleLaunchProduction_ScopePrompt_SurfacesSourceContext pins the
 // integration: when the source project is reachable and has a single
 // runtime, the scope-prompt response carries SourceContext with all
@@ -141,9 +345,12 @@ func TestHandleLaunchProduction_ScopePrompt_SurfacesSourceContext(t *testing.T) 
 		WithProject(&platform.Project{ID: "src", Name: "myapp-dev"}).
 		WithServices([]platform.ServiceStack{
 			{
-				ID:                   "svc-app",
-				Name:                 "app",
-				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeCategoryName: "USER"},
+				ID:   "svc-app",
+				Name: "app",
+				ServiceStackTypeInfo: platform.ServiceTypeInfo{
+					ServiceStackTypeVersionName:  "nodejs@22",
+					ServiceStackTypeCategoryName: "USER",
+				},
 			},
 		})
 
@@ -165,4 +372,25 @@ func TestHandleLaunchProduction_ScopePrompt_SurfacesSourceContext(t *testing.T) 
 	if resp.SourceContext.SuggestedRuntime != "app" {
 		t.Errorf("SuggestedRuntime: got %q want app", resp.SourceContext.SuggestedRuntime)
 	}
+}
+
+// writeRuntimeMeta writes one ServiceMeta into a fresh temp state-dir
+// and returns the stateDir path. Helper for tests that exercise
+// pair-keyed collapse and stage-half normalization.
+func writeRuntimeMeta(t *testing.T, meta *workflow.ServiceMeta) string {
+	t.Helper()
+	dir := t.TempDir()
+	servicesDir := filepath.Join(dir, "services")
+	if err := os.MkdirAll(servicesDir, 0o755); err != nil {
+		t.Fatalf("mkdir services: %v", err)
+	}
+	b, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal meta: %v", err)
+	}
+	path := filepath.Join(servicesDir, meta.Hostname+".json")
+	if err := os.WriteFile(path, b, 0o600); err != nil {
+		t.Fatalf("write meta: %v", err)
+	}
+	return dir
 }

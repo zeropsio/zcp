@@ -8,6 +8,8 @@ import (
 
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
+	"github.com/zeropsio/zcp/internal/workflow"
 )
 
 // sentinelLaunchKey is a value that, if it ever appears in a response,
@@ -258,5 +260,92 @@ func TestHandleLaunchProduction_EmptyProjectIDReturnsError(t *testing.T) {
 	}
 	if result == nil || !result.IsError {
 		t.Errorf("expected IsError=true for empty projectID, got %v", result)
+	}
+}
+
+// TestHandleLaunchProduction_StageHalfTarget_ScopePromptBlocker pins F2.3:
+// when the user supplies `targetService` as the stage-half of a known
+// dev/stage pair, the handler returns scope-prompt with the
+// `scope-stage-half-not-promotable` blocker — instead of silently
+// using the wrong source tree or surfacing a confusing late failure.
+func TestHandleLaunchProduction_StageHalfTarget_ScopePromptBlocker(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	stateDir := writeRuntimeMeta(t, &workflow.ServiceMeta{
+		Hostname:       "appdev",
+		StageHostname:  "appstage",
+		Mode:           topology.ModeStandard,
+		BootstrappedAt: "2026-05-01T00:00:00Z",
+	})
+
+	client := newLaunchMockClient().WithProjectEnv([]platform.EnvVar{
+		{Key: "LOG_LEVEL", Content: "info"},
+	})
+
+	input := WorkflowInput{
+		Workflow:              workflowLaunchProduction,
+		ProductionProjectName: "myapp-prod",
+		TargetService:         "appstage",
+	}
+	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, input, stateDir, runtime.Info{}, nil)
+	if err != nil {
+		t.Fatalf("handleLaunchProduction: %v", err)
+	}
+	resp := decodeLaunchResp(t, []byte(extractText(result)))
+
+	if resp.Status != "scope-prompt" {
+		t.Fatalf("status: got %q want scope-prompt", resp.Status)
+	}
+	foundBlocker := false
+	for _, b := range resp.Blockers {
+		if b.ID == "scope-stage-half-not-promotable" {
+			foundBlocker = true
+			if !strings.Contains(b.Message, "appdev") {
+				t.Errorf("blocker message should mention dev-half hostname appdev; got: %s", b.Message)
+			}
+			break
+		}
+	}
+	if !foundBlocker {
+		t.Fatalf("expected scope-stage-half-not-promotable blocker; got %+v", resp.Blockers)
+	}
+}
+
+// TestHandleLaunchProduction_DevHalfTarget_Accepted pins the partner
+// case: dev-half input progresses normally (no false-positive blocker
+// from the stage-half check).
+func TestHandleLaunchProduction_DevHalfTarget_Accepted(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	stateDir := writeRuntimeMeta(t, &workflow.ServiceMeta{
+		Hostname:       "appdev",
+		StageHostname:  "appstage",
+		Mode:           topology.ModeStandard,
+		BootstrappedAt: "2026-05-01T00:00:00Z",
+	})
+
+	client := newLaunchMockClient().WithProjectEnv([]platform.EnvVar{
+		{Key: "LOG_LEVEL", Content: "info"},
+	})
+
+	input := WorkflowInput{
+		Workflow:              workflowLaunchProduction,
+		ProductionProjectName: "myapp-prod",
+		TargetService:         "appdev",
+		EnvClassifications:    map[string]string{"LOG_LEVEL": "plain-config"},
+	}
+	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, input, stateDir, runtime.Info{}, nil)
+	if err != nil {
+		t.Fatalf("handleLaunchProduction: %v", err)
+	}
+	resp := decodeLaunchResp(t, []byte(extractText(result)))
+
+	if resp.Status != "ready-to-launch" {
+		t.Fatalf("status: got %q want ready-to-launch (dev-half input should pass)", resp.Status)
+	}
+	for _, b := range resp.Blockers {
+		if b.ID == "scope-stage-half-not-promotable" {
+			t.Errorf("dev-half target should NOT trigger stage-half blocker; got %+v", b)
+		}
 	}
 }
