@@ -1,6 +1,7 @@
 package recipe
 
 import (
+	"os"
 	"testing"
 )
 
@@ -126,26 +127,26 @@ func TestFriendlyAuthGate_AdequateCoveragePasses(t *testing.T) {
 }
 
 // TestFriendlyAuthGate_GoldensPass — jetstream + showcase regression
-// fixtures. The plan named both goldens as regression anchors. Read
-// from disk via the on-disk repos (when present); skip when goldens
-// aren't mounted (test runs in container vs main repo).
+// fixtures. The plan named both goldens as regression anchors. Run-46
+// Item 4 G5 followup — the original test read from on-disk repos and
+// silently skipped on missing fixtures, producing a vacuous pass on
+// any non-author machine. Fixtures now live in
+// `internal/recipe/testdata/goldens/` so the test always runs against
+// a stable corpus; the source-of-truth is the upstream zeropsio OSS
+// recipes (laravel-jetstream-app, laravel-showcase-app) — re-sync via
+// `cp` if those recipes change.
 func TestFriendlyAuthGate_GoldensPass(t *testing.T) {
 	t.Parallel()
-	goldenPaths := []string{
-		"/Users/fxck/www/laravel-jetstream-app/zerops.yaml",
-		"/Users/fxck/www/laravel-showcase-app/zerops.yaml",
+	goldens := []string{
+		"testdata/goldens/jetstream-zerops.yaml",
+		"testdata/goldens/showcase-zerops.yaml",
 	}
-	for _, path := range goldenPaths {
-		if !fileExists(path) {
-			t.Logf("skipping golden %s — not mounted in this test run", path)
-			continue
-		}
-		body, err := readFileForTest(path)
+	for _, path := range goldens {
+		body, err := os.ReadFile(path)
 		if err != nil {
-			t.Errorf("read golden %s: %v", path, err)
-			continue
+			t.Fatalf("read golden %s: %v — testdata/goldens/ must ship with the repo per Run-46 Item 4 G5", path, err)
 		}
-		violations := evalFriendlyAuthGate("codebase/golden/zerops-yaml", body)
+		violations := evalFriendlyAuthGate("codebase/golden/zerops-yaml", string(body))
 		for _, v := range violations {
 			if v.Code == "friendly-auth-floor-below-tunable-count" {
 				t.Errorf("golden %s fails Item 4 gate: %s", path, v.Message)
@@ -184,6 +185,11 @@ func TestRequiredAdaptPaths_FormulaIsCeilDivThree(t *testing.T) {
 // extends plan.json with porter-tunable directive enumeration computed
 // at codebase-content close. The gate reads this metadata; agents +
 // downstream tooling can inspect plan.PorterTunableDirectives[host].
+//
+// G4-followup — yaml fixture now exercises `ports[].port` AND a
+// `*_URL` env-var so the test covers the expanded detector. Both
+// patterns count alongside the existing minContainers / verticalAutoscaling
+// allowlist.
 func TestPorterTunableEnumeration_PopulatesPlanMetadata(t *testing.T) {
 	t.Parallel()
 	plan := &Plan{
@@ -196,11 +202,93 @@ func TestPorterTunableEnumeration_PopulatesPlanMetadata(t *testing.T) {
       minContainers: 2
       verticalAutoscaling:
         minRam: 0.5
+      ports:
+        - port: 3000
+      envVariables:
+        APP_URL: ${zeropsSubdomain}
 `,
 		},
 	}
 	populatePorterTunableDirectives(plan)
-	if got := plan.ObservedFacts.PorterTunableDirectives["api"]; got == 0 {
-		t.Errorf("expected PorterTunableDirectives[\"api\"] populated, got %d", got)
+	got := plan.ObservedFacts.PorterTunableDirectives["api"]
+	// minContainers + verticalAutoscaling.minRam + ports[].port + APP_URL = 4.
+	if got < 4 {
+		t.Errorf("expected ≥4 tunables (minContainers + minRam + port + APP_URL); got %d", got)
+	}
+}
+
+// TestEnumeratePorterTunableDirectives_NamesPortsAndURLEnvVars — Run-46
+// Item 4 G4 followup. The enumeration must surface `ports[].port`
+// list-item declarations + env-var keys ending in `_URL` / `_HOST` /
+// `_DOMAIN` / `_ORIGIN` whose values are NOT managed-service hostname
+// templates. Managed-service wiring (`${db_hostname}`, value carries
+// `_hostname}` substring) stays excluded so DB_HOST: ${db_hostname}
+// doesn't count as porter-tunable.
+func TestEnumeratePorterTunableDirectives_NamesPortsAndURLEnvVars(t *testing.T) {
+	t.Parallel()
+	yaml := `zerops:
+  - setup: api
+    run:
+      base: nodejs@22
+      ports:
+        - port: 3000
+          httpSupport: true
+      envVariables:
+        APP_URL: ${zeropsSubdomain}
+        DB_HOST: ${db_hostname}
+        MEILISEARCH_HOST: http://${search_hostname}:${search_port}
+        CUSTOM_DOMAIN: example.com
+`
+	got := EnumeratePorterTunableDirectives(yaml)
+	want := map[string]bool{
+		"ports[].port":  true,
+		"APP_URL":       true,
+		"CUSTOM_DOMAIN": true,
+	}
+	gotSet := map[string]bool{}
+	for _, n := range got {
+		gotSet[n] = true
+	}
+	for w := range want {
+		if !gotSet[w] {
+			t.Errorf("expected %q in tunables; got %v", w, got)
+		}
+	}
+	if gotSet["DB_HOST"] {
+		t.Error("DB_HOST with ${db_hostname} value must be excluded as managed-service wiring")
+	}
+	if gotSet["MEILISEARCH_HOST"] {
+		t.Error("MEILISEARCH_HOST with ${search_hostname} substring must be excluded as managed-service wiring")
+	}
+}
+
+// TestPortTunableRE_SkipsHttpGetPort — Run-46 Item 4 G4 followup. The
+// list-item-dash discriminator ensures `port:` under `httpGet:` /
+// `readinessCheck:` is NOT counted (framework-pinned health-check port,
+// not porter-tunable). Only the `- port: <value>` shape under
+// `ports:` counts.
+func TestPortTunableRE_SkipsHttpGetPort(t *testing.T) {
+	t.Parallel()
+	yaml := `zerops:
+  - setup: api
+    deploy:
+      readinessCheck:
+        httpGet:
+          port: 80
+          path: /health
+    run:
+      base: nodejs@22
+      ports:
+        - port: 3000
+`
+	got := EnumeratePorterTunableDirectives(yaml)
+	portCount := 0
+	for _, n := range got {
+		if n == "ports[].port" {
+			portCount++
+		}
+	}
+	if portCount != 1 {
+		t.Errorf("expected exactly 1 ports[].port (the list-item under ports:), got %d in %v", portCount, got)
 	}
 }

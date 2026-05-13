@@ -2,7 +2,6 @@ package recipe
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 )
@@ -56,6 +55,25 @@ var porterTunableFieldRE = regexp.MustCompile(`(?m)^\s+(` + strings.Join(porterT
 // `maxCpu:` line under such a parent counts as one directive.
 var porterTunableNestedFieldRE = regexp.MustCompile(`(?m)^\s+(minRam|maxRam|minCpu|maxCpu):\s*\S`)
 
+// portTunableRE catches `ports[].port` list-item declarations —
+// `- port: <value>` shape only. Bare `port:` under `httpGet:` /
+// `readinessCheck:` is framework-pinned health-check port territory,
+// NOT porter-tunable runtime port. The list-item dash is the
+// discriminator.
+//
+// Run-46 Item 4 G4 followup — the porter typically changes the
+// runtime port to free up the host or align with their domain-
+// fronting setup; tightening to list-item shape avoids false
+// positives on `httpGet.port: 80` in showcase + jetstream.
+var portTunableRE = regexp.MustCompile(`(?m)^\s*-\s+port:\s*\S`)
+
+// envVarURLTunableRE catches yaml lines declaring an env var whose key
+// ends in `_URL` / `_HOST` / `_DOMAIN` / `_ORIGIN` — custom-domain /
+// SLO-related values the porter typically renames or rewires. The full
+// envVariables key is matched at start-of-line indent. Run-46 Item 4
+// G4 followup.
+var envVarURLTunableRE = regexp.MustCompile(`(?m)^\s+([A-Z][A-Z0-9_]*_(?:URL|HOST|DOMAIN|ORIGIN)):\s*(\S.*)?$`)
+
 // adaptPathPhrases — friendly-authority adapt-path phrasing patterns.
 // Substrate F-FRIENDLY-AUTH names the phrasing family; the validator
 // matches the substring set case-insensitively.
@@ -89,16 +107,19 @@ func countPorterTunableDirectives(yaml string) int {
 // tunable directive field names found in the yaml body. Each match in
 // the slice corresponds to one directive instance (the same field
 // repeating across setup blocks contributes one entry per occurrence).
-// Run-46 Item 1 G2-followup — refinement-2 manifest entries surface
-// this list per-codebase so downstream uniqueness + adapt-path coverage
-// gates have structured input.
 //
-// Detection mirrors countPorterTunableDirectives: top-level + nested
-// verticalAutoscaling.* shapes plus the static allowlist
-// porterTunableFieldNames. Future G4 followup will extend the detector
-// with `ports[].port` + env-var URL/HOST patterns; the enumeration
-// shape (returning field names) is the stable API the manifest
-// consumes regardless of detector coverage.
+// Detection covers:
+//   - The static allowlist porterTunableFieldNames (minContainers /
+//     maxContainers / objectStorageSize / priority / verticalAutoscaling.*).
+//   - `ports[].port` list-item declarations — porter-tunable runtime
+//     port. Health-check `httpGet.port` is excluded via the list-item
+//     dash discriminator.
+//   - Env-var keys ending in `_URL` / `_HOST` / `_DOMAIN` / `_ORIGIN`
+//     whose values are NOT managed-service hostname templates
+//     (`${<svc>_hostname}` / `${<svc>_host}` substring exclusion).
+//
+// Run-46 Item 1 G2-followup exposed the helper; Run-46 Item 4 G4
+// followup extended the detector with ports + URL-pattern env vars.
 func EnumeratePorterTunableDirectives(yaml string) []string {
 	var out []string
 	for _, m := range porterTunableFieldRE.FindAllStringSubmatch(yaml, -1) {
@@ -111,7 +132,60 @@ func EnumeratePorterTunableDirectives(yaml string) []string {
 	for _, m := range porterTunableNestedFieldRE.FindAllStringSubmatch(yaml, -1) {
 		out = append(out, "verticalAutoscaling."+m[1])
 	}
+	out = append(out, enumeratePortTunables(yaml)...)
+	out = append(out, enumerateEnvVarTunables(yaml)...)
 	return out
+}
+
+// enumeratePortTunables returns one entry per `ports[].port` list-item
+// declaration. The canonical field name `ports[].port` distinguishes
+// the list-item port from a bare `port:` under `httpGet:` / similar.
+func enumeratePortTunables(yaml string) []string {
+	matches := portTunableRE.FindAllString(yaml, -1)
+	out := make([]string, 0, len(matches))
+	for range matches {
+		out = append(out, "ports[].port")
+	}
+	return out
+}
+
+// enumerateEnvVarTunables returns the ordered list of env-var keys whose
+// names end in `_URL` / `_HOST` / `_DOMAIN` / `_ORIGIN`. Each match
+// returns the literal key name (`APP_URL`, `CUSTOM_DOMAIN`, …) so the
+// manifest can surface which env vars are porter-tunable.
+//
+// HOST suffix excludes managed-service hostname templates — keys whose
+// value contains `${<service>_hostname}` (e.g. `DB_HOST: ${db_hostname}`
+// or `MEILISEARCH_HOST: http://${search_hostname}:${search_port}`) are
+// infrastructure wiring, not porter-tunable. The conservative cut
+// keeps the false-positive rate low — recipes that hardcode
+// `MAIL_HOST: smtp.example.com` come through and are legitimately
+// porter-tunable.
+func enumerateEnvVarTunables(yaml string) []string {
+	matches := envVarURLTunableRE.FindAllStringSubmatch(yaml, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(matches))
+	for _, m := range matches {
+		key := m[1]
+		var value string
+		if len(m) > 2 {
+			value = strings.TrimSpace(m[2])
+		}
+		if isManagedServiceHostTemplate(value) {
+			continue
+		}
+		out = append(out, key)
+	}
+	return out
+}
+
+// isManagedServiceHostTemplate reports whether the env-var value uses a
+// `${<svc>_hostname}` or `${<svc>_host}` template — managed-service
+// wiring as opposed to porter-tunable custom-domain values.
+func isManagedServiceHostTemplate(value string) bool {
+	return strings.Contains(value, "_hostname}") || strings.Contains(value, "_host}")
 }
 
 // PerFieldComment is one porter-tunable field's adjacent-comment context.
@@ -271,26 +345,4 @@ func populatePorterTunableDirectives(plan *Plan) {
 		body := plan.Fragments[fragmentID]
 		plan.ObservedFacts.PorterTunableDirectives[cb.Hostname] = countPorterTunableDirectives(body)
 	}
-}
-
-// fileExists is a test-helper that reports whether a path resolves to
-// a regular file. Used by the goldens-pass regression test in
-// gate_friendly_auth_test.go — skips the assertion when the golden
-// repos aren't mounted (e.g. CI running without the local apps tree).
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	return !info.IsDir()
-}
-
-// readFileForTest is a test-helper that reads a path into a string.
-// Mirrors fileExists scoping — used by the goldens-pass test.
-func readFileForTest(path string) (string, error) {
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return string(body), nil
 }
