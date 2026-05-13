@@ -27,16 +27,16 @@
 
 ---
 
-## 2. Fix priority + sequencing (post-codex revision)
+## 2. Fix priority + sequencing (post-codex revision; shipped)
 
 Atomic phases, each verifiable on its own (per `CLAUDE.md` "Phased refactors verify each phase before continuing"):
 
-| Phase | Fixes | Severity | Estimate | Ship |
-|---|---|---|---|---|
-| F1 | #1 (`launchKey` schema unblock + stale-comment + atom-overpromise + schema-desc) | CRITICAL | ~1 hr | v9.89.0 |
-| F2 | #2 (zcp self-filter) + #4 (pair-keyed collapse + stage-half normalization) | HIGH+MEDIUM | ~3 hr | v9.89.1 |
-| F3 | #3 + #5 (auto-classify platform envs, exact-key list, `needsClassifyPrompt` patch) | HIGH | ~3 hr | v9.89.2 |
-| F4 | #6 + #7 (status action active-launch recovery, deterministic resolver) | MEDIUM/LOW | ~3 hr | v9.89.3 |
+| Phase | Fixes | Severity | Shipped |
+|---|---|---|---|
+| F1 | #1 (`launchKey` schema unblock + stale-comment + atom-overpromise + schema-desc) | CRITICAL | **v9.88.4** (patch — bug fix) |
+| F2 | #2 (zcp self-filter) + #4 (pair-keyed collapse + stage-half normalization) | HIGH+MEDIUM | **v9.89.0** (minor — wire-shape change) |
+| F3 | #3 + #5 (auto-classify platform envs, exact-key list, `needsClassifyPrompt` patch) | HIGH | **v9.89.1** (patch — additive) |
+| F4 | #6 + #7 (status action active-launch recovery, deterministic resolver) | MEDIUM/LOW | **v9.89.2** (patch — additive) |
 
 **Codex re-sequencing:** original plan split #2 + #4 across F2/F3. Codex flagged this would rework `gatherLaunchSourceContext` twice. New F2 merges them. F3 becomes the auto-classification phase. F4 unchanged.
 
@@ -104,7 +104,7 @@ Total ~10 hours over 4 ship boundaries. Ship boundaries preserved (not batched) 
 
 **Atom adjustment:** `launch-intro.md` overpromise fix (above). No new atoms.
 
-**Ship:** v9.89.0.
+**Shipped:** v9.88.4 (patch — bug fix).
 
 ---
 
@@ -175,7 +175,7 @@ In the scope-validation path (before any source-immutability hashing), if `input
 - Old: "If `sourceContext.suggestedRuntime` is populated (source has exactly ONE user runtime), use it without asking."
 - New: "Use `sourceContext.suggestedRuntime` (dev-half hostname). `availableRuntimes[].hostname` is always the dev-half; `stageHostname` is present on standard-mode pairs for disclosure ("promoting `appdev` ships the dev-stage pair's published source"). If user names the stage-half (e.g. `appstage`), the scope-prompt blocker `scope-stage-half-not-promotable` will fire — re-call with the dev-half."
 
-**Ship:** v9.89.1.
+**Shipped:** v9.89.0 (minor — wire-shape change).
 
 ---
 
@@ -240,7 +240,7 @@ Original plan filtered only the response rows. Codex flagged: the prompt status 
 
 **Atom adjustment:** create new atom `internal/content/atoms/launch-classify-platform-envs.md` with `phases: [launch-production-active]`, frontmatter `priority: 3`. Body explains: "Some envs are platform-injected and auto-classified (`zeropsSubdomain*`, ZCP-control envs). The classify-prompt rows you see contain only envs that need YOUR judgment — the rest are bucketed by ZCP." Brief example list with 3 entries. NO mention of `needsClassifyPrompt` or any handler-behavior verbs (axis-K hard-forbid per atom contract).
 
-**Ship:** v9.89.2.
+**Shipped:** v9.89.1 (patch — additive).
 
 ---
 
@@ -278,17 +278,17 @@ In `workflow_action.go` status handler:
 
 **Atom adjustment:** new atom `internal/content/atoms/launch-status-recovery.md` with `phases: [launch-production-active]`. Describes the recovery surface: "After context compaction, `action=status` returns `kind:launch-active` if a launch is mid-flight. Re-enter with `productionProjectName` from the envelope. No `launchKey` is required for status; the key is only needed on the publish call that advances ready-to-launch → launching." No directory-walking or implementation details.
 
-**Ship:** v9.89.3.
+**Shipped:** v9.89.2 (patch — additive).
 
 ---
 
 ## 4. Verification path
 
-**After F1 (v9.89.0):** user re-runs `"nasaď to na prod"` on `laravel-showcase-agent` with FRESH launch token. Tool call with `launchKey` succeeds (no schema rejection). Workflow advances ready-to-launch → launching → configuring-pipeline → launched.
+**After F1 (v9.88.4):** user re-runs `"nasaď to na prod"` on `laravel-showcase-agent` with FRESH launch token. Tool call with `launchKey` succeeds (no schema rejection). Workflow advances ready-to-launch → launching → configuring-pipeline → launched.
 
 Remaining findings (#2-#7) still surface; F2-F4 clear them.
 
-**After all 4 phases:** ergonomics complete. Future testing feedback lands per Plan §5 methodology.
+**After all 4 phases (v9.89.2):** ergonomics complete. Future testing feedback lands per Plan §5 methodology.
 
 **Live test substrate:** eval-zcp project (per `CLAUDE.local.md`). Token regeneration in dashboard required after every test cycle (token from session 2026-05-13 already revoked per user).
 
