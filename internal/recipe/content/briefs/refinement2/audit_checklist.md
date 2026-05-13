@@ -242,6 +242,26 @@ The cross-surface uniqueness pass subsumes the earlier
 classes — it catches the same pattern by principle rather than by
 named class.
 
+**Cross-surface uniqueness receipt (Run-46 Item 6)** — when you emit
+findings, also include the pass receipt alongside `walked`:
+
+```json
+{
+  "findings": [...],
+  "walked": [...],
+  "crossSurfaceUniquenessScanned": <count>,
+  "duplicates": ["<pair-ref-1>", "<pair-ref-2>", ...]
+}
+```
+
+`crossSurfaceUniquenessScanned` is the COUNT of manifest items you
+compared in the pass (typically equals the manifest total — every
+findable item gets scanned for duplicates). `duplicates` lists any
+pair references you flagged (each entry names the two surfaces or
+fragmentIds that ship the same teaching). The refinement-close gate
+refuses when `crossSurfaceUniquenessScanned` is below the manifest
+total — that's the signal you didn't run the pass.
+
 ---
 
 ## Citation requirement (S4 + S5)

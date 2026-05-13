@@ -1085,6 +1085,18 @@ func checkRefinementCloseGates(sess *Session) string {
 			len(ledger.Walked), len(manifest.AllKeys()), len(missing), strings.Join(missingHead(missing, 5), ", "),
 		)
 	}
+	// Run-46 Item 6 — cross-surface uniqueness pass gate. The audit
+	// MUST scan every manifest entry for cross-codebase duplicates
+	// (one-fact-one-surface per audit_checklist.md §"Cross-surface
+	// uniqueness pass"). Sub-agent emits `crossSurfaceUniquenessScanned`
+	// as the count of items compared; refuse when scanned < total.
+	totalItems := len(manifest.AllKeys())
+	if ledger.CrossSurfaceUniquenessScanned < totalItems {
+		return fmt.Sprintf(
+			"complete-phase: phase=refinement cross-surface uniqueness pass scanned %d of %d manifest entries — the audit's second pass (each fact on exactly one surface; other surfaces cross-reference rather than re-author) is not verifiable. Re-dispatch refinement-2 and forward the `crossSurfaceUniquenessScanned` count + any `duplicates` pair references via `zerops_recipe action=enrich-findings`. Run-46 Item 6 closes the run-45 pattern where cross-codebase KB duplications (APP_SECRET shadow on apidev IG #5 + worker KB #4; https-Meilisearch on apidev KB #3 + worker KB #5) shipped without cross-reference because the audit didn't verifiably run the pass.",
+			ledger.CrossSurfaceUniquenessScanned, totalItems,
+		)
+	}
 	return ""
 }
 

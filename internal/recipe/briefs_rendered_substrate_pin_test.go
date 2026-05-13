@@ -168,6 +168,8 @@ var auditChecklistRequiredSubstrings = []string{
 	// walk loop MUST NOT include S6.
 	"S6 is also out of scope",
 	"For SURFACE in {S3, S4, S5, S7}",
+	// Run-46 Item 6 — cross-surface uniqueness receipt anchor.
+	"crossSurfaceUniquenessScanned",
 }
 
 // TestRefinement2Brief_AuditChecklistRequiredSubstringsRender — every
