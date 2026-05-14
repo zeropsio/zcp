@@ -140,6 +140,43 @@ type Refinement2Ledger struct {
 	Duplicates                    []string `json:"duplicates,omitempty"`
 }
 
+// BatchedLedger is the in-flight accumulator for Run-47 Item H's typed
+// multi-batch enrich-findings API. Walked entries from each batch are
+// appended (NOT latest-wins — codex requirement) until every batch in
+// {1..TotalBatches} has arrived; the engine then promotes the
+// aggregated state to sess.Refinement2Ledger and clears
+// sess.BatchedRefinement2Ledger. Lives on the session, so a session
+// snapshot/restore survives compaction.
+//
+// CrossSurfaceUniquenessScanned + Duplicates carry the cross-surface
+// counter the sub-agent typically reports on a single batch (the final
+// emission); on promotion these land on the Refinement2Ledger so Item
+// C's close-gate consistency check operates on the aggregated walked
+// count.
+type BatchedLedger struct {
+	Walked                        []string     `json:"walked"`
+	ReceivedBatches               map[int]bool `json:"receivedBatches"`
+	TotalBatches                  int          `json:"totalBatches"`
+	CrossSurfaceUniquenessScanned int          `json:"crossSurfaceUniquenessScanned,omitempty"`
+	Duplicates                    []string     `json:"duplicates,omitempty"`
+}
+
+// MissingBatchIDs returns the {1..TotalBatches} ids that have NOT yet
+// been marked received. Returned sorted ascending. Empty result means
+// the batched set is complete and ready for promotion.
+func (b *BatchedLedger) MissingBatchIDs() []int {
+	if b == nil || b.TotalBatches <= 0 {
+		return nil
+	}
+	var missing []int
+	for i := 1; i <= b.TotalBatches; i++ {
+		if !b.ReceivedBatches[i] {
+			missing = append(missing, i)
+		}
+	}
+	return missing
+}
+
 // missingHead returns the first n elements of missing — bounded so the
 // close-gate error message stays under a sane envelope size when the
 // sub-agent walked nothing.

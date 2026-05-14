@@ -223,6 +223,18 @@ type RecipeInput struct {
 	// lands in PR 5).
 	CrossSurfaceUniquenessScanned int      `json:"crossSurfaceUniquenessScanned,omitempty" jsonschema:"For enrich-findings: count of manifest items the sub-agent compared in the cross-surface uniqueness pass. Run-46 Item 6."`
 	Duplicates                    []string `json:"duplicates,omitempty"                    jsonschema:"For enrich-findings: pair references to duplicate teachings flagged in the cross-surface uniqueness pass. Run-46 Item 6."`
+	// BatchID + TotalBatches — Run-47 Item H typed multi-batch
+	// enrich-findings. The refinement-2 audit's monolithic JSON exceeds
+	// the inline tool-response cap on large recipes (~58 KB observed
+	// run-46); the sub-agent partitions emissions into N batches and
+	// calls enrich-findings once per batch with BatchID=1..TotalBatches.
+	// Engine aggregates walked entries into a BatchedRefinement2Ledger
+	// and promotes to sess.Refinement2Ledger only after every batch in
+	// {1..TotalBatches} has been received. TotalBatches <= 1 keeps the
+	// pre-Run-47 single-batch path (latest-wins assignment) for
+	// backward compat.
+	BatchID      int `json:"batchId,omitempty"      jsonschema:"For enrich-findings: 1-indexed batch number when the audit emits across multiple calls; 0 (omitted) or 1 with TotalBatches=0/1 uses the single-batch path. Run-47 Item H."`
+	TotalBatches int `json:"totalBatches,omitempty" jsonschema:"For enrich-findings: total number of batches the audit will emit; 0 or 1 uses the single-batch path. Engine promotes the aggregated walked-ledger to sess.Refinement2Ledger after all batches received. Run-47 Item H."`
 }
 
 // RecipeResult is the generic envelope returned from zerops_recipe.
@@ -760,20 +772,140 @@ func enrichFindingsAction(sess *Session, in RecipeInput, r RecipeResult) RecipeR
 			facts = records
 		}
 	}
+	// Run-47 Item H — batch identity range check (codex requirement).
+	// Pure-input validation (no shared state) runs lock-free BEFORE
+	// EnrichFindings + any session mutation. The TotalBatches-shift
+	// check + the actual append happen together inside one critical
+	// section below to close the validate-then-mutate TOCTOU race two
+	// concurrent enrich-findings calls would otherwise expose.
+	if in.TotalBatches > 1 {
+		if in.BatchID < 1 || in.BatchID > in.TotalBatches {
+			r.Error = fmt.Sprintf(
+				"enrich-findings: batchId=%d out of range for totalBatches=%d. "+
+					"Multi-batch enrich-findings requires batchId in [1..totalBatches]; "+
+					"single-batch path uses totalBatches=0 or 1. Run-47 Item H.",
+				in.BatchID, in.TotalBatches)
+			return r
+		}
+	}
 	r.EnrichedFindings = EnrichFindings(env, facts)
-	// Run-46 Item 1 — persist the walked-ledger receipt the main agent
-	// forwarded alongside the findings. The refinement close-gate reads
-	// sess.Refinement2Ledger to refuse close when the ledger doesn't
-	// cover the full manifest. We persist on every enrich-findings call
-	// (latest-wins) so a re-dispatch + re-enrich path replaces a
-	// partial earlier ledger with the most recent emission.
-	if len(in.Walked) > 0 || in.CrossSurfaceUniquenessScanned > 0 || len(in.Duplicates) > 0 {
+	// Run-46 Item 1 + Run-47 Item H — persist the walked-ledger receipt
+	// the main agent forwarded alongside the findings. Two paths:
+	//
+	//  - TotalBatches > 1 (Run-47 Item H multi-batch): append the
+	//    incoming Walked into BatchedRefinement2Ledger, mark the batch
+	//    received, and promote only after every batch in
+	//    {1..TotalBatches} has landed (MissingBatchIDs() returns
+	//    empty). Latest-wins is forbidden here (codex requirement) so
+	//    batch 1's entries are not overwritten by batch 4. The
+	//    TotalBatches-shift check + the append happen in one critical
+	//    section so two concurrent calls can't both pass a stale
+	//    pre-mutation check and corrupt the accumulator. Re-emission
+	//    of an already-received batchID is also rejected here — a
+	//    retry that appended the same walked entries twice would later
+	//    fail Item C's walked-vs-scanned consistency at close-time.
+	//    Refused batch (Item A pre-mutation refusal or batch-identity
+	//    refusal here) leaves the partial accumulator intact so prior
+	//    valid batches are not lost.
+	//
+	//  - TotalBatches <= 1 (single-batch backward compat): existing
+	//    latest-wins assignment on sess.Refinement2Ledger so a
+	//    re-dispatch + re-enrich path replaces a partial earlier ledger
+	//    with the most recent emission.
+	if in.TotalBatches > 1 {
+		sess.mu.Lock()
+		// Consolidated TOCTOU-safe validate + append. The
+		// promoted-ledger + TotalBatches-shift + already-received
+		// checks observe and mutate the SAME critical section so two
+		// concurrent enrich-findings calls cannot both pass and then
+		// corrupt the accumulator with mismatched TotalBatches or
+		// double-appended Walked for the same batchID.
+		//
+		// Post-promotion retry guard (codex code review): once the
+		// multi-batch sequence has promoted to sess.Refinement2Ledger,
+		// the accumulator is cleared. A late retry of any batchID
+		// would otherwise see BatchedRefinement2Ledger=nil, allocate a
+		// fresh accumulator with just that one batchID, and block the
+		// close-gate with a spurious "missing N-1 batches" refusal
+		// even though the full ledger is already promoted. Refuse the
+		// retry instead — the sub-agent must call complete-phase or
+		// emit a fresh single-batch latest-wins replacement to restart.
+		if sess.Refinement2Ledger != nil && sess.BatchedRefinement2Ledger == nil {
+			sess.mu.Unlock()
+			r.Error = fmt.Sprintf(
+				"enrich-findings: multi-batch sequence already promoted to sess.Refinement2Ledger; refusing batchId=%d/totalBatches=%d retry. "+
+					"To replace the promoted ledger, call enrich-findings with totalBatches<=1 (single-batch latest-wins) instead of restarting a multi-batch partition. Run-47 Item H.",
+				in.BatchID, in.TotalBatches)
+			return r
+		}
+		if existing := sess.BatchedRefinement2Ledger; existing != nil && existing.TotalBatches != in.TotalBatches {
+			prior := existing.TotalBatches
+			sess.mu.Unlock()
+			r.Error = fmt.Sprintf(
+				"enrich-findings: totalBatches=%d does not match the in-flight accumulator's totalBatches=%d. "+
+					"All batches in one multi-batch enrich-findings sequence must declare the same totalBatches; "+
+					"complete the current set (received batch id(s): emit the remaining ones) before starting a new partition. Run-47 Item H.",
+				in.TotalBatches, prior)
+			return r
+		}
+		if existing := sess.BatchedRefinement2Ledger; existing != nil && existing.ReceivedBatches[in.BatchID] {
+			sess.mu.Unlock()
+			r.Error = fmt.Sprintf(
+				"enrich-findings: batchId=%d already received in the in-flight accumulator. "+
+					"Re-emitting a batchID would double-append walked entries and break Item C's walked-vs-scanned consistency at close-time. "+
+					"Emit the remaining missing batch id(s) instead. Run-47 Item H.",
+				in.BatchID)
+			return r
+		}
+		if sess.BatchedRefinement2Ledger == nil {
+			sess.BatchedRefinement2Ledger = &BatchedLedger{
+				ReceivedBatches: map[int]bool{},
+				TotalBatches:    in.TotalBatches,
+			}
+		}
+		acc := sess.BatchedRefinement2Ledger
+		acc.Walked = append(acc.Walked, in.Walked...)
+		acc.ReceivedBatches[in.BatchID] = true
+		// CrossSurfaceUniquenessScanned is a global manifest-total
+		// count; the audit reports it on a single batch (typically the
+		// final emission). Last-positive-wins so a re-emission that
+		// corrects the count after an earlier under-count is honored.
+		// Duplicates accumulate across batches (per-batch pair refs).
+		if in.CrossSurfaceUniquenessScanned > 0 {
+			acc.CrossSurfaceUniquenessScanned = in.CrossSurfaceUniquenessScanned
+		}
+		if len(in.Duplicates) > 0 {
+			acc.Duplicates = append(acc.Duplicates, in.Duplicates...)
+		}
+		// Promote when the {1..TotalBatches} set is fully populated.
+		// Using MissingBatchIDs() rather than len(ReceivedBatches) so a
+		// stray BatchID outside the declared range (would have been
+		// rejected above) cannot inflate the count.
+		if len(acc.MissingBatchIDs()) == 0 {
+			sess.Refinement2Ledger = &Refinement2Ledger{
+				Walked:                        append([]string(nil), acc.Walked...),
+				CrossSurfaceUniquenessScanned: acc.CrossSurfaceUniquenessScanned,
+				Duplicates:                    append([]string(nil), acc.Duplicates...),
+			}
+			sess.BatchedRefinement2Ledger = nil
+		}
+		sess.mu.Unlock()
+	} else if len(in.Walked) > 0 || in.CrossSurfaceUniquenessScanned > 0 || len(in.Duplicates) > 0 {
 		sess.mu.Lock()
 		sess.Refinement2Ledger = &Refinement2Ledger{
 			Walked:                        append([]string(nil), in.Walked...),
 			CrossSurfaceUniquenessScanned: in.CrossSurfaceUniquenessScanned,
 			Duplicates:                    append([]string(nil), in.Duplicates...),
 		}
+		// Clear any in-flight multi-batch accumulator under the same
+		// lock (codex code review). The single-batch latest-wins path
+		// is the documented escape hatch for replacing a partial or
+		// promoted multi-batch ledger; without this clear, a leftover
+		// BatchedRefinement2Ledger would (a) make the close-gate
+		// refuse with "multi-batch incomplete" even though the
+		// replacement landed, and (b) let stale batches from the old
+		// sequence later promote over the newer single-batch ledger.
+		sess.BatchedRefinement2Ledger = nil
 		sess.mu.Unlock()
 	}
 	r.OK = true
@@ -1099,6 +1231,21 @@ func checkRefinementCloseGates(sess *Session) string {
 	ref1 := sess.RefinementDispatched
 	ref2 := sess.Refinement2Dispatched
 	ledger := sess.Refinement2Ledger
+	// Clone the batched state under the lock so the subsequent
+	// MissingBatchIDs() + receivedCount read cannot race with a
+	// concurrent enrichFindingsAction mutating the same map/slices
+	// (codex code review surfaced the read-after-unlock race). Nil
+	// pointer when no multi-batch sequence is in flight.
+	var batchedSnap *BatchedLedger
+	if sess.BatchedRefinement2Ledger != nil {
+		src := sess.BatchedRefinement2Ledger
+		received := make(map[int]bool, len(src.ReceivedBatches))
+		maps.Copy(received, src.ReceivedBatches)
+		batchedSnap = &BatchedLedger{
+			TotalBatches:    src.TotalBatches,
+			ReceivedBatches: received,
+		}
+	}
 	plan := sess.Plan
 	sess.mu.Unlock()
 	if !ref1 {
@@ -1106,6 +1253,24 @@ func checkRefinementCloseGates(sess *Session) string {
 	}
 	if !ref2 {
 		return "complete-phase: phase=refinement requires the refinement-2 sub-agent (cross-surface audit) to be dispatched after refinement-1 closes; call `zerops_recipe action=build-subagent-prompt briefKind=refinement2` and dispatch the agent before closing refinement. The cross-surface audit catches KB↔IG duplication, surface-misplacement, aspirational-as-current prose, and yaml-comment ↔ yaml-content drift — defect classes refinement-1's per-fragment rule walk cannot see."
+	}
+	// Run-47 Item H — refuse close when the multi-batch enrich-findings
+	// API is still in flight (some batch slots not yet received). Runs
+	// BEFORE the ledger-nil + Item C consistency checks so the refusal
+	// names the missing batch ids rather than the misleading "no
+	// walked-ledger receipt" message (the walked entries ARE arriving;
+	// the engine is just holding promotion until the set is complete).
+	if batchedSnap != nil {
+		missing := batchedSnap.MissingBatchIDs()
+		if len(missing) > 0 {
+			missingStrs := make([]string, len(missing))
+			for i, id := range missing {
+				missingStrs[i] = fmt.Sprintf("%d", id)
+			}
+			return fmt.Sprintf(
+				"complete-phase: phase=refinement multi-batch enrich-findings incomplete; received %d of %d batches, missing batch id(s): [%s]. Re-emit the missing batch(es) via `zerops_recipe action=enrich-findings batchId=<id> totalBatches=%d walked=<chunk>` so the engine can promote the aggregated walked-ledger before close. Run-47 Item H.",
+				len(batchedSnap.ReceivedBatches), batchedSnap.TotalBatches, strings.Join(missingStrs, ", "), batchedSnap.TotalBatches)
+		}
 	}
 	manifest, mErr := BuildRefinement2Manifest(plan)
 	if mErr != nil {
