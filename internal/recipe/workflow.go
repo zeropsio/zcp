@@ -498,19 +498,31 @@ func (s *Session) EmitYAML(shape Shape, tierIndex int) (string, error) {
 
 // Status returns a snapshot summary for handlers to return from
 // zerops_recipe action=status.
+//
+// GateRefusals (Run-47 Item D) summarizes counts per gate per phase
+// read from <outputRoot>/.gate-refusals.jsonl. Surfaces visibility
+// into engine-side gates that fire at sub-agent boundaries (Item 3
+// snapshot/restore wrapper, Item 4 friendly-auth floor, Item 7 self-
+// referential KB linter, Item B citation validator revert). Nil when
+// no refusals have landed for this session.
 type Status struct {
-	Slug       string  `json:"slug"`
-	Current    Phase   `json:"current"`
-	Completed  []Phase `json:"completed"`
-	Codebases  int     `json:"codebases"`
-	Services   int     `json:"services"`
-	FactsCount int     `json:"factsCount"`
+	Slug         string                    `json:"slug"`
+	Current      Phase                     `json:"current"`
+	Completed    []Phase                   `json:"completed"`
+	Codebases    int                       `json:"codebases"`
+	Services     int                       `json:"services"`
+	FactsCount   int                       `json:"factsCount"`
+	GateRefusals map[string]map[string]int `json:"gateRefusals,omitempty"`
 }
 
 // Snapshot returns the current session status.
+//
+// Run-47 Item D — `GateRefusals` summarizes counts per gate per phase
+// from the on-disk ledger. The session lock is released before the
+// ledger read so the I/O happens unlocked (CLAUDE.md "Hold mutexes
+// during I/O").
 func (s *Session) Snapshot() Status {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	completed := make([]Phase, 0, len(s.Completed))
 	for p, done := range s.Completed {
 		if done {
@@ -526,8 +538,19 @@ func (s *Session) Snapshot() Status {
 	if s.Plan != nil {
 		cbs, svcs = len(s.Plan.Codebases), len(s.Plan.Services)
 	}
+	slug, current, outputRoot := s.Slug, s.Current, s.OutputRoot
+	s.mu.Unlock()
+	var gateRefusals map[string]map[string]int
+	if outputRoot != "" {
+		if entries, err := ReadGateRefusalLedger(outputRoot); err == nil {
+			gateRefusals = SummarizeGateRefusals(entries)
+		} else {
+			fmt.Fprintf(os.Stderr, "snapshot: read gate-refusal ledger: %v\n", err)
+		}
+	}
 	return Status{
-		Slug: s.Slug, Current: s.Current, Completed: completed,
+		Slug: slug, Current: current, Completed: completed,
 		Codebases: cbs, Services: svcs, FactsCount: factsCount,
+		GateRefusals: gateRefusals,
 	}
 }

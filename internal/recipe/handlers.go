@@ -902,6 +902,9 @@ func handleRecordFragment(sess *Session, in RecipeInput, r RecipeResult) RecipeR
 	// as the named-constant-drift gate.
 	if errMsg := selfReferentialKBRefusal(sess, in.FragmentID, in.Fragment); errMsg != "" {
 		r.Error = errMsg
+		// Run-47 Item D — telemetry: surface the refusal in the gate
+		// ledger so the run-validation report can confirm Item 7 fired.
+		recordSelfReferentialRefusal(sess, in.FragmentID, errMsg)
 		return r
 	}
 
@@ -1212,6 +1215,12 @@ func runCodebaseRefinementWrapper(sess *Session, fragmentID, host, priorBody str
 				v.Code, v.Path, v.Message),
 		})
 	}
+	// Run-47 Item D — telemetry: each revert emits one ledger entry so
+	// validation runs can confirm Item 3 (snapshot/restore wrapper) and
+	// Item B (citation-validator) reverts fired without main-session
+	// re-extraction. Underlying validator code is carried in the
+	// notice Message and forwarded to the ledger reason.
+	recordRevertViolations(sess, fragmentID, notices)
 	return notices
 }
 
@@ -1249,6 +1258,10 @@ func runEnvRefinementWrapper(sess *Session, fragmentID string, tierIdx int, envP
 				v.Code, v.Path, v.Message),
 		})
 	}
+	// Run-47 Item D — env-tier wrapper revert telemetry; same shape as
+	// the codebase wrapper. Pinned by
+	// TestGateRefusalLedger_WritesEntryOnRefinementReplaceRevert.
+	recordRevertViolations(sess, fragmentID, notices)
 	return notices
 }
 
@@ -1541,6 +1554,11 @@ func completePhase(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
 			r.Error = err.Error()
 			return r
 		}
+		// Run-47 Item D — telemetry for engine-side substrate gates
+		// that fire at the sub-agent boundary (Item 4 friendly-auth).
+		// Emit BEFORE snapshot so the status response in this same
+		// call already sees the entry counted.
+		recordGateViolations(sess, string(sess.Current), blocking)
 		snap := sess.Snapshot()
 		r.Violations, r.Notices, r.Status = blocking, notices, &snap
 		r.OK = len(blocking) == 0
@@ -1582,6 +1600,10 @@ func completePhase(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
 		r.Error = err.Error()
 		return r
 	}
+	// Run-47 Item D — telemetry for engine-side substrate gates that
+	// fire at the main-agent boundary (no-codebase close path). Mirror
+	// the scoped close hook so both surfaces emit identical entries.
+	recordGateViolations(sess, string(sess.Current), blocking)
 	r.Violations, r.Notices = blocking, notices
 	r.OK = len(blocking) == 0
 	if r.OK && sess.Current == PhaseScaffold {
