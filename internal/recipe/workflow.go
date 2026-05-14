@@ -101,6 +101,16 @@ type Session struct {
 	// caller forwards the sub-agent's `walked` array.
 	Refinement2Ledger *Refinement2Ledger
 
+	// BatchedRefinement2Ledger is the in-flight accumulator for Run-47
+	// Item H's typed multi-batch enrich-findings API. Non-nil while at
+	// least one but not all batches in {1..TotalBatches} have arrived;
+	// the engine promotes its Walked union to Refinement2Ledger and
+	// clears this field when the last batch lands. Close-gate refuses
+	// refinement-phase close while this field is non-nil so an
+	// incomplete batch set surfaces as a refusal naming the missing
+	// batch ids.
+	BatchedRefinement2Ledger *BatchedLedger
+
 	// parentResolved guards lazy parent resolution. LoadParent runs at
 	// most once per session — subsequent calls return the cached Parent.
 	// True after the first LoadParent attempt regardless of outcome
