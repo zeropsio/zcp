@@ -161,6 +161,15 @@ func (s *Session) LoadParent() (*ParentRecipe, error) {
 // EnterPhase transitions the session into the named phase. Returns an
 // error if the transition is not adjacent-forward or if the previous
 // phase hasn't completed.
+//
+// Run-47 Item I — accept the call as a silent no-op when the requested
+// phase is ALREADY in s.Completed. Sub-agents (env-content, refinement)
+// self-close their phase via CompletePhase; the main agent's subsequent
+// stale `enter-phase` call would otherwise refuse as non-adjacent. The
+// carve-out is narrow: only completed phases are accepted; arbitrary
+// "in the past" jumps still refuse so genuine skipped-phase errors
+// remain caught. Handler attaches a Notice (handlers.go::enterPhaseAction)
+// so the main agent sees that a sub-agent self-closed the phase.
 func (s *Session) EnterPhase(p Phase) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -170,7 +179,10 @@ func (s *Session) EnterPhase(p Phase) error {
 		return fmt.Errorf("unknown phase %q", p)
 	}
 	if p == s.Current {
-		return nil // idempotent
+		return nil // idempotent on current phase
+	}
+	if s.Completed[p] {
+		return nil // idempotent on already-completed phase (run-47 Item I)
 	}
 	if next != cur+1 {
 		return fmt.Errorf("phase transition %q → %q not adjacent-forward", s.Current, p)
@@ -180,6 +192,17 @@ func (s *Session) EnterPhase(p Phase) error {
 	}
 	s.Current = p
 	return nil
+}
+
+// PhaseCompleted reports whether the named phase is in the session's
+// Completed set. Thread-safe; takes the session mutex. Used by
+// handlers.go::enterPhaseAction to attach a structured Notice on the
+// completed-phase idempotency path so a sub-agent self-close is visible
+// to the main agent (run-47 Item I).
+func (s *Session) PhaseCompleted(p Phase) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Completed[p]
 }
 
 // CompletePhase marks the current phase done after gate evaluation.
