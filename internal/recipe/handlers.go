@@ -760,7 +760,7 @@ func enrichFindingsAction(sess *Session, in RecipeInput, r RecipeResult) RecipeR
 			facts = records
 		}
 	}
-	r.EnrichedFindings = EnrichFindings(env, facts)
+	r.EnrichedFindings = EnrichFindingsWithPlan(env, facts, sess.Plan)
 	// Run-46 Item 1 — persist the walked-ledger receipt the main agent
 	// forwarded alongside the findings. The refinement close-gate reads
 	// sess.Refinement2Ledger to refuse close when the ledger doesn't
