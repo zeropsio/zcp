@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -46,6 +47,15 @@ import (
 //
 // Enriched output shape — same fields PLUS the three filled by engine.
 
+// Surface-test failure-mode literals. Match the JSON wire shape the
+// audit sub-agent emits; centralising them removes the goconst-flagged
+// repeated string-literal pattern that emerged once Item G added a
+// third reader/writer at the auto-override decision.
+const (
+	FailureModeDROP    = "DROP"
+	FailureModeREWRITE = "REWRITE"
+)
+
 // SlimFinding is what the audit sub-agent emits. Fields below are
 // agent-authored; the engine fills `fragmentId`, `classification`, and
 // `suggestedReplacement` on the enriched form.
@@ -76,11 +86,33 @@ type SlimFinding struct {
 // EnrichedFinding extends SlimFinding with engine-derived fields. The
 // main agent reads this shape and copies fields verbatim onto its
 // `record-fragment mode=replace` ACT path.
+//
+// Run-47 Item G — ClassificationAmbiguous + AutoOverrideRefused.
+// When the fact's CandidateClass is framework-quirk and the fact's
+// topic carries cross-surface evidence (≥2 surfaces OR citation-map
+// topic match), the engine REFUSES to apply its DISCARD-class auto-
+// override (mode→DROP). The finding's Mode passes through unchanged
+// from the sub-agent's emission; ClassificationAmbiguous flags the
+// case for the main agent's surface test (S4) to settle disposition.
+// The engine does NOT re-classify on ambiguity — that would replace
+// one brittle classifier with another. Ambiguity refuses, not
+// promotes.
 type EnrichedFinding struct {
 	SlimFinding
 	FragmentID           string `json:"fragmentId,omitempty"`
 	Classification       string `json:"classification,omitempty"`
 	SuggestedReplacement string `json:"suggestedReplacement,omitempty"`
+
+	// ClassificationAmbiguous — Run-47 Item G. The engine resolved a
+	// DISCARD-leaning candidate class (framework-quirk) on a fact
+	// whose topic shows cross-surface evidence, so it declined to
+	// auto-override the sub-agent's emitted mode. Main agent's surface
+	// test settles disposition.
+	ClassificationAmbiguous bool `json:"classificationAmbiguous,omitempty"`
+	// AutoOverrideRefused — non-empty when ClassificationAmbiguous is
+	// true; names the reason the engine refused (for telemetry +
+	// audit-trail).
+	AutoOverrideRefused string `json:"autoOverrideRefused,omitempty"`
 }
 
 // FindingsEnvelope is the JSON shape the audit sub-agent emits and the
@@ -373,6 +405,29 @@ func defaultClassificationForSurface(surface string) string {
 // `classification` empty. The DISCARD class IS the surface test's
 // failure rationale; DROP is the correct disposition.
 func EnrichFindings(env *FindingsEnvelope, facts []FactRecord) *EnrichedFindingsEnvelope {
+	return EnrichFindingsWithPlan(env, facts, nil)
+}
+
+// EnrichFindingsWithPlan is the plan-aware variant. When `plan` is
+// non-nil and a fact's CandidateClass is framework-quirk, the engine
+// checks `hasCrossSurfaceEvidence(fact, plan)`; when evidence exists,
+// the DISCARD-class auto-override is REFUSED and the finding is
+// emitted with `ClassificationAmbiguous=true` +
+// `AutoOverrideRefused=<reason>`; the sub-agent's emitted mode passes
+// through unchanged. Main-agent S4 surface test settles disposition.
+//
+// Plan = nil reproduces pre-Run-47 behavior (no ambiguity check; auto-
+// override fires on every DISCARD-class hit). Used by call sites that
+// don't have a plan in scope (tests + back-compat for the bare
+// EnrichFindings entry point).
+//
+// Run-47 Item G design — ambiguity REFUSES, doesn't re-classify. The
+// engine never decides "this framework-quirk fact is actually
+// intersection"; it decides "this fact's classification is unreliable,
+// let the main-agent surface test settle it." Replacing one brittle
+// classifier with another is exactly the monkey-patch pattern codex
+// flagged.
+func EnrichFindingsWithPlan(env *FindingsEnvelope, facts []FactRecord, plan *Plan) *EnrichedFindingsEnvelope {
 	if env == nil {
 		return &EnrichedFindingsEnvelope{Findings: []EnrichedFinding{}}
 	}
@@ -390,16 +445,37 @@ func EnrichFindings(env *FindingsEnvelope, facts []FactRecord) *EnrichedFindings
 		// classification compatibility rule doesn't fire.
 		if slim.Surface == "S4" || slim.Surface == "S5" {
 			factClass := classificationFromFactRef(facts, slim.FactRef)
-			// Issue 2 — DISCARD-class override. When the resolved
-			// fact's class can't legally land on this finding's
-			// surface (e.g. self-inflicted on CODEBASE_KB), the
-			// finding's correct disposition is DROP. Force the
-			// failure mode and leave classification empty so the main
-			// agent's verbatim copy doesn't trigger a downstream
-			// surface-incompatibility reject.
+			ambiguous := false
+			if factClass != "" && plan != nil &&
+				Classification(factClass) == ClassFrameworkQuirk &&
+				!classCompatibleWithAuditSurface(Classification(factClass), slim.Surface) {
+				// Run-47 Item G — before the DISCARD-class auto-override
+				// fires for framework-quirk, check whether the fact's
+				// topic carries cross-surface evidence. If yes, refuse
+				// the override; the main-agent S4 surface test will
+				// settle disposition. The engine does NOT re-classify.
+				fact := findFactByRef(facts, slim.FactRef)
+				if fact != nil && hasCrossSurfaceEvidence(*fact, plan) {
+					ambiguous = true
+				}
+			}
 			switch {
+			case ambiguous:
+				// Mode untouched (slim's mode passes through via
+				// EnrichedFinding embedding); Classification stays
+				// empty (engine declines to decide).
+				ef.ClassificationAmbiguous = true
+				ef.AutoOverrideRefused = "framework-quirk class has cross-surface evidence; main-agent S4 surface test settles disposition"
+				ef.Classification = ""
 			case factClass != "" && !classCompatibleWithAuditSurface(Classification(factClass), slim.Surface):
-				ef.SurfaceTestFailureMode = "DROP"
+				// Issue 2 — DISCARD-class override. When the resolved
+				// fact's class can't legally land on this finding's
+				// surface (e.g. self-inflicted on CODEBASE_KB), the
+				// finding's correct disposition is DROP. Force the
+				// failure mode and leave classification empty so the
+				// main agent's verbatim copy doesn't trigger a
+				// downstream surface-incompatibility reject.
+				ef.SurfaceTestFailureMode = FailureModeDROP
 				ef.Classification = ""
 			case factClass != "":
 				ef.Classification = factClass
@@ -413,13 +489,197 @@ func EnrichFindings(env *FindingsEnvelope, facts []FactRecord) *EnrichedFindings
 		// MOVE-TO removal/migration don't need a replacement string;
 		// the action itself is the replacement. Re-read the (possibly-
 		// overridden) failure mode from ef, not the slim input.
-		if ef.SurfaceTestFailureMode == "REWRITE" && slim.Topic != "" {
+		if ef.SurfaceTestFailureMode == FailureModeREWRITE && slim.Topic != "" {
 			ef.SuggestedReplacement = suggestedReplacementForTopic(slim.Topic)
 		}
 
 		out.Findings = append(out.Findings, ef)
 	}
 	return out
+}
+
+// findFactByRef looks up a fact record by the audit's FactRef
+// (`<topic>@<recordedAt>` or bare `<topic>`). Returns the first
+// matching record, or nil. Deterministic — first-match-wins under
+// stable iteration of the input slice.
+//
+// Used by Run-47 Item G's ambiguity check: when the engine considers
+// refusing the DISCARD-class override, it needs the fact's topic to
+// observe cross-surface evidence in the plan. classificationFromFactRef
+// returns only the candidate class; this helper returns the whole
+// record so the ambiguity check can read `Topic` (and any other
+// fields it might consult in future) directly.
+func findFactByRef(facts []FactRecord, factRef string) *FactRecord {
+	if factRef == "" {
+		return nil
+	}
+	topic, recordedAt, hasAt := strings.Cut(factRef, "@")
+	if hasAt {
+		for i := range facts {
+			if facts[i].Topic == topic && facts[i].RecordedAt == recordedAt {
+				return &facts[i]
+			}
+		}
+		return nil
+	}
+	for i := range facts {
+		if facts[i].Topic == topic {
+			return &facts[i]
+		}
+	}
+	return nil
+}
+
+// hasCrossSurfaceEvidence reports whether the fact's topic appears
+// across enough plan surfaces (or matches a citation-map topic) to
+// make the fact's DISCARD-class candidateClass unreliable. The check
+// is deterministic + observation-only: it walks the plan's existing
+// fragment bodies + EnvComments and counts surfaces whose topic
+// candidates include the fact's topic. Returns true iff:
+//
+//   - The fact's topic resolves to a citation-map guide id (
+//     `CitationGuideURL[fact.Topic]` OR `CitationMap[fact.Topic]`
+//     hit). Documented platform topics are NOT framework quirks by
+//     definition.
+//   - OR the fact's topic appears in ≥2 distinct surfaces (S3 env
+//     comments / S4 IG / S5 KB / S7 zerops.yaml) via
+//     `DetectBulletTopicCandidates`.
+//
+// The helper does NOT re-classify or promote the fact; it observes
+// evidence presence. Run-47 Item G — codex specifically flagged:
+// "if `hasCrossSurfaceEvidence` does any classification decision-
+// making beyond 'evidence exists / doesn't exist', it's monkey-patch."
+func hasCrossSurfaceEvidence(fact FactRecord, plan *Plan) bool {
+	if plan == nil || fact.Topic == "" {
+		return false
+	}
+	// Citation-map topic match — directly or via the CitationMap
+	// remapping (e.g. "execOnce" → "init-commands" guide).
+	if _, ok := CitationGuideURL[fact.Topic]; ok {
+		return true
+	}
+	if guide, ok := CitationMap[fact.Topic]; ok && guide != "" {
+		if _, ok2 := CitationGuideURL[guide]; ok2 {
+			return true
+		}
+	}
+	// Cross-surface appearance count. A surface "carries" the fact's
+	// topic when its fragment body's DetectBulletTopicCandidates output
+	// includes the fact's topic (or the citation-map mapped guide id).
+	targets := map[string]bool{fact.Topic: true}
+	if guide, ok := CitationMap[fact.Topic]; ok && guide != "" {
+		targets[guide] = true
+	}
+	surfaces := 0
+
+	// S3 — EnvComments (project + per-service per tier).
+	for _, ec := range plan.EnvComments {
+		matched := false
+		if strings.TrimSpace(ec.Project) != "" {
+			for _, t := range DetectBulletTopicCandidates(ec.Project) {
+				if targets[t] {
+					matched = true
+					break
+				}
+			}
+		}
+		if !matched {
+			for _, body := range ec.Service {
+				if strings.TrimSpace(body) == "" {
+					continue
+				}
+				for _, t := range DetectBulletTopicCandidates(body) {
+					if targets[t] {
+						matched = true
+						break
+					}
+				}
+				if matched {
+					break
+				}
+			}
+		}
+		if matched {
+			surfaces++
+			break // EnvComments collectively count as a single S3 surface
+		}
+	}
+	// S4 / S5 / S7 — per-codebase fragments.
+	for _, cb := range plan.Codebases {
+		host := cb.Hostname
+		for _, surfKey := range []string{
+			"codebase/" + host + "/integration-guide",
+			"codebase/" + host + "/knowledge-base",
+			"codebase/" + host + "/zerops-yaml",
+		} {
+			// IG slotted entries — collect IG slot bodies separately
+			// since they live under nested keys (`integration-guide/<n>`).
+			// We count this surface once per codebase per surface key.
+			if surfKey == "codebase/"+host+"/integration-guide" {
+				if matchedIG := igTopicAppears(plan.Fragments, host, targets); matchedIG {
+					surfaces++
+					if surfaces >= 2 {
+						return true
+					}
+					continue
+				}
+			}
+			body := plan.Fragments[surfKey]
+			if strings.TrimSpace(body) == "" {
+				continue
+			}
+			matched := false
+			for _, t := range DetectBulletTopicCandidates(body) {
+				if targets[t] {
+					matched = true
+					break
+				}
+			}
+			if matched {
+				surfaces++
+				if surfaces >= 2 {
+					return true
+				}
+			}
+		}
+	}
+	return surfaces >= 2
+}
+
+// igTopicAppears reports whether ANY IG fragment (unslotted or
+// slotted) for the codebase carries one of the target topics.
+// Returns true on first match; cheap-exit deterministic walk.
+func igTopicAppears(fragments map[string]string, host string, targets map[string]bool) bool {
+	base := "codebase/" + host + "/integration-guide"
+	if body := fragments[base]; strings.TrimSpace(body) != "" {
+		for _, t := range DetectBulletTopicCandidates(body) {
+			if targets[t] {
+				return true
+			}
+		}
+	}
+	// Slotted: codebase/<host>/integration-guide/<n>. Walk all matching
+	// keys deterministically by sorting them first.
+	prefix := base + "/"
+	var slotKeys []string
+	for k := range fragments {
+		if strings.HasPrefix(k, prefix) {
+			slotKeys = append(slotKeys, k)
+		}
+	}
+	sort.Strings(slotKeys)
+	for _, k := range slotKeys {
+		body := fragments[k]
+		if strings.TrimSpace(body) == "" {
+			continue
+		}
+		for _, t := range DetectBulletTopicCandidates(body) {
+			if targets[t] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // classCompatibleWithAuditSurface maps the audit's surface string

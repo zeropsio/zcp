@@ -812,7 +812,9 @@ func enrichFindingsAction(sess *Session, in RecipeInput, r RecipeResult) RecipeR
 			return r
 		}
 	}
-	r.EnrichedFindings = EnrichFindings(env, facts)
+	// Run-47 Item G — plan-aware variant enables the framework-quirk
+	// ambiguity refusal in the auto-override path.
+	r.EnrichedFindings = EnrichFindingsWithPlan(env, facts, sess.Plan)
 	// Run-46 Item 1 + Run-47 Item H — persist the walked-ledger receipt
 	// the main agent forwarded alongside the findings. Two paths:
 	//
