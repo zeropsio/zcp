@@ -22,6 +22,76 @@ func TestSession_EnterPhase_MustBeAdjacentForward(t *testing.T) {
 	}
 }
 
+// TestEnterPhase_RefusesSkippedPhase — run-47 Item I. Engine must still
+// refuse a forward jump to a phase that is NOT in s.Completed and NOT
+// adjacent-forward. The completed-phase idempotency carve-out must not
+// silently mask genuine skipped-phase errors.
+func TestEnterPhase_RefusesSkippedPhase(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	log := OpenFactsLog(filepath.Join(dir, "facts.jsonl"))
+	s := NewSession("synth-showcase", "dev", log, dir, nil)
+
+	// Mark research + provision complete; session Current = provision
+	// (entered+completed) — refinement is far ahead and NOT in
+	// Completed. The idempotency carve-out must NOT accept this call.
+	s.Completed[PhaseResearch] = true
+	s.Completed[PhaseProvision] = true
+	s.Current = PhaseProvision
+
+	if err := s.EnterPhase(PhaseRefinement); err == nil {
+		t.Error("EnterPhase refinement from provision with no intermediate phases completed must refuse")
+	}
+}
+
+// TestEnterPhase_AdjacentForwardStillWorks — run-47 Item I regression.
+// The completed-phase carve-out must not break adjacent-forward semantics
+// when the requested phase is NOT yet in Completed.
+func TestEnterPhase_AdjacentForwardStillWorks(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	log := OpenFactsLog(filepath.Join(dir, "facts.jsonl"))
+	s := NewSession("synth-showcase", "dev", log, dir, nil)
+
+	// Walk research → provision the normal way.
+	if _, _, err := s.CompletePhase(nil); err != nil {
+		t.Fatalf("CompletePhase research: %v", err)
+	}
+	if err := s.EnterPhase(PhaseProvision); err != nil {
+		t.Fatalf("EnterPhase provision (adjacent-forward, not in Completed): %v", err)
+	}
+	if s.Current != PhaseProvision {
+		t.Errorf("after adjacent-forward enter: Current = %q, want %q", s.Current, PhaseProvision)
+	}
+}
+
+// TestEnterPhase_SamePhaseStillIdempotent — run-47 Item I regression.
+// The original same-phase idempotency at workflow.go:172 must remain
+// intact: EnterPhase(s.Current) returns nil with no state change.
+func TestEnterPhase_SamePhaseStillIdempotent(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	log := OpenFactsLog(filepath.Join(dir, "facts.jsonl"))
+	s := NewSession("synth-showcase", "dev", log, dir, nil)
+
+	// s.Current is PhaseResearch by default; PhaseResearch is NOT in
+	// Completed yet. Same-phase idempotency must work independently of
+	// the completed-phase carve-out.
+	if err := s.EnterPhase(PhaseResearch); err != nil {
+		t.Errorf("EnterPhase(current phase) must be idempotent: got %v", err)
+	}
+	if s.Current != PhaseResearch {
+		t.Errorf("same-phase idempotent call mutated Current: got %q, want %q",
+			s.Current, PhaseResearch)
+	}
+	if s.Completed[PhaseResearch] {
+		t.Error("same-phase idempotent call must not mark phase complete")
+	}
+}
+
 // Run-16 §6.1 — phase enum extends to 7. Walk every adjacency the new
 // pipeline introduces and confirm non-adjacent transitions still error.
 

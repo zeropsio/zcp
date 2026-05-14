@@ -621,8 +621,22 @@ func startAction(store *Store, in RecipeInput, r RecipeResult) RecipeResult {
 
 // enterPhaseAction handles `action=enter-phase`. Advances the session
 // phase and runs scaffold-phase prep when entering scaffold.
+//
+// Run-47 Item I — when the requested phase is already in sess.Completed
+// (e.g., env-content sub-agent self-closed its phase) the engine's
+// EnterPhase returns nil as a no-op; the handler attaches a structured
+// Notice so the main agent sees that a sub-agent self-closed the phase
+// rather than wondering why a non-adjacent jump was accepted.
 func enterPhaseAction(sess *Session, in RecipeInput, r RecipeResult) RecipeResult {
-	if err := sess.EnterPhase(Phase(in.Phase)); err != nil {
+	target := Phase(in.Phase)
+	// Snapshot completed-state BEFORE the call so we can distinguish the
+	// already-completed-no-op from a fresh adjacent-forward transition
+	// (both return nil from EnterPhase). Snapshot ordering matters when
+	// target == sess.Current AND sess.Current is in Completed — the
+	// completed-no-op branch wins; that is benign because the response
+	// shape is identical to same-phase idempotency aside from Notice.
+	alreadyCompleted := sess.PhaseCompleted(target)
+	if err := sess.EnterPhase(target); err != nil {
 		r.Error = err.Error()
 		return r
 	}
@@ -635,6 +649,16 @@ func enterPhaseAction(sess *Session, in RecipeInput, r RecipeResult) RecipeResul
 	snap := sess.Snapshot()
 	r.Status = &snap
 	r.Guidance = loadPhaseEntry(sess.Current)
+	if alreadyCompleted && snap.Current != target {
+		// Idempotent no-op on an already-completed phase. Surface the
+		// sub-agent self-close so the main agent reconciles its mental
+		// model rather than suspecting an engine bug. snap.Current is the
+		// mutex-locked-read value; prefer it over sess.Current here.
+		r.Notice = fmt.Sprintf(
+			"session phase=%s already in completed list; enter-phase accepted as no-op. Likely sub-agent self-closed this phase.",
+			target,
+		)
+	}
 	r.OK = true
 	return r
 }

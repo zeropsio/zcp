@@ -460,6 +460,49 @@ func TestEnterPhase_Scaffold_DoesNotOverrideExplicitSourceRoot(t *testing.T) {
 	}
 }
 
+// TestEnterPhase_IdempotentOnCompletedPhase — run-47 Item I. When a
+// sub-agent self-closes a phase, the main agent's stale `enter-phase`
+// call targeting that already-completed phase must be accepted as a
+// no-op with a structured Notice rather than refused as non-adjacent.
+// Pinned per plans/run-47-substrate-fixes.md Item I.
+func TestEnterPhase_IdempotentOnCompletedPhase(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	store := NewStore(dir)
+	outputRoot := filepath.Join(dir, "run")
+	dispatch(t.Context(), store, RecipeInput{
+		Action: "start", Slug: "synth-showcase", OutputRoot: outputRoot,
+	})
+	sess, _ := store.Get("synth-showcase")
+
+	// Simulate the run-46 R9 shape: env-content sub-agent self-closed its
+	// phase; main agent's subsequent `enter-phase phase=env-content` lands
+	// when env-content is already in Completed and Current has advanced.
+	for _, p := range []Phase{
+		PhaseResearch, PhaseProvision, PhaseScaffold,
+		PhaseFeature, PhaseCodebaseContent, PhaseEnvContent,
+	} {
+		sess.Completed[p] = true
+	}
+	sess.Current = PhaseFinalize
+
+	res := dispatch(t.Context(), store, RecipeInput{
+		Action: "enter-phase", Slug: "synth-showcase", Phase: "env-content",
+	})
+	if !res.OK {
+		t.Fatalf("enter-phase env-content (already completed) must be OK no-op, got: %+v", res)
+	}
+	if !strings.Contains(res.Notice, "already in completed list") {
+		t.Errorf("Notice must surface completed-phase no-op; got Notice=%q", res.Notice)
+	}
+	// Current must NOT regress to the already-completed phase.
+	if sess.Current != PhaseFinalize {
+		t.Errorf("idempotent no-op must not rewind Current: got %q, want %q",
+			sess.Current, PhaseFinalize)
+	}
+}
+
 // TestStitch_NonAbsSourceRoot_HardFails — run-11 gap M-1. Run 10 closed
 // with cb.SourceRoot carrying the bare hostname ("api", "app", "worker")
 // at finalize stitch time, causing README/CLAUDE to land at cwd-relative
