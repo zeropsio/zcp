@@ -18,9 +18,16 @@
 # wall-time bound that flow-eval enforces.
 
 services:
+  # zeropsSetup MUST match a setup name in the recipe's zerops.yml.
+  # Upstream recipe-laravel-minimal exposes only `setup: app` (verified
+  # 2026-05-15 against main branch). Using `dev`/`prod` here caused the
+  # build process to fail in ~1 second with stack.build → FAILED before
+  # the pipeline even started (appVersion stuck at WAITING_TO_BUILD).
+  # Both halves share the same build recipe; pair distinction is
+  # presentational (dev vs stage hostname) — the build is identical.
   - hostname: appdev
     type: php-nginx@8.4
-    zeropsSetup: dev
+    zeropsSetup: app
     buildFromGit: https://github.com/zeropsio/recipe-laravel-minimal
     enableSubdomainAccess: true
     envSecrets:
@@ -32,7 +39,7 @@ services:
 
   - hostname: appstage
     type: php-nginx@8.4
-    zeropsSetup: prod
+    zeropsSetup: app
     buildFromGit: https://github.com/zeropsio/recipe-laravel-minimal
     enableSubdomainAccess: true
     envSecrets:

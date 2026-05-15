@@ -4,6 +4,7 @@ builds/
 /zcp
 /zcp-recipe-sim
 /zcp-recipe-patch
+/zcp-launch-live
 *.test
 RECIPE_RUNS/
 docs/zcprecipator3/runs/
