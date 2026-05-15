@@ -89,6 +89,14 @@ var (
 	kbWordRE          = regexp.MustCompile(`[A-Za-z0-9-]+`)
 	kbBacktickIDRE    = regexp.MustCompile("`([a-z][a-z0-9-]+)`")
 	kbBulletStartRE   = regexp.MustCompile(`(?m)^\s*-\s+`)
+	// kbHeadingStartRE — Run-48 — codebase KBs across runs 44-47 author
+	// each entry as un-numbered `### <stem>` H3. The bullet-shape
+	// splitter (kbBulletStartRE) misses these entirely, so V-2/V-3/V-4
+	// + O-2 were silently inert on H3 KB bodies. The regex requires a
+	// non-digit, non-space first stem char so numbered IG headings
+	// don't accidentally split as KB entries; kbBulletBlocks runs the
+	// H3 pattern only as a fallback when no `^- ` bullets matched.
+	kbHeadingStartRE = regexp.MustCompile(`(?m)^### [^\d\s]`)
 )
 
 // tokenizeForJaccard lower-cases, splits on word boundaries, drops
@@ -191,12 +199,25 @@ func containment(bullet, keyword map[string]bool) float64 {
 }
 
 // kbBulletBlocks splits a KB body into per-bullet text blocks. Each
-// bullet starts with `^- ` and continues until the next bullet or end.
+// bullet starts with `^- ` (the bold-symptom shape) OR an un-numbered
+// `### <stem>` H3 (the run-44+ codebase-KB authoring shape) and runs
+// until the next entry or end-of-body. Run-48 — without the H3
+// fallback every kb-quality validator (V-2/V-3/V-4 + O-2) silently
+// no-ops on the published shape because the bullet regex never
+// matches.
 func kbBulletBlocks(kb string) []string {
-	idx := kbBulletStartRE.FindAllStringIndex(kb, -1)
-	if len(idx) == 0 {
-		return nil
+	if idx := kbBulletStartRE.FindAllStringIndex(kb, -1); len(idx) > 0 {
+		return sliceBlocksAt(kb, idx)
 	}
+	if idx := kbHeadingStartRE.FindAllStringIndex(kb, -1); len(idx) > 0 {
+		return sliceBlocksAt(kb, idx)
+	}
+	return nil
+}
+
+// sliceBlocksAt carves kb into substrings starting at each match index,
+// extending to the next match (or end-of-body for the last).
+func sliceBlocksAt(kb string, idx [][]int) []string {
 	out := make([]string, 0, len(idx))
 	for i, m := range idx {
 		end := len(kb)

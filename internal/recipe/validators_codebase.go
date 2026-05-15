@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // Run-8-readiness Workstream D — codebase-scoped validators.
@@ -20,6 +21,17 @@ import (
 // item #1 ("### 1. Adding zerops.yaml") and any porter-authored
 // "### 2. <title>", "### 3. <title>" items.
 var igHeadingItemRE = regexp.MustCompile(`(?m)^### \d+\.\s+\S`)
+
+// kbHeadingRE matches the un-numbered `### <stem>` H3 shape that
+// codebase KBs author. Run-48 — runs 44-47 shipped every codebase KB
+// in this shape, but citationBlockSplits previously required either
+// `- **stem**` bullets or `### N. <title>` numbered IG headings. The
+// validator's display↔URL agreement check was silently inert against
+// published KB content for four runs because the splitter returned
+// nil. The regex requires a non-digit, non-space first stem char so
+// numbered IG headings still split via igHeadingItemRE — kbHeadingRE
+// runs last in citationBlockSplits as a fallback.
+var kbHeadingRE = regexp.MustCompile(`(?m)^### [^\d\s]`)
 
 // igPlainOrderedItemRE matches plain ordered-list items (`1. `, `2. `)
 // that aren't preceded by `###`. The pre-§R shape; rejected (R-1).
@@ -447,6 +459,43 @@ func trimForMessage(s string) string {
 // display↔URL agreement.
 var markdownLinkRE = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
 
+// friendlyDisplayToGuide is the reverse of FriendlyDisplayName — keyed
+// by the lower-case friendly display name, valued by the guide id.
+// Built once at package init by iterating CitationGuideURL and
+// resolving each guide's friendly through FriendlyDisplayName so the
+// two maps stay single-source. Run-48 — used by Check 4 in
+// validateCitationDisplayAgreement: when a markdown link's display
+// text IS a known friendly but its URL doesn't resolve to ANY guide
+// (e.g. run-47's worker KB pointing the "zero-downtime deploys with
+// multi-container setups" display at `#minrunningcontainers-`), the
+// validator can flag the display↔URL drift instead of skipping on
+// `matchedGuide == ""`.
+var (
+	friendlyDisplayToGuide     map[string]string
+	friendlyDisplayToGuideOnce sync.Once
+)
+
+func ensureFriendlyDisplayToGuide() {
+	friendlyDisplayToGuideOnce.Do(func() {
+		friendlyDisplayToGuide = make(map[string]string, len(CitationGuideURL))
+		for guide := range CitationGuideURL {
+			display := FriendlyDisplayName(guide)
+			if display == "" {
+				continue
+			}
+			friendlyDisplayToGuide[strings.ToLower(display)] = guide
+		}
+	})
+}
+
+// lookupGuideIDFromFriendlyDisplay returns the guide id whose
+// FriendlyDisplayName matches the given display text (case-insensitive),
+// or "" when no friendly registration matches.
+func lookupGuideIDFromFriendlyDisplay(displayText string) string {
+	ensureFriendlyDisplayToGuide()
+	return friendlyDisplayToGuide[strings.ToLower(strings.TrimSpace(displayText))]
+}
+
 // DetectBulletTopic returns the canonical topic id when a KB bullet's
 // PRIMARY teaching is unambiguously one citation-map topic. Returns ""
 // on ambiguity (multi-topic bullets are legitimate; only hard-fail on
@@ -674,8 +723,8 @@ func canonicalURLPathWithFragment(url string) string {
 // teaches.
 var citationFormARE = regexp.MustCompile("`([a-z][a-z0-9-]+)`\\s+(?:guide|reference)")
 
-// validateCitationDisplayAgreement — Run-46 Item 5. Three checks across
-// the per-bullet/per-IG-item citation set:
+// validateCitationDisplayAgreement — Run-46 Item 5 + Run-48 bidirectional
+// check. Four checks across the per-bullet/per-IG-item citation set:
 //
 //  1. Display-text ↔ URL agreement: when a markdown link's URL matches a
 //     known guide URL, the display text MUST be the friendly display
@@ -692,14 +741,27 @@ var citationFormARE = regexp.MustCompile("`([a-z][a-z0-9-]+)`\\s+(?:guide|refere
 //     unambiguously detectable AND the block cites a guide id via the
 //     "the `<id>` guide" shape, the cited guide MUST match the topic.
 //
+//  4. Run-48 — Display-text ↔ canonical URL agreement (the bidirectional
+//     check). When the URL does NOT resolve to any known guide BUT the
+//     display text IS a known friendly display name, the link is
+//     citing a friendly name with a non-canonical URL — refuse with
+//     kb-citation-display-name-without-canonical-url. Run-47 fixture:
+//     worker KB pointed "zero-downtime deploys with multi-container
+//     setups" (the canonical friendly for rolling-deploys) at
+//     `zerops-yaml/specification#minrunningcontainers-`, which is not
+//     in the citation map. The legacy validator skipped on
+//     `matchedGuide == ""`; the new check fires instead.
+//
 // Blocks without any citation don't fire; the existing
 // kb-citation-missing check covers the missing-citation case.
 //
 // G1-followup — surface-symmetric. KB bodies are split per `- **stem**`
-// bullet; IG bodies are split per `### N. <title>` heading section.
-// citationBlockSplits picks the right delimiter automatically. The
-// motivating run-45 case was an IG bullet (apidev IG #4); the validator
-// is wired into both validateCodebaseKB and validateCodebaseIG.
+// bullet OR un-numbered `### <stem>` H3 (the codebase-KB authoring
+// shape across runs 44+); IG bodies are split per `### N. <title>`
+// numbered heading. citationBlockSplits picks the right delimiter
+// automatically. The motivating run-45 case was an IG bullet (apidev
+// IG #4); the run-47 frontier was un-numbered H3 KBs (worker KB #1,
+// #2; apidev KB #1).
 func validateCitationDisplayAgreement(path, body string) []Violation {
 	var vs []Violation
 	blocks := citationBlockSplits(body)
@@ -723,9 +785,25 @@ func validateCitationDisplayAgreement(path, body string) []Violation {
 			linkURL := strings.TrimSpace(link[2])
 			matchedGuide := lookupGuideIDFromURL(linkURL)
 			if matchedGuide == "" {
-				// URL doesn't match any known guide — skip; this isn't
-				// a citation-map URL, so display-text doesn't have to
-				// match anything in particular.
+				// Run-48 Check 4 — bidirectional display→guide→URL. The
+				// URL doesn't resolve to any known guide, but if the
+				// display text IS a known friendly display name, the
+				// author is naming a canonical guide with a non-
+				// canonical URL — refuse instead of silently skipping
+				// (the run-47 worker KB #1/#2 defect: known friendly
+				// "zero-downtime deploys with multi-container setups"
+				// pointed at `#minrunningcontainers-`, which isn't in
+				// the citation map).
+				if displayGuide := lookupGuideIDFromFriendlyDisplay(displayText); displayGuide != "" {
+					canonicalURL := CitationGuideURL[displayGuide]
+					vs = append(vs, violation("kb-citation-display-name-without-canonical-url", path,
+						fmt.Sprintf("citation display text %q is the canonical friendly name for the %q guide, but the URL %s does not resolve to any known guide (expected canonical %s). Either fix the URL to the guide's canonical, or change the display text so it doesn't claim the friendly name.",
+							displayText, displayGuide, linkURL, canonicalURL)))
+				}
+				// URL doesn't match any known guide and (if reached
+				// here) display text isn't a known friendly either —
+				// skip; this isn't a citation-map URL, so display-text
+				// doesn't have to match anything in particular.
 				continue
 			}
 			// Check 1 — display text MUST be the friendly name for the
@@ -772,14 +850,24 @@ func validateCitationDisplayAgreement(path, body string) []Violation {
 
 // citationBlockSplits returns the per-block substrings the citation
 // display-text validator walks. The function picks the right delimiter
-// per surface shape:
+// per surface shape, in priority order:
 //
-//   - KB bodies open each bullet with `- **stem**` — split on
+//  1. KB bodies that open each bullet with `- **stem**` — split on
 //     boldBulletRE.
-//   - IG bodies open each item with `### N. <title>` — split on
-//     igHeadingItemRE.
+//  2. IG bodies that open each item with `### N. <title>` — split on
+//     igHeadingItemRE (numbered heading shape).
+//  3. Codebase KB bodies that open each entry with an un-numbered
+//     `### <stem>` H3 — split on kbHeadingRE.
 //
-// When both shapes match (mixed body) the boldBulletRE delimiter wins.
+// Run-48 — fallback #3 closes the structural-inertness gap surfaced in
+// run-47: every codebase KB across runs 44-47 used un-numbered H3, so
+// the splitter previously returned nil and validateCitationDisplayAgreement
+// silently skipped the body. The numbered-heading regex stays a higher-
+// priority match so IG bodies that already use `### N. <title>` (incl.
+// the engine-stamped IG #1 "### 1. Adding zerops.yaml") still split on
+// the numbered shape; kbHeadingRE requires a non-digit first stem char
+// so the two shapes are unambiguous.
+//
 // When neither matches (no bullets, no headings) returns an empty slice
 // so the caller treats the body as carrying no countable blocks.
 func citationBlockSplits(body string) []string {
@@ -787,6 +875,9 @@ func citationBlockSplits(body string) []string {
 		return splitAtIndexes(body, starts)
 	}
 	if starts := igHeadingItemRE.FindAllStringIndex(body, -1); len(starts) > 0 {
+		return splitAtIndexes(body, starts)
+	}
+	if starts := kbHeadingRE.FindAllStringIndex(body, -1); len(starts) > 0 {
 		return splitAtIndexes(body, starts)
 	}
 	return nil
