@@ -675,28 +675,16 @@ a refinement round-trip.
 
 ### Related discard class: wrong env-var composition
 
-The same routing applies when a candidate KB bullet describes a
-symptom that fires only when the porter manually composes a URL the
-recipe already ships pre-composed. Worked example from the run-42
-apidev KB:
-
-> **BAD candidate** — *"`UnknownError` on first `GetObject`"* — body
-> claims the AWS SDK rejects the storage endpoint because the SDK
-> wants `https://` while the platform ships `http://`.
-
-The recipe ships `S3_ENDPOINT: ${storage_apiUrl}` — a pre-composed
-full URL (scheme + host + port). The bullet only fires if the porter
-hand-composes `http://${storage_apiHost}` instead, dropping the
-scheme and port that `${storage_apiUrl}` already encodes. The porter
-has replaced the shipped directive with a manual composition — same
-class as the self-inflicted-reversible litmus: the symptom is gated
-on the porter UNDOING what the recipe ships.
-
-Route: CLAUDE.md or yaml comment at the `S3_ENDPOINT` directive
-(the recipe yaml is exactly where the `${storage_apiUrl}` vs
-`${storage_apiHost}` distinction already lives). NOT the public
-recipe-page KB — a porter who copied the shipped yaml never sees
-the symptom.
+Same routing applies to bullets that fire only when the porter
+manually composes a URL the recipe ships pre-composed. Run-42
+apidev example: `**UnknownError on first GetObject**` (BAD
+candidate). The recipe ships `S3_ENDPOINT: ${storage_apiUrl}` — a
+pre-composed full URL (scheme + host + port). The symptom only fires
+when a porter hand-composes `http://${storage_apiHost}` instead,
+dropping the scheme/port that `${storage_apiUrl}` already encodes —
+same self-inflicted-reversible class (porter UNDOES the shipped
+directive). Route to a yaml comment at the `S3_ENDPOINT` directive
+or CLAUDE.md, NOT the recipe-page KB.
 
 ### What still belongs in KB
 
