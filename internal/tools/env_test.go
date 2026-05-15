@@ -62,7 +62,7 @@ func TestEnvTool_GetAction_Success(t *testing.T) {
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-1", Name: "db", Status: statusActive, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@17"}},
 		}).
-		WithServiceEnv("svc-1", []platform.EnvVar{
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
 			{Key: "hostname", Content: "db"},
 			{Key: "port", Content: "5432"},
 			{Key: "user", Content: "dbuser"},
@@ -189,7 +189,7 @@ func TestEnvTool_Delete_PollsToFinished(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
 		WithServices([]platform.ServiceStack{{ID: "svc-1", Name: "api"}}).
-		WithServiceEnv("svc-1", []platform.EnvVar{{ID: "env-1", Key: "OLD_VAR", Content: "old"}}).
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{{ID: "env-1", Key: "OLD_VAR", Content: "old"}}).
 		WithProcess(&platform.Process{
 			ID:     "proc-envdel-env-1",
 			Status: statusFinished,

@@ -163,7 +163,7 @@ func (m *Mock) SetAutoscaling(_ context.Context, _ string, _ AutoscalingParams) 
 	return nil, nil //nolint:nilnil // intentional: nil process means sync (no async process)
 }
 
-func (m *Mock) GetServiceEnv(_ context.Context, serviceID string) ([]EnvVar, error) {
+func (m *Mock) GetServiceEnv(_ context.Context, serviceID string) ([]ServiceEnvVar, error) {
 	if err := m.getError("GetServiceEnv"); err != nil {
 		return nil, err
 	}
@@ -195,7 +195,7 @@ func (m *Mock) DeleteUserData(_ context.Context, userDataID string) (*Process, e
 	}, nil
 }
 
-func (m *Mock) GetProjectEnv(_ context.Context, _ string) ([]EnvVar, error) {
+func (m *Mock) GetProjectEnv(_ context.Context, _ string) ([]ProjectEnvVar, error) {
 	if err := m.getError("GetProjectEnv"); err != nil {
 		return nil, err
 	}

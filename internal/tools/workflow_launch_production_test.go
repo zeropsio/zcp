@@ -67,7 +67,7 @@ func TestHandleLaunchProduction_ScopePrompt_MissingProductionProjectName(t *test
 // and classifications are incomplete.
 func TestHandleLaunchProduction_ClassifyPrompt(t *testing.T) {
 	ctx := context.Background()
-	client := newLaunchMockClient().WithProjectEnv([]platform.EnvVar{
+	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
 		{ID: "e1", Key: "LOG_LEVEL", Content: "info"},
 		{ID: "e2", Key: "STRIPE_SECRET", Content: "sk_live_xxx"},
 		{ID: "e3", Key: "DB_HOST", Content: "${db_hostname}"},
@@ -105,7 +105,7 @@ func TestHandleLaunchProduction_ClassifyPrompt(t *testing.T) {
 // fires the prompt when only some envs are classified.
 func TestHandleLaunchProduction_ClassifyPrompt_PartialClassifications(t *testing.T) {
 	ctx := context.Background()
-	client := newLaunchMockClient().WithProjectEnv([]platform.EnvVar{
+	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
 		{Key: "LOG_LEVEL", Content: "info"},
 		{Key: "STRIPE_SECRET", Content: "sk_test_xxx"},
 	})
@@ -132,7 +132,7 @@ func TestHandleLaunchProduction_ClassifyPrompt_PartialClassifications(t *testing
 // and classifications are complete but launchKey isn't supplied.
 func TestHandleLaunchProduction_ReadyToLaunch_NoLaunchKey(t *testing.T) {
 	ctx := context.Background()
-	client := newLaunchMockClient().WithProjectEnv([]platform.EnvVar{
+	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
 		{Key: "LOG_LEVEL", Content: "info"},
 	})
 
@@ -187,7 +187,7 @@ func TestHandleLaunchProduction_NoSourceEnvs_AdvancesToReadyToLaunch(t *testing.
 // response, no matter which branch fires.
 func TestHandleLaunchProduction_LaunchKeyNeverInResponse(t *testing.T) {
 	ctx := context.Background()
-	client := newLaunchMockClient().WithProjectEnv([]platform.EnvVar{
+	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
 		{Key: "LOG_LEVEL", Content: "info"},
 	})
 
@@ -282,7 +282,7 @@ func TestHandleLaunchProduction_StageHalfTarget_NormalizedToDevHalf(t *testing.T
 		BootstrappedAt: "2026-05-01T00:00:00Z",
 	})
 
-	client := newLaunchMockClient().WithProjectEnv([]platform.EnvVar{
+	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
 		{Key: "LOG_LEVEL", Content: "info"},
 	})
 
@@ -323,7 +323,7 @@ func TestHandleLaunchProduction_DevHalfTarget_Accepted(t *testing.T) {
 		BootstrappedAt: "2026-05-01T00:00:00Z",
 	})
 
-	client := newLaunchMockClient().WithProjectEnv([]platform.EnvVar{
+	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
 		{Key: "LOG_LEVEL", Content: "info"},
 	})
 

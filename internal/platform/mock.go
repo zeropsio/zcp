@@ -21,8 +21,8 @@ type Mock struct {
 	service            *ServiceStack
 	processes          map[string]*Process
 	processScenarios   map[string]*processScenarioState // optional per-process state machine driven by GetProcess calls
-	envVars            map[string][]EnvVar              // serviceID -> env vars
-	projectEnv         []EnvVar
+	envVars            map[string][]ServiceEnvVar       // serviceID -> service env vars
+	projectEnv         []ProjectEnvVar                  // project-level env vars
 	logAccess          *LogAccess
 	importResult       *ImportResult
 	processEvents      []ProcessEvent
@@ -58,7 +58,7 @@ func NewMock() *Mock {
 	return &Mock{
 		processes:        make(map[string]*Process),
 		processScenarios: make(map[string]*processScenarioState),
-		envVars:          make(map[string][]EnvVar),
+		envVars:          make(map[string][]ServiceEnvVar),
 		CallCounts:       make(map[string]int),
 		errors:           make(map[string]error),
 	}
@@ -119,16 +119,20 @@ func (m *Mock) WithProcess(process *Process) *Mock {
 	return m
 }
 
-// WithServiceEnv sets env vars for a service.
-func (m *Mock) WithServiceEnv(serviceID string, vars []EnvVar) *Mock {
+// WithServiceEnv sets env vars for a service. Accepts scope-specific
+// ServiceEnvVar (with Type/Sensitive fields the SDK exposes on
+// service-stack-env scope; NO Editable field — see types.go).
+func (m *Mock) WithServiceEnv(serviceID string, vars []ServiceEnvVar) *Mock {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.envVars[serviceID] = vars
 	return m
 }
 
-// WithProjectEnv sets project-level env vars.
-func (m *Mock) WithProjectEnv(vars []EnvVar) *Mock {
+// WithProjectEnv sets project-level env vars. Accepts scope-specific
+// ProjectEnvVar (with Type/Sensitive/Editable fields the SDK exposes
+// on project-env scope).
+func (m *Mock) WithProjectEnv(vars []ProjectEnvVar) *Mock {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.projectEnv = vars

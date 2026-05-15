@@ -15,7 +15,7 @@ func TestCheckProvision_AllServicesExist_Pass(t *testing.T) {
 		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
 		{ID: "s2", Name: "appstage", Status: serviceStatusNew},
 		{ID: "s3", Name: "db", Status: serviceStatusRunning},
-	}).WithServiceEnv("s3", []platform.EnvVar{{Key: "connectionString", Content: "pg://..."}})
+	}).WithServiceEnv("s3", []platform.ServiceEnvVar{{Key: "connectionString", Content: "pg://..."}})
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
@@ -45,7 +45,7 @@ func TestCheckProvision_ActiveStatus_Pass(t *testing.T) {
 		{ID: "s1", Name: "appdev", Status: serviceStatusActive},
 		{ID: "s2", Name: "appstage", Status: serviceStatusReadyToDeploy},
 		{ID: "s3", Name: "db", Status: serviceStatusActive},
-	}).WithServiceEnv("s3", []platform.EnvVar{{Key: "connectionString", Content: "pg://..."}})
+	}).WithServiceEnv("s3", []platform.ServiceEnvVar{{Key: "connectionString", Content: "pg://..."}})
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
@@ -277,7 +277,7 @@ func TestCheckProvision_StoresDiscoveredEnvVars(t *testing.T) {
 		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
 		{ID: "s2", Name: "appstage", Status: serviceStatusNew},
 		{ID: "s3", Name: "db", Status: serviceStatusRunning},
-	}).WithServiceEnv("s3", []platform.EnvVar{
+	}).WithServiceEnv("s3", []platform.ServiceEnvVar{
 		{Key: "connectionString", Content: "pg://..."},
 		{Key: "port", Content: "5432"},
 		{Key: "user", Content: "zerops"},
@@ -317,7 +317,7 @@ func TestCheckProvision_ExistingRuntime_StageActive_Pass(t *testing.T) {
 		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
 		{ID: "s2", Name: "appstage", Status: serviceStatusActive},
 		{ID: "s3", Name: "cache", Status: serviceStatusRunning},
-	}).WithServiceEnv("s3", []platform.EnvVar{{Key: "port", Content: "6379"}})
+	}).WithServiceEnv("s3", []platform.ServiceEnvVar{{Key: "port", Content: "6379"}})
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
@@ -347,7 +347,7 @@ func TestCheckProvision_ExistingRuntime_StageRunning_Pass(t *testing.T) {
 		{ID: "s1", Name: "appdev", Status: serviceStatusActive},
 		{ID: "s2", Name: "appstage", Status: serviceStatusRunning},
 		{ID: "s3", Name: "queue", Status: serviceStatusRunning},
-	}).WithServiceEnv("s3", []platform.EnvVar{{Key: "connectionString", Content: "nats://..."}})
+	}).WithServiceEnv("s3", []platform.ServiceEnvVar{{Key: "connectionString", Content: "nats://..."}})
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
@@ -418,7 +418,7 @@ func TestCheckProvision_ExistsDep_StoresEnvVars(t *testing.T) {
 		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
 		{ID: "s2", Name: "appstage", Status: serviceStatusRunning},
 		{ID: "s3", Name: "db", Status: serviceStatusRunning},
-	}).WithServiceEnv("s3", []platform.EnvVar{
+	}).WithServiceEnv("s3", []platform.ServiceEnvVar{
 		{Key: "connectionString", Content: "pg://..."},
 		{Key: "port", Content: "5432"},
 		{Key: "user", Content: "zerops"},
@@ -515,10 +515,10 @@ func TestCheckProvision_MixedResolution_StoresBoth(t *testing.T) {
 		{ID: "s2", Name: "appstage", Status: serviceStatusRunning},
 		{ID: "s3", Name: "db", Status: serviceStatusRunning},
 		{ID: "s4", Name: "cache", Status: serviceStatusRunning},
-	}).WithServiceEnv("s3", []platform.EnvVar{
+	}).WithServiceEnv("s3", []platform.ServiceEnvVar{
 		{Key: "connectionString", Content: "pg://..."},
 		{Key: "port", Content: "5432"},
-	}).WithServiceEnv("s4", []platform.EnvVar{
+	}).WithServiceEnv("s4", []platform.ServiceEnvVar{
 		{Key: "connectionString", Content: "redis://..."},
 		{Key: "port", Content: "6379"},
 	})
@@ -560,7 +560,7 @@ func TestCheckProvision_SimpleMode_NoStage_Pass(t *testing.T) {
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
 		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
 		{ID: "s2", Name: "db", Status: serviceStatusRunning},
-	}).WithServiceEnv("s2", []platform.EnvVar{{Key: "connectionString", Content: "pg://..."}})
+	}).WithServiceEnv("s2", []platform.ServiceEnvVar{{Key: "connectionString", Content: "pg://..."}})
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
@@ -589,7 +589,7 @@ func TestCheckProvision_DevMode_NoStage_Pass(t *testing.T) {
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
 		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
 		{ID: "s2", Name: "db", Status: serviceStatusRunning},
-	}).WithServiceEnv("s2", []platform.EnvVar{{Key: "connectionString", Content: "pg://..."}})
+	}).WithServiceEnv("s2", []platform.ServiceEnvVar{{Key: "connectionString", Content: "pg://..."}})
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{
@@ -631,7 +631,7 @@ func TestCheckProvision_StoreEnvVarsError_Fail(t *testing.T) {
 		{ID: "s1", Name: "appdev", Status: serviceStatusRunning},
 		{ID: "s2", Name: "appstage", Status: serviceStatusNew},
 		{ID: "s3", Name: "db", Status: serviceStatusRunning},
-	}).WithServiceEnv("s3", []platform.EnvVar{
+	}).WithServiceEnv("s3", []platform.ServiceEnvVar{
 		{Key: "connectionString", Content: "pg://..."},
 	})
 
@@ -712,7 +712,7 @@ func TestCheckProvision_TypeMismatch_Fail(t *testing.T) {
 			}
 			mock := platform.NewMock().WithServices(services)
 			if !tt.isRuntime {
-				mock = mock.WithServiceEnv("s2", []platform.EnvVar{{Key: "port", Content: "5432"}})
+				mock = mock.WithServiceEnv("s2", []platform.ServiceEnvVar{{Key: "port", Content: "5432"}})
 			}
 
 			plan := &workflow.ServicePlan{
@@ -767,7 +767,7 @@ func TestCheckProvision_TypeMatch_Pass(t *testing.T) {
 				ServiceStackTypeVersionName: "postgresql@16",
 			},
 		},
-	}).WithServiceEnv("s3", []platform.EnvVar{{Key: "connectionString", Content: "pg://..."}})
+	}).WithServiceEnv("s3", []platform.ServiceEnvVar{{Key: "connectionString", Content: "pg://..."}})
 
 	plan := &workflow.ServicePlan{
 		Targets: []workflow.BootstrapTarget{{

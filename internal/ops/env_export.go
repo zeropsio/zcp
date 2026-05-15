@@ -11,7 +11,7 @@ import (
 type ServiceEnvGroup struct {
 	Hostname string
 	Type     string
-	Vars     []platform.EnvVar
+	Vars     []platform.ServiceEnvVar
 }
 
 // FormatEnvFile generates .env file content from discovered service env vars.

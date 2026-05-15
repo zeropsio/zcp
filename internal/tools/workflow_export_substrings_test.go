@@ -221,7 +221,7 @@ func driveClassifyPrompt(t *testing.T) *mcp.CallToolResult {
 	t.Helper()
 	mock := newExportMock(
 		[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
-		[]platform.EnvVar{
+		[]platform.ProjectEnvVar{
 			{Key: "APP_KEY", Content: "old-key"},
 			{Key: "DB_HOST", Content: "${db_hostname}"},
 		},
@@ -257,7 +257,7 @@ func driveValidationFailed(t *testing.T) *mcp.CallToolResult {
 `
 	mock := newExportMock(
 		[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
-		[]platform.EnvVar{{Key: "LOG_LEVEL", Content: "info"}},
+		[]platform.ProjectEnvVar{{Key: "LOG_LEVEL", Content: "info"}},
 	)
 	dir := t.TempDir()
 	writeBootstrappedMeta(t, dir, topology.ModeStandard, topology.GitPushConfigured)
@@ -286,7 +286,7 @@ func drivePublishReady(t *testing.T) *mcp.CallToolResult {
 			runtimeService("appdev", "php-apache@8.4", true),
 			managedService(),
 		},
-		[]platform.EnvVar{
+		[]platform.ProjectEnvVar{
 			{Key: "APP_KEY", Content: "old-key"},
 			{Key: "DB_HOST", Content: "${db_hostname}"},
 			{Key: "LOG_LEVEL", Content: "info"},

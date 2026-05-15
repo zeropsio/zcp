@@ -30,11 +30,14 @@ type Client interface {
 	// When process != nil -> treat as async (track via process ID).
 	SetAutoscaling(ctx context.Context, serviceID string, params AutoscalingParams) (*Process, error)
 
-	// Environment variables
-	GetServiceEnv(ctx context.Context, serviceID string) ([]EnvVar, error)
+	// Environment variables. Project + service envs are server-side
+	// distinct concepts (different SDK enums: EnvTypeEnum vs
+	// UserDataTypeEnum); the wrappers mirror that split so envclass
+	// (Layer 3, Phase 2) sees the structured taxonomy at compile time.
+	GetServiceEnv(ctx context.Context, serviceID string) ([]ServiceEnvVar, error)
 	SetServiceEnvFile(ctx context.Context, serviceID string, content string) (*Process, error)
 	DeleteUserData(ctx context.Context, userDataID string) (*Process, error)
-	GetProjectEnv(ctx context.Context, projectID string) ([]EnvVar, error)
+	GetProjectEnv(ctx context.Context, projectID string) ([]ProjectEnvVar, error)
 	CreateProjectEnv(ctx context.Context, projectID string, key, content string, sensitive bool) (*Process, error)
 	DeleteProjectEnv(ctx context.Context, envID string) (*Process, error)
 

@@ -112,7 +112,7 @@ func TestHandleLaunchProduction_FullSequence_HappyPath(t *testing.T) {
 				Mode:   "NON_HA",
 			},
 		}).
-		WithProjectEnv([]platform.EnvVar{
+		WithProjectEnv([]platform.ProjectEnvVar{
 			{Key: "LOG_LEVEL", Content: "info"},
 		})
 

@@ -155,12 +155,81 @@ type ServiceStackRef struct {
 	Name string `json:"name"`
 }
 
-// EnvVar represents an environment variable.
-type EnvVar struct {
-	ID      string `json:"id"`
-	Key     string `json:"key"`
-	Content string `json:"content"`
+// ProjectEnvType is the server-authoritative enum on project-level
+// env entries (SDK EnvTypeEnum). USER values come from user authorship
+// (ZCP_API_KEY, JWT_SECRET, ...); SYSTEM values are platform-injected
+// (zeropsSubdomainHost, staticCdnUrl, envIsolation, ...).
+//
+// Closed enum — Phase 2 envclass treats SYSTEM as universal drop and
+// classifies USER per LLM. New values would surface as drift via
+// TestProjectEnvType_ClosedEnum.
+type ProjectEnvType string
+
+const (
+	ProjectEnvUser   ProjectEnvType = "USER"
+	ProjectEnvSystem ProjectEnvType = "SYSTEM"
+)
+
+// ServiceEnvType is the server-authoritative enum on service-stack
+// env entries (SDK UserDataTypeEnum). Five values cover the
+// platform-managed categories — Phase 2 envclass drops every service
+// env regardless of Type (target's own managed services regenerate
+// equivalents on import).
+type ServiceEnvType string
+
+const (
+	ServiceEnvReadOnly ServiceEnvType = "READ_ONLY"
+	ServiceEnvEditable ServiceEnvType = "EDITABLE"
+	ServiceEnvSecret   ServiceEnvType = "SECRET"
+	ServiceEnvInternal ServiceEnvType = "INTERNAL"
+	ServiceEnvEnv      ServiceEnvType = "ENV"
+)
+
+// ProjectEnvVar is a project-level env entry. Mirrors the SDK's
+// ProjectEnv DTO with Type/Sensitive/Editable propagated from server.
+// Returned by Client.GetProjectEnv.
+type ProjectEnvVar struct {
+	ID        string         `json:"id"`
+	Key       string         `json:"key"`
+	Content   string         `json:"content"`
+	Type      ProjectEnvType `json:"type,omitempty"`
+	Sensitive bool           `json:"sensitive,omitempty"`
+	Editable  bool           `json:"editable,omitempty"`
 }
+
+// ServiceEnvVar is a service-stack env entry. Mirrors the SDK's
+// ServiceStackEnv DTO. Note: NO Editable field — the SDK doesn't
+// expose Editable on service-stack-env scope (verified live, see
+// plans/research/env-types-investigation-2026-05-14.md). Returned
+// by Client.GetServiceEnv.
+type ServiceEnvVar struct {
+	ID        string         `json:"id"`
+	Key       string         `json:"key"`
+	Content   string         `json:"content"`
+	Type      ServiceEnvType `json:"type,omitempty"`
+	Sensitive bool           `json:"sensitive,omitempty"`
+}
+
+// EnvAccessor is the minimal read-side interface shared by
+// ProjectEnvVar and ServiceEnvVar. Consumers that operate uniformly
+// over either scope (envVarsToMaps, findEnvIDByKey, etc.) accept any
+// type implementing this interface — keeps helpers single-source while
+// preserving the compile-time scope split at API boundaries.
+type EnvAccessor interface {
+	GetID() string
+	GetKey() string
+	GetContent() string
+}
+
+// GetID, GetKey, GetContent — ProjectEnvVar implements EnvAccessor.
+func (p ProjectEnvVar) GetID() string      { return p.ID }
+func (p ProjectEnvVar) GetKey() string     { return p.Key }
+func (p ProjectEnvVar) GetContent() string { return p.Content }
+
+// GetID, GetKey, GetContent — ServiceEnvVar implements EnvAccessor.
+func (s ServiceEnvVar) GetID() string      { return s.ID }
+func (s ServiceEnvVar) GetKey() string     { return s.Key }
+func (s ServiceEnvVar) GetContent() string { return s.Content }
 
 // ImportResult represents the result of an import operation.
 type ImportResult struct {

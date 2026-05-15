@@ -125,7 +125,7 @@ type CreateOpts struct {
 
 // EnvKey is an environment variable entry surfaced WITHOUT its value.
 //
-// Distinct from EnvVar (which carries Content) by design — used when ZCP
+// Distinct from ProjectEnvVar / ServiceEnvVar (which carry Content) by design — used when ZCP
 // verifies the presence of user-set external secrets in a target prod
 // project without ever reading those secrets through MCP. Pinned by
 // P-LP-5 invariant.
@@ -333,7 +333,7 @@ func (p *projectAdminClient) GetServiceEnvKeys(ctx context.Context, serviceID st
 	if err != nil {
 		return nil, err
 	}
-	return stripEnvValues(vars), nil
+	return stripServiceEnvValues(vars), nil
 }
 
 // GetProjectEnvKeys implements ProjectAdminClient — returns project-level
@@ -346,7 +346,7 @@ func (p *projectAdminClient) GetProjectEnvKeys(ctx context.Context, projectID st
 	if err != nil {
 		return nil, err
 	}
-	return stripEnvValues(vars), nil
+	return stripProjectEnvValues(vars), nil
 }
 
 // GetProcess implements ProjectAdminClient — same semantics as Client.GetProcess.
@@ -453,32 +453,31 @@ func mapIntegrationOutput(gh *output.GithubIntegration, gl *output.GitlabIntegra
 
 // stripEnvValues maps []EnvVar (with Content) to []EnvKey (without Content).
 // Centralizing the strip ensures GetServiceEnvKeys / GetProjectEnvKeys can
-// never accidentally surface values — P-LP-5 invariant.
-func stripEnvValues(vars []EnvVar) []EnvKey {
+// never accidentally surface values — P-LP-5 invariant. Scope-specific
+// since Phase 1a (SDK ProjectEnv carries Editable; ServiceStackEnv does
+// not — see plans/research/env-types-investigation-2026-05-14.md). The
+// Sensitive field is now sourced directly from the SDK rather than the
+// Phase B stub.
+func stripServiceEnvValues(vars []ServiceEnvVar) []EnvKey {
 	out := make([]EnvKey, 0, len(vars))
 	for _, v := range vars {
 		out = append(out, EnvKey{
 			ID:        v.ID,
 			Key:       v.Key,
-			Sensitive: envEntrySensitive(v),
+			Sensitive: v.Sensitive,
 		})
 	}
 	return out
 }
 
-// envEntrySensitive returns true if EnvVar.Content indicates a sensitive
-// entry per platform convention. The Zerops API marks sensitive entries
-// with a server-side flag we don't yet model on EnvVar; until we do, this
-// is a no-op returning false. Phase B e2e (TestProjectAdminClient_GetServiceEnv_OmitsValues)
-// verifies real sensitive-flag handling end-to-end.
-//
-// Note: even when Sensitive=false here, the Value field is STILL omitted
-// from EnvKey — the omit is unconditional. Sensitive is a separate signal
-// the caller can use to decide whether to surface the key to the user.
-func envEntrySensitive(_ EnvVar) bool {
-	// Phase B e2e fills this in once we observe the API's sensitive-flag
-	// field on EnvVar. Current EnvVar struct lacks a Sensitive flag; we
-	// can either extend it OR query a separate endpoint. Decision deferred
-	// to e2e observation.
-	return false
+func stripProjectEnvValues(vars []ProjectEnvVar) []EnvKey {
+	out := make([]EnvKey, 0, len(vars))
+	for _, v := range vars {
+		out = append(out, EnvKey{
+			ID:        v.ID,
+			Key:       v.Key,
+			Sensitive: v.Sensitive,
+		})
+	}
+	return out
 }

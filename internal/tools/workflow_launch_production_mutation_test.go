@@ -58,7 +58,7 @@ func TestHandleLaunchProduction_MissingTargetService_ScopePromptEarly(t *testing
 	mock := platform.NewMockProjectAdminClient()
 	defer installMockAdminFactory(t, mock)()
 
-	client := newLaunchMockClient().WithProjectEnv([]platform.EnvVar{
+	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
 		{Key: "LOG_LEVEL", Content: "info"},
 	})
 
@@ -221,7 +221,7 @@ func TestHandleLaunchProduction_Mutation_AuthFailureWrappedSafely(t *testing.T) 
 	})
 	defer restore()
 
-	client := newLaunchMockClient().WithProjectEnv([]platform.EnvVar{
+	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
 		{Key: "LOG_LEVEL", Content: "info"},
 	})
 
@@ -266,7 +266,7 @@ func TestHandleLaunchProduction_IdempotentResume(t *testing.T) {
 	mock := platform.NewMockProjectAdminClient()
 	defer installMockAdminFactory(t, mock)()
 
-	client := newLaunchMockClient().WithProjectEnv([]platform.EnvVar{
+	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
 		{Key: "LOG_LEVEL", Content: "info"},
 	})
 
@@ -304,7 +304,7 @@ func TestHandleLaunchProduction_LaunchedResponseIncludesDeleteKey(t *testing.T) 
 
 	mock := platform.NewMockProjectAdminClient()
 	defer installMockAdminFactory(t, mock)()
-	client := newLaunchMockClient().WithProjectEnv([]platform.EnvVar{
+	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
 		{Key: "LOG_LEVEL", Content: "info"},
 	})
 

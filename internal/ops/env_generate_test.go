@@ -19,8 +19,8 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
 		name         string
 		zeropsYml    string
 		hostname     string
-		serviceEnvs  map[string][]platform.EnvVar
-		projectEnvs  []platform.EnvVar
+		serviceEnvs  map[string][]platform.ServiceEnvVar
+		projectEnvs  []platform.ProjectEnvVar
 		wantVars     int
 		wantServices int
 		wantContains []string
@@ -36,7 +36,7 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
         DB_PORT: ${db_port}
 `,
 			hostname: "app",
-			serviceEnvs: map[string][]platform.EnvVar{
+			serviceEnvs: map[string][]platform.ServiceEnvVar{
 				"db": {
 					{ID: "e1", Key: "hostname", Content: "db"},
 					{ID: "e2", Key: "port", Content: "5432"},
@@ -55,12 +55,12 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
         DB_HOST: ${db_hostname}
 `,
 			hostname: "app",
-			serviceEnvs: map[string][]platform.EnvVar{
+			serviceEnvs: map[string][]platform.ServiceEnvVar{
 				"db": {
 					{ID: "e1", Key: "hostname", Content: "db"},
 				},
 			},
-			projectEnvs: []platform.EnvVar{
+			projectEnvs: []platform.ProjectEnvVar{
 				{ID: "pe1", Key: "APP_KEY", Content: "base64:secretkey"},
 			},
 			wantVars:     2, // 1 from zerops.yaml + 1 project
@@ -77,7 +77,7 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
         DB_HOST: ${db_hostname}
 `,
 			hostname: "app",
-			serviceEnvs: map[string][]platform.EnvVar{
+			serviceEnvs: map[string][]platform.ServiceEnvVar{
 				"db": {
 					{ID: "e1", Key: "hostname", Content: "db"},
 				},
@@ -102,7 +102,7 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
         DATABASE_URL: postgresql://${db_user}:${db_password}@db:${db_port}/${db_dbName}
 `,
 			hostname: "app",
-			serviceEnvs: map[string][]platform.EnvVar{
+			serviceEnvs: map[string][]platform.ServiceEnvVar{
 				"db": {
 					{ID: "e1", Key: "user", Content: "appuser"},
 					{ID: "e2", Key: "password", Content: "s3cret"},
@@ -127,7 +127,7 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
         NODE_ENV: production
 `,
 			hostname: "app",
-			serviceEnvs: map[string][]platform.EnvVar{
+			serviceEnvs: map[string][]platform.ServiceEnvVar{
 				"db": {
 					{ID: "e1", Key: "hostname", Content: "db"},
 					{ID: "e2", Key: "user", Content: "u"},
@@ -156,7 +156,7 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
         DATABASE_URL: postgresql://${db_user}:${db_typoed}@db/main
 `,
 			hostname: "app",
-			serviceEnvs: map[string][]platform.EnvVar{
+			serviceEnvs: map[string][]platform.ServiceEnvVar{
 				"db": {
 					{ID: "e1", Key: "user", Content: "u"},
 				},
@@ -182,7 +182,7 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
         DATABASE_URL: ${db_connectionString}
 `,
 			hostname: "app",
-			serviceEnvs: map[string][]platform.EnvVar{
+			serviceEnvs: map[string][]platform.ServiceEnvVar{
 				"db": {
 					{ID: "e1", Key: "user", Content: "myuser"},
 					{ID: "e2", Key: "password", Content: "s3cret"},
@@ -209,7 +209,7 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
         DB_URL: ${db_composed}
 `,
 			hostname: "app",
-			serviceEnvs: map[string][]platform.EnvVar{
+			serviceEnvs: map[string][]platform.ServiceEnvVar{
 				"db": {
 					{ID: "d1", Key: "composed", Content: "db@${cache_url}"},
 				},
@@ -235,7 +235,7 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
         FOO: ${db_x}
 `,
 			hostname: "app",
-			serviceEnvs: map[string][]platform.EnvVar{
+			serviceEnvs: map[string][]platform.ServiceEnvVar{
 				"db": {
 					{ID: "d1", Key: "x", Content: "${y}"},
 					{ID: "d2", Key: "y", Content: "${x}"},
@@ -257,7 +257,7 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
         URL: https://${hostname}:${port}/api
 `,
 			hostname:     "app",
-			serviceEnvs:  map[string][]platform.EnvVar{},
+			serviceEnvs:  map[string][]platform.ServiceEnvVar{},
 			wantVars:     1,
 			wantServices: 0,
 			wantContains: []string{"URL=https://${hostname}:${port}/api"},
@@ -271,7 +271,7 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
         SHARED_KEY: custom_value
 `,
 			hostname: "app",
-			projectEnvs: []platform.EnvVar{
+			projectEnvs: []platform.ProjectEnvVar{
 				{ID: "pe1", Key: "SHARED_KEY", Content: "project_value"},
 			},
 			wantVars:     1,
@@ -318,7 +318,7 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
         DB_HOST: ${db_hostname}
 `,
 			hostname: "app",
-			serviceEnvs: map[string][]platform.EnvVar{
+			serviceEnvs: map[string][]platform.ServiceEnvVar{
 				"db": {
 					{ID: "e1", Key: "port", Content: "5432"},
 				},
@@ -340,7 +340,7 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
         DB_HOST: ${my_db_hostname}
 `,
 			hostname: "app",
-			serviceEnvs: map[string][]platform.EnvVar{
+			serviceEnvs: map[string][]platform.ServiceEnvVar{
 				"my-db": {
 					{ID: "e1", Key: "hostname", Content: "my-db"},
 				},
@@ -363,7 +363,7 @@ func TestEnvGenerateDotenv_ResolvesRefs(t *testing.T) {
         FALLBACK: ${SOME_PROJECT_VAR}
 `,
 			hostname:     "app",
-			serviceEnvs:  map[string][]platform.EnvVar{},
+			serviceEnvs:  map[string][]platform.ServiceEnvVar{},
 			wantVars:     1,
 			wantServices: 0,
 			wantContains: []string{"FALLBACK=${SOME_PROJECT_VAR}"},
@@ -469,7 +469,7 @@ func TestEnvGenerateDotenv_PlatformInternalsFiltered(t *testing.T) {
 			ID: "svc-app", Name: "app", ProjectID: "proj-1", Status: "RUNNING",
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
 		}}).
-		WithProjectEnv([]platform.EnvVar{
+		WithProjectEnv([]platform.ProjectEnvVar{
 			{ID: "p1", Key: "ZCP_API_KEY", Content: "deploy-token-leak"},
 			{ID: "p2", Key: "envIsolation", Content: "service"},
 			{ID: "p3", Key: "sshIsolation", Content: "service"},
@@ -557,7 +557,7 @@ func TestEnvGenerateDotenv_YamlRefOverridesDenylist(t *testing.T) {
 			ID: "svc-app", Name: "app", ProjectID: "proj-1", Status: "RUNNING",
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"},
 		}}).
-		WithProjectEnv([]platform.EnvVar{
+		WithProjectEnv([]platform.ProjectEnvVar{
 			{ID: "p1", Key: "ZCP_API_KEY", Content: "deploy-token-from-platform"},
 		})
 
@@ -619,9 +619,9 @@ func TestEnvGenerateDotenv_ListServices_CalledOncePerBatch(t *testing.T) {
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "proj-1", Name: "test", Status: statusActive}).
 		WithServices(services).
-		WithServiceEnv("svc-db", []platform.EnvVar{{ID: "d1", Key: "hostname", Content: "db"}}).
-		WithServiceEnv("svc-cache", []platform.EnvVar{{ID: "c1", Key: "url", Content: "redis://cache:6379"}}).
-		WithServiceEnv("svc-queue", []platform.EnvVar{{ID: "q1", Key: "url", Content: "nats://queue:4222"}})
+		WithServiceEnv("svc-db", []platform.ServiceEnvVar{{ID: "d1", Key: "hostname", Content: "db"}}).
+		WithServiceEnv("svc-cache", []platform.ServiceEnvVar{{ID: "c1", Key: "url", Content: "redis://cache:6379"}}).
+		WithServiceEnv("svc-queue", []platform.ServiceEnvVar{{ID: "q1", Key: "url", Content: "nats://queue:4222"}})
 
 	if _, err := EnvGenerateDotenv(context.Background(), mock, "proj-1", "app", tmpDir, EnvGenerateDotenvOptions{}); err != nil {
 		t.Fatalf("EnvGenerateDotenv: %v", err)
@@ -819,7 +819,7 @@ LOG_LEVEL=debug
 			{ID: "svc-app", Name: "app", ProjectID: "p1", Status: "RUNNING"},
 			{ID: "svc-db", Name: "db", ProjectID: "p1", Status: "RUNNING"},
 		}).
-		WithServiceEnv("svc-db", []platform.EnvVar{
+		WithServiceEnv("svc-db", []platform.ServiceEnvVar{
 			{ID: "e1", Key: "hostname", Content: "db"},
 		})
 
@@ -882,7 +882,7 @@ func TestGenerateDotenv_PreviewReturnsDiff(t *testing.T) {
 			{ID: "svc-app", Name: "app", ProjectID: "p1", Status: "RUNNING"},
 			{ID: "svc-db", Name: "db", ProjectID: "p1", Status: "RUNNING"},
 		}).
-		WithServiceEnv("svc-db", []platform.EnvVar{
+		WithServiceEnv("svc-db", []platform.ServiceEnvVar{
 			{ID: "e1", Key: "hostname", Content: "db"},
 		})
 

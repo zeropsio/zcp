@@ -77,7 +77,7 @@ func bootstrapMock() *platform.Mock {
 			{ID: "svc-db", Name: "db", Status: "RUNNING",
 				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
 		}).
-		WithServiceEnv("svc-db", []platform.EnvVar{
+		WithServiceEnv("svc-db", []platform.ServiceEnvVar{
 			{ID: "env-1", Key: "connectionString", Content: "postgresql://zerops:secret@db:5432/db"},
 			{ID: "env-2", Key: "host", Content: "db"},
 			{ID: "env-3", Key: "port", Content: "5432"},
@@ -350,7 +350,7 @@ func TestIntegration_BootstrapRealistic_ManagedOnlySkipPath(t *testing.T) {
 			{ID: "svc-db", Name: "db", Status: "RUNNING",
 				ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
 		}).
-		WithServiceEnv("svc-db", []platform.EnvVar{
+		WithServiceEnv("svc-db", []platform.ServiceEnvVar{
 			{ID: "env-1", Key: "connectionString", Content: "postgresql://zerops:secret@db:5432/db"},
 		}).
 		WithImportResult(&platform.ImportResult{

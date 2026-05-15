@@ -196,7 +196,7 @@ func TestMergePlatformAutoClassifications(t *testing.T) {
 func TestClassifyPromptResponse_HidesPlatformEnvs(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	client := newLaunchMockClient().WithProjectEnv([]platform.EnvVar{
+	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
 		{Key: "APP_KEY", Content: "secret-value"},
 		{Key: "zeropsSubdomainHost", Content: "abc.zerops.app"},
 		{Key: "ZCP_API_KEY", Content: "zcp-key-value"},
@@ -250,7 +250,7 @@ func TestClassifyPromptResponse_HidesPlatformEnvs(t *testing.T) {
 func TestClassifyPromptResponse_OnlyPlatformEnvs_NoPromptFires(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	client := newLaunchMockClient().WithProjectEnv([]platform.EnvVar{
+	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
 		{Key: "zeropsSubdomainHost", Content: "abc.zerops.app"},
 		{Key: "ZCP_API_KEY", Content: "zcp-value"},
 	})

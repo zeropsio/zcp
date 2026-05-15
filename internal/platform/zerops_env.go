@@ -13,7 +13,7 @@ import (
 // Service environment
 // ---------------------------------------------------------------------------
 
-func (z *ZeropsClient) GetServiceEnv(ctx context.Context, serviceID string) ([]EnvVar, error) {
+func (z *ZeropsClient) GetServiceEnv(ctx context.Context, serviceID string) ([]ServiceEnvVar, error) {
 	pathParam := path.ServiceStackId{Id: uuid.ServiceStackId(serviceID)}
 	resp, err := z.handler.GetServiceStackEnv(ctx, pathParam)
 	if err != nil {
@@ -24,12 +24,14 @@ func (z *ZeropsClient) GetServiceEnv(ctx context.Context, serviceID string) ([]E
 		return nil, mapSDKError(err, "service")
 	}
 
-	envs := make([]EnvVar, 0, len(out.Items))
+	envs := make([]ServiceEnvVar, 0, len(out.Items))
 	for _, e := range out.Items {
-		envs = append(envs, EnvVar{
-			ID:      e.Id.TypedString().String(),
-			Key:     e.Key.String(),
-			Content: string(e.Content),
+		envs = append(envs, ServiceEnvVar{
+			ID:        e.Id.TypedString().String(),
+			Key:       e.Key.String(),
+			Content:   string(e.Content),
+			Type:      ServiceEnvType(e.Type),
+			Sensitive: bool(e.Sensitive),
 		})
 	}
 	return envs, nil
@@ -70,7 +72,7 @@ func (z *ZeropsClient) DeleteUserData(ctx context.Context, userDataID string) (*
 // Project environment
 // ---------------------------------------------------------------------------
 
-func (z *ZeropsClient) GetProjectEnv(ctx context.Context, projectID string) ([]EnvVar, error) {
+func (z *ZeropsClient) GetProjectEnv(ctx context.Context, projectID string) ([]ProjectEnvVar, error) {
 	clientID, err := z.getClientID(ctx)
 	if err != nil {
 		return nil, err
@@ -104,12 +106,15 @@ func (z *ZeropsClient) GetProjectEnv(ctx context.Context, projectID string) ([]E
 	}
 	project := out.Items[0]
 
-	envs := make([]EnvVar, 0, len(project.EnvList))
+	envs := make([]ProjectEnvVar, 0, len(project.EnvList))
 	for _, e := range project.EnvList {
-		envs = append(envs, EnvVar{
-			ID:      e.Id.TypedString().String(),
-			Key:     e.Key.String(),
-			Content: string(e.Content),
+		envs = append(envs, ProjectEnvVar{
+			ID:        e.Id.TypedString().String(),
+			Key:       e.Key.String(),
+			Content:   string(e.Content),
+			Type:      ProjectEnvType(e.Type),
+			Sensitive: bool(e.Sensitive),
+			Editable:  bool(e.Editable),
 		})
 	}
 	return envs, nil

@@ -83,7 +83,7 @@ func TestCheckServiceStatusAny_ReadyToDeployRejectFromRunningSet_AttachesImportR
 		WithAppVersionEvents([]platform.AppVersionEvent{
 			{ID: "av-1", ServiceStackID: "s1", Status: platform.BuildStatusBuildFailed, Created: "2026-05-05T10:00:00Z"},
 		}).
-		WithServiceEnv("s2", []platform.EnvVar{{Key: "connectionString", Content: "pg://..."}})
+		WithServiceEnv("s2", []platform.ServiceEnvVar{{Key: "connectionString", Content: "pg://..."}})
 
 	// Dev runtime expected to be RUNNING/ACTIVE — READY_TO_DEPLOY rejects.
 	plan := &workflow.ServicePlan{

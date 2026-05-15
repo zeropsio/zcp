@@ -88,7 +88,7 @@ func TestSubdomainTool_EnableReturnsUrls_BarePrefix(t *testing.T) {
 			ID: "proj-1", Name: "myproject", Status: statusActive,
 			SubdomainHost: "abc1", // bare prefix — no domain suffix
 		}).
-		WithServiceEnv("svc-1", []platform.EnvVar{
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
 			{ID: "env-1", Key: "zeropsSubdomain", Content: "https://app-abc1-3000.prg1.zerops.app"},
 		}).
 		WithProcess(&platform.Process{

@@ -53,7 +53,7 @@ func TestBuildEnvPlan_OnlyProjectEnv(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "p1", Name: "test", Status: statusActive}).
-		WithProjectEnv([]platform.EnvVar{
+		WithProjectEnv([]platform.ProjectEnvVar{
 			{ID: "pe1", Key: "APP_KEY", Content: "base64:secret"},
 			{ID: "pe2", Key: "JWT_SECRET", Content: "shared-jwt"},
 		})
@@ -94,7 +94,7 @@ func TestBuildEnvPlan_PrecedenceYAMLOverProject(t *testing.T) {
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-app", Name: "app", ProjectID: "p1", Status: "RUNNING"},
 		}).
-		WithProjectEnv([]platform.EnvVar{
+		WithProjectEnv([]platform.ProjectEnvVar{
 			{ID: "pe1", Key: "APP_NAME", Content: "from-project"},
 		})
 
@@ -142,7 +142,7 @@ LOG_LEVEL=debug
 			{ID: "svc-app", Name: "app", ProjectID: "p1", Status: "RUNNING"},
 			{ID: "svc-db", Name: "db", ProjectID: "p1", Status: "RUNNING"},
 		}).
-		WithServiceEnv("svc-db", []platform.EnvVar{
+		WithServiceEnv("svc-db", []platform.ServiceEnvVar{
 			{ID: "e1", Key: "hostname", Content: "db"},
 		})
 
@@ -207,7 +207,7 @@ func TestBuildEnvPlan_OverlayWinsOverProject(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "p1", Name: "test", Status: statusActive}).
-		WithProjectEnv([]platform.EnvVar{
+		WithProjectEnv([]platform.ProjectEnvVar{
 			{ID: "pe1", Key: "APP_KEY", Content: "base64:project-secret"},
 		})
 
@@ -254,7 +254,7 @@ BETA_VAR=b
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-app", Name: "app", ProjectID: "p1", Status: "RUNNING"},
 		}).
-		WithProjectEnv([]platform.EnvVar{
+		WithProjectEnv([]platform.ProjectEnvVar{
 			{ID: "pe1", Key: "PROJECT_VAR", Content: "p"},
 		})
 
@@ -393,7 +393,7 @@ func TestBuildEnvPlan_PlatformInternalsFiltered(t *testing.T) {
 
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "p1", Name: "test", Status: statusActive}).
-		WithProjectEnv([]platform.EnvVar{
+		WithProjectEnv([]platform.ProjectEnvVar{
 			{ID: "p1", Key: "APP_KEY", Content: "base64:secret"},
 			{ID: "p2", Key: "ZCP_API_KEY", Content: "deploy-token-leak"},
 			{ID: "p3", Key: "envIsolation", Content: "service"},
@@ -448,10 +448,10 @@ func TestBuildEnvPlan_TouchedServiceHostnames(t *testing.T) {
 			{ID: "svc-db", Name: "db", ProjectID: "p1", Status: "RUNNING"},
 			{ID: "svc-cache", Name: "cache", ProjectID: "p1", Status: "RUNNING"},
 		}).
-		WithServiceEnv("svc-db", []platform.EnvVar{
+		WithServiceEnv("svc-db", []platform.ServiceEnvVar{
 			{ID: "e1", Key: "hostname", Content: "db"},
 		}).
-		WithServiceEnv("svc-cache", []platform.EnvVar{
+		WithServiceEnv("svc-cache", []platform.ServiceEnvVar{
 			{ID: "e2", Key: "url", Content: "redis://cache:6379"},
 		})
 
@@ -702,7 +702,7 @@ func TestBuildEnvPlan_BrownfieldOverrides_MergeBetweenProjectAndYAML(t *testing.
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-app", Name: "app", ProjectID: "p1", Status: "RUNNING"},
 		}).
-		WithProjectEnv([]platform.EnvVar{
+		WithProjectEnv([]platform.ProjectEnvVar{
 			{ID: "pe1", Key: "PROJECT_ONLY", Content: "from-project"},
 			{ID: "pe2", Key: "BROWNFIELD_OVERRIDES_PROJECT", Content: "project-loses"},
 		})

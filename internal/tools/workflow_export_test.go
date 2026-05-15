@@ -61,7 +61,7 @@ const exportTestZeropsYAML = `zerops:
         DB_HOST: ${db_hostname}
 `
 
-func newExportMock(svcs []platform.ServiceStack, projectEnvs []platform.EnvVar) *platform.Mock {
+func newExportMock(svcs []platform.ServiceStack, projectEnvs []platform.ProjectEnvVar) *platform.Mock {
 	m := platform.NewMock().
 		WithProject(&platform.Project{ID: "proj1", Name: "demo", Status: "ACTIVE"}).
 		WithServices(svcs).
@@ -214,7 +214,7 @@ func TestHandleExport_SimpleMode_SkipsVariantPrompt(t *testing.T) {
 	t.Parallel()
 	mock := newExportMock(
 		[]platform.ServiceStack{runtimeService("appdev", "nodejs@22", false)},
-		[]platform.EnvVar{{Key: "LOG_LEVEL", Content: "info"}},
+		[]platform.ProjectEnvVar{{Key: "LOG_LEVEL", Content: "info"}},
 	)
 
 	dir := t.TempDir()
@@ -345,7 +345,7 @@ func TestHandleExport_ClassifyPrompt(t *testing.T) {
 	t.Parallel()
 	mock := newExportMock(
 		[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
-		[]platform.EnvVar{
+		[]platform.ProjectEnvVar{
 			{Key: "APP_KEY", Content: "old-key"},
 			{Key: "DB_HOST", Content: "${db_hostname}"},
 		},
@@ -393,7 +393,7 @@ func TestHandleExport_GitPushUnconfigured_ChainsAfterClassify(t *testing.T) {
 	t.Parallel()
 	mock := newExportMock(
 		[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
-		[]platform.EnvVar{{Key: "LOG_LEVEL", Content: "info"}},
+		[]platform.ProjectEnvVar{{Key: "LOG_LEVEL", Content: "info"}},
 	)
 
 	dir := t.TempDir()
@@ -437,7 +437,7 @@ func TestHandleExport_PublishReady(t *testing.T) {
 			runtimeService("appdev", "php-apache@8.4", true), // subdomain enabled
 			managedService(),
 		},
-		[]platform.EnvVar{
+		[]platform.ProjectEnvVar{
 			{Key: "APP_KEY", Content: "old-key"},
 			{Key: "DB_HOST", Content: "${db_hostname}"},
 			{Key: "LOG_LEVEL", Content: "info"},
@@ -634,7 +634,7 @@ func TestHandleExport_PartialClassifications_RePromptsClassify(t *testing.T) {
 	t.Parallel()
 	mock := newExportMock(
 		[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
-		[]platform.EnvVar{
+		[]platform.ProjectEnvVar{
 			{Key: "APP_KEY", Content: "old"},
 			{Key: "DB_HOST", Content: "${db_hostname}"},
 			{Key: "LOG_LEVEL", Content: "info"},
@@ -679,7 +679,7 @@ func TestHandleExport_ExtraClassificationKeys_NoSuppress(t *testing.T) {
 	t.Parallel()
 	mock := newExportMock(
 		[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
-		[]platform.EnvVar{{Key: "LOG_LEVEL", Content: "info"}},
+		[]platform.ProjectEnvVar{{Key: "LOG_LEVEL", Content: "info"}},
 	)
 
 	dir := t.TempDir()
@@ -754,7 +754,7 @@ func TestHandleExport_ClassifyPromptDoesNotLeakValues(t *testing.T) {
 	const sentinelValue = "S3CRET_SENTINEL_VALUE_DO_NOT_LEAK"
 	mock := newExportMock(
 		[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
-		[]platform.EnvVar{{Key: "APP_KEY", Content: sentinelValue}},
+		[]platform.ProjectEnvVar{{Key: "APP_KEY", Content: sentinelValue}},
 	)
 
 	dir := t.TempDir()
@@ -909,7 +909,7 @@ func TestHandleExport_ValidationFailed(t *testing.T) {
 `
 	mock := newExportMock(
 		[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
-		[]platform.EnvVar{{Key: "LOG_LEVEL", Content: "info"}},
+		[]platform.ProjectEnvVar{{Key: "LOG_LEVEL", Content: "info"}},
 	)
 
 	dir := t.TempDir()
@@ -976,7 +976,7 @@ func TestHandleExport_ValidationOutranksGitPushSetup(t *testing.T) {
 `
 	mock := newExportMock(
 		[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
-		[]platform.EnvVar{{Key: "LOG_LEVEL", Content: "info"}},
+		[]platform.ProjectEnvVar{{Key: "LOG_LEVEL", Content: "info"}},
 	)
 
 	dir := t.TempDir()
@@ -1019,7 +1019,7 @@ func TestHandleExport_RemoteURLDrift_SurfacesWarning(t *testing.T) {
 	t.Parallel()
 	mock := newExportMock(
 		[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
-		[]platform.EnvVar{{Key: "LOG_LEVEL", Content: "info"}},
+		[]platform.ProjectEnvVar{{Key: "LOG_LEVEL", Content: "info"}},
 	)
 
 	dir := t.TempDir()
@@ -1101,7 +1101,7 @@ func TestHandleExport_RemoteURLAligned_NoWarning(t *testing.T) {
 	t.Parallel()
 	mock := newExportMock(
 		[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
-		[]platform.EnvVar{{Key: "LOG_LEVEL", Content: "info"}},
+		[]platform.ProjectEnvVar{{Key: "LOG_LEVEL", Content: "info"}},
 	)
 
 	dir := t.TempDir()
@@ -1164,7 +1164,7 @@ func TestHandleExport_FreshMetaCacheSeed(t *testing.T) {
 	t.Parallel()
 	mock := newExportMock(
 		[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
-		[]platform.EnvVar{{Key: "LOG_LEVEL", Content: "info"}},
+		[]platform.ProjectEnvVar{{Key: "LOG_LEVEL", Content: "info"}},
 	)
 
 	dir := t.TempDir()

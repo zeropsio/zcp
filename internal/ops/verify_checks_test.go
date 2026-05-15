@@ -37,7 +37,7 @@ func TestResolveSubdomainURL_BarePrefixFallback(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "p1", SubdomainHost: "1df2"}).
-		WithServiceEnv("svc-1", []platform.EnvVar{
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
 			{Key: "zeropsSubdomain", Content: "https://api-1df2-3000.prg1.zerops.app"},
 		})
 
@@ -61,7 +61,7 @@ func TestResolveSubdomainURL_BarePrefixPort80(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "p1", SubdomainHost: "1df2"}).
-		WithServiceEnv("svc-1", []platform.EnvVar{
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
 			{Key: "zeropsSubdomain", Content: "https://api-1df2.prg1.zerops.app"},
 		})
 

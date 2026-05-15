@@ -124,7 +124,7 @@ type refExpander struct {
 	client       platform.Client
 	classifier   *EnvRefClassifier
 	serviceIndex map[string]platform.ServiceStack
-	cache        map[string][]platform.EnvVar
+	cache        map[string][]platform.ServiceEnvVar
 }
 
 // expandRefs walks `value` and substitutes resolvable `${...}` refs.
@@ -440,10 +440,10 @@ func probeTouchedServices(ctx context.Context, projectID string, services []plat
 	return ""
 }
 
-func findEnvValue(envs []platform.EnvVar, key string) string {
+func findEnvValue[T platform.EnvAccessor](envs []T, key string) string {
 	for _, e := range envs {
-		if e.Key == key {
-			return e.Content
+		if e.GetKey() == key {
+			return e.GetContent()
 		}
 	}
 	return ""

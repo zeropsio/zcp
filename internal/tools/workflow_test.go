@@ -1294,7 +1294,7 @@ func TestBootstrapProvision_AutoMount_ContainerEnv(t *testing.T) {
 	mock := platform.NewMock().WithServices([]platform.ServiceStack{
 		{ID: "svc-1", Name: "appdev", Status: serviceStatusRunning},
 		{ID: "svc-2", Name: "db", Status: serviceStatusRunning},
-	}).WithServiceEnv("svc-2", []platform.EnvVar{{Key: "connectionString", Content: "pg://..."}})
+	}).WithServiceEnv("svc-2", []platform.ServiceEnvVar{{Key: "connectionString", Content: "pg://..."}})
 	mounter := newTestMounter()
 	engine := workflow.NewEngine(t.TempDir(), workflow.EnvContainer, nil)
 

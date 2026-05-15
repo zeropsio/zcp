@@ -102,7 +102,7 @@ func TestExportFlow_MultiCallThroughServer(t *testing.T) {
 				Mode:   "NON_HA",
 			},
 		}).
-		WithProjectEnv([]platform.EnvVar{{Key: "LOG_LEVEL", Content: "info"}})
+		WithProjectEnv([]platform.ProjectEnvVar{{Key: "LOG_LEVEL", Content: "info"}})
 
 	// Seed ServiceMeta so the handler's bootstrap-meta gate passes.
 	stateDir := writeIntegrationMeta(t, "appdev", topology.ModeStandard, topology.GitPushConfigured)

@@ -84,7 +84,7 @@ func Discover(
 			return nil, getErr
 		}
 		info := buildDetailedServiceInfo(detail)
-		var rawEnvs []platform.EnvVar
+		var rawEnvs []platform.ServiceEnvVar
 		if includeEnvs {
 			rawEnvs = attachEnvs(ctx, client, &info, detail.ID, result, includeEnvValues)
 		}
@@ -242,7 +242,7 @@ func attachProjectEnvs(ctx context.Context, client platform.Client, info *Projec
 
 // attachEnvs fetches service env vars and converts them for JSON output.
 // Returns raw envs for internal use (e.g. extractSubdomainURL).
-func attachEnvs(ctx context.Context, client platform.Client, info *ServiceInfo, serviceID string, result *DiscoverResult, includeValues bool) []platform.EnvVar {
+func attachEnvs(ctx context.Context, client platform.Client, info *ServiceInfo, serviceID string, result *DiscoverResult, includeValues bool) []platform.ServiceEnvVar {
 	envs, err := client.GetServiceEnv(ctx, serviceID)
 	if err != nil {
 		result.Warnings = append(result.Warnings,
@@ -280,7 +280,7 @@ func BuildSubdomainURL(hostname, subdomainHost string, port int) string {
 // without the key means subdomain isn't enabled" shortcut surfaced empty
 // URLs in discover responses during that propagation window. The extra
 // API call only fires on the rare miss; the cached path is unchanged.
-func ExtractSubdomainURL(ctx context.Context, client platform.Client, serviceID string, rawEnvs []platform.EnvVar) string {
+func ExtractSubdomainURL(ctx context.Context, client platform.Client, serviceID string, rawEnvs []platform.ServiceEnvVar) string {
 	for _, env := range rawEnvs {
 		if env.Key == envKeyZeropsSubdomain {
 			return env.Content

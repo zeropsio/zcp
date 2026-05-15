@@ -24,7 +24,7 @@ func TestImport_OverrideOnFailedRequiresAck(t *testing.T) {
 		WithServices([]platform.ServiceStack{
 			{ID: "s1", Name: "api", Status: platform.ServiceStatusReadyToDeploy},
 		}).
-		WithServiceEnv("s1", []platform.EnvVar{
+		WithServiceEnv("s1", []platform.ServiceEnvVar{
 			{ID: "e1", Key: "DATABASE_URL", Content: "postgresql://..."},
 			{ID: "e2", Key: "APP_KEY", Content: "secret"},
 		}).
@@ -127,11 +127,11 @@ func TestGateOverrideOnFailedHistory_PopulatesEnvVarLoss(t *testing.T) {
 			{ID: "s1", Name: "api", Status: platform.ServiceStatusReadyToDeploy},
 			{ID: "s2", Name: "worker", Status: platform.ServiceStatusReadyToDeploy},
 		}).
-		WithServiceEnv("s1", []platform.EnvVar{
+		WithServiceEnv("s1", []platform.ServiceEnvVar{
 			{ID: "e1", Key: "DATABASE_URL", Content: "postgresql://..."},
 			{ID: "e2", Key: "SHARED", Content: "from-api"},
 		}).
-		WithServiceEnv("s2", []platform.EnvVar{
+		WithServiceEnv("s2", []platform.ServiceEnvVar{
 			{ID: "e3", Key: "QUEUE_URL", Content: "nats://..."},
 			{ID: "e4", Key: "SHARED", Content: "from-worker"},
 		}).

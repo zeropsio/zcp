@@ -265,7 +265,7 @@ func TestSubdomain_EnableReturnsUrls(t *testing.T) {
 					ID: "proj-1", Name: "myproject", Status: "ACTIVE",
 					SubdomainHost: "1df2",
 				}).
-				WithServiceEnv("svc-1", []platform.EnvVar{
+				WithServiceEnv("svc-1", []platform.ServiceEnvVar{
 					{ID: "env-1", Key: "zeropsSubdomain", Content: "https://app-1df2-3000.prg1.zerops.app"},
 				}),
 			hostname: "app",
@@ -293,7 +293,7 @@ func TestSubdomain_EnableReturnsUrls(t *testing.T) {
 					ID: "proj-1", Name: "myproject", Status: "ACTIVE",
 					SubdomainHost: "1df2",
 				}).
-				WithServiceEnv("svc-1", []platform.EnvVar{
+				WithServiceEnv("svc-1", []platform.ServiceEnvVar{
 					{ID: "env-1", Key: "zeropsSubdomain", Content: "https://app-1df2-3000.prg1.zerops.app"},
 				}),
 			hostname: "app",

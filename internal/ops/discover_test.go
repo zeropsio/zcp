@@ -273,10 +273,10 @@ func TestDiscover_WithEnvs(t *testing.T) {
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices(services).
-		WithServiceEnv("svc-1", []platform.EnvVar{
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
 			{ID: "e1", Key: "PORT", Content: "3000"},
 		}).
-		WithServiceEnv("svc-2", []platform.EnvVar{
+		WithServiceEnv("svc-2", []platform.ServiceEnvVar{
 			{ID: "e2", Key: "DB_HOST", Content: "localhost"},
 		})
 
@@ -335,7 +335,7 @@ func TestDiscover_ProjectEnvs_NoFilter(t *testing.T) {
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices(services).
-		WithProjectEnv([]platform.EnvVar{
+		WithProjectEnv([]platform.ProjectEnvVar{
 			{ID: "pe1", Key: "GLOBAL_KEY", Content: "global_val"},
 			{ID: "pe2", Key: "APP_ENV", Content: "production"},
 		})
@@ -366,7 +366,7 @@ func TestDiscover_ProjectEnvs_WithServiceFilter(t *testing.T) {
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices(services).
-		WithProjectEnv([]platform.EnvVar{
+		WithProjectEnv([]platform.ProjectEnvVar{
 			{ID: "pe1", Key: "GLOBAL_KEY", Content: "global_val"},
 		})
 
@@ -421,10 +421,10 @@ func TestDiscover_SuccessfulEnvs_NoWarnings(t *testing.T) {
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices(services).
-		WithServiceEnv("svc-1", []platform.EnvVar{
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
 			{ID: "e1", Key: "PORT", Content: "3000"},
 		}).
-		WithProjectEnv([]platform.EnvVar{
+		WithProjectEnv([]platform.ProjectEnvVar{
 			{ID: "pe1", Key: "APP_ENV", Content: "production"},
 		})
 
@@ -548,12 +548,12 @@ func TestDiscover_EnvRefAnnotation(t *testing.T) {
 
 	tests := []struct {
 		name      string
-		envs      []platform.EnvVar
+		envs      []platform.ServiceEnvVar
 		wantIsRef map[string]bool // key -> expected isReference presence
 	}{
 		{
 			name: "plain values have no isReference",
-			envs: []platform.EnvVar{
+			envs: []platform.ServiceEnvVar{
 				{ID: "e1", Key: "PORT", Content: "3000"},
 				{ID: "e2", Key: "HOST", Content: "0.0.0.0"},
 			},
@@ -561,7 +561,7 @@ func TestDiscover_EnvRefAnnotation(t *testing.T) {
 		},
 		{
 			name: "cross-service refs get isReference true",
-			envs: []platform.EnvVar{
+			envs: []platform.ServiceEnvVar{
 				{ID: "e1", Key: "DB_HOST", Content: "${db_hostname}"},
 				{ID: "e2", Key: "DB_PASS", Content: "${db_password}"},
 			},
@@ -569,7 +569,7 @@ func TestDiscover_EnvRefAnnotation(t *testing.T) {
 		},
 		{
 			name: "mixed plain and ref values",
-			envs: []platform.EnvVar{
+			envs: []platform.ServiceEnvVar{
 				{ID: "e1", Key: "PORT", Content: "3000"},
 				{ID: "e2", Key: "DB_URL", Content: "postgresql://${db_hostname}:${db_port}/mydb"},
 				{ID: "e3", Key: "NODE_ENV", Content: "production"},
@@ -578,7 +578,7 @@ func TestDiscover_EnvRefAnnotation(t *testing.T) {
 		},
 		{
 			name: "dollar without braces is not a reference",
-			envs: []platform.EnvVar{
+			envs: []platform.ServiceEnvVar{
 				{ID: "e1", Key: "PRICE", Content: "$100"},
 			},
 			wantIsRef: map[string]bool{"PRICE": false},
@@ -636,7 +636,7 @@ func TestDiscover_NotesOnReferences(t *testing.T) {
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices(services).
-		WithServiceEnv("svc-1", []platform.EnvVar{
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
 			{ID: "e1", Key: "PORT", Content: "3000"},
 			{ID: "e2", Key: "DB_HOST", Content: "${db_hostname}"},
 		})
@@ -665,7 +665,7 @@ func TestDiscover_NoNotesWithoutReferences(t *testing.T) {
 	mock := platform.NewMock().
 		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices(services).
-		WithServiceEnv("svc-1", []platform.EnvVar{
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
 			{ID: "e1", Key: "PORT", Content: "3000"},
 			{ID: "e2", Key: "HOST", Content: "0.0.0.0"},
 		})
@@ -739,7 +739,7 @@ func TestDiscover_SubdomainURL_DetailedView(t *testing.T) {
 		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices(services).
 		WithService(detailSvc).
-		WithServiceEnv("svc-1", []platform.EnvVar{
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
 			{ID: "e1", Key: "zeropsSubdomain", Content: "https://api-1df2-3000.prg1.zerops.app"},
 			{ID: "e2", Key: "hostname", Content: "api"},
 		})
@@ -780,7 +780,7 @@ func TestDiscover_SubdomainURL_DetailedNoEnvs(t *testing.T) {
 		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
 		WithServices(services).
 		WithService(detailSvc).
-		WithServiceEnv("svc-1", []platform.EnvVar{
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
 			{ID: "e1", Key: "zeropsSubdomain", Content: "https://api-1df2-3000.prg1.zerops.app"},
 		})
 
@@ -841,7 +841,7 @@ func TestExtractSubdomainURL_RawEnvsHit(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
 		WithError("GetServiceEnv", fmt.Errorf("should not be called"))
-	rawEnvs := []platform.EnvVar{
+	rawEnvs := []platform.ServiceEnvVar{
 		{Key: "zeropsSubdomain", Content: "https://app-1df2-3000.prg1.zerops.app"},
 	}
 	got := ExtractSubdomainURL(context.Background(), mock, "svc-1", rawEnvs)
@@ -859,10 +859,10 @@ func TestExtractSubdomainURL_RawEnvsHit(t *testing.T) {
 func TestExtractSubdomainURL_RawEnvsMiss_FetchFallback(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
-		WithServiceEnv("svc-1", []platform.EnvVar{
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
 			{Key: "zeropsSubdomain", Content: "https://app-late.prg1.zerops.app"},
 		})
-	rawEnvs := []platform.EnvVar{{Key: "OTHER_VAR", Content: "x"}}
+	rawEnvs := []platform.ServiceEnvVar{{Key: "OTHER_VAR", Content: "x"}}
 	got := ExtractSubdomainURL(context.Background(), mock, "svc-1", rawEnvs)
 	if got != "https://app-late.prg1.zerops.app" {
 		t.Errorf("got %q, want URL from fetch fallback", got)
@@ -874,7 +874,7 @@ func TestExtractSubdomainURL_RawEnvsMiss_FetchFallback(t *testing.T) {
 func TestExtractSubdomainURL_NilEnvs_FetchFallback(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().
-		WithServiceEnv("svc-1", []platform.EnvVar{
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
 			{Key: "zeropsSubdomain", Content: "https://app-fetched.prg1.zerops.app"},
 		})
 	got := ExtractSubdomainURL(context.Background(), mock, "svc-1", nil)

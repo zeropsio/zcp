@@ -94,7 +94,7 @@ func defaultMock() *platform.Mock {
 			{ID: "svc-1", Name: "app", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
 			{ID: "svc-2", Name: "db", Status: "RUNNING", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
 		}).
-		WithServiceEnv("svc-1", []platform.EnvVar{
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
 			{ID: "env-1", Key: "DB_HOST", Content: "db"},
 		}).
 		WithProcessEvents([]platform.ProcessEvent{
@@ -312,7 +312,7 @@ func TestIntegration_DiscoverProjectEnvs(t *testing.T) {
 	t.Parallel()
 
 	mock := defaultMock().
-		WithProjectEnv([]platform.EnvVar{
+		WithProjectEnv([]platform.ProjectEnvVar{
 			{ID: "pe1", Key: "GLOBAL_KEY", Content: "global_val"},
 		})
 	session, cleanup := setupTestServer(t, mock, defaultLogFetcher())

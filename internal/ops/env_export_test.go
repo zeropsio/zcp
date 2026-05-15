@@ -15,7 +15,7 @@ func TestFormatEnvFile_SingleService(t *testing.T) {
 		{
 			Hostname: "db",
 			Type:     "postgresql@16",
-			Vars: []platform.EnvVar{
+			Vars: []platform.ServiceEnvVar{
 				{Key: "host", Content: "db"},
 				{Key: "port", Content: "5432"},
 				{Key: "password", Content: "secret123"},
@@ -60,14 +60,14 @@ func TestFormatEnvFile_MultipleServices(t *testing.T) {
 		{
 			Hostname: "db",
 			Type:     "postgresql@16",
-			Vars: []platform.EnvVar{
+			Vars: []platform.ServiceEnvVar{
 				{Key: "connectionString", Content: "postgresql://db:pass@db:5432/db"},
 			},
 		},
 		{
 			Hostname: "cache",
 			Type:     "valkey@7.2",
-			Vars: []platform.EnvVar{
+			Vars: []platform.ServiceEnvVar{
 				{Key: "host", Content: "cache"},
 				{Key: "port", Content: "6379"},
 			},
@@ -97,7 +97,7 @@ func TestFormatEnvFile_SpecialChars(t *testing.T) {
 		{
 			Hostname: "db",
 			Type:     "postgresql@16",
-			Vars: []platform.EnvVar{
+			Vars: []platform.ServiceEnvVar{
 				{Key: "password", Content: "p@ss=w0rd!$"},
 			},
 		},
@@ -118,7 +118,7 @@ func TestFormatEnvFile_IncludesS3(t *testing.T) {
 		{
 			Hostname: "storage",
 			Type:     "object-storage",
-			Vars: []platform.EnvVar{
+			Vars: []platform.ServiceEnvVar{
 				{Key: "apiUrl", Content: "https://storage.app-prg1.zerops.io"},
 				{Key: "accessKeyId", Content: "AKID123"},
 				{Key: "secretAccessKey", Content: "SECRET456"},

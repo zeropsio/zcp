@@ -401,7 +401,7 @@ func buildEnvPlanWith(
 	// Channel 2 (middle precedence): zerops.yaml run.envVariables.
 	// Refs of the form ${svc_var} are resolved against managed-service
 	// envs via the existing refExpander.
-	expanderCache := make(map[string][]platform.EnvVar)
+	expanderCache := make(map[string][]platform.ServiceEnvVar)
 	if len(entry.Run.EnvVariables) > 0 {
 		services := preListed
 		if services == nil {

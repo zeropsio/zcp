@@ -95,7 +95,7 @@ func pLP3MockClient() *platform.Mock {
 				ServiceStackTypeVersionName: "nodejs@22",
 			},
 		}).
-		WithProjectEnv([]platform.EnvVar{
+		WithProjectEnv([]platform.ProjectEnvVar{
 			{Key: "LOG_LEVEL", Content: "info"},
 		})
 }

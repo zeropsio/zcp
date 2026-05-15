@@ -177,7 +177,7 @@ func TestEnvSet_Project_UpsertExistingKey(t *testing.T) {
 	// Calling EnvSet with an already-existing project env must UPDATE it
 	// (delete + create), not fail with projectEnvDuplicateKey. Agents
 	// iterating on a recipe used to hit this error repeatedly.
-	base := platform.NewMock().WithProjectEnv([]platform.EnvVar{
+	base := platform.NewMock().WithProjectEnv([]platform.ProjectEnvVar{
 		{ID: "env-old-1", Key: "APP_KEY", Content: "old-value"},
 	})
 	mock := &countingProjectEnvMock{Client: base}
@@ -278,7 +278,7 @@ func TestEnvDelete_Service_Found(t *testing.T) {
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-1", Name: "api", ProjectID: "proj-1"},
 		}).
-		WithServiceEnv("svc-1", []platform.EnvVar{
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
 			{ID: "e1", Key: "DB_HOST", Content: "localhost"},
 		})
 
@@ -298,7 +298,7 @@ func TestEnvDelete_Service_NotFound(t *testing.T) {
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-1", Name: "api", ProjectID: "proj-1"},
 		}).
-		WithServiceEnv("svc-1", []platform.EnvVar{
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
 			{ID: "e1", Key: "DB_HOST", Content: "localhost"},
 		})
 
@@ -312,7 +312,7 @@ func TestEnvDelete_Project(t *testing.T) {
 	t.Parallel()
 
 	mock := platform.NewMock().
-		WithProjectEnv([]platform.EnvVar{
+		WithProjectEnv([]platform.ProjectEnvVar{
 			{ID: "pe1", Key: "GLOBAL_KEY", Content: "val"},
 		})
 

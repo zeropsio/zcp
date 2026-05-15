@@ -141,23 +141,29 @@ var platformInjectedKeys = map[string]bool{
 	envKeyZeropsSubdomain: true,
 }
 
-// envVarsToMaps converts platform env vars to a slice of maps for JSON output.
-// When includeValues is false, only keys and annotations are returned (no secret values in LLM context).
-// Values containing ${...} cross-service references are annotated with isReference: true.
+// envVarsToMaps converts platform env vars to a slice of maps for JSON
+// output. Generic over any EnvAccessor implementer — same code path
+// for both ProjectEnvVar and ServiceEnvVar.
+//
+// When includeValues is false, only keys and annotations are returned
+// (no secret values in LLM context). Values containing ${...}
+// cross-service references are annotated with isReference: true.
 // Platform-injected keys are annotated with isPlatformInjected: true.
-func envVarsToMaps(envs []platform.EnvVar, includeValues bool) []map[string]any {
+func envVarsToMaps[T platform.EnvAccessor](envs []T, includeValues bool) []map[string]any {
 	result := make([]map[string]any, 0, len(envs))
 	for _, e := range envs {
+		key := e.GetKey()
+		content := e.GetContent()
 		m := map[string]any{
-			"key": e.Key,
+			"key": key,
 		}
 		if includeValues {
-			m["value"] = e.Content
+			m["value"] = content
 		}
-		if crossRefPattern.MatchString(e.Content) {
+		if crossRefPattern.MatchString(content) {
 			m["isReference"] = true
 		}
-		if platformInjectedKeys[e.Key] {
+		if platformInjectedKeys[key] {
 			m["isPlatformInjected"] = true
 		}
 		result = append(result, m)
@@ -165,11 +171,12 @@ func envVarsToMaps(envs []platform.EnvVar, includeValues bool) []map[string]any 
 	return result
 }
 
-// findEnvIDByKey finds an env var ID by key name.
-func findEnvIDByKey(envs []platform.EnvVar, key string) string {
+// findEnvIDByKey finds an env var ID by key name. Generic over
+// EnvAccessor implementers.
+func findEnvIDByKey[T platform.EnvAccessor](envs []T, key string) string {
 	for _, e := range envs {
-		if e.Key == key {
-			return e.ID
+		if e.GetKey() == key {
+			return e.GetID()
 		}
 	}
 	return ""

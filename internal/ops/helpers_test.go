@@ -351,14 +351,14 @@ func TestEnvVarsToMaps_PlatformInjected(t *testing.T) {
 
 	tests := []struct {
 		name                string
-		envs                []platform.EnvVar
+		envs                []platform.ServiceEnvVar
 		wantKeys            []string
 		wantPlatformKeys    []string // keys that should have isPlatformInjected: true
 		wantNonPlatformKeys []string // keys that should NOT have isPlatformInjected
 	}{
 		{
 			name: "zeropsSubdomain annotated as platform-injected",
-			envs: []platform.EnvVar{
+			envs: []platform.ServiceEnvVar{
 				{ID: "e1", Key: "PORT", Content: "3000"},
 				{ID: "e2", Key: "zeropsSubdomain", Content: "https://app-1df2-3000.prg1.zerops.app"},
 				{ID: "e3", Key: "HOST", Content: "0.0.0.0"},
@@ -369,7 +369,7 @@ func TestEnvVarsToMaps_PlatformInjected(t *testing.T) {
 		},
 		{
 			name: "no platform-injected keys present",
-			envs: []platform.EnvVar{
+			envs: []platform.ServiceEnvVar{
 				{ID: "e1", Key: "PORT", Content: "3000"},
 				{ID: "e2", Key: "HOST", Content: "0.0.0.0"},
 			},
@@ -378,12 +378,12 @@ func TestEnvVarsToMaps_PlatformInjected(t *testing.T) {
 		},
 		{
 			name:     "empty envs",
-			envs:     []platform.EnvVar{},
+			envs:     []platform.ServiceEnvVar{},
 			wantKeys: []string{},
 		},
 		{
 			name: "only zeropsSubdomain",
-			envs: []platform.EnvVar{
+			envs: []platform.ServiceEnvVar{
 				{ID: "e1", Key: "zeropsSubdomain", Content: "https://app-1df2.prg1.zerops.app"},
 			},
 			wantKeys:         []string{"zeropsSubdomain"},
@@ -391,7 +391,7 @@ func TestEnvVarsToMaps_PlatformInjected(t *testing.T) {
 		},
 		{
 			name: "platform-injected with isReference interaction",
-			envs: []platform.EnvVar{
+			envs: []platform.ServiceEnvVar{
 				{ID: "e1", Key: "DB_URL", Content: "${db_connectionString}"},
 				{ID: "e2", Key: "zeropsSubdomain", Content: "https://app-1df2.prg1.zerops.app"},
 			},
@@ -449,7 +449,7 @@ func TestEnvVarsToMaps_PlatformInjected(t *testing.T) {
 func TestEnvVarsToMaps_KeysOnly(t *testing.T) {
 	t.Parallel()
 
-	envs := []platform.EnvVar{
+	envs := []platform.ServiceEnvVar{
 		{ID: "e1", Key: "PORT", Content: "3000"},
 		{ID: "e2", Key: "DB_URL", Content: "${db_connectionString}"},
 		{ID: "e3", Key: "zeropsSubdomain", Content: "https://app-1df2-3000.prg1.zerops.app"},
@@ -489,7 +489,7 @@ func TestEnvVarsToMaps_KeysOnly(t *testing.T) {
 func TestFindEnvIDByKey(t *testing.T) {
 	t.Parallel()
 
-	envs := []platform.EnvVar{
+	envs := []platform.ServiceEnvVar{
 		{ID: "env-1", Key: "DB_HOST", Content: "localhost"},
 		{ID: "env-2", Key: "DB_PORT", Content: "5432"},
 	}

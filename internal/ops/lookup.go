@@ -32,6 +32,6 @@ func LookupService(ctx context.Context, client platform.Client, projectID, hostn
 // upper layers don't reach into platform.Client directly. Today this is
 // a thin passthrough, but caching / batching / retries can land here
 // without touching every site.
-func FetchServiceEnv(ctx context.Context, client platform.Client, serviceID string) ([]platform.EnvVar, error) {
+func FetchServiceEnv(ctx context.Context, client platform.Client, serviceID string) ([]platform.ServiceEnvVar, error) {
 	return client.GetServiceEnv(ctx, serviceID)
 }

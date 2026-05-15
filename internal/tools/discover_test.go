@@ -77,7 +77,7 @@ func TestDiscoverTool_WithEnvs(t *testing.T) {
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-1", Name: "api", Status: statusActive, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@20"}},
 		}).
-		WithServiceEnv("svc-1", []platform.EnvVar{{Key: "PORT", Content: "3000"}})
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{{Key: "PORT", Content: "3000"}})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDiscover(srv, mock, "proj-1", "")
@@ -110,7 +110,7 @@ func TestDiscoverTool_StringifiedBool(t *testing.T) {
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-1", Name: "api", Status: statusActive, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@20"}},
 		}).
-		WithServiceEnv("svc-1", []platform.EnvVar{{Key: "PORT", Content: "3000"}})
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{{Key: "PORT", Content: "3000"}})
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
 	RegisterDiscover(srv, mock, "proj-1", "")
@@ -190,7 +190,7 @@ func TestDiscoverTool_EnvRefAnnotation(t *testing.T) {
 		WithServices([]platform.ServiceStack{
 			{ID: "svc-1", Name: "api", Status: statusActive, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@20"}},
 		}).
-		WithServiceEnv("svc-1", []platform.EnvVar{
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
 			{Key: "PORT", Content: "3000"},
 			{Key: "DB_HOST", Content: "${db_hostname}"},
 		})
