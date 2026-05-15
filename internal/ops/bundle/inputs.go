@@ -19,10 +19,19 @@ type ProjectEnvVar struct {
 // in the destination project. Hostname + Type + Mode mirror Discover
 // output; envs + envSecrets are intentionally absent — the platform
 // regenerates managed credentials on import.
+//
+// QuotaGBytes carries the source object-storage quota (GB, 1-100
+// range) for service types where ServiceTypeRules.
+// RequiresObjectStorageSize=true. Zero defaults to 1 at compose time
+// (platform import minimum); upstream caller may probe the source
+// service's quotaGBytes env to plumb a higher value through. Closes
+// F21 (object-storage entries missed the required objectStorageSize
+// field, causing projectImportMissingParameter rejection).
 type ManagedServiceEntry struct {
-	Hostname string
-	Type     string
-	Mode     string // "HA" / "NON_HA" / "" (object-storage and similar)
+	Hostname    string
+	Type        string
+	Mode        string // "HA" / "NON_HA" / "" (object-storage and similar)
+	QuotaGBytes int    // populated for object-storage; 0 → composer defaults to 1
 }
 
 // BundleInputs feeds composition for the export variants

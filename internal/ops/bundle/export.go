@@ -93,14 +93,7 @@ func composeImportYAML(
 	services := make([]any, 0, 1+len(inputs.ManagedServices))
 	services = append(services, runtimeEntry)
 	for _, m := range inputs.ManagedServices {
-		entry := map[string]any{
-			"hostname": m.Hostname,
-			"type":     m.Type,
-			"priority": 10,
-		}
-		if m.Mode != "" {
-			entry["mode"] = m.Mode
-		}
+		entry := managedEntryWithRules(m, false /*launch*/, false /*keepNonHA*/)
 		services = append(services, entry)
 	}
 

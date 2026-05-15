@@ -155,10 +155,11 @@ func launchRecipeNodejsInputs() ops.LaunchBundleInputs {
 
 // launchRecipeLaravelInputs models a launch from a Laravel-style stack:
 // php-nginx runtime + postgres + redis + object-storage. The
-// object-storage entry exercises the F20/F21 surface — current composer
-// (Phase 0) emits `mode: HA` and OMITS `objectStorageSize`. The golden
-// captured here pins THAT current shape. After Phase 2 fixes, the
-// golden must be updated.
+// object-storage entry exercises the F20/F21 surface. After Phase 2b
+// landed bundle.ServiceTypeRules + ManagedServiceEntry.QuotaGBytes,
+// the golden pins the corrected shape: object-storage entry has NO
+// `mode:` field and DOES have `objectStorageSize:` (default 1 when
+// caller doesn't probe source quotaGBytes).
 func launchRecipeLaravelInputs() ops.LaunchBundleInputs {
 	return ops.LaunchBundleInputs{
 		SourceProjectID:   "source-recipe-laravel",
@@ -231,9 +232,9 @@ func TestLaunchGolden_RecipeLaravel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildLaunchBundle: %v", err)
 	}
-	// NOTE: this golden captures the F20/F21 buggy output (storage entry
-	// has mode:HA and no objectStorageSize). After Phase 2 lands, this
-	// golden must be regenerated to reflect the corrected shape.
+	// Golden captures the Phase 2b corrected shape: storage entry has
+	// no `mode:` field (F20) and carries `objectStorageSize: 1` (F21
+	// default; caller may probe source quotaGBytes for a higher value).
 	assertGolden(t, "launch-recipe-laravel", bundle.ImportYAML)
 }
 

@@ -1,28 +1,16 @@
-//go:build regression_red
-
-// F20/F21 reproducers — pin the bugs identified in
-// plans/launch-production-feedback-fixes-2026-05-13-round3.md. These
-// tests MUST FAIL with the current composer (Phase 2a baseline).
-// When Phase 2b of the workflow-family redesign (plans/workflow-
-// family-architecture-2026-05-14.md §11) lands the bundle.
-// ServiceTypeRules.AcceptsMode + ManagedServiceEntry.QuotaGBytes
-// fixes, these tests flip to PASS and the build tag is removed.
+// F20/F21 permanent regression pins. Phase 2b (plans/workflow-family-
+// architecture-2026-05-14.md §11) landed the bundle.ServiceTypeRules.
+// AcceptsMode + ManagedServiceEntry.QuotaGBytes composer fixes;
+// these tests now run unconditionally to guard against re-introduction.
 //
-// F19 (CDN keys leaking into target yaml) was closed at the
-// handler-envclass boundary in Phase 2a — composer never sees
-// Type=SYSTEM envs anymore. Pin migrated to:
+// F19 (CDN keys leaking into target yaml) closed in Phase 2a at the
+// handler-envclass boundary — composer never sees Type=SYSTEM envs
+// anymore. Pin migrated to:
 //   - internal/envclass/classify_test.go::TestClassifyProjectEnv_CDNKeys_SystemDrops
 //   - internal/tools/workflow_launch_production_test.go::
 //       TestHandleLaunchProduction_ClassifyPrompt_HidesSystemEnvs
 //
-// Run: go test -tags regression_red ./internal/ops/ -run TestF2
-//
-// Why a build tag: default `go test ./...` should stay green during
-// the phased v9.91 → v9.92 → v9.93 → v9.95 release sequence. The
-// reproducers prove the bugs are observable, but the actual fix
-// lands in Phase 2b (v9.92). Gate G2 evidence per plan §13 confirms
-// these tests PASS after the fix; at that point the build tag is
-// stripped + tests run unconditionally.
+// Run: go test ./internal/ops/ -run TestF2
 
 package ops_test
 

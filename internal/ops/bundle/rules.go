@@ -64,3 +64,51 @@ func RulesForType(serviceType string) ServiceTypeRules {
 func hasPrefix(s, prefix string) bool {
 	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }
+
+// managedEntryWithRules composes the per-managed-service yaml entry,
+// consulting ServiceTypeRules for type-specific shape requirements:
+//
+//   - !AcceptsMode → mode field omitted regardless of caller intent
+//     (F20 fix: platform import rejects ANY mode value on
+//     object-storage / shared-storage with
+//     projectImportInvalidParameter).
+//   - RequiresObjectStorageSize → emit objectStorageSize, defaulting
+//     to 1 (platform minimum) when m.QuotaGBytes is unset
+//     (F21 fix: platform import rejects without the field with
+//     projectImportMissingParameter).
+//
+// `launchPromote` is launch-only: when true (and rules permit mode),
+// the entry HA-promotes unless `keepNonHA` opts out — this is the
+// launch composer's per-managed-service HA upgrade behavior. Export
+// passes launchPromote=false and propagates the source Mode verbatim
+// when present.
+func managedEntryWithRules(m ManagedServiceEntry, launchPromote, keepNonHA bool) map[string]any {
+	rules := RulesForType(m.Type)
+	entry := map[string]any{
+		"hostname": m.Hostname,
+		"type":     m.Type,
+		"priority": 10,
+	}
+	if rules.AcceptsMode {
+		switch {
+		case launchPromote && keepNonHA:
+			if m.Mode != "" {
+				entry["mode"] = m.Mode
+			} else {
+				entry["mode"] = importModeNonHA
+			}
+		case launchPromote:
+			entry["mode"] = importModeHA
+		case m.Mode != "":
+			entry["mode"] = m.Mode
+		}
+	}
+	if rules.RequiresObjectStorageSize {
+		size := m.QuotaGBytes
+		if size <= 0 {
+			size = 1
+		}
+		entry["objectStorageSize"] = size
+	}
+	return entry
+}

@@ -99,20 +99,7 @@ func BuildLaunch(
 	services := make([]any, 0, 1+len(inputs.ManagedServices))
 	services = append(services, runtimeEntry)
 	for _, m := range inputs.ManagedServices {
-		entry := map[string]any{
-			"hostname": m.Hostname,
-			"type":     m.Type,
-			"priority": 10,
-		}
-		if keepNonHASet[m.Hostname] {
-			if m.Mode != "" {
-				entry["mode"] = m.Mode
-			} else {
-				entry["mode"] = importModeNonHA
-			}
-		} else {
-			entry["mode"] = importModeHA
-		}
+		entry := managedEntryWithRules(m, true /*launch*/, keepNonHASet[m.Hostname])
 		services = append(services, entry)
 	}
 
