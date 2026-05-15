@@ -49,18 +49,24 @@ func existingTargetMock(targetProjectID string, existingServices []platform.Serv
 		})
 }
 
+// expectedExistingProjectID is the canonical target-project ID used
+// by the existing-project test fixtures. Tests inject "wrong-target-id"
+// (or similar) into the MOCK's WithProjects to exercise scope-mismatch
+// failure; input.ExistingProjectID always carries the canonical value.
+const expectedExistingProjectID = "expected-target-id"
+
 // existingCompleteInput returns a WorkflowInput populated for the
 // existing-project path: target project + project-scoped token + a
 // classification for the single user env in pLP3MockClient. P-LP-3
 // baseline is computed at compose time inside executeExistingProjectMutation.
-func existingCompleteInput(existingProjectID string) WorkflowInput {
+func existingCompleteInput() WorkflowInput {
 	return WorkflowInput{
 		Workflow:              workflowLaunchProduction,
 		ProductionProjectName: "myapp-prod",
 		Region:                "eu-central",
 		TargetService:         "app",
 		EnvClassifications:    map[string]string{"LOG_LEVEL": "plain-config"},
-		ExistingProjectID:     existingProjectID,
+		ExistingProjectID:     expectedExistingProjectID,
 		ExistingProdToken:     sentinelExistingProdToken,
 	}
 }
@@ -81,7 +87,7 @@ func TestLaunchExistingProject_TokenScopeMismatch_Refuses(t *testing.T) {
 		return targetMock, nil
 	})()
 
-	input := existingCompleteInput("expected-target-id")
+	input := existingCompleteInput()
 
 	result, _, err := handleLaunchProduction(
 		context.Background(),
@@ -126,7 +132,7 @@ func TestLaunchExistingProject_HostnameConflict_Refuses(t *testing.T) {
 		return targetMock, nil
 	})()
 
-	input := existingCompleteInput("expected-target-id")
+	input := existingCompleteInput()
 
 	result, _, err := handleLaunchProduction(
 		context.Background(),
@@ -175,7 +181,7 @@ func TestLaunchExistingProject_ServicesOnlyImport_NoProjectBlock(t *testing.T) {
 		return targetMock, nil
 	})()
 
-	input := existingCompleteInput("expected-target-id")
+	input := existingCompleteInput()
 
 	result, _, err := handleLaunchProduction(
 		context.Background(),
@@ -248,7 +254,7 @@ func TestLaunchExistingProject_BothCredentials_Refused(t *testing.T) {
 	stateDir := t.TempDir()
 	sourceClient := pLP3MockClient()
 
-	input := existingCompleteInput("expected-target-id")
+	input := existingCompleteInput()
 	input.LaunchKey = sentinelLaunchKey
 
 	result, _, err := handleLaunchProduction(
@@ -291,7 +297,7 @@ func TestExistingProdToken_NeverInResponse(t *testing.T) {
 				restore := setExistingProdTokenClientFactory(func(_, _ string) (platform.Client, error) {
 					return targetMock, nil
 				})
-				return targetMock, existingCompleteInput("expected-target-id"), restore
+				return targetMock, existingCompleteInput(), restore
 			},
 		},
 		{
@@ -303,7 +309,7 @@ func TestExistingProdToken_NeverInResponse(t *testing.T) {
 				restore := setExistingProdTokenClientFactory(func(_, _ string) (platform.Client, error) {
 					return targetMock, nil
 				})
-				return targetMock, existingCompleteInput("expected-target-id"), restore
+				return targetMock, existingCompleteInput(), restore
 			},
 		},
 		{
@@ -313,7 +319,7 @@ func TestExistingProdToken_NeverInResponse(t *testing.T) {
 				restore := setExistingProdTokenClientFactory(func(_, _ string) (platform.Client, error) {
 					return targetMock, nil
 				})
-				return targetMock, existingCompleteInput("expected-target-id"), restore
+				return targetMock, existingCompleteInput(), restore
 			},
 		},
 	}
