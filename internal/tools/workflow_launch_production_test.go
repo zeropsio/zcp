@@ -348,3 +348,84 @@ func TestHandleLaunchProduction_DevHalfTarget_Accepted(t *testing.T) {
 		}
 	}
 }
+
+// TestHandleLaunchProduction_ClassifyPrompt_HidesSystemEnvs pins the
+// envclass integration at the handler boundary: project envs with
+// Type=SYSTEM (zeropsSubdomain*, CDN URLs, envIsolation,
+// sshIsolation) MUST NOT appear in classify-prompt rows. The classifier
+// (Layer 3) Drops them upstream so the LLM never sees them — agent has
+// no business classifying platform-managed values, and the target
+// project regenerates equivalents on import. F19 coverage end-to-end.
+func TestHandleLaunchProduction_ClassifyPrompt_HidesSystemEnvs(t *testing.T) {
+	ctx := context.Background()
+	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
+		{Key: "APP_KEY", Content: "secret-value", Type: platform.ProjectEnvUser},
+		{Key: "zeropsSubdomainHost", Content: "abc.zerops.app", Type: platform.ProjectEnvSystem},
+		{Key: "envIsolation", Content: "project", Type: platform.ProjectEnvSystem, Editable: true},
+		{Key: "staticCdnUrl", Content: "https://static.cdn", Type: platform.ProjectEnvSystem},
+		{Key: "DB_HOST", Content: "${db_hostname}", Type: platform.ProjectEnvUser},
+	})
+
+	input := WorkflowInput{
+		Workflow:              workflowLaunchProduction,
+		ProductionProjectName: "myapp-prod",
+		TargetService:         "app",
+	}
+	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, input, t.TempDir(), runtime.Info{}, nil)
+	if err != nil {
+		t.Fatalf("handleLaunchProduction: %v", err)
+	}
+	text := extractText(result)
+	resp := decodeLaunchResp(t, []byte(text))
+
+	if resp.Status != "classify-prompt" {
+		t.Fatalf("status: got %q want classify-prompt\nbody:\n%s", resp.Status, text)
+	}
+	if len(resp.Classifications) != 2 {
+		t.Fatalf("classifications rows: got %d want 2 (APP_KEY + DB_HOST only)\n%+v", len(resp.Classifications), resp.Classifications)
+	}
+	keysSeen := map[string]bool{}
+	for _, row := range resp.Classifications {
+		keysSeen[row.Key] = true
+	}
+	if !keysSeen["APP_KEY"] || !keysSeen["DB_HOST"] {
+		t.Errorf("expected USER-scope keys in rows: %+v", keysSeen)
+	}
+	for _, banned := range []string{"zeropsSubdomainHost", "envIsolation", "staticCdnUrl"} {
+		if keysSeen[banned] {
+			t.Errorf("Type=SYSTEM env %q must not appear in classifications rows", banned)
+		}
+	}
+	// Defense in depth: no env values leak.
+	for _, val := range []string{"secret-value", "abc.zerops.app", "https://static.cdn"} {
+		if strings.Contains(text, val) {
+			t.Errorf("env value %q leaked into response", val)
+		}
+	}
+}
+
+// TestHandleLaunchProduction_AllSystemEnvs_NoPromptFires pins the
+// no-loop guarantee: when every source env is Type=SYSTEM, the
+// workflow advances past classify-prompt directly (envclass-Drop on
+// all entries, no PromptUser-decision env remains).
+func TestHandleLaunchProduction_AllSystemEnvs_NoPromptFires(t *testing.T) {
+	ctx := context.Background()
+	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
+		{Key: "zeropsSubdomainHost", Content: "abc.zerops.app", Type: platform.ProjectEnvSystem},
+		{Key: "storageCdnUrl", Content: "https://storage.cdn", Type: platform.ProjectEnvSystem},
+	})
+
+	input := WorkflowInput{
+		Workflow:              workflowLaunchProduction,
+		ProductionProjectName: "myapp-prod",
+		TargetService:         "app",
+	}
+	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, input, t.TempDir(), runtime.Info{}, nil)
+	if err != nil {
+		t.Fatalf("handleLaunchProduction: %v", err)
+	}
+	resp := decodeLaunchResp(t, []byte(extractText(result)))
+	if resp.Status != "ready-to-launch" {
+		t.Errorf("status: got %q want ready-to-launch (all SYSTEM envs should not trigger prompt)", resp.Status)
+	}
+}

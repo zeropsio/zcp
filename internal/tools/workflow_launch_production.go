@@ -9,6 +9,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/ops/inventory"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -116,27 +117,29 @@ func handleLaunchProduction(
 	input.TargetService = normalizeTargetServiceForLaunch(stateDir, input.TargetService)
 
 	// Read source project envs (needed for both classify-prompt and
-	// publish-time bundle composition).
-	sourceEnvs, err := readProjectEnvs(ctx, client, projectID)
+	// publish-time bundle composition). Layer-2 entry point via
+	// inventory.FetchProjectEnvs keeps the SDK shape (Type/Sensitive/
+	// Editable) so envclass (Layer 3) can drop SYSTEM-scoped envs at
+	// the handler before they reach the prompt or the composer.
+	sourceEnvs, err := inventory.FetchProjectEnvs(ctx, client, projectID)
 	if err != nil {
 		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
 
-	// Status 2 — classify-prompt: source envs present, not all bucketed.
-	// Auto-classified platform envs (e.g. zeropsSubdomainHost, ZCP_*)
-	// satisfy themselves without agent judgment per F3.
-	if needsClassifyPromptForLaunch(input.EnvClassifications, sourceEnvs) {
+	// Status 2 — classify-prompt: source envs present, not all
+	// user-classified. SYSTEM-scoped envs (zeropsSubdomain*, CDN URLs,
+	// envIsolation/sshIsolation) are envclass-Drop and excluded
+	// upstream — the prompt only surfaces USER-scoped envs.
+	if launchNeedsClassifyPrompt(input.EnvClassifications, sourceEnvs) {
 		classifications := convertClassificationsInput(input.EnvClassifications)
 		return launchClassifyPromptResponse(corpus, sourceEnvs, classifications, sourceContext), nil, nil
 	}
 
 	// Effective classifications for bundle composition: user-supplied
-	// merged with platform auto-classifications (e.g. zeropsSubdomain*).
-	// Bundle composer routes by this map; "drop" envs are excluded
-	// implicitly by absence from the map. Raw sourceEnvs stays intact
-	// for SourceSnapshot hashing (P-LP-3 source-immutability digest is
-	// computed over the unfiltered snapshot).
-	classifications := mergePlatformAutoClassifications(convertClassificationsInput(input.EnvClassifications))
+	// classifications only. envclass-Drop envs never reach the
+	// composer (filtered at launchBundleProjectEnvs boundary), so no
+	// per-key auto-bucketing is needed here.
+	classifications := convertClassificationsInput(input.EnvClassifications)
 
 	// Status 3+ — ready-to-launch / mutation pipeline.
 	// Check for existing launch state — if a prior publish already created
@@ -197,7 +200,7 @@ func handleLaunchProduction(
 			RepoURL:           source.RepoURL,
 			ZeropsYAMLBody:    source.ZeropsYAMLBody,
 			GitCommitSHA:      source.GitCommitSHA,
-			ProjectEnvs:       sourceEnvs,
+			ProjectEnvs:       launchBundleProjectEnvs(sourceEnvs),
 			ManagedServices:   source.ManagedServices,
 			KeepNonHA:         input.KeepNonHA,
 		}, classifications); bundleErr == nil {
@@ -339,7 +342,7 @@ func executeLaunchMutation(
 	sshDeployer ops.SSHDeployer,
 	rt runtime.Info,
 	input WorkflowInput,
-	sourceEnvs []ops.ProjectEnvVar,
+	sourceEnvs []platform.ProjectEnvVar,
 	classifications map[string]topology.SecretClassification,
 	corpus []workflow.KnowledgeAtom,
 	stateDir string,
@@ -370,7 +373,7 @@ func executeLaunchMutation(
 		RepoURL:           source.RepoURL,
 		ZeropsYAMLBody:    source.ZeropsYAMLBody,
 		GitCommitSHA:      source.GitCommitSHA,
-		ProjectEnvs:       sourceEnvs,
+		ProjectEnvs:       launchBundleProjectEnvs(sourceEnvs),
 		ManagedServices:   source.ManagedServices,
 		KeepNonHA:         input.KeepNonHA,
 	}
@@ -790,7 +793,7 @@ func launchScopePromptResponse(corpus []workflow.KnowledgeAtom, input WorkflowIn
 // launchClassifyPromptResponse builds the classify-prompt response.
 func launchClassifyPromptResponse(
 	corpus []workflow.KnowledgeAtom,
-	sourceEnvs []ops.ProjectEnvVar,
+	sourceEnvs []platform.ProjectEnvVar,
 	classifications map[string]topology.SecretClassification,
 	sourceCtx *launchSourceContext,
 ) *mcp.CallToolResult {
@@ -804,12 +807,11 @@ func launchClassifyPromptResponse(
 		guidance = "Classify each source env into infrastructure / auto-secret / external-secret / plain-config buckets."
 	}
 
-	// Hide platform-auto-classified envs from the prompt rows. The agent
-	// has no business classifying zeropsSubdomain* / ZCP_* / project-level
-	// settings — those are bucketed (or dropped) deterministically by
-	// classifyPlatformEnv. Raw sourceEnvs stays intact for P-LP-3
-	// source-immutability hashing in BuildLaunchBundle.
-	userEnvs := filterUserClassificationEnvs(sourceEnvs)
+	// Hide envclass-Drop envs (project SYSTEM scope: zeropsSubdomain*,
+	// CDN URLs, envIsolation, sshIsolation) from the prompt rows. The
+	// agent only sees USER-scoped envs that need its judgment; the
+	// target project regenerates SYSTEM envs on import.
+	userEnvs := launchEnvsForClassifyPrompt(sourceEnvs)
 	rows := make([]launchClassifyRow, 0, len(userEnvs))
 	for _, env := range userEnvs {
 		rows = append(rows, launchClassifyRow{
@@ -836,7 +838,7 @@ func launchClassifyPromptResponse(
 func launchReadyToLaunchResponse(
 	corpus []workflow.KnowledgeAtom,
 	input WorkflowInput,
-	sourceEnvs []ops.ProjectEnvVar,
+	sourceEnvs []platform.ProjectEnvVar,
 	sourceCtx *launchSourceContext,
 ) *mcp.CallToolResult {
 	guidance := atomBody(corpus, "launch-mutation-key-required")

@@ -1,45 +1,37 @@
 //go:build regression_red
 
-// F19/F20/F21 reproducers — pin the bugs identified in
+// F20/F21 reproducers — pin the bugs identified in
 // plans/launch-production-feedback-fixes-2026-05-13-round3.md. These
-// tests MUST FAIL with the current composer (Phase 0). When Phase 2
-// of the workflow-family redesign (plans/workflow-family-architecture-
-// 2026-05-14.md §11) lands the SDK-driven classifier + server
-// baseline composer, these tests flip to PASS and the build tag is
-// removed — they become permanent regression pins.
+// tests MUST FAIL with the current composer (Phase 2a baseline).
+// When Phase 2b of the workflow-family redesign (plans/workflow-
+// family-architecture-2026-05-14.md §11) lands the bundle.
+// ServiceTypeRules.AcceptsMode + ManagedServiceEntry.QuotaGBytes
+// fixes, these tests flip to PASS and the build tag is removed.
 //
-// Run: go test -tags regression_red ./internal/ops/ -run TestF1
+// F19 (CDN keys leaking into target yaml) was closed at the
+// handler-envclass boundary in Phase 2a — composer never sees
+// Type=SYSTEM envs anymore. Pin migrated to:
+//   - internal/envclass/classify_test.go::TestClassifyProjectEnv_CDNKeys_SystemDrops
+//   - internal/tools/workflow_launch_production_test.go::
+//       TestHandleLaunchProduction_ClassifyPrompt_HidesSystemEnvs
+//
+// Run: go test -tags regression_red ./internal/ops/ -run TestF2
 //
 // Why a build tag: default `go test ./...` should stay green during
 // the phased v9.91 → v9.92 → v9.93 → v9.95 release sequence. The
 // reproducers prove the bugs are observable, but the actual fix
-// lands in Phase 2 (v9.92). Gate G2 evidence per plan §13 confirms
+// lands in Phase 2b (v9.92). Gate G2 evidence per plan §13 confirms
 // these tests PASS after the fix; at that point the build tag is
 // stripped + tests run unconditionally.
 
 package ops_test
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/topology"
 )
-
-// cdnSourceEnvs returns a source-project env list that includes the
-// three platform-managed CDN URL keys verified live against eval-zcp
-// (see plans/research/env-types-investigation-2026-05-14.md). The
-// current composer (Phase 0) does NOT auto-drop these — they flow
-// through user classification and end up in the rendered target yaml.
-func cdnSourceEnvs() []ops.ProjectEnvVar {
-	return []ops.ProjectEnvVar{
-		{Key: "LOG_LEVEL", Value: "info"},
-		{Key: "storageCdnUrl", Value: "https://source-storage.example.cdn"},
-		{Key: "staticCdnUrl", Value: "https://source-static.example.cdn"},
-		{Key: "apiCdnUrl", Value: "https://source-api.example.cdn"},
-	}
-}
 
 // classifyAllPlainSimple is a local copy of classifyAllPlain so this
 // file remains self-contained relative to launch_bundle_test.go's
@@ -84,40 +76,6 @@ func laravelStyleInputs() ops.LaunchBundleInputs {
 			{Hostname: "db", Type: "postgresql@16", Mode: "NON_HA"},
 			{Hostname: "storage", Type: "object-storage", Mode: ""},
 		},
-	}
-}
-
-// TestF19_CDNKeysLeakIntoTargetImportYaml pins F19: platform-managed
-// CDN URL keys (storageCdnUrl / staticCdnUrl / apiCdnUrl) are
-// Type=SYSTEM on the server (verified live, env-types-investigation-
-// 2026-05-14.md). The composer must NOT emit them into the target
-// project's import yaml — the target generates its own CDN URLs
-// from its own services.
-//
-// Current Phase 0 behavior: classifier table (launch_platform_envs.go)
-// is missing the 3 CDN keys; agent classifies them as plain-config;
-// composer emits them verbatim under project.envVariables; platform
-// rejects with `projectEnvUseOfSystemKey`.
-//
-// Expected post-Phase-2 behavior: the SDK-driven classifier treats
-// project envs with `Type=SYSTEM` as universal drop. CDN keys never
-// reach the agent's classify prompt; never appear in target yaml.
-func TestF19_CDNKeysLeakIntoTargetImportYaml(t *testing.T) {
-	inputs := launchStandardPairInputs()
-	inputs.ProjectEnvs = cdnSourceEnvs()
-
-	bundle, err := ops.BuildLaunchBundle(inputs, classifyAllPlainSimple(inputs.ProjectEnvs))
-	if err != nil {
-		t.Fatalf("BuildLaunchBundle: %v", err)
-	}
-
-	yamlBody := bundle.ImportYAML
-	for _, leaked := range []string{"storageCdnUrl", "staticCdnUrl", "apiCdnUrl"} {
-		if strings.Contains(yamlBody, leaked) {
-			t.Errorf("F19: target import yaml leaks platform-managed CDN key %q; "+
-				"expected SDK Type=SYSTEM classifier to drop before emit.\nyaml:\n%s",
-				leaked, yamlBody)
-		}
 	}
 }
 
