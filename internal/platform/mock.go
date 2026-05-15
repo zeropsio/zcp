@@ -42,6 +42,16 @@ type Mock struct {
 	// CapturedImportYAML stores the YAML content passed to ImportServices.
 	CapturedImportYAML string
 
+	// CapturedImportProjectID records the projectID arg of the last
+	// ImportServices call (existing-project mutation path verification).
+	CapturedImportProjectID string
+
+	// CapturedProjectEnvCreations records each CreateProjectEnv call so
+	// tests can assert per-env mutation occurred with the expected
+	// (key, value, sensitive) tuple. Used by the launch-production
+	// existing-project path tests (Phase 2c).
+	CapturedProjectEnvCreations []CapturedProjectEnvCreate
+
 	// CapturedValidateZeropsYaml stores inputs passed to ValidateZeropsYaml
 	// so deploy-flow tests can assert call ordering / field propagation.
 	CapturedValidateZeropsYaml []ValidateZeropsYamlInput
@@ -51,6 +61,16 @@ type Mock struct {
 
 	// Error overrides: method name -> error
 	errors map[string]error
+}
+
+// CapturedProjectEnvCreate is one row of CapturedProjectEnvCreations.
+// Field shapes mirror the platform.Client.CreateProjectEnv args so
+// tests can compare values directly.
+type CapturedProjectEnvCreate struct {
+	ProjectID string
+	Key       string
+	Content   string
+	Sensitive bool
 }
 
 // NewMock creates a new configurable mock.

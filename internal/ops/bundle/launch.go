@@ -19,9 +19,11 @@ const runtimeProductionMinContainers = 2
 // SHARED at the cost of higher per-container price.
 const runtimeProductionCPUMode = "DEDICATED"
 
-// BuildLaunch composes the production import yaml for the launch-new
-// path (VariantLaunchNew). Phase 6b will add VariantLaunchExisting
-// (services-only yaml without the `project:` block).
+// BuildLaunch composes the production import yaml. Variant on inputs
+// selects between launch-new (full project block — feeds
+// PostClientProjectImport) and launch-existing (services-only yaml —
+// feeds PostProjectServiceStackImport, which rejects project blocks).
+// Zero (VariantExportDev) normalizes to VariantLaunchNew.
 //
 // Composition steps mirror the prior internal/ops/launch_bundle.go
 // pipeline (preserved verbatim during Phase 1b refactor):
@@ -30,7 +32,8 @@ const runtimeProductionCPUMode = "DEDICATED"
 //  2. Classify project envs via composeProjectEnvVariables.
 //  3. Compose services array — runtime + managed entries with HA
 //     promotion (per ServiceTypeRules; opt-out via KeepNonHA).
-//  4. Compose project block — name + tags + envVariables.
+//  4. Compose project block — name + tags + envVariables (omitted
+//     for VariantLaunchExisting).
 //  5. Marshal yaml + add preprocessor header.
 //  6. Schema-validate; surface errors on bundle.
 //  7. Compute SourceSnapshot hashes (P-LP-3).
@@ -61,6 +64,11 @@ func BuildLaunch(
 	}
 	if err := verifyZeropsYAMLSetup(inputs.ZeropsYAMLBody, inputs.SetupName); err != nil {
 		return nil, err
+	}
+
+	variant := inputs.Variant
+	if !variant.IsLaunch() {
+		variant = VariantLaunchNew
 	}
 
 	bundle := &LaunchBundle{
@@ -103,17 +111,18 @@ func BuildLaunch(
 		services = append(services, entry)
 	}
 
-	project := map[string]any{
-		"name": inputs.TargetProjectName,
-		"tags": composeLaunchTags(inputs.SourceProjectID, inputs.AdditionalTags),
-	}
-	if len(projectEnvs) > 0 {
-		project["envVariables"] = projectEnvs
-	}
-
 	doc := map[string]any{
-		"project":  project,
 		"services": services,
+	}
+	if variant == VariantLaunchNew {
+		project := map[string]any{
+			"name": inputs.TargetProjectName,
+			"tags": composeLaunchTags(inputs.SourceProjectID, inputs.AdditionalTags),
+		}
+		if len(projectEnvs) > 0 {
+			project["envVariables"] = projectEnvs
+		}
+		doc["project"] = project
 	}
 
 	out, err := yaml.Marshal(doc)
@@ -121,6 +130,10 @@ func BuildLaunch(
 		return nil, fmt.Errorf("launch bundle: marshal yaml: %w", err)
 	}
 	body := string(out)
+	// Preprocessor header still applies to VariantLaunchExisting —
+	// services-only yaml may still reference cross-service envs that
+	// need preprocessor preamble (zerops considers preprocessor a
+	// document-level directive, not project-block-scoped).
 	body = addPreprocessorHeader(body, projectEnvs)
 
 	bundle.ImportYAML = body

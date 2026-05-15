@@ -204,7 +204,16 @@ func (m *Mock) GetProjectEnv(_ context.Context, _ string) ([]ProjectEnvVar, erro
 	return m.projectEnv, nil
 }
 
-func (m *Mock) CreateProjectEnv(_ context.Context, _ string, _, _ string, _ bool) (*Process, error) {
+func (m *Mock) CreateProjectEnv(_ context.Context, projectID string, key, content string, sensitive bool) (*Process, error) {
+	m.mu.Lock()
+	m.CapturedProjectEnvCreations = append(m.CapturedProjectEnvCreations, CapturedProjectEnvCreate{
+		ProjectID: projectID,
+		Key:       key,
+		Content:   content,
+		Sensitive: sensitive,
+	})
+	m.mu.Unlock()
+	m.trackCall("CreateProjectEnv")
 	if err := m.getError("CreateProjectEnv"); err != nil {
 		return nil, err
 	}
@@ -250,12 +259,14 @@ func (m *Mock) GetServiceStackExport(_ context.Context, _ string) (string, error
 	return m.serviceExportYAML, nil
 }
 
-func (m *Mock) ImportServices(_ context.Context, _ string, yamlContent string) (*ImportResult, error) {
+func (m *Mock) ImportServices(_ context.Context, projectID string, yamlContent string) (*ImportResult, error) {
 	if err := m.getError("ImportServices"); err != nil {
 		return nil, err
 	}
+	m.trackCall("ImportServices")
 	m.mu.Lock()
 	m.CapturedImportYAML = yamlContent
+	m.CapturedImportProjectID = projectID
 	m.mu.Unlock()
 
 	m.mu.RLock()

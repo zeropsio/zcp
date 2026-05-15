@@ -9,10 +9,18 @@ import (
 
 // Error codes for ZCP.
 const (
-	ErrAuthRequired           = "AUTH_REQUIRED"
-	ErrAuthTokenExpired       = "AUTH_TOKEN_EXPIRED"
-	ErrTokenNoProject         = "TOKEN_NO_PROJECT"
-	ErrTokenMultiProject      = "TOKEN_MULTI_PROJECT"
+	ErrAuthRequired      = "AUTH_REQUIRED"
+	ErrAuthTokenExpired  = "AUTH_TOKEN_EXPIRED"
+	ErrTokenNoProject    = "TOKEN_NO_PROJECT"
+	ErrTokenMultiProject = "TOKEN_MULTI_PROJECT"
+	// ErrTokenScopeMismatch fires on the launch-production existing-project
+	// path when a project-scoped token authenticates and resolves to
+	// exactly one project, but that project's ID does NOT match the
+	// user-supplied ExistingProjectID. Distinct from the no-project /
+	// multi-project codes because the token IS validly scoped, just to
+	// the wrong project — the agent must regenerate a token on the
+	// target project's dashboard.
+	ErrTokenScopeMismatch     = "TOKEN_SCOPE_MISMATCH"
 	ErrServiceNotFound        = "SERVICE_NOT_FOUND"
 	ErrServiceRequired        = "SERVICE_REQUIRED"
 	ErrFileNotFound           = "FILE_NOT_FOUND"

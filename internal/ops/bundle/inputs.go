@@ -74,6 +74,12 @@ type BundleInputs struct {
 // (VariantLaunchNew / VariantLaunchExisting). Superset of BundleInputs
 // fields plus prod-specific knobs (HA opt-out, source-snapshot
 // inputs, audit-log fields).
+//
+// Variant selects launch shape — zero (VariantExportDev) is invalid
+// for this struct and is normalized to VariantLaunchNew at compose
+// time. Set explicitly to VariantLaunchExisting for the existing-
+// project mutation path which calls PostProjectServiceStackImport
+// (rejects yaml carrying a project: block).
 type LaunchBundleInputs struct {
 	// SourceProjectID — recorded on the bundle for audit.
 	SourceProjectID string
@@ -107,4 +113,10 @@ type LaunchBundleInputs struct {
 	MinContainers int
 	// AdditionalTags — appended to canonical launch tags.
 	AdditionalTags []string
+	// Variant selects between launch-new (full project block — feeds
+	// PostClientProjectImport) and launch-existing (services-only yaml
+	// — feeds PostProjectServiceStackImport, which rejects project
+	// blocks). Zero value (VariantExportDev) is invalid for launch
+	// inputs; BuildLaunch normalizes to VariantLaunchNew.
+	Variant Variant
 }

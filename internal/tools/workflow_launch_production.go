@@ -209,20 +209,35 @@ func handleLaunchProduction(
 		}
 	}
 
+	hasExistingPath := input.ExistingProjectID != "" && input.ExistingProdToken != ""
+	publishing := input.LaunchKey != "" || hasExistingPath
+
+	// Reject ambiguous publish input: caller MUST pick one mutation
+	// path (new-project via LaunchKey, or existing-project via
+	// ExistingProjectID+ExistingProdToken). Both supplied means the
+	// agent is misclassifying the user's intent — fail closed.
+	if input.LaunchKey != "" && hasExistingPath {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"Mutually exclusive credentials: launchKey (new-project path) AND existingProjectId+existingProdToken (existing-project path) cannot both be supplied",
+			"Pick one path: either launchKey for a fresh production project, or existingProjectId+existingProdToken to import services into a pre-existing project.",
+		), WithRecoveryStatus()), nil, nil
+	}
+
 	// Drift gate: when a prior ready-to-launch transition persisted a
-	// baseline and the user is now publishing (LaunchKey supplied),
-	// recompute current and refuse on mismatch. The existing state file
-	// is preserved on refusal so operators can inspect the drift.
+	// baseline and the user is now publishing (either path), recompute
+	// current and refuse on mismatch. The existing state file is
+	// preserved on refusal so operators can inspect the drift.
 	var zeroSnapshot ops.SourceSnapshot
-	if haveCurrent && input.LaunchKey != "" && existing != nil && existing.SourceSnapshot != zeroSnapshot && existing.SourceSnapshot != current {
+	if haveCurrent && publishing && existing != nil && existing.SourceSnapshot != zeroSnapshot && existing.SourceSnapshot != current {
 		return launchSourceDriftResponse(corpus, existing.SourceSnapshot, current), nil, nil
 	}
 
-	if input.LaunchKey == "" {
+	if !publishing {
 		// Persist the ready-to-launch baseline on first transition when
 		// the source state was readable. Idempotent: subsequent calls
-		// without LaunchKey reuse the existing baseline rather than
-		// refreshing it (baseline is fixed at the moment of
+		// without publish credentials reuse the existing baseline rather
+		// than refreshing it (baseline is fixed at the moment of
 		// classification completion; user must abandon + re-start to
 		// refresh).
 		if haveCurrent && existing == nil {
@@ -239,8 +254,14 @@ func handleLaunchProduction(
 		return launchReadyToLaunchResponse(corpus, input, sourceEnvs, sourceContext), nil, nil
 	}
 
-	// Mutation pipeline — LaunchKey supplied, no existing target,
-	// baseline matches current (or no prior baseline = first publish).
+	// Existing-project mutation path takes priority — the user has
+	// explicitly identified the target project via ExistingProjectID.
+	if hasExistingPath {
+		return executeExistingProjectMutation(ctx, projectID, client, sshDeployer, rt, input, sourceEnvs, classifications, corpus, stateDir, launchID)
+	}
+
+	// Mutation pipeline (new-project path) — LaunchKey supplied,
+	// no existing target, baseline matches current.
 	return executeLaunchMutation(ctx, projectID, client, sshDeployer, rt, input, sourceEnvs, classifications, corpus, stateDir, launchID)
 }
 
