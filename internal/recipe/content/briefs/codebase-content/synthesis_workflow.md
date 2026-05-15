@@ -673,6 +673,31 @@ The engine's `kb-self-inflicted-reversible` gate refuses these at
 codebase-content close; applying the litmus at authoring time saves
 a refinement round-trip.
 
+### Related discard class: wrong env-var composition
+
+The same routing applies when a candidate KB bullet describes a
+symptom that fires only when the porter manually composes a URL the
+recipe already ships pre-composed. Worked example from the run-42
+apidev KB:
+
+> **BAD candidate** — *"`UnknownError` on first `GetObject`"* — body
+> claims the AWS SDK rejects the storage endpoint because the SDK
+> wants `https://` while the platform ships `http://`.
+
+The recipe ships `S3_ENDPOINT: ${storage_apiUrl}` — a pre-composed
+full URL (scheme + host + port). The bullet only fires if the porter
+hand-composes `http://${storage_apiHost}` instead, dropping the
+scheme and port that `${storage_apiUrl}` already encodes. The porter
+has replaced the shipped directive with a manual composition — same
+class as the self-inflicted-reversible litmus: the symptom is gated
+on the porter UNDOING what the recipe ships.
+
+Route: CLAUDE.md or yaml comment at the `S3_ENDPOINT` directive
+(the recipe yaml is exactly where the `${storage_apiUrl}` vs
+`${storage_apiHost}` distinction already lives). NOT the public
+recipe-page KB — a porter who copied the shipped yaml never sees
+the symptom.
+
 ### What still belongs in KB
 
 After the litmus, what survives:

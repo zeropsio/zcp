@@ -160,6 +160,34 @@ func TestSynthesisWorkflow_KBPluralAudience(t *testing.T) {
 	}
 }
 
+// TestSynthesisWorkflow_KBURLCompositionDiscardExample — codex
+// code-review F5 carry-forward. The retired
+// `TestSynthesisWorkflow_P1_DiscardExampleStorageEndpoint` pinned a
+// worked example in the run-43 brief showing the
+// `http://${storage_apiHost}` (wrong) vs `${storage_apiUrl}` (correct)
+// URL-composition pattern as a DISCARD candidate. The Run-48 rewrite
+// teaches "porter undoes shipped directive" but did not carry forward
+// the URL-composition discard class — neither the brief nor the new
+// `kb-self-inflicted-reversible` gate's 5 patterns would catch a
+// `UnknownError on first GetObject` bullet. Pin the restored anchors
+// here.
+func TestSynthesisWorkflow_KBURLCompositionDiscardExample(t *testing.T) {
+	t.Parallel()
+	body, err := readAtom("briefs/codebase-content/synthesis_workflow.md")
+	if err != nil {
+		t.Fatalf("read synthesis_workflow.md: %v", err)
+	}
+	for _, anchor := range []string{
+		"storage_apiHost",
+		"storage_apiUrl",
+		"UnknownError",
+	} {
+		if !strings.Contains(body, anchor) {
+			t.Errorf("synthesis_workflow brief missing URL-composition discard anchor %q (Run-42 apidev KB #2 class — see codex code-review F5)", anchor)
+		}
+	}
+}
+
 // TestSynthesisWorkflow_P1_InitCommandsLifetimeDistinction — pin the
 // 8.5 anchor in-body completion example uses execOnce key shapes
 // consistent with `principles/init-commands-model.md`. The earlier
