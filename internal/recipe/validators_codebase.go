@@ -868,6 +868,14 @@ func validateCitationDisplayAgreement(path, body string) []Violation {
 // the numbered shape; kbHeadingRE requires a non-digit first stem char
 // so the two shapes are unambiguous.
 //
+// When multiple shapes match (mixed body) the first matching delimiter
+// in the precedence order above wins — boldBulletRE > igHeadingItemRE
+// > kbHeadingRE — and the lower-priority shapes are not consulted; any
+// `### <stem>` lines fall inside whichever bold-bullet or numbered-
+// heading block contains them. Pinned by
+// TestCitationBlockSplits_UnumberedH3KB cases "mixed body — bold-bullet
+// wins" and "mixed numbered + unnumbered H3 — numbered wins".
+//
 // When neither matches (no bullets, no headings) returns an empty slice
 // so the caller treats the body as carrying no countable blocks.
 func citationBlockSplits(body string) []string {

@@ -42,6 +42,7 @@ func TestCitationBlockSplits_UnumberedH3KB(t *testing.T) {
 		name      string
 		body      string
 		wantMin   int    // minimum number of blocks
+		wantExact int    // when >0, exact block count required (precedence pinning)
 		mustHaveA string // substring that must appear in some block
 		mustHaveB string // second substring (different block)
 	}{
@@ -89,6 +90,23 @@ More content.
 			mustHaveA: "**Bullet one**",
 			mustHaveB: "**Bullet two**",
 		},
+		{
+			// Pinning precedence: igHeadingItemRE is tried before
+			// kbHeadingRE, so the numbered item drives the split and the
+			// un-numbered H3 below it falls inside whichever numbered
+			// block contains it. Not a defect — this guards against
+			// drift if a future contributor reorders the three
+			// fallbacks in citationBlockSplits.
+			name: "mixed numbered + unnumbered H3 — numbered wins (kbHeadingRE NOT consulted)",
+			body: "### 1. Numbered item that opens the body\n\n" +
+				"Body of the numbered IG item.\n\n" +
+				"### Unnumbered H3 that should NOT produce a second block\n\n" +
+				"Body that belongs inside the numbered block above.\n",
+			wantMin:   1,
+			wantExact: 1, // un-numbered H3 falls inside the single numbered block; NO second block.
+			mustHaveA: "### 1. Numbered item",
+			mustHaveB: "Unnumbered H3",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -96,6 +114,9 @@ More content.
 			blocks := citationBlockSplits(tc.body)
 			if len(blocks) < tc.wantMin {
 				t.Fatalf("got %d blocks, want >= %d; blocks=%q", len(blocks), tc.wantMin, blocks)
+			}
+			if tc.wantExact > 0 && len(blocks) != tc.wantExact {
+				t.Fatalf("got %d blocks, want EXACTLY %d (precedence-pin); blocks=%q", len(blocks), tc.wantExact, blocks)
 			}
 			var foundA, foundB bool
 			for _, b := range blocks {
@@ -217,5 +238,105 @@ func TestValidateKB_RejectsFirstPersonShape_OnH3Bullet(t *testing.T) {
 				t.Errorf("expected kb-bullet-self-inflicted-shape on H3-shape KB body; got %+v", vs)
 			}
 		})
+	}
+}
+
+// TestFriendlyDisplayToGuide_NoCollisions — collision-safety pin for the
+// run-48 reverse map. friendlyDisplayToGuide is built lazily by iterating
+// CitationGuideURL and resolving each guide through FriendlyDisplayName.
+// Today there are no collisions across the 22 guides; if a future
+// contributor adds a guide whose friendly display lowercases to an
+// already-mapped value, Go's unordered map iteration would make
+// last-writer-wins NONDETERMINISTIC and the reverse lookup would
+// silently return whichever guide won the race. Guard the bidirectional
+// Check 4 by failing fast when two guides claim the same friendly key.
+//
+// No t.Parallel() — touches the package-level reverse map.
+func TestFriendlyDisplayToGuide_NoCollisions(t *testing.T) {
+	groups := map[string][]string{}
+	for guide := range CitationGuideURL {
+		friendly := FriendlyDisplayName(guide)
+		if friendly == "" {
+			continue // mirrors ensureFriendlyDisplayToGuide's skip-on-empty branch
+		}
+		key := strings.ToLower(friendly)
+		groups[key] = append(groups[key], guide)
+	}
+	for friendlyLower, guides := range groups {
+		if len(guides) > 1 {
+			t.Errorf("friendly display %q (lower-cased) maps to %d guides %v — reverse-map last-writer-wins would be nondeterministic across map iteration. Adjust FriendlyDisplayName for one of these guides.",
+				friendlyLower, len(guides), guides)
+		}
+	}
+}
+
+// TestValidateCitationDisplayAgreement_KnownURLUnknownDisplay_OnlyCheck1Fires —
+// negative case for Check 4. When the URL DOES resolve to a known guide
+// (rolling-deploys here) but the display text is NOT a known friendly
+// display name, Check 1 (kb-citation-display-mismatch) MUST fire and
+// Check 4 (kb-citation-display-name-without-canonical-url) MUST NOT —
+// the new code is gated on `matchedGuide == ""`, so when a URL matches
+// it stays out of the way.
+func TestValidateCitationDisplayAgreement_KnownURLUnknownDisplay_OnlyCheck1Fires(t *testing.T) {
+	t.Parallel()
+	body := "<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->\n" +
+		"\n" +
+		"### Some H3 stem that splits the body via kbHeadingRE\n" +
+		"\n" +
+		"The codebase relies on " +
+		"[some random display text that is not a friendly name](https://docs.zerops.io/features/scaling-ha) " +
+		"as the underlying mechanism.\n" +
+		"<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->\n"
+	vs, err := validateCodebaseKB(context.Background(), "codebases/x/README.md", []byte(body), SurfaceInputs{Plan: &Plan{}})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if !containsCode(vs, "kb-citation-display-mismatch") {
+		t.Errorf("expected Check 1 (kb-citation-display-mismatch) to fire on known-URL/unknown-display; got %+v", vs)
+	}
+	if containsCode(vs, "kb-citation-display-name-without-canonical-url") {
+		t.Errorf("did NOT expect Check 4 (kb-citation-display-name-without-canonical-url) on known-URL/unknown-display — Check 4 is gated on matchedGuide==\"\"; got %+v", vs)
+	}
+}
+
+// TestValidateCitationDisplayAgreement_EmptyDisplayText_NoCheck4 — negative
+// case exercising ensureFriendlyDisplayToGuide's skip-on-empty branch
+// (validators_codebase.go:480-487). When the display text is empty AND
+// the URL is unknown, the reverse-map lookup
+// (`lookupGuideIDFromFriendlyDisplay("")`) MUST return "" and Check 4
+// MUST NOT fire. Pin so an accidental "" key in the reverse map (the
+// missing skip-empty branch) would be caught.
+//
+// Note: `markdownLinkRE` requires at least one character inside the
+// display brackets (`[([^\]]+)\]`), so a literal `[]` link does not even
+// register as a markdown link — Check 4 cannot fire because no link is
+// parsed. We use a single-space display `[ ]` which DOES match the regex
+// and trims to "" inside `lookupGuideIDFromFriendlyDisplay`, exercising
+// the empty-key path through the reverse-map lookup itself.
+func TestValidateCitationDisplayAgreement_EmptyDisplayText_NoCheck4(t *testing.T) {
+	t.Parallel()
+	body := "<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->\n" +
+		"\n" +
+		"### Some H3 stem that splits the body via kbHeadingRE\n" +
+		"\n" +
+		"Some text with [ ](https://example.com/unknown-not-in-citation-map) " +
+		"a link whose display is whitespace and URL is unknown.\n" +
+		"<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->\n"
+	vs, err := validateCodebaseKB(context.Background(), "codebases/x/README.md", []byte(body), SurfaceInputs{Plan: &Plan{}})
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if containsCode(vs, "kb-citation-display-name-without-canonical-url") {
+		t.Errorf("did NOT expect Check 4 on empty/whitespace display text — lookupGuideIDFromFriendlyDisplay(\"\") returns \"\" and Check 4 MUST stay silent; got %+v", vs)
+	}
+	// Defensive: the lookup helper itself MUST return "" for both empty
+	// and whitespace-only display text. Pins the skip-on-empty branch
+	// in ensureFriendlyDisplayToGuide and the TrimSpace in
+	// lookupGuideIDFromFriendlyDisplay.
+	if got := lookupGuideIDFromFriendlyDisplay(""); got != "" {
+		t.Errorf("lookupGuideIDFromFriendlyDisplay(\"\") = %q, want \"\"", got)
+	}
+	if got := lookupGuideIDFromFriendlyDisplay("   "); got != "" {
+		t.Errorf("lookupGuideIDFromFriendlyDisplay(\"   \") = %q, want \"\"", got)
 	}
 }
