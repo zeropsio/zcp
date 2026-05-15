@@ -198,16 +198,16 @@ func run() error {
 		log.Printf("  service: id=%s name=%s%s", s.ID, s.Name, errStr)
 	}
 
-	// 7. Verify new project shape via real API.
-	newSvcs, err := admin.ListServices(ctx, result.ProjectID)
-	if err != nil {
-		log.Printf("WARN: ListServices on new project: %v", err)
-	} else {
-		log.Printf("\n*** new project listing -- %d services ***", len(newSvcs))
-		for _, s := range newSvcs {
-			typ := s.ServiceStackTypeInfo.ServiceStackTypeVersionName
-			log.Printf("  %s  type=%s  status=%s  mode=%s", s.Name, typ, s.Status, s.Mode)
-		}
+	// 7. Verify shape via result.ServiceStacks (returned by
+	// CreateAndImportProject). For deeper inspection of created services
+	// after platform indexing settles, use a separate ZCP-CLI session
+	// against the new project — this scaffold deliberately doesn't
+	// retain a listing handle to keep the architecture rule clean
+	// (tools/cmd reach platform via ops; see
+	// internal/topology/architecture_call_discipline_test.go).
+	log.Printf("\n*** result.ServiceStacks (%d entries from CreateAndImportProject) ***", len(result.ServiceStacks))
+	for _, s := range result.ServiceStacks {
+		log.Printf("  %s  id=%s  processes=%d", s.Name, s.ID, len(s.Processes))
 	}
 
 	// 8. Cleanup -- delete the test project (regardless of success above).
