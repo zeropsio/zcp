@@ -274,15 +274,12 @@ func hasExposedHeadersShipped(plan *Plan, hostname string) bool {
 	return false
 }
 
-var (
-	// baseStaticRE — the codebase's yaml has a `base: static` line
-	// (the static runtime, which silently ignores `start:`).
-	baseStaticRE = regexp.MustCompile(`(?im)^\s*base\s*:\s*static\b`)
-	// runStartRE — a top-level `start:` directive under `run:` is what
-	// the porter would add to trigger the trap. The recipe is fine if
-	// there's NO `start:` near a `base: static` block.
-	runStartRE = regexp.MustCompile(`(?im)^\s+start\s*:`)
-)
+// baseStaticRE — the codebase's yaml has a `base: static` line
+// (the static runtime, which silently ignores `start:`). Once the
+// recipe ships `base: static`, the symptom fires only when the
+// porter ADDS `start:`; we don't need to check the porter's
+// hypothetical `start:` — it would BE the trigger.
+var baseStaticRE = regexp.MustCompile(`(?im)^\s*base\s*:\s*static\b`)
 
 func hasStaticBaseWithoutStartShipped(plan *Plan, hostname string) bool {
 	yaml := codebaseYAMLBody(plan, hostname)
