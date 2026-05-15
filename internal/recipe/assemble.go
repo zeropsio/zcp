@@ -649,8 +649,23 @@ func substituteFragmentMarkers(body string, fragments map[string]string, idPrefi
 		fragmentID := idPrefix + "/" + name
 		frag, ok := fragments[fragmentID]
 		if !ok || strings.TrimSpace(frag) == "" {
-			missing = append(missing, fragmentID)
-			out.WriteString(body[absStart:absEndClose])
+			// Run-48 KB-optional — spec §Surface 5 permits an empty
+			// codebase/<h>/knowledge-base fragment when the IG, yaml
+			// comments, and CLAUDE.md cover everything the porter needs.
+			// Skip the missing-list add ONLY for this fragment id pattern.
+			// Render the marker pair with a blank body so the rendered
+			// output is `START\n\nEND` and the assembler's downstream
+			// validators see well-formed but empty markers.
+			if isKBFragmentID(fragmentID) {
+				out.WriteString(extractStartPrefix)
+				out.WriteString(name)
+				out.WriteString(extractStartSuffix)
+				out.WriteString("\n\n")
+				out.WriteString(endMarker)
+			} else {
+				missing = append(missing, fragmentID)
+				out.WriteString(body[absStart:absEndClose])
+			}
 		} else {
 			if hits := unfencedEngineTokens(frag); len(hits) > 0 {
 				return "", nil, fmt.Errorf("fragment %q contains unbound engine token(s) %s outside a fenced code block — wrap the example in ``` fences or remove the literal", fragmentID, strings.Join(hits, ", "))
@@ -677,6 +692,28 @@ func substituteFragmentMarkers(body string, fragments map[string]string, idPrefi
 		cursor = absEndClose
 	}
 	return out.String(), missing, nil
+}
+
+// isKBFragmentID reports whether the fragment id names a codebase
+// knowledge-base fragment (`codebase/<hostname>/knowledge-base`).
+// Run-48 spec recalibration permits KB to be empty when the IG, yaml
+// comments, and CLAUDE.md cover everything the porter needs;
+// substituteFragmentMarkers skips the missing-list add for KB only and
+// renders well-formed empty markers in place.
+func isKBFragmentID(fragmentID string) bool {
+	if !strings.HasPrefix(fragmentID, "codebase/") {
+		return false
+	}
+	if !strings.HasSuffix(fragmentID, "/knowledge-base") {
+		return false
+	}
+	// Reject codebase//knowledge-base (empty hostname) and any path with
+	// extra segments between codebase/ and /knowledge-base.
+	mid := strings.TrimSuffix(strings.TrimPrefix(fragmentID, "codebase/"), "/knowledge-base")
+	if mid == "" || strings.Contains(mid, "/") {
+		return false
+	}
+	return true
 }
 
 // unfencedEngineTokens returns engine-bound `{KEY}` matches in body
