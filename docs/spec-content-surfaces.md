@@ -29,7 +29,7 @@ None of these are caught by token-level checks ("names a Zerops mechanism", "nam
 
 ## Per-surface line-budget table
 
-Hard caps for every surface. Both reference recipes settle within these caps; run-14 violated three of them by 2-3×. The caps are part of every `SurfaceContract` and are enforced structurally at finalize.
+Hard caps for every surface. The human-authored jetstream reference settles within these caps; showcase data is consistent but is not the calibration source. Run-14 violated three of them by 2-3×. The caps are part of every `SurfaceContract` and are enforced structurally at finalize.
 
 | Surface | Hard line cap | Hard item cap | Reader |
 |---|---|---|---|
@@ -432,7 +432,7 @@ The fact is true on any cloud, any deployment shape. Zerops is not party to the 
 
 ### Surface-2 contract violation: ladder content inside extract markers
 
-- **Run-14 tier READMEs (all six)** wrap ~35 lines of ladder content (Shape at a glance / Who fits / How iteration works / What you give up / When to outgrow / What changes at next tier) inside the `<!-- #ZEROPS_EXTRACT_START:intro# -->` markers. The recipe-page UI renders the marker contents as the tier-card description. Both reference recipes (laravel-jetstream + laravel-showcase) wrap a single sentence. The 35-line ladder shows up in the recipe page UI as a 35-line "card description" — wrong rendering, wrong reader.
+- **Run-14 tier READMEs (all six)** wrap ~35 lines of ladder content (Shape at a glance / Who fits / How iteration works / What you give up / When to outgrow / What changes at next tier) inside the `<!-- #ZEROPS_EXTRACT_START:intro# -->` markers. The recipe-page UI renders the marker contents as the tier-card description. The laravel-jetstream reference wraps a single sentence (laravel-showcase is consistent but was engine output, cited for historical context only). The 35-line ladder shows up in the recipe page UI as a 35-line "card description" — wrong rendering, wrong reader.
 
 ### Fabricated yaml field names in import.yaml comments
 
