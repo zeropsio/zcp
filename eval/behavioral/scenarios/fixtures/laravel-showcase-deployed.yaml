@@ -1,0 +1,61 @@
+# Laravel-style full-stack project deployed externally — php-nginx pair
+# (appdev/appstage), postgres, valkey, object-storage. Tests the
+# launch-production composer against a realistic showcase shape.
+#
+# This fixture reproduces three round-3 findings:
+#   - F19: classify-prompt surfaces platform-reserved CDN URL keys
+#          (storage exposes storageCdnUrl when subdomain access enabled).
+#   - F20: launch composer emits `mode:` for object-storage; platform
+#          rejects with `storage.mode: mode not supported`.
+#   - F21: neither composer maps source `quotaGBytes` to bundle
+#          `objectStorageSize`; mutation rejected with
+#          `storage.objectStorageSize: required`.
+#   - F25: keepNonHA AskUserQuestion surfaces object-storage as a HA
+#          opt-out candidate, which it isn't (no HA/NON_HA mode at all).
+#
+# Worker + meilisearch deferred — the four services above are sufficient
+# to surface F19/F20/F21/F25; the seed budget stays inside the 15-min
+# wall-time bound that flow-eval enforces.
+
+services:
+  - hostname: appdev
+    type: php-nginx@8.4
+    zeropsSetup: dev
+    buildFromGit: https://github.com/zeropsio/recipe-laravel-minimal
+    enableSubdomainAccess: true
+    envSecrets:
+      APP_KEY: <@generateRandomString(<32>)>
+      APP_DEBUG: "true"
+      APP_ENV: development
+    verticalAutoscaling:
+      minRam: 0.5
+
+  - hostname: appstage
+    type: php-nginx@8.4
+    zeropsSetup: prod
+    buildFromGit: https://github.com/zeropsio/recipe-laravel-minimal
+    enableSubdomainAccess: true
+    envSecrets:
+      APP_KEY: <@generateRandomString(<32>)>
+      APP_DEBUG: "false"
+      APP_ENV: production
+    verticalAutoscaling:
+      minRam: 0.5
+
+  - hostname: db
+    type: postgresql@18
+    mode: NON_HA
+    priority: 10
+    verticalAutoscaling:
+      minRam: 0.25
+
+  - hostname: cache
+    type: valkey@7.2
+    mode: NON_HA
+    priority: 10
+
+  - hostname: storage
+    type: object-storage
+    objectStorageSize: 1
+    objectStoragePolicy: private
+    priority: 10
