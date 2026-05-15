@@ -174,9 +174,15 @@ var surfaceContracts = map[Surface]SurfaceContract{
 		Owns:             []string{"codebases/*/README.md#gotchas"},
 		FactHint:         "platform-trap",
 		AdjacentSurfaces: []Surface{SurfaceCodebaseIG},
-		Reader:           "A developer hitting a confusing failure on Zerops and searching for what's wrong.",
-		Test:             "Would a developer who read the Zerops docs AND the relevant framework docs STILL be surprised by this?",
-		ItemCap:          8,
+		Reader:           "A developer evaluating how to operate this codebase on Zerops, OR landing here via search after hitting a Zerops platform trap.",
+		Test:             "Does this help the reader make a sound operational decision — name a CONSTRAINT (platform limit, scaling ceiling, compatibility gap) or an ADAPTATION COST (what changes when you customize this recipe) that doesn't disappear if they follow the IG correctly?",
+		// Run-48-recalibration — ItemCap retired. Spec §Surface 5 is now
+		// dual-shape (forward-looking H3 sections OR symptom-first
+		// `### Gotchas` bullets); the bar is salience, not count; the
+		// fragment may be empty when other surfaces cover the porter's
+		// needs. Calibration anchor is laravel-jetstream only (the
+		// human-authored reference); laravel-showcase is engine output
+		// retained as historical data, not as a target.
 	},
 	SurfaceCodebaseCLAUDE: {
 		Name: SurfaceCodebaseCLAUDE, Author: AuthorWriter,

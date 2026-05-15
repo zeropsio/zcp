@@ -123,10 +123,15 @@ func TestSurfaceFromFragmentID(t *testing.T) {
 func TestSurfaceContract_HasCaps(t *testing.T) {
 	t.Parallel()
 	// Surface 7 (codebase zerops.yaml comments) has no numeric cap by
-	// design — the spec leaves comment granularity to the author. Every
-	// other writer-authored surface must declare at least one cap.
+	// design — the spec leaves comment granularity to the author.
+	// Surface 5 (codebase KB) dropped its ItemCap in the run-48
+	// recalibration — the bar is salience, not count, and the body may
+	// be empty when other surfaces cover the porter's needs (spec
+	// §Surface 5 dual-shape). Every other writer-authored surface must
+	// declare at least one cap.
 	exempt := map[Surface]bool{
 		SurfaceCodebaseZeropsComments: true,
+		SurfaceCodebaseKB:             true,
 	}
 	for _, s := range Surfaces() {
 		c, _ := ContractFor(s)
