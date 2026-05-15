@@ -1,4 +1,4 @@
-package ops
+package bundle
 
 import (
 	"strings"
@@ -8,16 +8,15 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
-// extractZeropsYAMLRunEnvRefs parses the body of /var/www/zerops.yaml
-// and returns the set of variable names referenced via `${...}` syntax
-// inside any setup's `run.envVariables` map values. The set is used by
+// extractZeropsYAMLRunEnvRefs parses the body of zerops.yaml and
+// returns the set of variable names referenced via `${...}` syntax
+// inside any setup's run.envVariables map values. The set is used by
 // the M2 indirect-reference detector to flag project envs that the
 // classification map is about to drop while zerops.yaml still depends
 // on them at runtime.
 //
 // Parse failures return an empty set — silent fallback is intentional;
-// the verifyZeropsYAMLSetup gate already rejects unparseable bodies
-// before composeImportYAML runs.
+// verifyZeropsYAMLSetup already rejects unparseable bodies upstream.
 func extractZeropsYAMLRunEnvRefs(body string) map[string]bool {
 	refs := map[string]bool{}
 	if strings.TrimSpace(body) == "" {
@@ -59,8 +58,7 @@ func extractZeropsYAMLRunEnvRefs(body string) map[string]bool {
 
 // parseDollarBraceRefs scans s for `${VAR_NAME}` occurrences and
 // returns the unique variable names found. Empty names and unclosed
-// patterns are skipped silently. Nested braces are not yaml-legal
-// inside a `${...}` ref, so the inner `}` always terminates the name.
+// patterns are skipped silently.
 func parseDollarBraceRefs(s string) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -86,20 +84,12 @@ func parseDollarBraceRefs(s string) []string {
 }
 
 // isLikelySentinel returns true when value matches a known
-// "review-required" sentinel pattern surfaced by Codex Agent C M4 —
-// Stripe test keys, common disable strings, etc. Used by
-// composeProjectEnvVariables to flag external-secret values that the
-// agent likely mis-classified (a sentinel value usually wants
-// PlainConfig verbatim, not REPLACE_ME substitution).
-//
-// Conservative allowlist — false positives waste user attention but
-// false negatives miss real M4 cases. New patterns require BOTH a
-// known frequency in real apps AND consensus on whether they should
-// stay external-secret OR shift to plain-config.
+// "review-required" sentinel pattern (Stripe test keys, common
+// disable strings, etc.).
 func isLikelySentinel(value string) bool {
 	lc := strings.ToLower(strings.TrimSpace(value))
 	if lc == "" {
-		return false // empty handled separately by the caller
+		return false
 	}
 	switch lc {
 	case "disabled", "none", "null", "false", "off", "n/a", "noop":
@@ -113,15 +103,11 @@ func isLikelySentinel(value string) bool {
 
 // detectIndirectInfraReferences walks the project envs flagged
 // Infrastructure-classified and surfaces a warning for each one whose
-// name appears in the zerops.yaml run.envVariables ref set. The bundle
-// would otherwise drop the project env while zerops.yaml's
-// `${ENV_NAME}` reference at re-import would have nothing to resolve
-// against — the M2 case from plan §3.4 amendment 12.
+// name appears in the zerops.yaml run.envVariables ref set.
 //
-// Detection only — no auto-reclassification (agent owns classification
-// per Codex Agent B 2c). The agent reads the warning, optionally
-// reclassifies the env as PlainConfig in the per-env review table,
-// and re-runs BuildBundle.
+// Detection only — no auto-reclassification. The agent reads the
+// warning, optionally reclassifies the env as PlainConfig in the
+// per-env review table, and re-runs the composer.
 func detectIndirectInfraReferences(
 	envs []ProjectEnvVar,
 	classifications map[string]topology.SecretClassification,
@@ -148,8 +134,7 @@ func detectIndirectInfraReferences(
 }
 
 // quoteEnvName wraps an env name in double quotes for warning
-// readability. Pulled out so warnings stay consistent across
-// composeProjectEnvVariables + detectIndirectInfraReferences.
+// readability.
 func quoteEnvName(name string) string {
 	return `"` + name + `"`
 }

@@ -5,7 +5,7 @@ phases: [export-active]
 exportStatus: [publish-ready]
 environments: [container]
 title: "Publish the export bundle: write yamls, commit, push"
-references-fields: [ops.ExportBundle.ImportYAML, ops.ExportBundle.ZeropsYAML, ops.ExportBundle.RepoURL, ops.ExportBundle.Warnings]
+references-fields: [bundle.ExportBundle.ImportYAML, bundle.ExportBundle.ZeropsYAML, bundle.ExportBundle.RepoURL, bundle.ExportBundle.Warnings]
 ---
 You are at `status="publish-ready"`. Bundle composed: classifications are accepted, `meta.GitPushState=configured`, schema validation clean. Three commands land the bundle: write the two yamls, commit, push via `zerops_deploy strategy="git-push"`.
 

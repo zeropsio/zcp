@@ -1,0 +1,128 @@
+package bundle
+
+import (
+	"fmt"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/zeropsio/zcp/internal/schema"
+	"github.com/zeropsio/zcp/internal/topology"
+)
+
+// BuildExport composes the export-buildFromGit bundle for either the
+// dev or stage variant. Pure composition — no I/O. The handler
+// resolves source state (SSH + Discover + git remote) upstream and
+// hands the typed inputs in.
+func BuildExport(
+	inputs BundleInputs,
+	variant topology.ExportVariant,
+	classifications map[string]topology.SecretClassification,
+) (*ExportBundle, error) {
+	if inputs.TargetHostname == "" {
+		return nil, fmt.Errorf("export bundle: target hostname required")
+	}
+	if inputs.RepoURL == "" {
+		return nil, fmt.Errorf("export bundle: repo URL required (chain to setup-git-push)")
+	}
+	if inputs.SetupName == "" {
+		return nil, fmt.Errorf("export bundle: zerops.yaml setup name required")
+	}
+	if inputs.ServiceType == "" {
+		return nil, fmt.Errorf("export bundle: runtime service type required")
+	}
+	if classifications == nil {
+		classifications = map[string]topology.SecretClassification{}
+	}
+
+	if err := verifyZeropsYAMLSetup(inputs.ZeropsYAMLBody, inputs.SetupName); err != nil {
+		return nil, fmt.Errorf("verify zerops.yaml: %w", err)
+	}
+
+	importYAML, warnings, err := composeImportYAML(inputs, variant, classifications)
+	if err != nil {
+		return nil, fmt.Errorf("compose import.yaml: %w", err)
+	}
+
+	importErrors := schema.ValidateImportYAML(importYAML)
+	zeropsErrors := schema.ValidateZeropsYAML(inputs.ZeropsYAMLBody, inputs.SetupName)
+	validationErrors := make([]schema.ValidationError, 0, len(importErrors)+len(zeropsErrors))
+	validationErrors = append(validationErrors, importErrors...)
+	validationErrors = append(validationErrors, zeropsErrors...)
+
+	return &ExportBundle{
+		ImportYAML:       importYAML,
+		ZeropsYAML:       inputs.ZeropsYAMLBody,
+		ZeropsYAMLSource: "live",
+		RepoURL:          inputs.RepoURL,
+		Variant:          variant,
+		TargetHostname:   inputs.TargetHostname,
+		SetupName:        inputs.SetupName,
+		Classifications:  classifications,
+		Warnings:         warnings,
+		Errors:           validationErrors,
+	}, nil
+}
+
+// composeImportYAML produces the zerops-project-import.yaml
+// body for an export bundle: project block + ONE runtime service
+// entry with buildFromGit + zeropsSetup + (optional)
+// enableSubdomainAccess, plus any managed services the agent
+// included so `${db_*}` / `${redis_*}` references in zerops.yaml
+// resolve in the destination project.
+func composeImportYAML(
+	inputs BundleInputs,
+	variant topology.ExportVariant,
+	classifications map[string]topology.SecretClassification,
+) (string, []string, error) {
+	projectEnvs, warnings := composeProjectEnvVariables(inputs.ProjectEnvs, classifications)
+
+	zeropsRefs := extractZeropsYAMLRunEnvRefs(inputs.ZeropsYAMLBody)
+	warnings = append(warnings, detectIndirectInfraReferences(inputs.ProjectEnvs, classifications, zeropsRefs)...)
+
+	runtimeEntry := map[string]any{
+		"hostname":     inputs.TargetHostname,
+		"type":         inputs.ServiceType,
+		"mode":         runtimeImportMode(inputs.SourceMode),
+		"buildFromGit": inputs.RepoURL,
+		"zeropsSetup":  inputs.SetupName,
+	}
+	if inputs.SubdomainEnabled {
+		runtimeEntry["enableSubdomainAccess"] = true
+	}
+
+	services := make([]any, 0, 1+len(inputs.ManagedServices))
+	services = append(services, runtimeEntry)
+	for _, m := range inputs.ManagedServices {
+		entry := map[string]any{
+			"hostname": m.Hostname,
+			"type":     m.Type,
+			"priority": 10,
+		}
+		if m.Mode != "" {
+			entry["mode"] = m.Mode
+		}
+		services = append(services, entry)
+	}
+
+	project := map[string]any{
+		"name": inputs.ProjectName,
+	}
+	if len(projectEnvs) > 0 {
+		project["envVariables"] = projectEnvs
+	}
+
+	doc := map[string]any{
+		"project":  project,
+		"services": services,
+	}
+
+	out, err := yaml.Marshal(doc)
+	if err != nil {
+		return "", nil, fmt.Errorf("marshal: %w", err)
+	}
+	body := string(out)
+	body = addPreprocessorHeader(body, projectEnvs)
+
+	_ = variant // recorded on bundle.Variant; mode derives from SourceMode
+	return body, warnings, nil
+}

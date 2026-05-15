@@ -1,4 +1,4 @@
-package ops
+package bundle
 
 import (
 	"context"
@@ -510,7 +510,7 @@ func TestBuildBundle_HappyPath(t *testing.T) {
 		"STRIPE_SECRET": topology.SecretClassExternalSecret,
 	}
 
-	bundle, err := BuildBundle(inputs, topology.ExportVariantDev, classifications)
+	bundle, err := BuildExport(inputs, topology.ExportVariantDev, classifications)
 	if err != nil {
 		t.Fatalf("BuildBundle: %v", err)
 	}
@@ -614,7 +614,7 @@ func TestBuildBundle_Errors(t *testing.T) {
 			t.Parallel()
 			inputs := base
 			tt.mutate(&inputs)
-			_, err := BuildBundle(inputs, topology.ExportVariantDev, nil)
+			_, err := BuildExport(inputs, topology.ExportVariantDev, nil)
 			if err == nil {
 				t.Fatalf("expected error containing %q, got nil", tt.wantErr)
 			}
@@ -647,7 +647,7 @@ func TestBuildBundle_NodeShape(t *testing.T) {
           path: /healthz
           port: 3000
 `
-	bundle, err := BuildBundle(BundleInputs{
+	bundle, err := BuildExport(BundleInputs{
 		ProjectName:    "node-demo",
 		TargetHostname: "api",
 		SourceMode:     topology.ModeSimple,
@@ -698,7 +698,7 @@ func TestBuildBundle_StaticShape(t *testing.T) {
     run:
       base: static
 `
-	bundle, err := BuildBundle(BundleInputs{
+	bundle, err := BuildExport(BundleInputs{
 		ProjectName:    "static-demo",
 		TargetHostname: "site",
 		SourceMode:     topology.ModeSimple,
@@ -720,7 +720,7 @@ func TestBuildBundle_StaticShape(t *testing.T) {
 // quoting decisions on the emitted value.
 func TestBuildBundle_PHPSecretMidString(t *testing.T) {
 	t.Parallel()
-	bundle, err := BuildBundle(BundleInputs{
+	bundle, err := BuildExport(BundleInputs{
 		ProjectName:    "php-demo",
 		TargetHostname: "appdev",
 		SourceMode:     topology.ModeStandard,
@@ -764,7 +764,7 @@ func TestBuildBundle_M2IndirectInfraReference(t *testing.T) {
       envVariables:
         DATABASE_URL: postgres://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${DB_NAME}
 `
-	bundle, err := BuildBundle(BundleInputs{
+	bundle, err := BuildExport(BundleInputs{
 		ProjectName:    "indirect-demo",
 		TargetHostname: "appdev",
 		SourceMode:     topology.ModeStandard,
@@ -818,7 +818,7 @@ func TestBuildBundle_M2IndirectInfraReference(t *testing.T) {
 // same name — that's the happy path, not M2.
 func TestBuildBundle_M2NoFalsePositiveOnManagedServiceRef(t *testing.T) {
 	t.Parallel()
-	bundle, err := BuildBundle(BundleInputs{
+	bundle, err := BuildExport(BundleInputs{
 		ProjectName:    "happy-managed-refs",
 		TargetHostname: "appdev",
 		SourceMode:     topology.ModeStandard,
@@ -867,7 +867,7 @@ func TestBuildBundle_SentinelExternalSecretFlags(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			bundle, err := BuildBundle(BundleInputs{
+			bundle, err := BuildExport(BundleInputs{
 				ProjectName:    "sentinel-demo",
 				TargetHostname: "appdev",
 				SourceMode:     topology.ModeStandard,
@@ -1063,11 +1063,11 @@ func TestBuildBundle_DeterministicOutput(t *testing.T) {
 		"A_FIRST": topology.SecretClassPlainConfig,
 		"M_MID":   topology.SecretClassPlainConfig,
 	}
-	first, err := BuildBundle(inputs, topology.ExportVariantDev, classifications)
+	first, err := BuildExport(inputs, topology.ExportVariantDev, classifications)
 	if err != nil {
 		t.Fatalf("first BuildBundle: %v", err)
 	}
-	second, err := BuildBundle(inputs, topology.ExportVariantDev, classifications)
+	second, err := BuildExport(inputs, topology.ExportVariantDev, classifications)
 	if err != nil {
 		t.Fatalf("second BuildBundle: %v", err)
 	}

@@ -5,7 +5,7 @@ phases: [export-active]
 exportStatus: [classify-prompt, validation-failed]
 environments: [container]
 title: "Read the export bundle's preview + warnings + errors before publishing"
-references-fields: [ops.ExportBundle.ImportYAML, ops.ExportBundle.ZeropsYAML, ops.ExportBundle.Warnings, ops.ExportBundle.Errors]
+references-fields: [bundle.ExportBundle.ImportYAML, bundle.ExportBundle.ZeropsYAML, bundle.ExportBundle.Warnings, bundle.ExportBundle.Errors]
 ---
 This atom fires across both `classify-prompt` (where `bundle.warnings` is the actionable signal — composer hints to act on before the next call) AND `validation-failed` (where `bundle.errors` is the blocker — schema validation failed, the bundle cannot publish). At classify-prompt, `bundle.errors` is empty and you act on warnings; at validation-failed, `bundle.errors` is non-empty and you fix those first. Read every relevant field before re-calling — corrections are cheaper here than after publish.
 
