@@ -153,6 +153,20 @@ var gotchasH3RE = regexp.MustCompile(`(?m)^\s*###\s+Gotchas\b`)
 // or (b) carries any bold-bullet (`- **...**`) shape. Both signals are
 // run-48-explicit opt-ins per spec §Surface 5 dual-shape.
 //
+// The boldBulletRE branch is the "implicit opt-in" path: ANY
+// `- **stem**` bullet anywhere in the body — not just under `###
+// Gotchas` — flips the body to shape (2). The rationale is that a
+// bold-stem bullet is itself the engine-convention shape from the
+// goldens (laravel-jetstream `### Gotchas` body uses `- **Topic**`
+// bullets verbatim); an author writing bold-stem bullets has chosen
+// the shape regardless of whether they wrote the wrapper. Tightening
+// to require the explicit `### Gotchas` header would route
+// bare-bold-bullet bodies to shape (1) and silently bypass stem-shape
+// enforcement on content the author clearly intended as Surface 5
+// shape (2). Pinned by the bullet-only fixtures in
+// TestCheckSlotShape_KB_AcceptsTopicShape and
+// TestCheckSlotShape_KB_NoCapAtTwelveBullets.
+//
 // Used by validateCodebaseKB (bold-symptom check) and by
 // slot_shape.go::checkCodebaseKBAll (symptom-first stem regex
 // enforcement) so the shape gate fires from one place.

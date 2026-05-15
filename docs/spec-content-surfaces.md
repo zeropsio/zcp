@@ -209,6 +209,13 @@ observable symptom (HTTP status, quoted error string, measurable
 wrong-state phrase). Use this shape only when a concrete symptom is
 the right teaching tool — not as the default.
 
+**Shape (2) detection has TWO opt-in signals**: the explicit `### Gotchas`
+H3 wrapper, OR any `- **stem**` bold-bullet anywhere in the body. The
+latter is the implicit opt-in — an author writing bold-stem bullets has
+chosen the engine-convention shape regardless of whether they wrote the
+wrapper, and stem-shape enforcement fires accordingly. Pinned in
+`internal/recipe/validators_codebase.go::isSymptomFirstShape`.
+
 The bar is **salience, not count**: sparse-when-brief-is-enough. The
 historical "≤ 8 bullets per codebase" cap is retired; bullets and H3
 sections stand on their own merit.
