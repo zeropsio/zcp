@@ -1,0 +1,22 @@
+project:
+    envVariables:
+        LOG_LEVEL: info
+        NODE_ENV: production
+    name: myapp-prod
+    tags:
+        - env:prod
+        - source-project:source-standard-pair
+        - managed-by:zcp-launch
+services:
+    - buildFromGit: https://github.com/example/myapp
+      hostname: app
+      minContainers: 2
+      mode: NON_HA
+      type: nodejs@22
+      verticalAutoscaling:
+        cpuMode: DEDICATED
+      zeropsSetup: prod
+    - hostname: db
+      mode: HA
+      priority: 10
+      type: postgresql@16

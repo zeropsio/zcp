@@ -1,0 +1,30 @@
+project:
+    envVariables:
+        APP_DEBUG: "false"
+        APP_ENV: production
+    name: laravel-prod
+    tags:
+        - env:prod
+        - source-project:source-recipe-laravel
+        - managed-by:zcp-launch
+services:
+    - buildFromGit: https://github.com/example/laravel-showcase
+      hostname: app
+      minContainers: 2
+      mode: NON_HA
+      type: php-nginx@8.3+8.0
+      verticalAutoscaling:
+        cpuMode: DEDICATED
+      zeropsSetup: prod
+    - hostname: db
+      mode: HA
+      priority: 10
+      type: postgresql@16
+    - hostname: redis
+      mode: HA
+      priority: 10
+      type: valkey@7
+    - hostname: storage
+      mode: HA
+      priority: 10
+      type: object-storage

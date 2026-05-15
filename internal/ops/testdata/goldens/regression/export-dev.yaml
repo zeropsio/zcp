@@ -1,0 +1,16 @@
+project:
+    envVariables:
+        LOG_LEVEL: info
+        NODE_ENV: development
+    name: myapp
+services:
+    - buildFromGit: https://github.com/example/myapp
+      enableSubdomainAccess: true
+      hostname: appdev
+      mode: NON_HA
+      type: nodejs@22
+      zeropsSetup: dev
+    - hostname: db
+      mode: NON_HA
+      priority: 10
+      type: postgresql@16

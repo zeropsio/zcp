@@ -169,12 +169,106 @@ func handleLaunchProduction(
 		return launchResumeResponse(corpus, existing), nil, nil
 	}
 
+	// P-LP-3 active compare gate: try to compute the current
+	// SourceSnapshot from live source state so it can be persisted at
+	// ready-to-launch (baseline) AND compared at launching (drift). The
+	// snapshot is the immutability anchor; without it, the workflow has
+	// no signal to detect mid-flight source mutations or state tampering.
+	//
+	// Soft-read at ready-to-launch: if the source can't be read or
+	// validated yet (missing setup:prod, no remote, no zerops.yaml),
+	// the workflow still emits ready-to-launch — the user gets to see
+	// scope + classification summary before tackling source-control
+	// fixes. Baseline persistence is skipped in that branch; drift
+	// detection only engages when a valid baseline has been captured.
+	//
+	// Hard-read at launching: the existing executeLaunchMutation gate
+	// re-runs readAndValidateSourceState and surfaces source-control
+	// blockers; nothing here changes that — current still calls it.
+	var current ops.SourceSnapshot
+	var haveCurrent bool
+	if source, sourceBlocker := readAndValidateSourceState(ctx, client, sshDeployer, rt, corpus, input, projectID, stateDir, launchID); sourceBlocker == nil {
+		if bundle, bundleErr := ops.BuildLaunchBundle(ops.LaunchBundleInputs{
+			SourceProjectID:   projectID,
+			TargetProjectName: input.ProductionProjectName,
+			TargetHostname:    input.TargetService,
+			ServiceType:       source.ServiceType,
+			SetupName:         "prod",
+			RepoURL:           source.RepoURL,
+			ZeropsYAMLBody:    source.ZeropsYAMLBody,
+			GitCommitSHA:      source.GitCommitSHA,
+			ProjectEnvs:       sourceEnvs,
+			ManagedServices:   source.ManagedServices,
+			KeepNonHA:         input.KeepNonHA,
+		}, classifications); bundleErr == nil {
+			current = bundle.SourceSnapshot
+			haveCurrent = true
+		}
+	}
+
+	// Drift gate: when a prior ready-to-launch transition persisted a
+	// baseline and the user is now publishing (LaunchKey supplied),
+	// recompute current and refuse on mismatch. The existing state file
+	// is preserved on refusal so operators can inspect the drift.
+	var zeroSnapshot ops.SourceSnapshot
+	if haveCurrent && input.LaunchKey != "" && existing != nil && existing.SourceSnapshot != zeroSnapshot && existing.SourceSnapshot != current {
+		return launchSourceDriftResponse(corpus, existing.SourceSnapshot, current), nil, nil
+	}
+
 	if input.LaunchKey == "" {
+		// Persist the ready-to-launch baseline on first transition when
+		// the source state was readable. Idempotent: subsequent calls
+		// without LaunchKey reuse the existing baseline rather than
+		// refreshing it (baseline is fixed at the moment of
+		// classification completion; user must abandon + re-start to
+		// refresh).
+		if haveCurrent && existing == nil {
+			_ = writeLaunchState(stateDir, &launchState{
+				LaunchID:              launchID,
+				SourceProjectID:       projectID,
+				TargetProjectName:     input.ProductionProjectName,
+				TargetServiceHostname: input.TargetService,
+				SourceSnapshot:        current,
+				Classifications:       classifications,
+				Status:                topology.LaunchStatusReadyToLaunch,
+			})
+		}
 		return launchReadyToLaunchResponse(corpus, input, sourceEnvs, sourceContext), nil, nil
 	}
 
-	// Mutation pipeline — LaunchKey supplied, no existing target.
+	// Mutation pipeline — LaunchKey supplied, no existing target,
+	// baseline matches current (or no prior baseline = first publish).
 	return executeLaunchMutation(ctx, projectID, client, sshDeployer, rt, input, sourceEnvs, classifications, corpus, stateDir, launchID)
+}
+
+// launchSourceDriftResponse builds the structured refusal response
+// for the P-LP-3 active-compare gate. The response carries:
+//   - status="failed"
+//   - blocker carrying the structured "source-drift" identifier
+//   - both baseline + current snapshots so the agent can diff and
+//     decide whether to abandon the ready-to-launch (re-classify
+//     against new source) or revert source to match baseline.
+//
+// State file is NOT modified by this response — caller preserves the
+// existing baseline so operators can inspect the drift after the fact.
+func launchSourceDriftResponse(corpus []workflow.KnowledgeAtom, baseline, current ops.SourceSnapshot) *mcp.CallToolResult {
+	msg := fmt.Sprintf(
+		"Source state changed since the ready-to-launch baseline was captured. "+
+			"Refusing publish to protect the immutability gate.\n"+
+			"baseline.commitSha=%s current.commitSha=%s\n"+
+			"baseline.zeropsYamlSha256=%s current.zeropsYamlSha256=%s\n"+
+			"baseline.projectEnvsDigest=%s current.projectEnvsDigest=%s\n"+
+			"baseline.serviceListDigest=%s current.serviceListDigest=%s\n"+
+			"To proceed: either revert source to baseline (git checkout) "+
+			"or abandon this launch (delete state file under "+
+			".zcp/state/launch-production/) and restart the workflow to "+
+			"capture a fresh baseline against the current source.",
+		baseline.GitCommitSHA, current.GitCommitSHA,
+		baseline.ZeropsYAMLSHA256, current.ZeropsYAMLSHA256,
+		baseline.ProjectEnvsDigest, current.ProjectEnvsDigest,
+		baseline.ServiceListDigest, current.ServiceListDigest,
+	)
+	return launchFailedResponse(corpus, topology.BlockerCategoryOther, "source-drift", msg)
 }
 
 // pipelineSkipRecorded returns true when state.PipelineConfigurations
