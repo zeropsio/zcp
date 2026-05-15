@@ -91,6 +91,21 @@ func TestGateKBSelfInflictedReversible_Run48Cases(t *testing.T) {
 			kbBody:      "",
 			wantRefusal: false,
 		},
+		{
+			// Codex code-review F4: hasExposedHeadersShipped used to
+			// raw-scan the full yaml body, so a recipe whose ONLY mention
+			// of `exposedHeaders` was a yaml comment would false-positive
+			// as "shipped" and the gate would refuse a valid KB bullet.
+			// stripYAMLComments() runs ahead of the directive scan and
+			// closes the false-positive.
+			name:     "exposedHeaders mentioned only in yaml comment - NOT shipped",
+			hostname: "api",
+			kbBody: "### Gotchas\n\n" +
+				"- **Custom response headers return `undefined` from the SPA but show up in `curl`** — browsers strip non-CORS-safelisted headers cross-origin unless the server lists them under `Access-Control-Expose-Headers`.",
+			yamlFragment: "# Set exposedHeaders if you need cross-origin custom headers\n" +
+				"zerops:\n  - setup: prod\n    run:\n      base: nodejs@22\n      envVariables:\n        FOO: bar\n",
+			wantRefusal: false,
+		},
 	}
 
 	for _, tc := range cases {

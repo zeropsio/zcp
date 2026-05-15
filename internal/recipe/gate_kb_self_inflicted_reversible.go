@@ -208,6 +208,35 @@ func codebaseYAMLBody(plan *Plan, hostname string) string {
 	return raw
 }
 
+// stripAllYAMLComments drops `# ... end-of-line` content from every
+// line of a yaml body — including inline trailing comments on data
+// lines — so directive-presence scans don't false-positive on prose
+// inside comments. Distinct from stitch_yaml.go::stripYAMLComments,
+// which preserves inline trailing comments because stitch-idempotency
+// only needs to strip standalone comment lines; the directive-scan
+// callsite here needs both stripped (an inline comment can still
+// mention a directive name that the gate would otherwise read as
+// "shipped").
+//
+// Crude: doesn't handle `#` inside quoted strings, but yaml env-var
+// declarations and directive keys in the recipe corpus don't place
+// comment chars inside quoted values. Acceptable for v1 directive
+// scans. Closes the F4 false-positive flagged by codex code-review:
+// a yaml body whose ONLY mention of `exposedHeaders` was a `#`
+// comment previously made `hasExposedHeadersShipped` return true even
+// when the directive wasn't actually shipped in executable yaml.
+func stripAllYAMLComments(s string) string {
+	var out strings.Builder
+	out.Grow(len(s))
+	for _, line := range strings.SplitAfter(s, "\n") {
+		if idx := strings.IndexByte(line, '#'); idx >= 0 {
+			line = line[:idx]
+		}
+		out.WriteString(line)
+	}
+	return out.String()
+}
+
 // codebaseClaudeMDBody returns the codebase's shipped CLAUDE.md
 // fragment body when present (empty string otherwise).
 func codebaseClaudeMDBody(plan *Plan, hostname string) string {
@@ -249,9 +278,11 @@ var (
 )
 
 func hasIgnoreEnvFileShipped(plan *Plan, hostname string) bool {
-	if ignoreEnvFileRE.MatchString(codebaseYAMLBody(plan, hostname)) {
+	if ignoreEnvFileRE.MatchString(stripAllYAMLComments(codebaseYAMLBody(plan, hostname))) {
 		return true
 	}
+	// CLAUDE.md is markdown — yaml comment-strip does not apply; the
+	// mention of the directive in CLAUDE.md prose is the signal we want.
 	if ignoreEnvFileRE.MatchString(codebaseClaudeMDBody(plan, hostname)) {
 		return true
 	}
@@ -265,10 +296,14 @@ var (
 )
 
 func hasExposedHeadersShipped(plan *Plan, hostname string) bool {
+	// IG body is markdown; yaml comment-strip does not apply (markdown
+	// `#` chars are headings, not comments). The yaml-body scan strips
+	// comments so a `# exposedHeaders is required for ...` comment in
+	// the recipe yaml does not false-positive as a shipped directive.
 	if exposedHeadersRE.MatchString(codebaseIGBody(plan, hostname)) {
 		return true
 	}
-	if exposedHeadersRE.MatchString(codebaseYAMLBody(plan, hostname)) {
+	if exposedHeadersRE.MatchString(stripAllYAMLComments(codebaseYAMLBody(plan, hostname))) {
 		return true
 	}
 	return false
@@ -282,7 +317,7 @@ func hasExposedHeadersShipped(plan *Plan, hostname string) bool {
 var baseStaticRE = regexp.MustCompile(`(?im)^\s*base\s*:\s*static\b`)
 
 func hasStaticBaseWithoutStartShipped(plan *Plan, hostname string) bool {
-	yaml := codebaseYAMLBody(plan, hostname)
+	yaml := stripAllYAMLComments(codebaseYAMLBody(plan, hostname))
 	if !baseStaticRE.MatchString(yaml) {
 		return false
 	}
@@ -305,7 +340,7 @@ var (
 )
 
 func hasScopedExecOnceKeysShipped(plan *Plan, hostname string) bool {
-	yaml := codebaseYAMLBody(plan, hostname)
+	yaml := stripAllYAMLComments(codebaseYAMLBody(plan, hostname))
 	// Discriminator: the recipe ships initCommands AND zsc execOnce
 	// with explicit keys (the per-codebase scoping). Both required;
 	// initCommands without explicit zsc execOnce keys doesn't ship the
@@ -334,7 +369,7 @@ var (
 )
 
 func hasNoCachePasswordAliasShipped(plan *Plan, hostname string) bool {
-	yaml := codebaseYAMLBody(plan, hostname)
+	yaml := stripAllYAMLComments(codebaseYAMLBody(plan, hostname))
 	// Discriminator: the codebase consumes the cache service (any
 	// `${cache_*}` / `${valkey_*}` / `${redis_*}` env-var pattern is
 	// present) AND the recipe omits the password alias. Both required;
