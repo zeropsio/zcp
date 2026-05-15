@@ -216,7 +216,7 @@ func TestE2E_KnowledgeQuality(t *testing.T) {
 	// Fetch env vars for managed services (services with a claim).
 	type serviceWithEnv struct {
 		svc  platform.ServiceStack
-		envs []platform.EnvVar
+		envs []platform.ServiceEnvVar
 	}
 	byType := groupByBaseType(userServices)
 	managedWithEnvs := make(map[string][]serviceWithEnv)
@@ -477,7 +477,7 @@ func groupByBaseType(svcs []platform.ServiceStack) map[string][]platform.Service
 }
 
 // kqEnvKeySet builds a set of env var key names.
-func kqEnvKeySet(envs []platform.EnvVar) map[string]bool {
+func kqEnvKeySet(envs []platform.ServiceEnvVar) map[string]bool {
 	set := make(map[string]bool, len(envs))
 	for _, e := range envs {
 		set[e.Key] = true

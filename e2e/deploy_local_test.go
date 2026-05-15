@@ -458,14 +458,14 @@ func TestE2E_LocalDeploy_EnvVarBridge(t *testing.T) {
 		t.Fatalf("parse discover: %v", err)
 	}
 
-	var envVars []platform.EnvVar
+	var envVars []platform.ServiceEnvVar
 	for _, svc := range discoverResult.Services {
 		if svc.Hostname == dbHostname {
 			for _, ev := range svc.Envs {
 				key, _ := ev["key"].(string)
 				value, _ := ev["value"].(string)
 				if key != "" {
-					envVars = append(envVars, platform.EnvVar{Key: key, Content: value})
+					envVars = append(envVars, platform.ServiceEnvVar{Key: key, Content: value})
 				}
 			}
 		}
