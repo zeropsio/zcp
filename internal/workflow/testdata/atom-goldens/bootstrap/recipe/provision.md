@@ -20,12 +20,12 @@ zerops_env action="set" scope="project" key="APP_KEY" value="<@generateRandomStr
 Preprocessor directives (`<@...>`) evaluate server-side; pass the literal
 string, not a pre-rendered value. Repeat for each project env var.
 
-Some recipes override this default (e.g. encryption keys that need a
-framework-specific format — set them post-deploy after the framework
-generates a canonical value). Check the recipe's gotchas via
-`zerops_knowledge action="recipe" slug="<slug>"` before pre-setting project
-env vars; if the gotcha names a key, skip it here and follow the
-recipe-specific procedure instead.
+Some recipes carry framework-specific notes about a particular key —
+e.g. which prefix format the framework will or won't accept, or whether
+a value must be regenerated post-deploy. Check the recipe's gotchas via
+`zerops_knowledge action="recipe" slug="<slug>"` BEFORE pre-setting
+project env vars; the gotcha section names the key and the exact value
+shape that works for the framework.
 
 2. **Import services.**
 
