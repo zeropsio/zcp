@@ -1396,3 +1396,207 @@ func TestHasPkgInstallWithoutSudo(t *testing.T) {
 		})
 	}
 }
+
+// TestCheckReservedEnvNames pins the reserved-env-name preflight against
+// the empirically-verified denylist (plans/audit-env-vars-20260515/
+// VERIFY-reserved-names.md). Two regimes:
+//   - hardReservedEnvKeys reject in either build or run envVariables
+//     (case-sensitive — the Zerops API's userDataUseOfSystemKey response)
+//   - runScopeReservedEnvKeys pass API validation but crash runtime-init
+//     when set in run.envVariables (build.envVariables is OK)
+func TestCheckReservedEnvNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		runEnv    map[string]string
+		buildEnv  map[string]string
+		wantErr   bool
+		wantInMsg []string
+	}{
+		// PASS cases — nothing reserved
+		{
+			name:    "no_env_vars",
+			wantErr: false,
+		},
+		{
+			name:    "allowed_run_keys",
+			runEnv:  map[string]string{"DATABASE_URL": "postgresql://x", "NODE_ENV": "production", "USER": "foo"},
+			wantErr: false,
+		},
+		{
+			name:     "allowed_build_keys",
+			buildEnv: map[string]string{"VITE_API_URL": "http://api:3001"},
+			wantErr:  false,
+		},
+		{
+			name:     "HOSTNAME_in_build_only_is_ok",
+			buildEnv: map[string]string{"HOSTNAME": "0.0.0.0"},
+			wantErr:  false,
+		},
+		// FAIL cases — hard-reserved in run
+		{
+			name:      "hostname_lowercase_in_run",
+			runEnv:    map[string]string{"hostname": "x"},
+			wantErr:   true,
+			wantInMsg: []string{"run.envVariables.hostname"},
+		},
+		{
+			name:      "PATH_in_run",
+			runEnv:    map[string]string{"PATH": "/custom"},
+			wantErr:   true,
+			wantInMsg: []string{"run.envVariables.PATH"},
+		},
+		{
+			name:      "serviceId_in_run",
+			runEnv:    map[string]string{"serviceId": "x"},
+			wantErr:   true,
+			wantInMsg: []string{"run.envVariables.serviceId"},
+		},
+		{
+			name:      "projectId_in_run",
+			runEnv:    map[string]string{"projectId": "x"},
+			wantErr:   true,
+			wantInMsg: []string{"run.envVariables.projectId"},
+		},
+		{
+			name:      "appVersionId_in_run",
+			runEnv:    map[string]string{"appVersionId": "x"},
+			wantErr:   true,
+			wantInMsg: []string{"run.envVariables.appVersionId"},
+		},
+		{
+			name:      "appVersionName_in_run",
+			runEnv:    map[string]string{"appVersionName": "x"},
+			wantErr:   true,
+			wantInMsg: []string{"run.envVariables.appVersionName"},
+		},
+		{
+			name:      "zeropsSubdomain_in_run",
+			runEnv:    map[string]string{"zeropsSubdomain": "x"},
+			wantErr:   true,
+			wantInMsg: []string{"run.envVariables.zeropsSubdomain"},
+		},
+		// FAIL cases — hard-reserved in build
+		{
+			name:      "hostname_lowercase_in_build",
+			buildEnv:  map[string]string{"hostname": "x"},
+			wantErr:   true,
+			wantInMsg: []string{"build.envVariables.hostname"},
+		},
+		{
+			name:      "PATH_in_build",
+			buildEnv:  map[string]string{"PATH": "/custom"},
+			wantErr:   true,
+			wantInMsg: []string{"build.envVariables.PATH"},
+		},
+		// FAIL cases — run-scope-only reserved
+		{
+			name:      "HOSTNAME_in_run",
+			runEnv:    map[string]string{"HOSTNAME": "0.0.0.0"},
+			wantErr:   true,
+			wantInMsg: []string{"run.envVariables.HOSTNAME"},
+		},
+		{
+			name:      "Path_capitalized_in_run",
+			runEnv:    map[string]string{"Path": "/custom"},
+			wantErr:   true,
+			wantInMsg: []string{"run.envVariables.Path"},
+		},
+		{
+			name:      "path_lowercase_in_run",
+			runEnv:    map[string]string{"path": "/custom"},
+			wantErr:   true,
+			wantInMsg: []string{"run.envVariables.path"},
+		},
+		// Combinations
+		{
+			name:      "mixed_legit_and_reserved",
+			runEnv:    map[string]string{"DATABASE_URL": "postgresql://x", "HOSTNAME": "0.0.0.0"},
+			wantErr:   true,
+			wantInMsg: []string{"run.envVariables.HOSTNAME"},
+		},
+		{
+			name:      "two_reserved_in_run",
+			runEnv:    map[string]string{"hostname": "x", "HOSTNAME": "0.0.0.0"},
+			wantErr:   true,
+			wantInMsg: []string{"run.envVariables.HOSTNAME", "run.envVariables.hostname"},
+		},
+		{
+			name:      "reserved_in_both_scopes",
+			buildEnv:  map[string]string{"hostname": "x"},
+			runEnv:    map[string]string{"PATH": "/custom"},
+			wantErr:   true,
+			wantInMsg: []string{"build.envVariables.hostname", "run.envVariables.PATH"},
+		},
+		// Negative case — keys that LOOK like reserved but aren't
+		{
+			name:    "case_insensitive_hostname_is_allowed",
+			runEnv:  map[string]string{"HOST": "example", "MY_HOSTNAME": "foo"},
+			wantErr: false,
+		},
+		{
+			name:    "zeropsSubdomainHost_not_reserved",
+			runEnv:  map[string]string{"zeropsSubdomainHost": "custom"},
+			wantErr: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			entry := &ZeropsYmlEntry{
+				Setup: "appdev",
+				Build: zeropsYmlBuild{EnvVariables: tt.buildEnv},
+				Run:   zeropsYmlRun{EnvVariables: tt.runEnv},
+			}
+			err := CheckReservedEnvNames(entry)
+			if tt.wantErr && err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+			if err != nil {
+				msg := err.Error()
+				for _, want := range tt.wantInMsg {
+					if !strings.Contains(msg, want) {
+						t.Errorf("error message missing %q\n\tgot: %s", want, msg)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestReservedEnvNames_AtomCoverage is a drift detector for the
+// reserved-key set: every key in hardReservedEnvKeys + runScopeReservedEnvKeys
+// must appear in develop-reserved-env-names.md so the atom and the
+// preflight stay in sync. If code adds a key but the atom doesn't list
+// it, agents reading the atom will be surprised when the preflight
+// rejects. If the atom lists a key the code doesn't enforce, agents
+// avoid a key the platform actually accepts.
+//
+// Pinned by VERIFY-reserved-names.md §E1+E3 — the empirical set from
+// 26 probes against eval-zcp on 2026-05-16.
+func TestReservedEnvNames_AtomCoverage(t *testing.T) {
+	t.Parallel()
+
+	atomPath := "../content/atoms/develop-reserved-env-names.md"
+	body, err := os.ReadFile(atomPath)
+	if err != nil {
+		t.Fatalf("read reserved-env atom: %v", err)
+	}
+	atomText := string(body)
+
+	for key := range hardReservedEnvKeys {
+		// Backtick-wrapped key is the atom's citation convention.
+		if !strings.Contains(atomText, "`"+key+"`") {
+			t.Errorf("hardReservedEnvKeys has %q but develop-reserved-env-names.md doesn't cite it (expected `%s` in backticks)", key, key)
+		}
+	}
+	for key := range runScopeReservedEnvKeys {
+		if !strings.Contains(atomText, "`"+key+"`") {
+			t.Errorf("runScopeReservedEnvKeys has %q but develop-reserved-env-names.md doesn't cite it (expected `%s` in backticks)", key, key)
+		}
+	}
+}

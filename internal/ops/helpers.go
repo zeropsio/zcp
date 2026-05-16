@@ -171,6 +171,70 @@ func envVarsToMaps[T platform.EnvAccessor](envs []T, includeValues bool) []map[s
 	return result
 }
 
+// annotateConnectionStringShape walks the env map slice (post-render
+// output of envVarsToMaps) and attaches `completenessFlags` +
+// `warning` to the `connectionString` entry when the service type is
+// Postgres or MariaDB. Both expose a connectionString resolving to
+// `protocol://${user}:${password}@${hostname}:${port}` — without
+// `/${dbName}` appended — and clients that need a fully-qualified URL
+// (Prisma, Drizzle, sqlx, SQLAlchemy, Sequelize) silently connect to
+// the driver's default admin DB unless the warning is honoured.
+//
+// Empirical basis: live `zerops_discover service=db includeEnvs=true
+// includeEnvValues=true` against postgresql@18 in eval-zcp
+// (plans/audit-env-vars-20260515/VERIFY-reserved-names.md §D);
+// observed agent friction across runs 1 + 2 (5+ wasted deploys +
+// manual schema grants in each session before discovering the gap).
+//
+// MariaDB inherits the same connectionString shape; ClickHouse and
+// Kafka are intentionally NOT covered — ClickHouse has multiple
+// per-protocol ports and Kafka exposes no connectionString at all.
+//
+// Pinning: TestAnnotateConnectionStringShape_* in helpers_test.go.
+func annotateConnectionStringShape(envs []map[string]any, serviceType string) {
+	if !dbServiceTypeWithBareConnectionString(serviceType) {
+		return
+	}
+	for _, m := range envs {
+		key, _ := m["key"].(string)
+		if key != "connectionString" {
+			continue
+		}
+		m["completenessFlags"] = map[string]any{"includesDbName": false}
+		m["warning"] = "connectionString omits /${dbName}; for Prisma / Drizzle / sqlx / SQLAlchemy / Sequelize compose explicitly: protocol://${" + serviceHostPrefix(serviceType) + "_user}:${" + serviceHostPrefix(serviceType) + "_password}@${" + serviceHostPrefix(serviceType) + "_hostname}:${" + serviceHostPrefix(serviceType) + "_port}/${" + serviceHostPrefix(serviceType) + "_dbName}"
+	}
+}
+
+// dbServiceTypeWithBareConnectionString reports whether a service type
+// exposes the bare-shape connectionString documented in
+// annotateConnectionStringShape.
+func dbServiceTypeWithBareConnectionString(serviceType string) bool {
+	base, _, _ := strings.Cut(serviceType, "@")
+	switch base {
+	case "postgresql", "mariadb":
+		return true
+	}
+	return false
+}
+
+// serviceHostPrefix returns the canonical hostname prefix used in
+// cross-service references (e.g. "db", "mysql"). Callers wire it into
+// the worked-URL warning. For ZCP-managed services the convention is
+// to name the service "db" / "mariadb" / etc.; ServiceInfo doesn't
+// carry the actual user-chosen hostname here, so we fall back to the
+// runtime-base prefix to keep the example deterministic. Callers that
+// know the live hostname can post-fix the warning string downstream.
+func serviceHostPrefix(serviceType string) string {
+	base, _, _ := strings.Cut(serviceType, "@")
+	switch base {
+	case "postgresql":
+		return "db"
+	case "mariadb":
+		return "db"
+	}
+	return base
+}
+
 // findEnvIDByKey finds an env var ID by key name. Generic over
 // EnvAccessor implementers.
 func findEnvIDByKey[T platform.EnvAccessor](envs []T, key string) string {

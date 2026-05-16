@@ -53,6 +53,8 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `develop-dynamic-runtime-start-container` | 6 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/steady-dev-auto-container |
 | `develop-dynamic-runtime-start-local` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-env-var-channels` | 10 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard, develop/git-push-configured-webhook, develop/git-push-unconfigured, develop/mode-expansion-source, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/steady-dev-auto-container |
+| `develop-env-var-model` | 3 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard |
+| `develop-env-var-shell-usage` | 7 | develop/git-push-configured-webhook, develop/git-push-unconfigured, develop/mode-expansion-source, develop/multi-service-scope-narrow, develop/post-adopt-standard-unset, develop/standard-auto-pair, develop/steady-dev-auto-container |
 | `develop-first-deploy-asset-pipeline-container` | 1 | develop/first-deploy-recipe-implicit-standard |
 | `develop-first-deploy-asset-pipeline-local` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-first-deploy-env-vars` | 3 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard |
@@ -75,6 +77,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `develop-platform-rules-local` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-ready-to-deploy` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
 | `develop-record-external-deploy` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |
+| `develop-reserved-env-names` | 3 | develop/failure-tier-3, develop/first-deploy-dev-dynamic-container, develop/first-deploy-recipe-implicit-standard |
 | `develop-standard-unset-iterate` | 1 | develop/post-adopt-standard-unset |
 | `develop-standard-unset-promote-stage` | 1 | develop/post-adopt-standard-unset |
 | `develop-static-workflow` | 0 | TODO: explicit decision required (scenario or `coverageExempt:` frontmatter) |

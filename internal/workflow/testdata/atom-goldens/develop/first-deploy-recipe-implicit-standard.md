@@ -1,8 +1,41 @@
 ---
 id: develop/first-deploy-recipe-implicit-standard
-atomIds: [develop-first-deploy-intro, develop-tool-preload, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-first-deploy-env-vars, develop-first-deploy-scaffold-yaml, develop-http-diagnostic, develop-implicit-webserver, develop-platform-rules-common, develop-deploy-files-self-deploy, develop-first-deploy-write-app, develop-knowledge-pointers, develop-auto-close-semantics, develop-first-deploy-execute, develop-verify-matrix, develop-first-deploy-asset-pipeline-container, develop-first-deploy-promote-stage, develop-first-deploy-verify, develop-strategy-awareness]
+atomIds: [develop-env-var-model, develop-first-deploy-intro, develop-tool-preload, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-first-deploy-env-vars, develop-first-deploy-scaffold-yaml, develop-http-diagnostic, develop-implicit-webserver, develop-platform-rules-common, develop-reserved-env-names, develop-deploy-files-self-deploy, develop-first-deploy-write-app, develop-knowledge-pointers, develop-auto-close-semantics, develop-first-deploy-execute, develop-verify-matrix, develop-first-deploy-asset-pipeline-container, develop-first-deploy-promote-stage, develop-first-deploy-verify, develop-strategy-awareness]
 description: "develop-active, mode=standard pair, php-nginx implicit-webserver runtime + db, never-deployed; bootstrap arrived via recipe route."
 ---
+### Where values come from
+
+Project envs auto-inject as OS env vars into every container — app
+code reads them directly via `process.env.KEY`, no `zerops.yaml` line
+required.
+
+`run.envVariables` lines exist for two purposes only:
+
+1. **Rename a cross-service value** — destination on the left,
+   `${hostname_varname}` source on the right. Example:
+   ```yaml
+   run:
+     envVariables:
+       DATABASE_URL: postgresql://${db_user}:${db_password}@${db_hostname}:${db_port}/${db_dbName}
+       REDIS_URL: ${cache_connectionString}
+   ```
+2. **Mode flag with a per-setup literal** — `NODE_ENV: development`
+   in `setup: appdev`, `NODE_ENV: production` in `setup: appstage`.
+
+### Self-shadow — never the same name on both sides
+
+```yaml
+db_hostname: ${db_hostname}   # WRONG — destination == source
+APP_KEY: ${APP_KEY}           # WRONG — re-declaring a project env
+```
+
+Source resolves to the literal string `${db_hostname}` (8 chars
+including dollar-brace), reaches `process.env` as that literal, and
+the framework crashes when it parses it as a hostname. Pinned in
+`internal/ops/env_shadow.go`.
+
+---
+
 ### You're in the develop first-deploy branch
 
 The envelope reports at least one in-scope service with
@@ -126,58 +159,48 @@ change live value — delete the service-level key
 
 ### Env var catalog from bootstrap
 
-Managed services expose env var keys that your runtime should reference.
-Fetch the actual key list with `zerops_discover service="<hostname>"
-includeEnvs=true` per managed service and use those keys verbatim — **do
-not guess alternatives**. The catalog is the authoritative source; the
-host key is **`hostname`** (never `host`), but every other key varies
-per service type, so don't hardcode from memory.
+Managed services expose env var keys your runtime references. Fetch
+the live key list per managed service with `zerops_discover
+service="<hostname>" includeEnvs=true` and use those keys verbatim —
+**do not guess alternatives**. The catalog is the authoritative source;
+the host key is `hostname` (never `host`), other keys vary per service
+type. Values are redacted by default; names are enough for wiring.
+Pass `includeEnvValues=true` only for troubleshooting.
 
-Place runtime env vars in `run.envVariables`. Cross-service references
-use this form:
+Cross-service wiring goes in `zerops.yaml` `run.envVariables`. A wrong
+spelling on the right-hand side reaches the app as the literal string
+and connect-time fails. Once values are in your context (via
+`includeEnvValues=true`), reference them back by `${name}` in any
+subsequent commands — don't paste raw secrets into tool calls.
 
-```yaml
-envVariables:
-  DATABASE_URL: ${db_connectionString}
-  DB_HOST: ${db_hostname}
-```
+### Per-managed-type cheatsheet
 
-Zerops rewrites `${db_connectionString}` at deploy time from service
-`db`'s `connectionString`; a wrong spelling remains literal and the
-app fails at connect time.
-
-**Re-check at any point:** `zerops_discover service="<hostname>"
-includeEnvs=true` returns the key list. Values are redacted by default;
-names alone are enough for cross-service wiring. Add
-`includeEnvValues=true` only for troubleshooting.
-
-### Per-managed-type guidance (when the envelope has managed services)
-
-If the envelope has zero managed deps (a runtime-only project), this
-section is a no-op. Otherwise, run `zerops_discover service="<dep>"
-includeEnvs=true` per managed dep — that returns the live key set for
-the actual service version. Patterns to remember when wiring:
-
-- Databases / message brokers usually expose `connectionString` —
-  prefer it over assembling `hostname:port:user:password:dbName`.
-- Some types expose elevated credentials (`superUser` /
-  `superUserPassword` on Postgres + ClickHouse) for DDL — pull from
-  the catalog only when DDL is actually needed.
-- ClickHouse + Kafka have multiple ports; match the driver
+- **Postgres / MariaDB / MySQL** — `connectionString` resolves to
+  `protocol://${user}:${password}@$appdev:${port}` and **omits
+  the database name**. For Prisma / Drizzle / sqlx / SQLAlchemy /
+  Sequelize, compose explicitly with `/${db_dbName}` appended (see
+  worked example in the env-var-model atom).
+- **Elevated DDL credentials** — `superUser` / `superUserPassword` on
+  Postgres + ClickHouse. Pull from catalog only when DDL is needed.
+- **ClickHouse + Kafka** — multiple ports; match the driver
   (`portHttp` / `portMysql` / `portNative` / `portPostgresql` for
-  ClickHouse; build broker URL from `hostname:port` for Kafka — no
-  `connectionString`).
-- Object storage is S3-compatible: `apiUrl`, `accessKeyId`,
-  `secretAccessKey`, `bucketName` — no `region` env var.
-- Shared storage is a `hostname`-only mount (`mount:` in zerops.yaml,
-  not a network service).
-- Search / vector services (Meilisearch, Typesense, Qdrant) ship
-  scoped API keys; pick the narrow key for app code, never the master
-  key. Qdrant has both HTTP (`connectionString`) and gRPC
-  (`grpcConnectionString`); pick to match the client library.
+  ClickHouse; build broker URL from `hostname:port` for Kafka —
+  no `connectionString`).
+- **Object storage** — S3-compatible: `apiUrl`, `accessKeyId`,
+  `secretAccessKey`, `bucketName`. No `region`.
+- **Shared storage** — `hostname`-only mount (`mount:` in
+  zerops.yaml, not a network service).
+- **Search / vector** (Meilisearch, Typesense, Qdrant) — scoped API
+  keys; pick the narrow key for app code, never the master key.
+  Qdrant ships both HTTP (`connectionString`) and gRPC
+  (`grpcConnectionString`); match the client library.
 
 For exotic types, `zerops_knowledge query="<service>"` returns the
 canonical reference page.
+
+The reserved-keys atom lists the few keys that cannot appear in
+`envVariables` (`HOSTNAME` in `run.envVariables` is the headline
+trap — `BUILD_FAILED` in 4-5s with empty logs).
 
 ---
 
@@ -293,6 +316,70 @@ triage; there is no app process to crash.
   container, deployed code, per-service env vars, and any
   work-in-progress on the service's filesystem are all torn down. The
   response Warnings name the replaced hostnames; back up first.
+
+---
+
+### Reserved env-var keys — two failure modes
+
+A small set of keys is platform-reserved and cannot be set in
+`zerops.yaml` `envVariables`. Two distinct failure shapes; knowing
+which one you hit tells you where to look.
+
+### Regime 1 — Hard-reserved, API-level (any scope)
+
+The Zerops API rejects these at push time with structured error
+`code: userDataUseOfSystemKey`. zcli surfaces the error before upload
+so you see it inline. Case-sensitive exact match:
+
+- `hostname` (lowercase — Zerops' service-injected service name)
+- `PATH` (uppercase only — `Path` and `path` fall under regime 2)
+- `serviceId`, `projectId`, `appVersionId`, `appVersionName`
+- `zeropsSubdomain` (the fully-resolved URL — `zeropsSubdomainHost`
+  and `zeropsSubdomainString` are NOT in this list and ARE overridable)
+
+If the API rejects, the error names which key failed. Rename the key
+(`MY_HOSTNAME`, `MY_PATH`, etc.) and retry.
+
+### Regime 2 — Run-scope-only, runtime-init crash
+
+These pass the API check but break runtime container startup when set
+in `run.envVariables`. They're fine in `build.envVariables`. The
+pattern: anything that conflicts with `PATH` or `HOSTNAME`
+case-insensitively at runtime-init.
+
+- `HOSTNAME` (uppercase)
+- `Path` (capitalized)
+- `path` (lowercase)
+
+Symptom: `BUILD_FAILED` event in 4-5 seconds with **zero build logs**
+and a generic baseline cause. The deploy response carries no specific
+hint at this layer; the empty-logs shape is the signal.
+
+Move these to `build.envVariables` if you genuinely need the override
+during the build phase, or rename the key entirely (`APP_HOSTNAME`,
+`APP_PATH`).
+
+### Regime 3 — Platform-provided, overridable
+
+These vars are platform-injected as OS env vars but the API
+silently accepts a user override. The override shadows the
+platform-provided value; that is rarely what you want.
+
+- `apiCdnUrl`, `staticCdnUrl`, `storageCdnUrl`
+- `envIsolation`, `sshIsolation`
+- `zeropsSubdomainHost`, `zeropsSubdomainString`
+
+Override only when there's a specific reason (e.g. routing through
+a custom CDN). Default is to read the value Zerops provides.
+
+### Not reserved — feel free to set when needed
+
+Common Linux/runtime defaults Zerops provides but the API does not
+restrict you from overriding:
+
+- `USER`, `HOME`, `LOGNAME`, `SHELL`, `PWD`
+- `PORT` (number or quoted string — both work)
+- `NODE_ENV`, `APP_ENV` and other framework mode flags
 
 ---
 

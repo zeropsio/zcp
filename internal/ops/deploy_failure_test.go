@@ -27,6 +27,7 @@ func TestClassifyDeployFailure_Build(t *testing.T) {
 		wantCategory             topology.FailureClass
 		wantSignal               string
 		wantInCause              string
+		wantInSuggestedAction    string
 		wantNotInSuggestedAction string
 	}{
 		{
@@ -124,6 +125,10 @@ func TestClassifyDeployFailure_Build(t *testing.T) {
 		// they're empty. Eval evidence:
 		// greenfield-fullstack-multi-runtime in suite 20260505-151844.
 		{
+			// VERIFY-reserved-names.md §C — empty-logs <10s case is
+			// dominated by reserved-env-name rejections (HOSTNAME/Path/path
+			// in run.envVariables). Baseline must point at that trap, NOT
+			// at buildCommands bisection.
 			name: "build-baseline-empty-logs",
 			input: FailureInput{
 				Phase:     PhaseBuild,
@@ -132,6 +137,7 @@ func TestClassifyDeployFailure_Build(t *testing.T) {
 			},
 			wantCategory:             topology.FailureClassBuild,
 			wantSignal:               "phase:build",
+			wantInSuggestedAction:    "reserved key in run.envVariables",
 			wantNotInSuggestedAction: "Read buildLogs",
 		},
 	}
@@ -141,6 +147,11 @@ func TestClassifyDeployFailure_Build(t *testing.T) {
 			t.Parallel()
 			got := ClassifyDeployFailure(tc.input)
 			assertClassification(t, got, tc.wantCategory, tc.wantSignal, tc.wantInCause)
+			if tc.wantInSuggestedAction != "" && got != nil &&
+				!strings.Contains(got.SuggestedAction, tc.wantInSuggestedAction) {
+				t.Errorf("SuggestedAction %q must contain %q",
+					got.SuggestedAction, tc.wantInSuggestedAction)
+			}
 			if tc.wantNotInSuggestedAction != "" && got != nil &&
 				strings.Contains(got.SuggestedAction, tc.wantNotInSuggestedAction) {
 				t.Errorf("SuggestedAction %q must not contain %q (logs unavailable)",

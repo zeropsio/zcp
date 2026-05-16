@@ -3,6 +3,8 @@ package ops
 
 import (
 	"math"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -512,5 +514,152 @@ func TestFindEnvIDByKey(t *testing.T) {
 				t.Fatalf("expected %q, got %q", tt.wantID, got)
 			}
 		})
+	}
+}
+
+// TestAnnotateConnectionStringShape pins the discover-output annotation
+// for Postgres + MariaDB connectionString (key omits /${dbName}).
+// Empirical basis: plans/audit-env-vars-20260515/VERIFY-reserved-names.md §D
+// — postgresql@18 in eval-zcp returns
+// "postgresql://${user}:${password}@${hostname}:${port}" verbatim.
+func TestAnnotateConnectionStringShape(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		serviceType      string
+		envs             []map[string]any
+		wantAnnotated    bool
+		wantWarnContains string
+	}{
+		{
+			name:        "postgresql_annotates_connectionString",
+			serviceType: "postgresql@18",
+			envs: []map[string]any{
+				{"key": "hostname"},
+				{"key": "connectionString", "isReference": true},
+				{"key": "dbName"},
+			},
+			wantAnnotated:    true,
+			wantWarnContains: "compose explicitly",
+		},
+		{
+			name:        "mariadb_annotates_connectionString",
+			serviceType: "mariadb@10.6",
+			envs: []map[string]any{
+				{"key": "connectionString", "isReference": true},
+			},
+			wantAnnotated:    true,
+			wantWarnContains: "compose explicitly",
+		},
+		{
+			name:        "valkey_no_annotation",
+			serviceType: "valkey@7.2",
+			envs: []map[string]any{
+				{"key": "connectionString", "isReference": true},
+			},
+			wantAnnotated: false,
+		},
+		{
+			name:        "clickhouse_no_annotation",
+			serviceType: "clickhouse@25.3",
+			envs: []map[string]any{
+				{"key": "connectionString", "isReference": true},
+			},
+			wantAnnotated: false,
+		},
+		{
+			name:        "postgresql_no_connectionString_no_annotation",
+			serviceType: "postgresql@18",
+			envs: []map[string]any{
+				{"key": "hostname"},
+				{"key": "port"},
+			},
+			wantAnnotated: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			annotateConnectionStringShape(tt.envs, tt.serviceType)
+			var annotated map[string]any
+			for _, m := range tt.envs {
+				if m["key"] == "connectionString" {
+					annotated = m
+					break
+				}
+			}
+			if !tt.wantAnnotated {
+				if annotated != nil {
+					if _, hasWarn := annotated["warning"]; hasWarn {
+						t.Errorf("unexpected warning on serviceType=%q connectionString: %v", tt.serviceType, annotated["warning"])
+					}
+					if _, hasFlags := annotated["completenessFlags"]; hasFlags {
+						t.Errorf("unexpected completenessFlags on serviceType=%q connectionString: %v", tt.serviceType, annotated["completenessFlags"])
+					}
+				}
+				return
+			}
+			if annotated == nil {
+				t.Fatal("expected connectionString entry, got none")
+			}
+			flags, ok := annotated["completenessFlags"].(map[string]any)
+			if !ok {
+				t.Fatalf("expected completenessFlags map, got %T", annotated["completenessFlags"])
+			}
+			if flags["includesDbName"] != false {
+				t.Errorf("completenessFlags.includesDbName = %v, want false", flags["includesDbName"])
+			}
+			warn, ok := annotated["warning"].(string)
+			if !ok {
+				t.Fatalf("expected warning string, got %T", annotated["warning"])
+			}
+			if !strings.Contains(warn, tt.wantWarnContains) {
+				t.Errorf("warning missing %q\n\tgot: %s", tt.wantWarnContains, warn)
+			}
+		})
+	}
+}
+
+// TestConnectionStringAnnotation_AtomConsistency pins the discover-output
+// warning text + atom worked example to use the SAME ${var} placeholders.
+// If either drifts (warning mentions ${db_dbName}, atom uses ${db_name}),
+// the agent gets contradictory templates.
+//
+// Empirical basis: VERIFY-reserved-names.md §D — postgresql@18 connectionString
+// shape verified live.
+func TestConnectionStringAnnotation_AtomConsistency(t *testing.T) {
+	t.Parallel()
+
+	// Synthesize what the warning looks like for postgresql.
+	envs := []map[string]any{{"key": "connectionString"}}
+	annotateConnectionStringShape(envs, "postgresql@18")
+	warn, _ := envs[0]["warning"].(string)
+
+	atomPath := "../content/atoms/develop-env-var-model.md"
+	body, err := os.ReadFile(atomPath)
+	if err != nil {
+		t.Fatalf("read env-var-model atom: %v", err)
+	}
+	atomText := string(body)
+
+	// Every ${...} placeholder in the warning must also appear in the
+	// atom — verifies the worked example and the runtime annotation
+	// teach the same composition shape.
+	placeholders := []string{
+		"${db_user}",
+		"${db_password}",
+		"${db_hostname}",
+		"${db_port}",
+		"${db_dbName}",
+	}
+	for _, p := range placeholders {
+		if !strings.Contains(warn, p) {
+			t.Errorf("connectionString warning missing placeholder %s\n\twarning: %s", p, warn)
+		}
+		if !strings.Contains(atomText, p) {
+			t.Errorf("develop-env-var-model.md missing placeholder %s — atom and runtime warning must use the same composition shape", p)
+		}
 	}
 }

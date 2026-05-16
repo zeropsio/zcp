@@ -134,10 +134,20 @@ func baselineForPhase(in FailureInput) *topology.DeployFailureClassification {
 		// captured (sub-10s failures), pointing the agent at buildLogs
 		// they don't have is a self-contradiction with the deploy
 		// response's hasLogs-aware suggestion field.
+		//
+		// Empirically (plans/audit-env-vars-20260515/VERIFY-reserved-names.md
+		// — probes P2/P9/P13/P25/P26 against eval-zcp 2026-05-16), the
+		// dominant zero-logs <10s case is a reserved env-var key in
+		// run.envVariables — HOSTNAME, Path, or path — that crashes
+		// runtime-init before any build output. ZCP preflight catches
+		// this now (CheckReservedEnvNames in deploy_validate.go), so a
+		// platform-side hit at this layer typically means raw zcli push
+		// or another tool bypassed our gate. Name the trap explicitly
+		// instead of pointing the agent at buildCommands bisection.
 		if len(in.BuildLogs) > 0 {
 			cls.SuggestedAction = "Read buildLogs for the exact stderr; fix buildCommands or dependencies in zerops.yaml."
 		} else {
-			cls.SuggestedAction = "Build logs were not captured before the container exited. Re-check zerops.yaml buildCommands syntax + manifests; consider simplifying buildCommands to bisect the failing step."
+			cls.SuggestedAction = "Build container exited before producing logs (typically <10s). The most common cause is a reserved key in run.envVariables — HOSTNAME, Path, or path — which crashes runtime-init before any build output. Remove that key from zerops.yaml run.envVariables. If those aren't present, re-check buildCommands syntax + manifests. See the develop-reserved-env-names atom for the full reserved-key set."
 		}
 		return cls
 	case PhasePrepare:

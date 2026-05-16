@@ -1,6 +1,6 @@
 ---
 id: develop/mode-expansion-source
-atomIds: [develop-intro, develop-tool-preload, develop-change-drives-deploy, develop-close-mode-auto-deploy-container, develop-deploy-modes, develop-env-var-channels, develop-http-diagnostic, develop-platform-rules-common, develop-checklist-simple-mode, develop-close-mode-auto, develop-close-mode-auto-workflow-simple, develop-deploy-files-self-deploy, develop-knowledge-pointers, develop-auto-close-semantics, develop-verify-matrix, develop-platform-rules-container, develop-strategy-awareness, develop-mode-expansion, develop-close-mode-auto-simple]
+atomIds: [develop-intro, develop-tool-preload, develop-change-drives-deploy, develop-close-mode-auto-deploy-container, develop-deploy-modes, develop-env-var-channels, develop-http-diagnostic, develop-platform-rules-common, develop-checklist-simple-mode, develop-close-mode-auto, develop-close-mode-auto-workflow-simple, develop-deploy-files-self-deploy, develop-env-var-shell-usage, develop-knowledge-pointers, develop-auto-close-semantics, develop-verify-matrix, develop-platform-rules-container, develop-strategy-awareness, develop-mode-expansion, develop-close-mode-auto-simple]
 description: "Deployed simple-mode service running close-mode auto — single-slot non-mutating runtime, common starter shape for a worker / API before considering pair expansion. S8 differentiation: ModeSimple (vs steady-dev's ModeDev) covers the simple arm of develop-mode-expansion's modes:[dev,simple] axis."
 ---
 ### Development & Deploy
@@ -221,6 +221,38 @@ When a self-deploying service uses a narrower deployFiles pattern (e.g. `[./out]
 4. On subsequent self-deploys, `zerops_deploy` finds no source to upload — the target is unrecoverable without a manual re-push from elsewhere.
 
 Client-side pre-flight rejects this with `INVALID_ZEROPS_YML` before any build triggers, so this failure mode cannot reach Zerops. (The atom fires for `closeDeployModes:[auto, manual, unset]` because git-push delivery uses cross-deploy semantics where this risk class doesn't apply.)
+
+---
+
+### Reference by name in container-side commands
+
+When SSHing into a container to run a command that needs a secret
+(psql, prisma, redis-cli, curl auth header), refer to the env var by
+name in a **single-quoted** command body. Bash inside the runtime container
+expands it at exec time from its already-injected OS env — the value
+never enters your context.
+
+```bash
+# WRONG — value pasted from earlier discover output into the command
+ssh apidev 'npx prisma migrate --url postgresql://postgres:U_UjIq5TC...@db:5432/db'
+
+# RIGHT — single-quoted, ${db_*} expanded at exec time inside apidev
+ssh apidev 'npx prisma migrate --url postgresql://${db_superUser}:${db_superUserPassword}@${db_hostname}:${db_port}/${db_dbName}'
+```
+
+Same for `curl` auth headers (`Authorization: Bearer ${api_token}`),
+`redis-cli`, `aws s3`, anything that takes a secret on the command line.
+
+**Read vs use.** Inspecting values for diagnosis is fine — mask in
+output so secrets don't enter your context:
+
+```bash
+ssh apidev 'env | grep -E "^(DB_|APP_)" | sed "s/=.*/=<set>/"'
+```
+
+If you DO pull values into context (export classification, debugging
+an unresolved ref), the next command should still reference by
+`${name}`, not the value you just saw.
 
 ---
 

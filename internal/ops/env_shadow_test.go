@@ -1,6 +1,8 @@
 package ops
 
 import (
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -137,4 +139,60 @@ func sameSet(a, b []string) bool {
 		m[s]--
 	}
 	return true
+}
+
+// TestSelfShadowSymptom_AtomMatchesMechanism is a drift detector for the
+// env-var audit's primary atom↔code consistency invariant. The gotcha
+// example (`internal/content/examples/gotcha_pass_platform_invariant_env_shadow.md`)
+// describes the symptom string an agent observes; this file's package doc
+// describes the underlying mechanism. If either drifts, the agent loses the
+// link between "what I see" and "why it happens".
+//
+// Pinning: both texts must mention the literal `${...}` string form. The
+// gotcha previously said "empty string at runtime" (factually wrong) —
+// plans/audit-env-vars-20260515/AUDIT.md §A2 / VERIFY-reserved-names.md.
+//
+// The check is intentionally loose (keyword-based) so authors can reword
+// freely AS LONG AS the link to "literal `${varname}` string" survives.
+func TestSelfShadowSymptom_AtomMatchesMechanism(t *testing.T) {
+	t.Parallel()
+
+	atomPath := "../content/examples/gotcha_pass_platform_invariant_env_shadow.md"
+	atomBody, err := os.ReadFile(atomPath)
+	if err != nil {
+		t.Fatalf("read gotcha atom: %v", err)
+	}
+	mechanismPath := "env_shadow.go"
+	mechanismBody, err := os.ReadFile(mechanismPath)
+	if err != nil {
+		t.Fatalf("read env_shadow.go: %v", err)
+	}
+
+	atomText := string(atomBody)
+	mechText := string(mechanismBody)
+
+	// Both must describe the symptom as the literal `${...}` string.
+	for _, label := range []struct {
+		name string
+		body string
+	}{
+		{"gotcha atom", atomText},
+		{"env_shadow.go", mechText},
+	} {
+		if !strings.Contains(label.body, "literal") {
+			t.Errorf("%s missing 'literal' keyword — env-shadow symptom must describe the literal-string mechanism", label.name)
+		}
+		if !strings.Contains(label.body, "${") {
+			t.Errorf("%s missing `${` token — symptom example must show the dollar-brace form the container actually receives", label.name)
+		}
+	}
+
+	// Neither side may revert to the historical wrong symptom phrasing.
+	const banned = "empty string at runtime"
+	if strings.Contains(strings.ToLower(atomText), banned) {
+		t.Errorf("gotcha atom contains banned phrase %q — symptom is literal `${var}` string, not empty (verified 2026-05-16, eval-zcp probe P2)", banned)
+	}
+	if strings.Contains(strings.ToLower(mechText), banned) {
+		t.Errorf("env_shadow.go contains banned phrase %q", banned)
+	}
 }

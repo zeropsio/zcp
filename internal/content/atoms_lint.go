@@ -95,6 +95,22 @@ var atomLintRules = []atomLintRule{
 		category: "plan-doc",
 		pattern:  regexp.MustCompile(`\bplans/[a-z][a-z0-9-]+\.md\b`),
 	},
+	// drift detectors for env-var audit 2026-05-15 — banned phrases that
+	// previously misled agents. "prefer it over assembling" lived in
+	// develop-first-deploy-env-vars and pushed agents toward the broken
+	// `${db_connectionString}` for Prisma (postgres connectionString omits
+	// /dbName); "empty string at runtime" lived in the env-shadow gotcha
+	// and misstated the symptom (literal `${var}` string, not empty).
+	{
+		name:     "env-vars-prefer-connection-string",
+		category: "factual-drift",
+		pattern:  regexp.MustCompile(`(?i)prefer\s+it\s+over\s+assembling`),
+	},
+	{
+		name:     "env-shadow-empty-string-symptom",
+		category: "factual-drift",
+		pattern:  regexp.MustCompile(`(?i)resolves\s+to\s+an\s+empty\s+string\s+at\s+runtime`),
+	},
 }
 
 // LintAtomCorpus scans every atom body (frontmatter excluded) for the

@@ -114,6 +114,19 @@ func TestAtomAuthoringLint_FiresOnKnownViolations(t *testing.T) {
 			wantPattern: "plan-doc",
 			wantCat:     "plan-doc",
 		},
+		// drift detectors for env-var audit 2026-05-15 -------------------
+		{
+			name:        "factual-drift-connection-string",
+			body:        "Databases expose connectionString — prefer it over assembling the URL.\n",
+			wantPattern: "env-vars-prefer-connection-string",
+			wantCat:     "factual-drift",
+		},
+		{
+			name:        "factual-drift-empty-string-symptom",
+			body:        "The self-ref resolves to an empty string at runtime.\n",
+			wantPattern: "env-shadow-empty-string-symptom",
+			wantCat:     "factual-drift",
+		},
 		// axis-L (HARD-FORBID env-only title qualifiers) -----------------
 		{
 			name:        "axis-l-title-em-dash-container",

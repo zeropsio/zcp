@@ -124,7 +124,81 @@ func ValidateZeropsYml(workingDir, targetHostname, serviceType string, class Dep
 			entry.Setup))
 	}
 
+	if err := CheckReservedEnvNames(entry); err != nil {
+		return warnings, err
+	}
+
 	return warnings, nil
+}
+
+// hardReservedEnvKeys lists env-var keys the Zerops API rejects in any
+// envVariables block (build or run) with code=userDataUseOfSystemKey.
+// Case-sensitive exact match against the platform's denylist as verified
+// 2026-05-16 (plans/audit-env-vars-20260515/VERIFY-reserved-names.md).
+var hardReservedEnvKeys = map[string]bool{
+	"hostname":        true,
+	"PATH":            true,
+	"serviceId":       true,
+	"projectId":       true,
+	"appVersionId":    true,
+	"appVersionName":  true,
+	"zeropsSubdomain": true,
+}
+
+// runScopeReservedEnvKeys lists keys that pass the API check but crash
+// the runtime container init when set in run.envVariables (the
+// build.envVariables side is accepted). Symptom: BUILD_FAILED event in
+// 4-5s with zero build logs.
+var runScopeReservedEnvKeys = map[string]bool{
+	"HOSTNAME": true,
+	"Path":     true,
+	"path":     true,
+}
+
+// CheckReservedEnvNames scans entry.Build.EnvVariables and
+// entry.Run.EnvVariables for reserved keys. Returns an ErrInvalidZeropsYml
+// platform error naming the offending keys + scope when any reserved key
+// is present; nil otherwise.
+//
+// Pinning: TestCheckReservedEnvNames_* in deploy_validate_test.go.
+// Empirical basis: 26 probes documented in
+// plans/audit-env-vars-20260515/VERIFY-reserved-names.md.
+func CheckReservedEnvNames(entry *ZeropsYmlEntry) error {
+	type violation struct {
+		scope string
+		key   string
+	}
+	var violations []violation
+	for key := range entry.Build.EnvVariables {
+		if hardReservedEnvKeys[key] {
+			violations = append(violations, violation{"build", key})
+		}
+	}
+	for key := range entry.Run.EnvVariables {
+		if hardReservedEnvKeys[key] || runScopeReservedEnvKeys[key] {
+			violations = append(violations, violation{"run", key})
+		}
+	}
+	if len(violations) == 0 {
+		return nil
+	}
+	slices.SortFunc(violations, func(a, b violation) int {
+		if a.scope != b.scope {
+			return strings.Compare(a.scope, b.scope)
+		}
+		return strings.Compare(a.key, b.key)
+	})
+	keys := make([]string, 0, len(violations))
+	scoped := make([]string, 0, len(violations))
+	for _, v := range violations {
+		keys = append(keys, v.key)
+		scoped = append(scoped, fmt.Sprintf("%s.envVariables.%s", v.scope, v.key))
+	}
+	return platform.NewPlatformError(
+		platform.ErrInvalidZeropsYml,
+		fmt.Sprintf("setup %q: reserved env-var key(s) in zerops.yaml: %s", entry.Setup, strings.Join(scoped, ", ")),
+		fmt.Sprintf("Remove or rename %s. Hard-reserved keys (%s) are rejected by the Zerops API; HOSTNAME/Path/path in run.envVariables crash runtime-init with empty build logs. See the develop-reserved-env-names atom for the full set + rationale.", strings.Join(keys, ", "), "hostname, PATH, serviceId, projectId, appVersionId, appVersionName, zeropsSubdomain"),
+	)
 }
 
 // ZeropsYmlDoc is the top-level zerops.yaml structure (minimal for validation).
@@ -242,10 +316,11 @@ type zeropsYmlDeploy struct {
 }
 
 type zeropsYmlBuild struct {
-	Base            any `yaml:"base"`            // string or []string — Zerops accepts both
-	PrepareCommands any `yaml:"prepareCommands"` // string or []string — for sudo detection
-	BuildCommands   any `yaml:"buildCommands"`   // string or []string
-	DeployFiles     any `yaml:"deployFiles"`     // string or []string — Zerops accepts both
+	Base            any               `yaml:"base"`            // string or []string — Zerops accepts both
+	PrepareCommands any               `yaml:"prepareCommands"` // string or []string — for sudo detection
+	BuildCommands   any               `yaml:"buildCommands"`   // string or []string
+	DeployFiles     any               `yaml:"deployFiles"`     // string or []string — Zerops accepts both
+	EnvVariables    map[string]string `yaml:"envVariables"`    // build-scope env (caught by CheckReservedEnvNames)
 }
 
 // deployFilesList normalizes DeployFiles to []string regardless of YAML format.
