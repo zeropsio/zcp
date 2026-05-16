@@ -661,7 +661,7 @@ func readAndValidateSourceState(
 	}
 	wantSetup := input.ProdSetupNameOverride
 	if wantSetup == "" {
-		wantSetup = "prod"
+		wantSetup = defaultPipelineZeropsYamlSetup
 	}
 	if !hasSetupNamed(source.ZeropsYAMLBody, wantSetup) {
 		availableNames, _ := listSetupNames(source.ZeropsYAMLBody)
@@ -697,7 +697,7 @@ func effectiveProdSetupName(input WorkflowInput) string {
 	if override := strings.TrimSpace(input.ProdSetupNameOverride); override != "" {
 		return override
 	}
-	return "prod"
+	return defaultPipelineZeropsYamlSetup
 }
 
 // boolStr returns t when cond, f otherwise.

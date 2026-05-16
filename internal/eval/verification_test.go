@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -295,13 +294,12 @@ type httpDoerFunc func(*http.Request) (*http.Response, error)
 
 func (f httpDoerFunc) Do(req *http.Request) (*http.Response, error) { return f(req) }
 
-// fakeResp returns a stubbed http.Response with the given status.
-func fakeResp(status int) *http.Response {
-	return &http.Response{
-		StatusCode: status,
-		Body:       io.NopCloser(strings.NewReader("")),
-	}
-}
+// errProbeShouldNotFire is the sentinel returned by httpDoerFunc stubs in
+// tests that assert the HTTP probe path never executes. Using a real
+// error keeps the linter happy (no `nil, nil` return) while preserving
+// the test-fail intent — the surrounding t.Fatal still aborts the test
+// before this value is consumed.
+var errProbeShouldNotFire = errors.New("http probe should not fire under this configuration")
 
 // TestProbeSubdomain_NoSubdomainAccess pins the immediate fail when
 // subdomain isn't enabled on the service.
@@ -314,7 +312,7 @@ func TestProbeSubdomain_NoSubdomainAccess(t *testing.T) {
 	svc := &platform.ServiceStack{Name: "appdev", SubdomainAccess: false}
 	got := probeSubdomain(context.Background(), exp, svc, httpDoerFunc(func(*http.Request) (*http.Response, error) {
 		t.Fatal("HTTP probe should not fire when subdomain access disabled")
-		return nil, nil
+		return nil, errProbeShouldNotFire
 	}))
 	if len(got) != 1 || got[0].Check != "subdomain_access" || got[0].Severity != "fail" {
 		t.Errorf("expected single subdomain_access fail finding, got %+v", got)

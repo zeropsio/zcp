@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -262,24 +263,17 @@ func findServiceByHostname(services []platform.ServiceStack, host string) *platf
 	return nil
 }
 
-// sliceContainsString is a generics-free Contains helper kept local to
-// the verification package — the rest of the package targets Go 1.21+ but
-// slice handling stays explicit to keep the diff small.
+// sliceContainsString is a thin alias over slices.Contains, kept for
+// callsite readability (`status not in [...]` reads naturally).
 func sliceContainsString(s []string, x string) bool {
-	for _, v := range s {
-		if v == x {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(s, x)
 }
 
 // matchTypeGlob returns true when actual matches the glob pattern. Only
 // the trailing `*` wildcard is supported — `postgresql@*` matches any
 // version. Exact match required when no `*`.
 func matchTypeGlob(actual, pattern string) bool {
-	if strings.HasSuffix(pattern, "*") {
-		prefix := strings.TrimSuffix(pattern, "*")
+	if prefix, hadStar := strings.CutSuffix(pattern, "*"); hadStar {
 		return strings.HasPrefix(actual, prefix)
 	}
 	return actual == pattern
