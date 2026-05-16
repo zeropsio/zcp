@@ -291,8 +291,8 @@ func TestBuildLaunchBundle_ClassifiesEnvs(t *testing.T) {
 	if envs["JWT_SECRET"] != "<@generateRandomString(<32>)>" {
 		t.Errorf("auto-secret: got %v", envs["JWT_SECRET"])
 	}
-	if envs["STRIPE_KEY"] != `<@pickRandom(["REPLACE_ME"])>` {
-		t.Errorf("external-secret: got %v", envs["STRIPE_KEY"])
+	if envs["STRIPE_KEY"] != "REPLACE_ME" {
+		t.Errorf("external-secret: got %v want literal REPLACE_ME (platform rejects JSON-array pickRandom syntax)", envs["STRIPE_KEY"])
 	}
 	if _, ok := envs["DB_HOST"]; ok {
 		t.Error("expected DB_HOST DROPPED as infrastructure")

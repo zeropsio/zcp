@@ -150,16 +150,24 @@ func TestComposeProjectEnvVariables(t *testing.T) {
 			},
 		},
 		{
-			name: "external-secret with non-empty value emits REPLACE_ME placeholder",
+			name: "external-secret with non-empty value emits REPLACE_ME literal placeholder",
 			envs: []ProjectEnvVar{
 				{Key: "STRIPE_SECRET", Value: "sk_live_xyz"},
 			},
 			classifications: map[string]topology.SecretClassification{
 				"STRIPE_SECRET": topology.SecretClassExternalSecret,
 			},
+			// Karel hit a real live-launch yamlPreprocessingError on
+			// 2026-05-16 when the prior emission `<@pickRandom(["REPLACE_ME"])>`
+			// reached the platform — the JSON-array form is rejected.
+			// Platform preprocessor syntax (per zerops-docs) requires
+			// `<@pickRandom(<a>, <b>, ...)>`. Switched to a literal
+			// REPLACE_ME string with mandatory warning; clearer + always
+			// importable.
 			wantOut: map[string]string{
-				"STRIPE_SECRET": `<@pickRandom(["REPLACE_ME"])>`,
+				"STRIPE_SECRET": "REPLACE_ME",
 			},
+			wantWarnSubstr: []string{`STRIPE_SECRET`, "REPLACE_ME", "Zerops dashboard"},
 		},
 		{
 			name: "external-secret with empty value emits empty + warning (M4)",
@@ -336,9 +344,9 @@ func TestAddPreprocessorHeader(t *testing.T) {
 			wantHeader:  true,
 		},
 		{
-			name:        "external-secret directive — header prepended",
+			name:        "auto-secret directive — header prepended (only auto-secret carries preprocessor now)",
 			body:        "project:\n  name: x\n",
-			projectEnvs: map[string]string{"STRIPE": `<@pickRandom(["REPLACE_ME"])>`},
+			projectEnvs: map[string]string{"APP_KEY": "<@generateRandomString(<32>)>"},
 			wantHeader:  true,
 		},
 		{
@@ -556,8 +564,8 @@ func TestBuildBundle_HappyPath(t *testing.T) {
 	if envs["LOG_LEVEL"] != "info" {
 		t.Errorf("LOG_LEVEL = %v, want info", envs["LOG_LEVEL"])
 	}
-	if envs["STRIPE_SECRET"] != `<@pickRandom(["REPLACE_ME"])>` {
-		t.Errorf("STRIPE_SECRET = %v, want pickRandom directive", envs["STRIPE_SECRET"])
+	if envs["STRIPE_SECRET"] != "REPLACE_ME" {
+		t.Errorf("STRIPE_SECRET = %v, want literal REPLACE_ME placeholder", envs["STRIPE_SECRET"])
 	}
 }
 

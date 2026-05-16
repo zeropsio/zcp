@@ -31,6 +31,26 @@ const importModeHA = "HA"
 // random 32-char string on re-import.
 const autoSecretPreprocessor = "<@generateRandomString(<32>)>"
 
+// externalSecretPlaceholder is the literal value emitted for
+// SecretClassExternalSecret envs with a non-empty source value. The
+// new project's owner replaces this in the Zerops dashboard (or via
+// `zerops_env action=set`) before the runtime depends on the value.
+//
+// We emit a literal string (not a preprocessor function) because the
+// platform's preprocessor `pickRandom(<a>, <b>, ...)` syntax requires
+// `<value>` wrapping per docs (zerops-docs/references/import-yaml/
+// pre-processor.mdx), and the previous emission
+// `<@pickRandom(["REPLACE_ME"])>` was JSON-array form which the
+// platform rejects with `yamlPreprocessingError: variable
+// [["REPLACE_ME"]] not found`. A literal string surfaces the
+// placeholder verbatim to the user — clearer + always-importable.
+//
+// Karel hit this in a real launch 2026-05-16: GIT_TOKEN+ZCP_API_KEY
+// classified external-secret → import refused with 8 field errors.
+// Workaround was reclassifying to plain-config; permanent fix is
+// this constant.
+const externalSecretPlaceholder = "REPLACE_ME"
+
 // composeProjectEnvVariables applies the four-category classification
 // to the project envVariables snapshot. Returns the rendered map
 // keyed by env name, plus per-env warnings for buckets that need
@@ -55,7 +75,10 @@ func composeProjectEnvVariables(
 				warnings = append(warnings, fmt.Sprintf(
 					"env %q: empty external secret — review before publish (plan §3.4 M4)", env.Key))
 			} else {
-				out[env.Key] = `<@pickRandom(["REPLACE_ME"])>`
+				out[env.Key] = externalSecretPlaceholder
+				warnings = append(warnings, fmt.Sprintf(
+					"env %q: external-secret bucket — value set to placeholder %q in target yaml; replace in Zerops dashboard (or via `zerops_env action=set`) before the runtime depends on it",
+					env.Key, externalSecretPlaceholder))
 				if isLikelySentinel(env.Value) {
 					warnings = append(warnings, fmt.Sprintf(
 						"env %q: external secret value %q matches a known sentinel/test pattern — verify classification (PlainConfig may be more appropriate; plan §3.4 M4)",
