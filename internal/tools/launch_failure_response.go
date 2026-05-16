@@ -214,11 +214,12 @@ func launchFirstDeployFailedResponse(state *launchState, projectID string) *mcp.
 		projectID, state.LastError, dashboardURL,
 	)
 	return jsonResult(launchProductionResponse{
-		Workflow:         workflowLaunchProduction,
-		Status:           topology.LaunchStatusFailed,
-		Phase:            workflow.PhaseLaunchProductionActive,
-		Guidance:         msg,
-		ImportedServices: state.ImportedServices,
+		Workflow:            workflowLaunchProduction,
+		Status:              topology.LaunchStatusFailed,
+		Phase:               workflow.PhaseLaunchProductionActive,
+		Guidance:            msg,
+		ProductionProjectID: projectID,
+		ImportedServices:    state.ImportedServices,
 		Blockers: []topology.Blocker{{
 			ID:       "first-deploy-failed",
 			Severity: topology.BlockerSeverityBlock,
@@ -244,11 +245,12 @@ func launchOrphanProjectResponse(state *launchState, projectID string) *mcp.Call
 	failed := strings.Join(failingNames, ", ")
 	message := fmt.Sprintf("Target project %s created but services failed import: %s. Inspect per-service ImportError on importedServices in this response; delete the project via Zerops dashboard or retry with corrected inputs.", projectID, failed)
 	return jsonResult(launchProductionResponse{
-		Workflow:         workflowLaunchProduction,
-		Status:           topology.LaunchStatusFailed,
-		Phase:            workflow.PhaseLaunchProductionActive,
-		Guidance:         message,
-		ImportedServices: state.ImportedServices,
+		Workflow:            workflowLaunchProduction,
+		Status:              topology.LaunchStatusFailed,
+		Phase:               workflow.PhaseLaunchProductionActive,
+		Guidance:            message,
+		ProductionProjectID: projectID,
+		ImportedServices:    state.ImportedServices,
 		Blockers: []topology.Blocker{{
 			ID:       "orphan-project",
 			Severity: topology.BlockerSeverityBlock,

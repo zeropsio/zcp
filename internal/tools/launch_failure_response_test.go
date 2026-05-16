@@ -305,4 +305,36 @@ func TestLaunchFirstDeployFailedResponse_EmbedsRetryGuidance(t *testing.T) {
 	if len(resp.Blockers) != 1 || resp.Blockers[0].ID != "first-deploy-failed" {
 		t.Fatalf("expected single first-deploy-failed blocker, got %+v", resp.Blockers)
 	}
+	// ProductionProjectID must be top-level — scenario #9 retro flagged
+	// the deep-link-only carrier as a cleanup blocker.
+	if resp.ProductionProjectID != "tgt-prj-id" {
+		t.Errorf("ProductionProjectID: got %q want %q", resp.ProductionProjectID, "tgt-prj-id")
+	}
+}
+
+// TestLaunchLaunchedResponse_SurfacesProductionProjectID pins the
+// top-level ProductionProjectID on the happy-path launched response.
+// Scenario #9 retro: agent had to regex the project ID out of a
+// blockers[].message deep-link URL because there was no top-level
+// field — cleanup flow burned an extra call resolving the ID.
+func TestLaunchLaunchedResponse_SurfacesProductionProjectID(t *testing.T) {
+	t.Parallel()
+
+	state := &launchState{
+		LaunchID:          "lnchXYZ",
+		SourceProjectID:   "src-proj",
+		TargetProjectID:   "prod-prj-id-42",
+		TargetProjectName: "myapp-prod",
+		Status:            topology.LaunchStatusLaunched,
+	}
+	result := launchLaunchedResponse(nil, state)
+	body := extractText(result)
+	resp := decodeLaunchResp(t, []byte(body))
+
+	if resp.Status != "launched" {
+		t.Fatalf("status: got %q want launched", resp.Status)
+	}
+	if resp.ProductionProjectID != "prod-prj-id-42" {
+		t.Errorf("ProductionProjectID: got %q want %q", resp.ProductionProjectID, "prod-prj-id-42")
+	}
 }

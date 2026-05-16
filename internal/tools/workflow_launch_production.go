@@ -731,6 +731,14 @@ type launchProductionResponse struct {
 	Guidance string                          `json:"guidance"`
 	Blockers []topology.Blocker              `json:"blockers,omitempty"`
 	Inputs   *launchInputsEcho               `json:"inputs,omitempty"`
+	// ProductionProjectID is the new prod project's UUID — surfaced at
+	// top level on launched / failed responses (whenever a target project
+	// actually got created). Scenario #9 retro flagged this as buried:
+	// the only carrier was a deep-link URL inside a pipeline-blocker
+	// message, which agents had to regex out for post-launch cleanup
+	// (`zcli project delete <id>`). Top-level surface gives every agent
+	// the project ID without parsing.
+	ProductionProjectID string `json:"productionProjectId,omitempty"`
 	// Classifications is the classify-prompt review table — emitted when
 	// status is classify-prompt. Per-env rows omit values per P-LP-5.
 	Classifications []launchClassifyRow `json:"classifications,omitempty"`
@@ -1008,11 +1016,12 @@ func launchLaunchedResponse(corpus []workflow.KnowledgeAtom, state *launchState)
 		guidance = "Production project " + state.TargetProjectID + " launched. DELETE THE LAUNCH-WINDOW KEY NOW in Zerops dashboard → Access Tokens Management."
 	}
 	return jsonResult(launchProductionResponse{
-		Workflow: workflowLaunchProduction,
-		Status:   topology.LaunchStatusLaunched,
-		Phase:    workflow.PhaseLaunchProductionActive,
-		Guidance: guidance,
-		Blockers: pipelineBlockers(state),
+		Workflow:            workflowLaunchProduction,
+		Status:              topology.LaunchStatusLaunched,
+		Phase:               workflow.PhaseLaunchProductionActive,
+		Guidance:            guidance,
+		Blockers:            pipelineBlockers(state),
+		ProductionProjectID: state.TargetProjectID,
 		Inputs: &launchInputsEcho{
 			ProductionProjectName: state.TargetProjectName,
 		},
