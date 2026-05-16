@@ -92,8 +92,13 @@ func TestScenario_S1_NewProjectRecipeMatch(t *testing.T) {
 		t.Fatalf("Synthesize idle: %v", err)
 	}
 	// idle-bootstrap-entry is load-bearing for an empty project — it routes
-	// the agent into the bootstrap workflow.
-	requireAtomIDsContain(t, "S1 idle", matchesBefore, "idle-bootstrap-entry")
+	// the agent into the bootstrap workflow. idle-tool-preload is the first-
+	// turn ToolSearch batching hint for container sessions; pinning it here
+	// ensures the batch-load directive appears BEFORE any zerops_workflow
+	// call (so agents don't burn N-1 round-trips loading tools sequentially).
+	requireAtomIDsContain(t, "S1 idle", matchesBefore,
+		"idle-bootstrap-entry",
+		"idle-tool-preload")
 
 	// S1 after start: bootstrap-active, Route=recipe, Step=provision.
 	// Matches bootstrap_recipe_provision coverage fixture — so atoms

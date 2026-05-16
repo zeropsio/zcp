@@ -93,6 +93,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `idle-bootstrap-entry` | 1 | idle/empty |
 | `idle-develop-entry` | 1 | idle/bootstrapped-with-managed |
 | `idle-launch-entry` | 1 | idle/bootstrapped-with-managed |
+| `idle-tool-preload` | 4 | idle/adopt-only, idle/bootstrapped-with-managed, idle/empty, idle/incomplete-resume |
 | `launch-classify-platform-envs` | 1 | launch-production/active |
 | `launch-delete-key` | 1 | launch-production/active |
 | `launch-intro` | 1 | launch-production/active |
