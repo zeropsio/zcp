@@ -44,21 +44,32 @@ parseRequiredEnvVars() {
   ' "$file"
 }
 
-# tokenSentinelGrep flags token-shaped strings in retrospective + transcript
-# artifacts post-pull. Defense-in-depth: persona convention says reference
-# env vars by name; this catches accidental literal leaks before the
-# operator commits artifacts. Returns 0 (clean) or 1 (hit found).
+# tokenSentinelGrep flags token-shaped strings in LLM-authored artifacts
+# (self-review.md + retrospective.jsonl) post-pull. The transcript is
+# DELIBERATELY EXCLUDED — the persona convention (`Bash echo $ZCP_E2E_*`
+# fetch + `zerops_env set` call) necessarily puts the token in the wire
+# transcript at the Bash tool result and the env-set call args. Those
+# are expected. The leak we guard against is the agent ECHOING the
+# token in its own prose (self-review) or the retrospective payload —
+# those are LLM-authored, not tool-mediated, and a hit there means the
+# agent broke containment.
+#
+# Patterns:
+#   - ghp_<20+>           classic GitHub PAT
+#   - github_pat_<20+>    fine-grained GitHub PAT (newer shape; Karel's tokens)
+#   - YJQTh.<20+>         Zerops LaunchKey (one known prefix)
+#
+# Returns 0 (clean) or 1 (hit found).
 tokenSentinelGrep() {
   local suite_dir="$1"
   local hit=0
-  # ghp_<20+> = GitHub PAT; YJQTh.<...> = Zerops LaunchKey shape.
-  local pattern='ghp_[A-Za-z0-9]{20,}|YJQTh\.[A-Za-z0-9._-]{20,}'
+  local pattern='ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|YJQTh\.[A-Za-z0-9._-]{20,}'
   while IFS= read -r f; do
     if grep -E "$pattern" "$f" > /dev/null 2>&1; then
       warn "token-shaped string in $f — review before committing"
       hit=1
     fi
-  done < <(find "$suite_dir" -type f \( -name 'transcript.jsonl' -o -name 'self-review.md' -o -name 'retrospective.jsonl' \))
+  done < <(find "$suite_dir" -type f \( -name 'self-review.md' -o -name 'retrospective.jsonl' \))
   return $hit
 }
 
