@@ -128,12 +128,22 @@ func indentYAMLFragment(body, prefix string) string {
 }
 
 // prodSetupGuidanceWithBlock composes the response guidance when the
-// source-control blocker fires for missing setup:prod. Embeds the
-// derived block + commit guidance + healthcheck reminder. The agent
-// applies + tweaks the block instead of guessing.
-func prodSetupGuidanceWithBlock(proposedBlock string) string {
+// source-control blocker fires for missing setup:<wantName>. Embeds the
+// derived block + commit guidance + healthcheck reminder, plus the list
+// of setups actually found in the source so the agent can either edit
+// the source to add the expected name OR pass
+// WorkflowInput.ProdSetupNameOverride to target an existing one.
+func prodSetupGuidanceWithBlock(wantName string, availableNames []string, proposedBlock string) string {
 	var b strings.Builder
-	b.WriteString("Source zerops.yaml lacks a `setup: prod` block. Append the proposed block below to the top-level `zerops:` list, commit, push to remote, then re-call publish.\n\n")
+	fmt.Fprintf(&b, "Source zerops.yaml lacks a `setup: %s` block. ", wantName)
+	if len(availableNames) > 0 {
+		fmt.Fprintf(&b, "Found setups: %s. ", strings.Join(availableNames, ", "))
+	}
+	b.WriteString("Two ways to resolve:\n\n")
+	fmt.Fprintf(&b, "1. **Add the missing setup block.** Append the proposed `setup: %s` block below to the top-level `zerops:` list, commit, push to remote, then re-call publish.\n\n", wantName)
+	if len(availableNames) > 0 {
+		fmt.Fprintf(&b, "2. **Target an existing setup block** — re-call publish with `prodSetupNameOverride=\"<name>\"` where `<name>` is one of: %s.\n\n", strings.Join(availableNames, ", "))
+	}
 	b.WriteString("Proposed block (derived from the source's existing dev/stage setup — review + tweak before committing):\n\n")
 	b.WriteString("```yaml\n")
 	b.WriteString(proposedBlock)
@@ -145,5 +155,18 @@ func prodSetupGuidanceWithBlock(proposedBlock string) string {
 	b.WriteString("- Add `run.healthCheck` (httpGet path on the runtime port) — prod-readiness rubric requires it.\n")
 	b.WriteString("- Verify build commands install only prod deps where possible (e.g. `npm ci --omit=dev`).\n")
 	b.WriteString("- Verify start command uses production env (`NODE_ENV=production`, `APP_ENV=production`, etc.) — set via project envVariables or the run block.\n")
+	return b.String()
+}
+
+// prodSetupMissingGenericMessage is the fallback used when deriveProdSetupBlock
+// cannot produce a template (malformed source yaml, zero non-prod setups).
+// Still surfaces the available setup names + override hint so the agent
+// has actionable next steps even without a derived block.
+func prodSetupMissingGenericMessage(wantName string, availableNames []string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Source zerops.yaml lacks a `setup: %s` block — write it (see launch-write-prod-setup atom), commit, push, then re-call publish.", wantName)
+	if len(availableNames) > 0 {
+		fmt.Fprintf(&b, " Found setups: %s. Or re-call publish with `prodSetupNameOverride=\"<name>\"` to target an existing setup.", strings.Join(availableNames, ", "))
+	}
 	return b.String()
 }

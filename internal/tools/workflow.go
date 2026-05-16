@@ -179,6 +179,14 @@ type WorkflowInput struct {
 	// can echo it to the user when guiding dashboard setup. ZCP itself
 	// never PUTs to the platform's integration endpoint in v1 (Path B).
 	PipelineTagRegex string `json:"pipelineTagRegex,omitempty" jsonschema:"Launch-production only: tag-trigger regex to recommend when guiding dashboard setup (default '^v\\d+\\.\\d+\\.\\d+$' per Zerops production-checklist)."`
+	// ProdSetupNameOverride lets the agent point the launch composer at a
+	// setup block named something other than "prod". Surfaces when the
+	// source zerops.yaml uses generic-named blocks (e.g. `setup: app`,
+	// `setup: appprod`, `setup: web`) instead of the canonical "prod".
+	// Without this knob the source-control gate refuses every launch
+	// attempt against a non-canonically-named source. Plumbs into
+	// ops.LaunchBundleInputs.SetupName as well.
+	ProdSetupNameOverride string `json:"prodSetupNameOverride,omitempty" jsonschema:"Launch-production only: override the source zerops.yaml setup name used as the production reference. Default 'prod' — set when the source uses a different name (e.g. 'app', 'appprod', 'web'). Source-control gate uses this name and the launch composer references it as the runtime's setup block."`
 }
 
 // immediateResponse is returned from immediate (stateless) workflows.

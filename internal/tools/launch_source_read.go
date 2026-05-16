@@ -211,8 +211,19 @@ func readLocalGitSHA(ctx context.Context, workingDir string) (string, error) {
 // `setup: prod` block. Launch publish requires this — the agent writes
 // it (guided by launch-write-prod-setup atom) before publish.
 func hasSetupProd(zeropsYAMLBody string) bool {
+	return hasSetupNamed(zeropsYAMLBody, "prod")
+}
+
+// hasSetupNamed reports whether the source zerops.yaml carries a block
+// named `setup: <name>`. Used by the launch source-control gate so the
+// agent can target a non-canonical setup name via
+// WorkflowInput.ProdSetupNameOverride.
+func hasSetupNamed(zeropsYAMLBody, name string) bool {
+	if name == "" {
+		return false
+	}
 	names, _ := listSetupNames(zeropsYAMLBody)
-	return slices.Contains(names, "prod")
+	return slices.Contains(names, name)
 }
 
 // _ keeps workflow.ServiceMeta in scope for the helper file even when

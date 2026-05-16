@@ -196,7 +196,7 @@ func handleLaunchProduction(
 			TargetProjectName: input.ProductionProjectName,
 			TargetHostname:    input.TargetService,
 			ServiceType:       source.ServiceType,
-			SetupName:         "prod",
+			SetupName:         effectiveProdSetupName(input),
 			RepoURL:           source.RepoURL,
 			ZeropsYAMLBody:    source.ZeropsYAMLBody,
 			GitCommitSHA:      source.GitCommitSHA,
@@ -390,7 +390,7 @@ func executeLaunchMutation(
 		TargetProjectName: input.ProductionProjectName,
 		TargetHostname:    input.TargetService,
 		ServiceType:       source.ServiceType,
-		SetupName:         "prod",
+		SetupName:         effectiveProdSetupName(input),
 		RepoURL:           source.RepoURL,
 		ZeropsYAMLBody:    source.ZeropsYAMLBody,
 		GitCommitSHA:      source.GitCommitSHA,
@@ -661,8 +661,13 @@ func readAndValidateSourceState(
 			"Source zerops.yaml is missing — write it (with `setup: prod` block), commit, push, then re-call publish.",
 		)
 	}
-	if !hasSetupProd(source.ZeropsYAMLBody) {
-		auditFail("source zerops.yaml lacks `setup: prod` block")
+	wantSetup := input.ProdSetupNameOverride
+	if wantSetup == "" {
+		wantSetup = "prod"
+	}
+	if !hasSetupNamed(source.ZeropsYAMLBody, wantSetup) {
+		availableNames, _ := listSetupNames(source.ZeropsYAMLBody)
+		auditFail(fmt.Sprintf("source zerops.yaml lacks `setup: %s` block (found: %s)", wantSetup, strings.Join(availableNames, ", ")))
 		// Item #6: derive a concrete proposed block from the source's
 		// existing dev/stage setup. Agent applies + tweaks instead of
 		// guessing from a generic template. Falls back to the generic
@@ -670,11 +675,11 @@ func readAndValidateSourceState(
 		proposed, derr := deriveProdSetupBlock(source.ZeropsYAMLBody)
 		if derr != nil {
 			return nil, launchSourceControlBlockerResponse(corpus,
-				"Source zerops.yaml lacks a `setup: prod` block — write it (see launch-write-prod-setup atom), commit, push, then re-call publish.",
+				prodSetupMissingGenericMessage(wantSetup, availableNames),
 			)
 		}
 		return nil, launchSourceControlBlockerResponse(corpus,
-			prodSetupGuidanceWithBlock(proposed),
+			prodSetupGuidanceWithBlock(wantSetup, availableNames, proposed),
 		)
 	}
 	if source.RepoURL == "" {
@@ -684,6 +689,17 @@ func readAndValidateSourceState(
 		)
 	}
 	return source, nil
+}
+
+// effectiveProdSetupName resolves the setup name the launch composer
+// should target in the source zerops.yaml. Honors
+// WorkflowInput.ProdSetupNameOverride; falls back to the canonical
+// "prod" when unset. Empty input ⇒ canonical default.
+func effectiveProdSetupName(input WorkflowInput) string {
+	if override := strings.TrimSpace(input.ProdSetupNameOverride); override != "" {
+		return override
+	}
+	return "prod"
 }
 
 // boolStr returns t when cond, f otherwise.
