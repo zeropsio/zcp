@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
 )
@@ -20,7 +21,7 @@ import (
 func TestRunVerification_NilConfig(t *testing.T) {
 	t.Parallel()
 	sc := &Scenario{}
-	got := RunVerification(context.Background(), sc, "p1", nil, nil, "")
+	got := RunVerification(context.Background(), sc, "p1", nil, nil, "", time.Time{})
 	if len(got) != 0 {
 		t.Errorf("expected no findings for nil verification, got %d: %+v", len(got), got)
 	}
@@ -41,7 +42,7 @@ func TestRunVerification_ExpectedService_HostnameMissing(t *testing.T) {
 		{ID: "db1", Name: "db", Status: "ACTIVE",
 			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@18"}},
 	})
-	got := RunVerification(context.Background(), sc, "p1", client, nil, "")
+	got := RunVerification(context.Background(), sc, "p1", client, nil, "", time.Time{})
 	if len(got) != 1 || got[0].Check != "expected_service" || got[0].Severity != "fail" {
 		t.Errorf("expected single fail finding for missing service, got %+v", got)
 	}
@@ -59,7 +60,7 @@ func TestRunVerification_ExpectedService_StatusMismatch(t *testing.T) {
 	client := platform.NewMock().WithServices([]platform.ServiceStack{
 		{ID: "app1", Name: "appdev", Status: "READY_TO_DEPLOY"},
 	})
-	got := RunVerification(context.Background(), sc, "p1", client, nil, "")
+	got := RunVerification(context.Background(), sc, "p1", client, nil, "", time.Time{})
 	if len(got) != 1 || got[0].Check != "service_status" || got[0].Severity != "fail" {
 		t.Errorf("expected single fail finding for status mismatch, got %+v", got)
 	}
@@ -95,7 +96,7 @@ func TestRunVerification_ExpectedService_TypeGlob(t *testing.T) {
 				{ID: "db1", Name: "db", Status: "ACTIVE",
 					ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: tt.actual}},
 			})
-			got := RunVerification(context.Background(), sc, "p1", client, nil, "")
+			got := RunVerification(context.Background(), sc, "p1", client, nil, "", time.Time{})
 			hasFail := false
 			for _, f := range got {
 				if f.Check == "service_type" && f.Severity == "fail" {
@@ -106,6 +107,65 @@ func TestRunVerification_ExpectedService_TypeGlob(t *testing.T) {
 				t.Errorf("type %q vs pattern %q: got fail=%v want fail=%v\nfindings: %+v", tt.actual, tt.pattern, hasFail, tt.wantFail, got)
 			}
 		})
+	}
+}
+
+// TestRunVerification_NoFailedProcesses_FiltersStaleByRunStart pins
+// the time-window filter: FAILED processes Created before runStart are
+// skipped as stale residue from prior eval runs. Without the filter,
+// scenario #12's run surfaced a false-positive FAILED process from
+// scenario #9 (same project, prior suite).
+func TestRunVerification_NoFailedProcesses_FiltersStaleByRunStart(t *testing.T) {
+	t.Parallel()
+	runStart := time.Date(2026, 5, 16, 17, 0, 0, 0, time.UTC)
+	staleReason := "stack.build from prior suite"
+	freshReason := "stack.build from THIS suite"
+	sc := &Scenario{Verification: &VerificationConfig{NoFailedProcesses: true}}
+	client := platform.NewMock().
+		WithServices(nil).
+		WithProcessEvents([]platform.ProcessEvent{
+			{
+				ID: "p-stale", ActionName: "stack.build", Status: "FAILED",
+				FailReason: &staleReason, Created: "2026-05-16T16:00:00Z",
+				ServiceStacks: []platform.ServiceStackRef{{Name: "appdev"}},
+			},
+			{
+				ID: "p-fresh", ActionName: "stack.build", Status: "FAILED",
+				FailReason: &freshReason, Created: "2026-05-16T17:30:00Z",
+				ServiceStacks: []platform.ServiceStackRef{{Name: "appdev"}},
+			},
+		})
+	got := RunVerification(context.Background(), sc, "p1", client, nil, "", runStart)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 finding (fresh only), got %d: %+v", len(got), got)
+	}
+	if !strings.Contains(got[0].Message, "p-fresh") {
+		t.Errorf("expected p-fresh in finding, got %q", got[0].Message)
+	}
+	if strings.Contains(got[0].Message, "p-stale") {
+		t.Errorf("p-stale should be filtered, got message: %q", got[0].Message)
+	}
+}
+
+// TestRunVerification_NoFailedProcesses_ZeroRunStart_NoFilter pins that
+// zero-value runStart (the default for unit tests + bypass cases)
+// disables the time filter — every FAILED process surfaces. Preserves
+// the original Sprint-3 behavior for callers that don't supply runStart.
+func TestRunVerification_NoFailedProcesses_ZeroRunStart_NoFilter(t *testing.T) {
+	t.Parallel()
+	reason := "old failure"
+	sc := &Scenario{Verification: &VerificationConfig{NoFailedProcesses: true}}
+	client := platform.NewMock().
+		WithServices(nil).
+		WithProcessEvents([]platform.ProcessEvent{
+			{
+				ID: "p-old", ActionName: "stack.build", Status: "FAILED",
+				FailReason: &reason, Created: "2024-01-01T00:00:00Z",
+			},
+		})
+	got := RunVerification(context.Background(), sc, "p1", client, nil, "", time.Time{})
+	if len(got) != 1 {
+		t.Errorf("expected 1 finding (zero-runStart = no filter), got %d", len(got))
 	}
 }
 
@@ -122,7 +182,7 @@ func TestRunVerification_NoFailedProcesses(t *testing.T) {
 			{ID: "p-bad", ActionName: "stack.build", Status: "FAILED", FailReason: &failReason,
 				ServiceStacks: []platform.ServiceStackRef{{Name: "appdev"}}},
 		})
-	got := RunVerification(context.Background(), sc, "p1", client, nil, "")
+	got := RunVerification(context.Background(), sc, "p1", client, nil, "", time.Time{})
 	if len(got) != 1 || got[0].Severity != "fail" {
 		t.Fatalf("expected single fail finding for FAILED process, got %+v", got)
 	}
@@ -139,7 +199,7 @@ func TestRunVerification_RetrospectiveMustNotMention(t *testing.T) {
 		RetrospectiveMustNotMention: []string{"hand-scaffolded", "smuggled"},
 	}}
 	got := RunVerification(context.Background(), sc, "p1", nil, nil,
-		"The flow went smoothly but I hand-scaffolded Laravel since the recipe didn't surface.")
+		"The flow went smoothly but I hand-scaffolded Laravel since the recipe didn't surface.", time.Time{})
 	if len(got) != 1 || got[0].Check != "retrospective_phrase_forbidden" {
 		t.Fatalf("expected single retrospective_phrase_forbidden finding, got %+v", got)
 	}
@@ -156,7 +216,7 @@ func TestRunVerification_ListServicesError(t *testing.T) {
 		ExpectedServices: []ExpectedService{{Hostname: "appdev", Status: []string{"ACTIVE"}}},
 	}}
 	client := platform.NewMock().WithError("ListServices", errors.New("network timeout"))
-	got := RunVerification(context.Background(), sc, "p1", client, nil, "")
+	got := RunVerification(context.Background(), sc, "p1", client, nil, "", time.Time{})
 	if len(got) != 1 || got[0].Check != "platform_query" || got[0].Severity != "fail" {
 		t.Errorf("expected single platform_query fail finding, got %+v", got)
 	}

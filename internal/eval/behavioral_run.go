@@ -200,7 +200,7 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	// verdict propagates from the retrospective. Promotion to a gating
 	// signal lands when Tier-2 scenarios mature past initial coverage.
 	if sc.Verification != nil {
-		findings := RunVerification(ctx, sc, r.projectID, r.client, r.httpDoer, selfReview)
+		findings := RunVerification(ctx, sc, r.projectID, r.client, r.httpDoer, selfReview, startedAt)
 		if err := WriteVerificationFindings(outDir, findings); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: write verification.json: %v\n", err)
 		}

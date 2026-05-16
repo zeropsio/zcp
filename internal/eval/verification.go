@@ -8,10 +8,29 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 )
+
+// processCreatedAfter reports whether the platform process's Created
+// timestamp is strictly after runStart. Returns true when the timestamp
+// is unparseable — defensive: if we can't be sure a process is stale,
+// surface it so the operator can investigate rather than silently drop.
+func processCreatedAfter(p platform.ProcessEvent, runStart time.Time) bool {
+	if p.Created == "" {
+		return true
+	}
+	t, err := time.Parse(time.RFC3339Nano, p.Created)
+	if err != nil {
+		t, err = time.Parse(time.RFC3339, p.Created)
+		if err != nil {
+			return true
+		}
+	}
+	return t.After(runStart)
+}
 
 // RunVerification evaluates the scenario's Verification block (if any)
 // against the live project state BEFORE cleanup. Returns findings — empty
@@ -21,6 +40,12 @@ import (
 // runner is fully unit-testable without spawning real client calls.
 // Production wires client = the same platform.Client the agent used; the
 // HTTP probe goes through ops.HTTPDoer (Runner.httpDoer).
+//
+// runStart is the scenario-start timestamp; `noFailedProcesses` ignores
+// FAILED processes created BEFORE this time. Without the filter, the
+// project-wide SearchProcesses history surfaces stale FAILED processes
+// from prior eval suites as false-positive findings. Zero-value runStart
+// disables the filter (all processes considered).
 //
 // Severity policy: assertion failures emit "fail" severity; missing
 // preconditions (no probe URL resolvable, e.g.) emit "warn". The runner
@@ -34,6 +59,7 @@ func RunVerification(
 	client platform.Client,
 	httpDoer ops.HTTPDoer,
 	retrospectiveText string,
+	runStart time.Time,
 ) []VerificationFinding {
 	if sc == nil || sc.Verification == nil {
 		return nil
@@ -69,21 +95,26 @@ func RunVerification(
 			})
 		} else {
 			for _, p := range procs {
-				if p.Status == "FAILED" {
-					reason := p.ActionName
-					if p.FailReason != nil && *p.FailReason != "" {
-						reason = *p.FailReason
-					}
-					svcLabel := ""
-					if len(p.ServiceStacks) > 0 {
-						svcLabel = " on " + p.ServiceStacks[0].Name
-					}
-					findings = append(findings, VerificationFinding{
-						Severity: "fail",
-						Check:    "no_failed_processes",
-						Message:  fmt.Sprintf("FAILED process %s: %s%s", p.ID, reason, svcLabel),
-					})
+				if p.Status != "FAILED" {
+					continue
 				}
+				if !runStart.IsZero() && !processCreatedAfter(p, runStart) {
+					// Stale FAILED process from a prior eval run — skip.
+					continue
+				}
+				reason := p.ActionName
+				if p.FailReason != nil && *p.FailReason != "" {
+					reason = *p.FailReason
+				}
+				svcLabel := ""
+				if len(p.ServiceStacks) > 0 {
+					svcLabel = " on " + p.ServiceStacks[0].Name
+				}
+				findings = append(findings, VerificationFinding{
+					Severity: "fail",
+					Check:    "no_failed_processes",
+					Message:  fmt.Sprintf("FAILED process %s: %s%s", p.ID, reason, svcLabel),
+				})
 			}
 		}
 	}
