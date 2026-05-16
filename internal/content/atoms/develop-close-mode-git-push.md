@@ -16,10 +16,12 @@ This service is on `closeDeployMode=git-push`. Your delivery pattern is `zerops_
 ## Push the build commit
 
 ```
-{services-list:zerops_deploy targetService="{hostname}" strategy="git-push"}
+{services-list:zerops_deploy targetService="{hostname}" setup="<zerops.yaml setup name>" strategy="git-push"}
 ```
 
 The deploy tool fetches the working tree from `/var/www` (container) or the local workspace, ensures there's a fresh commit, and pushes to the configured remote on the configured branch. If `failureClassification.category=credential` surfaces (GIT_TOKEN or local credentials missing), re-run `zerops_workflow action="git-push-setup" service="{hostname}"` to refresh the capability.
+
+**Setup parameter:** `setup=<name>` MUST match a `setup:` block name in the project's `zerops.yaml`. Recipe-derived yamls usually use `dev`/`prod` (not the hostname); single-runtime adoptions usually use `<hostname>` itself. The deploy tool defaults the lookup to the target hostname when omitted — that works only when the setup name happens to equal the hostname. Read the project's `zerops.yaml` first and pass the matching name explicitly. An `INVALID_ZEROPS_YML` error response carries `attemptedSetup` + `availableSetups` so a missed first call is recoverable in one round-trip.
 
 ## What runs the build depends on `BuildIntegration`
 
