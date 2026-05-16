@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","cwd":"/var/www","session_id":"test-askuq-alone","model":"claude-opus-4-6"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_qa1","name":"AskUserQuestion","input":{"questions":[{"question":"Which database engine do you prefer?","header":"Database","options":[{"label":"PostgreSQL","description":"Default"},{"label":"MariaDB","description":"MySQL-compatible"}],"multiSelect":false}]}}],"stop_reason":null},"session_id":"test-askuq-alone"}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"Answer questions?","is_error":true,"tool_use_id":"toolu_qa1"}]},"session_id":"test-askuq-alone"}
+{"type":"result","subtype":"success","is_error":false,"num_turns":2,"result":"","stop_reason":"end_turn","session_id":"test-askuq-alone"}

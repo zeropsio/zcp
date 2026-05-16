@@ -29,6 +29,13 @@ func TestClassifyTranscriptTail(t *testing.T) {
 		{"error_max_turns", "error_max_turns.jsonl", VerdictMaxTurns, ""},
 		{"error_is_error", "error_is_error.jsonl", VerdictError, ""},
 		{"working_mid_roundtrip", "working_mid_roundtrip.jsonl", VerdictWorking, ""},
+		// AskUserQuestion is a wait signal by MCP semantics — permission_denial
+		// in headless mode does not change the agent's intent. User-sim must
+		// engage. `_denied` covers the streaming-split case (prior text in one
+		// event + AskUQ tool_use in the next); `_alone` covers AskUQ as the
+		// only content in the burst (text falls back to AskUQ question prose).
+		{"ask_user_question_denied", "ask_user_question_denied.jsonl", VerdictWaiting, "Mám tři možnosti"},
+		{"ask_user_question_alone", "ask_user_question_alone.jsonl", VerdictWaiting, "Which database engine"},
 	}
 
 	for _, tt := range tests {

@@ -102,6 +102,21 @@ func ClassifyTranscriptTail(logFile string) (Verdict, error) {
 		canonicalText = resultEv.ResultText
 	}
 
+	// Rule 4a — last tool_use was AskUserQuestion. MCP wait-signal by API
+	// contract: the agent explicitly requested user input. In headless mode
+	// the tool_result is permission_denial ("Answer questions?"), but the
+	// agent's intent is unchanged — user-sim must engage. Checked BEFORE
+	// Rule 4 (verify success) so AskUQ following a verify (agent asking
+	// "anything else?" after deploy-verify) is correctly classified as wait,
+	// not done.
+	if isAskUQ, askUQText := lastAskUserQuestion(events); isAskUQ {
+		text := canonicalText
+		if text == "" {
+			text = askUQText
+		}
+		return Verdict{Kind: VerdictWaiting, LastAssistantText: text, Reason: "rule4a_ask_user_question"}, nil
+	}
+
 	// Rule 4 — last tool_use was zerops_verify with success-shaped result.
 	// Checked BEFORE rule 3 because verify-success is a stronger signal than
 	// text markers (covers "verify confirms healthy. anything else?" tail).
@@ -196,10 +211,11 @@ type parsedEvent struct {
 	ResultText string
 
 	// assistant fields
-	AssistantText  string   // concatenated text-block content
-	ToolUseNames   []string // names of tool_use blocks in this assistant message (in order)
-	ToolUseIDs     []string // matching ids, parallel to ToolUseNames
-	HasAssistantTU bool     // true if this assistant message contained any tool_use
+	AssistantText  string            // concatenated text-block content
+	ToolUseNames   []string          // names of tool_use blocks in this assistant message (in order)
+	ToolUseIDs     []string          // matching ids, parallel to ToolUseNames
+	ToolUseInputs  []json.RawMessage // raw input JSON, parallel to ToolUseNames
+	HasAssistantTU bool              // true if this assistant message contained any tool_use
 
 	// user fields (tool_result carrier)
 	ToolResultID   string
@@ -218,11 +234,12 @@ func decodeEvent(line []byte) (parsedEvent, error) {
 		Message struct {
 			Role    string `json:"role"`
 			Content []struct {
-				Type      string `json:"type"`
-				Text      string `json:"text"`
-				Name      string `json:"name"`
-				ID        string `json:"id"`
-				ToolUseID string `json:"tool_use_id"` //nolint:tagliatelle // upstream
+				Type      string          `json:"type"`
+				Text      string          `json:"text"`
+				Name      string          `json:"name"`
+				ID        string          `json:"id"`
+				Input     json.RawMessage `json:"input"`
+				ToolUseID string          `json:"tool_use_id"` //nolint:tagliatelle // upstream
 				// tool_result content (nested)
 				Content []struct {
 					Type string `json:"type"`
@@ -256,6 +273,7 @@ func decodeEvent(line []byte) (parsedEvent, error) {
 				pe.HasAssistantTU = true
 				pe.ToolUseNames = append(pe.ToolUseNames, c.Name)
 				pe.ToolUseIDs = append(pe.ToolUseIDs, c.ID)
+				pe.ToolUseInputs = append(pe.ToolUseInputs, c.Input)
 			}
 		}
 		pe.AssistantText = strings.Join(texts, "\n")
@@ -289,17 +307,37 @@ func findLastResult(events []parsedEvent) (parsedEvent, bool) {
 	return parsedEvent{}, false
 }
 
-// lastAssistantTextAndShape returns the concatenated text of the last
-// assistant message AND whether that message contained any tool_use. Both are
-// needed because rule branches differ for "ended with text-only" vs
-// "ended with tool_use that completed before result event".
+// lastAssistantTextAndShape returns the concatenated text of the most-recent
+// assistant BURST (back-to-back assistant events with no intervening user
+// event) AND whether any event in that burst contained tool_use.
+//
+// Claude headless splits a single logical message across multiple stream-json
+// events — text content lands in one event, tool_use blocks in subsequent
+// ones — so reading only the LAST event misses prose that immediately
+// preceded a tool_use. Aggregating across the burst captures the agent's
+// full intent; hasToolUse stays true if any event in the burst held a tool.
 func lastAssistantTextAndShape(events []parsedEvent) (text string, hasToolUse bool) {
+	var texts []string
+	sawAssistant := false
 	for i := len(events) - 1; i >= 0; i-- {
-		if events[i].Type == eventTypeAssistant {
-			return events[i].AssistantText, events[i].HasAssistantTU
+		ev := events[i]
+		if ev.Type == eventTypeAssistant {
+			sawAssistant = true
+			if ev.AssistantText != "" {
+				// Prepend so chronological order is preserved.
+				texts = append([]string{ev.AssistantText}, texts...)
+			}
+			if ev.HasAssistantTU {
+				hasToolUse = true
+			}
+			continue
+		}
+		if sawAssistant {
+			// Hit a non-assistant event after the burst — stop.
+			break
 		}
 	}
-	return "", false
+	return strings.Join(texts, "\n"), hasToolUse
 }
 
 // lastVerifyOK reports whether the most-recent tool_use across the transcript
@@ -343,6 +381,75 @@ func isVerifyTool(name string) bool {
 	// "mcp__zerops__zerops_verify". Match by suffix to tolerate transport
 	// prefix variations.
 	return strings.HasSuffix(name, "zerops_verify")
+}
+
+// lastAskUserQuestion reports whether the most-recent tool_use across the
+// transcript was AskUserQuestion. If yes, returns formatted question prose
+// pulled from the tool input (best-effort, "" on parse failure) so the
+// user-sim has context to reply to when canonical agent text is empty
+// (AskUQ-only burst with no surrounding text content).
+//
+// AskUQ is a built-in claude tool — not MCP — so it appears in stream-json
+// without an mcp__ prefix. Exact-match the name to avoid matching unrelated
+// future tools.
+func lastAskUserQuestion(events []parsedEvent) (isLast bool, questionText string) {
+	for i := len(events) - 1; i >= 0; i-- {
+		ev := events[i]
+		if ev.Type != eventTypeAssistant || len(ev.ToolUseNames) == 0 {
+			continue
+		}
+		idx := len(ev.ToolUseNames) - 1
+		if ev.ToolUseNames[idx] != "AskUserQuestion" {
+			return false, ""
+		}
+		var input askUQInput
+		var inputJSON json.RawMessage
+		if idx < len(ev.ToolUseInputs) {
+			inputJSON = ev.ToolUseInputs[idx]
+		}
+		if err := json.Unmarshal(inputJSON, &input); err == nil && len(input.Questions) > 0 {
+			return true, formatAskUQQuestion(input.Questions[0])
+		}
+		return true, ""
+	}
+	return false, ""
+}
+
+// askUQInput mirrors the AskUserQuestion tool input shape — only the fields
+// needed to reconstruct a user-sim-facing prompt. Schema-tolerant: extra
+// fields are ignored.
+type askUQInput struct {
+	Questions []askUQQuestion `json:"questions"`
+}
+
+type askUQQuestion struct {
+	Question string        `json:"question"`
+	Header   string        `json:"header"`
+	Options  []askUQOption `json:"options"`
+}
+
+type askUQOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description"`
+}
+
+// formatAskUQQuestion renders a single AskUQ question into prose suitable
+// for the user-sim prompt: "<question>\nOptions:\n  - <label> — <desc>...".
+func formatAskUQQuestion(q askUQQuestion) string {
+	var b strings.Builder
+	b.WriteString(q.Question)
+	if len(q.Options) > 0 {
+		b.WriteString("\nOptions:")
+		for _, o := range q.Options {
+			b.WriteString("\n  - ")
+			b.WriteString(o.Label)
+			if o.Description != "" {
+				b.WriteString(" — ")
+				b.WriteString(o.Description)
+			}
+		}
+	}
+	return b.String()
 }
 
 // verifyResultIndicatesSuccess inspects the verify tool_result text for healthy
