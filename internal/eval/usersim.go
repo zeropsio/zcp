@@ -529,8 +529,11 @@ know the Zerops platform's internal details, but you know your own goal.`
 // satisfactionMarkers are substrings (matched lowercased) in a user-sim reply
 // that signal "task complete from the user's perspective". Match → loop ends
 // with TerminatedSimSatisfied. Phrases mirror what real users type when
-// closing a chat.
+// closing a chat — covers English + Czech because Tier-1 / Tier-2 scenarios
+// are Czech-prompted and English-only markers leave the loop spinning into
+// goodbye-pingpong (stuck_loop on "díky"/"👋" turns) for completed work.
 var satisfactionMarkers = []string{
+	// English.
 	"thanks, looks good",
 	"that's all i needed",
 	"thats all i needed",
@@ -541,6 +544,25 @@ var satisfactionMarkers = []string{
 	"looks good — thanks",
 	"looks good - thanks",
 	"looks good, thanks",
+	// Czech — same closure intent (přesně to co jsem potřeboval / díky to je
+	// vše / hotovo, díky). Lowercased; rune-folding handles diacritics on
+	// strings.Contains match.
+	"přesně to co jsem potřeboval",
+	"to je přesně to co jsem potřeboval",
+	"to je vše co jsem teď potřeboval",
+	"to je vše co jsem potřeboval",
+	"to je vše",
+	"to je všechno",
+	"díky to je vše",
+	"díky to je všechno",
+	"díky, to je vše",
+	"díky, to je všechno",
+	"hotovo, díky",
+	"hotovo díky",
+	"perfektně, to je vše",
+	"perfektně, to je všechno",
+	"to mi stačí",
+	"to mi stací",
 }
 
 // UserSimRunner produces a single user reply for a fully-formed prompt.

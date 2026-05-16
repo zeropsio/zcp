@@ -361,6 +361,17 @@ func TestIsSatisfied_PicksUpMarkers(t *testing.T) {
 		{"Let me think about it", false},
 		{"Use MariaDB", false},
 		{"Sure, go ahead.", false},
+		// Czech replies — same closure intent as English; Tier-1 / Tier-2
+		// scenarios are Czech-prompted and must not loop into goodbye-pingpong
+		// when the user-sim signals closure in Czech.
+		{"Výborně, to je přesně to co jsem potřeboval. Díky!", true},
+		{"Díky, to je všechno co jsem teď potřeboval.", true},
+		{"Perfektně, to je vše. Díky za pomoc!", true},
+		{"To mi stačí, díky.", true},
+		{"Hotovo, díky!", true},
+		{"Super, díky!", false}, // courtesy "thanks" without closure intent
+		{"Použij MariaDB", false},
+		{"Pokračuj prosím", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.reply, func(t *testing.T) {
