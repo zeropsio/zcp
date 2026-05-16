@@ -5,8 +5,8 @@ Zerops has its own syntax. Don't guess — look up via `zerops_knowledge`, inspe
 | Intent | First action | Don't |
 |---|---|---|
 | Build/edit/scaffold/fix/deploy/debug a service | `zerops_discover`/`zerops_workflow action="status"` first if target/session unclear, then `zerops_workflow action="start" workflow="develop" intent="..." scope=["<host>"]` | Write code, run Bash/npx/SSH, or scaffold to scratch dirs before workflow start |
-| No service yet, or infra/topology change | `zerops_workflow action="start" workflow="bootstrap" intent="..."` | Write app code in bootstrap |
-| Create/publish a recipe (user said "recipe" or named a slug) | `zerops_recipe action="start" slug="..." outputRoot="..."` | Start develop/bootstrap inside recipe |
+| No service yet, or infra/topology change — INCLUDING "deploy / set up / scaffold from existing recipe X" (user names a recipe slug like `zerops-laravel-minimal`) | `zerops_workflow action="start" workflow="bootstrap" intent="..."` — the route-menu surfaces the matching recipe; pick `route="recipe"` with the named slug | Write app code in bootstrap; **NEVER** call `zerops_recipe` directly for deploy/scaffold — that tool is recipe-AUTHORING only |
+| AUTHOR a brand-new recipe to publish to the Zerops corpus (user says "contribute a recipe", "create a new recipe for X", "add X to the catalog") — recipe-MAINTAINER work, NOT end-user deploy | `zerops_recipe action="start" slug="..." outputRoot="..."` | Use this for end-user deploy of an existing recipe — that's bootstrap-with-route=recipe |
 | Read or set platform state — logs/env/status/scale/subdomain/manage/events/verify | matching `zerops_*` tool | Guess values when live state exists |
 | Promote dev/stage to a separate prod project ("go live", "deploy to prod", "nasaď na prod") | `zerops_workflow action="start" workflow="launch-production" intent="..." targetService="<host>"` | `zcli project create` or hand-rolled import.yaml |
 | Pure concept Q unrelated to this project | prose, no tool | Re-route when user pivots to build/change |
