@@ -556,10 +556,8 @@ func executeLaunchMutation(
 		return launchOrphanProjectResponse(state, result.ProjectID), nil, nil
 	}
 	if state.Status == topology.LaunchStatusFailed {
-		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
-			"first-deploy-failed",
-			fmt.Sprintf("Target project %s created but first deploy did not complete cleanly: %s", result.ProjectID, state.LastError),
-		), nil, nil
+		_ = corpus // launchFirstDeployFailedResponse is corpus-independent
+		return launchFirstDeployFailedResponse(state, result.ProjectID), nil, nil
 	}
 
 	return launchLaunchedResponse(corpus, state), nil, nil

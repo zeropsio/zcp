@@ -253,3 +253,56 @@ func TestLaunchOrphanProjectResponse_SurfacesPerServiceImportErrors(t *testing.T
 		t.Errorf("db service ImportError not preserved in response: %+v", resp.ImportedServices)
 	}
 }
+
+// TestLaunchFirstDeployFailedResponse_EmbedsRetryGuidance pins the
+// surface promoted from plans/backlog/launch-first-deploy-failed-recovery-hint.md:
+// when the target project is created and services import successfully
+// but the first-deploy poll hits a FAILED terminal process, the response
+// embeds the explicit retry-via-push command, the dashboard URL, and
+// the imported-services list inline so the agent has actionable next
+// steps without needing a structured Recovery pointing at a cross-
+// project tool that doesn't exist.
+func TestLaunchFirstDeployFailedResponse_EmbedsRetryGuidance(t *testing.T) {
+	t.Parallel()
+
+	state := &launchState{
+		LaunchID:          "lnchABC",
+		SourceProjectID:   "src-proj",
+		TargetProjectName: "myapp-prod",
+		LastError:         "service appdev: process pid-123 terminal status FAILED (FAILED)",
+		ImportedServices: []importedServiceEntry{
+			{ID: "svc-appdev", Name: "appdev"},
+			{ID: "svc-db", Name: "db"},
+		},
+	}
+	result := launchFirstDeployFailedResponse(state, "tgt-prj-id")
+	body := extractText(result)
+	resp := decodeLaunchResp(t, []byte(body))
+
+	if resp.Status != "failed" {
+		t.Fatalf("status: got %q want failed", resp.Status)
+	}
+	for _, want := range []string{
+		"first deploy did not complete cleanly",
+		"git -C <source-repo> commit --allow-empty",
+		"git push origin <main-branch>",
+		"https://app.zerops.io/project/tgt-prj-id",
+		"delete the target project",
+		"importedServices",
+		"service appdev: process pid-123 terminal status FAILED",
+	} {
+		if !strings.Contains(resp.Guidance, want) {
+			t.Errorf("guidance missing %q\nfull:\n%s", want, resp.Guidance)
+		}
+	}
+	// Imported services must land inline so agent maps LastError →
+	// per-service record without state-file IO.
+	if len(resp.ImportedServices) != 2 {
+		t.Fatalf("expected 2 imported services in response, got %d", len(resp.ImportedServices))
+	}
+	// Blocker id pins for downstream consumers (audit log readers,
+	// recovery atom matchers).
+	if len(resp.Blockers) != 1 || resp.Blockers[0].ID != "first-deploy-failed" {
+		t.Fatalf("expected single first-deploy-failed blocker, got %+v", resp.Blockers)
+	}
+}

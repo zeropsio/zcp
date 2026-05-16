@@ -183,6 +183,51 @@ func formatPlatformErrorForAudit(err error) string {
 	return strings.Join(parts, " | ")
 }
 
+// launchFirstDeployFailedResponse builds the failure response for the
+// "target project created + services imported successfully, but first
+// deploy hit a FAILED terminal process" case. Per
+// plans/backlog/launch-first-deploy-failed-recovery-hint.md: this is
+// typically platform-side (build queue, clone preflight, quota — Karel's
+// 2026-05-16 reproducer showed `WAITING_TO_BUILD` with null
+// pipelineStart). The agent's recoveries — retry-via-push, dashboard
+// inspection, delete + republish — are user actions, not in-tool calls,
+// so the response embeds them as explicit guidance in the message
+// instead of a structured topology.Recovery (no in-tool target is
+// reachable across projects from the source-bound ZCP instance).
+//
+// state.ImportedServices lands inline so the agent can map state.LastError
+// (which names the offending service + process ID) to the per-service
+// record without a second tool call.
+func launchFirstDeployFailedResponse(state *launchState, projectID string) *mcp.CallToolResult {
+	var dashboardURL string
+	if projectID != "" {
+		dashboardURL = "https://app.zerops.io/project/" + projectID
+	}
+	msg := fmt.Sprintf(
+		"Target project %s created and services imported, but the first deploy did not complete cleanly: %s.\n\n"+
+			"This usually indicates a platform-side condition (build queue, clone preflight, quota). Recovery options:\n\n"+
+			"1. Retry by pushing a fresh commit to the source repo — Zerops picks up the new ref and re-triggers build:\n\n"+
+			"       git -C <source-repo> commit --allow-empty -m \"retry build\" && git push origin <main-branch>\n\n"+
+			"2. Inspect the target project in the Zerops dashboard: %s\n"+
+			"3. If the failure persists across retries, delete the target project (Zerops dashboard) and re-call publish after fixing the underlying source issue.\n\n"+
+			"Per-service import + first-deploy outcomes are listed inline under `importedServices` — the failing service's process ID appears in the message above.",
+		projectID, state.LastError, dashboardURL,
+	)
+	return jsonResult(launchProductionResponse{
+		Workflow:         workflowLaunchProduction,
+		Status:           topology.LaunchStatusFailed,
+		Phase:            workflow.PhaseLaunchProductionActive,
+		Guidance:         msg,
+		ImportedServices: state.ImportedServices,
+		Blockers: []topology.Blocker{{
+			ID:       "first-deploy-failed",
+			Severity: topology.BlockerSeverityBlock,
+			Category: topology.BlockerCategoryOther,
+			Message:  msg,
+		}},
+	})
+}
+
 // launchOrphanProjectResponse builds the failure response for the
 // "project created, one or more services rejected" case. Pre-F5 this
 // emitted just a blocker pointing at the state file ("inspect
