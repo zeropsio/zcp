@@ -67,6 +67,15 @@ deploy; without it they sit at READY_TO_DEPLOY, blocking SSHFS and SSH.
 Stage deliberately omits it and waits at READY_TO_DEPLOY for the first
 dev→stage cross-deploy.
 
+**Do NOT set `mode` on runtime services in the import yaml** — `mode`
+is a managed-service-only field (`NON_HA` / `HA`). For runtimes, the
+dev/standard/simple distinction is committed in the discover-step plan
+via `bootstrapMode`, which composes the appropriate runtime properties
+(`startWithoutCode`, `maxContainers`, paired stage entry) into the
+import yaml at provision time. Adding `mode: DEV` (or similar invented
+values) silently fails or interacts oddly with managed-service mode
+plumbing.
+
 Expected post-import states: Dev/Simple → RUNNING, Stage →
 READY_TO_DEPLOY, Managed → RUNNING/ACTIVE.
 
