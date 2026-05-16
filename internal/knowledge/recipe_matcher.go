@@ -112,6 +112,14 @@ func scoreRecipe(slug string, frameworks, languages, tokens []string) float64 {
 	if slices.Contains(tokens, slugLower) {
 		return 1.0
 	}
+	// Users frequently name recipes by their branded form
+	// ("zerops-laravel-minimal" / "zerops-nodejs-hello-world"); the corpus
+	// stores them without the `zerops-` prefix. Recognize the prefixed form
+	// as the same identity so the route-menu surfaces the recipe instead of
+	// falling through to classic.
+	if slices.Contains(tokens, "zerops-"+slugLower) {
+		return 1.0
+	}
 	for _, fw := range frameworks {
 		if slices.Contains(tokens, strings.ToLower(fw)) {
 			if 0.95 > best {

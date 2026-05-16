@@ -76,6 +76,22 @@ func TestFindRecipeCandidates(t *testing.T) {
 			wantSlugs:  []string{"laravel-minimal"},
 		},
 		{
+			// Users name recipes by branded form ("zerops-laravel-minimal");
+			// the matcher must alias that to the corpus slug "laravel-minimal"
+			// so the route-menu surfaces the matching recipe instead of
+			// falling through to classic.
+			name:       "branded_slug_aliases_to_corpus_slug",
+			intent:     "Deploy a Kanban app from zerops-laravel-minimal recipe. Dev service only.",
+			maxResults: 3,
+			wantSlugs:  []string{"laravel-minimal"},
+		},
+		{
+			name:       "branded_slug_bare",
+			intent:     "zerops-laravel-minimal",
+			maxResults: 3,
+			wantSlugs:  []string{"laravel-minimal"},
+		},
+		{
 			name:       "language_keyword_returns_all_language_matches_framework_wins_tiebreak",
 			intent:     "PHP backend",
 			maxResults: 3,
