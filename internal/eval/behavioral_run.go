@@ -194,6 +194,18 @@ func (r *Runner) RunBehavioralScenario(ctx context.Context, scenarioPath, suiteI
 	result.Duration = Duration(time.Since(startedAt))
 	writeBehavioralResult(outDir, result)
 
+	// Post-run platform verification — fires BEFORE cleanup so service /
+	// process state is still queryable. Findings land alongside
+	// self-review.md as verification.json. Currently warn-only: the suite
+	// verdict propagates from the retrospective. Promotion to a gating
+	// signal lands when Tier-2 scenarios mature past initial coverage.
+	if sc.Verification != nil {
+		findings := RunVerification(ctx, sc, r.projectID, r.client, r.httpDoer, selfReview)
+		if err := WriteVerificationFindings(outDir, findings); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: write verification.json: %v\n", err)
+		}
+	}
+
 	if cleanErr := CleanupProject(ctx, r.client, r.projectID, r.config.WorkDir); cleanErr != nil {
 		fmt.Fprintf(os.Stderr, "warning: post-scenario cleanup: %v\n", cleanErr)
 	}

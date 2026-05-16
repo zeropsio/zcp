@@ -54,6 +54,15 @@ type Scenario struct {
 	// per-stage iteration cap, wall-time budget). Both default-safe.
 	UserPersona string
 	UserSim     *UserSimConfig
+
+	// Verification (optional, behavioral mode only) asserts platform-side
+	// outcomes BEFORE cleanup wipes services. Captures the gap exposed by
+	// Tier-1 kanban retros: agent self-reports "Kanban is live" but the
+	// cleanup hook deletes services before manual verify can confirm. With
+	// Verification set, the runner queries the live platform between
+	// retrospective + cleanup and writes findings to verification.json
+	// alongside self-review.md. See VerificationConfig for the schema.
+	Verification *VerificationConfig
 }
 
 // UserSimConfig configures the user-sim simulator transport. All fields
@@ -75,6 +84,53 @@ type UserSimConfig struct {
 // under internal/eval/retrospective_prompts/<promptStyle>.md.
 type RetrospectiveConfig struct {
 	PromptStyle string `yaml:"promptStyle"`
+}
+
+// VerificationConfig declares post-run platform-side assertions the runner
+// evaluates between retrospective + cleanup. Each block is optional; an
+// empty VerificationConfig produces no findings (no-op).
+//
+// Captured findings land in verification.json alongside self-review.md.
+// Sprint 3 wires this to behavioral runs; failures are warn-only at this
+// stage (the suite verdict still propagates from the retrospective). A
+// later sprint may promote findings to gate the exit code.
+type VerificationConfig struct {
+	// ExpectedServices lists per-service assertions: hostname must exist,
+	// status must match one of the allowed values, optional subdomain HTTP
+	// probe, optional type-glob.
+	ExpectedServices []ExpectedService `yaml:"expectedServices,omitempty"`
+	// NoFailedProcesses asserts every project process is non-FAILED.
+	// Catches "agent reports success but a background process died" gaps.
+	NoFailedProcesses bool `yaml:"noFailedProcesses,omitempty"`
+	// RetrospectiveMustNotMention is a list of phrases the retrospective
+	// MUST NOT contain (substring match, case-insensitive). Use for
+	// red-flag phrases the agent shouldn't admit to in success retros
+	// (e.g. "smuggled", "hand-edited", "had to overwrite").
+	RetrospectiveMustNotMention []string `yaml:"retrospectiveMustNotMention,omitempty"`
+}
+
+// ExpectedService is one per-service assertion in a VerificationConfig.
+type ExpectedService struct {
+	Hostname       string          `yaml:"hostname"`
+	Status         []string        `yaml:"status"`
+	Type           string          `yaml:"type,omitempty"`
+	SubdomainProbe *SubdomainProbe `yaml:"subdomainProbe,omitempty"`
+}
+
+// SubdomainProbe configures an HTTP probe against the service's subdomain
+// URL. Path is appended to the URL; ExpectStatus accepts shapes "2xx",
+// "3xx", "200", "200-299", or "any" (no status assertion).
+type SubdomainProbe struct {
+	Path         string `yaml:"path,omitempty"`
+	ExpectStatus string `yaml:"expectStatus,omitempty"`
+}
+
+// VerificationFinding is one assertion outcome — pass when Severity is
+// empty, otherwise "warn" or "fail".
+type VerificationFinding struct {
+	Severity string `json:"severity,omitempty"` // "", "warn", "fail"
+	Check    string `json:"check"`
+	Message  string `json:"message"`
 }
 
 // NotableFrictionEntry documents an expected pain-point for the local
@@ -114,6 +170,7 @@ type scenarioFrontmatter struct {
 	Retrospective   *RetrospectiveConfig   `yaml:"retrospective"`
 	UserPersona     string                 `yaml:"userPersona"`
 	UserSim         *UserSimConfig         `yaml:"userSim"`
+	Verification    *VerificationConfig    `yaml:"verification"`
 }
 
 // ParseScenario reads a scenario markdown file and returns the parsed structure.
@@ -151,6 +208,7 @@ func ParseScenario(path string) (*Scenario, error) {
 		Retrospective:   fm.Retrospective,
 		UserPersona:     strings.TrimSpace(fm.UserPersona),
 		UserSim:         fm.UserSim,
+		Verification:    fm.Verification,
 	}
 
 	if err := sc.validate(); err != nil {
