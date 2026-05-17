@@ -169,9 +169,7 @@ Pass `includeEnvValues=true` only for troubleshooting.
 
 Cross-service wiring goes in `zerops.yaml` `run.envVariables`. A wrong
 spelling on the right-hand side reaches the app as the literal string
-and connect-time fails. Once values are in your context (via
-`includeEnvValues=true`), reference them back by `${name}` in any
-subsequent commands — don't paste raw secrets into tool calls.
+and connect-time fails.
 
 ### Per-managed-type cheatsheet
 
@@ -180,27 +178,26 @@ subsequent commands — don't paste raw secrets into tool calls.
   the database name**. For Prisma / Drizzle / sqlx / SQLAlchemy /
   Sequelize, compose explicitly with `/${db_dbName}` appended (see
   worked example in the env-var-model atom).
-- **Elevated DDL credentials** — `superUser` / `superUserPassword` on
-  Postgres + ClickHouse. Pull from catalog only when DDL is needed.
-- **ClickHouse + Kafka** — multiple ports; match the driver
-  (`portHttp` / `portMysql` / `portNative` / `portPostgresql` for
-  ClickHouse; build broker URL from `hostname:port` for Kafka —
-  no `connectionString`).
+- **Prisma — `migrate dev` errors with `P3014`** because its shadow
+  database needs CREATE DATABASE permission the regular user lacks.
+  For fresh schemas use `prisma db push` (no shadow); for migration
+  files override DATABASE_URL with `${db_superUser}:${db_superUserPassword}`
+  only for the `migrate dev` call.
+- **Elevated DDL credentials** — `superUser`/`superUserPassword` on
+  Postgres + ClickHouse, only when DDL needs them.
+- **ClickHouse + Kafka** — multi-port; match driver (`portHttp` /
+  `portMysql` / `portNative` / `portPostgresql` for ClickHouse;
+  Kafka builds broker URL from `hostname:port`, no `connectionString`).
 - **Object storage** — S3-compatible: `apiUrl`, `accessKeyId`,
   `secretAccessKey`, `bucketName`. No `region`.
-- **Shared storage** — `hostname`-only mount (`mount:` in
-  zerops.yaml, not a network service).
+- **Shared storage** — `hostname`-only mount in zerops.yaml.
 - **Search / vector** (Meilisearch, Typesense, Qdrant) — scoped API
-  keys; pick the narrow key for app code, never the master key.
-  Qdrant ships both HTTP (`connectionString`) and gRPC
-  (`grpcConnectionString`); match the client library.
+  keys; pick the narrow key, never master. Qdrant ships HTTP
+  (`connectionString`) + gRPC (`grpcConnectionString`).
 
 For exotic types, `zerops_knowledge query="<service>"` returns the
-canonical reference page.
-
-The reserved-keys atom lists the few keys that cannot appear in
-`envVariables` (`HOSTNAME` in `run.envVariables` is the headline
-trap — `BUILD_FAILED` in 4-5s with empty logs).
+canonical page. Reserved-keys atom covers the few keys forbidden in
+`envVariables` (`HOSTNAME` in run = `BUILD_FAILED` 4-5s, empty logs).
 
 ---
 
