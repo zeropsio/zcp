@@ -31,6 +31,7 @@ description: |
 
 seed: deployed
 fixture: fixtures/nodejs-standard-deployed.yaml
+preseedScript: scripts/break-prod-setup.sh
 tags: [launch-production, failure-recovery, czech-prompt, token-injected, real-life, requires-cleanup]
 area: launch-production-recovery
 requiredEnvVars:
