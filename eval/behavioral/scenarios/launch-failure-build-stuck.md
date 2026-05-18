@@ -3,102 +3,137 @@ id: launch-failure-build-stuck
 description: |
   "Source pair má rozbitý zerops.yaml (build:base nepoužitelný),
   zkus to deploynout do produkce — pak diagnostikuj a navrhni fix" —
-  natural-Czech failure-recovery scenario. Pre-state: dev/stage pair
-  exists with a deliberately-broken `setup: prod` (e.g. `build.base:
-  bogus@99` or unsatisfiable buildCommands). Agent launches via
-  LaunchKey; CreateAndImportProject succeeds (services created);
-  first deploy poll catches FAILED build → launch-production
-  surfaces first-deploy-failed blocker with the recovery hints from
-  S2.2.2 (retry-via-push + dashboard URL + delete fallback).
+  natural-Czech recovery scenario. Pre-state: dev/stage pair exists
+  with a deliberately-broken `setup: prod` build.base (preseed script
+  rewrites it to `nodejs@99-deliberately-bogus` between fixture seed
+  and agent run).
 
-  Surfaces the agent must navigate:
+  **Scenario name is historical.** The original design assumed
+  `launch-production` would auto-build at launch time and the broken
+  yaml would FAIL the build → trigger S2.2.2 `first-deploy-failed`
+  blocker. **launch-production v1 (Path B) doesn't auto-build** —
+  the first prod build only fires once the user wires up CD in the
+  dashboard and pushes a tag (spec §4.5). So this scenario can NEVER
+  fire S2.2.2 live; the retry-via-push surface stays unit-tested
+  only (`TestLaunchFirstDeployFailedResponse_EmbedsRetryGuidance`).
 
-   1. Recognize structured failure response — blocker `id=first-deploy-failed`
-      carries `Recovery`-style guidance (retry-via-push + dashboard URL)
-      in the message. Agent must READ the guidance instead of
-      interpreting "FAILED" as a generic catastrophe.
-   2. Diagnostic gather BEFORE retry — agent should pull build logs
-      (via `zerops_logs source=build` if reachable, OR via deep-link
-      dashboard inspection), surface what failed (build pipeline,
-      bogus base detected, etc.) to the user, propose a fix.
-   3. Orphan-project cleanup — same constraint as #9: agent must
-      delete the half-launched prod project (zcli + token swap) so
-      Muad org doesn't accumulate broken targets.
-   4. Retry-via-push pattern verification — if agent applies fix to
-      source yaml + pushes, the platform picks up new ref and
-      re-triggers build. Verify this loop is articulable from the
-      atom guidance.
+  What this scenario ACTUALLY exercises (and what the agent in suite
+  20260517-074452 successfully demonstrated):
+
+   1. **Diagnostic-from-source-state** — agent reads broken yaml
+      directly from source `/var/www/zerops.yaml` (after bootstrap-
+      adopt completes and SSHFS mount materializes). The broken
+      `build.base: nodejs@99-deliberately-bogus` in `setup: prod`
+      is observable without ever triggering a build.
+   2. **Concrete fix proposal** — agent surfaces the specific yaml
+      change needed (`base: nodejs@22` or whichever real runtime),
+      not a vague "fix the yaml".
+   3. **Cleanup of orphan target project** — even when the launch
+      "succeeds" without ever building, the new target project
+      exists in the org and must be deleted (zcli auth-swap dance).
+   4. **Expectation calibration** — agent should NOT promise "I'll
+      notify you when the build fails" because launch-production
+      returns synchronously after `status=launched` without ever
+      attempting a build. Honest framing for the user is "the
+      failure would surface on the first tag-push after dashboard
+      pipeline setup, not now".
+
+  When Path A launch-production with auto-build lands (future), this
+  scenario can be promoted back to its original "build FAILED → S2.2.2
+  retry guidance" shape. Until then it's a diagnostic-skills test.
 
 seed: deployed
 fixture: fixtures/nodejs-standard-deployed.yaml
 preseedScript: scripts/break-prod-setup.sh
-tags: [launch-production, failure-recovery, czech-prompt, token-injected, real-life, requires-cleanup]
+tags: [launch-production, diagnostic-skills, czech-prompt, token-injected, real-life, requires-cleanup, design-mismatch-historical]
 area: launch-production-recovery
 requiredEnvVars:
   - ZCP_E2E_LAUNCH_KEY
 retrospective:
   promptStyle: briefing-future-agent
 verification:
-  noFailedProcesses: false
+  noFailedProcesses: true
   retrospectiveMustNotMention:
     - YJQTh.
+    - github_pat_
+    - ghp_
 userPersona: |
   Máš funkční dev/stage pair na Zerops (`appdev` + `appstage` + `db`).
   POZOR: zerops.yaml na source pair má vědomě zpackaný `setup: prod`
-  blok (build pipeline neproveditelný — neexistující build.base nebo
-  podobné). Tohle je úmyslné — chceš si vyzkoušet failure-recovery
-  flow: launch-production → build FAILED → diagnostic + fix proposal.
+  blok (build.base je `nodejs@99-deliberately-bogus`). Tohle je
+  úmyslné — chceš si vyzkoušet diagnostic flow.
 
   LaunchKey je v env var `$ZCP_E2E_LAUNCH_KEY` — získej přes Bash.
+
+  Tvoje očekávání ohledně failure timing:
+   - Víš že launch-production v1 NEDĚLÁ auto-build. Build pipeline
+     vystartuje až po push tagu po dashboard CD setup. Takže
+     "FAILED build během launch call" se tady NESTANE.
+   - Místo toho chceš aby agent diagnostikoval rozbitý yaml ze
+     source state PŘED launch-em nebo z dashboard inspekce PO
+     launch-em a navrhl konkrétní fix.
+   - Pokud agent slíbí "dám ti vědět až build fails", oprav ho:
+     "launch-production v1 nedělá auto-build, build se spustí až
+     po tag push s CD wired; chci jen diagnostiku rozbitého yaml."
 
   Tvoje preference:
    - Production project name: "eval-failure-test" nebo cokoli
      short-lived.
    - Akceptuj defaults pro env-classification.
-   - Pokud agent nechce launch protože "zerops.yaml má problém",
-     řekni: "spustíme to schválně — chci vidět recovery flow."
-
-  Po failure:
-   - Agent musí surface failure attribution (build vs runtime, base
-     unknown vs network, atd.).
-   - Agent musí navrhnout fix (`build.base` na existující runtime,
-     etc.).
-   - Smaž ten prod projekt: "není potřeba ho mít, recovery jsme si
-     vyzkoušeli."
+   - Pokud agent navrhne launch i přes rozbitý yaml, fajn — chceš
+     uvidět celý flow + cleanup. Pokud agent odmítne launch protože
+     "yaml je broken", taky fajn — chceš slyšet diagnostiku +
+     návrh fixu.
 
   Co odmítneš:
-   - Agent retries blindly without diagnostic.
-   - Agent skipne cleanup (orphan projekt v org).
+   - Agent slíbí "počkám až build fails" → "launch-production
+     nedělá build, vidíme rozbitý yaml přímo, dej mi diagnostiku."
+   - Agent skipne cleanup orphan projektu.
+   - Agent navrhne generic "fix the yaml" bez konkrétního pojmenování
+     které pole je rozbité.
 
   Co očekáváš na konci:
-   - Prod projekt vytvořený + první build vstoupil do FAILED stavu
-   - Response carries first-deploy-failed blocker s retry guidance
-   - Agent jasně diagnostikoval příčinu (build.base, syntax, atd.)
-   - Agent navrhl konkrétní fix
-   - Prod projekt smazaný
+   - Agent přečetl `setup: prod` blok ze source zerops.yaml
+   - Agent surfacoval konkrétní problém: `build.base:
+     nodejs@99-deliberately-bogus` neexistuje, potřebuje to být
+     `nodejs@22` (nebo jiný supported runtime)
+   - Agent buď udělal launch (a target project potom smazal) NEBO
+     odmítl launch s návrhem fix-first
+   - Žádný orphan target projekt v org
 
 notableFriction:
-  - id: first-deploy-failed-blocker-readability
+  - id: source-state-detect-broken-yaml
     description: |
-      Blocker message obsahuje retry-via-push příkaz + dashboard URL.
-      Agent by měl prezentovat tuhle guidance user-friendly, ne jen
-      "deploy failed" prose. Surfaces whether S2.2.2 enhanced message
-      actually lands in agent's response.
-  - id: diagnostic-before-retry
+      Agent musí přečíst `/var/www/zerops.yaml` (po bootstrap-adopt,
+      který materializuje SSHFS mount) a parsovat `setup: prod`
+      blok. Surfaces whether atom guidance telegraphs "read source
+      yaml before launch" jako diagnostic step.
+  - id: expectation-calibration-no-auto-build
     description: |
-      Agent nesmí blindly retry. Musí pull build logs / events nebo
-      navrhnout dashboard inspect. Surfaces whether failure-recovery
-      atoms (post-S2.2.2) telegraph "diagnose first" pattern.
-  - id: orphan-cleanup-after-failure
+      Agent NESMÍ slíbit "dám vědět až build fails" — launch-production
+      v1 nedělá auto-build. Surfaces whether agent comprehends the
+      spec (§4.5: prod runtime startWithoutCode:true, no buildFromGit,
+      build fires on tag push post-CD-setup) or naively assumes
+      auto-build like Heroku-style platforms.
+  - id: concrete-fix-proposal
     description: |
-      Stejné jako #9 — agent musí delete prod projekt. Failure scenario
-      činí cleanup ještě důležitější (org se zaplní rozbitými targety).
-  - id: fix-proposal-actionable
+      "fix the yaml" je generic. Agent by měl říct: "v `setup: prod`
+      bloku je `build.base: nodejs@99-deliberately-bogus`, změnit
+      na `nodejs@22`" — konkrétně. Surfaces whether agent reads
+      what's broken vs just relays "broken yaml".
+  - id: orphan-cleanup-after-cosmetic-launch
     description: |
-      Agent by měl navrhnout KONKRÉTNÍ změnu (edit `setup: prod`
-      build.base na `nodejs@22`, atd.), ne obecné "fix the yaml".
-      Surfaces whether agent's diagnostic skills extend to fix
-      proposal vs. handing back to user.
+      I když launch "uspěje" (status=launched), broken-yaml target
+      projekt je nefunkční a zaplňuje org. Agent must propose
+      cleanup proactively. Same constraint as #9 + #10 — cross-
+      project cleanup needs zcli auth-swap dance.
+  - id: diagnose-before-launch-vs-during-launch
+    description: |
+      Two valid agent paths: (a) refuse launch + diagnose source
+      yaml first, (b) launch + diagnose post-launch via source read.
+      Both end at "broken build.base, here's the fix". Surfaces
+      agent's strategic judgment (don't burn a launch call when
+      cheaper to read source first).
 ---
 
-Mám na Zerops Node.js dev/stage pair (`appdev` + `appstage` + `db`). Source zerops.yaml ale má vědomě rozbitý `setup: prod` blok — chci si vyzkoušet failure-recovery flow. Spusť launch-production přes LaunchKey (`$ZCP_E2E_LAUNCH_KEY` přes Bash), nech to FAILED na build kroku, pak diagnostikuj a navrhni mi fix. Až mi řekneš příčinu + návrh, ten prod projekt smaž — je to jen test.
+Mám na Zerops Node.js dev/stage pair (`appdev` + `appstage` + `db`). Source zerops.yaml ale má vědomě rozbitý `setup: prod` blok (build.base je `nodejs@99-deliberately-bogus`) — chci si vyzkoušet diagnostic flow. **Vím že launch-production v1 nedělá auto-build, takže "FAILED build během launch" se tady nestane.** Místo toho chci abys přečetl ten source yaml a řekl mi konkrétně co je rozbité a jak to fixnout. Pokud chceš pro úplnost spustit launch-production přes LaunchKey (`$ZCP_E2E_LAUNCH_KEY` přes Bash) a uvidíš celý flow, ok — pak ale ten prod projekt smaž, je to jen test.
