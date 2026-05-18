@@ -1,0 +1,70 @@
+# Zerops yaml OS-prefix shape drift — ZCP wide
+
+- **Surfaced**: 2026-05-18, during deep-research investigation of broken behavior in eval review 20260518 subset (see `plans/eval-review-20260518-subset/deep-research/01-atoms-templates.md` Finding E + Karel's clarification in chat).
+- **Why deferred**: Originally framed as a 5-line strip-OS-prefix fix in `topology/runtime_class.go`. Karel's clarification: Zerops upstream changed yaml shape — service type strings used to be bare (`nginx@1.22`, `php-apache@8.4`), now arrive OS-prefixed (`alpine/nginx@1.22`, `ubuntu/nodejs@22`, `alpine/php-apache@8.4`). The classifier bug is one visible leaf; the actual drift surface spans the full ZCP stack (knowledge atoms, recipe templates, validators, render goldens, plan-vs-yaml conversion). A single-site strip is symptom-axis — bringing ZCP to parity with the new upstream shape is a design pass and an audit, not a point fix.
+- **Trigger to promote**: when Karel decides ZCP needs to be brought to coherent parity with the new Zerops yaml shape (likely soon — it's blocking visible eval scenarios). The eval evidence is already strong: `classic-static-nginx-simple`, `landing-page-static-simple`, `classic-php-mariadb-standard`, and any PHP-apache/PHP-nginx/static-nginx scenario will keep failing until this lands.
+
+## Visible symptom (the classifier leaf)
+
+`internal/topology/runtime_class.go:28-32` does `HasPrefix(lower, "nginx" | "static" | "php-apache" | "php-nginx")` against the type string Zerops returns. With the new shape `alpine/nginx@1.22`, that prefix-check returns `false`. The classifier labels the service `RuntimeDynamic` instead of `RuntimeStatic` / `RuntimeImplicitWeb`. Downstream:
+
+- `develop-static-workflow.md` is gated on `runtimes:[static]` — never fans out for any nginx service.
+- Same for PHP-apache / PHP-nginx atoms (gated on `runtimes:[implicit-webserver]`).
+- Layer-3 consumers (`compute_envelope.go:223`, `deploy_poll.go:227`, `deploy_subdomain.go:118`, `subdomain.go:146`) all funnel through `RuntimeClassFor` and inherit the misclassification.
+
+Empirically verified in-package test (researcher 01 ran):
+
+```
+alpine/nginx@1.22        -> dynamic   (should be static)
+alpine/php-apache@8.4    -> dynamic   (should be implicit-webserver)
+ubuntu/nginx@1.22        -> dynamic   (should be static)
+```
+
+Existing test `internal/topology/runtime_class_test.go:5-35` covers only bare forms — the gap that hid this for the period between the Zerops upstream change and now.
+
+## Sketch — why a strip is not the whole fix
+
+A 5-line `lower = strings.TrimPrefix(...)` in `RuntimeClassFor` resolves the classifier symptom. But the OS prefix is now load-bearing semantic data — it appears throughout:
+
+1. **`liveTypes[].Versions[].Name` registry** (plan validator at `internal/workflow/validate.go:387-397::typeExists`) — already uses composite/OS-prefixed forms. Plan input must match.
+2. **`zerops.yaml` runtime declaration** — accepts BOTH bare and OS-prefixed (per `internal/platform/project_admin_api_test.go:35,76,153`). Recipe yamls (`internal/knowledge/recipes/*.import.yml`) currently use bare.
+3. **Atom prose + recipe knowledge** — many references to runtime types in atoms/recipes assume bare form. Search reveals dozens of `nginx@` / `nodejs@22` patterns; some are docs-only, some are templating values.
+4. **Composite-mode encoding** for managed dependencies (`postgresql:single@18` vs `postgresql@18 + mode: NON_HA`) — separate but related asymmetry, covered by **finding G** in the eval review (`plans/eval-review-20260518-subset/deep-research/03-workflow-recovery.md`).
+
+Pre-production rule from CLAUDE.local.md: pick one canonical encoding per concept and normalize at every boundary. Question is: **is the canonical form OS-prefixed (`alpine/nginx@1.22`) or bare (`nginx@1.22`)?** The current Zerops yaml shape says OS-prefixed for runtime declaration but accepts both at the import API. Plan validator wants the OS-prefixed form. Recipe yamls ship bare.
+
+## Risks
+
+- The strip-and-move-on fix masks the wider drift. Six months from now another shape change at Zerops will surface another leaf and the same audit will be needed.
+- Some OS-prefixed names are NOT runtime classifiers — e.g. `postgresql:single@18` has a colon (mode encoding), not a slash. Classifier strip must distinguish OS prefix from mode encoding from version separator.
+- Atom gating axes (`runtimes:[static]`, `runtimes:[implicit-webserver]`) — once the classifier is fixed, all those atoms WILL start firing. Verify their content is still accurate for the OS-prefixed-yaml world; specifically, any inline yaml examples that show bare-form `nginx@1.22` should match what the agent will actually see.
+- Recipe yamls + recipe knowledge files (`internal/knowledge/recipes/*.md` and `*.import.yml`) may need re-templating if they currently ship bare-form runtime types that no longer match what Zerops returns.
+- Render goldens (`*_golden_test.go`) may pin bare-form output that needs regeneration.
+
+## Sketch — phased fix when promoted
+
+1. **Audit pass**: enumerate every site that consumes service type strings. Grep targets:
+   - `HasPrefix.*nginx` / `HasPrefix.*static` / `HasPrefix.*php-` across `internal/`
+   - `nodejs@` / `nginx@` / `php-` across `internal/content/atoms/`, `internal/knowledge/recipes/`
+   - `*ServiceStackTypeVersionName*` / `*.Versions[].Name` consumers
+   - `liveTypes` reads
+2. **Canonical-form decision**: OS-prefixed `<os>/<runtime>@<version>` everywhere ZCP touches the platform side. Bare form acceptable in human-facing prose only, normalized at the boundary.
+3. **Classifier fix** (the leaf): `runtime_class.go` strip-after-slash before HasPrefix check. Extend test table with OS-prefixed forms.
+4. **Plan validator alignment**: confirm `typeExists` at `validate.go:387-397` reads from the canonical registry; reject bare forms with an actionable error pointing at the OS-prefixed name.
+5. **Recipe yaml audit**: regenerate import.yml templates with OS-prefixed forms IF live import API has moved past bare-form acceptance (verify empirically).
+6. **Atom content audit**: every atom that shows inline yaml with `nginx@1.22` / similar should match what `zerops_discover` actually returns. Otherwise agent reads atom, copies bare, gets `INVALID_ZEROPS_YML: unknown base`.
+7. **Render golden regeneration**: after atoms/recipes regenerate, run `go test ./internal/content/... -update` (or equivalent).
+8. **Eval re-run**: `classic-static-nginx-simple`, `landing-page-static-simple`, `classic-php-mariadb-standard`, and any other scenario whose runtime gets OS-prefixed by the Zerops side.
+
+Estimated effort once promoted: 1-2 days for the audit + classifier + plan validator; another day for recipe + atom alignment + golden regeneration.
+
+## Refs
+
+- `internal/topology/runtime_class.go:28-32` — classifier site
+- `internal/topology/runtime_class_test.go:5-35` — gap-hiding test
+- `internal/workflow/validate.go:387-397::typeExists` — plan validator (separate but related)
+- `internal/platform/project_admin_api_test.go:35,76,153` — empirical evidence import-yaml API accepts both forms
+- `internal/knowledge/recipes/*.import.yml` — recipe yamls (current bare-form usage)
+- Researcher report: `plans/eval-review-20260518-subset/deep-research/01-atoms-templates.md` (Finding E section)
+- Related backlog: composite-type plan-vs-yaml asymmetry (finding G in `03-workflow-recovery.md`) — covers `postgresql:single@18` vs `postgresql@18 + mode` axis
+- Karel's clarification (chat 2026-05-18): yaml shape changed upstream, drive was bare prefix, needs separate audit pass; classifier is one leaf of a broader drift surface.
