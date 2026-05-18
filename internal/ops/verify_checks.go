@@ -97,18 +97,27 @@ func batchLogChecks(
 	return []CheckResult{{Name: name, Status: CheckPass}}
 }
 
-// checkHTTPRoot performs GET / and asks the question "is the HTTP server
-// responding at all?" — NOT "does / return a 2xx?". Any HTTP response
-// (2xx/3xx/4xx) proves the server is listening, binding the port, and
-// handling requests; only 5xx or a connection error means the server
-// is broken. Older versions of this check treated 404 as a failure,
-// which flagged every API-only service that only routes /api/* as
-// "degraded" in every single run — the root path is legitimately not
-// served by API scaffolds, and downgrading the whole service for it is
-// noise, not signal. Workflow-specific endpoint-shape checks
-// (recipe's feature-sweep, bootstrap's /status curl) live in the
-// workflow that knows the path — verify stays generic and only asks
-// the single question it's qualified to answer.
+// checkHTTPRoot performs GET / and asks "is the root endpoint serving a
+// real response?" — pass on 2xx/3xx, fail on 4xx/5xx with the HTTP status
+// surfaced in detail.
+//
+// History: this check previously passed on any non-5xx response (the
+// "is the server alive?" semantic) because flagging API-only services
+// as degraded over a `/` 404 produced noise across showcase runs. Eval
+// review 20260518-subset revealed the opposite trap: agents read
+// `http_root: pass, httpStatus: 404` as proof their endpoints work and
+// signed off broken services. Phase 3 of fix-plan inverted the rule —
+// the agent's "did the deploy succeed at delivering the user's app?"
+// question is what verify needs to answer; reachability-only probing
+// stays in `WaitHTTPReady` (used during L7 propagation polling) where
+// the "is the server up at all" semantic is still right.
+//
+// For API-only services where `/` is legitimately not served, the agent
+// reads the fail detail ("HTTP 404: ...") and either verifies a real
+// endpoint or accepts the cosmetic failure with a one-line note to the
+// user — both are honest about the state. Workflow-specific endpoint-
+// shape checks (recipe's feature-sweep, bootstrap's /status curl) live
+// in the workflow that knows the path.
 func checkHTTPRoot(ctx context.Context, httpClient HTTPDoer, url string) CheckResult {
 	name := checkNameHTTPRoot
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -128,17 +137,21 @@ func checkHTTPRoot(ctx context.Context, httpClient HTTPDoer, url string) CheckRe
 	// caller can forward the full body without re-issuing the request.
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, httpRootBodyReadCap))
 
-	// 2xx / 3xx / 4xx — any response proves the HTTP server is up and
-	// serving. 4xx means "you asked for something I don't have" which
-	// is still proof of life.
-	if resp.StatusCode < 500 {
+	// 2xx / 3xx — root path serves a real response. Pass.
+	if resp.StatusCode < 400 {
 		return CheckResult{Name: name, Status: CheckPass, HTTPStatus: resp.StatusCode}
 	}
-	// 5xx — the server is reachable but broken. This is the only
-	// http_root outcome that downgrades the service to degraded.
+	// 4xx — server reachable but root path not served (404), auth-gated
+	// (401), or rejecting GET (405). Fail with the status + body excerpt
+	// so the agent can decide whether to verify a real endpoint or
+	// accept the failure as cosmetic and surface to the user.
+	// 5xx — server reachable but broken; same shape.
 	detail := fmt.Sprintf("HTTP %d", resp.StatusCode)
 	if len(body) > 0 {
 		detail += ": " + truncateBody(body, 200)
+	}
+	if resp.StatusCode < 500 {
+		detail += " (server reachable but root path not serving a 2xx/3xx — verify a real endpoint or accept as cosmetic)"
 	}
 	return CheckResult{Name: name, Status: CheckFail, Detail: detail, HTTPStatus: resp.StatusCode}
 }

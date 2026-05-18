@@ -603,14 +603,25 @@ func TestCheckHTTPRoot_Success(t *testing.T) {
 	}
 }
 
-// TestCheckHTTPRoot_NonFailingStatuses locks the "any non-5xx is a
-// pass" rule. Any response from the HTTP server proves it is listening
-// and serving HTTP — which is the only question http_root asks. 4xx
-// is legitimate for API-only services that don't route the root path.
-// 3xx is legitimate for frameworks that redirect / to /app or similar.
-// The rule change was made after every showcase run ever flagged apidev
-// as "degraded" because /api/health works but / returns 404.
-func TestCheckHTTPRoot_NonFailingStatuses(t *testing.T) {
+// TestCheckHTTPRoot_4xxFails locks the inverted rule introduced by Phase 3
+// of plans/eval-review-20260518-subset/fix-plan.md: 4xx HTTP responses on
+// `/` now FAIL the check (with the status + body excerpt surfaced in detail)
+// rather than passing as "server alive."
+//
+// History: a previous iteration of this check passed on any non-5xx to
+// avoid flagging API-only services as "degraded" over `/` 404. Eval
+// review 20260518-subset revealed the opposite trap: agents read
+// `http_root: pass, httpStatus: 404` as proof the user's endpoints work
+// and signed off broken services on `api-node-postgres-classic-dev` and
+// related scenarios. The new semantic answers "is the root endpoint
+// serving a real response?" — pass on 2xx/3xx, fail on 4xx/5xx.
+//
+// API-only services where `/` is legitimately not served now produce a
+// `fail` that the agent must reason about: verify a real endpoint, or
+// accept the failure as cosmetic and surface to the user. Either is
+// honest about state. Reachability-only probing (the "is the server up
+// at all?" question) lives in WaitHTTPReady for L7 propagation polling.
+func TestCheckHTTPRoot_4xxFails(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -651,11 +662,14 @@ func TestCheckHTTPRoot_NonFailingStatuses(t *testing.T) {
 			defer srv.Close()
 
 			c := checkHTTPRoot(context.Background(), srv.Client(), srv.URL)
-			if c.Status != CheckPass {
-				t.Errorf("status = %q, want pass (any HTTP response proves the server is alive)", c.Status)
+			if c.Status != CheckFail {
+				t.Errorf("status = %q, want fail (4xx must not pass — agent reads `pass + 4xx` as endpoint working)", c.Status)
 			}
 			if c.HTTPStatus != tt.wantHTTPStatus {
 				t.Errorf("httpStatus = %d, want %d", c.HTTPStatus, tt.wantHTTPStatus)
+			}
+			if !strings.Contains(c.Detail, "verify a real endpoint or accept as cosmetic") {
+				t.Errorf("Detail must teach the agent the resolution path; got %q", c.Detail)
 			}
 		})
 	}
