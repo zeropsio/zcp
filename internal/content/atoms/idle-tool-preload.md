@@ -14,7 +14,7 @@ real action. On the very first turn — BEFORE calling `zerops_workflow` —
 batch-load every tool you'll need across bootstrap and develop:
 
 ```
-ToolSearch query="select:zerops_workflow,zerops_discover,zerops_knowledge,zerops_import,zerops_env,zerops_mount,zerops_deploy,zerops_verify,zerops_logs,zerops_events,zerops_subdomain,zerops_manage,zerops_process"
+ToolSearch query="select:mcp__zerops__zerops_workflow,mcp__zerops__zerops_discover,mcp__zerops__zerops_knowledge,mcp__zerops__zerops_import,mcp__zerops__zerops_env,mcp__zerops__zerops_mount,mcp__zerops__zerops_deploy,mcp__zerops__zerops_verify,mcp__zerops__zerops_logs,mcp__zerops__zerops_events,mcp__zerops__zerops_subdomain,mcp__zerops__zerops_manage,mcp__zerops__zerops_process"
 ```
 
 `select:` accepts a comma-separated list and returns all matching schemas

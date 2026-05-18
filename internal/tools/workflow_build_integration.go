@@ -73,10 +73,19 @@ func handleBuildIntegration(
 			""), WithRecoveryStatus()), nil, nil
 	}
 	if meta == nil || !meta.IsComplete() {
+		// Mirrors workflow_close_mode.go — point at bootstrap+adopt, not
+		// generic status. Code is ErrAdoptRequired (not ErrServiceNotFound —
+		// the service IS found in Zerops, it just lacks ZCP bootstrap
+		// metadata). Pinned by TestErrAdoptRequiredCarriesAdoptRecovery.
 		return convertError(platform.NewPlatformError(
-			platform.ErrServiceNotFound,
+			platform.ErrAdoptRequired,
 			fmt.Sprintf("Service %q is not bootstrapped", input.Service),
-			"Run bootstrap first: zerops_workflow action=\"start\" workflow=\"bootstrap\""), WithRecoveryStatus()), nil, nil
+			"Run bootstrap first: zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\""),
+			WithRecovery(&RecoveryHint{
+				Tool:   "zerops_workflow",
+				Action: "start",
+				Args:   map[string]string{"workflow": "bootstrap", "route": "adopt"},
+			})), nil, nil
 	}
 
 	// Walkthrough mode: synthesize options atom (PhaseStrategySetup).

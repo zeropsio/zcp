@@ -18,7 +18,7 @@ arrived in develop fresh (compaction recovery, or develop without prior
 bootstrap), batch-load before iterating:
 
 ```
-ToolSearch query="select:zerops_workflow,zerops_deploy,zerops_verify,zerops_logs,zerops_events,zerops_manage,zerops_env,zerops_discover"
+ToolSearch query="select:mcp__zerops__zerops_workflow,mcp__zerops__zerops_deploy,mcp__zerops__zerops_verify,mcp__zerops__zerops_logs,mcp__zerops__zerops_events,mcp__zerops__zerops_manage,mcp__zerops__zerops_env,mcp__zerops__zerops_discover"
 ```
 
 `select:` accepts a comma-separated list and returns all matching
@@ -419,4 +419,4 @@ zerops_deploy sourceService="appdev" targetService="appstage" setup="prod"
 zerops_verify serviceHostname="appstage"
 ```
 
-Cross-deploy packages the dev tree into stage with no second build; stage has a real `run.start` + `healthCheck`, so it auto-starts (no `zerops_dev_server` on the stage side). The work session closes once both halves have a successful deploy + passing verify (`closeReason=auto-complete`). If the dev server is already running after a code-only change, run `action=status` first; if `running: true`, skip `action=start`.
+Cross-deploy builds the dev source on stage (dev side unchanged); stage has a real `run.start` + `healthCheck`, so it auto-starts (no `zerops_dev_server` on the stage side). The work session closes once both halves have a successful deploy + passing verify (`closeReason=auto-complete`). If the dev server is already running after a code-only change, run `action=status` first; if `running: true`, skip `action=start`.

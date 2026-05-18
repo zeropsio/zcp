@@ -13,7 +13,7 @@ arrived in develop fresh (compaction recovery, or develop without prior
 bootstrap), batch-load before iterating:
 
 ```
-ToolSearch query="select:zerops_workflow,zerops_deploy,zerops_verify,zerops_logs,zerops_events,zerops_manage,zerops_env,zerops_discover"
+ToolSearch query="select:mcp__zerops__zerops_workflow,mcp__zerops__zerops_deploy,mcp__zerops__zerops_verify,mcp__zerops__zerops_logs,mcp__zerops__zerops_events,mcp__zerops__zerops_manage,mcp__zerops__zerops_env,mcp__zerops__zerops_discover"
 ```
 
 `select:` accepts a comma-separated list and returns all matching

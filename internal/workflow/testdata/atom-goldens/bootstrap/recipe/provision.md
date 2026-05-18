@@ -23,9 +23,9 @@ string, not a pre-rendered value. Repeat for each project env var.
 Some recipes carry framework-specific notes about a particular key —
 e.g. which prefix format the framework will or won't accept, or whether
 a value must be regenerated post-deploy. Check the recipe's gotchas via
-`zerops_knowledge action="recipe" slug="<slug>"` BEFORE pre-setting
-project env vars; the gotcha section names the key and the exact value
-shape that works for the framework.
+`zerops_knowledge recipe="<slug>"` BEFORE pre-setting project env vars;
+the gotcha section names the key and the exact value shape that works
+for the framework.
 
 2. **Import services.**
 
@@ -55,7 +55,7 @@ them sequentially burns 2-3 round-trips before the first real action.
 On the first turn, batch-load:
 
 ```
-ToolSearch query="select:zerops_workflow,zerops_discover,zerops_import,zerops_deploy,zerops_verify,zerops_logs,zerops_events,zerops_dev_server"
+ToolSearch query="select:mcp__zerops__zerops_workflow,mcp__zerops__zerops_discover,mcp__zerops__zerops_import,mcp__zerops__zerops_deploy,mcp__zerops__zerops_verify,mcp__zerops__zerops_logs,mcp__zerops__zerops_events,mcp__zerops__zerops_dev_server"
 ```
 
 `select:` accepts a comma-separated list and returns all matching

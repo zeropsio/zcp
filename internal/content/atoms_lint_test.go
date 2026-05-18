@@ -59,6 +59,11 @@ func TestAtomAuthoringLint(t *testing.T) {
 //   - axis-k: abstraction-leak candidate (marker convention)
 //   - axis-m: terminology-drift candidate (marker convention)
 //   - axis-n: universal-atom env leak (marker convention)
+//
+// Table-driven; every new lint rule adds one row, lowering maintidx —
+// splitting by category would scatter the contract enumeration.
+//
+//nolint:maintidx
 func TestAtomAuthoringLint_FiresOnKnownViolations(t *testing.T) {
 	t.Parallel()
 
@@ -126,6 +131,12 @@ func TestAtomAuthoringLint_FiresOnKnownViolations(t *testing.T) {
 			body:        "The self-ref resolves to an empty string at runtime.\n",
 			wantPattern: "env-shadow-empty-string-symptom",
 			wantCat:     "factual-drift",
+		},
+		{
+			name:        "toolsearch-select-bare-prefix",
+			body:        "ToolSearch query=\"select:zerops_workflow,zerops_deploy\"\n",
+			wantPattern: "toolsearch-select-missing-mcp-prefix",
+			wantCat:     "tool-call-shape",
 		},
 		// axis-L (HARD-FORBID env-only title qualifiers) -----------------
 		{

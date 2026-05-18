@@ -82,6 +82,52 @@ func TestErrAdoptRequiredCarriesAdoptRecovery(t *testing.T) {
 				return extractText(result)
 			},
 		},
+		{
+			name: "git_push_setup_unbootstrapped_service",
+			drive: func(t *testing.T) string {
+				t.Helper()
+				dir := t.TempDir()
+				// No ServiceMeta written — triggers meta == nil path at
+				// workflow_git_push_setup.go (Phase 1.2 of eval-review-20260518
+				// fix-plan; previously emitted ErrServiceNotFound + generic
+				// status Recovery, missed during the 5478623c migration).
+				result, _, err := handleGitPushSetup(WorkflowInput{
+					Service:   "appdev",
+					RemoteURL: "https://github.com/example/repo",
+				}, dir, runtime.Info{InContainer: true})
+				if err != nil {
+					t.Fatalf("handleGitPushSetup: %v", err)
+				}
+				if !result.IsError {
+					t.Fatalf("expected ADOPT_REQUIRED rejection, got success:\n%s", extractText(result))
+				}
+				return extractText(result)
+			},
+		},
+		{
+			name: "build_integration_unbootstrapped_service",
+			drive: func(t *testing.T) string {
+				t.Helper()
+				dir := t.TempDir()
+				// No ServiceMeta written — triggers meta == nil path at
+				// workflow_build_integration.go (Phase 1.2 of eval-review-20260518
+				// fix-plan; previously emitted ErrServiceNotFound + generic
+				// status Recovery, missed during the 5478623c migration).
+				result, _, err := handleBuildIntegration(context.Background(),
+					platform.NewMock(),
+					"proj1",
+					WorkflowInput{Service: "appdev"},
+					dir,
+					runtime.Info{InContainer: true})
+				if err != nil {
+					t.Fatalf("handleBuildIntegration: %v", err)
+				}
+				if !result.IsError {
+					t.Fatalf("expected ADOPT_REQUIRED rejection, got success:\n%s", extractText(result))
+				}
+				return extractText(result)
+			},
+		},
 		// workflow_develop.go:195 (errStandardPairStageMissing) intentionally
 		// not driven here — its trigger requires a complete ServiceMeta with
 		// a stage hostname not in the live service list, which is a more

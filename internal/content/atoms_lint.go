@@ -111,6 +111,19 @@ var atomLintRules = []atomLintRule{
 		category: "factual-drift",
 		pattern:  regexp.MustCompile(`(?i)resolves\s+to\s+an\s+empty\s+string\s+at\s+runtime`),
 	},
+	// ToolSearch select: tokens must use the MCP-server-prefixed form.
+	// The bare form `select:zerops_workflow,...` returns "No matching
+	// deferred tools found" — the host harness routes by the MCP server
+	// name (`zerops` per `internal/content/templates/mcp-config.json`),
+	// which registers tools as `mcp__zerops__zerops_*`. Atoms documenting
+	// `select:zerops_*` (bare) instruct every fresh session to make a
+	// dead-end call. Verified live in
+	// `eval/behavioral/runs/20260518-132736/develop-loop-after-bootstrap/transcript.jsonl`.
+	{
+		name:     "toolsearch-select-missing-mcp-prefix",
+		category: "tool-call-shape",
+		pattern:  regexp.MustCompile(`\bselect:zerops_`),
+	},
 }
 
 // LintAtomCorpus scans every atom body (frontmatter excluded) for the

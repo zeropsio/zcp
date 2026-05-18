@@ -26,7 +26,7 @@ them sequentially burns 2-3 round-trips before the first real action.
 On the first turn, batch-load:
 
 ```
-ToolSearch query="select:zerops_workflow,zerops_discover,zerops_import,zerops_deploy,zerops_verify,zerops_logs,zerops_events,zerops_dev_server"
+ToolSearch query="select:mcp__zerops__zerops_workflow,mcp__zerops__zerops_discover,mcp__zerops__zerops_import,mcp__zerops__zerops_deploy,mcp__zerops__zerops_verify,mcp__zerops__zerops_logs,mcp__zerops__zerops_events,mcp__zerops__zerops_dev_server"
 ```
 
 `select:` accepts a comma-separated list and returns all matching

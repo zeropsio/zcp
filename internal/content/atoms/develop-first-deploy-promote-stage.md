@@ -21,6 +21,6 @@ cross-deploy it to its paired stage:
 zerops_verify serviceHostname="{stage-hostname}"}
 ```
 
-No second build — cross-deploy packages the dev tree straight into
-stage. Auto-close fires once both halves carry a successful deploy +
+Cross-deploy builds the dev source on stage; dev side unchanged.
+Auto-close fires once both halves carry a successful deploy +
 passing verify.
