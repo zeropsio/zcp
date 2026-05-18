@@ -232,13 +232,19 @@ func checkServiceStatusAny(ctx context.Context, client platform.Client, fetcher 
 }
 
 // checkServiceType verifies a service's API type matches the plan type.
+//
+// Comparison is type-equivalence (topology.TypesAreEquivalent), not byte
+// equality — Sunday-release 2026-05-18 moved Zerops upstream identifiers to
+// composite form (`alpine/php-nginx@8.4`, `postgresql:single@18`) while the
+// plan-side may still carry legacy bare form (`php-nginx@8.4`,
+// `postgresql@18`). Both must accept.
 func checkServiceType(svcMap map[string]platform.ServiceStack, hostname, expectedType string) []workflow.StepCheck {
 	svc, exists := svcMap[hostname]
 	if !exists {
 		return nil // missing service is caught by checkServiceRunning
 	}
 	actual := svc.ServiceStackTypeInfo.ServiceStackTypeVersionName
-	if actual == "" || actual == expectedType {
+	if actual == "" || topology.TypesAreEquivalent(actual, expectedType) {
 		return nil
 	}
 	return []workflow.StepCheck{{

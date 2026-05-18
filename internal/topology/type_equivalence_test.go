@@ -56,12 +56,13 @@ func TestTypesAreEquivalent(t *testing.T) {
 		{"nodejs@22", "alpine/nodejs@22", true},
 		{"alpine/nodejs@22", "nodejs@22", true},
 		{"php-nginx@8.4", "alpine/php-nginx@8.4", true},
-		// Different OS variants of the same bare — equivalent.
-		{"alpine/nodejs@22", "ubuntu/nodejs@22", true},
+		// Different OS variants — NOT equivalent (different runtime variants).
+		{"alpine/nodejs@22", "ubuntu/nodejs@22", false},
 		// Bare ↔ mode-encoded managed (the deps BC pattern).
 		{"postgresql@18", "postgresql:single@18", true},
 		{"postgresql@18", "postgresql:ha@18", true},
-		{"postgresql:ha@18", "postgresql:single@18", true},
+		// Different modes — NOT equivalent (HA and single are different services).
+		{"postgresql:ha@18", "postgresql:single@18", false},
 		// Different version — not equivalent.
 		{"nodejs@22", "nodejs@24", false},
 		{"postgresql@18", "postgresql@17", false},
