@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 const versionStatusActive = "ACTIVE"
@@ -46,6 +47,14 @@ var managedCategories = map[string]bool{
 // ManagedBaseNames derives managed service base names from live API service stack types.
 // Filters for STANDARD, SHARED_STORAGE, and OBJECT_STORAGE categories.
 // Returns empty map (not nil) for nil/empty input.
+//
+// Post-Sunday-release the live API returns composite mode-encoded names
+// (`postgresql:single@18`, `postgresql:ha@18`). Canonicalize via
+// topology.CanonicalBareForm before the cut so the stored key is the
+// bare base name (`postgresql`) regardless of which shape the API
+// returned. Required for symmetric lookup in
+// `workflow.isManagedTypeWithLive`, which canonicalizes the plan-side
+// type the same way.
 func ManagedBaseNames(types []platform.ServiceStackType) map[string]bool {
 	result := make(map[string]bool)
 	for _, st := range types {
@@ -56,7 +65,8 @@ func ManagedBaseNames(types []platform.ServiceStackType) map[string]bool {
 			if v.Status != versionStatusActive {
 				continue
 			}
-			base, _, _ := strings.Cut(v.Name, "@")
+			canonical := topology.CanonicalBareForm(v.Name)
+			base, _, _ := strings.Cut(canonical, "@")
 			result[base] = true
 		}
 	}

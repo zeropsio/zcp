@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/topology"
 	"gopkg.in/yaml.v3"
 )
 
@@ -50,6 +51,19 @@ func loadKnownVersions(t *testing.T) map[string]bool {
 		m[v] = true
 		if base, _, ok := strings.Cut(v, "@"); ok {
 			bases[base] = true
+		}
+		// Post-Sunday-release the live catalog returns composite types
+		// (`alpine/nodejs@22`, `postgresql:single@18`). Recipes carry
+		// the legacy bare form (`nodejs@22`, `postgresql@18`); the API
+		// still accepts both. Accept the canonical bare form alongside
+		// the composite via topology.CanonicalBareForm so recipe lint
+		// stays green during the bare→composite migration window.
+		canonical := topology.CanonicalBareForm(v)
+		if canonical != v {
+			m[canonical] = true
+			if canonicalBase, _, ok := strings.Cut(canonical, "@"); ok {
+				bases[canonicalBase] = true
+			}
 		}
 	}
 	// Add @latest aliases and base-type sentinels for any base with at least

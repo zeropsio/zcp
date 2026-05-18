@@ -435,10 +435,13 @@ func ValidateEnvReferences(envVars map[string]string, discoveredEnvVars map[stri
 	return errs
 }
 
-// IsImplicitWebServerType returns true if the given service type (e.g. "php-nginx@8.4")
-// has a built-in web server that starts automatically.
+// IsImplicitWebServerType returns true if the given service type (e.g. "php-nginx@8.4"
+// or post-Sunday-release "alpine/php-nginx@8.4") has a built-in web server
+// that starts automatically. Strips OS prefix via topology.CanonicalBareForm
+// before the switch so composite and bare shapes match the same case.
 func IsImplicitWebServerType(serviceType string) bool {
-	b, _, _ := strings.Cut(serviceType, "@")
+	canonical := topology.CanonicalBareForm(serviceType)
+	b, _, _ := strings.Cut(canonical, "@")
 	switch b {
 	case runtimePHPApach, runtimePHPNginx, runtimeNginx, runtimeStatic:
 		return true
@@ -473,6 +476,12 @@ func HasPkgInstallWithoutSudo(commands any) bool {
 // hasImplicitWebServer returns true if the runtime has a built-in web server
 // that starts automatically (no run.start or run.ports needed).
 // Checks run.base first, falls back to build.base strings.
+//
+// Post-Sunday-release the live zerops.yaml schema enums non-`static` bases
+// as composite-only (`alpine/php-nginx@8.4`); recipe yamls may emit either
+// shape. Strip OS prefix via topology.CanonicalBareForm before the switch
+// so both shapes hit the same case. Standalone `runtimeStatic` (no `@`)
+// remains a special bare token preserved by the live schema.
 func hasImplicitWebServer(runBase string, buildBases []string) bool {
 	bases := append([]string{runBase}, buildBases...)
 	for _, base := range bases {
@@ -482,7 +491,8 @@ func hasImplicitWebServer(runBase string, buildBases []string) bool {
 		if base == runtimeStatic {
 			return true
 		}
-		b, _, _ := strings.Cut(base, "@")
+		canonical := topology.CanonicalBareForm(base)
+		b, _, _ := strings.Cut(canonical, "@")
 		switch b {
 		case runtimePHPApach, runtimePHPNginx, runtimeNginx, runtimeStatic:
 			return true

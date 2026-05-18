@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 const (
@@ -38,8 +39,16 @@ const (
 )
 
 // classifyRuntime determines the runtime class from service type and port presence.
+//
+// `serviceType` is the live API `ServiceStackTypeVersionName` — post-
+// Sunday-release that carries the composite OS-prefixed form
+// (`alpine/php-nginx@8.4`). Strip the OS prefix and mode suffix via
+// `topology.CanonicalBareForm` before the switch so the bare-name cases
+// (`runtimePHPNginx`, `runtimeNginx`, etc.) match regardless of which
+// shape the API returns.
 func classifyRuntime(serviceType string, hasPorts bool) RuntimeClass {
-	base, _, _ := strings.Cut(serviceType, "@")
+	canonical := topology.CanonicalBareForm(serviceType)
+	base, _, _ := strings.Cut(canonical, "@")
 	switch base {
 	case runtimePHPApach, runtimePHPNginx:
 		return RuntimeImplicit

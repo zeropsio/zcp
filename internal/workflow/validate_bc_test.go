@@ -145,6 +145,76 @@ func TestValidateBootstrapTargets_BareShapeAcceptedWithoutOsField(t *testing.T) 
 	}
 }
 
+// TestIsManagedTypeWithLive_CompositeCatalog locks in the paired BC fix:
+// when the live API returns composite mode-encoded managed names
+// (`postgresql:single@18`) the live-managed map (built by
+// knowledge.ManagedBaseNames) stores the canonical bare base (`postgresql`).
+// isManagedTypeWithLive then must also canonicalize the plan-side service
+// type before consulting the map, regardless of which shape the agent
+// submitted.
+func TestIsManagedTypeWithLive_CompositeCatalog(t *testing.T) {
+	t.Parallel()
+	liveManaged := map[string]bool{
+		"postgresql":     true,
+		"valkey":         true,
+		"object-storage": true,
+	}
+	tests := []struct {
+		name    string
+		svcType string
+		want    bool
+	}{
+		// Bare — legacy clients.
+		{"bare_managed", "postgresql@18", true},
+		{"bare_managed_valkey", "valkey@7.2", true},
+		// Composite mode-encoded — post-release shape.
+		{"composite_single", "postgresql:single@18", true},
+		{"composite_ha", "postgresql:ha@18", true},
+		{"composite_valkey_single", "valkey:single@7.2", true},
+		// Runtimes — not managed.
+		{"composite_runtime", "alpine/nodejs@22", false},
+		{"bare_runtime", "nodejs@22", false},
+		// Unknown base — not managed.
+		{"unknown", "rust@1.0", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := isManagedTypeWithLive(tt.svcType, liveManaged)
+			if got != tt.want {
+				t.Errorf("isManagedTypeWithLive(%q) = %v, want %v",
+					tt.svcType, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestIsManagedTypeWithLive_EmptyLiveFallsBackToStatic confirms the
+// fallback path (when live map empty, e.g. catalog fetch failed)
+// uses topology.IsManagedService which has its own canonicalization.
+func TestIsManagedTypeWithLive_EmptyLiveFallsBackToStatic(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		svcType string
+		want    bool
+	}{
+		{"composite_managed_static", "postgresql:single@18", true},
+		{"bare_managed_static", "postgresql@18", true},
+		{"composite_runtime_static", "alpine/nodejs@22", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := isManagedTypeWithLive(tt.svcType, nil)
+			if got != tt.want {
+				t.Errorf("isManagedTypeWithLive(%q, nil) = %v, want %v",
+					tt.svcType, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestValidateBootstrapTargets_CompositeShapePassesThrough confirms the
 // post-Sunday-release canonical shape also works (in case agent or recipe
 // upgrades to composite ahead of the rest of the repo).
