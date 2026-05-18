@@ -208,8 +208,6 @@ func isManagedTypeWithLive(serviceType string, liveManaged map[string]bool) bool
 // but the validation loop pattern is the cohesive shape — splitting would
 // scatter the "iterate every target, iterate every dep, validate each
 // constraint" structure across helpers.
-//
-//nolint:maintidx
 func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.ServiceStackType, liveServices []platform.ServiceStack) ([]string, error) {
 	// Empty targets allowed for managed-only projects (no runtime services).
 	if len(targets) == 0 {
@@ -261,20 +259,9 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 			errs = append(errs, fmt.Sprintf("target %q has empty type", rt.DevHostname))
 			continue
 		}
-		if liveTypes != nil {
-			canonical, ok := resolveRuntimeType(rt, liveTypes)
-			if !ok {
-				errs = append(errs, fmt.Sprintf("target %q type %q not found in available service types", rt.DevHostname, rt.Type))
-				continue
-			}
-			// Normalize legacy bare+Os shape into composite Type. Strips Os
-			// so downstream consumers see the canonical post-Sunday-release
-			// identifier.
-			if canonical != rt.Type {
-				targets[i].Runtime.Type = canonical
-				targets[i].Runtime.Os = ""
-				rt = targets[i].Runtime
-			}
+		if liveTypes != nil && !typeAcceptedByCatalog(rt.Type, liveTypes) {
+			errs = append(errs, fmt.Sprintf("target %q type %q not found in available service types", rt.DevHostname, rt.Type))
+			continue
 		}
 
 		// Standard-mode targets must carry an explicit stageHostname.
@@ -323,20 +310,9 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 				errs = append(errs, fmt.Sprintf("target %q dependency %q has empty type", rt.DevHostname, dep.Hostname))
 				continue
 			}
-			if liveTypes != nil {
-				canonical, ok := resolveDepType(dep, liveTypes)
-				if !ok {
-					errs = append(errs, fmt.Sprintf("target %q dependency %q type %q not found in available service types", rt.DevHostname, dep.Hostname, dep.Type))
-					continue
-				}
-				// Normalize legacy bare+Mode shape into composite Type. The
-				// Mode field is preserved (still used for managed-service
-				// gating below); the composite Type carries the canonical
-				// identifier for downstream consumers.
-				if canonical != dep.Type {
-					targets[i].Dependencies[j].Type = canonical
-					dep = targets[i].Dependencies[j]
-				}
+			if liveTypes != nil && !typeAcceptedByCatalog(dep.Type, liveTypes) {
+				errs = append(errs, fmt.Sprintf("target %q dependency %q type %q not found in available service types", rt.DevHostname, dep.Hostname, dep.Type))
+				continue
 			}
 
 			// Normalize resolution to uppercase (LLMs send mixed case).
@@ -421,125 +397,25 @@ func runtimeCollisionError(rt RuntimeTarget, stageHostname string, liveServiceNa
 	return ""
 }
 
-// typeExists checks if a version name exists in the live type catalog.
-func typeExists(versionName string, types []platform.ServiceStackType) bool {
+// typeAcceptedByCatalog returns true when planType matches any version in the
+// live catalog — comparison is type-equivalence (topology.TypesAreEquivalent),
+// not byte-equality. The plan-side type may be the legacy bare form
+// (`nodejs@22`, `postgresql@18`) and the catalog-side may carry the
+// post-Sunday-release composite form (`alpine/nodejs@22`,
+// `postgresql:single@18`), or vice versa — both must accept.
+//
+// Sunday-release 2026-05-18: Zerops API still accepts the legacy split shape
+// (`type` + sibling `os:` / `mode:`) for BC, while the live catalog returns
+// composite identifiers only. Strict equality rejects every legacy-shape plan
+// against a composite catalog; equivalence-based acceptance bridges both
+// shapes without rewriting the plan.
+func typeAcceptedByCatalog(planType string, types []platform.ServiceStackType) bool {
 	for _, st := range types {
 		for _, v := range st.Versions {
-			if v.Name == versionName {
+			if topology.TypesAreEquivalent(v.Name, planType) {
 				return true
 			}
 		}
 	}
 	return false
-}
-
-// resolveRuntimeType returns the canonical composite type identifier for a
-// RuntimeTarget plus a flag indicating whether the catalog contains it.
-//
-// Sunday-release 2026-05-18: Zerops upstream moved runtime type identifiers
-// to OS-prefixed composite form (`alpine/nodejs@22`, `ubuntu/nodejs@22`).
-// Legacy callers still send `type: nodejs@22 + os: alpine` — that shape is
-// normalized here:
-//
-//   - Type already composite (contains "/") → pass through unchanged.
-//   - Type bare + Os set → compose `Os + "/" + Type` and lookup.
-//   - Type bare + Os empty → try every catalog OS prefix; if exactly one
-//     composite form matches, use it (BC for recipes that omit `os:`
-//     altogether). If multiple match, return Type as-is so typeExists fails
-//     with a "not found in catalog" error — the agent must disambiguate.
-//
-// Returns (canonicalType, true) on success, (rt.Type, false) on miss so the
-// caller can surface the agent-supplied form in error messages.
-func resolveRuntimeType(rt RuntimeTarget, types []platform.ServiceStackType) (string, bool) {
-	if typeExists(rt.Type, types) {
-		return rt.Type, true
-	}
-	if strings.Contains(rt.Type, "/") {
-		// Composite that doesn't exist — caller will fail with typeExists.
-		return rt.Type, false
-	}
-	// Bare type. Try Os prefix first if provided.
-	if rt.Os != "" {
-		composite := rt.Os + "/" + rt.Type
-		if typeExists(composite, types) {
-			return composite, true
-		}
-	}
-	// Bare with no Os hint — search the catalog for any OS-prefixed form
-	// ending with "/<rt.Type>". Unique match is BC-acceptable; ambiguous
-	// match falls through to the strict-typeExists failure path.
-	suffix := "/" + rt.Type
-	var matches []string
-	for _, st := range types {
-		for _, v := range st.Versions {
-			if strings.HasSuffix(v.Name, suffix) {
-				matches = append(matches, v.Name)
-			}
-		}
-	}
-	if len(matches) == 1 {
-		return matches[0], true
-	}
-	return rt.Type, false
-}
-
-// resolveDepType returns the canonical composite type identifier for a
-// Dependency plus a flag indicating whether the catalog contains it.
-//
-// Sunday-release 2026-05-18: managed-service modes moved from sibling field
-// to type-encoded suffix (`postgresql:single@18`, `postgresql:ha@18`).
-// Legacy callers still send `type: postgresql@18 + mode: NON_HA` — that
-// shape is normalized here:
-//
-//   - Type already mode-encoded (contains ":") → pass through unchanged.
-//   - Type bare + Mode set → compose `base:suffix@version` (NON_HA → single,
-//     HA → ha) and lookup. The suffix mapping mirrors the platform's
-//     convention; unknown Mode values fall through to the strict failure.
-//   - Type bare + Mode empty → search catalog for any mode-encoded form
-//     matching the bare base@version; unique match is BC-acceptable,
-//     ambiguous match falls through.
-//
-// Returns (canonicalType, true) on success, (dep.Type, false) on miss.
-func resolveDepType(dep Dependency, types []platform.ServiceStackType) (string, bool) {
-	if typeExists(dep.Type, types) {
-		return dep.Type, true
-	}
-	if strings.Contains(dep.Type, ":") {
-		return dep.Type, false
-	}
-	base, version, hasVersion := strings.Cut(dep.Type, "@")
-	if !hasVersion {
-		return dep.Type, false
-	}
-	// Mode hint: compose `base:suffix@version`.
-	if dep.Mode != "" {
-		var suffix string
-		switch strings.ToUpper(dep.Mode) {
-		case ModeNonHA:
-			suffix = "single"
-		case ModeHA:
-			suffix = "ha"
-		}
-		if suffix != "" {
-			composite := base + ":" + suffix + "@" + version
-			if typeExists(composite, types) {
-				return composite, true
-			}
-		}
-	}
-	// No mode hint — search for any catalog entry matching `base:*@version`.
-	prefix := base + ":"
-	wantedSuffix := "@" + version
-	var matches []string
-	for _, st := range types {
-		for _, v := range st.Versions {
-			if strings.HasPrefix(v.Name, prefix) && strings.HasSuffix(v.Name, wantedSuffix) {
-				matches = append(matches, v.Name)
-			}
-		}
-	}
-	if len(matches) == 1 {
-		return matches[0], true
-	}
-	return dep.Type, false
 }

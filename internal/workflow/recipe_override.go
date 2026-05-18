@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/zeropsio/zcp/internal/topology"
 )
 
 // Role markers used when matching plan runtime slots to recipe services.
@@ -164,7 +166,10 @@ func buildRuntimeSlots(plan *ServicePlan) []runtimeSlot {
 // multi-target plans (rare in recipes today) map deterministically.
 func findRuntimeSlot(slots []runtimeSlot, svcType, role string) int {
 	for i, s := range slots {
-		if s.used || s.target == nil || s.role != role || s.target.Type != svcType {
+		if s.used || s.target == nil || s.role != role {
+			continue
+		}
+		if !topology.TypesAreEquivalent(s.target.Type, svcType) {
 			continue
 		}
 		return i
@@ -201,7 +206,7 @@ func collectManagedDeps(plan *ServicePlan) []Dependency {
 // out of scope for F6 and would need explicit plan-side hostname matching.
 func findDepByType(deps []Dependency, svcType string) *Dependency {
 	for i := range deps {
-		if deps[i].Type == svcType {
+		if topology.TypesAreEquivalent(deps[i].Type, svcType) {
 			return &deps[i]
 		}
 	}

@@ -79,8 +79,10 @@ func validateRuntimeType(rt string, schemas *schema.Schemas, liveTypes []platfor
 		}
 		return nil
 	}
-	// Fallback: liveTypes from API.
-	if liveTypes != nil && !typeExists(rt, liveTypes) {
+	// Fallback: liveTypes from API. Uses type-equivalence (BC for legacy
+	// bare vs post-Sunday-release composite shape — see
+	// topology.TypesAreEquivalent).
+	if liveTypes != nil && !typeAcceptedByCatalog(rt, liveTypes) {
 		return []string{fmt.Sprintf("runtimeType %q not found in available service types", rt)}
 	}
 	return nil
