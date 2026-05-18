@@ -28,11 +28,11 @@ and connect-time fails.
   the database name**. For Prisma / Drizzle / sqlx / SQLAlchemy /
   Sequelize, compose explicitly with `/${db_dbName}` appended (see
   worked example in the env-var-model atom).
-- **Prisma — `migrate dev` errors with `P3014`** because its shadow
-  database needs CREATE DATABASE permission the regular user lacks.
-  For fresh schemas use `prisma db push` (no shadow); for migration
-  files override DATABASE_URL with `${db_superUser}:${db_superUserPassword}`
-  only for the `migrate dev` call.
+- **Prisma — `migrate dev` errors with `P3014`**: shadow DB needs
+  CREATE DATABASE the regular user lacks. Fresh schemas:
+  `prisma db push` (no shadow). For migration files, pass `migrate dev`
+  the elevated URL only for that call —
+  `postgresql://${db_superUser}:${db_superUserPassword}@${db_hostname}:${db_port}/${db_dbName}`.
 - **Elevated DDL credentials** — `superUser`/`superUserPassword` on
   Postgres + ClickHouse, only when DDL needs them.
 - **ClickHouse + Kafka** — multi-port; match driver (`portHttp` /

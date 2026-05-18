@@ -1,853 +1,2358 @@
 {
-	"$schema": "https://json-schema.org/draft/2020-12/schema",
-	"$id": "https://api.app-prg1.zerops.io/api/rest/public/settings/import-project-yaml-json-schema.json",
-	"properties": {
-		"project": {
-			"properties": {
-				"name": {
-					"type": "string",
-					"description": "The name of the new project. Duplicates are allowed."
-				},
-				"description": {
-					"type": "string",
-					"description": "Description of the new project."
-				},
-				"corePackage": {
-					"type": "string",
-					"enum": [
-						"LIGHT",
-						"SERIOUS"
-					],
-					"description": "Project core package.",
-					"default": "LIGHT"
-				},
-				"tags": {
-					"items": {
-						"type": "string"
-					},
-					"type": "array",
-					"description": "One or more string tags. Tags do not have functional meaning, they only provide better orientation in projects."
-				},
-				"envVariables": {
-					"additionalProperties": {
-						"type": "string"
-					},
-					"type": "object",
-					"description": "List of environment variables of project configuration."
-				},
-				"envIsolation": {
-					"type": "string",
-					"description": "Defines the visibility scope for environment variables. Allowed values: none (no isolation, everyone sees all variables), service (isolation at service level, each service can only see its own variables). Explicit variable referencing is still possible regardless of the isolation setting."
-				},
-				"sshIsolation": {
-					"type": "string",
-					"description": "Defines who is authorized to access the service via SSH. Values can be combined using spaces (e.g., project vpn). To exclude a specific access type, use a negative prefix (e.g., -vpn). Allowed values: project (anyone from the project), vpn (anyone from the VPN), service (anyone from the same service), service@name (anyone from the service named \"name\")."
-				},
-				"sharedIpv4": {
-					"type": "boolean",
-					"description": "When enabled, project domain includes both AAAA records and an A record pointing to Zerops shared IPv4 address. When disabled, the A record is not defined. If the project has its own dedicated IPv4 address, the domain always contains an A record with this assigned IPv4 address."
-				},
-				"location": {
-					"type": "string",
-					"enum": [
-						"eu-central",
-						"us-east-1"
-					],
-					"description": "Defines project's primary/fallback location'."
-				}
-			},
-			"additionalProperties": false,
-			"type": "object",
-			"required": [
-				"name"
-			],
-			"description": "Only one project can be defined."
-		},
-		"services": {
-			"items": {
-				"properties": {
-					"hostname": {
-						"type": "string",
-						"description": "The unique service identifier. Limitations: duplicates in the same project forbidden; maximum 25 characters, lowercase ASCII letters (a-z) or numbers (0-9) only."
-					},
-					"type": {
-						"type": "string",
-						"enum": [
-							"22.04",
-							"3.17",
-							"3.18",
-							"3.19",
-							"3.20",
-							"3.21",
-							"3.22",
-							"3.23",
-							"alpine@3.17",
-							"alpine@3.18",
-							"alpine@3.19",
-							"alpine@3.20",
-							"alpine@3.21",
-							"alpine@3.22",
-							"alpine@3.23",
-							"bun@1.1",
-							"bun@1.1.34",
-							"bun@1.2",
-							"bun@1.2.2",
-							"bun@1.3",
-							"bun@1.3.9",
-							"bun@canary",
-							"bun@latest",
-							"bun@nightly",
-							"clickhouse@25.3",
-							"deno@1",
-							"deno@1.45.5",
-							"deno@2",
-							"deno@2.0.0",
-							"deno@latest",
-							"docker@26",
-							"docker@26.1",
-							"docker@26.1.5",
-							"docker@latest",
-							"dotnet@10",
-							"dotnet@6",
-							"dotnet@7",
-							"dotnet@8",
-							"dotnet@9",
-							"elasticsearch@8.16",
-							"elasticsearch@9.2",
-							"elixir@1",
-							"elixir@1.16",
-							"elixir@1.16.2",
-							"gleam@1",
-							"gleam@1.5",
-							"gleam@1.5.1",
-							"go@1",
-							"go@1.22",
-							"golang@1",
-							"golang@1.22",
-							"java",
-							"java@17",
-							"java@21",
-							"java@latest",
-							"kafka@3.8",
-							"kafka@3.9",
-							"keydb@6",
-							"mariadb@10.6",
-							"meilisearch@1.10",
-							"meilisearch@1.20",
-							"nats@2.10",
-							"nats@2.12",
-							"nginx@1.22",
-							"nginx@latest",
-							"nodejs@18",
-							"nodejs@20",
-							"nodejs@22",
-							"nodejs@24",
-							"object-storage",
-							"objectstorage",
-							"php-apache@8.0+2.4",
-							"php-apache@8.1",
-							"php-apache@8.1+2.4",
-							"php-apache@8.3",
-							"php-apache@8.3+2.4",
-							"php-apache@8.4",
-							"php-apache@8.4+2.4",
-							"php-apache@8.5",
-							"php-apache@8.5+2.4",
-							"php-nginx@8.1",
-							"php-nginx@8.1+1.22",
-							"php-nginx@8.3",
-							"php-nginx@8.3+1.22",
-							"php-nginx@8.4",
-							"php-nginx@8.4+1.22",
-							"php-nginx@8.5",
-							"php-nginx@8.5+1.28",
-							"postgresql@14",
-							"postgresql@16",
-							"postgresql@17",
-							"postgresql@18",
-							"python@3.11",
-							"python@3.12",
-							"python@3.14",
-							"python@3.9",
-							"qdrant@1.10",
-							"qdrant@1.12",
-							"rabbitmq@3.9",
-							"ruby@3.2",
-							"ruby@3.3",
-							"ruby@3.4",
-							"runtime",
-							"rust@1.78",
-							"rust@1.80",
-							"rust@1.86",
-							"rust@nightly",
-							"rust@stable",
-							"seaweedfs@3",
-							"shared-storage",
-							"sharedstorage",
-							"static",
-							"static@1.0",
-							"static@latest",
-							"typesense@27.1",
-							"typesense@30.2",
-							"ubuntu@22.04",
-							"ubuntu@24.04",
-							"valkey@7.2",
-							"zcp@1"
-						],
-						"description": "Specifies the service type and version."
-					},
-					"mode": {
-						"type": "string",
-						"enum": [
-							"HA",
-							"NON_HA"
-						],
-						"description": "Defines the operation mode of the service."
-					},
-					"envSecrets": {
-						"additionalProperties": {
-							"type": "string"
-						},
-						"type": "object",
-						"description": "List of key-value pairs. Environment variables that are blurred by default in Zerops GUI. Can be edited or deleted in Zerops GUI."
-					},
-					"dotEnvSecrets": {
-						"type": "string",
-						"description": "List of key-value pairs in .env format. Environment variables that are blurred by default in Zerops GUI. Can be edited or deleted in Zerops GUI."
-					},
-					"nginxConfig": {
-						"type": "string",
-						"description": "Insert full nginx config."
-					},
-					"objectStorageSize": {
-						"type": "number",
-						"description": "Object storage size in GB."
-					},
-					"objectStoragePolicy": {
-						"type": "string",
-						"enum": [
-							"custom",
-							"private",
-							"public-read",
-							"public-objects-read",
-							"public-write",
-							"public-read-write"
-						],
-						"description": "Select a predefined AWS S3 bucket access policy."
-					},
-					"objectStorageRawPolicy": {
-						"type": "string",
-						"description": "Define your own AWS S3 bucket access policy. See AWS docs for details. Use {{ .BucketName }} placeholder if you need to use bucket name in your custom policy rules."
-					},
-					"buildFromGit": {
-						"type": "string",
-						"description": "A URL of a Github or Gitlab repository used for a one-time build of your service."
-					},
-					"startWithoutCode": {
-						"type": "boolean",
-						"description": "Set true, if you want to start service without code."
-					},
-					"enableSubdomainAccess": {
-						"type": "boolean",
-						"description": "Set true, if you want to enable a public access to your service via a Zerops subdomain. Not suitable for production.",
-						"default": false
-					},
-					"priority": {
-						"type": "integer",
-						"description": "Services are sorted before creation by priority in descending order, i.e. the higher the priority the sooner the service is created."
-					},
-					"verticalAutoscaling": {
-						"properties": {
-							"cpu": {
-								"type": "integer",
-								"description": "Fixed CPU thread count that each container of the service will be set to."
-							},
-							"ram": {
-								"type": "number",
-								"description": "Fixed RAM in GB that each container of the service will be set to."
-							},
-							"disk": {
-								"type": "number",
-								"description": "Fixed disk space in GB that each container of the service will be set to."
-							},
-							"cpuMode": {
-								"type": "string",
-								"enum": [
-									"DEDICATED",
-									"SHARED"
-								],
-								"description": "CPU mode that each container of the service will be set to.",
-								"default": "SHARED"
-							},
-							"minCpu": {
-								"type": "integer",
-								"description": "Minimum CPU thread count that each container of the service can scale down to."
-							},
-							"maxCpu": {
-								"type": "integer",
-								"description": "Maximum CPU thread count that each container of the service can scale up to."
-							},
-							"minRam": {
-								"type": "number",
-								"description": "Minimum RAM in GB that each container of the service can scale down to."
-							},
-							"maxRam": {
-								"type": "number",
-								"description": "Maximum RAM in GB that each container of the service can scale up to."
-							},
-							"minDisk": {
-								"type": "number",
-								"description": "Minimum disk space in GB that each container of the service can scale down to."
-							},
-							"maxDisk": {
-								"type": "number",
-								"description": "Maximum disk space in GB that each container of the service can scale up to."
-							},
-							"startCpuCoreCount": {
-								"type": "integer",
-								"description": "Number of CPU cores with which each container starts."
-							},
-							"swapEnabled": {
-								"type": "boolean",
-								"description": "Whether to enable swap memory for containers. Swap is enabled by default. Refer to documentation for more details."
-							},
-							"minFreeCpuCores": {
-								"type": "number",
-								"description": "Minimum number of unused CPU cores before a container starts scaling."
-							},
-							"minFreeCpuPercent": {
-								"type": "number",
-								"description": "Minimum percentage of unused CPU cores before a container starts scaling."
-							},
-							"minFreeRamGB": {
-								"type": "number",
-								"description": "Minimum unused memory in GB before a container starts scaling."
-							},
-							"minFreeRamPercent": {
-								"type": "number",
-								"description": "Minimum percentage of unused memory before a container starts scaling."
-							},
-							"minVCpu": {
-								"type": "integer",
-								"deprecated": true
-							},
-							"maxVCpu": {
-								"type": "integer",
-								"deprecated": true
-							}
-						},
-						"additionalProperties": false,
-						"type": "object",
-						"description": "Vertical autoscaling settings."
-					},
-					"minContainers": {
-						"type": "integer",
-						"maximum": 10,
-						"description": "Minimum number of containers of the service.",
-						"default": 1
-					},
-					"maxContainers": {
-						"type": "integer",
-						"maximum": 10,
-						"description": "Maximum number of containers of the service."
-					},
-					"mount": {
-						"items": {
-							"type": "string"
-						},
-						"type": "array",
-						"description": "Mount shared storages to the service, buildFromGit must be filled."
-					},
-					"enableCdn": {
-						"type": "boolean",
-						"description": "Set true, if you want to enable CDN for the object storage bucket. Currently only relevant for object storage services."
-					},
-					"envIsolation": {
-						"type": "string",
-						"description": "Defines the visibility scope for environment variables. Allowed values: none (no isolation, everyone sees all variables), service (isolation at service level, each service can only see its own variables). Explicit variable referencing is still possible regardless of the isolation setting. When set at the service level, these values override any project-level defined isolation settings."
-					},
-					"sshIsolation": {
-						"type": "string",
-						"description": "Defines who is authorized to access the service via SSH. Values can be combined using spaces (e.g., project vpn). To exclude a specific access type, use a negative prefix (e.g., -vpn). Allowed values: project (anyone from the project), vpn (anyone from the VPN), service (anyone from the same service), service@name (anyone from the service named \"name\"). When set at the service level, these values override any project-level defined isolation settings."
-					},
-					"os": {
-						"type": "string",
-						"enum": [
-							"alpine",
-							"ubuntu"
-						],
-						"description": "Optionally specifies the OS of the runtime service imported with 'startWithoutCode=true'."
-					},
-					"zeropsSetup": {
-						"type": "string"
-					},
-					"zeropsYaml": {
-						"properties": {
-							"zerops": {
-								"items": {
-									"properties": {
-										"setup": {
-											"type": "string",
-											"description": "The first element setup contains the hostname of your service. A runtime service with the same hostname must exist in Zerops. Zerops supports the definition of multiple runtime services in a single zerops.yml. This is useful when you use a monorepo. Just add multiple setup elements in your zerops.yml."
-										},
-										"build": {
-											"properties": {
-												"os": {
-													"type": "string",
-													"description": "Sets the operating system for the runtime environment."
-												},
-												"base": {
-													"items": {
-														"type": "string"
-													},
-													"type": "array",
-													"description": "Sets the base technology for the build environment. If you need to install more technologies to the build environment, set multiple values as a yaml array."
-												},
-												"prepareCommands": {
-													"items": {
-														"type": "string"
-													},
-													"type": "array",
-													"description": "Customises the build environment by installing additional dependencies or tools to the base build environment."
-												},
-												"buildCommands": {
-													"items": {
-														"type": "string"
-													},
-													"type": "array",
-													"description": "Defines build commands. Zerops triggers each command in the defined order in a dedicated build container."
-												},
-												"deploy": {
-													"items": {
-														"type": "string"
-													},
-													"type": "array"
-												},
-												"deployFiles": {
-													"items": {
-														"type": "string"
-													},
-													"type": "array",
-													"description": "Selects which files or folders will be deployed after the build has successfully finished. To filter out specific files or folders, use .deployignore file."
-												},
-												"cache": {
-													"properties": {},
-													"additionalProperties": false,
-													"type": "object",
-													"description": "Defines which files or folders will be cached for the next build."
-												},
-												"addToRunPrepare": {
-													"items": {
-														"type": "string"
-													},
-													"type": "array",
-													"description": "Defines what files or folders will be copied from the build container to the prepare runtime container. The prepare runtime container is used to customize your runtime environment."
-												},
-												"envVariables": {
-													"additionalProperties": {
-														"type": "string"
-													},
-													"type": "object",
-													"description": "Defines the environment variables for the build environment."
-												}
-											},
-											"additionalProperties": false,
-											"type": "object",
-											"required": [
-												"deployFiles"
-											],
-											"description": "Build pipeline configuration."
-										},
-										"deploy": {
-											"properties": {
-												"readinessCheck": {
-													"properties": {
-														"httpGet": {
-															"properties": {
-																"scheme": {
-																	"type": "string",
-																	"description": "The readiness check is triggered from inside of your runtime container so no https is required. If your application requires a https request, set scheme: https"
-																},
-																"host": {
-																	"type": "string",
-																	"description": "The readiness check is triggered from inside of your runtime container so it always uses the localhost (127.0.0.1). If you need to add a host to the request header, specify it in the host attribute."
-																},
-																"port": {
-																	"type": "integer",
-																	"description": "Defines the port of the HTTP GET request."
-																},
-																"path": {
-																	"type": "string",
-																	"description": "Defines the URL path of the HTTP GET request."
-																}
-															},
-															"additionalProperties": false,
-															"type": "object",
-															"required": [
-																"port",
-																"path"
-															],
-															"description": "Configures the readiness check to request a local URL using a http GET method."
-														},
-														"exec": {
-															"properties": {
-																"command": {
-																	"type": "string",
-																	"description": "Defines a local command to be run. The command has access to the same environment variables. A single string is required. If you need to run multiple commands create a shell script or, use a multiline format as in the example below."
-																}
-															},
-															"additionalProperties": false,
-															"type": "object",
-															"required": [
-																"command"
-															],
-															"description": "Configures the readiness check to run a local command."
-														},
-														"failureTimeout": {
-															"type": "integer",
-															"description": "Time until container is marked as failed."
-														},
-														"retryPeriod": {
-															"type": "integer",
-															"description": "Time interval between readiness check attempts."
-														}
-													},
-													"additionalProperties": false,
-													"type": "object",
-													"description": "Defines a readiness check. Requires either httpGet object or exec object."
-												},
-												"temporaryShutdown": {
-													"type": "boolean"
-												}
-											},
-											"additionalProperties": false,
-											"type": "object",
-											"description": "Deploy configuration."
-										},
-										"run": {
-											"properties": {
-												"initCommands": {
-													"items": {
-														"type": "string"
-													},
-													"type": "array",
-													"description": "Defines one or more commands to be run each time a new runtime container is started or a container is restarted."
-												},
-												"prepareCommands": {
-													"items": {
-														"type": "string"
-													},
-													"type": "array",
-													"description": "Customises the runtime environment by installing additional dependencies or tools to the base runtime environment."
-												},
-												"os": {
-													"type": "string",
-													"description": "Sets the operating system for the runtime environment."
-												},
-												"base": {
-													"type": "string",
-													"description": "Sets the base technology for the runtime environment. If you don't specify the run.base attribute, Zerops keeps the current version for your runtime."
-												},
-												"start": {
-													"type": "string",
-													"description": "Defines the start command for your application."
-												},
-												"documentRoot": {
-													"type": "string",
-													"description": "Customizes the folder that will be used as the root of the publicly accessible web server content. This attribute is available only for runtimes with webservers."
-												},
-												"siteConfigPath": {
-													"type": "string",
-													"description": "Sets the custom webserver configuration. This attribute is available only for runtimes with webservers."
-												},
-												"envReplace": {
-													"properties": {
-														"target": {
-															"items": {
-																"type": "string"
-															},
-															"type": "array"
-														},
-														"delimiter": {
-															"items": {
-																"type": "string"
-															},
-															"type": "array"
-														}
-													},
-													"additionalProperties": false,
-													"type": "object",
-													"required": [
-														"target",
-														"delimiter"
-													]
-												},
-												"healthCheck": {
-													"properties": {
-														"httpGet": {
-															"properties": {
-																"scheme": {
-																	"type": "string",
-																	"description": "The readiness check is triggered from inside of your runtime container so no https is required. If your application requires a https request, set scheme: https"
-																},
-																"host": {
-																	"type": "string",
-																	"description": "The readiness check is triggered from inside of your runtime container so it always uses the localhost (127.0.0.1). If you need to add a host to the request header, specify it in the host attribute."
-																},
-																"port": {
-																	"type": "integer",
-																	"description": "Defines the port of the HTTP GET request."
-																},
-																"path": {
-																	"type": "string",
-																	"description": "Defines the URL path of the HTTP GET request."
-																}
-															},
-															"additionalProperties": false,
-															"type": "object",
-															"required": [
-																"port",
-																"path"
-															],
-															"description": "Configures the health check to request a local URL using a http GET method."
-														},
-														"exec": {
-															"properties": {
-																"command": {
-																	"type": "string",
-																	"description": "Defines a local command to be run. The command has access to the same environment variables. A single string is required. If you need to run multiple commands create a shell script or, use a multiline format as in the example below."
-																}
-															},
-															"additionalProperties": false,
-															"type": "object",
-															"required": [
-																"command"
-															],
-															"description": "Configures the health check to run a local command."
-														},
-														"failureTimeout": {
-															"type": "integer",
-															"description": "Time until container fails after consecutive health check failures (reset by success)."
-														},
-														"disconnectTimeout": {
-															"type": "integer",
-															"description": "Time until container is disconnected and becomes publicly unavailable."
-														},
-														"recoveryTimeout": {
-															"type": "integer",
-															"description": "Time until container is connected and becomes publicly available."
-														},
-														"execPeriod": {
-															"type": "integer",
-															"description": "Time interval between health check attempts."
-														}
-													},
-													"additionalProperties": false,
-													"type": "object",
-													"description": "Defines a health check."
-												},
-												"routing": {
-													"properties": {
-														"root": {
-															"type": "string"
-														},
-														"cors": {
-															"type": "string",
-															"description": "Content of default Access-Control headers (Allow-Origin, Allow-Methods, Allow-Headers and Expose-Headers), e.g. \"'*' always\""
-														},
-														"redirects": {
-															"items": {
-																"properties": {
-																	"from": {
-																		"type": "string",
-																		"description": "Relative or an absolute (defined by with http://) path to be matched against request location. May contain * at the end for regex."
-																	},
-																	"to": {
-																		"type": "string",
-																		"description": "Relative or an absolute (defined by with http://) path to redirect user to."
-																	},
-																	"status": {
-																		"type": "integer",
-																		"description": "Which HTTP status code to use for the redirect. If not set, and To and From are relative, an internal/masked redirect will be used."
-																	},
-																	"preservePath": {
-																		"type": "boolean",
-																		"description": "Whether part of the path after From should be preserved. Used to forward contents of one directory to another in non-masked redirects."
-																	},
-																	"preserveQuery": {
-																		"type": "boolean",
-																		"description": "Whether query parameters should be preserved. Used in non-masked redirects."
-																	}
-																},
-																"additionalProperties": false,
-																"type": "object",
-																"required": [
-																	"from",
-																	"to"
-																]
-															},
-															"type": "array"
-														},
-														"headers": {
-															"items": {
-																"properties": {
-																	"for": {
-																		"type": "string",
-																		"description": "Relative path to be matched against request location. May contain * at the end for prefix-based match."
-																	},
-																	"values": {
-																		"additionalProperties": {
-																			"type": "string"
-																		},
-																		"type": "object",
-																		"description": "Header name as Key and raw content as Value, e.g. \"Access-Control-Allow-Origin\": \"'*' always\""
-																	}
-																},
-																"additionalProperties": false,
-																"type": "object",
-																"required": [
-																	"for",
-																	"values"
-																]
-															},
-															"type": "array"
-														}
-													},
-													"additionalProperties": false,
-													"type": "object"
-												},
-												"ports": {
-													"items": {
-														"properties": {
-															"protocol": {
-																"type": "string",
-																"description": "Defines the protocol. Allowed values are TCP or UDP. Default value is TCP."
-															},
-															"port": {
-																"type": "integer",
-																"description": "Defines the port number. You can set any port number between 10 and 65435. Ports outside this interval are reserved for internal Zerops systems."
-															},
-															"description": {
-																"type": "string"
-															},
-															"httpSupport": {
-																"type": "boolean",
-																"description": "Set to true if a web server is running on the port. Zerops uses this information for the configuration of public access. True is available only in combination with the TCP protocol. Default value is false."
-															}
-														},
-														"additionalProperties": false,
-														"type": "object",
-														"required": [
-															"port"
-														]
-													},
-													"type": "array",
-													"description": "Specifies one or more internal ports on which your application will listen."
-												},
-												"envVariables": {
-													"additionalProperties": {
-														"type": "string"
-													},
-													"type": "object",
-													"description": "Defines the environment variables for the runtime environment."
-												},
-												"startCommands": {
-													"items": {
-														"properties": {
-															"name": {
-																"type": "string"
-															},
-															"command": {
-																"type": "string"
-															},
-															"workingDir": {
-																"type": "string"
-															},
-															"initCommands": {
-																"items": {
-																	"type": "string"
-																},
-																"type": "array",
-																"description": "Defines one or more commands to be run each time a new runtime container is started or a container is restarted."
-															}
-														},
-														"additionalProperties": false,
-														"type": "object",
-														"required": [
-															"command"
-														]
-													},
-													"type": "array",
-													"description": "Defines the start commands for the runtime environment."
-												},
-												"crontab": {
-													"items": {
-														"properties": {
-															"timing": {
-																"type": "string",
-																"description": "Defines when the cron job runs in standard cron format."
-															},
-															"command": {
-																"type": "string",
-																"description": "Specifies the shell command to run at the scheduled time."
-															},
-															"workingDir": {
-																"type": "string",
-																"description": "The directory where the command will be executed (default: /var/www)"
-															},
-															"allContainers": {
-																"type": "boolean",
-																"description": "If set to true, the job runs on all containers; otherwise, it runs on a single container (default: false)"
-															}
-														},
-														"additionalProperties": false,
-														"type": "object",
-														"required": [
-															"timing",
-															"command",
-															"allContainers"
-														]
-													},
-													"type": "array",
-													"description": "A list of cron jobs with their respective schedule (timing), the command to run (command), and additional options like allContainers and workingDir."
-												}
-											},
-											"additionalProperties": false,
-											"type": "object",
-											"description": "Runtime configuration."
-										}
-									},
-									"additionalProperties": false,
-									"type": "object",
-									"required": [
-										"setup"
-									]
-								},
-								"type": "array",
-								"description": "The top-level element is always zerops."
-							}
-						},
-						"additionalProperties": false,
-						"type": "object",
-						"required": [
-							"zerops"
-						]
-					},
-					"override": {
-						"type": "boolean",
-						"description": "Override existing service."
-					}
-				},
-				"additionalProperties": false,
-				"type": "object",
-				"required": [
-					"hostname",
-					"type"
-				]
-			},
-			"type": "array"
-		}
-	},
-	"additionalProperties": false,
-	"type": "object"
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://api.app-prg1.zerops.io/api/rest/public/settings/import-project-yaml-json-schema.json",
+  "properties": {
+    "project": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The name of the new project. Duplicates are allowed."
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the new project."
+        },
+        "corePackage": {
+          "type": "string",
+          "enum": [
+            "LIGHT",
+            "SERIOUS"
+          ],
+          "description": "Project core package.",
+          "default": "LIGHT"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "One or more string tags. Tags do not have functional meaning, they only provide better orientation in projects."
+        },
+        "envVariables": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "List of environment variables of project configuration."
+        },
+        "envIsolation": {
+          "type": "string",
+          "description": "Defines the visibility scope for environment variables. Allowed values: none (no isolation, everyone sees all variables), service (isolation at service level, each service can only see its own variables). Explicit variable referencing is still possible regardless of the isolation setting."
+        },
+        "sshIsolation": {
+          "type": "string",
+          "description": "Defines who is authorized to access the service via SSH. Values can be combined using spaces (e.g., project vpn). To exclude a specific access type, use a negative prefix (e.g., -vpn). Allowed values: project (anyone from the project), vpn (anyone from the VPN), service (anyone from the same service), service@name (anyone from the service named \"name\")."
+        },
+        "sharedIpv4": {
+          "type": "boolean",
+          "description": "When enabled, project domain includes both AAAA records and an A record pointing to Zerops shared IPv4 address. When disabled, the A record is not defined. If the project has its own dedicated IPv4 address, the domain always contains an A record with this assigned IPv4 address."
+        },
+        "location": {
+          "type": "string",
+          "enum": [
+            "eu-central",
+            "us-east-1"
+          ],
+          "description": "Defines project's primary/fallback location'."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "description": "Only one project can be defined."
+    },
+    "services": {
+      "items": {
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "alpine/bun@1",
+                    "alpine/bun@1.2",
+                    "alpine/bun@1.2.2",
+                    "alpine/bun@1.3",
+                    "alpine/bun@1.3.9",
+                    "alpine/bun@canary",
+                    "alpine/bun@latest",
+                    "alpine/bun@nightly",
+                    "alpine/docker@26",
+                    "alpine/docker@26.1",
+                    "alpine/docker@26.1.5",
+                    "alpine/docker@latest",
+                    "alpine/dotnet@10",
+                    "alpine/dotnet@6",
+                    "alpine/dotnet@7",
+                    "alpine/dotnet@8",
+                    "alpine/dotnet@9",
+                    "alpine/dotnet@latest",
+                    "alpine/elixir@1",
+                    "alpine/elixir@1.16",
+                    "alpine/elixir@1.16.3",
+                    "alpine/elixir@latest",
+                    "alpine/gleam@1",
+                    "alpine/gleam@1.5",
+                    "alpine/gleam@1.5.1",
+                    "alpine/gleam@latest",
+                    "alpine/go@1",
+                    "alpine/go@1.22",
+                    "alpine/go@latest",
+                    "alpine/golang@1",
+                    "alpine/golang@1.22",
+                    "alpine/golang@latest",
+                    "alpine/java@17",
+                    "alpine/java@21",
+                    "alpine/java@latest",
+                    "alpine/nginx@1.22",
+                    "alpine/nginx@latest",
+                    "alpine/nodejs@18",
+                    "alpine/nodejs@20",
+                    "alpine/nodejs@22",
+                    "alpine/nodejs@24",
+                    "alpine/nodejs@latest",
+                    "alpine/php-apache@8.1",
+                    "alpine/php-apache@8.1+2.4",
+                    "alpine/php-apache@8.3",
+                    "alpine/php-apache@8.3+2.4",
+                    "alpine/php-apache@8.4",
+                    "alpine/php-apache@8.4+2.4",
+                    "alpine/php-apache@8.5",
+                    "alpine/php-apache@8.5+2.4",
+                    "alpine/php-apache@latest",
+                    "alpine/php-nginx@8.1",
+                    "alpine/php-nginx@8.1+1.22",
+                    "alpine/php-nginx@8.3",
+                    "alpine/php-nginx@8.3+1.22",
+                    "alpine/php-nginx@8.4",
+                    "alpine/php-nginx@8.4+1.22",
+                    "alpine/php-nginx@8.5",
+                    "alpine/php-nginx@8.5+1.28",
+                    "alpine/php-nginx@latest",
+                    "alpine/python@3.11",
+                    "alpine/python@3.12",
+                    "alpine/python@latest",
+                    "alpine/ruby@3.2",
+                    "alpine/ruby@3.3",
+                    "alpine/ruby@3.4",
+                    "alpine/ruby@latest",
+                    "alpine/rust@1",
+                    "alpine/rust@1.78",
+                    "alpine/rust@1.80",
+                    "alpine/rust@1.86",
+                    "alpine/rust@latest",
+                    "alpine/rust@nightly",
+                    "alpine/rust@stable",
+                    "alpine/static",
+                    "alpine/static@1.0",
+                    "alpine/static@latest",
+                    "alpine@3.17",
+                    "alpine@3.18",
+                    "alpine@3.19",
+                    "alpine@3.20",
+                    "alpine@3.21",
+                    "alpine@3.22",
+                    "alpine@3.23",
+                    "alpine@latest",
+                    "bun@1",
+                    "bun@1.1",
+                    "bun@1.1.34",
+                    "bun@1.2",
+                    "bun@1.2.2",
+                    "bun@1.3",
+                    "bun@1.3.9",
+                    "bun@canary",
+                    "bun@latest",
+                    "bun@nightly",
+                    "clickhouse:ha@25.3",
+                    "clickhouse:single@25.3",
+                    "clickhouse@25.3",
+                    "deno@1",
+                    "deno@1.45",
+                    "deno@1.45.5",
+                    "deno@2",
+                    "deno@2.0",
+                    "deno@2.0.0",
+                    "deno@latest",
+                    "docker@26",
+                    "docker@26.1",
+                    "docker@26.1.5",
+                    "docker@latest",
+                    "dotnet@10",
+                    "dotnet@6",
+                    "dotnet@7",
+                    "dotnet@8",
+                    "dotnet@9",
+                    "dotnet@latest",
+                    "elasticsearch:ha@8.16",
+                    "elasticsearch:ha@9.2",
+                    "elasticsearch:single@8.16",
+                    "elasticsearch:single@9.2",
+                    "elasticsearch@8.16",
+                    "elasticsearch@9.2",
+                    "elixir@1",
+                    "elixir@1.16",
+                    "elixir@1.16.2",
+                    "elixir@1.16.3",
+                    "elixir@latest",
+                    "gleam@1",
+                    "gleam@1.5",
+                    "gleam@1.5.1",
+                    "gleam@latest",
+                    "go@1",
+                    "go@1.22",
+                    "go@latest",
+                    "golang@1",
+                    "golang@1.22",
+                    "golang@latest",
+                    "java@17",
+                    "java@21",
+                    "java@latest",
+                    "kafka:ha@3.8",
+                    "kafka:ha@3.9",
+                    "kafka:single@3.8",
+                    "kafka:single@3.9",
+                    "kafka@3.8",
+                    "kafka@3.9",
+                    "keydb:ha@6",
+                    "keydb:single@6",
+                    "keydb@6",
+                    "mariadb:ha@10.6",
+                    "mariadb:single@10.6",
+                    "mariadb@10.6",
+                    "meilisearch:single@1.10",
+                    "meilisearch:single@1.20",
+                    "meilisearch@1.10",
+                    "meilisearch@1.20",
+                    "nats:ha@2.10",
+                    "nats:ha@2.12",
+                    "nats:single@2.10",
+                    "nats:single@2.12",
+                    "nats@2.10",
+                    "nats@2.12",
+                    "nginx@1.22",
+                    "nginx@latest",
+                    "nodejs@18",
+                    "nodejs@20",
+                    "nodejs@22",
+                    "nodejs@24",
+                    "nodejs@latest",
+                    "object-storage",
+                    "objectstorage",
+                    "php-apache@8.1",
+                    "php-apache@8.1+2.4",
+                    "php-apache@8.3",
+                    "php-apache@8.3+2.4",
+                    "php-apache@8.4",
+                    "php-apache@8.4+2.4",
+                    "php-apache@8.5",
+                    "php-apache@8.5+2.4",
+                    "php-apache@latest",
+                    "php-nginx@8.1",
+                    "php-nginx@8.1+1.22",
+                    "php-nginx@8.3",
+                    "php-nginx@8.3+1.22",
+                    "php-nginx@8.4",
+                    "php-nginx@8.4+1.22",
+                    "php-nginx@8.5",
+                    "php-nginx@8.5+1.28",
+                    "php-nginx@latest",
+                    "postgresql:ha@14",
+                    "postgresql:ha@16",
+                    "postgresql:ha@17",
+                    "postgresql:ha@18",
+                    "postgresql:single@14",
+                    "postgresql:single@16",
+                    "postgresql:single@17",
+                    "postgresql:single@18",
+                    "postgresql@14",
+                    "postgresql@16",
+                    "postgresql@17",
+                    "postgresql@18",
+                    "python@3.11",
+                    "python@3.12",
+                    "python@3.14",
+                    "python@latest",
+                    "qdrant:ha@1.10",
+                    "qdrant:ha@1.12",
+                    "qdrant:single@1.10",
+                    "qdrant:single@1.12",
+                    "qdrant@1.10",
+                    "qdrant@1.12",
+                    "rabbitmq:ha@3.9",
+                    "rabbitmq:single@3.9",
+                    "rabbitmq@3.9",
+                    "ruby@3.2",
+                    "ruby@3.3",
+                    "ruby@3.4",
+                    "ruby@latest",
+                    "rust@1",
+                    "rust@1.78",
+                    "rust@1.80",
+                    "rust@1.86",
+                    "rust@latest",
+                    "rust@nightly",
+                    "rust@stable",
+                    "seaweedfs:ha@3",
+                    "seaweedfs:single@3",
+                    "seaweedfs@3",
+                    "shared-storage",
+                    "shared-storage:ha",
+                    "shared-storage:single",
+                    "sharedstorage",
+                    "sharedstorage:ha",
+                    "sharedstorage:single",
+                    "static",
+                    "static@1.0",
+                    "static@latest",
+                    "typesense:ha@27.1",
+                    "typesense:ha@30.2",
+                    "typesense:single@27.1",
+                    "typesense:single@30.2",
+                    "typesense@27.1",
+                    "typesense@30.2",
+                    "ubuntu/bun@1",
+                    "ubuntu/bun@1.1",
+                    "ubuntu/bun@1.1.34",
+                    "ubuntu/bun@1.2",
+                    "ubuntu/bun@1.2.2",
+                    "ubuntu/bun@1.3",
+                    "ubuntu/bun@1.3.9",
+                    "ubuntu/bun@canary",
+                    "ubuntu/bun@latest",
+                    "ubuntu/bun@nightly",
+                    "ubuntu/deno@1",
+                    "ubuntu/deno@1.45",
+                    "ubuntu/deno@1.45.5",
+                    "ubuntu/deno@2",
+                    "ubuntu/deno@2.0",
+                    "ubuntu/deno@2.0.0",
+                    "ubuntu/deno@latest",
+                    "ubuntu/dotnet@10",
+                    "ubuntu/dotnet@6",
+                    "ubuntu/dotnet@7",
+                    "ubuntu/dotnet@8",
+                    "ubuntu/dotnet@9",
+                    "ubuntu/dotnet@latest",
+                    "ubuntu/elixir@1",
+                    "ubuntu/elixir@1.16",
+                    "ubuntu/elixir@1.16.2",
+                    "ubuntu/elixir@latest",
+                    "ubuntu/gleam@1",
+                    "ubuntu/gleam@1.5",
+                    "ubuntu/gleam@1.5.1",
+                    "ubuntu/gleam@latest",
+                    "ubuntu/go@1",
+                    "ubuntu/go@1.22",
+                    "ubuntu/go@latest",
+                    "ubuntu/golang@1",
+                    "ubuntu/golang@1.22",
+                    "ubuntu/golang@latest",
+                    "ubuntu/java@17",
+                    "ubuntu/java@21",
+                    "ubuntu/java@latest",
+                    "ubuntu/nginx@1.22",
+                    "ubuntu/nginx@latest",
+                    "ubuntu/nodejs@18",
+                    "ubuntu/nodejs@20",
+                    "ubuntu/nodejs@22",
+                    "ubuntu/nodejs@24",
+                    "ubuntu/nodejs@latest",
+                    "ubuntu/php-apache@8.1",
+                    "ubuntu/php-apache@8.1+2.4",
+                    "ubuntu/php-apache@8.3",
+                    "ubuntu/php-apache@8.3+2.4",
+                    "ubuntu/php-apache@8.4",
+                    "ubuntu/php-apache@8.4+2.4",
+                    "ubuntu/php-apache@8.5",
+                    "ubuntu/php-apache@8.5+2.4",
+                    "ubuntu/php-apache@latest",
+                    "ubuntu/php-nginx@8.1",
+                    "ubuntu/php-nginx@8.1+1.22",
+                    "ubuntu/php-nginx@8.3",
+                    "ubuntu/php-nginx@8.3+1.22",
+                    "ubuntu/php-nginx@8.4",
+                    "ubuntu/php-nginx@8.4+1.22",
+                    "ubuntu/php-nginx@8.5",
+                    "ubuntu/php-nginx@8.5+1.28",
+                    "ubuntu/php-nginx@latest",
+                    "ubuntu/python@3.11",
+                    "ubuntu/python@3.12",
+                    "ubuntu/python@3.14",
+                    "ubuntu/python@latest",
+                    "ubuntu/ruby@3.2",
+                    "ubuntu/ruby@3.3",
+                    "ubuntu/ruby@3.4",
+                    "ubuntu/ruby@latest",
+                    "ubuntu/rust@1",
+                    "ubuntu/rust@1.78",
+                    "ubuntu/rust@1.80",
+                    "ubuntu/rust@1.86",
+                    "ubuntu/rust@latest",
+                    "ubuntu/rust@nightly",
+                    "ubuntu/rust@stable",
+                    "ubuntu/static",
+                    "ubuntu/static@1.0",
+                    "ubuntu/static@latest",
+                    "ubuntu@22.04",
+                    "ubuntu@24.04",
+                    "ubuntu@latest",
+                    "valkey:ha@7.2",
+                    "valkey:single@7.2",
+                    "valkey@7.2",
+                    "zcp@1",
+                    "zcp@latest"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "profile": false,
+                "profileOverrides": false
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "alpine/bun@1",
+                    "alpine/bun@1.2",
+                    "alpine/bun@1.2.2",
+                    "alpine/bun@1.3",
+                    "alpine/bun@1.3.9",
+                    "alpine/bun@canary",
+                    "alpine/bun@latest",
+                    "alpine/bun@nightly",
+                    "alpine/dotnet@10",
+                    "alpine/dotnet@6",
+                    "alpine/dotnet@7",
+                    "alpine/dotnet@8",
+                    "alpine/dotnet@9",
+                    "alpine/dotnet@latest",
+                    "alpine/elixir@1",
+                    "alpine/elixir@1.16",
+                    "alpine/elixir@1.16.3",
+                    "alpine/elixir@latest",
+                    "alpine/gleam@1",
+                    "alpine/gleam@1.5",
+                    "alpine/gleam@1.5.1",
+                    "alpine/gleam@latest",
+                    "alpine/go@1",
+                    "alpine/go@1.22",
+                    "alpine/go@latest",
+                    "alpine/golang@1",
+                    "alpine/golang@1.22",
+                    "alpine/golang@latest",
+                    "alpine/java@17",
+                    "alpine/java@21",
+                    "alpine/java@latest",
+                    "alpine/nginx@1.22",
+                    "alpine/nginx@latest",
+                    "alpine/nodejs@18",
+                    "alpine/nodejs@20",
+                    "alpine/nodejs@22",
+                    "alpine/nodejs@24",
+                    "alpine/nodejs@latest",
+                    "alpine/php-apache@8.1",
+                    "alpine/php-apache@8.1+2.4",
+                    "alpine/php-apache@8.3",
+                    "alpine/php-apache@8.3+2.4",
+                    "alpine/php-apache@8.4",
+                    "alpine/php-apache@8.4+2.4",
+                    "alpine/php-apache@8.5",
+                    "alpine/php-apache@8.5+2.4",
+                    "alpine/php-apache@latest",
+                    "alpine/php-nginx@8.1",
+                    "alpine/php-nginx@8.1+1.22",
+                    "alpine/php-nginx@8.3",
+                    "alpine/php-nginx@8.3+1.22",
+                    "alpine/php-nginx@8.4",
+                    "alpine/php-nginx@8.4+1.22",
+                    "alpine/php-nginx@8.5",
+                    "alpine/php-nginx@8.5+1.28",
+                    "alpine/php-nginx@latest",
+                    "alpine/python@3.11",
+                    "alpine/python@3.12",
+                    "alpine/python@latest",
+                    "alpine/ruby@3.2",
+                    "alpine/ruby@3.3",
+                    "alpine/ruby@3.4",
+                    "alpine/ruby@latest",
+                    "alpine/rust@1",
+                    "alpine/rust@1.78",
+                    "alpine/rust@1.80",
+                    "alpine/rust@1.86",
+                    "alpine/rust@latest",
+                    "alpine/rust@nightly",
+                    "alpine/rust@stable",
+                    "alpine/static",
+                    "alpine/static@1.0",
+                    "alpine/static@latest",
+                    "alpine@3.17",
+                    "alpine@3.18",
+                    "alpine@3.19",
+                    "alpine@3.20",
+                    "alpine@3.21",
+                    "alpine@3.22",
+                    "alpine@3.23",
+                    "alpine@latest",
+                    "bun@1",
+                    "bun@1.1",
+                    "bun@1.1.34",
+                    "bun@1.2",
+                    "bun@1.2.2",
+                    "bun@1.3",
+                    "bun@1.3.9",
+                    "bun@canary",
+                    "bun@latest",
+                    "bun@nightly",
+                    "deno@1",
+                    "deno@1.45",
+                    "deno@1.45.5",
+                    "deno@2",
+                    "deno@2.0",
+                    "deno@2.0.0",
+                    "deno@latest",
+                    "dotnet@10",
+                    "dotnet@6",
+                    "dotnet@7",
+                    "dotnet@8",
+                    "dotnet@9",
+                    "dotnet@latest",
+                    "elixir@1",
+                    "elixir@1.16",
+                    "elixir@1.16.2",
+                    "elixir@1.16.3",
+                    "elixir@latest",
+                    "gleam@1",
+                    "gleam@1.5",
+                    "gleam@1.5.1",
+                    "gleam@latest",
+                    "go@1",
+                    "go@1.22",
+                    "go@latest",
+                    "golang@1",
+                    "golang@1.22",
+                    "golang@latest",
+                    "java@17",
+                    "java@21",
+                    "java@latest",
+                    "nginx@1.22",
+                    "nginx@latest",
+                    "nodejs@18",
+                    "nodejs@20",
+                    "nodejs@22",
+                    "nodejs@24",
+                    "nodejs@latest",
+                    "php-apache@8.1",
+                    "php-apache@8.1+2.4",
+                    "php-apache@8.3",
+                    "php-apache@8.3+2.4",
+                    "php-apache@8.4",
+                    "php-apache@8.4+2.4",
+                    "php-apache@8.5",
+                    "php-apache@8.5+2.4",
+                    "php-apache@latest",
+                    "php-nginx@8.1",
+                    "php-nginx@8.1+1.22",
+                    "php-nginx@8.3",
+                    "php-nginx@8.3+1.22",
+                    "php-nginx@8.4",
+                    "php-nginx@8.4+1.22",
+                    "php-nginx@8.5",
+                    "php-nginx@8.5+1.28",
+                    "php-nginx@latest",
+                    "python@3.11",
+                    "python@3.12",
+                    "python@3.14",
+                    "python@latest",
+                    "ruby@3.2",
+                    "ruby@3.3",
+                    "ruby@3.4",
+                    "ruby@latest",
+                    "rust@1",
+                    "rust@1.78",
+                    "rust@1.80",
+                    "rust@1.86",
+                    "rust@latest",
+                    "rust@nightly",
+                    "rust@stable",
+                    "static",
+                    "static@1.0",
+                    "static@latest",
+                    "ubuntu/bun@1",
+                    "ubuntu/bun@1.1",
+                    "ubuntu/bun@1.1.34",
+                    "ubuntu/bun@1.2",
+                    "ubuntu/bun@1.2.2",
+                    "ubuntu/bun@1.3",
+                    "ubuntu/bun@1.3.9",
+                    "ubuntu/bun@canary",
+                    "ubuntu/bun@latest",
+                    "ubuntu/bun@nightly",
+                    "ubuntu/deno@1",
+                    "ubuntu/deno@1.45",
+                    "ubuntu/deno@1.45.5",
+                    "ubuntu/deno@2",
+                    "ubuntu/deno@2.0",
+                    "ubuntu/deno@2.0.0",
+                    "ubuntu/deno@latest",
+                    "ubuntu/dotnet@10",
+                    "ubuntu/dotnet@6",
+                    "ubuntu/dotnet@7",
+                    "ubuntu/dotnet@8",
+                    "ubuntu/dotnet@9",
+                    "ubuntu/dotnet@latest",
+                    "ubuntu/elixir@1",
+                    "ubuntu/elixir@1.16",
+                    "ubuntu/elixir@1.16.2",
+                    "ubuntu/elixir@latest",
+                    "ubuntu/gleam@1",
+                    "ubuntu/gleam@1.5",
+                    "ubuntu/gleam@1.5.1",
+                    "ubuntu/gleam@latest",
+                    "ubuntu/go@1",
+                    "ubuntu/go@1.22",
+                    "ubuntu/go@latest",
+                    "ubuntu/golang@1",
+                    "ubuntu/golang@1.22",
+                    "ubuntu/golang@latest",
+                    "ubuntu/java@17",
+                    "ubuntu/java@21",
+                    "ubuntu/java@latest",
+                    "ubuntu/nginx@1.22",
+                    "ubuntu/nginx@latest",
+                    "ubuntu/nodejs@18",
+                    "ubuntu/nodejs@20",
+                    "ubuntu/nodejs@22",
+                    "ubuntu/nodejs@24",
+                    "ubuntu/nodejs@latest",
+                    "ubuntu/php-apache@8.1",
+                    "ubuntu/php-apache@8.1+2.4",
+                    "ubuntu/php-apache@8.3",
+                    "ubuntu/php-apache@8.3+2.4",
+                    "ubuntu/php-apache@8.4",
+                    "ubuntu/php-apache@8.4+2.4",
+                    "ubuntu/php-apache@8.5",
+                    "ubuntu/php-apache@8.5+2.4",
+                    "ubuntu/php-apache@latest",
+                    "ubuntu/php-nginx@8.1",
+                    "ubuntu/php-nginx@8.1+1.22",
+                    "ubuntu/php-nginx@8.3",
+                    "ubuntu/php-nginx@8.3+1.22",
+                    "ubuntu/php-nginx@8.4",
+                    "ubuntu/php-nginx@8.4+1.22",
+                    "ubuntu/php-nginx@8.5",
+                    "ubuntu/php-nginx@8.5+1.28",
+                    "ubuntu/php-nginx@latest",
+                    "ubuntu/python@3.11",
+                    "ubuntu/python@3.12",
+                    "ubuntu/python@3.14",
+                    "ubuntu/python@latest",
+                    "ubuntu/ruby@3.2",
+                    "ubuntu/ruby@3.3",
+                    "ubuntu/ruby@3.4",
+                    "ubuntu/ruby@latest",
+                    "ubuntu/rust@1",
+                    "ubuntu/rust@1.78",
+                    "ubuntu/rust@1.80",
+                    "ubuntu/rust@1.86",
+                    "ubuntu/rust@latest",
+                    "ubuntu/rust@nightly",
+                    "ubuntu/rust@stable",
+                    "ubuntu/static",
+                    "ubuntu/static@1.0",
+                    "ubuntu/static@latest",
+                    "ubuntu@22.04",
+                    "ubuntu@24.04",
+                    "ubuntu@latest",
+                    "zcp@1",
+                    "zcp@latest"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "minContainers": {
+                  "type": "integer",
+                  "maximum": 10,
+                  "minimum": 1
+                },
+                "maxContainers": {
+                  "type": "integer",
+                  "maximum": 10,
+                  "minimum": 1
+                },
+                "verticalAutoscaling": {
+                  "properties": {
+                    "cpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "minCpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "maxCpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "ram": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.125
+                    },
+                    "minRam": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.125
+                    },
+                    "maxRam": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.125
+                    },
+                    "disk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 1
+                    },
+                    "minDisk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 1
+                    },
+                    "maxDisk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "alpine/docker@26",
+                    "alpine/docker@26.1",
+                    "alpine/docker@26.1.5",
+                    "alpine/docker@latest",
+                    "docker@26",
+                    "docker@26.1",
+                    "docker@26.1.5",
+                    "docker@latest"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "minContainers": {
+                  "type": "integer",
+                  "maximum": 10,
+                  "minimum": 1
+                },
+                "maxContainers": {
+                  "type": "integer",
+                  "maximum": 10,
+                  "minimum": 1
+                },
+                "verticalAutoscaling": {
+                  "properties": {
+                    "cpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "minCpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "maxCpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "ram": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.25
+                    },
+                    "minRam": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.25
+                    },
+                    "maxRam": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.25
+                    },
+                    "disk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 5
+                    },
+                    "minDisk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 5
+                    },
+                    "maxDisk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 5
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "clickhouse:ha@25.3",
+                    "clickhouse:single@25.3",
+                    "clickhouse@25.3",
+                    "mariadb:ha@10.6",
+                    "mariadb:single@10.6",
+                    "mariadb@10.6",
+                    "meilisearch:single@1.10",
+                    "meilisearch:single@1.20",
+                    "meilisearch@1.10",
+                    "meilisearch@1.20",
+                    "nats:ha@2.10",
+                    "nats:ha@2.12",
+                    "nats:single@2.10",
+                    "nats:single@2.12",
+                    "nats@2.10",
+                    "nats@2.12",
+                    "postgresql:ha@14",
+                    "postgresql:ha@16",
+                    "postgresql:ha@17",
+                    "postgresql:ha@18",
+                    "postgresql:single@14",
+                    "postgresql:single@16",
+                    "postgresql:single@17",
+                    "postgresql:single@18",
+                    "postgresql@14",
+                    "postgresql@16",
+                    "postgresql@17",
+                    "postgresql@18",
+                    "qdrant:ha@1.10",
+                    "qdrant:ha@1.12",
+                    "qdrant:single@1.10",
+                    "qdrant:single@1.12",
+                    "qdrant@1.10",
+                    "qdrant@1.12",
+                    "rabbitmq:ha@3.9",
+                    "rabbitmq:single@3.9",
+                    "rabbitmq@3.9",
+                    "typesense:ha@27.1",
+                    "typesense:ha@30.2",
+                    "typesense:single@27.1",
+                    "typesense:single@30.2",
+                    "typesense@27.1",
+                    "typesense@30.2"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "minContainers": false,
+                "maxContainers": false,
+                "verticalAutoscaling": {
+                  "properties": {
+                    "cpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "minCpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "maxCpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "ram": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.25
+                    },
+                    "minRam": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.25
+                    },
+                    "maxRam": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.25
+                    },
+                    "disk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 1
+                    },
+                    "minDisk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 1
+                    },
+                    "maxDisk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "elasticsearch:ha@8.16",
+                    "elasticsearch:ha@9.2",
+                    "elasticsearch@8.16",
+                    "elasticsearch@9.2"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "minContainers": {
+                  "type": "integer",
+                  "maximum": 3,
+                  "minimum": 3
+                },
+                "maxContainers": {
+                  "type": "integer",
+                  "maximum": 3,
+                  "minimum": 3
+                },
+                "verticalAutoscaling": {
+                  "properties": {
+                    "cpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "minCpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "maxCpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "ram": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.75
+                    },
+                    "minRam": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.75
+                    },
+                    "maxRam": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.75
+                    },
+                    "disk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 1
+                    },
+                    "minDisk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 1
+                    },
+                    "maxDisk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "elasticsearch:single@8.16",
+                    "elasticsearch:single@9.2",
+                    "elasticsearch@8.16",
+                    "elasticsearch@9.2"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "minContainers": {
+                  "type": "integer",
+                  "maximum": 1,
+                  "minimum": 1
+                },
+                "maxContainers": {
+                  "type": "integer",
+                  "maximum": 1,
+                  "minimum": 1
+                },
+                "verticalAutoscaling": {
+                  "properties": {
+                    "cpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "minCpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "maxCpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "ram": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.75
+                    },
+                    "minRam": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.75
+                    },
+                    "maxRam": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.75
+                    },
+                    "disk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 1
+                    },
+                    "minDisk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 1
+                    },
+                    "maxDisk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "kafka:ha@3.8",
+                    "kafka:ha@3.9",
+                    "kafka:single@3.8",
+                    "kafka:single@3.9",
+                    "kafka@3.8",
+                    "kafka@3.9"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "minContainers": false,
+                "maxContainers": false,
+                "verticalAutoscaling": {
+                  "properties": {
+                    "cpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "minCpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "maxCpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "ram": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.5
+                    },
+                    "minRam": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.5
+                    },
+                    "maxRam": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.5
+                    },
+                    "disk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 1
+                    },
+                    "minDisk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 1
+                    },
+                    "maxDisk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "keydb:ha@6",
+                    "keydb:single@6",
+                    "keydb@6",
+                    "valkey:ha@7.2",
+                    "valkey:single@7.2",
+                    "valkey@7.2"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "minContainers": false,
+                "maxContainers": false,
+                "verticalAutoscaling": {
+                  "properties": {
+                    "cpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "minCpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "maxCpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "ram": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.125
+                    },
+                    "minRam": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.125
+                    },
+                    "maxRam": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.125
+                    },
+                    "disk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 1
+                    },
+                    "minDisk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 1
+                    },
+                    "maxDisk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "object-storage",
+                    "objectstorage"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "minContainers": false,
+                "maxContainers": false,
+                "verticalAutoscaling": {
+                  "properties": {
+                    "cpu": false,
+                    "minCpu": false,
+                    "maxCpu": false,
+                    "ram": false,
+                    "minRam": false,
+                    "maxRam": false,
+                    "disk": false,
+                    "minDisk": false,
+                    "maxDisk": false
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "seaweedfs:ha@3",
+                    "seaweedfs:single@3",
+                    "seaweedfs@3",
+                    "shared-storage",
+                    "shared-storage:ha",
+                    "shared-storage:single",
+                    "sharedstorage",
+                    "sharedstorage:ha",
+                    "sharedstorage:single"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "properties": {
+                "minContainers": false,
+                "maxContainers": false,
+                "verticalAutoscaling": {
+                  "properties": {
+                    "cpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "minCpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "maxCpu": {
+                      "type": "integer",
+                      "maximum": 8,
+                      "minimum": 1
+                    },
+                    "ram": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.5
+                    },
+                    "minRam": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.5
+                    },
+                    "maxRam": {
+                      "type": "number",
+                      "maximum": 48,
+                      "minimum": 0.5
+                    },
+                    "disk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 5
+                    },
+                    "minDisk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 5
+                    },
+                    "maxDisk": {
+                      "type": "number",
+                      "maximum": 250,
+                      "minimum": 5
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "properties": {
+          "hostname": {
+            "type": "string",
+            "description": "The unique service identifier. Limitations: duplicates in the same project forbidden; maximum 25 characters, lowercase ASCII letters (a-z) or numbers (0-9) only."
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "alpine/bun@1",
+              "alpine/bun@1.2",
+              "alpine/bun@1.2.2",
+              "alpine/bun@1.3",
+              "alpine/bun@1.3.9",
+              "alpine/bun@canary",
+              "alpine/bun@latest",
+              "alpine/bun@nightly",
+              "alpine/docker@26",
+              "alpine/docker@26.1",
+              "alpine/docker@26.1.5",
+              "alpine/docker@latest",
+              "alpine/dotnet@10",
+              "alpine/dotnet@6",
+              "alpine/dotnet@7",
+              "alpine/dotnet@8",
+              "alpine/dotnet@9",
+              "alpine/dotnet@latest",
+              "alpine/elixir@1",
+              "alpine/elixir@1.16",
+              "alpine/elixir@1.16.3",
+              "alpine/elixir@latest",
+              "alpine/gleam@1",
+              "alpine/gleam@1.5",
+              "alpine/gleam@1.5.1",
+              "alpine/gleam@latest",
+              "alpine/go@1",
+              "alpine/go@1.22",
+              "alpine/go@latest",
+              "alpine/golang@1",
+              "alpine/golang@1.22",
+              "alpine/golang@latest",
+              "alpine/java@17",
+              "alpine/java@21",
+              "alpine/java@latest",
+              "alpine/nginx@1.22",
+              "alpine/nginx@latest",
+              "alpine/nodejs@18",
+              "alpine/nodejs@20",
+              "alpine/nodejs@22",
+              "alpine/nodejs@24",
+              "alpine/nodejs@latest",
+              "alpine/php-apache@8.1",
+              "alpine/php-apache@8.1+2.4",
+              "alpine/php-apache@8.3",
+              "alpine/php-apache@8.3+2.4",
+              "alpine/php-apache@8.4",
+              "alpine/php-apache@8.4+2.4",
+              "alpine/php-apache@8.5",
+              "alpine/php-apache@8.5+2.4",
+              "alpine/php-apache@latest",
+              "alpine/php-nginx@8.1",
+              "alpine/php-nginx@8.1+1.22",
+              "alpine/php-nginx@8.3",
+              "alpine/php-nginx@8.3+1.22",
+              "alpine/php-nginx@8.4",
+              "alpine/php-nginx@8.4+1.22",
+              "alpine/php-nginx@8.5",
+              "alpine/php-nginx@8.5+1.28",
+              "alpine/php-nginx@latest",
+              "alpine/python@3.11",
+              "alpine/python@3.12",
+              "alpine/python@latest",
+              "alpine/ruby@3.2",
+              "alpine/ruby@3.3",
+              "alpine/ruby@3.4",
+              "alpine/ruby@latest",
+              "alpine/rust@1",
+              "alpine/rust@1.78",
+              "alpine/rust@1.80",
+              "alpine/rust@1.86",
+              "alpine/rust@latest",
+              "alpine/rust@nightly",
+              "alpine/rust@stable",
+              "alpine/static",
+              "alpine/static@1.0",
+              "alpine/static@latest",
+              "alpine@3.17",
+              "alpine@3.18",
+              "alpine@3.19",
+              "alpine@3.20",
+              "alpine@3.21",
+              "alpine@3.22",
+              "alpine@3.23",
+              "alpine@latest",
+              "bun@1",
+              "bun@1.1",
+              "bun@1.1.34",
+              "bun@1.2",
+              "bun@1.2.2",
+              "bun@1.3",
+              "bun@1.3.9",
+              "bun@canary",
+              "bun@latest",
+              "bun@nightly",
+              "clickhouse:ha@25.3",
+              "clickhouse:single@25.3",
+              "clickhouse@25.3",
+              "deno@1",
+              "deno@1.45",
+              "deno@1.45.5",
+              "deno@2",
+              "deno@2.0",
+              "deno@2.0.0",
+              "deno@latest",
+              "docker@26",
+              "docker@26.1",
+              "docker@26.1.5",
+              "docker@latest",
+              "dotnet@10",
+              "dotnet@6",
+              "dotnet@7",
+              "dotnet@8",
+              "dotnet@9",
+              "dotnet@latest",
+              "elasticsearch:ha@8.16",
+              "elasticsearch:ha@9.2",
+              "elasticsearch:single@8.16",
+              "elasticsearch:single@9.2",
+              "elasticsearch@8.16",
+              "elasticsearch@9.2",
+              "elixir@1",
+              "elixir@1.16",
+              "elixir@1.16.2",
+              "elixir@1.16.3",
+              "elixir@latest",
+              "gleam@1",
+              "gleam@1.5",
+              "gleam@1.5.1",
+              "gleam@latest",
+              "go@1",
+              "go@1.22",
+              "go@latest",
+              "golang@1",
+              "golang@1.22",
+              "golang@latest",
+              "java@17",
+              "java@21",
+              "java@latest",
+              "kafka:ha@3.8",
+              "kafka:ha@3.9",
+              "kafka:single@3.8",
+              "kafka:single@3.9",
+              "kafka@3.8",
+              "kafka@3.9",
+              "keydb:ha@6",
+              "keydb:single@6",
+              "keydb@6",
+              "mariadb:ha@10.6",
+              "mariadb:single@10.6",
+              "mariadb@10.6",
+              "meilisearch:single@1.10",
+              "meilisearch:single@1.20",
+              "meilisearch@1.10",
+              "meilisearch@1.20",
+              "nats:ha@2.10",
+              "nats:ha@2.12",
+              "nats:single@2.10",
+              "nats:single@2.12",
+              "nats@2.10",
+              "nats@2.12",
+              "nginx@1.22",
+              "nginx@latest",
+              "nodejs@18",
+              "nodejs@20",
+              "nodejs@22",
+              "nodejs@24",
+              "nodejs@latest",
+              "object-storage",
+              "objectstorage",
+              "php-apache@8.1",
+              "php-apache@8.1+2.4",
+              "php-apache@8.3",
+              "php-apache@8.3+2.4",
+              "php-apache@8.4",
+              "php-apache@8.4+2.4",
+              "php-apache@8.5",
+              "php-apache@8.5+2.4",
+              "php-apache@latest",
+              "php-nginx@8.1",
+              "php-nginx@8.1+1.22",
+              "php-nginx@8.3",
+              "php-nginx@8.3+1.22",
+              "php-nginx@8.4",
+              "php-nginx@8.4+1.22",
+              "php-nginx@8.5",
+              "php-nginx@8.5+1.28",
+              "php-nginx@latest",
+              "postgresql:ha@14",
+              "postgresql:ha@16",
+              "postgresql:ha@17",
+              "postgresql:ha@18",
+              "postgresql:single@14",
+              "postgresql:single@16",
+              "postgresql:single@17",
+              "postgresql:single@18",
+              "postgresql@14",
+              "postgresql@16",
+              "postgresql@17",
+              "postgresql@18",
+              "python@3.11",
+              "python@3.12",
+              "python@3.14",
+              "python@latest",
+              "qdrant:ha@1.10",
+              "qdrant:ha@1.12",
+              "qdrant:single@1.10",
+              "qdrant:single@1.12",
+              "qdrant@1.10",
+              "qdrant@1.12",
+              "rabbitmq:ha@3.9",
+              "rabbitmq:single@3.9",
+              "rabbitmq@3.9",
+              "ruby@3.2",
+              "ruby@3.3",
+              "ruby@3.4",
+              "ruby@latest",
+              "rust@1",
+              "rust@1.78",
+              "rust@1.80",
+              "rust@1.86",
+              "rust@latest",
+              "rust@nightly",
+              "rust@stable",
+              "seaweedfs:ha@3",
+              "seaweedfs:single@3",
+              "seaweedfs@3",
+              "shared-storage",
+              "shared-storage:ha",
+              "shared-storage:single",
+              "sharedstorage",
+              "sharedstorage:ha",
+              "sharedstorage:single",
+              "static",
+              "static@1.0",
+              "static@latest",
+              "typesense:ha@27.1",
+              "typesense:ha@30.2",
+              "typesense:single@27.1",
+              "typesense:single@30.2",
+              "typesense@27.1",
+              "typesense@30.2",
+              "ubuntu/bun@1",
+              "ubuntu/bun@1.1",
+              "ubuntu/bun@1.1.34",
+              "ubuntu/bun@1.2",
+              "ubuntu/bun@1.2.2",
+              "ubuntu/bun@1.3",
+              "ubuntu/bun@1.3.9",
+              "ubuntu/bun@canary",
+              "ubuntu/bun@latest",
+              "ubuntu/bun@nightly",
+              "ubuntu/deno@1",
+              "ubuntu/deno@1.45",
+              "ubuntu/deno@1.45.5",
+              "ubuntu/deno@2",
+              "ubuntu/deno@2.0",
+              "ubuntu/deno@2.0.0",
+              "ubuntu/deno@latest",
+              "ubuntu/dotnet@10",
+              "ubuntu/dotnet@6",
+              "ubuntu/dotnet@7",
+              "ubuntu/dotnet@8",
+              "ubuntu/dotnet@9",
+              "ubuntu/dotnet@latest",
+              "ubuntu/elixir@1",
+              "ubuntu/elixir@1.16",
+              "ubuntu/elixir@1.16.2",
+              "ubuntu/elixir@latest",
+              "ubuntu/gleam@1",
+              "ubuntu/gleam@1.5",
+              "ubuntu/gleam@1.5.1",
+              "ubuntu/gleam@latest",
+              "ubuntu/go@1",
+              "ubuntu/go@1.22",
+              "ubuntu/go@latest",
+              "ubuntu/golang@1",
+              "ubuntu/golang@1.22",
+              "ubuntu/golang@latest",
+              "ubuntu/java@17",
+              "ubuntu/java@21",
+              "ubuntu/java@latest",
+              "ubuntu/nginx@1.22",
+              "ubuntu/nginx@latest",
+              "ubuntu/nodejs@18",
+              "ubuntu/nodejs@20",
+              "ubuntu/nodejs@22",
+              "ubuntu/nodejs@24",
+              "ubuntu/nodejs@latest",
+              "ubuntu/php-apache@8.1",
+              "ubuntu/php-apache@8.1+2.4",
+              "ubuntu/php-apache@8.3",
+              "ubuntu/php-apache@8.3+2.4",
+              "ubuntu/php-apache@8.4",
+              "ubuntu/php-apache@8.4+2.4",
+              "ubuntu/php-apache@8.5",
+              "ubuntu/php-apache@8.5+2.4",
+              "ubuntu/php-apache@latest",
+              "ubuntu/php-nginx@8.1",
+              "ubuntu/php-nginx@8.1+1.22",
+              "ubuntu/php-nginx@8.3",
+              "ubuntu/php-nginx@8.3+1.22",
+              "ubuntu/php-nginx@8.4",
+              "ubuntu/php-nginx@8.4+1.22",
+              "ubuntu/php-nginx@8.5",
+              "ubuntu/php-nginx@8.5+1.28",
+              "ubuntu/php-nginx@latest",
+              "ubuntu/python@3.11",
+              "ubuntu/python@3.12",
+              "ubuntu/python@3.14",
+              "ubuntu/python@latest",
+              "ubuntu/ruby@3.2",
+              "ubuntu/ruby@3.3",
+              "ubuntu/ruby@3.4",
+              "ubuntu/ruby@latest",
+              "ubuntu/rust@1",
+              "ubuntu/rust@1.78",
+              "ubuntu/rust@1.80",
+              "ubuntu/rust@1.86",
+              "ubuntu/rust@latest",
+              "ubuntu/rust@nightly",
+              "ubuntu/rust@stable",
+              "ubuntu/static",
+              "ubuntu/static@1.0",
+              "ubuntu/static@latest",
+              "ubuntu@22.04",
+              "ubuntu@24.04",
+              "ubuntu@latest",
+              "valkey:ha@7.2",
+              "valkey:single@7.2",
+              "valkey@7.2",
+              "zcp@1",
+              "zcp@latest"
+            ],
+            "description": "Specifies the service type and version."
+          },
+          "mode": {
+            "type": "string",
+            "description": "Deprecated, use Type version only. Defines the operation mode of the service."
+          },
+          "envSecrets": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "description": "List of key-value pairs. Environment variables that are blurred by default in Zerops GUI. Can be edited or deleted in Zerops GUI."
+          },
+          "dotEnvSecrets": {
+            "type": "string",
+            "description": "List of key-value pairs in .env format. Environment variables that are blurred by default in Zerops GUI. Can be edited or deleted in Zerops GUI."
+          },
+          "nginxConfig": {
+            "type": "string",
+            "description": "Insert full nginx config."
+          },
+          "objectStorageSize": {
+            "type": "number",
+            "description": "Object storage size in GB."
+          },
+          "objectStoragePolicy": {
+            "type": "string",
+            "enum": [
+              "custom",
+              "private",
+              "public-read",
+              "public-objects-read",
+              "public-write",
+              "public-read-write"
+            ],
+            "description": "Select a predefined AWS S3 bucket access policy."
+          },
+          "objectStorageRawPolicy": {
+            "type": "string",
+            "description": "Define your own AWS S3 bucket access policy. See AWS docs for details. Use {{ .BucketName }} placeholder if you need to use bucket name in your custom policy rules."
+          },
+          "buildFromGit": {
+            "type": "string",
+            "description": "A URL of a Github or Gitlab repository used for a one-time build of your service."
+          },
+          "startWithoutCode": {
+            "type": "boolean",
+            "description": "Set true, if you want to start service without code."
+          },
+          "enableSubdomainAccess": {
+            "type": "boolean",
+            "description": "Set true, if you want to enable a public access to your service via a Zerops subdomain. Not suitable for production.",
+            "default": false
+          },
+          "priority": {
+            "type": "integer",
+            "description": "Services are sorted before creation by priority in descending order, i.e. the higher the priority the sooner the service is created."
+          },
+          "verticalAutoscaling": {
+            "properties": {
+              "cpu": {
+                "type": "integer",
+                "description": "Fixed CPU thread count that each container of the service will be set to."
+              },
+              "ram": {
+                "type": "number",
+                "description": "Fixed RAM in GB that each container of the service will be set to."
+              },
+              "disk": {
+                "type": "number",
+                "description": "Fixed disk space in GB that each container of the service will be set to."
+              },
+              "cpuMode": {
+                "type": "string",
+                "enum": [
+                  "DEDICATED",
+                  "SHARED"
+                ],
+                "description": "CPU mode that each container of the service will be set to."
+              },
+              "minCpu": {
+                "type": "integer",
+                "description": "Minimum CPU thread count that each container of the service can scale down to."
+              },
+              "maxCpu": {
+                "type": "integer",
+                "description": "Maximum CPU thread count that each container of the service can scale up to."
+              },
+              "minRam": {
+                "type": "number",
+                "description": "Minimum RAM in GB that each container of the service can scale down to."
+              },
+              "maxRam": {
+                "type": "number",
+                "description": "Maximum RAM in GB that each container of the service can scale up to."
+              },
+              "minDisk": {
+                "type": "number",
+                "description": "Minimum disk space in GB that each container of the service can scale down to."
+              },
+              "maxDisk": {
+                "type": "number",
+                "description": "Maximum disk space in GB that each container of the service can scale up to."
+              },
+              "startCpuCoreCount": {
+                "type": "integer",
+                "description": "Number of CPU cores with which each container starts."
+              },
+              "swapEnabled": {
+                "type": "boolean",
+                "description": "Whether to enable swap memory for containers. Swap is enabled by default. Refer to documentation for more details."
+              },
+              "minFreeCpuCores": {
+                "type": "number",
+                "description": "Minimum number of unused CPU cores before a container starts scaling."
+              },
+              "minFreeCpuPercent": {
+                "type": "number",
+                "description": "Minimum percentage of unused CPU cores before a container starts scaling."
+              },
+              "minFreeRamGB": {
+                "type": "number",
+                "description": "Minimum unused memory in GB before a container starts scaling."
+              },
+              "minFreeRamPercent": {
+                "type": "number",
+                "description": "Minimum percentage of unused memory before a container starts scaling."
+              },
+              "minVCpu": {
+                "type": "integer",
+                "deprecated": true
+              },
+              "maxVCpu": {
+                "type": "integer",
+                "deprecated": true
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "description": "Vertical autoscaling settings."
+          },
+          "minContainers": {
+            "type": "integer",
+            "description": "Minimum number of containers of the service."
+          },
+          "maxContainers": {
+            "type": "integer",
+            "description": "Maximum number of containers of the service."
+          },
+          "profile": {
+            "type": "string",
+            "description": "Defines the autoscaling profile for the service."
+          },
+          "profileOverrides": {
+            "description": "Json formatted list of overrides for the selected autoscaling profile."
+          },
+          "mount": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "description": "Mount shared storages to the service, buildFromGit must be filled."
+          },
+          "enableCdn": {
+            "type": "boolean",
+            "description": "Set true, if you want to enable CDN for the object storage bucket. Currently only relevant for object storage services."
+          },
+          "envIsolation": {
+            "type": "string",
+            "description": "Defines the visibility scope for environment variables. Allowed values: none (no isolation, everyone sees all variables), service (isolation at service level, each service can only see its own variables). Explicit variable referencing is still possible regardless of the isolation setting. When set at the service level, these values override any project-level defined isolation settings."
+          },
+          "sshIsolation": {
+            "type": "string",
+            "description": "Defines who is authorized to access the service via SSH. Values can be combined using spaces (e.g., project vpn). To exclude a specific access type, use a negative prefix (e.g., -vpn). Allowed values: project (anyone from the project), vpn (anyone from the VPN), service (anyone from the same service), service@name (anyone from the service named \"name\"). When set at the service level, these values override any project-level defined isolation settings."
+          },
+          "os": {
+            "type": "string",
+            "description": "Deprecated, use Type version only. Optionally specifies the OS of the runtime service imported with 'startWithoutCode=true'."
+          },
+          "zeropsSetup": {
+            "type": "string"
+          },
+          "zeropsYaml": {
+            "properties": {
+              "zerops": {
+                "items": {
+                  "properties": {
+                    "setup": {
+                      "type": "string",
+                      "description": "The first element setup contains the hostname of your service. A runtime service with the same hostname must exist in Zerops. Zerops supports the definition of multiple runtime services in a single zerops.yml. This is useful when you use a monorepo. Just add multiple setup elements in your zerops.yml."
+                    },
+                    "build": {
+                      "properties": {
+                        "os": {
+                          "type": "string",
+                          "description": "Sets the operating system for the runtime environment."
+                        },
+                        "base": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array",
+                          "description": "Sets the base technology for the build environment. If you need to install more technologies to the build environment, set multiple values as a yaml array."
+                        },
+                        "prepareCommands": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array",
+                          "description": "Customises the build environment by installing additional dependencies or tools to the base build environment."
+                        },
+                        "buildCommands": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array",
+                          "description": "Defines build commands. Zerops triggers each command in the defined order in a dedicated build container."
+                        },
+                        "deploy": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "deployFiles": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array",
+                          "description": "Selects which files or folders will be deployed after the build has successfully finished. To filter out specific files or folders, use .deployignore file."
+                        },
+                        "cache": {
+                          "properties": {},
+                          "additionalProperties": false,
+                          "type": "object",
+                          "description": "Defines which files or folders will be cached for the next build."
+                        },
+                        "addToRunPrepare": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array",
+                          "description": "Defines what files or folders will be copied from the build container to the prepare runtime container. The prepare runtime container is used to customize your runtime environment."
+                        },
+                        "envVariables": {
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "type": "object",
+                          "description": "Defines the environment variables for the build environment."
+                        }
+                      },
+                      "additionalProperties": false,
+                      "type": "object",
+                      "required": [
+                        "deployFiles"
+                      ],
+                      "description": "Build pipeline configuration."
+                    },
+                    "deploy": {
+                      "properties": {
+                        "readinessCheck": {
+                          "properties": {
+                            "httpGet": {
+                              "properties": {
+                                "scheme": {
+                                  "type": "string",
+                                  "description": "The readiness check is triggered from inside of your runtime container so no https is required. If your application requires a https request, set scheme: https"
+                                },
+                                "host": {
+                                  "type": "string",
+                                  "description": "The readiness check is triggered from inside of your runtime container so it always uses the localhost (127.0.0.1). If you need to add a host to the request header, specify it in the host attribute."
+                                },
+                                "port": {
+                                  "type": "integer",
+                                  "description": "Defines the port of the HTTP GET request."
+                                },
+                                "path": {
+                                  "type": "string",
+                                  "description": "Defines the URL path of the HTTP GET request."
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": [
+                                "port",
+                                "path"
+                              ],
+                              "description": "Configures the readiness check to request a local URL using a http GET method."
+                            },
+                            "exec": {
+                              "properties": {
+                                "command": {
+                                  "type": "string",
+                                  "description": "Defines a local command to be run. The command has access to the same environment variables. A single string is required. If you need to run multiple commands create a shell script or, use a multiline format as in the example below."
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": [
+                                "command"
+                              ],
+                              "description": "Configures the readiness check to run a local command."
+                            },
+                            "failureTimeout": {
+                              "type": "integer",
+                              "description": "Time until container is marked as failed."
+                            },
+                            "retryPeriod": {
+                              "type": "integer",
+                              "description": "Time interval between readiness check attempts."
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "description": "Defines a readiness check. Requires either httpGet object or exec object."
+                        },
+                        "temporaryShutdown": {
+                          "type": "boolean"
+                        }
+                      },
+                      "additionalProperties": false,
+                      "type": "object",
+                      "description": "Deploy configuration."
+                    },
+                    "run": {
+                      "properties": {
+                        "initCommands": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array",
+                          "description": "Defines one or more commands to be run each time a new runtime container is started or a container is restarted."
+                        },
+                        "prepareCommands": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array",
+                          "description": "Customises the runtime environment by installing additional dependencies or tools to the base runtime environment."
+                        },
+                        "os": {
+                          "type": "string",
+                          "description": "Deprecated - use base attribute. Sets the operating system for the runtime environment."
+                        },
+                        "base": {
+                          "type": "string",
+                          "description": "Sets the base technology for the runtime environment. If you don't specify the run.base attribute, Zerops keeps the current version for your runtime."
+                        },
+                        "start": {
+                          "type": "string",
+                          "description": "Defines the start command for your application."
+                        },
+                        "documentRoot": {
+                          "type": "string",
+                          "description": "Customizes the folder that will be used as the root of the publicly accessible web server content. This attribute is available only for runtimes with webservers."
+                        },
+                        "siteConfigPath": {
+                          "type": "string",
+                          "description": "Sets the custom webserver configuration. This attribute is available only for runtimes with webservers."
+                        },
+                        "envReplace": {
+                          "properties": {
+                            "target": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            },
+                            "delimiter": {
+                              "items": {
+                                "type": "string"
+                              },
+                              "type": "array"
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": [
+                            "target",
+                            "delimiter"
+                          ]
+                        },
+                        "healthCheck": {
+                          "properties": {
+                            "httpGet": {
+                              "properties": {
+                                "scheme": {
+                                  "type": "string",
+                                  "description": "The readiness check is triggered from inside of your runtime container so no https is required. If your application requires a https request, set scheme: https"
+                                },
+                                "host": {
+                                  "type": "string",
+                                  "description": "The readiness check is triggered from inside of your runtime container so it always uses the localhost (127.0.0.1). If you need to add a host to the request header, specify it in the host attribute."
+                                },
+                                "port": {
+                                  "type": "integer",
+                                  "description": "Defines the port of the HTTP GET request."
+                                },
+                                "path": {
+                                  "type": "string",
+                                  "description": "Defines the URL path of the HTTP GET request."
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": [
+                                "port",
+                                "path"
+                              ],
+                              "description": "Configures the health check to request a local URL using a http GET method."
+                            },
+                            "exec": {
+                              "properties": {
+                                "command": {
+                                  "type": "string",
+                                  "description": "Defines a local command to be run. The command has access to the same environment variables. A single string is required. If you need to run multiple commands create a shell script or, use a multiline format as in the example below."
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object",
+                              "required": [
+                                "command"
+                              ],
+                              "description": "Configures the health check to run a local command."
+                            },
+                            "failureTimeout": {
+                              "type": "integer",
+                              "description": "Time until container fails after consecutive health check failures (reset by success)."
+                            },
+                            "disconnectTimeout": {
+                              "type": "integer",
+                              "description": "Time until container is disconnected and becomes publicly unavailable."
+                            },
+                            "recoveryTimeout": {
+                              "type": "integer",
+                              "description": "Time until container is connected and becomes publicly available."
+                            },
+                            "execPeriod": {
+                              "type": "integer",
+                              "description": "Time interval between health check attempts."
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "description": "Defines a health check."
+                        },
+                        "routing": {
+                          "properties": {
+                            "root": {
+                              "type": "string"
+                            },
+                            "cors": {
+                              "type": "string",
+                              "description": "Content of default Access-Control headers (Allow-Origin, Allow-Methods, Allow-Headers and Expose-Headers), e.g. \"'*' always\""
+                            },
+                            "redirects": {
+                              "items": {
+                                "properties": {
+                                  "from": {
+                                    "type": "string",
+                                    "description": "Relative or an absolute (defined by with http://) path to be matched against request location. May contain * at the end for regex."
+                                  },
+                                  "to": {
+                                    "type": "string",
+                                    "description": "Relative or an absolute (defined by with http://) path to redirect user to."
+                                  },
+                                  "status": {
+                                    "type": "integer",
+                                    "description": "Which HTTP status code to use for the redirect. If not set, and To and From are relative, an internal/masked redirect will be used."
+                                  },
+                                  "preservePath": {
+                                    "type": "boolean",
+                                    "description": "Whether part of the path after From should be preserved. Used to forward contents of one directory to another in non-masked redirects."
+                                  },
+                                  "preserveQuery": {
+                                    "type": "boolean",
+                                    "description": "Whether query parameters should be preserved. Used in non-masked redirects."
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "type": "object",
+                                "required": [
+                                  "from",
+                                  "to"
+                                ]
+                              },
+                              "type": "array"
+                            },
+                            "headers": {
+                              "items": {
+                                "properties": {
+                                  "for": {
+                                    "type": "string",
+                                    "description": "Relative path to be matched against request location. May contain * at the end for prefix-based match."
+                                  },
+                                  "values": {
+                                    "additionalProperties": {
+                                      "type": "string"
+                                    },
+                                    "type": "object",
+                                    "description": "Header name as Key and raw content as Value, e.g. \"Access-Control-Allow-Origin\": \"'*' always\""
+                                  }
+                                },
+                                "additionalProperties": false,
+                                "type": "object",
+                                "required": [
+                                  "for",
+                                  "values"
+                                ]
+                              },
+                              "type": "array"
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object"
+                        },
+                        "ports": {
+                          "items": {
+                            "properties": {
+                              "protocol": {
+                                "type": "string",
+                                "description": "Defines the protocol. Allowed values are TCP or UDP. Default value is TCP."
+                              },
+                              "port": {
+                                "type": "integer",
+                                "description": "Defines the port number. You can set any port number between 10 and 65435. Ports outside this interval are reserved for internal Zerops systems."
+                              },
+                              "description": {
+                                "type": "string"
+                              },
+                              "httpSupport": {
+                                "type": "boolean",
+                                "description": "Set to true if a web server is running on the port. Zerops uses this information for the configuration of public access. True is available only in combination with the TCP protocol. Default value is false."
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": [
+                              "port"
+                            ]
+                          },
+                          "type": "array",
+                          "description": "Specifies one or more internal ports on which your application will listen."
+                        },
+                        "envVariables": {
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "type": "object",
+                          "description": "Defines the environment variables for the runtime environment."
+                        },
+                        "startCommands": {
+                          "items": {
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "command": {
+                                "type": "string"
+                              },
+                              "workingDir": {
+                                "type": "string"
+                              },
+                              "initCommands": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array",
+                                "description": "Defines one or more commands to be run each time a new runtime container is started or a container is restarted."
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": [
+                              "command"
+                            ]
+                          },
+                          "type": "array",
+                          "description": "Defines the start commands for the runtime environment."
+                        },
+                        "crontab": {
+                          "items": {
+                            "properties": {
+                              "timing": {
+                                "type": "string",
+                                "description": "Defines when the cron job runs in standard cron format."
+                              },
+                              "command": {
+                                "type": "string",
+                                "description": "Specifies the shell command to run at the scheduled time."
+                              },
+                              "workingDir": {
+                                "type": "string",
+                                "description": "The directory where the command will be executed (default: /var/www)"
+                              },
+                              "allContainers": {
+                                "type": "boolean",
+                                "description": "If set to true, the job runs on all containers; otherwise, it runs on a single container (default: false)"
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": [
+                              "timing",
+                              "command",
+                              "allContainers"
+                            ]
+                          },
+                          "type": "array",
+                          "description": "A list of cron jobs with their respective schedule (timing), the command to run (command), and additional options like allContainers and workingDir."
+                        }
+                      },
+                      "additionalProperties": false,
+                      "type": "object",
+                      "description": "Runtime configuration."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "setup"
+                  ]
+                },
+                "type": "array",
+                "description": "The top-level element is always zerops."
+              }
+            },
+            "additionalProperties": false,
+            "type": "object",
+            "required": [
+              "zerops"
+            ]
+          },
+          "override": {
+            "type": "boolean",
+            "description": "Override existing service."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "hostname",
+          "type"
+        ]
+      },
+      "type": "array"
+    }
+  },
+  "additionalProperties": false,
+  "type": "object"
 }

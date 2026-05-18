@@ -17,6 +17,12 @@ import (
 // Compile-time interface check.
 var _ Client = (*ZeropsClient)(nil)
 
+// defaultAPIHost is the production Zerops REST endpoint used when callers
+// don't supply an explicit host. Single source of truth for the empty-host
+// fallback — every constructor that wraps NewZeropsClient inherits it
+// rather than duplicating the constant.
+const defaultAPIHost = "api.app-prg1.zerops.io"
+
 // ZeropsClient implements the Client interface using the zerops-go SDK.
 type ZeropsClient struct {
 	handler  sdk.Handler
@@ -25,14 +31,11 @@ type ZeropsClient struct {
 }
 
 // NewZeropsClient creates a new ZeropsClient authenticated with the given token.
+// Empty apiHost falls back to defaultAPIHost — without this the SDK endpoint
+// becomes the literal "https://" (no host), and every subsequent request fails
+// with `http: no Host in request URL`.
 func NewZeropsClient(token, apiHost string) (*ZeropsClient, error) {
-	endpoint := apiHost
-	if !strings.HasPrefix(endpoint, "http") {
-		endpoint = "https://" + endpoint
-	}
-	if !strings.HasSuffix(endpoint, "/") {
-		endpoint += "/"
-	}
+	endpoint := resolveEndpoint(apiHost)
 
 	httpClient := &http.Client{Timeout: DefaultAPITimeout}
 	config := sdkBase.DefaultConfig(sdkBase.WithCustomEndpoint(endpoint))
@@ -40,6 +43,25 @@ func NewZeropsClient(token, apiHost string) (*ZeropsClient, error) {
 	handler = sdk.AuthorizeSdk(handler, token)
 
 	return &ZeropsClient{handler: handler}, nil
+}
+
+// resolveEndpoint normalizes the apiHost argument into the SDK endpoint
+// URL. Empty input falls back to defaultAPIHost; missing scheme gets
+// "https://"; missing trailing slash gets one appended. Extracted so the
+// empty-host fallback can be pinned in unit tests without standing up a
+// mock HTTP server.
+func resolveEndpoint(apiHost string) string {
+	endpoint := apiHost
+	if endpoint == "" {
+		endpoint = defaultAPIHost
+	}
+	if !strings.HasPrefix(endpoint, "http") {
+		endpoint = "https://" + endpoint
+	}
+	if !strings.HasSuffix(endpoint, "/") {
+		endpoint += "/"
+	}
+	return endpoint
 }
 
 // getClientID returns the cached clientId, retrying on transient errors.

@@ -51,6 +51,7 @@ internal/knowledge/decisions/*.md
 # Go
 tmp/
 vendor/
+_scratch/
 
 # Eval results (logs, jsonl, extracted json)
 eval/results/*

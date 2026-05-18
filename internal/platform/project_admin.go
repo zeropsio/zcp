@@ -146,11 +146,6 @@ var ErrNoClientResolved = errors.New("project admin: launch-window key resolves 
 // ErrClientClosed is returned by ProjectAdminClient methods after Close().
 var ErrClientClosed = errors.New("project admin: client closed")
 
-// defaultAPIHostForAdmin is used when no apiHost is supplied. Mirrors the
-// existing defaultAPIHost in the apitest harness; kept local so platform
-// stays self-contained.
-const defaultAPIHostForAdmin = "api.app-prg1.zerops.io"
-
 // NewProjectAdminClient constructs a ProjectAdminClient from a launch-window
 // key. The key is held internally by the wrapped ZeropsClient (inside its
 // SDK handler's authenticated transport); this struct never copies it into
@@ -163,13 +158,11 @@ const defaultAPIHostForAdmin = "api.app-prg1.zerops.io"
 //   - Discovers clientID from the response — needed for CreateAndImportProject.
 //   - Returns ErrNoClientResolved if the key authenticates but lacks org access.
 //
-// Caller MUST defer Close() on the returned client.
+// Caller MUST defer Close() on the returned client. Empty apiHost falls
+// back to platform.defaultAPIHost via the underlying NewZeropsClient.
 func NewProjectAdminClient(launchKey, apiHost string) (ProjectAdminClient, error) {
 	if launchKey == "" {
 		return nil, ErrEmptyLaunchKey
-	}
-	if apiHost == "" {
-		apiHost = defaultAPIHostForAdmin
 	}
 	z, err := NewZeropsClient(launchKey, apiHost)
 	if err != nil {

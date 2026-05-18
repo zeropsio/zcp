@@ -190,7 +190,7 @@ func handleLaunchProduction(
 	// blockers; nothing here changes that — current still calls it.
 	var current ops.SourceSnapshot
 	var haveCurrent bool
-	if source, sourceBlocker := readAndValidateSourceState(ctx, client, sshDeployer, rt, corpus, input, projectID, stateDir, launchID); sourceBlocker == nil {
+	if source, sourceBlocker := readAndValidateSourceState(ctx, client, sshDeployer, rt, corpus, input, projectID, stateDir, launchID, false); sourceBlocker == nil {
 		if bundle, bundleErr := ops.BuildLaunchBundle(ops.LaunchBundleInputs{
 			SourceProjectID:   projectID,
 			TargetProjectName: input.ProductionProjectName,
@@ -379,8 +379,11 @@ func executeLaunchMutation(
 	// Source-state validation + read. Returns a blocker response when
 	// any check fails (target service missing, zerops.yaml missing,
 	// setup: prod block missing, git remote missing). Otherwise returns
-	// the fully-populated source state for bundle composition.
-	source, blocker := readAndValidateSourceState(ctx, client, sshDeployer, rt, corpus, input, sourceProjectID, stateDir, launchID)
+	// the fully-populated source state for bundle composition. This is
+	// the new-project mutation path's hard-read — every failure is a
+	// real publish attempt and SHOULD persist a publish-rejected audit
+	// entry (writeAudit=true).
+	source, blocker := readAndValidateSourceState(ctx, client, sshDeployer, rt, corpus, input, sourceProjectID, stateDir, launchID, true)
 	if blocker != nil {
 		return blocker, nil, nil
 	}
@@ -619,6 +622,15 @@ func isProcessSuccess(proc *platform.Process) bool {
 // Pulled out of executeLaunchMutation to keep that function under
 // maintainability-index threshold; the call sites are otherwise
 // straight-line.
+//
+// writeAudit selects whether failure paths persist a `publish-rejected`
+// entry to launch-audit-log.json. Mutation callers (executeLaunchMutation,
+// executeExistingProjectMutation) pass true — every refusal is a real
+// publish attempt that operators want logged. The ready-to-launch
+// baseline probe (workflow_launch_production.go:193) passes false; it
+// runs on every poll regardless of publish intent, and persisting an
+// audit entry per poll would spam the log with refusals the user never
+// authored (bug_008).
 func readAndValidateSourceState(
 	ctx context.Context,
 	client platform.Client,
@@ -629,8 +641,12 @@ func readAndValidateSourceState(
 	sourceProjectID string,
 	stateDir string,
 	launchID string,
+	writeAudit bool,
 ) (*LaunchSourceState, *mcp.CallToolResult) {
 	auditFail := func(reason string) {
+		if !writeAudit {
+			return
+		}
 		_ = appendAuditLog(stateDir, launchAuditEntry{
 			LaunchID:          launchID,
 			Action:            "publish-rejected",

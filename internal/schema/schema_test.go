@@ -136,8 +136,15 @@ func TestParseImportYmlSchema_Enums(t *testing.T) {
 		t.Fatalf("parse: %v", err)
 	}
 
-	if !slices.Contains(s.Modes, "HA") || !slices.Contains(s.Modes, "NON_HA") {
-		t.Errorf("expected modes [HA, NON_HA], got %v", s.Modes)
+	// services[].mode was deprecated as an enum field in the May 2026
+	// schema refresh — operation mode is now derived from the
+	// service-type version name (`postgresql:ha@18` vs
+	// `postgresql:single@18`). Modes is allowed to be empty; legacy
+	// values (HA, NON_HA) are still recognized if the schema retains them.
+	for _, m := range s.Modes {
+		if m != "HA" && m != "NON_HA" {
+			t.Errorf("unexpected mode %q in Modes; legacy enum should yield HA/NON_HA only", m)
+		}
 	}
 	if !slices.Contains(s.CorePackages, "LIGHT") || !slices.Contains(s.CorePackages, "SERIOUS") {
 		t.Errorf("expected core packages [LIGHT, SERIOUS], got %v", s.CorePackages)

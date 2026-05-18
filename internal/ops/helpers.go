@@ -190,8 +190,17 @@ func envVarsToMaps[T platform.EnvAccessor](envs []T, includeValues bool) []map[s
 // Kafka are intentionally NOT covered — ClickHouse has multiple
 // per-protocol ports and Kafka exposes no connectionString at all.
 //
+// The warning text uses `hostname` as the reference prefix so the
+// worked example resolves against the user's actual service name (e.g.
+// `${appdb_user}` when the service is hostnamed `appdb`). A canonical
+// `db` hostname produces the `${db_*}` shape documented in
+// develop-env-var-model.md; any other hostname propagates to the
+// placeholders. The previous implementation hardcoded `db` regardless
+// of hostname — services named `appdb` / `customers_pg` / `analytics_pg`
+// got a misleading template that wouldn't resolve at deploy time.
+//
 // Pinning: TestAnnotateConnectionStringShape_* in helpers_test.go.
-func annotateConnectionStringShape(envs []map[string]any, serviceType string) {
+func annotateConnectionStringShape(envs []map[string]any, serviceType, hostname string) {
 	if !dbServiceTypeWithBareConnectionString(serviceType) {
 		return
 	}
@@ -201,7 +210,7 @@ func annotateConnectionStringShape(envs []map[string]any, serviceType string) {
 			continue
 		}
 		m["completenessFlags"] = map[string]any{"includesDbName": false}
-		m["warning"] = "connectionString omits /${dbName}; for Prisma / Drizzle / sqlx / SQLAlchemy / Sequelize compose explicitly: protocol://${" + serviceHostPrefix(serviceType) + "_user}:${" + serviceHostPrefix(serviceType) + "_password}@${" + serviceHostPrefix(serviceType) + "_hostname}:${" + serviceHostPrefix(serviceType) + "_port}/${" + serviceHostPrefix(serviceType) + "_dbName}"
+		m["warning"] = "connectionString omits /${dbName}; for Prisma / Drizzle / sqlx / SQLAlchemy / Sequelize compose explicitly: protocol://${" + hostname + "_user}:${" + hostname + "_password}@${" + hostname + "_hostname}:${" + hostname + "_port}/${" + hostname + "_dbName}"
 	}
 }
 
@@ -215,24 +224,6 @@ func dbServiceTypeWithBareConnectionString(serviceType string) bool {
 		return true
 	}
 	return false
-}
-
-// serviceHostPrefix returns the canonical hostname prefix used in
-// cross-service references (e.g. "db", "mysql"). Callers wire it into
-// the worked-URL warning. For ZCP-managed services the convention is
-// to name the service "db" / "mariadb" / etc.; ServiceInfo doesn't
-// carry the actual user-chosen hostname here, so we fall back to the
-// runtime-base prefix to keep the example deterministic. Callers that
-// know the live hostname can post-fix the warning string downstream.
-func serviceHostPrefix(serviceType string) string {
-	base, _, _ := strings.Cut(serviceType, "@")
-	switch base {
-	case "postgresql":
-		return "db"
-	case "mariadb":
-		return "db"
-	}
-	return base
 }
 
 // findEnvIDByKey finds an env var ID by key name. Generic over

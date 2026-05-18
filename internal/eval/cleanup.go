@@ -166,6 +166,18 @@ func CleanupProject(ctx context.Context, client platform.Client, projectID, work
 		return fmt.Errorf("cleanup remove service metas: %w", err)
 	}
 
+	// 5b. Remove launch-production state. generateLaunchID is deterministic
+	// over (sourceProjectID, targetProjectName), so re-running the same
+	// scenario after a prior launch lands on the same state file and the
+	// idempotent-resume branch (workflow_launch_production.go:166) short-
+	// circuits the publish path — the agent sees "launched" against a
+	// targetProjectID that the cleanup never actually re-created. Wipe the
+	// state directory at scenario boundaries so each run starts from a
+	// blank slate, mirroring the services/ removal one step up.
+	if err := os.RemoveAll(filepath.Join(stateDir, "launch-production")); err != nil {
+		return fmt.Errorf("cleanup remove launch-production state: %w", err)
+	}
+
 	// 6. Explicit CLAUDE.md removal + post-verify. cleanWorkDir already
 	// removes non-protected entries (and CLAUDE.md is not protected), but
 	// REFLOG persistence is the highest-leverage cross-scenario contamination

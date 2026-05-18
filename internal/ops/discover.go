@@ -250,7 +250,7 @@ func attachEnvs(ctx context.Context, client platform.Client, info *ServiceInfo, 
 		return nil
 	}
 	info.Envs = envVarsToMaps(envs, includeValues)
-	annotateConnectionStringShape(info.Envs, info.Type)
+	annotateConnectionStringShape(info.Envs, info.Type, info.Hostname)
 	return envs
 }
 

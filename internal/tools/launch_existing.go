@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -188,8 +190,10 @@ func executeExistingProjectMutation(
 
 	// 3. Read + validate source state, compute the bundle (carries
 	// SourceSnapshot for P-LP-3 compare). Source reads use the
-	// source-project client (sourceClient), not the target client.
-	source, blocker := readAndValidateSourceState(ctx, sourceClient, sshDeployer, rt, corpus, input, sourceProjectID, stateDir, launchID)
+	// source-project client (sourceClient), not the target client. This
+	// is the existing-project mutation path's hard-read — failures land
+	// in launch-audit-log.json (writeAudit=true).
+	source, blocker := readAndValidateSourceState(ctx, sourceClient, sshDeployer, rt, corpus, input, sourceProjectID, stateDir, launchID, true)
 	if blocker != nil {
 		return blocker, nil, nil
 	}
@@ -199,7 +203,7 @@ func executeExistingProjectMutation(
 		TargetProjectName: input.ProductionProjectName,
 		TargetHostname:    input.TargetService,
 		ServiceType:       source.ServiceType,
-		SetupName:         "prod",
+		SetupName:         effectiveProdSetupName(input),
 		RepoURL:           source.RepoURL,
 		ZeropsYAMLBody:    source.ZeropsYAMLBody,
 		GitCommitSHA:      source.GitCommitSHA,
@@ -283,23 +287,17 @@ func executeExistingProjectMutation(
 			fmt.Sprintf("write launch state: %v (proceeding; resume after restart may not work)", writeErr))
 	}
 
-	// 5. Per-env mutation. Composer-supplied envs only — Drop-decision
-	// envs (envclass SYSTEM) never reach launchBundleProjectEnvs.
+	// 5. Per-env mutation — apply classifications to composer envs and
+	// drive CreateProjectEnv per emission. Extracted to keep this
+	// function under the maintainability-index ceiling.
 	composerEnvs := launchBundleProjectEnvs(sourceEnvs)
-	for _, env := range composerEnvs {
-		sensitive := classificationsSensitive(classifications, env.Key)
-		if _, envErr := target.CreateProjectEnv(ctx, input.ExistingProjectID, env.Key, env.Value, sensitive); envErr != nil {
-			_ = appendAuditLog(stateDir, launchAuditEntry{
-				LaunchID:          launchID,
-				Action:            "create-project-env-failed",
-				SourceProjectID:   sourceProjectID,
-				TargetProjectName: input.ProductionProjectName,
-				Result:            "failure",
-				ErrorMessage:      fmt.Sprintf("CreateProjectEnv %s: %v", env.Key, envErr),
-			})
-			return convertError(fmt.Errorf("existing-project env mutation %s: %w", env.Key, envErr), WithRecoveryStatus()), nil, nil
-		}
+	emitWarnings, mutationResp := mutateProjectEnvs(
+		ctx, target, stateDir, launchID, sourceProjectID, input, composerEnvs, classifications,
+	)
+	if mutationResp != nil {
+		return mutationResp, nil, nil
 	}
+	launchBundle.Warnings = append(launchBundle.Warnings, emitWarnings...)
 
 	// 6. Services-only import. VariantLaunchExisting omits the project
 	// block; the API rejects yaml with project: blocks on this endpoint.
@@ -356,17 +354,151 @@ func executeExistingProjectMutation(
 	return launchLaunchedResponse(corpus, state), nil, nil
 }
 
-// classificationsSensitive returns whether a classified env should be
-// marked Sensitive on CreateProjectEnv. Conservative default: any
-// classification other than plain-config is sensitive (auto-secret,
-// external-secret, infrastructure). Plain-config is treated as
-// non-sensitive (the user opted into the "literal copy" bucket).
-func classificationsSensitive(classifications map[string]topology.SecretClassification, key string) bool {
-	c, ok := classifications[key]
-	if !ok {
-		return false
+// projectEnvEmission is one (Key, Value, Sensitive) tuple that the
+// existing-project mutation path feeds to CreateProjectEnv. Output of
+// applyClassificationToProjectEnvs; intentionally distinct from
+// platform.ProjectEnvVar so the per-env-API path doesn't accidentally
+// carry the source-side `Content` field through unmodified.
+type projectEnvEmission struct {
+	Key       string
+	Value     string
+	Sensitive bool
+}
+
+// mutateProjectEnvs runs step 5 of executeExistingProjectMutation:
+// apply classifications to the composer envs, then drive
+// CreateProjectEnv for each emission. Returns (warnings, nil) on
+// success and (nil, response) on any failure — caller surfaces the
+// response to the MCP boundary and aborts. Extracted from
+// executeExistingProjectMutation so that function stays under the
+// maintainability-index ceiling; mirrors mutate* helper shapes
+// elsewhere in this package.
+//
+// applyClassificationToProjectEnvs handles the bucket semantics
+// (Infrastructure → drop, AutoSecret → fresh random, ExternalSecret →
+// REPLACE_ME, PlainConfig → verbatim). The transform is necessary
+// because CreateProjectEnv bypasses the platform preprocessor — the
+// new-project path's `<@generateRandomString(<32>)>` directive in
+// project.envVariables would land here as a literal string. Without
+// the transform, dev/stage secrets leaked verbatim to prod.
+func mutateProjectEnvs(
+	ctx context.Context,
+	target platform.Client,
+	stateDir string,
+	launchID string,
+	sourceProjectID string,
+	input WorkflowInput,
+	composerEnvs []bundle.ProjectEnvVar,
+	classifications map[string]topology.SecretClassification,
+) ([]string, *mcp.CallToolResult) {
+	emissions, emissionWarnings, applyErr := applyClassificationToProjectEnvs(composerEnvs, classifications)
+	if applyErr != nil {
+		_ = appendAuditLog(stateDir, launchAuditEntry{
+			LaunchID:          launchID,
+			Action:            "apply-classification-failed",
+			SourceProjectID:   sourceProjectID,
+			TargetProjectName: input.ProductionProjectName,
+			Result:            "failure",
+			ErrorMessage:      applyErr.Error(),
+		})
+		return nil, convertError(fmt.Errorf("existing-project env classification: %w", applyErr), WithRecoveryStatus())
 	}
-	return c != topology.SecretClassPlainConfig
+	for _, e := range emissions {
+		if _, envErr := target.CreateProjectEnv(ctx, input.ExistingProjectID, e.Key, e.Value, e.Sensitive); envErr != nil {
+			_ = appendAuditLog(stateDir, launchAuditEntry{
+				LaunchID:          launchID,
+				Action:            "create-project-env-failed",
+				SourceProjectID:   sourceProjectID,
+				TargetProjectName: input.ProductionProjectName,
+				Result:            "failure",
+				ErrorMessage:      fmt.Sprintf("CreateProjectEnv %s: %v", e.Key, envErr),
+			})
+			return nil, convertError(fmt.Errorf("existing-project env mutation %s: %w", e.Key, envErr), WithRecoveryStatus())
+		}
+	}
+	return emissionWarnings, nil
+}
+
+// applyClassificationToProjectEnvs walks composer-supplied envs and
+// produces the CreateProjectEnv-shaped emissions for the existing-
+// project mutation path. Mirrors composeProjectEnvVariables (which
+// emits preprocessor directives into the project.envVariables yaml
+// block for the new-project path) but with one critical difference:
+// CreateProjectEnv bypasses the platform preprocessor, so the
+// auto-secret directive `<@generateRandomString(<32>)>` would land as
+// a literal string. Auto-secret values are therefore generated in-tool
+// from crypto/rand.
+//
+// Bucket semantics:
+//   - Infrastructure → entry dropped (managed services regenerate at
+//     re-import; the ${db_*} ref still resolves against the target's
+//     own managed service).
+//   - AutoSecret     → fresh 32-char base64-url-safe random; entry
+//     emitted with Sensitive=true.
+//   - ExternalSecret → bundle.ExternalSecretPlaceholder literal;
+//     Sensitive=true; warning instructs the operator to replace in
+//     dashboard before runtime depends on it.
+//   - PlainConfig    → source value verbatim; Sensitive=false (the
+//     "literal copy" bucket is opt-in non-sensitive by design).
+//   - Unset / unknown → source value verbatim + warning.
+//
+// Returns the emissions, the per-env warnings, and an error if random
+// generation itself fails (crypto/rand exhaustion — practically
+// unreachable, but propagated rather than swallowed).
+func applyClassificationToProjectEnvs(
+	envs []bundle.ProjectEnvVar,
+	classifications map[string]topology.SecretClassification,
+) ([]projectEnvEmission, []string, error) {
+	out := make([]projectEnvEmission, 0, len(envs))
+	var warnings []string
+	for _, env := range envs {
+		bucket := classifications[env.Key]
+		switch bucket {
+		case topology.SecretClassInfrastructure:
+			continue
+		case topology.SecretClassAutoSecret:
+			v, err := generateAutoSecretValue()
+			if err != nil {
+				return nil, warnings, fmt.Errorf("env %s: %w", env.Key, err)
+			}
+			out = append(out, projectEnvEmission{Key: env.Key, Value: v, Sensitive: true})
+		case topology.SecretClassExternalSecret:
+			out = append(out, projectEnvEmission{
+				Key:       env.Key,
+				Value:     bundle.ExternalSecretPlaceholder,
+				Sensitive: true,
+			})
+			warnings = append(warnings, fmt.Sprintf(
+				"env %q: external-secret bucket — emitted as %q on the target; replace in Zerops dashboard (or via `zerops_env action=set`) before the runtime depends on it",
+				env.Key, bundle.ExternalSecretPlaceholder))
+		case topology.SecretClassPlainConfig:
+			out = append(out, projectEnvEmission{Key: env.Key, Value: env.Value, Sensitive: false})
+		case topology.SecretClassUnset:
+			out = append(out, projectEnvEmission{Key: env.Key, Value: env.Value, Sensitive: false})
+			warnings = append(warnings, fmt.Sprintf(
+				"env %q: not classified — emitted as plain-config; classify before publish", env.Key))
+		default:
+			out = append(out, projectEnvEmission{Key: env.Key, Value: env.Value, Sensitive: false})
+			warnings = append(warnings, fmt.Sprintf(
+				"env %q: unknown classification %q — emitted as plain-config", env.Key, bucket))
+		}
+	}
+	return out, warnings, nil
+}
+
+// generateAutoSecretValue returns a fresh cryptographically random
+// 32-character secret using base64 URL-safe encoding without padding
+// (24 random bytes → 32 chars). Matches the platform preprocessor's
+// generateRandomString(<32>) visible length so AutoSecret values look
+// the same regardless of whether the new-project (preprocessor) or
+// existing-project (CreateProjectEnv) mutation path produced them.
+func generateAutoSecretValue() (string, error) {
+	const rawBytes = 24
+	b := make([]byte, rawBytes)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("generate auto-secret: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 // ensureNoExistingProdTokenInState is a defensive helper that traces

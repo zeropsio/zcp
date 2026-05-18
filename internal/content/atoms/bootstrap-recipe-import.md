@@ -27,9 +27,9 @@ string, not a pre-rendered value. Repeat for each project env var.
 Some recipes carry framework-specific notes about a particular key —
 e.g. which prefix format the framework will or won't accept, or whether
 a value must be regenerated post-deploy. Check the recipe's gotchas via
-`zerops_knowledge action="recipe" slug="<slug>"` BEFORE pre-setting
-project env vars; the gotcha section names the key and the exact value
-shape that works for the framework.
+`zerops_knowledge recipe="<slug>"` BEFORE pre-setting project env vars;
+the gotcha section names the key and the exact value shape that works
+for the framework.
 
 2. **Import services.**
 

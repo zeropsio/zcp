@@ -157,6 +157,61 @@ func TestLaunchState_NoLaunchKeyFieldExists(t *testing.T) {
 	}
 }
 
+// TestReadyToLaunchSoftRead_NoAuditEntries pins bug_008: the active-
+// compare baseline read at ready-to-launch is a probe — it runs on
+// every poll BEFORE the user commits to publishing — so its failure
+// paths MUST NOT persist publish-rejected entries to the audit log.
+// Mutation callers (executeLaunchMutation, executeExistingProjectMutation)
+// continue to write the audit log on hard-read failures; only the
+// soft-read branch (workflow_launch_production.go:193) suppresses.
+//
+// Pre-fix: every poll against a source missing `setup: prod` appended
+// a publish-rejected entry to launch-audit-log.json, polluting forensic
+// reads with refusals the user never authored.
+func TestReadyToLaunchSoftRead_NoAuditEntries(t *testing.T) {
+	stateDir := t.TempDir()
+
+	// Source zerops.yaml lacks a `setup: prod` block — the active-compare
+	// gate's hasSetupNamed check returns false. Pre-fix this lands in
+	// auditFail and writes a publish-rejected entry; post-fix it returns
+	// the blocker without persisting state.
+	sshNoProdBlock := &stubSSHDeployer{
+		responses: map[string][]byte{
+			"git rev-parse HEAD": []byte("frozen-baseline-sha\n"),
+			"git remote get-url": []byte("https://github.com/example/myapp\n"),
+			"/var/www/zerops.yaml": []byte("zerops:\n" +
+				"  - setup: dev\n" +
+				"    build:\n      base: nodejs@22\n" +
+				"    run:\n      base: nodejs@22\n      start: node dev.js\n"),
+		},
+	}
+
+	sourceClient := pLP3MockClient()
+	// pLP3CompleteInput has no LaunchKey + no ExistingProjectID — the
+	// active-compare baseline path runs, publishing=false.
+	input := pLP3CompleteInput()
+
+	_, _, err := handleLaunchProduction(
+		context.Background(),
+		"source-project-id",
+		sourceClient,
+		input,
+		stateDir,
+		pLP3ContainerRuntime(),
+		sshNoProdBlock,
+	)
+	if err != nil {
+		t.Fatalf("handleLaunchProduction: %v", err)
+	}
+
+	auditPath := filepath.Join(stateDir, launchStateDir, launchAuditLogName)
+	if _, statErr := os.Stat(auditPath); statErr == nil {
+		body, _ := os.ReadFile(auditPath)
+		t.Errorf("ready-to-launch soft-read probe MUST NOT write audit entries; found %d bytes:\n%s",
+			len(body), string(body))
+	}
+}
+
 // TestAuditLog_AppendOnlyMode verifies audit log writes append, never
 // truncate. P-LP-6.
 func TestAuditLog_AppendOnlyMode(t *testing.T) {

@@ -528,33 +528,47 @@ func TestAnnotateConnectionStringShape(t *testing.T) {
 	tests := []struct {
 		name             string
 		serviceType      string
+		hostname         string
 		envs             []map[string]any
 		wantAnnotated    bool
 		wantWarnContains string
 	}{
 		{
-			name:        "postgresql_annotates_connectionString",
+			name:        "postgresql_db_hostname_canonical_prefix",
 			serviceType: "postgresql@18",
+			hostname:    "db",
 			envs: []map[string]any{
 				{"key": "hostname"},
 				{"key": "connectionString", "isReference": true},
 				{"key": "dbName"},
 			},
 			wantAnnotated:    true,
-			wantWarnContains: "compose explicitly",
+			wantWarnContains: "${db_user}",
 		},
 		{
-			name:        "mariadb_annotates_connectionString",
-			serviceType: "mariadb@10.6",
+			name:        "postgresql_descriptive_hostname_uses_actual_name",
+			serviceType: "postgresql@18",
+			hostname:    "appdb",
 			envs: []map[string]any{
 				{"key": "connectionString", "isReference": true},
 			},
 			wantAnnotated:    true,
-			wantWarnContains: "compose explicitly",
+			wantWarnContains: "${appdb_user}",
+		},
+		{
+			name:        "mariadb_multi_db_hostname_uses_actual_name",
+			serviceType: "mariadb@10.6",
+			hostname:    "customers_pg",
+			envs: []map[string]any{
+				{"key": "connectionString", "isReference": true},
+			},
+			wantAnnotated:    true,
+			wantWarnContains: "${customers_pg_hostname}",
 		},
 		{
 			name:        "valkey_no_annotation",
 			serviceType: "valkey@7.2",
+			hostname:    "cache",
 			envs: []map[string]any{
 				{"key": "connectionString", "isReference": true},
 			},
@@ -563,6 +577,7 @@ func TestAnnotateConnectionStringShape(t *testing.T) {
 		{
 			name:        "clickhouse_no_annotation",
 			serviceType: "clickhouse@25.3",
+			hostname:    "analytics",
 			envs: []map[string]any{
 				{"key": "connectionString", "isReference": true},
 			},
@@ -571,6 +586,7 @@ func TestAnnotateConnectionStringShape(t *testing.T) {
 		{
 			name:        "postgresql_no_connectionString_no_annotation",
 			serviceType: "postgresql@18",
+			hostname:    "db",
 			envs: []map[string]any{
 				{"key": "hostname"},
 				{"key": "port"},
@@ -582,7 +598,7 @@ func TestAnnotateConnectionStringShape(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			annotateConnectionStringShape(tt.envs, tt.serviceType)
+			annotateConnectionStringShape(tt.envs, tt.serviceType, tt.hostname)
 			var annotated map[string]any
 			for _, m := range tt.envs {
 				if m["key"] == "connectionString" {
@@ -632,9 +648,13 @@ func TestAnnotateConnectionStringShape(t *testing.T) {
 func TestConnectionStringAnnotation_AtomConsistency(t *testing.T) {
 	t.Parallel()
 
-	// Synthesize what the warning looks like for postgresql.
+	// Synthesize what the warning looks like for postgresql with the
+	// canonical "db" hostname — the convention the env-var-model atom
+	// documents. Custom hostnames propagate to the placeholders (e.g.
+	// ${appdb_user} for a service hostnamed `appdb`); this regression
+	// case pins the canonical shape against the atom.
 	envs := []map[string]any{{"key": "connectionString"}}
-	annotateConnectionStringShape(envs, "postgresql@18")
+	annotateConnectionStringShape(envs, "postgresql@18", "db")
 	warn, _ := envs[0]["warning"].(string)
 
 	atomPath := "../content/atoms/develop-env-var-model.md"

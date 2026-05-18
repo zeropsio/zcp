@@ -24,6 +24,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/platform"
 )
 
@@ -278,6 +279,198 @@ func TestLaunchExistingProject_BothCredentials_Refused(t *testing.T) {
 	}
 	if strings.Contains(text, sentinelExistingProdToken) {
 		t.Errorf("ExistingProdToken sentinel leaked into refusal response")
+	}
+}
+
+// TestLaunchExistingProject_ClassificationAppliedToTargetEnvs pins
+// bug_001: the existing-project mutation path MUST transform each
+// composer env according to its classification before calling
+// CreateProjectEnv. Before the fix, the loop wrote raw source values
+// verbatim — AutoSecret dev/stage secrets leaked to prod, ExternalSecret
+// values never became REPLACE_ME, Infrastructure entries polluted the
+// target with stale ${...} refs. This test seeds one env per
+// non-PlainConfig classification + one PlainConfig and asserts the
+// CreateProjectEnv contract per bucket.
+func TestLaunchExistingProject_ClassificationAppliedToTargetEnvs(t *testing.T) {
+	stateDir := t.TempDir()
+
+	// Source has one env per non-PlainConfig classification + one PlainConfig.
+	sourceClient := pLP3MockClient().WithProjectEnv([]platform.ProjectEnvVar{
+		{Key: "DB_HOST", Content: "${db_hostname}"},    // infrastructure → drop
+		{Key: "APP_KEY", Content: "dev-secret-leaked"}, // auto-secret    → regenerate
+		{Key: "STRIPE_SECRET", Content: "sk_test_xyz"}, // external-secret → REPLACE_ME
+		{Key: "LOG_LEVEL", Content: "info"},            // plain-config    → verbatim
+	})
+
+	targetMock := existingTargetMock(expectedExistingProjectID, nil)
+	defer setExistingProdTokenClientFactory(func(_, _ string) (platform.Client, error) {
+		return targetMock, nil
+	})()
+
+	input := existingCompleteInput()
+	input.EnvClassifications = map[string]string{
+		"DB_HOST":       "infrastructure",
+		"APP_KEY":       "auto-secret",
+		"STRIPE_SECRET": "external-secret",
+		"LOG_LEVEL":     "plain-config",
+	}
+
+	result, _, err := handleLaunchProduction(
+		context.Background(),
+		"source-project-id",
+		sourceClient,
+		input,
+		stateDir,
+		pLP3ContainerRuntime(),
+		pLP3SSHFrozen(),
+	)
+	if err != nil {
+		t.Fatalf("handleLaunchProduction: %v", err)
+	}
+	text := extractText(result)
+
+	// Each CreateProjectEnv call captured by hostname keyed by env key
+	// so the per-bucket asserts read clean.
+	seen := map[string]platform.CapturedProjectEnvCreate{}
+	for _, c := range targetMock.CapturedProjectEnvCreations {
+		seen[c.Key] = c
+	}
+
+	// Infrastructure: dropped, never reaches CreateProjectEnv.
+	if c, ok := seen["DB_HOST"]; ok {
+		t.Errorf("Infrastructure env DB_HOST must be dropped from existing-project mutation; got CreateProjectEnv call: %+v", c)
+	}
+
+	// AutoSecret: present, value differs from source, length 32,
+	// not the preprocessor directive literal, Sensitive=true.
+	autoSec, ok := seen["APP_KEY"]
+	if !ok {
+		t.Fatalf("AutoSecret env APP_KEY missing from CreateProjectEnv captures; response:\n%s", text)
+	}
+	if autoSec.Content == "dev-secret-leaked" {
+		t.Errorf("AutoSecret APP_KEY leaked dev source value verbatim to prod: %q", autoSec.Content)
+	}
+	if strings.Contains(autoSec.Content, "<@generateRandomString") {
+		t.Errorf("AutoSecret APP_KEY emitted preprocessor directive as literal (CreateProjectEnv bypasses preprocessor): %q", autoSec.Content)
+	}
+	if len(autoSec.Content) != 32 {
+		t.Errorf("AutoSecret APP_KEY expected 32-char value, got %d chars: %q", len(autoSec.Content), autoSec.Content)
+	}
+	if !autoSec.Sensitive {
+		t.Errorf("AutoSecret APP_KEY should be Sensitive=true, got false")
+	}
+
+	// ExternalSecret: present, value=REPLACE_ME (literal), Sensitive=true.
+	extSec, ok := seen["STRIPE_SECRET"]
+	if !ok {
+		t.Fatalf("ExternalSecret env STRIPE_SECRET missing from CreateProjectEnv captures; response:\n%s", text)
+	}
+	if extSec.Content != bundle.ExternalSecretPlaceholder {
+		t.Errorf("ExternalSecret STRIPE_SECRET expected %q, got %q (source value leaked?)",
+			bundle.ExternalSecretPlaceholder, extSec.Content)
+	}
+	if !extSec.Sensitive {
+		t.Errorf("ExternalSecret STRIPE_SECRET should be Sensitive=true, got false")
+	}
+
+	// PlainConfig: present, value verbatim, Sensitive=false.
+	plain, ok := seen["LOG_LEVEL"]
+	if !ok {
+		t.Fatalf("PlainConfig env LOG_LEVEL missing from CreateProjectEnv captures; response:\n%s", text)
+	}
+	if plain.Content != "info" {
+		t.Errorf("PlainConfig LOG_LEVEL expected verbatim %q, got %q", "info", plain.Content)
+	}
+	if plain.Sensitive {
+		t.Errorf("PlainConfig LOG_LEVEL should be Sensitive=false, got true")
+	}
+
+	// P-LP-1 sentinel scan: the project-scoped token MUST NOT appear
+	// anywhere in the success response.
+	if strings.Contains(text, sentinelExistingProdToken) {
+		t.Errorf("ExistingProdToken sentinel leaked into launched response")
+	}
+
+	// Bug_001 regression net: the literal raw source secret value of
+	// the AutoSecret/ExternalSecret rows MUST NOT appear in any
+	// CreateProjectEnv emission. (Defense in depth — if a future
+	// regression makes one of the buckets fall through to verbatim,
+	// this catches it independently of the per-bucket asserts above.)
+	for _, c := range targetMock.CapturedProjectEnvCreations {
+		if c.Content == "dev-secret-leaked" {
+			t.Errorf("regression: dev-secret-leaked value emitted on %q", c.Key)
+		}
+		if c.Content == "sk_test_xyz" {
+			t.Errorf("regression: sk_test_xyz value emitted on %q", c.Key)
+		}
+	}
+}
+
+// TestLaunchExistingProject_SetupNameOverride_HonoredInBundle pins
+// bug_004: the existing-project mutation path MUST consult
+// effectiveProdSetupName(input) when constructing LaunchBundleInputs.
+// Before the fix, executeExistingProjectMutation hardcoded
+// SetupName: "prod" regardless of input.ProdSetupNameOverride. The
+// upstream readAndValidateSourceState gate honored the override (so
+// the source yaml gate-check used "production"), then the bundle
+// composer was asked for "prod" anyway — producing either a silent
+// wrong-block compose (when both names existed in the source yaml)
+// or a late confusing rejection (when only the override existed).
+func TestLaunchExistingProject_SetupNameOverride_HonoredInBundle(t *testing.T) {
+	stateDir := t.TempDir()
+	sourceClient := pLP3MockClient()
+
+	targetMock := existingTargetMock(expectedExistingProjectID, nil)
+	defer setExistingProdTokenClientFactory(func(_, _ string) (platform.Client, error) {
+		return targetMock, nil
+	})()
+
+	// Source zerops.yaml exposes BOTH `prod` and `production` setup
+	// blocks. With ProdSetupNameOverride="production" the gate accepts
+	// it; the composer must also emit `production` (not the default
+	// "prod") for the two ends to agree.
+	sshBothSetups := &stubSSHDeployer{
+		responses: map[string][]byte{
+			"git rev-parse HEAD": []byte("frozen-baseline-sha\n"),
+			"git remote get-url": []byte("https://github.com/example/myapp\n"),
+			"/var/www/zerops.yaml": []byte("zerops:\n" +
+				"  - setup: prod\n" +
+				"    build:\n      base: nodejs@22\n" +
+				"    run:\n      base: nodejs@22\n      start: node prod.js\n" +
+				"  - setup: production\n" +
+				"    build:\n      base: nodejs@22\n" +
+				"    run:\n      base: nodejs@22\n      start: node production.js\n"),
+		},
+	}
+
+	input := existingCompleteInput()
+	input.ProdSetupNameOverride = "production"
+
+	result, _, err := handleLaunchProduction(
+		context.Background(),
+		"source-project-id",
+		sourceClient,
+		input,
+		stateDir,
+		pLP3ContainerRuntime(),
+		sshBothSetups,
+	)
+	if err != nil {
+		t.Fatalf("handleLaunchProduction: %v", err)
+	}
+	text := extractText(result)
+
+	if targetMock.CapturedImportYAML == "" {
+		t.Fatalf("ImportServices was not called; response:\n%s", text)
+	}
+	if !strings.Contains(targetMock.CapturedImportYAML, "zeropsSetup: production") {
+		t.Errorf("captured launch yaml must carry zeropsSetup: production (override honored), got:\n%s",
+			targetMock.CapturedImportYAML)
+	}
+	if strings.Contains(targetMock.CapturedImportYAML, "zeropsSetup: prod\n") ||
+		strings.HasSuffix(strings.TrimRight(targetMock.CapturedImportYAML, "\n"), "zeropsSetup: prod") {
+		t.Errorf("captured launch yaml must NOT carry zeropsSetup: prod when override=production, got:\n%s",
+			targetMock.CapturedImportYAML)
 	}
 }
 
