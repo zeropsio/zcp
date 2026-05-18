@@ -1,8 +1,21 @@
 # Zerops yaml OS-prefix shape drift — ZCP wide
 
 - **Surfaced**: 2026-05-18, during deep-research investigation of broken behavior in eval review 20260518 subset (see `plans/eval-review-20260518-subset/deep-research/01-atoms-templates.md` Finding E + Karel's clarification in chat).
-- **Why deferred**: Originally framed as a 5-line strip-OS-prefix fix in `topology/runtime_class.go`. Karel's clarification: Zerops upstream changed yaml shape — service type strings used to be bare (`nginx@1.22`, `php-apache@8.4`), now arrive OS-prefixed (`alpine/nginx@1.22`, `ubuntu/nodejs@22`, `alpine/php-apache@8.4`). The classifier bug is one visible leaf; the actual drift surface spans the full ZCP stack (knowledge atoms, recipe templates, validators, render goldens, plan-vs-yaml conversion). A single-site strip is symptom-axis — bringing ZCP to parity with the new upstream shape is a design pass and an audit, not a point fix.
-- **Trigger to promote**: when Karel decides ZCP needs to be brought to coherent parity with the new Zerops yaml shape (likely soon — it's blocking visible eval scenarios). The eval evidence is already strong: `classic-static-nginx-simple`, `landing-page-static-simple`, `classic-php-mariadb-standard`, and any PHP-apache/PHP-nginx/static-nginx scenario will keep failing until this lands.
+- **Update 2026-05-18 (Sunday release confirmation)**: Karel confirms upstream change. `mode:` and `os:` sibling fields are deprecated (kept for BC); the canonical shape is the composite `type` field carrying the full identifier:
+  ```
+  before: type: nodejs@22         after: type: alpine/nodejs@22
+          os:   alpine
+  before: type: postgresql@18     after: type: postgresql:single@18
+          mode: NON_HA
+  ```
+  ZCP atoms / prompts that hardcode `os` or `mode` need update. Recipes need a full pass to rewrite import.yml templates to the composite form. Plan validator already requires composite (visible eval friction).
+- **Why deferred**: Originally framed as a 5-line strip-OS-prefix fix in `topology/runtime_class.go`. Karel's clarification: Zerops upstream changed yaml shape — service type strings used to be bare (`nginx@1.22`, `php-apache@8.4`, `nodejs@22`), now arrive composite (`alpine/nginx@1.22`, `ubuntu/nodejs@22`, `postgresql:single@18`). The classifier bug is one visible leaf; the actual drift surface spans the full ZCP stack (knowledge atoms, recipe templates, validators, render goldens, plan-vs-yaml conversion). A single-site strip is symptom-axis — bringing ZCP to parity with the new upstream shape is a design pass and an audit, not a point fix.
+- **Trigger to promote**: NOW. Karel confirms Sunday release shipped this; ZCP recipes + atoms are out of sync with platform reality. Visible eval evidence: `classic-static-nginx-simple`, `landing-page-static-simple`, `classic-php-mariadb-standard`, plus any PHP-apache/PHP-nginx/static-nginx scenario; plus the `adopt-existing-standard-pair` eval (20260518-194541) where the agent self-review explicitly named bare `nodejs@22` not-in-catalog as biggest friction.
+- **Scope inventory (2026-05-18)**: 48 files carry `os:` or `mode:` siblings that need rewrite to composite `type:`:
+  - 47 recipe files under `internal/knowledge/recipes/` (`.import.yml` + `.md` recipe pairs)
+  - 1 workflow example: `internal/content/workflows/recipe/phases/provision/import-yaml/standard-mode.md`
+  - 0 atom files (after `idle-adopt-entry.md` rewrite which mentions `os:` + `mode:` only in BC-deprecation prose, not as yaml example)
+  - Plus the `topology/runtime_class.go` classifier strip + test extension surfaced earlier in this backlog entry.
 
 ## Visible symptom (the classifier leaf)
 

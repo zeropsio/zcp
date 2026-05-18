@@ -7,40 +7,36 @@ title: "Adopt existing unmanaged services"
 references-fields: [workflow.ServiceSnapshot.Bootstrapped, workflow.BootstrapRouteOption.AdoptServices]
 ---
 
-Runtime services exist in this project that ZCP is not tracking —
-the Services block shows one or more as `not bootstrapped`. Develop,
-deploy, and verify on these services require ZCP service metadata
-that bootstrap creates; until bootstrap closes, those workflows are
-not reachable as direct next-actions.
+Services in project, `not bootstrapped`. Bootstrap must close before
+develop/deploy/verify on these hostnames is reachable.
 
-Two valid options to surface:
-- **adopt** — take the existing services into ZCP (common when user
-  said "adopt", "převzít", "nastav ZCP integration", or named the
-  existing hostnames).
-- **classic** — ignore the existing services and create new ones in
-  parallel (valid when user wants a fresh slate or named different
-  hostnames). Recipe is also valid when user mentions a framework.
+**Branch on intent.** Clear adopt intent ("adopt", "převzít", named
+existing hostnames) → run adopt, no menu. Unclear → offer routes,
+not workflows.
 
-If the user's intent is unambiguous (e.g. "adopt the project"), state
-directly *"I'll adopt them first, then we can develop"* and start
-adopt without asking. If intent is ambiguous, ask between routes —
-NOT between post-bootstrap workflows. Wrong framing: *"develop on
-appdev, finish staging, or something else"* — those aren't reachable
-yet. Right framing: *"Adopt the existing appdev/appstage, or create
-new services in parallel?"*
+- ✅ "Adopt existing appdev/appstage, or create new in parallel?"
+- ❌ "Develop on appdev, finish staging, or something else?" — those
+  workflows aren't reachable yet; framing presents the unreachable as
+  available.
 
-Start with discovery so the engine inspects the live state:
+Start (route-menu, no session yet):
 
 ```
 zerops_workflow action="start" workflow="bootstrap" intent="adopt existing"
 ```
 
-The response surfaces an `adopt` option at the top of
-`routeOptions[]` with `adoptServices[]` listing the hostnames. Commit
-the adoption with:
+Commit (opens session):
 
 ```
 zerops_workflow action="start" workflow="bootstrap" route="adopt" intent="adopt existing"
 ```
 
-After close, the envelope shows each adopted hostname with `bootstrapped: true` and the existing mode preserved. Close-mode + git-push capability stay empty (develop configures them on first use).
+Type field in the plan carries the full identifier from
+`zerops_discover` verbatim — `alpine/nodejs@22`, `postgresql:single@18`.
+Legacy `os:` + `mode:` sibling fields still accepted for BC but the
+composite `type` is canonical; don't split. Pair-OS mismatch
+(ubuntu/alpine) accepted silently — dev half's type is what the
+plan carries.
+
+Close: each adopted hostname stamps `bootstrapped: true`, mode preserved.
+Close-mode + git-push stay empty (develop configures on first use).
