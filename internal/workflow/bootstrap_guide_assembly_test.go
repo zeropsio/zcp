@@ -338,3 +338,70 @@ func TestBuildGuide_SynthesisErrorPropagates(t *testing.T) {
 		t.Fatalf("production corpus should not emit error guide, got:\n%s", guide)
 	}
 }
+
+// TestPlanTargetSnapshots_PopulatesStatusFromLive pins that snapshots produced
+// for synthesisEnvelope carry the per-hostname platform Status captured in
+// BootstrapState.DiscoveredStatuses. Without this, atoms gated on
+// serviceStatus (e.g. develop-ready-to-deploy.md gated on
+// serviceStatus:[READY_TO_DEPLOY]) never match during bootstrap-active phase
+// even when the live service IS in READY_TO_DEPLOY — Phase 2.1 of
+// plans/eval-review-20260518-subset/fix-plan.md.
+func TestPlanTargetSnapshots_PopulatesStatusFromLive(t *testing.T) {
+	t.Parallel()
+	statuses := map[string]string{
+		"appdev":   "READY_TO_DEPLOY",
+		"appstage": "ACTIVE",
+	}
+	target := BootstrapTarget{
+		Runtime: RuntimeTarget{
+			DevHostname:   "appdev",
+			Type:          "nodejs@22",
+			BootstrapMode: topology.PlanModeStandard,
+			ExplicitStage: "appstage",
+		},
+	}
+	snaps := planTargetSnapshots(target, statuses)
+	if len(snaps) != 2 {
+		t.Fatalf("standard mode: expected 2 snapshots, got %d", len(snaps))
+	}
+	devSnap := snaps[0]
+	stageSnap := snaps[1]
+	if devSnap.Hostname != "appdev" || devSnap.Status != "READY_TO_DEPLOY" {
+		t.Errorf("dev snapshot Status: got %q, want %q", devSnap.Status, "READY_TO_DEPLOY")
+	}
+	if stageSnap.Hostname != "appstage" || stageSnap.Status != "ACTIVE" {
+		t.Errorf("stage snapshot Status: got %q, want %q", stageSnap.Status, "ACTIVE")
+	}
+
+	// Absent hostname yields empty Status — the safe default before the
+	// first provision check or in fixtures that don't carry live state.
+	empty := planTargetSnapshots(target, nil)
+	if empty[0].Status != "" {
+		t.Errorf("nil statuses: Status must be empty, got %q", empty[0].Status)
+	}
+}
+
+// TestSynthesisEnvelope_PropagatesDiscoveredStatuses pins that
+// BootstrapState.DiscoveredStatuses flows into the synthesis envelope, so
+// status-gated atoms see the live state when fanning out. Phase 2.1 of
+// plans/eval-review-20260518-subset/fix-plan.md.
+func TestSynthesisEnvelope_PropagatesDiscoveredStatuses(t *testing.T) {
+	t.Parallel()
+	bs := NewBootstrapState()
+	bs.Plan = &ServicePlan{Targets: []BootstrapTarget{{
+		Runtime: RuntimeTarget{
+			DevHostname:   "appdev",
+			Type:          "nodejs@22",
+			BootstrapMode: topology.PlanModeDev,
+		},
+	}}}
+	bs.DiscoveredStatuses = map[string]string{"appdev": "READY_TO_DEPLOY"}
+
+	env := bs.synthesisEnvelope(StepProvision, EnvContainer)
+	if len(env.Services) != 1 {
+		t.Fatalf("expected 1 service snapshot, got %d", len(env.Services))
+	}
+	if env.Services[0].Status != "READY_TO_DEPLOY" {
+		t.Errorf("Status in envelope: got %q, want %q", env.Services[0].Status, "READY_TO_DEPLOY")
+	}
+}

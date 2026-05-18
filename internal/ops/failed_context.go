@@ -142,6 +142,64 @@ func LatestFailedAppVersionContext(
 	return nil, nil //nolint:nilnil // not-found sentinel: no failed appVersion in scope window
 }
 
+// HasPriorDeployAttempt returns true when the named service has any
+// non-startWithoutCode appVersion within the scope window, regardless of
+// status. The discriminator answers "has this service ever tried to deploy?"
+// — broader than LatestFailedAppVersionContext (which only catches recognized
+// failure phases). Used by NonRunningRecovery to point at zerops_import when
+// a service in READY_TO_DEPLOY has any prior deploy history (including stalled
+// states like WAITING_TO_BUILD with null pipelineStart — Karel's 2026-05-16
+// reproducer), versus pointing at zerops_logs for the rare never-deployed case
+// where logs carry no useful diagnostic data.
+//
+// Phase 2.2 of plans/eval-review-20260518-subset/fix-plan.md broadened the
+// discriminator: previously the develop-adopt path's recovery hint relied on
+// LatestFailedAppVersionContext != nil, which silently filtered out queued
+// states because FailurePhaseFromStatus returns "" for them. The launch-
+// production path got a parallel fix via 33fb9358 (launchFirstDeployFailedResponse)
+// but the symmetric develop-adopt path missed the same coverage.
+//
+// Returns (false, err) only when the platform API call itself fails.
+func HasPriorDeployAttempt(
+	ctx context.Context,
+	client platform.Client,
+	projectID, hostname string,
+) (bool, error) {
+	services, err := client.ListServices(ctx, projectID)
+	if err != nil {
+		return false, err
+	}
+	var serviceStackID string
+	for _, s := range services {
+		if s.Name == hostname {
+			serviceStackID = s.ID
+			break
+		}
+	}
+	if serviceStackID == "" {
+		return false, nil
+	}
+
+	appVersions, err := client.SearchAppVersions(ctx, projectID, failedContextLimit)
+	if err != nil {
+		return false, err
+	}
+	for i := range appVersions {
+		av := appVersions[i]
+		if av.ServiceStackID != serviceStackID {
+			continue
+		}
+		// Mirror LatestFailedAppVersionContext + events.go: skip
+		// startWithoutCode appVersions (Source="NONE", no build info) —
+		// bootstrap stamps, not real deploy attempts.
+		if av.Source == appVersionSourceNone && av.Build == nil {
+			continue
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
 // suggestedReadArgs builds the MCP-tool argument map for the diagnostic
 // deep-dive call the agent should issue next. Phase-specific because the
 // log facility / severity that surfaces the failing output differs:

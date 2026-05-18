@@ -57,8 +57,10 @@ func checkProvision(client platform.Client, fetcher platform.LogFetcher, project
 			return nil, fmt.Errorf("list services: %w", err)
 		}
 		svcMap := make(map[string]platform.ServiceStack, len(services))
+		statusMap := make(map[string]string, len(services))
 		for _, svc := range services {
 			svcMap[svc.Name] = svc
+			statusMap[svc.Name] = svc.Status
 		}
 
 		// Local-recipe path (Theme 1): the recipe match-derived plan
@@ -152,6 +154,23 @@ func checkProvision(client platform.Client, fetcher platform.LogFetcher, project
 						}
 					}
 				}
+			}
+		}
+
+		// Persist the per-hostname Status snapshot so synthesisEnvelope can
+		// populate ServiceSnapshot.Status during bootstrap-active phase. Atoms
+		// gated on serviceStatus (e.g. develop-ready-to-deploy.md gated on
+		// READY_TO_DEPLOY) need this to fire — without it Status="" and the
+		// gating never matches. Failure here is non-fatal: provision can still
+		// proceed, the snapshot just doesn't carry Status. Fix per
+		// plans/eval-review-20260518-subset/fix-plan.md Phase 2.1.
+		if engine != nil {
+			if storeErr := engine.StoreDiscoveredStatuses(statusMap); storeErr != nil {
+				checks = append(checks, workflow.StepCheck{
+					Name:   "_status_persist",
+					Status: statusFail,
+					Detail: fmt.Sprintf("persist discovered statuses: %v", storeErr),
+				})
 			}
 		}
 

@@ -3,6 +3,7 @@ package workflow
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"strings"
 	"sync"
@@ -647,6 +648,28 @@ func (e *Engine) StoreDiscoveredEnvVars(hostname string, vars []string) error {
 		state.Bootstrap.DiscoveredEnvVars = make(map[string][]string)
 	}
 	state.Bootstrap.DiscoveredEnvVars[hostname] = vars
+
+	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	return saveSessionState(e.stateDir, e.sessionID, state)
+}
+
+// StoreDiscoveredStatuses overwrites the per-hostname platform Status map
+// captured at the most recent provision check. Read by synthesisEnvelope so
+// status-gated atoms (e.g. develop-ready-to-deploy.md gated on
+// serviceStatus:[READY_TO_DEPLOY]) fire correctly during bootstrap-active phase.
+// Map is overwritten wholesale on each call — each provision check is a fresh
+// snapshot of live state, and stale per-hostname entries from a previous step
+// would mask a current-state change.
+func (e *Engine) StoreDiscoveredStatuses(statuses map[string]string) error {
+	state, err := e.loadState()
+	if err != nil {
+		return fmt.Errorf("store discovered statuses: %w", err)
+	}
+	if state.Bootstrap == nil {
+		return fmt.Errorf("store discovered statuses: no bootstrap state")
+	}
+	state.Bootstrap.DiscoveredStatuses = make(map[string]string, len(statuses))
+	maps.Copy(state.Bootstrap.DiscoveredStatuses, statuses)
 
 	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	return saveSessionState(e.stateDir, e.sessionID, state)

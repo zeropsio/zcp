@@ -147,6 +147,31 @@ func TestClaudeContainer_HasHostnameTemplate(t *testing.T) {
 	}
 }
 
+// TestClaudeContainer_MountClaimConditional asserts the mount-claim text
+// is conditional on bootstrap/adopt provision completing, not asserted as
+// ambient state. Phase 2.3 of plans/eval-review-20260518-subset/fix-plan.md:
+// the previous unconditional claim ("Service code SSHFS-mounted at ...")
+// burned several eval sessions where agents read CLAUDE.md, did `ls
+// /var/www/`, saw only CLAUDE.md, and concluded the environment was
+// broken. The actual mount materializes only after the bootstrap/adopt
+// workflow's provision step closes (workflow_bootstrap.go::autoMountTargets).
+func TestClaudeContainer_MountClaimConditional(t *testing.T) {
+	t.Parallel()
+	body, err := GetTemplate("claude_container.md")
+	if err != nil {
+		t.Fatalf("GetTemplate: %v", err)
+	}
+	// Anchor on the conditional framing — "after bootstrap or adopt" must
+	// precede the mount path on the same line for the claim to read as
+	// conditional rather than ambient.
+	if !strings.Contains(body, "After bootstrap or adopt") {
+		t.Error("claude_container.md must frame mount claim as conditional on bootstrap/adopt completion")
+	}
+	if !strings.Contains(body, "hasn't been bootstrapped") {
+		t.Error("claude_container.md must tell the agent what to do when mount is empty (run adopt route)")
+	}
+}
+
 func TestClaudeLocal_NoContainerPaths(t *testing.T) {
 	t.Parallel()
 	body, err := GetTemplate("claude_local.md")

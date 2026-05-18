@@ -38,8 +38,16 @@ type BootstrapState struct {
 	Steps             []BootstrapStep     `json:"steps"`
 	Plan              *ServicePlan        `json:"plan,omitempty"`
 	DiscoveredEnvVars map[string][]string `json:"discoveredEnvVars,omitempty"`
-	Route             BootstrapRoute      `json:"route,omitempty"`
-	RecipeMatch       *RecipeMatch        `json:"recipeMatch,omitempty"`
+	// DiscoveredStatuses carries the platform Status (per-hostname) captured at
+	// the most recent provision check. Populated alongside DiscoveredEnvVars
+	// from workflow_checks.go's svcMap; read by synthesisEnvelope so atoms
+	// gated on serviceStatus (e.g. develop-ready-to-deploy.md gated on
+	// READY_TO_DEPLOY) fire correctly during bootstrap-active phase. Without
+	// this, planTargetSnapshots emitted Status="" and status-gated atoms never
+	// matched — fix per plans/eval-review-20260518-subset/fix-plan.md Phase 2.1.
+	DiscoveredStatuses map[string]string `json:"discoveredStatuses,omitempty"`
+	Route              BootstrapRoute    `json:"route,omitempty"`
+	RecipeMatch        *RecipeMatch      `json:"recipeMatch,omitempty"`
 }
 
 // BootstrapResponse is returned from conductor actions.

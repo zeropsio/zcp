@@ -131,11 +131,18 @@ func buildBootstrapHardStop(step, lastAttestation string) string {
 // inferred from the plan (adopt when every target pre-exists, classic
 // otherwise). Each standard-mode runtime emits two snapshots (dev + stage)
 // so stage-scoped atoms match.
+//
+// Per-hostname Status is populated from BootstrapState.DiscoveredStatuses
+// (captured at the most recent provision check) so atoms gated on
+// serviceStatus (e.g. develop-ready-to-deploy.md gated on READY_TO_DEPLOY)
+// fire correctly during bootstrap-active phase. Map may be empty before the
+// first provision check or in tests — snapshots then carry Status="" and
+// status-gated atoms simply don't match, which is the safe default.
 func (b *BootstrapState) synthesisEnvelope(step string, env Environment) StateEnvelope {
 	services := make([]ServiceSnapshot, 0)
 	if b.Plan != nil {
 		for _, t := range b.Plan.Targets {
-			services = append(services, planTargetSnapshots(t)...)
+			services = append(services, planTargetSnapshots(t, b.DiscoveredStatuses)...)
 		}
 	}
 	route := b.Route
@@ -159,7 +166,12 @@ func (b *BootstrapState) synthesisEnvelope(step string, env Environment) StateEn
 // RuntimeClass assumes the target has ports (true for every dynamic or
 // implicit-webserver runtime we bootstrap today); static plans keep the
 // same classification because atoms filter on runtime presence, not shape.
-func planTargetSnapshots(t BootstrapTarget) []ServiceSnapshot {
+//
+// `statuses` carries per-hostname platform Status captured at the most recent
+// provision check (BootstrapState.DiscoveredStatuses). Status is populated on
+// each snapshot when the hostname is present in the map; absence yields
+// Status="" which is the safe default (status-gated atoms simply don't match).
+func planTargetSnapshots(t BootstrapTarget, statuses map[string]string) []ServiceSnapshot {
 	mode := planModeToEnvelopeMode(t.Runtime.EffectiveMode())
 	runtimeClass := classifyEnvelopeRuntime(t.Runtime.Type)
 	snaps := []ServiceSnapshot{{
@@ -167,6 +179,7 @@ func planTargetSnapshots(t BootstrapTarget) []ServiceSnapshot {
 		TypeVersion:  t.Runtime.Type,
 		RuntimeClass: runtimeClass,
 		Mode:         mode,
+		Status:       statuses[t.Runtime.DevHostname],
 	}}
 	if mode == topology.ModeStandard {
 		if stage := t.Runtime.StageHostname(); stage != "" {
@@ -176,6 +189,7 @@ func planTargetSnapshots(t BootstrapTarget) []ServiceSnapshot {
 				TypeVersion:  t.Runtime.Type,
 				RuntimeClass: runtimeClass,
 				Mode:         topology.ModeStage,
+				Status:       statuses[stage],
 			})
 		}
 	}
