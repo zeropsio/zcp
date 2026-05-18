@@ -18,3 +18,8 @@ The envelope will flip to `phase: develop-active`; subsequent status
 calls show `workSession.deploys[]` and `workSession.verifies[]` as
 you iterate. Once the develop session is active, auto-close semantics
 land in the develop response.
+
+**To add a NEW service to this project** — run bootstrap workflow
+again with a non-colliding hostname (`route="classic"` or
+`route="recipe"`). The new service exists alongside the bootstrapped
+ones; bootstrap never modifies or replaces existing services.

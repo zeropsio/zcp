@@ -191,8 +191,16 @@ func ValidatePlanHostname(hostname string) error {
 
 // isManagedTypeWithLive checks if a service type requires a Mode field.
 // Uses live API categories when available, falls back to static prefixes.
+//
+// Post-Sunday-release the live API returns composite mode-encoded names
+// (`postgresql:single@18`). `ManagedBaseNames` canonicalizes its map keys
+// via topology.CanonicalBareForm; the plan-side type must be canonicalized
+// the same way before lookup or a bare-form plan dep (`postgresql@18`)
+// would silently miss the live-API set and skip mode defaulting / HA
+// validation downstream.
 func isManagedTypeWithLive(serviceType string, liveManaged map[string]bool) bool {
-	base, _, _ := strings.Cut(serviceType, "@")
+	canonical := topology.CanonicalBareForm(serviceType)
+	base, _, _ := strings.Cut(canonical, "@")
 	if len(liveManaged) > 0 {
 		return liveManaged[base]
 	}
@@ -373,14 +381,20 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 // or the empty string when the target is consistent. Pairs the dev and stage
 // checks so callers only pay one cost.
 //
-// Classic plan + hostname already live → "exists, use adopt or pick a
-// non-colliding hostname". Adopt plan + hostname missing → "isExisting=true
-// but not found". Recipe route: see bootstrap-recipe-match atom for the
-// rename flow — the error wording stays generic because the same function
-// serves all routes.
+// Classic plan + hostname already live → primary recovery is "pick a
+// non-colliding hostname to create alongside"; adoption is the alternative
+// when the user's intent is actually to attach to the running service.
+// Adopt plan + hostname missing → "isExisting=true but not found". Recipe
+// route: see bootstrap-recipe-match atom for the rename flow — the error
+// wording stays generic because the same function serves all routes.
+//
+// Re-importing the existing service (`zerops_import override=true`) is
+// intentionally NOT suggested here: it is destructive (replaces the running
+// stack, deployed code, env vars, filesystem state) and reserved for
+// explicit user requests, not a default conflict-recovery path.
 func runtimeCollisionError(rt RuntimeTarget, stageHostname string, liveServiceNames map[string]bool) string {
 	if liveServiceNames[rt.DevHostname] && !rt.IsExisting {
-		return fmt.Sprintf("target %q: runtime already exists in project — set isExisting=true to adopt it, or pick a non-colliding devHostname (recipe route: ZCP rewrites the import YAML using your plan's hostnames)", rt.DevHostname)
+		return fmt.Sprintf("target %q: runtime already exists in project — pick a non-colliding devHostname to create a parallel service (existing one stays running), or set isExisting=true to adopt (attach ZCP tracking to the running service, no infra change). Recipe route: ZCP rewrites the import YAML using your plan's hostnames.", rt.DevHostname)
 	}
 	if !liveServiceNames[rt.DevHostname] && rt.IsExisting {
 		return fmt.Sprintf("target %q: isExisting=true but runtime not found in project", rt.DevHostname)
@@ -389,7 +403,7 @@ func runtimeCollisionError(rt RuntimeTarget, stageHostname string, liveServiceNa
 		return ""
 	}
 	if liveServiceNames[stageHostname] && !rt.IsExisting {
-		return fmt.Sprintf("target %q: stage runtime %q already exists — set isExisting=true to adopt, or pick a non-colliding stageHostname (recipe route: ZCP rewrites the import YAML using your plan's hostnames)", rt.DevHostname, stageHostname)
+		return fmt.Sprintf("target %q: stage runtime %q already exists — pick a non-colliding stageHostname to create a parallel pair (existing one stays running), or set isExisting=true to adopt (attach ZCP tracking to the running pair). Recipe route: ZCP rewrites the import YAML using your plan's hostnames.", rt.DevHostname, stageHostname)
 	}
 	if !liveServiceNames[stageHostname] && rt.IsExisting {
 		return fmt.Sprintf("target %q: isExisting=true but stage runtime %q not found in project", rt.DevHostname, stageHostname)

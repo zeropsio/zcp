@@ -21,14 +21,24 @@ zerops_workflow action="start" workflow="bootstrap" route="<picked>" \
    → kind="session-active"
 ```
 
+### Coexistence with existing services
+
+Existing services in the project (bootstrapped or not) are **independent**.
+Bootstrap creates **new** services alongside them — it does not modify,
+re-import, or replace existing ones. To add a service to a project that
+already has some, pick a non-colliding hostname and bootstrap normally.
+`zerops_import override=true` is destructive and reserved for explicit
+user requests (config change on a known service), never the default
+path when bootstrap surfaces a hostname collision.
+
 ### Ranked options
 
 | Route | Present when | Carries | Dispatch / rule |
 |---|---|---|---|
 | `resume` | Snapshot has `resumable: true` | `resumeSession`, `resumeServices` | Pick first unless intentionally overriding: `route="resume" sessionId="<resumeSession>"`. |
-| `adopt` | Runtime services lack bootstrap records (`not bootstrapped`) | `adoptServices[]` | Use when services match intent; otherwise use classic for non-colliding names. |
+| `adopt` | Runtime services lack bootstrap records (`not bootstrapped`) | `adoptServices[]` | Attach ZCP tracking to running services — no infra change. Use when the user's intent matches the listed `adoptServices[]`. To add NEW services alongside (instead of adopting these), use `classic`. |
 | `recipe` | Up to three recipe matches | `recipeSlug`, `confidence`, `collisions[]` | `route="recipe" recipeSlug="<value from routeOptions[].recipeSlug>"`. Copy the slug verbatim from the discover response — corpus slugs don't carry a `zerops-` prefix even when users name a recipe by its branded form (`"zerops-laravel-minimal"`). Collisions recover by runtime rename or same-type managed `resolution: EXISTS`; switch routes only for different-type managed collision or independent infra. |
-| `classic` | Always, last | none | `route="classic"` for manual planning. |
+| `classic` | Always available | none | `route="classic"` for manual planning. Default path for creating new services in any project state — fresh project or alongside existing ones. |
 
 ### Explicit overrides
 

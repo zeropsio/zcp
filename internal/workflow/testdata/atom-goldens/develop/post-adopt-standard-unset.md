@@ -135,13 +135,13 @@ default to
   (Zerops rewrites at deploy from the named service's catalog). Local
   vars in `run.envVariables` shadow project-level entries with the
   same key.
-- Service config changes (shared storage, scaling, nginx fragments):
-  use `zerops_import` with `override: true` to update existing services.
-  This is separate from `zerops_deploy`, which only updates code.
-  **Destructive**: override REPLACES the service stack — the running
-  container, deployed code, per-service env vars, and any
-  work-in-progress on the service's filesystem are all torn down. The
-  response Warnings name the replaced hostnames; back up first.
+- **`zerops_import override=true` is destructive** — REPLACES the
+  service stack (container, code, env vars, filesystem). Reserved for
+  explicit user-requested config changes (shared storage, scaling,
+  nginx) that `zerops_deploy` can't handle. Never the default fix for
+  hostname collisions, env drift, or unexpected state — pick a
+  different hostname, adopt, or escalate. Back up first; Warnings
+  name replaced hostnames.
 
 ---
 
