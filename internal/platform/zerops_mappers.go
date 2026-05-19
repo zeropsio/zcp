@@ -12,6 +12,18 @@ import (
 // statusCancelled is the API status string for cancelled operations.
 const statusCancelled = "CANCELLED"
 
+// stringNullValue extracts the underlying string from a types.StringNull,
+// returning "" when the value is null. SDK v1.0.20 changed several scalar
+// fields (e.g. ServiceStack.Mode) from pointer-to-enum to types.StringNull;
+// this helper keeps consumer sites terse without repeating the Get pattern.
+func stringNullValue(s types.StringNull) string {
+	v, ok := s.Get()
+	if !ok {
+		return ""
+	}
+	return v.Native()
+}
+
 // ---------------------------------------------------------------------------
 // Mapping helpers
 // ---------------------------------------------------------------------------
@@ -96,8 +108,8 @@ func mapEsServiceStack(s output.EsServiceStack) ServiceStack {
 	}
 
 	mode := ""
-	if s.Mode != nil {
-		mode = s.Mode.String()
+	if v, ok := s.Mode.Get(); ok {
+		mode = v.Native()
 	}
 
 	return ServiceStack{
@@ -140,7 +152,7 @@ func mapFullServiceStack(s output.ServiceStack) ServiceStack {
 			ServiceStackTypeCategoryName: s.ServiceStackTypeInfo.ServiceStackTypeCategory.String(),
 		},
 		Status:             s.Status.String(),
-		Mode:               s.Mode.String(),
+		Mode:               stringNullValue(s.Mode),
 		SubdomainAccess:    s.SubdomainAccess.Native(),
 		Ports:              mapServicePorts(s.Ports),
 		CustomAutoscaling:  customAutoscaling,
@@ -230,13 +242,15 @@ func mapOutputCustomAutoscaling(ca *output.CustomAutoscaling) *CustomAutoscaling
 }
 
 func buildAutoscalingBody(params AutoscalingParams) body.Autoscaling {
+	// SDK v1.0.20 ("refactor of the service base and scaling") removed
+	// body.Autoscaling.Mode + enum.ServiceStackModeEnum. Mode (HA/NON_HA)
+	// is no longer part of the autoscaling body — Zerops moved it to
+	// service-stack-creation / pipeline-trigger endpoints (marked
+	// `Deprecated` there pending its own dedicated endpoint).
+	// The old defensive resend ("nil mode causes 'mode update forbidden'")
+	// is no longer needed: the field doesn't exist to be nulled.
 	result := body.Autoscaling{}
-
-	// Set service mode to preserve current HA/NON_HA — nil mode causes "mode update forbidden".
-	if params.ServiceMode != "" {
-		mode := enum.ServiceStackModeEnum(params.ServiceMode)
-		result.Mode = &mode
-	}
+	_ = params.ServiceMode // ServiceMode is now ignored at this site; see scale handler if explicit Mode change is needed.
 
 	var vert *body.VerticalAutoscalingNullable
 	var horiz *body.HorizontalAutoscalingNullable
