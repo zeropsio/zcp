@@ -40,12 +40,12 @@ jobs:
       - name: Deploy to Zerops
         run: |
           zcli login "$ZEROPS_TOKEN"
-          zcli push --service-id "${{ secrets.ZEROPS_SERVICE_ID }}" --setup {hostname}
+          zcli push --service-id "${{ secrets.ZEROPS_SERVICE_ID }}" --setup <build-setup>
         env:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
 ```
 
-Replace `{hostname}` with the setup name in your `zerops.yaml` if it differs from the runtime hostname.
+The `build-integration=actions` confirm response carries `buildSetup` already resolved for the target topology (recipe-style standard pair: `prod` on stage; single-runtime adoption: the runtime's own setup name). Paste that value in place of `<build-setup>` before committing the workflow file. The `workflowFile.content` field of the confirm response has it already substituted — copy that body verbatim.
 
 If the repository has exactly one setup and you do not need explicit setup
 selection, the compact wrapper action also works:

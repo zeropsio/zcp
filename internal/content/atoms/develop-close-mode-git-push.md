@@ -34,8 +34,8 @@ This service is on `closeDeployMode=git-push`. Your delivery pattern is `zerops_
 
 | `buildIntegration` | What happens after the push |
 |---|---|
-| `webhook` | Zerops dashboard pulls the repo and runs the build pipeline. Watch via `zerops_events serviceHostname="<hostname>"`. |
-| `actions` | Your GitHub Actions workflow runs `zcli push` from CI; the build lands on the runtime. Same observation path. |
+| `webhook` | Zerops dashboard pulls the repo and runs the build pipeline. Watch via `zerops_events serviceHostname="<build-target>"` (stage half for standard pairs; the service itself for simple modes). |
+| `actions` | Your GitHub Actions workflow runs `zcli push` from CI; the build lands on the runtime. Same observation target. |
 | `none` | The push is archived at the remote. No ZCP-managed build fires; if you have independent CI/CD, that may pick it up — ZCP doesn't track external CI. |
 
 `build-integration=none` is a valid steady state if your team has independent CI/CD. The `Warnings` array surfaces a soft note when the deploy tool detects this combination — informational, not a blocker.

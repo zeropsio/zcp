@@ -149,6 +149,13 @@ func Resolve(target ServiceSnapshot, services []ServiceSnapshot) DeployIntent {
 		intent.BuildSetup = RecipeSetupProd
 	case topology.ModeStandard, topology.ModeLocalStage:
 		intent.PushSource = target.Hostname
+		// PushSetup names the SOURCE-side setup block used by the local
+		// push pre-flight (zerops.yaml validation before transmit).
+		// Recipe-derived yamls use `dev` on the source half; legacy
+		// single-runtime adoptions use the hostname. The deploy tool
+		// defaults to hostname-as-setup when omitted, which fails on
+		// recipe-style yamls — so always emit explicitly.
+		intent.PushSetup = RecipeSetupDev
 		if intent.Delivery == DeployDeliveryGitPush && target.StageHostname != "" {
 			// Remote push → stage rebuilds from git. Stage runtime is the
 			// build target; build setup is the stage entry ("prod" by
@@ -196,15 +203,17 @@ func Resolve(target ServiceSnapshot, services []ServiceSnapshot) DeployIntent {
 		intent.EventsService = target.Hostname
 		intent.VerifyTarget = target.Hostname
 	case DeployDeliveryGitPush:
-		// Phase 1 placeholder. The git-push args are populated for
-		// downstream Phase 3+ consumers; build_plan's NextAction adapter
-		// still routes through the direct branch this phase (no behavior
-		// change yet). Phase 2 starts using the resolved BuildTarget for
-		// the auto-close gate; Phase 4 wires record-deploy/verify against
-		// BuildTarget.
+		// Emit setup=<PushSetup> so the local push pre-flight validates
+		// against the source-side setup block (e.g. "dev" for recipe-
+		// style standard pairs). Without this the deploy tool defaults
+		// setup to the target hostname, which fails on recipe yamls
+		// (setup blocks are `dev`/`prod`, not the hostname).
 		intent.DeployArgs = map[string]string{
 			"targetService": intent.PushSource,
 			"strategy":      "git-push",
+		}
+		if intent.PushSetup != "" {
+			intent.DeployArgs["setup"] = intent.PushSetup
 		}
 		intent.EventsService = intent.BuildTarget
 		intent.RecordDeployTarget = intent.BuildTarget
