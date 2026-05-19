@@ -9,19 +9,21 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// TestResolveBuildTargetForHost_StandardPair pins the dev → stage redirect
-// for record-deploy + verify under standard mode. A standard pair always
-// resolves to the stage half regardless of the meta's current closeMode
-// (Phase 4 design: build target is a topology fact, not a delivery
-// decision — record-deploy / verify run AFTER deploy landed and the
-// target is decided by Mode + StageHostname).
-func TestResolveBuildTargetForHost_StandardPair(t *testing.T) {
+// TestResolveBuildTargetForHost_StandardPair_GitPush pins the dev → stage
+// redirect for record-deploy + verify under standard mode WHEN the meta's
+// actual closeMode is git-push + configured (= the only delivery shape
+// where dev pushes and stage builds remotely). For auto / manual / unset
+// the redirect must NOT fire — that branch is covered by
+// TestResolveBuildTargetForHost_StandardPair_AutoNoRedirect below.
+func TestResolveBuildTargetForHost_StandardPair_GitPush(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
 		StageHostname:    "appstage",
+		CloseDeployMode:  topology.CloseModeGitPush,
+		GitPushState:     topology.GitPushConfigured,
 		BootstrapSession: "test",
 		BootstrappedAt:   "2026-05-19",
 		FirstDeployedAt:  "2026-05-19",
@@ -31,30 +33,88 @@ func TestResolveBuildTargetForHost_StandardPair(t *testing.T) {
 
 	host, setup := resolveBuildTargetForHost(dir, "appdev")
 	if host != "appstage" {
-		t.Errorf("dev half: build target = %q, want appstage", host)
+		t.Errorf("dev half (git-push): build target = %q, want appstage", host)
 	}
 	if setup != "prod" {
-		t.Errorf("dev half: build setup = %q, want prod", setup)
+		t.Errorf("dev half (git-push): build setup = %q, want prod", setup)
 	}
 
-	// Stage half: resolves to itself.
-	host, setup = resolveBuildTargetForHost(dir, "appstage")
-	if host != "appstage" {
-		t.Errorf("stage half: build target = %q, want appstage", host)
+	// Stage half under git-push: helper may return "appstage" (identity)
+	// or empty — both are no-op at the caller (`if buildHost != "" &&
+	// buildHost != input.TargetService`). Either way no swap fires;
+	// assertion captures "no observable redirect for the caller".
+	host, _ = resolveBuildTargetForHost(dir, "appstage")
+	if host != "" && host != "appstage" {
+		t.Errorf("stage half (git-push): build target = %q, want empty or appstage (no redirect)", host)
 	}
-	if setup != "prod" {
-		t.Errorf("stage half: build setup = %q, want prod", setup)
+}
+
+// TestResolveBuildTargetForHost_StandardPair_AutoNoRedirect pins the
+// regression that broke the greenfield-node-postgres-dev-stage flow-eval
+// run on 2026-05-19: under closeMode=auto, dev half deploys to itself
+// (direct delivery), so verify + record-deploy on appdev MUST NOT
+// redirect to appstage. The fix made resolveBuildTargetForHost read the
+// meta's actual closeMode + gitPushState (not synthesize git-push).
+func TestResolveBuildTargetForHost_StandardPair_AutoNoRedirect(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             topology.PlanModeStandard,
+		StageHostname:    "appstage",
+		CloseDeployMode:  topology.CloseModeAuto,
+		BootstrapSession: "test",
+		BootstrappedAt:   "2026-05-19",
+		FirstDeployedAt:  "2026-05-19",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	host, _ := resolveBuildTargetForHost(dir, "appdev")
+	if host != "" {
+		t.Errorf("dev half (auto): build target = %q, want empty (no redirect — auto self-deploys)", host)
+	}
+	host, _ = resolveBuildTargetForHost(dir, "appstage")
+	if host != "" {
+		t.Errorf("stage half (auto): build target = %q, want empty (no redirect)", host)
+	}
+}
+
+// TestResolveBuildTargetForHost_StandardPair_GitPushUnconfigured pins the
+// "capability gap" branch: closeMode=git-push but GitPushState=unconfigured
+// means the resolver falls back to direct delivery, so no redirect.
+func TestResolveBuildTargetForHost_StandardPair_GitPushUnconfigured(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             topology.PlanModeStandard,
+		StageHostname:    "appstage",
+		CloseDeployMode:  topology.CloseModeGitPush,
+		GitPushState:     topology.GitPushUnconfigured,
+		BootstrapSession: "test",
+		BootstrappedAt:   "2026-05-19",
+		FirstDeployedAt:  "2026-05-19",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+	host, _ := resolveBuildTargetForHost(dir, "appdev")
+	if host != "" {
+		t.Errorf("git-push unconfigured: build target = %q, want empty (falls back to direct)", host)
 	}
 }
 
 // TestResolveBuildTargetForHost_Simple verifies that simple-mode (single
-// service) does NOT redirect — build target equals input.
+// service) does NOT redirect — build target equals input even under
+// git-push (push source == build target for simple modes).
 func TestResolveBuildTargetForHost_Simple(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	if err := workflow.WriteServiceMeta(dir, &workflow.ServiceMeta{
 		Hostname:         "api",
 		Mode:             topology.PlanModeSimple,
+		CloseDeployMode:  topology.CloseModeGitPush,
+		GitPushState:     topology.GitPushConfigured,
 		BootstrapSession: "test",
 		BootstrappedAt:   "2026-05-19",
 		FirstDeployedAt:  "2026-05-19",
@@ -63,7 +123,7 @@ func TestResolveBuildTargetForHost_Simple(t *testing.T) {
 	}
 	host, _ := resolveBuildTargetForHost(dir, "api")
 	if host != "api" {
-		t.Errorf("simple: build target = %q, want api", host)
+		t.Errorf("simple (git-push): build target = %q, want api (push source == build target)", host)
 	}
 }
 
@@ -79,8 +139,9 @@ func TestResolveBuildTargetForHost_NoMeta(t *testing.T) {
 }
 
 // TestHandleRecordDeploy_RedirectsDevToStage pins Phase 4: an agent that
-// passes `targetService=appdev` on a standard pair gets the stamp routed
-// to the stage half (build target), with a warning explaining the redirect.
+// passes `targetService=appdev` on a standard pair UNDER git-push gets the
+// stamp routed to the stage half (build target), with a warning explaining
+// the redirect.
 func TestHandleRecordDeploy_RedirectsDevToStage(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -88,6 +149,8 @@ func TestHandleRecordDeploy_RedirectsDevToStage(t *testing.T) {
 		Hostname:         "appdev",
 		Mode:             topology.PlanModeStandard,
 		StageHostname:    "appstage",
+		CloseDeployMode:  topology.CloseModeGitPush,
+		GitPushState:     topology.GitPushConfigured,
 		BootstrapSession: "test",
 		BootstrappedAt:   "2026-05-19",
 		FirstDeployedAt:  "2026-05-19",

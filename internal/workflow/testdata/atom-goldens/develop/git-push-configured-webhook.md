@@ -75,7 +75,7 @@ For webhook + actions integrations, the build is async — `zerops_deploy strate
 zerops_workflow action="record-deploy" targetService="<build-target>"
 ```
 
-This records the deploy so the develop session sees the build target as deployed and auto-close becomes eligible (the close-mode gate stays open under git-push). If the push source is passed by mistake (dev half), the call routes to the build target and the response carries a warning — pass the build target directly next time. Verify runs against the build target the same way: `zerops_verify serviceHostname="<build-target>"`.
+This records the deploy so the develop session sees the build target as deployed and auto-close becomes eligible (the close-mode gate stays open under git-push). If the push source is passed by mistake (dev half), the call routes to the build target and the response carries a warning — pass the build target directly next time. Verify runs against the build target the same way: `zerops_verify serviceHostname="<build-target>"`. The auto-redirect fires ONLY when the meta is on `closeMode=git-push` + `gitPushState=configured` (= current delivery is git-push). Under `closeMode=auto` (direct delivery) the dev half is self-deploying and verify/record-deploy stay on whichever hostname you pass — no redirect.
 
 ---
 
