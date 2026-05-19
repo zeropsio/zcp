@@ -106,14 +106,14 @@ func handleBuildIntegration(
 				fmt.Sprintf("build-integration synthesis failed: %v", err),
 				"Build-time defect — report it. Run `make lint-local` to verify the atom corpus."), WithRecoveryStatus()), nil, nil
 		}
-		return jsonResult(map[string]any{
+		return jsonResult(attachWorkSessionState(map[string]any{
 			"status":           "walkthrough",
 			"service":          input.Service,
 			"gitPushState":     meta.GitPushState,
 			"buildIntegration": meta.BuildIntegration,
 			"guidance":         guidance,
 			"nextStep":         fmt.Sprintf("Pick an integration and re-call: zerops_workflow action=\"build-integration\" service=%q integration=\"webhook|actions|none\".", input.Service),
-		}), nil, nil
+		}, stateDir)), nil, nil
 	}
 
 	bi := topology.BuildIntegration(input.Integration)
@@ -129,20 +129,20 @@ func handleBuildIntegration(
 	// remote pushes, which need GitPushConfigured to land in the first place.
 	// 'none' is a valid no-prereq target (clears any prior integration).
 	if bi != topology.BuildIntegrationNone && meta.GitPushState != topology.GitPushConfigured {
-		return jsonResult(map[string]any{
+		return jsonResult(attachWorkSessionState(map[string]any{
 			"status":   "needsGitPushSetup",
 			"service":  input.Service,
 			"reason":   fmt.Sprintf("Build integration %q requires git-push capability (current state: %s).", bi, meta.GitPushState),
 			"nextStep": fmt.Sprintf("Run zerops_workflow action=\"git-push-setup\" service=%q first; then re-run this build-integration call.", input.Service),
-		}), nil, nil
+		}, stateDir)), nil, nil
 	}
 
 	if meta.BuildIntegration == bi {
-		return jsonResult(map[string]any{
+		return jsonResult(attachWorkSessionState(map[string]any{
 			"status":           "noop",
 			"service":          input.Service,
 			"buildIntegration": bi,
-		}), nil, nil
+		}, stateDir)), nil, nil
 	}
 	meta.BuildIntegration = bi
 	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
@@ -154,16 +154,16 @@ func handleBuildIntegration(
 
 	switch bi {
 	case topology.BuildIntegrationActions:
-		return actionsConfirmResponse(ctx, client, projectID, input.Service, meta, rt), nil, nil
+		return actionsConfirmResponse(ctx, client, projectID, input.Service, meta, rt, stateDir), nil, nil
 	case topology.BuildIntegrationWebhook:
-		return webhookConfirmResponse(ctx, client, projectID, input.Service), nil, nil
+		return webhookConfirmResponse(ctx, client, projectID, input.Service, stateDir), nil, nil
 	case topology.BuildIntegrationNone:
-		return jsonResult(map[string]any{
+		return jsonResult(attachWorkSessionState(map[string]any{
 			"status":           "configured",
 			"service":          input.Service,
 			"buildIntegration": bi,
 			"nextStep":         "BuildIntegration cleared. Pushes to the remote will no longer trigger any ZCP-managed CI integration; any independent CI/CD you may have continues unchanged.",
-		}), nil, nil
+		}, stateDir)), nil, nil
 	}
 	// validBuildIntegrations gate above ensures bi is one of the three
 	// known values; this point is unreachable. The defensive return keeps
@@ -189,6 +189,7 @@ func actionsConfirmResponse(
 	projectID, hostname string,
 	meta *workflow.ServiceMeta,
 	rt runtime.Info,
+	stateDir string,
 ) *mcp.CallToolResult {
 	serviceID := actionsLookupServiceID(ctx, client, projectID, hostname)
 	owner, repo, repoOK := ops.ParseGitRemoteOwnerRepo(meta.RemoteURL)
@@ -245,7 +246,7 @@ func actionsConfirmResponse(
 	if serviceID == "" {
 		body["serviceIDLookupWarning"] = "Could not resolve serviceId via Discover — run `zerops_discover service=" + hostname + "` and paste the numeric ID into the ZEROPS_SERVICE_ID command."
 	}
-	return jsonResult(body)
+	return jsonResult(attachWorkSessionState(body, stateDir))
 }
 
 // webhookConfirmResponse builds the confirm body for the dashboard-OAuth
@@ -258,6 +259,7 @@ func webhookConfirmResponse(
 	ctx context.Context,
 	client platform.Client,
 	projectID, hostname string,
+	stateDir string,
 ) *mcp.CallToolResult {
 	serviceID := actionsLookupServiceID(ctx, client, projectID, hostname)
 	dashboardURL := "https://app.zerops.io/dashboard/projects"
@@ -285,7 +287,7 @@ func webhookConfirmResponse(
 	if projectID == "" || serviceID == "" {
 		body["dashboardLookupWarning"] = "Could not deep-link to the runtime page (missing projectId and/or serviceId). Open the Zerops dashboard, navigate to the project, then to the runtime service for " + hostname + " manually."
 	}
-	return jsonResult(body)
+	return jsonResult(attachWorkSessionState(body, stateDir))
 }
 
 // actionsWorkflowYAML returns the default .github/workflows/zerops.yml body.

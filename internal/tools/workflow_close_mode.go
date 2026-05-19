@@ -160,7 +160,14 @@ func handleCloseMode(input WorkflowInput, stateDir string) (*mcp.CallToolResult,
 	if len(setupPointers) > 0 {
 		result["nextSteps"] = setupPointers
 	}
-	return jsonResult(result), nil, nil
+	// Attach WorkSessionState so the agent observes the lifecycle effect
+	// of the close-mode write in the same response. sessionAnnotations
+	// invokes MaybeFireAutoClose lazily; if this write tipped the gate
+	// (scope green + every meta now auto/git-push), the response carries
+	// status="auto-closed" instead of leaving the agent to learn via a
+	// follow-up action="status" call. Spec §1.3 invariant: every state
+	// transition observable in the next MCP response.
+	return jsonResult(attachWorkSessionState(result, stateDir)), nil, nil
 }
 
 // handleCloseModeList returns the per-pair close-mode state + the other

@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
@@ -175,6 +176,12 @@ func TestHandleGitPushSetup_Confirm(t *testing.T) {
 	if meta.RemoteURL != "https://github.com/example/app.git" {
 		t.Errorf("RemoteURL not persisted: %q", meta.RemoteURL)
 	}
+	// Phase 3 sweep: handler attaches workSessionState so the lifecycle
+	// signal is uniform across mutation handlers (spec §1.3).
+	body := getTextContent(t, result)
+	if !strings.Contains(body, `"workSessionState"`) {
+		t.Errorf("response missing workSessionState attachment: %s", body)
+	}
 }
 
 // TestHandleGitPushSetup_RejectsStageHostname pins the source-of-push
@@ -272,6 +279,11 @@ func TestHandleBuildIntegration_Configures(t *testing.T) {
 	meta, _ := workflow.ReadServiceMeta(stateDir, "appdev")
 	if meta.BuildIntegration != topology.BuildIntegrationActions {
 		t.Errorf("BuildIntegration = %q, want actions", meta.BuildIntegration)
+	}
+	// Phase 3 sweep: handler attaches workSessionState (via actionsConfirmResponse)
+	// so the lifecycle signal is uniform across mutation handlers (spec §1.3).
+	if !strings.Contains(getTextContent(t, result), `"workSessionState"`) {
+		t.Errorf("response missing workSessionState attachment: %s", getTextContent(t, result))
 	}
 }
 
@@ -725,3 +737,157 @@ func TestHandleGitPushSetup_ContainerStandard_StageHalfStillRejects(t *testing.T
 }
 
 var _ = context.Background // keep import alive for future test additions
+
+// TestHandleCloseMode_FiresAutoCloseWhenScopeReady pins the structural
+// fix for issue #3 (auto-close gate after close-mode write): when the
+// session has every in-scope service deployed + verified and the
+// close-mode write tips the last gate input, handleCloseMode must
+// (a) stamp ws.ClosedAt + CloseReason via sessionAnnotations →
+//
+//	MaybeFireAutoClose lazy trigger, and
+//
+// (b) surface workSessionState.status="auto-closed" in the response
+//
+//	so the agent observes the lifecycle effect in the same call.
+//
+// Pre-fix: handler returned terse {status:"updated", services:"..."}
+// and the session stayed open until the agent round-tripped via
+// action="status" — violating spec §1.3 + §9.1 step 11.
+//
+// Note: not parallel — touches the per-PID work session file.
+func TestHandleCloseMode_FiresAutoCloseWhenScopeReady(t *testing.T) {
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             topology.PlanModeStandard,
+		StageHostname:    "appstage",
+		BootstrapSession: "test",
+		BootstrappedAt:   "2026-04-28",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta appdev: %v", err)
+	}
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "appstage",
+		Mode:             topology.ModeStage,
+		BootstrapSession: "test",
+		BootstrappedAt:   "2026-04-28",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta appstage: %v", err)
+	}
+
+	// Pre-seed work session with both halves deployed + verified.
+	ws := workflow.NewWorkSession("p", "container", "test", []string{"appdev", "appstage"})
+	ws.Deploys = map[string][]workflow.DeployAttempt{
+		"appdev":   {{AttemptedAt: "t", SucceededAt: "t", Setup: "dev"}},
+		"appstage": {{AttemptedAt: "t", SucceededAt: "t", Setup: "prod"}},
+	}
+	ws.Verifies = map[string][]workflow.VerifyAttempt{
+		"appdev":   {{AttemptedAt: "t", PassedAt: "t", Passed: true}},
+		"appstage": {{AttemptedAt: "t", PassedAt: "t", Passed: true}},
+	}
+	if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
+		t.Fatalf("SaveWorkSession: %v", err)
+	}
+
+	// One handler call sets close-mode on both halves — last gate input tipped.
+	result, _, err := handleCloseMode(WorkflowInput{
+		CloseModes: map[string]string{
+			"appdev":   string(topology.CloseModeAuto),
+			"appstage": string(topology.CloseModeAuto),
+		},
+	}, stateDir)
+	if err != nil {
+		t.Fatalf("handleCloseMode: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success: %s", getTextContent(t, result))
+	}
+	body := getTextContent(t, result)
+
+	// (a) Response surfaces auto-closed state — F5 closure parity with
+	// deploy/verify responses (spec §1.3 invariant).
+	if !strings.Contains(body, `"workSessionState"`) {
+		t.Errorf("response missing workSessionState field: %s", body)
+	}
+	if !strings.Contains(body, `"status":"auto-closed"`) {
+		t.Errorf("response missing status=auto-closed: %s", body)
+	}
+	if !strings.Contains(body, `"closeReason":"`+workflow.CloseReasonAutoComplete+`"`) {
+		t.Errorf("response missing closeReason=auto-complete: %s", body)
+	}
+
+	// (b) Session is actually stamped on disk — spec §9.1 step 11 contract.
+	loaded, err := workflow.LoadWorkSession(stateDir, os.Getpid())
+	if err != nil {
+		t.Fatalf("LoadWorkSession: %v", err)
+	}
+	if loaded.ClosedAt == "" {
+		t.Error("ws.ClosedAt not stamped — auto-close didn't fire")
+	}
+	if loaded.CloseReason != workflow.CloseReasonAutoComplete {
+		t.Errorf("ws.CloseReason = %q, want %q", loaded.CloseReason, workflow.CloseReasonAutoComplete)
+	}
+}
+
+// TestHandleCloseMode_StaysOpenWhenManualBlocks asserts the symmetric
+// case: setting manual on at least one in-scope service blocks the gate
+// even when scope is otherwise green, and the response surfaces
+// status="open" (not auto-closed). Pins that lazy stamp doesn't
+// over-fire.
+func TestHandleCloseMode_StaysOpenWhenManualBlocks(t *testing.T) {
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             topology.PlanModeStandard,
+		StageHostname:    "appstage",
+		BootstrapSession: "test",
+		BootstrappedAt:   "2026-04-28",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta appdev: %v", err)
+	}
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "appstage",
+		Mode:             topology.ModeStage,
+		BootstrapSession: "test",
+		BootstrappedAt:   "2026-04-28",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta appstage: %v", err)
+	}
+	ws := workflow.NewWorkSession("p", "container", "test", []string{"appdev", "appstage"})
+	ws.Deploys = map[string][]workflow.DeployAttempt{
+		"appdev":   {{AttemptedAt: "t", SucceededAt: "t", Setup: "dev"}},
+		"appstage": {{AttemptedAt: "t", SucceededAt: "t", Setup: "prod"}},
+	}
+	ws.Verifies = map[string][]workflow.VerifyAttempt{
+		"appdev":   {{AttemptedAt: "t", PassedAt: "t", Passed: true}},
+		"appstage": {{AttemptedAt: "t", PassedAt: "t", Passed: true}},
+	}
+	if err := workflow.SaveWorkSession(stateDir, ws); err != nil {
+		t.Fatalf("SaveWorkSession: %v", err)
+	}
+
+	// appstage gets manual → blocks gate even on green scope.
+	result, _, err := handleCloseMode(WorkflowInput{
+		CloseModes: map[string]string{
+			"appdev":   string(topology.CloseModeAuto),
+			"appstage": string(topology.CloseModeManual),
+		},
+	}, stateDir)
+	if err != nil || result.IsError {
+		t.Fatalf("handleCloseMode: %v / %s", err, getTextContent(t, result))
+	}
+	body := getTextContent(t, result)
+	if strings.Contains(body, `"status":"auto-closed"`) {
+		t.Errorf("auto-close fired despite manual mode: %s", body)
+	}
+	if !strings.Contains(body, `"status":"open"`) {
+		t.Errorf("response missing status=open: %s", body)
+	}
+	loaded, _ := workflow.LoadWorkSession(stateDir, os.Getpid())
+	if loaded == nil {
+		t.Fatal("session lost")
+	}
+	if loaded.ClosedAt != "" {
+		t.Errorf("ClosedAt stamped on manual-blocked gate: %q", loaded.ClosedAt)
+	}
+}

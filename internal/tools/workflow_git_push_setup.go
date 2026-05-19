@@ -143,12 +143,12 @@ func handleGitPushSetup(input WorkflowInput, stateDir string, rt runtime.Info) (
 				fmt.Sprintf("git-push-setup synthesis failed: %v", err),
 				"Build-time defect — report it. Run `make lint-local` to verify the atom corpus."), WithRecoveryStatus()), nil, nil
 		}
-		return jsonResult(map[string]any{
+		return jsonResult(attachWorkSessionState(map[string]any{
 			"status":   "walkthrough",
 			"service":  input.Service,
 			"guidance": guidance,
 			"nextStep": fmt.Sprintf("After completing the setup steps, re-call: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<configured-remote-url>", input.Service),
-		}), nil, nil
+		}, stateDir)), nil, nil
 	}
 
 	// Confirm mode: validate remoteUrl format then write meta state. Full
@@ -168,11 +168,11 @@ func handleGitPushSetup(input WorkflowInput, stateDir string, rt runtime.Info) (
 			""), WithRecoveryStatus()), nil, nil
 	}
 
-	return jsonResult(map[string]any{
+	return jsonResult(attachWorkSessionState(map[string]any{
 		"status":       "configured",
 		"service":      input.Service,
 		"gitPushState": meta.GitPushState,
 		"remoteUrl":    meta.RemoteURL,
 		"nextStep":     fmt.Sprintf("git-push capability is now ready. Push via: zerops_deploy targetService=%q strategy=\"git-push\". Configure a build integration (webhook|actions) via: zerops_workflow action=\"build-integration\" service=%q integration=\"webhook|actions\".", input.Service, input.Service),
-	}), nil, nil
+	}, stateDir)), nil, nil
 }

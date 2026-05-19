@@ -304,6 +304,19 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   handler already has ComputeEnvelope inputs. Error responses MUST remain
   leaf payloads (`convertError` does not attach an envelope). Pinned by P4
   in `docs/spec-workflows.md`.
+- **Auto-close gate is lazily evaluated via `sessionAnnotations`** — the
+  auto-close gate is a 3-input predicate (deploys + verifies + per-service
+  `meta.CloseDeployMode`). Trigger pattern was event-only (`RecordDeployAttempt`,
+  `RecordVerifyAttempt`) until close-mode joined as a state-input that has no
+  Record* parallel; that introduced a silent gate-tipping path. Resolution:
+  `workflow.MaybeFireAutoClose(stateDir)` runs idempotently from
+  `tools/deploy_local.go::sessionAnnotations`, so every response that attaches
+  `WorkSessionState` (deploy_*, verify, close-mode, git-push-setup,
+  build-integration) acts as a canonical gate-check point. State mutations
+  that tip the gate without recording an event still fire close on the next
+  response surface. Pinned by `TestHandleCloseMode_FiresAutoCloseWhenScopeReady`,
+  `TestHandleCloseMode_StaysOpenWhenManualBlocks`. Spec §1.3 + §9.1 step 11
+  in `docs/spec-work-session.md`.
 - **JSON-only stdout** — debug to stderr; MCP protocol depends on it.
   Pinned by `TestNoStdoutOutsideJSONPath` (scans `internal/...` for
   `fmt.Print*`, `fmt.Fprint*(os.Stdout, ...)`, `os.Stdout.Write*`,

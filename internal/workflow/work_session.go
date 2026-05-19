@@ -295,6 +295,44 @@ func TouchWorkSession(stateDir string) error {
 	return SaveWorkSession(stateDir, ws)
 }
 
+// MaybeFireAutoClose evaluates the auto-close gate against the current-PID
+// work session and stamps ClosedAt+CloseReason if it newly passes. Idempotent
+// — already-closed sessions return (true) without re-stamping. Returns
+// (false) when no session exists, when ws is in scope-empty state, or when
+// the gate doesn't pass.
+//
+// Callable from any response-annotation site: sessionAnnotations invokes
+// this before reading state so mutation handlers that don't themselves
+// record deploy/verify events (e.g. action="close-mode") still tip the
+// gate. Without this read-side trigger the gate became asymmetric after
+// P6 (commit 851fea40) added meta.CloseDeployMode as a third gate input:
+// state mutations that affect the gate's outcome had no Record* parallel
+// to fire the post-event re-evaluation. Lazy stamp on read eliminates the
+// asymmetry — gate is checked wherever lifecycle state is reported.
+//
+// Coexists with the inline stamp in RecordDeployAttempt+RecordVerifyAttempt
+// without double-stamping (both paths guard on ClosedAt == "" under the
+// same mutex).
+func MaybeFireAutoClose(stateDir string) bool {
+	workSessionMu.Lock()
+	defer workSessionMu.Unlock()
+
+	ws, err := CurrentWorkSession(stateDir)
+	if err != nil || ws == nil {
+		return false
+	}
+	if ws.ClosedAt != "" {
+		return true
+	}
+	if !EvaluateAutoClose(stateDir, ws) {
+		return false
+	}
+	ws.ClosedAt = time.Now().UTC().Format(time.RFC3339)
+	ws.CloseReason = CloseReasonAutoComplete
+	_ = SaveWorkSession(stateDir, ws)
+	return true
+}
+
 // HasSuccessfulDeploy reports whether ws has any deploy attempt with a
 // non-empty SucceededAt. Distinct from EvaluateAutoClose, which requires
 // every in-scope service to be both deployed and verified.

@@ -235,7 +235,16 @@ type WorkSessionState struct {
 // round-trip through `action="status"` to learn that a session
 // terminated mid-iteration. Mirrors the envelope's `develop-closed-auto`
 // signal so the same lifecycle vocabulary surfaces at every boundary.
+//
+// MaybeFireAutoClose runs FIRST so state mutations that tip the gate but
+// don't record a deploy/verify event (e.g. action="close-mode" writing
+// meta.CloseDeployMode) are observed as auto-closed in the same response.
+// Idempotent — already-closed sessions skip cleanly. This makes
+// sessionAnnotations the canonical lifecycle-gate check point at every
+// response surface; the trigger-vs-state asymmetry that surfaced when P6
+// added meta.CloseDeployMode as a third gate input is resolved here.
 func sessionAnnotations(stateDir string) *WorkSessionState {
+	_ = workflow.MaybeFireAutoClose(stateDir)
 	ws, err := workflow.CurrentWorkSession(stateDir)
 	if err != nil || ws == nil {
 		return &WorkSessionState{
@@ -258,3 +267,18 @@ func sessionAnnotations(stateDir string) *WorkSessionState {
 }
 
 const noActiveSessionNote = "No active develop session — deploy not tracked. Start one via zerops_workflow action=\"start\" workflow=\"develop\" intent=\"...\" scope=[...] to pick up auto-close + verify tracking."
+
+// attachWorkSessionState writes the canonical lifecycle annotation into
+// the response body. Used by handlers whose response shape is a
+// map[string]any (close-mode, git-push-setup, build-integration) to
+// match the WorkSessionState field that typed-struct responses
+// (deploy_*, verify) already carry. Spec §1.3 invariant: every state
+// transition is observable in the next MCP response — uniform shape
+// across mutation handlers means the agent reads one lifecycle signal,
+// not three different ones.
+func attachWorkSessionState(body map[string]any, stateDir string) map[string]any {
+	if state := sessionAnnotations(stateDir); state != nil {
+		body["workSessionState"] = state
+	}
+	return body
+}
