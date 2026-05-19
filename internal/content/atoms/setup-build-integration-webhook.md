@@ -1,12 +1,14 @@
 ---
 id: setup-build-integration-webhook
-priority: 2
+priority: 3
 phases: [strategy-setup]
 gitPushStates: [configured]
 buildIntegrations: [none]
-title: "Wire the Zerops dashboard webhook integration"
+title: "Alternative (GitLab / policy-constrained repos): Zerops dashboard webhook"
 ---
-The webhook integration is one specific ZCP-managed CI shape: when a push lands on the remote, Zerops pulls the repo and runs the build pipeline. Independent CI/CD you may already have keeps working — ZCP doesn't track or manage external integrations, so `build-integration=webhook` is additive, not exclusive.
+Webhook is the fallback CI shape when Actions doesn't fit — GitLab remotes, repos where workflow files / secrets can't be written from the terminal, or policies that block GitHub Actions. Zerops OAuths the repository in the dashboard and rebuilds the runtime on every push. **Requires one manual step in the Zerops dashboard** (the OAuth flow can't run from MCP). For GitHub remotes with a permissive PAT the Actions integration is the shorter happy path — see the actions atom.
+
+ZCP doesn't track external CI/CD you may already have — `build-integration=webhook` is additive.
 
 ## 1. Confirm git-push setup landed
 
@@ -14,14 +16,15 @@ This atom assumes `GitPushState=configured`. If you haven't run the setup yet, `
 
 ## 2. Wire the webhook in the Zerops dashboard
 
-Open your Zerops project in the dashboard and navigate to the runtime service for `{hostname}`. Use the OAuth flow there to:
+The confirm response carries `dashboardUrl` (deep-link to the BUILD TARGET service's Deploy panel — stage half for standard pairs, the service itself for simple modes) and `setupFieldMandatory` (true when buildSetup ≠ hostname). One-time account-level setup applies: the Zerops dashboard OAuth bonds GitHub on the user's ACCOUNT, not per-repo or per-service — once bonded, every project and service-stack on that account can wire builds without re-authorizing.
 
-1. Connect to GitHub or GitLab (whichever hosts the repo).
-2. Pick the repository the service should pull from.
-3. Pick the branch (typically `main`).
-4. Save.
-
-The dashboard installs the webhook on the remote side with the right permissions. On GitHub fine-grained tokens you need at minimum `Contents: Read` on the repo and `Webhooks: Read and write` on the org/account; the OAuth flow surfaces the specific scope prompt.
+1. Open `dashboardUrl` — the build-target service's Deploy tab.
+2. Click the GitHub/GitLab integration button. If this is the first time on this account, authorize Zerops (one-time per account; the bond covers every future project + service-stack).
+3. Pick the repository. Choose trigger type: Push to Branch (typical) or New Tag (production-grade CD with tag regex).
+4. For Push to Branch: select the branch (default `main` auto-discovered from the repo).
+5. **`setup` field** — the UI labels it optional, but the dashboard maps service hostname → setup block in `zerops.yaml` with NO fallback. Type the `buildSetup` value the confirm response carried whenever it differs from the hostname (recipe pairs: `prod` on the stage half; single-runtime: matches the runtime's setup name). Leaving blank surfaces "The setup was not found" when the hostname has no matching setup block.
+6. Optional: tick "Trigger once after the activation?" to run an immediate build of the current branch state right after save.
+7. Click Activate pipeline trigger.
 
 ## 3. Mark the integration configured
 

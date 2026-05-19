@@ -383,7 +383,11 @@ func EvaluateAutoClose(stateDir string, ws *WorkSession) bool {
 	if !autoCloseGateOpen(stateDir, ws) {
 		return false
 	}
-	for _, h := range ws.Services {
+	targets := ResolvedDeployTargets(stateDir, ws)
+	if len(targets) == 0 {
+		return false
+	}
+	for _, h := range targets {
 		if !serviceAutoCloseReady(ws, h) {
 			return false
 		}
@@ -460,12 +464,13 @@ func AutoCloseProgressOf(stateDir string, ws *WorkSession) *AutoCloseProgress {
 	if ws == nil {
 		return nil
 	}
+	targets := ResolvedDeployTargets(stateDir, ws)
 	progress := &AutoCloseProgress{
 		SessionID: workSessionID(ws.PID),
-		Total:     len(ws.Services),
+		Total:     len(targets),
 		Enabled:   true,
 	}
-	for _, h := range ws.Services {
+	for _, h := range targets {
 		if serviceAutoCloseReady(ws, h) {
 			progress.Ready++
 			continue

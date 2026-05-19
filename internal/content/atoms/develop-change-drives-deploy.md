@@ -17,6 +17,5 @@ Iteration cadence is mode-specific:
 - Simple / standard / local / first-deploy: every change →
   `zerops_deploy`.
 
-Once close-mode is `auto` or `git-push` and every in-scope service has
-both a successful deploy and passing verify, the work session
-auto-closes (`closeReason=auto-complete`).
+Once close-mode is `auto` or `git-push` and every resolved deploy
+target is deployed + verified, the work session auto-closes.

@@ -35,23 +35,27 @@ Iteration cadence is mode-specific:
 - Simple / standard / local / first-deploy: every change →
   `zerops_deploy`.
 
-Once close-mode is `auto` or `git-push` and every in-scope service has
-both a successful deploy and passing verify, the work session
-auto-closes (`closeReason=auto-complete`).
+Once close-mode is `auto` or `git-push` and every resolved deploy
+target is deployed + verified, the work session auto-closes.
 
 ---
 
 This service is on `closeDeployMode=git-push`. Your delivery pattern is `zerops_deploy strategy="git-push"` — commits whatever is live in the workspace and pushes to the configured remote, then Zerops (or your CI) sees the push and runs the build separately. `action="close"` itself is a session-teardown call regardless of close-mode; run the push call below before invoking close.
 
+**Push source vs build target.** For a standard pair, push originates from the DEV half (push source), and Zerops rebuilds the STAGE half (build target) from the remote. No local dev-to-stage cross-deploy is required — the remote push replaces it. For simple / single-runtime modes, push source equals build target.
+<!-- axis-l-keep -->
+
 ## Push the build commit
 
 ```
-zerops_deploy targetService="appdev" setup="<zerops.yaml setup name>" strategy="git-push"
+zerops_deploy targetService="appdev" setup="<source-setup>" strategy="git-push"
 ```
 
-The deploy tool fetches the working tree from `/var/www` (container) or the local workspace, ensures there's a fresh commit, and pushes to the configured remote on the configured branch. If `failureClassification.category=credential` surfaces (GIT_TOKEN or local credentials missing), re-run `zerops_workflow action="git-push-setup" service="appdev"` to refresh the capability.
+`targetService` is the PUSH SOURCE hostname (dev half of a standard pair, or the service itself for simple modes). The deploy tool reads the working tree from `/var/www` (container) or the local workspace, ensures there's a fresh commit, and pushes to the configured remote on the configured branch. If `failureClassification.category=credential` surfaces (GIT_TOKEN or local credentials missing), re-run `zerops_workflow action="git-push-setup" service="appdev"` to refresh the capability.
 
-**Setup parameter:** `setup=<name>` MUST match a `setup:` block name in the project's `zerops.yaml`. Recipe-derived yamls usually use `dev`/`prod` (not the hostname); single-runtime adoptions usually use `<hostname>` itself. The deploy tool defaults the lookup to the target hostname when omitted — that works only when the setup name happens to equal the hostname. Read the project's `zerops.yaml` first and pass the matching name explicitly. An `INVALID_ZEROPS_YML` error response carries `attemptedSetup` + `availableSetups` so a missed first call is recoverable in one round-trip.
+**Setup parameter:** `setup=<name>` MUST match a `setup:` block name in the project's `zerops.yaml`. For the local push pre-flight use the SOURCE setup (recipe-derived: `dev`; single-runtime: `<hostname>`). The remote build (webhook / actions) consumes a separate setup name — for standard pairs that's `prod`, and the build-integration confirm response carries `buildSetup` already populated. The deploy tool defaults the source setup to the target hostname when omitted — that works only when the setup name happens to equal the hostname. Read the project's `zerops.yaml` first and pass the matching name explicitly. An `INVALID_ZEROPS_YML` error response carries `attemptedSetup` + `availableSetups` so a missed first call is recoverable in one round-trip.
+
+**Self-deploy / cross-deploy under git-push:** the develop iteration cycle uses `zerops_deploy strategy="git-push"` only — `zerops_deploy targetService="appdev" setup=dev` (self-deploy into dev) and `zerops_deploy sourceService=<dev> targetService=<stage> setup=prod` (local cross-deploy) are NOT part of the git-push delivery pattern. Persistence is git; the build is async on the build target.
 
 ## What runs the build depends on `BuildIntegration`
 
@@ -65,13 +69,13 @@ The deploy tool fetches the working tree from `/var/www` (container) or the loca
 
 ## When the build lands, ack it
 
-For webhook + actions integrations, the build is async — `zerops_deploy strategy=git-push` returns as soon as the push transmits. After `zerops_events` confirms the build's appVersion went `Status: ACTIVE`, run record-deploy per service:
+For webhook + actions integrations, the build is async — `zerops_deploy strategy=git-push` returns as soon as the push transmits. After `zerops_events` confirms the build's appVersion went `Status: ACTIVE` on the BUILD TARGET (stage half for standard pairs), run record-deploy on that build target:
 
 ```
-zerops_workflow action="record-deploy" targetService="appdev"
+zerops_workflow action="record-deploy" targetService="<build-target>"
 ```
 
-This records the deploy so the develop session sees the service as deployed and auto-close becomes eligible (the close-mode gate stays open under git-push).
+This records the deploy so the develop session sees the build target as deployed and auto-close becomes eligible (the close-mode gate stays open under git-push). If the push source is passed by mistake (dev half), the call routes to the build target and the response carries a warning — pass the build target directly next time. Verify runs against the build target the same way: `zerops_verify serviceHostname="<build-target>"`.
 
 ---
 
@@ -374,9 +378,10 @@ rendered Services block shows them as
   means GIT_TOKEN + .netrc + remote URL are stamped; `unconfigured`
   / `broken` / `unknown` indicate setup is needed before
   `closeMode=git-push` can fire.
-- `buildIntegration` — ZCP-managed CI shape. `none` (default),
-  `webhook` (Zerops webhook drives the build), or `actions` (GitHub
-  Actions workflow YAML). Requires `gitPush=configured`.
+- `buildIntegration` — ZCP-managed CI. `actions` (recommended for
+  GitHub remotes; zero manual dashboard step), `webhook` (Zerops
+  dashboard OAuth — fallback for GitLab / policy-constrained
+  repos), or `none`. Requires `gitPush=configured`.
 
 Switch any axis without closing the session — three actions, each
 operating at a different scope:
@@ -387,7 +392,7 @@ operating at a different scope:
 ```
 zerops_workflow action="close-mode" closeMode={"appdev":"auto"}
 zerops_workflow action="git-push-setup" service="appdev" remoteUrl="..."
-zerops_workflow action="build-integration" service="appdev" integration="webhook"
+zerops_workflow action="build-integration" service="appdev" integration="actions"
 ```
 
 Substitute `appdev` with the dev-half hostname (or single-runtime hostname). For a multi-service project, repeat each call once per dev-half service — never per stage-half.

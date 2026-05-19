@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/platform"
@@ -122,11 +123,13 @@ func handleGitPushSetup(input WorkflowInput, stateDir string, rt runtime.Info) (
 		), WithRecoveryStatus()), nil, nil
 	}
 
-	// Walkthrough mode: synthesize the env-aware setup atom and return.
-	// Atoms still use the legacy strategies/triggers axes pre-Phase-8;
-	// the snapshot we hand to the synthesizer maps the new state onto
-	// the legacy vocabulary so existing strategy-push-git-push-{container,
-	// local} atoms render. Phase 8 swaps both halves to the new axes.
+	// Walkthrough mode: synthesize the env-aware setup atom + emit the
+	// structured input-collection block. inputsRequired carries the parsable
+	// shape AskUserQuestion-capable harnesses render as a typed picker
+	// instead of having the LLM improvise free-text questions for repo URL +
+	// PAT + integration choice (which sent every observed real-session agent
+	// down the "ask three things in a numbered list" path and let webhook
+	// land as the "obvious" default).
 	if input.RemoteURL == "" {
 		snap := workflow.ServiceSnapshot{
 			Hostname:        input.Service,
@@ -147,7 +150,31 @@ func handleGitPushSetup(input WorkflowInput, stateDir string, rt runtime.Info) (
 			"status":   "walkthrough",
 			"service":  input.Service,
 			"guidance": guidance,
-			"nextStep": fmt.Sprintf("After completing the setup steps, re-call: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<configured-remote-url>", input.Service),
+			"inputsRequired": []map[string]any{
+				{
+					"name":        "remoteUrl",
+					"label":       "Git remote URL",
+					"description": "HTTPS or scp-form SSH URL of the target repository. Example: https://github.com/<owner>/<repo>.git or git@github.com:<owner>/<repo>.git",
+					"required":    true,
+				},
+				{
+					"name":        "gitToken",
+					"label":       "GIT_TOKEN (fine-grained PAT)",
+					"description": "Personal access token scoped to the single target repo. For GitHub: Contents:Read+Write; add Secrets+Workflows if you plan integration=actions (recommended). For GitLab: write_repository; add api for webhook. Stored via zerops_env action=\"set\" project=true variables=[\"GIT_TOKEN=...\"].",
+					"secret":      true,
+					"required":    true,
+				},
+				{
+					"name":        "integration",
+					"label":       "CI integration",
+					"description": "Which CI shape consumes the remote push. Actions = GitHub Actions workflow runs zcli push (recommended for GitHub — zero manual dashboard steps); webhook = Zerops dashboard OAuth pulls the repo (requires manual dashboard step); none = independent CI/CD you already own.",
+					"options":     []string{"actions", "webhook", "none"},
+					"required":    true,
+				},
+			},
+			"recommendedIntegration": "actions",
+			"prompt":                 "Three inputs needed to wire git-push for " + input.Service + ": (1) remote repo URL, (2) fine-grained PAT, (3) CI integration. Actions is the default for GitHub repos with a permissive PAT (zero manual Zerops dashboard step); webhook is the fallback for GitLab / policy-constrained repos; none means external CI/CD you already own.",
+			"nextStep":               fmt.Sprintf("After collecting inputs: 1) set GIT_TOKEN via zerops_env action=\"set\" project=true. 2) confirm capability: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<url>. 3) wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\".", input.Service, input.Service),
 		}, stateDir)), nil, nil
 	}
 
@@ -169,10 +196,26 @@ func handleGitPushSetup(input WorkflowInput, stateDir string, rt runtime.Info) (
 	}
 
 	return jsonResult(attachWorkSessionState(map[string]any{
-		"status":       "configured",
-		"service":      input.Service,
-		"gitPushState": meta.GitPushState,
-		"remoteUrl":    meta.RemoteURL,
-		"nextStep":     fmt.Sprintf("git-push capability is now ready. Push via: zerops_deploy targetService=%q strategy=\"git-push\". Configure a build integration (webhook|actions) via: zerops_workflow action=\"build-integration\" service=%q integration=\"webhook|actions\".", input.Service, input.Service),
+		"status":                 "configured",
+		"service":                input.Service,
+		"gitPushState":           meta.GitPushState,
+		"remoteUrl":              meta.RemoteURL,
+		"recommendedIntegration": recommendIntegrationForRemoteURL(meta.RemoteURL),
+		"nextStep":               fmt.Sprintf("git-push capability is ready. Wire CI (recommended for GitHub: integration=\"actions\" — zero manual dashboard step; for GitLab or policy-constrained repos: integration=\"webhook\"; for external CI/CD: integration=\"none\"): zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
 	}, stateDir)), nil, nil
+}
+
+// recommendIntegrationForRemoteURL picks the default CI integration based
+// on the remote URL host. GitHub URLs default to "actions" (the agent can
+// land workflow + secrets via `gh` without leaving the terminal); GitLab
+// and other hosts default to "webhook" (the dashboard OAuth is the
+// canonical path there because no equivalent CLI-driven secret wiring
+// exists). Empty URL falls back to "actions" — most users on the
+// happy path are on GitHub, and the agent can still override.
+func recommendIntegrationForRemoteURL(remote string) string {
+	low := strings.ToLower(remote)
+	if strings.Contains(low, "gitlab") {
+		return "webhook"
+	}
+	return "actions"
 }

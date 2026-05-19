@@ -48,15 +48,32 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 				WorkSessionState: sessionAnnotations(stateDir),
 			}), nil, nil
 		}
-		result, err := ops.Verify(ctx, client, fetcher, httpClient, projectID, input.ServiceHostname)
+		// Phase 4: if the input hostname is a push source whose builds land
+		// on a different runtime (dev half of a standard pair under
+		// git-push), verify against the BUILD TARGET instead. Self/cross
+		// (auto close-mode) modes resolve to self → no redirect.
+		// Recorded under the build-target hostname so the work session's
+		// auto-close gate (which evaluates resolved targets after Phase 2)
+		// sees the green tick on the right key.
+		host := input.ServiceHostname
+		var redirectedFrom string
+		if buildHost, _ := resolveBuildTargetForHost(stateDir, host); buildHost != "" && buildHost != host {
+			redirectedFrom = host
+			host = buildHost
+		}
+		result, err := ops.Verify(ctx, client, fetcher, httpClient, projectID, host)
 		if err != nil {
 			return convertError(err, WithRecoveryStatus()), nil, nil
 		}
 		recordVerifyToWorkSession(stateDir, result)
-		return jsonResult(verifyResponse{
+		resp := verifyResponse{
 			VerifyResult:     result,
 			WorkSessionState: sessionAnnotations(stateDir),
-		}), nil, nil
+		}
+		if redirectedFrom != "" {
+			resp.Note = fmt.Sprintf("verify: input serviceHostname=%q is a push source; verified build target %q instead (git-push standard pair builds on stage). Pass the build-target hostname directly next time.", redirectedFrom, host)
+		}
+		return jsonResult(resp), nil, nil
 	})
 }
 
@@ -65,8 +82,14 @@ func RegisterVerify(srv *mcp.Server, client platform.Client, fetcher platform.Lo
 // session state turns verify from a pure HTTP probe into an observable
 // lifecycle event — the agent sees whether this call landed inside an
 // open session, on an auto-closed one, or with no session tracking.
+//
+// Note carries any user-facing hint about the verify call's routing —
+// Phase 4 uses it to surface that the input hostname was redirected to
+// the build target (e.g. dev → stage under git-push) so the agent learns
+// the right hostname for next time.
 type verifyResponse struct {
 	*ops.VerifyResult
+	Note             string            `json:"note,omitempty"`
 	WorkSessionState *WorkSessionState `json:"workSessionState,omitempty"`
 }
 

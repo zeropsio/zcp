@@ -85,6 +85,21 @@ func handleRecordDeploy(
 			"Pass targetService=\"<hostname>\" — the runtime service whose external deploy you are acknowledging."), WithRecoveryStatus()), nil, nil
 	}
 
+	// Phase 4: redirect to build target. For a standard pair under
+	// git-push, the agent pushed from the dev half but Zerops rebuilt the
+	// stage half — record-deploy must stamp the build target (where the
+	// deploy actually landed), not the push source. resolveBuildTargetForHost
+	// returns the resolved hostname; auto-correct with a warning so the
+	// agent learns the right hostname for next time. Simple/single-runtime
+	// modes resolve to self → no redirect.
+	originalTarget := input.TargetService
+	buildHost, _ := resolveBuildTargetForHost(stateDir, input.TargetService)
+	redirected := false
+	if buildHost != "" && buildHost != input.TargetService {
+		input.TargetService = buildHost
+		redirected = true
+	}
+
 	// Build-status pre-flight: gate on the latest appVersion event being
 	// ACTIVE before stamping or appending a synthetic deploy attempt to the
 	// work session. Push transmits ≠ build lands; agents that ack too early
@@ -134,6 +149,11 @@ func handleRecordDeploy(
 		resp.Note = "FirstDeployedAt freshly stamped — ServiceSnapshot.Deployed flips to true on next envelope build"
 	default:
 		resp.Note = "already stamped — no change"
+	}
+	if redirected {
+		resp.Warnings = append(resp.Warnings,
+			fmt.Sprintf("record-deploy: input targetService=%q is a push source; the deploy landed on build target %q. Stamping %q. Pass the build-target hostname directly next time.",
+				originalTarget, input.TargetService, input.TargetService))
 	}
 
 	// Work-session bridge: append a synthetic successful DeployAttempt so

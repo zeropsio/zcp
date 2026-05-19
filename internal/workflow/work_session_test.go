@@ -615,3 +615,189 @@ func TestLoadWorkSession_Corrupt_ReturnsPlatformError(t *testing.T) {
 		t.Error("expected Diagnostic to carry the parser detail + path")
 	}
 }
+
+// TestEvaluateAutoClose_GitPushStandardPair pins Phase 2 of the git-push
+// flow redesign: under closeMode=git-push + GitPushConfigured, the
+// auto-close gate evaluates the RESOLVED build target (stage half), not
+// the raw scope hostnames (which still include the dev half because
+// validateDevelopScope auto-includes pair halves). Without this, an
+// agent that pushed via git-push and recorded/verified on stage would
+// see the session never auto-close because the dev half has no deploy
+// in its history.
+func TestEvaluateAutoClose_GitPushStandardPair(t *testing.T) {
+	cases := []struct {
+		name          string
+		closeMode     topology.CloseDeployMode
+		gitPushState  topology.GitPushState
+		devDeployed   bool
+		devVerified   bool
+		stageDeployed bool
+		stageVerified bool
+		want          bool
+	}{
+		{
+			name:          "git-push configured, stage green → fires (ignores dev half)",
+			closeMode:     topology.CloseModeGitPush,
+			gitPushState:  topology.GitPushConfigured,
+			stageDeployed: true,
+			stageVerified: true,
+			want:          true,
+		},
+		{
+			name:          "git-push configured, stage pending → blocks",
+			closeMode:     topology.CloseModeGitPush,
+			gitPushState:  topology.GitPushConfigured,
+			devDeployed:   true,
+			devVerified:   true,
+			stageDeployed: false,
+			want:          false,
+		},
+		{
+			name:          "git-push configured, stage deployed but not verified → blocks",
+			closeMode:     topology.CloseModeGitPush,
+			gitPushState:  topology.GitPushConfigured,
+			stageDeployed: true,
+			stageVerified: false,
+			want:          false,
+		},
+		{
+			name:          "auto, dev+stage both green → fires (legacy parity)",
+			closeMode:     topology.CloseModeAuto,
+			devDeployed:   true,
+			devVerified:   true,
+			stageDeployed: true,
+			stageVerified: true,
+			want:          true,
+		},
+		{
+			name:          "auto, dev green but stage missing → blocks (legacy parity)",
+			closeMode:     topology.CloseModeAuto,
+			devDeployed:   true,
+			devVerified:   true,
+			stageDeployed: false,
+			want:          false,
+		},
+		{
+			name:          "git-push unconfigured (capability gap) → falls back to direct gate",
+			closeMode:     topology.CloseModeGitPush,
+			gitPushState:  topology.GitPushUnconfigured,
+			devDeployed:   true,
+			devVerified:   true,
+			stageDeployed: true,
+			stageVerified: true,
+			want:          true, // resolver returns Delivery=direct; both halves need to be ready
+		},
+		{
+			name:          "git-push unconfigured, stage missing → falls back to direct gate, blocks",
+			closeMode:     topology.CloseModeGitPush,
+			gitPushState:  topology.GitPushUnconfigured,
+			devDeployed:   true,
+			devVerified:   true,
+			stageDeployed: false,
+			want:          false,
+		},
+		{
+			name:          "manual blocks regardless of state",
+			closeMode:     topology.CloseModeManual,
+			devDeployed:   true,
+			devVerified:   true,
+			stageDeployed: true,
+			stageVerified: true,
+			want:          false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			meta := &ServiceMeta{
+				Hostname:                 "appdev",
+				Mode:                     topology.PlanModeStandard,
+				StageHostname:            "appstage",
+				CloseDeployMode:          tc.closeMode,
+				CloseDeployModeConfirmed: true,
+				GitPushState:             tc.gitPushState,
+				BootstrapSession:         "test",
+				BootstrappedAt:           "2026-05-19",
+				FirstDeployedAt:          "2026-05-19", // not first deploy — git-push branch eligible
+			}
+			if err := WriteServiceMeta(dir, meta); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+			ws := &WorkSession{
+				Services: []string{"appdev", "appstage"},
+				Deploys:  map[string][]DeployAttempt{},
+				Verifies: map[string][]VerifyAttempt{},
+			}
+			if tc.devDeployed {
+				ws.Deploys["appdev"] = []DeployAttempt{{AttemptedAt: "t", SucceededAt: "t"}}
+			}
+			if tc.devVerified {
+				ws.Verifies["appdev"] = []VerifyAttempt{{AttemptedAt: "t", PassedAt: "t", Passed: true}}
+			}
+			if tc.stageDeployed {
+				ws.Deploys["appstage"] = []DeployAttempt{{AttemptedAt: "t", SucceededAt: "t"}}
+			}
+			if tc.stageVerified {
+				ws.Verifies["appstage"] = []VerifyAttempt{{AttemptedAt: "t", PassedAt: "t", Passed: true}}
+			}
+			got := EvaluateAutoClose(dir, ws)
+			if got != tc.want {
+				t.Errorf("EvaluateAutoClose = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestResolvedDeployTargets_StandardPair pins the dedup + build-target
+// collapse: for a standard pair the resolved targets should be [stage]
+// under git-push (PushSource appdev → BuildTarget appstage; appstage →
+// itself), and [appdev, appstage] under auto (self-deploys).
+func TestResolvedDeployTargets_StandardPair(t *testing.T) {
+	cases := []struct {
+		name      string
+		closeMode topology.CloseDeployMode
+		gitPush   topology.GitPushState
+		want      []string
+	}{
+		{"auto: both halves are targets", topology.CloseModeAuto, topology.GitPushUnconfigured, []string{"appdev", "appstage"}},
+		{"git-push configured: collapses to stage", topology.CloseModeGitPush, topology.GitPushConfigured, []string{"appstage"}},
+		{"git-push unconfigured: falls back to both", topology.CloseModeGitPush, topology.GitPushUnconfigured, []string{"appdev", "appstage"}},
+		{"manual: keeps both (gate blocks elsewhere)", topology.CloseModeManual, topology.GitPushUnconfigured, []string{"appdev", "appstage"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			meta := &ServiceMeta{
+				Hostname:         "appdev",
+				Mode:             topology.PlanModeStandard,
+				StageHostname:    "appstage",
+				CloseDeployMode:  tc.closeMode,
+				GitPushState:     tc.gitPush,
+				BootstrapSession: "test",
+				BootstrappedAt:   "2026-05-19",
+				FirstDeployedAt:  "2026-05-19",
+			}
+			if err := WriteServiceMeta(dir, meta); err != nil {
+				t.Fatalf("WriteServiceMeta: %v", err)
+			}
+			ws := &WorkSession{Services: []string{"appdev", "appstage"}}
+			got := ResolvedDeployTargets(dir, ws)
+			if !equalStringSlices(got, tc.want) {
+				t.Errorf("ResolvedDeployTargets = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func equalStringSlices(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

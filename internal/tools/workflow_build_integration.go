@@ -88,7 +88,12 @@ func handleBuildIntegration(
 			})), nil, nil
 	}
 
-	// Walkthrough mode: synthesize options atom (PhaseStrategySetup).
+	// Walkthrough mode: synthesize options atom (PhaseStrategySetup) and
+	// emit the structured choice prompt. The `options` list is ordered with
+	// the recommended choice first so agent harnesses with AskUserQuestion
+	// surface Actions as the default for GitHub remotes (zero manual
+	// dashboard step) and webhook as the fallback for GitLab / policy-
+	// constrained setups.
 	if input.Integration == "" {
 		snap := workflow.ServiceSnapshot{
 			Hostname:         input.Service,
@@ -106,14 +111,39 @@ func handleBuildIntegration(
 				fmt.Sprintf("build-integration synthesis failed: %v", err),
 				"Build-time defect — report it. Run `make lint-local` to verify the atom corpus."), WithRecoveryStatus()), nil, nil
 		}
-		return jsonResult(attachWorkSessionState(map[string]any{
-			"status":           "walkthrough",
-			"service":          input.Service,
-			"gitPushState":     meta.GitPushState,
-			"buildIntegration": meta.BuildIntegration,
-			"guidance":         guidance,
-			"nextStep":         fmt.Sprintf("Pick an integration and re-call: zerops_workflow action=\"build-integration\" service=%q integration=\"webhook|actions|none\".", input.Service),
-		}, stateDir)), nil, nil
+		recommended := recommendIntegrationForRemoteURL(meta.RemoteURL)
+		buildHost, buildSetup := anticipatedBuildTarget(meta)
+		body := map[string]any{
+			"status":                 "walkthrough",
+			"service":                input.Service,
+			"gitPushState":           meta.GitPushState,
+			"buildIntegration":       meta.BuildIntegration,
+			"buildTarget":            buildHost,
+			"buildSetup":             buildSetup,
+			"recommendedIntegration": recommended,
+			"options": []map[string]any{
+				{
+					"name":        "actions",
+					"label":       "GitHub Actions (recommended for GitHub)",
+					"description": "Workflow YAML + gh secret set commands. Zero manual Zerops dashboard step. Requires fine-grained PAT with Contents+Secrets+Workflows scope.",
+				},
+				{
+					"name":        "webhook",
+					"label":       "Zerops dashboard webhook (fallback)",
+					"description": "OAuth in Zerops dashboard authorizes pull. Required for GitLab and policy-constrained repos. Includes one manual dashboard step.",
+				},
+				{
+					"name":        "none",
+					"label":       "No ZCP-managed CI",
+					"description": "Keep your existing CI/CD; ZCP does not wire anything. Pushes still land at the remote.",
+				},
+			},
+			"inputField": "integration",
+			"prompt":     "Pick a CI integration for " + input.Service + " (build target: " + buildHost + ", setup: " + buildSetup + "). Default: " + recommended + ".",
+			"guidance":   guidance,
+			"nextStep":   fmt.Sprintf("Pick an integration and re-call: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\".", input.Service),
+		}
+		return jsonResult(attachWorkSessionState(body, stateDir)), nil, nil
 	}
 
 	bi := topology.BuildIntegration(input.Integration)
@@ -122,6 +152,21 @@ func handleBuildIntegration(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Invalid integration %q", input.Integration),
 			"Valid values: none, webhook, actions"), WithRecoveryStatus()), nil, nil
+	}
+
+	// Local-only projects have no Zerops runtime to receive builds. Refuse
+	// actions/webhook with adopt-local recovery so the agent links a stage
+	// first; ZEROPS_SERVICE_ID and webhook deep-link have no target without
+	// it. 'none' is allowed (clears integration; no build target needed).
+	if bi != topology.BuildIntegrationNone && meta.Mode == topology.PlanModeLocalOnly {
+		return convertError(platform.NewPlatformError(
+			platform.ErrPrerequisiteMissing,
+			fmt.Sprintf("Build integration %q requires a linked Zerops runtime; %q is local-only", bi, input.Service),
+			"Link a Zerops runtime as stage first: zerops_workflow action=\"adopt-local\" targetService=\"<runtime-hostname>\". Then re-run build-integration.",
+		), WithRecovery(&RecoveryHint{
+			Tool:   "zerops_workflow",
+			Action: "adopt-local",
+		})), nil, nil
 	}
 
 	// Pre-check the prereq chain. Setting BuildIntegration to anything other
@@ -156,7 +201,7 @@ func handleBuildIntegration(
 	case topology.BuildIntegrationActions:
 		return actionsConfirmResponse(ctx, client, projectID, input.Service, meta, rt, stateDir), nil, nil
 	case topology.BuildIntegrationWebhook:
-		return webhookConfirmResponse(ctx, client, projectID, input.Service, stateDir), nil, nil
+		return webhookConfirmResponse(ctx, client, projectID, input.Service, meta, stateDir), nil, nil
 	case topology.BuildIntegrationNone:
 		return jsonResult(attachWorkSessionState(map[string]any{
 			"status":           "configured",
@@ -183,6 +228,14 @@ func handleBuildIntegration(
 // are available; on miss (e.g. handler called from a unit test without
 // mock platform), the placeholder `<run zerops_discover>` falls in so the
 // response is still self-describing.
+//
+// Build target resolution: for a standard pair the Actions workflow must
+// `zcli push` to the STAGE half (build target) with `--setup prod`, NOT to
+// the dev half passed as `service=` (which is the push source for the meta
+// configuration). DeployIntent.Resolve flips the snapshot's closeMode to
+// git-push (anticipated state once the integration fires) and reads the
+// resolved BuildTarget + BuildSetup. For simple/single-runtime modes
+// BuildTarget falls back to the input hostname.
 func actionsConfirmResponse(
 	ctx context.Context,
 	client platform.Client,
@@ -191,7 +244,14 @@ func actionsConfirmResponse(
 	rt runtime.Info,
 	stateDir string,
 ) *mcp.CallToolResult {
-	serviceID := actionsLookupServiceID(ctx, client, projectID, hostname)
+	buildHost, buildSetup := anticipatedBuildTarget(meta)
+	if buildHost == "" {
+		buildHost = hostname // defensive fallback
+	}
+	if buildSetup == "" {
+		buildSetup = buildHost
+	}
+	serviceID := actionsLookupServiceID(ctx, client, projectID, buildHost)
 	owner, repo, repoOK := ops.ParseGitRemoteOwnerRepo(meta.RemoteURL)
 	ownerRepo := "<owner>/<repo>"
 	if repoOK {
@@ -201,13 +261,15 @@ func actionsConfirmResponse(
 	body := map[string]any{
 		"status":           "configured",
 		"service":          hostname,
+		"buildTarget":      buildHost,
+		"buildSetup":       buildSetup,
 		"buildIntegration": topology.BuildIntegrationActions,
 		"workflowFile": map[string]any{
 			"path":        ".github/workflows/zerops.yml",
 			"variant":     "setup-aware-zcli",
-			"setup":       hostname,
+			"setup":       buildSetup,
 			"description": "Default workflow: installs zcli directly and passes --setup, so it works when zerops.yaml has multiple setups or the setup must be selected explicitly.",
-			"content":     actionsWorkflowYAML(hostname),
+			"content":     actionsWorkflowYAML(buildSetup),
 		},
 		"alternateWorkflowFiles": []map[string]any{
 			{
@@ -255,39 +317,117 @@ func actionsConfirmResponse(
 // project + service IDs prefilled — they form the deep-link path so the
 // agent (or the user) lands on the exact runtime page rather than having
 // to navigate from the project root.
+//
+// Build target resolution: deep-link points at the BUILD TARGET service
+// page, not the push source. For a standard pair the user must connect
+// OAuth on the stage half so Zerops rebuilds the stage runtime from
+// pushed code (matches the actions integration's `--setup prod`
+// targeting). For simple/single-runtime modes the build target equals
+// the input hostname. The `service-stack-source-code` route slug used
+// in the deep-link was not verified in the legacy frontend tree; the
+// fallback service-stack-detail page is included in dashboardSteps so
+// the agent navigates manually if the slug 404s.
 func webhookConfirmResponse(
 	ctx context.Context,
 	client platform.Client,
 	projectID, hostname string,
+	meta *workflow.ServiceMeta,
 	stateDir string,
 ) *mcp.CallToolResult {
-	serviceID := actionsLookupServiceID(ctx, client, projectID, hostname)
-	dashboardURL := "https://app.zerops.io/dashboard/projects"
-	if projectID != "" && serviceID != "" {
-		dashboardURL = fmt.Sprintf(
-			"https://app.zerops.io/dashboard/project/%s/service-stack/%s/service-stack-source-code",
-			projectID, serviceID,
-		)
+	buildHost, buildSetup := anticipatedBuildTarget(meta)
+	if buildHost == "" {
+		buildHost = hostname
 	}
+	if buildSetup == "" {
+		buildSetup = buildHost
+	}
+	serviceID := actionsLookupServiceID(ctx, client, projectID, buildHost)
+	dashboardURL := "https://app.zerops.io/dashboard/projects"
+	if serviceID != "" {
+		dashboardURL = fmt.Sprintf("https://app.zerops.io/service-stack/%s/deploy", serviceID)
+	}
+	setupMandatory := buildSetup != "" && buildSetup != buildHost
 	body := map[string]any{
-		"status":           "configured",
-		"service":          hostname,
-		"buildIntegration": topology.BuildIntegrationWebhook,
-		"projectId":        projectID,
-		"serviceId":        serviceID,
-		"dashboardUrl":     dashboardURL,
-		"dashboardSteps": []string{
-			"Open " + dashboardURL + " — this deep-links straight to the runtime's source-code panel.",
-			"Click the GitHub/GitLab OAuth connect button. Authorize Zerops to access the repository.",
-			"Pick the repository the service should pull from, then the branch (typically main). Save.",
-			"The dashboard installs the webhook on the remote with the right permissions automatically — no manual secret wiring on the GitHub side.",
-		},
-		"nextStep": "Once the OAuth flow is saved, every push to the chosen branch triggers a Zerops build automatically — including pushes from other contributors, not just yours.",
+		"status":              "configured",
+		"service":             hostname,
+		"buildTarget":         buildHost,
+		"buildSetup":          buildSetup,
+		"buildIntegration":    topology.BuildIntegrationWebhook,
+		"projectId":           projectID,
+		"serviceId":           serviceID,
+		"dashboardUrl":        dashboardURL,
+		"setupFieldMandatory": setupMandatory,
+		"dashboardSteps":      webhookDashboardSteps(dashboardURL, buildHost, buildSetup, setupMandatory),
+		"nextStep":            "Once the pipeline trigger is activated, every push to the chosen branch triggers a build of " + buildHost + " using setup=" + buildSetup + ". Tick \"Trigger once after the activation?\" to also run an immediate build of the current branch state.",
 	}
 	if projectID == "" || serviceID == "" {
-		body["dashboardLookupWarning"] = "Could not deep-link to the runtime page (missing projectId and/or serviceId). Open the Zerops dashboard, navigate to the project, then to the runtime service for " + hostname + " manually."
+		body["dashboardLookupWarning"] = "Could not deep-link to the runtime page (missing serviceId). Open the Zerops dashboard, navigate to the project, then to the runtime service for " + buildHost + ", and switch to the Deploy tab."
 	}
 	return jsonResult(attachWorkSessionState(body, stateDir))
+}
+
+// webhookDashboardSteps builds the per-step dashboard instructions for the
+// webhook integration. Captures the empirical UI shape verified on
+// 2026-05-19 (eval-zcp live test, service-stack/<id>/deploy panel):
+//
+//   - The integration page lives at `/service-stack/<serviceId>/deploy`,
+//     NOT `/service-stack-source-code` (legacy slug that 404s).
+//   - The trigger dialog offers New Tag or Push to Branch — branch flow
+//     is the default happy path; tag flow is for production-grade CD.
+//   - The "setup from zerops.yml" field is labelled optional in the UI but
+//     dashboard maps hostname → setup with NO fallback, so for any service
+//     whose hostname doesn't match a setup block name (e.g. recipe-style
+//     standard pair: stage hostname `appstage` vs setup name `prod`), the
+//     field IS mandatory — leaving it blank surfaces a "The setup was not
+//     found" error.
+//   - "Trigger once after the activation?" runs an immediate build of the
+//     current branch state without waiting for the next push.
+func webhookDashboardSteps(dashboardURL, buildHost, buildSetup string, setupMandatory bool) []string {
+	setupStep := "In the `setup` field, leave blank (the dashboard maps the service hostname `" + buildHost + "` to a matching setup block in zerops.yaml)."
+	if setupMandatory {
+		setupStep = "In the `setup` field, type `" + buildSetup + "`. MANDATORY despite the optional label: dashboard maps service hostname → setup block, and `" + buildHost + "` does not match a setup block in zerops.yaml — leaving blank surfaces \"The setup was not found\"."
+	}
+	return []string{
+		"Open " + dashboardURL + " — the Deploy tab on the build target service. Click the GitHub/GitLab integration button to start OAuth.",
+		"Authorize Zerops to access the repository. Pick the repo, then choose trigger type: Push to Branch (typical) or New Tag (production-grade CD with tag regex).",
+		"For Push to Branch: select the branch (typically `main`).",
+		setupStep,
+		"Optional: tick \"Trigger once after the activation?\" to run an immediate build of the current branch state right after save.",
+		"Click Activate pipeline trigger. Zerops installs the webhook on the remote automatically — no manual secret wiring on the GitHub side.",
+	}
+}
+
+// anticipatedBuildTarget returns (BuildTarget, BuildSetup) for the service
+// receiving builds triggered by the CI integration the user is about to
+// wire. Synthesizes a "post-integration" ServiceSnapshot (closeMode=git-push,
+// GitPushConfigured) regardless of meta's CURRENT closeMode — the
+// integration always sends builds to the same destination once it fires,
+// and the user typically wires the integration BEFORE switching close-mode.
+//
+// For standard / local-stage pairs: BuildTarget = StageHostname, BuildSetup
+// = "prod" (matches recipe convention). For simple/dev/single-runtime modes:
+// BuildTarget = self, BuildSetup = "" (caller defaults to hostname). For
+// local-only modes: BuildTarget = "" (caller's responsibility to refuse).
+func anticipatedBuildTarget(meta *workflow.ServiceMeta) (string, string) {
+	if meta == nil {
+		return "", ""
+	}
+	// Deployed=true forces past-first-deploy semantics: the integration the
+	// agent is wiring will fire on subsequent pushes, never on the initial
+	// commit. Without this override the FirstDeployBypass branch collapses
+	// BuildTarget to self for a fresh meta whose FirstDeployedAt isn't
+	// stamped yet.
+	snap := workflow.ServiceSnapshot{
+		Hostname:        meta.Hostname,
+		Mode:            meta.ModeFor(meta.Hostname),
+		CloseDeployMode: topology.CloseModeGitPush,
+		GitPushState:    topology.GitPushConfigured,
+		StageHostname:   meta.StageHostname,
+		Deployed:        true,
+	}
+	snaps := workflow.SnapshotsFromMetas([]*workflow.ServiceMeta{meta})
+	intent := workflow.Resolve(snap, snaps)
+	return intent.BuildTarget, intent.BuildSetup
 }
 
 // actionsWorkflowYAML returns the default .github/workflows/zerops.yml body.

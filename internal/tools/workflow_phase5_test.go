@@ -411,6 +411,11 @@ func TestHandleBuildIntegration_ActionsConfirmEnrichesResponse(t *testing.T) {
 	mustContain := []string{
 		`"status":"configured"`,
 		`"buildIntegration":"actions"`,
+		// Phase 3: standard pair resolves to stage half + prod setup.
+		// Workflow YAML targets the build runtime, not the push source.
+		`"buildTarget":"appstage"`,
+		`"buildSetup":"prod"`,
+		`"service":"appdev"`,
 		`"workflowFile"`,
 		".github/workflows/zerops.yml",
 		"actions/checkout@v4",
@@ -418,8 +423,7 @@ func TestHandleBuildIntegration_ActionsConfirmEnrichesResponse(t *testing.T) {
 		"curl -sSL https://zerops.io/zcli/install.sh",
 		"zcli login",
 		"zcli push --service-id",
-		"--setup",
-		"appdev",
+		`--setup \"prod\"`,
 		"single-setup-action",
 		"zeropsio/actions@v1.0.2",
 		"access-token",

@@ -23,9 +23,10 @@ rendered Services block shows them as
   means GIT_TOKEN + .netrc + remote URL are stamped; `unconfigured`
   / `broken` / `unknown` indicate setup is needed before
   `closeMode=git-push` can fire.
-- `buildIntegration` — ZCP-managed CI shape. `none` (default),
-  `webhook` (Zerops webhook drives the build), or `actions` (GitHub
-  Actions workflow YAML). Requires `gitPush=configured`.
+- `buildIntegration` — ZCP-managed CI. `actions` (recommended for
+  GitHub remotes; zero manual dashboard step), `webhook` (Zerops
+  dashboard OAuth — fallback for GitLab / policy-constrained
+  repos), or `none`. Requires `gitPush=configured`.
 
 Switch any axis without closing the session — three actions, each
 operating at a different scope:
@@ -36,7 +37,7 @@ operating at a different scope:
 ```
 zerops_workflow action="close-mode" closeMode={"{hostname}":"auto"}
 zerops_workflow action="git-push-setup" service="{hostname}" remoteUrl="..."
-zerops_workflow action="build-integration" service="{hostname}" integration="webhook"
+zerops_workflow action="build-integration" service="{hostname}" integration="actions"
 ```
 
 Substitute `{hostname}` with the dev-half hostname (or single-runtime hostname). For a multi-service project, repeat each call once per dev-half service — never per stage-half.

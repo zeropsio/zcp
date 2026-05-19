@@ -1,14 +1,16 @@
 ---
 id: setup-build-integration-actions
-priority: 2
+priority: 1
 phases: [strategy-setup]
 gitPushStates: [configured]
 buildIntegrations: [none]
-title: "Wire the GitHub Actions integration"
+title: "Recommended for GitHub: GitHub Actions integration (zero manual dashboard step)"
 ---
-The Actions integration is one specific ZCP-managed CI shape: a GitHub Actions workflow runs `zcli push` from CI on every push that matches the workflow trigger. ZCP doesn't track or manage external workflows you may already have, so `build-integration=actions` is additive — independent CI/CD keeps running unchanged.
+The Actions integration is the recommended ZCP-managed CI shape for GitHub remotes — a GitHub Actions workflow runs `zcli push` from CI on every push to the configured branch. With a permissive PAT and `gh` CLI, both the workflow file and the two repository secrets are written from the terminal, so the setup completes without any manual step in the Zerops dashboard. (Webhook is the fallback for GitLab / policy-constrained repos — see the webhook atom.)
 
-After you call `zerops_workflow action="build-integration" service="{hostname}" integration="actions"`, the response carries the workflow YAML body + prefilled `gh secret set` commands ready to paste. This atom is the human-readable companion that explains what each piece does and the recommended GitHub PAT shape.
+ZCP doesn't track or manage external workflows you may already have, so `build-integration=actions` is additive — independent CI/CD keeps running unchanged.
+
+After you call `zerops_workflow action="build-integration" service="{hostname}" integration="actions"`, the response carries the workflow YAML body + prefilled `gh secret set` commands ready to paste, plus `buildTarget` and `buildSetup` so the workflow's `zcli push --service-id ... --setup ...` targets the right runtime (stage half for standard pairs, the service itself for simple modes). This atom is the human-readable companion.
 
 ## 1. Confirm git-push setup landed
 

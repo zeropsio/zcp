@@ -249,31 +249,37 @@ func countIdleServices(env StateEnvelope) (bootstrapped, adoptable int) {
 // then reject with `ErrInvalidZeropsYml` because stage's `deployFiles`
 // is post-build-tree (cherry-picked), not the full source tree.
 //
-// TODO: replace with a workflow-side `DeployIntent` resolver that
-// computes (mode, deploy-class, source, target, setup) once and
-// flows it through both build_plan and ops.ClassifyDeploy. The current
-// implementation is a symptom fix that infers the same data inline at
-// dispatch time. See audit-prerelease-internal-testing-2026-04-29.md
-// H1 + plan §3 for the structural target.
+// Args + tool come from the typed DeployIntent resolver
+// (`workflow.Resolve`) so build_plan, auto-close gate (Phase 2), build-
+// integration response targeting (Phase 3), and verify/record-deploy
+// (Phase 4) all read from a single source of truth instead of duplicating
+// the (mode, deploy-class, source, target, setup) inference. The previous
+// inline implementation predates the resolver — see plan
+// `plans/git-push-deploy-flow-redesign-2026-05-19.md` for the redesign.
 func deployActionFor(host string, last AttemptInfo, services []ServiceSnapshot) NextAction {
-	if devHost := findDevHalfForStage(host, services); devHost != "" {
-		return NextAction{
-			Label: "Deploy " + host,
-			Tool:  "zerops_deploy",
-			Args: map[string]string{
-				"sourceService": devHost,
-				"targetService": host,
-				"setup":         "prod",
-			},
-			Rationale: deployRationale(last),
-		}
-	}
+	target := snapshotByHostname(services, host)
+	intent := Resolve(target, services)
 	return NextAction{
 		Label:     "Deploy " + host,
-		Tool:      "zerops_deploy",
-		Args:      map[string]string{"targetService": host},
+		Tool:      intent.DeployTool,
+		Args:      intent.DeployArgs,
 		Rationale: deployRationale(last),
 	}
+}
+
+// snapshotByHostname returns the ServiceSnapshot for host or a zero-value
+// snapshot carrying just the hostname when no match exists. The zero-value
+// path preserves today's deployActionFor behavior for scope hostnames that
+// don't appear in env.Services (rare, but ResolveIntent must still produce
+// usable args for the existing tests that drive build_plan with synthetic
+// scopes).
+func snapshotByHostname(services []ServiceSnapshot, host string) ServiceSnapshot {
+	for _, svc := range services {
+		if svc.Hostname == host {
+			return svc
+		}
+	}
+	return ServiceSnapshot{Hostname: host}
 }
 
 // findDevHalfForStage returns the dev hostname of the standard pair when

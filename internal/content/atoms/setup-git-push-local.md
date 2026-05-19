@@ -10,6 +10,10 @@ coverageExempt: "local-mode git-push setup — strategy-setup/container-unconfig
 ---
 On a local workstation, ZCP delegates auth to your existing git setup — SSH keys, macOS Keychain, or the system credential helper your local git already uses. ZCP never reads or writes credentials. Walk through a first push, then mark the capability configured.
 
+## Collect inputs (use `AskUserQuestion` when the harness exposes it)
+
+The `git-push-setup` walkthrough response carries `inputsRequired` + `recommendedIntegration`; render them as a structured picker, not free-text questions. The inputs on local mode are: (1) **remote URL**, (2) **build integration** choice (`actions` recommended for GitHub remotes — zero manual Zerops dashboard step; `webhook` for GitLab and policy-constrained repos; `none` for external CI/CD). Token entry is NOT collected — local git already holds the user's credentials.
+
 ## 1. Confirm git knows who to push as
 
 A working `git push` outside ZCP confirms credentials are wired. If `git push` prompts for a password every time or fails on auth, fix that first (SSH key in agent, credential helper installed, or PAT in keychain).

@@ -35,9 +35,8 @@ Iteration cadence is mode-specific:
 - Simple / standard / local / first-deploy: every change →
   `zerops_deploy`.
 
-Once close-mode is `auto` or `git-push` and every in-scope service has
-both a successful deploy and passing verify, the work session
-auto-closes (`closeReason=auto-complete`).
+Once close-mode is `auto` or `git-push` and every resolved deploy
+target is deployed + verified, the work session auto-closes.
 
 ---
 
@@ -384,9 +383,10 @@ rendered Services block shows them as
   means GIT_TOKEN + .netrc + remote URL are stamped; `unconfigured`
   / `broken` / `unknown` indicate setup is needed before
   `closeMode=git-push` can fire.
-- `buildIntegration` — ZCP-managed CI shape. `none` (default),
-  `webhook` (Zerops webhook drives the build), or `actions` (GitHub
-  Actions workflow YAML). Requires `gitPush=configured`.
+- `buildIntegration` — ZCP-managed CI. `actions` (recommended for
+  GitHub remotes; zero manual dashboard step), `webhook` (Zerops
+  dashboard OAuth — fallback for GitLab / policy-constrained
+  repos), or `none`. Requires `gitPush=configured`.
 
 Switch any axis without closing the session — three actions, each
 operating at a different scope:
@@ -397,7 +397,7 @@ operating at a different scope:
 ```
 zerops_workflow action="close-mode" closeMode={"appdev":"auto"}
 zerops_workflow action="git-push-setup" service="appdev" remoteUrl="..."
-zerops_workflow action="build-integration" service="appdev" integration="webhook"
+zerops_workflow action="build-integration" service="appdev" integration="actions"
 ```
 
 Substitute `appdev` with the dev-half hostname (or single-runtime hostname). For a multi-service project, repeat each call once per dev-half service — never per stage-half.
