@@ -10,6 +10,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/zeropsio/zcp/internal/ops"
+	"github.com/zeropsio/zcp/internal/ops/bundle"
 	"github.com/zeropsio/zcp/internal/ops/inventory"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -308,22 +309,40 @@ func handleLaunchProduction(
 	// blockers; nothing here changes that — current still calls it.
 	var current ops.SourceSnapshot
 	var haveCurrent bool
-	if source, sourceBlocker := readAndValidateSourceState(ctx, client, sshDeployer, rt, corpus, input, projectID, stateDir, launchID, false); sourceBlocker == nil {
-		if bundle, bundleErr := ops.BuildLaunchBundle(ops.LaunchBundleInputs{
-			SourceProjectID:   projectID,
-			TargetProjectName: input.ProductionProjectName,
-			TargetHostname:    input.TargetService,
-			ServiceType:       source.ServiceType,
-			SetupName:         effectiveProdSetupName(input),
-			RepoURL:           source.RepoURL,
-			ZeropsYAMLBody:    source.ZeropsYAMLBody,
-			GitCommitSHA:      source.GitCommitSHA,
-			ProjectEnvs:       bundleProjectEnvsFromSource(sourceEnvs),
-			ManagedServices:   source.ManagedServices,
-			KeepNonHA:         input.KeepNonHA,
-		}, classifications); bundleErr == nil {
-			current = bundle.SourceSnapshot
-			haveCurrent = true
+	resolvedForBaseline := resolveLaunchRuntimes(stateDir, input)
+	if len(resolvedForBaseline) > 0 {
+		if _, sourceBlocker := readAndValidateSourceState(ctx, client, sshDeployer, rt, corpus, input, projectID, stateDir, launchID, false); sourceBlocker == nil {
+			// Compose per-runtime inputs using the gate-validated RepoURL
+			// (gateCheck already populated). For the baseline soft-read
+			// path the gate ran above (gateCheck != nil only on read-side
+			// pass); re-derive a fresh per-runtime gate result here so the
+			// composer's per-runtime RepoURL discipline holds.
+			gateChecks := make([]*LaunchSourceControlCheck, 0, len(resolvedForBaseline))
+			gateClean := true
+			for _, r := range resolvedForBaseline {
+				ck, ckBlockers, ckErr := validateLaunchSourceControl(ctx, client, sshDeployer, rt, stateDir, r.ChoiceHostname, input.SkipBuildIntegration)
+				if ckErr != nil || gateHasBlockingFailure(ckBlockers) || ck == nil {
+					gateClean = false
+					break
+				}
+				gateChecks = append(gateChecks, ck)
+			}
+			if gateClean {
+				bundleInputs, _, composeErr := composeLaunchBundleInputs(
+					ctx, client, sshDeployer, rt,
+					projectID, input.ProductionProjectName,
+					resolvedForBaseline, gateChecks,
+					bundleProjectEnvsFromSource(sourceEnvs),
+					input.KeepNonHA,
+					bundle.VariantLaunchNew,
+				)
+				if composeErr == nil {
+					if b, bundleErr := ops.BuildLaunchBundle(bundleInputs, classifications); bundleErr == nil {
+						current = b.SourceSnapshot
+						haveCurrent = true
+					}
+				}
+			}
 		}
 	}
 
@@ -474,6 +493,8 @@ func executeLaunchPipelineResume(
 // vars. defer admin.Close() zeros it before return.
 //
 // P-LP-1: no field on the response or state file carries the key.
+//
+//nolint:maintidx // state-machine size, not nested conditionals; P2 multi-runtime composer reshape pushed cyclomatic complexity up by 2 (composeLaunchBundleInputs error branch + bundleResult RepoURL plumbing) but the function is still linear top-to-bottom
 func executeLaunchMutation(
 	ctx context.Context,
 	sourceProjectID string,
@@ -505,35 +526,48 @@ func executeLaunchMutation(
 	if blocker != nil {
 		return blocker, nil, nil
 	}
+	_ = source // kept for the legacy single-runtime readAndValidate flow's auditFail side-effects; per-runtime sources are read inside composeLaunchBundleInputs.
+
+	resolved := resolveLaunchRuntimes(stateDir, input)
 
 	// Publish-side source-control gate (P-LP-10 hard re-check). Shared
 	// helper with executeExistingProjectMutation — drift between read-
 	// side OK and publish-side fail is a real publish refusal operators
 	// want logged (writeAudit semantics handled inside the helper).
+	// Returns one LaunchSourceControlCheck per resolved runtime; the
+	// composer reads the gate-validated MetaRemoteURL from each.
 	gateResult := runPublishSideSourceControlGate(
 		ctx, corpus, client, sshDeployer, rt, input,
-		sourceProjectID, stateDir, launchID, source.RepoURL,
+		sourceProjectID, stateDir, launchID, resolved,
 	)
 	if gateResult.Response != nil {
 		return gateResult.Response, nil, nil
 	}
 
-	bundleInputs := ops.LaunchBundleInputs{
-		SourceProjectID:   sourceProjectID,
-		TargetProjectName: input.ProductionProjectName,
-		TargetHostname:    input.TargetService,
-		ServiceType:       source.ServiceType,
-		SetupName:         effectiveProdSetupName(input),
-		RepoURL:           gateResult.RepoURL,
-		ZeropsYAMLBody:    source.ZeropsYAMLBody,
-		GitCommitSHA:      source.GitCommitSHA,
-		ProjectEnvs:       bundleProjectEnvsFromSource(sourceEnvs),
-		ManagedServices:   source.ManagedServices,
-		KeepNonHA:         input.KeepNonHA,
+	bundleInputs, composeWarnings, composeErr := composeLaunchBundleInputs(
+		ctx, client, sshDeployer, rt,
+		sourceProjectID, input.ProductionProjectName,
+		resolved, gateResult.Checks,
+		bundleProjectEnvsFromSource(sourceEnvs),
+		input.KeepNonHA,
+		bundle.VariantLaunchNew,
+	)
+	if composeErr != nil {
+		_ = appendAuditLog(stateDir, launchAuditEntry{
+			LaunchID:          launchID,
+			Action:            "publish-rejected",
+			SourceProjectID:   sourceProjectID,
+			TargetProjectName: input.ProductionProjectName,
+			Result:            "failure",
+			ErrorMessage:      "compose bundle inputs: " + composeErr.Error(),
+		})
+		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
+			"compose-inputs-failed",
+			"Launch bundle input composition failed: "+composeErr.Error()), nil, nil
 	}
 
 	// Bundle composition — uses ops.BuildLaunchBundle (Phase C).
-	bundle, err := ops.BuildLaunchBundle(bundleInputs, classifications)
+	launchBundle, err := ops.BuildLaunchBundle(bundleInputs, classifications)
 	if err != nil {
 		_ = appendAuditLog(stateDir, launchAuditEntry{
 			LaunchID:          launchID,
@@ -547,7 +581,8 @@ func executeLaunchMutation(
 			"bundle-compose-failed",
 			"Launch bundle composition failed: "+err.Error()), nil, nil
 	}
-	if len(bundle.Errors) > 0 {
+	launchBundle.Warnings = append(launchBundle.Warnings, composeWarnings...)
+	if len(launchBundle.Errors) > 0 {
 		_ = appendAuditLog(stateDir, launchAuditEntry{
 			LaunchID:          launchID,
 			Action:            "publish-rejected",
@@ -558,30 +593,38 @@ func executeLaunchMutation(
 		})
 		return launchFailedResponse(corpus, topology.BlockerCategorySchema,
 			"schema-validation-failed",
-			fmt.Sprintf("Import yaml schema validation failed: %v", bundle.Errors)), nil, nil
+			fmt.Sprintf("Import yaml schema validation failed: %v", launchBundle.Errors)), nil, nil
 	}
 
 	// Persist initial state pre-mutation — if CreateAndImport panics or
 	// the process dies before completion, the state file shows the
-	// attempt and the source-snapshot for forensics.
+	// attempt and the source-snapshot for forensics. Records the first
+	// promoted runtime's push hostname + gate-validated RepoURL for
+	// forensic correlation; multi-runtime SourceRepoURL is captured in
+	// SourceSnapshot via the composer's digest.
+	primaryRuntime := firstResolvedRuntime(resolved)
+	primaryRepoURL := ""
+	if len(gateResult.Checks) > 0 && gateResult.Checks[0] != nil {
+		primaryRepoURL = gateResult.Checks[0].MetaRemoteURL
+	}
 	state := &launchState{
 		LaunchID:              launchID,
 		SourceProjectID:       sourceProjectID,
-		SourceRepoURL:         source.RepoURL,
+		SourceRepoURL:         primaryRepoURL,
 		TargetProjectName:     input.ProductionProjectName,
-		TargetServiceHostname: input.TargetService,
-		SourceSnapshot:        bundle.SourceSnapshot,
+		TargetServiceHostname: primaryRuntime.PushHostname,
+		SourceSnapshot:        launchBundle.SourceSnapshot,
 		Classifications:       classifications,
 		Status:                topology.LaunchStatusLaunching,
 	}
 	if err := writeLaunchState(stateDir, state); err != nil {
 		// Non-fatal — proceed with the mutation, but warn.
-		bundle.Warnings = append(bundle.Warnings,
+		launchBundle.Warnings = append(launchBundle.Warnings,
 			fmt.Sprintf("write launch state: %v (proceeding; resume after restart may not work)", err))
 	}
 
 	// Mutation: CreateAndImportProject. This is the irreversible step.
-	result, err := admin.CreateAndImportProject(ctx, bundle.ImportYAML, platform.CreateOpts{
+	result, err := admin.CreateAndImportProject(ctx, launchBundle.ImportYAML, platform.CreateOpts{
 		Location: input.Region,
 		Tags:     []string{"env:prod", "managed-by:zcp-launch"},
 	})
@@ -594,8 +637,8 @@ func executeLaunchMutation(
 			Action:            "create-and-import",
 			SourceProjectID:   sourceProjectID,
 			TargetProjectName: input.ProductionProjectName,
-			SourceCommitSHA:   bundle.SourceSnapshot.GitCommitSHA,
-			SourceYAMLSHA256:  bundle.SourceSnapshot.ZeropsYAMLSHA256,
+			SourceCommitSHA:   launchBundle.SourceSnapshot.GitCommitSHA,
+			SourceYAMLSHA256:  launchBundle.SourceSnapshot.ZeropsYAMLSHA256,
 			Classifications:   classifications,
 			HAOptOut:          input.KeepNonHA,
 			Result:            "failure",
@@ -620,7 +663,7 @@ func executeLaunchMutation(
 	// here is non-fatal — the project IS created, env-read fallbacks
 	// to manual UI verification.
 	if err := admin.GrantSelfRole(ctx, result.ProjectID, "ADMIN"); err != nil {
-		bundle.Warnings = append(bundle.Warnings,
+		launchBundle.Warnings = append(launchBundle.Warnings,
 			fmt.Sprintf("grant self ADMIN role on %s: %v (env-presence verification disabled; user can read via UI)", result.ProjectID, err))
 	}
 	state.ImportedServices = make([]importedServiceEntry, 0, len(result.ServiceStacks))
@@ -677,8 +720,8 @@ func executeLaunchMutation(
 		SourceProjectID:   sourceProjectID,
 		TargetProjectID:   result.ProjectID,
 		TargetProjectName: result.ProjectName,
-		SourceCommitSHA:   bundle.SourceSnapshot.GitCommitSHA,
-		SourceYAMLSHA256:  bundle.SourceSnapshot.ZeropsYAMLSHA256,
+		SourceCommitSHA:   launchBundle.SourceSnapshot.GitCommitSHA,
+		SourceYAMLSHA256:  launchBundle.SourceSnapshot.ZeropsYAMLSHA256,
 		Classifications:   classifications,
 		HAOptOut:          input.KeepNonHA,
 		Result:            boolStr(!hasPerServiceError, "success", "failure"),

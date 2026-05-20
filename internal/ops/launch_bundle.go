@@ -25,6 +25,10 @@ type SourceSnapshot = bundle.SourceSnapshot
 // bundle/inputs.go.
 type LaunchBundleInputs = bundle.LaunchBundleInputs
 
+// LaunchRuntimeInput — alias of bundle.LaunchRuntimeInput. See
+// bundle/inputs.go for the canonical definition + field docs.
+type LaunchRuntimeInput = bundle.LaunchRuntimeInput
+
 // BuildLaunchBundle is the legacy entry point for launch bundle
 // composition. Delegates to bundle.BuildLaunch which owns the
 // composition pipeline (verify setup, classify envs, compose

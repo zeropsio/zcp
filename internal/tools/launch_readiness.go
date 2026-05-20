@@ -108,8 +108,17 @@ func runReadinessRubric(bundle *ops.LaunchBundle, inputs ops.LaunchBundleInputs)
 	}
 
 	// 3. Runtime minContainers >= 2 — bundle composer defaults to 2,
-	// caller may override to a higher value.
-	if inputs.MinContainers <= 0 || inputs.MinContainers >= 2 {
+	// caller may override per runtime. Multi-runtime check: every
+	// runtime must satisfy.
+	var failingRuntime *ops.LaunchRuntimeInput
+	for i := range inputs.Runtimes {
+		r := inputs.Runtimes[i]
+		if r.MinContainers > 0 && r.MinContainers < 2 {
+			failingRuntime = &r
+			break
+		}
+	}
+	if failingRuntime == nil {
 		out = append(out, readinessCheck{
 			ID:       readinessCheckRuntimeMinContainers,
 			Severity: readinessSeverityBlock,
@@ -120,7 +129,7 @@ func runReadinessRubric(bundle *ops.LaunchBundle, inputs ops.LaunchBundleInputs)
 			ID:       readinessCheckRuntimeMinContainers,
 			Severity: readinessSeverityBlock,
 			Status:   readinessStatusFail,
-			Message:  fmt.Sprintf("minContainers=%d below prod default of 2 (HA-via-replication needs >= 2)", inputs.MinContainers),
+			Message:  fmt.Sprintf("runtime %s: minContainers=%d below prod default of 2 (HA-via-replication needs >= 2)", failingRuntime.ProdHostname, failingRuntime.MinContainers),
 		})
 	}
 

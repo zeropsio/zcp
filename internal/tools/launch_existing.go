@@ -128,10 +128,13 @@ func detectHostnameConflicts(existing []platform.ServiceStack, incoming []string
 // importHostnamesFromInputs returns the hostnames the launch bundle
 // would create on the target. Used by the hostname-conflict preflight
 // to compare against the existing service list. Order matches the
-// composer's services array order (runtime first, then managed deps).
+// composer's services array order (runtime entries first, then
+// deduplicated managed deps).
 func importHostnamesFromInputs(inputs ops.LaunchBundleInputs) []string {
-	hostnames := make([]string, 0, 1+len(inputs.ManagedServices))
-	hostnames = append(hostnames, inputs.TargetHostname)
+	hostnames := make([]string, 0, len(inputs.Runtimes)+len(inputs.ManagedServices))
+	for _, r := range inputs.Runtimes {
+		hostnames = append(hostnames, r.ProdHostname)
+	}
 	for _, m := range inputs.ManagedServices {
 		hostnames = append(hostnames, m.Hostname)
 	}
@@ -197,32 +200,46 @@ func executeExistingProjectMutation(
 	if blocker != nil {
 		return blocker, nil, nil
 	}
+	_ = source // legacy single-runtime auditFail side-effects; per-runtime sources are read in composeLaunchBundleInputs.
+
+	resolved := resolveLaunchRuntimes(stateDir, input)
 
 	// Publish-side source-control gate (P-LP-10 hard re-check) — shared
 	// helper with executeLaunchMutation.
 	gateResult := runPublishSideSourceControlGate(
 		ctx, corpus, sourceClient, sshDeployer, rt, input,
-		sourceProjectID, stateDir, launchID, source.RepoURL,
+		sourceProjectID, stateDir, launchID, resolved,
 	)
 	if gateResult.Response != nil {
 		return gateResult.Response, nil, nil
 	}
 
-	bundleInputs := ops.LaunchBundleInputs{
-		SourceProjectID:   sourceProjectID,
-		TargetProjectName: input.ProductionProjectName,
-		TargetHostname:    input.TargetService,
-		ServiceType:       source.ServiceType,
-		SetupName:         effectiveProdSetupName(input),
-		RepoURL:           gateResult.RepoURL,
-		ZeropsYAMLBody:    source.ZeropsYAMLBody,
-		GitCommitSHA:      source.GitCommitSHA,
-		ProjectEnvs:       bundleProjectEnvsFromSource(sourceEnvs),
-		ManagedServices:   source.ManagedServices,
-		KeepNonHA:         input.KeepNonHA,
-		Variant:           bundle.VariantLaunchExisting,
+	bundleInputs, composeWarnings, composeErr := composeLaunchBundleInputs(
+		ctx, sourceClient, sshDeployer, rt,
+		sourceProjectID, input.ProductionProjectName,
+		resolved, gateResult.Checks,
+		bundleProjectEnvsFromSource(sourceEnvs),
+		input.KeepNonHA,
+		bundle.VariantLaunchExisting,
+	)
+	if composeErr != nil {
+		_ = appendAuditLog(stateDir, launchAuditEntry{
+			LaunchID:          launchID,
+			Action:            "publish-rejected",
+			SourceProjectID:   sourceProjectID,
+			TargetProjectName: input.ProductionProjectName,
+			Result:            "failure",
+			ErrorMessage:      "compose bundle inputs: " + composeErr.Error(),
+		})
+		//nolint:nilerr // composeErr surfaces via the structured launchFailedResponse; returning nil as the third value is the MCP-success boundary contract (payload reaches client)
+		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
+			"compose-inputs-failed",
+			"Launch bundle input composition failed: "+composeErr.Error()), nil, nil
 	}
 	launchBundle, err := ops.BuildLaunchBundle(bundleInputs, classifications)
+	if launchBundle != nil {
+		launchBundle.Warnings = append(launchBundle.Warnings, composeWarnings...)
+	}
 	if err != nil {
 		_ = appendAuditLog(stateDir, launchAuditEntry{
 			LaunchID:          launchID,

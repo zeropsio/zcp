@@ -24,7 +24,7 @@ func TestReadinessRubric_AllPassOnCleanBundle(t *testing.T) {
 		SourceSnapshot: ops.SourceSnapshot{ZeropsYAMLSHA256: "abc123"},
 	}
 	inputs := ops.LaunchBundleInputs{
-		MinContainers: 2,
+		Runtimes: []ops.LaunchRuntimeInput{{ProdHostname: "app", ServiceType: "nodejs@22", RepoURL: "https://example/r.git", ZeropsYAMLBody: "zerops:\n  - setup: prod\n"}},
 		ManagedServices: []ops.ManagedServiceEntry{
 			{Hostname: "db", Type: "postgresql@16"},
 		},
@@ -45,7 +45,7 @@ func TestReadinessRubric_SchemaFailsBlocks(t *testing.T) {
 		Errors:         []schema.ValidationError{{Path: "/foo", Message: "broken"}},
 		SourceSnapshot: ops.SourceSnapshot{ZeropsYAMLSHA256: "x"},
 	}
-	checks := runReadinessRubric(bundle, ops.LaunchBundleInputs{MinContainers: 2})
+	checks := runReadinessRubric(bundle, ops.LaunchBundleInputs{Runtimes: []ops.LaunchRuntimeInput{{ProdHostname: "app", MinContainers: 2}}})
 	if !hasBlockingFailures(checks) {
 		t.Fatal("expected blocking failure for schema errors")
 	}
@@ -57,7 +57,7 @@ func TestReadinessRubric_LowMinContainersBlocks(t *testing.T) {
 	bundle := &ops.LaunchBundle{
 		SourceSnapshot: ops.SourceSnapshot{ZeropsYAMLSHA256: "x"},
 	}
-	checks := runReadinessRubric(bundle, ops.LaunchBundleInputs{MinContainers: 1})
+	checks := runReadinessRubric(bundle, ops.LaunchBundleInputs{Runtimes: []ops.LaunchRuntimeInput{{ProdHostname: "app", MinContainers: 1}}})
 	if !hasBlockingFailures(checks) {
 		t.Fatal("expected blocking failure for minContainers=1")
 	}
@@ -68,7 +68,7 @@ func TestReadinessRubric_LowMinContainersBlocks(t *testing.T) {
 func TestReadinessRubric_MissingSnapshotBlocks(t *testing.T) {
 	t.Parallel()
 	bundle := &ops.LaunchBundle{} // SourceSnapshot empty
-	checks := runReadinessRubric(bundle, ops.LaunchBundleInputs{MinContainers: 2})
+	checks := runReadinessRubric(bundle, ops.LaunchBundleInputs{Runtimes: []ops.LaunchRuntimeInput{{ProdHostname: "app", MinContainers: 2}}})
 	if !hasBlockingFailures(checks) {
 		t.Fatal("expected blocking failure for missing source snapshot")
 	}
@@ -82,7 +82,7 @@ func TestReadinessRubric_KeepNonHAWarnsButPasses(t *testing.T) {
 		SourceSnapshot: ops.SourceSnapshot{ZeropsYAMLSHA256: "x"},
 	}
 	inputs := ops.LaunchBundleInputs{
-		MinContainers: 2,
+		Runtimes: []ops.LaunchRuntimeInput{{ProdHostname: "app", ServiceType: "nodejs@22", RepoURL: "https://example/r.git", ZeropsYAMLBody: "zerops:\n  - setup: prod\n"}},
 		ManagedServices: []ops.ManagedServiceEntry{
 			{Hostname: "valkey", Type: "valkey@7"},
 		},
@@ -114,7 +114,7 @@ func TestReadinessRubric_NoManagedServicesSkipsHACheck(t *testing.T) {
 	bundle := &ops.LaunchBundle{
 		SourceSnapshot: ops.SourceSnapshot{ZeropsYAMLSHA256: "x"},
 	}
-	checks := runReadinessRubric(bundle, ops.LaunchBundleInputs{MinContainers: 2})
+	checks := runReadinessRubric(bundle, ops.LaunchBundleInputs{Runtimes: []ops.LaunchRuntimeInput{{ProdHostname: "app", MinContainers: 2}}})
 	for _, c := range checks {
 		if c.ID == readinessCheckHAManagedDeps && c.Status != readinessStatusSkip {
 			t.Errorf("expected HA check skip when no managed deps, got %q", c.Status)

@@ -70,10 +70,56 @@ type BundleInputs struct {
 	ManagedServices []ManagedServiceEntry
 }
 
+// LaunchRuntimeInput is the per-runtime payload BuildLaunch consumes
+// to emit one `services[]` entry in the production import.yaml. The
+// composer loops over LaunchBundleInputs.Runtimes and emits one
+// runtimeEntry per LaunchRuntimeInput.
+//
+// All RepoURL values MUST come from ServiceMeta.RemoteURL of a meta
+// whose GitPushState=configured (P-LP-10 invariant — enforced at the
+// handler-side gate in internal/tools/launch_source_control_gate.go).
+// The composer is a downstream consumer that trusts the gate-validated
+// value and never reads live SSH for the URL embedded in the bundle.
+type LaunchRuntimeInput struct {
+	// ProdHostname is the hostname the production runtime gets in
+	// import.yaml. Typically the source dev-half stripped of its mode
+	// suffix (`appdev` → `app`, `workerstage` → `worker`); the handler
+	// owns derivation and override semantics.
+	ProdHostname string
+	// ServiceType is the runtime's platform type tag (e.g. "nodejs@22").
+	ServiceType string
+	// SetupName is the `setup:` block name the runtime resolves at
+	// build. Per-runtime so monorepo + multi-runtime projects can
+	// reference different setup blocks under the same zerops.yaml,
+	// AND separate-repo deployments can each reference their own
+	// zerops.yaml's setup. Default "prod" when empty (BuildLaunch
+	// applies the default).
+	SetupName string
+	// RepoURL is the buildFromGit value. Gate-validated; composer
+	// rejects when empty.
+	RepoURL string
+	// GitCommitSHA — source HEAD at compose time. Per-runtime so
+	// multi-runtime projects sharing a repo carry the same SHA while
+	// separate-repo projects can carry different SHAs.
+	GitCommitSHA string
+	// ZeropsYAMLBody — verbatim source zerops.yaml content. Used by
+	// the composer to detect cross-service env refs that need
+	// preprocessor preamble; per-runtime so separate-repo runtimes
+	// each contribute their own yaml.
+	ZeropsYAMLBody string
+	// MinContainers — runtime min count. Default
+	// runtimeProductionMinContainers (2) when zero.
+	MinContainers int
+}
+
 // LaunchBundleInputs feeds composition for the launch variants
-// (VariantLaunchNew / VariantLaunchExisting). Superset of BundleInputs
-// fields plus prod-specific knobs (HA opt-out, source-snapshot
-// inputs, audit-log fields).
+// (VariantLaunchNew / VariantLaunchExisting). Carries the per-project
+// scope (TargetProjectName, SourceProjectID, ProjectEnvs, ManagedServices,
+// KeepNonHA, AdditionalTags, Variant) plus the per-runtime payloads
+// in Runtimes — one entry per promoted runtime. The composer loops
+// over Runtimes to emit N runtime services in import.yaml; ManagedServices
+// is deduplicated by hostname so multiple runtimes sharing infra get one
+// entry each.
 //
 // Variant selects launch shape — zero (VariantExportDev) is invalid
 // for this struct and is normalized to VariantLaunchNew at compose
@@ -85,32 +131,22 @@ type LaunchBundleInputs struct {
 	SourceProjectID string
 	// TargetProjectName — what the new prod project will be named.
 	TargetProjectName string
-	// TargetHostname — the runtime hostname in the launch yaml.
-	TargetHostname string
-	// ServiceType — runtime type tag (e.g. "nodejs@22").
-	ServiceType string
-	// SetupName — the zerops.yaml setup-block name the runtime
-	// resolves at build. Default "prod".
-	SetupName string
-	// RepoURL — buildFromGit URL pointing at the source repo.
-	RepoURL string
-	// ZeropsYAMLBody — verbatim source zerops.yaml body. Composer
-	// hashes it into SourceSnapshot.ZeropsYAMLSHA256.
-	ZeropsYAMLBody string
-	// GitCommitSHA — current HEAD of the source repo. Captured into
-	// SourceSnapshot.GitCommitSHA.
-	GitCommitSHA string
+	// Runtimes — per-runtime payloads (one services[] entry each).
+	// Composer requires at least one. Per-runtime checks (RepoURL,
+	// ServiceType, ZeropsYAMLBody, setup-block presence) live on the
+	// individual LaunchRuntimeInput; bundle-level field validation
+	// rejects empty Runtimes.
+	Runtimes []LaunchRuntimeInput
 	// ProjectEnvs — source project-level env snapshot for classification.
 	ProjectEnvs []ProjectEnvVar
 	// ManagedServices — managed dep entries in source. Bundle
 	// promotes each to HA unless its Hostname is in KeepNonHA.
+	// Composer deduplicates by hostname so multiple runtimes sharing
+	// infra get one entry each.
 	ManagedServices []ManagedServiceEntry
 	// KeepNonHA — opt-out: managed service hostnames the user
 	// explicitly wants to stay NON_HA in prod.
 	KeepNonHA []string
-	// MinContainers — runtime min count. Default
-	// runtimeProductionMinContainers (2).
-	MinContainers int
 	// AdditionalTags — appended to canonical launch tags.
 	AdditionalTags []string
 	// Variant selects between launch-new (full project block — feeds

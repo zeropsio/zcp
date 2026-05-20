@@ -136,14 +136,18 @@ func run() error {
 	inputs := ops.LaunchBundleInputs{
 		SourceProjectID:   "waAzEFn6SBaysG4YE4rv7A",
 		TargetProjectName: prodName,
-		TargetHostname:    "appdev",
-		ServiceType:       "php-nginx@8.4",
-		SetupName:         "app",
-		RepoURL:           "https://github.com/zeropsio/recipe-laravel-minimal",
-		ZeropsYAMLBody:    laravelZeropsYAML,
-		GitCommitSHA:      "live-test-" + time.Now().Format("20060102"),
-		ProjectEnvs:       bundleEnvs,
-		ManagedServices:   managed,
+		Runtimes: []ops.LaunchRuntimeInput{
+			{
+				ProdHostname:   "appdev",
+				ServiceType:    "php-nginx@8.4",
+				SetupName:      "app",
+				RepoURL:        "https://github.com/zeropsio/recipe-laravel-minimal",
+				ZeropsYAMLBody: laravelZeropsYAML,
+				GitCommitSHA:   "live-test-" + time.Now().Format("20060102"),
+			},
+		},
+		ProjectEnvs:     bundleEnvs,
+		ManagedServices: managed,
 	}
 	launchBundle, err := ops.BuildLaunchBundle(inputs, classifications)
 	if err != nil {

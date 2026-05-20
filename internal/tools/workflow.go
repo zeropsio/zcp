@@ -209,6 +209,40 @@ type WorkflowInput struct {
 	// advance to classify-prompt. Hostnames not listed continue to
 	// surface the warn until either configured or acknowledged.
 	SkipBuildIntegration []string `json:"skipBuildIntegration,omitempty" jsonschema:"Launch-production only: list of source hostnames whose missing build-integration the user explicitly opted out of configuring before launch. Ack mechanism for the source-control gate's build-integration-recommended warn-blocker. Each listed hostname suppresses that warn on subsequent re-calls; the launch advances to classify-prompt once every other source-control check is green."`
+
+	// Promotables names the multi-runtime list of services the launch
+	// composer promotes into the production project. Each entry's
+	// Hostname accepts either the dev OR stage half of a standard
+	// pair (the handler normalizes to the canonical dev-half via the
+	// pair-keyed ServiceMeta). When empty, the handler falls back to
+	// single-runtime promotion derived from TargetService (legacy /
+	// single-promotable path). Composer emits one runtime services[]
+	// entry per Promotables entry and deduplicates managed deps so
+	// shared infra lands once.
+	//
+	// Production runtime hostnames are derived from each promotable's
+	// dev-half hostname (`appdev` / `appstage` → `app`, `workerstage`
+	// → `worker`) unless ProdHostname is set on the entry.
+	Promotables []LaunchPromotableInput `json:"promotables,omitempty" jsonschema:"Launch-production only: list of runtimes to promote into the production project. Each entry's hostname accepts either the dev or stage half of a standard pair (handler normalizes). Composer emits one runtime entry per promotable + dedupes shared managed deps. Empty list falls back to single-runtime promotion via targetService."`
+}
+
+// LaunchPromotableInput names one runtime to include in the launch
+// bundle. The shape lets the agent override per-runtime production
+// hostname / setup-block name on a per-promotable basis without
+// forcing every multi-runtime launch through the same defaults.
+type LaunchPromotableInput struct {
+	// Hostname is the source-side hostname (dev OR stage half of a
+	// pair; handler normalizes to dev-half via ServiceMeta).
+	Hostname string `json:"hostname" jsonschema:"Source runtime hostname (dev or stage half of a pair). The handler normalizes to the canonical dev-half via the pair-keyed ServiceMeta lookup."`
+	// ProdHostname overrides the derived production runtime name. When
+	// empty, the handler derives via deriveProdHostnameFromSource:
+	// strip the canonical `-dev` / `-stage` / `-worker` suffix and
+	// fall back to the hostname itself.
+	ProdHostname string `json:"prodHostname,omitempty" jsonschema:"Optional override for the production-side runtime hostname. Default derived from the source hostname (appdev/appstage → app, workerstage → worker); supply only when the convention does not produce the wanted name."`
+	// ProdSetupNameOverride targets a specific zerops.yaml setup block
+	// for this runtime in the production bundle. Default falls back to
+	// WorkflowInput.ProdSetupNameOverride, then to canonical "prod".
+	ProdSetupNameOverride string `json:"prodSetupNameOverride,omitempty" jsonschema:"Optional per-runtime override for the zerops.yaml setup block the production runtime references. Default per-input ProdSetupNameOverride (workflow-level), then canonical 'prod'."`
 }
 
 // immediateResponse is returned from immediate (stateless) workflows.
@@ -302,7 +336,8 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	}
 
 	switch input.Action {
-	case "start": //nolint:goconst // pinned by TestAtomLintAcceptedActionsMatchDispatcher which parses the case literal; resolving to the actionStart const would require an AST const-lookup extension
+	//nolint:goconst // literal "start" is pinned by TestAtomLintAcceptedActionsMatchDispatcher (AST-parses the case literal); centralising into actionStart would require an AST const-lookup extension to keep the pin valid
+	case "start":
 		// Phase 3 — export workflow has handler-based orchestration that
 		// MUST run for both invocation shapes (`workflow="export"` no-action
 		// AND `action="start" workflow="export"`). Without this fork, the
@@ -406,7 +441,8 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleRoute(ctx, engine, client, projectID, stateDir, selfHostname, rt)
 	case "close-mode":
 		return handleCloseMode(input, stateDir)
-	case "git-push-setup": //nolint:goconst // pinned by TestAtomLintAcceptedActionsMatchDispatcher (see actionStart comment above)
+	//nolint:goconst // literal "git-push-setup" is pinned by TestAtomLintAcceptedActionsMatchDispatcher (see "start" comment above)
+	case "git-push-setup":
 		return handleGitPushSetup(input, stateDir, rt)
 	case "build-integration":
 		return handleBuildIntegration(ctx, client, projectID, input, stateDir, rt)

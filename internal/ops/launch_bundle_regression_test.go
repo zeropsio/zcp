@@ -66,11 +66,13 @@ func launchStandardPairInputs() ops.LaunchBundleInputs {
 	return ops.LaunchBundleInputs{
 		SourceProjectID:   "source-standard-pair",
 		TargetProjectName: "myapp-prod",
-		TargetHostname:    "app",
-		ServiceType:       "nodejs@22",
-		SetupName:         "prod",
-		RepoURL:           "https://github.com/example/myapp",
-		ZeropsYAMLBody: `zerops:
+		Runtimes: []ops.LaunchRuntimeInput{
+			{
+				ProdHostname: "app",
+				ServiceType:  "nodejs@22",
+				SetupName:    "prod",
+				RepoURL:      "https://github.com/example/myapp",
+				ZeropsYAMLBody: `zerops:
   - setup: prod
     build:
       base: nodejs@22
@@ -81,7 +83,9 @@ func launchStandardPairInputs() ops.LaunchBundleInputs {
       base: nodejs@22
       start: node dist/server.js
 `,
-		GitCommitSHA: "abc123def4567890",
+				GitCommitSHA: "abc123def4567890",
+			},
+		},
 		ProjectEnvs: []ops.ProjectEnvVar{
 			{Key: "LOG_LEVEL", Value: "info"},
 			{Key: "NODE_ENV", Value: "production"},
@@ -98,11 +102,13 @@ func launchDevOnlyInputs() ops.LaunchBundleInputs {
 	return ops.LaunchBundleInputs{
 		SourceProjectID:   "source-dev-only",
 		TargetProjectName: "api-prod",
-		TargetHostname:    "api",
-		ServiceType:       "nodejs@22",
-		SetupName:         "prod",
-		RepoURL:           "https://github.com/example/api",
-		ZeropsYAMLBody: `zerops:
+		Runtimes: []ops.LaunchRuntimeInput{
+			{
+				ProdHostname: "api",
+				ServiceType:  "nodejs@22",
+				SetupName:    "prod",
+				RepoURL:      "https://github.com/example/api",
+				ZeropsYAMLBody: `zerops:
   - setup: prod
     build:
       base: nodejs@22
@@ -110,7 +116,9 @@ func launchDevOnlyInputs() ops.LaunchBundleInputs {
       base: nodejs@22
       start: node dist/index.js
 `,
-		GitCommitSHA: "0123456789abcdef",
+				GitCommitSHA: "0123456789abcdef",
+			},
+		},
 		ProjectEnvs: []ops.ProjectEnvVar{
 			{Key: "PORT", Value: "3000"},
 		},
@@ -126,11 +134,13 @@ func launchRecipeNodejsInputs() ops.LaunchBundleInputs {
 	return ops.LaunchBundleInputs{
 		SourceProjectID:   "source-recipe-nodejs",
 		TargetProjectName: "node-recipe-prod",
-		TargetHostname:    "app",
-		ServiceType:       "nodejs@22",
-		SetupName:         "prod",
-		RepoURL:           "https://github.com/example/node-recipe",
-		ZeropsYAMLBody: `zerops:
+		Runtimes: []ops.LaunchRuntimeInput{
+			{
+				ProdHostname: "app",
+				ServiceType:  "nodejs@22",
+				SetupName:    "prod",
+				RepoURL:      "https://github.com/example/node-recipe",
+				ZeropsYAMLBody: `zerops:
   - setup: prod
     build:
       base: nodejs@22
@@ -141,7 +151,9 @@ func launchRecipeNodejsInputs() ops.LaunchBundleInputs {
       base: nodejs@22
       start: node dist/server.js
 `,
-		GitCommitSHA: "fedcba9876543210",
+				GitCommitSHA: "fedcba9876543210",
+			},
+		},
 		ProjectEnvs: []ops.ProjectEnvVar{
 			{Key: "LOG_LEVEL", Value: "info"},
 			{Key: "NODE_ENV", Value: "production"},
@@ -164,11 +176,13 @@ func launchRecipeLaravelInputs() ops.LaunchBundleInputs {
 	return ops.LaunchBundleInputs{
 		SourceProjectID:   "source-recipe-laravel",
 		TargetProjectName: "laravel-prod",
-		TargetHostname:    "app",
-		ServiceType:       "php-nginx@8.3+8.0",
-		SetupName:         "prod",
-		RepoURL:           "https://github.com/example/laravel-showcase",
-		ZeropsYAMLBody: `zerops:
+		Runtimes: []ops.LaunchRuntimeInput{
+			{
+				ProdHostname: "app",
+				ServiceType:  "php-nginx@8.3+8.0",
+				SetupName:    "prod",
+				RepoURL:      "https://github.com/example/laravel-showcase",
+				ZeropsYAMLBody: `zerops:
   - setup: prod
     build:
       base:
@@ -183,7 +197,9 @@ func launchRecipeLaravelInputs() ops.LaunchBundleInputs {
         - nginx@1.22
       start: php artisan octane:start
 `,
-		GitCommitSHA: "0badcafebadcafe1",
+				GitCommitSHA: "0badcafebadcafe1",
+			},
+		},
 		ProjectEnvs: []ops.ProjectEnvVar{
 			{Key: "APP_ENV", Value: "production"},
 			{Key: "APP_DEBUG", Value: "false"},

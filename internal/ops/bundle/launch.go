@@ -25,18 +25,23 @@ const runtimeProductionCPUMode = "DEDICATED"
 // feeds PostProjectServiceStackImport, which rejects project blocks).
 // Zero (VariantExportDev) normalizes to VariantLaunchNew.
 //
-// Composition steps mirror the prior internal/ops/launch_bundle.go
-// pipeline (preserved verbatim during Phase 1b refactor):
+// Composition pipeline:
 //
-//  1. Verify SetupName exists in ZeropsYAMLBody.
-//  2. Classify project envs via composeProjectEnvVariables.
-//  3. Compose services array — runtime + managed entries with HA
-//     promotion (per ServiceTypeRules; opt-out via KeepNonHA).
-//  4. Compose project block — name + tags + envVariables (omitted
+//  1. Validate inputs (per-runtime + project-level).
+//  2. Verify each runtime's SetupName exists in its ZeropsYAMLBody.
+//  3. Classify project envs via composeProjectEnvVariables.
+//  4. Loop runtimes — one services[] entry per LaunchRuntimeInput with
+//     its own buildFromGit + zeropsSetup + minContainers.
+//  5. Append managed deps (deduplicated by hostname so shared infra
+//     across multiple promoted runtimes lands once) with HA promotion
+//     per ServiceTypeRules; opt-out via KeepNonHA.
+//  6. Compose project block — name + tags + envVariables (omitted
 //     for VariantLaunchExisting).
-//  5. Marshal yaml + add preprocessor header.
-//  6. Schema-validate; surface errors on bundle.
-//  7. Compute SourceSnapshot hashes (P-LP-3).
+//  7. Marshal yaml + add preprocessor header.
+//  8. Schema-validate; surface errors on bundle.
+//  9. Compute SourceSnapshot hashes (P-LP-3) over the first runtime's
+//     git SHA + the merged zerops.yaml body digest (multi-runtime
+//     SourceSnapshot reshape lands in a follow-up).
 func BuildLaunch(
 	inputs LaunchBundleInputs,
 	classifications map[string]topology.SecretClassification,
@@ -44,26 +49,32 @@ func BuildLaunch(
 	if inputs.TargetProjectName == "" {
 		return nil, fmt.Errorf("launch bundle: TargetProjectName required")
 	}
-	if inputs.TargetHostname == "" {
-		return nil, fmt.Errorf("launch bundle: TargetHostname required")
-	}
-	if inputs.ServiceType == "" {
-		return nil, fmt.Errorf("launch bundle: ServiceType required")
-	}
-	if inputs.SetupName == "" {
-		inputs.SetupName = "prod"
-	}
-	if inputs.RepoURL == "" {
-		return nil, fmt.Errorf("launch bundle: RepoURL required")
-	}
-	if inputs.ZeropsYAMLBody == "" {
-		return nil, fmt.Errorf("launch bundle: ZeropsYAMLBody required")
-	}
 	if inputs.SourceProjectID == "" {
 		return nil, fmt.Errorf("launch bundle: SourceProjectID required (audit + immutability guard)")
 	}
-	if err := verifyZeropsYAMLSetup(inputs.ZeropsYAMLBody, inputs.SetupName); err != nil {
-		return nil, err
+	if len(inputs.Runtimes) == 0 {
+		return nil, fmt.Errorf("launch bundle: at least one runtime required (Runtimes is empty)")
+	}
+	for i := range inputs.Runtimes {
+		if inputs.Runtimes[i].SetupName == "" {
+			inputs.Runtimes[i].SetupName = "prod"
+		}
+		r := inputs.Runtimes[i]
+		if r.ProdHostname == "" {
+			return nil, fmt.Errorf("launch bundle: runtime[%d]: ProdHostname required", i)
+		}
+		if r.ServiceType == "" {
+			return nil, fmt.Errorf("launch bundle: runtime[%d] (%s): ServiceType required", i, r.ProdHostname)
+		}
+		if r.RepoURL == "" {
+			return nil, fmt.Errorf("launch bundle: runtime[%d] (%s): RepoURL required", i, r.ProdHostname)
+		}
+		if r.ZeropsYAMLBody == "" {
+			return nil, fmt.Errorf("launch bundle: runtime[%d] (%s): ZeropsYAMLBody required", i, r.ProdHostname)
+		}
+		if err := verifyZeropsYAMLSetup(r.ZeropsYAMLBody, r.SetupName); err != nil {
+			return nil, fmt.Errorf("launch bundle: runtime[%d] (%s): %w", i, r.ProdHostname, err)
+		}
 	}
 
 	variant := inputs.Variant
@@ -80,33 +91,24 @@ func BuildLaunch(
 	projectEnvs, envWarnings := composeProjectEnvVariables(inputs.ProjectEnvs, classifications)
 	bundle.Warnings = append(bundle.Warnings, envWarnings...)
 
-	zeropsRefs := extractZeropsYAMLRunEnvRefs(inputs.ZeropsYAMLBody)
+	// Cross-service env refs scan reads the first runtime's zerops.yaml
+	// when all runtimes share a repo (monorepo) and reads each one when
+	// they differ. Multi-runtime + separate-repo support concatenates
+	// every body so detectIndirectInfraReferences sees all refs.
+	mergedYAMLForRefs := mergeZeropsYAMLBodiesForRefs(inputs.Runtimes)
+	zeropsRefs := extractZeropsYAMLRunEnvRefs(mergedYAMLForRefs)
 	bundle.Warnings = append(bundle.Warnings, detectIndirectInfraReferences(inputs.ProjectEnvs, classifications, zeropsRefs)...)
-
-	minContainers := inputs.MinContainers
-	if minContainers <= 0 {
-		minContainers = runtimeProductionMinContainers
-	}
-	runtimeEntry := map[string]any{
-		"hostname":      inputs.TargetHostname,
-		"type":          inputs.ServiceType,
-		"mode":          importModeNonHA,
-		"buildFromGit":  inputs.RepoURL,
-		"zeropsSetup":   inputs.SetupName,
-		"minContainers": minContainers,
-		"verticalAutoscaling": map[string]any{
-			"cpuMode": runtimeProductionCPUMode,
-		},
-	}
 
 	keepNonHASet := make(map[string]bool, len(inputs.KeepNonHA))
 	for _, h := range inputs.KeepNonHA {
 		keepNonHASet[h] = true
 	}
 
-	services := make([]any, 0, 1+len(inputs.ManagedServices))
-	services = append(services, runtimeEntry)
-	for _, m := range inputs.ManagedServices {
+	services := make([]any, 0, len(inputs.Runtimes)+len(inputs.ManagedServices))
+	for _, r := range inputs.Runtimes {
+		services = append(services, runtimeEntryFromInput(r))
+	}
+	for _, m := range dedupeManagedByHostname(inputs.ManagedServices) {
 		entry := managedEntryWithRules(m, true /*launch*/, keepNonHASet[m.Hostname])
 		services = append(services, entry)
 	}
@@ -142,6 +144,100 @@ func BuildLaunch(
 		bundle.Errors = errs
 	}
 
-	bundle.SourceSnapshot = computeSourceSnapshot(inputs)
+	bundle.SourceSnapshot = computeSourceSnapshotMulti(inputs)
 	return bundle, nil
+}
+
+// runtimeEntryFromInput renders one services[] entry from a per-runtime
+// LaunchRuntimeInput. Centralized so the YAML field shape stays
+// consistent between every promoted runtime in the bundle.
+func runtimeEntryFromInput(r LaunchRuntimeInput) map[string]any {
+	minContainers := r.MinContainers
+	if minContainers <= 0 {
+		minContainers = runtimeProductionMinContainers
+	}
+	return map[string]any{
+		"hostname":      r.ProdHostname,
+		"type":          r.ServiceType,
+		"mode":          importModeNonHA,
+		"buildFromGit":  r.RepoURL,
+		"zeropsSetup":   r.SetupName,
+		"minContainers": minContainers,
+		"verticalAutoscaling": map[string]any{
+			"cpuMode": runtimeProductionCPUMode,
+		},
+	}
+}
+
+// dedupeManagedByHostname returns the input list with duplicate
+// hostnames collapsed to the first occurrence. Multi-runtime
+// promotion that shares managed deps (e.g. monorepo app + worker
+// both pointing at the same db) must not emit duplicate services[]
+// entries — the import API rejects them.
+func dedupeManagedByHostname(in []ManagedServiceEntry) []ManagedServiceEntry {
+	if len(in) <= 1 {
+		return in
+	}
+	seen := make(map[string]bool, len(in))
+	out := make([]ManagedServiceEntry, 0, len(in))
+	for _, m := range in {
+		if seen[m.Hostname] {
+			continue
+		}
+		seen[m.Hostname] = true
+		out = append(out, m)
+	}
+	return out
+}
+
+// mergeZeropsYAMLBodiesForRefs concatenates per-runtime zerops.yaml
+// bodies for cross-service env reference scanning. Monorepo
+// (all runtimes share the same body) folds to one copy via dedupe
+// so duplicate scan results don't double-count.
+func mergeZeropsYAMLBodiesForRefs(runtimes []LaunchRuntimeInput) string {
+	if len(runtimes) == 0 {
+		return ""
+	}
+	seen := make(map[string]bool, len(runtimes))
+	var sb yamlBodyBuilder
+	for _, r := range runtimes {
+		if r.ZeropsYAMLBody == "" || seen[r.ZeropsYAMLBody] {
+			continue
+		}
+		seen[r.ZeropsYAMLBody] = true
+		sb.AppendBody(r.ZeropsYAMLBody)
+	}
+	return sb.String()
+}
+
+// yamlBodyBuilder is a tiny strings.Builder-equivalent that adds a
+// separator newline between bodies so concatenated YAML still parses
+// as one document for the reference scanner (which is line-based).
+type yamlBodyBuilder struct {
+	parts []string
+}
+
+func (b *yamlBodyBuilder) AppendBody(body string) {
+	b.parts = append(b.parts, body)
+}
+
+func (b *yamlBodyBuilder) String() string {
+	if len(b.parts) == 0 {
+		return ""
+	}
+	if len(b.parts) == 1 {
+		return b.parts[0]
+	}
+	total := 0
+	for _, p := range b.parts {
+		total += len(p) + 1
+	}
+	out := make([]byte, 0, total)
+	for i, p := range b.parts {
+		if i > 0 {
+			out = append(out, '\n')
+		}
+		out = append(out, p...)
+	}
+	return string(out)
 }

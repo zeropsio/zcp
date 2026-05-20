@@ -16,11 +16,13 @@ func minimalLaunchInputs() ops.LaunchBundleInputs {
 	return ops.LaunchBundleInputs{
 		SourceProjectID:   "source123",
 		TargetProjectName: "myapp-prod",
-		TargetHostname:    "app",
-		ServiceType:       "nodejs@22",
-		SetupName:         "prod",
-		RepoURL:           "git@github.com:user/myapp.git",
-		ZeropsYAMLBody: `zerops:
+		Runtimes: []ops.LaunchRuntimeInput{
+			{
+				ProdHostname: "app",
+				ServiceType:  "nodejs@22",
+				SetupName:    "prod",
+				RepoURL:      "git@github.com:user/myapp.git",
+				ZeropsYAMLBody: `zerops:
   - setup: prod
     build:
       base: nodejs@22
@@ -31,7 +33,9 @@ func minimalLaunchInputs() ops.LaunchBundleInputs {
       base: nodejs@22
       start: node dist/server.js
 `,
-		GitCommitSHA: "abc123def456",
+				GitCommitSHA: "abc123def456",
+			},
+		},
 		ProjectEnvs: []ops.ProjectEnvVar{
 			{Key: "LOG_LEVEL", Value: "info"},
 			{Key: "NODE_ENV", Value: "production"},
@@ -159,7 +163,7 @@ func TestBuildLaunchBundle_RuntimeMinContainersDefault(t *testing.T) {
 func TestBuildLaunchBundle_RuntimeMinContainersOverride(t *testing.T) {
 	t.Parallel()
 	inputs := minimalLaunchInputs()
-	inputs.MinContainers = 5
+	inputs.Runtimes[0].MinContainers = 5
 	cls := classifyAllPlain(inputs.ProjectEnvs)
 
 	bundle, err := ops.BuildLaunchBundle(inputs, cls)
@@ -327,9 +331,9 @@ func TestBuildLaunchBundle_SourceSnapshotDetectsDrift(t *testing.T) {
 		name string
 		mut  func(i *ops.LaunchBundleInputs)
 	}{
-		{"git SHA changed", func(i *ops.LaunchBundleInputs) { i.GitCommitSHA = "different-sha" }},
+		{"git SHA changed", func(i *ops.LaunchBundleInputs) { i.Runtimes[0].GitCommitSHA = "different-sha" }},
 		{"zerops yaml body changed", func(i *ops.LaunchBundleInputs) {
-			i.ZeropsYAMLBody += "\n# trailing comment\n"
+			i.Runtimes[0].ZeropsYAMLBody += "\n# trailing comment\n"
 		}},
 		{"project env added", func(i *ops.LaunchBundleInputs) {
 			i.ProjectEnvs = append(i.ProjectEnvs, ops.ProjectEnvVar{Key: "NEW", Value: "x"})
@@ -361,10 +365,11 @@ func TestBuildLaunchBundle_MissingRequiredFields(t *testing.T) {
 		want string
 	}{
 		{"missing TargetProjectName", func(i *ops.LaunchBundleInputs) { i.TargetProjectName = "" }, "TargetProjectName"},
-		{"missing TargetHostname", func(i *ops.LaunchBundleInputs) { i.TargetHostname = "" }, "TargetHostname"},
-		{"missing ServiceType", func(i *ops.LaunchBundleInputs) { i.ServiceType = "" }, "ServiceType"},
-		{"missing RepoURL", func(i *ops.LaunchBundleInputs) { i.RepoURL = "" }, "RepoURL"},
-		{"missing ZeropsYAMLBody", func(i *ops.LaunchBundleInputs) { i.ZeropsYAMLBody = "" }, "ZeropsYAMLBody"},
+		{"empty Runtimes", func(i *ops.LaunchBundleInputs) { i.Runtimes = nil }, "runtime"},
+		{"missing ProdHostname", func(i *ops.LaunchBundleInputs) { i.Runtimes[0].ProdHostname = "" }, "ProdHostname"},
+		{"missing ServiceType", func(i *ops.LaunchBundleInputs) { i.Runtimes[0].ServiceType = "" }, "ServiceType"},
+		{"missing RepoURL", func(i *ops.LaunchBundleInputs) { i.Runtimes[0].RepoURL = "" }, "RepoURL"},
+		{"missing ZeropsYAMLBody", func(i *ops.LaunchBundleInputs) { i.Runtimes[0].ZeropsYAMLBody = "" }, "ZeropsYAMLBody"},
 		{"missing SourceProjectID", func(i *ops.LaunchBundleInputs) { i.SourceProjectID = "" }, "SourceProjectID"},
 	}
 
@@ -390,8 +395,8 @@ func TestBuildLaunchBundle_MissingRequiredFields(t *testing.T) {
 func TestBuildLaunchBundle_RejectsMissingSetupBlock(t *testing.T) {
 	t.Parallel()
 	inputs := minimalLaunchInputs()
-	inputs.SetupName = "prod"
-	inputs.ZeropsYAMLBody = `zerops:
+	inputs.Runtimes[0].SetupName = "prod"
+	inputs.Runtimes[0].ZeropsYAMLBody = `zerops:
   - setup: dev
     build:
       base: nodejs@22
@@ -428,7 +433,7 @@ func TestBuildLaunchBundle_OmitsUserRolesAlways(t *testing.T) {
 func TestBuildLaunchBundle_SetupNameDefaultsToProd(t *testing.T) {
 	t.Parallel()
 	inputs := minimalLaunchInputs()
-	inputs.SetupName = "" // explicit empty to verify default kicks in
+	inputs.Runtimes[0].SetupName = "" // explicit empty to verify default kicks in
 
 	cls := classifyAllPlain(inputs.ProjectEnvs)
 	bundle, err := ops.BuildLaunchBundle(inputs, cls)

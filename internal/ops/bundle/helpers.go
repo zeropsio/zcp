@@ -183,14 +183,30 @@ func composeLaunchTags(sourceProjectID string, additional []string) []string {
 	return tags
 }
 
-// computeSourceSnapshot produces a deterministic digest of source
-// state for the immutability guard (P-LP-3).
-func computeSourceSnapshot(inputs LaunchBundleInputs) SourceSnapshot {
+// computeSourceSnapshotMulti produces a deterministic digest of source
+// state for the immutability guard (P-LP-3) across N promoted runtimes.
+// Per-runtime SHA + zerops.yaml body fold into stable composite
+// digests; multi-runtime drift on any single runtime trips the guard.
+func computeSourceSnapshotMulti(inputs LaunchBundleInputs) SourceSnapshot {
+	gitLines := make([]string, 0, len(inputs.Runtimes))
+	yamlLines := make([]string, 0, len(inputs.Runtimes))
+	svcLines := make([]string, 0, len(inputs.Runtimes)+len(inputs.ManagedServices))
+	for _, r := range inputs.Runtimes {
+		gitLines = append(gitLines, r.ProdHostname+":"+r.GitCommitSHA)
+		yamlLines = append(yamlLines, r.ProdHostname+":"+sha256Hex(r.ZeropsYAMLBody))
+		svcLines = append(svcLines, r.ProdHostname+":"+r.ServiceType)
+	}
+	for _, m := range inputs.ManagedServices {
+		svcLines = append(svcLines, m.Hostname+":"+m.Type)
+	}
+	sort.Strings(gitLines)
+	sort.Strings(yamlLines)
+	sort.Strings(svcLines)
 	return SourceSnapshot{
-		GitCommitSHA:      inputs.GitCommitSHA,
-		ZeropsYAMLSHA256:  sha256Hex(inputs.ZeropsYAMLBody),
+		GitCommitSHA:      sha256Hex(strings.Join(gitLines, "\n")),
+		ZeropsYAMLSHA256:  sha256Hex(strings.Join(yamlLines, "\n")),
 		ProjectEnvsDigest: hashProjectEnvs(inputs.ProjectEnvs),
-		ServiceListDigest: hashServiceList(inputs.ManagedServices, inputs.TargetHostname, inputs.ServiceType),
+		ServiceListDigest: sha256Hex(strings.Join(svcLines, "\n")),
 	}
 }
 
@@ -208,16 +224,4 @@ func hashProjectEnvs(envs []ProjectEnvVar) string {
 	}
 	sort.Strings(pairs)
 	return sha256Hex(strings.Join(pairs, "\n"))
-}
-
-// hashServiceList returns sha256 over sorted "hostname:type\n" lines
-// including the runtime + all managed deps.
-func hashServiceList(managed []ManagedServiceEntry, runtimeHost, runtimeType string) string {
-	lines := make([]string, 0, 1+len(managed))
-	lines = append(lines, runtimeHost+":"+runtimeType)
-	for _, m := range managed {
-		lines = append(lines, m.Hostname+":"+m.Type)
-	}
-	sort.Strings(lines)
-	return sha256Hex(strings.Join(lines, "\n"))
 }

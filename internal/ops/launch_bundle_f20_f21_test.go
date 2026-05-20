@@ -40,11 +40,13 @@ func laravelStyleInputs() ops.LaunchBundleInputs {
 	return ops.LaunchBundleInputs{
 		SourceProjectID:   "f20-f21-repro",
 		TargetProjectName: "laravel-prod",
-		TargetHostname:    "app",
-		ServiceType:       "php-nginx@8.3+8.0",
-		SetupName:         "prod",
-		RepoURL:           "https://github.com/example/laravel",
-		ZeropsYAMLBody: `zerops:
+		Runtimes: []ops.LaunchRuntimeInput{
+			{
+				ProdHostname: "app",
+				ServiceType:  "php-nginx@8.3+8.0",
+				SetupName:    "prod",
+				RepoURL:      "https://github.com/example/laravel",
+				ZeropsYAMLBody: `zerops:
   - setup: prod
     build:
       base:
@@ -56,7 +58,9 @@ func laravelStyleInputs() ops.LaunchBundleInputs {
         - nginx@1.22
       start: php artisan octane:start
 `,
-		GitCommitSHA: "f20f21reprosha",
+				GitCommitSHA: "f20f21reprosha",
+			},
+		},
 		ProjectEnvs: []ops.ProjectEnvVar{
 			{Key: "APP_ENV", Value: "production"},
 		},

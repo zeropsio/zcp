@@ -350,26 +350,25 @@ func gateHasBlockingFailure(blockers []topology.Blocker) bool {
 }
 
 // publishSidePublishGateResult bundles the publish-side gate's outputs
-// for the mutation callers: the meta-resolved RepoURL to embed in the
-// bundle (gate-validated; never read live SSH at composer time) plus
-// an optional MCP response when the gate refuses. Both
-// executeLaunchMutation and executeExistingProjectMutation read this
-// shape to keep their function bodies under the maintainability
-// threshold.
+// for the mutation callers: the per-runtime gate-validated check carrier
+// (composer reads MetaRemoteURL from these) plus an optional MCP
+// response when the gate refuses. Both executeLaunchMutation and
+// executeExistingProjectMutation consume this shape.
 type publishSidePublishGateResult struct {
-	RepoURL  string
+	Checks   []*LaunchSourceControlCheck
 	Response *mcp.CallToolResult
 }
 
 // runPublishSideSourceControlGate runs the source-control gate at
-// publish time (writeAudit=true semantics) and returns the meta-
-// validated RepoURL + an optional refusal response. Callers test
-// `result.Response != nil` and return early; otherwise they consume
-// `result.RepoURL` as the buildFromGit value for the launch bundle.
+// publish time (writeAudit=true semantics) for every promoted runtime
+// and returns the per-runtime checks + an optional refusal response.
+// Callers test `result.Response != nil` and return early; otherwise
+// they consume `result.Checks[i]` as the gate-validated RepoURL source
+// for the matching runtime in the launch bundle.
 //
 // The helper centralizes the publish-side audit-logging discipline so
-// both mutation callers share one source of "what to log when the gate
-// fails", avoiding drift between the two paths.
+// the new-project and existing-project mutation paths share one source
+// of "what to log when the gate fails", avoiding drift.
 func runPublishSideSourceControlGate(
 	ctx context.Context,
 	corpus []workflow.KnowledgeAtom,
@@ -380,45 +379,54 @@ func runPublishSideSourceControlGate(
 	sourceProjectID string,
 	stateDir string,
 	launchID string,
-	sourceFallbackRepoURL string,
+	runtimes []resolvedLaunchRuntime,
 ) publishSidePublishGateResult {
-	check, blockers, gateErr := validateLaunchSourceControl(
-		ctx, client, sshDeployer, rt, stateDir,
-		input.TargetService, input.SkipBuildIntegration,
-	)
-	if gateErr != nil {
-		_ = appendAuditLog(stateDir, launchAuditEntry{
-			LaunchID:          launchID,
-			Action:            "publish-rejected",
-			SourceProjectID:   sourceProjectID,
-			TargetProjectName: input.ProductionProjectName,
-			Result:            "failure",
-			ErrorMessage:      "source-control gate: " + gateErr.Error(),
-		})
+	if len(runtimes) == 0 {
 		return publishSidePublishGateResult{
 			Response: convertError(platform.NewPlatformError(
-				platform.ErrAPIError,
-				fmt.Sprintf("publish-side source-control gate: %v", gateErr),
-				"",
+				platform.ErrInvalidParameter,
+				"publish-side source-control gate: no runtimes resolved (Promotables empty + TargetService missing)",
+				"Pass targetService=<hostname> or promotables=[{hostname:<host>}, ...].",
 			), WithRecoveryStatus()),
 		}
 	}
-	if gateHasBlockingFailure(blockers) {
-		_ = appendAuditLog(stateDir, launchAuditEntry{
-			LaunchID:          launchID,
-			Action:            "publish-rejected",
-			SourceProjectID:   sourceProjectID,
-			TargetProjectName: input.ProductionProjectName,
-			Result:            "failure",
-			ErrorMessage:      "publish-side source-control gate failed (drift from read-side)",
-		})
-		return publishSidePublishGateResult{
-			Response: launchSourceControlRequiredResponse(corpus, input, nil, blockers),
+	checks := make([]*LaunchSourceControlCheck, 0, len(runtimes))
+	for _, r := range runtimes {
+		check, blockers, gateErr := validateLaunchSourceControl(
+			ctx, client, sshDeployer, rt, stateDir,
+			r.ChoiceHostname, input.SkipBuildIntegration,
+		)
+		if gateErr != nil {
+			_ = appendAuditLog(stateDir, launchAuditEntry{
+				LaunchID:          launchID,
+				Action:            "publish-rejected",
+				SourceProjectID:   sourceProjectID,
+				TargetProjectName: input.ProductionProjectName,
+				Result:            "failure",
+				ErrorMessage:      "source-control gate (" + r.PushHostname + "): " + gateErr.Error(),
+			})
+			return publishSidePublishGateResult{
+				Response: convertError(platform.NewPlatformError(
+					platform.ErrAPIError,
+					fmt.Sprintf("publish-side source-control gate (%s): %v", r.PushHostname, gateErr),
+					"",
+				), WithRecoveryStatus()),
+			}
 		}
+		if gateHasBlockingFailure(blockers) {
+			_ = appendAuditLog(stateDir, launchAuditEntry{
+				LaunchID:          launchID,
+				Action:            "publish-rejected",
+				SourceProjectID:   sourceProjectID,
+				TargetProjectName: input.ProductionProjectName,
+				Result:            "failure",
+				ErrorMessage:      "publish-side source-control gate failed for " + r.PushHostname + " (drift from read-side)",
+			})
+			return publishSidePublishGateResult{
+				Response: launchSourceControlRequiredResponse(corpus, input, nil, blockers),
+			}
+		}
+		checks = append(checks, check)
 	}
-	repo := check.MetaRemoteURL
-	if repo == "" {
-		repo = sourceFallbackRepoURL
-	}
-	return publishSidePublishGateResult{RepoURL: repo}
+	return publishSidePublishGateResult{Checks: checks}
 }
