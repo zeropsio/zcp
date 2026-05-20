@@ -25,8 +25,6 @@
 package envclass
 
 import (
-	"regexp"
-
 	"github.com/zeropsio/zcp/internal/ops/inventory"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -53,14 +51,6 @@ type Result struct {
 	Bias     topology.SecretClassification
 }
 
-// credentialPattern flags Key shapes the LLM/user almost certainly
-// wants to mark as auto-secret. Case-insensitive suffix match (so
-// `APP_KEY`, `MY_SECRET`, `JWT_TOKEN`, `DB_PASS`, `OPENAI_API_KEY`
-// all hit). PlainConfig is the fallback bias.
-//
-// Final say belongs to the LLM/user — bias is a hint, not a verdict.
-var credentialPattern = regexp.MustCompile(`(?i)(_KEY|_SECRET|_TOKEN|_PASS|APP_KEY)$`)
-
 // ClassifyServiceEnv applies Rule 1: every service env drops. Source
 // service envs are never carried over — the target's own managed
 // services regenerate equivalents (accessKeyId, apiUrl, secretAccessKey,
@@ -77,7 +67,7 @@ func ClassifyProjectEnv(env inventory.ProjectEnvVar) Result {
 		return Result{Decision: Drop}
 	}
 	// Type=USER (or empty default): surface to prompt with bias.
-	if credentialPattern.MatchString(env.Key) {
+	if topology.CredentialPattern.MatchString(env.Key) {
 		return Result{Decision: PromptUser, Bias: topology.SecretClassAutoSecret}
 	}
 	return Result{Decision: PromptUser, Bias: topology.SecretClassPlainConfig}

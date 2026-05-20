@@ -404,6 +404,121 @@ func TestHandleLaunchProduction_ClassifyPrompt_HidesSystemEnvs(t *testing.T) {
 	}
 }
 
+// TestLaunchClassifyPrompt_SuggestedBucketPopulated pins Phase 2 of
+// plans/env-discover-three-changes-2026-05-20.md: every row in the
+// classify-prompt response carries a non-empty SuggestedBucket and
+// Rationale. The bias derives from envclass.ClassifyProjectEnv and the
+// topology.IsClassifyInfrastructure override — name-pattern only, no
+// value disclosure.
+func TestLaunchClassifyPrompt_SuggestedBucketPopulated(t *testing.T) {
+	ctx := context.Background()
+	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
+		{Key: "APP_KEY", Content: "framework-key", Type: platform.ProjectEnvUser},
+		{Key: "LOG_LEVEL", Content: "info", Type: platform.ProjectEnvUser},
+		{Key: "STRIPE_SECRET", Content: "sk_live_x", Type: platform.ProjectEnvUser},
+	})
+
+	input := WorkflowInput{
+		Workflow:              workflowLaunchProduction,
+		ProductionProjectName: "myapp-prod",
+		TargetService:         "app",
+	}
+
+	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, input, t.TempDir(), runtime.Info{}, nil)
+	if err != nil {
+		t.Fatalf("handleLaunchProduction: %v", err)
+	}
+	resp := decodeLaunchResp(t, []byte(extractText(result)))
+	if resp.Status != "classify-prompt" {
+		t.Fatalf("status: got %q want classify-prompt", resp.Status)
+	}
+	if len(resp.Classifications) != 3 {
+		t.Fatalf("expected 3 rows, got %d (%+v)", len(resp.Classifications), resp.Classifications)
+	}
+	wantBias := map[string]topology.SecretClassification{
+		"APP_KEY":       topology.SecretClassAutoSecret,
+		"LOG_LEVEL":     topology.SecretClassPlainConfig,
+		"STRIPE_SECRET": topology.SecretClassAutoSecret,
+	}
+	for _, row := range resp.Classifications {
+		if row.SuggestedBucket == topology.SecretClassUnset {
+			t.Errorf("row %q: suggestedBucket missing", row.Key)
+		}
+		if row.Rationale == "" {
+			t.Errorf("row %q: rationale missing", row.Key)
+		}
+		if got, want := row.SuggestedBucket, wantBias[row.Key]; got != want {
+			t.Errorf("row %q: suggestedBucket = %q, want %q", row.Key, got, want)
+		}
+	}
+}
+
+// TestLaunchClassifyPrompt_ControlPlaneInfrastructure pins the
+// IsClassifyInfrastructure allowlist override: ZCP_API_KEY,
+// ZCP_AGENT_TYPE, and GIT_TOKEN all bias to infrastructure regardless of
+// credential-pattern match (GIT_TOKEN ends in _TOKEN — without the
+// override it would land in auto-secret).
+func TestLaunchClassifyPrompt_ControlPlaneInfrastructure(t *testing.T) {
+	ctx := context.Background()
+	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
+		{Key: "ZCP_API_KEY", Content: "v", Type: platform.ProjectEnvUser},
+		{Key: "ZCP_AGENT_TYPE", Content: "v", Type: platform.ProjectEnvUser},
+		{Key: "GIT_TOKEN", Content: "v", Type: platform.ProjectEnvUser},
+	})
+
+	input := WorkflowInput{
+		Workflow:              workflowLaunchProduction,
+		ProductionProjectName: "myapp-prod",
+		TargetService:         "app",
+	}
+	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, input, t.TempDir(), runtime.Info{}, nil)
+	if err != nil {
+		t.Fatalf("handleLaunchProduction: %v", err)
+	}
+	resp := decodeLaunchResp(t, []byte(extractText(result)))
+	for _, row := range resp.Classifications {
+		if row.SuggestedBucket != topology.SecretClassInfrastructure {
+			t.Errorf("row %q: suggestedBucket = %q, want infrastructure", row.Key, row.SuggestedBucket)
+		}
+	}
+}
+
+// TestLaunchClassifyPrompt_UnknownZcpPrefix pins the
+// launch-classify-platform-envs.md policy: keys merely starting with
+// `ZCP_` (and not in the exact-key allowlist) fall through to the
+// envclass default. ZCP_CUSTOM_USER_THING has no credential-pattern
+// suffix → plain-config.
+func TestLaunchClassifyPrompt_UnknownZcpPrefix(t *testing.T) {
+	ctx := context.Background()
+	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
+		{Key: "ZCP_CUSTOM_USER_THING", Content: "v", Type: platform.ProjectEnvUser},
+		{Key: "ZCP_TEAM_KEY", Content: "v", Type: platform.ProjectEnvUser},
+	})
+
+	input := WorkflowInput{
+		Workflow:              workflowLaunchProduction,
+		ProductionProjectName: "myapp-prod",
+		TargetService:         "app",
+	}
+	result, _, err := handleLaunchProduction(ctx, "source-project-id", client, input, t.TempDir(), runtime.Info{}, nil)
+	if err != nil {
+		t.Fatalf("handleLaunchProduction: %v", err)
+	}
+	resp := decodeLaunchResp(t, []byte(extractText(result)))
+	wantBias := map[string]topology.SecretClassification{
+		"ZCP_CUSTOM_USER_THING": topology.SecretClassPlainConfig,
+		"ZCP_TEAM_KEY":          topology.SecretClassAutoSecret, // credentialPattern hit
+	}
+	for _, row := range resp.Classifications {
+		if got, want := row.SuggestedBucket, wantBias[row.Key]; got != want {
+			t.Errorf("row %q: suggestedBucket = %q, want %q", row.Key, got, want)
+		}
+		if row.SuggestedBucket == topology.SecretClassInfrastructure {
+			t.Errorf("row %q: must NOT bias to infrastructure (not in allowlist)", row.Key)
+		}
+	}
+}
+
 // TestHandleLaunchProduction_AllSystemEnvs_NoPromptFires pins the
 // no-loop guarantee: when every source env is Type=SYSTEM, the
 // workflow advances past classify-prompt directly (envclass-Drop on

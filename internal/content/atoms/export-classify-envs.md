@@ -19,7 +19,9 @@ The export bundle's `project.envVariables` block holds the values that re-import
 | `external-secret` | Source calls a third-party SDK using the var (Stripe, OpenAI, Mailgun, GitHub, …). Includes aliased imports and webhook verification secrets. | Comment + `<@pickRandom(["REPLACE_ME"])>`. The new project's owner pastes the real key into the dashboard before deploying. |
 | `plain-config` | Source uses the var as literal runtime config (LOG_LEVEL, NODE_ENV, FEATURE_FLAGS, …). | The literal value verbatim. |
 
-`zerops_workflow workflow="export"` returns each unclassified env's key but NOT its value — fetch values via `zerops_discover hostname="{targetHostname}" includeEnvs=true includeEnvValues=true`, grep them against the source tree, then call back with an `envClassifications` map (key → bucket per env).
+`zerops_workflow workflow="export"` returns each unclassified env's key but NOT its value — fetch values via `zerops_discover service="{targetHostname}" includeEnvs=true includeEnvValues=true`, grep them against the source tree, then call back with an `envClassifications` map (key → bucket per env).
+
+Every row carries `suggestedBucket` + `rationale` computed server-side from the env key NAME alone (never the value, per the no-leak invariant). Treat the suggestion as a starting point — the four-bucket detection table above remains authoritative when you override (e.g. a credential-pattern name whose value is plain config, or a plain-named env whose value resolves to a `${db_*}` reference).
 
 ## Worked examples per bucket
 
@@ -84,9 +86,9 @@ Trace one alias hop — wrapper modules that re-export an SDK still count. Beyon
 The Phase B response (`status="classify-prompt"`) carries a row per project env:
 
 ```
-{ "key": "APP_KEY",    "currentBucket": "" },
-{ "key": "DB_HOST",    "currentBucket": "" },
-{ "key": "STRIPE_KEY", "currentBucket": "" }
+{ "key": "APP_KEY",    "currentBucket": "", "suggestedBucket": "auto-secret",  "rationale": "key matches credentialPattern …" },
+{ "key": "DB_HOST",    "currentBucket": "", "suggestedBucket": "plain-config", "rationale": "no credential-pattern match …" },
+{ "key": "STRIPE_KEY", "currentBucket": "", "suggestedBucket": "auto-secret",  "rationale": "key matches credentialPattern …" }
 ```
 
 Build your classification map from the keys, then call back with `envClassifications`:

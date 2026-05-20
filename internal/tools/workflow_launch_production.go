@@ -153,14 +153,14 @@ func handleLaunchProduction(
 	// user-classified. SYSTEM-scoped envs (zeropsSubdomain*, CDN URLs,
 	// envIsolation/sshIsolation) are envclass-Drop and excluded
 	// upstream — the prompt only surfaces USER-scoped envs.
-	if launchNeedsClassifyPrompt(input.EnvClassifications, sourceEnvs) {
+	if needsClassifyPrompt(input.EnvClassifications, sourceEnvs) {
 		classifications := convertClassificationsInput(input.EnvClassifications)
 		return launchClassifyPromptResponse(corpus, sourceEnvs, classifications, sourceContext), nil, nil
 	}
 
 	// Effective classifications for bundle composition: user-supplied
 	// classifications only. envclass-Drop envs never reach the
-	// composer (filtered at launchBundleProjectEnvs boundary), so no
+	// composer (filtered at bundleProjectEnvsFromSource boundary), so no
 	// per-key auto-bucketing is needed here.
 	classifications := convertClassificationsInput(input.EnvClassifications)
 
@@ -289,7 +289,7 @@ func handleLaunchProduction(
 			RepoURL:           source.RepoURL,
 			ZeropsYAMLBody:    source.ZeropsYAMLBody,
 			GitCommitSHA:      source.GitCommitSHA,
-			ProjectEnvs:       launchBundleProjectEnvs(sourceEnvs),
+			ProjectEnvs:       bundleProjectEnvsFromSource(sourceEnvs),
 			ManagedServices:   source.ManagedServices,
 			KeepNonHA:         input.KeepNonHA,
 		}, classifications); bundleErr == nil {
@@ -486,7 +486,7 @@ func executeLaunchMutation(
 		RepoURL:           source.RepoURL,
 		ZeropsYAMLBody:    source.ZeropsYAMLBody,
 		GitCommitSHA:      source.GitCommitSHA,
-		ProjectEnvs:       launchBundleProjectEnvs(sourceEnvs),
+		ProjectEnvs:       bundleProjectEnvsFromSource(sourceEnvs),
 		ManagedServices:   source.ManagedServices,
 		KeepNonHA:         input.KeepNonHA,
 	}
@@ -877,9 +877,19 @@ type launchInputsEcho struct {
 // Mirrors export's classify-prompt row shape but explicitly omits raw
 // values — agent fetches them separately via zerops_discover and
 // re-calls with the populated EnvClassifications.
+//
+// SuggestedBucket + Rationale carry server-computed hints derived from
+// the env key NAME only (never the value, per the no-leak invariant):
+// envclass.ClassifyProjectEnv supplies the credentialPattern-vs-default
+// bias; topology.IsClassifyInfrastructure overrides for ZCP control-
+// plane keys that always bucket as infrastructure. The agent treats
+// these as a starting point — the four-bucket atom guidance applies
+// when the agent overrides.
 type launchClassifyRow struct {
-	Key           string                        `json:"key"`
-	CurrentBucket topology.SecretClassification `json:"currentBucket"`
+	Key             string                        `json:"key"`
+	CurrentBucket   topology.SecretClassification `json:"currentBucket"`
+	SuggestedBucket topology.SecretClassification `json:"suggestedBucket,omitempty"`
+	Rationale       string                        `json:"rationale,omitempty"`
 }
 
 // missingScopeFields returns the names of scope fields that are still
@@ -959,12 +969,15 @@ func launchClassifyPromptResponse(
 	// CDN URLs, envIsolation, sshIsolation) from the prompt rows. The
 	// agent only sees USER-scoped envs that need its judgment; the
 	// target project regenerates SYSTEM envs on import.
-	userEnvs := launchEnvsForClassifyPrompt(sourceEnvs)
+	userEnvs := envsForClassifyPrompt(sourceEnvs)
 	rows := make([]launchClassifyRow, 0, len(userEnvs))
 	for _, env := range userEnvs {
+		suggested, rationale := suggestBucketForKey(env)
 		rows = append(rows, launchClassifyRow{
-			Key:           env.Key,
-			CurrentBucket: classifications[env.Key],
+			Key:             env.Key,
+			CurrentBucket:   classifications[env.Key],
+			SuggestedBucket: suggested,
+			Rationale:       rationale,
 		})
 	}
 

@@ -11,7 +11,6 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -382,6 +381,134 @@ func TestHandleExport_ClassifyPrompt(t *testing.T) {
 	preview, _ := body["preview"].(map[string]any)
 	if preview["importYaml"] == "" {
 		t.Error("preview.importYaml should be populated")
+	}
+}
+
+// TestHandleExport_ClassifyPromptCarriesSuggestedBucket pins Phase 2 of
+// plans/env-discover-three-changes-2026-05-20.md on the export side:
+// every classify-prompt row carries server-computed suggestedBucket +
+// rationale, derived from the env key NAME alone. ZCP_API_KEY hits the
+// IsClassifyInfrastructure override; APP_KEY hits credentialPattern;
+// LOG_LEVEL falls through to plain-config. Defense-in-depth assert that
+// no raw env value appears in the response.
+func TestHandleExport_ClassifyPromptCarriesSuggestedBucket(t *testing.T) {
+	t.Parallel()
+	mock := newExportMock(
+		[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
+		[]platform.ProjectEnvVar{
+			{Key: "APP_KEY", Content: "framework-key", Type: platform.ProjectEnvUser},
+			{Key: "LOG_LEVEL", Content: "info", Type: platform.ProjectEnvUser},
+			{Key: "ZCP_API_KEY", Content: "control-plane-token", Type: platform.ProjectEnvUser},
+		},
+	)
+	dir := t.TempDir()
+	writeBootstrappedMeta(t, dir, topology.ModeStandard, topology.GitPushConfigured)
+	ssh := &routedSSH{responses: map[string]string{
+		"cat /var/www/zerops.yaml": exportTestZeropsYAML,
+		"git remote get-url":       "https://github.com/example/demo.git",
+	}}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"workflow":      "export",
+		"targetService": "appdev",
+		"variant":       "dev",
+	})
+	if result.IsError {
+		t.Fatalf("classify-prompt should not error: %s", getTextContent(t, result))
+	}
+	text := getTextContent(t, result)
+	for _, raw := range []string{"framework-key", "control-plane-token"} {
+		if strings.Contains(text, raw) {
+			t.Errorf("response leaked raw env value %q", raw)
+		}
+	}
+
+	body := decodeExportJSON(t, result)
+	rows, _ := body["envClassificationTable"].([]any)
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows, got %d (%+v)", len(rows), rows)
+	}
+	wantBias := map[string]string{
+		"APP_KEY":     "auto-secret",
+		"LOG_LEVEL":   "plain-config",
+		"ZCP_API_KEY": "infrastructure",
+	}
+	for _, r := range rows {
+		row, _ := r.(map[string]any)
+		key, _ := row["key"].(string)
+		if got, want := row["suggestedBucket"], wantBias[key]; got != want {
+			t.Errorf("row %q: suggestedBucket = %v, want %v", key, got, want)
+		}
+		if r, _ := row["rationale"].(string); r == "" {
+			t.Errorf("row %q: rationale must be populated", key)
+		}
+		if _, hasValue := row["value"]; hasValue {
+			t.Errorf("row %q: must not carry raw value field", key)
+		}
+	}
+}
+
+// TestHandleExport_SystemEnvsDroppedFromClassifyPrompt pins the codex-
+// identified regression risk that drove the readProjectEnvs typing
+// fix in Phase 2 of plans/env-discover-three-changes-2026-05-20.md:
+// project envs of Type=SYSTEM must be filtered out before the classify-
+// prompt response is built. Earlier readProjectEnvs dropped Type at the
+// boundary; envclass would then default to USER → SYSTEM envs would
+// surface in the row table awaiting an agent classification they should
+// never be subjected to. The probe now preserves SDK Type so envclass
+// Rule 2 (Type=SYSTEM → Drop) takes effect end-to-end.
+func TestHandleExport_SystemEnvsDroppedFromClassifyPrompt(t *testing.T) {
+	t.Parallel()
+	mock := newExportMock(
+		[]platform.ServiceStack{runtimeService("appdev", "php-apache@8.4", false)},
+		[]platform.ProjectEnvVar{
+			{Key: "APP_KEY", Content: "framework-key", Type: platform.ProjectEnvUser},
+			{Key: "zeropsSubdomainHost", Content: "abc.zerops.app", Type: platform.ProjectEnvSystem},
+			{Key: "envIsolation", Content: "project", Type: platform.ProjectEnvSystem, Editable: true},
+			{Key: "staticCdnUrl", Content: "https://static.cdn", Type: platform.ProjectEnvSystem},
+			{Key: "DB_HOST", Content: "${db_hostname}", Type: platform.ProjectEnvUser},
+		},
+	)
+	dir := t.TempDir()
+	writeBootstrappedMeta(t, dir, topology.ModeStandard, topology.GitPushConfigured)
+	ssh := &routedSSH{responses: map[string]string{
+		"cat /var/www/zerops.yaml": exportTestZeropsYAML,
+		"git remote get-url":       "https://github.com/example/demo.git",
+	}}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterWorkflow(srv, mock, nil, "proj1", nil, nil, nil, nil, dir, "", nil, ssh, runtime.Info{InContainer: true})
+
+	result := callTool(t, srv, "zerops_workflow", map[string]any{
+		"workflow":      "export",
+		"targetService": "appdev",
+		"variant":       "dev",
+	})
+	if result.IsError {
+		t.Fatalf("classify-prompt should not error: %s", getTextContent(t, result))
+	}
+	body := decodeExportJSON(t, result)
+	rows, _ := body["envClassificationTable"].([]any)
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 USER rows (APP_KEY + DB_HOST), got %d", len(rows))
+	}
+	keysSeen := map[string]bool{}
+	for _, r := range rows {
+		row, _ := r.(map[string]any)
+		if key, _ := row["key"].(string); key != "" {
+			keysSeen[key] = true
+		}
+	}
+	for _, banned := range []string{"zeropsSubdomainHost", "envIsolation", "staticCdnUrl"} {
+		if keysSeen[banned] {
+			t.Errorf("SYSTEM env %q must not appear in classify-prompt rows", banned)
+		}
+	}
+	if !keysSeen["APP_KEY"] || !keysSeen["DB_HOST"] {
+		t.Errorf("USER-scope keys missing from classify-prompt: %+v", keysSeen)
 	}
 }
 
@@ -798,17 +925,24 @@ func TestHandleExport_ClassifyPromptDoesNotLeakValues(t *testing.T) {
 
 // TestNeedsClassifyPrompt covers the partial-classification logic
 // directly. Per Codex Phase 3 POST-WORK Amendment 3: the original
-// implementation treated any non-empty map as fully classified.
+// implementation treated any non-empty map as fully classified. Phase 2
+// of plans/env-discover-three-changes-2026-05-20.md added the envclass-
+// PromptUser filter so SYSTEM envs (Type=ProjectEnvSystem, e.g.
+// zeropsSubdomain*) never trip the prompt — they're auto-dropped by the
+// composer and don't need the agent's judgment.
 func TestNeedsClassifyPrompt(t *testing.T) {
 	t.Parallel()
-	envs := []ops.ProjectEnvVar{
-		{Key: "APP_KEY", Value: "x"},
-		{Key: "DB_HOST", Value: "y"},
+	envs := []platform.ProjectEnvVar{
+		{Key: "APP_KEY", Content: "x", Type: platform.ProjectEnvUser},
+		{Key: "DB_HOST", Content: "y", Type: platform.ProjectEnvUser},
+	}
+	systemEnv := []platform.ProjectEnvVar{
+		{Key: "zeropsSubdomainHost", Content: "abc.zerops.app", Type: platform.ProjectEnvSystem},
 	}
 	tests := []struct {
 		name string
 		in   map[string]string
-		envs []ops.ProjectEnvVar
+		envs []platform.ProjectEnvVar
 		want bool
 	}{
 		{"empty input + envs → prompt", nil, envs, true},
@@ -816,6 +950,8 @@ func TestNeedsClassifyPrompt(t *testing.T) {
 		{"partial classified → prompt", map[string]string{"APP_KEY": "auto-secret"}, envs, true},
 		{"empty envs → no prompt regardless", map[string]string{"APP_KEY": "auto-secret"}, nil, false},
 		{"extra unmapped keys + all envs covered → no prompt", map[string]string{"APP_KEY": "auto-secret", "DB_HOST": "infrastructure", "GHOST": "plain-config"}, envs, false},
+		{"SYSTEM env alone → no prompt", nil, systemEnv, false},
+		{"SYSTEM env mixed with classified USER envs → no prompt", map[string]string{"APP_KEY": "auto-secret", "DB_HOST": "infrastructure"}, append([]platform.ProjectEnvVar{}, append(envs, systemEnv...)...), false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

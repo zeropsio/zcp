@@ -31,7 +31,9 @@ If you skip an env, the next response re-prompts with the remaining unclassified
 | `external-secret` | Source calls a third-party SDK with the var (Stripe, OpenAI, Mailgun, GitHub, …). Includes aliased imports + webhook verification secrets. | Comment + `<@pickRandom(["REPLACE_ME"])>`. New project's owner pastes the real key into the dashboard before deploy. |
 | `plain-config` | Source uses the var as literal runtime config (LOG_LEVEL, NODE_ENV, FEATURE_FLAGS, …). | Literal value verbatim. |
 
-`zerops_workflow` returns each unclassified env's key but NOT its value — fetch values via `zerops_discover hostname="{targetHostname}" includeEnvs=true includeEnvValues=true`, then grep them against the mounted source tree (when accessible) before bucketing.
+`zerops_workflow` returns each unclassified env's key but NOT its value — fetch values via `zerops_discover service="{targetHostname}" includeEnvs=true includeEnvValues=true`, then grep them against the mounted source tree (when accessible) before bucketing.
+
+Every row carries `suggestedBucket` + `rationale` computed server-side from the env key NAME alone (never the value, per the no-leak invariant). Treat the suggestion as a starting point — the four-bucket detection table below remains authoritative when you override. Common reasons to override: a credential-pattern match (`*_KEY`, `*_TOKEN`) that's actually plain-config in your app, or a plain-config name (`DB_HOST`) whose value resolves to a managed-service reference (`${db_*}`) and should bucket `infrastructure`.
 
 ## Worked examples per bucket
 

@@ -13,7 +13,7 @@ You hit `status="scaffold-required"`. The chosen container's `/var/www/zerops.ya
 The runtime container's image type tells you the build/run base:
 
 ```
-zerops_discover hostname="{targetHostname}"
+zerops_discover service="{targetHostname}"
 ```
 
 The response includes `type` (e.g. `nodejs@22`, `php-apache@8.4`, `static`). Map type to a minimal block:

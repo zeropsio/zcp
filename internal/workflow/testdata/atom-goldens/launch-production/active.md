@@ -80,7 +80,9 @@ If you skip an env, the next response re-prompts with the remaining unclassified
 | `external-secret` | Source calls a third-party SDK with the var (Stripe, OpenAI, Mailgun, GitHub, …). Includes aliased imports + webhook verification secrets. | Comment + `<@pickRandom(["REPLACE_ME"])>`. New project's owner pastes the real key into the dashboard before deploy. |
 | `plain-config` | Source uses the var as literal runtime config (LOG_LEVEL, NODE_ENV, FEATURE_FLAGS, …). | Literal value verbatim. |
 
-`zerops_workflow` returns each unclassified env's key but NOT its value — fetch values via `zerops_discover hostname="{targetHostname}" includeEnvs=true includeEnvValues=true`, then grep them against the mounted source tree (when accessible) before bucketing.
+`zerops_workflow` returns each unclassified env's key but NOT its value — fetch values via `zerops_discover service="{targetHostname}" includeEnvs=true includeEnvValues=true`, then grep them against the mounted source tree (when accessible) before bucketing.
+
+Every row carries `suggestedBucket` + `rationale` computed server-side from the env key NAME alone (never the value, per the no-leak invariant). Treat the suggestion as a starting point — the four-bucket detection table below remains authoritative when you override. Common reasons to override: a credential-pattern match (`*_KEY`, `*_TOKEN`) that's actually plain-config in your app, or a plain-config name (`DB_HOST`) whose value resolves to a managed-service reference (`${db_*}`) and should bucket `infrastructure`.
 
 ## Worked examples per bucket
 
@@ -210,6 +212,8 @@ Auto-handled (by exact key):
 | `ZCP_API_KEY`, `ZCP_AGENT_TYPE`, `ZCP_BASE_HOST`, `ZCP_BUILTINS_DIR`, `ZCP_PROJECT_DIR` | dropped — ZCP control-plane envs only meaningful in the dev-side ZCP container. |
 
 If a key is in the list above, you do not need to classify it; the bundle composer routes it (or excludes it) deterministically. Membership is closed and matches by **exact key only** — keys merely starting with `ZCP_` (e.g. `ZCP_CUSTOM_USER_THING`) fall through to your classification as normal.
+
+The same exact-key allowlist drives the `suggestedBucket` field on classify-prompt rows: `ZCP_API_KEY`, `ZCP_AGENT_TYPE`, and `GIT_TOKEN` surface with `suggestedBucket: "infrastructure"` regardless of credential-pattern match. Any other `ZCP_*` key surfaces with the default bias (auto-secret or plain-config) — accept or override per the four-bucket table.
 
 ---
 

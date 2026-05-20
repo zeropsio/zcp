@@ -196,7 +196,7 @@ func handleExport(
 		SetupName:        setupName,
 		ZeropsYAMLBody:   zeropsYAMLBody,
 		RepoURL:          repoURL,
-		ProjectEnvs:      projectEnvs,
+		ProjectEnvs:      bundleProjectEnvsFromSource(projectEnvs),
 		ManagedServices:  managedServices,
 	}
 
@@ -431,6 +431,13 @@ func gitPushSetupChainResponse(
 // re-fetches values via zerops_discover if it needs them for grep-
 // driven classification.
 //
+// Rows carry server-side `suggestedBucket` + `rationale` derived from
+// the env key NAME only (envclass + topology.IsClassifyInfrastructure);
+// the value never enters that computation, preserving the no-leak
+// invariant pinned by TestHandleExport_ClassifyPromptDoesNotLeakValues.
+// SYSTEM envs are filtered upstream so the agent only sees keys that
+// genuinely require its judgment.
+//
 // The live zerops.yaml body and the bundle warnings are still passed
 // through — zerops.yaml is the upstream source the agent already has
 // SSH access to (no incremental leak), and warnings carry only env
@@ -438,17 +445,21 @@ func gitPushSetupChainResponse(
 func classifyPromptResponse(
 	ctx context.Context,
 	bundle *ops.ExportBundle,
-	envs []ops.ProjectEnvVar,
+	envs []platform.ProjectEnvVar,
 	classifications map[string]topology.SecretClassification,
 	opts workflow.ExportEnvelopeOpts,
 	corpus []workflow.KnowledgeAtom,
 ) *mcp.CallToolResult {
-	rows := make([]map[string]any, 0, len(envs))
-	for _, env := range envs {
+	userEnvs := envsForClassifyPrompt(envs)
+	rows := make([]map[string]any, 0, len(userEnvs))
+	for _, env := range userEnvs {
 		bucket := classifications[env.Key]
+		suggested, rationale := suggestBucketForKey(env)
 		row := map[string]any{
-			"key":           env.Key,
-			"currentBucket": bucket,
+			"key":             env.Key,
+			"currentBucket":   bucket,
+			"suggestedBucket": suggested,
+			"rationale":       rationale,
 		}
 		if bucket != topology.SecretClassUnset {
 			row["classified"] = true
@@ -468,7 +479,7 @@ func classifyPromptResponse(
 		"warnings":               bundle.Warnings,
 		"envClassificationTable": rows,
 		"guidance":               guidance,
-		"fetchValuesVia":         fmt.Sprintf("zerops_discover hostname=%q includeEnvs=true includeEnvValues=true", bundle.TargetHostname),
+		"fetchValuesVia":         fmt.Sprintf("zerops_discover service=%q includeEnvs=true includeEnvValues=true", bundle.TargetHostname),
 		"nextSteps": []string{
 			fmt.Sprintf("Re-call: zerops_workflow workflow=\"export\" targetService=%q", bundle.TargetHostname),
 			fmt.Sprintf("        variant=%q envClassifications={key:bucket,...}", bundle.Variant),
@@ -585,28 +596,6 @@ func formatBundleErrors(errs []schema.ValidationError) []map[string]any {
 		})
 	}
 	return out
-}
-
-// needsClassifyPrompt returns true when the project has any env that
-// has not yet been classified. Walks the projectEnvs slice and checks
-// each key against the classifications input — partial maps (some
-// envs classified, others missing) still trigger a re-prompt so the
-// agent can complete the table per Codex Phase 3 POST-WORK
-// amendment 3.
-//
-// Extra keys in EnvClassifications that don't map to any project env
-// do NOT suppress the prompt — they're informational noise that the
-// composer simply ignores (no env to apply them to).
-func needsClassifyPrompt(envClassifications map[string]string, envs []ops.ProjectEnvVar) bool {
-	if len(envs) == 0 {
-		return false
-	}
-	for _, env := range envs {
-		if _, ok := envClassifications[env.Key]; !ok {
-			return true
-		}
-	}
-	return false
 }
 
 // convertClassificationsInput coerces the JSON-input string map into

@@ -197,9 +197,13 @@ func dedupeCandidates(in []string) []string {
 }
 
 // readProjectEnvs lists project-level envVariables from the platform
-// API. Each entry becomes an ops.ProjectEnvVar awaiting classification
-// at Phase B.
-func readProjectEnvs(ctx context.Context, client platform.Client, projectID string) ([]ops.ProjectEnvVar, error) {
+// API and returns the SDK shape verbatim. Type + Sensitive are preserved
+// so downstream callers (envclass.ClassifyProjectEnv, classify-prompt
+// builder, bundle composer) read the same source of truth. Lossy
+// conversion to ops.ProjectEnvVar happens at the bundle-inputs boundary
+// via bundleProjectEnvsFromSource so SYSTEM envs are also dropped
+// from the composer state at that hop.
+func readProjectEnvs(ctx context.Context, client platform.Client, projectID string) ([]platform.ProjectEnvVar, error) {
 	envs, err := client.GetProjectEnv(ctx, projectID)
 	if err != nil {
 		return nil, platform.NewPlatformError(
@@ -208,11 +212,7 @@ func readProjectEnvs(ctx context.Context, client platform.Client, projectID stri
 			"",
 		)
 	}
-	out := make([]ops.ProjectEnvVar, 0, len(envs))
-	for _, env := range envs {
-		out = append(out, ops.ProjectEnvVar{Key: env.Key, Value: env.Content})
-	}
-	return out, nil
+	return envs, nil
 }
 
 // refreshRemoteURLCache compares the live git remote URL against the

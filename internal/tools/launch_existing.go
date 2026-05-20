@@ -207,7 +207,7 @@ func executeExistingProjectMutation(
 		RepoURL:           source.RepoURL,
 		ZeropsYAMLBody:    source.ZeropsYAMLBody,
 		GitCommitSHA:      source.GitCommitSHA,
-		ProjectEnvs:       launchBundleProjectEnvs(sourceEnvs),
+		ProjectEnvs:       bundleProjectEnvsFromSource(sourceEnvs),
 		ManagedServices:   source.ManagedServices,
 		KeepNonHA:         input.KeepNonHA,
 		Variant:           bundle.VariantLaunchExisting,
@@ -290,7 +290,7 @@ func executeExistingProjectMutation(
 	// 5. Per-env mutation — apply classifications to composer envs and
 	// drive CreateProjectEnv per emission. Extracted to keep this
 	// function under the maintainability-index ceiling.
-	composerEnvs := launchBundleProjectEnvs(sourceEnvs)
+	composerEnvs := bundleProjectEnvsFromSource(sourceEnvs)
 	emitWarnings, mutationResp := mutateProjectEnvs(
 		ctx, target, stateDir, launchID, sourceProjectID, input, composerEnvs, classifications,
 	)
