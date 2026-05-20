@@ -77,12 +77,16 @@ func CodebaseScaffoldGates() []Gate {
 		// it needs to author yaml-comment fragments.
 		{Name: "fact-rationale-completeness", Run: gateFactRationaleCompleteness},
 		// Run-20 C4 — worker dev-server attestation. Refuses scaffold
-		// complete-phase when a dev codebase whose start is `zsc noop
-		// --silent` lacks a `worker_dev_server_started` fact. Bypass
-		// via `worker_no_dev_server` for one-shot batch codebases.
+		// complete-phase when a dev codebase whose dev setup is a
+		// dynamic runtime (the kind that needs `zerops_dev_server`)
+		// lacks a `worker_dev_server_started` fact. Bypass via
+		// `worker_no_dev_server` for one-shot batch codebases.
 		// Closes the run-19 scaffold-worker gap (zero MCP zerops_dev_server
 		// invocations on workerdev — worker behavior was attested only on
 		// the compiled-entry workerstage path).
+		// Marker updated run-49 issue 3: dev setups now omit `run.start`
+		// entirely, so the predicate keys on dev-runtime class instead of
+		// the prior `start: zsc noop --silent` literal.
 		{Name: "worker-dev-server-started", Run: gateWorkerDevServerStarted},
 		// Run-21-prep RC2 — schema-conformance at the producer. Without
 		// this, scaffold can ship a yaml with fields invalid under the

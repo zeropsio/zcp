@@ -135,7 +135,7 @@ zerops[]:
 - **ALWAYS** use managed service hostname conventions: `db`, `cache`, `queue`, `search`, `storage`. REASON: standardizes cross-service references
 - **Shared secrets** (encryption/session keys): put in `project.envVariables` when multiple services in the same project share a database — they must share the key or encrypted data becomes unreadable across services. Use preprocessor: `<@generateRandomString(<32>)>`. **Per-service secrets**: put in service-level `envSecrets`. Determine which pattern applies based on what the framework uses the secret for (encryption = shared, API token = per-service).
 - **ALWAYS** use generic `setup:` names in zerops.yaml (`dev`, `prod`, `worker`). When deploying to a hostname that differs from the setup name, pass `setup="..."` to `zerops_deploy`. REASON: generic names work across all environments; `zeropsSetup` in recipe import.yaml + `--setup` in workspace deploy both handle the mapping
-- **ALWAYS** add `run.healthCheck` and `deploy.readinessCheck` ONLY to stage/prod entries, NEVER to dev. REASON: dev uses `zsc noop --silent`; healthCheck would restart the container during iteration
+- **ALWAYS** add `run.healthCheck` and `deploy.readinessCheck` ONLY to stage/prod entries, NEVER to dev. REASON: dev omits `run.start` and the container idles; healthCheck would restart the container during iteration
 - **DEBUG** DEPLOY_FAILED with empty runtime logs by temporarily removing `deploy.readinessCheck` and `run.healthCheck` from the setup, redeploying, then SSH-ing in and curling the health path directly (`ssh {host} "curl -s http://localhost{path}"`). REASON: the framework may be rendering a 500 error page with the full stack trace in the response body while writing nothing to stderr. With checks stripped, the container reaches ACTIVE and stays alive long enough to read the real error. Restore checks after fixing the bug.
 
 ### Environment Variables — Three Levels
@@ -254,7 +254,7 @@ zerops[]:
 
   | Deploy mode | Who deploys? | deployFiles | start |
   |-------------|-------------|-------------|-------|
-  | Dev (in dev+stage) | Self-deploy | `[.]` | `zsc noop --silent` (implicit-webserver: omit) |
+  | Dev (in dev+stage) | Self-deploy | `[.]` | Omit `run.start` (container idles, dev process owned by `zerops_dev_server`) |
   | Stage (in dev+stage) | Cross-deploy from dev | Recipe pattern | Compiled/prod start |
   | Simple (single service) | Self-deploy | `[.]` | Real start command |
   | Production (buildFromGit) | Platform from git | Recipe pattern | Compiled/prod start |
