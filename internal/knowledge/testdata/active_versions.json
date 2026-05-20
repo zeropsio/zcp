@@ -109,6 +109,7 @@
     "mariadb:single@10.6",
     "meilisearch:single@1.10",
     "meilisearch:single@1.20",
+    "meilisearch:single@1.44",
     "nats:ha@2.10",
     "nats:ha@2.12",
     "nats:single@2.10",

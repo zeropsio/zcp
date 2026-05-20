@@ -91,7 +91,6 @@ func TestRuntimeClassFor_BareCompositeSymmetry(t *testing.T) {
 		{"valkey@7.2", "valkey:single@7.2"},
 	}
 	for _, p := range pairs {
-		p := p
 		t.Run(p.bare+"_vs_"+p.composite, func(t *testing.T) {
 			t.Parallel()
 			bareClass := RuntimeClassFor(p.bare)
