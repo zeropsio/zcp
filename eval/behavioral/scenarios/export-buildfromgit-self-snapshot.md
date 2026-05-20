@@ -25,12 +25,36 @@ userPersona: |
   the snapshot. Push back if it proposes pushing to GitHub on your
   behalf or invents a different URL.
 notableFriction:
+  - id: route-to-workflow-export-vs-legacy-tool
+    description: |
+      Two surfaces produce a project YAML snapshot: legacy
+      `zerops_export` tool (returns full project YAML with cleartext
+      secrets in envVariables/envSecrets, no env classification, no
+      schema validation) versus `zerops_workflow workflow="export"`
+      (three-call narrowing with env classify-prompt + buildFromGit-
+      aware import.yaml + schema validation gate). The new workflow
+      is canonical when the user wants a re-importable bundle. Earlier
+      eval run (suite 20260520-162314) showed the agent reaching for
+      the legacy tool 9× and never invoking `workflow="export"` — the
+      "self-snapshot" phrase routed to the wrong surface. Verify the
+      agent routes to `workflow="export"` from natural language
+      describing a re-importable bundle + buildFromGit migration.
   - id: export-three-call-shape
     description: |
       Export is a stateless three-call narrowing keyed by per-request
       WorkflowInput (target service, variant, env classifications).
       Surfaces whether the agent walks all three calls or tries to
       submit a single-shot export.
+  - id: classify-prompt-suggested-bucket-acceptance
+    description: |
+      classify-prompt rows now carry server-computed `suggestedBucket`
+      + `rationale` (Phase 2 of plans/env-discover-three-changes-
+      2026-05-20.md). Agent should accept the suggestion verbatim for
+      unambiguous keys (credential-pattern hits → auto-secret;
+      ZCP_API_KEY / GIT_TOKEN → infrastructure) without re-deriving
+      name-pattern bias. Surfaces whether the new field reduces the
+      pre-Phase2 13/13 transcripts that re-walked the four-bucket
+      detection rules in agent prose.
   - id: buildfromgit-vs-services-mode
     description: |
       `services[].mode` in import.yaml is the Zerops scaling enum
@@ -44,4 +68,4 @@ notableFriction:
       delivery setup.
 ---
 
-The `app` service is working fine but I deploy it by pushing directly. I want to switch future deploys to buildFromGit on `https://github.com/example/teamapi`, and I'd like a self-snapshot import.yaml for the current project so I can re-apply it later.
+The `app` service is working fine but I deploy it by pushing directly. I want to turn this project into a re-importable bundle that points at GitHub: switch the deploy to buildFromGit from `https://github.com/example/teamapi` AND give me the matching `zerops-project-import.yaml` + `zerops.yaml` pair so a teammate (or my future self) can recreate the project from scratch later. Use whatever workflow path is canonical for this — I don't want a raw cleartext dump of the project state, I want the curated re-importable form.
