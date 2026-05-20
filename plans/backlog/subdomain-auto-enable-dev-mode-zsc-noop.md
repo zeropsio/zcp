@@ -26,7 +26,7 @@ Option 1 is the cheapest first move; if the friction reappears, escalate to 2 or
 
 **Update 2026-05-20:** 2nd retro names this drift explicitly —
 `develop-loop-after-bootstrap` (suite `20260520-161651`, after Phase 1-4
-ship from plans/env-discover-three-changes-2026-05-20.md). Agent verbatim:
+ship from plans/archive/env-discover-three-changes-2026-05-20.md). Agent verbatim:
 *"The subdomain situation was the one place the guidance actively misled
 me. The develop atom says 'On first-deploy success the response carries
 subdomainAccessEnabled: true and a subdomainUrl — no manual zerops_subdomain

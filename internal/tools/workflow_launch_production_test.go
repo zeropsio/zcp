@@ -405,7 +405,7 @@ func TestHandleLaunchProduction_ClassifyPrompt_HidesSystemEnvs(t *testing.T) {
 }
 
 // TestLaunchClassifyPrompt_SuggestedBucketPopulated pins Phase 2 of
-// plans/env-discover-three-changes-2026-05-20.md: every row in the
+// plans/archive/env-discover-three-changes-2026-05-20.md: every row in the
 // classify-prompt response carries a non-empty SuggestedBucket and
 // Rationale. The bias derives from envclass.ClassifyProjectEnv and the
 // topology.IsClassifyInfrastructure override — name-pattern only, no

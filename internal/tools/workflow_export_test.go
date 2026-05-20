@@ -385,7 +385,7 @@ func TestHandleExport_ClassifyPrompt(t *testing.T) {
 }
 
 // TestHandleExport_ClassifyPromptCarriesSuggestedBucket pins Phase 2 of
-// plans/env-discover-three-changes-2026-05-20.md on the export side:
+// plans/archive/env-discover-three-changes-2026-05-20.md on the export side:
 // every classify-prompt row carries server-computed suggestedBucket +
 // rationale, derived from the env key NAME alone. ZCP_API_KEY hits the
 // IsClassifyInfrastructure override; APP_KEY hits credentialPattern;
@@ -453,7 +453,7 @@ func TestHandleExport_ClassifyPromptCarriesSuggestedBucket(t *testing.T) {
 
 // TestHandleExport_SystemEnvsDroppedFromClassifyPrompt pins the codex-
 // identified regression risk that drove the readProjectEnvs typing
-// fix in Phase 2 of plans/env-discover-three-changes-2026-05-20.md:
+// fix in Phase 2 of plans/archive/env-discover-three-changes-2026-05-20.md:
 // project envs of Type=SYSTEM must be filtered out before the classify-
 // prompt response is built. Earlier readProjectEnvs dropped Type at the
 // boundary; envclass would then default to USER → SYSTEM envs would
@@ -926,7 +926,7 @@ func TestHandleExport_ClassifyPromptDoesNotLeakValues(t *testing.T) {
 // TestNeedsClassifyPrompt covers the partial-classification logic
 // directly. Per Codex Phase 3 POST-WORK Amendment 3: the original
 // implementation treated any non-empty map as fully classified. Phase 2
-// of plans/env-discover-three-changes-2026-05-20.md added the envclass-
+// of plans/archive/env-discover-three-changes-2026-05-20.md added the envclass-
 // PromptUser filter so SYSTEM envs (Type=ProjectEnvSystem, e.g.
 // zeropsSubdomain*) never trip the prompt — they're auto-dropped by the
 // composer and don't need the agent's judgment.

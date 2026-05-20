@@ -62,7 +62,7 @@ type ServiceInfo struct {
 // attaches them. Default false at this layer is a caller-safety choice:
 // zerops_env action="get" delegates here scoped to one service and must
 // not return raw project env values implicitly. Only zerops_discover sets
-// it true; see Phase 1 of plans/env-discover-three-changes-2026-05-20.md.
+// it true; see Phase 1 of plans/archive/env-discover-three-changes-2026-05-20.md.
 func Discover(
 	ctx context.Context,
 	client platform.Client,

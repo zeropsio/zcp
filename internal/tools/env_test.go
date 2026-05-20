@@ -105,7 +105,7 @@ func TestEnvTool_GetAction_Success(t *testing.T) {
 // broaden to return raw project-level secret values — a contract +
 // safety expansion. Phase 1 patches ops.Discover to require an explicit
 // includeProjectEnvs opt-in, and env.go keeps it false. See plan
-// Risk R1 in plans/env-discover-three-changes-2026-05-20.md.
+// Risk R1 in plans/archive/env-discover-three-changes-2026-05-20.md.
 func TestEnvGet_ServiceScoped_NoProjectEnvLeak(t *testing.T) {
 	t.Parallel()
 	mock := platform.NewMock().

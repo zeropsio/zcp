@@ -359,7 +359,7 @@ func TestDiscover_ProjectEnvs_NoFilter(t *testing.T) {
 // caller-safe default: when a hostname filter is set, project envs are
 // only attached if the caller explicitly opts in via includeProjectEnvs.
 // This protects zerops_env action="get" from leaking project values via
-// its scoped Discover delegation. See plans/env-discover-three-changes-2026-05-20.md
+// its scoped Discover delegation. See plans/archive/env-discover-three-changes-2026-05-20.md
 // Phase 1 + Risk R1.
 func TestDiscover_ProjectEnvs_OnServiceScope_DefaultExcluded(t *testing.T) {
 	t.Parallel()
@@ -423,7 +423,7 @@ func TestDiscover_ProjectEnvs_OnServiceScope_WhenIncluded(t *testing.T) {
 }
 
 // TestDiscover_ManagedService_RefsPopulated pins Phase 3 of
-// plans/env-discover-three-changes-2026-05-20.md: managed services
+// plans/archive/env-discover-three-changes-2026-05-20.md: managed services
 // (topology.IsManagedService) surface a `${hostname_key}` ref string
 // per exposed env so the agent can copy verbatim instead of composing
 // `DATABASE_URL=${db_hostname}:${db_port}/...` by hand. Ref strings

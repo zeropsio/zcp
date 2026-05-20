@@ -48,8 +48,8 @@ notableFriction:
   - id: classify-prompt-suggested-bucket-acceptance
     description: |
       classify-prompt rows now carry server-computed `suggestedBucket`
-      + `rationale` (Phase 2 of plans/env-discover-three-changes-
-      2026-05-20.md). Agent should accept the suggestion verbatim for
+      + `rationale` (Phase 2 of plans/archive/env-discover-
+      three-changes-2026-05-20.md). Agent should accept the suggestion verbatim for
       unambiguous keys (credential-pattern hits → auto-secret;
       ZCP_API_KEY / GIT_TOKEN → infrastructure) without re-deriving
       name-pattern bias. Surfaces whether the new field reduces the
