@@ -255,6 +255,24 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   `plan.EngineVersion = server.Version` before the first `WritePlan()`;
   any complete-phase refuses when missing or mismatched against the running
   binary. Pinned by `TestGateEngineVersionStamped_*`.
+- **launch-production is an orchestrator, not a passive promoter** — every
+  promoted runtime's `buildFromGit:` value comes from
+  `ServiceMeta.RemoteURL` of a meta whose `GitPushState=GitPushConfigured`
+  AND whose live `git remote get-url origin` matches that meta AND whose
+  push hostname has a clean working tree + local-HEAD-on-remote (P-LP-10,
+  P-LP-11). Live SSH read of `/var/www/.git/config` is NEVER the source —
+  recipe-bootstrap leaves the public template URL there indefinitely, and
+  the gate exists to catch that loophole structurally. Source-control
+  failures surface as `source-control-required` chaining the agent into
+  `git-push-setup` → `zerops_deploy strategy=git-push` → `build-integration`
+  (the existing develop-side actions; launch does not implement source
+  mutations itself). Multi-runtime promotion uses
+  `WorkflowInput.Promotables []LaunchPromotableInput`; the composer loops
+  + dedupes managed deps so shared infra lands once. Existing-project
+  collisions surface as `existing-project-conflict-prompt` (P-LP-12) with
+  per-conflict skip/replace + `confirmDestructive` ack for replace. Spec:
+  `docs/spec-workflows.md §10`. Plan: `plans/launch-production-source-of-
+  truth-2026-05-20.md`.
 - **Export-for-buildFromGit is a single-repo self-referential snapshot** —
   `zerops_workflow workflow="export"` is a stateless three-call narrowing
   (scope-prompt → classify-prompt → publish-ready / validation-failed) keyed

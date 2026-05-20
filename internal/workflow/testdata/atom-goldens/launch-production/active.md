@@ -185,15 +185,16 @@ If the user explicitly hands you an existing project ID OR a project-scoped toke
 #### Then — apply suggestions from `sourceContext`
 
 - **`productionProjectName`** — `sourceContext.suggestedTargetName` (`<source>-dev` / `<source>-stage` → `<source>-prod`, else `<source>-prod` appended). Confirm name with user; don't silently rename.
-- **`targetService`** — `sourceContext.suggestedRuntime` when single. For standard-mode pairs the headline is the stage hostname (validated last-known-good); `devHostname` field discloses the iteration half. The new prod project rebuilds fresh from git, so promotion is the dev/stage pair *as a unit*. Either half is accepted as input — the handler normalizes internally. Managed deps are bundled implicitly.
+- **`targetService`** — `sourceContext.suggestedRuntime` when single. For standard-mode pairs the headline is the stage hostname (validated last-known-good); `devHostname` field discloses the iteration half. Either half is accepted as input — the handler normalizes internally. Managed deps are bundled implicitly.
+- **`promotables`** — multi-runtime promotion. Pass an array of `{hostname, prodHostname?, prodSetupNameOverride?}` entries when more than one runtime is being promoted into the same prod project (monorepo with app + worker, or separate-repos with multiple services). Empty/absent → falls back to single-runtime from `targetService`. Production hostname derivation: `appdev`/`appstage` → `app`, `workerstage` → `worker`. Pass `prodHostname` to override.
 - **`region`** — optional, default `eu-central`.
 - **`customDomain`** — optional; ZCP emits DNS records + verification probes, user attaches in Zerops UI.
 - **`keepNonHA`** — optional `[]hostname` to keep at `NON_HA` (default: all managed deps go `HA`).
 - **`envOverrides`** — optional plain-config overrides. No secret values; ZCP never receives them.
 
-When `sourceContext.availableRuntimes` has multiple entries, the user must pick. Use `AskUserQuestion` if your harness exposes it (structured choice UI); else surface the choice inline and wait for the user's next turn.
+When `sourceContext.availableRuntimes` has multiple entries, the user must pick. Use `AskUserQuestion` if your harness exposes it (structured choice UI); else surface the choice inline and wait for the user's next turn. For multi-runtime, ask the user whether to promote all or pick a subset — defensive default is "primary runtime + infra now, other runtimes as separate additive launches" unless promotables share the same source repo (monorepo).
 
-After scope is complete, ZCP advances to `classify-prompt` for env classification.
+After scope is complete, ZCP runs the source-control gate — every promoted runtime must carry `meta.GitPushState=configured` + a live remote that matches the recorded value + a clean working tree with pushed HEAD. Unresolved blockers surface as `source-control-required` with per-runtime Recovery hints chaining `git-push-setup` / `zerops_deploy strategy=git-push` / `build-integration`. Once green, ZCP advances to `classify-prompt` for env classification.
 
 ---
 
