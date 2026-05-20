@@ -47,6 +47,12 @@ type ServiceInfo struct {
 // Discover fetches project and service information.
 // When includeEnvs is true, env var keys and annotations are returned.
 // When includeEnvValues is also true, actual env var values are included (for troubleshooting).
+// When includeProjectEnvs is true AND hostname filter is set, project-level
+// envs are attached alongside the service envs — the unscoped path always
+// attaches them. Default false at this layer is a caller-safety choice:
+// zerops_env action="get" delegates here scoped to one service and must
+// not return raw project env values implicitly. Only zerops_discover sets
+// it true; see Phase 1 of plans/env-discover-three-changes-2026-05-20.md.
 func Discover(
 	ctx context.Context,
 	client platform.Client,
@@ -54,6 +60,7 @@ func Discover(
 	hostname string,
 	includeEnvs bool,
 	includeEnvValues bool,
+	includeProjectEnvs bool,
 ) (*DiscoverResult, error) {
 	proj, err := client.GetProject(ctx, projectID)
 	if err != nil {
@@ -92,6 +99,9 @@ func Discover(
 			info.SubdomainURL = ExtractSubdomainURL(ctx, client, detail.ID, rawEnvs)
 		}
 		result.Services = []ServiceInfo{info}
+		if includeEnvs && includeProjectEnvs {
+			attachProjectEnvs(ctx, client, &result.Project, projectID, result, includeEnvValues)
+		}
 		addEnvRefNotes(result)
 		return result, nil
 	}

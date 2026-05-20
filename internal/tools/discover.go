@@ -56,7 +56,12 @@ func RegisterDiscover(srv *mcp.Server, client platform.Client, projectID, stateD
 			IdempotentHint: true,
 		},
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input DiscoverInput) (*mcp.CallToolResult, any, error) {
-		result, err := ops.Discover(ctx, client, projectID, input.Service, input.IncludeEnvs.Bool(), input.IncludeEnvValues.Bool())
+		// includeProjectEnvs=true: the discover tool always surfaces project
+		// envs alongside scoped service envs so agents can read launch /
+		// debug / env-wiring context in one call. The ops layer defaults
+		// this false so zerops_env action="get" (which delegates to Discover)
+		// keeps its narrow service-only contract — see env.go.
+		result, err := ops.Discover(ctx, client, projectID, input.Service, input.IncludeEnvs.Bool(), input.IncludeEnvValues.Bool(), true)
 		if err != nil {
 			return convertError(err), nil, nil
 		}

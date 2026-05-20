@@ -94,7 +94,7 @@ func handleExport(
 	// managed-services collector empty and producing bundles missing the
 	// db/redis/etc. entries plan §3.4 requires for `${db_*}` reference
 	// resolution at re-import.
-	discover, err := ops.Discover(ctx, client, projectID, "", false, false)
+	discover, err := ops.Discover(ctx, client, projectID, "", false, false, false)
 	if err != nil {
 		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
@@ -311,7 +311,7 @@ func scopePromptResponse(
 	opts workflow.ExportEnvelopeOpts,
 	corpus []workflow.KnowledgeAtom,
 ) (*mcp.CallToolResult, any, error) {
-	discover, err := ops.Discover(ctx, client, projectID, "", false, false)
+	discover, err := ops.Discover(ctx, client, projectID, "", false, false, false)
 	if err != nil {
 		return convertError(err, WithRecoveryStatus()), nil, nil
 	}

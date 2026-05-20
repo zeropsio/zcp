@@ -97,6 +97,66 @@ func TestEnvTool_GetAction_Success(t *testing.T) {
 	}
 }
 
+// TestEnvGet_ServiceScoped_NoProjectEnvLeak pins the caller-safety
+// regression that drove the includeProjectEnvs option on ops.Discover.
+// zerops_env action="get" serviceHostname=X delegates to Discover scoped
+// to that service and asks for env VALUES (includeEnvValues=true). If
+// the scoped path implicitly attached project envs, get would silently
+// broaden to return raw project-level secret values — a contract +
+// safety expansion. Phase 1 patches ops.Discover to require an explicit
+// includeProjectEnvs opt-in, and env.go keeps it false. See plan
+// Risk R1 in plans/env-discover-three-changes-2026-05-20.md.
+func TestEnvGet_ServiceScoped_NoProjectEnvLeak(t *testing.T) {
+	t.Parallel()
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "db", Status: statusActive, ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@17"}},
+		}).
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
+			{Key: "hostname", Content: "db"},
+			{Key: "port", Content: "5432"},
+		}).
+		WithProjectEnv([]platform.ProjectEnvVar{
+			{ID: "pe1", Key: "PROJECT_SECRET", Content: "must-not-leak-via-service-get"},
+			{ID: "pe2", Key: "SESSION_SECRET", Content: "must-not-leak-either"},
+		})
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterEnv(srv, mock, "proj-1", "")
+
+	result := callTool(t, srv, "zerops_env", map[string]any{
+		"action": "get", "serviceHostname": "db",
+	})
+
+	if result.IsError {
+		t.Fatalf("unexpected IsError: %s", getTextContent(t, result))
+	}
+
+	text := getTextContent(t, result)
+	if strings.Contains(text, "PROJECT_SECRET") || strings.Contains(text, "SESSION_SECRET") || strings.Contains(text, "must-not-leak") {
+		t.Fatalf("scoped env get leaked project envs: %s", text)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		t.Fatalf("parse result: %v", err)
+	}
+	project, _ := parsed["project"].(map[string]any)
+	if envs, ok := project["envs"]; ok && envs != nil {
+		t.Fatalf("project.envs must be absent on scoped get, got %v", envs)
+	}
+	// Sanity: the service envs we asked for must still be present.
+	services, _ := parsed["services"].([]any)
+	if len(services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(services))
+	}
+	first, _ := services[0].(map[string]any)
+	if envs, _ := first["envs"].([]any); len(envs) == 0 {
+		t.Fatalf("expected service envs returned, got none on first service")
+	}
+}
+
 // TestEnvTool_GetAction_RequiresTarget verifies the handler's own
 // guard: get without serviceHostname AND without project=true is a
 // user error that must come back with an actionable suggestion. This

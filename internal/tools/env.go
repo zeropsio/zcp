@@ -109,7 +109,11 @@ func RegisterEnv(srv *mcp.Server, client platform.Client, projectID, selfHostnam
 					"get requires serviceHostname or project=true",
 					"Example: zerops_env action=get serviceHostname=\"db\" OR zerops_env action=get project=true. To list env vars for all services in one call, use zerops_discover includeEnvs=true.")), nil, nil
 			}
-			result, err := ops.Discover(ctx, client, projectID, input.ServiceHostname, true, true)
+			// includeProjectEnvs=false: env get serviceHostname=X must NOT
+			// leak project env VALUES (includeEnvValues=true is always set
+			// here). Project-level reads go through project=true → unscoped
+			// Discover, which is a separate intent.
+			result, err := ops.Discover(ctx, client, projectID, input.ServiceHostname, true, true, false)
 			if err != nil {
 				return convertError(err), nil, nil
 			}

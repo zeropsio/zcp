@@ -65,7 +65,7 @@ func readSourceState(
 	// Discover source services. Drives runtime type + managed dep list.
 	// Pass empty hostname so Discover returns all services (we filter
 	// locally to pick the runtime + collect managed deps).
-	discover, err := ops.Discover(ctx, client, projectID, "", false, false)
+	discover, err := ops.Discover(ctx, client, projectID, "", false, false, false)
 	if err != nil {
 		return nil, fmt.Errorf("discover source project: %w", err)
 	}
