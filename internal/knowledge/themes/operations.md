@@ -122,7 +122,7 @@ HA mode is **immutable after creation**. To go HA, delete and recreate.
 | Connection | Single primary | Primary + read replicas |
 
 ### Application Scaling
-Set `minContainers: 2` or higher for zero-downtime deploys. Enable health checks.
+Set `minContainers: 2` or higher when one container can't carry the load OR when a single-container crash drops too much traffic. Rolling-deploy cutover is zero-downtime at any `minContainers` value via the platform default `temporaryShutdown: false` — new container readiness-checks before old removal. Enable health checks so the cutover waits for the new container to answer.
 
 ### Remove Development Services
 Remove Mailpit and Adminer. Replace with production SMTP and VPN-based DB access.

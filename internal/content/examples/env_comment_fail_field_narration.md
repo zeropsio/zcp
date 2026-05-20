@@ -36,6 +36,6 @@ reader can't infer from the field name alone.
   buildFromGit: https://github.com/zerops-recipe-apps/nestjs-showcase-app
 ```
 
-Anti-pattern: templated opening repeated across services ("enables
-zero-downtime rolling deploys" on every block). Each block's reasoning
-is service-specific.
+Anti-pattern: templated opening repeated across services ("gives the
+service capacity for concurrent traffic" copy-pasted on every block).
+Each block's reasoning is service-specific.

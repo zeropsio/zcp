@@ -97,14 +97,19 @@ so and no signal of what would change their mind.
 
 **Refined to**:
 
-> *"# Two Svelte replicas behind the public subdomain keep the"*
-> *"# dashboard available during rolling deploys — one serves traffic"*
-> *"# while the other rebuilds. Feel free to bump minContainers when"*
-> *"# your dashboard usage outgrows the two-replica fan-out."*
+> *"# Two Svelte replicas behind the public subdomain give the"*
+> *"# dashboard capacity for concurrent users and absorb a single"*
+> *"# container crash without dropping requests. Feel free to bump"*
+> *"# minContainers when your dashboard usage outgrows the two-replica"*
+> *"# fan-out."*
 
 The reshape opens with the mechanism, names the adapt path
 (`minContainers`), and ties to a concrete porter signal (dashboard
 usage growth). Field echoes deleted; mechanism + invitation kept.
+Rolling-deploy cutover is NOT mentioned here — that's the platform
+default (`temporaryShutdown: false`), independent of `minContainers`;
+folding it into the `minContainers≥2` mechanism conflates two
+orthogonal axes.
 
 ### Fail 2 — field-restatement preamble, mechanism-first body (tier-4 worker)
 

@@ -26,7 +26,7 @@ Reference the guide by name in prose — no URL required.
 
 - In a gotcha body: *"The platform injects NATS credentials as separate `NATS_USER` / `NATS_PASS` env vars; see the platform's `env-var-model` guide. The Node NATS client at its current major release strips URL-embedded creds silently, so the client must pass user and pass as separate `ConnectionOptions` fields."*
 - In an integration-guide item: *"Bind to `0.0.0.0` instead of `127.0.0.1` so the L7 balancer can reach the container over VXLAN; see the platform's `http-support` guide for the routing model."*
-- In an env `import.yaml` comment: *"`minContainers: 2` here is for HA failover during rolling deploys, not for throughput — see the platform's `rolling-deploys` guide for the two-axis model."*
+- In an env `import.yaml` comment: *"`minContainers: 2` here is for crash tolerance, not for throughput — a single replica drops traffic when its container crashes; rolling-deploy cutover is the platform default at any `minContainers`."*
 
 Record the fetch in the manifest entry's `citations` array: `{topic: "<guide-id>", guide_fetched_at: "<RFC3339 timestamp>"}`.
 
