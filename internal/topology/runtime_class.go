@@ -12,6 +12,14 @@ import "strings"
 //   - everything else (nodejs, go, python, rust, bun, ...) → RuntimeDynamic
 //   - empty input → RuntimeUnknown
 //
+// Accepts both legacy bare (`nodejs@22`, `php-nginx@8.4`) and post-Sunday-
+// release composite (`alpine/nodejs@22`, `ubuntu/php-nginx@8.4`) forms.
+// `stripKnownOSPrefix` runs before the runtime-prefix check so a composite
+// input classifies the same as its bare equivalent. `IsManagedService` does
+// its own HasPrefix walk against bare managed names; mode-encoded composites
+// (`postgresql:single@18`) match the bare `postgresql` prefix directly.
+// Reference: plans/backlog/zerops-yaml-os-prefix-shape-drift.md.
+//
 // Lives in topology because the classification is foundational vocabulary
 // shared by workflow/ (envelope rendering), ops/ (deploy classification),
 // and tools/ (subdomain auto-enable probe gating). Previously duplicated as
@@ -24,7 +32,7 @@ func RuntimeClassFor(typeVersion string) RuntimeClass {
 	if IsManagedService(typeVersion) {
 		return RuntimeManaged
 	}
-	lower := strings.ToLower(typeVersion)
+	lower := stripKnownOSPrefix(strings.ToLower(typeVersion))
 	if strings.HasPrefix(lower, "php-apache") || strings.HasPrefix(lower, "php-nginx") {
 		return RuntimeImplicitWeb
 	}

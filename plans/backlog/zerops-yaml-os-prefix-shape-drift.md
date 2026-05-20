@@ -17,23 +17,27 @@
   - 0 atom files (after `idle-adopt-entry.md` rewrite which mentions `os:` + `mode:` only in BC-deprecation prose, not as yaml example)
   - Plus the `topology/runtime_class.go` classifier strip + test extension surfaced earlier in this backlog entry.
 
-## Visible symptom (the classifier leaf)
+## Visible symptom (the classifier leaf) — FIXED 2026-05-20
 
-`internal/topology/runtime_class.go:28-32` does `HasPrefix(lower, "nginx" | "static" | "php-apache" | "php-nginx")` against the type string Zerops returns. With the new shape `alpine/nginx@1.22`, that prefix-check returns `false`. The classifier labels the service `RuntimeDynamic` instead of `RuntimeStatic` / `RuntimeImplicitWeb`. Downstream:
+`internal/topology/runtime_class.go::RuntimeClassFor` now strips the known OS
+prefix (`alpine/`, `ubuntu/`) before the HasPrefix runtime-class check, so
+composite forms classify identically to their bare equivalents.
 
-- `develop-static-workflow.md` is gated on `runtimes:[static]` — never fans out for any nginx service.
-- Same for PHP-apache / PHP-nginx atoms (gated on `runtimes:[implicit-webserver]`).
-- Layer-3 consumers (`compute_envelope.go:223`, `deploy_poll.go:227`, `deploy_subdomain.go:118`, `subdomain.go:146`) all funnel through `RuntimeClassFor` and inherit the misclassification.
+Pinned by:
+- `TestRuntimeClassFor` — extended table now carries 13 composite-shape cases
+  (alpine/*, ubuntu/*, mixed-case ALPINE/, mode-encoded `postgresql:single@18`).
+- `TestRuntimeClassFor_BareCompositeSymmetry` — 11 bare↔composite pairs assert
+  classification symmetry; gate against silent regression on a future managed-
+  prefix or stripKnownOSPrefix refactor.
 
-Empirically verified in-package test (researcher 01 ran):
+Downstream `RuntimeClassFor` consumers — `compute_envelope.go:223`,
+`deploy_poll.go:233`, `deploy_subdomain.go:118`, `subdomain.go:146` — all
+inherit the fix transparently (`go test ./internal/{topology,workflow,ops,tools}`
+green after the change).
 
-```
-alpine/nginx@1.22        -> dynamic   (should be static)
-alpine/php-apache@8.4    -> dynamic   (should be implicit-webserver)
-ubuntu/nginx@1.22        -> dynamic   (should be static)
-```
-
-Existing test `internal/topology/runtime_class_test.go:5-35` covers only bare forms — the gap that hid this for the period between the Zerops upstream change and now.
+The broader audit work below stays open (atom content alignment, recipe
+yaml regeneration, render goldens); the classifier leaf is no longer the
+gating defect.
 
 ## Sketch — why a strip is not the whole fix
 
@@ -56,20 +60,26 @@ Pre-production rule from CLAUDE.local.md: pick one canonical encoding per concep
 
 ## Sketch — phased fix when promoted
 
-1. **Audit pass**: enumerate every site that consumes service type strings. Grep targets:
-   - `HasPrefix.*nginx` / `HasPrefix.*static` / `HasPrefix.*php-` across `internal/`
-   - `nodejs@` / `nginx@` / `php-` across `internal/content/atoms/`, `internal/knowledge/recipes/`
-   - `*ServiceStackTypeVersionName*` / `*.Versions[].Name` consumers
-   - `liveTypes` reads
+1. **Audit pass**: ~~enumerate every site that consumes service type strings~~.
+   **DONE 2026-05-18** — `plans/eval-review-20260518-subset/os-prefix-bc-audit.md`
+   inspected 38 comparison sites; 3 broken sites fixed in commit `0696f646`
+   (verify_checks.go, deploy_validate.go, validate.go); 6 SUSPECT sites flagged
+   for Karel verify; 29 SAFE sites confirmed shape-tolerant.
 2. **Canonical-form decision**: OS-prefixed `<os>/<runtime>@<version>` everywhere ZCP touches the platform side. Bare form acceptable in human-facing prose only, normalized at the boundary.
-3. **Classifier fix** (the leaf): `runtime_class.go` strip-after-slash before HasPrefix check. Extend test table with OS-prefixed forms.
-4. **Plan validator alignment**: confirm `typeExists` at `validate.go:387-397` reads from the canonical registry; reject bare forms with an actionable error pointing at the OS-prefixed name.
-5. **Recipe yaml audit**: regenerate import.yml templates with OS-prefixed forms IF live import API has moved past bare-form acceptance (verify empirically).
-6. **Atom content audit**: every atom that shows inline yaml with `nginx@1.22` / similar should match what `zerops_discover` actually returns. Otherwise agent reads atom, copies bare, gets `INVALID_ZEROPS_YML: unknown base`.
+   - Cross-boundary equivalence handled via `topology.TypesAreEquivalent`
+     (commit `a3314929`) + asymmetric semantic (commit `4932e4b4`).
+3. **Classifier fix** (the leaf): ~~`runtime_class.go` strip-after-slash before HasPrefix check. Extend test table with OS-prefixed forms.~~
+   **DONE 2026-05-20** — see "Visible symptom" section above.
+4. **Plan validator alignment**: ~~confirm `typeExists` at `validate.go:387-397` reads from the canonical registry; reject bare forms with an actionable error pointing at the OS-prefixed name.~~
+   **DONE** — `typeAcceptedByCatalog` already delegates to
+   `topology.TypesAreEquivalent` (commit `a3314929`); bare-form plans accepted
+   against composite live catalog.
+5. **Recipe yaml audit** (Aleš scope): regenerate import.yml templates with OS-prefixed forms IF live import API has moved past bare-form acceptance (verify empirically). Live `services[].type` enum still carries both shapes, so this is a Aleš-side authoring preference, not a forcing requirement.
+6. **Atom content audit**: every atom that shows inline yaml with `nginx@1.22` / similar should match what `zerops_discover` actually returns. Otherwise agent reads atom, copies bare, gets `INVALID_ZEROPS_YML: unknown base`. **PARTIAL** — `atoms_lint_axes.go` doesn't enforce composite-shape today; manual sweep needed for atoms emitting yaml examples (`develop-first-deploy-scaffold-yaml.md`, `scaffold-zerops-yaml.md`, `launch-write-prod-setup.md`, framework-tagged atoms).
 7. **Render golden regeneration**: after atoms/recipes regenerate, run `go test ./internal/content/... -update` (or equivalent).
 8. **Eval re-run**: `classic-static-nginx-simple`, `landing-page-static-simple`, `classic-php-mariadb-standard`, and any other scenario whose runtime gets OS-prefixed by the Zerops side.
 
-Estimated effort once promoted: 1-2 days for the audit + classifier + plan validator; another day for recipe + atom alignment + golden regeneration.
+Estimated remaining effort: 1 day for the atom-content audit + recipe alignment + golden regeneration. The classifier + downstream-classifier + plan-validator work is done.
 
 ## Refs
 
