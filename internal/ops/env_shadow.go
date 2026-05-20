@@ -3,15 +3,23 @@ package ops
 import "strings"
 
 // DetectSelfShadows returns the keys in an envVariables map whose value is a
-// pure `${KEY}` template matching the same key — i.e. `db_hostname: ${db_hostname}`.
+// pure `${KEY}` template matching the same key — i.e. `API_URL: ${API_URL}`.
 //
-// Self-shadows are always wrong. The Zerops template interpolator sees the
-// service-level variable of that name first, cannot recurse back to the
-// auto-injected source (cross-service `${hostname_varname}` or project-level
-// `${VAR_NAME}`), and resolves the OS env var to the literal string
-// `${varname}`. Applications then try to connect to "${db_hostname}:5432",
-// authenticate with password "${db_password}", etc., and crash with cryptic
+// Same-key declarations are always wrong. The Zerops template interpolator
+// sees the service-level variable of that name first, cannot recurse back
+// to the project-level value, and resolves the OS env var to the literal
+// string `${varname}`. Applications then try to connect to "${db_hostname}:5432",
+// authenticate with password "${API_URL}", etc., and crash with cryptic
 // DNS/auth errors.
+//
+// Failure-mode shape varies by var scope. PROJECT-level vars auto-inherit
+// into every container; a same-key declaration in run.envVariables
+// produces the literal-string shadow above. CROSS-SERVICE vars do not
+// auto-inject under the porter-default isolation — a same-key
+// declaration is technically not a "shadow" (there is no auto-injected
+// value to shadow) but is still invalid because the right-hand-side
+// template cannot resolve to anything useful. Either way the value
+// becomes a literal at runtime; flag both shapes uniformly.
 //
 // Matching rules:
 //   - Value must be EXACTLY `${KEY}` (optionally with surrounding whitespace

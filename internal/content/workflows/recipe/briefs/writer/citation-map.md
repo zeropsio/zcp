@@ -10,9 +10,9 @@ Every `content_gotcha` and `content_ig` manifest entry is gated: no entry ships 
 
 | Topic area | Guide ID | What the guide covers |
 |---|---|---|
-| Cross-service env vars, self-shadow, aliasing | `env-var-model` | Auto-inject semantics across services; self-shadow trap; legitimate renames (`DB_HOST: ${db_hostname}`); envIsolation semantics; project-level vs service-level scope. |
+| Cross-service env vars, project-vs-service scope, aliasing | `env-var-model` | Project vars auto-inherit; cross-service vars require explicit `run.envVariables` aliases; project-level same-key self-shadow trap; legitimate renames (`DB_HOST: ${db_hostname}`). |
 | `zsc execOnce`, `appVersionId`, init commands | `init-commands` | Per-deploy execOnce key semantics; `--retryUntilSuccessful` boot retry; static vs per-deploy key rationale. |
-| Rolling deploys, SIGTERM, HA replicas | `rolling-deploys` | Two-axis `minContainers` (throughput vs HA); SIGTERM-before-teardown sequence; drain semantics; queue-group requirement for multi-replica consumers. |
+| Rolling deploys, SIGTERM, multi-replica services | `rolling-deploys` | `temporaryShutdown: false` default = new-then-cutover zero-downtime; two-axis `minContainers` (throughput vs crash tolerance, both independent of the cutover axis); SIGTERM-before-teardown sequence; drain semantics; queue-group requirement for multi-replica consumers. |
 | Object Storage, MinIO, `forcePathStyle` | `object-storage` | MinIO-backed; path-style requirement; `storage_apiUrl` vs `storage_apiHost`; credential env-var names. |
 | L7 balancer, `httpSupport`, VXLAN IP routing | `http-support` | Why bind `0.0.0.0`; TLS termination at the balancer; `trust proxy`; `httpSupport: true` gating. |
 | Deploy files, tilde suffix, static base | `deploy-files` | `./dist/~` tilde-strip rationale; `deployFiles: ./` dev-mount preservation; `base: static` limitations. |

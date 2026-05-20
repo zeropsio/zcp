@@ -48,12 +48,15 @@ func scanYAMLBoxDrawing(t *testing.T, path, body string) {
 // box-drawing in yaml blocks, tier-promotion narrative refinement
 // rubric. See docs/zcprecipator3/runs/22/FIX_SPEC.md.
 
-// TestBrief_TeachesProjectLevelShadowTrap — run-22 RC-2. The
-// scaffold/codebase-content `platform_principles.md` brief must
-// extend the same-key shadow warning to project-level vars
-// (`${APP_SECRET}`, `${API_URL}`), not just cross-service
-// auto-injects (`${db_hostname}`). Authoritative source:
-// internal/knowledge/guides/environment-variables.md L97-115.
+// TestBrief_TeachesProjectLevelShadowTrap — run-22 RC-2 (rewritten
+// for run-49 corpus-recalibration). The scaffold/codebase-content
+// `platform_principles.md` brief teaches the same-key trap on
+// PROJECT-LEVEL vars specifically — cross-service vars don't have
+// the trap because they aren't auto-injected to begin with (the
+// porter-default `envIsolation: service` semantics; the legacy
+// `none` mode was operationally adequate but porters never see it).
+// Authoritative source: `develop-env-var-model.md` atom +
+// `plans/audit-env-vars-20260515/AUDIT.md` §B3.
 func TestBrief_TeachesProjectLevelShadowTrap(t *testing.T) {
 	t.Parallel()
 	plan := syntheticShowcasePlan()
@@ -62,17 +65,17 @@ func TestBrief_TeachesProjectLevelShadowTrap(t *testing.T) {
 		t.Fatalf("BuildScaffoldBrief: %v", err)
 	}
 	body := brief.Body
-	// Must teach the APP_SECRET variant.
-	if !strings.Contains(body, "${APP_SECRET}") {
-		t.Errorf("scaffold brief missing project-level shadow example ${APP_SECRET}")
+	// Must teach the API_URL variant (project-level same-key trap).
+	if !strings.Contains(body, "${API_URL}") {
+		t.Errorf("scaffold brief missing project-level shadow example ${API_URL}")
 	}
 	// Must explicitly call out project-level scope.
 	if !strings.Contains(body, "Project-level") && !strings.Contains(body, "project-level") {
 		t.Errorf("scaffold brief missing the word `project-level` in shadow teaching")
 	}
-	// Sanity: the shadow-trap heading still anchors the section.
-	if !strings.Contains(body, "Same-key shadow trap") {
-		t.Errorf("scaffold brief missing `Same-key shadow trap` anchor")
+	// Sanity: the trap-section anchor still appears.
+	if !strings.Contains(body, "Self-shadow trap on project vars only") {
+		t.Errorf("scaffold brief missing `Self-shadow trap on project vars only` anchor")
 	}
 }
 

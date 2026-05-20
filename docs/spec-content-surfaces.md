@@ -213,9 +213,9 @@ If the answer is "yes, it surprises you even knowing both" → this is a gotcha.
 
 **Length**: **Cap 8 bullets per codebase. No floor** — bullets stand on their own merit, not on count. The empirical span across the two reference recipes is 2 (jetstream) to 7 (showcase) — count is shape-by-content, not target-by-floor. The Surface-5 editorial test (*"Would a developer who read the Zerops docs AND the framework docs STILL be surprised by this?"*) is the gating signal; bullets that pass it ship, bullets that fail get discarded. Run-14 shipped 11–12; that's over-collection above the cap.
 
-**Citation rule**: If the gotcha's topic is covered by a `zerops_knowledge` guide (env-var-model, execOnce, rolling-deploys, object-storage, cross-service-refs), the gotcha MUST cite that guide by name. Pattern: *"The `<guide-id>` guide covers <basic mechanism>; the application-specific corollary is …"*. Writing new mental models for topics the platform already documents is how folk-doctrine ships.
+**Citation rule**: If the gotcha's topic is covered by a `zerops_knowledge` guide (env-var-model, execOnce, rolling-deploys, object-storage), the gotcha MUST cite that guide by name. Pattern: *"The `<guide-id>` guide covers <basic mechanism>; the application-specific corollary is …"*. Writing new mental models for topics the platform already documents is how folk-doctrine ships.
 
-**Anti-pattern ("folk-doctrine defect")**: Gotcha invents a mechanism because the author couldn't explain an observation. Example from v28 workerdev gotcha #1: *"The API codebase avoided the symptom because its resolver path happened to interpolate before the shadow formed; do not rely on that."* — This is fabricated. Both codebases had the same shadow pattern; both were broken. The correct rule (from the `env-var-model` guide) is "cross-service vars auto-inject project-wide — never declare `key: ${key}` at all." The author had access to that guide and didn't consult it.
+**Anti-pattern ("folk-doctrine defect")**: Gotcha invents a mechanism because the author couldn't explain an observation. Example from v28 workerdev gotcha #1: *"The API codebase avoided the symptom because its resolver path happened to interpolate before the shadow formed; do not rely on that."* — This is fabricated. Both codebases had the same pattern; both were broken. The correct rule (from the `env-var-model` atom): cross-service vars require explicit `run.envVariables` aliases (the value is not in the process env without the alias); same-key declaration on a project-level var produces a literal-string shadow. The author had access to that atom and didn't consult it.
 
 ---
 
@@ -389,7 +389,7 @@ Concrete, named examples of each classification failure, so the content author c
 
 ### Folk-doctrine defects (real trap, fabricated explanation)
 
-- **"The API codebase avoided the symptom because its resolver path happened to interpolate before the shadow formed; do not rely on that."** (v28 workerdev gotcha #1) — The env-shadow trap is real and load-bearing. But the explanation is invented. Both apidev and workerdev shipped identical `db_hostname: ${db_hostname}` patterns; both were broken. The correct platform rule (from the `env-var-model` guide, which existed and was accessible during the run): **cross-service vars auto-inject project-wide; never declare `key: ${key}` in run.envVariables — the line is redundant AND it breaks the container env.** Fix: citation to guide, use guide's framing.
+- **"The API codebase avoided the symptom because its resolver path happened to interpolate before the shadow formed; do not rely on that."** (v28 workerdev gotcha #1) — The env-shadow trap is real and load-bearing on PROJECT-LEVEL vars only. But the explanation is invented. Both apidev and workerdev shipped identical patterns; both were broken. The correct platform rule (from the `env-var-model` atom, which existed and was accessible during the run): **cross-service vars require explicit `run.envVariables` aliases — the value is not in the process env at all without the alias. Same-key declaration on a project-level var (`API_URL: ${API_URL}`) produces a literal-string shadow because the interpolator does not recurse back to project scope.** Fix: citation to atom, use atom's framing.
 
 ### Surface-2 contract violation: ladder content inside extract markers
 
@@ -425,12 +425,11 @@ When content touches any of these topics, the author MUST fetch the guide first 
 
 | Topic area | Guide ID (via `zerops_knowledge`) | What the guide covers |
 |---|---|---|
-| Cross-service env vars, self-shadow, aliasing | `env-var-model` | Auto-inject semantics, never declare `key: ${key}`, legitimate renames (`DB_HOST: ${db_hostname}`), mode flags |
+| Cross-service env vars, project-vs-service scope, aliasing | `env-var-model` | Project vars auto-inherit; cross-service vars require explicit `run.envVariables` aliases; legitimate renames (`DB_HOST: ${db_hostname}`); project-level same-key self-shadow; mode flags |
 | `zsc execOnce` gate, `appVersionId`, init commands | `init-commands` | Per-deploy gate semantics, `--retryUntilSuccessful`, distinct keys per command |
-| Rolling deploys, SIGTERM, HA replicas | `rolling-deploys` / `minContainers-semantics` | Two-axis `minContainers` (throughput + HA), SIGTERM-before-teardown, drain semantics |
+| Rolling deploys, SIGTERM, multi-replica services | `rolling-deploys` / `minContainers-semantics` | `temporaryShutdown: false` default zero-downtime cutover; two-axis `minContainers` (throughput + crash tolerance, independent of cutover); SIGTERM-before-teardown; drain semantics |
 | Object Storage (MinIO, forcePathStyle) | `object-storage` | MinIO-backed, path-style required, `storage_*` env vars |
 | L7 balancer, `httpSupport`, VXLAN IP routing | `http-support` / `l7-balancer` | Why bind 0.0.0.0, TLS termination, `trust proxy` |
-| Cross-service references, isolation modes | `env-var-model` (same guide) | `envIsolation` semantics, project-level vs service-level |
 | Deploy files, tilde suffix, static base | `deploy-files` / `static-runtime` | `./dist/~` rationale, `base: static` limitations |
 | Readiness check, health check, routing gates | `readiness-health-checks` | What routes traffic, what restarts the container |
 

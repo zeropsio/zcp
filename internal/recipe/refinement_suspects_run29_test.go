@@ -23,18 +23,19 @@ func TestCollectRefinementSuspects_IGYAMLCommentDup_Detected(t *testing.T) {
 		"codebase/api/integration-guide": "" +
 			"### 1. Adding `zerops.yaml`\n\n" +
 			"```yaml\nzerops:\n  - setup: api\n```\n\n" +
-			"### 5. Same-key shadow trap\n\n" +
-			"Pick own-key names that are DIFFERENT from the platform-side keys. " +
-			"Declaring `db_hostname: ${db_hostname}` self-shadows: the per-service " +
-			"envVariables write runs after the auto-inject so the literal " +
-			"${db_hostname} string lands on the OS env.\n",
+			"### 5. Own-key aliases for cross-service vars\n\n" +
+			"Cross-service vars reach the app only via an alias in " +
+			"`run.envVariables`. Declaring `DB_HOST: ${db_hostname}` " +
+			"under your own key lets the app read `DB_HOST` directly " +
+			"and keeps swapping the managed service a yaml-only edit.\n",
 		"codebase/api/zerops-yaml": "" +
 			"zerops:\n" +
 			"  - setup: api\n" +
 			"    envVariables:\n" +
-			"      # Same-key aliasing self-shadows: declaring `db_hostname: ${db_hostname}`\n" +
-			"      # writes the literal ${db_hostname} string to the OS env because the\n" +
-			"      # per-service envVariables write runs after the auto-inject.\n" +
+			"      # DB_HOST aliases ${db_hostname} so app code reads its own\n" +
+			"      # constant. Cross-service vars reach the app only via an\n" +
+			"      # alias in run.envVariables; swapping the managed service\n" +
+			"      # later is a yaml-only edit.\n" +
 			"      DB_HOST: ${db_hostname}\n",
 	}
 	suspects := CollectRefinementSuspects(plan, nil)
