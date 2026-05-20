@@ -199,6 +199,16 @@ type WorkflowInput struct {
 	// attempt against a non-canonically-named source. Plumbs into
 	// ops.LaunchBundleInputs.SetupName as well.
 	ProdSetupNameOverride string `json:"prodSetupNameOverride,omitempty" jsonschema:"Launch-production only: override the source zerops.yaml setup name used as the production reference. Default 'prod' — set when the source uses a different name (e.g. 'app', 'appprod', 'web'). Source-control gate uses this name and the launch composer references it as the runtime's setup block."`
+
+	// SkipBuildIntegration is the per-hostname acknowledgement for
+	// build-integration-recommended warn-blockers raised by the
+	// source-control gate. List the hostnames whose missing
+	// `meta.BuildIntegration` the user has explicitly chosen NOT to
+	// configure before promotion. Each subsequent gate evaluation
+	// suppresses the warn for those hostnames so the workflow can
+	// advance to classify-prompt. Hostnames not listed continue to
+	// surface the warn until either configured or acknowledged.
+	SkipBuildIntegration []string `json:"skipBuildIntegration,omitempty" jsonschema:"Launch-production only: list of source hostnames whose missing build-integration the user explicitly opted out of configuring before launch. Ack mechanism for the source-control gate's build-integration-recommended warn-blocker. Each listed hostname suppresses that warn on subsequent re-calls; the launch advances to classify-prompt once every other source-control check is green."`
 }
 
 // immediateResponse is returned from immediate (stateless) workflows.
@@ -292,7 +302,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	}
 
 	switch input.Action {
-	case "start":
+	case "start": //nolint:goconst // pinned by TestAtomLintAcceptedActionsMatchDispatcher which parses the case literal; resolving to the actionStart const would require an AST const-lookup extension
 		// Phase 3 — export workflow has handler-based orchestration that
 		// MUST run for both invocation shapes (`workflow="export"` no-action
 		// AND `action="start" workflow="export"`). Without this fork, the
@@ -396,7 +406,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleRoute(ctx, engine, client, projectID, stateDir, selfHostname, rt)
 	case "close-mode":
 		return handleCloseMode(input, stateDir)
-	case "git-push-setup":
+	case "git-push-setup": //nolint:goconst // pinned by TestAtomLintAcceptedActionsMatchDispatcher (see actionStart comment above)
 		return handleGitPushSetup(input, stateDir, rt)
 	case "build-integration":
 		return handleBuildIntegration(ctx, client, projectID, input, stateDir, rt)

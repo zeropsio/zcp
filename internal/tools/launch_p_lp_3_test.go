@@ -151,6 +151,7 @@ func pLP3CompleteInput() WorkflowInput {
 // mutation calls compare against this baseline.
 func TestPersistsSnapshotAtReadyToLaunch(t *testing.T) {
 	stateDir := t.TempDir()
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 	client := pLP3MockClient()
 	ssh := pLP3SSHFrozen()
 	rt := pLP3ContainerRuntime()
@@ -201,6 +202,7 @@ func TestPersistsSnapshotAtReadyToLaunch(t *testing.T) {
 // flow OR cleanup).
 func TestRefusesOnSourceDriftBetweenReadyAndPublish(t *testing.T) {
 	stateDir := t.TempDir()
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 	client := pLP3MockClient()
 	input := pLP3CompleteInput()
 	input.LaunchKey = sentinelLaunchKey
@@ -293,6 +295,7 @@ func TestRefusesOnSourceDriftBetweenReadyAndPublish(t *testing.T) {
 // regardless of whether the source or the file diverged.
 func TestRefusesOnTamperedStateFile(t *testing.T) {
 	stateDir := t.TempDir()
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 	client := pLP3MockClient()
 	input := pLP3CompleteInput()
 	input.LaunchKey = sentinelLaunchKey

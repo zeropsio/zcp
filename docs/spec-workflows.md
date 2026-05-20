@@ -1164,20 +1164,21 @@ Recipes (`zerops_recipe`) are a multi-repo, registry-published product with sepa
 
 `zerops_workflow workflow="launch-production"` is a stateless multi-call narrowing that takes a working dev/stage source project all the way to a healthy production deployment in a SEPARATE Zerops project, under a strict one-shot trust boundary: ZCP never holds standing prod access.
 
-### 10.1 Seven-state machine
+### 10.1 Eight-state machine
 
 ```
-scope-prompt → classify-prompt → ready-to-launch → launching →
-                                                       │
-                                              ┌────────┴────────┐
-                                              │                 │
-                                      configuring-pipeline    failed
-                                              │
-                                           launched
+scope-prompt → source-control-required → classify-prompt → ready-to-launch → launching →
+                                                                                  │
+                                                                         ┌────────┴────────┐
+                                                                         │                 │
+                                                                 configuring-pipeline    failed
+                                                                         │
+                                                                      launched
 ```
 
 Status semantics — read-side narrowing (no mutation, no launch key needed):
 - `scope-prompt` — `productionProjectName`, `region`, `customDomain`, `keepNonHA` missing.
+- `source-control-required` — scope complete but the source-control gate (P-LP-10) refuses one or more promoted runtimes. Per-runtime blockers identify which check failed (`git-push-unconfigured`, `remote-mismatch`, `build-integration-recommended`) with Recovery hints chaining `git-push-setup` / `zerops_deploy strategy=git-push` / `build-integration`. Stateless — no state file written; gate re-runs on every poll. Read-side does NOT audit (would spam every poll); publish-side does. Atom `launch-source-control-required` carries the per-blocker-id user-facing guidance.
 - `classify-prompt` — source-project envs present, classifications incomplete.
 - `ready-to-launch` — bundle composed, source-control changes pushed (`setup: prod` block in source `zerops.yaml`), schema clean, blockers cleared. Awaits the one-shot launchKey.
 
@@ -1207,6 +1208,7 @@ A second call with the same `productionProjectName` + same launchID reads the ex
 | P-LP-7 | ZCP does NOT call `PutServiceStackIntegration` in v1 (Path B). The pipeline-check uses `GetServiceStackIntegrationStatus` only. Path A is backlogged. Pinned by `TestExecuteLaunchPipelineCheck_NoPutCallsByZCP`. |
 | P-LP-8 | Pipeline-config issues surface as warn-severity blockers on the `launched` response — never failure. Prod project IS created + deployed; pipeline-config is recoverable via dashboard + workflow re-call. Pinned by `TestExecuteLaunchPipelineCheck_NotConfigured_PopulatesBlocker`. |
 | P-LP-9 | `GetServiceStackIntegrationStatus` HTTP 400 with code `noExternalRepositoryIntegration` maps to canonical `IntegrationState.NotConfigured` — error is NOT propagated as failure. Pinned by `TestApiCodeNoExternalRepositoryIntegration_Constant` + live `TestProjectAdminClient_GetServiceStackIntegrationStatus_NotConfiguredLive`. |
+| P-LP-10 | The `buildFromGit:` URL in every production import.yaml runtime entry comes from `ServiceMeta.RemoteURL` of a meta with `GitPushState == GitPushConfigured` AND matches the live `git remote get-url origin` on the push hostname. NEVER from a live SSH read of `/var/www/.git/config` alone. The gate (`validateLaunchSourceControl`) runs at the read-side transition (`scope-prompt → classify-prompt`) without audit and at the publish-side mutation (`executeLaunchMutation` / `executeExistingProjectMutation`) with audit — drift between the two surfaces in `launch-audit-log.json`. Closes the recipe-template silent-fallback loophole where `git remote get-url origin` returned the public `zerops-recipe-apps/<slug>` template URL on a service the user never wired via `git-push-setup`. Pinned by `TestValidateLaunchSourceControl_*` + `TestHandleLaunchProduction_GitPushUnconfigured_FiresSourceControlRequired` + `TestHandleLaunchProduction_ReadSideGate_DoesNotAudit`. |
 
 ---
 

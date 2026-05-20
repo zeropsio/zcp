@@ -180,8 +180,6 @@ func readLocalZeropsYAML(workingDir string) (string, error) {
 // exit-status-1; the function intentionally swallows that error and
 // returns empty so caller chains to setup-git-push (same path as
 // container-mode empty remote).
-//
-//nolint:unparam // error return preserved for symmetry with container-mode read path; future enhancements may need to distinguish "not a repo" from "no origin"
 func readLocalGitRemote(ctx context.Context, workingDir string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "remote", "get-url", "origin")
 	cmd.Dir = workingDir

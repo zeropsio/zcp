@@ -76,6 +76,7 @@ const sequenceLaunchYAML = `zerops:
 // projectAdminClientFactory swap works.
 func TestHandleLaunchProduction_FullSequence_HappyPath(t *testing.T) {
 	stateDir := withTempState(t)
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 
 	// Mock admin returns success on CreateAndImportProject + Process
 	// poll returns FINISHED so the launched path runs end-to-end.
@@ -271,6 +272,7 @@ func TestHandleLaunchProduction_FullSequence_HappyPath(t *testing.T) {
 // exits cleanly.
 func TestHandleLaunchProduction_PipelineConfigured_OmitsBlocker(t *testing.T) {
 	stateDir := withTempState(t)
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 	mockAdmin := platform.NewMockProjectAdminClient().
 		WithImportResult(&platform.ImportResult{
 			ProjectID:   "new-prod-id",
@@ -341,6 +343,7 @@ func TestHandleLaunchProduction_PipelineConfigured_OmitsBlocker(t *testing.T) {
 // the skip reason.
 func TestHandleLaunchProduction_PipelineSkipFlag_NoBlocker(t *testing.T) {
 	stateDir := withTempState(t)
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 	mockAdmin := platform.NewMockProjectAdminClient().
 		WithImportResult(&platform.ImportResult{
 			ProjectID:   "new-prod-id",
@@ -423,6 +426,7 @@ func TestHandleLaunchProduction_PipelineSkipFlag_NoBlocker(t *testing.T) {
 // dashboard config.
 func TestHandleLaunchProduction_ResumeRefreshesPipeline(t *testing.T) {
 	stateDir := withTempState(t)
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 
 	// First call: not-configured → blocker in launched response.
 	mockAdminFirst := platform.NewMockProjectAdminClient().
@@ -517,6 +521,7 @@ func TestHandleLaunchProduction_ResumeRefreshesPipeline(t *testing.T) {
 // FAILED, the handler transitions state.Status → failed (not launched).
 func TestHandleLaunchProduction_FullSequence_ProcessFailedTransitionsToFailed(t *testing.T) {
 	stateDir := withTempState(t)
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 	failReason := "build failed: tsc compile error"
 
 	mockAdmin := platform.NewMockProjectAdminClient().

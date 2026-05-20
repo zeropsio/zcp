@@ -1,0 +1,293 @@
+package tools
+
+import (
+	"context"
+	"errors"
+	"io/fs"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/runtime"
+	"github.com/zeropsio/zcp/internal/topology"
+)
+
+// TestValidateLaunchSourceControl_NoMeta_ReturnsBootstrapBlocker pins
+// the "service has no ServiceMeta" branch — gate cannot validate state
+// that does not exist, so it surfaces a bootstrap blocker instead of a
+// git-push blocker. Recovery hint points at the adopt route.
+func TestValidateLaunchSourceControl_NoMeta_ReturnsBootstrapBlocker(t *testing.T) {
+	stateDir := t.TempDir()
+
+	_, blockers, err := validateLaunchSourceControl(
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "missing-host", nil,
+	)
+	if err != nil {
+		t.Fatalf("validateLaunchSourceControl: %v", err)
+	}
+	if len(blockers) != 1 {
+		t.Fatalf("blockers: got %d want 1\n%+v", len(blockers), blockers)
+	}
+	if blockers[0].ID != "service-not-bootstrapped" {
+		t.Errorf("blocker ID: got %q want service-not-bootstrapped", blockers[0].ID)
+	}
+	if blockers[0].Recovery == nil || blockers[0].Recovery.Action != "start" {
+		t.Errorf("expected recovery hint pointing at bootstrap start, got %+v", blockers[0].Recovery)
+	}
+}
+
+// TestValidateLaunchSourceControl_GitPushUnconfigured_BlocksBeforeClassify
+// pins the canonical P1 failure mode: meta exists but GitPushState !=
+// configured. Returns a block-severity blocker with Recovery pointing
+// at git-push-setup for the canonical (dev-half) hostname.
+func TestValidateLaunchSourceControl_GitPushUnconfigured_BlocksBeforeClassify(t *testing.T) {
+	stateDir := t.TempDir()
+	seedLaunchGateReadyMeta(t, stateDir, "app", "",
+		withMetaGitPushState(topology.GitPushUnconfigured))
+
+	_, blockers, err := validateLaunchSourceControl(
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "app", nil,
+	)
+	if err != nil {
+		t.Fatalf("validateLaunchSourceControl: %v", err)
+	}
+	if len(blockers) < 1 {
+		t.Fatalf("expected at least 1 blocker for unconfigured git-push, got 0")
+	}
+	first := blockers[0]
+	if !strings.HasPrefix(first.ID, "git-push-unconfigured-") {
+		t.Errorf("first blocker ID: got %q want git-push-unconfigured-app", first.ID)
+	}
+	if first.Severity != topology.BlockerSeverityBlock {
+		t.Errorf("severity: got %q want block", first.Severity)
+	}
+	if first.Recovery == nil || first.Recovery.Action != "git-push-setup" {
+		t.Errorf("recovery: got %+v want git-push-setup chain", first.Recovery)
+	}
+	if first.Recovery.Args["service"] != "app" {
+		t.Errorf("recovery service: got %q want app", first.Recovery.Args["service"])
+	}
+}
+
+// TestValidateLaunchSourceControl_LiveRemoteMismatch_Blocks fires when
+// meta records RemoteURL but the live origin on the push hostname
+// reports a different URL. This catches the recipe-bootstrap loophole:
+// meta says "we wired github.com/me/myapp" but live /var/www/.git/config
+// still points at the recipe template.
+func TestValidateLaunchSourceControl_LiveRemoteMismatch_Blocks(t *testing.T) {
+	stateDir := t.TempDir()
+	seedLaunchGateReadyMeta(t, stateDir, "app", "https://github.com/me/myapp.git")
+	// Live read returns a DIFFERENT URL (simulates drift / recipe leftover).
+	installFakeLiveRemoteReader(t, map[string]string{"app": "https://github.com/zerops-recipe-apps/template.git"})
+
+	_, blockers, err := validateLaunchSourceControl(
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "app", nil,
+	)
+	if err != nil {
+		t.Fatalf("validateLaunchSourceControl: %v", err)
+	}
+	if len(blockers) != 1 {
+		t.Fatalf("blockers: got %d want 1\n%+v", len(blockers), blockers)
+	}
+	if !strings.HasPrefix(blockers[0].ID, "remote-mismatch-") {
+		t.Errorf("blocker ID: got %q want remote-mismatch-app", blockers[0].ID)
+	}
+	if !strings.Contains(blockers[0].Message, "https://github.com/zerops-recipe-apps/template.git") {
+		t.Errorf("expected message to surface the live URL for diagnosis, got %q", blockers[0].Message)
+	}
+}
+
+// TestValidateLaunchSourceControl_BuildIntegrationRecommended_WarnOnly
+// pins the warn-severity build-integration blocker: meta is otherwise
+// gate-ready but BuildIntegration=none. Blocker fires but with
+// Severity=warn so the gate does not block status advancement (caller
+// uses gateHasBlockingFailure to distinguish).
+func TestValidateLaunchSourceControl_BuildIntegrationRecommended_WarnOnly(t *testing.T) {
+	stateDir := t.TempDir()
+	seedLaunchGateReadyMeta(t, stateDir, "app", "https://github.com/me/myapp.git",
+		withMetaBuildIntegration(topology.BuildIntegrationNone))
+	installFakeLiveRemoteReader(t, map[string]string{"app": "https://github.com/me/myapp.git"})
+
+	_, blockers, err := validateLaunchSourceControl(
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "app", nil,
+	)
+	if err != nil {
+		t.Fatalf("validateLaunchSourceControl: %v", err)
+	}
+	if len(blockers) != 1 {
+		t.Fatalf("blockers: got %d want 1\n%+v", len(blockers), blockers)
+	}
+	if !strings.HasPrefix(blockers[0].ID, "build-integration-recommended-") {
+		t.Errorf("blocker ID: got %q want build-integration-recommended-app", blockers[0].ID)
+	}
+	if blockers[0].Severity != topology.BlockerSeverityWarn {
+		t.Errorf("severity: got %q want warn", blockers[0].Severity)
+	}
+	if gateHasBlockingFailure(blockers) {
+		t.Errorf("warn-only blocker should NOT report as blocking; gateHasBlockingFailure returned true")
+	}
+}
+
+// TestValidateLaunchSourceControl_SkipBuildIntegration_AckSuppressesWarn
+// pins the D1 acknowledgement: when the user opts out via
+// SkipBuildIntegration=[hostname], the warn blocker is suppressed and
+// the gate goes fully green.
+func TestValidateLaunchSourceControl_SkipBuildIntegration_AckSuppressesWarn(t *testing.T) {
+	stateDir := t.TempDir()
+	seedLaunchGateReadyMeta(t, stateDir, "app", "https://github.com/me/myapp.git",
+		withMetaBuildIntegration(topology.BuildIntegrationNone))
+	installFakeLiveRemoteReader(t, map[string]string{"app": "https://github.com/me/myapp.git"})
+
+	_, blockers, err := validateLaunchSourceControl(
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "app",
+		[]string{"app"},
+	)
+	if err != nil {
+		t.Fatalf("validateLaunchSourceControl: %v", err)
+	}
+	if len(blockers) != 0 {
+		t.Errorf("expected no blockers after ack, got %+v", blockers)
+	}
+}
+
+// TestValidateLaunchSourceControl_FullyGateReady_NoBlockers pins the
+// happy path: meta has all four checks aligned (GitPushState=configured,
+// RemoteURL non-empty, live origin matches, build-integration set) →
+// zero blockers, MetaRemoteURL populated on the check for composer use.
+func TestValidateLaunchSourceControl_FullyGateReady_NoBlockers(t *testing.T) {
+	stateDir := t.TempDir()
+	seedLaunchGateReadyMeta(t, stateDir, "app", canonicalLaunchTestRemoteURL)
+	installFakeLiveRemoteReader(t, map[string]string{"app": canonicalLaunchTestRemoteURL})
+
+	check, blockers, err := validateLaunchSourceControl(
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "app", nil,
+	)
+	if err != nil {
+		t.Fatalf("validateLaunchSourceControl: %v", err)
+	}
+	if len(blockers) != 0 {
+		t.Errorf("expected no blockers for fully gate-ready meta, got %+v", blockers)
+	}
+	if check.MetaRemoteURL != canonicalLaunchTestRemoteURL {
+		t.Errorf("MetaRemoteURL: got %q want %q (composer must read meta, not SSH)",
+			check.MetaRemoteURL, canonicalLaunchTestRemoteURL)
+	}
+	if check.PushHostname != "app" {
+		t.Errorf("PushHostname: got %q want app", check.PushHostname)
+	}
+}
+
+// TestValidateLaunchSourceControl_StageHalfNormalizesToDevHalf pins
+// pair-key normalization: user passes the stage-half hostname,
+// resolver returns the canonical dev-half (= meta primary key) as
+// PushHostname. ChoiceHostname preserves the user's input for UX
+// continuity.
+func TestValidateLaunchSourceControl_StageHalfNormalizesToDevHalf(t *testing.T) {
+	stateDir := t.TempDir()
+	seedLaunchGateReadyMeta(t, stateDir, "appdev", canonicalLaunchTestRemoteURL,
+		withMetaMode(topology.ModeStandard),
+		withMetaStageHostname("appstage"))
+	installFakeLiveRemoteReader(t, map[string]string{"appdev": canonicalLaunchTestRemoteURL})
+
+	check, blockers, err := validateLaunchSourceControl(
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "appstage", nil,
+	)
+	if err != nil {
+		t.Fatalf("validateLaunchSourceControl: %v", err)
+	}
+	if len(blockers) != 0 {
+		t.Errorf("expected gate green for stage-half input pointing at pair-keyed meta, got %+v", blockers)
+	}
+	if check.ChoiceHostname != "appstage" {
+		t.Errorf("ChoiceHostname: got %q want appstage (user choice preserved)", check.ChoiceHostname)
+	}
+	if check.PushHostname != "appdev" {
+		t.Errorf("PushHostname: got %q want appdev (normalized to canonical dev-half)", check.PushHostname)
+	}
+}
+
+// TestHandleLaunchProduction_GitPushUnconfigured_FiresSourceControlRequired
+// pins the integration end-to-end: handler runs the gate between
+// scope-prompt and classify-prompt and surfaces source-control-required
+// status when meta is gate-failing.
+func TestHandleLaunchProduction_GitPushUnconfigured_FiresSourceControlRequired(t *testing.T) {
+	stateDir := t.TempDir()
+	// Seed an incomplete meta: bootstrapped but GitPushState=unconfigured
+	// (simulates the session log's recipe-bootstrap scenario).
+	seedLaunchGateReadyMeta(t, stateDir, "app", "",
+		withMetaGitPushState(topology.GitPushUnconfigured))
+
+	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
+		{Key: "LOG_LEVEL", Content: "info"},
+	})
+
+	input := WorkflowInput{
+		Workflow:              workflowLaunchProduction,
+		ProductionProjectName: "myapp-prod",
+		TargetService:         "app",
+	}
+	result, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, input, stateDir, runtime.Info{}, nil)
+	if err != nil {
+		t.Fatalf("handleLaunchProduction: %v", err)
+	}
+	resp := decodeLaunchResp(t, []byte(extractText(result)))
+	if resp.Status != topology.LaunchStatusSourceControlRequired {
+		t.Fatalf("status: got %q want source-control-required\nresponse: %s",
+			resp.Status, extractText(result))
+	}
+	if len(resp.Blockers) == 0 {
+		t.Fatal("expected at least one source-control blocker")
+	}
+	if resp.Blockers[0].Recovery == nil || resp.Blockers[0].Recovery.Action != "git-push-setup" {
+		t.Errorf("expected git-push-setup recovery, got %+v", resp.Blockers[0].Recovery)
+	}
+}
+
+// TestHandleLaunchProduction_ReadSideGate_DoesNotAudit pins the
+// audit-asymmetry split (Codex round-2 insight): the read-side gate
+// (fires on every poll before publish credentials are supplied) must
+// NEVER write to launch-audit-log.json. The publish-side gate
+// (executeLaunchMutation / executeExistingProjectMutation) is the
+// site that audits. Without this split, every poll against a gate-
+// failing source would spam refusals the user never authored.
+func TestHandleLaunchProduction_ReadSideGate_DoesNotAudit(t *testing.T) {
+	stateDir := t.TempDir()
+	seedLaunchGateReadyMeta(t, stateDir, "app", "",
+		withMetaGitPushState(topology.GitPushUnconfigured))
+
+	client := newLaunchMockClient().WithProjectEnv([]platform.ProjectEnvVar{
+		{Key: "LOG_LEVEL", Content: "info"},
+	})
+
+	input := WorkflowInput{
+		Workflow:              workflowLaunchProduction,
+		ProductionProjectName: "myapp-prod",
+		TargetService:         "app",
+		// No LaunchKey / ExistingProdToken → read-side only.
+	}
+	_, _, err := handleLaunchProduction(context.Background(), "source-project-id", client, input, stateDir, runtime.Info{}, nil)
+	if err != nil {
+		t.Fatalf("handleLaunchProduction: %v", err)
+	}
+
+	// Audit log MUST NOT exist after a read-side gate refusal.
+	auditPath := stateDir + "/launch-production/launch-audit-log.json"
+	if statResult, statErr := fileExists(auditPath); statErr != nil {
+		t.Fatalf("stat audit: %v", statErr)
+	} else if statResult {
+		t.Errorf("read-side gate must NOT write audit entries; %s exists", auditPath)
+	}
+}
+
+// fileExists is a tiny helper for the audit-asymmetry test.
+func fileExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
+}

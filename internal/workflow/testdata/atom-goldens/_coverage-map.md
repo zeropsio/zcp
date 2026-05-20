@@ -109,6 +109,7 @@ Atoms with zero scenarios are flagged `TODO: explicit decision required` — Pha
 | `launch-pipeline-skipped` | 1 | launch-production/active |
 | `launch-post-checklist` | 1 | launch-production/active |
 | `launch-scope-prompt` | 1 | launch-production/active |
+| `launch-source-control-required` | 1 | launch-production/active |
 | `launch-status-recovery` | 1 | launch-production/active |
 | `launch-write-prod-setup` | 1 | launch-production/active |
 | `scaffold-zerops-yaml` | 1 | export/scaffold-required |

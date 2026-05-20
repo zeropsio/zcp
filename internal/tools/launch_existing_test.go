@@ -79,6 +79,7 @@ func existingCompleteInput() WorkflowInput {
 // with ErrTokenScopeMismatch.
 func TestLaunchExistingProject_TokenScopeMismatch_Refuses(t *testing.T) {
 	stateDir := t.TempDir()
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 	sourceClient := pLP3MockClient()
 
 	// Target mock reports the token resolves to project "wrong-target-id"
@@ -122,6 +123,7 @@ func TestLaunchExistingProject_TokenScopeMismatch_Refuses(t *testing.T) {
 // ImportServices call.
 func TestLaunchExistingProject_HostnameConflict_Refuses(t *testing.T) {
 	stateDir := t.TempDir()
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 	sourceClient := pLP3MockClient()
 
 	// Target has an existing service named "app" — same hostname the
@@ -175,6 +177,7 @@ func TestLaunchExistingProject_HostnameConflict_Refuses(t *testing.T) {
 // per USER-classified env (split mutation invariant).
 func TestLaunchExistingProject_ServicesOnlyImport_NoProjectBlock(t *testing.T) {
 	stateDir := t.TempDir()
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 	sourceClient := pLP3MockClient()
 
 	targetMock := existingTargetMock("expected-target-id", nil)
@@ -253,6 +256,7 @@ func TestLaunchExistingProject_ServicesOnlyImport_NoProjectBlock(t *testing.T) {
 // reached; no platform calls.
 func TestLaunchExistingProject_BothCredentials_Refused(t *testing.T) {
 	stateDir := t.TempDir()
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 	sourceClient := pLP3MockClient()
 
 	input := existingCompleteInput()
@@ -293,6 +297,7 @@ func TestLaunchExistingProject_BothCredentials_Refused(t *testing.T) {
 // CreateProjectEnv contract per bucket.
 func TestLaunchExistingProject_ClassificationAppliedToTargetEnvs(t *testing.T) {
 	stateDir := t.TempDir()
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 
 	// Source has one env per non-PlainConfig classification + one PlainConfig.
 	sourceClient := pLP3MockClient().WithProjectEnv([]platform.ProjectEnvVar{
@@ -418,6 +423,7 @@ func TestLaunchExistingProject_ClassificationAppliedToTargetEnvs(t *testing.T) {
 // or a late confusing rejection (when only the override existed).
 func TestLaunchExistingProject_SetupNameOverride_HonoredInBundle(t *testing.T) {
 	stateDir := t.TempDir()
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 	sourceClient := pLP3MockClient()
 
 	targetMock := existingTargetMock(expectedExistingProjectID, nil)
@@ -519,6 +525,7 @@ func TestExistingProdToken_NeverInResponse(t *testing.T) {
 	for _, sc := range scenarios {
 		t.Run(sc.name, func(t *testing.T) {
 			stateDir := t.TempDir()
+			installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 			_, input, restore := sc.setup()
 			defer restore()
 			result, _, err := handleLaunchProduction(

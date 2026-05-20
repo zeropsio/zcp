@@ -198,13 +198,23 @@ func executeExistingProjectMutation(
 		return blocker, nil, nil
 	}
 
+	// Publish-side source-control gate (P-LP-10 hard re-check) — shared
+	// helper with executeLaunchMutation.
+	gateResult := runPublishSideSourceControlGate(
+		ctx, corpus, sourceClient, sshDeployer, rt, input,
+		sourceProjectID, stateDir, launchID, source.RepoURL,
+	)
+	if gateResult.Response != nil {
+		return gateResult.Response, nil, nil
+	}
+
 	bundleInputs := ops.LaunchBundleInputs{
 		SourceProjectID:   sourceProjectID,
 		TargetProjectName: input.ProductionProjectName,
 		TargetHostname:    input.TargetService,
 		ServiceType:       source.ServiceType,
 		SetupName:         effectiveProdSetupName(input),
-		RepoURL:           source.RepoURL,
+		RepoURL:           gateResult.RepoURL,
 		ZeropsYAMLBody:    source.ZeropsYAMLBody,
 		GitCommitSHA:      source.GitCommitSHA,
 		ProjectEnvs:       bundleProjectEnvsFromSource(sourceEnvs),

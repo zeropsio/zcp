@@ -268,6 +268,7 @@ func TestAuditLog_NeverContainsLaunchKey(t *testing.T) {
 // the auth failure error wrapper never leaks the key value.
 func TestHandleLaunchProduction_Mutation_AuthFailureWrappedSafely(t *testing.T) {
 	stateDir := withTempState(t)
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 	// Factory that always errors (e.g., key invalid)
 	restore := setProjectAdminClientFactory(func(launchKey, apiHost string) (platform.ProjectAdminClient, error) {
 		_ = launchKey
@@ -304,6 +305,7 @@ func TestHandleLaunchProduction_Mutation_AuthFailureWrappedSafely(t *testing.T) 
 // status without re-importing.
 func TestHandleLaunchProduction_IdempotentResume(t *testing.T) {
 	stateDir := withTempState(t)
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 	launchID := generateLaunchID("source-project-id", "myapp-prod")
 	// Pre-populate state file as if a prior publish already ran.
 	priorState := &launchState{
@@ -345,6 +347,7 @@ func TestHandleLaunchProduction_IdempotentResume(t *testing.T) {
 // P-LP-4: launched response always carries the launch-delete-key atom.
 func TestHandleLaunchProduction_LaunchedResponseIncludesDeleteKey(t *testing.T) {
 	stateDir := withTempState(t)
+	installLaunchGateReady(t, stateDir, "app", canonicalLaunchTestRemoteURL)
 	launchID := generateLaunchID("source-project-id", "myapp-prod")
 	state := &launchState{
 		LaunchID:          launchID,

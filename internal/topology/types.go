@@ -248,6 +248,19 @@ const (
 	// LaunchStatusScopePrompt fires when launch inputs are incomplete
 	// (productionProjectName, region, or other scope fields missing).
 	LaunchStatusScopePrompt LaunchProductionStatus = "scope-prompt"
+	// LaunchStatusSourceControlRequired fires when scope is complete but
+	// the source-side prerequisites for promotion are not all in place:
+	// the chosen runtime lacks ServiceMeta.GitPushState=configured (no
+	// user-owned remote wired), live `/var/www` origin diverges from the
+	// recorded RemoteURL (manual rewrite or recipe-template carryover),
+	// or build-integration on the source pair is recommended but absent.
+	// Stateless recoverable status — no state file written. Response
+	// carries one blocker per failing check with structured Recovery
+	// pointing at the existing `git-push-setup` / `zerops_deploy
+	// strategy=git-push` / `build-integration` actions. Agent resolves
+	// blockers shop-down with a re-call between each. Pinned by the
+	// source-control-gate tests.
+	LaunchStatusSourceControlRequired LaunchProductionStatus = "source-control-required"
 	// LaunchStatusClassifyPrompt fires when source project envs are
 	// present but EnvClassifications is incomplete — agent must bucket
 	// each env per the existing four-bucket protocol.

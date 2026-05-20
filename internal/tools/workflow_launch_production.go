@@ -139,6 +139,35 @@ func handleLaunchProduction(
 	// dev is the build key.
 	input.TargetService = normalizeTargetServiceForLaunch(stateDir, input.TargetService)
 
+	// Status 1.5 — source-control gate (P-LP-10). Fires after scope is
+	// complete but before classify-prompt: refuse to advance the
+	// workflow until every promoted runtime has a user-owned git
+	// remote wired via ServiceMeta.GitPushState=configured AND the
+	// live origin in /var/www matches the recorded RemoteURL.
+	// Read-side gate — never audit-logs (writeAudit=false at this
+	// site); the publish-side mutation pipeline re-runs the gate with
+	// audit enabled so drift between the two surfaces appears in
+	// launch-audit-log.json.
+	gateCheck, gateBlockers, gateErr := validateLaunchSourceControl(
+		ctx, client, sshDeployer, rt, stateDir,
+		input.TargetService, input.SkipBuildIntegration,
+	)
+	if gateErr != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrAPIError,
+			fmt.Sprintf("source-control gate: %v", gateErr),
+			"Inspect ZCP state directory + ServiceMeta files for the source project; re-run after fixing.",
+		), WithRecoveryStatus()), nil, nil
+	}
+	if gateHasBlockingFailure(gateBlockers) {
+		return launchSourceControlRequiredResponse(corpus, input, sourceContext, gateBlockers), nil, nil
+	}
+	// Warn-only blockers (build-integration-recommended) attached to the
+	// classify-prompt response so the agent still sees them when scope is
+	// otherwise green. Cleared once SkipBuildIntegration ack lists the
+	// hostname.
+	_ = gateCheck
+
 	// Read source project envs (needed for both classify-prompt and
 	// publish-time bundle composition). Layer-2 entry point via
 	// inventory.FetchProjectEnvs keeps the SDK shape (Type/Sensitive/
@@ -155,7 +184,7 @@ func handleLaunchProduction(
 	// upstream — the prompt only surfaces USER-scoped envs.
 	if needsClassifyPrompt(input.EnvClassifications, sourceEnvs) {
 		classifications := convertClassificationsInput(input.EnvClassifications)
-		return launchClassifyPromptResponse(corpus, sourceEnvs, classifications, sourceContext), nil, nil
+		return launchClassifyPromptResponse(corpus, sourceEnvs, classifications, sourceContext, gateBlockers), nil, nil
 	}
 
 	// Effective classifications for bundle composition: user-supplied
@@ -477,13 +506,25 @@ func executeLaunchMutation(
 		return blocker, nil, nil
 	}
 
+	// Publish-side source-control gate (P-LP-10 hard re-check). Shared
+	// helper with executeExistingProjectMutation — drift between read-
+	// side OK and publish-side fail is a real publish refusal operators
+	// want logged (writeAudit semantics handled inside the helper).
+	gateResult := runPublishSideSourceControlGate(
+		ctx, corpus, client, sshDeployer, rt, input,
+		sourceProjectID, stateDir, launchID, source.RepoURL,
+	)
+	if gateResult.Response != nil {
+		return gateResult.Response, nil, nil
+	}
+
 	bundleInputs := ops.LaunchBundleInputs{
 		SourceProjectID:   sourceProjectID,
 		TargetProjectName: input.ProductionProjectName,
 		TargetHostname:    input.TargetService,
 		ServiceType:       source.ServiceType,
 		SetupName:         effectiveProdSetupName(input),
-		RepoURL:           source.RepoURL,
+		RepoURL:           gateResult.RepoURL,
 		ZeropsYAMLBody:    source.ZeropsYAMLBody,
 		GitCommitSHA:      source.GitCommitSHA,
 		ProjectEnvs:       bundleProjectEnvsFromSource(sourceEnvs),
@@ -949,11 +990,17 @@ func launchScopePromptResponse(corpus []workflow.KnowledgeAtom, input WorkflowIn
 }
 
 // launchClassifyPromptResponse builds the classify-prompt response.
+// warnBlockers carry warn-only source-control gate failures (e.g.
+// build-integration-recommended) so the agent surfaces them alongside
+// the classify-prompt without losing visibility — the gate advanced
+// past block-severity failures but still wants the agent to ask the
+// user whether to set up the warn-level prerequisite.
 func launchClassifyPromptResponse(
 	corpus []workflow.KnowledgeAtom,
 	sourceEnvs []platform.ProjectEnvVar,
 	classifications map[string]topology.SecretClassification,
 	sourceCtx *launchSourceContext,
+	warnBlockers []topology.Blocker,
 ) *mcp.CallToolResult {
 	guidance := atomBody(corpus, "launch-classify-prompt")
 	if guidance == "" {
@@ -988,6 +1035,38 @@ func launchClassifyPromptResponse(
 		Guidance:        guidance,
 		Classifications: rows,
 		SourceContext:   sourceCtx,
+		Blockers:        warnBlockers,
+	})
+}
+
+// launchSourceControlRequiredResponse builds the response for the new
+// source-control gate failure status. Carries one or more blockers
+// (one per failing check, top-down order) with structured Recovery
+// hints pointing the agent at the existing workflow actions that
+// resolve each blocker. Stateless — no state file written.
+//
+// Atom `launch-source-control-required` carries the per-blocker-id
+// user-facing guidance; the response includes the rendered atom body
+// in `guidance` so the agent has the disambiguation table available
+// without an extra lookup.
+func launchSourceControlRequiredResponse(
+	corpus []workflow.KnowledgeAtom,
+	input WorkflowInput,
+	sourceCtx *launchSourceContext,
+	blockers []topology.Blocker,
+) *mcp.CallToolResult {
+	guidance := atomBody(corpus, "launch-source-control-required")
+	if guidance == "" {
+		guidance = "Source-side prerequisites for production promotion are not all in place. Resolve each blocker shown below (top-down — agent runs the Recovery call, then re-calls launch-production between each)."
+	}
+	return jsonResult(launchProductionResponse{
+		Workflow:      workflowLaunchProduction,
+		Status:        topology.LaunchStatusSourceControlRequired,
+		Phase:         workflow.PhaseLaunchProductionActive,
+		Guidance:      guidance,
+		Blockers:      blockers,
+		Inputs:        echoInputs(input),
+		SourceContext: sourceCtx,
 	})
 }
 
@@ -1042,12 +1121,16 @@ func launchResumeResponse(corpus []workflow.KnowledgeAtom, state *launchState) *
 		}}
 	case topology.LaunchStatusUnset,
 		topology.LaunchStatusScopePrompt,
+		topology.LaunchStatusSourceControlRequired,
 		topology.LaunchStatusClassifyPrompt,
 		topology.LaunchStatusReadyToLaunch,
 		topology.LaunchStatusLaunching,
 		topology.LaunchStatusConfiguringPipeline:
 		// Resume found state with a pre-terminal status — surface
 		// in-progress guidance; agent re-polls via action="status".
+		// source-control-required never persists state files (gate is
+		// stateless), so this branch is defensive: any future writer
+		// of the status to a state file lands here.
 		resp.Guidance = "Launch in progress. State file shows targetProjectID " + state.TargetProjectID + "."
 	case topology.LaunchStatusLaunched:
 		// Handled by the early-return above; case kept for exhaustiveness.
