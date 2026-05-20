@@ -72,7 +72,6 @@ const cleanZeropsYAML = `zerops:
       base: nodejs@22
     run:
       base: nodejs@22
-      start: zsc noop --silent
   - setup: prod
     build:
       base: nodejs@22

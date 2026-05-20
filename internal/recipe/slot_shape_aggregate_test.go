@@ -41,7 +41,7 @@ func TestCheckSlotShape_AggregatesAllOffenders_KBMultipleAuthorClaim(t *testing.
 // passes; only structural checks remain.
 func TestCheckSlotShape_ClaudeMD_AcceptsZeropsTokens_R2_5(t *testing.T) {
 	t.Parallel()
-	body := "# api\n\nframing\n\n## Build & run\n\n- run zsc noop\n- call zerops_deploy\n- use zcp sync push\n- zcli login\n\n## Architecture\n\n- src/main.ts"
+	body := "# api\n\nframing\n\n## Build & run\n\n- run zsc execOnce\n- call zerops_deploy\n- use zcp sync push\n- zcli login\n\n## Architecture\n\n- src/main.ts"
 	violations := checkSlotShape("codebase/api/claude-md", body)
 	if len(violations) > 0 {
 		t.Errorf("R2-5: claude-md with zerops tokens must pass slot-shape (brief teaches Zerops-free); got %v", violations)

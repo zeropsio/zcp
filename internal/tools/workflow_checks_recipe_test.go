@@ -1536,7 +1536,6 @@ func TestCheckRecipeGenerate_EnvSelfShadow_SeparateWorker(t *testing.T) {
     run:
       envVariables:
         NODE_ENV: development
-      start: zsc noop --silent
       ports:
         - port: 3000
   - setup: prod
@@ -1569,7 +1568,6 @@ func TestCheckRecipeGenerate_EnvSelfShadow_SeparateWorker(t *testing.T) {
         queue_port: ${queue_port}
         queue_user: ${queue_user}
         queue_password: ${queue_password}
-      start: zsc noop --silent
   - setup: prod
     build:
       base: nodejs@22
@@ -1663,7 +1661,6 @@ func TestCheckRecipeGenerate_EnvSelfShadow_CleanWorker(t *testing.T) {
     run:
       envVariables:
         NODE_ENV: development
-      start: zsc noop --silent
       ports:
         - port: 3000
   - setup: prod
@@ -1691,7 +1688,6 @@ func TestCheckRecipeGenerate_EnvSelfShadow_CleanWorker(t *testing.T) {
         DB_HOST: ${db_hostname}
         DB_PORT: ${db_port}
         NATS_HOST: ${queue_hostname}
-      start: zsc noop --silent
   - setup: prod
     build:
       base: nodejs@22

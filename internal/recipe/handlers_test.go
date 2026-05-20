@@ -704,7 +704,6 @@ func TestStitch_IGItem1IntroDescribesYamlBehavior(t *testing.T) {
   - setup: dev
     run:
       base: nodejs@22
-      start: zsc noop --silent
 
   - setup: prod
     build:

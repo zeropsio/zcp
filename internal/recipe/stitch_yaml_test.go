@@ -35,7 +35,6 @@ func TestWriteCodebaseYAML_WholeFragment_WritesVerbatim(t *testing.T) {
       ports:
         - port: 3000
           httpSupport: true
-      start: zsc noop --silent
 `
 	yamlPath := filepath.Join(dir, "zerops.yaml")
 	if err := os.WriteFile(yamlPath, []byte(bare), 0o600); err != nil {
@@ -55,8 +54,6 @@ func TestWriteCodebaseYAML_WholeFragment_WritesVerbatim(t *testing.T) {
       ports:
         - port: 3000
           httpSupport: true
-      # zsc noop keeps container alive for SSH workflow.
-      start: zsc noop --silent
 `
 	plan := &Plan{
 		Codebases: []Codebase{{Hostname: "api", SourceRoot: dir}},
@@ -86,7 +83,7 @@ func TestWriteCodebaseYAML_NoFragment_LeavesBareYaml(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	bare := "zerops:\n  - setup: dev\n    run:\n      start: zsc noop --silent\n"
+	bare := "zerops:\n  - setup: dev\n    run:\n      base: nodejs@22\n"
 	yamlPath := filepath.Join(dir, "zerops.yaml")
 	if err := os.WriteFile(yamlPath, []byte(bare), 0o600); err != nil {
 		t.Fatal(err)
@@ -127,7 +124,7 @@ func TestStripYAMLComments_RemovesIndentedHashLines(t *testing.T) {
       base: nodejs@22
       ports:
         - port: 3000  # Trailing comment kept (not on its own line).
-      start: zsc noop --silent
+      start: node dist/main.js
 `
 	want := `zerops:
   - setup: prod
@@ -135,7 +132,7 @@ func TestStripYAMLComments_RemovesIndentedHashLines(t *testing.T) {
       base: nodejs@22
       ports:
         - port: 3000  # Trailing comment kept (not on its own line).
-      start: zsc noop --silent
+      start: node dist/main.js
 `
 	got := stripYAMLComments(in)
 	if got != want {

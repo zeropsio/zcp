@@ -48,7 +48,6 @@ func TestVisualStyleAsciiOnly_Table(t *testing.T) {
       base: nodejs@22
     run:
       base: nodejs@22
-      start: zsc noop --silent
 `,
 			wantStatus: "pass",
 		},
