@@ -91,3 +91,30 @@ Estimated remaining effort: 1 day for the atom-content audit + recipe alignment 
 - Researcher report: `plans/eval-review-20260518-subset/deep-research/01-atoms-templates.md` (Finding E section)
 - Related backlog: composite-type plan-vs-yaml asymmetry (finding G in `03-workflow-recovery.md`) — covers `postgresql:single@18` vs `postgresql@18 + mode` axis
 - Karel's clarification (chat 2026-05-18): yaml shape changed upstream, drive was bare prefix, needs separate audit pass; classifier is one leaf of a broader drift surface.
+
+## Update 2026-05-20 — Go runtime concrete agent confusion
+
+`classic-go-simple` retro (suite `20260520-171709`) surfaces the
+agent-facing leaf of the bare-vs-composite shape drift. Agent verbatim:
+
+> "One thing I guessed at: the `type` field format in the plan. The
+> available stacks list shows `alpine/go@1.22` and `ubuntu/go@1.22`, but
+> the plan examples use bare `go@1` without the OS prefix. I submitted
+> `go@1.22` and the platform resolved it to `ubuntu/go@1.22`. That
+> worked, but the guidance never says explicitly 'omit the OS prefix in
+> plan types' — you infer it from the examples. If someone passed
+> `ubuntu/go@1.22`, I don't know whether it would accept or reject it."
+
+`topology.TypesAreEquivalent` (commit `a3314929`) already handles the
+bare/composite equivalence empirically — so bare submission resolves
+fine. The friction is **observable surface inconsistency**: the
+discover/catalog response shows composite, the atom example shows bare,
+and the agent has to guess which form the plan input expects. Phase
+6 of the sketch (atom content audit + guidance that explicitly names
+acceptable shapes) is still open and would close this.
+
+This is at minimum a guidance-level fix in the bootstrap plan atoms
+(`develop-first-deploy-scaffold-yaml.md`, `scaffold-zerops-yaml.md` plus
+the plan-shape atoms in workflow content) — explicitly say "either
+bare `go@1.22` or composite `ubuntu/go@1.22` is accepted; the platform
+resolves to its canonical composite form."

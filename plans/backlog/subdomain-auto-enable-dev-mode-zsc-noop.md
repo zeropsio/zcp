@@ -24,6 +24,20 @@ Agent's verbatim observation:
 
 Option 1 is the cheapest first move; if the friction reappears, escalate to 2 or 3.
 
+**Update 2026-05-20:** 2nd retro names this drift explicitly —
+`develop-loop-after-bootstrap` (suite `20260520-161651`, after Phase 1-4
+ship from plans/env-discover-three-changes-2026-05-20.md). Agent verbatim:
+*"The subdomain situation was the one place the guidance actively misled
+me. The develop atom says 'On first-deploy success the response carries
+subdomainAccessEnabled: true and a subdomainUrl — no manual zerops_subdomain
+call is needed in the happy path.' My deploy response had neither field.
+I only discovered subdomain was off when zerops_verify returned http_root:
+fail with 'subdomain access not enabled'. ... don't trust the 'happy path'
+claim — plan on checking verify and following recovery actions."* This
+is the 2nd-of-3 retros referenced in the original promote trigger; one
+more eval retro flagging the same misclaim flips this to Option 1 + 2
+combined.
+
 ## Risks
 
 - Option 2 (deferred auto-enable) interacts with the F8 deferred-start path for worker services (`serviceStackIsNotHttp`) which is already handled at the deploy layer. Need to make sure the new branch doesn't double-up.

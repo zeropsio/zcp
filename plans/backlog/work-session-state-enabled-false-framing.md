@@ -59,6 +59,16 @@ Three possible directions, increasing cost:
 Option (1) is structurally right and aligns with Phase 2's `kind`
 discriminator philosophy — name the state, don't encode it as a bool.
 
+**Update 2026-05-20:** another 4 retros across two eval batches (suites
+`20260520-161258`, `20260520-161651`, `20260520-162922`, `20260520-171709`,
+`20260520-172213`, `20260520-173405`) — 6/9 agents this round flag the
+close-mode gate as a confusing trailing blocker after deploy+verify both
+pass. Verbatim quotes converge: "stays open", "wonder why the session is
+still open", "auto-close gate is easy to forget". Frequency growing; tips
+toward Option (1) (field rename to `autoCloseStatus` enum) as the right
+move. Trigger to promote conditions essentially satisfied — anyone
+touching work-session state next should fold this in.
+
 ## Risks
 
 - Renaming the field is a JSON schema change. Atoms and tests

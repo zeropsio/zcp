@@ -47,6 +47,54 @@ Two atoms to update (both in `internal/content/atoms/`):
 - The dev_server tool description in `internal/tools/dev_server.go`
   jsonschema strings — same correction.
 
+## Update 2026-05-20 — three new patterns across Rust + Python retros
+
+Eval batch (suites `20260520-172631` python, `20260520-173405` rust)
+surfaced three concrete dev-server-tool friction modes the current
+guidance doesn't cover:
+
+1. **Rust `waitSeconds` default 15 is too tight for cargo cold-compile.**
+   `classic-rust-postgres-standard` retro: *"The first `cargo run` on a
+   dev container compiles everything from scratch. In this minimal
+   project it took ~9 seconds, which squeaks under the default. A
+   project with more dependencies would blow past 15 seconds and the
+   agent would get a health probe timeout, think the app is broken, and
+   start debugging code that's actually fine — it just hasn't finished
+   compiling yet."* Agent preemptively set `waitSeconds=45`. Atom or
+   tool description should suggest bumping for any compiled-language
+   `command` (Rust/Java/Go-when-not-prebuilt) — the default targets
+   interpreted-language fast startup.
+
+2. **Python vendored installs (`pip install --target=./vendor`) hide bin
+   stubs from PATH.** `classic-python-postgres-dev-only` retro: *"The
+   build step installs packages into `./vendor` via `pip install
+   --target=./vendor`, but that means `uvicorn` isn't on the container's
+   PATH — it's sitting inside `/var/www/vendor/`. My first
+   `zerops_dev_server` call used `env PYTHONPATH=/var/www/vendor uvicorn
+   app:app ...`, which failed with `can't execute 'uvicorn': No such
+   file or directory`. The fix was `python -m uvicorn` instead."*
+   Python-section of the compiled/interpreted split should call out
+   `python -m <module>` as the durable pattern, because vendored installs
+   don't create bin stubs.
+
+3. **`zerops_dev_server.command` is exec, not shell — env-var prefix
+   needs `env`.** `classic-python-postgres-dev-only` retro: *"The
+   `zerops_dev_server` command field has a subtle constraint: `command
+   runs via exec, NOT a shell`. The description says to use `env KEY=VAL
+   cmd` instead of `KEY=VAL cmd`. I followed this, but it's easy to
+   miss. If a future agent writes `PYTHONPATH=/var/www/vendor python -m
+   uvicorn ...` without the `env` prefix, it'll fail with a confusing
+   'command not found' because the shell assignment syntax isn't
+   interpreted. The error won't tell you why — it'll just say it can't
+   find the program name (which will be the entire `KEY=VAL cmd`
+   string)."* The doc clause exists; the failure mode message is
+   misleading enough that agents would need atom-level reinforcement.
+
+These three patterns extend the same atom-rewrite scope. Total fresh
+content ~6 lines of structured atom prose. Trigger condition (eval
+evidence + dev_server atom touch) now well-satisfied — promote when
+anyone is editing develop-active dev_server atoms next.
+
 ## Risks
 
 - Atom-axes pass may end up gating dev-server atoms by `runtimes` axis,

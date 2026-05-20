@@ -95,6 +95,31 @@ Move to `rejected/` if:
   consolidation would be a much bigger change but addresses the same
   root.
 
+## Update 2026-05-20
+
+`classic-go-simple` retro (suite `20260520-171709`) confirms the cap-fix
+problem persists post-Phase-3 atoms. Agent self-review verbatim:
+
+> "The deferred tool loading is the biggest time sink. Every `zerops_*`
+> tool requires a `ToolSearch` call before you can use it, and the
+> guidance repeatedly tells you to batch-load them all in one `select:`
+> call upfront. I didn't do that — I loaded them incrementally as I
+> needed them, which cost me four separate ToolSearch round-trips across
+> the session."
+
+Same cap-pattern as the original 2026-05-06 verification: atom hint
+arrives AFTER the agent's first ToolSearch round-trips, so even after
+the atom renders, the early calls are already burnt. Four-round-trip
+session in this run is concrete cost, not optimization.
+
+Two earlier 2026-05-20 retros (`classic-bun-simple`, `classic-python-postgres-dev-only`)
+did not flag this — they happened to batch-load. So the symptom is
+intermittent (depends on agent's initial probe pattern), but recurring.
+
+Still doesn't trip the "real eval evidence" promote bar by itself; the
+ServerInstructions surface is the right home for next time anyone is
+touching `internal/server/instructions.go`.
+
 ## Refs
 
 - `internal/server/instructions.go` — current ServerInstructions
