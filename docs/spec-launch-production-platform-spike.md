@@ -285,14 +285,15 @@ ProjectModeEnumSerious = "SERIOUS"
 > Error: `"Token accesses N projects; use project-scoped token"` → ZCP refuses to start.
 
 **Implications:**
-1. The launch-window key (account-wide or multi-project) **cannot** become ZCP's standing token — platform refuses.
-2. Token scoping options in Zerops UI:
-   - **Custom access per project**: ZCP-compatible; can select one project for Full or Read-Only access.
-   - **Account-wide** (implied): can create new projects + manage all org resources. **This is the launch-window key shape.**
+1. The launch-window key (token with `canCreateProjects=true`) **cannot** become ZCP's standing token — platform refuses anything with project-create permission or multi-project scope when validating the standing token.
+2. Token scoping options in Zerops UI (verified live 2026-05-20):
+   - **Full access to all projects**: account-wide read/write + canCreateProjects. Works for launch, but grants far more than needed.
+   - **Read access to all projects**: read-only across the org; not useful for launch.
+   - **Custom access per project**: per-project selection (Full or Read-Only) AND an independent **Allow creating projects** toggle. When the toggle is ON with zero per-project entries selected, the token has canCreateProjects=true and no read/write access to any existing project — the minimal launch-window shape.
 3. Token generation is via Zerops UI: `Settings → Access Tokens Management` (`https://app.zerops.io/settings/token-management`). No public token-creation API surface needed for v1.
 
 **v1 decision:**
-- `launch-mutation-key-required` atom prompts user to: "Generate an account-wide one-shot token at https://app.zerops.io/settings/token-management → 'Create token' → leave 'Custom access per project' UNCHECKED → copy the value."
+- `launch-mutation-key-required` atom prompts user to: "Generate a one-shot launch-window token at https://app.zerops.io/settings/token-management → 'Create token' → select **Custom access per project** → turn ON the **Allow creating projects** toggle → leave per-project access empty → copy the value."
 - ZCP runtime accepts the key as workflow input only (never reads it from `ZCP_API_KEY` env, which is ALWAYS project-scoped).
 - `launch-delete-key` atom (priority 1, mandatory in `launched` response) instructs user to delete the token in the same UI after the launch finishes.
 

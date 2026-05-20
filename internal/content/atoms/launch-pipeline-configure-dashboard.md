@@ -12,7 +12,7 @@ The production runtime has no CD pipeline yet — ongoing pushes will NOT auto-b
 
 For each runtime listed in the `pipeline-not-configured-*` blockers:
 
-1. Open the **deep-link** from the blocker (`https://app.zerops.io/dashboard/project/<projectID>/service-stack/<svcID>/service-stack-source-code`).
+1. Open the **deep-link** from the blocker (`https://app.zerops.io/service-stack/<svcID>/deploy`).
 2. Click **Connect to GitHub** (or GitLab). Authorize Zerops if asked — uses your existing org-level grant, no extra setup.
 3. Select the source repository listed in the blocker's `recommendation.repositoryFullName`.
 4. Set the trigger:

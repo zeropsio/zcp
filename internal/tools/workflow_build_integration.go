@@ -323,10 +323,12 @@ func actionsConfirmResponse(
 // OAuth on the stage half so Zerops rebuilds the stage runtime from
 // pushed code (matches the actions integration's `--setup prod`
 // targeting). For simple/single-runtime modes the build target equals
-// the input hostname. The `service-stack-source-code` route slug used
-// in the deep-link was not verified in the legacy frontend tree; the
-// fallback service-stack-detail page is included in dashboardSteps so
-// the agent navigates manually if the slug 404s.
+// the input hostname. Deep-link URL shape verified live 2026-05-19:
+// `/service-stack/<id>/deploy` (no project segment); the earlier
+// `/dashboard/project/<proj>/service-stack/<id>/service-stack-source-code`
+// slug 404s. The fallback service-stack-detail page is included in
+// dashboardSteps so the agent navigates manually if the live shape
+// later changes again.
 func webhookConfirmResponse(
 	ctx context.Context,
 	client platform.Client,

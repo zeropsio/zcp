@@ -33,7 +33,8 @@ const launchMutationStaleAfter = 10 * time.Minute
 // narrowing via per-request WorkflowInput fields:
 //   - ProductionProjectName / Region / CustomDomain / KeepNonHA — scope
 //   - EnvClassifications — classify-prompt outputs
-//   - LaunchKey — one-shot account-wide token (mutation pipeline, Phase D.2)
+//   - LaunchKey — one-shot launch-window token with project-creation
+//     permission (mutation pipeline, Phase D.2)
 //
 // Six top-level statuses:
 //
@@ -990,7 +991,7 @@ func launchReadyToLaunchResponse(
 ) *mcp.CallToolResult {
 	guidance := atomBody(corpus, "launch-mutation-key-required")
 	if guidance == "" {
-		guidance = "Scope and classifications complete. Generate a one-shot Zerops API key (account-wide) and re-call with launchKey set to advance to publish."
+		guidance = "Scope and classifications complete. Generate a one-shot Zerops API key (Custom access per project + 'Allow creating projects' toggle ON) and re-call with launchKey set to advance to publish."
 	}
 	_ = sourceEnvs // Phase D.2 will surface classified-env summary
 

@@ -75,16 +75,18 @@ func deriveRepositoryFullName(repoURL string) string {
 }
 
 // deriveDashboardDeepLink composes the Zerops dashboard URL pointing at
-// the source-code config page for a specific service-stack in a
-// specific project. Mirrors the URL pattern used by the existing
-// source-side build-integration handler's webhook deep-link, with the
-// per-runtime service-stack ID rather than the source-project's.
-func deriveDashboardDeepLink(projectID, serviceStackID string) string {
-	if projectID == "" || serviceStackID == "" {
+// the build-integration config page for a specific service-stack.
+// Matches the live URL shape verified by `webhookConfirmResponse`
+// (`/service-stack/<id>/deploy`, 2026-05-19) — the legacy
+// `/dashboard/project/<proj>/service-stack/<id>/service-stack-source-code`
+// slug 404s. ProjectID is not part of this URL — the service-stack ID
+// alone resolves the page on the Zerops dashboard.
+func deriveDashboardDeepLink(serviceStackID string) string {
+	if serviceStackID == "" {
 		return ""
 	}
-	return fmt.Sprintf("%s/dashboard/project/%s/service-stack/%s/service-stack-source-code",
-		pipelineDashboardBase, projectID, serviceStackID)
+	return fmt.Sprintf("%s/service-stack/%s/deploy",
+		pipelineDashboardBase, serviceStackID)
 }
 
 // pipelineRecommendation composes the suggested integration config the
@@ -163,7 +165,7 @@ func executeLaunchPipelineCheck(
 			state.PipelineConfigurations[svc.Name] = entry
 			continue
 		}
-		entry.DeepLink = deriveDashboardDeepLink(state.TargetProjectID, svc.ID)
+		entry.DeepLink = deriveDashboardDeepLink(svc.ID)
 		entry.Recommendation = recommendation
 
 		status, err := admin.GetServiceStackIntegrationStatus(ctx, svc.ID)

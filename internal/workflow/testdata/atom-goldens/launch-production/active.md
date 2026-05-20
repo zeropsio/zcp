@@ -40,7 +40,7 @@ The production runtime has no CD pipeline yet — ongoing pushes will NOT auto-b
 
 For each runtime listed in the `pipeline-not-configured-*` blockers:
 
-1. Open the **deep-link** from the blocker (`https://app.zerops.io/dashboard/project/<projectID>/service-stack/<svcID>/service-stack-source-code`).
+1. Open the **deep-link** from the blocker (`https://app.zerops.io/service-stack/<svcID>/deploy`).
 2. Click **Connect to GitHub** (or GitLab). Authorize Zerops if asked — uses your existing org-level grant, no extra setup.
 3. Select the source repository listed in the blocker's `recommendation.repositoryFullName`.
 4. Set the trigger:
@@ -175,7 +175,7 @@ launch-production has two mutation paths in one workflow. Pick which one matches
 
 | User intent signal | Path | Required token params |
 |---|---|---|
-| "Create new prod project", "launch to fresh project", or no existing project mentioned | **NEW-PROJECT** | `launchKey` (account-wide one-shot — surfaced at the `ready-to-launch` step via the launch-mutation-key-required atom) |
+| "Create new prod project", "launch to fresh project", or no existing project mentioned | **NEW-PROJECT** | `launchKey` (one-shot launch-window token with project-creation permission — surfaced at the `ready-to-launch` step via the launch-mutation-key-required atom) |
 | "I have existing prod project", explicit project ID/token supplied, "deploy into project X" | **EXISTING-PROJECT** | `existingProjectId` + `existingProdToken` (project-scoped token from target project's dashboard) |
 
 If the user explicitly hands you an existing project ID OR a project-scoped token, pass `existingProjectId` + `existingProdToken` on this first `action="start"` call alongside the scope params below — both will land in the `inputs` accumulator and the workflow will skip the `launchKey` prompt at `ready-to-launch`. Otherwise default to NEW-PROJECT and let the workflow ask for `launchKey` later.
@@ -217,13 +217,15 @@ If a key is in the list above, you do not need to classify it; the bundle compos
 
 **Note**: this guidance applies to the **NEW-PROJECT** launch path only. If you're deploying into an existing prod project (the user supplied `existingProjectId` + `existingProdToken` at the scope-prompt step), you'll have advanced past this point — the workflow uses the project-scoped token instead and goes straight to `launching`. See the scope-prompt's path-selection table for which params trigger which path.
 
-ZCP cannot create a NEW production project with its standing token (project-scoped). Walk the user through generating a temporary **account-wide** Zerops API key for the launch window — and wait for them to paste the value back before calling the workflow again:
+ZCP cannot create a NEW production project with its standing token (project-scoped, no project-creation permission). Walk the user through generating a temporary launch-window token — and wait for them to paste the value back before calling the workflow again:
 
 1. Open [Settings → Access Tokens Management](https://app.zerops.io/settings/token-management).
 2. Click **Create token**. Name it `zcp-launch-<production-project-name>`.
-3. Leave **Custom access per project** UNCHECKED — needs account-wide scope to create projects.
-4. Copy the token value (shown once).
-5. Paste the value back into the conversation.
+3. Under **Primary Access**, select **Custom access per project**.
+4. Turn ON the **Allow creating projects** toggle that appears below — this is the gate that lets the token create the new prod project. Without it, the launch call will fail at create-project.
+5. Leave **Per Project Access Customization** empty — the launch-window token only needs project-creation; it does not need read/write access to any existing project.
+6. Copy the token value (shown once).
+7. Paste the value back into the conversation.
 
 When the value lands, re-call the launch workflow with the publish action and the token value passed as `launchKey`. Do NOT invent or guess a value, and do NOT proceed without it — the key is the gate.
 

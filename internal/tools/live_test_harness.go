@@ -12,8 +12,9 @@
 //                          (read by /Users/macbook/Documents/Zerops-MCP/zcp/.mcp.json
 //                          but tests read directly from env to keep harness
 //                          self-contained).
-//   ZCP_E2E_LAUNCH_KEY     account-wide one-shot LaunchKey with
-//                          canCreateProjects=true. Required for Test 4
+//   ZCP_E2E_LAUNCH_KEY     one-shot LaunchKey with canCreateProjects=true
+//                          (Custom access per project + Allow creating
+//                          projects toggle ON). Required for Test 4
 //                          (launch-production) only.
 //   ZCP_E2E_GITHUB_PAT     fine-grained PAT for a writable test repo.
 //                          Required for Tests 2/3 (git-push-setup,

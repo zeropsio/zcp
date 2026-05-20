@@ -95,6 +95,6 @@ The project has bootstrapped services with at least one successful deploy — a 
 zerops_workflow action="start" workflow="launch-production" intent="<one-line>" targetService="<dev-hostname>"
 ```
 
-The workflow handles bundle composition (managed deps promoted to HA, production scaling tier), source-control mutation (appending `setup: prod` block to `zerops.yaml`), one-shot account-wide launch-window token (validated, never persisted), and a post-launch checklist (delete the key, attach domain). Multi-call narrowing: `scope-prompt` → `classify-prompt` → `ready-to-launch` → `launching` → `configuring-pipeline` → `launched`.
+The workflow handles bundle composition (managed deps promoted to HA, production scaling tier), source-control mutation (appending `setup: prod` block to `zerops.yaml`), a one-shot launch-window token with project-creation permission (validated, never persisted), and a post-launch checklist (delete the key, attach domain). Multi-call narrowing: `scope-prompt` → `classify-prompt` → `ready-to-launch` → `launching` → `configuring-pipeline` → `launched`.
 
 For standard-mode dev/stage pairs, pass the dev-half hostname as `targetService` (stage-half input fires a corrective scope-prompt blocker). Continue developing the existing services through the develop entry instead when the user's intent is iteration, not promotion.

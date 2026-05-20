@@ -79,7 +79,7 @@ func launchFailedFromPlatformError(
 			Action: actionStart,
 			Args:   map[string]string{"workflow": "launch-production"},
 		}
-		const authBootstrapHint = "Token rejected by platform. Re-read the FULL token value from the env var (avoid Bash truncation like ${VAR:0:8}). For existing-project path regenerate the project-scoped token; for new-project path regenerate the account-wide launchKey. Bootstrap is NOT a prerequisite — DO NOT run adopt/bootstrap; retry launch-production with the corrected token directly."
+		const authBootstrapHint = "Token rejected by platform. Re-read the FULL token value from the env var (avoid Bash truncation like ${VAR:0:8}). For existing-project path regenerate the project-scoped token; for new-project path regenerate the launchKey (Custom access per project + 'Allow creating projects' toggle ON). Bootstrap is NOT a prerequisite — DO NOT run adopt/bootstrap; retry launch-production with the corrected token directly."
 		if blocker.Suggestion == "" {
 			blocker.Suggestion = authBootstrapHint
 		} else if !strings.Contains(blocker.Suggestion, "Bootstrap is NOT a prerequisite") {

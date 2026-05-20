@@ -41,18 +41,18 @@ func TestDeriveRepositoryFullName_TableDriven(t *testing.T) {
 }
 
 // TestDeriveDashboardDeepLink_NonEmptyShape verifies the URL composition.
+// Pins the live URL shape (`/service-stack/<id>/deploy`, verified
+// 2026-05-19 against eval-zcp dashboard) — earlier
+// `/dashboard/project/<proj>/service-stack/<id>/service-stack-source-code`
+// slug 404s on the current frontend.
 func TestDeriveDashboardDeepLink_NonEmptyShape(t *testing.T) {
 	t.Parallel()
-	got := deriveDashboardDeepLink("proj-123", "svc-456")
-	wantPrefix := "https://app.zerops.io/dashboard/project/proj-123/service-stack/svc-456/"
-	if !strings.HasPrefix(got, wantPrefix) {
-		t.Errorf("got %q want prefix %q", got, wantPrefix)
+	got := deriveDashboardDeepLink("svc-456")
+	want := "https://app.zerops.io/service-stack/svc-456/deploy"
+	if got != want {
+		t.Errorf("got %q want %q", got, want)
 	}
-	// Empty inputs collapse to empty (no half-formed URLs).
-	if deriveDashboardDeepLink("", "svc") != "" {
-		t.Error("empty projectID should produce empty link")
-	}
-	if deriveDashboardDeepLink("proj", "") != "" {
+	if deriveDashboardDeepLink("") != "" {
 		t.Error("empty serviceID should produce empty link")
 	}
 }

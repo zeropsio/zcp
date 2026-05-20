@@ -121,8 +121,8 @@ func handleLaunchReset(stateDir, sourceProjectID string, input WorkflowInput) (*
 		// Orphan project may exist in Zerops account (created before
 		// failure). Surface as operator follow-up since reset is
 		// state-file scoped per P-LP-2; cross-project mutation requires
-		// the original account-wide launchKey which is one-shot already
-		// consumed.
+		// the original launch-window launchKey (project-creation
+		// permission) which is one-shot already consumed.
 		note += " WARNING: state recorded targetProjectId=" + state.TargetProjectID + " — the production project may exist in your Zerops account. Inspect via dashboard and delete manually if unwanted (ZCP cannot reach the prod project without a fresh launchKey)."
 	}
 

@@ -12,7 +12,8 @@
 //
 // Required env:
 //   ZCP_API_KEY            project-scoped (eval-zcp source)
-//   ZCP_E2E_LAUNCH_KEY     account-wide, canCreateProjects=true
+//   ZCP_E2E_LAUNCH_KEY     canCreateProjects=true (Custom access per
+//                          project + Allow creating projects toggle ON)
 //
 // Runtime: ~3-10 min wall clock (real platform build + wait + cleanup).
 // Run via:

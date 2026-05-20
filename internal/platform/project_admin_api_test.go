@@ -18,8 +18,8 @@ import (
 //   - go test ./internal/platform/ -tags api -run TestProjectAdminClient_
 //   - env ZCP_E2E_PROD_LAUNCH=1
 //   - env ZCP_LAUNCH_KEY=<admin-token>  (NOT the project-scoped ZCP_API_KEY;
-//     this MUST be an account-wide / multi-project Zerops API token with
-//     project-create permissions)
+//     this MUST be a Zerops API token with canCreateProjects=true —
+//     Custom access per project + Allow creating projects toggle ON)
 //
 // These tests provision throwaway projects in the authenticated org,
 // observe real API behavior, and tear down. Each test is responsible for
