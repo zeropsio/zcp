@@ -896,3 +896,113 @@ body`,
 		})
 	}
 }
+
+// TestParseAtom_RuntimeBasesAxis verifies the parser accepts the new
+// per-runtime-base axis (`runtimeBases: [nodejs]`) and rejects malformed
+// shapes (scalar value where list is required, unknown frontmatter key
+// stays unknown).
+//
+// Plan: plans/runtime-bases-axis-and-nodejs-buildhint-2026-05-20.md §3.1
+func TestParseAtom_RuntimeBasesAxis(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name      string
+		content   string
+		wantBases []string
+		wantErr   bool
+		errFrag   string
+	}{
+		{
+			name: "single_nodejs_value",
+			content: `---
+id: runtime-base-single
+phases: [develop-active]
+runtimeBases: [nodejs]
+---
+body`,
+			wantBases: []string{"nodejs"},
+		},
+		{
+			name: "multi_value_list",
+			content: `---
+id: runtime-base-multi
+phases: [develop-active]
+runtimeBases: [nodejs, python, go]
+---
+body`,
+			wantBases: []string{"nodejs", "python", "go"},
+		},
+		{
+			name: "missing_axis_yields_empty",
+			content: `---
+id: runtime-base-absent
+phases: [develop-active]
+---
+body`,
+			wantBases: nil,
+		},
+		{
+			name: "scalar_value_rejected_must_be_list",
+			content: `---
+id: runtime-base-scalar
+phases: [develop-active]
+runtimeBases: nodejs
+---
+body`,
+			wantErr: true,
+			errFrag: "must be inline list form",
+		},
+		{
+			name: "open_value_set_accepts_unknown_base",
+			content: `---
+id: runtime-base-open
+phases: [develop-active]
+runtimeBases: [some_future_runtime]
+---
+body`,
+			// Open value set — parsing must not reject unknown bases; the
+			// axis just never matches a live service.
+			wantBases: []string{"some_future_runtime"},
+		},
+		{
+			name: "compound_base_value_preserved",
+			content: `---
+id: runtime-base-compound
+phases: [develop-active]
+runtimeBases: [php-nginx, php-apache]
+---
+body`,
+			// PHP family clarification (codex): values are concrete bases,
+			// not family selectors. Parser preserves both as-is.
+			wantBases: []string{"php-nginx", "php-apache"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			atom, err := ParseAtom(tc.content)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tc.errFrag)
+				}
+				if !strings.Contains(err.Error(), tc.errFrag) {
+					t.Errorf("error %q missing fragment %q", err.Error(), tc.errFrag)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(atom.Axes.RuntimeBases) != len(tc.wantBases) {
+				t.Fatalf("RuntimeBases length: got %d, want %d (%v vs %v)", len(atom.Axes.RuntimeBases), len(tc.wantBases), atom.Axes.RuntimeBases, tc.wantBases)
+			}
+			for i, want := range tc.wantBases {
+				if atom.Axes.RuntimeBases[i] != want {
+					t.Errorf("RuntimeBases[%d]: got %q, want %q", i, atom.Axes.RuntimeBases[i], want)
+				}
+			}
+		})
+	}
+}

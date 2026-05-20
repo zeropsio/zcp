@@ -1374,3 +1374,151 @@ func TestSynthesize_MultiMatchRendersOncePerService(t *testing.T) {
 		}
 	}
 }
+
+// TestSynthesize_RuntimeBasesAxis verifies the per-runtime-base axis filter
+// (e.g. `runtimeBases: [nodejs]`) matches services whose canonical bare
+// runtime base equals one of the listed values. Composite-form TypeVersions
+// (`alpine/nodejs@22`, `ubuntu/python@3.12`) are canonicalized before
+// comparison; `php-nginx@8.4` matches `[php-nginx]` but NOT `[php]` (family
+// matching is a deliberately separate abstraction).
+//
+// Plan: plans/runtime-bases-axis-and-nodejs-buildhint-2026-05-20.md §3.2 / §5.1
+// Codex review: must be added to both hasServiceScopedAxes + serviceSatisfiesAxes
+// so the axis participates in same-service conjunction with deployStates.
+func TestSynthesize_RuntimeBasesAxis(t *testing.T) {
+	t.Parallel()
+
+	type tc struct {
+		name        string
+		typeVersion string
+		bases       []string
+		wantMatch   bool
+	}
+	cases := []tc{
+		{"nodejs_bare_match", "nodejs@22", []string{"nodejs"}, true},
+		{"python_against_nodejs_no_match", "python@3.12", []string{"nodejs"}, false},
+		{"alpine_nodejs_composite_match", "alpine/nodejs@22", []string{"nodejs"}, true},
+		{"ubuntu_python_composite_no_match", "ubuntu/python@3.12", []string{"nodejs"}, false},
+		{"nodejs_in_multi_base_list_match", "nodejs@22", []string{"nodejs", "python"}, true},
+		{"go_against_nodejs_python_no_match", "go@1", []string{"nodejs", "python"}, false},
+		{"empty_axis_means_no_gate", "nodejs@22", nil, true},
+		{"nonexistent_base_parses_but_never_matches", "nodejs@22", []string{"nonexistent_runtime"}, false},
+		// PHP family clarification (codex): `[php]` must NOT match `php-nginx`/`php-apache`.
+		// Future PHP atoms enumerate explicitly: `runtimeBases: [php-nginx, php-apache]`.
+		{"php_nginx_against_php_family_no_match", "php-nginx@8.4", []string{"php"}, false},
+		{"php_nginx_against_php_nginx_match", "php-nginx@8.4", []string{"php-nginx"}, true},
+		{"php_apache_in_explicit_list_match", "php-apache@8.4", []string{"php-nginx", "php-apache"}, true},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			atom := KnowledgeAtom{
+				ID: "runtime-base-test",
+				Axes: AxisVector{
+					Phases:       []Phase{PhaseDevelopActive},
+					RuntimeBases: c.bases,
+				},
+				Body: "Runtime-base atom.",
+			}
+			env := StateEnvelope{
+				Phase: PhaseDevelopActive,
+				Services: []ServiceSnapshot{{
+					Hostname:     "appdev",
+					TypeVersion:  c.typeVersion,
+					RuntimeClass: topology.RuntimeDynamic,
+				}},
+			}
+			got, err := SynthesizeBodies(env, []KnowledgeAtom{atom})
+			if err != nil {
+				t.Fatalf("Synthesize: %v", err)
+			}
+			fired := false
+			for _, body := range got {
+				if strings.Contains(body, "Runtime-base atom.") {
+					fired = true
+					break
+				}
+			}
+			if fired != c.wantMatch {
+				t.Errorf("typeVersion=%q bases=%v: got fired=%v, want %v", c.typeVersion, c.bases, fired, c.wantMatch)
+			}
+		})
+	}
+}
+
+// TestSynthesize_RuntimeBasesAxis_SameServiceConjunction verifies that
+// `runtimeBases` is a service-scoped axis: when combined with
+// `deployStates`, both must be satisfied by the SAME service for the atom
+// to fire. The critical bug the plan's first draft would have shipped:
+// envelope-scoped deployStates allows deployed Node + never-deployed Python
+// to satisfy the atom even though no single service is "Node AND
+// never-deployed".
+//
+// Plan: plans/runtime-bases-axis-and-nodejs-buildhint-2026-05-20.md §3.3
+// Codex review: this is THE load-bearing test — without same-service
+// conjunction the atom leaks into mixed-runtime mixed-deploy projects.
+func TestSynthesize_RuntimeBasesAxis_SameServiceConjunction(t *testing.T) {
+	t.Parallel()
+
+	atom := KnowledgeAtom{
+		ID: "nodejs-greenfield",
+		Axes: AxisVector{
+			Phases:       []Phase{PhaseDevelopActive},
+			RuntimeBases: []string{"nodejs"},
+			DeployStates: []DeployState{DeployStateNeverDeployed},
+		},
+		Body: "Node greenfield hint.",
+	}
+
+	// Mixed: Node DEPLOYED + Python NEVER-DEPLOYED. No single service is
+	// "Node AND never-deployed" → atom must NOT fire.
+	mixed := StateEnvelope{
+		Phase: PhaseDevelopActive,
+		Services: []ServiceSnapshot{
+			{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: true},
+			{Hostname: "pythondev", TypeVersion: "python@3.12", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: false},
+		},
+	}
+	got, err := SynthesizeBodies(mixed, []KnowledgeAtom{atom})
+	if err != nil {
+		t.Fatalf("Synthesize mixed: %v", err)
+	}
+	if strings.Contains(strings.Join(got, "\n"), "Node greenfield hint.") {
+		t.Error("mixed envelope: atom must NOT fire — no single service is Node+never-deployed (would leak per envelope-scoped misuse)")
+	}
+
+	// Match: Node service is itself never-deployed (other services managed
+	// or unrelated). Atom MUST fire.
+	matchEnv := StateEnvelope{
+		Phase: PhaseDevelopActive,
+		Services: []ServiceSnapshot{
+			{Hostname: "appdev", TypeVersion: "nodejs@22", RuntimeClass: topology.RuntimeDynamic, Bootstrapped: true, Deployed: false},
+			{Hostname: "db", TypeVersion: "postgresql@18", RuntimeClass: topology.RuntimeManaged, Bootstrapped: true, Deployed: true},
+		},
+	}
+	got, err = SynthesizeBodies(matchEnv, []KnowledgeAtom{atom})
+	if err != nil {
+		t.Fatalf("Synthesize match: %v", err)
+	}
+	if !strings.Contains(strings.Join(got, "\n"), "Node greenfield hint.") {
+		t.Error("match envelope: atom must fire — Node service is itself never-deployed")
+	}
+
+	// Managed-only services with runtimeBases=[nodejs] never match, even
+	// if they happen to be never-deployed.
+	managedOnly := StateEnvelope{
+		Phase: PhaseDevelopActive,
+		Services: []ServiceSnapshot{
+			{Hostname: "db", TypeVersion: "postgresql@18", RuntimeClass: topology.RuntimeManaged, Bootstrapped: true, Deployed: false},
+		},
+	}
+	got, err = SynthesizeBodies(managedOnly, []KnowledgeAtom{atom})
+	if err != nil {
+		t.Fatalf("Synthesize managedOnly: %v", err)
+	}
+	if strings.Contains(strings.Join(got, "\n"), "Node greenfield hint.") {
+		t.Error("managed-only envelope: atom must NOT fire — postgresql is not nodejs runtime base")
+	}
+}

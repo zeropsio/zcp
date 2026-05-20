@@ -358,6 +358,7 @@ func hasServiceScopedAxes(axes AxisVector) bool {
 		len(axes.GitPushStates) > 0 ||
 		len(axes.BuildIntegrations) > 0 ||
 		len(axes.Runtimes) > 0 ||
+		len(axes.RuntimeBases) > 0 ||
 		len(axes.DeployStates) > 0 ||
 		len(axes.ServiceStatuses) > 0
 }
@@ -383,6 +384,9 @@ func serviceSatisfiesAxes(svc ServiceSnapshot, axes AxisVector) bool {
 	if len(axes.Runtimes) > 0 && !slices.Contains(axes.Runtimes, svc.RuntimeClass) {
 		return false
 	}
+	if len(axes.RuntimeBases) > 0 && !matchesRuntimeBase(svc.TypeVersion, axes.RuntimeBases) {
+		return false
+	}
 	if len(axes.DeployStates) > 0 {
 		if !svc.Bootstrapped {
 			return false
@@ -399,6 +403,24 @@ func serviceSatisfiesAxes(svc ServiceSnapshot, axes AxisVector) bool {
 		return false
 	}
 	return true
+}
+
+// matchesRuntimeBase reports whether a service's TypeVersion belongs to
+// one of the listed runtime bases. The base is the canonical bare form
+// before the `@version` suffix:
+//
+//	nodejs@22            → nodejs
+//	alpine/nodejs@22     → nodejs    (composite OS prefix stripped)
+//	ubuntu/python@3.12   → python    (composite OS prefix stripped)
+//	php-nginx@8.4        → php-nginx (no family expansion — concrete base)
+//	postgresql:single@18 → postgresql (managed mode suffix stripped)
+//
+// Empty `bases` means the axis is not enforced (caller should not invoke
+// this function in that case).
+func matchesRuntimeBase(typeVersion string, bases []string) bool {
+	bare := topology.CanonicalBareForm(typeVersion)
+	base, _, _ := strings.Cut(bare, "@")
+	return slices.Contains(bases, base)
 }
 
 func routeInSet(r BootstrapRoute, set []BootstrapRoute) bool {

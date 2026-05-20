@@ -1325,6 +1325,7 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"develop-first-deploy-scaffold-yaml",
 		"develop-first-deploy-verify",
 		"develop-first-deploy-write-app",
+		"develop-nodejs-greenfield-buildhint",
 		"develop-http-diagnostic",
 		"develop-implicit-webserver",
 		"develop-intro",

@@ -71,10 +71,25 @@ type AxisVector struct {
 	// (see topology.BuildIntegration). Service-scoped. Empty = no gate.
 	BuildIntegrations []topology.BuildIntegration
 	Runtimes          []topology.RuntimeClass
-	Routes            []BootstrapRoute
-	Steps             []string
-	IdleScenarios     []IdleScenario
-	DeployStates      []DeployState
+	// RuntimeBases scopes the atom to specific concrete runtime bases —
+	// the canonical bare form of `ServiceSnapshot.TypeVersion` before the
+	// `@version` suffix (e.g. `nodejs` from `nodejs@22` or
+	// `alpine/nodejs@22`, `php-nginx` from `php-nginx@8.4`). Service-scoped:
+	// at least one matching service in the envelope must have a runtime
+	// base in this list. Empty = no gate. Open value set — typos do not
+	// fail parse, they just never match a live service. Sister to
+	// `Runtimes` (which classifies by RuntimeClass: dynamic /
+	// implicit-webserver / static / managed); RuntimeBases lets atoms
+	// target a specific stack like nodejs without dragging in all dynamic
+	// runtimes. PHP family is NOT auto-expanded: `[php]` will not match
+	// `php-nginx@8.4` — future PHP atoms enumerate explicitly
+	// (`[php-nginx, php-apache]`) because family matching is a separate
+	// abstraction not introduced here.
+	RuntimeBases  []string
+	Routes        []BootstrapRoute
+	Steps         []string
+	IdleScenarios []IdleScenario
+	DeployStates  []DeployState
 	// EnvelopeDeployStates is the envelope-scoped twin of DeployStates:
 	// the atom matches once if at least one bootstrapped service in the
 	// envelope satisfies any of the listed states, and renders 1× via the
@@ -147,6 +162,7 @@ var validAtomFrontmatterKeys = map[string]struct{}{
 	"gitPushStates":        {},
 	"buildIntegrations":    {},
 	"runtimes":             {},
+	"runtimeBases":         {},
 	"routes":               {},
 	"steps":                {},
 	"idleScenarios":        {},
@@ -174,6 +190,7 @@ var listAxisKeys = map[string]struct{}{
 	"gitPushStates":        {},
 	"buildIntegrations":    {},
 	"runtimes":             {},
+	"runtimeBases":         {},
 	"routes":               {},
 	"steps":                {},
 	"idleScenarios":        {},
@@ -310,7 +327,7 @@ var validScalarEnumValues = map[string]map[string]struct{}{
 func validateAtomFrontmatter(fields map[string]string) error {
 	for key := range fields {
 		if _, ok := validAtomFrontmatterKeys[key]; !ok {
-			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, closeDeployModes, gitPushStates, buildIntegrations, runtimes, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, exportStatus, multiService, references-fields, references-atoms, pinned-by-scenario, coverageExempt)", key)
+			return fmt.Errorf("unknown atom frontmatter key %q (valid keys: id, title, priority, phases, modes, environments, closeDeployModes, gitPushStates, buildIntegrations, runtimes, runtimeBases, routes, steps, idleScenarios, deployStates, envelopeDeployStates, serviceStatus, exportStatus, multiService, references-fields, references-atoms, pinned-by-scenario, coverageExempt)", key)
 		}
 	}
 	for key, raw := range fields {
@@ -417,6 +434,7 @@ func ParseAtom(content string) (KnowledgeAtom, error) {
 			GitPushStates:        parseGitPushStates(fields["gitPushStates"]),
 			BuildIntegrations:    parseBuildIntegrations(fields["buildIntegrations"]),
 			Runtimes:             parseRuntimes(fields["runtimes"]),
+			RuntimeBases:         parseYAMLList(fields["runtimeBases"]),
 			Routes:               parseRoutes(fields["routes"]),
 			Steps:                parseYAMLList(fields["steps"]),
 			IdleScenarios:        parseIdleScenarios(fields["idleScenarios"]),
