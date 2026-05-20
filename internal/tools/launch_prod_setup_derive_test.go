@@ -52,9 +52,11 @@ const sourceWithOnlyProd = `zerops:
       base: nodejs@22
 `
 
-// TestDeriveProdSetupBlock_PreferDev verifies dev wins over other names
-// as the template source.
-func TestDeriveProdSetupBlock_PreferDev(t *testing.T) {
+// TestDeriveProdSetupBlock_PreferStage pins P3 priority reorder:
+// stage wins over dev as the template source. Stage is the validated
+// last-known-good copy that runs on Zerops (build-once, immutable);
+// dev encodes iteration patterns that don't survive the prod build.
+func TestDeriveProdSetupBlock_PreferStage(t *testing.T) {
 	t.Parallel()
 	got, err := deriveProdSetupBlock(sourceWithDevAndStage)
 	if err != nil {
@@ -64,12 +66,12 @@ func TestDeriveProdSetupBlock_PreferDev(t *testing.T) {
 		t.Errorf("output missing setup: prod\n%s", got)
 	}
 	// dev's buildCommand was `npm install`; stage was `npm ci`.
-	// Preferring dev means the proposed block carries `npm install`.
-	if !strings.Contains(got, "npm install") {
-		t.Errorf("expected dev's npm install (template prefer dev), got:\n%s", got)
+	// Preferring stage means the proposed block carries `npm ci`.
+	if !strings.Contains(got, "npm ci") {
+		t.Errorf("expected stage's npm ci (template prefer stage post-P3), got:\n%s", got)
 	}
-	if strings.Contains(got, "npm ci") {
-		t.Errorf("expected dev template, not stage:\n%s", got)
+	if strings.Contains(got, "npm install") {
+		t.Errorf("expected stage template, not dev:\n%s", got)
 	}
 }
 

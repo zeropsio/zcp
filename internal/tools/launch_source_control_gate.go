@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"slices"
 	"sort"
 	"strings"
@@ -33,6 +34,21 @@ const (
 	// rewrites the meta to match live, OR the user rewrites the live
 	// remote to match meta).
 	gateCheckRemoteMismatch sourceControlGateCheck = "remote-mismatch"
+	// gateCheckDevTreeDirty (P3 check) fires when `git status --porcelain`
+	// on the push hostname's /var/www reports any non-empty output —
+	// the dev container has uncommitted / staged / untracked changes
+	// that will NOT make it to production (git push only pushes
+	// commits). Recovery → `zerops_deploy strategy="git-push"` (which
+	// commits + pushes the live working tree) OR the user runs git
+	// add/commit/push manually. Hard-block.
+	gateCheckDevTreeDirty sourceControlGateCheck = "dev-tree-dirty"
+	// gateCheckHeadNotPushed (P3 check) fires when `git ls-remote
+	// <RemoteURL> HEAD` returns a SHA that does NOT match the local
+	// HEAD on the push hostname's /var/www — the local commit is
+	// ahead of the configured remote. Production would clone the
+	// remote's HEAD and build stale code. Recovery → `zerops_deploy
+	// strategy="git-push"` to push the missing commits. Hard-block.
+	gateCheckHeadNotPushed sourceControlGateCheck = "head-not-pushed"
 	// gateCheckBuildIntegrationRecommended fires (severity=warn) when
 	// the source pair has meta.BuildIntegration=none. Recovery →
 	// zerops_workflow action="build-integration" service=<pushHostname>
@@ -174,6 +190,25 @@ func validateLaunchSourceControl(
 		}
 	}
 
+	// Checks 4 + 5 (P3 push proof) — fire only when checks 1-3 are
+	// green so the chain stack remains "fix git remote first, then
+	// push the code." Both run via the same launchPushProofReader hook
+	// so tests can stub the SSH/local exec without a real container.
+	if len(check.FailedChecks) == 0 {
+		proof, proofErr := launchPushProofReader(ctx, sshDeployer, rt, pushHost, check.MetaRemoteURL)
+		switch {
+		case proofErr != nil:
+			// Unable to read push proof — surface as head-not-pushed
+			// with the read error embedded; recovery is still "push
+			// the code via zerops_deploy strategy=git-push".
+			check.FailedChecks = append(check.FailedChecks, gateCheckHeadNotPushed)
+		case proof.DirtyTree:
+			check.FailedChecks = append(check.FailedChecks, gateCheckDevTreeDirty)
+		case proof.LocalHead == "" || proof.RemoteHead == "" || proof.LocalHead != proof.RemoteHead:
+			check.FailedChecks = append(check.FailedChecks, gateCheckHeadNotPushed)
+		}
+	}
+
 	// Check 4 — build-integration recommended (warn-only). Always
 	// evaluated; emission gated on SkipBuildIntegration ack.
 	if meta.BuildIntegration == "" || meta.BuildIntegration == topology.BuildIntegrationNone {
@@ -222,6 +257,124 @@ func setLaunchLiveRemoteReader(f func(ctx context.Context, ssh ops.SSHDeployer, 
 	return func() { launchLiveRemoteReader = prev }
 }
 
+// LaunchPushProofResult bundles the per-runtime push-proof signals
+// the gate's P3 checks consume:
+//
+//	DirtyTree   — `git status --porcelain` on push hostname returned
+//	              non-empty (uncommitted/staged/untracked changes).
+//	LocalHead   — `git rev-parse HEAD` on push hostname.
+//	RemoteHead  — `git ls-remote <remoteURL> HEAD` (or default branch).
+//
+// Empty LocalHead OR empty RemoteHead OR mismatched LocalHead vs
+// RemoteHead all fail the gate (head-not-pushed). The reader returns
+// an error only on tool failure (SSH/exec broken); "no remote" / "no
+// commits" / "dirty tree" surface via the fields.
+type LaunchPushProofResult struct {
+	DirtyTree  bool
+	LocalHead  string
+	RemoteHead string
+}
+
+// readLaunchPushProof is the default env-aware push-proof reader.
+// Container mode SSH-execs `git status` + `git rev-parse HEAD` + `git
+// ls-remote` against the push hostname's /var/www; local mode exec's
+// the same commands against the current working directory.
+func readLaunchPushProof(ctx context.Context, sshDeployer ops.SSHDeployer, rt runtime.Info, pushHostname string, remoteURL string) (LaunchPushProofResult, error) {
+	if rt.InContainer {
+		if sshDeployer == nil {
+			return LaunchPushProofResult{}, fmt.Errorf("launch push-proof: SSH deployer unavailable in container mode")
+		}
+		return readLaunchPushProofContainer(ctx, sshDeployer, pushHostname, remoteURL)
+	}
+	return readLaunchPushProofLocal(ctx, remoteURL)
+}
+
+// readLaunchPushProofContainer runs the three push-proof commands
+// over SSH in /var/www on the push hostname.
+func readLaunchPushProofContainer(ctx context.Context, ssh ops.SSHDeployer, pushHostname string, remoteURL string) (LaunchPushProofResult, error) {
+	statusCmd := fmt.Sprintf(`cd %s 2>/dev/null && git status --porcelain 2>/dev/null || true`, exportRepoRoot)
+	statusOut, err := ssh.ExecSSH(ctx, pushHostname, statusCmd)
+	if err != nil {
+		return LaunchPushProofResult{}, fmt.Errorf("git status on %s: %w", pushHostname, err)
+	}
+	dirty := strings.TrimSpace(string(statusOut)) != ""
+
+	headCmd := fmt.Sprintf(`cd %s 2>/dev/null && git rev-parse HEAD 2>/dev/null || true`, exportRepoRoot)
+	headOut, err := ssh.ExecSSH(ctx, pushHostname, headCmd)
+	if err != nil {
+		return LaunchPushProofResult{}, fmt.Errorf("git rev-parse on %s: %w", pushHostname, err)
+	}
+	local := strings.TrimSpace(string(headOut))
+
+	remote := ""
+	if remoteURL != "" {
+		// ls-remote default branch — Zerops `buildFromGit:` clones the
+		// default branch only (schema is just a URL string per the live
+		// import schema; no @branch / @SHA pinning supported).
+		// POSIX single-quote escape — same shape ops.shellQuote uses;
+		// inlined here to avoid a tools→ops dependency for one shell
+		// command. RemoteURL comes from meta.RemoteURL which passes
+		// validateRemoteURL; embedded single quotes are escaped via
+		// the canonical `'\''` sequence.
+		quotedURL := "'" + strings.ReplaceAll(remoteURL, "'", `'\''`) + "'"
+		lsCmd := fmt.Sprintf(`git ls-remote %s HEAD 2>/dev/null | head -1 | cut -f1 || true`, quotedURL)
+		lsOut, lsErr := ssh.ExecSSH(ctx, pushHostname, lsCmd)
+		if lsErr != nil {
+			return LaunchPushProofResult{}, fmt.Errorf("git ls-remote on %s: %w", pushHostname, lsErr)
+		}
+		remote = strings.TrimSpace(string(lsOut))
+	}
+	return LaunchPushProofResult{DirtyTree: dirty, LocalHead: local, RemoteHead: remote}, nil
+}
+
+// readLaunchPushProofLocal runs the three push-proof commands against
+// the current working directory in local mode.
+func readLaunchPushProofLocal(ctx context.Context, remoteURL string) (LaunchPushProofResult, error) {
+	// git status --porcelain
+	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
+	statusOut, err := statusCmd.Output()
+	if err != nil {
+		return LaunchPushProofResult{}, fmt.Errorf("local git status: %w", err)
+	}
+	dirty := strings.TrimSpace(string(statusOut)) != ""
+
+	headCmd := exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
+	headOut, err := headCmd.Output()
+	local := ""
+	if err == nil {
+		local = strings.TrimSpace(string(headOut))
+	}
+
+	remote := ""
+	if remoteURL != "" {
+		lsCmd := exec.CommandContext(ctx, "git", "ls-remote", remoteURL, "HEAD")
+		lsOut, lsErr := lsCmd.Output()
+		if lsErr == nil {
+			// Output format: "<SHA>\tHEAD"
+			fields := strings.Fields(string(lsOut))
+			if len(fields) > 0 {
+				remote = strings.TrimSpace(fields[0])
+			}
+		}
+	}
+	return LaunchPushProofResult{DirtyTree: dirty, LocalHead: local, RemoteHead: remote}, nil
+}
+
+// launchPushProofReader is the function the gate calls for P3 checks
+// (DirtyTree + RemoteHead == LocalHead). Tests override via
+// setLaunchPushProofReader.
+//
+//nolint:gochecknoglobals // test-injection point; matches launchLiveRemoteReader pattern
+var launchPushProofReader = readLaunchPushProof
+
+// setLaunchPushProofReader swaps the push-proof reader for tests.
+// Returns a cleanup func to restore the previous value via defer.
+func setLaunchPushProofReader(f func(ctx context.Context, ssh ops.SSHDeployer, rt runtime.Info, hostname string, remoteURL string) (LaunchPushProofResult, error)) func() {
+	prev := launchPushProofReader
+	launchPushProofReader = f
+	return func() { launchPushProofReader = prev }
+}
+
 // hasCheck reports whether the supplied gate check is already in the
 // failure list. Stable-order de-dup helper.
 func hasCheck(list []sourceControlGateCheck, target sourceControlGateCheck) bool {
@@ -258,15 +411,20 @@ func buildSourceControlBlockers(check *LaunchSourceControlCheck) []topology.Bloc
 	return out
 }
 
-// gateCheckOrder defines the canonical chain order. Top-down: git first
-// (without a configured push the rest cannot be verified), then remote
-// alignment, then build-integration. Agent resolves in this order.
+// gateCheckOrder defines the canonical chain order. Top-down: git
+// remote first (without a configured push the rest cannot be verified),
+// then remote alignment, then push proof (commit-clean + HEAD pushed),
+// then build-integration. Agent resolves in this order.
 func gateCheckOrder(ck sourceControlGateCheck) int {
 	switch ck {
 	case gateCheckGitPushUnconfigured:
 		return 1
 	case gateCheckRemoteMismatch:
 		return 2
+	case gateCheckDevTreeDirty:
+		return 3
+	case gateCheckHeadNotPushed:
+		return 4
 	case gateCheckBuildIntegrationRecommended:
 		return 9
 	default:
@@ -324,6 +482,36 @@ func sourceControlBlockerFor(check *LaunchSourceControlCheck, ck sourceControlGa
 				Tool:   "zerops_workflow",
 				Action: "build-integration",
 				Args:   map[string]string{"service": check.PushHostname},
+			},
+		}
+	case gateCheckDevTreeDirty:
+		return topology.Blocker{
+			ID:       fmt.Sprintf("dev-tree-dirty-%s", check.PushHostname),
+			Severity: topology.BlockerSeverityBlock,
+			Category: topology.BlockerCategorySourceControl,
+			Message: fmt.Sprintf(
+				"Dev container %q has uncommitted changes — `git status --porcelain` is non-empty. Those changes will NOT make it to production (the platform clones the remote's HEAD; git push only pushes commits). Run `zerops_deploy targetService=%q strategy=\"git-push\"` to commit + push the live working tree, then re-call launch.",
+				check.PushHostname, check.PushHostname,
+			),
+			Recovery: &topology.Recovery{
+				Tool:   "zerops_deploy",
+				Action: "",
+				Args:   map[string]string{"targetService": check.PushHostname, "strategy": "git-push"},
+			},
+		}
+	case gateCheckHeadNotPushed:
+		return topology.Blocker{
+			ID:       fmt.Sprintf("head-not-pushed-%s", check.PushHostname),
+			Severity: topology.BlockerSeverityBlock,
+			Category: topology.BlockerCategorySourceControl,
+			Message: fmt.Sprintf(
+				"Local HEAD on dev container %q is ahead of the configured remote (or remote HEAD unreachable). Production would build stale code. Run `zerops_deploy targetService=%q strategy=\"git-push\"` to push the missing commits, then re-call launch.",
+				check.PushHostname, check.PushHostname,
+			),
+			Recovery: &topology.Recovery{
+				Tool:   "zerops_deploy",
+				Action: "",
+				Args:   map[string]string{"targetService": check.PushHostname, "strategy": "git-push"},
 			},
 		}
 	}

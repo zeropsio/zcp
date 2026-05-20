@@ -77,9 +77,25 @@ func deriveProdSetupBlock(sourceYAMLBody string) (string, error) {
 }
 
 // pickProdSetupTemplate selects the source setup block to template
-// from. Priority: `setup: dev` (canonical lifecycle baseline) →
-// `setup: stage` → first non-prod block. Returns nil when nothing
-// suitable found.
+// the production runtime setup from. Priority (P3 reorder per Karel
+// 2026-05-20):
+//
+//  1. `setup: stage` — validated last-known-good copy that runs on
+//     Zerops; closest to what production will execute.
+//  2. `setup: dev` — fallback for dev/simple runtimes with no stage
+//     half.
+//  3. First non-prod block — last-resort heuristic when neither stage
+//     nor dev exists by canonical name.
+//
+// Stage-first inverts the pre-P3 dev-first priority. Dev's setup
+// encodes iteration patterns (hot-reload watchers, debug logging,
+// source-mounted volumes) that don't survive the recipe build
+// environment; stage already runs a build-once, immutable-artifact
+// shape closer to production. Tests pin both priorities to catch
+// regressions in either direction.
+//
+// Returns nil when no non-prod block is found (caller surfaces the
+// generic prod-setup-missing guidance).
 func pickProdSetupTemplate(setups []any) map[string]any {
 	var dev, stage, firstNonProd map[string]any
 	for _, item := range setups {
@@ -102,10 +118,10 @@ func pickProdSetupTemplate(setups []any) map[string]any {
 		}
 	}
 	switch {
-	case dev != nil:
-		return dev
 	case stage != nil:
 		return stage
+	case dev != nil:
+		return dev
 	default:
 		return firstNonProd
 	}

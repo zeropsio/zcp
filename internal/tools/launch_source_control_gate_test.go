@@ -151,6 +151,69 @@ func TestValidateLaunchSourceControl_SkipBuildIntegration_AckSuppressesWarn(t *t
 	}
 }
 
+// TestValidateLaunchSourceControl_DevTreeDirty_Blocks pins the P3
+// dev-tree-dirty check: meta passes checks 1-3 but the push hostname
+// has uncommitted changes (`git status --porcelain` non-empty).
+// Production would build stale code; gate blocks with chain to
+// zerops_deploy strategy=git-push.
+func TestValidateLaunchSourceControl_DevTreeDirty_Blocks(t *testing.T) {
+	stateDir := t.TempDir()
+	seedLaunchGateReadyMeta(t, stateDir, "app", canonicalLaunchTestRemoteURL)
+	installFakeLiveRemoteReader(t, map[string]string{"app": canonicalLaunchTestRemoteURL})
+	// Override with dirty-tree push-proof.
+	installFakePushProofReader(t, map[string]LaunchPushProofResult{
+		"app": {DirtyTree: true, LocalHead: canonicalLaunchTestHeadSHA, RemoteHead: canonicalLaunchTestHeadSHA},
+	})
+
+	_, blockers, err := validateLaunchSourceControl(
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "app", nil,
+	)
+	if err != nil {
+		t.Fatalf("validateLaunchSourceControl: %v", err)
+	}
+	if len(blockers) != 1 {
+		t.Fatalf("blockers: got %d want 1\n%+v", len(blockers), blockers)
+	}
+	if !strings.HasPrefix(blockers[0].ID, "dev-tree-dirty-") {
+		t.Errorf("blocker ID: got %q want dev-tree-dirty-app", blockers[0].ID)
+	}
+	if blockers[0].Severity != topology.BlockerSeverityBlock {
+		t.Errorf("severity: got %q want block", blockers[0].Severity)
+	}
+	if blockers[0].Recovery == nil || blockers[0].Recovery.Args["strategy"] != "git-push" {
+		t.Errorf("recovery: got %+v want zerops_deploy strategy=git-push", blockers[0].Recovery)
+	}
+}
+
+// TestValidateLaunchSourceControl_HeadNotPushed_Blocks pins the P3
+// head-not-pushed check: meta passes checks 1-3 + dev tree is clean,
+// but local HEAD does not match remote HEAD (commits not pushed).
+// Gate blocks with chain to zerops_deploy strategy=git-push.
+func TestValidateLaunchSourceControl_HeadNotPushed_Blocks(t *testing.T) {
+	stateDir := t.TempDir()
+	seedLaunchGateReadyMeta(t, stateDir, "app", canonicalLaunchTestRemoteURL)
+	installFakeLiveRemoteReader(t, map[string]string{"app": canonicalLaunchTestRemoteURL})
+	installFakePushProofReader(t, map[string]LaunchPushProofResult{
+		"app": {DirtyTree: false, LocalHead: "local-sha-newer", RemoteHead: "remote-sha-older"},
+	})
+
+	_, blockers, err := validateLaunchSourceControl(
+		context.Background(), nil, nil, runtime.Info{}, stateDir, "app", nil,
+	)
+	if err != nil {
+		t.Fatalf("validateLaunchSourceControl: %v", err)
+	}
+	if len(blockers) != 1 {
+		t.Fatalf("blockers: got %d want 1\n%+v", len(blockers), blockers)
+	}
+	if !strings.HasPrefix(blockers[0].ID, "head-not-pushed-") {
+		t.Errorf("blocker ID: got %q want head-not-pushed-app", blockers[0].ID)
+	}
+	if blockers[0].Severity != topology.BlockerSeverityBlock {
+		t.Errorf("severity: got %q want block", blockers[0].Severity)
+	}
+}
+
 // TestValidateLaunchSourceControl_FullyGateReady_NoBlockers pins the
 // happy path: meta has all four checks aligned (GitPushState=configured,
 // RemoteURL non-empty, live origin matches, build-integration set) →

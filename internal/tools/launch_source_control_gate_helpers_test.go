@@ -103,6 +103,12 @@ func withMetaBuildIntegration(bi topology.BuildIntegration) seedMetaOption {
 // with seedLaunchGateReadyMeta(t, stateDir, hostname, sameURL) so
 // the gate's check 3 (live == meta) passes.
 //
+// Also installs a happy-path push-proof reader returning DirtyTree=false
+// + LocalHead==RemoteHead==<canonical sha> for every hostname in the
+// map, so P3 checks 4-5 also pass for the canonical happy path. Tests
+// that need to exercise the P3 failure branches override via
+// installFakePushProofReader after this call.
+//
 // Cleanup registers via t.Cleanup so the swap reverts even on test
 // failure / panic.
 func installFakeLiveRemoteReader(t *testing.T, urlByHostname map[string]string) {
@@ -112,6 +118,47 @@ func installFakeLiveRemoteReader(t *testing.T, urlByHostname map[string]string) 
 			return url, nil
 		}
 		return "", nil
+	})
+	t.Cleanup(cleanup)
+	// Happy-path push-proof default: every hostname listed is "clean +
+	// pushed". Tests that exercise P3 failure paths override.
+	installFakePushProofReader(t, defaultGateReadyPushProof(urlByHostname))
+}
+
+// canonicalLaunchTestHeadSHA is the SHA the happy-path push-proof
+// reader returns for both LocalHead and RemoteHead. Stable across runs
+// so tests can match without re-deriving.
+const canonicalLaunchTestHeadSHA = "deadbeefcafebabefacefeedbaadf00dba5eba11"
+
+// defaultGateReadyPushProof builds the canonical "clean + pushed"
+// push-proof map for the canonical happy path. Every hostname that
+// has a remote URL gets DirtyTree=false + matching LocalHead/RemoteHead.
+func defaultGateReadyPushProof(urlByHostname map[string]string) map[string]LaunchPushProofResult {
+	out := make(map[string]LaunchPushProofResult, len(urlByHostname))
+	for host := range urlByHostname {
+		out[host] = LaunchPushProofResult{
+			DirtyTree:  false,
+			LocalHead:  canonicalLaunchTestHeadSHA,
+			RemoteHead: canonicalLaunchTestHeadSHA,
+		}
+	}
+	return out
+}
+
+// installFakePushProofReader swaps the gate's push-proof reader with a
+// per-hostname lookup. Tests that exercise P3 failure paths supply a
+// map with the failure shape (DirtyTree=true OR LocalHead!=RemoteHead).
+func installFakePushProofReader(t *testing.T, proofByHostname map[string]LaunchPushProofResult) {
+	t.Helper()
+	cleanup := setLaunchPushProofReader(func(_ context.Context, _ ops.SSHDeployer, _ runtime.Info, hostname string, _ string) (LaunchPushProofResult, error) {
+		if p, ok := proofByHostname[hostname]; ok {
+			return p, nil
+		}
+		// Hostname not in the map = no remote URL set on the meta →
+		// gate's P3 branch never runs (checks 1-3 already failed).
+		// Return empty so the gate handles the empty-LocalHead branch
+		// uniformly.
+		return LaunchPushProofResult{}, nil
 	})
 	t.Cleanup(cleanup)
 }
