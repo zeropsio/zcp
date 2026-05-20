@@ -26,6 +26,15 @@ type ProjectInfo struct {
 }
 
 // ServiceInfo contains service details for the discover response.
+//
+// Refs is populated for managed services (topology.IsManagedService)
+// when env keys are also fetched. Each entry is a `${hostname_key}`
+// reference string the agent can copy verbatim into env wiring (e.g.
+// `DATABASE_URL=${db_connectionString}`), keyed off live env names so
+// the canonical hostname stays in sync with the running service. The
+// hostname half uses underscore-canonical form to match the platform's
+// env interpolator (`my-db` → `my_db`); runtime services omit the
+// field — they don't expose envs through the `${...}` interpolator.
 type ServiceInfo struct {
 	Hostname         string           `json:"hostname"`
 	ServiceID        string           `json:"serviceId"`
@@ -42,6 +51,7 @@ type ServiceInfo struct {
 	Resources        map[string]any   `json:"resources,omitempty"`
 	Ports            []map[string]any `json:"ports,omitempty"`
 	Envs             []map[string]any `json:"envs,omitempty"`
+	Refs             []string         `json:"refs,omitempty"`
 }
 
 // Discover fetches project and service information.
@@ -261,6 +271,13 @@ func attachEnvs(ctx context.Context, client platform.Client, info *ServiceInfo, 
 	}
 	info.Envs = envVarsToMaps(envs, includeValues)
 	annotateConnectionStringShape(info.Envs, info.Type, info.Hostname)
+	if topology.IsManagedService(info.Type) && len(envs) > 0 {
+		canonHost := strings.ReplaceAll(info.Hostname, "-", "_")
+		info.Refs = make([]string, 0, len(envs))
+		for _, env := range envs {
+			info.Refs = append(info.Refs, fmt.Sprintf("${%s_%s}", canonHost, env.Key))
+		}
+	}
 	return envs
 }
 

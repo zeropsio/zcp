@@ -422,6 +422,165 @@ func TestDiscover_ProjectEnvs_OnServiceScope_WhenIncluded(t *testing.T) {
 	}
 }
 
+// TestDiscover_ManagedService_RefsPopulated pins Phase 3 of
+// plans/env-discover-three-changes-2026-05-20.md: managed services
+// (topology.IsManagedService) surface a `${hostname_key}` ref string
+// per exposed env so the agent can copy verbatim instead of composing
+// `DATABASE_URL=${db_hostname}:${db_port}/...` by hand. Ref strings
+// use the live env keys for canonical fidelity.
+func TestDiscover_ManagedService_RefsPopulated(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "db", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@17"}},
+	}
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices(services).
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
+			{Key: "hostname", Content: "db"},
+			{Key: "port", Content: "5432"},
+			{Key: "user", Content: "dbuser"},
+			{Key: "password", Content: "p"},
+			{Key: "dbName", Content: "appdb"},
+			{Key: "connectionString", Content: "postgresql://dbuser:p@db:5432/appdb"},
+		})
+
+	result, err := Discover(context.Background(), mock, "proj-1", "db", true, false, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Services) != 1 {
+		t.Fatalf("expected 1 service, got %d", len(result.Services))
+	}
+	svc := result.Services[0]
+	wantRefs := []string{
+		"${db_hostname}",
+		"${db_port}",
+		"${db_user}",
+		"${db_password}",
+		"${db_dbName}",
+		"${db_connectionString}",
+	}
+	if !slices.Equal(svc.Refs, wantRefs) {
+		t.Errorf("refs mismatch:\n got: %v\nwant: %v", svc.Refs, wantRefs)
+	}
+}
+
+// TestDiscover_DashHostname_UnderscoreCanonicalRefs pins the
+// underscore-canonicalization that matches the platform's env
+// interpolator: a `my-db` hostname emits `${my_db_*}` refs, not
+// `${my-db_*}` (which the interpolator rejects).
+func TestDiscover_DashHostname_UnderscoreCanonicalRefs(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "my-db", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@17"}},
+	}
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices(services).
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
+			{Key: "hostname", Content: "my-db"},
+			{Key: "port", Content: "5432"},
+		})
+
+	result, err := Discover(context.Background(), mock, "proj-1", "my-db", true, false, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	wantRefs := []string{"${my_db_hostname}", "${my_db_port}"}
+	if !slices.Equal(result.Services[0].Refs, wantRefs) {
+		t.Errorf("refs mismatch:\n got: %v\nwant: %v", result.Services[0].Refs, wantRefs)
+	}
+}
+
+// TestDiscover_RuntimeService_NoRefs pins that runtime services
+// (non-managed types) omit the refs field — they don't expose envs
+// through the platform's `${...}` interpolator the way managed services
+// do, so emitting refs there would mislead agents into composing
+// references the platform won't resolve.
+func TestDiscover_RuntimeService_NoRefs(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+	}
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices(services).
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
+			{Key: "PORT", Content: "3000"},
+			{Key: "NODE_ENV", Content: "production"},
+		})
+
+	result, err := Discover(context.Background(), mock, "proj-1", "api", true, false, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Services[0].Refs != nil {
+		t.Errorf("runtime service refs must be nil, got %v", result.Services[0].Refs)
+	}
+}
+
+// TestDiscover_NoIncludeEnvs_NoRefs pins that refs derive from live
+// envs — when includeEnvs=false the envs are not fetched and refs MUST
+// also be omitted (cannot fabricate refs without the source keys).
+func TestDiscover_NoIncludeEnvs_NoRefs(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "db", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@17"}},
+	}
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices(services).
+		WithServiceEnv("svc-1", []platform.ServiceEnvVar{
+			{Key: "hostname", Content: "db"},
+		})
+
+	result, err := Discover(context.Background(), mock, "proj-1", "db", false, false, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Services[0].Refs != nil {
+		t.Errorf("refs must be nil when includeEnvs=false (no source keys), got %v", result.Services[0].Refs)
+	}
+}
+
+// TestDiscover_ManagedService_EmptyEnvs_OmitsRefs pins the empty-envs
+// edge: a managed service that has no exposed envs (no source keys)
+// must omit refs entirely rather than emitting an empty `[]` array.
+func TestDiscover_ManagedService_EmptyEnvs_OmitsRefs(t *testing.T) {
+	t.Parallel()
+
+	services := []platform.ServiceStack{
+		{ID: "svc-1", Name: "storage", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "object-storage@1"}},
+	}
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices(services).
+		WithServiceEnv("svc-1", nil)
+
+	result, err := Discover(context.Background(), mock, "proj-1", "storage", true, false, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Services[0].Refs != nil {
+		t.Errorf("managed service with zero envs must omit refs, got %v", result.Services[0].Refs)
+	}
+}
+
 func TestDiscover_ProjectEnvFetchError_Graceful(t *testing.T) {
 	t.Parallel()
 
