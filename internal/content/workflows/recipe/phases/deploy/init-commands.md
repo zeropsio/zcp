@@ -38,7 +38,7 @@ A static-key seed that crashed mid-insert leaves the key marked done while the d
 
 Two recovery paths:
 
-1. **Bump the version suffix** — `bootstrap-seed` → `bootstrap-seed-v2`, or `<slug>.seed.v1` → `<slug>.seed.v2`. Edit the static key in `zerops.yaml`, then redeploy through `deploy-dev`. The new key has no recorded run, so the seed fires once under the new name. This is the preferred path because the suffix bump is discoverable from the yaml — future operators see how recovery happened.
+1. **Bump the version suffix on the static key** — `bootstrap-seed` → next suffix (e.g. add a numeric or letter increment), or `<slug>.seed.<version>` → next version. Edit the static key in `zerops.yaml`, then redeploy through `deploy-dev`. The new key has no recorded run, so the seed fires once under the new name. This is the preferred path because the suffix bump is discoverable from the yaml — future operators see how recovery happened. The canonical authoring contract for the suffix grammar lives in the per-codebase `principles/init-commands-model.md` atom.
 2. **Hand-run the seed command once** — `ssh {hostname} "cd /var/www && {seed_command}"` then redeploy to confirm the fix lands. Use this only when the seed depends on a schema that exists only after a successful initCommand run.
 
 Every data gap at this substep is resolved either by recovery path (1) or (2) above. If initCommands truly did not fire after a successful ACTIVE deploy and neither recovery path applies, stop this substep and surface the condition. A recipe that only works because a human hand-ran migrate plus seed over SSH during the workspace build ships broken to end users who never see that manual fix — the substep gate blocks that outcome by design.
