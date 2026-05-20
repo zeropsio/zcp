@@ -158,6 +158,8 @@ func importHostnamesFromInputs(inputs ops.LaunchBundleInputs) []string {
 // success states (some envs created, some failed; envs created but
 // ImportServices failed) surface via the audit log + last-error
 // fields. Resume idempotency is deferred to Phase 4b state promotion.
+//
+//nolint:maintidx // state-machine size + P4 merge-resolution logic; conflict-prompt + replace ack + skip recompose live in launch_existing_conflict.go helpers so this function stays linear despite the cyclomatic count
 func executeExistingProjectMutation(
 	ctx context.Context,
 	sourceProjectID string,
@@ -280,7 +282,60 @@ func executeExistingProjectMutation(
 	if err != nil {
 		return convertError(fmt.Errorf("existing-project preflight: list services: %w", err), WithRecoveryStatus()), nil, nil
 	}
-	if conflicts := detectHostnameConflicts(existingServices, importHostnamesFromInputs(bundleInputs)); len(conflicts) > 0 {
+
+	// P4 — existing-project conflict resolution. Detect hostname
+	// collisions, apply agent-supplied MergeStrategy. Unresolved
+	// conflicts surface the conflict-prompt; replace-flagged conflicts
+	// require ConfirmDestructive ack. Skip-flagged conflicts drop the
+	// matching runtime / managed dep from the composed bundle.
+	promotedHosts := make([]string, 0, len(bundleInputs.Runtimes))
+	for _, r := range bundleInputs.Runtimes {
+		promotedHosts = append(promotedHosts, r.ProdHostname)
+	}
+	managedHosts := make([]string, 0, len(bundleInputs.ManagedServices))
+	for _, m := range bundleInputs.ManagedServices {
+		managedHosts = append(managedHosts, m.Hostname)
+	}
+	detectedConflicts := detectExistingProjectConflicts(promotedHosts, managedHosts, existingServices)
+	resolvedConflicts, unresolvedConflicts := resolveExistingProjectStrategies(detectedConflicts, input.MergeStrategy)
+	if len(unresolvedConflicts) > 0 {
+		// No audit on the read-side conflict-prompt; the agent
+		// will re-call with strategies populated and the publish
+		// audit fires on the actual mutation.
+		return existingProjectConflictPromptResponse(corpus, input, unresolvedConflicts), nil, nil
+	}
+	// Replace-flagged conflicts require ConfirmDestructive ack.
+	if missing := missingDestructiveAckForReplaces(resolvedConflicts, input.ConfirmDestructive); len(missing) > 0 {
+		_ = appendAuditLog(stateDir, launchAuditEntry{
+			LaunchID:          launchID,
+			Action:            "publish-rejected",
+			SourceProjectID:   sourceProjectID,
+			TargetProjectName: input.ProductionProjectName,
+			Result:            "failure",
+			ErrorMessage:      "replace flagged without confirmDestructive ack: " + strings.Join(missing, ","),
+		})
+		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
+			"existing-project-replace-needs-ack",
+			fmt.Sprintf("MergeStrategy=replace for %v requires confirmDestructive with operation=\"launch-production-replace\" and acknowledgedTargets including those hostnames.", missing)), nil, nil
+	}
+	// Drop skip-flagged conflicts from the bundle.
+	bundleInputs = applyMergeSkipsToBundle(bundleInputs, resolvedConflicts)
+	// Recompose bundle if any runtime / managed was dropped.
+	if hasSkips(resolvedConflicts) {
+		launchBundle, err = ops.BuildLaunchBundle(bundleInputs, classifications)
+		if err != nil {
+			//nolint:nilerr // wrapped into structured response
+			return launchFailedResponse(corpus, topology.BlockerCategoryOther,
+				"bundle-recompose-after-skip-failed",
+				"Re-composing bundle after merge-skip drops failed: "+err.Error()), nil, nil
+		}
+	}
+
+	// Legacy fall-back for surface compat: when no conflicts were
+	// resolved AND none detected, the legacy hostname-conflict block
+	// fires (e.g. agent passed empty MergeStrategy but conflicts list
+	// is also empty — should never trip but kept for defense in depth).
+	if conflicts := detectHostnameConflicts(existingServices, importHostnamesFromInputs(bundleInputs)); len(conflicts) > 0 && len(resolvedConflicts) == 0 {
 		_ = appendAuditLog(stateDir, launchAuditEntry{
 			LaunchID:          launchID,
 			Action:            "publish-rejected",

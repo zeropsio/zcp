@@ -1165,6 +1165,7 @@ func launchResumeResponse(corpus []workflow.KnowledgeAtom, state *launchState) *
 	case topology.LaunchStatusUnset,
 		topology.LaunchStatusScopePrompt,
 		topology.LaunchStatusSourceControlRequired,
+		topology.LaunchStatusExistingProjectConflictPrompt,
 		topology.LaunchStatusClassifyPrompt,
 		topology.LaunchStatusReadyToLaunch,
 		topology.LaunchStatusLaunching,

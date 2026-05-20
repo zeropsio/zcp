@@ -261,6 +261,19 @@ const (
 	// blockers shop-down with a re-call between each. Pinned by the
 	// source-control-gate tests.
 	LaunchStatusSourceControlRequired LaunchProductionStatus = "source-control-required"
+	// LaunchStatusExistingProjectConflictPrompt fires on the existing-
+	// project launch path (ExistingProjectID + ExistingProdToken
+	// supplied) when the target project already has services whose
+	// hostnames collide with what the launch bundle would create.
+	// Stateless recoverable status — no state file written. Response
+	// surfaces one conflict entry per colliding hostname; agent asks
+	// the user per-promotable: skip (additive — promote only non-
+	// colliding) or replace (requires confirmDestructive ack +
+	// destructive intent — diagnose-before-destruct invariant extends
+	// here). Agent re-calls with mergeStrategy=[host:skip|replace] +
+	// confirmDestructive on the replace path. Pinned by
+	// TestHandleLaunchProduction_ExistingProjectConflict_*.
+	LaunchStatusExistingProjectConflictPrompt LaunchProductionStatus = "existing-project-conflict-prompt"
 	// LaunchStatusClassifyPrompt fires when source project envs are
 	// present but EnvClassifications is incomplete — agent must bucket
 	// each env per the existing four-bucket protocol.

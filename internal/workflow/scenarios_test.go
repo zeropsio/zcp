@@ -1373,6 +1373,7 @@ func TestScenario_PinCoverage_AllAtomsReachable(t *testing.T) {
 		"launch-intro",
 		"launch-scope-prompt",
 		"launch-source-control-required",
+		"launch-existing-project-conflict",
 		"launch-classify-platform-envs",
 		"launch-classify-prompt",
 		"launch-status-recovery",

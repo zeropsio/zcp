@@ -224,6 +224,18 @@ type WorkflowInput struct {
 	// dev-half hostname (`appdev` / `appstage` → `app`, `workerstage`
 	// → `worker`) unless ProdHostname is set on the entry.
 	Promotables []LaunchPromotableInput `json:"promotables,omitempty" jsonschema:"Launch-production only: list of runtimes to promote into the production project. Each entry's hostname accepts either the dev or stage half of a standard pair (handler normalizes). Composer emits one runtime entry per promotable + dedupes shared managed deps. Empty list falls back to single-runtime promotion via targetService."`
+
+	// MergeStrategy is the per-prod-hostname acknowledgement of how
+	// to resolve conflicts with services already present in an
+	// existing target project (existing-project launch path). Keys
+	// are prod-side hostnames (after derivation); values are
+	// "skip" (additive launch — do not promote this entry) or
+	// "replace" (overwrite existing target service — REQUIRES the
+	// ConfirmDestructive ack per diagnose-before-destruct invariant).
+	// When the existing-project gate detects conflicts, it surfaces
+	// `existing-project-conflict-prompt`; the agent asks the user
+	// per conflict + re-calls with this map populated.
+	MergeStrategy map[string]string `json:"mergeStrategy,omitempty" jsonschema:"Launch-production existing-project only: per-prod-hostname conflict resolution. Keys are prod-side hostnames; values are 'skip' (additive — drop from bundle) or 'replace' (overwrite existing service in target — requires confirmDestructive ack). Populated on re-call after the existing-project-conflict-prompt response."`
 }
 
 // LaunchPromotableInput names one runtime to include in the launch
@@ -441,7 +453,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleRoute(ctx, engine, client, projectID, stateDir, selfHostname, rt)
 	case "close-mode":
 		return handleCloseMode(input, stateDir)
-	//nolint:goconst // literal "git-push-setup" is pinned by TestAtomLintAcceptedActionsMatchDispatcher (see "start" comment above)
+	//nolint:goconst // literal "git-push-setup" is pinned by TestAtomLintAcceptedActionsMatchDispatcher (AST-parses case literal); centralising would require pin-test AST const-lookup
 	case "git-push-setup":
 		return handleGitPushSetup(input, stateDir, rt)
 	case "build-integration":

@@ -150,8 +150,11 @@ func TestLaunchExistingProject_HostnameConflict_Refuses(t *testing.T) {
 		t.Fatalf("handleLaunchProduction: %v", err)
 	}
 	text := extractText(result)
-	if !strings.Contains(text, "hostname-conflict") {
-		t.Errorf("expected response to carry hostname-conflict blocker code, got:\n%s", text)
+	// P4 — unack'd conflicts now surface the existing-project-conflict-prompt
+	// status with per-conflict blockers (id=existing-project-conflict-<host>),
+	// asking the agent for per-promotable skip / replace via mergeStrategy.
+	if !strings.Contains(text, "existing-project-conflict") {
+		t.Errorf("expected response to carry existing-project-conflict blocker, got:\n%s", text)
 	}
 	if !strings.Contains(text, "app") {
 		t.Errorf("expected response to mention the conflicting hostname 'app', got:\n%s", text)
