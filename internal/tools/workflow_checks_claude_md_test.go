@@ -46,8 +46,8 @@ Source lives at ` + "`/var/www/`" + ` on the container, mounted from zcp at ` + 
 ## Migrations & Seed
 
 Run manually: ` + "`npx ts-node src/migrate.ts`" + ` then ` + "`npx ts-node src/seed.ts`" + `.
-On deploy, ` + "`initCommands`" + ` runs both via ` + "`zsc execOnce ${appVersionId}`" + ` so only one container per version executes them.
-If seed fails mid-insert the execOnce key is burned; touch any source file and redeploy to rotate ` + "`appVersionId`" + `.
+On deploy, ` + "`initCommands`" + ` runs migrate via ` + "`zsc execOnce ${appVersionId}-migrate`" + ` (re-runs every deploy, idempotent) and seed via ` + "`zsc execOnce bootstrap-seed-v1`" + ` (runs once per service lifetime).
+If the static-key seed fails mid-insert, bump the suffix to ` + "`bootstrap-seed-v2`" + ` and redeploy to fire it once under the new key.
 
 ## Container Traps
 
@@ -192,7 +192,7 @@ SSH in via zcli and run the dev server. Source lives at /var/www/ on the contain
 
 ## Migrations & Seed
 
-Migrations via npx ts-node src/migrate.ts. Seeder via npx ts-node src/seed.ts. On deploy, both are wrapped by zsc execOnce so only one container per version runs them. If the seed crashes mid-run, the execOnce key is burned and subsequent deploys skip it; touch a source file to rotate the key. This section is deliberately verbose to clear the byte floor so the depth-section check is the only thing that fires.
+Migrations via npx ts-node src/migrate.ts. Seeder via npx ts-node src/seed.ts. On deploy, migrate is wrapped by zsc execOnce ${appVersionId}-migrate (re-runs every deploy, idempotent) and seed is wrapped by zsc execOnce bootstrap-seed-v1 (runs once per service lifetime). If the static-key seed crashes mid-run, bump the version suffix in zerops.yaml and redeploy so the new key runs against a clean state. This section is deliberately verbose to clear the byte floor so the depth-section check is the only thing that fires.
 
 ## Container Traps
 

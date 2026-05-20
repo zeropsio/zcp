@@ -1576,9 +1576,11 @@ Look for the framework-specific output each command emits: migration applied row
 
 **Never "work around" missing output by running `npx ts-node migrate.ts && ... seed.ts` over SSH to populate the database manually.** That produces a recipe that appears to work in the workspace but ships broken to end users who never see your manual fix. If the initCommands truly didn't fire (rare — would be a platform bug), report it and stop; don't proceed with a hand-patched dataset.
 
-**The `zsc execOnce` burn-on-failure trap**: `zsc execOnce` keys on `${appVersionId}`, which doesn't change between retries of the same deploy version. If the first attempt runs the seed, the seed crashes mid-insert, and the container dies — the next retry with the same `appVersionId` will NOT re-run the seed. The platform thinks it already ran. Symptom: the seeder output appears in the FIRST deploy's logs, then is absent on every subsequent retry, and the database contains partial data.
+**The `zsc execOnce` burn-on-failure trap** applies to **static keys** (e.g. `bootstrap-seed`, `<slug>.seed.v1`). If a static-key seed crashes mid-insert, the platform marks the key done, the container dies, and every subsequent deploy skips that seed because the static key is still considered executed. Symptom: the seeder output appears in the FIRST deploy's logs, then is absent on every subsequent deploy, and the database contains partial data.
 
-Recovery: either (a) modify something that forces a new `appVersionId` (touch a source file, even a whitespace change, then redeploy — the new version ID makes `execOnce` re-fire), or (b) manually run the seed command via SSH once (`ssh {hostname} "cd /var/www && {seed_command}"`) then redeploy to verify the fix lands. Option (a) is preferred because it preserves the "never manually patch workspace state" rule; option (b) is the escape hatch when the seed depends on a schema that only exists after a successful initCommand run.
+Recovery for a burned static key: bump the version suffix (`bootstrap-seed` → `bootstrap-seed-v2`, or `<slug>.seed.v1` → `<slug>.seed.v2`) and redeploy. The new key has no recorded run, so the seed fires once under the new name. If the seed depends on schema that only a successful initCommand run produces, the escape hatch is hand-running the seed once via SSH (`ssh {hostname} "cd /var/www && {seed_command}"`) then redeploying to verify; prefer the suffix bump because it keeps the recovery path discoverable.
+
+`${appVersionId}` keys do NOT have this trap — every new deploy gets a fresh `${appVersionId}`, so a failed per-deploy initCommand re-fires automatically on the next deploy. That is by design: per-deploy keys are only for idempotent work that re-converges every deploy. If you wrote a per-deploy key over a non-idempotent operation (seed/bootstrap), the key shape is the bug, not the burn — switch to a static key.
 
 #### Two `execOnce` keys, two lifetimes
 
@@ -1597,7 +1599,7 @@ Versioned suffix (`-v1`, `-v2`) is the way to force a re-run when the seed data 
 
 **Anti-pattern — `${appVersionId}` on seed.** Seed runs every deploy, so the in-script `if (count > 0) return` guard you'll reach for creates a worse bug. Any idempotency-sensitive sibling work inside the guarded branch (search-index creation, cache warmup, S3-object upload) skips as well, and a state mismatch between the DB and that sibling system leaves a silent hole. This is the literal cause of `GET /api/search returns 500 Index 'items' not found on the second deploy` (v33 apidev gotcha #7): the Meilisearch `addDocuments(...)` call lived inside the row-count-guarded branch. The fix is the key shape, not a smarter guard. If the seed inserts rows AND creates a search index AND warms the cache, those three steps are either all gated on a static key (so they all run exactly once), or decomposed into separate initCommands each with the key shape that matches its own lifetime — never hidden behind a short-circuit.
 
-**Post-deploy data verification**: after a successful deploy, verify the expected data actually exists — don't assume initCommands ran just because the deploy returned ACTIVE. If prior failed deploys burned the `execOnce` key, the successful deploy may skip those commands silently. Check: query the database for seeded records, verify the search index contains documents, confirm the cache is populated. If the data is missing, the `execOnce` key was burned — use recovery option (a) or (b) above.
+**Post-deploy data verification**: after a successful deploy, verify the expected data actually exists — don't assume initCommands ran just because the deploy returned ACTIVE. If a prior failed deploy burned a **static** `execOnce` key, every subsequent deploy will skip that command silently. Check: query the database for seeded records, verify the search index contains documents, confirm the cache is populated. If the data is missing AND the key was static, bump the version suffix per the burn-recovery recipe above. If the data is missing AND the key was `${appVersionId}`-shaped, the next deploy already re-ran it — check the more recent logs.
 
 **Redeployment = fresh container.** If you fix code and redeploy during iteration, the platform creates a new container — ALL background processes (asset dev server, queue worker) are gone. Restart them before re-verifying. This applies to every redeploy, not just the first.
 
@@ -2341,7 +2343,7 @@ On deploy, these run via `initCommands` — keyed by the lifetime the command ac
 - `migrate` is keyed by `${appVersionId}` — re-runs once per deploy, reconverges schema on each version (idempotent by design: `CREATE TABLE IF NOT EXISTS`, additive column adds).
 - `seed` is keyed by a static string (e.g. `bootstrap-seed-v1`) — runs once per service lifetime; bump the suffix when seed data changes so the next deploy re-runs once under the new key.
 
-See "Two `execOnce` keys, two lifetimes" in the recipe guidance for the full rationale. Do NOT key `seed` on `${appVersionId}` — that runs seed on every deploy and forces an in-script row-count guard that silently skips sibling work (search-index creation, cache warmup). If the seeder crashed mid-insert and burned the per-deploy key on the migrate command, touch any source file and redeploy to force a fresh `appVersionId`.
+See "Two `execOnce` keys, two lifetimes" in the recipe guidance for the full rationale. Do NOT key `seed` on `${appVersionId}` — that runs seed on every deploy and forces an in-script row-count guard that silently skips sibling work (search-index creation, cache warmup). If the static-key seed crashed mid-insert, bump the version suffix (`bootstrap-seed-v1` → `bootstrap-seed-v2`) and redeploy so the new key runs against a clean state.
 
 ## Container Traps
 
@@ -2359,11 +2361,11 @@ See "Two `execOnce` keys, two lifetimes" in the recipe guidance for the full rat
 
 **Now add at least 2 of these custom sections** (pick the ones that apply to this codebase):
 
-- **Resetting dev state** — how to drop/re-seed the database without a full redeploy (avoids the `appVersionId` rotation dance).
+- **Resetting dev state** — how to drop/re-seed the database without a full redeploy (faster than a static-key version bump for iterative work).
 - **Log tailing** — the exact log file path + `tail -f` command for each long-running process in this codebase, plus when to reach for `zerops_logs` instead.
 - **Driving a test job / endpoint** — a real curl (or psql / redis-cli / nats-cli) command sequence that exercises the feature path end-to-end on the dev container. For a worker, the exact NATS message shape + how to dispatch it from the API.
 - **Adding a new managed service** — the delta against this recipe's current zerops.yaml / import.yaml when the user wants to bolt on another dependency.
-- **Recovering from a burned `zsc execOnce` key** — the exact `touch` or file-mtime trick for THIS codebase's source tree, step by step.
+- **Recovering from a burned static `zsc execOnce` key** — the exact version-suffix bump for the static seed/bootstrap keys in THIS codebase's zerops.yaml, step by step. Per-deploy (`${appVersionId}`) keys auto-recover on the next deploy and don't need a procedure.
 
 **Rules:**
 - Section headings (`## Integration Guide`) go OUTSIDE markers in README.md — they're visible but not extracted
