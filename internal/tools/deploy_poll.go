@@ -48,13 +48,19 @@ func pollDeployBuild(
 		result.Status = statusDeployed
 		result.MonitorHint = ""
 		// Post-deploy message is runtime-class-agnostic and strategy-agnostic
-		// (invariant DS-01, plans/dev-server-canonical-primitive.md).
-		// Dev-server lifecycle guidance is owned by atoms: they prescribe
-		// `zerops_dev_server` in container env and the harness background
-		// task primitive in local env. zerops_verify covers runtime-state
-		// assertions honestly (service_running, error_logs, http_root).
-		// The message here reports only what the platform told us.
-		result.Message = fmt.Sprintf("Successfully deployed to %s. Run zerops_verify for runtime state.", result.TargetService)
+		// (invariant DS-01, plans/dev-server-canonical-primitive.md):
+		// reports only what the platform told us, no liveness claims, no
+		// next-tool pointer. The next-tool pointer is OWNED exclusively by
+		// `result.NextActions` (set below via deploySuccessNextActions,
+		// which IS mode-aware: deferred-start runtimes are pointed at
+		// dev_server start first; everything else at the verify tool).
+		// The Message previously trailed a verify-tool pointer — that hint
+		// contradicted NextActions on dev-mode dynamic runtimes and
+		// produced the verify-before-dev-server 502 trap seen in 10+ eval
+		// runs across the 20260517-20260519 suite. Single source of truth
+		// for next-tool now lives on NextActions; pinned by
+		// TestDeployPostMessageHonesty.
+		result.Message = fmt.Sprintf("Successfully deployed to %s.", result.TargetService)
 		if result.SourceService == result.TargetService {
 			// Strategy-agnostic fact: push-dev replaces the container, which
 			// drops any prior SSH sessions. Agents holding open sessions

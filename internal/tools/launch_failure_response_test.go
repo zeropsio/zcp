@@ -114,6 +114,71 @@ func TestLaunchFailedFromPlatformError_DerivedCategoryAuthFromTokenExpired(t *te
 	}
 }
 
+// TestLaunchFailedFromPlatformError_AuthAttachesSpecificRecovery
+// pins the eval-driven fix from 2026-05-20: AUTH-class blockers carry a
+// specific Recovery hint pointing back at action="start" + a Suggestion
+// containing the "Bootstrap is NOT a prerequisite" anti-detour text.
+// Pre-fix the agent received only the generic action="status" recovery
+// (attached at the convertError boundary), which on auth-failed launches
+// led to a wasted bootstrap/adopt cycle (eval run 20260520-085736).
+func TestLaunchFailedFromPlatformError_AuthAttachesSpecificRecovery(t *testing.T) {
+	t.Parallel()
+
+	pe := &platform.PlatformError{
+		Code:    platform.ErrAuthTokenExpired,
+		Message: "Not authorized",
+	}
+	result := launchFailedFromPlatformError(nil, pe,
+		topology.BlockerCategoryAuth,
+		"launch-key-invalid",
+		"ProjectAdminClient construction failed: %v")
+	resp := decodeLaunchResp(t, []byte(extractText(result)))
+
+	b := resp.Blockers[0]
+	if b.Recovery == nil {
+		t.Fatal("AUTH-class blocker MUST carry a specific Recovery (not the generic action=status default)")
+	}
+	if b.Recovery.Tool != "zerops_workflow" {
+		t.Errorf("Recovery.Tool = %q, want zerops_workflow", b.Recovery.Tool)
+	}
+	if b.Recovery.Action != "start" {
+		t.Errorf("Recovery.Action = %q, want start (not status — status leads to bootstrap nudge)", b.Recovery.Action)
+	}
+	if b.Recovery.Args["workflow"] != "launch-production" {
+		t.Errorf("Recovery.Args[workflow] = %q, want launch-production", b.Recovery.Args["workflow"])
+	}
+
+	if !strings.Contains(b.Suggestion, "Bootstrap is NOT a prerequisite") {
+		t.Errorf("Suggestion must contain explicit anti-bootstrap-detour hint; got %q", b.Suggestion)
+	}
+	if !strings.Contains(b.Suggestion, "Re-read the FULL token") {
+		t.Errorf("Suggestion must instruct re-reading full token (anti-truncation); got %q", b.Suggestion)
+	}
+}
+
+// TestLaunchFailedFromPlatformError_NonAuthNoSpecificRecovery confirms
+// the specific Recovery only attaches for AUTH-class blockers — schema
+// or other failures keep the existing behavior (no Blocker.Recovery,
+// agent reads APIMeta + Suggestion to fix input directly).
+func TestLaunchFailedFromPlatformError_NonAuthNoSpecificRecovery(t *testing.T) {
+	t.Parallel()
+
+	pe := &platform.PlatformError{
+		Code:    platform.ErrInvalidImportYml,
+		Message: "yaml validation failed",
+	}
+	result := launchFailedFromPlatformError(nil, pe,
+		topology.BlockerCategoryOther,
+		"create-import-failed",
+		"CreateAndImportProject failed: %v")
+	resp := decodeLaunchResp(t, []byte(extractText(result)))
+
+	b := resp.Blockers[0]
+	if b.Recovery != nil {
+		t.Errorf("schema-class blocker must NOT carry specific Recovery; got %+v", b.Recovery)
+	}
+}
+
 // TestLaunchFailedFromPlatformError_DerivedCategorySchemaFromImportYml
 // pins ErrInvalidImportYml → Schema mapping so schema-validation
 // failures don't masquerade as auth/other.

@@ -265,6 +265,68 @@ func isTerminalLaunchStatus(s topology.LaunchProductionStatus) bool {
 	return s == topology.LaunchStatusLaunched || s == topology.LaunchStatusFailed
 }
 
+// findRecentLaunchState walks the launch-production state directory and
+// returns the most-recently-updated launch matching the given
+// sourceProjectID — INCLUDING terminal states (LaunchStatusLaunched,
+// LaunchStatusFailed).
+//
+// Sister to findActiveLaunchState (which intentionally filters terminal
+// states for pipeline-resume callers). This variant exists for
+// `action="status"` surfacing — when a launch reached `failed` (e.g.
+// schema validation rejection) the status handler must surface the
+// terminal state with reset guidance instead of returning generic `idle`.
+// Without this, the agent calls status, gets `idle`, may retry start,
+// and either hits projectEnvDuplicateKey or burns a new launchKey on
+// resume of cached state.
+//
+// Return shape matches findActiveLaunchState: (most-recent, all, err).
+// Filters: corrupt state files skipped silently; missing dir returns
+// (nil, nil, nil).
+//
+// FIX 1 PR 1 (eval root-cause review 2026-05-19).
+func findRecentLaunchState(stateDir, sourceProjectID string) (*launchState, []*launchState, error) {
+	if stateDir == "" || sourceProjectID == "" {
+		return nil, nil, nil
+	}
+	dir := filepath.Join(stateDir, launchStateDir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil, nil
+		}
+		return nil, nil, fmt.Errorf("read %s: %w", dir, err)
+	}
+
+	var matches []*launchState
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if name == launchAuditLogName || !hasJSONSuffix(name) || hasTempSuffix(name) {
+			continue
+		}
+		launchID := stripJSONSuffix(name)
+		state, readErr := readLaunchState(stateDir, launchID)
+		if readErr != nil || state == nil {
+			continue
+		}
+		if state.SourceProjectID != sourceProjectID {
+			continue
+		}
+		matches = append(matches, state)
+	}
+
+	if len(matches) == 0 {
+		return nil, nil, nil
+	}
+
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].LastUpdate.After(matches[j].LastUpdate)
+	})
+	return matches[0], matches, nil
+}
+
 func hasJSONSuffix(name string) bool {
 	return len(name) > len(".json") && name[len(name)-len(".json"):] == ".json"
 }

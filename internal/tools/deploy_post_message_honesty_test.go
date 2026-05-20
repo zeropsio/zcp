@@ -83,4 +83,18 @@ func TestDeployPostMessageHonesty(t *testing.T) {
 		t.Errorf("%s must not define %s — the heuristic is retired (see plans/dev-server-canonical-primitive.md W1)",
 			validate, needsSym)
 	}
+
+	// DS-01 next-tool ownership (post-FIX 3 fundamental, 2026-05-20):
+	// `DeployResult.Message` must not embed a "Run zerops_verify" hint.
+	// `NextActions` is the single source of truth for which tool to call
+	// next (deploySuccessNextActions, mode-aware: dev-mode → start dev
+	// server first; everything else → verify). Message-side "Run
+	// zerops_verify" contradicted NextActions on dev-mode dynamic runtimes
+	// and produced the verify-before-dev-server 502 trap seen in
+	// 10+ eval runs across the 20260517-20260519 suite. Pinning the
+	// absence keeps the two fields from drifting back into self-contradiction.
+	if strings.Contains(poll, "Run zerops_verify") {
+		t.Errorf("%s must not embed \"Run zerops_verify\" in Message — NextActions owns the next-tool pointer (mode-aware; dev-mode says start dev_server first). Pre-fix Message overwrote that hint and trapped agents in verify-before-dev-server 502.",
+			pollPath)
+	}
 }

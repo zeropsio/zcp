@@ -7,6 +7,11 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
+// actionStart is the canonical "start" verb shared by zerops_workflow,
+// zerops_manage, and zerops_dev_server action params. Kept as a constant
+// so goconst is satisfied across the three emitters that share the string.
+const actionStart = "start"
+
 // NextActions constants provide actionable follow-up instructions for LLMs.
 const (
 	nextActionDeploySuccess         = "Run zerops_verify for runtime state."

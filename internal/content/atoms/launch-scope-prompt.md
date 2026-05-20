@@ -10,7 +10,18 @@ references-fields: []
 
 **This workflow is stateless multi-call narrowing.** Every response's `inputs` block is the running accumulator: pass all previously-accepted parameters forward on every next `action="start"` call. `action="complete"` is reserved for bootstrap and returns `BOOTSTRAP_NOT_ACTIVE` here.
 
-Apply suggestions from `sourceContext`:
+#### First — identify the launch path
+
+launch-production has two mutation paths in one workflow. Pick which one matches the user's intent BEFORE collecting scope params; the choice surfaces in `inputs` and dispatches the right mutation at the `ready-to-launch` step.
+
+| User intent signal | Path | Required token params |
+|---|---|---|
+| "Create new prod project", "launch to fresh project", or no existing project mentioned | **NEW-PROJECT** | `launchKey` (account-wide one-shot — surfaced at the `ready-to-launch` step via the launch-mutation-key-required atom) |
+| "I have existing prod project", explicit project ID/token supplied, "deploy into project X" | **EXISTING-PROJECT** | `existingProjectId` + `existingProdToken` (project-scoped token from target project's dashboard) |
+
+If the user explicitly hands you an existing project ID OR a project-scoped token, pass `existingProjectId` + `existingProdToken` on this first `action="start"` call alongside the scope params below — both will land in the `inputs` accumulator and the workflow will skip the `launchKey` prompt at `ready-to-launch`. Otherwise default to NEW-PROJECT and let the workflow ask for `launchKey` later.
+
+#### Then — apply suggestions from `sourceContext`
 
 - **`productionProjectName`** — `sourceContext.suggestedTargetName` (`<source>-dev` / `<source>-stage` → `<source>-prod`, else `<source>-prod` appended). Confirm name with user; don't silently rename.
 - **`targetService`** — `sourceContext.suggestedRuntime` when single. For standard-mode pairs the headline is the stage hostname (validated last-known-good); `devHostname` field discloses the iteration half. The new prod project rebuilds fresh from git, so promotion is the dev/stage pair *as a unit*. Either half is accepted as input — the handler normalizes internally. Managed deps are bundled implicitly.

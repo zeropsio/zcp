@@ -83,7 +83,7 @@ func handleBuildIntegration(
 			"Run bootstrap first: zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\""),
 			WithRecovery(&RecoveryHint{
 				Tool:   "zerops_workflow",
-				Action: "start",
+				Action: actionStart,
 				Args:   map[string]string{"workflow": "bootstrap", "route": "adopt"},
 			})), nil, nil
 	}

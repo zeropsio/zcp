@@ -47,7 +47,7 @@ func RegisterManage(srv *mcp.Server, client platform.Client, projectID string) {
 		onProgress := buildProgressCallback(ctx, req)
 
 		switch input.Action {
-		case "start":
+		case actionStart:
 			proc, err := ops.Start(ctx, client, projectID, input.ServiceHostname)
 			if err != nil {
 				return convertError(err), nil, nil

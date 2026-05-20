@@ -403,7 +403,43 @@ func mutateProjectEnvs(
 		})
 		return nil, convertError(fmt.Errorf("existing-project env classification: %w", applyErr), WithRecoveryStatus())
 	}
+
+	// FIX 1 PR 3 — preflight existing envs so a partial-success retry
+	// doesn't hit `projectEnvDuplicateKey` from the platform side.
+	// Eval evidence (launch-to-existing-prod-project 20260517-185653):
+	// first call created SESSION_SECRET etc.; second call hit dup-key on
+	// the same env; agent deleted services thinking they were stale, but
+	// project-level envs persist independently of service deletion, so
+	// the retry loop continued failing. Pre-reading the live env set and
+	// skipping already-present keys turns the mutation idempotent.
+	existing, existingErr := target.GetProjectEnv(ctx, input.ExistingProjectID)
+	existingKeys := make(map[string]bool, len(existing))
+	if existingErr == nil {
+		for _, e := range existing {
+			existingKeys[e.Key] = true
+		}
+	}
+	// Failure to read existing envs degrades gracefully — the mutation
+	// proceeds with no skip set; CreateProjectEnv will surface
+	// projectEnvDuplicateKey as before. We surface a warning so the
+	// operator knows preflight didn't run.
+	if existingErr != nil {
+		emissionWarnings = append(emissionWarnings,
+			fmt.Sprintf("preflight GetProjectEnv failed (%v) — idempotency check skipped; dup-key errors will surface from the platform", existingErr))
+	}
+
 	for _, e := range emissions {
+		if existingKeys[e.Key] {
+			// Already present in the target — skip to keep the mutation
+			// idempotent. Surfaces in warnings so the operator can audit
+			// whether the existing value matches their intent. Note: we
+			// do NOT compare values (CreateProjectEnv returns sensitive
+			// values as a discriminator placeholder, not the literal),
+			// so the warning emphasizes "verify don't overwrite".
+			emissionWarnings = append(emissionWarnings,
+				fmt.Sprintf("env %q already exists in target project — skipped to avoid duplicate-key; verify the existing value in Zerops dashboard matches intent", e.Key))
+			continue
+		}
 		if _, envErr := target.CreateProjectEnv(ctx, input.ExistingProjectID, e.Key, e.Value, e.Sensitive); envErr != nil {
 			_ = appendAuditLog(stateDir, launchAuditEntry{
 				LaunchID:          launchID,

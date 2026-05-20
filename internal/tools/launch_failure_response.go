@@ -63,6 +63,30 @@ func launchFailedFromPlatformError(
 		blocker.Message = composeBlockerMessage(fallbackMessageFmt, pe)
 	}
 
+	// FIX (eval review 2026-05-20): Auth-class blockers on launch-production
+	// previously fell back to the generic `action="status"` recovery hint
+	// (attached by convertError WithRecoveryStatus elsewhere). That hint
+	// pointed agents at the generic lifecycle status, which on an idle
+	// source project (no launch state file yet — auth failed before
+	// state-write) returned a bootstrap nudge. Agents in eval
+	// 20260520-085736 ran a full bootstrap/adopt cycle before noticing the
+	// real fix was "re-read the token value." Specific Recovery on the
+	// Blocker + explicit "bootstrap is NOT a prerequisite" Suggestion
+	// short-circuits that wasted detour.
+	if blocker.Category == topology.BlockerCategoryAuth {
+		blocker.Recovery = &topology.Recovery{
+			Tool:   "zerops_workflow",
+			Action: actionStart,
+			Args:   map[string]string{"workflow": "launch-production"},
+		}
+		const authBootstrapHint = "Token rejected by platform. Re-read the FULL token value from the env var (avoid Bash truncation like ${VAR:0:8}). For existing-project path regenerate the project-scoped token; for new-project path regenerate the account-wide launchKey. Bootstrap is NOT a prerequisite — DO NOT run adopt/bootstrap; retry launch-production with the corrected token directly."
+		if blocker.Suggestion == "" {
+			blocker.Suggestion = authBootstrapHint
+		} else if !strings.Contains(blocker.Suggestion, "Bootstrap is NOT a prerequisite") {
+			blocker.Suggestion = blocker.Suggestion + " " + authBootstrapHint
+		}
+	}
+
 	return jsonResult(launchProductionResponse{
 		Workflow: workflowLaunchProduction,
 		Status:   topology.LaunchStatusFailed,

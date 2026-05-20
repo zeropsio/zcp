@@ -227,10 +227,19 @@ Spec: `docs/spec-architecture.md` — per-package mapping + examples.
   `internal/tools/deploy_subdomain.go` doc-comment). Platform-classified
   `serviceStackIsNotHttp` (worker, F8 deferred-start) is silently swallowed
   in `maybeAutoEnableSubdomain` only; `ops.Subdomain.Enable` still surfaces
-  it for explicit-recovery callers. Agents/recipes never call
-  `zerops_subdomain action=enable` in happy path. Pinned by
-  `TestServiceEligible_*`, `TestMaybeAutoEnable_ServiceStackIsNotHttp_BenignSkip`.
-  Spec: `spec-workflows.md §4.8` + O3.
+  it for explicit-recovery callers. **Launch-production deliberately opts
+  out** per P-PROD-2 invariant (`docs/spec-launch-production-platform-spike.md`):
+  production prefers explicit custom-domain over `*.zerops.app`; the launch
+  composer strips `enableSubdomainAccess` from the production import YAML
+  and does NOT call `maybeAutoEnableSubdomain`. Pinned by
+  `TestBuildLaunchBundle_StripsSubdomainAccess` + readinessCheckSubdomainDisabled.
+  Agents/recipes never call `zerops_subdomain action=enable` in happy path
+  for dev/stage; launch-production agents surface the choice to the operator
+  via the `launch-post-checklist` atom (always attached to the launched
+  response — explicit fact + mandatory step 3 to establish HTTP exposure
+  before smoke test). Pinned by `TestServiceEligible_*`,
+  `TestMaybeAutoEnable_ServiceStackIsNotHttp_BenignSkip`. Spec:
+  `spec-workflows.md §4.8` + O3.
 - **Container `.claude.json` pre-trusts the workspace and pre-approves
   `ANTHROPIC_API_KEY` when set** — `zcp init` on containers always writes
   `projects[vsCodeWorkDir]` with `hasTrustDialogAccepted` and

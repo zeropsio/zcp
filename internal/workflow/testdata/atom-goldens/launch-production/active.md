@@ -1,6 +1,6 @@
 ---
 id: launch-production/active
-atomIds: [launch-delete-key, launch-intro, launch-pipeline-configure-dashboard, launch-post-checklist, launch-scope-prompt, launch-classify-platform-envs, launch-mutation-key-required, launch-pipeline-configuring, launch-pipeline-configured, launch-pipeline-skipped, launch-status-recovery, launch-write-prod-setup]
+atomIds: [launch-delete-key, launch-intro, launch-pipeline-configure-dashboard, launch-classify-prompt, launch-post-checklist, launch-scope-prompt, launch-classify-platform-envs, launch-mutation-key-required, launch-pipeline-configuring, launch-pipeline-configured, launch-pipeline-skipped, launch-status-recovery, launch-write-prod-setup]
 description: "Launch-production workflow mid-flow on a source project — bundle composed, awaiting one-shot launch key for the mutation pipeline."
 ---
 ### Delete the launch-window API key
@@ -55,18 +55,113 @@ To deploy after setup: `git tag v1.0.0 && git push --tags` (matching your tag re
 
 ---
 
+### Launch classify — bucket source envs before production publish
+
+You are at `status="classify-prompt"`. The launch composer needs every source `project.envVariables` entry classified into one of four buckets — `infrastructure`, `auto-secret`, `external-secret`, `plain-config` — before it can emit the production import bundle.
+
+**Call shape — `action="start"` always.** Launch-production is stateless multi-call narrowing: every advance is another `zerops_workflow action="start" workflow="launch-production"` with the FULL accumulated `inputs` block from the prior response plus `envClassifications`. There is NO `action="classify"` step (that's the recipe-fact workflow — wrong tool). There is NO `action="complete"` step (that's bootstrap). Re-call `action="start"` with the accumulated inputs and the new classification map:
+
+```
+zerops_workflow action="start" workflow="launch-production" \
+  productionProjectName="<from inputs>" \
+  targetService="<from inputs>" \
+  region="<from inputs>" \
+  envClassifications={"APP_KEY":"auto-secret","DB_HOST":"infrastructure","STRIPE_KEY":"external-secret"}
+```
+
+If you skip an env, the next response re-prompts with the remaining unclassified keys. Extra keys that don't match any source env are informational — the composer ignores them.
+
+## The four buckets
+
+| Bucket | Detection signal | Emit in production project |
+|---|---|---|
+| `infrastructure` | Value (or component) resolves from a managed-service reference (`${db_*}`, `${redis_*}`, `${mongo_*}`, plus per-service prefixes). Includes app-built compound URLs assembled at runtime from `${...}` components. | DROP from `project.envVariables`. The reference still lives in `zerops.yaml`'s `run.envVariables`; the re-imported managed service emits a fresh value at boot. |
+| `auto-secret` | Source code uses the var as a local encryption / signing key (framework owns the call; rarely visible in app code). | `<@generateRandomString(<32>)>`. Each launch gets a fresh secret. |
+| `external-secret` | Source calls a third-party SDK with the var (Stripe, OpenAI, Mailgun, GitHub, …). Includes aliased imports + webhook verification secrets. | Comment + `<@pickRandom(["REPLACE_ME"])>`. New project's owner pastes the real key into the dashboard before deploy. |
+| `plain-config` | Source uses the var as literal runtime config (LOG_LEVEL, NODE_ENV, FEATURE_FLAGS, …). | Literal value verbatim. |
+
+`zerops_workflow` returns each unclassified env's key but NOT its value — fetch values via `zerops_discover hostname="{targetHostname}" includeEnvs=true includeEnvValues=true`, then grep them against the mounted source tree (when accessible) before bucketing.
+
+## Worked examples per bucket
+
+### Infrastructure
+
+```
+DB_HOST=${db_hostname}
+REDIS_URL=${redis_connectionString}
+```
+
+Both resolve from managed-service references — bucket `infrastructure`. The new prod project's `db` and `redis` services emit fresh values at boot. Compound case: `DATABASE_URL` assembled in app code from `${DB_USER}`, `${DB_PASSWORD}` — the COMPONENT envs are `infrastructure`. If `DATABASE_URL` is itself a project env resolving to managed refs, bucket it `infrastructure`; if assembled manually with literal credentials, bucket `external-secret`.
+
+### Auto-secret
+
+```
+APP_KEY=existing-key    # Laravel — encrypts cookies/session
+SECRET_KEY=django…      # Django — signs sessions, CSRF
+JWT_SECRET=long-bytes   # Node — signs tokens
+```
+
+Framework convention drives detection: Laravel `APP_KEY`, Django `SECRET_KEY`, Rails `SECRET_KEY_BASE`, Express `SESSION_SECRET` / `JWT_SECRET`. **Stability warning**: if persisted state (encrypted cookies, signed tokens, encrypted DB columns) depends on the existing key, regenerating breaks it. Ask the user before bucketing `auto-secret` for a non-greenfield prod migration — the alternative is `plain-config` (carry the existing key forward).
+
+### External secret
+
+```
+STRIPE_SECRET=sk_live_xyz…
+OPENAI_API_KEY=sk-proj-…
+MAILGUN_API_KEY=key-…
+GITHUB_TOKEN=ghp_…
+```
+
+Source contains the SDK call (`stripe(env.STRIPE_SECRET)`, etc.). Aliased imports still count: `from stripe import Stripe as PaymentProvider; PaymentProvider(env.SECRET)`. Webhook-verification secrets (`stripe.webhooks.constructEvent`) also bucket `external-secret`. Empty / sentinel values (`STRIPE_SECRET=`, `disabled`, `sk_test_*`, `test_xxx`, `none`) are review-required — `REPLACE_ME` breaks startup if the app validates on init. Bucket `external-secret` only if a real prod value is needed; otherwise `plain-config` keeps the existing.
+
+### Plain config
+
+```
+LOG_LEVEL=info
+NODE_ENV=production
+FEATURE_FLAGS=experiments_v2,beta_signups
+APP_URL=${zeropsSubdomainHost}
+```
+
+Literal runtime config. Privacy flag: real emails (`MAIL_FROM_ADDRESS=ops@acme.com`), customer names, internal domain names, sender identities are technically `plain-config` but emitting them into a fresh prod project leaks PII. Surface to the user before bucketing — they may want to redact or rotate.
+
+## Platform-injected tokens
+
+`GIT_TOKEN` and `ZCP_API_KEY` appear in source-project envs but are ZCP-side infrastructure (re-injected by the launch handler for the new project's git push + MCP session). Bucket both as `infrastructure` — they will be DROPPED from `project.envVariables` and the prod project re-receives them via its own launch flow. Do NOT bucket them as `external-secret` (`REPLACE_ME` would break the prod project's first git push).
+
+## Common mis-classification traps
+
+- **APP_KEY across a stateful app** (M3): auto-generating breaks existing encrypted columns / session cookies. If state continuity matters, bucket `plain-config` and carry the existing value forward.
+- **`STRIPE_SECRET=` empty in staging** (M4): `REPLACE_ME` placeholder breaks startup if the app validates on init. Bucket `external-secret` only if a real prod value is needed; otherwise `plain-config`.
+- **Compound `DATABASE_URL` with literal credentials** (M2): looks like infrastructure but it's a hand-rolled URL. Bucket `external-secret`.
+- **`MAIL_FROM_ADDRESS=ops@acme.com`** (M5): literal config, but the email is real. Flag privacy; consider placeholder before launch.
+- **Test-fixture values** (`TEST_API_KEY=test_xxx` consumed only by tests, M6): bucket `plain-config` only if read at runtime; if every reference is inside a test file, drop the env entirely before launch.
+- **Non-default managed-service prefixes** (M7): a custom Mongo/Postgres/MySQL may emit envs as `${mongo_connectionString}` / `${postgres_*}` / `${mysql_*}` instead of `${db_*}`. Inspect the discover response's `services[].envs` array — false-negative `plain-config` here emits literal hostname/password into the prod project.
+
+If a row is genuinely ambiguous, the safest default is `plain-config` (carries the existing value) plus a follow-up review with the user — wrong-direction errors there are fixable post-launch without breaking deploy.
+
+---
+
 ### Launch complete — user-owned steps remaining
 
 ZCP has imported services and validated first deploy. The following steps require the user to act in the Zerops dashboard. ZCP cannot perform them (no standing prod access).
 
+**Production L7 exposure baseline — production has NO HTTP access enabled by default.**
+
+`appdev_zeropsSubdomain` env vars are populated on every HTTP-eligible runtime (platform always emits them), but the launch composer strips `enableSubdomainAccess` from the production import YAML per P-PROD-2 — so no L7 backend is registered. `curl` to that URL returns 502 until you either attach a custom domain OR explicitly enable the zerops.app subdomain in the prod project's dashboard.
+
+This is intentional, not a bug. Production prefers a custom domain over the `*.zerops.app` developer URL. Pick ONE path below before treating the launch as user-reachable; both paths require dashboard action against the prod project.
+
 1. **Delete the launch-window key** — open Settings → Access Tokens Management and revoke the token named `zcp-launch-<production-project-name>`.
 2. **Set external secrets** — open the production project, navigate to each service that needs Stripe/OpenAI/SMTP/etc. values, and set them under Env Variables → Secret. ZCP listed the keys needed in the prior response.
-3. **Attach custom domain** (if requested at scope time) — Project → Public Access → HTTP Routing → Add Domain. Use the DNS records ZCP emitted; add them at the registrar; click Verify in dashboard.
-4. **Verify production smoke test** — hit the live URL with a known request shape; check response and logs in dashboard.
-
-After step 4 passes, the launch is complete. For ongoing prod iteration: generate a separate project-scoped `ZCP_API_KEY` (Custom access per project, this one project, Full access) and configure a fresh ZCP MCP session against the production project.
-
+3. **Establish HTTP exposure (MANDATORY before smoke test)** — pick one:
+   - **Custom domain (recommended for prod)** — Project → Public Access → HTTP Routing → Add Domain in the prod project's dashboard. Use the DNS records ZCP emitted when the launch input carried `customDomain`. Add at the registrar, click Verify in dashboard.
+   - **zerops.app subdomain (explicit opt-in)** — Project → Service → Public Access → Enable Subdomain in the prod project's dashboard. ZCP cannot do this from the source-project MCP session because `zerops_subdomain` is bound to the current project; explicit enable requires either a new MCP session against the prod project (with a project-scoped `ZCP_API_KEY` for that project) or the dashboard click-through.
+   - **No public access** — leave the runtime reachable only via internal hostname for backend / worker services. Skip step 4.
+4. **Smoke test** — hit the URL from step 3 with a known request shape; check response and logs in dashboard. If step 3 is "no public access", skip directly to step 5 (services reachable only via internal hostname from peer services in the same project).
 5. **Pipeline trigger (if launched response had no `pipeline-not-configured-*` blockers)** — push a release tag to deploy: `git tag v1.0.0 && git push --tags` (matching the integration's tag regex, default `^v\d+\.\d+\.\d+$`). If the launched response carried such blockers, configure each runtime via Zerops dashboard first using the deep-link the blocker provides.
+
+After step 5 passes, the launch is complete. For ongoing prod iteration: generate a separate project-scoped `ZCP_API_KEY` (Custom access per project, this one project, Full access) and configure a fresh ZCP MCP session against the production project.
 
 ---
 
@@ -74,7 +169,18 @@ After step 4 passes, the launch is complete. For ongoing prod iteration: generat
 
 **This workflow is stateless multi-call narrowing.** Every response's `inputs` block is the running accumulator: pass all previously-accepted parameters forward on every next `action="start"` call. `action="complete"` is reserved for bootstrap and returns `BOOTSTRAP_NOT_ACTIVE` here.
 
-Apply suggestions from `sourceContext`:
+#### First — identify the launch path
+
+launch-production has two mutation paths in one workflow. Pick which one matches the user's intent BEFORE collecting scope params; the choice surfaces in `inputs` and dispatches the right mutation at the `ready-to-launch` step.
+
+| User intent signal | Path | Required token params |
+|---|---|---|
+| "Create new prod project", "launch to fresh project", or no existing project mentioned | **NEW-PROJECT** | `launchKey` (account-wide one-shot — surfaced at the `ready-to-launch` step via the launch-mutation-key-required atom) |
+| "I have existing prod project", explicit project ID/token supplied, "deploy into project X" | **EXISTING-PROJECT** | `existingProjectId` + `existingProdToken` (project-scoped token from target project's dashboard) |
+
+If the user explicitly hands you an existing project ID OR a project-scoped token, pass `existingProjectId` + `existingProdToken` on this first `action="start"` call alongside the scope params below — both will land in the `inputs` accumulator and the workflow will skip the `launchKey` prompt at `ready-to-launch`. Otherwise default to NEW-PROJECT and let the workflow ask for `launchKey` later.
+
+#### Then — apply suggestions from `sourceContext`
 
 - **`productionProjectName`** — `sourceContext.suggestedTargetName` (`<source>-dev` / `<source>-stage` → `<source>-prod`, else `<source>-prod` appended). Confirm name with user; don't silently rename.
 - **`targetService`** — `sourceContext.suggestedRuntime` when single. For standard-mode pairs the headline is the stage hostname (validated last-known-good); `devHostname` field discloses the iteration half. The new prod project rebuilds fresh from git, so promotion is the dev/stage pair *as a unit*. Either half is accepted as input — the handler normalizes internally. Managed deps are bundled implicitly.
@@ -109,7 +215,9 @@ If a key is in the list above, you do not need to classify it; the bundle compos
 
 ### One-shot API key required for publish
 
-ZCP cannot create the production project with its standing token (project-scoped). Walk the user through generating a temporary **account-wide** Zerops API key for the launch window — and wait for them to paste the value back before calling the workflow again:
+**Note**: this guidance applies to the **NEW-PROJECT** launch path only. If you're deploying into an existing prod project (the user supplied `existingProjectId` + `existingProdToken` at the scope-prompt step), you'll have advanced past this point — the workflow uses the project-scoped token instead and goes straight to `launching`. See the scope-prompt's path-selection table for which params trigger which path.
+
+ZCP cannot create a NEW production project with its standing token (project-scoped). Walk the user through generating a temporary **account-wide** Zerops API key for the launch window — and wait for them to paste the value back before calling the workflow again:
 
 1. Open [Settings → Access Tokens Management](https://app.zerops.io/settings/token-management).
 2. Click **Create token**. Name it `zcp-launch-<production-project-name>`.
@@ -158,24 +266,46 @@ Re-run `workflow="launch-production"` with the same `launchKey` if you want ZCP 
 
 ---
 
-### Launch status — mid-flight recovery
+### Launch status — recovery
 
-When `action="status"` returns `kind: "launch-active"`, a launch-production workflow is mid-flight for this source project. Conversation context was likely lost (compaction, restart). The envelope carries enough state to resume:
+`action="status"` surfaces one of three launch-production envelope shapes when a state file exists for this source project. Conversation context was likely lost (compaction, restart) — the envelope carries enough state to resume or terminate cleanly.
+
+#### `kind: "launch-active"` — mid-flight
+
+A non-terminal launch is in progress. Resume via `action="start"` with the same `productionProjectName`.
 
 | Field | Use |
 |---|---|
 | `targetProjectName` | Pass back as `productionProjectName` on the resume call. |
-| `status` | Tells you which phase to expect on the next response (e.g. `ready-to-launch` means you still need `launchKey`; `launching` / `configuring-pipeline` means polling). |
-| `lastUpdate` | Sanity-check that this is the launch you remember — if minutes old, it's the active one; if days old, the user may have abandoned it (ask before resuming). |
-| `ambiguousChoices` | When present, multiple non-terminal launches exist for this source. Pick a `productionProjectName` from the list before the resume call. |
+| `status` | Phase to expect next response (`ready-to-launch` needs `launchKey`; `launching` / `configuring-pipeline` are polling). |
+| `lastUpdate` | Sanity-check freshness — minutes old = active; days old = user may have abandoned (ask before resuming). |
+| `ambiguousChoices` | Multiple non-terminal launches exist; pick a `productionProjectName` before resume. |
 
 Resume call shape:
 
 ```
-zerops_workflow workflow="launch-production" productionProjectName="<from envelope>"
+zerops_workflow action="start" workflow="launch-production" productionProjectName="<from envelope>"
 ```
 
+`action="start"` is required on every call — launch-production is stateless multi-call narrowing, `action="start"` is the only orchestration entry (no `action="classify"`, no `action="complete"`). The handler re-reads accumulated state from `productionProjectName` and advances to the next phase.
+
 The `launchKey` is NOT required at the status step — only generate and pass it when the workflow re-enters `ready-to-launch` and you intend to advance to `launching`. Status is read-only; ZCP never constructs a project-admin client on this path.
+
+#### `kind: "launch-failed"` — terminal failure, reset required
+
+The most-recent launch for this source project ended in `failed` (e.g. schema validation rejected the import, mutation API error). The state file persists so the operator can inspect; a blind retry on the same `productionProjectName` would hit cached state and burn a fresh `launchKey` without re-entering the mutation phase.
+
+Recovery: `action="reset"` clears the state file and orphan project envs so the next `action="start"` enters cleanly with a fresh `launchKey`.
+
+```
+zerops_workflow action="reset" workflow="launch-production" productionProjectName="<from envelope>"
+```
+
+`action="reset"` is destructive — first call returns a `wouldDelete` diagnostic listing what will be removed; pass `confirmDestructive: true` on the second call to actually delete. (Old binaries without reset support: manually delete `.zcp/state/launch-production/<launchID>.json` and follow up with `zerops_manage` on orphan project envs.)
+
+#### `kind: "launch-completed"` — terminal success, no further action
+
+The launch finished cleanly (`status="launched"`). The production project exists at `targetProjectId`; no further `action="start"` calls are needed for this launch. Use the launch's checklist (returned at the original `launched` response) to delete the temporary `launchKey` and configure custom-domain if needed. To launch ANOTHER prod project from the same source, pick a different `productionProjectName` to derive a fresh `launchID`.
 
 ---
 

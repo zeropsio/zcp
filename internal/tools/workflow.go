@@ -136,6 +136,16 @@ type WorkflowInput struct {
 	FactType      string `json:"factType,omitempty"      jsonschema:"Recipe classify action only: the fact's type (one of gotcha_candidate, ig_item_candidate, verified_behavior, platform_observation, fix_applied, cross_codebase_contract) — returned by zerops_record_fact when the writer reads back recorded facts."`
 	TitleKeywords string `json:"titleKeywords,omitempty" jsonschema:"Recipe classify action only: space-separated keywords lifted from the fact's title (e.g. 'setGlobalPrefix Controller decorators collision' or 'env-var shadow cross-service'). The classify handler inspects these for framework-quirk / self-inflicted / platform-invariant indicators. Not required; without keywords the handler returns the default route for the type alone."`
 
+	// ConfirmDestructive is the diagnose-before-destruct ack used by
+	// `action="reset"` for `workflow="launch-production"` (FIX 1 PR 2).
+	// The first call without this field returns a `wouldDestroy` payload
+	// listing the launch state-file path + target project name; the agent
+	// reads the payload, then re-calls with this field populated to match
+	// `operation="launch-production-reset"` + `acknowledgedTargets=[<targetProjectName>]`.
+	// Same shape as the import-override gate; structure pinned in
+	// internal/tools/destructive_ack.go.
+	ConfirmDestructive *DestructiveAck `json:"confirmDestructive,omitempty" jsonschema:"Diagnose-before-destruct acknowledgment. Required on the second call after action=\"reset\" workflow=\"launch-production\" (also used by zerops_import override). Set operation to the wouldDestroy.operation echoed in the first-call refusal, and acknowledgedTargets to the same hostname / target-project-name set."`
+
 	// Launch-production workflow (Phase D.1 read-side, D.2 mutation).
 	// Per-request inputs threaded across calls — same stateless pattern
 	// as export's WorkflowInput.{TargetService, Variant, EnvClassifications}.
@@ -297,6 +307,15 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		}
 		return handleStart(ctx, projectID, engine, client, cache, input, rt)
 	case "reset":
+		// Launch-production reset clears the per-launchID state file
+		// (.zcp/state/launch-production/<launchID>.json). Separate from
+		// the session-scoped handleReset which clears bootstrap /
+		// develop / recipe engine state. Diagnose-before-destruct
+		// pattern (DiagnosedDestruction + ConfirmDestructive) — same
+		// shape as zerops_import override. FIX 1 PR 2.
+		if input.Workflow == workflowLaunchProduction {
+			return handleLaunchReset(stateDir, projectID, input)
+		}
 		return handleReset(ctx, engine, client, projectID)
 	case "iterate":
 		return handleIterate(ctx, engine, client, cache)
@@ -353,6 +372,16 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		if launchActive, allLaunches, _ := findActiveLaunchState(stateDir, projectID); launchActive != nil {
 			corpus, _ := workflow.LoadAtomCorpus()
 			return renderLaunchActiveRecovery(corpus, launchActive, allLaunches), nil, nil
+		}
+		// Terminal launch-production recovery: when the most-recent
+		// launch for this source project ended in `failed` (or recently
+		// `launched`), surface a dedicated envelope so the agent learns
+		// the launch already terminated rather than reading `idle` and
+		// retrying blindly. Failed → points at action="reset"; launched
+		// → confirms completion. FIX 1 PR 1 (eval review 2026-05-19).
+		if recent, _, _ := findRecentLaunchState(stateDir, projectID); recent != nil && isTerminalLaunchStatus(recent.Status) {
+			corpus, _ := workflow.LoadAtomCorpus()
+			return renderLaunchTerminalRecovery(corpus, recent), nil, nil
 		}
 		return handleLifecycleStatus(ctx, engine, client, projectID, rt)
 	case "close":

@@ -187,4 +187,5 @@ var retryShapes = map[string]struct {
 	paramPrefix string
 }{
 	importOverrideOperation: {tool: "zerops_import", paramPrefix: "override=true "},
+	launchResetOperation:    {tool: "zerops_workflow", paramPrefix: `action="reset" workflow="launch-production" productionProjectName="<your-target-name>" `},
 }

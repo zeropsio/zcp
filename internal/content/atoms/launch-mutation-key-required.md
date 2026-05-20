@@ -8,7 +8,9 @@ references-fields: []
 
 ### One-shot API key required for publish
 
-ZCP cannot create the production project with its standing token (project-scoped). Walk the user through generating a temporary **account-wide** Zerops API key for the launch window — and wait for them to paste the value back before calling the workflow again:
+**Note**: this guidance applies to the **NEW-PROJECT** launch path only. If you're deploying into an existing prod project (the user supplied `existingProjectId` + `existingProdToken` at the scope-prompt step), you'll have advanced past this point — the workflow uses the project-scoped token instead and goes straight to `launching`. See the scope-prompt's path-selection table for which params trigger which path.
+
+ZCP cannot create a NEW production project with its standing token (project-scoped). Walk the user through generating a temporary **account-wide** Zerops API key for the launch window — and wait for them to paste the value back before calling the workflow again:
 
 1. Open [Settings → Access Tokens Management](https://app.zerops.io/settings/token-management).
 2. Click **Create token**. Name it `zcp-launch-<production-project-name>`.

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -15,6 +16,17 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
+
+// launchMutationStaleAfter is the threshold beyond which a "launching"
+// state-file entry with empty TargetProjectID is considered abandoned
+// (the original mutation crashed). Below this threshold, a concurrent
+// retry is refused to prevent silent-double-mutation (FIX 1 PR 2).
+//
+// 10 minutes covers normal mutation latency (CreateAndImportProject +
+// async process polling typically settles in 2-3 min). Stale recovery
+// after that window allows the user to retry without an explicit reset
+// when the prior call genuinely crashed.
+const launchMutationStaleAfter = 10 * time.Minute
 
 // handleLaunchProduction orchestrates the launch-production workflow per
 // plans/production-lifecycle-2026-05-11.md §8.1. Stateless multi-call
@@ -68,6 +80,16 @@ func setProjectAdminClientFactory(f func(launchKey, apiHost string) (platform.Pr
 	return func() { projectAdminClientFactory = prev }
 }
 
+// handleLaunchProduction is the dispatch entry for action="start" workflow="launch-production".
+// State machine has 7 statuses + 4-branch resume; the orchestrator
+// necessarily reads linearly through them. Splitting into per-status
+// sub-handlers was tried in plan v3 and produced 8 small functions that
+// each had to re-extract the same input fields — net negative for
+// readability. Cyclomatic complexity = state-machine size, not nested
+// conditionals. Phase-aware resume (FIX 1 PR 2 of 2026-05-19 review)
+// adds 4 branches but each is a single-condition early return.
+//
+//nolint:maintidx // see doc-comment above
 func handleLaunchProduction(
 	ctx context.Context,
 	projectID string,
@@ -155,21 +177,87 @@ func handleLaunchProduction(
 		), WithRecoveryStatus()), nil, nil
 	}
 
-	// If we already created the target project on a prior call, two
-	// resume sub-cases:
-	//   - launchKey supplied AND pipeline check is pending OR
-	//     SkipPipelineSetup=true and not yet recorded: re-run pipeline
-	//     check with a fresh ProjectAdminClient (post-dashboard-config
-	//     refresh).
-	//   - otherwise: return the current launched/failed view as-is.
-	// This is the recovery primitive (action="status" semantics).
-	if existing != nil && existing.TargetProjectID != "" {
-		if existing.Status == topology.LaunchStatusLaunched && input.LaunchKey != "" {
-			if pendingPipelineConfigurations(existing) || (input.SkipPipelineSetup.Bool() && !pipelineSkipRecorded(existing)) {
-				return executeLaunchPipelineResume(ctx, input, corpus, stateDir, existing)
+	// Phase-aware resume (FIX 1 PR 2 — eval root-cause review 2026-05-19).
+	// Four resume branches based on (Status, TargetProjectID):
+	//
+	//   1. launching + TargetProjectID=="" — silent-double-mutation P0
+	//      lock. Mutation crashed between state-file persist and
+	//      CreateAndImportProject success; a blind retry would create
+	//      a SECOND project under the same name. Refuse with a
+	//      timeout-gated retry hint (allow only when state is stale
+	//      i.e. >launchMutationStaleAfter ago).
+	//
+	//   2. failed + TargetProjectID=="" — safe to retry with fresh
+	//      launchKey. No prod project exists; re-enter mutation phase
+	//      after wiping the failed state-file entry by ALLOWING fall-
+	//      through to the normal mutation gate. Stale launchKey
+	//      protection: handled by ZP API rejection on bad token.
+	//
+	//   3. failed + TargetProjectID!="" — destructive retry refused.
+	//      Project + partial services exist; blind re-import would
+	//      create duplicate services or hit projectEnvDuplicateKey.
+	//      Surface a Recovery hint pointing at action="reset" so the
+	//      agent first cleans the state file (and optionally the orphan
+	//      project via Zerops dashboard), then re-attempts cleanly.
+	//
+	//   4. launched / launching-with-project — current idempotent resume
+	//      (pipeline check rerun when launchKey supplied; else state-as-is).
+	if existing != nil {
+		if existing.TargetProjectID == "" {
+			//exhaustive:ignore — only Launching and Failed need
+			// resume-time treatment when TargetProjectID is empty; the
+			// remaining statuses (Unset/ScopePrompt/ClassifyPrompt/
+			// ReadyToLaunch/ConfiguringPipeline/Launched) flow through
+			// the normal status machine below the resume gate.
+			switch existing.Status {
+			case topology.LaunchStatusLaunching:
+				// P0 silent-double-mutation lock. Fresh `launching` state
+				// without a target project ID = mutation in progress
+				// elsewhere (or just crashed). Refuse blindly retrying.
+				if time.Since(existing.LastUpdate) < launchMutationStaleAfter {
+					return convertError(platform.NewPlatformError(
+						platform.ErrAPIError,
+						fmt.Sprintf(
+							"launch-production already in progress (status=launching, lastUpdate=%s); refusing concurrent mutation",
+							existing.LastUpdate.UTC().Format("2006-01-02T15:04:05Z"),
+						),
+						`Another zerops_workflow invocation is mid-mutation. Wait for it to finish (action="status" surfaces progress) or run action="reset" workflow="launch-production" if the prior call is genuinely dead and you want to retry from scratch.`,
+					), WithRecoveryStatus()), nil, nil
+				}
+				// Stale (>launchMutationStaleAfter): the original call
+				// crashed long ago; allow fall-through so the user can
+				// retry. The state file gets overwritten as part of
+				// executeLaunchMutation.
+			case topology.LaunchStatusFailed:
+				// Failed before target project was created → safe to
+				// retry. Fall through to mutation gate.
+			default:
+				// scope-prompt / classify-prompt / ready-to-launch with
+				// empty TargetProjectID are normal flow — handled by the
+				// status machine below, not the resume gate.
 			}
+		} else {
+			// TargetProjectID populated → project exists in Zerops.
+			if existing.Status == topology.LaunchStatusFailed {
+				// Refuse destructive retry; point at reset.
+				return convertError(platform.NewPlatformError(
+					platform.ErrAPIError,
+					fmt.Sprintf(
+						"launch-production for %q is in terminal failed state with targetProjectId=%s; cannot blindly retry — orphan project may exist",
+						existing.TargetProjectName, existing.TargetProjectID,
+					),
+					`Run action="reset" workflow="launch-production" productionProjectName="`+existing.TargetProjectName+`" to clear the state file. The orphan production project in your Zerops account is NOT deleted by reset (state-file scoped only); inspect via dashboard and delete manually if unwanted, then retry the launch with a fresh launchKey and a different productionProjectName.`,
+				), WithRecoveryStatus()), nil, nil
+			}
+			// launched / launching-with-project / configuring-pipeline —
+			// current idempotent resume.
+			if existing.Status == topology.LaunchStatusLaunched && input.LaunchKey != "" {
+				if pendingPipelineConfigurations(existing) || (input.SkipPipelineSetup.Bool() && !pipelineSkipRecorded(existing)) {
+					return executeLaunchPipelineResume(ctx, input, corpus, stateDir, existing)
+				}
+			}
+			return launchResumeResponse(corpus, existing), nil, nil
 		}
-		return launchResumeResponse(corpus, existing), nil, nil
 	}
 
 	// P-LP-3 active compare gate: try to compute the current

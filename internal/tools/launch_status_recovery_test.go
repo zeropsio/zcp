@@ -350,5 +350,162 @@ func handleStatusForTest(_ context.Context, _ platform.Client, stateDir, project
 	if launchActive, allLaunches, _ := findActiveLaunchState(stateDir, projectID); launchActive != nil {
 		return renderLaunchActiveRecovery(nil, launchActive, allLaunches)
 	}
+	if recent, _, _ := findRecentLaunchState(stateDir, projectID); recent != nil && isTerminalLaunchStatus(recent.Status) {
+		return renderLaunchTerminalRecovery(nil, recent)
+	}
 	return nil
 }
+
+// --- FIX 1 PR 1: terminal-state surfacing -------------------------------
+
+// TestFindRecentLaunchState_IncludesTerminal pins the new sister to
+// findActiveLaunchState: terminal states (failed / launched) MUST be
+// returned. findActiveLaunchState filters them out for pipeline-resume
+// callers; findRecentLaunchState carries them for action="status".
+func TestFindRecentLaunchState_IncludesTerminal(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	state := &launchState{
+		LaunchID:          "term1",
+		SourceProjectID:   "src",
+		TargetProjectName: "myapp-prod",
+		Status:            topology.LaunchStatusFailed,
+		LastUpdate:        time.Now(),
+	}
+	if err := writeLaunchState(dir, state); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	recent, all, err := findRecentLaunchState(dir, "src")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if recent == nil {
+		t.Fatal("expected non-nil terminal state — findRecentLaunchState MUST surface failed")
+	}
+	if recent.Status != topology.LaunchStatusFailed {
+		t.Errorf("status = %q, want failed", recent.Status)
+	}
+	if len(all) != 1 {
+		t.Errorf("len(all) = %d, want 1", len(all))
+	}
+
+	// Confirm findActiveLaunchState still filters terminal (P-LP-1 callers).
+	active, _, _ := findActiveLaunchState(dir, "src")
+	if active != nil {
+		t.Errorf("findActiveLaunchState must STILL filter terminal — got %+v", active)
+	}
+}
+
+// TestFindRecentLaunchState_PrefersMostRecent pins ordering: when both
+// active and terminal exist, the most-recent by LastUpdate wins.
+func TestFindRecentLaunchState_PrefersMostRecent(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	older := &launchState{
+		LaunchID:          "older",
+		SourceProjectID:   "src",
+		TargetProjectName: "myapp-prod-1",
+		Status:            topology.LaunchStatusLaunched,
+		LastUpdate:        time.Now().Add(-2 * time.Hour),
+	}
+	newer := &launchState{
+		LaunchID:          "newer",
+		SourceProjectID:   "src",
+		TargetProjectName: "myapp-prod-2",
+		Status:            topology.LaunchStatusFailed,
+		LastUpdate:        time.Now(),
+	}
+	for _, s := range []*launchState{older, newer} {
+		if err := writeLaunchState(dir, s); err != nil {
+			t.Fatalf("write %s: %v", s.LaunchID, err)
+		}
+	}
+
+	recent, all, err := findRecentLaunchState(dir, "src")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if recent == nil || recent.LaunchID != "newer" {
+		t.Errorf("expected newer launch, got %+v", recent)
+	}
+	if len(all) != 2 {
+		t.Errorf("len(all) = %d, want 2", len(all))
+	}
+}
+
+// TestRenderLaunchTerminalRecovery_FailedPointsAtReset pins the failed
+// envelope shape: kind="launch-failed", NextCall includes action="reset".
+func TestRenderLaunchTerminalRecovery_FailedPointsAtReset(t *testing.T) {
+	t.Parallel()
+	terminal := &launchState{
+		LaunchID:          "f1",
+		SourceProjectID:   "src",
+		TargetProjectName: "myapp-prod",
+		Status:            topology.LaunchStatusFailed,
+		LastUpdate:        time.Now(),
+	}
+	result := renderLaunchTerminalRecovery(nil, terminal)
+	if result == nil {
+		t.Fatal("nil result")
+	}
+	body := mustExtractEnvelope(t, result)
+	if body.Kind != "launch-failed" {
+		t.Errorf("Kind = %q, want launch-failed", body.Kind)
+	}
+	if !strings.Contains(body.NextCall, `action="reset"`) {
+		t.Errorf("NextCall must include action=\"reset\", got %q", body.NextCall)
+	}
+	if !strings.Contains(body.NextCall, terminal.TargetProjectName) {
+		t.Errorf("NextCall must echo TargetProjectName, got %q", body.NextCall)
+	}
+}
+
+// TestRenderLaunchTerminalRecovery_LaunchedConfirmsCompletion pins the
+// launched envelope: kind="launch-completed", no destructive NextCall
+// (launch is done — no reset suggested, no further start required).
+func TestRenderLaunchTerminalRecovery_LaunchedConfirmsCompletion(t *testing.T) {
+	t.Parallel()
+	terminal := &launchState{
+		LaunchID:          "l1",
+		SourceProjectID:   "src",
+		TargetProjectName: "myapp-prod",
+		TargetProjectID:   "tgt-pid",
+		Status:            topology.LaunchStatusLaunched,
+		LastUpdate:        time.Now(),
+	}
+	result := renderLaunchTerminalRecovery(nil, terminal)
+	body := mustExtractEnvelope(t, result)
+	if body.Kind != "launch-completed" {
+		t.Errorf("Kind = %q, want launch-completed", body.Kind)
+	}
+	if body.NextCall != "" {
+		t.Errorf("NextCall must be empty for launched state (launch already done), got %q", body.NextCall)
+	}
+	if body.TargetProjectID != "tgt-pid" {
+		t.Errorf("TargetProjectID = %q, want tgt-pid", body.TargetProjectID)
+	}
+}
+
+// mustExtractEnvelope parses the MCP CallToolResult JSON body into the
+// launchActiveEnvelope shape — both active and terminal recoveries use
+// the same wire type.
+func mustExtractEnvelope(t *testing.T, result *mcp.CallToolResult) launchActiveEnvelope {
+	t.Helper()
+	if len(result.Content) == 0 {
+		t.Fatal("result has no content")
+	}
+	text, ok := result.Content[0].(*mcp.TextContent)
+	if !ok {
+		t.Fatalf("content[0] not TextContent: %T", result.Content[0])
+	}
+	var env launchActiveEnvelope
+	if err := json.Unmarshal([]byte(text.Text), &env); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	return env
+}
+
+// silence unused-imports guard if mustExtractEnvelope unused in some
+// future cleanup pass.
+var _ = errors.New

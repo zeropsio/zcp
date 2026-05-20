@@ -52,7 +52,12 @@ type launchActiveChoice struct {
 func renderLaunchActiveRecovery(corpus []workflow.KnowledgeAtom, active *launchState, all []*launchState) *mcp.CallToolResult {
 	guidance := atomBody(corpus, "launch-status-recovery")
 	if guidance == "" {
-		guidance = "Launch-production workflow is mid-flight. Re-call zerops_workflow workflow=\"launch-production\" with the same productionProjectName to advance. Provide a fresh launchKey when the status is ready-to-launch."
+		// Fallback explicitly carries action="start" — launch-production is
+		// stateless multi-call narrowing, every advance is action="start"
+		// with accumulated inputs. Older atoms / NextCall strings that
+		// omitted action="start" led agents to guess action="classify"
+		// (FIX 1 from eval root-cause review 2026-05-19).
+		guidance = `Launch-production workflow is mid-flight. Re-call zerops_workflow action="start" workflow="launch-production" with the same productionProjectName to advance. Provide a fresh launchKey when the status is ready-to-launch.`
 	}
 
 	env := launchActiveEnvelope{
@@ -66,7 +71,7 @@ func renderLaunchActiveRecovery(corpus []workflow.KnowledgeAtom, active *launchS
 		TargetServiceHostname: active.TargetServiceHostname,
 		LastUpdate:            formatLaunchStateTimestamp(active),
 		Guidance:              guidance,
-		NextCall:              `zerops_workflow workflow="launch-production" productionProjectName="` + active.TargetProjectName + `"`,
+		NextCall:              `zerops_workflow action="start" workflow="launch-production" productionProjectName="` + active.TargetProjectName + `"`,
 	}
 
 	if len(all) > 1 {
@@ -93,4 +98,56 @@ func formatLaunchStateTimestamp(s *launchState) string {
 		return ""
 	}
 	return s.LastUpdate.UTC().Format("2006-01-02T15:04:05Z")
+}
+
+// renderLaunchTerminalRecovery surfaces a terminal launch-production
+// state (launched / failed) on `action="status"` instead of returning
+// generic `idle`. FIX 1 PR 1 closure.
+//
+// Failed state: agent gets the launchID + reset-required guidance so the
+// next action is `action="reset"` (PR 2 surface) — not blind retry that
+// hits projectEnvDuplicateKey or cached state. Until reset ships, the
+// recovery message names the manual state-file path as escape hatch.
+//
+// Launched state: provides the launchID + targetProjectID + brief
+// "launch complete" envelope. Agent learns the launch already finished
+// (e.g. compaction lost the launched response).
+func renderLaunchTerminalRecovery(corpus []workflow.KnowledgeAtom, terminal *launchState) *mcp.CallToolResult {
+	kind := "launch-terminal"
+	//exhaustive:ignore — only terminal statuses (Failed/Launched) reach
+	// this renderer; non-terminal statuses are gated upstream by
+	// isTerminalLaunchStatus and the fallback "launch-terminal" kind keeps
+	// the response shape predictable for any future mis-dispatch.
+	switch terminal.Status {
+	case topology.LaunchStatusFailed:
+		kind = "launch-failed"
+	case topology.LaunchStatusLaunched:
+		kind = "launch-completed"
+	}
+
+	guidance := atomBody(corpus, "launch-status-recovery")
+	if guidance == "" {
+		if terminal.Status == topology.LaunchStatusFailed {
+			guidance = `Launch-production reached terminal "failed" state. Use action="reset" to clear state before retrying with a fresh launchKey. Inspect the state file (.zcp/state/launch-production/<launchID>.json) if reset action is unavailable on your binary.`
+		} else {
+			guidance = `Launch-production completed (status="launched"). The production project is already created; no further start calls are required for this launchID.`
+		}
+	}
+
+	env := launchActiveEnvelope{
+		Kind:                  kind,
+		Workflow:              workflowLaunchProduction,
+		Status:                terminal.Status,
+		LaunchID:              terminal.LaunchID,
+		SourceProjectID:       terminal.SourceProjectID,
+		TargetProjectName:     terminal.TargetProjectName,
+		TargetProjectID:       terminal.TargetProjectID,
+		TargetServiceHostname: terminal.TargetServiceHostname,
+		LastUpdate:            formatLaunchStateTimestamp(terminal),
+		Guidance:              guidance,
+	}
+	if terminal.Status == topology.LaunchStatusFailed {
+		env.NextCall = `zerops_workflow action="reset" workflow="launch-production" productionProjectName="` + terminal.TargetProjectName + `"`
+	}
+	return jsonResult(env)
 }
