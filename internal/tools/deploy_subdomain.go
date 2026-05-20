@@ -13,12 +13,13 @@ import (
 
 // apiCodeServiceStackIsNotHTTP is the platform's "this service stack is not
 // HTTP-shaped" rejection on EnableSubdomainAccess. Returned for workers, for
-// dev runtimes whose start command hasn't published a listening HTTP port
-// yet (e.g. F8: `zsc noop` deferred dev-server start), and for any other
-// stack the platform won't route via L7. In the auto-enable context this is
-// not an error — just a "not for this service" signal that we silently
-// swallow. In the EXPLICIT zerops_subdomain enable context this is a real
-// diagnostic the user needs (their yaml is missing httpSupport: true), so
+// dev runtimes whose container has no listening HTTP port yet (F8 deferred
+// dev-server start — dev setups omit `run.start`, so no app process exists
+// until `zerops_dev_server action=start` runs), and for any other stack the
+// platform won't route via L7. In the auto-enable context this is not an
+// error — just a "not for this service" signal that we silently swallow. In
+// the EXPLICIT zerops_subdomain enable context this is a real diagnostic the
+// user needs (their yaml is missing httpSupport: true), so
 // ops.Subdomain.Enable still returns it as an error to that caller.
 const apiCodeServiceStackIsNotHTTP = "serviceStackIsNotHttp"
 
@@ -41,8 +42,9 @@ const apiCodeServiceStackIsNotHTTP = "serviceStackIsNotHttp"
 //     - success → set SubdomainAccessEnabled + URL, probe HTTP-ready.
 //     - already_enabled → set SubdomainAccessEnabled + URL, skip probe
 //     when ServiceMeta is supplied (bootstrapped earlier, route is live).
-//     - serviceStackIsNotHttp → silent benign skip (worker, F8 zsc-noop,
-//     any non-HTTP stack the platform refuses to route).
+//     - serviceStackIsNotHttp → silent benign skip (worker, F8 deferred-
+//     start dev runtime with omitted run.start, any non-HTTP stack the
+//     platform refuses to route).
 //     - other error → result.Warnings entry, deploy still succeeds.
 //
 // Why no DTO checks (the historical wrong path): the previous predicate read
@@ -75,10 +77,11 @@ func maybeAutoEnableSubdomain(
 	if err != nil {
 		if isServiceStackIsNotHTTPErr(err) {
 			// Platform: "service stack is not http or https". Worker, F8
-			// zsc-noop deferred dev-server, or any other non-HTTP-shaped
-			// stack. Benign signal in the auto-enable context — silently
-			// swallow. Explicit zerops_subdomain enable callers still get
-			// this error from ops.Subdomain (the downgrade is contextual).
+			// deferred dev-server (dev runtime with omitted run.start), or
+			// any other non-HTTP-shaped stack. Benign signal in the
+			// auto-enable context — silently swallow. Explicit
+			// zerops_subdomain enable callers still get this error from
+			// ops.Subdomain (the downgrade is contextual).
 			return
 		}
 		result.Warnings = append(result.Warnings,
@@ -105,7 +108,7 @@ func maybeAutoEnableSubdomain(
 	//     race) — always probe in that case so the next zerops_verify
 	//     doesn't race.
 	//
-	//  2. deferred-start runtime (dev-mode dynamic with `zsc noop --silent`).
+	//  2. deferred-start runtime (dev-mode dynamic with `run.start` omitted).
 	//     The container is alive but no app process exists yet by design;
 	//     HTTP probe returns 502 until the agent invokes
 	//     `zerops_dev_server action=start`. Surfacing the 502 as a warning
@@ -120,10 +123,10 @@ func maybeAutoEnableSubdomain(
 		// standard pair (m.Mode = ModeStandard, m.StageHostname populated),
 		// auto-enabling subdomain on the stage hostname must NOT skip the
 		// HTTP probe. The stage runtime runs run.start (HTTP-shaped from
-		// boot); only the dev half is zsc-noop deferred-start. Reading
-		// meta.Mode directly would treat both halves as deferred and
-		// silently swallow legitimate "subdomain not HTTP-ready" warnings
-		// for stage deploys.
+		// boot); only the dev half is deferred-start (no `run.start`).
+		// Reading meta.Mode directly would treat both halves as deferred
+		// and silently swallow legitimate "subdomain not HTTP-ready"
+		// warnings for stage deploys.
 		deferredStart = topology.IsDeferredStart(meta.ModeFor(targetService), runtimeClass)
 	}
 

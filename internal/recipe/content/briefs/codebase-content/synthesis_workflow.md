@@ -256,22 +256,24 @@ invoke `zerops_dev_server`, `zerops_deploy`, `zcli`, or "the agent".
 Name the **outcome** + **canonical porter mechanism**, not the
 authoring tool that sets it up.
 
-**FAIL**: ``# `zsc noop --silent` keeps the container alive — the
-agent owns the long-running process via `zerops_dev_server`...`` —
-"agent owns" + "zerops_dev_server" both leak.
+**FAIL**: ``# Whole-source deployFiles so the agent's SSHFS edits
+land on the container...`` — "the agent" + SSHFS-as-authoring-tool
+both leak.
 
-**PASS** (laravel-showcase apidev/zerops.yaml dev start):
+**PASS** (laravel-showcase apidev/zerops.yaml dev `deployFiles: [.]`):
 
 ```yaml
-# `zsc noop --silent` keeps the container alive without binding
-# the runtime to a foreground process — the dev container is a
-# remote-development workspace, the porter SSHs in and runs
-# `npm run start:dev` (or framework-equivalent watcher) by hand.
-# Code edits over SSHFS rebuild in place, no redeploy.
+# `deployFiles: [.]` ships the whole source tree on every dev deploy
+# — the dev container is a remote-development workspace, the porter
+# SSHs in and runs `npm run start:dev` (or framework-equivalent
+# watcher) by hand. Edits over SSHFS rebuild in place, no redeploy.
+# Narrowing to `[dist, package.json]` would wipe the source on the
+# next cycle.
 ```
 
-Mechanism named (zsc noop keeps container alive), porter affordance
-named (SSH in, run framework watcher), no authoring-tool token.
+Mechanism named (whole-source deploy preserves the tree across
+iterations), porter affordance named (SSH in, run framework watcher),
+no authoring-tool token.
 
 ## Citation map (BINDING for KB and IG)
 

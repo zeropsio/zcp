@@ -24,7 +24,7 @@ var activeVersionsJSON []byte
 
 // healthCheckExemptSetups lists setup names exempt from the healthCheck requirement.
 // "bot": Discord bots use gateway connections, not HTTP.
-// "dev": Dev entries use `zsc noop --silent` — developer controls the server manually.
+// "dev": Dev entries omit `run.start` entirely — developer controls the server manually.
 var healthCheckExemptSetups = map[string]bool{
 	"bot": true,
 	"dev": true,

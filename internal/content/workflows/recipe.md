@@ -706,7 +706,7 @@ Recipe-specific conventions for each setup (platform rules from provision apply 
 **`setup: dev`** (self-deploy from SSHFS mount — agent iterates here):
 - **`setup: dev` MUST give the agent a container that can host the framework's dev toolchain** — shell, package manager, and the framework's hot-reload process (`npm run dev`, `php artisan serve`, `bun --hot`, `cargo watch`, etc.). This is what makes the dev setup iterable over SSH.
 - **Dynamic runtimes** (nodejs, python, php-nginx, go, rust, bun, ubuntu, …): `run.base` is the same as prod and `deployFiles: [.]` preserves source across deploys — **MANDATORY**, anything else destroys the source tree.
-- `start: zsc noop --silent` — exception: omit `start` for implicit-webserver runtimes (php-nginx, php-apache, nginx, static)
+- Omit `run.start` entirely on every dev setup — dynamic runtimes (nodejs, go, python, …) and implicit-webserver runtimes (php-nginx, php-apache, nginx, static) both leave the `start` key out. The container idles without an explicit start command; the agent owns the long-running process via `zerops_dev_server` (dynamic) or the bundled webserver auto-serves (implicit).
 - **NO healthCheck, NO readinessCheck** — agent controls lifecycle; checks would restart the container during iteration
 - Framework mode flags set to dev values (`APP_ENV: local`, `NODE_ENV: development`, `DEBUG: "true"`, verbose logging)
 - Same cross-service refs from `zerops_discover` as prod — only mode flags differ

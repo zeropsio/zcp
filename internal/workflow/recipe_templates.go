@@ -388,7 +388,7 @@ func envOperationalConcerns(plan *RecipePlan, envIndex int) string {
 	switch envIndex {
 	case 0:
 		return "- SSH into the dev container and drive the app process yourself.\n" +
-			"- `zerops.yaml` `setup: dev` ships a no-op start (`zsc noop --silent`) — the container idles until you run the dev server.\n" +
+			"- `zerops.yaml` `setup: dev` omits `run.start` — the container idles until you run the dev server.\n" +
 			"- Edits made on the SSHFS mount from zcp are live on the container's filesystem; there is no build loop.\n" +
 			"- `initCommands` do NOT fire automatically at this tier — run migrations and seeds ad-hoc over SSH.\n" +
 			"- See `zerops_knowledge topic=init-commands` for how `zsc execOnce` behaves across iterations."

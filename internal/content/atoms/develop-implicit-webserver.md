@@ -13,7 +13,7 @@ Apache or nginx is bundled into the runtime image — **no manual `start:` and n
 
 **`zerops.yaml` differences vs. dynamic runtimes:**
 
-- Omit `run.start` — leave the field out entirely (not even `zsc noop`).
+- Omit `run.start` — leave the field out entirely.
 - Omit `run.ports` — port 80 is fixed; Zerops handles it.
 - Set `run.documentRoot` to the web-serving subtree. Laravel / Symfony /
   composer apps use `public`; root-serving apps omit it or set `.`.

@@ -267,7 +267,7 @@ Apache or nginx is bundled into the runtime image — **no manual `start:` and n
 
 **`zerops.yaml` differences vs. dynamic runtimes:**
 
-- Omit `run.start` — leave the field out entirely (not even `zsc noop`).
+- Omit `run.start` — leave the field out entirely.
 - Omit `run.ports` — port 80 is fixed; Zerops handles it.
 - Set `run.documentRoot` to the web-serving subtree. Laravel / Symfony /
   composer apps use `public`; root-serving apps omit it or set `.`.
@@ -603,9 +603,9 @@ passing verify.
 
 ### Before verify on dev-mode dynamic runtimes
 
-Dev-mode dynamic runtimes deploy with `start: zsc noop --silent` —
-nothing is listening yet. `zerops_verify` will return `http_root: HTTP
-502` and that is NOT a deploy failure. Start the dev process via
+Dev-mode dynamic runtimes deploy with `run.start` omitted — nothing is
+listening yet. `zerops_verify` will return `http_root: HTTP 502` and
+that is NOT a deploy failure. Start the dev process via
 `zerops_dev_server action=start` first, then verify.
 
 For simple-mode and standard-mode runtimes the runtime starts on

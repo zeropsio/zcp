@@ -494,11 +494,12 @@ func TestMaybeAutoEnableSubdomain_StageCrossDeploy_EnablesForStage(t *testing.T)
 //
 // Subtractive root fix for the post-deploy 502 friction (eval suite
 // 20260503-211240, 4-of-9 scenarios flagged the noise): when the runtime
-// is dev-mode dynamic with `zsc noop --silent` start command, no app is
-// expected to be HTTP-reachable until `zerops_dev_server action=start`
-// fires. Probing in this state always returns 502 and emits a misleading
-// warning. Skip the probe entirely; the agent's next move (dev_server
-// start) tests HTTP readiness more reliably anyway.
+// is dev-mode dynamic with `run.start` omitted (the container boots idle,
+// no app process), no app is expected to be HTTP-reachable until
+// `zerops_dev_server action=start` fires. Probing in this state always
+// returns 502 and emits a misleading warning. Skip the probe entirely;
+// the agent's next move (dev_server start) tests HTTP readiness more
+// reliably anyway.
 //
 // The predicate (topology.IsDeferredStart) gates only on (mode in
 // {Dev, Standard}) AND (class == Dynamic). Stage / simple modes auto-start

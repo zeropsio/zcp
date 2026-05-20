@@ -358,7 +358,7 @@ manual control). For implicit-webserver runtimes (`php-apache`,
 `php-nginx`) the implicit-webserver guidance fires instead; for static
 runtimes the web server auto-starts and this checklist does not apply.
 
-- Dev setup block in `zerops.yaml`: `start: zsc noop --silent`, **no**
+- Dev setup block in `zerops.yaml`: **omit `run.start`**, **no**
   `healthCheck`. Zerops keeps the runtime container idle; you start
   the dev process yourself via `zerops_dev_server action=start` after
   each deploy.
@@ -388,9 +388,9 @@ Client-side pre-flight rejects this with `INVALID_ZEROPS_YML` before any build t
 
 ### Dynamic-runtime dev server
 
-Dev-mode dynamic runtime containers start running `zsc noop` after
-deploy — no dev process is live until you start one. Action family
-on `zerops_dev_server`:
+Dev-mode dynamic runtimes deploy with `run.start` omitted — the
+runtime container idles and no dev process is live until you start
+one. Action family on `zerops_dev_server`:
 
 | Action | Use | Args |
 |---|---|---|
@@ -568,9 +568,9 @@ It has the `Agent(model="sonnet", prompt=...)` template; substitute
 
 ### Before verify on dev-mode dynamic runtimes
 
-Dev-mode dynamic runtimes deploy with `start: zsc noop --silent` —
-nothing is listening yet. `zerops_verify` will return `http_root: HTTP
-502` and that is NOT a deploy failure. Start the dev process via
+Dev-mode dynamic runtimes deploy with `run.start` omitted — nothing is
+listening yet. `zerops_verify` will return `http_root: HTTP 502` and
+that is NOT a deploy failure. Start the dev process via
 `zerops_dev_server action=start` first, then verify.
 
 For simple-mode and standard-mode runtimes the runtime starts on

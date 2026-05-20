@@ -99,8 +99,8 @@ framework work, not on each other.
 4. **Verify the dev deploy**: `zerops_verify targetService=<hostname>`.
 
 5. **Start the dev server**: `zerops_dev_server action=start` (dynamic
-   runtimes + any codebase with a frontend bundler). Dev slots run
-   `start: zsc noop --silent` and do NOT auto-start — the long-running
+   runtimes + any codebase with a frontend bundler). Dev slots omit
+   `run.start` and do NOT auto-start any app process — the long-running
    process is owned by the agent so code edits don't force a redeploy.
    Implicit-webserver backends skip this for their own process, but
    run the tool for a compiled frontend (Vite, esbuild) when applicable.
