@@ -241,6 +241,80 @@ func TestPhaseEntryCodebaseContentAtom_TeachesMultiFilePointer(t *testing.T) {
 	mustContain(t, body, "Read order")
 }
 
+// TestHandleBuildSubagentPrompt_NoticeCarriesSubagentTypeDirective —
+// every build-subagent-prompt response Notice MUST tell the main agent
+// to dispatch with `subagent_type="general-purpose"`. The directive
+// inside the brief body (writePromptRecipeContext) is invisible at
+// dispatch time on the disk-fallback / multi-file paths because the
+// main agent only sees BriefPath, not the body. Without this on Notice
+// the main agent defaults to `subagent_type="claude"` (FleetView
+// default), which triggers worktree isolation, which fails on the
+// non-git recipe-authoring outputRoot. Closes the run-48 wall: every
+// scaffold/codebase-content/refinement dispatch died at "Cannot create
+// agent worktree: not in a git repository". Pin every kind across the
+// real handler so a future Notice edit can't silently re-open the gap.
+func TestHandleBuildSubagentPrompt_NoticeCarriesSubagentTypeDirective(t *testing.T) {
+	t.Parallel()
+
+	type kindCase struct {
+		kind     string
+		codebase string // empty for phase-wide kinds.
+	}
+	cases := []kindCase{
+		{kind: "scaffold", codebase: "api"},
+		{kind: "feature"},
+		{kind: "finalize"},
+		{kind: "codebase-content", codebase: "api"},
+		{kind: "claudemd-author", codebase: "api"},
+		{kind: "env-content"},
+		{kind: "refinement"},
+		{kind: "refinement2"},
+	}
+	// Anchors that MUST appear in Notice — keep tight to load-bearing
+	// tokens so prose edits stay possible but the directive itself
+	// cannot drift.
+	noticeAnchors := []string{
+		`subagent_type="general-purpose"`,
+		`subagent_type="claude"`,
+		"worktree isolation",
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.kind, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			store := NewStore(dir)
+			outRoot := filepath.Join(dir, "run")
+			startRes := dispatch(t.Context(), store, RecipeInput{
+				Action: "start", Slug: "synth-showcase", OutputRoot: outRoot,
+			})
+			if !startRes.OK {
+				t.Fatalf("start: %+v", startRes)
+			}
+			sess, _ := store.Get("synth-showcase")
+			sess.Plan = syntheticShowcasePlan()
+
+			in := RecipeInput{
+				Action: "build-subagent-prompt", Slug: "synth-showcase",
+				BriefKind: tc.kind, Codebase: tc.codebase,
+			}
+			if tc.kind == "feature" {
+				in.FeaturePass = string(FeaturePassFrontend)
+			}
+			r := dispatch(t.Context(), store, in)
+			if !r.OK {
+				t.Fatalf("build-subagent-prompt(kind=%s): %+v", tc.kind, r)
+			}
+			for _, want := range noticeAnchors {
+				if !strings.Contains(r.Notice, want) {
+					t.Errorf("kind=%s Notice missing anchor %q (silent-drop guard against run-48 worktree-isolation regression)\nNotice=%s",
+						tc.kind, want, r.Notice)
+				}
+			}
+		})
+	}
+}
+
 // TestHandleBuildSubagentPrompt_OverThreshold_PromptIsEmptyBriefPathSet —
 // verifies the either-or contract end-to-end: no dual-population.
 func TestHandleBuildSubagentPrompt_OverThreshold_PromptIsEmptyBriefPathSet(t *testing.T) {

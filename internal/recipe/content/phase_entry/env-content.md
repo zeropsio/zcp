@@ -41,6 +41,11 @@ multi-file pointer:
 The index lists N part files in a "Read order" section. The sub-
 agent dispatch wrapper MUST instruct: "Read `<briefPath>` first;
 then Read each part file listed in its 'Read order' section in the
-order shown before authoring any fragment." Run-31 Fix #1 closure —
-multi-file shape ensures no single Read exceeds the 25K-token cap
-even with the full atom corpus + 142+ recorded facts in scope.
+order shown before authoring any fragment." Dispatch with
+`subagent_type="general-purpose"` — do NOT use
+`subagent_type="claude"` (FleetView's default when unspecified).
+`claude` triggers worktree isolation on dispatch, which fails on the
+non-git recipe-authoring outputRoot and breaks the shared
+`zerops_recipe` MCP state. Run-31 Fix #1 closure — multi-file shape
+ensures no single Read exceeds the 25K-token cap even with the full
+atom corpus + 142+ recorded facts in scope.

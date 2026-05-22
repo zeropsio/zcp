@@ -536,6 +536,7 @@ func handleBuildSubagentPrompt(sess *Session, in RecipeInput, r RecipeResult) Re
 		}
 		r.BriefPath = indexPath
 		r.Notice = "brief written to disk as multi-file index; dispatch sub-agent with this path. Sub-agent must Read index.md, then Read each part file listed in its 'Read order' section in order."
+		r.Notice += mainAgentSubagentTypeGuidance()
 		r.Notice += refinement2MainAgentTriageGuidance(BriefKind(in.BriefKind))
 		flipDispatchFlags(sess, BriefKind(in.BriefKind))
 		r.OK = true
@@ -559,6 +560,7 @@ func handleBuildSubagentPrompt(sess *Session, in RecipeInput, r RecipeResult) Re
 		r.BriefPath = path
 		r.BriefSize = len(prompt)
 		r.Notice = "brief written to disk; dispatch sub-agent with this path"
+		r.Notice += mainAgentSubagentTypeGuidance()
 		r.Notice += refinement2MainAgentTriageGuidance(BriefKind(in.BriefKind))
 		// Run-23 F-26 / Run-41 — flip the per-kind Dispatched flag only
 		// after the brief is actually deliverable (inline or pointer).
@@ -574,10 +576,33 @@ func handleBuildSubagentPrompt(sess *Session, in RecipeInput, r RecipeResult) Re
 	// Single-flip is fine; the gate only reads the boolean.
 	flipDispatchFlags(sess, BriefKind(in.BriefKind))
 	r.Prompt, r.OK = prompt, true
+	r.Notice += mainAgentSubagentTypeGuidance()
 	if guidance := refinement2MainAgentTriageGuidance(BriefKind(in.BriefKind)); guidance != "" {
 		r.Notice += guidance
 	}
 	return r
+}
+
+// mainAgentSubagentTypeGuidance returns the dispatch directive the main
+// agent needs at sub-agent dispatch time: pass
+// `subagent_type="general-purpose"`, do NOT default to `claude`.
+//
+// Why this lives on response.Notice: the directive itself also lives
+// inside the dispatched brief body (writePromptRecipeContext in
+// briefs_subagent_prompt.go §"Sub-agent dispatch — subagent_type",
+// pinned by TestBuildSubagentPrompt_AllKindsCarrySubagentDispatchType
+// Directive). On the disk-fallback / multi-file paths the main agent
+// never reads the body — it dispatches by pointer. The directive in
+// the body is invisible at dispatch time and the main agent defaults
+// to `claude` (FleetView's default when no subagent_type is passed),
+// which triggers worktree isolation. On the non-git recipe-authoring
+// outputRoot that aborts the dispatch ("Cannot create agent worktree:
+// not in a git repository"). Even on the inline path the phase-entry
+// guidance never names subagent_type, so the same default fires.
+// Surface the directive on the response Notice so it reaches the
+// main agent BEFORE composing the dispatch.
+func mainAgentSubagentTypeGuidance() string {
+	return "\n\nMAIN AGENT — Agent-tool dispatch MUST pass `subagent_type=\"general-purpose\"`. Do NOT use `subagent_type=\"claude\"` (FleetView's default when unspecified) — that subagent_type triggers worktree isolation on dispatch, which fails on the non-git recipe-authoring outputRoot and breaks the shared `zerops_recipe` MCP state every recipe sub-agent depends on. `general-purpose` has the same tool surface (`*`) and runs inline."
 }
 
 // refinement2MainAgentTriageGuidance returns the per-finding triage

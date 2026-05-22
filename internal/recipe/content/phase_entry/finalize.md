@@ -44,7 +44,12 @@ The response carries the engine-owned recipe-level context block +
 the finalize brief verbatim (correct codebase paths, fragment-count
 math, validator tripwires, managed-service list — all Plan-derived) +
 closing notes naming the stitch-then-complete-phase path. Pass
-`response.prompt` verbatim to `Agent`. Hand-typed wrappers are out —
+`response.prompt` verbatim to `Agent` with
+`subagent_type="general-purpose"` — do NOT use
+`subagent_type="claude"` (FleetView's default when unspecified).
+`claude` triggers worktree isolation on dispatch, which fails on the
+non-git recipe-authoring outputRoot and breaks the shared
+`zerops_recipe` MCP state. Hand-typed wrappers are out —
 math errors and path drift compound (run-10 wrapper claimed 89
 fragments when actual was 67; carried obsolete pre-§L paths), and a
 cramped wrapper at codebase-content phase historically dropped run-
