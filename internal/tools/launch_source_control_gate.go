@@ -209,7 +209,7 @@ func validateLaunchSourceControl(
 		}
 	}
 
-	// Check 4 — build-integration recommended (warn-only). Always
+	// Check 6 — build-integration recommended (warn-only). Always
 	// evaluated; emission gated on SkipBuildIntegration ack.
 	if meta.BuildIntegration == "" || meta.BuildIntegration == topology.BuildIntegrationNone {
 		if !skipBuildIntegrationListed(skipBuildIntegration, pushHost) &&

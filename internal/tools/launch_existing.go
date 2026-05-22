@@ -100,47 +100,6 @@ func validateExistingProdTokenScope(ctx context.Context, c platform.Client, expe
 	}
 }
 
-// detectHostnameConflicts returns the subset of about-to-import
-// hostnames that already exist as services in the target project.
-// Comparison is case-sensitive (platform treats hostnames as
-// case-sensitive identifiers). Order preserved from `incoming` for
-// deterministic test output.
-//
-// platform.ServiceStack.Name carries the hostname per ServiceStack
-// struct docs (line 35: `Name string `json:"name"` // hostname`).
-func detectHostnameConflicts(existing []platform.ServiceStack, incoming []string) []string {
-	if len(existing) == 0 || len(incoming) == 0 {
-		return nil
-	}
-	taken := make(map[string]bool, len(existing))
-	for _, s := range existing {
-		taken[s.Name] = true
-	}
-	var conflicts []string
-	for _, h := range incoming {
-		if taken[h] {
-			conflicts = append(conflicts, h)
-		}
-	}
-	return conflicts
-}
-
-// importHostnamesFromInputs returns the hostnames the launch bundle
-// would create on the target. Used by the hostname-conflict preflight
-// to compare against the existing service list. Order matches the
-// composer's services array order (runtime entries first, then
-// deduplicated managed deps).
-func importHostnamesFromInputs(inputs ops.LaunchBundleInputs) []string {
-	hostnames := make([]string, 0, len(inputs.Runtimes)+len(inputs.ManagedServices))
-	for _, r := range inputs.Runtimes {
-		hostnames = append(hostnames, r.ProdHostname)
-	}
-	for _, m := range inputs.ManagedServices {
-		hostnames = append(hostnames, m.Hostname)
-	}
-	return hostnames
-}
-
 // executeExistingProjectMutation runs the launch-production existing-
 // project mutation path per plan §6.6:
 //
@@ -329,25 +288,6 @@ func executeExistingProjectMutation(
 				"bundle-recompose-after-skip-failed",
 				"Re-composing bundle after merge-skip drops failed: "+err.Error()), nil, nil
 		}
-	}
-
-	// Legacy fall-back for surface compat: when no conflicts were
-	// resolved AND none detected, the legacy hostname-conflict block
-	// fires (e.g. agent passed empty MergeStrategy but conflicts list
-	// is also empty — should never trip but kept for defense in depth).
-	if conflicts := detectHostnameConflicts(existingServices, importHostnamesFromInputs(bundleInputs)); len(conflicts) > 0 && len(resolvedConflicts) == 0 {
-		_ = appendAuditLog(stateDir, launchAuditEntry{
-			LaunchID:          launchID,
-			Action:            "publish-rejected",
-			SourceProjectID:   sourceProjectID,
-			TargetProjectName: input.ProductionProjectName,
-			Result:            "failure",
-			ErrorMessage:      "hostname conflicts: " + strings.Join(conflicts, ","),
-		})
-		return launchFailedResponse(corpus, topology.BlockerCategoryOther,
-			"hostname-conflict",
-			fmt.Sprintf("Target project already has services with these hostnames: %s. Rename source services or delete the target collisions before retrying.",
-				strings.Join(conflicts, ", "))), nil, nil
 	}
 
 	// Pre-mutation state persistence — same shape as new-project path

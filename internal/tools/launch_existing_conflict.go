@@ -24,7 +24,7 @@ const (
 	// composed bundle. Additive launch — the existing target service
 	// is left untouched. Default when no entry is supplied for a
 	// hostname (the gate then refuses with "ack required" until the
-	// agent explicitly states the strategyValueegy per conflict).
+	// agent explicitly states the strategy per conflict).
 	mergeStrategySkip existingProjectMergeStrategy = "skip"
 	// mergeStrategyReplace overwrites the existing target service.
 	// REQUIRES ConfirmDestructive ack matching every replace-flagged
@@ -41,7 +41,7 @@ type existingProjectConflict struct {
 	Hostname       string                       `json:"hostname"`
 	ExistingType   string                       `json:"existingType,omitempty"`
 	ExistingStatus string                       `json:"existingStatus,omitempty"`
-	Strategy       existingProjectMergeStrategy `json:"strategyValueegy,omitempty"`
+	Strategy       existingProjectMergeStrategy `json:"strategy,omitempty"`
 }
 
 // detectExistingProjectConflicts compares the prod-hostname set the
@@ -84,7 +84,7 @@ func detectExistingProjectConflicts(
 
 // resolveExistingProjectStrategies applies the agent-supplied
 // WorkflowInput.MergeStrategy to the detected conflicts. Returns
-// the conflict list annotated with the chosen strategyValueegy plus a list
+// the conflict list annotated with the chosen strategy plus a list
 // of conflicts still missing an agent ack (the gate surfaces these
 // as unresolved until the agent re-calls with a complete map).
 func resolveExistingProjectStrategies(
@@ -138,7 +138,7 @@ func missingDestructiveAckForReplaces(resolved []existingProjectConflict, ack *D
 
 // applyMergeSkipsToBundle drops every promotable / managed dep whose
 // prod-hostname appears in the resolved-conflict list with
-// Strategy=skip. Replace strategyValueegies pass through unchanged (the
+// Strategy=skip. Replace strategies pass through unchanged (the
 // composer keeps the entry; the platform's ImportServices overwrites
 // the existing service on import).
 func applyMergeSkipsToBundle(inputs ops.LaunchBundleInputs, resolved []existingProjectConflict) ops.LaunchBundleInputs {
