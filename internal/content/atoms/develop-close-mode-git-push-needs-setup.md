@@ -4,7 +4,7 @@ priority: 2
 phases: [develop-active]
 modes: [standard, simple, local-stage, local-only]
 closeDeployModes: [git-push]
-gitPushStates: [unconfigured, broken, unknown]
+gitPushStates: [unconfigured, broken]
 deployStates: [deployed]
 multiService: aggregate
 title: "Close-mode is git-push but capability isn't ready — set it up first"

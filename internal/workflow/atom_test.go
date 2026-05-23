@@ -571,14 +571,13 @@ body`,
 			content: `---
 id: gps-full
 phases: [develop-active]
-gitPushStates: [unconfigured, configured, broken, unknown]
+gitPushStates: [unconfigured, configured, broken]
 ---
 body`,
 			wantGps: []topology.GitPushState{
 				topology.GitPushUnconfigured,
 				topology.GitPushConfigured,
 				topology.GitPushBroken,
-				topology.GitPushUnknown,
 			},
 		},
 		{

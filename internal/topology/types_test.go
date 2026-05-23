@@ -206,19 +206,21 @@ func TestCloseDeployModeValues(t *testing.T) {
 }
 
 // TestGitPushStateValues pins the closed enum set for the per-pair
-// git-push capability dimension.
+// git-push capability dimension. Phase 6 of the systemic fix dropped
+// the dead GitPushUnknown value — `broken` covers the "previously
+// configured but probe needed" semantics with a real writer (deploy
+// credential-failure degradation).
 func TestGitPushStateValues(t *testing.T) {
 	t.Parallel()
 	set := map[GitPushState]struct{}{
 		GitPushUnconfigured: {},
 		GitPushConfigured:   {},
 		GitPushBroken:       {},
-		GitPushUnknown:      {},
 	}
-	if len(set) != 4 {
-		t.Fatalf("GitPushState constants must be 4 distinct values, got %d", len(set))
+	if len(set) != 3 {
+		t.Fatalf("GitPushState constants must be 3 distinct values, got %d", len(set))
 	}
-	for _, want := range []GitPushState{"unconfigured", "configured", "broken", "unknown"} {
+	for _, want := range []GitPushState{"unconfigured", "configured", "broken"} {
 		if _, ok := set[want]; !ok {
 			t.Errorf("GitPushState missing canonical value %q", want)
 		}

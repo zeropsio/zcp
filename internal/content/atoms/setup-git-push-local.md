@@ -2,7 +2,7 @@
 id: setup-git-push-local
 priority: 2
 phases: [strategy-setup]
-gitPushStates: [unconfigured, broken, unknown]
+gitPushStates: [unconfigured, broken]
 environments: [local]
 title: "Configure git-push capability from the local machine"
 references-fields: [ops.DeployResult.Status, ops.DeployResult.Warnings, ops.DeployResult.FailureClassification]

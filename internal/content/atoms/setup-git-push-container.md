@@ -2,7 +2,7 @@
 id: setup-git-push-container
 priority: 2
 phases: [strategy-setup]
-gitPushStates: [unconfigured, broken, unknown]
+gitPushStates: [unconfigured, broken]
 environments: [container]
 title: "Configure git-push capability on the container"
 references-fields: [ops.DeployResult.Status, ops.DeployResult.Warnings, ops.DeployResult.FailureClassification]

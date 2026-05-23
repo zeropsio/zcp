@@ -57,8 +57,8 @@ Invariant: at most one non-idle **stateful** phase per PID at a time. `strategy-
 
 `strategy-setup` replaces the retired `cicd-active` phase. Deploy configuration is now three orthogonal operations:
 - `zerops_workflow action="close-mode" closeMode={hostname:auto|git-push|manual}` — declares the develop session's delivery pattern. Drives auto-close gating + selects which `develop-close-mode-*` atoms fire.
-- `zerops_workflow action="git-push-setup" service="..." remoteUrl="..."` — provisions GIT_TOKEN / .netrc / remote URL and stamps `GitPushState=configured`.
-- `zerops_workflow action="build-integration" service="..." integration="webhook|actions"` — chooses the ZCP-managed CI shape (requires `GitPushState=configured`).
+- `zerops_workflow action="git-push-setup" service="..." remoteUrl="..." gitToken="..."` (container) or `... remoteUrl="..."` (local) — **probe-first verifier**. The handler probes the supplied (remoteUrl, gitToken) pair against the remote BEFORE writing any project state. On success: writes GIT_TOKEN as sensitive project env, restarts the push-source so the env is live in container shell, syncs `origin` in the working tree's git config, stamps `meta.GitPushState=configured` + `meta.RemoteURL`. On probe failure: returns a structured `GIT_TOKEN_INVALID` error with no project state mutation — agent re-calls with corrected inputs. Local mode skips the token (uses local credential helper); container mode requires HTTPS only (PAT + `.netrc` auth pattern; SCP-form SSH rejected). Pinned by `TestGitPushSetupContainer_*` + `TestGitPushSetupLocal_*`.
+- `zerops_workflow action="build-integration" service="..." integration="webhook|actions"` — chooses the ZCP-managed CI shape (requires `GitPushState=configured`). Records the choice and emits the handoff (workflow YAML body + `gh secret set` commands for actions, dashboard URL for webhook); ZCP does NOT verify that the agent committed the workflow / set secrets / completed OAuth — `BuildIntegration=actions/webhook` means "this integration shape was wired", not "the build trigger is confirmed live".
 
 See `plans/instruction-delivery-rewrite.md` §4.1 for the concrete Go enum.
 

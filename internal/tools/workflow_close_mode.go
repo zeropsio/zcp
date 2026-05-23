@@ -149,7 +149,7 @@ func handleCloseMode(input WorkflowInput, stateDir string) (*mcp.CallToolResult,
 		// §3.4 Scenario B). Surface the pointer so the agent walks the
 		// prereq chain without a status round-trip.
 		if cm == topology.CloseModeGitPush && meta.GitPushState != topology.GitPushConfigured {
-			setupPointers = append(setupPointers, fmt.Sprintf("Run zerops_workflow action=\"git-push-setup\" service=%q to set up GIT_TOKEN, .netrc, and remote URL.", hostname))
+			setupPointers = append(setupPointers, fmt.Sprintf("Run zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<url> gitToken=<PAT> (container) or remoteUrl=<url> (local) — the handler probes the remote BEFORE writing project state.", hostname))
 		}
 	}
 

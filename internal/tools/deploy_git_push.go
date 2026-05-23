@@ -165,21 +165,23 @@ func committedCodeCheckCmd(workingDir string) string {
 	)
 }
 
-// gitPushSetupPointerInstructions redirects to the post-decomposition
-// git-push-setup action (deploy-decomp P5). The full setup flow is
-// synthesized there from the atom corpus. After git-push-setup completes,
-// the agent can independently wire a build integration via
-// action=build-integration if desired (orthogonal dimension).
+// gitPushSetupPointerInstructions redirects to the probe-first
+// git-push-setup verifier. The full setup flow is synthesized there
+// from the atom corpus. After git-push-setup completes, the agent can
+// independently wire a build integration via action=build-integration
+// (orthogonal dimension).
 const gitPushSetupPointerInstructions = `Configure git-push capability via the deploy-config actions:
 
-  zerops_workflow action="git-push-setup" service="%s"
+  zerops_workflow action="git-push-setup" service="%s" remoteUrl="<url>" gitToken="<PAT>"
   # then optionally:
   zerops_workflow action="build-integration" service="%s" integration="webhook|actions"
 
-git-push-setup walks through GIT_TOKEN / .netrc / remote URL setup;
-build-integration wires the ZCP-managed CI integration (independent of
-any external CI/CD you may already have). After setup completes, retry
-this push.`
+git-push-setup probes the (remoteUrl, gitToken) pair against the remote
+BEFORE writing project state — failed probe leaves state untouched, agent
+re-calls with corrected inputs. Local mode (no container) skips gitToken
+and uses local git credentials. build-integration wires the ZCP-managed
+CI integration shape (workflow YAML / dashboard URL); external CI/CD you
+already own continues unchanged. After setup completes, retry the push.`
 
 // handleGitPush executes the git-push strategy: push committed code to an
 // external git remote. No Zerops build is triggered directly from our side,

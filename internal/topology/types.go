@@ -62,20 +62,22 @@ const (
 type GitPushState string
 
 const (
-	// GitPushUnconfigured is the default — no push capability exists.
+	// GitPushUnconfigured is the default — no probe ever ran. Setup
+	// has not been attempted, or a previously-configured state was
+	// reset.
 	GitPushUnconfigured GitPushState = "unconfigured"
-	// GitPushConfigured means GIT_TOKEN/.netrc/credentials are set up
-	// and the remote URL is known. Ready for git-push close-mode and/or
-	// BuildIntegration setup.
+	// GitPushConfigured means the last git-push-setup probe succeeded
+	// end-to-end: the supplied token authenticated against the remote
+	// URL, project env carries GIT_TOKEN (sensitive), and `origin` is
+	// synced in the working tree's git config. Ready for git-push
+	// close-mode and BuildIntegration setup.
 	GitPushConfigured GitPushState = "configured"
-	// GitPushBroken means setup was attempted but produced damaged
-	// artifacts (.netrc partial, GIT_TOKEN expired, etc.). Recovery is
-	// explicit re-setup; ZCP does not auto-probe.
+	// GitPushBroken means a previously-configured state hit a credential
+	// failure during git push — most likely cause is upstream PAT
+	// rotation/revocation. Recovery is `zerops_workflow action=
+	// git-push-setup` with a fresh PAT (the handler probes the token
+	// before writing project state).
 	GitPushBroken GitPushState = "broken"
-	// GitPushUnknown means setup was previously claimed but the
-	// capability needs a probe before the next push to confirm it
-	// still works (token rotated, .netrc rewritten externally, etc.).
-	GitPushUnknown GitPushState = "unknown"
 )
 
 // BuildIntegration is the per-pair record of which ZCP-managed CI
