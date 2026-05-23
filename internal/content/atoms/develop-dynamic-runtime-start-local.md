@@ -12,38 +12,21 @@ coverageExempt: "local-mode dynamic-runtime dev server — 30 canonical scenario
 ### Dynamic-runtime dev server
 
 In local env the dev server runs **on your machine**, not in Zerops. ZCP
-does not spawn local processes — use the harness background-task
+does not spawn local processes — use your agent's background-task
 primitive so it survives the ZCP call and stdio does not block.
 
-**Claude Code: `Bash run_in_background=true`.**
-
-**Start:**
-
-```
-Bash run_in_background=true  command="{start-command}"
-```
-
+**Start:** background-spawn `{start-command}` (returns immediately).
 Use the framework dev command and bind to the app port.
 
-**Check:**
+**Check:** foreground call
 
 ```
-Bash command="curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:{port}/"
+curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://localhost:{port}/
 ```
 
-**Logs:**
+**Logs:** read stdout/stderr from the background task.
 
-```
-BashOutput bash_id={task-id}
-```
-
-**Stop:**
-
-```
-KillBash shell_id={task-id}
-```
-
-If task id is lost: `Bash command="lsof -ti :{port} | xargs kill"`.
+**Stop:** kill the background task. If task id is lost: `lsof -ti :{port} | xargs kill`.
 
 **Managed-service env vars** come from Zerops. Generate `.env` for the
 dev command:

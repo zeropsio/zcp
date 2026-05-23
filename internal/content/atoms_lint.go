@@ -95,6 +95,23 @@ var atomLintRules = []atomLintRule{
 		category: "plan-doc",
 		pattern:  regexp.MustCompile(`\bplans/[a-z][a-z0-9-]+\.md\b`),
 	},
+	// Source-code references — atoms are LLM-facing runtime prose; the
+	// LLM cannot navigate to Go source files or run named tests at
+	// runtime. Any reference to internal/<pkg>/<file>.go or test
+	// function names leaks dev-side concerns into agent guidance,
+	// either misleading the agent (it tries to "look at" the file) or
+	// wasting context tokens on unactionable information. Catch these
+	// structurally so the runtime-vs-build-time layer stays clean.
+	{
+		name:     "source-go-path",
+		category: "source-code-ref",
+		pattern:  regexp.MustCompile(`\b(internal|cmd)/[a-z_][a-z0-9_]*(/[a-z_][a-z0-9_]*)*\.go\b`),
+	},
+	{
+		name:     "source-test-name",
+		category: "source-code-ref",
+		pattern:  regexp.MustCompile(`\bTest[A-Z][A-Za-z0-9_]*_[A-Z]`),
+	},
 	// drift detectors for env-var audit 2026-05-15 — banned phrases that
 	// previously misled agents. "prefer it over assembling" lived in
 	// develop-first-deploy-env-vars and pushed agents toward the broken

@@ -16,9 +16,10 @@ In local mode there is no SSH-in dev workspace. Your CWD becomes the source-of-t
 ```
 1. Inventory existing files:
      ls -A
-   The CWD typically has ZCP state already (.claude, .mcp.json, .zcp,
-   CLAUDE.md). Anything OUTSIDE that set is the user's work — stop
-   and ask before continuing if you see it.
+   The CWD typically has ZCP state — agent context files (CLAUDE.md,
+   AGENTS.md), MCP configs (.mcp.json, .claude/, .codex/), and ZCP
+   work state (.zcp/). Anything OUTSIDE that set is the user's work
+   — stop and ask before continuing if you see it.
 
 2. Bring the recipe content in WITHOUT clobbering ZCP state:
      git clone {{recipe.repo}} /tmp/recipe-clone

@@ -862,18 +862,7 @@ func TestCorpusCoverage_RoundTrip(t *testing.T) {
 // wire-frame number is the actual MCP-cap-relevant measurement (~3 KB
 // larger than body-join — see plans/atom-corpus-context-trim-2026-04-26.md
 // §17.1 and the wire-frame info Logf in `_OutputUnderMCPCap`).
-var knownOverflowFixtures = map[string]string{
-	// 2026-05-20: 28793 B body-join (~121 B over 28672 B soft cap; wire-frame
-	// 31146 B still under 32 KB MCP hard cap). Source: plans/runtime-bases-
-	// axis-and-nodejs-buildhint-2026-05-20.md adds
-	// `develop-nodejs-greenfield-buildhint` (minimal — TRIGGER + ACTION +
-	// FAILURE MODE per CLAUDE.local.md, 2-line body, multiService=aggregate
-	// so emits once). Fixture was at 28583 B baseline (89 B headroom under
-	// soft cap); even the tightest hint pushes over. Sibling-atom trim
-	// deferred to separate scope per this test's docstring guidance (T2 in
-	// audit-workflow-llm-information-flow.md).
-	"develop_first_deploy_two_runtime_pairs_standard": "node greenfield buildhint atom (multi-service-pair fixture) — body 28793 B above 28672 B soft cap; wire-frame 31146 B under 32 KB MCP hard cap; sibling-atom trim is separate scope.",
-}
+var knownOverflowFixtures = map[string]string{}
 
 // TestCorpusCoverage_OutputUnderMCPCap pins G13: every representative
 // envelope shape's synthesized output stays under a soft 28 KB ceiling

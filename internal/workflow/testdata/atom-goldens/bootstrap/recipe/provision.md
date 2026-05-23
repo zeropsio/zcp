@@ -1,6 +1,6 @@
 ---
 id: bootstrap/recipe/provision
-atomIds: [bootstrap-recipe-import, bootstrap-tool-preload]
+atomIds: [bootstrap-recipe-import]
 description: "Recipe route, provision step in progress, target service ACTIVE awaiting first deploy."
 ---
 ### Provision recipe services
@@ -40,23 +40,8 @@ services. Don't edit resource limits, `buildFromGit`, `priority`,
 zerops_discover
 ```
 
-Runtimes must reach a running state (`RUNNING` or `ACTIVE`) before `deploy`; the readiness predicate at `internal/tools/workflow_checks.go::checkServiceRunning` accepts both. Managed deps usually transition first.
+Runtimes must reach a running state (`RUNNING` or `ACTIVE`) before `deploy` — both states are acceptable. Managed deps usually transition first.
 
 4. **Record discovered env vars.**
 
 After services are running, include managed-service env var keys in the provision attestation (e.g. `db: connectionString, port`) for later `run.envVariables` references.
-
----
-
-### Pre-load tool schemas in one batch
-
-`zerops_*` tools are deferred — schemas load via `ToolSearch`. Loading
-them sequentially burns 2-3 round-trips before the first real action.
-On the first turn, batch-load:
-
-```
-ToolSearch query="select:mcp__zerops__zerops_workflow,mcp__zerops__zerops_discover,mcp__zerops__zerops_import,mcp__zerops__zerops_deploy,mcp__zerops__zerops_verify,mcp__zerops__zerops_logs,mcp__zerops__zerops_events,mcp__zerops__zerops_dev_server"
-```
-
-`select:` accepts a comma-separated list and returns all matching
-schemas in one round-trip. Loading sequentially defeats the point.

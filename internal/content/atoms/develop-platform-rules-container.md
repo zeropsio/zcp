@@ -11,9 +11,6 @@ references-atoms: [develop-dynamic-runtime-start-container, develop-dev-server-r
 
 ### Platform rules — container additions
 
-Mount basics in `claude_container.md` (boot shim). Container-only
-cautions on top:
-
 - **Mount caveats.** Mount is the build source for each new container.
   Never `ssh <hostname> cat/ls/tail …` for mount files — SSH adds
   shell-escape bugs (nested quotes in `sed`/`awk` break). One-shot

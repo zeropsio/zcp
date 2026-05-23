@@ -1,6 +1,6 @@
 ---
 id: develop/first-deploy-recipe-implicit-standard
-atomIds: [develop-env-var-model, develop-first-deploy-intro, develop-tool-preload, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-first-deploy-env-vars, develop-first-deploy-scaffold-yaml, develop-http-diagnostic, develop-implicit-webserver, develop-platform-rules-common, develop-reserved-env-names, develop-deploy-files-self-deploy, develop-first-deploy-write-app, develop-knowledge-pointers, develop-auto-close-semantics, develop-first-deploy-execute, develop-verify-matrix, develop-first-deploy-asset-pipeline-container, develop-first-deploy-promote-stage, develop-first-deploy-verify, develop-strategy-awareness]
+atomIds: [develop-env-var-model, develop-first-deploy-intro, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-first-deploy-env-vars, develop-first-deploy-scaffold-yaml, develop-http-diagnostic, develop-implicit-webserver, develop-platform-rules-common, develop-reserved-env-names, develop-deploy-files-self-deploy, develop-first-deploy-write-app, develop-knowledge-pointers, develop-auto-close-semantics, develop-first-deploy-execute, develop-verify-matrix, develop-first-deploy-asset-pipeline-container, develop-first-deploy-promote-stage, develop-first-deploy-verify, develop-strategy-awareness]
 description: "develop-active, mode=standard pair, php-nginx implicit-webserver runtime + db, never-deployed; bootstrap arrived via recipe route."
 ---
 ### Where values come from
@@ -31,8 +31,7 @@ APP_KEY: ${APP_KEY}           # WRONG — re-declaring a project env
 
 Source resolves to the literal string `${db_hostname}` (8 chars
 including dollar-brace), reaches `process.env` as that literal, and
-the framework crashes when it parses it as a hostname. Pinned in
-`internal/ops/env_shadow.go`.
+the framework crashes when it parses it as a hostname.
 
 ---
 
@@ -71,21 +70,6 @@ The strategy-awareness section of this response covers all three axes
 
 Don't skip to edits before the first deploy lands — HTTP probes
 return errors before any code is delivered.
-
----
-
-### Pre-load tool schemas in one batch
-
-`zerops_*` tools are deferred — schemas load via `ToolSearch`. If you
-arrived in develop fresh (compaction recovery, or develop without prior
-bootstrap), batch-load before iterating:
-
-```
-ToolSearch query="select:mcp__zerops__zerops_workflow,mcp__zerops__zerops_deploy,mcp__zerops__zerops_verify,mcp__zerops__zerops_logs,mcp__zerops__zerops_events,mcp__zerops__zerops_manage,mcp__zerops__zerops_env,mcp__zerops__zerops_discover"
-```
-
-`select:` accepts a comma-separated list and returns all matching
-schemas in one round-trip. Loading sequentially defeats the point.
 
 ---
 
@@ -453,7 +437,7 @@ When the embedded guidance is not enough, these are the canonical lookups:
 
 ### Work session auto-close
 
-Auto-close is gated on every in-scope service carrying `closeDeployMode ∈ {auto, git-push}`. Services with `closeDeployMode=unset` or `closeDeployMode=manual` BLOCK the auto-close trigger — the session stays open until you either pick a close-mode for those services or call `action="close"` explicitly. (Verified by `internal/workflow/work_session_test.go::TestEvaluateAutoClose` — `unset_blocks` and `manual_blocks` both return `want: false`.)
+Auto-close is gated on every in-scope service carrying `closeDeployMode ∈ {auto, git-push}`. Services with `closeDeployMode=unset` or `closeDeployMode=manual` BLOCK the auto-close trigger — the session stays open until you either pick a close-mode for those services or call `action="close"` explicitly.
 
 When the gate is open (every in-scope service is `auto` or `git-push`), the session closes automatically under either of two conditions:
 

@@ -102,8 +102,8 @@ func TestDevelopPlatformRulesLocalAtom_BackgroundTaskCallout(t *testing.T) {
 	if !strings.Contains(body, "### Dev server") {
 		t.Error("dev-server guidance must live in its own H3 subsection — burying it in the table cell was the B15 failure mode")
 	}
-	if !strings.Contains(body, "run_in_background=true") {
-		t.Error("atom must show the canonical `run_in_background=true` example")
+	if !strings.Contains(body, "background-task primitive") {
+		t.Error("atom must promote the agent's background-task primitive as the canonical way to run the dev server (was previously hardcoded to Claude Code's `run_in_background=true`; genericized 2026-05-23 for multi-agent support — invariant is the PATTERN, not the agent-specific syntax)")
 	}
 	if !strings.Contains(body, "Anti-pattern") {
 		t.Error("atom must include an Anti-pattern callout — recognition of the foreground-bash trap before invocation depends on the example being adjacent to the rule")

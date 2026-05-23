@@ -44,7 +44,7 @@ services. Don't edit resource limits, `buildFromGit`, `priority`,
 zerops_discover
 ```
 
-Runtimes must reach a running state (`RUNNING` or `ACTIVE`) before `deploy`; the readiness predicate at `internal/tools/workflow_checks.go::checkServiceRunning` accepts both. Managed deps usually transition first.
+Runtimes must reach a running state (`RUNNING` or `ACTIVE`) before `deploy` — both states are acceptable. Managed deps usually transition first.
 
 4. **Record discovered env vars.**
 

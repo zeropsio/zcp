@@ -92,13 +92,9 @@ func TestScenario_S1_NewProjectRecipeMatch(t *testing.T) {
 		t.Fatalf("Synthesize idle: %v", err)
 	}
 	// idle-bootstrap-entry is load-bearing for an empty project — it routes
-	// the agent into the bootstrap workflow. idle-tool-preload is the first-
-	// turn ToolSearch batching hint for container sessions; pinning it here
-	// ensures the batch-load directive appears BEFORE any zerops_workflow
-	// call (so agents don't burn N-1 round-trips loading tools sequentially).
+	// the agent into the bootstrap workflow.
 	requireAtomIDsContain(t, "S1 idle", matchesBefore,
-		"idle-bootstrap-entry",
-		"idle-tool-preload")
+		"idle-bootstrap-entry")
 
 	// S1 after start: bootstrap-active, Route=recipe, Step=provision.
 	// Matches bootstrap_recipe_provision coverage fixture — so atoms
@@ -137,11 +133,8 @@ func TestScenario_S1_NewProjectRecipeMatch(t *testing.T) {
 	// provision step the route is committed and the framing overview is
 	// no longer the relevant content; bootstrap-recipe-import owns the
 	// step-specific imperative.)
-	// bootstrap-tool-preload is also pinned here — it's the first-turn
-	// ToolSearch batching hint for container-env bootstrap sessions.
 	requireAtomIDsContain(t, "S1 bootstrap-active", matchesAfter,
-		"bootstrap-recipe-import",
-		"bootstrap-tool-preload")
+		"bootstrap-recipe-import")
 }
 
 func TestScenario_S5_MixedBootstrappedAndUnmanaged(t *testing.T) {
@@ -303,10 +296,7 @@ func TestScenario_S4_DevelopStrategyReviewAfterFirstDeploy(t *testing.T) {
 	}
 	// develop-strategy-review is the load-bearing atom for the
 	// after-first-deploy / strategy-unset gate.
-	// develop-tool-preload pinned here — fires on every develop-active
-	// container session to recommend ToolSearch batching for compaction
-	// recovery / fresh-develop callers.
-	requireAtomIDsContain(t, "S4", matches, "develop-strategy-review", "develop-tool-preload")
+	requireAtomIDsContain(t, "S4", matches, "develop-strategy-review")
 
 	// Plan routes to deploy as long as no deploy attempt is recorded in the
 	// work session. The strategy-review gate is expressed by the atom layer.

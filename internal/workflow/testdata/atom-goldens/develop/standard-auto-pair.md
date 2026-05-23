@@ -1,6 +1,6 @@
 ---
 id: develop/standard-auto-pair
-atomIds: [develop-intro, develop-tool-preload, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-http-diagnostic, develop-platform-rules-common, develop-close-mode-auto, develop-deploy-files-self-deploy, develop-dynamic-runtime-start-container, develop-env-var-shell-usage, develop-knowledge-pointers, develop-auto-close-semantics, develop-verify-matrix, develop-platform-rules-container, develop-strategy-awareness, develop-close-mode-auto-standard]
+atomIds: [develop-intro, develop-change-drives-deploy, develop-deploy-modes, develop-env-var-channels, develop-http-diagnostic, develop-platform-rules-common, develop-close-mode-auto, develop-deploy-files-self-deploy, develop-dynamic-runtime-start-container, develop-env-var-shell-usage, develop-knowledge-pointers, develop-auto-close-semantics, develop-verify-matrix, develop-platform-rules-container, develop-strategy-awareness, develop-close-mode-auto-standard]
 description: "Standard dev+stage pair, close-mode auto on both halves, both deployed."
 ---
 ### Development & Deploy
@@ -8,21 +8,6 @@ description: "Standard dev+stage pair, close-mode auto on both halves, both depl
 Infrastructure is provisioned and at least one runtime already has a
 successful first deploy on record. You're in the edit loop: discover
 the current state, implement the user's request, redeploy, verify.
-
----
-
-### Pre-load tool schemas in one batch
-
-`zerops_*` tools are deferred — schemas load via `ToolSearch`. If you
-arrived in develop fresh (compaction recovery, or develop without prior
-bootstrap), batch-load before iterating:
-
-```
-ToolSearch query="select:mcp__zerops__zerops_workflow,mcp__zerops__zerops_deploy,mcp__zerops__zerops_verify,mcp__zerops__zerops_logs,mcp__zerops__zerops_events,mcp__zerops__zerops_manage,mcp__zerops__zerops_env,mcp__zerops__zerops_discover"
-```
-
-`select:` accepts a comma-separated list and returns all matching
-schemas in one round-trip. Loading sequentially defeats the point.
 
 ---
 
@@ -274,7 +259,7 @@ When the embedded guidance is not enough, these are the canonical lookups:
 
 ### Work session auto-close
 
-Auto-close is gated on every in-scope service carrying `closeDeployMode ∈ {auto, git-push}`. Services with `closeDeployMode=unset` or `closeDeployMode=manual` BLOCK the auto-close trigger — the session stays open until you either pick a close-mode for those services or call `action="close"` explicitly. (Verified by `internal/workflow/work_session_test.go::TestEvaluateAutoClose` — `unset_blocks` and `manual_blocks` both return `want: false`.)
+Auto-close is gated on every in-scope service carrying `closeDeployMode ∈ {auto, git-push}`. Services with `closeDeployMode=unset` or `closeDeployMode=manual` BLOCK the auto-close trigger — the session stays open until you either pick a close-mode for those services or call `action="close"` explicitly.
 
 When the gate is open (every in-scope service is `auto` or `git-push`), the session closes automatically under either of two conditions:
 
@@ -338,9 +323,6 @@ It has the `Agent(model="sonnet", prompt=...)` template; substitute
 ---
 
 ### Platform rules — container additions
-
-Mount basics in `claude_container.md` (boot shim). Container-only
-cautions on top:
 
 - **Mount caveats.** Mount is the build source for each new container.
   Never `ssh <hostname> cat/ls/tail …` for mount files — SSH adds
