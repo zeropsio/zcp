@@ -640,10 +640,13 @@ rendered Services block shows them as
   `origin` synced. `unconfigured` / `broken` indicate setup is
   needed before `closeMode=git-push` can fire (`broken` means a previously-
   configured token stopped working, e.g. PAT rotation).
-- `buildIntegration` — ZCP-managed CI. `actions` (recommended for
-  GitHub remotes; zero manual dashboard step), `webhook` (Zerops
-  dashboard OAuth — fallback for GitLab / policy-constrained
-  repos), or `none`. Requires `gitPush=configured`.
+- `buildIntegration` — the ZCP-managed CI shape that was picked. `actions`
+  (GitHub Actions workflow + secrets), `webhook` (Zerops dashboard OAuth),
+  or `none`. Requires `gitPush=configured`. The flag records the choice
+  and the handoff shape (workflow YAML body / dashboard URL); workflow
+  commit, secrets landing, and OAuth completion happen outside ZCP's
+  reach and are not verified by this flag. Treat as "this is the
+  integration shape we wired", not "the build trigger is confirmed live".
 
 Switch any axis without closing the session — three actions, each
 operating at a different scope:

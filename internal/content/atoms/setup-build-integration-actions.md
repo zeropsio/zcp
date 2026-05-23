@@ -12,9 +12,14 @@ ZCP doesn't track or manage external workflows you may already have, so `build-i
 
 After you call `zerops_workflow action="build-integration" service="{hostname}" integration="actions"`, the response carries the workflow YAML body + prefilled `gh secret set` commands ready to paste, plus `buildTarget` and `buildSetup` so the workflow's `zcli push --service-id ... --setup ...` targets the right runtime (stage half for standard pairs, the service itself for simple modes). This atom is the human-readable companion.
 
-## 1. Confirm git-push setup landed
+## 1. Confirm git-push setup landed AND `gh` is authenticated
 
-This atom assumes `GitPushState=configured`. If you haven't run the setup yet, `action=build-integration` returns a `needsGitPushSetup` pointer; resolve that first.
+Two preconditions exist outside this integration — surface them before calling:
+
+- **`GitPushState=configured`** — if setup hasn't run yet, `action=build-integration` returns a `needsGitPushSetup` pointer.
+- **`gh auth status`** — the `gh secret set` commands below assume an authenticated GitHub CLI session. If `gh auth status` fails or the stored PAT lacks `Secrets: Read and write` on `{owner}/{repo}`, the secret-set step fails. Run `gh auth login` first, or refresh scope with `gh auth refresh -s repo,workflow`.
+
+The integration's promise is only as strong as those two preconditions plus the steps below. `BuildIntegration=actions` records the choice and the handoff shape; ZCP does not run the workflow commit, the secret set, or the CLI auth.
 
 ## 2. Add the workflow file
 
