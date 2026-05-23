@@ -11,12 +11,12 @@ After you call `zerops_workflow action="build-integration" service="appdev" inte
 
 ## 1. Confirm git-push setup landed AND `gh` is authenticated
 
-Two preconditions exist outside this integration — surface them before calling:
+Two preconditions live outside this integration — surface them before calling:
 
 - **`GitPushState=configured`** — if setup hasn't run yet, `action=build-integration` returns a `needsGitPushSetup` pointer.
-- **`gh auth status`** — the `gh secret set` commands below assume an authenticated GitHub CLI session. If `gh auth status` fails or the stored PAT lacks `Secrets: Read and write` on `{owner}/{repo}`, the secret-set step fails. Run `gh auth login` first, or refresh scope with `gh auth refresh -s repo,workflow`.
+- **`gh auth status`** — the `gh secret set` commands below assume an authenticated GitHub CLI session. The confirm response carries the `ghAuthPrecondition` block with the exact authentication command; do it FIRST or the first `gh secret set` invocation fails with `HTTP 401: Bad credentials`. The same PAT used for git-push-setup works if its scope covers `Secrets: Read and write` (default recommended scope already covers it).
 
-The integration's promise is only as strong as those two preconditions plus the steps below. `BuildIntegration=actions` records the choice and the handoff shape; ZCP does not run the workflow commit, the secret set, or the CLI auth.
+`BuildIntegration=actions` records the choice and the handoff shape; the workflow YAML commit, the secret-set, and the `gh` auth steps happen outside this integration's reach.
 
 ## 2. Add the workflow file
 

@@ -296,8 +296,15 @@ func actionsConfirmResponse(
 				"command": ghSecretSetCommand("ZEROPS_SERVICE_ID", quoteShellLiteral(serviceID), ownerRepo),
 			},
 		},
+		"ghAuthPrecondition": map[string]any{
+			"required":       true,
+			"description":    "The `gh secret set` commands below require an authenticated `gh` CLI. Fresh containers + workstations do NOT have `gh auth` cached. Before running the secret commands, authenticate `gh` with a PAT that has `Secrets: Read and write` on " + ownerRepo + " (the same PAT used for git-push-setup works if its scope covers Secrets+Workflows — the recommended default).",
+			"setupCommand":   "echo \"$ZCP_E2E_GITHUB_PAT\" | gh auth login --with-token  # container: token from env-var passed via Bash by the user",
+			"verifyCommand":  "gh auth status",
+			"failureSymptom": "HTTP 401: Bad credentials on the first `gh secret set` invocation = `gh` was not authenticated.",
+		},
 		"ghPatRecommendation": "Default to a fine-grained GitHub PAT scoped ONLY to " + ownerRepo + " with `Secrets: Read and write` (single-repo blast radius). GitHub PATs require an expiration — pick the longest you're comfortable with (max 1 year); set a calendar reminder to regenerate + re-run `gh secret set` before it lapses.",
-		"nextStep":            "1) Write workflowFile.content at .github/workflows/zerops.yml. 2) Run the two `gh secret set` commands above. 3) Push the workflow file. From then on every push to main triggers the GitHub Actions deploy. Keep the default setup-aware zcli workflow unless you are certain the repository has only one setup.",
+		"nextStep":            "1) Authenticate `gh` (see ghAuthPrecondition.setupCommand). 2) Write workflowFile.content at .github/workflows/zerops.yml. 3) Run the two `gh secret set` commands above. 4) Push the workflow file. From then on every push to main triggers the GitHub Actions deploy. Keep the default setup-aware zcli workflow unless you are certain the repository has only one setup.",
 	}
 	if !repoOK {
 		body["repoParseWarning"] = fmt.Sprintf(

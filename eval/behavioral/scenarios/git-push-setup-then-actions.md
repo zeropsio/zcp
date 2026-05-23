@@ -98,12 +98,17 @@ notableFriction:
       literal. Agent musí navrhnout tenhle pattern aby token nezůstal
       v transcript prose. Surfaces whether agent reflexively asks for
       the literal value (transcript leak) or routes via Bash.
-  - id: two-step-config-ordering
+  - id: probe-first-single-call-verify
     description: |
-      `git-push-setup` PRVNÍ (provisions GIT_TOKEN env + .netrc + remote),
-      `build-integration=actions` DRUHÝ (wires CI handoff using the
-      configured state). Agent who runs them in wrong order or skips
-      build-integration leaves the setup partial.
+      `git-push-setup` confirm call probes (remoteUrl, gitToken) against
+      the remote BEFORE writing any project state — failed probe leaves
+      project state untouched. On success it writes sensitive GIT_TOKEN,
+      restarts the push-source so $GIT_TOKEN is live, syncs origin, then
+      stamps GitPushState=configured. The agent should NOT separately
+      call zerops_env to write GIT_TOKEN — git-push-setup owns it.
+      `build-integration=actions` runs AFTER setup to wire the CI
+      handoff (workflow YAML + gh secret set commands). Agent who skips
+      build-integration leaves the wiring partial.
   - id: service-meta-pair-key
     description: |
       Standard pair → one pair-keyed ServiceMeta entry (dev half holds
