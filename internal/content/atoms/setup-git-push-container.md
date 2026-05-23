@@ -41,4 +41,8 @@ zerops_deploy targetService="{hostname}" strategy="git-push" \
   branch="main"
 ```
 
-`git init` already ran at bootstrap time (`InitServiceGit`); the commit step lives outside ZCP because `zerops_deploy strategy="git-push"` refuses to push an empty working tree. The deploy call uses the project-level `GIT_TOKEN` and the stamped `origin` — no extra plumbing needed. The `remoteUrl` arg is optional on the deploy call (the stamped meta carries it). On failure, read `failureClassification.category` — `credential` means the token was rejected by the remote (re-call git-push-setup with a fresh PAT), `config` with a committed-code cause means there is no commit on HEAD yet.
+`git init` already ran at bootstrap time (`InitServiceGit`); the commit step lives outside ZCP because `zerops_deploy strategy="git-push"` refuses to push an empty working tree. The deploy call uses the project-level `GIT_TOKEN` and the stamped `origin` — no extra plumbing needed.
+
+**Push must go via `zerops_deploy strategy="git-push"`** — not a plain `git push` from another shell. The probe-time `.netrc` (Phase 1 setup) was ephemeral inside the SSH chain; `$GIT_TOKEN` is now live in the runtime container's shell after the setup-time restart, but it is NOT visible to shells outside the container (the ZCP host, the SSHFS mount, a separate terminal). Running `git push` from any of those will fail with "could not read Username" because no `.netrc` exists there and no helper is configured. `zerops_deploy strategy="git-push"` re-creates the ephemeral `.netrc` inside the runtime container for the duration of the push command — that is the only push path supported here.
+
+The `remoteUrl` arg is optional on the deploy call (the stamped meta carries it). On failure, read `failureClassification.category` — `credential` means the token was rejected by the remote (re-call git-push-setup with a fresh PAT), `config` with a committed-code cause means there is no commit on HEAD yet.
