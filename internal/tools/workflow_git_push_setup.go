@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 
@@ -161,35 +162,43 @@ func handleGitPushSetup(
 				fmt.Sprintf("git-push-setup synthesis failed: %v", err),
 				"Build-time defect — report it. Run `make lint-local` to verify the atom corpus."), WithRecoveryStatus()), nil, nil
 		}
-		return jsonResult(attachWorkSessionState(map[string]any{
-			"status":   "walkthrough",
-			"service":  input.Service,
-			"guidance": guidance,
-			"inputsRequired": []map[string]any{
-				{
-					"name":        "remoteUrl",
-					"label":       "Git remote URL",
-					"description": "HTTPS or scp-form SSH URL of the target repository. Example: https://github.com/<owner>/<repo>.git or git@github.com:<owner>/<repo>.git",
-					"required":    true,
-				},
-				{
-					"name":        "gitToken",
-					"label":       "GIT_TOKEN (fine-grained PAT)",
-					"description": "Personal access token scoped to the single target repo. For GitHub: Contents:Read+Write; add Secrets+Workflows if you plan integration=actions (recommended). For GitLab: write_repository; add api for webhook. Stored via zerops_env action=\"set\" project=true variables=[\"GIT_TOKEN=...\"].",
-					"secret":      true,
-					"required":    true,
-				},
-				{
-					"name":        "integration",
-					"label":       "CI integration",
-					"description": "Which CI shape consumes the remote push. Actions = GitHub Actions workflow runs zcli push (recommended for GitHub — zero manual dashboard steps); webhook = Zerops dashboard OAuth pulls the repo (requires manual dashboard step); none = independent CI/CD you already own.",
-					"options":     []string{"actions", "webhook", "none"},
-					"required":    true,
-				},
+		// inputsRequired is env-aware: container mode collects gitToken so
+		// the handler can probe + write it; local mode trusts the user's
+		// local git credential helper and rejects gitToken explicitly on
+		// the confirm path (see confirmGitPushSetupLocal).
+		inputs := []map[string]any{
+			{
+				"name":        "remoteUrl",
+				"label":       "Git remote URL",
+				"description": gitPushRemoteURLDescription(rt),
+				"required":    true,
 			},
+		}
+		if rt.InContainer {
+			inputs = append(inputs, map[string]any{
+				"name":        "gitToken",
+				"label":       "GIT_TOKEN (fine-grained PAT)",
+				"description": "Personal access token scoped to the single target repo. For GitHub: Contents:Read+Write; add Secrets+Workflows if you plan integration=actions (recommended). For GitLab: write_repository; add api for webhook. The handler probes this token against the remote BEFORE writing it as sensitive project env — value is never echoed back.",
+				"secret":      true,
+				"required":    true,
+			})
+		}
+		inputs = append(inputs,
+			map[string]any{
+				"name":        "integration",
+				"label":       "CI integration",
+				"description": "Which CI shape consumes the remote push. Actions = GitHub Actions workflow runs zcli push (recommended for GitHub — zero manual dashboard steps); webhook = Zerops dashboard OAuth pulls the repo (requires manual dashboard step); none = independent CI/CD you already own.",
+				"options":     []string{"actions", "webhook", "none"},
+				"required":    true,
+			})
+		return jsonResult(attachWorkSessionState(map[string]any{
+			"status":                 "walkthrough",
+			"service":                input.Service,
+			"guidance":               guidance,
+			"inputsRequired":         inputs,
 			"recommendedIntegration": "actions",
-			"prompt":                 "Three inputs needed to wire git-push for " + input.Service + ": (1) remote repo URL, (2) fine-grained PAT, (3) CI integration. Actions is the default for GitHub repos with a permissive PAT (zero manual Zerops dashboard step); webhook is the fallback for GitLab / policy-constrained repos; none means external CI/CD you already own.",
-			"nextStep":               fmt.Sprintf("After collecting inputs: 1) set GIT_TOKEN via zerops_env action=\"set\" project=true. 2) confirm capability: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<url>. 3) wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\".", input.Service, input.Service),
+			"prompt":                 gitPushWalkthroughPrompt(rt, input.Service),
+			"nextStep":               gitPushWalkthroughNextStep(rt, input.Service),
 		}, stateDir)), nil, nil
 	}
 
@@ -212,23 +221,108 @@ func handleGitPushSetup(
 	if rt.InContainer {
 		return confirmGitPushSetupContainer(ctx, client, sshDeployer, projectID, stateDir, input, meta)
 	}
+	return confirmGitPushSetupLocal(ctx, stateDir, input, meta)
+}
 
-	// Local env — Phase 2 will replace this with a real local probe.
+// localGitProbeReader is the local-mode auth-probe hook. Production wires
+// it to ops.RunGitAuthProbeLocal; tests swap a stub. Variable indirection
+// only — initial assignment is the real implementation, so per CLAUDE.md
+// the global-state-ban exempts this initialized form.
+//
+//nolint:gochecknoglobals // test hook for local-mode probe
+var localGitProbeReader = ops.RunGitAuthProbeLocal
+
+// localGitOriginSyncer is the local-mode origin-sync hook. Same indirection
+// pattern as localGitProbeReader.
+//
+//nolint:gochecknoglobals // test hook for local-mode origin sync
+var localGitOriginSyncer = ops.RunGitOriginSyncLocal
+
+// setLocalGitProbeReader swaps localGitProbeReader for the duration of one
+// test; returns a cleanup func to defer-restore. Test-only helper.
+func setLocalGitProbeReader(f func(ctx context.Context, workingDir, remoteURL string) error) func() {
+	prev := localGitProbeReader
+	localGitProbeReader = f
+	return func() { localGitProbeReader = prev }
+}
+
+// setLocalGitOriginSyncer swaps localGitOriginSyncer for the duration of
+// one test; returns a cleanup func to defer-restore. Test-only helper.
+func setLocalGitOriginSyncer(f func(ctx context.Context, workingDir, remoteURL string) error) func() {
+	prev := localGitOriginSyncer
+	localGitOriginSyncer = f
+	return func() { localGitOriginSyncer = prev }
+}
+
+// confirmGitPushSetupLocal implements the local-mode probe-first verifier.
+// Reached only when rt.InContainer is false. Symmetric to the container
+// path but uses the user's local git config + credential helper instead
+// of an SSH'd ephemeral .netrc — ZCP never sees credentials in local mode.
+// Probe-first: no project state is mutated until the probe proves the
+// supplied remoteUrl is reachable + authenticates with local creds.
+func confirmGitPushSetupLocal(
+	ctx context.Context,
+	stateDir string,
+	input WorkflowInput,
+	meta *workflow.ServiceMeta,
+) (*mcp.CallToolResult, any, error) {
+	// gitToken not collected locally — local git holds the user's creds
+	// directly (SSH agent, OS credential manager, cached PAT). Reject
+	// explicitly so an agent re-using container-mode atom guidance gets
+	// an early signal rather than a misleading "auth failed" later.
+	if input.GitToken != "" {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"Local git-push-setup does not collect gitToken — your local git already holds credentials (SSH agent, OS credential manager, cached PAT).",
+			"Re-call without gitToken: zerops_workflow action=\"git-push-setup\" service=<host> remoteUrl=<url>",
+		), WithRecoveryStatus()), nil, nil
+	}
+
+	workingDir, wdErr := os.Getwd()
+	if wdErr != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Local git-push-setup: resolve workingDir: %v", wdErr),
+			"This usually means the agent's process has no current directory. Run from a project workspace.",
+		), WithRecoveryStatus()), nil, nil
+	}
+
+	// 1. Probe — read-only auth check using local credentials. NO mutation.
+	if probeErr := localGitProbeReader(ctx, workingDir, input.RemoteURL); probeErr != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrGitTokenInvalid,
+			fmt.Sprintf("git-push-setup probe against %s failed: %v", input.RemoteURL, probeErr),
+			"Verify: (1) the remote URL exists, (2) your local git can reach it (test with `git ls-remote "+input.RemoteURL+" HEAD`), (3) credentials are wired — SSH agent has the key, or your credential helper has a cached PAT/password. Then re-call. NO project state was modified.",
+		), WithRecoveryStatus()), nil, nil
+	}
+
+	// 2. Sync origin in workingDir's .git/config.
+	if syncErr := localGitOriginSyncer(ctx, workingDir, input.RemoteURL); syncErr != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("git-push-setup probe passed but origin sync in %s failed: %v", workingDir, syncErr),
+			"Ensure the working directory is a git repo (`git init` if not) and the user has write permission to .git/config. NO meta state was modified.",
+		), WithRecoveryStatus()), nil, nil
+	}
+
+	// 3. Stamp configured.
 	meta.GitPushState = topology.GitPushConfigured
 	meta.RemoteURL = input.RemoteURL
 	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
 		return convertError(platform.NewPlatformError(
 			platform.ErrServiceNotFound,
 			fmt.Sprintf("Write service meta %q: %v", input.Service, err),
-			""), WithRecoveryStatus()), nil, nil
+			"Origin synced, probe passed, but local meta write failed. Re-run git-push-setup to re-stamp; probe is idempotent.",
+		), WithRecoveryStatus()), nil, nil
 	}
+
 	return jsonResult(attachWorkSessionState(map[string]any{
 		"status":                 "configured",
 		"service":                input.Service,
 		"gitPushState":           meta.GitPushState,
 		"remoteUrl":              meta.RemoteURL,
 		"recommendedIntegration": recommendIntegrationForRemoteURL(meta.RemoteURL),
-		"nextStep":               fmt.Sprintf("git-push capability is ready (local mode). Wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
+		"nextStep":               fmt.Sprintf("git-push capability verified end-to-end (local mode): local git reaches remote with your credentials, origin synced in workingDir. Wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
 	}, stateDir)), nil, nil
 }
 
@@ -350,6 +444,36 @@ func confirmGitPushSetupContainer(
 		"recommendedIntegration": recommendIntegrationForRemoteURL(meta.RemoteURL),
 		"nextStep":               fmt.Sprintf("git-push capability verified end-to-end: token authenticates against remote, origin synced on /var/www/.git/config, GIT_TOKEN live in container shell. Wire CI (integration=\"actions\" recommended for GitHub; \"webhook\" for GitLab; \"none\" for external CI/CD): zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
 	}, stateDir)), nil, nil
+}
+
+// gitPushRemoteURLDescription returns env-aware help text for the
+// remoteUrl input. Container mode rejects scp-form SSH (PAT + .netrc only
+// works for HTTPS); local mode allows any URL git itself accepts.
+func gitPushRemoteURLDescription(rt runtime.Info) string {
+	if rt.InContainer {
+		return "HTTPS URL of the target repository (https://github.com/<owner>/<repo>.git). Container mode authenticates via .netrc + PAT, which requires HTTPS. SSH form (git@github.com:owner/repo) is rejected — use the HTTPS clone URL."
+	}
+	return "HTTPS or SSH URL of the target repository (https://github.com/<owner>/<repo>.git or git@github.com:<owner>/<repo>.git). Local mode uses your local git credential helper — whatever URL form works with `git ls-remote` on your machine works here."
+}
+
+// gitPushWalkthroughPrompt returns env-aware user-facing text for the
+// walkthrough response. Container mode lists three inputs (URL + token +
+// integration); local mode lists two (URL + integration).
+func gitPushWalkthroughPrompt(rt runtime.Info, service string) string {
+	if rt.InContainer {
+		return "Three inputs needed to wire git-push for " + service + ": (1) HTTPS remote repo URL, (2) fine-grained PAT, (3) CI integration. The setup call probes the token against the remote BEFORE writing project state — failed probe leaves project state untouched. Actions is the default for GitHub repos."
+	}
+	return "Two inputs needed to wire git-push for " + service + ": (1) remote repo URL, (2) CI integration. Local mode uses your existing git credentials (SSH agent, OS credential manager) — no token collection. The setup call probes the remote before stamping configured. Actions is the default for GitHub repos."
+}
+
+// gitPushWalkthroughNextStep returns env-aware next-step guidance.
+// Container mode tells the agent that GIT_TOKEN is collected on the
+// confirm call (handler writes it); local mode skips the token step.
+func gitPushWalkthroughNextStep(rt runtime.Info, service string) string {
+	if rt.InContainer {
+		return fmt.Sprintf("After collecting inputs: 1) confirm capability with all three values: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<url> gitToken=<PAT>. Handler probes auth, writes GIT_TOKEN as sensitive project env, restarts push-source, stamps configured. 2) wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\".", service, service)
+	}
+	return fmt.Sprintf("After collecting inputs: 1) confirm capability: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<url>. Handler probes the remote using your local git credentials, syncs origin, stamps configured. 2) wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\".", service, service)
 }
 
 // recommendIntegrationForRemoteURL picks the default CI integration based

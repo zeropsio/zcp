@@ -1,7 +1,9 @@
 package ops
 
 import (
+	"context"
 	"fmt"
+	"os/exec"
 	"strings"
 )
 
@@ -57,4 +59,52 @@ func BuildGitOriginSyncCommand(workingDir, remoteURL string) string {
 		`cd %s && (git remote add origin %s 2>/dev/null || git remote set-url origin %s)`,
 		workingDir, quoted, quoted,
 	)
+}
+
+// RunGitAuthProbeLocal runs `git ls-remote $remoteURL HEAD` from
+// workingDir using the user's local git config + credential helper. ZCP
+// does NOT supply credentials in local mode — local git already holds
+// them (SSH keys, OS credential manager, cached PAT).
+//
+// Safety flags:
+//   - `GIT_TERMINAL_PROMPT=0` prevents git from prompting on stdin (would
+//     hang the MCP session indefinitely).
+//   - `GIT_SSH_COMMAND='ssh -o BatchMode=yes'` propagates the same
+//     non-interactive guarantee to SSH-form remotes so a missing key
+//     fails fast instead of hanging on a key passphrase prompt.
+//
+// Returns the combined stdout+stderr on failure so caller can surface
+// meaningful error context to the agent.
+func RunGitAuthProbeLocal(ctx context.Context, workingDir, remoteURL string) error {
+	cmd := exec.CommandContext(ctx, "git", "ls-remote", remoteURL, "HEAD")
+	cmd.Dir = workingDir
+	cmd.Env = append(cmd.Environ(),
+		"GIT_TERMINAL_PROMPT=0",
+		"GIT_SSH_COMMAND=ssh -o BatchMode=yes",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git ls-remote %s: %w (output: %s)", remoteURL, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// RunGitOriginSyncLocal sets `origin` in workingDir's .git/config to
+// remoteURL. Idempotent: tries `git remote add origin` first (silently),
+// falls back to `git remote set-url origin` if origin already exists.
+// Same pattern as the container path's BuildGitOriginSyncCommand.
+func RunGitOriginSyncLocal(ctx context.Context, workingDir, remoteURL string) error {
+	addCmd := exec.CommandContext(ctx, "git", "remote", "add", "origin", remoteURL)
+	addCmd.Dir = workingDir
+	if err := addCmd.Run(); err == nil {
+		return nil
+	}
+	// `add` failed (origin exists) — fall back to set-url.
+	setCmd := exec.CommandContext(ctx, "git", "remote", "set-url", "origin", remoteURL)
+	setCmd.Dir = workingDir
+	out, err := setCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git remote set-url origin %s: %w (output: %s)", remoteURL, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }

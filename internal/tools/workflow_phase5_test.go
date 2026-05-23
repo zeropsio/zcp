@@ -146,10 +146,12 @@ func TestHandleCloseMode_InvalidValue(t *testing.T) {
 	}
 }
 
-// TestHandleGitPushSetup_Confirm pins the confirm-mode happy path:
-// passing service + remoteUrl writes GitPushState=configured + RemoteURL.
+// TestHandleGitPushSetup_Confirm pins the local-mode confirm-mode happy
+// path: probe passes (stubbed), origin sync runs (stubbed), meta stamps
+// configured. Container-mode confirm-mode tests live separately in
+// workflow_git_push_setup_container_test.go and exercise the real probe-
+// before-mutate sequence with a stubbed SSHDeployer.
 func TestHandleGitPushSetup_Confirm(t *testing.T) {
-	t.Parallel()
 	stateDir := t.TempDir()
 	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
 		Hostname:         "appdev",
@@ -160,6 +162,11 @@ func TestHandleGitPushSetup_Confirm(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("WriteServiceMeta: %v", err)
 	}
+
+	// Stub local probe + origin sync — return nil for both so the
+	// verifier reaches the meta-stamp step.
+	defer setLocalGitProbeReader(func(context.Context, string, string) error { return nil })()
+	defer setLocalGitOriginSyncer(func(context.Context, string, string) error { return nil })()
 
 	result, _, err := handleGitPushSetup(context.Background(), nil, nil, "test-project", WorkflowInput{
 		Service:   "appdev",
