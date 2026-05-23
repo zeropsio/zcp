@@ -25,7 +25,7 @@ target is deployed + verified, the work session auto-closes.
 
 ---
 
-This service is on `closeDeployMode=git-push`, but the runtime's `gitPushState` is not `configured` — pushing now will be rejected by `zerops_deploy strategy="git-push"` pre-flight (PUSH_NOT_CONFIGURED).
+This service is on `closeDeployMode=git-push`, but the runtime's `gitPushState` is not `configured` — pushing now will be rejected by `zerops_deploy strategy="git-push"` pre-flight (`PREREQUISITE_MISSING`).
 
 Run the capability setup first; the env-aware setup atom will be returned synchronously with the walkthrough:
 
