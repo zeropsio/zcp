@@ -1151,7 +1151,14 @@ func (s *stubSSHWithCommands) ExecSSHBackground(_ context.Context, _, _ string, 
 	return s.pushOutput, s.pushErr
 }
 
-func TestDeployTool_GitPush_MissingGitToken_ReturnsPrerequisites(t *testing.T) {
+// TestDeployTool_GitPush_TokenStaleInShell_PointsAtRestart pins the
+// Phase-5 diagnose branch: when meta.GitPushState is `configured`
+// (git-push-setup probe-verified GIT_TOKEN earlier) but the container
+// shell's `test -n "$GIT_TOKEN"` returns 0, the most likely cause is
+// a stale shell (env wasn't injected because skipRestart=true or an
+// existing SSH session). Recovery is restart the runtime — NOT a
+// git-push-setup re-run, which would re-probe a known-good token.
+func TestDeployTool_GitPush_TokenStaleInShell_PointsAtRestart(t *testing.T) {
 	t.Parallel()
 
 	stateDir := t.TempDir()
@@ -1159,7 +1166,8 @@ func TestDeployTool_GitPush_MissingGitToken_ReturnsPrerequisites(t *testing.T) {
 	markGitPushConfigured(t, stateDir, "appdev")
 
 	mock := platform.NewMock()
-	// GIT_TOKEN check returns "0" — token not set.
+	// GIT_TOKEN check returns "0" — token not in shell env, even though
+	// meta says configured (the diagnose branch).
 	ssh := &stubSSHWithCommands{
 		tokenOutput: []byte("0"),
 		pushOutput:  []byte("ok"),
@@ -1175,19 +1183,105 @@ func TestDeployTool_GitPush_MissingGitToken_ReturnsPrerequisites(t *testing.T) {
 		"remoteUrl":     "https://github.com/example/repo",
 	})
 
-	// Should NOT be an error — it's a structured "prerequisites missing" response.
 	text := getTextContent(t, result)
 
 	wantParts := []string{
-		"GIT_TOKEN_MISSING",                // uses platform error constant
-		"action=\\\"git-push-setup\\\"",    // post-decomp Phase-5 action pointer (JSON-escaped)
-		"action=\\\"build-integration\\\"", // optional follow-up to wire ZCP-managed CI
-		"appdev",                           // target service hostname filled into the pointer
+		"GIT_TOKEN_MISSING",               // uses platform error constant
+		"action=\\\"restart\\\"",          // restart recovery, NOT git-push-setup re-run
+		"serviceHostname=\\\"appdev\\\"",  // restart target
+		"probe-verified",                  // diagnose message references probe history
+		"not live in the container shell", // explains shell vs project state
 	}
 	for _, part := range wantParts {
 		if !strings.Contains(text, part) {
-			t.Errorf("git-push prerequisite response should contain %q, got:\n%s", part, text)
+			t.Errorf("stale-shell prerequisite response should contain %q, got:\n%s", part, text)
 		}
+	}
+}
+
+// TestDeployTool_GitPush_CredentialFailure_DegradesMetaToBroken pins
+// the Phase-5 token-rotation handling: when a previously probe-verified
+// configured state hits a credential failure during push (PAT rotated
+// or revoked upstream), the handler degrades meta.GitPushState from
+// configured to broken so the next launch source-control gate refuses
+// cleanly + chains the agent into a fresh git-push-setup probe.
+func TestDeployTool_GitPush_CredentialFailure_DegradesMetaToBroken(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	setupDeployedService(t, stateDir, "appdev", "")
+	markGitPushConfigured(t, stateDir, "appdev")
+
+	mock := platform.NewMock()
+	// Token check passes (token in shell), committed-code check passes,
+	// but the push itself fails with a credential-class error from git.
+	ssh := &stubSSHWithCommands{
+		tokenOutput:     []byte("1"),
+		committedOutput: []byte("1"),
+		pushErr:         &platform.SSHExecError{Output: "fatal: Authentication failed for 'https://github.com/example/repo'", Err: fmt.Errorf("exit status 128")},
+	}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil)
+
+	_ = callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "appdev",
+		"strategy":      "git-push",
+		"remoteUrl":     "https://github.com/example/repo",
+	})
+
+	// Meta should be degraded from configured to broken.
+	refreshed, err := workflow.FindServiceMeta(stateDir, "appdev")
+	if err != nil {
+		t.Fatalf("re-read meta: %v", err)
+	}
+	if refreshed == nil {
+		t.Fatal("expected meta to exist post-deploy")
+	}
+	if refreshed.GitPushState != topology.GitPushBroken {
+		t.Errorf("expected GitPushState=broken (degraded from configured); got %q", refreshed.GitPushState)
+	}
+}
+
+// TestDeployTool_GitPush_TokenNeverSetInProject_PointsAtSetup pins the
+// other branch: when meta.GitPushState is not `configured` (no probe
+// ever ran) AND the container shell has no GIT_TOKEN, the recovery
+// points at git-push-setup so the agent runs the probe-first verifier.
+func TestDeployTool_GitPush_TokenNeverSetInProject_PointsAtSetup(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	setupDeployedService(t, stateDir, "appdev", "")
+	// Intentionally NOT calling markGitPushConfigured — meta is in the
+	// default unconfigured state.
+
+	mock := platform.NewMock()
+	ssh := &stubSSHWithCommands{
+		tokenOutput: []byte("0"),
+		pushOutput:  []byte("ok"),
+	}
+	authInfo := &auth.Info{Token: "t", APIHost: "api.app-prg1.zerops.io", Region: "prg1"}
+
+	srv := mcp.NewServer(&mcp.Implementation{Name: "test", Version: "0.1"}, nil)
+	RegisterDeploySSH(srv, mock, okHTTP, "proj-1", ssh, authInfo, nil, runtime.Info{}, stateDir, testDeployEngine(t), nil)
+
+	result := callTool(t, srv, "zerops_deploy", map[string]any{
+		"targetService": "appdev",
+		"strategy":      "git-push",
+		"remoteUrl":     "https://github.com/example/repo",
+	})
+
+	// gitPushMetaPreflight fires FIRST (meta.GitPushState != configured),
+	// returning the git-push-setup pointer before we ever exec the SSH
+	// token check. So this test pins the meta-preflight chain, not the
+	// shell-test branch.
+	text := getTextContent(t, result)
+	if !strings.Contains(text, "git-push not configured") {
+		t.Errorf("expected meta-preflight pointer at git-push-setup, got:\n%s", text)
+	}
+	if !strings.Contains(text, "action=\\\"git-push-setup\\\"") {
+		t.Errorf("expected git-push-setup pointer in recovery, got:\n%s", text)
 	}
 }
 

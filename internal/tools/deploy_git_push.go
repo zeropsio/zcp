@@ -116,6 +116,21 @@ func gitPushMetaPreflight(
 
 const gitTokenCheckCmd = `test -n "$GIT_TOKEN" && echo 1 || echo 0`
 
+// degradeGitPushStateToBroken flips meta.GitPushState from configured to
+// broken in response to a credential failure observed during git push.
+// Best-effort: meta read/write errors are silently ignored — the deploy
+// has already failed and we're augmenting the recovery story, not
+// gating on disk I/O. Only flips state if currently `configured` (does
+// not touch unconfigured / unknown / broken states).
+func degradeGitPushStateToBroken(stateDir, targetService string) {
+	meta, _ := workflow.FindServiceMeta(stateDir, targetService)
+	if meta == nil || meta.GitPushState != topology.GitPushConfigured {
+		return
+	}
+	meta.GitPushState = topology.GitPushBroken
+	_ = workflow.WriteServiceMeta(stateDir, meta)
+}
+
 // resolveEffectiveRemote picks the URL the deploy handler should push to:
 // the explicit input arg wins (lets the agent override on a one-off push),
 // falling back to the remote stamped in meta during
@@ -171,6 +186,8 @@ this push.`
 // but the remote's receipt of the push triggers one — so zerops.yaml still
 // needs to be valid. Pre-push validation fetches the file from the container
 // via SSH cat and calls the Zerops validator; any failure aborts the push.
+//
+//nolint:maintidx // long but linear: pre-flight chain (meta gate → committed-code → token diagnose → yaml validate → env-ref preflight → push → token-rotation degradation). Extracting any single branch would split the single-place state-mutation policy.
 func handleGitPush(
 	ctx context.Context,
 	client platform.Client,
@@ -267,10 +284,22 @@ func handleGitPush(
 		)), nil, nil
 	}
 	if strings.TrimSpace(string(tokenOut)) == "0" {
-		recordAttempt("GIT_TOKEN missing", topology.FailureClassCredential)
+		recordAttempt("GIT_TOKEN missing in container shell", topology.FailureClassCredential)
+		// Lean diagnose: distinguish "GIT_TOKEN never written to project
+		// env" (state-level: meta.GitPushState != configured) from
+		// "GIT_TOKEN exists in project env but container shell is stale"
+		// (meta says configured but shell-test failed — restart needed).
+		meta, _ := workflow.FindServiceMeta(stateDir, hostname)
+		if meta != nil && meta.GitPushState == topology.GitPushConfigured {
+			return jsonResult(&gitPushPrerequisites{
+				Status:       platform.ErrGitTokenMissing,
+				Message:      fmt.Sprintf("GIT_TOKEN is set in the project env (git-push-setup probe-verified it) but not live in the container shell on %s — the runtime needs a restart before $GIT_TOKEN is visible.", hostname),
+				Instructions: fmt.Sprintf("Restart the runtime so the env-var injects into the container shell: zerops_manage action=\"restart\" serviceHostname=%q. Then retry the push. (This usually happens when a previous git-push-setup or env write used skipRestart=true.)", hostname),
+			}), nil, nil
+		}
 		return jsonResult(&gitPushPrerequisites{
 			Status:       platform.ErrGitTokenMissing,
-			Message:      "GIT_TOKEN is not set. This project env var is required for pushing to a git remote.",
+			Message:      "GIT_TOKEN is not set. The project env var is required for pushing to a git remote.",
 			Instructions: fmt.Sprintf(gitPushSetupPointerInstructions, hostname, hostname),
 		}), nil, nil
 	}
@@ -328,12 +357,22 @@ func handleGitPush(
 		if classification != nil {
 			category = classification.Category
 		}
+		// Token-rotation degradation: when a previously probe-verified
+		// configured state hits a credential failure during push, the
+		// most likely cause is upstream PAT rotation/revocation. Degrade
+		// meta.GitPushState to broken so the next launch source-control
+		// gate refuses cleanly + chains the agent into git-push-setup
+		// for a fresh probe — instead of letting the stale "configured"
+		// flag surface a launch as ready when its push wouldn't work.
+		if category == topology.FailureClassCredential {
+			degradeGitPushStateToBroken(stateDir, input.TargetService)
+		}
 		recordAttempt(fmt.Sprintf("git-push failed: %v", err), category)
 		_ = output
 		return convertError(platform.NewPlatformError(
 			platform.ErrSSHDeployFailed,
 			fmt.Sprintf("git-push from %s failed: %s", hostname, err),
-			"Check GIT_TOKEN env var, remote URL, and git status on the container",
+			"Re-run zerops_workflow action=\"git-push-setup\" with a fresh PAT (the handler probes the token against the remote before writing project state). If recovery says GIT_TOKEN is missing on the container, restart the runtime first via zerops_manage action=\"restart\".",
 		), WithFailureClassification(classification)), nil, nil
 	}
 
