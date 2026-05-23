@@ -1,0 +1,60 @@
+package ops
+
+import (
+	"fmt"
+	"strings"
+)
+
+// BuildGitAuthProbeCommand builds an SSH command body that probes git
+// remote auth using a one-shot inline GIT_TOKEN. Uses the same ephemeral
+// .netrc + trap-cleanup pattern as BuildGitPushCommand so probe and real
+// push share identical auth semantics — a passing probe is the strongest
+// possible pre-stamp guarantee that the next push will authenticate.
+//
+// The probe is read-only (`git ls-remote HEAD`) — it does not mutate
+// remote refs, does not push, does not touch container disk beyond the
+// ephemeral .netrc.
+//
+// Safety flags:
+//   - `GIT_TERMINAL_PROMPT=0` — never prompt for credentials. Without
+//     this, a missing/wrong token can hang the SSH session waiting for
+//     stdin, freezing the MCP call.
+//   - `trap 'rm -f ~/.netrc' EXIT` — .netrc removed on any exit
+//     (success, failure, signal).
+//   - `umask 077` + `chmod 600` — token file world-unreadable.
+//
+// The token is passed inline via `export GIT_TOKEN=<quoted>`. Briefly
+// visible in /proc/<pid>/environ during the SSH session, same exposure
+// envelope as BuildGitPushCommand (which assumes $GIT_TOKEN is already
+// in container env). Acceptable trade-off — probe is short-lived (~1s
+// network round-trip).
+//
+// HTTPS-only enforcement is the caller's responsibility — this builder
+// does NOT validate URL scheme. SCP-form SSH remotes (`git@host:owner/repo`)
+// don't authenticate via .netrc + PAT; caller must reject before calling.
+func BuildGitAuthProbeCommand(remoteURL, token string) string {
+	host := parseGitHost(remoteURL)
+	parts := []string{
+		fmt.Sprintf("export GIT_TOKEN=%s", shellQuote(token)),
+		"trap 'rm -f ~/.netrc' EXIT",
+		fmt.Sprintf(`umask 077 && echo "machine %s login oauth2 password $GIT_TOKEN" > ~/.netrc && chmod 600 ~/.netrc`, host),
+		fmt.Sprintf("GIT_TERMINAL_PROMPT=0 git ls-remote %s HEAD", shellQuote(remoteURL)),
+	}
+	return strings.Join(parts, " && ")
+}
+
+// BuildGitOriginSyncCommand builds an SSH command body that idempotently
+// sets `origin` in workingDir's .git/config to remoteURL. Uses the same
+// `(add 2>/dev/null || set-url)` pattern as BuildGitPushCommand so the
+// container's persistent .git/config carries the same canonical origin
+// the deploy path expects.
+//
+// Caller passes workingDir absolute path (e.g. /var/www). remoteURL is
+// shell-quoted.
+func BuildGitOriginSyncCommand(workingDir, remoteURL string) string {
+	quoted := shellQuote(remoteURL)
+	return fmt.Sprintf(
+		`cd %s && (git remote add origin %s 2>/dev/null || git remote set-url origin %s)`,
+		workingDir, quoted, quoted,
+	)
+}

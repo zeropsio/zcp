@@ -91,7 +91,7 @@ func TestErrAdoptRequiredCarriesAdoptRecovery(t *testing.T) {
 				// workflow_git_push_setup.go (Phase 1.2 of eval-review-20260518
 				// fix-plan; previously emitted ErrServiceNotFound + generic
 				// status Recovery, missed during the 5478623c migration).
-				result, _, err := handleGitPushSetup(WorkflowInput{
+				result, _, err := handleGitPushSetup(context.Background(), nil, nil, "test-project", WorkflowInput{
 					Service:   "appdev",
 					RemoteURL: "https://github.com/example/repo",
 				}, dir, runtime.Info{InContainer: true})

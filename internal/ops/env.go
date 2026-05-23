@@ -144,6 +144,57 @@ func setProjectEnvs(ctx context.Context, client platform.Client, projectID strin
 	return &EnvSetResult{Process: lastProc, Stored: stored}, nil
 }
 
+// EnvSetSensitiveProject writes one project-level env var with sensitive=true
+// at the platform layer. Used by handlers that write user secrets (today:
+// GIT_TOKEN via git-push-setup verifier) where the value must NEVER appear
+// in any response, state file, or audit log. Upsert semantics mirror
+// EnvSet: existing key is delete-then-created.
+//
+// Returns the platform process only (no Stored echo). Callers that need
+// confirmation that the value landed should poll the process, not read
+// the value back — by design we don't expose it.
+//
+// The supplied value is run through the same preprocessor expansion as
+// EnvSet so a recipe-style <@expr> would resolve identically; today's
+// only caller (git-push-setup) passes literal PATs, but the path stays
+// consistent.
+func EnvSetSensitiveProject(ctx context.Context, client platform.Client, projectID, key, value string) (*platform.Process, error) {
+	if key == "" {
+		return nil, platform.NewPlatformError(platform.ErrInvalidUsage,
+			"EnvSetSensitiveProject: key required", "")
+	}
+	if value == "" {
+		return nil, platform.NewPlatformError(platform.ErrInvalidUsage,
+			"EnvSetSensitiveProject: value required", "")
+	}
+
+	pairs := []envPair{{Key: key, Value: value}}
+	if err := expandPairs(ctx, pairs); err != nil {
+		return nil, err
+	}
+	if err := rejectEncodingPrefixedSecrets(pairs, []string{key + "=" + value}); err != nil {
+		return nil, err
+	}
+
+	existing, err := client.GetProjectEnv(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	for _, e := range existing {
+		if e.Key == key {
+			if _, delErr := client.DeleteProjectEnv(ctx, e.ID); delErr != nil {
+				return nil, delErr
+			}
+			break
+		}
+	}
+	proc, err := client.CreateProjectEnv(ctx, projectID, pairs[0].Key, pairs[0].Value, true /* sensitive */)
+	if err != nil {
+		return nil, err
+	}
+	return proc, nil
+}
+
 // EnvDelete deletes environment variables from a service or project.
 // Service-level: each variable is deleted individually; only the last process
 // is returned. Project-level: same behavior. On error, returns immediately —

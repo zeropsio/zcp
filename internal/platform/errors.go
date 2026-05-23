@@ -67,6 +67,12 @@ const (
 	ErrWorkflowRequired   = "WORKFLOW_REQUIRED"
 	ErrSelfServiceBlocked = "SELF_SERVICE_BLOCKED"
 	ErrGitTokenMissing    = "GIT_TOKEN_MISSING"
+	// ErrGitTokenInvalid signals that a GIT_TOKEN was supplied but the
+	// remote rejected the auth probe (bad token, expired PAT, insufficient
+	// scope, or URL unreachable). Distinct from ErrGitTokenMissing — the
+	// recovery is "regenerate / re-scope PAT", not "set GIT_TOKEN". Emitted
+	// by the git-push-setup probe-first verifier.
+	ErrGitTokenInvalid    = "GIT_TOKEN_INVALID"
 	ErrSubagentMisuse     = "SUBAGENT_MISUSE"
 	ErrExportBlocked      = "EXPORT_BLOCKED"
 	ErrMissingEvidence    = "MISSING_EVIDENCE"

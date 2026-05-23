@@ -1,12 +1,14 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
 	"github.com/zeropsio/zcp/internal/runtime"
 	"github.com/zeropsio/zcp/internal/topology"
@@ -44,24 +46,37 @@ func validateRemoteURL(remote string) error {
 }
 
 // handleGitPushSetup walks the agent through configuring git-push capability
-// for a service: GIT_TOKEN on the container (or origin URL on local) plus
-// the remote repository URL. Introduced by deploy-strategy decomposition
-// Phase 5.
+// for a service. Container env: GIT_TOKEN + HTTPS remote URL + verified
+// authentication. Local env: origin URL + user's local credential helper
+// proves auth.
 //
 // Two modes:
 //
 //   - Walkthrough (input.RemoteURL empty): synthesize the env-aware setup
 //     atom from the corpus — agent reads, executes the steps, then re-calls
-//     with input.RemoteURL set. No meta mutation.
-//   - Confirm (input.RemoteURL set): writes meta.GitPushState=configured
-//     plus meta.RemoteURL on a successful pre-flight, returns confirmation.
-//     The pre-flight is light at this layer — full GIT_TOKEN / .netrc
-//     verification still runs at zerops_deploy time (deploy-decomp P4).
+//     with input.RemoteURL (+ input.GitToken in container mode). No meta
+//     mutation.
+//   - Confirm (input.RemoteURL set): probe-first verifier. Runs auth probe
+//     against the supplied remoteUrl + gitToken BEFORE writing any project
+//     state. On probe success: writes sensitive GIT_TOKEN env, restarts the
+//     push-source runtime so $GIT_TOKEN is live, syncs origin in
+//     /var/www/.git/config, then stamps meta.GitPushState=configured +
+//     meta.RemoteURL. On probe failure: returns a structured credential
+//     error with NO project state mutation — agent re-calls with corrected
+//     inputs.
 //
 // service param is required and resolves via FindServiceMeta (pair-keyed).
 // Stage-hostname targets are rejected with the same source-of-push remediation
 // as the deploy handlers.
-func handleGitPushSetup(input WorkflowInput, stateDir string, rt runtime.Info) (*mcp.CallToolResult, any, error) {
+func handleGitPushSetup(
+	ctx context.Context,
+	client platform.Client,
+	sshDeployer ops.SSHDeployer,
+	projectID string,
+	input WorkflowInput,
+	stateDir string,
+	rt runtime.Info,
+) (*mcp.CallToolResult, any, error) {
 	if input.Service == "" {
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
@@ -178,14 +193,27 @@ func handleGitPushSetup(input WorkflowInput, stateDir string, rt runtime.Info) (
 		}, stateDir)), nil, nil
 	}
 
-	// Confirm mode: validate remoteUrl format then write meta state. Full
-	// GIT_TOKEN / .netrc verification happens later at deploy time
-	// (deploy_git_push.go pre-flight); the URL-format check here closes
-	// the gap surfaced in the Phase 5 Codex POST-WORK review (a malformed
-	// URL persisted in meta would survive to deploy preflight silently).
+	// Confirm mode: probe-first verifier.
+	//
+	// 1. Validate URL format (existing).
+	// 2. Container env additionally requires gitToken + HTTPS-only URL.
+	// 3. Run auth probe — if it fails, return error with NO state mutation.
+	// 4. Side effects (in order): SSH sync origin in /var/www/.git/config,
+	//    write sensitive GIT_TOKEN, restart push-source runtime, stamp meta.
+	//
+	// Local env (rt.InContainer == false) is handled by Phase 2 of the
+	// systemic fix plan — until then, fall through to URL-format-only
+	// confirm for backward compat (local path uses user's credential helper
+	// directly; ZCP can't inject .netrc on user's local machine).
 	if err := validateRemoteURL(input.RemoteURL); err != nil {
 		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
+
+	if rt.InContainer {
+		return confirmGitPushSetupContainer(ctx, client, sshDeployer, projectID, stateDir, input, meta)
+	}
+
+	// Local env — Phase 2 will replace this with a real local probe.
 	meta.GitPushState = topology.GitPushConfigured
 	meta.RemoteURL = input.RemoteURL
 	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
@@ -194,6 +222,125 @@ func handleGitPushSetup(input WorkflowInput, stateDir string, rt runtime.Info) (
 			fmt.Sprintf("Write service meta %q: %v", input.Service, err),
 			""), WithRecoveryStatus()), nil, nil
 	}
+	return jsonResult(attachWorkSessionState(map[string]any{
+		"status":                 "configured",
+		"service":                input.Service,
+		"gitPushState":           meta.GitPushState,
+		"remoteUrl":              meta.RemoteURL,
+		"recommendedIntegration": recommendIntegrationForRemoteURL(meta.RemoteURL),
+		"nextStep":               fmt.Sprintf("git-push capability is ready (local mode). Wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
+	}, stateDir)), nil, nil
+}
+
+// confirmGitPushSetupContainer implements the container-mode probe-first
+// verifier. Reached only when rt.InContainer is true. Probe-first principle:
+// no project state is mutated until the auth probe proves the supplied
+// (gitToken, remoteUrl) pair authenticates against the remote.
+func confirmGitPushSetupContainer(
+	ctx context.Context,
+	client platform.Client,
+	sshDeployer ops.SSHDeployer,
+	projectID, stateDir string,
+	input WorkflowInput,
+	meta *workflow.ServiceMeta,
+) (*mcp.CallToolResult, any, error) {
+	// HTTPS-only: SCP-form SSH remotes (git@github.com:owner/repo.git)
+	// don't authenticate via .netrc + PAT. Reject early with a clear
+	// remediation pointing at HTTPS form. (SSH deploy-key flow is a
+	// separate phase, not yet implemented.)
+	if scpStyleRemote.MatchString(input.RemoteURL) {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Container git-push-setup uses HTTPS + PAT auth via .netrc; SCP-form SSH remote %q is not supported.", input.RemoteURL),
+			"Pass an HTTPS URL: https://github.com/<owner>/<repo>.git. SSH deploy-key flow is not yet implemented.",
+		), WithRecoveryStatus()), nil, nil
+	}
+	u, parseErr := url.Parse(input.RemoteURL)
+	if parseErr != nil || (u.Scheme != "https" && u.Scheme != "http") {
+		//nolint:nilerr // parseErr surfaced via error-code wrap below; caller wants structured error not raw url.Parse error
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("Container git-push-setup requires HTTPS remote URL; got %q", input.RemoteURL),
+			"Pass an HTTPS URL: https://github.com/<owner>/<repo>.git.",
+		), WithRecoveryStatus()), nil, nil
+	}
+
+	// Token required in container mode.
+	if input.GitToken == "" {
+		return convertError(platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			"Container git-push-setup requires gitToken (fine-grained PAT) — the handler verifies the token against the remote before writing project state.",
+			fmt.Sprintf("Re-call: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=%q gitToken=<PAT>. Fine-grained PAT scoped to owner/repo with Contents: Read and write (add Secrets/Workflows for integration=actions).", input.Service, input.RemoteURL),
+		), WithRecoveryStatus()), nil, nil
+	}
+
+	pushHost := meta.Hostname
+
+	// 1. Probe — read-only auth check via ephemeral .netrc. NO mutation.
+	probeCmd := ops.BuildGitAuthProbeCommand(input.RemoteURL, input.GitToken)
+	if _, probeErr := sshDeployer.ExecSSH(ctx, pushHost, probeCmd); probeErr != nil {
+		// Probe failure = bad token OR unreachable URL OR network. We can
+		// inspect probeErr for category but agent-side recovery is the
+		// same: fix inputs and re-call. NO state was written.
+		return convertError(platform.NewPlatformError(
+			platform.ErrGitTokenInvalid,
+			fmt.Sprintf("git-push-setup probe against %s failed: %v", input.RemoteURL, probeErr),
+			"Verify: (1) PAT is correct and unexpired, (2) PAT has Contents: Read+Write on this repo (add Secrets/Workflows if integration=actions), (3) Remote URL exists and is reachable. Then re-call with corrected inputs. NO project state was modified.",
+		), WithRecoveryStatus()), nil, nil
+	}
+
+	// 2. SSH sync origin in /var/www/.git/config. Writes survive the
+	//    upcoming restart (filesystem persists). Done before env+restart
+	//    so we don't have to wait for the container to come back.
+	originCmd := ops.BuildGitOriginSyncCommand("/var/www", input.RemoteURL)
+	if _, originErr := sshDeployer.ExecSSH(ctx, pushHost, originCmd); originErr != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrSSHDeployFailed,
+			fmt.Sprintf("git-push-setup probe passed but origin sync on %s failed: %v", pushHost, originErr),
+			"The container's /var/www/.git/config could not be updated. Confirm the container has /var/www/.git initialized (bootstrap runs InitServiceGit) and SSH is healthy, then re-call. NO project env or meta state was modified.",
+		), WithRecoveryStatus()), nil, nil
+	}
+
+	// 3. Write GIT_TOKEN to project env as sensitive — value never echoes
+	//    back in response or audit log.
+	if _, envErr := ops.EnvSetSensitiveProject(ctx, client, projectID, "GIT_TOKEN", input.GitToken); envErr != nil {
+		return convertError(envErr, WithRecoveryStatus()), nil, nil
+	}
+
+	// 4. Restart push-source so $GIT_TOKEN lands in the container's shell
+	//    env. Without this, the next zerops_deploy strategy=git-push would
+	//    SSH to the same container session and its gitTokenCheckCmd would
+	//    return 0 (token in platform DB, not in shell).
+	svc, lookupErr := ops.LookupService(ctx, client, projectID, pushHost)
+	if lookupErr != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrServiceNotFound,
+			fmt.Sprintf("git-push-setup: locate push-source service %q for restart: %v", pushHost, lookupErr),
+			"Token was written to project env, origin synced, but push-source restart could not be issued (service lookup failed). Restart the runtime manually via zerops_manage action=restart serviceHostname=<host>, then re-call git-push-setup with the same inputs (probe is idempotent; subsequent runs will stamp configured).",
+		), WithRecoveryStatus()), nil, nil
+	}
+	restartProc, restartErr := client.RestartService(ctx, svc.ID)
+	if restartErr != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrAPIError,
+			fmt.Sprintf("git-push-setup: restart push-source %q failed: %v", pushHost, restartErr),
+			"Token was written + origin synced. Restart manually via zerops_manage action=restart serviceHostname=<host>, then re-call git-push-setup.",
+		), WithRecoveryStatus()), nil, nil
+	}
+	// Poll restart to completion so the agent sees a fully ready container
+	// on the next deploy call.
+	_, _ = pollManageProcess(ctx, client, restartProc, nil)
+
+	// 5. Stamp configured. All side effects succeeded.
+	meta.GitPushState = topology.GitPushConfigured
+	meta.RemoteURL = input.RemoteURL
+	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
+		return convertError(platform.NewPlatformError(
+			platform.ErrServiceNotFound,
+			fmt.Sprintf("Write service meta %q: %v", input.Service, err),
+			"All platform-side side effects (env write, restart) succeeded but local meta write failed. Re-run git-push-setup to re-stamp; the probe is idempotent (token already verified).",
+		), WithRecoveryStatus()), nil, nil
+	}
 
 	return jsonResult(attachWorkSessionState(map[string]any{
 		"status":                 "configured",
@@ -201,7 +348,7 @@ func handleGitPushSetup(input WorkflowInput, stateDir string, rt runtime.Info) (
 		"gitPushState":           meta.GitPushState,
 		"remoteUrl":              meta.RemoteURL,
 		"recommendedIntegration": recommendIntegrationForRemoteURL(meta.RemoteURL),
-		"nextStep":               fmt.Sprintf("git-push capability is ready. Wire CI (recommended for GitHub: integration=\"actions\" — zero manual dashboard step; for GitLab or policy-constrained repos: integration=\"webhook\"; for external CI/CD: integration=\"none\"): zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
+		"nextStep":               fmt.Sprintf("git-push capability verified end-to-end: token authenticates against remote, origin synced on /var/www/.git/config, GIT_TOKEN live in container shell. Wire CI (integration=\"actions\" recommended for GitHub; \"webhook\" for GitLab; \"none\" for external CI/CD): zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\". Then push via: zerops_deploy targetService=%q strategy=\"git-push\".", input.Service, input.Service),
 	}, stateDir)), nil, nil
 }
 

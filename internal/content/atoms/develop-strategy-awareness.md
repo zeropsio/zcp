@@ -20,9 +20,12 @@ rendered Services block shows them as
   you for orchestration. `unset` is the bootstrap-written
   placeholder that develop converts on first use.
 - `gitPush` — capability state for the git-push path. `configured`
-  means GIT_TOKEN + .netrc + remote URL are stamped; `unconfigured`
-  / `broken` / `unknown` indicate setup is needed before
-  `closeMode=git-push` can fire.
+  means the last `git-push-setup` probe **proved end-to-end auth**: the
+  supplied token authenticates against the remote URL, project env carries
+  `GIT_TOKEN` (sensitive), and the working tree's git config has its
+  `origin` synced. `unconfigured` / `broken` indicate setup is
+  needed before `closeMode=git-push` can fire (`broken` means a previously-
+  configured token stopped working, e.g. PAT rotation).
 - `buildIntegration` — ZCP-managed CI. `actions` (recommended for
   GitHub remotes; zero manual dashboard step), `webhook` (Zerops
   dashboard OAuth — fallback for GitLab / policy-constrained
