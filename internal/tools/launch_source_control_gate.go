@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os/exec"
 	"slices"
 	"sort"
@@ -16,6 +17,11 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
+
+// urlParse is a package-local indirection over net/url.Parse so the
+// launchPushProofHost helper doesn't shadow a stdlib import name in
+// inline tests. Behavior identical to url.Parse.
+var urlParse = url.Parse
 
 // sourceControlGateCheck names one failure mode the launch source-control
 // gate can surface. Each value maps to a distinct blocker ID + Recovery
@@ -290,7 +296,10 @@ func readLaunchPushProof(ctx context.Context, sshDeployer ops.SSHDeployer, rt ru
 }
 
 // readLaunchPushProofContainer runs the three push-proof commands
-// over SSH in /var/www on the push hostname.
+// over SSH in /var/www on the push hostname. The `ls-remote` step
+// uses the same authenticated pattern as Phase 1 git-push-setup
+// probe (ephemeral .netrc from $GIT_TOKEN) so private repos do not
+// false-fail as `head-not-pushed`.
 func readLaunchPushProofContainer(ctx context.Context, ssh ops.SSHDeployer, pushHostname string, remoteURL string) (LaunchPushProofResult, error) {
 	statusCmd := fmt.Sprintf(`cd %s 2>/dev/null && git status --porcelain 2>/dev/null || true`, exportRepoRoot)
 	statusOut, err := ssh.ExecSSH(ctx, pushHostname, statusCmd)
@@ -308,16 +317,21 @@ func readLaunchPushProofContainer(ctx context.Context, ssh ops.SSHDeployer, push
 
 	remote := ""
 	if remoteURL != "" {
-		// ls-remote default branch — Zerops `buildFromGit:` clones the
-		// default branch only (schema is just a URL string per the live
-		// import schema; no @branch / @SHA pinning supported).
-		// POSIX single-quote escape — same shape ops.shellQuote uses;
-		// inlined here to avoid a tools→ops dependency for one shell
-		// command. RemoteURL comes from meta.RemoteURL which passes
-		// validateRemoteURL; embedded single quotes are escaped via
-		// the canonical `'\''` sequence.
+		// Authenticated ls-remote: ephemeral .netrc from $GIT_TOKEN
+		// (assumed live in container shell — git-push-setup Phase 1
+		// guarantees it by restarting the runtime post-write). Same
+		// trap-cleanup + umask pattern as Phase 1 probe so a missing
+		// token surfaces as auth failure here, not as a falsely-missing
+		// remote HEAD. POSIX single-quote escape inlined to avoid a
+		// tools→ops dependency for one shell command — RemoteURL
+		// passed validateRemoteURL already.
 		quotedURL := "'" + strings.ReplaceAll(remoteURL, "'", `'\''`) + "'"
-		lsCmd := fmt.Sprintf(`git ls-remote %s HEAD 2>/dev/null | head -1 | cut -f1 || true`, quotedURL)
+		host := launchPushProofHost(remoteURL)
+		lsCmd := strings.Join([]string{
+			"trap 'rm -f ~/.netrc' EXIT",
+			fmt.Sprintf(`umask 077 && echo "machine %s login oauth2 password $GIT_TOKEN" > ~/.netrc && chmod 600 ~/.netrc`, host),
+			fmt.Sprintf(`GIT_TERMINAL_PROMPT=0 git ls-remote %s HEAD 2>/dev/null | head -1 | cut -f1 || true`, quotedURL),
+		}, " && ")
 		lsOut, lsErr := ssh.ExecSSH(ctx, pushHostname, lsCmd)
 		if lsErr != nil {
 			return LaunchPushProofResult{}, fmt.Errorf("git ls-remote on %s: %w", pushHostname, lsErr)
@@ -327,8 +341,36 @@ func readLaunchPushProofContainer(ctx context.Context, ssh ops.SSHDeployer, push
 	return LaunchPushProofResult{DirtyTree: dirty, LocalHead: local, RemoteHead: remote}, nil
 }
 
+// launchPushProofHost extracts the host from a remote URL for the
+// ephemeral .netrc machine line. Mirrors ops.parseGitHost — duplicated
+// here to keep this layer-4 file from importing the unexported helper.
+// Falls back to "github.com" for URLs that don't parse cleanly.
+func launchPushProofHost(remoteURL string) string {
+	if remoteURL == "" {
+		return "github.com"
+	}
+	if strings.Contains(remoteURL, "://") {
+		if u, err := urlParse(remoteURL); err == nil && u.Host != "" {
+			return u.Host
+		}
+	}
+	if idx := strings.Index(remoteURL, "/"); idx > 0 {
+		host := remoteURL[:idx]
+		if colon := strings.LastIndex(host, ":"); colon > 0 {
+			host = host[:colon]
+		}
+		if host != "" {
+			return host
+		}
+	}
+	return "github.com"
+}
+
 // readLaunchPushProofLocal runs the three push-proof commands against
-// the current working directory in local mode.
+// the current working directory in local mode. The `ls-remote` step
+// runs with GIT_TERMINAL_PROMPT=0 + GIT_SSH_COMMAND='ssh -o BatchMode=yes'
+// so a missing credential helper fails fast instead of hanging the MCP
+// session on a credential prompt.
 func readLaunchPushProofLocal(ctx context.Context, remoteURL string) (LaunchPushProofResult, error) {
 	// git status --porcelain
 	statusCmd := exec.CommandContext(ctx, "git", "status", "--porcelain")
@@ -348,6 +390,10 @@ func readLaunchPushProofLocal(ctx context.Context, remoteURL string) (LaunchPush
 	remote := ""
 	if remoteURL != "" {
 		lsCmd := exec.CommandContext(ctx, "git", "ls-remote", remoteURL, "HEAD")
+		lsCmd.Env = append(lsCmd.Environ(),
+			"GIT_TERMINAL_PROMPT=0",
+			"GIT_SSH_COMMAND=ssh -o BatchMode=yes",
+		)
 		lsOut, lsErr := lsCmd.Output()
 		if lsErr == nil {
 			// Output format: "<SHA>\tHEAD"

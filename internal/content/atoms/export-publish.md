@@ -39,7 +39,7 @@ ssh {targetHostname} "cd /var/www && git add -A && git commit -m 'export: zerops
 zerops_deploy targetService="{targetHostname}" strategy="git-push"
 ```
 
-The deploy command handles `git init`, `.netrc` configuration, and `git remote add origin <repoUrl>` internally — these are not separate manual steps. `bundle.repoUrl` is what `meta.RemoteURL` will be cached as after a successful push.
+`git-push-setup` already probe-verified the remote auth and synced `origin` in the working tree's git config. The deploy call uses the project-level `GIT_TOKEN` to authenticate the push. `bundle.repoUrl` matches the `meta.RemoteURL` that `git-push-setup` stamped.
 
 On error, read `failureClassification.category`:
 

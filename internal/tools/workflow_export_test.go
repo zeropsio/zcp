@@ -1146,11 +1146,13 @@ func TestHandleExport_ValidationOutranksGitPushSetup(t *testing.T) {
 	}
 }
 
-// TestHandleExport_RemoteURLDrift_SurfacesWarning covers Phase 6:
-// when the chosen container's live `git remote get-url origin` differs
-// from the cached `meta.RemoteURL`, the bundle surfaces a warning AND
-// the cache gets updated to the live value so subsequent invocations
-// see consistent state.
+// TestHandleExport_RemoteURLDrift_SurfacesWarning covers the Phase-3
+// systemic-fix invariant: when the cached meta.RemoteURL is probe-proven
+// (GitPushState=configured) but the live origin differs, the bundle
+// surfaces a drift warning AND preserves the probe-proven cache.
+// ZCP refuses to silently overwrite a probe-proven URL with an
+// unverified live value — agent must re-run git-push-setup to probe the
+// new URL before the cache updates.
 func TestHandleExport_RemoteURLDrift_SurfacesWarning(t *testing.T) {
 	t.Parallel()
 	mock := newExportMock(
@@ -1212,22 +1214,23 @@ func TestHandleExport_RemoteURLDrift_SurfacesWarning(t *testing.T) {
 	driftFound := false
 	for _, w := range warnings {
 		s, _ := w.(string)
-		if strings.Contains(s, "RemoteURL cache") && strings.Contains(s, "drifted") {
+		if strings.Contains(s, "probe-proven") && strings.Contains(s, "drift detected") {
 			driftFound = true
 			break
 		}
 	}
 	if !driftFound {
-		t.Errorf("expected RemoteURL drift warning in bundle.warnings, got %v", warnings)
+		t.Errorf("expected probe-proven RemoteURL drift warning in bundle.warnings, got %v", warnings)
 	}
 
-	// Cache should now hold the live URL.
+	// Cache must NOT be overwritten — probe-proven value is preserved
+	// until git-push-setup probes the new URL.
 	refreshed, err := workflow.FindServiceMeta(dir, "appdev")
 	if err != nil {
 		t.Fatalf("re-read meta: %v", err)
 	}
-	if refreshed == nil || refreshed.RemoteURL != liveURL {
-		t.Errorf("meta.RemoteURL = %q, want refreshed to live %q", refreshedRemoteURL(refreshed), liveURL)
+	if refreshed == nil || refreshed.RemoteURL != "https://github.com/old/stale-fork.git" {
+		t.Errorf("meta.RemoteURL = %q, probe-proven cache should be preserved (drift surfaces as warning only)", refreshedRemoteURL(refreshed))
 	}
 }
 
