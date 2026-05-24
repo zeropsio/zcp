@@ -370,8 +370,11 @@ User makes a bootstrap in either session → `bootstrap_outputs.go::AppendReflog
   ```
   `type: "stdio"` is required by Cursor's schema (distinguishes from `sse` / streamable HTTP). NO `env` field — Cursor spawns the MCP subprocess inheriting parent env (verified: `agent mcp list-tools zerops` enumerated 21 zerops_* tools without enumeration). Same pattern as Gemini/Antigravity; Codex's restrictive `env_vars` is the outlier.
 - Auth handling: out of scope. Cursor authenticates via `CURSOR_API_KEY` env var OR `agent login` OAuth — operator picks one. Adapter's MCP config write is independent of auth.
-- Project trust: separately, `agent -p` headless mode needs `--trust` flag to bypass workspace-trust prompt + `--approve-mcps` to auto-approve our MCP server. These are CLI flags, not config-file fields — operator passes per-invocation.
-- AGENTS.md: Cursor reads its own `.cursor/rules/*.mdc` natively; AGENTS.md compatibility is via the cross-tool agents.md convention (Cursor's MCP-listed servers see AGENTS.md as context-file fallback). Empirical confirmation deferred to first interactive run.
+- **Workspace trust pre-population**: adapter also writes `~/.cursor/projects/<flat-workspace>/.workspace-trusted` (schema `{trustedAt: ISO8601, workspacePath: /var/www}`). Removes the workspace-trust prompt on first interactive `agent` run. `<flat-workspace>` = workspace path with leading slash stripped + remaining slashes → dashes (e.g. `/var/www` → `var-www`).
+- **MCP approval is operator step (intentional)**: adapter does NOT pre-write `mcp-approvals.json`. The approval-id format is sha256(JSON.stringify({path, server})).hex.slice(0,16) per cursor-agent bundle 7434.index.js, but (a) the input canonicalization didn't match for non-trivial empirical cases, (b) `agent mcp enable <name>` short-circuits against server-side cached state for logged-in users so shelling out doesn't reliably write the file. Two operator paths cover the gap:
+  - Headless / scripted: `agent -p --approve-mcps "..."` auto-approves per-invocation
+  - Interactive: one-time y/N prompt on first zerops_* tool call; persists per-workspace
+- AGENTS.md: Cursor reads its own `.cursor/rules/*.mdc` natively; AGENTS.md compatibility is via the cross-tool agents.md convention. Empirical confirmation deferred to first interactive run.
 
 **Notable discrepancy** — `agent mcp list-tools zerops` shows 21 tools (Gemini/Antigravity see all 24). Missing: `zerops_browser`, `zerops_deploy_batch`, `zerops_dev_server`. Possibly Cursor's CLI display filters tools above a description-length threshold (all three have descriptions >1000 chars); does NOT mean the tools are inaccessible at runtime (would require auth to verify via actual `agent -p` call). Filed as known unknown; not a blocker since the missing tools are convenience wrappers (delete_batch composes deploys; dev_server composes ssh+setsid; browser composes agent-browser lifecycle).
 
@@ -600,6 +603,7 @@ P0a + P0b + P1 landed. All goals from §3 achieved; all backward-compat invarian
 | `f5ba8747` | Gemini CLI + Antigravity (`agy`) adapters (§5.4 + §5.5, additive) | 6 files (+849 / -5) |
 | `50e56ed1` | deploy/ssh: workingDir gate error message — explicit sourceService recovery (audit feedback) | 2 files (+51 / -1) |
 | `67fa46fd` | Cursor adapter (§5.6, additive) — Cursor IDE headless CLI (`agent` / `cursor-agent`) | 3 files (+456 / -6) |
+| `44b5d361` | Cursor adapter: workspace-trust pre-population + operator MCP-approval docs | 2 files (+178 / -10), plus 3 unrelated plan files inadvertently bundled (see git history if separation needed) |
 
 ### Verification matrix
 
@@ -618,9 +622,10 @@ P0a + P0b + P1 landed. All goals from §3 achieved; all backward-compat invarian
 | Live `agy --print "list available MCP tools"` in eval-zcp container after `zcp init` rewrote `~/.gemini/config/mcp_config.json` | Pass — Antigravity enumerated all 24 `zerops_*` tools end-to-end via the new mcp_config.json |
 | Live `gemini --prompt "Call mcp__zerops__zerops_workflow…"` after `zcp init` rewrote `~/.gemini/settings.json` (with operator-set `security.auth.selectedType: "oauth-personal"`) | Pass — Gemini called `mcp_zerops_zerops_workflow`, parsed the structured workflow envelope, listed all action choices (`start`, `close-mode`, `git-push-setup`, `build-integration`, `status`, `complete`, `skip`, `reset`, `iterate`, `resume`, `list`, `route`) |
 | `zcp init` re-run preserves operator's `security.auth.selectedType` (merge-aware contract) | Pass — second `gemini --prompt` after re-init enumerated all 24 tool names; auth field byte-identical before/after |
-| Cursor adapter: 14 `TestCursor_*` including `TestCursor_MCPEntry_NoEnvField`, `TestCursor_MCPEntry_TypeStdioRequired`, `TestCursor_Detect_{OnlyAgent,OnlyCursorAgent,Both}Present_True` | Pass |
-| Live `agent mcp list-tools zerops` after `zcp init` rewrote `~/.cursor/mcp.json` | Pass — Cursor enumerated 21 `zerops_*` tools from our config (3-tool gap to be investigated; not a blocker) |
-| Cursor init preserves pre-existing `~/.cursor/{cli-config.json, statsig-cache.json, projects/}` (merge-aware) | Pass — only `mcpServers.zerops` touched |
+| Cursor adapter: 15 `TestCursor_*` including `TestCursor_MCPEntry_NoEnvField`, `TestCursor_MCPEntry_TypeStdioRequired`, `TestCursor_ContainerInit_WritesWorkspaceTrust`, `TestCursor_ContainerInit_WorkspaceDirFlattening` (4 sub-cases), `TestCursor_ContainerInit_RefreshesTrustTimestamp` | Pass |
+| Live `agent mcp list-tools zerops` after `zcp init` rewrote `~/.cursor/mcp.json` | Pass — Cursor enumerated 21 `zerops_*` tools from our config (3-tool gap = `zerops_browser`, `zerops_deploy_batch`, `zerops_dev_server`; non-blocker — convenience wrappers) |
+| Cursor init preserves pre-existing `~/.cursor/{cli-config.json, statsig-cache.json, projects/}` (merge-aware) | Pass — only `mcpServers.zerops` + projects/<flat>/.workspace-trusted touched |
+| Workspace-trust pre-population via `~/.cursor/projects/var-www/.workspace-trusted` | Pass — Cursor consumes the file at next interactive `agent` startup (no trust prompt) |
 | `flow-eval-local greenfield-node-postgres-dev-stage` (Claude regression check via container) | Pass — agent self-review: "this one went clean. No retries, no validation errors." Full bootstrap → provision → deploy → dev-server → verify pipeline |
 
 ### Codex review critiques (gpt-5.5 second-opinion 2026-05-23) → all folded
