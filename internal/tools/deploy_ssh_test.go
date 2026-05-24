@@ -952,6 +952,12 @@ func setupAdoptedService(t *testing.T, stateDir, hostname, stageHostname string)
 // Deployed=true for hostname. Under plan A.3 the stamp is driven by
 // RecordDeployAttempt-on-success and adoption-at-ACTIVE; tests needing the
 // bit set up front use this helper and plant the timestamp directly.
+//
+// for any future deployed-state test targeting a different fixture hostname;
+// keeping the parameter keeps the call site self-documenting (parallel to
+// markGitPushConfigured below).
+//
+//nolint:unparam // hostname always "appdev" today but the helper is reusable
 func setupDeployedService(t *testing.T, stateDir, hostname, stageHostname string) {
 	t.Helper()
 	setupAdoptedService(t, stateDir, hostname, stageHostname)
