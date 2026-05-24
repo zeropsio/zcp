@@ -26,10 +26,16 @@ var (
 
 // registeredAdapters returns the per-agent adapters tried at container
 // init. Order = log emission order; no functional dependency. Future
-// adapters (Codex, Gemini, Antigravity, Cursor) plug in here.
+// adapters (Gemini, Antigravity, Cursor) plug in here.
+//
+// Backward compat: Codex's Detect probes `which codex`; existing
+// container templates that don't ship codex see Detect=false and the
+// adapter skips silently. Behavior identical to pre-multi-agent ZCP
+// for those users.
 func registeredAdapters() []adapters.Adapter {
 	return []adapters.Adapter{
 		adapters.NewClaude(),
+		adapters.NewCodex(),
 	}
 }
 
