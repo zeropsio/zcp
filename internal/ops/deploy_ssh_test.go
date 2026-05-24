@@ -174,6 +174,52 @@ func TestDeploy_SSHMode_TargetNotFound(t *testing.T) {
 	}
 }
 
+// TestDeploy_SSHMode_MountStyleWorkingDirSuggestsSourceService pins the
+// suggestion text on the workingDir gate. The gate rejects any
+// workingDir starting with /var/www/ (mount path on the dev container,
+// not a valid target-runtime path). The original suggestion only said
+// "Use /var/www or omit" — agents (Gemini 2026-05-24 audit) hit this
+// and self-corrected by passing sourceService=<hostname>. The
+// suggestion now spells out that recovery pattern so a future agent
+// can fix in one shot instead of guessing.
+func TestDeploy_SSHMode_MountStyleWorkingDirSuggestsSourceService(t *testing.T) {
+	t.Parallel()
+
+	mock := platform.NewMock().
+		WithServices([]platform.ServiceStack{
+			{ID: "svc-1", Name: "weatherbun"},
+			{ID: "svc-2", Name: "weatherbun"}, // self-deploy: source==target
+		})
+	ssh := &mockSSHDeployer{}
+	authInfo := testAuthInfo()
+
+	_, err := DeploySSH(context.Background(), mock, "proj-1", ssh, authInfo,
+		"weatherbun", "weatherbun", "", "/var/www/weatherbun")
+	if err == nil {
+		t.Fatal("expected error for mount-style workingDir")
+	}
+
+	var pe *platform.PlatformError
+	if !errorAs(err, &pe) {
+		t.Fatalf("expected PlatformError, got %T: %v", err, err)
+	}
+	if pe.Code != platform.ErrInvalidParameter {
+		t.Errorf("code = %s, want %s", pe.Code, platform.ErrInvalidParameter)
+	}
+	if !containsSubstring(pe.Message, "looks like a local SSHFS mount path") {
+		t.Errorf("message should describe the mount-path heuristic, got: %s", pe.Message)
+	}
+	// Suggestion must name BOTH escape hatches — the working recovery
+	// pattern (omit workingDir + sourceService=<hostname>) and the
+	// minimal fix (workingDir="/var/www").
+	if !containsSubstring(pe.Suggestion, `sourceService="weatherbun"`) {
+		t.Errorf("suggestion should propose sourceService=\"weatherbun\" recovery, got: %s", pe.Suggestion)
+	}
+	if !containsSubstring(pe.Suggestion, `workingDir="/var/www"`) {
+		t.Errorf("suggestion should also mention workingDir=\"/var/www\" fallback, got: %s", pe.Suggestion)
+	}
+}
+
 func TestDeploy_SSHMode_SSHError(t *testing.T) {
 	t.Parallel()
 

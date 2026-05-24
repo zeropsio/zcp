@@ -114,10 +114,14 @@ func deploySSH(
 	// Reject mount-style paths — workingDir runs INSIDE the container where
 	// /var/www/{hostname} doesn't exist. The correct container path is /var/www.
 	if workingDir != defaultWorkingDir && strings.HasPrefix(workingDir, defaultWorkingDir+"/") {
+		mountHost := strings.TrimPrefix(workingDir, defaultWorkingDir+"/")
+		if i := strings.IndexByte(mountHost, '/'); i >= 0 {
+			mountHost = mountHost[:i]
+		}
 		return nil, platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("workingDir %q looks like a local SSHFS mount path, not a container path. Inside the container, code lives at /var/www", workingDir),
-			"Use workingDir=\"/var/www\" or omit workingDir (defaults to /var/www). The mount path /var/www/{hostname} is only valid on the local machine.",
+			fmt.Sprintf("Omit workingDir and pass sourceService=%q — the mount /var/www/%s is the source code location, ZCP deploys from it automatically. (Or pass workingDir=\"/var/www\" if you really need to set it.)", mountHost, mountHost),
 		)
 	}
 
