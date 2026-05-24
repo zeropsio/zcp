@@ -505,7 +505,9 @@ Mount + InitServiceGit are skipped entirely in local env (`mounter == nil`, `ssh
    - `BuildIntegration` = **empty** (renders as `none`)
    - Container: hostname = devHostname
    - Local + standard: hostname = stageHostname (inverted)
-2. Append reflog to CLAUDE.md.
+2. Append reflog to AGENTS.md (cross-tool canonical; Claude pulls it
+   via the @AGENTS.md include in CLAUDE.md; Codex / Cursor / Gemini /
+   Antigravity read AGENTS.md natively).
 3. Delete session, unregister.
 4. Return completion message: service list with modes. NO close-mode prompt.
 

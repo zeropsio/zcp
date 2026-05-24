@@ -14,9 +14,21 @@ func sanitizeReflogIntent(s string) string {
 	return strings.TrimSpace(r.Replace(s))
 }
 
-// AppendReflogEntry appends a bootstrap history entry to a CLAUDE.md file.
-// Each entry is wrapped in ZEROPS:REFLOG markers. Entries are append-only.
-func AppendReflogEntry(claudeMDPath string, intent string, targets []BootstrapTarget, sessionID string, date string) error {
+// AppendReflogEntry appends a bootstrap history entry to a markdown
+// file at agentsMDPath. Each entry is wrapped in ZEROPS:REFLOG markers.
+// Entries are append-only.
+//
+// Post-multi-agent migration the writer point is AGENTS.md (the
+// cross-tool canonical context file — Codex, Cursor, Gemini, future
+// adapters all read it natively; Claude pulls it via @AGENTS.md
+// include in CLAUDE.md). Pre-migration the writer pointed at
+// CLAUDE.md; existing CLAUDE.md REFLOG sections are relocated to
+// AGENTS.md by init.migrateReflogToAgentsMD on first upgrade.
+//
+// The function itself is path-agnostic — callers (bootstrap_outputs.go)
+// pick the target file. Keeping the parameter generic lets us also
+// reuse for any future agent context file without renaming.
+func AppendReflogEntry(agentsMDPath string, intent string, targets []BootstrapTarget, sessionID string, date string) error {
 	intent = sanitizeReflogIntent(intent)
 	var b strings.Builder
 	b.WriteString("\n<!-- ZEROPS:REFLOG -->\n")
@@ -41,9 +53,9 @@ func AppendReflogEntry(claudeMDPath string, intent string, targets []BootstrapTa
 	b.WriteString("\n> This is a historical record. Verify current state via `zerops_discover`.\n")
 	b.WriteString("<!-- /ZEROPS:REFLOG -->\n")
 
-	f, err := os.OpenFile(claudeMDPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(agentsMDPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return fmt.Errorf("open CLAUDE.md for reflog: %w", err)
+		return fmt.Errorf("open agent context file for reflog: %w", err)
 	}
 	defer f.Close()
 

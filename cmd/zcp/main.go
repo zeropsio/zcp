@@ -222,12 +222,14 @@ func run() (*server.Server, error) {
 	// Detect runtime environment (Zerops container vs local dev).
 	rtInfo := runtime.Detect()
 
-	// Headless hygiene: warn when CLAUDE.md is missing in cwd. Doctrine
-	// lives in CLAUDE.md (TestBuildInstructions_NoStaticRulesLeak forbids
-	// injecting it into MCP Instructions); without the file, agents have
-	// only tool descriptions and lack workflow guidance. zcp init writes it.
+	// Headless hygiene: warn when neither AGENTS.md nor CLAUDE.md is
+	// present in cwd. Doctrine lives in AGENTS.md (canonical) + CLAUDE.md
+	// (Claude's @AGENTS.md include wrapper) — TestBuildInstructions_
+	// NoStaticRulesLeak forbids injecting it into MCP Instructions.
+	// Without either file the agent has only tool descriptions and lacks
+	// workflow guidance. `zcp init` writes both.
 	if cwd, cwdErr := os.Getwd(); cwdErr == nil {
-		zcpinit.WarnMissingClaudeMD(cwd, os.Stderr)
+		zcpinit.WarnMissingAgentContext(cwd, os.Stderr)
 	}
 
 	// Mounter requires SSHFS — only available inside Zerops containers.

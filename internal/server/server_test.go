@@ -353,24 +353,31 @@ func TestServer_New_LocalAutoAdopt(t *testing.T) {
 	}
 }
 
-// TestServerNew_LocalEnv_RefreshesClaudeMD pins that the CLAUDE.md
-// refresh-at-serve hook fires in local env too. Pre-Phase-10 the call
-// was gated on rtInfo.InContainer — local users with stale CLAUDE.md
-// kept reading drifted wording until they manually re-ran `zcp init`.
+// TestServerNew_LocalEnv_RefreshesAgentContext pins that the AGENTS.md +
+// CLAUDE.md refresh-at-serve hook fires in local env. Multi-agent
+// migration: AGENTS.md is canonical (refreshes when stale), CLAUDE.md
+// is the thin @AGENTS.md wrapper (refreshes when stale, but ONLY if
+// AGENTS.md exists — see TestRefreshAgentContext_PreUpgradeCLAUDEmd
+// WithoutAgentsMD_LeftUntouched in content/ for the safeguard).
 //
 // Non-parallel: t.Chdir rebases cwd so server.New's stateDir derivation
 // (filepath.Join(cwd, .zcp/state)) lands under TempDir.
-func TestServerNew_LocalEnv_RefreshesClaudeMD(t *testing.T) {
+func TestServerNew_LocalEnv_RefreshesAgentContext(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	// Seed a CLAUDE.md with the managed-section markers but a stale body
-	// inside, so RefreshClaudeMD must re-render to drop stale and
-	// match the embedded template.
-	claudeMd := filepath.Join(dir, "CLAUDE.md")
-	stale := "# CLAUDE.md\n<!-- ZCP:BEGIN -->\nstale body\n<!-- ZCP:END -->\nuser additions remain\n"
-	if err := os.WriteFile(claudeMd, []byte(stale), 0o644); err != nil {
-		t.Fatalf("write seed: %v", err)
+	// Seed AGENTS.md (canonical, stale body inside markers) + CLAUDE.md
+	// (current wrapper). Refresh should rewrite AGENTS.md to current
+	// template content and leave CLAUDE.md alone (already correct).
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	staleAgents := "<!-- ZCP:BEGIN -->\nstale body\n<!-- ZCP:END -->\nuser additions remain\n"
+	if err := os.WriteFile(agentsPath, []byte(staleAgents), 0o644); err != nil {
+		t.Fatalf("write AGENTS.md seed: %v", err)
+	}
+	claudePath := filepath.Join(dir, "CLAUDE.md")
+	claudeWrapper := "<!-- ZCP:BEGIN -->\n@AGENTS.md\n<!-- ZCP:END -->\n"
+	if err := os.WriteFile(claudePath, []byte(claudeWrapper), 0o644); err != nil {
+		t.Fatalf("write CLAUDE.md seed: %v", err)
 	}
 
 	mock := platform.NewMock().
@@ -384,30 +391,29 @@ func TestServerNew_LocalEnv_RefreshesClaudeMD(t *testing.T) {
 
 	_ = New(context.Background(), mock, authInfo, store, platform.NewMockLogFetcher(), nil, nil, runtime.Info{})
 
-	body, err := os.ReadFile(claudeMd)
+	agentsBody, err := os.ReadFile(agentsPath)
 	if err != nil {
-		t.Fatalf("read CLAUDE.md: %v", err)
+		t.Fatalf("read AGENTS.md: %v", err)
 	}
-	if string(body) == stale {
-		t.Errorf("CLAUDE.md not refreshed in local env; still:\n%s", string(body))
+	if string(agentsBody) == staleAgents {
+		t.Errorf("AGENTS.md not refreshed in local env; still:\n%s", string(agentsBody))
 	}
 	// User-additions outside the managed block must be preserved.
-	if !strings.Contains(string(body), "user additions remain") {
-		t.Errorf("user-additions section dropped during refresh; got:\n%s", string(body))
+	if !strings.Contains(string(agentsBody), "user additions remain") {
+		t.Errorf("user-additions section dropped during refresh; got:\n%s", string(agentsBody))
 	}
 }
 
-// TestServerNew_ContainerEnv_StillRefreshesClaudeMD pins the container-
-// path regression: dropping the InContainer-only gate must not change
-// behavior in container env.
-func TestServerNew_ContainerEnv_StillRefreshesClaudeMD(t *testing.T) {
+// TestServerNew_ContainerEnv_StillRefreshesAgentContext pins the
+// container-path regression: same refresh fires in container env.
+func TestServerNew_ContainerEnv_StillRefreshesAgentContext(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
 
-	claudeMd := filepath.Join(dir, "CLAUDE.md")
-	stale := "# CLAUDE.md\n<!-- ZCP:BEGIN -->\nstale body\n<!-- ZCP:END -->\n"
-	if err := os.WriteFile(claudeMd, []byte(stale), 0o644); err != nil {
-		t.Fatalf("write seed: %v", err)
+	agentsPath := filepath.Join(dir, "AGENTS.md")
+	staleAgents := "<!-- ZCP:BEGIN -->\nstale body\n<!-- ZCP:END -->\n"
+	if err := os.WriteFile(agentsPath, []byte(staleAgents), 0o644); err != nil {
+		t.Fatalf("write AGENTS.md seed: %v", err)
 	}
 
 	mock := platform.NewMock().
@@ -421,12 +427,50 @@ func TestServerNew_ContainerEnv_StillRefreshesClaudeMD(t *testing.T) {
 
 	_ = New(context.Background(), mock, authInfo, store, platform.NewMockLogFetcher(), nil, nil, runtime.Info{InContainer: true, ServiceName: "zcp"})
 
-	body, err := os.ReadFile(claudeMd)
+	agentsBody, err := os.ReadFile(agentsPath)
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	if string(agentsBody) == staleAgents {
+		t.Errorf("AGENTS.md not refreshed in container env; still:\n%s", string(agentsBody))
+	}
+}
+
+// TestServerNew_PreUpgradeClaudeMDWithoutAgentsMD_LeftUntouched pins
+// the Codex-review-flagged safeguard: a pre-upgrade Claude user with
+// stale full-body CLAUDE.md (no AGENTS.md yet) MUST NOT have CLAUDE.md
+// rewritten by serve startup — the wrapper refresh would orphan the
+// @AGENTS.md include. `zcp init` owns the migration; serve must wait.
+func TestServerNew_PreUpgradeClaudeMDWithoutAgentsMD_LeftUntouched(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	claudePath := filepath.Join(dir, "CLAUDE.md")
+	preUpgradeClaude := "<!-- ZCP:BEGIN -->\n# Zerops\n\nPRE-UPGRADE FULL BODY (stale, but doctrine still here)\n<!-- ZCP:END -->\n"
+	if err := os.WriteFile(claudePath, []byte(preUpgradeClaude), 0o644); err != nil {
+		t.Fatalf("write CLAUDE.md seed: %v", err)
+	}
+
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "p1", Name: "demo"}).
+		WithServices(nil)
+	authInfo := &auth.Info{ProjectID: "p1", Token: "t", APIHost: "localhost"}
+	store, err := knowledge.GetEmbeddedStore()
+	if err != nil {
+		t.Fatalf("knowledge store: %v", err)
+	}
+
+	_ = New(context.Background(), mock, authInfo, store, platform.NewMockLogFetcher(), nil, nil, runtime.Info{InContainer: true, ServiceName: "zcp"})
+
+	got, err := os.ReadFile(claudePath)
 	if err != nil {
 		t.Fatalf("read CLAUDE.md: %v", err)
 	}
-	if string(body) == stale {
-		t.Errorf("CLAUDE.md not refreshed in container env; still:\n%s", string(body))
+	if string(got) != preUpgradeClaude {
+		t.Errorf("CLAUDE.md was rewritten despite missing AGENTS.md — would orphan @AGENTS.md include:\n%s", got)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "AGENTS.md")); !os.IsNotExist(statErr) {
+		t.Errorf("AGENTS.md should still be missing (zcp init owns first-write); stat err=%v", statErr)
 	}
 }
 

@@ -7,11 +7,11 @@ import (
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
-func TestBuildClaudeMD_Container_InjectsHostname(t *testing.T) {
+func TestBuildAgentsMD_Container_InjectsHostname(t *testing.T) {
 	t.Parallel()
-	out, err := BuildClaudeMD(runtime.Info{InContainer: true, ServiceName: "zcp"})
+	out, err := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"})
 	if err != nil {
-		t.Fatalf("BuildClaudeMD: %v", err)
+		t.Fatalf("BuildAgentsMD: %v", err)
 	}
 	if !strings.Contains(out, "ZCP control-plane container `zcp`") {
 		t.Errorf("hostname not injected:\n%s", out)
@@ -21,9 +21,9 @@ func TestBuildClaudeMD_Container_InjectsHostname(t *testing.T) {
 	}
 }
 
-func TestBuildClaudeMD_Container_HasContainerFacts(t *testing.T) {
+func TestBuildAgentsMD_Container_HasContainerFacts(t *testing.T) {
 	t.Parallel()
-	out, _ := BuildClaudeMD(runtime.Info{InContainer: true, ServiceName: "zcp"})
+	out, _ := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"})
 	for _, want := range []string{
 		"# Zerops",
 		"/var/www/{hostname}/",
@@ -34,28 +34,28 @@ func TestBuildClaudeMD_Container_HasContainerFacts(t *testing.T) {
 		"`intent` = one-line proposal",
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("container CLAUDE.md missing %q", want)
+			t.Errorf("container AGENTS.md missing %q", want)
 		}
 	}
 }
 
-func TestBuildClaudeMD_Container_NoLocalLeak(t *testing.T) {
+func TestBuildAgentsMD_Container_NoLocalLeak(t *testing.T) {
 	t.Parallel()
-	out, _ := BuildClaudeMD(runtime.Info{InContainer: true, ServiceName: "zcp"})
+	out, _ := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"})
 	for _, forbidden := range []string{
 		"Developer machine",
 		"zcli vpn up",
 		"Working dir = source of truth",
 	} {
 		if strings.Contains(out, forbidden) {
-			t.Errorf("container CLAUDE.md leaked local content %q", forbidden)
+			t.Errorf("container AGENTS.md leaked local content %q", forbidden)
 		}
 	}
 }
 
-func TestBuildClaudeMD_Local_HasLocalFacts(t *testing.T) {
+func TestBuildAgentsMD_Local_HasLocalFacts(t *testing.T) {
 	t.Parallel()
-	out, _ := BuildClaudeMD(runtime.Info{InContainer: false})
+	out, _ := BuildAgentsMD(runtime.Info{InContainer: false})
 	for _, want := range []string{
 		"# Zerops",
 		"Developer machine",
@@ -66,14 +66,14 @@ func TestBuildClaudeMD_Local_HasLocalFacts(t *testing.T) {
 		"Don't guess",
 	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("local CLAUDE.md missing %q", want)
+			t.Errorf("local AGENTS.md missing %q", want)
 		}
 	}
 }
 
-func TestBuildClaudeMD_Local_NoContainerLeak(t *testing.T) {
+func TestBuildAgentsMD_Local_NoContainerLeak(t *testing.T) {
 	t.Parallel()
-	out, _ := BuildClaudeMD(runtime.Info{InContainer: false})
+	out, _ := BuildAgentsMD(runtime.Info{InContainer: false})
 	for _, forbidden := range []string{
 		"/var/www/",
 		"SSHFS",
@@ -81,24 +81,24 @@ func TestBuildClaudeMD_Local_NoContainerLeak(t *testing.T) {
 		"{{.SelfHostname}}",
 	} {
 		if strings.Contains(out, forbidden) {
-			t.Errorf("local CLAUDE.md leaked container content %q", forbidden)
+			t.Errorf("local AGENTS.md leaked container content %q", forbidden)
 		}
 	}
 }
 
-func TestBuildClaudeMD_Deterministic(t *testing.T) {
+func TestBuildAgentsMD_Deterministic(t *testing.T) {
 	t.Parallel()
 	rt := runtime.Info{InContainer: true, ServiceName: "zcp"}
-	a, _ := BuildClaudeMD(rt)
-	b, _ := BuildClaudeMD(rt)
+	a, _ := BuildAgentsMD(rt)
+	b, _ := BuildAgentsMD(rt)
 	if a != b {
-		t.Error("BuildClaudeMD not deterministic for same Info")
+		t.Error("BuildAgentsMD not deterministic for same Info")
 	}
 }
 
-func TestBuildClaudeMD_DevelopFirst(t *testing.T) {
+func TestBuildAgentsMD_DevelopFirst(t *testing.T) {
 	t.Parallel()
-	out, _ := BuildClaudeMD(runtime.Info{InContainer: true, ServiceName: "zcp"})
+	out, _ := BuildAgentsMD(runtime.Info{InContainer: true, ServiceName: "zcp"})
 	devIdx := strings.Index(out, "- `develop`")
 	bootIdx := strings.Index(out, "- `bootstrap`")
 	recipeIdx := strings.Index(out, "- `recipe`")
@@ -112,12 +112,12 @@ func TestBuildClaudeMD_DevelopFirst(t *testing.T) {
 	}
 }
 
-// TestClaudeShared_NoEnvLeak — architecture invariant: the shared body
+// TestAgentsShared_NoEnvLeak — architecture invariant: the shared body
 // must not contain env-specific content. Drift here would re-introduce
 // the "or local" branching this refactor eliminates.
-func TestClaudeShared_NoEnvLeak(t *testing.T) {
+func TestAgentsShared_NoEnvLeak(t *testing.T) {
 	t.Parallel()
-	body, err := GetTemplate("claude_shared.md")
+	body, err := GetTemplate("agents_shared.md")
 	if err != nil {
 		t.Fatalf("GetTemplate: %v", err)
 	}
@@ -131,57 +131,54 @@ func TestClaudeShared_NoEnvLeak(t *testing.T) {
 	}
 	for _, f := range forbidden {
 		if strings.Contains(body, f) {
-			t.Errorf("claude_shared.md must not contain env-specific %q", f)
+			t.Errorf("agents_shared.md must not contain env-specific %q", f)
 		}
 	}
 }
 
-func TestClaudeContainer_HasHostnameTemplate(t *testing.T) {
+func TestAgentsContainer_HasHostnameTemplate(t *testing.T) {
 	t.Parallel()
-	body, err := GetTemplate("claude_container.md")
+	body, err := GetTemplate("agents_container.md")
 	if err != nil {
 		t.Fatalf("GetTemplate: %v", err)
 	}
 	if !strings.Contains(body, "{{.SelfHostname}}") {
-		t.Error("claude_container.md must reference {{.SelfHostname}} template var")
+		t.Error("agents_container.md must reference {{.SelfHostname}} template var")
 	}
 }
 
-// TestClaudeContainer_MountClaimConditional asserts the mount-claim text
+// TestAgentsContainer_MountClaimConditional asserts the mount-claim text
 // is conditional on bootstrap/adopt provision completing, not asserted as
 // ambient state. Phase 2.3 of plans/eval-review-20260518-subset/fix-plan.md:
 // the previous unconditional claim ("Service code SSHFS-mounted at ...")
-// burned several eval sessions where agents read CLAUDE.md, did `ls
-// /var/www/`, saw only CLAUDE.md, and concluded the environment was
+// burned several eval sessions where agents read AGENTS.md, did `ls
+// /var/www/`, saw only AGENTS.md, and concluded the environment was
 // broken. The actual mount materializes only after the bootstrap/adopt
 // workflow's provision step closes (workflow_bootstrap.go::autoMountTargets).
-func TestClaudeContainer_MountClaimConditional(t *testing.T) {
+func TestAgentsContainer_MountClaimConditional(t *testing.T) {
 	t.Parallel()
-	body, err := GetTemplate("claude_container.md")
+	body, err := GetTemplate("agents_container.md")
 	if err != nil {
 		t.Fatalf("GetTemplate: %v", err)
 	}
-	// Anchor on the conditional framing — "after bootstrap or adopt" must
-	// precede the mount path on the same line for the claim to read as
-	// conditional rather than ambient.
 	if !strings.Contains(body, "After bootstrap or adopt") {
-		t.Error("claude_container.md must frame mount claim as conditional on bootstrap/adopt completion")
+		t.Error("agents_container.md must frame mount claim as conditional on bootstrap/adopt completion")
 	}
 	if !strings.Contains(body, "hasn't been bootstrapped") {
-		t.Error("claude_container.md must tell the agent what to do when mount is empty (run adopt route)")
+		t.Error("agents_container.md must tell the agent what to do when mount is empty (run adopt route)")
 	}
 }
 
-func TestClaudeLocal_NoContainerPaths(t *testing.T) {
+func TestAgentsLocal_NoContainerPaths(t *testing.T) {
 	t.Parallel()
-	body, err := GetTemplate("claude_local.md")
+	body, err := GetTemplate("agents_local.md")
 	if err != nil {
 		t.Fatalf("GetTemplate: %v", err)
 	}
 	forbidden := []string{"/var/www/", "SSHFS", "{{.SelfHostname}}"}
 	for _, f := range forbidden {
 		if strings.Contains(body, f) {
-			t.Errorf("claude_local.md must not contain container-specific %q", f)
+			t.Errorf("agents_local.md must not contain container-specific %q", f)
 		}
 	}
 }

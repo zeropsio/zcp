@@ -29,56 +29,145 @@ func TestRun_GeneratesCLAUDEMD(t *testing.T) {
 		t.Fatalf("Run() error: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	// Post-multi-agent migration: canonical body lives in AGENTS.md;
+	// CLAUDE.md is a thin @AGENTS.md wrapper that pulls the body into
+	// Claude Code's system prompt via its native @-include syntax.
+	agentsData, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	if !strings.Contains(string(agentsData), "# Zerops") {
+		t.Error("AGENTS.md should contain '# Zerops' heading (canonical body)")
+	}
+
+	claudeData, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
 	if err != nil {
 		t.Fatalf("read CLAUDE.md: %v", err)
 	}
-
-	content := string(data)
-	if !strings.Contains(content, "# Zerops") {
-		t.Error("CLAUDE.md should contain '# Zerops' heading")
+	if !strings.Contains(string(claudeData), "@AGENTS.md") {
+		t.Errorf("CLAUDE.md should contain @AGENTS.md include (got: %s)", claudeData)
 	}
 }
 
-func TestCLAUDEMD_PreservesReflog(t *testing.T) {
+// TestUpgrade_MigratesReflogFromClaudeMDToAgentsMD pins the
+// backward-compat migration path: a user upgrading from a pre-multi-
+// agent ZCP has CLAUDE.md with REFLOG entries appended by past
+// bootstraps. The first `zcp init` after upgrade must relocate REFLOG
+// to AGENTS.md (so all agents — Claude, Codex, future Cursor/Gemini —
+// see the history at startup) and shrink CLAUDE.md to the @AGENTS.md
+// wrapper.
+func TestUpgrade_MigratesReflogFromClaudeMDToAgentsMD(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	// First run: write the template.
+	// Simulate a pre-upgrade state: CLAUDE.md exists with ZCP-managed
+	// body and a REFLOG section appended by a past bootstrap. AGENTS.md
+	// does NOT exist (multi-agent migration hasn't run yet).
+	initialClaude := "<!-- ZCP:BEGIN -->\n# Zerops\n\nOLD BODY\n<!-- ZCP:END -->\n" +
+		"\n<!-- ZEROPS:REFLOG -->\n" +
+		"### 2026-04-19 — Bootstrap: test entry\n\n- **Session:** abc123\n" +
+		"<!-- /ZEROPS:REFLOG -->\n"
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(initialClaude), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Run the new multi-agent init.
 	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
-		t.Fatalf("first Run() error: %v", err)
+		t.Fatalf("Run() error: %v", err)
 	}
 
-	// Append a REFLOG entry as bootstrap does.
-	path := filepath.Join(dir, "CLAUDE.md")
-	reflog := "\n<!-- ZEROPS:REFLOG -->\n### 2026-04-19 — Bootstrap: test entry\n\n- **Session:** abc123\n<!-- /ZEROPS:REFLOG -->\n"
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	// AGENTS.md should now exist with current body + migrated REFLOG.
+	agentsContent, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
 	if err != nil {
-		t.Fatalf("open for append: %v", err)
+		t.Fatalf("AGENTS.md must be created during migration: %v", err)
 	}
-	if _, err := f.WriteString(reflog); err != nil {
-		t.Fatalf("append reflog: %v", err)
+	agents := string(agentsContent)
+	if !strings.Contains(agents, "# Zerops") {
+		t.Error("AGENTS.md must contain template body after migration")
 	}
-	f.Close()
+	if !strings.Contains(agents, "ZEROPS:REFLOG") {
+		t.Error("AGENTS.md must contain migrated REFLOG section")
+	}
+	if !strings.Contains(agents, "Session:** abc123") {
+		t.Error("AGENTS.md must preserve REFLOG entry body")
+	}
 
-	// Second run: re-init. The REFLOG must survive.
+	// CLAUDE.md should be the thin wrapper now — REFLOG moved to AGENTS.md.
+	claudeContent, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	claude := string(claudeContent)
+	if strings.Contains(claude, "ZEROPS:REFLOG") {
+		t.Errorf("CLAUDE.md must not retain REFLOG after migration (moved to AGENTS.md): %s", claude)
+	}
+	if !strings.Contains(claude, "@AGENTS.md") {
+		t.Errorf("CLAUDE.md must be @AGENTS.md wrapper after migration: %s", claude)
+	}
+	if strings.Contains(claude, "OLD BODY") {
+		t.Errorf("CLAUDE.md must not retain old body after migration: %s", claude)
+	}
+}
+
+// TestUpgrade_MigrationIdempotent pins idempotence: the migration runs
+// at most once. Once AGENTS.md exists, subsequent inits leave it (and
+// CLAUDE.md) byte-stable.
+func TestUpgrade_MigrationIdempotent(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	initialClaude := "<!-- ZCP:BEGIN -->\n# old\n<!-- ZCP:END -->\n" +
+		"\n<!-- ZEROPS:REFLOG -->\nentry 1\n<!-- /ZEROPS:REFLOG -->\n"
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(initialClaude), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
-		t.Fatalf("second Run() error: %v", err)
+		t.Fatal(err)
+	}
+	firstAgents, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	firstClaude, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatal(err)
+	}
+	secondAgents, _ := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	secondClaude, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+
+	if string(firstAgents) != string(secondAgents) {
+		t.Errorf("AGENTS.md not byte-stable across reruns:\n  first:  %s\n  second: %s", firstAgents, secondAgents)
+	}
+	if string(firstClaude) != string(secondClaude) {
+		t.Errorf("CLAUDE.md not byte-stable across reruns:\n  first:  %s\n  second: %s", firstClaude, secondClaude)
+	}
+}
+
+// TestUpgrade_PreservesUserContentOutsideMarkers pins user-edit
+// preservation: hand-added content outside the ZCP:BEGIN/END markers
+// in CLAUDE.md survives the multi-agent migration and subsequent
+// re-inits. Critical published-product backward-compat invariant.
+func TestUpgrade_PreservesUserContentOutsideMarkers(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	initialClaude := "<!-- ZCP:BEGIN -->\n# old\n<!-- ZCP:END -->\n" +
+		"\n## User-authored notes\nMy custom guidance for this project.\n" +
+		"\n<!-- ZEROPS:REFLOG -->\nentry\n<!-- /ZEROPS:REFLOG -->\n"
+	if err := os.WriteFile(filepath.Join(dir, "CLAUDE.md"), []byte(initialClaude), 0o644); err != nil {
+		t.Fatal(err)
 	}
 
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read CLAUDE.md: %v", err)
+	if err := zcpinit.Run(dir, runtime.Info{}); err != nil {
+		t.Fatal(err)
 	}
-	content := string(data)
-	if !strings.Contains(content, "ZEROPS:REFLOG") {
-		t.Error("CLAUDE.md must preserve REFLOG section across re-init")
+
+	got, _ := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	gotStr := string(got)
+	if !strings.Contains(gotStr, "## User-authored notes") {
+		t.Errorf("user heading outside markers lost:\n%s", gotStr)
 	}
-	if !strings.Contains(content, "Session:** abc123") {
-		t.Error("CLAUDE.md must preserve REFLOG entry body across re-init")
-	}
-	if !strings.Contains(content, "# Zerops") {
-		t.Error("CLAUDE.md must still contain template heading after re-init")
+	if !strings.Contains(gotStr, "My custom guidance for this project.") {
+		t.Errorf("user body outside markers lost:\n%s", gotStr)
 	}
 }
 
@@ -158,12 +247,19 @@ func TestRun_Idempotent(t *testing.T) {
 	}
 
 	// Files should still exist and be valid.
-	data, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
+	agentsData, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("read AGENTS.md after second run: %v", err)
+	}
+	if !strings.Contains(string(agentsData), "# Zerops") {
+		t.Error("AGENTS.md should still contain '# Zerops' after second run (canonical body)")
+	}
+	claudeData, err := os.ReadFile(filepath.Join(dir, "CLAUDE.md"))
 	if err != nil {
 		t.Fatalf("read CLAUDE.md after second run: %v", err)
 	}
-	if !strings.Contains(string(data), "# Zerops") {
-		t.Error("CLAUDE.md should still contain '# Zerops' after second run")
+	if !strings.Contains(string(claudeData), "@AGENTS.md") {
+		t.Error("CLAUDE.md should still contain @AGENTS.md include after second run (wrapper)")
 	}
 }
 

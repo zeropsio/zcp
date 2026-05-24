@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/zeropsio/zcp/internal/content"
+	"github.com/zeropsio/zcp/internal/init/adapters"
 	"github.com/zeropsio/zcp/internal/runtime"
 )
 
@@ -45,14 +46,13 @@ func Run(baseDir string, rt runtime.Info) error {
 
 	// Shared steps (both local and container).
 	steps := []step{
-		{"CLAUDE.md", generateCLAUDEMD},
+		{"Agent context (AGENTS.md + CLAUDE.md)", generateAgentContext},
 		{"Permissions", generateSettingsLocal},
 		{"Shell aliases", generateAliases},
 	}
 	if rt.InContainer {
-		// Container: SSH config, git identity, Claude configs (incl. global MCP server).
+		// Container: SSH config + per-agent adapter dispatch.
 		steps = append(steps, step{"SSH config", generateSSHConfig})
-		steps = append(steps, containerSteps()...)
 	} else {
 		// Local: project-scoped .mcp.json (carries ZCP_API_KEY per-project).
 		steps = append(steps, step{"MCP config", generateMCPConfig})
@@ -62,6 +62,25 @@ func Run(baseDir string, rt runtime.Info) error {
 		fmt.Fprintf(os.Stderr, "  → %s\n", s.name)
 		if err := s.fn(baseDir, rt); err != nil {
 			return fmt.Errorf("%s: %w", s.name, err)
+		}
+	}
+
+	// Container-only: dispatch each per-agent adapter (Detect → Validate
+	// → ContainerInit). Claude (always-on, backward compat) + Codex
+	// (Detect-gated on `which codex`); future adapters (Gemini,
+	// Antigravity, Cursor) plug in via registeredAdapters().
+	if rt.InContainer {
+		env := adapters.Env{
+			BaseDir:       baseDir,
+			Home:          resolveHome(),
+			RT:            rt,
+			VSCodeWorkDir: vsCodeWorkDir,
+			CommandRunner: commandRunner,
+			CommandOutput: adapters.DefaultCommandOutput,
+			LookPath:      adapters.DefaultLookPath,
+		}
+		if err := runContainerAdapters(env); err != nil {
+			return err
 		}
 	}
 
@@ -82,33 +101,83 @@ func writeTemplate(templateName, path string) error {
 	return os.WriteFile(path, []byte(tmpl), 0644) //nolint:gosec // G306: config files need to be readable
 }
 
-// generateCLAUDEMD writes the env-rendered CLAUDE.md to baseDir, wrapped
-// in <!-- ZCP:BEGIN/END --> markers. The body is composed by
-// content.BuildClaudeMD from one env-specific preamble (container or
-// local) plus the env-agnostic shared body. Container preamble has its
-// {{.SelfHostname}} template var resolved to rt.ServiceName at render
-// time. Re-runs replace only the marked section, preserving any
-// trailing content (REFLOG entries appended by bootstrap, user
-// additions outside the markers).
+// generateAgentContext writes the env-rendered AGENTS.md (canonical
+// body, ZCP-managed marker section) and CLAUDE.md (thin @AGENTS.md
+// wrapper for Claude Code's @-include syntax).
 //
-// Migration path: if the file exists without markers but contains a
-// REFLOG section (legacy layout where the template was overwritten
-// verbatim), the pre-REFLOG portion is replaced by the marker-wrapped
-// body while REFLOG onwards is preserved.
-func generateCLAUDEMD(baseDir string, rt runtime.Info) error {
-	body, err := content.BuildClaudeMD(rt)
+// AGENTS.md is the cross-tool canonical context file (Codex, Cursor,
+// Gemini, Antigravity, and ~17 other agents read it natively).
+// CLAUDE.md exists separately because Claude Code reads only CLAUDE.md;
+// the wrapper's @AGENTS.md include pulls the canonical body into
+// Claude's system prompt.
+//
+// One-time migration: pre-multi-agent users have CLAUDE.md with the
+// full body AND REFLOG sections appended by bootstrap. On first run
+// after upgrade, REFLOG sections move from CLAUDE.md → AGENTS.md
+// (LLM-startup visibility preserved cross-agent), and CLAUDE.md
+// shrinks to the wrapper. Idempotent on subsequent runs.
+//
+// Both files: re-runs replace only the marked section, preserving any
+// content outside the markers (user prose, REFLOG entries appended by
+// bootstrap into AGENTS.md going forward).
+//
+// Legacy compat path: if AGENTS.md exists without markers but contains
+// a REFLOG section (theoretical — AGENTS.md is new in this version),
+// the pre-REFLOG portion is replaced by the marker-wrapped body while
+// REFLOG onwards is preserved.
+func generateAgentContext(baseDir string, rt runtime.Info) error {
+	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+		return fmt.Errorf("mkdir baseDir: %w", err)
+	}
+
+	// Phase 1: one-time REFLOG migration CLAUDE.md → AGENTS.md (no-op
+	// when already migrated or no CLAUDE.md REFLOG exists).
+	if err := migrateReflogToAgentsMD(baseDir); err != nil {
+		return fmt.Errorf("migrate reflog: %w", err)
+	}
+
+	// Phase 2: write AGENTS.md (canonical body, preserves REFLOG inside).
+	agentsBody, err := content.BuildAgentsMD(rt)
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(baseDir, "CLAUDE.md")
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("mkdir: %w", err)
+	agentsPath := filepath.Join(baseDir, "AGENTS.md")
+	if err := writeManagedSectionPreservingReflog(agentsPath, agentsBody); err != nil {
+		return fmt.Errorf("write AGENTS.md: %w", err)
 	}
+
+	// Phase 3: write CLAUDE.md (thin @AGENTS.md wrapper). REFLOG is now
+	// in AGENTS.md (after migration), so CLAUDE.md needs no REFLOG
+	// preservation path.
+	claudePath := filepath.Join(baseDir, "CLAUDE.md")
+	if err := writeManagedSectionPreservingReflog(claudePath, content.BuildClaudeWrapper()); err != nil {
+		return fmt.Errorf("write CLAUDE.md: %w", err)
+	}
+
+	return nil
+}
+
+// writeManagedSectionPreservingReflog writes a ZCP-managed marker block
+// at path, preserving any content outside the markers (REFLOG entries,
+// user prose, user-authored content from a pre-existing file). Four
+// cases:
+//
+//   - File missing → create with just the block.
+//   - File exists with markers → upsert managed section in place; all
+//     content outside the markers is preserved verbatim.
+//   - File exists without markers but has REFLOG → prepend block; keep
+//     content from the REFLOG marker onwards.
+//   - File exists without markers and no REFLOG → PREPEND block to
+//     existing content (do NOT clobber user-authored content — a user
+//     who hand-created AGENTS.md before the multi-agent ZCP shipped
+//     should keep their content; ZCP just adds its managed section at
+//     the top).
+func writeManagedSectionPreservingReflog(path, body string) error {
 	block := mdMarkerBegin + "\n" + strings.TrimRight(body, "\n") + "\n" + mdMarkerEnd + "\n"
 
 	existing, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("read CLAUDE.md: %w", err)
+		return fmt.Errorf("read %s: %w", path, err)
 	}
 	text := string(existing)
 
@@ -116,9 +185,189 @@ func generateCLAUDEMD(baseDir string, rt runtime.Info) error {
 		return upsertManagedSection(path, block, mdMarkerBegin, mdMarkerEnd)
 	}
 	if idx := strings.Index(text, reflogMarker); idx >= 0 {
-		return os.WriteFile(path, []byte(block+"\n"+text[idx:]), 0644) //nolint:gosec // G306: config file
+		return os.WriteFile(path, []byte(block+"\n"+text[idx:]), 0o644) //nolint:gosec // G306: config file
 	}
-	return os.WriteFile(path, []byte(block), 0644) //nolint:gosec // G306: config file
+	if len(text) > 0 {
+		// Markerless user-authored file — preserve content by
+		// prepending the managed block, separated by a blank line.
+		return os.WriteFile(path, []byte(block+"\n"+text), 0o644) //nolint:gosec // G306: config file
+	}
+	return os.WriteFile(path, []byte(block), 0o644) //nolint:gosec // G306: config file
+}
+
+// migrateReflogToAgentsMD relocates REFLOG sections from a pre-existing
+// CLAUDE.md to AGENTS.md. Content-resumable (not existence-gated): the
+// migration looks at actual REFLOG content in both files and merges
+// what's missing, then cleans CLAUDE.md.
+//
+// Cases handled:
+//
+//   - Fresh install (no CLAUDE.md): no-op.
+//   - CLAUDE.md without REFLOG: no-op.
+//   - CLAUDE.md REFLOG, AGENTS.md missing: append REFLOG sections to a
+//     new AGENTS.md (with empty marker block; generateAgentContext fills
+//     the body next). Clean CLAUDE.md.
+//   - CLAUDE.md REFLOG, AGENTS.md exists with same REFLOG already
+//     present: only clean CLAUDE.md (no duplication).
+//   - CLAUDE.md REFLOG, AGENTS.md exists without those REFLOG sections
+//     (crashed mid-migration / user-created AGENTS.md / etc.): append
+//     the missing sections and clean CLAUDE.md.
+//   - CLAUDE.md REFLOG, AGENTS.md user-content but markerless: prepend
+//     marker block + missing REFLOG, preserve user content.
+//
+// Idempotent and concurrent-safe in the steady state: once REFLOG
+// sections live in AGENTS.md and are removed from CLAUDE.md, both
+// content-checks come up empty and the function returns no-op.
+//
+// REFLOG section identity is compared by content (string equality of
+// the section bytes including markers). Two bootstraps that produced
+// the same bytes would dedupe — a non-issue in practice since each
+// AppendReflogEntry call writes a unique session ID + timestamp.
+//
+// Preserves CLAUDE.md content OUTSIDE the REFLOG markers (user prose,
+// ZCP-managed body section) — only the REFLOG blocks themselves are
+// removed from CLAUDE.md.
+func migrateReflogToAgentsMD(baseDir string) error {
+	claudePath := filepath.Join(baseDir, "CLAUDE.md")
+	agentsPath := filepath.Join(baseDir, "AGENTS.md")
+
+	claudeContent, err := os.ReadFile(claudePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // fresh install — nothing to migrate
+		}
+		return fmt.Errorf("read CLAUDE.md for migration: %w", err)
+	}
+
+	claudeSections := extractReflogSections(string(claudeContent))
+	if len(claudeSections) == 0 {
+		return nil // no REFLOG in CLAUDE.md — nothing to migrate
+	}
+
+	// Read whatever exists at AGENTS.md (may be missing, may be
+	// user-created with no markers, may be a prior partial migration).
+	var existingAgents string
+	agentsBytes, err := os.ReadFile(agentsPath)
+	switch {
+	case err == nil:
+		existingAgents = string(agentsBytes)
+	case os.IsNotExist(err):
+		existingAgents = ""
+	default:
+		return fmt.Errorf("read AGENTS.md for migration: %w", err)
+	}
+	agentsAlreadyHas := extractReflogSections(existingAgents)
+	already := make(map[string]struct{}, len(agentsAlreadyHas))
+	for _, s := range agentsAlreadyHas {
+		already[s] = struct{}{}
+	}
+
+	// Append only the CLAUDE REFLOG sections that aren't already in
+	// AGENTS.md (content-equal dedupe).
+	var toAppend strings.Builder
+	for _, s := range claudeSections {
+		if _, dup := already[s]; dup {
+			continue
+		}
+		toAppend.WriteString("\n")
+		toAppend.WriteString(s)
+	}
+
+	if toAppend.Len() > 0 {
+		if existingAgents == "" {
+			// New AGENTS.md: empty marker block + REFLOG sections.
+			// generateAgentContext fills the body in the next step.
+			var initial strings.Builder
+			initial.WriteString(mdMarkerBegin + "\n" + mdMarkerEnd + "\n")
+			initial.WriteString(toAppend.String())
+			if err := os.WriteFile(agentsPath, []byte(initial.String()), 0o644); err != nil { //nolint:gosec // G306: config file
+				return fmt.Errorf("write migrated AGENTS.md: %w", err)
+			}
+		} else {
+			// Existing AGENTS.md: append missing REFLOG sections at
+			// end. Preserves all prior content (markers + body + any
+			// user prose).
+			merged := strings.TrimRight(existingAgents, "\n") + "\n" + toAppend.String()
+			if err := os.WriteFile(agentsPath, []byte(merged), 0o644); err != nil { //nolint:gosec // G306: config file
+				return fmt.Errorf("append migrated REFLOG to AGENTS.md: %w", err)
+			}
+		}
+	}
+
+	// Remove REFLOG sections from CLAUDE.md. Content outside REFLOG
+	// markers (ZCP-managed body, user prose) is preserved verbatim.
+	// Runs even if toAppend was empty (sections were already in
+	// AGENTS.md) — the goal is a CLAUDE.md without stale REFLOG.
+	cleaned := removeReflogSections(string(claudeContent))
+	if cleaned != string(claudeContent) {
+		if err := os.WriteFile(claudePath, []byte(cleaned), 0o644); err != nil { //nolint:gosec // G306: config file
+			return fmt.Errorf("rewrite CLAUDE.md without REFLOG: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// reflogMarkerEnd is the closing marker for a REFLOG section appended
+// by workflow.AppendReflogEntry. Mirrors reflogMarker (the opener).
+const reflogMarkerEnd = "<!-- /ZEROPS:REFLOG -->"
+
+// extractReflogSections returns every <!-- ZEROPS:REFLOG --> .. <!-- /ZEROPS:REFLOG -->
+// block in text, in order, each including its leading newline if
+// AppendReflogEntry wrote one (preserves exact bytes for migration).
+func extractReflogSections(text string) []string {
+	var out []string
+	rest := text
+	for {
+		begin := strings.Index(rest, reflogMarker)
+		if begin < 0 {
+			break
+		}
+		end := strings.Index(rest[begin:], reflogMarkerEnd)
+		if end < 0 {
+			break
+		}
+		sectionEnd := begin + end + len(reflogMarkerEnd)
+		if sectionEnd < len(rest) && rest[sectionEnd] == '\n' {
+			sectionEnd++
+		}
+		out = append(out, rest[begin:sectionEnd])
+		rest = rest[sectionEnd:]
+	}
+	return out
+}
+
+// removeReflogSections returns text with every REFLOG block stripped.
+// Preserves all other content. Drops the leading newline immediately
+// before a REFLOG block so the file doesn't accumulate blank lines on
+// repeated migrations.
+func removeReflogSections(text string) string {
+	var b strings.Builder
+	rest := text
+	for {
+		begin := strings.Index(rest, reflogMarker)
+		if begin < 0 {
+			b.WriteString(rest)
+			break
+		}
+		end := strings.Index(rest[begin:], reflogMarkerEnd)
+		if end < 0 {
+			b.WriteString(rest)
+			break
+		}
+		sectionEnd := begin + end + len(reflogMarkerEnd)
+		if sectionEnd < len(rest) && rest[sectionEnd] == '\n' {
+			sectionEnd++
+		}
+		// Drop the leading newline if present (avoid blank-line drift).
+		writeUntil := begin
+		if writeUntil > 0 && rest[writeUntil-1] == '\n' {
+			writeUntil--
+		}
+		b.WriteString(rest[:writeUntil])
+		rest = rest[sectionEnd:]
+	}
+	return b.String()
 }
 
 func generateMCPConfig(baseDir string, _ runtime.Info) error {

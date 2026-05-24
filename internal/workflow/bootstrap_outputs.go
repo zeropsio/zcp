@@ -77,10 +77,13 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 	}
 
 	// Derive project root from stateDir (expected: {projectRoot}/.zcp/state/).
+	// REFLOG lives in AGENTS.md post-multi-agent migration — Codex,
+	// Cursor, Gemini, and Antigravity all read AGENTS.md natively;
+	// Claude pulls it via the @AGENTS.md include in CLAUDE.md.
 	projectRoot := filepath.Dir(filepath.Dir(e.stateDir))
-	claudeMDPath := filepath.Join(projectRoot, "CLAUDE.md")
+	agentsMDPath := filepath.Join(projectRoot, "AGENTS.md")
 
-	if err := AppendReflogEntry(claudeMDPath, state.Intent, plan.Targets, state.SessionID, now); err != nil {
+	if err := AppendReflogEntry(agentsMDPath, state.Intent, plan.Targets, state.SessionID, now); err != nil {
 		fmt.Fprintf(os.Stderr, "zcp: append reflog: %v\n", err)
 	}
 }

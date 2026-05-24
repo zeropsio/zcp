@@ -79,19 +79,27 @@ func New(ctx context.Context, client platform.Client, authInfo *auth.Info, store
 		adoptionNote = runLocalAutoAdopt(ctx, client, authInfo.ProjectID, stateDir, logger)
 	}
 
-	// Idempotently refresh CLAUDE.md from the embedded template if the
-	// on-disk managed section drifted from this build's version. Long-
-	// lived installs (container OR local) otherwise hold the snapshot
-	// from the last manual `zcp init`, which can be days old and carry
-	// wording the current description-drift lint would refuse (G9).
-	// First-install (no file present) is left for `zcp init` — this is
-	// incremental refresh only.
+	// Idempotently refresh AGENTS.md (canonical body) and CLAUDE.md
+	// (thin @AGENTS.md wrapper) from the embedded templates if the
+	// on-disk managed sections drifted from this build's version.
+	// Long-lived installs (container OR local) otherwise hold the
+	// snapshot from the last manual `zcp init`, which can be days old
+	// and carry wording the current description-drift lint would
+	// refuse (G9). First-install (no files present) is left for
+	// `zcp init` — this is incremental refresh only.
 	if stateDir != "" {
-		claudemdPath := filepath.Join(filepath.Dir(filepath.Dir(stateDir)), "CLAUDE.md")
-		if refreshed, err := content.RefreshClaudeMD(claudemdPath, rtInfo); err != nil {
-			logger.Warn("CLAUDE.md refresh failed", "path", claudemdPath, "err", err)
-		} else if refreshed {
-			logger.Info("CLAUDE.md refreshed from embedded template", "path", claudemdPath)
+		projectRoot := filepath.Dir(filepath.Dir(stateDir))
+		agentsPath := filepath.Join(projectRoot, "AGENTS.md")
+		claudePath := filepath.Join(projectRoot, "CLAUDE.md")
+		if agentsChanged, claudeChanged, err := content.RefreshAgentContext(agentsPath, claudePath, rtInfo); err != nil {
+			logger.Warn("agent context refresh failed", "agents", agentsPath, "claude", claudePath, "err", err)
+		} else {
+			if agentsChanged {
+				logger.Info("AGENTS.md refreshed from embedded template", "path", agentsPath)
+			}
+			if claudeChanged {
+				logger.Info("CLAUDE.md wrapper refreshed from embedded template", "path", claudePath)
+			}
 		}
 	}
 

@@ -1,6 +1,7 @@
 package content
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -65,9 +66,9 @@ func TestGetTemplate_AllTemplates(t *testing.T) {
 	tests := []struct {
 		name string
 	}{
-		{"claude_shared.md"},
-		{"claude_container.md"},
-		{"claude_local.md"},
+		{"agents_shared.md"},
+		{"agents_container.md"},
+		{"agents_local.md"},
 		{"mcp-config.json"},
 		{"ssh-config"},
 		{"settings-local.json"},
@@ -90,10 +91,10 @@ func TestGetTemplate_AllTemplates(t *testing.T) {
 	}
 }
 
-func TestGetTemplate_ClaudeSharedContent(t *testing.T) {
+func TestGetTemplate_AgentsSharedContent(t *testing.T) {
 	t.Parallel()
 
-	body, err := GetTemplate("claude_shared.md")
+	body, err := GetTemplate("agents_shared.md")
 	if err != nil {
 		t.Fatalf("GetTemplate: %v", err)
 	}
@@ -101,7 +102,7 @@ func TestGetTemplate_ClaudeSharedContent(t *testing.T) {
 	// Shared body must mention the routing header (the static
 	// project-rule layer all envs share).
 	if !strings.Contains(body, "Route every user turn") {
-		t.Error("claude_shared.md should contain 'Route every user turn' header")
+		t.Error("agents_shared.md should contain 'Route every user turn' header")
 	}
 }
 
@@ -132,6 +133,85 @@ func TestGetTemplate_Unknown(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown template")
 	}
+}
+
+// TestMCPServerNameCanonical pins the single canonical MCP server key
+// (`zerops`) across every template that writes one. Multi-agent adapter
+// work (Codex, Cursor, Gemini) will register the same key in their own
+// per-agent config files (~/.codex/config.toml, .cursor/mcp.json, etc.) —
+// drift between the template, the permission allowlist, and atom tool
+// namespace (`mcp__zerops__zerops_*`) would silently fork the agent's
+// tool-call namespace per install.
+//
+// The corpus (atoms, recipes) hardcodes `mcp__zerops__zerops_*` already;
+// this test locks the writer side to match. End-user installs land
+// `zerops` everywhere by default — only this dev repo's gitignored
+// .mcp.json used to drift historically (operator-edited).
+func TestMCPServerNameCanonical(t *testing.T) {
+	t.Parallel()
+
+	const canonicalServerKey = "zerops"
+
+	// mcp-config.json: the MCP server registration template.
+	mcpConfig, err := GetTemplate("mcp-config.json")
+	if err != nil {
+		t.Fatalf("GetTemplate(mcp-config.json): %v", err)
+	}
+	var mcp map[string]any
+	if err := json.Unmarshal([]byte(mcpConfig), &mcp); err != nil {
+		t.Fatalf("parse mcp-config.json: %v", err)
+	}
+	servers, ok := mcp["mcpServers"].(map[string]any)
+	if !ok {
+		t.Fatalf("mcp-config.json missing mcpServers map; got %T", mcp["mcpServers"])
+	}
+	if _, ok := servers[canonicalServerKey]; !ok {
+		t.Errorf("mcp-config.json mcpServers missing canonical key %q; got keys %v",
+			canonicalServerKey, mapKeys(servers))
+	}
+	for key := range servers {
+		if key != canonicalServerKey {
+			t.Errorf("mcp-config.json: non-canonical mcpServers key %q (expected only %q)",
+				key, canonicalServerKey)
+		}
+	}
+
+	// settings-local.json: the permission allowlist must reference the
+	// canonical tool namespace (mcp__<server>__*).
+	settingsLocal, err := GetTemplate("settings-local.json")
+	if err != nil {
+		t.Fatalf("GetTemplate(settings-local.json): %v", err)
+	}
+	wantAllowlist := "mcp__" + canonicalServerKey + "__*"
+	if !strings.Contains(settingsLocal, wantAllowlist) {
+		t.Errorf("settings-local.json missing canonical permission %q", wantAllowlist)
+	}
+
+	// Negative assertion: NO template should contain a stale mcp__zcp__ namespace.
+	staleNamespace := "mcp__zcp__"
+	for _, tmpl := range []string{
+		"mcp-config.json",
+		"settings-local.json",
+		"claude.json",
+		"claude-settings.json",
+	} {
+		body, err := GetTemplate(tmpl)
+		if err != nil {
+			continue // optional template
+		}
+		if strings.Contains(body, staleNamespace) {
+			t.Errorf("template %s contains stale namespace %q (expected mcp__%s__)",
+				tmpl, staleNamespace, canonicalServerKey)
+		}
+	}
+}
+
+func mapKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 func TestListWorkflows_Complete(t *testing.T) {

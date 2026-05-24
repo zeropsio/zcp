@@ -51,7 +51,7 @@ func TestAtomCorpus_NoForbiddenGitPushClaims(t *testing.T) {
 		},
 	}
 
-	atomDir := filepath.Join("atoms")
+	const atomDir = "atoms"
 	entries, err := os.ReadDir(atomDir)
 	if err != nil {
 		t.Fatalf("read atoms dir: %v", err)

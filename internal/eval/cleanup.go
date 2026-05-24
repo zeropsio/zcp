@@ -178,30 +178,54 @@ func CleanupProject(ctx context.Context, client platform.Client, projectID, work
 		return fmt.Errorf("cleanup remove launch-production state: %w", err)
 	}
 
-	// 6. Explicit CLAUDE.md removal + post-verify. cleanWorkDir already
-	// removes non-protected entries (and CLAUDE.md is not protected), but
+	// 6. Explicit AGENTS.md + CLAUDE.md removal + post-verify. cleanWorkDir
+	// already removes non-protected entries (neither file is protected), but
 	// REFLOG persistence is the highest-leverage cross-scenario contamination
 	// vector — the bootstrap workflow appends `<!-- ZEROPS:REFLOG -->` blocks
+	// to AGENTS.md (post-multi-agent migration; pre-migration it was CLAUDE.md)
 	// outside the ZCP managed-section markers, and `init.Run` preserves them
 	// by design (real users want REFLOG carried across re-init). For eval-zcp,
 	// a stale REFLOG can claim infrastructure exists when live discover shows
 	// none of it (see plans/backlog/reflog-vs-live-discover-staleness.md).
-	// This belt-and-braces step removes CLAUDE.md explicitly and fails loud
+	// This belt-and-braces step removes both files explicitly and fails loud
 	// if it can't, so init.Run on the next scenario always starts from a
-	// REFLOG-free file.
-	if err := removeClaudeMD(workDir); err != nil {
-		return fmt.Errorf("cleanup remove CLAUDE.md: %w", err)
+	// REFLOG-free state.
+	if err := removeAgentContextFiles(workDir); err != nil {
+		return fmt.Errorf("cleanup remove agent context files: %w", err)
 	}
 
 	return nil
 }
 
-// removeClaudeMD deletes the workdir's CLAUDE.md and verifies it is gone.
-// IsNotExist on the initial Remove is benign (cleanWorkDir already handled
-// it). Any other error, or a file that survives the Remove call, is a hard
-// failure: the next scenario's init.Run would otherwise read stale REFLOG
-// content and the agent would face a "context claims infrastructure exists
-// but discover shows none of it" trap.
+// removeAgentContextFiles deletes AGENTS.md and CLAUDE.md from the
+// workdir and verifies they're gone. IsNotExist on the initial Remove
+// is benign (cleanWorkDir already handled it). Any other error, or a
+// file that survives the Remove call, is a hard failure: the next
+// scenario's init.Run would otherwise read stale REFLOG content and
+// the agent would face a "context claims infrastructure exists but
+// discover shows none of it" trap.
+func removeAgentContextFiles(workDir string) error {
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
+		path := filepath.Join(workDir, name)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove %s: %w", path, err)
+		}
+		if _, err := os.Stat(path); err == nil {
+			return fmt.Errorf("%s still present at %s after explicit remove", name, path)
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("stat %s after remove: %w", path, err)
+		}
+	}
+	return nil
+}
+
+// removeClaudeMD is the deprecated single-file removal retained for
+// any external eval-driver still calling it. Removes ONLY CLAUDE.md
+// (does not touch AGENTS.md) — preserves the historical contract.
+// New callers should use removeAgentContextFiles to also clean
+// AGENTS.md for full cross-scenario REFLOG isolation.
+//
+// Deprecated: use removeAgentContextFiles.
 func removeClaudeMD(workDir string) error {
 	path := filepath.Join(workDir, "CLAUDE.md")
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {

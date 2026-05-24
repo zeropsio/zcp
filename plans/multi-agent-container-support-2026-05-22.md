@@ -1,8 +1,25 @@
 # Multi-Agent ZCP Container Support — Final Plan (revised 2026-05-23)
 
-> **Status**: Plan finalized after research + Codex second-opinion + user-driven scope refinement.
+> **Status**: Plan finalized after research + Codex second-opinion + user-driven scope refinement + commit `d0f8a449` (atom corpus pre-work).
 > **Scope**: shipped ZCP binary's container-init flow. Add Codex CLI support, future-proof architecture for Cursor / Gemini / Antigravity.
 > **Constraint**: ZCP is published. Backward-compat for user-facing surfaces is mandatory.
+
+## 0. Progress to date (commit d0f8a449, 2026-05-23)
+
+Atom-corpus pre-work landed ahead of P0a/P0b/P1 implementation. Conceptual frame: two systemic leaks in atoms — (1) build-time artifacts (Go paths, test names, template filenames, historical changelog), (2) Claude-Code-specific tool API (`Bash run_in_background=true`, `BashOutput`, `KillBash`, `ToolSearch`) hardcoded as canonical pattern.
+
+**Done in d0f8a449** (40 files, +769/-596):
+- 6 atoms genericized (replaced Claude-only API examples with neutral patterns; dropped Go-source paths; dropped template-filename refs; dropped historical-changelog sentences)
+- 3 tool-preload atoms DELETED entirely (`bootstrap-tool-preload`, `develop-tool-preload`, `idle-tool-preload`) — they were built around Claude Code's `ToolSearch` deferred-tool loader; Codex loads MCP tools eagerly via `~/.codex/config.toml` and has no equivalent. Cascade: `scenarios_test.go` pinning removed, `knownOverflowFixtures` emptied (corpus shrank enough), 19 goldens + lifecycle-matrix regenerated
+- 1 Go validation error message reframed: "human or Claude Code" → "human or AI agent" (so LLM doesn't see agent-specific self-reference in failure responses)
+- 2 NEW lint rules in `internal/content/atoms_lint.go` (category `source-code-ref`):
+  - `source-go-path` — forbids `internal|cmd/<pkg>/<file>.go` paths in atom bodies
+  - `source-test-name` — forbids `Test<X>_<Y>` identifiers in atom bodies
+  - Effect: regressions surface in CI; can't accumulate silently again
+- 1 pinning test relaxed: `TestDevelopPlatformRulesLocalAtom_BackgroundTaskCallout` asserts on the PATTERN ("background-task primitive"), not the Claude-specific keyword ("`run_in_background=true`")
+- 1 backlog entry: `plans/backlog/tool-preload-atoms-need-agents-axis.md` documents proper restoration path via per-agent `agents:` axis when 2+ agents need diverging prose
+
+**Net effect on this plan**: §6 atom work is largely DONE; only the per-agent prose-axis (`agents:` frontmatter field) remains, and it's deferred via backlog (proper trigger: 2nd agent ships with diverging needs). P0b atom-related line items removed from §7.
 
 ---
 
@@ -297,89 +314,59 @@ User makes a bootstrap in either session → `bootstrap_outputs.go::AppendReflog
 
 ---
 
-## 6. Atom genericization — the 4 atoms touched
+## 6. Atom corpus work — DONE in commit d0f8a449
 
-### 6.1 `internal/content/atoms/develop-platform-rules-container.md`
+The atom-genericization scope this plan originally proposed (4 atoms) expanded during deeper audit to 6 genericized + 3 deleted. All of that landed in commit `d0f8a449` (see §0). Summary of what changed:
 
-**What it says today** (line 14):
-> Mount basics in `claude_container.md` (boot shim).
+### 6.1 Atoms genericized (6)
 
-**Why genericize**: `claude_container.md` is the template filename; after AGENTS.md migration the boot shim moves to `agents_container.md`. Reference becomes stale.
+Mechanisms applied — each atom retains its mechanism statement, drops the Claude-coupling that would mislead non-Claude agents or stale references that would mislead all agents:
 
-**Fix**: replace with generic "boot shim file" or "container section of AGENTS.md". Single-line edit.
+| Atom | Coupling removed |
+|---|---|
+| `develop-platform-rules-container.md` | Template-filename ref (`claude_container.md`) replaced with scope statement; atom title already establishes the section |
+| `develop-platform-rules-local.md` | Hardcoded "2 minutes in Claude Code" timeout + Claude-tool-API example (`Bash run_in_background=true` + `BashOutput` + `KillBash`) replaced with neutral "background-task primitive" pattern; `claude_local.md` template ref dropped |
+| `develop-dynamic-runtime-start-local.md` | Same as above — entire atom was Claude-tool-API; restructured as agent-neutral mechanism + neutral start/check/logs/stop wording |
+| `bootstrap-recipe-local-clone.md` | File-list refreshed (added AGENTS.md anticipating P0b migration); generic ZCP-state phrasing |
+| `bootstrap-mode-prompt.md` | Build-time Go-path citation dropped |
+| `develop-env-var-model.md` | Build-time test-name citation dropped |
+| `develop-auto-close-semantics.md` | Build-time test-name citation dropped |
+| `bootstrap-recipe-import.md` | Build-time leak dropped |
 
-### 6.2 `internal/content/atoms/develop-platform-rules-local.md`
+### 6.2 Atoms deleted (3 — tool-preload set)
 
-**What it says today** (lines 19-25):
-> a foreground `Bash` call to `npm run dev` / `php artisan serve` / `bun --watch` blocks your turn until the per-call bash timeout fires (**2 minutes in Claude Code**, then the harness kills it).
->
-> In **Claude Code**, the canonical pattern is `run_in_background=true`:
->
-> ```
-> Bash run_in_background=true  command="npm run dev"
-> Bash                         command="curl -s -o /dev/null -w '%{http_code}' http://localhost:5173/"
-> BashOutput                   bash_id={task-id}
-> KillBash                     shell_id={task-id}
-> ```
+`bootstrap-tool-preload.md`, `develop-tool-preload.md`, `idle-tool-preload.md` — entirely built around Claude Code's `ToolSearch query="select:mcp__zerops__..."` deferred-tool loader. Codex loads MCP tools eagerly via `~/.codex/config.toml` and has no `ToolSearch` equivalent. Calling these atoms from a Codex session would tell it to invoke a non-existent tool.
 
-And line 49:
-> use `zcli vpn up <projectId>` from `claude_local.md`
+Cascade:
+- `scenarios_test.go` pinning assertions for the 3 atoms removed
+- `knownOverflowFixtures` emptied — dropping 3 atoms shrank corpus enough that the previously-overflowing `develop_first_deploy_two_runtime_pairs_standard` fixture now fits the 28 KB soft cap; the explicit allowlist no longer needed
+- 19 atom-goldens regenerated via `ZCP_UPDATE_ATOM_GOLDENS=1`
+- `lifecycle-matrix.md` regenerated
 
-**Why genericize**: Codex CLI has NO `run_in_background=true` parameter, NO `BashOutput`, NO `KillBash` tool. Codex backgrounds processes via shell `&` / `nohup` / `screen`. If Codex agent reads this atom, it tries to call non-existent tools. Also `claude_local.md` reference stale post-migration.
+Claude-side regression: Claude users lose `ToolSearch` prefetch optimization → Claude now eagerly loads all ZCP tool schemas at startup (the universal MCP default, ~80% more schema tokens upfront, no correctness impact).
 
-**Fix**:
-- Replace hardcoded "2 minutes in Claude Code" with "per-call tool timeout fires (typically 60-120s, agent-specific)"
-- Generalize the pattern: "use your agent's background-task primitive". Add labeled examples:
-  - Claude Code: `Bash run_in_background=true` + `BashOutput` + `KillBash`
-  - Codex CLI: shell `&` + `wait` / `nohup` / `screen`
-- Replace `claude_local.md` reference with `AGENTS.md (local section)`
+Restoration path: `plans/backlog/tool-preload-atoms-need-agents-axis.md` — proper fix is adding `agents: [claude-code]` frontmatter axis to atoms so per-agent prose can coexist. Trigger to promote: when 2nd agent ships with diverging prose needs (single-instance is overkill; 2+ instances pays for the axis infrastructure).
 
-### 6.3 `internal/content/atoms/develop-dynamic-runtime-start-local.md`
+### 6.3 Structural lock — new lint rules
 
-**What it says today** (line 18 + lines 22-46):
-> **Claude Code: `Bash run_in_background=true`.**
->
-> **Start:**
-> ```
-> Bash run_in_background=true  command="{start-command}"
-> ```
-> **Logs:**
-> ```
-> BashOutput bash_id={task-id}
-> ```
-> **Stop:**
-> ```
-> KillBash shell_id={task-id}
-> ```
+Two new rules in `internal/content/atoms_lint.go` (category `source-code-ref`):
 
-**Why genericize**: same as 6.2 — entire atom is Claude-Code-tool-API specific. Codex doesn't have these tools.
+- `source-go-path` — regex `\b(internal|cmd)/[a-z_][a-z0-9_]*(/[a-z_][a-z0-9_]*)*\.go\b` — forbids internal Go-source paths
+- `source-test-name` — regex `\bTest[A-Z][A-Za-z0-9_]*_[A-Z]` — forbids test function names
 
-**Fix**: restructure as agent-neutral guidance with per-agent example block:
-- Agent-neutral body: "Start dev server via your agent's background-task primitive; check via `curl`; manage via your agent's task-listing/stop calls"
-- Per-agent example section (small block at bottom):
-  - Claude Code: `Bash run_in_background=true` + `BashOutput` + `KillBash`
-  - Codex CLI: `bash -c "cmd &"` + `ps`/`pgrep` + `kill <pid>`
+Regressions surface in CI lint, not in user feedback months later. Build-time vs runtime separation is now structural.
 
-### 6.4 `internal/content/atoms/bootstrap-recipe-local-clone.md`
+### 6.4 Pinning test relaxed
 
-**What it says today** (lines 19, 33):
-> The CWD typically has ZCP state already (`.claude`, `.mcp.json`, `.zcp`, CLAUDE.md). Anything OUTSIDE that set is the user's work — stop and ask before continuing if you see it.
->
-> If the recipe ships its own CLAUDE.md / README.md and you want it to win…
+`TestDevelopPlatformRulesLocalAtom_BackgroundTaskCallout` previously asserted Claude-specific keyword (`run_in_background=true`); now asserts the agent-neutral pattern ("background-task primitive"). Invariant moved from agent-specific to mechanism-level.
 
-**Why genericize**: file list incomplete for multi-agent world. Post-migration, AGENTS.md appears. Future Codex/Cursor/Gemini may add `.codex/`, `.cursor/` directories. The "is this user's work?" heuristic needs updating.
+### 6.5 Go error message reframed
 
-**Fix**: expand file list:
-- `.claude`, `.codex` (now), future `.cursor`, `.gemini` directories
-- `.mcp.json`, `.zcp/`
-- **CLAUDE.md AND AGENTS.md** (both ZCP-managed context files)
-- Generic phrasing: "ZCP-managed files include: AGENTS.md (canonical context), CLAUDE.md (Claude wrapper, when Claude adapter ran), .mcp.json, .zcp/, plus per-agent config directories (.claude/, .codex/, …)"
+One validation error message in `internal/tools/workflow_checks_claude_md.go`: "human or Claude Code" → "human or AI agent". The LLM consuming the error message no longer sees an agent-specific self-reference in tool-fail responses.
 
-### 6.5 Why this matters specifically for Codex
+### 6.6 What's NOT done — `agents:` axis (deferred)
 
-If atoms 6.2 + 6.3 ship to a Codex agent unchanged, Codex tries to call `Bash run_in_background=true` (parameter doesn't exist in Codex's shell tool) → tool call fails → agent confused. Atoms must work for ALL agents that could read them, not just Claude.
-
-Atom 6.1 + 6.4 are about file references becoming stale post-migration — agent-neutral, just need updating.
+The proper structural fix for per-agent prose divergence is an `agents:` frontmatter field. Deferred via backlog because the cost (atom frontmatter schema + lint rules + filter logic in `internal/workflow/atom_*.go` + MCP `initialize.clientInfo` client-identity detection + ZCP startup wiring) only pays off at 2+ instances of diverging per-agent prose. For Codex MVP, deleting the 3 tool-preload atoms + genericizing 6 others covers the seam with zero new infrastructure. Restoration when 2nd agent (Cursor / Gemini / Antigravity) ships with its own diverging needs.
 
 ---
 
@@ -399,7 +386,7 @@ Atom 6.1 + 6.4 are about file references becoming stale post-migration — agent
 
 **Tests added**: `TestMCPServerNameCanonical`, `TestClaude_MergePreservesUserMCPServers`, `TestClaude_MergePreservesUnknownTopLevelFields`, `TestAdapter_Interface_AllMethodsCovered`
 
-### P0b — Context migration (3 days)
+### P0b — Context migration (2-2.5 days, reduced after d0f8a449)
 
 - Rename `internal/content/build_claude.go` → `build_agents.go` (compat alias kept); templates `claude_*.md` → `agents_*.md`
 - Core writes AGENTS.md (env-specific: container OR local, NOT consolidated — preserves env-separation invariant)
@@ -411,7 +398,7 @@ Atom 6.1 + 6.4 are about file references becoming stale post-migration — agent
 - `internal/init/headless_warn.go:10` warning text references AGENTS.md
 - `docs/spec-workflows.md:508` ("Append reflog to CLAUDE.md") updated
 - `internal/eval/cleanup.go:181` comment updated; eval cleanup logic adjusted to remove AGENTS.md (not CLAUDE.md) for cross-scenario isolation
-- Genericize 4 atoms per §6
+- ~~Genericize 4 atoms~~ **DONE in d0f8a449** (6 genericized + 3 deleted; see §6)
 - Flip CLAUDE.local.md:15 "Pre-production" → published-product policy
 
 **Tests added**: `TestUpgrade_FirstRun_SplitsCLAUDEmdToAGENTSmd`, `TestUpgrade_Idempotent_NoOpOnSecondRun`, `TestUpgrade_PreservesUserContentOutsideMarkers`, `TestReflog_MigratesExistingClaudeMDOnFirstRun`, `TestReflog_AppendedToAGENTSmdAfterUpgrade`, `TestReflog_PreservesContentOnIdempotentRerun`, `TestAGENTSmd_NoContainerLocalLeak`
@@ -436,7 +423,7 @@ Atom 6.1 + 6.4 are about file references becoming stale post-migration — agent
 
 **Tests added**: `TestCodex_Detect_BinaryPresent`, `TestCodex_Detect_BinaryMissing`, `TestCodex_Validate_VersionTooOld`, `TestCodex_ContainerInit_FreshConfig`, `TestCodex_ContainerInit_MergesIntoExistingConfig`, `TestCodex_ContainerInit_PreservesUserMCPServers`, `TestCodex_ContainerInit_Idempotent`, `TestCodex_AGENTSmdUnderSizeCap`
 
-**Total: ~9-11 working days (~2.5-3 weeks elapsed).**
+**Total: ~8-10 working days (~2-2.5 weeks elapsed)** — atom work pre-done in d0f8a449 saves ~0.5-1 day from P0b.
 
 P0a → P0b → P1 strictly sequential (P0a unblocks P0b unblocks P1). P0a and P0b can land as separate PRs that are independently verifiable.
 
@@ -530,5 +517,87 @@ Full research available for when these are scheduled:
 - `ZCP_TOOLSET=core|admin|recipe|all` server-side tool filtering (only matters when Cursor's 40-tool cap bites)
 - `SessionOwner` abstraction `{kind: pid|workspace|external}` (only matters for Cursor's IDE-embedded model)
 - Per-adapter `Capabilities()` interface method (only matters when ZCP guidance needs to vary per agent feature support)
+- **`agents:` axis on atom frontmatter** (per-agent prose divergence) — tracked in `plans/backlog/tool-preload-atoms-need-agents-axis.md`; trigger to promote = 2nd agent ships with diverging prose needs. Also restores the 3 deleted tool-preload atoms tagged `agents: [claude-code]`.
 
-When these adapters are scheduled, this plan's foundation (Adapter interface, merge.go, AGENTS.md canonical, env-driven config) makes them additive — no further refactor of core init/state code needed.
+When these adapters are scheduled, this plan's foundation (Adapter interface, merge.go, AGENTS.md canonical, env-driven config, structural lint rules from d0f8a449) makes them additive — no further refactor of core init/state code needed.
+
+---
+
+## 10. Implementation status (2026-05-24) — SHIPPED
+
+P0a + P0b + P1 landed. All goals from §3 achieved; all backward-compat invariants from §4 preserved.
+
+### Commits
+
+| Commit | Scope | Files |
+|---|---|---|
+| `<sha-1>` | Multi-agent foundation + AGENTS.md migration + Claude refactor (P0a + P0b) | ~25 files |
+| `<sha-2>` | Codex adapter (P1, additive) | 3 files |
+
+### Verification matrix
+
+| Test surface | Result |
+|---|---|
+| `go test ./... -count=1 -race -short` (all 30 packages) | All green |
+| `make lint-fast` (golangci-lint) | 0 issues |
+| Backward-compat pinning: `TestContainerSteps_ClaudeConfigs_ProjectEntry`, `TestRun_GeneratesSettingsLocal`, `TestBootstrapComplete_AppendsReflog`, etc. | Pass — Claude container init field shape unchanged for users |
+| New migration: `TestUpgrade_MigratesReflogFromClaudeMDToAgentsMD`, `TestUpgrade_MigrationIdempotent`, `TestUpgrade_PreservesUserContentOutsideMarkers`, `TestUpgrade_MarkerlessUserAgentsMD_PreservedNotClobbered`, `TestUpgrade_AgentsMDAlreadyHasMigratedReflog_NoDuplication`, `TestUpgrade_MalformedReflogOpenerNoCloser_NoDataLoss` | Pass — one-time + idempotent + content-resumable |
+| New safeguard: `TestRefreshAgentContext_PreUpgradeCLAUDEmdWithoutAgentsMD_LeftUntouched`, `TestServerNew_PreUpgradeClaudeMDWithoutAgentsMD_LeftUntouched` | Pass — serve startup will not orphan @AGENTS.md include |
+| Merge primitives: 13 `TestUpsertPath_*` / `TestHasPath_*` / `TestLoadJSONFile_*` / `TestSaveTOMLFile_*` + 4 `TestShallowMergeAtPath_*` | Pass |
+| Codex adapter: 11 `TestCodex_*` including `TestCodex_MCPEntry_UsesEnvVarsNotEnv`, `TestCodex_ContainerInit_ByteStableAfterReloadResave`, `TestCodex_ContainerInit_PreservesUserAddedServers` | Pass |
+| E2E in eval-zcp container (cross-compiled binary, simulated pre-upgrade CLAUDE.md with 2 REFLOG entries + user content outside markers + Codex pre-existing config with user-added MCP servers) | 17/17 checks pass |
+| `flow-eval-local greenfield-node-postgres-dev-stage` (Claude regression check via container) | Pass — agent self-review: "this one went clean. No retries, no validation errors." Full bootstrap → provision → deploy → dev-server → verify pipeline |
+
+### Codex review critiques (gpt-5.5 second-opinion 2026-05-23) → all folded
+
+| Critique | Resolution | Pinning test added |
+|---|---|---|
+| `env.ZCP_API_KEY = "${ZCP_API_KEY}"` — Codex doesn't expand placeholders | Switched to `env_vars = ["ZCP_API_KEY"]` (documented Codex pass-through) | `TestCodex_MCPEntry_UsesEnvVarsNotEnv` |
+| `zcp serve` startup could orphan @AGENTS.md include for pre-upgrade Claude users | `RefreshAgentContext` skips CLAUDE.md refresh when AGENTS.md missing | `TestRefreshAgentContext_PreUpgradeCLAUDEmdWithoutAgentsMD_LeftUntouched`, `TestServerNew_PreUpgradeClaudeMDWithoutAgentsMD_LeftUntouched` |
+| REFLOG migration not content-resumable (existence-gated, false-negative on partial crash) | Content-based dedupe; handles markerless user AGENTS.md, partial-crash recovery, concurrent re-init | `TestUpgrade_AgentsMDAlreadyHasMigratedReflog_NoDuplication`, `TestUpgrade_MarkerlessUserAgentsMD_PreservedNotClobbered` |
+| Claude `projects[VSCodeWorkDir]` full-clobber loses user-added keys | Added `ShallowMergeAtPath` helper; `configureClaude` uses it (ZCP keys win, user keys preserved) | `TestShallowMergeAtPath_OverwritesZCPKeys_PreservesUserKeys` |
+| Codex idempotence test compared decoded maps, not raw bytes | Added byte-stability assertion through load+save cycle | `TestCodex_ContainerInit_ByteStableAfterReloadResave` |
+| Malformed REFLOG opener edge case | Verified `extractReflogSections` no-ops cleanly; truncated content stays visible | `TestUpgrade_MalformedReflogOpenerNoCloser_NoDataLoss` |
+| `removeClaudeMD` comment/code mismatch | Comment rewritten to describe actual single-file behavior | resolved |
+
+### Architecture delivered
+
+```
+internal/init/
+├── init.go                          generateAgentContext + migrate + extract/remove reflog
+├── init_container.go                runContainerAdapters dispatcher
+├── init_upgrade_test.go             3 migration edge-case tests
+├── headless_warn.go                 WarnMissingAgentContext (alias kept)
+└── adapters/
+    ├── adapter.go                   Adapter interface + Env (Detect, Validate, ContainerInit, hooks)
+    ├── merge.go                     Load/Save JSON+TOML, UpsertPath, ShallowMergeAtPath, HasPath
+    ├── merge_test.go                13 tests
+    ├── merge_shallow_test.go        4 ShallowMergeAtPath tests
+    ├── claude.go                    Claude adapter (merge-aware ~/.claude.json + project-entry shallow merge)
+    ├── claude_test.go               7 tests
+    ├── codex.go                     Codex adapter (env_vars not literal, TOML merge, version warning)
+    └── codex_test.go                11 tests
+
+internal/content/
+├── build_agents.go                  BuildAgentsMD + BuildClaudeWrapper (BuildClaudeMD deprecated alias)
+├── refresh_agents.go                RefreshAgentContext with AGENTS.md-gate safeguard (RefreshClaudeMD alias)
+├── refresh_agents_upgrade_test.go   2 pre-upgrade safeguard tests
+├── content_test.go                  TestMCPServerNameCanonical
+└── templates/agents_{shared,container,local}.md   (git-renamed)
+
+internal/server/server.go             RefreshAgentContext on startup (was RefreshClaudeMD)
+internal/workflow/{reflog,bootstrap_outputs}.go    REFLOG writer point → AGENTS.md
+internal/eval/cleanup.go              removeAgentContextFiles
+cmd/zcp/main.go                       WarnMissingAgentContext
+docs/spec-workflows.md:508            REFLOG target documentation
+CLAUDE.local.md:15                    "Pre-production" → published-product policy
+```
+
+### Deferred (unchanged from §9)
+
+Cursor / Gemini / Antigravity adapters + `ZCP_TOOLSET` server-side filtering + `SessionOwner` abstraction + `agents:` axis on atom frontmatter — all gated on future agent shipping. Foundation makes them additive.
+
+### Operator next steps
+
+- Zerops platform team: install `codex` binary in dev container template (npm `@openai/codex`). Once present, `zcp init` auto-detects + configures via the Codex adapter; existing Claude-only containers see zero behavior change (Codex Detect returns false, adapter skipped).
+- Optional: add `ZCP_AGENT_TYPE`, `ZCP_AUTH_TYPE`, `ZCP_PROVIDER` env vars to Codex container template YAML for parity with Claude's `claude-code`/`oauth`/`anthropic` (not consumed by adapters yet — informational labels, future).

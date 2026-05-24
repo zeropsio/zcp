@@ -52,7 +52,10 @@ func TestBootstrapComplete_WritesServiceMeta(t *testing.T) {
 
 func TestBootstrapComplete_AppendsReflog(t *testing.T) {
 	t.Parallel()
-	// Create project root with CLAUDE.md.
+	// Create project root. AGENTS.md will be created by AppendReflogEntry
+	// on first write (open with O_CREATE). Post-multi-agent migration
+	// REFLOG goes to AGENTS.md, not CLAUDE.md — Codex / Cursor / Gemini
+	// all read AGENTS.md natively, Claude pulls it via @AGENTS.md include.
 	projectRoot := t.TempDir()
 	stateDir := filepath.Join(projectRoot, ".zcp", "state")
 
@@ -77,18 +80,18 @@ func TestBootstrapComplete_AppendsReflog(t *testing.T) {
 		}
 	}
 
-	// Verify CLAUDE.md has reflog entry.
-	claudePath := filepath.Join(projectRoot, "CLAUDE.md")
-	data, err := os.ReadFile(claudePath)
+	// Verify AGENTS.md has reflog entry (canonical post-migration).
+	agentsPath := filepath.Join(projectRoot, "AGENTS.md")
+	data, err := os.ReadFile(agentsPath)
 	if err != nil {
-		t.Fatalf("read CLAUDE.md: %v", err)
+		t.Fatalf("read AGENTS.md: %v", err)
 	}
 	content := string(data)
 	if !strings.Contains(content, "ZEROPS:REFLOG") {
-		t.Error("CLAUDE.md should contain ZEROPS:REFLOG marker")
+		t.Error("AGENTS.md should contain ZEROPS:REFLOG marker")
 	}
 	if !strings.Contains(content, "appdev") {
-		t.Error("CLAUDE.md should contain hostname appdev")
+		t.Error("AGENTS.md should contain hostname appdev")
 	}
 }
 
