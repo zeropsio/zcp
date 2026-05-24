@@ -333,7 +333,7 @@ User makes a bootstrap in either session → `bootstrap_outputs.go::AppendReflog
   }
   ```
   NO `env` field — Gemini's MCP subprocess spawn uses `env: { ...process.env, ...envMap }` (verified in `chunk-WFCK2Z32.js`: `childProcess2.spawn(..., { env: { ...process.env, ...Object.fromEntries(envMap) } })`). Parent env spreads first; config `env` only overrides. ZCP_API_KEY / serviceId / hostname / projectId / PATH / HOME all flow through naturally — opposite of Codex's restrictive `env_vars` list.
-- Auth handling: out of scope. Gemini CLI reads `GEMINI_API_KEY` / `GOOGLE_GENAI_USE_VERTEXAI` / `GOOGLE_GENAI_USE_GCA` env vars OR an interactive OAuth flow; user picks their own. The adapter's MCP config write is independent of auth — settings.json is loaded regardless and `mcpServers.zerops` registers even before auth.
+- Auth handling: out of scope. Gemini CLI reads `GEMINI_API_KEY` / `GOOGLE_GENAI_USE_VERTEXAI` / `GOOGLE_GENAI_USE_GCA` env vars OR `security.auth.selectedType` in settings.json (one of `"oauth-personal"`, `"gemini-api-key"`, `"vertex-ai"`, `"cloud-shell"`). Path is NESTED — top-level `"selectedAuthType"` is silently ignored. The adapter's MCP config write is independent of auth: settings.json is loaded regardless and `mcpServers.zerops` registers even before auth — Codex/Antigravity-style permissive merge means an operator's manually-set `security.auth.selectedType` survives every `zcp init` re-run untouched (verified 2026-05-24).
 - AGENTS.md already written by Core — Gemini reads AGENTS.md natively (`context.fileName` defaults include it).
 
 ### 5.5 Antigravity CLI (shipped 2026-05-24, commit `f5ba8747`)
@@ -588,6 +588,8 @@ P0a + P0b + P1 landed. All goals from §3 achieved; all backward-compat invarian
 | Antigravity adapter: 13 `TestAntigravity_*` including `TestAntigravity_MCPEntry_NoEnvField`, `TestAntigravity_ContainerInit_PreservesUserAddedServersAndWorkspaces`, `TestAntigravity_ContainerInit_PreservesScalarTrustedWorkspaces`, `TestAntigravity_ContainerInit_TrustedWorkspaceAlreadyPresent_NoDuplicate` | Pass |
 | E2E in eval-zcp container (cross-compiled binary, simulated pre-upgrade CLAUDE.md with 2 REFLOG entries + user content outside markers + Codex pre-existing config with user-added MCP servers) | 17/17 checks pass |
 | Live `agy --print "list available MCP tools"` in eval-zcp container after `zcp init` rewrote `~/.gemini/config/mcp_config.json` | Pass — Antigravity enumerated all 24 `zerops_*` tools end-to-end via the new mcp_config.json |
+| Live `gemini --prompt "Call mcp__zerops__zerops_workflow…"` after `zcp init` rewrote `~/.gemini/settings.json` (with operator-set `security.auth.selectedType: "oauth-personal"`) | Pass — Gemini called `mcp_zerops_zerops_workflow`, parsed the structured workflow envelope, listed all action choices (`start`, `close-mode`, `git-push-setup`, `build-integration`, `status`, `complete`, `skip`, `reset`, `iterate`, `resume`, `list`, `route`) |
+| `zcp init` re-run preserves operator's `security.auth.selectedType` (merge-aware contract) | Pass — second `gemini --prompt` after re-init enumerated all 24 tool names; auth field byte-identical before/after |
 | `flow-eval-local greenfield-node-postgres-dev-stage` (Claude regression check via container) | Pass — agent self-review: "this one went clean. No retries, no validation errors." Full bootstrap → provision → deploy → dev-server → verify pipeline |
 
 ### Codex review critiques (gpt-5.5 second-opinion 2026-05-23) → all folded
