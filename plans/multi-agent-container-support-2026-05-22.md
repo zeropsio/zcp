@@ -351,6 +351,32 @@ User makes a bootstrap in either session → `bootstrap_outputs.go::AppendReflog
 
 ---
 
+### 5.6 Cursor CLI (shipped 2026-05-24, commit `67fa46fd`)
+
+`internal/init/adapters/cursor.go`:
+- **Binary**: `agent` (primary) or `cursor-agent` (legacy alias). Both are symlinks to `~/.local/share/cursor-agent/versions/<version>/cursor-agent` created by the official installer (`curl https://cursor.com/install -fsS | bash`). Detect tries `cursor-agent` first (unambiguous), falls back to `agent`.
+- `Validate(env)`: `cursor-agent --version` (returns build identifier like `2026.05.20-2b5dd59`). No version gates today. Probe failure → soft warning.
+- `ContainerInit(env)`: JSON structured merge into `~/.cursor/mcp.json`:
+  ```json
+  {
+    "mcpServers": {
+      "zerops": {
+        "type": "stdio",
+        "command": "zcp",
+        "args": ["serve"]
+      }
+    }
+  }
+  ```
+  `type: "stdio"` is required by Cursor's schema (distinguishes from `sse` / streamable HTTP). NO `env` field — Cursor spawns the MCP subprocess inheriting parent env (verified: `agent mcp list-tools zerops` enumerated 21 zerops_* tools without enumeration). Same pattern as Gemini/Antigravity; Codex's restrictive `env_vars` is the outlier.
+- Auth handling: out of scope. Cursor authenticates via `CURSOR_API_KEY` env var OR `agent login` OAuth — operator picks one. Adapter's MCP config write is independent of auth.
+- Project trust: separately, `agent -p` headless mode needs `--trust` flag to bypass workspace-trust prompt + `--approve-mcps` to auto-approve our MCP server. These are CLI flags, not config-file fields — operator passes per-invocation.
+- AGENTS.md: Cursor reads its own `.cursor/rules/*.mdc` natively; AGENTS.md compatibility is via the cross-tool agents.md convention (Cursor's MCP-listed servers see AGENTS.md as context-file fallback). Empirical confirmation deferred to first interactive run.
+
+**Notable discrepancy** — `agent mcp list-tools zerops` shows 21 tools (Gemini/Antigravity see all 24). Missing: `zerops_browser`, `zerops_deploy_batch`, `zerops_dev_server`. Possibly Cursor's CLI display filters tools above a description-length threshold (all three have descriptions >1000 chars); does NOT mean the tools are inaccessible at runtime (would require auth to verify via actual `agent -p` call). Filed as known unknown; not a blocker since the missing tools are convenience wrappers (delete_batch composes deploys; dev_server composes ssh+setsid; browser composes agent-browser lifecycle).
+
+---
+
 ## 6. Atom corpus work — DONE in commit d0f8a449
 
 The atom-genericization scope this plan originally proposed (4 atoms) expanded during deeper audit to 6 genericized + 3 deleted. All of that landed in commit `d0f8a449` (see §0). Summary of what changed:
@@ -551,8 +577,8 @@ Full research available for when these are scheduled:
 - **Estimated effort**: 1 week, AFTER Gemini adapter verified
 
 ### Common deferred infrastructure
-- `ZCP_TOOLSET=core|admin|recipe|all` server-side tool filtering (only matters when Cursor's 40-tool cap bites)
-- `SessionOwner` abstraction `{kind: pid|workspace|external}` (only matters for Cursor's IDE-embedded model)
+- ~~`ZCP_TOOLSET=core|admin|recipe|all` server-side tool filtering~~ — **NO LONGER A BLOCKER** for Cursor as of 2026-05-24. The original "40-tool cap" finding from Cursor's older docs is absent from current docs (`https://cursor.com/docs/context/mcp`) and empirically Cursor enumerated 21 zerops tools without complaint. Still useful long-term if any agent introduces a real cap, but not required to ship Cursor.
+- ~~`SessionOwner` abstraction `{kind: pid|workspace|external}`~~ — **NO LONGER NEEDED** for Cursor's CLI mode. The "IDE-embedded, no PID" concern applied to Cursor IDE; Cursor CLI runs as a regular PID-owned process (just like Claude/Codex/Gemini/Antigravity CLIs). The PID-keyed work session model works.
 - Per-adapter `Capabilities()` interface method (only matters when ZCP guidance needs to vary per agent feature support)
 - **`agents:` axis on atom frontmatter** (per-agent prose divergence) — tracked in `plans/backlog/tool-preload-atoms-need-agents-axis.md`; trigger to promote = 2nd agent ships with diverging prose needs. Also restores the 3 deleted tool-preload atoms tagged `agents: [claude-code]`.
 
@@ -572,6 +598,8 @@ P0a + P0b + P1 landed. All goals from §3 achieved; all backward-compat invarian
 | `70327184` | Codex CLI adapter (P1, additive) | 3 files (+530 / -1) |
 | `07a2044a` | Codex env_vars fix — include runtime detection vars (post-ship bug) | 2 files (+47 / -3) |
 | `f5ba8747` | Gemini CLI + Antigravity (`agy`) adapters (§5.4 + §5.5, additive) | 6 files (+849 / -5) |
+| `50e56ed1` | deploy/ssh: workingDir gate error message — explicit sourceService recovery (audit feedback) | 2 files (+51 / -1) |
+| `67fa46fd` | Cursor adapter (§5.6, additive) — Cursor IDE headless CLI (`agent` / `cursor-agent`) | 3 files (+456 / -6) |
 
 ### Verification matrix
 
@@ -590,6 +618,9 @@ P0a + P0b + P1 landed. All goals from §3 achieved; all backward-compat invarian
 | Live `agy --print "list available MCP tools"` in eval-zcp container after `zcp init` rewrote `~/.gemini/config/mcp_config.json` | Pass — Antigravity enumerated all 24 `zerops_*` tools end-to-end via the new mcp_config.json |
 | Live `gemini --prompt "Call mcp__zerops__zerops_workflow…"` after `zcp init` rewrote `~/.gemini/settings.json` (with operator-set `security.auth.selectedType: "oauth-personal"`) | Pass — Gemini called `mcp_zerops_zerops_workflow`, parsed the structured workflow envelope, listed all action choices (`start`, `close-mode`, `git-push-setup`, `build-integration`, `status`, `complete`, `skip`, `reset`, `iterate`, `resume`, `list`, `route`) |
 | `zcp init` re-run preserves operator's `security.auth.selectedType` (merge-aware contract) | Pass — second `gemini --prompt` after re-init enumerated all 24 tool names; auth field byte-identical before/after |
+| Cursor adapter: 14 `TestCursor_*` including `TestCursor_MCPEntry_NoEnvField`, `TestCursor_MCPEntry_TypeStdioRequired`, `TestCursor_Detect_{OnlyAgent,OnlyCursorAgent,Both}Present_True` | Pass |
+| Live `agent mcp list-tools zerops` after `zcp init` rewrote `~/.cursor/mcp.json` | Pass — Cursor enumerated 21 `zerops_*` tools from our config (3-tool gap to be investigated; not a blocker) |
+| Cursor init preserves pre-existing `~/.cursor/{cli-config.json, statsig-cache.json, projects/}` (merge-aware) | Pass — only `mcpServers.zerops` touched |
 | `flow-eval-local greenfield-node-postgres-dev-stage` (Claude regression check via container) | Pass — agent self-review: "this one went clean. No retries, no validation errors." Full bootstrap → provision → deploy → dev-server → verify pipeline |
 
 ### Codex review critiques (gpt-5.5 second-opinion 2026-05-23) → all folded
@@ -625,7 +656,9 @@ internal/init/
     ├── gemini.go                    Gemini CLI adapter (~/.gemini/settings.json::mcpServers, JSON merge)
     ├── gemini_test.go               10 tests
     ├── antigravity.go               Antigravity adapter (~/.gemini/config/mcp_config.json + trustedWorkspaces pre-seed)
-    └── antigravity_test.go          13 tests
+    ├── antigravity_test.go          14 tests
+    ├── cursor.go                    Cursor adapter (~/.cursor/mcp.json, type=stdio, dual binary detect)
+    └── cursor_test.go               14 tests
 
 internal/content/
 ├── build_agents.go                  BuildAgentsMD + BuildClaudeWrapper (BuildClaudeMD deprecated alias)
