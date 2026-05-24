@@ -1,9 +1,9 @@
 # Post-launch friction — ultra-deep analysis + structural fixes
 
-**Date:** 2026-05-23 (drafted), updated 2026-05-24 (Phase 2 dropped to error-feedback only after empirical re-check)
+**Date:** 2026-05-23 (drafted), updated 2026-05-24 (Phase 2 demoted to error-feedback; Phase 5 dropped — sentinel pattern grows linearly with incidents, not structural improvement)
 **Trigger:** 3 live behavioral evals (`suite=20260523-{181931,182949,184005}`) on `git-push-setup-then-actions` scenario. Phase 1-7 of the git-push systemic fix shipped + 2 eval-driven iterations landed. Remaining friction surfaced consistently across all 3 retrospectives.
 **Method:** 5 explore agents (read-only) + 3 transcript walks + 3 Codex review rounds. Each phase below comes with empirical turn-cost evidence and a concrete handler/render touch point.
-**Effort:** ~5 phases, ~80-100 LOC total, ~2-3 days focused work.
+**Effort:** ~4 phases, ~90 LOC total, ~2 days focused work.
 
 ---
 
@@ -15,7 +15,7 @@ Paste this command to Claude in a fresh session inside the repo:
 Implement plans/post-launch-friction-deep-analysis-2026-05-23.md.
 
 Vertical-slice each phase (handler change + tests + atom updates in
-one commit). Phase order: 1 → 2 → 3 → eval re-run → 4 → 5. Each phase
+one commit). Phase order: 1 → 2 → 3 → eval re-run → 4. Each phase
 ships independently; verify go build + go test -short + make lint-fast
 clean before commit.
 
@@ -36,7 +36,7 @@ After Phases 1-3 commit, run one behavioral eval:
   export ZCP_E2E_GITHUB_PAT=$(sed -n '2p' /Users/macbook/Documents/Zerops-MCP/zcp/.zcp/manual/cred.txt)
   ./eval/behavioral/flow-eval.sh git-push-setup-then-actions
   (background mode, ~15min)
-Then read self-review.md, evaluate, and proceed to Phases 4+5 if no
+Then read self-review.md, evaluate, and proceed to Phase 4 if no
 regression. If eval surfaces NEW friction not in the plan, stop and
 ask before iterating.
 
@@ -57,7 +57,7 @@ multi-agent-container-support-*) must stay out of every commit
 
 **Phase 4 — Close-mode conflict detection:** preflight grouping by canonical pair meta. Reject only divergent both-halves; collapse same-value duals to single canonical write. Avoid tie-break (no canonical winner without arbitrary choice).
 
-**Phase 5 — Sentinel test extension:** narrow forbidden phrase only — `"handler rejects stage-half targets"` (Phase 3 atom alignment). Do NOT forbid `"must nest inside runtime"` / `"flat placement is hard-rejected"` — Phase 2 keeps nested wire shape; that teaching is currently correct.
+**Phase 5 — DROPPED 2026-05-24:** Karel pointed out that the sentinel test pattern (forbidden exact-phrase list) grows linearly with each incident — existing 6 entries are all post-mortem reactions, adding entry #7 doesn't solve the underlying atom/handler drift, just memorializes one specific phrase. Sentinel can be bypassed by rewording the same false claim. Atom claim fix for `"handler rejects stage-half targets"` rolls into Phase 3 commit (1-line atom edit). Structural atom-drift detection v3 is BACKLOG (`plans/backlog/atom-drift-detection-v3.md` — design when more drift data accumulates).
 
 **Original Phase 4 (`discoveryBypassed` flag) — NO-GO:** Codex round 2 sanity check: discovery state is not persisted; handler can't truthfully discriminate "agent skipped menu" from "agent saw menu then committed". Backlog until route-first eval surfaces concrete turn-cost.
 
@@ -319,15 +319,9 @@ Each phase is independently shippable, has a single thematic concern, and includ
 
 **Effort:** ~25 LOC + 2 test pins + 1 atom edit.
 
-### Phase 5 — Sentinel test extension
+### Phase 5 — DROPPED
 
-**Scope (post Codex round 3 — nested stays canonical):**
-- `internal/content/git_push_atom_sentinel_test.go::TestAtomCorpus_NoForbiddenGitPushClaims` — extend with:
-  - `"handler rejects stage-half targets"` (Phase 3 — atom claim was wrong; handler is permissive via pair-keyed FindServiceMeta lookup)
-
-**Explicitly NOT forbidden:** `"must nest inside runtime"` and `"flat placement is hard-rejected"` stay in atoms + schema description. The teaching is currently correct and consistent across 3 surfaces. Phase 2 keeps the nested wire shape.
-
-**Effort:** ~5 LOC.
+Sentinel test pattern is reactive memorialization of past phrases. Each incident → one more entry → grows linearly. Doesn't solve atom/handler drift; can be bypassed by rewording. Atom claim fix moved into Phase 3 commit. Structural atom-drift detection v3 is BACKLOG.
 
 ---
 
@@ -397,7 +391,6 @@ This unifies Phases 2 (flat→nested alias acceptance), 3 (input→canonical rol
 - Phase 2: `internal/workflow/validate.go:58-83` (UnmarshalJSON error message only — type stays nested), `internal/content/atoms/bootstrap-classic-plan-dynamic.md`, `internal/content/atoms/bootstrap-recipe-match.md`, `internal/workflow/validate_test.go` (new `TestUnmarshalJSON_FlattenedFields_ErrorReturnsCorrectedNestedJSON`)
 - Phase 3: `internal/tools/workflow_build_integration.go:116, 185, 262, 359`, `internal/content/atoms/develop-strategy-awareness.md:41`
 - Phase 4: `internal/tools/workflow_close_mode.go::handleCloseMode` (preflight grouping), `internal/content/atoms/develop-strategy-awareness.md` (close-mode dual-half clarification)
-- Phase 5: `internal/content/git_push_atom_sentinel_test.go` (add `"handler rejects stage-half targets"` forbidden phrase only)
 
 ### Spec touches
 - `docs/spec-workflows.md` — invariants for `discoveryBypassed`, build-integration stage-half rule (Phase 5 may surface need to add explicit invariant), `close-mode` per-pair conflict detection.
