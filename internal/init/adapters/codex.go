@@ -123,11 +123,26 @@ func (Codex) ContainerInit(env Env) error {
 // codexMCPServerEntry builds the [mcp_servers.zerops] table contents.
 // The structure matches what Codex CLI expects per its MCP docs:
 // command + args + env_vars (literal pass-through list — Codex
-// inherits the named variables from its calling shell at MCP spawn).
+// inherits ONLY the named variables from its calling shell at MCP
+// spawn; vars not listed are stripped from the subprocess env).
 //
 // IMPORTANT: Codex does NOT expand `${...}` placeholders inside `env`
-// values. Use `env_vars = ["ZCP_API_KEY"]` for shell-env inheritance;
-// `env = {KEY = "static-string"}` is for hard-coded values only.
+// values. Use `env_vars = [...]` for shell-env inheritance.
+//
+// env_vars MUST include every variable `zcp serve` reads at startup:
+//
+//   - ZCP_API_KEY — required for Zerops API auth.
+//   - serviceId / hostname / projectId — Zerops-injected runtime
+//     identifiers. runtime.Detect() reads `serviceId` to tell
+//     container from local mode. WITHOUT THIS LIST, Codex strips
+//     these vars; zcp serve sees `serviceId=""`, returns
+//     `InContainer=false`, and bootstrap workflow ships local-mode
+//     atoms (bootstrap-discover-local, bootstrap-recipe-local-clone)
+//     to a session that's actually inside a Zerops container —
+//     observed bug: Codex skipped the appdev runtime + rsynced
+//     recipe code into /var/www as if it were a local dev checkout.
+//   - PATH / HOME — required so zcp serve can locate child binaries
+//     (ssh, zcli, git) and resolve config paths.
 //
 // startup_timeout_sec is generous (30s) because the ZCP binary loads
 // recipe + atom corpus at boot. tool_timeout_sec covers the longest
@@ -138,7 +153,16 @@ func codexMCPServerEntry() map[string]any {
 		"args":                []any{"serve"},
 		"startup_timeout_sec": int64(30),
 		"tool_timeout_sec":    int64(600),
-		"env_vars":            []any{"ZCP_API_KEY"},
+		"env_vars": []any{
+			"ZCP_API_KEY",
+			// Zerops runtime detection (runtime.Detect reads these).
+			"serviceId",
+			"hostname",
+			"projectId",
+			// Process basics for subprocess execution.
+			"PATH",
+			"HOME",
+		},
 	}
 }
 

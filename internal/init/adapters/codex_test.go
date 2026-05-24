@@ -237,6 +237,13 @@ func TestCodex_ContainerInit_EmptyHomeReturnsError(t *testing.T) {
 // "${VAR}" (Codex does not expand placeholders), and ZCP MCP would
 // receive a bogus token and fail auth. This regression was caught by
 // Codex review of the initial implementation.
+//
+// env_vars MUST also include the Zerops runtime detection variables
+// (serviceId / hostname / projectId) — without them, runtime.Detect()
+// returns InContainer=false and the workflow ships local-mode atoms
+// to a session that's actually inside a Zerops container. Observed
+// bug 2026-05-24: Codex skipped the appdev runtime and rsynced the
+// recipe code into /var/www as if it were a local dev checkout.
 func TestCodex_MCPEntry_UsesEnvVarsNotEnv(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -247,24 +254,37 @@ func TestCodex_MCPEntry_UsesEnvVarsNotEnv(t *testing.T) {
 	config := loadCodexTOML(t, home)
 	zerops := config["mcp_servers"].(map[string]any)["zerops"].(map[string]any)
 
-	// env_vars MUST be present + list-shaped + contain ZCP_API_KEY.
 	envVars, ok := zerops["env_vars"].([]any)
 	if !ok {
 		t.Fatalf("[mcp_servers.zerops].env_vars missing or wrong shape; got %v (type %T)", zerops["env_vars"], zerops["env_vars"])
 	}
-	var hasAPIKey bool
+	present := make(map[string]bool, len(envVars))
 	for _, v := range envVars {
-		if s, _ := v.(string); s == "ZCP_API_KEY" {
-			hasAPIKey = true
+		if s, ok := v.(string); ok {
+			present[s] = true
 		}
 	}
-	if !hasAPIKey {
-		t.Errorf("env_vars must include ZCP_API_KEY for shell pass-through; got %v", envVars)
+
+	// Required vars: API auth + runtime detection (container/local) +
+	// subprocess basics. Missing any of these has observed regressions.
+	required := []string{
+		"ZCP_API_KEY",
+		"serviceId",
+		"hostname",
+		"projectId",
+		"PATH",
+		"HOME",
+	}
+	for _, name := range required {
+		if !present[name] {
+			t.Errorf("env_vars must include %q (got %v) — required so zcp serve subprocess can detect Zerops container env / authenticate / locate child binaries",
+				name, envVars)
+		}
 	}
 
 	// env MUST NOT contain a literal "${ZCP_API_KEY}" placeholder
-	// (the bug Codex review caught — Codex doesn't expand placeholders
-	// in `env` values).
+	// (the original bug Codex review caught — Codex doesn't expand
+	// placeholders in `env` values).
 	if envMap, ok := zerops["env"].(map[string]any); ok {
 		if v, present := envMap["ZCP_API_KEY"]; present {
 			if s, _ := v.(string); strings.Contains(s, "${") {
