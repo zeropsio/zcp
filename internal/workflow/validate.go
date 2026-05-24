@@ -50,11 +50,11 @@ type BootstrapTarget struct {
 var flattenedRuntimeFields = []string{"bootstrapMode", "stageHostname", "devHostname", "type", "isExisting"}
 
 // UnmarshalJSON hard-rejects flattened RuntimeTarget fields at the top level
-// of a plan target. The actionable diagnostic tells the agent the exact
-// nesting required, so they don't waste a turn investigating a downstream
-// validator complaint about a field that was silently discarded upstream.
-// All flattened fields are reported in one error so the agent can fix the
-// shape in one round-trip.
+// of a plan target. The actionable diagnostic returns the complete corrected
+// target JSON (with leaked keys folded into "runtime") so the agent can
+// paste-and-resend in one turn instead of hand-reconstructing the nested
+// shape from a one-field example. All flattened fields are reported in one
+// error so the fix lands in one round-trip.
 func (t *BootstrapTarget) UnmarshalJSON(data []byte) error {
 	var probe map[string]json.RawMessage
 	if err := json.Unmarshal(data, &probe); err != nil {
@@ -67,11 +67,8 @@ func (t *BootstrapTarget) UnmarshalJSON(data []byte) error {
 		}
 	}
 	if len(leaked) > 0 {
-		quoted := make([]string, len(leaked))
-		for i, k := range leaked {
-			quoted[i] = fmt.Sprintf("%q", k)
-		}
-		return fmt.Errorf(`plan target: [%s] must nest inside runtime, e.g. {"runtime":{%q:...}}`, strings.Join(quoted, ", "), leaked[0])
+		return fmt.Errorf("plan target: flattened fields [%s] must nest inside runtime. Resubmit this target as:\n%s",
+			strings.Join(leaked, ", "), renderCorrectedTarget(probe, leaked))
 	}
 	type alias BootstrapTarget
 	var a alias
@@ -80,6 +77,37 @@ func (t *BootstrapTarget) UnmarshalJSON(data []byte) error {
 	}
 	*t = BootstrapTarget(a)
 	return nil
+}
+
+// renderCorrectedTarget folds leaked top-level keys into "runtime" and
+// returns the marshalled corrected target shape. Existing nested runtime
+// fields take precedence when a key appears in both flat and nested form
+// (presence of flat is the bug; the nested copy reflects the agent's
+// considered intent). Best-effort: marshal errors fall back to a static
+// nested-shape stub so the error still names the corrected shape.
+func renderCorrectedTarget(probe map[string]json.RawMessage, leaked []string) string {
+	runtimeMap := make(map[string]json.RawMessage)
+	if raw, ok := probe["runtime"]; ok {
+		_ = json.Unmarshal(raw, &runtimeMap)
+	}
+	for _, key := range leaked {
+		if _, exists := runtimeMap[key]; !exists {
+			runtimeMap[key] = probe[key]
+		}
+	}
+	runtimeBytes, err := json.Marshal(runtimeMap)
+	if err != nil {
+		return `{"runtime":{<leaked keys + existing runtime fields>}}`
+	}
+	corrected := map[string]json.RawMessage{"runtime": runtimeBytes}
+	if deps, ok := probe["dependencies"]; ok {
+		corrected["dependencies"] = deps
+	}
+	out, err := json.MarshalIndent(corrected, "", "  ")
+	if err != nil {
+		return `{"runtime":{<leaked keys + existing runtime fields>}}`
+	}
+	return string(out)
 }
 
 // RuntimeTarget describes a runtime service to bootstrap.

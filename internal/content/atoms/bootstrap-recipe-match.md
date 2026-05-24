@@ -17,7 +17,7 @@ coverageExempt: "recipe+discover step — 30 canonical scenarios cover recipe at
 
 ### Plan shape (no collisions)
 
-`bootstrapMode` and `stageHostname` MUST be inside `runtime` — flat placement is hard-rejected.
+`bootstrapMode` and `stageHostname` MUST be inside `runtime` — flat placement is hard-rejected. If you flatten by reflex, the error response includes the corrected JSON literal; paste-and-resend in one turn.
 
 ```json
 [

@@ -913,6 +913,52 @@ func TestBootstrapTarget_UnmarshalJSON_AcceptsStandardWithStage(t *testing.T) {
 	}
 }
 
+// Phase 2 — error message returns the complete corrected target so the
+// agent can paste-and-resend instead of hand-reconstructing the nested
+// shape from a one-field example.
+func TestBootstrapTarget_UnmarshalJSON_ErrorReturnsCorrectedNestedJSON(t *testing.T) {
+	t.Parallel()
+	raw := []byte(`{"devHostname":"appdev","stageHostname":"appstage","type":"go@1","bootstrapMode":"standard","dependencies":[{"hostname":"db","type":"postgresql@18","resolution":"CREATE"}]}`)
+	var target BootstrapTarget
+	err := target.UnmarshalJSON(raw)
+	if err == nil {
+		t.Fatal("expected error for fully-flattened target, got nil")
+	}
+	msg := err.Error()
+	// Every leaked field name appears in the diagnostic.
+	for _, field := range []string{"devHostname", "stageHostname", "type", "bootstrapMode"} {
+		if !strings.Contains(msg, field) {
+			t.Errorf("error must name leaked field %q: %v", field, err)
+		}
+	}
+	// The corrected JSON literal is present (pretty-printed) so the agent pastes verbatim.
+	for _, want := range []string{`"runtime":`, `"devHostname": "appdev"`, `"bootstrapMode": "standard"`, `"stageHostname": "appstage"`, `"dependencies":`} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error must include corrected JSON literal %q:\n%s", want, msg)
+		}
+	}
+}
+
+// When nested runtime already carries a key AND the flat sibling differs,
+// the corrected output preserves the nested value (agent's considered intent;
+// the flat copy is the bug).
+func TestBootstrapTarget_UnmarshalJSON_NestedAndFlat_NestedWins(t *testing.T) {
+	t.Parallel()
+	raw := []byte(`{"runtime":{"devHostname":"appdev","type":"go@1","bootstrapMode":"dev"},"bootstrapMode":"standard"}`)
+	var target BootstrapTarget
+	err := target.UnmarshalJSON(raw)
+	if err == nil {
+		t.Fatal("expected error for flat+nested duplicate, got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, `"bootstrapMode": "dev"`) {
+		t.Errorf("nested value must win over flat duplicate:\n%s", msg)
+	}
+	if strings.Contains(msg, `"bootstrapMode": "standard"`) {
+		t.Errorf("flat duplicate must NOT appear in corrected JSON:\n%s", msg)
+	}
+}
+
 // Phase 1.3 — bootstrapMode is required (no empty→standard default).
 //
 // Codex's structural fix to the default-is-standard trap: empty mode is
