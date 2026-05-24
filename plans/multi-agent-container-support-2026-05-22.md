@@ -38,11 +38,13 @@ The `zcp` binary inside a Zerops dev container, when invoked as `zcp init`, need
 
 ### Out of scope
 
-- Cursor adapter, Gemini adapter, Antigravity adapter — research preserved in Appendix C, deferred to future iterations
+- Cursor adapter — still deferred (40-tool cap requires `ZCP_TOOLSET` server-side filtering first)
 - VS Code extension scope decision (per-agent ext install) — defer until needed
 - ZCP_TOOLSET server-side filtering (only matters for Cursor's 40-tool cap)
 - SessionOwner abstraction (only matters for Cursor's IDE-embedded model)
 - Eval harness multi-agent (dev tooling, not shipped binary)
+
+> **2026-05-24**: Gemini CLI + Antigravity adapters were promoted out of "deferred" once Karel confirmed both are pre-installed in the eval-zcp template (gemini at `/usr/bin/gemini`, agy at `~/.local/bin/agy`). Spec in §5.4 + §5.5; implementation in commit `f5ba8747`.
 
 ---
 
@@ -93,7 +95,7 @@ zcp init container:
   │  • one-time migrate CLAUDE.md REFLOG → AGENTS.md REFLOG
   └────────────────────────────────────────────────────────
 
-  for each adapter in [claude, codex]:        # future: cursor, gemini, antigravity
+  for each adapter in [claude, codex, gemini, antigravity]:   # future: cursor
     if !adapter.Detect():                     # binary in PATH?
       log debug "X not installed, skip"
       continue
@@ -311,6 +313,41 @@ User opens terminal B → runs `codex` → Codex sees AGENTS.md, calls ZCP MCP, 
 Both sessions parallel, independent PIDs, shared `.zcp/state/` (safe).
 
 User makes a bootstrap in either session → `bootstrap_outputs.go::AppendReflogEntry` appends to AGENTS.md REFLOG → both sessions see updated history on next read.
+
+### 5.4 Gemini CLI (shipped 2026-05-24, commit `f5ba8747`)
+
+`internal/init/adapters/gemini.go`:
+- `Detect()`: `which gemini` returns ok. Container template ships `/usr/bin/gemini` → `/usr/lib/node_modules/@google/gemini-cli/bundle/gemini.js` (npm `@google/gemini-cli` v0.39.x).
+- `Validate(env)`: `gemini --version` probe. Soft warning on probe failure / empty output. No version-gated features today.
+- `ContainerInit(env)`: JSON structured merge into `~/.gemini/settings.json`:
+  ```json
+  {
+    "mcpServers": {
+      "zerops": {
+        "command": "zcp",
+        "args": ["serve"],
+        "trust": true,
+        "description": "Zerops platform MCP server"
+      }
+    }
+  }
+  ```
+  NO `env` field — Gemini's MCP subprocess spawn uses `env: { ...process.env, ...envMap }` (verified in `chunk-WFCK2Z32.js`: `childProcess2.spawn(..., { env: { ...process.env, ...Object.fromEntries(envMap) } })`). Parent env spreads first; config `env` only overrides. ZCP_API_KEY / serviceId / hostname / projectId / PATH / HOME all flow through naturally — opposite of Codex's restrictive `env_vars` list.
+- Auth handling: out of scope. Gemini CLI reads `GEMINI_API_KEY` / `GOOGLE_GENAI_USE_VERTEXAI` / `GOOGLE_GENAI_USE_GCA` env vars OR an interactive OAuth flow; user picks their own. The adapter's MCP config write is independent of auth — settings.json is loaded regardless and `mcpServers.zerops` registers even before auth.
+- AGENTS.md already written by Core — Gemini reads AGENTS.md natively (`context.fileName` defaults include it).
+
+### 5.5 Antigravity CLI (shipped 2026-05-24, commit `f5ba8747`)
+
+`internal/init/adapters/antigravity.go`:
+- **Binary name is `agy`** (three letters). Installed by the official bootstrap (`curl -fsSL https://antigravity.google/cli/install.sh | bash`) at `$HOME/.local/bin/agy`. v1.0.x is a stripped Go binary — language-server self-identifies as `product=antigravity` in cli.log.
+- `Detect()`: `which agy` returns ok.
+- `Validate(env)`: `agy --version` probe (returns `1.0.2`). No MCP-related version gates; agy v1.0.x and Gemini CLI v0.39.x share the same `MCPServerConfig` schema.
+- `ContainerInit(env)` writes TWO files (Antigravity migrated config layout to per-feature directory — `~/.gemini/config/.migrated` marker):
+  - `~/.gemini/config/mcp_config.json` — same JSON shape as Gemini, structured merge.
+  - `~/.gemini/antigravity-cli/settings.json::trustedWorkspaces` — append `VSCodeWorkDir` idempotently via `appendIfMissingString` (normalizes nil / []any / scalar / unknown defensively). Pre-seeded before first interactive `agy` session removes the workspace-trust prompt (Antigravity auto-adds to trustedWorkspaces on first open, but that doesn't help for headless `agy --print` runs).
+- NO `env` field (same Gemini-family permissive parent-env spread).
+- Live verification: `agy --print "list available MCP tools"` enumerates all 24 `zerops_*` tools end-to-end via the new mcp_config.json (eval-zcp container, 2026-05-24).
+- AGENTS.md already written by Core; Antigravity reads it natively (Gemini fork inherits same context-file behavior).
 
 ---
 
@@ -533,6 +570,8 @@ P0a + P0b + P1 landed. All goals from §3 achieved; all backward-compat invarian
 |---|---|---|
 | `a975aa8a` | Multi-agent foundation + AGENTS.md migration + Claude refactor (P0a + P0b) | 34 files (~+2400 / -1100) |
 | `70327184` | Codex CLI adapter (P1, additive) | 3 files (+530 / -1) |
+| `07a2044a` | Codex env_vars fix — include runtime detection vars (post-ship bug) | 2 files (+47 / -3) |
+| `f5ba8747` | Gemini CLI + Antigravity (`agy`) adapters (§5.4 + §5.5, additive) | 6 files (+849 / -5) |
 
 ### Verification matrix
 
@@ -545,7 +584,10 @@ P0a + P0b + P1 landed. All goals from §3 achieved; all backward-compat invarian
 | New safeguard: `TestRefreshAgentContext_PreUpgradeCLAUDEmdWithoutAgentsMD_LeftUntouched`, `TestServerNew_PreUpgradeClaudeMDWithoutAgentsMD_LeftUntouched` | Pass — serve startup will not orphan @AGENTS.md include |
 | Merge primitives: 13 `TestUpsertPath_*` / `TestHasPath_*` / `TestLoadJSONFile_*` / `TestSaveTOMLFile_*` + 4 `TestShallowMergeAtPath_*` | Pass |
 | Codex adapter: 11 `TestCodex_*` including `TestCodex_MCPEntry_UsesEnvVarsNotEnv`, `TestCodex_ContainerInit_ByteStableAfterReloadResave`, `TestCodex_ContainerInit_PreservesUserAddedServers` | Pass |
+| Gemini adapter: 10 `TestGemini_*` including `TestGemini_MCPEntry_NoEnvField`, `TestGemini_ContainerInit_PreservesUserAddedServers`, `TestGemini_ContainerInit_Idempotent` | Pass |
+| Antigravity adapter: 13 `TestAntigravity_*` including `TestAntigravity_MCPEntry_NoEnvField`, `TestAntigravity_ContainerInit_PreservesUserAddedServersAndWorkspaces`, `TestAntigravity_ContainerInit_PreservesScalarTrustedWorkspaces`, `TestAntigravity_ContainerInit_TrustedWorkspaceAlreadyPresent_NoDuplicate` | Pass |
 | E2E in eval-zcp container (cross-compiled binary, simulated pre-upgrade CLAUDE.md with 2 REFLOG entries + user content outside markers + Codex pre-existing config with user-added MCP servers) | 17/17 checks pass |
+| Live `agy --print "list available MCP tools"` in eval-zcp container after `zcp init` rewrote `~/.gemini/config/mcp_config.json` | Pass — Antigravity enumerated all 24 `zerops_*` tools end-to-end via the new mcp_config.json |
 | `flow-eval-local greenfield-node-postgres-dev-stage` (Claude regression check via container) | Pass — agent self-review: "this one went clean. No retries, no validation errors." Full bootstrap → provision → deploy → dev-server → verify pipeline |
 
 ### Codex review critiques (gpt-5.5 second-opinion 2026-05-23) → all folded
@@ -575,8 +617,13 @@ internal/init/
     ├── merge_shallow_test.go        4 ShallowMergeAtPath tests
     ├── claude.go                    Claude adapter (merge-aware ~/.claude.json + project-entry shallow merge)
     ├── claude_test.go               7 tests
-    ├── codex.go                     Codex adapter (env_vars not literal, TOML merge, version warning)
-    └── codex_test.go                11 tests
+    ├── codex.go                     Codex adapter (env_vars list with runtime detection vars, TOML merge, version warning)
+    ├── codex_test.go                11 tests
+    ├── gemini_family.go             Shared MCPServerConfig entry (Gemini CLI + Antigravity, identical schema)
+    ├── gemini.go                    Gemini CLI adapter (~/.gemini/settings.json::mcpServers, JSON merge)
+    ├── gemini_test.go               10 tests
+    ├── antigravity.go               Antigravity adapter (~/.gemini/config/mcp_config.json + trustedWorkspaces pre-seed)
+    └── antigravity_test.go          13 tests
 
 internal/content/
 ├── build_agents.go                  BuildAgentsMD + BuildClaudeWrapper (BuildClaudeMD deprecated alias)
@@ -593,11 +640,19 @@ docs/spec-workflows.md:508            REFLOG target documentation
 CLAUDE.local.md:15                    "Pre-production" → published-product policy
 ```
 
-### Deferred (unchanged from §9)
+### Deferred (updated 2026-05-24)
 
-Cursor / Gemini / Antigravity adapters + `ZCP_TOOLSET` server-side filtering + `SessionOwner` abstraction + `agents:` axis on atom frontmatter — all gated on future agent shipping. Foundation makes them additive.
+- Cursor adapter + `ZCP_TOOLSET` server-side filtering + `SessionOwner` abstraction — gated on Cursor shipping. Foundation makes them additive.
+- `agents:` axis on atom frontmatter — trigger to promote = 2nd agent ships with diverging prose needs. Tracked in `plans/backlog/tool-preload-atoms-need-agents-axis.md`.
+
+### Codex review critiques on Gemini/Antigravity adapters (gpt-5.5 second-opinion 2026-05-24) → all folded
+
+| Critique | Resolution | Pinning test added |
+|---|---|---|
+| `appendIfMissingString` silently drops scalar values when `trustedWorkspaces` was hand-set as a string instead of an array | Normalize via switch on input type — nil / []any / scalar / other all preserved | `TestAntigravity_ContainerInit_PreservesScalarTrustedWorkspaces` |
 
 ### Operator next steps
 
-- Zerops platform team: install `codex` binary in dev container template (npm `@openai/codex`). Once present, `zcp init` auto-detects + configures via the Codex adapter; existing Claude-only containers see zero behavior change (Codex Detect returns false, adapter skipped).
-- Optional: add `ZCP_AGENT_TYPE`, `ZCP_AUTH_TYPE`, `ZCP_PROVIDER` env vars to Codex container template YAML for parity with Claude's `claude-code`/`oauth`/`anthropic` (not consumed by adapters yet — informational labels, future).
+- Zerops platform team: install `codex` (npm `@openai/codex`) + `gemini` (npm `@google/gemini-cli`) + `agy` (Antigravity bootstrap script) binaries in dev container template. Once present, `zcp init` auto-detects + configures all four adapters in parallel; existing Claude-only containers see zero behavior change (each non-Claude adapter's Detect returns false, adapter skipped).
+- Optional: add `ZCP_AGENT_TYPE`, `ZCP_AUTH_TYPE`, `ZCP_PROVIDER` env vars to Codex / Gemini / Antigravity container template YAML for parity with Claude's `claude-code`/`oauth`/`anthropic` (not consumed by adapters yet — informational labels, future).
+- Antigravity `agy` is OAuth-gated: operator authenticates once via `agy login` interactively; the OAuth token at `~/.gemini/antigravity-cli/antigravity-oauth-token` persists across container restarts. ZCP init does not provision the token.
