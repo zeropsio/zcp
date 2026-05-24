@@ -26,16 +26,19 @@ var (
 
 // registeredAdapters returns the per-agent adapters tried at container
 // init. Order = log emission order; no functional dependency. Future
-// adapters (Gemini, Antigravity, Cursor) plug in here.
+// adapters (Cursor) plug in here.
 //
-// Backward compat: Codex's Detect probes `which codex`; existing
-// container templates that don't ship codex see Detect=false and the
-// adapter skips silently. Behavior identical to pre-multi-agent ZCP
-// for those users.
+// Backward compat: every non-Claude adapter's Detect() probes a binary
+// (codex / gemini / agy) and returns false when absent. Containers that
+// only ship Claude — every container before the multi-agent template —
+// see the other adapters skip silently; behavior is identical to
+// pre-multi-agent ZCP.
 func registeredAdapters() []adapters.Adapter {
 	return []adapters.Adapter{
 		adapters.NewClaude(),
 		adapters.NewCodex(),
+		adapters.NewGemini(),
+		adapters.NewAntigravity(),
 	}
 }
 
