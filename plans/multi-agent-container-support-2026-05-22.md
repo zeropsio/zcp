@@ -531,8 +531,8 @@ P0a + P0b + P1 landed. All goals from §3 achieved; all backward-compat invarian
 
 | Commit | Scope | Files |
 |---|---|---|
-| `<sha-1>` | Multi-agent foundation + AGENTS.md migration + Claude refactor (P0a + P0b) | ~25 files |
-| `<sha-2>` | Codex adapter (P1, additive) | 3 files |
+| `a975aa8a` | Multi-agent foundation + AGENTS.md migration + Claude refactor (P0a + P0b) | 34 files (~+2400 / -1100) |
+| `70327184` | Codex CLI adapter (P1, additive) | 3 files (+530 / -1) |
 
 ### Verification matrix
 
