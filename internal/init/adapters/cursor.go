@@ -171,19 +171,40 @@ func cursorWorkspaceDir(workspacePath string) string {
 }
 
 // cursorMCPServerEntry builds the mcpServers["zerops"] object that
-// Cursor consumes. Minimal shape — `type=stdio` is required (Cursor
-// distinguishes stdio from SSE / streamable HTTP transports), then
-// command + args. NO `env` field by design: Cursor's MCP subprocess
-// spawn (confirmed empirically 2026-05-24 — `agent mcp list-tools
-// zerops` enumerated all 21 tools without env enumeration) inherits
-// parent env so ZCP_API_KEY / serviceId / hostname / projectId /
-// PATH / HOME flow through naturally. Codex's restrictive `env_vars`
-// list is Codex-specific; Gemini-family + Cursor all use permissive
-// parent-env spread.
+// Cursor consumes.
+//
+//   - type=stdio is required by Cursor's schema (distinguishes from
+//     SSE / streamable HTTP transports).
+//   - command + args invoke `zcp serve` via the stdio transport.
+//   - env uses Cursor's "${env:NAME}" substitution syntax to forward
+//     the four vars the zcp serve subprocess needs from the Cursor
+//     process env. This is REQUIRED because Cursor spawns the MCP
+//     subprocess with a STRIPPED env (verified empirically 2026-05-24
+//     by wrapping zcp serve with a logger — Cursor passed only
+//     HOME/USER/PATH to the subprocess).
+//
+// Without this env block, zcp serve sees serviceId="" → runtime.Detect
+// returns InContainer=false → server.go skips three container-only
+// tools (zerops_browser gated on InContainer, zerops_dev_server and
+// zerops_deploy_batch gated on sshDeployer != nil which only initializes
+// in container mode). Plus ZCP_API_KEY is missing → API calls fail
+// auth.
+//
+// Same bug class as Codex (commit 07a2044a) — restrictive env
+// pass-through requires explicit enumeration. Cursor's mechanism
+// (env-value substitution via "${env:NAME}") differs from Codex's
+// (env_vars allowlist) but the structural fix is the same: name every
+// var zcp serve reads at startup.
 func cursorMCPServerEntry() map[string]any {
 	return map[string]any{
 		"type":    "stdio",
 		"command": "zcp",
 		"args":    []any{"serve"},
+		"env": map[string]any{
+			"ZCP_API_KEY": "${env:ZCP_API_KEY}",
+			"serviceId":   "${env:serviceId}",
+			"hostname":    "${env:hostname}",
+			"projectId":   "${env:projectId}",
+		},
 	}
 }

@@ -355,15 +355,20 @@ func TestCursor_ContainerInit_EmptyHomeReturnsError(t *testing.T) {
 	}
 }
 
-// TestCursor_MCPEntry_NoEnvField pins the same contract as
-// TestGemini_MCPEntry_NoEnvField / TestAntigravity_MCPEntry_NoEnvField:
-// Cursor's MCP spawn inherits parent env (verified empirically — `agent
-// mcp list-tools zerops` enumerated all tools without env enumeration).
-// Writing an `env` field here would risk hard-coding stale
-// runtime-detection values at init-time. Codex's restrictive `env_vars`
-// model is the outlier; Cursor / Gemini / Antigravity all spread
-// parent env.
-func TestCursor_MCPEntry_NoEnvField(t *testing.T) {
+// TestCursor_MCPEntry_EnvForwardsRuntimeDetectionVars pins the env
+// block contract — Cursor RESTRICTS the spawned MCP subprocess's env
+// (verified 2026-05-24 by wrapping zcp serve with a logger; Cursor
+// passed only HOME/USER/PATH). Without explicit forwarding of
+// ZCP_API_KEY + serviceId + hostname + projectId, zcp serve sees
+// runtime.Detect returning InContainer=false and 3 tools fail to
+// register (zerops_browser, zerops_dev_server, zerops_deploy_batch).
+// Pin guards against well-meaning "drop the env block, it's redundant"
+// edits — same bug class as Codex commit 07a2044a's env_vars fix.
+//
+// "${env:NAME}" is Cursor's documented substitution syntax — value
+// resolves to the named var from Cursor's calling-process env at
+// subprocess spawn time.
+func TestCursor_MCPEntry_EnvForwardsRuntimeDetectionVars(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	env := newCursorEnv(t, home)
@@ -373,14 +378,30 @@ func TestCursor_MCPEntry_NoEnvField(t *testing.T) {
 	config := loadCursorJSON(t, home)
 	zerops := config["mcpServers"].(map[string]any)["zerops"].(map[string]any)
 
-	if _, has := zerops["env"]; has {
-		t.Errorf("mcpServers.zerops.env present (%v); Cursor uses permissive parent-env spread", zerops["env"])
+	envMap, ok := zerops["env"].(map[string]any)
+	if !ok {
+		t.Fatalf("mcpServers.zerops.env missing or wrong shape; got %v (type %T)", zerops["env"], zerops["env"])
+	}
+
+	required := []string{"ZCP_API_KEY", "serviceId", "hostname", "projectId"}
+	for _, name := range required {
+		v, has := envMap[name]
+		if !has {
+			t.Errorf("env.%s missing — without it Cursor's restrictive subprocess env strips this var and zcp serve loses runtime detection / auth", name)
+			continue
+		}
+		s, _ := v.(string)
+		want := "${env:" + name + "}"
+		if s != want {
+			t.Errorf("env.%s = %q, want %q (Cursor's documented substitution syntax)", name, s, want)
+		}
+	}
+
+	if _, has := zerops["env_vars"]; has {
+		t.Errorf("mcpServers.zerops.env_vars present (%v); env_vars is Codex-specific syntax — Cursor silently ignores", zerops["env_vars"])
 	}
 	if _, has := zerops["envFile"]; has {
-		t.Errorf("mcpServers.zerops.envFile present (%v); ZCP doesn't manage envFile (user-owned secret)", zerops["envFile"])
-	}
-	if _, has := zerops["env_vars"]; has {
-		t.Errorf("mcpServers.zerops.env_vars present (%v); env_vars is Codex-specific", zerops["env_vars"])
+		t.Errorf("mcpServers.zerops.envFile present (%v); ZCP doesn't own envFile (user-owned secret)", zerops["envFile"])
 	}
 }
 
