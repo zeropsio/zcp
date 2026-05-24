@@ -143,6 +143,7 @@ func handleBuildIntegration(
 			"guidance":   guidance,
 			"nextStep":   fmt.Sprintf("Pick an integration and re-call: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\".", input.Service),
 		}
+		addTopologyFields(body, meta, buildHost, buildSetup, "Walkthrough")
 		return jsonResult(attachWorkSessionState(body, stateDir)), nil, nil
 	}
 
@@ -183,11 +184,16 @@ func handleBuildIntegration(
 	}
 
 	if meta.BuildIntegration == bi {
-		return jsonResult(attachWorkSessionState(map[string]any{
+		buildHost, buildSetup := anticipatedBuildTarget(meta)
+		body := map[string]any{
 			"status":           "noop",
 			"service":          input.Service,
 			"buildIntegration": bi,
-		}, stateDir)), nil, nil
+			"buildTarget":      buildHost,
+			"buildSetup":       buildSetup,
+		}
+		addTopologyFields(body, meta, buildHost, buildSetup, "Re-call")
+		return jsonResult(attachWorkSessionState(body, stateDir)), nil, nil
 	}
 	meta.BuildIntegration = bi
 	if err := workflow.WriteServiceMeta(stateDir, meta); err != nil {
@@ -306,6 +312,7 @@ func actionsConfirmResponse(
 		"ghPatRecommendation": "Default to a fine-grained GitHub PAT scoped ONLY to " + ownerRepo + " with `Secrets: Read and write` (single-repo blast radius). GitHub PATs require an expiration — pick the longest you're comfortable with (max 1 year); set a calendar reminder to regenerate + re-run `gh secret set` before it lapses.",
 		"nextStep":            "1) Authenticate `gh` (see ghAuthPrecondition.setupCommand). 2) Write workflowFile.content at .github/workflows/zerops.yml. 3) Run the two `gh secret set` commands above. 4) Push the workflow file. From then on every push to main triggers the GitHub Actions deploy. Keep the default setup-aware zcli workflow unless you are certain the repository has only one setup.",
 	}
+	addTopologyFields(body, meta, buildHost, buildSetup, "Actions")
 	if !repoOK {
 		body["repoParseWarning"] = fmt.Sprintf(
 			"Could not parse owner/repo from meta.RemoteURL=%q. Replace `<owner>/<repo>` in the commands above before running.",
@@ -369,6 +376,7 @@ func webhookConfirmResponse(
 		"dashboardSteps":      webhookDashboardSteps(dashboardURL, buildHost, buildSetup, setupMandatory),
 		"nextStep":            "Once the pipeline trigger is activated, every push to the chosen branch triggers a build of " + buildHost + " using setup=" + buildSetup + ". Tick \"Trigger once after the activation?\" to also run an immediate build of the current branch state.",
 	}
+	addTopologyFields(body, meta, buildHost, buildSetup, "Webhook")
 	if projectID == "" || serviceID == "" {
 		body["dashboardLookupWarning"] = "Could not deep-link to the runtime page (missing serviceId). Open the Zerops dashboard, navigate to the project, then to the runtime service for " + buildHost + ", and switch to the Deploy tab."
 	}
@@ -404,6 +412,32 @@ func webhookDashboardSteps(dashboardURL, buildHost, buildSetup string, setupMand
 		"Optional: tick \"Trigger once after the activation?\" to run an immediate build of the current branch state right after save.",
 		"Click Activate pipeline trigger. Zerops installs the webhook on the remote automatically — no manual secret wiring on the GitHub side.",
 	}
+}
+
+// addTopologyFields enriches a build-integration response body with the
+// canonical push source + a human-readable topology note for standard pairs.
+// Roles:
+//   - pushSource: meta.Hostname (the canonical dev half). Computed from
+//     canonical meta, NOT from input echo — pair-keyed FindServiceMeta
+//     resolves both halves to the same dev meta, so an agent passing the
+//     stage hostname would receive a lying input-echoed pushSource.
+//   - topologyNote: only emitted when meta.Hostname != buildHost (standard /
+//     local-stage pairs). Simple / dev / single-runtime modes have
+//     pushSource == buildTarget so the note would be noise.
+//
+// biLabel is the integration name ("Actions" / "Webhook") used inside the note.
+func addTopologyFields(body map[string]any, meta *workflow.ServiceMeta, buildHost, buildSetup string, biLabel string) {
+	if meta == nil {
+		return
+	}
+	body["pushSource"] = meta.Hostname
+	if meta.Hostname == buildHost {
+		return
+	}
+	body["topologyNote"] = fmt.Sprintf(
+		"Standard-pair build-integration: configured per-pair from the dev half %q (push source = meta-mutation target); CI runs `zcli push --setup %s` so the build lands on the stage half %q (build target). %s secrets/deep-links below reflect %q.",
+		meta.Hostname, buildSetup, buildHost, biLabel, buildHost,
+	)
 }
 
 // anticipatedBuildTarget returns (BuildTarget, BuildSetup) for the service

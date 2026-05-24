@@ -902,3 +902,124 @@ func TestHandleCloseMode_StaysOpenWhenManualBlocks(t *testing.T) {
 		t.Errorf("ClosedAt stamped on manual-blocked gate: %q", loaded.ClosedAt)
 	}
 }
+
+// Phase 3 — build-integration response carries explicit pushSource +
+// topologyNote when the input hostname differs from the canonical pair
+// meta. Without this the agent reads `service:"appstage"` as input echo
+// and never sees that the configuration landed on the dev half.
+
+func TestHandleBuildIntegration_PushSourceComputedFromCanonicalMeta(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             topology.PlanModeStandard,
+		StageHostname:    "appstage",
+		GitPushState:     topology.GitPushConfigured,
+		RemoteURL:        "https://github.com/example/demo.git",
+		BootstrapSession: "test",
+		BootstrappedAt:   "2026-04-29",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	// Agent passes the STAGE hostname; handler resolves to canonical dev meta.
+	result, _, _ := handleBuildIntegration(context.Background(), nil, "", WorkflowInput{
+		Service:     "appstage",
+		Integration: string(topology.BuildIntegrationActions),
+	}, stateDir, runtime.Info{InContainer: false})
+	if result.IsError {
+		t.Fatalf("expected configured, got error: %s", getTextContent(t, result))
+	}
+	body := getTextContent(t, result)
+
+	for _, want := range []string{
+		`"service":"appstage"`,     // input echo preserved
+		`"pushSource":"appdev"`,    // canonical role, NOT input echo
+		`"buildTarget":"appstage"`, // resolved build target
+		`"topologyNote":`,          // explanatory note present
+		"Standard-pair build-integration",
+		`from the dev half \"appdev\"`,
+		`stage half \"appstage\"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("response missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestHandleBuildIntegration_NoOpReCall_MatchesFirstCallShape(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	// Pre-set BuildIntegration so the next call hits the noop branch.
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             topology.PlanModeStandard,
+		StageHostname:    "appstage",
+		GitPushState:     topology.GitPushConfigured,
+		BuildIntegration: topology.BuildIntegrationActions,
+		RemoteURL:        "https://github.com/example/demo.git",
+		BootstrapSession: "test",
+		BootstrappedAt:   "2026-04-29",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	result, _, _ := handleBuildIntegration(context.Background(), nil, "", WorkflowInput{
+		Service:     "appdev",
+		Integration: string(topology.BuildIntegrationActions),
+	}, stateDir, runtime.Info{InContainer: false})
+	if result.IsError {
+		t.Fatalf("expected noop, got error: %s", getTextContent(t, result))
+	}
+	body := getTextContent(t, result)
+
+	// Idempotent verification path must surface canonical roles + topologyNote
+	// identically to the first-call response (eval-friction: agent could not
+	// tell whether build-integration had stuck without re-calling and
+	// re-deriving the topology).
+	for _, want := range []string{
+		`"status":"noop"`,
+		`"service":"appdev"`,
+		`"pushSource":"appdev"`,
+		`"buildTarget":"appstage"`,
+		`"buildSetup":"prod"`,
+		`"topologyNote":`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("noop re-call missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestHandleBuildIntegration_SimpleNoTopologyNote(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	// Simple mode: pushSource == buildTarget, so topologyNote would be noise.
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             topology.PlanModeSimple,
+		GitPushState:     topology.GitPushConfigured,
+		RemoteURL:        "https://github.com/example/demo.git",
+		BootstrapSession: "test",
+		BootstrappedAt:   "2026-04-29",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	result, _, _ := handleBuildIntegration(context.Background(), nil, "", WorkflowInput{
+		Service:     "appdev",
+		Integration: string(topology.BuildIntegrationActions),
+	}, stateDir, runtime.Info{InContainer: false})
+	if result.IsError {
+		t.Fatalf("expected configured, got error: %s", getTextContent(t, result))
+	}
+	body := getTextContent(t, result)
+
+	if !strings.Contains(body, `"pushSource":"appdev"`) {
+		t.Errorf("simple mode must still carry pushSource:\n%s", body)
+	}
+	if strings.Contains(body, `"topologyNote":`) {
+		t.Errorf("simple mode must NOT carry topologyNote (pushSource == buildTarget):\n%s", body)
+	}
+}
