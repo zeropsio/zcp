@@ -376,7 +376,26 @@ User makes a bootstrap in either session → `bootstrap_outputs.go::AppendReflog
   - Interactive: one-time y/N prompt on first zerops_* tool call; persists per-workspace
 - AGENTS.md: Cursor reads its own `.cursor/rules/*.mdc` natively; AGENTS.md compatibility is via the cross-tool agents.md convention. Empirical confirmation deferred to first interactive run.
 
-**Notable discrepancy** — `agent mcp list-tools zerops` shows 21 tools (Gemini/Antigravity see all 24). Missing: `zerops_browser`, `zerops_deploy_batch`, `zerops_dev_server`. Possibly Cursor's CLI display filters tools above a description-length threshold (all three have descriptions >1000 chars); does NOT mean the tools are inaccessible at runtime (would require auth to verify via actual `agent -p` call). Filed as known unknown; not a blocker since the missing tools are convenience wrappers (delete_batch composes deploys; dev_server composes ssh+setsid; browser composes agent-browser lifecycle).
+**Env passthrough is RESTRICTIVE** (commit `4e7e329a` 2026-05-24) — the same trap as Codex (commit `07a2044a`). Cursor strips the MCP subprocess env down to HOME/USER/PATH only; without explicit forwarding, `zcp serve` sees `serviceId=""` → `runtime.Detect` returns `InContainer=false` → 3 tools silently skip registration:
+
+- `zerops_browser` (gated on `InContainer && AgentBrowserAvailable`)
+- `zerops_dev_server` (gated on `sshDeployer != nil`, which itself initializes only in container mode)
+- `zerops_deploy_batch` (same `sshDeployer` gate)
+
+Adapter forwards via Cursor's documented `"${env:NAME}"` substitution syntax:
+
+```json
+"env": {
+  "ZCP_API_KEY": "${env:ZCP_API_KEY}",
+  "serviceId":   "${env:serviceId}",
+  "hostname":    "${env:hostname}",
+  "projectId":   "${env:projectId}"
+}
+```
+
+Post-fix `agent mcp list-tools zerops` reports 24/24 tools. Pinned by `TestCursor_MCPEntry_EnvForwardsRuntimeDetectionVars`.
+
+**Lesson**: of the 5 agents shipped, Cursor + Codex use RESTRICTIVE env passthrough requiring explicit forwarding; Claude + Gemini + Antigravity use PERMISSIVE parent-env spread. Adapter docs (gemini_family.go) updated to reflect that the permissive/restrictive split is per-agent, not Gemini-family-vs-Codex.
 
 ---
 
@@ -604,6 +623,7 @@ P0a + P0b + P1 landed. All goals from §3 achieved; all backward-compat invarian
 | `50e56ed1` | deploy/ssh: workingDir gate error message — explicit sourceService recovery (audit feedback) | 2 files (+51 / -1) |
 | `67fa46fd` | Cursor adapter (§5.6, additive) — Cursor IDE headless CLI (`agent` / `cursor-agent`) | 3 files (+456 / -6) |
 | `44b5d361` | Cursor adapter: workspace-trust pre-population + operator MCP-approval docs | 2 files (+178 / -10), plus 3 unrelated plan files inadvertently bundled (see git history if separation needed) |
+| `4e7e329a` | Cursor adapter: forward runtime detection env vars (zerops_browser + zerops_deploy_batch + zerops_dev_server were silently missing — Cursor strips subprocess env like Codex does) | 2 files (+65 / -23) |
 
 ### Verification matrix
 
@@ -623,7 +643,7 @@ P0a + P0b + P1 landed. All goals from §3 achieved; all backward-compat invarian
 | Live `gemini --prompt "Call mcp__zerops__zerops_workflow…"` after `zcp init` rewrote `~/.gemini/settings.json` (with operator-set `security.auth.selectedType: "oauth-personal"`) | Pass — Gemini called `mcp_zerops_zerops_workflow`, parsed the structured workflow envelope, listed all action choices (`start`, `close-mode`, `git-push-setup`, `build-integration`, `status`, `complete`, `skip`, `reset`, `iterate`, `resume`, `list`, `route`) |
 | `zcp init` re-run preserves operator's `security.auth.selectedType` (merge-aware contract) | Pass — second `gemini --prompt` after re-init enumerated all 24 tool names; auth field byte-identical before/after |
 | Cursor adapter: 15 `TestCursor_*` including `TestCursor_MCPEntry_NoEnvField`, `TestCursor_MCPEntry_TypeStdioRequired`, `TestCursor_ContainerInit_WritesWorkspaceTrust`, `TestCursor_ContainerInit_WorkspaceDirFlattening` (4 sub-cases), `TestCursor_ContainerInit_RefreshesTrustTimestamp` | Pass |
-| Live `agent mcp list-tools zerops` after `zcp init` rewrote `~/.cursor/mcp.json` | Pass — Cursor enumerated 21 `zerops_*` tools from our config (3-tool gap = `zerops_browser`, `zerops_deploy_batch`, `zerops_dev_server`; non-blocker — convenience wrappers) |
+| Live `agent mcp list-tools zerops` after `zcp init` rewrote `~/.cursor/mcp.json` (post-env-fix `4e7e329a`) | Pass — Cursor enumerates all 24 `zerops_*` tools including `zerops_browser`, `zerops_deploy_batch`, `zerops_dev_server` |
 | Cursor init preserves pre-existing `~/.cursor/{cli-config.json, statsig-cache.json, projects/}` (merge-aware) | Pass — only `mcpServers.zerops` + projects/<flat>/.workspace-trusted touched |
 | Workspace-trust pre-population via `~/.cursor/projects/var-www/.workspace-trusted` | Pass — Cursor consumes the file at next interactive `agent` startup (no trust prompt) |
 | `flow-eval-local greenfield-node-postgres-dev-stage` (Claude regression check via container) | Pass — agent self-review: "this one went clean. No retries, no validation errors." Full bootstrap → provision → deploy → dev-server → verify pipeline |
