@@ -162,6 +162,8 @@ func TestRenderStatus_IdleRenders(t *testing.T) {
 		"bootstrapped=true",
 		"mode=dev",
 		"closeMode=git-push",
+		"gitPush=unconfigured",
+		"buildIntegration=none",
 		"deployed=false",
 		"▸ Primary:",
 		"· Alternatives:",

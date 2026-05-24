@@ -32,6 +32,7 @@ type closeModeListEntry struct {
 	Options          []topology.CloseDeployMode `json:"options"`
 	GitPushState     topology.GitPushState      `json:"gitPushState"`
 	BuildIntegration topology.BuildIntegration  `json:"buildIntegration"`
+	RemoteURL        string                     `json:"remoteUrl,omitempty"`
 	Hint             string                     `json:"hint"`
 }
 
@@ -198,6 +199,7 @@ func handleCloseModeList(stateDir string) (*mcp.CallToolResult, any, error) {
 			Options:          options,
 			GitPushState:     m.GitPushState,
 			BuildIntegration: m.BuildIntegration,
+			RemoteURL:        m.RemoteURL,
 			Hint:             fmt.Sprintf(`zerops_workflow action="close-mode" closeMode={%q:%q}`, m.Hostname, topology.CloseModeAuto),
 		})
 	}

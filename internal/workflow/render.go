@@ -202,6 +202,16 @@ func renderBootstrappedFields(svc ServiceSnapshot) string {
 		closeMode = topology.CloseModeUnset
 	}
 	fields = append(fields, "closeMode="+string(closeMode))
+	gitPush := svc.GitPushState
+	if gitPush == "" {
+		gitPush = topology.GitPushUnconfigured
+	}
+	fields = append(fields, "gitPush="+string(gitPush))
+	buildIntegration := svc.BuildIntegration
+	if buildIntegration == "" {
+		buildIntegration = topology.BuildIntegrationNone
+	}
+	fields = append(fields, "buildIntegration="+string(buildIntegration))
 	if svc.StageHostname != "" {
 		fields = append(fields, "stage="+svc.StageHostname)
 	}
@@ -209,6 +219,9 @@ func renderBootstrappedFields(svc ServiceSnapshot) string {
 		fields = append(fields, "deployed=true")
 	} else {
 		fields = append(fields, "deployed=false")
+	}
+	if svc.RemoteURL != "" {
+		fields = append(fields, "remoteUrl="+svc.RemoteURL)
 	}
 	return strings.Join(fields, ", ")
 }
