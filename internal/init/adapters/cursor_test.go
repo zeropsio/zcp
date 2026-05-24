@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/zeropsio/zcp/internal/init/adapters"
 	"github.com/zeropsio/zcp/internal/runtime"
@@ -176,6 +177,105 @@ func TestCursor_ContainerInit_FreshHomeWritesConfig(t *testing.T) {
 	}
 }
 
+// TestCursor_ContainerInit_WritesWorkspaceTrust pins that ContainerInit
+// writes ~/.cursor/projects/<flat-workspace>/.workspace-trusted with
+// the schema Cursor expects ({trustedAt, workspacePath}). Without this,
+// first interactive `agent` run in /var/www gates on the workspace-trust
+// prompt — defeats the headless container UX.
+func TestCursor_ContainerInit_WritesWorkspaceTrust(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	env := newCursorEnv(t, home)
+
+	if err := adapters.NewCursor().ContainerInit(env); err != nil {
+		t.Fatalf("ContainerInit: %v", err)
+	}
+
+	trustPath := filepath.Join(home, ".cursor", "projects", "var-www", ".workspace-trusted")
+	data, err := adapters.LoadJSONFile(trustPath)
+	if err != nil {
+		t.Fatalf("load %s: %v", trustPath, err)
+	}
+	if data["workspacePath"] != "/var/www" {
+		t.Errorf("trustedFile.workspacePath = %v, want \"/var/www\"", data["workspacePath"])
+	}
+	ts, _ := data["trustedAt"].(string)
+	if ts == "" {
+		t.Errorf("trustedFile.trustedAt missing; got %v", data)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, ts); err != nil {
+		t.Errorf("trustedFile.trustedAt = %q must be RFC3339Nano: %v", ts, err)
+	}
+}
+
+// TestCursor_ContainerInit_WorkspaceDirFlattening pins the directory-name
+// convention Cursor uses (slashes → dashes, leading slash stripped).
+// Verified empirically against Cursor v2026.05.20-2b5dd59: `cd /var/www
+// && agent mcp enable zerops` populated ~/.cursor/projects/var-www/.
+// Without identical flattening, our trust file lands in the wrong dir
+// and Cursor still gates on the trust prompt.
+func TestCursor_ContainerInit_WorkspaceDirFlattening(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		workspace string
+		want      string
+	}{
+		{"/var/www", "var-www"},
+		{"/Users/me/myproject", "Users-me-myproject"},
+		{"/tmp/cursor-fresh-test", "tmp-cursor-fresh-test"},
+		{"/a", "a"},
+	}
+	for _, c := range cases {
+		t.Run(c.workspace, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			env := newCursorEnv(t, home)
+			env.VSCodeWorkDir = c.workspace
+			if err := adapters.NewCursor().ContainerInit(env); err != nil {
+				t.Fatalf("ContainerInit: %v", err)
+			}
+			trustPath := filepath.Join(home, ".cursor", "projects", c.want, ".workspace-trusted")
+			if _, err := adapters.LoadJSONFile(trustPath); err != nil {
+				t.Errorf("expected trust file at %s for workspace %q, got load error: %v",
+					trustPath, c.workspace, err)
+			}
+		})
+	}
+}
+
+// TestCursor_ContainerInit_RefreshesTrustTimestamp pins that re-running
+// ContainerInit updates the `trustedAt` timestamp (idempotent for
+// schema, not for timestamp — every init bumps it). This is intentional:
+// the trust file existence + recent timestamp is itself the contract;
+// stale trust files would be confusing.
+func TestCursor_ContainerInit_RefreshesTrustTimestamp(t *testing.T) {
+	t.Parallel()
+	home := t.TempDir()
+	env := newCursorEnv(t, home)
+
+	if err := adapters.NewCursor().ContainerInit(env); err != nil {
+		t.Fatal(err)
+	}
+	trustPath := filepath.Join(home, ".cursor", "projects", "var-www", ".workspace-trusted")
+	first, _ := adapters.LoadJSONFile(trustPath)
+	firstTS := first["trustedAt"].(string)
+
+	time.Sleep(2 * time.Millisecond)
+
+	if err := adapters.NewCursor().ContainerInit(env); err != nil {
+		t.Fatal(err)
+	}
+	second, _ := adapters.LoadJSONFile(trustPath)
+	secondTS := second["trustedAt"].(string)
+
+	if firstTS == secondTS {
+		t.Errorf("trustedAt should refresh on re-init; got identical %q", firstTS)
+	}
+	if second["workspacePath"] != "/var/www" {
+		t.Errorf("workspacePath should remain /var/www across re-init; got %v", second["workspacePath"])
+	}
+}
+
 func TestCursor_ContainerInit_PreservesUserAddedServers(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -222,7 +322,12 @@ func TestCursor_ContainerInit_PreservesUserAddedServers(t *testing.T) {
 	}
 }
 
-func TestCursor_ContainerInit_Idempotent(t *testing.T) {
+// TestCursor_ContainerInit_MCPJSONIdempotent pins that the mcp.json
+// write is byte-stable across reruns. The .workspace-trusted file is
+// NOT byte-stable (timestamp refreshes — see
+// TestCursor_ContainerInit_RefreshesTrustTimestamp), so this only
+// asserts on mcp.json.
+func TestCursor_ContainerInit_MCPJSONIdempotent(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
 	env := newCursorEnv(t, home)
@@ -237,7 +342,7 @@ func TestCursor_ContainerInit_Idempotent(t *testing.T) {
 	second := loadCursorJSON(t, home)
 
 	if !reflect.DeepEqual(first, second) {
-		t.Errorf("ContainerInit not idempotent:\n  first:  %v\n  second: %v", first, second)
+		t.Errorf("ContainerInit mcp.json not idempotent:\n  first:  %v\n  second: %v", first, second)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Cursor implements Adapter for the Cursor IDE's headless CLI
@@ -93,15 +94,37 @@ func (Cursor) Validate(env Env) ([]string, error) {
 	return nil, nil
 }
 
-// ContainerInit upserts the ZCP MCP server registration into
-// ~/.cursor/mcp.json. Merge-aware: any other mcpServers entries the
-// user has configured survive the upsert.
+// ContainerInit configures Cursor for low-friction headless use:
 //
-// Auth handling: out of scope. Cursor authenticates via the
-// `CURSOR_API_KEY` env var OR an interactive `agent login` OAuth
-// flow — operator picks one. The adapter's MCP config write is
-// independent of auth: mcp.json is loaded regardless and
-// mcpServers.zerops registers even before login.
+//  1. ~/.cursor/mcp.json — upsert the zerops MCP server entry
+//     (merge-aware: pre-existing user entries survive).
+//  2. ~/.cursor/projects/<flat-workspace>/.workspace-trusted —
+//     pre-trust the workspace so first interactive `agent` run doesn't
+//     gate on the workspace-trust prompt.
+//
+// Auth handling stays operator-driven: Cursor authenticates via
+// `CURSOR_API_KEY` env var OR `cursor-agent login` OAuth flow.
+//
+// MCP server APPROVAL is intentionally NOT pre-written. The approval
+// id format is a sha256-derived hash of the server entry + project
+// path (visible in `~/.cursor/projects/<workspace>/mcp-approvals.json`
+// as `zerops-<16hex>`), but empirical attempts to mirror Cursor's
+// canonicalization didn't match for non-trivial cases — and
+// `cursor-agent mcp enable` short-circuits as "already enabled and
+// approved" against server-side cached state for logged-in users
+// without writing the local file. Two operator paths cover the gap:
+//
+//   - Headless / scripted: `agent -p --approve-mcps "..."` auto-
+//     approves all configured MCP servers for the invocation. Zero
+//     state, fully scriptable.
+//   - Interactive: `agent` in the workspace shows a one-time y/N
+//     prompt the first time it tries to call a zerops_* tool. After
+//     "y", the approval persists in Cursor's per-workspace state
+//     (and synced server-side if user is logged in).
+//
+// The same pattern as Gemini's operator-driven `security.auth.selectedType`
+// or Claude's `claude login` — the adapter's writes are independent of
+// the agent's own auth/approval lifecycle.
 func (Cursor) ContainerInit(env Env) error {
 	if env.Home == "" {
 		return fmt.Errorf("cursor adapter: Env.Home is empty")
@@ -112,13 +135,39 @@ func (Cursor) ContainerInit(env Env) error {
 	if err != nil {
 		return fmt.Errorf("load %s: %w", configPath, err)
 	}
-
 	UpsertPath(data, cursorMCPServerEntry(), "mcpServers", "zerops")
-
 	if err := SaveJSONFile(configPath, data); err != nil {
 		return fmt.Errorf("write %s: %w", configPath, err)
 	}
+
+	vsDir := env.VSCodeWorkDir
+	if vsDir == "" {
+		vsDir = DefaultVSCodeWorkDir
+	}
+	trustPath := filepath.Join(env.Home, ".cursor", "projects", cursorWorkspaceDir(vsDir), ".workspace-trusted")
+	trustEntry := map[string]any{
+		"trustedAt":     time.Now().UTC().Format(time.RFC3339Nano),
+		"workspacePath": vsDir,
+	}
+	if err := SaveJSONFile(trustPath, trustEntry); err != nil {
+		return fmt.Errorf("write %s: %w", trustPath, err)
+	}
 	return nil
+}
+
+// cursorWorkspaceDir maps a workspace absolute path to the directory
+// name Cursor uses under ~/.cursor/projects/. Cursor flattens slashes
+// to dashes and strips the leading slash:
+//
+//	/var/www                → var-www
+//	/Users/me/myproject     → Users-me-myproject
+//	/tmp/cursor-fresh-test  → tmp-cursor-fresh-test
+//
+// (Verified empirically against Cursor v2026.05.20-2b5dd59 — `find
+// ~/.cursor/projects` after `cd <path> && agent mcp enable zerops`.)
+func cursorWorkspaceDir(workspacePath string) string {
+	trimmed := strings.TrimPrefix(workspacePath, "/")
+	return strings.ReplaceAll(trimmed, "/", "-")
 }
 
 // cursorMCPServerEntry builds the mcpServers["zerops"] object that
