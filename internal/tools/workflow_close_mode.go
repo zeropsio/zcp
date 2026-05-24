@@ -23,6 +23,63 @@ var validCloseModes = map[topology.CloseDeployMode]bool{
 	topology.CloseModeManual:  true,
 }
 
+// preflightCloseModeDualHalves rejects input maps carrying divergent
+// closeMode values for both halves of a pair. ServiceMeta is pair-keyed —
+// FindServiceMeta resolves either dev or stage hostname to the canonical
+// dev meta — so writing the same pair twice with conflicting values
+// would silently last-write-wins by Go's undefined map iteration order.
+//
+// Hostnames whose meta cannot be loaded (missing / incomplete) are skipped
+// here; the main per-hostname loop produces the proper ErrAdoptRequired /
+// ErrServiceNotFound diagnostic. Same-value duals are allowed: the
+// per-hostname loop writes the canonical meta twice and the no-op
+// shortcut absorbs the second pass.
+func preflightCloseModeDualHalves(stateDir string, closeModes map[string]topology.CloseDeployMode) error {
+	canonicalToInputs := make(map[string]map[string]topology.CloseDeployMode)
+	for hostname, cm := range closeModes {
+		meta, err := workflow.FindServiceMeta(stateDir, hostname)
+		if err != nil || meta == nil || !meta.IsComplete() {
+			continue
+		}
+		if canonicalToInputs[meta.Hostname] == nil {
+			canonicalToInputs[meta.Hostname] = make(map[string]topology.CloseDeployMode)
+		}
+		canonicalToInputs[meta.Hostname][hostname] = cm
+	}
+	canonicals := make([]string, 0, len(canonicalToInputs))
+	for c := range canonicalToInputs {
+		canonicals = append(canonicals, c)
+	}
+	sort.Strings(canonicals)
+	for _, canonical := range canonicals {
+		inputs := canonicalToInputs[canonical]
+		if len(inputs) <= 1 {
+			continue
+		}
+		var first topology.CloseDeployMode
+		divergent := false
+		pairs := make([]string, 0, len(inputs))
+		for h, v := range inputs {
+			pairs = append(pairs, fmt.Sprintf("%s=%s", h, v))
+			if first == "" {
+				first = v
+			} else if v != first {
+				divergent = true
+			}
+		}
+		if !divergent {
+			continue
+		}
+		sort.Strings(pairs)
+		return platform.NewPlatformError(
+			platform.ErrInvalidParameter,
+			fmt.Sprintf("close-mode conflict for pair %q: input map carries divergent values across both halves (%s)",
+				canonical, strings.Join(pairs, ", ")),
+			fmt.Sprintf("Pass a single value for the pair: closeMode={%q:\"<auto|git-push|manual>\"}. Both halves of a pair share one canonical close-mode written to the pair's dev-half meta.", canonical))
+	}
+	return nil
+}
+
 // closeModeListEntry is one row in the listing-mode response: current
 // close-mode + all options the agent may switch to.
 type closeModeListEntry struct {
@@ -72,6 +129,17 @@ func handleCloseMode(input WorkflowInput, stateDir string) (*mcp.CallToolResult,
 				"Valid values: auto, git-push, manual"), WithRecoveryStatus()), nil, nil
 		}
 		closeModes[hostname] = cm
+	}
+
+	// Preflight: reject divergent dual-half input. ServiceMeta is pair-keyed
+	// (one file per pair, FindServiceMeta resolves either hostname to the
+	// same dev meta). Without this guard, an input map carrying conflicting
+	// values for both halves silently last-write-wins by Go's undefined map
+	// iteration order. Same-value dual-halves stay accepted: the per-hostname
+	// loop below idempotently writes the canonical meta twice and the no-op
+	// shortcut absorbs the second pass.
+	if err := preflightCloseModeDualHalves(stateDir, closeModes); err != nil {
+		return convertError(err, WithRecoveryStatus()), nil, nil
 	}
 
 	updated := make([]string, 0, len(closeModes))

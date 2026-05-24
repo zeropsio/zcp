@@ -992,6 +992,93 @@ func TestHandleBuildIntegration_NoOpReCall_MatchesFirstCallShape(t *testing.T) {
 	}
 }
 
+// Phase 4 — close-mode dual-half conflict detection. ServiceMeta is
+// pair-keyed; passing both halves with divergent values would
+// silently last-write-wins by Go's map iteration order. Reject the
+// ambiguous input; same-value duals stay accepted (no-op shortcut
+// absorbs the second pass).
+
+func TestHandleCloseMode_DivergentDualHalves_Rejected(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             topology.PlanModeStandard,
+		StageHostname:    "appstage",
+		BootstrapSession: "test",
+		BootstrappedAt:   "2026-04-28",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	result, _, err := handleCloseMode(WorkflowInput{
+		CloseModes: map[string]string{
+			"appdev":   string(topology.CloseModeAuto),
+			"appstage": string(topology.CloseModeManual),
+		},
+	}, stateDir)
+	if err != nil {
+		t.Fatalf("handleCloseMode: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected error for divergent dual-halves, got: %s", getTextContent(t, result))
+	}
+	body := getTextContent(t, result)
+	for _, want := range []string{
+		"close-mode conflict",
+		`pair \"appdev\"`,
+		"appdev=auto",
+		"appstage=manual",
+		"Pass a single value for the pair",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("response missing %q:\n%s", want, body)
+		}
+	}
+
+	// Meta must NOT have been mutated — reject happens before any write.
+	meta, _ := workflow.ReadServiceMeta(stateDir, "appdev")
+	if meta != nil && meta.CloseDeployMode != "" {
+		t.Errorf("preflight must reject before mutation; meta.CloseDeployMode=%q", meta.CloseDeployMode)
+	}
+}
+
+func TestHandleCloseMode_SameValueDualHalves_Accepted(t *testing.T) {
+	t.Parallel()
+	stateDir := t.TempDir()
+	if err := workflow.WriteServiceMeta(stateDir, &workflow.ServiceMeta{
+		Hostname:         "appdev",
+		Mode:             topology.PlanModeStandard,
+		StageHostname:    "appstage",
+		BootstrapSession: "test",
+		BootstrappedAt:   "2026-04-28",
+	}); err != nil {
+		t.Fatalf("WriteServiceMeta: %v", err)
+	}
+
+	// Both halves with the SAME value → no conflict; write once to canonical.
+	result, _, err := handleCloseMode(WorkflowInput{
+		CloseModes: map[string]string{
+			"appdev":   string(topology.CloseModeManual),
+			"appstage": string(topology.CloseModeManual),
+		},
+	}, stateDir)
+	if err != nil {
+		t.Fatalf("handleCloseMode: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("same-value duals must be accepted, got error: %s", getTextContent(t, result))
+	}
+	body := getTextContent(t, result)
+	if !strings.Contains(body, `"status":"updated"`) {
+		t.Errorf("response missing status=updated:\n%s", body)
+	}
+	meta, _ := workflow.ReadServiceMeta(stateDir, "appdev")
+	if meta == nil || meta.CloseDeployMode != topology.CloseModeManual {
+		t.Errorf("canonical meta missing manual close-mode after dual-half input: %+v", meta)
+	}
+}
+
 func TestHandleBuildIntegration_SimpleNoTopologyNote(t *testing.T) {
 	t.Parallel()
 	stateDir := t.TempDir()
