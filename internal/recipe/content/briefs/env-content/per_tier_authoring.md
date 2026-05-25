@@ -300,21 +300,40 @@ adapt paths don't apply (see "Tier-specific carve-outs" below).
 
 PASS — tier-4 small-prod app block (jetstream-GOOD lead):
 
-> *Run two app replicas on shared CPU — minContainers: 2 keeps
-> rolling deploys zero-downtime (one container serves traffic
-> while the other rebuilds). Bump verticalAutoscaling.maxRam when
-> monitoring shows containers approaching the current ceiling.*
+> *Run two app replicas on shared CPU. minContainers: 2 gives
+> the service capacity for concurrent traffic and absorbs a single
+> container crash without dropping requests. Bump
+> verticalAutoscaling.minRam when monitoring shows steady-state
+> RAM usage saturating the current floor.*
 
-Imperative (`Run two app replicas`) → mechanism (`minContainers:
-2 keeps rolling deploys zero-downtime`) → outcome (`one container
-serves traffic while the other rebuilds`) → adapt-knob tail (`bump
-verticalAutoscaling.maxRam when…`) tied to a within-tier porter
-signal. **Note**: `minContainers` is NOT a within-tier adapt knob —
-the within-tier-scope rules below (line ~370) reserve `minContainers`
+Imperative (`Run two app replicas`) → mechanism (`minContainers: 2
+gives the service capacity… and absorbs a single container crash`)
+→ adapt-knob tail (`bump verticalAutoscaling.minRam when…`) tied to
+a within-tier porter signal. The mechanism statement and the
+adapt-knob are separate sentences — em-dashes welding two distinct
+thoughts read as one fused thought; two sentences signal that
+mechanism and adapt path are independent.
+
+**Rolling-deploy mechanism is separate from `minContainers`.** Zero-
+downtime cutover is platform default (`temporaryShutdown: false`):
+new container spins up, readiness probe passes, then old container
+is removed. This works the same at `minContainers: 1` and
+`minContainers: 2`. `minContainers≥2` is the capacity-and-crash-
+tolerance axis, NOT the deploy-cutover axis. Don't write
+*"minContainers: 2 enables rolling deploys"* / *"one serves traffic
+while the other rebuilds"* — both describe the wrong mechanism.
+
+**Note**: `minContainers` is NOT a within-tier adapt knob — the
+within-tier-scope rules below (line ~370) reserve `minContainers`
 for cross-tier ladder design points. The PASS lead names tier-4's
 `minContainers: 2` mechanism but does NOT invite the porter to bump
 it; bumping past the ladder design point graduates the porter to
-tier 5 by re-importing, not by editing this yaml.
+tier 5 by re-importing, not by editing this yaml. The adapt knob in
+the PASS lead is `verticalAutoscaling.minRam`, a field the yaml
+actually sets (so the porter can locate and tune it). Don't gesture
+at fields the yaml doesn't set (e.g. `verticalAutoscaling.maxRam`
+"ceiling bumping" when no ceiling is declared) — the porter looks
+for the field, doesn't find it, and the adapt-path collapses.
 
 ## Friendly-authority phrasing — the adapt-path contract
 
@@ -840,8 +859,11 @@ The directive value already says "2"; the comment says nothing the
 yaml doesn't. Replace with mechanism + reason:
 
 ```
-# Two containers always running enables rolling deploys —
-# one serves traffic while the other rebuilds, no downtime.
+# Two containers always running gives capacity for concurrent
+# traffic and absorbs a single-container crash without dropping
+# requests. Rolling deploys are zero-downtime at any
+# minContainers value via the platform default
+# (temporaryShutdown: false).
 ```
 
 **Repetition across services** — copy-pasting the same NON_HA-with-

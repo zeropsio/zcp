@@ -200,18 +200,33 @@ func kbStemMatchesSymptomFirst(stem string) bool {
 // checkCodebaseKBAll walks every bullet collecting refusals; returns
 // the full list so the agent can re-author against every offender in
 // one round-trip. Run-17 §10. Bullet-shape and stem-shape failures
-// are collected per bullet; the cap-violation (over 8 bullets)
-// appends after the per-bullet pass so the agent sees both surface
-// failures and the cap blocker in one response.
+// are collected per bullet.
+//
+// Run-48 recalibration — Surface 5 is dual-shape per spec:
+//
+//	(1) Forward-looking H3 operational sections (jetstream-shape) —
+//	    no symptom-first stem requirement.
+//	(2) Symptom-first `### Gotchas` bullet list — symptom-first stem
+//	    required, AND each bullet must open with `- **Topic**`.
+//
+// Stem enforcement is gated on isSymptomFirstShape: shape (1) bodies
+// pass through unchecked at this layer. The 8-bullet cap is retired
+// per the spec — bar is salience, not count.
 func checkCodebaseKBAll(body string) []string {
 	var out []string
-	bulletCount := 0
+	symptomFirst := isSymptomFirstShape(body)
+	if !symptomFirst {
+		// Shape (1) — forward-looking H3 operational sections. No
+		// per-bullet symptom-first / bold-stem enforcement at this
+		// layer; the kb-self-inflicted-reversible gate + the citation
+		// validator cover the remaining surface contract.
+		return out
+	}
 	for line := range strings.SplitSeq(body, "\n") {
 		trimmed := strings.TrimLeft(line, " \t")
 		if !strings.HasPrefix(trimmed, "- ") {
 			continue
 		}
-		bulletCount++
 		rest := strings.TrimPrefix(trimmed, "- ")
 		if !strings.HasPrefix(rest, "**") {
 			out = append(out,
@@ -234,9 +249,6 @@ func checkCodebaseKBAll(body string) []string {
 		// single-line paragraphs, matching the existing line-iteration
 		// assumption.
 		out = append(out, kbBulletAuthoringRefusals(stem, rest)...)
-	}
-	if bulletCount > 8 {
-		out = append(out, fmt.Sprintf("codebase/<h>/knowledge-base ≤ 8 bullets; got %d. See spec §Surface 5.", bulletCount))
 	}
 	return out
 }

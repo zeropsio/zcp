@@ -47,7 +47,7 @@ func TestNoVersionAnchorsInPublished_Table(t *testing.T) {
 		{
 			name: "clean tree passes",
 			files: map[string]string{
-				"apidev/README.md":             "# Api Dev\n\nRun `zsc noop`.\n",
+				"apidev/README.md":             "# Api Dev\n\nThe setup omits `run.start`; the container idles.\n",
 				"apidev/CLAUDE.md":             "Dev loop: edit src, ssh apidev to restart.\n",
 				"environments/local/README.md": "Local env.\n",
 				"environments/prod/README.md":  "Prod env.\n",

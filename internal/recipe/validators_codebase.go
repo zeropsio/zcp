@@ -124,40 +124,118 @@ func validateCodebaseIG(_ context.Context, path string, body []byte, _ SurfaceIn
 // `**Topic** — explanation`. Run-10-readiness §O.
 var kbTripleFormatRE = regexp.MustCompile(`(?m)^\s*[-*]\s+\*\*(symptom|mechanism|fix)\*\*\s*:`)
 
-// validateCodebaseKB — knowledge-base fragment contract. Every bullet
-// starts with a bold symptom; any bullet whose topic appears in the
-// CitationMap must include the guide-id reference. Bullets opening with
-// the `**symptom**:` triple are flagged — debugging runbooks live in
-// CLAUDE.md/notes, KB uses `**Topic** — prose`.
+// kbExtractStart / kbExtractEnd are the literal marker strings the
+// engine renders around the KB fragment. Used by kbMarkersPresent to
+// distinguish "marker missing" (true defect) from "body empty between
+// markers" (spec-permitted per Surface 5 dual-shape recalibration).
+const (
+	kbExtractStart = "<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->"
+	kbExtractEnd   = "<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->"
+)
+
+// kbMarkersPresent reports whether the rendered body carries both the
+// KB start and end extract markers. Run-48 spec recalibration permits
+// an empty body BETWEEN the markers as a legitimate authoring outcome
+// (the IG / yaml comments / CLAUDE.md cover everything the porter
+// needs); only true marker absence is a defect.
+func kbMarkersPresent(body string) bool {
+	return strings.Contains(body, kbExtractStart) && strings.Contains(body, kbExtractEnd)
+}
+
+// gotchasH3RE matches a body that opens with `### Gotchas` (the
+// run-48 dual-shape opt-in marker for shape (2): symptom-first bullets
+// under the `### Gotchas` wrapper).
+var gotchasH3RE = regexp.MustCompile(`(?m)^\s*###\s+Gotchas\b`)
+
+// isSymptomFirstShape returns true when the KB body opts into shape
+// (2) — the symptom-first `### Gotchas` bullet list. Detection
+// heuristic: the body either (a) opens with a `### Gotchas` H3 header,
+// or (b) carries any bold-bullet (`- **...**`) shape. Both signals are
+// run-48-explicit opt-ins per spec §Surface 5 dual-shape.
+//
+// The boldBulletRE branch is the "implicit opt-in" path: ANY
+// `- **stem**` bullet anywhere in the body — not just under `###
+// Gotchas` — flips the body to shape (2). The rationale is that a
+// bold-stem bullet is itself the engine-convention shape from the
+// goldens (laravel-jetstream `### Gotchas` body uses `- **Topic**`
+// bullets verbatim); an author writing bold-stem bullets has chosen
+// the shape regardless of whether they wrote the wrapper. Tightening
+// to require the explicit `### Gotchas` header would route
+// bare-bold-bullet bodies to shape (1) and silently bypass stem-shape
+// enforcement on content the author clearly intended as Surface 5
+// shape (2). Pinned by the bullet-only fixtures in
+// TestCheckSlotShape_KB_AcceptsTopicShape and
+// TestCheckSlotShape_KB_NoCapAtTwelveBullets.
+//
+// Used by validateCodebaseKB (bold-symptom check) and by
+// slot_shape.go::checkCodebaseKBAll (symptom-first stem regex
+// enforcement) so the shape gate fires from one place.
+func isSymptomFirstShape(body string) bool {
+	if gotchasH3RE.MatchString(body) {
+		return true
+	}
+	if boldBulletRE.MatchString(body) {
+		return true
+	}
+	return false
+}
+
+// validateCodebaseKB — knowledge-base fragment contract.
+//
+// Run-48 recalibration — Surface 5 is dual-shape per spec:
+//
+//	(1) Forward-looking H3 operational sections (jetstream-shape) —
+//	    no symptom-first bullet requirement.
+//	(2) Symptom-first `### Gotchas` bullet list (engine-convention) —
+//	    each bullet starts with `**Bold Topic**` opener.
+//
+// The validator detects which shape the body opts into and applies
+// shape-(2)-specific checks (bold-symptom opener) only when shape (2)
+// is detected. The fragment may be EMPTY (markers present, body
+// blank) when the IG, yaml comments, and CLAUDE.md cover everything
+// the porter needs — that's a positive signal, not a defect.
+//
+// Marker-missing fires only when the start/end markers are absent from
+// the rendered body (true "no marker" case), not when markers are
+// present and the body between them is empty.
+//
+// Citation-required + display-text-↔-URL agreement checks apply to
+// EITHER shape — citation rules are surface-level, not shape-level.
 func validateCodebaseKB(_ context.Context, path string, body []byte, inputs SurfaceInputs) ([]Violation, error) {
 	s := string(body)
 	var vs []Violation
-	kb := extractBetweenMarkers(s, "knowledge-base")
-	if kb == "" {
+	// Marker-presence is distinct from empty-body. The start/end markers
+	// must be present in the rendered output; the body between them may
+	// legitimately be empty (spec §Surface 5 "May be empty").
+	if !kbMarkersPresent(s) {
 		vs = append(vs, violation("codebase-kb-marker-missing", path,
-			"knowledge-base marker missing or body empty"))
+			"knowledge-base extract markers missing from rendered body"))
 		return vs, nil
 	}
-	// Bullet count.
+	kb := extractBetweenMarkers(s, "knowledge-base")
+	if kb == "" {
+		// Markers present, body empty — spec §Surface 5 permits this.
+		// No further per-bullet / citation checks are meaningful on an
+		// empty body; return clean.
+		return vs, nil
+	}
+	// Bullet count + shape-(2) opt-in detection. Shape (2) applies when
+	// the body opens with `### Gotchas` OR carries any bold-bullet
+	// (`- **...**`) shape. Bold-symptom enforcement is scoped to shape
+	// (2); shape (1) bodies (forward-looking H3 operational sections
+	// like `### Maintenance Mode`) have no bold-symptom requirement.
 	bulletRE := regexp.MustCompile(`(?m)^\s*-\s+\S`)
 	bullets := bulletRE.FindAllStringIndex(kb, -1)
 	boldBullets := boldBulletRE.FindAllStringIndex(kb, -1)
-	if len(bullets) > 0 && len(boldBullets) < len(bullets) {
-		vs = append(vs, notice("kb-missing-bold-symptom", path,
-			fmt.Sprintf("%d of %d KB bullets lack a **bold symptom** opening", len(bullets)-len(boldBullets), len(bullets))))
-	}
-	// Run-15 F.5 — KB bullet cap (8 per codebase, per spec Surface 5).
-	// Run-14 shipped 11-12; that's over-collection. Read the cap from
-	// SurfaceContract so spec edits stay single-source.
-	if contract, ok := ContractFor(SurfaceCodebaseKB); ok && contract.ItemCap > 0 {
-		if len(bullets) > contract.ItemCap {
-			vs = append(vs, violation("codebase-kb-too-many-bullets", path,
-				fmt.Sprintf(
-					"%d KB bullets > %d cap (spec §Surface 5: 5-8 bullets per codebase). Over-collection in KB usually means scaffold decisions, framework quirks, or self-inflicted observations that should be discarded or routed elsewhere — see spec §Counter-examples.",
-					len(bullets), contract.ItemCap,
-				)))
+	if isSymptomFirstShape(kb) {
+		if len(bullets) > 0 && len(boldBullets) < len(bullets) {
+			vs = append(vs, notice("kb-missing-bold-symptom", path,
+				fmt.Sprintf("%d of %d KB bullets lack a **bold symptom** opening (shape (2) `### Gotchas` body)", len(bullets)-len(boldBullets), len(bullets))))
 		}
 	}
+	// Run-48 — ItemCap retired. Spec §Surface 5: "no floor, no cap;
+	// bar is salience". Over-collection signal moved to the
+	// kb-self-inflicted-reversible gate + the brief's discriminator.
 	for _, m := range kbTripleFormatRE.FindAllString(kb, -1) {
 		vs = append(vs, notice("codebase-kb-triple-format-banned", path,
 			fmt.Sprintf("KB entries use `**Topic** — prose` format; `**symptom**:` / `**mechanism**:` / `**fix**:` triples belong in CLAUDE.md/notes: %q",
@@ -632,7 +710,7 @@ var bulletTopicKeywords = map[string][]string{
 	},
 	"env-var-model": {
 		"env-var-model", "cross-service env",
-		"self-shadow", "envisolation",
+		"self-shadow",
 	},
 	"http-support": {
 		"http-support", "l7-balancer", "l7 balancer",

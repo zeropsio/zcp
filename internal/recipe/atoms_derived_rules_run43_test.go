@@ -51,6 +51,50 @@ func TestDerivedRules_P3_ExecOnceSemanticsRulePresent(t *testing.T) {
 	}
 }
 
+// TestDerivedRules_R49_ExecOnceBurnRecoveryRulePresent pins the
+// run-49 extension to F-EXECONCE-SEMANTICS that catches burn-recovery
+// vocabulary attached to per-deploy (`${appVersionId}`) keys. The
+// canonical example: a worked example showing
+// `${appVersionId}-migrate` / `${appVersionId}-seed` split with the
+// rationale "split so failed seed doesn't burn the migrate key — the
+// next deploy retries the seed but already-applied schema is skipped"
+// — the keys are per-deploy (auto-fresh on next deploy) but the
+// rationale is static-key burn-recovery vocab. Cross-reference:
+// `principles/init-commands-model.md:50-60` (distinct-keys-per-step
+// rationale is within-deploy lock-collision avoidance, NOT
+// cross-deploy burn-recovery).
+func TestDerivedRules_R49_ExecOnceBurnRecoveryRulePresent(t *testing.T) {
+	t.Parallel()
+	body, err := readAtom("briefs/refinement/derived_rules.md")
+	if err != nil {
+		t.Fatalf("read derived_rules.md: %v", err)
+	}
+	for _, want := range []string{
+		// New failure-mode (b) framing — burn-recovery over per-deploy key.
+		"Burn-recovery prose over per-deploy key",
+		"burn-recovery vocabulary",
+		"`burn`",
+		"`burned`",
+		"`consumed key`",
+		"split keys so failed",
+		"touch any source file to rotate appVersionId",
+		// Authoritative anchor: burn-recovery belongs to static keys.
+		"Burn-recovery semantics belong to **static keys only**",
+		// Within-deploy collision is the correct rationale for
+		// distinct per-deploy keys, NOT burn-recovery.
+		"within-deploy lock-collision avoidance pattern",
+		"`${appVersionId}-migrate` / `${appVersionId}-seed`",
+		"two commands sharing one `${appVersionId}` collapse to one lock",
+		// Run-49 user feedback anchor.
+		"Run-49 user feedback",
+		"already-applied schema is skipped",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("derived_rules.md missing run-49 burn-recovery anchor %q", want)
+		}
+	}
+}
+
 // TestDerivedRules_P3_ExecOnceSemanticsRuleSurfacesInBrief — the
 // composer threads derived_rules.md into the refinement brief body.
 // Pin that the F-EXECONCE-SEMANTICS rule lands in the assembled

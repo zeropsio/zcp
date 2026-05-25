@@ -104,7 +104,7 @@ func buildCodebaseContentBriefMultiFileWithFraming(plan *Plan, cb Codebase, pare
 	}
 
 	// Part 3 — platform principles.
-	if err := w.StartPart("platform", "platform principles (env-var aliasing, same-key shadow trap)"); err != nil {
+	if err := w.StartPart("platform", "platform principles (env-var aliasing, project-vs-service scope, same-key trap)"); err != nil {
 		return Brief{}, err
 	}
 	if err := w.WriteOptionalAtom("briefs/scaffold/platform_principles.md"); err != nil {

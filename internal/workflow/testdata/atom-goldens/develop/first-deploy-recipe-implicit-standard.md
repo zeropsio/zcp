@@ -251,7 +251,7 @@ Apache or nginx is bundled into the runtime image — **no manual `start:` and n
 
 **`zerops.yaml` differences vs. dynamic runtimes:**
 
-- Omit `run.start` — leave the field out entirely (not even `zsc noop`).
+- Omit `run.start` — leave the field out entirely.
 - Omit `run.ports` — port 80 is fixed; Zerops handles it.
 - Set `run.documentRoot` to the web-serving subtree. Laravel / Symfony /
   composer apps use `public`; root-serving apps omit it or set `.`.
@@ -285,10 +285,10 @@ triage; there is no app process to crash.
 - **Build ≠ runtime container.** Runtime packages → `run.prepareCommands`;
   build-only packages → `build.prepareCommands`. Build-time tools may
   not exist at run time; see guide `deployment-lifecycle`.
-- Env vars use `${hostname_KEY}` syntax for cross-service references
-  (Zerops rewrites at deploy from the named service's catalog). Local
-  vars in `run.envVariables` shadow project-level entries with the
-  same key.
+- Cross-service env vars use `${hostname_KEY}` syntax and must be
+  declared in `run.envVariables` under an own-key alias to reach the
+  app process. Project-level vars auto-inherit; same-key declaration
+  (`API_URL: ${API_URL}`) produces a literal-string shadow.
 - **`zerops_import override=true` is destructive** — REPLACES the
   service stack (container, code, env vars, filesystem). Reserved for
   explicit user-requested config changes (shared storage, scaling,
@@ -587,9 +587,9 @@ passing verify.
 
 ### Before verify on dev-mode dynamic runtimes
 
-Dev-mode dynamic runtimes deploy with `start: zsc noop --silent` —
-nothing is listening yet. `zerops_verify` will return `http_root: HTTP
-502` and that is NOT a deploy failure. Start the dev process via
+Dev-mode dynamic runtimes deploy with `run.start` omitted — nothing is
+listening yet. `zerops_verify` will return `http_root: HTTP 502` and
+that is NOT a deploy failure. Start the dev process via
 `zerops_dev_server action=start` first, then verify.
 
 For simple-mode and standard-mode runtimes the runtime starts on

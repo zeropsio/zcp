@@ -148,7 +148,6 @@ var PlatformVocabulary = []string{
 	"balancer",
 	"buildFromGit",
 	"deployFiles",
-	"envIsolation",
 	"execOnce",
 	"forcePathStyle",
 	"httpSupport",

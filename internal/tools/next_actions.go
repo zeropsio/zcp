@@ -52,7 +52,7 @@ const (
 // fallback is never wrong, only sometimes less specific.
 func deploySuccessNextActions(_ *ops.DeployResult, mode topology.Mode, class topology.RuntimeClass) string {
 	if mode != "" && class != "" && topology.IsDeferredStart(mode, class) {
-		return "Dev-mode dynamic runtime is idle (zsc noop). Start the dev server: zerops_dev_server action=start. Then run zerops_verify."
+		return "Dev-mode dynamic runtime is idle (no start command). Start the dev server: zerops_dev_server action=start. Then run zerops_verify."
 	}
 	return nextActionDeploySuccess
 }

@@ -90,7 +90,7 @@ right origin. No ordering dance, no deferred deploy.
 ## Dev variant
 
 The dev codebase still runs Vite's dev server (HMR, browser-walk
-during scaffold) — that's `nodejs@22` + `zsc noop --silent` + agent-
+during scaffold) — that's `nodejs@22` + omitted `run.start` + agent-
 owned `zerops_dev_server` per `dev-loop.md`. Only the **stage**
 setup flips to `base: static`. Two setup blocks in the same yaml.
 

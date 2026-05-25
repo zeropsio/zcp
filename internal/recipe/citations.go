@@ -10,11 +10,10 @@ package recipe
 // D validates that every KB fragment whose topic has a mapping carries
 // the guide reference in its body.
 var CitationMap = map[string]string{
-	// Cross-service env vars, self-shadow, aliasing.
+	// Cross-service env vars, project-vs-service scope, aliasing.
 	"cross-service-env": "env-var-model",
 	"self-shadow":       "env-var-model",
 	"env-var-model":     "env-var-model",
-	"envIsolation":      "env-var-model",
 	// execOnce + init commands.
 	"init-commands": "init-commands",
 	"execOnce":      "init-commands",

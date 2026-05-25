@@ -53,7 +53,11 @@ func TestSynthesisWorkflowAtom_BadGoodExamples_BothPresent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read synthesis_workflow.md: %v", err)
 	}
-	idx := strings.Index(body, "### Worked example — same-key shadow trap (api codebase)")
+	// Run-49 corpus-recalibration: worked-example reframed from
+	// "same-key shadow trap" to "own-key alias rename" because the
+	// shadow framing was built on the wrong premise (cross-service
+	// auto-inject doesn't happen under porter-default isolation).
+	idx := strings.Index(body, "### Worked example — own-key alias rename (api codebase)")
 	if idx < 0 {
 		t.Fatal("worked-example heading missing")
 	}
@@ -65,13 +69,12 @@ func TestSynthesisWorkflowAtom_BadGoodExamples_BothPresent(t *testing.T) {
 	window := rest[:end+1]
 	// Run-43 P1 — voice rule tightened. The worked example still
 	// pairs a BAD (mechanism leaking onto Surface 7) with a GOOD
-	// (yaml comment self-contained), but the GOOD shape no longer
-	// closes with "see IG #N" deferral; voice is mechanism+reason in
+	// (yaml comment self-contained); voice is mechanism+reason in
 	// one breath per spec §"Surface 7".
 	for _, want := range []string{
 		"**BAD**",
 		"**GOOD**",
-		"yaml comment teaches the mechanism",
+		"yaml comment teaches the platform mechanism",
 		"in one breath",
 	} {
 		if !strings.Contains(window, want) {

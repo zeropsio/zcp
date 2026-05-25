@@ -42,14 +42,16 @@ func RuntimeClassFor(typeVersion string) RuntimeClass {
 	return RuntimeDynamic
 }
 
-// IsDeferredStart returns true when a runtime's start command is the
-// "wait for dev_server" placeholder (zsc noop --silent) instead of the
-// real application command. HTTP probes against such a runtime's
-// subdomain return 502 by design until the agent invokes
-// `zerops_dev_server action=start` to launch the actual server.
+// IsDeferredStart returns true when a runtime is configured to wait for
+// an out-of-band dev process instead of running a real application
+// command on container boot. Dev-mode dynamic runtimes omit `run.start`
+// entirely — the container stays alive without a start directive and
+// no app process exists until `zerops_dev_server action=start` runs.
+// HTTP probes against such a runtime's subdomain return 502 by design
+// until that invocation.
 //
 // True for: dev-mode dynamic runtimes — (ModeDev || ModeStandard) +
-// RuntimeDynamic. These follow the SSHFS-mount + zsc-noop +
+// RuntimeDynamic. These follow the SSHFS-mount + omitted-`run.start` +
 // zerops_dev_server lifecycle, where deploy lands code but no app
 // process exists yet.
 //

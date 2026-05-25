@@ -1,14 +1,16 @@
-# Dev loop — `zsc noop` + `zerops_dev_server`
+# Dev loop — `zerops_dev_server`
 
-Dev and prod containers run different `run.start` commands.
+Dev and prod containers diverge on `run.start`: prod runs the compiled
+entry, dev omits the start command entirely.
 
 ## Dev vs prod process model (dynamic runtimes)
 
 Dynamic runtimes (nodejs, php, go, python, deno, bun):
 
-- **dev** — `start: zsc noop --silent`, NO `healthCheck`,
-  `buildCommands` installs deps only. The agent owns the long-running
-  process via `zerops_dev_server` so code edits don't force redeploy.
+- **dev** — omit `run.start`, NO `healthCheck`, `buildCommands`
+  installs deps only. The container stays alive without an explicit
+  start command; the agent owns the long-running process via
+  `zerops_dev_server` so code edits don't force redeploy.
 - **prod** — `start: <compiled-entry>` (e.g. `node dist/main.js`) with
   full build chain, `readinessCheck`, `healthCheck`, narrow
   `deployFiles`.
@@ -40,7 +42,7 @@ zerops_dev_server action=start hostname=<worker>dev \
   healthPath=""
 ```
 
-The dev container still has `start: zsc noop --silent`. The worker
+The dev container still ships with `run.start` omitted. The worker
 process is owned by `zerops_dev_server` the same as any HTTP
 runtime — code edits trigger a watcher rebuild, the platform doesn't
 redeploy.
@@ -64,14 +66,12 @@ record-fact topic=worker_dev_server_started kind=porter_change \
 (`scaffold-decision` + `CODEBASE_ZEROPS_COMMENTS` per the
 classification × surface table — the dev-server invocation is a
 recipe-internal scaffold decision; if any prose surfaces it at all,
-it surfaces as a `# zsc noop` block-comment rationale on the dev
-yaml's `start:` field.)
+it surfaces as a block-comment rationale on the dev yaml.)
 
 The scaffold complete-phase gate refuses the phase if any dev
-codebase with `start: zsc noop --silent` lacks this attestation.
-Bypass is intentional: a `worker_no_dev_server` fact with reason
-suppresses the requirement for one-shot batch codebases that don't
-need a watcher loop.
+codebase lacks this attestation. Bypass is intentional: a
+`worker_no_dev_server` fact with reason suppresses the requirement
+for one-shot batch codebases that don't need a watcher loop.
 
 Skipping `zerops_dev_server` for a worker because "the tool's port
 field doesn't apply" was the run-19 trap — the worker process never
@@ -102,8 +102,8 @@ by default unless the framework documents otherwise.
 ## Implicit-webserver + frontend-bundle case
 
 Implicit-webserver runtimes (`php-nginx`, `php-apache`, `nginx`,
-`static`) omit `run.start` on both dev and prod — the `zsc noop` rule
-does not apply to the backend. BUT if the codebase compiles a
-frontend (Laravel + Vite, Rails + esbuild), the bundler is a
+`static`) also omit `run.start` on both dev and prod — the omit-start
+rule is uniform across runtime classes. BUT if the codebase compiles
+a frontend (Laravel + Vite, Rails + esbuild), the bundler is a
 long-running dev process and belongs under `zerops_dev_server` the
 same way. Check the frontend before skipping this atom.

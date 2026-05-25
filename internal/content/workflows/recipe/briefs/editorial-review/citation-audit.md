@@ -8,12 +8,11 @@ Eight topic areas. When a gotcha's mechanism falls inside any of these areas, th
 
 | Topic area | Platform topic identifier | What the guide covers |
 |---|---|---|
-| Cross-service environment variables, self-shadow, aliasing | `env-var-model` | Auto-inject semantics; never declare `key: ${key}`; legitimate renames such as `DB_HOST: ${db_hostname}`; mode flags |
+| Cross-service environment variables, project-vs-service scope, aliasing | `env-var-model` | Project vars auto-inherit; cross-service vars require explicit `run.envVariables` aliases; legitimate renames such as `DB_HOST: ${db_hostname}`; project-level same-key self-shadow; mode flags |
 | `zsc execOnce` gate, `appVersionId`, init commands | `init-commands` | Per-deploy gate semantics; `--retryUntilSuccessful` usage |
-| Rolling deploys, SIGTERM, HA replicas | `rolling-deploys` and `minContainers-semantics` | Two-axis `minContainers` (throughput and HA separately); SIGTERM-before-teardown; drain semantics |
+| Rolling deploys, SIGTERM, multi-replica services | `rolling-deploys` and `minContainers-semantics` | `temporaryShutdown: false` default = new-then-cutover zero-downtime; two-axis `minContainers` (throughput and crash tolerance, independent of cutover); SIGTERM-before-teardown; drain semantics |
 | Object Storage, MinIO, `forcePathStyle` | `object-storage` | MinIO-backed storage; path-style addressing required; `storage_*` environment variable shape |
 | L7 balancer, `httpSupport`, VXLAN routing | `http-support` and `l7-balancer` | Why bind `0.0.0.0`; TLS termination; `trust proxy` rationale |
-| Cross-service references, isolation modes | `env-var-model` (same guide as the self-shadow entry) | `envIsolation` semantics; project-level versus service-level |
 | Deploy files, tilde suffix, static base | `deploy-files` and `static-runtime` | `./dist/~` rationale; `base: static` limitations |
 | Readiness check, health check, routing gates | `readiness-health-checks` | What routes traffic; what restarts the container |
 

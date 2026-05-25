@@ -12,9 +12,9 @@ references-atoms: [develop-auto-close-semantics, develop-verify-matrix, develop-
 
 ### Before verify on dev-mode dynamic runtimes
 
-Dev-mode dynamic runtimes deploy with `start: zsc noop --silent` —
-nothing is listening yet. `zerops_verify` will return `http_root: HTTP
-502` and that is NOT a deploy failure. Start the dev process via
+Dev-mode dynamic runtimes deploy with `run.start` omitted — nothing is
+listening yet. `zerops_verify` will return `http_root: HTTP 502` and
+that is NOT a deploy failure. Start the dev process via
 `zerops_dev_server action=start` first, then verify.
 
 For simple-mode and standard-mode runtimes the runtime starts on

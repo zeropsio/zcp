@@ -8,11 +8,13 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// checkEnvSelfShadow flags entries where a `run.envVariables` key shadows the
-// containing service's own published key (`KEY: ${<hostname>_KEY}`). Cross-
-// service references resolve at deploy time against the named service; a
-// self-shadow loop fails silently and the runtime sees a literal `${...}`
-// placeholder.
+// checkEnvSelfShadow flags entries where a `run.envVariables` key has the
+// shape `KEY: ${KEY}` (same key on both sides). For project-level vars
+// this is a true self-shadow (the project value auto-inherits, and the
+// service-level same-key declaration produces the literal string in the
+// process env). For cross-service vars under default isolation the
+// right-hand template has nothing to resolve to. Both shapes are
+// invalid and resolve to the literal `${...}` placeholder at runtime.
 //
 // The predicate lives in `internal/ops/checks` and emits one row per
 // invocation (never a slice); the contract guarantees exactly one row, so we

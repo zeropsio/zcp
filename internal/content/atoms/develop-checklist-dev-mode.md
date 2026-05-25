@@ -17,7 +17,7 @@ manual control). For implicit-webserver runtimes (`php-apache`,
 `php-nginx`) the implicit-webserver guidance fires instead; for static
 runtimes the web server auto-starts and this checklist does not apply.
 
-- Dev setup block in `zerops.yaml`: `start: zsc noop --silent`, **no**
+- Dev setup block in `zerops.yaml`: **omit `run.start`**, **no**
   `healthCheck`. Zerops keeps the runtime container idle; you start
   the dev process yourself via `zerops_dev_server action=start` after
   each deploy.

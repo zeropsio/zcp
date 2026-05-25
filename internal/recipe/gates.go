@@ -77,12 +77,16 @@ func CodebaseScaffoldGates() []Gate {
 		// it needs to author yaml-comment fragments.
 		{Name: "fact-rationale-completeness", Run: gateFactRationaleCompleteness},
 		// Run-20 C4 — worker dev-server attestation. Refuses scaffold
-		// complete-phase when a dev codebase whose start is `zsc noop
-		// --silent` lacks a `worker_dev_server_started` fact. Bypass
-		// via `worker_no_dev_server` for one-shot batch codebases.
+		// complete-phase when a dev codebase whose dev setup is a
+		// dynamic runtime (the kind that needs `zerops_dev_server`)
+		// lacks a `worker_dev_server_started` fact. Bypass via
+		// `worker_no_dev_server` for one-shot batch codebases.
 		// Closes the run-19 scaffold-worker gap (zero MCP zerops_dev_server
 		// invocations on workerdev — worker behavior was attested only on
 		// the compiled-entry workerstage path).
+		// Marker updated run-49 issue 3: dev setups now omit `run.start`
+		// entirely, so the predicate keys on dev-runtime class instead of
+		// the prior `start: zsc noop --silent` literal.
 		{Name: "worker-dev-server-started", Run: gateWorkerDevServerStarted},
 		// Run-21-prep RC2 — schema-conformance at the producer. Without
 		// this, scaffold can ship a yaml with fields invalid under the
@@ -156,6 +160,14 @@ func CodebaseContentGates() []Gate {
 		{Name: "cross-recipe-duplication", Run: gateCrossRecipeDuplication},
 		{Name: "zerops-yaml-schema", Run: gateZeropsYamlSchema},
 		{Name: "kb-h3-required", Run: gateRequireH3InKnowledgeBaseFragment},
+		// Run-48 Surface 5 recalibration — refuses KB content whose
+		// symptom only fires when the porter UNDOES a directive the
+		// recipe ships. Per spec §"Self-inflicted-reversible", these
+		// bullets have a null reader: the porter following the IG never
+		// hits them, and the only audience would be someone debugging
+		// after breaking the recipe's own fix. Pinned by
+		// TestGateKBSelfInflictedReversible_*.
+		{Name: "kb-self-inflicted-reversible", Run: gateKBSelfInflictedReversible},
 		// Run-22 R2-WK-1 + R2-WK-2 — source-scanning gate for showcase-
 		// tier worker codebases. Refuses codebase-content complete-phase
 		// when worker source has naked `nc.subscribe(SUBJECT)` (no queue

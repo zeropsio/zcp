@@ -100,17 +100,23 @@ func TestCodebaseIG_ItemCap(t *testing.T) {
 	}
 }
 
-// TestCodebaseKB_BulletCap pins run-15 F.5 — the spec's Surface 5 cap
-// of 5-8 KB bullets per codebase. Run-14 shipped 11-12; over-collection
-// usually means scaffold decisions, framework quirks, or self-inflicted
-// observations that should be discarded or routed elsewhere.
-func TestCodebaseKB_BulletCap(t *testing.T) {
+// TestCodebaseKB_NoBulletCap pins the run-48 Surface 5 recalibration
+// — the spec dropped the ≤ 8 bullets-per-codebase cap. The bar is
+// salience, not count; over-collection signal is now routed to the
+// kb-self-inflicted-reversible gate + the brief's discriminator.
+// Validator must NOT emit codebase-kb-too-many-bullets regardless of
+// bullet count.
+func TestCodebaseKB_NoBulletCap(t *testing.T) {
 	t.Parallel()
 	var b strings.Builder
 	b.WriteString("README\n\n<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->\n")
-	// 9 bullets > cap of 8.
-	for i := 1; i <= 9; i++ {
-		fmt.Fprintf(&b, "- **Topic %d** — Description sentence about gotcha %d.\n", i, i)
+	// 12 bullets — over the historical cap. The new validator must not
+	// surface a too-many-bullets violation. The bullets each mention a
+	// platform-side token so kb-bullet-no-platform-mention does NOT fire
+	// (the test pins the cap retirement, not the unrelated platform-
+	// mention check).
+	for i := 1; i <= 12; i++ {
+		fmt.Fprintf(&b, "- **Topic %d** — Description naming `zerops.yaml` directive %d.\n", i, i)
 	}
 	b.WriteString("<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->\n")
 	plan := &Plan{Codebases: []Codebase{{Hostname: "api"}}}
@@ -118,20 +124,8 @@ func TestCodebaseKB_BulletCap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("validate: %v", err)
 	}
-	if !containsCode(vs, "codebase-kb-too-many-bullets") {
-		t.Errorf("expected codebase-kb-too-many-bullets at 9 bullets, got %+v", vs)
-	}
-
-	// Cap exact (8 bullets) — passes the cap check.
-	var ok strings.Builder
-	ok.WriteString("README\n\n<!-- #ZEROPS_EXTRACT_START:knowledge-base# -->\n")
-	for i := 1; i <= 8; i++ {
-		fmt.Fprintf(&ok, "- **Topic %d** — Description sentence about gotcha %d.\n", i, i)
-	}
-	ok.WriteString("<!-- #ZEROPS_EXTRACT_END:knowledge-base# -->\n")
-	vsOK, _ := validateCodebaseKB(context.Background(), "codebases/api/README.md", []byte(ok.String()), SurfaceInputs{Plan: plan})
-	if containsCode(vsOK, "codebase-kb-too-many-bullets") {
-		t.Errorf("8 bullets at cap should pass; got %+v", vsOK)
+	if containsCode(vs, "codebase-kb-too-many-bullets") {
+		t.Errorf("Surface 5 cap retired; codebase-kb-too-many-bullets must not fire. got %+v", vs)
 	}
 }
 
@@ -427,7 +421,7 @@ func TestValidateCLAUDE_UnderCap_Passes(t *testing.T) {
 	b.WriteString("Nodejs 22 REST service on Zerops — HTTP port 3000 with PostgreSQL sibling, Valkey cache, and an NATS broker.\n\n")
 	b.WriteString("## Zerops service facts\n\n")
 	b.WriteString("- Hostname `api`, port 3000, DB host `db`, cache `cache`, broker `broker`.\n")
-	b.WriteString("- Runtime base: `nodejs@22` (compiled) on the prod slot; dev slot runs `zsc noop --silent`.\n")
+	b.WriteString("- Runtime base: `nodejs@22` (compiled) on the prod slot; dev slot omits `run.start` and idles.\n")
 	b.WriteString("- Health endpoint `/health`; readiness probes it before traffic switches.\n")
 	b.WriteString("- Cross-service env vars inject `${db_hostname}`, `${cache_connectionString}`, `${broker_connectionString}`.\n\n")
 	b.WriteString("## Zerops dev\n\nDev slot is SSHFS-mounted at `/var/www/apidev/`. Run framework CLIs via SSH; never npm-install against the mount.\n\n")

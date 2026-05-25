@@ -97,8 +97,8 @@ adapt path.
 **HOLD when**:
 - Comment ALREADY names a mechanism in addition to the field
   restatement (e.g. "minContainers: 2 — two replicas behind a queue
-  group keep deploys zero-downtime"). The field restatement is
-  redundant but not load-bearing — HOLD.
+  group share the workload across containers"). The field
+  restatement is redundant but not load-bearing — HOLD.
 - Comment is short (≤2 lines) and the field restatement IS the
   mechanism explanation — common in tier-3 (Stage) where the
   config is the teaching. HOLD.
@@ -113,10 +113,11 @@ adapt path.
 **Refined**:
 
 ```yaml
-# Two NestJS containers behind a queue group keep the deploy
-# zero-downtime — the balancer fans requests across both replicas.
-# Feel free to bump minContainers to 3 if your traffic spikes need
-# a deeper buffer.
+# Two NestJS containers serve the API — the L7 balancer fans
+# requests across both replicas, and a single-container crash
+# doesn't drop traffic because the survivor keeps answering.
+# Feel free to bump minContainers to 3 if your traffic spikes
+# need a deeper buffer.
 - hostname: api
 ```
 
