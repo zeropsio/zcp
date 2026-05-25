@@ -136,8 +136,15 @@ func TestBuildRefinementBrief_BodyUnderShrinkTarget(t *testing.T) {
 	// LLM-judgment based, not regex). Run-43 F7 — cap raised 48→50
 	// KB for the phase-entry anti-redispatch tightening (status-check
 	// + exactly-once-per-recipe guidance against run-42 third-pass
-	// failure).
-	const briefShrinkCap = 50 * 1024
+	// failure). Run-49 reconcile (2026-05-25) — cap raised 50→52 KB
+	// after merging v9.98.0 (R49-I1/I2/I3/I4 corpus closures: rolling-
+	// deploy mechanism, cross-service env model, zsc noop retirement,
+	// execOnce burn-recovery scoping; +8/6/2 lines across
+	// derived_rules.md) plus v9.99.0 (Surface 5 dual-shape,
+	// kb-self-inflicted-reversible gate; +2 lines on derived_rules.md).
+	// Resulting brief lands at ~51.4 KB; cap set at 52 KB with ~0.6 KB
+	// headroom.
+	const briefShrinkCap = 52 * 1024
 	if brief.Bytes > briefShrinkCap {
 		t.Errorf("refinement brief %d bytes exceeds %d cap (F-24 shrink target; run-32 phase 2 raised to 75K)", brief.Bytes, briefShrinkCap)
 	}
