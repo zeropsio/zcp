@@ -90,11 +90,28 @@ func TestCheckSlotShape_LegacyIG_NotConstrained(t *testing.T) {
 	}
 }
 
-func TestCheckSlotShape_KB_RefusesNonTopicBullet(t *testing.T) {
+// TestCheckSlotShape_KB_NonTopicBulletPassesUnderShape1 — Run-48
+// recalibration. Without a `### Gotchas` H3 opt-in OR any bold-bullet
+// shape, the body reads as Surface 5 shape (1) (forward-looking H3
+// operational section). Free-prose bullets are not refused at this
+// layer; the kb-self-inflicted-reversible gate + citation validator
+// cover the remaining surface contract.
+func TestCheckSlotShape_KB_NonTopicBulletPassesUnderShape1(t *testing.T) {
 	t.Parallel()
 	body := "- a free-prose bullet without **Topic**"
+	if msgs := checkSlotShape("codebase/api/knowledge-base", body); len(msgs) > 0 {
+		t.Errorf("KB bullet without **Topic** opt-in should pass under shape (1); got %v", msgs)
+	}
+}
+
+// TestCheckSlotShape_KB_NonTopicBulletRefusedUnderShape2Optin — under
+// shape (2) (the `### Gotchas` opt-in), every `- ` bullet must open
+// with `**Topic**`. A free-prose bullet under that header fails.
+func TestCheckSlotShape_KB_NonTopicBulletRefusedUnderShape2Optin(t *testing.T) {
+	t.Parallel()
+	body := "### Gotchas\n\n- a free-prose bullet without **Topic**"
 	if msgs := checkSlotShape("codebase/api/knowledge-base", body); len(msgs) == 0 {
-		t.Error("KB bullet without **Topic** prefix should be refused")
+		t.Error("KB bullet without **Topic** under `### Gotchas` shape (2) should be refused")
 	}
 }
 
@@ -108,13 +125,17 @@ func TestCheckSlotShape_KB_AcceptsTopicShape(t *testing.T) {
 	}
 }
 
-func TestCheckSlotShape_KB_RefusesOverEightBullets(t *testing.T) {
+// TestCheckSlotShape_KB_NoCapAtTwelveBullets — Run-48 recalibration
+// retires the ≤ 8 bullets-per-codebase cap. Bullets that carry a
+// symptom-first stem under shape (2) must pass regardless of count.
+func TestCheckSlotShape_KB_NoCapAtTwelveBullets(t *testing.T) {
 	t.Parallel()
-	// Stems carry a symptom-first signal so the cap check (not the stem
-	// heuristic) is what fires.
-	body := strings.Repeat("- **HTTP 503 on boot** — body\n", 9)
-	if msgs := checkSlotShape("codebase/api/knowledge-base", body); len(msgs) == 0 {
-		t.Error("KB > 8 bullets should be refused")
+	// All twelve bullets share a symptom-first stem (HTTP 503 numeric
+	// status) so the per-bullet check passes and only the (now-retired)
+	// cap could have fired.
+	body := strings.Repeat("- **HTTP 503 on boot** — body\n", 12)
+	if msgs := checkSlotShape("codebase/api/knowledge-base", body); len(msgs) > 0 {
+		t.Errorf("Surface 5 cap retired; 12 bullets should pass slot-shape, got %v", msgs)
 	}
 }
 

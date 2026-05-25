@@ -87,7 +87,14 @@ framework work, not on each other.
 
 2. **Dispatch the sub-agent** via the `Agent` tool. Pass
    `response.prompt` verbatim as the `prompt`. Description:
-   `scaffold-<hostname>`.
+   `scaffold-<hostname>`. Pass `subagent_type="general-purpose"` —
+   do NOT use `subagent_type="claude"` (FleetView's default when
+   unspecified). `claude` triggers worktree isolation on dispatch,
+   which fails on the non-git recipe-authoring outputRoot and
+   breaks the shared `zerops_recipe` MCP state. When
+   `response.prompt` is empty (multi-file pointer), dispatch the
+   thin wrapper instructing the sub-agent to Read `response.briefPath`
+   first — same `subagent_type="general-purpose"` rule applies.
 
 3. **Sub-agent produces**: source tree under the Zerops service's
    SSHFS mount (`/var/www/<hostname>/` in-container, or equivalent

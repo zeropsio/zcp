@@ -156,6 +156,14 @@ func CodebaseContentGates() []Gate {
 		{Name: "cross-recipe-duplication", Run: gateCrossRecipeDuplication},
 		{Name: "zerops-yaml-schema", Run: gateZeropsYamlSchema},
 		{Name: "kb-h3-required", Run: gateRequireH3InKnowledgeBaseFragment},
+		// Run-48 Surface 5 recalibration — refuses KB content whose
+		// symptom only fires when the porter UNDOES a directive the
+		// recipe ships. Per spec §"Self-inflicted-reversible", these
+		// bullets have a null reader: the porter following the IG never
+		// hits them, and the only audience would be someone debugging
+		// after breaking the recipe's own fix. Pinned by
+		// TestGateKBSelfInflictedReversible_*.
+		{Name: "kb-self-inflicted-reversible", Run: gateKBSelfInflictedReversible},
 		// Run-22 R2-WK-1 + R2-WK-2 — source-scanning gate for showcase-
 		// tier worker codebases. Refuses codebase-content complete-phase
 		// when worker source has naked `nc.subscribe(SUBJECT)` (no queue

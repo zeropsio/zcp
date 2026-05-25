@@ -20,7 +20,12 @@ feature-kind from the feature brief.
 
 2. **One dispatch** for the whole feature suite — feature sub-agent
    works across every codebase that needs edits. Pass `response.prompt`
-   verbatim. Description: `features-<slug>`.
+   verbatim. Description: `features-<slug>`. Pass
+   `subagent_type="general-purpose"` — do NOT use
+   `subagent_type="claude"` (FleetView's default when unspecified).
+   `claude` triggers worktree isolation on dispatch, which fails on
+   the non-git recipe-authoring outputRoot and breaks the shared
+   `zerops_recipe` MCP state.
 
 3. **Behavioral verification** per feature: each feature-kind has an
    observable signal (cache-demo emits `X-Cache: HIT`, queue-demo has

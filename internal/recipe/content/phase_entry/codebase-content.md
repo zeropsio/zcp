@@ -68,6 +68,12 @@ instruct: "Read `<briefPath>` first; then Read each part file listed
 in its 'Read order' section in the order shown before authoring any
 fragment."
 
+Dispatch with `subagent_type="general-purpose"` — do NOT use
+`subagent_type="claude"` (FleetView's default when unspecified).
+`claude` triggers worktree isolation on dispatch, which fails on the
+non-git recipe-authoring outputRoot and breaks the shared
+`zerops_recipe` MCP state every recipe sub-agent depends on.
+
 Why multi-file? The composed brief carries phase-entry, synthesis
 workflow, citation guides, platform principles, cross-service
 teaching, yaml-comment style rules, codebase metadata, recorded

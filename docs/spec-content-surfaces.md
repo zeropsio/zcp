@@ -6,12 +6,12 @@ This spec exists because recipe content quality has drifted below the bar across
 
 The spec is the ground truth that the content-authoring sub-agent (see [implementation-v8.94-content-authoring.md](implementation-v8.94-content-authoring.md)) reads as part of its brief, and the ground truth that editorial reviews evaluate against. It is also the source of truth for `internal/recipe/surfaces.go::SurfaceContract` — every surface's `FormatSpec` field anchors into a section of this file by URL fragment, so the heading anchors are load-bearing.
 
-The empirical floor for every contract below is two reference recipes:
+The empirical floor for every contract below is anchored on the human-authored reference recipe:
 
-- [`/Users/fxck/www/recipes/laravel-jetstream/`](../../../recipes/laravel-jetstream/) + [`/Users/fxck/www/laravel-jetstream-app/`](../../../laravel-jetstream-app/) — human-authored, the readability + voice floor.
-- [`/Users/fxck/www/recipes/laravel-showcase/`](../../../recipes/laravel-showcase/) + [`/Users/fxck/www/laravel-showcase-app/`](../../../laravel-showcase-app/) — early recipe-flow output, the mechanism-density floor.
+- [`/Users/fxck/www/recipes/laravel-jetstream/`](../../../recipes/laravel-jetstream/) + [`/Users/fxck/www/laravel-jetstream-app/`](../../../laravel-jetstream-app/) — human-authored, the readability + voice floor and the canonical calibration target.
+- [`/Users/fxck/www/recipes/laravel-showcase/`](../../../recipes/laravel-showcase/) + [`/Users/fxck/www/laravel-showcase-app/`](../../../laravel-showcase-app/) — prior engine output, retained as data only, not as a target. (laravel-showcase is engine output — referenced for historical density data only; do NOT calibrate new rules against it.)
 
-Both references agree on the structural shape of every surface within ±20%. Where the contracts below name caps, those caps are observed in both references — not invented. When the contracts and a run's deliverable disagree, the deliverable is wrong.
+Where the contracts below name caps, those caps trace to the human-authored anchor — not invented. When the contracts and a run's deliverable disagree, the deliverable is wrong.
 
 ---
 
@@ -29,7 +29,7 @@ None of these are caught by token-level checks ("names a Zerops mechanism", "nam
 
 ## Per-surface line-budget table
 
-Hard caps for every surface. Both reference recipes settle within these caps; run-14 violated three of them by 2-3×. The caps are part of every `SurfaceContract` and are enforced structurally at finalize.
+Hard caps for every surface. The human-authored jetstream reference settles within these caps; showcase data is consistent but is not the calibration source. Run-14 violated three of them by 2-3×. The caps are part of every `SurfaceContract` and are enforced structurally at finalize.
 
 | Surface | Hard line cap | Hard item cap | Reader |
 |---|---|---|---|
@@ -39,7 +39,7 @@ Hard caps for every surface. Both reference recipes settle within these caps; ru
 | **Tier `import.yaml` comments** | 40 indented comment lines per tier | 3–5 lines per service block | Dashboard manifest reader |
 | Apps-repo README intro extract (between markers) | 1–3 sentences ≤ 500 chars | n/a | Apps-repo browser |
 | **Apps-repo Integration Guide** | n/a | **4–5 items per codebase** (incl. engine-emitted IG #1) | Porter bringing own code |
-| **Apps-repo Knowledge Base / Gotchas** | n/a | **no floor; cap 8 bullets per codebase** | Porter hitting a failure |
+| **Apps-repo Knowledge Base & Gotchas** | n/a | **no floor, no cap; bar is salience — may be empty when other surfaces cover the porter's needs** | Developer evaluating operation, or arriving via search after hitting a Zerops trap |
 | Apps-repo CLAUDE.md | ~30–50 lines (no hard cap) | 2–4 H2 sections, `claude /init`-shape, Zerops-free | AI/human operating the repo |
 | Apps-repo zerops.yaml comments | n/a | one comment block per directive group / per directive — author's choice | Porter editing the deploy config |
 
@@ -182,40 +182,70 @@ Cross-tier shifts surface implicitly through the contrast between adjacent tier 
 
 ---
 
-### Surface 5 — Per-codebase README: Knowledge Base / Gotchas fragment
+### Surface 5 — Per-codebase README: Knowledge Base & Gotchas fragment
 
-**Reader**: A developer hitting a confusing failure on Zerops and searching for what's wrong.
+**Reader**: A developer evaluating how to operate this codebase on Zerops, OR landing here via search after hitting a Zerops platform trap.
 
-**Purpose**: Surface platform traps that are non-obvious even to someone who read the docs.
+**Purpose**: Name forward-looking operational constraints, adaptation costs, and the platform traps a porter could hit that the IG and yaml comments don't already prevent.
 
-**The test**: *"Would a developer who read the Zerops docs AND the relevant framework docs STILL be surprised by this?"*
+**The test**: *"Does this help the reader make a sound operational decision — name a CONSTRAINT (platform limit, scaling ceiling, compatibility gap) or an ADAPTATION COST (what changes when you customize this recipe) that doesn't disappear if they follow the IG correctly?"*
 
-If the answer is "no, it's in the docs" → remove, don't ship as gotcha.
-If the answer is "no, it's in the framework docs" → framework quirk, not a gotcha.
-If the answer is "yes, it surprises you even knowing both" → this is a gotcha.
+**Two valid shapes — pick by content, not by template**:
 
-**Bullet shape (mandatory)**: `- **Topic** — 2–4 sentences.` Topic is bold, ≤ 6 words. Explanation is one paragraph. No sub-bullets. No code blocks inside KB unless the trap requires showing the offending string.
+(1) **Forward-looking H3 operational section** (jetstream-shape, canonical).
+One or more `### <Topic>` H3 headers with prose paragraphs, optional
+`> [!CAUTION]` callouts, and optional code blocks where the operational
+workflow warrants them. The voice is constraint-naming or
+scenario-naming — "When you swap apistage for a custom domain…",
+"Maintenance Mode", "Temporary Upscaling". There is NO symptom-first
+bullet requirement under this shape.
+
+(2) **Symptom-first gotcha bullet** (engine-convention, explicit opt-in).
+The existing `### Gotchas` H3 wrapper with `- **Topic** — body` bullets.
+Topic is bold, ≤ 6 words. Body is one paragraph. No sub-bullets. No
+code blocks inside the bullet unless the trap requires showing the
+offending string. Each bullet under this shape MUST carry a concrete
+observable symptom (HTTP status, quoted error string, measurable
+wrong-state phrase). Use this shape only when a concrete symptom is
+the right teaching tool — not as the default.
+
+**Shape (2) detection has TWO opt-in signals**: the explicit `### Gotchas`
+H3 wrapper, OR any `- **stem**` bold-bullet anywhere in the body. The
+latter is the implicit opt-in — an author writing bold-stem bullets has
+chosen the engine-convention shape regardless of whether they wrote the
+wrapper, and stem-shape enforcement fires accordingly. Pinned in
+`internal/recipe/validators_codebase.go::isSymptomFirstShape`.
+
+The bar is **salience, not count**: sparse-when-brief-is-enough. The
+historical "≤ 8 bullets per codebase" cap is retired; bullets and H3
+sections stand on their own merit.
+
+**May be empty**: If the IG, yaml comments, and CLAUDE.md cover
+everything a porter needs to operate this codebase, the KB fragment
+MAY be empty (markers present, body empty). Engine assembler permits
+this — an empty KB is a positive signal that the other surfaces are
+doing their job.
 
 **Belongs here**:
-- **Platform behaviors that surprise** (cross-service vars auto-inject project-wide → self-shadow trap; APP_KEY must be project-level for shared sessions across containers).
-- **Platform × library intersections** (Zerops injects NATS creds as separate vars; nats.js v2 strips URL-embedded creds silently; `php-nginx@8.4` lacks `phpredis` so use `predis`).
-- **Zerops-specific mechanisms with non-obvious failure modes** (MinIO-backed Object Storage rejects virtual-hosted style; `./dist/~` tilde strips directory wrapper; cache commands belong in `initCommands` not `buildCommands` because the build path differs from the runtime path).
-- **Cross-codebase contracts the recipe enforces** (schema ownership, entity duplication).
-- **Each gotcha has a concrete observable symptom** — HTTP status, quoted error string, measurable wrong-state — not just "it breaks".
+- **Forward-looking operational constraints** the IG can't encode — what to do during a maintenance window; how to temporarily upscale a tier; what API contract drift looks like under load.
+- **Adaptation costs** that surface when the porter customizes the recipe — "When you swap `apistage` for a custom domain, `API_URL` stops auto-tracking and needs manual rotation."
+- **Platform constraints the recipe inherits** — "Object Storage runs on a MinIO backend — no Glacier, no Object Lock"; "Subdomain access provides a Zerops-managed TLS cert; bring your own domain when you need a longer cert chain."
+- **Platform × library intersections** that the IG fix-shipping doesn't prevent — `nats.js` v2 strips URL-embedded creds, so if the porter switches from the IG-shipped separate-credential block to a connection-string assembly, the auth fails silently.
+- **Concrete platform traps with a search-discoverable symptom** (when shape (2) applies) — HTTP status, quoted error string, measurable wrong-state.
 
 **Does not belong here**:
+- **Bullets whose failure mode only fires when the porter UNDOES an IG-shipped directive** (self-inflicted-reversible). The IG itself prevents the symptom; the bullet teaches what would go wrong if you removed code the recipe ships. Belongs in CLAUDE.md or yaml comments at most, not in the recipe-page KB.
+- **Bullets describing pure framework or library facts not specific to Zerops** (e.g. "S3 ListObjectsV2 sorts lexicographically" — true on every cloud).
 - **Self-inflicted incidents** — code bugs the recipe accidentally shipped and then fixed. A silently-exiting seed script is a seed-script bug, not a platform trap. `zsc execOnce` honoring exit 0 is doing what its docs say.
 - **Framework-only quirks** — `setGlobalPrefix` collision with `@Controller`, Svelte 5 `mount()` vs legacy constructor, plugin-svelte peer-dep — these belong in framework docs, not here.
 - **npm / tooling metadata** — EPEERINVALID, package-lock conflicts, Node version mismatches — the porter's own tooling concern.
 - **Scaffold-code decisions** — "our `api.ts` does X", "we chose pattern Y", "tabs-over-scroll for browser-walk verification", "the queue panel polls every 700ms" — these belong in zerops.yaml comments, code comments, or get discarded entirely.
 - **Authoring-tool names** — `zerops_browser`, `zerops_subdomain`, `zerops_knowledge`, `zcli`, `zcp` are tools the recipe agent used, not tools the porter operates.
-- **Restatements of IG items** — if IG #4 teaches `forcePathStyle`, the gotcha must add value beyond that (e.g. the symptom, not the fix).
+- **Restatements of IG items** — if IG #4 teaches `forcePathStyle`, KB content here must add value beyond that (e.g. the operational scenario, not the fix).
 
-**Length**: **Cap 8 bullets per codebase. No floor** — bullets stand on their own merit, not on count. The empirical span across the two reference recipes is 2 (jetstream) to 7 (showcase) — count is shape-by-content, not target-by-floor. The Surface-5 editorial test (*"Would a developer who read the Zerops docs AND the framework docs STILL be surprised by this?"*) is the gating signal; bullets that pass it ship, bullets that fail get discarded. Run-14 shipped 11–12; that's over-collection above the cap.
+**Citation rule**: If KB content touches a topic covered by a `zerops_knowledge` guide (env-var-model, execOnce, rolling-deploys, object-storage, cross-service-refs), the content MUST cite that guide by name. Applies to BOTH sub-shapes — H3 section prose and `### Gotchas` bullet body alike. Pattern: *"The `<guide-id>` guide covers <basic mechanism>; the application-specific corollary is …"*. Writing new mental models for topics the platform already documents is how folk-doctrine ships.
 
-**Citation rule**: If the gotcha's topic is covered by a `zerops_knowledge` guide (env-var-model, execOnce, rolling-deploys, object-storage, cross-service-refs), the gotcha MUST cite that guide by name. Pattern: *"The `<guide-id>` guide covers <basic mechanism>; the application-specific corollary is …"*. Writing new mental models for topics the platform already documents is how folk-doctrine ships.
-
-**Anti-pattern ("folk-doctrine defect")**: Gotcha invents a mechanism because the author couldn't explain an observation. Example from v28 workerdev gotcha #1: *"The API codebase avoided the symptom because its resolver path happened to interpolate before the shadow formed; do not rely on that."* — This is fabricated. Both codebases had the same shadow pattern; both were broken. The correct rule (from the `env-var-model` guide) is "cross-service vars auto-inject project-wide — never declare `key: ${key}` at all." The author had access to that guide and didn't consult it.
+**Anti-pattern ("folk-doctrine defect")**: KB content invents a mechanism because the author couldn't explain an observation. Example from v28 workerdev gotcha #1: *"The API codebase avoided the symptom because its resolver path happened to interpolate before the shadow formed; do not rely on that."* — This is fabricated. Both codebases had the same shadow pattern; both were broken. The correct rule (from the `env-var-model` guide) is "cross-service vars auto-inject project-wide — never declare `key: ${key}` at all." The author had access to that guide and didn't consult it.
 
 ---
 
@@ -375,6 +405,22 @@ Concrete, named examples of each classification failure, so the content author c
 
 - **"`zsc execOnce` can record a successful seed that produced zero output"** (v28 apidev gotcha #1) — The seed script silently exited 0 with no stdout. `execOnce` correctly honored the exit code. This is a seed-script bug ("our script silently exited without inserting rows"), NOT a platform trap. `execOnce` is doing what its docs say. Fix: inspect the seed script and make it fail loudly on empty inserts. Discard the gotcha.
 
+### Self-inflicted-reversible (KB bullets whose symptom only fires when the porter UNDOES an IG-shipped directive)
+
+The recipe ships the fix; the bullet teaches what would go wrong if the porter removed it. The IG itself prevents the symptom. These belong in CLAUDE.md or yaml comments at most, never the recipe-page KB.
+
+- **"No `.env` file in the deployed tree"** (run-48 apidev) — Fires only if the porter creates a `.env` after deploying; the recipe ships `ignoreEnvFile: true` (or equivalent code/yaml directive). The porter following the IG never creates the file.
+- **"Custom response headers return `undefined` from the SPA but show up in `curl`"** (run-48 apidev) — Fires only if the porter removes `exposedHeaders` from the SPA's CORS config; the IG ships the `exposedHeaders` list.
+- **"`start:` directive on `base: static` is silently ignored"** (run-48 appdev) — Fires only if the porter adds a `start:` line under `base: static`; the recipe ships `base: static` without `start:`.
+- **"`relation \"job_log\" already exists`"** (run-48 workerdev) — Fires only if the porter adds a third codebase sharing an `execOnce` key; the recipe scopes per-codebase keys.
+- **"`ioredis` sends garbage `AUTH` commands when wired to Valkey with `password`"** (run-48 workerdev) — Fires only if the porter aliases a cache password env var; the recipe omits the cache password in `envVariables`.
+
+### Pure framework / library / cloud facts unrelated to Zerops (should have been discarded)
+
+The fact is true on any cloud, any deployment shape. Zerops is not party to the symptom.
+
+- **"`ListObjectsV2` returns oldest-first, not newest-first"** (run-48 apidev) — Pure S3-spec behavior; S3-compatible APIs sort lexicographically regardless of cloud. A porter who has integrated any S3-compat backend has hit this. Belongs in framework / library docs, not in a Zerops recipe's KB.
+
 ### Framework quirks (should have been discarded)
 
 - **"`app.setGlobalPrefix('api')` collides with `@Controller('api/...')` decorators"** (v28 apidev gotcha #5) — Pure NestJS framework fact. Zerops is not involved. A porter using NestJS already knows or will learn this from NestJS docs. Belongs in framework docs or code comments.
@@ -393,7 +439,7 @@ Concrete, named examples of each classification failure, so the content author c
 
 ### Surface-2 contract violation: ladder content inside extract markers
 
-- **Run-14 tier READMEs (all six)** wrap ~35 lines of ladder content (Shape at a glance / Who fits / How iteration works / What you give up / When to outgrow / What changes at next tier) inside the `<!-- #ZEROPS_EXTRACT_START:intro# -->` markers. The recipe-page UI renders the marker contents as the tier-card description. Both reference recipes (laravel-jetstream + laravel-showcase) wrap a single sentence. The 35-line ladder shows up in the recipe page UI as a 35-line "card description" — wrong rendering, wrong reader.
+- **Run-14 tier READMEs (all six)** wrap ~35 lines of ladder content (Shape at a glance / Who fits / How iteration works / What you give up / When to outgrow / What changes at next tier) inside the `<!-- #ZEROPS_EXTRACT_START:intro# -->` markers. The recipe-page UI renders the marker contents as the tier-card description. The laravel-jetstream reference wraps a single sentence (laravel-showcase is consistent but was engine output, cited for historical context only). The 35-line ladder shows up in the recipe page UI as a 35-line "card description" — wrong rendering, wrong reader.
 
 ### Fabricated yaml field names in import.yaml comments
 
@@ -452,7 +498,7 @@ Single-question tests to apply during self-review before publishing.
 - **Tier README extract** → "Does this 1–2 sentence card description tell a porter which tier to click?"
 - **Tier import.yaml comment** → "Does each service block explain a decision (why this scale / mode / presence), not narrate what the field does?"
 - **IG item** → "Would a porter bringing their own code need to copy THIS exact content into their own app?"
-- **Gotcha (KB bullet)** → "Would a developer who read the Zerops docs AND the framework docs STILL be surprised by this?"
+- **KB entry (H3 section or `### Gotchas` bullet)** → "Does this help the reader make a sound operational decision — name a CONSTRAINT or an ADAPTATION COST that doesn't disappear if they follow the IG correctly?"
 - **CLAUDE.md entry** → "Is this useful for operating THIS repo — not for deploying or porting?"
 - **zerops.yaml comment** → "Does this explain a trade-off the reader couldn't infer from the field name?"
 

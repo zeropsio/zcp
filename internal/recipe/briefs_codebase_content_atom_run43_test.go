@@ -5,37 +5,24 @@ import (
 	"testing"
 )
 
-// briefs_codebase_content_atom_run43_test.go — Run-43 P1 substrate pin.
+// briefs_codebase_content_atom_run43_test.go — Run-43 P1 substrate pin,
+// updated for Run-48 Surface 5 recalibration.
 //
-// Spec citation: docs/spec-content-surfaces.md §"Fact classification
-// taxonomy" → litmus #4 (Self-inflicted) + §"Self-inflicted (should
-// have been discarded)" + §"Surface 7 — Per-codebase `zerops.yaml`
-// comments" (anti-cross-reference voice rule).
+// Spec citation: docs/spec-content-surfaces.md §"Surface 5 —
+// Per-codebase README: Knowledge Base & Gotchas fragment" (dual-shape
+// + self-inflicted-reversible) + §"Surface 7 — Per-codebase
+// `zerops.yaml` comments" (anti-cross-reference voice rule) +
+// §"Counter-examples — Self-inflicted-reversible".
 //
-// Run-42 dogfood ([plans/run-42-validation.md "Recommended next
-// action" §"Substrate priority 1"]) exposed three contradictions
-// inside `briefs/codebase-content/synthesis_workflow.md`:
-//
-//  1. The authoring-order step #2 (yaml-comment authoring) blessed
-//     "see IG #N" cross-surface deferrals — voice the goldens never
-//     use and the run-42 refinement-2 audit's `cross-surface-reference`
-//     class flags.
-//  2. The KB discriminator's tail rule said "a single anchor anywhere
-//     flips to KB-eligible" — permissive enough to pass the run-42
-//     self-inflicted bullets (apidev KB #2 `UnknownError`, apidev
-//     KB #3 `X-Cache returns null`) because each had a shallow
-//     Zerops-anchor pass (object-storage gateway / project-scope
-//     subdomains).
-//  3. The KEEP example block listed `fetch().headers.get('X-Cache')
-//     returns null` as an intersection KB-eligible bullet — exactly
-//     the run-42 self-inflicted #3 the spec routes to DISCARD.
-//
-// And separately the in-body completion 8.5 anchor used
-// `${appVersionId}-seed` as a "stamps each key into a per-deploy
-// ledger and skips it if the key already ran" example, which
-// contradicts `internal/recipe/content/principles/init-commands-model.md`
-// (`${appVersionId}` resolves to a fresh value every deploy → re-runs
-// every deploy; `seed` shape is once-ever and needs a static key).
+// Run-42 dogfood exposed three contradictions in
+// `briefs/codebase-content/synthesis_workflow.md` (yaml cross-ref
+// voice, permissive KB discriminator, KEEP-vs-DISCARD mis-classifying
+// X-Cache). The Run-48 audit replaced the run-42 KB discriminator
+// entirely with the **self-inflicted-reversible litmus**: refuse KB
+// content whose symptom fires only when the porter UNDOES a recipe-
+// shipped directive. The new brief teaches dual-shape (forward-looking
+// H3 OR `### Gotchas` bullets), permits empty KB, and routes the
+// run-48 audit's 5 named cases to CLAUDE.md / yaml comments.
 
 // TestSynthesisWorkflow_P1_YamlCommentVoiceIsSelfContained — pin
 // the authoring-order step #2 edit. yaml comments must state
@@ -77,99 +64,126 @@ func TestSynthesisWorkflow_P1_YamlCommentVoiceIsSelfContained(t *testing.T) {
 	}
 }
 
-// TestSynthesisWorkflow_P1_KBDiscriminatorAddsSelfInflictedLitmus —
-// pin the litmus #4 self-inflicted test in the KB-classification
-// section. The tail rule "a single anchor anywhere flips to KB-
-// eligible" is replaced with the porter-following-IG#1-verbatim test.
-func TestSynthesisWorkflow_P1_KBDiscriminatorAddsSelfInflictedLitmus(t *testing.T) {
+// TestSynthesisWorkflow_KBSelfInflictedReversibleLitmus — Run-48
+// recalibration. The brief teaches the self-inflicted-reversible
+// litmus: refuse KB content whose symptom fires only when the porter
+// UNDOES a directive the recipe ships. Anchors are positive (presence)
+// + negative (the old permissive single-anchor-flip rule is gone).
+func TestSynthesisWorkflow_KBSelfInflictedReversibleLitmus(t *testing.T) {
 	t.Parallel()
 	body, err := readAtom("briefs/codebase-content/synthesis_workflow.md")
 	if err != nil {
 		t.Fatalf("read synthesis_workflow.md: %v", err)
 	}
 	for _, want := range []string{
-		"Self-inflicted litmus test",
-		"copying IG #1's shipped",
-		"deviates from the shipped config",
-		"discard as `self-inflicted`",
-		"Fact classification taxonomy",
+		"Self-inflicted-reversible litmus",
+		"UNDOES a directive",
+		"null reader",
+		"kb-self-inflicted-reversible",
+		"ignoreEnvFile",
+		"exposedHeaders",
+		"`base: static` without `start:`",
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("synthesis_workflow.md missing self-inflicted-litmus anchor %q", want)
+			t.Errorf("synthesis_workflow.md missing self-inflicted-reversible litmus anchor %q", want)
 		}
 	}
-	// Negative — the permissive "single anchor flips to KB-eligible"
-	// must be gone.
+	// Negative — the run-42 permissive rule must be gone.
 	if strings.Contains(body, "A single anchor anywhere flips to KB-eligible") {
 		t.Error("KB discriminator still carries the permissive single-anchor-flips rule")
 	}
 }
 
-// TestSynthesisWorkflow_P1_DiscardExampleStorageEndpoint — pin the
-// worked DISCARD example for the storage_apiHost UnknownError pattern
-// from run-42 (apidev KB #2). A porter following IG #1's shipped
-// `S3_ENDPOINT: ${storage_apiUrl}` never composes the broken
-// `http://${storage_apiHost}` URL → self-inflicted → DISCARD.
-func TestSynthesisWorkflow_P1_DiscardExampleStorageEndpoint(t *testing.T) {
+// TestSynthesisWorkflow_KBDualShape — Run-48 recalibration. The brief
+// must teach BOTH valid Surface 5 shapes: forward-looking H3
+// operational sections AND symptom-first `### Gotchas` bullets, with
+// "pick by content, not by template" guidance.
+func TestSynthesisWorkflow_KBDualShape(t *testing.T) {
 	t.Parallel()
 	body, err := readAtom("briefs/codebase-content/synthesis_workflow.md")
 	if err != nil {
 		t.Fatalf("read synthesis_workflow.md: %v", err)
 	}
 	for _, want := range []string{
-		"**DISCARD — `self-inflicted`**",
-		"`UnknownError` on first `GetObject`",
-		"http://${storage_apiHost}",
-		"${storage_apiUrl}",
-		"Run-42 dogfood: apidev KB #2",
+		"two valid shapes",
+		"Forward-looking H3 operational sections",
+		"jetstream-shape",
+		"### Gotchas",
+		"symptom-first",
+		"Pick the shape that fits the content",
 	} {
 		if !strings.Contains(body, want) {
-			t.Errorf("synthesis_workflow.md missing storage_apiHost DISCARD worked-example anchor %q", want)
+			t.Errorf("synthesis_workflow.md missing dual-shape anchor %q", want)
 		}
 	}
 }
 
-// TestSynthesisWorkflow_P1_XCacheRemovedFromKeepList — the
-// `fetch().headers.get('X-Cache') returns null` example was on the
-// KEEP list; spec §"Self-inflicted" routes it to DISCARD because a
-// porter following IG #1's shipped CORS config (with
-// `exposedHeaders`) never hits it. Pin that the KEEP block no longer
-// lists it as intersection and the DISCARD block now does list it as
-// self-inflicted.
-func TestSynthesisWorkflow_P1_XCacheRemovedFromKeepList(t *testing.T) {
+// TestSynthesisWorkflow_KBMayBeEmpty — Run-48 recalibration permits
+// an empty KB fragment when the IG / yaml comments / CLAUDE.md cover
+// everything the porter needs. The brief must teach this as a
+// positive outcome (not a defect) and warn against padding.
+func TestSynthesisWorkflow_KBMayBeEmpty(t *testing.T) {
 	t.Parallel()
 	body, err := readAtom("briefs/codebase-content/synthesis_workflow.md")
 	if err != nil {
 		t.Fatalf("read synthesis_workflow.md: %v", err)
 	}
-	// Locate KEEP block.
-	idx := strings.Index(body, "**KEEP** (intersection):")
-	if idx < 0 {
-		t.Fatal("KEEP block heading missing")
-	}
-	keepEnd := strings.Index(body[idx:], "**DISCARD")
-	if keepEnd < 0 {
-		t.Fatal("DISCARD block boundary missing after KEEP")
-	}
-	keepWindow := body[idx : idx+keepEnd]
-	if strings.Contains(keepWindow, "X-Cache") {
-		t.Error("KEEP block still lists X-Cache example; spec routes to DISCARD (self-inflicted)")
-	}
-	// DISCARD block — explicit X-Cache shape lands as a worked
-	// example. The block lives further down so search from idx.
-	tail := body[idx:]
-	discardIdx := strings.Index(tail, "**DISCARD — `self-inflicted`**")
-	if discardIdx < 0 {
-		t.Fatal("DISCARD self-inflicted block missing")
-	}
-	discardWindow := tail[discardIdx:]
 	for _, want := range []string{
-		"X-Cache",
-		"exposedHeaders",
-		"Run-42 dogfood: apidev KB #3",
+		"KB may be empty",
+		"positive signal",
+		"Don't pad",
 	} {
-		if !strings.Contains(discardWindow, want) {
-			t.Errorf("DISCARD self-inflicted block missing X-Cache worked-example anchor %q", want)
+		if !strings.Contains(body, want) {
+			t.Errorf("synthesis_workflow.md missing empty-KB-permitted anchor %q", want)
+		}
+	}
+}
+
+// TestSynthesisWorkflow_KBPluralAudience — Run-48 recalibration
+// teaches KB serves BOTH evaluation and search audiences. The brief
+// must call out the plural-audience framing and explicitly name the
+// "null reader" (a porter who broke the recipe by following it).
+func TestSynthesisWorkflow_KBPluralAudience(t *testing.T) {
+	t.Parallel()
+	body, err := readAtom("briefs/codebase-content/synthesis_workflow.md")
+	if err != nil {
+		t.Fatalf("read synthesis_workflow.md: %v", err)
+	}
+	for _, want := range []string{
+		"EVALUATING how to operate",
+		"arriving via SEARCH",
+		"null reader",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("synthesis_workflow.md missing plural-audience anchor %q", want)
+		}
+	}
+}
+
+// TestSynthesisWorkflow_KBURLCompositionDiscardExample — codex
+// code-review F5 carry-forward. The retired
+// `TestSynthesisWorkflow_P1_DiscardExampleStorageEndpoint` pinned a
+// worked example in the run-43 brief showing the
+// `http://${storage_apiHost}` (wrong) vs `${storage_apiUrl}` (correct)
+// URL-composition pattern as a DISCARD candidate. The Run-48 rewrite
+// teaches "porter undoes shipped directive" but did not carry forward
+// the URL-composition discard class — neither the brief nor the new
+// `kb-self-inflicted-reversible` gate's 5 patterns would catch a
+// `UnknownError on first GetObject` bullet. Pin the restored anchors
+// here.
+func TestSynthesisWorkflow_KBURLCompositionDiscardExample(t *testing.T) {
+	t.Parallel()
+	body, err := readAtom("briefs/codebase-content/synthesis_workflow.md")
+	if err != nil {
+		t.Fatalf("read synthesis_workflow.md: %v", err)
+	}
+	for _, anchor := range []string{
+		"storage_apiHost",
+		"storage_apiUrl",
+		"UnknownError",
+	} {
+		if !strings.Contains(body, anchor) {
+			t.Errorf("synthesis_workflow brief missing URL-composition discard anchor %q (Run-42 apidev KB #2 class — see codex code-review F5)", anchor)
 		}
 	}
 }

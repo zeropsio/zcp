@@ -603,119 +603,125 @@ framework config name IS the IG subject (*"Add zerops.yaml"*).
 
 ## Step 3 — Author KB (Surface 5)
 
-For each `CandidateSurface=CODEBASE_KB` fact, emit one entry in the
-single `codebase/<h>/knowledge-base` fragment.
+KB serves a plural audience: a developer EVALUATING how to operate
+this codebase on Zerops, OR arriving via SEARCH after hitting a real
+platform trap. Don't author for "the porter who already deployed and
+broke things by following the recipe correctly" — that's a null
+reader (the IG itself prevents the symptom).
 
-### KB shape is H3-rooted
+Single editorial test: *"Does this help the reader make a sound
+operational decision — name a CONSTRAINT (platform limit, scaling
+ceiling, compatibility gap) or an ADAPTATION COST (what changes when
+you customize this recipe) that doesn't disappear if they follow the
+IG correctly?"*
 
-Start the fragment with `### Topic`, then use paragraphs and/or bullets.
-Optional `> [!CAUTION]` callouts and fenced shell examples are fine
-when the mechanism warrants them. Cross-surface dedup: if IG already
-teaches a topic with code/diff, do NOT duplicate in KB.
+### KB has two valid shapes — pick by content
 
-Format reference for the flat-bullet shape:
+(1) **Forward-looking H3 operational sections** (jetstream-shape,
+canonical) — use for forward-looking workflows or constraints:
+maintenance, scaling, swap-the-managed-service, adaptation costs.
+Examples of section headers: `### Maintenance Mode`,
+`### Temporary Upscaling`, `### Custom Domain Rotation`. Prose
+paragraphs and optional `> [!CAUTION]` callouts; no symptom-first
+bullet requirement.
 
-```
-- **<symptom-first or directive-tightly-mapped stem>** — 2-4 sentences
-  explaining symptom + mechanism + fix at the platform level.
-```
+(2) **Symptom-first `### Gotchas` bullet list** (engine-convention,
+explicit opt-in) — use when a concrete symptom is the right teaching
+tool: HTTP status, quoted error string, observable wrong-state.
+Shape: `- **Topic** — 2-4 sentences.` Stem MUST carry a
+porter-searchable signal.
 
-### Pre-record classification — the 3-check discriminator
+Pick the shape that fits the content. Do NOT default to bullets if
+the content is forward-looking; do NOT default to `### Gotchas` if
+the content is genuinely a workflow.
 
-**Before recording a KB bullet, classify it.** Spec §337-358 routes
-`platform-invariant` + `intersection` → KB; `framework-quirk` +
-`library-metadata` + `self-inflicted` → DISCARD. The classification
-table above is the routing rule; below is the discriminator to walk
-for each candidate before `record-fragment` (mirrors refinement-pass
-Action 1a):
+### KB may be empty — that's a positive signal
 
-(i) **Walk the body, not the stem.** Look for ANY Zerops-side
-mechanism, concrete OR abstract. Concrete: `${db_*}`, `${broker_*}`,
-`${zeropsSubdomainHost}`, project-scope constants (`STAGE_*`/
-`DEV_*`), `zerops.yaml` directives, named managed services.
-Abstract: "project-scope URL constants", "the L7 balancer", "the
-auto-injected cross-service var", "container lifecycle". Both count.
+If the IG, yaml comments, and CLAUDE.md cover everything the porter
+needs, the KB fragment MAY be empty (or unrecorded). The engine
+assembler emits well-formed empty markers. Don't pad — three weak
+bullets dilute the porter's signal.
 
-(ii) **Will you cite a Zerops guide?** (`env-var-model`,
-`init-commands`, `managed-services-nats`, `object-storage`,
-`rolling-deploys`.) An inline cite means a Zerops thread.
+### Self-inflicted-reversible litmus — the load-bearing filter
 
-(iii) **"Different scaffold code?" test** — does the trap fire
-regardless of platform (any user of NestJS / Vite / CORS / HTTP
-hits it anywhere), or does it require this recipe's Zerops wiring
-to manifest (project-scope env in CORS allow-list, `zsc execOnce`
-with `${appVersionId}`, `${db_*}` injection, `readinessCheck` +
-SIGTERM)? Platform-agnostic → DISCARD. Zerops-required →
-intersection → KB.
+For every candidate KB entry (H3 section OR bullet), ask:
 
-Drop when (i) AND (ii) AND (iii) all return "no Zerops thread".
+> *Does the symptom fire only when the porter UNDOES a directive the
+> recipe already ships?*
 
-**(iv) Self-inflicted litmus test (decisive over a shallow
-Zerops-anchor pass).** Anchors alone don't promote to KB. Ask:
-would a porter copying IG #1's shipped `envVariables` block
-verbatim hit this trap? If NO — the trap fires only when the porter
-deviates from the shipped config — discard as `self-inflicted`.
-Spec §"Fact classification taxonomy" → litmus #4: *"Could this
-observation be summarized as 'our code did X, we fixed it to do Y'?
-If yes, discard."* The shipped IG #1 yaml encodes the fix; the
-porter cannot hit it without un-doing the fix.
+If YES → route to CLAUDE.md (or a yaml comment at the directive
+site). DO NOT put it on the recipe-page KB.
 
-KEEP only when (i)+(ii)+(iii) pass AND (iv) confirms the trap fires
-for a porter following IG #1's shipped envVariables verbatim.
+The discriminator: open the recipe's shipped `zerops.yaml` and IG
+slots. Find the directive whose REMOVAL would trigger the symptom.
+If the directive ships, the bullet has a null reader.
 
-**DROP** (framework / spec / library quirks):
+Run-48 audit examples — every one belongs OFF the recipe KB:
 
-- *"`@sveltejs/vite-plugin-svelte@^5` peer-requires Vite 6"* — pure
-  npm metadata; same trap on Vercel/Netlify/bare-Docker.
-- *"`createApplicationContext` + `app.listen()` crashes"* when body
-  teaches ONLY the NestJS factory contract with no yaml-shape
-  consequence — framework throws regardless of platform.
-- *"`@Controller('api')` collides with `setGlobalPrefix('api')`"* —
-  pure NestJS routing internals.
+- *"No `.env` file in the deployed tree"* — recipe ships
+  `ignoreEnvFile: true`. Move to CLAUDE.md.
+- *"Custom response headers undefined from SPA"* — IG ships
+  `exposedHeaders`. Move to yaml comment at the directive.
+- *"`start:` on `base: static` silently ignored"* — recipe ships
+  `base: static` without `start:`. Move to yaml comment.
+- *"`relation \"job_log\" already exists`"* — recipe scopes
+  per-codebase `execOnce` keys. Move to yaml comment.
+- *"`ioredis` AUTH against unauth Valkey"* — recipe omits cache
+  password alias. Move to yaml comment.
 
-**KEEP** (intersection):
+The engine's `kb-self-inflicted-reversible` gate refuses these at
+codebase-content close; applying the litmus at authoring time saves
+a refinement round-trip.
 
-- *"TypeORM `synchronize: true` corrupts schema on multi-replica
-  boot"* — framework fact (DDL on boot) AND platform fact
-  (`minContainers ≥ 2` parallel boots); porter following IG #1's
-  shipped yaml with `minContainers ≥ 2` hits it.
-- *"nats.js v2 strips URL-embedded creds silently"* — library fact +
-  `${broker_*}` injection; trap fires when porter tries Pattern B
-  (connection-string assembly), a legitimate alternative IG #1 does
-  NOT ship. Contrast with DISCARD below: no "alternative shape" a
-  porter would reach for — trap only fires by un-doing the fix.
+### Related discard class: wrong env-var composition
 
-**DISCARD — `self-inflicted`** (scaffold-time mistakes the author
-fixed before shipping):
+Same routing applies to bullets that fire only when the porter
+manually composes a URL the recipe ships pre-composed. Run-42
+apidev example: `**UnknownError on first GetObject**` (BAD
+candidate). The recipe ships `S3_ENDPOINT: ${storage_apiUrl}` — a
+pre-composed full URL (scheme + host + port). The symptom only fires
+when a porter hand-composes `http://${storage_apiHost}` instead,
+dropping the scheme/port that `${storage_apiUrl}` already encodes —
+same self-inflicted-reversible class (porter UNDOES the shipped
+directive). Route to a yaml comment at the `S3_ENDPOINT` directive
+or CLAUDE.md, NOT the recipe-page KB.
 
-- *"`UnknownError` on first `GetObject` because `S3_ENDPOINT` resolved
-  to `http://${storage_apiHost}`"* — earlier scaffold composed
-  `http://${storage_apiHost}`, hit 301, switched to shipped
-  `${storage_apiUrl}`. IG #1 ships `S3_ENDPOINT: ${storage_apiUrl}`;
-  porter following shipped envVariables verbatim never composes the
-  broken URL. (Run-42 dogfood: apidev KB #2 shipped this bullet;
-  spec §"Self-inflicted" routes to DROP.)
-- *"`fetch().headers.get('X-Cache')` returns null from the SPA"* —
-  scaffolded without `exposedHeaders`, hit cross-origin header
-  invisibility, added `exposedHeaders: ['X-Cache']`. The shipped IG
-  #1 config encodes the fix; porter following it hits zero of this.
-  (Run-42 dogfood: apidev KB #3 shipped this bullet; spec routes to
-  DROP.)
+### What still belongs in KB
 
-**Anti-pattern: the "headline test".** Classify by BODY, not stem.
-*"connect() crashes with Invalid URL"* with body citing
-`${broker_*}` injection + nats.js library parser quirk → KB
-(intersection); same stem with body mentioning only the framework
-library exception → pure library quirk, DISCARD.
+After the litmus, what survives:
 
-Applying this at authoring time reduces refinement load — the
-refinement-pass Action 1a is the safety net, not the primary filter.
+- **Forward-looking adaptation costs.** *"When you swap `apistage`
+  for a custom domain, `API_URL` stops auto-tracking and needs
+  manual rotation."* — Surfaces ONLY when the porter customizes;
+  the IG can't preempt it.
+- **Platform constraints the recipe inherits.** *"Object Storage
+  runs on a MinIO backend — no Glacier, no Object Lock."* —
+  Platform limit, no IG directive prevents.
+- **Platform × library intersections the IG fix-shipping doesn't
+  prevent.** *"`nats.js` v2 strips URL-embedded creds silently"* —
+  fires when the porter switches to a LEGITIMATE alternative shape
+  (connection-string assembly) the IG doesn't ship.
+- **Forward-looking operational workflows.** Maintenance,
+  temporary upscaling, swap-the-managed-service.
+- **Concrete platform traps with a search-discoverable symptom**
+  (shape (2)) — porter Googles the error string and lands here
+  expecting the Zerops-side context.
 
-Trade-offs are two-sided: name the chosen path AND the rejected
-alternative when one is namable. "Pin `synchronize: false`" alone is
-one-sided; "Pin `synchronize: false` and own DDL in an idempotent
-script — auto-sync's appeal is zero-config, but two containers racing
-the same DDL corrupt the schema intermittently" is two-sided.
+### Pure framework / library / cloud facts — DISCARD
+
+Facts true on every cloud don't belong here. *"S3 `ListObjectsV2`
+returns lexicographic order"* is true on AWS, Cloudflare R2, MinIO
+local Docker, GCS S3-compat. Belongs in framework / library docs.
+
+Same for: *"`@sveltejs/vite-plugin-svelte@^5` peer-requires Vite 6"*
+(npm metadata), *"`@Controller('api')` collides with
+`setGlobalPrefix('api')`"* (NestJS routing internals).
+
+Trade-offs are two-sided. *"Pin `synchronize: false`"* alone is
+one-sided; *"Pin `synchronize: false` and own DDL in an idempotent
+script — auto-sync's appeal is zero-config, but two containers
+racing the same DDL corrupt the schema intermittently"* names the
+chosen path AND the rejected alternative.
 
 ### KB body — inline the guide name when the validator requires it
 
