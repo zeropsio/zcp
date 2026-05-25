@@ -13,9 +13,9 @@ references-atoms: [develop-dev-server-reason-codes, develop-platform-rules-commo
 
 ### Dynamic-runtime dev server
 
-Dev-mode dynamic runtime containers start running `zsc noop` after
-deploy — no dev process is live until you start one. Action family
-on `zerops_dev_server`:
+Dev-mode dynamic runtimes deploy with `run.start` omitted — the
+runtime container idles and no dev process is live until you start
+one. Action family on `zerops_dev_server`:
 
 | Action | Use | Args |
 |---|---|---|

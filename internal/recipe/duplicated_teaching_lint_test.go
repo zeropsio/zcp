@@ -121,14 +121,15 @@ var loadBearingRules = []loadBearingRule{
 		fingerprintRE: regexp.MustCompile(`\*\*Y8 — no tier-promotion narrative inside yaml comments\.\*\*`),
 	},
 	{
-		// Run-22 R1-RC-2. Same-key shadow trap teaching at scaffold
-		// (platform_principles.md). Fingerprint: the BOLD anchor used
-		// only at the canonical site; the other lint
+		// Run-22 R1-RC-2 (rewritten for run-49 corpus-recalibration).
+		// Same-key trap teaching at scaffold (platform_principles.md),
+		// now scoped to project-level vars only. Fingerprint: the BOLD
+		// anchor used only at the canonical site; the other lint
 		// (TestNoBriefAtomTeachesSameKeyShadow) catches the YAML-block
 		// VIOLATION shape, this one catches the TEACHING claim.
 		name:          "same-key shadow trap teaching",
 		canonicalAtom: "internal/recipe/content/briefs/scaffold/platform_principles.md",
-		fingerprintRE: regexp.MustCompile(`\*\*Same-key shadow trap\*\* — declaring`),
+		fingerprintRE: regexp.MustCompile(`\*\*Self-shadow trap on project vars only\.\*\*`),
 	},
 	{
 		// Run-22 R3-C-1, migrated in run-34 Fix A from embedded_rubric.md

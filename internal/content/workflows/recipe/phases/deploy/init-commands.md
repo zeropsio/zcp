@@ -28,15 +28,17 @@ Expected outcomes:
 
 ## Post-deploy data verification
 
-After a successful deploy, confirm the expected application state exists — do not infer "initCommands ran" from "deploy returned ACTIVE" alone. If a prior failed deploy burned the execOnce key for a command, the subsequent successful deploy may skip that command silently. Query the database for seeded records, verify the search index contains documents, confirm the cache is populated. If the data is missing, the execOnce key was burned; recovery is below.
+After a successful deploy, confirm the expected application state exists — do not infer "initCommands ran" from "deploy returned ACTIVE" alone. If a prior failed deploy burned a **static** execOnce key, every subsequent deploy will skip that command silently. Query the database for seeded records, verify the search index contains documents, confirm the cache is populated. If the data is missing AND the key is static, follow the burn-recovery path below.
 
-## Recovering a burned execOnce key
+`${appVersionId}`-shaped keys do NOT need a burn-recovery path — each new deploy gets a fresh `${appVersionId}`, so a failed per-deploy initCommand re-fires automatically on the next deploy. If a per-deploy key's command is non-idempotent (a seed, a one-shot bootstrap), the key shape is the bug — switch to a static slug per `zerops-yaml/seed-execonce-keys.md`.
 
-A seed that crashed mid-insert can leave the per-deploy execOnce key marked done while the data is partial. The next retry of the same deploy will not re-run the seed because the platform considers it already executed. Symptom: the seeder output appears in the FIRST deploy's logs, then is absent on every subsequent retry, and the database contains partial data.
+## Recovering a burned static execOnce key
+
+A static-key seed that crashed mid-insert leaves the key marked done while the data is partial. Subsequent deploys skip the command because the static key already has a recorded run. Symptom: the seeder output appears in the FIRST deploy's logs, then is absent on every subsequent deploy, and the database contains partial data.
 
 Two recovery paths:
 
-1. **Force a fresh deploy version** — touch any source file (a whitespace edit is enough), then redeploy through `deploy-dev`. The new deploy version makes the per-deploy execOnce key re-fire. This is the preferred path because it preserves "never manually patch workspace state."
+1. **Bump the version suffix on the static key** — `bootstrap-seed` → next suffix (e.g. add a numeric or letter increment), or `<slug>.seed.<version>` → next version. Edit the static key in `zerops.yaml`, then redeploy through `deploy-dev`. The new key has no recorded run, so the seed fires once under the new name. This is the preferred path because the suffix bump is discoverable from the yaml — future operators see how recovery happened. The canonical authoring contract for the suffix grammar lives in the per-codebase `principles/init-commands-model.md` atom.
 2. **Hand-run the seed command once** — `ssh {hostname} "cd /var/www && {seed_command}"` then redeploy to confirm the fix lands. Use this only when the seed depends on a schema that exists only after a successful initCommand run.
 
 Every data gap at this substep is resolved either by recovery path (1) or (2) above. If initCommands truly did not fire after a successful ACTIVE deploy and neither recovery path applies, stop this substep and surface the condition. A recipe that only works because a human hand-ran migrate plus seed over SSH during the workspace build ships broken to end users who never see that manual fix — the substep gate blocks that outcome by design.

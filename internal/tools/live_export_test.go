@@ -225,7 +225,7 @@ func minimalLiveTestYAML(setupName string) string {
 		"      deployFiles: ./\n" +
 		"    run:\n" +
 		"      base: nodejs@22\n" +
-		"      start: zsc noop\n"
+		"      start: node index.js\n"
 }
 
 // extractServiceBlockLive mirrors the heuristic in cmd/zcp-launch-live —

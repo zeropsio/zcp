@@ -161,7 +161,11 @@ func TestBrief_Scaffold_InjectsDevLoopAtom(t *testing.T) {
 		t.Fatalf("BuildScaffoldBrief: %v", err)
 	}
 	for _, anchor := range []string{
-		"zsc noop",
+		// Dev-loop principle anchors. Post run-49 issue 3, dev setups omit
+		// `run.start` entirely (no more `zsc noop` keepalive) — the marker
+		// becomes the omit-start framing + the canonical agent-owned
+		// dev-server tool + the whole-source deployFiles rule.
+		"omit `run.start`",
 		"zerops_dev_server",
 		"deployFiles: .",
 	} {

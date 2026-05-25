@@ -109,7 +109,7 @@ func TestStitchYAML_RefusesEmptyWriteOverNonEmpty(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	yamlPath := filepath.Join(srcRoot, "zerops.yaml")
-	original := "zerops:\n  - setup: appdev\n    run:\n      base: nodejs@22\n      start: zsc noop --silent\n"
+	original := "zerops:\n  - setup: appdev\n    run:\n      base: nodejs@22\n"
 	if err := os.WriteFile(yamlPath, []byte(original), 0o600); err != nil {
 		t.Fatalf("write yaml: %v", err)
 	}

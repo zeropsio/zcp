@@ -115,10 +115,10 @@ default to
 - **Build ≠ runtime container.** Runtime packages → `run.prepareCommands`;
   build-only packages → `build.prepareCommands`. Build-time tools may
   not exist at run time; see guide `deployment-lifecycle`.
-- Env vars use `${hostname_KEY}` syntax for cross-service references
-  (Zerops rewrites at deploy from the named service's catalog). Local
-  vars in `run.envVariables` shadow project-level entries with the
-  same key.
+- Cross-service env vars use `${hostname_KEY}` syntax and must be
+  declared in `run.envVariables` under an own-key alias to reach the
+  app process. Project-level vars auto-inherit; same-key declaration
+  (`API_URL: ${API_URL}`) produces a literal-string shadow.
 - **`zerops_import override=true` is destructive** — REPLACES the
   service stack (container, code, env vars, filesystem). Reserved for
   explicit user-requested config changes (shared storage, scaling,
@@ -175,9 +175,9 @@ Client-side pre-flight rejects this with `INVALID_ZEROPS_YML` before any build t
 
 ### Dynamic-runtime dev server
 
-Dev-mode dynamic runtime containers start running `zsc noop` after
-deploy — no dev process is live until you start one. Action family
-on `zerops_dev_server`:
+Dev-mode dynamic runtimes deploy with `run.start` omitted — the
+runtime container idles and no dev process is live until you start
+one. Action family on `zerops_dev_server`:
 
 | Action | Use | Args |
 |---|---|---|

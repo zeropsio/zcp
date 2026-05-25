@@ -111,7 +111,8 @@ func TestIsDeferredStart(t *testing.T) {
 		class RuntimeClass
 		want  bool
 	}{
-		// True: dev-mode dynamic runtimes (zsc noop lifecycle)
+		// True: dev-mode dynamic runtimes (omitted-run.start lifecycle —
+		// container idles until zerops_dev_server starts the app process)
 		{"dev_dynamic", ModeDev, RuntimeDynamic, true},
 		{"standard_dynamic", ModeStandard, RuntimeDynamic, true},
 

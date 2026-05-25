@@ -155,13 +155,12 @@ surface owns a distinct content class per spec-content-surfaces §§4, 7:
    *"see IG #N"* / *"see KB"* meta-prose (spec §"Surface 7"
    anti-pattern; run-42 audit `cross-surface-reference` class).
    Worked **GOOD**: *"`DB_HOST` aliases `${db_hostname}` so app code
-   reads its own constant — pick an own-key name different from the
-   platform side or the per-service write self-shadows the
-   auto-inject."* Mechanism (alias rename) + reason (avoid
-   self-shadow) in one breath; no surface reference. Worked **BAD**:
-   *"`DB_HOST` is the own-key alias for `${db_hostname}` — see IG #5
-   for the same-key shadow trap..."* — meta-prose deferring to
-   another surface.
+   reads its own constant — swapping the managed service later is a
+   yaml-only edit, code keeps reading `DB_HOST`."* Mechanism (alias
+   rename) + reason (yaml-only swap) in one breath; no surface
+   reference. Worked **BAD**: *"`DB_HOST` is the own-key alias for
+   `${db_hostname}` — see IG #5 for why the platform requires
+   declared aliases..."* — meta-prose deferring to another surface.
 3. **Author KB last.** If a KB candidate restates an IG mechanism, drop
    it. KB only adds value when it surfaces a symptom mechanism-teaching
    wouldn't preempt.
@@ -170,24 +169,24 @@ Each Zerops mechanism is taught on exactly ONE surface (IG). The
 yaml comment owns its own field-adjacent WHY-choice in one breath —
 no cross-surface deferral (spec §"Surface 7" anti-pattern).
 
-### Worked example — same-key shadow trap (api codebase)
+### Worked example — own-key alias rename (api codebase)
 
-**BAD** — yaml comment teaches the mechanism (Surface 7 over-reaches
-into IG territory):
+**BAD** — yaml comment teaches the platform mechanism (Surface 7
+over-reaches into IG territory):
 
-- `zerops.yaml` comment (8 lines): *"Same-key aliasing self-shadows:
-  declaring `db_hostname: ${db_hostname}` writes the literal string
-  to OS env because the per-service envVariables write runs after
-  the auto-inject..."*
+- `zerops.yaml` comment (8 lines): *"Cross-service vars don't reach
+  the app process unless declared in run.envVariables. Aliasing under
+  your own key (`DB_HOST: ${db_hostname}`) is the only way to get the
+  value to the app, and lets the app code stay platform-agnostic..."*
 - IG #5: *"Pick own-key names DIFFERENT from the platform side..."*
 
 Cross-surface duplication.
 
 **GOOD** — IG owns the full mechanism + adapt-path; yaml comment is
 short, self-contained, field-adjacent: *"`DB_HOST` aliases
-`${db_hostname}` — same-key would self-shadow the auto-inject."*
-Mechanism (alias rename) + reason (avoid self-shadow) in one breath;
-no "see IG #5" deferral.
+`${db_hostname}` so swapping the managed service later is a yaml-only
+edit — app code keeps reading `DB_HOST`."* Mechanism (alias rename) +
+reason (yaml-only swap) in one breath; no "see IG #5" deferral.
 
 ### Yaml comments stand alone
 
@@ -257,22 +256,24 @@ invoke `zerops_dev_server`, `zerops_deploy`, `zcli`, or "the agent".
 Name the **outcome** + **canonical porter mechanism**, not the
 authoring tool that sets it up.
 
-**FAIL**: ``# `zsc noop --silent` keeps the container alive — the
-agent owns the long-running process via `zerops_dev_server`...`` —
-"agent owns" + "zerops_dev_server" both leak.
+**FAIL**: ``# Whole-source deployFiles so the agent's SSHFS edits
+land on the container...`` — "the agent" + SSHFS-as-authoring-tool
+both leak.
 
-**PASS** (laravel-showcase apidev/zerops.yaml dev start):
+**PASS** (laravel-showcase apidev/zerops.yaml dev `deployFiles: [.]`):
 
 ```yaml
-# `zsc noop --silent` keeps the container alive without binding
-# the runtime to a foreground process — the dev container is a
-# remote-development workspace, the porter SSHs in and runs
-# `npm run start:dev` (or framework-equivalent watcher) by hand.
-# Code edits over SSHFS rebuild in place, no redeploy.
+# `deployFiles: [.]` ships the whole source tree on every dev deploy
+# — the dev container is a remote-development workspace, the porter
+# SSHs in and runs `npm run start:dev` (or framework-equivalent
+# watcher) by hand. Edits over SSHFS rebuild in place, no redeploy.
+# Narrowing to `[dist, package.json]` would wipe the source on the
+# next cycle.
 ```
 
-Mechanism named (zsc noop keeps container alive), porter affordance
-named (SSH in, run framework watcher), no authoring-tool token.
+Mechanism named (whole-source deploy preserves the tree across
+iterations), porter affordance named (SSH in, run framework watcher),
+no authoring-tool token.
 
 ## Citation map (BINDING for KB and IG)
 

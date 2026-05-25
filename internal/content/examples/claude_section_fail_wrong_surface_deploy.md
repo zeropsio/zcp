@@ -16,7 +16,9 @@ title: "CLAUDE.md section restates deploy instructions that belong in IG"
 > 4. Restart the service with `start: node dist/main.js`.
 >
 > You can also add `deploy.readinessCheck` to the prod setup to gate
-> traffic during rolling deploys at `minContainers: 2` on env 4+.
+> traffic until the new container answers HTTP 200 — the platform
+> default rolling-deploy cutover (`temporaryShutdown: false`) waits
+> on this probe before removing the old container.
 
 **Why this fails the CLAUDE.md test.**
 This is deploy content — the mechanics of how a production deploy

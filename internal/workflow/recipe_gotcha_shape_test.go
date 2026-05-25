@@ -44,7 +44,7 @@ func TestClassifyGotcha(t *testing.T) {
 			want: ShapeAuthentic,
 		},
 		{
-			name: "real — worker has no HTTP ports (zsc noop)",
+			name: "real — worker has no HTTP ports (run.start omitted)",
 			stem: "Worker has no HTTP ports",
 			body: "Never add ports, healthCheck, or readinessCheck to zerops.yaml. The process stays alive via the NATS subscription loop, not by listening on a port.",
 			want: ShapeAuthentic,

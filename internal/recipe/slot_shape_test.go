@@ -305,7 +305,7 @@ func TestCheckSlotShape_ClaudeMD_AllowsZeropsHeading_BriefTeachingHandlesIt(t *t
 
 func TestCheckSlotShape_ClaudeMD_Allows_zsc_Token_BriefTeachingHandlesIt(t *testing.T) {
 	t.Parallel()
-	body := "## Build & run\n- npm test\n## Architecture\n- run zsc noop\n- src/"
+	body := "## Build & run\n- npm test\n## Architecture\n- run zsc execOnce\n- src/"
 	if msgs := checkSlotShape("codebase/api/claude-md", body); len(msgs) > 0 {
 		t.Errorf("claude-md with `zsc` token must pass slot-shape (R2-5); got %v", msgs)
 	}
@@ -400,7 +400,7 @@ func TestClaudeMDGuard_StructuralOnly(t *testing.T) {
 	}{
 		{
 			name:       "structural pass with bare hostnames + zsc token",
-			body:       "# api\n\nbody intro.\n\n## Build & run\n- npm test\n- ssh apidev 'zsc noop --silent'\n\n## Architecture\n- connect to db.local\n- search via meilisearch\n",
+			body:       "# api\n\nbody intro.\n\n## Build & run\n- npm test\n- ssh apidev 'zsc execOnce ${appVersionId} -- node scripts/migrate.js'\n\n## Architecture\n- connect to db.local\n- search via meilisearch\n",
 			mustRefuse: false,
 		},
 		{

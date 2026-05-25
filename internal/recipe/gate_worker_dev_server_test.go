@@ -3,7 +3,6 @@ package recipe
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -14,13 +13,10 @@ func TestGateWorkerDevServerStarted_RefusesWhenAttestationMissing(t *testing.T) 
 	if err := os.MkdirAll(srcRoot, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	yamlBody := strings.Join([]string{
-		"zerops:",
-		"  - setup: dev",
-		"    run:",
-		"      base: nodejs@22",
-		"      start: zsc noop --silent",
-	}, "\n") + "\n"
+	// Dev setup with dynamic-runtime base and no run.start — the canonical
+	// post-run-49 shape. Gate fires because no worker_dev_server_started
+	// fact was recorded.
+	yamlBody := "zerops:\n  - setup: dev\n    run:\n      base: nodejs@22\n"
 	if err := os.WriteFile(filepath.Join(srcRoot, "zerops.yaml"), []byte(yamlBody), 0o644); err != nil {
 		t.Fatalf("write yaml: %v", err)
 	}
@@ -53,7 +49,7 @@ func TestGateWorkerDevServerStarted_PassesWithAttestationFact(t *testing.T) {
 	if err := os.MkdirAll(srcRoot, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	yamlBody := "zerops:\n  - setup: dev\n    run:\n      start: zsc noop --silent\n"
+	yamlBody := "zerops:\n  - setup: dev\n    run:\n      base: nodejs@22\n"
 	if err := os.WriteFile(filepath.Join(srcRoot, "zerops.yaml"), []byte(yamlBody), 0o644); err != nil {
 		t.Fatalf("write yaml: %v", err)
 	}
@@ -86,7 +82,7 @@ func TestGateWorkerDevServerStarted_PassesWithBypassFact(t *testing.T) {
 	if err := os.MkdirAll(srcRoot, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	yamlBody := "zerops:\n  - setup: dev\n    run:\n      start: zsc noop --silent\n"
+	yamlBody := "zerops:\n  - setup: dev\n    run:\n      base: nodejs@22\n"
 	if err := os.WriteFile(filepath.Join(srcRoot, "zerops.yaml"), []byte(yamlBody), 0o644); err != nil {
 		t.Fatalf("write yaml: %v", err)
 	}
@@ -112,16 +108,18 @@ func TestGateWorkerDevServerStarted_PassesWithBypassFact(t *testing.T) {
 	}
 }
 
-func TestGateWorkerDevServerStarted_SkipsCodebasesWithCompiledStart(t *testing.T) {
+func TestGateWorkerDevServerStarted_SkipsCodebasesWithOnlyProdSetup(t *testing.T) {
 	t.Parallel()
-	// api codebase with compiled start (no zsc noop) — gate doesn't apply,
-	// no attestation required, no violation.
+	// Codebase with a compiled prod setup only (no `setup: dev`) — gate
+	// doesn't apply, no attestation required, no violation. Mirrors the
+	// pre-run-49 "compiled-start" case where the gate didn't fire on
+	// platform-managed processes.
 	root := t.TempDir()
 	srcRoot := filepath.Join(root, "apidev")
 	if err := os.MkdirAll(srcRoot, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	yamlBody := "zerops:\n  - setup: prod\n    run:\n      start: node dist/main.js\n"
+	yamlBody := "zerops:\n  - setup: prod\n    run:\n      base: nodejs@22\n      start: node dist/main.js\n"
 	if err := os.WriteFile(filepath.Join(srcRoot, "zerops.yaml"), []byte(yamlBody), 0o644); err != nil {
 		t.Fatalf("write yaml: %v", err)
 	}
@@ -132,22 +130,78 @@ func TestGateWorkerDevServerStarted_SkipsCodebasesWithCompiledStart(t *testing.T
 	}
 	ctx := GateContext{Plan: plan, OutputRoot: root, FactsLog: newMemFactsLog(t, root)}
 	if v := gateWorkerDevServerStarted(ctx); len(v) != 0 {
-		t.Errorf("want 0 violations for compiled-start codebase, got %d", len(v))
+		t.Errorf("want 0 violations for compiled-only codebase, got %d", len(v))
 	}
 }
 
-func TestCodebaseHasNoopDevStart_DetectsCanonicalShape(t *testing.T) {
+func TestGateWorkerDevServerStarted_SkipsImplicitWebserverDev(t *testing.T) {
+	t.Parallel()
+	// Implicit-webserver dev setup (php-nginx) — no `zerops_dev_server`
+	// needed because the bundled webserver auto-serves on container boot.
+	// Gate must NOT fire even without an attestation fact.
+	root := t.TempDir()
+	srcRoot := filepath.Join(root, "phpdev")
+	if err := os.MkdirAll(srcRoot, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	yamlBody := "zerops:\n  - setup: dev\n    run:\n      base: php-nginx@8.4\n      documentRoot: public\n"
+	if err := os.WriteFile(filepath.Join(srcRoot, "zerops.yaml"), []byte(yamlBody), 0o644); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+	plan := &Plan{
+		Codebases: []Codebase{
+			{Hostname: "php", SourceRoot: srcRoot},
+		},
+	}
+	ctx := GateContext{Plan: plan, OutputRoot: root, FactsLog: newMemFactsLog(t, root)}
+	if v := gateWorkerDevServerStarted(ctx); len(v) != 0 {
+		t.Errorf("want 0 violations for implicit-webserver dev codebase, got %d (%+v)", len(v), v)
+	}
+}
+
+func TestGateWorkerDevServerStarted_SkipsStaticDev(t *testing.T) {
+	t.Parallel()
+	// Static dev setup — same exemption as implicit-webserver. Static
+	// runtimes auto-serve deployFiles and need no dev-server.
+	root := t.TempDir()
+	srcRoot := filepath.Join(root, "appdev")
+	if err := os.MkdirAll(srcRoot, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	yamlBody := "zerops:\n  - setup: dev\n    run:\n      base: static\n"
+	if err := os.WriteFile(filepath.Join(srcRoot, "zerops.yaml"), []byte(yamlBody), 0o644); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+	plan := &Plan{
+		Codebases: []Codebase{
+			{Hostname: "app", SourceRoot: srcRoot},
+		},
+	}
+	ctx := GateContext{Plan: plan, OutputRoot: root, FactsLog: newMemFactsLog(t, root)}
+	if v := gateWorkerDevServerStarted(ctx); len(v) != 0 {
+		t.Errorf("want 0 violations for static dev codebase, got %d (%+v)", len(v), v)
+	}
+}
+
+func TestCodebaseDevSetupIsDynamic_DetectsRuntimeClasses(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
 		body string
 		want bool
 	}{
-		{"canonical", "zerops:\n  - setup: dev\n    run:\n      start: zsc noop --silent\n", true},
-		{"single-quoted", "run:\n  start: 'zsc noop --silent'\n", true},
-		{"double-quoted", "run:\n  start: \"zsc noop --silent\"\n", true},
-		{"compiled-entry", "run:\n  start: node dist/main.js\n", false},
-		{"npx-serve", "run:\n  start: npx --no-install serve -s dist -l 3000\n", false},
+		{"dev-nodejs", "zerops:\n  - setup: dev\n    run:\n      base: nodejs@22\n", true},
+		{"dev-go", "zerops:\n  - setup: dev\n    run:\n      base: go@1\n", true},
+		{"dev-python", "zerops:\n  - setup: dev\n    run:\n      base: python@3.12\n", true},
+		{"dev-bun", "zerops:\n  - setup: dev\n    run:\n      base: bun@1.1\n", true},
+		{"dev-php-nginx", "zerops:\n  - setup: dev\n    run:\n      base: php-nginx@8.4\n", false},
+		{"dev-php-apache", "zerops:\n  - setup: dev\n    run:\n      base: php-apache@8.3\n", false},
+		{"dev-static", "zerops:\n  - setup: dev\n    run:\n      base: static\n", false},
+		{"dev-nginx", "zerops:\n  - setup: dev\n    run:\n      base: nginx@1.22\n", false},
+		{"only-prod", "zerops:\n  - setup: prod\n    run:\n      base: nodejs@22\n      start: node dist/main.js\n", false},
+		{"legacy-setup-name", "zerops:\n  - setup: appdev\n    run:\n      base: nodejs@22\n", true},
+		{"quoted-base", "zerops:\n  - setup: dev\n    run:\n      base: \"nodejs@22\"\n", true},
+		{"composite-base", "zerops:\n  - setup: dev\n    run:\n      base: alpine/nodejs@22\n", true},
 		{"empty", "", false},
 	}
 	for _, tc := range cases {
@@ -157,9 +211,9 @@ func TestCodebaseHasNoopDevStart_DetectsCanonicalShape(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, "zerops.yaml"), []byte(tc.body), 0o644); err != nil {
 				t.Fatalf("write yaml: %v", err)
 			}
-			got := codebaseHasNoopDevStart(dir)
+			got := codebaseDevSetupIsDynamic(dir)
 			if got != tc.want {
-				t.Errorf("codebaseHasNoopDevStart(%q) = %v, want %v", tc.name, got, tc.want)
+				t.Errorf("codebaseDevSetupIsDynamic(%q) = %v, want %v", tc.name, got, tc.want)
 			}
 		})
 	}

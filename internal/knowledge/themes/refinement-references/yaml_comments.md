@@ -76,20 +76,22 @@ field.
 
 ### Pass 4 — showcase tier-4 mechanism-with-light-field-token
 
-> *"  # Small production — minContainers: 2 guarantees two app containers at all"*
-> *"  # times, enabling rolling deploys with zero downtime (one container serves"*
-> *"  # traffic while the other rebuilds). Zerops autoscales RAM within"*
-> *"  # verticalAutoscaling bounds to absorb traffic spikes without manual"*
-> *"  # intervention."*
+> *"  # Small production — minContainers: 2 gives the service capacity for"*
+> *"  # concurrent traffic and absorbs a single-container crash without"*
+> *"  # dropping requests. Zerops autoscales RAM within verticalAutoscaling"*
+> *"  # bounds to absorb traffic spikes without manual intervention."*
 
 **Why this works**: comment opens with "Small production —" (tier
 identity, not field name), names `minContainers: 2` inline as part of
 the mechanism explanation (not as preamble), and explains *why* the
-field carries that value (rolling deploys with zero downtime). The
-inline `minContainers: 2` is a teaching anchor — the porter reading
-the comment can match the explanation to the literal field below.
-This is showcase-shape: looser than jetstream, but the field token
-serves the mechanism prose, not the other way around.
+field carries that value (capacity + crash tolerance). The inline
+`minContainers: 2` is a teaching anchor — the porter reading the
+comment can match the explanation to the literal field below. This
+is showcase-shape: looser than jetstream, but the field token serves
+the mechanism prose, not the other way around. **Rolling-deploy
+cutover is NOT cited** — that's the platform default
+(`temporaryShutdown: false`), works the same at any `minContainers`,
+and is a separate concern from why this service runs ≥2 containers.
 
 ### Pass 5 — showcase tier-4 worker block
 
@@ -124,15 +126,18 @@ the yaml.
 
 **Refined to**:
 
-> *"  # Two Svelte replicas behind the public subdomain keep the dashboard"*
-> *"  # available during rolling deploys — one serves traffic while the other"*
-> *"  # rebuilds. Bump minContainers when dashboard usage outgrows the"*
-> *"  # two-replica fan-out."*
+> *"  # Two Svelte replicas behind the public subdomain give the dashboard"*
+> *"  # capacity for concurrent users and absorb a single-container crash"*
+> *"  # without dropping requests. Bump minContainers when dashboard usage"*
+> *"  # outgrows the two-replica fan-out."*
 
 Field echo dropped. The `minContainers: 2` claim is now embedded in
 the mechanism prose ("Two Svelte replicas") rather than restated as
 a preamble. Friendly-authority "Bump ... when ..." added with a
-named porter signal.
+named porter signal. Rolling-deploy cutover is intentionally NOT
+mentioned — `temporaryShutdown: false` is the platform default and
+operates independently of `minContainers`; folding it into the
+multi-replica rationale conflates two orthogonal axes.
 
 ### Fail 2 — field-restatement preamble (run-16 tier-4 worker)
 
@@ -191,8 +196,9 @@ authority) to 9.0 is unambiguous when:
 
 - The comment ALREADY names the mechanism in addition to the field
   restatement (e.g. "minContainers: 2 — two replicas behind a queue
-  group keep deploys zero-downtime"). Field restatement is redundant
-  but the mechanism is present; reshape would be cosmetic. HOLD.
+  group share workload across containers"). Field restatement is
+  redundant but the mechanism is present; reshape would be cosmetic.
+  HOLD.
 - The comment is short (≤ 2 lines) and the field restatement IS the
   mechanism explanation — common in tier-3 (Stage) where the config
   is the teaching. HOLD.

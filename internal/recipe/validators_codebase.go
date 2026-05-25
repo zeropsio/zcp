@@ -710,7 +710,7 @@ var bulletTopicKeywords = map[string][]string{
 	},
 	"env-var-model": {
 		"env-var-model", "cross-service env",
-		"self-shadow", "envisolation",
+		"self-shadow",
 	},
 	"http-support": {
 		"http-support", "l7-balancer", "l7 balancer",

@@ -28,7 +28,7 @@ type SubdomainInput struct {
 // stateDir is the per-pid Work Session directory for ServiceMeta lookup. The
 // looked-up meta supplies Mode, which combines with the service's runtime
 // class to gate the L7-readiness probe — deferred-start runtimes (dev-mode
-// dynamic with `zsc noop --silent`) skip the probe, since 502 is the
+// dynamic with `run.start` omitted) skip the probe, since 502 is the
 // expected steady state until `zerops_dev_server action=start` runs.
 // Empty stateDir (no Work Session, recipe-authoring scaffold path) leaves
 // meta nil and the probe runs unconditionally.
@@ -85,7 +85,7 @@ func RegisterSubdomain(srv *mcp.Server, client platform.Client, httpClient ops.H
 		// Best-effort — timeout appends to Warnings, never fails the call.
 		//
 		// Deferred-start exception: dev-mode dynamic runtimes serve 502 by
-		// design (start command is `zsc noop --silent`; the real app starts
+		// design (no `run.start` — the container idles; the real app starts
 		// only via zerops_dev_server). Skip the probe so the response stays
 		// silent on the expected 502 — agents misread the warning as a
 		// failure (eval suite 20260503-211240, multiple scenarios).
@@ -106,16 +106,17 @@ func RegisterSubdomain(srv *mcp.Server, client platform.Client, httpClient ops.H
 
 // skipDeferredStartProbe returns true when the L7-readiness probe should be
 // silenced because the runtime is in deferred-start state (dev-mode dynamic
-// with `zsc noop --silent` boot command). Combines a ServiceMeta lookup
-// (Mode source) with a platform service lookup (RuntimeClass source) and
-// runs them through topology.IsDeferredStart.
+// with `run.start` omitted — the container boots idle, no app process).
+// Combines a ServiceMeta lookup (Mode source) with a platform service
+// lookup (RuntimeClass source) and runs them through topology.IsDeferredStart.
 //
 // Mode is target-relative via ServiceMeta.ModeFor — for a standard pair
 // (m.Mode = ModeStandard, m.StageHostname populated), an explicit
 // `zerops_subdomain action=enable` on the stage hostname must NOT skip
 // the probe. The stage runtime runs run.start; only the dev half is
-// zsc-noop. Reading meta.Mode directly previously treated both halves
-// as deferred and silenced legitimate 502 warnings on stage subdomains.
+// deferred-start (no `run.start`). Reading meta.Mode directly previously
+// treated both halves as deferred and silenced legitimate 502 warnings on
+// stage subdomains.
 //
 // Returns false when:
 //   - stateDir is empty (no Work Session — recipe-authoring scaffold path).

@@ -18,13 +18,14 @@ guide is silent.
 
 ## Managed services
 
-Cross-service env vars auto-inject project-wide under platform-specific
-keys (`${db_hostname}`, `${cache_port}`, `${broker_user}`,
-`${storage_apiUrl}`, `${<host>_zeropsSubdomain}`, etc.). Do NOT read
-those names directly in code — the code becomes platform-coupled.
+Cross-service env vars are reachable as interpolation tokens in the
+recipe yamls (`${db_hostname}`, `${cache_port}`, `${broker_user}`,
+`${storage_apiUrl}`, `${<host>_zeropsSubdomain}`, etc.). The app
+process sees a cross-service value as an OS env var ONLY when you
+declare an alias in `zerops.yaml run.envVariables`. Without the
+declaration the value is not in the process env at all.
 
-**Recommended pattern** — declare own-key aliases in
-`zerops.yaml run.envVariables`; code reads the own-key names:
+**Canonical pattern** — own-key aliases:
 
 ```yaml
 run:
@@ -38,45 +39,34 @@ run:
 ```
 
 ```js
-// application code
 const host = process.env.DB_HOST;
 const port = process.env.DB_PORT;
 ```
 
-The keys on the left differ from the platform-side keys on the right.
-Different-key aliasing does NOT self-shadow — the platform injects
-`db_hostname=...` and your envVariables writes `DB_HOST=...`; two
-distinct env entries.
+Left-hand keys are what code reads; right-hand tokens resolve at
+container start. Swapping a managed service later is a yaml-only
+edit — code keeps reading `DB_HOST`.
 
-**Same-key shadow trap** — declaring any per-service env under the
-SAME key as something already auto-injected self-shadows. The
-per-service `envVariables` write runs after the auto-inject; the
-literal `${KEY}` token wins; the OS env var becomes the literal
-string. Symptom: NATS `Invalid URL`, Postgres
-`getaddrinfo ENOTFOUND ${db_hostname}`, JWT signing produces literal
-"${APP_SECRET}" hashes.
+**Project-level vars are different** — vars set at project scope
+(`APP_SECRET`, `JWT_SECRET`, `API_URL` set at project level) auto-
+inherit into every container, runtime and build. No `run.envVariables`
+declaration needed — `process.env.APP_SECRET` works directly.
 
-The rule applies identically to:
-- **Cross-service auto-injects** — declaring
-  `db_hostname: ${db_hostname}` (or any
-  `<peer-host>_<key>: ${<peer-host>_<key>}`) self-shadows.
-- **Project-level envs** — declaring `APP_SECRET: ${APP_SECRET}` (or
-  `API_URL: ${API_URL}`, or any project-level secret /
-  URL constant under its own name) self-shadows the same way.
+**Self-shadow trap on project vars only.** Re-declaring a
+project-level var under the same name in `run.envVariables`
+(`API_URL: ${API_URL}`) overrides the auto-inherited value with the
+unresolved literal `${API_URL}` — the interpolator doesn't recurse
+back to project scope on the right-hand side. Symptom: `process.env
+.API_URL` is the literal string. Fix: delete the redundant line.
 
-Project-level envs and cross-service envs both auto-propagate to
-every container. Re-declaring them under the same name is never
-necessary.
+**Cross-service vars do not have this trap** — without a declaration
+in `run.envVariables` the value isn't in the process env, so there's
+nothing to shadow. Each cross-service alias is a NEW entry under
+your own key.
 
-**Right pattern**: rename to a different own-key
-(`API_SIGNING_KEY: ${APP_SECRET}` or `DB_HOST: ${db_hostname}`), OR
-omit the per-service declaration entirely (the auto-inject is already
-in the container's env).
-
-Reference: `internal/knowledge/guides/environment-variables.md` —
-fetch via `zerops_knowledge query=env-var-model` for the full
-treatment of project vs cross-service vars, build-time vs runtime
-scopes, and isolation modes.
+Reference: `zerops_knowledge query=env-var-model`. Atoms:
+`develop-env-var-model`, `develop-env-var-shell-usage`,
+`develop-reserved-env-names`.
 
 ## Alias-type contracts
 

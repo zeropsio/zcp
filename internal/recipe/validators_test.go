@@ -421,7 +421,7 @@ func TestValidateCLAUDE_UnderCap_Passes(t *testing.T) {
 	b.WriteString("Nodejs 22 REST service on Zerops — HTTP port 3000 with PostgreSQL sibling, Valkey cache, and an NATS broker.\n\n")
 	b.WriteString("## Zerops service facts\n\n")
 	b.WriteString("- Hostname `api`, port 3000, DB host `db`, cache `cache`, broker `broker`.\n")
-	b.WriteString("- Runtime base: `nodejs@22` (compiled) on the prod slot; dev slot runs `zsc noop --silent`.\n")
+	b.WriteString("- Runtime base: `nodejs@22` (compiled) on the prod slot; dev slot omits `run.start` and idles.\n")
 	b.WriteString("- Health endpoint `/health`; readiness probes it before traffic switches.\n")
 	b.WriteString("- Cross-service env vars inject `${db_hostname}`, `${cache_connectionString}`, `${broker_connectionString}`.\n\n")
 	b.WriteString("## Zerops dev\n\nDev slot is SSHFS-mounted at `/var/www/apidev/`. Run framework CLIs via SSH; never npm-install against the mount.\n\n")

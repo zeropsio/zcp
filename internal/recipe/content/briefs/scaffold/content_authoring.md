@@ -167,9 +167,9 @@ BAD  `Dev loop: \`zerops_dev_server action=start hostname=apidev command="npm ru
 GOOD `Deploy: edit, then commit + push to your Zerops-connected branch.`
 BAD  `Deploy: \`zerops_deploy targetService=apidev\`.`
 
-The platform's `start: zsc noop --silent` is background context — one
-line, factual, not the dev loop the porter follows. The porter starts
-the watcher themselves.
+The platform's "dev omits `run.start`, container idles" model is
+background context — one line, factual, not the dev loop the porter
+follows. The porter starts the watcher themselves.
 
 What goes here:
 - **Zerops service facts** — hostnames, port, runtime, subdomain, etc.
@@ -213,8 +213,10 @@ no teaching for a porter cloning the finished recipe.
 Operational rule: before recording a KB-eligible fact, ask: would a porter cloning this finished recipe (with the fix already applied) ever encounter this? If no, discard.
 
 Dev/prod process model + `zerops_dev_server` → `principles/dev-loop.md`.
-Implicit-webserver runtimes (php-nginx, static) skip `zsc noop` for
-their backend but may still need a dev-server for a compiled frontend.
+Implicit-webserver runtimes (php-nginx, static) also omit `run.start`
+(uniform with dynamic runtimes); their backend auto-serves via the
+bundled webserver, but a compiled frontend bundler still belongs under
+`zerops_dev_server`.
 
 Mount vs container execution-split → `principles/mount-vs-container.md`.
 Never `npm install` / `tsc` / `nest build` against the SSHFS mount.
