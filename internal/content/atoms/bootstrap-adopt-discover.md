@@ -12,6 +12,14 @@ references-fields: [workflow.ServiceSnapshot.Bootstrapped, workflow.ServiceSnaps
 
 Adoption attaches ZCP tracking to an existing runtime service without touching its code, configuration, or scale. After adopt close, the envelope reports each adopted hostname with `bootstrapped: true` and an empty close-mode / git-push capability — populated later when the develop session needs them.
 
+If you reached this atom by way of the `ADOPT_REQUIRED` rejection on a service-scoped tool, the right reflex was to fire adopt directly from the discover warning. The bootstrap-adopt session opens with a single committed call:
+
+```
+zerops_workflow action="start" workflow="bootstrap" route="adopt" intent="<one-line user task summary>"
+```
+
+Use the SAME `intent` string you'd pass to `workflow="develop"` afterwards — the intent threads through so you don't re-type it on the next workflow call. Placeholder strings (`"<task>"`, `"adopt existing"`) lose user context and break the develop-session continuity heuristic; phrase it as the actual scope the user requested.
+
 List what's there:
 
 ```

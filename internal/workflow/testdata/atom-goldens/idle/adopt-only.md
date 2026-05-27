@@ -61,6 +61,30 @@ the warning), `managed-dep` (db/cache/storage, no adoption concept),
 response also surfaces directive warnings naming exact recovery calls
 per state — read them before deriving anything from per-service flags.
 
+**FIRST CALL when discover surfaces adoptable services:** open the
+bootstrap-adopt session immediately, with the SAME intent string you'd
+pass to develop/deploy later. Do NOT probe with `workflow="develop"`
+expecting an ADOPT_REQUIRED redirect — the redirect works but costs a
+wasted round-trip + clutters the session log with a rejected start.
+
+Concrete shape (commits the route on the first call — skip the menu
+when adopt intent is already clear from discover output):
+
+```
+zerops_workflow action="start" workflow="bootstrap" route="adopt" intent="<one-line user task summary>"
+```
+
+Replace `<one-line user task summary>` with the actual task intent
+(e.g. `intent="redesign appdev homepage as tech blog"`) — NOT a
+placeholder, NOT a generic "adopt existing". The intent threads
+through to the develop session that follows, so phrasing it as the
+real task scope avoids a re-typed intent on the next call.
+
+Service-scoped tools (`workflow="develop"`, `zerops_deploy`,
+`zerops_verify`) reject with `ADOPT_REQUIRED` until adoption completes.
+That gate is structural backstop, not the primary path — read the
+warning, fire adopt directly.
+
 Services in project, `not bootstrapped`. Two primary paths, both
 legitimate; existing services stay independent either way:
 
