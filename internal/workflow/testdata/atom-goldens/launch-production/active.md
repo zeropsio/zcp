@@ -32,6 +32,8 @@ Six top-level statuses gate progress:
 
 ZCP has **zero standing access** to the production project. The one-shot key flows in via the `launchKey` parameter only during `publish` action; ZCP never writes it to state, logs, or audit trail. The MCP tool-call transcript itself records the parameter (that surface is your client's, not ZCP's) — generate the key right before `publish`, then revoke it in the Zerops dashboard the moment `launched` status returns.
 
+**Two-window key lifecycle.** During the launch window itself (between `publish` and `launched`), the same one-shot key MAY be reused for the small number of poll calls ZCP makes to drive the import + first-deploy sequence — re-prompting the user mid-launch would interleave with Zerops's async import + build pipeline. Once `launched` returns, the launch window is closed: **revoke the launch key in the Zerops dashboard** and switch to a fresh prod-scoped key for any subsequent production operations (verify, env reads, custom-domain DNS lookups). The launch key has full project mutation rights; leaving it active turns "zero standing access" into permanent admin access.
+
 ---
 
 ### Configure CD pipeline in Zerops dashboard
@@ -185,7 +187,7 @@ If the user explicitly hands you an existing project ID OR a project-scoped toke
 #### Then — apply suggestions from `sourceContext`
 
 - **`productionProjectName`** — `sourceContext.suggestedTargetName` (`<source>-dev` / `<source>-stage` → `<source>-prod`, else `<source>-prod` appended). Confirm name with user; don't silently rename.
-- **`targetService`** — `sourceContext.suggestedRuntime` when single. For standard-mode pairs the headline is the stage hostname (validated last-known-good); `devHostname` field discloses the iteration half. Either half is accepted as input — the handler normalizes internally. Managed deps are bundled implicitly.
+- **`targetService`** — `sourceContext.promotionHeadline` when single. For standard-mode pairs the headline is the stage hostname (validated last-known-good); `devHostname` field discloses the iteration half. Either half is accepted as input — the handler normalizes internally. When the canonical post-normalization differs, `sourceContext.targetServiceCanonical` echoes the form the bundle composer will use. Managed deps are bundled implicitly.
 - **`promotables`** — multi-runtime promotion. Pass an array of `{hostname, prodHostname?, prodSetupNameOverride?}` entries when more than one runtime is being promoted into the same prod project (monorepo with app + worker, or separate-repos with multiple services). Empty/absent → falls back to single-runtime from `targetService`. Production hostname derivation: `appdev`/`appstage` → `app`, `workerstage` → `worker`. Pass `prodHostname` to override.
 - **`region`** — optional, default `eu-central`.
 - **`customDomain`** — optional; ZCP emits DNS records + verification probes, user attaches in Zerops UI.

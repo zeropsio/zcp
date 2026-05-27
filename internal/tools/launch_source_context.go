@@ -35,11 +35,27 @@ type launchSourceContext struct {
 	// container itself (zcp@1) is filtered out so it never shows up as a
 	// promotion candidate.
 	AvailableRuntimes []runtimeChoice `json:"availableRuntimes,omitempty"`
-	// SuggestedRuntime is populated when AvailableRuntimes has exactly
+	// PromotionHeadline is populated when AvailableRuntimes has exactly
 	// one entry — the agent should default `targetService` to this value
-	// (always the dev-half hostname) without asking. When empty (zero or
-	// 2+ runtimes), the agent must select via user input.
-	SuggestedRuntime string `json:"suggestedRuntime,omitempty"`
+	// (the runtimeChoice.Hostname — stage-half for pairs, the only
+	// hostname for singletons). When empty (zero or 2+ runtimes), the
+	// agent must select via user input.
+	//
+	// Renamed from SuggestedRuntime in plan §P7 F7: "headline" matches
+	// what the user sees on the launch surface ("we'll promote
+	// `<hostname>`"), where SuggestedRuntime suggested a generic
+	// recommendation. The field still carries the same hostname.
+	PromotionHeadline string `json:"promotionHeadline,omitempty"`
+	// TargetServiceCanonical is the post-normalization hostname the
+	// launch composer will use as `TargetService` after pair-keyed
+	// collapse via normalizeTargetServiceForLaunch (stage-half input
+	// for a standard pair resolves to the dev-half). Disclosed so the
+	// agent can echo the actual key the bundle will reference without
+	// re-running the normalization mentally. Empty when
+	// PromotionHeadline is empty or the canonical form equals the
+	// headline (most common case for stage-half pair promotion and
+	// singleton runtimes).
+	TargetServiceCanonical string `json:"targetServiceCanonical,omitempty"`
 }
 
 // runtimeChoice is one promotable runtime in `AvailableRuntimes`. The
@@ -142,7 +158,14 @@ func gatherLaunchSourceContext(ctx context.Context, client platform.Client, sour
 			})
 		}
 		if len(out.AvailableRuntimes) == 1 {
-			out.SuggestedRuntime = out.AvailableRuntimes[0].Hostname
+			only := out.AvailableRuntimes[0]
+			out.PromotionHeadline = only.Hostname
+			// Canonical hostname is the dev-half of a pair (managed key
+			// of the bundle's TargetService). Only disclosed when it
+			// differs from the headline — same value would be noise.
+			if only.DevHostname != "" && only.DevHostname != only.Hostname {
+				out.TargetServiceCanonical = only.DevHostname
+			}
 		}
 	}
 	if out.SourceProjectName == "" && len(out.AvailableRuntimes) == 0 {

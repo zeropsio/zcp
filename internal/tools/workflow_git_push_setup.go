@@ -199,6 +199,7 @@ func handleGitPushSetup(
 			"recommendedIntegration": "actions",
 			"prompt":                 gitPushWalkthroughPrompt(rt, input.Service),
 			"nextStep":               gitPushWalkthroughNextStep(rt, input.Service),
+			"steps":                  gitPushWalkthroughSteps(rt, input.Service),
 		}, stateDir)), nil, nil
 	}
 
@@ -474,6 +475,57 @@ func gitPushWalkthroughNextStep(rt runtime.Info, service string) string {
 		return fmt.Sprintf("After collecting inputs: 1) confirm capability with all three values: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<url> gitToken=<PAT>. Handler probes auth, writes GIT_TOKEN as sensitive project env, restarts push-source, stamps configured. 2) wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\".", service, service)
 	}
 	return fmt.Sprintf("After collecting inputs: 1) confirm capability: zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<url>. Handler probes the remote using your local git credentials, syncs origin, stamps configured. 2) wire CI: zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\".", service, service)
+}
+
+// gitPushWalkthroughStep is one entry in the walkthrough's structured
+// steps[] response field — gives the agent an enumerable, machine-
+// readable view of the call sequence alongside the prose `prompt` +
+// `nextStep` strings. Plan §P7 F2.
+type gitPushWalkthroughStep struct {
+	N     int    `json:"n"`     // 1-indexed step number
+	Title string `json:"title"` // one-line label
+	Call  string `json:"call"`  // exact MCP call template the agent makes
+}
+
+// gitPushWalkthroughSteps returns the env-aware structured step
+// sequence. Container mode has 3 steps (collect inputs → probe-confirm
+// with token → wire CI); local mode has 2 (collect inputs → probe-
+// confirm → wire CI, no token step). Mirrors the prose in
+// gitPushWalkthroughNextStep but in agent-machine-readable form so
+// downstream tools can render a progress checklist without re-parsing
+// human language.
+func gitPushWalkthroughSteps(rt runtime.Info, service string) []gitPushWalkthroughStep {
+	if rt.InContainer {
+		return []gitPushWalkthroughStep{
+			{
+				N:     1,
+				Title: "Collect inputs from user",
+				Call:  "<no MCP call> — gather remoteUrl + gitToken (fine-grained PAT) + integration choice from the user",
+			},
+			{
+				N:     2,
+				Title: "Probe-confirm + write capability",
+				Call:  fmt.Sprintf("zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<url> gitToken=<PAT>", service),
+			},
+			{
+				N:     3,
+				Title: "Wire CI integration",
+				Call:  fmt.Sprintf("zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\"", service),
+			},
+		}
+	}
+	return []gitPushWalkthroughStep{
+		{
+			N:     1,
+			Title: "Collect inputs from user",
+			Call:  "<no MCP call> — gather remoteUrl + integration choice from the user (local git credentials handle auth)",
+		},
+		{
+			N:     2,
+			Title: "Probe-confirm + wire CI",
+			Call:  fmt.Sprintf("zerops_workflow action=\"git-push-setup\" service=%q remoteUrl=<url>, then zerops_workflow action=\"build-integration\" service=%q integration=\"actions|webhook|none\"", service, service),
+		},
+	}
 }
 
 // recommendIntegrationForRemoteURL picks the default CI integration based

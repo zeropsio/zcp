@@ -99,14 +99,14 @@ func TestGatherLaunchSourceContext_SingleRuntime_SuggestsAll(t *testing.T) {
 	if got.AvailableRuntimes[0].Type != "nodejs@22" {
 		t.Errorf("AvailableRuntimes[0].Type: got %q want nodejs@22", got.AvailableRuntimes[0].Type)
 	}
-	if got.SuggestedRuntime != "app" {
-		t.Errorf("SuggestedRuntime: got %q want app", got.SuggestedRuntime)
+	if got.PromotionHeadline != "app" {
+		t.Errorf("PromotionHeadline: got %q want app", got.PromotionHeadline)
 	}
 }
 
 // TestGatherLaunchSourceContext_MultiRuntime_NoSuggestion forces the
 // agent to ask the user when source has multiple runtime services.
-// SuggestedRuntime stays empty; AvailableRuntimes lists choices.
+// PromotionHeadline stays empty; AvailableRuntimes lists choices.
 func TestGatherLaunchSourceContext_MultiRuntime_NoSuggestion(t *testing.T) {
 	t.Parallel()
 	client := platform.NewMock().
@@ -130,8 +130,8 @@ func TestGatherLaunchSourceContext_MultiRuntime_NoSuggestion(t *testing.T) {
 	if len(got.AvailableRuntimes) != 2 {
 		t.Errorf("AvailableRuntimes: got %+v want 2 entries", got.AvailableRuntimes)
 	}
-	if got.SuggestedRuntime != "" {
-		t.Errorf("SuggestedRuntime: got %q want empty (multi-runtime case forces user choice)", got.SuggestedRuntime)
+	if got.PromotionHeadline != "" {
+		t.Errorf("PromotionHeadline: got %q want empty (multi-runtime case forces user choice)", got.PromotionHeadline)
 	}
 	if got.SuggestedTargetName != "myapp-prod" {
 		t.Errorf("SuggestedTargetName: got %q want myapp-prod (stage→prod swap)", got.SuggestedTargetName)
@@ -265,8 +265,8 @@ func TestGatherLaunchSourceContext_CollapsesStandardPair(t *testing.T) {
 	if rc.Mode != string(topology.ModeStandard) {
 		t.Errorf("collapsed pair Mode: got %q want %q", rc.Mode, topology.ModeStandard)
 	}
-	if got.SuggestedRuntime != "appstage" {
-		t.Errorf("SuggestedRuntime: got %q want appstage (stage-half headline)", got.SuggestedRuntime)
+	if got.PromotionHeadline != "appstage" {
+		t.Errorf("PromotionHeadline: got %q want appstage (stage-half headline)", got.PromotionHeadline)
 	}
 }
 
@@ -374,8 +374,8 @@ func TestHandleLaunchProduction_ScopePrompt_SurfacesSourceContext(t *testing.T) 
 	if resp.SourceContext.SuggestedTargetName != "myapp-prod" {
 		t.Errorf("SuggestedTargetName: got %q want myapp-prod", resp.SourceContext.SuggestedTargetName)
 	}
-	if resp.SourceContext.SuggestedRuntime != "app" {
-		t.Errorf("SuggestedRuntime: got %q want app", resp.SourceContext.SuggestedRuntime)
+	if resp.SourceContext.PromotionHeadline != "app" {
+		t.Errorf("PromotionHeadline: got %q want app", resp.SourceContext.PromotionHeadline)
 	}
 }
 

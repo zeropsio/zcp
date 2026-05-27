@@ -94,3 +94,9 @@ plan carries.
 
 Close: each adopted hostname stamps `bootstrapped: true`, mode preserved.
 Close-mode + git-push stay empty (develop configures on first use).
+
+After adopt completes the runtime becomes a valid `launch-production`
+source — the adopted ServiceMeta carries the pair identity + setup
+cascade state, so `zerops_workflow workflow="launch-production"
+targetService=<adopted-hostname>` lands on the canonical dev-half
+without an extra normalization round-trip.

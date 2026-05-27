@@ -959,7 +959,7 @@ type launchProductionResponse struct {
 	// suggested runtime when source has exactly one. Best-effort —
 	// populated on scope/classify/ready responses when source discovery
 	// succeeded. The agent SHOULD apply `suggestedTargetName` and
-	// `suggestedRuntime` rather than ask the user when populated.
+	// `promotionHeadline` rather than ask the user when populated.
 	SourceContext *launchSourceContext `json:"sourceContext,omitempty"`
 	// ImportedServices surfaces the per-service create+import outcomes
 	// when CreateAndImportProject succeeded at the project level but
@@ -1004,7 +1004,7 @@ type launchClassifyRow struct {
 //
 // Surfaces TargetService here (not late in executeLaunchMutation) so
 // the scope-prompt response carries the agent the full picture in one
-// pass. sourceContext is read-only: when it carries a SuggestedRuntime
+// pass. sourceContext is read-only: when it carries a PromotionHeadline
 // the agent can fill TargetService on the next call without prompting
 // the user (single-runtime case); the field is still listed missing so
 // the agent acts on the suggestion rather than silently defaulting.
@@ -1031,7 +1031,7 @@ func launchScopePromptResponse(corpus []workflow.KnowledgeAtom, input WorkflowIn
 	if guidance == "" {
 		// Fallback when corpus load left the atom out — shouldn't happen
 		// in practice, but better than a silent empty response.
-		guidance = "Provide productionProjectName + targetService (runtime hostname). Region defaults to eu-central. Use sourceContext.suggestedTargetName + sourceContext.suggestedRuntime when populated."
+		guidance = "Provide productionProjectName + targetService (runtime hostname). Region defaults to eu-central. Use sourceContext.suggestedTargetName + sourceContext.promotionHeadline when populated."
 	}
 
 	blockers := make([]topology.Blocker, 0, len(missing))
