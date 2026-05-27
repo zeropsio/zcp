@@ -71,6 +71,18 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 		Name: "zerops_yml_exists", Status: statusPass,
 	})
 
+	// Gate B — first-deploy cache hit. When the input `setup` is empty AND
+	// the per-pair ServiceMeta has a canonical PrimarySetupName /
+	// StageSetupName recorded (from a prior Gate R / Gate A / earlier
+	// Gate B write-back), use it directly. Skips the role+hostname
+	// fallback entirely so a setup-name the user explicitly chose
+	// (set-default-setup, P6) survives recipe-template drift.
+	if setup == "" {
+		if cached := meta.SetupNameFor(targetHostname); cached != "" {
+			setup = cached
+		}
+	}
+
 	// Resolve setup entry: explicit setup param → role name → hostname.
 	// v8.85 — when the input `setup` is empty and pre-flight resolves one
 	// via role or hostname fallback, the resolved name is propagated back
@@ -87,15 +99,31 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	if role == "" {
 		role = meta.PrimaryRole()
 	}
+	originalInputEmpty := setup == ""
 	entry := resolveSetupEntry(doc, setup, role, targetHostname)
 	if entry == nil {
+		// Gate B — multi-setup ambiguity surfaces as the structured
+		// requiresSetupInput blocker so the agent can branch into
+		// set-default-setup (P6). Pre-Gate-B path returned a free-text
+		// "no setup entry %q found" error that agents had to parse
+		// from prose; the typed blocker carries availableSetups +
+		// recovery in the wire shape.
+		availableSetups := doc.SetupNames()
+		if len(availableSetups) > 1 {
+			return setup, nil, &workflow.ErrRequiresSetupInput{
+				Service:         targetHostname,
+				TargetHostname:  targetHostname,
+				AvailableSetups: availableSetups,
+				Reason:          "no setup matched hostname / suffix conventions and yaml has multiple blocks",
+			}
+		}
 		tried := targetHostname
 		if setup != "" {
 			tried = setup
 		}
 		checks = append(checks, workflow.StepCheck{
 			Name: targetHostname + "_setup", Status: statusFail,
-			Detail: fmt.Sprintf("no setup entry %q found in zerops.yaml — available setups: [%s]. Pass one explicitly via the `setup` parameter; in recipes setup names differ from hostnames (e.g. hostname=%s → setup=dev), the deploy tool cannot guess when multiple setups are declared.", tried, strings.Join(doc.SetupNames(), ", "), targetHostname),
+			Detail: fmt.Sprintf("no setup entry %q found in zerops.yaml — available setups: [%s]. Pass one explicitly via the `setup` parameter; in recipes setup names differ from hostnames (e.g. hostname=%s → setup=dev), the deploy tool cannot guess when multiple setups are declared.", tried, strings.Join(availableSetups, ", "), targetHostname),
 		})
 		return setup, &workflow.StepCheckResult{
 			Passed: false, Checks: checks,
@@ -105,6 +133,16 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	// Entry resolved. The actual setup name to pass to zcli is entry.Setup —
 	// even when the input was empty and role/hostname fallback found it.
 	resolvedSetup = entry.Setup
+
+	// Gate B — first-deploy write-back. When the input was empty (i.e.
+	// the resolution happened here via role+hostname matching), persist
+	// the answer onto the meta so subsequent deploys hit the Gate B
+	// cache instead of re-resolving each time. Failure is logged at the
+	// caller's discretion; we don't fail preflight on a benign cache
+	// write hiccup.
+	if originalInputEmpty {
+		_ = workflow.WriteResolvedSetupName(stateDir, targetHostname, entry.Setup)
+	}
 	checks = append(checks, workflow.StepCheck{
 		Name: targetHostname + "_setup", Status: statusPass,
 	})

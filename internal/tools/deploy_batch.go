@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -97,6 +98,10 @@ func RegisterDeployBatch(
 			// See deploy_ssh.go for the same threading rationale.
 			resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, sourceForPreflight, t.TargetService, t.Setup, "")
 			if pfErr != nil {
+				var blocker *workflow.ErrRequiresSetupInput
+				if errors.As(pfErr, &blocker) {
+					return jsonResult(buildRequiresSetupInputResponse(t.TargetService, blocker)), nil, nil
+				}
 				return convertError(platform.NewPlatformError(
 					platform.ErrInvalidParameter,
 					fmt.Sprintf("Pre-flight validation error for %s: %v", t.TargetService, pfErr),

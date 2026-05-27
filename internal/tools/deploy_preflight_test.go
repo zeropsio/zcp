@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -530,11 +531,13 @@ func TestDeployPreFlight_ResolvedSetupEchoedBack(t *testing.T) {
 	}
 }
 
-// TestDeployPreFlight_UnknownSetup_ListsAvailable — v8.85. When the caller
-// passes an explicit setup that doesn't match any block, the error must
-// list the actual setup names available so the agent can correct the call
-// instead of guessing.
-func TestDeployPreFlight_UnknownSetup_ListsAvailable(t *testing.T) {
+// TestDeployPreFlight_UnknownSetup_ReturnsRequiresSetupInput — Gate B
+// (P4) upgrade. When the caller passes an explicit setup that doesn't
+// match any block AND the yaml has multiple setups, preflight returns
+// the structured *workflow.ErrRequiresSetupInput so the deploy handler
+// projects it into a RequiresSetupInputResponse the agent can recover
+// from via set-default-setup (P6) instead of parsing prose.
+func TestDeployPreFlight_UnknownSetup_ReturnsRequiresSetupInput(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -576,28 +579,20 @@ func TestDeployPreFlight_UnknownSetup_ListsAvailable(t *testing.T) {
 	}
 
 	mock := platform.NewMock()
-	_, result, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "apidev", "apidev", "apidev", "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	_, _, err := deployPreFlight(context.Background(), mock, "proj-1", stateDir, "apidev", "apidev", "apidev", "")
+	if err == nil {
+		t.Fatal("expected ErrRequiresSetupInput, got nil")
 	}
-	if result == nil || result.Passed {
-		t.Fatal("expected pre-flight failure on unknown setup name")
+	var blocker *workflow.ErrRequiresSetupInput
+	if !errors.As(err, &blocker) {
+		t.Fatalf("error type: want *workflow.ErrRequiresSetupInput, got %T (%v)", err, err)
 	}
-	var detail string
-	for _, c := range result.Checks {
-		if c.Name == "apidev_setup" && c.Status == statusFail {
-			detail = c.Detail
-			break
-		}
+	if blocker.TargetHostname != "apidev" {
+		t.Errorf("blocker.TargetHostname: got %q, want apidev", blocker.TargetHostname)
 	}
-	if detail == "" {
-		t.Fatal("expected apidev_setup fail check with detail")
-	}
-	// Must name each available setup so the agent can self-correct.
-	for _, want := range []string{"dev", "prod", "available setups"} {
-		if !containsString(detail, want) {
-			t.Errorf("error detail missing %q; got: %q", want, detail)
-		}
+	wantAvailable := []string{"dev", "prod"}
+	if len(blocker.AvailableSetups) != 2 {
+		t.Errorf("blocker.AvailableSetups: got %v, want %v", blocker.AvailableSetups, wantAvailable)
 	}
 }
 

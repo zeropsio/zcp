@@ -176,6 +176,10 @@ func RegisterDeploySSH(
 			// branch from firing.
 			resolvedSetup, pfResult, pfErr := deployPreFlight(ctx, client, projectID, stateDir, sourceForPreflight, input.TargetService, input.Setup, "")
 			if pfErr != nil {
+				var blocker *workflow.ErrRequiresSetupInput
+				if errors.As(pfErr, &blocker) {
+					return jsonResult(buildRequiresSetupInputResponse(input.TargetService, blocker)), nil, nil
+				}
 				return convertError(platform.NewPlatformError(
 					platform.ErrInvalidParameter,
 					fmt.Sprintf("Pre-flight validation error: %v", pfErr),
