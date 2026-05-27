@@ -33,7 +33,7 @@ func ListSetupNames(body string) ([]string, error) {
 	}
 	setups, ok := doc["zerops"].([]any)
 	if !ok {
-		return nil, nil //nolint:nilnil // not-found sentinel: caller decides whether to wrap
+		return nil, nil
 	}
 	var names []string
 	for _, item := range setups {

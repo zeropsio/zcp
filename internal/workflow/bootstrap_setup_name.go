@@ -9,40 +9,55 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
+// Recipe-corpus setup-name vocabulary. Recipes universally emit "dev"
+// for the dev-half / standalone-dev block and "prod" for everything
+// else (stage half, simple singleton — see `recipe_corpus_store_test.go`).
+// Kept distinct from `recipeRoleDev` / `recipeRoleStage` in
+// `recipe_override.go`, which name internal SLOT identifiers (dev vs
+// stage as plan-target halves) rather than yaml setup-block names.
+const (
+	recipeSetupNameDev  = "dev"
+	recipeSetupNameProd = "prod"
+)
+
 // recipeSetupNamesForTarget returns the canonical (PrimarySetupName,
-// StageSetupName) values a recipe-bootstrapped target's ServiceMeta should
-// carry, based on its mode shape.
+// StageSetupName) values a recipe-bootstrapped target's ServiceMeta
+// should carry, keyed on mode shape.
 //
 // Conventions emitted by the recipe corpus (see
 // `internal/knowledge/recipes/*.md` + `recipe_templates_import.go`):
 //
-//   - Standard pair: dev half runs setup "dev", stage half runs setup "prod"
-//   - Dev (standalone): single half runs setup "dev"
-//   - Simple (standalone): single half runs setup "prod" (corpus convention,
-//     not "simple" — see `recipe_corpus_store_test.go`)
+//   - Standard pair: dev half "dev", stage half "prod"
+//   - Dev (standalone): single half "dev"
+//   - Simple (standalone): single half "prod" (NOT "simple")
 //   - LocalStage (Theme-1 dev-stripped recipe): meta collapses
-//     Hostname==StageHostname == stage hostname, so SetupNameFor reads
-//     StageSetupName (the StageHostname branch fires first). Write the
-//     stage half value there ("prod") and leave PrimarySetupName empty.
-//   - LocalOnly: no Zerops-side runtime; both empty.
+//     Hostname==StageHostname; SetupNameFor reads StageSetupName for
+//     the stage hostname, so the stage slot carries "prod".
+//   - LocalOnly + per-service ModeStage: empty / empty — no recipe
+//     write path lands here; the default handles them defensively so
+//     the exhaustive lint is satisfied without poisoning unknown modes.
 //
 // Drift between this helper and recipe templates is caught by the
-// belt-and-suspenders parse in `verifySetupNameConvention` — when a
-// recipe template emits a non-conventional zeropsSetup, the convention
-// asserted here triggers a stderr log so the discrepancy surfaces in
-// bootstrap output rather than silently writing a wrong value.
+// belt-and-suspenders parse in `verifySetupNameConvention` — a recipe
+// template emitting a non-conventional zeropsSetup triggers a stderr
+// log so the discrepancy surfaces in bootstrap output rather than
+// silently writing a wrong value.
 func recipeSetupNamesForTarget(mode topology.Mode) (primary, stage string) {
 	switch mode {
 	case topology.PlanModeStandard:
-		return "dev", "prod"
+		return recipeSetupNameDev, recipeSetupNameProd
 	case topology.PlanModeDev:
-		return "dev", ""
+		return recipeSetupNameDev, ""
 	case topology.PlanModeSimple:
-		return "prod", ""
+		return recipeSetupNameProd, ""
 	case topology.PlanModeLocalStage:
-		// Hostname==StageHostname collapse in writeBootstrapOutputs:
-		// SetupNameFor reads StageSetupName for the stage hostname.
-		return "", "prod"
+		return "", recipeSetupNameProd
+	case topology.ModeStage:
+		// Per-service axis variant of a standard-pair stage half; not
+		// produced by the recipe-bootstrap planner today, but the
+		// exhaustive enum requires coverage. If a future code path
+		// hands a ModeStage target, the stage slot carries "prod".
+		return "", recipeSetupNameProd
 	case topology.PlanModeLocalOnly:
 		return "", ""
 	default:

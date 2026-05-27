@@ -349,8 +349,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	}
 
 	switch input.Action {
-	//nolint:goconst // literal "start" is pinned by TestAtomLintAcceptedActionsMatchDispatcher (AST-parses the case literal); centralising into actionStart would require an AST const-lookup extension to keep the pin valid
-	case "start":
+	case "start": //nolint:goconst // literal pinned by TestAtomLintAcceptedActionsMatchDispatcher (AST-literal parse); centralising into actionStart breaks the pin
 		// Phase 3 — export workflow has handler-based orchestration that
 		// MUST run for both invocation shapes (`workflow="export"` no-action
 		// AND `action="start" workflow="export"`). Without this fork, the
@@ -454,8 +453,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleRoute(ctx, engine, client, projectID, stateDir, selfHostname, rt)
 	case "close-mode":
 		return handleCloseMode(input, stateDir)
-	//nolint:goconst // literal "git-push-setup" is pinned by TestAtomLintAcceptedActionsMatchDispatcher (AST-parses case literal); centralising would require pin-test AST const-lookup
-	case "git-push-setup":
+	case "git-push-setup": //nolint:goconst // literal pinned by TestAtomLintAcceptedActionsMatchDispatcher (AST-literal parse); centralising would require AST const-lookup extension
 		return handleGitPushSetup(ctx, client, sshDeployer, projectID, input, stateDir, rt)
 	case "build-integration":
 		return handleBuildIntegration(ctx, client, projectID, input, stateDir, rt)

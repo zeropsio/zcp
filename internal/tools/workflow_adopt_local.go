@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -124,6 +125,22 @@ func handleAdoptLocal(ctx context.Context, client platform.Client, projectID, st
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("write meta: %v", err),
 			""), WithRecoveryStatus()), nil, nil
+	}
+
+	// Gate A — run cascade. On hit, writeBackCache persists
+	// StageSetupName onto the meta. On total miss, surface a structured
+	// requiresSetupInput blocker — adoption is agent-driven so the agent
+	// receives the recovery shape directly; LocalAutoAdopt silently
+	// swallows the same miss because no agent is listening at boot.
+	_, cascadeErr := workflow.ResolveCanonicalSetup(ctx, client, workflow.ResolveCanonicalSetupInput{
+		StateDir:       stateDir,
+		ServiceID:      target.ID,
+		TargetHostname: target.Name,
+		Mode:           topology.ModeStage,
+	})
+	var blocker *workflow.ErrRequiresSetupInput
+	if errors.As(cascadeErr, &blocker) {
+		return jsonResult(buildRequiresSetupInputResponse(target.Name, blocker)), nil, nil
 	}
 
 	return jsonResult(adoptLocalResponse{

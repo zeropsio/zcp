@@ -9,10 +9,14 @@ import (
 	"github.com/zeropsio/zcp/internal/topology"
 )
 
-func writeMetaForResolver(t *testing.T, dir, host, stageHost string) {
+// writeMetaForResolver seeds a minimal ServiceMeta for cascade tests.
+// Hostname is hardcoded "appdev" — every existing cascade test uses
+// that hostname; if a future test needs a different name, promote the
+// helper to take the hostname back.
+func writeMetaForResolver(t *testing.T, dir, stageHost string) {
 	t.Helper()
 	meta := &ServiceMeta{
-		Hostname:         host,
+		Hostname:         "appdev",
 		StageHostname:    stageHost,
 		BootstrappedAt:   "2026-05-27T10:00:00Z",
 		BootstrapSession: "sess-1",
@@ -52,7 +56,7 @@ func TestResolveCanonicalSetup_Step1_CacheHit(t *testing.T) {
 func TestResolveCanonicalSetup_Step2_GHIntegration_WritesBackCache(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeMetaForResolver(t, dir, "appdev", "")
+	writeMetaForResolver(t, dir, "")
 
 	mock := platform.NewMock().WithIntegrationStatus("svc-1", platform.IntegrationStatus{
 		State:           platform.IntegrationConfigured,
@@ -81,7 +85,7 @@ func TestResolveCanonicalSetup_Step2_GHIntegration_WritesBackCache(t *testing.T)
 func TestResolveCanonicalSetup_Step3_ActiveAppVersionGH_WritesBackCache(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeMetaForResolver(t, dir, "appdev", "")
+	writeMetaForResolver(t, dir, "")
 
 	mock := platform.NewMock().WithService(&platform.ServiceStack{
 		ID:   "svc-1",
@@ -114,7 +118,7 @@ func TestResolveCanonicalSetup_Step3_ActiveAppVersionGH_WritesBackCache(t *testi
 func TestResolveCanonicalSetup_Step4_ArchiveFetch_WritesBackCache(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeMetaForResolver(t, dir, "appdev", "")
+	writeMetaForResolver(t, dir, "")
 
 	mock := platform.NewMock().
 		WithService(&platform.ServiceStack{
@@ -220,7 +224,7 @@ func TestResolveCanonicalSetup_Step6_MultiSetupAmbiguity_CarriesAvailable(t *tes
 func TestResolveCanonicalSetup_StageHalfTarget_WritesStageSetupName(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	writeMetaForResolver(t, dir, "appdev", "appstage")
+	writeMetaForResolver(t, dir, "appstage")
 
 	mock := platform.NewMock().WithIntegrationStatus("svc-stage", platform.IntegrationStatus{
 		State:           platform.IntegrationConfigured,

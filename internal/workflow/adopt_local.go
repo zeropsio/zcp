@@ -132,6 +132,18 @@ func LocalAutoAdopt(ctx context.Context, client platform.Client, projectID, stat
 		}
 		result.Meta = meta
 		result.StageAutoLinked = true
+
+		// Gate A — best-effort cascade to populate StageSetupName.
+		// LocalAutoAdopt runs at server start: no agent context to
+		// receive a blocker, so any miss / error is silently swallowed.
+		// The next setup-sensitive call from an agent reruns the
+		// cascade and surfaces the blocker then.
+		_, _ = ResolveCanonicalSetup(ctx, client, ResolveCanonicalSetupInput{
+			StateDir:       stateDir,
+			ServiceID:      rt.ID,
+			TargetHostname: rt.Name,
+			Mode:           topology.ModeStage,
+		})
 		return result, nil
 
 	default:
