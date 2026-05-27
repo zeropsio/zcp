@@ -117,6 +117,19 @@ type ServiceSnapshot struct {
 	RemoteURL        string                    `json:"remoteUrl,omitempty"`
 
 	StageHostname string `json:"stageHostname,omitempty"`
+
+	// Setup-name projection from ServiceMeta (canonical store on disk).
+	// SetupName mirrors meta.PrimarySetupName for Hostname's half;
+	// StageSetupName mirrors meta.StageSetupName for the paired stage
+	// half (empty when no pair). Populated by ComputeEnvelope from the
+	// loaded meta; downstream consumers (DeployIntent.Resolve, launch
+	// composer, build-integration generator) read from snapshot so they
+	// stay pure and don't re-touch disk per call. Empty fields signal
+	// cache-miss → cascade discovery + write-back via
+	// ResolveCanonicalSetup. Plan: plans/setup-name-local-canonical-2026-05-27.md
+	// §ServiceMeta schema.
+	SetupName      string `json:"setupName,omitempty"`
+	StageSetupName string `json:"stageSetupName,omitempty"`
 }
 
 // WorkSessionSummary mirrors the persistent WorkSession at envelope build time.

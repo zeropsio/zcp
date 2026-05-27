@@ -31,18 +31,34 @@ type Project struct {
 
 // ServiceStack represents a Zerops service.
 type ServiceStack struct {
-	ID                   string             `json:"id"`
-	Name                 string             `json:"name"` // hostname
-	ProjectID            string             `json:"projectId"`
-	ServiceStackTypeInfo ServiceTypeInfo    `json:"serviceStackTypeInfo"`
-	Status               string             `json:"status"`
-	Mode                 string             `json:"mode"` // HA, NON_HA
-	SubdomainAccess      bool               `json:"subdomainAccess,omitempty"`
-	Ports                []Port             `json:"ports,omitempty"`
-	CustomAutoscaling    *CustomAutoscaling `json:"customAutoscaling,omitempty"`
-	CurrentAutoscaling   *CustomAutoscaling `json:"currentAutoscaling,omitempty"`
-	Created              string             `json:"created"`
-	LastUpdate           string             `json:"lastUpdate,omitempty"`
+	ID                   string                  `json:"id"`
+	Name                 string                  `json:"name"` // hostname
+	ProjectID            string                  `json:"projectId"`
+	ServiceStackTypeInfo ServiceTypeInfo         `json:"serviceStackTypeInfo"`
+	Status               string                  `json:"status"`
+	Mode                 string                  `json:"mode"` // HA, NON_HA
+	SubdomainAccess      bool                    `json:"subdomainAccess,omitempty"`
+	Ports                []Port                  `json:"ports,omitempty"`
+	CustomAutoscaling    *CustomAutoscaling      `json:"customAutoscaling,omitempty"`
+	CurrentAutoscaling   *CustomAutoscaling      `json:"currentAutoscaling,omitempty"`
+	Created              string                  `json:"created"`
+	LastUpdate           string                  `json:"lastUpdate,omitempty"`
+	ActiveAppVersion     *ActiveAppVersionDigest `json:"activeAppVersion,omitempty"`
+}
+
+// ActiveAppVersionDigest projects the platform's ActiveAppVersion onto a
+// minimal shape ZCP cares about: the version ID (used by setup-name
+// cascade step 4 to fetch the source archive via GetAppVersionAppCode)
+// and the GithubIntegration.ZeropsYamlSetup field (cascade step 3 — the
+// per-latest-deploy setup-block name when the deploy came via the GH
+// integration). Empty fields mean the service has no active app version
+// OR the version wasn't deployed via integration.
+//
+// Plan: plans/setup-name-local-canonical-2026-05-27.md §SDK surface.
+type ActiveAppVersionDigest struct {
+	ID                         string `json:"id,omitempty"`
+	GithubIntegrationSetup     string `json:"githubIntegrationSetup,omitempty"`
+	PublicGitSourceExplicitSet *bool  `json:"publicGitSourceExplicitSetup,omitempty"`
 }
 
 // ServiceTypeInfo contains service type details.

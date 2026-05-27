@@ -61,6 +61,34 @@ func (m *Mock) ListServices(_ context.Context, _ string) ([]ServiceStack, error)
 	return m.services, nil
 }
 
+// GetServiceStackIntegrationStatus returns the seeded IntegrationStatus
+// or IntegrationStatus{State: IntegrationNotConfigured} when unseeded —
+// mirrors the real wrapper's HTTP-400-as-state mapping. Seed via
+// WithIntegrationStatus.
+func (m *Mock) GetServiceStackIntegrationStatus(_ context.Context, serviceID string) (IntegrationStatus, error) {
+	if err := m.getError("GetServiceStackIntegrationStatus"); err != nil {
+		return IntegrationStatus{}, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if status, ok := m.integrationStatus[serviceID]; ok {
+		return status, nil
+	}
+	return IntegrationStatus{State: IntegrationNotConfigured}, nil
+}
+
+// GetAppVersionAppCode returns the seeded download URL for appVersionID
+// or empty string when unseeded (cascade treats empty URL as miss).
+// Seed via WithAppVersionAppCode.
+func (m *Mock) GetAppVersionAppCode(_ context.Context, appVersionID string) (string, error) {
+	if err := m.getError("GetAppVersionAppCode"); err != nil {
+		return "", err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.appVersionURLs[appVersionID], nil
+}
+
 func (m *Mock) GetService(_ context.Context, serviceID string) (*ServiceStack, error) {
 	m.trackCall("GetService")
 	if err := m.getError("GetService"); err != nil {

@@ -51,6 +51,46 @@ type ServiceMeta struct {
 	BootstrapSession string `json:"bootstrapSession"`
 	BootstrappedAt   string `json:"bootstrappedAt"`
 	FirstDeployedAt  string `json:"firstDeployedAt,omitempty"` // stamped on first observed deploy — via session or adoption
+
+	// Setup-name canonical store. The zerops.yaml setup-block name ZCP
+	// uses for this service's deploys, matching the same local-canonical
+	// pattern as the per-pair deploy dimensions above.
+	//
+	// Empty = not yet discovered. First setup-sensitive operation runs
+	// ResolveCanonicalSetup (internal/workflow/setup_resolver.go); on a
+	// platform-source or local-yaml hit the field is populated; on total
+	// miss the caller emits a requiresSetupInput structured blocker.
+	// Updated by set-default-setup action or cascade write-back.
+	//
+	// PrimarySetupName applies to deploys targeting Hostname's half.
+	// StageSetupName applies to cross-deploys targeting StageHostname
+	// (pair shapes only; empty for non-pair modes).
+	//
+	// Plan: plans/setup-name-local-canonical-2026-05-27.md §F3.
+	PrimarySetupName string `json:"primarySetupName,omitempty"`
+	StageSetupName   string `json:"stageSetupName,omitempty"`
+}
+
+// SetupNameFor returns the canonical zerops.yaml setup-block name for a
+// target hostname. Pair-keyed: targetHostname == StageHostname returns
+// StageSetupName; targetHostname == Hostname returns PrimarySetupName;
+// any other hostname returns "" (caller must load that hostname's meta).
+//
+// Empty result on an in-scope hostname means "cache miss — run cascade."
+// Callers that need a guaranteed value must invoke ResolveCanonicalSetup
+// (see internal/workflow/setup_resolver.go from P1) rather than treating
+// an empty return as authoritative.
+func (m *ServiceMeta) SetupNameFor(targetHostname string) string {
+	if m == nil {
+		return ""
+	}
+	if m.StageHostname != "" && targetHostname == m.StageHostname {
+		return m.StageSetupName
+	}
+	if targetHostname == m.Hostname {
+		return m.PrimarySetupName
+	}
+	return ""
 }
 
 // IsComplete returns true if bootstrap finished for this service.

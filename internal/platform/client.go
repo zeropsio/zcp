@@ -77,6 +77,20 @@ type Client interface {
 
 	// Service stack types (public, no auth required for search)
 	ListServiceStackTypes(ctx context.Context) ([]ServiceStackType, error)
+
+	// External-repository integration status — public read. Same response
+	// shape ProjectAdminClient.GetServiceStackIntegrationStatus exposes
+	// for the launch-window. Used by setup-name cascade (P1) step 2 to
+	// read GithubIntegration.ZeropsYamlSetup without requiring an admin
+	// session. Plan: plans/setup-name-local-canonical-2026-05-27.md.
+	GetServiceStackIntegrationStatus(ctx context.Context, serviceID string) (IntegrationStatus, error)
+
+	// AppVersion source archive — signed download URL for the source
+	// bundle uploaded at deploy time. Only platform-side way to recover
+	// the deployed zerops.yaml content (appVersion DTOs do not carry
+	// yaml). Used by setup-name cascade (P1) step 4 for orphan services
+	// with at least one prior deploy.
+	GetAppVersionAppCode(ctx context.Context, appVersionID string) (string, error)
 }
 
 // LogFetcher fetches logs from the log backend (step 2).

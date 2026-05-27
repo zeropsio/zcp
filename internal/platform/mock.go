@@ -56,6 +56,19 @@ type Mock struct {
 	// so deploy-flow tests can assert call ordering / field propagation.
 	CapturedValidateZeropsYaml []ValidateZeropsYamlInput
 
+	// Setup-name cascade test data (P0):
+	//   - integrationStatus: GH/GitLab integration per service stack ID,
+	//     consumed by GetServiceStackIntegrationStatus (cascade step 2).
+	//     Seed via WithIntegrationStatus; unseeded keys return
+	//     IntegrationStatus{State: IntegrationNotConfigured} to mirror
+	//     the real wrapper's HTTP-400-as-state mapping.
+	//   - appVersionURLs: signed download URL per app-version ID,
+	//     consumed by GetAppVersionAppCode (cascade step 4). Seed via
+	//     WithAppVersionAppCode; unseeded returns empty string (cascade
+	//     treats empty URL as miss).
+	integrationStatus map[string]IntegrationStatus
+	appVersionURLs    map[string]string
+
 	// CallCounts tracks how many times each method was called.
 	CallCounts map[string]int
 
@@ -76,12 +89,37 @@ type CapturedProjectEnvCreate struct {
 // NewMock creates a new configurable mock.
 func NewMock() *Mock {
 	return &Mock{
-		processes:        make(map[string]*Process),
-		processScenarios: make(map[string]*processScenarioState),
-		envVars:          make(map[string][]ServiceEnvVar),
-		CallCounts:       make(map[string]int),
-		errors:           make(map[string]error),
+		processes:         make(map[string]*Process),
+		processScenarios:  make(map[string]*processScenarioState),
+		envVars:           make(map[string][]ServiceEnvVar),
+		integrationStatus: make(map[string]IntegrationStatus),
+		appVersionURLs:    make(map[string]string),
+		CallCounts:        make(map[string]int),
+		errors:            make(map[string]error),
 	}
+}
+
+// WithIntegrationStatus seeds the IntegrationStatus returned by
+// GetServiceStackIntegrationStatus for a service ID. Unseeded IDs
+// return IntegrationStatus{State: IntegrationNotConfigured} (mirrors
+// the real wrapper's HTTP-400-as-state mapping) so cascade tests can
+// rely on "no seed = not configured" without explicit setup.
+func (m *Mock) WithIntegrationStatus(serviceID string, status IntegrationStatus) *Mock {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.integrationStatus[serviceID] = status
+	return m
+}
+
+// WithAppVersionAppCode seeds the download URL returned by
+// GetAppVersionAppCode for an app-version ID. Tests that exercise the
+// archive-fetch cascade step pre-seed the URL their HTTP harness will
+// serve from.
+func (m *Mock) WithAppVersionAppCode(appVersionID, url string) *Mock {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.appVersionURLs[appVersionID] = url
+	return m
 }
 
 // trackCall increments the call count for a method.

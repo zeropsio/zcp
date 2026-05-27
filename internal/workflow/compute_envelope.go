@@ -208,6 +208,7 @@ func buildServiceSnapshots(
 			GitPushState:     m.GitPushState,
 			BuildIntegration: m.BuildIntegration,
 			RemoteURL:        m.RemoteURL,
+			SetupName:        m.PrimarySetupName,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Hostname < out[j].Hostname })
@@ -235,6 +236,15 @@ func buildOneSnapshot(svc platform.ServiceStack, meta *ServiceMeta, ws *WorkSess
 		snap.RemoteURL = meta.RemoteURL
 		if meta.StageHostname != "" && svc.Name == meta.Hostname {
 			snap.StageHostname = meta.StageHostname
+		}
+		// Setup-name projection from meta (canonical store on disk).
+		// SetupName via SetupNameFor picks the right field for this
+		// hostname (Primary for Hostname, Stage for StageHostname).
+		// StageSetupName projects the paired half's value when this
+		// snapshot represents the dev/primary side of a pair.
+		snap.SetupName = meta.SetupNameFor(svc.Name)
+		if meta.StageHostname != "" && svc.Name == meta.Hostname {
+			snap.StageSetupName = meta.StageSetupName
 		}
 	}
 	// Incomplete meta with BootstrapSession tag = resumable. Fires even when

@@ -159,7 +159,37 @@ func mapFullServiceStack(s output.ServiceStack) ServiceStack {
 		CurrentAutoscaling: currentAutoscaling,
 		Created:            s.Created.Format(time.RFC3339Nano),
 		LastUpdate:         s.LastUpdate.Format(time.RFC3339Nano),
+		ActiveAppVersion:   mapActiveAppVersion(s.ActiveAppVersion),
 	}
+}
+
+// mapActiveAppVersion projects the SDK's GetAppVersion (when populated
+// on ServiceStack.ActiveAppVersion) onto the minimal ActiveAppVersionDigest
+// ZCP uses for setup-name cascade. Returns nil when there's no active
+// app version OR no useful field was readable. Plan: plans/setup-name-
+// local-canonical-2026-05-27.md §SDK surface.
+func mapActiveAppVersion(av *output.GetAppVersion) *ActiveAppVersionDigest {
+	if av == nil {
+		return nil
+	}
+	out := &ActiveAppVersionDigest{
+		ID: av.Id.TypedString().String(),
+	}
+	if av.GithubIntegration != nil {
+		if setup, ok := av.GithubIntegration.ZeropsYamlSetup.Get(); ok {
+			out.GithubIntegrationSetup = setup.Native()
+		}
+	}
+	if av.PublicGitSource != nil {
+		if explicit, ok := av.PublicGitSource.ExplicitSetup.Get(); ok {
+			b := explicit.Native()
+			out.PublicGitSourceExplicitSet = &b
+		}
+	}
+	if out.ID == "" && out.GithubIntegrationSetup == "" && out.PublicGitSourceExplicitSet == nil {
+		return nil
+	}
+	return out
 }
 
 func mapServicePorts(sdkPorts []output.ServicePort) []Port {
