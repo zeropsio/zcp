@@ -144,26 +144,25 @@ func Discover(
 	}
 
 	if hostname != "" {
-		svc, resolveErr := FindService(services, hostname)
-		if resolveErr != nil {
-			return nil, resolveErr
-		}
-		// Filter system-category services in the scoped path too. The
-		// unfiltered path skips IsSystem services (line below); this
-		// guard mirrors that behavior so `zerops_discover service=
-		// "<system-host>"` doesn't surface CORE/BUILD/INTERNAL/
-		// PREPARE_RUNTIME/HTTP_L7_BALANCER stacks. The agent has no
-		// legitimate user-facing reason to target a system service,
-		// and the unfiltered tool inventory already hides them — both
-		// paths now match.
+		// Scoped Discover hides system services regardless of whether
+		// the hostname matched one (system service IS lookup) or
+		// missed entirely (any not-found path). Both cases must yield
+		// the same ErrServiceNotFound + user-visible "Available
+		// services:" suggestion so agents see a consistent view.
 		//
-		// Available-services suggestion filters system services out
-		// before listing, matching the user-visible inventory.
-		if svc.IsSystem() {
+		// Implementation: scan user-visible slice once; lookup misses
+		// or system-category hits both fall to the same ErrServiceNotFound
+		// branch. This avoids leaking system hostnames via the suggestion
+		// list (Karel's live verification 2026-05-27 caught the leak
+		// when `Discover service="<nonexistent>"` returned a list
+		// containing buildappdev*, core, etc.).
+		visible := filterUserVisible(services)
+		svc := findServiceByHostname(visible, hostname)
+		if svc == nil {
 			return nil, platform.NewPlatformError(
 				platform.ErrServiceNotFound,
 				fmt.Sprintf("Service '%s' not found", hostname),
-				"Available services: "+ListHostnames(filterUserVisible(services)),
+				"Available services: "+ListHostnames(visible),
 			)
 		}
 		// Fetch full detail (includes CurrentAutoscaling with active config).

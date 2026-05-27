@@ -261,6 +261,52 @@ func TestDiscover_SingleService_NotFound(t *testing.T) {
 	}
 }
 
+// TestDiscover_ScopedNotFound_SuggestionExcludesSystemHostnames pins
+// the regression caught by Karel's live verification 2026-05-27: a
+// `Discover service="<nonexistent>"` call was returning a suggestion
+// list that included system hostnames (buildappdev*, core, etc.)
+// because FindService's not-found path used raw ListHostnames(services)
+// without the IsSystem filter. The IsSystem-MATCHED case was filtered
+// (via my earlier branch), but the lookup-MISS case wasn't. Now both
+// converge: scoped Discover scans filterUserVisible(services) and any
+// miss (system or absent) returns the same ErrServiceNotFound with a
+// user-visible-only suggestion.
+func TestDiscover_ScopedNotFound_SuggestionExcludesSystemHostnames(t *testing.T) {
+	t.Parallel()
+	services := []platform.ServiceStack{
+		{ID: "svc-build", Name: "buildappdevv123", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeCategoryName: "BUILD"}},
+		{ID: "svc-core", Name: "core", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeCategoryName: "CORE"}},
+		{ID: "svc-usr", Name: "api", ProjectID: "proj-1", Status: "RUNNING",
+			ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22", ServiceStackTypeCategoryName: "USER"}},
+	}
+	mock := platform.NewMock().
+		WithProject(&platform.Project{ID: "proj-1", Name: "myproject", Status: statusActive}).
+		WithServices(services)
+
+	_, err := Discover(context.Background(), mock, "proj-1", "nonexistent-host-xyz", false, false, false)
+	if err == nil {
+		t.Fatal("expected ErrServiceNotFound for absent hostname")
+	}
+	pe, ok := err.(*platform.PlatformError)
+	if !ok {
+		t.Fatalf("expected *PlatformError, got %T", err)
+	}
+	if pe.Code != platform.ErrServiceNotFound {
+		t.Errorf("code = %s, want ErrServiceNotFound", pe.Code)
+	}
+	// Suggestion MUST NOT name system services.
+	for _, sysHost := range []string{"buildappdevv123", "core"} {
+		if strings.Contains(pe.Suggestion, sysHost) {
+			t.Errorf("suggestion leaks system hostname %q; got: %s", sysHost, pe.Suggestion)
+		}
+	}
+	if !strings.Contains(pe.Suggestion, "api") {
+		t.Errorf("suggestion missing user-visible service `api`; got: %s", pe.Suggestion)
+	}
+}
+
 // TestDiscover_ScopedSystemService_NotFound pins the scoped-path
 // system-service filter introduced in v9.101.4 (plan
 // plans/discover-adoption-state-enum-2026-05-27.md §"System-service
