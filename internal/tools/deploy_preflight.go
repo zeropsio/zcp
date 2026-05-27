@@ -99,7 +99,6 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	if role == "" {
 		role = meta.PrimaryRole()
 	}
-	originalInputEmpty := setup == ""
 	entry := resolveSetupEntry(doc, setup, role, targetHostname)
 	if entry == nil {
 		// Gate B — multi-setup ambiguity surfaces as the structured
@@ -134,15 +133,23 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	// even when the input was empty and role/hostname fallback found it.
 	resolvedSetup = entry.Setup
 
-	// Gate B — first-deploy write-back. When the input was empty (i.e.
-	// the resolution happened here via role+hostname matching), persist
-	// the answer onto the meta so subsequent deploys hit the Gate B
-	// cache instead of re-resolving each time. Failure is logged at the
-	// caller's discretion; we don't fail preflight on a benign cache
-	// write hiccup.
-	if originalInputEmpty {
-		_ = workflow.WriteResolvedSetupName(stateDir, targetHostname, entry.Setup)
-	}
+	// Gate B — first-deploy write-back. Persist the resolved setup
+	// onto the meta regardless of whether `setup` arrived explicit or
+	// got role-resolved here. Recipe-bootstrap (the dominant adopt-side
+	// path) hands the agent a setup name in the bootstrap-guide prose,
+	// so the agent typically passes setup= explicitly on every deploy;
+	// gating write-back on input being empty meant the cache stayed
+	// permanently empty for every recipe-flow service. WriteResolvedSetupName
+	// is a no-op when the value already matches what's on disk
+	// (writeBackCache short-circuits), so unconditional write doesn't
+	// cause spurious disk churn either.
+	//
+	// Side effect: container-side bootstrap `route="adopt"` (which has
+	// no Gate A wire-up — Gate A is local-env-only) also lands its
+	// canonical name here on the first deploy. That closes the
+	// adopt-route discovery gap plan §"Gate A items" tracked under
+	// "Container-side adoption: first agent interaction surfaces …".
+	_ = workflow.WriteResolvedSetupName(stateDir, targetHostname, entry.Setup)
 	checks = append(checks, workflow.StepCheck{
 		Name: targetHostname + "_setup", Status: statusPass,
 	})
