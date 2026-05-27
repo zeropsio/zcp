@@ -10,11 +10,21 @@ import (
 )
 
 // DiscoverResult contains project and service information.
+//
+// UnmanagedRuntimes + AdoptRecovery surface the "live runtimes exist
+// in the project but ZCP has no ServiceMeta for them" signal directly
+// in the discover response. Pre-fix the only way an agent learned
+// this was by calling workflow="develop" and getting the ADOPT_REQUIRED
+// rejection — one wasted round-trip per session. Now the recovery
+// hint lands in the first discover call, the same way verify-side
+// recovery hints surface preconditions.
 type DiscoverResult struct {
-	Project  ProjectInfo   `json:"project"`
-	Services []ServiceInfo `json:"services"`
-	Notes    []string      `json:"notes,omitempty"`
-	Warnings []string      `json:"warnings,omitempty"`
+	Project           ProjectInfo        `json:"project"`
+	Services          []ServiceInfo      `json:"services"`
+	Notes             []string           `json:"notes,omitempty"`
+	Warnings          []string           `json:"warnings,omitempty"`
+	UnmanagedRuntimes []string           `json:"unmanagedRuntimes,omitempty"`
+	AdoptRecovery     *topology.Recovery `json:"adoptRecovery,omitempty"`
 }
 
 // ProjectInfo contains basic project information.

@@ -258,12 +258,21 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 		liveServiceNames[svc.Name] = true
 	}
 
-	// Collect all CREATE hostnames across targets for SHARED validation.
-	createHostnames := make(map[string]bool)
+	// Collect all CREATE + EXISTS hostnames across targets for SHARED
+	// validation. SHARED is the plan-level "this dep is shared across
+	// targets, don't redefine it" marker — the OWNER target can be
+	// either CREATE (greenfield) or EXISTS (adopt scenarios). Pre-fix
+	// the validator required CREATE specifically, which broke adopt-
+	// only plans where multiple existing runtimes share live managed
+	// deps (Karel's Laravel showcase: workerstage shares db/redis/
+	// search/storage with appdev pair — all four targets IsExisting=
+	// true, so no CREATE exists to anchor SHARED → 4 false-positive
+	// validation errors).
+	sharedAnchors := make(map[string]bool)
 	for _, target := range targets {
 		for _, dep := range target.Dependencies {
-			if dep.Resolution == ResolutionCreate {
-				createHostnames[dep.Hostname] = true
+			if dep.Resolution == ResolutionCreate || dep.Resolution == ResolutionExists {
+				sharedAnchors[dep.Hostname] = true
 			}
 		}
 	}
@@ -368,8 +377,8 @@ func ValidateBootstrapTargets(targets []BootstrapTarget, liveTypes []platform.Se
 					continue
 				}
 			case ResolutionShared:
-				if !createHostnames[dep.Hostname] {
-					errs = append(errs, fmt.Sprintf("target %q dependency %q: SHARED resolution requires another target to CREATE it", rt.DevHostname, dep.Hostname))
+				if !sharedAnchors[dep.Hostname] {
+					errs = append(errs, fmt.Sprintf("target %q dependency %q: SHARED resolution requires another target to declare it (CREATE for greenfield, EXISTS for adopt)", rt.DevHostname, dep.Hostname))
 					continue
 				}
 			default:

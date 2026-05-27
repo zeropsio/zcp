@@ -421,6 +421,50 @@ func TestValidateBootstrapTargets_SharedResolution_Success(t *testing.T) {
 	}
 }
 
+// TestValidateBootstrapTargets_SharedResolution_AdoptOnly_Success pins
+// Karel's Laravel-showcase scenario: 4 adopt targets share live managed
+// deps (db / redis / search / storage). Every target is IsExisting=true
+// so no CREATE exists to anchor SHARED. Pre-fix the validator rejected
+// every workerstage SHARED dep with "SHARED resolution requires another
+// target to CREATE it" — 4 false positives that blocked the entire
+// adopt flow. Post-fix EXISTS counts as a SHARED anchor (the live
+// service IS the source of truth; another target asserting EXISTS
+// means it's been verified live), so workerstage's SHARED deps land
+// against appdev's EXISTS declarations.
+func TestValidateBootstrapTargets_SharedResolution_AdoptOnly_Success(t *testing.T) {
+	t.Parallel()
+	liveServices := []platform.ServiceStack{
+		{Name: "appdev", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{Name: "appstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{Name: "workerstage", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "nodejs@22"}},
+		{Name: "db", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "postgresql@16"}},
+		{Name: "redis", ServiceStackTypeInfo: platform.ServiceTypeInfo{ServiceStackTypeVersionName: "valkey@7.2"}},
+	}
+	targets := []BootstrapTarget{
+		{
+			// Adopted dev/stage pair anchors EXISTS for db + redis.
+			Runtime: RuntimeTarget{DevHostname: "appdev", Type: "nodejs@22", BootstrapMode: "standard", ExplicitStage: "appstage", IsExisting: true},
+			Dependencies: []Dependency{
+				{Hostname: "db", Type: "postgresql@16", Resolution: "EXISTS"},
+				{Hostname: "redis", Type: "valkey@7.2", Resolution: "EXISTS"},
+			},
+		},
+		{
+			// Adopted worker SHARES the deps — pre-fix this branch failed
+			// because validator demanded CREATE for SHARED anchors.
+			Runtime: RuntimeTarget{DevHostname: "workerstage", Type: "nodejs@22", BootstrapMode: "dev", IsExisting: true},
+			Dependencies: []Dependency{
+				{Hostname: "db", Type: "postgresql@16", Resolution: "SHARED"},
+				{Hostname: "redis", Type: "valkey@7.2", Resolution: "SHARED"},
+			},
+		},
+	}
+	_, err := ValidateBootstrapTargets(targets, testLiveTypes, liveServices)
+	if err != nil {
+		t.Fatalf("unexpected error for adopt-only plan with SHARED deps: %v", err)
+	}
+}
+
 func TestValidateBootstrapTargets_SharedResolution_NoCreate_Error(t *testing.T) {
 	t.Parallel()
 	// SHARED dep references "db" but no target has CREATE for it.

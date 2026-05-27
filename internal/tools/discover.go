@@ -8,6 +8,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
+	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -71,7 +72,11 @@ func RegisterDiscover(srv *mcp.Server, client platform.Client, projectID, stateD
 }
 
 // enrichWithMetaStatus sets ManagedByZCP on each service based on ServiceMeta presence,
-// and detects SSHFS mount paths for services mounted locally.
+// detects SSHFS mount paths for services mounted locally, and — when
+// the project has live runtime services that ZCP doesn't yet track —
+// populates UnmanagedRuntimes + AdoptRecovery so the agent surfaces
+// the adopt-first recommendation on the FIRST discover call instead of
+// learning about it via the workflow="develop" ADOPT_REQUIRED rejection.
 func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
 	// Detect mounts regardless of stateDir.
 	for i := range result.Services {
@@ -81,20 +86,55 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
 		}
 	}
 
-	if stateDir == "" {
-		return
+	var idx map[string]*workflow.ServiceMeta
+	if stateDir != "" {
+		metas, err := workflow.ListServiceMetas(stateDir)
+		if err == nil && len(metas) > 0 {
+			// Pair-keyed index: both halves of a standard-mode pair resolve
+			// to the shared meta (spec-workflows.md §8 E8). Layer an
+			// IsComplete filter on top because ManagedByZCP should reflect
+			// a fully-bootstrapped state.
+			idx = workflow.ManagedRuntimeIndex(metas)
+			for i := range result.Services {
+				if m, ok := idx[result.Services[i].Hostname]; ok && m.IsComplete() {
+					result.Services[i].ManagedByZCP = true
+				}
+			}
+		}
 	}
-	metas, err := workflow.ListServiceMetas(stateDir)
-	if err != nil || len(metas) == 0 {
-		return
-	}
-	// Pair-keyed index: both halves of a standard-mode pair resolve to the
-	// shared meta (spec-workflows.md §8 E8). Layer an IsComplete filter on
-	// top because ManagedByZCP should reflect a fully-bootstrapped state.
-	idx := workflow.ManagedRuntimeIndex(metas)
+
+	// Adopt-discovery hint: enumerate non-system runtime services that
+	// have NO IsComplete meta. Managed services (db / cache / storage)
+	// are not adopt candidates — they live as API-authoritative
+	// dependencies of a runtime adoption.
+	var unmanaged []string
 	for i := range result.Services {
-		if m, ok := idx[result.Services[i].Hostname]; ok && m.IsComplete() {
-			result.Services[i].ManagedByZCP = true
+		s := &result.Services[i]
+		if s.IsInfrastructure {
+			continue
+		}
+		if s.ManagedByZCP {
+			continue
+		}
+		// System services (proxies, internal stacks) carry an empty
+		// MountPath + their type carries the system prefix; ManagedByZCP
+		// is irrelevant for them. The simplest filter that lines up
+		// with the bootstrap-route logic is "hostname appears in
+		// runtime category" — IsInfrastructure already excludes
+		// managed deps, so what remains is runtime services. The
+		// adoption flow's own discover (engine.go::BuildPlanFromDiscover)
+		// uses the same IsManagedService filter.
+		unmanaged = append(unmanaged, s.Hostname)
+	}
+	if len(unmanaged) > 0 {
+		result.UnmanagedRuntimes = unmanaged
+		result.AdoptRecovery = &topology.Recovery{
+			Tool:   "zerops_workflow",
+			Action: "start",
+			Args: map[string]string{
+				"workflow": "bootstrap",
+				"route":    "adopt",
+			},
 		}
 	}
 }
