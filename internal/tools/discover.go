@@ -106,7 +106,10 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
 	// Adopt-discovery hint: enumerate non-system runtime services that
 	// have NO IsComplete meta. Managed services (db / cache / storage)
 	// are not adopt candidates — they live as API-authoritative
-	// dependencies of a runtime adoption.
+	// dependencies of a runtime adoption. The ZCP control-plane
+	// container (type=zcp@1) is also excluded — it's the host running
+	// THIS process, never a promotion target. Mirror of
+	// launch_source_context.go::isZCPSelfService gating; same rationale.
 	var unmanaged []string
 	for i := range result.Services {
 		s := &result.Services[i]
@@ -116,14 +119,9 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
 		if s.ManagedByZCP {
 			continue
 		}
-		// System services (proxies, internal stacks) carry an empty
-		// MountPath + their type carries the system prefix; ManagedByZCP
-		// is irrelevant for them. The simplest filter that lines up
-		// with the bootstrap-route logic is "hostname appears in
-		// runtime category" — IsInfrastructure already excludes
-		// managed deps, so what remains is runtime services. The
-		// adoption flow's own discover (engine.go::BuildPlanFromDiscover)
-		// uses the same IsManagedService filter.
+		if s.Type == "zcp@1" {
+			continue
+		}
 		unmanaged = append(unmanaged, s.Hostname)
 	}
 	if len(unmanaged) > 0 {

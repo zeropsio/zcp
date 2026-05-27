@@ -122,6 +122,41 @@ func TestEnrichWithMetaStatus_FullyAdopted_NoHint(t *testing.T) {
 	}
 }
 
+// ZCP self-service (type=zcp@1) must never appear in unmanagedRuntimes
+// even when it shows up in the project's service list with
+// ManagedByZCP:false + IsInfrastructure:false. Mirrors the self-filter
+// in launch_source_context.go::isZCPSelfService — the control-plane
+// container is never an adopt candidate (or a promotion target).
+//
+// Karel's v9.101.2 production discover surfaced zcp@1 in
+// unmanagedRuntimes because IsInfrastructure:false (USER category on
+// the platform) + no ServiceMeta → fell through both pre-fix filters.
+func TestEnrichWithMetaStatus_ZCPSelfService_ExcludedFromUnmanaged(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	stateDir := filepath.Join(dir, ".zcp", "state")
+
+	result := &ops.DiscoverResult{
+		Services: []ops.ServiceInfo{
+			{Hostname: "appdev", Type: "alpine/php-nginx@8.4", IsInfrastructure: false},
+			{Hostname: "zcp", Type: "zcp@1", IsInfrastructure: false},
+			{Hostname: "db", Type: "postgresql:single@18", IsInfrastructure: true},
+		},
+	}
+
+	enrichWithMetaStatus(result, stateDir)
+
+	for _, host := range result.UnmanagedRuntimes {
+		if host == "zcp" {
+			t.Errorf("unmanagedRuntimes must NOT contain zcp self-service; got %v", result.UnmanagedRuntimes)
+		}
+	}
+	if len(result.UnmanagedRuntimes) != 1 || result.UnmanagedRuntimes[0] != "appdev" {
+		t.Errorf("unmanagedRuntimes: got %v, want [appdev] (zcp self-filtered, db is infrastructure)",
+			result.UnmanagedRuntimes)
+	}
+}
+
 // Mixed state: some runtimes adopted, some not. The not-adopted ones
 // surface in unmanagedRuntimes; the hint still fires (any unadopted
 // runtime is a signal worth surfacing).
