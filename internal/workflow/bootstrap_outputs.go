@@ -63,6 +63,26 @@ func (e *Engine) writeBootstrapOutputs(state *WorkflowState) {
 			BootstrappedAt:   now,
 		}
 
+		// Gate R — recipe-bootstrap canonical setup-name write. Fires
+		// only for the recipe route AND fresh (!IsExisting) targets:
+		// adopted services run Gate A's cascade (handled at adopt-time,
+		// not here). Pre-existing meta values survive the mode-expansion
+		// path via mergeExistingMeta's migrate-forward-empty semantics
+		// below.
+		if state.Bootstrap.Route == BootstrapRouteRecipe && !target.Runtime.IsExisting {
+			primary, stage := recipeSetupNamesForTarget(mode)
+			meta.PrimarySetupName = primary
+			meta.StageSetupName = stage
+			if state.Bootstrap.RecipeMatch != nil {
+				verifySetupNameConvention(
+					state.Bootstrap.RecipeMatch.ImportYAML,
+					target.Runtime.DevHostname,
+					target.Runtime.StageHostname(),
+					primary, stage,
+				)
+			}
+		}
+
 		// Expansion merge: gate the disk read behind IsExisting so fresh
 		// bootstraps don't pay a ReadServiceMeta for every target.
 		if target.Runtime.IsExisting {
@@ -134,6 +154,25 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 			BootstrapSession: bootstrapSession,
 		}
 
+		// Gate R — partial-write counterpart of writeBootstrapOutputs.
+		// Same predicate (recipe route + !IsExisting), so a crash between
+		// provision and close leaves the canonical setup names already
+		// recorded — the eventual recovery doesn't have to re-derive
+		// them, and stage discovery survives the crash window.
+		if state.Bootstrap.Route == BootstrapRouteRecipe && !target.Runtime.IsExisting {
+			primary, stage := recipeSetupNamesForTarget(mode)
+			meta.PrimarySetupName = primary
+			meta.StageSetupName = stage
+			if state.Bootstrap.RecipeMatch != nil {
+				verifySetupNameConvention(
+					state.Bootstrap.RecipeMatch.ImportYAML,
+					target.Runtime.DevHostname,
+					target.Runtime.StageHostname(),
+					primary, stage,
+				)
+			}
+		}
+
 		if target.Runtime.IsExisting {
 			if existing, _ := ReadServiceMeta(e.stateDir, metaHostname); existing != nil && existing.IsComplete() {
 				mergeExistingMeta(meta, existing)
@@ -150,6 +189,13 @@ func (e *Engine) writeProvisionMetas(state *WorkflowState) {
 // mode-expansion write so a dev→standard upgrade doesn't silently clear
 // the user's deploy choices or reset deploy history. Mode and
 // StageHostname come from the plan and are left untouched.
+//
+// PrimarySetupName / StageSetupName follow migrate-forward-empty
+// semantics: a non-empty existing value wins (a previously-discovered
+// setup name is the canonical record); an empty existing value lets the
+// fresh meta's value through unchanged (covers the dev→standard
+// expansion where the new stage half's "prod" comes from the fresh meta
+// while the existing "dev" survives on PrimarySetupName).
 func mergeExistingMeta(meta, existing *ServiceMeta) {
 	meta.BootstrappedAt = existing.BootstrappedAt
 	meta.FirstDeployedAt = existing.FirstDeployedAt
@@ -159,4 +205,11 @@ func mergeExistingMeta(meta, existing *ServiceMeta) {
 	meta.GitPushState = existing.GitPushState
 	meta.RemoteURL = existing.RemoteURL
 	meta.BuildIntegration = existing.BuildIntegration
+
+	if existing.PrimarySetupName != "" {
+		meta.PrimarySetupName = existing.PrimarySetupName
+	}
+	if existing.StageSetupName != "" {
+		meta.StageSetupName = existing.StageSetupName
+	}
 }
