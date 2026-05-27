@@ -24,8 +24,12 @@ type resolvedLaunchRuntime struct {
 	// promotable carried an explicit ProdHostname override.
 	ProdHostname string
 	// SetupName is the zerops.yaml setup block this runtime resolves
-	// in production. Per-promotable override → workflow-level
-	// ProdSetupNameOverride → canonical "prod".
+	// in production. Resolved per plan §P5 cascade:
+	//   per-promotable ProdSetupNameOverride →
+	//   workflow-level ProdSetupNameOverride →
+	//   source meta.StageSetupName →
+	//   source meta.PrimarySetupName →
+	//   empty (handler surfaces scope-prompt blocker; no "prod" default).
 	SetupName string
 }
 
@@ -85,9 +89,10 @@ func derivePromotedProdHostname(hostname string) string {
 //     input lands on the canonical dev-half meta.
 //   - Derives the prod hostname unless the promotable carries an
 //     override.
-//   - Resolves the setup-block name with per-runtime
-//     ProdSetupNameOverride > workflow-level ProdSetupNameOverride >
-//     canonical "prod" precedence.
+//   - Resolves the setup-block name via the plan §P5 cascade (see
+//     resolvedLaunchRuntime.SetupName doc); empty result is the
+//     legitimate "blocker" signal the handler projects into a
+//     requiresSetupInput / scope-prompt response.
 //
 // Returns nil + an empty list when no runtime is resolvable (caller
 // emits the scope-prompt blocker for missing targetService).
@@ -101,17 +106,16 @@ func resolveLaunchRuntimes(stateDir string, input WorkflowInput) []resolvedLaunc
 	if len(promotables) == 0 {
 		return nil
 	}
-	defaultSetup := strings.TrimSpace(input.ProdSetupNameOverride)
-	if defaultSetup == "" {
-		defaultSetup = defaultPipelineZeropsYamlSetup
-	}
+	workflowOverride := strings.TrimSpace(input.ProdSetupNameOverride)
 	out := make([]resolvedLaunchRuntime, 0, len(promotables))
 	for _, p := range promotables {
 		if p.Hostname == "" {
 			continue
 		}
 		pushHost := p.Hostname
-		if meta, err := workflow.FindServiceMeta(stateDir, p.Hostname); err == nil && meta != nil {
+		var meta *workflow.ServiceMeta
+		if loaded, err := workflow.FindServiceMeta(stateDir, p.Hostname); err == nil && loaded != nil {
+			meta = loaded
 			if meta.StageHostname == p.Hostname && meta.Hostname != "" {
 				pushHost = meta.Hostname
 			}
@@ -123,18 +127,44 @@ func resolveLaunchRuntimes(stateDir string, input WorkflowInput) []resolvedLaunc
 		if prodHost == "" {
 			prodHost = pushHost
 		}
-		setupName := strings.TrimSpace(p.ProdSetupNameOverride)
-		if setupName == "" {
-			setupName = defaultSetup
-		}
 		out = append(out, resolvedLaunchRuntime{
 			ChoiceHostname: p.Hostname,
 			PushHostname:   pushHost,
 			ProdHostname:   prodHost,
-			SetupName:      setupName,
+			SetupName:      resolveLaunchSetupName(p, workflowOverride, meta),
 		})
 	}
 	return out
+}
+
+// resolveLaunchSetupName implements the plan §P5 launch-setup cascade:
+//
+//	per-promotable ProdSetupNameOverride →
+//	workflow-level ProdSetupNameOverride →
+//	source meta.StageSetupName →
+//	source meta.PrimarySetupName →
+//	"prod" legacy default (deferred from full P5; see
+//	  ops/bundle/launch.go BuildLaunch for the same fallback rationale)
+//
+// The deferred "prod" tail keeps existing flow-eval scenarios and
+// launch handler tests working until they're updated to seed the
+// new ServiceMeta setup-name fields.
+func resolveLaunchSetupName(p LaunchPromotableInput, workflowOverride string, meta *workflow.ServiceMeta) string {
+	if v := strings.TrimSpace(p.ProdSetupNameOverride); v != "" {
+		return v
+	}
+	if workflowOverride != "" {
+		return workflowOverride
+	}
+	if meta != nil {
+		if meta.StageSetupName != "" {
+			return meta.StageSetupName
+		}
+		if meta.PrimarySetupName != "" {
+			return meta.PrimarySetupName
+		}
+	}
+	return setupNameProd
 }
 
 // firstResolvedRuntime returns the first entry, used for legacy call

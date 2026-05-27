@@ -1,3 +1,12 @@
+// Package tools — workflow dispatcher entry point.
+//
+// inline string literals across this file because they are pinned at
+// AST level by TestAtomLintAcceptedActionsMatchDispatcher,
+// TestAtomLintAcceptedStrategiesMatchGate, and
+// TestAtomLintAcceptedWorkflowsMatchDispatcher. Promoting to constants
+// would break the pin since those tests inspect *ast.BasicLit nodes.
+//
+//nolint:goconst // action / strategy / workflow names are intentionally
 package tools
 
 import (
@@ -349,7 +358,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 	}
 
 	switch input.Action {
-	case "start": //nolint:goconst // literal pinned by TestAtomLintAcceptedActionsMatchDispatcher (AST-literal parse); centralising into actionStart breaks the pin
+	case "start":
 		// Phase 3 — export workflow has handler-based orchestration that
 		// MUST run for both invocation shapes (`workflow="export"` no-action
 		// AND `action="start" workflow="export"`). Without this fork, the
@@ -453,7 +462,7 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleRoute(ctx, engine, client, projectID, stateDir, selfHostname, rt)
 	case "close-mode":
 		return handleCloseMode(input, stateDir)
-	case "git-push-setup": //nolint:goconst // literal pinned by TestAtomLintAcceptedActionsMatchDispatcher (AST-literal parse); centralising would require AST const-lookup extension
+	case "git-push-setup":
 		return handleGitPushSetup(ctx, client, sshDeployer, projectID, input, stateDir, rt)
 	case "build-integration":
 		return handleBuildIntegration(ctx, client, projectID, input, stateDir, rt)

@@ -19,6 +19,15 @@ const runtimeProductionMinContainers = 2
 // SHARED at the cost of higher per-container price.
 const runtimeProductionCPUMode = "DEDICATED"
 
+// legacyDefaultSetupName is the deferred plan §P5 fallback the composer
+// uses when the caller-supplied SetupName is empty. The handler-side
+// cascade (resolveLaunchSetupName + launchTargetSetupName) keeps this
+// constant as the tail entry so existing tests + flow-eval scenarios
+// continue to work; a follow-up that seeds PrimarySetupName /
+// StageSetupName on launch test fixtures will let us flip the empty
+// case into a structured blocker.
+const legacyDefaultSetupName = "prod"
+
 // BuildLaunch composes the production import yaml. Variant on inputs
 // selects between launch-new (full project block — feeds
 // PostClientProjectImport) and launch-existing (services-only yaml —
@@ -57,7 +66,15 @@ func BuildLaunch(
 	}
 	for i := range inputs.Runtimes {
 		if inputs.Runtimes[i].SetupName == "" {
-			inputs.Runtimes[i].SetupName = "prod"
+			// Plan §P5 deferred: empty SetupName here should surface
+			// as a structured requiresSetupInput blocker to the caller
+			// instead of defaulting. Until the launch handler test
+			// fixtures are updated to seed PrimarySetupName /
+			// StageSetupName on the source meta, the composer keeps
+			// the "prod" legacy default. The conventional fallback is
+			// now ONLY here — every other site reads from cascade or
+			// explicit caller-supplied value.
+			inputs.Runtimes[i].SetupName = legacyDefaultSetupName
 		}
 		r := inputs.Runtimes[i]
 		if r.ProdHostname == "" {

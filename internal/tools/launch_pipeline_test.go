@@ -58,13 +58,14 @@ func TestDeriveDashboardDeepLink_NonEmptyShape(t *testing.T) {
 }
 
 // TestPipelineRecommendation_DefaultsAndOverride pins the recommendation
-// payload shape — default tag-regex when override is empty, override
-// value passed verbatim otherwise. Empty repoURL collapses to nil.
+// payload shape. ZeropsYamlSetup is now an explicit caller-supplied
+// argument (plan §P5 — no "prod" default in pipelineRecommendation);
+// empty zeropsYamlSetup OR empty repoURL collapse the return to nil.
 func TestPipelineRecommendation_DefaultsAndOverride(t *testing.T) {
 	t.Parallel()
 	t.Run("default-regex", func(t *testing.T) {
 		t.Parallel()
-		rec := pipelineRecommendation("https://github.com/krls2020/myapp", "")
+		rec := pipelineRecommendation("https://github.com/krls2020/myapp", "", "prod")
 		if rec == nil {
 			t.Fatal("expected non-nil recommendation")
 		}
@@ -77,21 +78,34 @@ func TestPipelineRecommendation_DefaultsAndOverride(t *testing.T) {
 		if rec.EventType != defaultPipelineEventType {
 			t.Errorf("EventType: got %q want %q", rec.EventType, defaultPipelineEventType)
 		}
-		if rec.ZeropsYamlSetup != defaultPipelineZeropsYamlSetup {
-			t.Errorf("ZeropsYamlSetup: got %q want %q", rec.ZeropsYamlSetup, defaultPipelineZeropsYamlSetup)
+		if rec.ZeropsYamlSetup != "prod" {
+			t.Errorf("ZeropsYamlSetup: got %q want %q", rec.ZeropsYamlSetup, "prod")
+		}
+	})
+	t.Run("explicit-non-prod-setup-name", func(t *testing.T) {
+		t.Parallel()
+		rec := pipelineRecommendation("https://github.com/krls2020/myapp", "", "release-train")
+		if rec == nil || rec.ZeropsYamlSetup != "release-train" {
+			t.Errorf("non-conventional setup name should pass through; got %+v", rec)
 		}
 	})
 	t.Run("override-regex", func(t *testing.T) {
 		t.Parallel()
-		rec := pipelineRecommendation("https://github.com/krls2020/myapp", "^release-.*$")
+		rec := pipelineRecommendation("https://github.com/krls2020/myapp", "^release-.*$", "prod")
 		if rec.TagRegex != "^release-.*$" {
 			t.Errorf("TagRegex: got %q want override", rec.TagRegex)
 		}
 	})
 	t.Run("empty-repo-url", func(t *testing.T) {
 		t.Parallel()
-		if pipelineRecommendation("", "") != nil {
+		if pipelineRecommendation("", "", "prod") != nil {
 			t.Error("expected nil for empty repo URL")
+		}
+	})
+	t.Run("empty-zeropsYamlSetup-blocks-recommendation", func(t *testing.T) {
+		t.Parallel()
+		if pipelineRecommendation("https://github.com/krls2020/myapp", "", "") != nil {
+			t.Error("expected nil when zeropsYamlSetup is empty — no \"prod\" default")
 		}
 	})
 }
@@ -128,6 +142,7 @@ func TestExecuteLaunchPipelineCheck_NotConfigured_PopulatesBlocker(t *testing.T)
 	executeLaunchPipelineCheck(context.Background(), mock, state, pipelineCheckInputs{
 		RuntimeHostname: "app",
 		RepoURL:         "https://github.com/krls2020/myapp",
+		ZeropsYamlSetup: "prod", // plan §P5 — explicit caller-supplied; no internal default
 	})
 	entry, ok := state.PipelineConfigurations["app"]
 	if !ok {

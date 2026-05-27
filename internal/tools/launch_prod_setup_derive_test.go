@@ -174,18 +174,20 @@ func TestProdSetupGuidanceWithBlock_HonoursOverrideName(t *testing.T) {
 	}
 }
 
-// TestEffectiveProdSetupName_OverrideTakesPrecedence pins the override
-// resolution: explicit non-empty override → that value; empty / whitespace
-// → "prod" canonical default.
-func TestEffectiveProdSetupName_OverrideTakesPrecedence(t *testing.T) {
+// TestEffectiveProdSetupName_OverrideOnly pins post-P5 behavior:
+// effectiveProdSetupName returns the trimmed override or empty. The
+// pre-P5 "prod" fallback is gone — callers that need a non-empty
+// setup name go through resolveLaunchSetupName (per-promotable cascade)
+// or surface a blocker on empty.
+func TestEffectiveProdSetupName_OverrideOnly(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name     string
 		override string
 		want     string
 	}{
-		{"empty_falls_back_to_prod", "", "prod"},
-		{"whitespace_falls_back_to_prod", "   ", "prod"},
+		{"empty_returns_empty", "", ""},
+		{"whitespace_returns_empty", "   ", ""},
 		{"explicit_override_wins", "appprod", "appprod"},
 		{"app_override", "app", "app"},
 	}

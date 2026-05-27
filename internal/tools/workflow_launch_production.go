@@ -467,6 +467,7 @@ func executeLaunchPipelineResume(
 		TagRegexOverride:  input.PipelineTagRegex,
 		RuntimeHostname:   state.TargetServiceHostname,
 		RepoURL:           state.SourceRepoURL,
+		ZeropsYamlSetup:   launchTargetSetupName(stateDir, state.TargetServiceHostname, input),
 	}
 	executeLaunchPipelineCheck(ctx, admin, state, checkInputs)
 	_ = writeLaunchState(stateDir, state)
@@ -707,6 +708,7 @@ func executeLaunchMutation(
 				TagRegexOverride:  input.PipelineTagRegex,
 				RuntimeHostname:   input.TargetService,
 				RepoURL:           source.RepoURL,
+				ZeropsYamlSetup:   launchTargetSetupName(stateDir, input.TargetService, input),
 			}
 			executeLaunchPipelineCheck(ctx, admin, state, checkInputs)
 			state.Status = topology.LaunchStatusLaunched
@@ -848,10 +850,7 @@ func readAndValidateSourceState(
 			"Source zerops.yaml is missing — write it (with `setup: prod` block), commit, push, then re-call publish.",
 		)
 	}
-	wantSetup := input.ProdSetupNameOverride
-	if wantSetup == "" {
-		wantSetup = defaultPipelineZeropsYamlSetup
-	}
+	wantSetup := launchTargetSetupName(stateDir, input.TargetService, input)
 	if !hasSetupNamed(source.ZeropsYAMLBody, wantSetup) {
 		availableNames, _ := listSetupNames(source.ZeropsYAMLBody)
 		auditFail(fmt.Sprintf("source zerops.yaml lacks `setup: %s` block (found: %s)", wantSetup, strings.Join(availableNames, ", ")))
@@ -878,15 +877,39 @@ func readAndValidateSourceState(
 	return source, nil
 }
 
-// effectiveProdSetupName resolves the setup name the launch composer
-// should target in the source zerops.yaml. Honors
-// WorkflowInput.ProdSetupNameOverride; falls back to the canonical
-// "prod" when unset. Empty input ⇒ canonical default.
+// effectiveProdSetupName returns WorkflowInput.ProdSetupNameOverride
+// trimmed, or empty when unset. Plan §P5 removed the "prod" fallback:
+// callers that need a non-empty setup name must run the full launch
+// cascade (resolveLaunchSetupName) which folds in meta-backed
+// discovery, or treat empty as a blocker case.
 func effectiveProdSetupName(input WorkflowInput) string {
-	if override := strings.TrimSpace(input.ProdSetupNameOverride); override != "" {
-		return override
+	return strings.TrimSpace(input.ProdSetupNameOverride)
+}
+
+// launchTargetSetupName runs the same source-meta cascade used by the
+// source-control gate (override → meta.StageSetupName →
+// meta.PrimarySetupName) and falls back to the legacy "prod" default
+// when both are absent. Shared by the pre-launch source gate and the
+// pipelineCheckInputs construction sites so the integration
+// recommendation announced to the user matches what the launch
+// composer actually wrote into the production import yaml.
+//
+// Plan §P5 deferred: the "prod" tail keeps existing tests + flow-eval
+// scenarios working until test fixtures seed PrimarySetupName /
+// StageSetupName on source metas.
+func launchTargetSetupName(stateDir, targetHostname string, input WorkflowInput) string {
+	if v := strings.TrimSpace(input.ProdSetupNameOverride); v != "" {
+		return v
 	}
-	return defaultPipelineZeropsYamlSetup
+	if meta, _ := workflow.FindServiceMeta(stateDir, targetHostname); meta != nil {
+		switch {
+		case meta.StageSetupName != "":
+			return meta.StageSetupName
+		case meta.PrimarySetupName != "":
+			return meta.PrimarySetupName
+		}
+	}
+	return setupNameProd
 }
 
 // boolStr returns t when cond, f otherwise.

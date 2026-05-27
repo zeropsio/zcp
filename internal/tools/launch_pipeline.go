@@ -23,12 +23,6 @@ const defaultPipelineTagRegex = `^v\d+\.\d+\.\d+$`
 // platform enum value of GithubIntegrationEventTypeEnumTag.
 const defaultPipelineEventType = "TAG"
 
-// defaultPipelineZeropsYamlSetup is the production setup block name the
-// agent appended to source zerops.yaml during the source-control mutation
-// phase. References the same block name the launch bundle's
-// `zeropsSetup: prod` field points at.
-const defaultPipelineZeropsYamlSetup = "prod"
-
 // pipelineDashboardBase is the Zerops dashboard URL host. Per-service
 // deep-links are composed via fmt.Sprintf — kept as a constant for the
 // avoid-magic-string lint.
@@ -92,9 +86,11 @@ func deriveDashboardDeepLink(serviceStackID string) string {
 // pipelineRecommendation composes the suggested integration config the
 // agent echoes to the user when guiding dashboard setup. Returns nil
 // when the runtime's source repo URL is empty (defensive — should not
-// happen in practice because launch requires buildFromGit).
-func pipelineRecommendation(repoURL, tagRegexOverride string) *pipelineConfigRecommendation {
-	if repoURL == "" {
+// happen in practice because launch requires buildFromGit) OR when
+// zeropsYamlSetup is empty (plan §P5 — no "prod" default; caller must
+// resolve the setup name via cascade before calling).
+func pipelineRecommendation(repoURL, tagRegexOverride, zeropsYamlSetup string) *pipelineConfigRecommendation {
+	if repoURL == "" || zeropsYamlSetup == "" {
 		return nil
 	}
 	regex := tagRegexOverride
@@ -105,7 +101,7 @@ func pipelineRecommendation(repoURL, tagRegexOverride string) *pipelineConfigRec
 		RepositoryFullName: deriveRepositoryFullName(repoURL),
 		EventType:          defaultPipelineEventType,
 		TagRegex:           regex,
-		ZeropsYamlSetup:    defaultPipelineZeropsYamlSetup,
+		ZeropsYamlSetup:    zeropsYamlSetup,
 	}
 }
 
@@ -125,6 +121,11 @@ type pipelineCheckInputs struct {
 	// RepoURL is the source git remote URL (buildFromGit value). Used to
 	// derive the recommendation's repositoryFullName.
 	RepoURL string
+	// ZeropsYamlSetup is the production zerops.yaml setup-block name the
+	// runtime resolves at deploy time (resolved by the launch handler via
+	// plan §P5 cascade — meta first, no "prod" default). When empty, the
+	// pipeline recommendation is omitted from the blocker payload.
+	ZeropsYamlSetup string
 }
 
 // executeLaunchPipelineCheck reads pipeline-integration status for each
@@ -152,7 +153,7 @@ func executeLaunchPipelineCheck(
 	if state.PipelineConfigurations == nil {
 		state.PipelineConfigurations = make(map[string]pipelineConfigEntry)
 	}
-	recommendation := pipelineRecommendation(inputs.RepoURL, inputs.TagRegexOverride)
+	recommendation := pipelineRecommendation(inputs.RepoURL, inputs.TagRegexOverride, inputs.ZeropsYamlSetup)
 
 	for _, svc := range state.ImportedServices {
 		if svc.Name != inputs.RuntimeHostname {
