@@ -2,6 +2,7 @@ package tools
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/zeropsio/zcp/internal/ops"
@@ -9,19 +10,24 @@ import (
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
-// TestEnrichWithMetaStatus_UnmanagedRuntimes_PopulatesAdoptRecovery pins
-// the discover-side adopt hint. Karel's transcript-2 friction: agent
-// called workflow="develop" on a project where the runtime services
-// existed live but had no ServiceMeta, and the only learning surface
-// was the ADOPT_REQUIRED rejection from develop. With this enrich
-// step, the FIRST discover call surfaces:
+// TestEnrichWithMetaStatus_UnmanagedRuntimes_AppendsDirectiveWarning pins
+// the discover-side adopt hint shape after the v9.101.4 redesign:
+// unadopted runtime services append a directive prose warning to
+// result.Warnings rather than populating a separate structured
+// AdoptRecovery field. Agents parse Warnings as a prominent system-
+// message bucket; a `Recovery`-named struct field they skim past as
+// passive fallback (verified via t3.txt agent introspection).
 //
-//   - unmanagedRuntimes: ["appdev", "appstage", "workerstage"]
-//   - adoptRecovery: {tool: zerops_workflow, action: start, args: {workflow:bootstrap, route:adopt}}
-//
-// so the agent picks bootstrap+route=adopt without the wasted develop
-// round-trip.
-func TestEnrichWithMetaStatus_UnmanagedRuntimes_PopulatesAdoptRecovery(t *testing.T) {
+// The warning MUST:
+//   - name every unadopted runtime hostname (so agent doesn't need to
+//     cross-reference services[i].managedByZcp per service)
+//   - reference the exact `zerops_workflow action="start"
+//     workflow="bootstrap" route="adopt"` call so the agent can
+//     copy-paste rather than reconstruct
+//   - state the consequence (subsequent service-scoped tools will
+//     reject with ADOPT_REQUIRED) so the agent sees this as a
+//     precondition, not advisory.
+func TestEnrichWithMetaStatus_UnmanagedRuntimes_AppendsDirectiveWarning(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	stateDir := filepath.Join(dir, ".zcp", "state")
@@ -37,35 +43,31 @@ func TestEnrichWithMetaStatus_UnmanagedRuntimes_PopulatesAdoptRecovery(t *testin
 
 	enrichWithMetaStatus(result, stateDir)
 
-	// Managed-service (db) excluded from unmanagedRuntimes — adoption
-	// is runtime-only, managed deps live as API-authoritative
-	// dependencies.
-	wantUnmanaged := []string{"appdev", "appstage", "workerstage"}
-	if len(result.UnmanagedRuntimes) != len(wantUnmanaged) {
-		t.Fatalf("UnmanagedRuntimes: got %v, want %v",
-			result.UnmanagedRuntimes, wantUnmanaged)
+	if len(result.Warnings) != 1 {
+		t.Fatalf("Warnings: got %d entries, want 1; full=%v", len(result.Warnings), result.Warnings)
 	}
-	for i, want := range wantUnmanaged {
-		if result.UnmanagedRuntimes[i] != want {
-			t.Errorf("UnmanagedRuntimes[%d]: got %q, want %q",
-				i, result.UnmanagedRuntimes[i], want)
+	w := result.Warnings[0]
+
+	// Names every unadopted runtime.
+	for _, host := range []string{"appdev", "appstage", "workerstage"} {
+		if !strings.Contains(w, host) {
+			t.Errorf("warning missing hostname %q; got: %s", host, w)
 		}
 	}
-
-	if result.AdoptRecovery == nil {
-		t.Fatal("AdoptRecovery must be populated when unmanagedRuntimes is non-empty")
+	// Managed dep (db) MUST NOT appear — adoption is runtime-only.
+	if strings.Contains(w, "db") {
+		t.Errorf("warning must not list managed dep `db`; got: %s", w)
 	}
-	if result.AdoptRecovery.Tool != "zerops_workflow" {
-		t.Errorf("AdoptRecovery.Tool: got %q, want zerops_workflow", result.AdoptRecovery.Tool)
+	// Names the exact recovery call so the agent can copy-paste.
+	for _, want := range []string{`action="start"`, `workflow="bootstrap"`, `route="adopt"`} {
+		if !strings.Contains(w, want) {
+			t.Errorf("warning missing recovery snippet %q; got: %s", want, w)
+		}
 	}
-	if result.AdoptRecovery.Action != "start" {
-		t.Errorf("AdoptRecovery.Action: got %q, want start", result.AdoptRecovery.Action)
-	}
-	if got := result.AdoptRecovery.Args["workflow"]; got != "bootstrap" {
-		t.Errorf("AdoptRecovery.Args[workflow]: got %q, want bootstrap", got)
-	}
-	if got := result.AdoptRecovery.Args["route"]; got != "adopt" {
-		t.Errorf("AdoptRecovery.Args[route]: got %q, want adopt", got)
+	// References the consequence so the warning is read as
+	// precondition, not advisory.
+	if !strings.Contains(w, "ADOPT_REQUIRED") {
+		t.Errorf("warning must mention ADOPT_REQUIRED consequence (so agent reads it as precondition, not optional); got: %s", w)
 	}
 
 	// ManagedByZCP must still report per-service (false in this case).
@@ -76,10 +78,8 @@ func TestEnrichWithMetaStatus_UnmanagedRuntimes_PopulatesAdoptRecovery(t *testin
 	}
 }
 
-// When the project is fully adopted (every runtime has a complete meta),
-// the hint stays absent — agents shouldn't pay attention noise for the
-// happy path.
-func TestEnrichWithMetaStatus_FullyAdopted_NoHint(t *testing.T) {
+// Fully adopted project: no warning appended, no attention noise.
+func TestEnrichWithMetaStatus_FullyAdopted_NoWarning(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	stateDir := filepath.Join(dir, ".zcp", "state")
@@ -103,13 +103,10 @@ func TestEnrichWithMetaStatus_FullyAdopted_NoHint(t *testing.T) {
 
 	enrichWithMetaStatus(result, stateDir)
 
-	if len(result.UnmanagedRuntimes) > 0 {
-		t.Errorf("UnmanagedRuntimes: got %v, want empty (every runtime adopted)",
-			result.UnmanagedRuntimes)
-	}
-	if result.AdoptRecovery != nil {
-		t.Errorf("AdoptRecovery must be nil when no unmanaged runtimes; got %+v",
-			result.AdoptRecovery)
+	for _, w := range result.Warnings {
+		if strings.Contains(w, "not adopted") {
+			t.Errorf("Warnings must not include adopt-required prose when fully adopted; got: %s", w)
+		}
 	}
 	// Pair-keyed: both halves resolve to the shared meta → ManagedByZCP=true.
 	for _, s := range result.Services {
@@ -122,16 +119,11 @@ func TestEnrichWithMetaStatus_FullyAdopted_NoHint(t *testing.T) {
 	}
 }
 
-// ZCP self-service (type=zcp@1) must never appear in unmanagedRuntimes
-// even when it shows up in the project's service list with
-// ManagedByZCP:false + IsInfrastructure:false. Mirrors the self-filter
-// in launch_source_context.go::isZCPSelfService — the control-plane
-// container is never an adopt candidate (or a promotion target).
-//
-// Karel's v9.101.2 production discover surfaced zcp@1 in
-// unmanagedRuntimes because IsInfrastructure:false (USER category on
-// the platform) + no ServiceMeta → fell through both pre-fix filters.
-func TestEnrichWithMetaStatus_ZCPSelfService_ExcludedFromUnmanaged(t *testing.T) {
+// ZCP self-service (type=zcp@1) must never appear in the warning even
+// when it shows up with ManagedByZCP:false + IsInfrastructure:false.
+// Mirrors launch_source_context.go::isZCPSelfService — the
+// control-plane container is never an adopt candidate.
+func TestEnrichWithMetaStatus_ZCPSelfService_ExcludedFromWarning(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	stateDir := filepath.Join(dir, ".zcp", "state")
@@ -146,21 +138,26 @@ func TestEnrichWithMetaStatus_ZCPSelfService_ExcludedFromUnmanaged(t *testing.T)
 
 	enrichWithMetaStatus(result, stateDir)
 
-	for _, host := range result.UnmanagedRuntimes {
-		if host == "zcp" {
-			t.Errorf("unmanagedRuntimes must NOT contain zcp self-service; got %v", result.UnmanagedRuntimes)
+	if len(result.Warnings) != 1 {
+		t.Fatalf("Warnings: got %d entries, want 1; full=%v", len(result.Warnings), result.Warnings)
+	}
+	w := result.Warnings[0]
+	// zcp@1 self-service MUST NOT appear in the warning's hostname list.
+	// Use space-boundary check so "zcp" inside "zcp_workflow" / "zerops"
+	// snippets doesn't false-positive.
+	for _, marker := range []string{" zcp,", " zcp.", "zcp ", "zcp,"} {
+		if strings.Contains(w, marker) {
+			t.Errorf("warning hostname list must NOT contain zcp self-service marker %q; got: %s", marker, w)
 		}
 	}
-	if len(result.UnmanagedRuntimes) != 1 || result.UnmanagedRuntimes[0] != "appdev" {
-		t.Errorf("unmanagedRuntimes: got %v, want [appdev] (zcp self-filtered, db is infrastructure)",
-			result.UnmanagedRuntimes)
+	if !strings.Contains(w, "appdev") {
+		t.Errorf("warning must list appdev (only legitimate unadopted runtime); got: %s", w)
 	}
 }
 
-// Mixed state: some runtimes adopted, some not. The not-adopted ones
-// surface in unmanagedRuntimes; the hint still fires (any unadopted
-// runtime is a signal worth surfacing).
-func TestEnrichWithMetaStatus_MixedAdoption_HintListsOnlyUnmanaged(t *testing.T) {
+// Mixed adoption: only the unadopted runtimes surface in the
+// warning's hostname enumeration; already-adopted halves are skipped.
+func TestEnrichWithMetaStatus_MixedAdoption_WarningListsOnlyUnmanaged(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	stateDir := filepath.Join(dir, ".zcp", "state")
@@ -178,17 +175,23 @@ func TestEnrichWithMetaStatus_MixedAdoption_HintListsOnlyUnmanaged(t *testing.T)
 		Services: []ops.ServiceInfo{
 			{Hostname: "appdev", Type: "nodejs@22", IsInfrastructure: false},
 			{Hostname: "appstage", Type: "nodejs@22", IsInfrastructure: false},
-			// workerstage exists live but no meta — should land in unmanaged.
 			{Hostname: "workerstage", Type: "nodejs@22", IsInfrastructure: false},
 		},
 	}
 
 	enrichWithMetaStatus(result, stateDir)
 
-	if len(result.UnmanagedRuntimes) != 1 || result.UnmanagedRuntimes[0] != "workerstage" {
-		t.Errorf("UnmanagedRuntimes: got %v, want [workerstage]", result.UnmanagedRuntimes)
+	if len(result.Warnings) != 1 {
+		t.Fatalf("Warnings: got %d entries, want 1 (workerstage is unmanaged); full=%v",
+			len(result.Warnings), result.Warnings)
 	}
-	if result.AdoptRecovery == nil {
-		t.Fatal("AdoptRecovery must fire when ANY runtime is unmanaged")
+	w := result.Warnings[0]
+	if !strings.Contains(w, "workerstage") {
+		t.Errorf("warning must list workerstage; got: %s", w)
+	}
+	// appdev / appstage already adopted — must NOT appear in the
+	// hostname list. Use space-comma boundary to avoid false positives.
+	if strings.Contains(w, "appdev,") || strings.Contains(w, "appdev ") || strings.HasSuffix(w, "appdev.") {
+		t.Errorf("warning must NOT list already-adopted appdev; got: %s", w)
 	}
 }

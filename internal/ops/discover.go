@@ -11,20 +11,19 @@ import (
 
 // DiscoverResult contains project and service information.
 //
-// UnmanagedRuntimes + AdoptRecovery surface the "live runtimes exist
-// in the project but ZCP has no ServiceMeta for them" signal directly
-// in the discover response. Pre-fix the only way an agent learned
-// this was by calling workflow="develop" and getting the ADOPT_REQUIRED
-// rejection — one wasted round-trip per session. Now the recovery
-// hint lands in the first discover call, the same way verify-side
-// recovery hints surface preconditions.
+// Unadopted-runtime signal lives in Warnings as a directive prose
+// string ("Services X, Y are not adopted — call bootstrap=adopt
+// first"). A v9.101.2 structured `adoptRecovery` *topology.Recovery
+// field was reverted in v9.101.4 after t3.txt eval showed agents
+// skimming past it ("Recovery" field name mapped to passive fallback
+// bucket); Warnings is the prominent-system-message bucket the same
+// agents actually parse. The existing ADOPT_REQUIRED rejection from
+// workflow=develop remains the hard gate.
 type DiscoverResult struct {
-	Project           ProjectInfo        `json:"project"`
-	Services          []ServiceInfo      `json:"services"`
-	Notes             []string           `json:"notes,omitempty"`
-	Warnings          []string           `json:"warnings,omitempty"`
-	UnmanagedRuntimes []string           `json:"unmanagedRuntimes,omitempty"`
-	AdoptRecovery     *topology.Recovery `json:"adoptRecovery,omitempty"`
+	Project  ProjectInfo   `json:"project"`
+	Services []ServiceInfo `json:"services"`
+	Notes    []string      `json:"notes,omitempty"`
+	Warnings []string      `json:"warnings,omitempty"`
 }
 
 // ProjectInfo contains basic project information.

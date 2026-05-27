@@ -2,13 +2,14 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zeropsio/zcp/internal/ops"
 	"github.com/zeropsio/zcp/internal/platform"
-	"github.com/zeropsio/zcp/internal/topology"
 	"github.com/zeropsio/zcp/internal/workflow"
 )
 
@@ -71,12 +72,22 @@ func RegisterDiscover(srv *mcp.Server, client platform.Client, projectID, stateD
 	})
 }
 
-// enrichWithMetaStatus sets ManagedByZCP on each service based on ServiceMeta presence,
-// detects SSHFS mount paths for services mounted locally, and — when
-// the project has live runtime services that ZCP doesn't yet track —
-// populates UnmanagedRuntimes + AdoptRecovery so the agent surfaces
-// the adopt-first recommendation on the FIRST discover call instead of
-// learning about it via the workflow="develop" ADOPT_REQUIRED rejection.
+// enrichWithMetaStatus sets ManagedByZCP on each service based on
+// ServiceMeta presence, detects SSHFS mount paths for services mounted
+// locally, and — when the project has live runtime services that ZCP
+// doesn't yet track — appends a directive warning to result.Warnings.
+//
+// The warning replaces an earlier structured `adoptRecovery` field
+// (v9.101.2 .. v9.101.3) that agents demonstrably skimmed past: the
+// "Recovery" field name mapped to the "passive fallback" mental
+// bucket and got ignored in favor of in-flight intent inference
+// (t3.txt agent introspection: "I read it but classified as advisory,
+// not precondition"). Warnings array agents parse as a prominent
+// system-message bucket — same surface ZCP already uses for other
+// project-level alerts. Combined with the existing
+// workflow=develop ADOPT_REQUIRED hard gate (already follow-throughs
+// reliably), the warning closes the discovery → adopt → develop
+// detour cost-free on the first call.
 func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
 	// Detect mounts regardless of stateDir.
 	for i := range result.Services {
@@ -86,7 +97,6 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
 		}
 	}
 
-	var idx map[string]*workflow.ServiceMeta
 	if stateDir != "" {
 		metas, err := workflow.ListServiceMetas(stateDir)
 		if err == nil && len(metas) > 0 {
@@ -94,7 +104,7 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
 			// to the shared meta (spec-workflows.md §8 E8). Layer an
 			// IsComplete filter on top because ManagedByZCP should reflect
 			// a fully-bootstrapped state.
-			idx = workflow.ManagedRuntimeIndex(metas)
+			idx := workflow.ManagedRuntimeIndex(metas)
 			for i := range result.Services {
 				if m, ok := idx[result.Services[i].Hostname]; ok && m.IsComplete() {
 					result.Services[i].ManagedByZCP = true
@@ -103,13 +113,13 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
 		}
 	}
 
-	// Adopt-discovery hint: enumerate non-system runtime services that
-	// have NO IsComplete meta. Managed services (db / cache / storage)
-	// are not adopt candidates — they live as API-authoritative
+	// Enumerate non-system runtime services that have NO IsComplete
+	// meta. Managed services (db / cache / storage — IsInfrastructure)
+	// are not adopt candidates; they live as API-authoritative
 	// dependencies of a runtime adoption. The ZCP control-plane
 	// container (type=zcp@1) is also excluded — it's the host running
 	// THIS process, never a promotion target. Mirror of
-	// launch_source_context.go::isZCPSelfService gating; same rationale.
+	// launch_source_context.go::isZCPSelfService gating.
 	var unmanaged []string
 	for i := range result.Services {
 		s := &result.Services[i]
@@ -125,14 +135,9 @@ func enrichWithMetaStatus(result *ops.DiscoverResult, stateDir string) {
 		unmanaged = append(unmanaged, s.Hostname)
 	}
 	if len(unmanaged) > 0 {
-		result.UnmanagedRuntimes = unmanaged
-		result.AdoptRecovery = &topology.Recovery{
-			Tool:   "zerops_workflow",
-			Action: "start",
-			Args: map[string]string{
-				"workflow": "bootstrap",
-				"route":    "adopt",
-			},
-		}
+		result.Warnings = append(result.Warnings, fmt.Sprintf(
+			"Services not adopted by ZCP: %s. Run `zerops_workflow action=\"start\" workflow=\"bootstrap\" route=\"adopt\"` to adopt them BEFORE any service-scoped work (develop, deploy, verify) — those calls will reject with ADOPT_REQUIRED until adoption completes.",
+			strings.Join(unmanaged, ", "),
+		))
 	}
 }
