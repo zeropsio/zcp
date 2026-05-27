@@ -57,7 +57,7 @@ func deployPreFlight(ctx context.Context, client platform.Client, projectID, sta
 	// Find and parse zerops.yaml from the source mount (container env) or
 	// workingDir / project root (local env). See findAndParseZeropsYml's
 	// contract for the workingDir-vs-projectRoot precedence.
-	doc, _, parseErr := findAndParseZeropsYml(projectRoot, sourceHostname, workingDir)
+	doc, parseErr := findAndParseZeropsYml(projectRoot, sourceHostname, workingDir)
 	if parseErr != nil {
 		checks = append(checks, workflow.StepCheck{
 			Name: "zerops_yml_exists", Status: statusFail,

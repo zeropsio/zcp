@@ -82,7 +82,7 @@ func checkDevProdEnvDivergence(doc *ops.ZeropsYmlDoc) []workflow.StepCheck {
 // == ""). Container-env callers should pass "" — workingDir for SSH deploys
 // names a CONTAINER path (default `/var/www`), not a dev-machine path, so
 // it's irrelevant for the dev-side yaml lookup.
-func findAndParseZeropsYml(projectRoot, sourceHostname, workingDir string) (*ops.ZeropsYmlDoc, string, error) {
+func findAndParseZeropsYml(projectRoot, sourceHostname, workingDir string) (*ops.ZeropsYmlDoc, error) {
 	if sourceHostname == "" {
 		// Local environment. workingDir wins when set — that honors the
 		// `workingDir` parameter advertised on `zerops_deploy` (mode=local)
@@ -95,10 +95,10 @@ func findAndParseZeropsYml(projectRoot, sourceHostname, workingDir string) (*ops
 		}
 		doc, err := ops.ParseZeropsYml(searchDir)
 		if err != nil {
-			return nil, searchDir, fmt.Errorf("zerops.yaml not found at %s (local environment): %w",
+			return nil, fmt.Errorf("zerops.yaml not found at %s (local environment): %w",
 				searchDir, err)
 		}
-		return doc, searchDir, nil
+		return doc, nil
 	}
 
 	// Container environment: yaml on the source service's mount.
@@ -106,20 +106,20 @@ func findAndParseZeropsYml(projectRoot, sourceHostname, workingDir string) (*ops
 	state, probeErr := probeMountForZeropsYml(mountPath)
 	switch {
 	case probeErr != nil:
-		return nil, mountPath, fmt.Errorf("source mount %s probe failed: %w", mountPath, probeErr)
+		return nil, fmt.Errorf("source mount %s probe failed: %w", mountPath, probeErr)
 	case state == mountStatePresent:
 		doc, parseErr := ops.ParseZeropsYml(mountPath)
 		if parseErr != nil {
-			return nil, mountPath, fmt.Errorf("source-mount zerops.yaml at %s is invalid: %w",
+			return nil, fmt.Errorf("source-mount zerops.yaml at %s is invalid: %w",
 				mountPath, parseErr)
 		}
-		return doc, mountPath, nil
+		return doc, nil
 	case state == mountStateAbsent:
-		return nil, mountPath, fmt.Errorf("source mount %s missing — scaffold zerops.yaml for service %q there",
+		return nil, fmt.Errorf("source mount %s missing — scaffold zerops.yaml for service %q there",
 			mountPath, sourceHostname)
 	default:
 		// mountStateNoYaml.
-		return nil, mountPath, fmt.Errorf("zerops.yaml not present on source mount %s — scaffold it for service %q",
+		return nil, fmt.Errorf("zerops.yaml not present on source mount %s — scaffold it for service %q",
 			mountPath, sourceHostname)
 	}
 }

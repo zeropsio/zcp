@@ -246,6 +246,20 @@ type WorkflowInput struct {
 	// `existing-project-conflict-prompt`; the agent asks the user
 	// per conflict + re-calls with this map populated.
 	MergeStrategy map[string]string `json:"mergeStrategy,omitempty" jsonschema:"Launch-production existing-project only: per-prod-hostname conflict resolution. Keys are prod-side hostnames; values are 'skip' (additive — drop from bundle) or 'replace' (overwrite existing service in target — requires confirmDestructive ack). Populated on re-call after the existing-project-conflict-prompt response."`
+
+	// Setup is the canonical zerops.yaml setup-block name for the
+	// targetService runtime. Used by action="set-default-setup" to
+	// resolve the requiresSetupInput / staleMetaSetup blocker by
+	// writing ServiceMeta.PrimarySetupName explicitly. Validated
+	// against any available zerops.yaml (workingDir for local mode,
+	// per-service SSHFS mount for container mode) before the write.
+	Setup string `json:"setup,omitempty" jsonschema:"Used by action=set-default-setup: canonical zerops.yaml setup-block name to write into the target service's local ServiceMeta as PrimarySetupName. Validated against any readable yaml (workingDir or per-service mount) before write — failure surfaces availableSetups so the agent can re-call with a corrected value."`
+
+	// StageSetup is the canonical zerops.yaml setup-block name for the
+	// targetService runtime's stage half (pair shapes only). When
+	// supplied, writes ServiceMeta.StageSetupName. Singleton runtimes
+	// (PlanModeDev / PlanModeSimple) ignore this field.
+	StageSetup string `json:"stageSetup,omitempty" jsonschema:"Used by action=set-default-setup: optional stage-half setup-block name (pair shapes only). Writes ServiceMeta.StageSetupName when supplied. Singletons (dev/simple) ignore this field."`
 }
 
 // LaunchPromotableInput names one runtime to include in the launch
@@ -474,11 +488,13 @@ func handleWorkflowAction(ctx context.Context, projectID string, engine *workflo
 		return handleRecipeClassify(input)
 	case "adopt-local":
 		return handleAdoptLocal(ctx, client, projectID, stateDir, input, rt)
+	case "set-default-setup":
+		return handleSetDefaultSetup(ctx, client, projectID, input, stateDir)
 	default:
 		return convertError(platform.NewPlatformError(
 			platform.ErrInvalidParameter,
 			fmt.Sprintf("Unknown action %q", input.Action),
-			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, close-mode, git-push-setup, build-integration, classify, adopt-local, dispatch-brief-atom, record-deploy, generate-finalize, build-subagent-brief, verify-subagent-dispatch"), WithRecoveryStatus()), nil, nil
+			"Valid actions: start, complete, close, skip, status, reset, iterate, resume, list, route, close-mode, git-push-setup, build-integration, classify, adopt-local, set-default-setup, dispatch-brief-atom, record-deploy, generate-finalize, build-subagent-brief, verify-subagent-dispatch"), WithRecoveryStatus()), nil, nil
 	}
 }
 
